@@ -1,0 +1,200 @@
+//! Compiled program: a flat instruction list for a stack machine.
+
+use std::collections::HashMap;
+
+use crate::ast::{BinaryOp, UnaryOp};
+use crate::lexer::Suffix;
+use crate::value::{ElemType, Str};
+
+pub type Addr = u32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Global(u32),
+    /// Index into the current DEF call's locals.
+    Local(u32),
+}
+
+/// What a call leaves on the stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Want {
+    /// Called as a function: exactly one value.
+    Value,
+    /// Called as a command: one value per OUT variable.
+    Outs(u8),
+}
+
+impl Want {
+    pub fn count(self) -> usize {
+        match self {
+            Want::Value => 1,
+            Want::Outs(n) => n.into(),
+        }
+    }
+}
+
+/// Stack effects are written as `[inputs] -> [outputs]`, top of stack last.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Op {
+    Int(i32),
+    Real(f64),
+    /// Pushes a fresh copy of string constant `n`, so that modifying it in
+    /// place cannot change the constant.
+    Str(u32),
+    Default,
+    Load(Slot),
+    /// `[value] -> []`, converting the value for the variable's suffix.
+    Store(Slot, Option<Suffix>),
+    /// `[base, i1..in] -> [element]`
+    Index(u8),
+    /// `[value, base, i1..in] -> []`
+    StoreIndex(u8),
+    /// `[d1..dn] -> [array]`
+    NewArray {
+        elem: ElemType,
+        dims: u8,
+    },
+    /// `[v1..vn] -> [array]`
+    ArrayLit {
+        elem: ElemType,
+        len: u32,
+    },
+    Unary(UnaryOp),
+    Binary(BinaryOp),
+    /// `[v] -> [0 or 1]`
+    Truthy,
+    Pop,
+    Jump(Addr),
+    /// `[cond] -> []`
+    JumpIfFalse(Addr),
+    JumpIfTrue(Addr),
+    Gosub(Addr),
+    /// `[label string] -> []`
+    GotoDyn,
+    GosubDyn,
+    /// `[selector] -> []`. Followed by `count` `Jump` entries forming the table.
+    On {
+        count: u32,
+        gosub: bool,
+    },
+    /// Returns from GOSUB, or from a DEF when no GOSUB is pending in it.
+    Return,
+    /// `[value] -> []`, returns from a function DEF.
+    ReturnValue,
+    /// `[args..] -> [results..]`
+    CallDef {
+        def: u32,
+        argc: u8,
+        want: Want,
+    },
+    CallBuiltin {
+        id: u16,
+        argc: u8,
+        want: Want,
+    },
+    CallHost {
+        id: u32,
+        argc: u8,
+        want: Want,
+    },
+    /// `[name, args..] -> [results..]`
+    CallDyn {
+        argc: u8,
+        want: Want,
+    },
+    /// `[name] -> [value]`
+    LoadDyn,
+    /// `[value, name] -> []`
+    StoreDyn,
+    DefArgc,
+    /// `[n] -> [arg n]`
+    DefArg,
+    DefOutc,
+    /// `[n, value] -> []`
+    DefOut,
+    /// `[var, to, step] -> [continue?]`
+    ForTest,
+    /// `[screen?, value] -> []`
+    Print {
+        screen: bool,
+    },
+    PrintTab {
+        screen: bool,
+    },
+    PrintNewline {
+        screen: bool,
+    },
+    /// `[frames?] -> []`
+    Wait {
+        vsync: bool,
+        has_arg: bool,
+    },
+    /// Moves the DATA read position.
+    Restore(u32),
+    /// `[label string] -> []`
+    RestoreDyn,
+    /// `[] -> [next DATA value]`
+    Read,
+    End,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Literal {
+    Int(i32),
+    Real(f64),
+    Str(Str),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VarInfo {
+    pub name: String,
+    pub suffix: Option<Suffix>,
+}
+
+impl VarInfo {
+    /// Name as VAR("...") spells it, suffix included.
+    pub fn full_name(&self) -> String {
+        full_name(&self.name, self.suffix)
+    }
+}
+
+pub fn full_name(name: &str, suffix: Option<Suffix>) -> String {
+    let mut s = name.to_string();
+    match suffix {
+        Some(Suffix::Int) => s.push('%'),
+        Some(Suffix::Real) => s.push('#'),
+        Some(Suffix::Str) => s.push('$'),
+        None => {}
+    }
+    s
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DefInfo {
+    pub name: String,
+    pub entry: Addr,
+    pub is_function: bool,
+    /// `None` when declared with `*`.
+    pub params: Option<u8>,
+    pub outs: Option<u8>,
+    /// Parameters first, then OUT variables, then other locals.
+    pub locals: Vec<VarInfo>,
+    pub labels: HashMap<String, Addr>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Compiled {
+    pub code: Vec<Op>,
+    /// Source line of each instruction.
+    pub lines: Vec<u32>,
+    pub strings: Vec<Str>,
+    pub globals: Vec<VarInfo>,
+    pub labels: HashMap<String, Addr>,
+    pub defs: Vec<DefInfo>,
+    pub def_names: HashMap<String, u32>,
+    pub data: Vec<Literal>,
+    /// DATA position each label refers to for RESTORE.
+    pub data_labels: HashMap<String, u32>,
+    /// OPTION DEFINT: variables without a suffix start as integer 0.
+    pub default_int: bool,
+}

@@ -20,7 +20,7 @@ pub struct Token {
 }
 
 /// Type suffix on an identifier: `A%`, `A#`, `A$`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Suffix {
     Int,
     Real,
