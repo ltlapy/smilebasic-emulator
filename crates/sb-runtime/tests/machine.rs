@@ -47,6 +47,9 @@ fn boot_message() {
     assert!(r[0].starts_with("ＳｍｉｌｅＢＡＳＩＣ　ｅｍｕｌａｔｏｒ"));
     assert_eq!(r[2], "１３４２１６７２０　ｂｙｔｅｓ　ｆｒｅｅ");
     assert_eq!(r[3], "OK");
+    // A blank line separates the message from OK.
+    assert_eq!(m.rt.text[4].cell(0, 3).code, 0);
+    assert_eq!(m.rt.text[4].cell(0, 4).code, u16::from(b'O'));
 }
 
 #[test]
