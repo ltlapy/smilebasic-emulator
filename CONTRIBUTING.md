@@ -18,7 +18,8 @@ headless on Windows, macOS and Linux.
 
 - SmileBASIC 4 is the reference. Other versions are profiles mapped onto it.
 - Base each command on the SmileBASIC 4 reference manual
-  (<https://sup4.smilebasic.com/doku.php>). Name the command in the doc comment.
+  (<https://sup4.smilebasic.com/doku.php>; while the site is offline, use the
+  Internet Archive's copies). Name the command in the doc comment.
 - If behavior comes from guessing rather than the manual or real hardware, mark it
   `// UNVERIFIED: <what is assumed>` so it can be checked later.
 - A user program must never panic the emulator. Bad input produces a SmileBASIC

@@ -54,8 +54,16 @@ pub enum TokenKind {
     LessEq,
     Greater,
     GreaterEq,
+    /// `<<`, and `<<<`, which the reference defines as identical.
     Shl,
+    /// `>>`, arithmetic.
     Shr,
+    /// `>>>`, logical.
+    UShr,
+    /// `<<+`
+    RotL,
+    /// `>>+`
+    RotR,
     /// `!`
     Bang,
     AndAnd,
@@ -91,14 +99,48 @@ macro_rules! keywords {
     };
 }
 
-// Words with their own syntax. Ordinary commands and functions (PRINT
-// excepted, because of its `?` alias) stay identifiers and are resolved by
-// the parser.
+// The reserved words of the language specification, plus the DIV and MOD
+// operators. Other words with special syntax (TO, STEP, CONST, ENUM, OPTION)
+// are not reserved, so they stay identifiers and the parser recognizes them
+// in context.
 keywords!(
-    And, Break, Call, Case, Common, Const, Continue, Data, Def, Dim, Div, Else, Elseif, End,
-    Endcase, Endif, Endloop, Enum, For, Gosub, Goto, If, Loop, Mod, Next, Not, On, Option, Or,
-    Otherwise, Out, Print, Repeat, Return, Step, Then, To, Until, Var, Wend, When, While, Xor,
+    And, Break, Call, Case, Common, Continue, Data, Def, Defout, Dim, Div, Else, Elseif, End,
+    Endcase, Endif, Endloop, Exec, For, Gosub, Goto, If, Input, Linput, Loop, Mod, Next, Not, On,
+    Or, Otherwise, Out, Print, Read, Repeat, Restore, Return, Swap, Then, Tprint, Until, Var, Wend,
+    When, While, Xor,
 );
+
+/// Longest spellings first so that `<<<` wins over `<<` and `<`.
+const OPERATORS: &[(&str, TokenKind)] = &[
+    ("<<<", TokenKind::Shl),
+    (">>>", TokenKind::UShr),
+    ("<<+", TokenKind::RotL),
+    (">>+", TokenKind::RotR),
+    ("==", TokenKind::Eq),
+    ("!=", TokenKind::NotEq),
+    ("<=", TokenKind::LessEq),
+    (">=", TokenKind::GreaterEq),
+    ("<<", TokenKind::Shl),
+    (">>", TokenKind::Shr),
+    ("&&", TokenKind::AndAnd),
+    ("||", TokenKind::OrOr),
+    ("=", TokenKind::Assign),
+    ("!", TokenKind::Bang),
+    ("<", TokenKind::Less),
+    (">", TokenKind::Greater),
+    ("+", TokenKind::Plus),
+    ("-", TokenKind::Minus),
+    ("*", TokenKind::Star),
+    ("/", TokenKind::Slash),
+    ("(", TokenKind::LParen),
+    (")", TokenKind::RParen),
+    ("[", TokenKind::LBracket),
+    ("]", TokenKind::RBracket),
+    (",", TokenKind::Comma),
+    (";", TokenKind::Semicolon),
+    (":", TokenKind::Colon),
+    ("?", TokenKind::Keyword(Keyword::Print)),
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LexErrorKind {
@@ -215,7 +257,7 @@ impl Lexer {
                 '"' => self.string(start),
                 '0'..='9' => self.number(start),
                 '.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => self.number(start),
-                '&' => self.ampersand(start)?,
+                '&' if self.peek_at(1) != Some('&') => self.ampersand(start)?,
                 '@' => {
                     self.bump();
                     let name = self
@@ -286,7 +328,11 @@ impl Lexer {
             if c == '"' {
                 break;
             }
-            text.push(c);
+            // Only the Basic Multilingual Plane is supported; the specification
+            // says surrogate pairs are ignored.
+            if c <= '\u{FFFF}' {
+                text.push(c);
+            }
         }
         self.push(TokenKind::Str(text.encode_utf16().collect()), start);
     }
@@ -317,7 +363,8 @@ impl Lexer {
                 self.take_digits(&mut text);
             }
         }
-        // UNVERIFIED: a decimal literal outside the 32-bit range becomes real.
+        // Integer literals go up to 2147483647.
+        // UNVERIFIED: a larger decimal literal becomes real instead of an error.
         let kind = match text.parse::<i32>() {
             Ok(n) if !is_real => TokenKind::Int(n),
             _ => TokenKind::Real(text.parse().expect("lexed digits form a valid float")),
@@ -332,15 +379,10 @@ impl Lexer {
         }
     }
 
-    /// `&H..`, `&B..` or `&&`.
+    /// `&H..` or `&B..`.
     fn ampersand(&mut self, start: Span) -> Result<(), LexError> {
         self.bump();
         let radix = match self.peek() {
-            Some('&') => {
-                self.bump();
-                self.push(TokenKind::AndAnd, start);
-                return Ok(());
-            }
             Some('h' | 'H') => 16,
             Some('b' | 'B') => 2,
             other => {
@@ -367,38 +409,15 @@ impl Lexer {
     }
 
     fn operator(&mut self, c: char, start: Span) -> Result<(), LexError> {
-        self.bump();
-        let next = self.peek();
-        let (kind, two_chars) = match (c, next) {
-            ('=', Some('=')) => (TokenKind::Eq, true),
-            ('!', Some('=')) => (TokenKind::NotEq, true),
-            ('<', Some('=')) => (TokenKind::LessEq, true),
-            ('>', Some('=')) => (TokenKind::GreaterEq, true),
-            ('<', Some('<')) => (TokenKind::Shl, true),
-            ('>', Some('>')) => (TokenKind::Shr, true),
-            ('|', Some('|')) => (TokenKind::OrOr, true),
-            ('=', _) => (TokenKind::Assign, false),
-            ('!', _) => (TokenKind::Bang, false),
-            ('<', _) => (TokenKind::Less, false),
-            ('>', _) => (TokenKind::Greater, false),
-            ('+', _) => (TokenKind::Plus, false),
-            ('-', _) => (TokenKind::Minus, false),
-            ('*', _) => (TokenKind::Star, false),
-            ('/', _) => (TokenKind::Slash, false),
-            ('(', _) => (TokenKind::LParen, false),
-            (')', _) => (TokenKind::RParen, false),
-            ('[', _) => (TokenKind::LBracket, false),
-            (']', _) => (TokenKind::RBracket, false),
-            (',', _) => (TokenKind::Comma, false),
-            (';', _) => (TokenKind::Semicolon, false),
-            (':', _) => (TokenKind::Colon, false),
-            ('?', _) => (TokenKind::Keyword(Keyword::Print), false),
-            _ => return Err(self.error(LexErrorKind::UnexpectedChar(c), start)),
-        };
-        if two_chars {
+        let rest = &self.chars[self.pos..];
+        let (spelling, kind) = OPERATORS
+            .iter()
+            .find(|(op, _)| op.len() <= rest.len() && op.chars().zip(rest).all(|(a, &b)| a == b))
+            .ok_or(self.error(LexErrorKind::UnexpectedChar(c), start))?;
+        for _ in 0..spelling.len() {
             self.bump();
         }
-        self.push(kind, start);
+        self.push(kind.clone(), start);
         Ok(())
     }
 }
@@ -523,6 +542,12 @@ mod tests {
                 T::Keyword(Keyword::Endcase),
             ]
         );
+        // Not reserved, so the parser decides from context.
+        assert_eq!(kinds("TO STEP"), [ident("TO"), ident("STEP")]);
+        assert_eq!(
+            kinds("tprint DEFOUT"),
+            [T::Keyword(Keyword::Tprint), T::Keyword(Keyword::Defout)]
+        );
         // A suffix makes it an ordinary identifier.
         assert_eq!(
             kinds("END$"),
@@ -543,6 +568,7 @@ mod tests {
             kinds("\"open\nX"),
             [T::Str(utf16("open")), T::Newline, ident("X")]
         );
+        assert_eq!(kinds("\"A😀B\""), [T::Str(utf16("AB"))]);
     }
 
     #[test]
@@ -576,7 +602,7 @@ mod tests {
     #[test]
     fn operators() {
         assert_eq!(
-            kinds("= == != < <= > >= << >> ! && || + - * / ( ) [ ] , ; :"),
+            kinds("= == != < <= > >= << >> <<< >>> <<+ >>+ ! && || + - * / ( ) [ ] , ; :"),
             [
                 T::Assign,
                 T::Eq,
@@ -587,6 +613,10 @@ mod tests {
                 T::GreaterEq,
                 T::Shl,
                 T::Shr,
+                T::Shl,
+                T::UShr,
+                T::RotL,
+                T::RotR,
                 T::Bang,
                 T::AndAnd,
                 T::OrOr,
