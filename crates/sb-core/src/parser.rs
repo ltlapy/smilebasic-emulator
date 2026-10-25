@@ -57,6 +57,24 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+impl ParseError {
+    /// Context for developers, without the error message and line.
+    pub fn detail(&self) -> Option<String> {
+        match &self.kind {
+            ParseErrorKind::Lex(LexErrorKind::UnexpectedChar(c)) => {
+                Some(format!("unexpected {c:?}"))
+            }
+            ParseErrorKind::Lex(_) => None,
+            ParseErrorKind::Expected { expected, found } => {
+                Some(format!("expected {expected}, found {found:?}"))
+            }
+            ParseErrorKind::Misplaced(keyword) => Some(format!("unexpected {keyword:?}")),
+            ParseErrorKind::DefInsideBlock => Some("DEF inside a block".to_string()),
+            ParseErrorKind::TooDeep => Some("expression too complex".to_string()),
+        }
+    }
+}
+
 impl From<LexError> for ParseError {
     fn from(e: LexError) -> Self {
         ParseError {

@@ -2,27 +2,27 @@
 
 use std::path::{Path, PathBuf};
 
-use sb_core::vm::{Status, Vm};
 use sb_profiles::Profile;
 use sb_runtime::font::Font;
+use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::{Runtime, resources, sbfile};
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
-use sdl3::pixels::PixelFormat;
+use sdl3::pixels::{Color, PixelFormat};
+use sdl3::rect::Rect;
 use sdl3::render::ScaleMode;
-use sdl3::sys::render::SDL_RendererLogicalPresentation;
 
 const USAGE: &str = "usage:
-  smilebasic PROGRAM            run a SmileBASIC 4 program (TXT file or plain text)
+  smilebasic                    start in direct mode
+  smilebasic PROGRAM            load a SmileBASIC 4 program (TXT file or plain
+                                text) into PRG0 and run it
   smilebasic import ROMFS...    copy the font from your own extracted SmileBASIC 4
                                 RomFS directories (list the update's last);
                                 without it, a bundled font is used";
 
-/// UNVERIFIED: instructions per frame for programs that do not VSYNC;
-/// SmileBASIC 4's real speed has not been measured.
-const FRAME_BUDGET: u32 = 200_000;
+const TITLE: &str = "SmileBASIC emulator";
 
 type AnyError = Box<dyn std::error::Error>;
 
@@ -30,13 +30,16 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("import") if args.len() > 1 => import(&args[1..]),
-        Some(program) if !program.starts_with('-') && args.len() == 1 => run(Path::new(program)),
+        None => run(None),
+        Some(program) if !program.starts_with('-') && args.len() == 1 => {
+            run(Some(Path::new(program)))
+        }
         _ => Err(USAGE.into()),
     };
     if let Err(e) = result {
         eprintln!("{e}");
         // Release builds on Windows have no console to print to.
-        let _ = show_simple_message_box(MessageBoxFlag::ERROR, "SmileBASIC", &e.to_string(), None);
+        let _ = show_simple_message_box(MessageBoxFlag::ERROR, TITLE, &e.to_string(), None);
         std::process::exit(1);
     }
 }
@@ -65,30 +68,25 @@ fn load_source(path: &Path) -> Result<String, AnyError> {
     }
 }
 
-fn run(program: &Path) -> Result<(), AnyError> {
-    let source = load_source(program)?;
+fn run(program: Option<&Path>) -> Result<(), AnyError> {
+    let source = program.map(load_source).transpose()?;
     let font = resources::load_font(&resource_dir()?).unwrap_or_else(|e| {
         eprintln!("using the fallback font: {e} (see `smilebasic import`)");
         Font::fallback()
     });
     let screen = Profile::default().screen();
-    let mut rt = Runtime::new(screen.width, screen.height, font);
-    let mut vm = match sb_core::compile(&source, &rt) {
-        Ok(compiled) => Some(Vm::new(compiled)),
-        Err(e) => {
-            report(&mut rt, &e);
-            None
-        }
-    };
+    let mut machine = Machine::new(Runtime::new(screen.width, screen.height, font));
+    machine.boot();
+    if let Some(source) = source {
+        machine.set_slot(0, source);
+        machine.run_slot(0);
+    }
 
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
+    let (display_w, display_h) = screen.display;
     let window = video
-        .window(
-            "SmileBASIC",
-            screen.width * screen.default_scale,
-            screen.height * screen.default_scale,
-        )
+        .window(TITLE, display_w, display_h)
         .position_centered()
         .resizable()
         .high_pixel_density()
@@ -101,11 +99,6 @@ fn run(program: &Path) -> Result<(), AnyError> {
     if !unsafe { sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1) } {
         eprintln!("vsync unavailable: {}", sdl3::get_error());
     }
-    canvas.set_logical_size(
-        screen.width,
-        screen.height,
-        SDL_RendererLogicalPresentation::INTEGER_SCALE,
-    )?;
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator.create_texture_streaming(
         PixelFormat::ARGB8888,
@@ -115,7 +108,6 @@ fn run(program: &Path) -> Result<(), AnyError> {
     texture.set_scale_mode(ScaleMode::Nearest);
 
     let mut events = sdl.event_pump()?;
-    let mut wait: u32 = 0;
     'running: loop {
         for event in events.poll_iter() {
             match event {
@@ -124,41 +116,42 @@ fn run(program: &Path) -> Result<(), AnyError> {
                     keycode: Some(key), ..
                 } => {
                     if let Some(code) = special_key(key) {
-                        rt.key_press(code);
+                        machine.rt.key_press(code);
                     }
                 }
-                Event::TextInput { text, .. } => {
-                    // SmileBASIC strings hold only the Basic Multilingual Plane.
-                    text.chars()
-                        .filter_map(|c| u16::try_from(u32::from(c)).ok())
-                        .for_each(|c| rt.key_press(c));
-                }
+                Event::TextInput { text, .. } => machine.type_text(&text),
                 _ => {}
             }
         }
 
-        wait = wait.saturating_sub(1);
-        if wait == 0
-            && let Some(machine) = &mut vm
-        {
-            match machine.run(&mut rt, FRAME_BUDGET) {
-                Ok(Status::Running) => {}
-                Ok(Status::Wait { frames, .. }) => wait = frames,
-                Ok(Status::Ended) => vm = None,
-                Err(e) => {
-                    report(&mut rt, &e);
-                    vm = None;
-                }
-            }
-        }
+        machine.frame();
 
-        let fb = rt.render();
+        let fb = machine.render();
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        canvas.copy(&texture, None, None)?;
+        let (out_w, out_h) = canvas.output_size()?;
+        canvas.copy(
+            &texture,
+            None,
+            screen_rect(fb.width(), fb.height(), out_w, out_h),
+        )?;
         canvas.present();
     }
     Ok(())
+}
+
+/// Where the screen goes in a window of `out_w` x `out_h` pixels: scaled
+/// by the largest whole factor that fits, and centered.
+fn screen_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> Rect {
+    let scale = (out_w / width).min(out_h / height).max(1);
+    let (w, h) = (width * scale, height * scale);
+    Rect::new(
+        (out_w as i32 - w as i32) / 2,
+        (out_h as i32 - h as i32) / 2,
+        w,
+        h,
+    )
 }
 
 /// The INKEY$ code of a key that does not type text.
@@ -180,18 +173,6 @@ fn special_key(key: Keycode) -> Option<u16> {
         Keycode::Down => keys::DOWN,
         _ => return None,
     })
-}
-
-/// Shows an error on the console, as SmileBASIC does, and on stderr.
-fn report(rt: &mut Runtime, error: &sb_core::error::Error) {
-    eprintln!("{error}");
-    let console = &mut rt.text[sb_runtime::text::CONSOLE];
-    if console.cursor().0 != 0 {
-        console.newline();
-    }
-    let text: Vec<u16> = error.to_string().encode_utf16().collect();
-    console.print(&text);
-    console.newline();
 }
 
 fn as_bytes(pixels: &[u32]) -> &[u8] {

@@ -168,6 +168,12 @@ impl Font {
                 symbols,
                 missing,
             } => {
+                // SmileBASIC's font draws ASCII as wide as full-width
+                // characters, so use GalmuriMono7's full-width forms.
+                let code = match code {
+                    0x21..=0x7E => code + 0xFEE0,
+                    _ => code,
+                };
                 let i = match index[usize::from(code)] {
                     NO_CELL => *missing,
                     i => i,
@@ -250,8 +256,12 @@ mod tests {
     fn fallback_font() {
         let font = Font::fallback();
         assert_eq!(font.origin(0x41, FontSize::Small), None);
-        // Half-width glyphs are centered in the cell.
-        assert_eq!(rows(&font, '!')[0], "...#....");
+        // ASCII is drawn with the full-width forms.
+        assert_eq!(rows(&font, 'A'), rows(&font, 'Ａ'));
+        // Other half-width glyphs are centered in the cell.
+        let kana = rows(&font, 'ｱ');
+        assert!(kana.iter().all(|r| r.starts_with("..")), "{kana:?}");
+        assert!(kana.iter().any(|r| r.contains('#')));
         // The overrides make look-alikes distinct.
         assert_ne!(rows(&font, '０'), rows(&font, 'Ｏ'));
         assert_ne!(rows(&font, 'Ｉ'), rows(&font, '｜'));

@@ -18,29 +18,31 @@ pub enum Profile {
 pub struct ScreenConfig {
     pub width: u32,
     pub height: u32,
-    /// Window scale used by the frontend when the window first opens.
-    pub default_scale: u32,
+    /// Size of the console's video output, used for the window when it
+    /// first opens. The screen is scaled up inside it by a whole factor.
+    pub display: (u32, u32),
 }
 
 impl Profile {
     pub fn screen(self) -> ScreenConfig {
         match self {
             // ACLS resets the screen with `XSCREEN 400,240,2`.
+            // The Switch outputs 1280x720.
             Profile::Sb4 => ScreenConfig {
                 width: 400,
                 height: 240,
-                default_scale: 3,
+                display: (1280, 720),
             },
             // Top screen only for now; the 320x240 lower screen comes later.
             Profile::Sb3 => ScreenConfig {
                 width: 400,
                 height: 240,
-                default_scale: 3,
+                display: (1200, 720),
             },
             Profile::Ptc => ScreenConfig {
                 width: 256,
                 height: 192,
-                default_scale: 4,
+                display: (1024, 768),
             },
         }
     }

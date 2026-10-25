@@ -4,6 +4,7 @@
 //! instructions and returns, so the frontend can keep drawing frames.
 //! VSYNC and WAIT return [`Status::Wait`] and resume on the next call.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::BinaryOp;
@@ -143,10 +144,21 @@ fn name_of(value: &Value) -> Result<String> {
 
 impl Vm {
     pub fn new(program: Compiled) -> Self {
+        Vm::with_globals(program, &HashMap::new())
+    }
+
+    /// Starts with the globals in `values`, keyed by full name (`A$`), set
+    /// to those values. Direct mode uses it to keep variables between lines.
+    pub fn with_globals(program: Compiled, values: &HashMap<String, Value>) -> Self {
         let globals = program
             .globals
             .iter()
-            .map(|g| initial_value(g, program.default_int))
+            .map(|g| {
+                values
+                    .get(&g.full_name())
+                    .cloned()
+                    .unwrap_or_else(|| initial_value(g, program.default_int))
+            })
             .collect();
         Vm {
             program: Rc::new(program),
@@ -159,6 +171,16 @@ impl Vm {
             ended: false,
             reading_input: false,
         }
+    }
+
+    /// Every named global with its current value, keyed by full name.
+    pub fn globals(&self) -> impl Iterator<Item = (String, Value)> + '_ {
+        self.program
+            .globals
+            .iter()
+            .zip(&self.globals)
+            .filter(|(info, _)| !info.name.starts_with('\0'))
+            .map(|(info, value)| (info.full_name(), value.clone()))
     }
 
     pub fn is_ended(&self) -> bool {

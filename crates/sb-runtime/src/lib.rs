@@ -4,6 +4,7 @@
 
 pub mod font;
 pub mod framebuffer;
+pub mod machine;
 pub mod resources;
 pub mod runtime;
 pub mod sbfile;

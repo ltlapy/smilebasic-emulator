@@ -14,18 +14,36 @@ use crate::text::{CONSOLE, SCREENS, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Command {
+    Clear,
     Cls,
     Color,
     Inkey,
     Locate,
+    New,
+    Run,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
+    ("CLEAR", Command::Clear),
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
     ("INKEY$", Command::Inkey),
     ("LOCATE", Command::Locate),
+    ("NEW", Command::New),
+    ("RUN", Command::Run),
 ];
+
+/// Program slots PRG0 to PRG5.
+pub const SLOTS: usize = 6;
+
+/// Work for the [`crate::machine::Machine`] around the runtime, asked for
+/// by direct-mode commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    Run(usize),
+    New(usize),
+    Clear,
+}
 
 /// UNVERIFIED: how many unread keys SmileBASIC keeps.
 pub const KEY_BUFFER: usize = 256;
@@ -59,6 +77,10 @@ pub struct Runtime {
     /// The line being typed for INPUT or LINPUT.
     line: Option<Vec<u16>>,
     frame: u32,
+    /// Whether the code running was typed in direct mode, where RUN, NEW
+    /// and CLEAR are allowed.
+    pub direct: bool,
+    requests: Vec<Request>,
 }
 
 fn illegal() -> Error {
@@ -79,6 +101,15 @@ fn opt_int(v: &Value) -> Result<Option<i32>> {
         Value::Default => Ok(None),
         v => v.to_int().map(Some),
     }
+}
+
+/// An optional program slot number, 0 when omitted.
+fn slot_arg(v: Option<&Value>) -> Result<usize> {
+    let slot = v.map(opt_int).transpose()?.flatten().unwrap_or(0);
+    usize::try_from(slot)
+        .ok()
+        .filter(|&s| s < SLOTS)
+        .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("slot {slot}")))
 }
 
 /// Splits an optional leading screen id off the arguments: commands take
@@ -102,7 +133,31 @@ impl Runtime {
             keys: VecDeque::new(),
             line: None,
             frame: 0,
+            direct: false,
+            requests: Vec::new(),
         }
+    }
+
+    /// Stops waiting for an INPUT line, if one is being typed.
+    pub fn cancel_input(&mut self) {
+        self.line = None;
+    }
+
+    /// Direct-mode requests made since the last call.
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.requests)
+    }
+
+    fn request(&mut self, request: Request) -> Result<Vec<Value>> {
+        if !self.direct {
+            // UNVERIFIED: the error SmileBASIC 4 gives for these in a program.
+            return Err(Error::with_detail(
+                ErrorKind::IllegalStatement,
+                "only in direct mode",
+            ));
+        }
+        self.requests.push(request);
+        Ok(vec![])
     }
 
     /// Queues a typed character, or one of the [`keys`] codes. Keys typed
@@ -151,6 +206,15 @@ impl Runtime {
                 let color = rest[0].to_int()? as u32;
                 self.text[id].set_color(color);
                 Ok(vec![])
+            }
+            (Command::Clear, Want::Outs(0)) if args.is_empty() => self.request(Request::Clear),
+            (Command::New, Want::Outs(0)) if args.len() <= 1 => {
+                let slot = slot_arg(args.first())?;
+                self.request(Request::New(slot))
+            }
+            (Command::Run, Want::Outs(0)) if args.len() <= 1 => {
+                let slot = slot_arg(args.first())?;
+                self.request(Request::Run(slot))
             }
             (Command::Inkey, Want::Value) if args.len() <= 1 => {
                 // TODO: without the flag, controller buttons also count as keys.
@@ -215,7 +279,9 @@ impl Host for Runtime {
     // UNVERIFIED: only typing, Backspace and Enter edit the line; the
     // cursor keys do nothing.
     fn input_poll(&mut self) -> Result<Option<Vec<u16>>> {
-        let line = self.line.as_mut().expect("input_start comes first");
+        let Some(line) = self.line.as_mut() else {
+            return Ok(None);
+        };
         let console = &mut self.text[CONSOLE];
         while let Some(key) = self.keys.pop_front() {
             match key {

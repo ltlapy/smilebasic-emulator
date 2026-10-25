@@ -26,7 +26,11 @@ pub fn compile(source: &str, host: &dyn host::Host) -> error::Result<bytecode::C
             ParseErrorKind::Lex(lexer::LexErrorKind::Overflow) => ErrorKind::Overflow,
             _ => ErrorKind::SyntaxError,
         };
-        Error::with_detail(kind, e.to_string()).at(e.span.line)
+        Error {
+            kind,
+            line: e.span.line,
+            detail: e.detail(),
+        }
     })?;
     compiler::compile(&program, host)
 }
