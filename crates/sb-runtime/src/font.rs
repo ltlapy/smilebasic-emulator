@@ -34,19 +34,29 @@ enum Source {
         /// `PAGE_SIZE` x `PAGE_SIZE` pixels, `0xAARRGGBB`.
         page: Vec<u32>,
     },
-    /// 8x8 one-bit cells, drawn doubled for the 16-pixel font.
+    /// 8x8 cells, drawn doubled for the 16-pixel font.
     Cells {
-        /// Index into `cells` for each code; `NO_CELL` if absent.
+        /// For each code, an index into `cells`, `SYMBOL | i` for
+        /// `symbols[i]`, or `NO_CELL`.
         index: Vec<u16>,
+        /// One-bit rows, leftmost pixel in bit 7.
         cells: Vec<[u8; 8]>,
+        /// Indices into `SYMBOL_PALETTE`, row by row.
+        symbols: Vec<[u8; 64]>,
         missing: u16,
     },
 }
 
 const NO_CELL: u16 = u16::MAX;
+const SYMBOL: u16 = 0x8000;
+/// Colors of `fonts/symbols.txt`: transparent, white, black, gray, sky blue.
+const SYMBOL_PALETTE: [u32; 5] = [0, 0xFFFF_FFFF, 0xFF00_0000, 0xFFBF_BFBF, 0xFF00_BFFF];
 /// Built by `build.rs` from `fonts/galmuri`: records of a u16 code and
 /// 8 row bytes.
 static FALLBACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_font.bin"));
+/// Built by `build.rs` from `fonts/symbols.txt`: records of a u16 code and
+/// 64 palette indices.
+static SYMBOLS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_symbols.bin"));
 
 #[derive(Debug)]
 pub enum FontError {
@@ -106,7 +116,8 @@ impl Font {
         Ok(Font(Source::Page { glyphs, page }))
     }
 
-    /// The bundled GalmuriMono7, for when no font has been imported.
+    /// The bundled GalmuriMono7 plus this emulator's drawings of
+    /// SmileBASIC's own characters, for when no font has been imported.
     pub fn fallback() -> Font {
         let mut index = vec![NO_CELL; CODES];
         let mut cells = Vec::with_capacity(FALLBACK.len() / 10);
@@ -115,10 +126,17 @@ impl Font {
             index[usize::from(code)] = cells.len() as u16;
             cells.push(record[2..].try_into().expect("8 rows"));
         }
+        let mut symbols = Vec::with_capacity(SYMBOLS.len() / 66);
+        for record in SYMBOLS.chunks_exact(66) {
+            let code = u16::from_le_bytes([record[0], record[1]]);
+            index[usize::from(code)] = SYMBOL | symbols.len() as u16;
+            symbols.push(record[2..].try_into().expect("64 pixels"));
+        }
         let missing = index[0xFFFD];
         Font(Source::Cells {
             index,
             cells,
+            symbols,
             missing,
         })
     }
@@ -147,6 +165,7 @@ impl Font {
             Source::Cells {
                 index,
                 cells,
+                symbols,
                 missing,
             } => {
                 let i = match index[usize::from(code)] {
@@ -157,6 +176,10 @@ impl Font {
                     FontSize::Small => (x, y),
                     FontSize::Large => (x / 2, y / 2),
                 };
+                if i & SYMBOL != 0 {
+                    let pixels = &symbols[usize::from(i & !SYMBOL)];
+                    return SYMBOL_PALETTE[usize::from(pixels[(y * 8 + x) as usize])];
+                }
                 let set = cells[usize::from(i)][y as usize] & (0x80 >> x) != 0;
                 if set { 0xFFFF_FFFF } else { 0 }
             }
@@ -233,8 +256,12 @@ mod tests {
         assert_ne!(rows(&font, '０'), rows(&font, 'Ｏ'));
         assert_ne!(rows(&font, 'Ｉ'), rows(&font, '｜'));
         assert_ne!(rows(&font, 'ｌ'), rows(&font, '｜'));
-        // Codes the font lacks draw U+FFFD.
-        assert_eq!(rows(&font, '\u{E100}'), rows(&font, '\u{FFFD}'));
+        // Codes the font lacks, such as Cyrillic, draw U+FFFD.
+        assert_eq!(rows(&font, 'Ж'), rows(&font, '\u{FFFD}'));
+        // SmileBASIC's own characters come from symbols.txt, with colors.
+        assert_eq!(font.pixel(0xE10A, FontSize::Small, 0, 0), 0xFFFF_FFFF);
+        assert_eq!(font.pixel(0xE10A, FontSize::Small, 2, 1), 0xFF00_0000);
+        assert_eq!(font.pixel(0xE100, FontSize::Small, 1, 1), 0xFFBF_BFBF);
         assert_eq!(
             font.pixel('A' as u16, FontSize::Large, 6, 1),
             font.pixel('A' as u16, FontSize::Small, 3, 0)

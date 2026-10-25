@@ -20,6 +20,9 @@ development headers listed in SDL's `docs/README-linux.md` first.
 
 Without any setup, the console uses a bundled font,
 [GalmuriMono7](https://github.com/quiple/galmuri) (SIL Open Font License 1.1).
+SmileBASIC's own characters (number tiles, buttons, box drawing and other
+symbols at U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
+`crates/sb-runtime/fonts/symbols.txt`.
 
 To see SmileBASIC's own font, import it from your own copy of SmileBASIC 4:
 extract the RomFS of the game (and of its update, if you have one) and run
