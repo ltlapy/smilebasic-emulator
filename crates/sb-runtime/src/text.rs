@@ -127,21 +127,22 @@ impl TextScreen {
         }
     }
 
-    // UNVERIFIED: the cursor wraps as soon as the last column is written.
+    /// Writing the last column leaves the cursor just past it; the wrap
+    /// happens with the next character, so a full line followed by a
+    /// newline moves down only once.
     fn put(&mut self, code: u16) {
         if self.width == 0 || self.height == 0 {
             return;
+        }
+        if self.cursor.0 >= self.width {
+            self.newline();
         }
         let (x, y) = self.cursor;
         self.cells[(y * self.width + x) as usize] = Cell {
             code,
             color: self.color,
         };
-        if x + 1 < self.width {
-            self.cursor.0 += 1;
-        } else {
-            self.newline();
-        }
+        self.cursor.0 += 1;
     }
 
     fn scroll_up(&mut self) {
@@ -159,6 +160,9 @@ impl TextScreen {
         }
         let cs = self.char_size;
         let (cx, cy) = self.cursor;
+        if cx >= self.width {
+            return;
+        }
         for y in cy * cs..(cy + 1) * cs {
             for x in cx * cs..(cx + 1) * cs {
                 if let Some(dst) = fb.get(x, y) {
@@ -248,6 +252,20 @@ mod tests {
         assert_eq!(row(&s, 0), "E");
         assert_eq!(row(&s, 1), "X");
         assert_eq!(row(&s, 2), "Y");
+    }
+
+    #[test]
+    fn full_line_then_newline_moves_down_once() {
+        let mut s = TextScreen::new(32, 24);
+        s.print(&text("ABCD"));
+        assert_eq!(s.cursor(), (4, 0));
+        s.newline();
+        assert_eq!(s.cursor(), (0, 1));
+        s.print(&text("EFGHI"));
+        assert_eq!((row(&s, 1).as_str(), row(&s, 2).as_str()), ("EFGH", "I"));
+        s.backspace();
+        s.backspace();
+        assert_eq!((row(&s, 1).as_str(), s.cursor()), ("EFG", (3, 1)));
     }
 
     #[test]
