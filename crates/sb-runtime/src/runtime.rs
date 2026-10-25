@@ -84,8 +84,9 @@ impl Default for Settings {
 
 /// UNVERIFIED: how many unread keys SmileBASIC keeps.
 pub const KEY_BUFFER: usize = 256;
-/// Frames per half period of the INPUT cursor's blink.
-const CURSOR_BLINK: u32 = 16;
+/// Frames per half period of the INPUT cursor's blink: at 60 fps, a full
+/// blink takes about 833 ms.
+const CURSOR_BLINK: u32 = 25;
 
 /// Character codes for keys that do not produce text, as INKEY$ returns them.
 pub mod keys {
