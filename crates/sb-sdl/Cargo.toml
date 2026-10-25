@@ -10,6 +10,7 @@ name = "smilebasic"
 path = "src/main.rs"
 
 [dependencies]
+sb-core.workspace = true
 sb-runtime.workspace = true
 sb-profiles.workspace = true
 

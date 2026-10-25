@@ -1,16 +1,81 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::{Path, PathBuf};
+
+use sb_core::vm::{Status, Vm};
 use sb_profiles::Profile;
-use sb_runtime::Framebuffer;
+use sb_runtime::{Runtime, resources, sbfile};
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
+use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::pixels::PixelFormat;
 use sdl3::render::ScaleMode;
 use sdl3::sys::render::SDL_RendererLogicalPresentation;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+const USAGE: &str = "usage:
+  smilebasic PROGRAM            run a SmileBASIC 4 program (TXT file or plain text)
+  smilebasic import ROMFS...    copy the font from your own extracted SmileBASIC 4
+                                RomFS directories (list the update's last)";
+
+/// UNVERIFIED: instructions per frame for programs that do not VSYNC;
+/// SmileBASIC 4's real speed has not been measured.
+const FRAME_BUDGET: u32 = 200_000;
+
+type AnyError = Box<dyn std::error::Error>;
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("import") if args.len() > 1 => import(&args[1..]),
+        Some(program) if !program.starts_with('-') && args.len() == 1 => run(Path::new(program)),
+        _ => Err(USAGE.into()),
+    };
+    if let Err(e) = result {
+        eprintln!("{e}");
+        // Release builds on Windows have no console to print to.
+        let _ = show_simple_message_box(MessageBoxFlag::ERROR, "SmileBASIC", &e.to_string(), None);
+        std::process::exit(1);
+    }
+}
+
+fn resource_dir() -> Result<PathBuf, AnyError> {
+    Ok(sdl3::filesystem::get_pref_path("", "smilebasic-emulator")?.join("resources"))
+}
+
+fn import(romfs: &[String]) -> Result<(), AnyError> {
+    let dest = resource_dir()?;
+    let romfs: Vec<PathBuf> = romfs.iter().map(PathBuf::from).collect();
+    for source in resources::import(&romfs, &dest)? {
+        println!("imported {}", source.display());
+    }
+    println!("into {}", dest.display());
+    Ok(())
+}
+
+fn load_source(path: &Path) -> Result<String, AnyError> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes.starts_with(&[4, 0]) {
+        let file = sbfile::parse(&bytes)?;
+        Ok(file.text()?.to_owned())
+    } else {
+        Ok(String::from_utf8(bytes).map_err(|_| "program is not UTF-8 text")?)
+    }
+}
+
+fn run(program: &Path) -> Result<(), AnyError> {
+    let source = load_source(program)?;
+    let font = resources::load_font(&resource_dir()?).map_err(|e| {
+        format!("cannot load the font ({e}); run `smilebasic import` first\n\n{USAGE}")
+    })?;
     let screen = Profile::default().screen();
-    let mut fb = Framebuffer::new(screen.width, screen.height);
+    let mut rt = Runtime::new(screen.width, screen.height, font);
+    let mut vm = match sb_core::compile(&source, &rt) {
+        Ok(compiled) => Some(Vm::new(compiled)),
+        Err(e) => {
+            report(&mut rt, &e);
+            None
+        }
+    };
 
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
@@ -45,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     texture.set_scale_mode(ScaleMode::Nearest);
 
     let mut events = sdl.event_pump()?;
-    let mut frame: u32 = 0;
+    let mut wait: u32 = 0;
     'running: loop {
         for event in events.poll_iter() {
             match event {
@@ -58,32 +123,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        draw_test_pattern(&mut fb, frame);
-        let bytes: &[u8] = bytemuck_u32(fb.pixels());
-        texture.update(None, bytes, (fb.width() * 4) as usize)?;
+        wait = wait.saturating_sub(1);
+        if wait == 0
+            && let Some(machine) = &mut vm
+        {
+            match machine.run(&mut rt, FRAME_BUDGET) {
+                Ok(Status::Running) => {}
+                Ok(Status::Wait { frames, .. }) => wait = frames,
+                Ok(Status::Ended) => vm = None,
+                Err(e) => {
+                    report(&mut rt, &e);
+                    vm = None;
+                }
+            }
+        }
 
+        let fb = rt.render();
+        texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         canvas.clear();
         canvas.copy(&texture, None, None)?;
         canvas.present();
-        frame = frame.wrapping_add(1);
     }
     Ok(())
 }
 
-/// Placeholder until the VM drives the frame.
-fn draw_test_pattern(fb: &mut Framebuffer, frame: u32) {
-    let (w, h) = (fb.width(), fb.height());
-    for y in 0..h {
-        for x in 0..w {
-            let r = (x * 255 / w) as u8;
-            let g = (y * 255 / h) as u8;
-            let b = (frame % 256) as u8;
-            fb.set(x, y, u32::from_be_bytes([0xFF, r, g, b]));
-        }
+/// Shows an error on the console, as SmileBASIC does, and on stderr.
+fn report(rt: &mut Runtime, error: &sb_core::error::Error) {
+    eprintln!("{error}");
+    let console = &mut rt.text[sb_runtime::text::CONSOLE];
+    if console.cursor().0 != 0 {
+        console.newline();
     }
+    let text: Vec<u16> = error.to_string().encode_utf16().collect();
+    console.print(&text);
+    console.newline();
 }
 
-fn bytemuck_u32(pixels: &[u32]) -> &[u8] {
+fn as_bytes(pixels: &[u32]) -> &[u8] {
     // SAFETY: u32 has no padding and u8 has alignment 1.
     unsafe { std::slice::from_raw_parts(pixels.as_ptr().cast(), std::mem::size_of_val(pixels)) }
 }

@@ -133,6 +133,7 @@ dependencies = [
 name = "sb-sdl"
 version = "0.1.0"
 dependencies = [
+ "sb-core",
  "sb-profiles",
  "sb-runtime",
  "sdl3",
