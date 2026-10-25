@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.87"
+
+[workspace.dependencies]
+sb-core = { path = "crates/sb-core" }
+sb-runtime = { path = "crates/sb-runtime" }
+sb-profiles = { path = "crates/sb-profiles" }
+# Built from source and linked statically on every OS so releases do not
+# depend on the distribution shipping SDL3.
+sdl3 = { version = "0.20", features = ["build-from-source-static"] }
+
+[profile.dev.package."*"]
+opt-level = 2

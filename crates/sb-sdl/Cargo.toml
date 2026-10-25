@@ -1,0 +1,16 @@
+[package]
+name = "sb-sdl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "smilebasic"
+path = "src/main.rs"
+
+[dependencies]
+sb-runtime.workspace = true
+sb-profiles.workspace = true
+
+sdl3.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "sb-profiles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sb-core.workspace = true
+sb-runtime.workspace = true
