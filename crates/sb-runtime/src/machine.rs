@@ -22,12 +22,16 @@ pub const FREE_MEMORY: u32 = 134_216_720;
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
     pub upper_case_letters: bool,
+    /// Ctrl+C stops the program, besides Pause/Break. Off by default, since
+    /// programs can read Ctrl+C.
+    pub ctrl_c_stops: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             upper_case_letters: true,
+            ctrl_c_stops: false,
         }
     }
 }
@@ -97,6 +101,20 @@ impl Machine {
     pub fn run_slot(&mut self, slot: usize) {
         self.vars.clear();
         self.start(&self.slots[slot].clone(), false);
+    }
+
+    /// Stops the running program or direct-mode line, as the Break key
+    /// does, and returns to direct mode.
+    pub fn stop(&mut self) {
+        let Some(vm) = self.vm.take() else {
+            return;
+        };
+        self.vars = vm.globals().collect();
+        self.rt.take_requests();
+        // UNVERIFIED: the wording of SmileBASIC 4's break message.
+        let text: Vec<u16> = format!("Break in {}", vm.line()).encode_utf16().collect();
+        self.print_line(&text);
+        self.ready();
     }
 
     /// Text typed on the keyboard, as the OS reports it.

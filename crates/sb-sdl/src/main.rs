@@ -8,7 +8,7 @@ use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::{Runtime, resources, sbfile};
 use sdl3::event::Event;
-use sdl3::keyboard::Keycode;
+use sdl3::keyboard::{Keycode, Mod};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
@@ -112,6 +112,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         for event in events.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Pause),
+                    ..
+                } => machine.stop(),
+                Event::KeyDown {
+                    keycode: Some(Keycode::C),
+                    keymod,
+                    ..
+                } if machine.settings.ctrl_c_stops
+                    && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) =>
+                {
+                    machine.stop()
+                }
                 Event::KeyDown {
                     keycode: Some(key), ..
                 } => {

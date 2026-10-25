@@ -97,3 +97,23 @@ fn errors_return_to_direct_mode() {
     assert!(r[11].starts_with("Illegal statement"), "{r:?}");
     assert_eq!(r[12], "OK");
 }
+
+#[test]
+fn stop_breaks_out_of_a_loop() {
+    let mut m = machine();
+    m.type_text("@l:i=i+1:goto @l");
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    m.frame();
+    m.frame();
+    assert!(m.is_running());
+    m.stop();
+    assert!(!m.is_running());
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["Break in 1", "OK"]);
+    // Variables of the stopped code stay for direct mode.
+    enter(&mut m, "?i>0");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
+    // Stopping in direct mode does nothing.
+    m.stop();
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+}

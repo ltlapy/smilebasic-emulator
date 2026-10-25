@@ -183,6 +183,11 @@ impl Vm {
             .map(|(info, value)| (info.full_name(), value.clone()))
     }
 
+    /// Source line of the next instruction.
+    pub fn line(&self) -> u32 {
+        self.program.lines.get(self.pc).copied().unwrap_or(0)
+    }
+
     pub fn is_ended(&self) -> bool {
         self.ended
     }
