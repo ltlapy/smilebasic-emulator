@@ -4,6 +4,7 @@ use sb_core::error::ErrorKind;
 use sb_core::vm::{Status, Vm};
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
+use sb_runtime::runtime::keys;
 
 fn run(source: &str) -> Result<Runtime, sb_core::error::Error> {
     let mut rt = Runtime::new(400, 240, Font::blank());
@@ -49,4 +50,39 @@ fn errors() {
     assert_eq!(kind("CLS 5"), Some(ErrorKind::OutOfRange));
     assert_eq!(kind("COLOR 1,2,3"), Some(ErrorKind::IllegalFunctionCall));
     assert_eq!(kind("COLOR \"A\""), Some(ErrorKind::TypeMismatch));
+}
+
+fn type_keys(rt: &mut Runtime, text: &str) {
+    text.encode_utf16().for_each(|c| rt.key_press(c));
+}
+
+#[test]
+fn inkey_reads_queued_keys() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    type_keys(&mut rt, "AB");
+    rt.key_press(keys::UP);
+    let src = "A$=INKEY$()+INKEY$():B$=INKEY$(1):C$=INKEY$()\n?A$;ASC(B$);LEN(C$)";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
+    assert_eq!(row(&rt, 4, 0), "AB300");
+}
+
+#[test]
+fn input_waits_for_enter_and_edits() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let src = "INPUT \"N\";A\n?A*2";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    let waiting = Status::Wait {
+        frames: 1,
+        vsync: false,
+    };
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), waiting);
+    type_keys(&mut rt, "12");
+    rt.key_press(keys::BACKSPACE);
+    type_keys(&mut rt, "3");
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), waiting);
+    assert_eq!(row(&rt, 4, 0), "N?13");
+    rt.key_press(keys::ENTER);
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
+    assert_eq!(row(&rt, 4, 1), "26");
 }

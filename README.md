@@ -40,7 +40,8 @@ directory. List the update's RomFS last so its files take precedence.
 smilebasic PROGRAM
 ```
 
-`PROGRAM` is a SmileBASIC 4 `TXT` file or a plain UTF-8 text file. Esc quits.
+`PROGRAM` is a SmileBASIC 4 `TXT` file or a plain UTF-8 text file. Close the
+window to quit; Esc and the other keys go to the program.
 
 ## License
 

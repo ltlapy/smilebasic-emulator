@@ -33,6 +33,13 @@ impl Want {
     }
 }
 
+/// What an INPUT target accepts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputKind {
+    Number,
+    Str,
+}
+
 /// Stack effects are written as `[inputs] -> [outputs]`, top of stack last.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
@@ -128,6 +135,15 @@ pub enum Op {
     Wait {
         vsync: bool,
         has_arg: bool,
+    },
+    /// `[prompt] -> [v1..vn]`: reads a line from the keyboard for INPUT
+    /// (one value per kind, split at commas) or LINPUT (`whole_line`, one
+    /// string). Yields until the line is complete. The prompt may be
+    /// `Default` for none.
+    Input {
+        kinds: Box<[InputKind]>,
+        question: bool,
+        whole_line: bool,
     },
     /// Moves the DATA read position.
     Restore(u32),

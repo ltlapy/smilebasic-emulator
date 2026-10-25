@@ -1,10 +1,12 @@
 //! The [`Host`] that programs run against: text screens now, graphics,
 //! sprites and sound later.
 
+use std::collections::VecDeque;
+
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::Host;
-use sb_core::value::Value;
+use sb_core::value::{Value, new_str};
 
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
@@ -14,19 +16,49 @@ use crate::text::{CONSOLE, SCREENS, TextScreen};
 enum Command {
     Cls,
     Color,
+    Inkey,
     Locate,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
+    ("INKEY$", Command::Inkey),
     ("LOCATE", Command::Locate),
 ];
+
+/// UNVERIFIED: how many unread keys SmileBASIC keeps.
+pub const KEY_BUFFER: usize = 256;
+/// Frames per half period of the INPUT cursor's blink.
+const CURSOR_BLINK: u32 = 16;
+
+/// Character codes for keys that do not produce text, as INKEY$ returns them.
+pub mod keys {
+    pub const HOME: u16 = 0x02;
+    pub const END: u16 = 0x03;
+    pub const BACKSPACE: u16 = 0x08;
+    pub const TAB: u16 = 0x09;
+    pub const ENTER: u16 = 0x0D;
+    pub const DELETE: u16 = 0x10;
+    pub const PAGE_UP: u16 = 0x11;
+    pub const PAGE_DOWN: u16 = 0x12;
+    pub const INSERT: u16 = 0x1A;
+    pub const ESCAPE: u16 = 0x1B;
+    pub const RIGHT: u16 = 0x1C;
+    pub const LEFT: u16 = 0x1D;
+    pub const UP: u16 = 0x1E;
+    pub const DOWN: u16 = 0x1F;
+}
 
 pub struct Runtime {
     pub text: Vec<TextScreen>,
     font: Font,
     fb: Framebuffer,
+    /// Typed characters not yet read by INKEY$ or INPUT.
+    keys: VecDeque<u16>,
+    /// The line being typed for INPUT or LINPUT.
+    line: Option<Vec<u16>>,
+    frame: u32,
 }
 
 fn illegal() -> Error {
@@ -67,15 +99,30 @@ impl Runtime {
                 .collect(),
             font,
             fb: Framebuffer::new(width, height),
+            keys: VecDeque::new(),
+            line: None,
+            frame: 0,
+        }
+    }
+
+    /// Queues a typed character, or one of the [`keys`] codes. Keys typed
+    /// while the buffer is full are dropped.
+    pub fn key_press(&mut self, code: u16) {
+        if self.keys.len() < KEY_BUFFER {
+            self.keys.push_back(code);
         }
     }
 
     /// Composes the current frame.
     pub fn render(&mut self) -> &Framebuffer {
+        self.frame = self.frame.wrapping_add(1);
         self.fb.clear(0xFF00_0000);
         // UNVERIFIED: screens are drawn in id order until layers exist.
         for screen in &self.text {
             screen.draw(&mut self.fb, &self.font);
+        }
+        if self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2) {
+            self.text[CONSOLE].draw_cursor(&mut self.fb);
         }
         &self.fb
     }
@@ -104,6 +151,14 @@ impl Runtime {
                 let color = rest[0].to_int()? as u32;
                 self.text[id].set_color(color);
                 Ok(vec![])
+            }
+            (Command::Inkey, Want::Value) if args.len() <= 1 => {
+                // TODO: without the flag, controller buttons also count as keys.
+                if let Some(flag) = args.first() {
+                    opt_int(flag)?;
+                }
+                let key = self.keys.pop_front();
+                Ok(vec![Value::Str(new_str(key.into_iter().collect()))])
             }
             (Command::Locate, Want::Outs(0)) => {
                 let (id, rest) = with_screen(args, 2)?;
@@ -150,5 +205,36 @@ impl Host for Runtime {
     fn print_newline(&mut self, screen: Option<i32>) -> Result<()> {
         self.screen(screen)?.newline();
         Ok(())
+    }
+
+    fn input_start(&mut self) -> Result<()> {
+        self.line = Some(Vec::new());
+        Ok(())
+    }
+
+    // UNVERIFIED: only typing, Backspace and Enter edit the line; the
+    // cursor keys do nothing.
+    fn input_poll(&mut self) -> Result<Option<Vec<u16>>> {
+        let line = self.line.as_mut().expect("input_start comes first");
+        let console = &mut self.text[CONSOLE];
+        while let Some(key) = self.keys.pop_front() {
+            match key {
+                keys::ENTER => {
+                    console.newline();
+                    return Ok(self.line.take());
+                }
+                keys::BACKSPACE => {
+                    if line.pop().is_some() {
+                        console.backspace();
+                    }
+                }
+                0..0x20 | 0x7F => {}
+                c => {
+                    line.push(c);
+                    console.print(&[c]);
+                }
+            }
+        }
+        Ok(None)
     }
 }

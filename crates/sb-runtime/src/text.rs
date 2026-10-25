@@ -105,6 +105,19 @@ impl TextScreen {
         }
     }
 
+    /// Steps the cursor back one cell, to the previous line if needed, and
+    /// clears that cell.
+    pub fn backspace(&mut self) {
+        let (x, y) = self.cursor;
+        self.cursor = match (x, y) {
+            (0, 0) => return,
+            (0, y) => (self.width - 1, y - 1),
+            (x, y) => (x - 1, y),
+        };
+        let (x, y) = self.cursor;
+        self.cells[(y * self.width + x) as usize] = EMPTY;
+    }
+
     pub fn newline(&mut self) {
         self.cursor.0 = 0;
         if self.cursor.1 + 1 < self.height {
@@ -136,6 +149,23 @@ impl TextScreen {
         self.cells.copy_within(w.., 0);
         let len = self.cells.len();
         self.cells[len - w..].fill(EMPTY);
+    }
+
+    /// Fills the cursor's cell with the text color.
+    // UNVERIFIED: the shape of SmileBASIC's INPUT cursor.
+    pub fn draw_cursor(&self, fb: &mut Framebuffer) {
+        if !self.visible {
+            return;
+        }
+        let cs = self.char_size;
+        let (cx, cy) = self.cursor;
+        for y in cy * cs..(cy + 1) * cs {
+            for x in cx * cs..(cx + 1) * cs {
+                if let Some(dst) = fb.get(x, y) {
+                    fb.set(x, y, blend(dst, self.color));
+                }
+            }
+        }
     }
 
     /// Draws the screen over `fb`, blending each glyph's alpha.
@@ -218,6 +248,19 @@ mod tests {
         assert_eq!(row(&s, 0), "E");
         assert_eq!(row(&s, 1), "X");
         assert_eq!(row(&s, 2), "Y");
+    }
+
+    #[test]
+    fn backspace_crosses_lines() {
+        let mut s = TextScreen::new(32, 24);
+        s.print(&text("ABCDE"));
+        s.backspace();
+        s.backspace();
+        assert_eq!((row(&s, 0).as_str(), row(&s, 1).as_str()), ("ABC", ""));
+        assert_eq!(s.cursor(), (3, 0));
+        s.locate(Some(0), Some(0));
+        s.backspace();
+        assert_eq!(s.cursor(), (0, 0));
     }
 
     #[test]

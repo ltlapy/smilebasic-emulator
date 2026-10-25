@@ -577,19 +577,21 @@ impl Parser {
     }
 
     fn input(&mut self, whole_line: bool) -> PResult<StmtKind> {
-        // UNVERIFIED: a `,` after the guide string is accepted like `;`, as in SB3.
-        let prompt = if matches!(self.peek(), TokenKind::Str(_))
+        // A `,` after the guide string hides the `?`.
+        let (prompt, semicolon) = if matches!(self.peek(), TokenKind::Str(_))
             && matches!(self.peek_at(1), TokenKind::Semicolon | TokenKind::Comma)
         {
             let prompt = self.expr()?;
-            self.advance();
-            Some(prompt)
+            let semicolon = self.advance() == TokenKind::Semicolon;
+            (Some(prompt), semicolon)
         } else {
-            None
+            (None, true)
         };
         let targets = self.comma_list(Self::lvalue)?;
         Ok(StmtKind::Input {
             prompt,
+            // UNVERIFIED: LINPUT never shows `?`, and INPUT without a guide does.
+            question: semicolon && !whole_line,
             targets,
             whole_line,
         })
@@ -1223,7 +1225,15 @@ mod tests {
         );
         assert!(matches!(
             one("INPUT \"NAME\";N$,A"),
-            StmtKind::Input { prompt: Some(_), targets, whole_line: false } if targets.len() == 2
+            StmtKind::Input { prompt: Some(_), question: true, targets, whole_line: false }
+                if targets.len() == 2
+        ));
+        assert!(matches!(
+            one("INPUT \"NAME\",N$"),
+            StmtKind::Input {
+                question: false,
+                ..
+            }
         ));
         assert!(matches!(
             one("LINPUT L$"),

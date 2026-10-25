@@ -473,8 +473,25 @@ impl Compiler<'_> {
                 ));
             }
             StmtKind::Print { screen, items } => self.print(screen.as_ref(), items)?,
-            StmtKind::Input { .. } => {
-                return Err(err(ErrorKind::IllegalStatement, "INPUT not implemented"));
+            StmtKind::Input {
+                prompt,
+                question,
+                targets,
+                whole_line,
+            } => {
+                match prompt {
+                    Some(p) => self.expr(p)?,
+                    None => _ = self.emit(Op::Default),
+                }
+                let kinds = targets.iter().map(input_kind).collect();
+                self.emit(Op::Input {
+                    kinds,
+                    question: *question,
+                    whole_line: *whole_line,
+                });
+                for target in targets.iter().rev() {
+                    self.store(target)?;
+                }
             }
             StmtKind::If {
                 branches,
@@ -1275,5 +1292,20 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
                 collect_vars(body, used, declared);
             }
         }
+    }
+}
+
+/// Whether an INPUT target takes a string or a number, from its suffix.
+fn input_kind(target: &LValue) -> InputKind {
+    match target {
+        LValue::Var(v) if v.suffix == Some(Suffix::Str) => InputKind::Str,
+        LValue::Var(_) => InputKind::Number,
+        LValue::Index { base, .. } => input_kind(base),
+        // UNVERIFIED: VAR("name$") targets; the name is only known at run
+        // time unless it is a literal.
+        LValue::Dynamic(name) => match &**name {
+            Expr::Str(s) if s.last() == Some(&u16::from(b'$')) => InputKind::Str,
+            _ => InputKind::Number,
+        },
     }
 }

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use sb_core::vm::{Status, Vm};
 use sb_profiles::Profile;
 use sb_runtime::font::Font;
+use sb_runtime::runtime::keys;
 use sb_runtime::{Runtime, resources, sbfile};
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
@@ -93,6 +94,7 @@ fn run(program: &Path) -> Result<(), AnyError> {
         .high_pixel_density()
         .build()?;
 
+    video.text_input().start(&window);
     let mut canvas = window.into_canvas();
     // SmileBASIC runs at 60 fps; until the VM has its own frame timer, pace with vsync.
     // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
@@ -117,11 +119,20 @@ fn run(program: &Path) -> Result<(), AnyError> {
     'running: loop {
         for event in events.poll_iter() {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
+                Event::Quit { .. } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(key), ..
+                } => {
+                    if let Some(code) = special_key(key) {
+                        rt.key_press(code);
+                    }
+                }
+                Event::TextInput { text, .. } => {
+                    // SmileBASIC strings hold only the Basic Multilingual Plane.
+                    text.chars()
+                        .filter_map(|c| u16::try_from(u32::from(c)).ok())
+                        .for_each(|c| rt.key_press(c));
+                }
                 _ => {}
             }
         }
@@ -148,6 +159,27 @@ fn run(program: &Path) -> Result<(), AnyError> {
         canvas.present();
     }
     Ok(())
+}
+
+/// The INKEY$ code of a key that does not type text.
+fn special_key(key: Keycode) -> Option<u16> {
+    Some(match key {
+        Keycode::Escape => keys::ESCAPE,
+        Keycode::Tab => keys::TAB,
+        Keycode::Backspace => keys::BACKSPACE,
+        Keycode::Return | Keycode::KpEnter => keys::ENTER,
+        Keycode::Insert => keys::INSERT,
+        Keycode::Delete => keys::DELETE,
+        Keycode::Home => keys::HOME,
+        Keycode::End => keys::END,
+        Keycode::PageUp => keys::PAGE_UP,
+        Keycode::PageDown => keys::PAGE_DOWN,
+        Keycode::Right => keys::RIGHT,
+        Keycode::Left => keys::LEFT,
+        Keycode::Up => keys::UP,
+        Keycode::Down => keys::DOWN,
+        _ => return None,
+    })
 }
 
 /// Shows an error on the console, as SmileBASIC does, and on stderr.

@@ -264,24 +264,28 @@ fn pad_left(mut s: Str, width: usize, fill: char) -> Str {
 /// UNVERIFIED: text that is not a number reads as 0, and surrounding spaces
 /// are ignored.
 fn val(args: &[Value]) -> Result<Value> {
-    let s = String::from_utf16_lossy(&text(&args[0])?);
+    Ok(parse_number(&text(&args[0])?).unwrap_or(Value::Int(0)))
+}
+
+/// Reads a number as VAL and INPUT do: decimal, `&H` hex or `&B` binary,
+/// with surrounding spaces. `None` if the text is not a number.
+pub fn parse_number(text: &[u16]) -> Option<Value> {
+    let s = String::from_utf16_lossy(text);
     let s = s.trim();
     let upper = s.to_ascii_uppercase();
-    let radix = |digits: &str, radix| {
-        u32::from_str_radix(digits, radix).map_or(Value::Int(0), |n| Value::Int(n as i32))
-    };
-    Ok(if let Some(hex) = upper.strip_prefix("&H") {
-        radix(hex, 16)
+    let radix = |digits: &str, radix| u32::from_str_radix(digits, radix).ok();
+    if let Some(hex) = upper.strip_prefix("&H") {
+        radix(hex, 16).map(|n| Value::Int(n as i32))
     } else if let Some(bin) = upper.strip_prefix("&B") {
-        radix(bin, 2)
+        radix(bin, 2).map(|n| Value::Int(n as i32))
     } else if let Ok(n) = s.parse::<i32>() {
-        Value::Int(n)
+        Some(Value::Int(n))
     } else {
         s.parse::<f64>()
             .ok()
             .filter(|x| x.is_finite())
-            .map_or(Value::Int(0), Value::Real)
-    })
+            .map(Value::Real)
+    }
 }
 
 fn chr(args: &[Value]) -> Result<Value> {

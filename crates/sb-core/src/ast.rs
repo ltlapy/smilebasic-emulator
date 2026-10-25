@@ -117,8 +117,11 @@ pub enum StmtKind {
         screen: Option<Expr>,
         items: Vec<PrintItem>,
     },
+    /// INPUT, or LINPUT when `whole_line` is set.
     Input {
         prompt: Option<Expr>,
+        /// Whether a `?` follows the prompt.
+        question: bool,
         targets: Vec<LValue>,
         whole_line: bool,
     },

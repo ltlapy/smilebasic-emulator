@@ -54,6 +54,8 @@ pub struct Vm {
     gosubs: Vec<usize>,
     data_pos: usize,
     ended: bool,
+    /// An INPUT or LINPUT has shown its prompt and waits for a line.
+    reading_input: bool,
 }
 
 fn initial_value(var: &VarInfo, default_int: bool) -> Value {
@@ -102,6 +104,29 @@ fn text_of(value: &Value) -> Result<Vec<u16>> {
     }
 }
 
+/// Splits an INPUT line into one value per target. `None` asks the user
+/// to type the line again.
+fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Vec<Value>> {
+    if whole_line {
+        return Some(vec![Value::Str(new_str(line.to_vec()))]);
+    }
+    let fields: Vec<&[u16]> = line.split(|&c| c == u16::from(b',')).collect();
+    // UNVERIFIED: extra fields are rejected like missing ones.
+    if fields.len() != kinds.len() {
+        return None;
+    }
+    fields
+        .iter()
+        .zip(kinds)
+        .map(|(field, kind)| match kind {
+            InputKind::Str => Some(Value::Str(new_str(field.to_vec()))),
+            // UNVERIFIED: an empty field reads as 0.
+            InputKind::Number if field.iter().all(|&c| c == u16::from(b' ')) => Some(Value::Int(0)),
+            InputKind::Number => builtins::parse_number(field),
+        })
+        .collect()
+}
+
 /// "@NAME", "NAME" or "1:@NAME" to "NAME".
 fn label_name(value: &Value) -> Result<String> {
     let s = String::from_utf16_lossy(&value.clone().into_str()?.borrow()).to_ascii_uppercase();
@@ -132,6 +157,7 @@ impl Vm {
             gosubs: Vec::new(),
             data_pos: 0,
             ended: false,
+            reading_input: false,
         }
     }
 
@@ -475,6 +501,44 @@ impl Vm {
                     frames: frames.max(0) as u32,
                     vsync: *vsync,
                 }));
+            }
+            Op::Input {
+                kinds,
+                question,
+                whole_line,
+            } => {
+                if !self.reading_input {
+                    let prompt = self.stack.last().expect("INPUT prompt");
+                    if !matches!(prompt, Value::Default) {
+                        host.print(None, &text_of(prompt)?)?;
+                    }
+                    if *question {
+                        host.print(None, &[u16::from(b'?')])?;
+                    }
+                    host.input_start()?;
+                    self.reading_input = true;
+                }
+                // Until the line is complete, run this instruction again
+                // on the next frame.
+                let Some(line) = host.input_poll()? else {
+                    return Ok(Some(Status::Wait {
+                        frames: 1,
+                        vsync: false,
+                    }));
+                };
+                self.reading_input = false;
+                match parse_input(&line, kinds, *whole_line) {
+                    Some(values) => {
+                        self.pop();
+                        self.stack.extend(values);
+                    }
+                    None => {
+                        let redo: Vec<u16> = "?Redo from start".encode_utf16().collect();
+                        host.print(None, &redo)?;
+                        host.print_newline(None)?;
+                        return Ok(None);
+                    }
+                }
             }
             Op::Restore(pos) => self.data_pos = *pos as usize,
             Op::RestoreDyn => {

@@ -6,7 +6,14 @@ use sb_core::host::TextHost;
 use sb_core::vm::{Status, Vm};
 
 fn run(source: &str) -> Result<String, sb_core::error::Error> {
-    let mut host = TextHost::default();
+    run_with_input(source, &[])
+}
+
+fn run_with_input(source: &str, input: &[&str]) -> Result<String, sb_core::error::Error> {
+    let mut host = TextHost {
+        input: input.iter().map(|s| s.to_string()).collect(),
+        ..TextHost::default()
+    };
     let compiled = sb_core::compile(source, &host)?;
     let mut vm = Vm::new(compiled);
     for _ in 0..10_000 {
@@ -292,4 +299,30 @@ fn compile_errors() {
 fn deep_recursion_is_an_error() {
     let src = "DEF F(N)\nRETURN F(N+1)\nEND\n?F(0)";
     assert_eq!(error(src).0, ErrorKind::StackOverflow);
+}
+
+#[test]
+fn input_and_linput() {
+    let src = "INPUT \"NAME AND AGE\";N$,A\n?N$;A+1";
+    assert_eq!(
+        run_with_input(src, &["BOB,41"]).unwrap(),
+        "NAME AND AGE?BOB,41\nBOB42\n"
+    );
+    // Missing values and non-numbers ask again.
+    assert_eq!(
+        run_with_input("INPUT A,B\n?A*B", &["3", "X,2", "3,&H10"]).unwrap(),
+        "?3\n?Redo from start\n?X,2\n?Redo from start\n?3,&H10\n48\n"
+    );
+    assert_eq!(
+        run_with_input("INPUT \"N\",N%:?N%", &["7.9"]).unwrap(),
+        "N7.9\n7\n"
+    );
+    assert_eq!(
+        run_with_input("LINPUT \"ADDR:\";L$:?LEN(L$)", &["1, MAIN ST"]).unwrap(),
+        "ADDR:1, MAIN ST\n10\n"
+    );
+    assert_eq!(
+        run_with_input("VAR A$[2]:INPUT A$[1]:?A$[1]", &["HI"]).unwrap(),
+        "?HI\nHI\n"
+    );
 }

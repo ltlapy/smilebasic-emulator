@@ -1,8 +1,10 @@
 //! Interface to everything outside the language: screens, input, sound,
 //! files. The frontend's runtime implements it.
 
+use std::collections::VecDeque;
+
 use crate::bytecode::Want;
-use crate::error::Result;
+use crate::error::{Error, ErrorKind, Result};
 use crate::value::Value;
 
 pub trait Host {
@@ -19,13 +21,22 @@ pub trait Host {
     /// PRINT's `,` separator.
     fn print_tab(&mut self, screen: Option<i32>) -> Result<()>;
     fn print_newline(&mut self, screen: Option<i32>) -> Result<()>;
+
+    /// Starts reading a line from the keyboard on the console, for INPUT
+    /// and LINPUT. The prompt has already been printed.
+    fn input_start(&mut self) -> Result<()>;
+    /// The line once Enter has been pressed, or `None` while still typing.
+    /// The VM polls once per frame.
+    fn input_poll(&mut self) -> Result<Option<Vec<u16>>>;
 }
 
-/// A host with no commands that records PRINT output. Useful for tests and
-/// for running programs headless.
+/// A host with no commands that records PRINT output and answers INPUT
+/// from a list of lines. Useful for tests and for running programs headless.
 #[derive(Debug, Default)]
 pub struct TextHost {
     pub output: String,
+    /// Lines typed for INPUT and LINPUT, in order.
+    pub input: VecDeque<String>,
 }
 
 impl Host for TextHost {
@@ -57,5 +68,20 @@ impl Host for TextHost {
     fn print_newline(&mut self, _screen: Option<i32>) -> Result<()> {
         self.output.push('\n');
         Ok(())
+    }
+
+    fn input_start(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Echoes the next line like a terminal would.
+    fn input_poll(&mut self) -> Result<Option<Vec<u16>>> {
+        let line = self
+            .input
+            .pop_front()
+            .ok_or_else(|| Error::with_detail(ErrorKind::IllegalStatement, "no more input"))?;
+        self.output.push_str(&line);
+        self.output.push('\n');
+        Ok(Some(line.encode_utf16().collect()))
     }
 }

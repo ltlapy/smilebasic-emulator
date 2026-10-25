@@ -32,6 +32,12 @@ impl Host for AnyHost {
     fn print_newline(&mut self, _screen: Option<i32>) -> Result<()> {
         Ok(())
     }
+    fn input_start(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn input_poll(&mut self) -> Result<Option<Vec<u16>>> {
+        Ok(None)
+    }
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
