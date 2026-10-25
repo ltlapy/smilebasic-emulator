@@ -44,7 +44,13 @@ smilebasic PROGRAM   # load PROGRAM into PRG0 and run it
 `PROGRAM` is a SmileBASIC 4 `TXT` file or a plain UTF-8 text file. In direct
 mode, typed lines run immediately; `RUN [slot]`, `NEW [slot]` and `CLEAR` work
 on the program slots PRG0-PRG5. Letters type in upper case unless Shift or
-Caps Lock is on. Pause/Break stops the running program. Close the window to
+Caps Lock is on. Pause/Break stops the running program.
+
+`LOAD`, `SAVE`, `FILES`, `PROJECT`, `CHKFILE`, `DELETE` and `RENAME` work on
+project folders in the emulator's data directory (`projects/`; the workspace
+project is `@WORKSPACE`). Programs are saved as plain UTF-8 text, so they can
+be edited with other tools; `SAVE` turns full-width letters and digits into
+ASCII. Close the window to
 quit; Esc and the other keys go to the program.
 
 ## License

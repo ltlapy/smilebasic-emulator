@@ -2,12 +2,14 @@
 //! the virtual file system. Frontends only consume the finished frame and
 //! audio buffers.
 
+mod files;
 pub mod font;
 pub mod framebuffer;
 pub mod machine;
 pub mod resources;
 pub mod runtime;
 pub mod sbfile;
+pub mod storage;
 pub mod text;
 
 pub use framebuffer::Framebuffer;

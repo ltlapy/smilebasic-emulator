@@ -6,6 +6,7 @@ use sb_profiles::Profile;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
+use sb_runtime::storage::Storage;
 use sb_runtime::{Runtime, resources, sbfile};
 use sdl3::event::Event;
 use sdl3::keyboard::{Keycode, Mod};
@@ -44,8 +45,12 @@ fn main() {
     }
 }
 
+fn data_dir() -> Result<PathBuf, AnyError> {
+    Ok(sdl3::filesystem::get_pref_path("", "smilebasic-emulator")?)
+}
+
 fn resource_dir() -> Result<PathBuf, AnyError> {
-    Ok(sdl3::filesystem::get_pref_path("", "smilebasic-emulator")?.join("resources"))
+    Ok(data_dir()?.join("resources"))
 }
 
 fn import(romfs: &[String]) -> Result<(), AnyError> {
@@ -75,7 +80,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         Font::fallback()
     });
     let screen = Profile::default().screen();
-    let mut machine = Machine::new(Runtime::new(screen.width, screen.height, font));
+    let mut rt = Runtime::new(screen.width, screen.height, font);
+    rt.storage = Storage::new(data_dir()?.join("projects"));
+    let mut machine = Machine::new(rt);
     machine.boot();
     if let Some(source) = source {
         machine.set_slot(0, source);
@@ -120,7 +127,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::C),
                     keymod,
                     ..
-                } if machine.settings.ctrl_c_stops
+                } if machine.rt.settings.ctrl_c_stops
                     && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) =>
                 {
                     machine.stop()

@@ -9,7 +9,7 @@ use sb_core::value::Value;
 use sb_core::vm::{Status, Vm};
 
 use crate::framebuffer::Framebuffer;
-use crate::runtime::{Request, Runtime, SLOTS};
+use crate::runtime::{Request, Runtime};
 use crate::text::CONSOLE;
 
 /// UNVERIFIED: instructions per frame for code that does not VSYNC;
@@ -20,28 +20,8 @@ pub const FRAME_BUDGET: u32 = 200_000;
 // once memory such as graphic pages is accounted for.
 pub const FREE_MEMORY: u32 = 134_216_720;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Settings {
-    /// Letters type in upper case unless Shift or Caps Lock is on.
-    pub upper_case_letters: bool,
-    /// Ctrl+C stops the program, besides Pause/Break. Off by default, since
-    /// programs can read Ctrl+C.
-    pub ctrl_c_stops: bool,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            upper_case_letters: true,
-            ctrl_c_stops: false,
-        }
-    }
-}
-
 pub struct Machine {
     pub rt: Runtime,
-    pub settings: Settings,
-    slots: Vec<String>,
     vm: Option<Vm>,
     /// Frames left before the VM runs again.
     wait: u32,
@@ -65,8 +45,6 @@ impl Machine {
     pub fn new(rt: Runtime) -> Machine {
         Machine {
             rt,
-            settings: Settings::default(),
-            slots: vec![String::new(); SLOTS],
             vm: None,
             wait: 0,
             vars: HashMap::new(),
@@ -88,11 +66,11 @@ impl Machine {
     }
 
     pub fn slot(&self, slot: usize) -> &str {
-        &self.slots[slot]
+        &self.rt.slots[slot]
     }
 
     pub fn set_slot(&mut self, slot: usize, source: String) {
-        self.slots[slot] = source;
+        self.rt.slots[slot] = source;
     }
 
     /// Whether a program or direct-mode line is executing.
@@ -103,7 +81,7 @@ impl Machine {
     /// Starts the program in a slot, as RUN does.
     pub fn run_slot(&mut self, slot: usize) {
         self.vars.clear();
-        self.start(&self.slots[slot].clone(), false);
+        self.start(&self.rt.slots[slot].clone(), false);
     }
 
     /// Stops the running program or direct-mode line, as the Break key
@@ -123,7 +101,7 @@ impl Machine {
     /// Text typed on the keyboard, as the OS reports it.
     pub fn type_text(&mut self, text: &str) {
         for c in text.chars() {
-            let c = if self.settings.upper_case_letters {
+            let c = if self.rt.settings.upper_case_letters {
                 swap_case(c)
             } else {
                 c
@@ -194,7 +172,6 @@ impl Machine {
         for request in self.rt.take_requests() {
             match request {
                 Request::Run(slot) => run = Some(slot),
-                Request::New(slot) => self.slots[slot].clear(),
                 Request::Clear => self.vars.clear(),
             }
         }

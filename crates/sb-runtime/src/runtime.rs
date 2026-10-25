@@ -10,27 +10,44 @@ use sb_core::value::{Value, new_str};
 
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
+use crate::storage::Storage;
 use crate::text::{CONSOLE, SCREENS, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Command {
+pub(crate) enum Command {
+    Chkfile,
     Clear,
     Cls,
     Color,
+    Delete,
+    Files,
     Inkey,
+    Load,
     Locate,
     New,
+    Project,
+    Rename,
+    Result,
     Run,
+    Save,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
+    ("CHKFILE", Command::Chkfile),
     ("CLEAR", Command::Clear),
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
+    ("DELETE", Command::Delete),
+    ("FILES", Command::Files),
     ("INKEY$", Command::Inkey),
+    ("LOAD", Command::Load),
     ("LOCATE", Command::Locate),
     ("NEW", Command::New),
+    ("PROJECT", Command::Project),
+    ("RENAME", Command::Rename),
+    ("RESULT", Command::Result),
     ("RUN", Command::Run),
+    ("SAVE", Command::Save),
 ];
 
 /// Program slots PRG0 to PRG5.
@@ -41,8 +58,28 @@ pub const SLOTS: usize = 6;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     Run(usize),
-    New(usize),
     Clear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Settings {
+    /// Letters type in upper case unless Shift or Caps Lock is on.
+    pub upper_case_letters: bool,
+    /// Ctrl+C stops the program, besides Pause/Break. Off by default, since
+    /// programs can read Ctrl+C.
+    pub ctrl_c_stops: bool,
+    /// SAVE turns full-width letters and digits into ASCII.
+    pub half_width_on_save: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            upper_case_letters: true,
+            ctrl_c_stops: false,
+            half_width_on_save: true,
+        }
+    }
 }
 
 /// UNVERIFIED: how many unread keys SmileBASIC keeps.
@@ -81,9 +118,15 @@ pub struct Runtime {
     /// and CLEAR are allowed.
     pub direct: bool,
     requests: Vec<Request>,
+    /// Source of each program slot.
+    pub slots: Vec<String>,
+    pub settings: Settings,
+    pub storage: Storage,
+    /// What RESULT() returns: 1 if the last file command succeeded, else 0.
+    pub(crate) result: i32,
 }
 
-fn illegal() -> Error {
+pub(crate) fn illegal() -> Error {
     ErrorKind::IllegalFunctionCall.into()
 }
 
@@ -96,7 +139,7 @@ fn screen_id(v: &Value) -> Result<usize> {
 }
 
 /// An omittable integer argument.
-fn opt_int(v: &Value) -> Result<Option<i32>> {
+pub(crate) fn opt_int(v: &Value) -> Result<Option<i32>> {
     match v {
         Value::Default => Ok(None),
         v => v.to_int().map(Some),
@@ -104,7 +147,7 @@ fn opt_int(v: &Value) -> Result<Option<i32>> {
 }
 
 /// An optional program slot number, 0 when omitted.
-fn slot_arg(v: Option<&Value>) -> Result<usize> {
+pub(crate) fn slot_arg(v: Option<&Value>) -> Result<usize> {
     let slot = v.map(opt_int).transpose()?.flatten().unwrap_or(0);
     usize::try_from(slot)
         .ok()
@@ -135,6 +178,10 @@ impl Runtime {
             frame: 0,
             direct: false,
             requests: Vec::new(),
+            slots: vec![String::new(); SLOTS],
+            settings: Settings::default(),
+            storage: Storage::none(),
+            result: 1,
         }
     }
 
@@ -148,14 +195,20 @@ impl Runtime {
         std::mem::take(&mut self.requests)
     }
 
-    fn request(&mut self, request: Request) -> Result<Vec<Value>> {
-        if !self.direct {
+    pub(crate) fn direct_only(&self) -> Result<()> {
+        if self.direct {
+            Ok(())
+        } else {
             // UNVERIFIED: the error SmileBASIC 4 gives for these in a program.
-            return Err(Error::with_detail(
+            Err(Error::with_detail(
                 ErrorKind::IllegalStatement,
                 "only in direct mode",
-            ));
+            ))
         }
+    }
+
+    fn request(&mut self, request: Request) -> Result<Vec<Value>> {
+        self.direct_only()?;
         self.requests.push(request);
         Ok(vec![])
     }
@@ -209,8 +262,12 @@ impl Runtime {
             }
             (Command::Clear, Want::Outs(0)) if args.is_empty() => self.request(Request::Clear),
             (Command::New, Want::Outs(0)) if args.len() <= 1 => {
-                let slot = slot_arg(args.first())?;
-                self.request(Request::New(slot))
+                self.direct_only()?;
+                match args.first() {
+                    None => self.slots.iter_mut().for_each(String::clear),
+                    slot => self.slots[slot_arg(slot)?].clear(),
+                }
+                Ok(vec![])
             }
             (Command::Run, Want::Outs(0)) if args.len() <= 1 => {
                 let slot = slot_arg(args.first())?;
@@ -238,6 +295,17 @@ impl Runtime {
                 let (x, y) = self.text[id].cursor();
                 Ok(vec![Value::Int(x as i32), Value::Int(y as i32)])
             }
+            (
+                Command::Chkfile
+                | Command::Delete
+                | Command::Files
+                | Command::Load
+                | Command::Project
+                | Command::Rename
+                | Command::Result
+                | Command::Save,
+                _,
+            ) => self.file_command(command, args, want),
             _ => Err(illegal()),
         }
     }
