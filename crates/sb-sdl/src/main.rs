@@ -1,19 +1,24 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod menu;
+
 use std::path::{Path, PathBuf};
 
+use menu::{Action, Click, MenuBar};
 use sb_profiles::Profile;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::storage::Storage;
-use sb_runtime::{Runtime, resources, sbfile};
+use sb_runtime::{Framebuffer, Runtime, resources, sbfile};
 use sdl3::event::Event;
+use sdl3::event::WindowEvent;
 use sdl3::keyboard::{Keycode, Mod};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
+use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
-use sdl3::render::ScaleMode;
+use sdl3::render::{BlendMode, FRect, ScaleMode};
 
 const USAGE: &str = "usage:
   smilebasic                    start in direct mode
@@ -113,12 +118,47 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         screen.height,
     )?;
     texture.set_scale_mode(ScaleMode::Nearest);
+    // The menu bar and other emulator UI, drawn at display resolution.
+    let mut overlay = Framebuffer::new(display_w, display_h);
+    let mut overlay_texture =
+        texture_creator.create_texture_streaming(PixelFormat::ARGB8888, display_w, display_h)?;
+    overlay_texture.set_scale_mode(ScaleMode::Nearest);
+    overlay_texture.set_blend_mode(BlendMode::Blend);
+    let mut menu = MenuBar::default();
 
     let mut events = sdl.event_pump()?;
     'running: loop {
+        let (out_w, out_h) = canvas.output_size()?;
+        let (win_w, _) = canvas.window().size();
+        let display = display_rect(display_w, display_h, out_w, out_h);
+        // Mouse positions come in window coordinates; the display is in pixels.
+        let to_display = |x: f32, y: f32| {
+            let px = out_w as f32 / win_w.max(1) as f32;
+            let scale = display.w / display_w as f32;
+            (
+                ((x * px - display.x) / scale) as i32,
+                ((y * px - display.y) / scale) as i32,
+            )
+        };
         for event in events.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'running,
+                Event::MouseMotion { x, y, .. } => menu.mouse_move(Some(to_display(x, y))),
+                Event::Window {
+                    win_event: WindowEvent::MouseLeave,
+                    ..
+                } => menu.mouse_move(None),
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    x,
+                    y,
+                    ..
+                } => match menu.click(to_display(x, y), machine.is_running()) {
+                    Click::Chosen(Action::Quit) => break 'running,
+                    Click::Chosen(Action::Stop) => machine.stop(),
+                    Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
+                    Click::Consumed | Click::Ignored => {}
+                },
                 Event::KeyDown {
                     keycode: Some(Keycode::Pause),
                     ..
@@ -150,15 +190,34 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        let (out_w, out_h) = canvas.output_size()?;
         canvas.copy(
             &texture,
             None,
             screen_rect(fb.width(), fb.height(), out_w, out_h),
         )?;
+        if menu.visible() {
+            overlay.clear(0);
+            let running = machine.is_running();
+            menu.draw(
+                &mut overlay,
+                machine.rt.font(),
+                &machine.rt.settings,
+                running,
+            );
+            overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
+            canvas.copy(&overlay_texture, None, display)?;
+        }
         canvas.present();
     }
     Ok(())
+}
+
+/// Where the display (emulator UI coordinates) goes in a window of
+/// `out_w` x `out_h` pixels: scaled to fit and centered.
+fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
+    let scale = (out_w as f32 / width as f32).min(out_h as f32 / height as f32);
+    let (w, h) = (width as f32 * scale, height as f32 * scale);
+    FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
 }
 
 /// Where the screen goes in a window of `out_w` x `out_h` pixels: scaled

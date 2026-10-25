@@ -185,6 +185,10 @@ impl Runtime {
         }
     }
 
+    pub fn font(&self) -> &Font {
+        &self.font
+    }
+
     /// Stops waiting for an INPUT line, if one is being typed.
     pub fn cancel_input(&mut self) {
         self.line = None;

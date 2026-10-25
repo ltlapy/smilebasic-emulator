@@ -46,6 +46,10 @@ mode, typed lines run immediately; `RUN [slot]`, `NEW [slot]` and `CLEAR` work
 on the program slots PRG0-PRG5. Letters type in upper case unless Shift or
 Caps Lock is on. Pause/Break stops the running program.
 
+Move the mouse to the top edge of the window for the menu bar: it can stop
+the program and switch the options above (upper-case letters, Ctrl+C to stop,
+half-width on SAVE).
+
 `LOAD`, `SAVE`, `FILES`, `PROJECT`, `CHKFILE`, `DELETE` and `RENAME` work on
 project folders in the emulator's data directory (`projects/`; the workspace
 project is `@WORKSPACE`). Programs are saved as plain UTF-8 text, so they can
