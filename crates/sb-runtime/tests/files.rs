@@ -81,7 +81,10 @@ fn save_load_and_list() {
     enter(&mut m, "load \"game.prg\",2:run 2");
     assert_eq!(tail(&m, 2), ["HI", "OK"]);
     enter(&mut m, "files");
-    assert_eq!(tail(&m, 3), ["TXT:@BACKUP.PRG", "TXT:GAME.PRG", "OK"]);
+    assert_eq!(
+        tail(&m, 4),
+        ["-- 2 files --", "TXT:@BACKUP.PRG", "TXT:GAME.PRG", "OK"]
+    );
     enter(&mut m, "?chkfile(\"game.prg\");chkfile(\"grp:game.prg\")");
     assert_eq!(tail(&m, 2), ["10", "OK"]);
 }

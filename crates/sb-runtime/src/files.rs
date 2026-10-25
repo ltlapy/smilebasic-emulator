@@ -135,6 +135,13 @@ impl Runtime {
                     Some(array) => fill_array(array, items)?,
                     None => {
                         let console = &mut self.text[CONSOLE];
+                        if console.cursor().0 != 0 {
+                            console.newline();
+                        }
+                        // UNVERIFIED: the header for project lists and for one file.
+                        let header = format!("-- {} files --", items.len());
+                        console.print(&header.encode_utf16().collect::<Vec<_>>());
+                        console.newline();
                         for item in items {
                             console.print(&item.encode_utf16().collect::<Vec<_>>());
                             console.newline();
@@ -203,8 +210,10 @@ impl Runtime {
     }
 
     /// FILES' entries: projects for `"//"`, else files of a project. Names
-    /// carry a `TYPE:` prefix unless one type was asked for.
-    // UNVERIFIED: how SmileBASIC 4 formats FILES entries.
+    /// carry a `TYPE:` prefix unless one type was asked for, as on SmileBASIC
+    /// 4 (`TXT:MAIN.PRG`).
+    // UNVERIFIED: how other types are shown; a GRP file appeared as its
+    // stored name (`GDEFFONT`) on hardware.
     fn listing(&self, spec: &str) -> storage::Result<Vec<String>> {
         if spec == "//" {
             return self.storage.projects();
