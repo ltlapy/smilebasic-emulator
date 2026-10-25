@@ -3,5 +3,6 @@
 //! audio buffers.
 
 pub mod framebuffer;
+pub mod sbfile;
 
 pub use framebuffer::Framebuffer;
