@@ -4,5 +4,8 @@
 //! audio or input devices.
 
 pub mod ast;
+pub mod error;
 pub mod lexer;
+pub mod ops;
 pub mod parser;
+pub mod value;
