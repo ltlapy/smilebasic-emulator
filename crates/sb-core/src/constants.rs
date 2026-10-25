@@ -70,6 +70,12 @@ static CONSTANTS: &[(&str, ConstValue)] = &[
     ("B_RANY", int(14)),
     ("B_LANY", int(15)),
     ("B_ANY", int(16)),
+    // Not in the reference's table but present in SmileBASIC 4 itself.
+    // UNVERIFIED: values follow the BUTTON table (A is the right face button).
+    ("B_X", int(0)),
+    ("B_B", int(1)),
+    ("B_Y", int(2)),
+    ("B_A", int(3)),
     ("A_ROT0", int(0)),
     ("A_ROT90", int(1)),
     ("A_ROT180", int(2)),
@@ -141,6 +147,9 @@ static CONSTANTS: &[(&str, ConstValue)] = &[
     ("MAXT", int(3)),
     ("MAXSP", int(4094)),
     ("MAXGRP", int(4)),
+    // First user-defined character. Not in the reference's table.
+    // UNVERIFIED: value taken from a comment in a bundled program.
+    ("TUSRCHR", int(0xE800)),
     ("HARDWARE", int(10)),
     ("VERSION", int(VERSION)),
 ];

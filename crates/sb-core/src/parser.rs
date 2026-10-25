@@ -231,15 +231,8 @@ impl Parser {
                 TokenKind::Keyword(Keyword::End) if self.in_def => return Ok(stmts),
                 _ => {}
             }
+            // No separator is needed between statements: `A=1B=2` is two.
             stmts.push(self.statement(until.is_empty() && !self.in_def)?);
-            let ok = match self.peek() {
-                TokenKind::Newline | TokenKind::Colon | TokenKind::Eof => true,
-                TokenKind::Keyword(k) => until.contains(k),
-                _ => false,
-            };
-            if !ok {
-                return self.expected("end of statement");
-            }
         }
     }
 
@@ -254,17 +247,14 @@ impl Parser {
     fn line_stmts(&mut self) -> PResult<Vec<Stmt>> {
         let mut stmts = Vec::new();
         loop {
-            if !self.at_stmt_end() {
-                stmts.push(self.statement(false)?);
+            if self.eat(&TokenKind::Colon) {
+                continue;
             }
-            if !self.eat(&TokenKind::Colon) {
-                break;
+            if self.at_stmt_end() {
+                return Ok(stmts);
             }
+            stmts.push(self.statement(false)?);
         }
-        if !self.at_stmt_end() {
-            return self.expected("end of statement");
-        }
-        Ok(stmts)
     }
 
     // ---- statements ----
@@ -435,16 +425,53 @@ impl Parser {
     }
 
     fn command(&mut self, name: Var) -> PResult<StmtKind> {
-        let args = self.args(|p| p.at_stmt_end() || p.is_keyword(Keyword::Out))?;
+        let args = self.args(Self::at_args_end)?;
         let outs = self.outs()?;
         Ok(StmtKind::Command { name, args, outs })
     }
 
-    fn outs(&mut self) -> PResult<Vec<LValue>> {
-        if self.eat_keyword(Keyword::Out) {
-            self.comma_list(Self::lvalue)
-        } else {
-            Ok(Vec::new())
+    /// End of a command's arguments: the statement ends, OUT follows, or
+    /// the next token starts another statement (`CLS PRINT 1`).
+    fn at_args_end(&self) -> bool {
+        self.at_stmt_end()
+            || self.is_keyword(Keyword::Out)
+            || !(*self.peek() == TokenKind::Comma || self.can_start_expr())
+    }
+
+    fn can_start_expr(&self) -> bool {
+        match self.peek() {
+            TokenKind::Int(_)
+            | TokenKind::Real(_)
+            | TokenKind::Str(_)
+            | TokenKind::Label(_)
+            | TokenKind::Constant(_)
+            | TokenKind::Ident { .. }
+            | TokenKind::LParen
+            | TokenKind::Minus
+            | TokenKind::Bang
+            | TokenKind::Keyword(Keyword::Not) => true,
+            TokenKind::Keyword(Keyword::Var | Keyword::Call | Keyword::Dim) => {
+                *self.peek_at(1) == TokenKind::LParen
+            }
+            _ => false,
+        }
+    }
+
+    /// OUT variables; like arguments, any of them may be left out (`OUT A,,B`).
+    fn outs(&mut self) -> PResult<Vec<Option<LValue>>> {
+        let mut outs = Vec::new();
+        if !self.eat_keyword(Keyword::Out) {
+            return Ok(outs);
+        }
+        loop {
+            if *self.peek() == TokenKind::Comma || self.at_stmt_end() {
+                outs.push(None);
+            } else {
+                outs.push(Some(self.lvalue()?));
+            }
+            if !self.eat(&TokenKind::Comma) {
+                return Ok(outs);
+            }
         }
     }
 
@@ -495,34 +522,42 @@ impl Parser {
     }
 
     fn var_decls(&mut self) -> PResult<Vec<VarDecl>> {
-        self.comma_list(|p| {
-            let var = p.var_name()?;
-            let dims = if p.eat(&TokenKind::LBracket) {
-                let dims = if *p.peek() == TokenKind::RBracket {
-                    Vec::new()
-                } else {
-                    p.comma_list(Self::expr)?
-                };
-                p.expect(&TokenKind::RBracket, "']'")?;
-                Some(dims)
-            } else {
-                None
-            };
-            let init = if !p.eat(&TokenKind::Assign) {
-                None
-            } else if dims.is_some() && p.eat(&TokenKind::LBracket) {
-                let values = if *p.peek() == TokenKind::RBracket {
-                    Vec::new()
-                } else {
-                    p.comma_list(Self::expr)?
-                };
-                p.expect(&TokenKind::RBracket, "']'")?;
-                Some(Init::Array(values))
-            } else {
-                Some(Init::Expr(p.expr()?))
-            };
-            Ok(VarDecl { var, dims, init })
-        })
+        let mut decls = Vec::new();
+        loop {
+            decls.push(self.var_decl()?);
+            // SmileBASIC 4's own example programs end a VAR list with a comma.
+            if !self.eat(&TokenKind::Comma) || self.at_stmt_end() {
+                return Ok(decls);
+            }
+        }
+    }
+
+    fn var_decl(&mut self) -> PResult<VarDecl> {
+        let var = self.var_name()?;
+        let dims = if self.eat(&TokenKind::LBracket) {
+            Some(self.bracket_list()?)
+        } else {
+            None
+        };
+        let init = if !self.eat(&TokenKind::Assign) {
+            None
+        } else if dims.is_some() && self.eat(&TokenKind::LBracket) {
+            Some(Init::Array(self.bracket_list()?))
+        } else {
+            Some(Init::Expr(self.expr()?))
+        };
+        Ok(VarDecl { var, dims, init })
+    }
+
+    /// Expressions up to `]`, which may be empty. The `[` is already consumed.
+    fn bracket_list(&mut self) -> PResult<Vec<Expr>> {
+        let items = if *self.peek() == TokenKind::RBracket {
+            Vec::new()
+        } else {
+            self.comma_list(Self::expr)?
+        };
+        self.expect(&TokenKind::RBracket, "']'")?;
+        Ok(items)
     }
 
     fn print_items(&mut self) -> PResult<Vec<PrintItem>> {
@@ -532,8 +567,10 @@ impl Parser {
                 items.push(PrintItem::Semicolon);
             } else if self.eat(&TokenKind::Comma) {
                 items.push(PrintItem::Comma);
-            } else {
+            } else if self.can_start_expr() {
                 items.push(PrintItem::Expr(self.expr()?));
+            } else {
+                break;
             }
         }
         Ok(items)
@@ -580,6 +617,12 @@ impl Parser {
         self.expect_keyword(Keyword::Then, "THEN")?;
         if *self.peek() != TokenKind::Newline {
             branches.push((cond, self.one_line_branch()?));
+            // A one-line IF can chain ELSEIF too.
+            while self.eat_keyword(Keyword::Elseif) {
+                let cond = self.expr()?;
+                self.expect_keyword(Keyword::Then, "THEN")?;
+                branches.push((cond, self.one_line_branch()?));
+            }
             let otherwise = self.one_line_else()?;
             return Ok(StmtKind::If {
                 branches,
@@ -760,7 +803,7 @@ impl Parser {
         }
         let name = self.expr()?;
         let args = if self.eat(&TokenKind::Comma) {
-            self.args(|p| p.at_stmt_end() || p.is_keyword(Keyword::Out))?
+            self.args(Self::at_args_end)?
         } else {
             Vec::new()
         };
@@ -1127,7 +1170,7 @@ mod tests {
             StmtKind::Command {
                 name: var("CALCPM"),
                 args: vec![Some(Expr::Int(5)), Some(Expr::Int(10))],
-                outs: vec![LValue::Var(var("P")), LValue::Var(var("M"))],
+                outs: vec![Some(LValue::Var(var("P"))), Some(LValue::Var(var("M")))],
             }
         );
         assert_eq!(
@@ -1225,6 +1268,20 @@ mod tests {
 
         // The one-line IF ends at the newline.
         assert_eq!(stmts("IF A THEN B=1\nC=2").len(), 2);
+    }
+
+    #[test]
+    fn one_line_elseif() {
+        let src = "IF OX<0 THEN OX=0 ELSEIF OX>9 THEN OX=9 ELSE OX=5";
+        let StmtKind::If {
+            branches,
+            otherwise,
+        } = one(src)
+        else {
+            panic!()
+        };
+        assert_eq!(branches.len(), 2);
+        assert!(otherwise.is_some());
     }
 
     #[test]
@@ -1381,15 +1438,24 @@ mod tests {
     }
 
     #[test]
-    fn statements_need_separators() {
-        assert!(matches!(
-            err("A=1 B=2"),
-            ParseErrorKind::Expected {
-                expected: "end of statement",
-                ..
-            }
-        ));
+    fn var_list_may_end_with_comma() {
+        let StmtKind::Var(decls) = one("VAR I,J,TONE,") else {
+            panic!()
+        };
+        assert_eq!(decls.len(), 3);
+    }
+
+    #[test]
+    fn separators_are_optional() {
+        assert_eq!(stmts("A=1B=2").len(), 2);
+        assert_eq!(stmts("CLS PRINT 1 PRINT 2").len(), 3);
+        assert_eq!(stmts("DATA 1,2 DATA 3").len(), 2);
         assert_eq!(stmts("@L:A=1:B=2\n\nC=3").len(), 4);
+        let StmtKind::Command { outs, .. } = one("RGB C OUT A,,,") else {
+            panic!()
+        };
+        assert_eq!(outs.len(), 4);
+        assert!(outs[1].is_none());
     }
 
     #[test]

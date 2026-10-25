@@ -7,7 +7,17 @@ use crate::value::{Array, ArrayData, ElemType, Str, Value, format_number, new_st
 #[derive(Clone, Copy)]
 pub enum Kind {
     Function(fn(&[Value]) -> Result<Value>),
-    Command(fn(&[Value]) -> Result<()>),
+    /// Called as a statement; gets the number of OUT variables and returns
+    /// that many values.
+    Command(fn(&[Value], usize) -> Result<Vec<Value>>),
+}
+
+/// How a builtin is being called. A name can have both forms (`RGB(...)`
+/// and `RGB C OUT R,G,B`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Form {
+    Function,
+    Command,
 }
 
 #[derive(Clone, Copy)]
@@ -77,15 +87,17 @@ table! {
     "DIM" 1..=2 Function dim;
     "POP" 1..=1 Function |a| take(&a[0], End::Back);
     "SHIFT" 1..=1 Function |a| take(&a[0], End::Front);
-    "PUSH" 2..=2 Command |a| put(&a[0], a[1].clone(), End::Back);
-    "UNSHIFT" 2..=2 Command |a| put(&a[0], a[1].clone(), End::Front);
-    "FILL" 2..=4 Command fill;
+    "PUSH" 2..=2 Command |a, _| put(&a[0], a[1].clone(), End::Back).map(|()| Vec::new());
+    "UNSHIFT" 2..=2 Command |a, _| put(&a[0], a[1].clone(), End::Front).map(|()| Vec::new());
+    "FILL" 2..=4 Command |a, _| fill(a).map(|()| Vec::new());
+    "RGB" 3..=5 Function rgb;
+    "RGB" 1..=1 Command rgb_out;
 }
 
-pub fn lookup(name: &str) -> Option<u16> {
+pub fn lookup(name: &str, form: Form) -> Option<u16> {
     BUILTINS
         .iter()
-        .position(|b| b.name == name)
+        .position(|b| b.name == name && b.form() == form)
         .map(|i| i as u16)
 }
 
@@ -94,6 +106,13 @@ pub fn get(id: u16) -> &'static Builtin {
 }
 
 impl Builtin {
+    pub fn form(&self) -> Form {
+        match self.kind {
+            Kind::Function(_) => Form::Function,
+            Kind::Command(_) => Form::Command,
+        }
+    }
+
     pub fn accepts(&self, argc: usize) -> bool {
         argc >= self.min_args.into() && (self.max_args == VARIADIC || argc <= self.max_args.into())
     }
@@ -350,6 +369,61 @@ fn radix_str(args: &[Value], radix: u32, max_digits: usize) -> Result<Value> {
     Ok(string(pad_left(text.encode_utf16().collect(), digits, '0')))
 }
 
+// ---- colors ----
+
+fn component(v: &Value) -> Result<u32> {
+    let n = v.to_int()?;
+    u32::try_from(n)
+        .ok()
+        .filter(|&n| n <= 255)
+        .ok_or(ErrorKind::OutOfRange.into())
+}
+
+fn argb(a: u32, r: u32, g: u32, b: u32) -> Value {
+    Value::Int((a << 24 | r << 16 | g << 8 | b) as i32)
+}
+
+/// `RGB(R,G,B)`, `RGB(A,R,G,B)`, or `RGB(color,[A],[R],[G],[B])` which
+/// replaces the given components of `color`.
+fn rgb(args: &[Value]) -> Result<Value> {
+    match args {
+        [r, g, b] => Ok(argb(255, component(r)?, component(g)?, component(b)?)),
+        [a, r, g, b] => Ok(argb(
+            component(a)?,
+            component(r)?,
+            component(g)?,
+            component(b)?,
+        )),
+        [color, parts @ ..] => {
+            let mut c = color.to_int()? as u32;
+            for (i, part) in parts.iter().enumerate() {
+                if !matches!(part, Value::Default) {
+                    let shift = 24 - 8 * i as u32;
+                    c = c & !(0xFF << shift) | component(part)? << shift;
+                }
+            }
+            Ok(Value::Int(c as i32))
+        }
+        [] => unreachable!("arity checked by the caller"),
+    }
+}
+
+/// `RGB color OUT R,G,B` or `RGB color OUT A,R,G,B`.
+fn rgb_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
+    let c = args[0].to_int()? as u32;
+    let parts = |shifts: &[u32]| {
+        shifts
+            .iter()
+            .map(|s| Value::Int((c >> s & 0xFF) as i32))
+            .collect()
+    };
+    match outs {
+        3 => Ok(parts(&[16, 8, 0])),
+        4 => Ok(parts(&[24, 16, 8, 0])),
+        _ => Err(ErrorKind::IllegalFunctionCall.into()),
+    }
+}
+
 // ---- arrays ----
 
 fn new_array(args: &[Value], elem: ElemType) -> Result<Value> {
@@ -479,7 +553,7 @@ fn fill(args: &[Value]) -> Result<()> {
 pub fn is_constant_function(name: &str) -> bool {
     // The reference allows these in CONST and DATA. RGB/HSV live in the
     // host's graphics code and are not folded yet.
-    matches!(name, "CHR$" | "DEG" | "RAD")
+    matches!(name, "CHR$" | "DEG" | "RAD" | "RGB")
 }
 
 #[cfg(test)]
@@ -487,11 +561,12 @@ mod tests {
     use super::*;
 
     fn call(name: &str, args: &[Value]) -> Result<Value> {
-        let b = get(lookup(name).unwrap_or_else(|| panic!("{name} missing")));
+        let id = lookup(name, Form::Function).or_else(|| lookup(name, Form::Command));
+        let b = get(id.unwrap_or_else(|| panic!("{name} missing")));
         assert!(b.accepts(args.len()));
         match b.kind {
             Kind::Function(f) => f(args),
-            Kind::Command(f) => f(args).map(|()| Value::Default),
+            Kind::Command(f) => f(args, 0).map(|_| Value::Default),
         }
     }
 
@@ -583,6 +658,44 @@ mod tests {
         assert_eq!(
             call("SQR", &[Value::Int(-1)]).unwrap_err().kind,
             ErrorKind::OutOfRange
+        );
+    }
+
+    #[test]
+    fn colors() {
+        let int = |v: Value| as_int(v) as u32;
+        assert_eq!(
+            int(call("RGB", &[Value::Int(0), Value::Int(100), Value::Int(200)]).unwrap()),
+            0xFF0064C8
+        );
+        let four = [
+            Value::Int(128),
+            Value::Int(0),
+            Value::Int(100),
+            Value::Int(200),
+        ];
+        assert_eq!(int(call("RGB", &four).unwrap()), 0x800064C8);
+        // RGB(#C_RED,127,,,) is a half-transparent red.
+        let red = Value::Int(0xFFFF0000u32 as i32);
+        let half = [
+            red,
+            Value::Int(127),
+            Value::Default,
+            Value::Default,
+            Value::Default,
+        ];
+        assert_eq!(int(call("RGB", &half).unwrap()), 0x7FFF0000);
+        let too_big = [Value::Int(256), Value::Int(0), Value::Int(0)];
+        assert_eq!(
+            call("RGB", &too_big).unwrap_err().kind,
+            ErrorKind::OutOfRange
+        );
+        let b = get(lookup("RGB", Form::Command).unwrap());
+        let Kind::Command(f) = b.kind else { panic!() };
+        let out = f(&[Value::Int(0x80112233u32 as i32)], 4).unwrap();
+        assert_eq!(
+            out.iter().map(|v| as_int(v.clone())).collect::<Vec<_>>(),
+            [0x80, 0x11, 0x22, 0x33]
         );
     }
 

@@ -237,6 +237,45 @@ impl Lexer {
         }
     }
 
+    /// A `\\` at the end of a line joins it with the next one. The reference
+    /// does not describe this, but SmileBASIC 4's bundled programs use it.
+    /// UNVERIFIED: spaces may follow the backslash.
+    fn continues_line(&mut self) -> bool {
+        let mut i = 1;
+        while matches!(self.peek_at(i), Some(' ' | '\t')) {
+            i += 1;
+        }
+        // A comment may follow: `\\ 'note`.
+        if self.peek_at(i) == Some('\'') {
+            while !matches!(self.peek_at(i), None | Some('\r' | '\n')) {
+                i += 1;
+            }
+        }
+        let newline_len = match (self.peek_at(i), self.peek_at(i + 1)) {
+            (Some('\r'), Some('\n')) => 2,
+            (Some('\r' | '\n'), _) => 1,
+            _ => return false,
+        };
+        self.pos += i + newline_len;
+        self.line += 1;
+        self.col = 1;
+        // Blank lines after the backslash are skipped too; a bundled program
+        // relies on it. UNVERIFIED: whether comment-only lines are skipped.
+        loop {
+            let mut j = 0;
+            while matches!(self.peek_at(j), Some(' ' | '\t')) {
+                j += 1;
+            }
+            let len = match (self.peek_at(j), self.peek_at(j + 1)) {
+                (Some('\r'), Some('\n')) => 2,
+                (Some('\r' | '\n'), _) => 1,
+                _ => return true,
+            };
+            self.pos += j + len;
+            self.line += 1;
+        }
+    }
+
     fn run(mut self) -> Result<Vec<Token>, LexError> {
         while let Some(c) = self.peek() {
             let start = self.span();
@@ -254,6 +293,7 @@ impl Lexer {
                     self.col = 1;
                 }
                 '\'' => self.skip_to_line_end(),
+                '\\' if self.continues_line() => {}
                 '"' => self.string(start),
                 '0'..='9' => self.number(start),
                 '.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => self.number(start),
@@ -267,9 +307,14 @@ impl Lexer {
                 }
                 '#' => {
                     self.bump();
-                    let name = self
+                    let mut name = self
                         .word()
                         .ok_or(self.error(LexErrorKind::MissingDigits, start))?;
+                    // Constants can carry a type suffix too (`#LF$`).
+                    if let Some(c @ ('$' | '%' | '#')) = self.peek() {
+                        name.push(c);
+                        self.bump();
+                    }
                     self.push(TokenKind::Constant(name), start);
                 }
                 c if is_ident_start(c) => self.ident(start),
@@ -392,7 +437,16 @@ impl Lexer {
         self.bump();
         let mut value: u64 = 0;
         let mut digits = 0;
-        while let Some(d) = self.peek().and_then(|c| c.to_digit(radix)) {
+        loop {
+            // `_` separates digit groups, as in `&B0000_0001`.
+            // UNVERIFIED: whether it may lead or repeat.
+            if self.peek() == Some('_') && digits > 0 {
+                self.bump();
+                continue;
+            }
+            let Some(d) = self.peek().and_then(|c| c.to_digit(radix)) else {
+                break;
+            };
             self.bump();
             value = value * u64::from(radix) + u64::from(d);
             digits += 1;
@@ -572,6 +626,15 @@ mod tests {
     }
 
     #[test]
+    fn underscores_in_radix_literals() {
+        assert_eq!(
+            kinds("&B000_00000_0000_0001 &HFF_FF"),
+            [T::Int(1), T::Int(0xFFFF)]
+        );
+        assert_eq!(error("&H_1"), LexErrorKind::MissingDigits);
+    }
+
+    #[test]
     fn labels_and_constants() {
         assert_eq!(
             kinds("@main_loop ?#C_WHITE"),
@@ -582,6 +645,45 @@ mod tests {
             ]
         );
         assert_eq!(error("@ X"), LexErrorKind::MissingDigits);
+        assert_eq!(
+            kinds("#LF$=#A%"),
+            [
+                T::Constant("LF$".into()),
+                T::Assign,
+                T::Constant("A%".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn backslash_continues_the_line() {
+        assert_eq!(
+            kinds("VAR A[]=[1,\\\n2]\nB"),
+            [
+                T::Keyword(Keyword::Var),
+                ident("A"),
+                T::LBracket,
+                T::RBracket,
+                T::Assign,
+                T::LBracket,
+                T::Int(1),
+                T::Comma,
+                T::Int(2),
+                T::RBracket,
+                T::Newline,
+                ident("B"),
+            ]
+        );
+        // Line numbers still count physical lines.
+        let tokens = tokenize("A \\ \r\n B\nC").unwrap();
+        let lines: Vec<_> = tokens.iter().map(|t| t.span.line).collect();
+        assert_eq!(lines, [1, 2, 2, 3, 3]);
+        assert_eq!(error("A\\B"), LexErrorKind::UnexpectedChar('\\'));
+        assert_eq!(kinds("1,\\ 'note\n2"), [T::Int(1), T::Comma, T::Int(2)]);
+        assert_eq!(
+            kinds("[\\\n\n  \n 1]"),
+            [T::LBracket, T::Int(1), T::RBracket]
+        );
     }
 
     #[test]

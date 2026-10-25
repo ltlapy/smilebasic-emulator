@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use crate::ast::BinaryOp;
-use crate::builtins::{self, Kind};
+use crate::builtins::{self, Form, Kind};
 use crate::bytecode::*;
 use crate::error::{Error, ErrorKind, Result};
 use crate::host::Host;
@@ -84,6 +84,13 @@ fn coerce(value: Value, suffix: Option<Suffix>) -> Result<Value> {
             Ok(value)
         }
         Some(Suffix::Str) => Err(ErrorKind::TypeMismatch.into()),
+    }
+}
+
+fn form(want: Want) -> Form {
+    match want {
+        Want::Value => Form::Function,
+        Want::Outs(_) => Form::Command,
     }
 }
 
@@ -372,7 +379,7 @@ impl Vm {
                 if let Some(&def) = program.def_names.get(&name) {
                     self.enter_def(def, args, *want)?;
                     return Ok(None);
-                } else if let Some(id) = builtins::lookup(&name) {
+                } else if let Some(id) = builtins::lookup(&name, form(*want)) {
                     self.call_builtin(id, &args, *want)?;
                 } else if let Some(id) = host.lookup(&name) {
                     self.call_host(host, id, &args, *want)?;
@@ -533,10 +540,7 @@ impl Vm {
         }
         let results = match (b.kind, want) {
             (Kind::Function(f), Want::Value) => vec![f(args)?],
-            (Kind::Command(f), Want::Outs(0)) => {
-                f(args)?;
-                Vec::new()
-            }
+            (Kind::Command(f), Want::Outs(n)) => f(args, n.into())?,
             _ => return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, b.name)),
         };
         self.push_results(results, want)

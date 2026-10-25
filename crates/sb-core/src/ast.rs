@@ -98,17 +98,18 @@ pub enum StmtKind {
     Const(Vec<(String, Expr)>),
     Enum(Vec<(String, Option<Expr>)>),
     Option(String),
-    /// A built-in or user-defined command. Omitted arguments (`CMD ,1`) are `None`.
+    /// A built-in or user-defined command. Omitted arguments (`CMD ,1`) and
+    /// OUT variables (`OUT A,,B`) are `None`.
     Command {
         name: Var,
         args: Vec<Option<Expr>>,
-        outs: Vec<LValue>,
+        outs: Vec<Option<LValue>>,
     },
     /// `CALL name$, args OUT vars`
     Call {
         name: Expr,
         args: Vec<Option<Expr>>,
-        outs: Vec<LValue>,
+        outs: Vec<Option<LValue>>,
     },
     CallSprite,
     CallText,

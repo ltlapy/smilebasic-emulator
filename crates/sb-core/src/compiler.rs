@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::builtins::{self, Kind};
+use crate::builtins::{self, Form, Kind};
 use crate::bytecode::*;
 use crate::constants::{self, ConstValue};
 use crate::error::{Error, ErrorKind, Result};
@@ -275,7 +275,8 @@ impl Compiler<'_> {
             }
             Expr::Call { name, args } if builtins::is_constant_function(&call_name(name)) => {
                 let b = builtins::get(
-                    builtins::lookup(&call_name(name)).expect("constant functions are builtins"),
+                    builtins::lookup(&call_name(name), Form::Function)
+                        .expect("constant functions are builtins"),
                 );
                 let args = args
                     .iter()
@@ -621,14 +622,15 @@ impl Compiler<'_> {
             StmtKind::OnBreakGoto(_) => {}
             StmtKind::Return(None) => _ = self.emit(Op::Return),
             StmtKind::Return(Some(e)) => {
-                if !self.def.as_ref().is_some_and(|d| d.is_function) {
-                    return Err(err(
-                        ErrorKind::IllegalStatement,
-                        "RETURN with a value outside a function",
-                    ));
-                }
                 self.expr(e)?;
-                self.emit(Op::ReturnValue);
+                if self.def.as_ref().is_some_and(|d| d.is_function) {
+                    self.emit(Op::ReturnValue);
+                } else {
+                    // A bundled program returns a value from a command DEF.
+                    // UNVERIFIED: the value is discarded.
+                    self.emit(Op::Pop);
+                    self.emit(Op::Return);
+                }
             }
             StmtKind::End => _ = self.emit(Op::End),
             StmtKind::Def(_) => unreachable!("DEFs are compiled separately"),
@@ -767,7 +769,12 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    fn command(&mut self, name: &Var, args: &[Option<Expr>], outs: &[LValue]) -> Result<()> {
+    fn command(
+        &mut self,
+        name: &Var,
+        args: &[Option<Expr>],
+        outs: &[Option<LValue>],
+    ) -> Result<()> {
         let full = call_name(name);
         let no_outs = |c: &Self| -> Result<()> {
             if outs.is_empty() {
@@ -830,18 +837,30 @@ impl Compiler<'_> {
         let want = Want::Outs(outs.len() as u8);
         if let Some(&def) = self.out.def_names.get(&full) {
             self.emit(Op::CallDef { def, argc, want });
-        } else if let Some(id) = builtins::lookup(&full) {
+        } else if let Some(id) = builtins::lookup(&full, Form::Command) {
             let b = builtins::get(id);
-            if !matches!(b.kind, Kind::Command(_)) || !b.accepts(args.len()) || !outs.is_empty() {
+            if !b.accepts(args.len()) {
                 return Err(self.illegal_call(&full));
             }
             self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
         } else {
-            return Err(err(ErrorKind::UndefinedFunction, full));
+            return Err(self.unknown_call(&full));
         }
         self.store_outs(outs)
+    }
+
+    /// A name that resolves to nothing in the form it is called in: a builtin
+    /// used in its other form is an illegal call, anything else is undefined.
+    fn unknown_call(&self, name: &str) -> Error {
+        let exists = builtins::lookup(name, Form::Function).is_some()
+            || builtins::lookup(name, Form::Command).is_some();
+        if exists {
+            self.illegal_call(name)
+        } else {
+            err(ErrorKind::UndefinedFunction, name.to_string())
+        }
     }
 
     fn illegal_call(&self, name: &str) -> Error {
@@ -855,9 +874,15 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    fn store_outs(&mut self, outs: &[LValue]) -> Result<()> {
+    fn store_outs(&mut self, outs: &[Option<LValue>]) -> Result<()> {
         // Results are on the stack in order, so the last one is stored first.
-        outs.iter().rev().try_for_each(|o| self.store(o))
+        for out in outs.iter().rev() {
+            match out {
+                Some(target) => self.store(target)?,
+                None => _ = self.emit(Op::Pop),
+            }
+        }
+        Ok(())
     }
 
     fn args(&mut self, args: &[Option<Expr>]) -> Result<()> {
@@ -1034,16 +1059,16 @@ impl Compiler<'_> {
         let want = Want::Value;
         if let Some(&def) = self.out.def_names.get(&full) {
             self.emit(Op::CallDef { def, argc, want });
-        } else if let Some(id) = builtins::lookup(&full) {
+        } else if let Some(id) = builtins::lookup(&full, Form::Function) {
             let b = builtins::get(id);
-            if !matches!(b.kind, Kind::Function(_)) || !b.accepts(args.len()) {
+            if !b.accepts(args.len()) {
                 return Err(self.illegal_call(&full));
             }
             self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
         } else {
-            return Err(err(ErrorKind::UndefinedFunction, full));
+            return Err(self.unknown_call(&full));
         }
         Ok(())
     }
@@ -1192,12 +1217,12 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
             }
             StmtKind::Command { args, outs, .. } => {
                 args.iter().flatten().for_each(|a| expr(a, used));
-                outs.iter().for_each(|o| lvalue(o, used));
+                outs.iter().flatten().for_each(|o| lvalue(o, used));
             }
             StmtKind::Call { name, args, outs } => {
                 expr(name, used);
                 args.iter().flatten().for_each(|a| expr(a, used));
-                outs.iter().for_each(|o| lvalue(o, used));
+                outs.iter().flatten().for_each(|o| lvalue(o, used));
             }
             StmtKind::Print { screen, items } => {
                 screen.iter().for_each(|s| expr(s, used));
