@@ -3,6 +3,7 @@
 //!
 //! Both files come from the user's own copy of SmileBASIC 4 (see
 //! [`crate::resources`]); nothing from them is part of this repository.
+//! Without them, [`Font::fallback`] draws with GalmuriMono7 instead.
 //!
 //! Glyph `n` of the 8-pixel font is at `((n % 64) * 8, (n / 64) * 8)` on the
 //! page, and of the 16-pixel font at `((n % 64) * 16, 1024 + (n / 64) * 16)`.
@@ -24,11 +25,28 @@ pub enum FontSize {
     Large = 16,
 }
 
-pub struct Font {
-    glyphs: Vec<u16>,
-    /// `PAGE_SIZE` x `PAGE_SIZE` pixels, `0xAARRGGBB`.
-    page: Vec<u32>,
+pub struct Font(Source);
+
+enum Source {
+    /// SmileBASIC 4's own font.
+    Page {
+        glyphs: Vec<u16>,
+        /// `PAGE_SIZE` x `PAGE_SIZE` pixels, `0xAARRGGBB`.
+        page: Vec<u32>,
+    },
+    /// 8x8 one-bit cells, drawn doubled for the 16-pixel font.
+    Cells {
+        /// Index into `cells` for each code; `NO_CELL` if absent.
+        index: Vec<u16>,
+        cells: Vec<[u8; 8]>,
+        missing: u16,
+    },
 }
+
+const NO_CELL: u16 = u16::MAX;
+/// Built by `build.rs` from `fonts/galmuri`: records of a u16 code and
+/// 8 row bytes.
+static FALLBACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_font.bin"));
 
 #[derive(Debug)]
 pub enum FontError {
@@ -85,40 +103,81 @@ impl Font {
             }
             _ => return Err(FontError::PageShape),
         };
-        Ok(Font { glyphs, page })
+        Ok(Font(Source::Page { glyphs, page }))
     }
 
-    /// Glyph number for a character code.
-    pub fn glyph(&self, code: u16) -> u16 {
-        self.glyphs[usize::from(code)]
+    /// The bundled GalmuriMono7, for when no font has been imported.
+    pub fn fallback() -> Font {
+        let mut index = vec![NO_CELL; CODES];
+        let mut cells = Vec::with_capacity(FALLBACK.len() / 10);
+        for record in FALLBACK.chunks_exact(10) {
+            let code = u16::from_le_bytes([record[0], record[1]]);
+            index[usize::from(code)] = cells.len() as u16;
+            cells.push(record[2..].try_into().expect("8 rows"));
+        }
+        let missing = index[0xFFFD];
+        Font(Source::Cells {
+            index,
+            cells,
+            missing,
+        })
     }
 
-    /// Top-left corner of a code's glyph on the page.
-    pub fn origin(&self, code: u16, size: FontSize) -> (u32, u32) {
-        let n = u32::from(self.glyph(code));
-        match size {
+    /// Top-left corner of a code's glyph on SmileBASIC 4's font page, as
+    /// FONTINFO reports it. `None` for the fallback font, which has no page.
+    pub fn origin(&self, code: u16, size: FontSize) -> Option<(u32, u32)> {
+        let Source::Page { glyphs, .. } = &self.0 else {
+            return None;
+        };
+        let n = u32::from(glyphs[usize::from(code)]);
+        Some(match size {
             FontSize::Small => ((n % 64) * 8, (n / 64) * 8),
             FontSize::Large => ((n % 64) * 16, 1024 + (n / 64) * 16),
+        })
+    }
+
+    /// Pixel `(x, y)` of a code's glyph, `0xAARRGGBB`; both coordinates
+    /// must be below the font size.
+    pub fn pixel(&self, code: u16, size: FontSize, x: u32, y: u32) -> u32 {
+        match &self.0 {
+            Source::Page { page, .. } => {
+                let (gx, gy) = self.origin(code, size).expect("page font");
+                page[((gy + y) * PAGE_SIZE + gx + x) as usize]
+            }
+            Source::Cells {
+                index,
+                cells,
+                missing,
+            } => {
+                let i = match index[usize::from(code)] {
+                    NO_CELL => *missing,
+                    i => i,
+                };
+                let (x, y) = match size {
+                    FontSize::Small => (x, y),
+                    FontSize::Large => (x / 2, y / 2),
+                };
+                let set = cells[usize::from(i)][y as usize] & (0x80 >> x) != 0;
+                if set { 0xFFFF_FFFF } else { 0 }
+            }
         }
     }
 
-    /// Page pixel at `(x, y)`; both must be below [`PAGE_SIZE`].
-    pub fn pixel(&self, x: u32, y: u32) -> u32 {
-        self.page[(y * PAGE_SIZE + x) as usize]
-    }
-
-    /// A font with every code mapped to glyph `code % 4096` on a blank
-    /// page, for tests that do not have the real files.
+    /// A page font with every code mapped to glyph `code % 4096` on a
+    /// blank page, for tests that do not have the real files.
     pub fn blank() -> Font {
-        Font {
+        Font(Source::Page {
             glyphs: (0..CODES).map(|c| (c % 4096) as u16).collect(),
             page: vec![0; (PAGE_SIZE * PAGE_SIZE) as usize],
-        }
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn page_mut(&mut self) -> &mut [u32] {
-        &mut self.page
+        match &mut self.0 {
+            Source::Page { page, .. } => page,
+            Source::Cells { .. } => unreachable!("tests draw on page fonts"),
+        }
     }
 }
 
@@ -143,9 +202,42 @@ mod tests {
     #[test]
     fn glyph_origins() {
         let mut font = Font::blank();
-        font.glyphs[0x6F22] = 1432;
+        if let Source::Page { glyphs, .. } = &mut font.0 {
+            glyphs[0x6F22] = 1432;
+        }
         // FONTINFO "漢",16 returns 384,1376 on hardware.
-        assert_eq!(font.origin(0x6F22, FontSize::Large), (384, 1376));
-        assert_eq!(font.origin(0x41, FontSize::Small), (8, 8));
+        assert_eq!(font.origin(0x6F22, FontSize::Large), Some((384, 1376)));
+        assert_eq!(font.origin(0x41, FontSize::Small), Some((8, 8)));
+    }
+
+    fn rows(font: &Font, code: char) -> Vec<String> {
+        (0..8)
+            .map(|y| {
+                (0..8)
+                    .map(|x| match font.pixel(code as u16, FontSize::Small, x, y) {
+                        0 => '.',
+                        _ => '#',
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fallback_font() {
+        let font = Font::fallback();
+        assert_eq!(font.origin(0x41, FontSize::Small), None);
+        // Half-width glyphs are centered in the cell.
+        assert_eq!(rows(&font, '!')[0], "...#....");
+        // The overrides make look-alikes distinct.
+        assert_ne!(rows(&font, '０'), rows(&font, 'Ｏ'));
+        assert_ne!(rows(&font, 'Ｉ'), rows(&font, '｜'));
+        assert_ne!(rows(&font, 'ｌ'), rows(&font, '｜'));
+        // Codes the font lacks draw U+FFFD.
+        assert_eq!(rows(&font, '\u{E100}'), rows(&font, '\u{FFFD}'));
+        assert_eq!(
+            font.pixel('A' as u16, FontSize::Large, 6, 1),
+            font.pixel('A' as u16, FontSize::Small, 3, 0)
+        );
     }
 }

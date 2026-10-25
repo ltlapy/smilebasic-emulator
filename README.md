@@ -18,9 +18,11 @@ development headers listed in SDL's `docs/README-linux.md` first.
 
 ## Font
 
-The emulator does not include SmileBASIC's font. Import it from your own
-copy of SmileBASIC 4: extract the RomFS of the game (and of its update, if
-you have one) and run
+Without any setup, the console uses a bundled font,
+[GalmuriMono7](https://github.com/quiple/galmuri) (SIL Open Font License 1.1).
+
+To see SmileBASIC's own font, import it from your own copy of SmileBASIC 4:
+extract the RomFS of the game (and of its update, if you have one) and run
 
 ```sh
 smilebasic import BASE_ROMFS UPDATE_ROMFS
@@ -39,4 +41,5 @@ smilebasic PROGRAM
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0. The bundled font in `crates/sb-runtime/fonts/galmuri`
+is under the SIL Open Font License 1.1.

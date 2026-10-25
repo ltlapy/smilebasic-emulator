@@ -47,6 +47,9 @@ headless on Windows, macOS and Linux.
 - Do not commit SmileBoom assets: fonts, sprite sheets, BGM, sound effects, or files
   extracted from the console versions. Users supply their own, or we draw
   replacements.
+- Third-party assets need a license that allows redistribution (such as the
+  SIL OFL). Keep the license text and a note on the source and version next
+  to the files.
 - The official reference is CC BY 4.0. Short quotes are fine with attribution;
   don't copy whole pages.
 - No paths from a developer's own machine in code, docs or configs.

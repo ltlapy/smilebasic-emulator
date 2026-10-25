@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use sb_core::vm::{Status, Vm};
 use sb_profiles::Profile;
+use sb_runtime::font::Font;
 use sb_runtime::{Runtime, resources, sbfile};
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
@@ -15,7 +16,8 @@ use sdl3::sys::render::SDL_RendererLogicalPresentation;
 const USAGE: &str = "usage:
   smilebasic PROGRAM            run a SmileBASIC 4 program (TXT file or plain text)
   smilebasic import ROMFS...    copy the font from your own extracted SmileBASIC 4
-                                RomFS directories (list the update's last)";
+                                RomFS directories (list the update's last);
+                                without it, a bundled font is used";
 
 /// UNVERIFIED: instructions per frame for programs that do not VSYNC;
 /// SmileBASIC 4's real speed has not been measured.
@@ -64,9 +66,10 @@ fn load_source(path: &Path) -> Result<String, AnyError> {
 
 fn run(program: &Path) -> Result<(), AnyError> {
     let source = load_source(program)?;
-    let font = resources::load_font(&resource_dir()?).map_err(|e| {
-        format!("cannot load the font ({e}); run `smilebasic import` first\n\n{USAGE}")
-    })?;
+    let font = resources::load_font(&resource_dir()?).unwrap_or_else(|e| {
+        eprintln!("using the fallback font: {e} (see `smilebasic import`)");
+        Font::fallback()
+    });
     let screen = Profile::default().screen();
     let mut rt = Runtime::new(screen.width, screen.height, font);
     let mut vm = match sb_core::compile(&source, &rt) {

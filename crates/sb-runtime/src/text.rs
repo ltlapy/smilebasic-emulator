@@ -152,10 +152,9 @@ impl TextScreen {
                 if cell.code == 0 || USER_CHARS.contains(&cell.code) {
                     continue;
                 }
-                let (gx, gy) = font.origin(cell.code, self.font);
                 for py in 0..cs {
                     for px in 0..cs {
-                        let src = font.pixel(gx + px * fs / cs, gy + py * fs / cs);
+                        let src = font.pixel(cell.code, self.font, px * fs / cs, py * fs / cs);
                         let (x, y) = (cx * cs + px, cy * cs + py);
                         if let Some(dst) = fb.get(x, y) {
                             fb.set(x, y, blend(dst, multiply(src, cell.color)));
@@ -239,7 +238,7 @@ mod tests {
     #[test]
     fn draw_blends_glyph_with_color() {
         let mut font = Font::blank();
-        let (gx, gy) = font.origin(0x41, FontSize::Small);
+        let (gx, gy) = font.origin(0x41, FontSize::Small).unwrap();
         font.page_mut()[(gy * crate::font::PAGE_SIZE + gx) as usize] = 0xFFFF_FFFF;
         font.page_mut()[(gy * crate::font::PAGE_SIZE + gx + 1) as usize] = 0x80FF_FFFF;
         let mut s = TextScreen::new(16, 8);
