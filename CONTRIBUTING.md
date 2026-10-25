@@ -6,7 +6,7 @@
 
 | Crate | May depend on | Must not touch |
 |---|---|---|
-| `sb-core` | std only | rendering, audio, input, files |
+| `sb-core` | std, `stacker` | rendering, audio, input, files |
 | `sb-runtime` | `sb-core` | SDL, OS APIs |
 | `sb-profiles` | `sb-core`, `sb-runtime` | SDL, OS APIs |
 | `sb-sdl` | everything | — |
