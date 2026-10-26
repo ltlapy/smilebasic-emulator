@@ -9,6 +9,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::Host;
 use sb_core::value::{Value, new_str};
 
+use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::Editor;
 use crate::font::Font;
@@ -22,6 +23,7 @@ use crate::text::{CONSOLE, SCREENS, TextScreen};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Animdef,
+    Backcolor,
     Chkfile,
     Clear,
     Cls,
@@ -46,6 +48,9 @@ pub(crate) enum Command {
     Gtarget,
     Gtri,
     Inkey,
+    Layer,
+    Lclip,
+    Lmatrix,
     Load,
     Locate,
     New,
@@ -81,10 +86,20 @@ pub(crate) enum Command {
     Spunlink,
     Spused,
     Spvar,
+    Tblend,
+    Tcolor,
+    Thide,
+    Thome,
+    Tlayer,
+    Tofs,
+    Trot,
+    Tscale,
+    Tshow,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
     ("ANIMDEF", Command::Animdef),
+    ("BACKCOLOR", Command::Backcolor),
     ("CHKFILE", Command::Chkfile),
     ("CLEAR", Command::Clear),
     ("CLS", Command::Cls),
@@ -109,6 +124,9 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GTARGET", Command::Gtarget),
     ("GTRI", Command::Gtri),
     ("INKEY$", Command::Inkey),
+    ("LAYER", Command::Layer),
+    ("LCLIP", Command::Lclip),
+    ("LMATRIX", Command::Lmatrix),
     ("LOAD", Command::Load),
     ("LOCATE", Command::Locate),
     ("NEW", Command::New),
@@ -144,6 +162,15 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPUNLINK", Command::Spunlink),
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
+    ("TBLEND", Command::Tblend),
+    ("TCOLOR", Command::Tcolor),
+    ("THIDE", Command::Thide),
+    ("THOME", Command::Thome),
+    ("TLAYER", Command::Tlayer),
+    ("TOFS", Command::Tofs),
+    ("TROT", Command::Trot),
+    ("TSCALE", Command::Tscale),
+    ("TSHOW", Command::Tshow),
 ];
 
 /// Program slots PRG0 to PRG5.
@@ -215,6 +242,18 @@ pub struct Runtime {
     pub(crate) notices: Vec<String>,
     /// The program last started, whose DATA commands like SPANIM read.
     pub(crate) program: Option<Rc<Compiled>>,
+    pub layers: [Layer; LAYERS],
+    /// BACKCOLOR: what shows behind every layer.
+    pub back_color: u32,
+    /// Where a layer that is composed is drawn first.
+    scratch: Framebuffer,
+}
+
+/// Something drawn on the frame.
+#[derive(Clone, Copy)]
+enum Element {
+    Text(usize),
+    Sprite(usize, sprites::Pose),
 }
 
 /// Reads DATA values in order; see [`Runtime::label_data`].
@@ -247,7 +286,7 @@ pub(crate) fn illegal() -> Error {
     ErrorKind::IllegalFunctionCall.into()
 }
 
-fn screen_id(v: &Value) -> Result<usize> {
+pub(crate) fn screen_id(v: &Value) -> Result<usize> {
     let id = v.to_int()?;
     usize::try_from(id)
         .ok()
@@ -286,7 +325,12 @@ impl Runtime {
     pub fn new(width: u32, height: u32, font: Font) -> Runtime {
         Runtime {
             text: (0..SCREENS)
-                .map(|_| TextScreen::new(width, height))
+                .map(|i| {
+                    let mut t = TextScreen::new(width, height);
+                    // The console starts in front of everything else.
+                    t.z = if i == CONSOLE { -4095 } else { 0 };
+                    t
+                })
                 .collect(),
             font,
             fb: Framebuffer::new(width, height),
@@ -308,6 +352,9 @@ impl Runtime {
             retry: false,
             notices: Vec::new(),
             program: None,
+            layers: [Layer::default(); LAYERS],
+            back_color: 0xFF00_0000,
+            scratch: Framebuffer::new(width, height),
         }
     }
 
@@ -328,6 +375,32 @@ impl Runtime {
             program,
             pos: pos as usize,
         })
+    }
+
+    /// The frame's size in pixels.
+    pub(crate) fn frame_size(&self) -> (u32, u32) {
+        (self.fb.width(), self.fb.height())
+    }
+
+    fn draw_element(&self, fb: &mut Framebuffer, e: Element, layer: &Layer, cursor: bool) {
+        let clip = layer.clip.as_ref();
+        match e {
+            Element::Text(i) => self.text[i].draw_placed(
+                fb,
+                &self.font,
+                &layer.matrix,
+                clip,
+                cursor && i == CONSOLE,
+            ),
+            Element::Sprite(i, pose) => sprites::draw_posed(
+                &self.sprites.list[i],
+                &pose,
+                &self.grp,
+                fb,
+                &layer.matrix,
+                clip,
+            ),
+        }
     }
 
     pub fn font(&self) -> &Font {
@@ -375,28 +448,52 @@ impl Runtime {
         self.keys.pop_front()
     }
 
-    /// Composes the current frame.
+    /// Composes the current frame: layers 7 to 0, each back to front.
     pub fn render(&mut self) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
-        self.fb.clear(0xFF00_0000);
-        // Back to front: sprites behind the text, the text screens, then
-        // sprites in front of it.
-        // UNVERIFIED: text screens sit at Z 0 and win ties, and are drawn
-        // in id order, until TOFS and layers exist.
-        let order = self.sprites.draw_order();
-        let (back, front): (Vec<_>, Vec<_>) = order.into_iter().partition(|(_, pose)| pose.z >= 0);
-        for (i, pose) in back {
-            sprites::draw_posed(&self.sprites.list[i], &pose, &self.grp, &mut self.fb);
+        let cursor = self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2);
+        // Within a layer, larger Z is further back; at equal Z text screens
+        // go behind sprites, and among either, higher ids go behind.
+        let mut elements: Vec<(i32, i32, u8, usize, Element)> = (self.text.iter().enumerate())
+            .filter(|(_, t)| t.visible)
+            .map(|(i, t)| (t.layer, t.z, 0, i, Element::Text(i)))
+            .collect();
+        for (i, pose) in self.sprites.draw_order() {
+            elements.push((pose.layer, pose.z, 1, i, Element::Sprite(i, pose)));
         }
-        for screen in &self.text {
-            screen.draw(&mut self.fb, &self.font);
+        elements.sort_by_key(|&(layer, z, kind, id, _)| {
+            (
+                std::cmp::Reverse(layer),
+                std::cmp::Reverse(z),
+                kind,
+                std::cmp::Reverse(id),
+            )
+        });
+        let mut fb = std::mem::replace(&mut self.fb, Framebuffer::new(0, 0));
+        let mut scratch = std::mem::replace(&mut self.scratch, Framebuffer::new(0, 0));
+        fb.clear(self.back_color | 0xFF00_0000);
+        for layer in (0..LAYERS as i32).rev() {
+            let mut in_layer = elements.iter().filter(|e| e.0 == layer).peekable();
+            if in_layer.peek().is_none() {
+                continue;
+            }
+            let settings = self.layers[layer as usize];
+            let target = match settings.compose {
+                Compose::Direct => &mut fb,
+                _ => {
+                    scratch.clear(0);
+                    &mut scratch
+                }
+            };
+            for &(_, _, _, _, element) in in_layer {
+                self.draw_element(target, element, &settings, cursor);
+            }
+            if settings.compose != Compose::Direct {
+                compose::compose(&mut fb, &scratch, settings.compose, settings.color);
+            }
         }
-        for (i, pose) in front {
-            sprites::draw_posed(&self.sprites.list[i], &pose, &self.grp, &mut self.fb);
-        }
-        if self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2) {
-            self.text[CONSOLE].draw_cursor(&mut self.fb);
-        }
+        self.fb = fb;
+        self.scratch = scratch;
         &self.fb
     }
 
@@ -536,6 +633,22 @@ impl Runtime {
                 | Command::Gtri,
                 _,
             ) => self.grp_command(command, args, want),
+            (
+                Command::Backcolor
+                | Command::Layer
+                | Command::Lclip
+                | Command::Lmatrix
+                | Command::Tblend
+                | Command::Tcolor
+                | Command::Thide
+                | Command::Thome
+                | Command::Tlayer
+                | Command::Tofs
+                | Command::Trot
+                | Command::Tscale
+                | Command::Tshow,
+                _,
+            ) => self.screen_command(command, args, want),
             (
                 Command::Animdef
                 | Command::Spanim

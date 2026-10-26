@@ -1,7 +1,9 @@
 //! Text screens 0-4. Screen 4 is the console that PRINT writes to.
 
+use crate::compose::{Affine, Placement, draw_image, over};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
+use crate::graphics::Clip;
 
 pub const SCREENS: usize = 5;
 pub const CONSOLE: usize = 4;
@@ -30,6 +32,18 @@ pub struct TextScreen {
     cursor: (u32, u32),
     color: u32,
     pub visible: bool,
+    /// TOFS, THOME, TROT and TSCALE place the screen like a sprite.
+    pub pos: (f64, f64),
+    /// Smaller is nearer the front: -4095 to 4095.
+    pub z: i32,
+    pub home: (f64, f64),
+    pub rot: f64,
+    pub scale: (f64, f64),
+    /// TCOLOR: multiplies the whole screen.
+    pub tint: u32,
+    /// TBLEND 1: additive.
+    pub add: bool,
+    pub layer: i32,
 }
 
 impl TextScreen {
@@ -45,6 +59,14 @@ impl TextScreen {
             cursor: (0, 0),
             color: WHITE,
             visible: true,
+            pos: (0.0, 0.0),
+            z: 0,
+            home: (0.0, 0.0),
+            rot: 0.0,
+            scale: (1.0, 1.0),
+            tint: WHITE,
+            add: false,
+            layer: 0,
         }
     }
 
@@ -160,51 +182,59 @@ impl TextScreen {
         self.cells[len - w..].fill(EMPTY);
     }
 
-    /// Fills the cursor's cell with the text color.
-    // UNVERIFIED: the shape of SmileBASIC's INPUT cursor.
-    pub fn draw_cursor(&self, fb: &mut Framebuffer) {
-        if !self.visible {
-            return;
-        }
-        let cs = self.char_size;
-        let (cx, cy) = self.cursor;
-        if cx >= self.width {
-            return;
-        }
-        for y in cy * cs..(cy + 1) * cs {
-            for x in cx * cs..(cx + 1) * cs {
-                if let Some(dst) = fb.get(x, y) {
-                    fb.set(x, y, blend(dst, self.color));
-                }
-            }
-        }
+    /// Draws the screen over `fb` where TOFS and its companions put it.
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
+        self.draw_placed(fb, font, &Affine::IDENTITY, None, false);
     }
 
-    /// Draws the screen over `fb`, blending each glyph's alpha.
-    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
+    /// Draws the screen through its layer's matrix and clipping, with the
+    /// INPUT cursor if `cursor` is set.
+    // UNVERIFIED: the shape of SmileBASIC's INPUT cursor (a cell filled
+    // with the text color).
+    pub fn draw_placed(
+        &self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        layer: &Affine,
+        clip: Option<&Clip>,
+        cursor: bool,
+    ) {
         if !self.visible {
             return;
         }
         let cs = self.char_size;
         let fs = self.font as u32;
-        for cy in 0..self.height {
-            for cx in 0..self.width {
-                let cell = self.cell(cx, cy);
-                // TODO: user-defined characters need graphic pages (TPAGE).
-                if cell.code == 0 || USER_CHARS.contains(&cell.code) {
-                    continue;
-                }
-                for py in 0..cs {
-                    for px in 0..cs {
-                        let src = font.pixel(cell.code, self.font, px * fs / cs, py * fs / cs);
-                        let (x, y) = (cx * cs + px, cy * cs + py);
-                        if let Some(dst) = fb.get(x, y) {
-                            fb.set(x, y, blend(dst, multiply(src, cell.color)));
-                        }
-                    }
-                }
-            }
+        let cursor = cursor.then_some(self.cursor);
+        if cursor.is_none() && self.cells.iter().all(|c| c.code == 0) {
+            return;
         }
+        let place = Placement {
+            matrix: Affine::place(self.pos, self.home, self.rot, self.scale).then(layer),
+            clip,
+            add: self.add,
+        };
+        let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
+        draw_image(fb, &place, w, h, |x, y| {
+            let (x, y) = (x as u32, y as u32);
+            let (cx, cy) = (x / cs, y / cs);
+            let cell = self.cell(cx, cy);
+            // TODO: user-defined characters need graphic pages (TPAGE).
+            let glyph = if cell.code == 0 || USER_CHARS.contains(&cell.code) {
+                0
+            } else {
+                let (px, py) = (x % cs, y % cs);
+                multiply(
+                    font.pixel(cell.code, self.font, px * fs / cs, py * fs / cs),
+                    cell.color,
+                )
+            };
+            let glyph = if cursor == Some((cx, cy)) {
+                over(glyph, self.color)
+            } else {
+                glyph
+            };
+            multiply(glyph, self.tint)
+        });
     }
 }
 
@@ -217,14 +247,6 @@ fn multiply(a: u32, b: u32) -> u32 {
     let (a, b) = (channels(a), channels(b));
     let c: [u8; 4] = std::array::from_fn(|i| (a[i] * b[i] / 255) as u8);
     u32::from_be_bytes(c)
-}
-
-/// `src` over `dst`; the result keeps `dst`'s alpha.
-fn blend(dst: u32, src: u32) -> u32 {
-    let (d, s) = (channels(dst), channels(src));
-    let a = s[0];
-    let mix = |i: usize| ((s[i] * a + d[i] * (255 - a)) / 255) as u8;
-    u32::from_be_bytes([d[0] as u8, mix(1), mix(2), mix(3)])
 }
 
 #[cfg(test)]

@@ -7,8 +7,9 @@ use sb_core::value::Value;
 
 use crate::anim::{self, Anim, Target, Track};
 use crate::collision::{Body, Collision, HitInfo, Search};
+use crate::compose::{Affine, Placement, draw_image};
 use crate::framebuffer::Framebuffer;
-use crate::graphics::{GRP_SIZE, Graphics, PAGES, multiply};
+use crate::graphics::{Clip, GRP_SIZE, Graphics, PAGES, multiply};
 
 pub const SPRITES: usize = 4096;
 pub const DEFS: usize = 8192;
@@ -458,8 +459,8 @@ impl Sprites {
         None
     }
 
-    /// Shown sprites with their poses, back to front.
-    // UNVERIFIED: among equal Z, lower ids are drawn in front.
+    /// Shown sprites with their poses, back to front: among equal Z,
+    /// lower ids are in front.
     pub fn draw_order(&self) -> Vec<(usize, Pose)> {
         let mut shown: Vec<(usize, Pose)> = (0..SPRITES)
             .filter(|&i| self.list[i].used)
@@ -472,11 +473,11 @@ impl Sprites {
 }
 
 /// The page pixel a sprite shows at `(x, y)` of its own rectangle (before
-/// rotation and flipping), or 0 off the page.
-fn sample(grp: &Graphics, page: i32, x: i32, y: i32) -> u32 {
+/// rotation and flipping). GRP-1 is white everywhere; off a page is
+/// transparent.
+pub fn sample(grp: &Graphics, page: i32, x: i32, y: i32) -> u32 {
     let Ok(p) = usize::try_from(page) else {
-        // UNVERIFIED: what page -1 shows.
-        return 0;
+        return 0xFFFF_FFFF;
     };
     if p >= PAGES {
         return 0;
@@ -488,16 +489,21 @@ fn sample(grp: &Graphics, page: i32, x: i32, y: i32) -> u32 {
     }
 }
 
-/// Draws one sprite over the frame, as if it had no parent.
+/// Draws one sprite over the frame, as if it had no parent or layer.
 pub fn draw(s: &Sprite, grp: &Graphics, fb: &mut Framebuffer) {
-    draw_posed(s, &Pose::of(s), grp, fb);
+    draw_posed(s, &Pose::of(s), grp, fb, &Affine::IDENTITY, None);
 }
 
-/// Draws one sprite over the frame in the given pose.
-pub fn draw_posed(s: &Sprite, pose: &Pose, grp: &Graphics, fb: &mut Framebuffer) {
-    if s.w <= 0 || s.h <= 0 || pose.scale.0 == 0.0 || pose.scale.1 == 0.0 {
-        return;
-    }
+/// Draws one sprite over the frame in the given pose, then through its
+/// layer's matrix and clipping.
+pub fn draw_posed(
+    s: &Sprite,
+    pose: &Pose,
+    grp: &Graphics,
+    fb: &mut Framebuffer,
+    layer: &Affine,
+    clip: Option<&Clip>,
+) {
     // The shown rectangle swaps sides for quarter turns.
     let quarter = s.attr & attr::ROTATION;
     let (bw, bh) = if quarter % 2 == 1 {
@@ -505,103 +511,28 @@ pub fn draw_posed(s: &Sprite, pose: &Pose, grp: &Graphics, fb: &mut Framebuffer)
     } else {
         (s.w, s.h)
     };
-    let (sin, cos) = pose.rot.to_radians().sin_cos();
-    let (sx, sy) = pose.scale;
-    // Screen position of a point of the shown rectangle.
-    let to_screen = |lx: f64, ly: f64| {
-        let (dx, dy) = ((lx - s.home.0) * sx, (ly - s.home.1) * sy);
-        (
-            pose.pos.0 + dx * cos - dy * sin,
-            pose.pos.1 + dx * sin + dy * cos,
-        )
+    let place = Placement {
+        matrix: Affine::place(pose.pos, s.home, pose.rot, pose.scale).then(layer),
+        clip,
+        add: s.attr & attr::ADD != 0,
     };
-    let corners = [
-        to_screen(0.0, 0.0),
-        to_screen(f64::from(bw), 0.0),
-        to_screen(0.0, f64::from(bh)),
-        to_screen(f64::from(bw), f64::from(bh)),
-    ];
-    let fw = f64::from(fb.width());
-    let fh = f64::from(fb.height());
-    let x0 = corners
-        .iter()
-        .map(|c| c.0)
-        .fold(f64::MAX, f64::min)
-        .max(0.0)
-        .floor();
-    let x1 = corners
-        .iter()
-        .map(|c| c.0)
-        .fold(f64::MIN, f64::max)
-        .min(fw)
-        .ceil();
-    let y0 = corners
-        .iter()
-        .map(|c| c.1)
-        .fold(f64::MAX, f64::min)
-        .max(0.0)
-        .floor();
-    let y1 = corners
-        .iter()
-        .map(|c| c.1)
-        .fold(f64::MIN, f64::max)
-        .min(fh)
-        .ceil();
-    let add = s.attr & attr::ADD != 0;
-    for py in y0 as u32..y1 as u32 {
-        for px in x0 as u32..x1 as u32 {
-            // Back from the pixel's center to the shown rectangle.
-            let (dx, dy) = (
-                f64::from(px) + 0.5 - pose.pos.0,
-                f64::from(py) + 0.5 - pose.pos.1,
-            );
-            let lx = (dx * cos + dy * sin) / sx + s.home.0;
-            let ly = (-dx * sin + dy * cos) / sy + s.home.1;
-            if lx < 0.0 || ly < 0.0 || lx >= f64::from(bw) || ly >= f64::from(bh) {
-                continue;
-            }
-            let (mut lx, mut ly) = (lx as i32, ly as i32);
-            // UNVERIFIED: flips apply to the shown rectangle, then the
-            // quarter turn picks the image pixel.
-            if s.attr & attr::REVH != 0 {
-                lx = bw - 1 - lx;
-            }
-            if s.attr & attr::REVV != 0 {
-                ly = bh - 1 - ly;
-            }
-            let (ix, iy) = match quarter {
-                0 => (lx, ly),
-                1 => (ly, s.h - 1 - lx),
-                2 => (s.w - 1 - lx, s.h - 1 - ly),
-                _ => (s.w - 1 - ly, lx),
-            };
-            let src = multiply(sample(grp, s.page, s.u + ix, s.v + iy), pose.color);
-            let a = src >> 24;
-            if a == 0 {
-                continue;
-            }
-            let Some(dst) = fb.get(px, py) else { continue };
-            let [_, sr, sg, sb] = src.to_be_bytes().map(u32::from);
-            let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-            let mix = |s: u32, d: u32| {
-                if add {
-                    (d + s * a / 255).min(255)
-                } else {
-                    (s * a + d * (255 - a)) / 255
-                }
-            };
-            fb.set(
-                px,
-                py,
-                u32::from_be_bytes([
-                    da as u8,
-                    mix(sr, dr) as u8,
-                    mix(sg, dg) as u8,
-                    mix(sb, db) as u8,
-                ]),
-            );
+    draw_image(fb, &place, bw, bh, |mut lx, mut ly| {
+        // UNVERIFIED: flips apply to the shown rectangle, then the
+        // quarter turn picks the image pixel.
+        if s.attr & attr::REVH != 0 {
+            lx = bw - 1 - lx;
         }
-    }
+        if s.attr & attr::REVV != 0 {
+            ly = bh - 1 - ly;
+        }
+        let (ix, iy) = match quarter {
+            0 => (lx, ly),
+            1 => (ly, s.h - 1 - lx),
+            2 => (s.w - 1 - lx, s.h - 1 - ly),
+            _ => (s.w - 1 - ly, lx),
+        };
+        multiply(sample(grp, s.page, s.u + ix, s.v + iy), pose.color)
+    });
 }
 
 #[cfg(test)]

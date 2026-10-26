@@ -5,8 +5,8 @@ Windows, macOS and Linux. Support for SmileBASIC 3 and Petit Computer is
 planned.
 
 Early work: the language, the console, the program editor, file commands,
-graphic pages and sprites (with animation and collisions) run. Sound,
-controllers and background layers are not implemented yet.
+graphic pages, sprites (with animation and collisions), text screen
+placement and layers run. Sound and controllers are not implemented yet.
 
 ## Building
 

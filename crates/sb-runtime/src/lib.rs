@@ -4,6 +4,7 @@
 
 pub mod anim;
 pub mod collision;
+pub mod compose;
 pub mod confirm;
 pub mod editor;
 mod files;
@@ -16,6 +17,7 @@ pub mod nso;
 pub mod resources;
 pub mod runtime;
 pub mod sbfile;
+mod screen;
 pub mod settings;
 mod sp;
 pub mod sprites;
