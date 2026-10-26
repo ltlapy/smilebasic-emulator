@@ -10,8 +10,10 @@ pub struct Program {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stmt {
     pub kind: StmtKind,
-    /// Source line, used for error messages.
+    /// Where the statement starts, for error messages and for the editor
+    /// to show: the 1-based line, and column in characters.
     pub line: u32,
+    pub col: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]

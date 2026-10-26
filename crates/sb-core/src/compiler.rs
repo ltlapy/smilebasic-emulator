@@ -31,6 +31,7 @@ pub fn compile(program: &Program, host: &dyn Host) -> Result<Compiled> {
         loops: Vec::new(),
         patches: Vec::new(),
         line: 0,
+        col: 0,
         temp_count: 0,
     };
     c.prepare(program)?;
@@ -78,6 +79,7 @@ struct Compiler<'h> {
     /// Jumps to labels, resolved when their scope is finished.
     patches: Vec<(usize, String, u32)>,
     line: u32,
+    col: u32,
     temp_count: u32,
 }
 
@@ -118,18 +120,21 @@ impl Compiler<'_> {
 
     fn prepare(&mut self, program: &Program) -> Result<()> {
         for stmt in &program.stmts {
-            self.line = stmt.line;
+            (self.line, self.col) = (stmt.line, stmt.col);
             match &stmt.kind {
                 StmtKind::Option(o) if o == "STRICT" => self.strict = true,
                 StmtKind::Option(o) if o == "DEFINT" => self.out.default_int = true,
                 StmtKind::Option(o) => {
-                    return Err(err(ErrorKind::SyntaxError, format!("OPTION {o}")).at(stmt.line));
+                    return Err(err(ErrorKind::SyntaxError, format!("OPTION {o}"))
+                        .at_pos(stmt.line, stmt.col));
                 }
                 StmtKind::Def(def) => {
                     let name = call_name(&def.name);
                     let index = self.out.defs.len() as u32;
                     if self.out.def_names.insert(name.clone(), index).is_some() {
-                        return Err(err(ErrorKind::DuplicateFunction, name).at(stmt.line));
+                        return Err(
+                            err(ErrorKind::DuplicateFunction, name).at_pos(stmt.line, stmt.col)
+                        );
                     }
                     self.out.defs.push(DefInfo {
                         name,
@@ -176,8 +181,8 @@ impl Compiler<'_> {
         data_labels: &mut HashMap<String, u32>,
     ) -> Result<()> {
         for stmt in stmts {
-            self.line = stmt.line;
-            let at = |e: Error| e.at(stmt.line);
+            (self.line, self.col) = (stmt.line, stmt.col);
+            let at = |e: Error| e.at_pos(stmt.line, stmt.col);
             match &stmt.kind {
                 StmtKind::Label(name) => {
                     data_labels
@@ -299,6 +304,7 @@ impl Compiler<'_> {
     fn emit(&mut self, op: Op) -> usize {
         self.out.code.push(op);
         self.out.lines.push(self.line);
+        self.out.cols.push(self.col);
         self.out.code.len() - 1
     }
 
@@ -349,7 +355,8 @@ impl Compiler<'_> {
                 None => &self.out.labels,
             };
             let target = *labels.get(&label).ok_or_else(|| {
-                err(ErrorKind::UndefinedLabel, format!("@{label}")).at(self.out.lines[at])
+                err(ErrorKind::UndefinedLabel, format!("@{label}"))
+                    .at_pos(self.out.lines[at], self.out.cols[at])
             })?;
             self.patch(at, target);
         }
@@ -436,9 +443,9 @@ impl Compiler<'_> {
     }
 
     fn stmt(&mut self, stmt: &Stmt) -> Result<()> {
-        self.line = stmt.line;
-        let line = stmt.line;
-        self.stmt_kind(&stmt.kind).map_err(|e| e.at(line))
+        (self.line, self.col) = (stmt.line, stmt.col);
+        self.stmt_kind(&stmt.kind)
+            .map_err(|e| e.at_pos(stmt.line, stmt.col))
     }
 
     fn stmt_kind(&mut self, kind: &StmtKind) -> Result<()> {
@@ -1150,7 +1157,8 @@ impl Compiler<'_> {
                 .contains_key(&k)
             {
                 return Err(
-                    err(ErrorKind::DuplicateVariable, full_name(&v.name, v.suffix)).at(self.line),
+                    err(ErrorKind::DuplicateVariable, full_name(&v.name, v.suffix))
+                        .at_pos(self.line, self.col),
                 );
             }
             self.local_slot(k.clone());

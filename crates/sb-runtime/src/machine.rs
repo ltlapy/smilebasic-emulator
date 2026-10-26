@@ -41,9 +41,9 @@ pub struct Machine {
     editing: bool,
     /// The slot whose program is running, if one is.
     running_slot: Option<usize>,
-    /// Where the last program error happened, for LIST ERR: the slot and
-    /// line.
-    last_error: Option<(usize, u32)>,
+    /// Where the last program error happened, for LIST ERR and F4: the
+    /// slot, line and column of the statement.
+    last_error: Option<(usize, u32, u32)>,
 }
 
 /// What a direct-mode LIST asks for.
@@ -165,7 +165,9 @@ impl Machine {
     /// Opens the editor at the last error, or where it was left.
     fn list_error(&mut self) {
         match self.last_error.take() {
-            Some((slot, line)) => self.open_editor(slot, Some(line as usize)),
+            Some((slot, line, col)) => {
+                self.open_editor(slot, Some((line as usize, col as usize)));
+            }
             None => self.open_editor(self.editor.slot(), None),
         }
     }
@@ -185,8 +187,8 @@ impl Machine {
         self.open_editor(slot, None);
     }
 
-    fn open_editor(&mut self, slot: usize, line: Option<usize>) {
-        self.editor.open(slot, &self.rt.slots[slot], line);
+    fn open_editor(&mut self, slot: usize, at: Option<(usize, usize)>) {
+        self.editor.open(slot, &self.rt.slots[slot], at);
         self.editing = true;
     }
 
@@ -327,7 +329,8 @@ impl Machine {
             Some(Ok(list)) => {
                 match list {
                     List::At(slot, line) => {
-                        self.open_editor(slot.unwrap_or(self.editor.slot()), line)
+                        let at = line.map(|line| (line, 0));
+                        self.open_editor(slot.unwrap_or(self.editor.slot()), at)
                     }
                     List::Error => self.list_error(),
                 }
@@ -356,7 +359,7 @@ impl Machine {
                 self.vsync_at = self.frame + 1;
             }
             Err(e) => {
-                self.last_error = slot.map(|slot| (slot, e.line)).or(self.last_error);
+                self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
                 self.report(&e);
                 self.ready();
             }
@@ -369,7 +372,7 @@ impl Machine {
         self.vars = vm.globals().collect();
         if let Some(e) = error {
             if let Some(slot) = self.running_slot {
-                self.last_error = Some((slot, e.line));
+                self.last_error = Some((slot, e.line, e.col));
             }
             self.report(&e);
         }

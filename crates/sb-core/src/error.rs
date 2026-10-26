@@ -61,6 +61,9 @@ pub struct Error {
     pub kind: ErrorKind,
     /// Source line; 0 until the VM or compiler fills it in.
     pub line: u32,
+    /// Column of the statement (or for syntax errors, the token) where it
+    /// happened, in characters; 0 if unknown.
+    pub col: u32,
     /// Extra context for developers, e.g. which name was undefined.
     pub detail: Option<String>,
 }
@@ -70,6 +73,7 @@ impl Error {
         Error {
             kind,
             line: 0,
+            col: 0,
             detail: None,
         }
     }
@@ -78,6 +82,7 @@ impl Error {
         Error {
             kind,
             line: 0,
+            col: 0,
             detail: Some(detail.into()),
         }
     }
@@ -85,6 +90,14 @@ impl Error {
     pub fn at(mut self, line: u32) -> Self {
         if self.line == 0 {
             self.line = line;
+        }
+        self
+    }
+
+    /// Fills in the line and column, if not known yet.
+    pub fn at_pos(mut self, line: u32, col: u32) -> Self {
+        if self.line == 0 {
+            (self.line, self.col) = (line, col);
         }
         self
     }

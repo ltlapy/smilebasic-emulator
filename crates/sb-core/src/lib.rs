@@ -29,6 +29,7 @@ pub fn compile(source: &str, host: &dyn host::Host) -> error::Result<bytecode::C
         Error {
             kind,
             line: e.span.line,
+            col: e.span.col,
             detail: e.detail(),
         }
     })?;

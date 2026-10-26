@@ -278,9 +278,9 @@ impl Parser {
     // ---- statements ----
 
     fn statement(&mut self, top_level: bool) -> PResult<Stmt> {
-        let line = self.span().line;
+        let Span { line, col } = self.span();
         let kind = self.nested(|p| p.statement_kind(top_level))?;
-        Ok(Stmt { kind, line })
+        Ok(Stmt { kind, line, col })
     }
 
     fn statement_kind(&mut self, top_level: bool) -> PResult<StmtKind> {
@@ -620,12 +620,13 @@ impl Parser {
         let cond = self.expr()?;
         // `IF X GOTO @L` jumps without THEN, and is always one line.
         if self.eat_keyword(Keyword::Goto) {
-            let line = self.span().line;
+            let Span { line, col } = self.span();
             branches.push((
                 cond,
                 vec![Stmt {
                     kind: StmtKind::Goto(self.target()?),
                     line,
+                    col,
                 }],
             ));
             let otherwise = self.one_line_else()?;
@@ -680,11 +681,12 @@ impl Parser {
     /// Statements after a one-line THEN or ELSE; a bare label means GOTO.
     fn one_line_branch(&mut self) -> PResult<Vec<Stmt>> {
         if let TokenKind::Label(name) = self.peek().clone() {
-            let line = self.span().line;
+            let Span { line, col } = self.span();
             self.advance();
             return Ok(vec![Stmt {
                 kind: StmtKind::Goto(Target::Label(name)),
                 line,
+                col,
             }]);
         }
         self.line_stmts()

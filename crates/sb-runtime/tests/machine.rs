@@ -157,16 +157,18 @@ fn list_edits_a_slot_and_f4_returns() {
 #[test]
 fn f4_and_list_err_show_the_error() {
     let mut m = machine();
-    m.set_slot(1, "?1\n?2\n?1/0".to_string());
+    // The cursor goes to the start of the statement that failed.
+    m.set_slot(1, "?1\n?2\nA=0:?1/A".to_string());
     enter(&mut m, "run 1");
     m.toggle_editor();
-    assert_eq!((m.editor.slot(), m.editor.cursor()), (1, (3, 0)));
+    assert_eq!((m.editor.slot(), m.editor.cursor()), (1, (3, 4)));
     // The error is shown once; later, the editor opens where it was left.
     m.toggle_editor();
-    m.set_slot(0, "?(".to_string());
+    // Syntax errors point at the token.
+    m.set_slot(0, "A=1:?(".to_string());
     enter(&mut m, "run");
     enter(&mut m, "list err");
-    assert_eq!((m.editor.slot(), m.editor.cursor()), (0, (1, 0)));
+    assert_eq!((m.editor.slot(), m.editor.cursor()), (0, (1, 6)));
     m.toggle_editor();
     m.toggle_editor();
     assert_eq!(m.editor.slot(), 0);

@@ -112,16 +112,16 @@ impl Editor {
         lines.join("\n")
     }
 
-    /// Starts editing `source` from `slot`, at a 1-based line or where the
-    /// slot was left.
-    pub fn open(&mut self, slot: usize, source: &str, line: Option<usize>) {
+    /// Starts editing `source` from `slot`, at a 1-based line and column
+    /// (0 for the start of the line), or where the slot was left.
+    pub fn open(&mut self, slot: usize, source: &str, at: Option<(usize, usize)>) {
         self.slot = slot;
         self.lines = split_lines(source);
         self.modified = false;
         self.view = self.saved[slot];
-        if let Some(line) = line {
+        if let Some((line, col)) = at {
             self.view.line = line.saturating_sub(1);
-            self.view.col = 0;
+            self.view.col = col.saturating_sub(1);
         }
         self.view.line = self.view.line.min(self.lines.len() - 1);
         self.view.col = self.view.col.min(self.lines[self.view.line].len());
@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(e.cursor(), (3, 0));
         e.open(0, "A", None);
         assert_eq!(e.cursor(), (1, 0), "clamped to a shorter program");
-        e.open(0, "A\nB\nC", Some(2));
+        e.open(0, "A\nB\nC", Some((2, 0)));
         assert_eq!(e.cursor(), (2, 0));
     }
 

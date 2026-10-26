@@ -210,6 +210,11 @@ impl Vm {
         self.program.lines.get(self.pc).copied().unwrap_or(0)
     }
 
+    /// Column of the statement the next instruction belongs to.
+    pub fn col(&self) -> u32 {
+        self.program.cols.get(self.pc).copied().unwrap_or(0)
+    }
+
     pub fn is_ended(&self) -> bool {
         self.ended
     }
@@ -243,7 +248,8 @@ impl Vm {
                 Err(e) => {
                     self.ended = true;
                     let line = self.program.lines.get(pc).copied().unwrap_or(0);
-                    return Err(e.at(line));
+                    let col = self.program.cols.get(pc).copied().unwrap_or(0);
+                    return Err(e.at_pos(line, col));
                 }
             }
         }

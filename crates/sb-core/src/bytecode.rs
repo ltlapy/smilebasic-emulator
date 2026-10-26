@@ -217,6 +217,8 @@ pub struct Compiled {
     pub code: Vec<Op>,
     /// Source line of each instruction.
     pub lines: Vec<u32>,
+    /// Column of the statement each instruction belongs to.
+    pub cols: Vec<u32>,
     pub strings: Vec<Str>,
     pub globals: Vec<VarInfo>,
     pub labels: HashMap<String, Addr>,
