@@ -6,10 +6,11 @@ use sb_runtime::confirm::{Confirm, unsaved_lines};
 use sb_runtime::font::Font;
 use sdl3::keyboard::Keycode;
 
-use crate::ui::{BACKGROUND, CHAR, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, text_width};
+use crate::ui::{
+    BACKGROUND, BORDER, CHAR, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, text_width,
+};
 
 const LINE: u32 = 24;
-const BORDER: u32 = 0xFF80_8080;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {

@@ -12,6 +12,7 @@ pub const BACKGROUND: u32 = 0xE818_1818;
 pub const HIGHLIGHT: u32 = 0xFF2F_5FAF;
 pub const TEXT: u32 = 0xFFFF_FFFF;
 pub const DISABLED: u32 = 0xFF80_8080;
+pub const BORDER: u32 = 0xFF80_8080;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
@@ -40,6 +41,27 @@ pub fn fill(fb: &mut Framebuffer, r: Rect, color: u32) {
         for x in r.x..r.x + r.w {
             fb.set(x, y, color);
         }
+    }
+}
+
+/// Draws a two-pixel frame just inside `r`.
+pub fn outline(fb: &mut Framebuffer, r: Rect, color: u32) {
+    let w = 2.min(r.w).min(r.h);
+    for side in [
+        Rect { h: w, ..r },
+        Rect {
+            y: r.y + r.h - w,
+            h: w,
+            ..r
+        },
+        Rect { w, ..r },
+        Rect {
+            x: r.x + r.w - w,
+            w,
+            ..r
+        },
+    ] {
+        fill(fb, side, color);
     }
 }
 
