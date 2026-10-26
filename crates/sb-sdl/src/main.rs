@@ -156,6 +156,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 } => match menu.click(to_display(x, y), machine.is_running()) {
                     Click::Chosen(Action::Quit) => break 'running,
                     Click::Chosen(Action::Stop) => machine.stop(),
+                    Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Consumed | Click::Ignored => {}
                 },
@@ -171,6 +172,22 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) =>
                 {
                     machine.stop()
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::F4),
+                    ..
+                } => machine.toggle_editor(),
+                Event::KeyDown {
+                    keycode: Some(key),
+                    keymod,
+                    ..
+                } if machine.is_editing() && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) => {
+                    match key {
+                        Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
+                        Keycode::Home => machine.editor.file_top(),
+                        Keycode::End => machine.editor.file_end(),
+                        _ => {}
+                    }
                 }
                 Event::KeyDown {
                     keycode: Some(key), ..

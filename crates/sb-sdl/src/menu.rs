@@ -21,9 +21,11 @@ const DISABLED: u32 = 0xFF80_8080;
 pub enum Action {
     Quit,
     Stop,
+    ToggleEditor,
     ToggleUpperCase,
     ToggleCtrlC,
     ToggleHalfWidth,
+    ToggleWrap,
 }
 
 impl Action {
@@ -33,7 +35,8 @@ impl Action {
             Action::ToggleUpperCase => Some(settings.upper_case_letters),
             Action::ToggleCtrlC => Some(settings.ctrl_c_stops),
             Action::ToggleHalfWidth => Some(settings.half_width_on_save),
-            Action::Quit | Action::Stop => None,
+            Action::ToggleWrap => Some(settings.editor_wrap),
+            Action::Quit | Action::Stop | Action::ToggleEditor => None,
         }
     }
 
@@ -43,9 +46,19 @@ impl Action {
             Action::ToggleUpperCase => &mut settings.upper_case_letters,
             Action::ToggleCtrlC => &mut settings.ctrl_c_stops,
             Action::ToggleHalfWidth => &mut settings.half_width_on_save,
-            Action::Quit | Action::Stop => return,
+            Action::ToggleWrap => &mut settings.editor_wrap,
+            Action::Quit | Action::Stop | Action::ToggleEditor => return,
         };
         *flag = !*flag;
+    }
+
+    /// Stop needs a running program; the editor cannot open during one.
+    fn enabled(self, running: bool) -> bool {
+        match self {
+            Action::Stop => running,
+            Action::ToggleEditor => !running,
+            _ => true,
+        }
     }
 }
 
@@ -69,10 +82,16 @@ const MENUS: &[Menu] = &[
     },
     Menu {
         title: "Program",
-        items: &[Item {
-            label: "Stop (Pause/Break)",
-            action: Action::Stop,
-        }],
+        items: &[
+            Item {
+                label: "Stop (Pause/Break)",
+                action: Action::Stop,
+            },
+            Item {
+                label: "Editor/Direct (F4)",
+                action: Action::ToggleEditor,
+            },
+        ],
     },
     Menu {
         title: "Options",
@@ -88,6 +107,10 @@ const MENUS: &[Menu] = &[
             Item {
                 label: "Half-width on SAVE",
                 action: Action::ToggleHalfWidth,
+            },
+            Item {
+                label: "Wrap lines in editor (Ctrl+W)",
+                action: Action::ToggleWrap,
             },
         ],
     },
@@ -184,12 +207,12 @@ impl MenuBar {
     }
 
     /// A left click at a display position. `running` tells whether a
-    /// program is running, which enables Stop.
+    /// program is running, which enables Stop and disables the editor.
     pub fn click(&mut self, at: (i32, i32), running: bool) -> Click {
         if let Some(menu) = self.open {
             for (i, item) in MENUS[menu].items.iter().enumerate() {
                 if item_rect(menu, i).contains(at) {
-                    if item.action == Action::Stop && !running {
+                    if !item.action.enabled(running) {
                         return Click::Consumed;
                     }
                     self.open = None;
@@ -237,7 +260,7 @@ impl MenuBar {
         for (i, item) in MENUS[open].items.iter().enumerate() {
             let r = item_rect(open, i);
             let hovered = self.mouse.is_some_and(|m| r.contains(m));
-            let enabled = item.action != Action::Stop || running;
+            let enabled = item.action.enabled(running);
             fill(
                 fb,
                 r,
@@ -328,6 +351,12 @@ mod tests {
         assert_eq!(
             bar.click(at(item_rect(1, 0)), true),
             Click::Chosen(Action::Stop)
+        );
+        bar.click(at(title_rect(1)), true);
+        assert_eq!(bar.click(at(item_rect(1, 1)), true), Click::Consumed);
+        assert_eq!(
+            bar.click(at(item_rect(1, 1)), false),
+            Click::Chosen(Action::ToggleEditor)
         );
     }
 

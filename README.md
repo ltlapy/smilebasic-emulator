@@ -46,9 +46,15 @@ mode, typed lines run immediately; `RUN [slot]`, `NEW [slot]` and `CLEAR` work
 on the program slots PRG0-PRG5. Letters type in upper case unless Shift or
 Caps Lock is on. Pause/Break stops the running program.
 
+F4 switches between direct mode and the program editor. The first F4 after
+a program error opens the editor at the error, as `LIST ERR` does; `LIST`,
+`LIST line` and `LIST slot:line` open it at a given place. In the editor,
+Insert switches to overwriting, Ctrl+Home and Ctrl+End jump to the start and
+end of the program, and Ctrl+W wraps long lines instead of scrolling sideways.
+
 Move the mouse to the top edge of the window for the menu bar: it can stop
-the program and switch the options above (upper-case letters, Ctrl+C to stop,
-half-width on SAVE).
+the program, open the editor and switch the options above (upper-case
+letters, Ctrl+C to stop, half-width on SAVE, wrapping in the editor).
 
 `LOAD`, `SAVE`, `FILES`, `PROJECT`, `CHKFILE`, `DELETE` and `RENAME` work on
 project folders in the emulator's data directory (`projects/`; the workspace
