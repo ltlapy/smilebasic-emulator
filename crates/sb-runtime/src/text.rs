@@ -1,5 +1,7 @@
 //! Text screens 0-4. Screen 4 is the console that PRINT writes to.
 
+use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
+
 use crate::compose::{Affine, Placement, draw_image, over};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
@@ -52,6 +54,28 @@ const EMPTY: Cell = Cell {
     attr: 0,
 };
 
+impl Cell {
+    /// TARRAY's two elements: the attribute over the character code, and
+    /// the color.
+    pub fn to_ints(self) -> [i32; 2] {
+        [
+            i32::from(self.attr) << 16 | i32::from(self.code),
+            self.color as i32,
+        ]
+    }
+
+    pub fn from_ints([code, color]: [i32; 2]) -> Cell {
+        Cell {
+            code: code as u16,
+            color: color as u32,
+            attr: (code >> 16) as u8 & 0xF,
+        }
+    }
+}
+
+/// A rectangle of cells: `x, y, width, height`.
+pub type CellRect = (i32, i32, i32, i32);
+
 pub struct TextScreen {
     /// TSCREEN's font type: 8 or 16 for the normal font at that size, or
     /// up to 64 for user-defined characters only.
@@ -81,6 +105,8 @@ pub struct TextScreen {
     /// TBLEND 1: additive.
     pub add: bool,
     pub layer: i32,
+    /// TARRAY's array, kept up to date with every cell written.
+    array: Option<ArrayRef>,
 }
 
 impl TextScreen {
@@ -107,6 +133,7 @@ impl TextScreen {
             tint: WHITE,
             add: false,
             layer: 0,
+            array: None,
         }
     }
 
@@ -126,6 +153,8 @@ impl TextScreen {
         (self.width, self.height) = (width, height);
         self.cells = vec![EMPTY; (width * height) as usize];
         self.cursor = (0, 0);
+        // UNVERIFIED: an array from before stops following the screen.
+        self.array = None;
     }
 
     pub fn cursor(&self) -> (u32, u32) {
@@ -144,22 +173,110 @@ impl TextScreen {
         self.cells[(y * self.width + x) as usize]
     }
 
-    /// Writes one cell without moving the cursor; off-screen cells are
-    /// ignored.
+    /// The cell at `(x, y)`, or `None` off the screen.
+    pub fn cell_at(&self, x: i32, y: i32) -> Option<Cell> {
+        self.index(x, y).map(|i| self.cells[i])
+    }
+
+    fn index(&self, x: i32, y: i32) -> Option<usize> {
+        let x = u32::try_from(x).ok().filter(|&x| x < self.width)?;
+        let y = u32::try_from(y).ok().filter(|&y| y < self.height)?;
+        Some((y * self.width + x) as usize)
+    }
+
+    fn set(&mut self, i: usize, cell: Cell) {
+        self.cells[i] = cell;
+        if let Some(array) = &self.array
+            && let ArrayData::Int(v) = &mut array.borrow_mut().data
+            && v.len() == self.cells.len() * 2
+        {
+            v[i * 2..i * 2 + 2].copy_from_slice(&cell.to_ints());
+        }
+    }
+
+    /// Writes one cell; off-screen cells are ignored.
+    pub fn set_cell(&mut self, x: i32, y: i32, cell: Cell) {
+        if let Some(i) = self.index(x, y) {
+            self.set(i, cell);
+        }
+    }
+
+    /// Writes one cell with the current ATTR without moving the cursor;
+    /// off-screen cells are ignored.
     pub fn put_at(&mut self, x: u32, y: u32, code: u16, color: u32) {
-        if x < self.width && y < self.height {
-            self.cells[(y * self.width + x) as usize] = Cell {
-                code,
-                color,
-                attr: self.attr,
-            };
+        let attr = self.attr;
+        self.set_cell(x as i32, y as i32, Cell { code, color, attr });
+    }
+
+    /// The cells of `rect` row by row, empty where it leaves the screen.
+    pub fn save(&self, (x, y, w, h): CellRect) -> Vec<Cell> {
+        let mut cells = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
+        for cy in y..y + h {
+            for cx in x..x + w {
+                cells.push(self.cell_at(cx, cy).unwrap_or(EMPTY));
+            }
+        }
+        cells
+    }
+
+    /// Writes row-by-row `cells` into `rect`, skipping what leaves the
+    /// screen.
+    pub fn load(&mut self, (x, y, w, _): CellRect, cells: &[Cell]) {
+        for (i, &cell) in cells.iter().enumerate() {
+            let i = i as i32;
+            self.set_cell(x + i % w, y + i / w, cell);
+        }
+    }
+
+    /// TARRAY: an array of the cells that follows every write to them;
+    /// TUPDATE brings writes to the array back.
+    pub fn array(&mut self) -> ArrayRef {
+        if let Some(array) = &self.array {
+            return array.clone();
+        }
+        let mut array = Array::new(
+            ElemType::Int,
+            vec![self.height as usize, self.width as usize * 2],
+        );
+        array.data = ArrayData::Int(self.cells.iter().flat_map(|c| c.to_ints()).collect());
+        let array = ArrayRef::new(array.into());
+        self.array = Some(array.clone());
+        array
+    }
+
+    /// TUPDATE: the cells of `rect` from TARRAY's array.
+    pub fn update(&mut self, (x, y, w, h): CellRect) {
+        let Some(array) = &self.array else { return };
+        let array = array.borrow();
+        let ArrayData::Int(v) = &array.data else {
+            return;
+        };
+        if v.len() != self.cells.len() * 2 {
+            return;
+        }
+        for cy in y.max(0)..(y + h).min(self.height as i32) {
+            for cx in x.max(0)..(x + w).min(self.width as i32) {
+                let i = (cy as u32 * self.width + cx as u32) as usize;
+                self.cells[i] = Cell::from_ints([v[i * 2], v[i * 2 + 1]]);
+            }
         }
     }
 
     /// Clears the screen and homes the cursor.
     pub fn cls(&mut self) {
-        self.cells.fill(EMPTY);
+        for i in 0..self.cells.len() {
+            self.set(i, EMPTY);
+        }
         self.cursor = (0, 0);
+    }
+
+    /// SCROLL: moves the contents `dx` cells left and `dy` up, emptying
+    /// what is uncovered. The cursor stays.
+    // UNVERIFIED: that the cursor stays.
+    pub fn scroll(&mut self, dx: i32, dy: i32) {
+        let (w, h) = (self.width as i32, self.height as i32);
+        let moved = self.save((dx, dy, w, h));
+        self.load((0, 0, w, h), &moved);
     }
 
     /// Moves the cursor; `None` keeps that coordinate. Returns false if the
@@ -203,7 +320,7 @@ impl TextScreen {
             (x, y) => (x - 1, y),
         };
         let (x, y) = self.cursor;
-        self.cells[(y * self.width + x) as usize] = EMPTY;
+        self.set((y * self.width + x) as usize, EMPTY);
     }
 
     pub fn newline(&mut self) {
@@ -226,19 +343,22 @@ impl TextScreen {
             self.newline();
         }
         let (x, y) = self.cursor;
-        self.cells[(y * self.width + x) as usize] = Cell {
+        let cell = Cell {
             code,
             color: self.color,
             attr: self.attr,
         };
+        self.set((y * self.width + x) as usize, cell);
         self.cursor.0 += 1;
     }
 
     fn scroll_up(&mut self) {
-        let w = self.width as usize;
-        self.cells.copy_within(w.., 0);
-        let len = self.cells.len();
-        self.cells[len - w..].fill(EMPTY);
+        self.scroll(0, 1);
+    }
+
+    /// Where TOFS, THOME, TROT and TSCALE put the screen's pixels.
+    pub fn placement(&self) -> Affine {
+        Affine::place(self.pos, self.home, self.rot, self.scale)
     }
 
     /// Draws the screen over `fb` where TOFS and its companions put it.
@@ -290,7 +410,7 @@ impl TextScreen {
             return;
         }
         let place = Placement {
-            matrix: Affine::place(self.pos, self.home, self.rot, self.scale).then(layer),
+            matrix: self.placement().then(layer),
             clip,
             add: self.add,
         };

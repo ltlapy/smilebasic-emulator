@@ -36,15 +36,42 @@ fn blend_arg(v: &Value) -> Result<Blend> {
     Blend::from_int(n).ok_or_else(|| out_of_range("drawing method", n))
 }
 
-fn numeric_array(v: &Value) -> Result<ArrayRef> {
+pub(crate) fn numeric_array(v: &Value) -> Result<ArrayRef> {
     match v {
         Value::Array(a) if !matches!(a.borrow().data, ArrayData::Str(_)) => Ok(a.clone()),
         _ => Err(ErrorKind::TypeMismatch.into()),
     }
 }
 
+/// Writes `values` to the start of a numeric array. Only one-dimensional
+/// arrays grow to fit.
+pub(crate) fn store_ints(array: &ArrayRef, values: &[i32]) -> Result<()> {
+    let mut array = array.borrow_mut();
+    if array.len() < values.len() {
+        if array.dims.len() != 1 {
+            return Err(ErrorKind::SubscriptOutOfRange.into());
+        }
+        array.dims[0] = values.len();
+        match &mut array.data {
+            ArrayData::Int(v) => v.resize(values.len(), 0),
+            ArrayData::Real(v) => v.resize(values.len(), 0.0),
+            ArrayData::Str(_) => unreachable!("checked by numeric_array"),
+        }
+    }
+    match &mut array.data {
+        ArrayData::Int(v) => v[..values.len()].copy_from_slice(values),
+        ArrayData::Real(v) => {
+            for (d, &n) in v.iter_mut().zip(values) {
+                *d = f64::from(n);
+            }
+        }
+        ArrayData::Str(_) => unreachable!("checked by numeric_array"),
+    }
+    Ok(())
+}
+
 /// The first `n` elements of a numeric array as color codes.
-fn array_colors(array: &ArrayRef, n: usize) -> Result<Vec<u32>> {
+pub(crate) fn array_colors(array: &ArrayRef, n: usize) -> Result<Vec<u32>> {
     let array = array.borrow();
     if array.len() < n {
         return Err(Error::with_detail(
@@ -243,33 +270,10 @@ impl Runtime {
                     _ => self.clip_rect(),
                 };
                 let array = numeric_array(rest.last().expect("an array"))?;
-                let pixels = self.grp.save_rect(page, rect);
-                let mut array = array.borrow_mut();
-                if array.len() < pixels.len() {
-                    // Only one-dimensional arrays grow to fit.
-                    if array.dims.len() != 1 {
-                        return Err(ErrorKind::SubscriptOutOfRange.into());
-                    }
-                    array.dims[0] = pixels.len();
-                    match &mut array.data {
-                        ArrayData::Int(v) => v.resize(pixels.len(), 0),
-                        ArrayData::Real(v) => v.resize(pixels.len(), 0.0),
-                        ArrayData::Str(_) => unreachable!("checked by numeric_array"),
-                    }
-                }
-                match &mut array.data {
-                    ArrayData::Int(v) => {
-                        for (d, p) in v.iter_mut().zip(pixels) {
-                            *d = p as i32;
-                        }
-                    }
-                    ArrayData::Real(v) => {
-                        for (d, p) in v.iter_mut().zip(pixels) {
-                            *d = f64::from(p as i32);
-                        }
-                    }
-                    ArrayData::Str(_) => unreachable!("checked by numeric_array"),
-                }
+                let pixels: Vec<i32> = (self.grp.save_rect(page, rect).into_iter())
+                    .map(|p| p as i32)
+                    .collect();
+                store_ints(&array, &pixels)?;
                 Ok(vec![])
             }
             (Command::Gload, Want::Outs(0), 2..=4 | 6..=8) => {

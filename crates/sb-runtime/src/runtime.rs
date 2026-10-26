@@ -27,6 +27,7 @@ pub(crate) enum Command {
     Animdef,
     Attr,
     Backcolor,
+    Chkchr,
     Chkfile,
     Clear,
     Cls,
@@ -62,6 +63,7 @@ pub(crate) enum Command {
     Result,
     Run,
     Save,
+    Scroll,
     Spanim,
     Spchk,
     Spchr,
@@ -89,17 +91,25 @@ pub(crate) enum Command {
     Spunlink,
     Spused,
     Spvar,
+    Tarray,
     Tblend,
     Tcolor,
+    Tcoord,
+    Tcopy,
+    Tfill,
     Thide,
     Thome,
     Tlayer,
+    Tload,
     Tofs,
     Tpage,
+    Tput,
     Trot,
+    Tsave,
     Tscale,
     Tscreen,
     Tshow,
+    Tupdate,
     Xscreen,
 }
 
@@ -108,6 +118,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("ANIMDEF", Command::Animdef),
     ("ATTR", Command::Attr),
     ("BACKCOLOR", Command::Backcolor),
+    ("CHKCHR", Command::Chkchr),
     ("CHKFILE", Command::Chkfile),
     ("CLEAR", Command::Clear),
     ("CLS", Command::Cls),
@@ -143,6 +154,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("RESULT", Command::Result),
     ("RUN", Command::Run),
     ("SAVE", Command::Save),
+    ("SCROLL", Command::Scroll),
     ("SPANIM", Command::Spanim),
     ("SPCHK", Command::Spchk),
     ("SPCHR", Command::Spchr),
@@ -170,17 +182,25 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPUNLINK", Command::Spunlink),
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
+    ("TARRAY", Command::Tarray),
     ("TBLEND", Command::Tblend),
     ("TCOLOR", Command::Tcolor),
+    ("TCOORD", Command::Tcoord),
+    ("TCOPY", Command::Tcopy),
+    ("TFILL", Command::Tfill),
     ("THIDE", Command::Thide),
     ("THOME", Command::Thome),
     ("TLAYER", Command::Tlayer),
+    ("TLOAD", Command::Tload),
     ("TOFS", Command::Tofs),
     ("TPAGE", Command::Tpage),
+    ("TPUT", Command::Tput),
     ("TROT", Command::Trot),
+    ("TSAVE", Command::Tsave),
     ("TSCALE", Command::Tscale),
     ("TSCREEN", Command::Tscreen),
     ("TSHOW", Command::Tshow),
+    ("TUPDATE", Command::Tupdate),
     ("XSCREEN", Command::Xscreen),
 ];
 
@@ -833,6 +853,19 @@ impl Runtime {
                 | Command::Spvar,
                 _,
             ) => self.sp_command(command, args, want),
+            (
+                Command::Chkchr
+                | Command::Scroll
+                | Command::Tarray
+                | Command::Tcoord
+                | Command::Tcopy
+                | Command::Tfill
+                | Command::Tload
+                | Command::Tput
+                | Command::Tsave
+                | Command::Tupdate,
+                _,
+            ) => self.text_command(command, args, want),
             _ => Err(illegal()),
         }
     }

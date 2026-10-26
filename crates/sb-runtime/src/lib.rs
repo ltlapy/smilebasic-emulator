@@ -23,6 +23,7 @@ mod sp;
 pub mod sprites;
 pub mod storage;
 pub mod text;
+mod txt;
 
 pub use framebuffer::Framebuffer;
 pub use runtime::Runtime;
