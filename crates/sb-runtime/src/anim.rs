@@ -178,12 +178,15 @@ fn mix(target: Target, a: [f64; 2], b: [f64; 2], f: f64) -> [f64; 2] {
     [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]
 }
 
-/// A relative key's value: the start value plus the key's.
-// UNVERIFIED: how a relative color adds up.
+/// A relative key's value: the start value plus the key's, or for colors
+/// the two multiplied per channel (checked on hardware: &H80808080 with
+/// "C+" &H10101010 gives &H08080808).
+// UNVERIFIED: whether the product is divided by 255 or 256.
 fn offset(target: Target, base: [f64; 2], by: [f64; 2]) -> [f64; 2] {
     if target == Target::C {
         let (a, b) = (channels(base[0]), channels(by[0]));
-        return [from_channels(std::array::from_fn(|i| a[i] + b[i])), 0.0];
+        let c = std::array::from_fn(|i| (a[i] * b[i] / 255.0).floor());
+        return [from_channels(c), 0.0];
     }
     [base[0] + by[0], base[1] + by[1]]
 }

@@ -271,3 +271,12 @@ fn label_data_moves_reads_place() {
          DATA 333");
     assert_eq!(out, "222333");
 }
+
+#[test]
+fn relative_colors_multiply() {
+    let (_, out) = run(
+        "SPSET 0,0:SPCOLOR 0,&H80808080:SPANIM 0,\"C+\",1,&H10101010\n\
+         VSYNC 1:?HEX$(SPCOLOR(0))",
+    );
+    assert_eq!(out, "8080808");
+}
