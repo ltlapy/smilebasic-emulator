@@ -13,6 +13,7 @@ use sb_profiles::Profile;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
+use sb_runtime::settings::Settings;
 use sb_runtime::storage::Storage;
 use sb_runtime::{Framebuffer, Runtime, resources, sbfile};
 use sdl3::event::Event;
@@ -34,6 +35,8 @@ const USAGE: &str = "usage:
                                 without it, a bundled font is used";
 
 const TITLE: &str = "SmileBASIC emulator";
+/// In the data directory.
+const SETTINGS_FILE: &str = "settings.txt";
 
 type AnyError = Box<dyn std::error::Error>;
 
@@ -92,6 +95,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let screen = Profile::default().screen();
     let mut rt = Runtime::new(screen.width, screen.height, font);
     rt.storage = Storage::new(data_dir()?.join("projects"));
+    let settings_path = data_dir()?.join(SETTINGS_FILE);
+    if let Ok(text) = std::fs::read_to_string(&settings_path) {
+        rt.settings = Settings::from_text(&text);
+    }
+    let mut saved_settings = rt.settings;
     let mut machine = Machine::new(rt);
     machine.boot();
     if let Some(source) = source {
@@ -253,6 +261,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
 
         machine.frame();
+        // Settings change through the menu, keys and questions; keep each
+        // change at once so that nothing is lost if the emulator crashes.
+        if machine.rt.settings != saved_settings {
+            saved_settings = machine.rt.settings;
+            if let Err(e) = std::fs::write(&settings_path, saved_settings.to_text()) {
+                eprintln!(
+                    "could not save settings to {}: {e}",
+                    settings_path.display()
+                );
+            }
+        }
         toasts.tick();
         for notice in machine.rt.take_notices() {
             toasts.push(notice);

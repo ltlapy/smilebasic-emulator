@@ -55,6 +55,7 @@ end of the program, and Ctrl+W wraps long lines instead of scrolling sideways.
 Move the mouse to the top edge of the window for the menu bar: it can stop
 the program, open the editor and switch the options above (upper-case
 letters, Ctrl+C to stop, half-width on SAVE, wrapping in the editor).
+Settings are kept in `settings.txt` in the data directory.
 
 `LOAD`, `SAVE`, `FILES`, `PROJECT`, `CHKFILE`, `DELETE` and `RENAME` work on
 project folders in the emulator's data directory (`projects/`; the workspace
