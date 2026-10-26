@@ -6,7 +6,7 @@ mod ui;
 
 use std::path::{Path, PathBuf};
 
-use dialog::{Answer, QuitDialog};
+use dialog::{Answer, Dialog};
 use menu::{Action, Click, MenuBar};
 use sb_profiles::Profile;
 use sb_runtime::font::Font;
@@ -128,9 +128,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     overlay_texture.set_scale_mode(ScaleMode::Nearest);
     overlay_texture.set_blend_mode(BlendMode::Blend);
     let mut menu = MenuBar::default();
-    // Asks before quitting while programs are unsaved; takes all input
-    // while it is open.
-    let mut quit_dialog: Option<QuitDialog> = None;
+    // A question, which takes all input while it is open: before quitting
+    // with unsaved programs, or for a command such as LOAD.
+    let mut dialog: Option<(Dialog, Asking)> = None;
 
     let mut events = sdl.event_pump()?;
     'running: loop {
@@ -148,11 +148,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         };
         let mut quit = false;
         for event in events.poll_iter() {
-            if let Some(dialog) = &mut quit_dialog {
+            if let Some((open, asking)) = &mut dialog {
                 let answer = match event {
-                    Event::Quit { .. } => Some(Answer::Quit),
+                    Event::Quit { .. } if *asking == Asking::Quit => break 'running,
+                    Event::Quit { .. } => {
+                        quit = true;
+                        None
+                    }
                     Event::MouseMotion { x, y, .. } => {
-                        dialog.mouse_move(to_display(x, y));
+                        open.mouse_move(to_display(x, y));
                         None
                     }
                     Event::MouseButtonDown {
@@ -160,16 +164,20 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         x,
                         y,
                         ..
-                    } => dialog.click(to_display(x, y)),
+                    } => open.click(to_display(x, y)),
                     Event::KeyDown {
                         keycode: Some(key), ..
-                    } => dialog.key(key),
+                    } => open.key(key),
                     _ => None,
                 };
-                match answer {
-                    Some(Answer::Quit) => break 'running,
-                    Some(Answer::Cancel) => quit_dialog = None,
-                    None => {}
+                match (answer, *asking) {
+                    (Some(Answer::Accept), Asking::Quit) => break 'running,
+                    (Some(answer), Asking::Command) => {
+                        machine.rt.answer(answer == Answer::Accept);
+                        dialog = None;
+                    }
+                    (Some(Answer::Cancel), Asking::Quit) => dialog = None,
+                    (None, _) => {}
                 }
                 continue;
             }
@@ -238,10 +246,22 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if unsaved.is_empty() {
                 break 'running;
             }
-            quit_dialog = Some(QuitDialog::new(&unsaved, (display_w, display_h)));
+            dialog = Some((Dialog::quit(&unsaved, (display_w, display_h)), Asking::Quit));
         }
 
         machine.frame();
+        match (&dialog, machine.rt.confirmation()) {
+            (None, Some(confirm)) => {
+                let open = Dialog::new(
+                    confirm.lines.clone(),
+                    confirm.accept,
+                    (display_w, display_h),
+                );
+                dialog = Some((open, Asking::Command));
+            }
+            (Some((_, Asking::Command)), None) => dialog = None,
+            _ => {}
+        }
 
         let fb = machine.render();
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
@@ -252,9 +272,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             None,
             screen_rect(fb.width(), fb.height(), out_w, out_h),
         )?;
-        if let Some(dialog) = &quit_dialog {
+        if let Some((open, _)) = &dialog {
             overlay.clear(0x8000_0000);
-            dialog.draw(&mut overlay, machine.rt.font());
+            open.draw(&mut overlay, machine.rt.font());
             overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
             canvas.copy(&overlay_texture, None, display)?;
         } else if menu.visible() {
@@ -272,6 +292,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.present();
     }
     Ok(())
+}
+
+/// Who asked the open dialog's question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Asking {
+    Quit,
+    /// A command of the running program or direct mode.
+    Command,
 }
 
 /// Where the display (emulator UI coordinates) goes in a window of
