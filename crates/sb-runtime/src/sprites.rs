@@ -387,16 +387,23 @@ impl Sprites {
     }
 
     /// SPCLR of one sprite. Children that follow its display go a frame
-    /// later; the others are unlinked.
-    // UNVERIFIED: unlinked children keep their relative position as their
-    // own.
+    /// later; the others are unlinked, staying where they show (checked
+    /// on hardware for the position).
+    // UNVERIFIED: that Z also becomes absolute.
     pub fn clear(&mut self, id: usize) {
+        for child in self.children(id).collect::<Vec<_>>() {
+            self.unlink(child);
+        }
         self.list[id] = Sprite::unused();
-        for s in &mut self.list {
-            if s.parent == Some(id) {
-                s.parent = None;
-                s.clear_pending |= s.link_flags & link::SHOWN != 0;
-            }
+    }
+
+    /// Takes a sprite off its parent, keeping where it shows.
+    fn unlink(&mut self, id: usize) {
+        let pose = self.pose(id);
+        let s = &mut self.list[id];
+        if s.parent.take().is_some() {
+            (s.pos, s.z) = (pose.pos, pose.z);
+            s.clear_pending |= s.link_flags & link::SHOWN != 0;
         }
     }
 
@@ -405,10 +412,7 @@ impl Sprites {
         for s in &mut self.list[..GSPRITE] {
             *s = Sprite::unused();
         }
-        let g = &mut self.list[GSPRITE];
-        if g.parent.take().is_some() {
-            g.clear_pending |= g.link_flags & link::SHOWN != 0;
-        }
+        self.unlink(GSPRITE);
     }
 
     /// Whether `ancestor` is `id` or one of its parents.
@@ -439,14 +443,16 @@ impl Sprites {
         let p = self.pose(parent);
         let f = s.link_flags;
         let mut pose = own;
-        let (mut dx, mut dy) = s.pos;
+        // The offset is in the parent's turned and scaled space whatever
+        // the flags (checked on hardware); they decide whether the child's
+        // own image turns and scales too.
+        let (dx, dy) = (s.pos.0 * p.scale.0, s.pos.1 * p.scale.1);
+        let (sin, cos) = p.rot.to_radians().sin_cos();
+        let (dx, dy) = (dx * cos - dy * sin, dx * sin + dy * cos);
         if f & link::SCALE != 0 {
-            (dx, dy) = (dx * p.scale.0, dy * p.scale.1);
             pose.scale = (own.scale.0 * p.scale.0, own.scale.1 * p.scale.1);
         }
         if f & link::ROTATION != 0 {
-            let (sin, cos) = p.rot.to_radians().sin_cos();
-            (dx, dy) = (dx * cos - dy * sin, dx * sin + dy * cos);
             pose.rot += p.rot;
         }
         pose.pos = (p.pos.0 + dx, p.pos.1 + dy);
@@ -501,11 +507,16 @@ impl Sprites {
     }
 
     /// The body a sprite collides with, if SPCOL has been set.
-    // UNVERIFIED: hidden sprites collide too.
+    /// Hidden sprites do not collide (checked on hardware).
+    // UNVERIFIED: whether a sprite hidden through its link (SPLINK bit0)
+    // counts as hidden.
     pub fn body(&self, id: usize) -> Option<Body> {
         let s = &self.list[id];
         let c = s.col.as_ref().filter(|_| s.used)?;
         let pose = self.pose(id);
+        if !pose.shown {
+            return None;
+        }
         Some(Body::sprite(
             c,
             pose.pos,

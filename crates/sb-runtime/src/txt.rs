@@ -267,8 +267,12 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
+            // Checked on hardware for SPCHK: stopped animations report 0.
             (Command::Tchk, Want::Value, 1) => {
                 let t = &self.text[screen_id(&args[0])?];
+                if t.anim_stopped {
+                    return Ok(vec![Value::Int(0)]);
+                }
                 let bits = (t.anims.iter().enumerate())
                     .filter(|(_, track)| track.is_some())
                     .fold(0, |bits, (i, _)| bits | 1 << i);
@@ -312,15 +316,18 @@ impl Runtime {
         }
     }
 
-    /// Text screens ignore "UV" and "I".
-    // UNVERIFIED: that such an animation is not set at all, so TCHK
-    // does not report it.
+    /// Text screens ignore "UV" and "I". Their animations start a frame
+    /// later than sprites': on hardware, a TANIM's first step showed one
+    /// VSYNC after a SPANIM's would have.
+    // UNVERIFIED: that "UV" and "I" are not set at all (TCHK reports
+    // nothing for them, as checked), and that the extra frame holds
+    // without a TANIM "I" just before.
     fn start_text_anim(&mut self, id: usize, anim: Anim) {
         if matches!(anim.mode.target, Target::Uv | Target::I) {
             return;
         }
         let t = &mut self.text[id];
         let target = anim.mode.target.index();
-        t.anims[target] = Some(Track::new(anim, t));
+        t.anims[target] = Some(Track::new(anim, t).delayed(1));
     }
 }

@@ -202,6 +202,8 @@ pub struct Track {
     loops_done: i32,
     /// Whether the last frame played was part of a slide.
     slid: bool,
+    /// Frames to let pass before the first step.
+    delay: u32,
 }
 
 impl Track {
@@ -215,6 +217,15 @@ impl Track {
             elapsed: 0,
             loops_done: 0,
             slid: false,
+            delay: 0,
+        }
+    }
+
+    /// The same track, starting `frames` frames later.
+    pub fn delayed(self, frames: u32) -> Track {
+        Track {
+            delay: frames,
+            ..self
         }
     }
 
@@ -255,6 +266,10 @@ impl Track {
     // on T frames, starting on the frame after SPANIM; looping slides
     // from where the last key ended.
     pub fn step(&mut self, on: &mut impl Animated) -> bool {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return true;
+        }
         let target = self.anim.mode.target;
         let time = self.anim.keys[self.key].time;
         let frames = time.unsigned_abs();

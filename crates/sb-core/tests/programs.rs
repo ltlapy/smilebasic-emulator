@@ -467,6 +467,12 @@ impl sb_core::host::Host for Callbacking {
             .map(|&(i, t)| (i, t.encode_utf16().collect()))
             .collect()
     }
+    fn callbacks_end(&self, kind: sb_core::bytecode::Callbacks) -> i32 {
+        match kind {
+            sb_core::bytecode::Callbacks::Sprite => 4096,
+            sb_core::bytecode::Callbacks::Text => 5,
+        }
+    }
 }
 
 #[test]
@@ -484,6 +490,7 @@ fn call_sprite_and_text_run_the_host_callbacks() {
     .unwrap();
     let mut vm = Vm::new(program);
     while vm.run(&mut host, 1000).unwrap() != Status::Ended {}
-    assert_eq!(host.text.output, "5t25b7/0\n");
+    // Once the list ends, CALLIDX() is one past the last number.
+    assert_eq!(host.text.output, "5t25b7/4096\n");
     assert_eq!(output("CALL SPRITE:CALL TEXT:?1"), "1\n");
 }

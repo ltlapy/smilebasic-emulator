@@ -216,7 +216,9 @@ fn linked_sprites_follow_their_parent() {
          SPOFS 2,1 OUT X,Y:?ROUND(X);\",\";ROUND(Y);\" \";\n\
          SPOFS 3,1 OUT X,Y:SPOFS 3 OUT RX,RY:?X;\",\";Y;\",\";RX;\" \";\n\
          ?SPLINK(1);SPLINK(0,1);SPLINK(1,2);SPLINK(3,3);SPLINK(2,2)");
-    assert_eq!(out, "110,50,8 100,70 115,55,5 0121-1");
+    // Offsets turn and scale with the parent whatever the flags; the flags
+    // pass on the parent's own rotation and scale to the child's image.
+    assert_eq!(out, "100,70,8 100,70 105,75,5 0121-1");
 }
 
 #[test]
@@ -253,7 +255,7 @@ fn call_sprite_runs_each_callback() {
          DEF MOVE\n\
          ?\"M\";CALLIDX();\n\
          END");
-    assert_eq!(out, "M13 0");
+    assert_eq!(out, "M13 4096");
 }
 
 #[test]

@@ -183,7 +183,8 @@ fn tanim_moves_text_screens() {
         "TOFS 0 OUT X,Y:TOFS 1 OUT ,,Z:TOFS 3 OUT A,B\n",
         "?X;Y;Z;A;B;TCHK(0);TCHK(3)",
     ));
-    assert_eq!(out, ["120", "1020120001"]);
+    // TCHK reports nothing for a stopped screen, as SPCHK does.
+    assert_eq!(out, ["120", "1020120000"]);
 }
 
 #[test]

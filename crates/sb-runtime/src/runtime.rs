@@ -950,6 +950,15 @@ impl Host for Runtime {
 
     // UNVERIFIED: sprites are called in id order, and the list is fixed
     // when CALL SPRITE starts.
+    // Checked on hardware: CALLIDX() is 4096 after CALL SPRITE.
+    // UNVERIFIED: 5 after CALL TEXT.
+    fn callbacks_end(&self, kind: Callbacks) -> i32 {
+        match kind {
+            Callbacks::Sprite => sprites::SPRITES as i32,
+            Callbacks::Text => SCREENS as i32,
+        }
+    }
+
     fn set_data_pos(&mut self, pos: usize) {
         self.data_pos.set(pos);
     }

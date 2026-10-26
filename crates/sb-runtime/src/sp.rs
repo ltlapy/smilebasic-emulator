@@ -523,8 +523,12 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
+            // Checked on hardware: stopped animations report 0.
             (Command::Spchk, Want::Value, 1) => {
                 let s = self.sprite(&args[0])?;
+                if s.anim_stopped {
+                    return Ok(vec![Value::Int(0)]);
+                }
                 let bits = (s.anims.iter().enumerate())
                     .filter(|(_, track)| track.is_some())
                     .fold(0, |bits, (i, _)| bits | 1 << i);

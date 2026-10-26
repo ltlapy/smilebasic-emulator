@@ -64,7 +64,7 @@ pub struct Vm {
     /// An INPUT or LINPUT has shown its prompt and waits for a line.
     reading_input: bool,
     /// Callbacks still to run for each CALL SPRITE or CALL TEXT under way,
-    /// with the CALLIDX() to restore once it ends.
+    /// with the CALLIDX() to leave once it ends.
     callbacks: Vec<(VecDeque<(i32, Value)>, i32)>,
     call_idx: i32,
 }
@@ -504,16 +504,16 @@ impl Vm {
                     .into_iter()
                     .map(|(idx, target)| (idx, Value::Str(new_str(target))))
                     .collect();
-                self.callbacks.push((queue, self.call_idx));
+                self.callbacks.push((queue, host.callbacks_end(*kind)));
             }
             Op::CallbackNext(end) => {
-                let (queue, outer) = self
+                let (queue, end_idx) = self
                     .callbacks
                     .last_mut()
                     .ok_or(ErrorKind::IllegalStatement)?;
                 match queue.pop_front() {
                     None => {
-                        self.call_idx = *outer;
+                        self.call_idx = *end_idx;
                         self.callbacks.pop();
                         next = *end as usize;
                     }

@@ -44,6 +44,12 @@ pub trait Host {
         Vec::new()
     }
 
+    /// What CALLIDX() reports once CALL SPRITE or CALL TEXT has ended:
+    /// one past the last number it went through.
+    fn callbacks_end(&self, _kind: Callbacks) -> i32 {
+        0
+    }
+
     /// READ's place in the DATA, handed over before each [`Host::call`].
     fn set_data_pos(&mut self, _pos: usize) {}
 

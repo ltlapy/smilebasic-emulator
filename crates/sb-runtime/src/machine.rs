@@ -28,6 +28,11 @@ pub struct Machine {
     vm: Option<Vm>,
     /// Frames left before the VM runs again.
     wait: u32,
+    /// Frames run so far.
+    frame: u64,
+    /// The frame the last VSYNC waited for, which the next one counts
+    /// from.
+    vsync_at: u64,
     /// Globals of the last program or direct-mode line, kept for the next
     /// direct-mode line.
     vars: HashMap<String, Value>,
@@ -103,6 +108,8 @@ impl Machine {
             rt,
             vm: None,
             wait: 0,
+            frame: 0,
+            vsync_at: 0,
             vars: HashMap::new(),
             editor: Editor::new(w * 8, h * 8),
             editing: false,
@@ -243,6 +250,7 @@ impl Machine {
     /// Runs one frame: the program, the editor, or direct-mode line
     /// editing.
     pub fn frame(&mut self) {
+        self.frame += 1;
         if self.editing {
             while let Some(key) = self.rt.next_key() {
                 self.editor.key(key);
@@ -262,11 +270,31 @@ impl Machine {
         if self.wait > 0 {
             return;
         }
-        match vm.run(&mut self.rt, FRAME_BUDGET) {
-            Ok(Status::Running) => {}
-            Ok(Status::Wait { frames, .. }) => self.wait = frames,
-            Ok(Status::Ended) => self.finish(None),
-            Err(e) => self.finish(Some(e)),
+        loop {
+            match vm.run(&mut self.rt, FRAME_BUDGET) {
+                Ok(Status::Running) => {}
+                Ok(Status::Wait {
+                    frames,
+                    vsync: false,
+                }) => self.wait = frames,
+                // VSYNC counts from the frame the last one waited for, so
+                // it goes straight on if that many have passed already.
+                Ok(Status::Wait {
+                    frames,
+                    vsync: true,
+                }) => {
+                    let until = self.vsync_at + u64::from(frames);
+                    if until <= self.frame {
+                        self.vsync_at = self.frame;
+                        continue;
+                    }
+                    self.vsync_at = until;
+                    self.wait = (until - self.frame) as u32;
+                }
+                Ok(Status::Ended) => self.finish(None),
+                Err(e) => self.finish(Some(e)),
+            }
+            break;
         }
     }
 
@@ -324,6 +352,8 @@ impl Machine {
                 self.rt.program = Some(vm.program());
                 self.vm = Some(vm);
                 self.wait = 0;
+                // The VM first runs on the next frame.
+                self.vsync_at = self.frame + 1;
             }
             Err(e) => {
                 self.last_error = slot.map(|slot| (slot, e.line)).or(self.last_error);
