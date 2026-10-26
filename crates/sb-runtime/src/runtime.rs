@@ -1,6 +1,7 @@
 //! The [`Host`] that programs run against: text screens now, graphics,
 //! sprites and sound later.
 
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -285,6 +286,8 @@ pub struct Runtime {
     pub(crate) notices: Vec<String>,
     /// The program last started, whose DATA commands like SPANIM read.
     pub(crate) program: Option<Rc<Compiled>>,
+    /// READ's place in the program's DATA, during a command.
+    data_pos: Cell<usize>,
     pub layers: [Layer; LAYERS],
     /// BACKCOLOR: what shows behind every layer.
     pub back_color: u32,
@@ -330,20 +333,21 @@ enum Element {
     Sprite(usize, sprites::Pose),
 }
 
-/// Reads DATA values in order; see [`Runtime::label_data`].
-pub(crate) struct DataReader {
+/// Reads DATA values in order, moving READ's place along; see
+/// [`Runtime::label_data`].
+pub(crate) struct DataReader<'a> {
     program: Rc<Compiled>,
-    pos: usize,
+    pos: &'a Cell<usize>,
 }
 
-impl DataReader {
+impl DataReader<'_> {
     pub(crate) fn number(&mut self) -> Result<f64> {
         let item = self
             .program
             .data
-            .get(self.pos)
+            .get(self.pos.get())
             .ok_or(ErrorKind::OutOfData)?;
-        self.pos += 1;
+        self.pos.set(self.pos.get() + 1);
         match item {
             Literal::Int(n) => Ok(f64::from(*n)),
             Literal::Real(x) => Ok(*x),
@@ -420,6 +424,7 @@ impl Runtime {
             retry: false,
             notices: Vec::new(),
             program: None,
+            data_pos: Cell::new(0),
             layers: [Layer::default(); LAYERS],
             back_color: 0xFF00_0000,
             scratch: Framebuffer::new(width, height),
@@ -505,9 +510,9 @@ impl Runtime {
     }
 
     /// The DATA values from `label` on, for commands that take a
-    /// `"@label"`. They are read apart from READ, which keeps its place.
-    // UNVERIFIED: whether these commands move READ's place.
-    pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader> {
+    /// `"@label"`. As on hardware, they move READ's place: RESTORE to
+    /// the label, then READ.
+    pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader<'_>> {
         let text =
             String::from_utf16_lossy(&label.clone().into_str()?.borrow()).to_ascii_uppercase();
         let name = text.split_once(':').map_or(text.as_str(), |(_, rest)| rest);
@@ -517,9 +522,10 @@ impl Runtime {
             .data_labels
             .get(name)
             .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))?;
+        self.data_pos.set(pos as usize);
         Ok(DataReader {
             program,
-            pos: pos as usize,
+            pos: &self.data_pos,
         })
     }
 
@@ -944,6 +950,14 @@ impl Host for Runtime {
 
     // UNVERIFIED: sprites are called in id order, and the list is fixed
     // when CALL SPRITE starts.
+    fn set_data_pos(&mut self, pos: usize) {
+        self.data_pos.set(pos);
+    }
+
+    fn data_pos(&self) -> Option<usize> {
+        Some(self.data_pos.get())
+    }
+
     fn callbacks(&mut self, kind: Callbacks) -> Vec<(i32, Vec<u16>)> {
         match kind {
             Callbacks::Sprite => (self.sprites.list.iter().enumerate())

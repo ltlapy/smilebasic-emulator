@@ -43,6 +43,15 @@ pub trait Host {
     fn callbacks(&mut self, _kind: Callbacks) -> Vec<(i32, Vec<u16>)> {
         Vec::new()
     }
+
+    /// READ's place in the DATA, handed over before each [`Host::call`].
+    fn set_data_pos(&mut self, _pos: usize) {}
+
+    /// READ's place after a [`Host::call`], which commands that read DATA
+    /// from a `"@label"` move; `None` leaves it.
+    fn data_pos(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// A host with no commands that records PRINT output and answers INPUT

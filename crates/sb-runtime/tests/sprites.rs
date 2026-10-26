@@ -255,3 +255,17 @@ fn call_sprite_runs_each_callback() {
          END");
     assert_eq!(out, "M13 0");
 }
+
+#[test]
+fn label_data_moves_reads_place() {
+    let (_, out) = run("RESTORE @A:SPSET 0,0:SPANIM 0,\"XY\",\"@B\":READ Q\n\
+         SPDEF \"@C\":READ R\n\
+         ?Q;R\n\
+         END\n\
+         @A:DATA 111\n\
+         @B:DATA 1,1,5,5\n\
+         DATA 222\n\
+         @C:DATA 1,0,0,16,16,0,0,0\n\
+         DATA 333");
+    assert_eq!(out, "222333");
+}

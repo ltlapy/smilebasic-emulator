@@ -710,7 +710,12 @@ impl Vm {
         args: &[Value],
         want: Want,
     ) -> Result<bool> {
-        let results = host.call(id, args, want)?;
+        host.set_data_pos(self.data_pos);
+        let results = host.call(id, args, want);
+        if let Some(pos) = host.data_pos() {
+            self.data_pos = pos;
+        }
+        let results = results?;
         if host.retry() {
             return Ok(false);
         }
