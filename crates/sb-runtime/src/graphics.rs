@@ -175,26 +175,8 @@ impl Graphics {
 
     /// GLINE: both ends included.
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
-        let Some((x0, y0, x1, y1)) = clip_line(x0, y0, x1, y1) else {
-            return;
-        };
-        let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-        let (sx, sy) = ((x1 - x0).signum(), (y1 - y0).signum());
-        let (mut x, mut y, mut err) = (x0, y0, dx + dy);
-        loop {
+        for (x, y) in line_points(x0, y0, x1, y1) {
             self.plot(x, y, color, blend);
-            if x == x1 && y == y1 {
-                break;
-            }
-            let e2 = 2 * err;
-            if e2 >= dy {
-                err += dy;
-                x += sx;
-            }
-            if e2 <= dx {
-                err += dx;
-                y += sy;
-            }
         }
     }
 
@@ -471,25 +453,34 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
     let Some((x0, y0, x1, y1)) = clip_line(x0, y0, x1, y1) else {
         return Vec::new();
     };
-    let mut points = Vec::new();
-    let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
-    let (sx, sy) = ((x1 - x0).signum(), (y1 - y0).signum());
-    let (mut x, mut y, mut err) = (x0, y0, dx + dy);
-    loop {
-        points.push((x, y));
-        if x == x1 && y == y1 {
-            return points;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
+    // Walk the longer axis. The rule below was worked out from lines read
+    // back on SmileBASIC 4: the same pixels whichever end comes first, as
+    // if drawn from the end with the smaller major coordinate, with the
+    // minor offset rounded down for slopes of 1/2 and more, and up below.
+    let x_major = (x1 - x0).abs() >= (y1 - y0).abs();
+    let swap = |(x, y): (i32, i32)| if x_major { (x, y) } else { (y, x) };
+    let (mut a, mut b) = (swap((x0, y0)), swap((x1, y1)));
+    if a.0 > b.0 {
+        std::mem::swap(&mut a, &mut b);
     }
+    let major = i64::from(b.0 - a.0);
+    let minor = i64::from(b.1 - a.1);
+    let bias = if 2 * minor.abs() < major {
+        major - 1
+    } else {
+        0
+    };
+    (0..=major)
+        .map(|t| {
+            let offset = if major == 0 {
+                0
+            } else {
+                (t * minor.abs() + bias) / major
+            };
+            let p = (a.0 + t as i32, a.1 + (minor.signum() * offset) as i32);
+            swap(p)
+        })
+        .collect()
 }
 
 /// Shortens a line whose ends lie far outside every page to the part
@@ -566,13 +557,55 @@ mod tests {
     fn lines_boxes_and_fills() {
         let mut g = Graphics::default();
         g.line(0, 0, 4, 2, RED, Blend::Normal);
-        assert_eq!(area(&g, 5, 3), ["#....", ".##..", "...##"]);
+        assert_eq!(area(&g, 5, 3), ["##...", "..##.", "....#"]);
         let mut g = Graphics::default();
         g.rect(3, 2, 0, 0, RED, Blend::Normal);
         assert_eq!(area(&g, 5, 3), ["####.", "#..#.", "####."]);
         let mut g = Graphics::default();
         g.fill(1, 1, 2, 2, RED, Blend::Normal);
         assert_eq!(area(&g, 4, 4), ["....", ".##.", ".##.", "...."]);
+    }
+
+    /// Lines read back on hardware: for each delta, the minor offset at
+    /// each step along the major axis, away from the start.
+    #[test]
+    fn lines_match_hardware() {
+        let read: [((i32, i32), &[i32]); 16] = [
+            ((4, 2), &[0, 0, 1, 1, 2]),
+            ((2, 4), &[0, 0, 1, 1, 2]),
+            ((4, 1), &[0, 1, 1, 1, 1]),
+            ((1, 4), &[0, 1, 1, 1, 1]),
+            ((5, 2), &[0, 1, 1, 2, 2, 2]),
+            ((2, 5), &[0, 1, 1, 2, 2, 2]),
+            ((5, 3), &[0, 0, 1, 1, 2, 3]),
+            ((3, 5), &[0, 0, 1, 1, 2, 3]),
+            ((-4, 2), &[0, 1, 1, 2, 2]),
+            ((4, -2), &[0, 0, -1, -1, -2]),
+            ((-4, -2), &[0, -1, -1, -2, -2]),
+            ((-2, 4), &[0, 0, -1, -1, -2]),
+            ((2, -4), &[0, 1, 1, 2, 2]),
+            ((-2, -4), &[0, -1, -1, -2, -2]),
+            ((6, 4), &[0, 0, 1, 2, 2, 3, 4]),
+            ((3, 3), &[0, 1, 2, 3]),
+        ];
+        for ((dx, dy), minors) in read {
+            let mut points = line_points(50, 50, 50 + dx, 50 + dy);
+            points.sort_unstable();
+            let mut expected: Vec<(i32, i32)> = minors
+                .iter()
+                .enumerate()
+                .map(|(t, &u)| {
+                    let t = t as i32;
+                    if dx.abs() >= dy.abs() {
+                        (50 + t * dx.signum(), 50 + u)
+                    } else {
+                        (50 + u, 50 + t * dy.signum())
+                    }
+                })
+                .collect();
+            expected.sort_unstable();
+            assert_eq!(points, expected, "line {dx},{dy}");
+        }
     }
 
     #[test]
