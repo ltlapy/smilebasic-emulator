@@ -4,9 +4,9 @@ An emulator for SmileBASIC 4 programs, written in Rust with SDL3. It runs on
 Windows, macOS and Linux. Support for SmileBASIC 3 and Petit Computer is
 planned.
 
-Early work: the language, the console, the program editor, graphic pages
-and sprites run. Sound, controllers and background layers are not
-implemented yet.
+Early work: the language, the console, the program editor, file commands,
+graphic pages and sprites (with animation and collisions) run. Sound,
+controllers and background layers are not implemented yet.
 
 ## Building
 
@@ -17,7 +17,7 @@ cargo build --release
 SDL3 is built from source. On Linux, install the X11, Wayland and audio
 development headers listed in SDL's `docs/README-linux.md` first.
 
-## Font
+## Resources
 
 Without any setup, the console uses a bundled font,
 [GalmuriMono7](https://github.com/quiple/galmuri) (SIL Open Font License 1.1).
@@ -47,48 +47,21 @@ smilebasic           # start in direct mode
 smilebasic PROGRAM   # load PROGRAM into PRG0 and run it
 ```
 
-`PROGRAM` is a SmileBASIC 4 `TXT` file or a plain UTF-8 text file. In direct
-mode, typed lines run immediately; `RUN [slot]`, `NEW [slot]` and `CLEAR` work
-on the program slots PRG0-PRG5. Letters type in upper case unless Shift or
-Caps Lock is on. Pause/Break stops the running program.
+`PROGRAM` is a SmileBASIC 4 `TXT` file or plain UTF-8 text.
 
-Graphic pages GRP0-GRP5 can be drawn on with `GPSET`, `GLINE`, `GBOX`,
-`GFILL`, `GCIRCLE`, `GTRI`, `GPAINT`, `GCOPY`, `GPUTCHR` and `GCLS`, with
-`GTARGET`, `GCOLOR`, `GCLIP`, `GPGET` and `GSAMPLE`; `GSAVE` and `GLOAD` copy
-them to and from arrays. GRP0 is shown through sprite 4095, as
-on SmileBASIC 4.
+Projects are folders in `projects/` in the data directory, `@WORKSPACE`
+included. Programs are saved as plain UTF-8 text, with full-width letters and
+digits turned into ASCII.
 
-Sprites work with `SPSET`, `SPCLR`, `SPSHOW`, `SPHIDE`, `SPOFS`, `SPHOME`,
-`SPROT`, `SPSCALE`, `SPCOLOR`, `SPCHR`, `SPPAGE`, `SPLAYER`, `SPDEF`, `SPVAR`
-and `SPUSED`, and are animated with `SPANIM`, `ANIMDEF`, `SPSTART`, `SPSTOP`
-and `SPCHK`, from arrays, arguments or `DATA`. `SPCOL`, `SPCOLVEC`, `SPHITSP`,
-`SPHITRC` and `SPHITINFO` detect collisions, including those of moving
-sprites within a frame.
-
-F4 switches between direct mode and the program editor. The first F4 after
-a program error opens the editor at the error, as `LIST ERR` does; `LIST`,
-`LIST line` and `LIST slot:line` open it at a given place, and Ctrl+1 to Ctrl+6 open
-slots PRG0 to PRG5. In the editor,
-Insert switches to overwriting, Ctrl+Home and Ctrl+End jump to the start and
-end of the program, and Ctrl+W wraps long lines instead of scrolling sideways.
-
-Move the mouse to the top edge of the window for the menu bar: it can stop
-the program, open the editor and switch the options above (upper-case
-letters, Ctrl+C to stop, half-width on SAVE, wrapping in the editor).
-Settings are kept in `settings.txt` in the data directory.
-
-`LOAD`, `SAVE`, `FILES`, `PROJECT`, `CHKFILE`, `DELETE` and `RENAME` work on
-project folders in the emulator's data directory (`projects/`; the workspace
-project is `@WORKSPACE`). Programs are saved as plain UTF-8 text, so they can
-be edited with other tools; `SAVE` turns full-width letters and digits into
-ASCII. Close the window to
-quit. As on SmileBASIC 4, file commands ask before reading
-or writing (a running program's `LOAD` only when it would replace unsaved
-edits); Options > File access can turn that into short notices or silence
-it. Slots with edits that were not saved are marked with `*` in
-the editor's status line, and quitting, `LOAD`, `NEW` and `PROJECT` always
-ask before those edits could be lost (a cancelled file command sets
-`RESULT()` to -1). Esc and the other keys go to the program.
+### Shortcuts
+| Key | Action |
+|---|---|
+| F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line |
+| Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
+| Pause/Break | Stop the program |
+| Ctrl+W | Wrap long lines in the editor, or scroll them |
+| Insert | Toggle overwriting in the editor |
+| Ctrl+Home, Ctrl+End | Jump to the start or end of the program |
 
 ## License
 
