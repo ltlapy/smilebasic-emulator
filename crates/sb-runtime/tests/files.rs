@@ -100,6 +100,12 @@ fn save_load_and_list() {
 fn projects_rename_delete() {
     let dir = TempDir::new("project");
     let mut m = machine(&dir);
+    // PROJECT only switches; projects are made in the project manager.
+    enter(&mut m, "project \"mygame\"");
+    assert!(tail(&m, 2)[0].starts_with("Undefined project name"));
+    enter(&mut m, "project \"/\"");
+    assert!(tail(&m, 2)[0].starts_with("Illegal project name"));
+    m.rt.storage.create_project("MYGAME").unwrap();
     enter(&mut m, "project \"mygame\":?project()");
     assert_eq!(tail(&m, 2), ["MYGAME", "OK"]);
     enter(&mut m, "save \"a\":rename \"a\",\"b\":files \"txt:\"");
@@ -246,7 +252,7 @@ fn direct_file_commands_ask_notify_or_stay_silent() {
         [
             "Save slot 0 as this file.",
             "",
-            "  Project:  @WORKSPACE",
+            "  Project:  [WORKSPACE]",
             "  File:     TXT:A",
             "",
             "To stop these questions, choose File access",
@@ -314,13 +320,14 @@ fn programs_ask_except_for_a_safe_load() {
 fn switching_projects_warns_of_unsaved_edits() {
     let dir = TempDir::new("switch");
     let mut m = machine(&dir);
+    m.rt.storage.create_project("X").unwrap();
     enter(&mut m, "project \"x\"");
     touch(&mut m, 2);
     let c = ask(&mut m, "project \"\":?result()");
     assert_eq!(
         c.lines,
         [
-            "Switch to project @WORKSPACE.",
+            "Switch to project [WORKSPACE].",
             "",
             "Unsaved changes in slot 2",
             "are not saved in project X.",

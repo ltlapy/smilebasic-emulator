@@ -22,6 +22,8 @@ pub enum ErrorKind {
     OutOfData,
     /// A break, continue, return or label outside the place it belongs.
     IllegalStatement,
+    IllegalProjectName,
+    UndefinedProjectName,
 }
 
 impl ErrorKind {
@@ -44,6 +46,8 @@ impl ErrorKind {
             ErrorKind::ReturnWithoutGosub => "RETURN without GOSUB",
             ErrorKind::OutOfData => "Out of DATA",
             ErrorKind::IllegalStatement => "Illegal statement",
+            ErrorKind::IllegalProjectName => "Illegal project name",
+            ErrorKind::UndefinedProjectName => "Undefined project name",
         }
     }
 }

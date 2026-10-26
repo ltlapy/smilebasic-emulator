@@ -65,6 +65,26 @@ pub fn unsaved_lines(slots: &[usize]) -> Vec<String> {
     vec![first, "which will be lost.".to_string()]
 }
 
+/// Before switching from project `old` to `new` with `unsaved` slots.
+pub fn switch_lines(new: &str, old: &str, unsaved: &[usize]) -> Vec<String> {
+    let names: Vec<String> = unsaved.iter().map(usize::to_string).collect();
+    vec![
+        format!("Switch to project {new}."),
+        String::new(),
+        format!("Unsaved changes in slot {}", names.join(", ")),
+        format!("are not saved in project {old}."),
+    ]
+}
+
+/// A project's name as shown to the user: the workspace is `[WORKSPACE]`,
+/// as on SmileBASIC 4.
+pub fn project_label(name: &str) -> &str {
+    match name {
+        "" => "[WORKSPACE]",
+        name => name,
+    }
+}
+
 impl Runtime {
     /// The question waiting for an answer, if any.
     pub fn confirmation(&self) -> Option<&Confirm> {
@@ -99,10 +119,7 @@ impl Runtime {
 
     /// The project's name as shown to the user.
     pub(crate) fn project_label(&self) -> String {
-        match self.storage.project() {
-            "" => "@WORKSPACE".to_string(),
-            name => name.to_string(),
-        }
+        project_label(self.storage.project()).to_string()
     }
 
     /// Asks `question` (built once) and waits for the answer.

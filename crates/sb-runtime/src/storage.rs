@@ -7,7 +7,7 @@
 
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const WORKSPACE_DIR: &str = "@WORKSPACE";
 /// UNVERIFIED: SmileBASIC 4's limit on file and project name length.
@@ -55,6 +55,7 @@ pub enum StorageError {
     BadName(String),
     BadKind(String),
     NotFound(String),
+    Exists(String),
     Io(io::Error),
 }
 
@@ -65,6 +66,7 @@ impl fmt::Display for StorageError {
             StorageError::BadName(n) => write!(f, "illegal name {n:?}"),
             StorageError::BadKind(k) => write!(f, "unknown file type {k:?}"),
             StorageError::NotFound(n) => write!(f, "{n} not found"),
+            StorageError::Exists(n) => write!(f, "{n} already exists"),
             StorageError::Io(e) => write!(f, "{e}"),
         }
     }
@@ -78,15 +80,50 @@ impl From<io::Error> for StorageError {
 
 pub type Result<T> = std::result::Result<T, StorageError>;
 
-/// Checks a file or project name and returns it in upper case.
-// UNVERIFIED: which characters SmileBASIC 4 accepts, and that names are
-// case-insensitive.
-fn check_name(name: &str, allow_dot: bool) -> Result<String> {
-    let ok = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-' || (allow_dot && c == '.');
-    if name.is_empty() || name.len() > MAX_NAME || !name.chars().all(ok) {
+/// Checks a file name and returns it in upper case: up to 32 letters,
+/// digits, `_`, `-` and `.`, not starting with `.`.
+fn check_name(name: &str) -> Result<String> {
+    let ok = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
+    if name.is_empty() || name.len() > MAX_NAME || name.starts_with('.') || !name.chars().all(ok) {
         return Err(StorageError::BadName(name.to_string()));
     }
     Ok(name.to_ascii_uppercase())
+}
+
+/// Checks a project name: the rules of a file name, after an optional `#`
+/// that marks a system project (`#SYS`). SmileBASIC 4 cannot type `#`, but
+/// system projects can be copied into the folder. The `#` counts toward the
+/// 32 characters.
+pub fn check_project_name(name: &str) -> Result<String> {
+    let rest = name.strip_prefix('#').unwrap_or(name);
+    check_name(rest)
+        .ok()
+        .filter(|_| name.len() <= MAX_NAME)
+        .ok_or(())
+        .map(|n| format!("{}{n}", &name[..name.len() - rest.len()]))
+        .map_err(|_| StorageError::BadName(name.to_string()))
+}
+
+/// A legal project name close to `name`, to offer when a folder copied in
+/// by hand breaks the rules.
+pub fn suggest_project_name(name: &str) -> String {
+    let (hash, rest) = match name.strip_prefix('#') {
+        Some(rest) => ("#", rest),
+        None => ("", name),
+    };
+    let fixed: String = rest
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '.' => c.to_ascii_uppercase(),
+            _ => '_',
+        })
+        .collect();
+    let room = MAX_NAME - hash.len();
+    let fixed: String = fixed.trim_start_matches('.').chars().take(room).collect();
+    match fixed.as_str() {
+        "" => format!("{hash}PROJECT"),
+        _ => format!("{hash}{fixed}"),
+    }
 }
 
 /// Splits `"[TYPE:]NAME"` into its type (or `default`) and checked name.
@@ -98,7 +135,7 @@ pub fn parse_file_name(spec: &str, default: FileKind) -> Result<(FileKind, Strin
         ),
         None => (default, spec),
     };
-    Ok((kind, check_name(name, true)?))
+    Ok((kind, check_name(name)?))
 }
 
 /// Splits FILES' `"[TYPE:][PROJECT]"` into an optional type and project.
@@ -112,7 +149,7 @@ pub fn parse_listing(spec: &str) -> Result<(Option<FileKind>, Option<String>)> {
     };
     let project = match project {
         "" => None,
-        p => Some(check_name(p, false)?),
+        p => Some(check_project_name(p)?),
     };
     Ok((kind, project))
 }
@@ -144,15 +181,80 @@ impl Storage {
         &self.project
     }
 
-    /// Switches project, creating its folder if needed.
-    // UNVERIFIED: whether SmileBASIC 4 creates a missing project.
+    /// Whether `name` (checked) is the workspace or an existing project.
+    pub fn project_exists(&self, name: &str) -> bool {
+        name.is_empty() || self.dir(name).is_ok_and(|d| d.is_dir())
+    }
+
+    /// Switches to an existing project, or to the workspace (`""`).
     pub fn set_project(&mut self, name: &str) -> Result<()> {
         let name = match name {
             "" => String::new(),
-            n => check_name(n, false)?,
+            n => check_project_name(n)?,
         };
-        std::fs::create_dir_all(self.dir(&name)?)?;
+        if !self.project_exists(&name) {
+            return Err(StorageError::NotFound(name));
+        }
         self.project = name;
+        Ok(())
+    }
+
+    /// The folder that holds the projects.
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    /// Creates an empty project and returns its checked name.
+    pub fn create_project(&self, name: &str) -> Result<String> {
+        let name = check_project_name(name)?;
+        let dir = self.dir(&name)?;
+        if dir.exists() {
+            return Err(StorageError::Exists(name));
+        }
+        std::fs::create_dir_all(dir)?;
+        Ok(name)
+    }
+
+    /// The folder of an existing project, named as it is on disk, which
+    /// may break the naming rules if it was copied there by hand.
+    fn existing_project(&self, name: &str) -> Result<PathBuf> {
+        let plain = !name.is_empty()
+            && name != WORKSPACE_DIR
+            && name != "."
+            && name != ".."
+            && !name.contains(['/', '\\']);
+        let dir = self.dir(name)?;
+        if !plain || !dir.is_dir() {
+            return Err(StorageError::NotFound(name.to_string()));
+        }
+        Ok(dir)
+    }
+
+    /// Renames a project and returns the new, checked name. Renaming the
+    /// current project keeps it current.
+    pub fn rename_project(&mut self, from: &str, to: &str) -> Result<String> {
+        let old = self.existing_project(from)?;
+        let to = check_project_name(to)?;
+        let new = self.dir(&to)?;
+        // A change of case only finds itself on case-insensitive disks.
+        if !to.eq_ignore_ascii_case(from) && new.exists() {
+            return Err(StorageError::Exists(to));
+        }
+        std::fs::rename(old, new)?;
+        if self.project == from {
+            self.project = to.clone();
+        }
+        Ok(to)
+    }
+
+    /// Deletes a project and its files. Deleting the current one goes back
+    /// to the workspace, as on SmileBASIC 4.
+    pub fn delete_project(&mut self, name: &str) -> Result<()> {
+        let dir = self.existing_project(name)?;
+        std::fs::remove_dir_all(dir)?;
+        if name == self.project {
+            self.project = String::new();
+        }
         Ok(())
     }
 
@@ -300,6 +402,22 @@ mod tests {
         assert!(parse_file_name("A/B", FileKind::Txt).is_err());
         assert!(parse_file_name("", FileKind::Txt).is_err());
         assert!(parse_file_name("XYZ:A", FileKind::Txt).is_err());
+        assert!(parse_file_name(".A", FileKind::Txt).is_err());
+        assert!(parse_file_name("#A", FileKind::Txt).is_err());
+        assert_eq!(check_project_name("#sys").unwrap(), "#SYS");
+        assert!(check_project_name("#").is_err());
+        assert!(check_project_name("A#").is_err());
+        assert!(check_project_name("A.B").is_ok());
+        assert!(check_project_name(&"A".repeat(32)).is_ok());
+        assert!(check_project_name(&format!("#{}", "A".repeat(31))).is_ok());
+        assert!(check_project_name(&format!("#{}", "A".repeat(32))).is_err());
+        assert_eq!(
+            suggest_project_name(&format!("#{}", "a".repeat(40))).len(),
+            32
+        );
+        assert_eq!(suggest_project_name("my game"), "MY_GAME");
+        assert_eq!(suggest_project_name("#.ゲーム"), "#___");
+        assert_eq!(suggest_project_name(".."), "PROJECT");
         assert_eq!(parse_listing("").unwrap(), (None, None));
         assert_eq!(parse_listing("TXT:").unwrap(), (Some(FileKind::Txt), None));
         assert_eq!(
@@ -334,12 +452,49 @@ mod tests {
             Err(StorageError::NotFound(_))
         ));
 
+        assert!(matches!(
+            s.set_project("game"),
+            Err(StorageError::NotFound(_))
+        ));
+        s.create_project("game").unwrap();
         s.set_project("game").unwrap();
         assert_eq!(s.project(), "GAME");
         assert!(s.list(None, None).unwrap().is_empty());
         assert_eq!(s.list(None, Some("")).unwrap().len(), 2);
         assert_eq!(s.projects().unwrap(), ["GAME"]);
         assert!(s.set_project("@WORKSPACE").is_err());
+        s.create_project("#sys").unwrap();
+        s.set_project("#sys").unwrap();
+        assert_eq!(s.project(), "#SYS");
+    }
+
+    #[test]
+    fn managing_projects() {
+        let tmp = TempDir::new("projects");
+        let mut s = Storage::new(tmp.0.clone());
+        assert_eq!(s.create_project("game").unwrap(), "GAME");
+        assert!(matches!(
+            s.create_project("GAME"),
+            Err(StorageError::Exists(_))
+        ));
+        assert!(s.create_project("a b").is_err());
+
+        s.set_project("GAME").unwrap();
+        s.write(FileKind::Txt, "MAIN", b"1", false).unwrap();
+        assert_eq!(s.rename_project("GAME", "#Demo").unwrap(), "#DEMO");
+        assert_eq!(s.project(), "#DEMO", "the current project follows");
+        assert_eq!(s.read(FileKind::Txt, "MAIN").unwrap(), b"1");
+
+        // A folder copied in by hand keeps its name until renamed.
+        std::fs::create_dir_all(tmp.0.join("my game")).unwrap();
+        assert!(s.projects().unwrap().contains(&"my game".to_string()));
+        assert_eq!(s.rename_project("my game", "MY_GAME").unwrap(), "MY_GAME");
+        s.delete_project("#DEMO").unwrap();
+        assert_eq!(s.project(), "", "back to the workspace");
+        assert_eq!(s.projects().unwrap(), ["MY_GAME"]);
+        for bad in ["", "@WORKSPACE", "..", "NONE"] {
+            assert!(s.delete_project(bad).is_err(), "{bad:?}");
+        }
 
         assert!(matches!(
             Storage::none().read(FileKind::Txt, "A"),

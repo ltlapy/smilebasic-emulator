@@ -5,12 +5,12 @@
 //! a message also explains what went wrong.
 
 use sb_core::bytecode::Want;
-use sb_core::error::{ErrorKind, Result};
+use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, ArrayData, ElemType, Value, new_str};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::confirm::{Ask, Confirm, FileAction};
+use crate::confirm::{Ask, Confirm, FileAction, project_label, switch_lines};
 use crate::runtime::{Command, Runtime, SLOTS, illegal, slot_arg};
 use crate::sbfile;
 use crate::storage::{self, FileKind, StorageError, parse_file_name, parse_listing};
@@ -79,18 +79,20 @@ impl Runtime {
             (Command::Project, Want::Value, 0) => Ok(vec![Value::str(self.storage.project())]),
             (Command::Project, Want::Outs(0), 1) => {
                 self.direct_only()?;
-                let name = str_arg(&args[0])?;
+                let name = match str_arg(&args[0])?.as_str() {
+                    "" => String::new(),
+                    name => storage::check_project_name(name).map_err(|_| {
+                        Error::with_detail(ErrorKind::IllegalProjectName, format!("{name:?}"))
+                    })?,
+                };
+                if !self.storage.project_exists(&name) {
+                    let detail = format!("no project {name}");
+                    return Err(Error::with_detail(ErrorKind::UndefinedProjectName, detail));
+                }
                 let unsaved = self.unsaved_among(0..SLOTS);
                 if !unsaved.is_empty() && name != self.storage.project() {
                     let old = self.project_label();
-                    let new = if name.is_empty() { "@WORKSPACE" } else { &name };
-                    let names: Vec<String> = unsaved.iter().map(usize::to_string).collect();
-                    let lines = vec![
-                        format!("Switch to project {new}."),
-                        String::new(),
-                        format!("Unsaved changes in slot {}", names.join(", ")),
-                        format!("are not saved in project {old}."),
-                    ];
+                    let lines = switch_lines(project_label(&name), &old, &unsaved);
                     let ask = self.ask(|_| Confirm {
                         title: "Switch project".to_string(),
                         lines,
