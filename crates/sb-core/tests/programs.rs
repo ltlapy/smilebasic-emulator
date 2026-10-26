@@ -418,3 +418,72 @@ fn color_functions() {
     assert_eq!(error("?RGBF(2,0,0)").0, ErrorKind::OutOfRange);
     assert_eq!(error("?HSV(0,256,0)").0, ErrorKind::OutOfRange);
 }
+
+/// A host with fixed callbacks for CALL SPRITE and CALL TEXT.
+struct Callbacking {
+    text: TextHost,
+}
+
+impl sb_core::host::Host for Callbacking {
+    fn lookup(&self, _name: &str) -> Option<u32> {
+        None
+    }
+
+    fn call(
+        &mut self,
+        _id: u32,
+        _args: &[sb_core::value::Value],
+        _want: sb_core::bytecode::Want,
+    ) -> sb_core::error::Result<Vec<sb_core::value::Value>> {
+        unreachable!("no host commands")
+    }
+
+    fn print(&mut self, s: Option<i32>, t: &[u16]) -> sb_core::error::Result<()> {
+        self.text.print(s, t)
+    }
+
+    fn print_tab(&mut self, s: Option<i32>) -> sb_core::error::Result<()> {
+        self.text.print_tab(s)
+    }
+
+    fn print_newline(&mut self, s: Option<i32>) -> sb_core::error::Result<()> {
+        self.text.print_newline(s)
+    }
+
+    fn input_start(&mut self) -> sb_core::error::Result<()> {
+        Ok(())
+    }
+
+    fn input_poll(&mut self) -> sb_core::error::Result<Option<Vec<u16>>> {
+        Ok(None)
+    }
+
+    fn callbacks(&mut self, kind: sb_core::bytecode::Callbacks) -> Vec<(i32, Vec<u16>)> {
+        let list: &[(i32, &str)] = match kind {
+            sb_core::bytecode::Callbacks::Sprite => &[(5, "@A"), (7, "B")],
+            sb_core::bytecode::Callbacks::Text => &[(2, "@T")],
+        };
+        list.iter()
+            .map(|&(i, t)| (i, t.encode_utf16().collect()))
+            .collect()
+    }
+}
+
+#[test]
+fn call_sprite_and_text_run_the_host_callbacks() {
+    let mut host = Callbacking {
+        text: TextHost::default(),
+    };
+    let program = sb_core::compile(
+        "CALL SPRITE:?\"/\";CALLIDX():END\n\
+         @A:?CALLIDX();:CALL TEXT:?CALLIDX();:RETURN\n\
+         @T:?\"t\";CALLIDX();:RETURN\n\
+         DEF B:?\"b\";CALLIDX();:END",
+        &host,
+    )
+    .unwrap();
+    let mut vm = Vm::new(program);
+    while vm.run(&mut host, 1000).unwrap() != Status::Ended {}
+    assert_eq!(host.text.output, "5t25b7/0\n");
+    assert_eq!(output("CALL SPRITE:CALL TEXT:?1"), "1\n");
+}

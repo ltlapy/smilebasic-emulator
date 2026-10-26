@@ -15,6 +15,13 @@ pub enum Slot {
     Local(u32),
 }
 
+/// Which callbacks CALL runs: SPFUNC's or TFUNC's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Callbacks {
+    Sprite,
+    Text,
+}
+
 /// What a call leaves on the stack.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Want {
@@ -114,6 +121,13 @@ pub enum Op {
     /// `[value, name] -> []`
     StoreDyn,
     DefArgc,
+    /// CALL SPRITE or CALL TEXT: takes the host's list of callbacks.
+    CallbacksStart(Callbacks),
+    /// Runs the next callback of the innermost CALL SPRITE or CALL TEXT,
+    /// or jumps to the address when none are left.
+    CallbackNext(Addr),
+    /// `CALLIDX()`
+    CallIdx,
     /// `[n] -> [arg n]`
     DefArg,
     DefOutc,

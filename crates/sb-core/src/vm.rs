@@ -4,7 +4,7 @@
 //! instructions and returns, so the frontend can keep drawing frames.
 //! VSYNC and WAIT return [`Status::Wait`] and resume on the next call.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use crate::ast::BinaryOp;
@@ -63,6 +63,10 @@ pub struct Vm {
     ended: bool,
     /// An INPUT or LINPUT has shown its prompt and waits for a line.
     reading_input: bool,
+    /// Callbacks still to run for each CALL SPRITE or CALL TEXT under way,
+    /// with the CALLIDX() to restore once it ends.
+    callbacks: Vec<(VecDeque<(i32, Value)>, i32)>,
+    call_idx: i32,
 }
 
 fn initial_value(var: &VarInfo, default_int: bool) -> Value {
@@ -176,6 +180,8 @@ impl Vm {
             data_pos: 0,
             ended: false,
             reading_input: false,
+            callbacks: Vec::new(),
+            call_idx: 0,
         }
     }
 
@@ -293,6 +299,21 @@ impl Vm {
             .get(&name)
             .map(|&a| a as usize)
             .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))
+    }
+
+    /// Calls one callback of CALL SPRITE or CALL TEXT: GOSUB to a
+    /// `"@label"`, or a DEF command without arguments.
+    fn run_callback(&mut self, program: &Compiled, target: &Value) -> Result<()> {
+        if target.clone().into_str()?.borrow().first() == Some(&u16::from(b'@')) {
+            let label = self.find_label(target)?;
+            return self.gosub(label);
+        }
+        let name = name_of(target)?;
+        let def = *program
+            .def_names
+            .get(&name)
+            .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedFunction, name))?;
+        self.enter_def(def, Vec::new(), Want::Outs(0))
     }
 
     fn gosub(&mut self, target: usize) -> Result<()> {
@@ -477,6 +498,33 @@ impl Vm {
                 let v = coerce(self.pop(), suffix)?;
                 self.store(slot, v);
             }
+            Op::CallbacksStart(kind) => {
+                let queue = host
+                    .callbacks(*kind)
+                    .into_iter()
+                    .map(|(idx, target)| (idx, Value::Str(new_str(target))))
+                    .collect();
+                self.callbacks.push((queue, self.call_idx));
+            }
+            Op::CallbackNext(end) => {
+                let (queue, outer) = self
+                    .callbacks
+                    .last_mut()
+                    .ok_or(ErrorKind::IllegalStatement)?;
+                match queue.pop_front() {
+                    None => {
+                        self.call_idx = *outer;
+                        self.callbacks.pop();
+                        next = *end as usize;
+                    }
+                    Some((idx, target)) => {
+                        self.call_idx = idx;
+                        self.run_callback(&program, &target)?;
+                        return Ok(None);
+                    }
+                }
+            }
+            Op::CallIdx => self.stack.push(Value::Int(self.call_idx)),
             Op::DefArgc => {
                 let f = self.frame()?;
                 let n = match program.defs[f.def as usize].params {

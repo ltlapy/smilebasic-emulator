@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use crate::bytecode::Want;
+use crate::bytecode::{Callbacks, Want};
 use crate::error::{Error, ErrorKind, Result};
 use crate::value::Value;
 
@@ -35,6 +35,13 @@ pub trait Host {
     /// clears it.
     fn retry(&mut self) -> bool {
         false
+    }
+
+    /// The callbacks CALL SPRITE or CALL TEXT runs, in order: the number
+    /// CALLIDX() reports, and a `"@label"` to GOSUB or the name of a DEF
+    /// command to call.
+    fn callbacks(&mut self, _kind: Callbacks) -> Vec<(i32, Vec<u16>)> {
+        Vec::new()
     }
 }
 

@@ -308,7 +308,11 @@ impl Compiler<'_> {
 
     fn patch(&mut self, at: usize, target: Addr) {
         match &mut self.out.code[at] {
-            Op::Jump(a) | Op::JumpIfFalse(a) | Op::JumpIfTrue(a) | Op::Gosub(a) => *a = target,
+            Op::Jump(a)
+            | Op::JumpIfFalse(a)
+            | Op::JumpIfTrue(a)
+            | Op::Gosub(a)
+            | Op::CallbackNext(a) => *a = target,
             other => unreachable!("patching non-jump {other:?}"),
         }
     }
@@ -467,10 +471,15 @@ impl Compiler<'_> {
                 self.store_outs(outs)?;
             }
             StmtKind::CallSprite | StmtKind::CallText => {
-                return Err(err(
-                    ErrorKind::IllegalStatement,
-                    "CALL SPRITE/TEXT not implemented",
-                ));
+                self.emit(Op::CallbacksStart(match kind {
+                    StmtKind::CallSprite => Callbacks::Sprite,
+                    _ => Callbacks::Text,
+                }));
+                let top = self.here();
+                let next = self.emit(Op::CallbackNext(0));
+                self.emit(Op::Jump(top));
+                let end = self.here();
+                self.patch(next, end);
             }
             StmtKind::Print { screen, items } => self.print(screen.as_ref(), items)?,
             StmtKind::Input {
@@ -1054,6 +1063,10 @@ impl Compiler<'_> {
     fn call_expr(&mut self, name: &Var, args: &[Option<Expr>]) -> Result<()> {
         let full = call_name(name);
         match (full.as_str(), args) {
+            ("CALLIDX", []) => {
+                self.emit(Op::CallIdx);
+                return Ok(());
+            }
             ("DEFARGC", []) | ("DEFOUTC", []) => {
                 self.require_def()?;
                 self.emit(if full == "DEFARGC" {
