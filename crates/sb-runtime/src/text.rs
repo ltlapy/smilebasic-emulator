@@ -15,6 +15,8 @@ pub const TAB_WIDTH: u32 = 4;
 const WHITE: u32 = 0xFFFF_FFFF;
 /// GRP5 (`#GRPF`) holds the font that text screens and GPUTCHR draw.
 pub const FONT_PAGE: usize = 5;
+/// GRP4 holds the default sprite image and user-defined characters.
+pub const SPRITE_PAGE: usize = 4;
 
 /// Pixel `(x, y)` of a character as GRP5 now shows it; fallback glyphs
 /// that have no place there come from the font itself.
@@ -294,28 +296,30 @@ impl TextScreen {
         };
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
         draw_image(fb, &place, w, h, |x, y| {
-            let (x, y) = (x as u32, y as u32);
-            let (cx, cy) = (x / cs, y / cs);
+            let size = f64::from(cs);
+            let (cx, cy) = ((x / size) as u32, (y / size) as u32);
             let cell = self.cell(cx, cy);
             let glyph = if cell.code == 0 {
                 0
             } else {
+                // Where in the cell, which a fine frame splits further.
                 // UNVERIFIED: flips apply to the cell, then the quarter turn
                 // picks the font pixel, as for sprites.
-                let (mut px, mut py) = (x % cs, y % cs);
+                let (mut px, mut py) = (x - f64::from(cx * cs), y - f64::from(cy * cs));
                 if cell.attr & attr::REVH != 0 {
-                    px = cs - 1 - px;
+                    px = size - px;
                 }
                 if cell.attr & attr::REVV != 0 {
-                    py = cs - 1 - py;
+                    py = size - py;
                 }
                 let (px, py) = match cell.attr & attr::ROTATION {
                     0 => (px, py),
-                    1 => (py, cs - 1 - px),
-                    2 => (cs - 1 - px, cs - 1 - py),
-                    _ => (cs - 1 - py, px),
+                    1 => (py, size - px),
+                    2 => (size - px, size - py),
+                    _ => (size - py, px),
                 };
-                let pixel = self.glyph_pixel(font, grp, cell.code, px * ft / cs, py * ft / cs);
+                let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
+                let pixel = self.glyph_pixel(font, grp, cell.code, at(px), at(py));
                 multiply(pixel, cell.color)
             };
             let glyph = if cursor == Some((cx, cy)) {

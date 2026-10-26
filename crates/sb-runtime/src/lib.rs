@@ -17,7 +17,7 @@ pub mod nso;
 pub mod resources;
 pub mod runtime;
 pub mod sbfile;
-mod screen;
+pub mod screen;
 pub mod settings;
 mod sp;
 pub mod sprites;

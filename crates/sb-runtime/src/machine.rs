@@ -12,6 +12,7 @@ use sb_core::vm::{Status, Vm};
 use crate::editor::Editor;
 use crate::framebuffer::Framebuffer;
 use crate::runtime::{Request, Runtime, SLOTS};
+use crate::screen::ScreenMode;
 use crate::text::CONSOLE;
 
 /// UNVERIFIED: instructions per frame for code that does not VSYNC;
@@ -266,6 +267,17 @@ impl Machine {
             Ok(Status::Wait { frames, .. }) => self.wait = frames,
             Ok(Status::Ended) => self.finish(None),
             Err(e) => self.finish(Some(e)),
+        }
+    }
+
+    /// How the frame that [`Machine::render`] returns is to be shown. The
+    /// editor keeps the start-up resolution, sampled once.
+    pub fn screen_mode(&self) -> ScreenMode {
+        if self.editing {
+            let m = self.rt.startup_mode();
+            ScreenMode::new(m.width, m.height)
+        } else {
+            self.rt.screen_mode()
         }
     }
 

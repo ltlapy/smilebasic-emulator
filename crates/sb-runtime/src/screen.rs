@@ -1,7 +1,7 @@
 //! Placing text screens (TOFS, THOME, TROT, TSCALE, TCOLOR, TBLEND, TSHOW,
 //! THIDE, TLAYER), the layers they and sprites belong to (LAYER, LCLIP,
-//! LMATRIX), BACKCOLOR, and what text screens show: TSCREEN, TPAGE and
-//! ATTR.
+//! LMATRIX), BACKCOLOR, what text screens show (TSCREEN, TPAGE and
+//! ATTR), the resolution (XSCREEN) and ACLS.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -11,6 +11,58 @@ use crate::compose::{Affine, Compose, LAYERS};
 use crate::graphics::Clip;
 use crate::runtime::{Command, Runtime, illegal, opt_int, screen_id, with_screen};
 use crate::text::CONSOLE;
+
+/// XSCREEN: the screen's resolution and how it is shown.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenMode {
+    pub width: u32,
+    pub height: u32,
+    /// Each pixel is drawn as `sample` x `sample` finer ones, so that
+    /// turned and scaled elements look smoother.
+    pub sample: u32,
+    pub filter: Filter,
+    /// Width over height on the display; `None` for square pixels.
+    pub aspect: Option<f64>,
+}
+
+impl ScreenMode {
+    /// `width` x `height` with square pixels, sampled once each.
+    pub fn new(width: u32, height: u32) -> ScreenMode {
+        ScreenMode {
+            width,
+            height,
+            sample: 1,
+            filter: Filter::Nearest,
+            aspect: None,
+        }
+    }
+
+    /// The frame's size in its finer pixels.
+    pub fn frame(&self) -> (u32, u32) {
+        (self.width * self.sample, self.height * self.sample)
+    }
+
+    pub fn aspect(&self) -> f64 {
+        self.aspect
+            .unwrap_or(f64::from(self.width) / f64::from(self.height))
+    }
+}
+
+/// How the frame is scaled to the display: XSCREEN's composite mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Filter {
+    Bilinear,
+    SmartNearest,
+    Nearest,
+}
+
+impl Filter {
+    fn from_int(n: i32) -> Option<Filter> {
+        [Filter::Bilinear, Filter::SmartNearest, Filter::Nearest]
+            .get(usize::try_from(n).ok()?)
+            .copied()
+    }
+}
 
 fn real(v: &Value) -> Result<f64> {
     v.to_real()
@@ -305,6 +357,61 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Backcolor, Want::Value, 0) => Ok(int_value(self.back_color as i32)),
+            (Command::Xscreen, Want::Outs(0), 2..=5) => {
+                let (w, h) = (args[0].to_int()?, args[1].to_int()?);
+                if !(128..=1280).contains(&w) || w % 4 != 0 {
+                    return Err(out_of_range("width", w));
+                }
+                if !(128..=720).contains(&h) || h % 4 != 0 {
+                    return Err(out_of_range("height", h));
+                }
+                let opt = |i: usize| args.get(i).map(opt_int).transpose().map(Option::flatten);
+                let sample = opt(2)?.unwrap_or(1);
+                if sample < 1 || w * sample > 1280 || h * sample > 720 {
+                    return Err(out_of_range("sample", sample));
+                }
+                let mode = opt(3)?.unwrap_or(0);
+                let filter = Filter::from_int(mode).ok_or_else(|| out_of_range("mode", mode))?;
+                let aspect = match args.get(4) {
+                    None | Some(Value::Default) => None,
+                    Some(v) => match real(v)? {
+                        a if (0.1..=10.0).contains(&a) => Some(a),
+                        a => {
+                            return Err(Error::with_detail(
+                                ErrorKind::OutOfRange,
+                                format!("aspect {a}"),
+                            ));
+                        }
+                    },
+                };
+                self.set_mode(ScreenMode {
+                    width: w as u32,
+                    height: h as u32,
+                    sample: sample as u32,
+                    filter,
+                    aspect,
+                });
+                Ok(vec![])
+            }
+            (Command::Xscreen, Want::Outs(n @ 2..=5), 0) => {
+                let m = self.mode;
+                let mut out = [m.width, m.height, m.sample]
+                    .map(|n| Value::Int(n as i32))
+                    .to_vec();
+                out.push(Value::Int(m.filter as i32));
+                out.push(Value::Real(m.aspect()));
+                out.truncate(n.into());
+                Ok(out)
+            }
+            (Command::Acls, Want::Outs(0), 0 | 3 | 4) => {
+                let flags: Vec<bool> = args
+                    .iter()
+                    .map(|v| v.to_int().map(|n| n != 0))
+                    .collect::<Result<_>>()?;
+                let keep = |i: usize| flags.get(i).copied().unwrap_or(false);
+                self.acls(keep(0), keep(1), keep(2), keep(3));
+                Ok(vec![])
+            }
             _ => Err(illegal()),
         }
     }

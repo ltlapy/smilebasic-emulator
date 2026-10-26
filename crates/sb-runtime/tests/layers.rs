@@ -197,3 +197,54 @@ fn drawing_on_grp5_changes_the_font() {
     // The editor and other overlays keep the original font.
     assert_eq!(font.pixel(u16::from(b'A'), FontSize::Small, x, y), WHITE);
 }
+
+#[test]
+fn xscreen_sets_the_resolution() {
+    assert_eq!(
+        first_row(
+            "XSCREEN 320,200,2,1:XSCREEN OUT W,H,S,M,A:TSCREEN OUT F,C,TW,TH\n\
+             ?W;H;S;M;FLOOR(A*100);\" \";F;C;TW;TH"
+        ),
+        "32020021160 884025"
+    );
+    assert!(first_row("CLS:XSCREEN 130,240").starts_with("Out of range"));
+    assert!(first_row("CLS:XSCREEN 400,240,4").starts_with("Out of range"));
+    assert!(first_row("CLS:XSCREEN 400,240,1,3").starts_with("Out of range"));
+    assert!(first_row("CLS:XSCREEN 400,240,1,0,20").starts_with("Out of range"));
+}
+
+#[test]
+fn sampling_makes_the_frame_finer() {
+    let mut m = run(&format!(
+        "{RED_SPRITE}THIDE 4:XSCREEN 256,128,2:SPSET 0,0,0,16,16:SPOFS 0,10,10\n\
+         LCLIP 0,0,0,19,199"
+    ));
+    let fb = m.render();
+    assert_eq!((fb.width(), fb.height()), (512, 256));
+    assert_eq!(fb.get(20, 20), Some(RED));
+    assert_eq!(fb.get(39, 51), Some(RED));
+    assert_eq!(
+        fb.get(40, 51),
+        Some(0xFF00_0000),
+        "clipped in coarse pixels"
+    );
+    assert_eq!(fb.get(19, 19), Some(0xFF00_0000));
+}
+
+#[test]
+fn acls_goes_back_to_the_start() {
+    let source = "GPSET 1,1,#C_RED:SPSET 0,0,0,16,16:BACKCOLOR #C_BLUE:LAYER 2,1\n\
+         TOFS 1,5,5:TSCREEN 1,8,8:XSCREEN 256,128:ANIMDEF 1,\"XY\",1,1,1\n";
+    assert_eq!(
+        first_row(&format!(
+            "{source}ACLS\n\
+             XSCREEN OUT W,H:TOFS 1 OUT X,Y:TSCREEN 1 OUT F,C,TW,TH\n\
+             ?W;H;X;Y;F;C;TW;TH;SPUSED(0);HEX$(BACKCOLOR());GPGET(1,1)"
+        )),
+        "40024000161625150FF0000000"
+    );
+    assert_eq!(
+        first_row(&format!("{source}ACLS 1,0,0:?HEX$(GPGET(1,1))")),
+        "FFFF0000"
+    );
+}

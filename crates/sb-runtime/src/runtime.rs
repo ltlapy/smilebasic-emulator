@@ -14,14 +14,16 @@ use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::Editor;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
-use crate::graphics::Graphics;
+use crate::graphics::{Clip, Graphics};
+use crate::screen::ScreenMode;
 pub use crate::settings::Settings;
 use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
-use crate::text::{CONSOLE, SCREENS, TextScreen};
+use crate::text::{CONSOLE, FONT_PAGE, SCREENS, SPRITE_PAGE, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
+    Acls,
     Animdef,
     Attr,
     Backcolor,
@@ -98,9 +100,11 @@ pub(crate) enum Command {
     Tscale,
     Tscreen,
     Tshow,
+    Xscreen,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
+    ("ACLS", Command::Acls),
     ("ANIMDEF", Command::Animdef),
     ("ATTR", Command::Attr),
     ("BACKCOLOR", Command::Backcolor),
@@ -177,6 +181,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TSCALE", Command::Tscale),
     ("TSCREEN", Command::Tscreen),
     ("TSHOW", Command::Tshow),
+    ("XSCREEN", Command::Xscreen),
 ];
 
 /// Program slots PRG0 to PRG5.
@@ -253,6 +258,37 @@ pub struct Runtime {
     pub back_color: u32,
     /// Where a layer that is composed is drawn first.
     scratch: Framebuffer,
+    /// XSCREEN, and what ACLS goes back to.
+    pub(crate) mode: ScreenMode,
+    startup_mode: ScreenMode,
+    /// The editor keeps the start-up resolution.
+    editor_fb: Framebuffer,
+    /// GRP4 at start-up, which ACLS puts back.
+    sprite_page: Option<Vec<u32>>,
+}
+
+/// The text screens at start-up: the console in front of everything else
+/// with 8-pixel characters, drawn from the 16-pixel font where the frame
+/// is fine enough, and the others with 16-pixel characters.
+// UNVERIFIED: from the manual's program equivalent to ACLS, which sets
+// TSCREEN #TCONSOLE,16,8 and TSCREEN I,16,16 at a sample magnification
+// of 2.
+fn startup_screens(mode: &ScreenMode) -> Vec<TextScreen> {
+    let (w, h) = (mode.width, mode.height);
+    (0..SCREENS)
+        .map(|i| {
+            let mut t = TextScreen::new(w, h);
+            if i == CONSOLE {
+                t.z = -4095;
+                if mode.sample >= 2 {
+                    t.set_font(16, 8, w / 8, h / 8);
+                }
+            } else {
+                t.set_font(16, 16, w / 16, h / 16);
+            }
+            t
+        })
+        .collect()
 }
 
 /// Something drawn on the frame.
@@ -329,15 +365,9 @@ pub(crate) fn with_screen(args: &[Value], rest: usize) -> Result<(usize, &[Value
 
 impl Runtime {
     pub fn new(width: u32, height: u32, font: Font) -> Runtime {
+        let mode = ScreenMode::new(width, height);
         Runtime {
-            text: (0..SCREENS)
-                .map(|i| {
-                    let mut t = TextScreen::new(width, height);
-                    // The console starts in front of everything else.
-                    t.z = if i == CONSOLE { -4095 } else { 0 };
-                    t
-                })
-                .collect(),
+            text: startup_screens(&mode),
             font,
             fb: Framebuffer::new(width, height),
             grp: Graphics::default(),
@@ -361,8 +391,85 @@ impl Runtime {
             layers: [Layer::default(); LAYERS],
             back_color: 0xFF00_0000,
             scratch: Framebuffer::new(width, height),
+            mode,
+            startup_mode: mode,
+            editor_fb: Framebuffer::new(width, height),
+            sprite_page: None,
         }
         .with_font_page()
+    }
+
+    pub fn screen_mode(&self) -> ScreenMode {
+        self.mode
+    }
+
+    pub fn startup_mode(&self) -> ScreenMode {
+        self.startup_mode
+    }
+
+    /// The resolution to start with and to go back to on ACLS, which
+    /// resets the screens for it as ACLS does. The editor uses its size.
+    pub fn set_startup_mode(&mut self, mode: ScreenMode) {
+        self.startup_mode = mode;
+        self.editor_fb = Framebuffer::new(mode.width, mode.height);
+        self.text = startup_screens(&mode);
+        self.set_mode(mode);
+    }
+
+    /// The sprite image on GRP4, also put back by ACLS.
+    pub fn set_sprite_page(&mut self, pixels: Vec<u32>) {
+        self.grp.set_page(SPRITE_PAGE, pixels.clone());
+        self.sprite_page = Some(pixels);
+    }
+
+    /// XSCREEN: the console is resized to fill the screen, keeping its
+    /// font, and `#GSPRITE` shows as much of GRP0.
+    // UNVERIFIED: whether the console is cleared, and how much of
+    // #GSPRITE's settings are reset.
+    pub(crate) fn set_mode(&mut self, mode: ScreenMode) {
+        self.mode = mode;
+        let (fw, fh) = mode.frame();
+        self.fb = Framebuffer::new(fw, fh);
+        self.scratch = Framebuffer::new(fw, fh);
+        let console = &mut self.text[CONSOLE];
+        let (ft, cs) = console.font();
+        console.set_font(ft, cs, mode.width / cs, mode.height / cs);
+        self.sprites.reset_gsprite((mode.width, mode.height));
+    }
+
+    /// ACLS: the start-up state of the screens, sprites, layers and
+    /// graphic pages, keeping what the flags ask for.
+    // UNVERIFIED: that SPPAGE, SPLAYER, GSAMPLE and the text screens'
+    // other settings go back too; the manual's equivalent program leaves
+    // them out.
+    pub(crate) fn acls(
+        &mut self,
+        keep_grp: bool,
+        keep_defs: bool,
+        keep_font: bool,
+        keep_anims: bool,
+    ) {
+        self.text = startup_screens(&self.startup_mode);
+        self.set_mode(self.startup_mode);
+        self.back_color = 0xFF00_0000;
+        self.layers = [Layer::default(); LAYERS];
+        self.sprites.reset(keep_defs, keep_anims);
+        if !keep_grp {
+            for page in 0..FONT_PAGE {
+                self.grp.clear_page(page);
+            }
+            if let Some(pixels) = &self.sprite_page {
+                self.grp.set_page(SPRITE_PAGE, pixels.clone());
+            }
+        }
+        if !keep_font {
+            self.grp.clear_page(FONT_PAGE);
+            let page = self.font.page_image();
+            if page.iter().any(|&p| p != 0) {
+                self.grp.set_page(FONT_PAGE, page);
+            }
+        }
+        self.grp.reset_state();
     }
 
     /// The DATA values from `label` on, for commands that take a
@@ -393,9 +500,9 @@ impl Runtime {
         self
     }
 
-    /// The frame's size in pixels.
+    /// The screen's size in pixels, before XSCREEN's sampling.
     pub(crate) fn frame_size(&self) -> (u32, u32) {
-        (self.fb.width(), self.fb.height())
+        (self.mode.width, self.mode.height)
     }
 
     fn draw_element(&self, fb: &mut Framebuffer, e: Element, layer: &Layer, cursor: bool) {
@@ -494,7 +601,7 @@ impl Runtime {
             if in_layer.peek().is_none() {
                 continue;
             }
-            let settings = self.layers[layer as usize];
+            let settings = self.fine(&self.layers[layer as usize]);
             let target = match settings.compose {
                 Compose::Direct => &mut fb,
                 _ => {
@@ -514,6 +621,30 @@ impl Runtime {
         &self.fb
     }
 
+    /// A layer's settings for a frame that XSCREEN's sampling makes finer.
+    fn fine(&self, layer: &Layer) -> Layer {
+        let s = self.mode.sample as i32;
+        if s == 1 {
+            return *layer;
+        }
+        let f = f64::from(s);
+        let scale = compose::Affine {
+            a: f,
+            d: f,
+            ..compose::Affine::IDENTITY
+        };
+        Layer {
+            matrix: layer.matrix.then(&scale),
+            clip: layer.clip.map(|c| Clip {
+                x0: c.x0 * s,
+                y0: c.y0 * s,
+                x1: c.x1 * s + s - 1,
+                y1: c.y1 * s + s - 1,
+            }),
+            ..*layer
+        }
+    }
+
     /// Composes a frame showing the editor instead of the screens.
     pub(crate) fn render_editor(&mut self, editor: &mut Editor) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
@@ -525,13 +656,13 @@ impl Runtime {
         }
         let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
         editor.draw(
-            &mut self.fb,
+            &mut self.editor_fb,
             &self.font,
             &name,
             self.settings.editor_wrap,
             blink,
         );
-        &self.fb
+        &self.editor_fb
     }
 
     fn screen(&mut self, id: Option<i32>) -> Result<&mut TextScreen> {
@@ -651,7 +782,8 @@ impl Runtime {
                 _,
             ) => self.grp_command(command, args, want),
             (
-                Command::Attr
+                Command::Acls
+                | Command::Attr
                 | Command::Backcolor
                 | Command::Layer
                 | Command::Lclip
@@ -666,7 +798,8 @@ impl Runtime {
                 | Command::Trot
                 | Command::Tscale
                 | Command::Tscreen
-                | Command::Tshow,
+                | Command::Tshow
+                | Command::Xscreen,
                 _,
             ) => self.screen_command(command, args, want),
             (

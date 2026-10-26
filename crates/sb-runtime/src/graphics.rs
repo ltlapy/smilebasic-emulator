@@ -157,6 +157,21 @@ impl Graphics {
         self.pages[page] = pixels;
     }
 
+    /// Empties a page, as GCLS does with 0.
+    pub fn clear_page(&mut self, page: usize) {
+        self.pages[page] = Vec::new();
+    }
+
+    /// GTARGET, GCOLOR and GCLIP as at start-up.
+    pub fn reset_state(&mut self) {
+        let pages = std::mem::take(&mut self.pages);
+        *self = Graphics {
+            pages,
+            sample: self.sample,
+            ..Graphics::default()
+        };
+    }
+
     fn target_pixels(&mut self) -> &mut Vec<u32> {
         let pixels = &mut self.pages[self.target];
         if pixels.is_empty() {

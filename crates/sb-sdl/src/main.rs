@@ -13,6 +13,7 @@ use sb_profiles::Profile;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
+use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
 use sb_runtime::sprites::Sprites;
 use sb_runtime::storage::Storage;
@@ -23,8 +24,10 @@ use sdl3::keyboard::{Keycode, Mod};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
-use sdl3::rect::Rect;
-use sdl3::render::{BlendMode, FRect, ScaleMode};
+use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator};
+use sdl3::sys::render::SDL_SetDefaultTextureScaleMode;
+use sdl3::sys::surface::SDL_ScaleMode;
+use sdl3::video::{Window, WindowContext};
 use toast::Toasts;
 
 const USAGE: &str = "usage:
@@ -40,9 +43,6 @@ const USAGE: &str = "usage:
 const TITLE: &str = "SmileBASIC emulator";
 /// In the data directory.
 const SETTINGS_FILE: &str = "settings.txt";
-/// The page that holds the default sprite image at start-up.
-const SPRITE_GRP: usize = 4;
-
 type AnyError = Box<dyn std::error::Error>;
 
 fn main() {
@@ -105,11 +105,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut rt = Runtime::new(screen.width, screen.height, font);
     let (sprite_page, sprite_defs) = resources::load_sprites(&resource_dir()?);
     if let Some(page) = sprite_page {
-        rt.grp.set_page(SPRITE_GRP, page);
+        rt.set_sprite_page(page);
     }
     if let Some(defs) = sprite_defs {
         rt.sprites = Sprites::new(defs);
     }
+    rt.set_startup_mode(ScreenMode {
+        sample: screen.sample,
+        ..ScreenMode::new(screen.width, screen.height)
+    });
     rt.storage = Storage::new(data_dir()?.join("projects"));
     let settings_path = data_dir()?.join(SETTINGS_FILE);
     if let Ok(text) = std::fs::read_to_string(&settings_path) {
@@ -141,12 +145,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         eprintln!("vsync unavailable: {}", sdl3::get_error());
     }
     let texture_creator = canvas.texture_creator();
-    let mut texture = texture_creator.create_texture_streaming(
-        PixelFormat::ARGB8888,
-        screen.width,
-        screen.height,
-    )?;
-    texture.set_scale_mode(ScaleMode::Nearest);
+    let mut mode = machine.screen_mode();
+    let mut texture = screen_texture(&canvas, &texture_creator, &mode)?;
     // The menu bar and other emulator UI, drawn at display resolution.
     let mut overlay = Framebuffer::new(display_w, display_h);
     let mut overlay_texture =
@@ -312,15 +312,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             _ => {}
         }
 
+        if machine.screen_mode() != mode {
+            mode = machine.screen_mode();
+            texture = screen_texture(&canvas, &texture_creator, &mode)?;
+        }
         let fb = machine.render();
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        canvas.copy(
-            &texture,
-            None,
-            screen_rect(fb.width(), fb.height(), out_w, out_h),
-        )?;
+        canvas.copy(&texture, None, screen_rect(&mode, out_w, out_h))?;
         if dialog.is_some() || menu.visible() || toasts.visible() {
             // A dialog dims the screen behind it.
             overlay.clear(if dialog.is_some() { 0x8000_0000 } else { 0 });
@@ -356,17 +356,38 @@ fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
     FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
 }
 
-/// Where the screen goes in a window of `out_w` x `out_h` pixels: scaled
-/// by the largest whole factor that fits, and centered.
-fn screen_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> Rect {
-    let scale = (out_w / width).min(out_h / height).max(1);
+/// A texture for frames shown in `mode`, filtered as XSCREEN asks.
+fn screen_texture<'a>(
+    canvas: &Canvas<Window>,
+    creator: &'a TextureCreator<WindowContext>,
+    mode: &ScreenMode,
+) -> Result<Texture<'a>, AnyError> {
+    // The Rust bindings lack SDL 3.4's pixel art mode for a single
+    // texture, but the renderer's default for new ones takes it.
+    let scale = match mode.filter {
+        Filter::Bilinear => SDL_ScaleMode::LINEAR,
+        Filter::SmartNearest => SDL_ScaleMode::PIXELART,
+        Filter::Nearest => SDL_ScaleMode::NEAREST,
+    };
+    // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
+    unsafe { SDL_SetDefaultTextureScaleMode(canvas.raw(), scale) };
+    let (w, h) = mode.frame();
+    Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
+}
+
+/// Where the screen goes in a window of `out_w` x `out_h` pixels:
+/// centered, at XSCREEN's aspect ratio, and scaled to fit, by a whole
+/// factor when the filter is nearest neighbor.
+fn screen_rect(mode: &ScreenMode, out_w: u32, out_h: u32) -> FRect {
+    let height = mode.height as f32;
+    let width = height * mode.aspect() as f32;
+    let fit = (out_w as f32 / width).min(out_h as f32 / height);
+    let scale = match mode.filter {
+        Filter::Nearest => fit.floor().max(1.0),
+        _ => fit,
+    };
     let (w, h) = (width * scale, height * scale);
-    Rect::new(
-        (out_w as i32 - w as i32) / 2,
-        (out_h as i32 - h as i32) / 2,
-        w,
-        h,
-    )
+    FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
 }
 
 /// The slot that Ctrl and a digit key opens in the editor: Ctrl+1 for PRG0

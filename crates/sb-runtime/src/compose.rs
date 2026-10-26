@@ -119,14 +119,15 @@ pub struct Placement<'a> {
 }
 
 /// Draws a `w` x `h` image whose pixels `sample` gives, placed by
-/// `place`. Pixels are taken at the image point under each frame pixel's
-/// center.
+/// `place`. `sample` gets the image point under each frame pixel's
+/// center, which falls between whole pixels when the frame is finer than
+/// the image.
 pub fn draw_image(
     fb: &mut Framebuffer,
     place: &Placement,
     w: i32,
     h: i32,
-    sample: impl Fn(i32, i32) -> u32,
+    sample: impl Fn(f64, f64) -> u32,
 ) {
     let m = &place.matrix;
     let Some(inv) = m.inverse() else { return };
@@ -163,7 +164,7 @@ pub fn draw_image(
             if lx < 0.0 || ly < 0.0 || lx >= w || ly >= h {
                 continue;
             }
-            let src = sample(lx as i32, ly as i32);
+            let src = sample(lx, ly);
             if src >> 24 == 0 {
                 continue;
             }

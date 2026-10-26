@@ -280,18 +280,32 @@ impl Sprites {
             hit_rc: None,
             hit_info: HitInfo::default(),
         };
-        s.reset_gsprite();
+        s.reset_gsprite((400, 240));
         s
     }
 
-    /// Sprite 4095 shows the top-left of GRP0 behind everything else.
-    // UNVERIFIED: its Z and size at start-up.
-    fn reset_gsprite(&mut self) {
+    /// Sprite 4095 shows the top-left `w` x `h` of GRP0 behind everything
+    /// else.
+    pub fn reset_gsprite(&mut self, (w, h): (u32, u32)) {
         let g = &mut self.list[GSPRITE];
         *g = Sprite::unused();
         (g.used, g.shown, g.page) = (true, true, 0);
-        (g.w, g.h) = (400, 240);
+        (g.w, g.h) = (w as i32, h as i32);
         g.z = 4095;
+    }
+
+    /// ACLS: every sprite cleared but `#GSPRITE`, which the caller resets,
+    /// and the templates and animations unless kept.
+    pub fn reset(&mut self, keep_defs: bool, keep_anims: bool) {
+        self.clear_all();
+        (self.new_page, self.new_layer) = (DEFAULT_PAGE, 0);
+        (self.hit_sp, self.hit_rc) = (None, None);
+        if !keep_defs {
+            self.reset_defs();
+        }
+        if !keep_anims {
+            self.anim_defs = vec![None; anim::DEFINITIONS];
+        }
     }
 
     /// Clears every sprite's variables, as starting a program does.
@@ -516,7 +530,8 @@ pub fn draw_posed(
         clip,
         add: s.attr & attr::ADD != 0,
     };
-    draw_image(fb, &place, bw, bh, |mut lx, mut ly| {
+    draw_image(fb, &place, bw, bh, |x, y| {
+        let (mut lx, mut ly) = (x as i32, y as i32);
         // UNVERIFIED: flips apply to the shown rectangle, then the
         // quarter turn picks the image pixel.
         if s.attr & attr::REVH != 0 {
