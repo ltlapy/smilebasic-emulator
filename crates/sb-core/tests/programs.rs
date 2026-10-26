@@ -326,3 +326,69 @@ fn input_and_linput() {
         "?HI\nHI\n"
     );
 }
+
+/// A host whose ASK waits one frame for each call before answering.
+struct Asking {
+    text: TextHost,
+    waited: bool,
+    retry: bool,
+}
+
+impl sb_core::host::Host for Asking {
+    fn lookup(&self, name: &str) -> Option<u32> {
+        (name == "ASK").then_some(0)
+    }
+
+    fn call(
+        &mut self,
+        _id: u32,
+        args: &[sb_core::value::Value],
+        want: sb_core::bytecode::Want,
+    ) -> sb_core::error::Result<Vec<sb_core::value::Value>> {
+        assert_eq!(args.len(), 1, "arguments survive a retry");
+        self.waited = !self.waited;
+        self.retry = self.waited;
+        let answer = sb_core::value::Value::Int(args[0].to_int()? + 6);
+        Ok(vec![answer; want.count()])
+    }
+
+    fn print(&mut self, s: Option<i32>, t: &[u16]) -> sb_core::error::Result<()> {
+        self.text.print(s, t)
+    }
+
+    fn print_tab(&mut self, s: Option<i32>) -> sb_core::error::Result<()> {
+        self.text.print_tab(s)
+    }
+
+    fn print_newline(&mut self, s: Option<i32>) -> sb_core::error::Result<()> {
+        self.text.print_newline(s)
+    }
+
+    fn input_start(&mut self) -> sb_core::error::Result<()> {
+        Ok(())
+    }
+
+    fn input_poll(&mut self) -> sb_core::error::Result<Option<Vec<u16>>> {
+        Ok(None)
+    }
+
+    fn retry(&mut self) -> bool {
+        std::mem::take(&mut self.retry)
+    }
+}
+
+#[test]
+fn host_calls_can_wait_for_the_user() {
+    let mut host = Asking {
+        text: TextHost::default(),
+        waited: false,
+        retry: false,
+    };
+    let program = sb_core::compile("?1;ASK(1);CALL \"ASK\",0", &host).unwrap();
+    let mut vm = Vm::new(program);
+    let mut frames = 0;
+    while vm.run(&mut host, 1000).unwrap() != Status::Ended {
+        frames += 1;
+    }
+    assert_eq!((host.text.output.as_str(), frames), ("17", 2));
+}

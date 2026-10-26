@@ -28,6 +28,14 @@ pub trait Host {
     /// The line once Enter has been pressed, or `None` while still typing.
     /// The VM polls once per frame.
     fn input_poll(&mut self) -> Result<Option<Vec<u16>>>;
+
+    /// Whether the last [`Host::call`] did nothing because it waits for
+    /// the user, such as a confirmation. The VM then makes the same call
+    /// on the next frame, and ignores what this one returned. Reading it
+    /// clears it.
+    fn retry(&mut self) -> bool {
+        false
+    }
 }
 
 /// A host with no commands that records PRINT output and answers INPUT

@@ -33,6 +33,12 @@ pub enum Status {
     Ended,
 }
 
+/// Waits a frame and runs the same instruction again.
+const RETRY: Status = Status::Wait {
+    frames: 1,
+    vsync: false,
+};
+
 struct Frame {
     def: u32,
     locals: Vec<Value>,
@@ -424,18 +430,26 @@ impl Vm {
             }
             Op::CallHost { id, argc, want } => {
                 let args = self.pop_n((*argc).into());
-                self.call_host(host, *id, &args, *want)?;
+                if !self.call_host(host, *id, &args, *want)? {
+                    self.stack.extend(args);
+                    return Ok(Some(RETRY));
+                }
             }
             Op::CallDyn { argc, want } => {
                 let args = self.pop_n((*argc).into());
-                let name = name_of(&self.pop())?;
+                let name_value = self.pop();
+                let name = name_of(&name_value)?;
                 if let Some(&def) = program.def_names.get(&name) {
                     self.enter_def(def, args, *want)?;
                     return Ok(None);
                 } else if let Some(id) = builtins::lookup(&name, form(*want)) {
                     self.call_builtin(id, &args, *want)?;
                 } else if let Some(id) = host.lookup(&name) {
-                    self.call_host(host, id, &args, *want)?;
+                    if !self.call_host(host, id, &args, *want)? {
+                        self.stack.push(name_value);
+                        self.stack.extend(args);
+                        return Ok(Some(RETRY));
+                    }
                 } else {
                     return Err(Error::with_detail(ErrorKind::UndefinedFunction, name));
                 }
@@ -548,10 +562,7 @@ impl Vm {
                 // Until the line is complete, run this instruction again
                 // on the next frame.
                 let Some(line) = host.input_poll()? else {
-                    return Ok(Some(Status::Wait {
-                        frames: 1,
-                        vsync: false,
-                    }));
+                    return Ok(Some(RETRY));
                 };
                 self.reading_input = false;
                 match parse_input(&line, kinds, *whole_line) {
@@ -637,15 +648,21 @@ impl Vm {
         self.push_results(results, want)
     }
 
+    /// Returns false, leaving the stack alone, if the host asked for the
+    /// call to be made again on the next frame.
     fn call_host(
         &mut self,
         host: &mut dyn Host,
         id: u32,
         args: &[Value],
         want: Want,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let results = host.call(id, args, want)?;
-        self.push_results(results, want)
+        if host.retry() {
+            return Ok(false);
+        }
+        self.push_results(results, want)?;
+        Ok(true)
     }
 
     fn enter_def(&mut self, def: u32, args: Vec<Value>, want: Want) -> Result<()> {
