@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use sb_core::value::Value;
 
+use crate::anim::{self, Anim, Track};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{GRP_SIZE, Graphics, PAGES, multiply};
 
@@ -143,6 +144,10 @@ pub struct Sprite {
     pub color: u32,
     pub layer: i32,
     pub vars: HashMap<VarKey, Value>,
+    /// Animations playing, by [`anim::Target`].
+    pub anims: [Option<Track>; anim::TARGETS],
+    /// SPSTOP pauses the animations until SPSTART.
+    pub anim_stopped: bool,
 }
 
 impl Sprite {
@@ -165,6 +170,8 @@ impl Sprite {
             color: 0xFFFF_FFFF,
             layer: 0,
             vars: HashMap::new(),
+            anims: Default::default(),
+            anim_stopped: false,
         }
     }
 
@@ -185,6 +192,8 @@ pub struct Sprites {
     /// SPPAGE and SPLAYER for sprites created from now on.
     pub new_page: i32,
     pub new_layer: i32,
+    /// ANIMDEF definitions.
+    pub anim_defs: Vec<Option<Anim>>,
 }
 
 impl Default for Sprites {
@@ -201,6 +210,7 @@ impl Sprites {
             default_defs: defs,
             new_page: DEFAULT_PAGE,
             new_layer: 0,
+            anim_defs: vec![None; anim::DEFINITIONS],
         };
         s.reset_gsprite();
         s
@@ -246,6 +256,32 @@ impl Sprites {
     pub fn clear_all(&mut self) {
         for s in &mut self.list[..GSPRITE] {
             *s = Sprite::unused();
+        }
+    }
+
+    /// Plays one frame of every sprite's animations. Sprites whose
+    /// animation asks for it are cleared when it ends.
+    pub fn animate(&mut self) {
+        for id in 0..SPRITES {
+            let s = &mut self.list[id];
+            if !s.used || s.anim_stopped {
+                continue;
+            }
+            let mut tracks = std::mem::take(&mut s.anims);
+            let mut delete = false;
+            for slot in &mut tracks {
+                if let Some(track) = slot
+                    && !track.step(s, &self.defs)
+                {
+                    delete |= track.mode().delete;
+                    *slot = None;
+                }
+            }
+            s.anims = tracks;
+            if delete {
+                // UNVERIFIED: #GSPRITE is cleared like any other.
+                self.clear(id);
+            }
         }
     }
 

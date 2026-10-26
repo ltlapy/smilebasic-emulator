@@ -248,6 +248,9 @@ impl Machine {
             }
             return;
         }
+        // UNVERIFIED: animations play in direct mode too, and pause while
+        // the editor hides the screen.
+        self.rt.sprites.animate();
         let Some(vm) = &mut self.vm else {
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));
@@ -305,7 +308,9 @@ impl Machine {
         self.running_slot = slot;
         match sb_core::compile(source, &self.rt) {
             Ok(program) => {
-                self.vm = Some(Vm::with_globals(program, &self.vars));
+                let vm = Vm::with_globals(program, &self.vars);
+                self.rt.program = Some(vm.program());
+                self.vm = Some(vm);
                 self.wait = 0;
             }
             Err(e) => {

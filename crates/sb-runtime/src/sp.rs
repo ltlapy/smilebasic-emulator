@@ -1,10 +1,12 @@
 //! Sprite commands: SPSET, SPCLR, SPSHOW, SPHIDE, SPHOME, SPOFS, SPROT,
-//! SPSCALE, SPCOLOR, SPCHR, SPPAGE, SPLAYER, SPDEF, SPVAR and SPUSED.
+//! SPSCALE, SPCOLOR, SPCHR, SPPAGE, SPLAYER, SPDEF, SPVAR, SPUSED, and the
+//! animation commands SPANIM, ANIMDEF, SPSTART, SPSTOP and SPCHK.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{ArrayData, Value};
 
+use crate::anim::{self, Anim, MAX_KEYS, Mode, Track};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
 use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey};
 
@@ -35,6 +37,32 @@ fn sprite_id(v: &Value) -> Result<usize> {
 
 fn def_id(v: &Value) -> Result<usize> {
     Ok(in_range(v, "sprite definition", 0..=DEFS as i32 - 1)? as usize)
+}
+
+fn anim_id(v: &Value) -> Result<usize> {
+    Ok(in_range(v, "animation definition", 0..=anim::DEFINITIONS as i32 - 1)? as usize)
+}
+
+/// A loop count, 1 when omitted.
+fn loops(v: Option<&Value>) -> Result<i32> {
+    Ok(v.map(opt_int).transpose()?.flatten().unwrap_or(1))
+}
+
+fn numbers(array: &ArrayData) -> Result<Vec<f64>> {
+    match array {
+        ArrayData::Int(v) => Ok(v.iter().map(|&n| f64::from(n)).collect()),
+        ArrayData::Real(v) => Ok(v.clone()),
+        ArrayData::Str(_) => Err(ErrorKind::TypeMismatch.into()),
+    }
+}
+
+/// How many entries a `"@label"` lists: the first DATA value.
+fn data_count(n: f64, max: usize) -> Result<usize> {
+    let n = n as i32;
+    usize::try_from(n)
+        .ok()
+        .filter(|&n| n <= max)
+        .ok_or_else(|| out_of_range("data count", n))
 }
 
 fn page(v: &Value) -> Result<i32> {
@@ -126,6 +154,43 @@ impl Runtime {
             (None, None) => unreachable!("one of the two forms"),
         }
         Ok(())
+    }
+
+    /// The animation SPANIM and ANIMDEF take after their number: the
+    /// target, then an array, a `"@label"` or the keys themselves, then
+    /// the loop count.
+    fn anim_args(&self, args: &[Value]) -> Result<Anim> {
+        let mode = Mode::parse(&args[0])?;
+        let per = 1 + mode.target.items();
+        match &args[1..] {
+            [Value::Array(array), rest @ ..] if rest.len() <= 1 => {
+                let data = numbers(&array.borrow().data)?;
+                Anim::new(mode, &data, loops(rest.first())?)
+            }
+            [label @ Value::Str(_), rest @ ..] if rest.len() <= 1 => {
+                let mut data = self.label_data(label)?;
+                let keys = data_count(data.number()?, MAX_KEYS)?;
+                Anim::new(mode, &data.numbers(keys * per)?, loops(rest.first())?)
+            }
+            keys => {
+                let (keys, rest) = keys.split_at(keys.len() - keys.len() % per);
+                if rest.len() > 1 {
+                    return Err(Error::with_detail(
+                        ErrorKind::IllegalFunctionCall,
+                        format!("animation data needs {per} values per key"),
+                    ));
+                }
+                let data = keys.iter().map(real).collect::<Result<Vec<_>>>()?;
+                Anim::new(mode, &data, loops(rest.first())?)
+            }
+        }
+    }
+
+    fn start_anim(&mut self, id: &Value, anim: Anim) -> Result<Vec<Value>> {
+        let s = self.sprite(id)?;
+        let target = anim.mode.target.index();
+        s.anims[target] = Some(Track::new(anim, s));
+        Ok(vec![])
     }
 
     pub(crate) fn sp_command(
@@ -317,6 +382,62 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
+            (Command::Spanim, Want::Outs(0), 0) => {
+                for s in &mut self.sprites.list {
+                    s.anims = Default::default();
+                }
+                Ok(vec![])
+            }
+            (Command::Spanim, Want::Outs(0), 1) => {
+                self.sprite(&args[0])?.anims = Default::default();
+                Ok(vec![])
+            }
+            (Command::Spanim, Want::Outs(0), 2) => {
+                let n = anim_id(&args[1])?;
+                let anim = self.sprites.anim_defs[n].clone().ok_or_else(|| {
+                    Error::with_detail(
+                        ErrorKind::IllegalFunctionCall,
+                        format!("animation {n} is not defined"),
+                    )
+                })?;
+                self.start_anim(&args[0], anim)
+            }
+            (Command::Spanim, Want::Outs(0), _) => {
+                let anim = self.anim_args(&args[1..])?;
+                self.start_anim(&args[0], anim)
+            }
+            (Command::Animdef, Want::Outs(0), 0) => {
+                self.sprites.anim_defs.fill(None);
+                Ok(vec![])
+            }
+            (Command::Animdef, Want::Outs(0), 1) => {
+                self.sprites.anim_defs[anim_id(&args[0])?] = None;
+                Ok(vec![])
+            }
+            (Command::Animdef, Want::Outs(0), 3..) => {
+                let n = anim_id(&args[0])?;
+                self.sprites.anim_defs[n] = Some(self.anim_args(&args[1..])?);
+                Ok(vec![])
+            }
+            (Command::Spstart | Command::Spstop, Want::Outs(0), 0 | 1) => {
+                let stopped = command == Command::Spstop;
+                match args.first() {
+                    Some(id) => self.sprite(id)?.anim_stopped = stopped,
+                    None => {
+                        for s in &mut self.sprites.list {
+                            s.anim_stopped = stopped;
+                        }
+                    }
+                }
+                Ok(vec![])
+            }
+            (Command::Spchk, Want::Value, 1) => {
+                let s = self.sprite(&args[0])?;
+                let bits = (s.anims.iter().enumerate())
+                    .filter(|(_, track)| track.is_some())
+                    .fold(0, |bits, (i, _)| bits | 1 << i);
+                Ok(vec![Value::Int(bits)])
+            }
             (Command::Spused, Want::Value, 1) => {
                 let id = sprite_id(&args[0])?;
                 Ok(vec![Value::Int(i32::from(self.sprites.list[id].used))])
@@ -345,18 +466,25 @@ impl Runtime {
                 };
                 Ok(ints(&out))
             }
-            (Want::Outs(0), [Value::Array(array), rest @ ..]) if rest.len() <= 3 => {
+            (Want::Outs(0), [source @ (Value::Array(_) | Value::Str(_)), rest @ ..])
+                if rest.len() <= 3 =>
+            {
                 let offset = rest.first().map(def_id).transpose()?.unwrap_or(0);
                 let (du, dv) = match rest {
                     [_, u, v] => (int(u)?, int(v)?),
                     [] | [_] => (0, 0),
                     _ => return Err(illegal()),
                 };
-                let values: Vec<i32> = match &array.borrow().data {
-                    ArrayData::Int(v) => v.clone(),
-                    ArrayData::Real(v) => v.iter().map(|&x| x as i32).collect(),
-                    ArrayData::Str(_) => return Err(ErrorKind::TypeMismatch.into()),
+                let values = match source {
+                    Value::Array(array) => numbers(&array.borrow().data)?,
+                    // The count of templates, then seven values for each.
+                    _ => {
+                        let mut data = self.label_data(source)?;
+                        let n = data_count(data.number()?, DEFS)?;
+                        data.numbers(n * 7)?
+                    }
                 };
+                let values: Vec<i32> = values.iter().map(|&x| x as i32).collect();
                 if !values.len().is_multiple_of(7) {
                     return Err(Error::with_detail(
                         ErrorKind::IllegalFunctionCall,
@@ -379,11 +507,6 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            // TODO: SPDEF "@label" reads DATA, which the host cannot reach yet.
-            (Want::Outs(0), [Value::Str(_), ..]) => Err(Error::with_detail(
-                ErrorKind::IllegalFunctionCall,
-                "SPDEF from DATA is not supported yet",
-            )),
             // SPDEF id,source,[U],[V],[W],[H],[HX],[HY],[attributes]
             (Want::Outs(0), [id, source, fields @ ..]) if fields.len() == 7 => {
                 let id = def_id(id)?;

@@ -2,6 +2,7 @@
 //! the virtual file system. Frontends only consume the finished frame and
 //! audio buffers.
 
+pub mod anim;
 pub mod confirm;
 pub mod editor;
 mod files;

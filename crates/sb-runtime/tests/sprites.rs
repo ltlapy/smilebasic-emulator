@@ -119,3 +119,48 @@ fn sprites_are_drawn_by_z_around_text() {
     assert_eq!(fb.get(10, 2), Some(0xFF00_00FF), "sprite 1 is nearer");
     assert_eq!(fb.get(30, 30), Some(0xFF00_FF00), "GRP0 through #GSPRITE");
 }
+
+#[test]
+fn animations_slide_and_end() {
+    // Each frame after SPANIM plays one step; VSYNC 2 lets two pass.
+    let (_, out) = run("SPSET 0,0:SPOFS 0,0,0\n\
+         DIM A[3]:A[0]=-4:A[1]=40:A[2]=20\n\
+         SPANIM 0,\"XY\",A\n\
+         VSYNC 2:SPOFS 0 OUT X,Y:?X;\",\";Y;\" \";SPCHK(0);\" \";\n\
+         VSYNC 2:SPOFS 0 OUT X,Y:?X;\",\";Y;\" \";SPCHK(0)");
+    assert_eq!(out, "20,10 1 40,20 0");
+}
+
+#[test]
+fn animations_from_data_can_clear_the_sprite() {
+    let (_, out) = run("SPSET 0,0:SPOFS 0,100,0\n\
+         SPANIM 0,\"XY+.\",\"@MV\"\n\
+         VSYNC 1:SPOFS 0 OUT X,Y:?X;\" \";\n\
+         VSYNC 2:?SPUSED(0)\n\
+         END\n\
+         @MV\n\
+         DATA 2\n\
+         DATA 1,5,0\n\
+         DATA -1,10,0");
+    assert_eq!(out, "105 0");
+}
+
+#[test]
+fn animation_definitions_stop_and_start() {
+    let (_, out) = run("ANIMDEF 3,\"Z\",1,1,1,2,0\n\
+         SPSET 0,0:SPANIM 0,3\n\
+         VSYNC 1:SPOFS 0 OUT X,Y,Z:?Z;\" \";\n\
+         SPSTOP 0:VSYNC 2:SPOFS 0 OUT X,Y,Z:?Z;\" \";\n\
+         SPSTART:VSYNC 1:SPOFS 0 OUT X,Y,Z:?Z;\" \";SPCHK(0);\" \";\n\
+         SPANIM 0:?SPCHK(0)");
+    assert_eq!(out, "1 1 2 2 0");
+}
+
+#[test]
+fn spdef_from_data() {
+    let (_, out) = run("SPDEF \"@D\",10,5,6\n\
+         SPDEF 10 OUT U,V,W,H,X,Y,A:?U;\",\";V;\",\";W;\",\";H;\",\";X;\",\";Y;\",\";A\n\
+         @D\n\
+         DATA 1, 1,2,3,4,5,6,7");
+    assert_eq!(out, "6,8,3,4,5,6,7");
+}

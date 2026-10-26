@@ -2,8 +2,9 @@
 //! sprites and sound later.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 
-use sb_core::bytecode::Want;
+use sb_core::bytecode::{Compiled, Literal, Want};
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::Host;
 use sb_core::value::{Value, new_str};
@@ -20,6 +21,7 @@ use crate::text::{CONSOLE, SCREENS, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
+    Animdef,
     Chkfile,
     Clear,
     Cls,
@@ -52,6 +54,8 @@ pub(crate) enum Command {
     Result,
     Run,
     Save,
+    Spanim,
+    Spchk,
     Spchr,
     Spclr,
     Spcolor,
@@ -65,11 +69,14 @@ pub(crate) enum Command {
     Spscale,
     Spset,
     Spshow,
+    Spstart,
+    Spstop,
     Spused,
     Spvar,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
+    ("ANIMDEF", Command::Animdef),
     ("CHKFILE", Command::Chkfile),
     ("CLEAR", Command::Clear),
     ("CLS", Command::Cls),
@@ -102,6 +109,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("RESULT", Command::Result),
     ("RUN", Command::Run),
     ("SAVE", Command::Save),
+    ("SPANIM", Command::Spanim),
+    ("SPCHK", Command::Spchk),
     ("SPCHR", Command::Spchr),
     ("SPCLR", Command::Spclr),
     ("SPCOLOR", Command::Spcolor),
@@ -115,6 +124,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPSCALE", Command::Spscale),
     ("SPSET", Command::Spset),
     ("SPSHOW", Command::Spshow),
+    ("SPSTART", Command::Spstart),
+    ("SPSTOP", Command::Spstop),
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
 ];
@@ -186,6 +197,34 @@ pub struct Runtime {
     /// The last command waits for an answer; see [`Host::retry`].
     pub(crate) retry: bool,
     pub(crate) notices: Vec<String>,
+    /// The program last started, whose DATA commands like SPANIM read.
+    pub(crate) program: Option<Rc<Compiled>>,
+}
+
+/// Reads DATA values in order; see [`Runtime::label_data`].
+pub(crate) struct DataReader {
+    program: Rc<Compiled>,
+    pos: usize,
+}
+
+impl DataReader {
+    pub(crate) fn number(&mut self) -> Result<f64> {
+        let item = self
+            .program
+            .data
+            .get(self.pos)
+            .ok_or(ErrorKind::OutOfData)?;
+        self.pos += 1;
+        match item {
+            Literal::Int(n) => Ok(f64::from(*n)),
+            Literal::Real(x) => Ok(*x),
+            Literal::Str(_) => Err(ErrorKind::TypeMismatch.into()),
+        }
+    }
+
+    pub(crate) fn numbers(&mut self, n: usize) -> Result<Vec<f64>> {
+        (0..n).map(|_| self.number()).collect()
+    }
 }
 
 pub(crate) fn illegal() -> Error {
@@ -252,7 +291,27 @@ impl Runtime {
             answer: None,
             retry: false,
             notices: Vec::new(),
+            program: None,
         }
+    }
+
+    /// The DATA values from `label` on, for commands that take a
+    /// `"@label"`. They are read apart from READ, which keeps its place.
+    // UNVERIFIED: whether these commands move READ's place.
+    pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader> {
+        let text =
+            String::from_utf16_lossy(&label.clone().into_str()?.borrow()).to_ascii_uppercase();
+        let name = text.split_once(':').map_or(text.as_str(), |(_, rest)| rest);
+        let name = name.strip_prefix('@').unwrap_or(name);
+        let program = self.program.clone().unwrap_or_default();
+        let pos = *program
+            .data_labels
+            .get(name)
+            .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))?;
+        Ok(DataReader {
+            program,
+            pos: pos as usize,
+        })
     }
 
     pub fn font(&self) -> &Font {
@@ -464,7 +523,10 @@ impl Runtime {
                 _,
             ) => self.grp_command(command, args, want),
             (
-                Command::Spchr
+                Command::Animdef
+                | Command::Spanim
+                | Command::Spchk
+                | Command::Spchr
                 | Command::Spclr
                 | Command::Spcolor
                 | Command::Spdef
@@ -477,6 +539,8 @@ impl Runtime {
                 | Command::Spscale
                 | Command::Spset
                 | Command::Spshow
+                | Command::Spstart
+                | Command::Spstop
                 | Command::Spused
                 | Command::Spvar,
                 _,

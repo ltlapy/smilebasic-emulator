@@ -4,8 +4,9 @@ An emulator for SmileBASIC 4 programs, written in Rust with SDL3. It runs on
 Windows, macOS and Linux. Support for SmileBASIC 3 and Petit Computer is
 planned.
 
-Early work: the language runs, and PRINT output appears on the console.
-Graphics, sprites, sound and input are not implemented yet.
+Early work: the language, the console, the program editor, graphic pages
+and sprites run. Sound, controllers and background layers are not
+implemented yet.
 
 ## Building
 
@@ -36,7 +37,8 @@ The importer copies `font.map`, `GDEFFONT` and the default sprite image
 `GDEFGRP` into the emulator's data directory, and takes the default sprite
 definitions (SPDEF) out of the executable `main`. List the update's
 directories last so its files take precedence. Only the font is required;
-without the ExeFS, sprite definitions are a plain grid of 16x16 cells.
+without the ExeFS, sprite definitions are a plain grid of 16x16 cells. The
+first release's ExeFS has only definitions 0-4095; the others are empty.
 
 ## Running
 
@@ -58,7 +60,8 @@ on SmileBASIC 4.
 
 Sprites work with `SPSET`, `SPCLR`, `SPSHOW`, `SPHIDE`, `SPOFS`, `SPHOME`,
 `SPROT`, `SPSCALE`, `SPCOLOR`, `SPCHR`, `SPPAGE`, `SPLAYER`, `SPDEF`, `SPVAR`
-and `SPUSED`.
+and `SPUSED`, and are animated with `SPANIM`, `ANIMDEF`, `SPSTART`, `SPSTOP`
+and `SPCHK`, from arrays, arguments or `DATA`.
 
 F4 switches between direct mode and the program editor. The first F4 after
 a program error opens the editor at the error, as `LIST ERR` does; `LIST`,
