@@ -713,7 +713,7 @@ impl Runtime {
             &mut self.editor_fb,
             &self.font,
             &name,
-            self.settings.editor_wrap,
+            (self.settings.editor_wrap, self.settings.editor_number_tiles),
             blink,
         );
         &self.editor_fb

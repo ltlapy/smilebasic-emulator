@@ -7,10 +7,12 @@ use crate::framebuffer::Framebuffer;
 use crate::runtime::{SLOTS, keys};
 use crate::text::{TAB_WIDTH, TextScreen};
 
-/// Six zero-padded digits and a space, as SmileBASIC 4 shows them.
-const GUTTER: usize = 7;
+/// Six digits on three number tiles (U+E100-E16E) and a thin cap.
+const TILE_GUTTER: usize = 4;
 /// Rows below the code: the ruler and the status line.
 const FOOTER: usize = 2;
+/// Closes the number tiles on the right.
+const TILE_CAP: u16 = 0xE17F;
 
 const BACKGROUND: u32 = 0xFF00_0000;
 const TEXT: u32 = 0xFFFF_FFFF;
@@ -48,6 +50,9 @@ pub struct Editor {
     want_col: usize,
     /// Typing replaces the character under the cursor (Insert toggles it).
     pub overwrite: bool,
+    /// Line numbers are drawn on SmileBASIC 4's number tiles rather than
+    /// in digits, which fonts other than its own may lack.
+    number_tiles: bool,
     modified: bool,
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
@@ -82,6 +87,7 @@ impl Editor {
             view: View::default(),
             want_col: 0,
             overwrite: false,
+            number_tiles: true,
             modified: false,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
@@ -135,10 +141,20 @@ impl Editor {
         std::mem::take(&mut self.modified).then(|| self.text())
     }
 
+    /// Columns before the code: the line numbers and a space. Digits take
+    /// as many as the last line's number needs.
+    fn gutter(&self) -> usize {
+        if self.number_tiles {
+            TILE_GUTTER
+        } else {
+            self.lines.len().to_string().len() + 1
+        }
+    }
+
     fn size(&self) -> (usize, usize) {
         let (w, h) = self.screen.size();
         (
-            (w as usize).saturating_sub(GUTTER).max(1),
+            (w as usize).saturating_sub(self.gutter()).max(1),
             (h as usize).saturating_sub(FOOTER).max(1),
         )
     }
@@ -276,10 +292,20 @@ impl Editor {
     }
 
     /// Draws the editor over the whole frame. `name` is the slot's file
-    /// name; `blink` shows the cursor in this frame.
-    pub fn draw(&mut self, fb: &mut Framebuffer, font: &Font, name: &str, wrap: bool, blink: bool) {
+    /// name; `tiles` draws line numbers on number tiles; `blink` shows the
+    /// cursor in this frame.
+    pub fn draw(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        name: &str,
+        (wrap, tiles): (bool, bool),
+        blink: bool,
+    ) {
+        self.number_tiles = tiles;
         self.scroll(wrap);
         let (cols, rows) = self.size();
+        let gutter = self.gutter();
         let v = self.view;
         fb.clear(BACKGROUND);
         let screen = &mut self.screen;
@@ -302,40 +328,59 @@ impl Editor {
                     fill_row(fb, row, 0, width, CURRENT_LINE);
                 }
                 if chunk == 0 {
-                    let number = format!("{:06}", line + 1);
                     let color = if current { TEXT } else { LINE_NUMBER };
-                    put_str(screen, 0, row, &number, color);
+                    if tiles {
+                        for (x, &c) in number_tiles(line + 1).iter().enumerate() {
+                            screen.put_at(x as u32, row as u32, c, color);
+                        }
+                        screen.put_at(3, row as u32, TILE_CAP, color);
+                    } else {
+                        let number = format!("{:>1$}", line + 1, gutter - 1);
+                        put_str(screen, 0, row, &number, color);
+                    }
                 }
                 let start = if wrap { chunk * cols } else { v.left };
                 for x in 0..cols {
                     match text.get(start + x) {
-                        Some(&c) => screen.put_at((GUTTER + x) as u32, row as u32, c, TEXT),
+                        Some(&c) => screen.put_at((gutter + x) as u32, row as u32, c, TEXT),
                         None => {
                             if start + x == text.len() {
-                                marks.push((GUTTER + x, row));
+                                marks.push((gutter + x, row));
                             }
                             break;
                         }
                     }
                 }
                 if current && v.col >= start && v.col - start < cols {
-                    cursor = Some((GUTTER + v.col - start, row));
+                    cursor = Some((gutter + v.col - start, row));
                 }
                 row += 1;
             }
             line += 1;
         }
 
-        // The ruler numbers the visible columns, every other one.
+        // The ruler numbers the visible columns, every other one, on tiles
+        // or in digits. Tiles other than the cursor's take the bar's color,
+        // with their digits recolored after drawing.
         let ruler = rows;
+        let mut ruler_digits = Vec::new();
         fill_row(fb, ruler, 0, width, BAR);
         let first = if wrap { 0 } else { v.left };
         let cursor_col = if wrap { v.col % cols } else { v.col };
         for x in 0..cols {
             let col = first + x;
-            let at = (GUTTER + x) as u32;
-            if col == cursor_col {
-                fill_row(fb, ruler, GUTTER + x, 1, TEXT);
+            let at = (gutter + x) as u32;
+            if tiles {
+                if col == cursor_col {
+                    // On a white tile, as the current line's number.
+                    screen.put_at(at, ruler as u32, ruler_tile(col), TEXT);
+                } else if col.is_multiple_of(2) {
+                    let color = if col.is_multiple_of(10) { TEXT } else { DIM };
+                    screen.put_at(at, ruler as u32, ruler_tile(col), BAR);
+                    ruler_digits.push((gutter + x, color));
+                }
+            } else if col == cursor_col {
+                fill_row(fb, ruler, gutter + x, 1, TEXT);
                 let digit = b'0' + (col % 10) as u8;
                 screen.put_at(at, ruler as u32, u16::from(digit), BACKGROUND);
             } else if col.is_multiple_of(2) {
@@ -345,11 +390,21 @@ impl Editor {
             }
         }
 
-        let status = rows + 1;
+        let status = ruler + 1;
         fill_row(fb, status, 0, width, BAR);
         put_str(screen, 0, status, &format!("PRG{} {name}", self.slot), TEXT);
 
         screen.draw(fb, font);
+        for (x, color) in ruler_digits {
+            for py in ruler * 8..(ruler + 1) * 8 {
+                for px in x * 8..(x + 1) * 8 {
+                    let (px, py) = (px as u32, py as u32);
+                    if fb.get(px, py).is_some_and(|c| c != BAR) {
+                        fb.set(px, py, color);
+                    }
+                }
+            }
+        }
         for (x, y) in marks {
             draw_glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
         }
@@ -362,6 +417,38 @@ impl Editor {
                 }
             }
         }
+    }
+}
+
+/// A line number's six digits on three tiles, two digits each, with the
+/// leading zeros dimmed as SmileBASIC 4 does.
+fn number_tiles(number: usize) -> [u16; 3] {
+    let n = number % 1_000_000;
+    let pairs = [n / 10_000, n / 100 % 100, n % 100];
+    let mut leading = true;
+    pairs.map(|pair| {
+        let pair = pair as u16;
+        if leading && pair == 0 {
+            0xE16E
+        } else if leading {
+            // 00-09 here have their first zero dimmed; 10-99 are plain.
+            leading = false;
+            0xE100 + pair
+        } else if pair < 10 {
+            0xE164 + pair
+        } else {
+            0xE100 + pair
+        }
+    })
+}
+
+/// A column number on one tile: 0-9 on one-digit tiles, then its last
+/// two digits.
+fn ruler_tile(col: usize) -> u16 {
+    match (col, (col % 100) as u16) {
+        (0..10, n) => 0xE170 + n,
+        (_, n @ 0..10) => 0xE164 + n,
+        (_, n) => 0xE100 + n,
     }
 }
 
@@ -510,14 +597,14 @@ mod tests {
         let mut e = editor(&"A".repeat(100));
         e.key(keys::END);
         e.scroll(false);
-        assert_eq!(e.view.left, 100 + 1 - 43);
+        assert_eq!(e.view.left, 100 + 1 - 46);
         e.scroll(true);
         assert_eq!(e.view.left, 0);
     }
 
     #[test]
     fn wrapped_lines_take_more_rows() {
-        let long = "A".repeat(43 * 3);
+        let long = "A".repeat(46 * 3);
         let mut e = editor(&format!("{long}\n").repeat(10));
         e.go(9, 0);
         e.scroll(true);
@@ -528,30 +615,70 @@ mod tests {
         assert_eq!(e.view.top, 4);
     }
 
+    fn row(e: &Editor, y: u32) -> String {
+        (0..50)
+            .map(|x| e.screen.cell(x, y).code)
+            .map(|c| {
+                if c == 0 {
+                    ' '
+                } else {
+                    char::from_u32(c.into()).unwrap()
+                }
+            })
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
     #[test]
     fn draws_numbers_ruler_and_status() {
         let mut e = editor("PRINT 1");
         let mut fb = Framebuffer::new(400, 240);
-        e.draw(&mut fb, &Font::blank(), "GAME", false, true);
-        let row = |y: u32| -> String {
-            (0..50)
-                .map(|x| e.screen.cell(x, y).code)
-                .map(|c| {
-                    if c == 0 {
-                        ' '
-                    } else {
-                        char::from_u32(c.into()).unwrap()
-                    }
-                })
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        };
-        assert_eq!(row(0), "000001 PRINT 1");
-        assert!(row(28).starts_with("       0 2 4 6 8 0 2"));
-        assert_eq!(row(29), "PRG0 GAME");
+        e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
+        assert_eq!(row(&e, 0), "\u{E16E}\u{E16E}\u{E101}\u{E17F}PRINT 1");
+        let ruler: Vec<u16> = (4..15).map(|x| e.screen.cell(x, 28).code).collect();
+        assert_eq!(
+            ruler,
+            [
+                0xE170, 0, 0xE172, 0, 0xE174, 0, 0xE176, 0, 0xE178, 0, 0xE10A
+            ]
+        );
+        assert_eq!(row(&e, 29), "PRG0 GAME");
         // The cursor bar at column 0 of the code.
-        assert_eq!(fb.get(7 * 8, 0), Some(TEXT));
-        assert_eq!(fb.get(7 * 8 + 2, 0), Some(CURRENT_LINE));
+        assert_eq!(fb.get(4 * 8, 0), Some(TEXT));
+        assert_eq!(fb.get(4 * 8 + 2, 0), Some(CURRENT_LINE));
+    }
+
+    #[test]
+    fn ruler_tiles_take_the_bar_color() {
+        let mut e = editor("PRINT 1");
+        let mut fb = Framebuffer::new(400, 240);
+        e.draw(&mut fb, &Font::fallback(), "GAME", (false, true), true);
+        // Column 2's tile: dim digits on the bar.
+        let cell: Vec<u32> = (0..64)
+            .map(|i| fb.get((4 + 2) * 8 + i % 8, 28 * 8 + i / 8).unwrap())
+            .collect();
+        assert!(cell.iter().all(|&c| c == BAR || c == DIM));
+        assert!(cell.contains(&DIM));
+    }
+
+    #[test]
+    fn plain_numbers_take_the_digits_they_need() {
+        let mut e = editor(&"PRINT\n".repeat(119));
+        let mut fb = Framebuffer::new(400, 240);
+        e.draw(&mut fb, &Font::blank(), "GAME", (false, false), true);
+        assert_eq!(row(&e, 0), "  1 PRINT");
+        assert!(row(&e, 28).starts_with("    0 2 4"));
+    }
+
+    #[test]
+    fn number_tiles_dim_leading_zeros() {
+        assert_eq!(number_tiles(1), [0xE16E, 0xE16E, 0xE101]);
+        assert_eq!(number_tiles(123), [0xE16E, 0xE101, 0xE117]);
+        assert_eq!(number_tiles(1005), [0xE16E, 0xE10A, 0xE169]);
+        assert_eq!(number_tiles(120_000), [0xE10C, 0xE164, 0xE164]);
+        assert_eq!(ruler_tile(7), 0xE177);
+        assert_eq!(ruler_tile(42), 0xE12A);
+        assert_eq!(ruler_tile(105), 0xE169);
     }
 }

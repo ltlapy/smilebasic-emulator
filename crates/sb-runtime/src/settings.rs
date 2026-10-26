@@ -16,6 +16,9 @@ pub struct Settings {
     pub half_width_on_save: bool,
     /// The editor wraps long lines instead of scrolling sideways.
     pub editor_wrap: bool,
+    /// The editor draws line numbers on SmileBASIC 4's number tiles; off,
+    /// in as many plain digits as the last line needs.
+    pub editor_number_tiles: bool,
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
@@ -30,6 +33,7 @@ impl Default for Settings {
             ctrl_c_stops: false,
             half_width_on_save: true,
             editor_wrap: false,
+            editor_number_tiles: true,
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
@@ -76,6 +80,7 @@ impl Settings {
                 "ctrl_c_stops" => &mut s.ctrl_c_stops,
                 "half_width_on_save" => &mut s.half_width_on_save,
                 "editor_wrap" => &mut s.editor_wrap,
+                "editor_number_tiles" => &mut s.editor_number_tiles,
                 "file_hint_shown" => &mut s.file_hint_shown,
                 "file_confirm" => {
                     if let Some(&(mode, _)) = FILE_CONFIRM.iter().find(|(_, n)| *n == value) {
@@ -113,6 +118,7 @@ impl Settings {
              ctrl_c_stops={}\n\
              half_width_on_save={}\n\
              editor_wrap={}\n\
+             editor_number_tiles={}\n\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n",
@@ -120,6 +126,7 @@ impl Settings {
             self.ctrl_c_stops,
             self.half_width_on_save,
             self.editor_wrap,
+            self.editor_number_tiles,
             self.file_hint_shown,
         )
     }
@@ -135,6 +142,7 @@ mod tests {
             upper_case_letters: false,
             ctrl_c_stops: true,
             editor_wrap: true,
+            editor_number_tiles: false,
             file_confirm: FileConfirm::Notify,
             file_hint_shown: true,
             screen_filter: None,

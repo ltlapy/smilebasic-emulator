@@ -26,6 +26,7 @@ pub enum Action {
     ToggleCtrlC,
     ToggleHalfWidth,
     ToggleWrap,
+    ToggleNumberTiles,
     FileAccess(FileConfirm),
     ScreenFilter(Option<Filter>),
 }
@@ -40,6 +41,7 @@ impl Action {
             Action::ToggleCtrlC => check(settings.ctrl_c_stops),
             Action::ToggleHalfWidth => check(settings.half_width_on_save),
             Action::ToggleWrap => check(settings.editor_wrap),
+            Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::FileAccess(mode) if settings.file_confirm == mode => "(*)",
             Action::FileAccess(_) => "( )",
             Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
@@ -60,6 +62,7 @@ impl Action {
             Action::ToggleCtrlC => &mut settings.ctrl_c_stops,
             Action::ToggleHalfWidth => &mut settings.half_width_on_save,
             Action::ToggleWrap => &mut settings.editor_wrap,
+            Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::FileAccess(mode) => {
                 settings.file_confirm = mode;
                 return;
@@ -146,6 +149,7 @@ const MENUS: &[Menu] = &[
             item("Ctrl+C stops program", Action::ToggleCtrlC),
             item("Half-width on SAVE", Action::ToggleHalfWidth),
             item("Wrap lines in editor (Ctrl+W)", Action::ToggleWrap),
+            item("Line number tiles in editor", Action::ToggleNumberTiles),
             Item {
                 label: "File access",
                 entry: Entry::Sub(&[
@@ -157,16 +161,13 @@ const MENUS: &[Menu] = &[
             Item {
                 label: "Screen filter",
                 entry: Entry::Sub(&[
-                    item("As the program sets (XSCREEN)", Action::ScreenFilter(None)),
+                    item("Program (XSCREEN)", Action::ScreenFilter(None)),
+                    item("Nearest", Action::ScreenFilter(Some(Filter::Nearest))),
                     item(
-                        "Sharp, whole-number scale",
-                        Action::ScreenFilter(Some(Filter::Nearest)),
-                    ),
-                    item(
-                        "Pixel art",
+                        "SmartNearest",
                         Action::ScreenFilter(Some(Filter::SmartNearest)),
                     ),
-                    item("Smooth", Action::ScreenFilter(Some(Filter::Bilinear))),
+                    item("Bilinear", Action::ScreenFilter(Some(Filter::Bilinear))),
                 ]),
             },
         ],
@@ -479,12 +480,12 @@ mod tests {
         let at = |r: Rect| ((r.x + 1) as i32, (r.y + 1) as i32);
         bar.mouse_move(Some((10, 5)));
         bar.click(at(title_rect(2)), false);
-        bar.mouse_move(Some(at(item_rect(2, 4))));
-        assert_eq!(bar.sub, Some(4), "hovering opens the submenu");
-        let silent = sub_rect(2, 4, 2);
-        assert!(silent.x >= item_rect(2, 4).x + item_rect(2, 4).w);
+        bar.mouse_move(Some(at(item_rect(2, 5))));
+        assert_eq!(bar.sub, Some(5), "hovering opens the submenu");
+        let silent = sub_rect(2, 5, 2);
+        assert!(silent.x >= item_rect(2, 5).x + item_rect(2, 5).w);
         bar.mouse_move(Some(at(silent)));
-        assert_eq!(bar.sub, Some(4), "moving into it keeps it open");
+        assert_eq!(bar.sub, Some(5), "moving into it keeps it open");
         assert_eq!(
             bar.click(at(silent), false),
             Click::Chosen(Action::FileAccess(FileConfirm::Silent))
@@ -492,8 +493,8 @@ mod tests {
         // Clicking the parent opens it too, and another item closes it.
         bar.mouse_move(Some(at(title_rect(2))));
         bar.click(at(title_rect(2)), false);
-        assert_eq!(bar.click(at(item_rect(2, 4)), false), Click::Consumed);
-        assert_eq!(bar.sub, Some(4));
+        assert_eq!(bar.click(at(item_rect(2, 5)), false), Click::Consumed);
+        assert_eq!(bar.sub, Some(5));
         bar.mouse_move(Some(at(item_rect(2, 0))));
         assert_eq!(bar.sub, None);
 
