@@ -8,10 +8,11 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::Host;
 use sb_core::value::{Value, new_str};
 
-use crate::confirm::{Ask, Confirm, FileConfirm, unsaved_lines};
+use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::Editor;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
+pub use crate::settings::Settings;
 use crate::storage::Storage;
 use crate::text::{CONSOLE, SCREENS, TextScreen};
 
@@ -61,32 +62,6 @@ pub const SLOTS: usize = 6;
 pub enum Request {
     Run(usize),
     Clear,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Settings {
-    /// Letters type in upper case unless Shift or Caps Lock is on.
-    pub upper_case_letters: bool,
-    /// Ctrl+C stops the program, besides Pause/Break. Off by default, since
-    /// programs can read Ctrl+C.
-    pub ctrl_c_stops: bool,
-    /// SAVE turns full-width letters and digits into ASCII.
-    pub half_width_on_save: bool,
-    /// The editor wraps long lines instead of scrolling sideways.
-    pub editor_wrap: bool,
-    pub file_confirm: FileConfirm,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            upper_case_letters: true,
-            ctrl_c_stops: false,
-            half_width_on_save: true,
-            editor_wrap: false,
-            file_confirm: FileConfirm::Ask,
-        }
-    }
 }
 
 /// UNVERIFIED: how many unread keys SmileBASIC keeps.
@@ -141,8 +116,6 @@ pub struct Runtime {
     pub(crate) answer: Option<bool>,
     /// The last command waits for an answer; see [`Host::retry`].
     pub(crate) retry: bool,
-    /// Whether a file question has said how to turn such questions off.
-    pub(crate) hint_shown: bool,
     pub(crate) notices: Vec<String>,
 }
 
@@ -207,7 +180,6 @@ impl Runtime {
             confirm: None,
             answer: None,
             retry: false,
-            hint_shown: false,
             notices: Vec::new(),
         }
     }

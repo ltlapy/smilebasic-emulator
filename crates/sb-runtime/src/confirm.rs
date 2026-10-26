@@ -145,8 +145,8 @@ impl Runtime {
                 if !unsaved.is_empty() {
                     lines.push(String::new());
                     lines.extend(unsaved_lines(&unsaved));
-                } else if !rt.hint_shown {
-                    rt.hint_shown = true;
+                } else if !rt.settings.file_hint_shown {
+                    rt.settings.file_hint_shown = true;
                     lines.push(String::new());
                     lines.extend(HINT.map(String::from));
                 }

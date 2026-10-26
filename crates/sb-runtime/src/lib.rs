@@ -11,6 +11,7 @@ pub mod machine;
 pub mod resources;
 pub mod runtime;
 pub mod sbfile;
+pub mod settings;
 pub mod storage;
 pub mod text;
 
