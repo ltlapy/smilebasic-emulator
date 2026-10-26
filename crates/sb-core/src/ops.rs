@@ -68,8 +68,8 @@ pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
         B::Sub => arith(lhs, rhs, i32::checked_sub, |a, b| a - b),
         B::Mul => {
             if let Value::Str(s) = lhs {
-                // UNVERIFIED: a negative count is an error rather than "".
-                let count = usize::try_from(rhs.to_int()?).map_err(|_| ErrorKind::OutOfRange)?;
+                // A negative count overflows (checked on hardware).
+                let count = usize::try_from(rhs.to_int()?).map_err(|_| ErrorKind::Overflow)?;
                 return Ok(Value::Str(new_str(s.borrow().repeat(count))));
             }
             arith(lhs, rhs, i32::checked_mul, |a, b| a * b)

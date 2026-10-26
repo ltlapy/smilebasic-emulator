@@ -44,7 +44,8 @@ fn print_separators() {
 fn arithmetic_and_types() {
     assert_eq!(output("?7/2;\" \";7 DIV 2;\" \";7 MOD 2"), "3.5 3 1\n");
     assert_eq!(output("A%=2147483647:B=A%+1:?B"), "2147483648\n");
-    assert_eq!(output("A%=3.9:?A%"), "3\n");
+    // The suffix gives only the starting value (checked on hardware).
+    assert_eq!(output("A%=3.9:?A%"), "3.9\n");
     assert_eq!(output("?\"AB\"*3+\"!\""), "ABABAB!\n");
     assert_eq!(output("?1==1, 1<0"), "1   0\n");
     assert_eq!(error("A$=1"), (ErrorKind::TypeMismatch, 1));
@@ -315,7 +316,7 @@ fn input_and_linput() {
     );
     assert_eq!(
         run_with_input("INPUT \"N\",N%:?N%", &["7.9"]).unwrap(),
-        "N7.9\n7\n"
+        "N7.9\n7.9\n"
     );
     assert_eq!(
         run_with_input("LINPUT \"ADDR:\";L$:?LEN(L$)", &["1, MAIN ST"]).unwrap(),
@@ -399,7 +400,7 @@ fn color_functions() {
         output(
             "?HEX$(RGBF(1,0.5,0));\" \";HEX$(RGBF(0.5,1,1,1));\" \";HEX$(RGBF(&HFF000000,,1,,))"
         ),
-        "FFFF8000 80FFFFFF FFFF0000\n"
+        "FFFF7F00 7FFFFFFF FFFF0000\n"
     );
     // Numbers printed with ; follow each other without spaces.
     assert_eq!(
@@ -493,4 +494,16 @@ fn call_sprite_and_text_run_the_host_callbacks() {
     // Once the list ends, CALLIDX() is one past the last number.
     assert_eq!(host.text.output, "5t25b7/4096\n");
     assert_eq!(output("CALL SPRITE:CALL TEXT:?1"), "1\n");
+}
+
+#[test]
+fn constant_operations_fail_when_compiled() {
+    let compiled = |src: &str| {
+        sb_core::compile(src, &TextHost::default())
+            .err()
+            .map(|e| e.kind)
+    };
+    assert_eq!(compiled("IF 0 THEN ?\"A\"*-1"), Some(ErrorKind::Overflow));
+    assert_eq!(compiled("?-2147483648 DIV -1"), None);
+    assert_eq!(output("?VAL(\" 12 \");VAL(\"12\")"), "012\n");
 }

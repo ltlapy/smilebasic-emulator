@@ -79,20 +79,21 @@ fn initial_value(var: &VarInfo, default_int: bool) -> Value {
     }
 }
 
-/// Converts a value for storage in a variable with `suffix`.
+/// Checks a value for storage in a variable with `suffix`.
 ///
-/// UNVERIFIED: the language spec says variables hold any type, but this
-/// keeps SmileBASIC 3's typed suffixes (A% stays an integer, A$ a string)
-/// until the Ver3/Ver4 differences page says otherwise.
+/// Numbers are stored as they are: `A%=1E10` keeps the real (checked on
+/// hardware), so `%` and `#` only give the starting value.
+/// UNVERIFIED: that a string in a numeric variable, or a number in a
+/// string one, is a type mismatch.
 fn coerce(value: Value, suffix: Option<Suffix>) -> Result<Value> {
     let elem_ok =
         |v: &Value, t: ElemType| matches!(v, Value::Array(a) if a.borrow().elem_type() == t);
     match suffix {
         None => Ok(value),
+        Some(Suffix::Int | Suffix::Real) if value.is_number() => Ok(value),
         Some(Suffix::Int) if elem_ok(&value, ElemType::Int) => Ok(value),
-        Some(Suffix::Int) => Ok(Value::Int(value.to_int()?)),
         Some(Suffix::Real) if elem_ok(&value, ElemType::Real) => Ok(value),
-        Some(Suffix::Real) => Ok(Value::Real(value.to_real()?)),
+        Some(Suffix::Int | Suffix::Real) => Err(ErrorKind::TypeMismatch.into()),
         Some(Suffix::Str) if matches!(value, Value::Str(_)) || elem_ok(&value, ElemType::Str) => {
             Ok(value)
         }
@@ -133,7 +134,11 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
             InputKind::Str => Some(Value::Str(new_str(field.to_vec()))),
             // UNVERIFIED: an empty field reads as 0.
             InputKind::Number if field.iter().all(|&c| c == u16::from(b' ')) => Some(Value::Int(0)),
-            InputKind::Number => builtins::parse_number(field),
+            // UNVERIFIED: INPUT takes spaces around a number, unlike VAL.
+            InputKind::Number => {
+                let trimmed = String::from_utf16_lossy(field);
+                builtins::parse_number(&trimmed.trim().encode_utf16().collect::<Vec<_>>())
+            }
         })
         .collect()
 }

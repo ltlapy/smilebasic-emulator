@@ -267,17 +267,17 @@ fn pad_left(mut s: Str, width: usize, fill: char) -> Str {
     s
 }
 
-/// UNVERIFIED: text that is not a number reads as 0, and surrounding spaces
-/// are ignored.
+/// Text that is not a number reads as 0, and so does a number with spaces
+/// around it (checked on hardware: `VAL(" 12 ")` is 0).
 fn val(args: &[Value]) -> Result<Value> {
     Ok(parse_number(&text(&args[0])?).unwrap_or(Value::Int(0)))
 }
 
-/// Reads a number as VAL and INPUT do: decimal, `&H` hex or `&B` binary,
-/// with surrounding spaces. `None` if the text is not a number.
+/// Reads a number as VAL and INPUT do: decimal, `&H` hex or `&B` binary.
+/// `None` if the text is not a number.
 pub fn parse_number(text: &[u16]) -> Option<Value> {
     let s = String::from_utf16_lossy(text);
-    let s = s.trim();
+    let s = s.as_str();
     let upper = s.to_ascii_uppercase();
     let radix = |digits: &str, radix| u32::from_str_radix(digits, radix).ok();
     if let Some(hex) = upper.strip_prefix("&H") {
@@ -434,14 +434,14 @@ fn rgb_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     }
 }
 
-/// A component from 0 to 1.0, scaled to 0-255.
-// UNVERIFIED: real components are rounded to the nearest step.
+/// A component from 0 to 1.0, scaled to 0-255 and rounded down (checked
+/// on hardware: 0.5 gives &H7F).
 fn unit_component(v: &Value) -> Result<u32> {
     let x = v.to_real()?;
     if !(0.0..=1.0).contains(&x) {
         return Err(ErrorKind::OutOfRange.into());
     }
-    Ok((x * 255.0).round() as u32)
+    Ok((x * 255.0) as u32)
 }
 
 /// `RGBF`: `RGB` with components from 0 to 1.0.

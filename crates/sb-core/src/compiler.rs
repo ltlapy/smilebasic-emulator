@@ -1015,8 +1015,9 @@ impl Compiler<'_> {
                 self.expr(name)?;
                 self.emit(Op::LoadDyn);
             }
-            Expr::Unary { op, expr } => {
-                self.expr(expr)?;
+            Expr::Unary { op, expr: operand } => {
+                self.check_constant(expr)?;
+                self.expr(operand)?;
                 self.emit(Op::Unary(*op));
             }
             Expr::Binary {
@@ -1052,10 +1053,27 @@ impl Compiler<'_> {
                 self.patch(end, here);
             }
             Expr::Binary { op, lhs, rhs } => {
+                self.check_constant(expr)?;
                 self.expr(lhs)?;
                 self.expr(rhs)?;
                 self.emit(Op::Binary(*op));
             }
+        }
+        Ok(())
+    }
+
+    /// SmileBASIC 4 works out operations on constants when it compiles,
+    /// so their errors stop the program before it runs (checked on
+    /// hardware with `"A"*-1`).
+    fn check_constant(&self, expr: &Expr) -> Result<()> {
+        let constant = |e: &Expr| self.const_value(e).is_ok();
+        let operands = match expr {
+            Expr::Unary { expr, .. } => constant(expr),
+            Expr::Binary { lhs, rhs, .. } => constant(lhs) && constant(rhs),
+            _ => false,
+        };
+        if operands {
+            self.const_value(expr)?;
         }
         Ok(())
     }

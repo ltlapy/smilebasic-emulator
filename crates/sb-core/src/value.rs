@@ -195,11 +195,10 @@ impl Value {
     }
 }
 
-/// Number to text as PRINT and STR$ show it.
-///
-/// UNVERIFIED: the reference gives no format. This follows SmileBASIC 3:
-/// integers in decimal; reals with up to six decimals and trailing zeros
-/// removed, switching to exponent form when that would show no digits.
+/// Number to text as PRINT and STR$ show it: integers in decimal, reals
+/// with eight decimals and the trailing zeros removed, never in exponent
+/// form (checked on hardware: 1E20 prints in full, 1/3 as 0.33333333).
+/// UNVERIFIED: how NaN, infinities and -0 show.
 pub fn format_number(value: &Value) -> Str {
     let text = match *value {
         Value::Int(n) => n.to_string(),
@@ -216,28 +215,11 @@ fn format_real(x: f64) -> String {
     if x.is_infinite() {
         return if x > 0.0 { "inf" } else { "-inf" }.into();
     }
-    if x == 0.0 {
-        return "0".into();
+    let fixed = format!("{x:.8}");
+    match fixed.trim_end_matches('0').trim_end_matches('.') {
+        "-0" => "0".into(),
+        trimmed => trimmed.to_string(),
     }
-    if x.abs() >= 1e16 {
-        return exponent_form(x);
-    }
-    let fixed = format!("{x:.6}");
-    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
-    if trimmed == "0" || trimmed == "-0" {
-        exponent_form(x)
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn exponent_form(x: f64) -> String {
-    let s = format!("{x:.6E}");
-    let (mantissa, exp) = s.split_once('E').expect("{:E} output has an exponent");
-    let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
-    let exp: i32 = exp.parse().expect("{:E} exponent is an integer");
-    let sign = if exp < 0 { '-' } else { '+' };
-    format!("{mantissa}E{sign}{:02}", exp.abs())
 }
 
 #[cfg(test)]
@@ -252,10 +234,12 @@ mod tests {
     fn number_formatting() {
         assert_eq!(fmt(Value::Int(-42)), "-42");
         assert_eq!(fmt(Value::Real(3.0)), "3");
-        assert_eq!(fmt(Value::Real(1.0 / 3.0)), "0.333333");
+        assert_eq!(fmt(Value::Real(1.0 / 3.0)), "0.33333333");
         assert_eq!(fmt(Value::Real(-2.5)), "-2.5");
-        assert_eq!(fmt(Value::Real(1e20)), "1E+20");
-        assert_eq!(fmt(Value::Real(1.5e-7)), "1.5E-07");
+        assert_eq!(fmt(Value::Real(1e20)), "100000000000000000000");
+        assert_eq!(fmt(Value::Real(1e-7)), "0.0000001");
+        assert_eq!(fmt(Value::Real(123456.789)), "123456.789");
+        assert_eq!(fmt(Value::Real(-1e-9)), "0");
     }
 
     #[test]
