@@ -210,3 +210,12 @@ fn call_text_runs_each_callback() {
     ));
     assert_eq!(out, ["L0D3"]);
 }
+
+#[test]
+fn tarray_follows_tscreen_and_acls_resets_gsample() {
+    let rt = run("T=TARRAY(0):TSCREEN 0,8,8:TPUT 0,0,0,65\n\
+         GSAMPLE 0,1:A=GSAMPLE(0):ACLS\n\
+         ?T[0,0];LEN(T);A;GSAMPLE(0)")
+    .unwrap();
+    assert_eq!(row(&rt, 4, 0, 20).trim_end_matches('.'), "65300010");
+}

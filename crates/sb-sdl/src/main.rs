@@ -148,7 +148,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     }
     let texture_creator = canvas.texture_creator();
     let mut mode = machine.screen_mode();
-    let mut texture = screen_texture(&canvas, &texture_creator, &mode)?;
+    let mut filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
+    let mut texture = screen_texture(&canvas, &texture_creator, &mode, filter)?;
     // The menu bar and other emulator UI, drawn at display resolution.
     let mut overlay = Framebuffer::new(display_w, display_h);
     let mut overlay_texture =
@@ -365,15 +366,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             _ => {}
         }
 
-        if machine.screen_mode() != mode {
-            mode = machine.screen_mode();
-            texture = screen_texture(&canvas, &texture_creator, &mode)?;
+        let shown = machine.screen_mode();
+        let shown_filter = machine.rt.settings.screen_filter.unwrap_or(shown.filter);
+        if (shown, shown_filter) != (mode, filter) {
+            (mode, filter) = (shown, shown_filter);
+            texture = screen_texture(&canvas, &texture_creator, &mode, filter)?;
         }
         let fb = machine.render();
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        canvas.copy(&texture, None, screen_rect(&mode, out_w, out_h))?;
+        canvas.copy(&texture, None, screen_rect(&mode, filter, out_w, out_h))?;
         let modal = dialog.is_some() || manager.is_some();
         if modal || menu.visible() || toasts.visible() {
             // A dialog or the project manager dims the screen behind it.
@@ -448,15 +451,17 @@ fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
     FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
 }
 
-/// A texture for frames shown in `mode`, filtered as XSCREEN asks.
+/// A texture for frames shown in `mode`, scaled with `filter`: XSCREEN's,
+/// or the one chosen in the menu.
 fn screen_texture<'a>(
     canvas: &Canvas<Window>,
     creator: &'a TextureCreator<WindowContext>,
     mode: &ScreenMode,
+    filter: Filter,
 ) -> Result<Texture<'a>, AnyError> {
     // The Rust bindings lack SDL 3.4's pixel art mode for a single
     // texture, but the renderer's default for new ones takes it.
-    let scale = match mode.filter {
+    let scale = match filter {
         Filter::Bilinear => SDL_ScaleMode::LINEAR,
         Filter::SmartNearest => SDL_ScaleMode::PIXELART,
         Filter::Nearest => SDL_ScaleMode::NEAREST,
@@ -470,11 +475,11 @@ fn screen_texture<'a>(
 /// Where the screen goes in a window of `out_w` x `out_h` pixels:
 /// centered, at XSCREEN's aspect ratio, and scaled to fit, by a whole
 /// factor when the filter is nearest neighbor.
-fn screen_rect(mode: &ScreenMode, out_w: u32, out_h: u32) -> FRect {
+fn screen_rect(mode: &ScreenMode, filter: Filter, out_w: u32, out_h: u32) -> FRect {
     let height = mode.height as f32;
     let width = height * mode.aspect() as f32;
     let fit = (out_w as f32 / width).min(out_h as f32 / height);
-    let scale = match mode.filter {
+    let scale = match filter {
         Filter::Nearest => fit.floor().max(1.0),
         _ => fit,
     };

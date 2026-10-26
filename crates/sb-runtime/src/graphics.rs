@@ -162,12 +162,11 @@ impl Graphics {
         self.pages[page] = Vec::new();
     }
 
-    /// GTARGET, GCOLOR and GCLIP as at start-up.
+    /// GTARGET, GCOLOR, GCLIP and GSAMPLE as at start-up.
     pub fn reset_state(&mut self) {
         let pages = std::mem::take(&mut self.pages);
         *self = Graphics {
             pages,
-            sample: self.sample,
             ..Graphics::default()
         };
     }

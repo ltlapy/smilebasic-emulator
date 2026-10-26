@@ -6,6 +6,7 @@ use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
 use sb_runtime::runtime::Settings;
+use sb_runtime::screen::Filter;
 
 use crate::ui::{
     BACKGROUND, BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, outline, text_width,
@@ -26,6 +27,7 @@ pub enum Action {
     ToggleHalfWidth,
     ToggleWrap,
     FileAccess(FileConfirm),
+    ScreenFilter(Option<Filter>),
 }
 
 impl Action {
@@ -40,6 +42,8 @@ impl Action {
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::FileAccess(mode) if settings.file_confirm == mode => "(*)",
             Action::FileAccess(_) => "( )",
+            Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
+            Action::ScreenFilter(_) => "( )",
             Action::Projects
             | Action::OpenFolder
             | Action::Quit
@@ -58,6 +62,10 @@ impl Action {
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::FileAccess(mode) => {
                 settings.file_confirm = mode;
+                return;
+            }
+            Action::ScreenFilter(f) => {
+                settings.screen_filter = f;
                 return;
             }
             Action::Projects
@@ -144,6 +152,21 @@ const MENUS: &[Menu] = &[
                     item("Always ask", Action::FileAccess(FileConfirm::Ask)),
                     item("Notify", Action::FileAccess(FileConfirm::Notify)),
                     item("Silent", Action::FileAccess(FileConfirm::Silent)),
+                ]),
+            },
+            Item {
+                label: "Screen filter",
+                entry: Entry::Sub(&[
+                    item("As the program sets (XSCREEN)", Action::ScreenFilter(None)),
+                    item(
+                        "Sharp, whole-number scale",
+                        Action::ScreenFilter(Some(Filter::Nearest)),
+                    ),
+                    item(
+                        "Pixel art",
+                        Action::ScreenFilter(Some(Filter::SmartNearest)),
+                    ),
+                    item("Smooth", Action::ScreenFilter(Some(Filter::Bilinear))),
                 ]),
             },
         ],

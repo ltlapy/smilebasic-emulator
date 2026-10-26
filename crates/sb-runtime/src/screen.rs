@@ -26,13 +26,14 @@ pub struct ScreenMode {
 }
 
 impl ScreenMode {
-    /// `width` x `height` with square pixels, sampled once each.
+    /// `width` x `height` with square pixels, sampled once each and
+    /// shown with bilinear filtering, as XSCREEN's defaults are.
     pub fn new(width: u32, height: u32) -> ScreenMode {
         ScreenMode {
             width,
             height,
             sample: 1,
-            filter: Filter::Nearest,
+            filter: Filter::Bilinear,
             aspect: None,
         }
     }
@@ -399,7 +400,9 @@ impl Runtime {
                     .map(|n| Value::Int(n as i32))
                     .to_vec();
                 out.push(Value::Int(m.filter as i32));
-                out.push(Value::Real(m.aspect()));
+                // SmileBASIC keeps it in single precision: 1.66666663 for
+                // 400x240 (checked on hardware).
+                out.push(Value::Real(f64::from(m.aspect() as f32)));
                 out.truncate(n.into());
                 Ok(out)
             }

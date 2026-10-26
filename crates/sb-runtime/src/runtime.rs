@@ -476,8 +476,8 @@ impl Runtime {
 
     /// ACLS: the start-up state of the screens, sprites, layers and
     /// graphic pages, keeping what the flags ask for.
-    // UNVERIFIED: that SPPAGE, SPLAYER, GSAMPLE and the text screens'
-    // other settings go back too; the manual's equivalent program leaves
+    // Checked on hardware: SPPAGE, SPLAYER, GSAMPLE, TOFS, COLOR, ATTR and
+    // TCOLOR go back too, though the manual's equivalent program leaves
     // them out.
     pub(crate) fn acls(
         &mut self,

@@ -3,6 +3,7 @@
 //! values are skipped, so files from other versions still load.
 
 use crate::confirm::FileConfirm;
+use crate::screen::Filter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
@@ -18,6 +19,8 @@ pub struct Settings {
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
+    /// How the screen is scaled to the window; `None` follows XSCREEN.
+    pub screen_filter: Option<Filter>,
 }
 
 impl Default for Settings {
@@ -29,9 +32,17 @@ impl Default for Settings {
             editor_wrap: false,
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
+            screen_filter: Some(Filter::Nearest),
         }
     }
 }
+
+const SCREEN_FILTER: [(Option<Filter>, &str); 4] = [
+    (None, "xscreen"),
+    (Some(Filter::Nearest), "nearest"),
+    (Some(Filter::SmartNearest), "pixel_art"),
+    (Some(Filter::Bilinear), "bilinear"),
+];
 
 const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
     (FileConfirm::Ask, "ask"),
@@ -72,6 +83,12 @@ impl Settings {
                     }
                     continue;
                 }
+                "screen_filter" => {
+                    if let Some(&(f, _)) = SCREEN_FILTER.iter().find(|(_, n)| *n == value) {
+                        s.screen_filter = f;
+                    }
+                    continue;
+                }
                 _ => continue,
             };
             if let Some(v) = parse_bool(value) {
@@ -86,6 +103,10 @@ impl Settings {
             .iter()
             .find(|(m, _)| *m == self.file_confirm)
             .map_or("ask", |(_, n)| n);
+        let filter = SCREEN_FILTER
+            .iter()
+            .find(|(f, _)| *f == self.screen_filter)
+            .map_or("nearest", |(_, n)| n);
         format!(
             "# SmileBASIC emulator settings\n\
              upper_case_letters={}\n\
@@ -93,7 +114,8 @@ impl Settings {
              half_width_on_save={}\n\
              editor_wrap={}\n\
              file_confirm={mode}\n\
-             file_hint_shown={}\n",
+             file_hint_shown={}\n\
+             screen_filter={filter}\n",
             self.upper_case_letters,
             self.ctrl_c_stops,
             self.half_width_on_save,
@@ -115,6 +137,7 @@ mod tests {
             editor_wrap: true,
             file_confirm: FileConfirm::Notify,
             file_hint_shown: true,
+            screen_filter: None,
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);

@@ -168,8 +168,13 @@ impl TextScreen {
         (self.width, self.height) = (width, height);
         self.cells = vec![EMPTY; (width * height) as usize];
         self.cursor = (0, 0);
-        // UNVERIFIED: an array from before stops following the screen.
-        self.array = None;
+        // TARRAY's array takes the new size and goes on following the
+        // screen (checked on hardware).
+        if let Some(array) = &self.array {
+            let mut array = array.borrow_mut();
+            array.dims = vec![height as usize, width as usize * 2];
+            array.data = ArrayData::Int(vec![0; (width * height * 2) as usize]);
+        }
     }
 
     pub fn cursor(&self) -> (u32, u32) {
