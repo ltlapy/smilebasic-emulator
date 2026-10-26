@@ -127,6 +127,8 @@ pub struct Runtime {
     pub slots: Vec<String>,
     /// The file each slot was last loaded from or saved to; empty if none.
     pub slot_names: Vec<String>,
+    /// Slots changed in the editor since they were last loaded or saved.
+    pub slot_modified: Vec<bool>,
     pub settings: Settings,
     pub storage: Storage,
     /// What RESULT() returns: 1 if the last file command succeeded, else 0.
@@ -187,6 +189,7 @@ impl Runtime {
             requests: Vec::new(),
             slots: vec![String::new(); SLOTS],
             slot_names: vec![String::new(); SLOTS],
+            slot_modified: vec![false; SLOTS],
             settings: Settings::default(),
             storage: Storage::none(),
             result: 1,
@@ -302,6 +305,7 @@ impl Runtime {
                 for slot in slots {
                     self.slots[slot].clear();
                     self.slot_names[slot].clear();
+                    self.slot_modified[slot] = false;
                 }
                 Ok(vec![])
             }

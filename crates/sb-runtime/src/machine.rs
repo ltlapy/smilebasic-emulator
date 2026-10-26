@@ -169,9 +169,22 @@ impl Machine {
 
     fn close_editor(&mut self) {
         if let Some(source) = self.editor.close() {
-            self.rt.slots[self.editor.slot()] = source;
+            let slot = self.editor.slot();
+            self.rt.slots[slot] = source;
+            self.rt.slot_modified[slot] = true;
         }
         self.editing = false;
+    }
+
+    /// Slots with edits that were not saved, including the one open in the
+    /// editor.
+    pub fn unsaved_slots(&self) -> Vec<usize> {
+        (0..SLOTS)
+            .filter(|&slot| {
+                self.rt.slot_modified[slot]
+                    || (self.editing && self.editor.slot() == slot && self.editor.is_modified())
+            })
+            .collect()
     }
 
     /// Starts the program in a slot, as RUN does.

@@ -126,3 +126,29 @@ fn failures_set_result_and_explain() {
     enter(&mut m, "new");
     assert_eq!(m.slot(0), "");
 }
+
+#[test]
+fn edits_are_unsaved_until_save() {
+    use sb_runtime::runtime::keys;
+    let dir = TempDir::new("unsaved");
+    let mut m = machine(&dir);
+    m.set_slot(1, "?1".to_string());
+    enter(&mut m, "list 1:1");
+    m.toggle_editor();
+    assert_eq!(m.unsaved_slots(), [] as [usize; 0], "nothing was changed");
+    enter(&mut m, "list 1:1");
+    m.type_text("?2");
+    m.rt.key_press(keys::ENTER);
+    m.frame();
+    assert_eq!(m.unsaved_slots(), [1], "counted while still editing");
+    m.toggle_editor();
+    assert_eq!(m.unsaved_slots(), [1]);
+    enter(&mut m, "save \"a\",1");
+    assert_eq!(m.unsaved_slots(), [] as [usize; 0]);
+    enter(&mut m, "list 2:1");
+    m.type_text("X");
+    m.frame();
+    m.toggle_editor();
+    enter(&mut m, "new 2");
+    assert_eq!(m.unsaved_slots(), [] as [usize; 0]);
+}

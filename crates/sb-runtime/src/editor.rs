@@ -93,6 +93,11 @@ impl Editor {
         self.slot
     }
 
+    /// Whether the text changed since it was opened.
+    pub fn is_modified(&self) -> bool {
+        self.modified
+    }
+
     /// The cursor as a 1-based line and 0-based column.
     pub fn cursor(&self) -> (usize, usize) {
         (self.view.line + 1, self.view.col)

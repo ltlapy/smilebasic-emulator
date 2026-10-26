@@ -186,6 +186,7 @@ impl Runtime {
         }
         self.slots[slot] = program_text(&self.storage.read(kind, &name)?)?;
         self.slot_names[slot] = name;
+        self.slot_modified[slot] = false;
         Ok(())
     }
 
@@ -200,6 +201,7 @@ impl Runtime {
         };
         self.storage.write(kind, &name, text.as_bytes(), true)?;
         self.slot_names[slot] = name;
+        self.slot_modified[slot] = false;
         Ok(())
     }
 
