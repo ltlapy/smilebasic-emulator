@@ -92,6 +92,12 @@ table! {
     "FILL" 2..=4 Command |a, _| fill(a).map(|()| Vec::new());
     "RGB" 3..=5 Function rgb;
     "RGB" 1..=1 Command rgb_out;
+    "RGBF" 3..=5 Function rgbf;
+    "RGBF" 1..=1 Command rgbf_out;
+    "HSV" 3..=4 Function |a| hsv(a, false);
+    "HSV" 1..=1 Command |a, outs| hsv_out(a, outs, false);
+    "HSVF" 3..=4 Function |a| hsv(a, true);
+    "HSVF" 1..=1 Command |a, outs| hsv_out(a, outs, true);
 }
 
 pub fn lookup(name: &str, form: Form) -> Option<u16> {
@@ -424,6 +430,128 @@ fn rgb_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     match outs {
         3 => Ok(parts(&[16, 8, 0])),
         4 => Ok(parts(&[24, 16, 8, 0])),
+        _ => Err(ErrorKind::IllegalFunctionCall.into()),
+    }
+}
+
+/// A component from 0 to 1.0, scaled to 0-255.
+// UNVERIFIED: real components are rounded to the nearest step.
+fn unit_component(v: &Value) -> Result<u32> {
+    let x = v.to_real()?;
+    if !(0.0..=1.0).contains(&x) {
+        return Err(ErrorKind::OutOfRange.into());
+    }
+    Ok((x * 255.0).round() as u32)
+}
+
+/// `RGBF`: `RGB` with components from 0 to 1.0.
+fn rgbf(args: &[Value]) -> Result<Value> {
+    match args {
+        [r, g, b] => Ok(argb(
+            255,
+            unit_component(r)?,
+            unit_component(g)?,
+            unit_component(b)?,
+        )),
+        [a, r, g, b] => Ok(argb(
+            unit_component(a)?,
+            unit_component(r)?,
+            unit_component(g)?,
+            unit_component(b)?,
+        )),
+        [color, parts @ ..] => {
+            let mut c = color.to_int()? as u32;
+            for (i, part) in parts.iter().enumerate() {
+                if !matches!(part, Value::Default) {
+                    let shift = 24 - 8 * i as u32;
+                    c = c & !(0xFF << shift) | unit_component(part)? << shift;
+                }
+            }
+            Ok(Value::Int(c as i32))
+        }
+        [] => unreachable!("arity checked by the caller"),
+    }
+}
+
+/// `RGBF color OUT R,G,B` or `RGBF color OUT A,R,G,B`, from 0 to 1.0.
+fn rgbf_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
+    Ok(rgb_out(args, outs)?
+        .into_iter()
+        .map(|v| match v {
+            Value::Int(n) => Value::Real(f64::from(n) / 255.0),
+            v => v,
+        })
+        .collect())
+}
+
+/// `HSV(hue,saturation,value[,alpha])`, with the hue in degrees (wrapping
+/// at 360) and the rest from 0 to 255; `HSVF` takes everything from 0 to
+/// 1.0, the hue wrapping at 1.
+// UNVERIFIED: how SmileBASIC 4 rounds the resulting components.
+fn hsv(args: &[Value], unit: bool) -> Result<Value> {
+    let part = |v: &Value| -> Result<f64> {
+        let x = v.to_real()?;
+        let max = if unit { 1.0 } else { 255.0 };
+        if (0.0..=max).contains(&x) {
+            Ok(x / max)
+        } else {
+            Err(ErrorKind::OutOfRange.into())
+        }
+    };
+    let hue = args[0].to_real()?;
+    let hue = if unit { hue * 360.0 } else { hue }.rem_euclid(360.0);
+    let (s, v) = (part(&args[1])?, part(&args[2])?);
+    let alpha = match args.get(3) {
+        Some(a) => part(a)?,
+        None => 1.0,
+    };
+    let h6 = hue / 60.0;
+    let f = h6 - h6.floor();
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    let (r, g, b) = match h6.floor() as i32 % 6 {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+    let byte = |x: f64| (x * 255.0).round().clamp(0.0, 255.0) as u32;
+    Ok(argb(byte(alpha), byte(r), byte(g), byte(b)))
+}
+
+/// `HSV color OUT H,S,V[,A]`: the hue in degrees from 0 to 360 and the
+/// rest from 0 to 255; `HSVF` gives everything from 0 to 1.0.
+fn hsv_out(args: &[Value], outs: usize, unit: bool) -> Result<Vec<Value>> {
+    let c = args[0].to_int()? as u32;
+    let channel = |shift: u32| f64::from(c >> shift & 0xFF) / 255.0;
+    let (a, r, g, b) = (channel(24), channel(16), channel(8), channel(0));
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let hue = if d == 0.0 {
+        0.0
+    } else if max == r {
+        60.0 * ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    let s = if max == 0.0 { 0.0 } else { d / max };
+    let mut values = if unit {
+        [hue / 360.0, s, max, a].map(Value::Real).to_vec()
+    } else {
+        [hue, s * 255.0, max * 255.0, a * 255.0]
+            .map(|x| Value::Int(x.round() as i32))
+            .to_vec()
+    };
+    match outs {
+        3 => {
+            values.truncate(3);
+            Ok(values)
+        }
+        4 => Ok(values),
         _ => Err(ErrorKind::IllegalFunctionCall.into()),
     }
 }

@@ -392,3 +392,29 @@ fn host_calls_can_wait_for_the_user() {
     }
     assert_eq!((host.text.output.as_str(), frames), ("17", 2));
 }
+
+#[test]
+fn color_functions() {
+    assert_eq!(
+        output(
+            "?HEX$(RGBF(1,0.5,0));\" \";HEX$(RGBF(0.5,1,1,1));\" \";HEX$(RGBF(&HFF000000,,1,,))"
+        ),
+        "FFFF8000 80FFFFFF FFFF0000\n"
+    );
+    // Numbers printed with ; follow each other without spaces.
+    assert_eq!(
+        output("RGBF &H80FF0000 OUT A,R,G,B:?A>0.5;A<0.51;R;G"),
+        "1110\n"
+    );
+    assert_eq!(
+        output("?HEX$(HSV(0,255,255));\" \";HEX$(HSV(480,255,255,128));\" \";HEX$(HSVF(0.5,1,1))"),
+        "FFFF0000 8000FF00 FF00FFFF\n"
+    );
+    assert_eq!(
+        output("HSV RGB(0,255,0) OUT H,S,V,A:?H;\",\";S;\",\";V;\",\";A"),
+        "120,255,255,255\n"
+    );
+    assert_eq!(output("HSVF RGB(0,0,255) OUT H,S,V:?H*3"), "2\n");
+    assert_eq!(error("?RGBF(2,0,0)").0, ErrorKind::OutOfRange);
+    assert_eq!(error("?HSV(0,256,0)").0, ErrorKind::OutOfRange);
+}
