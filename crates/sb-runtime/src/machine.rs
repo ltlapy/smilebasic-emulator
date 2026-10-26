@@ -206,7 +206,7 @@ impl Machine {
     /// Starts the program in a slot, as RUN does.
     pub fn run_slot(&mut self, slot: usize) {
         self.vars.clear();
-        self.rt.sprites.clear_vars();
+        self.rt.clear_vars();
         self.start(&self.rt.slots[slot].clone(), Some(slot));
     }
 
@@ -251,7 +251,7 @@ impl Machine {
         }
         // UNVERIFIED: animations play in direct mode too, and pause while
         // the editor hides the screen.
-        self.rt.sprites.animate();
+        self.rt.animate();
         let Some(vm) = &mut self.vm else {
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));

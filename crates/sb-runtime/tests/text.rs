@@ -4,12 +4,44 @@ use sb_core::error::ErrorKind;
 use sb_core::vm::{Status, Vm};
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
+use sb_runtime::machine::Machine;
 
 fn run(source: &str) -> Result<Runtime, sb_core::error::Error> {
     let mut rt = Runtime::new(400, 240, Font::blank());
     let mut vm = Vm::new(sb_core::compile(source, &rt)?);
     while vm.run(&mut rt, 100_000)? != Status::Ended {}
     Ok(rt)
+}
+
+/// Runs a program frame by frame until it ends, and returns the console
+/// rows it printed.
+fn play(source: &str) -> Vec<String> {
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    m.set_slot(0, source.to_string());
+    m.run_slot(0);
+    for _ in 0..100 {
+        m.frame();
+        if !m.is_running() {
+            break;
+        }
+    }
+    assert!(!m.is_running(), "program did not end");
+    let console = &m.rt.text[4];
+    let (w, h) = console.size();
+    let rows: Vec<String> = (0..h)
+        .map(|y| {
+            let codes: Vec<u16> = (0..w)
+                .map(|x| console.cell(x, y).code)
+                .take_while(|&c| c != 0)
+                .collect();
+            String::from_utf16(&codes).unwrap()
+        })
+        .filter(|r| !r.is_empty())
+        .collect();
+    // The rows between the start-up OK and the one at the end.
+    let start = rows.iter().position(|r| r == "OK").expect("OK") + 1;
+    rows[start..rows.len() - 1].to_vec()
 }
 
 /// Row `y` of a screen, with `.` for empty cells.
@@ -138,4 +170,42 @@ fn bad_arguments() {
         Some(ErrorKind::SubscriptOutOfRange)
     );
     assert_eq!(kind("?CHKCHR(0,0,0,2)"), Some(ErrorKind::OutOfRange));
+}
+
+#[test]
+fn tanim_moves_text_screens() {
+    let out = play(concat!(
+        "TOFS 1,0,0,7\n",
+        "TANIM 0,\"XY\",-2,10,20:TANIM 1,\"Z+\",1,5:TANIM 2,\"I\",1,5\n",
+        "TANIM 3,\"XY\",-2,10,20:TSTOP 3\n",
+        "?TCHK(0);TCHK(1);TCHK(2)\n",
+        "WAIT 3\n",
+        "TOFS 0 OUT X,Y:TOFS 1 OUT ,,Z:TOFS 3 OUT A,B\n",
+        "?X;Y;Z;A;B;TCHK(0);TCHK(3)",
+    ));
+    assert_eq!(out, ["120", "1020120001"]);
+}
+
+#[test]
+fn tvar_and_tanim_v() {
+    let out = play(concat!(
+        "TVAR 0,\"A\",5:TVAR 0,1,\"S\"\n",
+        "?TVAR(0,\"A\");TVAR(0,1);TVAR(1,\"A\")\n",
+        "TVAR 0,\"A\":?TVAR(0,\"A\");TVAR(0,1):TVAR 0:?TVAR(0,1)\n",
+        "TANIM 2,\"V\",1,42:WAIT 2:?TVAR(2,7)",
+    ));
+    assert_eq!(out, ["5S0", "0S", "0", "42"]);
+}
+
+#[test]
+fn call_text_runs_each_callback() {
+    let out = play(concat!(
+        "TFUNC 3,\"F\":TFUNC 0,\"@T\":TFUNC 1,\"@T\":TFUNC 1\n",
+        "CALL TEXT\n",
+        "?\"\"\n",
+        "END\n",
+        "@T:?\"L\";CALLIDX();:RETURN\n",
+        "DEF F:?\"D\";CALLIDX();:END",
+    ));
+    assert_eq!(out, ["L0D3"]);
 }

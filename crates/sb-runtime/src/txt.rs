@@ -1,12 +1,15 @@
 //! Commands on what text screens hold: TPUT, TFILL, SCROLL, CHKCHR,
-//! TCOORD, TCOPY, TSAVE, TLOAD, TARRAY and TUPDATE.
+//! TCOORD, TCOPY, TSAVE, TLOAD, TARRAY and TUPDATE; and their animations,
+//! variables and callbacks: TANIM, TSTART, TSTOP, TCHK, TVAR and TFUNC.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
+use crate::anim::{Anim, Target, Track};
 use crate::grp::{array_colors, numeric_array, store_ints};
 use crate::runtime::{Command, Runtime, illegal, screen_id, with_screen};
+use crate::sp::{anim_id, var_key};
 use crate::text::{Cell, CellRect, TextScreen};
 
 fn int(v: &Value) -> Result<i32> {
@@ -227,7 +230,97 @@ impl Runtime {
                 t.update(rect);
                 Ok(vec![])
             }
+            (Command::Tanim, Want::Outs(0), 0) => {
+                for t in &mut self.text {
+                    t.anims = Default::default();
+                }
+                Ok(vec![])
+            }
+            (Command::Tanim, Want::Outs(0), 1) => {
+                self.text[screen_id(&args[0])?].anims = Default::default();
+                Ok(vec![])
+            }
+            (Command::Tanim, Want::Outs(0), 2) => {
+                let id = screen_id(&args[0])?;
+                let n = anim_id(&args[1])?;
+                let anim = self.sprites.anim_defs[n].clone().ok_or_else(|| {
+                    Error::with_detail(ErrorKind::IllegalFunctionCall, format!("no animation {n}"))
+                })?;
+                self.start_text_anim(id, anim);
+                Ok(vec![])
+            }
+            (Command::Tanim, Want::Outs(0), _) => {
+                let id = screen_id(&args[0])?;
+                let anim = self.anim_args(&args[1..])?;
+                self.start_text_anim(id, anim);
+                Ok(vec![])
+            }
+            (Command::Tstart | Command::Tstop, Want::Outs(0), 0 | 1) => {
+                let stopped = command == Command::Tstop;
+                match args.first() {
+                    Some(id) => self.text[screen_id(id)?].anim_stopped = stopped,
+                    None => {
+                        for t in &mut self.text {
+                            t.anim_stopped = stopped;
+                        }
+                    }
+                }
+                Ok(vec![])
+            }
+            (Command::Tchk, Want::Value, 1) => {
+                let t = &self.text[screen_id(&args[0])?];
+                let bits = (t.anims.iter().enumerate())
+                    .filter(|(_, track)| track.is_some())
+                    .fold(0, |bits, (i, _)| bits | 1 << i);
+                Ok(vec![Value::Int(bits)])
+            }
+            (Command::Tvar, Want::Outs(0), 3) => {
+                let key = var_key(&args[1])?;
+                let value = match &args[2] {
+                    Value::Int(_) | Value::Real(_) | Value::Str(_) => args[2].clone(),
+                    _ => return Err(ErrorKind::TypeMismatch.into()),
+                };
+                self.text[screen_id(&args[0])?].vars.insert(key, value);
+                Ok(vec![])
+            }
+            (Command::Tvar, Want::Value, 2) => {
+                let key = var_key(&args[1])?;
+                let t = &self.text[screen_id(&args[0])?];
+                Ok(vec![t.vars.get(&key).cloned().unwrap_or(Value::Int(0))])
+            }
+            (Command::Tvar, Want::Outs(0), 1 | 2) => {
+                let key = args.get(1).map(var_key).transpose()?;
+                let t = &mut self.text[screen_id(&args[0])?];
+                match key {
+                    Some(key) => {
+                        t.vars.remove(&key);
+                    }
+                    None => t.vars.clear(),
+                }
+                Ok(vec![])
+            }
+            (Command::Tfunc, Want::Outs(0), 1 | 2) => {
+                let func = match args.get(1) {
+                    Some(Value::Str(name)) => Some(name.borrow().clone()),
+                    Some(_) => return Err(ErrorKind::TypeMismatch.into()),
+                    None => None,
+                };
+                self.text[screen_id(&args[0])?].func = func;
+                Ok(vec![])
+            }
             _ => Err(illegal()),
         }
+    }
+
+    /// Text screens ignore "UV" and "I".
+    // UNVERIFIED: that such an animation is not set at all, so TCHK
+    // does not report it.
+    fn start_text_anim(&mut self, id: usize, anim: Anim) {
+        if matches!(anim.mode.target, Target::Uv | Target::I) {
+            return;
+        }
+        let t = &mut self.text[id];
+        let target = anim.mode.target.index();
+        t.anims[target] = Some(Track::new(anim, t));
     }
 }

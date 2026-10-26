@@ -11,7 +11,7 @@ use sb_core::value::{ArrayData, Value};
 use crate::anim::{self, Anim, MAX_KEYS, Mode, Track};
 use crate::collision::{Body, Collision, Search};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
-use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey};
+use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey, WithDefs};
 
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
@@ -42,7 +42,7 @@ fn def_id(v: &Value) -> Result<usize> {
     Ok(in_range(v, "sprite definition", 0..=DEFS as i32 - 1)? as usize)
 }
 
-fn anim_id(v: &Value) -> Result<usize> {
+pub(crate) fn anim_id(v: &Value) -> Result<usize> {
     Ok(in_range(v, "animation definition", 0..=anim::DEFINITIONS as i32 - 1)? as usize)
 }
 
@@ -89,7 +89,7 @@ fn flag(v: Option<&Value>) -> Result<bool> {
     Ok(v.map(opt_int).transpose()?.flatten().unwrap_or(1) != 0)
 }
 
-fn var_key(v: &Value) -> Result<VarKey> {
+pub(crate) fn var_key(v: &Value) -> Result<VarKey> {
     match v {
         Value::Str(s) => Ok(VarKey::Str(s.borrow().clone())),
         v => Ok(VarKey::Int(int(v)?)),
@@ -170,7 +170,7 @@ impl Runtime {
     /// The animation SPANIM and ANIMDEF take after their number: the
     /// target, then an array, a `"@label"` or the keys themselves, then
     /// the loop count.
-    fn anim_args(&self, args: &[Value]) -> Result<Anim> {
+    pub(crate) fn anim_args(&self, args: &[Value]) -> Result<Anim> {
         let mode = Mode::parse(&args[0])?;
         let per = 1 + mode.target.items();
         match &args[1..] {
@@ -198,9 +198,10 @@ impl Runtime {
     }
 
     fn start_anim(&mut self, id: &Value, anim: Anim) -> Result<Vec<Value>> {
-        let s = self.sprite(id)?;
+        self.sprite(id)?;
+        let s = &mut self.sprites.list[sprite_id(id)?];
         let target = anim.mode.target.index();
-        s.anims[target] = Some(Track::new(anim, s));
+        s.anims[target] = Some(Track::new(anim, &WithDefs::new(s, &self.sprites.defs)));
         Ok(vec![])
     }
 

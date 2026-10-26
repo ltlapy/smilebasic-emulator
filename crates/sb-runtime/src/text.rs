@@ -1,12 +1,15 @@
 //! Text screens 0-4. Screen 4 is the console that PRINT writes to.
 
-use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
+use std::collections::HashMap;
 
+use sb_core::value::{Array, ArrayData, ArrayRef, ElemType, Value};
+
+use crate::anim::{self, ANIM_VAR, Animated, Target, Track};
 use crate::compose::{Affine, Placement, draw_image, over};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
-use crate::sprites::sample;
+use crate::sprites::{VarKey, sample, var_number};
 
 pub const SCREENS: usize = 5;
 pub const CONSOLE: usize = 4;
@@ -107,6 +110,14 @@ pub struct TextScreen {
     pub layer: i32,
     /// TARRAY's array, kept up to date with every cell written.
     array: Option<ArrayRef>,
+    /// TANIM's animations, by [`anim::Target`].
+    pub anims: [Option<Track>; anim::TARGETS],
+    /// TSTOP pauses the animations until TSTART.
+    pub anim_stopped: bool,
+    /// TVAR's variables.
+    pub vars: HashMap<VarKey, Value>,
+    /// TFUNC: the label or DEF that CALL TEXT calls.
+    pub func: Option<Vec<u16>>,
 }
 
 impl TextScreen {
@@ -134,6 +145,10 @@ impl TextScreen {
             add: false,
             layer: 0,
             array: None,
+            anims: Default::default(),
+            anim_stopped: false,
+            vars: HashMap::new(),
+            func: None,
         }
     }
 
@@ -356,6 +371,22 @@ impl TextScreen {
         self.scroll(0, 1);
     }
 
+    /// Plays one frame of the animations.
+    pub fn animate(&mut self) {
+        if self.anim_stopped {
+            return;
+        }
+        let mut tracks = std::mem::take(&mut self.anims);
+        for slot in &mut tracks {
+            if let Some(track) = slot
+                && !track.step(self)
+            {
+                *slot = None;
+            }
+        }
+        self.anims = tracks;
+    }
+
     /// Where TOFS, THOME, TROT and TSCALE put the screen's pixels.
     pub fn placement(&self) -> Affine {
         Affine::place(self.pos, self.home, self.rot, self.scale)
@@ -449,6 +480,37 @@ impl TextScreen {
             };
             multiply(glyph, self.tint)
         });
+    }
+}
+
+/// Text screens have no image to animate: "UV" and "I" do nothing.
+// UNVERIFIED: Z and the color take the value rounded towards zero, as
+// for sprites.
+impl Animated for TextScreen {
+    fn value(&self, target: Target) -> [f64; 2] {
+        match target {
+            Target::Xy => [self.pos.0, self.pos.1],
+            Target::Z => [f64::from(self.z), 0.0],
+            Target::R => [self.rot, 0.0],
+            Target::S => [self.scale.0, self.scale.1],
+            Target::C => [f64::from(self.tint), 0.0],
+            Target::V => [var_number(&self.vars), 0.0],
+            Target::Uv | Target::I => [0.0, 0.0],
+        }
+    }
+
+    fn set_value(&mut self, target: Target, v: [f64; 2]) {
+        match target {
+            Target::Xy => self.pos = (v[0], v[1]),
+            Target::Z => self.z = (v[0] as i32).clamp(-4095, 4095),
+            Target::R => self.rot = v[0],
+            Target::S => self.scale = (v[0], v[1]),
+            Target::C => self.tint = v[0] as i64 as u32,
+            Target::V => {
+                self.vars.insert(VarKey::Int(ANIM_VAR), Value::Real(v[0]));
+            }
+            Target::Uv | Target::I => {}
+        }
     }
 }
 

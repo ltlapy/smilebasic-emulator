@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use sb_core::value::Value;
 
-use crate::anim::{self, Anim, Target, Track};
+use crate::anim::{self, ANIM_VAR, Anim, Animated, Target, Track};
 use crate::collision::{Body, Collision, HitInfo, Search};
 use crate::compose::{Affine, Placement, draw_image};
 use crate::framebuffer::Framebuffer;
@@ -125,6 +125,63 @@ fn grid_defs() -> Vec<SpriteDef> {
             ..SpriteDef::default()
         })
         .collect()
+}
+
+/// A sprite with the templates that animating its definition number
+/// (target "I") takes.
+pub struct WithDefs<'a> {
+    sprite: &'a mut Sprite,
+    defs: &'a [SpriteDef],
+}
+
+impl<'a> WithDefs<'a> {
+    pub fn new(sprite: &'a mut Sprite, defs: &'a [SpriteDef]) -> WithDefs<'a> {
+        WithDefs { sprite, defs }
+    }
+}
+
+impl Animated for WithDefs<'_> {
+    fn value(&self, target: Target) -> [f64; 2] {
+        let s = &self.sprite;
+        match target {
+            Target::Xy => [s.pos.0, s.pos.1],
+            Target::Z => [f64::from(s.z), 0.0],
+            Target::R => [s.rot, 0.0],
+            Target::S => [s.scale.0, s.scale.1],
+            Target::C => [f64::from(s.color), 0.0],
+            Target::V => [var_number(&s.vars), 0.0],
+            Target::Uv => [f64::from(s.u), f64::from(s.v)],
+            Target::I => [f64::from(s.def), 0.0],
+        }
+    }
+
+    // UNVERIFIED: integer properties take the value rounded towards zero.
+    fn set_value(&mut self, target: Target, v: [f64; 2]) {
+        let s = &mut self.sprite;
+        match target {
+            Target::Xy => s.pos = (v[0], v[1]),
+            Target::Z => s.z = (v[0] as i32).clamp(-4095, 4095),
+            Target::R => s.rot = v[0],
+            Target::S => s.scale = (v[0], v[1]),
+            Target::C => s.color = v[0] as i64 as u32,
+            Target::V => {
+                s.vars.insert(VarKey::Int(ANIM_VAR), Value::Real(v[0]));
+            }
+            Target::Uv => (s.u, s.v) = (v[0] as i32, v[1] as i32),
+            Target::I => {
+                let n = (v[0] as i32).clamp(0, DEFS as i32 - 1);
+                if let Some(def) = self.defs.get(n as usize) {
+                    s.set_def(n, def);
+                }
+            }
+        }
+    }
+}
+
+/// Variable 7, which target "V" animates, as a number.
+pub fn var_number(vars: &HashMap<VarKey, Value>) -> f64 {
+    let v = vars.get(&VarKey::Int(ANIM_VAR));
+    v.and_then(|v| v.to_real().ok()).unwrap_or(0.0)
 }
 
 /// A key of a sprite variable (SPVAR): a number or a string.
@@ -426,7 +483,7 @@ impl Sprites {
             s.anim_move = (0.0, 0.0);
             for (i, slot) in tracks.iter_mut().enumerate() {
                 let Some(track) = slot else { continue };
-                let going = track.step(s, &self.defs);
+                let going = track.step(&mut WithDefs::new(s, &self.defs));
                 if i == Target::Xy.index() && track.slid() {
                     s.anim_move = (s.pos.0 - before.0, s.pos.1 - before.1);
                 }

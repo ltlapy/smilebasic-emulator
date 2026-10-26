@@ -1,10 +1,8 @@
-//! Sprite animation (SPANIM, ANIMDEF): keyframes that set or slide one
-//! property of a sprite, played one frame at a time.
+//! Animation of sprites and text screens (SPANIM, TANIM, ANIMDEF):
+//! keyframes that set or slide one property, played one frame at a time.
 
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
-
-use crate::sprites::{DEFS, Sprite, SpriteDef, VarKey};
 
 /// Keyframes in one animation, at most.
 pub const MAX_KEYS: usize = 32;
@@ -12,8 +10,8 @@ pub const MAX_KEYS: usize = 32;
 pub const DEFINITIONS: usize = 1024;
 /// One animation per target can run on a sprite at a time.
 pub const TARGETS: usize = 8;
-/// The sprite variable that target "V" animates.
-const ANIM_VAR: i32 = 7;
+/// The variable (SPVAR, TVAR) that target "V" animates.
+pub const ANIM_VAR: i32 = 7;
 
 /// What an animation changes, in SPCHK's bit order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,40 +146,11 @@ impl Anim {
     }
 }
 
-/// The current value of a target.
-fn get(s: &Sprite, target: Target) -> [f64; 2] {
-    match target {
-        Target::Xy => [s.pos.0, s.pos.1],
-        Target::Z => [f64::from(s.z), 0.0],
-        Target::R => [s.rot, 0.0],
-        Target::S => [s.scale.0, s.scale.1],
-        Target::C => [f64::from(s.color), 0.0],
-        Target::V => {
-            let v = s.vars.get(&VarKey::Int(ANIM_VAR));
-            [v.and_then(|v| v.to_real().ok()).unwrap_or(0.0), 0.0]
-        }
-        Target::Uv => [f64::from(s.u), f64::from(s.v)],
-        Target::I => [f64::from(s.def), 0.0],
-    }
-}
-
-// UNVERIFIED: integer properties take the value rounded towards zero.
-fn set(s: &mut Sprite, target: Target, v: [f64; 2], defs: &[SpriteDef]) {
-    match target {
-        Target::Xy => s.pos = (v[0], v[1]),
-        Target::Z => s.z = (v[0] as i32).clamp(-4095, 4095),
-        Target::R => s.rot = v[0],
-        Target::S => s.scale = (v[0], v[1]),
-        Target::C => s.color = v[0] as i64 as u32,
-        Target::V => {
-            s.vars.insert(VarKey::Int(ANIM_VAR), Value::Real(v[0]));
-        }
-        Target::Uv => (s.u, s.v) = (v[0] as i32, v[1] as i32),
-        Target::I => {
-            let n = (v[0] as i32).clamp(0, DEFS as i32 - 1);
-            s.set_def(n, &defs[n as usize]);
-        }
-    }
+/// Something animations play on.
+pub trait Animated {
+    /// The current value of a target.
+    fn value(&self, target: Target) -> [f64; 2];
+    fn set_value(&mut self, target: Target, v: [f64; 2]);
 }
 
 fn channels(c: f64) -> [f64; 4] {
@@ -212,11 +181,11 @@ fn offset(target: Target, base: [f64; 2], by: [f64; 2]) -> [f64; 2] {
     [base[0] + by[0], base[1] + by[1]]
 }
 
-/// An animation playing on a sprite.
+/// An animation playing on a sprite or text screen.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Track {
     anim: Anim,
-    /// The value when SPANIM ran, which relative keys add to.
+    /// The value when the animation was set, which relative keys add to.
     base: [f64; 2],
     /// Where a sliding key starts: the value the previous key ended on.
     from: [f64; 2],
@@ -229,8 +198,8 @@ pub struct Track {
 }
 
 impl Track {
-    pub fn new(anim: Anim, s: &Sprite) -> Track {
-        let base = get(s, anim.mode.target);
+    pub fn new(anim: Anim, on: &impl Animated) -> Track {
+        let base = on.value(anim.mode.target);
         Track {
             anim,
             base,
@@ -279,7 +248,7 @@ impl Track {
     // on T frames, starting on the frame after SPANIM; time 0 sets the
     // value and goes on to the next key in the same frame; looping slides
     // from where the last key ended.
-    pub fn step(&mut self, s: &mut Sprite, defs: &[SpriteDef]) -> bool {
+    pub fn step(&mut self, on: &mut impl Animated) -> bool {
         let target = self.anim.mode.target;
         self.slid = false;
         // Keys of time 0 take no frame; a whole loop of them takes one.
@@ -288,7 +257,7 @@ impl Track {
             let frames = time.unsigned_abs();
             let to = self.key_value();
             if frames == 0 {
-                set(s, target, to, defs);
+                on.set_value(target, to);
                 if !self.next_key(to) {
                     return false;
                 }
@@ -306,7 +275,7 @@ impl Track {
             } else {
                 to
             };
-            set(s, target, value, defs);
+            on.set_value(target, value);
             return self.elapsed < frames || self.next_key(to);
         }
         true
@@ -316,6 +285,7 @@ impl Track {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sprites::{DEFS, Sprite, SpriteDef, WithDefs};
 
     fn mode(target: Target) -> Mode {
         Mode {
@@ -335,7 +305,7 @@ mod tests {
         let defs = vec![SpriteDef::default(); DEFS];
         (0..frames)
             .map(|_| {
-                let going = track.step(s, &defs);
+                let going = track.step(&mut WithDefs::new(s, &defs));
                 (s.pos.0, s.pos.1, going)
             })
             .collect()
@@ -367,7 +337,7 @@ mod tests {
     fn holds_then_slides() {
         let anim = Anim::new(mode(Target::Xy), &[2.0, 10.0, 20.0, -2.0, 20.0, 40.0], 1).unwrap();
         let mut s = sprite();
-        let mut t = Track::new(anim, &s);
+        let mut t = Track::new(anim, &WithDefs::new(&mut s, &[]));
         assert_eq!(
             play(&mut t, &mut s, 4),
             [
@@ -392,7 +362,7 @@ mod tests {
         .unwrap();
         let mut s = sprite();
         s.pos = (100.0, 50.0);
-        let mut t = Track::new(anim, &s);
+        let mut t = Track::new(anim, &WithDefs::new(&mut s, &[]));
         // The time-0 key snaps back on the frame after the slide, and the
         // next loop's slide goes on in that same frame.
         assert_eq!(
@@ -412,9 +382,9 @@ mod tests {
         let anim = Anim::new(mode(Target::C), &[-2.0, f64::from(0xFF00_0000u32)], 0).unwrap();
         let mut s = sprite();
         s.color = 0x80FF_FF00;
-        let mut t = Track::new(anim, &s);
         let defs = vec![SpriteDef::default(); DEFS];
-        assert!(t.step(&mut s, &defs));
+        let mut t = Track::new(anim, &WithDefs::new(&mut s, &defs));
+        assert!(t.step(&mut WithDefs::new(&mut s, &defs)));
         assert_eq!(s.color, 0xBF7F_7F00);
     }
 }

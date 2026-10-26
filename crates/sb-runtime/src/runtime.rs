@@ -91,12 +91,15 @@ pub(crate) enum Command {
     Spunlink,
     Spused,
     Spvar,
+    Tanim,
     Tarray,
     Tblend,
+    Tchk,
     Tcolor,
     Tcoord,
     Tcopy,
     Tfill,
+    Tfunc,
     Thide,
     Thome,
     Tlayer,
@@ -109,7 +112,10 @@ pub(crate) enum Command {
     Tscale,
     Tscreen,
     Tshow,
+    Tstart,
+    Tstop,
     Tupdate,
+    Tvar,
     Xscreen,
 }
 
@@ -182,12 +188,15 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPUNLINK", Command::Spunlink),
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
+    ("TANIM", Command::Tanim),
     ("TARRAY", Command::Tarray),
     ("TBLEND", Command::Tblend),
+    ("TCHK", Command::Tchk),
     ("TCOLOR", Command::Tcolor),
     ("TCOORD", Command::Tcoord),
     ("TCOPY", Command::Tcopy),
     ("TFILL", Command::Tfill),
+    ("TFUNC", Command::Tfunc),
     ("THIDE", Command::Thide),
     ("THOME", Command::Thome),
     ("TLAYER", Command::Tlayer),
@@ -200,7 +209,10 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TSCALE", Command::Tscale),
     ("TSCREEN", Command::Tscreen),
     ("TSHOW", Command::Tshow),
+    ("TSTART", Command::Tstart),
+    ("TSTOP", Command::Tstop),
     ("TUPDATE", Command::Tupdate),
+    ("TVAR", Command::Tvar),
     ("XSCREEN", Command::Xscreen),
 ];
 
@@ -641,6 +653,22 @@ impl Runtime {
         &self.fb
     }
 
+    /// Plays one frame of the sprites' and text screens' animations.
+    pub fn animate(&mut self) {
+        self.sprites.animate();
+        for t in &mut self.text {
+            t.animate();
+        }
+    }
+
+    /// Clears SPVAR's and TVAR's variables, as starting a program does.
+    pub fn clear_vars(&mut self) {
+        self.sprites.clear_vars();
+        for t in &mut self.text {
+            t.vars.clear();
+        }
+    }
+
     /// A layer's settings for a frame that XSCREEN's sampling makes finer.
     fn fine(&self, layer: &Layer) -> Layer {
         let s = self.mode.sample as i32;
@@ -861,9 +889,15 @@ impl Runtime {
                 | Command::Tcopy
                 | Command::Tfill
                 | Command::Tload
+                | Command::Tanim
+                | Command::Tchk
+                | Command::Tfunc
                 | Command::Tput
                 | Command::Tsave
-                | Command::Tupdate,
+                | Command::Tstart
+                | Command::Tstop
+                | Command::Tupdate
+                | Command::Tvar,
                 _,
             ) => self.text_command(command, args, want),
             _ => Err(illegal()),
@@ -916,8 +950,9 @@ impl Host for Runtime {
                 .filter(|(_, s)| s.used)
                 .filter_map(|(i, s)| Some((i as i32, s.func.clone()?)))
                 .collect(),
-            // TFUNC is not implemented yet.
-            Callbacks::Text => Vec::new(),
+            Callbacks::Text => (self.text.iter().enumerate())
+                .filter_map(|(i, t)| Some((i as i32, t.func.clone()?)))
+                .collect(),
         }
     }
 
