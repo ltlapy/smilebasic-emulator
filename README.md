@@ -24,15 +24,19 @@ SmileBASIC's own characters (number tiles, buttons, box drawing and other
 symbols at U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 `crates/sb-runtime/fonts/symbols.txt`.
 
-To see SmileBASIC's own font, import it from your own copy of SmileBASIC 4:
-extract the RomFS of the game (and of its update, if you have one) and run
+To see SmileBASIC's own font and sprites, import them from your own copy of
+SmileBASIC 4: extract the RomFS and ExeFS of the game (and of its update, if
+you have one) and run
 
 ```sh
-smilebasic import BASE_ROMFS UPDATE_ROMFS
+smilebasic import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
 ```
 
-The importer copies `font.map` and `GDEFFONT` into the emulator's data
-directory. List the update's RomFS last so its files take precedence.
+The importer copies `font.map`, `GDEFFONT` and the default sprite image
+`GDEFGRP` into the emulator's data directory, and takes the default sprite
+definitions (SPDEF) out of the executable `main`. List the update's
+directories last so its files take precedence. Only the font is required;
+without the ExeFS, sprite definitions are a plain grid of 16x16 cells.
 
 ## Running
 
@@ -49,8 +53,12 @@ Caps Lock is on. Pause/Break stops the running program.
 Graphic pages GRP0-GRP5 can be drawn on with `GPSET`, `GLINE`, `GBOX`,
 `GFILL`, `GCIRCLE`, `GTRI`, `GPAINT`, `GCOPY`, `GPUTCHR` and `GCLS`, with
 `GTARGET`, `GCOLOR`, `GCLIP`, `GPGET` and `GSAMPLE`; `GSAVE` and `GLOAD` copy
-them to and from arrays. Until sprites exist, GRP0 is shown
-under the text screens.
+them to and from arrays. GRP0 is shown through sprite 4095, as
+on SmileBASIC 4.
+
+Sprites work with `SPSET`, `SPCLR`, `SPSHOW`, `SPHIDE`, `SPOFS`, `SPHOME`,
+`SPROT`, `SPSCALE`, `SPCOLOR`, `SPCHR`, `SPPAGE`, `SPLAYER`, `SPDEF`, `SPVAR`
+and `SPUSED`.
 
 F4 switches between direct mode and the program editor. The first F4 after
 a program error opens the editor at the error, as `LIST ERR` does; `LIST`,

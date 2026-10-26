@@ -14,6 +14,7 @@ use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::settings::Settings;
+use sb_runtime::sprites::Sprites;
 use sb_runtime::storage::Storage;
 use sb_runtime::{Framebuffer, Runtime, resources, sbfile};
 use sdl3::event::Event;
@@ -30,13 +31,17 @@ const USAGE: &str = "usage:
   smilebasic                    start in direct mode
   smilebasic PROGRAM            load a SmileBASIC 4 program (TXT file or plain
                                 text) into PRG0 and run it
-  smilebasic import ROMFS...    copy the font from your own extracted SmileBASIC 4
-                                RomFS directories (list the update's last);
-                                without it, a bundled font is used";
+  smilebasic import DIR...      copy the font, sprite image and sprite
+                                definitions from your own extracted SmileBASIC 4
+                                RomFS and ExeFS directories (list the update's
+                                last); without them, a bundled font and blank
+                                sprites are used";
 
 const TITLE: &str = "SmileBASIC emulator";
 /// In the data directory.
 const SETTINGS_FILE: &str = "settings.txt";
+/// The page that holds the default sprite image at start-up.
+const SPRITE_GRP: usize = 4;
 
 type AnyError = Box<dyn std::error::Error>;
 
@@ -66,13 +71,17 @@ fn resource_dir() -> Result<PathBuf, AnyError> {
     Ok(data_dir()?.join("resources"))
 }
 
-fn import(romfs: &[String]) -> Result<(), AnyError> {
+fn import(dirs: &[String]) -> Result<(), AnyError> {
     let dest = resource_dir()?;
-    let romfs: Vec<PathBuf> = romfs.iter().map(PathBuf::from).collect();
-    for source in resources::import(&romfs, &dest)? {
+    let dirs: Vec<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+    let imported = resources::import(&dirs, &dest)?;
+    for source in &imported.sources {
         println!("imported {}", source.display());
     }
     println!("into {}", dest.display());
+    for missing in &imported.missing {
+        println!("not found: {missing}");
+    }
     Ok(())
 }
 
@@ -94,6 +103,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     });
     let screen = Profile::default().screen();
     let mut rt = Runtime::new(screen.width, screen.height, font);
+    let (sprite_page, sprite_defs) = resources::load_sprites(&resource_dir()?);
+    if let Some(page) = sprite_page {
+        rt.grp.set_page(SPRITE_GRP, page);
+    }
+    if let Some(defs) = sprite_defs {
+        rt.sprites = Sprites::new(defs);
+    }
     rt.storage = Storage::new(data_dir()?.join("projects"));
     let settings_path = data_dir()?.join(SETTINGS_FILE);
     if let Ok(text) = std::fs::read_to_string(&settings_path) {

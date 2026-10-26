@@ -10,6 +10,7 @@ pub mod framebuffer;
 pub mod graphics;
 mod grp;
 pub mod machine;
+pub mod nso;
 pub mod resources;
 pub mod runtime;
 pub mod sbfile;
