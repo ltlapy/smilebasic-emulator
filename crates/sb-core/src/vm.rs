@@ -179,6 +179,11 @@ impl Vm {
         }
     }
 
+    /// The program being run.
+    pub fn program(&self) -> Rc<Compiled> {
+        Rc::clone(&self.program)
+    }
+
     /// Every named global with its current value, keyed by full name.
     pub fn globals(&self) -> impl Iterator<Item = (String, Value)> + '_ {
         self.program
