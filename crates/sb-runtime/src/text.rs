@@ -13,6 +13,18 @@ pub const USER_CHARS: std::ops::RangeInclusive<u16> = 0xE800..=0xF7FF;
 /// UNVERIFIED: SB3's default TABSTEP; SB4's console has not been measured.
 pub const TAB_WIDTH: u32 = 4;
 const WHITE: u32 = 0xFFFF_FFFF;
+/// GRP5 (`#GRPF`) holds the font that text screens and GPUTCHR draw.
+pub const FONT_PAGE: usize = 5;
+
+/// Pixel `(x, y)` of a character as GRP5 now shows it; fallback glyphs
+/// that have no place there come from the font itself.
+pub fn glyph_pixel(font: &Font, grp: &Graphics, code: u16, size: FontSize, x: u32, y: u32) -> u32 {
+    match font.origin(code, size) {
+        Some((gx, gy)) => grp.pixel(FONT_PAGE, (gx + x) as i32, (gy + y) as i32),
+        None => font.pixel(code, size, x, y),
+    }
+}
+
 /// User-defined characters sit in a grid this many characters wide.
 const USER_GRID: i32 = 64;
 
@@ -229,7 +241,8 @@ impl TextScreen {
 
     /// Draws the screen over `fb` where TOFS and its companions put it.
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
-        let grp = Graphics::default();
+        let mut grp = Graphics::default();
+        grp.set_page(FONT_PAGE, font.page_image());
         self.draw_placed(fb, font, &grp, &Affine::IDENTITY, None, false);
     }
 
@@ -245,8 +258,8 @@ impl TextScreen {
             return sample(grp, self.page, gx, gy);
         }
         match ft {
-            8 => font.pixel(code, FontSize::Small, x, y),
-            16 => font.pixel(code, FontSize::Large, x, y),
+            8 => glyph_pixel(font, grp, code, FontSize::Small, x, y),
+            16 => glyph_pixel(font, grp, code, FontSize::Large, x, y),
             // Larger font types show only user-defined characters.
             _ => 0,
         }

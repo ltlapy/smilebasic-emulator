@@ -177,3 +177,23 @@ fn user_defined_characters_come_from_tpage() {
     let mut m = run("CLS:TPAGE -1,0,0:PRINT CHR$(&HE801)");
     assert_eq!(m.render().get(5, 5), Some(WHITE));
 }
+
+#[test]
+fn drawing_on_grp5_changes_the_font() {
+    let (x, y) = lit_pixel_of_a();
+    // Find "A" on GRP5 by where the font put it, then clear it there.
+    let font = Font::fallback();
+    let (gx, gy) = font
+        .origin(u16::from(b'A'), FontSize::Small)
+        .expect("on the page");
+    let mut m = run(&format!(
+        "CLS:PRINT \"AA\":GTARGET 5:GFILL {gx},{gy},{},{},0:GTARGET 0",
+        gx + 7,
+        gy + 7
+    ));
+    let fb = m.render();
+    assert_eq!(fb.get(x, y), Some(0xFF00_0000));
+    assert_eq!(fb.get(8 + x, y), Some(0xFF00_0000));
+    // The editor and other overlays keep the original font.
+    assert_eq!(font.pixel(u16::from(b'A'), FontSize::Small, x, y), WHITE);
+}

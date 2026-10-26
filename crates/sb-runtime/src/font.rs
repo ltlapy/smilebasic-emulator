@@ -44,8 +44,28 @@ enum Source {
         /// Indices into `SYMBOL_PALETTE`, row by row.
         symbols: Vec<[u8; 64]>,
         missing: u16,
+        /// For each code, its glyph number on the font page, or `NO_CELL`
+        /// for codes drawn straight from `cells`: the page has room for
+        /// only `PAGE_GLYPHS` of them.
+        slots: Vec<u16>,
     },
 }
+
+/// Glyphs the 16-pixel half of the font page holds.
+const PAGE_GLYPHS: usize = 4096;
+/// Codes the fallback font puts on the font page first; the rest follow in
+/// code order while there is room.
+const FIRST_ON_PAGE: &[std::ops::RangeInclusive<u16>] = &[
+    0x20..=0x7E,
+    0xFFFD..=0xFFFD,
+    0xE100..=0xE17F,
+    0xE200..=0xE2FF,
+    0xA0..=0x24F,
+    0x370..=0x4FF,
+    0x2000..=0x2BFF,
+    0x3000..=0x30FF,
+    0xFF00..=0xFFEF,
+];
 
 const NO_CELL: u16 = u16::MAX;
 const SYMBOL: u16 = 0x8000;
@@ -100,6 +120,14 @@ pub fn parse_map(bytes: &[u8]) -> Result<Vec<u16>, FontError> {
         .collect())
 }
 
+/// Where glyph `n` sits on the font page.
+fn slot_origin(n: u32, size: FontSize) -> (u32, u32) {
+    match size {
+        FontSize::Small => ((n % 64) * 8, (n / 64) * 8),
+        FontSize::Large => ((n % 64) * 16, 1024 + (n / 64) * 16),
+    }
+}
+
 impl Font {
     /// Builds the font from the bytes of `font.map` and of the `GDEFFONT`
     /// file (a SmileBASIC 4 DAT container).
@@ -133,25 +161,75 @@ impl Font {
             symbols.push(record[2..].try_into().expect("64 pixels"));
         }
         let missing = index[0xFFFD];
+        let mut slots = vec![NO_CELL; CODES];
+        let mut used = 0;
+        let order = FIRST_ON_PAGE.iter().cloned().flatten().chain(0..=u16::MAX);
+        for code in order {
+            if used == PAGE_GLYPHS {
+                break;
+            }
+            let drawn = match code {
+                0x21..=0x7E => code + 0xFEE0,
+                _ => code,
+            };
+            if slots[usize::from(code)] == NO_CELL && index[usize::from(drawn)] != NO_CELL {
+                slots[usize::from(code)] = used as u16;
+                used += 1;
+            }
+        }
         Font(Source::Cells {
             index,
             cells,
             symbols,
             missing,
+            slots,
         })
     }
 
-    /// Top-left corner of a code's glyph on SmileBASIC 4's font page, as
-    /// FONTINFO reports it. `None` for the fallback font, which has no page.
+    /// The font page as SmileBASIC 4 keeps it in GRP5.
+    pub fn page_image(&self) -> Vec<u32> {
+        match &self.0 {
+            Source::Page { page, .. } => page.clone(),
+            Source::Cells { slots, .. } => {
+                let mut page = vec![0; (PAGE_SIZE * PAGE_SIZE) as usize];
+                for (code, &slot) in slots.iter().enumerate() {
+                    if slot == NO_CELL {
+                        continue;
+                    }
+                    for size in [FontSize::Small, FontSize::Large] {
+                        let (gx, gy) = slot_origin(u32::from(slot), size);
+                        let n = size as u32;
+                        for y in 0..n {
+                            for x in 0..n {
+                                let p = self.pixel(code as u16, size, x, y);
+                                page[((gy + y) * PAGE_SIZE + gx + x) as usize] = p;
+                            }
+                        }
+                    }
+                }
+                page
+            }
+        }
+    }
+
+    /// Top-left corner of a code's glyph on the font page, as FONTINFO
+    /// reports it. `None` for fallback glyphs that did not fit on the page.
     pub fn origin(&self, code: u16, size: FontSize) -> Option<(u32, u32)> {
-        let Source::Page { glyphs, .. } = &self.0 else {
-            return None;
+        let n = match &self.0 {
+            Source::Page { glyphs, .. } => glyphs[usize::from(code)],
+            Source::Cells { slots, index, .. } => {
+                let drawn = match code {
+                    0x21..=0x7E => code + 0xFEE0,
+                    _ => code,
+                };
+                match slots[usize::from(code)] {
+                    // Codes with no glyph at all show the missing glyph.
+                    NO_CELL if index[usize::from(drawn)] == NO_CELL => slots[0xFFFD],
+                    slot => slot,
+                }
+            }
         };
-        let n = u32::from(glyphs[usize::from(code)]);
-        Some(match size {
-            FontSize::Small => ((n % 64) * 8, (n / 64) * 8),
-            FontSize::Large => ((n % 64) * 16, 1024 + (n / 64) * 16),
-        })
+        (n != NO_CELL).then(|| slot_origin(u32::from(n), size))
     }
 
     /// Pixel `(x, y)` of a code's glyph, `0xAARRGGBB`; both coordinates
@@ -167,6 +245,7 @@ impl Font {
                 cells,
                 symbols,
                 missing,
+                ..
             } => {
                 // SmileBASIC's font draws ASCII as wide as full-width
                 // characters, so use GalmuriMono7's full-width forms.
@@ -255,7 +334,10 @@ mod tests {
     #[test]
     fn fallback_font() {
         let font = Font::fallback();
-        assert_eq!(font.origin(0x41, FontSize::Small), None);
+        // Common characters get a place on the font page; the page has no
+        // room left for Hangul.
+        assert_eq!(font.origin(0x41, FontSize::Small), Some((33 * 8, 0)));
+        assert_eq!(font.origin(0xAC00, FontSize::Small), None);
         // ASCII is drawn with the full-width forms.
         assert_eq!(rows(&font, 'A'), rows(&font, 'Ａ'));
         // Other half-width glyphs are centered in the cell.

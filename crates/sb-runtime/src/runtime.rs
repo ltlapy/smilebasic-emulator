@@ -362,6 +362,7 @@ impl Runtime {
             back_color: 0xFF00_0000,
             scratch: Framebuffer::new(width, height),
         }
+        .with_font_page()
     }
 
     /// The DATA values from `label` on, for commands that take a
@@ -381,6 +382,15 @@ impl Runtime {
             program,
             pos: pos as usize,
         })
+    }
+
+    /// Copies the font into GRP5, where programs can change it.
+    fn with_font_page(mut self) -> Runtime {
+        let page = self.font.page_image();
+        if page.iter().any(|&p| p != 0) {
+            self.grp.set_page(crate::text::FONT_PAGE, page);
+        }
+        self
     }
 
     /// The frame's size in pixels.

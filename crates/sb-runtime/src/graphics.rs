@@ -2,6 +2,7 @@
 //! once something is drawn on it; until then every pixel is 0.
 
 use crate::font::{Font, FontSize};
+use crate::text::glyph_pixel;
 
 pub const PAGES: usize = 6;
 /// `#GRPWIDTH` and `#GRPHEIGHT`.
@@ -396,7 +397,8 @@ impl Graphics {
             let left = x.saturating_add((i as i32).saturating_mul(n * sx));
             for gy in 0..n {
                 for gx in 0..n {
-                    let p = multiply(font.pixel(code, size, gx as u32, gy as u32), color);
+                    let glyph = glyph_pixel(font, self, code, size, gx as u32, gy as u32);
+                    let p = multiply(glyph, color);
                     for py in 0..sy {
                         for px in 0..sx {
                             let (x, y) = (left + gx * sx + px, y + gy * sy + py);
