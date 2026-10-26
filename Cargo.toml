@@ -16,5 +16,9 @@ sb-profiles = { path = "crates/sb-profiles" }
 # depend on the distribution shipping SDL3.
 sdl3 = { version = "0.20", features = ["build-from-source-static"] }
 
+# Unoptimized, the per-pixel compositing falls far below 60 frames a second.
+[profile.dev]
+opt-level = 1
+
 [profile.dev.package."*"]
 opt-level = 2
