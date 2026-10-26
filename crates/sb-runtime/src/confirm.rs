@@ -1,6 +1,6 @@
 //! Questions that commands wait on, and the notices shown instead of them.
-//! SmileBASIC 4 asks before every file read and write typed in direct
-//! mode; the emulator lets that be turned into a notice or silenced, but
+//! SmileBASIC 4 asks before every file read and write, except a LOAD in a
+//! running program; the emulator lets that be turned into a notice or silenced, but
 //! always asks before unsaved edits are lost.
 
 use crate::runtime::Runtime;
@@ -45,6 +45,9 @@ pub(crate) struct FileAction {
     pub accept: &'static str,
     /// The one line shown when notifying instead of asking.
     pub notice: String,
+    /// Whether it also asks in a running program. On SmileBASIC 4, LOAD
+    /// there asks only when it would replace unsaved edits.
+    pub in_programs: bool,
 }
 
 const HINT: [&str; 2] = [
@@ -121,14 +124,14 @@ impl Runtime {
 
     /// Confirms a file command as the settings say. Replacing slots in
     /// `replaces` that have unsaved edits always asks.
-    // UNVERIFIED: whether SmileBASIC 4 asks before SAVE, DELETE and RENAME
-    // in a running program; LOAD there asks only for unsaved edits.
     pub(crate) fn confirm_file(&mut self, action: FileAction, replaces: &[usize]) -> Ask {
         let unsaved = self.unsaved_among(replaces.iter().copied());
-        let mode = match (unsaved.is_empty(), self.direct) {
-            (false, _) => FileConfirm::Ask,
-            (true, false) => FileConfirm::Silent,
-            (true, true) => self.settings.file_confirm,
+        let mode = if !unsaved.is_empty() {
+            FileConfirm::Ask
+        } else if self.direct || action.in_programs {
+            self.settings.file_confirm
+        } else {
+            FileConfirm::Silent
         };
         match mode {
             FileConfirm::Silent => Ask::Go,

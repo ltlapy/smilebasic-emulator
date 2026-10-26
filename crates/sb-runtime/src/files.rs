@@ -120,6 +120,7 @@ impl Runtime {
                         details: self.details(&file, None),
                         accept: "Load",
                         notice: format!("Loading {file} into slot {slot}"),
+                        in_programs: false,
                     };
                     let ask = self.confirm_file(action, &[slot]);
                     if self.held(ask) {
@@ -146,6 +147,7 @@ impl Runtime {
                         details,
                         accept: "Save",
                         notice: format!("Saving slot {slot} as {file}"),
+                        in_programs: true,
                     };
                     let ask = self.confirm_file(action, &[]);
                     if self.held(ask) {
@@ -165,6 +167,7 @@ impl Runtime {
                         details: self.details(&file, None),
                         accept: "Delete",
                         notice: format!("Deleting {file}"),
+                        in_programs: true,
                     };
                     let ask = self.confirm_file(action, &[]);
                     if self.held(ask) {
@@ -185,6 +188,7 @@ impl Runtime {
                         details: self.details(&file, Some(&to)),
                         accept: "Rename",
                         notice: format!("Renaming {file} to {to}"),
+                        in_programs: true,
                     };
                     let ask = self.confirm_file(action, &[]);
                     if self.held(ask) {

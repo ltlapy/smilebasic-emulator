@@ -272,7 +272,7 @@ fn direct_file_commands_ask_notify_or_stay_silent() {
 }
 
 #[test]
-fn a_program_loads_silently_unless_edits_would_be_lost() {
+fn programs_ask_except_for_a_safe_load() {
     let dir = TempDir::new("program");
     let mut m = machine(&dir);
     m.rt.settings.file_confirm = FileConfirm::Ask;
@@ -285,6 +285,23 @@ fn a_program_loads_silently_unless_edits_would_be_lost() {
         (vec!["1".into(), "OK".into()], "?2")
     );
 
+    // SAVE in a program asks, as typed ones do.
+    m.set_slot(0, "SAVE \"B\",1:?RESULT()".to_string());
+    let c = ask(&mut m, "run");
+    assert_eq!(c.title, "Slot 1: Save file");
+    m.rt.answer(true);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    m.rt.settings.file_confirm = FileConfirm::Notify;
+    enter(&mut m, "run");
+    assert_eq!(
+        m.rt.take_notices(),
+        ["Saving slot 1 as TXT:B"; 1],
+        "and follows the setting"
+    );
+
+    m.rt.settings.file_confirm = FileConfirm::Silent;
+    m.set_slot(0, "LOAD \"A\",1:?RESULT()".to_string());
     touch(&mut m, 1);
     let c = ask(&mut m, "run");
     assert_eq!(c.lines[0], "Load this file into slot 1.");
@@ -295,7 +312,7 @@ fn a_program_loads_silently_unless_edits_would_be_lost() {
 
 #[test]
 fn switching_projects_warns_of_unsaved_edits() {
-    let dir = TempDir::new("project");
+    let dir = TempDir::new("switch");
     let mut m = machine(&dir);
     enter(&mut m, "project \"x\"");
     touch(&mut m, 2);
