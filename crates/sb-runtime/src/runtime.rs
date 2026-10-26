@@ -324,7 +324,7 @@ impl Runtime {
                     slot => slot_arg(slot).map(|s| s..s + 1)?,
                 };
                 let unsaved = self.unsaved_among(slots.clone());
-                // UNVERIFIED: whether NEW asks when nothing is unsaved.
+                // Without unsaved edits, NEW clears at once (checked on hardware).
                 if !unsaved.is_empty() {
                     let summary = match args.first() {
                         None => "Erase the programs in all slots.".to_string(),
