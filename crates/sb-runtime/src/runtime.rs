@@ -58,9 +58,14 @@ pub(crate) enum Command {
     Spchk,
     Spchr,
     Spclr,
+    Spcol,
     Spcolor,
+    Spcolvec,
     Spdef,
     Sphide,
+    Sphitinfo,
+    Sphitrc,
+    Sphitsp,
     Sphome,
     Splayer,
     Spofs,
@@ -113,9 +118,14 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPCHK", Command::Spchk),
     ("SPCHR", Command::Spchr),
     ("SPCLR", Command::Spclr),
+    ("SPCOL", Command::Spcol),
     ("SPCOLOR", Command::Spcolor),
+    ("SPCOLVEC", Command::Spcolvec),
     ("SPDEF", Command::Spdef),
     ("SPHIDE", Command::Sphide),
+    ("SPHITINFO", Command::Sphitinfo),
+    ("SPHITRC", Command::Sphitrc),
+    ("SPHITSP", Command::Sphitsp),
     ("SPHOME", Command::Sphome),
     ("SPLAYER", Command::Splayer),
     ("SPOFS", Command::Spofs),
@@ -528,9 +538,14 @@ impl Runtime {
                 | Command::Spchk
                 | Command::Spchr
                 | Command::Spclr
+                | Command::Spcol
                 | Command::Spcolor
+                | Command::Spcolvec
                 | Command::Spdef
                 | Command::Sphide
+                | Command::Sphitinfo
+                | Command::Sphitrc
+                | Command::Sphitsp
                 | Command::Sphome
                 | Command::Splayer
                 | Command::Spofs

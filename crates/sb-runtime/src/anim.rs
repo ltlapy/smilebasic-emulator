@@ -224,6 +224,8 @@ pub struct Track {
     /// Frames of the current key played.
     elapsed: u32,
     loops_done: i32,
+    /// Whether the last frame played was part of a slide.
+    slid: bool,
 }
 
 impl Track {
@@ -236,11 +238,16 @@ impl Track {
             key: 0,
             elapsed: 0,
             loops_done: 0,
+            slid: false,
         }
     }
 
     pub fn mode(&self) -> Mode {
         self.anim.mode
+    }
+
+    pub fn slid(&self) -> bool {
+        self.slid
     }
 
     fn key_value(&self) -> [f64; 2] {
@@ -274,6 +281,7 @@ impl Track {
     // from where the last key ended.
     pub fn step(&mut self, s: &mut Sprite, defs: &[SpriteDef]) -> bool {
         let target = self.anim.mode.target;
+        self.slid = false;
         // Keys of time 0 take no frame; a whole loop of them takes one.
         for _ in 0..=self.anim.keys.len() {
             let time = self.anim.keys[self.key].time;
@@ -287,6 +295,7 @@ impl Track {
                 continue;
             }
             self.elapsed += 1;
+            self.slid = time < 0;
             let value = if time < 0 {
                 mix(
                     target,

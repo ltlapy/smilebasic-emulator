@@ -61,7 +61,9 @@ on SmileBASIC 4.
 Sprites work with `SPSET`, `SPCLR`, `SPSHOW`, `SPHIDE`, `SPOFS`, `SPHOME`,
 `SPROT`, `SPSCALE`, `SPCOLOR`, `SPCHR`, `SPPAGE`, `SPLAYER`, `SPDEF`, `SPVAR`
 and `SPUSED`, and are animated with `SPANIM`, `ANIMDEF`, `SPSTART`, `SPSTOP`
-and `SPCHK`, from arrays, arguments or `DATA`.
+and `SPCHK`, from arrays, arguments or `DATA`. `SPCOL`, `SPCOLVEC`, `SPHITSP`,
+`SPHITRC` and `SPHITINFO` detect collisions, including those of moving
+sprites within a frame.
 
 F4 switches between direct mode and the program editor. The first F4 after
 a program error opens the editor at the error, as `LIST ERR` does; `LIST`,

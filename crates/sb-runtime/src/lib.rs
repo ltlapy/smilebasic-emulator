@@ -3,6 +3,7 @@
 //! audio buffers.
 
 pub mod anim;
+pub mod collision;
 pub mod confirm;
 pub mod editor;
 mod files;

@@ -164,3 +164,34 @@ fn spdef_from_data() {
          DATA 1, 1,2,3,4,5,6,7");
     assert_eq!(out, "6,8,3,4,5,6,7");
 }
+
+#[test]
+fn sprites_hit_each_other() {
+    let (_, out) = run("FOR I=0 TO 3:SPSET I,0:SPCOL I:NEXT\n\
+         SPOFS 0,0,0:SPOFS 1,8,8:SPOFS 2,100,0:SPOFS 3,4,4\n\
+         H=SPHITSP(0):?H;:H=SPHITSP():?H;:H=SPHITSP():?H;\" \";\n\
+         ?SPHITSP(0,2);SPHITSP(0,3);\" \";\n\
+         SPCOL 3,,2:SPCOL 0,,1:?SPHITSP(0,3);\" \";\n\
+         SPCOL 1 OUT X,Y,W,H,SC,M:?X;Y;W;H;SC;HEX$(M)");
+    assert_eq!(out, "13-1 01 0 0016160FFFFFFFF");
+}
+
+#[test]
+fn moving_rectangles_hit_sprites() {
+    let (_, out) = run("SPSET 5,0:SPOFS 5,100,0:SPCOL 5\n\
+         H=SPHITRC(0,0,10,10,,200,0)\n\
+         SPHITINFO OUT T,X1,Y1,X2,Y2\n\
+         ?H;\" \";T;\" \";X1;\",\";X2;\" \";SPHITRC(5,0,0,10,10);SPHITRC(0,4,0,0,10,10,,200,0)");
+    assert_eq!(out, "5 0.45 90,100 0-1");
+}
+
+#[test]
+fn sliding_sprites_collide_with_their_motion() {
+    let (_, out) = run("SPSET 0,0:SPOFS 0,0,0:SPCOL 0:SPANIM 0,\"XY\",-10,100,0\n\
+         SPSET 1,0:SPOFS 1,30,0:SPCOL 1\n\
+         VSYNC 1\n\
+         ?SPHITSP(0,1);\" \";\n\
+         SPHITINFO OUT T,X1,Y1,VX1,VY1,X2,Y2,VX2,VY2:?T;\" \";X1;\" \";VX1;\" \";\n\
+         SPCOLVEC 0,0,0:?SPHITSP(0,1)");
+    assert_eq!(out, "1 0.4 14 10 0");
+}

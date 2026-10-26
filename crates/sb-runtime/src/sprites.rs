@@ -5,7 +5,8 @@ use std::collections::HashMap;
 
 use sb_core::value::Value;
 
-use crate::anim::{self, Anim, Track};
+use crate::anim::{self, Anim, Target, Track};
+use crate::collision::{Body, Collision, HitInfo, Search};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{GRP_SIZE, Graphics, PAGES, multiply};
 
@@ -148,6 +149,13 @@ pub struct Sprite {
     pub anims: [Option<Track>; anim::TARGETS],
     /// SPSTOP pauses the animations until SPSTART.
     pub anim_stopped: bool,
+    /// SPCOL's settings; sprites without them never collide.
+    // UNVERIFIED: whether SPSET gives sprites a rectangle already.
+    pub col: Option<Collision>,
+    /// SPCOLVEC's movement, or `None` to use `anim_move`.
+    pub col_vel: Option<(f64, f64)>,
+    /// How far an XY slide moved the sprite in the last frame.
+    pub anim_move: (f64, f64),
 }
 
 impl Sprite {
@@ -172,6 +180,9 @@ impl Sprite {
             vars: HashMap::new(),
             anims: Default::default(),
             anim_stopped: false,
+            col: None,
+            col_vel: None,
+            anim_move: (0.0, 0.0),
         }
     }
 
@@ -194,6 +205,11 @@ pub struct Sprites {
     pub new_layer: i32,
     /// ANIMDEF definitions.
     pub anim_defs: Vec<Option<Anim>>,
+    /// Where SPHITSP() and SPHITRC() without arguments go on searching.
+    pub hit_sp: Option<Search>,
+    pub hit_rc: Option<Search>,
+    /// What SPHITINFO reports.
+    pub hit_info: HitInfo,
 }
 
 impl Default for Sprites {
@@ -211,6 +227,9 @@ impl Sprites {
             new_page: DEFAULT_PAGE,
             new_layer: 0,
             anim_defs: vec![None; anim::DEFINITIONS],
+            hit_sp: None,
+            hit_rc: None,
+            hit_info: HitInfo::default(),
         };
         s.reset_gsprite();
         s
@@ -265,14 +284,20 @@ impl Sprites {
         for id in 0..SPRITES {
             let s = &mut self.list[id];
             if !s.used || s.anim_stopped {
+                s.anim_move = (0.0, 0.0);
                 continue;
             }
             let mut tracks = std::mem::take(&mut s.anims);
             let mut delete = false;
-            for slot in &mut tracks {
-                if let Some(track) = slot
-                    && !track.step(s, &self.defs)
-                {
+            let before = s.pos;
+            s.anim_move = (0.0, 0.0);
+            for (i, slot) in tracks.iter_mut().enumerate() {
+                let Some(track) = slot else { continue };
+                let going = track.step(s, &self.defs);
+                if i == Target::Xy.index() && track.slid() {
+                    s.anim_move = (s.pos.0 - before.0, s.pos.1 - before.1);
+                }
+                if !going {
                     delete |= track.mode().delete;
                     *slot = None;
                 }
@@ -283,6 +308,35 @@ impl Sprites {
                 self.clear(id);
             }
         }
+    }
+
+    /// The body a sprite collides with, if SPCOL has been set.
+    // UNVERIFIED: hidden sprites collide too.
+    pub fn body(&self, id: usize) -> Option<Body> {
+        let s = &self.list[id];
+        let c = s.col.as_ref().filter(|_| s.used)?;
+        Some(Body::sprite(
+            c,
+            s.pos,
+            s.scale,
+            s.col_vel.unwrap_or(s.anim_move),
+        ))
+    }
+
+    /// The next sprite `search` hits, noting the details for SPHITINFO.
+    pub fn next_hit(&mut self, search: &mut Search) -> Option<usize> {
+        while let Some(id) = search.rest.pop() {
+            if Some(id) == search.skip {
+                continue;
+            }
+            if let Some(body) = self.body(id)
+                && let Some(t) = crate::collision::sweep(&search.source, &body)
+            {
+                self.hit_info = HitInfo::new(t, &search.source, &body);
+                return Some(id);
+            }
+        }
+        None
     }
 
     /// Ids of shown sprites, back to front.

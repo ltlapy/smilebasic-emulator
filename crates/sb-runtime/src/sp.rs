@@ -1,12 +1,14 @@
 //! Sprite commands: SPSET, SPCLR, SPSHOW, SPHIDE, SPHOME, SPOFS, SPROT,
 //! SPSCALE, SPCOLOR, SPCHR, SPPAGE, SPLAYER, SPDEF, SPVAR, SPUSED, and the
-//! animation commands SPANIM, ANIMDEF, SPSTART, SPSTOP and SPCHK.
+//! animation commands SPANIM, ANIMDEF, SPSTART, SPSTOP and SPCHK, and the
+//! collision commands SPCOL, SPCOLVEC, SPHITSP, SPHITRC and SPHITINFO.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{ArrayData, Value};
 
 use crate::anim::{self, Anim, MAX_KEYS, Mode, Track};
+use crate::collision::{Body, Collision, Search};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
 use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey};
 
@@ -63,6 +65,14 @@ fn data_count(n: f64, max: usize) -> Result<usize> {
         .ok()
         .filter(|&n| n <= max)
         .ok_or_else(|| out_of_range("data count", n))
+}
+
+/// A collision mask, every bit when omitted.
+fn mask(v: Option<&Value>) -> Result<u32> {
+    Ok(v.map(opt_int)
+        .transpose()?
+        .flatten()
+        .map_or(u32::MAX, |m| m as u32))
 }
 
 fn page(v: &Value) -> Result<i32> {
@@ -191,6 +201,79 @@ impl Runtime {
         let target = anim.mode.target.index();
         s.anims[target] = Some(Track::new(anim, s));
         Ok(vec![])
+    }
+
+    /// SPCOL's setting forms.
+    fn spcol(&mut self, args: &[Value]) -> Result<()> {
+        let flag = |v: Option<&Value>| -> Result<bool> {
+            Ok(v.map(opt_int).transpose()?.flatten().unwrap_or(0) != 0)
+        };
+        let rect = match args.len() {
+            5..=7 => Some((
+                in_range(&args[1], "collision X", -32768..=32767)?,
+                in_range(&args[2], "collision Y", -32768..=32767)?,
+                in_range(&args[3], "collision width", 1..=65535)?,
+                in_range(&args[4], "collision height", 1..=65535)?,
+            )),
+            _ => None,
+        };
+        let (scale, mask) = match args.len() {
+            1 | 2 => (flag(args.get(1))?, u32::MAX),
+            3 => (flag(args.get(1))?, mask(args.get(2))?),
+            5 | 6 => (flag(args.get(5))?, u32::MAX),
+            7 => (flag(args.get(5))?, mask(args.get(6))?),
+            _ => return Err(illegal()),
+        };
+        let s = self.sprite(&args[0])?;
+        // Without a rectangle, the sprite's own at the time, from its home.
+        // UNVERIFIED: the start point is minus the home point.
+        let (x, y, w, h) = rect.unwrap_or((-s.home.0 as i32, -s.home.1 as i32, s.w, s.h));
+        s.col = Some(Collision {
+            x,
+            y,
+            w,
+            h,
+            scale,
+            mask,
+        });
+        Ok(())
+    }
+
+    /// Runs a search, or goes on with the last one, and returns the next
+    /// sprite hit or -1.
+    fn hit(&mut self, rect: bool, start: Option<Search>) -> i32 {
+        let slot = if rect {
+            &mut self.sprites.hit_rc
+        } else {
+            &mut self.sprites.hit_sp
+        };
+        let Some(mut search) = start.or_else(|| slot.take()) else {
+            return -1;
+        };
+        let found = self.sprites.next_hit(&mut search);
+        if rect {
+            self.sprites.hit_rc = Some(search);
+        } else {
+            self.sprites.hit_sp = Some(search);
+        }
+        found.map_or(-1, |id| id as i32)
+    }
+
+    /// SPHITRC's rectangle: X,Y,W,H, then optionally [mask],VX,VY.
+    fn hit_rect(args: &[Value]) -> Result<Body> {
+        let (vel, mask) = match args {
+            [_, _, _, _] => ((0.0, 0.0), u32::MAX),
+            [_, _, _, _, m, vx, vy] => ((real(vx)?, real(vy)?), mask(Some(m))?),
+            _ => return Err(illegal()),
+        };
+        Ok(Body::rect(
+            real(&args[0])?,
+            real(&args[1])?,
+            real(&args[2])?,
+            real(&args[3])?,
+            vel,
+            mask,
+        ))
     }
 
     pub(crate) fn sp_command(
@@ -437,6 +520,96 @@ impl Runtime {
                     .filter(|(_, track)| track.is_some())
                     .fold(0, |bits, (i, _)| bits | 1 << i);
                 Ok(vec![Value::Int(bits)])
+            }
+            (Command::Spcol, Want::Outs(0), _) => {
+                self.spcol(args)?;
+                Ok(vec![])
+            }
+            (Command::Spcol, Want::Outs(n @ (1 | 2 | 4..=6)), 1) => {
+                // UNVERIFIED: what a sprite without SPCOL reports.
+                let c = self.sprite(&args[0])?.col.unwrap_or(Collision {
+                    x: 0,
+                    y: 0,
+                    w: 0,
+                    h: 0,
+                    scale: false,
+                    mask: u32::MAX,
+                });
+                let all = [c.x, c.y, c.w, c.h, i32::from(c.scale), c.mask as i32];
+                let n = n as usize;
+                Ok(ints(if n <= 2 { &all[4..4 + n] } else { &all[..n] }))
+            }
+            (Command::Spcolvec, Want::Outs(0), 1 | 3) => {
+                let vel = match args {
+                    [_, x, y] => Some((real(x)?, real(y)?)),
+                    _ => None,
+                };
+                self.sprite(&args[0])?.col_vel = vel;
+                Ok(vec![])
+            }
+            (Command::Sphitsp, Want::Value, 0) => Ok(vec![Value::Int(self.hit(false, None))]),
+            (Command::Sphitsp, Want::Value, 1 | 3) => {
+                let id = sprite_id(&args[0])?;
+                self.sprite(&args[0])?;
+                let (first, last) = match args {
+                    [_, a, b] => (sprite_id(a)?, sprite_id(b)?),
+                    _ => (0, SPRITES - 1),
+                };
+                let found = match self.sprites.body(id) {
+                    Some(source) => {
+                        self.hit(false, Some(Search::new(source, first, last, Some(id))))
+                    }
+                    None => {
+                        self.sprites.hit_sp = None;
+                        -1
+                    }
+                };
+                Ok(vec![Value::Int(found)])
+            }
+            (Command::Sphitsp, Want::Value, 2) => {
+                let (id, other) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
+                self.sprite(&args[0])?;
+                self.sprite(&args[1])?;
+                let hit = match self.sprites.body(id) {
+                    Some(source) if id != other => {
+                        let mut search = Search::new(source, other, other, None);
+                        self.sprites.next_hit(&mut search).is_some()
+                    }
+                    _ => false,
+                };
+                Ok(vec![Value::Int(i32::from(hit))])
+            }
+            (Command::Sphitrc, Want::Value, 0) => Ok(vec![Value::Int(self.hit(true, None))]),
+            (Command::Sphitrc, Want::Value, 4 | 7) => {
+                let source = Runtime::hit_rect(args)?;
+                let found = self.hit(true, Some(Search::new(source, 0, SPRITES - 1, None)));
+                Ok(vec![Value::Int(found)])
+            }
+            (Command::Sphitrc, Want::Value, 5 | 8) => {
+                let id = sprite_id(&args[0])?;
+                self.sprite(&args[0])?;
+                let mut search = Search::new(Runtime::hit_rect(&args[1..])?, id, id, None);
+                let hit = self.sprites.next_hit(&mut search).is_some();
+                Ok(vec![Value::Int(i32::from(hit))])
+            }
+            (Command::Sphitrc, Want::Value, 6 | 9) => {
+                let (first, last) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
+                let source = Runtime::hit_rect(&args[2..])?;
+                let found = self.hit(true, Some(Search::new(source, first, last, None)));
+                Ok(vec![Value::Int(found)])
+            }
+            (Command::Sphitinfo, Want::Value, 0) => {
+                Ok(vec![Value::Real(self.sprites.hit_info.time)])
+            }
+            (Command::Sphitinfo, Want::Outs(n @ (5 | 9)), 0) => {
+                let i = self.sprites.hit_info;
+                let [(x1, y1), (x2, y2)] = i.pos;
+                let [(vx1, vy1), (vx2, vy2)] = i.vel;
+                Ok(if n == 5 {
+                    reals(&[i.time, x1, y1, x2, y2])
+                } else {
+                    reals(&[i.time, x1, y1, vx1, vy1, x2, y2, vx2, vy2])
+                })
             }
             (Command::Spused, Want::Value, 1) => {
                 let id = sprite_id(&args[0])?;
