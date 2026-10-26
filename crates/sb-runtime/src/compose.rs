@@ -89,6 +89,9 @@ impl Affine {
 
 /// `src`, an element's straight color, over `dst`, premultiplied.
 pub fn over(dst: u32, src: u32) -> u32 {
+    if src >> 24 == 0xFF {
+        return src;
+    }
     let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
     let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
     let mix = |s: u32, d: u32| ((s * sa + d * (255 - sa)) / 255) as u8;
@@ -125,18 +128,28 @@ pub fn draw_image(
     h: i32,
     sample: impl Fn(f64, f64) -> u32,
 ) {
+    draw_image_part(fb, place, w, h, (0, 0, w, h), sample);
+}
+
+/// Like [`draw_image`], but only around where the part of the image from
+/// `(x0, y0)` to `(x1, y1)` falls. Pixels just outside the part may still
+/// be sampled, so `sample` must give nothing there; drawing an image part
+/// by part then gives the same frame as drawing it whole, while parts
+/// with nothing in them need not be drawn at all.
+pub fn draw_image_part(
+    fb: &mut Framebuffer,
+    place: &Placement,
+    w: i32,
+    h: i32,
+    part: (i32, i32, i32, i32),
+    sample: impl Fn(f64, f64) -> u32,
+) {
     let m = &place.matrix;
     let Some(inv) = m.inverse() else { return };
     if w <= 0 || h <= 0 {
         return;
     }
     let (w, h) = (f64::from(w), f64::from(h));
-    let corners = [
-        m.apply(0.0, 0.0),
-        m.apply(w, 0.0),
-        m.apply(0.0, h),
-        m.apply(w, h),
-    ];
     let (mut x0, mut y0) = (f64::from(0), f64::from(0));
     let (mut x1, mut y1) = (f64::from(fb.width()), f64::from(fb.height()));
     if let Some(c) = place.clip {
@@ -145,12 +158,22 @@ pub fn draw_image(
         x1 = x1.min(f64::from(c.x1) + 1.0);
         y1 = y1.min(f64::from(c.y1) + 1.0);
     }
-    let lo = |f: fn(&(f64, f64)) -> f64| corners.iter().map(f).fold(f64::MAX, f64::min);
-    let hi = |f: fn(&(f64, f64)) -> f64| corners.iter().map(f).fold(f64::MIN, f64::max);
-    let x0 = lo(|c| c.0).max(x0).floor();
-    let y0 = lo(|c| c.1).max(y0).floor();
-    let x1 = hi(|c| c.0).min(x1).ceil();
-    let y1 = hi(|c| c.1).min(y1).ceil();
+    let (lx0, ly0, lx1, ly1) = bounds(m, (0.0, 0.0, w, h));
+    // A pixel's margin for rounding, so that no pixel the whole image
+    // would draw is missed.
+    let (px0, py0, px1, py1) = bounds(
+        m,
+        (
+            f64::from(part.0),
+            f64::from(part.1),
+            f64::from(part.2),
+            f64::from(part.3),
+        ),
+    );
+    let x0 = lx0.max(px0 - 1.0).max(x0).floor();
+    let y0 = ly0.max(py0 - 1.0).max(y0).floor();
+    let x1 = lx1.min(px1 + 1.0).min(x1).ceil();
+    let y1 = ly1.min(py1 + 1.0).min(y1).ceil();
     if x0 >= x1 || y0 >= y1 {
         return;
     }
@@ -176,6 +199,20 @@ pub fn draw_image(
             );
         }
     }
+}
+
+/// The smallest and largest x and y that `m` takes the corners of the
+/// rectangle from `(x0, y0)` to `(x1, y1)` to.
+fn bounds(m: &Affine, (x0, y0, x1, y1): (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+    let corners = [
+        m.apply(x0, y0),
+        m.apply(x1, y0),
+        m.apply(x0, y1),
+        m.apply(x1, y1),
+    ];
+    let lo = |f: fn(&(f64, f64)) -> f64| corners.iter().map(f).fold(f64::MAX, f64::min);
+    let hi = |f: fn(&(f64, f64)) -> f64| corners.iter().map(f).fold(f64::MIN, f64::max);
+    (lo(|c| c.0), lo(|c| c.1), hi(|c| c.0), hi(|c| c.1))
 }
 
 /// Layers 0-7; 7 is drawn first, so lower layers are nearer the front.

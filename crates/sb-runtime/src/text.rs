@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
 use crate::anim::{self, ANIM_VAR, Animated, Target, Track};
-use crate::compose::{Affine, Placement, draw_image, over};
+use crate::compose::{Affine, Placement, draw_image_part, over};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -451,40 +451,61 @@ impl TextScreen {
             add: self.add,
         };
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
-        draw_image(fb, &place, w, h, |x, y| {
-            let size = f64::from(cs);
-            let (cx, cy) = ((x / size) as u32, (y / size) as u32);
-            let cell = self.cell(cx, cy);
-            let glyph = if cell.code == 0 {
-                0
-            } else {
-                // Where in the cell, which a fine frame splits further. As
-                // for sprites, the character is flipped, then turned
-                // (checked on hardware): undo the turn, then the flips.
-                let (px, py) = (x - f64::from(cx * cs), y - f64::from(cy * cs));
-                let (mut px, mut py) = match cell.attr & attr::ROTATION {
-                    0 => (px, py),
-                    1 => (py, size - px),
-                    2 => (size - px, size - py),
-                    _ => (size - py, px),
-                };
-                if cell.attr & attr::REVH != 0 {
-                    px = size - px;
+        let size = f64::from(cs);
+        // The cell's character in its colors, looked up once rather than
+        // for every pixel it covers.
+        let mut glyph = vec![0; (ft * ft) as usize];
+        for cy in 0..self.height {
+            for cx in 0..self.width {
+                let cell = self.cell(cx, cy);
+                let at_cursor = cursor == Some((cx, cy));
+                // Empty cells show nothing, so need no drawing.
+                if cell.code == 0 && !at_cursor {
+                    continue;
                 }
-                if cell.attr & attr::REVV != 0 {
-                    py = size - py;
+                for (i, pixel) in glyph.iter_mut().enumerate() {
+                    let (gx, gy) = (i as u32 % ft, i as u32 / ft);
+                    let pixel_color = if cell.code == 0 {
+                        0
+                    } else {
+                        let p = self.glyph_pixel(font, grp, cell.code, gx, gy);
+                        multiply(p, cell.color)
+                    };
+                    let pixel_color = if at_cursor {
+                        over(pixel_color, self.color)
+                    } else {
+                        pixel_color
+                    };
+                    *pixel = multiply(pixel_color, self.tint);
                 }
-                let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
-                let pixel = self.glyph_pixel(font, grp, cell.code, at(px), at(py));
-                multiply(pixel, cell.color)
-            };
-            let glyph = if cursor == Some((cx, cy)) {
-                over(glyph, self.color)
-            } else {
-                glyph
-            };
-            multiply(glyph, self.tint)
-        });
+                let (x0, y0) = ((cx * cs) as i32, (cy * cs) as i32);
+                let part = (x0, y0, x0 + cs as i32, y0 + cs as i32);
+                draw_image_part(fb, &place, w, h, part, |x, y| {
+                    // Pixels of the cells around are theirs to draw.
+                    if ((x / size) as u32, (y / size) as u32) != (cx, cy) {
+                        return 0;
+                    }
+                    // Where in the cell, which a fine frame splits further.
+                    // As for sprites, the character is flipped, then turned
+                    // (checked on hardware): undo the turn, then the flips.
+                    let (px, py) = (x - f64::from(cx * cs), y - f64::from(cy * cs));
+                    let (mut px, mut py) = match cell.attr & attr::ROTATION {
+                        0 => (px, py),
+                        1 => (py, size - px),
+                        2 => (size - px, size - py),
+                        _ => (size - py, px),
+                    };
+                    if cell.attr & attr::REVH != 0 {
+                        px = size - px;
+                    }
+                    if cell.attr & attr::REVV != 0 {
+                        py = size - py;
+                    }
+                    let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
+                    glyph[(at(py) * ft + at(px)) as usize]
+                });
+            }
+        }
     }
 }
 
@@ -525,6 +546,9 @@ fn channels(c: u32) -> [u32; 4] {
 
 /// Per-channel product, as used for text colors.
 fn multiply(a: u32, b: u32) -> u32 {
+    if b == WHITE {
+        return a;
+    }
     let (a, b) = (channels(a), channels(b));
     let c: [u8; 4] = std::array::from_fn(|i| (a[i] * b[i] / 255) as u8);
     u32::from_be_bytes(c)

@@ -70,6 +70,9 @@ impl Blend {
 
 /// Per-channel product, alpha included.
 pub fn multiply(a: u32, b: u32) -> u32 {
+    if b == 0xFFFF_FFFF {
+        return a;
+    }
     let (a, b) = (a.to_be_bytes(), b.to_be_bytes());
     u32::from_be_bytes(std::array::from_fn(|i| {
         (u32::from(a[i]) * u32::from(b[i]) / 255) as u8
@@ -148,6 +151,11 @@ impl Graphics {
             return 0;
         }
         pixels[index(x, y)]
+    }
+
+    /// Whether a page is empty, as at start-up or after GCLS with 0.
+    pub fn is_blank(&self, page: usize) -> bool {
+        self.pages[page].is_empty()
     }
 
     /// Replaces a whole page, such as GRP4 with the default sprite image.

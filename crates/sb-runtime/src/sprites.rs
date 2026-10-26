@@ -586,6 +586,11 @@ pub fn draw_posed(
     layer: &Affine,
     clip: Option<&Clip>,
 ) {
+    // A blank page shows nothing, as GRP0 does through #GSPRITE until
+    // something is drawn there.
+    if usize::try_from(s.page).is_ok_and(|p| p >= PAGES || grp.is_blank(p)) {
+        return;
+    }
     // The shown rectangle swaps sides for quarter turns.
     let quarter = s.attr & attr::ROTATION;
     let (bw, bh) = if quarter % 2 == 1 {
