@@ -3,19 +3,12 @@
 //! keys away from programs.
 
 use sb_runtime::Framebuffer;
-use sb_runtime::font::{Font, FontSize};
+use sb_runtime::font::Font;
 use sb_runtime::runtime::Settings;
 
-/// Glyphs are the console's 8x8 font drawn at twice the size.
-const GLYPH_SCALE: u32 = 2;
-const CHAR: u32 = 8 * GLYPH_SCALE;
-const ROW_HEIGHT: u32 = 24;
-const PAD: u32 = 8;
+use crate::ui::{BACKGROUND, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, text_width};
 
-const BACKGROUND: u32 = 0xE818_1818;
-const HIGHLIGHT: u32 = 0xFF2F_5FAF;
-const TEXT: u32 = 0xFFFF_FFFF;
-const DISABLED: u32 = 0xFF80_8080;
+const ROW_HEIGHT: u32 = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -124,28 +117,6 @@ pub enum Click {
     /// The menu bar used the click.
     Consumed,
     Chosen(Action),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Rect {
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-}
-
-impl Rect {
-    fn contains(self, (x, y): (i32, i32)) -> bool {
-        let (x, y) = (i64::from(x), i64::from(y));
-        x >= i64::from(self.x)
-            && y >= i64::from(self.y)
-            && x < i64::from(self.x + self.w)
-            && y < i64::from(self.y + self.h)
-    }
-}
-
-fn text_width(text: &str) -> u32 {
-    text.chars().count() as u32 * CHAR
 }
 
 /// An item's label behind a `[x] ` check box for toggles, or the same
@@ -273,35 +244,6 @@ impl MenuBar {
             let label = item_text(item.label, item.action.checked(settings));
             let color = if enabled { TEXT } else { DISABLED };
             draw_text(fb, font, r.x + PAD, r.y + 4, &label, color);
-        }
-    }
-}
-
-fn fill(fb: &mut Framebuffer, r: Rect, color: u32) {
-    for y in r.y..r.y + r.h {
-        for x in r.x..r.x + r.w {
-            fb.set(x, y, color);
-        }
-    }
-}
-
-/// Draws text in `color`, keeping the background's alpha.
-fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
-    for (i, c) in text.encode_utf16().enumerate() {
-        let left = x + i as u32 * CHAR;
-        for py in 0..CHAR {
-            for px in 0..CHAR {
-                let glyph = font.pixel(c, FontSize::Small, px / GLYPH_SCALE, py / GLYPH_SCALE);
-                if glyph >> 24 >= 0x80
-                    && let Some(dst) = fb.get(left + px, y + py)
-                {
-                    fb.set(
-                        left + px,
-                        y + py,
-                        (dst & 0xFF00_0000) | (color & 0x00FF_FFFF),
-                    );
-                }
-            }
         }
     }
 }

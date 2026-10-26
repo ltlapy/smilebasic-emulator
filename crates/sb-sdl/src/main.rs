@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dialog;
 mod menu;
+mod ui;
 
 use std::path::{Path, PathBuf};
 
+use dialog::{Answer, QuitDialog};
 use menu::{Action, Click, MenuBar};
 use sb_profiles::Profile;
 use sb_runtime::font::Font;
@@ -125,6 +128,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     overlay_texture.set_scale_mode(ScaleMode::Nearest);
     overlay_texture.set_blend_mode(BlendMode::Blend);
     let mut menu = MenuBar::default();
+    // Asks before quitting while programs are unsaved; takes all input
+    // while it is open.
+    let mut quit_dialog: Option<QuitDialog> = None;
 
     let mut events = sdl.event_pump()?;
     'running: loop {
@@ -140,9 +146,35 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 ((y * px - display.y) / scale) as i32,
             )
         };
+        let mut quit = false;
         for event in events.poll_iter() {
+            if let Some(dialog) = &mut quit_dialog {
+                let answer = match event {
+                    Event::Quit { .. } => Some(Answer::Quit),
+                    Event::MouseMotion { x, y, .. } => {
+                        dialog.mouse_move(to_display(x, y));
+                        None
+                    }
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Left,
+                        x,
+                        y,
+                        ..
+                    } => dialog.click(to_display(x, y)),
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => dialog.key(key),
+                    _ => None,
+                };
+                match answer {
+                    Some(Answer::Quit) => break 'running,
+                    Some(Answer::Cancel) => quit_dialog = None,
+                    None => {}
+                }
+                continue;
+            }
             match event {
-                Event::Quit { .. } => break 'running,
+                Event::Quit { .. } => quit = true,
                 Event::MouseMotion { x, y, .. } => menu.mouse_move(Some(to_display(x, y))),
                 Event::Window {
                     win_event: WindowEvent::MouseLeave,
@@ -154,7 +186,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     y,
                     ..
                 } => match menu.click(to_display(x, y), machine.is_running()) {
-                    Click::Chosen(Action::Quit) => break 'running,
+                    Click::Chosen(Action::Quit) => quit = true,
                     Click::Chosen(Action::Stop) => machine.stop(),
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
@@ -201,6 +233,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
         }
 
+        if quit {
+            let unsaved = machine.unsaved_slots();
+            if unsaved.is_empty() {
+                break 'running;
+            }
+            quit_dialog = Some(QuitDialog::new(&unsaved, (display_w, display_h)));
+        }
+
         machine.frame();
 
         let fb = machine.render();
@@ -212,7 +252,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             None,
             screen_rect(fb.width(), fb.height(), out_w, out_h),
         )?;
-        if menu.visible() {
+        if let Some(dialog) = &quit_dialog {
+            overlay.clear(0x8000_0000);
+            dialog.draw(&mut overlay, machine.rt.font());
+            overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
+            canvas.copy(&overlay_texture, None, display)?;
+        } else if menu.visible() {
             overlay.clear(0);
             let running = machine.is_running();
             menu.draw(
