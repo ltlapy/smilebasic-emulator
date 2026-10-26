@@ -186,3 +186,21 @@ fn list_arguments() {
     enter(&mut m, "list");
     assert!(m.is_editing());
 }
+
+#[test]
+fn ctrl_digits_switch_slots() {
+    let mut m = machine();
+    m.set_slot(3, "?3".to_string());
+    // From direct mode, opens the editor on the slot.
+    m.edit_slot(3);
+    assert!(m.is_editing());
+    assert_eq!(m.editor.slot(), 3);
+    m.type_text("'");
+    m.frame();
+    // Switching keeps the edit and opens the other slot.
+    m.edit_slot(1);
+    assert_eq!((m.editor.slot(), m.slot(3)), (1, "'?3"));
+    assert_eq!(m.unsaved_slots(), [3]);
+    m.edit_slot(6);
+    assert_eq!(m.editor.slot(), 1, "no such slot");
+}

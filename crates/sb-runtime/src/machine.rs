@@ -162,6 +162,21 @@ impl Machine {
         }
     }
 
+    /// Opens the editor on a slot, from direct mode or from another slot
+    /// (Ctrl+1 to Ctrl+6, like SmileBASIC 4's EDIT0 to EDIT3).
+    pub fn edit_slot(&mut self, slot: usize) {
+        if self.vm.is_some() || slot >= SLOTS {
+            return;
+        }
+        if self.editing {
+            if self.editor.slot() == slot {
+                return;
+            }
+            self.close_editor();
+        }
+        self.open_editor(slot, None);
+    }
+
     fn open_editor(&mut self, slot: usize, line: Option<usize>) {
         self.editor.open(slot, &self.rt.slots[slot], line);
         self.editing = true;
