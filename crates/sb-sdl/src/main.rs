@@ -208,6 +208,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::Quit) => quit = true,
                     Click::Chosen(Action::Stop) => machine.stop(),
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
+                    Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Consumed | Click::Ignored => {}
                 },
@@ -228,6 +229,16 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::F4),
                     ..
                 } => machine.toggle_editor(),
+                Event::KeyDown {
+                    keycode: Some(key),
+                    keymod,
+                    ..
+                } if keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD)
+                    && !machine.is_running()
+                    && slot_key(key).is_some() =>
+                {
+                    machine.edit_slot(slot_key(key).expect("checked"));
+                }
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -340,6 +351,21 @@ fn screen_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> Rect {
         w,
         h,
     )
+}
+
+/// The slot that Ctrl and a digit key opens in the editor: Ctrl+1 for PRG0
+/// up to Ctrl+6 for PRG5.
+fn slot_key(key: Keycode) -> Option<usize> {
+    [
+        Keycode::_1,
+        Keycode::_2,
+        Keycode::_3,
+        Keycode::_4,
+        Keycode::_5,
+        Keycode::_6,
+    ]
+    .iter()
+    .position(|&k| k == key)
 }
 
 /// The INKEY$ code of a key that does not type text.

@@ -18,6 +18,7 @@ pub enum Action {
     Quit,
     Stop,
     ToggleEditor,
+    EditSlot(usize),
     ToggleUpperCase,
     ToggleCtrlC,
     ToggleHalfWidth,
@@ -37,7 +38,7 @@ impl Action {
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::FileAccess(mode) if settings.file_confirm == mode => "(*)",
             Action::FileAccess(_) => "( )",
-            Action::Quit | Action::Stop | Action::ToggleEditor => "   ",
+            Action::Quit | Action::Stop | Action::ToggleEditor | Action::EditSlot(_) => "   ",
         }
     }
 
@@ -52,7 +53,7 @@ impl Action {
                 settings.file_confirm = mode;
                 return;
             }
-            Action::Quit | Action::Stop | Action::ToggleEditor => return,
+            Action::Quit | Action::Stop | Action::ToggleEditor | Action::EditSlot(_) => return,
         };
         *flag = !*flag;
     }
@@ -61,7 +62,7 @@ impl Action {
     fn enabled(self, running: bool) -> bool {
         match self {
             Action::Stop => running,
-            Action::ToggleEditor => !running,
+            Action::ToggleEditor | Action::EditSlot(_) => !running,
             _ => true,
         }
     }
@@ -100,6 +101,17 @@ const MENUS: &[Menu] = &[
         items: &[
             item("Stop (Pause/Break)", Action::Stop),
             item("Editor/Direct (F4)", Action::ToggleEditor),
+            Item {
+                label: "Edit slot",
+                entry: Entry::Sub(&[
+                    item("PRG0 (Ctrl+1)", Action::EditSlot(0)),
+                    item("PRG1 (Ctrl+2)", Action::EditSlot(1)),
+                    item("PRG2 (Ctrl+3)", Action::EditSlot(2)),
+                    item("PRG3 (Ctrl+4)", Action::EditSlot(3)),
+                    item("PRG4 (Ctrl+5)", Action::EditSlot(4)),
+                    item("PRG5 (Ctrl+6)", Action::EditSlot(5)),
+                ]),
+            },
         ],
     },
     Menu {

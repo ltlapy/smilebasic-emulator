@@ -53,7 +53,8 @@ under the text screens.
 
 F4 switches between direct mode and the program editor. The first F4 after
 a program error opens the editor at the error, as `LIST ERR` does; `LIST`,
-`LIST line` and `LIST slot:line` open it at a given place. In the editor,
+`LIST line` and `LIST slot:line` open it at a given place, and Ctrl+1 to Ctrl+6 open
+slots PRG0 to PRG5. In the editor,
 Insert switches to overwriting, Ctrl+Home and Ctrl+End jump to the start and
 end of the program, and Ctrl+W wraps long lines instead of scrolling sideways.
 
