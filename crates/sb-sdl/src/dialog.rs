@@ -2,6 +2,7 @@
 //! drawn over the screen like the menu bar.
 
 use sb_runtime::Framebuffer;
+use sb_runtime::confirm::{Confirm, unsaved_lines};
 use sb_runtime::font::Font;
 use sdl3::keyboard::Keycode;
 
@@ -19,7 +20,8 @@ pub enum Answer {
 const ANSWERS: [Answer; 2] = [Answer::Accept, Answer::Cancel];
 
 pub struct Dialog {
-    lines: [String; 2],
+    title: String,
+    lines: Vec<String>,
     /// Labels of the Accept and Cancel buttons.
     labels: [String; 2],
     /// Display size the dialog is centered in.
@@ -30,8 +32,9 @@ pub struct Dialog {
 }
 
 impl Dialog {
-    pub fn new(lines: [String; 2], accept: &str, size: (u32, u32)) -> Dialog {
+    pub fn new(title: &str, lines: Vec<String>, accept: &str, size: (u32, u32)) -> Dialog {
         Dialog {
+            title: title.to_string(),
             lines,
             labels: [accept.to_string(), "Cancel".to_string()],
             size,
@@ -39,14 +42,16 @@ impl Dialog {
         }
     }
 
+    /// Asks a command's question.
+    pub fn ask(confirm: &Confirm, size: (u32, u32)) -> Dialog {
+        Dialog::new(&confirm.title, confirm.lines.clone(), confirm.accept, size)
+    }
+
     /// Asks before quitting with unsaved slots.
     pub fn quit(unsaved: &[usize], size: (u32, u32)) -> Dialog {
-        let slots: Vec<String> = unsaved.iter().map(|s| format!("PRG{s}")).collect();
-        let lines = [
-            format!("Not saved: {}", slots.join(", ")),
-            "Quit anyway?".to_string(),
-        ];
-        Dialog::new(lines, "Quit", size)
+        let mut lines = vec!["Quit the emulator.".to_string(), String::new()];
+        lines.extend(unsaved_lines(unsaved));
+        Dialog::new("Quit", lines, "Quit", size)
     }
 
     fn button_width(&self) -> u32 {
@@ -54,9 +59,16 @@ impl Dialog {
     }
 
     fn frame(&self) -> Rect {
-        let text = self.lines.iter().map(|l| text_width(l)).max().unwrap_or(0);
+        let text = self
+            .lines
+            .iter()
+            .chain([&self.title])
+            .map(|l| text_width(l))
+            .max()
+            .unwrap_or(0);
         let w = text.max(2 * self.button_width() + PAD) + 4 * PAD;
-        let h = 3 * LINE + 4 * PAD + CHAR;
+        // Title bar, body, buttons.
+        let h = LINE + self.lines.len() as u32 * LINE + LINE + 6 * PAD;
         Rect {
             x: self.size.0.saturating_sub(w) / 2,
             y: self.size.1.saturating_sub(h) / 2,
@@ -112,8 +124,11 @@ impl Dialog {
             h: f.h - 4,
         };
         fill(fb, inner, BACKGROUND | 0xFF00_0000);
+        let bar = Rect { h: LINE, ..inner };
+        fill(fb, bar, HIGHLIGHT);
+        draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &self.title, TEXT);
         for (i, line) in self.lines.iter().enumerate() {
-            let y = f.y + 2 * PAD + i as u32 * LINE;
+            let y = f.y + LINE + 2 * PAD + i as u32 * LINE + (LINE - CHAR) / 2;
             draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
         }
         for (i, label) in self.labels.iter().enumerate() {
@@ -136,7 +151,7 @@ mod tests {
     #[test]
     fn names_the_slots_and_defaults_to_cancel() {
         let mut d = Dialog::quit(&[0, 2], (1280, 720));
-        assert_eq!(d.lines[0], "Not saved: PRG0, PRG2");
+        assert_eq!(d.lines[2], "Slots 0, 2 have unsaved changes,");
         assert_eq!(d.key(Keycode::Return), Some(Answer::Cancel));
         assert_eq!(d.key(Keycode::Left), None);
         assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
@@ -145,8 +160,8 @@ mod tests {
 
     #[test]
     fn buttons_answer_clicks() {
-        let lines = ["Not saved: PRG1".to_string(), "Erase anyway?".to_string()];
-        let mut d = Dialog::new(lines, "Erase", (1280, 720));
+        let lines = vec!["Erase the program in slot 1.".to_string()];
+        let mut d = Dialog::new("Erase programs", lines, "Erase", (1280, 720));
         let (quit, cancel) = (d.button(0), d.button(1));
         assert!(quit.x + quit.w < cancel.x, "Quit sits left of Cancel");
         assert!(cancel.x + cancel.w <= d.frame().x + d.frame().w);

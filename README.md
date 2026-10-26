@@ -61,9 +61,12 @@ project folders in the emulator's data directory (`projects/`; the workspace
 project is `@WORKSPACE`). Programs are saved as plain UTF-8 text, so they can
 be edited with other tools; `SAVE` turns full-width letters and digits into
 ASCII. Close the window to
-quit. Slots with edits that were not saved are marked with `*` in the
-editor's status line; quitting, `LOAD` and `NEW` ask before throwing those
-edits away (a cancelled `LOAD` sets `RESULT()` to -1). Esc and the other keys go to the program.
+quit. As on SmileBASIC 4, file commands typed in direct mode ask before
+reading or writing; Options > File access can turn that into a short notice
+or silence it. Slots with edits that were not saved are marked with `*` in
+the editor's status line, and quitting, `LOAD`, `NEW` and `PROJECT` always
+ask before those edits could be lost (a cancelled file command sets
+`RESULT()` to -1). Esc and the other keys go to the program.
 
 ## License
 

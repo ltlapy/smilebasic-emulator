@@ -2,6 +2,7 @@
 
 mod dialog;
 mod menu;
+mod toast;
 mod ui;
 
 use std::path::{Path, PathBuf};
@@ -22,6 +23,7 @@ use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
 use sdl3::render::{BlendMode, FRect, ScaleMode};
+use toast::Toasts;
 
 const USAGE: &str = "usage:
   smilebasic                    start in direct mode
@@ -131,6 +133,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // A question, which takes all input while it is open: before quitting
     // with unsaved programs, or for a command such as LOAD.
     let mut dialog: Option<(Dialog, Asking)> = None;
+    let mut toasts = Toasts::default();
 
     let mut events = sdl.event_pump()?;
     'running: loop {
@@ -250,13 +253,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
 
         machine.frame();
+        toasts.tick();
+        for notice in machine.rt.take_notices() {
+            toasts.push(notice);
+        }
         match (&dialog, machine.rt.confirmation()) {
             (None, Some(confirm)) => {
-                let open = Dialog::new(
-                    confirm.lines.clone(),
-                    confirm.accept,
-                    (display_w, display_h),
-                );
+                let open = Dialog::ask(confirm, (display_w, display_h));
                 dialog = Some((open, Asking::Command));
             }
             (Some((_, Asking::Command)), None) => dialog = None,
@@ -272,20 +275,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             None,
             screen_rect(fb.width(), fb.height(), out_w, out_h),
         )?;
-        if let Some((open, _)) = &dialog {
-            overlay.clear(0x8000_0000);
-            open.draw(&mut overlay, machine.rt.font());
-            overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
-            canvas.copy(&overlay_texture, None, display)?;
-        } else if menu.visible() {
-            overlay.clear(0);
-            let running = machine.is_running();
-            menu.draw(
-                &mut overlay,
-                machine.rt.font(),
-                &machine.rt.settings,
-                running,
-            );
+        if dialog.is_some() || menu.visible() || toasts.visible() {
+            // A dialog dims the screen behind it.
+            overlay.clear(if dialog.is_some() { 0x8000_0000 } else { 0 });
+            let font = machine.rt.font();
+            toasts.draw(&mut overlay, font);
+            if let Some((open, _)) = &dialog {
+                open.draw(&mut overlay, font);
+            } else if menu.visible() {
+                let running = machine.is_running();
+                menu.draw(&mut overlay, font, &machine.rt.settings, running);
+            }
             overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
             canvas.copy(&overlay_texture, None, display)?;
         }

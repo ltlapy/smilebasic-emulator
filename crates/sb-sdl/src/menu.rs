@@ -3,6 +3,7 @@
 //! keys away from programs.
 
 use sb_runtime::Framebuffer;
+use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
 use sb_runtime::runtime::Settings;
 
@@ -19,6 +20,7 @@ pub enum Action {
     ToggleCtrlC,
     ToggleHalfWidth,
     ToggleWrap,
+    FileAccess(FileConfirm),
 }
 
 impl Action {
@@ -29,17 +31,22 @@ impl Action {
             Action::ToggleCtrlC => Some(settings.ctrl_c_stops),
             Action::ToggleHalfWidth => Some(settings.half_width_on_save),
             Action::ToggleWrap => Some(settings.editor_wrap),
+            Action::FileAccess(mode) => Some(settings.file_confirm == mode),
             Action::Quit | Action::Stop | Action::ToggleEditor => None,
         }
     }
 
-    /// Flips the setting of a toggle.
+    /// Flips the setting of a toggle, or picks a choice.
     pub fn toggle(self, settings: &mut Settings) {
         let flag = match self {
             Action::ToggleUpperCase => &mut settings.upper_case_letters,
             Action::ToggleCtrlC => &mut settings.ctrl_c_stops,
             Action::ToggleHalfWidth => &mut settings.half_width_on_save,
             Action::ToggleWrap => &mut settings.editor_wrap,
+            Action::FileAccess(mode) => {
+                settings.file_confirm = mode;
+                return;
+            }
             Action::Quit | Action::Stop | Action::ToggleEditor => return,
         };
         *flag = !*flag;
@@ -104,6 +111,18 @@ const MENUS: &[Menu] = &[
             Item {
                 label: "Wrap lines in editor (Ctrl+W)",
                 action: Action::ToggleWrap,
+            },
+            Item {
+                label: "File access: always ask",
+                action: Action::FileAccess(FileConfirm::Ask),
+            },
+            Item {
+                label: "File access: notify",
+                action: Action::FileAccess(FileConfirm::Notify),
+            },
+            Item {
+                label: "File access: silent",
+                action: Action::FileAccess(FileConfirm::Silent),
             },
         ],
     },
