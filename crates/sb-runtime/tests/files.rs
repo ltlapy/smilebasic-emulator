@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use sb_runtime::Runtime;
+use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
@@ -27,6 +28,8 @@ impl Drop for TempDir {
 fn machine(dir: &TempDir) -> Machine {
     let mut rt = Runtime::new(400, 240, Font::blank());
     rt.storage = Storage::new(dir.0.clone());
+    // Tests of file questions turn them back on.
+    rt.settings.file_confirm = FileConfirm::Silent;
     let mut m = Machine::new(rt);
     m.boot();
     m
@@ -164,7 +167,7 @@ fn touch(m: &mut Machine, slot: usize) {
 }
 
 /// Types a line and runs frames until it asks a question.
-fn ask(m: &mut Machine, line: &str) -> sb_runtime::runtime::Confirm {
+fn ask(m: &mut Machine, line: &str) -> sb_runtime::confirm::Confirm {
     m.type_text(line);
     m.rt.key_press(sb_runtime::runtime::keys::ENTER);
     for _ in 0..10 {
@@ -196,7 +199,11 @@ fn load_and_new_ask_before_losing_edits() {
     assert_eq!(tail(&m, 2), ["0", "OK"]);
 
     let c = ask(&mut m, "load \"a\":?result()");
-    assert_eq!(c.lines, ["Not saved: PRG0", "Load anyway?"]);
+    assert_eq!(c.title, "Slot 0: Load file");
+    assert_eq!(
+        c.lines[5..],
+        ["Slot 0 has unsaved changes,", "which will be lost."]
+    );
     m.rt.answer(false);
     settle(&mut m);
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
@@ -211,7 +218,8 @@ fn load_and_new_ask_before_losing_edits() {
     touch(&mut m, 3);
     enter(&mut m, "new 2");
     let c = ask(&mut m, "new");
-    assert_eq!(c.lines[0], "Not saved: PRG3");
+    assert_eq!(c.lines[0], "Erase the programs in all slots.");
+    assert_eq!(c.lines[2], "Slot 3 has unsaved changes,");
     m.rt.answer(false);
     settle(&mut m);
     assert_eq!(m.slot(3), "'");
@@ -223,4 +231,86 @@ fn load_and_new_ask_before_losing_edits() {
     m.rt.answer(true);
     settle(&mut m);
     assert_eq!((m.slot(3), m.unsaved_slots()), ("", vec![]));
+}
+
+#[test]
+fn direct_file_commands_ask_notify_or_stay_silent() {
+    let dir = TempDir::new("confirm");
+    let mut m = machine(&dir);
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    m.set_slot(0, "?1".to_string());
+    let c = ask(&mut m, "save \"a\"");
+    assert_eq!(c.title, "Slot 0: Save file");
+    assert_eq!(
+        c.lines,
+        [
+            "Save slot 0 as this file.",
+            "",
+            "  Project:  @WORKSPACE",
+            "  File:     TXT:A",
+            "",
+            "To stop these questions, choose File access",
+            "in the Options menu (top of the window).",
+        ]
+    );
+    m.rt.answer(true);
+    settle(&mut m);
+    assert!(dir.0.join("@WORKSPACE").join("TA").is_file());
+
+    // The hint is given once; LOAD asks even with nothing unsaved.
+    let c = ask(&mut m, "load \"a\",1");
+    assert_eq!(c.lines.len(), 4);
+    assert_eq!(c.accept, "Load");
+    m.rt.answer(true);
+    settle(&mut m);
+    assert_eq!(m.slot(1), "?1");
+
+    m.rt.settings.file_confirm = FileConfirm::Notify;
+    enter(&mut m, "rename \"a\",\"b\"");
+    assert_eq!(m.rt.take_notices(), ["Renaming TXT:A to B"]);
+    assert!(dir.0.join("@WORKSPACE").join("TB").is_file());
+}
+
+#[test]
+fn a_program_loads_silently_unless_edits_would_be_lost() {
+    let dir = TempDir::new("program");
+    let mut m = machine(&dir);
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    std::fs::create_dir_all(dir.0.join("@WORKSPACE")).unwrap();
+    std::fs::write(dir.0.join("@WORKSPACE").join("TA"), "?2").unwrap();
+    m.set_slot(0, "LOAD \"A\",1:?RESULT()".to_string());
+    enter(&mut m, "run");
+    assert_eq!(
+        (tail(&m, 2), m.slot(1)),
+        (vec!["1".into(), "OK".into()], "?2")
+    );
+
+    touch(&mut m, 1);
+    let c = ask(&mut m, "run");
+    assert_eq!(c.lines[0], "Load this file into slot 1.");
+    m.rt.answer(false);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["-1", "OK"]);
+}
+
+#[test]
+fn switching_projects_warns_of_unsaved_edits() {
+    let dir = TempDir::new("project");
+    let mut m = machine(&dir);
+    enter(&mut m, "project \"x\"");
+    touch(&mut m, 2);
+    let c = ask(&mut m, "project \"\":?result()");
+    assert_eq!(
+        c.lines,
+        [
+            "Switch to project @WORKSPACE.",
+            "",
+            "Unsaved changes in slot 2",
+            "are not saved in project X.",
+        ]
+    );
+    m.rt.answer(false);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["-1", "OK"]);
+    assert_eq!(m.rt.storage.project(), "X");
 }

@@ -1,0 +1,175 @@
+//! Questions that commands wait on, and the notices shown instead of them.
+//! SmileBASIC 4 asks before every file read and write typed in direct
+//! mode; the emulator lets that be turned into a notice or silenced, but
+//! always asks before unsaved edits are lost.
+
+use crate::runtime::Runtime;
+
+/// How file commands typed in direct mode confirm.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileConfirm {
+    /// Ask first, as SmileBASIC 4 does.
+    #[default]
+    Ask,
+    /// Go ahead and show a notice.
+    Notify,
+    Silent,
+}
+
+/// A question a command waits on; the frontend shows it and calls
+/// [`Runtime::answer`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Confirm {
+    pub title: String,
+    pub lines: Vec<String>,
+    /// The label of the button that goes ahead.
+    pub accept: &'static str,
+}
+
+/// How a question stands.
+pub(crate) enum Ask {
+    /// No question was needed, or the user agreed.
+    Go,
+    Refused,
+    /// No answer yet; the command runs again next frame.
+    Wait,
+}
+
+/// What a file command is about to do, for its question or notice.
+pub(crate) struct FileAction {
+    pub title: String,
+    /// One sentence saying what happens.
+    pub summary: String,
+    /// The project and file lines.
+    pub details: Vec<String>,
+    pub accept: &'static str,
+    /// The one line shown when notifying instead of asking.
+    pub notice: String,
+}
+
+const HINT: [&str; 2] = [
+    "To stop these questions, choose File access",
+    "in the Options menu (top of the window).",
+];
+
+/// Warns that `slots` have unsaved changes that will be lost.
+pub fn unsaved_lines(slots: &[usize]) -> Vec<String> {
+    let names: Vec<String> = slots.iter().map(usize::to_string).collect();
+    let first = match slots {
+        [slot] => format!("Slot {slot} has unsaved changes,"),
+        _ => format!("Slots {} have unsaved changes,", names.join(", ")),
+    };
+    vec![first, "which will be lost.".to_string()]
+}
+
+impl Runtime {
+    /// The question waiting for an answer, if any.
+    pub fn confirmation(&self) -> Option<&Confirm> {
+        self.confirm.as_ref().filter(|_| self.answer.is_none())
+    }
+
+    /// Answers the waiting question: `true` goes ahead.
+    pub fn answer(&mut self, yes: bool) {
+        if self.confirm.is_some() {
+            self.answer = Some(yes);
+        }
+    }
+
+    /// Drops a question whose command was stopped.
+    pub fn cancel_confirm(&mut self) {
+        self.confirm = None;
+        self.answer = None;
+    }
+
+    /// Notices for the frontend to show briefly, since the last call.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
+    }
+
+    /// Those of `slots` that have unsaved edits.
+    pub(crate) fn unsaved_among(&self, slots: impl IntoIterator<Item = usize>) -> Vec<usize> {
+        slots
+            .into_iter()
+            .filter(|&s| self.slot_modified[s])
+            .collect()
+    }
+
+    /// The project's name as shown to the user.
+    pub(crate) fn project_label(&self) -> String {
+        match self.storage.project() {
+            "" => "@WORKSPACE".to_string(),
+            name => name.to_string(),
+        }
+    }
+
+    /// Asks `question` (built once) and waits for the answer.
+    pub(crate) fn ask(&mut self, question: impl FnOnce(&mut Runtime) -> Confirm) -> Ask {
+        match self.answer.take() {
+            Some(yes) => {
+                self.confirm = None;
+                if yes { Ask::Go } else { Ask::Refused }
+            }
+            None => {
+                if self.confirm.is_none() {
+                    self.confirm = Some(question(self));
+                }
+                self.retry = true;
+                Ask::Wait
+            }
+        }
+    }
+
+    /// Confirms a file command as the settings say. Replacing slots in
+    /// `replaces` that have unsaved edits always asks.
+    // UNVERIFIED: whether SmileBASIC 4 asks before SAVE, DELETE and RENAME
+    // in a running program; LOAD there asks only for unsaved edits.
+    pub(crate) fn confirm_file(&mut self, action: FileAction, replaces: &[usize]) -> Ask {
+        let unsaved = self.unsaved_among(replaces.iter().copied());
+        let mode = match (unsaved.is_empty(), self.direct) {
+            (false, _) => FileConfirm::Ask,
+            (true, false) => FileConfirm::Silent,
+            (true, true) => self.settings.file_confirm,
+        };
+        match mode {
+            FileConfirm::Silent => Ask::Go,
+            FileConfirm::Notify => {
+                self.notices.push(action.notice);
+                Ask::Go
+            }
+            FileConfirm::Ask => self.ask(|rt| {
+                let mut lines = vec![action.summary, String::new()];
+                lines.extend(action.details);
+                if !unsaved.is_empty() {
+                    lines.push(String::new());
+                    lines.extend(unsaved_lines(&unsaved));
+                } else if !rt.hint_shown {
+                    rt.hint_shown = true;
+                    lines.push(String::new());
+                    lines.extend(HINT.map(String::from));
+                }
+                Confirm {
+                    title: action.title,
+                    lines,
+                    accept: action.accept,
+                }
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsaved_lines_name_the_slots() {
+        assert_eq!(
+            unsaved_lines(&[0]),
+            ["Slot 0 has unsaved changes,", "which will be lost."]
+        );
+        assert_eq!(
+            unsaved_lines(&[1, 3])[0],
+            "Slots 1, 3 have unsaved changes,"
+        );
+    }
+}

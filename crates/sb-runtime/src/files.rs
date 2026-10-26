@@ -10,7 +10,8 @@ use sb_core::value::{Array, ArrayData, ElemType, Value, new_str};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::runtime::{Ask, Command, Runtime, illegal, slot_arg};
+use crate::confirm::{Ask, Confirm, FileAction};
+use crate::runtime::{Command, Runtime, SLOTS, illegal, slot_arg};
 use crate::sbfile;
 use crate::storage::{self, FileKind, StorageError, parse_file_name, parse_listing};
 use crate::text::CONSOLE;
@@ -79,6 +80,26 @@ impl Runtime {
             (Command::Project, Want::Outs(0), 1) => {
                 self.direct_only()?;
                 let name = str_arg(&args[0])?;
+                let unsaved = self.unsaved_among(0..SLOTS);
+                if !unsaved.is_empty() && name != self.storage.project() {
+                    let old = self.project_label();
+                    let new = if name.is_empty() { "@WORKSPACE" } else { &name };
+                    let names: Vec<String> = unsaved.iter().map(usize::to_string).collect();
+                    let lines = vec![
+                        format!("Switch to project {new}."),
+                        String::new(),
+                        format!("Unsaved changes in slot {}", names.join(", ")),
+                        format!("are not saved in project {old}."),
+                    ];
+                    let ask = self.ask(|_| Confirm {
+                        title: "Switch project".to_string(),
+                        lines,
+                        accept: "Switch",
+                    });
+                    if self.held(ask) {
+                        return Ok(vec![]);
+                    }
+                }
                 let outcome = self.storage.set_project(&name);
                 self.finish("PROJECT", outcome);
                 Ok(vec![])
@@ -92,16 +113,17 @@ impl Runtime {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
                 // A file that is not there fails without asking first.
-                let found = parse_file_name(&spec, FileKind::Txt)
-                    .is_ok_and(|(kind, name)| self.storage.exists(kind, &name));
-                if found {
-                    match self.ask_overwrite(&[slot], "Load") {
-                        Ask::Go => {}
-                        Ask::Wait => return Ok(vec![]),
-                        Ask::Refused => {
-                            self.result = -1;
-                            return Ok(vec![]);
-                        }
+                if let Some(file) = self.existing(&spec) {
+                    let action = FileAction {
+                        title: format!("Slot {slot}: Load file"),
+                        summary: format!("Load this file into slot {slot}."),
+                        details: self.details(&file, None),
+                        accept: "Load",
+                        notice: format!("Loading {file} into slot {slot}"),
+                    };
+                    let ask = self.confirm_file(action, &[slot]);
+                    if self.held(ask) {
+                        return Ok(vec![]);
                     }
                 }
                 let outcome = self.load(&spec, slot);
@@ -111,12 +133,44 @@ impl Runtime {
             (Command::Save, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
+                if let Ok((kind, name)) = parse_file_name(&spec, FileKind::Txt) {
+                    let file = format!("{}:{name}", kind.name());
+                    let mut details = self.details(&file, None);
+                    if self.storage.exists(kind, &name) {
+                        details.push(String::new());
+                        details.push("The file there now will be replaced.".to_string());
+                    }
+                    let action = FileAction {
+                        title: format!("Slot {slot}: Save file"),
+                        summary: format!("Save slot {slot} as this file."),
+                        details,
+                        accept: "Save",
+                        notice: format!("Saving slot {slot} as {file}"),
+                    };
+                    let ask = self.confirm_file(action, &[]);
+                    if self.held(ask) {
+                        return Ok(vec![]);
+                    }
+                }
                 let outcome = self.save(&spec, slot);
                 self.finish("SAVE", outcome);
                 Ok(vec![])
             }
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
+                if let Some(file) = self.existing(&spec) {
+                    let action = FileAction {
+                        title: "Delete file".to_string(),
+                        summary: "Delete this file.".to_string(),
+                        details: self.details(&file, None),
+                        accept: "Delete",
+                        notice: format!("Deleting {file}"),
+                    };
+                    let ask = self.confirm_file(action, &[]);
+                    if self.held(ask) {
+                        return Ok(vec![]);
+                    }
+                }
                 let outcome = parse_file_name(&spec, FileKind::Txt)
                     .and_then(|(kind, name)| self.storage.delete(kind, &name));
                 self.finish("DELETE", outcome);
@@ -124,6 +178,19 @@ impl Runtime {
             }
             (Command::Rename, Want::Outs(0), 2) => {
                 let (from, to) = (str_arg(&args[0])?, str_arg(&args[1])?);
+                if let Some(file) = self.existing(&from) {
+                    let action = FileAction {
+                        title: "Rename file".to_string(),
+                        summary: "Rename this file.".to_string(),
+                        details: self.details(&file, Some(&to)),
+                        accept: "Rename",
+                        notice: format!("Renaming {file} to {to}"),
+                    };
+                    let ask = self.confirm_file(action, &[]);
+                    if self.held(ask) {
+                        return Ok(vec![]);
+                    }
+                }
                 let outcome = self.rename(&from, &to);
                 self.finish("RENAME", outcome);
                 Ok(vec![])
@@ -164,6 +231,39 @@ impl Runtime {
                 Ok(vec![])
             }
             _ => Err(illegal()),
+        }
+    }
+
+    /// The file a name refers to, as `TYPE:NAME`, if it exists.
+    fn existing(&self, spec: &str) -> Option<String> {
+        let (kind, name) = parse_file_name(spec, FileKind::Txt).ok()?;
+        self.storage
+            .exists(kind, &name)
+            .then(|| format!("{}:{name}", kind.name()))
+    }
+
+    /// The project and file lines of a file question.
+    fn details(&self, file: &str, new_name: Option<&str>) -> Vec<String> {
+        let mut lines = vec![
+            format!("  Project:  {}", self.project_label()),
+            format!("  File:     {file}"),
+        ];
+        if let Some(new_name) = new_name {
+            lines.push(format!("  New name: {new_name}"));
+        }
+        lines
+    }
+
+    /// Whether a command must stop here for its question: it waits for
+    /// the answer, or was cancelled, which RESULT() reports as -1.
+    fn held(&mut self, ask: Ask) -> bool {
+        match ask {
+            Ask::Go => false,
+            Ask::Wait => true,
+            Ask::Refused => {
+                self.result = -1;
+                true
+            }
         }
     }
 

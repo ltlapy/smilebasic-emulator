@@ -8,6 +8,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::Host;
 use sb_core::value::{Value, new_str};
 
+use crate::confirm::{Ask, Confirm, FileConfirm, unsaved_lines};
 use crate::editor::Editor;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
@@ -62,25 +63,6 @@ pub enum Request {
     Clear,
 }
 
-/// A question a command waits on; the frontend shows it and calls
-/// [`Runtime::answer`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Confirm {
-    /// What the question is about, then the question.
-    pub lines: [String; 2],
-    /// The label of the button that goes ahead.
-    pub accept: &'static str,
-}
-
-/// How a question about overwriting unsaved slots stands.
-pub(crate) enum Ask {
-    /// Nothing unsaved, or the user agreed.
-    Go,
-    Refused,
-    /// No answer yet; the command runs again next frame.
-    Wait,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
@@ -92,6 +74,7 @@ pub struct Settings {
     pub half_width_on_save: bool,
     /// The editor wraps long lines instead of scrolling sideways.
     pub editor_wrap: bool,
+    pub file_confirm: FileConfirm,
 }
 
 impl Default for Settings {
@@ -101,6 +84,7 @@ impl Default for Settings {
             ctrl_c_stops: false,
             half_width_on_save: true,
             editor_wrap: false,
+            file_confirm: FileConfirm::Ask,
         }
     }
 }
@@ -153,10 +137,13 @@ pub struct Runtime {
     /// What RESULT() returns: 1 if the last file command succeeded, 0 if
     /// it failed, -1 if the user cancelled it.
     pub(crate) result: i32,
-    confirm: Option<Confirm>,
-    answer: Option<bool>,
+    pub(crate) confirm: Option<Confirm>,
+    pub(crate) answer: Option<bool>,
     /// The last command waits for an answer; see [`Host::retry`].
-    retry: bool,
+    pub(crate) retry: bool,
+    /// Whether a file question has said how to turn such questions off.
+    pub(crate) hint_shown: bool,
+    pub(crate) notices: Vec<String>,
 }
 
 pub(crate) fn illegal() -> Error {
@@ -220,6 +207,8 @@ impl Runtime {
             confirm: None,
             answer: None,
             retry: false,
+            hint_shown: false,
+            notices: Vec::new(),
         }
     }
 
@@ -230,55 +219,6 @@ impl Runtime {
     /// Stops waiting for an INPUT line, if one is being typed.
     pub fn cancel_input(&mut self) {
         self.line = None;
-    }
-
-    /// The question waiting for an answer, if any.
-    pub fn confirmation(&self) -> Option<&Confirm> {
-        self.confirm.as_ref().filter(|_| self.answer.is_none())
-    }
-
-    /// Answers the waiting question: `true` goes ahead.
-    pub fn answer(&mut self, yes: bool) {
-        if self.confirm.is_some() {
-            self.answer = Some(yes);
-        }
-    }
-
-    /// Drops a question whose command was stopped.
-    pub fn cancel_confirm(&mut self) {
-        self.confirm = None;
-        self.answer = None;
-    }
-
-    /// Asks before a command replaces slots that have unsaved edits.
-    // UNVERIFIED: SmileBASIC 4's wording, and whether it asks for NEW and
-    // for LOAD in a running program.
-    pub(crate) fn ask_overwrite(&mut self, slots: &[usize], accept: &'static str) -> Ask {
-        let unsaved: Vec<String> = slots
-            .iter()
-            .filter(|&&s| self.slot_modified[s])
-            .map(|s| format!("PRG{s}"))
-            .collect();
-        if unsaved.is_empty() {
-            return Ask::Go;
-        }
-        match self.answer.take() {
-            Some(yes) => {
-                self.confirm = None;
-                if yes { Ask::Go } else { Ask::Refused }
-            }
-            None => {
-                self.confirm.get_or_insert_with(|| Confirm {
-                    lines: [
-                        format!("Not saved: {}", unsaved.join(", ")),
-                        format!("{accept} anyway?"),
-                    ],
-                    accept,
-                });
-                self.retry = true;
-                Ask::Wait
-            }
-        }
     }
 
     /// Direct-mode requests made since the last call.
@@ -383,9 +323,25 @@ impl Runtime {
                     None => 0..SLOTS,
                     slot => slot_arg(slot).map(|s| s..s + 1)?,
                 };
-                match self.ask_overwrite(&slots.clone().collect::<Vec<_>>(), "Erase") {
-                    Ask::Go => {}
-                    Ask::Wait | Ask::Refused => return Ok(vec![]),
+                let unsaved = self.unsaved_among(slots.clone());
+                // UNVERIFIED: whether NEW asks when nothing is unsaved.
+                if !unsaved.is_empty() {
+                    let summary = match args.first() {
+                        None => "Erase the programs in all slots.".to_string(),
+                        Some(_) => format!("Erase the program in slot {}.", slots.start),
+                    };
+                    let ask = self.ask(|_| {
+                        let mut lines = vec![summary, String::new()];
+                        lines.extend(unsaved_lines(&unsaved));
+                        Confirm {
+                            title: "Erase programs".to_string(),
+                            lines,
+                            accept: "Erase",
+                        }
+                    });
+                    if !matches!(ask, Ask::Go) {
+                        return Ok(vec![]);
+                    }
                 }
                 for slot in slots {
                     self.slots[slot].clear();
