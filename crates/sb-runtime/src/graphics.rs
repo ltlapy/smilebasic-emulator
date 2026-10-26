@@ -45,24 +45,24 @@ impl Blend {
             Blend::Normal => src,
             Blend::Normal2 if sa == 0 => dst,
             Blend::Normal2 => src,
-            // UNVERIFIED: the alpha left by modes 2 to 4.
+            // Modes 2 and 4 keep the page's alpha; mode 3 combines both.
+            // The rounding matches values read back on hardware.
             Blend::Alpha => {
                 let mix = |s: u32, d: u32| (s * sa + d * (255 - sa)) / 255;
-                let a = sa + da * (255 - sa) / 255;
-                pack(a, mix(sr, dr), mix(sg, dg), mix(sb, db))
+                pack(da, mix(sr, dr), mix(sg, dg), mix(sb, db))
             }
             Blend::Alpha2 => {
-                let a = sa + da * (255 - sa) / 255;
+                let a = sa + da - sa * da / 255;
                 if a == 0 {
                     return 0;
                 }
-                let dw = da * (255 - sa) / 255;
-                let mix = |s: u32, d: u32| (s * sa + d * dw) / a;
+                let dw = da * (255 - sa);
+                let mix = |s: u32, d: u32| (s * sa * 255 + d * dw) / (255 * a);
                 pack(a, mix(sr, dr), mix(sg, dg), mix(sb, db))
             }
             Blend::Add => {
                 let add = |s: u32, d: u32| (d + s * sa / 255).min(255);
-                pack(da.max(sa), add(sr, dr), add(sg, dg), add(sb, db))
+                pack(da, add(sr, dr), add(sg, dg), add(sb, db))
             }
         }
     }
@@ -117,7 +117,7 @@ pub struct Graphics {
     /// GCOLOR: the color used when a command leaves it out.
     pub color: u32,
     /// GCLIP.
-    // UNVERIFIED: one clipping rectangle shared by all pages.
+    /// One rectangle shared by all pages, as on hardware.
     pub clip: Clip,
 }
 
@@ -244,13 +244,17 @@ impl Graphics {
         let mut points = circle_points(r);
         if let Some((start, end, _)) = arc {
             let (s, e) = (start.rem_euclid(360), end.rem_euclid(360));
+            // An arc from an angle to the same angle draws nothing.
+            // UNVERIFIED: whether a sector does the same.
+            if s == e {
+                return;
+            }
             points.retain(|&(dx, dy)| {
                 let a = f64::from(dy)
                     .atan2(f64::from(dx))
                     .to_degrees()
                     .rem_euclid(360.0);
                 let (s, e) = (f64::from(s), f64::from(e));
-                // UNVERIFIED: equal angles draw the whole circle.
                 if s <= e {
                     (s..=e).contains(&a)
                 } else {
@@ -263,7 +267,7 @@ impl Graphics {
             .map(|(dx, dy)| (cx + dx, cy + dy))
             .collect();
         if let Some((start, end, true)) = arc {
-            // UNVERIFIED: a sector is outlined, not filled.
+            // A sector is outlined, not filled (checked on hardware).
             for angle in [start, end] {
                 let (s, c) = f64::from(angle).to_radians().sin_cos();
                 let x = cx + (c * f64::from(r)).round() as i32;
@@ -381,9 +385,9 @@ impl Graphics {
         }
     }
 
-    /// GPUTCHR: draws text with the 8 or 16-pixel font, scaled. Pixels
-    /// where the glyph is transparent are left alone.
-    // UNVERIFIED: transparent glyph pixels do not erase the page.
+    /// GPUTCHR: draws text with the 8 or 16-pixel font, scaled. The whole
+    /// cell is drawn, so with `#G_NORMAL` the glyph's transparent pixels
+    /// clear the page, as on hardware.
     #[allow(clippy::too_many_arguments)]
     pub fn put_chars(
         &mut self,
@@ -400,11 +404,7 @@ impl Graphics {
             let left = x.saturating_add((i as i32).saturating_mul(n * sx));
             for gy in 0..n {
                 for gx in 0..n {
-                    let p = font.pixel(code, size, gx as u32, gy as u32);
-                    if p >> 24 == 0 {
-                        continue;
-                    }
-                    let p = multiply(p, color);
+                    let p = multiply(font.pixel(code, size, gx as u32, gy as u32), color);
                     for py in 0..sy {
                         for px in 0..sx {
                             let (x, y) = (left + gx * sx + px, y + gy * sy + py);
@@ -617,6 +617,10 @@ mod tests {
             &area(&g, 7, 7)[3..],
             [".....#.", ".....#.", "...##..", "......."]
         );
+        // From an angle to the same one, nothing.
+        let mut g = Graphics::default();
+        g.circle((3, 3, 2), Some((90, 90, false)), RED, Blend::Normal);
+        assert_eq!(g.pixel(0, 3, 5), 0);
         // As a sector, with lines to the center.
         let mut g = Graphics::default();
         g.circle((3, 3, 2), Some((0, 90, true)), RED, Blend::Normal);
@@ -669,5 +673,23 @@ mod tests {
         assert_eq!(Blend::Alpha2.apply(0, half_red), half_red);
         assert_eq!(Blend::Add.apply(0xFF80_0000, half_red), 0xFFFF_0000);
         assert_eq!(Blend::from_int(5), None);
+        // Read back on hardware: half-transparent red drawn with modes 2,
+        // 3 and 4 over transparent, opaque blue and half-transparent blue.
+        let read = [
+            0x0080_0000,
+            0x80FF_0000,
+            0x0080_0000,
+            0xFF80_007F,
+            0xFF80_007F,
+            0xFF80_00FF,
+            0x8080_007F,
+            0xC0AA_0054,
+            0x8080_00FF,
+        ];
+        for (i, expected) in read.into_iter().enumerate() {
+            let dst = [0, 0xFF00_00FF, 0x8000_00FF][i / 3];
+            let mode = Blend::from_int(2 + (i % 3) as i32).unwrap();
+            assert_eq!(mode.apply(dst, half_red), expected, "case {i}");
+        }
     }
 }

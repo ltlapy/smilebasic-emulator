@@ -93,6 +93,11 @@ fn putchr_draws_glyphs() {
     let (m, _) = run("GPUTCHR 10,10,\"A\",8,2,2,#C_RED:?1");
     // The blank test font has no glyph pixels, so nothing is drawn.
     assert_eq!(m.rt.grp.pixel(0, 10, 10), 0);
+    // With #G_NORMAL the glyph's transparent pixels clear what was there.
+    let (m, _) = run("GFILL 0,0,15,15,#C_RED:GPUTCHR 0,0,\"A\",16,#C_WHITE,0:?1");
+    assert_eq!(m.rt.grp.pixel(0, 0, 0), 0);
+    let (m, _) = run("GFILL 0,0,15,15,#C_RED:GPUTCHR 0,0,\"A\",16,#C_WHITE,1:?1");
+    assert_eq!(m.rt.grp.pixel(0, 0, 0), 0xFFFF_0000);
     let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
     m.boot();
     m.set_slot(0, "GPUTCHR 0,0,\"A\",8,2,2,#C_RED".to_string());
