@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use sb_core::bytecode::{Compiled, Literal, Want};
+use sb_core::bytecode::{Callbacks, Compiled, Literal, Want};
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::Host;
 use sb_core::value::{Value, new_str};
@@ -62,6 +62,7 @@ pub(crate) enum Command {
     Spcolor,
     Spcolvec,
     Spdef,
+    Spfunc,
     Sphide,
     Sphitinfo,
     Sphitrc,
@@ -124,6 +125,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPCOLOR", Command::Spcolor),
     ("SPCOLVEC", Command::Spcolvec),
     ("SPDEF", Command::Spdef),
+    ("SPFUNC", Command::Spfunc),
     ("SPHIDE", Command::Sphide),
     ("SPHITINFO", Command::Sphitinfo),
     ("SPHITRC", Command::Sphitrc),
@@ -544,6 +546,7 @@ impl Runtime {
                 | Command::Spcolor
                 | Command::Spcolvec
                 | Command::Spdef
+                | Command::Spfunc
                 | Command::Sphide
                 | Command::Sphitinfo
                 | Command::Sphitrc
@@ -604,6 +607,19 @@ impl Host for Runtime {
 
     fn retry(&mut self) -> bool {
         std::mem::take(&mut self.retry)
+    }
+
+    // UNVERIFIED: sprites are called in id order, and the list is fixed
+    // when CALL SPRITE starts.
+    fn callbacks(&mut self, kind: Callbacks) -> Vec<(i32, Vec<u16>)> {
+        match kind {
+            Callbacks::Sprite => (self.sprites.list.iter().enumerate())
+                .filter(|(_, s)| s.used)
+                .filter_map(|(i, s)| Some((i as i32, s.func.clone()?)))
+                .collect(),
+            // TFUNC is not implemented yet.
+            Callbacks::Text => Vec::new(),
+        }
     }
 
     // UNVERIFIED: only typing, Backspace and Enter edit the line; the

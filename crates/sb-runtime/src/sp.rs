@@ -1,6 +1,6 @@
 //! Sprite commands: SPSET, SPCLR, SPSHOW, SPHIDE, SPHOME, SPOFS, SPROT,
 //! SPSCALE, SPCOLOR, SPCHR, SPPAGE, SPLAYER, SPDEF, SPVAR, SPUSED, SPLINK,
-//! SPUNLINK, and the
+//! SPUNLINK, SPFUNC, and the
 //! animation commands SPANIM, ANIMDEF, SPSTART, SPSTOP and SPCHK, and the
 //! collision commands SPCOL, SPCOLVEC, SPHITSP, SPHITRC and SPHITINFO.
 
@@ -655,6 +655,15 @@ impl Runtime {
             }
             (Command::Spunlink, Want::Outs(0), 1) => {
                 self.sprite(&args[0])?.parent = None;
+                Ok(vec![])
+            }
+            (Command::Spfunc, Want::Outs(0), 1 | 2) => {
+                let func = match args.get(1) {
+                    Some(Value::Str(name)) => Some(name.borrow().clone()),
+                    Some(_) => return Err(ErrorKind::TypeMismatch.into()),
+                    None => None,
+                };
+                self.sprite(&args[0])?.func = func;
                 Ok(vec![])
             }
             (Command::Spused, Want::Value, 1) => {

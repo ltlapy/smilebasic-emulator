@@ -239,3 +239,19 @@ fn hidden_parents_hide_children_that_follow_them() {
     let shown: Vec<usize> = m.rt.sprites.draw_order().iter().map(|&(i, _)| i).collect();
     assert_eq!(shown, [4095, 2]);
 }
+
+#[test]
+fn call_sprite_runs_each_callback() {
+    let (_, out) = run("SPSET 3,0:SPSET 1,0:SPSET 2,0\n\
+         SPFUNC 3,\"@CB\":SPFUNC 1,\"MOVE\":SPFUNC 2,\"@CB\":SPFUNC 2\n\
+         CALL SPRITE\n\
+         ?\" \";CALLIDX()\n\
+         END\n\
+         @CB\n\
+         ?CALLIDX();\n\
+         RETURN\n\
+         DEF MOVE\n\
+         ?\"M\";CALLIDX();\n\
+         END");
+    assert_eq!(out, "M13 0");
+}

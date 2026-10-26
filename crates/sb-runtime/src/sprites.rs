@@ -171,6 +171,8 @@ pub struct Sprite {
     pub link_flags: i32,
     /// Cleared on the next frame, as its parent was.
     pub clear_pending: bool,
+    /// SPFUNC's callback for CALL SPRITE: a `"@label"` or a DEF name.
+    pub func: Option<Vec<u16>>,
 }
 
 /// Where and how a sprite shows once its links are followed.
@@ -228,6 +230,7 @@ impl Sprite {
             parent: None,
             link_flags: 0,
             clear_pending: false,
+            func: None,
         }
     }
 
