@@ -1,6 +1,7 @@
 //! Placing text screens (TOFS, THOME, TROT, TSCALE, TCOLOR, TBLEND, TSHOW,
 //! THIDE, TLAYER), the layers they and sprites belong to (LAYER, LCLIP,
-//! LMATRIX), and BACKCOLOR.
+//! LMATRIX), BACKCOLOR, and what text screens show: TSCREEN, TPAGE and
+//! ATTR.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -8,7 +9,8 @@ use sb_core::value::Value;
 
 use crate::compose::{Affine, Compose, LAYERS};
 use crate::graphics::Clip;
-use crate::runtime::{Command, Runtime, illegal, opt_int, screen_id};
+use crate::runtime::{Command, Runtime, illegal, opt_int, screen_id, with_screen};
+use crate::text::CONSOLE;
 
 fn real(v: &Value) -> Result<f64> {
     v.to_real()
@@ -28,6 +30,29 @@ fn layer_id(v: &Value) -> Result<usize> {
         .ok()
         .filter(|&n| n < LAYERS)
         .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("layer {n}")))
+}
+
+fn out_of_range(what: &str, n: i32) -> Error {
+    Error::with_detail(ErrorKind::OutOfRange, format!("{what} {n}"))
+}
+
+/// TSCREEN's font type: 8 to 64 in steps of 8.
+fn font_type(v: &Value) -> Result<u32> {
+    let n = v.to_int()?;
+    if (8..=64).contains(&n) && n % 8 == 0 {
+        Ok(n as u32)
+    } else {
+        Err(out_of_range("font type", n))
+    }
+}
+
+fn char_size(v: &Value) -> Result<u32> {
+    let n = v.to_int()?;
+    if (8..=64).contains(&n) {
+        Ok(n as u32)
+    } else {
+        Err(out_of_range("character size", n))
+    }
 }
 
 fn z(v: &Value) -> Result<i32> {
@@ -187,6 +212,93 @@ impl Runtime {
                     (n(5, 1.0)?, n(6, 1.0)?),
                 );
                 Ok(vec![])
+            }
+            (Command::Tscreen, Want::Outs(0), 1..=5) => {
+                let (id, ft, cs, size) = match args {
+                    [ft] => (CONSOLE, font_type(ft)?, None, None),
+                    [ft, cs] => (CONSOLE, font_type(ft)?, Some(char_size(cs)?), None),
+                    [id, ft, cs] => (screen_id(id)?, font_type(ft)?, Some(char_size(cs)?), None),
+                    [id, ft, w, h] => (screen_id(id)?, font_type(ft)?, None, Some((w, h))),
+                    [id, ft, cs, w, h] => (
+                        screen_id(id)?,
+                        font_type(ft)?,
+                        Some(char_size(cs)?),
+                        Some((w, h)),
+                    ),
+                    _ => unreachable!("one to five"),
+                };
+                let cs = cs.unwrap_or(ft);
+                let (fw, fh) = self.frame_size();
+                // 0 or omitted: as many characters as fill the frame.
+                let fill = |v: Option<&Value>, frame: u32| -> Result<u32> {
+                    match v.map(Value::to_int).transpose()?.unwrap_or(0) {
+                        0 => Ok(frame / cs),
+                        n if n > 0 => Ok(n as u32),
+                        n => Err(out_of_range("text screen size", n)),
+                    }
+                };
+                let w = fill(size.map(|s| s.0), fw)?;
+                let h = fill(size.map(|s| s.1), fh)?;
+                if w * h > 32768 {
+                    return Err(Error::with_detail(
+                        ErrorKind::OutOfRange,
+                        format!("{w}x{h} characters"),
+                    ));
+                }
+                self.text[id].set_font(ft, cs, w, h);
+                Ok(vec![])
+            }
+            (Command::Tscreen, Want::Outs(4), 0 | 1) => {
+                let id = args.first().map(screen_id).transpose()?.unwrap_or(CONSOLE);
+                let t = &self.text[id];
+                let ((ft, cs), (w, h)) = (t.font(), t.size());
+                Ok([ft, cs, w, h].map(|n| Value::Int(n as i32)).to_vec())
+            }
+            (Command::Tpage, Want::Outs(0), 3 | 4) => {
+                let (id, rest) = with_screen(args, 3)?;
+                let page = rest[0].to_int()?;
+                if !(-1..=5).contains(&page) {
+                    return Err(out_of_range("graphic page", page));
+                }
+                let origin = (rest[1].to_int()?, rest[2].to_int()?);
+                let t = &mut self.text[id];
+                (t.page, t.page_origin) = (page, origin);
+                Ok(vec![])
+            }
+            (Command::Tpage, Want::Outs(3), 0 | 1) => {
+                let (id, _) = with_screen(args, 0)?;
+                let t = &self.text[id];
+                Ok([t.page, t.page_origin.0, t.page_origin.1]
+                    .map(Value::Int)
+                    .to_vec())
+            }
+            (Command::Attr, Want::Outs(0), 1..=4) => {
+                let (id, rest) = match args.len() {
+                    1 | 3 => (CONSOLE, args),
+                    _ => (screen_id(&args[0])?, &args[1..]),
+                };
+                let attr = match rest {
+                    [a] => a.to_int()?,
+                    [h, v, r] => {
+                        let bit = |v: &Value| v.to_int().map(|n| i32::from(n != 0));
+                        bit(h)? << 2 | bit(v)? << 3 | (r.to_int()? & 3)
+                    }
+                    _ => unreachable!("one or three"),
+                };
+                if !(0..16).contains(&attr) {
+                    return Err(out_of_range("attribute", attr));
+                }
+                self.text[id].attr = attr as u8;
+                Ok(vec![])
+            }
+            (Command::Attr, Want::Outs(3), 0 | 1) => {
+                let (id, _) = with_screen(args, 0)?;
+                let a = i32::from(self.text[id].attr);
+                Ok([a >> 2 & 1, a >> 3 & 1, a & 3].map(Value::Int).to_vec())
+            }
+            (Command::Attr, Want::Value, 0 | 1) => {
+                let (id, _) = with_screen(args, 0)?;
+                Ok(int_value(i32::from(self.text[id].attr)))
             }
             (Command::Backcolor, Want::Outs(0), 1) => {
                 self.back_color = args[0].to_int()? as u32;

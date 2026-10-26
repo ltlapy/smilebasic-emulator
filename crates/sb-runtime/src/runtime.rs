@@ -23,6 +23,7 @@ use crate::text::{CONSOLE, SCREENS, TextScreen};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Animdef,
+    Attr,
     Backcolor,
     Chkfile,
     Clear,
@@ -92,13 +93,16 @@ pub(crate) enum Command {
     Thome,
     Tlayer,
     Tofs,
+    Tpage,
     Trot,
     Tscale,
+    Tscreen,
     Tshow,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
     ("ANIMDEF", Command::Animdef),
+    ("ATTR", Command::Attr),
     ("BACKCOLOR", Command::Backcolor),
     ("CHKFILE", Command::Chkfile),
     ("CLEAR", Command::Clear),
@@ -168,8 +172,10 @@ const COMMANDS: &[(&str, Command)] = &[
     ("THOME", Command::Thome),
     ("TLAYER", Command::Tlayer),
     ("TOFS", Command::Tofs),
+    ("TPAGE", Command::Tpage),
     ("TROT", Command::Trot),
     ("TSCALE", Command::Tscale),
+    ("TSCREEN", Command::Tscreen),
     ("TSHOW", Command::Tshow),
 ];
 
@@ -313,7 +319,7 @@ pub(crate) fn slot_arg(v: Option<&Value>) -> Result<usize> {
 
 /// Splits an optional leading screen id off the arguments: commands take
 /// either `rest` arguments or a screen id plus `rest`.
-fn with_screen(args: &[Value], rest: usize) -> Result<(usize, &[Value])> {
+pub(crate) fn with_screen(args: &[Value], rest: usize) -> Result<(usize, &[Value])> {
     match args.len() {
         n if n == rest => Ok((CONSOLE, args)),
         n if n == rest + 1 => Ok((screen_id(&args[0])?, &args[1..])),
@@ -388,6 +394,7 @@ impl Runtime {
             Element::Text(i) => self.text[i].draw_placed(
                 fb,
                 &self.font,
+                &self.grp,
                 &layer.matrix,
                 clip,
                 cursor && i == CONSOLE,
@@ -634,7 +641,8 @@ impl Runtime {
                 _,
             ) => self.grp_command(command, args, want),
             (
-                Command::Backcolor
+                Command::Attr
+                | Command::Backcolor
                 | Command::Layer
                 | Command::Lclip
                 | Command::Lmatrix
@@ -644,8 +652,10 @@ impl Runtime {
                 | Command::Thome
                 | Command::Tlayer
                 | Command::Tofs
+                | Command::Tpage
                 | Command::Trot
                 | Command::Tscale
+                | Command::Tscreen
                 | Command::Tshow,
                 _,
             ) => self.screen_command(command, args, want),

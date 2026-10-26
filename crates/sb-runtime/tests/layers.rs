@@ -1,4 +1,5 @@
-//! Text screen placement, display order and layers.
+//! Text screens (placement, fonts, user-defined characters), display
+//! order and layers.
 
 use sb_runtime::Runtime;
 use sb_runtime::font::{Font, FontSize};
@@ -130,4 +131,49 @@ fn settings_read_back() {
         String::from_utf16(&codes).unwrap(),
         "34-5674523FFFF00001016129800399239FF000000"
     );
+}
+
+/// The console's first line after `source` runs, as text, joining the
+/// rows it wraps onto.
+fn first_row(source: &str) -> String {
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    m.set_slot(0, source.to_string());
+    m.run_slot(0);
+    for _ in 0..5 {
+        m.frame();
+    }
+    let console = &m.rt.text[4];
+    let (w, h) = console.size();
+    let codes: Vec<u16> = (0..w * h)
+        .map(|i| console.cell(i % w, i / w).code)
+        .take_while(|&c| c != 0)
+        .collect();
+    String::from_utf16(&codes).unwrap()
+}
+
+#[test]
+fn tscreen_sizes_and_attributes() {
+    assert_eq!(
+        first_row(
+            "TSCREEN 16:TSCREEN 1,8,16,10,5:TSCREEN 2,32,0,3\n\
+             TSCREEN OUT A,B,C,D:TSCREEN 1 OUT E,F,G,H:TSCREEN 2 OUT I,J,K,L\n\
+             ATTR 1,1,3:ATTR OUT P,Q,R:ATTR 2,6:TPAGE 2,-1,8,9:TPAGE 2 OUT S,T,U\n\
+             ?A;B;C;D;\" \";E;F;G;H;\" \";I;J;K;L;\" \";ATTR();P;Q;R;ATTR(2);S;T;U"
+        ),
+        "16162515 816105 3232123 151136-189"
+    );
+    assert!(first_row("CLS:TSCREEN 12").starts_with("Out of range"));
+    assert!(first_row("CLS:TSCREEN 1,8,8,300,300").starts_with("Out of range"));
+}
+
+#[test]
+fn user_defined_characters_come_from_tpage() {
+    let mut m = run("GTARGET 4:GPSET 1027,2,#C_RED:GTARGET 0\n\
+         CLS:PRINT CHR$(&HE800);:ATTR 0,0,2:PRINT CHR$(&HE800)");
+    let fb = m.render();
+    assert_eq!(fb.get(3, 2), Some(RED));
+    assert_eq!(fb.get(8 + 4, 5), Some(RED), "turned half around");
+    let mut m = run("CLS:TPAGE -1,0,0:PRINT CHR$(&HE801)");
+    assert_eq!(m.render().get(5, 5), Some(WHITE));
 }

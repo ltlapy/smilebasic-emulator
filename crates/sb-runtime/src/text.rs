@@ -3,7 +3,8 @@
 use crate::compose::{Affine, Placement, draw_image, over};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
-use crate::graphics::Clip;
+use crate::graphics::{Clip, Graphics};
+use crate::sprites::sample;
 
 pub const SCREENS: usize = 5;
 pub const CONSOLE: usize = 4;
@@ -12,18 +13,35 @@ pub const USER_CHARS: std::ops::RangeInclusive<u16> = 0xE800..=0xF7FF;
 /// UNVERIFIED: SB3's default TABSTEP; SB4's console has not been measured.
 pub const TAB_WIDTH: u32 = 4;
 const WHITE: u32 = 0xFFFF_FFFF;
+/// User-defined characters sit in a grid this many characters wide.
+const USER_GRID: i32 = 64;
+
+/// ATTR bits of a character.
+pub mod attr {
+    pub const ROTATION: u8 = 0b11;
+    pub const REVH: u8 = 0b100;
+    pub const REVV: u8 = 0b1000;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
     /// 0 is an empty cell.
     pub code: u16,
     pub color: u32,
+    /// ATTR: quarter turns and flips.
+    pub attr: u8,
 }
 
-const EMPTY: Cell = Cell { code: 0, color: 0 };
+const EMPTY: Cell = Cell {
+    code: 0,
+    color: 0,
+    attr: 0,
+};
 
 pub struct TextScreen {
-    font: FontSize,
+    /// TSCREEN's font type: 8 or 16 for the normal font at that size, or
+    /// up to 64 for user-defined characters only.
+    font_type: u32,
     /// Size each character is drawn at, in pixels.
     char_size: u32,
     width: u32,
@@ -31,6 +49,11 @@ pub struct TextScreen {
     cells: Vec<Cell>,
     cursor: (u32, u32),
     color: u32,
+    /// ATTR for characters written from now on.
+    pub attr: u8,
+    /// TPAGE: where user-defined characters come from.
+    pub page: i32,
+    pub page_origin: (i32, i32),
     pub visible: bool,
     /// TOFS, THOME, TROT and TSCALE place the screen like a sprite.
     pub pos: (f64, f64),
@@ -51,13 +74,16 @@ impl TextScreen {
     pub fn new(screen_w: u32, screen_h: u32) -> TextScreen {
         let (width, height) = (screen_w / 8, screen_h / 8);
         TextScreen {
-            font: FontSize::Small,
+            font_type: 8,
             char_size: 8,
             width,
             height,
             cells: vec![EMPTY; (width * height) as usize],
             cursor: (0, 0),
             color: WHITE,
+            attr: 0,
+            page: 4,
+            page_origin: (1024, 0),
             visible: true,
             pos: (0.0, 0.0),
             z: 0,
@@ -72,6 +98,20 @@ impl TextScreen {
 
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// TSCREEN's font type and character size.
+    pub fn font(&self) -> (u32, u32) {
+        (self.font_type, self.char_size)
+    }
+
+    /// TSCREEN: a new font and size, which clears the screen.
+    // UNVERIFIED: whether TSCREEN keeps the contents.
+    pub fn set_font(&mut self, font_type: u32, char_size: u32, width: u32, height: u32) {
+        (self.font_type, self.char_size) = (font_type, char_size);
+        (self.width, self.height) = (width, height);
+        self.cells = vec![EMPTY; (width * height) as usize];
+        self.cursor = (0, 0);
     }
 
     pub fn cursor(&self) -> (u32, u32) {
@@ -94,7 +134,11 @@ impl TextScreen {
     /// ignored.
     pub fn put_at(&mut self, x: u32, y: u32, code: u16, color: u32) {
         if x < self.width && y < self.height {
-            self.cells[(y * self.width + x) as usize] = Cell { code, color };
+            self.cells[(y * self.width + x) as usize] = Cell {
+                code,
+                color,
+                attr: self.attr,
+            };
         }
     }
 
@@ -171,6 +215,7 @@ impl TextScreen {
         self.cells[(y * self.width + x) as usize] = Cell {
             code,
             color: self.color,
+            attr: self.attr,
         };
         self.cursor.0 += 1;
     }
@@ -184,7 +229,27 @@ impl TextScreen {
 
     /// Draws the screen over `fb` where TOFS and its companions put it.
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
-        self.draw_placed(fb, font, &Affine::IDENTITY, None, false);
+        let grp = Graphics::default();
+        self.draw_placed(fb, font, &grp, &Affine::IDENTITY, None, false);
+    }
+
+    /// The pixel at `(x, y)` of a character's `font_type`-sized image.
+    fn glyph_pixel(&self, font: &Font, grp: &Graphics, code: u16, x: u32, y: u32) -> u32 {
+        let ft = self.font_type;
+        if USER_CHARS.contains(&code) {
+            let i = i32::from(code - USER_CHARS.start());
+            let (ox, oy) = self.page_origin;
+            let size = ft as i32;
+            let gx = ox + i % USER_GRID * size + x as i32;
+            let gy = oy + i / USER_GRID * size + y as i32;
+            return sample(grp, self.page, gx, gy);
+        }
+        match ft {
+            8 => font.pixel(code, FontSize::Small, x, y),
+            16 => font.pixel(code, FontSize::Large, x, y),
+            // Larger font types show only user-defined characters.
+            _ => 0,
+        }
     }
 
     /// Draws the screen through its layer's matrix and clipping, with the
@@ -195,6 +260,7 @@ impl TextScreen {
         &self,
         fb: &mut Framebuffer,
         font: &Font,
+        grp: &Graphics,
         layer: &Affine,
         clip: Option<&Clip>,
         cursor: bool,
@@ -203,7 +269,7 @@ impl TextScreen {
             return;
         }
         let cs = self.char_size;
-        let fs = self.font as u32;
+        let ft = self.font_type;
         let cursor = cursor.then_some(self.cursor);
         if cursor.is_none() && self.cells.iter().all(|c| c.code == 0) {
             return;
@@ -218,15 +284,26 @@ impl TextScreen {
             let (x, y) = (x as u32, y as u32);
             let (cx, cy) = (x / cs, y / cs);
             let cell = self.cell(cx, cy);
-            // TODO: user-defined characters need graphic pages (TPAGE).
-            let glyph = if cell.code == 0 || USER_CHARS.contains(&cell.code) {
+            let glyph = if cell.code == 0 {
                 0
             } else {
-                let (px, py) = (x % cs, y % cs);
-                multiply(
-                    font.pixel(cell.code, self.font, px * fs / cs, py * fs / cs),
-                    cell.color,
-                )
+                // UNVERIFIED: flips apply to the cell, then the quarter turn
+                // picks the font pixel, as for sprites.
+                let (mut px, mut py) = (x % cs, y % cs);
+                if cell.attr & attr::REVH != 0 {
+                    px = cs - 1 - px;
+                }
+                if cell.attr & attr::REVV != 0 {
+                    py = cs - 1 - py;
+                }
+                let (px, py) = match cell.attr & attr::ROTATION {
+                    0 => (px, py),
+                    1 => (py, cs - 1 - px),
+                    2 => (cs - 1 - px, cs - 1 - py),
+                    _ => (cs - 1 - py, px),
+                };
+                let pixel = self.glyph_pixel(font, grp, cell.code, px * ft / cs, py * ft / cs);
+                multiply(pixel, cell.color)
             };
             let glyph = if cursor == Some((cx, cy)) {
                 over(glyph, self.color)
