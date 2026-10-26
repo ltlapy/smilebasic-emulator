@@ -59,7 +59,7 @@ fn row(rt: &Runtime, screen: usize, y: u32, width: u32) -> String {
 fn tput_and_tfill() {
     let rt = run(concat!(
         "COLOR 0,#C_RED\n",
-        "TPUT 0,1,0,\"AB\":TPUT 0,2,0,67,#A_REVV:TPUT 0,99,0,\"Z\"\n",
+        "TPUT 0,1,0,\"AB\":TPUT 0,2,0,67,#A_REVV\n",
         "TFILL 0,0,1,4,2,\"XY\"\n",
         "TFILL 0,6,3,5,2,ASC(\"Q\")",
     ))
@@ -157,8 +157,9 @@ fn bad_arguments() {
     assert_eq!(kind("TPUT 5,0,0,65"), Some(ErrorKind::OutOfRange));
     assert_eq!(kind("TPUT 0,0,0,65536"), Some(ErrorKind::OutOfRange));
     assert_eq!(kind("TPUT 0,0,0,65,16"), Some(ErrorKind::OutOfRange));
+    assert_eq!(kind("TPUT 0,99,0,65"), Some(ErrorKind::OutOfRange));
     assert_eq!(
-        kind("DIM A[0]:TSAVE 0,20,0,10,1,A"),
+        kind("DIM A[0]:TSAVE 0,20,0,10,0,A"),
         Some(ErrorKind::OutOfRange)
     );
     assert_eq!(

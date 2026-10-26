@@ -86,7 +86,7 @@ fn variables() {
 #[test]
 fn errors() {
     for (source, error) in [
-        ("SPOFS 3,0,0", "Illegal function call"),
+        ("SPOFS 3,0,0", "Sprite not set"),
         ("SPSET 4096,0", "Out of range"),
         ("SPSET 0,8192", "Out of range"),
         ("SPSET 0,0:SPOFS 0,0,0,5000", "Out of range"),

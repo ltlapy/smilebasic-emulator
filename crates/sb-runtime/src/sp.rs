@@ -105,8 +105,8 @@ fn ints(values: &[i32]) -> Vec<Value> {
 }
 
 impl Runtime {
-    /// A sprite that SPSET has created.
-    // UNVERIFIED: the error for using a sprite before SPSET.
+    /// A sprite that SPSET has created; others are "Sprite not set"
+    /// (checked on hardware).
     fn sprite(&mut self, v: &Value) -> Result<&mut Sprite> {
         let id = sprite_id(v)?;
         let s = &mut self.sprites.list[id];
@@ -114,8 +114,8 @@ impl Runtime {
             Ok(s)
         } else {
             Err(Error::with_detail(
-                ErrorKind::IllegalFunctionCall,
-                format!("sprite {id} is not set"),
+                ErrorKind::SpriteNotSet,
+                format!("sprite {id}"),
             ))
         }
     }

@@ -134,8 +134,9 @@ fn gsave_and_gload() {
 fn gsave_needs_room_in_multi_dimensional_arrays() {
     let (_, out) = run("DIM W[1,1]:GSAVE 0,0,2,2,W");
     assert!(out.starts_with("Subscript out of range"), "{out}");
-    let (_, out) = run("DIM W[0]:GSAVE 2047,0,2,1,W");
-    assert!(out.starts_with("Out of range"), "{out}");
+    // Off the page reads as 0.
+    let (_, out) = run("GPSET 2047,0,#C_RED:DIM W[0]:GSAVE 2047,0,2,1,W:?LEN(W);HEX$(W[0]);W[1]");
+    assert_eq!(out, "2FFFF00000");
     let (_, out) = run("DIM W[3]:GLOAD 0,0,2,2,W,0");
     assert!(out.starts_with("Subscript out of range"), "{out}");
 }

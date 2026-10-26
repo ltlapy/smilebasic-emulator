@@ -50,17 +50,17 @@ fn corners(args: &[Value]) -> Result<CellRect> {
     Ok((x0, y0, x1 - x0 + 1, y1 - y0 + 1))
 }
 
-/// X,Y,width,height, which must lie on the screen; the whole screen when
-/// `args` is empty.
-// UNVERIFIED: rectangles reaching off the screen are errors, as for GSAVE.
+/// X,Y,width,height; the whole screen when `args` is empty. It may reach
+/// off the screen (checked on hardware: TSAVE reads empty cells there).
+// UNVERIFIED: the limits on width and height.
 fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
     let (w, h) = screen.size();
     if args.is_empty() {
         return Ok((0, 0, w as i32, h as i32));
     }
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
-    let fits = |start: i32, len: i32, max: u32| start >= 0 && len >= 1 && start + len <= max as i32;
-    if fits(v[0], v[2], w) && fits(v[1], v[3], h) {
+    let fits = |len: i32| (1..=4096).contains(&len);
+    if fits(v[2]) && fits(v[3]) {
         Ok((v[0], v[1], v[2], v[3]))
     } else {
         Err(Error::with_detail(
@@ -90,11 +90,17 @@ impl Runtime {
         want: Want,
     ) -> Result<Vec<Value>> {
         match (command, want, args.len()) {
-            // UNVERIFIED: off-screen cells are ignored; an empty string
-            // writes nothing.
+            // Checked on hardware: off-screen cells are out of range, and
+            // an empty string writes nothing.
             (Command::Tput, Want::Outs(0), 4 | 5) => {
                 let t = &mut self.text[screen_id(&args[0])?];
                 let (x, y) = (int(&args[1])?, int(&args[2])?);
+                if t.cell_at(x, y).is_none() {
+                    return Err(Error::with_detail(
+                        ErrorKind::OutOfRange,
+                        format!("cell {x},{y}"),
+                    ));
+                }
                 let codes = codes(&args[3])?;
                 let attr = attr_arg(args.get(4), t)?;
                 if let Some(&code) = codes.first() {
@@ -124,7 +130,7 @@ impl Runtime {
                 self.text[id].scroll(dx, dy);
                 Ok(vec![])
             }
-            // UNVERIFIED: off-screen positions give 0 rather than an error.
+            // Off-screen positions give 0 (checked on hardware).
             (Command::Chkchr, Want::Value | Want::Outs(2), 2..=4) => {
                 let (id, rest) = match args.len() {
                     2 => (crate::text::CONSOLE, args),

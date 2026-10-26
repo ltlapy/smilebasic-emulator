@@ -25,6 +25,7 @@ pub enum ErrorKind {
     IllegalProjectName,
     UndefinedProjectName,
     IllegalAnimationData,
+    SpriteNotSet,
 }
 
 impl ErrorKind {
@@ -50,6 +51,7 @@ impl ErrorKind {
             ErrorKind::IllegalProjectName => "Illegal project name",
             ErrorKind::UndefinedProjectName => "Undefined project name",
             ErrorKind::IllegalAnimationData => "Illegal animation data",
+            ErrorKind::SpriteNotSet => "Sprite not set",
         }
     }
 }

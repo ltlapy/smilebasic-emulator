@@ -86,13 +86,15 @@ pub(crate) fn array_colors(array: &ArrayRef, n: usize) -> Result<Vec<u32>> {
     })
 }
 
-/// A rectangle given as X,Y,width,height that must lie on the page.
-// UNVERIFIED: rectangles reaching off the page are errors, as for SAVEG.
+/// A rectangle given as X,Y,width,height. It may reach off the page
+/// (checked on hardware: GSAVE reads 0 there), but not be empty or larger
+/// than a page.
+// UNVERIFIED: the limits on width and height.
 fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
     let (x, y, w, h) = (v[0], v[1], v[2], v[3]);
-    let fits = |start: i32, len: i32| start >= 0 && len >= 1 && start + len <= GRP_SIZE;
-    if fits(x, w) && fits(y, h) {
+    let fits = |len: i32| (1..=GRP_SIZE).contains(&len);
+    if fits(w) && fits(h) {
         Ok((x, y, w, h))
     } else {
         Err(Error::with_detail(
@@ -296,10 +298,10 @@ impl Runtime {
                 if let Some(palette) = palette {
                     let len = palette.borrow().len();
                     let colors = array_colors(&palette, len)?;
+                    // Indexes past the palette are no error (checked on
+                    // hardware). UNVERIFIED: that they draw transparent.
                     for p in &mut pixels {
-                        *p = *colors
-                            .get(*p as usize)
-                            .ok_or_else(|| out_of_range("palette index", *p as i32))?;
+                        *p = colors.get(*p as usize).copied().unwrap_or(0);
                     }
                 }
                 self.grp.load_rect(rect, &pixels, tint, blend);
