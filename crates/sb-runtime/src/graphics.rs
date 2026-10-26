@@ -2,7 +2,6 @@
 //! once something is drawn on it; until then every pixel is 0.
 
 use crate::font::{Font, FontSize};
-use crate::framebuffer::Framebuffer;
 
 pub const PAGES: usize = 6;
 /// `#GRPWIDTH` and `#GRPHEIGHT`.
@@ -148,6 +147,13 @@ impl Graphics {
             return 0;
         }
         pixels[index(x, y)]
+    }
+
+    /// Replaces a whole page, such as GRP4 with the default sprite image.
+    /// `pixels` holds 2048x2048 pixels row by row.
+    pub fn set_page(&mut self, page: usize, pixels: Vec<u32>) {
+        assert_eq!(pixels.len(), (GRP_SIZE * GRP_SIZE) as usize);
+        self.pages[page] = pixels;
     }
 
     fn target_pixels(&mut self) -> &mut Vec<u32> {
@@ -425,25 +431,6 @@ impl Graphics {
             let (px, py) = (x + i as i32 % w, y + i as i32 / w);
             let p = tint.map_or(p, |t| multiply(p, t));
             self.plot(px, py, p, blend);
-        }
-    }
-
-    /// Draws a page's top-left corner over the whole frame.
-    pub fn draw(&self, page: usize, fb: &mut Framebuffer) {
-        let pixels = &self.pages[page];
-        if pixels.is_empty() {
-            return;
-        }
-        for y in 0..fb.height().min(GRP_SIZE as u32) {
-            for x in 0..fb.width().min(GRP_SIZE as u32) {
-                let src = pixels[index(x as i32, y as i32)];
-                if src >> 24 != 0
-                    && let Some(dst) = fb.get(x, y)
-                {
-                    let out = Blend::Alpha.apply(dst, src);
-                    fb.set(x, y, (dst & 0xFF00_0000) | (out & 0x00FF_FFFF));
-                }
-            }
         }
     }
 }

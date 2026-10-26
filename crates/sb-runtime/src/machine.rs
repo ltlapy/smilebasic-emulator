@@ -205,6 +205,7 @@ impl Machine {
     /// Starts the program in a slot, as RUN does.
     pub fn run_slot(&mut self, slot: usize) {
         self.vars.clear();
+        self.rt.sprites.clear_vars();
         self.start(&self.rt.slots[slot].clone(), Some(slot));
     }
 

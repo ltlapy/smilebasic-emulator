@@ -14,6 +14,7 @@ use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
 pub use crate::settings::Settings;
+use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
 use crate::text::{CONSOLE, SCREENS, TextScreen};
 
@@ -51,6 +52,21 @@ pub(crate) enum Command {
     Result,
     Run,
     Save,
+    Spchr,
+    Spclr,
+    Spcolor,
+    Spdef,
+    Sphide,
+    Sphome,
+    Splayer,
+    Spofs,
+    Sppage,
+    Sprot,
+    Spscale,
+    Spset,
+    Spshow,
+    Spused,
+    Spvar,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
@@ -86,6 +102,21 @@ const COMMANDS: &[(&str, Command)] = &[
     ("RESULT", Command::Result),
     ("RUN", Command::Run),
     ("SAVE", Command::Save),
+    ("SPCHR", Command::Spchr),
+    ("SPCLR", Command::Spclr),
+    ("SPCOLOR", Command::Spcolor),
+    ("SPDEF", Command::Spdef),
+    ("SPHIDE", Command::Sphide),
+    ("SPHOME", Command::Sphome),
+    ("SPLAYER", Command::Splayer),
+    ("SPOFS", Command::Spofs),
+    ("SPPAGE", Command::Sppage),
+    ("SPROT", Command::Sprot),
+    ("SPSCALE", Command::Spscale),
+    ("SPSET", Command::Spset),
+    ("SPSHOW", Command::Spshow),
+    ("SPUSED", Command::Spused),
+    ("SPVAR", Command::Spvar),
 ];
 
 /// Program slots PRG0 to PRG5.
@@ -129,6 +160,7 @@ pub struct Runtime {
     fb: Framebuffer,
     /// Graphic pages GRP0-GRP5.
     pub grp: Graphics,
+    pub sprites: Sprites,
     /// Typed characters not yet read by INKEY$ or INPUT.
     keys: VecDeque<u16>,
     /// The line being typed for INPUT or LINPUT.
@@ -204,6 +236,7 @@ impl Runtime {
             font,
             fb: Framebuffer::new(width, height),
             grp: Graphics::default(),
+            sprites: Sprites::default(),
             keys: VecDeque::new(),
             line: None,
             frame: 0,
@@ -271,12 +304,22 @@ impl Runtime {
     pub fn render(&mut self) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
         self.fb.clear(0xFF00_0000);
-        // TODO: show GRP pages through sprite #GSPRITE (4095) once sprites
-        // exist; until then GRP0 lies under the text screens.
-        self.grp.draw(0, &mut self.fb);
-        // UNVERIFIED: screens are drawn in id order until layers exist.
+        // Back to front: sprites behind the text, the text screens, then
+        // sprites in front of it.
+        // UNVERIFIED: text screens sit at Z 0 and win ties, and are drawn
+        // in id order, until TOFS and layers exist.
+        let order = self.sprites.draw_order();
+        let (back, front): (Vec<usize>, Vec<usize>) = order
+            .into_iter()
+            .partition(|&i| self.sprites.list[i].z >= 0);
+        for i in back {
+            sprites::draw(&self.sprites.list[i], &self.grp, &mut self.fb);
+        }
         for screen in &self.text {
             screen.draw(&mut self.fb, &self.font);
+        }
+        for i in front {
+            sprites::draw(&self.sprites.list[i], &self.grp, &mut self.fb);
         }
         if self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2) {
             self.text[CONSOLE].draw_cursor(&mut self.fb);
@@ -420,6 +463,24 @@ impl Runtime {
                 | Command::Gtri,
                 _,
             ) => self.grp_command(command, args, want),
+            (
+                Command::Spchr
+                | Command::Spclr
+                | Command::Spcolor
+                | Command::Spdef
+                | Command::Sphide
+                | Command::Sphome
+                | Command::Splayer
+                | Command::Spofs
+                | Command::Sppage
+                | Command::Sprot
+                | Command::Spscale
+                | Command::Spset
+                | Command::Spshow
+                | Command::Spused
+                | Command::Spvar,
+                _,
+            ) => self.sp_command(command, args, want),
             _ => Err(illegal()),
         }
     }

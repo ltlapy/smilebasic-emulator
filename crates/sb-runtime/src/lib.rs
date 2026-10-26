@@ -14,6 +14,8 @@ pub mod resources;
 pub mod runtime;
 pub mod sbfile;
 pub mod settings;
+mod sp;
+pub mod sprites;
 pub mod storage;
 pub mod text;
 
