@@ -15,6 +15,8 @@ const ROW_HEIGHT: u32 = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    Projects,
+    OpenFolder,
     Quit,
     Stop,
     ToggleEditor,
@@ -38,7 +40,12 @@ impl Action {
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::FileAccess(mode) if settings.file_confirm == mode => "(*)",
             Action::FileAccess(_) => "( )",
-            Action::Quit | Action::Stop | Action::ToggleEditor | Action::EditSlot(_) => "   ",
+            Action::Projects
+            | Action::OpenFolder
+            | Action::Quit
+            | Action::Stop
+            | Action::ToggleEditor
+            | Action::EditSlot(_) => "   ",
         }
     }
 
@@ -53,16 +60,22 @@ impl Action {
                 settings.file_confirm = mode;
                 return;
             }
-            Action::Quit | Action::Stop | Action::ToggleEditor | Action::EditSlot(_) => return,
+            Action::Projects
+            | Action::OpenFolder
+            | Action::Quit
+            | Action::Stop
+            | Action::ToggleEditor
+            | Action::EditSlot(_) => return,
         };
         *flag = !*flag;
     }
 
-    /// Stop needs a running program; the editor cannot open during one.
+    /// Stop needs a running program; the editor and the project manager
+    /// cannot open during one.
     fn enabled(self, running: bool) -> bool {
         match self {
             Action::Stop => running,
-            Action::ToggleEditor | Action::EditSlot(_) => !running,
+            Action::ToggleEditor | Action::EditSlot(_) | Action::Projects => !running,
             _ => true,
         }
     }
@@ -94,7 +107,11 @@ struct Menu {
 const MENUS: &[Menu] = &[
     Menu {
         title: "SmileBASIC",
-        items: &[item("Quit", Action::Quit)],
+        items: &[
+            item("Projects...", Action::Projects),
+            item("Open projects folder", Action::OpenFolder),
+            item("Quit", Action::Quit),
+        ],
     },
     Menu {
         title: "Program",

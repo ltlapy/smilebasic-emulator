@@ -2,6 +2,7 @@
 
 mod dialog;
 mod menu;
+mod projects;
 mod toast;
 mod ui;
 
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use dialog::{Answer, Dialog};
 use menu::{Action, Click, MenuBar};
+use projects::{Outcome, ProjectManager};
 use sb_profiles::Profile;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
@@ -158,6 +160,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // with unsaved programs, or for a command such as LOAD.
     let mut dialog: Option<(Dialog, Asking)> = None;
     let mut toasts = Toasts::default();
+    // Takes all input while it is open, except for a dialog over it.
+    let mut manager: Option<ProjectManager> = None;
 
     let mut events = sdl.event_pump()?;
     'running: loop {
@@ -208,6 +212,48 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 continue;
             }
+            if let Some(open) = &mut manager {
+                let unsaved = machine.unsaved_slots();
+                let storage = &mut machine.rt.storage;
+                let outcome = match event {
+                    Event::Quit { .. } => {
+                        quit = true;
+                        Outcome::Stay
+                    }
+                    Event::MouseMotion { x, y, .. } => {
+                        open.mouse_move(to_display(x, y));
+                        Outcome::Stay
+                    }
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Left,
+                        x,
+                        y,
+                        ..
+                    } => open.click(to_display(x, y), storage, &unsaved),
+                    Event::MouseWheel { y, .. } => {
+                        open.wheel(-y.round() as i32);
+                        Outcome::Stay
+                    }
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => open.key(key, storage, &unsaved),
+                    Event::TextInput { text, .. } => {
+                        open.text(&text);
+                        Outcome::Stay
+                    }
+                    _ => Outcome::Stay,
+                };
+                match outcome {
+                    Outcome::Stay => {}
+                    Outcome::Close => manager = None,
+                    Outcome::Switched(name) => {
+                        toasts.push(format!("Switched to project {name}"));
+                        manager = None;
+                    }
+                    Outcome::OpenFolder => open_folder(&machine.rt.storage, &mut toasts),
+                }
+                continue;
+            }
             match event {
                 Event::Quit { .. } => quit = true,
                 Event::MouseMotion { x, y, .. } => menu.mouse_move(Some(to_display(x, y))),
@@ -222,6 +268,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } => match menu.click(to_display(x, y), machine.is_running()) {
                     Click::Chosen(Action::Quit) => quit = true,
+                    Click::Chosen(Action::Projects) => {
+                        let size = (display_w, display_h);
+                        manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                    }
+                    Click::Chosen(Action::OpenFolder) => {
+                        open_folder(&machine.rt.storage, &mut toasts)
+                    }
                     Click::Chosen(Action::Stop) => machine.stop(),
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
@@ -321,14 +374,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         canvas.copy(&texture, None, screen_rect(&mode, out_w, out_h))?;
-        if dialog.is_some() || menu.visible() || toasts.visible() {
-            // A dialog dims the screen behind it.
-            overlay.clear(if dialog.is_some() { 0x8000_0000 } else { 0 });
+        let modal = dialog.is_some() || manager.is_some();
+        if modal || menu.visible() || toasts.visible() {
+            // A dialog or the project manager dims the screen behind it.
+            overlay.clear(if modal { 0x8000_0000 } else { 0 });
             let font = machine.rt.font();
+            if let Some(open) = &manager {
+                open.draw(&mut overlay, font);
+            }
             toasts.draw(&mut overlay, font);
             if let Some((open, _)) = &dialog {
                 open.draw(&mut overlay, font);
-            } else if menu.visible() {
+            } else if manager.is_none() && menu.visible() {
                 let running = machine.is_running();
                 menu.draw(&mut overlay, font, &machine.rt.settings, running);
             }
@@ -338,6 +395,41 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.present();
     }
     Ok(())
+}
+
+/// Opens the folder that holds the projects in the system's file manager.
+fn open_folder(storage: &Storage, toasts: &mut Toasts) {
+    let Some(root) = storage.root() else {
+        toasts.push("There is no projects folder".to_string());
+        return;
+    };
+    let opened = std::fs::create_dir_all(root)
+        .map_err(|e| e.to_string())
+        .and_then(|()| sdl3::url::open_url(&file_url(root)).map_err(|e| e.to_string()));
+    if let Err(e) = opened {
+        toasts.push(format!("Could not open the projects folder: {e}"));
+    }
+}
+
+/// A `file:` URL for an absolute path, with anything but plain characters
+/// percent-encoded.
+fn file_url(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    // Windows paths start with a drive letter rather than a slash.
+    let mut url = String::from(if path.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
+    });
+    for b in path.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b':' | b'-' | b'_' | b'.' | b'~' => {
+                url.push(char::from(b))
+            }
+            _ => url.push_str(&format!("%{b:02X}")),
+        }
+    }
+    url
 }
 
 /// Who asked the open dialog's question.
@@ -429,4 +521,18 @@ fn special_key(key: Keycode) -> Option<u16> {
 fn as_bytes(pixels: &[u32]) -> &[u8] {
     // SAFETY: u32 has no padding and u8 has alignment 1.
     unsafe { std::slice::from_raw_parts(pixels.as_ptr().cast(), std::mem::size_of_val(pixels)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_urls_encode_the_path() {
+        assert_eq!(
+            file_url(Path::new("/home/a b/데이터")),
+            "file:///home/a%20b/%EB%8D%B0%EC%9D%B4%ED%84%B0"
+        );
+        assert_eq!(file_url(Path::new("C:\\Users\\x")), "file:///C:/Users/x");
+    }
 }
