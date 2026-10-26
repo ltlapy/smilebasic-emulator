@@ -3,13 +3,18 @@
 //!
 //! Both files come from the user's own copy of SmileBASIC 4 (see
 //! [`crate::resources`]); nothing from them is part of this repository.
-//! Without them, [`Font::fallback`] draws with GalmuriMono7 instead.
+//! Without them, [`Font::fallback`] draws the 8-pixel font with
+//! GalmuriMono7 and the 16-pixel one with a subset of Noto Sans Mono CJK.
 //!
 //! Glyph `n` of the 8-pixel font is at `((n % 64) * 8, (n / 64) * 8)` on the
 //! page, and of the 16-pixel font at `((n % 64) * 16, 1024 + (n / 64) * 16)`.
 //! This matches FONTINFO on real hardware.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Mutex, OnceLock};
+
+use ab_glyph::{Font as _, FontRef, PxScale, point};
 
 use crate::sbfile::{self, DataValues, FileError};
 
@@ -66,6 +71,61 @@ const FIRST_ON_PAGE: &[std::ops::RangeInclusive<u16>] = &[
     0x3000..=0x30FF,
     0xFF00..=0xFFEF,
 ];
+
+/// The 16-pixel fallback font's outlines (see `fonts/noto-cjk`).
+static OUTLINES: &[u8] = include_bytes!("../fonts/noto-cjk/SBEmulatorMonoCJK-Regular.ttf");
+/// Top of the outline font's em box above the baseline, in font units of
+/// 1000: Noto CJK's ideographic em box runs from -120 to 880.
+const EM_TOP: f32 = 880.0;
+const LARGE: usize = FontSize::Large as usize;
+
+/// A 16-pixel glyph drawn from the outlines: one alpha byte per pixel.
+type Bitmap = [u8; LARGE * LARGE];
+
+fn outlines() -> &'static FontRef<'static> {
+    static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
+    FONT.get_or_init(|| FontRef::try_from_slice(OUTLINES).expect("bundled font"))
+}
+
+/// The 16-pixel glyph of `c` from the outline font, `None` if it has none.
+/// Drawing is slow next to looking pixels up, so glyphs are kept once
+/// drawn.
+fn outline_glyph(c: char) -> Option<Bitmap> {
+    static DRAWN: OnceLock<Mutex<HashMap<char, Option<Bitmap>>>> = OnceLock::new();
+    let drawn = DRAWN.get_or_init(Default::default);
+    if let Some(&bitmap) = drawn.lock().expect("glyph cache").get(&c) {
+        return bitmap;
+    }
+    let bitmap = draw_outline(c);
+    drawn.lock().expect("glyph cache").insert(c, bitmap);
+    bitmap
+}
+
+fn draw_outline(c: char) -> Option<Bitmap> {
+    let font = outlines();
+    let id = font.glyph_id(c);
+    if id.0 == 0 {
+        return None;
+    }
+    let size = LARGE as f32;
+    let em = font.units_per_em().unwrap_or(1000.0);
+    // ab_glyph scales by ascent minus descent; one em should be 16 pixels.
+    let scale = PxScale::from(size * font.height_unscaled() / em);
+    // Narrow glyphs sit in the middle of the cell.
+    let advance = font.h_advance_unscaled(id) * size / em;
+    let origin = point((size - advance) / 2.0, size * EM_TOP / em);
+    let mut bitmap = [0; LARGE * LARGE];
+    if let Some(outline) = font.outline_glyph(id.with_scale_and_position(scale, origin)) {
+        let min = outline.px_bounds().min;
+        outline.draw(|x, y, coverage| {
+            let (x, y) = (min.x as i32 + x as i32, min.y as i32 + y as i32);
+            if (0..LARGE as i32).contains(&x) && (0..LARGE as i32).contains(&y) {
+                bitmap[y as usize * LARGE + x as usize] = (coverage * 255.0).round() as u8;
+            }
+        });
+    }
+    Some(bitmap)
+}
 
 const NO_CELL: u16 = u16::MAX;
 const SYMBOL: u16 = 0x8000;
@@ -190,6 +250,17 @@ impl Font {
     pub fn page_image(&self) -> Vec<u32> {
         match &self.0 {
             Source::Page { page, .. } => page.clone(),
+            // Every fallback font is the same, so its page is drawn once.
+            Source::Cells { .. } => {
+                static PAGE: OnceLock<Vec<u32>> = OnceLock::new();
+                PAGE.get_or_init(|| self.draw_page()).clone()
+            }
+        }
+    }
+
+    fn draw_page(&self) -> Vec<u32> {
+        match &self.0 {
+            Source::Page { page, .. } => page.clone(),
             Source::Cells { slots, .. } => {
                 let mut page = vec![0; (PAGE_SIZE * PAGE_SIZE) as usize];
                 for (code, &slot) in slots.iter().enumerate() {
@@ -257,6 +328,18 @@ impl Font {
                     NO_CELL => *missing,
                     i => i,
                 };
+                // SmileBASIC's own symbols keep their drawings, doubled.
+                if size == FontSize::Large
+                    && i & SYMBOL == 0
+                    && let Some(bitmap) = char::from_u32(u32::from(code)).and_then(outline_glyph)
+                {
+                    let alpha = u32::from(bitmap[(y * 16 + x) as usize]);
+                    return if alpha == 0 {
+                        0
+                    } else {
+                        alpha << 24 | 0x00FF_FFFF
+                    };
+                }
                 let (x, y) = match size {
                     FontSize::Small => (x, y),
                     FontSize::Large => (x / 2, y / 2),
@@ -354,9 +437,18 @@ mod tests {
         assert_eq!(font.pixel(0xE10A, FontSize::Small, 0, 0), 0xFFFF_FFFF);
         assert_eq!(font.pixel(0xE10A, FontSize::Small, 2, 1), 0xFF00_0000);
         assert_eq!(font.pixel(0xE100, FontSize::Small, 1, 1), 0xFFBF_BFBF);
-        assert_eq!(
-            font.pixel('A' as u16, FontSize::Large, 6, 1),
-            font.pixel('A' as u16, FontSize::Small, 3, 0)
-        );
+        // The 16-pixel font is drawn from outlines, with soft edges...
+        let alphas: Vec<u32> = (0..256)
+            .map(|i| font.pixel('A' as u16, FontSize::Large, i % 16, i / 16) >> 24)
+            .collect();
+        assert!(alphas.contains(&255) && alphas.iter().any(|&a| a > 0 && a < 255));
+        // ...except for SmileBASIC's symbols and characters the outlines
+        // lack, which are the 8-pixel drawings doubled.
+        for code in [0xE100, 'Ą' as u16] {
+            assert_eq!(
+                font.pixel(code, FontSize::Large, 6, 3),
+                font.pixel(code, FontSize::Small, 3, 1)
+            );
+        }
     }
 }

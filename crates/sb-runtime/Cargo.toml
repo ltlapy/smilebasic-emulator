@@ -6,5 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ab_glyph = "0.2.32"
 miniz_oxide = "0.9.1"
 sb-core.workspace = true

@@ -19,8 +19,10 @@ development headers listed in SDL's `docs/README-linux.md` first.
 
 ## Resources
 
-Without any setup, the console uses a bundled font,
-[GalmuriMono7](https://github.com/quiple/galmuri) (SIL Open Font License 1.1).
+Without any setup, text uses bundled fonts under the SIL Open Font License
+1.1: [GalmuriMono7](https://github.com/quiple/galmuri) at 8 pixels, and a
+subset of [Noto Sans Mono CJK JP](https://github.com/notofonts/noto-cjk) at
+16 pixels.
 SmileBASIC's own characters (number tiles, buttons, box drawing and other
 symbols at U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 `crates/sb-runtime/fonts/symbols.txt`.
@@ -65,5 +67,6 @@ digits turned into ASCII.
 
 ## License
 
-MIT OR Apache-2.0. The bundled font in `crates/sb-runtime/fonts/galmuri`
-is under the SIL Open Font License 1.1.
+MIT OR Apache-2.0. The bundled fonts in `crates/sb-runtime/fonts/galmuri`
+and `crates/sb-runtime/fonts/noto-cjk` are under the SIL Open Font License
+1.1.
