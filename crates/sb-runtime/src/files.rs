@@ -185,6 +185,7 @@ impl Runtime {
             return Err(StorageError::BadKind(kind.name().to_string()));
         }
         self.slots[slot] = program_text(&self.storage.read(kind, &name)?)?;
+        self.slot_names[slot] = name;
         Ok(())
     }
 
@@ -197,7 +198,9 @@ impl Runtime {
             true => half_width(&self.slots[slot]),
             false => self.slots[slot].clone(),
         };
-        self.storage.write(kind, &name, text.as_bytes(), true)
+        self.storage.write(kind, &name, text.as_bytes(), true)?;
+        self.slot_names[slot] = name;
+        Ok(())
     }
 
     fn rename(&mut self, from: &str, to: &str) -> storage::Result<()> {

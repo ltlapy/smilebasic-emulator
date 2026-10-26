@@ -68,6 +68,14 @@ impl TextScreen {
         self.cells[(y * self.width + x) as usize]
     }
 
+    /// Writes one cell without moving the cursor; off-screen cells are
+    /// ignored.
+    pub fn put_at(&mut self, x: u32, y: u32, code: u16, color: u32) {
+        if x < self.width && y < self.height {
+            self.cells[(y * self.width + x) as usize] = Cell { code, color };
+        }
+    }
+
     /// Clears the screen and homes the cursor.
     pub fn cls(&mut self) {
         self.cells.fill(EMPTY);

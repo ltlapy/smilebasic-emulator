@@ -120,3 +120,69 @@ fn stop_breaks_out_of_a_loop() {
     m.stop();
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
+
+/// Presses keys, one frame each.
+fn press(m: &mut Machine, codes: &[u16]) {
+    for &code in codes {
+        m.rt.key_press(code);
+        m.frame();
+    }
+}
+
+#[test]
+fn list_edits_a_slot_and_f4_returns() {
+    use sb_runtime::runtime::keys;
+    let mut m = machine();
+    m.set_slot(0, "?1\r\n?2".to_string());
+    enter(&mut m, "list 2");
+    assert!(m.is_editing());
+    assert_eq!(m.editor.cursor(), (2, 0));
+    press(&mut m, &[keys::END]);
+    m.type_text("3");
+    m.frame();
+    m.toggle_editor();
+    assert!(!m.is_editing());
+    assert_eq!(m.slot(0), "?1\n?23");
+    enter(&mut m, "run");
+    assert_eq!(&rows(&m)[rows(&m).len() - 3..], ["1", "23", "OK"]);
+
+    // An untouched program keeps its line endings.
+    m.set_slot(2, "?1\r\n".to_string());
+    enter(&mut m, "list 2:1");
+    assert_eq!(m.editor.slot(), 2);
+    m.toggle_editor();
+    assert_eq!(m.slot(2), "?1\r\n");
+}
+
+#[test]
+fn f4_and_list_err_show_the_error() {
+    let mut m = machine();
+    m.set_slot(1, "?1\n?2\n?1/0".to_string());
+    enter(&mut m, "run 1");
+    m.toggle_editor();
+    assert_eq!((m.editor.slot(), m.editor.cursor()), (1, (3, 0)));
+    // The error is shown once; later, the editor opens where it was left.
+    m.toggle_editor();
+    m.set_slot(0, "?(".to_string());
+    enter(&mut m, "run");
+    enter(&mut m, "list err");
+    assert_eq!((m.editor.slot(), m.editor.cursor()), (0, (1, 0)));
+    m.toggle_editor();
+    m.toggle_editor();
+    assert_eq!(m.editor.slot(), 0);
+}
+
+#[test]
+fn list_arguments() {
+    let mut m = machine();
+    enter(&mut m, "list x");
+    assert!(!m.is_editing());
+    assert!(rows(&m)[rows(&m).len() - 2].starts_with("Syntax error"));
+    enter(&mut m, "list 6:1");
+    assert!(rows(&m)[rows(&m).len() - 2].starts_with("Out of range"));
+    // A name that only starts with LIST is a variable.
+    enter(&mut m, "lista=3:?lista");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "3");
+    enter(&mut m, "list");
+    assert!(m.is_editing());
+}

@@ -8,6 +8,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::Host;
 use sb_core::value::{Value, new_str};
 
+use crate::editor::Editor;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::storage::Storage;
@@ -70,6 +71,8 @@ pub struct Settings {
     pub ctrl_c_stops: bool,
     /// SAVE turns full-width letters and digits into ASCII.
     pub half_width_on_save: bool,
+    /// The editor wraps long lines instead of scrolling sideways.
+    pub editor_wrap: bool,
 }
 
 impl Default for Settings {
@@ -78,6 +81,7 @@ impl Default for Settings {
             upper_case_letters: true,
             ctrl_c_stops: false,
             half_width_on_save: true,
+            editor_wrap: false,
         }
     }
 }
@@ -121,6 +125,8 @@ pub struct Runtime {
     requests: Vec<Request>,
     /// Source of each program slot.
     pub slots: Vec<String>,
+    /// The file each slot was last loaded from or saved to; empty if none.
+    pub slot_names: Vec<String>,
     pub settings: Settings,
     pub storage: Storage,
     /// What RESULT() returns: 1 if the last file command succeeded, else 0.
@@ -180,6 +186,7 @@ impl Runtime {
             direct: false,
             requests: Vec::new(),
             slots: vec![String::new(); SLOTS],
+            slot_names: vec![String::new(); SLOTS],
             settings: Settings::default(),
             storage: Storage::none(),
             result: 1,
@@ -226,6 +233,11 @@ impl Runtime {
         }
     }
 
+    /// Takes the next unread key, for the editor.
+    pub(crate) fn next_key(&mut self) -> Option<u16> {
+        self.keys.pop_front()
+    }
+
     /// Composes the current frame.
     pub fn render(&mut self) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
@@ -237,6 +249,21 @@ impl Runtime {
         if self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2) {
             self.text[CONSOLE].draw_cursor(&mut self.fb);
         }
+        &self.fb
+    }
+
+    /// Composes a frame showing the editor instead of the screens.
+    pub(crate) fn render_editor(&mut self, editor: &mut Editor) -> &Framebuffer {
+        self.frame = self.frame.wrapping_add(1);
+        let name = &self.slot_names[editor.slot()];
+        let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
+        editor.draw(
+            &mut self.fb,
+            &self.font,
+            name,
+            self.settings.editor_wrap,
+            blink,
+        );
         &self.fb
     }
 
@@ -268,9 +295,13 @@ impl Runtime {
             (Command::Clear, Want::Outs(0)) if args.is_empty() => self.request(Request::Clear),
             (Command::New, Want::Outs(0)) if args.len() <= 1 => {
                 self.direct_only()?;
-                match args.first() {
-                    None => self.slots.iter_mut().for_each(String::clear),
-                    slot => self.slots[slot_arg(slot)?].clear(),
+                let slots = match args.first() {
+                    None => 0..SLOTS,
+                    slot => slot_arg(slot).map(|s| s..s + 1)?,
+                };
+                for slot in slots {
+                    self.slots[slot].clear();
+                    self.slot_names[slot].clear();
                 }
                 Ok(vec![])
             }

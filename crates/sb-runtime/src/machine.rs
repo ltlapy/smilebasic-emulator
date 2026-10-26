@@ -1,15 +1,17 @@
-//! The whole computer: direct mode, the program slots, and the program
-//! running on the [`Runtime`]. Frontends feed it keys, call
+//! The whole computer: direct mode, the editor, the program slots, and the
+//! program running on the [`Runtime`]. Frontends feed it keys, call
 //! [`Machine::frame`] once per frame and show [`Machine::render`].
 
 use std::collections::HashMap;
 
+use sb_core::error::{Error, ErrorKind};
 use sb_core::host::Host;
 use sb_core::value::Value;
 use sb_core::vm::{Status, Vm};
 
+use crate::editor::Editor;
 use crate::framebuffer::Framebuffer;
-use crate::runtime::{Request, Runtime};
+use crate::runtime::{Request, Runtime, SLOTS};
 use crate::text::CONSOLE;
 
 /// UNVERIFIED: instructions per frame for code that does not VSYNC;
@@ -28,6 +30,58 @@ pub struct Machine {
     /// Globals of the last program or direct-mode line, kept for the next
     /// direct-mode line.
     vars: HashMap<String, Value>,
+    pub editor: Editor,
+    /// Whether the editor is shown instead of direct mode.
+    editing: bool,
+    /// The slot whose program is running, if one is.
+    running_slot: Option<usize>,
+    /// Where the last program error happened, for LIST ERR: the slot and
+    /// line.
+    last_error: Option<(usize, u32)>,
+}
+
+/// What a direct-mode LIST asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum List {
+    /// A slot (the edited one when `None`) and a 1-based line.
+    At(Option<usize>, Option<usize>),
+    Error,
+}
+
+/// Reads LIST, LIST line, LIST slot:line and LIST ERR. Returns `None` for
+/// lines that are not a LIST; LIST is handled here because its `:` is not
+/// the statement separator.
+// UNVERIFIED: only number literals are accepted, not expressions.
+fn parse_list(line: &str) -> Option<Result<List, Error>> {
+    let line = line.trim();
+    let head = line.get(..4)?;
+    let rest = &line[4..];
+    if !head.eq_ignore_ascii_case("LIST")
+        || rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+    {
+        return None;
+    }
+    let rest = rest.trim();
+    let number = |s: &str| s.trim().parse::<usize>().ok();
+    let list = if rest.is_empty() {
+        Some(List::At(None, None))
+    } else if rest.eq_ignore_ascii_case("ERR") {
+        Some(List::Error)
+    } else if let Some((slot, line)) = rest.split_once(':') {
+        number(slot)
+            .zip(number(line))
+            .map(|(s, l)| List::At(Some(s), Some(l)))
+    } else {
+        number(rest).map(|l| List::At(None, Some(l)))
+    };
+    Some(match list {
+        Some(List::At(Some(slot), _)) if slot >= SLOTS => Err(Error::with_detail(
+            ErrorKind::OutOfRange,
+            format!("slot {slot}"),
+        )),
+        Some(list) => Ok(list),
+        None => Err(Error::with_detail(ErrorKind::SyntaxError, "LIST")),
+    })
 }
 
 /// ASCII to full-width forms, as SmileBASIC writes its own messages.
@@ -43,11 +97,16 @@ fn full_width(text: &str) -> Vec<u16> {
 
 impl Machine {
     pub fn new(rt: Runtime) -> Machine {
+        let (w, h) = rt.text[CONSOLE].size();
         Machine {
             rt,
             vm: None,
             wait: 0,
             vars: HashMap::new(),
+            editor: Editor::new(w * 8, h * 8),
+            editing: false,
+            running_slot: None,
+            last_error: None,
         }
     }
 
@@ -78,10 +137,47 @@ impl Machine {
         self.vm.is_some()
     }
 
+    pub fn is_editing(&self) -> bool {
+        self.editing
+    }
+
+    /// Switches between direct mode and the editor, as F4 does. Entering
+    /// the editor shows the last error's line once, like LIST ERR.
+    pub fn toggle_editor(&mut self) {
+        if self.vm.is_some() {
+            return;
+        }
+        if self.editing {
+            self.close_editor();
+        } else {
+            self.list_error();
+        }
+    }
+
+    /// Opens the editor at the last error, or where it was left.
+    fn list_error(&mut self) {
+        match self.last_error.take() {
+            Some((slot, line)) => self.open_editor(slot, Some(line as usize)),
+            None => self.open_editor(self.editor.slot(), None),
+        }
+    }
+
+    fn open_editor(&mut self, slot: usize, line: Option<usize>) {
+        self.editor.open(slot, &self.rt.slots[slot], line);
+        self.editing = true;
+    }
+
+    fn close_editor(&mut self) {
+        if let Some(source) = self.editor.close() {
+            self.rt.slots[self.editor.slot()] = source;
+        }
+        self.editing = false;
+    }
+
     /// Starts the program in a slot, as RUN does.
     pub fn run_slot(&mut self, slot: usize) {
         self.vars.clear();
-        self.start(&self.rt.slots[slot].clone(), false);
+        self.start(&self.rt.slots[slot].clone(), Some(slot));
     }
 
     /// Stops the running program or direct-mode line, as the Break key
@@ -113,8 +209,15 @@ impl Machine {
         }
     }
 
-    /// Runs one frame: the program, or direct-mode line editing.
+    /// Runs one frame: the program, the editor, or direct-mode line
+    /// editing.
     pub fn frame(&mut self) {
+        if self.editing {
+            while let Some(key) = self.rt.next_key() {
+                self.editor.key(key);
+            }
+            return;
+        }
         let Some(vm) = &mut self.vm else {
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));
@@ -134,7 +237,11 @@ impl Machine {
     }
 
     pub fn render(&mut self) -> &Framebuffer {
-        self.rt.render()
+        if self.editing {
+            self.rt.render_editor(&mut self.editor)
+        } else {
+            self.rt.render()
+        }
     }
 
     /// Runs a line typed in direct mode.
@@ -143,18 +250,36 @@ impl Machine {
             self.rt.input_start().expect("console input");
             return;
         }
-        self.start(line, true);
+        match parse_list(line) {
+            Some(Ok(list)) => {
+                match list {
+                    List::At(slot, line) => {
+                        self.open_editor(slot.unwrap_or(self.editor.slot()), line)
+                    }
+                    List::Error => self.list_error(),
+                }
+                self.rt.input_start().expect("console input");
+            }
+            Some(Err(e)) => {
+                self.report(&e.at(1));
+                self.ready();
+            }
+            None => self.start(line, None),
+        }
     }
 
-    fn start(&mut self, source: &str, direct: bool) {
+    /// Starts a program from `slot`, or a direct-mode line.
+    fn start(&mut self, source: &str, slot: Option<usize>) {
         self.rt.cancel_input();
-        self.rt.direct = direct;
+        self.rt.direct = slot.is_none();
+        self.running_slot = slot;
         match sb_core::compile(source, &self.rt) {
             Ok(program) => {
                 self.vm = Some(Vm::with_globals(program, &self.vars));
                 self.wait = 0;
             }
             Err(e) => {
+                self.last_error = slot.map(|slot| (slot, e.line)).or(self.last_error);
                 self.report(&e);
                 self.ready();
             }
@@ -162,12 +287,16 @@ impl Machine {
     }
 
     /// The program or line ended, by itself or with an error.
-    fn finish(&mut self, error: Option<sb_core::error::Error>) {
+    fn finish(&mut self, error: Option<Error>) {
         let vm = self.vm.take().expect("finish follows a run");
         self.vars = vm.globals().collect();
         if let Some(e) = error {
+            if let Some(slot) = self.running_slot {
+                self.last_error = Some((slot, e.line));
+            }
             self.report(&e);
         }
+        self.running_slot = None;
         let mut run = None;
         for request in self.rt.take_requests() {
             match request {
@@ -188,7 +317,7 @@ impl Machine {
         self.rt.input_start().expect("console input");
     }
 
-    fn report(&mut self, error: &sb_core::error::Error) {
+    fn report(&mut self, error: &Error) {
         let text: Vec<u16> = error.to_string().encode_utf16().collect();
         self.print_line(&text);
     }

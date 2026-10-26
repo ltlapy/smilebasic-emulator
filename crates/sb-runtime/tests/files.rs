@@ -80,6 +80,10 @@ fn save_load_and_list() {
 
     enter(&mut m, "load \"game.prg\",2:run 2");
     assert_eq!(tail(&m, 2), ["HI", "OK"]);
+    // The editor's status line names the file each slot came from.
+    assert_eq!(m.rt.slot_names[1..3], ["GAME.PRG", "GAME.PRG"]);
+    enter(&mut m, "new 2");
+    assert_eq!(m.rt.slot_names[2], "");
     enter(&mut m, "files");
     assert_eq!(
         tail(&m, 4),
