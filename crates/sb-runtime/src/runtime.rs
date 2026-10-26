@@ -33,10 +33,13 @@ pub(crate) enum Command {
     Gcopy,
     Gfill,
     Gline,
+    Gload,
     Gpaint,
     Gpget,
     Gpset,
     Gputchr,
+    Gsample,
+    Gsave,
     Gtarget,
     Gtri,
     Inkey,
@@ -65,10 +68,13 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GCOPY", Command::Gcopy),
     ("GFILL", Command::Gfill),
     ("GLINE", Command::Gline),
+    ("GLOAD", Command::Gload),
     ("GPAINT", Command::Gpaint),
     ("GPGET", Command::Gpget),
     ("GPSET", Command::Gpset),
     ("GPUTCHR", Command::Gputchr),
+    ("GSAMPLE", Command::Gsample),
+    ("GSAVE", Command::Gsave),
     ("GTARGET", Command::Gtarget),
     ("GTRI", Command::Gtri),
     ("INKEY$", Command::Inkey),
@@ -403,10 +409,13 @@ impl Runtime {
                 | Command::Gcopy
                 | Command::Gfill
                 | Command::Gline
+                | Command::Gload
                 | Command::Gpaint
                 | Command::Gpget
                 | Command::Gpset
                 | Command::Gputchr
+                | Command::Gsample
+                | Command::Gsave
                 | Command::Gtarget
                 | Command::Gtri,
                 _,

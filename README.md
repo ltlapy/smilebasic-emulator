@@ -48,7 +48,8 @@ Caps Lock is on. Pause/Break stops the running program.
 
 Graphic pages GRP0-GRP5 can be drawn on with `GPSET`, `GLINE`, `GBOX`,
 `GFILL`, `GCIRCLE`, `GTRI`, `GPAINT`, `GCOPY`, `GPUTCHR` and `GCLS`, with
-`GTARGET`, `GCOLOR`, `GCLIP` and `GPGET`. Until sprites exist, GRP0 is shown
+`GTARGET`, `GCOLOR`, `GCLIP`, `GPGET` and `GSAMPLE`; `GSAVE` and `GLOAD` copy
+them to and from arrays. Until sprites exist, GRP0 is shown
 under the text screens.
 
 F4 switches between direct mode and the program editor. The first F4 after

@@ -109,3 +109,33 @@ fn putchr_draws_glyphs() {
         .count();
     assert!(red > 8 && red % 4 == 0, "scaled 2x2: {red}");
 }
+
+#[test]
+fn gsave_and_gload() {
+    let (m, out) = run("GFILL 0,0,1,0,#C_RED:GPSET 0,1,#C_BLUE\n\
+         DIM W[0]\n\
+         GSAVE 0,0,0,2,2,W\n\
+         ?LEN(W);\" \";HEX$(W[0]);\" \";HEX$(W[2])\n\
+         GLOAD 10,10,2,2,W,0\n\
+         GLOAD 20,20,2,2,W,&HFF00FFFF,0\n\
+         DIM I[4]:I[0]=1:I[3]=1\n\
+         DIM P[2]:P[0]=0:P[1]=#C_WHITE\n\
+         GLOAD 30,30,2,2,I,P,1\n\
+         GSAMPLE 3,1:?GSAMPLE(3);GSAMPLE(0)");
+    assert_eq!(out, "10");
+    let g = &m.rt.grp;
+    assert_eq!(g.pixel(0, 10, 11), 0xFF00_00FF);
+    assert_eq!(g.pixel(0, 21, 20), 0xFF00_0000, "red tinted by cyan");
+    assert_eq!((g.pixel(0, 30, 30), g.pixel(0, 31, 30)), (0xFFFF_FFFF, 0));
+    assert_eq!(g.pixel(0, 31, 31), 0xFFFF_FFFF);
+}
+
+#[test]
+fn gsave_needs_room_in_multi_dimensional_arrays() {
+    let (_, out) = run("DIM W[1,1]:GSAVE 0,0,2,2,W");
+    assert!(out.starts_with("Subscript out of range"), "{out}");
+    let (_, out) = run("DIM W[0]:GSAVE 2047,0,2,1,W");
+    assert!(out.starts_with("Out of range"), "{out}");
+    let (_, out) = run("DIM W[3]:GLOAD 0,0,2,2,W,0");
+    assert!(out.starts_with("Subscript out of range"), "{out}");
+}

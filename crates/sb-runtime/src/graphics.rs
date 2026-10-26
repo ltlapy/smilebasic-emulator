@@ -119,6 +119,9 @@ pub struct Graphics {
     /// GCLIP.
     /// One rectangle shared by all pages, as on hardware.
     pub clip: Clip,
+    /// GSAMPLE of each page: 0 for border, 1 for repeat. Kept for sprites
+    /// and text screens, which read pages.
+    pub sample: [i32; PAGES],
 }
 
 impl Default for Graphics {
@@ -128,6 +131,7 @@ impl Default for Graphics {
             target: 0,
             color: 0xFFFF_FFFF,
             clip: Clip::PAGE,
+            sample: [0; PAGES],
         }
     }
 }
@@ -395,6 +399,32 @@ impl Graphics {
                     }
                 }
             }
+        }
+    }
+
+    /// GSAVE: a rectangle of a page, row by row.
+    pub fn save_rect(&self, page: usize, (x, y, w, h): (i32, i32, i32, i32)) -> Vec<u32> {
+        let mut pixels = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
+        for py in y..y + h {
+            for px in x..x + w {
+                pixels.push(self.pixel(page, px, py));
+            }
+        }
+        pixels
+    }
+
+    /// GLOAD: draws row-by-row pixels into a rectangle of the target page.
+    pub fn load_rect(
+        &mut self,
+        (x, y, w, _h): (i32, i32, i32, i32),
+        pixels: &[u32],
+        tint: Option<u32>,
+        blend: Blend,
+    ) {
+        for (i, &p) in pixels.iter().enumerate() {
+            let (px, py) = (x + i as i32 % w, y + i as i32 / w);
+            let p = tint.map_or(p, |t| multiply(p, t));
+            self.plot(px, py, p, blend);
         }
     }
 

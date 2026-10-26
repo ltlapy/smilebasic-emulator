@@ -1,12 +1,13 @@
 //! Graphic commands: GTARGET, GCOLOR, GCLIP, GCLS, GPGET, GPSET, GLINE,
-//! GBOX, GFILL, GCIRCLE, GTRI, GPAINT, GCOPY and GPUTCHR.
+//! GBOX, GFILL, GCIRCLE, GTRI, GPAINT, GCOPY, GPUTCHR, GSAVE, GLOAD and
+//! GSAMPLE.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
-use sb_core::value::Value;
+use sb_core::value::{ArrayData, ArrayRef, Value};
 
 use crate::font::FontSize;
-use crate::graphics::{Blend, Clip, PAGES};
+use crate::graphics::{Blend, Clip, GRP_SIZE, PAGES};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
 
 fn int(v: &Value) -> Result<i32> {
@@ -35,7 +36,52 @@ fn blend_arg(v: &Value) -> Result<Blend> {
     Blend::from_int(n).ok_or_else(|| out_of_range("drawing method", n))
 }
 
+fn numeric_array(v: &Value) -> Result<ArrayRef> {
+    match v {
+        Value::Array(a) if !matches!(a.borrow().data, ArrayData::Str(_)) => Ok(a.clone()),
+        _ => Err(ErrorKind::TypeMismatch.into()),
+    }
+}
+
+/// The first `n` elements of a numeric array as color codes.
+fn array_colors(array: &ArrayRef, n: usize) -> Result<Vec<u32>> {
+    let array = array.borrow();
+    if array.len() < n {
+        return Err(Error::with_detail(
+            ErrorKind::SubscriptOutOfRange,
+            format!("{n} elements needed"),
+        ));
+    }
+    Ok(match &array.data {
+        ArrayData::Int(v) => v[..n].iter().map(|&c| c as u32).collect(),
+        ArrayData::Real(v) => v[..n].iter().map(|&c| c as i64 as u32).collect(),
+        ArrayData::Str(_) => unreachable!("checked by numeric_array"),
+    })
+}
+
+/// A rectangle given as X,Y,width,height that must lie on the page.
+// UNVERIFIED: rectangles reaching off the page are errors, as for SAVEG.
+fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
+    let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
+    let (x, y, w, h) = (v[0], v[1], v[2], v[3]);
+    let fits = |start: i32, len: i32| start >= 0 && len >= 1 && start + len <= GRP_SIZE;
+    if fits(x, w) && fits(y, h) {
+        Ok((x, y, w, h))
+    } else {
+        Err(Error::with_detail(
+            ErrorKind::OutOfRange,
+            format!("{x},{y},{w},{h}"),
+        ))
+    }
+}
+
 impl Runtime {
+    /// The clipping rectangle as X,Y,width,height.
+    fn clip_rect(&self) -> (i32, i32, i32, i32) {
+        let c = self.grp.clip;
+        (c.x0, c.y0, c.x1 - c.x0 + 1, c.y1 - c.y0 + 1)
+    }
+
     /// The optional color and drawing method that end most commands.
     fn color_and_blend(&self, rest: &[Value]) -> Result<(u32, Blend)> {
         let color = match rest.first().map(opt_int).transpose()?.flatten() {
@@ -185,6 +231,85 @@ impl Runtime {
                 let font = &self.font;
                 self.grp
                     .put_chars(font, (v[0], v[1]), &text, size, scale, color, blend);
+                Ok(vec![])
+            }
+            (Command::Gsave, Want::Outs(0), 1 | 2 | 5 | 6) => {
+                let (page, rest) = match args.len() {
+                    2 | 6 => (page_arg(&args[0])?, &args[1..]),
+                    _ => (self.grp.target, args),
+                };
+                let rect = match rest.len() {
+                    5 => rect_args(rest)?,
+                    _ => self.clip_rect(),
+                };
+                let array = numeric_array(rest.last().expect("an array"))?;
+                let pixels = self.grp.save_rect(page, rect);
+                let mut array = array.borrow_mut();
+                if array.len() < pixels.len() {
+                    // Only one-dimensional arrays grow to fit.
+                    if array.dims.len() != 1 {
+                        return Err(ErrorKind::SubscriptOutOfRange.into());
+                    }
+                    array.dims[0] = pixels.len();
+                    match &mut array.data {
+                        ArrayData::Int(v) => v.resize(pixels.len(), 0),
+                        ArrayData::Real(v) => v.resize(pixels.len(), 0.0),
+                        ArrayData::Str(_) => unreachable!("checked by numeric_array"),
+                    }
+                }
+                match &mut array.data {
+                    ArrayData::Int(v) => {
+                        for (d, p) in v.iter_mut().zip(pixels) {
+                            *d = p as i32;
+                        }
+                    }
+                    ArrayData::Real(v) => {
+                        for (d, p) in v.iter_mut().zip(pixels) {
+                            *d = f64::from(p as i32);
+                        }
+                    }
+                    ArrayData::Str(_) => unreachable!("checked by numeric_array"),
+                }
+                Ok(vec![])
+            }
+            (Command::Gload, Want::Outs(0), 2..=4 | 6..=8) => {
+                let (rect, rest) = match args.len() {
+                    6..=8 => (rect_args(args)?, &args[4..]),
+                    _ => (self.clip_rect(), args),
+                };
+                let palette = match rest {
+                    [_, Value::Array(p), ..] => Some(numeric_array(&Value::Array(p.clone()))?),
+                    _ => None,
+                };
+                let (blend, tint) = match (rest.len(), palette.is_some()) {
+                    (2, false) | (3, true) => (blend_arg(rest.last().unwrap())?, None),
+                    (3, false) => (blend_arg(&rest[2])?, Some(color_arg(&rest[1])?)),
+                    (4, true) => (blend_arg(&rest[3])?, Some(color_arg(&rest[2])?)),
+                    _ => return Err(illegal()),
+                };
+                let n = (rect.2 * rect.3) as usize;
+                let mut pixels = array_colors(&numeric_array(&rest[0])?, n)?;
+                if let Some(palette) = palette {
+                    let len = palette.borrow().len();
+                    let colors = array_colors(&palette, len)?;
+                    for p in &mut pixels {
+                        *p = *colors
+                            .get(*p as usize)
+                            .ok_or_else(|| out_of_range("palette index", *p as i32))?;
+                    }
+                }
+                self.grp.load_rect(rect, &pixels, tint, blend);
+                Ok(vec![])
+            }
+            (Command::Gsample, Want::Value, 1) => {
+                Ok(vec![Value::Int(self.grp.sample[page_arg(&args[0])?])])
+            }
+            (Command::Gsample, Want::Outs(0), 2) => {
+                let page = page_arg(&args[0])?;
+                self.grp.sample[page] = match int(&args[1])? {
+                    n @ (0 | 1) => n,
+                    n => return Err(out_of_range("sampling type", n)),
+                };
                 Ok(vec![])
             }
             _ => Err(illegal()),
