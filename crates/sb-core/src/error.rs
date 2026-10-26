@@ -24,6 +24,7 @@ pub enum ErrorKind {
     IllegalStatement,
     IllegalProjectName,
     UndefinedProjectName,
+    IllegalAnimationData,
 }
 
 impl ErrorKind {
@@ -48,6 +49,7 @@ impl ErrorKind {
             ErrorKind::IllegalStatement => "Illegal statement",
             ErrorKind::IllegalProjectName => "Illegal project name",
             ErrorKind::UndefinedProjectName => "Undefined project name",
+            ErrorKind::IllegalAnimationData => "Illegal animation data",
         }
     }
 }

@@ -135,13 +135,20 @@ impl Anim {
                 format!("loop count {loops}"),
             ));
         }
-        let keys = data
+        let keys: Vec<Key> = data
             .chunks_exact(per)
             .map(|k| Key {
                 time: k[0] as i32,
                 values: [k[1], k.get(2).copied().unwrap_or(0.0)],
             })
             .collect();
+        // Checked on hardware: a key of time 0 is refused.
+        if let Some(i) = keys.iter().position(|k| k.time == 0) {
+            return Err(Error::with_detail(
+                ErrorKind::IllegalAnimationData,
+                format!("key {} lasts 0 frames", i + 1),
+            ));
+        }
         Ok(Anim { mode, keys, loops })
     }
 }
@@ -245,40 +252,27 @@ impl Track {
 
     /// Plays one frame; false once the animation has ended.
     // UNVERIFIED: a key of time T shows its value (or the slide's steps)
-    // on T frames, starting on the frame after SPANIM; time 0 sets the
-    // value and goes on to the next key in the same frame; looping slides
+    // on T frames, starting on the frame after SPANIM; looping slides
     // from where the last key ended.
     pub fn step(&mut self, on: &mut impl Animated) -> bool {
         let target = self.anim.mode.target;
-        self.slid = false;
-        // Keys of time 0 take no frame; a whole loop of them takes one.
-        for _ in 0..=self.anim.keys.len() {
-            let time = self.anim.keys[self.key].time;
-            let frames = time.unsigned_abs();
-            let to = self.key_value();
-            if frames == 0 {
-                on.set_value(target, to);
-                if !self.next_key(to) {
-                    return false;
-                }
-                continue;
-            }
-            self.elapsed += 1;
-            self.slid = time < 0;
-            let value = if time < 0 {
-                mix(
-                    target,
-                    self.from,
-                    to,
-                    f64::from(self.elapsed) / f64::from(frames),
-                )
-            } else {
-                to
-            };
-            on.set_value(target, value);
-            return self.elapsed < frames || self.next_key(to);
-        }
-        true
+        let time = self.anim.keys[self.key].time;
+        let frames = time.unsigned_abs();
+        let to = self.key_value();
+        self.elapsed += 1;
+        self.slid = time < 0;
+        let value = if time < 0 {
+            mix(
+                target,
+                self.from,
+                to,
+                f64::from(self.elapsed) / f64::from(frames),
+            )
+        } else {
+            to
+        };
+        on.set_value(target, value);
+        self.elapsed < frames || self.next_key(to)
     }
 }
 
@@ -331,6 +325,8 @@ mod tests {
         assert!(Anim::new(mode(Target::Z), &[1.0; 66], 1).is_err());
         assert!(Anim::new(mode(Target::Z), &[1.0; 64], 1).is_ok());
         assert!(Anim::new(mode(Target::Z), &[1.0, 1.0], -1).is_err());
+        let zero = Anim::new(mode(Target::Z), &[1.0, 1.0, 0.0, 2.0], 1).unwrap_err();
+        assert_eq!(zero.kind, ErrorKind::IllegalAnimationData);
     }
 
     #[test]
@@ -356,20 +352,21 @@ mod tests {
                 relative: true,
                 ..mode(Target::Xy)
             },
-            &[-2.0, 10.0, 0.0, 0.0, 0.0, 0.0],
+            &[-2.0, 10.0, 0.0, 1.0, 0.0, 0.0],
             2,
         )
         .unwrap();
         let mut s = sprite();
         s.pos = (100.0, 50.0);
         let mut t = Track::new(anim, &WithDefs::new(&mut s, &[]));
-        // The time-0 key snaps back on the frame after the slide, and the
-        // next loop's slide goes on in that same frame.
+        // The second key snaps back for a frame, and the next loop slides
+        // from there.
         assert_eq!(
-            play(&mut t, &mut s, 5),
+            play(&mut t, &mut s, 6),
             [
                 (105.0, 50.0, true),
                 (110.0, 50.0, true),
+                (100.0, 50.0, true),
                 (105.0, 50.0, true),
                 (110.0, 50.0, true),
                 (100.0, 50.0, false),
