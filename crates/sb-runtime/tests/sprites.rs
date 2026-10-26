@@ -92,6 +92,15 @@ fn errors() {
         ("SPSET 0,0:SPOFS 0,0,0,5000", "Out of range"),
         ("SPPAGE 6", "Out of range"),
         ("DIM D[6]:SPDEF D", "Illegal function call"),
+        (
+            "SPSET 0,0:SPSET 1,0:SPLINK 1,0:SPLINK 0,1",
+            "Illegal function call",
+        ),
+        ("SPSET 0,0:SPLINK 0,0", "Illegal function call"),
+        ("SPSET 0,0:SPANIM 0,\"XY\",1,2", "Illegal function call"),
+        ("SPSET 0,0:SPANIM 0,\"Q\",1,2", "Out of range"),
+        ("SPSET 0,0:SPANIM 0,5", "Illegal function call"),
+        ("SPSET 0,0:SPANIM 0,\"Z\",\"@NOPE\"", "Undefined label"),
     ] {
         let (_, out) = run(source);
         assert!(out.starts_with(error), "{source}: {out}");
@@ -194,4 +203,39 @@ fn sliding_sprites_collide_with_their_motion() {
          SPHITINFO OUT T,X1,Y1,VX1,VY1,X2,Y2,VX2,VY2:?T;\" \";X1;\" \";VX1;\" \";\n\
          SPCOLVEC 0,0,0:?SPHITSP(0,1)");
     assert_eq!(out, "1 0.4 14 10 0");
+}
+
+#[test]
+fn linked_sprites_follow_their_parent() {
+    let (_, out) = run("FOR I=0 TO 3:SPSET I,0:NEXT\n\
+         SPOFS 0,100,50,10:SPROT 0,90:SPSCALE 0,2,2\n\
+         SPOFS 1,10,0,-2:SPLINK 1,0\n\
+         SPOFS 2,10,0:SPLINK 2,0,6\n\
+         SPOFS 3,5,5:SPLINK 3,1,1\n\
+         SPOFS 1,1 OUT X,Y,Z:?X;\",\";Y;\",\";Z;\" \";\n\
+         SPOFS 2,1 OUT X,Y:?ROUND(X);\",\";ROUND(Y);\" \";\n\
+         SPOFS 3,1 OUT X,Y:SPOFS 3 OUT RX,RY:?X;\",\";Y;\",\";RX;\" \";\n\
+         ?SPLINK(1);SPLINK(0,1);SPLINK(1,2);SPLINK(3,3);SPLINK(2,2)");
+    assert_eq!(out, "110,50,8 100,70 115,55,5 0121-1");
+}
+
+#[test]
+fn clearing_a_parent_clears_or_frees_its_children() {
+    let (_, out) = run("SPSET 0,0:SPSET 1,0:SPSET 2,0:SPLINK 1,0,1:SPLINK 2,0\n\
+         SPCLR 0:?SPUSED(1);SPLINK(2);\" \";:VSYNC 1:?SPUSED(1);SPUSED(2)");
+    assert_eq!(out, "1-1 01");
+}
+
+#[test]
+fn hidden_parents_hide_children_that_follow_them() {
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    m.set_slot(
+        0,
+        "SPSET 0,0:SPSET 1,0:SPSET 2,0:SPLINK 1,0,1:SPLINK 2,0:SPHIDE 0".to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    let shown: Vec<usize> = m.rt.sprites.draw_order().iter().map(|&(i, _)| i).collect();
+    assert_eq!(shown, [4095, 2]);
 }

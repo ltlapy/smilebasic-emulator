@@ -27,6 +27,16 @@ pub mod attr {
     pub const ADD: i32 = 0b1_0000;
 }
 
+/// SPLINK flags: what a child takes from its parent besides position and Z.
+pub mod link {
+    /// Shown only while the parent is, and cleared a frame after it.
+    pub const SHOWN: i32 = 1;
+    pub const ROTATION: i32 = 2;
+    pub const SCALE: i32 = 4;
+    pub const COLOR: i32 = 8;
+    pub const LAYER: i32 = 16;
+}
+
 /// An SPDEF template: image rectangle, home point and attributes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SpriteDef {
@@ -156,6 +166,38 @@ pub struct Sprite {
     pub col_vel: Option<(f64, f64)>,
     /// How far an XY slide moved the sprite in the last frame.
     pub anim_move: (f64, f64),
+    /// SPLINK's parent; position and Z are then relative to it.
+    pub parent: Option<usize>,
+    pub link_flags: i32,
+    /// Cleared on the next frame, as its parent was.
+    pub clear_pending: bool,
+}
+
+/// Where and how a sprite shows once its links are followed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pose {
+    pub pos: (f64, f64),
+    pub z: i32,
+    pub rot: f64,
+    pub scale: (f64, f64),
+    pub color: u32,
+    pub shown: bool,
+    pub layer: i32,
+}
+
+impl Pose {
+    /// A sprite's own settings, as if it had no parent.
+    pub fn of(s: &Sprite) -> Pose {
+        Pose {
+            pos: s.pos,
+            z: s.z,
+            rot: s.rot,
+            scale: s.scale,
+            color: s.color,
+            shown: s.shown,
+            layer: s.layer,
+        }
+    }
 }
 
 impl Sprite {
@@ -183,6 +225,9 @@ impl Sprite {
             col: None,
             col_vel: None,
             anim_move: (0.0, 0.0),
+            parent: None,
+            link_flags: 0,
+            clear_pending: false,
         }
     }
 
@@ -266,9 +311,18 @@ impl Sprites {
         s
     }
 
-    /// SPCLR of one sprite.
+    /// SPCLR of one sprite. Children that follow its display go a frame
+    /// later; the others are unlinked.
+    // UNVERIFIED: unlinked children keep their relative position as their
+    // own.
     pub fn clear(&mut self, id: usize) {
         self.list[id] = Sprite::unused();
+        for s in &mut self.list {
+            if s.parent == Some(id) {
+                s.parent = None;
+                s.clear_pending |= s.link_flags & link::SHOWN != 0;
+            }
+        }
     }
 
     /// SPCLR without arguments: every sprite but `#GSPRITE`.
@@ -276,11 +330,72 @@ impl Sprites {
         for s in &mut self.list[..GSPRITE] {
             *s = Sprite::unused();
         }
+        let g = &mut self.list[GSPRITE];
+        if g.parent.take().is_some() {
+            g.clear_pending |= g.link_flags & link::SHOWN != 0;
+        }
+    }
+
+    /// Whether `ancestor` is `id` or one of its parents.
+    pub fn descends_from(&self, id: usize, ancestor: usize) -> bool {
+        let mut at = Some(id);
+        while let Some(i) = at {
+            if i == ancestor {
+                return true;
+            }
+            at = self.list[i].parent;
+        }
+        false
+    }
+
+    /// The children of `id`, in id order.
+    // UNVERIFIED: SPLINK(n,1) and SPLINK(n,2) go through children by id.
+    pub fn children(&self, id: usize) -> impl Iterator<Item = usize> + '_ {
+        (0..SPRITES).filter(move |&i| self.list[i].used && self.list[i].parent == Some(id))
+    }
+
+    /// A sprite's pose with its parents' applied.
+    // UNVERIFIED: an inherited rotation or scale also turns or scales the
+    // child's offset from its parent.
+    pub fn pose(&self, id: usize) -> Pose {
+        let s = &self.list[id];
+        let own = Pose::of(s);
+        let Some(parent) = s.parent else { return own };
+        let p = self.pose(parent);
+        let f = s.link_flags;
+        let mut pose = own;
+        let (mut dx, mut dy) = s.pos;
+        if f & link::SCALE != 0 {
+            (dx, dy) = (dx * p.scale.0, dy * p.scale.1);
+            pose.scale = (own.scale.0 * p.scale.0, own.scale.1 * p.scale.1);
+        }
+        if f & link::ROTATION != 0 {
+            let (sin, cos) = p.rot.to_radians().sin_cos();
+            (dx, dy) = (dx * cos - dy * sin, dx * sin + dy * cos);
+            pose.rot += p.rot;
+        }
+        pose.pos = (p.pos.0 + dx, p.pos.1 + dy);
+        pose.z = p.z + own.z;
+        if f & link::SHOWN != 0 {
+            pose.shown &= p.shown;
+        }
+        if f & link::COLOR != 0 {
+            pose.color = multiply(own.color, p.color);
+        }
+        if f & link::LAYER != 0 {
+            pose.layer = p.layer;
+        }
+        pose
     }
 
     /// Plays one frame of every sprite's animations. Sprites whose
     /// animation asks for it are cleared when it ends.
     pub fn animate(&mut self) {
+        for id in 0..SPRITES {
+            if self.list[id].clear_pending {
+                self.clear(id);
+            }
+        }
         for id in 0..SPRITES {
             let s = &mut self.list[id];
             if !s.used || s.anim_stopped {
@@ -315,10 +430,11 @@ impl Sprites {
     pub fn body(&self, id: usize) -> Option<Body> {
         let s = &self.list[id];
         let c = s.col.as_ref().filter(|_| s.used)?;
+        let pose = self.pose(id);
         Some(Body::sprite(
             c,
-            s.pos,
-            s.scale,
+            pose.pos,
+            pose.scale,
             s.col_vel.unwrap_or(s.anim_move),
         ))
     }
@@ -339,14 +455,16 @@ impl Sprites {
         None
     }
 
-    /// Ids of shown sprites, back to front.
+    /// Shown sprites with their poses, back to front.
     // UNVERIFIED: among equal Z, lower ids are drawn in front.
-    pub fn draw_order(&self) -> Vec<usize> {
-        let mut ids: Vec<usize> = (0..SPRITES)
-            .filter(|&i| self.list[i].used && self.list[i].shown)
+    pub fn draw_order(&self) -> Vec<(usize, Pose)> {
+        let mut shown: Vec<(usize, Pose)> = (0..SPRITES)
+            .filter(|&i| self.list[i].used)
+            .map(|i| (i, self.pose(i)))
+            .filter(|(_, pose)| pose.shown)
             .collect();
-        ids.sort_by_key(|&i| (std::cmp::Reverse(self.list[i].z), std::cmp::Reverse(i)));
-        ids
+        shown.sort_by_key(|&(i, pose)| (std::cmp::Reverse(pose.z), std::cmp::Reverse(i)));
+        shown
     }
 }
 
@@ -367,9 +485,14 @@ fn sample(grp: &Graphics, page: i32, x: i32, y: i32) -> u32 {
     }
 }
 
-/// Draws one sprite over the frame.
+/// Draws one sprite over the frame, as if it had no parent.
 pub fn draw(s: &Sprite, grp: &Graphics, fb: &mut Framebuffer) {
-    if s.w <= 0 || s.h <= 0 || s.scale.0 == 0.0 || s.scale.1 == 0.0 {
+    draw_posed(s, &Pose::of(s), grp, fb);
+}
+
+/// Draws one sprite over the frame in the given pose.
+pub fn draw_posed(s: &Sprite, pose: &Pose, grp: &Graphics, fb: &mut Framebuffer) {
+    if s.w <= 0 || s.h <= 0 || pose.scale.0 == 0.0 || pose.scale.1 == 0.0 {
         return;
     }
     // The shown rectangle swaps sides for quarter turns.
@@ -379,12 +502,15 @@ pub fn draw(s: &Sprite, grp: &Graphics, fb: &mut Framebuffer) {
     } else {
         (s.w, s.h)
     };
-    let (sin, cos) = s.rot.to_radians().sin_cos();
-    let (sx, sy) = s.scale;
+    let (sin, cos) = pose.rot.to_radians().sin_cos();
+    let (sx, sy) = pose.scale;
     // Screen position of a point of the shown rectangle.
     let to_screen = |lx: f64, ly: f64| {
         let (dx, dy) = ((lx - s.home.0) * sx, (ly - s.home.1) * sy);
-        (s.pos.0 + dx * cos - dy * sin, s.pos.1 + dx * sin + dy * cos)
+        (
+            pose.pos.0 + dx * cos - dy * sin,
+            pose.pos.1 + dx * sin + dy * cos,
+        )
     };
     let corners = [
         to_screen(0.0, 0.0),
@@ -422,7 +548,10 @@ pub fn draw(s: &Sprite, grp: &Graphics, fb: &mut Framebuffer) {
     for py in y0 as u32..y1 as u32 {
         for px in x0 as u32..x1 as u32 {
             // Back from the pixel's center to the shown rectangle.
-            let (dx, dy) = (f64::from(px) + 0.5 - s.pos.0, f64::from(py) + 0.5 - s.pos.1);
+            let (dx, dy) = (
+                f64::from(px) + 0.5 - pose.pos.0,
+                f64::from(py) + 0.5 - pose.pos.1,
+            );
             let lx = (dx * cos + dy * sin) / sx + s.home.0;
             let ly = (-dx * sin + dy * cos) / sy + s.home.1;
             if lx < 0.0 || ly < 0.0 || lx >= f64::from(bw) || ly >= f64::from(bh) {
@@ -443,7 +572,7 @@ pub fn draw(s: &Sprite, grp: &Graphics, fb: &mut Framebuffer) {
                 2 => (s.w - 1 - lx, s.h - 1 - ly),
                 _ => (s.w - 1 - ly, lx),
             };
-            let src = multiply(sample(grp, s.page, s.u + ix, s.v + iy), s.color);
+            let src = multiply(sample(grp, s.page, s.u + ix, s.v + iy), pose.color);
             let a = src >> 24;
             if a == 0 {
                 continue;
@@ -583,6 +712,6 @@ mod tests {
         s.clear_all();
         assert!(!s.list[3].used);
         assert!(s.list[GSPRITE].used);
-        assert_eq!(s.draw_order(), [GSPRITE]);
+        assert_eq!(s.draw_order()[0].0, GSPRITE);
     }
 }

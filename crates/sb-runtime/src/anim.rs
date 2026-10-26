@@ -122,7 +122,7 @@ impl Anim {
         if data.is_empty() || !data.len().is_multiple_of(per) {
             return Err(Error::with_detail(
                 ErrorKind::IllegalFunctionCall,
-                format!("animation data needs {per} values per key"),
+                format!("{per} values per key"),
             ));
         }
         if data.len() / per > MAX_KEYS {

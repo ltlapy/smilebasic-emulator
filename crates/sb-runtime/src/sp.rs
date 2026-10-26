@@ -1,5 +1,6 @@
 //! Sprite commands: SPSET, SPCLR, SPSHOW, SPHIDE, SPHOME, SPOFS, SPROT,
-//! SPSCALE, SPCOLOR, SPCHR, SPPAGE, SPLAYER, SPDEF, SPVAR, SPUSED, and the
+//! SPSCALE, SPCOLOR, SPCHR, SPPAGE, SPLAYER, SPDEF, SPVAR, SPUSED, SPLINK,
+//! SPUNLINK, and the
 //! animation commands SPANIM, ANIMDEF, SPSTART, SPSTOP and SPCHK, and the
 //! collision commands SPCOL, SPCOLVEC, SPHITSP, SPHITRC and SPHITINFO.
 
@@ -187,7 +188,7 @@ impl Runtime {
                 if rest.len() > 1 {
                     return Err(Error::with_detail(
                         ErrorKind::IllegalFunctionCall,
-                        format!("animation data needs {per} values per key"),
+                        format!("{per} values per key"),
                     ));
                 }
                 let data = keys.iter().map(real).collect::<Result<Vec<_>>>()?;
@@ -354,12 +355,22 @@ impl Runtime {
                 s.z = z.unwrap_or(s.z);
                 Ok(vec![])
             }
-            // The coordinate flag matters only once SPLINK exists.
+            // With the flag set, where the sprite shows once its links are
+            // followed.
             (Command::Spofs, Want::Outs(n @ (2 | 3)), 1 | 2) => {
-                let s = self.sprite(&args[0])?;
-                let mut out = reals(&[s.pos.0, s.pos.1]);
+                let absolute = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0) != 0;
+                self.sprite(&args[0])?;
+                let id = sprite_id(&args[0])?;
+                let s = &self.sprites.list[id];
+                let (pos, z) = if absolute {
+                    let pose = self.sprites.pose(id);
+                    (pose.pos, pose.z)
+                } else {
+                    (s.pos, s.z)
+                };
+                let mut out = reals(&[pos.0, pos.1]);
                 if n == 3 {
-                    out.push(Value::Int(s.z));
+                    out.push(Value::Int(z));
                 }
                 Ok(out)
             }
@@ -478,10 +489,7 @@ impl Runtime {
             (Command::Spanim, Want::Outs(0), 2) => {
                 let n = anim_id(&args[1])?;
                 let anim = self.sprites.anim_defs[n].clone().ok_or_else(|| {
-                    Error::with_detail(
-                        ErrorKind::IllegalFunctionCall,
-                        format!("animation {n} is not defined"),
-                    )
+                    Error::with_detail(ErrorKind::IllegalFunctionCall, format!("no animation {n}"))
                 })?;
                 self.start_anim(&args[0], anim)
             }
@@ -610,6 +618,44 @@ impl Runtime {
                 } else {
                     reals(&[i.time, x1, y1, vx1, vy1, x2, y2, vx2, vy2])
                 })
+            }
+            (Command::Splink, Want::Outs(0), 2 | 3) => {
+                let (child, parent) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
+                let flags = match args.get(2).map(opt_int).transpose()?.flatten() {
+                    Some(f) if !(0..32).contains(&f) => return Err(out_of_range("link flags", f)),
+                    f => f.unwrap_or(0),
+                };
+                self.sprite(&args[1])?;
+                self.sprite(&args[0])?;
+                if self.sprites.descends_from(parent, child) {
+                    return Err(Error::with_detail(
+                        ErrorKind::IllegalFunctionCall,
+                        "link loop",
+                    ));
+                }
+                let s = &mut self.sprites.list[child];
+                (s.parent, s.link_flags) = (Some(parent), flags);
+                Ok(vec![])
+            }
+            (Command::Splink, Want::Value, 1 | 2) => {
+                let kind = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0);
+                self.sprite(&args[0])?;
+                let id = sprite_id(&args[0])?;
+                let s = &self.sprites.list[id];
+                let found = match kind {
+                    0 => s.parent,
+                    1 => self.sprites.children(id).next(),
+                    2 => s
+                        .parent
+                        .and_then(|p| self.sprites.children(p).find(|&i| i > id)),
+                    3 => return Ok(vec![Value::Int(s.link_flags)]),
+                    _ => return Err(out_of_range("link type", kind)),
+                };
+                Ok(vec![Value::Int(found.map_or(-1, |i| i as i32))])
+            }
+            (Command::Spunlink, Want::Outs(0), 1) => {
+                self.sprite(&args[0])?.parent = None;
+                Ok(vec![])
             }
             (Command::Spused, Want::Value, 1) => {
                 let id = sprite_id(&args[0])?;

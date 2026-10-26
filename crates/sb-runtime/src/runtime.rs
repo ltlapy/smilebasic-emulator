@@ -68,6 +68,7 @@ pub(crate) enum Command {
     Sphitsp,
     Sphome,
     Splayer,
+    Splink,
     Spofs,
     Sppage,
     Sprot,
@@ -76,6 +77,7 @@ pub(crate) enum Command {
     Spshow,
     Spstart,
     Spstop,
+    Spunlink,
     Spused,
     Spvar,
 }
@@ -128,6 +130,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPHITSP", Command::Sphitsp),
     ("SPHOME", Command::Sphome),
     ("SPLAYER", Command::Splayer),
+    ("SPLINK", Command::Splink),
     ("SPOFS", Command::Spofs),
     ("SPPAGE", Command::Sppage),
     ("SPROT", Command::Sprot),
@@ -136,6 +139,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPSHOW", Command::Spshow),
     ("SPSTART", Command::Spstart),
     ("SPSTOP", Command::Spstop),
+    ("SPUNLINK", Command::Spunlink),
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
 ];
@@ -378,17 +382,15 @@ impl Runtime {
         // UNVERIFIED: text screens sit at Z 0 and win ties, and are drawn
         // in id order, until TOFS and layers exist.
         let order = self.sprites.draw_order();
-        let (back, front): (Vec<usize>, Vec<usize>) = order
-            .into_iter()
-            .partition(|&i| self.sprites.list[i].z >= 0);
-        for i in back {
-            sprites::draw(&self.sprites.list[i], &self.grp, &mut self.fb);
+        let (back, front): (Vec<_>, Vec<_>) = order.into_iter().partition(|(_, pose)| pose.z >= 0);
+        for (i, pose) in back {
+            sprites::draw_posed(&self.sprites.list[i], &pose, &self.grp, &mut self.fb);
         }
         for screen in &self.text {
             screen.draw(&mut self.fb, &self.font);
         }
-        for i in front {
-            sprites::draw(&self.sprites.list[i], &self.grp, &mut self.fb);
+        for (i, pose) in front {
+            sprites::draw_posed(&self.sprites.list[i], &pose, &self.grp, &mut self.fb);
         }
         if self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2) {
             self.text[CONSOLE].draw_cursor(&mut self.fb);
@@ -548,6 +550,7 @@ impl Runtime {
                 | Command::Sphitsp
                 | Command::Sphome
                 | Command::Splayer
+                | Command::Splink
                 | Command::Spofs
                 | Command::Sppage
                 | Command::Sprot
@@ -556,6 +559,7 @@ impl Runtime {
                 | Command::Spshow
                 | Command::Spstart
                 | Command::Spstop
+                | Command::Spunlink
                 | Command::Spused
                 | Command::Spvar,
                 _,
