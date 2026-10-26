@@ -458,22 +458,22 @@ impl TextScreen {
             let glyph = if cell.code == 0 {
                 0
             } else {
-                // Where in the cell, which a fine frame splits further.
-                // UNVERIFIED: flips apply to the cell, then the quarter turn
-                // picks the font pixel, as for sprites.
-                let (mut px, mut py) = (x - f64::from(cx * cs), y - f64::from(cy * cs));
+                // Where in the cell, which a fine frame splits further. As
+                // for sprites, the character is flipped, then turned
+                // (checked on hardware): undo the turn, then the flips.
+                let (px, py) = (x - f64::from(cx * cs), y - f64::from(cy * cs));
+                let (mut px, mut py) = match cell.attr & attr::ROTATION {
+                    0 => (px, py),
+                    1 => (py, size - px),
+                    2 => (size - px, size - py),
+                    _ => (size - py, px),
+                };
                 if cell.attr & attr::REVH != 0 {
                     px = size - px;
                 }
                 if cell.attr & attr::REVV != 0 {
                     py = size - py;
                 }
-                let (px, py) = match cell.attr & attr::ROTATION {
-                    0 => (px, py),
-                    1 => (py, size - px),
-                    2 => (size - px, size - py),
-                    _ => (size - py, px),
-                };
                 let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
                 let pixel = self.glyph_pixel(font, grp, cell.code, at(px), at(py));
                 multiply(pixel, cell.color)

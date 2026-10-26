@@ -48,7 +48,7 @@ fn arithmetic_and_types() {
     assert_eq!(output("A%=3.9:?A%"), "3.9\n");
     assert_eq!(output("?\"AB\"*3+\"!\""), "ABABAB!\n");
     assert_eq!(output("?1==1, 1<0"), "1   0\n");
-    assert_eq!(error("A$=1"), (ErrorKind::TypeMismatch, 1));
+    assert_eq!(output("A$=1:B%=\"X\":?A$;B%"), "1X\n");
     assert_eq!(error("\n?1/0"), (ErrorKind::DivideByZero, 2));
 }
 
@@ -459,14 +459,18 @@ impl sb_core::host::Host for Callbacking {
         Ok(None)
     }
 
-    fn callbacks(&mut self, kind: sb_core::bytecode::Callbacks) -> Vec<(i32, Vec<u16>)> {
+    fn next_callback(
+        &mut self,
+        kind: sb_core::bytecode::Callbacks,
+        after: i32,
+    ) -> Option<(i32, Vec<u16>)> {
         let list: &[(i32, &str)] = match kind {
             sb_core::bytecode::Callbacks::Sprite => &[(5, "@A"), (7, "B")],
             sb_core::bytecode::Callbacks::Text => &[(2, "@T")],
         };
         list.iter()
+            .find(|&&(i, _)| i > after)
             .map(|&(i, t)| (i, t.encode_utf16().collect()))
-            .collect()
     }
     fn callbacks_end(&self, kind: sb_core::bytecode::Callbacks) -> i32 {
         match kind {

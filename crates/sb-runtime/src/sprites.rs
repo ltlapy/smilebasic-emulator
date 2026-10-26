@@ -599,21 +599,21 @@ pub fn draw_posed(
         add: s.attr & attr::ADD != 0,
     };
     draw_image(fb, &place, bw, bh, |x, y| {
-        let (mut lx, mut ly) = (x as i32, y as i32);
-        // UNVERIFIED: flips apply to the shown rectangle, then the
-        // quarter turn picks the image pixel.
-        if s.attr & attr::REVH != 0 {
-            lx = bw - 1 - lx;
-        }
-        if s.attr & attr::REVV != 0 {
-            ly = bh - 1 - ly;
-        }
-        let (ix, iy) = match quarter {
+        let (lx, ly) = (x as i32, y as i32);
+        // The image is flipped, then turned (checked on hardware): undo
+        // the turn, then the flips.
+        let (mut ix, mut iy) = match quarter {
             0 => (lx, ly),
             1 => (ly, s.h - 1 - lx),
             2 => (s.w - 1 - lx, s.h - 1 - ly),
             _ => (s.w - 1 - ly, lx),
         };
+        if s.attr & attr::REVH != 0 {
+            ix = s.w - 1 - ix;
+        }
+        if s.attr & attr::REVV != 0 {
+            iy = s.h - 1 - iy;
+        }
         multiply(sample(grp, s.page, s.u + ix, s.v + iy), pose.color)
     });
 }

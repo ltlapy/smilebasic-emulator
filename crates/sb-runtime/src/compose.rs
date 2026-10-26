@@ -81,31 +81,27 @@ impl Affine {
     }
 }
 
-/// `src` over `dst`, both with alpha.
+// Frames and layers hold premultiplied colors: each channel already
+// multiplied by the alpha. Frames are opaque, so for them it makes no
+// difference; in a layer of its own, an additive element adds light
+// without adding alpha, and lights what is under the layer once it is
+// composed (checked on hardware).
+
+/// `src`, an element's straight color, over `dst`, premultiplied.
 pub fn over(dst: u32, src: u32) -> u32 {
     let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
     let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-    let a = sa + da - sa * da / 255;
-    if a == 0 {
-        return 0;
-    }
-    let dw = da * (255 - sa);
-    let mix = |s: u32, d: u32| ((s * sa * 255 + d * dw) / (255 * a)) as u8;
-    u32::from_be_bytes([a as u8, mix(sr, dr), mix(sg, dg), mix(sb, db)])
+    let mix = |s: u32, d: u32| ((s * sa + d * (255 - sa)) / 255) as u8;
+    u32::from_be_bytes([mix(255, da), mix(sr, dr), mix(sg, dg), mix(sb, db)])
 }
 
-/// `src` added to `dst` in proportion to its alpha.
-// UNVERIFIED: how additive elements build up alpha in a layer of their own.
+/// `src`, an element's straight color, added to `dst` in proportion to
+/// its alpha, leaving `dst`'s alpha as it is.
 pub fn add(dst: u32, src: u32) -> u32 {
     let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
     let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
     let plus = |s: u32, d: u32| (d + s * sa / 255).min(255) as u8;
-    u32::from_be_bytes([
-        (da + sa).min(255) as u8,
-        plus(sr, dr),
-        plus(sg, dg),
-        plus(sb, db),
-    ])
+    u32::from_be_bytes([da as u8, plus(sr, dr), plus(sg, dg), plus(sb, db)])
 }
 
 /// Where a layer's elements may draw.
@@ -234,26 +230,32 @@ impl Compose {
     }
 }
 
-/// Puts a layer drawn on its own (transparent) frame over `dst`, its
-/// colors first multiplied by `color`.
-// UNVERIFIED: the composition formulas, and that mode 0 draws the layer's
-// elements straight onto the frame.
+/// Puts a layer drawn on its own (transparent, premultiplied) frame over
+/// `dst`, its colors first multiplied by `color`.
+// Checked on hardware: the results of modes 0 to 4 over a color and over
+// black; mode 0 matched mode 1 there. UNVERIFIED: that mode 0 draws the
+// layer's elements straight onto the frame.
 pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color: u32) {
+    let [ca, cr, cg, cb] = color.to_be_bytes().map(u32::from);
     for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-        let s = crate::graphics::multiply(l, color);
-        let [sa, sr, sg, sb] = s.to_be_bytes().map(u32::from);
-        if sa == 0 {
+        if l == 0 {
             continue;
         }
+        let [la, lr, lg, lb] = l.to_be_bytes().map(u32::from);
+        // The layer color scales the light, and its alpha the coverage.
+        let a = la * ca / 255;
+        let tint = |p: u32, c: u32| p * c / 255 * ca / 255;
+        let [pr, pg, pb] = [tint(lr, cr), tint(lg, cg), tint(lb, cb)];
         let [da, dr, dg, db] = d.to_be_bytes().map(u32::from);
         let each = |f: &dyn Fn(u32, u32) -> u32| {
-            u32::from_be_bytes([da as u8, f(sr, dr) as u8, f(sg, dg) as u8, f(sb, db) as u8])
+            let c = |p: u32, d: u32| f(p, d).min(255) as u8;
+            u32::from_be_bytes([da as u8, c(pr, dr), c(pg, dg), c(pb, db)])
         };
         *d = match mode {
-            Compose::Direct | Compose::Normal => over(*d, s),
-            Compose::Add => add(*d, s),
-            Compose::Multiply => each(&|s, d| d * (s * sa + 255 * (255 - sa)) / (255 * 255)),
-            Compose::Screen => each(&|s, d| d + (s * (255 - d) / 255) * sa / 255),
+            Compose::Direct | Compose::Normal => each(&|p, d| p + d * (255 - a) / 255),
+            Compose::Add => each(&|p, d| d + p),
+            Compose::Multiply => each(&|p, d| d * (p + 255 - a) / 255),
+            Compose::Screen => each(&|p, d| d + p * (255 - d) / 255),
         };
     }
 }
@@ -285,8 +287,10 @@ mod tests {
     #[test]
     fn over_and_add() {
         assert_eq!(over(0xFF00_0000, 0x80FF_FFFF), 0xFF80_8080);
-        assert_eq!(over(0, 0x80FF_0000), 0x80FF_0000);
+        assert_eq!(over(0, 0x80FF_0000), 0x8080_0000);
         assert_eq!(add(0xFF80_0000, 0x80FF_0010), 0xFFFF_0008);
+        // Light without coverage.
+        assert_eq!(add(0, 0x8080_8080), 0x0040_4040);
     }
 
     #[test]

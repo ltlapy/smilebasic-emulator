@@ -4,7 +4,7 @@
 //! instructions and returns, so the frontend can keep drawing frames.
 //! VSYNC and WAIT return [`Status::Wait`] and resume on the next call.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::BinaryOp;
@@ -14,7 +14,7 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::host::Host;
 use crate::lexer::Suffix;
 use crate::ops;
-use crate::value::{Array, ElemType, Value, format_number, new_str};
+use crate::value::{Array, Value, format_number, new_str};
 
 /// UNVERIFIED: SmileBASIC's own nesting limits are not documented.
 pub const MAX_CALL_DEPTH: usize = 4096;
@@ -63,12 +63,17 @@ pub struct Vm {
     ended: bool,
     /// An INPUT or LINPUT has shown its prompt and waits for a line.
     reading_input: bool,
-    /// Callbacks still to run for each CALL SPRITE or CALL TEXT under way,
-    /// with the CALLIDX() to leave once it ends.
-    callbacks: Vec<(VecDeque<(i32, Value)>, i32)>,
+    /// Each CALL SPRITE or CALL TEXT under way, with the number of the
+    /// callback it last ran (-1 before the first).
+    callbacks: Vec<(Callbacks, i32)>,
     call_idx: i32,
+    /// Instructions run so far.
+    executed: u64,
 }
 
+/// A variable's starting value. The suffix decides only this: variables
+/// keep whatever value they are given (checked on hardware: `A%=1E10`
+/// keeps the real, `A$` takes a number and `A%` a string).
 fn initial_value(var: &VarInfo, default_int: bool) -> Value {
     match var.suffix {
         Some(Suffix::Int) => Value::Int(0),
@@ -76,28 +81,6 @@ fn initial_value(var: &VarInfo, default_int: bool) -> Value {
         Some(Suffix::Str) => Value::Str(new_str(Vec::new())),
         None if default_int => Value::Int(0),
         None => Value::Real(0.0),
-    }
-}
-
-/// Checks a value for storage in a variable with `suffix`.
-///
-/// Numbers are stored as they are: `A%=1E10` keeps the real (checked on
-/// hardware), so `%` and `#` only give the starting value.
-/// UNVERIFIED: that a string in a numeric variable, or a number in a
-/// string one, is a type mismatch.
-fn coerce(value: Value, suffix: Option<Suffix>) -> Result<Value> {
-    let elem_ok =
-        |v: &Value, t: ElemType| matches!(v, Value::Array(a) if a.borrow().elem_type() == t);
-    match suffix {
-        None => Ok(value),
-        Some(Suffix::Int | Suffix::Real) if value.is_number() => Ok(value),
-        Some(Suffix::Int) if elem_ok(&value, ElemType::Int) => Ok(value),
-        Some(Suffix::Real) if elem_ok(&value, ElemType::Real) => Ok(value),
-        Some(Suffix::Int | Suffix::Real) => Err(ErrorKind::TypeMismatch.into()),
-        Some(Suffix::Str) if matches!(value, Value::Str(_)) || elem_ok(&value, ElemType::Str) => {
-            Ok(value)
-        }
-        Some(Suffix::Str) => Err(ErrorKind::TypeMismatch.into()),
     }
 }
 
@@ -134,11 +117,9 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
             InputKind::Str => Some(Value::Str(new_str(field.to_vec()))),
             // UNVERIFIED: an empty field reads as 0.
             InputKind::Number if field.iter().all(|&c| c == u16::from(b' ')) => Some(Value::Int(0)),
-            // UNVERIFIED: INPUT takes spaces around a number, unlike VAL.
-            InputKind::Number => {
-                let trimmed = String::from_utf16_lossy(field);
-                builtins::parse_number(&trimmed.trim().encode_utf16().collect::<Vec<_>>())
-            }
+            // Spaces around a number make it ask again (checked on
+            // hardware), as VAL reads them as 0.
+            InputKind::Number => builtins::parse_number(field),
         })
         .collect()
 }
@@ -187,6 +168,7 @@ impl Vm {
             reading_input: false,
             callbacks: Vec::new(),
             call_idx: 0,
+            executed: 0,
         }
     }
 
@@ -230,6 +212,11 @@ impl Vm {
         Some(&self.globals[i])
     }
 
+    /// Instructions run so far, for hosts that share out a budget.
+    pub fn executed(&self) -> u64 {
+        self.executed
+    }
+
     /// Executes up to `budget` instructions.
     pub fn run(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
         if self.ended {
@@ -237,6 +224,7 @@ impl Vm {
         }
         for _ in 0..budget {
             let pc = self.pc;
+            self.executed += 1;
             match self.step(host) {
                 Ok(None) => {}
                 Ok(Some(status)) => {
@@ -354,8 +342,8 @@ impl Vm {
                 let v = self.load(*slot);
                 self.stack.push(v);
             }
-            Op::Store(slot, suffix) => {
-                let v = coerce(self.pop(), *suffix)?;
+            Op::Store(slot) => {
+                let v = self.pop();
                 self.store(*slot, v);
             }
             Op::Index(n) => {
@@ -500,37 +488,25 @@ impl Vm {
             Op::StoreDyn => {
                 let name = name_of(&self.pop())?;
                 let slot = self.dynamic_slot(&name)?;
-                let suffix = match slot {
-                    Slot::Global(i) => program.globals[i as usize].suffix,
-                    Slot::Local(i) => {
-                        program.defs[self.frame()?.def as usize].locals[i as usize].suffix
-                    }
-                };
-                let v = coerce(self.pop(), suffix)?;
+                let v = self.pop();
                 self.store(slot, v);
             }
-            Op::CallbacksStart(kind) => {
-                let queue = host
-                    .callbacks(*kind)
-                    .into_iter()
-                    .map(|(idx, target)| (idx, Value::Str(new_str(target))))
-                    .collect();
-                self.callbacks.push((queue, host.callbacks_end(*kind)));
-            }
+            Op::CallbacksStart(kind) => self.callbacks.push((*kind, -1)),
             Op::CallbackNext(end) => {
-                let (queue, end_idx) = self
+                let (kind, at) = self
                     .callbacks
                     .last_mut()
                     .ok_or(ErrorKind::IllegalStatement)?;
-                match queue.pop_front() {
+                match host.next_callback(*kind, *at) {
                     None => {
-                        self.call_idx = *end_idx;
+                        self.call_idx = host.callbacks_end(*kind);
                         self.callbacks.pop();
                         next = *end as usize;
                     }
                     Some((idx, target)) => {
+                        *at = idx;
                         self.call_idx = idx;
-                        self.run_callback(&program, &target)?;
+                        self.run_callback(&program, &Value::Str(new_str(target)))?;
                         return Ok(None);
                     }
                 }
@@ -568,7 +544,7 @@ impl Vm {
                 match (info.params, info.outs) {
                     (params, Some(outs)) if n < usize::from(outs) => {
                         let slot = usize::from(params.unwrap_or(0)) + n;
-                        frame.locals[slot] = coerce(value, info.locals[slot].suffix)?;
+                        frame.locals[slot] = value;
                     }
                     (_, None) if n < frame.outs.len() => frame.outs[n] = value,
                     _ => return Err(ErrorKind::OutOfRange.into()),
@@ -759,7 +735,7 @@ impl Vm {
         let variadic_args = match info.params {
             Some(_) => {
                 for (i, a) in args.into_iter().enumerate() {
-                    locals[i] = coerce(a, info.locals[i].suffix)?;
+                    locals[i] = a;
                 }
                 Vec::new()
             }

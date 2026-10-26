@@ -280,3 +280,14 @@ fn relative_colors_multiply() {
     );
     assert_eq!(out, "8080808");
 }
+
+#[test]
+fn callbacks_see_sprites_set_and_cleared_by_earlier_ones() {
+    let (_, out) = run("FOR I=20 TO 22:SPSET I,0:SPFUNC I,\"@CB\":NEXT\n\
+         CALL SPRITE:?\n\
+         END\n\
+         @CB:?CALLIDX();\" \";\n\
+         IF CALLIDX()==20 THEN SPCLR 21:SPSET 23,0:SPFUNC 23,\"@CB\"\n\
+         RETURN");
+    assert_eq!(out, "20 22 23 ");
+}

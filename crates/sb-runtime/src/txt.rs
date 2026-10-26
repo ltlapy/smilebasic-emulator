@@ -322,18 +322,15 @@ impl Runtime {
         }
     }
 
-    /// Text screens ignore "UV" and "I". Their animations start a frame
-    /// later than sprites': on hardware, a TANIM's first step showed one
-    /// VSYNC after a SPANIM's would have.
-    // UNVERIFIED: that "UV" and "I" are not set at all (TCHK reports
-    // nothing for them, as checked), and that the extra frame holds
-    // without a TANIM "I" just before.
+    /// Text screens ignore "UV" and "I"; TCHK reports nothing for them
+    /// (checked on hardware). Their animations start in step with sprites'.
+    // UNVERIFIED: that such an animation is not set at all.
     fn start_text_anim(&mut self, id: usize, anim: Anim) {
         if matches!(anim.mode.target, Target::Uv | Target::I) {
             return;
         }
         let t = &mut self.text[id];
         let target = anim.mode.target.index();
-        t.anims[target] = Some(Track::new(anim, t).delayed(1));
+        t.anims[target] = Some(Track::new(anim, t));
     }
 }

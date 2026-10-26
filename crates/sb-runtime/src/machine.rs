@@ -253,15 +253,15 @@ impl Machine {
     /// editing.
     pub fn frame(&mut self) {
         self.frame += 1;
+        // Animations play in direct mode too, and go on while the editor
+        // hides the screen (checked on hardware).
+        self.rt.animate();
         if self.editing {
             while let Some(key) = self.rt.next_key() {
                 self.editor.key(key);
             }
             return;
         }
-        // UNVERIFIED: animations play in direct mode too, and pause while
-        // the editor hides the screen.
-        self.rt.animate();
         let Some(vm) = &mut self.vm else {
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));
@@ -272,26 +272,36 @@ impl Machine {
         if self.wait > 0 {
             return;
         }
+        // A VSYNC that is behind goes on within the frame's budget.
+        let start = vm.executed();
         loop {
-            match vm.run(&mut self.rt, FRAME_BUDGET) {
+            let left = FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32);
+            match vm.run(&mut self.rt, left) {
                 Ok(Status::Running) => {}
+                // UNVERIFIED: WAIT, like INPUT, starts VSYNC's count anew.
                 Ok(Status::Wait {
                     frames,
                     vsync: false,
-                }) => self.wait = frames,
-                // VSYNC counts from the frame the last one waited for, so
-                // it goes straight on if that many have passed already.
+                }) => {
+                    self.wait = frames;
+                    self.vsync_at = self.frame + u64::from(frames);
+                }
+                // VSYNC counts from the frame the last one waited for, and
+                // goes straight on while it is behind, catching up one
+                // count at a time (checked on hardware: after a slow ACLS,
+                // VSYNC:VSYNC went by without a frame).
+                // UNVERIFIED: whether a long time behind is caught up in
+                // full.
                 Ok(Status::Wait {
                     frames,
                     vsync: true,
                 }) => {
-                    let until = self.vsync_at + u64::from(frames);
-                    if until <= self.frame {
-                        self.vsync_at = self.frame;
+                    self.vsync_at += u64::from(frames);
+                    if self.vsync_at > self.frame {
+                        self.wait = (self.vsync_at - self.frame) as u32;
+                    } else if vm.executed() - start < u64::from(FRAME_BUDGET) {
                         continue;
                     }
-                    self.vsync_at = until;
-                    self.wait = (until - self.frame) as u32;
                 }
                 Ok(Status::Ended) => self.finish(None),
                 Err(e) => self.finish(Some(e)),

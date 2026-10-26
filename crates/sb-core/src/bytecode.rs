@@ -57,8 +57,8 @@ pub enum Op {
     Str(u32),
     Default,
     Load(Slot),
-    /// `[value] -> []`, converting the value for the variable's suffix.
-    Store(Slot, Option<Suffix>),
+    /// `[value] -> []`
+    Store(Slot),
     /// `[base, i1..in] -> [element]`
     Index(u8),
     /// `[value, base, i1..in] -> []`
@@ -121,7 +121,8 @@ pub enum Op {
     /// `[value, name] -> []`
     StoreDyn,
     DefArgc,
-    /// CALL SPRITE or CALL TEXT: takes the host's list of callbacks.
+    /// CALL SPRITE or CALL TEXT: starts going through the host's
+    /// callbacks.
     CallbacksStart(Callbacks),
     /// Runs the next callback of the innermost CALL SPRITE or CALL TEXT,
     /// or jumps to the address when none are left.

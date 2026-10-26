@@ -948,10 +948,8 @@ impl Host for Runtime {
         std::mem::take(&mut self.retry)
     }
 
-    // UNVERIFIED: sprites are called in id order, and the list is fixed
-    // when CALL SPRITE starts.
-    // Checked on hardware: CALLIDX() is 4096 after CALL SPRITE.
-    // UNVERIFIED: 5 after CALL TEXT.
+    // Checked on hardware: CALLIDX() is 4096 after CALL SPRITE and 5
+    // after CALL TEXT.
     fn callbacks_end(&self, kind: Callbacks) -> i32 {
         match kind {
             Callbacks::Sprite => sprites::SPRITES as i32,
@@ -967,15 +965,17 @@ impl Host for Runtime {
         Some(self.data_pos.get())
     }
 
-    fn callbacks(&mut self, kind: Callbacks) -> Vec<(i32, Vec<u16>)> {
+    // Checked on hardware: in id order, and a callback that clears a
+    // later sprite skips it, while one that sets a later sprite's SPFUNC
+    // gets it called.
+    fn next_callback(&mut self, kind: Callbacks, after: i32) -> Option<(i32, Vec<u16>)> {
+        let from = (after + 1).max(0) as usize;
         match kind {
-            Callbacks::Sprite => (self.sprites.list.iter().enumerate())
+            Callbacks::Sprite => (self.sprites.list.iter().enumerate().skip(from))
                 .filter(|(_, s)| s.used)
-                .filter_map(|(i, s)| Some((i as i32, s.func.clone()?)))
-                .collect(),
-            Callbacks::Text => (self.text.iter().enumerate())
-                .filter_map(|(i, t)| Some((i as i32, t.func.clone()?)))
-                .collect(),
+                .find_map(|(i, s)| Some((i as i32, s.func.clone()?))),
+            Callbacks::Text => (self.text.iter().enumerate().skip(from))
+                .find_map(|(i, t)| Some((i as i32, t.func.clone()?))),
         }
     }
 

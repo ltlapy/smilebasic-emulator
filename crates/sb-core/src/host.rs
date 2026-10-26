@@ -37,11 +37,12 @@ pub trait Host {
         false
     }
 
-    /// The callbacks CALL SPRITE or CALL TEXT runs, in order: the number
-    /// CALLIDX() reports, and a `"@label"` to GOSUB or the name of a DEF
-    /// command to call.
-    fn callbacks(&mut self, _kind: Callbacks) -> Vec<(i32, Vec<u16>)> {
-        Vec::new()
+    /// The callback CALL SPRITE or CALL TEXT runs after number `after`
+    /// (-1 to start): its number, which CALLIDX() reports, and a
+    /// `"@label"` to GOSUB or the name of a DEF command to call. Asked
+    /// anew each time, so callbacks set or cleared by earlier ones count.
+    fn next_callback(&mut self, _kind: Callbacks, _after: i32) -> Option<(i32, Vec<u16>)> {
+        None
     }
 
     /// What CALLIDX() reports once CALL SPRITE or CALL TEXT has ended:

@@ -535,7 +535,7 @@ impl Compiler<'_> {
             } => {
                 let tmp = self.temp();
                 self.expr(subject)?;
-                self.emit(Op::Store(tmp, None));
+                self.emit(Op::Store(tmp));
                 let mut ends = Vec::new();
                 for arm in arms {
                     let mut to_body = Vec::new();
@@ -570,12 +570,12 @@ impl Compiler<'_> {
                 self.expr(from)?;
                 self.store(var)?;
                 self.expr(to)?;
-                self.emit(Op::Store(to_slot, None));
+                self.emit(Op::Store(to_slot));
                 match step {
                     Some(s) => self.expr(s)?,
                     None => _ = self.emit(Op::Int(1)),
                 }
-                self.emit(Op::Store(step_slot, None));
+                self.emit(Op::Store(step_slot));
                 let check = self.here();
                 self.load_lvalue(var)?;
                 self.emit(Op::Load(to_slot));
@@ -761,7 +761,7 @@ impl Compiler<'_> {
                 return Err(err(ErrorKind::SyntaxError, "array initializer"));
             }
         }
-        self.emit(Op::Store(slot, None));
+        self.emit(Op::Store(slot));
         Ok(())
     }
 
@@ -770,7 +770,7 @@ impl Compiler<'_> {
             Some(e) => {
                 let tmp = self.temp();
                 self.expr(e)?;
-                self.emit(Op::Store(tmp, None));
+                self.emit(Op::Store(tmp));
                 Some(tmp)
             }
             None => None,
@@ -937,7 +937,7 @@ impl Compiler<'_> {
         match target {
             LValue::Var(v) => {
                 let slot = self.slot(v)?;
-                self.emit(Op::Store(slot, v.suffix));
+                self.emit(Op::Store(slot));
             }
             LValue::Index { base, indices } => {
                 self.load_lvalue(base)?;

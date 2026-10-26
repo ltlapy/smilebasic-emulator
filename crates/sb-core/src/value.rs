@@ -198,7 +198,7 @@ impl Value {
 /// Number to text as PRINT and STR$ show it: integers in decimal, reals
 /// with eight decimals and the trailing zeros removed, never in exponent
 /// form (checked on hardware: 1E20 prints in full, 1/3 as 0.33333333).
-/// UNVERIFIED: how NaN, infinities and -0 show.
+/// UNVERIFIED: how NaN shows; infinity shows as `inf` (checked).
 pub fn format_number(value: &Value) -> Str {
     let text = match *value {
         Value::Int(n) => n.to_string(),
@@ -215,11 +215,12 @@ fn format_real(x: f64) -> String {
     if x.is_infinite() {
         return if x > 0.0 { "inf" } else { "-inf" }.into();
     }
+    // A small negative number shows as -0 (checked on hardware).
     let fixed = format!("{x:.8}");
-    match fixed.trim_end_matches('0').trim_end_matches('.') {
-        "-0" => "0".into(),
-        trimmed => trimmed.to_string(),
-    }
+    fixed
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 #[cfg(test)]
@@ -239,7 +240,7 @@ mod tests {
         assert_eq!(fmt(Value::Real(1e20)), "100000000000000000000");
         assert_eq!(fmt(Value::Real(1e-7)), "0.0000001");
         assert_eq!(fmt(Value::Real(123456.789)), "123456.789");
-        assert_eq!(fmt(Value::Real(-1e-9)), "0");
+        assert_eq!(fmt(Value::Real(-1e-9)), "-0");
     }
 
     #[test]

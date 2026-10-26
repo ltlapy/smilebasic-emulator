@@ -164,11 +164,11 @@ fn f4_and_list_err_show_the_error() {
     assert_eq!((m.editor.slot(), m.editor.cursor()), (1, (3, 4)));
     // The error is shown once; later, the editor opens where it was left.
     m.toggle_editor();
-    // Syntax errors point at the token.
+    // So do syntax errors (checked on hardware: before the `?`).
     m.set_slot(0, "A=1:?(".to_string());
     enter(&mut m, "run");
     enter(&mut m, "list err");
-    assert_eq!((m.editor.slot(), m.editor.cursor()), (0, (1, 6)));
+    assert_eq!((m.editor.slot(), m.editor.cursor()), (0, (1, 4)));
     m.toggle_editor();
     m.toggle_editor();
     assert_eq!(m.editor.slot(), 0);

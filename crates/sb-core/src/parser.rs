@@ -27,6 +27,8 @@ pub const MAX_DEPTH: u32 = 256;
 pub struct ParseError {
     pub kind: ParseErrorKind,
     pub span: Span,
+    /// Where the innermost statement around the error starts.
+    pub stmt: Option<Span>,
 }
 
 impl fmt::Display for ParseError {
@@ -80,6 +82,7 @@ impl From<LexError> for ParseError {
         ParseError {
             kind: ParseErrorKind::Lex(e.kind),
             span: e.span,
+            stmt: None,
         }
     }
 }
@@ -190,6 +193,7 @@ impl Parser {
                 found: self.peek().clone(),
             },
             span: self.span(),
+            stmt: None,
         })
     }
 
@@ -278,8 +282,14 @@ impl Parser {
     // ---- statements ----
 
     fn statement(&mut self, top_level: bool) -> PResult<Stmt> {
-        let Span { line, col } = self.span();
-        let kind = self.nested(|p| p.statement_kind(top_level))?;
+        let start = self.span();
+        let kind = self
+            .nested(|p| p.statement_kind(top_level))
+            .map_err(|e| ParseError {
+                stmt: e.stmt.or(Some(start)),
+                ..e
+            })?;
+        let Span { line, col } = start;
         Ok(Stmt { kind, line, col })
     }
 
@@ -356,6 +366,7 @@ impl Parser {
                     return Err(ParseError {
                         kind: ParseErrorKind::DefInsideBlock,
                         span,
+                        stmt: None,
                     });
                 }
                 let common = keyword == K::Common;
@@ -385,6 +396,7 @@ impl Parser {
                 return Err(ParseError {
                     kind: ParseErrorKind::Misplaced(other),
                     span,
+                    stmt: None,
                 });
             }
         })
@@ -906,6 +918,7 @@ impl Parser {
             return Err(ParseError {
                 kind: ParseErrorKind::TooDeep,
                 span: self.span(),
+                stmt: None,
             });
         }
         self.depth += 1;

@@ -103,14 +103,10 @@ pub struct Search {
 }
 
 impl Search {
-    /// Tests sprites `first` to `last`, counting down if `last` is lower.
+    /// Tests sprites `first` to `last`, upwards from the lower one either
+    /// way (checked on hardware for SPHITSP).
     pub fn new(source: Body, first: usize, last: usize, skip: Option<usize>) -> Search {
-        let mut rest: Vec<usize> = if first <= last {
-            (first..=last).collect()
-        } else {
-            (last..=first).rev().collect()
-        };
-        rest.reverse();
+        let rest: Vec<usize> = (first.min(last)..=first.max(last)).rev().collect();
         Search { source, rest, skip }
     }
 }
