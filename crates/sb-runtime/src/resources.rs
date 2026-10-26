@@ -163,7 +163,7 @@ pub fn import(romfs: &[PathBuf], dest: &Path) -> Result<Imported, ResourceError>
             let table = sprites::find_default_defs(&ro).ok_or_else(|| {
                 ResourceError::Bad(path.clone(), "no sprite definitions found".into())
             })?;
-            write(SPRITE_DEFS, table)?;
+            write(SPRITE_DEFS, &table)?;
             imported.sources.push(path);
         }
         None => imported

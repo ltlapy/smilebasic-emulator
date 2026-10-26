@@ -10,6 +10,8 @@ use crate::graphics::{GRP_SIZE, Graphics, PAGES, multiply};
 
 pub const SPRITES: usize = 4096;
 pub const DEFS: usize = 8192;
+/// Templates in the first release's table.
+const FIRST_RELEASE_DEFS: usize = 4096;
 /// `#GSPRITE`: the sprite that shows the graphic screen.
 pub const GSPRITE: usize = 4095;
 /// SPPAGE at start-up: sprites take their images from GRP4.
@@ -71,21 +73,28 @@ pub fn defs_from_bytes(bytes: &[u8]) -> Option<Vec<SpriteDef>> {
 
 /// Finds SmileBASIC 4's built-in template table in its executable's
 /// read-only data: it starts with 16x16 cells at (0,0) and (16,0). Returns
-/// the table's bytes.
-pub fn find_default_defs(ro: &[u8]) -> Option<&[u8]> {
+/// the table's bytes. The first release has only the first
+/// [`FIRST_RELEASE_DEFS`] templates; the rest are left empty, as unused
+/// templates are in later releases.
+pub fn find_default_defs(ro: &[u8]) -> Option<Vec<u8>> {
     let start: Vec<u8> = [0u16, 0, 16, 16, 0, 0, 0, 16, 0, 16, 16, 0, 0, 0]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect();
-    let mut from = 0;
-    while let Some(i) = ro[from..].windows(start.len()).position(|w| w == start) {
-        let at = from + i;
-        if let Some(table) = ro.get(at..at + DEFS * DEF_BYTES)
-            && defs_from_bytes(table).is_some()
-        {
-            return Some(table);
+    let starts: Vec<usize> = (0..ro.len())
+        .filter(|&at| ro[at..].starts_with(&start))
+        .collect();
+    for count in [DEFS, FIRST_RELEASE_DEFS] {
+        for &at in &starts {
+            let Some(table) = ro.get(at..at + count * DEF_BYTES) else {
+                continue;
+            };
+            let mut table = table.to_vec();
+            table.resize(DEFS * DEF_BYTES, 0);
+            if defs_from_bytes(&table).is_some() {
+                return Some(table);
+            }
         }
-        from = at + 1;
     }
     None
 }
@@ -461,7 +470,16 @@ mod tests {
             .collect();
         bytes.extend_from_slice(&table);
         let found = find_default_defs(&bytes).expect("table");
-        assert_eq!(defs_from_bytes(found), Some(grid_defs()));
+        assert_eq!(defs_from_bytes(&found), Some(grid_defs()));
+        // A first-release table, followed by other data.
+        let mut first = bytes[..10 + FIRST_RELEASE_DEFS * DEF_BYTES].to_vec();
+        first.extend_from_slice(&[0xFF; 1000]);
+        let defs = defs_from_bytes(&find_default_defs(&first).expect("table")).unwrap();
+        assert_eq!(
+            defs[..FIRST_RELEASE_DEFS],
+            grid_defs()[..FIRST_RELEASE_DEFS]
+        );
+        assert_eq!(defs[FIRST_RELEASE_DEFS], SpriteDef::default());
         let mut bad = table.clone();
         bad[2] = 0xFF; // U far off the page
         bad[3] = 0xFF;
