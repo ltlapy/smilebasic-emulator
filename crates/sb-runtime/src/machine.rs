@@ -201,6 +201,7 @@ impl Machine {
         };
         self.vars = vm.globals().collect();
         self.rt.take_requests();
+        self.rt.cancel_confirm();
         // UNVERIFIED: the wording of SmileBASIC 4's break message.
         let text: Vec<u16> = format!("Break in {}", vm.line()).encode_utf16().collect();
         self.print_line(&text);

@@ -62,6 +62,25 @@ pub enum Request {
     Clear,
 }
 
+/// A question a command waits on; the frontend shows it and calls
+/// [`Runtime::answer`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Confirm {
+    /// What the question is about, then the question.
+    pub lines: [String; 2],
+    /// The label of the button that goes ahead.
+    pub accept: &'static str,
+}
+
+/// How a question about overwriting unsaved slots stands.
+pub(crate) enum Ask {
+    /// Nothing unsaved, or the user agreed.
+    Go,
+    Refused,
+    /// No answer yet; the command runs again next frame.
+    Wait,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
@@ -131,8 +150,13 @@ pub struct Runtime {
     pub slot_modified: Vec<bool>,
     pub settings: Settings,
     pub storage: Storage,
-    /// What RESULT() returns: 1 if the last file command succeeded, else 0.
+    /// What RESULT() returns: 1 if the last file command succeeded, 0 if
+    /// it failed, -1 if the user cancelled it.
     pub(crate) result: i32,
+    confirm: Option<Confirm>,
+    answer: Option<bool>,
+    /// The last command waits for an answer; see [`Host::retry`].
+    retry: bool,
 }
 
 pub(crate) fn illegal() -> Error {
@@ -193,6 +217,9 @@ impl Runtime {
             settings: Settings::default(),
             storage: Storage::none(),
             result: 1,
+            confirm: None,
+            answer: None,
+            retry: false,
         }
     }
 
@@ -203,6 +230,55 @@ impl Runtime {
     /// Stops waiting for an INPUT line, if one is being typed.
     pub fn cancel_input(&mut self) {
         self.line = None;
+    }
+
+    /// The question waiting for an answer, if any.
+    pub fn confirmation(&self) -> Option<&Confirm> {
+        self.confirm.as_ref().filter(|_| self.answer.is_none())
+    }
+
+    /// Answers the waiting question: `true` goes ahead.
+    pub fn answer(&mut self, yes: bool) {
+        if self.confirm.is_some() {
+            self.answer = Some(yes);
+        }
+    }
+
+    /// Drops a question whose command was stopped.
+    pub fn cancel_confirm(&mut self) {
+        self.confirm = None;
+        self.answer = None;
+    }
+
+    /// Asks before a command replaces slots that have unsaved edits.
+    // UNVERIFIED: SmileBASIC 4's wording, and whether it asks for NEW and
+    // for LOAD in a running program.
+    pub(crate) fn ask_overwrite(&mut self, slots: &[usize], accept: &'static str) -> Ask {
+        let unsaved: Vec<String> = slots
+            .iter()
+            .filter(|&&s| self.slot_modified[s])
+            .map(|s| format!("PRG{s}"))
+            .collect();
+        if unsaved.is_empty() {
+            return Ask::Go;
+        }
+        match self.answer.take() {
+            Some(yes) => {
+                self.confirm = None;
+                if yes { Ask::Go } else { Ask::Refused }
+            }
+            None => {
+                self.confirm.get_or_insert_with(|| Confirm {
+                    lines: [
+                        format!("Not saved: {}", unsaved.join(", ")),
+                        format!("{accept} anyway?"),
+                    ],
+                    accept,
+                });
+                self.retry = true;
+                Ask::Wait
+            }
+        }
     }
 
     /// Direct-mode requests made since the last call.
@@ -258,12 +334,17 @@ impl Runtime {
     /// Composes a frame showing the editor instead of the screens.
     pub(crate) fn render_editor(&mut self, editor: &mut Editor) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
-        let name = &self.slot_names[editor.slot()];
+        let slot = editor.slot();
+        let mut name = self.slot_names[slot].clone();
+        // The slot has edits that were not saved.
+        if self.slot_modified[slot] || editor.is_modified() {
+            name.push_str(" *");
+        }
         let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
         editor.draw(
             &mut self.fb,
             &self.font,
-            name,
+            &name,
             self.settings.editor_wrap,
             blink,
         );
@@ -302,6 +383,10 @@ impl Runtime {
                     None => 0..SLOTS,
                     slot => slot_arg(slot).map(|s| s..s + 1)?,
                 };
+                match self.ask_overwrite(&slots.clone().collect::<Vec<_>>(), "Erase") {
+                    Ask::Go => {}
+                    Ask::Wait | Ask::Refused => return Ok(vec![]),
+                }
                 for slot in slots {
                     self.slots[slot].clear();
                     self.slot_names[slot].clear();
@@ -382,6 +467,10 @@ impl Host for Runtime {
     fn input_start(&mut self) -> Result<()> {
         self.line = Some(Vec::new());
         Ok(())
+    }
+
+    fn retry(&mut self) -> bool {
+        std::mem::take(&mut self.retry)
     }
 
     // UNVERIFIED: only typing, Backspace and Enter edit the line; the

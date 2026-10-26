@@ -149,6 +149,78 @@ fn edits_are_unsaved_until_save() {
     m.type_text("X");
     m.frame();
     m.toggle_editor();
-    enter(&mut m, "new 2");
+    ask(&mut m, "new 2");
+    m.rt.answer(true);
+    settle(&mut m);
     assert_eq!(m.unsaved_slots(), [] as [usize; 0]);
+}
+
+/// Edits a slot so that it has unsaved changes.
+fn touch(m: &mut Machine, slot: usize) {
+    enter(m, &format!("list {slot}:1"));
+    m.type_text("'");
+    m.frame();
+    m.toggle_editor();
+}
+
+/// Types a line and runs frames until it asks a question.
+fn ask(m: &mut Machine, line: &str) -> sb_runtime::runtime::Confirm {
+    m.type_text(line);
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    for _ in 0..10 {
+        m.frame();
+        if let Some(c) = m.rt.confirmation() {
+            return c.clone();
+        }
+    }
+    panic!("{line:?} did not ask");
+}
+
+/// Runs frames until direct mode waits for a line again.
+fn settle(m: &mut Machine) {
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(!m.is_running());
+}
+
+#[test]
+fn load_and_new_ask_before_losing_edits() {
+    let dir = TempDir::new("ask");
+    let mut m = machine(&dir);
+    m.set_slot(0, "?1".to_string());
+    enter(&mut m, "save \"a\"");
+    touch(&mut m, 0);
+    // A missing file fails without asking.
+    enter(&mut m, "load \"nope\":?result()");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+
+    let c = ask(&mut m, "load \"a\":?result()");
+    assert_eq!(c.lines, ["Not saved: PRG0", "Load anyway?"]);
+    m.rt.answer(false);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["-1", "OK"]);
+    assert_eq!(m.slot(0), "'?1");
+
+    ask(&mut m, "load \"a\":?result()");
+    m.rt.answer(true);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    assert_eq!(m.slot(0), "?1");
+
+    touch(&mut m, 3);
+    enter(&mut m, "new 2");
+    let c = ask(&mut m, "new");
+    assert_eq!(c.lines[0], "Not saved: PRG3");
+    m.rt.answer(false);
+    settle(&mut m);
+    assert_eq!(m.slot(3), "'");
+    // Stopping drops the question.
+    ask(&mut m, "new 3");
+    m.stop();
+    assert!(m.rt.confirmation().is_none());
+    ask(&mut m, "new 3");
+    m.rt.answer(true);
+    settle(&mut m);
+    assert_eq!((m.slot(3), m.unsaved_slots()), ("", vec![]));
 }

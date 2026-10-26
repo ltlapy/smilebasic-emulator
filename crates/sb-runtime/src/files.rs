@@ -10,7 +10,7 @@ use sb_core::value::{Array, ArrayData, ElemType, Value, new_str};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::runtime::{Command, Runtime, illegal, slot_arg};
+use crate::runtime::{Ask, Command, Runtime, illegal, slot_arg};
 use crate::sbfile;
 use crate::storage::{self, FileKind, StorageError, parse_file_name, parse_listing};
 use crate::text::CONSOLE;
@@ -91,6 +91,19 @@ impl Runtime {
             (Command::Load, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
+                // A file that is not there fails without asking first.
+                let found = parse_file_name(&spec, FileKind::Txt)
+                    .is_ok_and(|(kind, name)| self.storage.exists(kind, &name));
+                if found {
+                    match self.ask_overwrite(&[slot], "Load") {
+                        Ask::Go => {}
+                        Ask::Wait => return Ok(vec![]),
+                        Ask::Refused => {
+                            self.result = -1;
+                            return Ok(vec![]);
+                        }
+                    }
+                }
                 let outcome = self.load(&spec, slot);
                 self.finish("LOAD", outcome);
                 Ok(vec![])
