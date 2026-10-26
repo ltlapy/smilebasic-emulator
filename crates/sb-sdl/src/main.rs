@@ -7,6 +7,7 @@ mod toast;
 mod ui;
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use dialog::{Answer, Dialog};
 use menu::{Action, Click, MenuBar};
@@ -47,6 +48,8 @@ const USAGE: &str = "usage:
 const TITLE: &str = "SmileBASIC emulator";
 /// In the data directory.
 const SETTINGS_FILE: &str = "settings.txt";
+/// SmileBASIC runs at 60 frames a second.
+const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 type AnyError = Box<dyn std::error::Error>;
 
 fn main() {
@@ -145,7 +148,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let clipboard = video.clipboard();
     let keyboard = sdl.keyboard();
     let mut canvas = window.into_canvas();
-    // SmileBASIC runs at 60 fps; until the VM has its own frame timer, pace with vsync.
+    // Vsync paces frames on a 60 Hz display; on faster ones, or without
+    // vsync, the loop waits for the next frame's time itself.
     // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
     if !unsafe { sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1) } {
         eprintln!("vsync unavailable: {}", sdl3::get_error());
@@ -169,6 +173,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut manager: Option<ProjectManager> = None;
 
     let mut events = sdl.event_pump()?;
+    let mut next_frame = Instant::now();
     // The left button went down on the editor and is still held.
     let mut dragging = false;
     'running: loop {
@@ -456,6 +461,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             canvas.copy(&overlay_texture, None, display)?;
         }
         canvas.present();
+        next_frame += FRAME;
+        let now = Instant::now();
+        if next_frame > now {
+            std::thread::sleep(next_frame - now);
+        } else if now - next_frame > FRAME {
+            // Too far behind to catch up; carry on from now.
+            next_frame = now;
+        }
     }
     Ok(())
 }
