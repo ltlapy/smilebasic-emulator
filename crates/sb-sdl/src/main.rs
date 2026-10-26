@@ -400,6 +400,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
 
         machine.frame();
+        // The editor leaves its top row for the menu bar.
+        menu.pinned = machine.is_editing();
         // Settings change through the menu, keys and questions; keep each
         // change at once so that nothing is lost if the emulator crashes.
         if machine.rt.settings != saved_settings {

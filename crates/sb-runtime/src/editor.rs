@@ -10,6 +10,8 @@ use crate::text::{TAB_WIDTH, TextScreen};
 
 /// Six digits on three number tiles (U+E100-E16E) and a thin cap.
 const TILE_GUTTER: usize = 4;
+/// Rows above the code, left for the emulator's menu bar.
+const HEADER: usize = 1;
 /// Rows below the code: the ruler and the status line.
 const FOOTER: usize = 2;
 /// Closes the number tiles on the right.
@@ -168,7 +170,7 @@ impl Editor {
         let (w, h) = self.screen.size();
         (
             (w as usize).saturating_sub(self.gutter()).max(1),
-            (h as usize).saturating_sub(FOOTER).max(1),
+            (h as usize).saturating_sub(HEADER + FOOTER).max(1),
         )
     }
 
@@ -374,7 +376,7 @@ impl Editor {
         let col = (x.div_euclid(8) - self.gutter() as i32).max(0) as usize;
         // Wrapped lines start every row at column 0, where `left` is 0.
         let left = self.view.left;
-        let row = y.div_euclid(8);
+        let row = y.div_euclid(8) - HEADER as i32;
         Some(if row < 0 {
             (first.0.saturating_sub(1), left + col)
         } else if let Some(&(line, start)) = self.layout.get(row as usize) {
@@ -389,10 +391,10 @@ impl Editor {
 
     /// A press of the mouse at a pixel of the editor's screen: moves the
     /// cursor there and starts a selection, or with `extend` moves the
-    /// selection's end there. Presses on the ruler and status line do
-    /// nothing.
+    /// selection's end there. Presses outside the code do nothing.
     pub fn mouse_down(&mut self, x: i32, y: i32, extend: bool) {
-        if y.div_euclid(8) >= self.size().1 as i32 {
+        let row = y.div_euclid(8) - HEADER as i32;
+        if row < 0 || row >= self.size().1 as i32 {
             return;
         }
         let Some((line, col)) = self.hit(x, y) else {
@@ -479,14 +481,14 @@ impl Editor {
         let mut marks = Vec::new();
         let mut cursor = None;
 
-        let mut row = 0;
+        let mut row = HEADER;
         let mut line = v.top;
-        while row < rows && line < self.lines.len() {
+        while row < HEADER + rows && line < self.lines.len() {
             let text = &self.lines[line];
             let current = line == v.line;
             let chunks = if wrap { rows_of(text, cols) } else { 1 };
             for chunk in 0..chunks {
-                if row >= rows {
+                if row >= HEADER + rows {
                     break;
                 }
                 if current {
@@ -532,7 +534,7 @@ impl Editor {
         // The ruler numbers the visible columns, every other one, on tiles
         // or in digits. Tiles other than the cursor's take the bar's color,
         // with their digits recolored after drawing.
-        let ruler = rows;
+        let ruler = HEADER + rows;
         let mut ruler_digits = Vec::new();
         fill_row(fb, ruler, 0, width, BAR);
         let first = if wrap { 0 } else { v.left };
@@ -771,10 +773,10 @@ mod tests {
         let mut e = editor(&"X\n".repeat(100));
         e.key(keys::PAGE_DOWN);
         e.scroll(false);
-        assert_eq!((e.cursor().0, e.view.top), (29, 1));
+        assert_eq!((e.cursor().0, e.view.top), (28, 1));
         e.file_end();
         e.scroll(false);
-        assert_eq!(e.view.top, 101 - 28);
+        assert_eq!(e.view.top, 101 - 27);
         e.file_top();
         e.scroll(false);
         assert_eq!(e.view.top, 0);
@@ -820,7 +822,7 @@ mod tests {
         let mut e = editor("PRINT 1");
         let mut fb = Framebuffer::new(400, 240);
         e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
-        assert_eq!(row(&e, 0), "\u{E16E}\u{E16E}\u{E101}\u{E17F}PRINT 1");
+        assert_eq!(row(&e, 1), "\u{E16E}\u{E16E}\u{E101}\u{E17F}PRINT 1");
         let ruler: Vec<u16> = (4..15).map(|x| e.screen.cell(x, 28).code).collect();
         assert_eq!(
             ruler,
@@ -830,8 +832,9 @@ mod tests {
         );
         assert_eq!(row(&e, 29), "PRG0 GAME");
         // The cursor bar at column 0 of the code.
-        assert_eq!(fb.get(4 * 8, 0), Some(TEXT));
-        assert_eq!(fb.get(4 * 8 + 2, 0), Some(CURRENT_LINE));
+        assert_eq!(row(&e, 0), "", "left for the menu bar");
+        assert_eq!(fb.get(4 * 8, 8), Some(TEXT));
+        assert_eq!(fb.get(4 * 8 + 2, 8), Some(CURRENT_LINE));
     }
 
     #[test]
@@ -852,7 +855,7 @@ mod tests {
         let mut e = editor(&"PRINT\n".repeat(119));
         let mut fb = Framebuffer::new(400, 240);
         e.draw(&mut fb, &Font::blank(), "GAME", (false, false), true);
-        assert_eq!(row(&e, 0), "  1 PRINT");
+        assert_eq!(row(&e, 1), "  1 PRINT");
         assert!(row(&e, 28).starts_with("    0 2 4"));
     }
 
@@ -898,16 +901,17 @@ mod tests {
         let mut fb = Framebuffer::new(400, 240);
         e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
         // Column 2 of line 1, then the end of line 2.
-        e.mouse_down((4 + 2) * 8 + 3, 4, false);
-        e.mouse_drag(40 * 8, 8 + 7);
+        e.mouse_down((4 + 2) * 8 + 3, 8 + 4, false);
+        e.mouse_drag(40 * 8, 16 + 7);
         assert_eq!(e.copy().as_deref(), Some("INT 1\nPRINT 2"));
         // Shift keeps the start; below the end goes to the last line's end.
         e.mouse_down(0, 20 * 8, true);
         assert_eq!(e.copy().as_deref(), Some("INT 1\nPRINT 2\nEND"));
         e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
-        assert_eq!(fb.get(6 * 8, 0), Some(SELECTION));
-        // The ruler does nothing.
+        assert_eq!(fb.get(6 * 8, 8), Some(SELECTION));
+        // The ruler and the menu bar's row do nothing.
         e.mouse_down(0, 28 * 8, false);
+        e.mouse_down(0, 4, false);
         assert!(e.copy().is_some());
     }
 }

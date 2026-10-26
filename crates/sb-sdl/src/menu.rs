@@ -255,11 +255,14 @@ pub struct MenuBar {
     open: Option<usize>,
     /// The item of the open menu whose submenu is open.
     sub: Option<usize>,
+    /// The bar stays shown, as over the editor, which leaves room for it.
+    pub pinned: bool,
 }
 
 impl MenuBar {
     pub fn visible(&self) -> bool {
-        self.open.is_some()
+        self.pinned
+            || self.open.is_some()
             || self
                 .mouse
                 .is_some_and(|(_, y)| y >= 0 && y < ROW_HEIGHT as i32)
