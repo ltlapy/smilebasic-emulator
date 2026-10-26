@@ -12,6 +12,7 @@ use dialog::{Answer, Dialog};
 use menu::{Action, Click, MenuBar};
 use projects::{Outcome, ProjectManager};
 use sb_profiles::Profile;
+use sb_runtime::editor::is_movement;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
@@ -20,6 +21,7 @@ use sb_runtime::settings::Settings;
 use sb_runtime::sprites::Sprites;
 use sb_runtime::storage::Storage;
 use sb_runtime::{Framebuffer, Runtime, resources, sbfile};
+use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
 use sdl3::event::WindowEvent;
 use sdl3::keyboard::{Keycode, Mod};
@@ -140,6 +142,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         .build()?;
 
     video.text_input().start(&window);
+    let clipboard = video.clipboard();
+    let keyboard = sdl.keyboard();
     let mut canvas = window.into_canvas();
     // SmileBASIC runs at 60 fps; until the VM has its own frame timer, pace with vsync.
     // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
@@ -165,6 +169,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut manager: Option<ProjectManager> = None;
 
     let mut events = sdl.event_pump()?;
+    // The left button went down on the editor and is still held.
+    let mut dragging = false;
     'running: loop {
         let (out_w, out_h) = canvas.output_size()?;
         let (win_w, _) = canvas.window().size();
@@ -178,6 +184,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 ((y * px - display.y) / scale) as i32,
             )
         };
+        // ...and the editor's pixels, which fill the screen's rectangle.
+        let shown = screen_rect(&mode, filter, out_w, out_h);
+        let to_screen = |x: f32, y: f32| {
+            let px = out_w as f32 / win_w.max(1) as f32;
+            (
+                ((x * px - shown.x) * mode.width as f32 / shown.w).floor() as i32,
+                ((y * px - shown.y) * mode.height as f32 / shown.h).floor() as i32,
+            )
+        };
+        let shift = |keymod: Mod| keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+        let ctrl = |keymod: Mod| keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         let mut quit = false;
         for event in events.poll_iter() {
             if let Some((open, asking)) = &mut dialog {
@@ -257,7 +274,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             match event {
                 Event::Quit { .. } => quit = true,
-                Event::MouseMotion { x, y, .. } => menu.mouse_move(Some(to_display(x, y))),
+                Event::MouseMotion { x, y, .. } => {
+                    menu.mouse_move(Some(to_display(x, y)));
+                    if dragging && machine.is_editing() {
+                        let (x, y) = to_screen(x, y);
+                        machine.edit().mouse_drag(x, y);
+                    }
+                }
+                Event::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => dragging = false,
                 Event::Window {
                     win_event: WindowEvent::MouseLeave,
                     ..
@@ -280,6 +307,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
+                    Click::Ignored if machine.is_editing() => {
+                        let (x, y) = to_screen(x, y);
+                        let extend = shift(keyboard.mod_state());
+                        machine.edit().mouse_down(x, y, extend);
+                        dragging = true;
+                    }
                     Click::Consumed | Click::Ignored => {}
                 },
                 Event::KeyDown {
@@ -290,11 +323,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::C),
                     keymod,
                     ..
-                } if machine.rt.settings.ctrl_c_stops
-                    && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) =>
-                {
+                } if machine.rt.settings.ctrl_c_stops && ctrl(keymod) && !machine.is_editing() => {
                     machine.stop()
                 }
+                // Ctrl+Shift+V pastes everywhere, also as keys to programs.
+                Event::KeyDown {
+                    keycode: Some(Keycode::V),
+                    keymod,
+                    ..
+                } if ctrl(keymod) && shift(keymod) => paste(&mut machine, &clipboard, &mut toasts),
                 Event::KeyDown {
                     keycode: Some(Keycode::F4),
                     ..
@@ -303,23 +340,44 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(key),
                     keymod,
                     ..
-                } if keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD)
-                    && !machine.is_running()
-                    && slot_key(key).is_some() =>
-                {
+                } if ctrl(keymod) && !machine.is_running() && slot_key(key).is_some() => {
                     machine.edit_slot(slot_key(key).expect("checked"));
                 }
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
                     ..
-                } if machine.is_editing() && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) => {
-                    match key {
-                        Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
-                        Keycode::Home => machine.editor.file_top(),
-                        Keycode::End => machine.editor.file_end(),
-                        _ => {}
+                } if machine.is_editing() && ctrl(keymod) => match key {
+                    Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
+                    Keycode::Home => machine.edit().file_top(),
+                    Keycode::End => machine.edit().file_end(),
+                    Keycode::A => machine.edit().select_all(),
+                    Keycode::C | Keycode::X => {
+                        let editor = machine.edit();
+                        let text = if key == Keycode::X {
+                            editor.cut()
+                        } else {
+                            editor.copy()
+                        };
+                        if let Some(Err(e)) = text.map(|t| clipboard.set_clipboard_text(&t)) {
+                            toasts.push(format!("Could not copy: {e}"));
+                        }
                     }
+                    Keycode::V => paste(&mut machine, &clipboard, &mut toasts),
+                    _ => {}
+                },
+                // Shift and the cursor keys select in the editor.
+                Event::KeyDown {
+                    keycode: Some(key),
+                    keymod,
+                    ..
+                } if machine.is_editing()
+                    && shift(keymod)
+                    && special_key(key).is_some_and(is_movement) =>
+                {
+                    machine
+                        .edit()
+                        .key_select(special_key(key).expect("checked"));
                 }
                 Event::KeyDown {
                     keycode: Some(key), ..
@@ -398,6 +456,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.present();
     }
     Ok(())
+}
+
+/// Pastes the clipboard's text into the editor, or types it.
+fn paste(machine: &mut Machine, clipboard: &ClipboardUtil, toasts: &mut Toasts) {
+    match clipboard.clipboard_text() {
+        Ok(text) => machine.paste(&text),
+        Err(e) => toasts.push(format!("Could not paste: {e}")),
+    }
 }
 
 /// Opens the folder that holds the projects in the system's file manager.

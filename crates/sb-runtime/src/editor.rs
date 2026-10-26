@@ -1,6 +1,7 @@
 //! The program editor that LIST and F4 open. It follows SmileBASIC 4's
 //! editor loosely: line numbers on the left, a column ruler and the slot's
-//! name at the bottom, and long lines either scrolled or wrapped.
+//! name at the bottom, and long lines either scrolled or wrapped. Text is
+//! selected with Shift and the cursor keys or by dragging the mouse.
 
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
@@ -21,6 +22,7 @@ const CURRENT_LINE: u32 = 0xFF20_2838;
 const BAR: u32 = 0xFF30_3040;
 const DIM: u32 = 0xFF70_7080;
 const RETURN_MARK: u32 = 0xFF50_5868;
+const SELECTION: u32 = 0xFF30_5090;
 
 /// The mark drawn after each line's last character.
 const RETURN_GLYPH: [u8; 8] = [
@@ -42,6 +44,9 @@ struct View {
     left: usize,
 }
 
+/// A line and a column in it.
+type Pos = (usize, usize);
+
 pub struct Editor {
     slot: usize,
     lines: Vec<Vec<u16>>,
@@ -50,9 +55,13 @@ pub struct Editor {
     want_col: usize,
     /// Typing replaces the character under the cursor (Insert toggles it).
     pub overwrite: bool,
+    /// The other end of the selection; the cursor is one end.
+    anchor: Option<Pos>,
     /// Line numbers are drawn on SmileBASIC 4's number tiles rather than
     /// in digits, which fonts other than its own may lack.
     number_tiles: bool,
+    /// The line and first column shown on each row of the last frame.
+    layout: Vec<Pos>,
     modified: bool,
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
@@ -87,7 +96,9 @@ impl Editor {
             view: View::default(),
             want_col: 0,
             overwrite: false,
+            anchor: None,
             number_tiles: true,
+            layout: Vec::new(),
             modified: false,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
@@ -132,6 +143,8 @@ impl Editor {
         self.view.line = self.view.line.min(self.lines.len() - 1);
         self.view.col = self.view.col.min(self.lines[self.view.line].len());
         self.want_col = self.view.col;
+        self.anchor = None;
+        self.layout.clear();
     }
 
     /// Stops editing. Returns the new source if it was changed, so that an
@@ -173,6 +186,80 @@ impl Editor {
         self.go(line, self.want_col);
     }
 
+    fn pos(&self) -> Pos {
+        (self.view.line, self.view.col)
+    }
+
+    /// The selected text's start and end, if any is selected.
+    fn selection(&self) -> Option<(Pos, Pos)> {
+        let anchor = self.anchor?;
+        let cursor = self.pos();
+        (anchor != cursor).then(|| (anchor.min(cursor), anchor.max(cursor)))
+    }
+
+    /// Removes the selected text, if any, leaving the cursor where it was.
+    fn delete_selection(&mut self) -> bool {
+        let Some((start, end)) = self.selection() else {
+            return false;
+        };
+        let rest = self.lines[end.0].split_off(end.1);
+        self.lines[start.0].truncate(start.1);
+        self.lines[start.0].extend(rest);
+        self.lines.drain(start.0 + 1..=end.0);
+        self.go(start.0, start.1);
+        self.anchor = None;
+        self.modified = true;
+        true
+    }
+
+    /// The selected text, with lines ending in LF.
+    pub fn copy(&self) -> Option<String> {
+        let (start, end) = self.selection()?;
+        let mut text = Vec::new();
+        for line in start.0..=end.0 {
+            let l = &self.lines[line];
+            let from = if line == start.0 { start.1 } else { 0 };
+            let to = if line == end.0 { end.1 } else { l.len() };
+            text.extend_from_slice(&l[from..to]);
+            if line < end.0 {
+                text.push(10);
+            }
+        }
+        Some(String::from_utf16_lossy(&text))
+    }
+
+    /// Takes the selected text out, for the clipboard.
+    pub fn cut(&mut self) -> Option<String> {
+        let text = self.copy()?;
+        self.delete_selection();
+        self.want_col = self.view.col;
+        Some(text)
+    }
+
+    /// Puts text at the cursor in place of the selection. Insert mode
+    /// does not apply.
+    pub fn paste(&mut self, text: &str) {
+        self.delete_selection();
+        let mut parts = split_lines(text);
+        let (line, col) = self.pos();
+        let rest = self.lines[line].split_off(col);
+        let last = parts.len() - 1;
+        let end_col = parts[last].len() + if last == 0 { col } else { 0 };
+        parts[last].extend(rest);
+        let mut parts = parts.into_iter();
+        self.lines[line].extend(parts.next().expect("never empty"));
+        self.lines.splice(line + 1..line + 1, parts);
+        self.go(line + last, end_col);
+        self.want_col = self.view.col;
+        self.modified |= !text.is_empty();
+    }
+
+    /// Selects the whole program.
+    pub fn select_all(&mut self) {
+        self.anchor = Some((0, 0));
+        self.file_end();
+    }
+
     fn insert(&mut self, code: u16) {
         let View { line, col, .. } = self.view;
         let text = &mut self.lines[line];
@@ -202,8 +289,34 @@ impl Editor {
         }
     }
 
+    /// Moves the cursor with a [`keys`] code while keeping the other end
+    /// of the selection, as Shift does.
+    pub fn key_select(&mut self, code: u16) {
+        let anchor = self.anchor.unwrap_or(self.pos());
+        self.anchor = None;
+        self.key(code);
+        if is_movement(code) {
+            self.anchor = Some(anchor);
+        }
+    }
+
     /// Edits with a typed character or one of the [`keys`] codes.
     pub fn key(&mut self, code: u16) {
+        if self.selection().is_some() {
+            match code {
+                c if is_movement(c) => self.anchor = None,
+                keys::BACKSPACE | keys::DELETE => {
+                    self.delete_selection();
+                    self.want_col = self.view.col;
+                    return;
+                }
+                // Other control codes type nothing.
+                c if c < 0x20 && c != keys::ENTER && c != keys::TAB || c == 0x7F => {}
+                _ => {
+                    self.delete_selection();
+                }
+            }
+        }
         let View { line, col, .. } = self.view;
         let (_, rows) = self.size();
         let keeps_column = matches!(
@@ -249,6 +362,56 @@ impl Editor {
             c => self.insert(c),
         }
         if !keeps_column {
+            self.want_col = self.view.col;
+        }
+    }
+
+    /// The text position under a pixel of the editor's screen, from the
+    /// last frame drawn. Rows above or below the code reach one line
+    /// further, so that dragging there scrolls.
+    fn hit(&self, x: i32, y: i32) -> Option<Pos> {
+        let (first, last) = (*self.layout.first()?, *self.layout.last()?);
+        let col = (x.div_euclid(8) - self.gutter() as i32).max(0) as usize;
+        // Wrapped lines start every row at column 0, where `left` is 0.
+        let left = self.view.left;
+        let row = y.div_euclid(8);
+        Some(if row < 0 {
+            (first.0.saturating_sub(1), left + col)
+        } else if let Some(&(line, start)) = self.layout.get(row as usize) {
+            (line, start + col)
+        } else if self.layout.len() < self.size().1 {
+            // Below the program's end.
+            (last.0, usize::MAX)
+        } else {
+            (last.0 + 1, left + col)
+        })
+    }
+
+    /// A press of the mouse at a pixel of the editor's screen: moves the
+    /// cursor there and starts a selection, or with `extend` moves the
+    /// selection's end there. Presses on the ruler and status line do
+    /// nothing.
+    pub fn mouse_down(&mut self, x: i32, y: i32, extend: bool) {
+        if y.div_euclid(8) >= self.size().1 as i32 {
+            return;
+        }
+        let Some((line, col)) = self.hit(x, y) else {
+            return;
+        };
+        let from = self.pos();
+        self.go(line, col);
+        self.want_col = self.view.col;
+        self.anchor = Some(if extend {
+            self.anchor.unwrap_or(from)
+        } else {
+            self.pos()
+        });
+    }
+
+    /// The mouse moved with its button held since [`Editor::mouse_down`].
+    pub fn mouse_drag(&mut self, x: i32, y: i32) {
+        if let Some((line, col)) = self.hit(x, y) {
+            self.go(line, col);
             self.want_col = self.view.col;
         }
     }
@@ -307,6 +470,8 @@ impl Editor {
         let (cols, rows) = self.size();
         let gutter = self.gutter();
         let v = self.view;
+        let selection = self.selection();
+        self.layout.clear();
         fb.clear(BACKGROUND);
         let screen = &mut self.screen;
         screen.cls();
@@ -340,7 +505,12 @@ impl Editor {
                     }
                 }
                 let start = if wrap { chunk * cols } else { v.left };
+                self.layout.push((line, start));
                 for x in 0..cols {
+                    let at = (line, start + x);
+                    if selection.is_some_and(|(a, b)| a <= at && at < b) && at.1 <= text.len() {
+                        fill_row(fb, row, gutter + x, 1, SELECTION);
+                    }
                     match text.get(start + x) {
                         Some(&c) => screen.put_at((gutter + x) as u32, row as u32, c, TEXT),
                         None => {
@@ -418,6 +588,21 @@ impl Editor {
             }
         }
     }
+}
+
+/// Whether a [`keys`] code moves the cursor without editing.
+pub fn is_movement(code: u16) -> bool {
+    matches!(
+        code,
+        keys::LEFT
+            | keys::RIGHT
+            | keys::UP
+            | keys::DOWN
+            | keys::HOME
+            | keys::END
+            | keys::PAGE_UP
+            | keys::PAGE_DOWN
+    )
 }
 
 /// A line number's six digits on three tiles, two digits each, with the
@@ -680,5 +865,49 @@ mod tests {
         assert_eq!(ruler_tile(7), 0xE177);
         assert_eq!(ruler_tile(42), 0xE12A);
         assert_eq!(ruler_tile(105), 0xE169);
+    }
+
+    #[test]
+    fn select_copy_cut_and_paste() {
+        let mut e = editor("ABC\nDEF\nGHI");
+        e.key(keys::RIGHT);
+        e.key_select(keys::DOWN);
+        e.key_select(keys::RIGHT);
+        assert_eq!(e.copy().as_deref(), Some("BC\nDE"));
+        assert_eq!(e.cut().as_deref(), Some("BC\nDE"));
+        assert_eq!((e.text().as_str(), e.cursor()), ("AF\nGHI", (1, 1)));
+        assert_eq!(e.copy(), None);
+        e.paste("12\r\n34\n5");
+        assert_eq!(
+            (e.text().as_str(), e.cursor()),
+            ("A12\n34\n5F\nGHI", (3, 1))
+        );
+        // Typing replaces a selection; moving drops it.
+        e.select_all();
+        typing(&mut e, "X");
+        assert_eq!(e.text(), "X");
+        e.key_select(keys::LEFT);
+        e.key(keys::RIGHT);
+        e.key(keys::BACKSPACE);
+        assert_eq!(e.text(), "");
+    }
+
+    #[test]
+    fn mouse_selects() {
+        let mut e = editor("PRINT 1\nPRINT 2\nEND");
+        let mut fb = Framebuffer::new(400, 240);
+        e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
+        // Column 2 of line 1, then the end of line 2.
+        e.mouse_down((4 + 2) * 8 + 3, 4, false);
+        e.mouse_drag(40 * 8, 8 + 7);
+        assert_eq!(e.copy().as_deref(), Some("INT 1\nPRINT 2"));
+        // Shift keeps the start; below the end goes to the last line's end.
+        e.mouse_down(0, 20 * 8, true);
+        assert_eq!(e.copy().as_deref(), Some("INT 1\nPRINT 2\nEND"));
+        e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
+        assert_eq!(fb.get(6 * 8, 0), Some(SELECTION));
+        // The ruler does nothing.
+        e.mouse_down(0, 28 * 8, false);
+        assert!(e.copy().is_some());
     }
 }

@@ -64,6 +64,9 @@ digits turned into ASCII.
 | Ctrl+W | Wrap long lines in the editor, or scroll them |
 | Insert | Toggle overwriting in the editor |
 | Ctrl+Home, Ctrl+End | Jump to the start or end of the program |
+| Shift+cursor keys, mouse drag | Select text in the editor |
+| Ctrl+A, Ctrl+X, Ctrl+C, Ctrl+V | Select all, cut, copy and paste in the editor |
+| Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
 
 ## License
 

@@ -11,7 +11,7 @@ use sb_core::vm::{Status, Vm};
 
 use crate::editor::Editor;
 use crate::framebuffer::Framebuffer;
-use crate::runtime::{Request, Runtime, SLOTS};
+use crate::runtime::{Request, Runtime, SLOTS, keys};
 use crate::screen::ScreenMode;
 use crate::text::CONSOLE;
 
@@ -234,6 +234,42 @@ impl Machine {
         self.ready();
     }
 
+    /// The editor, after it has taken the keys typed so far, so that its
+    /// other commands come in order with them.
+    pub fn edit(&mut self) -> &mut Editor {
+        while let Some(key) = self.rt.next_key() {
+            self.editor.key(key);
+        }
+        &mut self.editor
+    }
+
+    /// Pasted text: into the editor, or typed as keys, with line breaks
+    /// as Enter and letters as they are.
+    pub fn paste(&mut self, text: &str) {
+        if self.editing {
+            self.edit().paste(text);
+            return;
+        }
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            let code = match c {
+                '\r' => {
+                    chars.next_if_eq(&'\n');
+                    keys::ENTER
+                }
+                '\n' => keys::ENTER,
+                '\t' => keys::TAB,
+                c if c < ' ' => continue,
+                // SmileBASIC strings hold only the Basic Multilingual Plane.
+                c => match u16::try_from(u32::from(c)) {
+                    Ok(code) => code,
+                    Err(_) => continue,
+                },
+            };
+            self.rt.key_press(code);
+        }
+    }
+
     /// Text typed on the keyboard, as the OS reports it.
     pub fn type_text(&mut self, text: &str) {
         for c in text.chars() {
@@ -257,9 +293,7 @@ impl Machine {
         // hides the screen (checked on hardware).
         self.rt.animate();
         if self.editing {
-            while let Some(key) = self.rt.next_key() {
-                self.editor.key(key);
-            }
+            self.edit();
             return;
         }
         let Some(vm) = &mut self.vm else {
