@@ -12,6 +12,7 @@ use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::Editor;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
+use crate::graphics::Graphics;
 pub use crate::settings::Settings;
 use crate::storage::Storage;
 use crate::text::{CONSOLE, SCREENS, TextScreen};
@@ -24,6 +25,20 @@ pub(crate) enum Command {
     Color,
     Delete,
     Files,
+    Gbox,
+    Gcircle,
+    Gclip,
+    Gcls,
+    Gcolor,
+    Gcopy,
+    Gfill,
+    Gline,
+    Gpaint,
+    Gpget,
+    Gpset,
+    Gputchr,
+    Gtarget,
+    Gtri,
     Inkey,
     Load,
     Locate,
@@ -42,6 +57,20 @@ const COMMANDS: &[(&str, Command)] = &[
     ("COLOR", Command::Color),
     ("DELETE", Command::Delete),
     ("FILES", Command::Files),
+    ("GBOX", Command::Gbox),
+    ("GCIRCLE", Command::Gcircle),
+    ("GCLIP", Command::Gclip),
+    ("GCLS", Command::Gcls),
+    ("GCOLOR", Command::Gcolor),
+    ("GCOPY", Command::Gcopy),
+    ("GFILL", Command::Gfill),
+    ("GLINE", Command::Gline),
+    ("GPAINT", Command::Gpaint),
+    ("GPGET", Command::Gpget),
+    ("GPSET", Command::Gpset),
+    ("GPUTCHR", Command::Gputchr),
+    ("GTARGET", Command::Gtarget),
+    ("GTRI", Command::Gtri),
     ("INKEY$", Command::Inkey),
     ("LOAD", Command::Load),
     ("LOCATE", Command::Locate),
@@ -90,8 +119,10 @@ pub mod keys {
 
 pub struct Runtime {
     pub text: Vec<TextScreen>,
-    font: Font,
+    pub(crate) font: Font,
     fb: Framebuffer,
+    /// Graphic pages GRP0-GRP5.
+    pub grp: Graphics,
     /// Typed characters not yet read by INKEY$ or INPUT.
     keys: VecDeque<u16>,
     /// The line being typed for INPUT or LINPUT.
@@ -166,6 +197,7 @@ impl Runtime {
                 .collect(),
             font,
             fb: Framebuffer::new(width, height),
+            grp: Graphics::default(),
             keys: VecDeque::new(),
             line: None,
             frame: 0,
@@ -233,6 +265,9 @@ impl Runtime {
     pub fn render(&mut self) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
         self.fb.clear(0xFF00_0000);
+        // TODO: show GRP pages through sprite #GSPRITE (4095) once sprites
+        // exist; until then GRP0 lies under the text screens.
+        self.grp.draw(0, &mut self.fb);
         // UNVERIFIED: screens are drawn in id order until layers exist.
         for screen in &self.text {
             screen.draw(&mut self.fb, &self.font);
@@ -359,6 +394,23 @@ impl Runtime {
                 | Command::Save,
                 _,
             ) => self.file_command(command, args, want),
+            (
+                Command::Gbox
+                | Command::Gcircle
+                | Command::Gclip
+                | Command::Gcls
+                | Command::Gcolor
+                | Command::Gcopy
+                | Command::Gfill
+                | Command::Gline
+                | Command::Gpaint
+                | Command::Gpget
+                | Command::Gpset
+                | Command::Gputchr
+                | Command::Gtarget
+                | Command::Gtri,
+                _,
+            ) => self.grp_command(command, args, want),
             _ => Err(illegal()),
         }
     }

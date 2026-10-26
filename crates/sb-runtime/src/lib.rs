@@ -7,6 +7,8 @@ pub mod editor;
 mod files;
 pub mod font;
 pub mod framebuffer;
+pub mod graphics;
+mod grp;
 pub mod machine;
 pub mod resources;
 pub mod runtime;

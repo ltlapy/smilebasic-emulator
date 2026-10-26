@@ -46,6 +46,11 @@ mode, typed lines run immediately; `RUN [slot]`, `NEW [slot]` and `CLEAR` work
 on the program slots PRG0-PRG5. Letters type in upper case unless Shift or
 Caps Lock is on. Pause/Break stops the running program.
 
+Graphic pages GRP0-GRP5 can be drawn on with `GPSET`, `GLINE`, `GBOX`,
+`GFILL`, `GCIRCLE`, `GTRI`, `GPAINT`, `GCOPY`, `GPUTCHR` and `GCLS`, with
+`GTARGET`, `GCOLOR`, `GCLIP` and `GPGET`. Until sprites exist, GRP0 is shown
+under the text screens.
+
 F4 switches between direct mode and the program editor. The first F4 after
 a program error opens the editor at the error, as `LIST ERR` does; `LIST`,
 `LIST line` and `LIST slot:line` open it at a given place. In the editor,
