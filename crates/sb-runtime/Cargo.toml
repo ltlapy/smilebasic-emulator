@@ -7,5 +7,6 @@ rust-version.workspace = true
 
 [dependencies]
 ab_glyph = "0.2.32"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 miniz_oxide = "0.9.1"
 sb-core.workspace = true

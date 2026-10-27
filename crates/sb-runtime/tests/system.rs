@@ -1,0 +1,62 @@
+//! Random numbers and time.
+
+use sb_core::error::ErrorKind;
+use sb_core::vm::{Status, Vm};
+use sb_runtime::Runtime;
+use sb_runtime::font::Font;
+
+fn run(source: &str) -> Result<String, sb_core::error::Error> {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    rt.begin_frame();
+    rt.begin_frame();
+    let mut vm = Vm::new(sb_core::compile(source, &rt)?);
+    while vm.run(&mut rt, 1_000_000)? != Status::Ended {}
+    let console = &rt.text[4];
+    let codes: Vec<u16> = (0..console.size().0)
+        .map(|x| console.cell(x, 0).code)
+        .take_while(|&c| c != 0)
+        .collect();
+    Ok(String::from_utf16(&codes).unwrap())
+}
+
+#[test]
+fn random_numbers() {
+    assert_eq!(
+        run("OK=1:FOR I=0 TO 999:R=RND(7):F#=RNDF(3):IF R<0 OR R>6 OR F#<0 OR F#>=1 THEN OK=0\nNEXT:?OK").unwrap(),
+        "1"
+    );
+    assert_eq!(
+        run("RANDOMIZE 2,99:A=RND(2,1000):B=RND(2,1000):RANDOMIZE 2,99:?RND(2,1000)==A AND RND(2,1000)==B").unwrap(),
+        "1"
+    );
+    assert_eq!(run("?TYPEOF(RND(5));TYPEOF(RNDF())").unwrap(), "12");
+    assert_eq!(run("?RND(0)").unwrap_err().kind, ErrorKind::OutOfRange);
+    assert_eq!(run("?RND(8,5)").unwrap_err().kind, ErrorKind::OutOfRange);
+}
+
+#[test]
+fn counters_and_clock() {
+    assert_eq!(run("?MAINCNT()").unwrap(), "2");
+    assert_eq!(run("?MILLISEC()>=0").unwrap(), "1");
+    assert_eq!(
+        run("D$=DATE$():T$=TIME$():?LEN(D$);MID$(D$,4,1);LEN(T$);MID$(T$,2,1)").unwrap(),
+        "10/8:"
+    );
+}
+
+#[test]
+fn reading_dates_and_times() {
+    assert_eq!(
+        run("DTREAD \"2014/10/12\" OUT Y,M,D,W:?Y;M;D;W;:TMREAD \"12:59:31\" OUT H,M,S:?H;M;S")
+            .unwrap(),
+        "201410120125931"
+    );
+    assert_eq!(
+        run("DTREAD \"2014/02/30\" OUT Y,M,D").unwrap_err().kind,
+        ErrorKind::IllegalFunctionCall
+    );
+    assert_eq!(
+        run("TMREAD \"1:00:00\" OUT H,M,S").unwrap_err().kind,
+        ErrorKind::IllegalFunctionCall
+    );
+}

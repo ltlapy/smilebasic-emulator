@@ -23,6 +23,7 @@ pub mod settings;
 mod sp;
 pub mod sprites;
 pub mod storage;
+mod system;
 pub mod text;
 mod txt;
 

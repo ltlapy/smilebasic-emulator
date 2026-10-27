@@ -21,6 +21,7 @@ use crate::screen::ScreenMode;
 pub use crate::settings::Settings;
 use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
+use crate::system::System;
 use crate::text::{CONSOLE, FONT_PAGE, SCREENS, SPRITE_PAGE, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,7 +39,9 @@ pub(crate) enum Command {
     Cls,
     Color,
     Controller,
+    Date,
     Delete,
+    Dtread,
     Files,
     Gbox,
     Gcircle,
@@ -68,13 +71,18 @@ pub(crate) enum Command {
     Lmatrix,
     Load,
     Locate,
+    Maincnt,
     Mbutton,
+    Millisec,
     Mouse,
     New,
     Project,
     Pushkey,
+    Randomize,
     Rename,
     Result,
+    Rnd,
+    Rndf,
     Run,
     Save,
     Scroll,
@@ -117,8 +125,10 @@ pub(crate) enum Command {
     Tfunc,
     Thide,
     Thome,
+    Time,
     Tlayer,
     Tload,
+    Tmread,
     Tofs,
     Touch,
     Tpage,
@@ -150,7 +160,9 @@ const COMMANDS: &[(&str, Command)] = &[
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
     ("CONTROLLER", Command::Controller),
+    ("DATE$", Command::Date),
     ("DELETE", Command::Delete),
+    ("DTREAD", Command::Dtread),
     ("FILES", Command::Files),
     ("GBOX", Command::Gbox),
     ("GCIRCLE", Command::Gcircle),
@@ -180,13 +192,18 @@ const COMMANDS: &[(&str, Command)] = &[
     ("LMATRIX", Command::Lmatrix),
     ("LOAD", Command::Load),
     ("LOCATE", Command::Locate),
+    ("MAINCNT", Command::Maincnt),
     ("MBUTTON", Command::Mbutton),
+    ("MILLISEC", Command::Millisec),
     ("MOUSE", Command::Mouse),
     ("NEW", Command::New),
     ("PROJECT", Command::Project),
     ("PUSHKEY", Command::Pushkey),
+    ("RANDOMIZE", Command::Randomize),
     ("RENAME", Command::Rename),
     ("RESULT", Command::Result),
+    ("RND", Command::Rnd),
+    ("RNDF", Command::Rndf),
     ("RUN", Command::Run),
     ("SAVE", Command::Save),
     ("SCROLL", Command::Scroll),
@@ -229,8 +246,10 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TFUNC", Command::Tfunc),
     ("THIDE", Command::Thide),
     ("THOME", Command::Thome),
+    ("TIME$", Command::Time),
     ("TLAYER", Command::Tlayer),
     ("TLOAD", Command::Tload),
+    ("TMREAD", Command::Tmread),
     ("TOFS", Command::Tofs),
     ("TOUCH", Command::Touch),
     ("TPAGE", Command::Tpage),
@@ -291,6 +310,7 @@ pub struct Runtime {
     pub grp: Graphics,
     pub sprites: Sprites,
     pub input: Input,
+    pub(crate) system: System,
     /// Typed characters not yet read by INKEY$ or INPUT.
     keys: VecDeque<u16>,
     /// The line being typed for INPUT or LINPUT.
@@ -441,6 +461,7 @@ impl Runtime {
             grp: Graphics::default(),
             sprites: Sprites::default(),
             input: Input::default(),
+            system: System::default(),
             keys: VecDeque::new(),
             line: None,
             frame: 0,
@@ -690,6 +711,12 @@ impl Runtime {
         self.fb = fb;
         self.scratch = scratch;
         &self.fb
+    }
+
+    /// Starts a frame: the input it sees, and MAINCNT.
+    pub fn begin_frame(&mut self) {
+        self.input.latch();
+        self.system.frames = self.system.frames.wrapping_add(1);
     }
 
     /// Plays one frame of the sprites' and text screens' animations.
@@ -957,6 +984,18 @@ impl Runtime {
                 | Command::Xctrlstyle,
                 _,
             ) => self.input_command(command, args, want),
+            (
+                Command::Date
+                | Command::Dtread
+                | Command::Maincnt
+                | Command::Millisec
+                | Command::Randomize
+                | Command::Rnd
+                | Command::Rndf
+                | Command::Time
+                | Command::Tmread,
+                _,
+            ) => self.system_command(command, args, want),
             _ => Err(illegal()),
         }
     }
