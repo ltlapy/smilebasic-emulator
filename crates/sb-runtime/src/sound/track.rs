@@ -1,12 +1,14 @@
 //! One BGM track: a song's channels stepped through tick by tick, played
 //! on a SoundFont synthesizer of the track's own.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use super::mml::{ChordPart, Cmd, Link, Num, Pitch, Song, WHOLE, ticks};
+use super::wave::{self, Envelope, Waves};
 use super::{RATE, Ramp};
 
 /// Ticks in a quarter note; T counts quarter notes a minute.
@@ -32,7 +34,9 @@ const DRUM_KITS: [i32; 21] = [
 enum Voice {
     /// A General MIDI instrument or drum kit: bank and program.
     Font(i32, i32),
-    /// PSG, user waveforms and sound effects, not played yet.
+    /// The PSG, noise or a user waveform: @216 to @255.
+    Wave(i32),
+    /// Sound effects, not played yet.
     Silent,
 }
 
@@ -40,6 +44,7 @@ fn voice(program: i32) -> Voice {
     match program {
         0..=127 => Voice::Font(0, program),
         128..=148 => Voice::Font(DRUM_BANK, DRUM_KITS[(program - 128) as usize]),
+        216..=255 => Voice::Wave(program),
         _ => Voice::Silent,
     }
 }
@@ -61,6 +66,9 @@ struct Channel {
     volume: i32,
     velocity: i32,
     detune: i32,
+    pan: i32,
+    /// @E's, over the waveform's own.
+    envelope: Option<Envelope>,
     voice: Voice,
     /// Notes sounding now, as MIDI keys.
     sounding: Vec<i32>,
@@ -85,6 +93,8 @@ impl Default for Channel {
             volume: 100,
             velocity: 100,
             detune: 0,
+            pan: 64,
+            envelope: None,
             voice: Voice::Font(0, 0),
             sounding: Vec::new(),
             link: Link::None,
@@ -96,6 +106,9 @@ impl Default for Channel {
 pub(crate) struct Track {
     /// None without a SoundFont: the song goes on, silent.
     synth: Option<Synthesizer>,
+    waves: Rc<RefCell<Waves>>,
+    /// Waveform notes sounding, with their channels.
+    voices: Vec<(usize, wave::Voice)>,
     song: Option<Rc<Song>>,
     channels: Vec<Channel>,
     tempo: u32,
@@ -125,11 +138,13 @@ pub(crate) enum AfterFade {
 }
 
 impl Track {
-    pub(crate) fn new(font: Option<&Arc<SoundFont>>) -> Track {
+    pub(crate) fn new(font: Option<&Arc<SoundFont>>, waves: Rc<RefCell<Waves>>) -> Track {
         let mut settings = SynthesizerSettings::new(RATE as i32);
         settings.enable_reverb_and_chorus = false;
         Track {
             synth: font.map(|f| Synthesizer::new(f, &settings).expect("valid settings")),
+            waves,
+            voices: Vec::new(),
             song: None,
             channels: Vec::new(),
             tempo: 120,
@@ -151,6 +166,7 @@ impl Track {
         if let Some(s) = &mut self.synth {
             s.reset();
         }
+        self.voices.clear();
         self.channels = vec![Channel::default(); super::mml::CHANNELS];
         self.tempo = 120;
         self.song_key = 0;
@@ -173,9 +189,15 @@ impl Track {
         self.playing = false;
         self.paused = false;
         self.song = None;
+        self.silence();
+    }
+
+    /// Every note stops at once.
+    fn silence(&mut self) {
         if let Some(s) = &mut self.synth {
             s.note_off_all(true);
         }
+        self.voices.clear();
     }
 
     fn midi(&mut self, c: usize, command: i32, a: i32, b: i32) {
@@ -213,6 +235,9 @@ impl Track {
         // Two semitones either way span the bend's 14 bits.
         let bend = 8192 + fraction * 8192 / 200;
         self.midi(c, 0xE0, bend & 0x7F, bend >> 7);
+        for (_, v) in self.voices.iter_mut().filter(|(vc, _)| *vc == c) {
+            v.set_pitch(fraction);
+        }
     }
 
     pub(crate) fn set_pitch(&mut self, cents: i32) {
@@ -230,10 +255,47 @@ impl Track {
     }
 
     fn notes_off(&mut self, c: usize) {
-        for key in std::mem::take(&mut self.channels[c].sounding) {
+        let keys = std::mem::take(&mut self.channels[c].sounding);
+        self.keys_off(c, &keys);
+    }
+
+    fn keys_off(&mut self, c: usize, keys: &[i32]) {
+        for &key in keys {
             if let Some(s) = &mut self.synth {
                 s.note_off(c as i32, key);
             }
+        }
+        for (_, v) in self
+            .voices
+            .iter_mut()
+            .filter(|(vc, v)| *vc == c && keys.contains(&v.key))
+        {
+            v.release();
+        }
+    }
+
+    fn keys_on(&mut self, c: usize, keys: &[i32]) {
+        let ch = &self.channels[c];
+        match ch.voice {
+            Voice::Font(..) => {
+                let velocity = ch.velocity.max(1);
+                if let Some(s) = &mut self.synth {
+                    for &key in keys {
+                        s.note_on(c as i32, key, velocity);
+                    }
+                }
+            }
+            Voice::Wave(program) => {
+                let Some(w) = self.waves.borrow().get(program) else {
+                    return;
+                };
+                let (envelope, cents) = (ch.envelope, self.cents(c).rem_euclid(100));
+                for &key in keys {
+                    let v = wave::Voice::new(w.clone(), envelope, key, cents, false);
+                    self.voices.push((c, v));
+                }
+            }
+            Voice::Silent => {}
         }
     }
 
@@ -251,23 +313,11 @@ impl Track {
             // A tie: the notes go on.
         } else {
             let old = std::mem::take(&mut self.channels[c].sounding);
-            if !keys.is_empty() && self.channels[c].voice != Voice::Silent {
-                let velocity = self.channels[c].velocity;
-                for &key in &keys {
-                    if (0..128).contains(&key) {
-                        if let Some(s) = &mut self.synth {
-                            s.note_on(c as i32, key, velocity.max(1));
-                        }
-                    }
-                }
-            }
+            let keys: Vec<i32> = keys.into_iter().filter(|k| (0..128).contains(k)).collect();
             // A slur starts the new notes before ending the old.
-            for key in old {
-                if let Some(s) = &mut self.synth {
-                    s.note_off(c as i32, key);
-                }
-            }
-            self.channels[c].sounding = keys.into_iter().filter(|k| (0..128).contains(k)).collect();
+            self.keys_on(c, &keys);
+            self.keys_off(c, &old);
+            self.channels[c].sounding = keys;
         }
         let ch = &mut self.channels[c];
         ch.link = link;
@@ -360,7 +410,10 @@ impl Track {
                     self.controller(c, 7, v);
                 }
                 Cmd::Velocity(n) => self.channels[c].velocity = self.var(*n).clamp(0, 127),
-                Cmd::Pan(n) => self.controller(c, 10, self.var(*n)),
+                Cmd::Pan(n) => {
+                    self.channels[c].pan = self.var(*n).clamp(0, 127);
+                    self.controller(c, 10, self.channels[c].pan);
+                }
                 Cmd::Gate(n) => self.channels[c].quantize = self.var(*n).clamp(0, 32),
                 Cmd::Key(n) => self.channels[c].key = self.var(*n),
                 Cmd::SongKey(n) => self.song_key = self.var(*n),
@@ -372,14 +425,20 @@ impl Track {
                 // UNVERIFIED: how depth, range, speed and delay map.
                 Cmd::Vibrato([depth, ..]) => self.controller(c, 1, self.var(*depth)),
                 Cmd::VibratoOff | Cmd::ModulationOff => self.controller(c, 1, 0),
-                // UNVERIFIED: envelopes, tremolo and pan modulation are
-                // read but not played on SoundFont instruments.
-                Cmd::Envelope(_)
-                | Cmd::EnvelopeOff
-                | Cmd::Tremolo(_)
-                | Cmd::TremoloOff
-                | Cmd::PanWave(_)
-                | Cmd::PanWaveOff => {}
+                Cmd::Envelope(e) => {
+                    let [attack, decay, sustain, release] = e.map(|n| self.var(n));
+                    self.channels[c].envelope = Some(Envelope {
+                        attack,
+                        decay,
+                        sustain,
+                        release,
+                    });
+                }
+                Cmd::EnvelopeOff => self.channels[c].envelope = None,
+                // UNVERIFIED: envelopes only shape waveforms, not SoundFont
+                // instruments; tremolo and pan modulation are read but
+                // not played.
+                Cmd::Tremolo(_) | Cmd::TremoloOff | Cmd::PanWave(_) | Cmd::PanWaveOff => {}
                 Cmd::RepeatStart => {
                     // Find the count at the matching end.
                     let mut depth = 0;
@@ -465,13 +524,17 @@ impl Track {
             } else {
                 ((self.until_tick.ceil() as usize).max(1)).min(n - done)
             };
+            let (cl, cr) = (&mut l[done..done + chunk], &mut r[done..done + chunk]);
             match &mut self.synth {
-                Some(s) => s.render(&mut l[done..done + chunk], &mut r[done..done + chunk]),
-                None => l[done..done + chunk]
-                    .iter_mut()
-                    .chain(&mut r[done..done + chunk])
-                    .for_each(|x| *x = 0.0),
+                Some(s) => s.render(cl, cr),
+                None => cl.iter_mut().chain(cr.iter_mut()).for_each(|x| *x = 0.0),
             }
+            for (vc, v) in &mut self.voices {
+                let ch = &self.channels[*vc];
+                v.gains = wave::gains(ch.volume, ch.velocity, ch.pan);
+                v.render(cl, cr);
+            }
+            self.voices.retain(|(_, v)| !v.done());
             if !self.paused && self.playing {
                 self.until_tick -= chunk as f64;
             }
@@ -490,9 +553,7 @@ impl Track {
                 AfterFade::Stop => self.stop(),
                 AfterFade::Pause => {
                     self.paused = true;
-                    if let Some(s) = &mut self.synth {
-                        s.note_off_all(true);
-                    }
+                    self.silence();
                 }
             }
         }

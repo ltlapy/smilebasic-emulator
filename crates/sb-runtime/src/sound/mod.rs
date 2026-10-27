@@ -1,17 +1,22 @@
 //! Sound: BGM tracks playing MML on a SoundFont, mixed a frame at a time
 //! into stereo samples for the frontend to play.
 
+pub mod beep;
 pub mod mml;
 mod track;
+pub mod wave;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 pub use rustysynth::SoundFont;
 
+use beep::Beeps;
 use mml::Song;
 use track::{AfterFade, Track};
+use wave::Waves;
 
 /// Samples a second.
 pub const RATE: u32 = 48_000;
@@ -77,6 +82,9 @@ pub struct Sound {
     tracks: Vec<Option<Track>>,
     /// BGMSET's songs, 128 to 255.
     pub(crate) songs: HashMap<i32, Rc<Song>>,
+    /// The PSG and WAVSET's waveforms, shared with the tracks.
+    pub(crate) waves: Rc<RefCell<Waves>>,
+    pub(crate) beeps: Beeps,
     /// SNDMVOL, as a gain.
     pub(crate) master: Ramp,
     /// Mixed samples, left and right in turn, not yet taken.
@@ -91,6 +99,8 @@ impl Default for Sound {
             font: None,
             tracks: (0..TRACKS).map(|_| None).collect(),
             songs: HashMap::new(),
+            waves: Rc::default(),
+            beeps: Beeps::new(None),
             master: Ramp::at(1.0),
             out: Vec::new(),
             scratch: Default::default(),
@@ -102,13 +112,15 @@ impl Default for Sound {
 impl Sound {
     /// The SoundFont instruments come from; without one, BGM is silent.
     pub fn set_font(&mut self, font: Option<Arc<SoundFont>>) {
+        self.beeps = Beeps::new(font.as_ref());
         self.font = font;
         self.tracks.iter_mut().for_each(|t| *t = None);
     }
 
     pub(crate) fn track(&mut self, n: usize) -> &mut Track {
         let font = self.font.as_ref();
-        self.tracks[n].get_or_insert_with(|| Track::new(font))
+        let waves = &self.waves;
+        self.tracks[n].get_or_insert_with(|| Track::new(font, waves.clone()))
     }
 
     /// The tracks that exist, which are all that can be playing.
@@ -162,6 +174,7 @@ impl Sound {
         for t in self.tracks() {
             t.stop();
         }
+        self.beeps.stop_all();
     }
 
     /// Mixes one frame of samples.
@@ -175,6 +188,7 @@ impl Sound {
         for t in self.tracks.iter_mut().flatten() {
             t.render(left, right, &mut self.scratch);
         }
+        self.beeps.render(left, right);
         // Nobody is taking them, as in tests: keep a second at most.
         let most = 2 * RATE as usize;
         if self.out.len() > most {

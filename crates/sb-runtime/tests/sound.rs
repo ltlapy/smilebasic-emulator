@@ -149,3 +149,59 @@ fn a_soundfont_makes_sound() {
         .fold(0f32, |m, s| m.max(s.abs()));
     assert!(left < 0.001, "peak after SNDSTOP {left}");
 }
+
+fn peak(rt: &mut Runtime) -> f32 {
+    rt.sound
+        .take_samples()
+        .iter()
+        .fold(0f32, |m, s| m.max(s.abs()))
+}
+
+#[test]
+fn user_waveforms_and_the_psg_play_without_a_soundfont() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "WAVSET 224,127,0,0,127,\"FF00\"*8,69:BGMPLAY \"@224O4A1\"",
+    )
+    .unwrap();
+    frames(&mut rt, 5);
+    assert!(peak(&mut rt) > 0.05);
+    run_on(&mut rt, "BGMPLAY \"@219 V127 C4\"").unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 5);
+    assert!(peak(&mut rt) > 0.05);
+    run_on(&mut rt, "DIM W[512]:FOR I=0 TO 511:W[I]=SIN(I/8)*20000:NEXT\nWAVSETA 225,127,127,127,127,W,69,0,511,48000:BGMPLAY \"@225C\"").unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 5);
+    assert!(peak(&mut rt) > 0.05);
+}
+
+#[test]
+fn beeps_take_handles() {
+    let mut rt = runtime();
+    assert_eq!(run_on(&mut rt, "?BEEP(152);BEEP();").unwrap(), "01");
+    run_on(&mut rt, "WAVSET 230,127,127,127,127,\"FF00\"*8:H=BEEP(230,0,127):BEEPPIT H,1200:BEEPVOL H,64:BEEPPAN H,0").unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 2);
+    assert!(peak(&mut rt) > 0.01);
+    run_on(&mut rt, "BEEPSTOP").unwrap();
+    frames(&mut rt, 1);
+    rt.sound.take_samples();
+    frames(&mut rt, 1);
+    assert_eq!(peak(&mut rt), 0.0);
+    assert_eq!(
+        run_on(&mut rt, "BEEP 200").unwrap_err().kind,
+        ErrorKind::OutOfRange
+    );
+    assert_eq!(
+        run_on(&mut rt, "BEEPVOL 16,1").unwrap_err().kind,
+        ErrorKind::OutOfRange
+    );
+    assert_eq!(
+        run_on(&mut rt, "WAVSET 224,0,0,0,0,\"FF0\"")
+            .unwrap_err()
+            .kind,
+        ErrorKind::IllegalFunctionCall
+    );
+}

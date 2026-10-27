@@ -32,6 +32,11 @@ pub(crate) enum Command {
     Animdef,
     Attr,
     Backcolor,
+    Beep,
+    Beeppan,
+    Beeppit,
+    Beepstop,
+    Beepvol,
     Bgmchk,
     Bgmclear,
     Bgmcont,
@@ -160,6 +165,8 @@ pub(crate) enum Command {
     Tstop,
     Tupdate,
     Tvar,
+    Wavset,
+    Wavseta,
     Xctrlstyle,
     Xscreen,
 }
@@ -170,6 +177,11 @@ const COMMANDS: &[(&str, Command)] = &[
     ("ANIMDEF", Command::Animdef),
     ("ATTR", Command::Attr),
     ("BACKCOLOR", Command::Backcolor),
+    ("BEEP", Command::Beep),
+    ("BEEPPAN", Command::Beeppan),
+    ("BEEPPIT", Command::Beeppit),
+    ("BEEPSTOP", Command::Beepstop),
+    ("BEEPVOL", Command::Beepvol),
     ("BGMCHK", Command::Bgmchk),
     ("BGMCLEAR", Command::Bgmclear),
     ("BGMCONT", Command::Bgmcont),
@@ -298,6 +310,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TSTOP", Command::Tstop),
     ("TUPDATE", Command::Tupdate),
     ("TVAR", Command::Tvar),
+    ("WAVSET", Command::Wavset),
+    ("WAVSETA", Command::Wavseta),
     ("XCTRLSTYLE", Command::Xctrlstyle),
     ("XSCREEN", Command::Xscreen),
 ];
@@ -1055,7 +1069,14 @@ impl Runtime {
                 _,
             ) => self.system_command(command, args, want),
             (
-                Command::Bgmchk
+                Command::Beep
+                | Command::Beeppan
+                | Command::Beeppit
+                | Command::Beepstop
+                | Command::Beepvol
+                | Command::Wavset
+                | Command::Wavseta
+                | Command::Bgmchk
                 | Command::Bgmclear
                 | Command::Bgmcont
                 | Command::Bgmpause

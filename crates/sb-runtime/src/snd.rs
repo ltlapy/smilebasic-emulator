@@ -1,6 +1,6 @@
 //! Sound commands: BGMPLAY, BGMSET, BGMSETD, BGMSTOP, BGMCHK, BGMVOL,
-//! BGMPITCH, BGMPAUSE, BGMCONT, BGMVAR, BGMCLEAR, BGMWET, CHKMML, SNDSTOP
-//! and SNDMVOL.
+//! BGMPITCH, BGMPAUSE, BGMCONT, BGMVAR, BGMCLEAR, BGMWET, CHKMML, SNDSTOP,
+//! SNDMVOL, WAVSET, WAVSETA, BEEP, BEEPPIT, BEEPVOL, BEEPPAN and BEEPSTOP.
 
 use std::rc::Rc;
 
@@ -9,7 +9,9 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
 use crate::runtime::{Command, Runtime, illegal};
+use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
+use crate::sound::wave::{Envelope, Wave};
 use crate::sound::{PRESET_SONGS, TRACKS, frames};
 
 fn int(v: &Value) -> Result<i32> {
@@ -49,6 +51,52 @@ fn seconds(v: Option<&Value>) -> Result<u32> {
             Ok(frames(s))
         }
     }
+}
+
+fn handle(v: &Value) -> Result<usize> {
+    in_range("handle", v, 0..=HANDLES as i32 - 1).map(|n| n as usize)
+}
+
+/// An omittable argument in `range`, `default` when left out.
+fn opt_in_range(
+    what: &str,
+    v: Option<&Value>,
+    range: std::ops::RangeInclusive<i32>,
+    default: i32,
+) -> Result<i32> {
+    match v {
+        None | Some(Value::Default) => Ok(default),
+        Some(v) => in_range(what, v, range),
+    }
+}
+
+/// WAVSET's instrument number and envelope.
+fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
+    let n = in_range("instrument", &args[0], 224..=255)? as usize - 224;
+    let [attack, decay, sustain, release] =
+        [1, 2, 3, 4].map(|i| in_range("envelope", &args[i], 0..=127));
+    Ok((
+        n,
+        Envelope {
+            attack: attack?,
+            decay: decay?,
+            sustain: sustain?,
+            release: release?,
+        },
+    ))
+}
+
+/// The numbers in a one-dimensional array.
+fn samples(v: &Value) -> Result<Vec<f64>> {
+    let a = v.clone().into_array()?;
+    let a = a.borrow();
+    if a.dims.len() != 1 {
+        return Err(Error::with_detail(
+            ErrorKind::IllegalFunctionCall,
+            "1D array",
+        ));
+    }
+    (0..a.len()).map(|i| a.get(i).to_real()).collect()
 }
 
 fn text(v: &Value) -> Result<String> {
@@ -235,6 +283,137 @@ impl Runtime {
             (Command::Sndmvol, Want::Outs(1), 0) => Ok(vec![Value::Int(
                 (self.sound.master.value * 127.0).round() as i32,
             )]),
+            (Command::Wavset, Want::Outs(0), 6..=7) => {
+                let (n, envelope) = wave_head(args)?;
+                let hex = text(&args[5])?;
+                let bytes: Option<Vec<u8>> = (0..hex.len() / 2)
+                    .map(|i| {
+                        hex.get(2 * i..2 * i + 2)
+                            .and_then(|h| u8::from_str_radix(h, 16).ok())
+                    })
+                    .collect();
+                let bytes = bytes
+                    .filter(|b| {
+                        hex.len() % 2 == 0 && [16, 32, 64, 128, 256, 512].contains(&b.len())
+                    })
+                    .ok_or_else(|| {
+                        Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform")
+                    })?;
+                let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
+                let samples: Vec<f32> = bytes
+                    .iter()
+                    .map(|&b| (f32::from(b) - 128.0) / 128.0)
+                    .collect();
+                let len = samples.len();
+                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(Wave {
+                    samples,
+                    base_note,
+                    rate: None,
+                    looped: (0, len),
+                    beep_loop: true,
+                    envelope,
+                }));
+                Ok(vec![])
+            }
+            // SmileBASIC 3's form: one cycle of 8-bit samples.
+            (Command::Wavseta, Want::Outs(0), 6..=9) => {
+                let (n, envelope) = wave_head(args)?;
+                let all = samples(&args[5])?;
+                let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
+                let last = all.len() as i32 - 1;
+                let start = opt_in_range("start", args.get(7), 0..=last, 0)? as usize;
+                let end = opt_in_range("end", args.get(8), start as i32..=last, last)? as usize;
+                let samples: Vec<f32> = all[start..=end]
+                    .iter()
+                    .map(|&x| (x as f32 - 128.0) / 128.0)
+                    .collect();
+                let len = samples.len();
+                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(Wave {
+                    samples,
+                    base_note,
+                    rate: None,
+                    looped: (0, len),
+                    beep_loop: true,
+                    envelope,
+                }));
+                Ok(vec![])
+            }
+            // A 16-bit sample with a loop and its own sample rate.
+            (Command::Wavseta, Want::Outs(0), 10..=12) => {
+                let (n, envelope) = wave_head(args)?;
+                let all = samples(&args[5])?;
+                let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
+                let last = all.len() as i32 - 1;
+                let offset = opt_in_range("offset", args.get(10), 0..=last.max(0), 0)? as usize;
+                let loop_start = opt_in_range("loop start", args.get(7), 0..=last, 0)? as usize;
+                let loop_end = opt_in_range("loop end", args.get(8), 0..=last, last)? as usize;
+                let rate = opt_in_range("frequency", args.get(9), 1..=96000, 28160)?;
+                let beep_loop = opt_in_range("flag", args.get(11), 0..=1, 0)? == 1;
+                let samples: Vec<f32> = all[offset..].iter().map(|&x| x as f32 / 32768.0).collect();
+                // UNVERIFIED: the loop's indices count from the array's start,
+                // offset included, and its end is the last sample played.
+                let looped = (
+                    loop_start.saturating_sub(offset),
+                    (loop_end + 1).saturating_sub(offset).max(1),
+                );
+                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(Wave {
+                    samples,
+                    base_note,
+                    rate: Some(f64::from(rate)),
+                    looped,
+                    beep_loop,
+                    envelope,
+                }));
+                Ok(vec![])
+            }
+            (Command::Beep, Want::Outs(0) | Want::Value, 0..=4) => {
+                let n = opt_in_range("sound", args.first(), 0..=383, 0)?;
+                let pitch = opt_in_range("pitch", args.get(1), -32768..=32767, 0)?;
+                let volume = opt_in_range("volume", args.get(2), 0..=127, 64)?;
+                let pan = opt_in_range("pan", args.get(3), 0..=127, 64)?;
+                let what = match n {
+                    // UNVERIFIED: without SmileBASIC's own sounds, presets are
+                    // silent.
+                    0..=155 => BeepSound::Preset,
+                    224..=255 => match self.sound.waves.borrow().get(n) {
+                        Some(w) => BeepSound::Wave(w),
+                        None => BeepSound::Preset,
+                    },
+                    256..=383 => BeepSound::Instrument(n - 256),
+                    n => return Err(out_of_range("sound", n)),
+                };
+                let h = self.sound.beeps.play(what, pitch, volume, pan);
+                Ok(match want {
+                    Want::Value => vec![Value::Int(h as i32)],
+                    _ => vec![],
+                })
+            }
+            (Command::Beeppit, Want::Outs(0), 2) => {
+                let h = handle(&args[0])?;
+                let pitch = in_range("pitch", &args[1], -32768..=32767)?;
+                self.sound.beeps.set_pitch(h, pitch);
+                Ok(vec![])
+            }
+            (Command::Beepvol, Want::Outs(0), 2) => {
+                let h = handle(&args[0])?;
+                let volume = in_range("volume", &args[1], 0..=127)?;
+                self.sound.beeps.set_volume(h, volume);
+                Ok(vec![])
+            }
+            (Command::Beeppan, Want::Outs(0), 2) => {
+                let h = handle(&args[0])?;
+                let pan = in_range("pan", &args[1], 0..=127)?;
+                self.sound.beeps.set_pan(h, pan);
+                Ok(vec![])
+            }
+            (Command::Beepstop, Want::Outs(0), 0..=2) => {
+                let fade = seconds(args.get(1))?;
+                match args.first() {
+                    None => (0..HANDLES).for_each(|h| self.sound.beeps.stop(h, fade)),
+                    Some(v) => self.sound.beeps.stop(handle(v)?, fade),
+                }
+                Ok(vec![])
+            }
             _ => Err(illegal()),
         }
     }
