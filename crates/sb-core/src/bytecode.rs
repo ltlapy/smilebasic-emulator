@@ -75,6 +75,8 @@ pub enum Op {
     },
     Unary(UnaryOp),
     Binary(BinaryOp),
+    /// `[array, v1..vn] -> [array]`: sets the first elements.
+    FillArray(u32),
     /// `[v] -> [0 or 1]`
     Truthy,
     Pop,

@@ -1,6 +1,9 @@
 //! Built-in functions and commands that need nothing from the host:
 //! numbers, strings and arrays.
 
+mod arrays;
+
+use crate::bytecode::{Compiled, Literal};
 use crate::error::{Error, ErrorKind, Result};
 use crate::value::{Array, ArrayData, ElemType, Str, Value, format_number, new_str};
 
@@ -10,6 +13,43 @@ pub enum Kind {
     /// Called as a statement; gets the number of OUT variables and returns
     /// that many values.
     Command(fn(&[Value], usize) -> Result<Vec<Value>>),
+    /// A command that also reads DATA, moving READ's place.
+    Data(fn(&[Value], usize, &mut Data) -> Result<Vec<Value>>),
+}
+
+/// The program's DATA and READ's place in it, for [`Kind::Data`].
+pub struct Data<'a> {
+    pub(crate) program: &'a Compiled,
+    pub(crate) pos: &'a mut usize,
+}
+
+impl Data<'_> {
+    /// RESTORE to a `"@label"`.
+    pub fn restore(&mut self, label: &Value) -> Result<()> {
+        let name = crate::vm::label_name(label)?;
+        let pos = self
+            .program
+            .data_labels
+            .get(&name)
+            .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))?;
+        *self.pos = *pos as usize;
+        Ok(())
+    }
+
+    /// READ.
+    pub fn read(&mut self) -> Result<Value> {
+        let item = self
+            .program
+            .data
+            .get(*self.pos)
+            .ok_or(ErrorKind::OutOfData)?;
+        *self.pos += 1;
+        Ok(match item {
+            Literal::Int(n) => Value::Int(*n),
+            Literal::Real(x) => Value::Real(*x),
+            Literal::Str(s) => Value::Str(new_str(s.clone())),
+        })
+    }
 }
 
 /// How a builtin is being called. A name can have both forms (`RGB(...)`
@@ -98,6 +138,18 @@ table! {
     "HSV" 1..=1 Command |a, outs| hsv_out(a, outs, false);
     "HSVF" 3..=4 Function |a| hsv(a, true);
     "HSVF" 1..=1 Command |a, outs| hsv_out(a, outs, true);
+    "FORMAT$" 1..=N Function format;
+    "COPY" 1..=3 Function arrays::copy_fn;
+    "COPY" 2..=5 Data arrays::copy;
+    "SORT" 1..=10 Command arrays::sort_up;
+    "RSORT" 1..=10 Command arrays::sort_down;
+    "INSERT" 2..=4 Command arrays::insert;
+    "REMOVE" 2..=3 Command arrays::remove;
+    "FIND" 2..=2 Function arrays::find_fn;
+    "FIND" 2..=2 Command arrays::find;
+    "RESIZE" 2..=5 Command arrays::resize;
+    "ARYOP" 4..=5 Command arrays::aryop;
+    "RINGCOPY" 3..=5 Command arrays::ringcopy;
 }
 
 pub fn lookup(name: &str, form: Form) -> Option<u16> {
@@ -115,7 +167,7 @@ impl Builtin {
     pub fn form(&self) -> Form {
         match self.kind {
             Kind::Function(_) => Form::Function,
-            Kind::Command(_) => Form::Command,
+            Kind::Command(_) | Kind::Data(_) => Form::Command,
         }
     }
 
@@ -377,6 +429,109 @@ fn radix_str(args: &[Value], radix: u32, max_digits: usize) -> Result<Value> {
         _ => format!("{n:b}"),
     };
     Ok(string(pad_left(text.encode_utf16().collect(), digits, '0')))
+}
+
+/// FORMAT$: `%S`, `%D`, `%X`, `%F`, `%B` and `%%`, each with C's flags
+/// (`-`, `+`, space, `0`), width and precision.
+// UNVERIFIED: that it follows C's printf, letters in either case are
+// conversions, and arguments left over are ignored.
+fn format(args: &[Value]) -> Result<Value> {
+    let fmt = text(&args[0])?;
+    let mut values = args[1..].iter();
+    let mut out: Str = Vec::new();
+    let at = |i: usize| fmt.get(i).and_then(|&c| char::from_u32(c.into()));
+    let mut i = 0;
+    while i < fmt.len() {
+        if at(i) != Some('%') {
+            out.push(fmt[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let (mut left, mut plus, mut space, mut zero) = (false, false, false, false);
+        loop {
+            match at(i) {
+                Some('-') => left = true,
+                Some('+') => plus = true,
+                Some(' ') => space = true,
+                Some('0') => zero = true,
+                _ => break,
+            }
+            i += 1;
+        }
+        let number = |i: &mut usize| {
+            let start = *i;
+            while at(*i).is_some_and(|c| c.is_ascii_digit()) {
+                *i += 1;
+            }
+            String::from_utf16_lossy(&fmt[start..*i])
+                .parse::<usize>()
+                .ok()
+        };
+        let width = number(&mut i).unwrap_or(0);
+        let precision = if at(i) == Some('.') {
+            i += 1;
+            Some(number(&mut i).unwrap_or(0))
+        } else {
+            None
+        };
+        let conversion = at(i).map(|c| c.to_ascii_uppercase());
+        i += 1;
+        if conversion == Some('%') {
+            out.push(u16::from(b'%'));
+            continue;
+        }
+        let value = values
+            .next()
+            .ok_or_else(|| Error::with_detail(ErrorKind::IllegalFunctionCall, "too few values"))?;
+        let (sign, body): (&str, String) = match conversion {
+            Some('S') => {
+                let s = String::from_utf16_lossy(&text(value)?);
+                let s = match precision {
+                    Some(p) => s.chars().take(p).collect(),
+                    None => s,
+                };
+                zero = false;
+                ("", s)
+            }
+            Some(c @ ('D' | 'X' | 'B' | 'F')) => {
+                if !value.is_number() {
+                    return Err(ErrorKind::TypeMismatch.into());
+                }
+                let negative = value.to_real()? < 0.0;
+                let body = match c {
+                    'D' => i64::from(value.to_int()?).unsigned_abs().to_string(),
+                    'X' => format!("{:X}", value.to_int()? as u32),
+                    'B' => format!("{:b}", value.to_int()? as u32),
+                    _ => format!("{:.*}", precision.unwrap_or(6), value.to_real()?.abs()),
+                };
+                let sign = match (c, negative) {
+                    ('X' | 'B', _) => "",
+                    (_, true) => "-",
+                    _ if plus => "+",
+                    _ if space => " ",
+                    _ => "",
+                };
+                (sign, body)
+            }
+            _ => {
+                return Err(Error::with_detail(
+                    ErrorKind::IllegalFunctionCall,
+                    "bad format",
+                ));
+            }
+        };
+        let pad = width.saturating_sub(sign.len() + body.chars().count());
+        let field = if left {
+            format!("{sign}{body}{}", " ".repeat(pad))
+        } else if zero {
+            format!("{sign}{}{body}", "0".repeat(pad))
+        } else {
+            format!("{}{sign}{body}", " ".repeat(pad))
+        };
+        out.extend(field.encode_utf16());
+    }
+    Ok(string(out))
 }
 
 // ---- colors ----
@@ -699,6 +854,7 @@ mod tests {
         match b.kind {
             Kind::Function(f) => f(args),
             Kind::Command(f) => f(args, 0).map(|_| Value::Default),
+            Kind::Data(_) => panic!("{name} reads DATA"),
         }
     }
 

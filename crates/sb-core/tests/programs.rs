@@ -511,3 +511,145 @@ fn constant_operations_fail_when_compiled() {
     assert_eq!(compiled("?-2147483648 DIV -1"), None);
     assert_eq!(output("?VAL(\" 12 \");VAL(\"12\")"), "012\n");
 }
+
+#[test]
+fn format_strings() {
+    assert_eq!(
+        output(r#"?FORMAT$("%06D|%-4D|%+D|% D|%4X|%B|%%",42,7,3,5,255,5)"#),
+        "000042|7   |+3| 5|  FF|101|%\n"
+    );
+    assert_eq!(
+        output(r#"?FORMAT$("%8.2F|%F|%S!|%.2S|%5S",3.14159,-1.5,"AB","XYZ","Q")"#),
+        "    3.14|-1.500000|AB!|XY|    Q\n"
+    );
+    assert_eq!(output(r#"?FORMAT$("%05D|%X",-42,-1)"#), "-0042|FFFFFFFF\n");
+    assert_eq!(error(r#"?FORMAT$("%D","A")"#).0, ErrorKind::TypeMismatch);
+    assert_eq!(
+        error(r#"?FORMAT$("%D %D",1)"#).0,
+        ErrorKind::IllegalFunctionCall
+    );
+}
+
+#[test]
+fn copying() {
+    assert_eq!(
+        output(
+            "DIM S[5]=[1,2,3,4,5]:DIM D[2]:COPY D,S:?LEN(D);D[4]\nCOPY D,1,S,3,2:?D[0];D[1];D[2];D[3]"
+        ),
+        "55\n1454\n"
+    );
+    assert_eq!(
+        output("DIM S[3]=[7,8,9]:A=COPY(S,1):?LEN(A);A[0];A[1]:?COPY(\"HELLO\",1,3)"),
+        "289\nELL\n"
+    );
+    assert_eq!(
+        output("A$=\"12345\":COPY A$,2,\"AB\":?A$:B$=\"\":COPY B$,\"XYZ\",1,2:?B$"),
+        "12AB5\nYZ\n"
+    );
+    assert_eq!(
+        output("DIM D[2]:COPY D,1,\"@N\",3:READ X:?LEN(D);D[1];D[3];X\n@N:DATA 5,6,7,8"),
+        "4578\n"
+    );
+}
+
+#[test]
+fn copy_errors() {
+    assert_eq!(
+        error("DIM D[2,2]:DIM S[5]:COPY D,S").0,
+        ErrorKind::SubscriptOutOfRange
+    );
+    assert_eq!(error("DIM S[2]:A=COPY(S,1,5)").0, ErrorKind::OutOfRange);
+    assert_eq!(
+        error("DIM D[3]:COPY D,\"@N\"\n@N:DATA 1").0,
+        ErrorKind::OutOfData
+    );
+}
+
+#[test]
+fn sorting() {
+    assert_eq!(
+        output(
+            "DIM K[]=[3,1,2,1]:DIM V$[]=[\"C\",\"A\",\"B\",\"D\"]:SORT K,V$:?K[0];K[1];K[2];K[3];V$[0];V$[1];V$[2];V$[3]"
+        ),
+        "1123ADBC\n"
+    );
+    assert_eq!(
+        output("DIM K[]=[3,1,2,5]:RSORT 1,2,K:?K[0];K[1];K[2];K[3]"),
+        "3215\n"
+    );
+}
+
+#[test]
+fn inserting_and_removing() {
+    assert_eq!(
+        output(
+            "DIM A[]=[1,2,3]:INSERT A,1,2,9:?LEN(A);A[0];A[1];A[2];A[3]\nREMOVE A,0,3:?LEN(A);A[0];A[1]"
+        ),
+        "51992\n223\n"
+    );
+    assert_eq!(
+        output("DIM A$[1]:INSERT A$,1:?LEN(A$);\"[\";A$[1];\"]\""),
+        "2[]\n"
+    );
+    assert_eq!(error("DIM A[3]:INSERT A,4").0, ErrorKind::OutOfRange);
+    assert_eq!(error("DIM A[3]:REMOVE A,2,2").0, ErrorKind::OutOfRange);
+}
+
+#[test]
+fn initialized_arrays_keep_their_sizes() {
+    assert_eq!(
+        output("DIM P$[3,2]=[\"X\",\"Y\",\"Z\"]:?LEN(P$);DIM(P$);P$[1,0];\"|\";P$[2,1];\"|\""),
+        "62Z||\n"
+    );
+    assert_eq!(error("DIM A[2]=[1,2,3]").0, ErrorKind::SubscriptOutOfRange);
+}
+
+#[test]
+fn finding() {
+    assert_eq!(output("DIM A[]=[1,2,3,4,5]:?FIND(A,3);FIND(A,9)"), "2-1\n");
+    assert_eq!(
+        output(
+            "DIM A$[3,3]=[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\",\"9\"]:FIND A$,\"6\" OUT Y,X:?Y;X;A$[Y,X]"
+        ),
+        "126\n"
+    );
+    assert_eq!(error("DIM A[3]:?FIND(A,\"X\")").0, ErrorKind::TypeMismatch);
+}
+
+#[test]
+fn resizing() {
+    assert_eq!(
+        output("DIM A[2,3]:A[1,2]=7:RESIZE A,3,3:?LEN(A);A[1,2];A[2,2]:RESIZE A,1,3:?LEN(A)"),
+        "970\n3\n"
+    );
+    assert_eq!(
+        error("DIM A[2,3]:RESIZE A,3,4").0,
+        ErrorKind::IllegalFunctionCall
+    );
+}
+
+#[test]
+fn array_operations() {
+    assert_eq!(
+        output(
+            "DIM R[4]:DIM P[]=[1,2]:ARYOP #AOPADD,R,P,10:?R[0];R[1];R[2];R[3]\nARYOP #AOPCLP,R,P,0,1.5:?R[0];R[1]\nARYOP #AOPLIP,R,10,20,0.25:?R[0]"
+        ),
+        "11121112\n11.5\n17.5\n"
+    );
+    assert_eq!(
+        error("DIM R[2]:ARYOP 4,R,1,2").0,
+        ErrorKind::IllegalFunctionCall
+    );
+}
+
+#[test]
+fn ring_copies() {
+    assert_eq!(
+        output("DIM D[4]:DIM S[]=[1,2,3]:RINGCOPY D,3,S OUT E:?D[0];D[1];D[2];D[3];E"),
+        "23012\n"
+    );
+    assert_eq!(
+        output("DIM D[2,3]:DIM S[]=[5,6]:RINGCOPY D,2,S:?D[0,2];D[0,0];D[1,2];D[1,0]"),
+        "5656\n"
+    );
+}

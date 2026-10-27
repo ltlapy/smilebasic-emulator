@@ -125,7 +125,7 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
 }
 
 /// "@NAME", "NAME" or "1:@NAME" to "NAME".
-fn label_name(value: &Value) -> Result<String> {
+pub(crate) fn label_name(value: &Value) -> Result<String> {
     let s = String::from_utf16_lossy(&value.clone().into_str()?.borrow()).to_ascii_uppercase();
     // UNVERIFIED: slot prefixes are ignored until there are program slots.
     let s = s.split_once(':').map_or(s.as_str(), |(_, rest)| rest);
@@ -382,6 +382,21 @@ impl Vm {
                 }
                 self.stack.push(Value::Array(Rc::new(array.into())));
             }
+            Op::FillArray(len) => {
+                let values = self.pop_n(*len as usize);
+                let array = self.pop().into_array()?;
+                {
+                    let mut a = array.borrow_mut();
+                    // UNVERIFIED: more values than elements is an error.
+                    if values.len() > a.len() {
+                        return Err(ErrorKind::SubscriptOutOfRange.into());
+                    }
+                    for (i, v) in values.into_iter().enumerate() {
+                        a.set(i, v)?;
+                    }
+                }
+                self.stack.push(Value::Array(array));
+            }
             Op::Unary(op) => {
                 let v = self.pop();
                 self.stack.push(ops::unary(*op, &v)?);
@@ -451,7 +466,7 @@ impl Vm {
             }
             Op::CallBuiltin { id, argc, want } => {
                 let args = self.pop_n((*argc).into());
-                self.call_builtin(*id, &args, *want)?;
+                self.call_builtin(&program, *id, &args, *want)?;
             }
             Op::CallHost { id, argc, want } => {
                 let args = self.pop_n((*argc).into());
@@ -468,7 +483,7 @@ impl Vm {
                     self.enter_def(def, args, *want)?;
                     return Ok(None);
                 } else if let Some(id) = builtins::lookup(&name, form(*want)) {
-                    self.call_builtin(id, &args, *want)?;
+                    self.call_builtin(&program, id, &args, *want)?;
                 } else if let Some(id) = host.lookup(&name) {
                     if !self.call_host(host, id, &args, *want)? {
                         self.stack.push(name_value);
@@ -675,7 +690,13 @@ impl Vm {
         Ok(())
     }
 
-    fn call_builtin(&mut self, id: u16, args: &[Value], want: Want) -> Result<()> {
+    fn call_builtin(
+        &mut self,
+        program: &Compiled,
+        id: u16,
+        args: &[Value],
+        want: Want,
+    ) -> Result<()> {
         let b = builtins::get(id);
         if !b.accepts(args.len()) {
             return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, b.name));
@@ -683,6 +704,13 @@ impl Vm {
         let results = match (b.kind, want) {
             (Kind::Function(f), Want::Value) => vec![f(args)?],
             (Kind::Command(f), Want::Outs(n)) => f(args, n.into())?,
+            (Kind::Data(f), Want::Outs(n)) => {
+                let mut data = builtins::Data {
+                    program,
+                    pos: &mut self.data_pos,
+                };
+                f(args, n.into(), &mut data)?
+            }
             _ => return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, b.name)),
         };
         self.push_results(results, want)

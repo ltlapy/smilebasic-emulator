@@ -730,7 +730,24 @@ impl Compiler<'_> {
         };
         let elem = elem_type(d.var.suffix, self.out.default_int);
         match (&d.dims, &d.init) {
-            // UNVERIFIED: with an initializer list, the list decides the size.
+            // With sizes, they decide the array's shape and the values fill
+            // it from the start (as the reference's DIM POS$[10,5]=["X",...]).
+            (Some(dims), Some(Init::Array(values))) if !dims.is_empty() => {
+                if dims.len() > crate::value::MAX_DIMS {
+                    return Err(err(ErrorKind::SyntaxError, "more than 4 dimensions"));
+                }
+                for e in dims {
+                    self.expr(e)?;
+                }
+                self.emit(Op::NewArray {
+                    elem,
+                    dims: dims.len() as u8,
+                });
+                for v in values {
+                    self.expr(v)?;
+                }
+                self.emit(Op::FillArray(values.len() as u32));
+            }
             (Some(_), Some(Init::Array(values))) => {
                 for v in values {
                     self.expr(v)?;
