@@ -95,6 +95,11 @@ follows all of it. Items still waiting for a check are marked
 - An additive sprite inside a composed layer adds light without
   covering anything, so it also brightens what is under the layer.
 
+## Sound
+
+- `TALK` reads は as "wa", falling in pitch, when 、 comes right after
+  it, as for a particle; before 。 or anywhere else it is "ha".
+
 ## Errors and the editor
 
 - After an error, F4 puts the cursor at the start of the statement that

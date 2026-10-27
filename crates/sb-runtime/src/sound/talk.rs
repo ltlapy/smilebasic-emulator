@@ -48,6 +48,9 @@ const BASE_GAIN: f32 = 3.0;
 /// as it goes.
 const PITCH_START: f32 = 1.06;
 const PITCH_END: f32 = 0.88;
+/// Where a falling syllable's pitch ends, as a part of where it starts.
+// UNVERIFIED: how far は falls before 、.
+const FALL: f32 = 0.8;
 
 /// One beat of speech.
 #[derive(Clone, Debug, PartialEq)]
@@ -63,6 +66,8 @@ enum Mora {
     /// っ: a held silence before the next consonant.
     Hold,
     Pause(f64),
+    /// The syllable before falls in pitch, as は before 、 does.
+    Fall,
     /// `<S…>`, `<P…>` and `<V…>`.
     Control(char, i32),
 }
@@ -160,7 +165,8 @@ fn kana_letters(text: &str) -> String {
         ('?', "."),
     ];
     let mut out = String::new();
-    for c in text.chars() {
+    let chars: Vec<char> = text.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
         // Katakana sit 0x60 above hiragana.
         let c = match c {
             'ァ'..='ヶ' => char::from_u32(c as u32 - 0x60).unwrap_or(c),
@@ -199,6 +205,10 @@ fn kana_letters(text: &str) -> String {
                     out.push(v);
                 }
             }
+            // Checked on hardware: は before 、 is read "wa", falling in
+            // pitch, as a particle; before 。 and other punctuation, or
+            // anywhere else, it is "ha".
+            'は' if chars.get(i + 1) == Some(&'、') => out.push_str("wa↓"),
             c => match TABLE.iter().find(|(k, _)| *k == c) {
                 Some((_, letters)) => out.push_str(letters),
                 // UNVERIFIED: anything else is skipped.
@@ -271,6 +281,11 @@ fn morae(text: &str) -> Vec<Mora> {
         match c {
             'q' => {
                 out.push(Mora::Nasal);
+                i += 1;
+                continue;
+            }
+            '↓' => {
+                out.push(Mora::Fall);
                 i += 1;
                 continue;
             }
@@ -405,7 +420,9 @@ impl Planner<'_> {
         self.at += self.ms(ms);
     }
 
-    fn vowel(&mut self, vowel: char, ms: f64, devoiced: bool, f0: f32) {
+    /// A vowel; one that `falls` glides down in pitch through its second
+    /// half.
+    fn vowel(&mut self, vowel: char, ms: f64, devoiced: bool, f0: f32, falls: bool) {
         let mut v = self.phoneme(&vowel.to_ascii_uppercase().to_string());
         v.f0 = Some(f0);
         if devoiced {
@@ -413,7 +430,17 @@ impl Planner<'_> {
             v.aspiration = Some(0.35);
         }
         self.target(v, TRANSITION);
-        self.at += self.ms(ms);
+        if falls {
+            self.at += self.ms(ms / 2.0);
+            let down = ParamUpdate {
+                f0: Some(f0 * FALL),
+                ..ParamUpdate::default()
+            };
+            self.target(down, ms * self.speed / 2.0);
+            self.at += self.ms(ms / 2.0);
+        } else {
+            self.at += self.ms(ms);
+        }
     }
 
     /// The consonant's part of a mora; gives the milliseconds it took.
@@ -523,7 +550,7 @@ impl Talk {
         };
         let spoken = morae
             .iter()
-            .filter(|m| !matches!(m, Mora::Control(..) | Mora::Pause(_)))
+            .filter(|m| !matches!(m, Mora::Control(..) | Mora::Pause(_) | Mora::Fall))
             .count()
             .max(1);
         let mut beat = 0;
@@ -531,6 +558,7 @@ impl Talk {
             let fall = beat as f32 / spoken as f32;
             let f0 = plan.pitch * (PITCH_START + (PITCH_END - PITCH_START) * fall);
             match *m {
+                Mora::Fall => {}
                 Mora::Control(kind, n) => match kind {
                     // 0 fast to 1024 slow, 128 standard.
                     'S' => plan.speed = f64::from(n.clamp(16, 1024)) / 128.0,
@@ -576,7 +604,7 @@ impl Talk {
                     // after one, are whispered.
                     let next = morae[i + 1..]
                         .iter()
-                        .find(|m| !matches!(m, Mora::Control(..)));
+                        .find(|m| !matches!(m, Mora::Control(..) | Mora::Fall));
                     let next_voiceless = match next {
                         Some(Mora::Syllable { consonant, .. }) => voiceless(*consonant),
                         None | Some(Mora::Pause(_)) => true,
@@ -584,7 +612,8 @@ impl Talk {
                     };
                     let devoiced = silent
                         || (matches!(vowel, 'i' | 'u') && voiceless(consonant) && next_voiceless);
-                    plan.vowel(vowel, (MORA - taken).max(50.0), devoiced, f0);
+                    let falls = morae.get(i + 1) == Some(&Mora::Fall);
+                    plan.vowel(vowel, (MORA - taken).max(50.0), devoiced, f0, falls);
                     beat += 1;
                 }
             }
@@ -635,6 +664,8 @@ mod tests {
         assert_eq!(kana_letters("キャット"), "kyaclto");
         assert_eq!(kana_letters("しゃしん、ラーメン。"), "shashiq,raameq.");
         assert_eq!(kana_letters("ファイル"), "fairu");
+        // は is "wa" before 、, falling, and "ha" otherwise.
+        assert_eq!(kana_letters("わたしは、ハナは。"), "watashiwa↓,hanaha.");
     }
 
     #[test]
@@ -662,12 +693,10 @@ mod tests {
     }
 
     /// The help's two ways of saying the same thing take the same time.
-    // UNVERIFIED: は as a particle is read "ha", so the kana are written
-    // here as they sound: わたしわ.
     #[test]
     fn kana_and_letters_agree() {
         let mut a = Talk::default();
-        a.say("<S128>こんにちわ。わたしわ、プチコンフォーです");
+        a.say("<S128>こんにちわ。わたしは、プチコンフォーです");
         let mut b = Talk::default();
         b.say("$<S128>koqnichiwa######watashiwa##puchikoqfoodesu");
         assert_eq!(a.left, b.left);
