@@ -80,7 +80,8 @@ Gamepads work as controllers 1 to 4. The keyboard also presses controller
 | Q, W | L, R |
 | 1, 2 | ZL, ZR |
 
-The mouse's left button touches the screen.
+Without a gamepad, the first time a program reads the buttons, a picture of
+these keys shows for a few seconds. The mouse's left button touches the screen.
 
 ## License
 

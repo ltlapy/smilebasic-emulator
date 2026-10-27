@@ -28,7 +28,7 @@ const PAD_BUTTONS: [(Button, u32); 12] = [
 /// Keys for the first controller's buttons when they are allowed to press
 /// them. The face buttons follow the Switch's layout: A on the right.
 // TODO: editable with the key layout settings once they exist.
-const KEY_BUTTONS: [(Scancode, u32); 12] = [
+pub const KEY_BUTTONS: [(Scancode, u32); 12] = [
     (Scancode::S, 0),
     (Scancode::X, 1),
     (Scancode::A, 2),
@@ -72,6 +72,11 @@ impl Controls {
             pads: Vec::new(),
             mouse: Mouse::default(),
         })
+    }
+
+    /// How many gamepads are connected.
+    pub fn gamepads(&self) -> usize {
+        self.pads.len()
     }
 
     /// Opens controllers as they are connected, and lets go of them.

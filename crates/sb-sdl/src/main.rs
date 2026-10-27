@@ -2,6 +2,7 @@
 
 mod controls;
 mod dialog;
+mod keyhint;
 mod menu;
 mod projects;
 mod toast;
@@ -12,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use controls::Controls;
 use dialog::{Answer, Dialog};
+use keyhint::KeyHint;
 use menu::{Action, Click, MenuBar};
 use projects::{Outcome, ProjectManager};
 use sb_profiles::Profile;
@@ -173,6 +175,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // with unsaved programs, or for a command such as LOAD.
     let mut dialog: Option<(Dialog, Asking)> = None;
     let mut toasts = Toasts::default();
+    let mut key_hint = KeyHint::default();
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
 
@@ -449,6 +452,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
         }
         toasts.tick();
+        if machine.rt.input.take_buttons_read() {
+            let keys = machine.rt.settings.keyboard_buttons;
+            key_hint.buttons_read(keys, controls.gamepads());
+        }
+        key_hint.tick();
         for notice in machine.rt.take_notices() {
             toasts.push(notice);
         }
@@ -473,12 +481,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.clear();
         canvas.copy(&texture, None, screen_rect(&mode, filter, out_w, out_h))?;
         let modal = dialog.is_some() || manager.is_some();
-        if modal || menu.visible() || toasts.visible() {
+        if modal || menu.visible() || toasts.visible() || key_hint.visible() {
             // A dialog or the project manager dims the screen behind it.
             overlay.clear(if modal { 0x8000_0000 } else { 0 });
             let font = machine.rt.font();
             if let Some(open) = &manager {
                 open.draw(&mut overlay, font);
+            }
+            if key_hint.visible() {
+                key_hint.draw(&mut overlay, font);
             }
             toasts.draw(&mut overlay, font);
             if let Some((open, _)) = &dialog {

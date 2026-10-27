@@ -113,6 +113,8 @@ pub struct Input {
     style: (i32, i32),
     /// KEY's contents for F1 to F5.
     pub function_keys: [Vec<u16>; 5],
+    /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
+    buttons_read: bool,
 }
 
 impl Default for Input {
@@ -127,6 +129,7 @@ impl Default for Input {
             touch: (0, 0),
             style: (1, 0),
             function_keys: Default::default(),
+            buttons_read: false,
         }
     }
 }
@@ -157,6 +160,12 @@ impl Input {
                 0
             },
         );
+    }
+
+    /// Whether the program has read buttons or sticks since the last call,
+    /// for the frontend to show where they are on the keyboard.
+    pub fn take_buttons_read(&mut self) -> bool {
+        std::mem::take(&mut self.buttons_read)
     }
 
     /// The bits of controller `pad`'s buttons that meet BUTTON's
@@ -254,6 +263,9 @@ impl Runtime {
         want: Want,
     ) -> Result<Vec<Value>> {
         let input = &mut self.input;
+        if matches!(command, Command::Button | Command::Stick) {
+            input.buttons_read = true;
+        }
         match (command, want, args.len()) {
             (Command::Button, Want::Value, 1..=3) => {
                 let pad = pad_id(&args[0])?;
