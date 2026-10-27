@@ -5,7 +5,7 @@
 use crate::confirm::FileConfirm;
 use crate::screen::Filter;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
     pub upper_case_letters: bool,
@@ -26,6 +26,9 @@ pub struct Settings {
     pub screen_filter: Option<Filter>,
     /// Keys also press the first controller's buttons.
     pub keyboard_buttons: bool,
+    /// The SoundFont file instruments come from; `None` for the bundled
+    /// one.
+    pub sound_font: Option<String>,
 }
 
 impl Default for Settings {
@@ -40,6 +43,7 @@ impl Default for Settings {
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
             keyboard_buttons: true,
+            sound_font: None,
         }
     }
 }
@@ -92,6 +96,10 @@ impl Settings {
                     }
                     continue;
                 }
+                "sound_font" => {
+                    s.sound_font = (!value.is_empty()).then(|| value.to_string());
+                    continue;
+                }
                 "screen_filter" => {
                     if let Some(&(f, _)) = SCREEN_FILTER.iter().find(|(_, n)| *n == value) {
                         s.screen_filter = f;
@@ -126,7 +134,8 @@ impl Settings {
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
-             keyboard_buttons={}\n",
+             keyboard_buttons={}\n\
+             sound_font={}\n",
             self.upper_case_letters,
             self.ctrl_c_stops,
             self.half_width_on_save,
@@ -134,6 +143,7 @@ impl Settings {
             self.editor_number_tiles,
             self.file_hint_shown,
             self.keyboard_buttons,
+            self.sound_font.as_deref().unwrap_or(""),
         )
     }
 }
@@ -153,6 +163,7 @@ mod tests {
             file_hint_shown: true,
             screen_filter: None,
             keyboard_buttons: false,
+            sound_font: Some("/fonts/a b.sf2".to_string()),
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);

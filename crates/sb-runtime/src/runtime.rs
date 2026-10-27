@@ -19,6 +19,7 @@ use crate::graphics::{Clip, Graphics};
 use crate::input::Input;
 use crate::screen::{Fade, ScreenMode};
 pub use crate::settings::Settings;
+use crate::sound::Sound;
 use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
 use crate::system::System;
@@ -31,10 +32,23 @@ pub(crate) enum Command {
     Animdef,
     Attr,
     Backcolor,
+    Bgmchk,
+    Bgmclear,
+    Bgmcont,
+    Bgmpause,
+    Bgmpitch,
+    Bgmplay,
+    Bgmset,
+    Bgmsetd,
+    Bgmstop,
+    Bgmvar,
+    Bgmvol,
+    Bgmwet,
     Brepeat,
     Button,
     Chkchr,
     Chkfile,
+    Chkmml,
     Clear,
     Cls,
     Color,
@@ -88,6 +102,8 @@ pub(crate) enum Command {
     Run,
     Save,
     Scroll,
+    Sndmvol,
+    Sndstop,
     Spanim,
     Spchk,
     Spchr,
@@ -154,10 +170,23 @@ const COMMANDS: &[(&str, Command)] = &[
     ("ANIMDEF", Command::Animdef),
     ("ATTR", Command::Attr),
     ("BACKCOLOR", Command::Backcolor),
+    ("BGMCHK", Command::Bgmchk),
+    ("BGMCLEAR", Command::Bgmclear),
+    ("BGMCONT", Command::Bgmcont),
+    ("BGMPAUSE", Command::Bgmpause),
+    ("BGMPITCH", Command::Bgmpitch),
+    ("BGMPLAY", Command::Bgmplay),
+    ("BGMSET", Command::Bgmset),
+    ("BGMSETD", Command::Bgmsetd),
+    ("BGMSTOP", Command::Bgmstop),
+    ("BGMVAR", Command::Bgmvar),
+    ("BGMVOL", Command::Bgmvol),
+    ("BGMWET", Command::Bgmwet),
     ("BREPEAT", Command::Brepeat),
     ("BUTTON", Command::Button),
     ("CHKCHR", Command::Chkchr),
     ("CHKFILE", Command::Chkfile),
+    ("CHKMML", Command::Chkmml),
     ("CLEAR", Command::Clear),
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
@@ -211,6 +240,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("RUN", Command::Run),
     ("SAVE", Command::Save),
     ("SCROLL", Command::Scroll),
+    ("SNDMVOL", Command::Sndmvol),
+    ("SNDSTOP", Command::Sndstop),
     ("SPANIM", Command::Spanim),
     ("SPCHK", Command::Spchk),
     ("SPCHR", Command::Spchr),
@@ -315,6 +346,7 @@ pub struct Runtime {
     pub sprites: Sprites,
     pub input: Input,
     pub(crate) system: System,
+    pub sound: Sound,
     /// Typed characters not yet read by INKEY$ or INPUT.
     keys: VecDeque<u16>,
     /// The line being typed for INPUT or LINPUT.
@@ -412,6 +444,17 @@ impl DataReader<'_> {
         }
     }
 
+    /// The next value, of whatever type.
+    pub(crate) fn literal(&mut self) -> Result<Literal> {
+        let item = self
+            .program
+            .data
+            .get(self.pos.get())
+            .ok_or(ErrorKind::OutOfData)?;
+        self.pos.set(self.pos.get() + 1);
+        Ok(item.clone())
+    }
+
     pub(crate) fn numbers(&mut self, n: usize) -> Result<Vec<f64>> {
         (0..n).map(|_| self.number()).collect()
     }
@@ -467,6 +510,7 @@ impl Runtime {
             sprites: Sprites::default(),
             input: Input::default(),
             system: System::default(),
+            sound: Sound::default(),
             keys: VecDeque::new(),
             line: None,
             frame: 0,
@@ -1010,6 +1054,24 @@ impl Runtime {
                 | Command::Tmread,
                 _,
             ) => self.system_command(command, args, want),
+            (
+                Command::Bgmchk
+                | Command::Bgmclear
+                | Command::Bgmcont
+                | Command::Bgmpause
+                | Command::Bgmpitch
+                | Command::Bgmplay
+                | Command::Bgmset
+                | Command::Bgmsetd
+                | Command::Bgmstop
+                | Command::Bgmvar
+                | Command::Bgmvol
+                | Command::Bgmwet
+                | Command::Chkmml
+                | Command::Sndmvol
+                | Command::Sndstop,
+                _,
+            ) => self.sound_command(command, args, want),
             _ => Err(illegal()),
         }
     }

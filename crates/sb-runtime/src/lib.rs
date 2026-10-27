@@ -20,6 +20,8 @@ pub mod runtime;
 pub mod sbfile;
 pub mod screen;
 pub mod settings;
+mod snd;
+pub mod sound;
 mod sp;
 pub mod sprites;
 pub mod storage;

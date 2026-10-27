@@ -30,6 +30,10 @@ pub enum Action {
     ToggleKeyboardButtons,
     FileAccess(FileConfirm),
     ScreenFilter(Option<Filter>),
+    /// Use the bundled SoundFont.
+    BundledSoundFont,
+    /// Pick a SoundFont file.
+    ChooseSoundFont,
 }
 
 impl Action {
@@ -48,6 +52,9 @@ impl Action {
             Action::FileAccess(_) => "( )",
             Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
             Action::ScreenFilter(_) => "( )",
+            Action::BundledSoundFont if settings.sound_font.is_none() => "(*)",
+            Action::ChooseSoundFont if settings.sound_font.is_some() => "(*)",
+            Action::BundledSoundFont | Action::ChooseSoundFont => "( )",
             Action::Projects
             | Action::OpenFolder
             | Action::Quit
@@ -74,7 +81,12 @@ impl Action {
                 settings.screen_filter = f;
                 return;
             }
-            Action::Projects
+            Action::BundledSoundFont => {
+                settings.sound_font = None;
+                return;
+            }
+            Action::ChooseSoundFont
+            | Action::Projects
             | Action::OpenFolder
             | Action::Quit
             | Action::Stop
@@ -174,6 +186,13 @@ const MENUS: &[Menu] = &[
                 ]),
             },
             item("Keys press buttons", Action::ToggleKeyboardButtons),
+            Item {
+                label: "Sound font",
+                entry: Entry::Sub(&[
+                    item("GeneralUser GS (bundled)", Action::BundledSoundFont),
+                    item("Choose a file...", Action::ChooseSoundFont),
+                ]),
+            },
         ],
     },
 ];

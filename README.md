@@ -6,7 +6,8 @@ planned.
 
 Early work: the language, the console, the program editor, file commands,
 graphic pages, sprites (with animation and collisions), text screen
-placement, layers and controllers run. Sound is not implemented yet.
+placement, layers, controllers and BGM from MML run. Sound effects (BEEP),
+SmileBASIC's preset songs and its own instruments are not there yet.
 
 ## Building
 
@@ -26,6 +27,10 @@ subset of [Noto Sans Mono CJK JP](https://github.com/notofonts/noto-cjk) at
 SmileBASIC's own characters (number tiles, buttons, box drawing and other
 symbols at U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 `crates/sb-runtime/fonts/symbols.txt`.
+
+Music plays with [GeneralUser GS](https://www.schristiancollins.com/generaluser)
+by S. Christian Collins, bundled in `crates/sb-sdl/sounds`. Options > Sound
+font picks another SoundFont (`.sf2`) instead.
 
 To see SmileBASIC's own font and sprites, import them from your own copy of
 SmileBASIC 4: extract the RomFS and ExeFS of the game (and of its update, if
@@ -87,4 +92,5 @@ these keys shows for a few seconds. The mouse's left button touches the screen.
 
 MIT OR Apache-2.0. The bundled fonts in `crates/sb-runtime/fonts/galmuri`
 and `crates/sb-runtime/fonts/noto-cjk` are under the SIL Open Font License
-1.1.
+1.1. GeneralUser GS in `crates/sb-sdl/sounds` is under its own license, in
+`GeneralUser-GS-LICENSE.txt` there.

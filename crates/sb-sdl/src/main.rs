@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio;
 mod controls;
 mod dialog;
 mod keyhint;
@@ -11,6 +12,7 @@ mod ui;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use audio::Audio;
 use controls::Controls;
 use dialog::{Answer, Dialog};
 use keyhint::KeyHint;
@@ -131,7 +133,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     if let Ok(text) = std::fs::read_to_string(&settings_path) {
         rt.settings = Settings::from_text(&text);
     }
-    let mut saved_settings = rt.settings;
+    let mut saved_settings = rt.settings.clone();
     let mut machine = Machine::new(rt);
     machine.boot();
     if let Some(source) = source {
@@ -153,6 +155,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let clipboard = video.clipboard();
     let keyboard = sdl.keyboard();
     let mut controls = Controls::new(&sdl)?;
+    let audio = Audio::open(&sdl);
+    // The file dialog answers from its own thread.
+    let (chosen_font, font_choice) = std::sync::mpsc::channel::<PathBuf>();
     let mut canvas = window.into_canvas();
     // Vsync paces frames on a 60 Hz display; on faster ones, or without
     // vsync, the loop waits for the next frame's time itself.
@@ -176,6 +181,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut dialog: Option<(Dialog, Asking)> = None;
     let mut toasts = Toasts::default();
     let mut key_hint = KeyHint::default();
+    let font_path = machine.rt.settings.sound_font.clone();
+    use_sound_font(&mut machine, font_path, &mut toasts);
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
 
@@ -332,6 +339,30 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::Stop) => machine.stop(),
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
+                    Click::Chosen(Action::ChooseSoundFont) => {
+                        let send = chosen_font.clone();
+                        let filters = [sdl3::dialog::DialogFileFilter {
+                            name: "SoundFont",
+                            pattern: "sf2",
+                        }];
+                        let shown = sdl3::dialog::show_open_file_dialog(
+                            &filters,
+                            None::<&Path>,
+                            false,
+                            canvas.window(),
+                            Box::new(move |chosen, _| {
+                                if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
+                                    let _ = send.send(path);
+                                }
+                            }),
+                        );
+                        if let Err(e) = shown {
+                            toasts.push(format!("Could not open a file dialog: {e}"));
+                        }
+                    }
+                    Click::Chosen(Action::BundledSoundFont) => {
+                        use_sound_font(&mut machine, None, &mut toasts);
+                    }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored if machine.is_editing() => {
                         let (x, y) = to_screen(x, y);
@@ -437,13 +468,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 machine.rt.settings.keyboard_buttons,
             )
         };
+        if let Ok(path) = font_choice.try_recv() {
+            let path = path.to_string_lossy().into_owned();
+            use_sound_font(&mut machine, Some(path), &mut toasts);
+        }
         machine.frame();
+        audio.play(&machine.rt.sound.take_samples());
         // The editor leaves its top row for the menu bar.
         menu.pinned = machine.is_editing();
         // Settings change through the menu, keys and questions; keep each
         // change at once so that nothing is lost if the emulator crashes.
         if machine.rt.settings != saved_settings {
-            saved_settings = machine.rt.settings;
+            saved_settings = machine.rt.settings.clone();
             if let Err(e) = std::fs::write(&settings_path, saved_settings.to_text()) {
                 eprintln!(
                     "could not save settings to {}: {e}",
@@ -512,6 +548,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
     }
     Ok(())
+}
+
+/// Plays with the SoundFont at `path`, or the bundled one, and keeps the
+/// choice; one that cannot be loaded leaves the bundled one in use.
+fn use_sound_font(machine: &mut Machine, path: Option<String>, toasts: &mut Toasts) {
+    let font = match audio::load_font(path.as_deref().map(Path::new)) {
+        Ok(font) => {
+            machine.rt.settings.sound_font = path;
+            Some(font)
+        }
+        Err(e) => {
+            toasts.push(format!("Using the bundled sound font: {e}"));
+            machine.rt.settings.sound_font = None;
+            audio::load_font(None).map_err(|e| eprintln!("{e}")).ok()
+        }
+    };
+    machine.rt.sound.set_font(font);
 }
 
 /// Pastes the clipboard's text into the editor, or types it.

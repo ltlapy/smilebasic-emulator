@@ -27,6 +27,7 @@ pub enum ErrorKind {
     IllegalAnimationData,
     SpriteNotSet,
     StringTooLong,
+    IllegalMml,
 }
 
 impl ErrorKind {
@@ -54,6 +55,7 @@ impl ErrorKind {
             ErrorKind::IllegalAnimationData => "Illegal animation data",
             ErrorKind::SpriteNotSet => "Sprite not set",
             ErrorKind::StringTooLong => "String too long",
+            ErrorKind::IllegalMml => "Illegal MML",
         }
     }
 }

@@ -1,0 +1,196 @@
+//! Sound: BGM tracks playing MML on a SoundFont, mixed a frame at a time
+//! into stereo samples for the frontend to play.
+
+pub mod mml;
+mod track;
+
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
+
+pub use rustysynth::SoundFont;
+
+use mml::Song;
+use track::{AfterFade, Track};
+
+/// Samples a second.
+pub const RATE: u32 = 48_000;
+/// Samples in one frame at 60 frames a second.
+pub const FRAME_SAMPLES: usize = (RATE / 60) as usize;
+/// BGM tracks 0 to 15.
+pub const TRACKS: usize = 16;
+/// The highest preset song number.
+pub const PRESET_SONGS: i32 = 45;
+
+/// A gain moving to a target in a straight line, a sample at a time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Ramp {
+    pub(crate) value: f64,
+    target: f64,
+    step: f64,
+}
+
+impl Ramp {
+    pub(crate) fn at(value: f64) -> Ramp {
+        Ramp {
+            value,
+            target: value,
+            step: 0.0,
+        }
+    }
+
+    /// Moves to `target` over `frames` frames, at once for 0.
+    pub(crate) fn to(&mut self, target: f64, frames: u32) {
+        self.target = target;
+        if frames == 0 {
+            self.value = target;
+            self.step = 0.0;
+        } else {
+            self.step = (target - self.value) / (f64::from(frames) * FRAME_SAMPLES as f64);
+        }
+    }
+
+    pub(crate) fn step_sample(&mut self) {
+        if self.step != 0.0 {
+            self.value += self.step;
+            if (self.step > 0.0 && self.value >= self.target)
+                || (self.step < 0.0 && self.value <= self.target)
+            {
+                self.value = self.target;
+                self.step = 0.0;
+            }
+        }
+    }
+
+    pub(crate) fn done(&self) -> bool {
+        self.step == 0.0
+    }
+}
+
+/// Seconds, as BGMSTOP and friends take them, in frames.
+pub(crate) fn frames(seconds: f64) -> u32 {
+    (seconds * 60.0).round().clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+pub struct Sound {
+    font: Option<Arc<SoundFont>>,
+    tracks: Vec<Option<Track>>,
+    /// BGMSET's songs, 128 to 255.
+    pub(crate) songs: HashMap<i32, Rc<Song>>,
+    /// SNDMVOL, as a gain.
+    pub(crate) master: Ramp,
+    /// Mixed samples, left and right in turn, not yet taken.
+    out: Vec<f32>,
+    scratch: [Vec<f32>; 2],
+    mix: [Vec<f32>; 2],
+}
+
+impl Default for Sound {
+    fn default() -> Self {
+        Sound {
+            font: None,
+            tracks: (0..TRACKS).map(|_| None).collect(),
+            songs: HashMap::new(),
+            master: Ramp::at(1.0),
+            out: Vec::new(),
+            scratch: Default::default(),
+            mix: Default::default(),
+        }
+    }
+}
+
+impl Sound {
+    /// The SoundFont instruments come from; without one, BGM is silent.
+    pub fn set_font(&mut self, font: Option<Arc<SoundFont>>) {
+        self.font = font;
+        self.tracks.iter_mut().for_each(|t| *t = None);
+    }
+
+    pub(crate) fn track(&mut self, n: usize) -> &mut Track {
+        let font = self.font.as_ref();
+        self.tracks[n].get_or_insert_with(|| Track::new(font))
+    }
+
+    /// The tracks that exist, which are all that can be playing.
+    pub(crate) fn tracks(&mut self) -> impl Iterator<Item = &mut Track> {
+        self.tracks.iter_mut().flatten()
+    }
+
+    pub(crate) fn playing(&self, n: usize) -> bool {
+        self.tracks[n].as_ref().is_some_and(|t| t.playing)
+    }
+
+    pub(crate) fn play(&mut self, n: usize, song: Option<Rc<Song>>, volume: i32, fade: u32) {
+        self.track(n).play(song, volume, fade);
+    }
+
+    pub(crate) fn stop(&mut self, n: usize, fade: u32) {
+        if let Some(t) = self.tracks[n].as_mut() {
+            if fade == 0 {
+                t.stop();
+            } else {
+                t.fade.to(0.0, fade);
+                t.after_fade = AfterFade::Stop;
+            }
+        }
+    }
+
+    pub(crate) fn pause(&mut self, n: usize, fade: u32) {
+        if let Some(t) = self.tracks[n].as_mut().filter(|t| t.playing && !t.paused) {
+            t.fade.to(0.0, fade);
+            t.after_fade = AfterFade::Pause;
+            if fade == 0 {
+                t.paused = true;
+            }
+        }
+    }
+
+    pub(crate) fn resume(&mut self, n: usize, fade: u32) {
+        if let Some(t) = self.tracks[n].as_mut().filter(|t| t.paused) {
+            t.paused = false;
+            t.after_fade = AfterFade::Nothing;
+            t.fade.to(1.0, fade);
+        }
+    }
+
+    pub(crate) fn vars(&mut self, n: usize) -> &mut [i32; 8] {
+        &mut self.track(n).vars
+    }
+
+    /// SNDSTOP: every sound stops at once.
+    pub fn stop_all(&mut self) {
+        for t in self.tracks() {
+            t.stop();
+        }
+    }
+
+    /// Mixes one frame of samples.
+    pub fn render_frame(&mut self) {
+        let n = FRAME_SAMPLES;
+        let [left, right] = &mut self.mix;
+        left.clear();
+        left.resize(n, 0.0);
+        right.clear();
+        right.resize(n, 0.0);
+        for t in self.tracks.iter_mut().flatten() {
+            t.render(left, right, &mut self.scratch);
+        }
+        // Nobody is taking them, as in tests: keep a second at most.
+        let most = 2 * RATE as usize;
+        if self.out.len() > most {
+            self.out.drain(..self.out.len() - most);
+        }
+        self.out.reserve(2 * n);
+        for i in 0..n {
+            let gain = self.master.value as f32;
+            self.out.push((left[i] * gain).clamp(-1.0, 1.0));
+            self.out.push((right[i] * gain).clamp(-1.0, 1.0));
+            self.master.step_sample();
+        }
+    }
+
+    /// The samples mixed since the last call, left and right in turn.
+    pub fn take_samples(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.out)
+    }
+}

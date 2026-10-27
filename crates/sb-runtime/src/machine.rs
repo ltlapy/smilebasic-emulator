@@ -290,6 +290,7 @@ impl Machine {
     pub fn frame(&mut self) {
         self.frame += 1;
         self.rt.begin_frame();
+        self.rt.sound.render_frame();
         // Animations play in direct mode too, and go on while the editor
         // hides the screen (checked on hardware).
         self.rt.animate();
