@@ -29,8 +29,10 @@ const BURST: f64 = 15.0;
 const FRICATIVE: f64 = 70.0;
 const SONORANT: f64 = 45.0;
 const GLIDE: f64 = 40.0;
-const SHORT_PAUSE: f64 = 220.0;
-const LONG_PAUSE: f64 = 400.0;
+/// 、 and 。, as long as the help's example says: it writes
+/// "こんにちわ。わたしは、" as "koqnichiwa######watashiwa##".
+const SHORT_PAUSE: f64 = 200.0;
+const LONG_PAUSE: f64 = 600.0;
 /// `#`: 0.1 seconds without sound.
 const BREAK: f64 = 100.0;
 /// Glides between targets.
@@ -146,6 +148,8 @@ fn kana_letters(text: &str) -> String {
         ('ゎ', "wa"),
         ('、', ","),
         ('，', ","),
+        (',', ","),
+        ('.', "."),
         ('　', ","),
         (' ', ","),
         ('。', "."),
@@ -484,9 +488,29 @@ impl Default for Talk {
 impl Talk {
     /// Starts saying `text`: kana, or phoneme letters after a `$`.
     pub fn say(&mut self, text: &str) {
-        let letters = match text.strip_prefix('$') {
-            Some(letters) => letters.to_string(),
-            None => kana_letters(text),
+        // Full-width letters, digits and brackets, as in ＜S128＞, read as
+        // their ASCII forms.
+        let text: String = text
+            .chars()
+            .map(|c| match c {
+                '！'..='～' if !"，．！？～".contains(c) => {
+                    char::from_u32(c as u32 - 0xFEE0).unwrap_or(c)
+                }
+                c => c,
+            })
+            .collect();
+        // Phoneme letters follow a `$`, which control strings may come
+        // before.
+        let mut tags = 0;
+        while text[tags..].starts_with('<') {
+            match text[tags..].find('>') {
+                Some(end) => tags += end + 1,
+                None => break,
+            }
+        }
+        let letters = match text[tags..].strip_prefix('$') {
+            Some(letters) => format!("{}{letters}", &text[..tags]),
+            None => kana_letters(&text),
         };
         let morae = morae(&letters);
         let mut plan = Planner {
@@ -635,6 +659,23 @@ mod tests {
                 Mora::Control('S', 200),
             ]
         );
+    }
+
+    /// The help's two ways of saying the same thing take the same time.
+    // UNVERIFIED: は as a particle is read "ha", so the kana are written
+    // here as they sound: わたしわ.
+    #[test]
+    fn kana_and_letters_agree() {
+        let mut a = Talk::default();
+        a.say("<S128>こんにちわ。わたしわ、プチコンフォーです");
+        let mut b = Talk::default();
+        b.say("$<S128>koqnichiwa######watashiwa##puchikoqfoodesu");
+        assert_eq!(a.left, b.left);
+        let mut c = Talk::default();
+        c.say("＜S256＞あ");
+        let mut d = Talk::default();
+        d.say("<S256>$a");
+        assert_eq!(c.left, d.left);
     }
 
     #[test]
