@@ -1,18 +1,22 @@
 //! Sound commands: BGMPLAY, BGMSET, BGMSETD, BGMSTOP, BGMCHK, BGMVOL,
 //! BGMPITCH, BGMPAUSE, BGMCONT, BGMVAR, BGMCLEAR, BGMWET, CHKMML, SNDSTOP,
-//! SNDMVOL, WAVSET, WAVSETA, BEEP, BEEPPIT, BEEPVOL, BEEPPAN and BEEPSTOP.
+//! SNDMVOL, WAVSET, WAVSETA, BEEP, BEEPPIT, BEEPVOL, BEEPPAN, BEEPSTOP,
+//! PCMSTREAM, PCMSTOP, PCMCONT, PCMPOS, PCMVOL, EFCEN, EFCSET, EFCWET,
+//! SNDMSBAL, TALK, TALKCHK, TALKSTOP, and RECSTART and the commands that
+//! read its recording.
 
 use std::rc::Rc;
 
 use sb_core::bytecode::{Literal, Want};
 use sb_core::error::{Error, ErrorKind, Result};
-use sb_core::value::Value;
+use sb_core::value::{Array, Value};
 
 use crate::runtime::{Command, Runtime, illegal};
 use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
+use crate::sound::pcm::{FULL, Source};
 use crate::sound::wave::{Envelope, Wave};
-use crate::sound::{PRESET_SONGS, TRACKS, frames};
+use crate::sound::{PRESET_SONGS, RATE, Recorder, TRACKS, frames};
 
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
@@ -411,6 +415,187 @@ impl Runtime {
                 match args.first() {
                     None => (0..HANDLES).for_each(|h| self.sound.beeps.stop(h, fade)),
                     Some(v) => self.sound.beeps.stop(handle(v)?, fade),
+                }
+                Ok(vec![])
+            }
+            (Command::Pcmstream, Want::Outs(0), 1..=3) => {
+                let arrays: Vec<_> = args
+                    .iter()
+                    .take_while(|a| matches!(a, Value::Array(_)))
+                    .map(|a| a.clone().into_array())
+                    .collect::<Result<_>>()?;
+                let source = match &arrays[..] {
+                    [a] => match a.borrow().dims.len() {
+                        1 => Source::Mono(a.clone()),
+                        // UNVERIFIED: a 2D array has a row for each side.
+                        2 if a.borrow().dims[0] == 2 => Source::Rows(a.clone()),
+                        _ => return Err(illegal()),
+                    },
+                    [l, r] => Source::Pair(l.clone(), r.clone()),
+                    _ => return Err(ErrorKind::TypeMismatch.into()),
+                };
+                let rate = opt_in_range("frequency", args.get(arrays.len()), 1..=192_000, 48_000)?;
+                let pcm = &mut self.sound.pcm;
+                pcm.source = Some(source);
+                pcm.rate = f64::from(rate);
+                pcm.pos = 0.0;
+                pcm.playing = true;
+                Ok(vec![])
+            }
+            (Command::Pcmstop, Want::Outs(0), 0) => {
+                self.sound.pcm.playing = false;
+                Ok(vec![])
+            }
+            (Command::Pcmcont, Want::Outs(0), 0) => {
+                let pcm = &mut self.sound.pcm;
+                pcm.playing = pcm.source.is_some();
+                Ok(vec![])
+            }
+            (Command::Pcmpos, Want::Outs(0), 1) => {
+                let at = in_range("position", &args[0], 0..=i32::MAX)?;
+                let pcm = &mut self.sound.pcm;
+                pcm.pos = f64::from(at);
+                let i = pcm.index();
+                pcm.pos = i as f64;
+                Ok(vec![])
+            }
+            (Command::Pcmpos, Want::Outs(1), 0) => {
+                Ok(vec![Value::Int(self.sound.pcm.index() as i32)])
+            }
+            (Command::Pcmvol, Want::Outs(0), 1..=3) => {
+                let (sides, volume, samples) = match args {
+                    [v] => (0..2, v, None),
+                    [c, v] => {
+                        let c = in_range("channel", c, 0..=1)? as usize;
+                        (c..c + 1, v, None)
+                    }
+                    [c, v, n] => {
+                        let c = in_range("channel", c, 0..=1)? as usize;
+                        (c..c + 1, v, Some(n))
+                    }
+                    _ => unreachable!("matched above"),
+                };
+                let volume = in_range("volume", volume, -32767..=32767)?;
+                let samples = opt_in_range("samples", samples, 0..=i32::MAX, 0)? as u32;
+                for side in sides {
+                    self.sound.pcm.volume[side].to(f64::from(volume), samples);
+                }
+                Ok(vec![])
+            }
+            (Command::Pcmvol, Want::Outs(n @ 1..=2), 0) => Ok(self.sound.pcm.volume
+                [..usize::from(n)]
+                .iter()
+                .map(|l| Value::Int(l.value.round().clamp(-FULL, FULL) as i32))
+                .collect()),
+            (Command::Efcen, Want::Outs(0), 1) => {
+                self.sound.effector.on = in_range("state", &args[0], 0..=1)? == 1;
+                Ok(vec![])
+            }
+            (Command::Efcen, Want::Outs(1), 0) => {
+                Ok(vec![Value::Int(i32::from(self.sound.effector.on))])
+            }
+            (Command::Efcset, Want::Outs(0), 1) => {
+                self.sound.effector.preset = in_range("preset", &args[0], 0..=3)?;
+                Ok(vec![])
+            }
+            (Command::Efcset, Want::Outs(0), 9) => {
+                in_range("reflections", &args[0], 0..=4)?;
+                in_range("echo", &args[3], 0..=4)?;
+                for a in args {
+                    a.to_real()?;
+                }
+                Ok(vec![])
+            }
+            (Command::Efcwet, Want::Outs(0), 4) => {
+                let mut wet = [0; 4];
+                for (w, a) in wet.iter_mut().zip(args) {
+                    *w = in_range("wet", a, 0..=127)?;
+                }
+                self.sound.effector.wet = wet;
+                Ok(vec![])
+            }
+            // UNVERIFIED: in the main program, SNDMSBAL is kept but changes
+            // nothing, as there are no subprograms yet.
+            (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
+                self.sound.balance = in_range("balance", &args[0], 0..=127)?;
+                opt_in_range("time", args.get(1), 0..=32767, 0)?;
+                Ok(vec![])
+            }
+            (Command::Sndmsbal, Want::Outs(1), 0) => Ok(vec![Value::Int(self.sound.balance)]),
+            // There is no speech: TALK says nothing and is over at once.
+            (Command::Talk, Want::Outs(0), 1) => {
+                text(&args[0])?;
+                Ok(vec![])
+            }
+            (Command::Talkchk, Want::Outs(1) | Want::Value, 0) => Ok(vec![Value::Int(0)]),
+            (Command::Talkstop, Want::Outs(0), 0) => Ok(vec![]),
+            (Command::Recstart, Want::Outs(0), 0..=1) => {
+                let (len, ring) = match args.first() {
+                    // Five seconds, round and round.
+                    None => (5 * RATE as usize, true),
+                    Some(v) => {
+                        let s = v.to_real()?;
+                        if !(0.1..=60.0).contains(&s) {
+                            return Err(Error::with_detail(ErrorKind::OutOfRange, "time"));
+                        }
+                        ((s * f64::from(RATE)).round() as usize, false)
+                    }
+                };
+                self.sound.recorder = Recorder {
+                    samples: vec![[0, 0]; len],
+                    pos: 0,
+                    recording: true,
+                    ring,
+                };
+                Ok(vec![])
+            }
+            (Command::Recstop, Want::Outs(0), 0) => {
+                self.sound.recorder.recording = false;
+                Ok(vec![])
+            }
+            (Command::Recchk, Want::Outs(1) | Want::Value, 0) => {
+                Ok(vec![Value::Int(i32::from(self.sound.recorder.recording))])
+            }
+            (Command::Reclen, Want::Value, 0) => {
+                Ok(vec![Value::Int(self.sound.recorder.samples.len() as i32)])
+            }
+            (Command::Recpos, Want::Value, 0) => {
+                Ok(vec![Value::Int(self.sound.recorder.pos as i32)])
+            }
+            (Command::Recdata, Want::Outs(2), 1) => {
+                let rec = &self.sound.recorder;
+                let at = in_range("position", &args[0], 0..=rec.samples.len() as i32 - 1)?;
+                let [l, r] = rec.samples[at as usize];
+                Ok(vec![Value::Int(i32::from(l)), Value::Int(i32::from(r))])
+            }
+            (Command::Recsave, Want::Outs(0), 1..=3) => {
+                let rec = &self.sound.recorder;
+                let len = rec.samples.len() as i32;
+                let n = opt_in_range("count", args.get(1), 0..=len, rec.pos as i32)? as usize;
+                let from = opt_in_range("position", args.get(2), 0..=len, 0)? as usize;
+                if from + n > rec.samples.len() {
+                    return Err(Error::with_detail(ErrorKind::OutOfRange, "count"));
+                }
+                let taken = &rec.samples[from..from + n];
+                let a = args[0].clone().into_array()?;
+                let mut a = a.borrow_mut();
+                let elem = a.elem_type();
+                // The array takes the size of what it gets.
+                match a.dims.len() {
+                    1 => {
+                        *a = Array::new(elem, vec![n]);
+                        for (i, [l, r]) in taken.iter().enumerate() {
+                            a.set(i, Value::Int((i32::from(*l) + i32::from(*r)) / 2))?;
+                        }
+                    }
+                    2 => {
+                        *a = Array::new(elem, vec![2, n]);
+                        for (i, [l, r]) in taken.iter().enumerate() {
+                            a.set(i, Value::Int(i32::from(*l)))?;
+                            a.set(n + i, Value::Int(i32::from(*r)))?;
+                        }
+                    }
+                    _ => return Err(illegal()),
                 }
                 Ok(vec![])
             }

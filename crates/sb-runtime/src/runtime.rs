@@ -61,6 +61,9 @@ pub(crate) enum Command {
     Date,
     Delete,
     Dtread,
+    Efcen,
+    Efcset,
+    Efcwet,
     Fade,
     Fadechk,
     Files,
@@ -97,9 +100,21 @@ pub(crate) enum Command {
     Millisec,
     Mouse,
     New,
+    Pcmcont,
+    Pcmpos,
+    Pcmstop,
+    Pcmstream,
+    Pcmvol,
     Project,
     Pushkey,
     Randomize,
+    Recchk,
+    Recdata,
+    Reclen,
+    Recpos,
+    Recsave,
+    Recstart,
+    Recstop,
     Rename,
     Result,
     Rnd,
@@ -107,6 +122,7 @@ pub(crate) enum Command {
     Run,
     Save,
     Scroll,
+    Sndmsbal,
     Sndmvol,
     Sndstop,
     Spanim,
@@ -137,6 +153,9 @@ pub(crate) enum Command {
     Spused,
     Spvar,
     Stick,
+    Talk,
+    Talkchk,
+    Talkstop,
     Tanim,
     Tarray,
     Tblend,
@@ -206,6 +225,9 @@ const COMMANDS: &[(&str, Command)] = &[
     ("DATE$", Command::Date),
     ("DELETE", Command::Delete),
     ("DTREAD", Command::Dtread),
+    ("EFCEN", Command::Efcen),
+    ("EFCSET", Command::Efcset),
+    ("EFCWET", Command::Efcwet),
     ("FADE", Command::Fade),
     ("FADECHK", Command::Fadechk),
     ("FILES", Command::Files),
@@ -242,9 +264,21 @@ const COMMANDS: &[(&str, Command)] = &[
     ("MILLISEC", Command::Millisec),
     ("MOUSE", Command::Mouse),
     ("NEW", Command::New),
+    ("PCMCONT", Command::Pcmcont),
+    ("PCMPOS", Command::Pcmpos),
+    ("PCMSTOP", Command::Pcmstop),
+    ("PCMSTREAM", Command::Pcmstream),
+    ("PCMVOL", Command::Pcmvol),
     ("PROJECT", Command::Project),
     ("PUSHKEY", Command::Pushkey),
     ("RANDOMIZE", Command::Randomize),
+    ("RECCHK", Command::Recchk),
+    ("RECDATA", Command::Recdata),
+    ("RECLEN", Command::Reclen),
+    ("RECPOS", Command::Recpos),
+    ("RECSAVE", Command::Recsave),
+    ("RECSTART", Command::Recstart),
+    ("RECSTOP", Command::Recstop),
     ("RENAME", Command::Rename),
     ("RESULT", Command::Result),
     ("RND", Command::Rnd),
@@ -252,6 +286,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("RUN", Command::Run),
     ("SAVE", Command::Save),
     ("SCROLL", Command::Scroll),
+    ("SNDMSBAL", Command::Sndmsbal),
     ("SNDMVOL", Command::Sndmvol),
     ("SNDSTOP", Command::Sndstop),
     ("SPANIM", Command::Spanim),
@@ -282,6 +317,9 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
     ("STICK", Command::Stick),
+    ("TALK", Command::Talk),
+    ("TALKCHK", Command::Talkchk),
+    ("TALKSTOP", Command::Talkstop),
     ("TANIM", Command::Tanim),
     ("TARRAY", Command::Tarray),
     ("TBLEND", Command::Tblend),
@@ -1070,6 +1108,25 @@ impl Runtime {
             ) => self.system_command(command, args, want),
             (
                 Command::Beep
+                | Command::Recchk
+                | Command::Recdata
+                | Command::Reclen
+                | Command::Recpos
+                | Command::Recsave
+                | Command::Recstart
+                | Command::Recstop
+                | Command::Efcen
+                | Command::Efcset
+                | Command::Efcwet
+                | Command::Pcmcont
+                | Command::Pcmpos
+                | Command::Pcmstop
+                | Command::Pcmstream
+                | Command::Pcmvol
+                | Command::Sndmsbal
+                | Command::Talk
+                | Command::Talkchk
+                | Command::Talkstop
                 | Command::Beeppan
                 | Command::Beeppit
                 | Command::Beepstop

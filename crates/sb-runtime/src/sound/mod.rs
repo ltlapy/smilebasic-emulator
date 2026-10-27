@@ -3,6 +3,7 @@
 
 pub mod beep;
 pub mod mml;
+pub mod pcm;
 mod track;
 pub mod wave;
 
@@ -15,6 +16,7 @@ pub use rustysynth::SoundFont;
 
 use beep::Beeps;
 use mml::Song;
+use pcm::Pcm;
 use track::{AfterFade, Track};
 use wave::Waves;
 
@@ -77,6 +79,42 @@ pub(crate) fn frames(seconds: f64) -> u32 {
     (seconds * 60.0).round().clamp(0.0, f64::from(u32::MAX)) as u32
 }
 
+/// RECSTART's recording of what plays, as 16-bit samples.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Recorder {
+    pub(crate) samples: Vec<[i16; 2]>,
+    pub(crate) pos: usize,
+    pub(crate) recording: bool,
+    /// Without a time, recording goes round the buffer until RECSTOP.
+    pub(crate) ring: bool,
+}
+
+impl Recorder {
+    fn record(&mut self, left: f32, right: f32) {
+        if !self.recording || self.samples.is_empty() {
+            return;
+        }
+        let s = |x: f32| (x * 32767.0).round() as i16;
+        self.samples[self.pos] = [s(left), s(right)];
+        self.pos += 1;
+        if self.pos == self.samples.len() {
+            if self.ring {
+                self.pos = 0;
+            } else {
+                self.recording = false;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Effector {
+    pub(crate) on: bool,
+    pub(crate) preset: i32,
+    /// BEEP, BGM, TALK and PCM's wetness.
+    pub(crate) wet: [i32; 4],
+}
+
 pub struct Sound {
     font: Option<Arc<SoundFont>>,
     tracks: Vec<Option<Track>>,
@@ -85,6 +123,13 @@ pub struct Sound {
     /// The PSG and WAVSET's waveforms, shared with the tracks.
     pub(crate) waves: Rc<RefCell<Waves>>,
     pub(crate) beeps: Beeps,
+    pub(crate) pcm: Pcm,
+    /// EFCEN, EFCSET and EFCWET's settings.
+    // UNVERIFIED: kept, but the effector does not change the sound yet.
+    pub(crate) effector: Effector,
+    pub(crate) recorder: Recorder,
+    /// SNDMSBAL, which only subprograms set.
+    pub(crate) balance: i32,
     /// SNDMVOL, as a gain.
     pub(crate) master: Ramp,
     /// Mixed samples, left and right in turn, not yet taken.
@@ -101,6 +146,10 @@ impl Default for Sound {
             songs: HashMap::new(),
             waves: Rc::default(),
             beeps: Beeps::new(None),
+            pcm: Pcm::default(),
+            effector: Effector::default(),
+            balance: 64,
+            recorder: Recorder::default(),
             master: Ramp::at(1.0),
             out: Vec::new(),
             scratch: Default::default(),
@@ -175,6 +224,7 @@ impl Sound {
             t.stop();
         }
         self.beeps.stop_all();
+        self.pcm.playing = false;
     }
 
     /// Mixes one frame of samples.
@@ -189,6 +239,7 @@ impl Sound {
             t.render(left, right, &mut self.scratch);
         }
         self.beeps.render(left, right);
+        self.pcm.render(left, right);
         // Nobody is taking them, as in tests: keep a second at most.
         let most = 2 * RATE as usize;
         if self.out.len() > most {
@@ -197,8 +248,13 @@ impl Sound {
         self.out.reserve(2 * n);
         for i in 0..n {
             let gain = self.master.value as f32;
-            self.out.push((left[i] * gain).clamp(-1.0, 1.0));
-            self.out.push((right[i] * gain).clamp(-1.0, 1.0));
+            let (l, r) = (
+                (left[i] * gain).clamp(-1.0, 1.0),
+                (right[i] * gain).clamp(-1.0, 1.0),
+            );
+            self.recorder.record(l, r);
+            self.out.push(l);
+            self.out.push(r);
             self.master.step_sample();
         }
     }

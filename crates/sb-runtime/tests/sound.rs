@@ -205,3 +205,83 @@ fn beeps_take_handles() {
         ErrorKind::IllegalFunctionCall
     );
 }
+
+#[test]
+fn pcm_streams_from_arrays() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "DIM W[4800]:FOR I=0 TO 4799:W[I]=SIN(I/4)*16000:NEXT:PCMSTREAM W",
+    )
+    .unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 1);
+    assert!(peak(&mut rt) > 0.3);
+    assert_eq!(run_on(&mut rt, "PCMPOS OUT P:?P").unwrap(), "800");
+    run_on(&mut rt, "PCMSTOP:PCMPOS 10").unwrap();
+    frames(&mut rt, 1);
+    assert_eq!(peak(&mut rt), 0.0);
+    assert_eq!(
+        run_on(&mut rt, "PCMCONT:PCMVOL 0,-100:PCMVOL OUT L,R:?L;R").unwrap(),
+        "-10032767"
+    );
+    assert_eq!(
+        run_on(&mut rt, "DIM S[3,4]:PCMSTREAM S").unwrap_err().kind,
+        ErrorKind::IllegalFunctionCall
+    );
+    run_on(
+        &mut rt,
+        "DIM S[2,4]:PCMSTREAM S,24000:DIM A[9],B[9]:PCMSTREAM A,B",
+    )
+    .unwrap();
+}
+
+#[test]
+fn effector_balance_and_talk_are_accepted() {
+    let mut rt = runtime();
+    assert_eq!(
+        run_on(&mut rt, "EFCEN #EFCON:EFCSET #EFCCAVE:EFCWET 1,2,3,4:EFCEN OUT E:SNDMSBAL 10:SNDMSBAL OUT B:TALK \"A\":TALKCHK OUT T:TALKSTOP:?E;B;T").unwrap(),
+        "1100"
+    );
+    run_on(&mut rt, "EFCSET 0,0.5,100,1,0.5,1000,0.5,0.5,1").unwrap();
+    assert_eq!(
+        run_on(&mut rt, "EFCSET 4").unwrap_err().kind,
+        ErrorKind::OutOfRange
+    );
+}
+
+#[test]
+fn recording_what_plays() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "DIM W[480]:FOR I=0 TO 479:W[I]=16000:NEXT:PCMSTREAM W:RECSTART 0.1",
+    )
+    .unwrap();
+    // 0.1 seconds is 4800 samples, 6 frames: half are in after 3.
+    frames(&mut rt, 3);
+    assert_eq!(
+        run_on(
+            &mut rt,
+            "RECCHK OUT C:RECDATA 5 OUT L,R:?C;RECLEN();RECPOS();L;R"
+        )
+        .unwrap(),
+        "1480024001600016000"
+    );
+    assert_eq!(
+        run_on(
+            &mut rt,
+            "DIM A[1]:RECSAVE A,10,2:DIM B[1,1]:RECSAVE B:?LEN(A);A[0];DIM(B,1);B[1,0]"
+        )
+        .unwrap(),
+        "1016000240016000"
+    );
+    frames(&mut rt, 3);
+    assert_eq!(run_on(&mut rt, "?RECCHK();RECPOS()").unwrap(), "04800");
+    run_on(&mut rt, "RECSTART:RECSTOP").unwrap();
+    assert_eq!(run_on(&mut rt, "?RECLEN()").unwrap(), "240000");
+    assert_eq!(
+        run_on(&mut rt, "RECSTART 61").unwrap_err().kind,
+        ErrorKind::OutOfRange
+    );
+}
