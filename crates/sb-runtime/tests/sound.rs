@@ -241,8 +241,12 @@ fn effector_balance_and_talk_are_accepted() {
     let mut rt = runtime();
     assert_eq!(
         run_on(&mut rt, "EFCEN #EFCON:EFCSET #EFCCAVE:EFCWET 1,2,3,4:EFCEN OUT E:SNDMSBAL 10:SNDMSBAL OUT B:TALK \"A\":TALKCHK OUT T:TALKSTOP:?E;B;T").unwrap(),
-        "1100"
+        "1101"
     );
+    assert_eq!(run_on(&mut rt, "?TALKCHK()").unwrap(), "0");
+    run_on(&mut rt, "TALK \"こんにちは\"").unwrap();
+    frames(&mut rt, 60);
+    assert_eq!(run_on(&mut rt, "?TALKCHK()").unwrap(), "0");
     run_on(&mut rt, "EFCSET 0,0.5,100,1,0.5,1000,0.5,0.5,1").unwrap();
     assert_eq!(
         run_on(&mut rt, "EFCSET 4").unwrap_err().kind,

@@ -24,8 +24,10 @@ imported from your own copy:
 
 - The effector (`EFCEN`, `EFCSET`, `EFCWET`, `BGMWET`) keeps its
   settings but does not change the sound.
-- `TALK` says nothing and is over at once; `TALKCHK` is always 0. In
-  MML, a sung note (`*WA,C4`) plays as a plain note.
+- `TALK` speaks with a voice of the emulator's own, a Klatt formant
+  synthesizer (klattsch-core) reading the kana or phoneme letters, so it
+  says the same words in another voice. In MML, a sung note (`*WA,C4`)
+  plays as a plain note.
 - MML's tremolo (`@MA`) and pan modulation (`@ML`) are read and
   ignored. Vibrato (`@MP`) is the SoundFont's own, through the
   modulation wheel. Envelopes (`@E`) shape the PSG and user waveforms

@@ -168,6 +168,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "klattsch-core"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9118ec8dcbf54dd0578df44b98fe147b031232d104dec7856e2067c591cf9f"
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -306,6 +312,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "chrono",
+ "klattsch-core",
  "miniz_oxide",
  "rustysynth",
  "sb-core",

@@ -522,13 +522,18 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Sndmsbal, Want::Outs(1), 0) => Ok(vec![Value::Int(self.sound.balance)]),
-            // There is no speech: TALK says nothing and is over at once.
+            // UNVERIFIED: a new TALK cuts off what is being said.
             (Command::Talk, Want::Outs(0), 1) => {
-                text(&args[0])?;
+                self.sound.talk.say(&text(&args[0])?);
                 Ok(vec![])
             }
-            (Command::Talkchk, Want::Outs(1) | Want::Value, 0) => Ok(vec![Value::Int(0)]),
-            (Command::Talkstop, Want::Outs(0), 0) => Ok(vec![]),
+            (Command::Talkchk, Want::Outs(1) | Want::Value, 0) => {
+                Ok(vec![Value::Int(i32::from(self.sound.talk.speaking()))])
+            }
+            (Command::Talkstop, Want::Outs(0), 0) => {
+                self.sound.talk.stop();
+                Ok(vec![])
+            }
             (Command::Recstart, Want::Outs(0), 0..=1) => {
                 let (len, ring) = match args.first() {
                     // Five seconds, round and round.

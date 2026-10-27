@@ -4,6 +4,7 @@
 pub mod beep;
 pub mod mml;
 pub mod pcm;
+pub mod talk;
 mod track;
 pub mod wave;
 
@@ -17,6 +18,7 @@ pub use rustysynth::SoundFont;
 use beep::Beeps;
 use mml::Song;
 use pcm::Pcm;
+use talk::Talk;
 use track::{AfterFade, Track};
 use wave::Waves;
 
@@ -124,6 +126,7 @@ pub struct Sound {
     pub(crate) waves: Rc<RefCell<Waves>>,
     pub(crate) beeps: Beeps,
     pub(crate) pcm: Pcm,
+    pub(crate) talk: Talk,
     /// EFCEN, EFCSET and EFCWET's settings.
     // UNVERIFIED: kept, but the effector does not change the sound yet.
     pub(crate) effector: Effector,
@@ -147,6 +150,7 @@ impl Default for Sound {
             waves: Rc::default(),
             beeps: Beeps::new(None),
             pcm: Pcm::default(),
+            talk: Talk::default(),
             effector: Effector::default(),
             balance: 64,
             recorder: Recorder::default(),
@@ -225,6 +229,7 @@ impl Sound {
         }
         self.beeps.stop_all();
         self.pcm.playing = false;
+        self.talk.stop();
     }
 
     /// Mixes one frame of samples.
@@ -240,6 +245,7 @@ impl Sound {
         }
         self.beeps.render(left, right);
         self.pcm.render(left, right);
+        self.talk.render(left, right);
         // Nobody is taking them, as in tests: keep a second at most.
         let most = 2 * RATE as usize;
         if self.out.len() > most {
