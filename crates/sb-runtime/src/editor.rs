@@ -2,29 +2,31 @@
 //! editor loosely: line numbers on the left, a column ruler and the slot's
 //! name at the bottom, and long lines either scrolled or wrapped. Text is
 //! selected with Shift and the cursor keys or by dragging the mouse.
+//!
+//! The code is colored by [`crate::syntax`] in the settings' palette, in
+//! the 8- or 16-pixel font at one of three sizes.
 
-use crate::font::Font;
+use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
+use crate::palette::{Palette, Part};
 use crate::runtime::{SLOTS, keys};
+use crate::syntax::highlight;
 use crate::text::{TAB_WIDTH, TextScreen};
 
 /// Six digits on three number tiles (U+E100-E16E) and a thin cap.
 const TILE_GUTTER: usize = 4;
-/// Rows above the code, left for the emulator's menu bar.
-const HEADER: usize = 1;
 /// Rows below the code: the ruler and the status line.
 const FOOTER: usize = 2;
 /// Closes the number tiles on the right.
 const TILE_CAP: u16 = 0xE17F;
 
-const BACKGROUND: u32 = 0xFF00_0000;
+// The ruler and the status line keep their colors whatever the palette.
 const TEXT: u32 = 0xFFFF_FFFF;
-const LINE_NUMBER: u32 = 0xFF80_8080;
-const CURRENT_LINE: u32 = 0xFF20_2838;
+const BLACK: u32 = 0xFF00_0000;
 const BAR: u32 = 0xFF30_3040;
 const DIM: u32 = 0xFF70_7080;
+const LINE_NUMBER: u32 = 0xFF80_8080;
 const RETURN_MARK: u32 = 0xFF50_5868;
-const SELECTION: u32 = 0xFF30_5090;
 
 /// The mark drawn after each line's last character.
 const RETURN_GLYPH: [u8; 8] = [
@@ -37,6 +39,113 @@ const RETURN_GLYPH: [u8; 8] = [
     0b0110_0000,
     0b0010_0000,
 ];
+
+/// How large the editor's characters are. SmileBASIC 4 steps through its
+/// sizes with F2 and Ctrl+B; Tiny is the emulator's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorSize {
+    Large,
+    Medium,
+    Small,
+    Tiny,
+}
+
+impl EditorSize {
+    /// The size after this one, back to Large after Tiny.
+    pub fn next(self) -> EditorSize {
+        match self {
+            EditorSize::Large => EditorSize::Medium,
+            EditorSize::Medium => EditorSize::Small,
+            EditorSize::Small => EditorSize::Tiny,
+            EditorSize::Tiny => EditorSize::Large,
+        }
+    }
+
+    /// Lines of code shown. SmileBASIC 4 shows 21, 28 and 43 whatever the
+    /// font (checked on hardware); Tiny fills about 60 rows in all.
+    fn code_rows(self) -> u32 {
+        match self {
+            EditorSize::Large => 21,
+            EditorSize::Medium => 28,
+            EditorSize::Small => 43,
+            EditorSize::Tiny => 57,
+        }
+    }
+}
+
+/// The part of the display's height the menu bar takes: 24 of 720 pixels.
+const MENU_SHARE: u32 = 30;
+
+/// The pixels at the top of a frame `height` pixels high that the menu bar
+/// covers once the frame fills the display's height.
+fn menu_height(height: u32) -> u32 {
+    height.div_ceil(MENU_SHARE)
+}
+
+/// The size of the frame the editor draws for a screen of `width` x
+/// `height` pixels: room for the menu bar, then the code, the ruler and
+/// the status line in whole cells of the font, at the screen's shape. It
+/// is shown where the screen is, scaled to fit.
+pub fn frame_size((width, height): (u32, u32), font: FontSize, size: EditorSize) -> (u32, u32) {
+    let rows = (size.code_rows() + FOOTER as u32) * font as u32;
+    // The menu bar's share of the whole frame, rows and all.
+    let h = (rows * MENU_SHARE).div_ceil(MENU_SHARE - 1);
+    (
+        (f64::from(h) * f64::from(width) / f64::from(height)).round() as u32,
+        h,
+    )
+}
+
+/// How the editor is drawn, from the settings.
+#[derive(Clone, Copy, Debug)]
+pub struct Look<'a> {
+    /// Long lines wrap instead of scrolling sideways.
+    pub wrap: bool,
+    /// Line numbers are drawn on number tiles.
+    pub tiles: bool,
+    pub font: FontSize,
+    pub colors: &'a Palette,
+}
+
+/// Where the editor's character cells are on its frame: `cell` pixels
+/// square, starting `top` pixels down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Grid {
+    cell: usize,
+    top: usize,
+}
+
+impl Grid {
+    /// The cell under a pixel, as a column and a row that may be off the
+    /// grid.
+    fn at(self, x: i32, y: i32) -> (i32, i32) {
+        let cell = self.cell as i32;
+        (x.div_euclid(cell), (y - self.top as i32).div_euclid(cell))
+    }
+
+    /// Fills `w` cells of a row from column `x`.
+    fn fill(self, fb: &mut Framebuffer, row: usize, x: usize, w: usize, color: u32) {
+        let (cell, top) = (self.cell, self.top);
+        for py in top + row * cell..top + (row + 1) * cell {
+            for px in x * cell..(x + w) * cell {
+                fb.set(px as u32, py as u32, color);
+            }
+        }
+    }
+
+    /// Draws an 8x8 one-bit glyph over a cell, scaled to fill it.
+    fn glyph(self, fb: &mut Framebuffer, x: usize, y: usize, glyph: &[u8; 8], color: u32) {
+        let scale = self.cell / 8;
+        for py in 0..self.cell {
+            for px in 0..self.cell {
+                if glyph[py / scale] & (0x80 >> (px / scale)) != 0 {
+                    let (fx, fy) = (x * self.cell + px, self.top + y * self.cell + py);
+                    fb.set(fx as u32, fy as u32, color);
+                }
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct View {
@@ -64,6 +173,7 @@ pub struct Editor {
     number_tiles: bool,
     /// The line and first column shown on each row of the last frame.
     layout: Vec<Pos>,
+    grid: Grid,
     modified: bool,
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
@@ -90,9 +200,11 @@ fn split_lines(source: &str) -> Vec<Vec<u16>> {
 }
 
 impl Editor {
-    /// An editor for a screen of `screen_w` x `screen_h` pixels.
+    /// An editor for a frame of `screen_w` x `screen_h` pixels in the
+    /// 8-pixel font. [`Editor::draw`] takes on the frame and font it is
+    /// given.
     pub fn new(screen_w: u32, screen_h: u32) -> Editor {
-        Editor {
+        let mut editor = Editor {
             slot: 0,
             lines: vec![Vec::new()],
             view: View::default(),
@@ -101,10 +213,29 @@ impl Editor {
             anchor: None,
             number_tiles: true,
             layout: Vec::new(),
+            grid: Grid { cell: 8, top: 0 },
             modified: false,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
+        };
+        editor.fit(screen_w, screen_h, FontSize::Small);
+        editor
+    }
+
+    /// Lays the character cells out on a frame of `width` x `height`
+    /// pixels, below the menu bar.
+    fn fit(&mut self, width: u32, height: u32, font: FontSize) {
+        let cell = font as u32;
+        let top = menu_height(height);
+        let size = (width / cell, (height - top) / cell);
+        if self.grid.cell != cell as usize || self.screen.size() != size {
+            self.screen.set_font(cell, cell, size.0, size.1);
         }
+        self.screen.pos = (0.0, f64::from(top));
+        self.grid = Grid {
+            cell: cell as usize,
+            top: top as usize,
+        };
     }
 
     /// The slot being edited, or last edited.
@@ -170,7 +301,7 @@ impl Editor {
         let (w, h) = self.screen.size();
         (
             (w as usize).saturating_sub(self.gutter()).max(1),
-            (h as usize).saturating_sub(HEADER + FOOTER).max(1),
+            (h as usize).saturating_sub(FOOTER).max(1),
         )
     }
 
@@ -373,10 +504,10 @@ impl Editor {
     /// further, so that dragging there scrolls.
     fn hit(&self, x: i32, y: i32) -> Option<Pos> {
         let (first, last) = (*self.layout.first()?, *self.layout.last()?);
-        let col = (x.div_euclid(8) - self.gutter() as i32).max(0) as usize;
+        let (col, row) = self.grid.at(x, y);
+        let col = (col - self.gutter() as i32).max(0) as usize;
         // Wrapped lines start every row at column 0, where `left` is 0.
         let left = self.view.left;
-        let row = y.div_euclid(8) - HEADER as i32;
         Some(if row < 0 {
             (first.0.saturating_sub(1), left + col)
         } else if let Some(&(line, start)) = self.layout.get(row as usize) {
@@ -393,7 +524,7 @@ impl Editor {
     /// cursor there and starts a selection, or with `extend` moves the
     /// selection's end there. Presses outside the code do nothing.
     pub fn mouse_down(&mut self, x: i32, y: i32, extend: bool) {
-        let row = y.div_euclid(8) - HEADER as i32;
+        let row = self.grid.at(x, y).1;
         if row < 0 || row >= self.size().1 as i32 {
             return;
         }
@@ -457,45 +588,55 @@ impl Editor {
     }
 
     /// Draws the editor over the whole frame. `name` is the slot's file
-    /// name; `tiles` draws line numbers on number tiles; `blink` shows the
-    /// cursor in this frame.
-    pub fn draw(
-        &mut self,
-        fb: &mut Framebuffer,
-        font: &Font,
-        name: &str,
-        (wrap, tiles): (bool, bool),
-        blink: bool,
-    ) {
+    /// name; `blink` shows the cursor in this frame.
+    pub fn draw(&mut self, fb: &mut Framebuffer, font: &Font, name: &str, look: Look, blink: bool) {
+        let Look {
+            wrap,
+            tiles,
+            colors,
+            ..
+        } = look;
         self.number_tiles = tiles;
+        self.fit(fb.width(), fb.height(), look.font);
         self.scroll(wrap);
         let (cols, rows) = self.size();
         let gutter = self.gutter();
+        let grid = self.grid;
         let v = self.view;
         let selection = self.selection();
         self.layout.clear();
-        fb.clear(BACKGROUND);
+        fb.clear(colors[Part::Background]);
         let screen = &mut self.screen;
         screen.cls();
         let width = screen.size().0 as usize;
         let mut marks = Vec::new();
         let mut cursor = None;
 
-        let mut row = HEADER;
+        let mut row = 0;
         let mut line = v.top;
-        while row < HEADER + rows && line < self.lines.len() {
+        while row < rows && line < self.lines.len() {
             let text = &self.lines[line];
+            let (roles, kind) = highlight(text);
             let current = line == v.line;
+            let back = if current {
+                colors[Part::CursorLine]
+            } else {
+                colors.line_background(kind)
+            };
             let chunks = if wrap { rows_of(text, cols) } else { 1 };
             for chunk in 0..chunks {
-                if row >= HEADER + rows {
+                if row >= rows {
                     break;
                 }
-                if current {
-                    fill_row(fb, row, 0, width, CURRENT_LINE);
+                if back != colors[Part::Background] {
+                    grid.fill(fb, row, 0, width, back);
                 }
                 if chunk == 0 {
-                    let color = if current { TEXT } else { LINE_NUMBER };
+                    let color = if current {
+                        colors[Part::Character]
+                    } else {
+                        LINE_NUMBER
+                    };
                     if tiles {
                         for (x, &c) in number_tiles(line + 1).iter().enumerate() {
                             screen.put_at(x as u32, row as u32, c, color);
@@ -511,10 +652,13 @@ impl Editor {
                 for x in 0..cols {
                     let at = (line, start + x);
                     if selection.is_some_and(|(a, b)| a <= at && at < b) && at.1 <= text.len() {
-                        fill_row(fb, row, gutter + x, 1, SELECTION);
+                        grid.fill(fb, row, gutter + x, 1, colors[Part::Selection]);
                     }
                     match text.get(start + x) {
-                        Some(&c) => screen.put_at((gutter + x) as u32, row as u32, c, TEXT),
+                        Some(&c) => {
+                            let color = colors[Part::from(roles[start + x])];
+                            screen.put_at((gutter + x) as u32, row as u32, c, color);
+                        }
                         None => {
                             if start + x == text.len() {
                                 marks.push((gutter + x, row));
@@ -534,9 +678,9 @@ impl Editor {
         // The ruler numbers the visible columns, every other one, on tiles
         // or in digits. Tiles other than the cursor's take the bar's color,
         // with their digits recolored after drawing.
-        let ruler = HEADER + rows;
+        let ruler = rows;
         let mut ruler_digits = Vec::new();
-        fill_row(fb, ruler, 0, width, BAR);
+        grid.fill(fb, ruler, 0, width, BAR);
         let first = if wrap { 0 } else { v.left };
         let cursor_col = if wrap { v.col % cols } else { v.col };
         for x in 0..cols {
@@ -552,9 +696,9 @@ impl Editor {
                     ruler_digits.push((gutter + x, color));
                 }
             } else if col == cursor_col {
-                fill_row(fb, ruler, gutter + x, 1, TEXT);
+                grid.fill(fb, ruler, gutter + x, 1, TEXT);
                 let digit = b'0' + (col % 10) as u8;
-                screen.put_at(at, ruler as u32, u16::from(digit), BACKGROUND);
+                screen.put_at(at, ruler as u32, u16::from(digit), BLACK);
             } else if col.is_multiple_of(2) {
                 let digit = b'0' + (col % 10) as u8;
                 let color = if col.is_multiple_of(10) { TEXT } else { DIM };
@@ -562,14 +706,23 @@ impl Editor {
             }
         }
 
+        // The status line, and the pixels below the last whole row.
         let status = ruler + 1;
-        fill_row(fb, status, 0, width, BAR);
+        grid.fill(fb, status, 0, width, BAR);
+        let below = grid.top + (status + 1) * grid.cell;
+        for py in below as u32..fb.height() {
+            for px in 0..fb.width() {
+                fb.set(px, py, BAR);
+            }
+        }
         put_str(screen, 0, status, &format!("PRG{} {name}", self.slot), TEXT);
 
         screen.draw(fb, font);
+        let cell = grid.cell;
         for (x, color) in ruler_digits {
-            for py in ruler * 8..(ruler + 1) * 8 {
-                for px in x * 8..(x + 1) * 8 {
+            let y0 = grid.top + ruler * cell;
+            for py in y0..y0 + cell {
+                for px in x * cell..(x + 1) * cell {
                     let (px, py) = (px as u32, py as u32);
                     if fb.get(px, py).is_some_and(|c| c != BAR) {
                         fb.set(px, py, color);
@@ -578,14 +731,15 @@ impl Editor {
             }
         }
         for (x, y) in marks {
-            draw_glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
+            grid.glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
         }
         if let (Some((x, y)), true) = (cursor, blink) {
             // A bar for inserting, a block for overwriting.
-            let w = if self.overwrite { 8 } else { 2 };
-            for py in 0..8 {
+            let w = if self.overwrite { cell } else { cell / 4 };
+            for py in 0..cell {
                 for px in 0..w {
-                    fb.set((x * 8 + px) as u32, (y * 8 + py) as u32, TEXT);
+                    let (fx, fy) = (x * cell + px, grid.top + y * cell + py);
+                    fb.set(fx as u32, fy as u32, colors[Part::Character]);
                 }
             }
         }
@@ -651,28 +805,19 @@ fn put_str(screen: &mut TextScreen, x: usize, y: usize, text: &str, color: u32) 
     }
 }
 
-/// Fills `w` cells of a text row from column `x`.
-fn fill_row(fb: &mut Framebuffer, row: usize, x: usize, w: usize, color: u32) {
-    for py in row * 8..(row + 1) * 8 {
-        for px in x * 8..(x + w) * 8 {
-            fb.set(px as u32, py as u32, color);
-        }
-    }
-}
-
-fn draw_glyph(fb: &mut Framebuffer, x: usize, y: usize, glyph: &[u8; 8], color: u32) {
-    for (py, bits) in glyph.iter().enumerate() {
-        for px in 0..8 {
-            if bits & (0x80 >> px) != 0 {
-                fb.set((x * 8 + px) as u32, (y * 8 + py) as u32, color);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::palette::SMILEBASIC;
+
+    fn look(tiles: bool) -> Look<'static> {
+        Look {
+            wrap: false,
+            tiles,
+            font: FontSize::Small,
+            colors: &SMILEBASIC,
+        }
+    }
 
     fn editor(source: &str) -> Editor {
         let mut e = Editor::new(400, 240);
@@ -803,7 +948,7 @@ mod tests {
     }
 
     fn row(e: &Editor, y: u32) -> String {
-        (0..50)
+        (0..e.screen.size().0)
             .map(|x| e.screen.cell(x, y).code)
             .map(|c| {
                 if c == 0 {
@@ -821,27 +966,28 @@ mod tests {
     fn draws_numbers_ruler_and_status() {
         let mut e = editor("PRINT 1");
         let mut fb = Framebuffer::new(400, 240);
-        e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
-        assert_eq!(row(&e, 1), "\u{E16E}\u{E16E}\u{E101}\u{E17F}PRINT 1");
-        let ruler: Vec<u16> = (4..15).map(|x| e.screen.cell(x, 28).code).collect();
+        e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
+        assert_eq!(row(&e, 0), "\u{E16E}\u{E16E}\u{E101}\u{E17F}PRINT 1");
+        let ruler: Vec<u16> = (4..15).map(|x| e.screen.cell(x, 27).code).collect();
         assert_eq!(
             ruler,
             [
                 0xE170, 0, 0xE172, 0, 0xE174, 0, 0xE176, 0, 0xE178, 0, 0xE10A
             ]
         );
-        assert_eq!(row(&e, 29), "PRG0 GAME");
+        assert_eq!(row(&e, 28), "PRG0 GAME");
+        // The top row is left for the menu bar.
+        assert_eq!(fb.get(0, 7), Some(SMILEBASIC[Part::Background]));
         // The cursor bar at column 0 of the code.
-        assert_eq!(row(&e, 0), "", "left for the menu bar");
         assert_eq!(fb.get(4 * 8, 8), Some(TEXT));
-        assert_eq!(fb.get(4 * 8 + 2, 8), Some(CURRENT_LINE));
+        assert_eq!(fb.get(4 * 8 + 2, 8), Some(SMILEBASIC[Part::CursorLine]));
     }
 
     #[test]
     fn ruler_tiles_take_the_bar_color() {
         let mut e = editor("PRINT 1");
         let mut fb = Framebuffer::new(400, 240);
-        e.draw(&mut fb, &Font::fallback(), "GAME", (false, true), true);
+        e.draw(&mut fb, &Font::fallback(), "GAME", look(true), true);
         // Column 2's tile: dim digits on the bar.
         let cell: Vec<u32> = (0..64)
             .map(|i| fb.get((4 + 2) * 8 + i % 8, 28 * 8 + i / 8).unwrap())
@@ -854,9 +1000,9 @@ mod tests {
     fn plain_numbers_take_the_digits_they_need() {
         let mut e = editor(&"PRINT\n".repeat(119));
         let mut fb = Framebuffer::new(400, 240);
-        e.draw(&mut fb, &Font::blank(), "GAME", (false, false), true);
-        assert_eq!(row(&e, 1), "  1 PRINT");
-        assert!(row(&e, 28).starts_with("    0 2 4"));
+        e.draw(&mut fb, &Font::blank(), "GAME", look(false), true);
+        assert_eq!(row(&e, 0), "  1 PRINT");
+        assert!(row(&e, 27).starts_with("    0 2 4"));
     }
 
     #[test]
@@ -899,7 +1045,7 @@ mod tests {
     fn mouse_selects() {
         let mut e = editor("PRINT 1\nPRINT 2\nEND");
         let mut fb = Framebuffer::new(400, 240);
-        e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
+        e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
         // Column 2 of line 1, then the end of line 2.
         e.mouse_down((4 + 2) * 8 + 3, 8 + 4, false);
         e.mouse_drag(40 * 8, 16 + 7);
@@ -907,11 +1053,72 @@ mod tests {
         // Shift keeps the start; below the end goes to the last line's end.
         e.mouse_down(0, 20 * 8, true);
         assert_eq!(e.copy().as_deref(), Some("INT 1\nPRINT 2\nEND"));
-        e.draw(&mut fb, &Font::blank(), "GAME", (false, true), true);
-        assert_eq!(fb.get(6 * 8, 8), Some(SELECTION));
+        e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
+        assert_eq!(fb.get(6 * 8, 8), Some(SMILEBASIC[Part::Selection]));
         // The ruler and the menu bar's row do nothing.
         e.mouse_down(0, 28 * 8, false);
         e.mouse_down(0, 4, false);
         assert!(e.copy().is_some());
+    }
+
+    #[test]
+    fn colors_code_and_line_backgrounds() {
+        let mut e = editor("@MAIN\nPRINT 1 'X\nDEF F\nEND");
+        e.go(3, 0);
+        let mut fb = Framebuffer::new(400, 240);
+        e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
+        let color = |x: u32, y: u32| e.screen.cell(x, y).color;
+        let p = SMILEBASIC;
+        assert_eq!(color(4, 0), p[Part::Label]);
+        assert_eq!(color(4, 1), p[Part::Reserved]);
+        assert_eq!(color(10, 1), p[Part::Numeric]);
+        assert_eq!(color(12, 1), p[Part::Comment]);
+        assert_eq!(fb.get(0, 8), Some(p[Part::LabelLine]));
+        assert_eq!(fb.get(0, 16), Some(p[Part::Background]));
+        assert_eq!(fb.get(0, 24), Some(p[Part::DefLine]));
+        assert_eq!(fb.get(0, 32), Some(p[Part::CursorLine]));
+    }
+
+    #[test]
+    fn sizes_and_the_large_font() {
+        let base = (400, 240);
+        for font in [FontSize::Small, FontSize::Large] {
+            let mut size = EditorSize::Large;
+            for code in [21, 28, 43, 57] {
+                let (w, h) = frame_size(base, font, size);
+                let mut fb = Framebuffer::new(w, h);
+                let look = Look { font, ..look(true) };
+                let mut e = editor("");
+                e.draw(&mut fb, &Font::blank(), "GAME", look, true);
+                assert_eq!(e.size().1, code, "{font:?} {size:?}");
+                // The menu bar covers none of the first line.
+                assert!(e.grid.top as u32 * 30 >= h);
+                size = size.next();
+            }
+        }
+        assert_eq!(
+            frame_size(base, FontSize::Small, EditorSize::Tiny),
+            (815, 489)
+        );
+        assert_eq!(EditorSize::Tiny.next(), EditorSize::Large);
+
+        // 600x360: 12 pixels for the menu bar, then 21 rows of 16 pixels,
+        // the last two for the ruler and the status line, and 12 left.
+        let mut e = editor("PRINT 1\nEND");
+        let mut fb = Framebuffer::new(600, 360);
+        let large = Look {
+            font: FontSize::Large,
+            ..look(true)
+        };
+        e.draw(&mut fb, &Font::blank(), "GAME", large, true);
+        assert_eq!(e.screen.size(), (37, 21));
+        assert_eq!(row(&e, 1), "\u{E16E}\u{E16E}\u{E102}\u{E17F}END");
+        assert_eq!(row(&e, 20), "PRG0 GAME");
+        assert_eq!(fb.get(0, 359), Some(BAR), "below the last row");
+        // The cursor is a quarter of a cell wide; clicks find 16-pixel cells.
+        assert_eq!(fb.get(4 * 16 + 3, 12), Some(TEXT));
+        assert_eq!(fb.get(4 * 16 + 4, 12), Some(SMILEBASIC[Part::CursorLine]));
+        e.mouse_down(6 * 16 + 1, 12 + 16 + 1, false);
+        assert_eq!(e.cursor(), (2, 2));
     }
 }

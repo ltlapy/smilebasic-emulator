@@ -3,6 +3,9 @@
 //! values are skipped, so files from other versions still load.
 
 use crate::confirm::FileConfirm;
+use crate::editor::EditorSize;
+use crate::font::FontSize;
+use crate::palette::Palette;
 use crate::screen::Filter;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,6 +22,10 @@ pub struct Settings {
     /// The editor draws line numbers on SmileBASIC 4's number tiles; off,
     /// in as many plain digits as the last line needs.
     pub editor_number_tiles: bool,
+    /// The editor draws the 8- or the 16-pixel font.
+    pub editor_font: FontSize,
+    pub editor_size: EditorSize,
+    pub editor_colors: Palette,
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
@@ -39,6 +46,9 @@ impl Default for Settings {
             half_width_on_save: true,
             editor_wrap: false,
             editor_number_tiles: true,
+            editor_font: FontSize::Large,
+            editor_size: EditorSize::Medium,
+            editor_colors: Palette::default(),
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
@@ -61,6 +71,31 @@ const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
     (FileConfirm::Silent, "silent"),
 ];
 
+const EDITOR_FONT: [(FontSize, &str); 2] = [(FontSize::Small, "8"), (FontSize::Large, "16")];
+
+const EDITOR_SIZE: [(EditorSize, &str); 4] = [
+    (EditorSize::Large, "large"),
+    (EditorSize::Medium, "medium"),
+    (EditorSize::Small, "small"),
+    (EditorSize::Tiny, "tiny"),
+];
+
+/// Keys of the editor's colors start with this.
+const EDITOR_COLOR: &str = "editor_color.";
+
+/// The value's entry in a table of choices and their names.
+fn choice<T: Copy>(table: &[(T, &str)], value: &str) -> Option<T> {
+    table.iter().find(|(_, n)| *n == value).map(|&(v, _)| v)
+}
+
+/// The name of a choice in its table.
+fn choice_name<T: PartialEq>(table: &[(T, &'static str)], value: &T) -> &'static str {
+    table
+        .iter()
+        .find(|(v, _)| v == value)
+        .map_or("", |(_, n)| n)
+}
+
 fn parse_bool(value: &str) -> Option<bool> {
     match value {
         "true" => Some(true),
@@ -82,6 +117,10 @@ impl Settings {
                 continue;
             };
             let (key, value) = (key.trim(), value.trim());
+            if let Some(part) = key.strip_prefix(EDITOR_COLOR) {
+                s.editor_colors.set(part, value);
+                continue;
+            }
             let flag = match key {
                 "upper_case_letters" => &mut s.upper_case_letters,
                 "ctrl_c_stops" => &mut s.ctrl_c_stops,
@@ -98,6 +137,18 @@ impl Settings {
                 }
                 "sound_font" => {
                     s.sound_font = (!value.is_empty()).then(|| value.to_string());
+                    continue;
+                }
+                "editor_font" => {
+                    if let Some(f) = choice(&EDITOR_FONT, value) {
+                        s.editor_font = f;
+                    }
+                    continue;
+                }
+                "editor_size" => {
+                    if let Some(size) = choice(&EDITOR_SIZE, value) {
+                        s.editor_size = size;
+                    }
                     continue;
                 }
                 "screen_filter" => {
@@ -131,6 +182,9 @@ impl Settings {
              half_width_on_save={}\n\
              editor_wrap={}\n\
              editor_number_tiles={}\n\
+             editor_font={}\n\
+             editor_size={}\n\
+             {}\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
@@ -141,6 +195,9 @@ impl Settings {
             self.half_width_on_save,
             self.editor_wrap,
             self.editor_number_tiles,
+            choice_name(&EDITOR_FONT, &self.editor_font),
+            choice_name(&EDITOR_SIZE, &self.editor_size),
+            self.editor_colors.lines(EDITOR_COLOR),
             self.file_hint_shown,
             self.keyboard_buttons,
             self.sound_font.as_deref().unwrap_or(""),
@@ -159,6 +216,9 @@ mod tests {
             ctrl_c_stops: true,
             editor_wrap: true,
             editor_number_tiles: false,
+            editor_font: FontSize::Small,
+            editor_size: EditorSize::Small,
+            editor_colors: crate::palette::PRESETS[2].1,
             file_confirm: FileConfirm::Notify,
             file_hint_shown: true,
             screen_filter: None,

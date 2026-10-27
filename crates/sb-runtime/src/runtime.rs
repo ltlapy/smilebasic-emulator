@@ -12,7 +12,7 @@ use sb_core::value::{Value, new_str};
 
 use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
-use crate::editor::Editor;
+use crate::editor::{Editor, Look, frame_size};
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -437,7 +437,8 @@ pub struct Runtime {
     /// XSCREEN, and what ACLS goes back to.
     pub(crate) mode: ScreenMode,
     startup_mode: ScreenMode,
-    /// The editor keeps the start-up resolution.
+    /// The editor draws at a multiple of the start-up resolution, for its
+    /// font and size (see [`frame_size`]).
     editor_fb: Framebuffer,
     /// GRP4 at start-up, which ACLS puts back.
     sprite_page: Option<Vec<u32>>,
@@ -877,13 +878,19 @@ impl Runtime {
             name.push_str(" *");
         }
         let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
-        editor.draw(
-            &mut self.editor_fb,
-            &self.font,
-            &name,
-            (self.settings.editor_wrap, self.settings.editor_number_tiles),
-            blink,
-        );
+        let s = &self.settings;
+        let mode = self.startup_mode;
+        let (w, h) = frame_size((mode.width, mode.height), s.editor_font, s.editor_size);
+        if (self.editor_fb.width(), self.editor_fb.height()) != (w, h) {
+            self.editor_fb = Framebuffer::new(w, h);
+        }
+        let look = Look {
+            wrap: s.editor_wrap,
+            tiles: s.editor_number_tiles,
+            font: s.editor_font,
+            colors: &s.editor_colors,
+        };
+        editor.draw(&mut self.editor_fb, &self.font, &name, look, blink);
         &self.editor_fb
     }
 

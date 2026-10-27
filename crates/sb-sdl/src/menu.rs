@@ -4,7 +4,9 @@
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
-use sb_runtime::font::Font;
+use sb_runtime::editor::EditorSize;
+use sb_runtime::font::{Font, FontSize};
+use sb_runtime::palette::PRESETS;
 use sb_runtime::runtime::Settings;
 use sb_runtime::screen::Filter;
 
@@ -28,6 +30,12 @@ pub enum Action {
     ToggleWrap,
     ToggleNumberTiles,
     ToggleKeyboardButtons,
+    EditorFont(FontSize),
+    EditorSize(EditorSize),
+    /// Use one of the preset palettes in the editor.
+    ColorPreset(usize),
+    /// Open the editor colors window.
+    EditColors,
     FileAccess(FileConfirm),
     ScreenFilter(Option<Filter>),
     /// Use the bundled SoundFont.
@@ -48,6 +56,10 @@ impl Action {
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
+            Action::EditorFont(f) if settings.editor_font == f => "(*)",
+            Action::EditorSize(size) if settings.editor_size == size => "(*)",
+            Action::ColorPreset(i) if settings.editor_colors == PRESETS[i].1 => "(*)",
+            Action::EditorFont(_) | Action::EditorSize(_) | Action::ColorPreset(_) => "( )",
             Action::FileAccess(mode) if settings.file_confirm == mode => "(*)",
             Action::FileAccess(_) => "( )",
             Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
@@ -60,6 +72,7 @@ impl Action {
             | Action::Quit
             | Action::Stop
             | Action::ToggleEditor
+            | Action::EditColors
             | Action::EditSlot(_) => "   ",
         }
     }
@@ -81,11 +94,24 @@ impl Action {
                 settings.screen_filter = f;
                 return;
             }
+            Action::EditorFont(f) => {
+                settings.editor_font = f;
+                return;
+            }
+            Action::EditorSize(size) => {
+                settings.editor_size = size;
+                return;
+            }
+            Action::ColorPreset(i) => {
+                settings.editor_colors = PRESETS[i].1;
+                return;
+            }
             Action::BundledSoundFont => {
                 settings.sound_font = None;
                 return;
             }
             Action::ChooseSoundFont
+            | Action::EditColors
             | Action::Projects
             | Action::OpenFolder
             | Action::Quit
@@ -163,8 +189,6 @@ const MENUS: &[Menu] = &[
             item("Upper-case letters", Action::ToggleUpperCase),
             item("Ctrl+C stops program", Action::ToggleCtrlC),
             item("Half-width on SAVE", Action::ToggleHalfWidth),
-            item("Wrap lines in editor (Ctrl+W)", Action::ToggleWrap),
-            item("Line number tiles in editor", Action::ToggleNumberTiles),
             Item {
                 label: "File access",
                 entry: Entry::Sub(&[
@@ -191,6 +215,41 @@ const MENUS: &[Menu] = &[
                 entry: Entry::Sub(&[
                     item("GeneralUser GS (bundled)", Action::BundledSoundFont),
                     item("Choose a file...", Action::ChooseSoundFont),
+                ]),
+            },
+        ],
+    },
+    Menu {
+        title: "Editor",
+        items: &[
+            item("Wrap lines (Ctrl+W)", Action::ToggleWrap),
+            item("Line number tiles", Action::ToggleNumberTiles),
+            Item {
+                label: "Font",
+                entry: Entry::Sub(&[
+                    item("8 pixels", Action::EditorFont(FontSize::Small)),
+                    item("16 pixels", Action::EditorFont(FontSize::Large)),
+                ]),
+            },
+            Item {
+                label: "Size (F2, Ctrl+B)",
+                entry: Entry::Sub(&[
+                    item("Large", Action::EditorSize(EditorSize::Large)),
+                    item("Medium", Action::EditorSize(EditorSize::Medium)),
+                    item("Small", Action::EditorSize(EditorSize::Small)),
+                    item("Tiny", Action::EditorSize(EditorSize::Tiny)),
+                ]),
+            },
+            Item {
+                label: "Colors",
+                entry: Entry::Sub(&[
+                    item(PRESETS[0].0, Action::ColorPreset(0)),
+                    item(PRESETS[1].0, Action::ColorPreset(1)),
+                    item(PRESETS[2].0, Action::ColorPreset(2)),
+                    item(PRESETS[3].0, Action::ColorPreset(3)),
+                    item(PRESETS[4].0, Action::ColorPreset(4)),
+                    item(PRESETS[5].0, Action::ColorPreset(5)),
+                    item("Edit colors...", Action::EditColors),
                 ]),
             },
         ],
@@ -506,12 +565,12 @@ mod tests {
         let at = |r: Rect| ((r.x + 1) as i32, (r.y + 1) as i32);
         bar.mouse_move(Some((10, 5)));
         bar.click(at(title_rect(2)), false);
-        bar.mouse_move(Some(at(item_rect(2, 5))));
-        assert_eq!(bar.sub, Some(5), "hovering opens the submenu");
-        let silent = sub_rect(2, 5, 2);
-        assert!(silent.x >= item_rect(2, 5).x + item_rect(2, 5).w);
+        bar.mouse_move(Some(at(item_rect(2, 3))));
+        assert_eq!(bar.sub, Some(3), "hovering opens the submenu");
+        let silent = sub_rect(2, 3, 2);
+        assert!(silent.x >= item_rect(2, 3).x + item_rect(2, 3).w);
         bar.mouse_move(Some(at(silent)));
-        assert_eq!(bar.sub, Some(5), "moving into it keeps it open");
+        assert_eq!(bar.sub, Some(3), "moving into it keeps it open");
         assert_eq!(
             bar.click(at(silent), false),
             Click::Chosen(Action::FileAccess(FileConfirm::Silent))
@@ -519,8 +578,8 @@ mod tests {
         // Clicking the parent opens it too, and another item closes it.
         bar.mouse_move(Some(at(title_rect(2))));
         bar.click(at(title_rect(2)), false);
-        assert_eq!(bar.click(at(item_rect(2, 5)), false), Click::Consumed);
-        assert_eq!(bar.sub, Some(5));
+        assert_eq!(bar.click(at(item_rect(2, 3)), false), Click::Consumed);
+        assert_eq!(bar.sub, Some(3));
         bar.mouse_move(Some(at(item_rect(2, 0))));
         assert_eq!(bar.sub, None);
 
@@ -541,5 +600,30 @@ mod tests {
         assert_eq!(bar.click((600, 400), false), Click::Consumed);
         bar.mouse_move(Some((600, 400)));
         assert!(!bar.visible());
+    }
+
+    #[test]
+    fn editor_menu_offers_every_preset() {
+        let editor = MENUS.iter().find(|m| m.title == "Editor").unwrap();
+        let colors = editor.items.iter().find(|i| i.label == "Colors").unwrap();
+        let Entry::Sub(items) = colors.entry else {
+            panic!("a submenu")
+        };
+        let presets: Vec<_> = items
+            .iter()
+            .filter_map(|i| match i.entry {
+                Entry::Do(Action::ColorPreset(n)) => Some((n, i.label)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(presets.len(), PRESETS.len());
+        assert!(presets.iter().all(|&(n, label)| PRESETS[n].0 == label));
+
+        let mut settings = Settings::default();
+        Action::ColorPreset(2).toggle(&mut settings);
+        assert_eq!(Action::ColorPreset(2).mark(&settings), "(*)");
+        assert_eq!(Action::ColorPreset(0).mark(&settings), "( )");
+        Action::EditorSize(EditorSize::Small).toggle(&mut settings);
+        assert_eq!(settings.editor_size, EditorSize::Small);
     }
 }

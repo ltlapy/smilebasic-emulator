@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+mod colors;
 mod controls;
 mod dialog;
 mod keyhint;
@@ -13,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use audio::Audio;
+use colors::ColorWindow;
 use controls::Controls;
 use dialog::{Answer, Dialog};
 use keyhint::KeyHint;
@@ -23,6 +25,7 @@ use sb_runtime::editor::is_movement;
 use sb_runtime::font::Font;
 use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
+use sb_runtime::palette::Palette;
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
@@ -158,6 +161,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let audio = Audio::open(&sdl);
     // The file dialog answers from its own thread.
     let (chosen_font, font_choice) = std::sync::mpsc::channel::<PathBuf>();
+    // ...as do the editor colors window's, with whether to save there.
+    let (chosen_colors, colors_choice) = std::sync::mpsc::channel::<(PathBuf, bool)>();
     let mut canvas = window.into_canvas();
     // Vsync paces frames on a 60 Hz display; on faster ones, or without
     // vsync, the loop waits for the next frame's time itself.
@@ -168,7 +173,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let texture_creator = canvas.texture_creator();
     let mut mode = machine.screen_mode();
     let mut filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
-    let mut texture = screen_texture(&canvas, &texture_creator, &mode, filter)?;
+    // The frame's size and filter, which the texture is made for.
+    let mut texture_kind = (mode.frame(), filter);
+    let mut texture = frame_texture(&canvas, &texture_creator, texture_kind)?;
+    // The pixels that mouse positions are given in: the screen's, or the
+    // editor's frame.
+    let mut pointer_space = (mode.width, mode.height);
     // The menu bar and other emulator UI, drawn at display resolution.
     let mut overlay = Framebuffer::new(display_w, display_h);
     let mut overlay_texture =
@@ -185,6 +195,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     use_sound_font(&mut machine, font_path, &mut toasts);
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
+    let mut color_window: Option<ColorWindow> = None;
 
     let mut events = sdl.event_pump()?;
     let mut next_frame = Instant::now();
@@ -208,8 +219,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let to_screen = |x: f32, y: f32| {
             let px = out_w as f32 / win_w.max(1) as f32;
             (
-                ((x * px - shown.x) * mode.width as f32 / shown.w).floor() as i32,
-                ((y * px - shown.y) * mode.height as f32 / shown.h).floor() as i32,
+                ((x * px - shown.x) * pointer_space.0 as f32 / shown.w).floor() as i32,
+                ((y * px - shown.y) * pointer_space.1 as f32 / shown.h).floor() as i32,
             )
         };
         let shift = |keymod: Mod| keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
@@ -305,6 +316,71 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 continue;
             }
+            if let Some(open) = &mut color_window {
+                let palette = &mut machine.rt.settings.editor_colors;
+                let outcome = match event {
+                    Event::Quit { .. } => {
+                        quit = true;
+                        colors::Outcome::Stay
+                    }
+                    Event::MouseMotion { x, y, .. } => {
+                        open.mouse_move(to_display(x, y));
+                        colors::Outcome::Stay
+                    }
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Left,
+                        x,
+                        y,
+                        ..
+                    } => open.click(to_display(x, y), palette),
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => open.key(key),
+                    Event::TextInput { text, .. } => {
+                        open.text(&text, palette);
+                        colors::Outcome::Stay
+                    }
+                    _ => colors::Outcome::Stay,
+                };
+                match outcome {
+                    colors::Outcome::Stay => {}
+                    colors::Outcome::Close => color_window = None,
+                    colors::Outcome::Import | colors::Outcome::Export => {
+                        let save = outcome == colors::Outcome::Export;
+                        let send = chosen_colors.clone();
+                        let filters = [sdl3::dialog::DialogFileFilter {
+                            name: "Editor colors",
+                            pattern: "txt",
+                        }];
+                        let callback: sdl3::dialog::DialogCallback = Box::new(move |chosen, _| {
+                            if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
+                                let _ = send.send((path, save));
+                            }
+                        });
+                        let window = canvas.window();
+                        let shown = if save {
+                            sdl3::dialog::show_save_file_dialog(
+                                &filters,
+                                Some("editor-colors.txt"),
+                                window,
+                                callback,
+                            )
+                        } else {
+                            sdl3::dialog::show_open_file_dialog(
+                                &filters,
+                                None::<&Path>,
+                                false,
+                                window,
+                                callback,
+                            )
+                        };
+                        if let Err(e) = shown {
+                            toasts.push(format!("Could not open a file dialog: {e}"));
+                        }
+                    }
+                }
+                continue;
+            }
             match event {
                 Event::Quit { .. } => quit = true,
                 Event::MouseMotion { x, y, .. } => {
@@ -360,6 +436,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             toasts.push(format!("Could not open a file dialog: {e}"));
                         }
                     }
+                    Click::Chosen(Action::EditColors) => {
+                        color_window = Some(ColorWindow::new((display_w, display_h)));
+                    }
                     Click::Chosen(Action::BundledSoundFont) => {
                         use_sound_font(&mut machine, None, &mut toasts);
                     }
@@ -394,6 +473,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } => machine.toggle_editor(),
                 Event::KeyDown {
+                    keycode: Some(Keycode::F2),
+                    ..
+                } if machine.is_editing() => next_editor_size(&mut machine),
+                Event::KeyDown {
                     keycode: Some(key),
                     keymod,
                     ..
@@ -406,6 +489,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } if machine.is_editing() && ctrl(keymod) => match key {
                     Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
+                    Keycode::B => next_editor_size(&mut machine),
                     Keycode::Home => machine.edit().file_top(),
                     Keycode::End => machine.edit().file_end(),
                     Keycode::A => machine.edit().select_all(),
@@ -458,7 +542,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
 
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
-        machine.rt.input.live = if dialog.is_some() || manager.is_some() || machine.is_editing() {
+        let modal = dialog.is_some() || manager.is_some() || color_window.is_some();
+        machine.rt.input.live = if modal || machine.is_editing() {
             State::default()
         } else {
             controls.state(
@@ -471,6 +556,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         if let Ok(path) = font_choice.try_recv() {
             let path = path.to_string_lossy().into_owned();
             use_sound_font(&mut machine, Some(path), &mut toasts);
+        }
+        if let Ok((path, save)) = colors_choice.try_recv() {
+            let palette = &mut machine.rt.settings.editor_colors;
+            toasts.push(if save {
+                save_colors(palette, &path)
+            } else {
+                load_colors(palette, &path)
+            });
         }
         machine.frame();
         audio.play(&machine.rt.sound.take_samples());
@@ -505,24 +598,40 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             _ => {}
         }
 
-        let shown = machine.screen_mode();
-        let shown_filter = machine.rt.settings.screen_filter.unwrap_or(shown.filter);
-        if (shown, shown_filter) != (mode, filter) {
-            (mode, filter) = (shown, shown_filter);
-            texture = screen_texture(&canvas, &texture_creator, &mode, filter)?;
-        }
+        mode = machine.screen_mode();
+        filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
+        let rect = screen_rect(&mode, filter, out_w, out_h);
+        let editing = machine.is_editing();
         let fb = machine.render();
+        let frame = (fb.width(), fb.height());
+        // The editor's frame can be finer than the screen it is shown in.
+        let kind = if editing {
+            pointer_space = frame;
+            (frame, editor_filter(rect, frame, filter))
+        } else {
+            pointer_space = (mode.width, mode.height);
+            (frame, filter)
+        };
+        if kind != texture_kind {
+            texture_kind = kind;
+            texture = frame_texture(&canvas, &texture_creator, kind)?;
+        }
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        canvas.copy(&texture, None, screen_rect(&mode, filter, out_w, out_h))?;
-        let modal = dialog.is_some() || manager.is_some();
+        canvas.copy(&texture, None, rect)?;
+        // The colors window leaves the editor behind it bright, to show
+        // its colors.
+        let dims = dialog.is_some() || manager.is_some();
         if modal || menu.visible() || toasts.visible() || key_hint.visible() {
             // A dialog or the project manager dims the screen behind it.
-            overlay.clear(if modal { 0x8000_0000 } else { 0 });
+            overlay.clear(if dims { 0x8000_0000 } else { 0 });
             let font = machine.rt.font();
             if let Some(open) = &manager {
                 open.draw(&mut overlay, font);
+            }
+            if let Some(open) = &color_window {
+                open.draw(&mut overlay, font, &machine.rt.settings.editor_colors);
             }
             if key_hint.visible() {
                 key_hint.draw(&mut overlay, font);
@@ -530,7 +639,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             toasts.draw(&mut overlay, font);
             if let Some((open, _)) = &dialog {
                 open.draw(&mut overlay, font);
-            } else if manager.is_none() && menu.visible() {
+            } else if !modal && menu.visible() {
                 let running = machine.is_running();
                 menu.draw(&mut overlay, font, &machine.rt.settings, running);
             }
@@ -626,13 +735,12 @@ fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
     FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
 }
 
-/// A texture for frames shown in `mode`, scaled with `filter`: XSCREEN's,
-/// or the one chosen in the menu.
-fn screen_texture<'a>(
+/// A texture for frames of `w` x `h` pixels, scaled with `filter`:
+/// XSCREEN's, or the one chosen in the menu.
+fn frame_texture<'a>(
     canvas: &Canvas<Window>,
     creator: &'a TextureCreator<WindowContext>,
-    mode: &ScreenMode,
-    filter: Filter,
+    ((w, h), filter): ((u32, u32), Filter),
 ) -> Result<Texture<'a>, AnyError> {
     // The Rust bindings lack SDL 3.4's pixel art mode for a single
     // texture, but the renderer's default for new ones takes it.
@@ -643,7 +751,6 @@ fn screen_texture<'a>(
     };
     // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
     unsafe { SDL_SetDefaultTextureScaleMode(canvas.raw(), scale) };
-    let (w, h) = mode.frame();
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
 }
 
@@ -660,6 +767,51 @@ fn screen_rect(mode: &ScreenMode, filter: Filter, out_w: u32, out_h: u32) -> FRe
     };
     let (w, h) = (width * scale, height * scale);
     FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
+}
+
+/// How the editor's frame is scaled into `rect`: sharp when it fits a
+/// whole number of times, and otherwise with the pixel art filter, unless
+/// the screen is filtered smoothly.
+fn editor_filter(rect: FRect, (_, h): (u32, u32), filter: Filter) -> Filter {
+    let scale = rect.h / h as f32;
+    if (scale - scale.round()).abs() < 0.001 {
+        Filter::Nearest
+    } else if filter == Filter::Bilinear {
+        Filter::Bilinear
+    } else {
+        Filter::SmartNearest
+    }
+}
+
+/// Makes the editor's characters a size smaller, back to the largest
+/// after the smallest, as F2 and Ctrl+B do.
+fn next_editor_size(machine: &mut Machine) {
+    let size = &mut machine.rt.settings.editor_size;
+    *size = size.next();
+}
+
+/// Reads editor colors from a file; returns what to tell the user.
+fn load_colors(palette: &mut Palette, path: &Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    match std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| Palette::from_text(&text))
+    {
+        Ok(read) => {
+            *palette = read;
+            format!("Loaded editor colors from {name}")
+        }
+        Err(e) => format!("Could not load {name}: {e}"),
+    }
+}
+
+/// Writes the editor colors to a file; returns what to tell the user.
+fn save_colors(palette: &Palette, path: &Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    match std::fs::write(path, palette.to_text()) {
+        Ok(()) => format!("Saved editor colors to {name}"),
+        Err(e) => format!("Could not save {name}: {e}"),
+    }
 }
 
 /// The slot that Ctrl and a digit key opens in the editor: Ctrl+1 for PRG0

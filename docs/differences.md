@@ -54,3 +54,14 @@ imported from your own copy:
   than always asking.
 - The screen's scaling filter can be chosen in Options instead of
   following `XSCREEN`.
+
+## Editor
+
+- The editor's colors start as SmileBASIC 4's, and can be swapped for
+  preset palettes from other editors, typed in as hex values, or loaded
+  from and saved to text files. Selected text has a color of its own.
+- The search match color is kept in palettes, but the editor has no
+  search yet.
+- Besides SmileBASIC 4's three sizes (21, 28 and 43 lines of code), the
+  editor has a smaller one with 57, about 60 rows with the ruler, the
+  status line and the room left for the menu bar.

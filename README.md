@@ -68,6 +68,7 @@ digits turned into ASCII.
 | Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
 | Pause/Break | Stop the program |
 | Ctrl+W | Wrap long lines in the editor, or scroll them |
+| F2, Ctrl+B | Make the editor's characters smaller, then large again |
 | Insert | Toggle overwriting in the editor |
 | Ctrl+Home, Ctrl+End | Jump to the start or end of the program |
 | Shift+cursor keys, mouse drag | Select text in the editor |

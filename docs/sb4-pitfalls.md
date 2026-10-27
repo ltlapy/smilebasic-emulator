@@ -104,3 +104,10 @@ follows all of it. Items still waiting for a check are marked
 
 - After an error, F4 puts the cursor at the start of the statement that
   failed, syntax errors included.
+
+## Editor
+
+- The editor shows 21, 28 or 43 lines of code, in the 8- and the
+  16-pixel font alike.
+- It colors TO, STEP, CONST and ENUM as reserved words, though the
+  language specification does not reserve them, and OPTION as a command.
