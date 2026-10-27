@@ -7,12 +7,16 @@ use sb_runtime::font::{Font, FontSize};
 const GLYPH_SCALE: u32 = 2;
 pub const CHAR: u32 = 8 * GLYPH_SCALE;
 pub const PAD: u32 = 8;
+/// The height of a line of text in windows, and of buttons.
+pub const LINE: u32 = 24;
 
 pub const BACKGROUND: u32 = 0xE818_1818;
 pub const HIGHLIGHT: u32 = 0xFF2F_5FAF;
 pub const TEXT: u32 = 0xFFFF_FFFF;
 pub const DISABLED: u32 = 0xFF80_8080;
 pub const BORDER: u32 = 0xFF80_8080;
+/// The face of a button that cannot be pressed.
+const DISABLED_FACE: u32 = 0xFF40_4040;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
@@ -84,4 +88,36 @@ pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, 
             }
         }
     }
+}
+
+/// A bordered window with a title bar.
+pub fn window(fb: &mut Framebuffer, font: &Font, f: Rect, title: &str) {
+    fill(fb, f, BORDER);
+    let inner = Rect {
+        x: f.x + 2,
+        y: f.y + 2,
+        w: f.w - 4,
+        h: f.h - 4,
+    };
+    fill(fb, inner, BACKGROUND | 0xFF00_0000);
+    fill(fb, Rect { h: LINE, ..inner }, HIGHLIGHT);
+    draw_text(fb, font, f.x + 2 * PAD, f.y + 6, title, TEXT);
+}
+
+pub fn button(
+    fb: &mut Framebuffer,
+    font: &Font,
+    r: Rect,
+    label: &str,
+    hovered: bool,
+    enabled: bool,
+) {
+    let (face, color) = match (enabled, hovered) {
+        (false, _) => (DISABLED_FACE, DISABLED),
+        (true, true) => (HIGHLIGHT, TEXT),
+        (true, false) => (BORDER, TEXT),
+    };
+    fill(fb, r, face);
+    let x = r.x + (r.w - text_width(label)) / 2;
+    draw_text(fb, font, x, r.y + 4, label, color);
 }

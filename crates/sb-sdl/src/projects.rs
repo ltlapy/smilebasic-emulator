@@ -10,18 +10,15 @@ use sdl3::keyboard::Keycode;
 
 use crate::dialog::{Answer, Dialog};
 use crate::ui::{
-    BACKGROUND, BORDER, CHAR, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, outline,
-    text_width,
+    BORDER, CHAR, HIGHLIGHT, LINE, PAD, Rect, TEXT, button, draw_text, fill, outline, text_width,
+    window,
 };
 
-const LINE: u32 = 24;
 const WIDTH: u32 = 1120;
 const HEIGHT: u32 = 600;
 /// The width of the project list; the files take the rest.
 const LIST_WIDTH: u32 = 600;
 const ERROR: u32 = 0xFFFF_8080;
-/// The face of a button that cannot be pressed.
-const DISABLED_FACE: u32 = 0xFF40_4040;
 /// The longest name the name box takes, a little over the limit so that
 /// a name that is too long gets an error rather than being cut short.
 const MAX_TYPED: usize = 40;
@@ -639,31 +636,6 @@ impl ProjectManager {
             button(fb, font, r, label, hovered, true);
         }
     }
-}
-
-/// A bordered window with a title bar.
-fn window(fb: &mut Framebuffer, font: &Font, f: Rect, title: &str) {
-    fill(fb, f, BORDER);
-    let inner = Rect {
-        x: f.x + 2,
-        y: f.y + 2,
-        w: f.w - 4,
-        h: f.h - 4,
-    };
-    fill(fb, inner, BACKGROUND | 0xFF00_0000);
-    fill(fb, Rect { h: LINE, ..inner }, HIGHLIGHT);
-    draw_text(fb, font, f.x + 2 * PAD, f.y + 6, title, TEXT);
-}
-
-fn button(fb: &mut Framebuffer, font: &Font, r: Rect, label: &str, hovered: bool, enabled: bool) {
-    let (face, color) = match (enabled, hovered) {
-        (false, _) => (DISABLED_FACE, DISABLED),
-        (true, true) => (HIGHLIGHT, TEXT),
-        (true, false) => (BORDER, TEXT),
-    };
-    fill(fb, r, face);
-    let x = r.x + (r.w - text_width(label)) / 2;
-    draw_text(fb, font, x, r.y + 4, label, color);
 }
 
 #[cfg(test)]
