@@ -26,6 +26,7 @@ pub enum ErrorKind {
     UndefinedProjectName,
     IllegalAnimationData,
     SpriteNotSet,
+    StringTooLong,
 }
 
 impl ErrorKind {
@@ -52,6 +53,7 @@ impl ErrorKind {
             ErrorKind::UndefinedProjectName => "Undefined project name",
             ErrorKind::IllegalAnimationData => "Illegal animation data",
             ErrorKind::SpriteNotSet => "Sprite not set",
+            ErrorKind::StringTooLong => "String too long",
         }
     }
 }

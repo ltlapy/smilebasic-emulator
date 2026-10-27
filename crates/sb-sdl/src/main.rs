@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod controls;
 mod dialog;
 mod menu;
 mod projects;
@@ -9,12 +10,14 @@ mod ui;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use controls::Controls;
 use dialog::{Answer, Dialog};
 use menu::{Action, Click, MenuBar};
 use projects::{Outcome, ProjectManager};
 use sb_profiles::Profile;
 use sb_runtime::editor::is_movement;
 use sb_runtime::font::Font;
+use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::{Filter, ScreenMode};
@@ -147,6 +150,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     video.text_input().start(&window);
     let clipboard = video.clipboard();
     let keyboard = sdl.keyboard();
+    let mut controls = Controls::new(&sdl)?;
     let mut canvas = window.into_canvas();
     // Vsync paces frames on a 60 Hz display; on faster ones, or without
     // vsync, the loop waits for the next frame's time itself.
@@ -202,6 +206,20 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let ctrl = |keymod: Mod| keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         let mut quit = false;
         for event in events.poll_iter() {
+            controls.event(&event);
+            match event {
+                Event::MouseMotion { x, y, .. } => {
+                    let (sx, sy) = to_screen(x, y);
+                    let m = &mut controls.mouse;
+                    (m.x, m.y, m.display) = (sx, sy, to_display(x, y));
+                    m.on_screen = (0..mode.width as i32).contains(&sx)
+                        && (0..mode.height as i32).contains(&sy);
+                }
+                Event::MouseWheel { y, .. } if manager.is_none() => {
+                    controls.mouse.wheel += y.round() as i32;
+                }
+                _ => {}
+            }
             if let Some((open, asking)) = &mut dialog {
                 let answer = match event {
                     Event::Quit { .. } if *asking == Asking::Quit => break 'running,
@@ -404,6 +422,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             dialog = Some((Dialog::quit(&unsaved, (display_w, display_h)), Asking::Quit));
         }
 
+        // Programs see nothing pressed while the emulator's own screens
+        // take the input.
+        machine.rt.input.live = if dialog.is_some() || manager.is_some() || machine.is_editing() {
+            State::default()
+        } else {
+            controls.state(
+                &events.keyboard_state(),
+                keyboard.mod_state(),
+                events.mouse_state(),
+                machine.rt.settings.keyboard_buttons,
+            )
+        };
         machine.frame();
         // The editor leaves its top row for the menu bar.
         menu.pinned = machine.is_editing();

@@ -6,7 +6,7 @@ planned.
 
 Early work: the language, the console, the program editor, file commands,
 graphic pages, sprites (with animation and collisions), text screen
-placement and layers run. Sound and controllers are not implemented yet.
+placement, layers and controllers run. Sound is not implemented yet.
 
 ## Building
 
@@ -67,6 +67,20 @@ digits turned into ASCII.
 | Shift+cursor keys, mouse drag | Select text in the editor |
 | Ctrl+A, Ctrl+X, Ctrl+C, Ctrl+V | Select all, cut, copy and paste in the editor |
 | Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
+
+### Buttons
+
+Gamepads work as controllers 1 to 4. The keyboard also presses controller
+1's buttons, unless *Keys press buttons* is turned off in Options:
+
+| Key | Button |
+|---|---|
+| Cursor keys | Up, down, left, right |
+| Z, X, A, S | A, B, X, Y |
+| Q, W | L, R |
+| 1, 2 | ZL, ZR |
+
+The mouse's left button touches the screen.
 
 ## License
 

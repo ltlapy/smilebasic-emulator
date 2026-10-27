@@ -16,6 +16,7 @@ use crate::editor::Editor;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
+use crate::input::Input;
 use crate::screen::ScreenMode;
 pub use crate::settings::Settings;
 use crate::sprites::{self, Sprites};
@@ -24,15 +25,19 @@ use crate::text::{CONSOLE, FONT_PAGE, SCREENS, SPRITE_PAGE, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
+    Accel,
     Acls,
     Animdef,
     Attr,
     Backcolor,
+    Brepeat,
+    Button,
     Chkchr,
     Chkfile,
     Clear,
     Cls,
     Color,
+    Controller,
     Delete,
     Files,
     Gbox,
@@ -52,14 +57,22 @@ pub(crate) enum Command {
     Gsave,
     Gtarget,
     Gtri,
+    Gyroa,
+    Gyrosync,
+    Gyrov,
     Inkey,
+    Key,
+    Keyboard,
     Layer,
     Lclip,
     Lmatrix,
     Load,
     Locate,
+    Mbutton,
+    Mouse,
     New,
     Project,
+    Pushkey,
     Rename,
     Result,
     Run,
@@ -92,6 +105,7 @@ pub(crate) enum Command {
     Spunlink,
     Spused,
     Spvar,
+    Stick,
     Tanim,
     Tarray,
     Tblend,
@@ -106,6 +120,7 @@ pub(crate) enum Command {
     Tlayer,
     Tload,
     Tofs,
+    Touch,
     Tpage,
     Tput,
     Trot,
@@ -117,19 +132,24 @@ pub(crate) enum Command {
     Tstop,
     Tupdate,
     Tvar,
+    Xctrlstyle,
     Xscreen,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
+    ("ACCEL", Command::Accel),
     ("ACLS", Command::Acls),
     ("ANIMDEF", Command::Animdef),
     ("ATTR", Command::Attr),
     ("BACKCOLOR", Command::Backcolor),
+    ("BREPEAT", Command::Brepeat),
+    ("BUTTON", Command::Button),
     ("CHKCHR", Command::Chkchr),
     ("CHKFILE", Command::Chkfile),
     ("CLEAR", Command::Clear),
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
+    ("CONTROLLER", Command::Controller),
     ("DELETE", Command::Delete),
     ("FILES", Command::Files),
     ("GBOX", Command::Gbox),
@@ -149,14 +169,22 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GSAVE", Command::Gsave),
     ("GTARGET", Command::Gtarget),
     ("GTRI", Command::Gtri),
+    ("GYROA", Command::Gyroa),
+    ("GYROSYNC", Command::Gyrosync),
+    ("GYROV", Command::Gyrov),
     ("INKEY$", Command::Inkey),
+    ("KEY", Command::Key),
+    ("KEYBOARD", Command::Keyboard),
     ("LAYER", Command::Layer),
     ("LCLIP", Command::Lclip),
     ("LMATRIX", Command::Lmatrix),
     ("LOAD", Command::Load),
     ("LOCATE", Command::Locate),
+    ("MBUTTON", Command::Mbutton),
+    ("MOUSE", Command::Mouse),
     ("NEW", Command::New),
     ("PROJECT", Command::Project),
+    ("PUSHKEY", Command::Pushkey),
     ("RENAME", Command::Rename),
     ("RESULT", Command::Result),
     ("RUN", Command::Run),
@@ -189,6 +217,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPUNLINK", Command::Spunlink),
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
+    ("STICK", Command::Stick),
     ("TANIM", Command::Tanim),
     ("TARRAY", Command::Tarray),
     ("TBLEND", Command::Tblend),
@@ -203,6 +232,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TLAYER", Command::Tlayer),
     ("TLOAD", Command::Tload),
     ("TOFS", Command::Tofs),
+    ("TOUCH", Command::Touch),
     ("TPAGE", Command::Tpage),
     ("TPUT", Command::Tput),
     ("TROT", Command::Trot),
@@ -214,6 +244,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TSTOP", Command::Tstop),
     ("TUPDATE", Command::Tupdate),
     ("TVAR", Command::Tvar),
+    ("XCTRLSTYLE", Command::Xctrlstyle),
     ("XSCREEN", Command::Xscreen),
 ];
 
@@ -259,6 +290,7 @@ pub struct Runtime {
     /// Graphic pages GRP0-GRP5.
     pub grp: Graphics,
     pub sprites: Sprites,
+    pub input: Input,
     /// Typed characters not yet read by INKEY$ or INPUT.
     keys: VecDeque<u16>,
     /// The line being typed for INPUT or LINPUT.
@@ -408,6 +440,7 @@ impl Runtime {
             fb: Framebuffer::new(width, height),
             grp: Graphics::default(),
             sprites: Sprites::default(),
+            input: Input::default(),
             keys: VecDeque::new(),
             line: None,
             frame: 0,
@@ -906,6 +939,24 @@ impl Runtime {
                 | Command::Tvar,
                 _,
             ) => self.text_command(command, args, want),
+            (
+                Command::Accel
+                | Command::Brepeat
+                | Command::Button
+                | Command::Controller
+                | Command::Gyroa
+                | Command::Gyrosync
+                | Command::Gyrov
+                | Command::Key
+                | Command::Keyboard
+                | Command::Mbutton
+                | Command::Mouse
+                | Command::Pushkey
+                | Command::Stick
+                | Command::Touch
+                | Command::Xctrlstyle,
+                _,
+            ) => self.input_command(command, args, want),
             _ => Err(illegal()),
         }
     }

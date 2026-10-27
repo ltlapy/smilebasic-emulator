@@ -27,6 +27,7 @@ pub enum Action {
     ToggleHalfWidth,
     ToggleWrap,
     ToggleNumberTiles,
+    ToggleKeyboardButtons,
     FileAccess(FileConfirm),
     ScreenFilter(Option<Filter>),
 }
@@ -42,6 +43,7 @@ impl Action {
             Action::ToggleHalfWidth => check(settings.half_width_on_save),
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
+            Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
             Action::FileAccess(mode) if settings.file_confirm == mode => "(*)",
             Action::FileAccess(_) => "( )",
             Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
@@ -63,6 +65,7 @@ impl Action {
             Action::ToggleHalfWidth => &mut settings.half_width_on_save,
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
+            Action::ToggleKeyboardButtons => &mut settings.keyboard_buttons,
             Action::FileAccess(mode) => {
                 settings.file_confirm = mode;
                 return;
@@ -170,6 +173,7 @@ const MENUS: &[Menu] = &[
                     item("Bilinear", Action::ScreenFilter(Some(Filter::Bilinear))),
                 ]),
             },
+            item("Keys press buttons", Action::ToggleKeyboardButtons),
         ],
     },
 ];

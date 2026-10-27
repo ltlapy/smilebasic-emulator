@@ -24,6 +24,8 @@ pub struct Settings {
     pub file_hint_shown: bool,
     /// How the screen is scaled to the window; `None` follows XSCREEN.
     pub screen_filter: Option<Filter>,
+    /// Keys also press the first controller's buttons.
+    pub keyboard_buttons: bool,
 }
 
 impl Default for Settings {
@@ -37,6 +39,7 @@ impl Default for Settings {
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
+            keyboard_buttons: true,
         }
     }
 }
@@ -82,6 +85,7 @@ impl Settings {
                 "editor_wrap" => &mut s.editor_wrap,
                 "editor_number_tiles" => &mut s.editor_number_tiles,
                 "file_hint_shown" => &mut s.file_hint_shown,
+                "keyboard_buttons" => &mut s.keyboard_buttons,
                 "file_confirm" => {
                     if let Some(&(mode, _)) = FILE_CONFIRM.iter().find(|(_, n)| *n == value) {
                         s.file_confirm = mode;
@@ -121,13 +125,15 @@ impl Settings {
              editor_number_tiles={}\n\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
-             screen_filter={filter}\n",
+             screen_filter={filter}\n\
+             keyboard_buttons={}\n",
             self.upper_case_letters,
             self.ctrl_c_stops,
             self.half_width_on_save,
             self.editor_wrap,
             self.editor_number_tiles,
             self.file_hint_shown,
+            self.keyboard_buttons,
         )
     }
 }
@@ -146,6 +152,7 @@ mod tests {
             file_confirm: FileConfirm::Notify,
             file_hint_shown: true,
             screen_filter: None,
+            keyboard_buttons: false,
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);

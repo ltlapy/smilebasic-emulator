@@ -12,6 +12,7 @@ pub mod font;
 pub mod framebuffer;
 pub mod graphics;
 mod grp;
+pub mod input;
 pub mod machine;
 pub mod nso;
 pub mod resources;
