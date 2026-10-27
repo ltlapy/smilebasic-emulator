@@ -1,7 +1,7 @@
 //! Placing text screens (TOFS, THOME, TROT, TSCALE, TCOLOR, TBLEND, TSHOW,
 //! THIDE, TLAYER), the layers they and sprites belong to (LAYER, LCLIP,
 //! LMATRIX), BACKCOLOR, what text screens show (TSCREEN, TPAGE and
-//! ATTR), the resolution (XSCREEN) and ACLS.
+//! ATTR), the resolution (XSCREEN), ACLS, and FADE over everything.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -96,6 +96,67 @@ fn font_type(v: &Value) -> Result<u32> {
         Ok(n as u32)
     } else {
         Err(out_of_range("font type", n))
+    }
+}
+
+/// FADE: a color over the whole screen, and its way to another one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Fade {
+    pub(crate) color: u32,
+    from: u32,
+    to: u32,
+    /// Frames the change takes, and those gone; equal when it is done.
+    frames: u32,
+    elapsed: u32,
+}
+
+impl Fade {
+    fn start(&mut self, to: u32, frames: u32) {
+        *self = Fade {
+            color: if frames == 0 { to } else { self.color },
+            from: self.color,
+            to,
+            frames,
+            elapsed: 0,
+        };
+    }
+
+    pub(crate) fn fading(&self) -> bool {
+        self.elapsed < self.frames
+    }
+
+    /// One frame of the change, each channel moving in a straight line.
+    // UNVERIFIED: how the channels are rounded on the way.
+    pub(crate) fn step(&mut self) {
+        if !self.fading() {
+            return;
+        }
+        self.elapsed += 1;
+        let (t, n) = (i64::from(self.elapsed), i64::from(self.frames));
+        self.color = (0..4).fold(0, |c, i| {
+            let shift = i * 8;
+            let a = i64::from(self.from >> shift & 0xFF);
+            let b = i64::from(self.to >> shift & 0xFF);
+            c | ((a + (b - a) * t / n) as u32) << shift
+        });
+    }
+
+    /// Covers `pixels`, which are opaque, with the fade color.
+    pub(crate) fn cover(&self, pixels: &mut [u32]) {
+        let a = self.color >> 24;
+        if a == 0 {
+            return;
+        }
+        let mix = |p: u32, c: u32, shift: u32| {
+            let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
+            ((c * a + p * (255 - a) + 127) / 255) << shift
+        };
+        for p in pixels {
+            *p = 0xFF00_0000
+                | mix(*p, self.color, 16)
+                | mix(*p, self.color, 8)
+                | mix(*p, self.color, 0);
+        }
     }
 }
 
@@ -358,6 +419,20 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Backcolor, Want::Value, 0) => Ok(int_value(self.back_color as i32)),
+            (Command::Fade, Want::Outs(0), 1..=2) => {
+                let color = args[0].to_int()? as u32;
+                let frames = match args.get(1) {
+                    None => 0,
+                    Some(v) => match v.to_int()? {
+                        n @ 0.. => n as u32,
+                        n => return Err(out_of_range("time", n)),
+                    },
+                };
+                self.fade.start(color, frames);
+                Ok(vec![])
+            }
+            (Command::Fade, Want::Value, 0) => Ok(int_value(self.fade.color as i32)),
+            (Command::Fadechk, Want::Value, 0) => Ok(int_value(i32::from(self.fade.fading()))),
             (Command::Xscreen, Want::Outs(0), 2..=5) => {
                 let (w, h) = (args[0].to_int()?, args[1].to_int()?);
                 if !(128..=1280).contains(&w) || w % 4 != 0 {

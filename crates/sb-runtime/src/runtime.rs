@@ -17,7 +17,7 @@ use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
 use crate::input::Input;
-use crate::screen::ScreenMode;
+use crate::screen::{Fade, ScreenMode};
 pub use crate::settings::Settings;
 use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
@@ -42,6 +42,8 @@ pub(crate) enum Command {
     Date,
     Delete,
     Dtread,
+    Fade,
+    Fadechk,
     Files,
     Gbox,
     Gcircle,
@@ -163,6 +165,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("DATE$", Command::Date),
     ("DELETE", Command::Delete),
     ("DTREAD", Command::Dtread),
+    ("FADE", Command::Fade),
+    ("FADECHK", Command::Fadechk),
     ("FILES", Command::Files),
     ("GBOX", Command::Gbox),
     ("GCIRCLE", Command::Gcircle),
@@ -343,6 +347,7 @@ pub struct Runtime {
     pub layers: [Layer; LAYERS],
     /// BACKCOLOR: what shows behind every layer.
     pub back_color: u32,
+    pub(crate) fade: Fade,
     /// Where a layer that is composed is drawn first.
     scratch: Framebuffer,
     /// XSCREEN, and what ACLS goes back to.
@@ -481,6 +486,7 @@ impl Runtime {
             data_pos: Cell::new(0),
             layers: [Layer::default(); LAYERS],
             back_color: 0xFF00_0000,
+            fade: Fade::default(),
             scratch: Framebuffer::new(width, height),
             mode,
             startup_mode: mode,
@@ -543,6 +549,8 @@ impl Runtime {
         self.text = startup_screens(&self.startup_mode);
         self.set_mode(self.startup_mode);
         self.back_color = 0xFF00_0000;
+        // UNVERIFIED: ACLS clears FADE.
+        self.fade = Fade::default();
         self.layers = [Layer::default(); LAYERS];
         self.sprites.reset(keep_defs, keep_anims);
         if !keep_grp {
@@ -708,6 +716,7 @@ impl Runtime {
                 compose::compose(&mut fb, &scratch, settings.compose, settings.color);
             }
         }
+        self.fade.cover(fb.pixels_mut());
         self.fb = fb;
         self.scratch = scratch;
         &self.fb
@@ -721,6 +730,9 @@ impl Runtime {
 
     /// Plays one frame of the sprites' and text screens' animations.
     pub fn animate(&mut self) {
+        // UNVERIFIED: a fade steps with the animations, starting on the
+        // frame after FADE.
+        self.fade.step();
         self.sprites.animate();
         for t in &mut self.text {
             t.animate();
@@ -899,6 +911,8 @@ impl Runtime {
                 Command::Acls
                 | Command::Attr
                 | Command::Backcolor
+                | Command::Fade
+                | Command::Fadechk
                 | Command::Layer
                 | Command::Lclip
                 | Command::Lmatrix

@@ -248,3 +248,35 @@ fn acls_goes_back_to_the_start() {
         "FFFF0000"
     );
 }
+
+#[test]
+fn fade_covers_everything_and_moves_in_steps() {
+    // FADE at once: half-covered red over the black back.
+    let mut m = run("FADE &H80FF0000");
+    let p = m.render().get(10, 10).unwrap();
+    assert_eq!(p, 0xFF80_0000);
+    // Over 4 frames from clear to opaque white; the program waits 2.
+    let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+    m.boot();
+    m.set_slot(
+        0,
+        "FADE &HFFFFFFFF,4:A=FADECHK():VSYNC 2:B=FADE():VSYNC 3:?A;HEX$(B);FADECHK();HEX$(FADE())"
+            .to_string(),
+    );
+    m.run_slot(0);
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(!m.is_running());
+    let console = &m.rt.text[4];
+    let rows: Vec<String> = (0..console.size().1)
+        .map(|y| {
+            (0..console.size().0)
+                .map(|x| console.cell(x, y).code)
+                .take_while(|&c| c != 0)
+                .map(|c| char::from_u32(c.into()).unwrap())
+                .collect()
+        })
+        .collect();
+    assert!(rows.iter().any(|r| r == "17F7F7F7F0FFFFFFFF"), "{rows:?}");
+}
