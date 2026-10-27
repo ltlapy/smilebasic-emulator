@@ -7,7 +7,8 @@ planned.
 Early work: the language, the console, the program editor, file commands,
 graphic pages, sprites (with animation and collisions), text screen
 placement, layers, controllers and BGM from MML run. Sound effects (BEEP),
-SmileBASIC's preset songs and its own instruments are not there yet.
+SmileBASIC's preset songs and its own instruments are not there yet. What
+differs on purpose is in [docs/differences.md](docs/differences.md).
 
 ## Building
 
