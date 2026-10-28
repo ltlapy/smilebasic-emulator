@@ -33,8 +33,10 @@ pub struct Settings {
     pub screen_filter: Option<Filter>,
     /// Keys also press the first controller's buttons.
     pub keyboard_buttons: bool,
-    /// The SoundFont file instruments come from; `None` for the bundled
-    /// one.
+    /// Play SmileBASIC 4's own instruments when they are imported.
+    pub smilebasic_instruments: bool,
+    /// The SoundFont file instruments come from otherwise; `None` for the
+    /// bundled one.
     pub sound_font: Option<String>,
 }
 
@@ -53,6 +55,7 @@ impl Default for Settings {
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
             keyboard_buttons: true,
+            smilebasic_instruments: true,
             sound_font: None,
         }
     }
@@ -129,6 +132,7 @@ impl Settings {
                 "editor_number_tiles" => &mut s.editor_number_tiles,
                 "file_hint_shown" => &mut s.file_hint_shown,
                 "keyboard_buttons" => &mut s.keyboard_buttons,
+                "smilebasic_instruments" => &mut s.smilebasic_instruments,
                 "file_confirm" => {
                     if let Some(&(mode, _)) = FILE_CONFIRM.iter().find(|(_, n)| *n == value) {
                         s.file_confirm = mode;
@@ -189,6 +193,7 @@ impl Settings {
              file_hint_shown={}\n\
              screen_filter={filter}\n\
              keyboard_buttons={}\n\
+             smilebasic_instruments={}\n\
              sound_font={}\n",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -200,6 +205,7 @@ impl Settings {
             self.editor_colors.lines(EDITOR_COLOR),
             self.file_hint_shown,
             self.keyboard_buttons,
+            self.smilebasic_instruments,
             self.sound_font.as_deref().unwrap_or(""),
         )
     }
@@ -223,6 +229,7 @@ mod tests {
             file_hint_shown: true,
             screen_filter: None,
             keyboard_buttons: false,
+            smilebasic_instruments: false,
             sound_font: Some("/fonts/a b.sf2".to_string()),
             ..Settings::default()
         };

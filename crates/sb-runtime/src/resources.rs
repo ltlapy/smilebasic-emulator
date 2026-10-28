@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::font::{Font, FontError};
 use crate::graphics::GRP_SIZE;
 use crate::sbfile::{self, DataValues};
+use crate::sound::bank::Bank;
 use crate::sprites::{self, SpriteDef};
 
 /// The emulator's data directory in the user's application data, which
@@ -29,6 +30,8 @@ pub const FONT_PAGE: &str = "GDEFFONT";
 pub const SPRITE_PAGE: &str = "GDEFGRP";
 /// The SPDEF table taken from the executable, as its raw records.
 pub const SPRITE_DEFS: &str = "spdef.bin";
+/// The instruments and waveforms from the sound archive, as a [`Bank`].
+pub const INSTRUMENTS: &str = "instruments.bin";
 
 #[derive(Debug)]
 pub enum ResourceError {
@@ -86,4 +89,10 @@ pub fn load_font(dir: &Path) -> Result<Font, ResourceError> {
     let map = read(&dir.join(FONT_MAP))?;
     let page = read(&dir.join(FONT_PAGE))?;
     Ok(Font::from_files(&map, &page)?)
+}
+
+/// SmileBASIC 4's instruments from the resource directory, `None` if they
+/// were not imported or are damaged.
+pub fn load_instruments(dir: &Path) -> Option<Bank> {
+    Bank::from_bytes(&std::fs::read(dir.join(INSTRUMENTS)).ok()?)
 }

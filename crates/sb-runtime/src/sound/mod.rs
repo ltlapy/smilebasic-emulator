@@ -1,9 +1,12 @@
 //! Sound: BGM tracks playing MML on a SoundFont, mixed a frame at a time
 //! into stereo samples for the frontend to play.
 
+pub mod bank;
 pub mod beep;
 pub mod mml;
 pub mod pcm;
+mod sampler;
+pub mod synth;
 pub mod talk;
 mod track;
 pub mod wave;
@@ -11,13 +14,13 @@ pub mod wave;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
 
 pub use rustysynth::SoundFont;
 
 use beep::Beeps;
 use mml::Song;
 use pcm::Pcm;
+use synth::Instruments;
 use talk::Talk;
 use track::{AfterFade, Track};
 use wave::Waves;
@@ -118,7 +121,7 @@ pub(crate) struct Effector {
 }
 
 pub struct Sound {
-    font: Option<Arc<SoundFont>>,
+    instruments: Option<Instruments>,
     tracks: Vec<Option<Track>>,
     /// BGMSET's songs, 128 to 255.
     pub(crate) songs: HashMap<i32, Rc<Song>>,
@@ -144,7 +147,7 @@ pub struct Sound {
 impl Default for Sound {
     fn default() -> Self {
         Sound {
-            font: None,
+            instruments: None,
             tracks: (0..TRACKS).map(|_| None).collect(),
             songs: HashMap::new(),
             waves: Rc::default(),
@@ -163,17 +166,17 @@ impl Default for Sound {
 }
 
 impl Sound {
-    /// The SoundFont instruments come from; without one, BGM is silent.
-    pub fn set_font(&mut self, font: Option<Arc<SoundFont>>) {
-        self.beeps = Beeps::new(font.as_ref());
-        self.font = font;
+    /// Where instruments come from; without any, BGM is silent.
+    pub fn set_instruments(&mut self, instruments: Option<Instruments>) {
+        self.beeps = Beeps::new(instruments.as_ref());
+        self.instruments = instruments;
         self.tracks.iter_mut().for_each(|t| *t = None);
     }
 
     pub(crate) fn track(&mut self, n: usize) -> &mut Track {
-        let font = self.font.as_ref();
+        let instruments = self.instruments.as_ref();
         let waves = &self.waves;
-        self.tracks[n].get_or_insert_with(|| Track::new(font, waves.clone()))
+        self.tracks[n].get_or_insert_with(|| Track::new(instruments, waves.clone()))
     }
 
     /// The tracks that exist, which are all that can be playing.

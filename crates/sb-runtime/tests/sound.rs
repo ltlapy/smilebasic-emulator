@@ -8,6 +8,7 @@ use sb_runtime::Runtime;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::sound::SoundFont;
+use sb_runtime::sound::synth::Instruments;
 
 fn run_on(rt: &mut Runtime, source: &str) -> Result<String, sb_core::error::Error> {
     let mut vm = Vm::new(sb_core::compile(source, &*rt)?);
@@ -128,7 +129,8 @@ fn a_soundfont_makes_sound() {
     );
     let font = SoundFont::new(&mut std::fs::File::open(path).unwrap()).unwrap();
     let mut rt = runtime();
-    rt.sound.set_font(Some(Arc::new(font)));
+    rt.sound
+        .set_instruments(Some(Instruments::Font(Arc::new(font))));
     rt.sound.take_samples();
     run_on(&mut rt, "BGMPLAY \"T120 @0 O4 C4\"").unwrap();
     frames(&mut rt, 10);

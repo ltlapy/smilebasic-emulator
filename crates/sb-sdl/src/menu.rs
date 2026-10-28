@@ -38,6 +38,8 @@ pub enum Action {
     EditColors,
     FileAccess(FileConfirm),
     ScreenFilter(Option<Filter>),
+    /// Use SmileBASIC 4's own instruments, imported.
+    SmileBasicInstruments,
     /// Use the bundled SoundFont.
     BundledSoundFont,
     /// Pick a SoundFont file.
@@ -64,9 +66,20 @@ impl Action {
             Action::FileAccess(_) => "( )",
             Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
             Action::ScreenFilter(_) => "( )",
-            Action::BundledSoundFont if settings.sound_font.is_none() => "(*)",
-            Action::ChooseSoundFont if settings.sound_font.is_some() => "(*)",
-            Action::BundledSoundFont | Action::ChooseSoundFont => "( )",
+            Action::SmileBasicInstruments if settings.smilebasic_instruments => "(*)",
+            Action::BundledSoundFont
+                if !settings.smilebasic_instruments && settings.sound_font.is_none() =>
+            {
+                "(*)"
+            }
+            Action::ChooseSoundFont
+                if !settings.smilebasic_instruments && settings.sound_font.is_some() =>
+            {
+                "(*)"
+            }
+            Action::SmileBasicInstruments | Action::BundledSoundFont | Action::ChooseSoundFont => {
+                "( )"
+            }
             Action::Projects
             | Action::OpenFolder
             | Action::Quit
@@ -106,7 +119,12 @@ impl Action {
                 settings.editor_colors = PRESETS[i].1;
                 return;
             }
+            Action::SmileBasicInstruments => {
+                settings.smilebasic_instruments = true;
+                return;
+            }
             Action::BundledSoundFont => {
+                settings.smilebasic_instruments = false;
                 settings.sound_font = None;
                 return;
             }
@@ -211,8 +229,9 @@ const MENUS: &[Menu] = &[
             },
             item("Keys press buttons", Action::ToggleKeyboardButtons),
             Item {
-                label: "Sound font",
+                label: "Instruments",
                 entry: Entry::Sub(&[
+                    item("SmileBASIC 4 (imported)", Action::SmileBasicInstruments),
                     item("GeneralUser GS (bundled)", Action::BundledSoundFont),
                     item("Choose a file...", Action::ChooseSoundFont),
                 ]),

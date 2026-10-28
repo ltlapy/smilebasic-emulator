@@ -2,12 +2,10 @@
 //! BEEPVOL, BEEPPAN and BEEPSTOP change.
 
 use std::rc::Rc;
-use std::sync::Arc;
 
-use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
-
+use super::Ramp;
+use super::synth::{Instruments, Synth};
 use super::wave::{self, Wave};
-use super::{RATE, Ramp};
 
 pub const HANDLES: usize = 16;
 /// The note BEEP plays instruments at.
@@ -19,10 +17,6 @@ const INSTRUMENT_FRAMES: u32 = 30;
 /// Frames an instrument's handle stays taken after letting go, for the
 /// note to die away.
 const RELEASE_FRAMES: u32 = 60;
-/// Semitones the pitch bend reaches either way, for BEEPPIT.
-const BEND_RANGE: i32 = 24;
-/// rustysynth's drum channel, which adds 128 to the bank.
-const DRUM_CHANNEL: usize = 9;
 
 #[derive(Clone, Debug)]
 enum Sounding {
@@ -50,7 +44,7 @@ struct Beep {
 }
 
 pub struct Beeps {
-    synth: Option<Synthesizer>,
+    synth: Option<Box<dyn Synth>>,
     beeps: Vec<Option<Beep>>,
     /// Which handle the next BEEP tries first, so that handles go round.
     next: usize,
@@ -58,29 +52,19 @@ pub struct Beeps {
 }
 
 impl Beeps {
-    pub fn new(font: Option<&Arc<SoundFont>>) -> Beeps {
-        let mut settings = SynthesizerSettings::new(RATE as i32);
-        settings.enable_reverb_and_chorus = false;
-        let mut synth = font.map(|f| Synthesizer::new(f, &settings).expect("valid settings"));
-        if let Some(s) = &mut synth {
-            for c in 0..HANDLES as i32 {
-                // RPN 0, the pitch bend's range.
-                s.process_midi_message(c, 0xB0, 0x65, 0);
-                s.process_midi_message(c, 0xB0, 0x64, 0);
-                s.process_midi_message(c, 0xB0, 0x06, BEND_RANGE);
-            }
-        }
+    pub fn new(instruments: Option<&Instruments>) -> Beeps {
         Beeps {
-            synth,
+            synth: instruments.map(Instruments::synth),
             beeps: vec![None; HANDLES],
             next: 0,
             scratch: Default::default(),
         }
     }
 
-    fn midi(&mut self, handle: usize, command: i32, a: i32, b: i32) {
+    /// Runs `f` on the synthesizer, if there is one.
+    fn synth(&mut self, f: impl FnOnce(&mut dyn Synth)) {
         if let Some(s) = &mut self.synth {
-            s.process_midi_message(handle as i32, command, a, b);
+            f(s.as_mut());
         }
     }
 
@@ -103,10 +87,10 @@ impl Beeps {
         let (volume, pan) = (b.volume, b.pan);
         match &mut b.sounding {
             Sounding::Wave(v) => v.gains = wave::gains(volume, 127, pan),
-            Sounding::Instrument { .. } => {
-                self.midi(h, 0xB0, 7, volume);
-                self.midi(h, 0xB0, 10, pan);
-            }
+            Sounding::Instrument { .. } => self.synth(|s| {
+                s.volume(h, volume);
+                s.pan(h, pan);
+            }),
             Sounding::Preset => {}
         }
     }
@@ -119,15 +103,14 @@ impl Beeps {
             BeepSound::Preset => Sounding::Preset,
             BeepSound::Instrument(program) => {
                 let key = INSTRUMENT_NOTE + pitch.div_euclid(100);
-                let bank = if h == DRUM_CHANNEL { -128 } else { 0 };
-                self.midi(h, 0xB0, 0, bank);
-                self.midi(h, 0xC0, program, 0);
-                self.bend(h, pitch.rem_euclid(100));
-                if (0..128).contains(&key) {
-                    if let Some(s) = &mut self.synth {
-                        s.note_on(h as i32, key, 127);
+                self.synth(|s| {
+                    s.expression(h, 127);
+                    s.program(h, program);
+                    s.bend(h, pitch.rem_euclid(100));
+                    if (0..128).contains(&key) {
+                        s.note_on(h, key, 127);
                     }
-                }
+                });
                 Sounding::Instrument {
                     key,
                     hold: INSTRUMENT_FRAMES,
@@ -152,12 +135,6 @@ impl Beeps {
         h
     }
 
-    fn bend(&mut self, h: usize, cents: i32) {
-        let cents = cents.clamp(-BEND_RANGE * 100, BEND_RANGE * 100);
-        let bend = (8192 + cents * 8192 / (BEND_RANGE * 100)).clamp(0, 16383);
-        self.midi(h, 0xE0, bend & 0x7F, bend >> 7);
-    }
-
     pub fn set_pitch(&mut self, h: usize, pitch: i32) {
         let Some(b) = &mut self.beeps[h] else {
             return;
@@ -166,7 +143,7 @@ impl Beeps {
             Sounding::Wave(v) => v.set_pitch(pitch),
             Sounding::Instrument { .. } => {
                 let from = b.start_pitch.div_euclid(100) * 100;
-                self.bend(h, pitch - from);
+                self.synth(|s| s.bend(h, pitch - from));
             }
             Sounding::Preset => {}
         }
@@ -192,9 +169,7 @@ impl Beeps {
             ..
         }) = self.beeps[h]
         {
-            if let Some(s) = &mut self.synth {
-                s.note_off_all_channel(h as i32, true);
-            }
+            self.synth(|s| s.channel_off(h));
         }
         self.beeps[h] = None;
     }
@@ -228,7 +203,7 @@ impl Beeps {
             }) = &self.beeps[h]
             {
                 let expression = (fade.value * 127.0).round() as i32;
-                self.midi(h, 0xB0, 11, expression);
+                self.synth(|s| s.expression(h, expression));
             }
         }
         let [l, r] = &mut self.scratch;
@@ -271,7 +246,7 @@ impl Beeps {
                         if *hold == 0
                             && let Some(s) = &mut self.synth
                         {
-                            s.note_off(h as i32, *key);
+                            s.note_off(h, *key);
                         }
                         false
                     } else {

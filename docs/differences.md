@@ -8,13 +8,18 @@ source, and what has been checked is in [sb4-pitfalls.md](sb4-pitfalls.md).
 ## Without SmileBASIC's own sounds
 
 SmileBASIC 4 keeps its instruments, sound effects and preset songs in its
-sound archive, which the emulator cannot ship. Until they can be
-imported from your own copy:
+sound archive, which the emulator cannot ship. The importer takes the
+instruments from your own copy, and the emulator plays them on a sampler
+of its own; its envelopes, volume curves and vibrato are guesses. The
+preset songs and sound effects are sequences, which are not played yet:
 
 - Preset songs (`BGMPLAY 0` to `45`) play silence, until stopped, so
   that programs waiting on `BGMCHK` still wait.
 - Preset sound effects (`BEEP 0` to `155`) are silent. They still take
   a handle.
+
+Without the imported instruments:
+
 - MML's sound effect tones (`@256` and up) are silent.
 - Instruments `@0` to `@127` come from a General MIDI SoundFont
   (GeneralUser GS, or one chosen in Options), so they sound different.
@@ -29,9 +34,8 @@ imported from your own copy:
   says the same words in another voice. In MML, a sung note (`*WA,C4`)
   plays as a plain note.
 - MML's tremolo (`@MA`) and pan modulation (`@ML`) are read and
-  ignored. Vibrato (`@MP`) is the SoundFont's own, through the
-  modulation wheel. Envelopes (`@E`) shape the PSG and user waveforms
-  only.
+  ignored. Vibrato (`@MP`) takes only its depth. Envelopes (`@E`) shape
+  the PSG and user waveforms only.
 - `SNDMSBAL` keeps its value; there are no subprograms to balance.
 
 ## Input

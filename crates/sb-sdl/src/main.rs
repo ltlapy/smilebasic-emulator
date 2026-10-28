@@ -12,6 +12,7 @@ mod toast;
 mod ui;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use audio::Audio;
@@ -31,6 +32,8 @@ use sb_runtime::palette::Palette;
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
+use sb_runtime::sound::bank::Bank;
+use sb_runtime::sound::synth::Instruments;
 use sb_runtime::sprites::Sprites;
 use sb_runtime::storage::Storage;
 use sb_runtime::{Framebuffer, Runtime, resources, sbfile};
@@ -106,6 +109,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let screen = Profile::default().screen();
     let mut rt = Runtime::new(screen.width, screen.height, font);
     let (sprite_page, sprite_defs) = resources::load_sprites(&resource_dir()?);
+    let bank = resources::load_instruments(&resource_dir()?).map(Arc::new);
     if let Some(page) = sprite_page {
         rt.set_sprite_page(page);
     }
@@ -183,8 +187,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut blink = 0u32;
     let mut toasts = Toasts::default();
     let mut key_hint = KeyHint::default();
-    let font_path = machine.rt.settings.sound_font.clone();
-    use_sound_font(&mut machine, font_path, &mut toasts);
+    use_instruments(&mut machine, bank.as_ref(), &mut toasts);
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
     let mut color_window: Option<ColorWindow> = None;
@@ -489,8 +492,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::EditColors) => {
                         color_window = Some(ColorWindow::new((display_w, display_h)));
                     }
-                    Click::Chosen(Action::BundledSoundFont) => {
-                        use_sound_font(&mut machine, None, &mut toasts);
+                    Click::Chosen(
+                        choice @ (Action::SmileBasicInstruments | Action::BundledSoundFont),
+                    ) => {
+                        choice.toggle(&mut machine.rt.settings);
+                        if choice == Action::SmileBasicInstruments && bank.is_none() {
+                            toasts.push(
+                                "SmileBASIC 4's instruments are not imported \
+                                 (see smilebasic-import)"
+                                    .into(),
+                            );
+                        }
+                        use_instruments(&mut machine, bank.as_ref(), &mut toasts);
                     }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored if machine.is_editing() => {
@@ -612,8 +625,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             )
         };
         if let Ok(path) = font_choice.try_recv() {
-            let path = path.to_string_lossy().into_owned();
-            use_sound_font(&mut machine, Some(path), &mut toasts);
+            let settings = &mut machine.rt.settings;
+            settings.smilebasic_instruments = false;
+            settings.sound_font = Some(path.to_string_lossy().into_owned());
+            use_instruments(&mut machine, bank.as_ref(), &mut toasts);
         }
         if let Ok((path, transfer)) = folder_choice.try_recv()
             && let Some(open) = &mut manager
@@ -733,21 +748,30 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     Ok(())
 }
 
-/// Plays with the SoundFont at `path`, or the bundled one, and keeps the
-/// choice; one that cannot be loaded leaves the bundled one in use.
-fn use_sound_font(machine: &mut Machine, path: Option<String>, toasts: &mut Toasts) {
+/// Plays with SmileBASIC 4's instruments when they are imported and
+/// chosen, or else with the chosen SoundFont or the bundled one. A
+/// SoundFont that cannot be loaded leaves the bundled one in use.
+fn use_instruments(machine: &mut Machine, bank: Option<&Arc<Bank>>, toasts: &mut Toasts) {
+    if let Some(bank) = bank.filter(|_| machine.rt.settings.smilebasic_instruments) {
+        machine
+            .rt
+            .sound
+            .set_instruments(Some(Instruments::Bank(bank.clone())));
+        return;
+    }
+    let path = machine.rt.settings.sound_font.clone();
     let font = match audio::load_font(path.as_deref().map(Path::new)) {
-        Ok(font) => {
-            machine.rt.settings.sound_font = path;
-            Some(font)
-        }
+        Ok(font) => Some(font),
         Err(e) => {
             toasts.push(format!("Using the bundled sound font: {e}"));
             machine.rt.settings.sound_font = None;
             audio::load_font(None).map_err(|e| eprintln!("{e}")).ok()
         }
     };
-    machine.rt.sound.set_font(font);
+    machine
+        .rt
+        .sound
+        .set_instruments(font.map(Instruments::Font));
 }
 
 /// The computer's clipboard, for CLIPBOARD.
