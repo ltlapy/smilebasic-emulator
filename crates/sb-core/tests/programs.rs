@@ -602,6 +602,12 @@ fn initialized_arrays_keep_their_sizes() {
         "62Z||\n"
     );
     assert_eq!(error("DIM A[2]=[1,2,3]").0, ErrorKind::SubscriptOutOfRange);
+    // A variable used before its DIM is a duplicate, checked on hardware.
+    assert_eq!(
+        error("S$=\"A\"\nDIM S$[4]"),
+        (ErrorKind::DuplicateVariable, 2)
+    );
+    assert_eq!(output("DIM S$[4]:S$[0]=\"A\":?S$[0]"), "A\n");
     // Only one-dimensional arrays may be empty.
     assert_eq!(error("DIM R#[0,0]").0, ErrorKind::SubscriptOutOfRange);
     assert_eq!(output("DIM A[0]:?LEN(A)"), "0\n");

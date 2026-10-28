@@ -28,6 +28,7 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool) -> Result<Compi
         global_slots: HashMap::new(),
         global_declared: HashSet::new(),
         global_var_seen: HashSet::new(),
+        global_used: HashSet::new(),
         strict: false,
         constants: HashMap::new(),
         def: None,
@@ -75,6 +76,8 @@ struct Compiler<'h> {
     global_declared: HashSet<Key>,
     /// VAR statements compiled so far at top level, to report duplicates.
     global_var_seen: HashSet<Key>,
+    /// Globals that top-level code has used so far, in source order.
+    global_used: HashSet<Key>,
     direct: bool,
     strict: bool,
     constants: HashMap<String, Literal>,
@@ -409,6 +412,7 @@ impl Compiler<'_> {
                 }
             }
         } else if let Some(&slot) = self.global_slots.get(&k) {
+            self.global_used.insert(k.clone());
             if self.strict && !self.global_declared.contains(&k) {
                 return Err(err(
                     ErrorKind::UndefinedVariable,
@@ -718,9 +722,14 @@ impl Compiler<'_> {
 
     fn var_decl(&mut self, d: &VarDecl) -> Result<()> {
         let k = key(&d.var);
+        // Using a variable before its DIM or VAR also makes the DIM a
+        // duplicate (checked on hardware).
         let first = match &mut self.def {
             Some(def) => def.declared.insert(k.clone()),
-            None => self.global_var_seen.insert(k.clone()) || self.direct,
+            None => {
+                (self.global_var_seen.insert(k.clone()) && !self.global_used.contains(&k))
+                    || self.direct
+            }
         };
         if !first {
             return Err(err(
