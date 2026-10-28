@@ -107,6 +107,14 @@ pub(crate) enum Command {
     Pcmstop,
     Pcmstream,
     Pcmvol,
+    Prgdel,
+    Prgedit,
+    Prgget,
+    Prgins,
+    Prgname,
+    Prgseek,
+    Prgset,
+    Prgsize,
     Project,
     Pushkey,
     Randomize,
@@ -275,6 +283,14 @@ const COMMANDS: &[(&str, Command)] = &[
     ("PCMSTOP", Command::Pcmstop),
     ("PCMSTREAM", Command::Pcmstream),
     ("PCMVOL", Command::Pcmvol),
+    ("PRGDEL", Command::Prgdel),
+    ("PRGEDIT", Command::Prgedit),
+    ("PRGGET$", Command::Prgget),
+    ("PRGINS", Command::Prgins),
+    ("PRGNAME$", Command::Prgname),
+    ("PRGSEEK", Command::Prgseek),
+    ("PRGSET", Command::Prgset),
+    ("PRGSIZE", Command::Prgsize),
     ("PROJECT", Command::Project),
     ("PUSHKEY", Command::Pushkey),
     ("RANDOMIZE", Command::Randomize),
@@ -422,6 +438,10 @@ pub struct Runtime {
     pub slot_names: Vec<String>,
     /// Slots changed in the editor since they were last loaded or saved.
     pub slot_modified: Vec<bool>,
+    /// The slot whose program is running; `None` in direct mode.
+    pub(crate) running_slot: Option<usize>,
+    /// The slot and line that PRGEDIT chose, for PRGGET$ and the rest.
+    pub(crate) prg_edit: Option<crate::prg::PrgEdit>,
     pub settings: Settings,
     pub storage: Storage,
     /// What RESULT() returns: 1 if the last file command succeeded, 0 if
@@ -580,6 +600,8 @@ impl Runtime {
             slots: vec![String::new(); SLOTS],
             slot_names: vec![String::new(); SLOTS],
             slot_modified: vec![false; SLOTS],
+            running_slot: None,
+            prg_edit: None,
             settings: Settings::default(),
             storage: Storage::none(),
             result: 1,
@@ -955,6 +977,7 @@ impl Runtime {
                     }
                 }
                 for slot in slots {
+                    self.drop_prg_edit(slot);
                     self.slots[slot].clear();
                     self.slot_names[slot].clear();
                     self.slot_modified[slot] = false;
@@ -987,6 +1010,17 @@ impl Runtime {
                 let (x, y) = self.text[id].cursor();
                 Ok(vec![Value::Int(x as i32), Value::Int(y as i32)])
             }
+            (
+                Command::Prgdel
+                | Command::Prgedit
+                | Command::Prgget
+                | Command::Prgins
+                | Command::Prgname
+                | Command::Prgseek
+                | Command::Prgset
+                | Command::Prgsize,
+                _,
+            ) => self.prg_command(command, args, want),
             (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
                 self.loadsave_command(command, args, want)
             }

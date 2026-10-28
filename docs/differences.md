@@ -56,6 +56,8 @@ imported from your own copy:
   `SAVEV "GRP:..."` write PNG images, so the files open on a computer.
   `DAT` files keep SmileBASIC 4's layout. All of these are read back, as
   are files from SmileBASIC 4.
+- `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands
+  count lines of the source, which wrapping does not change.
 - The screen's scaling filter can be chosen in Options instead of
   following `XSCREEN`.
 

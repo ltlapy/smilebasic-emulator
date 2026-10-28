@@ -18,6 +18,7 @@ mod loadsave;
 pub mod machine;
 pub mod nso;
 pub mod palette;
+mod prg;
 pub mod resources;
 pub mod runtime;
 pub mod sbfile;

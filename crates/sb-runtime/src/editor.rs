@@ -181,7 +181,7 @@ pub struct Editor {
 }
 
 /// Splits a program into lines the way the lexer counts them.
-fn split_lines(source: &str) -> Vec<Vec<u16>> {
+pub(crate) fn split_lines(source: &str) -> Vec<Vec<u16>> {
     let text: Vec<u16> = source.encode_utf16().collect();
     let mut lines = vec![Vec::new()];
     let mut i = 0;

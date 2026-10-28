@@ -304,6 +304,7 @@ impl Runtime {
             return Err(StorageError::BadKind(kind.name().to_string()));
         }
         self.slots[slot] = program_text(&self.storage.read(kind, &name)?)?;
+        self.drop_prg_edit(slot);
         self.slot_names[slot] = name;
         self.slot_modified[slot] = false;
         Ok(())

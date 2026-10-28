@@ -214,6 +214,8 @@ impl Machine {
 
     /// Starts the program in a slot, as RUN does.
     pub fn run_slot(&mut self, slot: usize) {
+        // Running a program ends PRGEDIT's editing.
+        self.rt.prg_edit = None;
         self.vars.clear();
         self.rt.clear_vars();
         self.start(&self.rt.slots[slot].clone(), Some(slot));
@@ -226,6 +228,8 @@ impl Machine {
             return;
         };
         self.vars = vm.globals().collect();
+        self.running_slot = None;
+        self.rt.running_slot = None;
         self.rt.take_requests();
         self.rt.cancel_confirm();
         // UNVERIFIED: the wording of SmileBASIC 4's break message.
@@ -395,6 +399,7 @@ impl Machine {
         self.rt.cancel_input();
         self.rt.direct = slot.is_none();
         self.running_slot = slot;
+        self.rt.running_slot = slot;
         match sb_core::compile(source, &self.rt) {
             Ok(program) => {
                 let vm = Vm::with_globals(program, &self.vars);
@@ -423,6 +428,7 @@ impl Machine {
             self.report(&e);
         }
         self.running_slot = None;
+        self.rt.running_slot = None;
         let mut run = None;
         for request in self.rt.take_requests() {
             match request {
