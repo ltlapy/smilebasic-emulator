@@ -1,5 +1,5 @@
 //! The emulator's menu bar, drawn over the screen at display resolution.
-//! It stays hidden until the mouse reaches the top edge or F10 shows it,
+//! It stays hidden until the mouse reaches the top edge or F8 shows it,
 //! so it takes no keys away from programs.
 
 use sb_runtime::Framebuffer;
@@ -23,7 +23,7 @@ pub enum Action {
     OpenFolder,
     Quit,
     Stop,
-    /// Pause or resume the program, with the menu bar shown (F10).
+    /// Pause or resume the program, with the menu bar shown (F8).
     Pause,
     ToggleEditor,
     EditSlot(usize),
@@ -220,7 +220,7 @@ const MENUS: &[Menu] = &[
                     item("PRG5 (Ctrl+6)", Action::EditSlot(5)),
                 ]),
             },
-            item("Pause/Resume (F10)", Action::Pause),
+            item("Pause/Resume (F8)", Action::Pause),
         ],
     },
     Menu {
@@ -397,7 +397,7 @@ pub struct MenuBar {
     sub: Option<usize>,
     /// The bar stays shown, as over the editor, which leaves room for it.
     pub pinned: bool,
-    /// F10 shows the bar, and pauses a running program, until pressed
+    /// F8 shows the bar, and pauses a running program, until pressed
     /// again.
     pub shown: bool,
     /// A program is paused; the bar says so.
@@ -519,7 +519,7 @@ impl MenuBar {
             draw_text(fb, font, r.x + PAD, r.y + 4, menu.title, TEXT);
         }
         if self.paused {
-            let note = "Paused - F10 resumes";
+            let note = "Paused - F8 resumes";
             let x = fb.width().saturating_sub(text_width(note) + PAD);
             draw_text(fb, font, x, 4, note, TEXT);
         }
@@ -662,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn f10_shows_the_bar_and_pause_needs_a_program() {
+    fn f8_shows_the_bar_and_pause_needs_a_program() {
         let bar = MenuBar {
             shown: true,
             ..MenuBar::default()

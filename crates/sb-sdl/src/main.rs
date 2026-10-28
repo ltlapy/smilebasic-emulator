@@ -523,8 +523,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::Pause),
                     ..
                 } => machine.stop(),
+                // F8 leaves F9 to F11 for SmileBASIC 4's tools.
                 Event::KeyDown {
-                    keycode: Some(Keycode::F10),
+                    keycode: Some(Keycode::F8),
                     repeat: false,
                     ..
                 } => menu.shown = !menu.shown,
