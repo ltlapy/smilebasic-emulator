@@ -55,8 +55,10 @@ imported from your own copy:
   notice, rather than a dialog to close, unless file access is silent.
 - `SAVE` and `SAVEV "TXT:..."` write plain UTF-8 text, and `SAVEG` and
   `SAVEV "GRP:..."` write PNG images, so the files open on a computer.
-  `DAT` files keep SmileBASIC 4's layout. All of these are read back, as
-  are files from SmileBASIC 4.
+  `DAT` files hold SmileBASIC 4's array without its container. All of
+  these are read back, as are files from SmileBASIC 4. The project
+  manager's Export writes a project in SmileBASIC 4's own files, and
+  Import reads them back into the emulator's.
 - `METASAVE` keeps a project's title and description in `@META.TXT`
   and its icon in `@ICON.PNG`, in the project's folder. `METALOAD`
   reads SmileBASIC 4's own `META` file when those are missing.

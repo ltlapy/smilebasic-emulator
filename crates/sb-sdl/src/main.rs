@@ -21,7 +21,7 @@ use dialog::{Answer, Dialog};
 use keyhint::KeyHint;
 use menu::{Action, Click, MenuBar};
 use program_dialog::ProgramView;
-use projects::{Outcome, ProjectManager};
+use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
 use sb_runtime::editor::is_movement;
 use sb_runtime::font::Font;
@@ -166,6 +166,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let (chosen_font, font_choice) = std::sync::mpsc::channel::<PathBuf>();
     // ...as do the editor colors window's, with whether to save there.
     let (chosen_colors, colors_choice) = std::sync::mpsc::channel::<(PathBuf, bool)>();
+    // ...and the project manager's, for importing and exporting.
+    let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
     let mut canvas = window.into_canvas();
     // Vsync paces frames on a 60 Hz display; on faster ones, or without
     // vsync, the loop waits for the next frame's time itself.
@@ -348,6 +350,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         manager = None;
                     }
                     Outcome::OpenFolder => open_folder(&machine.rt.storage, &mut toasts),
+                    Outcome::ChooseFolder(transfer) => {
+                        let send = chosen_folder.clone();
+                        sdl3::dialog::show_open_folder_dialog(
+                            None::<&Path>,
+                            false,
+                            canvas.window(),
+                            Box::new(move |chosen, _| {
+                                if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
+                                    let _ = send.send((path, transfer.clone()));
+                                }
+                            }),
+                        );
+                    }
                 }
                 continue;
             }
@@ -591,6 +606,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         if let Ok(path) = font_choice.try_recv() {
             let path = path.to_string_lossy().into_owned();
             use_sound_font(&mut machine, Some(path), &mut toasts);
+        }
+        if let Ok((path, transfer)) = folder_choice.try_recv()
+            && let Some(open) = &mut manager
+        {
+            open.folder_chosen(transfer, path, &machine.rt.storage);
         }
         if let Ok((path, save)) = colors_choice.try_recv() {
             let palette = &mut machine.rt.settings.editor_colors;

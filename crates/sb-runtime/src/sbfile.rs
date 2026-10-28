@@ -79,8 +79,13 @@ pub struct Date {
 impl Date {
     /// The local time now, for files being written.
     pub fn now() -> Date {
+        Date::local(std::time::SystemTime::now())
+    }
+
+    /// `time` in local time, such as when a file was last changed.
+    pub fn local(time: std::time::SystemTime) -> Date {
         use chrono::{Datelike, Timelike};
-        let t = chrono::Local::now();
+        let t = chrono::DateTime::<chrono::Local>::from(time);
         Date {
             year: t.year() as u16,
             month: t.month() as u8,

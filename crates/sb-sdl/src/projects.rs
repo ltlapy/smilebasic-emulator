@@ -1,12 +1,14 @@
 //! The project manager: lists the projects and their files, and switches,
-//! creates, renames and deletes projects. Drawn over the screen like the
+//! creates, renames, deletes, imports and exports projects. Drawn over the screen like the
 //! menu bar, it takes all input while it is open.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::{project_label, switch_lines};
 use sb_runtime::font::Font;
 use sb_runtime::storage::{Storage, check_project_name, suggest_project_name};
+use sb_runtime::transfer;
 use sdl3::keyboard::Keycode;
+use std::path::{Path, PathBuf};
 
 use crate::dialog::{Answer, Dialog};
 use crate::ui::{
@@ -14,7 +16,7 @@ use crate::ui::{
     window,
 };
 
-const WIDTH: u32 = 1120;
+const WIDTH: u32 = 1200;
 const HEIGHT: u32 = 600;
 /// The width of the project list; the files take the rest.
 const LIST_WIDTH: u32 = 600;
@@ -29,15 +31,19 @@ enum Button {
     New,
     Rename,
     Delete,
+    Import,
+    Export,
     OpenFolder,
     Close,
 }
 
-const BUTTONS: [Button; 6] = [
+const BUTTONS: [Button; 8] = [
     Button::Switch,
     Button::New,
     Button::Rename,
     Button::Delete,
+    Button::Import,
+    Button::Export,
     Button::OpenFolder,
     Button::Close,
 ];
@@ -49,6 +55,8 @@ impl Button {
             Button::New => "New",
             Button::Rename => "Rename",
             Button::Delete => "Delete",
+            Button::Import => "Import",
+            Button::Export => "Export",
             Button::OpenFolder => "Open folder",
             Button::Close => "Close",
         }
@@ -64,6 +72,17 @@ pub enum Outcome {
     Switched(String),
     /// Open the folder that holds the projects.
     OpenFolder,
+    /// Ask for a folder, then call [`ProjectManager::folder_chosen`].
+    ChooseFolder(Transfer),
+}
+
+/// What a chosen folder is for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Transfer {
+    /// Export the named project into it, in SmileBASIC 4's files.
+    Export(String),
+    /// Import SmileBASIC 4's project in it as a new project.
+    Import,
 }
 
 enum Naming {
@@ -73,6 +92,10 @@ enum Naming {
     Rename {
         from: String,
         then_switch: bool,
+    },
+    /// A new project for the SmileBASIC 4 project in `from`.
+    Import {
+        from: PathBuf,
     },
 }
 
@@ -85,6 +108,8 @@ struct NameBox {
 enum Pending {
     Switch(String),
     Delete(String),
+    /// Export a project into a folder that already holds one.
+    Export(String, PathBuf),
 }
 
 enum Mode {
@@ -192,7 +217,9 @@ impl ProjectManager {
         match button {
             Button::Switch => name != self.current,
             Button::Rename | Button::Delete => !name.is_empty(),
-            Button::New | Button::OpenFolder | Button::Close => true,
+            Button::New | Button::Import | Button::Export | Button::OpenFolder | Button::Close => {
+                true
+            }
         }
     }
 
@@ -401,10 +428,50 @@ impl ProjectManager {
                 let dialog = Dialog::new("Delete project", lines, "Delete", self.size);
                 self.mode = Mode::Ask(dialog, Pending::Delete(name));
             }
+            Button::Import => return Outcome::ChooseFolder(Transfer::Import),
+            Button::Export => return Outcome::ChooseFolder(Transfer::Export(name)),
             Button::OpenFolder => return Outcome::OpenFolder,
             Button::Close => return Outcome::Close,
         }
         Outcome::Stay
+    }
+
+    /// Goes on with `transfer` once the frontend's folder dialog has
+    /// given `folder`.
+    pub fn folder_chosen(&mut self, transfer: Transfer, folder: PathBuf, storage: &Storage) {
+        if !matches!(self.mode, Mode::Browse) {
+            return;
+        }
+        match transfer {
+            Transfer::Import => {
+                let text = transfer::import_name(&folder);
+                let naming = Naming::Import { from: folder };
+                self.ask_name(naming, text, None);
+            }
+            Transfer::Export(name) => {
+                let target = transfer::export_target(&name, &folder);
+                let used = std::fs::read_dir(&target).is_ok_and(|mut d| d.next().is_some());
+                if !used {
+                    return self.export(&name, &folder, storage);
+                }
+                let shown = target.file_name().unwrap_or_default().to_string_lossy();
+                let lines = vec![
+                    format!("The folder {shown} is already there."),
+                    String::new(),
+                    "Its files of the same names will be replaced.".to_string(),
+                ];
+                let dialog = Dialog::new("Export project", lines, "Replace", self.size);
+                self.mode = Mode::Ask(dialog, Pending::Export(name, folder));
+            }
+        }
+    }
+
+    fn export(&mut self, name: &str, folder: &Path, storage: &Storage) {
+        let label = project_label(name);
+        self.status = Some(match transfer::export_project(storage, name, folder) {
+            Ok(summary) => (summary.line(&format!("Exported {label}")), false),
+            Err(e) => (format!("Could not export {label}: {e}"), true),
+        });
     }
 
     fn ask_name(&mut self, naming: Naming, text: String, message: Option<String>) {
@@ -460,6 +527,7 @@ impl ProjectManager {
         }
         match pending {
             Pending::Switch(name) => return self.switch(name, storage, unsaved, true),
+            Pending::Export(name, folder) => self.export(&name, &folder, storage),
             Pending::Delete(name) => {
                 let was_current = name == self.current;
                 self.status = Some(match storage.delete_project(&name) {
@@ -481,7 +549,7 @@ impl ProjectManager {
             unreachable!("only the name box submits")
         };
         let done = match &name.naming {
-            Naming::New => storage.create_project(&name.text),
+            Naming::New | Naming::Import { .. } => storage.create_project(&name.text),
             Naming::Rename { from, .. } => storage.rename_project(from, &name.text),
         };
         let new = match done {
@@ -497,6 +565,13 @@ impl ProjectManager {
         self.refresh(storage, Some(&new));
         match name.naming {
             Naming::New => self.status = Some((format!("Created project {new}."), false)),
+            Naming::Import { from } => {
+                self.status = Some(match transfer::import_project(storage, &from, &new) {
+                    Ok(summary) => (summary.line(&format!("Imported {new}")), false),
+                    Err(e) => (format!("Could not import into {new}: {e}"), true),
+                });
+                self.refresh(storage, Some(&new));
+            }
             Naming::Rename {
                 then_switch: true, ..
             } => return self.switch(new, storage, unsaved, false),
@@ -603,6 +678,10 @@ impl ProjectManager {
         let title = match &name.naming {
             Naming::New => "New project".to_string(),
             Naming::Rename { from, .. } => format!("Rename project {from}"),
+            Naming::Import { from } => {
+                let folder = from.file_name().unwrap_or_default().to_string_lossy();
+                format!("Import project {folder}")
+            }
         };
         window(fb, font, f, &fit(&title, f.w - 4 * PAD));
         let x = f.x + 2 * PAD;
@@ -768,6 +847,52 @@ mod tests {
         m.key(Keycode::Return, &mut s, &[]);
         assert_eq!(s.project(), "");
         assert_eq!(m.current, "");
+    }
+
+    #[test]
+    fn export_and_import() {
+        let tmp = TempDir::new("transfer");
+        let mut s = Storage::new(tmp.0.join("projects"));
+        s.create_project("GAME").unwrap();
+        s.set_project("GAME").unwrap();
+        s.write(
+            sb_runtime::storage::FileKind::Txt,
+            "MAIN.PRG",
+            b"?1\n",
+            None,
+        )
+        .unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let out = tmp.0.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let Outcome::ChooseFolder(export) = m.press(Button::Export, &mut s, &[]) else {
+            panic!("asks for a folder")
+        };
+        assert_eq!(export, Transfer::Export("GAME".to_string()));
+        m.folder_chosen(export.clone(), out.clone(), &s);
+        assert!(out.join("GAME/TMAIN.PRG").is_file());
+        assert!(matches!(m.mode, Mode::Browse));
+
+        // A second export asks before replacing.
+        m.folder_chosen(export, out.clone(), &s);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Export(..))));
+        m.key(Keycode::Escape, &mut s, &[]);
+
+        assert_eq!(
+            m.press(Button::Import, &mut s, &[]),
+            Outcome::ChooseFolder(Transfer::Import)
+        );
+        m.folder_chosen(Transfer::Import, out.join("GAME"), &s);
+        let Mode::Name(name) = &m.mode else {
+            panic!("asks for a name")
+        };
+        assert_eq!(name.text, "GAME");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Name(_)), "GAME is taken");
+        m.text("2");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert_eq!(m.selected_name(), "GAME2");
+        assert_eq!(m.files, ["TXT:MAIN.PRG"]);
     }
 
     #[test]

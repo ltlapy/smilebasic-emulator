@@ -13,7 +13,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, ArrayData, Value, new_str};
 
-use crate::confirm::FileAction;
+use crate::confirm::{FileAction, project_label};
 use crate::image::{self, Image};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
 use crate::sbfile;
@@ -31,7 +31,7 @@ const DESCRIPTION_CHARS: usize = 240;
 const META_TEXT: &str = "@META.TXT";
 const META_ICON: &str = "@ICON.PNG";
 /// SmileBASIC 4's own metadata file, read when the emulator's are missing.
-const SB4_META: &str = "META";
+pub const SB4_META: &str = "META";
 
 /// Somewhere to keep the text that CLIPBOARD sets and gets: the
 /// computer's clipboard in the frontend.
@@ -94,8 +94,7 @@ impl Runtime {
     }
 
     /// The metadata being edited. Switching projects starts it afresh,
-    /// titled with the project's name (checked on hardware: the
-    /// workspace's is "[WORKSPACE]").
+    /// titled with the project's name.
     fn meta(&mut self) -> &mut Meta {
         if self.meta.project != self.storage.project() {
             self.meta = self.blank_meta();
@@ -104,11 +103,7 @@ impl Runtime {
     }
 
     fn blank_meta(&self) -> Meta {
-        Meta {
-            project: self.storage.project().to_string(),
-            title: self.project_label().encode_utf16().collect(),
-            ..Meta::default()
-        }
+        project_meta(self.storage.project(), |_| None)
     }
 
     fn status(&self) -> i32 {
@@ -255,51 +250,75 @@ impl Runtime {
         }
     }
 
-    /// The project's metadata, or empty metadata where its files are
-    /// missing or unreadable.
-    /// The project's metadata: the emulator's own files, or else
-    /// SmileBASIC 4's META file, or else empty metadata titled with the
-    /// project's name.
+    /// The project's metadata, read again from its files.
     fn read_meta(&self) -> Meta {
-        let mut meta = self.blank_meta();
-        let sb4 = (self.storage.read_project_file(SB4_META).ok())
-            .and_then(|bytes| sbfile::parse(&bytes).ok())
-            .and_then(|file| sbfile::parse_meta(&file.body).ok());
-        if let Some(sb4) = sb4 {
-            meta.title = sb4.title;
-            meta.description = sb4.description;
-            meta.icon = sb4.icon.into_iter().map(|p| p as i32).collect();
-        }
-        if let Ok(bytes) = self.storage.read_project_file(META_TEXT) {
-            let text = String::from_utf8_lossy(&bytes);
-            let (title, description) = text.split_once('\n').unwrap_or((&text, ""));
-            meta.title = title.encode_utf16().take(TITLE_CHARS).collect();
-            meta.description = description.encode_utf16().take(DESCRIPTION_CHARS).collect();
-        }
-        if let Ok(bytes) = self.storage.read_project_file(META_ICON)
-            && let Ok(icon) = image::decode(&bytes)
-            && icon.pixels.len() == ICON_SIZE * ICON_SIZE
-        {
-            meta.icon = icon.pixels.into_iter().map(|p| p as i32).collect();
-        }
-        meta
+        let storage = &self.storage;
+        project_meta(storage.project(), |name| {
+            storage.read_project_file(name).ok()
+        })
     }
 
     fn write_meta(&mut self) -> storage::Result<()> {
         self.meta();
-        let mut text = String::from_utf16_lossy(&self.meta.title);
-        text.push('\n');
-        text.push_str(&String::from_utf16_lossy(&self.meta.description));
-        self.storage
-            .write_project_file(META_TEXT, text.as_bytes())?;
-        let icon = Image {
-            width: ICON_SIZE,
-            height: ICON_SIZE,
-            pixels: self.meta.icon.iter().map(|&p| p as u32).collect(),
-        };
-        self.storage
-            .write_project_file(META_ICON, &image::encode_png(&icon))
+        for (name, bytes) in meta_files(&self.meta) {
+            self.storage.write_project_file(name, &bytes)?;
+        }
+        Ok(())
     }
+}
+
+/// A project's metadata from its files, which `read` gives by name: the
+/// emulator's own, or else SmileBASIC 4's META file, or else empty
+/// metadata titled with the project's name (checked on hardware: the
+/// workspace's is "[WORKSPACE]").
+pub fn project_meta(project: &str, read: impl Fn(&str) -> Option<Vec<u8>>) -> Meta {
+    let mut meta = Meta {
+        project: project.to_string(),
+        title: project_label(project).encode_utf16().collect(),
+        ..Meta::default()
+    };
+    let sb4 = read(SB4_META)
+        .and_then(|bytes| sbfile::parse(&bytes).ok())
+        .and_then(|file| sbfile::parse_meta(&file.body).ok());
+    if let Some(sb4) = sb4 {
+        meta.title = sb4.title;
+        meta.description = sb4.description;
+        meta.icon = sb4.icon.into_iter().map(|p| p as i32).collect();
+    }
+    if let Some(bytes) = read(META_TEXT) {
+        let text = String::from_utf8_lossy(&bytes);
+        let (title, description) = text.split_once('\n').unwrap_or((&text, ""));
+        meta.title = title.encode_utf16().take(TITLE_CHARS).collect();
+        meta.description = description.encode_utf16().take(DESCRIPTION_CHARS).collect();
+    }
+    if let Some(bytes) = read(META_ICON)
+        && let Ok(icon) = image::decode(&bytes)
+        && icon.pixels.len() == ICON_SIZE * ICON_SIZE
+    {
+        meta.icon = icon.pixels.into_iter().map(|p| p as i32).collect();
+    }
+    meta
+}
+
+/// Whether `name` is one of the files that hold a project's metadata.
+pub fn is_meta_file(name: &str) -> bool {
+    matches!(name, META_TEXT | META_ICON | SB4_META)
+}
+
+/// The emulator's files for `meta`, by name.
+pub fn meta_files(meta: &Meta) -> [(&'static str, Vec<u8>); 2] {
+    let mut text = String::from_utf16_lossy(&meta.title);
+    text.push('\n');
+    text.push_str(&String::from_utf16_lossy(&meta.description));
+    let icon = Image {
+        width: ICON_SIZE,
+        height: ICON_SIZE,
+        pixels: meta.icon.iter().map(|&p| p as u32).collect(),
+    };
+    [
+        (META_TEXT, text.into_bytes()),
+        (META_ICON, image::encode_png(&icon)),
+    ]
 }
 
 /// A title or description, cut to `max` characters.

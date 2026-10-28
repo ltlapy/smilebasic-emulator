@@ -59,7 +59,8 @@ smilebasic PROGRAM   # load PROGRAM into PRG0 and run it
 
 Projects are folders in `projects/` in the data directory, `@WORKSPACE`
 included. Programs are saved as plain UTF-8 text, with full-width letters and
-digits turned into ASCII.
+digits turned into ASCII. The project manager imports and exports projects in
+SmileBASIC 4's own files.
 
 ### Shortcuts
 | Key | Action |

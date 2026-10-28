@@ -45,7 +45,8 @@ impl FileKind {
         }
     }
 
-    fn prefix(self) -> char {
+    /// The letter that starts the names of this type's files.
+    pub fn prefix(self) -> char {
         match self {
             FileKind::Txt => 'T',
             FileKind::Dat => 'B',
@@ -53,6 +54,10 @@ impl FileKind {
             // UNVERIFIED: SmileBASIC 4's prefix for JPG files.
             FileKind::Jpg => 'J',
         }
+    }
+
+    pub fn from_prefix(prefix: char) -> Option<FileKind> {
+        KINDS.into_iter().find(|k| k.prefix() == prefix)
     }
 
     fn from_name(name: &str) -> Option<FileKind> {
@@ -272,6 +277,11 @@ impl Storage {
         Ok(())
     }
 
+    /// The folder of a project (checked, or `""`), which may not exist yet.
+    pub fn project_dir(&self, project: &str) -> Result<PathBuf> {
+        self.dir(project)
+    }
+
     fn dir(&self, project: &str) -> Result<PathBuf> {
         let root = self.root.as_ref().ok_or(StorageError::Unavailable)?;
         Ok(root.join(if project.is_empty() {
@@ -374,7 +384,7 @@ impl Storage {
             };
             let mut chars = file_name.chars();
             let Some(prefix) = chars.next() else { continue };
-            let Some(k) = KINDS.into_iter().find(|k| k.prefix() == prefix) else {
+            let Some(k) = FileKind::from_prefix(prefix) else {
                 continue;
             };
             if kind.is_none_or(|want| want == k) {

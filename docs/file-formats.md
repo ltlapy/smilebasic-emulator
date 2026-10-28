@@ -112,3 +112,18 @@ For files that can be opened on a computer, the emulator saves:
   description) and `@ICON.PNG`.
 
 It reads both these and SmileBASIC 4's files.
+
+## Exporting and importing
+
+The project manager's Export writes a project into a folder named after
+it (`###` for the workspace), as SmileBASIC 4.4.9 writes each type, with
+the files' own dates. Text files all go as programs: SAVEV's compressed
+form is not used, since the emulator cannot tell the two apart. Files
+already in SmileBASIC 4's container are copied as they are. `META` is
+made from the project's metadata, or from its name if it has none, with
+a blank icon.
+
+Import does the reverse into a new project: programs and text become
+plain UTF-8, GRP files PNG, JPG files plain JPEG, DAT files the bare
+array, and `META` becomes `@META.TXT` and `@ICON.PNG`. Files that are
+not in a container are copied as they are.
