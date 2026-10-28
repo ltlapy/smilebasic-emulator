@@ -17,7 +17,7 @@ pub enum Exec {
     /// Waiting for the user, such as a confirmation: ask again on the
     /// next frame.
     Wait,
-    /// The file was not loaded; EXEC does nothing.
+    /// Loading was cancelled; EXEC does nothing.
     Skip,
 }
 
@@ -55,12 +55,6 @@ pub trait Host {
     /// `slot`, and gives the slot's source to run there.
     fn exec_source(&mut self, _file: Option<&[u16]>, _slot: i32) -> Result<Exec> {
         Err(ErrorKind::IllegalFunctionCall.into())
-    }
-
-    /// Program slots loaded anew since the last call, whose programs
-    /// (if EXEC ran them) the VM forgets.
-    fn take_reloaded(&mut self) -> Vec<usize> {
-        Vec::new()
     }
 
     /// The VM went on in program slot `slot`, which runs `program`.

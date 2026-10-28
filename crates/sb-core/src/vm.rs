@@ -750,9 +750,10 @@ impl Vm {
             }
             Op::CallCommon { name, argc, want } => {
                 let name = String::from_utf16_lossy(&program.strings[*name as usize]);
+                // Checked on hardware: a name found nowhere is a Syntax error.
                 let (slot, def) = self
                     .find_common(&name)
-                    .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedFunction, name))?;
+                    .ok_or_else(|| Error::with_detail(ErrorKind::SyntaxError, name))?;
                 let args = self.pop_n((*argc).into());
                 self.call_in(slot, def, args, *want, host)?;
                 return Ok(None);
@@ -1040,11 +1041,6 @@ impl Vm {
         let results = host.call(id, args, want);
         if let Some(pos) = host.data_pos() {
             self.data_pos = pos;
-        }
-        for slot in host.take_reloaded() {
-            if let Some(unit) = self.units.get_mut(slot) {
-                *unit = None;
-            }
         }
         let results = results?;
         if host.retry() {

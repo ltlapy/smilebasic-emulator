@@ -100,27 +100,26 @@ impl From<io::Error> for StorageError {
 pub type Result<T> = std::result::Result<T, StorageError>;
 
 /// Checks a file name and returns it in upper case: up to 32 letters,
-/// digits, `_`, `-` and `.`, not starting with `.`.
+/// digits, `_`, `-` and `.`, not starting with `.`. It may start with `@`,
+/// as the backups' names do (`@BACKUP.PRG`); programs can read and save
+/// such names (checked on hardware).
 fn check_name(name: &str) -> Result<String> {
+    if let Some(rest) = name.strip_prefix('@') {
+        return check_plain_name(rest)
+            .ok()
+            .filter(|_| name.len() <= MAX_NAME)
+            .map(|n| format!("@{n}"))
+            .ok_or_else(|| StorageError::BadName(name.to_string()));
+    }
+    check_plain_name(name)
+}
+
+fn check_plain_name(name: &str) -> Result<String> {
     let ok = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
     if name.is_empty() || name.len() > MAX_NAME || name.starts_with('.') || !name.chars().all(ok) {
         return Err(StorageError::BadName(name.to_string()));
     }
     Ok(name.to_ascii_uppercase())
-}
-
-/// A file name as reading takes it: also the backups' names, which start
-/// with `@` (`@BACKUP.PRG`).
-// UNVERIFIED: that SmileBASIC 4 reads `@` names, and only for reading.
-fn check_read_name(name: &str) -> Result<String> {
-    match name.strip_prefix('@') {
-        Some(rest) => check_name(rest)
-            .ok()
-            .filter(|_| name.len() <= MAX_NAME)
-            .map(|n| format!("@{n}"))
-            .ok_or_else(|| StorageError::BadName(name.to_string())),
-        None => check_name(name),
-    }
 }
 
 /// A file named for reading: `[TYPE:][PROJECT/]NAME`, where an empty
@@ -160,7 +159,7 @@ pub fn parse_read_name(spec: &str, default: FileKind) -> Result<FileRef> {
     Ok(FileRef {
         kind,
         project,
-        name: check_read_name(name)?,
+        name: check_name(name)?,
     })
 }
 
@@ -170,7 +169,8 @@ pub fn parse_read_name(spec: &str, default: FileKind) -> Result<FileRef> {
 /// 32 characters.
 pub fn check_project_name(name: &str) -> Result<String> {
     let rest = name.strip_prefix('#').unwrap_or(name);
-    check_name(rest)
+    // `@` stays out of project names, so `@WORKSPACE` never clashes.
+    check_plain_name(rest)
         .ok()
         .filter(|_| name.len() <= MAX_NAME)
         .ok_or(())
@@ -557,7 +557,8 @@ mod tests {
         assert!(parse_read_name("A/B/C", FileKind::Txt).is_err());
         assert!(parse_read_name("@", FileKind::Txt).is_err());
         assert!(parse_read_name("A@", FileKind::Txt).is_err());
-        assert!(parse_file_name("@BACKUP.PRG", FileKind::Txt).is_err());
+        assert!(parse_file_name("@X", FileKind::Txt).is_ok());
+        assert!(check_project_name("@WORKSPACE").is_err());
         assert_eq!(parse_listing("").unwrap(), (None, None));
         assert_eq!(parse_listing("TXT:").unwrap(), (Some(FileKind::Txt), None));
         assert_eq!(

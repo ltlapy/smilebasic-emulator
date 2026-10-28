@@ -56,6 +56,23 @@ follows all of it. Items still waiting for a check are marked
 - `FILES` prints a long list a screen at a time, waiting for any key
   before the next, in direct mode and in programs alike.
 
+## Program slots and files
+
+- A call to a name defined nowhere compiles, and is a `Syntax error`
+  only when it is reached: the name may be a `COMMON DEF` of a slot that
+  `EXEC` runs later.
+- `EXEC` of a file that is not there shows a dialog (File not found) and
+  then stops with `Load failed`. In direct mode, `EXEC` is
+  `Can't use from direct mode`, shown without a line.
+- Against the manual: a program can `LOAD` over its own slot, and goes
+  on; and loading over a slot that `EXEC` ran keeps that slot's
+  `COMMON DEF`s callable.
+- File names may start with `@`, as the backups' do: `LOADV
+  "DAT:@BACKUP.DAT"` reads one, and `SAVE "@X"` saves (after the usual
+  question).
+- A program may name its own project in a file name
+  (`LOAD "GAME/SUB",1` in `GAME`).
+
 ## Order of evaluation
 
 SmileBASIC 4 works things out right to left, which shows when the parts

@@ -117,14 +117,6 @@ impl Runtime {
             (Command::Load, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
-                // UNVERIFIED: the error; the manual says only that the
-                // running slot cannot LOAD into itself.
-                if self.running_slot == Some(slot) {
-                    return Err(Error::with_detail(
-                        ErrorKind::CantEditRunningProgram,
-                        format!("slot {slot}"),
-                    ));
-                }
                 self.load_asking("LOAD", &spec, slot);
                 Ok(vec![])
             }
@@ -301,14 +293,18 @@ impl Runtime {
 
     /// A file named for reading. Programs read other projects' files only
     /// with EXEC (`any_project`), as the manual says; direct mode reads
-    /// them all.
+    /// them all. Naming the current project is always allowed (checked
+    /// on hardware).
     pub(crate) fn read_name(
         &self,
         spec: &str,
         default: FileKind,
         any_project: bool,
     ) -> storage::Result<FileRef> {
-        let file = parse_read_name(spec, default)?;
+        let mut file = parse_read_name(spec, default)?;
+        if file.project.as_deref() == Some(self.storage.project()) {
+            file.project = None;
+        }
         if file.project.is_some() && !(any_project || self.direct) {
             return Err(StorageError::BadName(spec.to_string()));
         }
@@ -400,14 +396,14 @@ impl Runtime {
         self.load_ref(&file, slot)
     }
 
-    /// Loading a program frees what the slot's old one defined, if EXEC
-    /// ran it (the manual says so).
+    /// Loading over a slot that EXEC ran keeps what its program defined
+    /// until the next EXEC, and a program can LOAD over itself and goes
+    /// on, although the manual says otherwise (checked on hardware).
     fn load_ref(&mut self, file: &FileRef, slot: usize) -> storage::Result<()> {
         self.slots[slot] = program_text(&self.storage.read_ref(file)?)?;
         self.drop_prg_edit(slot);
         self.slot_names[slot] = file.name.clone();
         self.slot_modified[slot] = false;
-        self.reloaded.push(slot);
         Ok(())
     }
 

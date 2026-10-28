@@ -195,10 +195,16 @@ fn failures_set_result_and_explain() {
     m.set_slot(0, "LOAD \"NOPE\",1".to_string());
     enter(&mut m, "run");
     assert_eq!(m.rt.take_notices(), ["LOAD failed: TXT:NOPE not found"]);
-    // A program cannot LOAD over itself.
-    m.set_slot(0, "LOAD \"NOPE\"".to_string());
+    // A program can LOAD over itself, and goes on (checked on hardware).
+    (m.rt.storage)
+        .write(sb_runtime::storage::FileKind::Txt, "X", b"?2", None)
+        .unwrap();
+    m.set_slot(0, "LOAD \"X\":?1".to_string());
     enter(&mut m, "run");
-    assert!(tail(&m, 2)[0].starts_with("Can't edit running program in 0:1"));
+    assert_eq!(
+        (tail(&m, 2), m.slot(0)),
+        (vec!["1".to_string(), "OK".to_string()], "?2")
+    );
 }
 
 #[test]
@@ -583,11 +589,18 @@ fn other_projects_and_backups() {
     enter(&mut m, "run");
     assert_eq!(tail(&m, 3), ["0", "SUB", "OK"]);
 
-    // Backups load and can be deleted, but no file is saved as one.
+    // ...or name the current project (checked on hardware).
+    enter(&mut m, "project \"game\"");
+    m.set_slot(0, "LOAD \"GAME/SUB\",1:?RESULT()".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    enter(&mut m, "project \"\"");
+
+    // Names may start with @, as the backups' do (checked on hardware).
     enter(&mut m, "save \"w\",3:load \"@backup.prg\",4:?result()");
     assert_eq!((m.slot(4), tail(&m, 2)[0].as_str()), ("?\"W\"", "1"));
     enter(&mut m, "save \"@x\",3:?result()");
-    assert_eq!(tail(&m, 3)[1], "0");
+    assert_eq!(tail(&m, 2)[0], "1");
     enter(
         &mut m,
         "delete \"@backup.prg\":?result();chkfile(\"@backup.prg\")",
@@ -595,8 +608,9 @@ fn other_projects_and_backups() {
     assert_eq!(tail(&m, 2)[0], "10");
 }
 
+/// Checked on hardware, although the manual says that loading frees them.
 #[test]
-fn loading_a_slot_forgets_its_program() {
+fn loading_a_slot_keeps_its_definitions() {
     use sb_runtime::storage::FileKind;
     let dir = TempDir::new("reload");
     let mut m = machine(&dir);
@@ -606,7 +620,5 @@ fn loading_a_slot_forgets_its_program() {
     m.set_slot(1, "END\nCOMMON DEF F()\nRETURN 7\nEND".to_string());
     m.set_slot(0, "EXEC 1:?F()\nLOAD \"OTHER\",1:?F()".to_string());
     enter(&mut m, "run");
-    let r = tail(&m, 3);
-    assert_eq!(r[0], "7");
-    assert!(r[1].starts_with("Undefined function in 0:2"), "{r:?}");
+    assert_eq!(tail(&m, 3), ["7", "7", "OK"]);
 }

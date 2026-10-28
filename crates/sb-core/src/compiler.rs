@@ -1208,10 +1208,10 @@ impl Compiler<'_> {
     }
 
     /// A call to a name defined nowhere in this program: a COMMON DEF of
-    /// another slot, found when it runs (it may be EXEC'd only then).
-    /// A builtin used in its other form is still an illegal call.
-    // UNVERIFIED: that SmileBASIC 4, too, reports an undefined name only
-    // when the call is reached.
+    /// another slot, found when it runs (it may be EXEC'd only then). A
+    /// name found nowhere is a Syntax error only when the call is reached
+    /// (checked on hardware). A builtin used in its other form is still
+    /// an illegal call.
     fn call_common(&mut self, name: &str, argc: u8, want: Want) -> Result<()> {
         let err = self.unknown_call(name);
         if err.kind != ErrorKind::UndefinedFunction {

@@ -35,6 +35,11 @@ pub enum ErrorKind {
     CantEditRunningProgram,
     /// PRGGET$ and the other PRG commands before PRGEDIT.
     UsePrgedit,
+    /// EXEC of a file that cannot be loaded.
+    LoadFailed,
+    /// A command for programs only, such as EXEC, in direct mode. SmileBASIC
+    /// 4 shows it without a place.
+    CantUseFromDirectMode,
 }
 
 impl ErrorKind {
@@ -68,6 +73,8 @@ impl ErrorKind {
             ErrorKind::IllegalFileFormat => "Illegal file format",
             ErrorKind::CantEditRunningProgram => "Can't edit running program",
             ErrorKind::UsePrgedit => "Use PRGEDIT before any PRG function",
+            ErrorKind::LoadFailed => "Load failed",
+            ErrorKind::CantUseFromDirectMode => "Can't use from direct mode",
         }
     }
 }
@@ -137,11 +144,14 @@ impl From<ErrorKind> for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} in ", self.kind.message())?;
-        if let Some(slot) = self.slot {
-            write!(f, "{slot}:")?;
+        write!(f, "{}", self.kind.message())?;
+        if self.kind != ErrorKind::CantUseFromDirectMode {
+            write!(f, " in ")?;
+            if let Some(slot) = self.slot {
+                write!(f, "{slot}:")?;
+            }
+            write!(f, "{}", self.line)?;
         }
-        write!(f, "{}", self.line)?;
         if let Some(detail) = &self.detail {
             write!(f, " ({detail})")?;
         }

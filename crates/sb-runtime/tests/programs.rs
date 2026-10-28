@@ -255,15 +255,17 @@ fn exec_runs_other_slots() {
     assert_eq!(tail(&m, 8), shown, "slot 1 has its own X");
 
     // Only COMMON DEFs are found by name, and only once their slot ran.
+    // A name found nowhere is a Syntax error when reached (checked on
+    // hardware).
     run(&mut m, &["?1:HIDDEN"]);
-    assert!(tail(&m, 2)[0].starts_with("Undefined function in 0:1"));
+    assert_eq!(tail(&m, 3)[..2], ["1", "Syntax error in 0:1 (HIDDEN)"]);
     run(&mut m, &["?ADD(1,2)"]);
-    assert!(tail(&m, 2)[0].starts_with("Undefined function in 0:1"));
+    assert!(tail(&m, 2)[0].starts_with("Syntax error in 0:1"));
     // The running slot cannot be EXEC'd, nor EXEC used in direct mode.
     run(&mut m, &["EXEC 0"]);
     assert!(tail(&m, 2)[0].starts_with("Illegal function call in 0:1"));
     enter(&mut m, "exec 1");
-    assert!(tail(&m, 2)[0].starts_with("Syntax error"));
+    assert_eq!(tail(&m, 2), ["Can't use from direct mode", "OK"]);
 
     // An error in slot 1 names it, and F4 goes there.
     m.set_slot(2, "?\"S2\"\nZ=0:?1/Z".to_string());
@@ -290,12 +292,14 @@ fn exec_loads_files() {
         &mut m,
         &[
             "X=1:EXEC \"SUB\",3:?\"BACK\";RESULT()",
-            "EXEC \"NONE\",3:?\"STILL\";RESULT()",
             "EXEC \"NEXT\"",
             "?\"NOT HERE\"",
         ],
     );
-    assert_eq!(tail(&m, 5), ["SUB", "BACK1", "STILL0", "NEXT0", "OK"]);
+    assert_eq!(tail(&m, 4), ["SUB", "BACK1", "NEXT0", "OK"]);
     assert_eq!(m.slot(0), "?\"NEXT\";X");
+    // A file that cannot be loaded is an error (checked on hardware).
+    run(&mut m, &["EXEC \"NONE\",3:?\"NOT HERE\""]);
+    assert_eq!(tail(&m, 2), ["Load failed in 0:1", "OK"]);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -316,7 +316,9 @@ fn vsync_yields() {
 
 #[test]
 fn compile_errors() {
-    assert_eq!(error("?1\nFOO 1").0, ErrorKind::UndefinedFunction);
+    // An unknown name fails only when reached, as a Syntax error (checked
+    // on hardware), since another slot may define it.
+    assert_eq!(error("?1\nFOO 1").0, ErrorKind::SyntaxError);
     assert_eq!(error("?1\n?(").0, ErrorKind::SyntaxError);
     assert_eq!(error("LEN 1").0, ErrorKind::IllegalFunctionCall);
     assert_eq!(error("@A\n@A").0, ErrorKind::DuplicateLabel);
