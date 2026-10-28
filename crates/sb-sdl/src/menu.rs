@@ -1,6 +1,6 @@
 //! The emulator's menu bar, drawn over the screen at display resolution.
-//! It stays hidden until the mouse reaches the top edge, so it takes no
-//! keys away from programs.
+//! It stays hidden until the mouse reaches the top edge or F10 shows it,
+//! so it takes no keys away from programs.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
@@ -23,6 +23,8 @@ pub enum Action {
     OpenFolder,
     Quit,
     Stop,
+    /// Pause or resume the program, with the menu bar shown (F10).
+    Pause,
     ToggleEditor,
     EditSlot(usize),
     ToggleUpperCase,
@@ -92,6 +94,7 @@ impl Action {
             | Action::OpenFolder
             | Action::Quit
             | Action::Stop
+            | Action::Pause
             | Action::ToggleEditor
             | Action::EditColors
             | Action::EditSlot(_) => "   ",
@@ -151,6 +154,7 @@ impl Action {
             | Action::OpenFolder
             | Action::Quit
             | Action::Stop
+            | Action::Pause
             | Action::ToggleEditor
             | Action::EditSlot(_) => return,
         };
@@ -161,7 +165,7 @@ impl Action {
     /// cannot open during one.
     fn enabled(self, running: bool) -> bool {
         match self {
-            Action::Stop => running,
+            Action::Stop | Action::Pause => running,
             Action::ToggleEditor | Action::EditSlot(_) | Action::Projects => !running,
             _ => true,
         }
@@ -216,6 +220,7 @@ const MENUS: &[Menu] = &[
                     item("PRG5 (Ctrl+6)", Action::EditSlot(5)),
                 ]),
             },
+            item("Pause/Resume (F10)", Action::Pause),
         ],
     },
     Menu {
@@ -392,11 +397,17 @@ pub struct MenuBar {
     sub: Option<usize>,
     /// The bar stays shown, as over the editor, which leaves room for it.
     pub pinned: bool,
+    /// F10 shows the bar, and pauses a running program, until pressed
+    /// again.
+    pub shown: bool,
+    /// A program is paused; the bar says so.
+    pub paused: bool,
 }
 
 impl MenuBar {
     pub fn visible(&self) -> bool {
         self.pinned
+            || self.shown
             || self.open.is_some()
             || self
                 .mouse
@@ -506,6 +517,11 @@ impl MenuBar {
                 fill(fb, Rect { h: r.h - 2, ..r }, HIGHLIGHT);
             }
             draw_text(fb, font, r.x + PAD, r.y + 4, menu.title, TEXT);
+        }
+        if self.paused {
+            let note = "Paused - F10 resumes";
+            let x = fb.width().saturating_sub(text_width(note) + PAD);
+            draw_text(fb, font, x, 4, note, TEXT);
         }
         let Some(open) = self.open else { return };
         let items = MENUS[open].items;
@@ -646,7 +662,15 @@ mod tests {
     }
 
     #[test]
-    fn language_and_tab_width() {
+    fn f10_shows_the_bar_and_pause_needs_a_program() {
+        let bar = MenuBar {
+            shown: true,
+            ..MenuBar::default()
+        };
+        assert!(bar.visible());
+        assert!(!Action::Pause.enabled(false));
+        assert!(Action::Pause.enabled(true));
+
         let mut settings = Settings::default();
         Action::Language(Language::Japanese).toggle(&mut settings);
         Action::TabStep(8).toggle(&mut settings);

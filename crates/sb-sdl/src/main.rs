@@ -470,6 +470,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         open_folder(&machine.rt.storage, &mut toasts)
                     }
                     Click::Chosen(Action::Stop) => machine.stop(),
+                    Click::Chosen(Action::Pause) => menu.shown = !menu.shown,
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
                     Click::Chosen(Action::ChooseSoundFont) => {
@@ -522,6 +523,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::Pause),
                     ..
                 } => machine.stop(),
+                Event::KeyDown {
+                    keycode: Some(Keycode::F10),
+                    repeat: false,
+                    ..
+                } => menu.shown = !menu.shown,
+                // A paused program takes no keys.
+                Event::KeyDown { .. } | Event::TextInput { .. }
+                    if menu.shown && machine.is_running() => {}
                 Event::KeyDown {
                     keycode: Some(Keycode::C),
                     keymod,
@@ -618,7 +627,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
         let modal = dialog.is_some() || manager.is_some() || color_window.is_some();
-        machine.rt.input.live = if modal || machine.is_editing() {
+        let paused = menu.shown && machine.is_running();
+        menu.paused = paused;
+        machine.rt.input.live = if modal || paused || machine.is_editing() {
             State::default()
         } else {
             controls.state(
@@ -647,7 +658,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 load_colors(palette, &path)
             });
         }
-        machine.frame();
+        if !paused {
+            machine.frame();
+        }
         audio.play(&machine.rt.sound.take_samples());
         // The editor leaves its top row for the menu bar.
         menu.pinned = machine.is_editing();
