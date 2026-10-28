@@ -160,6 +160,23 @@ fn stop_breaks_out_of_a_loop() {
     assert_eq!(rows(&m).last().unwrap(), "OK");
 }
 
+#[test]
+fn sysreq_runs_prg0_and_stops() {
+    let mut m = machine();
+    m.set_slot(0, "?\"A\"\n@l:goto @l".to_string());
+    enter(&mut m, "list");
+    assert!(m.is_editing());
+    m.sysreq();
+    assert!(!m.is_editing());
+    m.frame();
+    m.frame();
+    assert!(m.is_running());
+    m.sysreq();
+    assert!(!m.is_running());
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 3..], ["A", "Break in 0:2", "OK"]);
+}
+
 /// Presses keys, one frame each.
 fn press(m: &mut Machine, codes: &[u16]) {
     for &code in codes {

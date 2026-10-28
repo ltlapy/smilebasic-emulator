@@ -523,6 +523,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::Pause),
                     ..
                 } => machine.stop(),
+                // SmileBASIC 4's F5 is the + button.
+                Event::KeyDown {
+                    keycode: Some(Keycode::F5),
+                    keymod,
+                    repeat: false,
+                    ..
+                } if !ctrl(keymod) => machine.sysreq(),
                 // F8 leaves F9 to F11 for SmileBASIC 4's tools.
                 Event::KeyDown {
                     keycode: Some(Keycode::F8),

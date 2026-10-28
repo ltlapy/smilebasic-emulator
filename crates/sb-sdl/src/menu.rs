@@ -207,7 +207,7 @@ const MENUS: &[Menu] = &[
     Menu {
         title: "Program",
         items: &[
-            item("Stop (Pause/Break)", Action::Stop),
+            item("Stop (F5, Pause/Break)", Action::Stop),
             item("Editor/Direct (F4)", Action::ToggleEditor),
             Item {
                 label: "Edit slot",
