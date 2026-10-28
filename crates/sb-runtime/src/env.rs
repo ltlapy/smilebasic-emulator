@@ -16,6 +16,7 @@ use sb_core::value::{Array, ArrayData, Value, new_str};
 use crate::confirm::FileAction;
 use crate::image::{self, Image};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::sbfile;
 use crate::storage;
 
 /// Direct-mode lines that ENVINPUT$ can read back.
@@ -27,10 +28,10 @@ const DESCRIPTION_CHARS: usize = 240;
 /// The metadata's files in the project folder: the title on the first
 /// line and the description after it, and the icon as a PNG. Their names
 /// start with `@`, so they never clash with SmileBASIC's typed files.
-// SmileBASIC 4 keeps metadata in a file named META, in a layout that is
-// not known; the emulator does not read or write that one.
 const META_TEXT: &str = "@META.TXT";
 const META_ICON: &str = "@ICON.PNG";
+/// SmileBASIC 4's own metadata file, read when the emulator's are missing.
+const SB4_META: &str = "META";
 
 /// Somewhere to keep the text that CLIPBOARD sets and gets: the
 /// computer's clipboard in the frontend.
@@ -256,8 +257,19 @@ impl Runtime {
 
     /// The project's metadata, or empty metadata where its files are
     /// missing or unreadable.
+    /// The project's metadata: the emulator's own files, or else
+    /// SmileBASIC 4's META file, or else empty metadata titled with the
+    /// project's name.
     fn read_meta(&self) -> Meta {
         let mut meta = self.blank_meta();
+        let sb4 = (self.storage.read_project_file(SB4_META).ok())
+            .and_then(|bytes| sbfile::parse(&bytes).ok())
+            .and_then(|file| sbfile::parse_meta(&file.body).ok());
+        if let Some(sb4) = sb4 {
+            meta.title = sb4.title;
+            meta.description = sb4.description;
+            meta.icon = sb4.icon.into_iter().map(|p| p as i32).collect();
+        }
         if let Ok(bytes) = self.storage.read_project_file(META_TEXT) {
             let text = String::from_utf8_lossy(&bytes);
             let (title, description) = text.split_once('\n').unwrap_or((&text, ""));

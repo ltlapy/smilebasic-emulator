@@ -371,6 +371,70 @@ pub fn data_body(data: &Data) -> Vec<u8> {
     b
 }
 
+/// A project's title, description and icon, as a META file keeps them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectMeta {
+    pub title: Vec<u16>,
+    pub description: Vec<u16>,
+    /// 40x40 pixels, row by row.
+    pub icon: Vec<u32>,
+}
+
+const META_MAGIC: &[u8; 8] = b"PCPM0005";
+const META_BODY: usize = 0x2B20;
+const META_TITLE: usize = 0x08;
+const META_DESCRIPTION: usize = 0x38;
+const META_ICON: usize = 0x1218;
+pub const ICON_SIDE: usize = 40;
+
+/// Text from UTF-16 that ends at its first zero or at `end`.
+fn utf16_field(body: &[u8], from: usize, end: usize) -> Vec<u16> {
+    body[from..end]
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .take_while(|&c| c != 0)
+        .collect()
+}
+
+/// Reads a META file's body.
+pub fn parse_meta(body: &[u8]) -> Result<ProjectMeta, FileError> {
+    if body.len() < META_BODY || &body[..8] != META_MAGIC {
+        return Err(FileError::BadData);
+    }
+    let side = u32_at(body, META_ICON) as usize;
+    let pixels = &body[META_ICON + 4..META_ICON + 4 + 4 * ICON_SIDE * ICON_SIDE];
+    if side != ICON_SIDE {
+        return Err(FileError::BadData);
+    }
+    Ok(ProjectMeta {
+        title: utf16_field(body, META_TITLE, META_DESCRIPTION),
+        description: utf16_field(body, META_DESCRIPTION, META_ICON),
+        icon: pixels
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().expect("4")))
+            .collect(),
+    })
+}
+
+/// A META file's body. Text beyond what the fields hold is cut.
+pub fn meta_body(meta: &ProjectMeta) -> Vec<u8> {
+    let mut b = vec![0u8; META_BODY];
+    b[..8].copy_from_slice(META_MAGIC);
+    let mut put = |from: usize, end: usize, text: &[u16]| {
+        for (i, c) in text.iter().take((end - from) / 2 - 1).enumerate() {
+            b[from + 2 * i..from + 2 * i + 2].copy_from_slice(&c.to_le_bytes());
+        }
+    };
+    put(META_TITLE, META_DESCRIPTION, &meta.title);
+    put(META_DESCRIPTION, META_ICON, &meta.description);
+    b[META_ICON..META_ICON + 4].copy_from_slice(&(ICON_SIDE as u32).to_le_bytes());
+    for (i, p) in meta.icon.iter().take(ICON_SIDE * ICON_SIDE).enumerate() {
+        let at = META_ICON + 4 + 4 * i;
+        b[at..at + 4].copy_from_slice(&p.to_le_bytes());
+    }
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,6 +496,21 @@ mod tests {
         assert_eq!(footer, sign(signed));
         let meta = container(Kind::Meta, 0, DATE, b"PCPM0005", false);
         assert_eq!(meta.len(), HEADER_SIZE + 8, "META has no footer");
+    }
+
+    #[test]
+    fn meta_reads_back() {
+        let meta = ProjectMeta {
+            title: "てすと05".encode_utf16().collect(),
+            description: "Line 1\nLine 2".encode_utf16().collect(),
+            icon: (0..1600).map(|i| 0xFF00_0000 | i).collect(),
+        };
+        let body = meta_body(&meta);
+        assert_eq!(body.len(), 0x2B20);
+        assert_eq!(&body[0x1218..0x121C], &[40, 0, 0, 0]);
+        let file = parse(&container(Kind::Meta, 0, DATE, &body, false)).unwrap();
+        assert_eq!(parse_meta(&file.body).unwrap(), meta);
+        assert!(parse_meta(&body[..100]).is_err());
     }
 
     #[test]

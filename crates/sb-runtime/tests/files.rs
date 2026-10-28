@@ -464,3 +464,30 @@ fn metadata_saves_with_the_project() {
     enter(&mut m, "project \"game\":run");
     assert_eq!(tail(&m, 2), ["GAME", "OK"]);
 }
+
+#[test]
+fn metadata_from_smilebasic() {
+    use sb_runtime::sbfile::{self, Date, Kind, ProjectMeta};
+    let dir = TempDir::new("sb4meta");
+    let mut m = machine(&dir);
+    let meta = ProjectMeta {
+        title: "てすと05".encode_utf16().collect(),
+        description: "Hi\n".encode_utf16().collect(),
+        icon: vec![0xFFD2_D6CA; 1600],
+    };
+    let date = Date {
+        year: 2026,
+        month: 10,
+        day: 28,
+        hour: 9,
+        minute: 2,
+        second: 28,
+    };
+    let bytes = sbfile::container(Kind::Meta, 0, date, &sbfile::meta_body(&meta), false);
+    m.rt.storage.write_project_file("META", &bytes).unwrap();
+    let program =
+        "METALOAD:METAEDIT 0 OUT T$:METAEDIT 1 OUT D$:METAEDIT 2 OUT I:?T$,LEN(D$),HEX$(I[39,39])";
+    m.set_slot(0, program.to_string());
+    enter(&mut m, "run");
+    assert_eq!(words(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
+}
