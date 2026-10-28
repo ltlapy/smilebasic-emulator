@@ -350,6 +350,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         manager = None;
                     }
                     Outcome::OpenFolder => open_folder(&machine.rt.storage, &mut toasts),
+                    Outcome::Open { switched, open } => {
+                        if let Some(name) = switched {
+                            toasts.push(format!("Switched to project {name}"));
+                        }
+                        let done = match open.run {
+                            true => machine.run_file(&open.file),
+                            false => machine.load_slot(open.slot, &open.file),
+                        };
+                        match done {
+                            Ok(()) if !open.run => {
+                                toasts.push(format!("Loaded {} into PRG{}", open.file, open.slot))
+                            }
+                            Ok(()) => {}
+                            Err(e) => toasts.push(format!("Could not load {}: {e}", open.file)),
+                        }
+                        manager = None;
+                    }
                     Outcome::ChooseFolder(transfer) => {
                         let send = chosen_folder.clone();
                         sdl3::dialog::show_open_folder_dialog(
@@ -522,6 +539,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::F4),
                     ..
                 } => machine.toggle_editor(),
+                // SmileBASIC 4's F12 returns to its menu, with the projects.
+                Event::KeyDown {
+                    keycode: Some(Keycode::F12),
+                    ..
+                } if !machine.is_running() => {
+                    let size = (display_w, display_h);
+                    manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                }
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
                     ..

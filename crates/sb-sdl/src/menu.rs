@@ -160,7 +160,7 @@ const MENUS: &[Menu] = &[
     Menu {
         title: "SmileBASIC",
         items: &[
-            item("Projects...", Action::Projects),
+            item("Projects... (F12)", Action::Projects),
             item("Open projects folder", Action::OpenFolder),
             item("Quit", Action::Quit),
         ],

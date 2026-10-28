@@ -69,6 +69,61 @@ fn tail(m: &Machine, n: usize) -> Vec<String> {
 }
 
 #[test]
+fn the_project_manager_loads_and_runs() {
+    use sb_runtime::storage::FileKind;
+    let dir = TempDir::new("manager");
+    let mut m = machine(&dir);
+    let storage = &m.rt.storage;
+    storage
+        .write(FileKind::Txt, "MAIN.PRG", b"?42", None)
+        .unwrap();
+    storage
+        .write(FileKind::Txt, "@BACKUP.PRG", b"?7", None)
+        .unwrap();
+    m.load_slot(1, "@BACKUP.PRG").unwrap();
+    assert_eq!(m.slot(1), "?7");
+    assert!(m.load_slot(1, "NONE").is_err());
+    m.run_file("MAIN.PRG").unwrap();
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert_eq!(m.slot(0), "?42");
+    assert_eq!(tail(&m, 2), ["42", "OK"]);
+}
+
+#[test]
+fn long_listings_wait_for_a_key() {
+    let dir = TempDir::new("pages");
+    let mut m = machine(&dir);
+    for i in 0..40 {
+        m.rt.storage
+            .write(
+                sb_runtime::storage::FileKind::Dat,
+                &format!("D{i:02}"),
+                b"",
+                None,
+            )
+            .unwrap();
+    }
+    m.type_text("cls:files");
+    m.rt.key_press(keys::ENTER);
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(m.is_running(), "waits after a screen");
+    let shown = rows(&m);
+    assert_eq!(shown.len(), 29);
+    assert_eq!(shown[0], "-- 40 files --");
+    assert_eq!(shown[28], "DAT:D27");
+    m.rt.key_press(u16::from(b' '));
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(!m.is_running());
+    assert_eq!(tail(&m, 2), ["DAT:D39", "OK"]);
+}
+
+#[test]
 fn save_load_and_list() {
     let dir = TempDir::new("save");
     let mut m = machine(&dir);

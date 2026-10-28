@@ -448,7 +448,7 @@ pub struct Runtime {
     pub(crate) system: System,
     pub sound: Sound,
     /// Typed characters not yet read by INKEY$ or INPUT.
-    keys: VecDeque<u16>,
+    pub(crate) keys: VecDeque<u16>,
     /// The line being typed for INPUT or LINPUT.
     line: Option<Vec<u16>>,
     frame: u32,
@@ -475,6 +475,8 @@ pub struct Runtime {
     /// The DIALOG the program waits on, and the frontend's answer.
     pub(crate) dialog: Option<crate::dialog::Waiting>,
     pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
+    /// Lines of a FILES listing still to show, after a key is pressed.
+    pub(crate) listing_left: Option<VecDeque<String>>,
     /// The project metadata that METAEDIT edits.
     pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
@@ -649,6 +651,7 @@ impl Runtime {
             confirm: None,
             answer: None,
             retry: false,
+            listing_left: None,
             notices: Vec::new(),
             program: None,
             data_pos: Cell::new(0),

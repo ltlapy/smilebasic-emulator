@@ -13,6 +13,7 @@ use crate::editor::Editor;
 use crate::framebuffer::Framebuffer;
 use crate::runtime::{Request, Runtime, SLOTS, keys};
 use crate::screen::ScreenMode;
+use crate::storage;
 use crate::text::CONSOLE;
 
 /// UNVERIFIED: instructions per frame for code that does not VSYNC;
@@ -220,6 +221,33 @@ impl Machine {
         self.vars.clear();
         self.rt.clear_vars();
         self.start(&self.rt.slots[slot].clone(), Some(slot));
+    }
+
+    /// Loads the current project's TXT file `name` into a slot, for the
+    /// project manager. A running program stops first.
+    pub fn load_slot(&mut self, slot: usize, name: &str) -> storage::Result<()> {
+        self.stop();
+        let editing = self.editing;
+        if editing {
+            self.close_editor();
+        }
+        let outcome = self.rt.load_file(name, slot);
+        if editing {
+            self.open_editor(slot, None);
+        }
+        outcome
+    }
+
+    /// Loads the current project's `name` into PRG0 and runs it, as
+    /// SmileBASIC 4's menu runs a project's MAIN.PRG.
+    pub fn run_file(&mut self, name: &str) -> storage::Result<()> {
+        self.stop();
+        if self.editing {
+            self.close_editor();
+        }
+        self.rt.load_file(name, 0)?;
+        self.run_slot(0);
+        Ok(())
     }
 
     /// Stops the running program or direct-mode line, as the Break key

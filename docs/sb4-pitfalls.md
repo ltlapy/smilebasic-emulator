@@ -53,6 +53,8 @@ follows all of it. Items still waiting for a check are marked
   after `VAR G=SQR(-1)` fails, `G` is 0. A line that does not compile
   declares nothing.
 - `CLEAR` in a program is a `Syntax error` when it runs.
+- `FILES` prints a long list a screen at a time, waiting for any key
+  before the next, in direct mode and in programs alike.
 
 ## Order of evaluation
 

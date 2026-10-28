@@ -8,6 +8,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, ArrayData, ElemType, Value, new_str};
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::confirm::{Ask, Confirm, FileAction, FileConfirm, project_label, switch_lines};
@@ -215,6 +216,9 @@ impl Runtime {
                     [spec, array] => (str_arg(spec)?, Some(array)),
                     _ => unreachable!(),
                 };
+                if let Some(left) = self.listing_left.take() {
+                    return Ok(self.show_listing(left));
+                }
                 let items = self.listing(&spec);
                 let items = self.finish("FILES", items).unwrap_or_default();
                 match array {
@@ -225,19 +229,46 @@ impl Runtime {
                             console.newline();
                         }
                         // UNVERIFIED: the header for project lists and for one file.
-                        let header = format!("-- {} files --", items.len());
-                        console.print(&header.encode_utf16().collect::<Vec<_>>());
-                        console.newline();
-                        for item in items {
-                            console.print(&item.encode_utf16().collect::<Vec<_>>());
-                            console.newline();
-                        }
+                        let mut lines = VecDeque::from([format!("-- {} files --", items.len())]);
+                        lines.extend(items);
+                        return Ok(self.show_listing_page(lines));
                     }
                 }
                 Ok(vec![])
             }
             _ => Err(illegal()),
         }
+    }
+
+    /// Goes on with a FILES listing once a key or button is pressed.
+    fn show_listing(&mut self, left: VecDeque<String>) -> Vec<Value> {
+        if self.keys.pop_front().is_some() || self.input.pressed() != 0 {
+            return self.show_listing_page(left);
+        }
+        self.listing_left = Some(left);
+        self.retry = true;
+        vec![]
+    }
+
+    /// Prints a screen of a FILES listing, and waits to print the rest,
+    /// as SmileBASIC 4 does in direct mode and in programs.
+    // UNVERIFIED: how many lines a screen holds (we leave the last row for
+    // the cursor), and whether anything is shown while waiting.
+    fn show_listing_page(&mut self, mut lines: VecDeque<String>) -> Vec<Value> {
+        let console = &mut self.text[CONSOLE];
+        let page = console.size().1.saturating_sub(1).max(1);
+        for _ in 0..page {
+            let Some(line) = lines.pop_front() else {
+                return vec![];
+            };
+            console.print(&line.encode_utf16().collect::<Vec<_>>());
+            console.newline();
+        }
+        if !lines.is_empty() {
+            self.listing_left = Some(lines);
+            self.retry = true;
+        }
+        vec![]
     }
 
     /// The file a name refers to, as `TYPE:NAME`, if it exists.
@@ -306,9 +337,14 @@ impl Runtime {
         if kind != FileKind::Txt {
             return Err(StorageError::BadKind(kind.name().to_string()));
         }
-        self.slots[slot] = program_text(&self.storage.read(kind, &name)?)?;
+        self.load_file(&name, slot)
+    }
+
+    /// Loads the TXT file `name`, as listed, into a slot.
+    pub(crate) fn load_file(&mut self, name: &str, slot: usize) -> storage::Result<()> {
+        self.slots[slot] = program_text(&self.storage.read(FileKind::Txt, name)?)?;
         self.drop_prg_edit(slot);
-        self.slot_names[slot] = name;
+        self.slot_names[slot] = name.to_string();
         self.slot_modified[slot] = false;
         Ok(())
     }

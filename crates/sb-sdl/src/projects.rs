@@ -1,10 +1,12 @@
 //! The project manager: lists the projects and their files, and switches,
-//! creates, renames, deletes, imports and exports projects. Drawn over the screen like the
+//! creates, renames, deletes, imports and exports projects. It also loads
+//! a program into a slot, and runs a project's MAIN.PRG. Drawn over the screen like the
 //! menu bar, it takes all input while it is open.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::{project_label, switch_lines};
 use sb_runtime::font::Font;
+use sb_runtime::runtime::SLOTS;
 use sb_runtime::storage::{Storage, check_project_name, suggest_project_name};
 use sb_runtime::transfer;
 use sdl3::keyboard::Keycode;
@@ -35,7 +37,16 @@ enum Button {
     Export,
     OpenFolder,
     Close,
+    /// Under the files: load the selected program into a slot.
+    LoadTo,
+    /// Under the files: run the project's MAIN.PRG.
+    Run,
 }
+
+/// The buttons under the files.
+const FILE_BUTTONS: [Button; 2] = [Button::LoadTo, Button::Run];
+/// The program that Run runs.
+const MAIN: &str = "MAIN.PRG";
 
 const BUTTONS: [Button; 8] = [
     Button::Switch,
@@ -59,6 +70,8 @@ impl Button {
             Button::Export => "Export",
             Button::OpenFolder => "Open folder",
             Button::Close => "Close",
+            Button::LoadTo => "Load to...",
+            Button::Run => "Run MAIN.PRG",
         }
     }
 }
@@ -74,6 +87,21 @@ pub enum Outcome {
     OpenFolder,
     /// Ask for a folder, then call [`ProjectManager::folder_chosen`].
     ChooseFolder(Transfer),
+    /// Load a TXT file of the current project into a slot, or run it;
+    /// the manager closes. `switched` names the project switched to first.
+    Open {
+        switched: Option<String>,
+        open: Open,
+    },
+}
+
+/// A program to load from the current project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Open {
+    pub file: String,
+    pub slot: usize,
+    /// Run it after loading (into PRG0).
+    pub run: bool,
 }
 
 /// What a chosen folder is for.
@@ -106,7 +134,10 @@ struct NameBox {
 }
 
 enum Pending {
-    Switch(String),
+    /// Switch, then open a program if given.
+    Switch(String, Option<Open>),
+    /// Open a program over a slot's unsaved changes.
+    Open(Open),
     Delete(String),
     /// Export a project into a folder that already holds one.
     Export(String, PathBuf),
@@ -116,6 +147,15 @@ enum Mode {
     Browse,
     Name(NameBox),
     Ask(Dialog, Pending),
+    /// Choosing the slot to load the selected file into.
+    Slot,
+}
+
+/// Which list Up and Down move in; Tab switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Focus {
+    Projects,
+    Files,
 }
 
 pub struct ProjectManager {
@@ -129,6 +169,10 @@ pub struct ProjectManager {
     scroll: usize,
     /// Files of the selected project, as `TXT:NAME`.
     files: Vec<String>,
+    file_selected: Option<usize>,
+    /// The first file row shown.
+    file_scroll: usize,
+    focus: Focus,
     status: Option<(String, bool)>,
     mode: Mode,
     mouse: Option<(i32, i32)>,
@@ -159,6 +203,9 @@ impl ProjectManager {
             selected: 0,
             scroll: 0,
             files: Vec::new(),
+            file_selected: None,
+            file_scroll: 0,
+            focus: Focus::Projects,
             status: None,
             mode: Mode::Browse,
             mouse: None,
@@ -196,6 +243,8 @@ impl ProjectManager {
         } else if self.selected >= self.scroll + rows {
             self.scroll = self.selected + 1 - rows;
         }
+        self.file_selected = None;
+        self.file_scroll = 0;
         self.files = match storage.list(None, Some(self.selected_name())) {
             Ok(files) => files
                 .into_iter()
@@ -212,11 +261,35 @@ impl ProjectManager {
         &self.projects[self.selected]
     }
 
+    /// The selected file's name, if it is a TXT file.
+    fn selected_program(&self) -> Option<&str> {
+        self.files.get(self.file_selected?)?.strip_prefix("TXT:")
+    }
+
+    fn select_file(&mut self, i: usize) {
+        let Some(last) = self.files.len().checked_sub(1) else {
+            return;
+        };
+        let i = i.min(last);
+        self.file_selected = Some(i);
+        let rows = self.file_rows();
+        if i < self.file_scroll {
+            self.file_scroll = i;
+        } else if i >= self.file_scroll + rows {
+            self.file_scroll = i + 1 - rows;
+        }
+    }
+
     fn enabled(&self, button: Button) -> bool {
         let name = self.selected_name();
         match button {
             Button::Switch => name != self.current,
             Button::Rename | Button::Delete => !name.is_empty(),
+            Button::LoadTo => self.selected_program().is_some(),
+            Button::Run => self
+                .files
+                .iter()
+                .any(|f| f.strip_prefix("TXT:") == Some(MAIN)),
             Button::New | Button::Import | Button::Export | Button::OpenFolder | Button::Close => {
                 true
             }
@@ -256,8 +329,27 @@ impl ProjectManager {
         Rect {
             x,
             w: f.x + f.w - 2 * PAD - x,
+            // Under the files: their buttons.
+            h: list.h - LINE - PAD,
             ..list
         }
+    }
+
+    fn file_rows(&self) -> usize {
+        (self.files_rect().h / LINE) as usize
+    }
+
+    fn file_row(&self, i: usize) -> Rect {
+        let files = self.files_rect();
+        Rect {
+            y: files.y + (i - self.file_scroll) as u32 * LINE,
+            h: LINE,
+            ..files
+        }
+    }
+
+    fn shown_files(&self) -> std::ops::Range<usize> {
+        self.file_scroll..self.files.len().min(self.file_scroll + self.file_rows())
     }
 
     fn row(&self, i: usize) -> Rect {
@@ -273,6 +365,20 @@ impl ProjectManager {
         let f = self.frame();
         let width = |b: Button| text_width(b.label()) + 4 * PAD;
         let y = f.y + f.h - 2 * PAD - LINE;
+        if FILE_BUTTONS.contains(&button) {
+            let files = self.files_rect();
+            let before: u32 = FILE_BUTTONS
+                .iter()
+                .take_while(|&&b| b != button)
+                .map(|&b| width(b) + PAD)
+                .sum();
+            return Rect {
+                x: files.x + before,
+                y: files.y + files.h + PAD,
+                w: width(button),
+                h: LINE,
+            };
+        }
         if button == Button::Close {
             let w = width(button);
             return Rect {
@@ -302,9 +408,14 @@ impl ProjectManager {
         }
     }
 
-    /// Scrolls the project list by `lines`, down for positive.
+    /// Scrolls the list under the mouse by `lines`, down for positive.
     pub fn wheel(&mut self, lines: i32) {
         if !matches!(self.mode, Mode::Browse) {
+            return;
+        }
+        if self.mouse.is_some_and(|m| self.files_rect().contains(m)) {
+            let last = self.files.len().saturating_sub(self.file_rows());
+            self.file_scroll = (self.file_scroll.saturating_add_signed(lines as isize)).min(last);
             return;
         }
         let last = self.projects.len().saturating_sub(self.rows());
@@ -340,20 +451,36 @@ impl ProjectManager {
                     Outcome::Stay
                 }
             }
+            Mode::Slot => {
+                let chosen = (0..=SLOTS).find(|&i| self.slot_button(i).contains(at));
+                match chosen {
+                    Some(SLOTS) => self.mode = Mode::Browse,
+                    Some(slot) => return self.load_to(slot, storage, unsaved),
+                    None => {}
+                }
+                Outcome::Stay
+            }
             Mode::Browse => {
-                if let Some(&b) = BUTTONS.iter().find(|&&b| self.button(b).contains(at)) {
+                let all = BUTTONS.iter().chain(&FILE_BUTTONS);
+                if let Some(&b) = all.into_iter().find(|&&b| self.button(b).contains(at)) {
                     return self.press(b, storage, unsaved);
                 }
                 let shown = self.scroll..self.projects.len().min(self.scroll + self.rows());
                 if let Some(i) = shown.into_iter().find(|&i| self.row(i).contains(at)) {
                     self.select(i, storage);
+                    self.focus = Focus::Projects;
+                }
+                if let Some(i) = self.shown_files().find(|&i| self.file_row(i).contains(at)) {
+                    self.select_file(i);
+                    self.focus = Focus::Files;
                 }
                 Outcome::Stay
             }
         }
     }
 
-    /// Up and Down choose a project, Enter switches to it, Esc closes.
+    /// Up and Down choose a project, or a file after Tab. Enter switches to
+    /// the project, or loads the file into a slot. Esc and F12 close.
     pub fn key(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         match &mut self.mode {
             Mode::Ask(dialog, _) => match dialog.key(key) {
@@ -372,6 +499,50 @@ impl ProjectManager {
                 }
                 _ => Outcome::Stay,
             },
+            Mode::Slot => {
+                let digit = (key as i32).checked_sub(Keycode::_0 as i32);
+                match digit {
+                    Some(d @ 0..) if (d as usize) < SLOTS => {
+                        return self.load_to(d as usize, storage, unsaved);
+                    }
+                    _ if key == Keycode::Escape => self.mode = Mode::Browse,
+                    _ => {}
+                }
+                Outcome::Stay
+            }
+            Mode::Browse if key == Keycode::Tab => {
+                self.focus = match self.focus {
+                    Focus::Projects if !self.files.is_empty() => {
+                        if self.file_selected.is_none() {
+                            self.select_file(0);
+                        }
+                        Focus::Files
+                    }
+                    _ => Focus::Projects,
+                };
+                Outcome::Stay
+            }
+            Mode::Browse if key == Keycode::F12 => Outcome::Close,
+            Mode::Browse if self.focus == Focus::Files => {
+                let last = self.files.len().saturating_sub(1);
+                let page = self.file_rows().saturating_sub(1).max(1);
+                let at = self.file_selected.unwrap_or(0);
+                let to = match key {
+                    Keycode::Up => at.saturating_sub(1),
+                    Keycode::Down => (at + 1).min(last),
+                    Keycode::PageUp => at.saturating_sub(page),
+                    Keycode::PageDown => (at + page).min(last),
+                    Keycode::Home => 0,
+                    Keycode::End => last,
+                    Keycode::Return | Keycode::KpEnter => {
+                        return self.press(Button::LoadTo, storage, unsaved);
+                    }
+                    Keycode::Escape => return Outcome::Close,
+                    _ => return Outcome::Stay,
+                };
+                self.select_file(to);
+                Outcome::Stay
+            }
             Mode::Browse => {
                 let last = self.projects.len() - 1;
                 let page = self.rows().saturating_sub(1).max(1);
@@ -402,7 +573,16 @@ impl ProjectManager {
         }
         let name = self.selected_name().to_string();
         match button {
-            Button::Switch => return self.switch(name, storage, unsaved, false),
+            Button::Switch => return self.switch(name, storage, unsaved, false, None),
+            Button::LoadTo => self.mode = Mode::Slot,
+            Button::Run => {
+                let open = Open {
+                    file: MAIN.to_string(),
+                    slot: 0,
+                    run: true,
+                };
+                return self.open(open, storage, unsaved, false);
+            }
             Button::New => self.ask_name(Naming::New, String::new(), None),
             Button::Rename => {
                 let text = suggest_project_name(&name);
@@ -482,14 +662,61 @@ impl ProjectManager {
         });
     }
 
+    /// Loads the selected file into `slot`.
+    fn load_to(&mut self, slot: usize, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        self.mode = Mode::Browse;
+        let Some(file) = self.selected_program() else {
+            return Outcome::Stay;
+        };
+        let open = Open {
+            file: file.to_string(),
+            slot,
+            run: false,
+        };
+        self.open(open, storage, unsaved, false)
+    }
+
+    /// Opens a program of the selected project, switching to it first if
+    /// it is not the current one. Replacing a slot's unsaved changes asks
+    /// first (unless `asked`); switching asks about all of them.
+    fn open(
+        &mut self,
+        open: Open,
+        storage: &mut Storage,
+        unsaved: &[usize],
+        asked: bool,
+    ) -> Outcome {
+        let name = self.selected_name().to_string();
+        if name != self.current {
+            return self.switch(name, storage, unsaved, false, Some(open));
+        }
+        if !asked && unsaved.contains(&open.slot) {
+            let lines = vec![
+                format!("PRG{} has changes that were not saved.", open.slot),
+                String::new(),
+                format!("Loading TXT:{} replaces them.", open.file),
+            ];
+            let accept = if open.run { "Run" } else { "Load" };
+            let dialog = Dialog::new("Unsaved program", lines, accept, self.size);
+            self.mode = Mode::Ask(dialog, Pending::Open(open));
+            return Outcome::Stay;
+        }
+        Outcome::Open {
+            switched: None,
+            open,
+        }
+    }
+
     /// Switches to `name`, first asking if slots have unsaved edits
     /// (unless `asked`), or for a new name if the folder's breaks the rules.
+    /// Then opens `then`, if given.
     fn switch(
         &mut self,
         name: String,
         storage: &mut Storage,
         unsaved: &[usize],
         asked: bool,
+        then: Option<Open>,
     ) -> Outcome {
         if !usable(&name) {
             let text = suggest_project_name(&name);
@@ -505,12 +732,21 @@ impl ProjectManager {
             let old = project_label(&self.current);
             let lines = switch_lines(project_label(&name), old, unsaved);
             let dialog = Dialog::new("Switch project", lines, "Switch", self.size);
-            self.mode = Mode::Ask(dialog, Pending::Switch(name));
+            self.mode = Mode::Ask(dialog, Pending::Switch(name, then));
             return Outcome::Stay;
         }
         self.mode = Mode::Browse;
         match storage.set_project(&name) {
-            Ok(()) => Outcome::Switched(project_label(storage.project()).to_string()),
+            Ok(()) => {
+                let switched = project_label(storage.project()).to_string();
+                match then {
+                    Some(open) => Outcome::Open {
+                        switched: Some(switched),
+                        open,
+                    },
+                    None => Outcome::Switched(switched),
+                }
+            }
             Err(e) => {
                 self.status = Some((format!("Could not switch: {e}"), true));
                 Outcome::Stay
@@ -526,7 +762,8 @@ impl ProjectManager {
             return Outcome::Stay;
         }
         match pending {
-            Pending::Switch(name) => return self.switch(name, storage, unsaved, true),
+            Pending::Switch(name, then) => return self.switch(name, storage, unsaved, true, then),
+            Pending::Open(open) => return self.open(open, storage, unsaved, true),
             Pending::Export(name, folder) => self.export(&name, &folder, storage),
             Pending::Delete(name) => {
                 let was_current = name == self.current;
@@ -574,7 +811,7 @@ impl ProjectManager {
             }
             Naming::Rename {
                 then_switch: true, ..
-            } => return self.switch(new, storage, unsaved, false),
+            } => return self.switch(new, storage, unsaved, false, None),
             Naming::Rename { from, .. } => {
                 self.status = Some((format!("Renamed project {from} to {new}."), false));
             }
@@ -623,7 +860,11 @@ impl ProjectManager {
             let r = self.row(i);
             let name = &self.projects[i];
             if i == self.selected {
-                fill(fb, r, HIGHLIGHT);
+                let color = match self.focus {
+                    Focus::Projects => HIGHLIGHT,
+                    Focus::Files => BORDER,
+                };
+                fill(fb, r, color);
             }
             let mark = if *name == self.current { "*" } else { " " };
             let mut label = format!("{mark} {}", project_label(name));
@@ -642,15 +883,17 @@ impl ProjectManager {
         }
         outline(fb, list, BORDER);
 
-        let rows = (files.h / LINE) as usize;
-        for (i, file) in self.files.iter().enumerate().take(rows) {
-            let text = if i + 1 == rows && self.files.len() > rows {
-                format!("... and {} more", self.files.len() - i)
-            } else {
-                fit(file, files.w - 2 * PAD)
-            };
-            let y = files.y + i as u32 * LINE + 4;
-            draw_text(fb, font, files.x + PAD, y, &text, TEXT);
+        for i in self.shown_files() {
+            let r = self.file_row(i);
+            if self.file_selected == Some(i) {
+                let color = match self.focus {
+                    Focus::Files => HIGHLIGHT,
+                    Focus::Projects => BORDER,
+                };
+                fill(fb, r, color);
+            }
+            let text = fit(&self.files[i], r.w - 2 * PAD);
+            draw_text(fb, font, r.x + PAD, r.y + 4, &text, TEXT);
         }
         outline(fb, files, BORDER);
 
@@ -660,7 +903,7 @@ impl ProjectManager {
             draw_text(fb, font, list.x, y, &fit(status, f.w - 4 * PAD), color);
         }
         let browsing = matches!(self.mode, Mode::Browse);
-        for b in BUTTONS {
+        for b in BUTTONS.into_iter().chain(FILE_BUTTONS) {
             let hovered = browsing && self.mouse.is_some_and(|m| self.button(b).contains(m));
             let enabled = self.enabled(b);
             button(fb, font, self.button(b), b.label(), hovered, enabled);
@@ -670,6 +913,68 @@ impl ProjectManager {
             Mode::Browse => {}
             Mode::Ask(dialog, _) => dialog.draw(fb, font),
             Mode::Name(name) => self.draw_name(fb, font, name),
+            Mode::Slot => self.draw_slot(fb, font),
+        }
+    }
+
+    fn slot_frame(&self) -> Rect {
+        let (w, h) = (760, 4 * LINE + 6 * PAD);
+        Rect {
+            x: self.size.0.saturating_sub(w) / 2,
+            y: self.size.1.saturating_sub(h) / 2,
+            w,
+            h,
+        }
+    }
+
+    /// PRG0 and on, then Cancel (`SLOTS`), in the slot chooser.
+    fn slot_button(&self, i: usize) -> Rect {
+        let f = self.slot_frame();
+        let w = text_width("PRG0") + 3 * PAD;
+        let y = f.y + f.h - 2 * PAD - LINE;
+        if i == SLOTS {
+            let w = text_width("Cancel") + 4 * PAD;
+            return Rect {
+                x: f.x + f.w - 2 * PAD - w,
+                y,
+                w,
+                h: LINE,
+            };
+        }
+        Rect {
+            x: f.x + 2 * PAD + i as u32 * (w + PAD),
+            y,
+            w,
+            h: LINE,
+        }
+    }
+
+    fn draw_slot(&self, fb: &mut Framebuffer, font: &Font) {
+        let f = self.slot_frame();
+        let file = self.selected_program().unwrap_or_default();
+        window(
+            fb,
+            font,
+            f,
+            &fit(&format!("Load TXT:{file}"), f.w - 4 * PAD),
+        );
+        let question = format!("Into which slot? (0 to {})", SLOTS - 1);
+        draw_text(
+            fb,
+            font,
+            f.x + 2 * PAD,
+            f.y + LINE + 2 * PAD + 4,
+            &question,
+            TEXT,
+        );
+        for i in 0..=SLOTS {
+            let r = self.slot_button(i);
+            let label = match i {
+                SLOTS => "Cancel".to_string(),
+                i => format!("PRG{i}"),
+            };
+            let hovered = self.mouse.is_some_and(|m| r.contains(m));
+            button(fb, font, r, &label, hovered, true);
         }
     }
 
@@ -791,7 +1096,7 @@ mod tests {
         let mut m = ProjectManager::new(&s, (1280, 720));
         m.key(Keycode::Down, &mut s, &[1]);
         assert_eq!(m.key(Keycode::Return, &mut s, &[1]), Outcome::Stay);
-        assert!(matches!(m.mode, Mode::Ask(_, Pending::Switch(_))));
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Switch(..))));
         // The question starts on Cancel.
         m.key(Keycode::Return, &mut s, &[1]);
         assert_eq!(s.project(), "");
@@ -896,6 +1201,96 @@ mod tests {
     }
 
     #[test]
+    fn load_to_and_run() {
+        use sb_runtime::storage::FileKind;
+        let tmp = TempDir::new("open");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "A.PRG", b"?1", None).unwrap();
+        s.write(FileKind::Dat, "D", b"", None).unwrap();
+        s.create_project("GAME").unwrap();
+        s.set_project("GAME").unwrap();
+        s.write(FileKind::Txt, MAIN, b"?2", None).unwrap();
+        s.set_project("").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        assert!(!m.enabled(Button::LoadTo) && !m.enabled(Button::Run));
+
+        // Tab moves to the files; DAT files cannot be loaded.
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert_eq!(m.selected_program(), Some("A.PRG"));
+        m.key(Keycode::Down, &mut s, &[]);
+        assert!(!m.enabled(Button::LoadTo));
+        m.key(Keycode::Up, &mut s, &[]);
+        m.key(Keycode::Return, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Slot));
+        let open = Open {
+            file: "A.PRG".to_string(),
+            slot: 2,
+            run: false,
+        };
+        assert_eq!(
+            m.key(Keycode::_2, &mut s, &[]),
+            Outcome::Open {
+                switched: None,
+                open: open.clone()
+            }
+        );
+        // Over unsaved changes, it asks first.
+        m.key(Keycode::Return, &mut s, &[2]);
+        m.key(Keycode::_2, &mut s, &[2]);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Open(_))));
+        m.key(Keycode::Left, &mut s, &[2]);
+        assert_eq!(
+            m.key(Keycode::Return, &mut s, &[2]),
+            Outcome::Open {
+                switched: None,
+                open
+            }
+        );
+
+        // Run switches to the project first.
+        m.key(Keycode::Tab, &mut s, &[]);
+        m.key(Keycode::Down, &mut s, &[]);
+        assert!(m.enabled(Button::Run));
+        let at = centre(m.button(Button::Run));
+        assert_eq!(
+            m.click(at, &mut s, &[]),
+            Outcome::Open {
+                switched: Some("GAME".to_string()),
+                open: Open {
+                    file: MAIN.to_string(),
+                    slot: 0,
+                    run: true
+                }
+            }
+        );
+        assert_eq!(s.project(), "GAME");
+    }
+
+    #[test]
+    fn long_file_lists_scroll() {
+        use sb_runtime::storage::FileKind;
+        let tmp = TempDir::new("scroll");
+        let mut s = Storage::new(tmp.0.clone());
+        for i in 0..60 {
+            s.write(FileKind::Dat, &format!("D{i:02}"), b"", None)
+                .unwrap();
+        }
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let rows = m.file_rows();
+        assert!(rows < 60);
+        m.mouse_move(centre(m.files_rect()));
+        m.wheel(3);
+        assert_eq!((m.file_scroll, m.scroll), (3, 0));
+        m.wheel(100);
+        assert_eq!(m.file_scroll, 60 - rows);
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert_eq!(m.file_scroll, 0, "the selection is kept in view");
+        m.key(Keycode::End, &mut s, &[]);
+        assert_eq!(m.file_selected, Some(59));
+        assert_eq!(m.file_scroll, 60 - rows);
+    }
+
+    #[test]
     fn buttons_fit_and_do_not_overlap() {
         let tmp = TempDir::new("layout");
         let s = Storage::new(tmp.0.clone());
@@ -905,6 +1300,14 @@ mod tests {
             let (a, b) = (m.button(pair[0]), m.button(pair[1]));
             assert!(a.x + a.w < b.x, "{pair:?}");
         }
+        for pair in FILE_BUTTONS.windows(2) {
+            let (a, b) = (m.button(pair[0]), m.button(pair[1]));
+            assert!(a.x + a.w < b.x, "{pair:?}");
+        }
+        let files = m.files_rect();
+        assert!(m.button(Button::LoadTo).y > files.y + files.h);
+        let last = m.slot_button(SLOTS - 1);
+        assert!(last.x + last.w < m.slot_button(SLOTS).x);
         let close = m.button(Button::Close);
         assert!(close.x + close.w <= f.x + f.w);
         assert!(m.rows() >= 10);
