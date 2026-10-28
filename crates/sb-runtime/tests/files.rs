@@ -131,9 +131,15 @@ fn failures_set_result_and_explain() {
     enter(&mut m, "run");
     let r = tail(&m, 3);
     assert_eq!(r[0], "0");
-    assert!(r[1].starts_with("Illegal statement in 2"), "{r:?}");
+    assert!(r[1].starts_with("Syntax error in 2"), "{r:?}");
     enter(&mut m, "new");
     assert_eq!(m.slot(0), "");
+    // Unless file access is silent, a program's failures show as notices.
+    m.rt.take_notices();
+    m.rt.settings.file_confirm = FileConfirm::Notify;
+    m.set_slot(0, "LOAD \"NOPE\"".to_string());
+    enter(&mut m, "run");
+    assert_eq!(m.rt.take_notices(), ["LOAD failed: TXT:NOPE not found"]);
 }
 
 #[test]
@@ -358,7 +364,7 @@ fn values_save_and_load() {
         "DIM C%[2,2]:LOADV \"DAT:A\",C%:?LEN(C%),C%[1,2]",
         "DIM S$[1]:S$[0]=\"X\":SAVEV \"DAT:S\",S$:DIM T$[5]:LOADV \"DAT:S\",T$:?LEN(T$),T$[0]",
         "SAVEV \"DAT:A\",A",
-        "?LEN(LOADV(\"DAT:NONE\")),RESULT(),LEN(LOADV(\"TXT:NONE\"))",
+        "?LOADV(\"DAT:NONE\"),RESULT(),LEN(LOADV(\"TXT:NONE\"))",
     ];
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");

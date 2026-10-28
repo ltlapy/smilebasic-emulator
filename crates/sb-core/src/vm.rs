@@ -57,6 +57,8 @@ pub struct Vm {
     pc: usize,
     stack: Vec<Value>,
     globals: Vec<Value>,
+    /// Which globals exist, for direct mode's declarations.
+    declared: Vec<bool>,
     frames: Vec<Frame>,
     gosubs: Vec<usize>,
     data_pos: usize,
@@ -146,6 +148,10 @@ impl Vm {
     /// Starts with the globals in `values`, keyed by full name (`A$`), set
     /// to those values. Direct mode uses it to keep variables between lines.
     pub fn with_globals(program: Compiled, values: &HashMap<String, Value>) -> Self {
+        // Variables from earlier lines exist already, for Op::Declare.
+        let declared = (program.globals.iter())
+            .map(|g| values.contains_key(&g.full_name()))
+            .collect();
         let globals = program
             .globals
             .iter()
@@ -161,6 +167,7 @@ impl Vm {
             pc: 0,
             stack: Vec::new(),
             globals,
+            declared,
             frames: Vec::new(),
             gosubs: Vec::new(),
             data_pos: 0,
@@ -341,6 +348,17 @@ impl Vm {
             Op::Load(slot) => {
                 let v = self.load(*slot);
                 self.stack.push(v);
+            }
+            Op::Declare { slot, array } => {
+                let i = *slot as usize;
+                if std::mem::replace(&mut self.declared[i], true) {
+                    let name = self.program.globals[i].full_name();
+                    return Err(Error::with_detail(ErrorKind::DuplicateVariable, name));
+                }
+                self.globals[i] = match array {
+                    true => Value::Default,
+                    false => initial_value(&self.program.globals[i], self.program.default_int),
+                };
             }
             Op::Store(slot) => {
                 let v = self.pop();

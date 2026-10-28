@@ -70,6 +70,45 @@ fn direct_mode_keeps_variables() {
 }
 
 #[test]
+fn direct_mode_declarations() {
+    let mut m = machine();
+    let last = |m: &Machine| rows(m).iter().rev().nth(1).unwrap().clone();
+    // Variables stay from line to line, also those a line did not use.
+    enter(&mut m, "a=1");
+    enter(&mut m, "b=2");
+    enter(&mut m, "?a");
+    assert_eq!(last(&m), "1");
+    // Any variable from an earlier line is a duplicate, however it came.
+    for line in ["dim a[3]", "var b=3"] {
+        enter(&mut m, line);
+        assert!(last(&m).starts_with("Duplicate variable"), "{line}");
+    }
+    // Checked as the line runs: the first DIM of the two declares.
+    enter(&mut m, "?\"x\";:dim h[2]:dim h[2]");
+    let r = rows(&m);
+    assert_eq!(r[r.len() - 3], "X");
+    assert!(last(&m).starts_with("Duplicate variable"));
+    enter(&mut m, "?len(h)");
+    assert_eq!(last(&m), "2");
+    // A DIM that fails leaves its array omitted, and a VAR zero.
+    enter(&mut m, "dim d[0,3]");
+    enter(&mut m, "?typeof(d)");
+    assert_eq!(last(&m), "0");
+    enter(&mut m, "var g=sqr(-1)");
+    enter(&mut m, "?typeof(g);g");
+    assert_eq!(last(&m), "20");
+    enter(&mut m, "dim d[2]");
+    assert!(last(&m).starts_with("Duplicate variable"));
+    // A line that does not compile declares nothing; CLEAR forgets all.
+    enter(&mut m, "dim k[2]:?(");
+    enter(&mut m, "dim k[2]:?len(k)");
+    assert_eq!(last(&m), "2");
+    enter(&mut m, "clear");
+    enter(&mut m, "dim a[3]:?len(a)");
+    assert_eq!(last(&m), "3");
+}
+
+#[test]
 fn slots_run_and_new() {
     let mut m = machine();
     m.set_slot(1, "X=X+1:?\"RAN\";X".to_string());
@@ -97,7 +136,7 @@ fn errors_return_to_direct_mode() {
         "{r:?}"
     );
     assert_eq!(r[10], "RUN");
-    assert!(r[11].starts_with("Illegal statement"), "{r:?}");
+    assert!(r[11].starts_with("Syntax error"), "{r:?}");
     assert_eq!(r[12], "OK");
 }
 

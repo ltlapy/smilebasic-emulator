@@ -33,8 +33,8 @@ pub struct Machine {
     /// The frame the last VSYNC waited for, which the next one counts
     /// from.
     vsync_at: u64,
-    /// Globals of the last program or direct-mode line, kept for the next
-    /// direct-mode line.
+    /// Globals of the last program and the direct-mode lines since, kept
+    /// for the next direct-mode line; each line adds its own.
     vars: HashMap<String, Value>,
     pub editor: Editor,
     /// Whether the editor is shown instead of direct mode.
@@ -228,7 +228,7 @@ impl Machine {
         let Some(vm) = self.vm.take() else {
             return;
         };
-        self.vars = vm.globals().collect();
+        self.vars.extend(vm.globals());
         self.running_slot = None;
         self.rt.running_slot = None;
         self.rt.take_requests();
@@ -402,7 +402,11 @@ impl Machine {
         self.rt.direct = slot.is_none();
         self.running_slot = slot;
         self.rt.running_slot = slot;
-        match sb_core::compile(source, &self.rt) {
+        let compiled = match slot {
+            Some(_) => sb_core::compile(source, &self.rt),
+            None => sb_core::compile_direct(source, &self.rt),
+        };
+        match compiled {
             Ok(program) => {
                 let vm = Vm::with_globals(program, &self.vars);
                 self.rt.program = Some(vm.program());
@@ -422,7 +426,7 @@ impl Machine {
     /// The program or line ended, by itself or with an error.
     fn finish(&mut self, error: Option<Error>) {
         let vm = self.vm.take().expect("finish follows a run");
-        self.vars = vm.globals().collect();
+        self.vars.extend(vm.globals());
         if let Some(e) = error {
             if let Some(slot) = self.running_slot {
                 self.last_error = Some((slot, e.line, e.col));

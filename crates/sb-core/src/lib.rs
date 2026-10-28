@@ -21,6 +21,20 @@ use parser::ParseErrorKind;
 
 /// Parses and compiles a program.
 pub fn compile(source: &str, host: &dyn host::Host) -> error::Result<bytecode::Compiled> {
+    compile_as(source, host, false)
+}
+
+/// Compiles a line typed in direct mode, whose DIM and VAR declare as
+/// they run (see [`bytecode::Op::Declare`]).
+pub fn compile_direct(source: &str, host: &dyn host::Host) -> error::Result<bytecode::Compiled> {
+    compile_as(source, host, true)
+}
+
+fn compile_as(
+    source: &str,
+    host: &dyn host::Host,
+    direct: bool,
+) -> error::Result<bytecode::Compiled> {
     let program = parser::parse(source).map_err(|e| {
         let kind = match e.kind {
             ParseErrorKind::Lex(lexer::LexErrorKind::Overflow) => ErrorKind::Overflow,
@@ -36,5 +50,5 @@ pub fn compile(source: &str, host: &dyn host::Host) -> error::Result<bytecode::C
             detail: e.detail(),
         }
     })?;
-    compiler::compile(&program, host)
+    compiler::compile(&program, host, direct)
 }

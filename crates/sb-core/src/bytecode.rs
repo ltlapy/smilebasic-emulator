@@ -59,6 +59,15 @@ pub enum Op {
     Load(Slot),
     /// `[value] -> []`
     Store(Slot),
+    /// Direct mode's DIM and VAR of a global: Duplicate variable if it
+    /// exists already, from this line or an earlier one; otherwise it
+    /// exists from now on, even if what follows fails. An array starts as
+    /// the omitted value (TYPEOF 0) until its DIM finishes, a variable as
+    /// zero (checked on hardware).
+    Declare {
+        slot: u32,
+        array: bool,
+    },
     /// `[base, i1..in] -> [element]`
     Index(u8),
     /// `[value, base, i1..in] -> []`

@@ -18,9 +18,12 @@ fn key(var: &Var) -> Key {
     (var.name.clone(), var.suffix)
 }
 
-pub fn compile(program: &Program, host: &dyn Host) -> Result<Compiled> {
+/// Compiles `program`; `direct` for a line typed in direct mode, where
+/// global declarations are checked as they run rather than here.
+pub fn compile(program: &Program, host: &dyn Host, direct: bool) -> Result<Compiled> {
     let mut c = Compiler {
         host,
+        direct,
         out: Compiled::default(),
         global_slots: HashMap::new(),
         global_declared: HashSet::new(),
@@ -72,6 +75,7 @@ struct Compiler<'h> {
     global_declared: HashSet<Key>,
     /// VAR statements compiled so far at top level, to report duplicates.
     global_var_seen: HashSet<Key>,
+    direct: bool,
     strict: bool,
     constants: HashMap<String, Literal>,
     def: Option<DefScope>,
@@ -716,7 +720,7 @@ impl Compiler<'_> {
         let k = key(&d.var);
         let first = match &mut self.def {
             Some(def) => def.declared.insert(k.clone()),
-            None => self.global_var_seen.insert(k.clone()),
+            None => self.global_var_seen.insert(k.clone()) || self.direct,
         };
         if !first {
             return Err(err(
@@ -728,6 +732,10 @@ impl Compiler<'_> {
             Some(_) => Slot::Local(self.local_slot(k)),
             None => Slot::Global(self.global_slot(k)),
         };
+        if let (true, None, Slot::Global(slot)) = (self.direct, &self.def, slot) {
+            let array = d.dims.is_some();
+            self.emit(Op::Declare { slot, array });
+        }
         let elem = elem_type(d.var.suffix, self.out.default_int);
         match (&d.dims, &d.init) {
             // With sizes, they decide the array's shape and the values fill

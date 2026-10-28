@@ -67,11 +67,13 @@ fn array_value(array: Array) -> Value {
 }
 
 /// What LOADV gives when a file cannot be read: an empty string for TXT,
-/// otherwise an integer array without elements.
+/// otherwise a number. The manual says an empty array, but on hardware
+/// LEN(LOADV("DAT:NONE")) is a Type mismatch.
+// UNVERIFIED: that the number is 0, and the empty string for TXT.
 fn failed_value(spec: &str) -> Value {
     match typed_name(spec) {
         Ok((FileKind::Txt, _)) => Value::str(""),
-        _ => array_value(Array::new(sb_core::value::ElemType::Int, vec![0])),
+        _ => Value::Int(0),
     }
 }
 

@@ -37,6 +37,22 @@ follows all of it. Items still waiting for a check are marked
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
   for 400x240.
+- Only one-dimensional arrays may be empty: `DIM A[0]` is fine, but
+  `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`.
+
+## Direct mode
+
+- Variables stay until `CLEAR`, however they came about: by `DIM`,
+  `VAR`, assigning or only reading them (an unknown variable reads as the
+  real 0). Declaring one of them again is `Duplicate variable`.
+- A line's declarations are checked as it runs, not when it compiles:
+  `DIM H[2]:DIM H[2]` declares `H` and then fails on the second `DIM`.
+  In a program the same line does not compile.
+- A declaration that fails still declares. After `DIM D[0,3]` fails,
+  `D` is the omitted value (`TYPEOF` 0, and `?D` is `Type mismatch`);
+  after `VAR G=SQR(-1)` fails, `G` is 0. A line that does not compile
+  declares nothing.
+- `CLEAR` in a program is a `Syntax error` when it runs.
 
 ## DATA
 

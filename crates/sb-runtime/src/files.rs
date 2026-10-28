@@ -10,7 +10,7 @@ use sb_core::value::{Array, ArrayData, ElemType, Value, new_str};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::confirm::{Ask, Confirm, FileAction, project_label, switch_lines};
+use crate::confirm::{Ask, Confirm, FileAction, FileConfirm, project_label, switch_lines};
 use crate::runtime::{Command, Runtime, SLOTS, illegal, slot_arg};
 use crate::sbfile;
 use crate::storage::{self, FileKind, StorageError, parse_file_name, parse_listing};
@@ -274,7 +274,8 @@ impl Runtime {
     }
 
     /// Sets RESULT() from an outcome; in direct mode, also explains a
-    /// failure on the console.
+    /// failure on the console, and in a program shows it as a notice
+    /// unless file access is silent (SmileBASIC 4 shows a dialog there).
     pub(crate) fn finish<T>(&mut self, what: &str, outcome: storage::Result<T>) -> Option<T> {
         match outcome {
             Ok(value) => {
@@ -292,6 +293,8 @@ impl Runtime {
                     let message = format!("{what} failed: {e}");
                     console.print(&message.encode_utf16().collect::<Vec<_>>());
                     console.newline();
+                } else if self.settings.file_confirm != FileConfirm::Silent {
+                    self.notices.push(format!("{what} failed: {e}"));
                 }
                 None
             }

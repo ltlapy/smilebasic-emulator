@@ -818,9 +818,10 @@ impl Runtime {
         if self.direct {
             Ok(())
         } else {
-            // UNVERIFIED: the error SmileBASIC 4 gives for these in a program.
+            // Checked on hardware: CLEAR in a program is a Syntax error
+            // when it runs. UNVERIFIED: that NEW, RUN and PROJECT are too.
             Err(Error::with_detail(
-                ErrorKind::IllegalStatement,
+                ErrorKind::SyntaxError,
                 "only in direct mode",
             ))
         }
