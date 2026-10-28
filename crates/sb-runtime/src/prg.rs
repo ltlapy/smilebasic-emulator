@@ -1,15 +1,21 @@
 //! Programs editing other slots' source: PRGEDIT, PRGGET$, PRGSET, PRGINS,
 //! PRGDEL, PRGSEEK, PRGSIZE and PRGNAME$.
 //!
-//! Lines are counted as the editor shows them: an empty slot has one empty
-//! line. The current line may also be one past the last, where PRGGET$
-//! gives an empty string and PRGSET adds a line.
+//! As SmileBASIC 4 does it (checked on hardware with sb4_test07):
+//! - A line is its text with the CHR$(10) that ends it, and PRGGET$ gives
+//!   both. A last line without one is read as if it had it.
+//! - An empty slot reads as one empty line, yet PRGSIZE counts 0 lines and
+//!   1 character.
+//! - The current line may go one past the last, where PRGGET$ gives an
+//!   empty string; PRGEDIT() then still reports the last line.
+//! - PRGSET on an empty line (or past the last) inserts before it, and
+//!   otherwise replaces the line; either way the current line moves past
+//!   what was set.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
-use crate::editor::split_lines;
 use crate::runtime::{Command, Runtime, illegal, opt_int, slot_arg};
 
 /// The slot PRGEDIT chose and its current line, from 0.
@@ -19,27 +25,77 @@ pub struct PrgEdit {
     pub line: usize,
 }
 
-/// What PRGSIZE reports as free characters.
-// UNVERIFIED: how much source a slot holds on SmileBASIC 4; this is the
-// emulator's own limit for reporting only.
+/// What a slot holds, counting PRGSIZE's free characters: 1 MiB less one
+/// for an empty slot (checked on hardware).
 const SLOT_CHARS: i32 = 1 << 20;
+const LF: u16 = 10;
 
-fn lines_of(source: &str) -> Vec<Vec<u16>> {
-    split_lines(source)
+/// A slot's source as lines, each ending in LF.
+struct Source {
+    lines: Vec<Vec<u16>>,
+    /// The slot was empty, and its one line is only how it reads.
+    empty: bool,
 }
 
-fn text_of(lines: &[Vec<u16>]) -> String {
-    let lines: Vec<String> = lines.iter().map(|l| String::from_utf16_lossy(l)).collect();
-    lines.join("\n")
+impl Source {
+    fn of(text: &str) -> Source {
+        let text: Vec<u16> = text.encode_utf16().collect();
+        if text.is_empty() {
+            return Source {
+                lines: vec![vec![LF]],
+                empty: true,
+            };
+        }
+        Source {
+            lines: split(&text),
+            empty: false,
+        }
+    }
+
+    /// Lines as PRGSIZE counts them.
+    fn count(&self) -> usize {
+        if self.empty { 0 } else { self.lines.len() }
+    }
+
+    fn chars(&self) -> usize {
+        self.lines.iter().map(Vec::len).sum()
+    }
+
+    fn text(&self) -> String {
+        let text: Vec<u16> = self.lines.concat();
+        // UNVERIFIED: that a slot left with one empty line is empty again.
+        if text == [LF] {
+            return String::new();
+        }
+        String::from_utf16_lossy(&text)
+    }
 }
 
-fn str_units(v: &Value) -> Result<Vec<u16>> {
-    Ok(v.clone().into_str()?.borrow().clone())
+/// Lines each ending in LF, the last given one if it has none.
+fn split(text: &[u16]) -> Vec<Vec<u16>> {
+    let mut lines: Vec<Vec<u16>> = text
+        .split_inclusive(|&c| c == LF)
+        .map(<[u16]>::to_vec)
+        .collect();
+    if let Some(last) = lines.last_mut()
+        && last.last() != Some(&LF)
+    {
+        last.push(LF);
+    }
+    lines
 }
 
-/// A string's lines, split at CHR$(10) or CHR$(13).
-fn new_lines(text: &[u16]) -> Vec<Vec<u16>> {
-    lines_of(&String::from_utf16_lossy(text))
+/// The lines a PRGSET or PRGINS string makes: it ends with a line break
+/// of its own.
+fn new_lines(v: &Value) -> Result<Vec<Vec<u16>>> {
+    let mut text = v.clone().into_str()?.borrow().clone();
+    text.push(LF);
+    Ok(split(&text))
+}
+
+/// The line number PRGEDIT() reports for an index: never past the last.
+fn reported(source: &Source, line: usize) -> i32 {
+    (line + 1).min(source.count().max(1)) as i32
 }
 
 impl Runtime {
@@ -66,17 +122,15 @@ impl Runtime {
 
     /// Changes the edited slot's lines, marking it as unsaved.
     fn change_lines(&mut self, edit: PrgEdit, f: impl FnOnce(&mut Vec<Vec<u16>>, &mut usize)) {
-        let mut lines = lines_of(&self.slots[edit.slot]);
+        let mut source = Source::of(&self.slots[edit.slot]);
         let mut line = edit.line;
-        f(&mut lines, &mut line);
-        if lines.is_empty() {
-            lines.push(Vec::new());
-        }
-        self.slots[edit.slot] = text_of(&lines);
+        f(&mut source.lines, &mut line);
+        source.empty = false;
+        self.slots[edit.slot] = source.text();
         self.slot_modified[edit.slot] = true;
         self.prg_edit = Some(PrgEdit {
             slot: edit.slot,
-            line: line.min(lines.len()),
+            line: line.min(source.lines.len()),
         });
     }
 
@@ -86,6 +140,9 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
+        let flag = |v: Option<&Value>, default: i32| -> Result<i32> {
+            Ok(v.map(opt_int).transpose()?.flatten().unwrap_or(default))
+        };
         match (command, want, args) {
             (Command::Prgedit, Want::Outs(0), [slot, rest @ ..]) if rest.len() <= 1 => {
                 let slot = slot_arg(Some(slot))?;
@@ -96,12 +153,11 @@ impl Runtime {
                         detail,
                     ));
                 }
-                let count = lines_of(&self.slots[slot]).len();
-                let line = match rest.first().map(opt_int).transpose()?.flatten() {
-                    None => 0,
-                    Some(-1) => count - 1,
-                    Some(n @ 1..) if n as usize <= count => n as usize - 1,
-                    Some(n) => {
+                let last = Source::of(&self.slots[slot]).count().max(1);
+                let line = match flag(rest.first(), 1)? {
+                    -1 => last - 1,
+                    n @ 1.. if n as usize <= last => n as usize - 1,
+                    n => {
                         let detail = format!("line {n}");
                         return Err(Error::with_detail(ErrorKind::OutOfRange, detail));
                     }
@@ -109,26 +165,20 @@ impl Runtime {
                 self.prg_edit = Some(PrgEdit { slot, line });
                 Ok(vec![])
             }
-            (Command::Prgedit, Want::Value, []) => {
-                Ok(vec![Value::Int(self.editing()?.line as i32 + 1)])
-            }
-            (Command::Prgedit, Want::Outs(n @ (1 | 2)), []) => {
+            (Command::Prgedit, Want::Value | Want::Outs(1 | 2), []) => {
                 let edit = self.editing()?;
-                let line = Value::Int(edit.line as i32 + 1);
-                Ok(match n {
-                    1 => vec![line],
-                    _ => vec![Value::Int(edit.slot as i32), line],
+                let line = Value::Int(reported(&Source::of(&self.slots[edit.slot]), edit.line));
+                Ok(match want {
+                    Want::Outs(2) => vec![Value::Int(edit.slot as i32), line],
+                    _ => vec![line],
                 })
             }
             (Command::Prgget, Want::Value, _) if args.len() <= 1 => {
-                let seek = match args.first().map(opt_int).transpose()?.flatten() {
-                    None => true,
-                    Some(n) => n != 0,
-                };
+                let seek = flag(args.first(), 1)? != 0;
                 let edit = self.editing()?;
-                let lines = lines_of(&self.slots[edit.slot]);
-                let text = lines.get(edit.line).cloned().unwrap_or_default();
-                if seek && edit.line < lines.len() {
+                let source = Source::of(&self.slots[edit.slot]);
+                let text = source.lines.get(edit.line).cloned().unwrap_or_default();
+                if seek && edit.line < source.lines.len() {
                     self.prg_edit = Some(PrgEdit {
                         line: edit.line + 1,
                         ..edit
@@ -136,19 +186,13 @@ impl Runtime {
                 }
                 Ok(vec![Value::Str(sb_core::value::new_str(text))])
             }
+            // PRGSEEK stops at the last line, while PRGGET$ goes one past
+            // it (checked on hardware).
             (Command::Prgseek, Want::Value | Want::Outs(0), _) if args.len() <= 1 => {
-                let step = args
-                    .first()
-                    .map(opt_int)
-                    .transpose()?
-                    .flatten()
-                    .unwrap_or(1);
                 let edit = self.editing()?;
-                let count = lines_of(&self.slots[edit.slot]).len();
-                // UNVERIFIED: PRGSEEK stops at the last line, while PRGGET$
-                // goes one past it.
-                let to = match step {
-                    1 if edit.line + 1 < count => Some(edit.line + 1),
+                let len = Source::of(&self.slots[edit.slot]).lines.len();
+                let to = match flag(args.first(), 1)? {
+                    1 if edit.line + 1 < len => Some(edit.line + 1),
                     -1 if edit.line > 0 => Some(edit.line - 1),
                     1 | -1 => None,
                     n => {
@@ -165,24 +209,31 @@ impl Runtime {
                 })
             }
             (Command::Prgset, Want::Outs(0), [text]) => {
-                let new = new_lines(&str_units(text)?);
+                let new = new_lines(text)?;
                 let edit = self.editing()?;
                 self.change_lines(edit, |lines, line| {
-                    let end = (*line + 1).min(lines.len());
-                    lines.splice(*line..end, new);
+                    let n = new.len();
+                    match lines.get(*line) {
+                        Some(old) if *old != [LF] => {
+                            lines.splice(*line..=*line, new);
+                        }
+                        _ => {
+                            lines.splice(*line..*line, new);
+                        }
+                    }
+                    *line += n;
                 });
                 Ok(vec![])
             }
-            // UNVERIFIED: where the current line is afterwards; here it
-            // stays on the line it was, so that inserting before it again
-            // keeps the order, and after inserting after, it is the last
-            // line inserted.
+            // The current line stays on the line it was when inserting
+            // before it, and moves to the last line inserted after it
+            // (checked on hardware).
             (Command::Prgins, Want::Outs(0), [text, rest @ ..]) if rest.len() <= 1 => {
-                let new = new_lines(&str_units(text)?);
-                let after = match rest.first().map(opt_int).transpose()?.flatten() {
-                    None | Some(0) => false,
-                    Some(1) => true,
-                    Some(n) => {
+                let new = new_lines(text)?;
+                let after = match flag(rest.first(), 0)? {
+                    0 => false,
+                    1 => true,
+                    n => {
                         return Err(Error::with_detail(ErrorKind::OutOfRange, format!("{n}")));
                     }
                 };
@@ -191,32 +242,21 @@ impl Runtime {
                     let at = (*line + usize::from(after)).min(lines.len());
                     let n = new.len();
                     lines.splice(at..at, new);
-                    *line += n;
-                    if after {
-                        *line = (*line).min(at + n - 1);
-                    }
+                    *line = if after { at + n - 1 } else { *line + n };
                 });
                 Ok(vec![])
             }
             // A negative count deletes every line (checked on hardware).
             (Command::Prgdel, Want::Outs(0), _) if args.len() <= 1 => {
-                let n = args
-                    .first()
-                    .map(opt_int)
-                    .transpose()?
-                    .flatten()
-                    .unwrap_or(1);
+                let n = flag(args.first(), 1)?;
                 let edit = self.editing()?;
-                self.change_lines(edit, |lines, line| {
-                    let (start, end) = match usize::try_from(n) {
-                        Ok(n) => {
-                            let start = (*line).min(lines.len());
-                            (start, (start + n).min(lines.len()))
-                        }
-                        Err(_) => (0, lines.len()),
-                    };
-                    lines.drain(start..end);
-                    if n < 0 {
+                self.change_lines(edit, |lines, line| match usize::try_from(n) {
+                    Ok(n) => {
+                        let start = (*line).min(lines.len());
+                        lines.drain(start..(start + n).min(lines.len()));
+                    }
+                    Err(_) => {
+                        lines.clear();
                         *line = 0;
                     }
                 });
@@ -224,17 +264,15 @@ impl Runtime {
             }
             (Command::Prgsize, Want::Value, _) if args.len() <= 2 => {
                 let slot = self.current_slot(args.first())?;
-                let source = &self.slots[slot];
-                let chars = source.encode_utf16().count() as i32;
-                let n = match args.get(1).map(opt_int).transpose()?.flatten() {
-                    None | Some(0) => lines_of(source).len() as i32,
-                    Some(1) => chars,
-                    Some(2) => (SLOT_CHARS - chars).max(0),
-                    Some(n) => {
-                        return Err(Error::with_detail(
-                            ErrorKind::OutOfRange,
-                            format!("type {n}"),
-                        ));
+                let source = Source::of(&self.slots[slot]);
+                let chars = source.chars() as i32;
+                let n = match flag(args.get(1), 0)? {
+                    0 => source.count() as i32,
+                    1 => chars,
+                    2 => (SLOT_CHARS - chars).max(0),
+                    n => {
+                        let detail = format!("type {n}");
+                        return Err(Error::with_detail(ErrorKind::OutOfRange, detail));
                     }
                 };
                 Ok(vec![Value::Int(n)])

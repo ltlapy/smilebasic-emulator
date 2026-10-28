@@ -46,42 +46,73 @@ fn run(m: &mut Machine, program: &[&str]) {
     enter(m, "run");
 }
 
-#[test]
-fn reads_lines_in_turn() {
-    let mut m = machine();
-    m.set_slot(1, "A\nB\nC".to_string());
+/// Runs `ops` on an emptied slot 3 and gives PRGSIZE's lines and
+/// characters, PRGEDIT() and the source, as sb4_test07 printed them on
+/// hardware.
+fn prg_state(m: &mut Machine, ops: &str) -> (String, String) {
     run(
-        &mut m,
+        m,
         &[
-            "PRGEDIT 1:?PRGSIZE(1),PRGGET$(),PRGGET$(),PRGEDIT()",
-            "?PRGGET$(0),PRGGET$(),\"[\"+PRGGET$()+\"]\",PRGSEEK(1)",
-            "PRGEDIT 1,-1:PRGEDIT OUT S,L:?S,L,PRGSEEK(1),PRGSEEK(-1),PRGGET$(0)",
-            "?PRGSIZE(1,1),PRGNAME$(1)==\"\"",
+            &format!("PRGEDIT 3:PRGDEL -1:{ops}"),
+            "A=PRGSIZE(3):B=PRGSIZE(3,1):C=PRGEDIT():?A,B,C",
         ],
     );
-    assert_eq!(
-        tail(&m, 5),
-        ["3 A B 3", "C C [] 0", "1 3 0 1 B", "5 1", "OK"]
-    );
+    (tail(m, 2)[0].clone(), m.slot(3).to_string())
 }
 
 #[test]
-fn changes_lines() {
+fn lines_as_on_hardware() {
     let mut m = machine();
-    m.set_slot(2, "1\n2\n3".to_string());
+    let state = |m: &mut Machine, ops: &str| prg_state(m, ops);
+    let cases: &[(&str, &str, &str)] = &[
+        ("", "0 1 1", ""),
+        ("PRGSET \"A\"", "2 3 2", "A\n\n"),
+        ("PRGINS \"A\"", "2 3 2", "A\n\n"),
+        ("PRGINS \"A\",1", "2 3 2", "\nA\n"),
+        ("PRGSET \"A\":PRGSET \"B\"", "3 5 3", "A\nB\n\n"),
+        ("PRGINS \"A\"+CHR$(10)+\"B\"", "3 5 3", "A\nB\n\n"),
+        ("PRGSET \"A\"+CHR$(10)", "3 4 3", "A\n\n\n"),
+        (
+            "PRGINS \"A\":PRGINS \"B\":PRGINS \"C\"",
+            "4 7 4",
+            "A\nB\nC\n\n",
+        ),
+        (
+            "PRGINS \"A\",1:PRGINS \"B\",1:PRGINS \"C\",1",
+            "4 7 4",
+            "\nA\nB\nC\n",
+        ),
+        (
+            "PRGINS \"1\",1:PRGINS \"2\",1:PRGINS \"3\",1:PRGEDIT 3,1:PRGINS \"ZERO\"",
+            "5 12 2",
+            "ZERO\n\n1\n2\n3\n",
+        ),
+    ];
+    for &(ops, numbers, text) in cases {
+        let (got, source) = state(&mut m, ops);
+        assert_eq!((got.as_str(), source.as_str()), (numbers, text), "{ops}");
+    }
+    // Replacing a line that has text, deleting, and reading past the end.
+    let build = "PRGINS \"A\",1:PRGINS \"B\",1:PRGINS \"C\",1:PRGEDIT 3,2:PRGSET \"X\"";
+    assert_eq!(state(&mut m, build), ("4 7 3".into(), "\nX\nB\nC\n".into()));
+    let build = format!("{build}:PRGEDIT 3,2:PRGDEL");
+    assert_eq!(state(&mut m, &build), ("3 5 2".into(), "\nB\nC\n".into()));
     run(
         &mut m,
         &[
-            "PRGEDIT 2,2:PRGSET \"TWO\"",
-            "PRGINS \"X\"+CHR$(10)+\"Y\":PRGINS \"Z\",1",
-            "PRGEDIT 2,1:PRGDEL",
-            "PRGEDIT 2,-1:A$=PRGGET$():PRGSET \"END\"",
+            "PRGEDIT 3,2:A$=PRGGET$():B$=PRGGET$():C=PRGEDIT()",
+            "?LEN(A$),ASC(B$),C,\"[\"+PRGGET$(0)+\"]\"",
+            "PRGEDIT 3,-1:S=PRGSEEK(1):?PRGEDIT(),S",
         ],
     );
-    assert_eq!(m.slot(2), "X\nY\nTWO\nZ\n3\nEND");
-    assert!(m.unsaved_slots().contains(&2));
-    run(&mut m, &["PRGEDIT 2,3:PRGDEL -1:PRGEDIT 2:PRGDEL 9"]);
-    assert_eq!(m.slot(2), "");
+    assert_eq!(tail(&m, 3), ["2 67 3 []", "3 0", "OK"]);
+    // An empty slot reads as one empty line, then nothing.
+    run(
+        &mut m,
+        &["PRGEDIT 3:PRGDEL -1:A$=PRGGET$():B$=PRGGET$():?ASC(A$),LEN(B$),PRGEDIT()"],
+    );
+    assert_eq!(tail(&m, 2), ["10 0 1", "OK"]);
+    assert!(m.unsaved_slots().contains(&3));
 }
 
 #[test]
