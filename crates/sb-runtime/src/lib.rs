@@ -7,6 +7,7 @@ pub mod collision;
 pub mod compose;
 pub mod confirm;
 pub mod editor;
+pub mod env;
 mod files;
 pub mod font;
 pub mod framebuffer;

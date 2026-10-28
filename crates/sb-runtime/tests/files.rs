@@ -419,3 +419,24 @@ fn graphic_pages_save_and_load() {
     enter(&mut m, "run");
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
 }
+
+#[test]
+fn metadata_saves_with_the_project() {
+    let dir = TempDir::new("meta");
+    let mut m = machine(&dir);
+    let program = [
+        "DIM I[1600]:I[41]=&HFF00FF00",
+        "METAEDIT 0,\"My game\":METAEDIT 1,\"Line 1\"+CHR$(10)+\"Line 2\":METAEDIT 2,I",
+        "METASAVE:METAEDIT 0,\"\":METALOAD",
+        "METAEDIT 0 OUT T$:METAEDIT 1 OUT D$:METAEDIT 2 OUT J",
+        "?T$,LEN(D$),DIM(J),HEX$(J[1,1])",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(words(&tail(&m, 2)), ["My game 13 2 FF00FF00", "OK"]);
+    let text = std::fs::read_to_string(dir.0.join("@WORKSPACE").join("@META.TXT")).unwrap();
+    assert_eq!(text, "My game\nLine 1\nLine 2");
+    m.set_slot(0, "METAEDIT 0,\"0123456789012345678901234\"".to_string());
+    enter(&mut m, "run");
+    assert!(tail(&m, 2)[0].starts_with("String too long"));
+}

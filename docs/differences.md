@@ -56,6 +56,13 @@ imported from your own copy:
   `SAVEV "GRP:..."` write PNG images, so the files open on a computer.
   `DAT` files keep SmileBASIC 4's layout. All of these are read back, as
   are files from SmileBASIC 4.
+- `METASAVE` keeps a project's title and description in `@META.TXT`
+  and its icon in `@ICON.PNG`, in the project's folder. SmileBASIC 4's
+  own `META` file is neither read nor written, since its layout is not
+  known.
+- There are no subprograms yet, so `ENVTYPE`, `ENVSTAT` and the other
+  `ENV` commands always answer for the main interpreter, and `ENVLOAD`
+  and `ENVSAVE` are errors.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands
   count lines of the source, which wrapping does not change.
 - The screen's scaling filter can be chosen in Options instead of

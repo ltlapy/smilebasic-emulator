@@ -156,6 +156,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
 
     video.text_input().start(&window);
     let clipboard = video.clipboard();
+    machine.rt.clipboard = Box::new(SystemClipboard(video.clipboard()));
     let keyboard = sdl.keyboard();
     let mut controls = Controls::new(&sdl)?;
     let audio = Audio::open(&sdl);
@@ -674,6 +675,20 @@ fn use_sound_font(machine: &mut Machine, path: Option<String>, toasts: &mut Toas
         }
     };
     machine.rt.sound.set_font(font);
+}
+
+/// The computer's clipboard, for CLIPBOARD.
+struct SystemClipboard(ClipboardUtil);
+
+impl sb_runtime::env::Clipboard for SystemClipboard {
+    // An empty or unreadable clipboard reads as an empty string.
+    fn text(&mut self) -> String {
+        self.0.clipboard_text().unwrap_or_default()
+    }
+
+    fn set_text(&mut self, text: &str) {
+        let _ = self.0.set_clipboard_text(text);
+    }
 }
 
 /// Pastes the clipboard's text into the editor, or types it.

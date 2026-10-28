@@ -98,3 +98,27 @@ fn errors() {
     run(&mut m, &["?PRGEDIT()"]);
     assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
 }
+
+#[test]
+fn surroundings_of_the_main_interpreter() {
+    let mut m = machine();
+    enter(&mut m, "a=1");
+    run(
+        &mut m,
+        &[
+            "ENVTYPE OUT T,P:?ENVTYPE(),T,P,ENVSTAT(),ENVFOCUS()",
+            "ENVSTAT OUT S,E,D:?S,E,D",
+            "?ENVINPUT$(1),ENVINPUT$(2),\"[\"+ENVINPUT$(32)+\"]\"",
+            "CLIPBOARD \"COPIED\":?CLIPBOARD()",
+            "ENVPROJECT:ENVSTAT 0:ENVFOCUS 1",
+        ],
+    );
+    assert_eq!(
+        tail(&m, 5),
+        ["0 0 -1 3 1", "3 0 0", "RUN A=1 []", "COPIED", "OK"]
+    );
+    enter(&mut m, "?envstat()");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+    run(&mut m, &["ENVLOAD 0,1,1"]);
+    assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
+}

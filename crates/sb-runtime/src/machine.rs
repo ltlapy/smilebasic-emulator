@@ -188,6 +188,7 @@ impl Machine {
     }
 
     fn open_editor(&mut self, slot: usize, at: Option<(usize, usize)>) {
+        self.rt.edit_slot = slot;
         self.editor.open(slot, &self.rt.slots[slot], at);
         self.editing = true;
     }
@@ -375,6 +376,7 @@ impl Machine {
             self.rt.input_start().expect("console input");
             return;
         }
+        self.rt.remember_input(line);
         match parse_list(line) {
             Some(Ok(list)) => {
                 match list {

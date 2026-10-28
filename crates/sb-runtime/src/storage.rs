@@ -320,6 +320,23 @@ impl Storage {
         Ok(())
     }
 
+    /// A file of the current project's own, outside the typed files (whose
+    /// names start with a type letter), such as its metadata.
+    pub fn read_project_file(&self, name: &str) -> Result<Vec<u8>> {
+        let path = self.dir(&self.project)?.join(name);
+        std::fs::read(&path).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => StorageError::NotFound(name.to_string()),
+            _ => e.into(),
+        })
+    }
+
+    pub fn write_project_file(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        let dir = self.dir(&self.project)?;
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(name), bytes)?;
+        Ok(())
+    }
+
     pub fn delete(&self, kind: FileKind, name: &str) -> Result<()> {
         if !self.exists(kind, name) {
             return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));

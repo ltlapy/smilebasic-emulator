@@ -55,6 +55,7 @@ pub(crate) enum Command {
     Chkfile,
     Chkmml,
     Clear,
+    Clipboard,
     Cls,
     Color,
     Controller,
@@ -64,6 +65,13 @@ pub(crate) enum Command {
     Efcen,
     Efcset,
     Efcwet,
+    Envfocus,
+    Envinput,
+    Envload,
+    Envproject,
+    Envsave,
+    Envstat,
+    Envtype,
     Fade,
     Fadechk,
     Files,
@@ -99,6 +107,9 @@ pub(crate) enum Command {
     Locate,
     Maincnt,
     Mbutton,
+    Metaedit,
+    Metaload,
+    Metasave,
     Millisec,
     Mouse,
     New,
@@ -231,6 +242,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("CHKFILE", Command::Chkfile),
     ("CHKMML", Command::Chkmml),
     ("CLEAR", Command::Clear),
+    ("CLIPBOARD", Command::Clipboard),
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
     ("CONTROLLER", Command::Controller),
@@ -240,6 +252,13 @@ const COMMANDS: &[(&str, Command)] = &[
     ("EFCEN", Command::Efcen),
     ("EFCSET", Command::Efcset),
     ("EFCWET", Command::Efcwet),
+    ("ENVFOCUS", Command::Envfocus),
+    ("ENVINPUT$", Command::Envinput),
+    ("ENVLOAD", Command::Envload),
+    ("ENVPROJECT", Command::Envproject),
+    ("ENVSAVE", Command::Envsave),
+    ("ENVSTAT", Command::Envstat),
+    ("ENVTYPE", Command::Envtype),
     ("FADE", Command::Fade),
     ("FADECHK", Command::Fadechk),
     ("FILES", Command::Files),
@@ -275,6 +294,9 @@ const COMMANDS: &[(&str, Command)] = &[
     ("LOCATE", Command::Locate),
     ("MAINCNT", Command::Maincnt),
     ("MBUTTON", Command::Mbutton),
+    ("METAEDIT", Command::Metaedit),
+    ("METALOAD", Command::Metaload),
+    ("METASAVE", Command::Metasave),
     ("MILLISEC", Command::Millisec),
     ("MOUSE", Command::Mouse),
     ("NEW", Command::New),
@@ -442,6 +464,14 @@ pub struct Runtime {
     pub(crate) running_slot: Option<usize>,
     /// The slot and line that PRGEDIT chose, for PRGGET$ and the rest.
     pub(crate) prg_edit: Option<crate::prg::PrgEdit>,
+    /// The slot the editor shows, or last showed.
+    pub(crate) edit_slot: usize,
+    /// Direct-mode lines typed, newest first, for ENVINPUT$.
+    pub(crate) history: crate::env::History,
+    /// What CLIPBOARD reads and writes.
+    pub clipboard: Box<dyn crate::env::Clipboard>,
+    /// The project metadata that METAEDIT edits.
+    pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
     pub storage: Storage,
     /// What RESULT() returns: 1 if the last file command succeeded, 0 if
@@ -602,6 +632,10 @@ impl Runtime {
             slot_modified: vec![false; SLOTS],
             running_slot: None,
             prg_edit: None,
+            edit_slot: 0,
+            history: Default::default(),
+            clipboard: Box::new(crate::env::MemoryClipboard::default()),
+            meta: Default::default(),
             settings: Settings::default(),
             storage: Storage::none(),
             result: 1,
@@ -756,6 +790,11 @@ impl Runtime {
 
     pub fn font(&self) -> &Font {
         &self.font
+    }
+
+    /// The line being typed for INPUT or in direct mode, if any.
+    pub(crate) fn typed_line(&self) -> Option<Vec<u16>> {
+        self.line.clone()
     }
 
     /// Stops waiting for an INPUT line, if one is being typed.
@@ -1021,6 +1060,20 @@ impl Runtime {
                 | Command::Prgsize,
                 _,
             ) => self.prg_command(command, args, want),
+            (
+                Command::Clipboard
+                | Command::Envfocus
+                | Command::Envinput
+                | Command::Envload
+                | Command::Envproject
+                | Command::Envsave
+                | Command::Envstat
+                | Command::Envtype
+                | Command::Metaedit
+                | Command::Metaload
+                | Command::Metasave,
+                _,
+            ) => self.env_command(command, args, want),
             (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
                 self.loadsave_command(command, args, want)
             }
