@@ -66,7 +66,7 @@ fn system_settings() {
     assert_eq!(
         run("SYSPARAM \"KEYREPEAT\" OUT S,I:?SYSPARAM(\"LANG\");S;I;SYSPARAM(\"TABSTEP\")")
             .unwrap(),
-        "en-US2034"
+        "en-US2031"
     );
     assert_eq!(
         run("A=SYSPARAM(\"MOUSECURSOR\"):SYSPARAM \"MOUSECURSOR\",1:?A;SYSPARAM(\"MOUSECURSOR\")")

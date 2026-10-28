@@ -75,8 +75,8 @@ impl Default for Settings {
             editor_number_tiles: true,
             editor_font: FontSize::Large,
             editor_size: EditorSize::Medium,
-            // UNVERIFIED: SmileBASIC 4's default.
-            editor_tab_step: 4,
+            // Characters are shown full-width, so one is already wide.
+            editor_tab_step: 1,
             editor_colors: Palette::default(),
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,

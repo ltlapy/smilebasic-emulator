@@ -212,7 +212,7 @@ impl Editor {
             view: View::default(),
             want_col: 0,
             overwrite: false,
-            tab_step: 4,
+            tab_step: 1,
             anchor: None,
             number_tiles: true,
             layout: Vec::new(),
@@ -892,6 +892,7 @@ mod tests {
         assert_eq!(e.text(), "XYC");
         e.key(keys::INSERT);
         e.key(keys::HOME);
+        e.tab_step = 4;
         e.key(keys::TAB);
         assert_eq!((e.text().as_str(), e.cursor()), ("    XYC", (1, 4)));
         // Control codes other than the editing keys type nothing.
