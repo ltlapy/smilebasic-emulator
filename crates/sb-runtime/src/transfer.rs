@@ -148,7 +148,7 @@ fn files(dir: &Path) -> Result<Vec<(String, Vec<u8>, Date)>, String> {
             continue;
         }
         let bytes = fs::read(entry.path()).map_err(|e| format!("{name}: {e}"))?;
-        let date = meta.modified().map_or_else(|_| Date::now(), Date::local);
+        let date = meta.modified().map_or_else(|_| Date::now(), Date::at);
         files.push((name, bytes, date));
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));

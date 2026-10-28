@@ -9,7 +9,7 @@
 //! | 0x04 | 2 | 1 if the body is zlib-compressed |
 //! | 0x06 | 2 | a number that depends on the kind; see [`usage`] |
 //! | 0x08 | 4 | stored body size |
-//! | 0x0C | 8 | date: u16 year, then month, day, hour, minute, second, 0xFF |
+//! | 0x0C | 8 | UTC date: u16 year, then month, day, hour, minute, second, 0xFF |
 //! | 0x14 | 0x5C | author names, zero in files saved by programs |
 //! | 0x70 | size | body |
 //! | end | 20 | HMAC-SHA1 of everything before it ([`container`]) |
@@ -77,15 +77,16 @@ pub struct Date {
 }
 
 impl Date {
-    /// The local time now, for files being written.
+    /// The time now, for files being written.
     pub fn now() -> Date {
-        Date::local(std::time::SystemTime::now())
+        Date::at(std::time::SystemTime::now())
     }
 
-    /// `time` in local time, such as when a file was last changed.
-    pub fn local(time: std::time::SystemTime) -> Date {
+    /// `time` in UTC, which files hold (checked on hardware: SmileBASIC 4
+    /// shows them in local time).
+    pub fn at(time: std::time::SystemTime) -> Date {
         use chrono::{Datelike, Timelike};
-        let t = chrono::DateTime::<chrono::Local>::from(time);
+        let t = chrono::DateTime::<chrono::Utc>::from(time);
         Date {
             year: t.year() as u16,
             month: t.month() as u8,

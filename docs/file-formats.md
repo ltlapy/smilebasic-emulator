@@ -32,12 +32,14 @@ with this header. Numbers are little-endian.
 | 0x04 | 2 | 1 if the body is zlib-compressed, else 0 |
 | 0x06 | 2 | a number that depends on the kind (below) |
 | 0x08 | 4 | size of the body as stored |
-| 0x0C | 2 | year saved |
-| 0x0E | 5 | month, day, hour, minute, second |
+| 0x0C | 2 | year saved, in UTC |
+| 0x0E | 5 | month, day, hour, minute, second, in UTC |
 | 0x13 | 1 | 0xFF |
 | 0x14 | 0x5C | zero in files saved by programs; author names in SmileBASIC 4's own |
 | 0x70 | size | body |
 | end | 20 | signature, except in META |
+
+SmileBASIC 4 shows the date in local time.
 
 The signature is the HMAC-SHA1 of the header and body, with the key that
 SmileBASIC 3 used too (`SIGNING_KEY` in `crates/sb-runtime/src/sbfile.rs`).
@@ -122,6 +124,10 @@ form is not used, since the emulator cannot tell the two apart. Files
 already in SmileBASIC 4's container are copied as they are. `META` is
 made from the project's metadata, or from its name if it has none, with
 a blank icon.
+
+SmileBASIC 4.4.9 lists a project exported this way when its folder is
+copied into its save data, shows its title, description and icon, and
+loads all of its files.
 
 Import does the reverse into a new project: programs and text become
 plain UTF-8, GRP files PNG, JPG files plain JPEG, DAT files the bare
