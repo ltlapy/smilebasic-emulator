@@ -2,10 +2,12 @@
 //! BEEPVOL, BEEPPAN and BEEPSTOP change.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
-use super::Ramp;
+use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Wave};
+use super::{RATE, Ramp};
 
 pub const HANDLES: usize = 16;
 /// The note BEEP plays instruments at.
@@ -18,7 +20,6 @@ const INSTRUMENT_FRAMES: u32 = 30;
 /// note to die away.
 const RELEASE_FRAMES: u32 = 60;
 
-#[derive(Clone, Debug)]
 enum Sounding {
     /// A preset effect, which there is nothing to play for.
     Preset,
@@ -30,9 +31,17 @@ enum Sounding {
         release: u32,
     },
     Wave(wave::Voice),
+    /// A preset effect: a sequence on a synthesizer of its own, as it may
+    /// take several channels. `tail` counts the frames left after it
+    /// ends, for its notes to die away.
+    Sequence {
+        player: Box<Player>,
+        synth: Box<dyn Synth>,
+        until_tick: f64,
+        tail: u32,
+    },
 }
 
-#[derive(Clone, Debug)]
 struct Beep {
     sounding: Sounding,
     /// The pitch at the start, in cents: what BEEPPIT bends from.
@@ -44,6 +53,7 @@ struct Beep {
 }
 
 pub struct Beeps {
+    instruments: Option<Instruments>,
     synth: Option<Box<dyn Synth>>,
     beeps: Vec<Option<Beep>>,
     /// Which handle the next BEEP tries first, so that handles go round.
@@ -54,8 +64,9 @@ pub struct Beeps {
 impl Beeps {
     pub fn new(instruments: Option<&Instruments>) -> Beeps {
         Beeps {
+            instruments: instruments.cloned(),
             synth: instruments.map(Instruments::synth),
-            beeps: vec![None; HANDLES],
+            beeps: (0..HANDLES).map(|_| None).collect(),
             next: 0,
             scratch: Default::default(),
         }
@@ -91,7 +102,7 @@ impl Beeps {
                 s.volume(h, volume);
                 s.pan(h, pan);
             }),
-            Sounding::Preset => {}
+            Sounding::Preset | Sounding::Sequence { .. } => {}
         }
     }
 
@@ -101,6 +112,20 @@ impl Beeps {
         let h = self.handle();
         let sounding = match what {
             BeepSound::Preset => Sounding::Preset,
+            BeepSound::Sequence(seq) => match &self.instruments {
+                Some(instruments) => {
+                    let mut synth = instruments.synth();
+                    let mut player = Box::new(Player::new(seq));
+                    player.set_pitch(pitch, synth.as_mut());
+                    Sounding::Sequence {
+                        player,
+                        synth,
+                        until_tick: 0.0,
+                        tail: RELEASE_FRAMES,
+                    }
+                }
+                None => Sounding::Preset,
+            },
             BeepSound::Instrument(program) => {
                 let key = INSTRUMENT_NOTE + pitch.div_euclid(100);
                 self.synth(|s| {
@@ -145,6 +170,7 @@ impl Beeps {
                 let from = b.start_pitch.div_euclid(100) * 100;
                 self.synth(|s| s.bend(h, pitch - from));
             }
+            Sounding::Sequence { player, synth, .. } => player.set_pitch(pitch, synth.as_mut()),
             Sounding::Preset => {}
         }
     }
@@ -237,6 +263,36 @@ impl Beeps {
                     }
                     v.done()
                 }
+                Sounding::Sequence {
+                    player,
+                    synth,
+                    until_tick,
+                    tail,
+                } => {
+                    let mut done = 0;
+                    while done < n {
+                        if *until_tick <= 0.0 && !player.ended() {
+                            player.tick(synth.as_mut());
+                            *until_tick += player.tick_samples(RATE);
+                        }
+                        let chunk = ((until_tick.ceil() as usize).max(1)).min(n - done);
+                        synth.render(&mut wl[done..done + chunk], &mut wr[done..done + chunk]);
+                        *until_tick -= chunk as f64;
+                        done += chunk;
+                    }
+                    let volume = b.volume as f32 / 127.0 * player.volume();
+                    let (pl, pr) = balance(b.pan);
+                    for i in 0..n {
+                        let gain = volume * b.fade.value as f32;
+                        left[i] += wl[i] * gain * pl;
+                        right[i] += wr[i] * gain * pr;
+                        b.fade.step_sample();
+                    }
+                    if player.ended() {
+                        *tail = tail.saturating_sub(1);
+                    }
+                    *tail == 0
+                }
                 Sounding::Instrument { key, hold, release } => {
                     for _ in 0..n {
                         b.fade.step_sample();
@@ -262,9 +318,19 @@ impl Beeps {
     }
 }
 
+/// Left and right gains that move a stereo sound towards one side: 64
+/// keeps both, 0 and 127 silence the other side.
+// UNVERIFIED: how BEEPPAN pans SmileBASIC 4's stereo effects.
+fn balance(pan: i32) -> (f32, f32) {
+    let p = pan.clamp(0, 127) as f32;
+    (((127.0 - p) / 63.5).min(1.0), (p / 63.5).min(1.0))
+}
+
 /// What BEEP plays.
 pub enum BeepSound {
     Preset,
+    /// SmileBASIC 4's own effect, imported.
+    Sequence(Arc<Sequence>),
     Instrument(i32),
     Wave(Rc<Wave>),
 }

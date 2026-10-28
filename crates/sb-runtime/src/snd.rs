@@ -15,6 +15,7 @@ use crate::runtime::{Command, Runtime, illegal};
 use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
+use crate::sound::seq::Kind;
 use crate::sound::wave::{Envelope, Wave};
 use crate::sound::{PRESET_SONGS, RATE, Recorder, TRACKS, frames};
 
@@ -158,10 +159,16 @@ impl Runtime {
                     Some(v) => frames(f64::from(in_range("time", v, 0..=32767)?)),
                 };
                 let song = match music {
-                    // UNVERIFIED: without SmileBASIC's own songs, presets play
-                    // silence until stopped, so programs waiting on BGMCHK
-                    // still wait.
-                    0..=PRESET_SONGS => None,
+                    0..=PRESET_SONGS => {
+                        if let Some(seq) = self.sound.sequence(Kind::Song, music) {
+                            self.sound.track(track).play_sequence(seq, volume, fade);
+                            return Ok(vec![]);
+                        }
+                        // UNVERIFIED: without SmileBASIC's own songs, presets
+                        // play silence until stopped, so programs waiting on
+                        // BGMCHK still wait.
+                        None
+                    }
                     // UNVERIFIED: a song number with nothing set plays
                     // silence too.
                     128..=255 => self.sound.songs.get(&music).cloned(),
@@ -376,6 +383,9 @@ impl Runtime {
                 let volume = opt_in_range("volume", args.get(2), 0..=127, 64)?;
                 let pan = opt_in_range("pan", args.get(3), 0..=127, 64)?;
                 let what = match n {
+                    0..=155 | 256..=383 if let Some(seq) = self.sound.sequence(Kind::Beep, n) => {
+                        BeepSound::Sequence(seq)
+                    }
                     // UNVERIFIED: without SmileBASIC's own sounds, presets are
                     // silent.
                     0..=155 => BeepSound::Preset,

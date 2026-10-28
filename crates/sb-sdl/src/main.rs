@@ -110,6 +110,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut rt = Runtime::new(screen.width, screen.height, font);
     let (sprite_page, sprite_defs) = resources::load_sprites(&resource_dir()?);
     let bank = resources::load_instruments(&resource_dir()?).map(Arc::new);
+    rt.sound
+        .set_sequences(resources::load_sequences(&resource_dir()?).map(Arc::new));
     if let Some(page) = sprite_page {
         rt.set_sprite_page(page);
     }

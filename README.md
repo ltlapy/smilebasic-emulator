@@ -34,7 +34,7 @@ by S. Christian Collins, bundled in `crates/sb-sdl/sounds`, until
 SmileBASIC's own instruments are imported. Options > Instruments picks
 between them and another SoundFont (`.sf2`).
 
-To see and hear SmileBASIC's own font, sprites and instruments, import them
+To see and hear SmileBASIC's own font, sprites and sounds, import them
 from your own copy of
 SmileBASIC 4: extract the RomFS and ExeFS of the game (and of its update, if
 you have one) and run the separate importer
@@ -45,8 +45,8 @@ smilebasic-import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
 
 The importer copies `font.map`, `GDEFFONT` and the default sprite image
 `GDEFGRP` into the emulator's data directory, and takes the default sprite
-definitions (SPDEF) out of the executable `main` and the instruments out
-of the sound archive `petc4.bfsar`. List the update's
+definitions (SPDEF) out of the executable `main` and the instruments,
+preset songs and sound effects out of the sound archive `petc4.bfsar`. List the update's
 directories last so its files take precedence. Only the font is required;
 without the ExeFS, sprite definitions are a plain grid of 16x16 cells. The
 first release's ExeFS has only definitions 0-4095; the others are empty.

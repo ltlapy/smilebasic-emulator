@@ -6,6 +6,7 @@ pub mod beep;
 pub mod mml;
 pub mod pcm;
 pub mod sampler;
+pub mod seq;
 pub mod synth;
 pub mod talk;
 mod track;
@@ -14,12 +15,14 @@ pub mod wave;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub use rustysynth::SoundFont;
 
 use beep::Beeps;
 use mml::Song;
 use pcm::Pcm;
+use seq::{Kind, Sequences};
 use synth::Instruments;
 use talk::Talk;
 use track::{AfterFade, Track};
@@ -122,6 +125,8 @@ pub(crate) struct Effector {
 
 pub struct Sound {
     instruments: Option<Instruments>,
+    /// The preset songs and sound effects, when imported.
+    sequences: Option<Arc<Sequences>>,
     tracks: Vec<Option<Track>>,
     /// BGMSET's songs, 128 to 255.
     pub(crate) songs: HashMap<i32, Rc<Song>>,
@@ -148,6 +153,7 @@ impl Default for Sound {
     fn default() -> Self {
         Sound {
             instruments: None,
+            sequences: None,
             tracks: (0..TRACKS).map(|_| None).collect(),
             songs: HashMap::new(),
             waves: Rc::default(),
@@ -171,6 +177,15 @@ impl Sound {
         self.beeps = Beeps::new(instruments.as_ref());
         self.instruments = instruments;
         self.tracks.iter_mut().for_each(|t| *t = None);
+    }
+
+    pub fn set_sequences(&mut self, sequences: Option<Arc<Sequences>>) {
+        self.sequences = sequences;
+    }
+
+    /// SmileBASIC 4's own preset song or effect `n`, if imported.
+    pub(crate) fn sequence(&self, kind: Kind, n: i32) -> Option<Arc<seq::Sequence>> {
+        self.sequences.as_ref()?.get(kind, n)
     }
 
     pub(crate) fn track(&mut self, n: usize) -> &mut Track {

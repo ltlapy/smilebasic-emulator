@@ -14,6 +14,7 @@ use crate::font::{Font, FontError};
 use crate::graphics::GRP_SIZE;
 use crate::sbfile::{self, DataValues};
 use crate::sound::bank::Bank;
+use crate::sound::seq::Sequences;
 use crate::sprites::{self, SpriteDef};
 
 /// The emulator's data directory in the user's application data, which
@@ -32,6 +33,8 @@ pub const SPRITE_PAGE: &str = "GDEFGRP";
 pub const SPRITE_DEFS: &str = "spdef.bin";
 /// The instruments and waveforms from the sound archive, as a [`Bank`].
 pub const INSTRUMENTS: &str = "instruments.bin";
+/// The preset songs and BEEP's effects from the sound archive.
+pub const SEQUENCES: &str = "sequences.bin";
 
 #[derive(Debug)]
 pub enum ResourceError {
@@ -95,4 +98,10 @@ pub fn load_font(dir: &Path) -> Result<Font, ResourceError> {
 /// were not imported or are damaged.
 pub fn load_instruments(dir: &Path) -> Option<Bank> {
     Bank::from_bytes(&std::fs::read(dir.join(INSTRUMENTS)).ok()?)
+}
+
+/// SmileBASIC 4's preset songs and effects from the resource directory,
+/// `None` if they were not imported or are damaged.
+pub fn load_sequences(dir: &Path) -> Option<Sequences> {
+    Sequences::from_bytes(&std::fs::read(dir.join(SEQUENCES)).ok()?)
 }

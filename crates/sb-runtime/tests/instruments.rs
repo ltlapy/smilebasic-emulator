@@ -3,6 +3,9 @@
 //! With `$SB_INSTRUMENTS_WAV` set, also writes what played there as a WAV
 //! file to listen to.
 //!
+//! The preset songs and effects play too, from `sequences.bin` next to
+//! the bank; `$SB_PRESETS_WAV` writes them all to a WAV file.
+//!
 //! `$SB_SOUNDFONT` names a SoundFont the importer wrote with `--sf2`, to
 //! play the same way.
 //!
@@ -15,6 +18,7 @@ use sb_core::vm::{Status, Vm};
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
 use sb_runtime::sound::bank::Bank;
+use sb_runtime::sound::seq::Sequences;
 use sb_runtime::sound::synth::Instruments;
 use sb_runtime::sound::{RATE, SoundFont};
 
@@ -26,8 +30,18 @@ fn bank() -> Option<Bank> {
 
 /// Runs `source` and plays `frames` frames, left and right in turn.
 fn play(instruments: &Instruments, source: &str, frames: usize) -> Vec<f32> {
+    play_with(instruments, None, source, frames)
+}
+
+fn play_with(
+    instruments: &Instruments,
+    sequences: Option<&Arc<Sequences>>,
+    source: &str,
+    frames: usize,
+) -> Vec<f32> {
     let mut rt = Runtime::new(400, 240, Font::blank());
     rt.sound.set_instruments(Some(instruments.clone()));
+    rt.sound.set_sequences(sequences.cloned());
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
     while vm.run(&mut rt, 1_000_000).unwrap() != Status::Ended {}
     let mut samples = Vec::new();
@@ -122,4 +136,43 @@ fn the_soundfont_plays() {
     assert!((400.0..490.0).contains(&hz), "out of tune");
     let drums = play(&font, "BGMPLAY \"T120 @128 O2 C4D4\"", 60);
     assert!(drums.iter().any(|s| s.abs() > 0.01), "drums are silent");
+}
+
+#[test]
+fn presets_play() {
+    let Some(path) = std::env::var_os("SB_INSTRUMENTS") else {
+        eprintln!("SB_INSTRUMENTS is not set; skipped");
+        return;
+    };
+    let bank = Instruments::Bank(Arc::new(bank().unwrap()));
+    let dir = std::path::Path::new(&path).parent().unwrap();
+    let bytes = std::fs::read(dir.join("sequences.bin")).expect("sequences.bin is there");
+    let seqs = Arc::new(Sequences::from_bytes(&bytes).expect("sequences.bin is whole"));
+    let peak = |s: &[f32]| s.iter().fold(0f32, |m, x| m.max(x.abs()));
+    let mut all = Vec::new();
+    let start = std::time::Instant::now();
+    let mut quiet = Vec::new();
+    for n in 0..=45 {
+        let samples = play_with(&bank, Some(&seqs), &format!("BGMPLAY {n}"), 60 * 8);
+        if peak(&samples) < 0.01 {
+            quiet.push(format!("BGM {n}"));
+        }
+        all.extend(samples);
+    }
+    eprintln!("46 songs, 8 seconds each, took {:?}", start.elapsed());
+    for n in (0..=155).chain(256..=383) {
+        let samples = play_with(&bank, Some(&seqs), &format!("BEEP {n}"), 60);
+        // Some effects are meant to be quiet.
+        if peak(&samples) < 0.001 {
+            quiet.push(format!("BEEP {n}"));
+        }
+        if n < 156 {
+            all.extend(samples);
+        }
+    }
+    eprintln!("silent: {quiet:?}");
+    if let Some(path) = std::env::var_os("SB_PRESETS_WAV") {
+        write_wav(&path, &all);
+    }
+    assert!(quiet.is_empty(), "silent presets: {quiet:?}");
 }

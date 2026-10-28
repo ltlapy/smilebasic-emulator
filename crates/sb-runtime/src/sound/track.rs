@@ -3,8 +3,10 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use super::mml::{ChordPart, Cmd, Link, Num, Pitch, Song, WHOLE, ticks};
+use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Envelope, Waves};
 use super::{RATE, Ramp};
@@ -86,6 +88,8 @@ pub(crate) struct Track {
     /// Waveform notes sounding, with their channels.
     voices: Vec<(usize, wave::Voice)>,
     song: Option<Rc<Song>>,
+    /// A preset song, played instead of `song`.
+    seq: Option<Player>,
     channels: Vec<Channel>,
     tempo: u32,
     song_key: i32,
@@ -120,6 +124,7 @@ impl Track {
             waves,
             voices: Vec::new(),
             song: None,
+            seq: None,
             channels: Vec::new(),
             tempo: 120,
             song_key: 0,
@@ -137,6 +142,27 @@ impl Track {
 
     /// Starts `song`, or plays silence for a song that is not there.
     pub(crate) fn play(&mut self, song: Option<Rc<Song>>, volume: i32, fade_frames: u32) {
+        self.start(volume, fade_frames);
+        self.song = song;
+        for c in 0..self.channels.len() {
+            self.apply_voice(c);
+            if let Some(s) = &mut self.synth {
+                s.volume(c, 100);
+            }
+        }
+    }
+
+    /// Starts a preset song.
+    pub(crate) fn play_sequence(&mut self, seq: Arc<Sequence>, volume: i32, fade_frames: u32) {
+        self.start(volume, fade_frames);
+        let mut player = Player::new(seq);
+        if let Some(s) = &mut self.synth {
+            player.set_pitch(self.pitch, s.as_mut());
+        }
+        self.seq = Some(player);
+    }
+
+    fn start(&mut self, volume: i32, fade_frames: u32) {
         if let Some(s) = &mut self.synth {
             s.reset();
         }
@@ -146,25 +172,21 @@ impl Track {
         self.song_key = 0;
         self.vars = [0; 8];
         self.until_tick = 0.0;
-        self.song = song;
+        self.song = None;
+        self.seq = None;
         self.playing = true;
         self.paused = false;
         self.volume = volume;
         self.fade = Ramp::at(if fade_frames > 0 { 0.0 } else { 1.0 });
         self.fade.to(1.0, fade_frames);
         self.after_fade = AfterFade::Nothing;
-        for c in 0..self.channels.len() {
-            self.apply_voice(c);
-            if let Some(s) = &mut self.synth {
-                s.volume(c, 100);
-            }
-        }
     }
 
     pub(crate) fn stop(&mut self) {
         self.playing = false;
         self.paused = false;
         self.song = None;
+        self.seq = None;
         self.silence();
     }
 
@@ -214,6 +236,10 @@ impl Track {
 
     pub(crate) fn set_pitch(&mut self, cents: i32) {
         self.pitch = cents;
+        if let (Some(p), Some(s)) = (&mut self.seq, &mut self.synth) {
+            p.set_pitch(cents, s.as_mut());
+            return;
+        }
         for c in 0..self.channels.len() {
             self.apply_bend(c);
         }
@@ -454,6 +480,16 @@ impl Track {
 
     /// One tick: notes whose time is up stop, and channels go on.
     fn tick(&mut self) {
+        if let Some(p) = &mut self.seq {
+            // Without instruments a preset goes on, silent, until stopped.
+            if let Some(s) = &mut self.synth {
+                p.tick(s.as_mut());
+                if p.ended() {
+                    self.playing = false;
+                }
+            }
+            return;
+        }
         for c in 0..self.channels.len() {
             let ch = &mut self.channels[c];
             if ch.gate > 0 {
@@ -491,7 +527,10 @@ impl Track {
         while done < n {
             if !self.paused && self.playing && self.until_tick <= 0.0 {
                 self.tick();
-                self.until_tick += f64::from(RATE) * 60.0 / f64::from(self.tempo * QUARTER);
+                self.until_tick += match &self.seq {
+                    Some(p) => p.tick_samples(RATE),
+                    None => f64::from(RATE) * 60.0 / f64::from(self.tempo * QUARTER),
+                };
             }
             let chunk = if self.paused || !self.playing {
                 n - done
@@ -514,7 +553,7 @@ impl Track {
             }
             done += chunk;
         }
-        let volume = self.volume as f32 / 127.0;
+        let volume = self.volume as f32 / 127.0 * self.seq.as_ref().map_or(1.0, Player::volume);
         for i in 0..n {
             let gain = volume * self.fade.value as f32;
             left[i] += l[i] * gain;
