@@ -51,11 +51,9 @@ const USAGE: &str = "usage:
   smilebasic                    start in direct mode
   smilebasic PROGRAM            load a SmileBASIC 4 program (TXT file or plain
                                 text) into PRG0 and run it
-  smilebasic import DIR...      copy the font, sprite image and sprite
-                                definitions from your own extracted SmileBASIC 4
-                                RomFS and ExeFS directories (list the update's
-                                last); without them, a bundled font and blank
-                                sprites are used";
+
+SmileBASIC 4's own font and sprites come from smilebasic-import; without
+them, a bundled font and blank sprites are used";
 
 const TITLE: &str = "SmileBASIC emulator";
 /// In the data directory.
@@ -67,7 +65,6 @@ type AnyError = Box<dyn std::error::Error>;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
-        Some("import") if args.len() > 1 => import(&args[1..]),
         None => run(None),
         Some(program) if !program.starts_with('-') && args.len() == 1 => {
             run(Some(Path::new(program)))
@@ -83,25 +80,11 @@ fn main() {
 }
 
 fn data_dir() -> Result<PathBuf, AnyError> {
-    Ok(sdl3::filesystem::get_pref_path("", "smilebasic-emulator")?)
+    Ok(sdl3::filesystem::get_pref_path("", resources::DATA_DIR)?)
 }
 
 fn resource_dir() -> Result<PathBuf, AnyError> {
-    Ok(data_dir()?.join("resources"))
-}
-
-fn import(dirs: &[String]) -> Result<(), AnyError> {
-    let dest = resource_dir()?;
-    let dirs: Vec<PathBuf> = dirs.iter().map(PathBuf::from).collect();
-    let imported = resources::import(&dirs, &dest)?;
-    for source in &imported.sources {
-        println!("imported {}", source.display());
-    }
-    println!("into {}", dest.display());
-    for missing in &imported.missing {
-        println!("not found: {missing}");
-    }
-    Ok(())
+    Ok(data_dir()?.join(resources::RESOURCE_DIR))
 }
 
 fn load_source(path: &Path) -> Result<String, AnyError> {
@@ -117,7 +100,7 @@ fn load_source(path: &Path) -> Result<String, AnyError> {
 fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let source = program.map(load_source).transpose()?;
     let font = resources::load_font(&resource_dir()?).unwrap_or_else(|e| {
-        eprintln!("using the fallback font: {e} (see `smilebasic import`)");
+        eprintln!("using the fallback font: {e} (see `smilebasic-import`)");
         Font::fallback()
     });
     let screen = Profile::default().screen();

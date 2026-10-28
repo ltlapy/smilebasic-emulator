@@ -18,7 +18,6 @@ pub mod image;
 pub mod input;
 mod loadsave;
 pub mod machine;
-pub mod nso;
 pub mod palette;
 mod prg;
 pub mod resources;

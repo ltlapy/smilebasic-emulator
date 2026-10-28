@@ -35,10 +35,10 @@ font picks another SoundFont (`.sf2`) instead.
 
 To see SmileBASIC's own font and sprites, import them from your own copy of
 SmileBASIC 4: extract the RomFS and ExeFS of the game (and of its update, if
-you have one) and run
+you have one) and run the separate importer
 
 ```sh
-smilebasic import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
+smilebasic-import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
 ```
 
 The importer copies `font.map`, `GDEFFONT` and the default sprite image

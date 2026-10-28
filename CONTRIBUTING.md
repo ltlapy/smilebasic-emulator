@@ -9,6 +9,7 @@
 | `sb-core` | std, `stacker` | rendering, audio, input, files |
 | `sb-runtime` | `sb-core` | SDL, OS APIs |
 | `sb-profiles` | `sb-core`, `sb-runtime` | SDL, OS APIs |
+| `sb-import` | `sb-runtime` | SDL |
 | `sb-sdl` | everything | — |
 
 SDL and platform code live in `sb-sdl` only. Everything else must build and test
@@ -62,7 +63,8 @@ headless on Windows, macOS and Linux.
 <body: why the change was made, and anything a reviewer can't see in the diff>
 ```
 
-- Scope is one of `core`, `runtime`, `profiles`, `sdl`, `tests`, `build`, `docs`.
+- Scope is one of `core`, `runtime`, `profiles`, `import`, `sdl`, `tests`, `build`,
+  `docs`.
   Use a comma for two (`core, runtime:`). If you need more, split the commit.
 - Summary: lowercase start, no trailing period, 72 characters at most.
 - One logical change per commit. Each commit builds and passes tests.
