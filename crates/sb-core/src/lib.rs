@@ -48,6 +48,7 @@ fn compile_as(
             line: at.line,
             col: at.col,
             detail: e.detail(),
+            slot: None,
         }
     })?;
     compiler::compile(&program, host, direct)

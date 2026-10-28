@@ -221,3 +221,81 @@ fn dialogs_wait_for_an_answer() {
     run(&mut m, &["?DIALOG(\"A\",0)"]);
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
 }
+
+#[test]
+fn exec_runs_other_slots() {
+    let mut m = machine();
+    m.set_slot(
+        1,
+        [
+            "X=5:?\"S1\";X",
+            "END",
+            "COMMON DEF ADD(A,B)",
+            " RETURN A+B+X",
+            "END",
+            "DEF HIDDEN",
+            " ?\"HID\"",
+            "END",
+            "@L",
+            "?\"L1\":RETURN",
+        ]
+        .join("\n"),
+    );
+    run(
+        &mut m,
+        &[
+            "?\"A\":EXEC 1:?\"B\";X",
+            "?ADD(2,3)",
+            "GOSUB \"1:@L\"",
+            "CALL \"1:HIDDEN\"",
+            "?\"END\"",
+        ],
+    );
+    let shown = ["A", "S15", "B0", "10", "L1", "HID", "END", "OK"];
+    assert_eq!(tail(&m, 8), shown, "slot 1 has its own X");
+
+    // Only COMMON DEFs are found by name, and only once their slot ran.
+    run(&mut m, &["?1:HIDDEN"]);
+    assert!(tail(&m, 2)[0].starts_with("Undefined function in 0:1"));
+    run(&mut m, &["?ADD(1,2)"]);
+    assert!(tail(&m, 2)[0].starts_with("Undefined function in 0:1"));
+    // The running slot cannot be EXEC'd, nor EXEC used in direct mode.
+    run(&mut m, &["EXEC 0"]);
+    assert!(tail(&m, 2)[0].starts_with("Illegal function call in 0:1"));
+    enter(&mut m, "exec 1");
+    assert!(tail(&m, 2)[0].starts_with("Syntax error"));
+
+    // An error in slot 1 names it, and F4 goes there.
+    m.set_slot(2, "?\"S2\"\nZ=0:?1/Z".to_string());
+    run(&mut m, &["EXEC 2"]);
+    assert_eq!(tail(&m, 3)[..2], ["S2", "Divide by zero in 2:2"]);
+    m.toggle_editor();
+    assert_eq!(m.edit().slot(), 2);
+}
+
+#[test]
+fn exec_loads_files() {
+    use sb_runtime::confirm::FileConfirm;
+    use sb_runtime::storage::{FileKind, Storage};
+    let dir = std::env::temp_dir().join(format!("sb-exec-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut m = machine();
+    m.rt.storage = Storage::new(dir.clone());
+    m.rt.settings.file_confirm = FileConfirm::Silent;
+    let s = &m.rt.storage;
+    s.write(FileKind::Txt, "SUB", b"?\"SUB\"", None).unwrap();
+    s.write(FileKind::Txt, "NEXT", b"?\"NEXT\";X", None)
+        .unwrap();
+    run(
+        &mut m,
+        &[
+            "X=1:EXEC \"SUB\",3:?\"BACK\";RESULT()",
+            "EXEC \"NONE\",3:?\"STILL\";RESULT()",
+            "EXEC \"NEXT\"",
+            "?\"NOT HERE\"",
+        ],
+    );
+    assert_eq!(tail(&m, 5), ["SUB", "BACK1", "STILL0", "NEXT0", "OK"]);
+    assert_eq!(m.slot(0), "?\"NEXT\";X");
+    let _ = std::fs::remove_dir_all(&dir);
+}

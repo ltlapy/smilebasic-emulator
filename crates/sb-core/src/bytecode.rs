@@ -127,6 +127,13 @@ pub enum Op {
         argc: u8,
         want: Want,
     },
+    /// `[args..] -> [results..]`: a COMMON DEF of another slot, by
+    /// string constant `name`.
+    CallCommon {
+        name: u32,
+        argc: u8,
+        want: Want,
+    },
     /// `[name, args..] -> [results..]`
     CallDyn {
         argc: u8,
@@ -183,6 +190,8 @@ pub enum Op {
     /// `[] -> [next DATA value]`
     Read,
     End,
+    /// `[file or slot, slot?] -> []`: EXEC.
+    Exec(u8),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -221,6 +230,8 @@ pub struct DefInfo {
     pub name: String,
     pub entry: Addr,
     pub is_function: bool,
+    /// COMMON DEF: callable from other program slots.
+    pub common: bool,
     /// `None` when declared with `*`.
     pub params: Option<u8>,
     pub outs: Option<u8>,

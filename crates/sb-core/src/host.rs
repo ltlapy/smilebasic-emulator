@@ -3,9 +3,23 @@
 
 use std::collections::VecDeque;
 
-use crate::bytecode::{Callbacks, Want};
+use std::rc::Rc;
+
+use crate::bytecode::{Callbacks, Compiled, Want};
 use crate::error::{Error, ErrorKind, Result};
 use crate::value::Value;
+
+/// What EXEC goes on with, from [`Host::exec_source`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Exec {
+    /// Run this source in the slot.
+    Run(String),
+    /// Waiting for the user, such as a confirmation: ask again on the
+    /// next frame.
+    Wait,
+    /// The file was not loaded; EXEC does nothing.
+    Skip,
+}
 
 pub trait Host {
     /// Resolves a command or function name, suffix included (`"GPSET"`,
@@ -36,6 +50,21 @@ pub trait Host {
     fn retry(&mut self) -> bool {
         false
     }
+
+    /// EXEC: loads the program file `file`, if given, into program slot
+    /// `slot`, and gives the slot's source to run there.
+    fn exec_source(&mut self, _file: Option<&[u16]>, _slot: i32) -> Result<Exec> {
+        Err(ErrorKind::IllegalFunctionCall.into())
+    }
+
+    /// Program slots loaded anew since the last call, whose programs
+    /// (if EXEC ran them) the VM forgets.
+    fn take_reloaded(&mut self) -> Vec<usize> {
+        Vec::new()
+    }
+
+    /// The VM went on in program slot `slot`, which runs `program`.
+    fn entered_slot(&mut self, _slot: usize, _program: &Rc<Compiled>) {}
 
     /// The callback CALL SPRITE or CALL TEXT runs after number `after`
     /// (-1 to start): its number, which CALLIDX() reports, and a

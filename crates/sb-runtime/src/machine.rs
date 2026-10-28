@@ -262,7 +262,11 @@ impl Machine {
         self.rt.take_requests();
         self.rt.cancel_confirm();
         // UNVERIFIED: the wording of SmileBASIC 4's break message.
-        let text: Vec<u16> = format!("Break in {}", vm.line()).encode_utf16().collect();
+        let at = match vm.slot() {
+            Some(slot) => format!("{slot}:{}", vm.line()),
+            None => vm.line().to_string(),
+        };
+        let text: Vec<u16> = format!("Break in {at}").encode_utf16().collect();
         self.print_line(&text);
         self.ready();
     }
@@ -437,6 +441,10 @@ impl Machine {
         match compiled {
             Ok(program) => {
                 let vm = Vm::with_globals(program, &self.vars);
+                let vm = match slot {
+                    Some(slot) => vm.in_slot(slot),
+                    None => vm,
+                };
                 self.rt.program = Some(vm.program());
                 self.vm = Some(vm);
                 self.wait = 0;
@@ -444,6 +452,7 @@ impl Machine {
                 self.vsync_at = self.frame + 1;
             }
             Err(e) => {
+                let e = e.in_slot(slot.map(|s| s as u32));
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
                 self.report(&e);
                 self.ready();
@@ -456,8 +465,8 @@ impl Machine {
         let vm = self.vm.take().expect("finish follows a run");
         self.vars.extend(vm.globals());
         if let Some(e) = error {
-            if let Some(slot) = self.running_slot {
-                self.last_error = Some((slot, e.line, e.col));
+            if let Some(slot) = e.slot {
+                self.last_error = Some((slot as usize, e.line, e.col));
             }
             self.report(&e);
         }

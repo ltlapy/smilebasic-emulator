@@ -109,6 +109,61 @@ fn check_name(name: &str) -> Result<String> {
     Ok(name.to_ascii_uppercase())
 }
 
+/// A file name as reading takes it: also the backups' names, which start
+/// with `@` (`@BACKUP.PRG`).
+// UNVERIFIED: that SmileBASIC 4 reads `@` names, and only for reading.
+fn check_read_name(name: &str) -> Result<String> {
+    match name.strip_prefix('@') {
+        Some(rest) => check_name(rest)
+            .ok()
+            .filter(|_| name.len() <= MAX_NAME)
+            .map(|n| format!("@{n}"))
+            .ok_or_else(|| StorageError::BadName(name.to_string())),
+        None => check_name(name),
+    }
+}
+
+/// A file named for reading: `[TYPE:][PROJECT/]NAME`, where an empty
+/// project (`"/NAME"`) is the workspace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRef {
+    pub kind: FileKind,
+    /// `None` for the current project.
+    pub project: Option<String>,
+    pub name: String,
+}
+
+impl FileRef {
+    /// `TXT:NAME`, or `TXT:PROJECT/NAME` in another project.
+    pub fn label(&self) -> String {
+        match &self.project {
+            None => format!("{}:{}", self.kind.name(), self.name),
+            Some(p) => format!("{}:{p}/{}", self.kind.name(), self.name),
+        }
+    }
+}
+
+/// Splits `"[TYPE:][PROJECT/]NAME"` for reading; see [`FileRef`].
+pub fn parse_read_name(spec: &str, default: FileKind) -> Result<FileRef> {
+    let (kind, rest) = match spec.split_once(':') {
+        Some((kind, rest)) => (
+            FileKind::from_name(kind).ok_or_else(|| StorageError::BadKind(kind.to_string()))?,
+            rest,
+        ),
+        None => (default, spec),
+    };
+    let (project, name) = match rest.split_once('/') {
+        Some(("", name)) => (Some(String::new()), name),
+        Some((project, name)) => (Some(check_project_name(project)?), name),
+        None => (None, rest),
+    };
+    Ok(FileRef {
+        kind,
+        project,
+        name: check_read_name(name)?,
+    })
+}
+
 /// Checks a project name: the rules of a file name, after an optional `#`
 /// that marks a system project (`#SYS`). SmileBASIC 4 cannot type `#`, but
 /// system projects can be copied into the folder. The `#` counts toward the
@@ -297,6 +352,29 @@ impl Storage {
             .join(format!("{}{name}", kind.prefix())))
     }
 
+    /// The path of a file named for reading, in its project.
+    fn ref_path(&self, file: &FileRef) -> Result<PathBuf> {
+        let project = file.project.as_deref().unwrap_or(&self.project);
+        if !self.project_exists(project) {
+            return Err(StorageError::NotFound(project.to_string()));
+        }
+        Ok(self
+            .dir(project)?
+            .join(format!("{}{}", file.kind.prefix(), file.name)))
+    }
+
+    pub fn exists_ref(&self, file: &FileRef) -> bool {
+        self.ref_path(file).is_ok_and(|p| p.is_file())
+    }
+
+    pub fn read_ref(&self, file: &FileRef) -> Result<Vec<u8>> {
+        let path = self.ref_path(file)?;
+        std::fs::read(&path).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => StorageError::NotFound(file.label()),
+            _ => e.into(),
+        })
+    }
+
     pub fn exists(&self, kind: FileKind, name: &str) -> bool {
         self.path(kind, name).is_ok_and(|p| p.is_file())
     }
@@ -468,6 +546,18 @@ mod tests {
         assert_eq!(suggest_project_name("my game"), "MY_GAME");
         assert_eq!(suggest_project_name("#.ゲーム"), "#___");
         assert_eq!(suggest_project_name(".."), "PROJECT");
+        let file = parse_read_name("dat:game/@backup.dat", FileKind::Txt).unwrap();
+        assert_eq!(
+            (file.kind, file.project.as_deref(), file.name.as_str()),
+            (FileKind::Dat, Some("GAME"), "@BACKUP.DAT")
+        );
+        assert_eq!(file.label(), "DAT:GAME/@BACKUP.DAT");
+        let file = parse_read_name("/MAIN.PRG", FileKind::Txt).unwrap();
+        assert_eq!(file.project.as_deref(), Some(""), "the workspace");
+        assert!(parse_read_name("A/B/C", FileKind::Txt).is_err());
+        assert!(parse_read_name("@", FileKind::Txt).is_err());
+        assert!(parse_read_name("A@", FileKind::Txt).is_err());
+        assert!(parse_file_name("@BACKUP.PRG", FileKind::Txt).is_err());
         assert_eq!(parse_listing("").unwrap(), (None, None));
         assert_eq!(parse_listing("TXT:").unwrap(), (Some(FileKind::Txt), None));
         assert_eq!(

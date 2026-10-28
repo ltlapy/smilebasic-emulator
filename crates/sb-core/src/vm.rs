@@ -11,7 +11,7 @@ use crate::ast::BinaryOp;
 use crate::builtins::{self, Form, Kind};
 use crate::bytecode::*;
 use crate::error::{Error, ErrorKind, Result};
-use crate::host::Host;
+use crate::host::{Exec, Host};
 use crate::lexer::Suffix;
 use crate::ops;
 use crate::value::{Array, Value, format_number, new_str};
@@ -41,6 +41,9 @@ const RETRY: Status = Status::Wait {
 
 struct Frame {
     def: u32,
+    /// The slot the DEF is in, and the one to return to.
+    home: usize,
+    caller: usize,
     locals: Vec<Value>,
     /// Arguments of a `*` DEF.
     args: Vec<Value>,
@@ -52,6 +55,39 @@ struct Frame {
     stack_base: usize,
 }
 
+/// A program slot's program with its variables and READ's place. The
+/// VM keeps the running slot's in its own fields, and the others here.
+struct Unit {
+    program: Rc<Compiled>,
+    globals: Vec<Value>,
+    declared: Vec<bool>,
+    data_pos: usize,
+}
+
+impl Unit {
+    fn new(program: Compiled) -> Unit {
+        let globals = (program.globals.iter())
+            .map(|g| initial_value(g, program.default_int))
+            .collect();
+        Unit {
+            declared: vec![false; program.globals.len()],
+            program: Rc::new(program),
+            globals,
+            data_pos: 0,
+        }
+    }
+}
+
+/// Where EXEC goes back to when the slot it started ends.
+struct ExecReturn {
+    slot: usize,
+    pc: usize,
+    frames: usize,
+    gosubs: usize,
+    stack: usize,
+    callbacks: usize,
+}
+
 pub struct Vm {
     program: Rc<Compiled>,
     pc: usize,
@@ -60,8 +96,16 @@ pub struct Vm {
     /// Which globals exist, for direct mode's declarations.
     declared: Vec<bool>,
     frames: Vec<Frame>,
-    gosubs: Vec<usize>,
+    /// Slot and address to return to.
+    gosubs: Vec<(usize, usize)>,
     data_pos: usize,
+    /// The program slot running, and whether errors name it (not in
+    /// direct mode).
+    slot: usize,
+    in_slot: bool,
+    /// The other slots EXEC has run, by slot.
+    units: Vec<Option<Unit>>,
+    execs: Vec<ExecReturn>,
     ended: bool,
     /// An INPUT or LINPUT has shown its prompt and waits for a line.
     reading_input: bool,
@@ -134,6 +178,22 @@ pub(crate) fn label_name(value: &Value) -> Result<String> {
     Ok(s.strip_prefix('@').unwrap_or(s).to_string())
 }
 
+/// `"1:@NAME"` or `"1:NAME"` to slot 1 and `"NAME"`; without a slot
+/// prefix, `None` and the name.
+fn slot_and_name(value: &Value) -> Result<(Option<usize>, String)> {
+    let s = String::from_utf16_lossy(&value.clone().into_str()?.borrow()).to_ascii_uppercase();
+    let (slot, rest) = match s.split_once(':') {
+        Some((slot, rest)) => {
+            let slot = slot.trim().parse().map_err(|_| {
+                Error::with_detail(ErrorKind::IllegalFunctionCall, format!("slot {slot:?}"))
+            })?;
+            (Some(slot), rest)
+        }
+        None => (None, s.as_str()),
+    };
+    Ok((slot, rest.strip_prefix('@').unwrap_or(rest).to_string()))
+}
+
 fn name_of(value: &Value) -> Result<String> {
     let s = String::from_utf16_lossy(&value.clone().into_str()?.borrow()).to_ascii_uppercase();
     Ok(s.split_once(':')
@@ -171,12 +231,28 @@ impl Vm {
             frames: Vec::new(),
             gosubs: Vec::new(),
             data_pos: 0,
+            slot: 0,
+            in_slot: false,
+            units: Vec::new(),
+            execs: Vec::new(),
             ended: false,
             reading_input: false,
             callbacks: Vec::new(),
             call_idx: 0,
             executed: 0,
         }
+    }
+
+    /// Runs as the program of `slot`, which errors name.
+    pub fn in_slot(mut self, slot: usize) -> Self {
+        self.slot = slot;
+        self.in_slot = true;
+        self
+    }
+
+    /// The program slot running, or `None` in direct mode.
+    pub fn slot(&self) -> Option<usize> {
+        self.in_slot.then_some(self.slot)
     }
 
     /// The program being run.
@@ -244,7 +320,8 @@ impl Vm {
                     self.ended = true;
                     let line = self.program.lines.get(pc).copied().unwrap_or(0);
                     let col = self.program.cols.get(pc).copied().unwrap_or(0);
-                    return Err(e.at_pos(line, col));
+                    let slot = self.slot().map(|s| s as u32);
+                    return Err(e.at_pos(line, col).in_slot(slot));
                 }
             }
         }
@@ -292,41 +369,214 @@ impl Vm {
         self.pop_n(n.into()).iter().map(Value::to_int).collect()
     }
 
+    /// The DEF running in this slot, if any.
+    fn own_frame(&self) -> Option<&Frame> {
+        self.frames.last().filter(|f| f.home == self.slot)
+    }
+
     fn labels(&self) -> &std::collections::HashMap<String, Addr> {
-        match self.frames.last() {
+        match self.own_frame() {
             Some(f) => &self.program.defs[f.def as usize].labels,
             None => &self.program.labels,
         }
     }
 
-    fn find_label(&self, value: &Value) -> Result<usize> {
-        let name = label_name(value)?;
-        self.labels()
-            .get(&name)
-            .map(|&a| a as usize)
-            .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))
+    /// A label's slot and address: in this slot (or the DEF running), or
+    /// at the top level of another slot that EXEC has run, as `"1:@NAME"`.
+    fn find_label(&self, value: &Value) -> Result<(usize, usize)> {
+        let (slot, name) = slot_and_name(value)?;
+        let found = match slot {
+            Some(slot) if slot != self.slot => (self.program_in(slot))
+                .and_then(|p| p.labels.get(&name))
+                .map(|&a| (slot, a as usize)),
+            _ => self.labels().get(&name).map(|&a| (self.slot, a as usize)),
+        };
+        found.ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))
+    }
+
+    /// The program of a slot that runs or that EXEC has run.
+    fn program_in(&self, slot: usize) -> Option<&Rc<Compiled>> {
+        match slot == self.slot {
+            true => Some(&self.program),
+            false => self.units.get(slot)?.as_ref().map(|u| &u.program),
+        }
+    }
+
+    /// Goes on in another slot that EXEC has run, keeping this one's
+    /// program and variables for later.
+    fn switch_to(&mut self, slot: usize, host: &mut dyn Host) {
+        if slot == self.slot {
+            return;
+        }
+        let unit = self.units[slot].take().expect("checked by program_in");
+        let old = self.take_unit();
+        self.park(self.slot, old);
+        self.put_unit(unit, slot, host);
+    }
+
+    fn take_unit(&mut self) -> Unit {
+        Unit {
+            program: Rc::clone(&self.program),
+            globals: std::mem::take(&mut self.globals),
+            declared: std::mem::take(&mut self.declared),
+            data_pos: self.data_pos,
+        }
+    }
+
+    fn park(&mut self, slot: usize, unit: Unit) {
+        if self.units.len() <= slot {
+            self.units.resize_with(slot + 1, || None);
+        }
+        self.units[slot] = Some(unit);
+    }
+
+    fn put_unit(&mut self, unit: Unit, slot: usize, host: &mut dyn Host) {
+        self.program = unit.program;
+        self.globals = unit.globals;
+        self.declared = unit.declared;
+        self.data_pos = unit.data_pos;
+        self.slot = slot;
+        host.entered_slot(slot, &self.program);
+    }
+
+    /// A COMMON DEF of another slot that EXEC has run, the lowest first.
+    fn find_common(&self, name: &str) -> Option<(usize, u32)> {
+        (self.units.iter().enumerate()).find_map(|(slot, unit)| {
+            let program = &unit.as_ref()?.program;
+            let &def = program.def_names.get(name)?;
+            program.defs[def as usize].common.then_some((slot, def))
+        })
+    }
+
+    /// Calls a DEF of another slot (or this one), coming back here.
+    fn call_in(
+        &mut self,
+        slot: usize,
+        def: u32,
+        args: Vec<Value>,
+        want: Want,
+        host: &mut dyn Host,
+    ) -> Result<()> {
+        let caller = self.slot;
+        self.switch_to(slot, host);
+        let entered = self.enter_def(def, args, want, caller);
+        if entered.is_err() {
+            self.switch_to(caller, host);
+        }
+        entered
+    }
+
+    /// END, or the end of the code: back to the EXEC that started this
+    /// slot, if any.
+    fn end(&mut self, host: &mut dyn Host) -> Option<Status> {
+        let Some(back) = self.execs.pop() else {
+            return Some(Status::Ended);
+        };
+        self.frames.truncate(back.frames);
+        self.gosubs.truncate(back.gosubs);
+        self.stack.truncate(back.stack);
+        self.callbacks.truncate(back.callbacks);
+        self.switch_to(back.slot, host);
+        self.pc = back.pc;
+        None
+    }
+
+    /// EXEC: runs a slot from its start, after loading a file into it if
+    /// given. EXEC of another slot comes back when it ends; loading into
+    /// the running slot replaces its program.
+    fn exec(&mut self, args: Vec<Value>, host: &mut dyn Host) -> Result<Option<Status>> {
+        let (file, slot) = match (&args[0], args.get(1)) {
+            (Value::Str(s), slot) => {
+                let slot = match slot {
+                    Some(v) => v.to_int()?,
+                    None => self.slot as i32,
+                };
+                (Some(s.borrow().clone()), slot)
+            }
+            (v, None) => (None, v.to_int()?),
+            (_, Some(_)) => return Err(ErrorKind::TypeMismatch.into()),
+        };
+        let running =
+            |s: i32| s == self.slot as i32 || self.execs.iter().any(|r| r.slot as i32 == s);
+        // EXEC of a slot must not start one that is running, and loading
+        // may replace only the slot running now.
+        let own = file.is_some() && slot == self.slot as i32;
+        if running(slot) && !own {
+            return Err(Error::with_detail(
+                ErrorKind::IllegalFunctionCall,
+                format!("slot {slot} is running"),
+            ));
+        }
+        let source = match host.exec_source(file.as_deref(), slot)? {
+            Exec::Run(source) => source,
+            Exec::Wait => {
+                self.stack.extend(args);
+                return Ok(Some(RETRY));
+            }
+            Exec::Skip => {
+                self.pc += 1;
+                return Ok(None);
+            }
+        };
+        let slot = slot as usize;
+        let program = crate::compile(&source, &*host).map_err(|e| e.in_slot(Some(slot as u32)))?;
+        let unit = Unit::new(program);
+        if own {
+            let base = self.execs.last();
+            let frames = base.map_or(0, |b| b.frames);
+            let gosubs = base.map_or(0, |b| b.gosubs);
+            let stack = base.map_or(0, |b| b.stack);
+            let callbacks = base.map_or(0, |b| b.callbacks);
+            self.frames.truncate(frames);
+            self.gosubs.truncate(gosubs);
+            self.stack.truncate(stack);
+            self.callbacks.truncate(callbacks);
+        } else {
+            self.execs.push(ExecReturn {
+                slot: self.slot,
+                pc: self.pc + 1,
+                frames: self.frames.len(),
+                gosubs: self.gosubs.len(),
+                stack: self.stack.len(),
+                callbacks: self.callbacks.len(),
+            });
+            let old = self.take_unit();
+            self.park(self.slot, old);
+            if let Some(stale) = self.units.get_mut(slot) {
+                *stale = None;
+            }
+        }
+        self.put_unit(unit, slot, host);
+        self.pc = 0;
+        Ok(None)
     }
 
     /// Calls one callback of CALL SPRITE or CALL TEXT: GOSUB to a
     /// `"@label"`, or a DEF command without arguments.
-    fn run_callback(&mut self, program: &Compiled, target: &Value) -> Result<()> {
+    fn run_callback(
+        &mut self,
+        program: &Compiled,
+        target: &Value,
+        host: &mut dyn Host,
+    ) -> Result<()> {
         if target.clone().into_str()?.borrow().first() == Some(&u16::from(b'@')) {
-            let label = self.find_label(target)?;
-            return self.gosub(label);
+            let (slot, label) = self.find_label(target)?;
+            return self.gosub(slot, label, host);
         }
         let name = name_of(target)?;
         let def = *program
             .def_names
             .get(&name)
             .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedFunction, name))?;
-        self.enter_def(def, Vec::new(), Want::Outs(0))
+        self.enter_def(def, Vec::new(), Want::Outs(0), self.slot)
     }
 
-    fn gosub(&mut self, target: usize) -> Result<()> {
+    fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
         if self.gosubs.len() >= MAX_GOSUB_DEPTH {
             return Err(ErrorKind::StackOverflow.into());
         }
-        self.gosubs.push(self.pc + 1);
+        self.gosubs.push((self.slot, self.pc + 1));
+        self.switch_to(slot, host);
         self.pc = target;
         Ok(())
     }
@@ -335,7 +585,7 @@ impl Vm {
     fn step(&mut self, host: &mut dyn Host) -> Result<Option<Status>> {
         let program = Rc::clone(&self.program);
         let Some(op) = program.code.get(self.pc) else {
-            return Ok(Some(Status::Ended));
+            return Ok(self.end(host));
         };
         let mut next = self.pc + 1;
         match op {
@@ -455,17 +705,19 @@ impl Vm {
                 }
             }
             Op::Gosub(a) => {
-                self.gosub(*a as usize)?;
+                self.gosub(self.slot, *a as usize, host)?;
                 return Ok(None);
             }
             Op::GotoDyn => {
                 let label = self.pop();
-                next = self.find_label(&label)?;
+                let (slot, target) = self.find_label(&label)?;
+                self.switch_to(slot, host);
+                next = target;
             }
             Op::GosubDyn => {
                 let label = self.pop();
-                let target = self.find_label(&label)?;
-                self.gosub(target)?;
+                let (slot, target) = self.find_label(&label)?;
+                self.gosub(slot, target, host)?;
                 return Ok(None);
             }
             Op::On { count, gosub } => {
@@ -481,19 +733,28 @@ impl Vm {
                         if self.gosubs.len() >= MAX_GOSUB_DEPTH {
                             return Err(ErrorKind::StackOverflow.into());
                         }
-                        self.gosubs.push(after);
+                        self.gosubs.push((self.slot, after));
                     }
                     next = target as usize;
                 }
             }
-            Op::Return => next = self.return_op()?,
+            Op::Return => next = self.return_op(host)?,
             Op::ReturnValue => {
                 let value = self.pop();
-                next = self.leave_def(vec![value])?;
+                next = self.leave_def(vec![value], host)?;
             }
             Op::CallDef { def, argc, want } => {
                 let args = self.pop_n((*argc).into());
-                self.enter_def(*def, args, *want)?;
+                self.enter_def(*def, args, *want, self.slot)?;
+                return Ok(None);
+            }
+            Op::CallCommon { name, argc, want } => {
+                let name = String::from_utf16_lossy(&program.strings[*name as usize]);
+                let (slot, def) = self
+                    .find_common(&name)
+                    .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedFunction, name))?;
+                let args = self.pop_n((*argc).into());
+                self.call_in(slot, def, args, *want, host)?;
                 return Ok(None);
             }
             Op::CallBuiltin { id, argc, want } => {
@@ -510,9 +771,20 @@ impl Vm {
             Op::CallDyn { argc, want } => {
                 let args = self.pop_n((*argc).into());
                 let name_value = self.pop();
-                let name = name_of(&name_value)?;
+                let (slot, name) = slot_and_name(&name_value)?;
+                if let Some(slot) = slot.filter(|&s| s != self.slot) {
+                    // CALL "1:NAME": a DEF of a slot that EXEC has run.
+                    let def = (self.program_in(slot))
+                        .and_then(|p| p.def_names.get(&name).copied())
+                        .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedFunction, name))?;
+                    self.call_in(slot, def, args, *want, host)?;
+                    return Ok(None);
+                }
                 if let Some(&def) = program.def_names.get(&name) {
-                    self.enter_def(def, args, *want)?;
+                    self.enter_def(def, args, *want, self.slot)?;
+                    return Ok(None);
+                } else if let Some((slot, def)) = self.find_common(&name) {
+                    self.call_in(slot, def, args, *want, host)?;
                     return Ok(None);
                 } else if let Some(id) = builtins::lookup(&name, form(*want)) {
                     self.call_builtin(&program, id, &args, *want)?;
@@ -553,7 +825,7 @@ impl Vm {
                     Some((idx, target)) => {
                         *at = idx;
                         self.call_idx = idx;
-                        self.run_callback(&program, &Value::Str(new_str(target)))?;
+                        self.run_callback(&program, &Value::Str(new_str(target)), host)?;
                         return Ok(None);
                     }
                 }
@@ -685,7 +957,11 @@ impl Vm {
                     Literal::Str(s) => Value::Str(new_str(s.clone())),
                 });
             }
-            Op::End => return Ok(Some(Status::Ended)),
+            Op::End => return Ok(self.end(host)),
+            Op::Exec(argc) => {
+                let args = self.pop_n((*argc).into());
+                return self.exec(args, host);
+            }
         }
         self.pc = next;
         Ok(None)
@@ -700,7 +976,7 @@ impl Vm {
     }
 
     fn dynamic_slot(&self, name: &str) -> Result<Slot> {
-        if let Some(f) = self.frames.last() {
+        if let Some(f) = self.own_frame() {
             let locals = &self.program.defs[f.def as usize].locals;
             if let Some(i) = locals.iter().position(|v| v.full_name() == name) {
                 return Ok(Slot::Local(i as u32));
@@ -765,6 +1041,11 @@ impl Vm {
         if let Some(pos) = host.data_pos() {
             self.data_pos = pos;
         }
+        for slot in host.take_reloaded() {
+            if let Some(unit) = self.units.get_mut(slot) {
+                *unit = None;
+            }
+        }
         let results = results?;
         if host.retry() {
             return Ok(false);
@@ -773,7 +1054,8 @@ impl Vm {
         Ok(true)
     }
 
-    fn enter_def(&mut self, def: u32, args: Vec<Value>, want: Want) -> Result<()> {
+    /// Calls DEF `def` of the running slot, returning to slot `caller`.
+    fn enter_def(&mut self, def: u32, args: Vec<Value>, want: Want, caller: usize) -> Result<()> {
         let info = &self.program.defs[def as usize];
         let call_ok = match want {
             Want::Value => info.is_function,
@@ -813,6 +1095,8 @@ impl Vm {
         };
         self.frames.push(Frame {
             def,
+            home: self.slot,
+            caller,
             locals,
             args: variadic_args,
             outs,
@@ -826,10 +1110,12 @@ impl Vm {
     }
 
     /// RETURN: from GOSUB if one is pending in this scope, else from the DEF.
-    fn return_op(&mut self) -> Result<usize> {
+    fn return_op(&mut self, host: &mut dyn Host) -> Result<usize> {
         let base = self.frames.last().map_or(0, |f| f.gosub_base);
         if self.gosubs.len() > base {
-            return Ok(self.gosubs.pop().expect("length checked"));
+            let (slot, pc) = self.gosubs.pop().expect("length checked");
+            self.switch_to(slot, host);
+            return Ok(pc);
         }
         let Some(frame) = self.frames.last() else {
             return Err(ErrorKind::ReturnWithoutGosub.into());
@@ -844,14 +1130,15 @@ impl Vm {
             }
             (false, None) => frame.outs.clone(),
         };
-        self.leave_def(results)
+        self.leave_def(results, host)
     }
 
-    fn leave_def(&mut self, results: Vec<Value>) -> Result<usize> {
+    fn leave_def(&mut self, results: Vec<Value>, host: &mut dyn Host) -> Result<usize> {
         let frame = self.frames.pop().ok_or(ErrorKind::IllegalStatement)?;
         self.gosubs.truncate(frame.gosub_base);
         self.stack.truncate(frame.stack_base);
         self.push_results(results, frame.want)?;
+        self.switch_to(frame.caller, host);
         Ok(frame.return_pc)
     }
 }

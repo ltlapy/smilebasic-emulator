@@ -14,7 +14,9 @@ use std::rc::Rc;
 use crate::confirm::{Ask, Confirm, FileAction, FileConfirm, project_label, switch_lines};
 use crate::runtime::{Command, Runtime, SLOTS, illegal, slot_arg};
 use crate::sbfile;
-use crate::storage::{self, FileKind, StorageError, parse_file_name, parse_listing};
+use crate::storage::{
+    self, FileKind, FileRef, StorageError, parse_file_name, parse_listing, parse_read_name,
+};
 use crate::text::CONSOLE;
 
 pub(crate) fn str_arg(v: &Value) -> Result<String> {
@@ -108,30 +110,22 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Chkfile, Want::Value, 1) => {
-                let found = parse_file_name(&str_arg(&args[0])?, FileKind::Txt)
-                    .is_ok_and(|(kind, name)| self.storage.exists(kind, &name));
+                let found = parse_read_name(&str_arg(&args[0])?, FileKind::Txt)
+                    .is_ok_and(|file| self.storage.exists_ref(&file));
                 Ok(vec![Value::Int(i32::from(found))])
             }
             (Command::Load, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
-                // A file that is not there fails without asking first.
-                if let Some(file) = self.existing(&spec) {
-                    let action = FileAction {
-                        title: format!("Slot {slot}: Load file"),
-                        summary: format!("Load this file into slot {slot}."),
-                        details: self.details(&file, None),
-                        accept: "Load",
-                        notice: format!("Loading {file} into slot {slot}"),
-                        in_programs: false,
-                    };
-                    let ask = self.confirm_file(action, &[slot]);
-                    if self.held(ask) {
-                        return Ok(vec![]);
-                    }
+                // UNVERIFIED: the error; the manual says only that the
+                // running slot cannot LOAD into itself.
+                if self.running_slot == Some(slot) {
+                    return Err(Error::with_detail(
+                        ErrorKind::CantEditRunningProgram,
+                        format!("slot {slot}"),
+                    ));
                 }
-                let outcome = self.load(&spec, slot);
-                self.finish("LOAD", outcome);
+                self.load_asking("LOAD", &spec, slot);
                 Ok(vec![])
             }
             (Command::Save, Want::Outs(0), 1 | 2) => {
@@ -163,7 +157,7 @@ impl Runtime {
             }
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
-                if let Some(file) = self.existing(&spec) {
+                if let Some(file) = self.existing_read(&spec, false) {
                     let action = FileAction {
                         title: "Delete file".to_string(),
                         summary: "Delete this file.".to_string(),
@@ -177,8 +171,14 @@ impl Runtime {
                         return Ok(vec![]);
                     }
                 }
-                let outcome = parse_file_name(&spec, FileKind::Txt)
-                    .and_then(|(kind, name)| self.storage.delete(kind, &name));
+                // Backups (`@BACKUP.PRG`) can be deleted, but only in the
+                // current project.
+                let outcome =
+                    self.read_name(&spec, FileKind::Txt, false)
+                        .and_then(|file| match file.project {
+                            None => self.storage.delete(file.kind, &file.name),
+                            Some(_) => Err(StorageError::BadName(spec.clone())),
+                        });
                 self.finish("DELETE", outcome);
                 Ok(vec![])
             }
@@ -271,6 +271,56 @@ impl Runtime {
         vec![]
     }
 
+    /// LOAD, and EXEC with a file: asks first as set (or, in a program,
+    /// only over unsaved changes). `None` while the question waits;
+    /// otherwise whether it loaded, which RESULT() tells too.
+    pub(crate) fn load_asking(&mut self, what: &str, spec: &str, slot: usize) -> Option<bool> {
+        // A file that is not there fails without asking first.
+        let exec = what == "EXEC";
+        if let Some(file) = self.existing_read(spec, exec) {
+            let action = FileAction {
+                title: format!("Slot {slot}: Load file"),
+                summary: format!("Load this file into slot {slot}."),
+                details: self.details(&file, None),
+                accept: "Load",
+                notice: format!("Loading {file} into slot {slot}"),
+                in_programs: false,
+            };
+            match self.confirm_file(action, &[slot]) {
+                Ask::Go => {}
+                Ask::Wait => return None,
+                Ask::Refused => {
+                    self.result = -1;
+                    return Some(false);
+                }
+            }
+        }
+        let outcome = self.load(spec, slot, exec);
+        Some(self.finish(what, outcome).is_some())
+    }
+
+    /// A file named for reading. Programs read other projects' files only
+    /// with EXEC (`any_project`), as the manual says; direct mode reads
+    /// them all.
+    pub(crate) fn read_name(
+        &self,
+        spec: &str,
+        default: FileKind,
+        any_project: bool,
+    ) -> storage::Result<FileRef> {
+        let file = parse_read_name(spec, default)?;
+        if file.project.is_some() && !(any_project || self.direct) {
+            return Err(StorageError::BadName(spec.to_string()));
+        }
+        Ok(file)
+    }
+
+    /// A file named for reading, as [`FileRef::label`], if it exists.
+    pub(crate) fn existing_read(&self, spec: &str, any_project: bool) -> Option<String> {
+        let file = self.read_name(spec, FileKind::Txt, any_project).ok()?;
+        self.storage.exists_ref(&file).then(|| file.label())
+    }
+
     /// The file a name refers to, as `TYPE:NAME`, if it exists.
     pub(crate) fn existing(&self, spec: &str) -> Option<String> {
         let (kind, name) = parse_file_name(spec, FileKind::Txt).ok()?;
@@ -332,20 +382,32 @@ impl Runtime {
         }
     }
 
-    fn load(&mut self, spec: &str, slot: usize) -> storage::Result<()> {
-        let (kind, name) = parse_file_name(spec, FileKind::Txt)?;
-        if kind != FileKind::Txt {
-            return Err(StorageError::BadKind(kind.name().to_string()));
+    fn load(&mut self, spec: &str, slot: usize, any_project: bool) -> storage::Result<()> {
+        let file = self.read_name(spec, FileKind::Txt, any_project)?;
+        if file.kind != FileKind::Txt {
+            return Err(StorageError::BadKind(file.kind.name().to_string()));
         }
-        self.load_file(&name, slot)
+        self.load_ref(&file, slot)
     }
 
-    /// Loads the TXT file `name`, as listed, into a slot.
+    /// Loads the current project's TXT file `name`, as listed, into a slot.
     pub(crate) fn load_file(&mut self, name: &str, slot: usize) -> storage::Result<()> {
-        self.slots[slot] = program_text(&self.storage.read(FileKind::Txt, name)?)?;
+        let file = FileRef {
+            kind: FileKind::Txt,
+            project: None,
+            name: name.to_string(),
+        };
+        self.load_ref(&file, slot)
+    }
+
+    /// Loading a program frees what the slot's old one defined, if EXEC
+    /// ran it (the manual says so).
+    fn load_ref(&mut self, file: &FileRef, slot: usize) -> storage::Result<()> {
+        self.slots[slot] = program_text(&self.storage.read_ref(file)?)?;
         self.drop_prg_edit(slot);
-        self.slot_names[slot] = name.to_string();
+        self.slot_names[slot] = file.name.clone();
         self.slot_modified[slot] = false;
+        self.reloaded.push(slot);
         Ok(())
     }
 

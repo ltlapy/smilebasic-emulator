@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use sb_core::bytecode::{Callbacks, Compiled, Literal, Want};
 use sb_core::error::{Error, ErrorKind, Result};
-use sb_core::host::Host;
+use sb_core::host::{Exec, Host};
 use sb_core::value::{Value, new_str};
 
 use crate::compose::{self, Compose, LAYERS, Layer};
@@ -475,6 +475,8 @@ pub struct Runtime {
     /// The DIALOG the program waits on, and the frontend's answer.
     pub(crate) dialog: Option<crate::dialog::Waiting>,
     pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
+    /// Slots loaded since the VM last asked, whose EXEC'd programs it drops.
+    pub(crate) reloaded: Vec<usize>,
     /// Lines of a FILES listing still to show, after a key is pressed.
     pub(crate) listing_left: Option<VecDeque<String>>,
     /// The project metadata that METAEDIT edits.
@@ -652,6 +654,7 @@ impl Runtime {
             answer: None,
             retry: false,
             listing_left: None,
+            reloaded: Vec::new(),
             notices: Vec::new(),
             program: None,
             data_pos: Cell::new(0),
@@ -1307,6 +1310,41 @@ impl Host for Runtime {
 
     fn retry(&mut self) -> bool {
         std::mem::take(&mut self.retry)
+    }
+
+    fn exec_source(&mut self, file: Option<&[u16]>, slot: i32) -> Result<Exec> {
+        // UNVERIFIED: the error for EXEC in direct mode, which the manual
+        // says cannot be used there.
+        if self.direct {
+            return Err(Error::with_detail(
+                ErrorKind::SyntaxError,
+                "not in direct mode",
+            ));
+        }
+        let slot = slot_arg(Some(&Value::Int(slot)))?;
+        if let Some(file) = file {
+            // UNVERIFIED: that a file that cannot be loaded runs nothing,
+            // like a failed LOAD, rather than being an error.
+            match self.load_asking("EXEC", &String::from_utf16_lossy(file), slot) {
+                None => {
+                    self.retry = false;
+                    return Ok(Exec::Wait);
+                }
+                Some(false) => return Ok(Exec::Skip),
+                // The VM replaces the slot's program itself.
+                Some(true) => self.reloaded.retain(|&s| s != slot),
+            }
+        }
+        Ok(Exec::Run(self.slots[slot].clone()))
+    }
+
+    fn take_reloaded(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.reloaded)
+    }
+
+    fn entered_slot(&mut self, slot: usize, program: &Rc<Compiled>) {
+        self.program = Some(Rc::clone(program));
+        self.running_slot = Some(slot);
     }
 
     // Checked on hardware: CALLIDX() is 4096 after CALL SPRITE and 5

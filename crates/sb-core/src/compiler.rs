@@ -147,6 +147,7 @@ impl Compiler<'_> {
                         name,
                         entry: 0,
                         is_function: def.is_function,
+                        common: def.common,
                         params: match &def.params {
                             Params::Fixed(p) => Some(p.len() as u8),
                             Params::Variadic => None,
@@ -898,6 +899,18 @@ impl Compiler<'_> {
                 });
                 return Ok(());
             }
+            "EXEC" => {
+                no_outs(self)?;
+                let (1 | 2) = args.len() else {
+                    return Err(err(ErrorKind::WrongNumberOfArguments, full));
+                };
+                if args.iter().any(Option::is_none) {
+                    return Err(self.illegal_call(&full));
+                }
+                self.args(args)?;
+                self.emit(Op::Exec(args.len() as u8));
+                return Ok(());
+            }
             "DEFOUT" => {
                 no_outs(self)?;
                 self.require_def()?;
@@ -926,7 +939,7 @@ impl Compiler<'_> {
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
         } else {
-            return Err(self.unknown_call(&full));
+            self.call_common(&full, argc, want)?;
         }
         self.store_outs(outs)
     }
@@ -1189,8 +1202,23 @@ impl Compiler<'_> {
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
         } else {
-            return Err(self.unknown_call(&full));
+            self.call_common(&full, argc, want)?;
         }
+        Ok(())
+    }
+
+    /// A call to a name defined nowhere in this program: a COMMON DEF of
+    /// another slot, found when it runs (it may be EXEC'd only then).
+    /// A builtin used in its other form is still an illegal call.
+    // UNVERIFIED: that SmileBASIC 4, too, reports an undefined name only
+    // when the call is reached.
+    fn call_common(&mut self, name: &str, argc: u8, want: Want) -> Result<()> {
+        let err = self.unknown_call(name);
+        if err.kind != ErrorKind::UndefinedFunction {
+            return Err(err);
+        }
+        let name = self.string_const(name.encode_utf16().collect());
+        self.emit(Op::CallCommon { name, argc, want });
         Ok(())
     }
 

@@ -42,6 +42,14 @@ fn typed_name(spec: &str) -> storage::Result<(FileKind, String)> {
     parse_file_name(spec, FileKind::Txt)
 }
 
+/// The kind of a file named for reading, whose type cannot be left out.
+fn read_kind(spec: &str) -> Option<FileKind> {
+    spec.contains(':')
+        .then(|| storage::parse_read_name(spec, FileKind::Txt).ok())
+        .flatten()
+        .map(|f| f.kind)
+}
+
 fn bad_file(e: impl ToString) -> StorageError {
     StorageError::Io(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
@@ -57,8 +65,8 @@ fn array_value(array: Array) -> Value {
 /// otherwise the omitted value (TYPEOF 0), although the manual says an
 /// empty array (checked on hardware).
 fn failed_value(spec: &str) -> Value {
-    match typed_name(spec) {
-        Ok((FileKind::Txt, _)) => Value::str(""),
+    match read_kind(spec) {
+        Some(FileKind::Txt) => Value::str(""),
         _ => Value::Default,
     }
 }
@@ -196,7 +204,7 @@ impl Runtime {
                 };
                 // Only DAT and GRP files load into an array (checked on
                 // hardware for TXT).
-                if let Ok((kind @ (FileKind::Txt | FileKind::Jpg), _)) = typed_name(&spec) {
+                if let Some(kind @ (FileKind::Txt | FileKind::Jpg)) = read_kind(&spec) {
                     let detail = format!("{} into an array", kind.name());
                     return Err(Error::with_detail(
                         ErrorKind::WrongNumberOfArguments,
@@ -315,9 +323,12 @@ impl Runtime {
 
     /// LOADV's value: a string for TXT files, an array for DAT and GRP.
     fn load_value(&self, spec: &str) -> storage::Result<Value> {
-        let (kind, name) = typed_name(spec)?;
-        let bytes = self.storage.read(kind, &name)?;
-        match kind {
+        if !spec.contains(':') {
+            return Err(StorageError::BadKind(String::new()));
+        }
+        let file = self.read_name(spec, FileKind::Txt, false)?;
+        let bytes = self.storage.read_ref(&file)?;
+        match file.kind {
             FileKind::Txt => Ok(Value::str(&program_text(&bytes)?)),
             FileKind::Dat => {
                 let (data, _) = sbfile::read_data(&bytes).map_err(bad_file)?;
@@ -326,7 +337,7 @@ impl Runtime {
             FileKind::Grp => Ok(array_value(image_array(
                 image::decode(&bytes).map_err(bad_file)?,
             ))),
-            FileKind::Jpg => Err(StorageError::BadKind(kind.name().to_string())),
+            FileKind::Jpg => Err(StorageError::BadKind(file.kind.name().to_string())),
         }
     }
 
@@ -334,11 +345,12 @@ impl Runtime {
     /// Illegal file format error, not a failure (checked on hardware for a
     /// string array).
     fn load_image(&self, spec: &str) -> Result<storage::Result<Image>> {
-        let (kind, name) = match parse_file_name(spec, FileKind::Grp) {
+        let file = match self.read_name(spec, FileKind::Grp, false) {
             Ok(file) => file,
             Err(e) => return Ok(Err(e)),
         };
-        let bytes = match self.storage.read(kind, &name) {
+        let kind = file.kind;
+        let bytes = match self.storage.read_ref(&file) {
             Ok(bytes) => bytes,
             Err(e) => return Ok(Err(e)),
         };
@@ -359,13 +371,13 @@ impl Runtime {
     /// command must stop here for the answer.
     // UNVERIFIED: that LOADV and LOADG in a program do not ask, like LOAD.
     fn ask_load(&mut self, spec: &str, default: FileKind) -> bool {
-        let Ok((kind, name)) = parse_file_name(spec, default) else {
+        let Ok(file) = self.read_name(spec, default, false) else {
             return false;
         };
-        if !self.storage.exists(kind, &name) {
+        if !self.storage.exists_ref(&file) {
             return false;
         }
-        let file = format!("{}:{name}", kind.name());
+        let file = file.label();
         let action = FileAction {
             title: "Load file".to_string(),
             summary: "Load this file.".to_string(),

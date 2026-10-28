@@ -182,19 +182,23 @@ fn failures_set_result_and_explain() {
     enter(&mut m, "?result()");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
     // In a program, failures are silent and PROJECT is direct-mode only.
-    m.set_slot(0, "LOAD \"NOPE\":?RESULT()\nPROJECT \"X\"".to_string());
+    m.set_slot(0, "LOAD \"NOPE\",1:?RESULT()\nPROJECT \"X\"".to_string());
     enter(&mut m, "run");
     let r = tail(&m, 3);
     assert_eq!(r[0], "0");
-    assert!(r[1].starts_with("Syntax error in 2"), "{r:?}");
+    assert!(r[1].starts_with("Syntax error in 0:2"), "{r:?}");
     enter(&mut m, "new");
     assert_eq!(m.slot(0), "");
     // Unless file access is silent, a program's failures show as notices.
     m.rt.take_notices();
     m.rt.settings.file_confirm = FileConfirm::Notify;
-    m.set_slot(0, "LOAD \"NOPE\"".to_string());
+    m.set_slot(0, "LOAD \"NOPE\",1".to_string());
     enter(&mut m, "run");
     assert_eq!(m.rt.take_notices(), ["LOAD failed: TXT:NOPE not found"]);
+    // A program cannot LOAD over itself.
+    m.set_slot(0, "LOAD \"NOPE\"".to_string());
+    enter(&mut m, "run");
+    assert!(tail(&m, 2)[0].starts_with("Can't edit running program in 0:1"));
 }
 
 #[test]
@@ -444,11 +448,12 @@ fn values_save_and_load() {
     assert!(tail(&m, 2)[0].starts_with("Type mismatch"));
     m.set_slot(0, "DIM Z$[0]:LOADV \"TXT:MEMO\",Z$".to_string());
     enter(&mut m, "run");
-    assert!(tail(&m, 2)[0].starts_with("Wrong number of arguments"));
+    // The message wraps onto a second row.
+    assert!(tail(&m, 3)[0].starts_with("Wrong number of arguments in 0:1"));
     m.set_slot(0, "LOADG \"DAT:S\",0".to_string());
     enter(&mut m, "run");
     assert!(
-        tail(&m, 2)[0].starts_with("Illegal file format"),
+        tail(&m, 3)[0].starts_with("Illegal file format"),
         "{:?}",
         tail(&m, 3)
     );
@@ -545,4 +550,63 @@ fn metadata_from_smilebasic() {
     m.set_slot(0, program.to_string());
     enter(&mut m, "run");
     assert_eq!(words(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
+}
+
+#[test]
+fn other_projects_and_backups() {
+    use sb_runtime::storage::FileKind;
+    let dir = TempDir::new("paths");
+    let mut m = machine(&dir);
+    let s = &mut m.rt.storage;
+    s.create_project("GAME").unwrap();
+    s.set_project("GAME").unwrap();
+    s.write(FileKind::Txt, "SUB", b"?\"SUB\"", None).unwrap();
+    s.write(FileKind::Txt, "NOTE", b"HI", None).unwrap();
+    s.set_project("").unwrap();
+    s.write(FileKind::Txt, "W", b"?\"W\"", None).unwrap();
+
+    // Direct mode reads any project's files; "/NAME" is the workspace.
+    enter(&mut m, "load \"game/sub\",1:?loadv(\"txt:game/note\")");
+    assert_eq!(
+        (m.slot(1), tail(&m, 2)),
+        ("?\"SUB\"", vec!["HI".to_string(), "OK".to_string()])
+    );
+    enter(&mut m, "project \"game\":load \"/w\",2:?result()");
+    assert_eq!(m.slot(2), "?\"W\"");
+    enter(&mut m, "project \"\"");
+
+    // Programs read them only with EXEC.
+    m.set_slot(
+        0,
+        "LOAD \"GAME/SUB\",1:?RESULT()\nEXEC \"GAME/SUB\",3".to_string(),
+    );
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 3), ["0", "SUB", "OK"]);
+
+    // Backups load and can be deleted, but no file is saved as one.
+    enter(&mut m, "save \"w\",3:load \"@backup.prg\",4:?result()");
+    assert_eq!((m.slot(4), tail(&m, 2)[0].as_str()), ("?\"W\"", "1"));
+    enter(&mut m, "save \"@x\",3:?result()");
+    assert_eq!(tail(&m, 3)[1], "0");
+    enter(
+        &mut m,
+        "delete \"@backup.prg\":?result();chkfile(\"@backup.prg\")",
+    );
+    assert_eq!(tail(&m, 2)[0], "10");
+}
+
+#[test]
+fn loading_a_slot_forgets_its_program() {
+    use sb_runtime::storage::FileKind;
+    let dir = TempDir::new("reload");
+    let mut m = machine(&dir);
+    (m.rt.storage)
+        .write(FileKind::Txt, "OTHER", b"?\"O\"", None)
+        .unwrap();
+    m.set_slot(1, "END\nCOMMON DEF F()\nRETURN 7\nEND".to_string());
+    m.set_slot(0, "EXEC 1:?F()\nLOAD \"OTHER\",1:?F()".to_string());
+    enter(&mut m, "run");
+    let r = tail(&m, 3);
+    assert_eq!(r[0], "7");
+    assert!(r[1].starts_with("Undefined function in 0:2"), "{r:?}");
 }

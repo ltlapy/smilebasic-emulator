@@ -82,6 +82,8 @@ pub struct Error {
     pub col: u32,
     /// Extra context for developers, e.g. which name was undefined.
     pub detail: Option<String>,
+    /// The program slot it happened in; `None` in direct mode.
+    pub slot: Option<u32>,
 }
 
 impl Error {
@@ -91,6 +93,7 @@ impl Error {
             line: 0,
             col: 0,
             detail: None,
+            slot: None,
         }
     }
 
@@ -100,6 +103,7 @@ impl Error {
             line: 0,
             col: 0,
             detail: Some(detail.into()),
+            slot: None,
         }
     }
 
@@ -107,6 +111,12 @@ impl Error {
         if self.line == 0 {
             self.line = line;
         }
+        self
+    }
+
+    /// Fills in the program slot, if not known yet.
+    pub fn in_slot(mut self, slot: Option<u32>) -> Self {
+        self.slot = self.slot.or(slot);
         self
     }
 
@@ -127,7 +137,11 @@ impl From<ErrorKind> for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} in {}", self.kind.message(), self.line)?;
+        write!(f, "{} in ", self.kind.message())?;
+        if let Some(slot) = self.slot {
+            write!(f, "{slot}:")?;
+        }
+        write!(f, "{}", self.line)?;
         if let Some(detail) = &self.detail {
             write!(f, " ({detail})")?;
         }
