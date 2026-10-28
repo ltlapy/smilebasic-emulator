@@ -338,3 +338,84 @@ fn switching_projects_warns_of_unsaved_edits() {
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
     assert_eq!(m.rt.storage.project(), "X");
 }
+
+/// Rows with PRINT's tab stops as single spaces.
+fn words(rows: &[String]) -> Vec<String> {
+    rows.iter()
+        .map(|r| r.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+#[test]
+fn values_save_and_load() {
+    let dir = TempDir::new("values");
+    let mut m = machine(&dir);
+    let program = [
+        "SAVEV \"TXT:MEMO\",\"Hi\"+CHR$(10)+\"あ\"",
+        "?LOADV(\"TXT:MEMO\")==\"Hi\"+CHR$(10)+\"あ\"",
+        "DIM A[2,3]:A[1,2]=1.5:SAVEV \"DAT:A\",A",
+        "B=LOADV(\"DAT:A\"):?DIM(B),LEN(B),B[1,2]",
+        "DIM C%[2,2]:LOADV \"DAT:A\",C%:?LEN(C%),C%[1,2]",
+        "DIM S$[1]:S$[0]=\"X\":SAVEV \"DAT:S\",S$:DIM T$[5]:LOADV \"DAT:S\",T$:?LEN(T$),T$[0]",
+        "SAVEV \"DAT:A\",A",
+        "?LEN(LOADV(\"DAT:NONE\")),RESULT(),LEN(LOADV(\"TXT:NONE\"))",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(
+        words(&tail(&m, 6)),
+        ["1", "2 6 1.5", "6 1", "1 X", "0 0 0", "OK"]
+    );
+    assert!(dir.0.join("@WORKSPACE").join("B@BACKUP.DAT").is_file());
+    // Text is stored as UTF-8, as SAVE does.
+    let memo = dir.0.join("@WORKSPACE").join("TMEMO");
+    assert_eq!(std::fs::read_to_string(memo).unwrap(), "Hi\nあ");
+
+    m.set_slot(0, "DIM D[2]:LOADV \"DAT:A\",D".to_string());
+    enter(&mut m, "run");
+    assert!(
+        tail(&m, 2)[0].starts_with("Type mismatch"),
+        "{:?}",
+        tail(&m, 2)
+    );
+    m.set_slot(0, "SAVEV \"TXT:X\",1".to_string());
+    enter(&mut m, "run");
+    assert!(tail(&m, 2)[0].starts_with("Type mismatch"));
+}
+
+#[test]
+fn graphic_pages_save_and_load() {
+    let dir = TempDir::new("images");
+    let mut m = machine(&dir);
+    let program = [
+        "GPSET 1,2,&HFF102030:GPSET 0,0,&H80FFFFFF",
+        "SAVEG \"PIC\",0,0,0,4,3:?RESULT()",
+        "GCLS:LOADG \"GRP:PIC\",1,10,20 OUT W,H:?W,H",
+        "GTARGET 1:?HEX$(GPGET(11,22)),HEX$(GPGET(10,20))",
+        "IMG=LOADV(\"GRP:PIC\"):?DIM(IMG),LEN(IMG),HEX$(IMG[2,1])",
+        "SAVEV \"GRP:IMG\",IMG:LOADG \"IMG\",2:GTARGET 2:?HEX$(GPGET(1,2))",
+        "SAVEG \"JPG:PHOTO\",1,8,16,8,8,90:LOADG \"JPG:PHOTO\",3 OUT W,H:?W,H,RESULT()",
+        "LOADG \"NOPE\",0:?RESULT()",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(
+        words(&tail(&m, 8)),
+        [
+            "1",
+            "4 3",
+            "FF102030 80FFFFFF",
+            "2 12 FF102030",
+            "FF102030",
+            "8 8 1",
+            "0",
+            "OK"
+        ]
+    );
+    // GRP files are PNG images.
+    let png = std::fs::read(dir.0.join("@WORKSPACE").join("GPIC")).unwrap();
+    assert!(png.starts_with(b"\x89PNG"));
+    m.set_slot(0, "SAVEG \"PIC\",0,2000,0,100,1".to_string());
+    enter(&mut m, "run");
+    assert!(tail(&m, 2)[0].starts_with("Out of range"));
+}

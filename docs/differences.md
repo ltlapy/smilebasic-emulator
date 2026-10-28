@@ -52,6 +52,10 @@ imported from your own copy:
   out of range.
 - File commands ask, notify or stay silent as set in Options, rather
   than always asking.
+- `SAVE` and `SAVEV "TXT:..."` write plain UTF-8 text, and `SAVEG` and
+  `SAVEV "GRP:..."` write PNG images, so the files open on a computer.
+  `DAT` files keep SmileBASIC 4's layout. All of these are read back, as
+  are files from SmileBASIC 4.
 - The screen's scaling filter can be chosen in Options instead of
   following `XSCREEN`.
 

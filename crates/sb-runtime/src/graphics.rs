@@ -180,7 +180,11 @@ impl Graphics {
     }
 
     fn target_pixels(&mut self) -> &mut Vec<u32> {
-        let pixels = &mut self.pages[self.target];
+        self.page_pixels(self.target)
+    }
+
+    fn page_pixels(&mut self, page: usize) -> &mut Vec<u32> {
+        let pixels = &mut self.pages[page];
         if pixels.is_empty() {
             *pixels = vec![0; (GRP_SIZE * GRP_SIZE) as usize];
         }
@@ -441,6 +445,21 @@ impl Graphics {
             }
         }
         pixels
+    }
+
+    /// LOADG: copies an image onto a page at `(x, y)` as it is, without
+    /// clipping or blending; what falls off the page is dropped.
+    pub fn put_image(&mut self, page: usize, (x, y): (i32, i32), image: &crate::image::Image) {
+        let pixels = self.page_pixels(page);
+        for (row, line) in image.pixels.chunks(image.width.max(1)).enumerate() {
+            let py = y + row as i32;
+            for (col, &p) in line.iter().enumerate() {
+                let px = x + col as i32;
+                if Clip::PAGE.contains(px, py) {
+                    pixels[index(px, py)] = p;
+                }
+            }
+        }
     }
 
     /// GLOAD: draws row-by-row pixels into a rectangle of the target page.

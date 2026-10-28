@@ -94,6 +94,8 @@ pub(crate) enum Command {
     Lclip,
     Lmatrix,
     Load,
+    Loadg,
+    Loadv,
     Locate,
     Maincnt,
     Mbutton,
@@ -121,6 +123,8 @@ pub(crate) enum Command {
     Rndf,
     Run,
     Save,
+    Saveg,
+    Savev,
     Scroll,
     Sndmsbal,
     Sndmvol,
@@ -258,6 +262,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("LCLIP", Command::Lclip),
     ("LMATRIX", Command::Lmatrix),
     ("LOAD", Command::Load),
+    ("LOADG", Command::Loadg),
+    ("LOADV", Command::Loadv),
     ("LOCATE", Command::Locate),
     ("MAINCNT", Command::Maincnt),
     ("MBUTTON", Command::Mbutton),
@@ -285,6 +291,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("RNDF", Command::Rndf),
     ("RUN", Command::Run),
     ("SAVE", Command::Save),
+    ("SAVEG", Command::Saveg),
+    ("SAVEV", Command::Savev),
     ("SCROLL", Command::Scroll),
     ("SNDMSBAL", Command::Sndmsbal),
     ("SNDMVOL", Command::Sndmvol),
@@ -978,6 +986,9 @@ impl Runtime {
                 let (id, _) = with_screen(args, 0)?;
                 let (x, y) = self.text[id].cursor();
                 Ok(vec![Value::Int(x as i32), Value::Int(y as i32)])
+            }
+            (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
+                self.loadsave_command(command, args, want)
             }
             (
                 Command::Chkfile

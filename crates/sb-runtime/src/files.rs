@@ -16,7 +16,7 @@ use crate::sbfile;
 use crate::storage::{self, FileKind, StorageError, parse_file_name, parse_listing};
 use crate::text::CONSOLE;
 
-fn str_arg(v: &Value) -> Result<String> {
+pub(crate) fn str_arg(v: &Value) -> Result<String> {
     Ok(String::from_utf16_lossy(&v.clone().into_str()?.borrow()))
 }
 
@@ -33,7 +33,7 @@ pub fn half_width(text: &str) -> String {
 }
 
 /// A program file's text: SmileBASIC 4's container or plain UTF-8.
-fn program_text(bytes: &[u8]) -> storage::Result<String> {
+pub(crate) fn program_text(bytes: &[u8]) -> storage::Result<String> {
     let bad = |e: String| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
     if bytes.starts_with(&[4, 0]) {
         let file = sbfile::parse(bytes).map_err(|e| bad(e.to_string()))?;
@@ -241,7 +241,7 @@ impl Runtime {
     }
 
     /// The file a name refers to, as `TYPE:NAME`, if it exists.
-    fn existing(&self, spec: &str) -> Option<String> {
+    pub(crate) fn existing(&self, spec: &str) -> Option<String> {
         let (kind, name) = parse_file_name(spec, FileKind::Txt).ok()?;
         self.storage
             .exists(kind, &name)
@@ -249,7 +249,7 @@ impl Runtime {
     }
 
     /// The project and file lines of a file question.
-    fn details(&self, file: &str, new_name: Option<&str>) -> Vec<String> {
+    pub(crate) fn details(&self, file: &str, new_name: Option<&str>) -> Vec<String> {
         let mut lines = vec![
             format!("  Project:  {}", self.project_label()),
             format!("  File:     {file}"),
@@ -262,7 +262,7 @@ impl Runtime {
 
     /// Whether a command must stop here for its question: it waits for
     /// the answer, or was cancelled, which RESULT() reports as -1.
-    fn held(&mut self, ask: Ask) -> bool {
+    pub(crate) fn held(&mut self, ask: Ask) -> bool {
         match ask {
             Ask::Go => false,
             Ask::Wait => true,
@@ -275,7 +275,7 @@ impl Runtime {
 
     /// Sets RESULT() from an outcome; in direct mode, also explains a
     /// failure on the console.
-    fn finish<T>(&mut self, what: &str, outcome: storage::Result<T>) -> Option<T> {
+    pub(crate) fn finish<T>(&mut self, what: &str, outcome: storage::Result<T>) -> Option<T> {
         match outcome {
             Ok(value) => {
                 self.result = 1;
@@ -318,7 +318,8 @@ impl Runtime {
             true => half_width(&self.slots[slot]),
             false => self.slots[slot].clone(),
         };
-        self.storage.write(kind, &name, text.as_bytes(), true)?;
+        self.storage
+            .write(kind, &name, text.as_bytes(), Some(storage::BACKUP_NAME))?;
         self.slot_names[slot] = name;
         self.slot_modified[slot] = false;
         Ok(())

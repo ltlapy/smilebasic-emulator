@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 const WORKSPACE_DIR: &str = "@WORKSPACE";
 /// UNVERIFIED: SmileBASIC 4's limit on file and project name length.
 pub const MAX_NAME: usize = 32;
-/// The previous version of a file overwritten by SAVE.
+/// The previous version of a program overwritten by SAVE.
 pub const BACKUP_NAME: &str = "@BACKUP.PRG";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -20,9 +20,10 @@ pub enum FileKind {
     Txt,
     Dat,
     Grp,
+    Jpg,
 }
 
-const KINDS: [FileKind; 3] = [FileKind::Txt, FileKind::Dat, FileKind::Grp];
+const KINDS: [FileKind; 4] = [FileKind::Txt, FileKind::Dat, FileKind::Grp, FileKind::Jpg];
 
 impl FileKind {
     pub fn name(self) -> &'static str {
@@ -30,6 +31,17 @@ impl FileKind {
             FileKind::Txt => "TXT",
             FileKind::Dat => "DAT",
             FileKind::Grp => "GRP",
+            FileKind::Jpg => "JPG",
+        }
+    }
+
+    /// The previous version of a file overwritten by SAVEV or SAVEG.
+    pub fn backup_name(self) -> &'static str {
+        match self {
+            FileKind::Txt => "@BACKUP.TXT",
+            FileKind::Dat => "@BACKUP.DAT",
+            FileKind::Grp => "@BACKUP.GRP",
+            FileKind::Jpg => "@BACKUP.JPG",
         }
     }
 
@@ -38,6 +50,8 @@ impl FileKind {
             FileKind::Txt => 'T',
             FileKind::Dat => 'B',
             FileKind::Grp => 'G',
+            // UNVERIFIED: SmileBASIC 4's prefix for JPG files.
+            FileKind::Jpg => 'J',
         }
     }
 
@@ -285,13 +299,22 @@ impl Storage {
         })
     }
 
-    /// Writes a file. When it replaces one and `backup` is set, the old
-    /// contents become `@BACKUP.PRG` of the same type.
-    pub fn write(&self, kind: FileKind, name: &str, bytes: &[u8], backup: bool) -> Result<()> {
+    /// Writes a file. When it replaces one, the old contents become the
+    /// file `backup` of the same type, if given.
+    pub fn write(
+        &self,
+        kind: FileKind,
+        name: &str,
+        bytes: &[u8],
+        backup: Option<&str>,
+    ) -> Result<()> {
         let path = self.path(kind, name)?;
         std::fs::create_dir_all(path.parent().expect("file in a project folder"))?;
-        if backup && path.is_file() {
-            std::fs::rename(&path, self.path(kind, BACKUP_NAME)?)?;
+        if let Some(backup) = backup
+            && path.is_file()
+            && name != backup
+        {
+            std::fs::rename(&path, self.path(kind, backup)?)?;
         }
         std::fs::write(path, bytes)?;
         Ok(())
@@ -430,9 +453,11 @@ mod tests {
     fn files_and_projects() {
         let tmp = TempDir::new("files");
         let mut s = Storage::new(tmp.0.clone());
-        s.write(FileKind::Txt, "A", b"1", true).unwrap();
-        s.write(FileKind::Txt, "A", b"2", true).unwrap();
-        s.write(FileKind::Dat, "D", b"x", false).unwrap();
+        s.write(FileKind::Txt, "A", b"1", Some(BACKUP_NAME))
+            .unwrap();
+        s.write(FileKind::Txt, "A", b"2", Some(BACKUP_NAME))
+            .unwrap();
+        s.write(FileKind::Dat, "D", b"x", None).unwrap();
         assert_eq!(s.read(FileKind::Txt, "A").unwrap(), b"2");
         assert_eq!(s.read(FileKind::Txt, BACKUP_NAME).unwrap(), b"1");
         assert_eq!(
@@ -480,7 +505,7 @@ mod tests {
         assert!(s.create_project("a b").is_err());
 
         s.set_project("GAME").unwrap();
-        s.write(FileKind::Txt, "MAIN", b"1", false).unwrap();
+        s.write(FileKind::Txt, "MAIN", b"1", None).unwrap();
         assert_eq!(s.rename_project("GAME", "#Demo").unwrap(), "#DEMO");
         assert_eq!(s.project(), "#DEMO", "the current project follows");
         assert_eq!(s.read(FileKind::Txt, "MAIN").unwrap(), b"1");
