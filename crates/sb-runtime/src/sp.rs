@@ -452,23 +452,27 @@ impl Runtime {
             }
             (Command::Splayer, Want::Value, 0) => Ok(vec![Value::Int(self.sprites.new_layer)]),
             (Command::Spdef, _, _) => self.spdef(args, want),
+            // Every sprite has its variables, set or not: BASICDEMO keeps
+            // its menu positions in sprite 0, which it never sets.
             (Command::Spvar, Want::Outs(0), 3) => {
                 let key = var_key(&args[1])?;
                 let value = match &args[2] {
                     Value::Int(_) | Value::Real(_) | Value::Str(_) => args[2].clone(),
                     _ => return Err(ErrorKind::TypeMismatch.into()),
                 };
-                self.sprite(&args[0])?.vars.insert(key, value);
+                self.sprites.list[sprite_id(&args[0])?]
+                    .vars
+                    .insert(key, value);
                 Ok(vec![])
             }
             (Command::Spvar, Want::Value, 2) => {
                 let key = var_key(&args[1])?;
-                let s = self.sprite(&args[0])?;
+                let s = &self.sprites.list[sprite_id(&args[0])?];
                 Ok(vec![s.vars.get(&key).cloned().unwrap_or(Value::Int(0))])
             }
             (Command::Spvar, Want::Outs(0), 1 | 2) => {
                 let key = args.get(1).map(var_key).transpose()?;
-                let s = self.sprite(&args[0])?;
+                let s = &mut self.sprites.list[sprite_id(&args[0])?];
                 match key {
                     Some(key) => {
                         s.vars.remove(&key);

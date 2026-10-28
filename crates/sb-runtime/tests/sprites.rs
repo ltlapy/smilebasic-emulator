@@ -84,6 +84,14 @@ fn variables() {
 }
 
 #[test]
+fn variables_of_unset_sprites() {
+    let (_, out) = run("SPVAR 5,\"A\",3:?SPVAR(5,\"A\");SPVAR(6,\"A\");\n\
+         SPVAR 5:?SPVAR(5,\"A\");\n\
+         SPVAR 5,\"A\",4:SPCLR 5:?SPVAR(5,\"A\")");
+    assert_eq!(out, "3000");
+}
+
+#[test]
 fn errors() {
     for (source, error) in [
         ("SPOFS 3,0,0", "Sprite not set"),
