@@ -7,7 +7,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use chrono::{Datelike, Timelike};
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, ArrayData, ArrayRef, Value, new_str};
@@ -17,7 +16,7 @@ use crate::files::{program_text, str_arg};
 use crate::graphics::{GRP_SIZE, PAGES};
 use crate::image::{self, Image};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
-use crate::sbfile::{self, Data, DataValues, Kind};
+use crate::sbfile::{self, Data, DataValues};
 use crate::storage::{self, FileKind, StorageError, parse_file_name};
 
 /// JPEG quality when SAVEG is not given one.
@@ -48,18 +47,6 @@ fn bad_file(e: impl ToString) -> StorageError {
         std::io::ErrorKind::InvalidData,
         e.to_string(),
     ))
-}
-
-fn now() -> sbfile::Date {
-    let t = chrono::Local::now();
-    sbfile::Date {
-        year: t.year() as u16,
-        month: t.month() as u8,
-        day: t.day() as u8,
-        hour: t.hour() as u8,
-        minute: t.minute() as u8,
-        second: t.second() as u8,
-    }
 }
 
 fn array_value(array: Array) -> Value {
@@ -238,9 +225,9 @@ impl Runtime {
                     (Ok((FileKind::Txt, _)), Value::Str(s)) => {
                         String::from_utf16_lossy(&s.borrow()).into_bytes()
                     }
+                    // The bare PCBN array, without SmileBASIC 4's container.
                     (Ok((FileKind::Dat, _)), Value::Array(a)) => {
-                        let body = sbfile::data_body(&array_data(&a.borrow()));
-                        sbfile::container(Kind::Data, sbfile::usage::DAT, now(), &body)
+                        sbfile::data_body(&array_data(&a.borrow()))
                     }
                     (Ok((FileKind::Grp, _)), Value::Array(a)) => {
                         image::encode_png(&array_image(&a.borrow())?)
@@ -333,8 +320,8 @@ impl Runtime {
         match kind {
             FileKind::Txt => Ok(Value::str(&program_text(&bytes)?)),
             FileKind::Dat => {
-                let file = sbfile::parse(&bytes).map_err(bad_file)?;
-                Ok(array_value(data_array(file.data().map_err(bad_file)?)))
+                let (data, _) = sbfile::read_data(&bytes).map_err(bad_file)?;
+                Ok(array_value(data_array(data)))
             }
             FileKind::Grp => Ok(array_value(image_array(
                 image::decode(&bytes).map_err(bad_file)?,
@@ -358,14 +345,12 @@ impl Runtime {
         if kind == FileKind::Txt {
             return Ok(Err(StorageError::BadKind(kind.name().to_string())));
         }
-        if kind == FileKind::Dat {
-            let data = sbfile::parse(&bytes).and_then(|f| f.data());
-            if let Ok(data) = &data
-                && !(data.dims.len() == 2 && matches!(data.values, DataValues::Int(_)))
-            {
-                let detail = "not a 2D integer array";
-                return Err(Error::with_detail(ErrorKind::IllegalFileFormat, detail));
-            }
+        if kind == FileKind::Dat
+            && let Ok((data, _)) = &sbfile::read_data(&bytes)
+            && !(data.dims.len() == 2 && matches!(data.values, DataValues::Int(_)))
+        {
+            let detail = "not a 2D integer array";
+            return Err(Error::with_detail(ErrorKind::IllegalFileFormat, detail));
         }
         Ok(image::decode(&bytes).map_err(bad_file))
     }

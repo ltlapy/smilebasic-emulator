@@ -19,23 +19,30 @@ const JPEG_MAGIC: &[u8] = &[0xFF, 0xD8];
 /// The largest image read: a whole graphic page.
 const MAX_SIDE: usize = GRP_SIZE as usize;
 
-/// Reads a GRP or JPG file, whichever of SmileBASIC 4's data, PNG or JPEG
-/// it holds.
+/// Reads a GRP, JPG or 2D integer DAT file: PNG or JPEG as it is or in
+/// SmileBASIC 4's container, or a `PCBN` array. GRP images store width
+/// then height; a DAT array is `[height, width]`.
 pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     let image = if bytes.starts_with(PNG_MAGIC) {
         decode_png(bytes)?
     } else if bytes.starts_with(JPEG_MAGIC) {
         decode_jpeg(bytes)?
+    } else if sbfile::is_container(bytes)
+        && let Ok(file) = sbfile::parse(bytes)
+        && (file.body.starts_with(PNG_MAGIC) || file.body.starts_with(JPEG_MAGIC))
+    {
+        decode(&file.body)?
     } else {
-        let data = sbfile::parse(bytes)
-            .and_then(|f| f.data())
-            .map_err(|e| e.to_string())?;
+        let (data, image) = sbfile::read_data(bytes).map_err(|e| e.to_string())?;
         match (&data.dims[..], data.values) {
-            (&[height, width], DataValues::Int(px)) => Image {
-                width,
-                height,
-                pixels: px.into_iter().map(|p| p as u32).collect(),
-            },
+            (&[a, b], DataValues::Int(px)) => {
+                let (width, height) = if image { (a, b) } else { (b, a) };
+                Image {
+                    width,
+                    height,
+                    pixels: px.into_iter().map(|p| p as u32).collect(),
+                }
+            }
             _ => return Err("not a 2D integer array".to_string()),
         }
     };

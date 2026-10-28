@@ -85,7 +85,7 @@ fn corpus() {
         };
         containers += 1;
         match file.kind {
-            Kind::Data => {
+            Kind::Data | Kind::Grp => {
                 if let Err(e) = file.data() {
                     failures.push(format!("{}: {e}", path.display()));
                 }
@@ -101,7 +101,7 @@ fn corpus() {
                     failures.push(format!("{}: {e}", path.display()));
                 }
             }
-            Kind::Text => {}
+            Kind::Text | Kind::Meta | Kind::Jpg => {}
         }
     }
     eprintln!(

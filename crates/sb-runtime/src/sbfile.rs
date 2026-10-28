@@ -1,34 +1,69 @@
-//! SmileBASIC 4 file container, as stored for TXT and DAT files.
-//!
-//! Layout, worked out from files saved by SmileBASIC 4:
+//! SmileBASIC 4's file container, and the `PCBN` arrays inside DAT and
+//! GRP files. docs/file-formats.md describes both, from files SmileBASIC 4
+//! saved.
 //!
 //! | Offset | Size | Field |
 //! |---|---|---|
 //! | 0x00 | 2 | format version (4) |
-//! | 0x02 | 2 | kind: 0 text, 1 data |
+//! | 0x02 | 2 | [`Kind`] |
 //! | 0x04 | 2 | 1 if the body is zlib-compressed |
-//! | 0x06 | 2 | what the body is: text 0, program 1; DAT 0, GRP 2 |
+//! | 0x06 | 2 | a number that depends on the kind; see [`usage`] |
 //! | 0x08 | 4 | stored body size |
-//! | 0x0C | 8 | date: u16 year, then month, day, hour, minute, second, unknown |
-//! | 0x14 | 0x5C | author names and other metadata |
+//! | 0x0C | 8 | date: u16 year, then month, day, hour, minute, second, 0xFF |
+//! | 0x14 | 0x5C | author names, zero in files saved by programs |
 //! | 0x70 | size | body |
-//! | end | 20 | footer, probably a signature; not checked |
+//! | end | 20 | HMAC-SHA1 of everything before it ([`container`]) |
 //!
-//! Text bodies are UTF-8. Data bodies start with a `PCBN0004` header.
-//! GRP files may also be plain PNG images.
+//! META files have the same header but no footer.
 
 use std::fmt;
+
+use hmac::{Hmac, Mac};
+use sha1::Sha1;
 
 pub const HEADER_SIZE: usize = 0x70;
 pub const FOOTER_SIZE: usize = 20;
 /// Largest decompressed body accepted: a 2048x2048 page of 32-bit pixels
 /// plus headroom, so a corrupt file cannot exhaust memory.
 pub const MAX_BODY: usize = 64 << 20;
+/// The key of the footer's HMAC, the one SmileBASIC 3 used too.
+const SIGNING_KEY: &[u8] = b"nqmby+e9S?{%U*-V]51n%^xZMk8>b{?x]&?(NmmV[,g85:%6Sqd\"'U\")/8u77UL2";
 
+/// What a file is, by the number at 0x02.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Text,
+    /// A DAT array. Older GRP files (the ones in SmileBASIC 4's own
+    /// projects) are Data with [`usage::OLD_GRP`].
     Data,
+    Grp,
+    Meta,
+    Jpg,
+}
+
+impl Kind {
+    fn code(self) -> u16 {
+        match self {
+            Kind::Text => 0,
+            Kind::Data => 1,
+            Kind::Grp => 2,
+            Kind::Meta => 4,
+            Kind::Jpg => 5,
+        }
+    }
+}
+
+/// The numbers at 0x06 that SmileBASIC 4.4.9 writes.
+pub mod usage {
+    /// A text file from SAVEV.
+    pub const TEXT: u16 = 0;
+    /// A program from SAVE.
+    pub const PROGRAM: u16 = 2;
+    pub const DAT: u16 = 1;
+    pub const GRP: u16 = 3;
+    pub const JPG: u16 = 3;
+    /// A GRP image stored as Data, as SmileBASIC 4's own projects have.
+    pub const OLD_GRP: u16 = 2;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,11 +76,27 @@ pub struct Date {
     pub second: u8,
 }
 
+impl Date {
+    /// The local time now, for files being written.
+    pub fn now() -> Date {
+        use chrono::{Datelike, Timelike};
+        let t = chrono::Local::now();
+        Date {
+            year: t.year() as u16,
+            month: t.month() as u8,
+            day: t.day() as u8,
+            hour: t.hour() as u8,
+            minute: t.minute() as u8,
+            second: t.second() as u8,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct File {
     pub kind: Kind,
     pub date: Date,
-    /// The field at 0x06; see [`usage`].
+    /// The number at 0x06; see [`usage`].
     pub usage: u16,
     /// Decompressed body.
     pub body: Vec<u8>,
@@ -87,6 +138,12 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(b[at..at + 4].try_into().expect("4 bytes"))
 }
 
+/// Whether `bytes` start like a SmileBASIC 4 container.
+pub fn is_container(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[4, 0])
+}
+
+/// Reads a container. The footer is not checked.
 pub fn parse(bytes: &[u8]) -> Result<File, FileError> {
     if bytes.len() < HEADER_SIZE {
         return Err(FileError::TooShort);
@@ -98,6 +155,9 @@ pub fn parse(bytes: &[u8]) -> Result<File, FileError> {
     let kind = match u16_at(bytes, 2) {
         0 => Kind::Text,
         1 => Kind::Data,
+        2 => Kind::Grp,
+        4 => Kind::Meta,
+        5 => Kind::Jpg,
         k => return Err(FileError::UnknownKind(k)),
     };
     let compressed = u16_at(bytes, 4) == 1;
@@ -127,31 +187,41 @@ pub fn parse(bytes: &[u8]) -> Result<File, FileError> {
     })
 }
 
-/// What a data body holds, in the field at 0x06.
-pub mod usage {
-    pub const DAT: u16 = 0;
-    pub const GRP: u16 = 2;
-}
-
-/// A container around `body`, compressed. The footer is left zero: the
-/// emulator reads files without checking it.
-pub fn container(kind: Kind, usage: u16, date: Date, body: &[u8]) -> Vec<u8> {
-    let stored = miniz_oxide::deflate::compress_to_vec_zlib(body, 6);
+/// A container around `body`, as SmileBASIC 4 writes it: compressed if
+/// asked, and signed unless it is META.
+pub fn container(kind: Kind, usage: u16, date: Date, body: &[u8], compress: bool) -> Vec<u8> {
+    let stored = match compress {
+        true => miniz_oxide::deflate::compress_to_vec_zlib(body, 6),
+        false => body.to_vec(),
+    };
     let mut f = vec![0u8; HEADER_SIZE];
     f[0..2].copy_from_slice(&4u16.to_le_bytes());
-    let kind: u16 = match kind {
-        Kind::Text => 0,
-        Kind::Data => 1,
-    };
-    f[2..4].copy_from_slice(&kind.to_le_bytes());
-    f[4..6].copy_from_slice(&1u16.to_le_bytes());
+    f[2..4].copy_from_slice(&kind.code().to_le_bytes());
+    f[4..6].copy_from_slice(&u16::from(compress).to_le_bytes());
     f[6..8].copy_from_slice(&usage.to_le_bytes());
     f[8..12].copy_from_slice(&(stored.len() as u32).to_le_bytes());
     f[0x0C..0x0E].copy_from_slice(&date.year.to_le_bytes());
-    f[0x0E..0x13].copy_from_slice(&[date.month, date.day, date.hour, date.minute, date.second]);
+    f[0x0E..0x14].copy_from_slice(&[
+        date.month,
+        date.day,
+        date.hour,
+        date.minute,
+        date.second,
+        0xFF,
+    ]);
     f.extend_from_slice(&stored);
-    f.extend_from_slice(&[0; FOOTER_SIZE]);
+    if kind != Kind::Meta {
+        let signature = sign(&f);
+        f.extend_from_slice(&signature);
+    }
     f
+}
+
+/// The footer for a file whose header and body are `bytes`.
+pub fn sign(bytes: &[u8]) -> [u8; FOOTER_SIZE] {
+    let mut mac = Hmac::<Sha1>::new_from_slice(SIGNING_KEY).expect("any key length");
+    mac.update(bytes);
+    mac.finalize().into_bytes().into()
 }
 
 impl File {
@@ -162,14 +232,29 @@ impl File {
     pub fn data(&self) -> Result<Data, FileError> {
         parse_data(&self.body)
     }
+
+    /// Whether the body is an image's `PCBN` array, stored width first.
+    pub fn is_image(&self) -> bool {
+        self.kind == Kind::Grp || (self.kind == Kind::Data && self.usage == usage::OLD_GRP)
+    }
 }
 
-/// Contents of a DAT file: an array with up to four dimensions.
+/// The array in a DAT or GRP file, which may be in a container or be the
+/// bare `PCBN` body the emulator saves; with whether it is an image,
+/// stored width first.
+pub fn read_data(bytes: &[u8]) -> Result<(Data, bool), FileError> {
+    if bytes.starts_with(DATA_MAGIC) {
+        return Ok((parse_data(bytes)?, false));
+    }
+    let file = parse(bytes)?;
+    Ok((file.data()?, file.is_image()))
+}
+
+/// An array as DAT and GRP files keep it, with up to four dimensions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Data {
-    /// Outermost first, as `DIM` takes them: `[height, width]` for an
-    /// image. Files keep them the other way round (a 768 wide, 1024 high
-    /// GRP file stores 768 first).
+    /// As stored: outermost first for a DAT file, as `DIM` takes them,
+    /// but width then height for a GRP image.
     pub dims: Vec<usize>,
     pub values: DataValues,
 }
@@ -180,16 +265,18 @@ pub enum DataValues {
     Int(Vec<i32>),
     /// Element type 5: doubles.
     Real(Vec<f64>),
-    /// Strings, each a u32 length in UTF-16 units and the units.
-    // UNVERIFIED: how SmileBASIC 4 stores string arrays; this type number
-    // and layout are the emulator's guess.
+    /// Element type 6: each string's length in a byte, then its text.
+    // UNVERIFIED: the text's encoding (UTF-8 here) and lengths over 255;
+    // only ASCII strings have been seen.
     Str(Vec<Vec<u16>>),
 }
 
 const STR_TYPE: u16 = 6;
 
-const DATA_MAGIC: &[u8; 8] = b"PCBN0004";
+pub const DATA_MAGIC: &[u8; 8] = b"PCBN0004";
 const DATA_HEADER: usize = 28;
+/// The longest string a DAT file can hold, in UTF-8 bytes.
+pub const MAX_STR_BYTES: usize = 255;
 
 /// `PCBN0004`, u16 element type, u16 dimension count, u32 x 4 dimensions
 /// (unused ones may hold anything), then the elements, little-endian.
@@ -203,7 +290,6 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
         return Err(FileError::BadData);
     }
     let dims: Vec<usize> = (0..ndims)
-        .rev()
         .map(|i| u32_at(body, 12 + 4 * i) as usize)
         .collect();
     let count = dims
@@ -211,8 +297,8 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
         .try_fold(1usize, |a, &d| a.checked_mul(d))
         .ok_or(FileError::BadData)?;
     let payload = &body[DATA_HEADER..];
-    // UNVERIFIED: element types other than 4 and 5 (SB3 used 3 for 16-bit
-    // pixels) have not been seen in SB4 files.
+    // UNVERIFIED: element types other than 4, 5 and 6 (SB3 used 3 for
+    // 16-bit pixels) have not been seen in SB4 files.
     let width = match elem {
         4 => 4,
         5 => 8,
@@ -242,16 +328,10 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
 fn parse_strings(mut payload: &[u8], count: usize) -> Result<DataValues, FileError> {
     let mut items = Vec::new();
     for _ in 0..count {
-        let len = payload.get(..4).ok_or(FileError::BadData)?;
-        let len = u32::from_le_bytes(len.try_into().expect("4")) as usize;
-        let bytes = len.checked_mul(2).ok_or(FileError::BadData)?;
-        let text = payload.get(4..4 + bytes).ok_or(FileError::BadData)?;
-        items.push(
-            text.chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect(),
-        );
-        payload = &payload[4 + bytes..];
+        let (&len, rest) = payload.split_first().ok_or(FileError::BadData)?;
+        let text = rest.get(..usize::from(len)).ok_or(FileError::BadData)?;
+        items.push(String::from_utf8_lossy(text).encode_utf16().collect());
+        payload = &rest[usize::from(len)..];
     }
     if !payload.is_empty() {
         return Err(FileError::BadData);
@@ -259,7 +339,8 @@ fn parse_strings(mut payload: &[u8], count: usize) -> Result<DataValues, FileErr
     Ok(DataValues::Str(items))
 }
 
-/// The body of a DAT file holding `data`.
+/// The `PCBN` body holding `data`. Strings longer than a DAT file holds
+/// are cut.
 pub fn data_body(data: &Data) -> Vec<u8> {
     let mut b = DATA_MAGIC.to_vec();
     let elem = match data.values {
@@ -270,7 +351,7 @@ pub fn data_body(data: &Data) -> Vec<u8> {
     b.extend_from_slice(&elem.to_le_bytes());
     b.extend_from_slice(&(data.dims.len() as u16).to_le_bytes());
     for i in 0..4 {
-        let d = data.dims.iter().rev().nth(i).copied().unwrap_or(0);
+        let d = data.dims.get(i).copied().unwrap_or(0);
         b.extend_from_slice(&(d as u32).to_le_bytes());
     }
     match &data.values {
@@ -278,8 +359,12 @@ pub fn data_body(data: &Data) -> Vec<u8> {
         DataValues::Real(v) => v.iter().for_each(|x| b.extend_from_slice(&x.to_le_bytes())),
         DataValues::Str(v) => {
             for s in v {
-                b.extend_from_slice(&(s.len() as u32).to_le_bytes());
-                s.iter().for_each(|c| b.extend_from_slice(&c.to_le_bytes()));
+                let mut text = String::from_utf16_lossy(s);
+                while text.len() > MAX_STR_BYTES {
+                    text.pop();
+                }
+                b.push(text.len() as u8);
+                b.extend_from_slice(text.as_bytes());
             }
         }
     }
@@ -290,23 +375,14 @@ pub fn data_body(data: &Data) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    fn container(kind: u16, compressed: bool, body: &[u8]) -> Vec<u8> {
-        let stored = if compressed {
-            miniz_oxide::deflate::compress_to_vec_zlib(body, 6)
-        } else {
-            body.to_vec()
-        };
-        let mut f = vec![0u8; HEADER_SIZE];
-        f[0..2].copy_from_slice(&4u16.to_le_bytes());
-        f[2..4].copy_from_slice(&kind.to_le_bytes());
-        f[4..6].copy_from_slice(&u16::from(compressed).to_le_bytes());
-        f[8..12].copy_from_slice(&(stored.len() as u32).to_le_bytes());
-        f[0x0C..0x0E].copy_from_slice(&2024u16.to_le_bytes());
-        f[0x0E] = 5;
-        f.extend_from_slice(&stored);
-        f.extend_from_slice(&[0; FOOTER_SIZE]);
-        f
-    }
+    const DATE: Date = Date {
+        year: 2026,
+        month: 10,
+        day: 28,
+        hour: 9,
+        minute: 15,
+        second: 58,
+    };
 
     fn dat(elem: u16, dims: &[u32], payload: &[u8]) -> Vec<u8> {
         let mut b = DATA_MAGIC.to_vec();
@@ -321,44 +397,45 @@ mod tests {
 
     #[test]
     fn text_file() {
-        let f = parse(&container(0, false, "PRINT \"あ\"\n".as_bytes())).unwrap();
-        assert_eq!(f.kind, Kind::Text);
+        let bytes = container(
+            Kind::Text,
+            usage::PROGRAM,
+            DATE,
+            "PRINT \"あ\"\n".as_bytes(),
+            false,
+        );
+        let f = parse(&bytes).unwrap();
+        assert_eq!((f.kind, f.usage), (Kind::Text, usage::PROGRAM));
         assert_eq!(f.text().unwrap(), "PRINT \"あ\"\n");
-        assert_eq!((f.date.year, f.date.month), (2024, 5));
+        assert_eq!(f.date, DATE);
+    }
+
+    /// What SmileBASIC 4 saved for `DIM A%[2,3]` holding 1 to 6, and for
+    /// the string array `["AB", ""]`.
+    #[test]
+    fn files_saved_by_smilebasic() {
+        let payload: Vec<u8> = (1..=6i32).flat_map(|n| n.to_le_bytes()).collect();
+        let body = dat(4, &[2, 3], &payload);
+        let bytes = container(Kind::Data, usage::DAT, DATE, &body, true);
+        let d = parse(&bytes).unwrap().data().unwrap();
+        assert_eq!(d.dims, vec![2, 3], "outermost first");
+        assert_eq!(d.values, DataValues::Int((1..=6).collect()));
+
+        let s = parse_data(&dat(6, &[2], b"\x02AB\x00")).unwrap();
+        assert_eq!(s.values, DataValues::Str(vec![vec![0x41, 0x42], vec![]]));
     }
 
     #[test]
-    fn compressed_data_file() {
-        let payload: Vec<u8> = [1i32, -1, 7, 8, 9, 10]
-            .iter()
-            .flat_map(|n| n.to_le_bytes())
-            .collect();
-        let f = parse(&container(1, true, &dat(4, &[2, 3], &payload))).unwrap();
-        let d = f.data().unwrap();
-        assert_eq!(d.dims, vec![3, 2], "outermost first");
-        assert_eq!(d.values, DataValues::Int(vec![1, -1, 7, 8, 9, 10]));
-    }
-
-    #[test]
-    fn real_data() {
-        let payload: Vec<u8> = [0.5f64, -2.0]
-            .iter()
-            .flat_map(|x| x.to_le_bytes())
-            .collect();
-        let d = parse_data(&dat(5, &[2], &payload)).unwrap();
-        assert_eq!(d.values, DataValues::Real(vec![0.5, -2.0]));
+    fn signature_covers_header_and_body() {
+        let bytes = container(Kind::Text, usage::TEXT, DATE, b"HI", true);
+        let (signed, footer) = bytes.split_at(bytes.len() - FOOTER_SIZE);
+        assert_eq!(footer, sign(signed));
+        let meta = container(Kind::Meta, 0, DATE, b"PCPM0005", false);
+        assert_eq!(meta.len(), HEADER_SIZE + 8, "META has no footer");
     }
 
     #[test]
     fn written_data_reads_back() {
-        let date = Date {
-            year: 2026,
-            month: 10,
-            day: 28,
-            hour: 1,
-            minute: 2,
-            second: 3,
-        };
         for values in [
             DataValues::Int(vec![1, 2, 3, 4, 5, 6]),
             DataValues::Real(vec![0.5; 6]),
@@ -368,14 +445,15 @@ mod tests {
                 dims: vec![2, 3],
                 values,
             };
-            let f = parse(&super::container(
+            let f = parse(&container(
                 Kind::Data,
                 usage::DAT,
-                date,
+                DATE,
                 &data_body(&data),
+                true,
             ))
             .unwrap();
-            assert_eq!((f.kind, f.usage, f.date), (Kind::Data, usage::DAT, date));
+            assert_eq!((f.kind, f.usage, f.date), (Kind::Data, usage::DAT, DATE));
             assert_eq!(f.data().unwrap(), data);
         }
     }
@@ -383,18 +461,18 @@ mod tests {
     #[test]
     fn rejects_malformed_input() {
         assert_eq!(parse(&[0; 10]), Err(FileError::TooShort));
-        let mut f = container(0, false, b"ABC");
+        let mut f = container(Kind::Text, 0, DATE, b"ABC", false);
         f[8] = 200;
         assert_eq!(parse(&f), Err(FileError::TooShort));
-        assert_eq!(
-            parse(&container(0, true, b"x")[..HEADER_SIZE + 2]).unwrap_err(),
-            FileError::TooShort
-        );
-        let mut bad = container(1, false, b"zz");
+        let mut bad = container(Kind::Data, usage::DAT, DATE, b"zz", false);
         bad[HEADER_SIZE] = b'x';
         assert_eq!(parse(&bad).unwrap().data().unwrap_err(), FileError::BadData);
         assert_eq!(
             parse_data(&dat(4, &[3], &[0; 8])).unwrap_err(),
+            FileError::BadData
+        );
+        assert_eq!(
+            parse_data(&dat(6, &[1], b"\x05AB")).unwrap_err(),
             FileError::BadData
         );
         assert_eq!(
@@ -409,7 +487,13 @@ mod tests {
 
     #[test]
     fn garbage_never_panics() {
-        let base = container(1, true, &dat(4, &[1], &[1, 2, 3, 4]));
+        let base = container(
+            Kind::Data,
+            usage::DAT,
+            DATE,
+            &dat(4, &[1], &[1, 2, 3, 4]),
+            true,
+        );
         for i in 0..base.len() {
             for v in [0u8, 0xFF, 0x7F] {
                 let mut b = base.clone();
