@@ -6,6 +6,7 @@ mod controls;
 mod dialog;
 mod keyhint;
 mod menu;
+mod program_dialog;
 mod projects;
 mod toast;
 mod ui;
@@ -19,6 +20,7 @@ use controls::Controls;
 use dialog::{Answer, Dialog};
 use keyhint::KeyHint;
 use menu::{Action, Click, MenuBar};
+use program_dialog::ProgramView;
 use projects::{Outcome, ProjectManager};
 use sb_profiles::Profile;
 use sb_runtime::editor::is_movement;
@@ -190,6 +192,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // A question, which takes all input while it is open: before quitting
     // with unsaved programs, or for a command such as LOAD.
     let mut dialog: Option<(Dialog, Asking)> = None;
+    // A program's DIALOG. It takes clicks on it, Enter and typing, but
+    // leaves the menu bar and the stop keys working.
+    let mut program_dialog: Option<ProgramView> = None;
+    let mut blink = 0u32;
     let mut toasts = Toasts::default();
     let mut key_hint = KeyHint::default();
     let font_path = machine.rt.settings.sound_font.clone();
@@ -274,6 +280,34 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     (None, _) => {}
                 }
                 continue;
+            }
+            if let Some(open) = &mut program_dialog {
+                let (taken, answer) = match event {
+                    Event::MouseMotion { x, y, .. } => {
+                        open.mouse_move(to_display(x, y));
+                        (false, None)
+                    }
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Left,
+                        x,
+                        y,
+                        ..
+                    } if open.contains(to_display(x, y)) => (true, open.click(to_display(x, y))),
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => match open.key(key) {
+                        Some(answer) => (true, answer),
+                        None => (false, None),
+                    },
+                    Event::TextInput { ref text, .. } => (open.text(text), None),
+                    _ => (false, None),
+                };
+                if let Some(answer) = answer {
+                    machine.rt.answer_dialog(answer);
+                }
+                if taken {
+                    continue;
+                }
             }
             if let Some(open) = &mut manager {
                 let unsaved = machine.unsaved_slots();
@@ -598,6 +632,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             (Some((_, Asking::Command)), None) => dialog = None,
             _ => {}
         }
+        match (&program_dialog, machine.rt.program_dialog()) {
+            (Some(open), Some(shown)) if open.shows(shown) => {}
+            (_, Some(shown)) => {
+                program_dialog = Some(ProgramView::new(shown, (display_w, display_h)));
+            }
+            (_, None) => program_dialog = None,
+        }
+        blink = blink.wrapping_add(1);
 
         mode = machine.screen_mode();
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
@@ -623,13 +665,16 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.copy(&texture, None, rect)?;
         // The colors window leaves the editor behind it bright, to show
         // its colors.
-        let dims = dialog.is_some() || manager.is_some();
-        if modal || menu.visible() || toasts.visible() || key_hint.visible() {
+        let dims = dialog.is_some() || manager.is_some() || program_dialog.is_some();
+        if modal || dims || menu.visible() || toasts.visible() || key_hint.visible() {
             // A dialog or the project manager dims the screen behind it.
             overlay.clear(if dims { 0x8000_0000 } else { 0 });
             let font = machine.rt.font();
             if let Some(open) = &manager {
                 open.draw(&mut overlay, font);
+            }
+            if let Some(open) = &program_dialog {
+                open.draw(&mut overlay, font, (blink / 25).is_multiple_of(2));
             }
             if let Some(open) = &color_window {
                 open.draw(&mut overlay, font, &machine.rt.settings.editor_colors);

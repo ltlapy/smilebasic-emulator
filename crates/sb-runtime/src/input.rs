@@ -13,6 +13,9 @@ use crate::runtime::{Command, Runtime, illegal, opt_int};
 pub const PADS: usize = 4;
 /// The buttons a controller reports, by BUTTON's ids: #B_RUP to #B_RSTICK.
 pub const BUTTONS: usize = 14;
+/// The A and B buttons' ids (#B_RRIGHT and #B_RDOWN).
+pub const A: u32 = 3;
+pub const B: u32 = 1;
 /// #B_RANY, #B_LANY and #B_ANY come after the buttons themselves.
 const BUTTON_IDS: usize = 17;
 const RANY: u32 = 0b1111;
@@ -166,6 +169,17 @@ impl Input {
     /// for the frontend to show where they are on the keyboard.
     pub fn take_buttons_read(&mut self) -> bool {
         std::mem::take(&mut self.buttons_read)
+    }
+
+    /// Buttons of any controller that went down this frame, with
+    /// #B_RANY, #B_LANY and #B_ANY.
+    pub(crate) fn pressed(&self) -> u32 {
+        self.buttons(0, 2)
+    }
+
+    /// Whether the touch screen was touched this frame.
+    pub(crate) fn touched(&self) -> bool {
+        self.touch.1 == 1
     }
 
     /// The bits of controller `pad`'s buttons that meet BUTTON's

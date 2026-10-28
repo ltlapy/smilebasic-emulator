@@ -122,3 +122,66 @@ fn surroundings_of_the_main_interpreter() {
     run(&mut m, &["ENVLOAD 0,1,1"]);
     assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
 }
+
+/// Starts a program and runs frames until it waits on a dialog.
+fn until_dialog(m: &mut Machine, program: &str) -> sb_runtime::dialog::ProgramDialog {
+    m.set_slot(0, program.to_string());
+    m.type_text("run");
+    m.rt.key_press(keys::ENTER);
+    for _ in 0..10 {
+        m.frame();
+        if let Some(d) = m.rt.program_dialog() {
+            return d.clone();
+        }
+    }
+    panic!("no dialog");
+}
+
+fn settle(m: &mut Machine) {
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(!m.is_running());
+}
+
+#[test]
+fn dialogs_wait_for_an_answer() {
+    use sb_runtime::dialog::{DialogAnswer, DialogKind};
+    let mut m = machine();
+    let d = until_dialog(&mut m, "DIALOG \"Hello\"+CHR$(10)+\"there\",1:?RESULT()");
+    assert_eq!(d.caption, "DIALOG");
+    assert_eq!(d.lines, ["Hello", "there"]);
+    assert_eq!(d.kind, DialogKind::Choice(vec!["No", "Yes"]));
+    m.rt.answer_dialog(DialogAnswer::Choice(0));
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["-1", "OK"]);
+
+    // A timeout in frames.
+    until_dialog(&mut m, "DIALOG \"X\",0,\"Cap\",-3:?RESULT()");
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+
+    // Waiting for buttons: B is pressed, but only A and B count.
+    until_dialog(&mut m, "?DIALOG(\"Press\",&B1010)");
+    m.rt.input.live.pads[0].buttons = 1 << 1;
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["2", "OK"]);
+    m.rt.input.live.pads[0].buttons = 0;
+
+    let d = until_dialog(&mut m, "N$=DIALOG(\"NAME0\",\"SAVE\",14):?N$,RESULT()");
+    assert_eq!(
+        d.kind,
+        DialogKind::Name {
+            initial: "NAME0".to_string(),
+            max: 14
+        }
+    );
+    m.rt.answer_dialog(DialogAnswer::Name(Some("GAME".to_string())));
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["GAME 1", "OK"]);
+
+    run(&mut m, &["?DIALOG(\"A B\",\"X\")"]);
+    assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
+    run(&mut m, &["?DIALOG(\"A\",0)"]);
+    assert!(tail(&m, 2)[0].starts_with("Out of range"));
+}

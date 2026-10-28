@@ -61,6 +61,7 @@ pub(crate) enum Command {
     Controller,
     Date,
     Delete,
+    Dialog,
     Dtread,
     Efcen,
     Efcset,
@@ -248,6 +249,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("CONTROLLER", Command::Controller),
     ("DATE$", Command::Date),
     ("DELETE", Command::Delete),
+    ("DIALOG", Command::Dialog),
     ("DTREAD", Command::Dtread),
     ("EFCEN", Command::Efcen),
     ("EFCSET", Command::Efcset),
@@ -470,6 +472,9 @@ pub struct Runtime {
     pub(crate) history: crate::env::History,
     /// What CLIPBOARD reads and writes.
     pub clipboard: Box<dyn crate::env::Clipboard>,
+    /// The DIALOG the program waits on, and the frontend's answer.
+    pub(crate) dialog: Option<crate::dialog::Waiting>,
+    pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
     /// The project metadata that METAEDIT edits.
     pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
@@ -636,6 +641,8 @@ impl Runtime {
             history: Default::default(),
             clipboard: Box::new(crate::env::MemoryClipboard::default()),
             meta: Default::default(),
+            dialog: None,
+            dialog_answer: None,
             settings: Settings::default(),
             storage: Storage::none(),
             result: 1,
@@ -1074,6 +1081,7 @@ impl Runtime {
                 | Command::Metasave,
                 _,
             ) => self.env_command(command, args, want),
+            (Command::Dialog, _) => self.dialog_command(command, args, want),
             (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
                 self.loadsave_command(command, args, want)
             }

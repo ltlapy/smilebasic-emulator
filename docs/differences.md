@@ -63,6 +63,8 @@ imported from your own copy:
 - There are no subprograms yet, so `ENVTYPE`, `ENVSTAT` and the other
   `ENV` commands always answer for the main interpreter, and `ENVLOAD`
   and `ENVSAVE` are errors.
+- `DIALOG` is drawn as the emulator's own window, in English. Besides
+  the controller's A and B, it answers clicks and Enter.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands
   count lines of the source, which wrapping does not change.
 - The screen's scaling filter can be chosen in Options instead of

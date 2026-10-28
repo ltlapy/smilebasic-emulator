@@ -6,6 +6,7 @@ pub mod anim;
 pub mod collision;
 pub mod compose;
 pub mod confirm;
+pub mod dialog;
 pub mod editor;
 pub mod env;
 mod files;

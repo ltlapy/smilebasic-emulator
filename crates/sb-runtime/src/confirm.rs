@@ -98,10 +98,12 @@ impl Runtime {
         }
     }
 
-    /// Drops a question whose command was stopped.
+    /// Drops a question or DIALOG whose command was stopped.
     pub fn cancel_confirm(&mut self) {
         self.confirm = None;
         self.answer = None;
+        self.dialog = None;
+        self.dialog_answer = None;
     }
 
     /// Notices for the frontend to show briefly, since the last call.
