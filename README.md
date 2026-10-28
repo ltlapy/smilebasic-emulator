@@ -54,6 +54,9 @@ first release's ExeFS has only definitions 0-4095; the others are empty.
 `--sf2 FILE` also writes the instruments as a SoundFont, to play them in
 other programs: `@0`-`@127` are bank 0, the drum sets `@128`-`@148` are
 bank 128 (programs 0-20), and the rest are bank `@/128`, program `@%128`.
+`--midi DIR` writes the preset songs into DIR as MIDI files, up to where
+each has gone round its loop once, choosing instruments by the same banks
+(bank select MSB and LSB) with a pitch bend range of 24 semitones.
 
 ## Running
 

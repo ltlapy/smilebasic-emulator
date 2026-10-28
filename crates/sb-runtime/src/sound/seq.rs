@@ -139,6 +139,8 @@ struct SeqTrack {
     bend: i32,
     bend_range: i32,
     ended: bool,
+    /// The track has jumped back: it loops from here on.
+    looped: bool,
 }
 
 impl SeqTrack {
@@ -152,6 +154,7 @@ impl SeqTrack {
             bend: 0,
             bend_range: 2,
             ended: false,
+            looped: false,
         }
     }
 }
@@ -297,7 +300,13 @@ impl Player {
                     self.tracks[track] = Some(SeqTrack::new(at));
                 }
             }
-            0x89 => next_pc = Some(r.u24()?),
+            0x89 => {
+                let to = r.u24()?;
+                if to <= self.tracks[c].as_ref()?.pc {
+                    self.tracks[c].as_mut()?.looped = true;
+                }
+                next_pc = Some(to);
+            }
             0x8A => {
                 let to = r.u24()?;
                 let t = self.tracks[c].as_mut()?;
@@ -342,6 +351,117 @@ impl Player {
         t.pc = next_pc.unwrap_or(r.at);
         Some(())
     }
+}
+
+/// A change a sequence makes, as [`record`] gives it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    Program(i32),
+    Volume(i32),
+    Expression(i32),
+    Pan(i32),
+    Modulation(i32),
+    /// In cents.
+    Bend(i32),
+    NoteOn(i32, i32),
+    NoteOff(i32),
+    /// Quarter notes a minute.
+    Tempo(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Timed {
+    pub tick: u32,
+    pub channel: usize,
+    pub event: Event,
+}
+
+/// Collects what a player asks of its synthesizer.
+#[derive(Default)]
+struct Recorder {
+    tick: u32,
+    events: Vec<Timed>,
+    sounding: Vec<(usize, i32)>,
+}
+
+impl Recorder {
+    fn push(&mut self, channel: usize, event: Event) {
+        self.events.push(Timed {
+            tick: self.tick,
+            channel,
+            event,
+        });
+    }
+}
+
+impl Synth for Recorder {
+    fn plays(&self, _: i32) -> bool {
+        true
+    }
+    fn program(&mut self, c: usize, p: i32) {
+        self.push(c, Event::Program(p));
+    }
+    fn volume(&mut self, c: usize, v: i32) {
+        self.push(c, Event::Volume(v));
+    }
+    fn expression(&mut self, c: usize, v: i32) {
+        self.push(c, Event::Expression(v));
+    }
+    fn pan(&mut self, c: usize, v: i32) {
+        self.push(c, Event::Pan(v));
+    }
+    fn modulation(&mut self, c: usize, v: i32) {
+        self.push(c, Event::Modulation(v));
+    }
+    fn bend(&mut self, c: usize, cents: i32) {
+        self.push(c, Event::Bend(cents));
+    }
+    fn note_on(&mut self, c: usize, key: i32, velocity: i32) {
+        // A note started again ends the one still sounding.
+        if let Some(i) = self.sounding.iter().position(|&n| n == (c, key)) {
+            self.sounding.remove(i);
+            self.push(c, Event::NoteOff(key));
+        }
+        self.sounding.push((c, key));
+        self.push(c, Event::NoteOn(key, velocity));
+    }
+    fn note_off(&mut self, c: usize, key: i32) {
+        if let Some(i) = self.sounding.iter().position(|&n| n == (c, key)) {
+            self.sounding.remove(i);
+            self.push(c, Event::NoteOff(key));
+        }
+    }
+    fn channel_off(&mut self, _: usize) {}
+    fn reset(&mut self) {}
+    fn render(&mut self, _: &mut [f32], _: &mut [f32]) {}
+}
+
+/// Ticks a recording goes on for at most.
+const RECORD_TICKS: u32 = 48 * 4 * 2000;
+
+/// Plays a sequence through without sound and gives what it did, tick by
+/// tick, and its ticks a quarter note. A song that loops is played up to
+/// where every track has gone round once; notes still sounding then stop.
+pub fn record(seq: Arc<Sequence>) -> (Vec<Timed>, u32) {
+    let mut player = Player::new(seq);
+    let mut rec = Recorder::default();
+    let mut tempo = None;
+    while rec.tick < RECORD_TICKS {
+        player.tick(&mut rec);
+        if tempo != Some(player.tempo) {
+            tempo = Some(player.tempo);
+            rec.push(0, Event::Tempo(player.tempo));
+        }
+        let done = player.tracks.iter().flatten().all(|t| t.ended || t.looped);
+        if done && rec.tick > 0 {
+            break;
+        }
+        rec.tick += 1;
+    }
+    for (c, key) in std::mem::take(&mut rec.sounding) {
+        rec.push(c, Event::NoteOff(key));
+    }
+    (rec.events, player.timebase)
 }
 
 struct CodeReader<'a> {
@@ -493,6 +613,33 @@ mod tests {
         assert!(p.ended());
         let (p, _) = run(vec![0x99], 1);
         assert!(p.ended());
+    }
+
+    #[test]
+    fn a_recording_stops_after_one_loop() {
+        // Tempo 100, then a note and a jump back to it.
+        let code = vec![0xE1, 100, 0, 60, 90, 2, 0x89, 3, 0, 0];
+        let (events, timebase) = record(Arc::new(Sequence {
+            volume: 127,
+            start: 0,
+            code,
+        }));
+        assert_eq!(timebase, 48);
+        let at = |tick, event| Timed {
+            tick,
+            channel: 0,
+            event,
+        };
+        assert_eq!(
+            events,
+            [
+                at(0, Event::NoteOn(60, 90)),
+                at(0, Event::Tempo(100)),
+                at(2, Event::NoteOff(60)),
+                at(2, Event::NoteOn(60, 90)),
+                at(2, Event::NoteOff(60)),
+            ]
+        );
     }
 
     #[test]
