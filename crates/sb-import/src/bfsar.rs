@@ -4,6 +4,7 @@
 //! emulator's own [`Bank`], keeping the waveforms compressed.
 
 use sb_runtime::sound::bank::{Adshr, Bank, Encoding, Region, WaveInfo};
+use sb_runtime::sound::seq::{Kind, Sequence, Sequences};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -69,8 +70,9 @@ impl<'a> Bytes<'a> {
     }
 }
 
-/// The archive's files that are stored in it, by position.
-fn files(d: Bytes) -> Result<Vec<usize>> {
+/// Where each of the archive's files is, by file number; `None` for a
+/// file kept outside it.
+fn files(d: Bytes) -> Result<Vec<Option<usize>>> {
     let info = d.block(0, b"FSAR", 0x2001)?;
     let data = d.block(0, b"FSAR", 0x2002)?;
     // The info block's seventh reference is the file table.
@@ -79,27 +81,102 @@ fn files(d: Bytes) -> Result<Vec<usize>> {
     let mut files = Vec::new();
     for i in 0..d.offset(table)? {
         let (_, entry) = d.reference(table + 4 + i * 8, table)?;
-        let Some(entry) = entry else { continue };
-        let (kind, location) = d.reference(entry, entry)?;
-        // 0x220C: a file inside the archive.
-        if kind != 0x220C {
-            continue;
+        let mut at = None;
+        if let Some(entry) = entry {
+            let (kind, location) = d.reference(entry, entry)?;
+            // 0x220C: a file inside the archive.
+            if kind == 0x220C {
+                at = d.reference(location.ok_or("no file location")?, data)?.1;
+            }
         }
-        let (_, at) = d.reference(location.ok_or("no file location")?, data)?;
-        if let Some(at) = at {
-            files.push(at);
-        }
+        files.push(at);
     }
     Ok(files)
 }
 
-fn find(d: Bytes, files: &[usize], magic: &[u8; 4]) -> Result<usize> {
-    for &at in files {
+fn find(d: Bytes, files: &[Option<usize>], magic: &[u8; 4]) -> Result<usize> {
+    for &at in files.iter().flatten() {
         if d.slice(at, 4)? == magic {
             return Ok(at);
         }
     }
     Err(format!("no {} inside", String::from_utf8_lossy(magic)))
+}
+
+/// The archive's sound names, by string number.
+fn names(d: Bytes) -> Result<Vec<String>> {
+    let strings = d.block(0, b"FSAR", 0x2000)?;
+    let (_, table) = d.reference(strings, strings)?;
+    let table = table.ok_or("no string table")?;
+    (0..d.offset(table)?)
+        .map(|i| {
+            let entry = table + 4 + i * 12;
+            let text = d.slice(table + d.offset(entry + 4)?, d.offset(entry + 8)?)?;
+            Ok(String::from_utf8_lossy(text.strip_suffix(&[0]).unwrap_or(text)).into_owned())
+        })
+        .collect()
+}
+
+/// The preset songs (sounds `Bnn`) and BEEP's effects (`Snnn`), which are
+/// sequences.
+pub fn sequences(archive: &[u8]) -> Result<Sequences> {
+    let d = Bytes(archive);
+    let files = files(d)?;
+    let names = names(d)?;
+    let info = d.block(0, b"FSAR", 0x2001)?;
+    let (_, sounds) = d.reference(info, info)?;
+    let sounds = sounds.ok_or("no sound table")?;
+    let mut out = Sequences::default();
+    for i in 0..d.offset(sounds)? {
+        let (_, sound) = d.reference(sounds + 4 + i * 8, sounds)?;
+        let Some(sound) = sound else { continue };
+        // The flags' first value is the name.
+        if d.u32(sound + 20)? & 1 == 0 {
+            continue;
+        }
+        let Some(name) = names.get(d.offset(sound + 24)?) else {
+            continue;
+        };
+        let (kind, number) = match name.split_at(1) {
+            ("B", n) => (Kind::Song, n),
+            ("S", n) => (Kind::Beep, n),
+            _ => continue,
+        };
+        let Ok(number) = number.parse::<usize>() else {
+            continue;
+        };
+        // 0x2203: a sequence.
+        let (detail_kind, detail) = d.reference(sound + 12, sound)?;
+        let (0x2203, Some(detail)) = (detail_kind, detail) else {
+            continue;
+        };
+        let file = files
+            .get(d.offset(sound)?)
+            .copied()
+            .flatten()
+            .ok_or_else(|| format!("{name}'s sequence is missing"))?;
+        let code = d.block(file, b"FSEQ", 0x5000)?;
+        let len = d
+            .offset(code - 4)?
+            .checked_sub(8)
+            .ok_or("a damaged sequence")?;
+        let code = d.slice(code, len)?.to_vec();
+        let start = d.offset(detail + 16)?;
+        if start >= code.len() {
+            return Err(format!("{name} starts outside its sequence"));
+        }
+        let volume = d.u8(sound + 8)?;
+        out.insert(
+            kind,
+            number,
+            Sequence {
+                volume,
+                start,
+                code,
+            },
+        );
+    }
+    Ok(out)
 }
 
 /// Reads the sound archive's instruments and waveforms.
@@ -411,28 +488,75 @@ mod tests {
         file(b"FBNK", &[(0x5800, b"INFO", info)])
     }
 
+    /// A sequence file whose code is `FF 80 01 FF`.
+    fn fseq() -> Vec<u8> {
+        file(b"FSEQ", &[(0x5000, b"DATA", vec![0xFF, 0x80, 1, 0xFF])])
+    }
+
+    /// An archive of the bank, the waves and one sequence, sound `B07`,
+    /// next to a sound `X1` that is not a preset.
     fn fsar() -> Vec<u8> {
-        let (bnk, war) = (fbnk(), fwar());
-        let mut data = bnk.clone();
-        data.resize(data.len().next_multiple_of(32), 0);
-        let war_at = data.len() as u32;
-        data.extend_from_slice(&war);
+        let mut data = Vec::new();
+        let mut at = Vec::new();
+        for f in [fbnk(), fwar(), fseq()] {
+            data.resize(data.len().next_multiple_of(32), 0);
+            at.push((data.len() as u32, f.len() as u32));
+            data.extend_from_slice(&f);
+        }
         let mut info = Vec::new();
-        // Seven references before the file table, which is at 0x40.
-        for _ in 0..6 {
+        // The sound table at 0x98, five unused references, and the file
+        // table at 0x40.
+        put(&mut info, &r(0x2100, 0x98));
+        for _ in 0..5 {
             put(&mut info, &r(0, u32::MAX));
         }
         put(&mut info, &r(0x2106, 0x40));
         put(&mut info, &r(0, u32::MAX));
-        // The file table: two entries, each a reference to a location.
+        // The file table: three entries, each a reference to a location.
+        put(&mut info, &[3]);
+        for i in 0..3 {
+            put(&mut info, &r(0, 0x1C + 20 * i));
+        }
+        for (offset, len) in at {
+            put(&mut info, &r(0x220C, 8));
+            put(&mut info, &[0x1F00, offset, len]);
+        }
+        // The sounds: file, player, volume, the sequence's details, the
+        // flags and the name; the details give the start, 1.
         put(&mut info, &[2]);
-        put(&mut info, &r(0, 0x14));
-        put(&mut info, &r(0, 0x28));
-        put(&mut info, &r(0x220C, 8));
-        put(&mut info, &[0x1F00, 0, bnk.len() as u32]);
-        put(&mut info, &r(0x220C, 8));
-        put(&mut info, &[0x1F00, war_at, war.len() as u32]);
-        file(b"FSAR", &[(0x2001, b"INFO", info), (0x2002, b"FILE", data)])
+        put(&mut info, &r(0, 20));
+        put(&mut info, &r(0, 68));
+        for (file, name) in [(2, 0), (2, 1)] {
+            put(&mut info, &[file, 0, 59]);
+            put(&mut info, &r(0x2203, 28));
+            put(&mut info, &[1, name]);
+            put(&mut info, &[0x0100, 0x18, 1, 3, 1]);
+        }
+        let mut strings = Vec::new();
+        put(&mut strings, &r(0x2400, 8));
+        put(&mut strings, &[2, 0x1F01, 28, 4, 0x1F01, 32, 3]);
+        strings.extend_from_slice(b"B07\0X1\0");
+        file(
+            b"FSAR",
+            &[
+                (0x2000, b"STRG", strings),
+                (0x2001, b"INFO", info),
+                (0x2002, b"FILE", data),
+            ],
+        )
+    }
+
+    #[test]
+    fn reads_sequences() {
+        let s = sequences(&fsar()).unwrap();
+        let expected = Sequence {
+            volume: 59,
+            start: 1,
+            code: vec![0xFF, 0x80, 1, 0xFF],
+        };
+        assert_eq!(s.get(Kind::Song, 7).as_deref(), Some(&expected));
+        assert_eq!(s.songs.iter().flatten().count(), 1);
+        assert!(s.beeps.is_empty());
     }
 
     #[test]
@@ -478,8 +602,9 @@ mod tests {
     #[test]
     fn damage_is_an_error() {
         let mut a = fsar();
-        a.truncate(a.len() - 40);
+        a.truncate(a.len() / 2);
         assert!(bank(&a).is_err());
+        assert!(sequences(&a).is_err());
         assert!(bank(b"FSAR").is_err());
     }
 }

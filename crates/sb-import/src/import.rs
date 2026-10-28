@@ -6,8 +6,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use sb_runtime::font::{Font, FontError};
-use sb_runtime::resources::{self, FONT_MAP, FONT_PAGE, INSTRUMENTS, SPRITE_DEFS, SPRITE_PAGE};
+use sb_runtime::resources::{
+    self, FONT_MAP, FONT_PAGE, INSTRUMENTS, SEQUENCES, SPRITE_DEFS, SPRITE_PAGE,
+};
 use sb_runtime::sound::bank::Bank;
+use sb_runtime::sound::seq::Sequences;
 
 use crate::{bfsar, nso, spdef};
 
@@ -34,7 +37,8 @@ const SPRITE_PAGE_SOURCE: Source = Source {
     paths: &["basic/en/#SYS/GDEFGRP", "basic/jp/#SYS/GDEFGRP"],
 };
 
-/// The sound archive, which holds the instruments.
+/// The sound archive, which holds the instruments, preset songs and
+/// effects.
 const SOUND_ARCHIVE: Source = Source {
     name: "petc4.bfsar",
     paths: &["petc4.bfsar"],
@@ -55,6 +59,8 @@ pub struct Imported {
     pub missing: Vec<&'static str>,
     /// The instruments, for writing out as a SoundFont too.
     pub instruments: Option<Bank>,
+    /// The preset songs and effects, for writing out as MIDI.
+    pub sequences: Option<Sequences>,
 }
 
 #[derive(Debug)]
@@ -160,14 +166,19 @@ pub fn import(dirs: &[PathBuf], dest: &Path) -> Result<Imported, ImportError> {
     }
     match locate(&SOUND_ARCHIVE, dirs) {
         Some(path) => {
-            let bank = bfsar::bank(&read(&path)?).map_err(|e| ImportError::Bad(path.clone(), e))?;
+            let archive = read(&path)?;
+            let bad = |e| ImportError::Bad(path.clone(), e);
+            let bank = bfsar::bank(&archive).map_err(bad)?;
+            let sequences = bfsar::sequences(&archive).map_err(bad)?;
             write(INSTRUMENTS, &bank.to_bytes())?;
+            write(SEQUENCES, &sequences.to_bytes())?;
             imported.sources.push(path);
             imported.instruments = Some(bank);
+            imported.sequences = Some(sequences);
         }
         None => imported
             .missing
-            .push("petc4.bfsar (the instruments, in the RomFS)"),
+            .push("petc4.bfsar (the instruments, songs and effects, in the RomFS)"),
     }
     Ok(imported)
 }
