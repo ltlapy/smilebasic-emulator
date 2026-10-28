@@ -72,9 +72,9 @@ DAT files and GRP images hold one array:
 | 0x1C | | the elements |
 
 - Integers are i32 and reals f64. Pixels are integers in `&HAARRGGBB`.
-- Each string is its length in one byte, then its text. Only ASCII has
-  been seen so far; the encoding of other characters, and strings over
-  255 bytes, are still to be checked.
+- Each string is its length in UTF-8 bytes, then its UTF-8 text. A
+  length under 128 takes one byte; a longer one takes two, big-endian
+  with the top bit set (300 is `81 2C`).
 - In a DAT file the sizes are as `DIM` gave them, outermost first:
   `DIM A%[2,3]` stores 2, then 3. The elements are in the order
   `A%[0,0]`, `A%[0,1]`, and so on.
