@@ -1,5 +1,5 @@
-//! Random numbers and time: RND, RNDF, RANDOMIZE, MILLISEC, MAINCNT,
-//! DATE$, TIME$, DTREAD and TMREAD.
+//! Random numbers, time and the system's settings: RND, RNDF, RANDOMIZE,
+//! MILLISEC, MAINCNT, DATE$, TIME$, DTREAD, TMREAD and SYSPARAM.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -53,7 +53,16 @@ pub struct System {
     started: Instant,
     /// Frames since start-up, for MAINCNT.
     pub(crate) frames: u32,
+    /// SYSPARAM "SYSBEEP": the system's own sounds play. The emulator has
+    /// none, so this is only kept.
+    sysbeep: bool,
+    /// SYSPARAM "MOUSECURSOR": programs show the mouse cursor.
+    pub mouse_cursor: bool,
 }
+
+/// SYSPARAM "KEYREPEAT": frames before a held key repeats, and between
+/// repeats, as SmileBASIC 4's settings start.
+const KEY_REPEAT: [i32; 2] = [20, 3];
 
 impl Default for System {
     fn default() -> Self {
@@ -61,6 +70,9 @@ impl Default for System {
             series: std::array::from_fn(|_| Series::seeded(entropy())),
             started: Instant::now(),
             frames: 0,
+            // UNVERIFIED: the system sounds start on.
+            sysbeep: true,
+            mouse_cursor: false,
         }
     }
 }
@@ -193,8 +205,47 @@ impl Runtime {
                     .map(|n| Value::Int(n as i32))
                     .to_vec())
             }
+            (Command::Sysparam, _, 1..=2) => {
+                // UNVERIFIED: whether names may be in lower case, and that
+                // unknown names, setting what can only be read or reading
+                // KEYREPEAT as a value are Illegal function call.
+                let name = text(&args[0])?.to_ascii_uppercase();
+                let bad = || Error::with_detail(ErrorKind::IllegalFunctionCall, name.clone());
+                let flag = |on: bool| Value::Int(on.into());
+                match (name.as_str(), want, args.get(1)) {
+                    ("LANG", Want::Value, None) => {
+                        Ok(vec![string(self.settings.language.code().to_string())])
+                    }
+                    ("SYSBEEP", Want::Value, None) => Ok(vec![flag(sys.sysbeep)]),
+                    ("SYSBEEP", Want::Outs(0), Some(v)) => {
+                        sys.sysbeep = int(v)? != 0;
+                        Ok(vec![])
+                    }
+                    ("TABSTEP", Want::Value, None) => {
+                        Ok(vec![Value::Int(self.settings.editor_tab_step as i32)])
+                    }
+                    ("KEYREPEAT", Want::Outs(2), None) => Ok(KEY_REPEAT.map(Value::Int).to_vec()),
+                    ("MOUSECURSOR", Want::Value, None) => Ok(vec![flag(sys.mouse_cursor)]),
+                    ("MOUSECURSOR", Want::Outs(0), Some(v)) => {
+                        sys.mouse_cursor = int(v)? != 0;
+                        Ok(vec![])
+                    }
+                    // The emulator's window stands for the Switch on a TV.
+                    ("TVMODE", Want::Value, None) => Ok(vec![Value::Int(1)]),
+                    // There are no tools to set.
+                    ("TOOL1" | "TOOL2" | "TOOL3", Want::Value, None) => {
+                        Ok(vec![string(String::new())])
+                    }
+                    _ => Err(bad()),
+                }
+            }
             _ => Err(illegal()),
         }
+    }
+
+    /// Whether the running program shows the mouse cursor.
+    pub fn mouse_cursor(&self) -> bool {
+        self.system.mouse_cursor
     }
 }
 

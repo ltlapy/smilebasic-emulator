@@ -1,4 +1,4 @@
-//! Random numbers and time.
+//! Random numbers, time and the system's settings.
 
 use sb_core::error::ErrorKind;
 use sb_core::vm::{Status, Vm};
@@ -59,4 +59,29 @@ fn reading_dates_and_times() {
         run("TMREAD \"1:00:00\" OUT H,M,S").unwrap_err().kind,
         ErrorKind::IllegalFunctionCall
     );
+}
+
+#[test]
+fn system_settings() {
+    assert_eq!(
+        run("SYSPARAM \"KEYREPEAT\" OUT S,I:?SYSPARAM(\"LANG\");S;I;SYSPARAM(\"TABSTEP\")")
+            .unwrap(),
+        "en-US2034"
+    );
+    assert_eq!(
+        run("A=SYSPARAM(\"MOUSECURSOR\"):SYSPARAM \"MOUSECURSOR\",1:?A;SYSPARAM(\"MOUSECURSOR\")")
+            .unwrap(),
+        "01"
+    );
+    for source in [
+        "?SYSPARAM(\"COLOR\")",
+        "SYSPARAM \"LANG\",1",
+        "?SYSPARAM(\"KEYREPEAT\")",
+    ] {
+        assert_eq!(
+            run(source).unwrap_err().kind,
+            ErrorKind::IllegalFunctionCall,
+            "{source}"
+        );
+    }
 }

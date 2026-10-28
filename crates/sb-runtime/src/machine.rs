@@ -220,6 +220,8 @@ impl Machine {
         self.rt.prg_edit = None;
         self.vars.clear();
         self.rt.clear_vars();
+        // UNVERIFIED: each program starts with the mouse cursor hidden.
+        self.rt.system.mouse_cursor = false;
         self.start(&self.rt.slots[slot].clone(), Some(slot));
     }
 
@@ -274,6 +276,7 @@ impl Machine {
     /// The editor, after it has taken the keys typed so far, so that its
     /// other commands come in order with them.
     pub fn edit(&mut self) -> &mut Editor {
+        self.editor.tab_step = self.rt.settings.editor_tab_step as usize;
         while let Some(key) = self.rt.next_key() {
             self.editor.key(key);
         }

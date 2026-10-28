@@ -47,6 +47,18 @@ Without them:
   `XCTRLSTYLE` shows no connection screen and always succeeds.
 - The keyboard also presses controller 1's buttons; Options turns this
   off.
+- A program that hides the mouse cursor (`SYSPARAM "MOUSECURSOR",0`,
+  as programs start) hides the computer's cursor over the window, until
+  the menu bar shows; Options can keep it shown.
+
+## System settings
+
+- `SYSPARAM("LANG")` answers `en-US`, as the English edition does, or
+  `ja`, as set in Options > System language.
+- `SYSPARAM("TABSTEP")` is the editor's tab width, set in the Editor
+  menu.
+- `SYSPARAM("TVMODE")` is always 1, `TOOL1` to `TOOL3` are empty, and
+  `SYSBEEP` keeps its value: the emulator has no system sounds.
 
 ## Other
 

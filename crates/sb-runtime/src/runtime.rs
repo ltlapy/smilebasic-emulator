@@ -177,6 +177,7 @@ pub(crate) enum Command {
     Spused,
     Spvar,
     Stick,
+    Sysparam,
     Talk,
     Talkchk,
     Talkstop,
@@ -365,6 +366,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
     ("STICK", Command::Stick),
+    ("SYSPARAM", Command::Sysparam),
     ("TALK", Command::Talk),
     ("TALKCHK", Command::Talkchk),
     ("TALKSTOP", Command::Talkstop),
@@ -1219,6 +1221,7 @@ impl Runtime {
                 | Command::Randomize
                 | Command::Rnd
                 | Command::Rndf
+                | Command::Sysparam
                 | Command::Time
                 | Command::Tmread,
                 _,

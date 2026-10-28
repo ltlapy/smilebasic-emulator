@@ -9,6 +9,7 @@ use sb_runtime::font::{Font, FontSize};
 use sb_runtime::palette::PRESETS;
 use sb_runtime::runtime::Settings;
 use sb_runtime::screen::Filter;
+use sb_runtime::settings::Language;
 
 use crate::ui::{
     BACKGROUND, BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, outline, text_width,
@@ -30,6 +31,9 @@ pub enum Action {
     ToggleWrap,
     ToggleNumberTiles,
     ToggleKeyboardButtons,
+    ToggleKeepCursor,
+    Language(Language),
+    TabStep(u32),
     EditorFont(FontSize),
     EditorSize(EditorSize),
     /// Use one of the preset palettes in the editor.
@@ -58,6 +62,10 @@ impl Action {
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
+            Action::ToggleKeepCursor => check(settings.keep_mouse_cursor),
+            Action::Language(l) if settings.language == l => "(*)",
+            Action::TabStep(n) if settings.editor_tab_step == n => "(*)",
+            Action::Language(_) | Action::TabStep(_) => "( )",
             Action::EditorFont(f) if settings.editor_font == f => "(*)",
             Action::EditorSize(size) if settings.editor_size == size => "(*)",
             Action::ColorPreset(i) if settings.editor_colors == PRESETS[i].1 => "(*)",
@@ -99,6 +107,15 @@ impl Action {
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::ToggleKeyboardButtons => &mut settings.keyboard_buttons,
+            Action::ToggleKeepCursor => &mut settings.keep_mouse_cursor,
+            Action::Language(l) => {
+                settings.language = l;
+                return;
+            }
+            Action::TabStep(n) => {
+                settings.editor_tab_step = n;
+                return;
+            }
             Action::FileAccess(mode) => {
                 settings.file_confirm = mode;
                 return;
@@ -236,6 +253,14 @@ const MENUS: &[Menu] = &[
                     item("Choose a file...", Action::ChooseSoundFont),
                 ]),
             },
+            Item {
+                label: "System language",
+                entry: Entry::Sub(&[
+                    item("English (en-US)", Action::Language(Language::English)),
+                    item("Japanese (ja)", Action::Language(Language::Japanese)),
+                ]),
+            },
+            item("Always show mouse cursor", Action::ToggleKeepCursor),
         ],
     },
     Menu {
@@ -257,6 +282,15 @@ const MENUS: &[Menu] = &[
                     item("Medium", Action::EditorSize(EditorSize::Medium)),
                     item("Small", Action::EditorSize(EditorSize::Small)),
                     item("Tiny", Action::EditorSize(EditorSize::Tiny)),
+                ]),
+            },
+            Item {
+                label: "Tab width",
+                entry: Entry::Sub(&[
+                    item("1", Action::TabStep(1)),
+                    item("2", Action::TabStep(2)),
+                    item("4", Action::TabStep(4)),
+                    item("8", Action::TabStep(8)),
                 ]),
             },
             Item {
@@ -609,6 +643,15 @@ mod tests {
             Action::FileAccess(FileConfirm::Notify).mark(&settings),
             "(*)"
         );
+    }
+
+    #[test]
+    fn language_and_tab_width() {
+        let mut settings = Settings::default();
+        Action::Language(Language::Japanese).toggle(&mut settings);
+        Action::TabStep(8).toggle(&mut settings);
+        assert_eq!(settings.language, Language::Japanese);
+        assert_eq!(Action::TabStep(8).mark(&settings), "(*)");
     }
 
     #[test]

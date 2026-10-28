@@ -8,6 +8,24 @@ use crate::font::FontSize;
 use crate::palette::Palette;
 use crate::screen::Filter;
 
+/// The Switch's language, as SYSPARAM("LANG") reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Language {
+    English,
+    Japanese,
+}
+
+impl Language {
+    /// The name SmileBASIC 4 gives: `en-US` in the English edition, `ja`
+    /// in the Japanese one.
+    pub fn code(self) -> &'static str {
+        match self {
+            Language::English => "en-US",
+            Language::Japanese => "ja",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
@@ -25,6 +43,9 @@ pub struct Settings {
     /// The editor draws the 8- or the 16-pixel font.
     pub editor_font: FontSize,
     pub editor_size: EditorSize,
+    /// Spaces the editor's Tab key inserts, which SYSPARAM("TABSTEP")
+    /// reports.
+    pub editor_tab_step: u32,
     pub editor_colors: Palette,
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
@@ -38,6 +59,10 @@ pub struct Settings {
     /// The SoundFont file instruments come from otherwise; `None` for the
     /// bundled one.
     pub sound_font: Option<String>,
+    pub language: Language,
+    /// The mouse cursor stays shown when a program hides it with
+    /// SYSPARAM "MOUSECURSOR".
+    pub keep_mouse_cursor: bool,
 }
 
 impl Default for Settings {
@@ -50,6 +75,8 @@ impl Default for Settings {
             editor_number_tiles: true,
             editor_font: FontSize::Large,
             editor_size: EditorSize::Medium,
+            // UNVERIFIED: SmileBASIC 4's default.
+            editor_tab_step: 4,
             editor_colors: Palette::default(),
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
@@ -57,6 +84,8 @@ impl Default for Settings {
             keyboard_buttons: true,
             smilebasic_instruments: true,
             sound_font: None,
+            language: Language::English,
+            keep_mouse_cursor: false,
         }
     }
 }
@@ -82,6 +111,11 @@ const EDITOR_SIZE: [(EditorSize, &str); 4] = [
     (EditorSize::Small, "small"),
     (EditorSize::Tiny, "tiny"),
 ];
+
+/// The editor's Tab key inserts this many spaces at most.
+pub const TAB_STEPS: std::ops::RangeInclusive<u32> = 1..=8;
+
+const LANGUAGE: [(Language, &str); 2] = [(Language::English, "en"), (Language::Japanese, "ja")];
 
 /// Keys of the editor's colors start with this.
 const EDITOR_COLOR: &str = "editor_color.";
@@ -133,6 +167,19 @@ impl Settings {
                 "file_hint_shown" => &mut s.file_hint_shown,
                 "keyboard_buttons" => &mut s.keyboard_buttons,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
+                "keep_mouse_cursor" => &mut s.keep_mouse_cursor,
+                "language" => {
+                    if let Some(l) = choice(&LANGUAGE, value) {
+                        s.language = l;
+                    }
+                    continue;
+                }
+                "editor_tab_step" => {
+                    if let Some(n) = value.parse().ok().filter(|n| TAB_STEPS.contains(n)) {
+                        s.editor_tab_step = n;
+                    }
+                    continue;
+                }
                 "file_confirm" => {
                     if let Some(&(mode, _)) = FILE_CONFIRM.iter().find(|(_, n)| *n == value) {
                         s.file_confirm = mode;
@@ -188,13 +235,16 @@ impl Settings {
              editor_number_tiles={}\n\
              editor_font={}\n\
              editor_size={}\n\
+             editor_tab_step={}\n\
              {}\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
              keyboard_buttons={}\n\
              smilebasic_instruments={}\n\
-             sound_font={}\n",
+             sound_font={}\n\
+             language={}\n\
+             keep_mouse_cursor={}\n",
             self.upper_case_letters,
             self.ctrl_c_stops,
             self.half_width_on_save,
@@ -202,11 +252,14 @@ impl Settings {
             self.editor_number_tiles,
             choice_name(&EDITOR_FONT, &self.editor_font),
             choice_name(&EDITOR_SIZE, &self.editor_size),
+            self.editor_tab_step,
             self.editor_colors.lines(EDITOR_COLOR),
             self.file_hint_shown,
             self.keyboard_buttons,
             self.smilebasic_instruments,
             self.sound_font.as_deref().unwrap_or(""),
+            choice_name(&LANGUAGE, &self.language),
+            self.keep_mouse_cursor,
         )
     }
 }
@@ -231,6 +284,9 @@ mod tests {
             keyboard_buttons: false,
             smilebasic_instruments: false,
             sound_font: Some("/fonts/a b.sf2".to_string()),
+            editor_tab_step: 2,
+            language: Language::Japanese,
+            keep_mouse_cursor: true,
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);
@@ -244,7 +300,7 @@ mod tests {
     fn skips_what_it_does_not_know() {
         let s = Settings::from_text(
             "# comment\nfuture_option=1\nctrl_c_stops = true\neditor_wrap=maybe\n\
-             file_confirm=loud\nno equals sign\n",
+             file_confirm=loud\nno equals sign\neditor_tab_step=0\nlanguage=fr\n",
         );
         assert_eq!(
             s,

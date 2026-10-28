@@ -180,6 +180,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     overlay_texture.set_scale_mode(ScaleMode::Nearest);
     overlay_texture.set_blend_mode(BlendMode::Blend);
     let mut menu = MenuBar::default();
+    let mouse = sdl.mouse();
+    let mut cursor_shown = true;
     // A question, which takes all input while it is open: before quitting
     // with unsaved programs, or for a command such as LOAD.
     let mut dialog: Option<(Dialog, Asking)> = None;
@@ -711,6 +713,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         // The colors window leaves the editor behind it bright, to show
         // its colors.
         let dims = dialog.is_some() || manager.is_some() || program_dialog.is_some();
+        // A running program shows the mouse cursor only if it asks to,
+        // unless the emulator's own screens need it.
+        let show_cursor = !machine.is_running()
+            || modal
+            || dims
+            || menu.visible()
+            || machine.rt.settings.keep_mouse_cursor
+            || machine.rt.mouse_cursor();
+        if show_cursor != cursor_shown {
+            cursor_shown = show_cursor;
+            mouse.show_cursor(show_cursor);
+        }
         if modal || dims || menu.visible() || toasts.visible() || key_hint.visible() {
             // A dialog or the project manager dims the screen behind it.
             overlay.clear(if dims { 0x8000_0000 } else { 0 });

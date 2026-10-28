@@ -11,7 +11,7 @@ use crate::framebuffer::Framebuffer;
 use crate::palette::{Palette, Part};
 use crate::runtime::{SLOTS, keys};
 use crate::syntax::highlight;
-use crate::text::{TAB_WIDTH, TextScreen};
+use crate::text::TextScreen;
 
 /// Six digits on three number tiles (U+E100-E16E) and a thin cap.
 const TILE_GUTTER: usize = 4;
@@ -166,6 +166,8 @@ pub struct Editor {
     want_col: usize,
     /// Typing replaces the character under the cursor (Insert toggles it).
     pub overwrite: bool,
+    /// Tab pads with spaces to the next multiple of this column.
+    pub tab_step: usize,
     /// The other end of the selection; the cursor is one end.
     anchor: Option<Pos>,
     /// Line numbers are drawn on SmileBASIC 4's number tiles rather than
@@ -210,6 +212,7 @@ impl Editor {
             view: View::default(),
             want_col: 0,
             overwrite: false,
+            tab_step: 4,
             anchor: None,
             number_tiles: true,
             layout: Vec::new(),
@@ -485,7 +488,7 @@ impl Editor {
             keys::END => self.view.col = self.line().len(),
             // UNVERIFIED: Tab pads with spaces to the next TABSTEP column.
             keys::TAB => {
-                let tab = TAB_WIDTH as usize;
+                let tab = self.tab_step.max(1);
                 for _ in 0..tab - col % tab {
                     self.insert(u16::from(b' '));
                 }
@@ -894,6 +897,9 @@ mod tests {
         // Control codes other than the editing keys type nothing.
         e.key(keys::ESCAPE);
         assert_eq!(e.text(), "    XYC");
+        e.tab_step = 3;
+        e.key(keys::TAB);
+        assert_eq!(e.text(), "      XYC");
     }
 
     #[test]
