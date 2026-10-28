@@ -115,6 +115,8 @@ pub struct Vm {
     call_idx: i32,
     /// Instructions run so far.
     executed: u64,
+    /// ON BREAK GOTO's slot and address, until the + button jumps there.
+    on_break: Option<(usize, usize)>,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -240,6 +242,7 @@ impl Vm {
             callbacks: Vec::new(),
             call_idx: 0,
             executed: 0,
+            on_break: None,
         }
     }
 
@@ -298,6 +301,24 @@ impl Vm {
     /// Instructions run so far, for hosts that share out a budget.
     pub fn executed(&self) -> u64 {
         self.executed
+    }
+
+    /// The + button: jumps to ON BREAK GOTO's label, which is then
+    /// forgotten. False when no label is set, and the program should stop.
+    pub fn take_break(&mut self, host: &mut dyn Host) -> bool {
+        let Some((slot, addr)) = self.on_break.take() else {
+            return false;
+        };
+        // UNVERIFIED: the jump leaves DEFs, GOSUBs, callbacks and a
+        // waiting INPUT behind, as a GOTO out of them would.
+        self.stack.clear();
+        self.frames.clear();
+        self.gosubs.clear();
+        self.callbacks.clear();
+        self.reading_input = false;
+        self.switch_to(slot, host);
+        self.pc = addr;
+        true
     }
 
     /// Executes up to `budget` instructions.
@@ -708,6 +729,7 @@ impl Vm {
                 self.gosub(self.slot, *a as usize, host)?;
                 return Ok(None);
             }
+            Op::OnBreak(a) => self.on_break = Some((self.slot, *a as usize)),
             Op::GotoDyn => {
                 let label = self.pop();
                 let (slot, target) = self.find_label(&label)?;

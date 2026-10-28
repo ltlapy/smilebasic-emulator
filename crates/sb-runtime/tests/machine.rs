@@ -177,6 +177,29 @@ fn sysreq_runs_prg0_and_stops() {
     assert_eq!(&r[r.len() - 3..], ["A", "Break in 0:2", "OK"]);
 }
 
+#[test]
+fn sysreq_jumps_to_on_break_once() {
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "ON BREAK GOTO @B\nINPUT A\n@B:?\"B\"\n@M:VSYNC:GOTO @M".to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    m.frame();
+    assert!(m.is_running());
+    // A waiting INPUT is left behind.
+    m.sysreq();
+    m.frame();
+    assert!(m.is_running());
+    // UNVERIFIED: the console goes on after INPUT's prompt.
+    assert_eq!(rows(&m).last().unwrap(), "?B");
+    // The label is used once; the next press stops.
+    m.sysreq();
+    assert!(!m.is_running());
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+}
+
 /// Presses keys, one frame each.
 fn press(m: &mut Machine, codes: &[u16]) {
     for &code in codes {

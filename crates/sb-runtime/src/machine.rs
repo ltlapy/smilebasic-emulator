@@ -252,13 +252,18 @@ impl Machine {
         Ok(())
     }
 
-    /// The + button (F5): stops a running program, or runs PRG0 from
-    /// direct mode or the editor.
+    /// The + button (F5): stops a running program, or jumps to its ON
+    /// BREAK GOTO label, or runs PRG0 from direct mode or the editor.
     pub fn sysreq(&mut self) {
-        if self.is_running() {
-            // UNVERIFIED: ON BREAK GOTO is not run yet; SmileBASIC 4
-            // jumps there instead of stopping.
-            self.stop();
+        if let Some(vm) = &mut self.vm {
+            if vm.take_break(&mut self.rt) {
+                // Whatever the program waited for is left behind.
+                self.wait = 0;
+                self.rt.cancel_input();
+                self.rt.cancel_confirm();
+            } else {
+                self.stop();
+            }
             return;
         }
         if self.editing {

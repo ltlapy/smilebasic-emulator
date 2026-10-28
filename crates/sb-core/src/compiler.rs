@@ -327,6 +327,7 @@ impl Compiler<'_> {
             | Op::JumpIfFalse(a)
             | Op::JumpIfTrue(a)
             | Op::Gosub(a)
+            | Op::OnBreak(a)
             | Op::CallbackNext(a) => *a = target,
             other => unreachable!("patching non-jump {other:?}"),
         }
@@ -663,8 +664,7 @@ impl Compiler<'_> {
                     self.jump_to_label(Op::Jump(0), l);
                 }
             }
-            // UNVERIFIED stub: the BREAK button does not exist yet.
-            StmtKind::OnBreakGoto(_) => {}
+            StmtKind::OnBreakGoto(l) => self.jump_to_label(Op::OnBreak(0), l),
             StmtKind::Return(None) => _ = self.emit(Op::Return),
             StmtKind::Return(Some(e)) => {
                 self.expr(e)?;

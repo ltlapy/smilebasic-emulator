@@ -99,6 +99,8 @@ pub enum Op {
     JumpIfFalse(Addr),
     JumpIfTrue(Addr),
     Gosub(Addr),
+    /// ON BREAK GOTO: the + button jumps here instead of stopping.
+    OnBreak(Addr),
     /// `[label string] -> []`
     GotoDyn,
     GosubDyn,
