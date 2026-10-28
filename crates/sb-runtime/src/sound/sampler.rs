@@ -374,6 +374,36 @@ impl Synth for Sampler {
     }
 }
 
+/// An envelope's stages in seconds, as a SoundFont gives them: the decay
+/// and release are how long a fall of 100 dB takes at their rate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Times {
+    pub attack: f64,
+    pub hold: f64,
+    pub decay: f64,
+    /// The sustain level below full, in dB.
+    pub sustain_db: f64,
+    pub release: f64,
+}
+
+pub fn times(adshr: Adshr) -> Times {
+    let step = TICK as f64 / f64::from(RATE);
+    let mut e = Envelope::new(adshr);
+    let mut steps = 0;
+    while e.stage == Stage::Attack && steps < 100_000 {
+        e.step();
+        steps += 1;
+    }
+    let fall = |value: u8| f64::from(-SILENCE) / f64::from(fall_rate(value)) * step;
+    Times {
+        attack: f64::from(steps) * step,
+        hold: f64::from(adshr.hold) * step,
+        decay: fall(adshr.decay),
+        sustain_db: f64::from(-level(adshr.sustain)) / 1280.0,
+        release: fall(adshr.release),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +506,22 @@ mod tests {
         assert_eq!(attack_factor(0), 255);
         assert_eq!(fall_rate(127), 0xFFFF);
         assert_eq!(fall_rate(10), 21);
+    }
+
+    #[test]
+    fn times_follow_the_steps() {
+        let t = times(Adshr {
+            attack: 127,
+            decay: 126,
+            sustain: 0,
+            hold: 2,
+            release: 127,
+        });
+        assert_eq!(t.attack, 0.005);
+        assert_eq!(t.hold, 0.01);
+        assert!((t.decay - 92544.0 / 15360.0 * 0.005).abs() < 1e-9);
+        assert_eq!(t.sustain_db, 72.3);
+        assert!(times(Adshr::default()).attack > 1.0);
     }
 
     #[test]

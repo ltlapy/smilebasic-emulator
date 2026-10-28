@@ -6,6 +6,7 @@
 mod bfsar;
 mod import;
 mod nso;
+mod sf2;
 mod spdef;
 
 use std::path::PathBuf;
@@ -13,11 +14,12 @@ use std::path::PathBuf;
 use sb_runtime::resources::{DATA_DIR, RESOURCE_DIR};
 
 const USAGE: &str = "usage:
-  smilebasic-import [-o OUT] DIR...
-      copy the font, sprite image and sprite definitions from your own
-      extracted SmileBASIC 4 RomFS and ExeFS directories into the
-      emulator's data directory, or into OUT. List the update's
-      directories after the base game's, so the update's files win.";
+  smilebasic-import [-o OUT] [--sf2 FILE] DIR...
+      copy the font, sprite image, sprite definitions and instruments
+      from your own extracted SmileBASIC 4 RomFS and ExeFS directories
+      into the emulator's data directory, or into OUT. List the update's
+      directories after the base game's, so the update's files win.
+      With --sf2, also write the instruments as a SoundFont to FILE.";
 
 type AnyError = Box<dyn std::error::Error>;
 
@@ -28,16 +30,25 @@ fn main() {
     }
 }
 
-fn run(mut args: Vec<String>) -> Result<(), AnyError> {
-    let dest = match args.iter().position(|a| a == "-o") {
+/// Takes `flag` and the value after it out of `args`.
+fn option(args: &mut Vec<String>, flag: &str) -> Result<Option<PathBuf>, AnyError> {
+    match args.iter().position(|a| a == flag) {
         Some(at) if at + 1 < args.len() => {
-            let dir = args.remove(at + 1);
+            let value = args.remove(at + 1);
             args.remove(at);
-            PathBuf::from(dir)
+            Ok(Some(PathBuf::from(value)))
         }
-        Some(_) => return Err(USAGE.into()),
+        Some(_) => Err(USAGE.into()),
+        None => Ok(None),
+    }
+}
+
+fn run(mut args: Vec<String>) -> Result<(), AnyError> {
+    let dest = match option(&mut args, "-o")? {
+        Some(dir) => dir,
         None => data_dir()?.join(RESOURCE_DIR),
     };
+    let sf2 = option(&mut args, "--sf2")?;
     if args.is_empty() || args.iter().any(|a| a.starts_with('-')) {
         return Err(USAGE.into());
     }
@@ -49,6 +60,16 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
     println!("into {}", dest.display());
     for missing in &imported.missing {
         println!("not found: {missing}");
+    }
+    if let Some(path) = sf2 {
+        let bank = imported
+            .instruments
+            .as_ref()
+            .ok_or("no instruments to write as a SoundFont")?;
+        std::fs::File::create(&path)
+            .and_then(|mut f| sf2::write(bank, &mut f))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("wrote the SoundFont {}", path.display());
     }
     Ok(())
 }

@@ -5,7 +5,7 @@ pub mod bank;
 pub mod beep;
 pub mod mml;
 pub mod pcm;
-mod sampler;
+pub mod sampler;
 pub mod synth;
 pub mod talk;
 mod track;

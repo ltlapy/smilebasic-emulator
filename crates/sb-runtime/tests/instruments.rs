@@ -3,6 +3,9 @@
 //! With `$SB_INSTRUMENTS_WAV` set, also writes what played there as a WAV
 //! file to listen to.
 //!
+//! `$SB_SOUNDFONT` names a SoundFont the importer wrote with `--sf2`, to
+//! play the same way.
+//!
 //! Run with `SB_INSTRUMENTS=/path/instruments.bin cargo test -p sb-runtime
 //! --test instruments -- --nocapture`.
 
@@ -11,9 +14,9 @@ use std::sync::Arc;
 use sb_core::vm::{Status, Vm};
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
-use sb_runtime::sound::RATE;
 use sb_runtime::sound::bank::Bank;
 use sb_runtime::sound::synth::Instruments;
+use sb_runtime::sound::{RATE, SoundFont};
 
 fn bank() -> Option<Bank> {
     let path = std::env::var_os("SB_INSTRUMENTS")?;
@@ -22,10 +25,9 @@ fn bank() -> Option<Bank> {
 }
 
 /// Runs `source` and plays `frames` frames, left and right in turn.
-fn play(bank: &Arc<Bank>, source: &str, frames: usize) -> Vec<f32> {
+fn play(instruments: &Instruments, source: &str, frames: usize) -> Vec<f32> {
     let mut rt = Runtime::new(400, 240, Font::blank());
-    rt.sound
-        .set_instruments(Some(Instruments::Bank(bank.clone())));
+    rt.sound.set_instruments(Some(instruments.clone()));
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
     while vm.run(&mut rt, 1_000_000).unwrap() != Status::Ended {}
     let mut samples = Vec::new();
@@ -74,7 +76,7 @@ fn instruments_play() {
         eprintln!("SB_INSTRUMENTS is not set; skipped");
         return;
     };
-    let bank = Arc::new(bank);
+    let bank = Instruments::Bank(Arc::new(bank));
     // A held A4 on a few instruments: piano, organ, strings.
     for program in [0, 19, 48] {
         let samples = play(&bank, &format!("BGMPLAY \"T60 @{program} O4 A1\""), 60);
@@ -103,4 +105,21 @@ fn instruments_play() {
         let song = "BGMPLAY \"T120 @0 O4 L8 CDEFGAB<C2 @48 >CEG<C2 @128 O2 L8 CCDCCCDC @19 O4 C1\"";
         write_wav(&path, &play(&bank, song, 60 * 12));
     }
+}
+
+#[test]
+fn the_soundfont_plays() {
+    let Some(path) = std::env::var_os("SB_SOUNDFONT") else {
+        eprintln!("SB_SOUNDFONT is not set; skipped");
+        return;
+    };
+    let mut file = std::fs::File::open(path).expect("SB_SOUNDFONT is readable");
+    let font = SoundFont::new(&mut file).expect("SB_SOUNDFONT is a SoundFont");
+    let font = Instruments::Font(Arc::new(font));
+    let samples = play(&font, "BGMPLAY \"T60 @0 O4 A1\"", 60);
+    let hz = pitch(&samples[samples.len() / 2..]);
+    eprintln!("SoundFont @0: about {hz:.0} Hz");
+    assert!((400.0..490.0).contains(&hz), "out of tune");
+    let drums = play(&font, "BGMPLAY \"T120 @128 O2 C4D4\"", 60);
+    assert!(drums.iter().any(|s| s.abs() > 0.01), "drums are silent");
 }

@@ -51,6 +51,10 @@ directories last so its files take precedence. Only the font is required;
 without the ExeFS, sprite definitions are a plain grid of 16x16 cells. The
 first release's ExeFS has only definitions 0-4095; the others are empty.
 
+`--sf2 FILE` also writes the instruments as a SoundFont, to play them in
+other programs: `@0`-`@127` are bank 0, the drum sets `@128`-`@148` are
+bank 128 (programs 0-20), and the rest are bank `@/128`, program `@%128`.
+
 ## Running
 
 ```sh
