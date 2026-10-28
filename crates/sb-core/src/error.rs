@@ -28,6 +28,13 @@ pub enum ErrorKind {
     SpriteNotSet,
     StringTooLong,
     IllegalMml,
+    WrongNumberOfArguments,
+    IllegalFileName,
+    IllegalFileFormat,
+    /// PRGEDIT on the slot that is running.
+    CantEditRunningProgram,
+    /// PRGGET$ and the other PRG commands before PRGEDIT.
+    UsePrgedit,
 }
 
 impl ErrorKind {
@@ -56,6 +63,11 @@ impl ErrorKind {
             ErrorKind::SpriteNotSet => "Sprite not set",
             ErrorKind::StringTooLong => "String too long",
             ErrorKind::IllegalMml => "Illegal MML",
+            ErrorKind::WrongNumberOfArguments => "Wrong number of arguments",
+            ErrorKind::IllegalFileName => "Illegal file name",
+            ErrorKind::IllegalFileFormat => "Illegal file format",
+            ErrorKind::CantEditRunningProgram => "Can't edit running program",
+            ErrorKind::UsePrgedit => "Use PRGEDIT before any PRG function",
         }
     }
 }

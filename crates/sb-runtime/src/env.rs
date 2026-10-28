@@ -57,6 +57,8 @@ impl Clipboard for MemoryClipboard {
 /// them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Meta {
+    /// The project they belong to.
+    pub project: String,
     pub title: Vec<u16>,
     pub description: Vec<u16>,
     pub icon: Vec<i32>,
@@ -65,6 +67,7 @@ pub struct Meta {
 impl Default for Meta {
     fn default() -> Self {
         Meta {
+            project: String::new(),
             title: Vec::new(),
             description: Vec::new(),
             icon: vec![0; ICON_SIZE * ICON_SIZE],
@@ -82,15 +85,29 @@ fn str_units(v: &Value) -> Result<Vec<u16>> {
     Ok(v.clone().into_str()?.borrow().clone())
 }
 
-fn sub_only() -> Error {
-    Error::with_detail(ErrorKind::IllegalFunctionCall, "only in subprograms")
-}
-
 impl Runtime {
     /// Remembers a line typed in direct mode, for ENVINPUT$.
     pub(crate) fn remember_input(&mut self, line: &str) {
         self.history.push_front(line.encode_utf16().collect());
         self.history.truncate(HISTORY);
+    }
+
+    /// The metadata being edited. Switching projects starts it afresh,
+    /// titled with the project's name (checked on hardware: the
+    /// workspace's is "[WORKSPACE]").
+    fn meta(&mut self) -> &mut Meta {
+        if self.meta.project != self.storage.project() {
+            self.meta = self.blank_meta();
+        }
+        &mut self.meta
+    }
+
+    fn blank_meta(&self) -> Meta {
+        Meta {
+            project: self.storage.project().to_string(),
+            title: self.project_label().encode_utf16().collect(),
+            ..Meta::default()
+        }
     }
 
     fn status(&self) -> i32 {
@@ -109,7 +126,8 @@ impl Runtime {
         let int = |n: i32| Value::Int(n);
         match (command, want, args) {
             (Command::Envtype, Want::Value, []) => Ok(vec![int(0)]),
-            (Command::Envtype, Want::Outs(2), []) => Ok(vec![int(0), int(-1)]),
+            // The manual says -1 for user programs; it is 0 on hardware.
+            (Command::Envtype, Want::Outs(2), []) => Ok(vec![int(0), int(0)]),
             (Command::Envstat, Want::Value, []) => Ok(vec![int(self.status())]),
             // Only subprograms set the main interpreter's status.
             (Command::Envstat, Want::Outs(0), [s]) => {
@@ -148,7 +166,14 @@ impl Runtime {
                 };
                 Ok(vec![Value::Str(new_str(text))])
             }
-            (Command::Envload | Command::Envsave, Want::Outs(0), [_, _, _]) => Err(sub_only()),
+            // Only subprograms copy; on the main interpreter they do
+            // nothing (checked on hardware for ENVLOAD).
+            (Command::Envload | Command::Envsave, Want::Outs(0), [a, b, c]) => {
+                for v in [a, b, c] {
+                    v.to_int()?;
+                }
+                Ok(vec![])
+            }
             (Command::Envproject, Want::Outs(0), []) => Ok(vec![]),
             (Command::Clipboard, Want::Value, []) => {
                 let text = self.clipboard.text();
@@ -165,8 +190,8 @@ impl Runtime {
             }
             (Command::Metaedit, Want::Outs(0), [item, value]) => {
                 match item.to_int()? {
-                    0 => self.meta.title = limited(str_units(value)?, TITLE_CHARS)?,
-                    1 => self.meta.description = limited(str_units(value)?, DESCRIPTION_CHARS)?,
+                    0 => self.meta().title = limited(str_units(value)?, TITLE_CHARS),
+                    1 => self.meta().description = limited(str_units(value)?, DESCRIPTION_CHARS),
                     2 => {
                         let Value::Array(a) = value else {
                             return Err(ErrorKind::TypeMismatch.into());
@@ -183,7 +208,7 @@ impl Runtime {
                             let detail = format!("{} elements", icon.len());
                             return Err(Error::with_detail(ErrorKind::OutOfRange, detail));
                         }
-                        self.meta.icon = icon;
+                        self.meta().icon = icon;
                     }
                     n => {
                         return Err(Error::with_detail(
@@ -195,11 +220,11 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Metaedit, Want::Outs(1), [item]) => Ok(vec![match item.to_int()? {
-                0 => Value::Str(new_str(self.meta.title.clone())),
-                1 => Value::Str(new_str(self.meta.description.clone())),
+                0 => Value::Str(new_str(self.meta().title.clone())),
+                1 => Value::Str(new_str(self.meta().description.clone())),
                 2 => Value::Array(Rc::new(RefCell::new(Array {
                     dims: vec![ICON_SIZE, ICON_SIZE],
-                    data: ArrayData::Int(self.meta.icon.clone()),
+                    data: ArrayData::Int(self.meta().icon.clone()),
                 }))),
                 n => {
                     return Err(Error::with_detail(
@@ -232,7 +257,7 @@ impl Runtime {
     /// The project's metadata, or empty metadata where its files are
     /// missing or unreadable.
     fn read_meta(&self) -> Meta {
-        let mut meta = Meta::default();
+        let mut meta = self.blank_meta();
         if let Ok(bytes) = self.storage.read_project_file(META_TEXT) {
             let text = String::from_utf8_lossy(&bytes);
             let (title, description) = text.split_once('\n').unwrap_or((&text, ""));
@@ -248,7 +273,8 @@ impl Runtime {
         meta
     }
 
-    fn write_meta(&self) -> storage::Result<()> {
+    fn write_meta(&mut self) -> storage::Result<()> {
+        self.meta();
         let mut text = String::from_utf16_lossy(&self.meta.title);
         text.push('\n');
         text.push_str(&String::from_utf16_lossy(&self.meta.description));
@@ -264,13 +290,12 @@ impl Runtime {
     }
 }
 
-/// A title or description, which may not be longer than `max`.
-fn limited(text: Vec<u16>, max: usize) -> Result<Vec<u16>> {
-    if text.len() > max {
-        let detail = format!("over {max} characters");
-        return Err(Error::with_detail(ErrorKind::StringTooLong, detail));
-    }
-    Ok(text)
+/// A title or description, cut to `max` characters.
+// Checked on hardware: a longer title is no error. UNVERIFIED: that it
+// is cut.
+fn limited(mut text: Vec<u16>, max: usize) -> Vec<u16> {
+    text.truncate(max);
+    text
 }
 
 /// The history type, newest first.

@@ -87,6 +87,16 @@ fn shortened(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+/// A caption longer than `max` keeps one character less and ends in
+/// "……" (checked on hardware: 45 characters of a 50-character caption
+/// show). UNVERIFIED: the same for the file name dialog's 39.
+fn cut_caption(text: &str, max: usize) -> String {
+    match text.chars().count() > max {
+        true => format!("{}……", shortened(text, max - 1)),
+        false => text.to_string(),
+    }
+}
+
 fn lines(text: &str) -> Vec<String> {
     let text = shortened(text, TEXT_CHARS).replace("\r\n", "\n");
     text.split(['\n', '\r']).map(str::to_string).collect()
@@ -104,7 +114,7 @@ fn timeout(v: Option<&Value>) -> Result<Option<u32>> {
 fn caption(v: Option<&Value>, max: usize) -> Result<String> {
     match v {
         None | Some(Value::Default) => Ok(DEFAULT_CAPTION.to_string()),
-        Some(v) => Ok(shortened(&text(v)?, max)),
+        Some(v) => Ok(cut_caption(&text(v)?, max)),
     }
 }
 
@@ -145,8 +155,8 @@ impl Runtime {
             (Want::Value, [initial, Value::Str(_), rest @ ..]) if rest.len() <= 1 => {
                 let initial = text(initial)?;
                 if !initial.chars().all(name_char) {
-                    let detail = format!("file name {initial:?}");
-                    return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, detail));
+                    let detail = format!("{initial:?}");
+                    return Err(Error::with_detail(ErrorKind::IllegalFileName, detail));
                 }
                 let max = match rest.first().map(opt_int).transpose()?.flatten() {
                     None => NAME_CHARS,

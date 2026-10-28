@@ -67,13 +67,12 @@ fn array_value(array: Array) -> Value {
 }
 
 /// What LOADV gives when a file cannot be read: an empty string for TXT,
-/// otherwise a number. The manual says an empty array, but on hardware
-/// LEN(LOADV("DAT:NONE")) is a Type mismatch.
-// UNVERIFIED: that the number is 0, and the empty string for TXT.
+/// otherwise the omitted value (TYPEOF 0), although the manual says an
+/// empty array (checked on hardware).
 fn failed_value(spec: &str) -> Value {
     match typed_name(spec) {
         Ok((FileKind::Txt, _)) => Value::str(""),
-        _ => Value::Int(0),
+        _ => Value::Default,
     }
 }
 
@@ -208,6 +207,15 @@ impl Runtime {
                 let Value::Array(target) = target else {
                     return Err(ErrorKind::TypeMismatch.into());
                 };
+                // Only DAT and GRP files load into an array (checked on
+                // hardware for TXT).
+                if let Ok((kind @ (FileKind::Txt | FileKind::Jpg), _)) = typed_name(&spec) {
+                    let detail = format!("{} into an array", kind.name());
+                    return Err(Error::with_detail(
+                        ErrorKind::WrongNumberOfArguments,
+                        detail,
+                    ));
+                }
                 if self.ask_load(&spec, FileKind::Txt) {
                     return Ok(vec![]);
                 }
@@ -336,7 +344,8 @@ impl Runtime {
     }
 
     /// LOADG's image. A DAT file that is not a 2D integer array is an
-    /// error, not a failure.
+    /// Illegal file format error, not a failure (checked on hardware for a
+    /// string array).
     fn load_image(&self, spec: &str) -> Result<storage::Result<Image>> {
         let (kind, name) = match parse_file_name(spec, FileKind::Grp) {
             Ok(file) => file,
@@ -354,10 +363,8 @@ impl Runtime {
             if let Ok(data) = &data
                 && !(data.dims.len() == 2 && matches!(data.values, DataValues::Int(_)))
             {
-                return Err(Error::with_detail(
-                    ErrorKind::TypeMismatch,
-                    "not a 2D array",
-                ));
+                let detail = "not a 2D integer array";
+                return Err(Error::with_detail(ErrorKind::IllegalFileFormat, detail));
             }
         }
         Ok(image::decode(&bytes).map_err(bad_file))

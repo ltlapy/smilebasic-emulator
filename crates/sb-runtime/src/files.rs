@@ -338,11 +338,9 @@ impl Runtime {
         self.storage.rename(kind, &from, &to)
     }
 
-    /// FILES' entries: projects for `"//"`, else files of a project. Names
-    /// carry a `TYPE:` prefix unless one type was asked for, as on SmileBASIC
-    /// 4 (`TXT:MAIN.PRG`).
-    // UNVERIFIED: how other types are shown; a GRP file appeared as its
-    // stored name (`GDEFFONT`) on hardware.
+    /// FILES' entries: projects for `"//"`, else files of a project, each
+    /// with its `TYPE:` prefix, also when one type was asked for (checked
+    /// on hardware: `FILES "DAT:"` lists `DAT:T5A`).
     fn listing(&self, spec: &str) -> storage::Result<Vec<String>> {
         if spec == "//" {
             return self.storage.projects();
@@ -351,10 +349,7 @@ impl Runtime {
         let files = self.storage.list(kind, project.as_deref())?;
         Ok(files
             .into_iter()
-            .map(|(k, name)| match kind {
-                Some(_) => name,
-                None => format!("{}:{name}", k.name()),
-            })
+            .map(|(k, name)| format!("{}:{name}", k.name()))
             .collect())
     }
 }

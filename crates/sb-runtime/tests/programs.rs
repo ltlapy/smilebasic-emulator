@@ -88,15 +88,15 @@ fn changes_lines() {
 fn errors() {
     let mut m = machine();
     run(&mut m, &["?PRGGET$()"]);
-    assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
+    assert!(tail(&m, 2)[0].starts_with("Use PRGEDIT before any PRG function"));
     run(&mut m, &["PRGEDIT 0"]);
-    assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
+    assert!(tail(&m, 2)[0].starts_with("Can't edit running program"));
     run(&mut m, &["PRGEDIT 1,2"]);
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
     // Running a program ends the editing.
     enter(&mut m, "prgedit 1");
     run(&mut m, &["?PRGEDIT()"]);
-    assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
+    assert!(tail(&m, 2)[0].starts_with("Use PRGEDIT"));
 }
 
 #[test]
@@ -115,12 +115,13 @@ fn surroundings_of_the_main_interpreter() {
     );
     assert_eq!(
         tail(&m, 5),
-        ["0 0 -1 3 1", "3 0 0", "RUN A=1 []", "COPIED", "OK"]
+        ["0 0 0 3 1", "3 0 0", "RUN A=1 []", "COPIED", "OK"]
     );
     enter(&mut m, "?envstat()");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
+    // Only subprograms copy; here it does nothing.
     run(&mut m, &["ENVLOAD 0,1,1"]);
-    assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
+    assert_eq!(tail(&m, 2), ["RUN", "OK"]);
 }
 
 /// Starts a program and runs frames until it waits on a dialog.
@@ -156,8 +157,12 @@ fn dialogs_wait_for_an_answer() {
     settle(&mut m);
     assert_eq!(tail(&m, 2), ["-1", "OK"]);
 
-    // A timeout in frames.
-    until_dialog(&mut m, "DIALOG \"X\",0,\"Cap\",-3:?RESULT()");
+    // A timeout in frames; a long caption is cut.
+    let d = until_dialog(
+        &mut m,
+        &format!("DIALOG \"X\",0,\"{}\",-3:?RESULT()", "C".repeat(50)),
+    );
+    assert_eq!(d.caption, format!("{}……", "C".repeat(45)));
     settle(&mut m);
     assert_eq!(tail(&m, 2), ["0", "OK"]);
 
@@ -181,7 +186,7 @@ fn dialogs_wait_for_an_answer() {
     assert_eq!(tail(&m, 2), ["GAME 1", "OK"]);
 
     run(&mut m, &["?DIALOG(\"A B\",\"X\")"]);
-    assert!(tail(&m, 2)[0].starts_with("Illegal function call"));
+    assert!(tail(&m, 2)[0].starts_with("Illegal file name"));
     run(&mut m, &["?DIALOG(\"A\",0)"]);
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
 }

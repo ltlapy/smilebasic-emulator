@@ -62,8 +62,8 @@ imported from your own copy:
   own `META` file is neither read nor written, since its layout is not
   known.
 - There are no subprograms yet, so `ENVTYPE`, `ENVSTAT` and the other
-  `ENV` commands always answer for the main interpreter, and `ENVLOAD`
-  and `ENVSAVE` are errors.
+  `ENV` commands always answer for the main interpreter, where `ENVLOAD`
+  and `ENVSAVE` do nothing.
 - `DIALOG` is drawn as the emulator's own window, in English. Besides
   the controller's A and B, it answers clicks and Enter.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands

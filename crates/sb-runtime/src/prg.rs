@@ -61,9 +61,7 @@ impl Runtime {
     }
 
     fn editing(&self) -> Result<PrgEdit> {
-        // UNVERIFIED: the error for PRG commands before PRGEDIT.
-        self.prg_edit
-            .ok_or_else(|| Error::with_detail(ErrorKind::IllegalFunctionCall, "no PRGEDIT"))
+        self.prg_edit.ok_or_else(|| ErrorKind::UsePrgedit.into())
     }
 
     /// Changes the edited slot's lines, marking it as unsaved.
@@ -92,8 +90,11 @@ impl Runtime {
             (Command::Prgedit, Want::Outs(0), [slot, rest @ ..]) if rest.len() <= 1 => {
                 let slot = slot_arg(Some(slot))?;
                 if self.running_slot == Some(slot) {
-                    let detail = format!("slot {slot} is running");
-                    return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, detail));
+                    let detail = format!("slot {slot}");
+                    return Err(Error::with_detail(
+                        ErrorKind::CantEditRunningProgram,
+                        detail,
+                    ));
                 }
                 let count = lines_of(&self.slots[slot]).len();
                 let line = match rest.first().map(opt_int).transpose()?.flatten() {
@@ -197,8 +198,7 @@ impl Runtime {
                 });
                 Ok(vec![])
             }
-            // UNVERIFIED: a negative count deletes from the current line
-            // to the end.
+            // A negative count deletes every line (checked on hardware).
             (Command::Prgdel, Want::Outs(0), _) if args.len() <= 1 => {
                 let n = args
                     .first()
@@ -208,12 +208,17 @@ impl Runtime {
                     .unwrap_or(1);
                 let edit = self.editing()?;
                 self.change_lines(edit, |lines, line| {
-                    let start = (*line).min(lines.len());
-                    let end = match usize::try_from(n) {
-                        Ok(n) => (start + n).min(lines.len()),
-                        Err(_) => lines.len(),
+                    let (start, end) = match usize::try_from(n) {
+                        Ok(n) => {
+                            let start = (*line).min(lines.len());
+                            (start, (start + n).min(lines.len()))
+                        }
+                        Err(_) => (0, lines.len()),
                     };
                     lines.drain(start..end);
+                    if n < 0 {
+                        *line = 0;
+                    }
                 });
                 Ok(vec![])
             }

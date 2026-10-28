@@ -109,7 +109,7 @@ fn projects_rename_delete() {
     enter(&mut m, "project \"mygame\":?project()");
     assert_eq!(tail(&m, 2), ["MYGAME", "OK"]);
     enter(&mut m, "save \"a\":rename \"a\",\"b\":files \"txt:\"");
-    assert_eq!(tail(&m, 2), ["B", "OK"]);
+    assert_eq!(tail(&m, 2), ["TXT:B", "OK"]);
     enter(&mut m, "delete \"b\":f$=files():?len(f$)");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
     enter(&mut m, "files \"//\"");
@@ -364,13 +364,13 @@ fn values_save_and_load() {
         "DIM C%[2,2]:LOADV \"DAT:A\",C%:?LEN(C%),C%[1,2]",
         "DIM S$[1]:S$[0]=\"X\":SAVEV \"DAT:S\",S$:DIM T$[5]:LOADV \"DAT:S\",T$:?LEN(T$),T$[0]",
         "SAVEV \"DAT:A\",A",
-        "?LOADV(\"DAT:NONE\"),RESULT(),LEN(LOADV(\"TXT:NONE\"))",
+        "?TYPEOF(LOADV(\"DAT:NONE\")),RESULT(),TYPEOF(LOADV(\"TXT:NONE\"))",
     ];
     m.set_slot(0, program.join("\n"));
     enter(&mut m, "run");
     assert_eq!(
         words(&tail(&m, 6)),
-        ["1", "2 6 1.5", "6 1", "1 X", "0 0 0", "OK"]
+        ["1", "2 6 1.5", "6 1", "1 X", "0 0 3", "OK"]
     );
     assert!(dir.0.join("@WORKSPACE").join("B@BACKUP.DAT").is_file());
     // Text is stored as UTF-8, as SAVE does.
@@ -387,6 +387,16 @@ fn values_save_and_load() {
     m.set_slot(0, "SAVEV \"TXT:X\",1".to_string());
     enter(&mut m, "run");
     assert!(tail(&m, 2)[0].starts_with("Type mismatch"));
+    m.set_slot(0, "DIM Z$[0]:LOADV \"TXT:MEMO\",Z$".to_string());
+    enter(&mut m, "run");
+    assert!(tail(&m, 2)[0].starts_with("Wrong number of arguments"));
+    m.set_slot(0, "LOADG \"DAT:S\",0".to_string());
+    enter(&mut m, "run");
+    assert!(
+        tail(&m, 2)[0].starts_with("Illegal file format"),
+        "{:?}",
+        tail(&m, 3)
+    );
 }
 
 #[test]
@@ -442,7 +452,15 @@ fn metadata_saves_with_the_project() {
     assert_eq!(words(&tail(&m, 2)), ["My game 13 2 FF00FF00", "OK"]);
     let text = std::fs::read_to_string(dir.0.join("@WORKSPACE").join("@META.TXT")).unwrap();
     assert_eq!(text, "My game\nLine 1\nLine 2");
-    m.set_slot(0, "METAEDIT 0,\"0123456789012345678901234\"".to_string());
+    // A longer title is cut; another project starts with its name.
+    m.set_slot(
+        0,
+        "METAEDIT 0,\"0123456789012345678901234\":METAEDIT 0 OUT T$:?LEN(T$)".to_string(),
+    );
     enter(&mut m, "run");
-    assert!(tail(&m, 2)[0].starts_with("String too long"));
+    assert_eq!(tail(&m, 2), ["24", "OK"]);
+    m.rt.storage.create_project("GAME").unwrap();
+    m.set_slot(0, "METAEDIT 0 OUT T$:?T$".to_string());
+    enter(&mut m, "project \"game\":run");
+    assert_eq!(tail(&m, 2), ["GAME", "OK"]);
 }
