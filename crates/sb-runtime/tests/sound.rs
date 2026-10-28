@@ -180,7 +180,8 @@ fn user_waveforms_and_the_psg_play_without_a_soundfont() {
 #[test]
 fn beeps_take_handles() {
     let mut rt = runtime();
-    assert_eq!(run_on(&mut rt, "?BEEP(152);BEEP();").unwrap(), "01");
+    // PRINT works out its items right to left, so BEEP() takes handle 0.
+    assert_eq!(run_on(&mut rt, "?BEEP(152);BEEP();").unwrap(), "10");
     run_on(&mut rt, "WAVSET 230,127,127,127,127,\"FF00\"*8:H=BEEP(230,0,127):BEEPPIT H,1200:BEEPVOL H,64:BEEPPAN H,0").unwrap();
     rt.sound.take_samples();
     frames(&mut rt, 2);

@@ -52,6 +52,33 @@ fn arithmetic_and_types() {
     assert_eq!(error("\n?1/0"), (ErrorKind::DivideByZero, 2));
 }
 
+/// The order SmileBASIC 4 works things out in, as TEST08 showed on
+/// hardware: right to left nearly everywhere.
+#[test]
+fn evaluation_order() {
+    let defs = "\nDEF F(N)\nO$=O$+STR$(N)\nRETURN N\nEND\nDEF G(A,B,C)\nRETURN 0\nEND\n\
+                DEF H A,B\nEND\nDEF P(N)\n?\"<\";N;\">\";\nRETURN N\nEND";
+    let order = |code: &str| output(&format!("O$=\"\":{code}:?O${defs}"));
+    for (code, want) in [
+        ("X=F(1)+F(2)*F(3)", "321"),
+        ("X=MAX(F(1),F(2),F(3))", "321"),
+        ("X=G(F(1),F(2),F(3))", "321"),
+        ("H F(1),F(2)", "21"),
+        ("DIM A[5,5]:A[F(1),F(2)]=F(3)", "321"),
+        ("X=F(F(1)+F(2))", "213"),
+        ("FOR I=F(1) TO F(2) STEP F(3):NEXT", "13232"),
+        ("X=F(1)+F(2)+F(3)", "321"),
+        ("X=-F(1)*(F(2)-F(3))", "321"),
+        ("X=F(1) AND F(2)", "21"),
+    ] {
+        assert_eq!(order(code), format!("{want}\n"), "{code}");
+    }
+    // PRINT works every item out, last first, before printing any.
+    assert_eq!(output(&format!("?P(1);P(2);P(3){defs}")), "<3><2><1>123\n");
+    // && and || still go left to right, stopping early.
+    assert_eq!(order("X=F(0) && F(1)"), "0\n");
+}
+
 #[test]
 fn short_circuit() {
     let src = "DEF T(X)\n?\"T\";\nRETURN X\nEND\n?T(0)&&T(1)\n?T(1)||T(0)\n?T(1)&&T(2)";

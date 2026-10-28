@@ -435,6 +435,14 @@ impl Vm {
                 self.stack.push(Value::Int(i32::from(b)));
             }
             Op::Pop => _ = self.pop(),
+            Op::Swap => {
+                let n = self.stack.len();
+                self.stack.swap(n - 1, n - 2);
+            }
+            Op::Reverse(n) => {
+                let from = self.stack.len() - usize::from(*n);
+                self.stack[from..].reverse();
+            }
             Op::Jump(a) => next = *a as usize,
             Op::JumpIfFalse(a) => {
                 if !self.pop().is_true()? {

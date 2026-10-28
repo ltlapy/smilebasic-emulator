@@ -26,7 +26,7 @@ fn random_numbers() {
         "1"
     );
     assert_eq!(
-        run("RANDOMIZE 2,99:A=RND(2,1000):B=RND(2,1000):RANDOMIZE 2,99:?RND(2,1000)==A AND RND(2,1000)==B").unwrap(),
+        run("RANDOMIZE 2,99:A=RND(2,1000):B=RND(2,1000):RANDOMIZE 2,99:C=RND(2,1000):D=RND(2,1000):?C==A AND D==B").unwrap(),
         "1"
     );
     assert_eq!(run("?TYPEOF(RND(5));TYPEOF(RNDF())").unwrap(), "12");

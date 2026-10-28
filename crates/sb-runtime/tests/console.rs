@@ -64,7 +64,8 @@ fn inkey_reads_queued_keys() {
     let src = "A$=INKEY$()+INKEY$():B$=INKEY$(1):C$=INKEY$()\n?A$;ASC(B$);LEN(C$)";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
-    assert_eq!(row(&rt, 4, 0), "AB300");
+    // The right operand of + is worked out first, so it reads A.
+    assert_eq!(row(&rt, 4, 0), "BA300");
 }
 
 #[test]

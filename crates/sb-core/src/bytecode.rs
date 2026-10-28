@@ -89,6 +89,11 @@ pub enum Op {
     /// `[v] -> [0 or 1]`
     Truthy,
     Pop,
+    /// `[a, b] -> [b, a]`. SmileBASIC evaluates right to left, so the
+    /// compiler pushes values in reverse and puts them back in order.
+    Swap,
+    /// `[v1..vn] -> [vn..v1]`
+    Reverse(u8),
     Jump(Addr),
     /// `[cond] -> []`
     JumpIfFalse(Addr),

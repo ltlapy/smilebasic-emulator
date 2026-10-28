@@ -54,6 +54,22 @@ follows all of it. Items still waiting for a check are marked
   declares nothing.
 - `CLEAR` in a program is a `Syntax error` when it runs.
 
+## Order of evaluation
+
+SmileBASIC 4 works things out right to left, which shows when the parts
+have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
+
+- Both sides of an operator: the right one first. `F(1)+F(2)*F(3)` calls
+  `F(3)`, `F(2)`, then `F(1)`; `INKEY$()+INKEY$()` puts the first key
+  typed last.
+- Arguments of functions, commands and DEFs, and array indices: the last
+  first. In `A[F(1),F(2)]=F(3)` the value comes before the indices.
+- `PRINT` works out every item, last first, before it prints any of
+  them: `?P(1);P(2)` with a `P` that prints shows `<2><1>12`.
+- `FOR` works out `STEP`, then `TO`, again before every test, so they
+  are called once more at each `NEXT`.
+- `&&` and `||` still go left to right and stop early.
+
 ## DATA
 
 - `SPANIM` with a `"@label"` reads its DATA with `READ`'s own place: it

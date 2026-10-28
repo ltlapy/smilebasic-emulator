@@ -578,14 +578,16 @@ impl Compiler<'_> {
                 let (to_slot, step_slot) = (self.temp(), self.temp());
                 self.expr(from)?;
                 self.store(var)?;
-                self.expr(to)?;
-                self.emit(Op::Store(to_slot));
+                // STEP, then TO, are worked out again before each test
+                // (checked on hardware).
+                let check = self.here();
                 match step {
                     Some(s) => self.expr(s)?,
                     None => _ = self.emit(Op::Int(1)),
                 }
                 self.emit(Op::Store(step_slot));
-                let check = self.here();
+                self.expr(to)?;
+                self.emit(Op::Store(to_slot));
                 self.load_lvalue(var)?;
                 self.emit(Op::Load(to_slot));
                 self.emit(Op::Load(step_slot));
@@ -816,11 +818,20 @@ impl Compiler<'_> {
                 c.emit(Op::Load(s));
             }
         };
+        // Every item is worked out before anything prints, the last
+        // first (checked on hardware), so the first ends up on top.
+        for item in items.iter().rev() {
+            if let PrintItem::Expr(e) = item {
+                self.expr(e)?;
+            }
+        }
         for item in items {
             match item {
-                PrintItem::Expr(e) => {
-                    load_screen(self);
-                    self.expr(e)?;
+                PrintItem::Expr(_) => {
+                    if has_screen {
+                        load_screen(self);
+                        self.emit(Op::Swap);
+                    }
                     self.emit(Op::Print { screen: has_screen });
                 }
                 PrintItem::Semicolon => {}
@@ -958,13 +969,25 @@ impl Compiler<'_> {
         if args.len() > u8::MAX as usize {
             return Err(err(ErrorKind::SyntaxError, "too many arguments"));
         }
-        for a in args {
+        // The last argument first, as SmileBASIC does (checked on
+        // hardware for builtins, DEFs and commands).
+        for a in args.iter().rev() {
             match a {
                 Some(e) => self.expr(e)?,
                 None => _ = self.emit(Op::Default),
             }
         }
+        self.reorder(args.len());
         Ok(())
+    }
+
+    /// Puts the last `n` values, pushed last first, back in order.
+    fn reorder(&mut self, n: usize) {
+        match n {
+            0 | 1 => {}
+            2 => _ = self.emit(Op::Swap),
+            n => _ = self.emit(Op::Reverse(n as u8)),
+        }
     }
 
     // ---- lvalues ----
@@ -1011,7 +1034,10 @@ impl Compiler<'_> {
         if indices.len() > crate::value::MAX_DIMS {
             return Err(ErrorKind::SubscriptOutOfRange.into());
         }
-        indices.iter().try_for_each(|i| self.expr(i))
+        // The last index first (checked on hardware).
+        indices.iter().rev().try_for_each(|i| self.expr(i))?;
+        self.reorder(indices.len());
+        Ok(())
     }
 
     // ---- expressions ----
@@ -1095,10 +1121,13 @@ impl Compiler<'_> {
                 let here = self.here();
                 self.patch(end, here);
             }
+            // The right operand first (checked on hardware: F(1)+F(2)*F(3)
+            // calls F(3), F(2), then F(1)).
             Expr::Binary { op, lhs, rhs } => {
                 self.check_constant(expr)?;
-                self.expr(lhs)?;
                 self.expr(rhs)?;
+                self.expr(lhs)?;
+                self.emit(Op::Swap);
                 self.emit(Op::Binary(*op));
             }
         }

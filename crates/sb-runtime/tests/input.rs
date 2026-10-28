@@ -160,7 +160,10 @@ fn function_keys_and_pushkey() {
         run(&[], "KEY 2,\"LIST\":?KEY(2);KEY(1);\"|\";").unwrap(),
         "LIST|"
     );
-    assert_eq!(run(&[], "PUSHKEY \"AB\":?INKEY$();INKEY$()").unwrap(), "AB");
+    assert_eq!(
+        run(&[], "PUSHKEY \"AB\":A$=INKEY$():?A$;INKEY$()").unwrap(),
+        "AB"
+    );
     let mut rt = Runtime::new(400, 240, Font::blank());
     let id = rt.lookup("KEY").unwrap();
     let long = sb_core::value::Value::Str(sb_core::value::new_str(vec![65; 257]));
