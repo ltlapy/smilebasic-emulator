@@ -602,6 +602,9 @@ fn initialized_arrays_keep_their_sizes() {
         "62Z||\n"
     );
     assert_eq!(error("DIM A[2]=[1,2,3]").0, ErrorKind::SubscriptOutOfRange);
+    // Only one-dimensional arrays may be empty.
+    assert_eq!(error("DIM R#[0,0]").0, ErrorKind::SubscriptOutOfRange);
+    assert_eq!(output("DIM A[0]:?LEN(A)"), "0\n");
 }
 
 #[test]

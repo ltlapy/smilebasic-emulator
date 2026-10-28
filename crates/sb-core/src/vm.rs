@@ -363,6 +363,12 @@ impl Vm {
                     .iter()
                     .map(|d| usize::try_from(d.to_int()?).map_err(|_| ErrorKind::OutOfRange.into()))
                     .collect::<Result<Vec<_>>>()?;
+                // Only a one-dimensional array may be empty: DIM R#[0,0] is
+                // Subscript out of range (checked on hardware).
+                // UNVERIFIED: that one zero among other sizes is, too.
+                if dims.len() > 1 && dims.contains(&0) {
+                    return Err(ErrorKind::SubscriptOutOfRange.into());
+                }
                 // UNVERIFIED: the cap stands in for "out of memory".
                 if dims
                     .iter()
