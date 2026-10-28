@@ -3,6 +3,7 @@
 //! directory. It is kept apart from the emulator, which only reads what
 //! this has imported.
 
+mod bfsar;
 mod import;
 mod nso;
 mod spdef;

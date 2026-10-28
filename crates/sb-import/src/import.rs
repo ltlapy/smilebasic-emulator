@@ -6,9 +6,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use sb_runtime::font::{Font, FontError};
-use sb_runtime::resources::{self, FONT_MAP, FONT_PAGE, SPRITE_DEFS, SPRITE_PAGE};
+use sb_runtime::resources::{self, FONT_MAP, FONT_PAGE, INSTRUMENTS, SPRITE_DEFS, SPRITE_PAGE};
+use sb_runtime::sound::bank::Bank;
 
-use crate::{nso, spdef};
+use crate::{bfsar, nso, spdef};
 
 /// A file to import, and where it lives inside a RomFS or ExeFS.
 struct Source {
@@ -33,6 +34,12 @@ const SPRITE_PAGE_SOURCE: Source = Source {
     paths: &["basic/en/#SYS/GDEFGRP", "basic/jp/#SYS/GDEFGRP"],
 };
 
+/// The sound archive, which holds the instruments.
+const SOUND_ARCHIVE: Source = Source {
+    name: "petc4.bfsar",
+    paths: &["petc4.bfsar"],
+};
+
 /// The executable in the ExeFS, which holds the default SPDEF table.
 const EXECUTABLE: Source = Source {
     name: "main",
@@ -46,6 +53,8 @@ pub struct Imported {
     pub sources: Vec<PathBuf>,
     /// Optional resources that were not found, with what they are for.
     pub missing: Vec<&'static str>,
+    /// The instruments, for writing out as a SoundFont too.
+    pub instruments: Option<Bank>,
 }
 
 #[derive(Debug)]
@@ -118,7 +127,7 @@ pub fn import(dirs: &[PathBuf], dest: &Path) -> Result<Imported, ImportError> {
     }
     let mut imported = Imported {
         sources,
-        missing: Vec::new(),
+        ..Imported::default()
     };
 
     match locate(&SPRITE_PAGE_SOURCE, dirs) {
@@ -148,6 +157,17 @@ pub fn import(dirs: &[PathBuf], dest: &Path) -> Result<Imported, ImportError> {
         None => imported
             .missing
             .push("main (sprite definitions, in the ExeFS)"),
+    }
+    match locate(&SOUND_ARCHIVE, dirs) {
+        Some(path) => {
+            let bank = bfsar::bank(&read(&path)?).map_err(|e| ImportError::Bad(path.clone(), e))?;
+            write(INSTRUMENTS, &bank.to_bytes())?;
+            imported.sources.push(path);
+            imported.instruments = Some(bank);
+        }
+        None => imported
+            .missing
+            .push("petc4.bfsar (the instruments, in the RomFS)"),
     }
     Ok(imported)
 }
