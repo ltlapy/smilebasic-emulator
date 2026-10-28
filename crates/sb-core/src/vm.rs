@@ -723,7 +723,10 @@ impl Vm {
     ) -> Result<()> {
         let b = builtins::get(id);
         if !b.accepts(args.len()) {
-            return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, b.name));
+            return Err(Error::with_detail(
+                ErrorKind::WrongNumberOfArguments,
+                b.name,
+            ));
         }
         let results = match (b.kind, want) {
             (Kind::Function(f), Want::Value) => vec![f(args)?],
@@ -769,11 +772,14 @@ impl Vm {
             Want::Outs(n) => !info.is_function && info.outs.is_none_or(|m| m == n),
         };
         let args_ok = info.params.is_none_or(|p| usize::from(p) == args.len());
+        // UNVERIFIED: that a DEF given the wrong number of arguments is
+        // the same error as a builtin.
         if !call_ok || !args_ok {
-            return Err(Error::with_detail(
-                ErrorKind::IllegalFunctionCall,
-                info.name.clone(),
-            ));
+            let kind = match call_ok {
+                true => ErrorKind::WrongNumberOfArguments,
+                false => ErrorKind::IllegalFunctionCall,
+            };
+            return Err(Error::with_detail(kind, info.name.clone()));
         }
         if self.frames.len() >= MAX_CALL_DEPTH {
             return Err(ErrorKind::StackOverflow.into());

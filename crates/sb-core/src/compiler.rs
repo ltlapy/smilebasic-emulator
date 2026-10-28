@@ -299,6 +299,7 @@ impl Compiler<'_> {
                     .collect::<Result<Vec<_>>>()?;
                 match b.kind {
                     Kind::Function(f) if b.accepts(args.len()) => f(&args)?,
+                    Kind::Function(_) => return Err(ErrorKind::WrongNumberOfArguments.into()),
                     _ => return Err(ErrorKind::IllegalFunctionCall.into()),
                 }
             }
@@ -906,8 +907,9 @@ impl Compiler<'_> {
             self.emit(Op::CallDef { def, argc, want });
         } else if let Some(id) = builtins::lookup(&full, Form::Command) {
             let b = builtins::get(id);
+            // Checked on hardware: ?ABS(1,2) is Wrong number of arguments.
             if !b.accepts(args.len()) {
-                return Err(self.illegal_call(&full));
+                return Err(err(ErrorKind::WrongNumberOfArguments, full.clone()));
             }
             self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
@@ -1150,8 +1152,9 @@ impl Compiler<'_> {
             self.emit(Op::CallDef { def, argc, want });
         } else if let Some(id) = builtins::lookup(&full, Form::Function) {
             let b = builtins::get(id);
+            // Checked on hardware: ?ABS(1,2) is Wrong number of arguments.
             if !b.accepts(args.len()) {
-                return Err(self.illegal_call(&full));
+                return Err(err(ErrorKind::WrongNumberOfArguments, full.clone()));
             }
             self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {

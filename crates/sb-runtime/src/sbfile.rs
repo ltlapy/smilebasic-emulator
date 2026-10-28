@@ -265,9 +265,9 @@ pub enum DataValues {
     Int(Vec<i32>),
     /// Element type 5: doubles.
     Real(Vec<f64>),
-    /// Element type 6: each string's length in a byte, then its text.
-    // UNVERIFIED: the text's encoding (UTF-8 here) and lengths over 255;
-    // only ASCII strings have been seen.
+    /// Element type 6: each string's length in UTF-8 bytes, then its
+    /// UTF-8 text. A length under 128 takes one byte; a longer one two,
+    /// big-endian with the top bit set (300 is `81 2C`).
     Str(Vec<Vec<u16>>),
 }
 
@@ -276,7 +276,7 @@ const STR_TYPE: u16 = 6;
 pub const DATA_MAGIC: &[u8; 8] = b"PCBN0004";
 const DATA_HEADER: usize = 28;
 /// The longest string a DAT file can hold, in UTF-8 bytes.
-pub const MAX_STR_BYTES: usize = 255;
+pub const MAX_STR_BYTES: usize = 0x7FFF;
 
 /// `PCBN0004`, u16 element type, u16 dimension count, u32 x 4 dimensions
 /// (unused ones may hold anything), then the elements, little-endian.
@@ -328,10 +328,16 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
 fn parse_strings(mut payload: &[u8], count: usize) -> Result<DataValues, FileError> {
     let mut items = Vec::new();
     for _ in 0..count {
-        let (&len, rest) = payload.split_first().ok_or(FileError::BadData)?;
-        let text = rest.get(..usize::from(len)).ok_or(FileError::BadData)?;
+        let (&first, mut rest) = payload.split_first().ok_or(FileError::BadData)?;
+        let mut len = usize::from(first);
+        if first & 0x80 != 0 {
+            let (&second, after) = rest.split_first().ok_or(FileError::BadData)?;
+            len = usize::from(first & 0x7F) << 8 | usize::from(second);
+            rest = after;
+        }
+        let text = rest.get(..len).ok_or(FileError::BadData)?;
         items.push(String::from_utf8_lossy(text).encode_utf16().collect());
-        payload = &rest[usize::from(len)..];
+        payload = &rest[len..];
     }
     if !payload.is_empty() {
         return Err(FileError::BadData);
@@ -363,7 +369,10 @@ pub fn data_body(data: &Data) -> Vec<u8> {
                 while text.len() > MAX_STR_BYTES {
                     text.pop();
                 }
-                b.push(text.len() as u8);
+                match text.len() {
+                    n @ 0..0x80 => b.push(n as u8),
+                    n => b.extend_from_slice(&(n as u16 | 0x8000).to_be_bytes()),
+                }
                 b.extend_from_slice(text.as_bytes());
             }
         }
@@ -487,6 +496,16 @@ mod tests {
 
         let s = parse_data(&dat(6, &[2], b"\x02AB\x00")).unwrap();
         assert_eq!(s.values, DataValues::Str(vec![vec![0x41, 0x42], vec![]]));
+        // UTF-8, with a two-byte length from 128 bytes on.
+        let mut long = b"\x09\xe3\x81\x82\xe3\x81\x84\xe3\x81\x86\x81\x2c".to_vec();
+        long.extend(std::iter::repeat_n(b'1', 300));
+        let s = parse_data(&dat(6, &[2], &long)).unwrap();
+        let DataValues::Str(items) = &s.values else {
+            panic!("strings")
+        };
+        assert_eq!(String::from_utf16(&items[0]).unwrap(), "あいう");
+        assert_eq!(items[1].len(), 300);
+        assert_eq!(&data_body(&s)[28..], &long[..]);
     }
 
     #[test]
