@@ -33,6 +33,19 @@ fn random_numbers() {
     assert_eq!(run("?RND(0)").unwrap(), "0");
     assert_eq!(run("?RND(-1)").unwrap_err().kind, ErrorKind::OutOfRange);
     assert_eq!(run("?RND(8,5)").unwrap_err().kind, ErrorKind::OutOfRange);
+    // SmileBASIC 4's own numbers (TEST12 and TEST13 on hardware). PRINT
+    // works its items out last first, so these take them one by one.
+    let seq = "RANDOMIZE 0,1:A=RND(&H7FFFFFFF):B=RND(65536):C=RND(100):?A;\" \";B;\" \";C";
+    assert_eq!(run(seq).unwrap(), "397858342 58081 33");
+    assert_eq!(
+        run("RANDOMIZE 3,-1:A=RND(3,&H7FFFFFFF):?A").unwrap(),
+        "1579374114"
+    );
+    // RND(0) takes no number; RNDF takes two.
+    assert_eq!(
+        run("RANDOMIZE 0,1:A=RND(0):B=RND(&H7FFFFFFF):RANDOMIZE 0,1:C=RNDF():D=RND(&H7FFFFFFF):?B;\" \";C;\" \";D").unwrap(),
+        "397858342 0.59263361 1567819186"
+    );
 }
 
 #[test]

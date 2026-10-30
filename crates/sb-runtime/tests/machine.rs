@@ -335,3 +335,26 @@ fn ctrl_digits_switch_slots() {
     m.edit_slot(6);
     assert_eq!(m.editor.slot(), 1, "no such slot");
 }
+
+#[test]
+fn the_clock_stays_while_a_program_is_busy() {
+    let mut m = machine();
+    // A loop far longer than a frame's budget, without waiting: MAINCNT
+    // and MILLISEC do not move, and the VSYNCs after it catch up at once,
+    // as on hardware (TEST13).
+    m.set_slot(
+        0,
+        "VSYNC:T=MILLISEC:M=MAINCNT:FOR I=1 TO 2000000:NEXT:A=MAINCNT-M:B=MILLISEC-T\n\
+         M=MAINCNT:FOR I=1 TO 10:VSYNC:NEXT:?A;B;MAINCNT-M"
+            .to_string(),
+    );
+    m.run_slot(0);
+    for _ in 0..2000 {
+        m.frame();
+        if !m.is_running() {
+            break;
+        }
+    }
+    assert!(!m.is_running());
+    assert!(rows(&m).iter().any(|r| r == "000"), "{:?}", rows(&m));
+}

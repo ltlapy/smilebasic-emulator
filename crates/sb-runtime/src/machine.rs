@@ -34,6 +34,9 @@ pub struct Machine {
     /// The frame the last VSYNC waited for, which the next one counts
     /// from.
     vsync_at: u64,
+    /// Whether the program ran out of the last frame's time without
+    /// waiting.
+    busy: bool,
     /// Globals of the last program and the direct-mode lines since, kept
     /// for the next direct-mode line; each line adds its own.
     vars: HashMap<String, Value>,
@@ -111,6 +114,7 @@ impl Machine {
             wait: 0,
             frame: 0,
             vsync_at: 0,
+            busy: false,
             vars: HashMap::new(),
             editor: Editor::new(w * 8, h * 8),
             editing: false,
@@ -354,7 +358,12 @@ impl Machine {
     /// editing.
     pub fn frame(&mut self) {
         self.frame += 1;
-        self.rt.begin_frame();
+        if self.busy && self.vm.is_some() {
+            self.rt.begin_busy_frame();
+        } else {
+            self.rt.begin_frame();
+        }
+        self.busy = false;
         self.rt.sound.render_frame();
         // Animations play in direct mode too, and go on while the editor
         // hides the screen (checked on hardware).
@@ -378,7 +387,7 @@ impl Machine {
         loop {
             let left = FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32);
             match vm.run(&mut self.rt, left) {
-                Ok(Status::Running) => {}
+                Ok(Status::Running) => self.busy = true,
                 // UNVERIFIED: WAIT, like INPUT, starts VSYNC's count anew.
                 Ok(Status::Wait {
                     frames,

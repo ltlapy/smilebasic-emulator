@@ -13,46 +13,74 @@ use crate::runtime::{Command, Runtime, no_form};
 /// RND's series 0 to 7.
 const SERIES: usize = 8;
 
-/// One series of random numbers.
-// UNVERIFIED: SmileBASIC 4's generator, so seeded series differ from the
-// hardware's.
+/// One series of random numbers: TinyMT32 with its standard parameters,
+/// which gives SmileBASIC 4's numbers for the same seed (checked on
+/// hardware with seeds 1, 2 and -1).
 #[derive(Clone, Copy, Debug)]
-struct Series(u64);
+struct Series([u32; 4]);
+
+const MAT1: u32 = 0x8F70_11EE;
+const MAT2: u32 = 0xFC78_FF1F;
+const TMAT: u32 = 0x3793_FDFF;
 
 impl Series {
-    fn seeded(seed: u64) -> Series {
-        // SplitMix64 spreads close seeds apart; zero would stay zero.
-        let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        Series((z ^ (z >> 31)) | 1)
+    fn seeded(seed: u32) -> Series {
+        let mut st = [seed, MAT1, MAT2, TMAT];
+        for i in 1..8u32 {
+            let prev = st[(i as usize - 1) & 3];
+            st[i as usize & 3] ^=
+                i.wrapping_add(1_812_433_253u32.wrapping_mul(prev ^ (prev >> 30)));
+        }
+        let mut s = Series(st);
+        for _ in 0..8 {
+            s.advance();
+        }
+        s
     }
 
-    /// xorshift64*.
-    fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.0 = x;
-        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    fn advance(&mut self) {
+        let st = &mut self.0;
+        let mut y = st[3];
+        let mut x = (st[0] & 0x7FFF_FFFF) ^ st[1] ^ st[2];
+        x ^= x << 1;
+        y ^= (y >> 1) ^ x;
+        st[0] = st[1];
+        st[1] = st[2];
+        st[2] = x ^ (y << 10);
+        st[3] = y;
+        if y & 1 != 0 {
+            st[1] ^= MAT1;
+            st[2] ^= MAT2;
+        }
+    }
+
+    fn next(&mut self) -> u32 {
+        self.advance();
+        let st = &self.0;
+        let t1 = st[0].wrapping_add(st[2] >> 8);
+        let t0 = st[3] ^ t1;
+        if t1 & 1 != 0 { t0 ^ TMAT } else { t0 }
     }
 }
 
 /// A seed from the clock, different for each call.
-fn entropy() -> u64 {
+fn entropy() -> u32 {
     static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos() as u64);
-    nanos ^ CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) << 48
+    let n = nanos ^ CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) << 48;
+    (n ^ n >> 32) as u32
 }
 
 pub struct System {
     series: [Series; SERIES],
     started: Instant,
-    /// Frames since start-up, for MAINCNT.
+    /// Frames since start-up, for MAINCNT, and milliseconds at the start
+    /// of the last one, for MILLISEC. Neither moves while a program runs
+    /// without waiting (checked on hardware).
     pub(crate) frames: u32,
+    millis: i32,
     /// SYSPARAM "SYSBEEP": the system's own sounds play. The emulator has
     /// none, so this is only kept.
     sysbeep: bool,
@@ -68,12 +96,22 @@ const TOOLS: [&str; 3] = ["#TOOL/SBSMILE.PRG", "#TOOL/GAHAKU.PRG", ""];
 /// repeats, as SmileBASIC 4's settings start.
 const KEY_REPEAT: [i32; 2] = [20, 3];
 
+impl System {
+    /// A frame in which the program waited, or none ran: MAINCNT and
+    /// MILLISEC move on.
+    pub(crate) fn tick(&mut self) {
+        self.frames = self.frames.wrapping_add(1);
+        self.millis = self.started.elapsed().as_millis() as i32;
+    }
+}
+
 impl Default for System {
     fn default() -> Self {
         System {
             series: std::array::from_fn(|_| Series::seeded(entropy())),
             started: Instant::now(),
             frames: 0,
+            millis: 0,
             sysbeep: true,
             mouse_cursor: false,
         }
@@ -133,22 +171,27 @@ impl Runtime {
                     [id, max] => (series_id(id)?, int(max)?),
                     _ => unreachable!("matched above"),
                 };
-                // RND(0) is 0 and a negative maximum Out of range, as on
-                // hardware.
-                // UNVERIFIED: RND(0) still takes a number from the series.
+                // RND(0) is 0 without taking a number, and a negative
+                // maximum Out of range, as on hardware.
                 if max < 0 {
                     return Err(Error::with_detail(
                         ErrorKind::OutOfRange,
                         format!("maximum {max}"),
                     ));
                 }
-                let r = ((sys.series[id].next() >> 32) * max as u64) >> 32;
+                if max == 0 {
+                    return Ok(vec![Value::Int(0)]);
+                }
+                let r = sys.series[id].next() % max as u32;
                 Ok(vec![Value::Int(r as i32)])
             }
             (Command::Rndf, Want::Value, 0..=1) => {
                 let id = args.first().map_or(Ok(0), series_id)?;
-                // 53 random bits: 0 up to but not including 1.
-                let r = (sys.series[id].next() >> 11) as f64 / (1u64 << 53) as f64;
+                // 53 bits from two numbers, as TinyMT's and Mersenne
+                // Twister's res53: 0 up to but not including 1.
+                let a = u64::from(sys.series[id].next() >> 5);
+                let b = u64::from(sys.series[id].next() >> 6);
+                let r = (a << 26 | b) as f64 / (1u64 << 53) as f64;
                 Ok(vec![Value::Real(r)])
             }
             (Command::Randomize, Want::Outs(0), 1..=2) => {
@@ -159,13 +202,11 @@ impl Runtime {
                 };
                 sys.series[id] = Series::seeded(match seed {
                     0 => entropy(),
-                    n => n as u32 as u64,
+                    n => n as u32,
                 });
                 Ok(vec![])
             }
-            (Command::Millisec, Want::Value, 0) => {
-                Ok(vec![Value::Int(sys.started.elapsed().as_millis() as i32)])
-            }
+            (Command::Millisec, Want::Value, 0) => Ok(vec![Value::Int(sys.millis)]),
             (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(sys.frames as i32)]),
             (Command::Date, Want::Value, 0) => {
                 Ok(vec![string(Local::now().format("%Y/%m/%d").to_string())])
@@ -267,12 +308,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seeds_repeat_and_differ() {
+    fn seeds_give_smilebasic_4s_numbers() {
         let take = |seed| {
             let mut s = Series::seeded(seed);
-            (0..4).map(|_| s.next()).collect::<Vec<_>>()
+            (0..3).map(|_| s.next()).collect::<Vec<_>>()
         };
-        assert_eq!(take(1), take(1));
+        assert_eq!(take(1), [2_545_341_989, 981_918_433, 3_715_302_833]);
         assert_ne!(take(1), take(2));
     }
 }
