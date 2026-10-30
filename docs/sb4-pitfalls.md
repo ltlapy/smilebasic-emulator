@@ -8,9 +8,13 @@ follows all of it. Items still waiting for a check are marked
 ## Timing
 
 - `VSYNC n` waits until n frames after the frame the previous `VSYNC`
-  waited for, not n frames from now. When the program is behind, `VSYNC`
-  returns at once and only moves that mark on by n, so after a slow
-  command such as `ACLS`, `VSYNC:VSYNC` can pass without a single frame.
+  waited for, not n frames from now. When that frame has gone by, it
+  returns at once and counts from then: a second behind, ten `VSYNC`s
+  take nine frames, while one `VSYNC 200` takes 140.
+- `WAIT`, `WAIT 0` included, starts `VSYNC`'s count anew; waiting in
+  `INPUT` does not.
+- `MAINCNT` and `MILLISEC` need their brackets: without them they are
+  plain variables, always 0 to begin with.
 - Animations (`SPANIM`, `TANIM`) take their first step on the frame
   after they are set. They also play in direct mode, and go on while the
   editor is open.
@@ -195,6 +199,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ## Sound
 
+- A track's MML variables read -1 while it is not playing: before any
+  song, after `BGMSTOP` and after the song ends. `BGMVAR` setting one on
+  a track that is not playing does nothing. Values the song or `BGMVAR`
+  set show a frame or more later, and the first `BGMPLAY` of a run takes
+  about four frames to start.
 - `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45). A user
   song number with nothing set is no error; it plays nothing, and
   `BGMCHK` says 0.
@@ -238,7 +247,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   OUT arguments`: it is read as the `OUT` form.
 - `HSV` and `HSVF` as functions need all three of H, S and V: two are
   `Wrong number of arguments`, and empty ones (`HSV(120,,)`) are `Type
-  mismatch`.
+  mismatch`. The `OUT` form needs at least three results too; fewer is
+  `Wrong number of OUT arguments`. (The 4.4.9 notes say S and V can be
+  left out; no form tried so far allows it.)
 - An unknown `#constant` is `Undefined constant`.
 
 - After an error, F4 puts the cursor at the start of the statement that
