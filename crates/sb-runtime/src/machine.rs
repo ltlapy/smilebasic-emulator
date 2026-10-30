@@ -3,6 +3,7 @@
 //! [`Machine::frame`] once per frame and show [`Machine::render`].
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use sb_core::error::{Error, ErrorKind};
 use sb_core::host::Host;
@@ -335,6 +336,8 @@ impl Machine {
         }
         // Keys typed so far go to the side they were typed on.
         self.edit();
+        // Only the side with the keys completes and hints.
+        self.editors[self.active].complete = None;
         let (a, o) = (self.active, self.other());
         if self.mirrors() {
             let [first, second] = &mut self.editors;
@@ -518,6 +521,9 @@ impl Machine {
         let editor = &mut self.editors[self.active];
         editor.tab_step = self.rt.settings.editor_tab_step as usize;
         editor.complete = Options::from_settings(&self.rt.settings, true);
+        if !Rc::ptr_eq(&editor.library, &self.rt.library) {
+            editor.library = self.rt.library.clone();
+        }
         while let Some(key) = self.rt.next_key() {
             editor.key(key);
         }

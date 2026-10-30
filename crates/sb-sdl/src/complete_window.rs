@@ -16,11 +16,12 @@ enum Row {
     Commands,
     Names,
     Enter,
+    Hints,
 }
 
 fn rows() -> Vec<Row> {
     let mut rows: Vec<Row> = COMPLETE_AFTER.map(Row::After).collect();
-    rows.extend([Row::Commands, Row::Names, Row::Enter]);
+    rows.extend([Row::Commands, Row::Names, Row::Enter, Row::Hints]);
     rows
 }
 
@@ -38,7 +39,14 @@ fn label(row: Row, settings: &Settings) -> String {
         }
         Row::Commands => format!("{} SmileBASIC's words", check(settings.complete_commands)),
         Row::Names => format!("{} Names in the program", check(settings.complete_names)),
-        Row::Enter => format!("{} Enter takes the word", check(settings.complete_enter)),
+        Row::Enter => format!(
+            "{} Enter takes a picked word",
+            check(settings.complete_enter)
+        ),
+        Row::Hints => format!(
+            "{} Show how commands are used",
+            check(settings.complete_hints)
+        ),
     }
 }
 
@@ -86,6 +94,7 @@ impl CompleteWindow {
             Row::Commands => settings.complete_commands ^= true,
             Row::Names => settings.complete_names ^= true,
             Row::Enter => settings.complete_enter ^= true,
+            Row::Hints => settings.complete_hints ^= true,
         }
     }
 
@@ -154,7 +163,8 @@ mod tests {
         w.key(Keycode::Down, &mut s);
         w.key(Keycode::Space, &mut s);
         assert_eq!(s.complete_after, 2);
-        // Up from the top goes round to the last row.
+        // Up from the top goes round to the last rows.
+        w.key(Keycode::Up, &mut s);
         w.key(Keycode::Up, &mut s);
         w.key(Keycode::Up, &mut s);
         w.key(Keycode::Return, &mut s);

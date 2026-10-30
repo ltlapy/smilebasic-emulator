@@ -10,7 +10,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::{Exec, Host};
 use sb_core::value::{Value, new_str};
 
-use crate::complete::{self, Completion, Options};
+use crate::complete::{self, Completion, Library, Options};
 use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
@@ -18,6 +18,7 @@ use crate::editor::{Editor, Look, frame_size, menu_height};
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
+use crate::hint;
 use crate::input::Input;
 use crate::line::LineEdit;
 use crate::screen::{Fade, ScreenMode};
@@ -526,6 +527,9 @@ pub struct Runtime {
     /// The editor draws at a multiple of the start-up resolution, for its
     /// font and size (see [`frame_size`]).
     editor_fb: Framebuffer,
+    /// SmileBASIC's words with their forms from the help, for completion
+    /// and argument hints.
+    pub library: Rc<Library>,
     /// One side of a split editor, drawn before going into `editor_fb`.
     side_fb: Framebuffer,
     /// Where the second side of a split editor starts on its frame: a
@@ -698,6 +702,7 @@ impl Runtime {
             startup_mode: mode,
             editor_fb: Framebuffer::new(width, height),
             side_fb: Framebuffer::new(0, 0),
+            library: Rc::default(),
             split_at: None,
             sprite_page: None,
         }
@@ -981,19 +986,43 @@ impl Runtime {
             }
         }
         self.fade.cover(fb.pixels_mut());
-        // Completion's list, below the word in direct mode.
-        if let Some(line) = &self.line
-            && let Some(list) = &line.completion
-        {
+        // In direct mode, the hint for the command being typed above the
+        // line and completion's list below the word.
+        let options = Options::from_settings(&self.settings, false);
+        if let (Some(line), Some(_), Some(options)) = (&self.line, &self.recall, options) {
             let console = &self.text[CONSOLE];
             let (w, _) = console.size();
             let (_, size) = console.font();
-            let scale = i64::from(self.mode.sample * size);
-            if let Some((x, y)) = line.cell_of(list.start, w) {
-                let (ox, oy) = console.pos;
-                let left = ox as i64 * i64::from(self.mode.sample) + x * scale;
-                let top = oy as i64 * i64::from(self.mode.sample) + y * scale;
-                list.draw(&mut fb, &self.font, (left, top + scale), top, scale as u32);
+            let sample = i64::from(self.mode.sample);
+            let scale = sample * i64::from(size);
+            let (ox, oy) = console.pos;
+            let at = |(x, y): (i64, i64)| {
+                (
+                    ox as i64 * sample + x * scale,
+                    oy as i64 * sample + y * scale,
+                )
+            };
+            let hint = options
+                .hints
+                .then(|| hint::find(&line.text, line.cursor, &self.library, &[]));
+            if let (Some(Some(hint)), Some(cell)) = (hint, line.cell_of(line.cursor, w)) {
+                let (_, top) = at(cell);
+                let (left, _) = at((0, 0));
+                hint.draw(&mut fb, &self.font, left, (top, top + scale), scale as u32);
+            }
+            if let Some(list) = &line.completion
+                && let Some(cell) = line.cell_of(list.start, w)
+            {
+                let (left, top) = at(cell);
+                let colors = &self.settings.editor_colors;
+                list.draw(
+                    &mut fb,
+                    &self.font,
+                    (left, top + scale),
+                    top,
+                    scale as u32,
+                    colors,
+                );
             }
         }
         self.fb = fb;
@@ -1573,14 +1602,12 @@ impl Host for Runtime {
                 c => is_ident_char(c) || c == 0x40 || c == 0x23,
             };
             if let (true, Some(options), None) = (looks, options, line.selection()) {
-                let names = match options.names {
-                    true => {
-                        let lines = split_lines(&self.slots[self.edit_slot]);
-                        complete::names(lines.iter().map(Vec::as_slice))
-                    }
-                    false => Vec::new(),
-                };
-                line.completion = Completion::find(&line.text, line.cursor, &options, &names);
+                // The edited slot's names, also for labels after GOTO.
+                let lines = split_lines(&self.slots[self.edit_slot]);
+                let names = complete::names(lines.iter().map(Vec::as_slice));
+                let library = &self.library;
+                line.completion =
+                    Completion::find(&line.text, line.cursor, &options, library, &names);
             }
             line.draw(console);
         }

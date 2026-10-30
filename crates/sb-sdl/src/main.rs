@@ -140,6 +140,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     if let Ok(text) = std::fs::read_to_string(&settings_path) {
         rt.settings = Settings::from_text(&text);
     }
+    // Completion and argument hints take the forms of the help's pages.
+    rt.library = std::rc::Rc::new(sb_runtime::complete::Library::new(help.as_ref()));
     let mut saved_settings = rt.settings.clone();
     let mut machine = Machine::new(rt);
     machine.boot();

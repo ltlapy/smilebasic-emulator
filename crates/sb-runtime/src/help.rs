@@ -134,6 +134,10 @@ impl Help {
         Some(Help { data, topics })
     }
 
+    pub fn topics(&self) -> impl Iterator<Item = &str> {
+        self.topics.keys().map(String::as_str)
+    }
+
     pub fn has(&self, topic: &str) -> bool {
         self.topics.contains_key(topic)
     }

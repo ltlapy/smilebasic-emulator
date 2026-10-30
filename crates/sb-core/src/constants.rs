@@ -154,6 +154,11 @@ static CONSTANTS: &[(&str, ConstValue)] = &[
     ("VERSION", int(VERSION)),
 ];
 
+/// Every predefined constant, by its name without `#`.
+pub fn all() -> &'static [(&'static str, ConstValue)] {
+    CONSTANTS
+}
+
 /// Looks up a predefined constant by its upper-cased name without `#`.
 pub fn lookup(name: &str) -> Option<ConstValue> {
     CONSTANTS.iter().find(|(n, _)| *n == name).map(|&(_, v)| v)

@@ -16,6 +16,7 @@ pub mod framebuffer;
 pub mod graphics;
 mod grp;
 pub mod help;
+pub mod hint;
 pub mod image;
 pub mod input;
 pub mod line;

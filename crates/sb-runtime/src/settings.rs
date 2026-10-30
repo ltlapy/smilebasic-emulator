@@ -77,6 +77,9 @@ pub struct Settings {
     pub complete_names: bool,
     /// Enter takes the chosen word, besides Tab.
     pub complete_enter: bool,
+    /// How commands are used shows under the list and while typing
+    /// their arguments.
+    pub complete_hints: bool,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -119,6 +122,7 @@ impl Default for Settings {
             complete_commands: true,
             complete_names: false,
             complete_enter: true,
+            complete_hints: true,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
         }
@@ -231,6 +235,7 @@ impl Settings {
                 "complete_commands" => &mut s.complete_commands,
                 "complete_names" => &mut s.complete_names,
                 "complete_enter" => &mut s.complete_enter,
+                "complete_hints" => &mut s.complete_hints,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -328,6 +333,7 @@ impl Settings {
              complete_commands={}\n\
              complete_names={}\n\
              complete_enter={}\n\
+             complete_hints={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -352,6 +358,7 @@ impl Settings {
             self.complete_commands,
             self.complete_names,
             self.complete_enter,
+            self.complete_hints,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),

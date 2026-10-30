@@ -104,7 +104,14 @@ Without them:
   to (Ctrl+J), an overview of the program behind the code's right side,
   and scrolling with the mouse wheel.
 - The list of words to complete also shows in direct mode, and can
-  offer the program's own names (off at first, as in SmileBASIC 4). When it shows and what it offers are
+  offer the program's own names (off at first, as in SmileBASIC 4).
+  Each entry is tagged with what it is, and the first form the help
+  gives for it shows under the list. After GOTO, GOSUB and RESTORE it
+  lists the program's labels, and after `#` the constants with their
+  values.
+- While a command's arguments are typed, every form the help gives for
+  it (or a DEF's own line) shows above the cursor, with the argument
+  being typed marked. When it shows and what it offers are
   set in Options > Autocomplete.
 - Ctrl+S takes the file name typed on the computer's keyboard rather
   than SmileBASIC 4's on-screen one.

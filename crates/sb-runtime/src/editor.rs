@@ -6,9 +6,12 @@
 //! The code is colored by [`crate::syntax`] in the settings' palette, in
 //! the 8- or 16-pixel font at one of three sizes.
 
-use crate::complete::{self, Completion, Options};
+use std::rc::Rc;
+
+use crate::complete::{self, Completion, Item, Library, Options};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
+use crate::hint;
 use crate::palette::{Palette, Part};
 use crate::runtime::{SLOTS, keys};
 use crate::syntax::{definition, highlight, is_ident_char};
@@ -320,6 +323,10 @@ pub struct Editor {
     /// on it.
     map: Option<Map>,
     map_drag: bool,
+    /// SmileBASIC's words and their forms, for completion and hints.
+    pub library: Rc<Library>,
+    /// The program's names, until the text changes.
+    names: Option<Rc<Vec<Item>>>,
     /// What completion offers; `None` when it is off.
     pub complete: Option<Options>,
     /// Where each slot was left, restored when it is opened again.
@@ -375,6 +382,8 @@ impl Editor {
             scrolled: false,
             followed: (0, 0),
             completion: None,
+            library: Rc::default(),
+            names: None,
             complete: None,
             map: None,
             map_drag: false,
@@ -433,6 +442,7 @@ impl Editor {
     /// Starts editing `source` from `slot`, at a 1-based line and column
     /// (0 for the start of the line), or where the slot was left.
     pub fn open(&mut self, slot: usize, source: &str, at: Option<(usize, usize)>) {
+        self.names = None;
         self.slot = slot;
         self.lines = split_lines(source);
         self.modified = false;
@@ -456,6 +466,7 @@ impl Editor {
     /// Takes over the program and its undo history from the other side of
     /// a split display, which showed the same slot.
     pub fn take_document(&mut self, from: &mut Editor) {
+        self.names = None;
         self.lines = from.lines.clone();
         self.undo = std::mem::take(&mut from.undo);
         self.redo = std::mem::take(&mut from.redo);
@@ -467,6 +478,7 @@ impl Editor {
     /// Shows the program that the other side of a split display edits.
     pub fn mirror(&mut self, from: &Editor) {
         if self.lines != from.lines {
+            self.names = None;
             self.lines.clone_from(&from.lines);
             self.fit_cursor();
         }
@@ -575,6 +587,7 @@ impl Editor {
     /// Replaces the text between two places, as part of the step that
     /// [`Editor::begin`] started. Returns where the new text ends.
     fn replace(&mut self, start: Pos, end: Pos, text: Lines) -> Pos {
+        self.names = None;
         if self.undo.is_empty() {
             self.begin(Merge::Alone);
         }
@@ -593,6 +606,7 @@ impl Editor {
 
     /// Takes back the last step of edits (Ctrl+Z).
     pub fn undo(&mut self) {
+        self.names = None;
         while let Some(step) = self.undo.pop() {
             if step.changes.is_empty() {
                 continue;
@@ -610,6 +624,7 @@ impl Editor {
 
     /// Makes the last step undone again (Ctrl+Shift+Z).
     pub fn redo(&mut self) {
+        self.names = None;
         if let Some(step) = self.redo.pop() {
             for c in &step.changes {
                 self.take(c.at, end_of(c.at, &c.removed));
@@ -1086,13 +1101,20 @@ impl Editor {
         };
         self.completion = None;
         if let (true, Some(options), None) = (looks, self.complete, self.selection()) {
-            let names = match options.names {
-                true => complete::names(self.lines.iter().map(Vec::as_slice)),
-                false => Vec::new(),
-            };
+            let names = self.program_names();
             let (line, col) = self.pos();
-            self.completion = Completion::find(&self.lines[line], col, &options, &names);
+            let text = &self.lines[line];
+            self.completion = Completion::find(text, col, &options, &self.library, &names);
         }
+    }
+
+    /// The names the program uses, worked out again after a change.
+    fn program_names(&mut self) -> Rc<Vec<Item>> {
+        let lines = &self.lines;
+        (self
+            .names
+            .get_or_insert_with(|| Rc::new(complete::names(lines.iter().map(Vec::as_slice)))))
+        .clone()
     }
 
     /// Puts the chosen word of completion's list in place of the word
@@ -1591,11 +1613,21 @@ impl Editor {
                 }
             }
         }
+        // How the command being typed is used, above the cursor's line.
+        let hints = self.complete.is_some_and(|o| o.hints) && self.mode == Mode::Edit;
+        if let (Some((_, y)), true, None) = (cursor, hints, self.selection()) {
+            let names = self.program_names();
+            if let Some(hint) = hint::find(&self.lines[v.line], v.col, &self.library, &names) {
+                let top = (grid.top + y * cell) as i64;
+                let x = (gutter * cell) as i64;
+                hint.draw(fb, font, x, (top, top + cell as i64), cell as u32);
+            }
+        }
         if let (Some((x, y)), Some(list)) = (cursor, &self.completion) {
             let x = x.saturating_sub(v.col - list.start.min(v.col)) as i64;
             let top = (grid.top + y * cell) as i64;
             let at = (x * cell as i64, top + cell as i64);
-            list.draw(fb, font, at, top, cell as u32);
+            list.draw(fb, font, at, top, cell as u32, colors);
         }
         if let (Some((x, y)), true) = (cursor, blink) {
             // A bar for inserting, a block for overwriting.
@@ -2188,11 +2220,16 @@ mod tests {
             commands: true,
             names: true,
             enter: true,
+            hints: true,
         });
         typing(&mut e, "S");
         assert!(e.completion.is_none(), "one letter");
         typing(&mut e, "C");
-        assert_eq!(e.completion.as_ref().unwrap().items, ["SCORE", "SCROLL"]);
+        let words = |e: &Editor| -> Vec<String> {
+            let list = e.completion.as_ref().unwrap();
+            list.items.iter().map(|i| i.word.clone()).collect()
+        };
+        assert_eq!(words(&e), ["SCORE", "SCROLL"]);
         e.key(keys::DOWN);
         e.key(keys::ENTER);
         assert_eq!((e.text().as_str(), e.cursor()), ("SCORE=0\nSCORE", (2, 5)));
