@@ -258,13 +258,13 @@ impl Runtime {
                 let track = track_id(&args[0])?;
                 let n = in_range("variable", &args[1], 0..=7)? as usize;
                 let v = in_range("value", &args[2], -32768..=32767)?;
-                self.sound.vars(track)[n] = v;
+                self.sound.set_var(track, n, v);
                 Ok(vec![])
             }
             (Command::Bgmvar, Want::Outs(1) | Want::Value, 2) => {
                 let track = track_id(&args[0])?;
                 let n = in_range("variable", &args[1], 0..=7)? as usize;
-                Ok(vec![Value::Int(self.sound.vars(track)[n])])
+                Ok(vec![Value::Int(self.sound.var(track, n))])
             }
             (Command::Bgmclear, Want::Outs(0), 0..=1) => {
                 match args.first() {

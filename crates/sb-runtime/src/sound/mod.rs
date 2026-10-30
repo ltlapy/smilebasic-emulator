@@ -237,8 +237,24 @@ impl Sound {
         }
     }
 
-    pub(crate) fn vars(&mut self, n: usize) -> &mut [i32; 8] {
-        &mut self.track(n).vars
+    /// BGMVAR: a track's MML variable, -1 while the track is not playing
+    /// (checked on hardware: before any song, after BGMSTOP and after the
+    /// song ended).
+    // UNVERIFIED: hardware takes a frame or more before a value set by the
+    // song or BGMVAR shows, and before a stopped track's values go; here
+    // both are at once.
+    pub(crate) fn var(&mut self, n: usize, var: usize) -> i32 {
+        let t = self.track(n);
+        if t.playing { t.vars[var] } else { -1 }
+    }
+
+    /// BGMVAR setting a variable, which a track that is not playing
+    /// ignores (checked on hardware).
+    pub(crate) fn set_var(&mut self, n: usize, var: usize, value: i32) {
+        let t = self.track(n);
+        if t.playing {
+            t.vars[var] = value;
+        }
     }
 
     /// SNDSTOP: every sound stops at once.

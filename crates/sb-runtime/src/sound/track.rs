@@ -170,7 +170,8 @@ impl Track {
         self.channels = vec![Channel::default(); super::mml::CHANNELS];
         self.tempo = 120;
         self.song_key = 0;
-        self.vars = [0; 8];
+        // Variables the song has not set read -1 (checked on hardware).
+        self.vars = [-1; 8];
         self.until_tick = 0.0;
         self.song = None;
         self.seq = None;

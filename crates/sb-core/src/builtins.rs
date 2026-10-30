@@ -723,7 +723,8 @@ fn hsv_out(args: &[Value], outs: usize, unit: bool) -> Result<Vec<Value>> {
             Ok(values)
         }
         4 => Ok(values),
-        _ => Err(ErrorKind::IllegalFunctionCall.into()),
+        // Fewer results than H, S and V, as on hardware.
+        _ => Err(ErrorKind::WrongNumberOfOutArguments.into()),
     }
 }
 

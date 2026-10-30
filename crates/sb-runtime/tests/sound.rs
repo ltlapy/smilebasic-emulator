@@ -110,6 +110,15 @@ fn checking_mml() {
 }
 
 #[test]
+fn song_variables_read_minus_one_while_nothing_plays() {
+    let mut rt = runtime();
+    assert_eq!(
+        run_on(&mut rt, "BGMVAR 0,1,7:BGMVAR 0,1 OUT A:?BGMVAR(0,0);A").unwrap(),
+        "-1-1"
+    );
+}
+
+#[test]
 fn unset_user_songs_play_nothing() {
     let mut rt = runtime();
     assert_eq!(run_on(&mut rt, "BGMPLAY 128:?BGMCHK()").unwrap(), "0");
