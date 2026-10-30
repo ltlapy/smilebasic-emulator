@@ -34,6 +34,8 @@ follows all of it. Items still waiting for a check are marked
   `-1E-9` as `-0`.
 - `VAL(" 12 ")` is 0: spaces make the text not a number. `INPUT` asks
   again (`?Redo from start`) for the same reason.
+- `INPUT`'s question mark is followed by a space, and `?Redo from start`
+  by an empty line.
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
   for 400x240.
@@ -163,6 +165,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   once, without the jump.
 - The jump leaves GOSUBs behind: a `RETURN` after it is `RETURN without
   GOSUB`.
+- Out of a waiting `INPUT`, the press both jumps and stops: the program
+  goes on printing after the prompt, runs the statement it jumped to,
+  and stops with `User break on` that statement's line.
 
 ## System settings
 
@@ -170,6 +175,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   set to Japanese. `SYSBEEP` starts at 1, `KEYREPEAT` at 20 and 3, and
   `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`, `#TOOL/GAHAKU.PRG` and
   nothing.
+- Items that can only be read can also be read with `OUT`
+  (`SYSPARAM "LANG" OUT L$`).
 - An unknown name is `Illegal system argument name`. Setting an item
   that can only be read, or reading `KEYREPEAT` as a value, is `Wrong
   number of OUT arguments`.
