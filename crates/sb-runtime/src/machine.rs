@@ -9,6 +9,7 @@ use sb_core::host::Host;
 use sb_core::value::Value;
 use sb_core::vm::{Status, Vm};
 
+use crate::complete::Options;
 use crate::editor::Editor;
 use crate::framebuffer::Framebuffer;
 use crate::runtime::{Request, Runtime, SLOTS, keys};
@@ -466,6 +467,7 @@ impl Machine {
     pub fn edit(&mut self) -> &mut Editor {
         let editor = &mut self.editors[self.active];
         editor.tab_step = self.rt.settings.editor_tab_step as usize;
+        editor.complete = Options::from_settings(&self.rt.settings, true);
         while let Some(key) = self.rt.next_key() {
             editor.key(key);
         }

@@ -10,8 +10,10 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::host::{Exec, Host};
 use sb_core::value::{Value, new_str};
 
+use crate::complete::{self, Completion, Options};
 use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
+use crate::editor::split_lines;
 use crate::editor::{Editor, Look, frame_size};
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
@@ -23,6 +25,7 @@ pub use crate::settings::Settings;
 use crate::sound::Sound;
 use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
+use crate::syntax::is_ident_char;
 use crate::system::System;
 use crate::text::{CONSOLE, FONT_PAGE, SCREENS, SPRITE_PAGE, TextScreen};
 
@@ -977,6 +980,21 @@ impl Runtime {
             }
         }
         self.fade.cover(fb.pixels_mut());
+        // Completion's list, below the word in direct mode.
+        if let Some(line) = &self.line
+            && let Some(list) = &line.completion
+        {
+            let console = &self.text[CONSOLE];
+            let (w, _) = console.size();
+            let (_, size) = console.font();
+            let scale = i64::from(self.mode.sample * size);
+            if let Some((x, y)) = line.cell_of(list.start, w) {
+                let (ox, oy) = console.pos;
+                let left = ox as i64 * i64::from(self.mode.sample) + x * scale;
+                let top = oy as i64 * i64::from(self.mode.sample) + y * scale;
+                list.draw(&mut fb, &self.font, (left, top + scale), top, scale as u32);
+            }
+        }
         self.fb = fb;
         self.scratch = scratch;
         &self.fb
@@ -1495,18 +1513,55 @@ impl Host for Runtime {
         if self.line.is_none() {
             return Ok(None);
         }
+        // Only lines typed in direct mode, not INPUT's, are completed.
+        let options = match self.recall {
+            Some(_) => Options::from_settings(&self.settings, false),
+            None => None,
+        };
         while let Some(key) = self.keys.pop_front() {
+            let console = &mut self.text[CONSOLE];
+            let line = self.line.as_mut().expect("checked above");
+            if let Some(list) = &mut line.completion {
+                let outcome = list.key(key, options.is_some_and(|o| o.enter));
+                match outcome {
+                    complete::Outcome::Used => {}
+                    complete::Outcome::Close => line.completion = None,
+                    complete::Outcome::Accept => {
+                        let list = line.completion.take().expect("open");
+                        let word: Vec<u16> = list.chosen().encode_utf16().collect();
+                        line.replace_before(list.start, &word);
+                    }
+                    complete::Outcome::Pass => {}
+                }
+                if outcome != complete::Outcome::Pass {
+                    line.draw(console);
+                    continue;
+                }
+            }
             if matches!(key, keys::UP | keys::DOWN) {
                 self.recall_line(key == keys::UP);
                 continue;
             }
-            let console = &mut self.text[CONSOLE];
             if key == keys::ENTER {
                 let line = self.line.take().expect("checked above");
                 return Ok(Some(line.finish(console)));
             }
-            let line = self.line.as_mut().expect("checked above");
+            let listing = line.completion.take().is_some();
             line.key(key);
+            let looks = match key {
+                keys::BACKSPACE => listing,
+                c => is_ident_char(c) || c == 0x40 || c == 0x23,
+            };
+            if let (true, Some(options), None) = (looks, options, line.selection()) {
+                let names = match options.names {
+                    true => {
+                        let lines = split_lines(&self.slots[self.edit_slot]);
+                        complete::names(lines.iter().map(Vec::as_slice))
+                    }
+                    false => Vec::new(),
+                };
+                line.completion = Completion::find(&line.text, line.cursor, &options, &names);
+            }
             line.draw(console);
         }
         Ok(None)

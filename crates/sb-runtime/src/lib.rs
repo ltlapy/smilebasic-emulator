@@ -4,6 +4,7 @@
 
 pub mod anim;
 pub mod collision;
+pub mod complete;
 pub mod compose;
 pub mod confirm;
 pub mod dialog;

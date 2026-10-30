@@ -450,3 +450,23 @@ fn split_editor_sides() {
     m.toggle_split();
     assert!(!m.is_split());
 }
+
+#[test]
+fn direct_mode_completes_words() {
+    use sb_runtime::runtime::keys;
+    let mut m = machine();
+    m.set_slot(0, "SCORE_TOTAL=5".to_string());
+    // Typed letters swap case, so these come out upper case.
+    m.type_text("?score_t");
+    m.rt.key_press(keys::TAB);
+    m.rt.key_press(keys::ENTER);
+    for _ in 0..10 {
+        m.frame();
+    }
+    // The variable is unset in direct mode, but the line read it.
+    assert_eq!(&rows(&m)[rows(&m).len() - 3..], ["?SCORE_TOTAL", "0", "OK"]);
+    // Up still goes through the history without a list.
+    m.rt.key_press(keys::UP);
+    m.frame();
+    assert_eq!(rows(&m).last().map(String::as_str), Some("?SCORE_TOTAL"));
+}

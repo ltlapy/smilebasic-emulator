@@ -2,6 +2,7 @@
 
 mod audio;
 mod colors;
+mod complete_window;
 mod controls;
 mod dialog;
 mod help;
@@ -19,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use audio::Audio;
 use colors::ColorWindow;
+use complete_window::CompleteWindow;
 use controls::Controls;
 use dialog::{Answer, Dialog};
 use help::HelpViewer;
@@ -204,6 +206,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
     let mut color_window: Option<ColorWindow> = None;
+    let mut complete_window: Option<CompleteWindow> = None;
     // A panel beside the editor, and whether it takes the keys.
     let mut side: Option<Side> = None;
     let mut side_focus = false;
@@ -448,6 +451,33 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 continue;
             }
+            if let Some(open) = &mut complete_window {
+                let settings = &mut machine.rt.settings;
+                let outcome = match event {
+                    Event::Quit { .. } => {
+                        quit = true;
+                        complete_window::Outcome::Stay
+                    }
+                    Event::MouseMotion { x, y, .. } => {
+                        open.mouse_move(to_display(x, y));
+                        complete_window::Outcome::Stay
+                    }
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Left,
+                        x,
+                        y,
+                        ..
+                    } => open.click(to_display(x, y), settings),
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => open.key(key, settings),
+                    _ => complete_window::Outcome::Stay,
+                };
+                if outcome == complete_window::Outcome::Close {
+                    complete_window = None;
+                }
+                continue;
+            }
             if let Some(open) = &mut color_window {
                 let palette = &mut machine.rt.settings.editor_colors;
                 let outcome = match event {
@@ -589,6 +619,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         if let Err(e) = shown {
                             toasts.push(format!("Could not open a file dialog: {e}"));
                         }
+                    }
+                    Click::Chosen(Action::CompleteOptions) => {
+                        complete_window = Some(CompleteWindow::new((display_w, display_h)));
                     }
                     Click::Chosen(Action::EditColors) => {
                         color_window = Some(ColorWindow::new((display_w, display_h)));
@@ -859,7 +892,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
 
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
-        let modal = dialog.is_some() || manager.is_some() || color_window.is_some();
+        let modal = dialog.is_some()
+            || manager.is_some()
+            || color_window.is_some()
+            || complete_window.is_some();
         if !machine.is_editing() {
             side = None;
         }
@@ -1005,6 +1041,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             if let Some(open) = &color_window {
                 open.draw(&mut overlay, font, &machine.rt.settings.editor_colors);
+            }
+            if let Some(open) = &complete_window {
+                open.draw(&mut overlay, font, &machine.rt.settings);
             }
             if key_hint.visible() {
                 key_hint.draw(&mut overlay, font);

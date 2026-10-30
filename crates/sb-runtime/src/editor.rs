@@ -6,11 +6,12 @@
 //! The code is colored by [`crate::syntax`] in the settings' palette, in
 //! the 8- or 16-pixel font at one of three sizes.
 
+use crate::complete::{self, Completion, Options};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::palette::{Palette, Part};
 use crate::runtime::{SLOTS, keys};
-use crate::syntax::{definition, highlight};
+use crate::syntax::{definition, highlight, is_ident_char};
 use crate::text::TextScreen;
 
 /// Six digits on three number tiles (U+E100-E16E) and a thin cap.
@@ -281,6 +282,10 @@ pub struct Editor {
     scrolled: bool,
     /// The cursor when the view last followed it.
     followed: Pos,
+    /// Completion's list for the word being typed.
+    completion: Option<Completion>,
+    /// What completion offers; `None` when it is off.
+    pub complete: Option<Options>,
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
     screen: TextScreen,
@@ -333,6 +338,8 @@ impl Editor {
             note: None,
             scrolled: false,
             followed: (0, 0),
+            completion: None,
+            complete: None,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
         };
@@ -579,6 +586,7 @@ impl Editor {
     /// Puts the cursor somewhere, dropping the selection; the next edit
     /// starts a step of its own.
     fn moved_to(&mut self, (line, col): Pos) {
+        self.completion = None;
         self.go(line, col);
         self.anchor = None;
         self.want_col = self.view.col;
@@ -1007,6 +1015,53 @@ impl Editor {
             return;
         }
         self.note = None;
+        if let Some(list) = &mut self.completion {
+            let enter = self.complete.is_some_and(|o| o.enter);
+            match list.key(code, enter) {
+                complete::Outcome::Used => return,
+                complete::Outcome::Close => {
+                    self.completion = None;
+                    return;
+                }
+                complete::Outcome::Accept => {
+                    self.accept_completion();
+                    return;
+                }
+                complete::Outcome::Pass => {}
+            }
+        }
+        let listing = self.completion.is_some();
+        self.edit_key(code);
+        // Typing a name, or erasing in it, looks for words again.
+        let looks = match code {
+            keys::BACKSPACE => listing,
+            c => is_ident_char(c) || c == 0x40 || c == 0x23,
+        };
+        self.completion = None;
+        if let (true, Some(options), None) = (looks, self.complete, self.selection()) {
+            let names = match options.names {
+                true => complete::names(self.lines.iter().map(Vec::as_slice)),
+                false => Vec::new(),
+            };
+            let (line, col) = self.pos();
+            self.completion = Completion::find(&self.lines[line], col, &options, &names);
+        }
+    }
+
+    /// Puts the chosen word of completion's list in place of the word
+    /// being typed.
+    fn accept_completion(&mut self) {
+        let Some(list) = self.completion.take() else {
+            return;
+        };
+        let (line, col) = self.pos();
+        let word: Vec<u16> = list.chosen().encode_utf16().collect();
+        self.begin(Merge::Alone);
+        let end = self.replace((line, list.start), (line, col), vec![word]);
+        self.moved_to(end);
+    }
+
+    fn edit_key(&mut self, code: u16) {
         // A click leaves the anchor at the cursor; once the text changes
         // it would no longer be a place in it.
         if self.selection().is_none() {
@@ -1130,6 +1185,7 @@ impl Editor {
             return;
         };
         let from = self.pos();
+        self.completion = None;
         self.go(line, col);
         self.want_col = self.view.col;
         self.merge = Merge::Alone;
@@ -1402,6 +1458,12 @@ impl Editor {
                     fb.set(fx as u32, fy as u32, TEXT);
                 }
             }
+        }
+        if let (Some((x, y)), Some(list)) = (cursor, &self.completion) {
+            let x = x.saturating_sub(v.col - list.start.min(v.col)) as i64;
+            let top = (grid.top + y * cell) as i64;
+            let at = (x * cell as i64, top + cell as i64);
+            list.draw(fb, font, at, top, cell as u32);
         }
         if let (Some((x, y)), true) = (cursor, blink) {
             // A bar for inserting, a block for overwriting.
@@ -1980,6 +2042,39 @@ mod tests {
         assert_eq!(b.text(), "BC\nDEF");
         a.undo();
         assert_eq!(a.text(), "BC\nEF", "the history went along");
+    }
+
+    #[test]
+    fn completes_words() {
+        let mut e = editor("SCORE=0\n");
+        e.file_end();
+        e.complete = Some(Options {
+            after: 2,
+            commands: true,
+            names: true,
+            enter: true,
+        });
+        typing(&mut e, "S");
+        assert!(e.completion.is_none(), "one letter");
+        typing(&mut e, "C");
+        assert_eq!(e.completion.as_ref().unwrap().items, ["SCORE", "SCROLL"]);
+        e.key(keys::ENTER);
+        assert_eq!((e.text().as_str(), e.cursor()), ("SCORE=0\nSCORE", (2, 5)));
+        e.undo();
+        assert_eq!(e.text(), "SCORE=0\nSC");
+        // Erasing looks again; moving or Esc closes.
+        typing(&mut e, "O");
+        e.key(keys::BACKSPACE);
+        assert!(e.completion.is_some());
+        e.key(keys::ESCAPE);
+        assert!(e.completion.is_none());
+        typing(&mut e, "O");
+        e.key(keys::LEFT);
+        assert!(e.completion.is_none());
+        // Without a list, Enter breaks the line.
+        e.key(keys::END);
+        e.key(keys::ENTER);
+        assert_eq!(e.text(), "SCORE=0\nSCO\n");
     }
 
     #[test]

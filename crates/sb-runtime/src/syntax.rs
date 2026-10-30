@@ -33,7 +33,7 @@ pub enum LineKind {
 
 /// The instructions and functions of SmileBASIC 4's reference that are not
 /// reserved words, sorted for binary search.
-const COMMANDS: &[&str] = &[
+pub(crate) const COMMANDS: &[&str] = &[
     "ABS",
     "ACCEL",
     "ACLS",
@@ -340,13 +340,13 @@ const COMMANDS: &[&str] = &[
 /// Words SmileBASIC 4's editor colors as reserved (checked on hardware),
 /// though the language specification does not reserve them. OPTION is
 /// colored as a command.
-const ALSO_RESERVED: &[&str] = &["TO", "STEP", "CONST", "ENUM"];
+pub(crate) const ALSO_RESERVED: &[&str] = &["TO", "STEP", "CONST", "ENUM"];
 
-fn is_ident_start(c: u16) -> bool {
+pub(crate) fn is_ident_start(c: u16) -> bool {
     c == u16::from(b'_') || (c < 0x80 && (c as u8).is_ascii_alphabetic())
 }
 
-fn is_ident_char(c: u16) -> bool {
+pub(crate) fn is_ident_char(c: u16) -> bool {
     c == u16::from(b'_') || (c < 0x80 && (c as u8).is_ascii_alphanumeric())
 }
 

@@ -65,6 +65,16 @@ pub struct Settings {
     pub keep_mouse_cursor: bool,
     /// The help panel draws its glyphs this many times their size.
     pub help_text_size: u32,
+    /// Completion's list shows in direct mode, and in the editor.
+    pub complete_direct: bool,
+    pub complete_editor: bool,
+    /// Letters typed before the list shows.
+    pub complete_after: u32,
+    /// The list has SmileBASIC's words, and the program's names.
+    pub complete_commands: bool,
+    pub complete_names: bool,
+    /// Enter takes the chosen word, besides Tab.
+    pub complete_enter: bool,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -100,6 +110,12 @@ impl Default for Settings {
             language: Language::English,
             keep_mouse_cursor: false,
             help_text_size: 2,
+            complete_direct: true,
+            complete_editor: true,
+            complete_after: 2,
+            complete_commands: true,
+            complete_names: true,
+            complete_enter: true,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
         }
@@ -137,6 +153,8 @@ const EDITOR_SIZE: [(EditorSize, &str); 4] = [
 pub const TAB_STEPS: std::ops::RangeInclusive<u32> = 1..=8;
 
 pub const HELP_TEXT_SIZES: std::ops::RangeInclusive<u32> = 1..=3;
+
+pub const COMPLETE_AFTER: std::ops::RangeInclusive<u32> = 1..=4;
 
 const LANGUAGE: [(Language, &str); 2] = [(Language::English, "en"), (Language::Japanese, "ja")];
 
@@ -204,6 +222,17 @@ impl Settings {
                 "keyboard_buttons" => &mut s.keyboard_buttons,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
                 "keep_mouse_cursor" => &mut s.keep_mouse_cursor,
+                "complete_direct" => &mut s.complete_direct,
+                "complete_editor" => &mut s.complete_editor,
+                "complete_commands" => &mut s.complete_commands,
+                "complete_names" => &mut s.complete_names,
+                "complete_enter" => &mut s.complete_enter,
+                "complete_after" => {
+                    if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
+                        s.complete_after = n;
+                    }
+                    continue;
+                }
                 "language" => {
                     if let Some(l) = choice(&LANGUAGE, value) {
                         s.language = l;
@@ -288,6 +317,12 @@ impl Settings {
              language={}\n\
              keep_mouse_cursor={}\n\
              help_text_size={}\n\
+             complete_direct={}\n\
+             complete_editor={}\n\
+             complete_after={}\n\
+             complete_commands={}\n\
+             complete_names={}\n\
+             complete_enter={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -305,6 +340,12 @@ impl Settings {
             choice_name(&LANGUAGE, &self.language),
             self.keep_mouse_cursor,
             self.help_text_size,
+            self.complete_direct,
+            self.complete_editor,
+            self.complete_after,
+            self.complete_commands,
+            self.complete_names,
+            self.complete_enter,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),

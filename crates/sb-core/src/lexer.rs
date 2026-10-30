@@ -88,6 +88,9 @@ macro_rules! keywords {
         }
 
         impl Keyword {
+            /// Every reserved word, as the enum spells it.
+            pub const WORDS: &[&str] = &[$(stringify!($name)),*];
+
             /// Looks up an upper-cased word.
             pub fn from_word(word: &str) -> Option<Keyword> {
                 match word {

@@ -2,6 +2,7 @@
 //! it is on the console: the cursor moves along it, Shift selects, and
 //! the line is drawn again after each change.
 
+use crate::complete::Completion;
 use crate::runtime::keys;
 use crate::text::{Cell, TextScreen};
 
@@ -36,6 +37,8 @@ pub struct LineEdit {
     origin: i64,
     /// Characters drawn last time, cleared if the line got shorter.
     shown: usize,
+    /// Completion's list for the word being typed.
+    pub completion: Option<Completion>,
 }
 
 impl LineEdit {
@@ -49,7 +52,16 @@ impl LineEdit {
             anchor: None,
             origin: i64::from(y) * i64::from(w) + i64::from(x),
             shown: 0,
+            completion: None,
         }
+    }
+
+    /// The console cell of a character of the line, if on the console:
+    /// `w` is the console's width.
+    pub fn cell_of(&self, i: usize, w: u32) -> Option<(i64, i64)> {
+        let w = i64::from(w);
+        let p = self.origin + i as i64;
+        (w > 0 && p >= 0).then(|| (p % w, p / w))
     }
 
     pub fn selection(&self) -> Option<(usize, usize)> {

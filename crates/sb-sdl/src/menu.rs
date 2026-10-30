@@ -39,6 +39,10 @@ pub enum Action {
     ToggleNumberTiles,
     ToggleKeyboardButtons,
     ToggleKeepCursor,
+    ToggleCompleteDirect,
+    ToggleCompleteEditor,
+    /// Open the autocomplete window.
+    CompleteOptions,
     Language(Language),
     TabStep(u32),
     EditorFont(FontSize),
@@ -70,6 +74,8 @@ impl Action {
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
             Action::ToggleKeepCursor => check(settings.keep_mouse_cursor),
+            Action::ToggleCompleteDirect => check(settings.complete_direct),
+            Action::ToggleCompleteEditor => check(settings.complete_editor),
             Action::Language(l) if settings.language == l => "(*)",
             Action::TabStep(n) if settings.editor_tab_step == n => "(*)",
             Action::Language(_) | Action::TabStep(_) => "( )",
@@ -102,6 +108,7 @@ impl Action {
             | Action::Pause
             | Action::ToggleEditor
             | Action::EditColors
+            | Action::CompleteOptions
             | Action::EditSlot(_)
             | Action::GoToLine
             | Action::Find
@@ -121,6 +128,8 @@ impl Action {
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::ToggleKeyboardButtons => &mut settings.keyboard_buttons,
             Action::ToggleKeepCursor => &mut settings.keep_mouse_cursor,
+            Action::ToggleCompleteDirect => &mut settings.complete_direct,
+            Action::ToggleCompleteEditor => &mut settings.complete_editor,
             Action::Language(l) => {
                 settings.language = l;
                 return;
@@ -159,6 +168,7 @@ impl Action {
                 return;
             }
             Action::ChooseSoundFont
+            | Action::CompleteOptions
             | Action::EditColors
             | Action::Projects
             | Action::OpenFolder
@@ -288,6 +298,14 @@ const MENUS: &[Menu] = &[
                 ]),
             },
             item("Always show mouse cursor", Action::ToggleKeepCursor),
+            Item {
+                label: "Autocomplete",
+                entry: Entry::Sub(&[
+                    item("In direct mode", Action::ToggleCompleteDirect),
+                    item("In the editor", Action::ToggleCompleteEditor),
+                    item("Advanced...", Action::CompleteOptions),
+                ]),
+            },
         ],
     },
     Menu {

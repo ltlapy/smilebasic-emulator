@@ -107,6 +107,7 @@ SmileBASIC 4's own files.
 | Ctrl+J | List the labels and DEFs; type to narrow the list, Enter to go there, Esc to go back |
 | Esc | Close the help or the list beside the editor |
 | Ctrl+/, Ctrl+Tab | Split the editor in two sides, or join them; move between the sides |
+| Tab, Enter, Up, Down, Esc | While the list of words shows, take the chosen word, choose another or close the list (Options > Autocomplete) |
 | Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
 
 ### Buttons
