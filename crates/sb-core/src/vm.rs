@@ -935,8 +935,9 @@ impl Vm {
                     if !matches!(prompt, Value::Default) {
                         host.print(None, &text_of(prompt)?)?;
                     }
+                    // Checked on hardware: a space follows the question mark.
                     if *question {
-                        host.print(None, &[u16::from(b'?')])?;
+                        host.print(None, &[u16::from(b'?'), u16::from(b' ')])?;
                     }
                     host.input_start()?;
                     self.reading_input = true;
@@ -954,7 +955,9 @@ impl Vm {
                     }
                     None => {
                         let redo: Vec<u16> = "?Redo from start".encode_utf16().collect();
+                        // An empty line follows (checked on hardware).
                         host.print(None, &redo)?;
+                        host.print_newline(None)?;
                         host.print_newline(None)?;
                         return Ok(None);
                     }

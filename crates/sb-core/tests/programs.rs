@@ -336,12 +336,12 @@ fn input_and_linput() {
     let src = "INPUT \"NAME AND AGE\";N$,A\n?N$;A+1";
     assert_eq!(
         run_with_input(src, &["BOB,41"]).unwrap(),
-        "NAME AND AGE?BOB,41\nBOB42\n"
+        "NAME AND AGE? BOB,41\nBOB42\n"
     );
     // Missing values and non-numbers ask again.
     assert_eq!(
         run_with_input("INPUT A,B\n?A*B", &["3", "X,2", "3,&H10"]).unwrap(),
-        "?3\n?Redo from start\n?X,2\n?Redo from start\n?3,&H10\n48\n"
+        "? 3\n?Redo from start\n\n? X,2\n?Redo from start\n\n? 3,&H10\n48\n"
     );
     assert_eq!(
         run_with_input("INPUT \"N\",N%:?N%", &["7.9"]).unwrap(),
@@ -353,7 +353,7 @@ fn input_and_linput() {
     );
     assert_eq!(
         run_with_input("VAR A$[2]:INPUT A$[1]:?A$[1]", &["HI"]).unwrap(),
-        "?HI\nHI\n"
+        "? HI\nHI\n"
     );
 }
 

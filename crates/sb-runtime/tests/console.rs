@@ -82,7 +82,7 @@ fn input_waits_for_enter_and_edits() {
     rt.key_press(keys::BACKSPACE);
     type_keys(&mut rt, "3");
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), waiting);
-    assert_eq!(row(&rt, 4, 0), "N?13");
+    assert_eq!(row(&rt, 4, 0), "N? 13");
     rt.key_press(keys::ENTER);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
     assert_eq!(row(&rt, 4, 1), "26");
