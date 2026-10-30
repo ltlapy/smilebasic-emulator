@@ -4,11 +4,15 @@
 //!
 //! Instruments become presets: @0-@127 in bank 0, the drum sets @128-@148
 //! in bank 128 (programs 0-20), and the rest in bank @/128, program @%128.
+//! With [`Layout::Gm`] @0-@127 and the drum sets follow General MIDI and
+//! Roland GS: bank 0, and bank 128 at GS's kit programs. The rest, which
+//! GM has no sound for, keep the numbers above.
 
 use std::io::{self, BufWriter, Write};
 
 use sb_runtime::sound::bank::{Bank, Reader};
 use sb_runtime::sound::sampler::times;
+use sb_runtime::sound::synth::DRUM_KITS;
 
 /// Zero samples after each waveform, as the format asks.
 const GAP: usize = 46;
@@ -18,6 +22,38 @@ pub fn preset(program: usize) -> (u16, u16) {
     match program {
         128..=148 => (128, program as u16 - 128),
         _ => ((program / 128) as u16, (program % 128) as u16),
+    }
+}
+
+/// How instruments are numbered.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// SmileBASIC 4's own numbers, see [`preset`].
+    Own,
+    /// General MIDI and Roland GS where they have the sound.
+    Gm,
+}
+
+/// The GS kit program of each drum set @128-@148, every one its own so
+/// that none hides another. A set takes the GS kit nearest by name
+/// ([`DRUM_KITS`]) if no earlier set has it, else the next program up.
+pub fn gm_drum_programs() -> [u8; 21] {
+    let mut taken = [false; 128];
+    DRUM_KITS.map(|kit| {
+        let program = (kit as usize..128).find(|&p| !taken[p]).unwrap_or(0);
+        taken[program] = true;
+        program as u8
+    })
+}
+
+impl Layout {
+    /// The preset bank and program for MML's instrument `program`.
+    pub fn preset(self, program: usize) -> (u16, u16) {
+        match (self, program) {
+            (Layout::Gm, 0..=127) => (0, program as u16),
+            (Layout::Gm, 128..=148) => (128, gm_drum_programs()[program - 128].into()),
+            (_, _) => preset(program),
+        }
     }
 }
 
@@ -76,7 +112,7 @@ fn bag(out: &mut Vec<u8>, generators: u16) {
 
 /// Writes the SoundFont to `out`, decoding the waveforms as it goes so
 /// that they are never all in memory.
-pub fn write(bank: &Bank, out: &mut impl Write) -> io::Result<()> {
+pub fn write(bank: &Bank, layout: Layout, out: &mut impl Write) -> io::Result<()> {
     // Where each waveform starts among the samples.
     let mut shdr = Vec::new();
     let mut start = 0u32;
@@ -105,6 +141,7 @@ pub fn write(bank: &Bank, out: &mut impl Write) -> io::Result<()> {
         if range.is_empty() {
             continue;
         }
+        let (b, p) = layout.preset(program);
         let instrument = (inst.len() / 22) as i16;
         inst.extend_from_slice(&name(&format!("@{program}")));
         inst.extend_from_slice(&((ibag.len() / 4) as u16).to_le_bytes());
@@ -134,7 +171,6 @@ pub fn write(bank: &Bank, out: &mut impl Write) -> io::Result<()> {
             igen.add(58, i16::from(region.original_key));
             igen.add(53, region.wave as i16);
         }
-        let (b, p) = preset(program);
         phdr.extend_from_slice(&name(&format!("SmileBASIC 4 @{program}")));
         phdr.extend_from_slice(&p.to_le_bytes());
         phdr.extend_from_slice(&b.to_le_bytes());
@@ -242,7 +278,7 @@ mod tests {
             data: samples,
         };
         let mut bytes = Vec::new();
-        write(&bank, &mut bytes).unwrap();
+        write(&bank, Layout::Own, &mut bytes).unwrap();
         let font = SoundFont::new(&mut std::io::Cursor::new(bytes)).unwrap();
         let presets: Vec<_> = font
             .get_presets()
@@ -253,5 +289,20 @@ mod tests {
         assert_eq!(font.get_sample_headers().len(), 1);
         assert_eq!(preset(140), (128, 12));
         assert_eq!(preset(300), (2, 44));
+    }
+
+    #[test]
+    fn gm_layout_keeps_to_gm() {
+        assert_eq!(Layout::Gm.preset(5), (0, 5));
+        assert_eq!(Layout::Gm.preset(128), (128, 0));
+        assert_eq!(Layout::Gm.preset(129), (128, 24));
+        // GM has no sound for these, so they keep their own numbers.
+        assert_eq!(Layout::Gm.preset(300), (2, 44));
+        assert_eq!(Layout::Own.preset(129), (128, 1));
+        // No two drum sets share a program.
+        let mut kits = gm_drum_programs().to_vec();
+        kits.sort_unstable();
+        kits.dedup();
+        assert_eq!(kits.len(), 21);
     }
 }

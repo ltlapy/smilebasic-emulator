@@ -61,7 +61,7 @@ const BEND_RANGE: i32 = 24;
 /// MIDI SoundFonts such as GeneralUser GS have.
 // UNVERIFIED: these are the nearest GS kits by name, not the sets'
 // own sounds.
-const DRUM_KITS: [i32; 21] = [
+pub const DRUM_KITS: [i32; 21] = [
     0, 24, 25, 1, 2, 8, 25, 26, 25, 26, 16, 24, 25, 26, 25, 32, 40, 48, 56, 56, 0,
 ];
 

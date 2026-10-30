@@ -14,14 +14,19 @@ use std::path::PathBuf;
 
 use sb_runtime::resources::{RESOURCE_DIR, data_dir};
 
-const USAGE: &str = "usage:
-  smilebasic-import [-o OUT] [--sf2 FILE] [--midi DIR] DIR...
-      copy the font, sprite image, sprite definitions and instruments
-      from your own extracted SmileBASIC 4 RomFS and ExeFS directories
-      into the emulator's data directory, or into OUT. List the update's
-      directories after the base game's, so the update's files win.
-      With --sf2, also write the instruments as a SoundFont to FILE;
-      with --midi, the preset songs as MIDI files into DIR.";
+const USAGE: &str = "usage: smilebasic-import [options] DIR...
+
+Imports the font, sprites and sounds from your own extracted SmileBASIC 4
+RomFS and ExeFS directories. List the update's directories after the base
+game's so that its files win.
+
+options:
+  -o OUT       import into OUT instead of the emulator's data directory
+  --sf2 FILE   also write the instruments as a SoundFont
+  --midi DIR   also write the preset songs as MIDI files
+  --gm         with --sf2 and --midi, number @0-@127 and the drum sets as
+               General MIDI and Roland GS do (drums on channel 10), not by
+               SmileBASIC 4's own banks. Other instruments keep theirs.";
 
 type AnyError = Box<dyn std::error::Error>;
 
@@ -50,6 +55,13 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         Some(dir) => dir,
         None => data_dir()?.join(RESOURCE_DIR),
     };
+    let layout = match args.iter().position(|a| a == "--gm") {
+        Some(at) => {
+            args.remove(at);
+            sf2::Layout::Gm
+        }
+        None => sf2::Layout::Own,
+    };
     let sf2 = option(&mut args, "--sf2")?;
     let midi = option(&mut args, "--midi")?;
     if args.is_empty() || args.iter().any(|a| a.starts_with('-')) {
@@ -70,7 +82,7 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
             .as_ref()
             .ok_or("no instruments to write as a SoundFont")?;
         std::fs::File::create(&path)
-            .and_then(|mut f| sf2::write(bank, &mut f))
+            .and_then(|mut f| sf2::write(bank, layout, &mut f))
             .map_err(|e| format!("{}: {e}", path.display()))?;
         println!("wrote the SoundFont {}", path.display());
     }
@@ -83,7 +95,7 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         for (n, song) in sequences.songs.iter().enumerate() {
             let Some(song) = song else { continue };
             let path = dir.join(format!("BGM{n:02}.mid"));
-            std::fs::write(&path, midi::write(song.clone()))
+            std::fs::write(&path, midi::write(song.clone(), layout))
                 .map_err(|e| format!("{}: {e}", path.display()))?;
         }
         println!("wrote the songs as MIDI into {}", dir.display());

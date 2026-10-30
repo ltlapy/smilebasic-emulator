@@ -57,6 +57,12 @@ bank 128 (programs 0-20), and the rest are bank `@/128`, program `@%128`.
 `--midi DIR` writes the preset songs into DIR as MIDI files, up to where
 each has gone round its loop once, choosing instruments by the same banks
 (bank select MSB and LSB) with a pitch bend range of 24 semitones.
+Add `--gm` to number `@0`-`@127` and the drum sets as General MIDI and
+Roland GS do: bank 0, and bank 128 with one GS kit program each (the nearest
+by name where free). The songs then put drums on channel 10 and start with
+GM System On and GS Reset. Instruments from `@149`, such as the tones of
+`@256` and up that many songs use, have no GM sound and keep the banks above;
+without the SoundFont, a player plays them as GM instruments.
 
 ## Running
 
