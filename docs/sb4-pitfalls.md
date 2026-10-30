@@ -34,7 +34,8 @@ follows all of it. Items still waiting for a check are marked
   `-1E-9` as `-0`.
 - `VAL(" 12 ")` is 0: spaces make the text not a number. `INPUT` asks
   again (`?Redo from start`) for the same reason.
-- `INPUT`'s question mark is followed by a space. After `?Redo from
+- `INPUT`'s question mark is followed by a space; with a comma after the
+  guide there is neither. Extra values typed are left out. After `?Redo from
   start`, the line is typed again on the next line, without the prompt.
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
@@ -165,9 +166,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   once, without the jump.
 - The jump leaves GOSUBs behind: a `RETURN` after it is `RETURN without
   GOSUB`.
-- Out of a waiting `INPUT`, the press both jumps and stops: the program
-  goes on printing after the prompt, runs the statement it jumped to,
-  and stops with `User break on` that statement's line.
+- Out of a waiting `INPUT` or `LINPUT`, the press counts twice: it
+  jumps, and once the first statement there has run (a whole FOR loop's
+  first statement only), it is acted on again: it jumps to a label that
+  statement set with `ON BREAK GOTO`, or stops with `User break on` that
+  statement's line. Printing goes on after the prompt.
 
 ## System settings
 
