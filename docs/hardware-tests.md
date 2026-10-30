@@ -66,6 +66,12 @@ END
    `PROJECT_FOLDER` is the project's folder in the save data, `TEST12` the
    program's name as SmileBASIC 4 loads it, and the last argument lists the
    parts (`1-26`, `2,5,7`). Each part runs on a fresh copy of the folder.
+   With `--screen DIR`, the emulator's screen is also saved as a PNG for
+   each part two seconds in, and Enter is then pressed: a part that
+   draws a picture should wait for a key or button before it ends, since
+   SmileBASIC 4 shows a status bar once a program has ended. Compare the
+   PNG with a lossless screenshot of SmileBASIC 4 at the same size (for
+   1:1, `XSCREEN 1280,720` and a 1280x720 screenshot).
    For each `RES` file it prints `same` or the rows that differ; where
    SmileBASIC 4 has not saved one yet, it prints the emulator's screen, to
    compare by eye.
