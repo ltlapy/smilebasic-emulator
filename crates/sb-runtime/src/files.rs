@@ -70,6 +70,9 @@ fn fill_array(target: &Value, items: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// What FILES shows while it waits between screens.
+const LISTING_PROMPT: &str = "=== Press ENTER ===";
+
 impl Runtime {
     pub(crate) fn file_command(
         &mut self,
@@ -232,9 +235,13 @@ impl Runtime {
         }
     }
 
-    /// Goes on with a FILES listing once a key or button is pressed.
+    /// Goes on with a FILES listing once a key or button is pressed. A
+    /// key held down goes on as it repeats (checked on hardware).
     fn show_listing(&mut self, left: VecDeque<String>) -> Vec<Value> {
         if self.keys.pop_front().is_some() || self.input.pressed() != 0 {
+            // UNVERIFIED: that the prompt is taken away.
+            let console = &mut self.text[CONSOLE];
+            LISTING_PROMPT.chars().for_each(|_| console.backspace());
             return self.show_listing_page(left);
         }
         self.listing_left = Some(left);
@@ -243,9 +250,8 @@ impl Runtime {
     }
 
     /// Prints a screen of a FILES listing, and waits to print the rest,
-    /// as SmileBASIC 4 does in direct mode and in programs.
-    // UNVERIFIED: how many lines a screen holds (we leave the last row for
-    // the cursor), and whether anything is shown while waiting.
+    /// as SmileBASIC 4 does in direct mode and in programs: all rows but
+    /// the last, which says to press Enter (checked on hardware).
     fn show_listing_page(&mut self, mut lines: VecDeque<String>) -> Vec<Value> {
         let console = &mut self.text[CONSOLE];
         let page = console.size().1.saturating_sub(1).max(1);
@@ -257,6 +263,7 @@ impl Runtime {
             console.newline();
         }
         if !lines.is_empty() {
+            console.print(&LISTING_PROMPT.encode_utf16().collect::<Vec<_>>());
             self.listing_left = Some(lines);
             self.retry = true;
         }

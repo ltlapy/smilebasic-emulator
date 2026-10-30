@@ -112,9 +112,10 @@ fn long_listings_wait_for_a_key() {
     }
     assert!(m.is_running(), "waits after a screen");
     let shown = rows(&m);
-    assert_eq!(shown.len(), 29);
+    assert_eq!(shown.len(), 30);
     assert_eq!(shown[0], "-- 40 files --");
     assert_eq!(shown[28], "DAT:D27");
+    assert_eq!(shown[29], "=== Press ENTER ===");
     m.rt.key_press(u16::from(b' '));
     for _ in 0..10 {
         m.frame();
