@@ -10,7 +10,8 @@ follows all of it. Items still waiting for a check are marked
 - `VSYNC n` waits until n frames after the frame the previous `VSYNC`
   waited for, not n frames from now. When that frame has gone by, it
   returns at once and counts from then: a second behind, ten `VSYNC`s
-  take nine frames, while one `VSYNC 200` takes 140.
+  take nine frames, while one `VSYNC 200` takes 140. After a slow
+  `ACLS`, `VSYNC:VSYNC` takes one frame.
 - `WAIT`, `WAIT 0` included, starts `VSYNC`'s count anew; waiting in
   `INPUT` does not.
 - `MAINCNT` and `MILLISEC` need their brackets: without them they are
@@ -82,8 +83,10 @@ follows all of it. Items still waiting for a check are marked
   after `VAR G=SQR(-1)` fails, `G` is 0. A line that does not compile
   declares nothing.
 - `CLEAR` in a program is a `Syntax error` when it runs.
-- `FILES` prints a long list a screen at a time, waiting for any key
-  before the next, in direct mode and in programs alike.
+- `FILES` prints a long list a screen at a time, in direct mode and in
+  programs alike: 29 rows of the list, then `=== Press ENTER ===` on the
+  last row. Any key or button goes on, and a held key goes on as it
+  repeats.
 
 ## Program slots and files
 
@@ -101,8 +104,12 @@ follows all of it. Items still waiting for a check are marked
   question).
 - `LOAD` takes the file's whole name: `LOAD "TEST10"` does not find
   `TEST10.PRG`.
-- A program may name its own project in a file name
-  (`LOAD "GAME/SUB",1` in `GAME`).
+- Against the manual, programs `LOAD` and `LOADV` other projects' files
+  too (`LOAD "GAME/SUB",1`), not only `EXEC`; naming the program's own
+  project works as well. `LOADV` and `LOADG` in a program ask nothing.
+- `EXEC` of a slot with code still to run, such as `EXEC 0` in a DEF of
+  slot 1 that slot 0 called, is `Can't use the specified slot`. Slots
+  that `EXEC` ran are gone after the next `RUN`.
 
 ## Order of evaluation
 
@@ -133,6 +140,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   underflow`. A subroutine that keeps a place must take it back before
   `RETURN`, which is otherwise `Use RESTORE POP before RETURN`. A
   thousand places can be kept.
+
+## Input
+
+- `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16.
+  A held button repeats at its start frame and then every interval plus
+  one frames: 20,3 fires at 0, 20, 24, 28...
+- `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14
+  to 16). `BUTTON()` without arguments is `Wrong number of arguments`.
 
 ## Screens and text
 
@@ -221,7 +236,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   break on 0:55`. Held for a second, the button stops the program at
   once, without the jump.
 - The jump leaves GOSUBs behind: a `RETURN` after it is `RETURN without
-  GOSUB`.
+  GOSUB`. `ON BREAK GOTO` inside a DEF may name a label outside it.
+- Breaking off a line typed in direct mode says `User break on 0:1`. A
+  forced stop (holding + for a second) says `User break on` too.
 - Out of a waiting `INPUT` or `LINPUT`, the press counts twice: it
   jumps, and once the first statement there has run (a whole FOR loop's
   first statement only), it is acted on again: it jumps to a label that
@@ -239,7 +256,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - An unknown name is `Illegal system argument name`. Setting an item
   that can only be read, or reading `KEYREPEAT` as a value, is `Wrong
   number of OUT arguments`.
-- A program run after one that set `MOUSECURSOR` to 1 reads 0 again.
+- A program run after one that set `MOUSECURSOR` to 1 reads 0 again;
+  `END` leaves it set, so direct mode still reads 1.
+- `KEY` 1 to 5 start as `FILES`, `LOAD"`, `SAVE"`, `LIST ERR` and `RUN`
+  (the settings can change them). `KEY` ignores a string over 256
+  characters; `PUSHKEY` over 64 is `String is too long`.
 
 ## Errors and the editor
 
@@ -251,8 +272,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `HSV` and `HSVF` as functions need all three of H, S and V: two are
   `Wrong number of arguments`, and empty ones (`HSV(120,,)`) are `Type
   mismatch`. The `OUT` form needs at least three results too; fewer is
-  `Wrong number of OUT arguments`. (The 4.4.9 notes say S and V can be
-  left out; no form tried so far allows it.)
+  `Wrong number of OUT arguments`, but S and V may be left empty, which
+  is what the 4.4.9 notes mean: `HSV C OUT H,,`.
 - An unknown `#constant` is `Undefined constant`.
 
 - After an error, F4 puts the cursor at the start of the statement that
