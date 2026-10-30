@@ -87,6 +87,15 @@ fn evaluation_order() {
     assert_eq!(order("X=F(0) && F(1)"), "0\n");
 }
 
+#[test]
+fn on_break_in_a_def_names_outer_labels() {
+    // TEST15: it compiles, and + would jump there.
+    assert_eq!(
+        output("W:?\"OK\"\nEND\nDEF W\nON BREAK GOTO @B\nEND\n@B:?\"B\""),
+        "OK\n"
+    );
+}
+
 /// RESTORE's special strings from SmileBASIC 4.4, as TEST12 showed them.
 #[test]
 fn restore_push_and_pop() {

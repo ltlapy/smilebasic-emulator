@@ -378,7 +378,13 @@ impl Compiler<'_> {
                 Some(d) => &self.out.defs[d as usize].labels,
                 None => &self.out.labels,
             };
-            let target = *labels.get(&label).ok_or_else(|| {
+            // ON BREAK GOTO in a DEF may name a label outside it, all of
+            // which are known by then (checked on hardware).
+            // UNVERIFIED: that a label of the DEF's own comes first.
+            let outside = matches!(self.out.code[at], Op::OnBreak(_))
+                .then(|| self.out.labels.get(&label))
+                .flatten();
+            let target = *labels.get(&label).or(outside).ok_or_else(|| {
                 err(ErrorKind::UndefinedLabel, format!("@{label}"))
                     .at_pos(self.out.lines[at], self.out.cols[at])
             })?;
