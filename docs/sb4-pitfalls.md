@@ -292,3 +292,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   16-pixel font alike.
 - It colors TO, STEP, CONST and ENUM as reserved words, though the
   language specification does not reserve them, and OPTION as a command.
+- Ctrl+Enter makes an empty line below the cursor's and moves to it.
+- Ctrl+K puts a quote at column 0 of each line, also before lines that
+  are comments already. Only Ctrl+Shift+K looks for one.
+- Finding ignores the case of letters.
+- Ctrl+/ splits the display side by side, then one above the other,
+  then joins it again. Both sides show the slot being edited at first.
+- Ctrl+S asks for a name on the on-screen keyboard, titled "Slot 0:
+  Write file", with the name the slot was saved as filled in. Ctrl+L
+  opens a list of the project's files, with a way up to the projects.
