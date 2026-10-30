@@ -36,6 +36,27 @@ pub const INSTRUMENTS: &str = "instruments.bin";
 /// The preset songs and BEEP's effects from the sound archive.
 pub const SEQUENCES: &str = "sequences.bin";
 
+/// The directory SDL's `SDL_GetPrefPath("", DATA_DIR)` gives the emulator,
+/// worked out the same way so tools need no SDL.
+pub fn data_dir() -> Result<PathBuf, &'static str> {
+    let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    let base = if cfg!(windows) {
+        env("APPDATA")
+            .map(PathBuf::from)
+            .ok_or("APPDATA is not set")?
+    } else if cfg!(target_os = "macos") {
+        env("HOME")
+            .map(|h| PathBuf::from(h).join("Library/Application Support"))
+            .ok_or("HOME is not set")?
+    } else {
+        env("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            .ok_or("neither XDG_DATA_HOME nor HOME is set")?
+    };
+    Ok(base.join(DATA_DIR))
+}
+
 #[derive(Debug)]
 pub enum ResourceError {
     Io(PathBuf, io::Error),

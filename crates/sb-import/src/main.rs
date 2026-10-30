@@ -12,7 +12,7 @@ mod spdef;
 
 use std::path::PathBuf;
 
-use sb_runtime::resources::{DATA_DIR, RESOURCE_DIR};
+use sb_runtime::resources::{RESOURCE_DIR, data_dir};
 
 const USAGE: &str = "usage:
   smilebasic-import [-o OUT] [--sf2 FILE] [--midi DIR] DIR...
@@ -89,25 +89,4 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         println!("wrote the songs as MIDI into {}", dir.display());
     }
     Ok(())
-}
-
-/// The directory SDL's `SDL_GetPrefPath("", DATA_DIR)` gives the emulator,
-/// worked out the same way so the importer needs no SDL.
-fn data_dir() -> Result<PathBuf, AnyError> {
-    let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
-    let base = if cfg!(windows) {
-        env("APPDATA")
-            .map(PathBuf::from)
-            .ok_or("APPDATA is not set")?
-    } else if cfg!(target_os = "macos") {
-        env("HOME")
-            .map(|h| PathBuf::from(h).join("Library/Application Support"))
-            .ok_or("HOME is not set")?
-    } else {
-        env("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| env("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-            .ok_or("neither XDG_DATA_HOME nor HOME is set")?
-    };
-    Ok(base.join(DATA_DIR))
 }
