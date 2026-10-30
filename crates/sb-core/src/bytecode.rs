@@ -93,7 +93,7 @@ pub enum Op {
     /// compiler pushes values in reverse and puts them back in order.
     Swap,
     /// `[v1..vn] -> [vn..v1]`
-    Reverse(u8),
+    Reverse(u32),
     Jump(Addr),
     /// `[cond] -> []`
     JumpIfFalse(Addr),

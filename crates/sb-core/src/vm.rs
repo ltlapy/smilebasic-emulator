@@ -746,7 +746,7 @@ impl Vm {
                 self.stack.swap(n - 1, n - 2);
             }
             Op::Reverse(n) => {
-                let from = self.stack.len() - usize::from(*n);
+                let from = self.stack.len() - *n as usize;
                 self.stack[from..].reverse();
             }
             Op::Jump(a) => next = *a as usize,

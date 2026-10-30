@@ -71,6 +71,13 @@ fn evaluation_order() {
         ("X=F(1)+F(2)+F(3)", "321"),
         ("X=-F(1)*(F(2)-F(3))", "321"),
         ("X=F(1) AND F(2)", "21"),
+        // TEST12: literals and sizes last first, SWAP and INC working
+        // each place out once, CALL's arguments before its name.
+        ("DIM A[]=[F(1),F(2)]", "21"),
+        ("DIM A[F(2),F(3)]", "32"),
+        ("DIM C[4]:SWAP C[F(0)],C[F(1)]", "10"),
+        ("DIM C[4]:INC C[F(0)],F(5)", "50"),
+        ("CALL MID$(\"HX\",F(0),1),F(1),F(2)", "210"),
     ] {
         assert_eq!(order(code), format!("{want}\n"), "{code}");
     }
@@ -78,6 +85,20 @@ fn evaluation_order() {
     assert_eq!(output(&format!("?P(1);P(2);P(3){defs}")), "<3><2><1>123\n");
     // && and || still go left to right, stopping early.
     assert_eq!(order("X=F(0) && F(1)"), "0\n");
+}
+
+#[test]
+fn read_modify_write() {
+    assert_eq!(
+        output(
+            "DIM C[]=[1,2]:SWAP C[0],C[1]:INC C[0],10:A$=\"X\":B$=\"Y\":SWAP A$,B$:INC A$,\"Z\":?C[0];C[1];A$;B$"
+        ),
+        "121YZX\n"
+    );
+    assert_eq!(
+        output("A=1:INC VAR(\"A\"):DIM S$[1]:S$[0]=\"AB\":INC S$[0],\"C\":?A;S$[0]"),
+        "2ABC\n"
+    );
 }
 
 #[test]

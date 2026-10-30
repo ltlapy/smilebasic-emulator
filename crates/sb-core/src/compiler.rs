@@ -68,6 +68,14 @@ struct Loop {
     continues: Vec<usize>,
 }
 
+/// A variable, or an element with its array and indices kept in
+/// temporaries, for statements that read and then write it.
+enum Place {
+    Var(Slot),
+    Index(Slot, Vec<Slot>),
+    Dynamic(Slot),
+}
+
 struct Compiler<'h> {
     host: &'h dyn Host,
     out: Compiled,
@@ -491,8 +499,12 @@ impl Compiler<'_> {
             StmtKind::Const(_) | StmtKind::Enum(_) | StmtKind::Option(_) | StmtKind::Data(_) => {}
             StmtKind::Command { name, args, outs } => self.command(name, args, outs)?,
             StmtKind::Call { name, args, outs } => {
-                self.expr(name)?;
+                // The arguments before the name (checked on hardware).
                 self.args(args)?;
+                self.expr(name)?;
+                // [args.., name] -> [name, args..]
+                self.reorder(args.len() + 1);
+                self.reorder(args.len());
                 let want = Want::Outs(outs.len() as u8);
                 self.emit(Op::CallDyn {
                     argc: args.len() as u8,
@@ -714,10 +726,14 @@ impl Compiler<'_> {
                 self.emit(Op::RestoreDyn);
             }
             StmtKind::Swap(a, b) => {
-                self.load_lvalue(a)?;
-                self.load_lvalue(b)?;
-                self.store(a)?;
-                self.store(b)?;
+                // Each place is worked out once, the second first (checked
+                // on hardware).
+                let b = self.place(b)?;
+                let a = self.place(a)?;
+                self.load_place(&a);
+                self.load_place(&b);
+                self.store_place(&a);
+                self.store_place(&b);
             }
         }
         Ok(())
@@ -773,22 +789,16 @@ impl Compiler<'_> {
                 if dims.len() > crate::value::MAX_DIMS {
                     return Err(err(ErrorKind::SyntaxError, "more than 4 dimensions"));
                 }
-                for e in dims {
-                    self.expr(e)?;
-                }
+                self.exprs(dims)?;
                 self.emit(Op::NewArray {
                     elem,
                     dims: dims.len() as u8,
                 });
-                for v in values {
-                    self.expr(v)?;
-                }
+                self.exprs(values)?;
                 self.emit(Op::FillArray(values.len() as u32));
             }
             (Some(_), Some(Init::Array(values))) => {
-                for v in values {
-                    self.expr(v)?;
-                }
+                self.exprs(values)?;
                 self.emit(Op::ArrayLit {
                     elem,
                     len: values.len() as u32,
@@ -800,9 +810,7 @@ impl Compiler<'_> {
                 } else if dims.len() > crate::value::MAX_DIMS {
                     return Err(err(ErrorKind::SyntaxError, "more than 4 dimensions"));
                 }
-                for e in dims {
-                    self.expr(e)?;
-                }
+                self.exprs(dims)?;
                 self.emit(Op::NewArray {
                     elem,
                     dims: dims.len().max(1) as u8,
@@ -886,18 +894,23 @@ impl Compiler<'_> {
                     [Some(t)] | [Some(t), _] => expr_to_lvalue(t).ok_or(ErrorKind::SyntaxError)?,
                     _ => return Err(self.illegal_call(&full)),
                 };
-                self.load_lvalue(&target)?;
+                // The amount first, then the place, once (checked on
+                // hardware).
                 match args.get(1) {
                     Some(Some(e)) => self.expr(e)?,
                     _ => _ = self.emit(Op::Int(1)),
                 }
+                let place = self.place(&target)?;
+                self.load_place(&place);
+                self.emit(Op::Swap);
                 let op = if full == "INC" {
                     BinaryOp::Add
                 } else {
                     BinaryOp::Sub
                 };
                 self.emit(Op::Binary(op));
-                return self.store(&target);
+                self.store_place(&place);
+                return Ok(());
             }
             "VSYNC" | "WAIT" => {
                 no_outs(self)?;
@@ -1010,12 +1023,19 @@ impl Compiler<'_> {
         Ok(())
     }
 
+    /// Pushes values, the last one first, and puts them back in order.
+    fn exprs(&mut self, exprs: &[Expr]) -> Result<()> {
+        exprs.iter().rev().try_for_each(|e| self.expr(e))?;
+        self.reorder(exprs.len());
+        Ok(())
+    }
+
     /// Puts the last `n` values, pushed last first, back in order.
     fn reorder(&mut self, n: usize) {
         match n {
             0 | 1 => {}
             2 => _ = self.emit(Op::Swap),
-            n => _ = self.emit(Op::Reverse(n as u8)),
+            n => _ = self.emit(Op::Reverse(n as u32)),
         }
     }
 
@@ -1038,6 +1058,67 @@ impl Compiler<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Works out where `target` is once, into temporaries, for statements
+    /// that read and write it.
+    fn place(&mut self, target: &LValue) -> Result<Place> {
+        let keep = |c: &mut Self| {
+            let tmp = c.temp();
+            c.emit(Op::Store(tmp));
+            tmp
+        };
+        Ok(match target {
+            LValue::Var(v) => Place::Var(self.slot(v)?),
+            LValue::Index { base, indices } => {
+                self.load_lvalue(base)?;
+                let base = keep(self);
+                if indices.len() > crate::value::MAX_DIMS {
+                    return Err(ErrorKind::SubscriptOutOfRange.into());
+                }
+                let mut slots: Vec<Slot> = Vec::new();
+                for i in indices.iter().rev() {
+                    self.expr(i)?;
+                    slots.push(keep(self));
+                }
+                slots.reverse();
+                Place::Index(base, slots)
+            }
+            LValue::Dynamic(name) => {
+                self.expr(name)?;
+                Place::Dynamic(keep(self))
+            }
+        })
+    }
+
+    fn load_place(&mut self, place: &Place) {
+        match place {
+            Place::Var(slot) => _ = self.emit(Op::Load(*slot)),
+            Place::Index(base, indices) => {
+                self.emit(Op::Load(*base));
+                indices.iter().for_each(|&i| _ = self.emit(Op::Load(i)));
+                self.emit(Op::Index(indices.len() as u8));
+            }
+            Place::Dynamic(name) => {
+                self.emit(Op::Load(*name));
+                self.emit(Op::LoadDyn);
+            }
+        }
+    }
+
+    fn store_place(&mut self, place: &Place) {
+        match place {
+            Place::Var(slot) => _ = self.emit(Op::Store(*slot)),
+            Place::Index(base, indices) => {
+                self.emit(Op::Load(*base));
+                indices.iter().for_each(|&i| _ = self.emit(Op::Load(i)));
+                self.emit(Op::StoreIndex(indices.len() as u8));
+            }
+            Place::Dynamic(name) => {
+                self.emit(Op::Load(*name));
+                self.emit(Op::StoreDyn);
+            }
+        }
     }
 
     fn load_lvalue(&mut self, target: &LValue) -> Result<()> {
