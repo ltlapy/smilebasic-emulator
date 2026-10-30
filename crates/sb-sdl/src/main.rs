@@ -4,6 +4,7 @@ mod audio;
 mod colors;
 mod controls;
 mod dialog;
+mod help;
 mod keyhint;
 mod menu;
 mod program_dialog;
@@ -19,6 +20,7 @@ use audio::Audio;
 use colors::ColorWindow;
 use controls::Controls;
 use dialog::{Answer, Dialog};
+use help::HelpViewer;
 use keyhint::KeyHint;
 use menu::{Action, Click, MenuBar};
 use program_dialog::ProgramView;
@@ -26,6 +28,7 @@ use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
 use sb_runtime::editor::is_movement;
 use sb_runtime::font::Font;
+use sb_runtime::help::Lookup;
 use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
 use sb_runtime::palette::Palette;
@@ -113,6 +116,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut rt = Runtime::new(screen.width, screen.height, font);
     let (sprite_page, sprite_defs) = resources::load_sprites(&resource_dir()?);
     let bank = resources::load_instruments(&resource_dir()?).map(Arc::new);
+    let help = resources::load_help(&resource_dir()?);
     rt.sound
         .set_sequences(resources::load_sequences(&resource_dir()?).map(Arc::new));
     if let Some(page) = sprite_page {
@@ -198,6 +202,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
     let mut color_window: Option<ColorWindow> = None;
+    let mut help_viewer: Option<HelpViewer> = None;
 
     let mut events = sdl.event_pump()?;
     let mut next_frame = Instant::now();
@@ -240,7 +245,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     m.on_screen = (0..mode.width as i32).contains(&sx)
                         && (0..mode.height as i32).contains(&sy);
                 }
-                Event::MouseWheel { y, .. } if manager.is_none() => {
+                Event::MouseWheel { y, .. } if manager.is_none() && help_viewer.is_none() => {
                     controls.mouse.wheel += y.round() as i32;
                 }
                 // The + button acts when let go, unless it was held until
@@ -311,6 +316,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 if taken {
                     continue;
                 }
+            }
+            if let Some(open) = &mut help_viewer {
+                match event {
+                    Event::Quit { .. } => quit = true,
+                    Event::MouseWheel { y, .. } => open.wheel(-y.round() as i32),
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } if open.key(key) == help::Outcome::Close => help_viewer = None,
+                    _ => {}
+                }
+                continue;
             }
             if let Some(open) = &mut manager {
                 let unsaved = machine.unsaved_slots();
@@ -579,6 +595,30 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::F2),
                     ..
                 } if machine.is_editing() => next_editor_size(&mut machine),
+                // F1 shows the help for the command at the cursor.
+                Event::KeyDown {
+                    keycode: Some(Keycode::F1),
+                    repeat: false,
+                    ..
+                } if machine.is_editing() => match &help {
+                    None => toasts
+                        .push("SmileBASIC 4's help is not imported (see smilebasic-import)".into()),
+                    Some(help) => {
+                        let (line, col) = machine.edit().cursor_line();
+                        let topic = match help.lookup(line, col) {
+                            Lookup::Topic(topic) => Some(topic),
+                            Lookup::Nothing => Some(sb_runtime::help::INTRO.to_string()),
+                            Lookup::Unknown(word) => {
+                                toasts.push(format!("No help for {word}"));
+                                None
+                            }
+                        };
+                        if let Some(topic) = topic {
+                            let size = (display_w, display_h);
+                            help_viewer = Some(HelpViewer::new(size, &topic, &help.pages(&topic)));
+                        }
+                    }
+                },
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -645,7 +685,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
 
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
-        let modal = dialog.is_some() || manager.is_some() || color_window.is_some();
+        let modal = dialog.is_some()
+            || manager.is_some()
+            || color_window.is_some()
+            || help_viewer.is_some();
         if f5_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
             f5_down = None;
             machine.stop();
@@ -748,7 +791,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.copy(&texture, None, rect)?;
         // The colors window leaves the editor behind it bright, to show
         // its colors.
-        let dims = dialog.is_some() || manager.is_some() || program_dialog.is_some();
+        let dims = dialog.is_some()
+            || manager.is_some()
+            || program_dialog.is_some()
+            || help_viewer.is_some();
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens need it.
         let show_cursor = !machine.is_running()
@@ -766,6 +812,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             overlay.clear(if dims { 0x8000_0000 } else { 0 });
             let font = machine.rt.font();
             if let Some(open) = &manager {
+                open.draw(&mut overlay, font);
+            }
+            if let Some(open) = &help_viewer {
                 open.draw(&mut overlay, font);
             }
             if let Some(open) = &program_dialog {

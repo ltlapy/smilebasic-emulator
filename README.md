@@ -43,8 +43,8 @@ you have one) and run the separate importer
 smilebasic-import BASE_ROMFS BASE_EXEFS UPDATE_ROMFS UPDATE_EXEFS
 ```
 
-The importer copies `font.map`, `GDEFFONT` and the default sprite image
-`GDEFGRP` into the emulator's data directory, and takes the default sprite
+The importer copies `font.map`, `GDEFFONT`, the default sprite image
+`GDEFGRP` and the English help (`HelpData.idx`, `HelpData.dat`) into the emulator's data directory, and takes the default sprite
 definitions (SPDEF) out of the executable `main` and the instruments,
 preset songs and sound effects out of the sound archive `petc4.bfsar`. List the update's
 directories last so its files take precedence. Only the font is required;
@@ -82,6 +82,7 @@ SmileBASIC 4's own files.
 | Key | Action |
 |---|---|
 | Up, Down | In direct mode, bring back the lines typed before; Down returns to what was being typed |
+| F1 | In the editor, show SmileBASIC 4's help for the command at the cursor (needs the imported help) |
 | F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line |
 | F12 | Open the projects: switch, load a program into a slot, or run a project's MAIN.PRG |
 | Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
