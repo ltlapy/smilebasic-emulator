@@ -560,6 +560,125 @@ impl Editor {
         self.go(at.0 + 1, 0);
     }
 
+    /// The lines that line commands work on: those with selected text, or
+    /// the cursor's.
+    fn chosen_lines(&self) -> (usize, usize) {
+        match self.selection() {
+            // A selection ending at a line's start leaves that line out.
+            Some((start, end)) if end.1 == 0 && end.0 > start.0 => (start.0, end.0 - 1),
+            Some((start, end)) => (start.0, end.0),
+            None => (self.view.line, self.view.line),
+        }
+    }
+
+    /// Changes each chosen line in one step: `change` gives the columns
+    /// to replace and what with, or `None` to leave the line alone. Whole
+    /// lines stay selected if any were; the cursor otherwise stays on the
+    /// same text.
+    fn change_lines(&mut self, change: impl Fn(&[u16]) -> Option<(usize, usize, Vec<u16>)>) {
+        let (first, last) = self.chosen_lines();
+        let selected = self.selection().is_some();
+        self.begin(Merge::Alone);
+        let mut col = self.view.col;
+        for line in first..=last {
+            let Some((from, to, text)) = change(&self.lines[line]) else {
+                continue;
+            };
+            if line == self.view.line && col > from {
+                col = if col >= to {
+                    col - (to - from) + text.len()
+                } else {
+                    from + text.len()
+                };
+            }
+            self.replace((line, from), (line, to), vec![text]);
+        }
+        if selected {
+            self.go(last, usize::MAX);
+            self.anchor = Some((first, 0));
+        } else {
+            self.go(first, col);
+        }
+        self.want_col = self.view.col;
+        self.merge = Merge::Alone;
+    }
+
+    /// Indents the chosen lines by TABSTEP's spaces (Tab over lines).
+    // UNVERIFIED: SmileBASIC 4 indents by TABSTEP's spaces.
+    pub fn indent(&mut self) {
+        let spaces = vec![u16::from(b' '); self.tab_step.max(1)];
+        self.change_lines(|_| Some((0, 0, spaces.clone())));
+    }
+
+    /// Takes up to TABSTEP's spaces from the start of the chosen lines
+    /// (Shift+Tab).
+    pub fn unindent(&mut self) {
+        let step = self.tab_step.max(1);
+        self.change_lines(|text| {
+            let n = text.iter().take(step).take_while(|&&c| c == 32).count();
+            (n > 0).then(|| (0, n, Vec::new()))
+        });
+    }
+
+    /// Turns the chosen lines into comments (Ctrl+K).
+    // UNVERIFIED: the quote goes at the start of the line, not after the
+    // indentation.
+    pub fn comment(&mut self) {
+        self.change_lines(|_| Some((0, 0, vec![u16::from(b'\'')])));
+    }
+
+    /// Takes the first quote after the indentation off the chosen lines
+    /// (Ctrl+Shift+K).
+    pub fn uncomment(&mut self) {
+        self.change_lines(|text| {
+            let at = text.iter().position(|&c| c != 32)?;
+            (text[at] == u16::from(b'\'')).then(|| (at, at + 1, Vec::new()))
+        });
+    }
+
+    /// Puts an empty line above the cursor's and moves to it (Ctrl+Enter).
+    // UNVERIFIED: the new line goes above, as in SmileBASIC 3.
+    pub fn insert_line(&mut self) {
+        let line = self.view.line;
+        self.anchor = None;
+        self.begin(Merge::Alone);
+        self.replace((line, 0), (line, 0), vec![Vec::new(), Vec::new()]);
+        self.moved_to((line, 0));
+    }
+
+    /// Removes the cursor's line, or the lines with selected text
+    /// (Ctrl+Backspace).
+    pub fn delete_line(&mut self) {
+        let (first, last) = self.chosen_lines();
+        self.anchor = None;
+        self.begin(Merge::Alone);
+        if last + 1 < self.lines.len() {
+            self.replace((first, 0), (last + 1, 0), vec![Vec::new()]);
+        } else if first > 0 {
+            let len = self.lines[first - 1].len();
+            self.replace(
+                (first - 1, len),
+                (last, self.lines[last].len()),
+                vec![Vec::new()],
+            );
+        } else {
+            self.replace((0, 0), (last, self.lines[last].len()), vec![Vec::new()]);
+        }
+        self.go_line(first);
+        self.merge = Merge::Alone;
+    }
+
+    /// Removes the rest of the line from the cursor (Ctrl+Delete).
+    pub fn delete_to_end(&mut self) {
+        self.anchor = None;
+        let (line, col) = self.pos();
+        if col < self.line().len() {
+            self.begin(Merge::Alone);
+            self.replace((line, col), (line, self.line().len()), vec![Vec::new()]);
+            self.merge = Merge::Alone;
+        }
+    }
+
     /// Moves the cursor with a [`keys`] code while keeping the other end
     /// of the selection, as Shift does.
     pub fn key_select(&mut self, code: u16) {
@@ -580,6 +699,10 @@ impl Editor {
         }
         // Control codes other than these type nothing.
         let types = !matches!(code, 0..0x20 | 0x7F) || matches!(code, keys::ENTER | keys::TAB);
+        if code == keys::TAB && self.selection().is_some_and(|(a, b)| a.0 != b.0) {
+            self.indent();
+            return;
+        }
         if is_movement(code) {
             self.anchor = None;
             self.merge = Merge::Alone;
@@ -1277,6 +1400,54 @@ mod tests {
         assert_eq!(e.text(), "1AXY\nDEF", "at the cursor from before the 2");
         e.undo();
         assert_eq!(e.text(), "1ABC\nDEF");
+    }
+
+    #[test]
+    fn line_commands() {
+        let mut e = editor("A\n  B\nC");
+        e.tab_step = 2;
+        e.key(keys::DOWN);
+        e.key(keys::END);
+        e.unindent();
+        assert_eq!((e.text().as_str(), e.cursor()), ("A\nB\nC", (2, 1)));
+        e.key(keys::UP);
+        e.key(keys::HOME);
+        e.key_select(keys::DOWN);
+        e.key_select(keys::DOWN);
+        // The selection ends at line 3's start, which is left out.
+        e.key(keys::TAB);
+        assert_eq!(e.text(), "  A\n  B\nC");
+        assert_eq!(e.copy().as_deref(), Some("  A\n  B"));
+        e.comment();
+        assert_eq!(e.text(), "'  A\n'  B\nC");
+        e.undo();
+        e.undo();
+        assert_eq!(e.text(), "A\nB\nC");
+        e.redo();
+        e.select_all();
+        e.comment();
+        e.key(keys::DOWN);
+        e.uncomment();
+        e.uncomment();
+        assert_eq!(e.text(), "'  A\n'  B\nC");
+
+        let mut e = editor("A\nB\nC");
+        e.key(keys::DOWN);
+        e.insert_line();
+        assert_eq!((e.text().as_str(), e.cursor()), ("A\n\nB\nC", (2, 0)));
+        e.delete_line();
+        e.delete_line();
+        assert_eq!((e.text().as_str(), e.cursor()), ("A\nC", (2, 0)));
+        e.delete_line();
+        assert_eq!((e.text().as_str(), e.cursor()), ("A", (1, 0)));
+        e.delete_line();
+        assert_eq!(e.text(), "");
+        e.undo();
+        typing(&mut e, "XYZ");
+        e.key(keys::LEFT);
+        e.key(keys::LEFT);
+        e.delete_to_end();
+        assert_eq!(e.text(), "X", "typed before the A");
     }
 
     #[test]

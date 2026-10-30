@@ -96,6 +96,10 @@ SmileBASIC 4's own files.
 | Shift+cursor keys, mouse drag | Select text in the editor |
 | Ctrl+A, Ctrl+X, Ctrl+C, Ctrl+V | Select all, cut, copy and paste in the editor |
 | Ctrl+Z, Ctrl+Shift+Z (or Ctrl+Y) | Undo and redo in the editor |
+| Ctrl+Enter, Ctrl+Backspace | Insert an empty line, or delete the line |
+| Ctrl+Delete | Delete the rest of the line |
+| Tab, Shift+Tab | Indent the selected lines, or unindent them |
+| Ctrl+K, Ctrl+Shift+K | Comment out the selected lines, or uncomment them |
 | Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
 
 ### Buttons

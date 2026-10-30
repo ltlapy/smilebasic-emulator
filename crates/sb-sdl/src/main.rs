@@ -651,8 +651,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Keycode::Z if shift(keymod) => machine.edit().redo(),
                     Keycode::Z => machine.edit().undo(),
                     Keycode::Y => machine.edit().redo(),
+                    Keycode::K if shift(keymod) => machine.edit().uncomment(),
+                    Keycode::K => machine.edit().comment(),
+                    Keycode::Return | Keycode::KpEnter => machine.edit().insert_line(),
+                    Keycode::Backspace => machine.edit().delete_line(),
+                    Keycode::Delete => machine.edit().delete_to_end(),
                     _ => {}
                 },
+                Event::KeyDown {
+                    keycode: Some(Keycode::Tab),
+                    keymod,
+                    ..
+                } if machine.is_editing() && shift(keymod) => machine.edit().unindent(),
                 // Shift and the cursor keys select in the editor.
                 Event::KeyDown {
                     keycode: Some(key),
