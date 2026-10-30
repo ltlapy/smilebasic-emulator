@@ -31,6 +31,7 @@ pub enum Action {
     Find,
     Replace,
     Index,
+    Split,
     ToggleUpperCase,
     ToggleCtrlC,
     ToggleHalfWidth,
@@ -105,7 +106,8 @@ impl Action {
             | Action::GoToLine
             | Action::Find
             | Action::Replace
-            | Action::Index => "   ",
+            | Action::Index
+            | Action::Split => "   ",
         }
     }
 
@@ -168,7 +170,8 @@ impl Action {
             | Action::GoToLine
             | Action::Find
             | Action::Replace
-            | Action::Index => return,
+            | Action::Index
+            | Action::Split => return,
         };
         *flag = !*flag;
     }
@@ -184,7 +187,8 @@ impl Action {
             | Action::GoToLine
             | Action::Find
             | Action::Replace
-            | Action::Index => !running,
+            | Action::Index
+            | Action::Split => !running,
             _ => true,
         }
     }
@@ -293,6 +297,7 @@ const MENUS: &[Menu] = &[
             item("Find (F3, Ctrl+F)", Action::Find),
             item("Replace (Ctrl+H)", Action::Replace),
             item("Labels and DEFs (Ctrl+J)", Action::Index),
+            item("Split display (Ctrl+/)", Action::Split),
             item("Wrap lines (Ctrl+W)", Action::ToggleWrap),
             item("Line number tiles", Action::ToggleNumberTiles),
             Item {

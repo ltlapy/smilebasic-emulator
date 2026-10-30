@@ -420,6 +420,9 @@ pub const KEY_BUFFER: usize = 256;
 /// Frames per half period of the INPUT cursor's blink: at 60 fps, a full
 /// blink takes about 833 ms.
 const CURSOR_BLINK: u32 = 25;
+/// The pixels between the sides of a split editor, and their color.
+const SPLIT_DIVIDER: u32 = 2;
+const SPLIT_COLOR: u32 = 0xFF30_3040;
 
 /// Character codes for keys that do not produce text, as INKEY$ returns them.
 pub mod keys {
@@ -519,6 +522,10 @@ pub struct Runtime {
     /// The editor draws at a multiple of the start-up resolution, for its
     /// font and size (see [`frame_size`]).
     editor_fb: Framebuffer,
+    /// One side of a split editor, drawn before going into `editor_fb`.
+    side_fb: Framebuffer,
+    /// Where the right side of a split editor starts on its frame.
+    pub(crate) split_at: Option<u32>,
     /// GRP4 at start-up, which ACLS puts back.
     sprite_page: Option<Vec<u32>>,
 }
@@ -685,6 +692,8 @@ impl Runtime {
             mode,
             startup_mode: mode,
             editor_fb: Framebuffer::new(width, height),
+            side_fb: Framebuffer::new(0, 0),
+            split_at: None,
             sprite_page: None,
         }
         .with_font_page()
@@ -1020,14 +1029,13 @@ impl Runtime {
     }
 
     /// Composes a frame showing the editor instead of the screens.
-    pub(crate) fn render_editor(&mut self, editor: &mut Editor) -> &Framebuffer {
+    pub(crate) fn render_editors(
+        &mut self,
+        editors: &mut [Editor; 2],
+        active: usize,
+        split: bool,
+    ) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
-        let slot = editor.slot();
-        let mut name = self.slot_names[slot].clone();
-        // The slot has edits that were not saved.
-        if self.slot_modified[slot] || editor.is_modified() {
-            name.push_str(" *");
-        }
         let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
         let s = &self.settings;
         let mode = self.startup_mode;
@@ -1041,7 +1049,45 @@ impl Runtime {
             font: s.editor_font,
             colors: &s.editor_colors,
         };
-        editor.draw(&mut self.editor_fb, &self.font, &name, look, blink);
+        let name = |editor: &Editor| {
+            let slot = editor.slot();
+            let mut name = self.slot_names[slot].clone();
+            // The slot has edits that were not saved.
+            if self.slot_modified[slot] || editor.is_modified() {
+                name.push_str(" *");
+            }
+            name
+        };
+        if !split {
+            self.split_at = None;
+            let name = name(&editors[active]);
+            editors[active].draw(&mut self.editor_fb, &self.font, &name, look, blink);
+            return &self.editor_fb;
+        }
+        // Two sides with a divider between them.
+        let half = (w - SPLIT_DIVIDER) / 2;
+        let right = w - half;
+        self.split_at = Some(right);
+        if (self.side_fb.width(), self.side_fb.height()) != (half, h) {
+            self.side_fb = Framebuffer::new(half, h);
+        }
+        for (side, editor) in editors.iter_mut().enumerate() {
+            let name = name(editor);
+            let blink = blink && side == active;
+            editor.draw(&mut self.side_fb, &self.font, &name, look, blink);
+            let x0 = if side == 0 { 0 } else { right };
+            for y in 0..h {
+                for x in 0..half {
+                    let pixel = self.side_fb.get(x, y).unwrap_or(0);
+                    self.editor_fb.set(x0 + x, y, pixel);
+                }
+            }
+        }
+        for y in 0..h {
+            for x in half..right {
+                self.editor_fb.set(x, y, SPLIT_COLOR);
+            }
+        }
         &self.editor_fb
     }
 

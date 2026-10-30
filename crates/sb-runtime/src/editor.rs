@@ -408,6 +408,34 @@ impl Editor {
         self.note = None;
     }
 
+    /// Takes over the program and its undo history from the other side of
+    /// a split display, which showed the same slot.
+    pub fn take_document(&mut self, from: &mut Editor) {
+        self.lines = from.lines.clone();
+        self.undo = std::mem::take(&mut from.undo);
+        self.redo = std::mem::take(&mut from.redo);
+        self.modified = from.modified;
+        self.merge = Merge::Alone;
+        self.fit_cursor();
+    }
+
+    /// Shows the program that the other side of a split display edits.
+    pub fn mirror(&mut self, from: &Editor) {
+        if self.lines != from.lines {
+            self.lines.clone_from(&from.lines);
+            self.fit_cursor();
+        }
+        self.modified = from.modified;
+    }
+
+    /// Keeps the cursor in the text after it changed under it.
+    fn fit_cursor(&mut self) {
+        let (line, col) = self.pos();
+        self.go(line, col);
+        self.anchor = None;
+        self.view.top = self.view.top.min(self.lines.len() - 1);
+    }
+
     /// Stops editing. Returns the new source if it was changed, so that an
     /// untouched program keeps its original line endings.
     pub fn close(&mut self) -> Option<String> {
@@ -1934,6 +1962,24 @@ mod tests {
         e.key(keys::DOWN);
         e.scroll(false);
         assert_eq!(e.view.top, 1);
+    }
+
+    #[test]
+    fn two_sides_share_a_program() {
+        let mut a = editor("ABC\nDEF");
+        let mut b = editor("ABC\nDEF");
+        b.file_end();
+        a.key(keys::DELETE);
+        a.key(keys::DOWN);
+        a.key(keys::DELETE);
+        b.mirror(&a);
+        assert_eq!((b.text().as_str(), b.cursor()), ("BC\nEF", (2, 2)));
+        assert!(b.is_modified());
+        b.take_document(&mut a);
+        b.undo();
+        assert_eq!(b.text(), "BC\nDEF");
+        a.undo();
+        assert_eq!(a.text(), "BC\nEF", "the history went along");
     }
 
     #[test]

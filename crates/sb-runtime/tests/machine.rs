@@ -265,7 +265,7 @@ fn list_edits_a_slot_and_f4_returns() {
     m.set_slot(0, "?1\r\n?2".to_string());
     enter(&mut m, "list 2");
     assert!(m.is_editing());
-    assert_eq!(m.editor.cursor(), (2, 0));
+    assert_eq!(m.editor().cursor(), (2, 0));
     press(&mut m, &[keys::END]);
     m.type_text("3");
     m.frame();
@@ -278,7 +278,7 @@ fn list_edits_a_slot_and_f4_returns() {
     // An untouched program keeps its line endings.
     m.set_slot(2, "?1\r\n".to_string());
     enter(&mut m, "list 2:1");
-    assert_eq!(m.editor.slot(), 2);
+    assert_eq!(m.editor().slot(), 2);
     m.toggle_editor();
     assert_eq!(m.slot(2), "?1\r\n");
 }
@@ -290,17 +290,17 @@ fn f4_and_list_err_show_the_error() {
     m.set_slot(1, "?1\n?2\nA=0:?1/A".to_string());
     enter(&mut m, "run 1");
     m.toggle_editor();
-    assert_eq!((m.editor.slot(), m.editor.cursor()), (1, (3, 4)));
+    assert_eq!((m.editor().slot(), m.editor().cursor()), (1, (3, 4)));
     // The error is shown once; later, the editor opens where it was left.
     m.toggle_editor();
     // So do syntax errors (checked on hardware: before the `?`).
     m.set_slot(0, "A=1:?(".to_string());
     enter(&mut m, "run");
     enter(&mut m, "list err");
-    assert_eq!((m.editor.slot(), m.editor.cursor()), (0, (1, 4)));
+    assert_eq!((m.editor().slot(), m.editor().cursor()), (0, (1, 4)));
     m.toggle_editor();
     m.toggle_editor();
-    assert_eq!(m.editor.slot(), 0);
+    assert_eq!(m.editor().slot(), 0);
 }
 
 #[test]
@@ -325,15 +325,15 @@ fn ctrl_digits_switch_slots() {
     // From direct mode, opens the editor on the slot.
     m.edit_slot(3);
     assert!(m.is_editing());
-    assert_eq!(m.editor.slot(), 3);
+    assert_eq!(m.editor().slot(), 3);
     m.type_text("'");
     m.frame();
     // Switching keeps the edit and opens the other slot.
     m.edit_slot(1);
-    assert_eq!((m.editor.slot(), m.slot(3)), (1, "'?3"));
+    assert_eq!((m.editor().slot(), m.slot(3)), (1, "'?3"));
     assert_eq!(m.unsaved_slots(), [3]);
     m.edit_slot(6);
-    assert_eq!(m.editor.slot(), 1, "no such slot");
+    assert_eq!(m.editor().slot(), 1, "no such slot");
 }
 
 /// TEST14 on hardware: a VSYNC that is behind goes straight on once and
@@ -407,4 +407,46 @@ fn the_same_line_twice_is_one_history_entry() {
     press(&mut m, &[UP]);
     enter(&mut m, "");
     assert_eq!(typed(&mut m, &[UP, UP]), "A=1");
+}
+
+#[test]
+fn split_editor_sides() {
+    use sb_runtime::runtime::keys;
+    let mut m = machine();
+    m.set_slot(0, "?0".to_string());
+    m.set_slot(1, "?1".to_string());
+    m.edit_slot(0);
+    m.toggle_split();
+    assert!(m.is_split());
+    // Both sides show PRG0 (letters typed swap case); typing on one shows on the other.
+    m.type_text("A");
+    m.frame();
+    m.render();
+    m.switch_side();
+    assert_eq!((m.active_side(), m.editor().text()), (1, "a?0".to_string()));
+    // The undo history came along.
+    m.edit().undo();
+    assert_eq!(m.editor().text(), "?0");
+    // The right side opens PRG1; the left keeps PRG0.
+    m.edit_slot(1);
+    press(&mut m, &[keys::END]);
+    m.type_text("1");
+    m.frame();
+    m.switch_side();
+    assert_eq!(
+        (m.editor().slot(), m.editor().text()),
+        (0, "?0".to_string())
+    );
+    // Asking for PRG1 here moves to the side showing it.
+    m.edit_slot(1);
+    assert_eq!(m.active_side(), 1);
+    assert_eq!(m.unsaved_slots(), [0, 1]);
+    // Leaving keeps both sides' edits.
+    m.toggle_editor();
+    assert_eq!((m.slot(0), m.slot(1)), ("?0", "?11"));
+    m.toggle_editor();
+    assert!(m.is_split());
+    assert_eq!(m.editor().slot(), 1);
+    m.toggle_split();
+    assert!(!m.is_split());
 }

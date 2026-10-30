@@ -519,7 +519,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     menu.mouse_move(Some(to_display(x, y)));
                     if dragging && machine.is_editing() {
                         let (x, y) = to_screen(x, y);
-                        machine.edit().mouse_drag(x, y);
+                        machine.editor_mouse_drag(x, y);
                     }
                 }
                 Event::MouseButtonUp {
@@ -548,6 +548,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::Pause) => menu.shown = !menu.shown,
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
+                    Click::Chosen(Action::Split) => machine.toggle_split(),
                     Click::Chosen(Action::Index) => {
                         if !machine.is_editing() {
                             machine.toggle_editor();
@@ -620,7 +621,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         side_focus = false;
                         let (x, y) = to_screen(x, y);
                         let extend = shift(keyboard.mod_state());
-                        machine.edit().mouse_down(x, y, extend);
+                        machine.editor_mouse_down(x, y, extend);
                         dragging = true;
                     }
                     Click::Consumed | Click::Ignored => {}
@@ -743,6 +744,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         }
                     }
                     Keycode::G => machine.edit().go_to_line(),
+                    Keycode::Slash | Keycode::KpDivide => machine.toggle_split(),
+                    Keycode::Tab => machine.switch_side(),
                     Keycode::J => {
                         side = Some(open_index(&mut machine, (display_w, display_h)));
                         side_focus = true;
@@ -827,6 +830,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let modal = dialog.is_some() || manager.is_some() || color_window.is_some();
         if !machine.is_editing() {
             side = None;
+        }
+        // Panels go on the side away from the code being edited.
+        if let Some(open) = &mut side {
+            open.set_left(machine.is_split() && machine.active_side() == 1);
         }
         if f5_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
             f5_down = None;
@@ -1095,6 +1102,13 @@ impl Side {
         match self {
             Side::Help(help) => help.wheel(rows),
             Side::Index(index, _) => index.wheel(rows),
+        }
+    }
+
+    fn set_left(&mut self, left: bool) {
+        match self {
+            Side::Help(help) => help.left = left,
+            Side::Index(index, _) => index.left = left,
         }
     }
 

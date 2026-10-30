@@ -37,7 +37,12 @@ pub struct Machine {
     /// Globals of the last program and the direct-mode lines since, kept
     /// for the next direct-mode line; each line adds its own.
     vars: HashMap<String, Value>,
-    pub editor: Editor,
+    /// The editor's two sides. Without a split display only the active
+    /// one is shown. When both show the same slot, the other one mirrors
+    /// the active one, which owns the text and its undo history.
+    editors: [Editor; 2],
+    active: usize,
+    split: bool,
     /// Whether the editor is shown instead of direct mode.
     editing: bool,
     /// The slot whose program is running, if one is.
@@ -112,7 +117,9 @@ impl Machine {
             frame: 0,
             vsync_at: 0,
             vars: HashMap::new(),
-            editor: Editor::new(w * 8, h * 8),
+            editors: [Editor::new(w * 8, h * 8), Editor::new(w * 8, h * 8)],
+            active: 0,
+            split: false,
             editing: false,
             running_slot: None,
             last_error: None,
@@ -173,47 +180,199 @@ impl Machine {
             Some((slot, line, col)) => {
                 self.open_editor(slot, Some((line as usize, col as usize)));
             }
-            None => self.open_editor(self.editor.slot(), None),
+            None => self.open_editor(self.editor().slot(), None),
         }
     }
 
+    /// The side of the editor that takes the keys.
+    pub fn editor(&self) -> &Editor {
+        &self.editors[self.active]
+    }
+
+    fn other(&self) -> usize {
+        1 - self.active
+    }
+
+    /// Whether the other side of a split display shows the active side's
+    /// slot.
+    fn mirrors(&self) -> bool {
+        self.split && self.editors[0].slot() == self.editors[1].slot()
+    }
+
     /// Opens the editor on a slot, from direct mode or from another slot
-    /// (Ctrl+1 to Ctrl+6, like SmileBASIC 4's EDIT0 to EDIT3).
+    /// (Ctrl+1 to Ctrl+6, like SmileBASIC 4's EDIT0 to EDIT3). A slot that
+    /// the other side of a split display shows gets the keys there.
     pub fn edit_slot(&mut self, slot: usize) {
         if self.vm.is_some() || slot >= SLOTS {
             return;
         }
         if self.editing {
-            if self.editor.slot() == slot {
+            if self.editor().slot() == slot {
                 return;
             }
-            self.close_editor();
+            if self.split && self.editors[self.other()].slot() == slot {
+                self.switch_side();
+                return;
+            }
+            self.leave_slot();
         }
         self.open_editor(slot, None);
     }
 
+    /// Lets the active side go of its slot, which the other side keeps
+    /// if it shows it too.
+    fn leave_slot(&mut self) {
+        let a = self.active;
+        if self.mirrors() {
+            let [first, second] = &mut self.editors;
+            let (active, other) = if a == 0 {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            other.take_document(active);
+            active.close();
+        } else {
+            self.close_side(a);
+        }
+    }
+
     fn open_editor(&mut self, slot: usize, at: Option<(usize, usize)>) {
         self.rt.edit_slot = slot;
-        self.editor.open(slot, &self.rt.slots[slot], at);
+        let (a, o) = (self.active, self.other());
+        if self.split && !self.editing {
+            // Back from direct mode, the other side shows its slot again.
+            let shown = self.editors[o].slot();
+            self.editors[o].open(shown, &self.rt.slots[shown], None);
+        }
+        if self.split && self.editing && self.editors[o].slot() == slot {
+            let text = self.editors[o].text();
+            let [first, second] = &mut self.editors;
+            let (active, other) = if a == 0 {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            active.open(slot, &text, at);
+            active.take_document(other);
+        } else {
+            self.editors[a].open(slot, &self.rt.slots[slot], at);
+        }
         self.editing = true;
     }
 
-    fn close_editor(&mut self) {
-        if let Some(source) = self.editor.close() {
-            let slot = self.editor.slot();
+    /// Closes one side, keeping its changes in the slot.
+    fn close_side(&mut self, side: usize) {
+        if let Some(source) = self.editors[side].close() {
+            let slot = self.editors[side].slot();
             self.rt.slots[slot] = source;
             self.rt.slot_modified[slot] = true;
         }
+    }
+
+    fn close_editor(&mut self) {
+        let other = self.other();
+        if self.mirrors() {
+            // Only its place is kept; the active side has the text.
+            self.editors[other].close();
+        } else if self.split {
+            self.close_side(other);
+        }
+        self.close_side(self.active);
         self.editing = false;
     }
 
-    /// Slots with edits that were not saved, including the one open in the
-    /// editor.
+    /// Splits the editor in two sides, both showing the active slot at
+    /// first, or goes back to one (Ctrl+/).
+    pub fn toggle_split(&mut self) {
+        if !self.editing {
+            return;
+        }
+        let other = self.other();
+        if self.split {
+            if self.mirrors() {
+                self.editors[other].close();
+            } else {
+                self.close_side(other);
+            }
+            self.split = false;
+            return;
+        }
+        let slot = self.editor().slot();
+        let text = self.editor().text();
+        self.editors[other].open(slot, &text, None);
+        self.split = true;
+    }
+
+    pub fn is_split(&self) -> bool {
+        self.split
+    }
+
+    /// Which side of a split display takes the keys: 0 for the left.
+    pub fn active_side(&self) -> usize {
+        self.active
+    }
+
+    /// Gives the keys to the other side of a split display (Ctrl+Tab).
+    pub fn switch_side(&mut self) {
+        if !self.split || !self.editing {
+            return;
+        }
+        // Keys typed so far go to the side they were typed on.
+        self.edit();
+        let (a, o) = (self.active, self.other());
+        if self.mirrors() {
+            let [first, second] = &mut self.editors;
+            let (active, other) = if a == 0 {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            other.take_document(active);
+        }
+        self.active = o;
+        self.rt.edit_slot = self.editors[o].slot();
+    }
+
+    /// A press of the mouse on the editor's frame: on the other side of a
+    /// split display, it gets the keys first.
+    pub fn editor_mouse_down(&mut self, x: i32, y: i32, extend: bool) {
+        let side = match self.rt.split_at {
+            Some(at) if self.split && x >= at as i32 => 1,
+            _ => 0,
+        };
+        if self.split && side != self.active {
+            self.switch_side();
+        }
+        let x = x - self.side_left();
+        self.edit().mouse_down(x, y, extend);
+    }
+
+    /// The mouse moved with its button held since the press.
+    pub fn editor_mouse_drag(&mut self, x: i32, y: i32) {
+        let x = x - self.side_left();
+        self.edit().mouse_drag(x, y);
+    }
+
+    /// Where the active side starts on the editor's frame.
+    fn side_left(&self) -> i32 {
+        match self.rt.split_at {
+            Some(at) if self.split && self.active == 1 => at as i32,
+            _ => 0,
+        }
+    }
+
+    /// Slots with edits that were not saved, including the ones open in
+    /// the editor.
     pub fn unsaved_slots(&self) -> Vec<usize> {
+        let shown = |side: usize| self.editing && (side == self.active || self.split);
         (0..SLOTS)
             .filter(|&slot| {
                 self.rt.slot_modified[slot]
-                    || (self.editing && self.editor.slot() == slot && self.editor.is_modified())
+                    || (0..2).any(|side| {
+                        let e = &self.editors[side];
+                        shown(side) && e.slot() == slot && e.is_modified()
+                    })
             })
             .collect()
     }
@@ -305,11 +464,12 @@ impl Machine {
     /// The editor, after it has taken the keys typed so far, so that its
     /// other commands come in order with them.
     pub fn edit(&mut self) -> &mut Editor {
-        self.editor.tab_step = self.rt.settings.editor_tab_step as usize;
+        let editor = &mut self.editors[self.active];
+        editor.tab_step = self.rt.settings.editor_tab_step as usize;
         while let Some(key) = self.rt.next_key() {
-            self.editor.key(key);
+            editor.key(key);
         }
-        &mut self.editor
+        editor
     }
 
     /// Pasted text: into the editor, or typed as keys, with line breaks
@@ -436,7 +596,15 @@ impl Machine {
 
     pub fn render(&mut self) -> &Framebuffer {
         if self.editing {
-            self.rt.render_editor(&mut self.editor)
+            if self.mirrors() {
+                let [first, second] = &mut self.editors;
+                match self.active {
+                    0 => second.mirror(first),
+                    _ => first.mirror(second),
+                }
+            }
+            self.rt
+                .render_editors(&mut self.editors, self.active, self.split)
         } else {
             self.rt.render()
         }
@@ -454,7 +622,7 @@ impl Machine {
                 match list {
                     List::At(slot, line) => {
                         let at = line.map(|line| (line, 0));
-                        self.open_editor(slot.unwrap_or(self.editor.slot()), at)
+                        self.open_editor(slot.unwrap_or(self.editor().slot()), at)
                     }
                     List::Error => self.list_error(),
                 }
