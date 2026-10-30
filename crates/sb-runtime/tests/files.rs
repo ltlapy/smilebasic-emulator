@@ -582,13 +582,14 @@ fn other_projects_and_backups() {
     assert_eq!(m.slot(2), "?\"W\"");
     enter(&mut m, "project \"\"");
 
-    // Programs read them only with EXEC.
+    // Programs read them too, with LOAD, LOADV and EXEC (checked on
+    // hardware).
     m.set_slot(
         0,
-        "LOAD \"GAME/SUB\",1:?RESULT()\nEXEC \"GAME/SUB\",3".to_string(),
+        "LOAD \"GAME/SUB\",1:?RESULT();LOADV(\"TXT:GAME/NOTE\")\nEXEC \"GAME/SUB\",3".to_string(),
     );
     enter(&mut m, "run");
-    assert_eq!(tail(&m, 3), ["0", "SUB", "OK"]);
+    assert_eq!(tail(&m, 3), ["1HI", "SUB", "OK"]);
 
     // ...or name the current project (checked on hardware).
     enter(&mut m, "project \"game\"");

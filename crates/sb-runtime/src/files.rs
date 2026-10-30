@@ -152,7 +152,7 @@ impl Runtime {
             }
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
-                if let Some(file) = self.existing_read(&spec, false) {
+                if let Some(file) = self.existing_read(&spec) {
                     let action = FileAction {
                         title: "Delete file".to_string(),
                         summary: "Delete this file.".to_string(),
@@ -169,7 +169,7 @@ impl Runtime {
                 // Backups (`@BACKUP.PRG`) can be deleted, but only in the
                 // current project.
                 let outcome =
-                    self.read_name(&spec, FileKind::Txt, false)
+                    self.read_name(&spec, FileKind::Txt)
                         .and_then(|file| match file.project {
                             None => self.storage.delete(file.kind, &file.name),
                             Some(_) => Err(StorageError::BadName(spec.clone())),
@@ -275,8 +275,7 @@ impl Runtime {
     /// otherwise whether it loaded, which RESULT() tells too.
     pub(crate) fn load_asking(&mut self, what: &str, spec: &str, slot: usize) -> Option<bool> {
         // A file that is not there fails without asking first.
-        let exec = what == "EXEC";
-        if let Some(file) = self.existing_read(spec, exec) {
+        if let Some(file) = self.existing_read(spec) {
             let action = FileAction {
                 title: format!("Slot {slot}: Load file"),
                 summary: format!("Load this file into slot {slot}."),
@@ -294,33 +293,24 @@ impl Runtime {
                 }
             }
         }
-        let outcome = self.load(spec, slot, exec);
+        let outcome = self.load(spec, slot);
         Some(self.finish(what, outcome).is_some())
     }
 
-    /// A file named for reading. Programs read other projects' files only
-    /// with EXEC (`any_project`), as the manual says; direct mode reads
-    /// them all. Naming the current project is always allowed (checked
-    /// on hardware).
-    pub(crate) fn read_name(
-        &self,
-        spec: &str,
-        default: FileKind,
-        any_project: bool,
-    ) -> storage::Result<FileRef> {
+    /// A file named for reading, in this project or another: programs
+    /// LOAD and LOADV other projects' files too (checked on hardware,
+    /// against the manual's word that only EXEC does).
+    pub(crate) fn read_name(&self, spec: &str, default: FileKind) -> storage::Result<FileRef> {
         let mut file = parse_read_name(spec, default)?;
         if file.project.as_deref() == Some(self.storage.project()) {
             file.project = None;
-        }
-        if file.project.is_some() && !(any_project || self.direct) {
-            return Err(StorageError::BadName(spec.to_string()));
         }
         Ok(file)
     }
 
     /// A file named for reading, as [`FileRef::label`], if it exists.
-    pub(crate) fn existing_read(&self, spec: &str, any_project: bool) -> Option<String> {
-        let file = self.read_name(spec, FileKind::Txt, any_project).ok()?;
+    pub(crate) fn existing_read(&self, spec: &str) -> Option<String> {
+        let file = self.read_name(spec, FileKind::Txt).ok()?;
         self.storage.exists_ref(&file).then(|| file.label())
     }
 
@@ -385,8 +375,8 @@ impl Runtime {
         }
     }
 
-    fn load(&mut self, spec: &str, slot: usize, any_project: bool) -> storage::Result<()> {
-        let file = self.read_name(spec, FileKind::Txt, any_project)?;
+    fn load(&mut self, spec: &str, slot: usize) -> storage::Result<()> {
+        let file = self.read_name(spec, FileKind::Txt)?;
         if file.kind != FileKind::Txt {
             return Err(StorageError::BadKind(file.kind.name().to_string()));
         }

@@ -326,7 +326,7 @@ impl Runtime {
         if !spec.contains(':') {
             return Err(StorageError::BadKind(String::new()));
         }
-        let file = self.read_name(spec, FileKind::Txt, false)?;
+        let file = self.read_name(spec, FileKind::Txt)?;
         let bytes = self.storage.read_ref(&file)?;
         match file.kind {
             FileKind::Txt => Ok(Value::str(&program_text(&bytes)?)),
@@ -345,7 +345,7 @@ impl Runtime {
     /// Illegal file format error, not a failure (checked on hardware for a
     /// string array).
     fn load_image(&self, spec: &str) -> Result<storage::Result<Image>> {
-        let file = match self.read_name(spec, FileKind::Grp, false) {
+        let file = match self.read_name(spec, FileKind::Grp) {
             Ok(file) => file,
             Err(e) => return Ok(Err(e)),
         };
@@ -371,7 +371,7 @@ impl Runtime {
     /// command must stop here for the answer.
     // UNVERIFIED: that LOADV and LOADG in a program do not ask, like LOAD.
     fn ask_load(&mut self, spec: &str, default: FileKind) -> bool {
-        let Ok(file) = self.read_name(spec, default, false) else {
+        let Ok(file) = self.read_name(spec, default) else {
             return false;
         };
         if !self.storage.exists_ref(&file) {
