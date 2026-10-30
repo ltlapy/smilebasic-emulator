@@ -560,15 +560,24 @@ impl Vm {
             (v, None) => (None, v.to_int()?),
             (_, Some(_)) => return Err(ErrorKind::TypeMismatch.into()),
         };
-        let running =
-            |s: i32| s == self.slot as i32 || self.execs.iter().any(|r| r.slot as i32 == s);
+        // A slot with code that may still run: the one running, one EXEC
+        // goes back to, or one a DEF or GOSUB returns to.
+        let running = |s: i32| {
+            let s = s as usize;
+            s == self.slot
+                || self.execs.iter().any(|r| r.slot == s)
+                || self.frames.iter().any(|f| f.caller == s || f.home == s)
+                || self.gosubs.iter().any(|g| g.0 == s)
+        };
         // EXEC of a slot must not start one that is running, and loading
-        // may replace only the slot running now.
+        // may replace only the slot running now (checked on hardware: EXEC
+        // 0 in a DEF of slot 1 called from slot 0 is Can't use the
+        // specified slot).
         let own = file.is_some() && slot == self.slot as i32;
         if running(slot) && !own {
             return Err(Error::with_detail(
-                ErrorKind::IllegalFunctionCall,
-                format!("slot {slot} is running"),
+                ErrorKind::CantUseSpecifiedSlot,
+                format!("slot {slot}"),
             ));
         }
         let source = match host.exec_source(file.as_deref(), slot)? {
