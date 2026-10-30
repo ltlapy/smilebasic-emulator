@@ -64,7 +64,7 @@ const SETTINGS_FILE: &str = "settings.txt";
 /// SmileBASIC runs at 60 frames a second.
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 /// Holding F5, SmileBASIC 4's + button, this long stops a program even
-/// past ON BREAK GOTO. UNVERIFIED: how long SmileBASIC 4 waits.
+/// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
 type AnyError = Box<dyn std::error::Error>;
 
@@ -243,10 +243,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::MouseWheel { y, .. } if manager.is_none() => {
                     controls.mouse.wheel += y.round() as i32;
                 }
+                // The + button acts when let go, unless it was held until
+                // the program stopped (checked on hardware).
                 Event::KeyUp {
                     keycode: Some(Keycode::F5),
                     ..
-                } => f5_down = None,
+                } if f5_down.take().is_some() => machine.sysreq(),
                 _ => {}
             }
             if let Some((open, asking)) = &mut dialog {
@@ -538,10 +540,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     repeat: false,
                     ..
-                } if !ctrl(keymod) => {
-                    f5_down = Some(Instant::now());
-                    machine.sysreq();
-                }
+                } if !ctrl(keymod) => f5_down = Some(Instant::now()),
                 // F8 leaves F9 to F11 for SmileBASIC 4's tools.
                 Event::KeyDown {
                     keycode: Some(Keycode::F8),
