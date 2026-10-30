@@ -76,11 +76,8 @@ fn entropy() -> u32 {
 pub struct System {
     series: [Series; SERIES],
     started: Instant,
-    /// Frames since start-up, for MAINCNT, and milliseconds at the start
-    /// of the last one, for MILLISEC. Neither moves while a program runs
-    /// without waiting (checked on hardware).
+    /// Frames since start-up, for MAINCNT.
     pub(crate) frames: u32,
-    millis: i32,
     /// SYSPARAM "SYSBEEP": the system's own sounds play. The emulator has
     /// none, so this is only kept.
     sysbeep: bool,
@@ -96,22 +93,12 @@ const TOOLS: [&str; 3] = ["#TOOL/SBSMILE.PRG", "#TOOL/GAHAKU.PRG", ""];
 /// repeats, as SmileBASIC 4's settings start.
 const KEY_REPEAT: [i32; 2] = [20, 3];
 
-impl System {
-    /// A frame in which the program waited, or none ran: MAINCNT and
-    /// MILLISEC move on.
-    pub(crate) fn tick(&mut self) {
-        self.frames = self.frames.wrapping_add(1);
-        self.millis = self.started.elapsed().as_millis() as i32;
-    }
-}
-
 impl Default for System {
     fn default() -> Self {
         System {
             series: std::array::from_fn(|_| Series::seeded(entropy())),
             started: Instant::now(),
             frames: 0,
-            millis: 0,
             sysbeep: true,
             mouse_cursor: false,
         }
@@ -206,7 +193,9 @@ impl Runtime {
                 });
                 Ok(vec![])
             }
-            (Command::Millisec, Want::Value, 0) => Ok(vec![Value::Int(sys.millis)]),
+            (Command::Millisec, Want::Value, 0) => {
+                Ok(vec![Value::Int(sys.started.elapsed().as_millis() as i32)])
+            }
             (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(sys.frames as i32)]),
             (Command::Date, Want::Value, 0) => {
                 Ok(vec![string(Local::now().format("%Y/%m/%d").to_string())])

@@ -914,17 +914,10 @@ impl Runtime {
         &self.fb
     }
 
-    /// Starts a frame: the input it sees, and MAINCNT and MILLISEC.
+    /// Starts a frame: the input it sees, and MAINCNT.
     pub fn begin_frame(&mut self) {
         self.input.latch();
-        self.system.tick();
-    }
-
-    /// Starts a frame while a program is still busy from the last one:
-    /// MAINCNT and MILLISEC stay (checked on hardware).
-    // UNVERIFIED: that the input still moves on.
-    pub fn begin_busy_frame(&mut self) {
-        self.input.latch();
+        self.system.frames = self.system.frames.wrapping_add(1);
     }
 
     /// Plays one frame of the sprites' and text screens' animations.
