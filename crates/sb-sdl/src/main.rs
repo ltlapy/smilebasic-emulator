@@ -646,6 +646,38 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 // A paused program takes no keys.
                 Event::KeyDown { .. } | Event::TextInput { .. }
                     if menu.shown && machine.is_running() => {}
+                // Editing the line typed in direct mode or for INPUT.
+                Event::KeyDown {
+                    keycode: Some(key),
+                    keymod,
+                    ..
+                } if !machine.is_editing()
+                    && machine.rt.wants_line()
+                    && let Some(code) = line_command(key, shift(keymod), ctrl(keymod)) =>
+                {
+                    machine.rt.key_press(code)
+                }
+                Event::KeyDown {
+                    keycode: Some(key @ (Keycode::C | Keycode::X)),
+                    keymod,
+                    ..
+                } if ctrl(keymod)
+                    && !machine.is_editing()
+                    && let Some(text) = machine.rt.line_selection() =>
+                {
+                    if let Err(e) = clipboard.set_clipboard_text(&text) {
+                        toasts.push(format!("Could not copy: {e}"));
+                    } else if key == Keycode::X {
+                        machine.rt.key_press(keys::BACKSPACE);
+                    }
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::V),
+                    keymod,
+                    ..
+                } if ctrl(keymod) && !machine.is_editing() && machine.rt.wants_line() => {
+                    paste(&mut machine, &clipboard, &mut toasts)
+                }
                 Event::KeyDown {
                     keycode: Some(Keycode::C),
                     keymod,
@@ -1259,6 +1291,22 @@ fn slot_key(key: Keycode) -> Option<usize> {
     ]
     .iter()
     .position(|&k| k == key)
+}
+
+/// The line editing command of a key with Shift or Ctrl, for the line
+/// typed in direct mode or for INPUT.
+fn line_command(key: Keycode, shift: bool, ctrl: bool) -> Option<u16> {
+    use sb_runtime::line::commands::*;
+    Some(match (key, shift, ctrl) {
+        (Keycode::Left, true, false) => SELECT_LEFT,
+        (Keycode::Right, true, false) => SELECT_RIGHT,
+        (Keycode::Home, true, false) => SELECT_HOME,
+        (Keycode::End, true, false) => SELECT_END,
+        (Keycode::A, _, true) => SELECT_ALL,
+        (Keycode::Backspace, _, true) => DELETE_LINE,
+        (Keycode::Delete, _, true) => DELETE_TO_END,
+        _ => return None,
+    })
 }
 
 /// The INKEY$ code of a key that does not type text.

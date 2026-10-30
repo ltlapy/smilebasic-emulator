@@ -17,6 +17,7 @@ mod grp;
 pub mod help;
 pub mod image;
 pub mod input;
+pub mod line;
 mod loadsave;
 pub mod machine;
 pub mod palette;

@@ -82,6 +82,7 @@ SmileBASIC 4's own files.
 | Key | Action |
 |---|---|
 | Up, Down | In direct mode, bring back the lines typed before; Down returns to what was being typed |
+| Left, Right, Home, End | Move along the line typed in direct mode or for `INPUT`; with Shift, select |
 | F1 | In the editor, show SmileBASIC 4's help for the command at the cursor beside the code (needs the imported help); F2 there changes its text size |
 | F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line |
 | F12 | Open the projects: switch, load a program into a slot, or run a project's MAIN.PRG |
@@ -94,10 +95,10 @@ SmileBASIC 4's own files.
 | Insert | Toggle overwriting in the editor |
 | Ctrl+Home, Ctrl+End | Jump to the start or end of the program |
 | Shift+cursor keys, mouse drag | Select text in the editor |
-| Ctrl+A, Ctrl+X, Ctrl+C, Ctrl+V | Select all, cut, copy and paste in the editor |
+| Ctrl+A, Ctrl+X, Ctrl+C, Ctrl+V | Select all, cut, copy and paste in the editor and the line typed in direct mode |
 | Ctrl+Z, Ctrl+Shift+Z (or Ctrl+Y) | Undo and redo in the editor |
-| Ctrl+Enter, Ctrl+Backspace | Insert an empty line, or delete the line |
-| Ctrl+Delete | Delete the rest of the line |
+| Ctrl+Enter, Ctrl+Backspace | Insert an empty line, or delete the line (also in direct mode) |
+| Ctrl+Delete | Delete the rest of the line (also in direct mode) |
 | Tab, Shift+Tab | Indent the selected lines, or unindent them |
 | Ctrl+K, Ctrl+Shift+K | Comment out the selected lines, or uncomment them |
 | Ctrl+G | Go to a line: type its number and press Enter |

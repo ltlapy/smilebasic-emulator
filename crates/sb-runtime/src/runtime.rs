@@ -17,6 +17,7 @@ use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
 use crate::input::Input;
+use crate::line::LineEdit;
 use crate::screen::{Fade, ScreenMode};
 pub use crate::settings::Settings;
 use crate::sound::Sound;
@@ -463,8 +464,8 @@ pub struct Runtime {
     pub sound: Sound,
     /// Typed characters not yet read by INKEY$ or INPUT.
     pub(crate) keys: VecDeque<u16>,
-    /// The line being typed for INPUT or LINPUT.
-    line: Option<Vec<u16>>,
+    /// The line being typed for INPUT, LINPUT or direct mode.
+    line: Option<LineEdit>,
     /// Where the Up and Down keys have taken the direct-mode line in the
     /// history, if it is being typed in direct mode and they have.
     recall: Option<Recall>,
@@ -836,7 +837,13 @@ impl Runtime {
 
     /// The line being typed for INPUT or in direct mode, if any.
     pub(crate) fn typed_line(&self) -> Option<Vec<u16>> {
-        self.line.clone()
+        Some(self.line.as_ref()?.text.clone())
+    }
+
+    /// The text selected in the line being typed.
+    pub fn line_selection(&self) -> Option<String> {
+        let text = self.line.as_ref()?.selected_text()?;
+        Some(String::from_utf16_lossy(&text))
     }
 
     /// Whether INPUT, LINPUT or direct mode waits for a line.
@@ -861,7 +868,7 @@ impl Runtime {
         let at = match (recall.at, older) {
             (None, true) if self.history.is_empty() => return,
             (None, true) => {
-                recall.draft = line.clone();
+                recall.draft = line.text.clone();
                 Some(0)
             }
             (None, false) => return,
@@ -874,18 +881,14 @@ impl Runtime {
             Some(i) => self.history[i].clone(),
             None => recall.draft.clone(),
         };
-        let console = &mut self.text[CONSOLE];
-        for _ in 0..line.len() {
-            console.backspace();
-        }
-        console.print(&text);
-        *line = text;
+        line.set_text(text);
+        line.draw(&mut self.text[CONSOLE]);
     }
 
     /// Waits for a line typed in direct mode, where Up and Down recall the
     /// lines typed before.
     pub(crate) fn direct_input_start(&mut self) {
-        self.line = Some(Vec::new());
+        self.line = Some(LineEdit::new(&self.text[CONSOLE]));
         self.recall = Some(Recall {
             at: None,
             draft: Vec::new(),
@@ -1419,7 +1422,7 @@ impl Host for Runtime {
     }
 
     fn input_start(&mut self) -> Result<()> {
-        self.line = Some(Vec::new());
+        self.line = Some(LineEdit::new(&self.text[CONSOLE]));
         self.recall = None;
         Ok(())
     }
@@ -1497,24 +1500,14 @@ impl Host for Runtime {
                 self.recall_line(key == keys::UP);
                 continue;
             }
-            let line = self.line.as_mut().expect("checked above");
             let console = &mut self.text[CONSOLE];
-            match key {
-                keys::ENTER => {
-                    console.newline();
-                    return Ok(self.line.take());
-                }
-                keys::BACKSPACE => {
-                    if line.pop().is_some() {
-                        console.backspace();
-                    }
-                }
-                0..0x20 | 0x7F => {}
-                c => {
-                    line.push(c);
-                    console.print(&[c]);
-                }
+            if key == keys::ENTER {
+                let line = self.line.take().expect("checked above");
+                return Ok(Some(line.finish(console)));
             }
+            let line = self.line.as_mut().expect("checked above");
+            line.key(key);
+            line.draw(console);
         }
         Ok(None)
     }
