@@ -19,6 +19,8 @@ use crate::value::{Array, Value, format_number, new_str};
 /// UNVERIFIED: SmileBASIC's own nesting limits are not documented.
 pub const MAX_CALL_DEPTH: usize = 4096;
 pub const MAX_GOSUB_DEPTH: usize = 4096;
+/// How many READ places RESTORE "PUSH" keeps.
+const MAX_DATA_KEPT: usize = 65536;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -100,9 +102,12 @@ pub struct Vm {
     /// Which globals exist, for direct mode's declarations.
     declared: Vec<bool>,
     frames: Vec<Frame>,
-    /// Slot and address to return to.
-    gosubs: Vec<(usize, usize)>,
+    /// Slot and address to return to, and how many READ places
+    /// RESTORE "PUSH" had kept then.
+    gosubs: Vec<(usize, usize, usize)>,
     data_pos: usize,
+    /// READ places kept by RESTORE "PUSH".
+    data_kept: Vec<usize>,
     /// The program slot running, and whether errors name it (not in
     /// direct mode).
     slot: usize,
@@ -242,6 +247,7 @@ impl Vm {
             frames: Vec::new(),
             gosubs: Vec::new(),
             data_pos: 0,
+            data_kept: Vec::new(),
             slot: 0,
             in_slot: false,
             units: Vec::new(),
@@ -339,6 +345,7 @@ impl Vm {
         self.stack.clear();
         self.frames.clear();
         self.gosubs.clear();
+        self.data_kept.clear();
         self.callbacks.clear();
         self.reading_input = false;
         self.switch_to(slot, host);
@@ -627,11 +634,53 @@ impl Vm {
         self.enter_def(def, Vec::new(), Want::Outs(0), self.slot)
     }
 
+    /// RESTORE "PUSH", "POP", "BEGIN" and "n:BEGIN" (SmileBASIC 4.4):
+    /// whether `target` was one of them.
+    fn restore_special(&mut self, target: &Value) -> Result<bool> {
+        let Value::Str(s) = target else {
+            return Ok(false);
+        };
+        let s = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
+        match s.as_str() {
+            "PUSH" => {
+                // UNVERIFIED: how many places it keeps; 1000 were fine.
+                if self.data_kept.len() >= MAX_DATA_KEPT {
+                    return Err(ErrorKind::StackOverflow.into());
+                }
+                self.data_kept.push(self.data_pos);
+            }
+            "POP" => self.data_pos = self.data_kept.pop().ok_or(ErrorKind::StackUnderflow)?,
+            "BEGIN" => self.data_pos = 0,
+            _ => {
+                let Some((slot, "BEGIN")) = s.split_once(':') else {
+                    return Ok(false);
+                };
+                let slot: usize = slot.trim().parse().map_err(|_| {
+                    Error::with_detail(ErrorKind::IllegalFunctionCall, format!("slot {slot:?}"))
+                })?;
+                // UNVERIFIED: another slot's READ place is its own, used
+                // once the program goes on there.
+                match self.units.get_mut(slot) {
+                    _ if slot == self.slot => self.data_pos = 0,
+                    Some(Some(unit)) => unit.data_pos = 0,
+                    _ => {
+                        return Err(Error::with_detail(
+                            ErrorKind::OutOfRange,
+                            format!("slot {slot}"),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+
     fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
         if self.gosubs.len() >= MAX_GOSUB_DEPTH {
             return Err(ErrorKind::StackOverflow.into());
         }
-        self.gosubs.push((self.slot, self.pc + 1));
+        self.gosubs
+            .push((self.slot, self.pc + 1, self.data_kept.len()));
         self.switch_to(slot, host);
         self.pc = target;
         Ok(())
@@ -790,7 +839,7 @@ impl Vm {
                         if self.gosubs.len() >= MAX_GOSUB_DEPTH {
                             return Err(ErrorKind::StackOverflow.into());
                         }
-                        self.gosubs.push((self.slot, after));
+                        self.gosubs.push((self.slot, after, self.data_kept.len()));
                     }
                     next = target as usize;
                 }
@@ -1002,11 +1051,14 @@ impl Vm {
             }
             Op::Restore(pos) => self.data_pos = *pos as usize,
             Op::RestoreDyn => {
-                let name = label_name(&self.pop())?;
-                let pos = program.data_labels.get(&name).ok_or_else(|| {
-                    Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}"))
-                })?;
-                self.data_pos = *pos as usize;
+                let target = self.pop();
+                if !self.restore_special(&target)? {
+                    let name = label_name(&target)?;
+                    let pos = program.data_labels.get(&name).ok_or_else(|| {
+                        Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}"))
+                    })?;
+                    self.data_pos = *pos as usize;
+                }
             }
             Op::Read => {
                 let item = program
@@ -1171,7 +1223,13 @@ impl Vm {
     fn return_op(&mut self, host: &mut dyn Host) -> Result<usize> {
         let base = self.frames.last().map_or(0, |f| f.gosub_base);
         if self.gosubs.len() > base {
-            let (slot, pc) = self.gosubs.pop().expect("length checked");
+            let (slot, pc, kept) = *self.gosubs.last().expect("length checked");
+            // Places RESTORE "PUSH" kept in the subroutine must be taken
+            // back first (checked on hardware).
+            if self.data_kept.len() > kept {
+                return Err(ErrorKind::UseRestorePop.into());
+            }
+            self.gosubs.pop();
             self.switch_to(slot, host);
             return Ok(pc);
         }

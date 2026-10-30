@@ -87,6 +87,23 @@ fn evaluation_order() {
     assert_eq!(order("X=F(0) && F(1)"), "0\n");
 }
 
+/// RESTORE's special strings from SmileBASIC 4.4, as TEST12 showed them.
+#[test]
+fn restore_push_and_pop() {
+    let src = "RESTORE @B:READ A:RESTORE \"PUSH\":READ B\nRESTORE @A:READ C:RESTORE \"POP\":READ D\n\
+               RESTORE \"BEGIN\":READ E:?A;B;C;D;E\n@A:DATA 10\n@B:DATA 1,2,3";
+    assert_eq!(output(src), "1210210\n");
+    assert_eq!(error("RESTORE \"POP\"").0, ErrorKind::StackUnderflow);
+    assert_eq!(
+        error("GOSUB @S:END\n@S:RESTORE \"PUSH\":RETURN").0,
+        ErrorKind::UseRestorePop
+    );
+    assert_eq!(
+        output("GOSUB @S:?\"OK\":END\n@S:RESTORE \"PUSH\":RESTORE \"POP\":RETURN"),
+        "OK\n"
+    );
+}
+
 #[test]
 fn read_modify_write() {
     assert_eq!(

@@ -48,6 +48,10 @@ pub enum ErrorKind {
     WrongNumberOfOutArguments,
     /// FORMAT$ with a conversion it does not know.
     IllegalFormat,
+    /// RESTORE "POP" with nothing kept.
+    StackUnderflow,
+    /// RETURN while places RESTORE "PUSH" kept in the subroutine remain.
+    UseRestorePop,
 }
 
 impl ErrorKind {
@@ -86,6 +90,8 @@ impl ErrorKind {
             ErrorKind::CantUseFromDirectMode => "Can't use from direct mode",
             ErrorKind::IllegalSystemArgumentName => "Illegal system argument name",
             ErrorKind::IllegalFormat => "Illegal format",
+            ErrorKind::StackUnderflow => "Stack underflow",
+            ErrorKind::UseRestorePop => "Use RESTORE POP before RETURN",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }
