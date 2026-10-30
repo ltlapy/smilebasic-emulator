@@ -10,7 +10,7 @@ use sb_core::value::Value;
 use sb_core::vm::{Status, Vm};
 
 use crate::complete::Options;
-use crate::editor::Editor;
+use crate::editor::{Editor, FileRequest};
 use crate::framebuffer::Framebuffer;
 use crate::runtime::{Request, Runtime, SLOTS, keys};
 use crate::screen::ScreenMode;
@@ -361,6 +361,62 @@ impl Machine {
             Some(at) if self.split && self.active == 1 => at as i32,
             _ => 0,
         }
+    }
+
+    /// The slot the editor shows, or last showed.
+    pub fn edited_slot(&self) -> usize {
+        self.rt.edit_slot
+    }
+
+    /// Opens the editor, if it is not open, typing a file name in its
+    /// status line to save the edited slot as (Ctrl+S without a name) or
+    /// to load into it (Ctrl+L).
+    pub fn prompt_file(&mut self, save: bool) {
+        if self.vm.is_some() {
+            return;
+        }
+        if !self.editing {
+            self.edit_slot(self.rt.edit_slot);
+        }
+        let name = self.rt.slot_names[self.rt.edit_slot].clone();
+        self.edit().start_file_prompt(save, &name);
+    }
+
+    /// A file command typed in the editor's status line.
+    pub fn take_file_request(&mut self) -> Option<FileRequest> {
+        if !self.editing {
+            return None;
+        }
+        self.edit().take_request()
+    }
+
+    /// Saves the edited slot under a name, editor changes included.
+    pub fn save_edited(&mut self, name: &str) -> storage::Result<()> {
+        let slot = self.rt.edit_slot;
+        if self.editing && self.editor().is_modified() {
+            self.rt.slots[slot] = self.editor().text();
+        }
+        self.rt.save_slot_as(name, slot)?;
+        if self.editing {
+            let editor = &mut self.editors[self.active];
+            editor.mark_saved();
+            editor.set_note(format!("Saved {}", self.rt.slot_names[slot]));
+        }
+        Ok(())
+    }
+
+    /// Loads a file into the edited slot, dropping its changes.
+    pub fn load_edited(&mut self, name: &str) -> storage::Result<()> {
+        let slot = self.rt.edit_slot;
+        let editing = self.editing;
+        if editing {
+            self.close_editor();
+        }
+        let outcome = self.rt.load_slot_from(name, slot);
+        if editing {
+            self.open_editor(slot, None);
+        }
+        outcome
     }
 
     /// Slots with edits that were not saved, including the ones open in

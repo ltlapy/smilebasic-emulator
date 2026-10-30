@@ -30,7 +30,7 @@ use menu::{Action, Click, MenuBar};
 use program_dialog::ProgramView;
 use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
-use sb_runtime::editor::{Mode, Place, is_movement};
+use sb_runtime::editor::{FileRequest, Mode, Place, is_movement};
 use sb_runtime::font::Font;
 use sb_runtime::help::Lookup;
 use sb_runtime::input::State;
@@ -285,13 +285,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     } => open.key(key),
                     _ => None,
                 };
-                match (answer, *asking) {
+                match (answer, asking.clone()) {
                     (Some(Answer::Accept), Asking::Quit) => break 'running,
                     (Some(answer), Asking::Command) => {
                         machine.rt.answer(answer == Answer::Accept);
                         dialog = None;
                     }
-                    (Some(Answer::Cancel), Asking::Quit) => dialog = None,
+                    (Some(Answer::Accept), Asking::Overwrite(name)) => {
+                        save_edited(&mut machine, &name, &mut toasts);
+                        dialog = None;
+                    }
+                    (Some(Answer::Accept), Asking::Discard(name)) => {
+                        load_edited(&mut machine, &name, &mut toasts);
+                        dialog = None;
+                    }
+                    (Some(Answer::Cancel), _) => dialog = None,
                     (None, _) => {}
                 }
                 continue;
@@ -767,6 +775,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         }
                     }
                 },
+                // Simple save and load, as SmileBASIC 4 has them.
+                Event::KeyDown {
+                    keycode: Some(key @ (Keycode::S | Keycode::L)),
+                    keymod,
+                    ..
+                } if ctrl(keymod) && !machine.is_running() => {
+                    let name = machine.rt.slot_names[machine.edited_slot()].clone();
+                    if key == Keycode::S && !name.is_empty() {
+                        save_edited(&mut machine, &name, &mut toasts);
+                    } else {
+                        machine.prompt_file(key == Keycode::S);
+                    }
+                }
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
@@ -810,6 +831,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     }
                     Keycode::G => machine.edit().go_to_line(),
                     Keycode::Slash | Keycode::KpDivide => machine.toggle_split(),
+                    Keycode::_0 | Keycode::Kp0 => machine.toggle_editor(),
                     Keycode::Tab => machine.switch_side(),
                     Keycode::J => {
                         side = Some(open_index(&mut machine, (display_w, display_h)));
@@ -879,6 +901,40 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 Event::TextInput { text, .. } => machine.type_text(&text),
                 _ => {}
+            }
+        }
+
+        if let Some(request) = machine.take_file_request()
+            && dialog.is_none()
+        {
+            let slot = machine.edited_slot();
+            let size = (display_w, display_h);
+            match request {
+                FileRequest::Save(name) => {
+                    let own = machine.rt.slot_names[slot] == name;
+                    if !own && machine.rt.txt_exists(&name) {
+                        let lines = vec![
+                            format!("Save PRG{slot} as {name}."),
+                            "The file there now will be replaced.".to_string(),
+                        ];
+                        let open = Dialog::new("Save file", lines, "Save", size);
+                        dialog = Some((open, Asking::Overwrite(name)));
+                    } else {
+                        save_edited(&mut machine, &name, &mut toasts);
+                    }
+                }
+                FileRequest::Load(name) => {
+                    if machine.unsaved_slots().contains(&slot) {
+                        let lines = vec![
+                            format!("Load {name} into PRG{slot}."),
+                            "Its unsaved changes will be lost.".to_string(),
+                        ];
+                        let open = Dialog::new("Load file", lines, "Load", size);
+                        dialog = Some((open, Asking::Discard(name)));
+                    } else {
+                        load_edited(&mut machine, &name, &mut toasts);
+                    }
+                }
             }
         }
 
@@ -1223,11 +1279,34 @@ fn side_outcome(
 }
 
 /// Who asked the open dialog's question.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Asking {
     Quit,
     /// A command of the running program or direct mode.
     Command,
+    /// Ctrl+S over another file of this name.
+    Overwrite(String),
+    /// Ctrl+L over unsaved changes.
+    Discard(String),
+}
+
+/// Saves the edited slot (Ctrl+S); says how it went.
+fn save_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
+    let slot = machine.edited_slot();
+    match machine.save_edited(name) {
+        Ok(()) if machine.is_editing() => {}
+        Ok(()) => toasts.push(format!("Saved PRG{slot} as {name}")),
+        Err(e) => toasts.push(format!("Could not save {name}: {e}")),
+    }
+}
+
+/// Loads a file into the edited slot (Ctrl+L); says how it went.
+fn load_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
+    let slot = machine.edited_slot();
+    match machine.load_edited(name) {
+        Ok(()) => toasts.push(format!("Loaded {name} into PRG{slot}")),
+        Err(e) => toasts.push(format!("Could not load {name}: {e}")),
+    }
 }
 
 /// Where the display (emulator UI coordinates) goes in a window of

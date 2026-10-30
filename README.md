@@ -87,6 +87,9 @@ SmileBASIC 4's own files.
 | F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line |
 | F12 | Open the projects: switch, load a program into a slot, or run a project's MAIN.PRG |
 | Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
+| Ctrl+0 | Leave the editor for direct mode |
+| Ctrl+S | Save the edited slot under its name, or type a name first |
+| Ctrl+L | Load a file into the edited slot: type its name |
 | Pause/Break | Stop the program |
 | F5 | Run PRG0, or stop the running program; hold to stop it past `ON BREAK GOTO` |
 | F8 | Show the menu bar and pause the program; press again to resume |

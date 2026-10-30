@@ -204,6 +204,16 @@ pub enum Mode {
     GoTo,
     Find,
     Replace,
+    /// Typing the name to save the slot as (Ctrl+S), or to load (Ctrl+L).
+    Save,
+    Load,
+}
+
+/// A file command typed in the status line, for the machine to carry out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileRequest {
+    Save(String),
+    Load(String),
 }
 
 /// A character as searches compare it: ASCII letters in either case.
@@ -277,6 +287,9 @@ pub struct Editor {
     search_from: Pos,
     /// Shown in the status line until the next key, as "Not found".
     note: Option<String>,
+    /// The file name typed after Ctrl+S or Ctrl+L, and what it was for.
+    file_name: Vec<u16>,
+    request: Option<FileRequest>,
     /// The mouse wheel scrolled away from the cursor, which stays where it
     /// is until it moves.
     scrolled: bool,
@@ -336,6 +349,8 @@ impl Editor {
             with: Vec::new(),
             search_from: (0, 0),
             note: None,
+            file_name: Vec::new(),
+            request: None,
             scrolled: false,
             followed: (0, 0),
             completion: None,
@@ -801,6 +816,29 @@ impl Editor {
         };
     }
 
+    /// Starts typing a file name to save the slot as or to load into it,
+    /// beginning with its own name.
+    pub fn start_file_prompt(&mut self, save: bool, name: &str) {
+        self.note = None;
+        self.file_name = name.encode_utf16().collect();
+        self.mode = if save { Mode::Save } else { Mode::Load };
+    }
+
+    /// The file command typed in the status line, once.
+    pub fn take_request(&mut self) -> Option<FileRequest> {
+        self.request.take()
+    }
+
+    /// The text was saved as it is.
+    pub fn mark_saved(&mut self) {
+        self.modified = false;
+    }
+
+    /// Shows a word in the status line until the next key.
+    pub fn set_note(&mut self, note: String) {
+        self.note = Some(note);
+    }
+
     /// Starts typing what to find (F3, Ctrl+F) or, with `replace`, what
     /// to replace it with (Ctrl+H). Text selected on one line becomes
     /// what to find.
@@ -937,6 +975,21 @@ impl Editor {
             }
             (Mode::GoTo, 0x30..=0x39) if self.goto.len() < 7 => self.goto.push(code),
             (Mode::GoTo, _) => {}
+            (Mode::Save | Mode::Load, keys::ENTER) => {
+                let name = String::from_utf16_lossy(&self.file_name).trim().to_string();
+                if !name.is_empty() {
+                    self.request = Some(match self.mode {
+                        Mode::Save => FileRequest::Save(name),
+                        _ => FileRequest::Load(name),
+                    });
+                }
+                self.mode = Mode::Edit;
+            }
+            (Mode::Save | Mode::Load, keys::BACKSPACE) => {
+                self.file_name.pop();
+            }
+            (Mode::Save | Mode::Load, c) if printable => self.file_name.push(c),
+            (Mode::Save | Mode::Load, _) => {}
             (_, keys::DOWN) | (Mode::Find, keys::ENTER) => {
                 self.find_next(true);
             }
@@ -1491,6 +1544,8 @@ impl Editor {
             Mode::Edit => (None, None),
             Mode::GoTo => (field("Go to line: ", &self.goto), None),
             Mode::Find => (field("Find: ", &self.find), None),
+            Mode::Save => (field("Save as: ", &self.file_name), None),
+            Mode::Load => (field("Load: ", &self.file_name), None),
             Mode::Replace => (
                 field("Replace with: ", &self.with),
                 Some(format!("Find: {}", String::from_utf16_lossy(&self.find))),
@@ -1950,6 +2005,24 @@ mod tests {
         e.go_to_line();
         assert_eq!((e.cursor(), e.mode()), ((4, 0), Mode::Edit));
         assert_eq!(e.text(), "A\nB\nC\nD");
+    }
+
+    #[test]
+    fn file_names_in_the_status_line() {
+        let mut e = editor("A");
+        e.start_file_prompt(true, "GAME");
+        e.key(keys::BACKSPACE);
+        typing(&mut e, "X");
+        assert_eq!(e.take_request(), None);
+        e.key(keys::ENTER);
+        assert_eq!(e.take_request(), Some(FileRequest::Save("GAMX".into())));
+        assert_eq!((e.take_request(), e.mode()), (None, Mode::Edit));
+        e.start_file_prompt(false, "");
+        e.key(keys::ENTER);
+        assert_eq!(e.take_request(), None, "no name, no load");
+        e.start_file_prompt(false, "B");
+        e.key(keys::ESCAPE);
+        assert_eq!((e.take_request(), e.text().as_str()), (None, "A"));
     }
 
     #[test]

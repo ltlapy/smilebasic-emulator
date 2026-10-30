@@ -405,6 +405,22 @@ impl Runtime {
         Ok(())
     }
 
+    /// Ctrl+S: a slot saved under a name, without asking.
+    pub(crate) fn save_slot_as(&mut self, spec: &str, slot: usize) -> storage::Result<()> {
+        self.save(spec, slot)
+    }
+
+    /// Ctrl+L: a slot loaded from a file, without asking.
+    pub(crate) fn load_slot_from(&mut self, spec: &str, slot: usize) -> storage::Result<()> {
+        self.load(spec, slot)
+    }
+
+    /// Whether a TXT file of this name is in the current project.
+    pub fn txt_exists(&self, spec: &str) -> bool {
+        parse_file_name(spec, FileKind::Txt)
+            .is_ok_and(|(kind, name)| self.storage.exists(kind, &name))
+    }
+
     fn save(&mut self, spec: &str, slot: usize) -> storage::Result<()> {
         let (kind, name) = parse_file_name(spec, FileKind::Txt)?;
         if kind != FileKind::Txt {

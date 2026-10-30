@@ -470,3 +470,37 @@ fn direct_mode_completes_words() {
     m.frame();
     assert_eq!(rows(&m).last().map(String::as_str), Some("?SCORE_TOTAL"));
 }
+
+#[test]
+fn simple_save_and_load() {
+    use sb_runtime::editor::FileRequest;
+    use sb_runtime::runtime::keys;
+    use sb_runtime::storage::Storage;
+    let dir = std::env::temp_dir().join(format!("sb-simple-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut m = machine();
+    m.rt.storage = Storage::new(dir.clone());
+    m.set_slot(1, "?1".to_string());
+    m.edit_slot(1);
+    m.type_text("'");
+    m.frame();
+    // No name yet: typed in the status line.
+    m.prompt_file(true);
+    m.type_text("game");
+    m.rt.key_press(keys::ENTER);
+    m.frame();
+    let Some(FileRequest::Save(name)) = m.take_file_request() else {
+        panic!("no request");
+    };
+    assert_eq!(name, "GAME");
+    m.save_edited(&name).unwrap();
+    assert!(m.unsaved_slots().is_empty());
+    assert!(m.rt.txt_exists("GAME"));
+    // Loading drops the edits.
+    m.type_text("X");
+    m.frame();
+    m.load_edited("GAME").unwrap();
+    assert_eq!(m.editor().text(), "'?1");
+    assert!(m.unsaved_slots().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
