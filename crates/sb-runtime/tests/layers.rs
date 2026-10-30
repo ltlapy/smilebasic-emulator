@@ -249,6 +249,50 @@ fn acls_goes_back_to_the_start() {
     );
 }
 
+/// The steps TEST12 and TEST13 read back from FADE() on hardware.
+#[test]
+fn fade_steps_as_on_hardware() {
+    let steps = |setup: &str, to: &str, n: u32| {
+        let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+        m.boot();
+        let src = format!(
+            "{setup}:WAIT 1:FADE {to},{n}:R$=HEX$(FADE(),8)\nFOR I=1 TO {n}:VSYNC:R$=R$+\" \"+HEX$(FADE(),8):NEXT:?R$"
+        );
+        m.set_slot(0, src);
+        m.run_slot(0);
+        for _ in 0..30 {
+            m.frame();
+        }
+        let console = &m.rt.text[4];
+        (0..console.size().1)
+            .map(|y| {
+                (0..console.size().0)
+                    .map(|x| console.cell(x, y).code)
+                    .take_while(|&c| c != 0)
+                    .map(|c| char::from_u32(c.into()).unwrap())
+                    .collect::<String>()
+            })
+            .find(|r| r.len() > 20 && r.is_ascii())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        steps("FADE 0", "&HFF7F3F01", 3),
+        "007F3F01 557F3E01 AA7F3F01 FF7F3F01"
+    );
+    assert_eq!(
+        steps("FADE &H80FF0000", "&H800000FF", 4),
+        "80FF0000 80BF003F 807F007F 803F00BF 800000FF"
+    );
+    assert_eq!(
+        steps("FADE &HFF000000", "&H00FFFFFF", 3),
+        "FF000000 A9000000 54000000 00000000"
+    );
+    assert_eq!(
+        steps("FADE 0", "&H40FF8000", 3),
+        "00FF8000 15FE8000 2AFF8000 40FF8000"
+    );
+}
+
 #[test]
 fn fade_covers_everything_and_moves_in_steps() {
     // FADE at once: half-covered red over the black back.

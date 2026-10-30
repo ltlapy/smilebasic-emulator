@@ -112,18 +112,21 @@ pub(crate) struct Fade {
 
 impl Fade {
     fn start(&mut self, to: u32, frames: u32) {
-        // From a clear color only the alpha moves: the color is the new
-        // one at once (checked on hardware, fading from 0).
-        // UNVERIFIED: fades to a clear color, and the 3E hardware gave for
-        // &H3F one frame into &HFF7F3F01 over 3 frames.
-        let from = match self.color >> 24 {
-            0 => to & 0x00FF_FFFF,
-            _ => self.color,
+        // A clear end takes the color of the other one, so only the alpha
+        // moves (checked on hardware, fading from and to clear colors).
+        let clear = |c: u32| c >> 24 == 0;
+        let from = match self.color {
+            c if clear(c) => to & 0x00FF_FFFF,
+            c => c,
+        };
+        let to_reached = match to {
+            c if clear(c) && frames > 0 => from & 0x00FF_FFFF,
+            c => c,
         };
         *self = Fade {
             color: if frames == 0 { to } else { from },
             from,
-            to,
+            to: to_reached,
             frames,
             elapsed: 0,
         };
@@ -133,19 +136,20 @@ impl Fade {
         self.elapsed < self.frames
     }
 
-    /// One frame of the change, each channel moving in a straight line.
-    // UNVERIFIED: how the channels are rounded on the way.
+    /// One frame of the change: each channel is the two ends mixed in
+    /// single precision and rounded down, which gives the hardware's
+    /// values (&HFF to 0 over 3 frames passes &HA9 and &H54).
     pub(crate) fn step(&mut self) {
         if !self.fading() {
             return;
         }
         self.elapsed += 1;
-        let (t, n) = (i64::from(self.elapsed), i64::from(self.frames));
+        let f = self.elapsed as f32 / self.frames as f32;
         self.color = (0..4).fold(0, |c, i| {
             let shift = i * 8;
-            let a = i64::from(self.from >> shift & 0xFF);
-            let b = i64::from(self.to >> shift & 0xFF);
-            c | ((a + (b - a) * t / n) as u32) << shift
+            let a = (self.from >> shift & 0xFF) as f32;
+            let b = (self.to >> shift & 0xFF) as f32;
+            c | ((a * (1.0 - f) + b * f).floor() as u32) << shift
         });
     }
 
