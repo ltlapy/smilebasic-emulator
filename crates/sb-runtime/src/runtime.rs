@@ -809,6 +809,11 @@ impl Runtime {
         self.line.clone()
     }
 
+    /// Whether INPUT, LINPUT or direct mode waits for a line.
+    pub fn wants_line(&self) -> bool {
+        self.line.is_some()
+    }
+
     /// Stops waiting for an INPUT line, if one is being typed.
     pub fn cancel_input(&mut self) {
         self.line = None;

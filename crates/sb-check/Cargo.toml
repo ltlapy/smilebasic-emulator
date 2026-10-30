@@ -1,0 +1,14 @@
+[package]
+name = "sb-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "smilebasic-check"
+path = "src/main.rs"
+
+[dependencies]
+sb-profiles.workspace = true
+sb-runtime.workspace = true

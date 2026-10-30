@@ -409,6 +409,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa4bcfea87b1b7f7a4c3eecc18934a88943b0cd3c16b69965aed94ffa4868954"
 
 [[package]]
+name = "sb-check"
+version = "0.1.0"
+dependencies = [
+ "sb-profiles",
+ "sb-runtime",
+]
+
+[[package]]
 name = "sb-core"
 version = "0.1.0"
 dependencies = [

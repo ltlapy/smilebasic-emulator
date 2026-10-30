@@ -10,6 +10,7 @@
 | `sb-runtime` | `sb-core` | SDL, OS APIs |
 | `sb-profiles` | `sb-core`, `sb-runtime` | SDL, OS APIs |
 | `sb-import` | `sb-runtime` | SDL |
+| `sb-check` | `sb-runtime`, `sb-profiles` | SDL |
 | `sb-sdl` | everything | — |
 
 SDL and platform code live in `sb-sdl` only. Everything else must build and test
