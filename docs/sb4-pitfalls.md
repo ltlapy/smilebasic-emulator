@@ -34,8 +34,8 @@ follows all of it. Items still waiting for a check are marked
   `-1E-9` as `-0`.
 - `VAL(" 12 ")` is 0: spaces make the text not a number. `INPUT` asks
   again (`?Redo from start`) for the same reason.
-- `INPUT`'s question mark is followed by a space, and `?Redo from start`
-  by an empty line.
+- `INPUT`'s question mark is followed by a space. After `?Redo from
+  start`, the line is typed again on the next line, without the prompt.
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
   for 400x240.

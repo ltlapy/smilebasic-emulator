@@ -342,7 +342,7 @@ fn input_and_linput() {
     // Missing values and non-numbers ask again.
     assert_eq!(
         run_with_input("INPUT A,B\n?A*B", &["3", "X,2", "3,&H10"]).unwrap(),
-        "? 3\n?Redo from start\n\n? X,2\n?Redo from start\n\n? 3,&H10\n48\n"
+        "? 3\n?Redo from start\nX,2\n?Redo from start\n3,&H10\n48\n"
     );
     assert_eq!(
         run_with_input("INPUT \"N\",N%:?N%", &["7.9"]).unwrap(),

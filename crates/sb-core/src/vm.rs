@@ -973,12 +973,14 @@ impl Vm {
                         self.stack.extend(values);
                     }
                     None => {
+                        // The line is typed again on the next line, without
+                        // the prompt (checked on hardware).
                         let redo: Vec<u16> = "?Redo from start".encode_utf16().collect();
-                        // An empty line follows (checked on hardware).
                         host.print(None, &redo)?;
                         host.print_newline(None)?;
-                        host.print_newline(None)?;
-                        return Ok(None);
+                        host.input_start()?;
+                        self.reading_input = true;
+                        return Ok(Some(RETRY));
                     }
                 }
             }
