@@ -70,6 +70,8 @@ follows all of it. Items still waiting for a check are marked
 - File names may start with `@`, as the backups' do: `LOADV
   "DAT:@BACKUP.DAT"` reads one, and `SAVE "@X"` saves (after the usual
   question).
+- `LOAD` takes the file's whole name: `LOAD "TEST10"` does not find
+  `TEST10.PRG`.
 - A program may name its own project in a file name
   (`LOAD "GAME/SUB",1` in `GAME`).
 
@@ -114,7 +116,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ## Sprites
 
-- Using a sprite before `SPSET` is `Sprite not set`.
+- Using a sprite before `SPSET` is `Sprite not set`, except for its
+  variables: `SPVAR` works on a sprite that was never set. `SPSET`,
+  `SPCLR`, `ACLS` and `RUN` clear them.
 - With both a flip and a quarter turn, the image is flipped first, then
   turned. Text characters (`ATTR`) work the same way.
 - A linked child's offset turns and scales with its parent whatever the
@@ -150,6 +154,26 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 - `TALK` reads は as "wa", falling in pitch, when 、 comes right after
   it, as for a particle; before 。 or anywhere else it is "ha".
+
+## Stopping
+
+- The + button acts when it is let go. A short press jumps to the label
+  of `ON BREAK GOTO`, once; without one, the program stops with `User
+  break on 0:55`. Held for a second, the button stops the program at
+  once, without the jump.
+- The jump leaves GOSUBs behind: a `RETURN` after it is `RETURN without
+  GOSUB`.
+
+## System settings
+
+- `SYSPARAM` takes names in lower case too. `LANG` is `ja` on a Switch
+  set to Japanese. `SYSBEEP` starts at 1, `KEYREPEAT` at 20 and 3, and
+  `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`, `#TOOL/GAHAKU.PRG` and
+  nothing.
+- An unknown name is `Illegal system argument name`. Setting an item
+  that can only be read, or reading `KEYREPEAT` as a value, is `Wrong
+  number of OUT arguments`.
+- A program run after one that set `MOUSECURSOR` to 1 reads 0 again.
 
 ## Errors and the editor
 
