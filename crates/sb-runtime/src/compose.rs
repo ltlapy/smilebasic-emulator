@@ -94,7 +94,7 @@ pub fn over(dst: u32, src: u32) -> u32 {
     }
     let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
     let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-    let mix = |s: u32, d: u32| ((s * sa + d * (255 - sa)) / 255) as u8;
+    let mix = |s: u32, d: u32| div255(s * sa + d * (255 - sa)) as u8;
     u32::from_be_bytes([mix(255, da), mix(sr, dr), mix(sg, dg), mix(sb, db)])
 }
 
@@ -267,11 +267,17 @@ impl Compose {
     }
 }
 
+/// `x / 255`, rounded to the nearest, as SmileBASIC 4 blends (checked on
+/// hardware against lossless screenshots).
+fn div255(x: u32) -> u32 {
+    (x + 127) / 255
+}
+
 /// Puts a layer drawn on its own (transparent, premultiplied) frame over
 /// `dst`, its colors first multiplied by `color`.
 // Checked on hardware: the results of modes 0 to 4 over a color and over
-// black; mode 0 matched mode 1 there. UNVERIFIED: that mode 0 draws the
-// layer's elements straight onto the frame.
+// black, and, with lossless screenshots, that mode 0 draws the layer's
+// elements straight onto the frame without its color, pixel for pixel.
 pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color: u32) {
     let [ca, cr, cg, cb] = color.to_be_bytes().map(u32::from);
     for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
@@ -280,8 +286,8 @@ pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color:
         }
         let [la, lr, lg, lb] = l.to_be_bytes().map(u32::from);
         // The layer color scales the light, and its alpha the coverage.
-        let a = la * ca / 255;
-        let tint = |p: u32, c: u32| p * c / 255 * ca / 255;
+        let a = div255(la * ca);
+        let tint = |p: u32, c: u32| div255(div255(p * c) * ca);
         let [pr, pg, pb] = [tint(lr, cr), tint(lg, cg), tint(lb, cb)];
         let [da, dr, dg, db] = d.to_be_bytes().map(u32::from);
         let each = |f: &dyn Fn(u32, u32) -> u32| {
@@ -289,7 +295,7 @@ pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color:
             u32::from_be_bytes([da as u8, c(pr, dr), c(pg, dg), c(pb, db)])
         };
         *d = match mode {
-            Compose::Direct | Compose::Normal => each(&|p, d| p + d * (255 - a) / 255),
+            Compose::Direct | Compose::Normal => each(&|p, d| p + div255(d * (255 - a))),
             Compose::Add => each(&|p, d| d + p),
             Compose::Multiply => each(&|p, d| d * (p + 255 - a) / 255),
             Compose::Screen => each(&|p, d| d + p * (255 - d) / 255),

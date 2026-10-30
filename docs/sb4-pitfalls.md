@@ -197,6 +197,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ## Graphics and layers
 
+- `LAYER` mode 0 draws the layer's elements straight onto the screen and
+  ignores the layer's color; only modes 1 to 4 multiply by it.
+- Blending rounds to the nearest, not down: a sprite at &H80 alpha over
+  60 gives (255x128 + 60x127)/255 = 157.9, shown as 158. With that, the
+  emulator matched lossless screenshots of mode 0 and mode 1 layers
+  pixel for pixel.
 - `FADE color,time` mixes the two colors channel by channel in single
   precision and rounds down: `&HFF` to 0 over three frames passes `&HA9`
   and `&H54`, not `&HAA` and `&H55`. A clear end (alpha 0) takes the
