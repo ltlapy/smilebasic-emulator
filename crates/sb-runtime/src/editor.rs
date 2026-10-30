@@ -10,7 +10,7 @@ use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::palette::{Palette, Part};
 use crate::runtime::{SLOTS, keys};
-use crate::syntax::highlight;
+use crate::syntax::{definition, highlight};
 use crate::text::TextScreen;
 
 /// Six digits on three number tiles (U+E100-E16E) and a thin cap.
@@ -155,6 +155,10 @@ struct View {
     left: usize,
 }
 
+/// Where the editor was, to go back to: see [`Editor::place`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place(View);
+
 /// A line and a column in it.
 type Pos = (usize, usize);
 
@@ -272,6 +276,11 @@ pub struct Editor {
     search_from: Pos,
     /// Shown in the status line until the next key, as "Not found".
     note: Option<String>,
+    /// The mouse wheel scrolled away from the cursor, which stays where it
+    /// is until it moves.
+    scrolled: bool,
+    /// The cursor when the view last followed it.
+    followed: Pos,
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
     screen: TextScreen,
@@ -322,6 +331,8 @@ impl Editor {
             with: Vec::new(),
             search_from: (0, 0),
             note: None,
+            scrolled: false,
+            followed: (0, 0),
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
         };
@@ -961,6 +972,8 @@ impl Editor {
 
     /// Edits with a typed character or one of the [`keys`] codes.
     pub fn key(&mut self, code: u16) {
+        // Any key brings the cursor back into view.
+        self.scrolled = false;
         if self.mode != Mode::Edit {
             self.prompt_key(code);
             return;
@@ -1117,8 +1130,46 @@ impl Editor {
         self.moved_to((usize::MAX, usize::MAX));
     }
 
-    /// Scrolls so that the cursor is on screen.
+    /// The lines that start with a label or a DEF, for jumping to.
+    pub fn index(&self) -> Vec<(usize, String)> {
+        (self.lines.iter().enumerate())
+            .filter_map(|(i, line)| Some((i, definition(line)?)))
+            .collect()
+    }
+
+    /// Where the editor is now, for [`Editor::go_back`].
+    pub fn place(&self) -> Place {
+        Place(self.view)
+    }
+
+    pub fn go_back(&mut self, Place(view): Place) {
+        self.moved_to((view.line, view.col));
+        self.view.top = view.top.min(self.lines.len() - 1);
+        self.view.left = view.left;
+    }
+
+    /// Moves to the start of a line (from 0), shown near the top.
+    pub fn jump_to(&mut self, line: usize) {
+        self.moved_to((line, 0));
+        self.view.top = self.view.line.saturating_sub(2);
+    }
+
+    /// Scrolls by lines without moving the cursor, as the mouse wheel does.
+    pub fn wheel(&mut self, lines: i32) {
+        let top = self.view.top as i64 + i64::from(lines);
+        self.view.top = top.clamp(0, self.lines.len() as i64 - 1) as usize;
+        self.scrolled = true;
+    }
+
+    /// Scrolls so that the cursor is on screen, unless the wheel scrolled
+    /// away and the cursor has not moved since.
     fn scroll(&mut self, wrap: bool) {
+        if self.scrolled && self.followed == self.pos() {
+            self.view.top = self.view.top.min(self.lines.len() - 1);
+            return;
+        }
+        self.scrolled = false;
+        self.followed = self.pos();
         let (cols, rows) = self.size();
         let v = &mut self.view;
         v.top = v.top.min(v.line);
@@ -1860,6 +1911,29 @@ mod tests {
         let aa: Vec<u16> = "AAAAA".encode_utf16().collect();
         assert_eq!(matches_in(&aa, &aa[..2]), [0, 2]);
         assert_eq!(matches_in(&aa, &[]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn index_and_jumping() {
+        let mut e = editor(&format!("@MAIN\n{}DEF F X\nEND", "PRINT\n".repeat(50)));
+        assert_eq!(
+            e.index(),
+            [(0, "@MAIN".to_string()), (51, "DEF F".to_string())]
+        );
+        let back = e.place();
+        e.jump_to(51);
+        e.scroll(false);
+        assert_eq!((e.cursor(), e.view.top), ((52, 0), 49));
+        e.go_back(back);
+        e.scroll(false);
+        assert_eq!((e.cursor(), e.view.top), ((1, 0), 0));
+        // The wheel leaves the cursor until it moves.
+        e.wheel(10);
+        e.scroll(false);
+        assert_eq!((e.cursor(), e.view.top), ((1, 0), 10));
+        e.key(keys::DOWN);
+        e.scroll(false);
+        assert_eq!(e.view.top, 1);
     }
 
     #[test]

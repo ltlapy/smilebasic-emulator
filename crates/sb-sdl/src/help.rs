@@ -1,14 +1,21 @@
-//! The help window, which shows SmileBASIC 4's own help for a command
-//! over the editor: one page at a time, scrolled when it is long.
+//! The help panel, which shows SmileBASIC 4's own help for a command
+//! beside the editor: one page at a time, scrolled when it is long.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
 use sb_runtime::help::{INTRO, Page, Style};
 use sdl3::keyboard::Keycode;
 
-use crate::ui::{BORDER, CHAR, DISABLED, LINE, PAD, Rect, TEXT, draw_text, fill, window};
+use crate::ui::{
+    BORDER, DISABLED, LINE, PAD, Rect, TEXT, draw_text, draw_text_scaled, fill, panel, side_rect,
+};
 
-const HINT: &str = "Left/Right: page   Up/Down/PgUp/PgDn: scroll   Esc: close";
+const HINT: &str = "Left/Right: page  F2: size  Esc: close";
+/// The panel is at least this many characters wide, as SmileBASIC 4's
+/// help is.
+const MIN_COLS: u32 = 38;
+/// The scroll bar's width, and its space.
+const BAR: u32 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -17,10 +24,15 @@ pub enum Outcome {
 }
 
 pub struct HelpViewer {
-    /// The display size the window fills.
+    /// The display size the panel is on.
     size: (u32, u32),
+    /// The panel is on the display's left, away from the editor in use.
+    pub left: bool,
+    /// The glyphs are drawn this many times their size.
+    scale: u32,
     title: String,
-    /// The rows of each page, wrapped to the window's width.
+    source: Vec<Page>,
+    /// The rows of each page, wrapped to the panel's width.
     pages: Vec<Vec<(Style, String)>>,
     page: usize,
     /// The first row shown.
@@ -66,21 +78,28 @@ fn wrap(text: &str, cols: usize) -> Vec<String> {
 }
 
 impl HelpViewer {
-    pub fn new(size: (u32, u32), topic: &str, pages: &[Page]) -> HelpViewer {
+    pub fn new(size: (u32, u32), topic: &str, pages: &[Page], scale: u32) -> HelpViewer {
         let mut viewer = HelpViewer {
             size,
+            left: false,
+            scale: scale.max(1),
             title: if topic == INTRO {
                 "Help".to_string()
             } else {
                 format!("Help: {topic}")
             },
+            source: pages.to_vec(),
             pages: Vec::new(),
             page: 0,
             scroll: 0,
         };
-        let cols = viewer.cols();
-        viewer.pages = pages
-            .iter()
+        viewer.wrap_pages();
+        viewer
+    }
+
+    fn wrap_pages(&mut self) {
+        let cols = self.cols();
+        self.pages = (self.source.iter())
             .map(|page| {
                 let mut rows = Vec::new();
                 for line in &page.lines {
@@ -94,21 +113,33 @@ impl HelpViewer {
                 rows
             })
             .collect();
-        viewer
+        self.scroll = self.scroll.min(self.max_scroll());
     }
 
-    fn frame(&self) -> Rect {
-        Rect {
-            x: 2 * PAD,
-            y: 2 * PAD,
-            w: self.size.0.saturating_sub(4 * PAD),
-            h: self.size.1.saturating_sub(4 * PAD),
+    /// Draws the text at another size, keeping the page.
+    pub fn set_scale(&mut self, scale: u32) {
+        if scale != self.scale {
+            self.scale = scale.max(1);
+            self.wrap_pages();
         }
+    }
+
+    fn cell(&self) -> u32 {
+        8 * self.scale
+    }
+
+    fn row_height(&self) -> u32 {
+        self.cell() + self.cell() / 2
+    }
+
+    pub fn frame(&self) -> Rect {
+        let min_w = MIN_COLS * 8 * self.scale + 4 * PAD + BAR;
+        side_rect(self.size, self.left, min_w)
     }
 
     /// The characters that fit in a row.
     fn cols(&self) -> usize {
-        (self.frame().w.saturating_sub(4 * PAD) / CHAR).max(1) as usize
+        (self.frame().w.saturating_sub(4 * PAD + BAR) / self.cell()).max(1) as usize
     }
 
     /// The top of the first row.
@@ -119,7 +150,8 @@ impl HelpViewer {
     /// The rows that fit between the title bar and the hint.
     fn visible(&self) -> usize {
         let f = self.frame();
-        (f.h.saturating_sub(LINE + 2 * PAD + LINE + 2 * PAD) / LINE).max(1) as usize
+        let body = f.h.saturating_sub(LINE + 2 * PAD + LINE + 2 * PAD);
+        (body / self.row_height()).max(1) as usize
     }
 
     fn max_scroll(&self) -> usize {
@@ -164,37 +196,41 @@ impl HelpViewer {
         Outcome::Stay
     }
 
-    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
+    /// Draws the panel; its title bar is gray while the keys go to the
+    /// editor.
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font, focused: bool) {
         let f = self.frame();
         let title = match self.pages.len() {
             0 | 1 => self.title.clone(),
             n => format!("{} ({}/{n})", self.title, self.page + 1),
         };
-        window(fb, font, f, &title);
+        panel(fb, font, f, &title, focused);
         let left = f.x + 2 * PAD;
         let rows = self.pages.get(self.page).map_or(&[][..], Vec::as_slice);
+        let height = self.row_height();
         for (i, (style, text)) in rows
             .iter()
             .skip(self.scroll)
             .take(self.visible())
             .enumerate()
         {
-            let y = self.body_top() + i as u32 * LINE;
+            let y = self.body_top() + i as u32 * height;
             if *style == Style::Rule {
                 let rule = Rect {
                     x: left,
-                    y: y + LINE / 2 - 1,
-                    w: f.w - 4 * PAD,
+                    y: y + height / 2 - 1,
+                    w: f.w - 4 * PAD - BAR,
                     h: 2,
                 };
                 fill(fb, rule, color(Style::Rule));
             } else {
-                draw_text(fb, font, left, y + 4, text, color(*style));
+                let y = y + (height - self.cell()) / 2;
+                draw_text_scaled(fb, font, left, y, text, color(*style), self.scale);
             }
         }
         if rows.len() > self.visible() {
-            let track = self.visible() as u32 * LINE;
-            let thumb = (track * self.visible() as u32 / rows.len() as u32).max(LINE / 2);
+            let track = self.visible() as u32 * height;
+            let thumb = (track * self.visible() as u32 / rows.len() as u32).max(height / 2);
             let at = (track - thumb) * self.scroll as u32 / self.max_scroll().max(1) as u32;
             let x = f.x + f.w - PAD - 2;
             let mut bar = |y, h, c| fill(fb, Rect { x, y, w: 4, h }, c);

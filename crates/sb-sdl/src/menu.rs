@@ -30,6 +30,7 @@ pub enum Action {
     GoToLine,
     Find,
     Replace,
+    Index,
     ToggleUpperCase,
     ToggleCtrlC,
     ToggleHalfWidth,
@@ -103,7 +104,8 @@ impl Action {
             | Action::EditSlot(_)
             | Action::GoToLine
             | Action::Find
-            | Action::Replace => "   ",
+            | Action::Replace
+            | Action::Index => "   ",
         }
     }
 
@@ -165,7 +167,8 @@ impl Action {
             | Action::EditSlot(_)
             | Action::GoToLine
             | Action::Find
-            | Action::Replace => return,
+            | Action::Replace
+            | Action::Index => return,
         };
         *flag = !*flag;
     }
@@ -180,7 +183,8 @@ impl Action {
             | Action::Projects
             | Action::GoToLine
             | Action::Find
-            | Action::Replace => !running,
+            | Action::Replace
+            | Action::Index => !running,
             _ => true,
         }
     }
@@ -288,6 +292,7 @@ const MENUS: &[Menu] = &[
             item("Go to line (Ctrl+G)", Action::GoToLine),
             item("Find (F3, Ctrl+F)", Action::Find),
             item("Replace (Ctrl+H)", Action::Replace),
+            item("Labels and DEFs (Ctrl+J)", Action::Index),
             item("Wrap lines (Ctrl+W)", Action::ToggleWrap),
             item("Line number tiles", Action::ToggleNumberTiles),
             Item {

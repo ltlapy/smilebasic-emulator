@@ -63,6 +63,8 @@ pub struct Settings {
     /// The mouse cursor stays shown when a program hides it with
     /// SYSPARAM "MOUSECURSOR".
     pub keep_mouse_cursor: bool,
+    /// The help panel draws its glyphs this many times their size.
+    pub help_text_size: u32,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -97,6 +99,7 @@ impl Default for Settings {
             sound_font: None,
             language: Language::English,
             keep_mouse_cursor: false,
+            help_text_size: 2,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
         }
@@ -132,6 +135,8 @@ const EDITOR_SIZE: [(EditorSize, &str); 4] = [
 
 /// The editor's Tab key inserts this many spaces at most.
 pub const TAB_STEPS: std::ops::RangeInclusive<u32> = 1..=8;
+
+pub const HELP_TEXT_SIZES: std::ops::RangeInclusive<u32> = 1..=3;
 
 const LANGUAGE: [(Language, &str); 2] = [(Language::English, "en"), (Language::Japanese, "ja")];
 
@@ -202,6 +207,12 @@ impl Settings {
                 "language" => {
                     if let Some(l) = choice(&LANGUAGE, value) {
                         s.language = l;
+                    }
+                    continue;
+                }
+                "help_text_size" => {
+                    if let Some(n) = value.parse().ok().filter(|n| HELP_TEXT_SIZES.contains(n)) {
+                        s.help_text_size = n;
                     }
                     continue;
                 }
@@ -276,6 +287,7 @@ impl Settings {
              sound_font={}\n\
              language={}\n\
              keep_mouse_cursor={}\n\
+             help_text_size={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -292,6 +304,7 @@ impl Settings {
             self.sound_font.as_deref().unwrap_or(""),
             choice_name(&LANGUAGE, &self.language),
             self.keep_mouse_cursor,
+            self.help_text_size,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),

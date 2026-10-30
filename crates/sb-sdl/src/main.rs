@@ -5,6 +5,7 @@ mod colors;
 mod controls;
 mod dialog;
 mod help;
+mod index;
 mod keyhint;
 mod menu;
 mod program_dialog;
@@ -21,12 +22,13 @@ use colors::ColorWindow;
 use controls::Controls;
 use dialog::{Answer, Dialog};
 use help::HelpViewer;
+use index::IndexPanel;
 use keyhint::KeyHint;
 use menu::{Action, Click, MenuBar};
 use program_dialog::ProgramView;
 use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
-use sb_runtime::editor::{Mode, is_movement};
+use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
 use sb_runtime::help::Lookup;
 use sb_runtime::input::State;
@@ -202,7 +204,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
     let mut color_window: Option<ColorWindow> = None;
-    let mut help_viewer: Option<HelpViewer> = None;
+    // A panel beside the editor, and whether it takes the keys.
+    let mut side: Option<Side> = None;
+    let mut side_focus = false;
 
     let mut events = sdl.event_pump()?;
     let mut next_frame = Instant::now();
@@ -245,7 +249,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     m.on_screen = (0..mode.width as i32).contains(&sx)
                         && (0..mode.height as i32).contains(&sy);
                 }
-                Event::MouseWheel { y, .. } if manager.is_none() && help_viewer.is_none() => {
+                Event::MouseWheel { y, .. } if manager.is_none() && !machine.is_editing() => {
                     controls.mouse.wheel += y.round() as i32;
                 }
                 // The + button acts when let go, unless it was held until
@@ -317,16 +321,60 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     continue;
                 }
             }
-            if let Some(open) = &mut help_viewer {
+            if let Some(open) = &mut side {
                 match event {
-                    Event::Quit { .. } => quit = true,
-                    Event::MouseWheel { y, .. } => open.wheel(-y.round() as i32),
-                    Event::KeyDown {
-                        keycode: Some(key), ..
-                    } if open.key(key) == help::Outcome::Close => help_viewer = None,
+                    Event::MouseWheel {
+                        y,
+                        mouse_x,
+                        mouse_y,
+                        ..
+                    } if open.frame().contains(to_display(mouse_x, mouse_y)) => {
+                        open.wheel(-y.round() as i32);
+                        continue;
+                    }
+                    Event::MouseMotion { x, y, .. } => open.mouse_move(to_display(x, y)),
                     _ => {}
                 }
-                continue;
+            }
+            if let (Some(open), true) = (&mut side, side_focus) {
+                let (taken, outcome) = match (open, &event) {
+                    (
+                        Side::Help(help),
+                        Event::KeyDown {
+                            keycode: Some(Keycode::F2),
+                            ..
+                        },
+                    ) => {
+                        let size = &mut machine.rt.settings.help_text_size;
+                        *size = if *size <= 1 { 3 } else { *size - 1 };
+                        help.set_scale(*size);
+                        (true, index::Outcome::Stay)
+                    }
+                    (
+                        Side::Help(help),
+                        Event::KeyDown {
+                            keycode: Some(key), ..
+                        },
+                    ) => match help.key(*key) {
+                        help::Outcome::Close => (true, index::Outcome::Back),
+                        help::Outcome::Stay => (true, index::Outcome::Stay),
+                    },
+                    (
+                        Side::Index(index, _),
+                        Event::KeyDown {
+                            keycode: Some(key), ..
+                        },
+                    ) => (true, index.key(*key)),
+                    (Side::Index(index, _), Event::TextInput { text, .. }) => {
+                        (true, index.text(text))
+                    }
+                    (_, Event::TextInput { .. }) => (true, index::Outcome::Stay),
+                    _ => (false, index::Outcome::Stay),
+                };
+                side_outcome(&mut side, &mut side_focus, &mut machine, outcome);
+                if taken {
+                    continue;
+                }
             }
             if let Some(open) = &mut manager {
                 let unsaved = machine.unsaved_slots();
@@ -500,6 +548,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::Pause) => menu.shown = !menu.shown,
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
+                    Click::Chosen(Action::Index) => {
+                        if !machine.is_editing() {
+                            machine.toggle_editor();
+                        }
+                        side = Some(open_index(&mut machine, (display_w, display_h)));
+                        side_focus = true;
+                    }
                     Click::Chosen(
                         command @ (Action::GoToLine | Action::Find | Action::Replace),
                     ) => {
@@ -551,7 +606,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         use_instruments(&mut machine, bank.as_ref(), &mut toasts);
                     }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
+                    Click::Ignored
+                        if let Some(open) = &mut side
+                            && open.frame().contains(to_display(x, y)) =>
+                    {
+                        side_focus = true;
+                        if let Side::Index(index, _) = open {
+                            let outcome = index.click(to_display(x, y));
+                            side_outcome(&mut side, &mut side_focus, &mut machine, outcome);
+                        }
+                    }
                     Click::Ignored if machine.is_editing() => {
+                        side_focus = false;
                         let (x, y) = to_screen(x, y);
                         let extend = shift(keyboard.mod_state());
                         machine.edit().mouse_down(x, y, extend);
@@ -628,7 +694,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         };
                         if let Some(topic) = topic {
                             let size = (display_w, display_h);
-                            help_viewer = Some(HelpViewer::new(size, &topic, &help.pages(&topic)));
+                            let pages = help.pages(&topic);
+                            let scale = machine.rt.settings.help_text_size;
+                            side = Some(Side::Help(HelpViewer::new(size, &topic, &pages, scale)));
+                            side_focus = true;
                         }
                     }
                 },
@@ -674,12 +743,29 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         }
                     }
                     Keycode::G => machine.edit().go_to_line(),
+                    Keycode::J => {
+                        side = Some(open_index(&mut machine, (display_w, display_h)));
+                        side_focus = true;
+                    }
                     Keycode::F => machine.edit().start_find(false),
                     Keycode::H => machine.edit().start_find(true),
                     Keycode::Backspace => machine.edit().delete_line(),
                     Keycode::Delete => machine.edit().delete_to_end(),
                     _ => {}
                 },
+                // Esc, which the editor's text does not use, closes a panel.
+                Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } if side.is_some()
+                    && machine.is_editing()
+                    && machine.edit().mode() == Mode::Edit =>
+                {
+                    side = None;
+                }
+                Event::MouseWheel { y, .. } if machine.is_editing() => {
+                    machine.edit().wheel(-3 * y.round() as i32);
+                }
                 // F3 finds, and in finding goes to the next match.
                 Event::KeyDown {
                     keycode: Some(Keycode::F3),
@@ -738,10 +824,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
 
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
-        let modal = dialog.is_some()
-            || manager.is_some()
-            || color_window.is_some()
-            || help_viewer.is_some();
+        let modal = dialog.is_some() || manager.is_some() || color_window.is_some();
+        if !machine.is_editing() {
+            side = None;
+        }
         if f5_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
             f5_down = None;
             machine.stop();
@@ -844,10 +930,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.copy(&texture, None, rect)?;
         // The colors window leaves the editor behind it bright, to show
         // its colors.
-        let dims = dialog.is_some()
-            || manager.is_some()
-            || program_dialog.is_some()
-            || help_viewer.is_some();
+        let dims = dialog.is_some() || manager.is_some() || program_dialog.is_some();
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens need it.
         let show_cursor = !machine.is_running()
@@ -860,15 +943,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             cursor_shown = show_cursor;
             mouse.show_cursor(show_cursor);
         }
-        if modal || dims || menu.visible() || toasts.visible() || key_hint.visible() {
+        if modal
+            || dims
+            || side.is_some()
+            || menu.visible()
+            || toasts.visible()
+            || key_hint.visible()
+        {
             // A dialog or the project manager dims the screen behind it.
             overlay.clear(if dims { 0x8000_0000 } else { 0 });
             let font = machine.rt.font();
             if let Some(open) = &manager {
                 open.draw(&mut overlay, font);
             }
-            if let Some(open) = &help_viewer {
-                open.draw(&mut overlay, font);
+            match &side {
+                Some(Side::Help(help)) => help.draw(&mut overlay, font, side_focus),
+                Some(Side::Index(index, _)) => index.draw(&mut overlay, font, side_focus),
+                None => {}
             }
             if let Some(open) = &program_dialog {
                 open.draw(&mut overlay, font, (blink / 25).is_multiple_of(2));
@@ -983,6 +1074,67 @@ fn file_url(path: &Path) -> String {
         }
     }
     url
+}
+
+/// A panel beside the editor.
+enum Side {
+    Help(HelpViewer),
+    /// With where the editor was when it opened, for Esc.
+    Index(IndexPanel, Place),
+}
+
+impl Side {
+    fn frame(&self) -> ui::Rect {
+        match self {
+            Side::Help(help) => help.frame(),
+            Side::Index(index, _) => index.frame(),
+        }
+    }
+
+    fn wheel(&mut self, rows: i32) {
+        match self {
+            Side::Help(help) => help.wheel(rows),
+            Side::Index(index, _) => index.wheel(rows),
+        }
+    }
+
+    fn mouse_move(&mut self, at: (i32, i32)) {
+        if let Side::Index(index, _) = self {
+            index.mouse_move(at);
+        }
+    }
+}
+
+/// Opens the index of the edited slot's labels and DEFs.
+fn open_index(machine: &mut Machine, size: (u32, u32)) -> Side {
+    let editor = machine.edit();
+    let line = editor.cursor().0 - 1;
+    let panel = IndexPanel::new(size, editor.slot(), editor.index(), line);
+    Side::Index(panel, editor.place())
+}
+
+/// Acts on what a side panel asked for. The help closes with `Back`.
+fn side_outcome(
+    side: &mut Option<Side>,
+    focus: &mut bool,
+    machine: &mut Machine,
+    outcome: index::Outcome,
+) {
+    match outcome {
+        index::Outcome::Stay => return,
+        index::Outcome::Show(line) => {
+            machine.edit().jump_to(line);
+            return;
+        }
+        index::Outcome::Go(line) => machine.edit().jump_to(line),
+        index::Outcome::Back => {
+            if let Some(Side::Index(_, place)) = side {
+                machine.edit().go_back(*place);
+            }
+        }
+    }
+    *side = None;
+    *focus = false;
 }
 
 /// Who asked the open dialog's question.

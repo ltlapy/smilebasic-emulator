@@ -71,11 +71,25 @@ pub fn outline(fb: &mut Framebuffer, r: Rect, color: u32) {
 
 /// Draws text in `color`, keeping the background's alpha.
 pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
+    draw_text_scaled(fb, font, x, y, text, color, GLYPH_SCALE);
+}
+
+/// Draws text with the 8x8 glyphs `scale` times their size.
+pub fn draw_text_scaled(
+    fb: &mut Framebuffer,
+    font: &Font,
+    x: u32,
+    y: u32,
+    text: &str,
+    color: u32,
+    scale: u32,
+) {
+    let cell = 8 * scale;
     for (i, c) in text.encode_utf16().enumerate() {
-        let left = x + i as u32 * CHAR;
-        for py in 0..CHAR {
-            for px in 0..CHAR {
-                let glyph = font.pixel(c, FontSize::Small, px / GLYPH_SCALE, py / GLYPH_SCALE);
+        let left = x + i as u32 * cell;
+        for py in 0..cell {
+            for px in 0..cell {
+                let glyph = font.pixel(c, FontSize::Small, px / scale, py / scale);
                 if glyph >> 24 >= 0x80
                     && let Some(dst) = fb.get(left + px, y + py)
                 {
@@ -90,8 +104,27 @@ pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, 
     }
 }
 
+/// Where a side panel (the help, the index) goes on a display of `w` x
+/// `h`: half of it beside the editor, or `min_w` if that is wider, below
+/// the menu bar, which stays shown over the editor.
+pub fn side_rect((w, h): (u32, u32), left: bool, min_w: u32) -> Rect {
+    let pw = (w / 2).max(min_w).min(w);
+    Rect {
+        x: if left { 0 } else { w - pw },
+        // The menu bar's height.
+        y: LINE,
+        w: pw,
+        h: h.saturating_sub(LINE),
+    }
+}
+
 /// A bordered window with a title bar.
 pub fn window(fb: &mut Framebuffer, font: &Font, f: Rect, title: &str) {
+    panel(fb, font, f, title, true);
+}
+
+/// A window whose title bar is grayed while the keys go elsewhere.
+pub fn panel(fb: &mut Framebuffer, font: &Font, f: Rect, title: &str, focused: bool) {
     fill(fb, f, BORDER);
     let inner = Rect {
         x: f.x + 2,
@@ -100,7 +133,8 @@ pub fn window(fb: &mut Framebuffer, font: &Font, f: Rect, title: &str) {
         h: f.h - 4,
     };
     fill(fb, inner, BACKGROUND | 0xFF00_0000);
-    fill(fb, Rect { h: LINE, ..inner }, HIGHLIGHT);
+    let bar = if focused { HIGHLIGHT } else { DISABLED_FACE };
+    fill(fb, Rect { h: LINE, ..inner }, bar);
     draw_text(fb, font, f.x + 2 * PAD, f.y + 6, title, TEXT);
 }
 

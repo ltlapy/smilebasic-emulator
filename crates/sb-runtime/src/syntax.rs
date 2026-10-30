@@ -465,6 +465,51 @@ pub fn highlight(line: &[u16]) -> (Vec<Role>, LineKind) {
 
 /// Where a decimal number starting at `i` ends, read as the lexer does:
 /// digits, a fraction, and an exponent only when digits follow it.
+/// What a line defines, for the editor's index: the label it starts
+/// with, or the function its DEF names, as written.
+pub fn definition(line: &[u16]) -> Option<String> {
+    let (roles, kind) = highlight(line);
+    let word = |from: usize, to: usize| String::from_utf16_lossy(&line[from..to]);
+    match kind {
+        LineKind::Plain => None,
+        LineKind::Label => {
+            let start = roles.iter().position(|&r| r == Role::Label)?;
+            let len = roles[start..]
+                .iter()
+                .take_while(|&&r| r == Role::Label)
+                .count();
+            Some(word(start, start + len))
+        }
+        LineKind::Def => {
+            let upper: Vec<u16> = line
+                .iter()
+                .map(|&c| {
+                    if (0x61..=0x7A).contains(&c) {
+                        c - 0x20
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            let def: Vec<u16> = "DEF".encode_utf16().collect();
+            let at = upper.windows(3).position(|w| w == def.as_slice())? + 3;
+            let start = at + line[at..].iter().take_while(|&&c| c == 32).count();
+            let mut end = start
+                + line[start..]
+                    .iter()
+                    .take_while(|&&c| is_ident_char(c))
+                    .count();
+            if line
+                .get(end)
+                .is_some_and(|&c| c < 0x80 && b"$%#".contains(&(c as u8)))
+            {
+                end += 1;
+            }
+            (end > start).then(|| format!("DEF {}", word(start, end)))
+        }
+    }
+}
+
 fn number_end(line: &[u16], mut i: usize) -> usize {
     while is_digit(line.get(i)) {
         i += 1;
@@ -494,6 +539,17 @@ fn number_end(line: &[u16], mut i: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn definitions_for_the_index() {
+        let def = |text: &str| definition(&text.encode_utf16().collect::<Vec<_>>());
+        assert_eq!(def("@MAIN 'start").as_deref(), Some("@MAIN"));
+        assert_eq!(def("  @loop:GOTO @X").as_deref(), Some("@loop"));
+        assert_eq!(def("DEF Add(A,B)").as_deref(), Some("DEF Add"));
+        assert_eq!(def("COMMON DEF NAME$ X").as_deref(), Some("DEF NAME$"));
+        assert_eq!(def("PRINT 1"), None);
+        assert_eq!(def("GOTO @MAIN"), None);
+    }
 
     /// One letter per character: `.` character, `n` numeric, `s` string,
     /// `k` constant, `l` label, `c` command, `r` reserved, `'` comment.
