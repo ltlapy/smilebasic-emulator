@@ -293,11 +293,10 @@ impl Machine {
         self.rt.running_slot = None;
         self.rt.take_requests();
         self.rt.cancel_confirm();
-        // Checked on hardware, in a program; UNVERIFIED in direct mode.
-        let at = match vm.slot() {
-            Some(slot) => format!("{slot}:{}", line.unwrap_or(vm.line())),
-            None => line.unwrap_or(vm.line()).to_string(),
-        };
+        // A direct-mode line counts as slot 0's line 1 (checked on
+        // hardware, as is the program's form, which a forced stop shares).
+        let slot = vm.slot().unwrap_or(0);
+        let at = format!("{slot}:{}", line.unwrap_or(vm.line()));
         let text: Vec<u16> = format!("User break on {at}").encode_utf16().collect();
         self.print_line(&text);
         self.ready();

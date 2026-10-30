@@ -151,7 +151,7 @@ fn stop_breaks_out_of_a_loop() {
     m.stop();
     assert!(!m.is_running());
     let r = rows(&m);
-    assert_eq!(&r[r.len() - 2..], ["User break on 1", "OK"]);
+    assert_eq!(&r[r.len() - 2..], ["User break on 0:1", "OK"]);
     // Variables of the stopped code stay for direct mode.
     enter(&mut m, "?i>0");
     assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
