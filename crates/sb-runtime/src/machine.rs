@@ -121,6 +121,10 @@ impl Machine {
 
     /// Prints the start-up message and waits for a direct-mode line.
     pub fn boot(&mut self) {
+        // KEY starts from the settings; programs change only this run's.
+        // UNVERIFIED: whether KEY in a program changes the settings too.
+        let keys = &self.rt.settings.function_keys;
+        self.rt.input.function_keys = keys.clone().map(|k| k.encode_utf16().collect());
         let version = env!("CARGO_PKG_VERSION");
         for line in [
             format!("SmileBASIC emulator ver {version}"),
@@ -220,7 +224,8 @@ impl Machine {
         self.rt.prg_edit = None;
         self.vars.clear();
         self.rt.clear_vars();
-        // UNVERIFIED: each program starts with the mouse cursor hidden.
+        // Each program starts with the mouse cursor hidden; END leaves it
+        // as the program set it (checked on hardware).
         self.rt.system.mouse_cursor = false;
         self.start(&self.rt.slots[slot].clone(), Some(slot));
     }

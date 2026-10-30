@@ -63,7 +63,13 @@ pub struct Settings {
     /// The mouse cursor stays shown when a program hides it with
     /// SYSPARAM "MOUSECURSOR".
     pub keep_mouse_cursor: bool,
+    /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
+    /// set them.
+    pub function_keys: [String; 5],
 }
+
+/// F1 to F5 as SmileBASIC 4 starts (checked on hardware).
+pub const FUNCTION_KEYS: [&str; 5] = ["FILES", "LOAD\"", "SAVE\"", "LIST ERR", "RUN"];
 
 impl Default for Settings {
     fn default() -> Self {
@@ -86,9 +92,13 @@ impl Default for Settings {
             sound_font: None,
             language: Language::English,
             keep_mouse_cursor: false,
+            function_keys: FUNCTION_KEYS.map(String::from),
         }
     }
 }
+
+/// Settings lines for F1 to F5 start with this and the key's number.
+const FUNCTION_KEY: &str = "key";
 
 const SCREEN_FILTER: [(Option<Filter>, &str); 4] = [
     (None, "xscreen"),
@@ -156,6 +166,13 @@ impl Settings {
             let (key, value) = (key.trim(), value.trim());
             if let Some(part) = key.strip_prefix(EDITOR_COLOR) {
                 s.editor_colors.set(part, value);
+                continue;
+            }
+            // The value keeps its inner spaces: "key4=LIST ERR".
+            if let Some(n) = key.strip_prefix(FUNCTION_KEY)
+                && let Ok(n @ 1..=5) = n.parse::<usize>()
+            {
+                s.function_keys[n - 1] = value.to_string();
                 continue;
             }
             let flag = match key {
@@ -244,7 +261,8 @@ impl Settings {
              smilebasic_instruments={}\n\
              sound_font={}\n\
              language={}\n\
-             keep_mouse_cursor={}\n",
+             keep_mouse_cursor={}\n\
+             {}",
             self.upper_case_letters,
             self.ctrl_c_stops,
             self.half_width_on_save,
@@ -260,6 +278,9 @@ impl Settings {
             self.sound_font.as_deref().unwrap_or(""),
             choice_name(&LANGUAGE, &self.language),
             self.keep_mouse_cursor,
+            (self.function_keys.iter().enumerate())
+                .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
+                .collect::<String>(),
         )
     }
 }
@@ -287,6 +308,7 @@ mod tests {
             editor_tab_step: 2,
             language: Language::Japanese,
             keep_mouse_cursor: true,
+            function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);

@@ -79,7 +79,7 @@ impl ErrorKind {
             ErrorKind::UndefinedProjectName => "Undefined project name",
             ErrorKind::IllegalAnimationData => "Illegal animation data",
             ErrorKind::SpriteNotSet => "Sprite not set",
-            ErrorKind::StringTooLong => "String too long",
+            ErrorKind::StringTooLong => "String is too long",
             ErrorKind::IllegalMml => "Illegal MML",
             ErrorKind::WrongNumberOfArguments => "Wrong number of arguments",
             ErrorKind::IllegalFileName => "Illegal file name",

@@ -165,14 +165,40 @@ fn function_keys_and_pushkey() {
         "AB"
     );
     let mut rt = Runtime::new(400, 240, Font::blank());
-    let id = rt.lookup("KEY").unwrap();
-    let long = sb_core::value::Value::Str(sb_core::value::new_str(vec![65; 257]));
+    let id = rt.lookup("PUSHKEY").unwrap();
+    let long = sb_core::value::Value::Str(sb_core::value::new_str(vec![65; 65]));
     let err = rt
-        .call(
-            id,
-            &[sb_core::value::Value::Int(1), long],
-            sb_core::bytecode::Want::Outs(0),
-        )
+        .call(id, &[long], sb_core::bytecode::Want::Outs(0))
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::StringTooLong);
+}
+
+#[test]
+fn function_keys_start_as_smilebasic_4s() {
+    // TEST15 on hardware; a string longer than 256 is ignored.
+    let mut m = sb_runtime::machine::Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    m.set_slot(
+        0,
+        "A$=\"\":FOR I=1 TO 257:A$=A$+\"A\":NEXT:KEY 1,A$:?KEY(1);\"|\";KEY(2);\"|\";KEY(4)"
+            .to_string(),
+    );
+    m.run_slot(0);
+    for _ in 0..10 {
+        m.frame();
+    }
+    let console = &m.rt.text[4];
+    let rows: Vec<String> = (0..console.size().1)
+        .map(|y| {
+            let codes: Vec<u16> = (0..console.size().0)
+                .map(|x| console.cell(x, y).code)
+                .take_while(|&c| c != 0)
+                .collect();
+            String::from_utf16(&codes).unwrap()
+        })
+        .collect();
+    assert!(
+        rows.iter().any(|r| r == "FILES|LOAD\"|LIST ERR"),
+        "{rows:?}"
+    );
 }

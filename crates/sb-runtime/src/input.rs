@@ -24,10 +24,14 @@ const LANY: u32 = 0b1111 << 4;
 const ANY: u32 = (1 << 12) - 1;
 /// Touches TOUCH can ask for; only the mouse's left button touches.
 const TOUCHES: i32 = 10;
-/// The most characters KEY keeps.
-// UNVERIFIED: longer strings are String too long, for KEY and PUSHKEY.
+/// The most characters KEY keeps; KEY ignores a longer string, while
+/// PUSHKEY's is String is too long (checked on hardware).
 const KEY_LENGTH: usize = 256;
 const PUSHKEY_LENGTH: usize = 64;
+/// BREPEAT's start and interval for buttons 0 to 7 and for the rest, as
+/// SmileBASIC 4 starts.
+const REPEAT_PADS: (u32, u32) = (20, 3);
+const REPEAT_OTHERS: (u32, u32) = (15, 4);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pad {
@@ -127,8 +131,10 @@ impl Default for Input {
             now: State::default(),
             before: State::default(),
             held: [[0; BUTTONS]; PADS + 1],
-            // UNVERIFIED: buttons do not repeat until BREPEAT says so.
-            repeat: [(0, 0); BUTTON_IDS],
+            repeat: std::array::from_fn(|id| match id {
+                0..=7 => REPEAT_PADS,
+                _ => REPEAT_OTHERS,
+            }),
             touch: (0, 0),
             style: (1, 0),
             function_keys: Default::default(),
@@ -192,9 +198,12 @@ impl Input {
                 let mut bits = now & !before;
                 for (id, &held) in self.held[pad].iter().enumerate() {
                     let (start, interval) = self.repeat[id];
-                    // UNVERIFIED: the first repeat comes `start` frames after
-                    // the press, the next ones every `interval` frames.
-                    if start > 0 && held > start && (held - 1 - start) % interval.max(1) == 0 {
+                    // The first repeat comes `start` frames after the press,
+                    // the next ones `interval` frames apart, not counting
+                    // the frame that repeats (checked on hardware: 20,3
+                    // repeats at 20, 24, 28...).
+                    // UNVERIFIED: a start of 0 never repeats.
+                    if start > 0 && held > start && (held - 1 - start) % (interval + 1) == 0 {
                         bits |= 1 << id;
                     }
                 }
@@ -435,10 +444,9 @@ impl Runtime {
             (Command::Key, Want::Outs(0), 2) => {
                 let n = in_range("key", &args[0], 1..=5)?;
                 let s = text(&args[1])?;
-                if s.len() > KEY_LENGTH {
-                    return Err(Error::with_detail(ErrorKind::StringTooLong, "KEY"));
+                if s.len() <= KEY_LENGTH {
+                    input.function_keys[n as usize - 1] = s;
                 }
-                input.function_keys[n as usize - 1] = s;
                 Ok(vec![])
             }
             (Command::Key, Want::Value, 1) => {
@@ -492,6 +500,15 @@ mod tests {
                 input.buttons(1, 1) & 1 << 4 != 0
             })
             .collect();
-        assert_eq!(fired, [true, false, false, true, false, true, false, true]);
+        assert_eq!(fired, [true, false, false, true, false, false, true, false]);
+        // SmileBASIC 4's own 20,3 for A: frames 0, 20, 24, 28 of the hold.
+        let mut input = Input::default();
+        let fired: Vec<usize> = (0..30)
+            .filter(|_| {
+                press(&mut input, 1 << 3);
+                input.buttons(1, 1) & 1 << 3 != 0
+            })
+            .collect();
+        assert_eq!(fired, [0, 20, 24, 28]);
     }
 }
