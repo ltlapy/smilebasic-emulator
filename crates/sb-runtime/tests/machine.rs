@@ -151,7 +151,7 @@ fn stop_breaks_out_of_a_loop() {
     m.stop();
     assert!(!m.is_running());
     let r = rows(&m);
-    assert_eq!(&r[r.len() - 2..], ["Break in 1", "OK"]);
+    assert_eq!(&r[r.len() - 2..], ["User break on 1", "OK"]);
     // Variables of the stopped code stay for direct mode.
     enter(&mut m, "?i>0");
     assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
@@ -174,7 +174,7 @@ fn sysreq_runs_prg0_and_stops() {
     m.sysreq();
     assert!(!m.is_running());
     let r = rows(&m);
-    assert_eq!(&r[r.len() - 3..], ["A", "Break in 0:2", "OK"]);
+    assert_eq!(&r[r.len() - 3..], ["A", "User break on 0:2", "OK"]);
 }
 
 #[test]

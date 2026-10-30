@@ -283,12 +283,12 @@ impl Machine {
         self.rt.running_slot = None;
         self.rt.take_requests();
         self.rt.cancel_confirm();
-        // UNVERIFIED: the wording of SmileBASIC 4's break message.
+        // Checked on hardware, in a program; UNVERIFIED in direct mode.
         let at = match vm.slot() {
             Some(slot) => format!("{slot}:{}", vm.line()),
             None => vm.line().to_string(),
         };
-        let text: Vec<u16> = format!("Break in {at}").encode_utf16().collect();
+        let text: Vec<u16> = format!("User break on {at}").encode_utf16().collect();
         self.print_line(&text);
         self.ready();
     }
