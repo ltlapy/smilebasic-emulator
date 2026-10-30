@@ -443,6 +443,11 @@ impl Editor {
 
     /// Edits with a typed character or one of the [`keys`] codes.
     pub fn key(&mut self, code: u16) {
+        // A click leaves the anchor at the cursor; once the text changes
+        // it would no longer be a place in it.
+        if self.selection().is_none() {
+            self.anchor = None;
+        }
         if self.selection().is_some() {
             match code {
                 c if is_movement(c) => self.anchor = None,
@@ -1051,6 +1056,22 @@ mod tests {
         e.key(keys::RIGHT);
         e.key(keys::BACKSPACE);
         assert_eq!(e.text(), "");
+    }
+
+    #[test]
+    fn typing_after_a_click_selects_nothing() {
+        let mut e = editor("ABCDEF");
+        let mut fb = Framebuffer::new(400, 240);
+        e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
+        e.mouse_down((4 + 6) * 8, 8 + 4, false);
+        typing(&mut e, "XY");
+        assert_eq!(e.text(), "ABCDEFXY");
+        e.key(keys::BACKSPACE);
+        e.key(keys::BACKSPACE);
+        e.key(keys::BACKSPACE);
+        e.key_select(keys::LEFT);
+        e.key(keys::DELETE);
+        assert_eq!(e.text(), "ABCD");
     }
 
     #[test]
