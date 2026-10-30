@@ -584,6 +584,14 @@ pub(crate) fn illegal() -> Error {
     ErrorKind::IllegalFunctionCall.into()
 }
 
+/// No form of a command takes the arguments given: SmileBASIC 4 says
+/// Wrong number of arguments (checked on hardware for LOCATE and TOFS).
+// UNVERIFIED: the same for a command used as a function or the other way
+// round.
+pub(crate) fn no_form() -> Error {
+    ErrorKind::WrongNumberOfArguments.into()
+}
+
 pub(crate) fn screen_id(v: &Value) -> Result<usize> {
     let id = v.to_int()?;
     usize::try_from(id)
@@ -615,7 +623,7 @@ pub(crate) fn with_screen(args: &[Value], rest: usize) -> Result<(usize, &[Value
     match args.len() {
         n if n == rest => Ok((CONSOLE, args)),
         n if n == rest + 1 => Ok((screen_id(&args[0])?, &args[1..])),
-        _ => Err(illegal()),
+        _ => Err(no_form()),
     }
 }
 
@@ -1275,7 +1283,7 @@ impl Runtime {
                 | Command::Sndstop,
                 _,
             ) => self.sound_command(command, args, want),
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 }

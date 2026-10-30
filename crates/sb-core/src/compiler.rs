@@ -265,10 +265,7 @@ impl Compiler<'_> {
         match constants::lookup(name) {
             Some(ConstValue::Int(n)) => Ok(Literal::Int(n)),
             Some(ConstValue::Real(x)) => Ok(Literal::Real(x)),
-            None => Err(err(
-                ErrorKind::SyntaxError,
-                format!("undefined constant #{name}"),
-            )),
+            None => Err(err(ErrorKind::UndefinedConstant, format!("#{name}"))),
         }
     }
 

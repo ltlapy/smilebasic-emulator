@@ -8,7 +8,7 @@ use sb_core::value::Value;
 
 use crate::anim::{Anim, Target, Track};
 use crate::grp::{array_colors, numeric_array, store_ints};
-use crate::runtime::{Command, Runtime, illegal, screen_id, with_screen};
+use crate::runtime::{Command, Runtime, no_form, screen_id, with_screen};
 use crate::sp::{anim_id, var_key};
 use crate::text::{Cell, CellRect, TextScreen};
 
@@ -318,7 +318,7 @@ impl Runtime {
                 self.text[screen_id(&args[0])?].func = func;
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 

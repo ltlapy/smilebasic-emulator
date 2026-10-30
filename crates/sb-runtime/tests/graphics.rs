@@ -81,7 +81,7 @@ fn bad_arguments_are_errors() {
         ("GPSET 0,0,0,5", "Out of range"),
         ("GPUTCHR 0,0,\"A\",12", "Out of range"),
         ("GCIRCLE 0,0,5,0,90,2", "Out of range"),
-        ("GLINE 0,0", "Illegal function call"),
+        ("GLINE 0,0", "Wrong number of arguments"),
     ] {
         let (_, out) = run(source);
         assert!(out.starts_with(error), "{source}: {out}");

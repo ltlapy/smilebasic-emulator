@@ -8,7 +8,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
-use crate::runtime::{Command, Runtime, illegal};
+use crate::runtime::{Command, Runtime, no_form};
 
 /// RND's series 0 to 7.
 const SERIES: usize = 8;
@@ -252,7 +252,7 @@ impl Runtime {
                     _ => Err(wrong()),
                 }
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 

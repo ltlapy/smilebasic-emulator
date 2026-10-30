@@ -15,7 +15,7 @@ use crate::confirm::FileAction;
 use crate::files::{program_text, str_arg};
 use crate::graphics::{GRP_SIZE, PAGES};
 use crate::image::{self, Image};
-use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
 use crate::sbfile::{self, Data, DataValues};
 use crate::storage::{self, FileKind, StorageError, parse_file_name};
 
@@ -317,7 +317,7 @@ impl Runtime {
                 self.finish("SAVEG", outcome);
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 

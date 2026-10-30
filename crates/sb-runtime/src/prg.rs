@@ -16,7 +16,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
-use crate::runtime::{Command, Runtime, illegal, opt_int, slot_arg};
+use crate::runtime::{Command, Runtime, no_form, opt_int, slot_arg};
 
 /// The slot PRGEDIT chose and its current line, from 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,7 +281,7 @@ impl Runtime {
                 let slot = self.current_slot(args.first())?;
                 Ok(vec![Value::str(&self.slot_names[slot])])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 }

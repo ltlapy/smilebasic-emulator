@@ -15,7 +15,7 @@ use sb_core::value::{Array, ArrayData, Value, new_str};
 
 use crate::confirm::{FileAction, project_label};
 use crate::image::{self, Image};
-use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::runtime::{Command, Runtime, no_form, opt_int};
 use crate::sbfile;
 use crate::storage;
 
@@ -246,7 +246,7 @@ impl Runtime {
                 self.finish("METASAVE", outcome);
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 

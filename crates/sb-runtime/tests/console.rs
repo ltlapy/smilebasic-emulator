@@ -48,7 +48,12 @@ fn errors() {
     let kind = |src| run(src).err().map(|e| e.kind);
     assert_eq!(kind("LOCATE 50,0"), Some(ErrorKind::OutOfRange));
     assert_eq!(kind("CLS 5"), Some(ErrorKind::OutOfRange));
-    assert_eq!(kind("COLOR 1,2,3"), Some(ErrorKind::IllegalFunctionCall));
+    // No form takes that many arguments, as LOCATE and TOFS on hardware.
+    assert_eq!(kind("COLOR 1,2,3"), Some(ErrorKind::WrongNumberOfArguments));
+    assert_eq!(
+        kind("LOCATE 1,2,3,4,5"),
+        Some(ErrorKind::WrongNumberOfArguments)
+    );
     assert_eq!(kind("COLOR \"A\""), Some(ErrorKind::TypeMismatch));
 }
 

@@ -7,7 +7,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
-use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::runtime::{Command, Runtime, no_form, opt_int};
 
 /// Controllers 1 to 4; controller 0 combines them.
 pub const PADS: usize = 4;
@@ -456,7 +456,7 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 }

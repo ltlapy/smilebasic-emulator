@@ -11,7 +11,7 @@ use sb_core::bytecode::{Literal, Want};
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, Value};
 
-use crate::runtime::{Command, Runtime, illegal};
+use crate::runtime::{Command, Runtime, illegal, no_form};
 use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
@@ -614,7 +614,7 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 }

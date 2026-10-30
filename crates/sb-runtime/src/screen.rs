@@ -9,7 +9,7 @@ use sb_core::value::Value;
 
 use crate::compose::{Affine, Compose, LAYERS};
 use crate::graphics::Clip;
-use crate::runtime::{Command, Runtime, illegal, opt_int, screen_id, with_screen};
+use crate::runtime::{Command, Runtime, no_form, opt_int, screen_id, with_screen};
 use crate::text::CONSOLE;
 
 /// XSCREEN: the screen's resolution and how it is shown.
@@ -490,7 +490,7 @@ impl Runtime {
                 self.acls(keep(0), keep(1), keep(2), keep(3));
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 }

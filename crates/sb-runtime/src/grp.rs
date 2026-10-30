@@ -8,7 +8,7 @@ use sb_core::value::{ArrayData, ArrayRef, Value};
 
 use crate::font::FontSize;
 use crate::graphics::{Blend, Clip, GRP_SIZE, PAGES};
-use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
 
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
@@ -318,7 +318,7 @@ impl Runtime {
                 };
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 }

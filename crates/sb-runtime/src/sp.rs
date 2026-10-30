@@ -10,7 +10,7 @@ use sb_core::value::{ArrayData, Value};
 
 use crate::anim::{self, Anim, MAX_KEYS, Mode, Track};
 use crate::collision::{Body, Collision, Search};
-use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
 use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey, WithDefs};
 
 fn int(v: &Value) -> Result<i32> {
@@ -679,7 +679,7 @@ impl Runtime {
                 let id = sprite_id(&args[0])?;
                 Ok(vec![Value::Int(i32::from(self.sprites.list[id].used))])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 
@@ -797,7 +797,7 @@ impl Runtime {
                 };
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 }

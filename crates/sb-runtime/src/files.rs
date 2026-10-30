@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::confirm::{Ask, Confirm, FileAction, FileConfirm, project_label, switch_lines};
-use crate::runtime::{Command, Runtime, SLOTS, illegal, slot_arg};
+use crate::runtime::{Command, Runtime, SLOTS, no_form, slot_arg};
 use crate::sbfile;
 use crate::storage::{
     self, FileKind, FileRef, StorageError, parse_file_name, parse_listing, parse_read_name,
@@ -228,7 +228,7 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            _ => Err(illegal()),
+            _ => Err(no_form()),
         }
     }
 
