@@ -122,6 +122,17 @@ fn song_variables_read_minus_one_while_nothing_plays() {
 }
 
 #[test]
+fn preset_ranges_follow_4_4_9() {
+    let mut rt = runtime();
+    // 4.4.5 added song 62 to 73 and sound 156.
+    assert_eq!(run_on(&mut rt, "BEEP 156:BGMPLAY 73:?1").unwrap(), "1");
+    assert_eq!(
+        run_on(&mut rt, "BEEP 157").unwrap_err().kind,
+        ErrorKind::OutOfRange
+    );
+}
+
+#[test]
 fn unset_user_songs_play_nothing() {
     let mut rt = runtime();
     assert_eq!(run_on(&mut rt, "BGMPLAY 128:?BGMCHK()").unwrap(), "0");

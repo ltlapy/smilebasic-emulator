@@ -39,6 +39,8 @@ const WAKE_FRAMES: u32 = 2;
 /// The highest preset song number: 4.4.5 added 62 to 73, and 46 and up
 /// play on hardware.
 pub const PRESET_SONGS: i32 = 73;
+/// The highest preset sound effect: 4.4.5 added 156.
+pub const PRESET_BEEPS: i32 = 156;
 
 /// A gain moving to a target in a straight line, a sample at a time.
 #[derive(Clone, Copy, Debug, PartialEq)]

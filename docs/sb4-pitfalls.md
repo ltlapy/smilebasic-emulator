@@ -206,7 +206,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   song, by `BGMVAR` or by stopping shows a frame later. A song started
   while no other plays takes about two frames more to begin: its first
   `$0=` showed four frames after `BGMPLAY`.
-- `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45). A user
+- `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45), and
+  `BEEP` sounds 0 to 156 (4.4.5 added 156). A user
   song number with nothing set is no error; it plays nothing, and
   `BGMCHK` says 0.
 
