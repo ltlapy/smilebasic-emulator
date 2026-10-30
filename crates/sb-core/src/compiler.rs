@@ -956,11 +956,8 @@ impl Compiler<'_> {
         if let Some(&def) = self.out.def_names.get(&full) {
             self.emit(Op::CallDef { def, argc, want });
         } else if let Some(id) = builtins::lookup(&full, Form::Command) {
-            let b = builtins::get(id);
-            // Checked on hardware: ?ABS(1,2) is Wrong number of arguments.
-            if !b.accepts(args.len()) {
-                return Err(err(ErrorKind::WrongNumberOfArguments, full.clone()));
-            }
+            // The VM checks the argument count when the call runs, as
+            // SmileBASIC 4 does (checked on hardware).
             self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
@@ -1287,11 +1284,8 @@ impl Compiler<'_> {
         if let Some(&def) = self.out.def_names.get(&full) {
             self.emit(Op::CallDef { def, argc, want });
         } else if let Some(id) = builtins::lookup(&full, Form::Function) {
-            let b = builtins::get(id);
-            // Checked on hardware: ?ABS(1,2) is Wrong number of arguments.
-            if !b.accepts(args.len()) {
-                return Err(err(ErrorKind::WrongNumberOfArguments, full.clone()));
-            }
+            // The VM checks the argument count when the call runs, as
+            // SmileBASIC 4 does (checked on hardware).
             self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
