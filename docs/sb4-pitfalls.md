@@ -42,6 +42,21 @@ follows all of it. Items still waiting for a check are marked
   for 400x240.
 - Only one-dimensional arrays may be empty: `DIM A[0]` is fine, but
   `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`.
+- `RND(0)` is 0; a negative maximum is `Out of range`.
+- `FORMAT$` takes its conversions in lower case too and ignores values
+  left over. Too few values is `Wrong number of arguments`, a value of the
+  wrong type `Type mismatch`, and a conversion it does not know (`%Q`)
+  `Illegal format`.
+- `SORT` keeps equal keys in their order; `RSORT` gives `SORT`'s order
+  turned round, so equal keys come out reversed. Strings sort by
+  character code: `""`, `"A"`, `"AA"`, `"B"`, `"a"`, `"b"`.
+- `RESIZE` of a 2D array takes every size, the later ones as they are:
+  `RESIZE A,3` on `DIM A[2,3]` is `Wrong number of arguments`, and
+  changing a later size `Illegal function call`.
+- `RINGCOPY` reading past the end of its source is `Illegal function
+  call`, not `Out of range` as for `COPY`.
+- `TVAR` cuts a real key down to an integer: keys 1.5 and 1 are the
+  same.
 
 ## Direct mode
 
@@ -92,12 +107,21 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   them: `?P(1);P(2)` with a `P` that prints shows `<2><1>12`.
 - `FOR` works out `STEP`, then `TO`, again before every test, so they
   are called once more at each `NEXT`.
+- Array literals and `DIM` sizes: the last first too.
+- `SWAP` works out each element's place once, the second first; `INC`
+  and `DEC` work out the amount first, then the place, once.
+- `CALL` works out its arguments before the name.
 - `&&` and `||` still go left to right and stop early.
 
 ## DATA
 
 - `SPANIM` with a `"@label"` reads its DATA with `READ`'s own place: it
   restores to the label, and `READ` goes on after the values it took.
+- `COPY` from a `"@label"` leaves `READ`'s place alone.
+- `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack
+  underflow`. A subroutine that keeps a place must take it back before
+  `RETURN`, which is otherwise `Use RESTORE POP before RETURN`. A
+  thousand places can be kept.
 
 ## Screens and text
 
@@ -139,9 +163,13 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   sprite's `SPFUNC` gets it called. Afterwards `CALLIDX()` is 4096 (5
   after `CALL TEXT`).
 - A relative color animation (`"C+"`) multiplies the start color by the
-  key per channel: `&H80808080` with `&H10101010` gives `&H08080808`.
+  key per channel and divides by 256, rounding down: `&H80808080` with
+  `&H10101010` gives `&H08080808`, and `&HFF` with `&HFF` gives `&HFE`.
 
 ## Graphics and layers
+
+- `FADE color,time` starting from a clear color (alpha 0) takes the new
+  color at once and only moves the alpha. `ACLS` clears the fade.
 
 - `GCLIP` is shared by all pages.
 - `GCIRCLE` with equal start and end angles draws nothing; the sector
@@ -154,6 +182,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   covering anything, so it also brightens what is under the layer.
 
 ## Sound
+
+- `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45). A user
+  song number with nothing set is no error; it plays nothing, and
+  `BGMCHK` says 0.
 
 - `TALK` reads は as "wa", falling in pitch, when 、 comes right after
   it, as for a particle; before 。 or anywhere else it is "ha".
@@ -186,6 +218,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A program run after one that set `MOUSECURSOR` to 1 reads 0 again.
 
 ## Errors and the editor
+
+- A command or function given a number of arguments none of its forms
+  takes is `Wrong number of arguments` (`LOCATE` with five, `TOFS 0,30`).
+  `HSV` with one argument is `Wrong number of OUT arguments`: it is read
+  as the `OUT` form.
+- An unknown `#constant` is `Undefined constant`.
 
 - After an error, F4 puts the cursor at the start of the statement that
   failed, syntax errors included.
