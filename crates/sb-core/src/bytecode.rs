@@ -249,6 +249,9 @@ pub struct Compiled {
     pub lines: Vec<u32>,
     /// Column of the statement each instruction belongs to.
     pub cols: Vec<u32>,
+    /// Whether each instruction starts a statement, NEXT and the other
+    /// ends of loops included.
+    pub starts: Vec<bool>,
     pub strings: Vec<Str>,
     pub globals: Vec<VarInfo>,
     pub labels: HashMap<String, Addr>,

@@ -121,9 +121,10 @@ pub struct Vm {
     executed: u64,
     /// ON BREAK GOTO's slot and address, until the + button jumps there.
     on_break: Option<(usize, usize)>,
-    /// The line and column of the statement a jump out of INPUT went to;
-    /// the program stops once it has run.
-    break_after: Option<(u32, u32)>,
+    /// After a jump out of INPUT, the press is acted on again once a
+    /// statement has run: the instruction count at the jump, and the line
+    /// of the last instruction run since.
+    break_pending: Option<(u64, u32)>,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -250,7 +251,7 @@ impl Vm {
             call_idx: 0,
             executed: 0,
             on_break: None,
-            break_after: None,
+            break_pending: None,
         }
     }
 
@@ -314,6 +315,21 @@ impl Vm {
     /// The + button: jumps to ON BREAK GOTO's label, which is then
     /// forgotten. False when no label is set, and the program should stop.
     pub fn take_break(&mut self, host: &mut dyn Host) -> bool {
+        let input = self.reading_input;
+        if !self.jump_on_break(host) {
+            return false;
+        }
+        // Out of INPUT, the press is acted on again once the statement
+        // there has run: it stops the program, or jumps to a label set
+        // meanwhile (checked on hardware).
+        if input {
+            self.break_pending = Some((self.executed, self.line()));
+        }
+        true
+    }
+
+    /// Jumps to ON BREAK GOTO's label, if one is set, and forgets it.
+    fn jump_on_break(&mut self, host: &mut dyn Host) -> bool {
         let Some((slot, addr)) = self.on_break.take() else {
             return false;
         };
@@ -323,14 +339,9 @@ impl Vm {
         self.frames.clear();
         self.gosubs.clear();
         self.callbacks.clear();
+        self.reading_input = false;
         self.switch_to(slot, host);
         self.pc = addr;
-        // Out of INPUT, the press also stops the program after the first
-        // statement there (checked on hardware, with a statement on a line
-        // of its own).
-        if std::mem::take(&mut self.reading_input) {
-            self.break_after = Some((self.line(), self.col()));
-        }
         true
     }
 
@@ -340,11 +351,15 @@ impl Vm {
             return Ok(Status::Ended);
         }
         for _ in 0..budget {
-            if let Some((line, col)) = self.break_after
-                && (self.line(), self.col()) != (line, col)
-            {
-                self.break_after = None;
-                return Ok(Status::Break { line });
+            if let Some((at, line)) = self.break_pending {
+                if self.executed > at && self.program.starts.get(self.pc) == Some(&true) {
+                    self.break_pending = None;
+                    if !self.jump_on_break(host) {
+                        return Ok(Status::Break { line });
+                    }
+                } else {
+                    self.break_pending = Some((at, self.line()));
+                }
             }
             let pc = self.pc;
             self.executed += 1;

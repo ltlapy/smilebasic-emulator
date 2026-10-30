@@ -216,6 +216,40 @@ fn sysreq_out_of_input_also_stops() {
     assert_eq!(&r[r.len() - 3..], ["? B", "User break on 0:4", "OK"]);
 }
 
+#[test]
+fn sysreq_out_of_input_acts_after_one_statement() {
+    // Checked on hardware: a FOR loop first stops after its first
+    // statement, with the variable at 1.
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "ON BREAK GOTO @B\nINPUT A\n@B\nFOR I=1 TO 99999:NEXT".to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    m.frame();
+    m.sysreq();
+    m.frame();
+    assert!(!m.is_running());
+    enter(&mut m, "?I");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
+
+    // A label set in that statement is jumped to instead.
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "ON BREAK GOTO @B\nINPUT A\n@B\nON BREAK GOTO @C\n?\"B\"\nEND\n@C\n?\"C\"".to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    m.frame();
+    m.sysreq();
+    m.frame();
+    assert!(!m.is_running());
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["? C", "OK"]);
+}
+
 /// Presses keys, one frame each.
 fn press(m: &mut Machine, codes: &[u16]) {
     for &code in codes {

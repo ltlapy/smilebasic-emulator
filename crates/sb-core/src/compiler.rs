@@ -314,7 +314,16 @@ impl Compiler<'_> {
         self.out.code.push(op);
         self.out.lines.push(self.line);
         self.out.cols.push(self.col);
+        self.out.starts.push(false);
         self.out.code.len() - 1
+    }
+
+    /// Marks `at` as the start of a statement, if anything was emitted
+    /// there.
+    fn mark_start(&mut self, at: usize) {
+        if let Some(s) = self.out.starts.get_mut(at) {
+            *s = true;
+        }
     }
 
     fn here(&self) -> Addr {
@@ -455,8 +464,11 @@ impl Compiler<'_> {
 
     fn stmt(&mut self, stmt: &Stmt) -> Result<()> {
         (self.line, self.col) = (stmt.line, stmt.col);
+        let start = self.out.code.len();
         self.stmt_kind(&stmt.kind)
-            .map_err(|e| e.at_pos(stmt.line, stmt.col))
+            .map_err(|e| e.at_pos(stmt.line, stmt.col))?;
+        self.mark_start(start);
+        Ok(())
     }
 
     fn stmt_kind(&mut self, kind: &StmtKind) -> Result<()> {
@@ -598,6 +610,7 @@ impl Compiler<'_> {
                 let lp = self.loop_body(body)?;
                 let next = self.here();
                 self.load_lvalue(var)?;
+                self.mark_start(next as usize);
                 self.emit(Op::Load(step_slot));
                 self.emit(Op::Binary(BinaryOp::Add));
                 self.store(var)?;
@@ -611,7 +624,8 @@ impl Compiler<'_> {
                 self.expr(cond)?;
                 let exit = self.emit(Op::JumpIfFalse(0));
                 let lp = self.loop_body(body)?;
-                self.emit(Op::Jump(check));
+                let wend = self.emit(Op::Jump(check));
+                self.mark_start(wend);
                 let end = self.here();
                 self.patch(exit, end);
                 self.finish_loop(lp, check, end);
@@ -621,6 +635,7 @@ impl Compiler<'_> {
                 let lp = self.loop_body(body)?;
                 let check = self.here();
                 self.expr(cond)?;
+                self.mark_start(check as usize);
                 self.emit(Op::JumpIfFalse(top));
                 let end = self.here();
                 self.finish_loop(lp, check, end);
@@ -628,7 +643,8 @@ impl Compiler<'_> {
             StmtKind::Loop { body } => {
                 let top = self.here();
                 let lp = self.loop_body(body)?;
-                self.emit(Op::Jump(top));
+                let endloop = self.emit(Op::Jump(top));
+                self.mark_start(endloop);
                 let end = self.here();
                 self.finish_loop(lp, top, end);
             }
