@@ -445,7 +445,7 @@ impl Machine {
     /// Runs a line typed in direct mode.
     fn direct(&mut self, line: &str) {
         if line.trim().is_empty() {
-            self.rt.input_start().expect("console input");
+            self.rt.direct_input_start();
             return;
         }
         self.rt.remember_input(line);
@@ -458,7 +458,7 @@ impl Machine {
                     }
                     List::Error => self.list_error(),
                 }
-                self.rt.input_start().expect("console input");
+                self.rt.direct_input_start();
             }
             Some(Err(e)) => {
                 self.report(&e.at(1));
@@ -529,7 +529,7 @@ impl Machine {
     fn ready(&mut self) {
         self.rt.direct = true;
         self.print_line(&"OK".encode_utf16().collect::<Vec<_>>());
-        self.rt.input_start().expect("console input");
+        self.rt.direct_input_start();
     }
 
     fn report(&mut self, error: &Error) {

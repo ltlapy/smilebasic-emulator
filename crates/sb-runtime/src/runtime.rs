@@ -439,6 +439,15 @@ pub mod keys {
     pub const DOWN: u16 = 0x1F;
 }
 
+/// A direct-mode line that Up and Down walk through the history from.
+struct Recall {
+    /// The history entry shown, newest first; `None` is the line that was
+    /// being typed.
+    at: Option<usize>,
+    /// The line that was being typed, which Down brings back.
+    draft: Vec<u16>,
+}
+
 pub struct Runtime {
     pub text: Vec<TextScreen>,
     pub(crate) font: Font,
@@ -453,6 +462,9 @@ pub struct Runtime {
     pub(crate) keys: VecDeque<u16>,
     /// The line being typed for INPUT or LINPUT.
     line: Option<Vec<u16>>,
+    /// Where the Up and Down keys have taken the direct-mode line in the
+    /// history, if it is being typed in direct mode and they have.
+    recall: Option<Recall>,
     frame: u32,
     /// Whether the code running was typed in direct mode, where RUN, NEW
     /// and CLEAR are allowed.
@@ -641,6 +653,7 @@ impl Runtime {
             sound: Sound::default(),
             keys: VecDeque::new(),
             line: None,
+            recall: None,
             frame: 0,
             direct: false,
             requests: Vec::new(),
@@ -825,6 +838,49 @@ impl Runtime {
     /// Stops waiting for an INPUT line, if one is being typed.
     pub fn cancel_input(&mut self) {
         self.line = None;
+        self.recall = None;
+    }
+
+    /// Moves through the history from the line being typed in direct mode:
+    /// `older` for Up, else Down. Whatever was typed before the first Up
+    /// comes back with the last Down; edits made on a recalled line are
+    /// lost when the line changes.
+    fn recall_line(&mut self, older: bool) {
+        let (Some(recall), Some(line)) = (self.recall.as_mut(), self.line.as_mut()) else {
+            return;
+        };
+        let at = match (recall.at, older) {
+            (None, true) if self.history.is_empty() => return,
+            (None, true) => {
+                recall.draft = line.clone();
+                Some(0)
+            }
+            (None, false) => return,
+            (Some(i), true) => Some((i + 1).min(self.history.len() - 1)),
+            (Some(0), false) => None,
+            (Some(i), false) => Some(i - 1),
+        };
+        recall.at = at;
+        let text = match at {
+            Some(i) => self.history[i].clone(),
+            None => recall.draft.clone(),
+        };
+        let console = &mut self.text[CONSOLE];
+        for _ in 0..line.len() {
+            console.backspace();
+        }
+        console.print(&text);
+        *line = text;
+    }
+
+    /// Waits for a line typed in direct mode, where Up and Down recall the
+    /// lines typed before.
+    pub(crate) fn direct_input_start(&mut self) {
+        self.line = Some(Vec::new());
+        self.recall = Some(Recall {
+            at: None,
+            draft: Vec::new(),
+        });
     }
 
     /// Direct-mode requests made since the last call.
@@ -1318,6 +1374,7 @@ impl Host for Runtime {
 
     fn input_start(&mut self) -> Result<()> {
         self.line = Some(Vec::new());
+        self.recall = None;
         Ok(())
     }
 
@@ -1384,14 +1441,18 @@ impl Host for Runtime {
         }
     }
 
-    // UNVERIFIED: only typing, Backspace and Enter edit the line; the
-    // cursor keys do nothing.
+    // Up and Down recall history in direct mode
     fn input_poll(&mut self) -> Result<Option<Vec<u16>>> {
-        let Some(line) = self.line.as_mut() else {
+        if self.line.is_none() {
             return Ok(None);
-        };
-        let console = &mut self.text[CONSOLE];
+        }
         while let Some(key) = self.keys.pop_front() {
+            if matches!(key, keys::UP | keys::DOWN) {
+                self.recall_line(key == keys::UP);
+                continue;
+            }
+            let line = self.line.as_mut().expect("checked above");
+            let console = &mut self.text[CONSOLE];
             match key {
                 keys::ENTER => {
                     console.newline();

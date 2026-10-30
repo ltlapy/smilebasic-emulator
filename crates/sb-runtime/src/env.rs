@@ -89,7 +89,12 @@ fn str_units(v: &Value) -> Result<Vec<u16>> {
 impl Runtime {
     /// Remembers a line typed in direct mode, for ENVINPUT$.
     pub(crate) fn remember_input(&mut self, line: &str) {
-        self.history.push_front(line.encode_utf16().collect());
+        let line: Vec<u16> = line.encode_utf16().collect();
+        // Running the line just before again adds nothing (checked on
+        // hardware); UNVERIFIED: whether an older equal line moves up.
+        if self.history.front() != Some(&line) {
+            self.history.push_front(line);
+        }
         self.history.truncate(HISTORY);
     }
 

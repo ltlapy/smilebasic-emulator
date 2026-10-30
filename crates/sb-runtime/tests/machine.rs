@@ -362,3 +362,49 @@ fn vsync_after_falling_behind() {
     assert_eq!(frames(":WAIT 1"), "10");
     assert_eq!(frames(":WAIT 0"), "10");
 }
+
+/// The line typed after the last prompt, as Enter would run it.
+fn typed(m: &mut Machine, keys: &[u16]) -> String {
+    press(m, keys);
+    let console = &m.rt.text[4];
+    let (w, _) = console.size();
+    let (_, y) = console.cursor();
+    let codes: Vec<u16> = (0..w)
+        .map(|x| console.cell(x, y).code)
+        .take_while(|&c| c != 0)
+        .collect();
+    String::from_utf16(&codes).unwrap()
+}
+
+#[test]
+fn up_and_down_walk_the_history() {
+    use sb_runtime::runtime::keys::{BACKSPACE, DOWN, UP};
+    let mut m = machine();
+    enter(&mut m, "a=1");
+    enter(&mut m, "a=22");
+    m.type_text("b");
+    assert_eq!(typed(&mut m, &[UP]), "A=22");
+    assert_eq!(typed(&mut m, &[UP]), "A=1");
+    // The oldest line stays when there is nothing older.
+    assert_eq!(typed(&mut m, &[UP]), "A=1");
+    assert_eq!(typed(&mut m, &[DOWN]), "A=22");
+    // Down past the newest brings back what was being typed.
+    assert_eq!(typed(&mut m, &[DOWN]), "B");
+    assert_eq!(typed(&mut m, &[DOWN]), "B");
+    // A recalled line can be edited and run.
+    press(&mut m, &[UP, BACKSPACE]);
+    enter(&mut m, "3");
+    enter(&mut m, "print a");
+    assert!(rows(&m).iter().any(|r| r == "23"));
+}
+
+#[test]
+fn the_same_line_twice_is_one_history_entry() {
+    use sb_runtime::runtime::keys::UP;
+    let mut m = machine();
+    enter(&mut m, "a=1");
+    enter(&mut m, "a=2");
+    press(&mut m, &[UP]);
+    enter(&mut m, "");
+    assert_eq!(typed(&mut m, &[UP, UP]), "A=1");
+}

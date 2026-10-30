@@ -81,6 +81,7 @@ SmileBASIC 4's own files.
 ### Shortcuts
 | Key | Action |
 |---|---|
+| Up, Down | In direct mode, bring back the lines typed before; Down returns to what was being typed |
 | F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line |
 | F12 | Open the projects: switch, load a program into a slot, or run a project's MAIN.PRG |
 | Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
