@@ -352,6 +352,11 @@ fn input_and_linput() {
         run_with_input("LINPUT \"ADDR:\";L$:?LEN(L$)", &["1, MAIN ST"]).unwrap(),
         "ADDR:1, MAIN ST\n10\n"
     );
+    // Extra values are left out (checked on hardware).
+    assert_eq!(
+        run_with_input("INPUT A\n?A", &["1,2"]).unwrap(),
+        "? 1,2\n1\n"
+    );
     assert_eq!(
         run_with_input("VAR A$[2]:INPUT A$[1]:?A$[1]", &["HI"]).unwrap(),
         "? HI\nHI\n"

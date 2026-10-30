@@ -162,8 +162,9 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
         return Some(vec![Value::Str(new_str(line.to_vec()))]);
     }
     let fields: Vec<&[u16]> = line.split(|&c| c == u16::from(b',')).collect();
-    // UNVERIFIED: extra fields are rejected like missing ones.
-    if fields.len() != kinds.len() {
+    // Extra fields are left out (checked on hardware). UNVERIFIED:
+    // whether they are checked at all.
+    if fields.len() < kinds.len() {
         return None;
     }
     fields
