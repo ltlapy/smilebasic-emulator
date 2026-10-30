@@ -34,6 +34,8 @@ pub const RATE: u32 = 48_000;
 pub const FRAME_SAMPLES: usize = (RATE / 60) as usize;
 /// BGM tracks 0 to 15.
 pub const TRACKS: usize = 16;
+/// Frames a song started on an idle sound system waits.
+const WAKE_FRAMES: u32 = 2;
 /// The highest preset song number: 4.4.5 added 62 to 73, and 46 and up
 /// play on hardware.
 pub const PRESET_SONGS: i32 = 73;
@@ -148,6 +150,9 @@ pub struct Sound {
     out: Vec<f32>,
     scratch: [Vec<f32>; 2],
     mix: [Vec<f32>; 2],
+    /// Each track's MML variables as the program sees them: as they were
+    /// when the last frame's sound was made.
+    shown: [[i32; 8]; TRACKS],
 }
 
 impl Default for Sound {
@@ -168,6 +173,7 @@ impl Default for Sound {
             out: Vec::new(),
             scratch: Default::default(),
             mix: Default::default(),
+            shown: [[-1; 8]; TRACKS],
         }
     }
 }
@@ -239,13 +245,26 @@ impl Sound {
 
     /// BGMVAR: a track's MML variable, -1 while the track is not playing
     /// (checked on hardware: before any song, after BGMSTOP and after the
-    /// song ended).
-    // UNVERIFIED: hardware takes a frame or more before a value set by the
-    // song or BGMVAR shows, and before a stopped track's values go; here
-    // both are at once.
-    pub(crate) fn var(&mut self, n: usize, var: usize) -> i32 {
-        let t = self.track(n);
-        if t.playing { t.vars[var] } else { -1 }
+    /// song ended). It is read as the sound was at the start of the frame,
+    /// so values set by the song, by BGMVAR or by stopping show a frame
+    /// later, as on hardware.
+    pub(crate) fn var(&self, n: usize, var: usize) -> i32 {
+        self.shown[n][var]
+    }
+
+    /// Whether no BGM track plays.
+    pub(crate) fn idle(&self) -> bool {
+        self.tracks.iter().flatten().all(|t| !t.playing)
+    }
+
+    /// Holds a song just started on an idle sound system back for the
+    /// frames it takes to wake up: on hardware a song's first variable
+    /// showed four frames after the first BGMPLAY of a run, but within
+    /// two for later ones.
+    // UNVERIFIED: whether the wait comes from the system being idle or
+    // from the first BGMPLAY of a run, and that the sound waits with it.
+    pub(crate) fn wake(&mut self, n: usize) {
+        self.track(n).hold = WAKE_FRAMES;
     }
 
     /// BGMVAR setting a variable, which a track that is not playing
@@ -281,6 +300,12 @@ impl Sound {
         self.beeps.render(left, right);
         self.pcm.render(left, right);
         self.talk.render(left, right);
+        for (i, shown) in self.shown.iter_mut().enumerate() {
+            *shown = match &self.tracks[i] {
+                Some(t) if t.playing => t.vars,
+                _ => [-1; 8],
+            };
+        }
         // Nobody is taking them, as in tests: keep a second at most.
         let most = 2 * RATE as usize;
         if self.out.len() > most {

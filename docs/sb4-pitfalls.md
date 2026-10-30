@@ -201,9 +201,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 - A track's MML variables read -1 while it is not playing: before any
   song, after `BGMSTOP` and after the song ends. `BGMVAR` setting one on
-  a track that is not playing does nothing. Values the song or `BGMVAR`
-  set show a frame or more later, and the first `BGMPLAY` of a run takes
-  about four frames to start.
+  a track that is not playing does nothing. The program reads the
+  variables as they were when the frame started, so a value set by the
+  song, by `BGMVAR` or by stopping shows a frame later. A song started
+  while no other plays takes about two frames more to begin: its first
+  `$0=` showed four frames after `BGMPLAY`.
 - `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45). A user
   song number with nothing set is no error; it plays nothing, and
   `BGMCHK` says 0.

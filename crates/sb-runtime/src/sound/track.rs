@@ -94,6 +94,8 @@ pub(crate) struct Track {
     tempo: u32,
     song_key: i32,
     pub(crate) vars: [i32; 8],
+    /// Frames before the song starts, while the sound system wakes up.
+    pub(crate) hold: u32,
     /// Samples until the next tick.
     until_tick: f64,
     /// Plays: a song that has not ended, or a preset that is not there.
@@ -129,6 +131,7 @@ impl Track {
             tempo: 120,
             song_key: 0,
             vars: [0; 8],
+            hold: 0,
             until_tick: 0.0,
             playing: false,
             paused: false,
@@ -172,6 +175,7 @@ impl Track {
         self.song_key = 0;
         // Variables the song has not set read -1 (checked on hardware).
         self.vars = [-1; 8];
+        self.hold = 0;
         self.until_tick = 0.0;
         self.song = None;
         self.seq = None;
@@ -520,6 +524,10 @@ impl Track {
         right: &mut [f32],
         scratch: &mut [Vec<f32>; 2],
     ) {
+        if self.hold > 0 {
+            self.hold -= 1;
+            return;
+        }
         let n = left.len();
         let [l, r] = scratch;
         l.resize(n, 0.0);

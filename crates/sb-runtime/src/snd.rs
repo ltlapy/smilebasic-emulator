@@ -142,7 +142,11 @@ impl Runtime {
             (Command::Bgmplay, Want::Outs(0), 1) if matches!(args[0], Value::Str(_)) => {
                 let song = Rc::new(parse(&text(&args[0])?)?);
                 self.sound.songs.insert(255, song.clone());
+                let idle = self.sound.idle();
                 self.sound.play(0, Some(song), 127, 0);
+                if idle {
+                    self.sound.wake(0);
+                }
                 Ok(vec![])
             }
             (Command::Bgmplay, Want::Outs(0), 1..=4) => {
@@ -161,7 +165,11 @@ impl Runtime {
                 let song = match music {
                     0..=PRESET_SONGS => {
                         if let Some(seq) = self.sound.sequence(Kind::Song, music) {
+                            let idle = self.sound.idle();
                             self.sound.track(track).play_sequence(seq, volume, fade);
+                            if idle {
+                                self.sound.wake(track);
+                            }
                             return Ok(vec![]);
                         }
                         // UNVERIFIED: without SmileBASIC's own songs, presets
@@ -178,7 +186,11 @@ impl Runtime {
                     },
                     n => return Err(out_of_range("song", n)),
                 };
+                let idle = self.sound.idle();
                 self.sound.play(track, song, volume, fade);
+                if idle {
+                    self.sound.wake(track);
+                }
                 Ok(vec![])
             }
             (Command::Bgmset, Want::Outs(0), 2) => {

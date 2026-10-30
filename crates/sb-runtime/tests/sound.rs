@@ -35,9 +35,10 @@ fn frames(rt: &mut Runtime, n: usize) {
 #[test]
 fn songs_play_for_their_length() {
     let mut rt = runtime();
-    // A quarter note at 120 a minute lasts half a second: 30 frames.
+    // A quarter note at 120 a minute lasts half a second: 30 frames, after
+    // the 2 an idle sound system takes to start.
     run_on(&mut rt, "BGMPLAY \"T120C4\"").unwrap();
-    frames(&mut rt, 29);
+    frames(&mut rt, 31);
     assert_eq!(run_on(&mut rt, "BGMCHK OUT A:?A").unwrap(), "1");
     frames(&mut rt, 2);
     assert_eq!(run_on(&mut rt, "BGMCHK OUT A:?A").unwrap(), "0");
@@ -65,16 +66,18 @@ fn variables_and_data() {
     m.boot();
     m.set_slot(
         0,
-        "BGMSETD 128,\"@M\":BGMPLAY 1,128:BGMVAR 1,2,7:BGMVAR 1,2 OUT A:VSYNC:BGMVAR 1,2 OUT B:?A;B\n\
+        "BGMSETD 128,\"@M\":BGMPLAY 1,128:BGMVAR 1,2,7:BGMVAR 1,2 OUT A:VSYNC:BGMVAR 1,2 OUT B\n\
+         VSYNC 3:BGMVAR 1,2 OUT C:?A;B;C\n\
          @M:DATA \"$2=1 :0 C\",\"D\",0"
             .to_string(),
     );
     m.run_slot(0);
-    for _ in 0..5 {
+    for _ in 0..10 {
         m.frame();
     }
     assert!(!m.is_running());
-    // The song set $2 to 1 on its first tick.
+    // BGMVAR's value shows a frame later, and the song sets $2 to 1 once
+    // it starts, two frames after BGMPLAY.
     let console = &m.rt.text[4];
     let rows: Vec<String> = (0..console.size().1)
         .map(|y| {
@@ -85,7 +88,7 @@ fn variables_and_data() {
             String::from_utf16(&codes).unwrap()
         })
         .collect();
-    assert!(rows.iter().any(|r| r == "71"), "{rows:?}");
+    assert!(rows.iter().any(|r| r == "-171"), "{rows:?}");
 }
 
 #[test]
