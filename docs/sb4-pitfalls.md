@@ -42,9 +42,16 @@ follows all of it. Items still waiting for a check are marked
   for 400x240.
 - Only one-dimensional arrays may be empty: `DIM A[0]` is fine, but
   `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`.
-- `RND(0)` is 0; a negative maximum is `Out of range`.
+- `RND(0)` is 0 and takes no number from the series; a negative maximum
+  is `Out of range`.
+- Each random series is TinyMT32 with its standard parameters, seeded
+  with `RANDOMIZE`'s value as a 32-bit number (-1 is the same seed as
+  &HFFFFFFFF), whatever the series number. `RND(n)` is the next number
+  modulo n, and `RNDF()` takes two numbers and makes 53 bits of them as
+  TinyMT's `res53` does.
 - `FORMAT$` takes its conversions in lower case too and ignores values
-  left over. Too few values is `Wrong number of arguments`, a value of the
+  left over. `%F` rounds to the nearest, but a value exactly half way goes
+  toward zero: `%.0F` gives 2 for 2.5, 3 for 3.5 and -2 for -2.5. Too few values is `Wrong number of arguments`, a value of the
   wrong type `Type mismatch`, and a conversion it does not know (`%Q`)
   `Illegal format`.
 - `SORT` keeps equal keys in their order; `RSORT` gives `SORT`'s order
@@ -158,6 +165,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   rectangles that only touch do not either. `SPCOL` without a rectangle
   starts it at minus the home point.
 - `SPHITSP` with a reversed range searches it from the lower number.
+- `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set
+  already.
 - `CALL SPRITE` goes through the sprites in number order as it runs: a
   callback that clears a later sprite skips it, and one that sets a later
   sprite's `SPFUNC` gets it called. Afterwards `CALLIDX()` is 4096 (5
@@ -168,8 +177,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ## Graphics and layers
 
-- `FADE color,time` starting from a clear color (alpha 0) takes the new
-  color at once and only moves the alpha. `ACLS` clears the fade.
+- `FADE color,time` mixes the two colors channel by channel in single
+  precision and rounds down: `&HFF` to 0 over three frames passes `&HA9`
+  and `&H54`, not `&HAA` and `&H55`. A clear end (alpha 0) takes the
+  other end's color, so only the alpha moves; fading to `&H00FFFFFF`
+  from black ends at `&H00000000`. `ACLS` clears the fade.
 
 - `GCLIP` is shared by all pages.
 - `GCIRCLE` with equal start and end angles draws nothing; the sector
@@ -221,8 +233,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 - A command or function given a number of arguments none of its forms
   takes is `Wrong number of arguments` (`LOCATE` with five, `TOFS 0,30`).
-  `HSV` with one argument is `Wrong number of OUT arguments`: it is read
-  as the `OUT` form.
+  This is found when the call runs, not when the program compiles, so
+  the lines before it run. `HSV` with one argument is `Wrong number of
+  OUT arguments`: it is read as the `OUT` form.
+- `HSV` and `HSVF` as functions need all three of H, S and V: two are
+  `Wrong number of arguments`, and empty ones (`HSV(120,,)`) are `Type
+  mismatch`.
 - An unknown `#constant` is `Undefined constant`.
 
 - After an error, F4 puts the cursor at the start of the statement that
