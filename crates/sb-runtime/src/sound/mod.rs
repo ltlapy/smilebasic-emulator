@@ -34,8 +34,9 @@ pub const RATE: u32 = 48_000;
 pub const FRAME_SAMPLES: usize = (RATE / 60) as usize;
 /// BGM tracks 0 to 15.
 pub const TRACKS: usize = 16;
-/// The highest preset song number.
-pub const PRESET_SONGS: i32 = 45;
+/// The highest preset song number: 4.4.5 added 62 to 73, and 46 and up
+/// play on hardware.
+pub const PRESET_SONGS: i32 = 73;
 
 /// A gain moving to a target in a straight line, a sample at a time.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -100,13 +100,19 @@ fn checking_mml() {
         ErrorKind::IllegalMml
     );
     assert_eq!(
-        run_on(&mut rt, "BGMPLAY 46").unwrap_err().kind,
+        run_on(&mut rt, "BGMPLAY 74").unwrap_err().kind,
         ErrorKind::OutOfRange
     );
     assert_eq!(
         run_on(&mut rt, "BGMSET 127,\"C\"").unwrap_err().kind,
         ErrorKind::OutOfRange
     );
+}
+
+#[test]
+fn unset_user_songs_play_nothing() {
+    let mut rt = runtime();
+    assert_eq!(run_on(&mut rt, "BGMPLAY 128:?BGMCHK()").unwrap(), "0");
 }
 
 #[test]

@@ -169,9 +169,13 @@ impl Runtime {
                         // BGMCHK still wait.
                         None
                     }
-                    // UNVERIFIED: a song number with nothing set plays
-                    // silence too.
-                    128..=255 => self.sound.songs.get(&music).cloned(),
+                    // A song number with nothing set plays nothing, so
+                    // BGMCHK says 0 (checked on hardware).
+                    // UNVERIFIED: whether it stops what the track played.
+                    128..=255 => match self.sound.songs.get(&music) {
+                        Some(song) => Some(Rc::clone(song)),
+                        None => return Ok(vec![]),
+                    },
                     n => return Err(out_of_range("song", n)),
                 };
                 self.sound.play(track, song, volume, fade);
