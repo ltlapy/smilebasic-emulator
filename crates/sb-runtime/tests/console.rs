@@ -78,10 +78,7 @@ fn input_waits_for_enter_and_edits() {
     let mut rt = Runtime::new(400, 240, Font::blank());
     let src = "INPUT \"N\";A\n?A*2";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
-    let waiting = Status::Wait {
-        frames: 1,
-        vsync: false,
-    };
+    let waiting = Status::Retry;
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), waiting);
     type_keys(&mut rt, "12");
     rt.key_press(keys::BACKSPACE);

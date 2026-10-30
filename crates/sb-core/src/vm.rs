@@ -32,6 +32,10 @@ pub enum Status {
         frames: u32,
         vsync: bool,
     },
+    /// Waiting on the user or the host, such as INPUT or a confirmation:
+    /// call [`Vm::run`] again on the next frame. Unlike WAIT, it leaves
+    /// VSYNC's count alone (checked on hardware for INPUT).
+    Retry,
     Ended,
     /// The + button stops the program after the statement on `line`.
     Break {
@@ -40,10 +44,7 @@ pub enum Status {
 }
 
 /// Waits a frame and runs the same instruction again.
-const RETRY: Status = Status::Wait {
-    frames: 1,
-    vsync: false,
-};
+const RETRY: Status = Status::Retry;
 
 struct Frame {
     def: u32,

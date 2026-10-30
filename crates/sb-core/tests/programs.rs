@@ -19,7 +19,7 @@ fn run_with_input(source: &str, input: &[&str]) -> Result<String, sb_core::error
     for _ in 0..10_000 {
         match vm.run(&mut host, 100_000)? {
             Status::Ended => return Ok(host.output),
-            Status::Running | Status::Wait { .. } => {}
+            Status::Running | Status::Wait { .. } | Status::Retry => {}
             Status::Break { .. } => unreachable!("nothing presses the + button"),
         }
     }

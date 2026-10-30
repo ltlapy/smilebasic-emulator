@@ -335,3 +335,30 @@ fn ctrl_digits_switch_slots() {
     m.edit_slot(6);
     assert_eq!(m.editor.slot(), 1, "no such slot");
 }
+
+/// TEST14 on hardware: a VSYNC that is behind goes straight on once and
+/// counts from then; WAIT, WAIT 0 too, starts the count anew.
+#[test]
+fn vsync_after_falling_behind() {
+    let frames = |between: &str| {
+        let mut m = machine();
+        m.set_slot(
+            0,
+            format!(
+                "VSYNC:FOR I=1 TO 2000000:NEXT{between}\n\
+                 M=MAINCNT():FOR I=1 TO 10:VSYNC:NEXT:?MAINCNT()-M"
+            ),
+        );
+        m.run_slot(0);
+        for _ in 0..2000 {
+            m.frame();
+            if !m.is_running() {
+                break;
+            }
+        }
+        rows(&m).iter().rev().nth(1).cloned().unwrap_or_default()
+    };
+    assert_eq!(frames(""), "9");
+    assert_eq!(frames(":WAIT 1"), "10");
+    assert_eq!(frames(":WAIT 0"), "10");
+}

@@ -379,20 +379,24 @@ impl Machine {
             let left = FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32);
             match vm.run(&mut self.rt, left) {
                 Ok(Status::Running) => {}
-                // UNVERIFIED: WAIT, like INPUT, starts VSYNC's count anew.
+                Ok(Status::Retry) => self.wait = 1,
+                // WAIT, WAIT 0 too, starts VSYNC's count anew; INPUT does
+                // not (checked on hardware).
                 Ok(Status::Wait {
                     frames,
                     vsync: false,
                 }) => {
                     self.wait = frames;
                     self.vsync_at = self.frame + u64::from(frames);
+                    if frames == 0 && vm.executed() - start < u64::from(FRAME_BUDGET) {
+                        continue;
+                    }
                 }
-                // VSYNC counts from the frame the last one waited for, and
-                // goes straight on while it is behind, catching up one
-                // count at a time (checked on hardware: after a slow ACLS,
-                // VSYNC:VSYNC went by without a frame).
-                // UNVERIFIED: whether a long time behind is caught up in
-                // full.
+                // VSYNC n waits until n frames after the one the last VSYNC
+                // waited for. When that has gone by, it goes straight on
+                // and counts from now (checked on hardware: a second
+                // behind, ten VSYNCs took nine frames, and VSYNC 200 took
+                // 140).
                 Ok(Status::Wait {
                     frames,
                     vsync: true,
@@ -400,8 +404,11 @@ impl Machine {
                     self.vsync_at += u64::from(frames);
                     if self.vsync_at > self.frame {
                         self.wait = (self.vsync_at - self.frame) as u32;
-                    } else if vm.executed() - start < u64::from(FRAME_BUDGET) {
-                        continue;
+                    } else {
+                        self.vsync_at = self.frame;
+                        if vm.executed() - start < u64::from(FRAME_BUDGET) {
+                            continue;
+                        }
                     }
                 }
                 Ok(Status::Ended) => self.finish(None),
