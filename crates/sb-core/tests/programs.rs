@@ -695,6 +695,7 @@ fn initialized_arrays_keep_their_sizes() {
     assert_eq!(error("?ABS(1,2)").0, ErrorKind::WrongNumberOfArguments);
     // Only when the call runs: the lines before it still run.
     assert_eq!(run("?1\n?HSV(120,100)").unwrap_err().line, 2);
+    assert_eq!(error("?HSV(120)").0, ErrorKind::WrongNumberOfOutArguments);
     assert_eq!(
         error("IF 0 THEN ?ABS(1,2)\n?ABS(1,2)"),
         (ErrorKind::WrongNumberOfArguments, 2)

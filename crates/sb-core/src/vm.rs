@@ -1122,10 +1122,20 @@ impl Vm {
     ) -> Result<()> {
         let b = builtins::get(id);
         if !b.accepts(args.len()) {
-            return Err(Error::with_detail(
-                ErrorKind::WrongNumberOfArguments,
-                b.name,
-            ));
+            // Arguments that fit the other form make the results the
+            // wrong ones: HSV(120) is read as HSV's OUT form (checked on
+            // hardware).
+            let other = match b.form() {
+                Form::Function => Form::Command,
+                Form::Command => Form::Function,
+            };
+            let fits_other = builtins::lookup(b.name, other)
+                .is_some_and(|o| builtins::get(o).accepts(args.len()));
+            let kind = match fits_other {
+                true => ErrorKind::WrongNumberOfOutArguments,
+                false => ErrorKind::WrongNumberOfArguments,
+            };
+            return Err(Error::with_detail(kind, b.name));
         }
         let results = match (b.kind, want) {
             (Kind::Function(f), Want::Value) => vec![f(args)?],
