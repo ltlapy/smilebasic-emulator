@@ -1067,6 +1067,7 @@ impl Runtime {
         let look = Look {
             wrap: s.editor_wrap,
             tiles: s.editor_number_tiles,
+            map: s.editor_map,
             font: s.editor_font,
             colors: &s.editor_colors,
         };

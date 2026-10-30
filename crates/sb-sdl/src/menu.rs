@@ -37,6 +37,7 @@ pub enum Action {
     ToggleHalfWidth,
     ToggleWrap,
     ToggleNumberTiles,
+    ToggleMap,
     ToggleKeyboardButtons,
     ToggleKeepCursor,
     ToggleCompleteDirect,
@@ -72,6 +73,7 @@ impl Action {
             Action::ToggleHalfWidth => check(settings.half_width_on_save),
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
+            Action::ToggleMap => check(settings.editor_map),
             Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
             Action::ToggleKeepCursor => check(settings.keep_mouse_cursor),
             Action::ToggleCompleteDirect => check(settings.complete_direct),
@@ -126,6 +128,7 @@ impl Action {
             Action::ToggleHalfWidth => &mut settings.half_width_on_save,
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
+            Action::ToggleMap => &mut settings.editor_map,
             Action::ToggleKeyboardButtons => &mut settings.keyboard_buttons,
             Action::ToggleKeepCursor => &mut settings.keep_mouse_cursor,
             Action::ToggleCompleteDirect => &mut settings.complete_direct,
@@ -318,6 +321,7 @@ const MENUS: &[Menu] = &[
             item("Split display (Ctrl+/)", Action::Split),
             item("Wrap lines (Ctrl+W)", Action::ToggleWrap),
             item("Line number tiles", Action::ToggleNumberTiles),
+            item("Overview on the right", Action::ToggleMap),
             Item {
                 label: "Font",
                 entry: Entry::Sub(&[

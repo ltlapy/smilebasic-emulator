@@ -40,6 +40,8 @@ pub struct Settings {
     /// The editor draws line numbers on SmileBASIC 4's number tiles; off,
     /// in as many plain digits as the last line needs.
     pub editor_number_tiles: bool,
+    /// An overview of the program behind the editor's right side.
+    pub editor_map: bool,
     /// The editor draws the 8- or the 16-pixel font.
     pub editor_font: FontSize,
     pub editor_size: EditorSize,
@@ -96,6 +98,7 @@ impl Default for Settings {
             half_width_on_save: true,
             editor_wrap: false,
             editor_number_tiles: true,
+            editor_map: true,
             editor_font: FontSize::Large,
             editor_size: EditorSize::Medium,
             // Characters are shown full-width, so one is already wide.
@@ -218,6 +221,7 @@ impl Settings {
                 "half_width_on_save" => &mut s.half_width_on_save,
                 "editor_wrap" => &mut s.editor_wrap,
                 "editor_number_tiles" => &mut s.editor_number_tiles,
+                "editor_map" => &mut s.editor_map,
                 "file_hint_shown" => &mut s.file_hint_shown,
                 "keyboard_buttons" => &mut s.keyboard_buttons,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
@@ -304,6 +308,7 @@ impl Settings {
              half_width_on_save={}\n\
              editor_wrap={}\n\
              editor_number_tiles={}\n\
+             editor_map={}\n\
              editor_font={}\n\
              editor_size={}\n\
              editor_tab_step={}\n\
@@ -329,6 +334,7 @@ impl Settings {
             self.half_width_on_save,
             self.editor_wrap,
             self.editor_number_tiles,
+            self.editor_map,
             choice_name(&EDITOR_FONT, &self.editor_font),
             choice_name(&EDITOR_SIZE, &self.editor_size),
             self.editor_tab_step,

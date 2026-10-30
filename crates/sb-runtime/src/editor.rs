@@ -104,6 +104,8 @@ pub struct Look<'a> {
     pub wrap: bool,
     /// Line numbers are drawn on number tiles.
     pub tiles: bool,
+    /// An overview of the program is drawn behind the code's right side.
+    pub map: bool,
     pub font: FontSize,
     pub colors: &'a Palette,
 }
@@ -162,6 +164,34 @@ pub struct Place(View);
 
 /// A line and a column in it.
 type Pos = (usize, usize);
+
+/// The overview's pixels per line, of which the characters fill the
+/// first two, one pixel wide each.
+const MAP_PITCH: usize = 3;
+const MAP_BLOCK: usize = 2;
+/// The overview is at most this wide, and a fifth of the frame.
+const MAP_WIDTH: usize = 120;
+/// How strongly the overview shows over the background, out of 256.
+const MAP_ALPHA: u32 = 120;
+
+/// Where the overview was drawn: from pixel `x` rightwards and from
+/// pixel `top` down for `height`, starting with line `first`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Map {
+    x: usize,
+    top: usize,
+    height: usize,
+    first: usize,
+}
+
+/// `over` mixed into `under` by `alpha` out of 256.
+fn blend(under: u32, over: u32, alpha: u32) -> u32 {
+    let mix = |shift: u32| {
+        let (a, b) = ((under >> shift) & 0xFF, (over >> shift) & 0xFF);
+        ((a * (256 - alpha) + b * alpha) / 256) << shift
+    };
+    0xFF00_0000 | mix(16) | mix(8) | mix(0)
+}
 
 /// Steps kept for Ctrl+Z.
 const UNDO_STEPS: usize = 1000;
@@ -297,6 +327,10 @@ pub struct Editor {
     followed: Pos,
     /// Completion's list for the word being typed.
     completion: Option<Completion>,
+    /// The overview in the last frame, and whether the mouse is dragging
+    /// on it.
+    map: Option<Map>,
+    map_drag: bool,
     /// What completion offers; `None` when it is off.
     pub complete: Option<Options>,
     /// Where each slot was left, restored when it is opened again.
@@ -355,6 +389,8 @@ impl Editor {
             followed: (0, 0),
             completion: None,
             complete: None,
+            map: None,
+            map_drag: false,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
         };
@@ -1230,6 +1266,14 @@ impl Editor {
     /// cursor there and starts a selection, or with `extend` moves the
     /// selection's end there. Presses outside the code do nothing.
     pub fn mouse_down(&mut self, x: i32, y: i32, extend: bool) {
+        self.map_drag = self.map.is_some_and(|m| {
+            let (x, y) = (x as i64, y as i64);
+            x >= m.x as i64 && y >= m.top as i64 && y < (m.top + m.height) as i64
+        });
+        if self.map_drag {
+            self.map_scroll(y);
+            return;
+        }
         let row = self.grid.at(x, y).1;
         if row < 0 || row >= self.size().1 as i32 {
             return;
@@ -1251,6 +1295,10 @@ impl Editor {
 
     /// The mouse moved with its button held since [`Editor::mouse_down`].
     pub fn mouse_drag(&mut self, x: i32, y: i32) {
+        if self.map_drag {
+            self.map_scroll(y);
+            return;
+        }
         if let Some((line, col)) = self.hit(x, y) {
             self.go(line, col);
             self.want_col = self.view.col;
@@ -1289,6 +1337,73 @@ impl Editor {
     pub fn jump_to(&mut self, line: usize) {
         self.moved_to((line, 0));
         self.view.top = self.view.line.saturating_sub(2);
+    }
+
+    /// Scrolls to show the line under a pixel row of the overview in the
+    /// middle, leaving the cursor where it is.
+    fn map_scroll(&mut self, y: i32) {
+        let Some(m) = self.map else {
+            return;
+        };
+        let row = (y - m.top as i32).max(0) as usize / MAP_PITCH;
+        let line = (m.first + row).min(self.lines.len() - 1);
+        self.view.top = line.saturating_sub(self.size().1 / 2);
+        self.scrolled = true;
+    }
+
+    /// Draws the overview of the program behind the right of the code:
+    /// each character a pixel in its color, the lines shown lighter.
+    fn draw_map(&mut self, fb: &mut Framebuffer, colors: &Palette, rows: usize) {
+        let width = (fb.width() as usize / 5).min(MAP_WIDTH);
+        let top = self.grid.top;
+        let height = rows * self.grid.cell;
+        let x0 = fb.width() as usize - width;
+        let fit = height / MAP_PITCH;
+        let total = self.lines.len();
+        // A long program's overview moves with the view, in proportion.
+        let first = match total > fit {
+            true => self.view.top * (total - fit) / total.saturating_sub(rows).max(1),
+            false => 0,
+        }
+        .min(total.saturating_sub(fit));
+        self.map = Some(Map {
+            x: x0,
+            top,
+            height,
+            first,
+        });
+        let mut paint = |x: usize, y: usize, h: usize, color: u32, alpha: u32| {
+            for py in y..(y + h).min(top + height) {
+                let (px, py) = (x as u32, py as u32);
+                if let Some(under) = fb.get(px, py) {
+                    fb.set(px, py, blend(under, color, alpha));
+                }
+            }
+        };
+        // The lines on screen.
+        let shown =
+            self.view.top.saturating_sub(first)..(self.view.top + rows).saturating_sub(first);
+        for x in x0..x0 + width {
+            let y = top + shown.start.min(fit) * MAP_PITCH;
+            let h = (shown.end.min(fit) - shown.start.min(fit)) * MAP_PITCH;
+            paint(x, y, h, 0xFFFF_FFFF, 20);
+        }
+        for (i, text) in self.lines[first..].iter().take(fit).enumerate() {
+            let y = top + i * MAP_PITCH;
+            let (roles, kind) = highlight(text);
+            let back = colors.line_background(kind);
+            if back != colors[Part::Background] {
+                for x in x0..x0 + width {
+                    paint(x, y, MAP_PITCH, back, MAP_ALPHA);
+                }
+            }
+            for (col, &c) in text.iter().enumerate().take(width) {
+                if c != 0x20 {
+                    let color = colors[Part::from(roles[col])];
+                    paint(x0 + col, y, MAP_BLOCK, color, MAP_ALPHA);
+                }
+            }
+        }
     }
 
     /// Scrolls by lines without moving the cursor, as the mouse wheel does.
@@ -1337,6 +1452,7 @@ impl Editor {
         let Look {
             wrap,
             tiles,
+            map,
             colors,
             ..
         } = look;
@@ -1428,6 +1544,11 @@ impl Editor {
             }
             line += 1;
         }
+        self.map = None;
+        if map {
+            self.draw_map(fb, colors, rows);
+        }
+        let screen = &mut self.screen;
 
         // The ruler numbers the visible columns, every other one, on tiles
         // or in digits. Tiles other than the cursor's take the bar's color,
@@ -1634,6 +1755,7 @@ mod tests {
         Look {
             wrap: false,
             tiles,
+            map: false,
             font: FontSize::Small,
             colors: &SMILEBASIC,
         }
@@ -2148,6 +2270,32 @@ mod tests {
         e.key(keys::END);
         e.key(keys::ENTER);
         assert_eq!(e.text(), "SCORE=0\nSCO\n");
+    }
+
+    #[test]
+    fn overview_scrolls_the_view() {
+        let mut e = editor(&"PRINT 1\n".repeat(300));
+        let mut fb = Framebuffer::new(400, 240);
+        let with_map = Look {
+            map: true,
+            ..look(true)
+        };
+        e.draw(&mut fb, &Font::blank(), "GAME", with_map, true);
+        let m = e.map.unwrap();
+        assert_eq!((m.x, m.top, m.first), (320, 8, 0));
+        // The P of line 1 in the overview, over the background.
+        let p = fb.get(320, 8).unwrap();
+        assert_ne!(p, SMILEBASIC[Part::CursorLine]);
+        // A press there scrolls; the cursor stays.
+        e.mouse_down(330, (8 + 200 * MAP_PITCH / 3) as i32, false);
+        e.mouse_drag(330, (8 + 60 * MAP_PITCH) as i32);
+        e.draw(&mut fb, &Font::blank(), "GAME", with_map, true);
+        assert_eq!((e.cursor(), e.view.top), ((1, 0), 60 - 27 / 2));
+        assert!(e.map.unwrap().first > 0, "the overview moved along");
+        // Off, nothing is drawn and presses edit again.
+        e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
+        e.mouse_down(330, 8 + 4, false);
+        assert_eq!(e.cursor(), (48, 7), "the top line shown, at its end");
     }
 
     #[test]
