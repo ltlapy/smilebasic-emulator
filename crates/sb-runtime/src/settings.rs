@@ -66,10 +66,15 @@ pub struct Settings {
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
+    /// The programs F9 to F11 start, which SYSPARAM "TOOL1" to "TOOL3"
+    /// reads, as SmileBASIC 4's settings set them.
+    pub tools: [String; 3],
 }
 
 /// F1 to F5 as SmileBASIC 4 starts (checked on hardware).
 pub const FUNCTION_KEYS: [&str; 5] = ["FILES", "LOAD\"", "SAVE\"", "LIST ERR", "RUN"];
+/// F9 to F11's programs as SmileBASIC 4 starts (checked on hardware).
+pub const TOOLS: [&str; 3] = ["#TOOL/SBSMILE.PRG", "#TOOL/GAHAKU.PRG", ""];
 
 impl Default for Settings {
     fn default() -> Self {
@@ -93,12 +98,15 @@ impl Default for Settings {
             language: Language::English,
             keep_mouse_cursor: false,
             function_keys: FUNCTION_KEYS.map(String::from),
+            tools: TOOLS.map(String::from),
         }
     }
 }
 
 /// Settings lines for F1 to F5 start with this and the key's number.
 const FUNCTION_KEY: &str = "key";
+/// Settings lines for F9 to F11's programs start with this and 1 to 3.
+const TOOL: &str = "tool";
 
 const SCREEN_FILTER: [(Option<Filter>, &str); 4] = [
     (None, "xscreen"),
@@ -173,6 +181,12 @@ impl Settings {
                 && let Ok(n @ 1..=5) = n.parse::<usize>()
             {
                 s.function_keys[n - 1] = value.to_string();
+                continue;
+            }
+            if let Some(n) = key.strip_prefix(TOOL)
+                && let Ok(n @ 1..=3) = n.parse::<usize>()
+            {
+                s.tools[n - 1] = value.to_string();
                 continue;
             }
             let flag = match key {
@@ -262,7 +276,7 @@ impl Settings {
              sound_font={}\n\
              language={}\n\
              keep_mouse_cursor={}\n\
-             {}",
+             {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
             self.half_width_on_save,
@@ -280,6 +294,9 @@ impl Settings {
             self.keep_mouse_cursor,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
+                .collect::<String>(),
+            (self.tools.iter().enumerate())
+                .map(|(i, t)| format!("{TOOL}{}={t}\n", i + 1))
                 .collect::<String>(),
         )
     }
@@ -309,6 +326,7 @@ mod tests {
             language: Language::Japanese,
             keep_mouse_cursor: true,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
+            tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);

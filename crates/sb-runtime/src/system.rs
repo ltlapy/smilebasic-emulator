@@ -85,10 +85,6 @@ pub struct System {
     pub mouse_cursor: bool,
 }
 
-/// SYSPARAM "TOOL1" to "TOOL3": the programs F9 to F11 start, as
-/// SmileBASIC 4's settings start.
-const TOOLS: [&str; 3] = ["#TOOL/SBSMILE.PRG", "#TOOL/GAHAKU.PRG", ""];
-
 /// SYSPARAM "KEYREPEAT": frames before a held key repeats, and between
 /// repeats, as SmileBASIC 4's settings start.
 const KEY_REPEAT: [i32; 2] = [20, 3];
@@ -254,7 +250,7 @@ impl Runtime {
                     "TVMODE" => vec![Value::Int(1)],
                     "TOOL1" | "TOOL2" | "TOOL3" => {
                         let n = usize::from(name.as_bytes()[4] - b'1');
-                        vec![string(TOOLS[n].to_string())]
+                        vec![string(self.settings.tools[n].clone())]
                     }
                     _ => {
                         return Err(Error::with_detail(
