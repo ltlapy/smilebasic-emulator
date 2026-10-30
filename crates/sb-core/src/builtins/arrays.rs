@@ -163,9 +163,8 @@ fn compare(a: &Value, b: &Value) -> Ordering {
 }
 
 /// SORT and RSORT: `[start, count,] key [, arrays...]`. The other arrays
-/// are put in the key's new order.
-// UNVERIFIED: equal keys keep their order, and the key may be a string
-// array.
+/// are put in the key's new order. SORT keeps equal keys in order; RSORT
+/// is SORT turned round, so it reverses them (checked on hardware).
 fn sort(args: &[Value], descending: bool) -> Result<Vec<Value>> {
     let (start, n, arrays) = if matches!(args[0], Value::Array(_)) {
         (None, None, args)
@@ -188,10 +187,10 @@ fn sort(args: &[Value], descending: bool) -> Result<Vec<Value>> {
         (start..start + n).map(|i| key.get(i)).collect()
     };
     let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&i, &j| {
-        let o = compare(&keys[i], &keys[j]);
-        if descending { o.reverse() } else { o }
-    });
+    order.sort_by(|&i, &j| compare(&keys[i], &keys[j]));
+    if descending {
+        order.reverse();
+    }
     for a in &arrays {
         let mut a = a.borrow_mut();
         let values: Vec<Value> = order.iter().map(|&i| a.get(start + i)).collect();
@@ -303,13 +302,16 @@ pub(super) fn find(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     Ok(indices.into_iter().map(Value::Int).collect())
 }
 
-/// `RESIZE array, n1 [, n2...]`: only the first size can change.
-// UNVERIFIED: the other sizes must be given as they are.
+/// `RESIZE array, n1 [, n2...]`: only the first size can change, and the
+/// others are given as they are (checked on hardware).
 pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let a = array(&args[0])?;
     let mut a = a.borrow_mut();
     let sizes: Vec<usize> = args[1..].iter().map(count).collect::<Result<_>>()?;
-    if sizes.len() != a.dims.len() || sizes[1..] != a.dims[1..] {
+    if sizes.len() != a.dims.len() {
+        return Err(ErrorKind::WrongNumberOfArguments.into());
+    }
+    if sizes[1..] != a.dims[1..] {
         return Err(ErrorKind::IllegalFunctionCall.into());
     }
     let len = sizes.iter().product();
@@ -414,7 +416,10 @@ pub(super) fn ringcopy(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     let samples: Vec<Vec<Value>> = {
         let source = source.borrow();
         let (ch, len) = channels(&source)?;
-        let (offset, n) = span(len, offset, n)?;
+        // Reading past the source's end is an Illegal function call on
+        // hardware, not Out of range as for COPY.
+        let (offset, n) =
+            span(len, offset, n).map_err(|_| Error::from(ErrorKind::IllegalFunctionCall))?;
         (0..ch)
             .map(|c| {
                 (offset..offset + n)

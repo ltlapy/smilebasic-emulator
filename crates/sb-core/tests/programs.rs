@@ -612,6 +612,11 @@ fn sorting() {
         output("DIM K[]=[3,1,2,5]:RSORT 1,2,K:?K[0];K[1];K[2];K[3]"),
         "3215\n"
     );
+    // Equal keys keep their order in SORT and swap it in RSORT, as on
+    // hardware.
+    let ties = "DIM K[]=[3,1,3,2,1],V[]=[0,1,2,3,4]:{}K,V:FOR I=0 TO 4:?V[I];:NEXT";
+    assert_eq!(output(&ties.replace("{}", "SORT ")), "14302");
+    assert_eq!(output(&ties.replace("{}", "RSORT ")), "20341");
 }
 
 #[test]
@@ -671,6 +676,10 @@ fn resizing() {
         error("DIM A[2,3]:RESIZE A,3,4").0,
         ErrorKind::IllegalFunctionCall
     );
+    assert_eq!(
+        error("DIM A[2,3]:RESIZE A,3").0,
+        ErrorKind::WrongNumberOfArguments
+    );
 }
 
 #[test]
@@ -696,5 +705,9 @@ fn ring_copies() {
     assert_eq!(
         output("DIM D[2,3]:DIM S[]=[5,6]:RINGCOPY D,2,S:?D[0,2];D[0,0];D[1,2];D[1,0]"),
         "5656\n"
+    );
+    assert_eq!(
+        error("DIM D[4],S[6]:RINGCOPY D,1,S,4,4").0,
+        ErrorKind::IllegalFunctionCall
     );
 }
