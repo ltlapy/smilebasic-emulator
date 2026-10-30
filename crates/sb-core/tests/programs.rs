@@ -559,9 +559,17 @@ fn format_strings() {
     );
     assert_eq!(output(r#"?FORMAT$("%05D|%X",-42,-1)"#), "-0042|FFFFFFFF\n");
     assert_eq!(error(r#"?FORMAT$("%D","A")"#).0, ErrorKind::TypeMismatch);
+    // These errors, lower case and the value left over are as TEST12
+    // showed on hardware.
+    assert_eq!(error(r#"?FORMAT$("%S",5)"#).0, ErrorKind::TypeMismatch);
     assert_eq!(
         error(r#"?FORMAT$("%D %D",1)"#).0,
-        ErrorKind::IllegalFunctionCall
+        ErrorKind::WrongNumberOfArguments
+    );
+    assert_eq!(error(r#"?FORMAT$("%Q",1)"#).0, ErrorKind::IllegalFormat);
+    assert_eq!(
+        output(r#"?FORMAT$("%d|%x|%s|%f",10,255,"Q",1.5);FORMAT$("%D",1,2)"#),
+        "10|FF|Q|1.5000001\n"
     );
 }
 

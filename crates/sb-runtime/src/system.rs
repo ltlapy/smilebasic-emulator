@@ -133,8 +133,10 @@ impl Runtime {
                     [id, max] => (series_id(id)?, int(max)?),
                     _ => unreachable!("matched above"),
                 };
-                // UNVERIFIED: a maximum of 0 or less is Out of range.
-                if max <= 0 {
+                // RND(0) is 0 and a negative maximum Out of range, as on
+                // hardware.
+                // UNVERIFIED: RND(0) still takes a number from the series.
+                if max < 0 {
                     return Err(Error::with_detail(
                         ErrorKind::OutOfRange,
                         format!("maximum {max}"),

@@ -432,9 +432,10 @@ fn radix_str(args: &[Value], radix: u32, max_digits: usize) -> Result<Value> {
 }
 
 /// FORMAT$: `%S`, `%D`, `%X`, `%F`, `%B` and `%%`, each with C's flags
-/// (`-`, `+`, space, `0`), width and precision.
-// UNVERIFIED: that it follows C's printf, letters in either case are
-// conversions, and arguments left over are ignored.
+/// (`-`, `+`, space, `0`), width and precision. Letters in either case
+/// are conversions and values left over are ignored (checked on
+/// hardware).
+// UNVERIFIED: how `%.0F` rounds; hardware gave 2 for 2.5 and 3 for 3.5.
 fn format(args: &[Value]) -> Result<Value> {
     let fmt = text(&args[0])?;
     let mut values = args[1..].iter();
@@ -481,9 +482,9 @@ fn format(args: &[Value]) -> Result<Value> {
             out.push(u16::from(b'%'));
             continue;
         }
-        let value = values
-            .next()
-            .ok_or_else(|| Error::with_detail(ErrorKind::IllegalFunctionCall, "too few values"))?;
+        let value = values.next().ok_or_else(|| {
+            Error::with_detail(ErrorKind::WrongNumberOfArguments, "too few values")
+        })?;
         let (sign, body): (&str, String) = match conversion {
             Some('S') => {
                 let s = String::from_utf16_lossy(&text(value)?);
@@ -515,10 +516,7 @@ fn format(args: &[Value]) -> Result<Value> {
                 (sign, body)
             }
             _ => {
-                return Err(Error::with_detail(
-                    ErrorKind::IllegalFunctionCall,
-                    "bad format",
-                ));
+                return Err(ErrorKind::IllegalFormat.into());
             }
         };
         let pad = width.saturating_sub(sign.len() + body.chars().count());

@@ -45,6 +45,8 @@ pub enum ErrorKind {
     /// SYSPARAM asked for another number of values than its item has, or
     /// setting one that can only be read.
     WrongNumberOfOutArguments,
+    /// FORMAT$ with a conversion it does not know.
+    IllegalFormat,
 }
 
 impl ErrorKind {
@@ -81,6 +83,7 @@ impl ErrorKind {
             ErrorKind::LoadFailed => "Load failed",
             ErrorKind::CantUseFromDirectMode => "Can't use from direct mode",
             ErrorKind::IllegalSystemArgumentName => "Illegal system argument name",
+            ErrorKind::IllegalFormat => "Illegal format",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }

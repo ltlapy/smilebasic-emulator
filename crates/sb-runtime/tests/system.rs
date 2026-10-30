@@ -30,7 +30,8 @@ fn random_numbers() {
         "1"
     );
     assert_eq!(run("?TYPEOF(RND(5));TYPEOF(RNDF())").unwrap(), "12");
-    assert_eq!(run("?RND(0)").unwrap_err().kind, ErrorKind::OutOfRange);
+    assert_eq!(run("?RND(0)").unwrap(), "0");
+    assert_eq!(run("?RND(-1)").unwrap_err().kind, ErrorKind::OutOfRange);
     assert_eq!(run("?RND(8,5)").unwrap_err().kind, ErrorKind::OutOfRange);
 }
 
