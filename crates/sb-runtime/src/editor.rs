@@ -79,7 +79,7 @@ const MENU_SHARE: u32 = 30;
 
 /// The pixels at the top of a frame `height` pixels high that the menu bar
 /// covers once the frame fills the display's height.
-fn menu_height(height: u32) -> u32 {
+pub fn menu_height(height: u32) -> u32 {
     height.div_ceil(MENU_SHARE)
 }
 
@@ -106,6 +106,9 @@ pub struct Look<'a> {
     pub tiles: bool,
     /// An overview of the program is drawn behind the code's right side.
     pub map: bool,
+    /// Pixels left at the top for the menu bar; `None` for its share of
+    /// the frame.
+    pub top: Option<u32>,
     pub font: FontSize,
     pub colors: &'a Palette,
 }
@@ -234,20 +237,10 @@ pub enum Mode {
     GoTo,
     Find,
     Replace,
-    /// Typing the name to save the slot as (Ctrl+S), or to load (Ctrl+L).
-    Save,
-    Load,
 }
 
-/// A file command typed in the status line, for the machine to carry out.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FileRequest {
-    Save(String),
-    Load(String),
-}
-
-/// A character as searches compare it: ASCII letters in either case.
-// UNVERIFIED: SmileBASIC 4's search ignores the case of letters.
+/// A character as searches compare it: ASCII letters in either case, as
+/// SmileBASIC 4's search ignores case (checked on hardware).
 fn fold(c: u16) -> u16 {
     match c {
         0x61..=0x7A => c - 0x20,
@@ -317,9 +310,6 @@ pub struct Editor {
     search_from: Pos,
     /// Shown in the status line until the next key, as "Not found".
     note: Option<String>,
-    /// The file name typed after Ctrl+S or Ctrl+L, and what it was for.
-    file_name: Vec<u16>,
-    request: Option<FileRequest>,
     /// The mouse wheel scrolled away from the cursor, which stays where it
     /// is until it moves.
     scrolled: bool,
@@ -383,8 +373,6 @@ impl Editor {
             with: Vec::new(),
             search_from: (0, 0),
             note: None,
-            file_name: Vec::new(),
-            request: None,
             scrolled: false,
             followed: (0, 0),
             completion: None,
@@ -394,15 +382,15 @@ impl Editor {
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
         };
-        editor.fit(screen_w, screen_h, FontSize::Small);
+        editor.fit(screen_w, screen_h, FontSize::Small, None);
         editor
     }
 
     /// Lays the character cells out on a frame of `width` x `height`
     /// pixels, below the menu bar.
-    fn fit(&mut self, width: u32, height: u32, font: FontSize) {
+    fn fit(&mut self, width: u32, height: u32, font: FontSize, top: Option<u32>) {
         let cell = font as u32;
-        let top = menu_height(height);
+        let top = top.unwrap_or_else(|| menu_height(height));
         let size = (width / cell, (height - top) / cell);
         if self.grid.cell != cell as usize || self.screen.size() != size {
             self.screen.set_font(cell, cell, size.0, size.1);
@@ -777,9 +765,9 @@ impl Editor {
         });
     }
 
-    /// Turns the chosen lines into comments (Ctrl+K).
-    // UNVERIFIED: the quote goes at the start of the line, not after the
-    // indentation.
+    /// Turns the chosen lines into comments (Ctrl+K): a quote at column
+    /// 0, also before lines that are comments already (checked on
+    /// hardware).
     pub fn comment(&mut self) {
         self.change_lines(|_| Some((0, 0, vec![u16::from(b'\'')])));
     }
@@ -793,14 +781,15 @@ impl Editor {
         });
     }
 
-    /// Puts an empty line above the cursor's and moves to it (Ctrl+Enter).
-    // UNVERIFIED: the new line goes above, as in SmileBASIC 3.
+    /// Puts an empty line below the cursor's and moves to it (Ctrl+Enter,
+    /// checked on hardware).
     pub fn insert_line(&mut self) {
         let line = self.view.line;
+        let end = self.lines[line].len();
         self.anchor = None;
         self.begin(Merge::Alone);
-        self.replace((line, 0), (line, 0), vec![Vec::new(), Vec::new()]);
-        self.moved_to((line, 0));
+        self.replace((line, end), (line, end), vec![Vec::new(), Vec::new()]);
+        self.moved_to((line + 1, 0));
     }
 
     /// Removes the cursor's line, or the lines with selected text
@@ -850,19 +839,6 @@ impl Editor {
             self.goto.clear();
             Mode::GoTo
         };
-    }
-
-    /// Starts typing a file name to save the slot as or to load into it,
-    /// beginning with its own name.
-    pub fn start_file_prompt(&mut self, save: bool, name: &str) {
-        self.note = None;
-        self.file_name = name.encode_utf16().collect();
-        self.mode = if save { Mode::Save } else { Mode::Load };
-    }
-
-    /// The file command typed in the status line, once.
-    pub fn take_request(&mut self) -> Option<FileRequest> {
-        self.request.take()
     }
 
     /// The text was saved as it is.
@@ -1011,21 +987,6 @@ impl Editor {
             }
             (Mode::GoTo, 0x30..=0x39) if self.goto.len() < 7 => self.goto.push(code),
             (Mode::GoTo, _) => {}
-            (Mode::Save | Mode::Load, keys::ENTER) => {
-                let name = String::from_utf16_lossy(&self.file_name).trim().to_string();
-                if !name.is_empty() {
-                    self.request = Some(match self.mode {
-                        Mode::Save => FileRequest::Save(name),
-                        _ => FileRequest::Load(name),
-                    });
-                }
-                self.mode = Mode::Edit;
-            }
-            (Mode::Save | Mode::Load, keys::BACKSPACE) => {
-                self.file_name.pop();
-            }
-            (Mode::Save | Mode::Load, c) if printable => self.file_name.push(c),
-            (Mode::Save | Mode::Load, _) => {}
             (_, keys::DOWN) | (Mode::Find, keys::ENTER) => {
                 self.find_next(true);
             }
@@ -1457,7 +1418,7 @@ impl Editor {
             ..
         } = look;
         self.number_tiles = tiles;
-        self.fit(fb.width(), fb.height(), look.font);
+        self.fit(fb.width(), fb.height(), look.font, look.top);
         self.scroll(wrap);
         let (cols, rows) = self.size();
         let gutter = self.gutter();
@@ -1665,8 +1626,6 @@ impl Editor {
             Mode::Edit => (None, None),
             Mode::GoTo => (field("Go to line: ", &self.goto), None),
             Mode::Find => (field("Find: ", &self.find), None),
-            Mode::Save => (field("Save as: ", &self.file_name), None),
-            Mode::Load => (field("Load: ", &self.file_name), None),
             Mode::Replace => (
                 field("Replace with: ", &self.with),
                 Some(format!("Find: {}", String::from_utf16_lossy(&self.find))),
@@ -1756,6 +1715,7 @@ mod tests {
             wrap: false,
             tiles,
             map: false,
+            top: None,
             font: FontSize::Small,
             colors: &SMILEBASIC,
         }
@@ -2094,7 +2054,8 @@ mod tests {
         let mut e = editor("A\nB\nC");
         e.key(keys::DOWN);
         e.insert_line();
-        assert_eq!((e.text().as_str(), e.cursor()), ("A\n\nB\nC", (2, 0)));
+        assert_eq!((e.text().as_str(), e.cursor()), ("A\nB\n\nC", (3, 0)));
+        e.key(keys::UP);
         e.delete_line();
         e.delete_line();
         assert_eq!((e.text().as_str(), e.cursor()), ("A\nC", (2, 0)));
@@ -2127,24 +2088,6 @@ mod tests {
         e.go_to_line();
         assert_eq!((e.cursor(), e.mode()), ((4, 0), Mode::Edit));
         assert_eq!(e.text(), "A\nB\nC\nD");
-    }
-
-    #[test]
-    fn file_names_in_the_status_line() {
-        let mut e = editor("A");
-        e.start_file_prompt(true, "GAME");
-        e.key(keys::BACKSPACE);
-        typing(&mut e, "X");
-        assert_eq!(e.take_request(), None);
-        e.key(keys::ENTER);
-        assert_eq!(e.take_request(), Some(FileRequest::Save("GAMX".into())));
-        assert_eq!((e.take_request(), e.mode()), (None, Mode::Edit));
-        e.start_file_prompt(false, "");
-        e.key(keys::ENTER);
-        assert_eq!(e.take_request(), None, "no name, no load");
-        e.start_file_prompt(false, "B");
-        e.key(keys::ESCAPE);
-        assert_eq!((e.take_request(), e.text().as_str()), (None, "A"));
     }
 
     #[test]

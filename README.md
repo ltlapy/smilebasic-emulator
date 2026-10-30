@@ -88,8 +88,8 @@ SmileBASIC 4's own files.
 | F12 | Open the projects: switch, load a program into a slot, or run a project's MAIN.PRG |
 | Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
 | Ctrl+0 | Leave the editor for direct mode |
-| Ctrl+S | Save the edited slot under its name, or type a name first |
-| Ctrl+L | Load a file into the edited slot: type its name |
+| Ctrl+S | Save the edited slot: type a name, its own to start with |
+| Ctrl+L | Load a program from a project's files into the edited slot |
 | Pause/Break | Stop the program |
 | F5 | Run PRG0, or stop the running program; hold to stop it past `ON BREAK GOTO` |
 | F8 | Show the menu bar and pause the program; press again to resume |
@@ -100,7 +100,7 @@ SmileBASIC 4's own files.
 | Shift+cursor keys, mouse drag | Select text in the editor |
 | Ctrl+A, Ctrl+X, Ctrl+C, Ctrl+V | Select all, cut, copy and paste in the editor and the line typed in direct mode |
 | Ctrl+Z, Ctrl+Shift+Z (or Ctrl+Y) | Undo and redo in the editor |
-| Ctrl+Enter, Ctrl+Backspace | Insert an empty line, or delete the line (also in direct mode) |
+| Ctrl+Enter, Ctrl+Backspace | Insert an empty line below and go there, or delete the line (also in direct mode) |
 | Ctrl+Delete | Delete the rest of the line (also in direct mode) |
 | Tab, Shift+Tab | Indent the selected lines, or unindent them |
 | Ctrl+K, Ctrl+Shift+K | Comment out the selected lines, or uncomment them |
@@ -109,7 +109,7 @@ SmileBASIC 4's own files.
 | Ctrl+H | Replace: Enter replaces the selected match, Ctrl+Enter replaces them all, Tab goes back to finding |
 | Ctrl+J | List the labels and DEFs; type to narrow the list, Enter to go there, Esc to go back |
 | Esc | Close the help or the list beside the editor |
-| Ctrl+/, Ctrl+Tab | Split the editor in two sides, or join them; move between the sides |
+| Ctrl+/, Ctrl+Tab | Split the editor side by side, then one above the other, then join it again; move between the sides |
 | Tab, Enter, Up, Down, Esc | While the list of words shows, take the chosen word, choose another or close the list (Options > Autocomplete) |
 | Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
 

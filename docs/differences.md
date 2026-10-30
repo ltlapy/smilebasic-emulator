@@ -106,5 +106,5 @@ Without them:
 - The list of words to complete also shows in direct mode, and can
   offer the program's own names. When it shows and what it offers are
   set in Options > Autocomplete.
-- Ctrl+S and Ctrl+L take the file name in the editor's status line.
-  Ctrl+S saves a slot that already has a name without asking.
+- Ctrl+S takes the file name typed on the computer's keyboard rather
+  than SmileBASIC 4's on-screen one.

@@ -441,6 +441,18 @@ impl Storage {
         Ok(())
     }
 
+    /// A file's size, and when it last changed in local time as
+    /// `YYYY/MM/DD hh:mm:ss`, as SmileBASIC 4's file list shows them.
+    pub fn file_info(&self, project: &str, kind: FileKind, name: &str) -> Option<(u64, String)> {
+        let path = self
+            .dir(project)
+            .ok()?
+            .join(format!("{}{name}", kind.prefix()));
+        let meta = std::fs::metadata(path).ok()?;
+        let changed = chrono::DateTime::<chrono::Local>::from(meta.modified().ok()?);
+        Some((meta.len(), changed.format("%Y/%m/%d %H:%M:%S").to_string()))
+    }
+
     /// Files of a project (the current one if `None`), optionally of one
     /// type, sorted by type and name.
     pub fn list(

@@ -447,6 +447,15 @@ fn split_editor_sides() {
     m.toggle_editor();
     assert!(m.is_split());
     assert_eq!(m.editor().slot(), 1);
+    // Side by side, then one above the other, then one side.
+    m.toggle_split();
+    assert!(m.is_split_rows());
+    let h = m.render().height() as i32;
+    // A press on the upper side gives it the keys.
+    m.editor_mouse_down(100, h / 4, false);
+    assert_eq!(m.active_side(), 0);
+    m.editor_mouse_down(100, h - h / 4, false);
+    assert_eq!(m.active_side(), 1);
     m.toggle_split();
     assert!(!m.is_split());
 }
@@ -473,8 +482,6 @@ fn direct_mode_completes_words() {
 
 #[test]
 fn simple_save_and_load() {
-    use sb_runtime::editor::FileRequest;
-    use sb_runtime::runtime::keys;
     use sb_runtime::storage::Storage;
     let dir = std::env::temp_dir().join(format!("sb-simple-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -484,16 +491,8 @@ fn simple_save_and_load() {
     m.edit_slot(1);
     m.type_text("'");
     m.frame();
-    // No name yet: typed in the status line.
-    m.prompt_file(true);
-    m.type_text("game");
-    m.rt.key_press(keys::ENTER);
-    m.frame();
-    let Some(FileRequest::Save(name)) = m.take_file_request() else {
-        panic!("no request");
-    };
-    assert_eq!(name, "GAME");
-    m.save_edited(&name).unwrap();
+    let name = "GAME";
+    m.save_edited(name).unwrap();
     assert!(m.unsaved_slots().is_empty());
     assert!(m.rt.txt_exists("GAME"));
     // Loading drops the edits.

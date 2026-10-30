@@ -5,6 +5,7 @@ mod colors;
 mod complete_window;
 mod controls;
 mod dialog;
+mod file_dialogs;
 mod help;
 mod index;
 mod keyhint;
@@ -23,6 +24,7 @@ use colors::ColorWindow;
 use complete_window::CompleteWindow;
 use controls::Controls;
 use dialog::{Answer, Dialog};
+use file_dialogs::{FilePicker, SaveDialog};
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
@@ -30,7 +32,7 @@ use menu::{Action, Click, MenuBar};
 use program_dialog::ProgramView;
 use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
-use sb_runtime::editor::{FileRequest, Mode, Place, is_movement};
+use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
 use sb_runtime::help::Lookup;
 use sb_runtime::input::State;
@@ -207,6 +209,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut manager: Option<ProjectManager> = None;
     let mut color_window: Option<ColorWindow> = None;
     let mut complete_window: Option<CompleteWindow> = None;
+    // Ctrl+S's and Ctrl+L's windows.
+    let mut file_dialog: Option<FileDialog> = None;
     // A panel beside the editor, and whether it takes the keys.
     let mut side: Option<Side> = None;
     let mut side_focus = false;
@@ -455,6 +459,83 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                                 }
                             }),
                         );
+                    }
+                }
+                continue;
+            }
+            if let Some(open) = &mut file_dialog {
+                let storage = &machine.rt.storage;
+                let outcome = match (open, event) {
+                    (_, Event::Quit { .. }) => {
+                        quit = true;
+                        file_dialogs::Outcome::Stay
+                    }
+                    (FileDialog::Load(picker), Event::MouseMotion { x, y, .. }) => {
+                        picker.mouse_move(to_display(x, y));
+                        file_dialogs::Outcome::Stay
+                    }
+                    (FileDialog::Load(picker), Event::MouseWheel { y, .. }) => {
+                        picker.wheel(-y.round() as i32);
+                        file_dialogs::Outcome::Stay
+                    }
+                    (
+                        open,
+                        Event::MouseButtonDown {
+                            mouse_btn: MouseButton::Left,
+                            x,
+                            y,
+                            ..
+                        },
+                    ) => match open {
+                        FileDialog::Save(d) => d.click(to_display(x, y)),
+                        FileDialog::Load(p) => p.click(to_display(x, y), storage),
+                    },
+                    (
+                        open,
+                        Event::KeyDown {
+                            keycode: Some(key), ..
+                        },
+                    ) => match open {
+                        FileDialog::Save(d) => d.key(key),
+                        FileDialog::Load(p) => p.key(key, storage),
+                    },
+                    (FileDialog::Save(d), Event::TextInput { text, .. }) => {
+                        d.text(&text);
+                        file_dialogs::Outcome::Stay
+                    }
+                    _ => file_dialogs::Outcome::Stay,
+                };
+                let slot = machine.edited_slot();
+                let size = (display_w, display_h);
+                match outcome {
+                    file_dialogs::Outcome::Stay => {}
+                    file_dialogs::Outcome::Close => file_dialog = None,
+                    file_dialogs::Outcome::Save(name) => {
+                        file_dialog = None;
+                        let own = machine.rt.slot_names[slot] == name;
+                        if !own && machine.rt.txt_exists(&name) {
+                            let lines = vec![
+                                format!("Save slot {slot} as {name}."),
+                                "The file there now will be replaced.".to_string(),
+                            ];
+                            let open = Dialog::new("Save file", lines, "Save", size);
+                            dialog = Some((open, Asking::Overwrite(name)));
+                        } else {
+                            save_edited(&mut machine, &name, &mut toasts);
+                        }
+                    }
+                    file_dialogs::Outcome::Load(spec) => {
+                        file_dialog = None;
+                        if machine.unsaved_slots().contains(&slot) {
+                            let lines = vec![
+                                format!("Load {spec} into slot {slot}."),
+                                "Its unsaved changes will be lost.".to_string(),
+                            ];
+                            let open = Dialog::new("Load file", lines, "Load", size);
+                            dialog = Some((open, Asking::Discard(spec)));
+                        } else {
+                            load_edited(&mut machine, &spec, &mut toasts);
+                        }
                     }
                 }
                 continue;
@@ -781,12 +862,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     ..
                 } if ctrl(keymod) && !machine.is_running() => {
-                    let name = machine.rt.slot_names[machine.edited_slot()].clone();
-                    if key == Keycode::S && !name.is_empty() {
-                        save_edited(&mut machine, &name, &mut toasts);
+                    let slot = machine.edited_slot();
+                    let size = (display_w, display_h);
+                    let storage = &machine.rt.storage;
+                    file_dialog = Some(if key == Keycode::S {
+                        let name = &machine.rt.slot_names[slot];
+                        FileDialog::Save(SaveDialog::new(size, slot, name, storage.project()))
                     } else {
-                        machine.prompt_file(key == Keycode::S);
-                    }
+                        FileDialog::Load(FilePicker::new(size, slot, storage))
+                    });
                 }
                 Event::KeyDown {
                     keycode: Some(key),
@@ -904,40 +988,6 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
         }
 
-        if let Some(request) = machine.take_file_request()
-            && dialog.is_none()
-        {
-            let slot = machine.edited_slot();
-            let size = (display_w, display_h);
-            match request {
-                FileRequest::Save(name) => {
-                    let own = machine.rt.slot_names[slot] == name;
-                    if !own && machine.rt.txt_exists(&name) {
-                        let lines = vec![
-                            format!("Save PRG{slot} as {name}."),
-                            "The file there now will be replaced.".to_string(),
-                        ];
-                        let open = Dialog::new("Save file", lines, "Save", size);
-                        dialog = Some((open, Asking::Overwrite(name)));
-                    } else {
-                        save_edited(&mut machine, &name, &mut toasts);
-                    }
-                }
-                FileRequest::Load(name) => {
-                    if machine.unsaved_slots().contains(&slot) {
-                        let lines = vec![
-                            format!("Load {name} into PRG{slot}."),
-                            "Its unsaved changes will be lost.".to_string(),
-                        ];
-                        let open = Dialog::new("Load file", lines, "Load", size);
-                        dialog = Some((open, Asking::Discard(name)));
-                    } else {
-                        load_edited(&mut machine, &name, &mut toasts);
-                    }
-                }
-            }
-        }
-
         if quit {
             let unsaved = machine.unsaved_slots();
             if unsaved.is_empty() {
@@ -951,13 +1001,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let modal = dialog.is_some()
             || manager.is_some()
             || color_window.is_some()
-            || complete_window.is_some();
+            || complete_window.is_some()
+            || file_dialog.is_some();
         if !machine.is_editing() {
             side = None;
         }
         // Panels go on the side away from the code being edited.
         if let Some(open) = &mut side {
-            open.set_left(machine.is_split() && machine.active_side() == 1);
+            let right_side = !machine.is_split_rows() && machine.active_side() == 1;
+            open.set_left(machine.is_split() && right_side);
         }
         if f5_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
             f5_down = None;
@@ -1101,6 +1153,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if let Some(open) = &complete_window {
                 open.draw(&mut overlay, font, &machine.rt.settings);
             }
+            match &file_dialog {
+                Some(FileDialog::Save(d)) => {
+                    d.draw(&mut overlay, font, (blink / 25).is_multiple_of(2))
+                }
+                Some(FileDialog::Load(p)) => p.draw(&mut overlay, font),
+                None => {}
+            }
             if key_hint.visible() {
                 key_hint.draw(&mut overlay, font);
             }
@@ -1210,6 +1269,12 @@ fn file_url(path: &Path) -> String {
     url
 }
 
+/// Ctrl+S's or Ctrl+L's window.
+enum FileDialog {
+    Save(SaveDialog),
+    Load(FilePicker),
+}
+
 /// A panel beside the editor.
 enum Side {
     Help(HelpViewer),
@@ -1286,7 +1351,7 @@ enum Asking {
     Command,
     /// Ctrl+S over another file of this name.
     Overwrite(String),
-    /// Ctrl+L over unsaved changes.
+    /// Ctrl+L over unsaved changes, with the file to load.
     Discard(String),
 }
 
@@ -1304,7 +1369,10 @@ fn save_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
 fn load_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
     let slot = machine.edited_slot();
     match machine.load_edited(name) {
-        Ok(()) => toasts.push(format!("Loaded {name} into PRG{slot}")),
+        Ok(()) => {
+            let name = &machine.rt.slot_names[slot];
+            toasts.push(format!("Loaded {name} into PRG{slot}"))
+        }
         Err(e) => toasts.push(format!("Could not load {name}: {e}")),
     }
 }

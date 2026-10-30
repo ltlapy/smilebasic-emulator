@@ -10,7 +10,7 @@ use sb_core::value::Value;
 use sb_core::vm::{Status, Vm};
 
 use crate::complete::Options;
-use crate::editor::{Editor, FileRequest};
+use crate::editor::Editor;
 use crate::framebuffer::Framebuffer;
 use crate::runtime::{Request, Runtime, SLOTS, keys};
 use crate::screen::ScreenMode;
@@ -44,6 +44,8 @@ pub struct Machine {
     editors: [Editor; 2],
     active: usize,
     split: bool,
+    /// The sides are one above the other rather than side by side.
+    split_rows: bool,
     /// Whether the editor is shown instead of direct mode.
     editing: bool,
     /// The slot whose program is running, if one is.
@@ -121,6 +123,7 @@ impl Machine {
             editors: [Editor::new(w * 8, h * 8), Editor::new(w * 8, h * 8)],
             active: 0,
             split: false,
+            split_rows: false,
             editing: false,
             running_slot: None,
             last_error: None,
@@ -283,14 +286,20 @@ impl Machine {
         self.editing = false;
     }
 
-    /// Splits the editor in two sides, both showing the active slot at
-    /// first, or goes back to one (Ctrl+/).
+    /// Splits the editor in two sides side by side, both showing the
+    /// active slot at first, then one above the other, then goes back to
+    /// one (Ctrl+/, in SmileBASIC 4's order).
     pub fn toggle_split(&mut self) {
         if !self.editing {
             return;
         }
         let other = self.other();
+        if self.split && !self.split_rows {
+            self.split_rows = true;
+            return;
+        }
         if self.split {
+            self.split_rows = false;
             if self.mirrors() {
                 self.editors[other].close();
             } else {
@@ -307,6 +316,11 @@ impl Machine {
 
     pub fn is_split(&self) -> bool {
         self.split
+    }
+
+    /// Whether a split display has its sides one above the other.
+    pub fn is_split_rows(&self) -> bool {
+        self.split && self.split_rows
     }
 
     /// Which side of a split display takes the keys: 0 for the left.
@@ -338,56 +352,36 @@ impl Machine {
     /// A press of the mouse on the editor's frame: on the other side of a
     /// split display, it gets the keys first.
     pub fn editor_mouse_down(&mut self, x: i32, y: i32, extend: bool) {
+        let along = if self.split_rows { y } else { x };
         let side = match self.rt.split_at {
-            Some(at) if self.split && x >= at as i32 => 1,
+            Some(at) if self.split && along >= at as i32 => 1,
             _ => 0,
         };
         if self.split && side != self.active {
             self.switch_side();
         }
-        let x = x - self.side_left();
+        let (x, y) = self.on_side(x, y);
         self.edit().mouse_down(x, y, extend);
     }
 
     /// The mouse moved with its button held since the press.
     pub fn editor_mouse_drag(&mut self, x: i32, y: i32) {
-        let x = x - self.side_left();
+        let (x, y) = self.on_side(x, y);
         self.edit().mouse_drag(x, y);
     }
 
-    /// Where the active side starts on the editor's frame.
-    fn side_left(&self) -> i32 {
+    /// A point of the editor's frame on the active side's.
+    fn on_side(&self, x: i32, y: i32) -> (i32, i32) {
         match self.rt.split_at {
-            Some(at) if self.split && self.active == 1 => at as i32,
-            _ => 0,
+            Some(at) if self.split && self.active == 1 && self.split_rows => (x, y - at as i32),
+            Some(at) if self.split && self.active == 1 => (x - at as i32, y),
+            _ => (x, y),
         }
     }
 
     /// The slot the editor shows, or last showed.
     pub fn edited_slot(&self) -> usize {
         self.rt.edit_slot
-    }
-
-    /// Opens the editor, if it is not open, typing a file name in its
-    /// status line to save the edited slot as (Ctrl+S without a name) or
-    /// to load into it (Ctrl+L).
-    pub fn prompt_file(&mut self, save: bool) {
-        if self.vm.is_some() {
-            return;
-        }
-        if !self.editing {
-            self.edit_slot(self.rt.edit_slot);
-        }
-        let name = self.rt.slot_names[self.rt.edit_slot].clone();
-        self.edit().start_file_prompt(save, &name);
-    }
-
-    /// A file command typed in the editor's status line.
-    pub fn take_file_request(&mut self) -> Option<FileRequest> {
-        if !self.editing {
-            return None;
-        }
-        self.edit().take_request()
     }
 
     /// Saves the edited slot under a name, editor changes included.
@@ -661,8 +655,11 @@ impl Machine {
                     _ => first.mirror(second),
                 }
             }
-            self.rt
-                .render_editors(&mut self.editors, self.active, self.split)
+            self.rt.render_editors(
+                &mut self.editors,
+                self.active,
+                self.split.then_some(self.split_rows),
+            )
         } else {
             self.rt.render()
         }

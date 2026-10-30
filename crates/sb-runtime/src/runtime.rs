@@ -14,7 +14,7 @@ use crate::complete::{self, Completion, Options};
 use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
-use crate::editor::{Editor, Look, frame_size};
+use crate::editor::{Editor, Look, frame_size, menu_height};
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -528,7 +528,8 @@ pub struct Runtime {
     editor_fb: Framebuffer,
     /// One side of a split editor, drawn before going into `editor_fb`.
     side_fb: Framebuffer,
-    /// Where the right side of a split editor starts on its frame.
+    /// Where the second side of a split editor starts on its frame: a
+    /// column, or a row when the sides are one above the other.
     pub(crate) split_at: Option<u32>,
     /// GRP4 at start-up, which ACLS puts back.
     sprite_page: Option<Vec<u32>>,
@@ -1050,11 +1051,13 @@ impl Runtime {
     }
 
     /// Composes a frame showing the editor instead of the screens.
+    /// `split` is `None` for one side, else whether the sides are one
+    /// above the other.
     pub(crate) fn render_editors(
         &mut self,
         editors: &mut [Editor; 2],
         active: usize,
-        split: bool,
+        split: Option<bool>,
     ) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
         let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
@@ -1068,6 +1071,7 @@ impl Runtime {
             wrap: s.editor_wrap,
             tiles: s.editor_number_tiles,
             map: s.editor_map,
+            top: None,
             font: s.editor_font,
             colors: &s.editor_colors,
         };
@@ -1080,33 +1084,44 @@ impl Runtime {
             }
             name
         };
-        if !split {
+        let Some(rows) = split else {
             self.split_at = None;
             let name = name(&editors[active]);
             editors[active].draw(&mut self.editor_fb, &self.font, &name, look, blink);
             return &self.editor_fb;
-        }
-        // Two sides with a divider between them.
-        let half = (w - SPLIT_DIVIDER) / 2;
-        let right = w - half;
-        self.split_at = Some(right);
-        if (self.side_fb.width(), self.side_fb.height()) != (half, h) {
-            self.side_fb = Framebuffer::new(half, h);
+        };
+        // Two sides with a divider between them; only the upper one
+        // leaves room for the menu bar.
+        let length = if rows { h } else { w };
+        let half = (length - SPLIT_DIVIDER) / 2;
+        let second = length - half;
+        self.split_at = Some(second);
+        let side_size = if rows { (w, half) } else { (half, h) };
+        if (self.side_fb.width(), self.side_fb.height()) != side_size {
+            self.side_fb = Framebuffer::new(side_size.0, side_size.1);
         }
         for (side, editor) in editors.iter_mut().enumerate() {
             let name = name(editor);
             let blink = blink && side == active;
+            let top = match (rows, side) {
+                (true, 0) => Some(menu_height(h)),
+                (true, _) => Some(0),
+                (false, _) => None,
+            };
+            let look = Look { top, ..look };
             editor.draw(&mut self.side_fb, &self.font, &name, look, blink);
-            let x0 = if side == 0 { 0 } else { right };
-            for y in 0..h {
-                for x in 0..half {
+            let at = if side == 0 { 0 } else { second };
+            let (x0, y0) = if rows { (0, at) } else { (at, 0) };
+            for y in 0..side_size.1 {
+                for x in 0..side_size.0 {
                     let pixel = self.side_fb.get(x, y).unwrap_or(0);
-                    self.editor_fb.set(x0 + x, y, pixel);
+                    self.editor_fb.set(x0 + x, y0 + y, pixel);
                 }
             }
         }
-        for y in 0..h {
-            for x in half..right {
+        for i in half..second {
+            for j in 0..if rows { w } else { h } {
+                let (x, y) = if rows { (j, i) } else { (i, j) };
                 self.editor_fb.set(x, y, SPLIT_COLOR);
             }
         }
