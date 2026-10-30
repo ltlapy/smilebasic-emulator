@@ -158,6 +158,46 @@ struct View {
 /// A line and a column in it.
 type Pos = (usize, usize);
 
+/// Steps kept for Ctrl+Z.
+const UNDO_STEPS: usize = 1000;
+
+/// Text as the pieces between its line breaks; never empty.
+type Lines = Vec<Vec<u16>>;
+
+/// One change to the text: `removed` taken out at `at` and `inserted`
+/// put there instead.
+#[derive(Clone, Debug)]
+struct Change {
+    at: Pos,
+    removed: Lines,
+    inserted: Lines,
+}
+
+/// Changes that Ctrl+Z undoes together, and where the cursor was before
+/// and after them.
+#[derive(Clone, Debug)]
+struct Step {
+    changes: Vec<Change>,
+    before: Pos,
+    after: Pos,
+}
+
+/// Which edits join the last step rather than starting one: typing and
+/// erasing go back a run at a time, until the cursor is moved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Merge {
+    Alone,
+    Type,
+    Erase,
+}
+
+/// Where text ends that is put at `at`.
+fn end_of(at: Pos, text: &Lines) -> Pos {
+    let last = text.len() - 1;
+    let col = text[last].len() + if last == 0 { at.1 } else { 0 };
+    (at.0 + last, col)
+}
+
 pub struct Editor {
     slot: usize,
     lines: Vec<Vec<u16>>,
@@ -177,6 +217,10 @@ pub struct Editor {
     layout: Vec<Pos>,
     grid: Grid,
     modified: bool,
+    undo: Vec<Step>,
+    redo: Vec<Step>,
+    /// How the last edit may be joined by the next one.
+    merge: Merge,
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
     screen: TextScreen,
@@ -218,6 +262,9 @@ impl Editor {
             layout: Vec::new(),
             grid: Grid { cell: 8, top: 0 },
             modified: false,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            merge: Merge::Alone,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
         };
@@ -286,6 +333,9 @@ impl Editor {
         self.want_col = self.view.col;
         self.anchor = None;
         self.layout.clear();
+        self.undo.clear();
+        self.redo.clear();
+        self.merge = Merge::Alone;
     }
 
     /// Stops editing. Returns the new source if it was changed, so that an
@@ -338,18 +388,113 @@ impl Editor {
         (anchor != cursor).then(|| (anchor.min(cursor), anchor.max(cursor)))
     }
 
+    /// Takes the text between two places out.
+    fn take(&mut self, start: Pos, end: Pos) -> Lines {
+        if start.0 == end.0 {
+            return vec![self.lines[start.0].drain(start.1..end.1).collect()];
+        }
+        let rest = self.lines[end.0].split_off(end.1);
+        let mut taken = vec![self.lines[start.0].split_off(start.1)];
+        taken.extend(self.lines.drain(start.0 + 1..=end.0));
+        self.lines[start.0].extend(rest);
+        taken
+    }
+
+    /// Puts text in at a place; returns where it ends.
+    fn put(&mut self, at: Pos, text: &Lines) -> Pos {
+        let rest = self.lines[at.0].split_off(at.1);
+        self.lines[at.0].extend_from_slice(&text[0]);
+        self.lines
+            .splice(at.0 + 1..at.0 + 1, text[1..].iter().cloned());
+        let end = end_of(at, text);
+        self.lines[end.0].extend(rest);
+        end
+    }
+
+    /// Starts a step of edits for Ctrl+Z, or goes on with the last one if
+    /// `merge` allows it.
+    fn begin(&mut self, merge: Merge) {
+        if merge == Merge::Alone || merge != self.merge || self.undo.is_empty() {
+            let at = self.pos();
+            self.undo.push(Step {
+                changes: Vec::new(),
+                before: at,
+                after: at,
+            });
+            if self.undo.len() > UNDO_STEPS {
+                self.undo.remove(0);
+            }
+        }
+        self.merge = merge;
+        self.redo.clear();
+    }
+
+    /// Replaces the text between two places, as part of the step that
+    /// [`Editor::begin`] started. Returns where the new text ends.
+    fn replace(&mut self, start: Pos, end: Pos, text: Lines) -> Pos {
+        if self.undo.is_empty() {
+            self.begin(Merge::Alone);
+        }
+        let removed = self.take(start, end);
+        let after = self.put(start, &text);
+        let step = self.undo.last_mut().expect("begun above");
+        step.changes.push(Change {
+            at: start,
+            removed,
+            inserted: text,
+        });
+        step.after = after;
+        self.modified = true;
+        after
+    }
+
+    /// Takes back the last step of edits (Ctrl+Z).
+    pub fn undo(&mut self) {
+        while let Some(step) = self.undo.pop() {
+            if step.changes.is_empty() {
+                continue;
+            }
+            for c in step.changes.iter().rev() {
+                self.take(c.at, end_of(c.at, &c.inserted));
+                self.put(c.at, &c.removed);
+            }
+            self.moved_to(step.before);
+            self.redo.push(step);
+            self.modified = true;
+            break;
+        }
+    }
+
+    /// Makes the last step undone again (Ctrl+Shift+Z).
+    pub fn redo(&mut self) {
+        if let Some(step) = self.redo.pop() {
+            for c in &step.changes {
+                self.take(c.at, end_of(c.at, &c.removed));
+                self.put(c.at, &c.inserted);
+            }
+            self.moved_to(step.after);
+            self.undo.push(step);
+            self.modified = true;
+        }
+    }
+
+    /// Puts the cursor somewhere, dropping the selection; the next edit
+    /// starts a step of its own.
+    fn moved_to(&mut self, (line, col): Pos) {
+        self.go(line, col);
+        self.anchor = None;
+        self.want_col = self.view.col;
+        self.merge = Merge::Alone;
+    }
+
     /// Removes the selected text, if any, leaving the cursor where it was.
     fn delete_selection(&mut self) -> bool {
         let Some((start, end)) = self.selection() else {
             return false;
         };
-        let rest = self.lines[end.0].split_off(end.1);
-        self.lines[start.0].truncate(start.1);
-        self.lines[start.0].extend(rest);
-        self.lines.drain(start.0 + 1..=end.0);
+        self.replace(start, end, vec![Vec::new()]);
         self.go(start.0, start.1);
         self.anchor = None;
-        self.modified = true;
         true
     }
 
@@ -372,6 +517,7 @@ impl Editor {
     /// Takes the selected text out, for the clipboard.
     pub fn cut(&mut self) -> Option<String> {
         let text = self.copy()?;
+        self.begin(Merge::Alone);
         self.delete_selection();
         self.want_col = self.view.col;
         Some(text)
@@ -380,54 +526,38 @@ impl Editor {
     /// Puts text at the cursor in place of the selection. Insert mode
     /// does not apply.
     pub fn paste(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.begin(Merge::Alone);
         self.delete_selection();
-        let mut parts = split_lines(text);
-        let (line, col) = self.pos();
-        let rest = self.lines[line].split_off(col);
-        let last = parts.len() - 1;
-        let end_col = parts[last].len() + if last == 0 { col } else { 0 };
-        parts[last].extend(rest);
-        let mut parts = parts.into_iter();
-        self.lines[line].extend(parts.next().expect("never empty"));
-        self.lines.splice(line + 1..line + 1, parts);
-        self.go(line + last, end_col);
-        self.want_col = self.view.col;
-        self.modified |= !text.is_empty();
+        let at = self.pos();
+        let (line, col) = self.replace(at, at, split_lines(text));
+        self.moved_to((line, col));
     }
 
     /// Selects the whole program.
     pub fn select_all(&mut self) {
-        self.anchor = Some((0, 0));
         self.file_end();
+        self.anchor = Some((0, 0));
     }
 
     fn insert(&mut self, code: u16) {
-        let View { line, col, .. } = self.view;
-        let text = &mut self.lines[line];
-        if self.overwrite && col < text.len() {
-            text[col] = code;
+        let (line, col) = self.pos();
+        let end = if self.overwrite && col < self.line().len() {
+            col + 1
         } else {
-            text.insert(col, code);
-        }
+            col
+        };
+        self.replace((line, col), (line, end), vec![vec![code]]);
         self.view.col += 1;
-        self.modified = true;
     }
 
     fn split(&mut self) {
-        let View { line, col, .. } = self.view;
-        let rest = self.lines[line].split_off(col);
-        self.lines.insert(line + 1, rest);
-        self.go(line + 1, 0);
-        self.modified = true;
-    }
-
-    /// Joins the line after `line` onto it.
-    fn join(&mut self, line: usize) {
-        if line + 1 < self.lines.len() {
-            let next = self.lines.remove(line + 1);
-            self.lines[line].extend(next);
-            self.modified = true;
-        }
+        let at = self.pos();
+        self.begin(Merge::Alone);
+        self.replace(at, at, vec![Vec::new(), Vec::new()]);
+        self.go(at.0 + 1, 0);
     }
 
     /// Moves the cursor with a [`keys`] code while keeping the other end
@@ -448,22 +578,31 @@ impl Editor {
         if self.selection().is_none() {
             self.anchor = None;
         }
-        if self.selection().is_some() {
+        // Control codes other than these type nothing.
+        let types = !matches!(code, 0..0x20 | 0x7F) || matches!(code, keys::ENTER | keys::TAB);
+        if is_movement(code) {
+            self.anchor = None;
+            self.merge = Merge::Alone;
+        } else if self.selection().is_some() {
             match code {
-                c if is_movement(c) => self.anchor = None,
                 keys::BACKSPACE | keys::DELETE => {
+                    self.begin(Merge::Alone);
                     self.delete_selection();
                     self.want_col = self.view.col;
                     return;
                 }
-                // Other control codes type nothing.
-                c if c < 0x20 && c != keys::ENTER && c != keys::TAB || c == 0x7F => {}
-                _ => {
+                keys::ENTER => {
+                    self.begin(Merge::Alone);
                     self.delete_selection();
                 }
+                _ if types => {
+                    self.begin(Merge::Type);
+                    self.delete_selection();
+                }
+                _ => {}
             }
         }
-        let View { line, col, .. } = self.view;
+        let (line, col) = self.pos();
         let (_, rows) = self.size();
         let keeps_column = matches!(
             code,
@@ -472,20 +611,24 @@ impl Editor {
         match code {
             keys::ENTER => self.split(),
             keys::BACKSPACE if col > 0 => {
-                self.lines[line].remove(col - 1);
+                self.begin(Merge::Erase);
+                self.replace((line, col - 1), (line, col), vec![Vec::new()]);
                 self.view.col -= 1;
-                self.modified = true;
             }
             keys::BACKSPACE if line > 0 => {
+                self.begin(Merge::Erase);
                 let len = self.lines[line - 1].len();
-                self.join(line - 1);
+                self.replace((line - 1, len), (line, 0), vec![Vec::new()]);
                 self.go(line - 1, len);
             }
             keys::DELETE if col < self.line().len() => {
-                self.lines[line].remove(col);
-                self.modified = true;
+                self.begin(Merge::Erase);
+                self.replace((line, col), (line, col + 1), vec![Vec::new()]);
             }
-            keys::DELETE => self.join(line),
+            keys::DELETE if line + 1 < self.lines.len() => {
+                self.begin(Merge::Erase);
+                self.replace((line, col), (line + 1, 0), vec![Vec::new()]);
+            }
             keys::LEFT if col > 0 => self.view.col -= 1,
             keys::LEFT if line > 0 => self.go(line - 1, usize::MAX),
             keys::RIGHT if col < self.line().len() => self.view.col += 1,
@@ -498,14 +641,18 @@ impl Editor {
             keys::END => self.view.col = self.line().len(),
             // UNVERIFIED: Tab pads with spaces to the next TABSTEP column.
             keys::TAB => {
+                self.begin(Merge::Type);
                 let tab = self.tab_step.max(1);
                 for _ in 0..tab - col % tab {
                     self.insert(u16::from(b' '));
                 }
             }
             keys::INSERT => self.overwrite = !self.overwrite,
-            0..0x20 | 0x7F => {}
-            c => self.insert(c),
+            _ if !types => {}
+            c => {
+                self.begin(Merge::Type);
+                self.insert(c);
+            }
         }
         if !keeps_column {
             self.want_col = self.view.col;
@@ -547,6 +694,7 @@ impl Editor {
         let from = self.pos();
         self.go(line, col);
         self.want_col = self.view.col;
+        self.merge = Merge::Alone;
         self.anchor = Some(if extend {
             self.anchor.unwrap_or(from)
         } else {
@@ -564,14 +712,12 @@ impl Editor {
 
     /// Moves to the first line (Ctrl+Home, FILETOP).
     pub fn file_top(&mut self) {
-        self.go(0, 0);
-        self.want_col = 0;
+        self.moved_to((0, 0));
     }
 
     /// Moves to the end of the last line (Ctrl+End, FILEEND).
     pub fn file_end(&mut self) {
-        self.go(usize::MAX, usize::MAX);
-        self.want_col = self.view.col;
+        self.moved_to((usize::MAX, usize::MAX));
     }
 
     /// Scrolls so that the cursor is on screen.
@@ -1072,6 +1218,65 @@ mod tests {
         e.key_select(keys::LEFT);
         e.key(keys::DELETE);
         assert_eq!(e.text(), "ABCD");
+    }
+
+    #[test]
+    fn undo_and_redo() {
+        let mut e = editor("PRINT 1\nEND");
+        e.key(keys::END);
+        typing(&mut e, " 23");
+        e.key(keys::ENTER);
+        typing(&mut e, "X");
+        e.key(keys::BACKSPACE);
+        e.key(keys::BACKSPACE);
+        assert_eq!(e.text(), "PRINT 1 23\nEND");
+        // The run of erasing, then Enter, then the run of typing.
+        e.undo();
+        assert_eq!(
+            (e.text().as_str(), e.cursor()),
+            ("PRINT 1 23\nX\nEND", (2, 1))
+        );
+        e.undo();
+        assert_eq!(e.text(), "PRINT 1 23\n\nEND");
+        e.undo();
+        assert_eq!(
+            (e.text().as_str(), e.cursor()),
+            ("PRINT 1 23\nEND", (1, 10))
+        );
+        e.undo();
+        assert_eq!((e.text().as_str(), e.cursor()), ("PRINT 1\nEND", (1, 7)));
+        e.undo();
+        assert_eq!(e.text(), "PRINT 1\nEND");
+        e.redo();
+        e.redo();
+        assert_eq!(
+            (e.text().as_str(), e.cursor()),
+            ("PRINT 1 23\n\nEND", (2, 0))
+        );
+        // A new edit drops what was undone.
+        typing(&mut e, "Y");
+        e.redo();
+        assert_eq!(e.text(), "PRINT 1 23\nY\nEND");
+
+        // Moving ends a run; a selection typed over goes back in one step.
+        let mut e = editor("ABC\nDEF");
+        typing(&mut e, "1");
+        e.key(keys::RIGHT);
+        typing(&mut e, "2");
+        e.select_all();
+        e.paste("Z\nZ");
+        typing(&mut e, "Q");
+        e.undo();
+        assert_eq!(e.text(), "Z\nZ");
+        e.undo();
+        assert_eq!(e.text(), "1A2BC\nDEF");
+        e.undo();
+        assert_eq!(e.text(), "1ABC\nDEF");
+        e.key(keys::INSERT);
+        typing(&mut e, "XY");
+        assert_eq!(e.text(), "1AXY\nDEF", "at the cursor from before the 2");
+        e.undo();
+        assert_eq!(e.text(), "1ABC\nDEF");
     }
 
     #[test]

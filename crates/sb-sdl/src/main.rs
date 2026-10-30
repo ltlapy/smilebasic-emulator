@@ -648,6 +648,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         }
                     }
                     Keycode::V => paste(&mut machine, &clipboard, &mut toasts),
+                    Keycode::Z if shift(keymod) => machine.edit().redo(),
+                    Keycode::Z => machine.edit().undo(),
+                    Keycode::Y => machine.edit().redo(),
                     _ => {}
                 },
                 // Shift and the cursor keys select in the editor.
