@@ -92,6 +92,33 @@ fn the_project_manager_loads_and_runs() {
 }
 
 #[test]
+fn listing_pages_follow_the_console_size() {
+    let dir = TempDir::new("small-pages");
+    let mut m = machine(&dir);
+    for i in 0..40 {
+        m.rt.storage
+            .write(
+                sb_runtime::storage::FileKind::Dat,
+                &format!("D{i:02}"),
+                b"",
+                None,
+            )
+            .unwrap();
+    }
+    // A 160-pixel-high screen holds 20 rows of 8-pixel characters.
+    m.type_text("xscreen 400,160:files");
+    m.rt.key_press(keys::ENTER);
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(m.is_running(), "waits after a screen: {:?}", rows(&m));
+    let shown = rows(&m);
+    assert_eq!(m.rt.text[4].size().1, 20);
+    assert_eq!(shown.len(), 20);
+    assert_eq!(shown[19], "=== Press ENTER ===");
+}
+
+#[test]
 fn long_listings_wait_for_a_key() {
     let dir = TempDir::new("pages");
     let mut m = machine(&dir);

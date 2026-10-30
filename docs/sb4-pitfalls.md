@@ -84,8 +84,9 @@ follows all of it. Items still waiting for a check are marked
   declares nothing.
 - `CLEAR` in a program is a `Syntax error` when it runs.
 - `FILES` prints a long list a screen at a time, in direct mode and in
-  programs alike: 29 rows of the list, then `=== Press ENTER ===` on the
-  last row. Any key or button goes on, and a held key goes on as it
+  programs alike: the list fills every row of the console but the last,
+  which says `=== Press ENTER ===`, so the page follows the console's
+  size (29 rows of the list on the usual 30). Any key or button goes on, and a held key goes on as it
   repeats.
 
 ## Program slots and files

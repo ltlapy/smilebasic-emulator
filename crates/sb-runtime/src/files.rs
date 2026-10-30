@@ -250,8 +250,9 @@ impl Runtime {
     }
 
     /// Prints a screen of a FILES listing, and waits to print the rest,
-    /// as SmileBASIC 4 does in direct mode and in programs: all rows but
-    /// the last, which says to press Enter (checked on hardware).
+    /// as SmileBASIC 4 does in direct mode and in programs: all the
+    /// console's rows but the last, which says to press Enter, however
+    /// many rows XSCREEN gives it (checked on hardware).
     fn show_listing_page(&mut self, mut lines: VecDeque<String>) -> Vec<Value> {
         let console = &mut self.text[CONSOLE];
         let page = console.size().1.saturating_sub(1).max(1);
