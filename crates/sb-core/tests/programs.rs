@@ -210,6 +210,12 @@ fn loops() {
 }
 
 #[test]
+fn labels_may_start_with_a_digit_or_underscore() {
+    let src = "GOSUB @1ST\nGOSUB \"@2_ND\"\nGOTO @_3\n@1ST\n?1:RETURN\n@2_ND\n?2:RETURN\n@_3\n?3";
+    assert_eq!(output(src), "1\n2\n3\n");
+}
+
+#[test]
 fn goto_gosub_on() {
     let src = r#"
 GOSUB @SUB

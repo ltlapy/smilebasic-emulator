@@ -394,24 +394,28 @@ pub fn highlight(line: &[u16]) -> (Vec<Role>, LineKind) {
                 }
                 Role::Numeric
             }
-            0x40 | 0x23 if line.get(i + 1).is_some_and(|&c| is_ident_start(c)) => {
+            // Labels may also start with a digit.
+            0x40 if line.get(i + 1).is_some_and(|&c| is_ident_char(c)) => {
                 i += 1;
                 while i < line.len() && is_ident_char(line[i]) {
                     i += 1;
                 }
-                if c == 0x40 {
-                    starts_with_label |= first.is_empty();
-                    Role::Label
-                } else {
-                    // Constants can carry a type suffix too (`#LF$`).
-                    if line
-                        .get(i)
-                        .is_some_and(|&c| b"$%#".contains(&(c as u8)) && c < 0x80)
-                    {
-                        i += 1;
-                    }
-                    Role::Constant
+                starts_with_label |= first.is_empty();
+                Role::Label
+            }
+            0x23 if line.get(i + 1).is_some_and(|&c| is_ident_start(c)) => {
+                i += 1;
+                while i < line.len() && is_ident_char(line[i]) {
+                    i += 1;
                 }
+                // Constants can carry a type suffix too (`#LF$`).
+                if line
+                    .get(i)
+                    .is_some_and(|&c| b"$%#".contains(&(c as u8)) && c < 0x80)
+                {
+                    i += 1;
+                }
+                Role::Constant
             }
             _ if is_ident_start(c) => {
                 while i < line.len() && is_ident_char(line[i]) {
@@ -536,6 +540,7 @@ mod tests {
         assert_eq!(roles("  common def F").1, LineKind::Def);
         assert_eq!(roles("@MAIN").1, LineKind::Label);
         assert_eq!(roles("  @MAIN:CLS").1, LineKind::Label);
+        assert_eq!(roles("@1ST").1, LineKind::Label);
         assert_eq!(roles("GOTO @MAIN").1, LineKind::Plain);
         assert_eq!(roles("X=1:DEF F").1, LineKind::Plain);
         assert_eq!(roles("'DEF").1, LineKind::Plain);

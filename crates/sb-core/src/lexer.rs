@@ -300,8 +300,9 @@ impl Lexer {
                 '&' if self.peek_at(1) != Some('&') => self.ampersand(start)?,
                 '@' => {
                     self.bump();
+                    // Unlike other names, a label may start with a digit.
                     let name = self
-                        .word()
+                        .word_from(is_ident_char)
                         .ok_or(self.error(LexErrorKind::MissingDigits, start))?;
                     self.push(TokenKind::Label(name), start);
                 }
@@ -328,7 +329,13 @@ impl Lexer {
 
     /// Reads `[A-Z_][A-Z0-9_]*` and returns it upper-cased.
     fn word(&mut self) -> Option<String> {
-        if !self.peek().is_some_and(is_ident_start) {
+        self.word_from(is_ident_start)
+    }
+
+    /// Like [`Lexer::word`], with `first` deciding which characters may
+    /// start it.
+    fn word_from(&mut self, first: fn(char) -> bool) -> Option<String> {
+        if !self.peek().is_some_and(first) {
             return None;
         }
         let mut name = String::new();
@@ -632,6 +639,16 @@ mod tests {
             [T::Int(1), T::Int(0xFFFF)]
         );
         assert_eq!(error("&H_1"), LexErrorKind::MissingDigits);
+    }
+
+    #[test]
+    fn labels_may_start_with_a_digit() {
+        assert_eq!(
+            kinds("@1ST @_2"),
+            [T::Label("1ST".into()), T::Label("_2".into())]
+        );
+        assert_eq!(error("@"), LexErrorKind::MissingDigits);
+        assert_eq!(error("#1"), LexErrorKind::MissingDigits);
     }
 
     #[test]
