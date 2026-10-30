@@ -435,7 +435,6 @@ fn radix_str(args: &[Value], radix: u32, max_digits: usize) -> Result<Value> {
 /// (`-`, `+`, space, `0`), width and precision. Letters in either case
 /// are conversions and values left over are ignored (checked on
 /// hardware).
-// UNVERIFIED: how `%.0F` rounds; hardware gave 2 for 2.5 and 3 for 3.5.
 fn format(args: &[Value]) -> Result<Value> {
     let fmt = text(&args[0])?;
     let mut values = args[1..].iter();
@@ -504,7 +503,7 @@ fn format(args: &[Value]) -> Result<Value> {
                     'D' => i64::from(value.to_int()?).unsigned_abs().to_string(),
                     'X' => format!("{:X}", value.to_int()? as u32),
                     'B' => format!("{:b}", value.to_int()? as u32),
-                    _ => format!("{:.*}", precision.unwrap_or(6), value.to_real()?.abs()),
+                    _ => fixed(value.to_real()?.abs(), precision.unwrap_or(6)),
                 };
                 let sign = match (c, negative) {
                     ('X' | 'B', _) => "",
@@ -530,6 +529,25 @@ fn format(args: &[Value]) -> Result<Value> {
         out.extend(field.encode_utf16());
     }
     Ok(string(out))
+}
+
+/// `x` with `digits` decimals, rounded to the nearest; a value exactly
+/// half way goes toward zero, as on hardware (`%.0F` of 2.5 and 3.5 gave
+/// 2 and 3, of 2.7 gave 3).
+fn fixed(x: f64, digits: usize) -> String {
+    // Every double has a finite decimal expansion of at most 1074 digits.
+    let exact = format!("{x:.1100}");
+    let point = exact.find('.').unwrap_or(exact.len());
+    let rest = exact.get(point + 1 + digits..).unwrap_or("");
+    if rest.starts_with('5') && rest[1..].bytes().all(|b| b == b'0') {
+        let end = if digits == 0 {
+            point
+        } else {
+            point + 1 + digits
+        };
+        return exact[..end].to_string();
+    }
+    format!("{x:.digits$}")
 }
 
 // ---- colors ----

@@ -605,6 +605,10 @@ fn format_strings() {
         ErrorKind::WrongNumberOfArguments
     );
     assert_eq!(error(r#"?FORMAT$("%Q",1)"#).0, ErrorKind::IllegalFormat);
+    // Halves go toward zero; the rest round to the nearest (TEST13).
+    let rounded = "FOR I=0 TO 7:READ X:?FORMAT$(\"%.0F \",X);:NEXT:READ X:?FORMAT$(\"%.1F\",X)\n\
+                   DATA 0.5,1.5,2.5,3.5,4.5,2.7,-2.5,-3.5,0.25";
+    assert_eq!(output(rounded), "0 1 2 3 4 3 -2 -3 0.2\n");
     assert_eq!(
         output(r#"?FORMAT$("%d|%x|%s|%f",10,255,"Q",1.5);FORMAT$("%D",1,2)"#),
         "10|FF|Q|1.5000001\n"
