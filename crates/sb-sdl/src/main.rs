@@ -26,7 +26,7 @@ use menu::{Action, Click, MenuBar};
 use program_dialog::ProgramView;
 use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
-use sb_runtime::editor::is_movement;
+use sb_runtime::editor::{Mode, is_movement};
 use sb_runtime::font::Font;
 use sb_runtime::help::Lookup;
 use sb_runtime::input::State;
@@ -500,6 +500,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::Pause) => menu.shown = !menu.shown,
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
+                    Click::Chosen(
+                        command @ (Action::GoToLine | Action::Find | Action::Replace),
+                    ) => {
+                        if !machine.is_editing() {
+                            machine.toggle_editor();
+                        }
+                        let editor = machine.edit();
+                        match command {
+                            Action::GoToLine => editor.go_to_line(),
+                            Action::Find => editor.start_find(false),
+                            _ => editor.start_find(true),
+                        }
+                    }
                     Click::Chosen(Action::ChooseSoundFont) => {
                         let send = chosen_font.clone();
                         let filters = [sdl3::dialog::DialogFileFilter {
@@ -653,16 +666,43 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Keycode::Y => machine.edit().redo(),
                     Keycode::K if shift(keymod) => machine.edit().uncomment(),
                     Keycode::K => machine.edit().comment(),
-                    Keycode::Return | Keycode::KpEnter => machine.edit().insert_line(),
+                    Keycode::Return | Keycode::KpEnter => {
+                        let editor = machine.edit();
+                        match editor.mode() {
+                            Mode::Replace => editor.replace_all(),
+                            _ => editor.insert_line(),
+                        }
+                    }
+                    Keycode::G => machine.edit().go_to_line(),
+                    Keycode::F => machine.edit().start_find(false),
+                    Keycode::H => machine.edit().start_find(true),
                     Keycode::Backspace => machine.edit().delete_line(),
                     Keycode::Delete => machine.edit().delete_to_end(),
                     _ => {}
                 },
+                // F3 finds, and in finding goes to the next match.
+                Event::KeyDown {
+                    keycode: Some(Keycode::F3),
+                    keymod,
+                    ..
+                } if machine.is_editing() => {
+                    let editor = machine.edit();
+                    if shift(keymod) || matches!(editor.mode(), Mode::Find | Mode::Replace) {
+                        editor.find_next(!shift(keymod));
+                    } else {
+                        editor.start_find(false);
+                    }
+                }
                 Event::KeyDown {
                     keycode: Some(Keycode::Tab),
                     keymod,
                     ..
-                } if machine.is_editing() && shift(keymod) => machine.edit().unindent(),
+                } if machine.is_editing()
+                    && shift(keymod)
+                    && machine.edit().mode() == Mode::Edit =>
+                {
+                    machine.edit().unindent()
+                }
                 // Shift and the cursor keys select in the editor.
                 Event::KeyDown {
                     keycode: Some(key),

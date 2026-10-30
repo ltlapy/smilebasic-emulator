@@ -100,6 +100,9 @@ SmileBASIC 4's own files.
 | Ctrl+Delete | Delete the rest of the line |
 | Tab, Shift+Tab | Indent the selected lines, or unindent them |
 | Ctrl+K, Ctrl+Shift+K | Comment out the selected lines, or uncomment them |
+| Ctrl+G | Go to a line: type its number and press Enter |
+| F3, Ctrl+F | Find as you type; Down, F3 or Enter for the next match, Up or Shift+F3 for the one before, Tab to replace |
+| Ctrl+H | Replace: Enter replaces the selected match, Ctrl+Enter replaces them all, Tab goes back to finding |
 | Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
 
 ### Buttons

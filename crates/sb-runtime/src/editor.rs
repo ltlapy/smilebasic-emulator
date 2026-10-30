@@ -191,6 +191,47 @@ enum Merge {
     Erase,
 }
 
+/// What the editor's keys do: edit the program, or type into the status
+/// line to go to a line, find or replace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Edit,
+    GoTo,
+    Find,
+    Replace,
+}
+
+/// A character as searches compare it: ASCII letters in either case.
+// UNVERIFIED: SmileBASIC 4's search ignores the case of letters.
+fn fold(c: u16) -> u16 {
+    match c {
+        0x61..=0x7A => c - 0x20,
+        _ => c,
+    }
+}
+
+/// The columns where `find` starts in `line`, not overlapping.
+fn matches_in(line: &[u16], find: &[u16]) -> Vec<usize> {
+    let mut at = Vec::new();
+    if find.is_empty() {
+        return at;
+    }
+    let mut col = 0;
+    while col + find.len() <= line.len() {
+        if line[col..col + find.len()]
+            .iter()
+            .zip(find)
+            .all(|(&a, &b)| fold(a) == fold(b))
+        {
+            at.push(col);
+            col += find.len();
+        } else {
+            col += 1;
+        }
+    }
+    at
+}
+
 /// Where text ends that is put at `at`.
 fn end_of(at: Pos, text: &Lines) -> Pos {
     let last = text.len() - 1;
@@ -221,6 +262,16 @@ pub struct Editor {
     redo: Vec<Step>,
     /// How the last edit may be joined by the next one.
     merge: Merge,
+    mode: Mode,
+    /// The line number typed after Ctrl+G.
+    goto: Vec<u16>,
+    /// What to find, and what to replace it with.
+    find: Vec<u16>,
+    with: Vec<u16>,
+    /// Where typing what to find searches from.
+    search_from: Pos,
+    /// Shown in the status line until the next key, as "Not found".
+    note: Option<String>,
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
     screen: TextScreen,
@@ -265,6 +316,12 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             merge: Merge::Alone,
+            mode: Mode::Edit,
+            goto: Vec::new(),
+            find: Vec::new(),
+            with: Vec::new(),
+            search_from: (0, 0),
+            note: None,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
         };
@@ -336,6 +393,8 @@ impl Editor {
         self.undo.clear();
         self.redo.clear();
         self.merge = Merge::Alone;
+        self.mode = Mode::Edit;
+        self.note = None;
     }
 
     /// Stops editing. Returns the new source if it was changed, so that an
@@ -679,9 +738,219 @@ impl Editor {
         }
     }
 
+    /// What the keys do now.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Starts typing a line number to go to, or stops (Ctrl+G).
+    pub fn go_to_line(&mut self) {
+        self.note = None;
+        self.mode = if self.mode == Mode::GoTo {
+            Mode::Edit
+        } else {
+            self.goto.clear();
+            Mode::GoTo
+        };
+    }
+
+    /// Starts typing what to find (F3, Ctrl+F) or, with `replace`, what
+    /// to replace it with (Ctrl+H). Text selected on one line becomes
+    /// what to find.
+    pub fn start_find(&mut self, replace: bool) {
+        self.note = None;
+        if let Some((start, end)) = self.selection()
+            && start.0 == end.0
+        {
+            self.find = self.lines[start.0][start.1..end.1].to_vec();
+        }
+        self.search_from = self.selection().map_or(self.pos(), |(start, _)| start);
+        self.mode = if replace { Mode::Replace } else { Mode::Find };
+    }
+
+    /// Selects the next place that holds what to find, after the cursor
+    /// or, going back, before the selection, going round the program's
+    /// ends. Returns whether there was one.
+    pub fn find_next(&mut self, forward: bool) -> bool {
+        let from = match (forward, self.selection()) {
+            (false, Some((start, _))) => start,
+            _ => self.pos(),
+        };
+        let found = self.search(from, forward, false);
+        self.show_found(found)
+    }
+
+    /// The nearest match from `from`, going forward or back, `at` it too
+    /// if `here`, around the ends.
+    fn search(&self, from: Pos, forward: bool, here: bool) -> Option<Pos> {
+        let n = self.lines.len();
+        // One more line than there are, to come back to the first's start.
+        for i in 0..=n {
+            let line = if forward {
+                (from.0 + i) % n
+            } else {
+                (from.0 + n * 2 - i) % n
+            };
+            let cols = matches_in(&self.lines[line], &self.find);
+            let hit = if forward {
+                cols.into_iter().find(|&c| {
+                    i > 0 && i < n
+                        || if i == 0 {
+                            c > from.1 || here && c == from.1
+                        } else {
+                            c < from.1
+                        }
+                })
+            } else {
+                cols.into_iter()
+                    .rev()
+                    .find(|&c| i > 0 && i < n || if i == 0 { c < from.1 } else { c > from.1 })
+            };
+            if let Some(col) = hit {
+                return Some((line, col));
+            }
+        }
+        None
+    }
+
+    /// Selects a match, or notes that there was none.
+    fn show_found(&mut self, found: Option<Pos>) -> bool {
+        match found {
+            Some((line, col)) => {
+                self.moved_to((line, col + self.find.len()));
+                self.anchor = Some((line, col));
+                self.note = None;
+                true
+            }
+            None => {
+                self.anchor = None;
+                self.note = (!self.find.is_empty()).then(|| "Not found".to_string());
+                false
+            }
+        }
+    }
+
+    /// Whether the selection is a match.
+    fn on_match(&self) -> bool {
+        self.selection().is_some_and(|(start, end)| {
+            start.0 == end.0
+                && end.1 - start.1 == self.find.len()
+                && matches_in(&self.lines[start.0][start.1..end.1], &self.find) == [0]
+        })
+    }
+
+    /// Replaces the selected match and finds the next (Enter in replace
+    /// mode), or finds one first.
+    pub fn replace_one(&mut self) {
+        if self.on_match() {
+            let (start, end) = self.selection().expect("on a match");
+            self.begin(Merge::Alone);
+            let after = self.replace(start, end, vec![self.with.clone()]);
+            self.moved_to(after);
+        }
+        self.find_next(true);
+    }
+
+    /// Replaces every match in one step (Ctrl+Enter in replace mode).
+    pub fn replace_all(&mut self) {
+        let mut count = 0;
+        self.begin(Merge::Alone);
+        for line in 0..self.lines.len() {
+            // From the right, so that the columns found stay right.
+            for col in matches_in(&self.lines[line], &self.find).into_iter().rev() {
+                let end = (line, col + self.find.len());
+                self.replace((line, col), end, vec![self.with.clone()]);
+                count += 1;
+            }
+        }
+        let at = self.pos();
+        self.moved_to(at);
+        self.note = Some(match count {
+            0 => "Not found".to_string(),
+            1 => "Replaced 1".to_string(),
+            n => format!("Replaced {n}"),
+        });
+    }
+
+    /// A key while typing in the status line.
+    fn prompt_key(&mut self, code: u16) {
+        self.note = None;
+        let printable = !matches!(code, 0..0x20 | 0x7F);
+        match (self.mode, code) {
+            (_, keys::ESCAPE) => self.mode = Mode::Edit,
+            (Mode::GoTo, keys::ENTER) => {
+                let digits = String::from_utf16_lossy(&self.goto);
+                if let Ok(line) = digits.parse::<usize>() {
+                    self.moved_to((line.max(1) - 1, 0));
+                }
+                self.mode = Mode::Edit;
+            }
+            (Mode::GoTo, keys::BACKSPACE) => {
+                self.goto.pop();
+            }
+            (Mode::GoTo, 0x30..=0x39) if self.goto.len() < 7 => self.goto.push(code),
+            (Mode::GoTo, _) => {}
+            (_, keys::DOWN) | (Mode::Find, keys::ENTER) => {
+                self.find_next(true);
+            }
+            (_, keys::UP) => {
+                self.find_next(false);
+            }
+            (Mode::Replace, keys::ENTER) => self.replace_one(),
+            (Mode::Find, keys::TAB) => self.mode = Mode::Replace,
+            (Mode::Replace, keys::TAB) => self.mode = Mode::Find,
+            (Mode::Find, keys::BACKSPACE) => {
+                self.find.pop();
+                self.find_from_start();
+            }
+            (Mode::Replace, keys::BACKSPACE) => {
+                self.with.pop();
+            }
+            (Mode::Find, c) if printable => {
+                self.find.push(c);
+                self.find_from_start();
+            }
+            (Mode::Replace, c) if printable => self.with.push(c),
+            _ => {}
+        }
+    }
+
+    /// Finds what is being typed from where typing began.
+    fn find_from_start(&mut self) {
+        let found = self.search(self.search_from, true, true);
+        if self.show_found(found) {
+            return;
+        }
+        let from = self.search_from;
+        self.moved_to(from);
+    }
+
+    /// The matches in the program, and which of them is selected (from
+    /// 1), for the status line.
+    fn match_count(&self) -> (usize, Option<usize>) {
+        let at = self
+            .on_match()
+            .then(|| self.selection().expect("on a match").0);
+        let mut count = 0;
+        let mut index = None;
+        for (line, text) in self.lines.iter().enumerate() {
+            for col in matches_in(text, &self.find) {
+                count += 1;
+                if at == Some((line, col)) {
+                    index = Some(count);
+                }
+            }
+        }
+        (count, index)
+    }
+
     /// Moves the cursor with a [`keys`] code while keeping the other end
     /// of the selection, as Shift does.
     pub fn key_select(&mut self, code: u16) {
+        if self.mode != Mode::Edit {
+            self.key(code);
+            return;
+        }
         let anchor = self.anchor.unwrap_or(self.pos());
         self.anchor = None;
         self.key(code);
@@ -692,6 +961,11 @@ impl Editor {
 
     /// Edits with a typed character or one of the [`keys`] codes.
     pub fn key(&mut self, code: u16) {
+        if self.mode != Mode::Edit {
+            self.prompt_key(code);
+            return;
+        }
+        self.note = None;
         // A click leaves the anchor at the cursor; once the text changes
         // it would no longer be a place in it.
         if self.selection().is_none() {
@@ -887,6 +1161,8 @@ impl Editor {
         let v = self.view;
         let selection = self.selection();
         self.layout.clear();
+        let (status_text, ruler_text) = self.prompt();
+        let note = self.note.clone().or_else(|| self.mode_note());
         fb.clear(colors[Part::Background]);
         let screen = &mut self.screen;
         screen.cls();
@@ -899,6 +1175,10 @@ impl Editor {
         while row < rows && line < self.lines.len() {
             let text = &self.lines[line];
             let (roles, kind) = highlight(text);
+            let hits = match self.mode {
+                Mode::Find | Mode::Replace => matches_in(text, &self.find),
+                _ => Vec::new(),
+            };
             let current = line == v.line;
             let back = if current {
                 colors[Part::CursorLine]
@@ -933,6 +1213,10 @@ impl Editor {
                 self.layout.push((line, start));
                 for x in 0..cols {
                     let at = (line, start + x);
+                    let col = start + x;
+                    if hits.iter().any(|&h| h <= col && col < h + self.find.len()) {
+                        grid.fill(fb, row, gutter + x, 1, colors[Part::Search]);
+                    }
                     if selection.is_some_and(|(a, b)| a <= at && at < b) && at.1 <= text.len() {
                         grid.fill(fb, row, gutter + x, 1, colors[Part::Selection]);
                     }
@@ -966,6 +1250,9 @@ impl Editor {
         let first = if wrap { 0 } else { v.left };
         let cursor_col = if wrap { v.col % cols } else { v.col };
         for x in 0..cols {
+            if ruler_text.is_some() {
+                break;
+            }
             let col = first + x;
             let at = (gutter + x) as u32;
             if tiles {
@@ -997,7 +1284,21 @@ impl Editor {
                 fb.set(px, py, BAR);
             }
         }
-        put_str(screen, 0, status, &format!("PRG{} {name}", self.slot), TEXT);
+        let mut prompt_cursor = None;
+        match &status_text {
+            Some((text, field)) => {
+                put_str(screen, 0, status, text, TEXT);
+                prompt_cursor = Some(*field);
+            }
+            None => put_str(screen, 0, status, &format!("PRG{} {name}", self.slot), TEXT),
+        }
+        if let Some(text) = &ruler_text {
+            put_str(screen, 0, ruler, text, TEXT);
+        }
+        if let Some(note) = &note {
+            let x = width.saturating_sub(note.encode_utf16().count());
+            put_str(screen, x, status, note, DIM);
+        }
 
         screen.draw(fb, font);
         let cell = grid.cell;
@@ -1015,6 +1316,14 @@ impl Editor {
         for (x, y) in marks {
             grid.glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
         }
+        if let (Some(x), true) = (prompt_cursor, blink) {
+            for py in 0..cell {
+                for px in 0..cell / 4 {
+                    let (fx, fy) = (x * cell + px, grid.top + status * cell + py);
+                    fb.set(fx as u32, fy as u32, TEXT);
+                }
+            }
+        }
         if let (Some((x, y)), true) = (cursor, blink) {
             // A bar for inserting, a block for overwriting.
             let w = if self.overwrite { cell } else { cell / 4 };
@@ -1025,6 +1334,39 @@ impl Editor {
                 }
             }
         }
+    }
+}
+
+impl Editor {
+    /// The status line while typing in it, with the column after what is
+    /// typed, and what the ruler's row shows instead of the ruler.
+    fn prompt(&self) -> (Option<(String, usize)>, Option<String>) {
+        let field = |label: &str, text: &[u16]| {
+            let text = String::from_utf16_lossy(text);
+            let at = label.len() + text.encode_utf16().count();
+            Some((format!("{label}{text}"), at))
+        };
+        match self.mode {
+            Mode::Edit => (None, None),
+            Mode::GoTo => (field("Go to line: ", &self.goto), None),
+            Mode::Find => (field("Find: ", &self.find), None),
+            Mode::Replace => (
+                field("Replace with: ", &self.with),
+                Some(format!("Find: {}", String::from_utf16_lossy(&self.find))),
+            ),
+        }
+    }
+
+    /// The count of matches shown while finding: "2/5".
+    fn mode_note(&self) -> Option<String> {
+        if !matches!(self.mode, Mode::Find | Mode::Replace) || self.find.is_empty() {
+            return None;
+        }
+        Some(match self.match_count() {
+            (0, _) => "Not found".to_string(),
+            (n, Some(i)) => format!("{i}/{n}"),
+            (n, None) => format!("{n}"),
+        })
     }
 }
 
@@ -1448,6 +1790,76 @@ mod tests {
         e.key(keys::LEFT);
         e.delete_to_end();
         assert_eq!(e.text(), "X", "typed before the A");
+    }
+
+    #[test]
+    fn go_to_a_line() {
+        let mut e = editor("A\nB\nC\nD");
+        e.go_to_line();
+        typing(&mut e, "3X");
+        assert_eq!(e.cursor(), (1, 0), "nothing moves until Enter");
+        e.key(keys::ENTER);
+        assert_eq!((e.cursor(), e.mode()), ((3, 0), Mode::Edit));
+        e.go_to_line();
+        typing(&mut e, "99");
+        e.key(keys::ENTER);
+        assert_eq!(e.cursor(), (4, 0));
+        e.go_to_line();
+        typing(&mut e, "1");
+        e.go_to_line();
+        assert_eq!((e.cursor(), e.mode()), ((4, 0), Mode::Edit));
+        assert_eq!(e.text(), "A\nB\nC\nD");
+    }
+
+    #[test]
+    fn find_and_replace() {
+        let mut e = editor("PRINT A\nprint b\nEND\nPRINT C");
+        e.key(keys::DOWN);
+        e.start_find(false);
+        typing(&mut e, "Pri");
+        assert_eq!(
+            e.copy().as_deref(),
+            Some("pri"),
+            "from the cursor, in any case"
+        );
+        assert_eq!(e.mode_note().as_deref(), Some("2/3"));
+        e.key(keys::DOWN);
+        assert_eq!(e.cursor(), (4, 3));
+        e.key(keys::DOWN);
+        assert_eq!(e.cursor(), (1, 3), "around the end");
+        e.key(keys::UP);
+        assert_eq!(e.cursor(), (4, 3));
+        typing(&mut e, "Q");
+        assert_eq!((e.note.as_deref(), e.copy()), (Some("Not found"), None));
+        // Typing finds again from where finding began.
+        e.key(keys::BACKSPACE);
+        assert_eq!(e.cursor(), (2, 3));
+        e.key(keys::TAB);
+        assert_eq!(e.mode(), Mode::Replace);
+        typing(&mut e, "?");
+        e.key(keys::ENTER);
+        assert_eq!(e.text(), "PRINT A\n?nt b\nEND\nPRINT C");
+        assert_eq!(e.cursor(), (4, 3), "on to the next");
+        e.replace_all();
+        assert_eq!(e.text(), "?NT A\n?nt b\nEND\n?NT C");
+        assert_eq!(e.note.as_deref(), Some("Replaced 2"));
+        e.key(keys::ESCAPE);
+        e.undo();
+        assert_eq!(e.text(), "PRINT A\n?nt b\nEND\nPRINT C");
+
+        // A selection on one line is what to find.
+        e.file_top();
+        e.key_select(keys::RIGHT);
+        e.start_find(false);
+        e.key(keys::DOWN);
+        assert_eq!(e.cursor(), (4, 1));
+    }
+
+    #[test]
+    fn matches_do_not_overlap() {
+        let aa: Vec<u16> = "AAAAA".encode_utf16().collect();
+        assert_eq!(matches_in(&aa, &aa[..2]), [0, 2]);
+        assert_eq!(matches_in(&aa, &[]), Vec::<usize>::new());
     }
 
     #[test]

@@ -27,6 +27,9 @@ pub enum Action {
     Pause,
     ToggleEditor,
     EditSlot(usize),
+    GoToLine,
+    Find,
+    Replace,
     ToggleUpperCase,
     ToggleCtrlC,
     ToggleHalfWidth,
@@ -97,7 +100,10 @@ impl Action {
             | Action::Pause
             | Action::ToggleEditor
             | Action::EditColors
-            | Action::EditSlot(_) => "   ",
+            | Action::EditSlot(_)
+            | Action::GoToLine
+            | Action::Find
+            | Action::Replace => "   ",
         }
     }
 
@@ -156,7 +162,10 @@ impl Action {
             | Action::Stop
             | Action::Pause
             | Action::ToggleEditor
-            | Action::EditSlot(_) => return,
+            | Action::EditSlot(_)
+            | Action::GoToLine
+            | Action::Find
+            | Action::Replace => return,
         };
         *flag = !*flag;
     }
@@ -166,7 +175,12 @@ impl Action {
     fn enabled(self, running: bool) -> bool {
         match self {
             Action::Stop | Action::Pause => running,
-            Action::ToggleEditor | Action::EditSlot(_) | Action::Projects => !running,
+            Action::ToggleEditor
+            | Action::EditSlot(_)
+            | Action::Projects
+            | Action::GoToLine
+            | Action::Find
+            | Action::Replace => !running,
             _ => true,
         }
     }
@@ -271,6 +285,9 @@ const MENUS: &[Menu] = &[
     Menu {
         title: "Editor",
         items: &[
+            item("Go to line (Ctrl+G)", Action::GoToLine),
+            item("Find (F3, Ctrl+F)", Action::Find),
+            item("Replace (Ctrl+H)", Action::Replace),
             item("Wrap lines (Ctrl+W)", Action::ToggleWrap),
             item("Line number tiles", Action::ToggleNumberTiles),
             Item {
