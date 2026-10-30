@@ -112,9 +112,17 @@ pub(crate) struct Fade {
 
 impl Fade {
     fn start(&mut self, to: u32, frames: u32) {
+        // From a clear color only the alpha moves: the color is the new
+        // one at once (checked on hardware, fading from 0).
+        // UNVERIFIED: fades to a clear color, and the 3E hardware gave for
+        // &H3F one frame into &HFF7F3F01 over 3 frames.
+        let from = match self.color >> 24 {
+            0 => to & 0x00FF_FFFF,
+            _ => self.color,
+        };
         *self = Fade {
-            color: if frames == 0 { to } else { self.color },
-            from: self.color,
+            color: if frames == 0 { to } else { from },
+            from,
             to,
             frames,
             elapsed: 0,

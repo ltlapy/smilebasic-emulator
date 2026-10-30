@@ -278,5 +278,6 @@ fn fade_covers_everything_and_moves_in_steps() {
                 .collect()
         })
         .collect();
-    assert!(rows.iter().any(|r| r == "17F7F7F7F0FFFFFFFF"), "{rows:?}");
+    // From clear, only the alpha moves.
+    assert!(rows.iter().any(|r| r == "17FFFFFFF0FFFFFFFF"), "{rows:?}");
 }

@@ -287,6 +287,12 @@ fn relative_colors_multiply() {
          VSYNC 1:?HEX$(SPCOLOR(0))",
     );
     assert_eq!(out, "8080808");
+    // Divided by 256, as TEST12 showed.
+    let (_, out) = run(
+        "SPSET 0,0:SPCOLOR 0,&HFFFF80C8:SPANIM 0,\"C+\",1,&HFF80FF80\n\
+         VSYNC 1:?HEX$(SPCOLOR(0))",
+    );
+    assert_eq!(out, "FE7F7F64");
 }
 
 #[test]
