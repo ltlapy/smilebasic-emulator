@@ -94,8 +94,17 @@ Without them:
 - The editor's colors start as SmileBASIC 4's, and can be swapped for
   preset palettes from other editors, typed in as hex values, or loaded
   from and saved to text files. Selected text has a color of its own.
-- The search match color is kept in palettes, but the editor has no
-  search yet.
 - Besides SmileBASIC 4's three sizes (21, 28 and 43 lines of code), the
   editor has a smaller one with 57, about 60 rows with the ruler, the
   status line and the room left for the menu bar.
+- The help opens beside the editor rather than over it, at one of three
+  text sizes (F2 while it has the keys), and clicking the code gives the
+  keys back while it stays open.
+- The emulator adds an index of the program's labels and DEFs to jump
+  to (Ctrl+J), an overview of the program behind the code's right side,
+  and scrolling with the mouse wheel.
+- The list of words to complete also shows in direct mode, and can
+  offer the program's own names. When it shows and what it offers are
+  set in Options > Autocomplete.
+- Ctrl+S and Ctrl+L take the file name in the editor's status line.
+  Ctrl+S saves a slot that already has a name without asking.
