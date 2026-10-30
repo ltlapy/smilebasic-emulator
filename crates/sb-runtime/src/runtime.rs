@@ -1537,6 +1537,10 @@ impl Host for Runtime {
         while let Some(key) = self.keys.pop_front() {
             let console = &mut self.text[CONSOLE];
             let line = self.line.as_mut().expect("checked above");
+            // Up and Down stay the history's; Tab takes a word.
+            if matches!(key, keys::UP | keys::DOWN) {
+                line.completion = None;
+            }
             if let Some(list) = &mut line.completion {
                 let outcome = list.key(key, options.is_some_and(|o| o.enter));
                 match outcome {

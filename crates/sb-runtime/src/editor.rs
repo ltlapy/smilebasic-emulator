@@ -239,8 +239,7 @@ pub enum Mode {
     Replace,
 }
 
-/// A character as searches compare it: ASCII letters in either case, as
-/// SmileBASIC 4's search ignores case (checked on hardware).
+/// A character as searches compare it: ASCII letters in either case.
 fn fold(c: u16) -> u16 {
     match c {
         0x61..=0x7A => c - 0x20,
@@ -766,8 +765,7 @@ impl Editor {
     }
 
     /// Turns the chosen lines into comments (Ctrl+K): a quote at column
-    /// 0, also before lines that are comments already (checked on
-    /// hardware).
+    /// 0, also before lines that are comments already.
     pub fn comment(&mut self) {
         self.change_lines(|_| Some((0, 0, vec![u16::from(b'\'')])));
     }
@@ -781,8 +779,7 @@ impl Editor {
         });
     }
 
-    /// Puts an empty line below the cursor's and moves to it (Ctrl+Enter,
-    /// checked on hardware).
+    /// Puts an empty line below the cursor's and moves to it (Ctrl+Enter).
     pub fn insert_line(&mut self) {
         let line = self.view.line;
         let end = self.lines[line].len();
@@ -2196,6 +2193,7 @@ mod tests {
         assert!(e.completion.is_none(), "one letter");
         typing(&mut e, "C");
         assert_eq!(e.completion.as_ref().unwrap().items, ["SCORE", "SCROLL"]);
+        e.key(keys::DOWN);
         e.key(keys::ENTER);
         assert_eq!((e.text().as_str(), e.cursor()), ("SCORE=0\nSCORE", (2, 5)));
         e.undo();

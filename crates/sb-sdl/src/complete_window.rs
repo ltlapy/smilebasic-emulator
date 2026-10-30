@@ -151,16 +151,19 @@ mod tests {
     fn keys_and_clicks_change_the_settings() {
         let mut s = Settings::default();
         let mut w = CompleteWindow::new((1280, 720));
+        w.key(Keycode::Down, &mut s);
         w.key(Keycode::Space, &mut s);
-        assert_eq!(s.complete_after, 1);
+        assert_eq!(s.complete_after, 2);
+        // Up from the top goes round to the last row.
+        w.key(Keycode::Up, &mut s);
         w.key(Keycode::Up, &mut s);
         w.key(Keycode::Return, &mut s);
         assert!(!s.complete_enter);
         let names = w.row_rect(5);
         let at = ((names.x + 4) as i32, (names.y + 4) as i32);
         assert_eq!(w.click(at, &mut s), Outcome::Stay);
-        assert!(!s.complete_names);
-        assert_eq!(label(Row::Names, &s), "[ ] Names in the program");
+        assert!(s.complete_names);
+        assert_eq!(label(Row::Names, &s), "[x] Names in the program");
         assert_eq!(w.click((0, 0), &mut s), Outcome::Close);
         assert_eq!(w.key(Keycode::Escape, &mut s), Outcome::Close);
     }

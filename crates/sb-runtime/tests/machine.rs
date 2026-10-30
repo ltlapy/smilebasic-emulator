@@ -464,6 +464,8 @@ fn split_editor_sides() {
 fn direct_mode_completes_words() {
     use sb_runtime::runtime::keys;
     let mut m = machine();
+    // The program's names are offered only when asked for.
+    m.rt.settings.complete_names = true;
     m.set_slot(0, "SCORE_TOTAL=5".to_string());
     // Typed letters swap case, so these come out upper case.
     m.type_text("?score_t");

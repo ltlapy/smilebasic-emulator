@@ -288,7 +288,7 @@ impl Machine {
 
     /// Splits the editor in two sides side by side, both showing the
     /// active slot at first, then one above the other, then goes back to
-    /// one (Ctrl+/, in SmileBASIC 4's order).
+    /// one (Ctrl+/).
     pub fn toggle_split(&mut self) {
         if !self.editing {
             return;

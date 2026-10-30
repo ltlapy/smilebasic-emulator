@@ -1,7 +1,7 @@
 //! Completion of the word being typed, in the editor and in direct mode:
-//! a list of SmileBASIC's words and the program's own names that start
-//! with it, below the cursor. SmileBASIC 4 has such a list in its editor;
-//! what goes in it and when it shows are the emulator's settings.
+//! a list of SmileBASIC's words, and if asked for the program's own
+//! names, that start with it, below the cursor. SmileBASIC 4's editor
+//! lists its words from the first letter; the settings can change that.
 
 use sb_core::lexer::Keyword;
 
@@ -69,7 +69,8 @@ pub struct Completion {
     /// Where the word starts in the line.
     pub start: usize,
     pub items: Vec<String>,
-    pub chosen: usize,
+    /// The entry picked with Up or Down; none until then.
+    pub chosen: Option<usize>,
     /// The first entry shown.
     top: usize,
 }
@@ -177,29 +178,37 @@ impl Completion {
         (!items.is_empty()).then_some(Completion {
             start,
             items,
-            chosen: 0,
+            chosen: None,
             top: 0,
         })
     }
 
+    /// The entry to put in: the one picked, or else the first.
     pub fn chosen(&self) -> &str {
-        &self.items[self.chosen]
+        &self.items[self.chosen.unwrap_or(0)]
     }
 
-    /// A key while the list is open.
+    /// A key while the list is open. Until Up or Down picks an entry,
+    /// Enter goes on to the text, so that a list showing after one letter
+    /// does not take the Enter that ends a line; Tab takes the first.
+    // UNVERIFIED: that SmileBASIC 4's Enter also needs an entry picked.
     pub fn key(&mut self, code: u16, enter: bool) -> Outcome {
         let n = self.items.len();
-        match code {
-            keys::DOWN => self.chosen = (self.chosen + 1) % n,
-            keys::UP => self.chosen = (self.chosen + n - 1) % n,
-            keys::TAB => return Outcome::Accept,
-            keys::ENTER if enter => return Outcome::Accept,
-            keys::ESCAPE => return Outcome::Close,
+        let chosen = match (code, self.chosen) {
+            (keys::DOWN, None) => 0,
+            (keys::UP, None) => n - 1,
+            (keys::DOWN, Some(i)) => (i + 1) % n,
+            (keys::UP, Some(i)) => (i + n - 1) % n,
+            (keys::TAB, _) | (keys::ENTER, Some(_)) if code == keys::TAB || enter => {
+                return Outcome::Accept;
+            }
+            (keys::ESCAPE, _) => return Outcome::Close,
             _ => return Outcome::Pass,
-        }
-        self.top = self.top.min(self.chosen);
-        if self.chosen >= self.top + ROWS {
-            self.top = self.chosen + 1 - ROWS;
+        };
+        self.chosen = Some(chosen);
+        self.top = self.top.min(chosen);
+        if chosen >= self.top + ROWS {
+            self.top = chosen + 1 - ROWS;
         }
         Outcome::Used
     }
@@ -244,7 +253,7 @@ impl Completion {
         screen.pos = (x as f64, y as f64);
         for (row, item) in self.items.iter().enumerate().skip(self.top).take(rows) {
             let r = (row - self.top) as i64;
-            if row == self.chosen {
+            if Some(row) == self.chosen {
                 fill(fb, x, y + r * i64::from(cell), w, i64::from(cell), CHOSEN);
             }
             for (i, c) in item.encode_utf16().enumerate() {
@@ -319,6 +328,8 @@ mod tests {
     fn keys_move_through_the_list() {
         let mut c = Completion::find(&u("BGMS"), 4, &ALL, &[]).unwrap();
         assert_eq!(c.items, ["BGMSET", "BGMSETD", "BGMSTOP"]);
+        assert_eq!(c.key(keys::ENTER, true), Outcome::Pass, "nothing picked");
+        assert_eq!(c.chosen(), "BGMSET");
         assert_eq!(c.key(keys::UP, true), Outcome::Used);
         assert_eq!(c.chosen(), "BGMSTOP");
         c.key(keys::DOWN, true);
