@@ -20,6 +20,7 @@ fn run_with_input(source: &str, input: &[&str]) -> Result<String, sb_core::error
         match vm.run(&mut host, 100_000)? {
             Status::Ended => return Ok(host.output),
             Status::Running | Status::Wait { .. } => {}
+            Status::Break { .. } => unreachable!("nothing presses the + button"),
         }
     }
     panic!("program did not end; output so far: {:?}", host.output);

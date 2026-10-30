@@ -31,6 +31,10 @@ pub enum Status {
         vsync: bool,
     },
     Ended,
+    /// The + button stops the program after the statement on `line`.
+    Break {
+        line: u32,
+    },
 }
 
 /// Waits a frame and runs the same instruction again.
@@ -117,6 +121,9 @@ pub struct Vm {
     executed: u64,
     /// ON BREAK GOTO's slot and address, until the + button jumps there.
     on_break: Option<(usize, usize)>,
+    /// The line and column of the statement a jump out of INPUT went to;
+    /// the program stops once it has run.
+    break_after: Option<(u32, u32)>,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -243,6 +250,7 @@ impl Vm {
             call_idx: 0,
             executed: 0,
             on_break: None,
+            break_after: None,
         }
     }
 
@@ -309,15 +317,20 @@ impl Vm {
         let Some((slot, addr)) = self.on_break.take() else {
             return false;
         };
-        // UNVERIFIED: the jump leaves DEFs, GOSUBs, callbacks and a
-        // waiting INPUT behind, as a GOTO out of them would.
+        // The jump leaves GOSUBs behind (checked on hardware). UNVERIFIED:
+        // that DEFs and callbacks go too.
         self.stack.clear();
         self.frames.clear();
         self.gosubs.clear();
         self.callbacks.clear();
-        self.reading_input = false;
         self.switch_to(slot, host);
         self.pc = addr;
+        // Out of INPUT, the press also stops the program after the first
+        // statement there (checked on hardware, with a statement on a line
+        // of its own).
+        if std::mem::take(&mut self.reading_input) {
+            self.break_after = Some((self.line(), self.col()));
+        }
         true
     }
 
@@ -327,6 +340,12 @@ impl Vm {
             return Ok(Status::Ended);
         }
         for _ in 0..budget {
+            if let Some((line, col)) = self.break_after
+                && (self.line(), self.col()) != (line, col)
+            {
+                self.break_after = None;
+                return Ok(Status::Break { line });
+            }
             let pc = self.pc;
             self.executed += 1;
             match self.step(host) {

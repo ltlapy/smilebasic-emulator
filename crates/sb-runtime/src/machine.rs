@@ -275,6 +275,11 @@ impl Machine {
     /// Stops the running program or direct-mode line, as the Break key
     /// does, and returns to direct mode.
     pub fn stop(&mut self) {
+        self.stop_on(None);
+    }
+
+    /// Stops, naming `line` rather than the one about to run.
+    fn stop_on(&mut self, line: Option<u32>) {
         let Some(vm) = self.vm.take() else {
             return;
         };
@@ -285,8 +290,8 @@ impl Machine {
         self.rt.cancel_confirm();
         // Checked on hardware, in a program; UNVERIFIED in direct mode.
         let at = match vm.slot() {
-            Some(slot) => format!("{slot}:{}", vm.line()),
-            None => vm.line().to_string(),
+            Some(slot) => format!("{slot}:{}", line.unwrap_or(vm.line())),
+            None => line.unwrap_or(vm.line()).to_string(),
         };
         let text: Vec<u16> = format!("User break on {at}").encode_utf16().collect();
         self.print_line(&text);
@@ -400,6 +405,7 @@ impl Machine {
                     }
                 }
                 Ok(Status::Ended) => self.finish(None),
+                Ok(Status::Break { line }) => self.stop_on(Some(line)),
                 Err(e) => self.finish(Some(e)),
             }
             break;

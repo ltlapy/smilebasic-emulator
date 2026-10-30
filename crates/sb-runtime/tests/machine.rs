@@ -182,22 +182,38 @@ fn sysreq_jumps_to_on_break_once() {
     let mut m = machine();
     m.set_slot(
         0,
-        "ON BREAK GOTO @B\nINPUT A\n@B:?\"B\"\n@M:VSYNC:GOTO @M".to_string(),
+        "ON BREAK GOTO @B\n@L:VSYNC:GOTO @L\n@B:?\"B\"\n@M:VSYNC:GOTO @M".to_string(),
     );
     m.run_slot(0);
     m.frame();
     m.frame();
-    assert!(m.is_running());
-    // A waiting INPUT is left behind.
     m.sysreq();
     m.frame();
     assert!(m.is_running());
-    // UNVERIFIED: the console goes on after INPUT's prompt.
-    assert_eq!(rows(&m).last().unwrap(), "?B");
+    assert_eq!(rows(&m).last().unwrap(), "B");
     // The label is used once; the next press stops.
     m.sysreq();
     assert!(!m.is_running());
     assert_eq!(rows(&m).last().unwrap(), "OK");
+}
+
+#[test]
+fn sysreq_out_of_input_also_stops() {
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "ON BREAK GOTO @B\nINPUT A\n@B\n?\"B\"\n?\"C\"".to_string(),
+    );
+    m.run_slot(0);
+    m.frame();
+    m.frame();
+    m.sysreq();
+    m.frame();
+    // Checked on hardware: the jump goes on after the prompt, and the
+    // program stops after the statement it jumped to.
+    assert!(!m.is_running());
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 3..], ["? B", "User break on 0:4", "OK"]);
 }
 
 /// Presses keys, one frame each.
