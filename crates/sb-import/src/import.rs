@@ -6,8 +6,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use sb_runtime::font::{Font, FontError};
+use sb_runtime::help::Help;
 use sb_runtime::resources::{
-    self, FONT_MAP, FONT_PAGE, INSTRUMENTS, SEQUENCES, SPRITE_DEFS, SPRITE_PAGE,
+    self, FONT_MAP, FONT_PAGE, HELP_DATA, HELP_INDEX, INSTRUMENTS, SEQUENCES, SPRITE_DEFS,
+    SPRITE_PAGE,
 };
 use sb_runtime::sound::bank::Bank;
 use sb_runtime::sound::seq::Sequences;
@@ -35,6 +37,16 @@ const FONT_PAGE_SOURCE: Source = Source {
 const SPRITE_PAGE_SOURCE: Source = Source {
     name: SPRITE_PAGE,
     paths: &["basic/en/#SYS/GDEFGRP", "basic/jp/#SYS/GDEFGRP"],
+};
+
+const HELP_INDEX_SOURCE: Source = Source {
+    name: HELP_INDEX,
+    paths: &["help/en/HelpData.idx"],
+};
+
+const HELP_DATA_SOURCE: Source = Source {
+    name: HELP_DATA,
+    paths: &["help/en/HelpData.dat"],
 };
 
 /// The sound archive, which holds the instruments, preset songs and
@@ -163,6 +175,21 @@ pub fn import(dirs: &[PathBuf], dest: &Path) -> Result<Imported, ImportError> {
         None => imported
             .missing
             .push("main (sprite definitions, in the ExeFS)"),
+    }
+    match (
+        locate(&HELP_INDEX_SOURCE, dirs),
+        locate(&HELP_DATA_SOURCE, dirs),
+    ) {
+        (Some(index), Some(data)) => {
+            let (index_bytes, data_bytes) = (read(&index)?, read(&data)?);
+            if Help::from_bytes(&index_bytes, data_bytes.clone()).is_none() {
+                return Err(ImportError::Bad(data, "not a help".into()));
+            }
+            write(HELP_INDEX, &index_bytes)?;
+            write(HELP_DATA, &data_bytes)?;
+            imported.sources.extend([index, data]);
+        }
+        _ => imported.missing.push("HelpData (the help, in the RomFS)"),
     }
     match locate(&SOUND_ARCHIVE, dirs) {
         Some(path) => {

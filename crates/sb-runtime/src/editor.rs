@@ -256,6 +256,11 @@ impl Editor {
         (self.view.line + 1, self.view.col)
     }
 
+    /// The line the cursor is on, and the cursor's column in it.
+    pub fn cursor_line(&self) -> (&[u16], usize) {
+        (&self.lines[self.view.line], self.view.col)
+    }
+
     pub fn text(&self) -> String {
         let lines: Vec<String> = self
             .lines

@@ -14,6 +14,7 @@ pub mod font;
 pub mod framebuffer;
 pub mod graphics;
 mod grp;
+pub mod help;
 pub mod image;
 pub mod input;
 mod loadsave;

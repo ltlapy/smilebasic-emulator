@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::font::{Font, FontError};
 use crate::graphics::GRP_SIZE;
+use crate::help::Help;
 use crate::sbfile::{self, DataValues};
 use crate::sound::bank::Bank;
 use crate::sound::seq::Sequences;
@@ -35,6 +36,10 @@ pub const SPRITE_DEFS: &str = "spdef.bin";
 pub const INSTRUMENTS: &str = "instruments.bin";
 /// The preset songs and BEEP's effects from the sound archive.
 pub const SEQUENCES: &str = "sequences.bin";
+
+/// The English help's index and data, from `help/en` in the RomFS.
+pub const HELP_INDEX: &str = "HelpData.idx";
+pub const HELP_DATA: &str = "HelpData.dat";
 
 /// The directory SDL's `SDL_GetPrefPath("", DATA_DIR)` gives the emulator,
 /// worked out the same way so tools need no SDL.
@@ -125,4 +130,11 @@ pub fn load_instruments(dir: &Path) -> Option<Bank> {
 /// `None` if they were not imported or are damaged.
 pub fn load_sequences(dir: &Path) -> Option<Sequences> {
     Sequences::from_bytes(&std::fs::read(dir.join(SEQUENCES)).ok()?)
+}
+
+/// SmileBASIC 4's help from the resource directory, `None` if it was not
+/// imported or is damaged.
+pub fn load_help(dir: &Path) -> Option<Help> {
+    let index = std::fs::read(dir.join(HELP_INDEX)).ok()?;
+    Help::from_bytes(&index, std::fs::read(dir.join(HELP_DATA)).ok()?)
 }
