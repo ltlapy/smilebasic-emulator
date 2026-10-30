@@ -40,6 +40,11 @@ pub enum ErrorKind {
     /// A command for programs only, such as EXEC, in direct mode. SmileBASIC
     /// 4 shows it without a place.
     CantUseFromDirectMode,
+    /// SYSPARAM of a name it does not know.
+    IllegalSystemArgumentName,
+    /// SYSPARAM asked for another number of values than its item has, or
+    /// setting one that can only be read.
+    WrongNumberOfOutArguments,
 }
 
 impl ErrorKind {
@@ -75,6 +80,8 @@ impl ErrorKind {
             ErrorKind::UsePrgedit => "Use PRGEDIT before any PRG function",
             ErrorKind::LoadFailed => "Load failed",
             ErrorKind::CantUseFromDirectMode => "Can't use from direct mode",
+            ErrorKind::IllegalSystemArgumentName => "Illegal system argument name",
+            ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }
 }

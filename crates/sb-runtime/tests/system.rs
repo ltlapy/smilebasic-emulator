@@ -73,15 +73,18 @@ fn system_settings() {
             .unwrap(),
         "01"
     );
-    for source in [
-        "?SYSPARAM(\"COLOR\")",
-        "SYSPARAM \"LANG\",1",
-        "?SYSPARAM(\"KEYREPEAT\")",
+    assert_eq!(
+        run("SYSPARAM \"lang\" OUT L$:?L$;SYSPARAM(\"TOOL2\")").unwrap(),
+        "en-US#TOOL/GAHAKU.PRG"
+    );
+    for (source, error) in [
+        ("?SYSPARAM(\"COLOR\")", ErrorKind::IllegalSystemArgumentName),
+        ("SYSPARAM \"LANG\",1", ErrorKind::WrongNumberOfOutArguments),
+        (
+            "?SYSPARAM(\"KEYREPEAT\")",
+            ErrorKind::WrongNumberOfOutArguments,
+        ),
     ] {
-        assert_eq!(
-            run(source).unwrap_err().kind,
-            ErrorKind::IllegalFunctionCall,
-            "{source}"
-        );
+        assert_eq!(run(source).unwrap_err().kind, error, "{source}");
     }
 }

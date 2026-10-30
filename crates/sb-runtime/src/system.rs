@@ -60,6 +60,10 @@ pub struct System {
     pub mouse_cursor: bool,
 }
 
+/// SYSPARAM "TOOL1" to "TOOL3": the programs F9 to F11 start, as
+/// SmileBASIC 4's settings start.
+const TOOLS: [&str; 3] = ["#TOOL/SBSMILE.PRG", "#TOOL/GAHAKU.PRG", ""];
+
 /// SYSPARAM "KEYREPEAT": frames before a held key repeats, and between
 /// repeats, as SmileBASIC 4's settings start.
 const KEY_REPEAT: [i32; 2] = [20, 3];
@@ -70,7 +74,6 @@ impl Default for System {
             series: std::array::from_fn(|_| Series::seeded(entropy())),
             started: Instant::now(),
             frames: 0,
-            // UNVERIFIED: the system sounds start on.
             sysbeep: true,
             mouse_cursor: false,
         }
@@ -206,37 +209,45 @@ impl Runtime {
                     .to_vec())
             }
             (Command::Sysparam, _, 1..=2) => {
-                // UNVERIFIED: whether names may be in lower case, and that
-                // unknown names, setting what can only be read or reading
-                // KEYREPEAT as a value are Illegal function call.
+                // Names may be in lower case (checked on hardware).
                 let name = text(&args[0])?.to_ascii_uppercase();
-                let bad = || Error::with_detail(ErrorKind::IllegalFunctionCall, name.clone());
                 let flag = |on: bool| Value::Int(on.into());
-                match (name.as_str(), want, args.get(1)) {
-                    ("LANG", Want::Value, None) => {
-                        Ok(vec![string(self.settings.language.code().to_string())])
-                    }
-                    ("SYSBEEP", Want::Value, None) => Ok(vec![flag(sys.sysbeep)]),
-                    ("SYSBEEP", Want::Outs(0), Some(v)) => {
-                        sys.sysbeep = int(v)? != 0;
-                        Ok(vec![])
-                    }
-                    ("TABSTEP", Want::Value, None) => {
-                        Ok(vec![Value::Int(self.settings.editor_tab_step as i32)])
-                    }
-                    ("KEYREPEAT", Want::Outs(2), None) => Ok(KEY_REPEAT.map(Value::Int).to_vec()),
-                    ("MOUSECURSOR", Want::Value, None) => Ok(vec![flag(sys.mouse_cursor)]),
-                    ("MOUSECURSOR", Want::Outs(0), Some(v)) => {
-                        sys.mouse_cursor = int(v)? != 0;
-                        Ok(vec![])
-                    }
+                let values = match name.as_str() {
+                    "LANG" => vec![string(self.settings.language.code().to_string())],
+                    "SYSBEEP" => vec![flag(sys.sysbeep)],
+                    "TABSTEP" => vec![Value::Int(self.settings.editor_tab_step as i32)],
+                    "KEYREPEAT" => KEY_REPEAT.map(Value::Int).to_vec(),
+                    "MOUSECURSOR" => vec![flag(sys.mouse_cursor)],
                     // The emulator's window stands for the Switch on a TV.
-                    ("TVMODE", Want::Value, None) => Ok(vec![Value::Int(1)]),
-                    // There are no tools to set.
-                    ("TOOL1" | "TOOL2" | "TOOL3", Want::Value, None) => {
-                        Ok(vec![string(String::new())])
+                    "TVMODE" => vec![Value::Int(1)],
+                    "TOOL1" | "TOOL2" | "TOOL3" => {
+                        let n = usize::from(name.as_bytes()[4] - b'1');
+                        vec![string(TOOLS[n].to_string())]
                     }
-                    _ => Err(bad()),
+                    _ => {
+                        return Err(Error::with_detail(
+                            ErrorKind::IllegalSystemArgumentName,
+                            name,
+                        ));
+                    }
+                };
+                // Setting an item that can only be read, or asking for
+                // another number of values than it has, is Wrong number of
+                // OUT arguments (checked on hardware).
+                let wrong =
+                    || Error::with_detail(ErrorKind::WrongNumberOfOutArguments, name.clone());
+                match (want, args.get(1)) {
+                    (Want::Outs(0), Some(v)) => {
+                        let on = int(v)? != 0;
+                        match name.as_str() {
+                            "SYSBEEP" => sys.sysbeep = on,
+                            "MOUSECURSOR" => sys.mouse_cursor = on,
+                            _ => return Err(wrong()),
+                        }
+                        Ok(vec![])
+                    }
+                    (_, None) if want.count() == values.len() => Ok(values),
+                    _ => Err(wrong()),
                 }
             }
             _ => Err(illegal()),

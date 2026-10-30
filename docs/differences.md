@@ -57,8 +57,9 @@ Without them:
   `ja`, as set in Options > System language.
 - `SYSPARAM("TABSTEP")` is the editor's tab width, set in the Editor
   menu.
-- `SYSPARAM("TVMODE")` is always 1, `TOOL1` to `TOOL3` are empty, and
-  `SYSBEEP` keeps its value: the emulator has no system sounds.
+- `SYSPARAM("TVMODE")` is always 1, and `SYSBEEP` keeps its value: the
+  emulator has no system sounds. `TOOL1` to `TOOL3` name SmileBASIC 4's
+  own tools, which the emulator does not have.
 
 ## Other
 
