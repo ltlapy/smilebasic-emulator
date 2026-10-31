@@ -167,8 +167,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not
   available`; `TCPIANO` without Toy-Con set up is `Illegal control
   style`. `IRSTATE` starts at 0.
-- Vibration patterns have lengths of their own: pattern 40 still read
-  40 after five seconds, pattern 1 was over within half a second.
+- Vibration patterns have lengths of their own, from 3 frames (57) to
+  115 (23); 34 to 43, 47 and 48 go on past two seconds, 40 past five.
+  The emulator keeps the measured table.
 - `VIBRATE()` reads back what was asked for, also where nothing
   vibrates: after `VIBRATE 1,40` it is 2621480 (40 on the right times
   65536, plus 40 on the left) and `VIBRATE(1,0)` 40; with frequencies
@@ -253,6 +254,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
   On a composed layer it filters only that layer. Mosaic blocks start at
   the screen's corner and take their middle pixel's color.
+  That holds for a layer with nothing in it, too.
+- `LFILTER`'s blur halves the layer: 2x2 blocks are averaged (halves
+  rounded down, so a dot becomes a 2x2 block at 64 and a line 127),
+  blurred by a Gaussian of about amount/25 half-size pixels, and scaled
+  back without smoothing. Amounts 1 to 4 look the same.
+- Scaled sprites are drawn without smoothing. Where a pixel's sample
+  point falls exactly on a column boundary, it takes the column to the
+  left (at 1.5, columns are 2, 1, 2, 1... pixels wide); rows do not.
 
 ## Signal processing
 
@@ -345,8 +354,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `FREEMEM` is 134216720 at start, and the program and its numeric
   variables take none of it. A string takes 2 bytes a character plus
   about 98, an array its elements (Int 4, Real and string 8) plus 64,
-  rounded up to 64 bytes; contents of up to 40 bytes take nothing (17
-  characters, 10 Ints). `DIM A[100000]` takes 800064 bytes, 1000
+  rounded up to 64 bytes. Strings of up to 24 characters and arrays of
+  up to 64 bytes of elements take nothing. `DIM A[100000]` takes 800064 bytes, 1000
   characters 2112. `GARRAY` and `TARRAY` take nothing. Memory let go of
   (emptying a string or array, a DEF's locals after it returns) does
   not come back at once. Both of its results are the same.
