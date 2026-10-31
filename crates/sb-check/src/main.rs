@@ -5,7 +5,8 @@
 //! into a TXT file whose name starts with `RES` (see
 //! docs/hardware-tests.md). Run on SmileBASIC 4, in Ryujinx, those files
 //! land in the project's folder; this runs the same parts here, on a copy
-//! of that folder, and compares them row by row.
+//! of that folder and the projects beside it, and compares them row by
+//! row.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,8 @@ const USAGE: &str = "usage:
       part in PARTS (such as 1-26 or 2,5,7), typing the part number at
       its INPUT. The RES* text files each run saves are compared with the
       ones SmileBASIC 4 saved into PROJECT; where there are none yet,
-      ours are printed.
+      ours are printed. The projects beside PROJECT are copied too, with
+      ### as the workspace.
       With --screen, each part's screen is also saved into DIR as a PNG
       once it has run for two seconds, and then Enter is pressed, for
       parts that show a picture and wait for a key to end.
@@ -122,8 +124,11 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         .and_then(|n| n.to_str())
         .ok_or("PROJECT must be a project folder")?;
     let scratch = std::env::temp_dir().join(format!("smilebasic-check-{}", std::process::id()));
-    let outcome = parts.iter().try_for_each(|&part| {
-        check_part(project, name, program, part, &scratch, screens.as_deref())
+    let _ = std::fs::remove_dir_all(&scratch);
+    let outcome = copy_others(project, name, &scratch).and_then(|()| {
+        parts.iter().try_for_each(|&part| {
+            check_part(project, name, program, part, &scratch, screens.as_deref())
+        })
     });
     let _ = std::fs::remove_dir_all(&scratch);
     outcome
@@ -153,7 +158,7 @@ fn check_part(
     // Each part starts from the project as SmileBASIC 4 had it, less the
     // results, so a part that saves nothing here shows as such.
     let copy = scratch.join(name);
-    let _ = std::fs::remove_dir_all(scratch);
+    let _ = std::fs::remove_dir_all(&copy);
     std::fs::create_dir_all(&copy)?;
     for entry in std::fs::read_dir(project)? {
         let entry = entry?;
@@ -563,6 +568,47 @@ fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
         pixels: fb.pixels().to_vec(),
     };
     std::fs::write(file, image::encode_png(&image))?;
+    Ok(())
+}
+
+/// Copies the projects beside PROJECT into `scratch` once, for parts that
+/// read other projects or the workspace (SmileBASIC 4's `###` folder).
+/// What a part changes in them stays for the next part. An emulator's
+/// own workspace folder there gives way to `###`.
+fn copy_others(project: &Path, name: &str, scratch: &Path) -> Result<(), AnyError> {
+    std::fs::create_dir_all(scratch)?;
+    let Some(parent) = project.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        return Ok(());
+    };
+    let sb4_workspace = parent.join("###").is_dir();
+    for entry in std::fs::read_dir(parent)? {
+        let entry = entry?;
+        let file = entry.file_name();
+        let other = file.to_string_lossy();
+        if !entry.file_type()?.is_dir() || other == name || (sb4_workspace && other == "@WORKSPACE")
+        {
+            continue;
+        }
+        let to = match other.as_ref() {
+            "###" => "@WORKSPACE",
+            other => other,
+        };
+        copy_dir(&entry.path(), &scratch.join(to))?;
+    }
+    Ok(())
+}
+
+fn copy_dir(from: &Path, to: &Path) -> Result<(), AnyError> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            copy_dir(&entry.path(), &to.join(entry.file_name()))?;
+        } else if kind.is_file() {
+            std::fs::copy(entry.path(), to.join(entry.file_name()))?;
+        }
+    }
     Ok(())
 }
 
