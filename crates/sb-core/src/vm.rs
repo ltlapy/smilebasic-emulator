@@ -1451,6 +1451,7 @@ impl Vm {
                 return Ok(None);
             }
             Op::OnBreak(a) => self.on_break = Some((self.slot, *a as usize)),
+            Op::NoBreak => self.on_break = None,
             Op::GotoDyn => {
                 let label = self.pop();
                 let (slot, target) = self.find_label(&label)?;

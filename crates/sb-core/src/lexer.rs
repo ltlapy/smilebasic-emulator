@@ -298,9 +298,12 @@ impl Lexer {
                 '@' => {
                     self.bump();
                     // Unlike other names, a label may start with a digit.
-                    let name = self
-                        .word_from(is_ident_char)
+                    // Its case is kept for `A$=@Lp`; as a place to go to,
+                    // the parser compares it in upper case.
+                    let from = self.pos;
+                    self.word_from(is_ident_char)
                         .ok_or(self.error(LexErrorKind::MissingDigits, start))?;
+                    let name = self.chars[from..self.pos].iter().collect();
                     self.push(TokenKind::Label(name), start);
                 }
                 '#' => {
@@ -695,7 +698,7 @@ mod tests {
         assert_eq!(
             kinds("@main_loop ?#C_WHITE"),
             [
-                T::Label("MAIN_LOOP".into()),
+                T::Label("main_loop".into()),
                 T::Keyword(Keyword::Print),
                 T::Constant("C_WHITE".into())
             ]

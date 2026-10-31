@@ -922,3 +922,12 @@ fn inc_adds_to_a_string_where_it_is() {
     );
     assert_eq!(output("A=1:INC A,2:A$=\"Q\":INC A$,A$:?A;A$"), "3QQ\n");
 }
+
+#[test]
+fn labels_keep_their_case_as_strings() {
+    assert_eq!(output("A$=@Lp:?A$"), "@Lp\n");
+    assert_eq!(output("GOTO @lp:?1\n@Lp\n?2"), "2\n");
+    assert_eq!(output("GOSUB \"@lP\":END\n@LP\n?3:RETURN"), "3\n");
+    assert_eq!(output("RESTORE @dd:READ X:?X\n@DD\nDATA 5"), "5\n");
+    assert_eq!(output("ON BREAK GOTO \"\":?4"), "4\n");
+}

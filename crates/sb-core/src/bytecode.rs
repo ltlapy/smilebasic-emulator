@@ -104,6 +104,8 @@ pub enum Op {
     Gosub(Addr),
     /// ON BREAK GOTO: the + button jumps here instead of stopping.
     OnBreak(Addr),
+    /// `ON BREAK GOTO ""`: the + button stops the program again.
+    NoBreak,
     /// `[label string] -> []`
     GotoDyn,
     GosubDyn,

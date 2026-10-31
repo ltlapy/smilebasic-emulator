@@ -744,6 +744,7 @@ impl Compiler<'_> {
                     self.jump_to_label(Op::Jump(0), l);
                 }
             }
+            StmtKind::OnBreakGoto(l) if l.is_empty() => _ = self.emit(Op::NoBreak),
             StmtKind::OnBreakGoto(l) => self.jump_to_label(Op::OnBreak(0), l),
             StmtKind::Return(None) => _ = self.emit(Op::Return),
             StmtKind::Return(Some(e)) => {

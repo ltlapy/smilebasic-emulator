@@ -299,7 +299,7 @@ impl Parser {
         let keyword = match self.peek().clone() {
             TokenKind::Label(name) => {
                 self.advance();
-                return Ok(StmtKind::Label(name));
+                return Ok(StmtKind::Label(name.to_ascii_uppercase()));
             }
             TokenKind::Ident { .. } => return self.ident_statement(),
             TokenKind::Keyword(k) => k,
@@ -717,7 +717,7 @@ impl Parser {
             let Span { line, col } = self.span();
             self.advance();
             return Ok(vec![Stmt {
-                kind: StmtKind::Goto(Target::Label(name)),
+                kind: StmtKind::Goto(Target::Label(name.to_ascii_uppercase())),
                 line,
                 col,
             }]);
@@ -808,7 +808,7 @@ impl Parser {
     fn target(&mut self) -> PResult<Target> {
         if let TokenKind::Label(name) = self.peek().clone() {
             self.advance();
-            Ok(Target::Label(name))
+            Ok(Target::Label(name.to_ascii_uppercase()))
         } else {
             Ok(Target::Expr(self.expr()?))
         }
@@ -818,7 +818,7 @@ impl Parser {
         match self.peek().clone() {
             TokenKind::Label(name) => {
                 self.advance();
-                Ok(name)
+                Ok(name.to_ascii_uppercase())
             }
             _ => self.expected("label"),
         }
@@ -827,6 +827,13 @@ impl Parser {
     fn on_statement(&mut self) -> PResult<StmtKind> {
         if self.eat_keyword(Keyword::Break) {
             self.expect_keyword(Keyword::Goto, "GOTO")?;
+            // An empty string takes the handler away.
+            if let TokenKind::Str(s) = self.peek()
+                && s.is_empty()
+            {
+                self.advance();
+                return Ok(StmtKind::OnBreakGoto(String::new()));
+            }
             return Ok(StmtKind::OnBreakGoto(self.label()?));
         }
         let selector = self.expr()?;

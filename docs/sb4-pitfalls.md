@@ -97,6 +97,9 @@ follows all of it. Items still waiting for a check are marked
   then sets B), and `NEXT` takes a loop variable only if a name follows
   (`NEXT?I`).
 - `T?` is short for `TPRINT`.
+- A label used as a value keeps its case (`A$=@Lp` is `"@Lp"`); as a
+  place to go to, case does not matter.
+- `ON BREAK GOTO ""` takes the handler away.
 - A constant's name may start with a digit, as a label's may (`#2P`).
 - A `#` after a number makes it a real (`0#`).
 - A `\` joins its line with the next; the rest of its line is left out
