@@ -204,6 +204,8 @@ pub enum Op {
     /// `[] -> [next DATA value]`
     Read,
     End,
+    /// Does nothing: marks where a statement starts.
+    Nop,
     /// `[file or slot, slot?] -> []`: EXEC.
     Exec(u8),
 }

@@ -115,6 +115,12 @@ impl Unit {
     }
 }
 
+/// TRACE runs until the start of the statement after the first one it
+/// runs into, and names that one's line.
+struct Trace {
+    line: Option<u32>,
+}
+
 /// Where EXEC goes back to when the slot it started ends.
 struct ExecReturn {
     slot: usize,
@@ -163,10 +169,8 @@ pub struct Vm {
     break_pending: Option<(u64, u32)>,
     /// STOP's message, shown after the line it stopped on.
     stop_message: Option<Str>,
-    /// The instruction count when TRACE asked for one statement, and the
-    /// last instruction run since.
-    trace_from: Option<u64>,
-    traced_pc: usize,
+    /// TRACE's statement under way.
+    trace: Option<Trace>,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -297,8 +301,7 @@ impl Vm {
             on_break: None,
             break_pending: None,
             stop_message: None,
-            trace_from: None,
-            traced_pc: 0,
+            trace: None,
         }
     }
 
@@ -356,18 +359,7 @@ impl Vm {
     /// TRACE: the next [`Vm::run`] runs one statement and returns
     /// [`Status::Traced`].
     pub fn trace(&mut self) {
-        self.trace_from = Some(self.executed);
-    }
-
-    /// Whether the last instruction went from a FOR's test into its body,
-    /// which TRACE runs together with the body's first statement.
-    // UNVERIFIED: that NEXT going round again does the same.
-    fn entered_for_body(&self) -> bool {
-        let code = &self.program.code;
-        self.pc == self.traced_pc + 1
-            && matches!(code.get(self.traced_pc), Some(Op::JumpIfFalse(_)))
-            && self.traced_pc > 0
-            && matches!(code.get(self.traced_pc - 1), Some(Op::ForTest))
+        self.trace = Some(Trace { line: None });
     }
 
     /// Where the running code was called from, outermost first: the slot
@@ -481,19 +473,16 @@ impl Vm {
                     self.break_pending = Some((at, self.line()));
                 }
             }
-            if let Some(at) = self.trace_from
-                && self.executed > at
+            if let Some(trace) = &mut self.trace
                 && self.program.starts.get(self.pc) == Some(&true)
-                && !self.entered_for_body()
             {
-                self.trace_from = None;
-                let line = self.program.lines.get(self.traced_pc).copied();
-                return Ok(Status::Traced {
-                    line: line.unwrap_or(0),
-                });
+                if let Some(line) = trace.line {
+                    self.trace = None;
+                    return Ok(Status::Traced { line });
+                }
+                trace.line = self.program.lines.get(self.pc).copied();
             }
             let pc = self.pc;
-            self.traced_pc = pc;
             self.executed += 1;
             match self.step(host) {
                 Ok(None) => {}
@@ -1287,6 +1276,7 @@ impl Vm {
                 });
             }
             Op::End => return Ok(self.end(host)),
+            Op::Nop => {}
             Op::Exec(argc) => {
                 let args = self.pop_n((*argc).into());
                 return self.exec(args, host);
@@ -1455,6 +1445,16 @@ impl Vm {
             }
             self.gosubs.pop();
             self.switch_to(slot, host);
+            // TRACE names the line of the GOSUB it came back to (checked
+            // on hardware).
+            if let Some(Trace { line: Some(line) }) = &mut self.trace {
+                *line = self
+                    .program
+                    .lines
+                    .get(pc.wrapping_sub(1))
+                    .copied()
+                    .unwrap_or(*line);
+            }
             return Ok(pc);
         }
         let Some(frame) = self.frames.last() else {

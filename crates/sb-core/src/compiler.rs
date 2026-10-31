@@ -478,7 +478,11 @@ impl Compiler<'_> {
         let start = self.out.code.len();
         self.stmt_kind(&stmt.kind)
             .map_err(|e| e.at_pos(stmt.line, stmt.col))?;
-        self.mark_start(start);
+        // A FOR's own start is no statement for TRACE: it runs on into
+        // the body (checked on hardware). A label emits nothing.
+        if !matches!(stmt.kind, StmtKind::For { .. } | StmtKind::Label(_)) {
+            self.mark_start(start);
+        }
         Ok(())
     }
 
@@ -607,9 +611,22 @@ impl Compiler<'_> {
                 let (to_slot, step_slot) = (self.temp(), self.temp());
                 self.expr(from)?;
                 self.store(var)?;
+                // NEXT goes back to the step and then the test, each a
+                // statement on the FOR's line for TRACE; FOR itself goes
+                // straight to the test (checked on hardware).
+                let enter = self.emit(Op::Jump(0));
+                let step_at = self.emit(Op::Nop);
+                self.mark_start(step_at);
+                self.load_lvalue(var)?;
+                self.emit(Op::Load(step_slot));
+                self.emit(Op::Binary(BinaryOp::Add));
+                self.store(var)?;
+                let test_at = self.emit(Op::Nop);
+                self.mark_start(test_at);
+                let check = self.here();
+                self.patch(enter, check);
                 // STEP, then TO, are worked out again before each test
                 // (checked on hardware).
-                let check = self.here();
                 match step {
                     Some(s) => self.expr(s)?,
                     None => _ = self.emit(Op::Int(1)),
@@ -623,16 +640,10 @@ impl Compiler<'_> {
                 self.emit(Op::ForTest);
                 let exit = self.emit(Op::JumpIfFalse(0));
                 let lp = self.loop_body(body)?;
-                let next = self.here();
-                self.load_lvalue(var)?;
-                self.mark_start(next as usize);
-                self.emit(Op::Load(step_slot));
-                self.emit(Op::Binary(BinaryOp::Add));
-                self.store(var)?;
-                self.emit(Op::Jump(check));
+                self.emit(Op::Jump(step_at as Addr));
                 let end = self.here();
                 self.patch(exit, end);
-                self.finish_loop(lp, next, end);
+                self.finish_loop(lp, step_at as Addr, end);
             }
             StmtKind::While { cond, body } => {
                 let check = self.here();
@@ -1392,16 +1403,13 @@ impl Compiler<'_> {
             self.local_slot(k);
         }
         self.block(&def.body)?;
-        (self.line, self.col) = def.end;
-        let end = if def.is_function {
+        if def.is_function {
             // UNVERIFIED: a function that ends without RETURN gives no value.
             self.emit(Op::Default);
-            self.emit(Op::ReturnValue)
+            self.emit(Op::ReturnValue);
         } else {
-            self.emit(Op::Return)
-        };
-        let start = if def.is_function { end - 1 } else { end };
-        self.mark_start(start);
+            self.emit(Op::Return);
+        }
         self.resolve_patches(Some(index))?;
         self.def = None;
         Ok(())

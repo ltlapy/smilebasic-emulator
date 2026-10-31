@@ -3,10 +3,9 @@
 
 use crate::value::{Array, ArrayData, Str, Value, format_number};
 
-/// Characters of a string shown before the rest is left out.
-// UNVERIFIED: SmileBASIC 4's limit (more than 300), and how it marks what
-// it leaves out.
-pub const STRING_CHARS: usize = 1024;
+/// Characters of a string shown; a longer one is cut off there, without
+/// its closing quote.
+pub const STRING_CHARS: usize = 256;
 
 /// The lines INSPECT prints for `value`: `INT: 1`, `REAL: 1.50000000` or
 /// `STRING: (2)"AB"`; for an array, `INT[2,2]:`, a line ` [0,1]: 0` for
@@ -71,9 +70,9 @@ fn element(value: &Value) -> Str {
     let s = s.borrow();
     let mut out: Str = format!("({})\"", s.len()).encode_utf16().collect();
     out.extend(s.iter().take(STRING_CHARS));
-    out.push(u16::from(b'"'));
-    if s.len() > STRING_CHARS {
-        out.extend("...".encode_utf16());
+    // UNVERIFIED: that exactly 256 characters keep the quote.
+    if s.len() <= STRING_CHARS {
+        out.push(u16::from(b'"'));
     }
     out
 }
@@ -98,7 +97,7 @@ mod tests {
         assert_eq!(text(&Value::Real(1.5)), ["REAL: 1.50000000"]);
         assert_eq!(text(&Value::Str(str_from("AB"))), ["STRING: (2)\"AB\""]);
         let long = "1234567890".repeat(110);
-        let shown = format!("STRING: (1100)\"{}\"...", &long[..STRING_CHARS]);
+        let shown = format!("STRING: (1100)\"{}", &long[..STRING_CHARS]);
         assert_eq!(text(&Value::Str(str_from(&long))), [shown]);
     }
 

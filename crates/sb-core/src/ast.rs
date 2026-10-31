@@ -87,8 +87,6 @@ pub struct Def {
     pub params: Params,
     pub outs: Params,
     pub body: Vec<Stmt>,
-    /// Where its END is: a statement of its own, for TRACE.
-    pub end: (u32, u32),
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -646,20 +646,17 @@ fn backtrace_and_trace() {
     let def = "DEF DF N\n STOP\n ?\"IN DF\";N\nEND\nDEF DE N\n ?1/N\nEND";
     m.set_slot(0, format!("GOSUB @G\nEND\n@G\nDF 1\nRETURN\n{def}"));
     enter(&mut m, "RUN");
-    // TRACE works inside a DEF.
-    enter(&mut m, "TRACE");
-    let r = rows(&m);
-    assert_eq!(&r[r.len() - 3..], ["IN DF1", "Break on 0:8", "OK"]);
     enter(&mut m, "BACKTRACE");
     let r = rows(&m);
     assert_eq!(
         &r[r.len() - 4..],
-        ["0:     8", "0:     4", "0:     1", "OK"]
+        ["0:     7", "0:     4", "0:     1", "OK"]
     );
     // After BACKTRACE the program cannot go on.
     enter(&mut m, "CONT");
-    let r = rows(&m);
-    assert_eq!(r[r.len() - 2], "Can't continue");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "Can't continue");
+    enter(&mut m, "TRACE");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "Can't trace");
 
     // After an error, BACKTRACE still works.
     m.set_slot(0, format!("GOSUB @E\nEND\n@E\nDE 0\nRETURN\n{def}"));
@@ -672,24 +669,61 @@ fn backtrace_and_trace() {
     );
 }
 
-/// TTEST19T on hardware: TRACE runs a statement and says where, with a
-/// FOR together with its body's first statement.
-#[test]
-fn trace_statement_by_statement() {
+/// TRACE on hardware (TTEST19T, TTEST20): `(output, line)` for each
+/// TRACE after the program's STOP.
+fn traces(src: &str, part: Option<&str>, expected: &[(&str, u32)]) {
     let mut m = machine();
-    let src = "STOP\n?\"A\":?\"B\"\n?\"C\"\nFOR I=0 TO 1\n?I\nNEXT\nX=0\n?1/X\n?\"END\"";
     m.set_slot(0, src.to_string());
-    enter(&mut m, "RUN");
-    for (out, at) in [("A", 2), ("B", 2), ("C", 3), ("0", 5)] {
+    match part {
+        Some(part) => {
+            m.run_slot(0);
+            m.frame();
+            enter(&mut m, part);
+        }
+        None => enter(&mut m, "RUN"),
+    }
+    for &(out, at) in expected {
         enter(&mut m, "TRACE");
         let r = rows(&m);
-        assert_eq!(&r[r.len() - 3..], [out, &format!("Break on 0:{at}"), "OK"]);
+        let mut want = vec![format!("Break on 0:{at}"), "OK".to_string()];
+        if !out.is_empty() {
+            want.insert(0, out.to_string());
+        }
+        assert_eq!(r[r.len() - want.len()..], want, "{r:?}");
     }
+}
+
+#[test]
+fn trace_statement_by_statement() {
+    // A FOR runs on into the first statement of its body.
+    let src = "STOP\n?\"A\":?\"B\"\n?\"C\"\nFOR I=0 TO 1\n?I\nNEXT\nX=0\n?1/X";
+    traces(src, None, &[("A", 2), ("B", 2), ("C", 3), ("0", 5)]);
+    let mut m = machine();
+    m.set_slot(0, src.to_string());
+    enter(&mut m, "RUN");
     enter(&mut m, "CONT");
-    let r = rows(&m);
-    assert_eq!(r[r.len() - 3], "1");
-    assert!(r[r.len() - 2].starts_with("Divide by zero in 0:8"), "{r:?}");
     enter(&mut m, "TRACE");
-    let r = rows(&m);
-    assert_eq!(r[r.len() - 2], "Can't trace");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "Can't trace");
+
+    // TTEST20: a DEF's END runs with what follows the call; RETURN names
+    // the GOSUB's line. NEXT goes round the FOR's step and test, each on
+    // the FOR's line.
+    let src = "INPUT P\nON P-1 GOSUB @P1,@P2\nEND\n@P1\nDT 5\n?\"BACK\"\nRETURN\n\
+               DEF DT N\n STOP\n ?\"X\";N\n ?\"Y\"\nEND\n\
+               @P2\nSTOP\nFOR I=0 TO 1\n?\"I\";I\n?\"J\"\nNEXT\n?\"DONE\"\nRETURN";
+    traces(
+        src,
+        Some("1"),
+        &[("X5", 10), ("Y", 11), ("BACK", 6), ("", 2)],
+    );
+    let expected = [
+        ("I0", 16),
+        ("J", 17),
+        ("", 15),
+        ("", 15),
+        ("I1", 16),
+        ("J", 17),
+        ("", 15),
+    ];
+    traces(src, Some("2"), &expected);
 }
