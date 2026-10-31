@@ -319,6 +319,8 @@ pub struct Editor {
     followed: Pos,
     /// Completion's list for the word being typed.
     completion: Option<Completion>,
+    /// Ctrl+Space hid the list and the hints until it is pressed again.
+    quiet: bool,
     /// The overview in the last frame, and whether the mouse is dragging
     /// on it.
     map: Option<Map>,
@@ -382,6 +384,7 @@ impl Editor {
             scrolled: false,
             followed: (0, 0),
             completion: None,
+            quiet: false,
             library: Rc::default(),
             names: None,
             complete: None,
@@ -1100,11 +1103,38 @@ impl Editor {
             c => is_ident_char(c) || c == 0x40 || c == 0x23,
         };
         self.completion = None;
-        if let (true, Some(options), None) = (looks, self.complete, self.selection()) {
-            let names = self.program_names();
-            let (line, col) = self.pos();
-            let text = &self.lines[line];
-            self.completion = Completion::find(text, col, &options, &self.library, &names);
+        if let (true, Some(options), false) = (looks, self.complete, self.quiet) {
+            self.look_for_words(options);
+        }
+    }
+
+    fn look_for_words(&mut self, options: Options) {
+        if self.selection().is_some() {
+            return;
+        }
+        let names = self.program_names();
+        let (line, col) = self.pos();
+        let text = &self.lines[line];
+        self.completion = Completion::find(text, col, &options, &self.library, &names);
+    }
+
+    /// Ctrl+Space: hides completion's list and the hints, or shows them
+    /// again with the list for the word at the cursor, from its first
+    /// letter.
+    pub fn toggle_popups(&mut self) {
+        let Some(options) = self.complete else {
+            return;
+        };
+        self.quiet = !self.quiet;
+        self.completion = None;
+        if self.quiet {
+            self.note = Some("Hints hidden: Ctrl+Space".into());
+        } else {
+            self.note = None;
+            self.look_for_words(Options {
+                after: 1,
+                ..options
+            });
         }
     }
 
@@ -1613,21 +1643,35 @@ impl Editor {
                 }
             }
         }
-        // How the command being typed is used, above the cursor's line.
-        let hints = self.complete.is_some_and(|o| o.hints) && self.mode == Mode::Edit;
-        if let (Some((_, y)), true, None) = (cursor, hints, self.selection()) {
+        // How the command being typed is used, above the cursor's line
+        // or at the bottom.
+        let options = self
+            .complete
+            .filter(|_| !self.quiet && self.mode == Mode::Edit);
+        if let (Some((x, y)), Some(options)) = (cursor, options) {
             let names = self.program_names();
-            if let Some(hint) = hint::find(&self.lines[v.line], v.col, &self.library, &names) {
-                let top = (grid.top + y * cell) as i64;
-                let x = (gutter * cell) as i64;
-                hint.draw(fb, font, x, (top, top + cell as i64), cell as u32);
-            }
-        }
-        if let (Some((x, y)), Some(list)) = (cursor, &self.completion) {
-            let x = x.saturating_sub(v.col - list.start.min(v.col)) as i64;
+            let hint = (options.hints && self.selection().is_none())
+                .then(|| hint::find(&self.lines[v.line], v.col, &self.library, &names))
+                .flatten();
             let top = (grid.top + y * cell) as i64;
-            let at = (x * cell as i64, top + cell as i64);
-            list.draw(fb, font, at, top, cell as u32, colors);
+            let left = (gutter * cell) as i64;
+            if options.bottom {
+                let band = hint::Band {
+                    left,
+                    top: grid.top as i64,
+                    bottom: (grid.top + ruler * cell) as i64,
+                    cursor: top,
+                };
+                let syntax = self.completion.as_ref().and_then(Completion::syntax);
+                hint::draw_band(fb, font, band, (hint.as_ref(), syntax), cell as u32);
+            } else if let Some(hint) = &hint {
+                hint.draw(fb, font, left, (top, top + cell as i64), cell as u32);
+            }
+            if let Some(list) = &self.completion {
+                let x = x.saturating_sub(v.col - list.start.min(v.col)) as i64;
+                let at = (x * cell as i64, top + cell as i64);
+                list.draw(fb, font, at, top, cell as u32, colors);
+            }
         }
         if let (Some((x, y)), true) = (cursor, blink) {
             // A bar for inserting, a block for overwriting.
@@ -2221,6 +2265,7 @@ mod tests {
             names: true,
             enter: true,
             hints: true,
+            bottom: false,
         });
         typing(&mut e, "S");
         assert!(e.completion.is_none(), "one letter");
@@ -2248,6 +2293,17 @@ mod tests {
         e.key(keys::END);
         e.key(keys::ENTER);
         assert_eq!(e.text(), "SCORE=0\nSCO\n");
+        // Ctrl+Space hides the list until pressed again, which shows it
+        // from the first letter.
+        typing(&mut e, "SC");
+        e.toggle_popups();
+        assert!(e.completion.is_none());
+        typing(&mut e, "O");
+        assert!(e.completion.is_none(), "hidden");
+        e.key(keys::BACKSPACE);
+        e.key(keys::BACKSPACE);
+        e.toggle_popups();
+        assert!(words(&e).contains(&"SCORE".to_string()), "after one letter");
     }
 
     #[test]

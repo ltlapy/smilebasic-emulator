@@ -530,6 +530,8 @@ pub struct Runtime {
     /// SmileBASIC's words with their forms from the help, for completion
     /// and argument hints.
     pub library: Rc<Library>,
+    /// Ctrl+Space hid completion's list and the hints in direct mode.
+    line_quiet: bool,
     /// One side of a split editor, drawn before going into `editor_fb`.
     side_fb: Framebuffer,
     /// Where the second side of a split editor starts on its frame: a
@@ -703,6 +705,7 @@ impl Runtime {
             editor_fb: Framebuffer::new(width, height),
             side_fb: Framebuffer::new(0, 0),
             library: Rc::default(),
+            line_quiet: false,
             split_at: None,
             sprite_page: None,
         }
@@ -855,6 +858,39 @@ impl Runtime {
         Some(String::from_utf16_lossy(&text))
     }
 
+    /// Ctrl+Space in direct mode: hides completion's list and the hints,
+    /// or shows them again with the list for the word at the cursor.
+    pub fn toggle_line_popups(&mut self) {
+        let Some(options) = Options::from_settings(&self.settings, false) else {
+            return;
+        };
+        self.line_quiet = !self.line_quiet;
+        if let Some(line) = &mut self.line {
+            line.completion = None;
+        }
+        if !self.line_quiet && self.recall.is_some() {
+            self.line_words(Options {
+                after: 1,
+                ..options
+            });
+        }
+    }
+
+    /// Completion's list for the word before the cursor of the line typed
+    /// in direct mode.
+    fn line_words(&mut self, options: Options) {
+        // The edited slot's names, also for labels after GOTO.
+        let lines = split_lines(&self.slots[self.edit_slot]);
+        let names = complete::names(lines.iter().map(Vec::as_slice));
+        if let Some(line) = &mut self.line
+            && line.selection().is_none()
+        {
+            line.completion =
+                Completion::find(&line.text, line.cursor, &options, &self.library, &names);
+            line.draw(&mut self.text[CONSOLE]);
+        }
+    }
+
     /// Whether INPUT, LINPUT or direct mode waits for a line.
     pub fn wants_line(&self) -> bool {
         self.line.is_some()
@@ -988,7 +1024,7 @@ impl Runtime {
         self.fade.cover(fb.pixels_mut());
         // In direct mode, the hint for the command being typed above the
         // line and completion's list below the word.
-        let options = Options::from_settings(&self.settings, false);
+        let options = Options::from_settings(&self.settings, false).filter(|_| !self.line_quiet);
         if let (Some(line), Some(_), Some(options)) = (&self.line, &self.recall, options) {
             let console = &self.text[CONSOLE];
             let (w, _) = console.size();
@@ -1002,13 +1038,30 @@ impl Runtime {
                     oy as i64 * sample + y * scale,
                 )
             };
-            let hint = options
-                .hints
-                .then(|| hint::find(&line.text, line.cursor, &self.library, &[]));
-            if let (Some(Some(hint)), Some(cell)) = (hint, line.cell_of(line.cursor, w)) {
+            let hint = (options.hints)
+                .then(|| hint::find(&line.text, line.cursor, &self.library, &[]))
+                .flatten();
+            if let Some(cell) = line.cell_of(line.cursor, w) {
                 let (_, top) = at(cell);
-                let (left, _) = at((0, 0));
-                hint.draw(&mut fb, &self.font, left, (top, top + scale), scale as u32);
+                let (left, screen_top) = at((0, 0));
+                if options.bottom {
+                    let band = hint::Band {
+                        left,
+                        top: screen_top,
+                        bottom: i64::from(fb.height()),
+                        cursor: top,
+                    };
+                    let syntax = line.completion.as_ref().and_then(Completion::syntax);
+                    hint::draw_band(
+                        &mut fb,
+                        &self.font,
+                        band,
+                        (hint.as_ref(), syntax),
+                        scale as u32,
+                    );
+                } else if let Some(hint) = &hint {
+                    hint.draw(&mut fb, &self.font, left, (top, top + scale), scale as u32);
+                }
             }
             if let Some(list) = &line.completion
                 && let Some(cell) = line.cell_of(list.start, w)
@@ -1601,15 +1654,10 @@ impl Host for Runtime {
                 keys::BACKSPACE => listing,
                 c => is_ident_char(c) || c == 0x40 || c == 0x23,
             };
-            if let (true, Some(options), None) = (looks, options, line.selection()) {
-                // The edited slot's names, also for labels after GOTO.
-                let lines = split_lines(&self.slots[self.edit_slot]);
-                let names = complete::names(lines.iter().map(Vec::as_slice));
-                let library = &self.library;
-                line.completion =
-                    Completion::find(&line.text, line.cursor, &options, library, &names);
-            }
             line.draw(console);
+            if let (true, Some(options), false) = (looks, options, self.line_quiet) {
+                self.line_words(options);
+            }
         }
         Ok(None)
     }

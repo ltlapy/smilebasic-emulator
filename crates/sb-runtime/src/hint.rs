@@ -3,7 +3,7 @@
 //! shows above the cursor, with the argument being typed marked in each
 //! form it fits.
 
-use crate::complete::{BACK, BORDER, DIM, Item, Library, SYNTAX, TEXT, fill};
+use crate::complete::{BACK, BORDER, DIM, Item, Library, SYNTAX, TEXT, draw_syntax, fill};
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::syntax::{Role, highlight, is_ident_char, is_ident_start};
@@ -187,6 +187,46 @@ fn is_call(form: &str, name: &str) -> bool {
     upper
         .find(name)
         .is_some_and(|at| upper[at + name.len()..].trim_start().starts_with('('))
+}
+
+/// Where the hints go when they show at the bottom: pixel columns from
+/// `left`, rows from `top` to `bottom`, and the cursor's row at `cursor`.
+#[derive(Clone, Copy, Debug)]
+pub struct Band {
+    pub left: i64,
+    pub top: i64,
+    pub bottom: i64,
+    pub cursor: i64,
+}
+
+/// Draws the hint for the command being typed over the form of
+/// completion's chosen entry, at the bottom of the band, or at its top
+/// while the cursor's row is down there.
+pub fn draw_band(
+    fb: &mut Framebuffer,
+    font: &Font,
+    band: Band,
+    (hint, syntax): (Option<&Hint>, Option<&str>),
+    cell: u32,
+) {
+    let c = i64::from(cell);
+    let hint_h = hint.map_or(0, |h| h.forms.len().min(FORMS) as i64 * c + 2);
+    let syntax_h = if syntax.is_some() { c + 2 } else { 0 };
+    let mut y = band.bottom - hint_h - syntax_h;
+    if band.cursor + c > y && band.cursor < band.bottom {
+        y = band.top;
+    }
+    if let Some(hint) = hint {
+        hint.draw(fb, font, band.left + 1, (y + hint_h, y + 1), cell);
+    }
+    if let Some(syntax) = syntax {
+        let cols = (syntax.encode_utf16().count() as i64 + 2).min(i64::from(fb.width()) / c);
+        let x = (band.left + 1)
+            .min(i64::from(fb.width()) - cols * c - 1)
+            .max(1);
+        let at = (x, y + hint_h + 1);
+        draw_syntax(fb, font, at, cols, cell, syntax);
+    }
 }
 
 impl Hint {

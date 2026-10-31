@@ -22,7 +22,7 @@ use crate::syntax::{ALSO_RESERVED, COMMANDS, Role, highlight, is_ident_char};
 use crate::text::TextScreen;
 
 /// Entries shown at once; the list scrolls through the rest.
-pub const ROWS: usize = 8;
+pub const ROWS: usize = 6;
 /// Cells before each entry for its tag.
 const TAG_CELLS: usize = 2;
 
@@ -48,6 +48,9 @@ pub struct Options {
     /// How commands are used shows under the list and while typing
     /// their arguments.
     pub hints: bool,
+    /// Hints show at the bottom of the screen, or at the top while the
+    /// cursor is down there, instead of by the cursor.
+    pub bottom: bool,
 }
 
 impl Options {
@@ -65,6 +68,7 @@ impl Options {
             names: settings.complete_names,
             enter: settings.complete_enter,
             hints: settings.complete_hints,
+            bottom: !settings.complete_above,
         })
     }
 }
@@ -263,6 +267,9 @@ pub struct Completion {
     top: usize,
     /// How the first form of the entry is used, under the list.
     syntax: Vec<Option<String>>,
+    /// The form goes under the list; otherwise the caller shows it with
+    /// the hints at the bottom.
+    syntax_below: bool,
 }
 
 /// The word that ends at `col`: where it starts, and its text with a
@@ -538,7 +545,13 @@ impl Completion {
             chosen: None,
             top: 0,
             syntax,
+            syntax_below: !options.bottom,
         })
+    }
+
+    /// How the chosen entry, or else the first, is used.
+    pub fn syntax(&self) -> Option<&str> {
+        self.syntax[self.chosen.unwrap_or(0)].as_deref()
     }
 
     /// The word to put in: the one picked, or else the first.
@@ -593,7 +606,7 @@ impl Completion {
             item.word.encode_utf16().count() + detail
         };
         let cols = (self.items.iter().map(entry).max().unwrap_or(0) + TAG_CELLS + 2) as i64;
-        let syntax = self.syntax[self.chosen.unwrap_or(0)].as_deref();
+        let syntax = self.syntax().filter(|_| self.syntax_below);
         let syntax_cols = syntax.map_or(0, |s| s.encode_utf16().count() as i64 + 2);
         let width_cells = cols.max(syntax_cols).min(i64::from(fb.width()) / c);
         let (w, h) = (width_cells * c, rows as i64 * c);
@@ -638,20 +651,33 @@ impl Completion {
             }
         }
         if let Some(syntax) = syntax {
-            let sy = y + h + 2;
-            fill(fb, x - 1, sy - 1, w + 2, c + 2, BORDER);
-            fill(fb, x, sy, w, c, BACK);
-            let mut line = TextScreen::new(0, 0);
-            line.set_font(cell, cell, width_cells as u32, 1);
-            line.pos = (x as f64, sy as f64);
-            for (i, ch) in syntax.encode_utf16().enumerate() {
-                line.put_at(i as u32 + 1, 0, ch, SYNTAX);
-            }
-            line.draw(fb, font);
+            draw_syntax(fb, font, (x, y + h + 2), width_cells, cell, syntax);
         }
         screen.draw(fb, font);
         symbols.draw(fb, font);
     }
+}
+
+/// How an entry is used, on a line `cols` cells wide with its top left
+/// at a pixel.
+pub fn draw_syntax(
+    fb: &mut Framebuffer,
+    font: &Font,
+    (x, y): (i64, i64),
+    cols: i64,
+    cell: u32,
+    syntax: &str,
+) {
+    let w = cols * i64::from(cell);
+    fill(fb, x - 1, y - 1, w + 2, i64::from(cell) + 2, BORDER);
+    fill(fb, x, y, w, i64::from(cell), BACK);
+    let mut line = TextScreen::new(0, 0);
+    line.set_font(cell, cell, cols as u32, 1);
+    line.pos = (x as f64, y as f64);
+    for (i, ch) in syntax.encode_utf16().enumerate() {
+        line.put_at(i as u32 + 1, 0, ch, SYNTAX);
+    }
+    line.draw(fb, font);
 }
 
 pub(crate) fn fill(fb: &mut Framebuffer, x0: i64, y0: i64, w: i64, h: i64, color: u32) {
@@ -721,6 +747,7 @@ mod tests {
         names: true,
         enter: true,
         hints: true,
+        bottom: false,
     };
 
     fn words(c: &Option<Completion>) -> Vec<&str> {

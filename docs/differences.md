@@ -106,12 +106,14 @@ Without them:
 - The list of words to complete also shows in direct mode, and can
   offer the program's own names (off at first, as in SmileBASIC 4).
   Each entry is tagged with what it is, and the first form the help
-  gives for it shows under the list. After GOTO, GOSUB and RESTORE it
+  gives for it shows at the bottom of the screen. After GOTO, GOSUB and RESTORE it
   lists the program's labels, and after `#` the constants with their
   values.
 - While a command's arguments are typed, every form the help gives for
-  it (or a DEF's own line) shows above the cursor, with the argument
-  being typed marked. When it shows and what it offers are
+  it (or a DEF's own line) shows at the bottom of the screen (at the top
+  while the cursor is down there, or by the cursor if set so), with the
+  argument being typed marked. Ctrl+Space hides the list and the hints
+  until it is pressed again. When they show and what they offer are
   set in Options > Autocomplete.
 - Ctrl+S takes the file name typed on the computer's keyboard rather
   than SmileBASIC 4's on-screen one.

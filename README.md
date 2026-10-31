@@ -111,6 +111,7 @@ SmileBASIC 4's own files.
 | Esc | Close the help or the list beside the editor |
 | Ctrl+/, Ctrl+Tab | Split the editor side by side, then one above the other, then join it again; move between the sides |
 | Up, Down, Enter, Tab, Esc | While the list of words shows: pick a word and take it with Enter, or take the first with Tab; Esc closes it. In direct mode Up and Down keep to the history (Options > Autocomplete) |
+| Ctrl+Space | Hide the list of words and the hints, or show them again |
 | Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
 
 ### Buttons

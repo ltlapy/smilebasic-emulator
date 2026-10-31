@@ -17,11 +17,18 @@ enum Row {
     Names,
     Enter,
     Hints,
+    Above,
 }
 
 fn rows() -> Vec<Row> {
     let mut rows: Vec<Row> = COMPLETE_AFTER.map(Row::After).collect();
-    rows.extend([Row::Commands, Row::Names, Row::Enter, Row::Hints]);
+    rows.extend([
+        Row::Commands,
+        Row::Names,
+        Row::Enter,
+        Row::Hints,
+        Row::Above,
+    ]);
     rows
 }
 
@@ -47,6 +54,7 @@ fn label(row: Row, settings: &Settings) -> String {
             "{} Show how commands are used",
             check(settings.complete_hints)
         ),
+        Row::Above => format!("{} Show them by the cursor", check(settings.complete_above)),
     }
 }
 
@@ -95,6 +103,7 @@ impl CompleteWindow {
             Row::Names => settings.complete_names ^= true,
             Row::Enter => settings.complete_enter ^= true,
             Row::Hints => settings.complete_hints ^= true,
+            Row::Above => settings.complete_above ^= true,
         }
     }
 
@@ -164,9 +173,9 @@ mod tests {
         w.key(Keycode::Space, &mut s);
         assert_eq!(s.complete_after, 2);
         // Up from the top goes round to the last rows.
-        w.key(Keycode::Up, &mut s);
-        w.key(Keycode::Up, &mut s);
-        w.key(Keycode::Up, &mut s);
+        for _ in 0..4 {
+            w.key(Keycode::Up, &mut s);
+        }
         w.key(Keycode::Return, &mut s);
         assert!(!s.complete_enter);
         let names = w.row_rect(5);
