@@ -503,9 +503,7 @@ impl FilePicker {
                 "Type to narrow  Enter: load  Backspace: projects  Esc: cancel".to_string()
             }
             (None, Purpose::Copy { .. }, None) => "Enter: open  Esc: cancel".to_string(),
-            (None, Purpose::Copy { .. }, Some(_)) => {
-                "Enter: copy  Click a file: take its name  Esc: cancel".to_string()
-            }
+            (None, Purpose::Copy { .. }, Some(_)) => "Enter: copy  Esc: cancel".to_string(),
         };
         draw_text(
             fb,
