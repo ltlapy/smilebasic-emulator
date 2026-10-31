@@ -3,6 +3,7 @@
 mod audio;
 mod colors;
 mod controls;
+mod debug_panel;
 mod dialog;
 mod file_dialogs;
 mod help;
@@ -23,6 +24,7 @@ use std::time::{Duration, Instant};
 use audio::Audio;
 use colors::ColorWindow;
 use controls::Controls;
+use debug_panel::{DebugPanel, Hit, Tab, View};
 use dialog::{Answer, Dialog};
 use file_dialogs::{FilePicker, SaveDialog};
 use help::HelpViewer;
@@ -38,7 +40,7 @@ use sb_runtime::help::{Help, Lookup};
 use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
 use sb_runtime::palette::Palette;
-use sb_runtime::runtime::keys;
+use sb_runtime::runtime::{SLOTS, keys};
 use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
 use sb_runtime::sound::bank::Bank;
@@ -224,6 +226,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut shortcuts_window: Option<ShortcutsWindow> = None;
     // Ctrl+S's and Ctrl+L's windows.
     let mut file_dialog: Option<FileDialog> = None;
+    // The debugger's panel below the editor, and the stop it last showed.
+    let mut debug_panel = DebugPanel::default();
+    let mut shown_stop = None;
     // A panel beside the editor, and whether it takes the keys.
     let mut side: Option<Side> = None;
     let mut side_focus = false;
@@ -362,6 +367,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 if taken {
                     continue;
                 }
+            }
+            if let Event::MouseWheel {
+                y,
+                mouse_x,
+                mouse_y,
+                ..
+            } = event
+                && debug_panel.contains(to_display(mouse_x, mouse_y))
+            {
+                let shown = debug_view(&mut machine, &debug_panel).variables.len();
+                debug_panel.wheel(-y.round() as i32, shown);
+                continue;
             }
             if let Some(open) = &mut side {
                 match event {
@@ -765,6 +782,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(Action::Comment) => machine.edit().comment(),
                     Click::Chosen(Action::Uncomment) => machine.edit().uncomment(),
                     Click::Chosen(Action::Run) => machine.sysreq(),
+                    Click::Chosen(
+                        action @ (Action::Continue
+                        | Action::StepInto
+                        | Action::StepOver
+                        | Action::StepOut
+                        | Action::RunToCursor
+                        | Action::JumpToCursor
+                        | Action::ToggleBreakpoint
+                        | Action::ClearBreakpoints
+                        | Action::Restart),
+                    ) => debug_action(&mut machine, action, &mut toasts),
                     Click::Chosen(Action::Help) => {
                         if !machine.is_editing() {
                             machine.toggle_editor();
@@ -842,12 +870,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             side_outcome(&mut side, &mut side_focus, &mut machine, outcome);
                         }
                     }
+                    Click::Ignored
+                        if machine.is_editing() && debug_panel.contains(to_display(x, y)) =>
+                    {
+                        if let Some(Hit::Call(i)) = debug_panel.click(to_display(x, y))
+                            && let Some(call) = machine.calls().get(i)
+                        {
+                            machine.show_line(call.slot, call.line);
+                        }
+                    }
                     Click::Ignored if machine.is_editing() => {
                         side_focus = false;
                         let (x, y) = to_screen(x, y);
-                        let extend = shift(keyboard.mod_state());
-                        machine.editor_mouse_down(x, y, extend);
-                        dragging = true;
+                        if !machine.editor_margin_click(x, y) {
+                            let extend = shift(keyboard.mod_state());
+                            machine.editor_mouse_down(x, y, extend);
+                            dragging = true;
+                        }
                     }
                     Click::Consumed | Click::Ignored => {}
                 },
@@ -855,6 +894,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::Pause),
                     ..
                 } => machine.stop(),
+                // The debugger's keys, around F5's.
+                Event::KeyDown {
+                    keycode: Some(key),
+                    keymod,
+                    ..
+                } if let Some(action) = debug_key(key, shift(keymod), ctrl(keymod)) => {
+                    debug_action(&mut machine, action, &mut toasts)
+                }
                 // SmileBASIC 4's F5 is the + button.
                 Event::KeyDown {
                     keycode: Some(Keycode::F5),
@@ -1233,6 +1280,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             texture = frame_texture(&canvas, &texture_creator, kind)?;
         }
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        // The debugger's panel fills the room the editor leaves below.
+        let debug = machine.panel_at().map(|at| {
+            let top = (rect.y + at as f32 * rect.h / frame.1 as f32) * display_h as f32 / display.h;
+            let top = (top.round() as u32).min(display_h);
+            let place = ui::Rect {
+                x: 0,
+                y: top,
+                w: display_w,
+                h: display_h - top,
+            };
+            if machine.paused_at() != shown_stop {
+                shown_stop = machine.paused_at();
+                debug_panel.reset();
+            }
+            let view = debug_view(&mut machine, &debug_panel);
+            (place, view, machine.render_screens().clone())
+        });
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         canvas.copy(&texture, None, rect)?;
@@ -1253,6 +1317,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         if modal
             || dims
+            || debug.is_some()
             || side.is_some()
             || menu.visible()
             || toasts.visible()
@@ -1263,6 +1328,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let font = machine.rt.font();
             if let Some(open) = &manager {
                 open.draw(&mut overlay, font, (blink / 25).is_multiple_of(2));
+            }
+            match &debug {
+                Some((place, view, screens)) => {
+                    debug_panel.draw(&mut overlay, font, *place, screens, view)
+                }
+                None => debug_panel.hide(),
             }
             match &side {
                 Some(Side::Help(help)) => help.draw(&mut overlay, font, side_focus),
@@ -1514,6 +1585,111 @@ fn menu_context(machine: &Machine) -> Context {
     Context {
         running: machine.is_running(),
         editing: machine.is_editing(),
+        paused: machine.paused_at().is_some() && !machine.is_running(),
+    }
+}
+
+/// The debugger's keys: Shift+F5 continues and Ctrl+Shift+F5 restarts;
+/// F6 steps into, F7 over and Shift+F6 out; Ctrl+F6 runs to the cursor
+/// and Ctrl+Shift+F6 goes on from it; Shift+F7 sets a breakpoint.
+fn debug_key(key: Keycode, shift: bool, ctrl: bool) -> Option<Action> {
+    Some(match (key, shift, ctrl) {
+        (Keycode::F5, true, false) => Action::Continue,
+        (Keycode::F5, true, true) => Action::Restart,
+        (Keycode::F6, false, false) => Action::StepInto,
+        (Keycode::F6, true, false) => Action::StepOut,
+        (Keycode::F6, false, true) => Action::RunToCursor,
+        (Keycode::F6, true, true) => Action::JumpToCursor,
+        (Keycode::F7, false, false) => Action::StepOver,
+        (Keycode::F7, true, false) => Action::ToggleBreakpoint,
+        _ => return None,
+    })
+}
+
+/// Does one of the debugger's commands, or says why it cannot.
+fn debug_action(machine: &mut Machine, action: Action, toasts: &mut Toasts) {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    let cursor = machine
+        .is_editing()
+        .then(|| (machine.editor().slot(), machine.editor().cursor().0 as u32));
+    let resume = match action {
+        Action::Continue => Resume::Cont,
+        Action::StepInto => Resume::Step(Step::Into),
+        Action::StepOver => Resume::Step(Step::Over),
+        Action::StepOut => Resume::Step(Step::Out),
+        Action::RunToCursor => match cursor {
+            Some((slot, line)) => Resume::RunTo(slot, line),
+            None => return,
+        },
+        Action::JumpToCursor => {
+            let here = cursor.zip(machine.paused_at());
+            if !here.is_some_and(|((slot, line), at)| slot == at.0 && machine.jump_to(line)) {
+                toasts.push("Can only go on from a line of the stopped DEF".to_string());
+            }
+            return;
+        }
+        Action::ToggleBreakpoint => {
+            if let Some((slot, line)) = cursor {
+                machine.toggle_breakpoint(slot, line);
+            }
+            return;
+        }
+        Action::ClearBreakpoints => return machine.clear_breakpoints(),
+        Action::Restart => {
+            if !machine.restart() {
+                toasts.push("Nothing has run yet".to_string());
+            }
+            return;
+        }
+        _ => return,
+    };
+    if !machine.debug(resume) {
+        let why = match resume {
+            Resume::RunTo(slot, _) if machine.lines_moved(slot) => {
+                "The stopped program's lines have moved: run it again"
+            }
+            _ if machine.is_running() => "The program is running",
+            _ => "No stopped program: set a breakpoint or use STOP",
+        };
+        toasts.push(why.to_string());
+    }
+}
+
+/// What the debugger's panel shows of the stopped program.
+fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
+    let calls = machine.calls();
+    let call = calls.get(panel.chosen_call(calls.len())).cloned();
+    let home = call.as_ref().map_or(machine.edited_slot(), |c| c.slot);
+    let mut tabs = Vec::new();
+    if call.as_ref().is_some_and(|c| c.frame.is_some()) {
+        tabs.push(Tab::Locals);
+    }
+    tabs.push(Tab::Globals(home));
+    for slot in (0..SLOTS).filter(|&s| s != home) {
+        if !machine.slot_globals(slot).is_empty() {
+            tabs.push(Tab::Globals(slot));
+        }
+    }
+    let tab = panel.tab.filter(|t| tabs.contains(t)).unwrap_or(tabs[0]);
+    let variables = match (tab, call.as_ref().and_then(|c| c.frame)) {
+        (Tab::Locals, Some(frame)) => machine.frame_locals(frame),
+        (Tab::Globals(slot), _) => machine.slot_globals(slot),
+        (Tab::Locals, None) => Vec::new(),
+    };
+    let status = match machine.paused_at() {
+        _ if machine.is_running() => "Running... Pause stops it".to_string(),
+        Some((slot, _)) if machine.lines_moved(slot) => {
+            "Edited since RUN: the old code goes on".to_string()
+        }
+        Some((slot, line)) => format!("Stopped at {slot}:{line}  F6/F7 step  Shift+F5 go on"),
+        None => String::new(),
+    };
+    View {
+        calls,
+        tabs,
+        variables,
+        status,
     }
 }
 

@@ -383,6 +383,9 @@ pub struct Editor {
     shifts: Vec<(usize, LineShift)>,
     /// Breakpoints and the stopped line, which the machine sets.
     pub marks: Marks,
+    /// The next frame puts the cursor's line in the middle of the view
+    /// if it is out of view.
+    center: bool,
 }
 
 /// How an edit moved a program's lines, for what is kept by line, such
@@ -483,6 +486,7 @@ impl Editor {
             screen: TextScreen::new(screen_w, screen_h),
             shifts: Vec::new(),
             marks: Marks::default(),
+            center: false,
         };
         editor.fit(screen_w, screen_h, FontSize::Small, None);
         editor
@@ -563,11 +567,13 @@ impl Editor {
         std::mem::take(&mut self.shifts)
     }
 
-    /// Puts the cursor at the start of a 1-based line, in view.
+    /// Puts the cursor at the start of a 1-based line, in the middle of
+    /// the view if it has to scroll there.
     pub fn go_to(&mut self, line: usize) {
         self.anchor = None;
         self.go(line.saturating_sub(1), 0);
         self.want_col = 0;
+        self.center = true;
     }
 
     /// Takes over the program and its undo history from the other side of
@@ -1381,6 +1387,20 @@ impl Editor {
         })
     }
 
+    /// The 1-based line whose number is under a pixel of the editor's
+    /// screen, from the last frame drawn.
+    pub fn margin_line(&self, x: i32, y: i32) -> Option<usize> {
+        let (col, row) = self.grid.at(x, y);
+        if !(0..self.gutter() as i32).contains(&col) || row < 0 {
+            return None;
+        }
+        let row = row as usize;
+        let &(line, _) = self.layout.get(row)?;
+        // A wrapped line has its number on its first row only.
+        let first = row == 0 || self.layout[row - 1].0 != line;
+        first.then_some(line + 1)
+    }
+
     /// A press of the mouse at a pixel of the editor's screen: moves the
     /// cursor there and starts a selection, or with `extend` moves the
     /// selection's end there. Presses outside the code do nothing.
@@ -1578,6 +1598,11 @@ impl Editor {
         self.number_tiles = tiles;
         let height = fb.height().saturating_sub(look.bottom);
         self.fit(fb.width(), height, look.font, look.top);
+        let rows = self.size().1;
+        let v = &mut self.view;
+        if std::mem::take(&mut self.center) && !(v.top..v.top + rows).contains(&v.line) {
+            v.top = v.line.saturating_sub(rows / 2);
+        }
         self.scroll(wrap);
         let (cols, rows) = self.size();
         let gutter = self.gutter();

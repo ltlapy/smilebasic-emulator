@@ -404,16 +404,38 @@ impl Machine {
     /// A press of the mouse on the editor's frame: on the other side of a
     /// split display, it gets the keys first.
     pub fn editor_mouse_down(&mut self, x: i32, y: i32, extend: bool) {
-        let along = if self.split_rows { y } else { x };
-        let side = match self.rt.split_at {
-            Some(at) if self.split && along >= at as i32 => 1,
-            _ => 0,
-        };
+        let side = self.side_at(x, y);
         if self.split && side != self.active {
             self.switch_side();
         }
         let (x, y) = self.on_side(x, y);
         self.edit().mouse_down(x, y, extend);
+    }
+
+    /// Which side of the editor's frame a point is on.
+    fn side_at(&self, x: i32, y: i32) -> usize {
+        let along = if self.split_rows { y } else { x };
+        match self.rt.split_at {
+            Some(at) if self.split && along >= at as i32 => 1,
+            _ => 0,
+        }
+    }
+
+    /// A press of the mouse on the line numbers' margin sets or clears a
+    /// breakpoint on that line. False when it is not on a number.
+    pub fn editor_margin_click(&mut self, x: i32, y: i32) -> bool {
+        let side = self.side_at(x, y);
+        let (x, y) = match self.rt.split_at {
+            Some(at) if self.split && side == 1 && self.split_rows => (x, y - at as i32),
+            Some(at) if self.split && side == 1 => (x - at as i32, y),
+            _ => (x, y),
+        };
+        let editor = &self.editors[side];
+        let Some(line) = editor.margin_line(x, y) else {
+            return false;
+        };
+        self.toggle_breakpoint(editor.slot(), line as u32);
+        true
     }
 
     /// The mouse moved with its button held since the press.
@@ -594,9 +616,16 @@ impl Machine {
     /// Opens the editor at the line the stopped program goes on from,
     /// keeping what is being edited.
     fn show_paused(&mut self) {
-        let Some((slot, line)) = self.paused_at() else {
+        if let Some((slot, line)) = self.paused_at() {
+            self.show_line(slot, line);
+        }
+    }
+
+    /// Shows a slot's 1-based line in the editor, opening it if need be.
+    pub fn show_line(&mut self, slot: usize, line: u32) {
+        if self.vm.is_some() || slot >= SLOTS {
             return;
-        };
+        }
         if !self.editing {
             self.open_editor(slot, Some((line as usize, 0)));
             return;

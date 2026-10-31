@@ -57,6 +57,18 @@ pub enum Action {
     /// Open the editor colors window.
     EditColors,
     ScreenFilter(Option<Filter>),
+    /// The debugger's commands, for a stopped program.
+    Continue,
+    StepInto,
+    StepOver,
+    StepOut,
+    RunToCursor,
+    JumpToCursor,
+    ToggleBreakpoint,
+    ClearBreakpoints,
+    /// Run the program RUN last started again.
+    Restart,
+    ToggleDebugOpenEditor,
     /// The help for the command at the editor's cursor (F1).
     Help,
     /// The window listing the keys.
@@ -69,6 +81,8 @@ pub enum Action {
 pub struct Context {
     pub running: bool,
     pub editing: bool,
+    /// A program is stopped where it can go on.
+    pub paused: bool,
 }
 
 impl Action {
@@ -82,6 +96,7 @@ impl Action {
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::ToggleMap => check(settings.editor_map),
             Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
+            Action::ToggleDebugOpenEditor => check(settings.debug_open_editor),
             Action::EditorFont(f) if settings.editor_font == f => "(*)",
             Action::EditorSize(size) if settings.editor_size == size => "(*)",
             Action::ColorPreset(i) if settings.editor_colors == PRESETS[i].1 => "(*)",
@@ -100,6 +115,7 @@ impl Action {
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::ToggleMap => &mut settings.editor_map,
             Action::ToggleKeyboardButtons => &mut settings.keyboard_buttons,
+            Action::ToggleDebugOpenEditor => &mut settings.debug_open_editor,
             Action::ScreenFilter(f) => {
                 settings.screen_filter = f;
                 return;
@@ -127,6 +143,11 @@ impl Action {
     fn enabled(self, context: Context) -> bool {
         match self {
             Action::Stop | Action::Pause => context.running,
+            Action::Continue | Action::StepInto | Action::StepOver | Action::StepOut => {
+                context.paused
+            }
+            Action::RunToCursor | Action::JumpToCursor => context.paused && context.editing,
+            Action::ToggleBreakpoint => context.editing,
             Action::Undo
             | Action::Redo
             | Action::Cut
@@ -308,6 +329,24 @@ const MENUS: &[Menu] = &[
             keyed("Pause/Resume", "F8", Action::Pause),
             LINE,
             item("Keys press buttons", Action::ToggleKeyboardButtons),
+        ],
+    },
+    Menu {
+        title: "Debug",
+        items: &[
+            keyed("Continue", "Shift+F5", Action::Continue),
+            keyed("Step into", "F6", Action::StepInto),
+            keyed("Step over", "F7", Action::StepOver),
+            keyed("Step out", "Shift+F6", Action::StepOut),
+            keyed("Run to cursor", "Ctrl+F6", Action::RunToCursor),
+            keyed("Go on from cursor", "Ctrl+Shift+F6", Action::JumpToCursor),
+            LINE,
+            keyed("Breakpoint", "Shift+F7", Action::ToggleBreakpoint),
+            item("Clear breakpoints", Action::ClearBreakpoints),
+            LINE,
+            keyed("Restart", "Ctrl+Shift+F5", Action::Restart),
+            LINE,
+            item("Open the editor on stops", Action::ToggleDebugOpenEditor),
         ],
     },
     Menu {
@@ -630,14 +669,17 @@ mod tests {
     const IDLE: Context = Context {
         running: false,
         editing: false,
+        paused: false,
     };
     const RUNNING: Context = Context {
         running: true,
         editing: false,
+        paused: false,
     };
     const EDITING: Context = Context {
         running: false,
         editing: true,
+        paused: false,
     };
 
     fn menu(title: &str) -> usize {
