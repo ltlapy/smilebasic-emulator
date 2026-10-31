@@ -172,7 +172,12 @@ impl From<ErrorKind> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.kind.message())?;
-        if self.kind != ErrorKind::CantUseFromDirectMode {
+        // These say no place on hardware.
+        let placeless = matches!(
+            self.kind,
+            ErrorKind::CantUseFromDirectMode | ErrorKind::CantContinue | ErrorKind::CantTrace
+        );
+        if !placeless {
             write!(f, " in ")?;
             if let Some(slot) = self.slot {
                 write!(f, "{slot}:")?;

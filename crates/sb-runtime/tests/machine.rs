@@ -552,7 +552,7 @@ fn stop_and_cont() {
     assert_eq!(&r[r.len() - 2..], ["END", "OK"]);
     enter(&mut m, "CONT");
     let r = rows(&m);
-    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+    assert_eq!(r[r.len() - 2], "Can't continue");
     enter(&mut m, "STOP");
     let r = rows(&m);
     assert!(
@@ -587,7 +587,7 @@ fn cont_after_edits_and_input_but_not_errors() {
     enter(&mut m, "RUN");
     enter(&mut m, "CONT");
     let r = rows(&m);
-    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+    assert_eq!(r[r.len() - 2], "Can't continue");
 }
 
 #[test]
@@ -659,7 +659,7 @@ fn backtrace_and_trace() {
     // After BACKTRACE the program cannot go on.
     enter(&mut m, "CONT");
     let r = rows(&m);
-    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+    assert_eq!(r[r.len() - 2], "Can't continue");
 
     // After an error, BACKTRACE still works.
     m.set_slot(0, format!("GOSUB @E\nEND\n@E\nDE 0\nRETURN\n{def}"));
@@ -691,5 +691,5 @@ fn trace_statement_by_statement() {
     assert!(r[r.len() - 2].starts_with("Divide by zero in 0:8"), "{r:?}");
     enter(&mut m, "TRACE");
     let r = rows(&m);
-    assert!(r[r.len() - 2].starts_with("Can't trace"), "{r:?}");
+    assert_eq!(r[r.len() - 2], "Can't trace");
 }
