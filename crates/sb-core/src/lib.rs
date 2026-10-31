@@ -24,19 +24,29 @@ use parser::ParseErrorKind;
 
 /// Parses and compiles a program.
 pub fn compile(source: &str, host: &dyn host::Host) -> error::Result<bytecode::Compiled> {
-    compile_as(source, host, false)
+    compile_as(source, host, false, 0)
+}
+
+/// Parses and compiles the program in `slot`, which `#_SLOT` gives.
+pub fn compile_in(
+    source: &str,
+    host: &dyn host::Host,
+    slot: usize,
+) -> error::Result<bytecode::Compiled> {
+    compile_as(source, host, false, slot as i32)
 }
 
 /// Compiles a line typed in direct mode, whose DIM and VAR declare as
 /// they run (see [`bytecode::Op::Declare`]).
 pub fn compile_direct(source: &str, host: &dyn host::Host) -> error::Result<bytecode::Compiled> {
-    compile_as(source, host, true)
+    compile_as(source, host, true, 0)
 }
 
 fn compile_as(
     source: &str,
     host: &dyn host::Host,
     direct: bool,
+    slot: i32,
 ) -> error::Result<bytecode::Compiled> {
     let program = parser::parse(source).map_err(|e| {
         let kind = match e.kind {
@@ -54,5 +64,5 @@ fn compile_as(
             slot: None,
         }
     })?;
-    compiler::compile(&program, host, direct)
+    compiler::compile(&program, host, direct, slot)
 }

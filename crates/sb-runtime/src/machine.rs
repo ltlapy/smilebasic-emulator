@@ -963,7 +963,7 @@ impl Machine {
         self.running_slot = slot;
         self.rt.running_slot = slot;
         let compiled = match slot {
-            Some(_) => sb_core::compile(source, &self.rt),
+            Some(slot) => sb_core::compile_in(source, &self.rt, slot),
             None => sb_core::compile_direct(source, &self.rt),
         };
         match compiled {

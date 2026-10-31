@@ -1176,7 +1176,8 @@ impl Vm {
             }
         };
         let slot = slot as usize;
-        let program = crate::compile(&source, &*host).map_err(|e| e.in_slot(Some(slot as u32)))?;
+        let program =
+            crate::compile_in(&source, &*host, slot).map_err(|e| e.in_slot(Some(slot as u32)))?;
         let unit = Unit::new(program);
         if own {
             let base = self.execs.last();

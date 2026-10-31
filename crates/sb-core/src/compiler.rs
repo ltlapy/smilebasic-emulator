@@ -20,10 +20,11 @@ fn key(var: &Var) -> Key {
 
 /// Compiles `program`; `direct` for a line typed in direct mode, where
 /// global declarations are checked as they run rather than here.
-pub fn compile(program: &Program, host: &dyn Host, direct: bool) -> Result<Compiled> {
+pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> Result<Compiled> {
     let mut c = Compiler {
         host,
         direct,
+        slot,
         out: Compiled::default(),
         global_slots: HashMap::new(),
         global_declared: HashSet::new(),
@@ -91,6 +92,8 @@ struct Compiler<'h> {
     /// Globals that top-level code has used so far, in source order.
     global_used: HashSet<Key>,
     direct: bool,
+    /// The program slot compiled for, `#_SLOT`.
+    slot: i32,
     strict: bool,
     constants: HashMap<String, Literal>,
     def: Option<DefScope>,
@@ -269,8 +272,8 @@ impl Compiler<'_> {
         }
         match name {
             "_LINE" => return Ok(Literal::Int(self.line as i32)),
-            // Only slot 0 exists so far, and programs are not loaded from files yet.
-            "_SLOT" => return Ok(Literal::Int(0)),
+            "_SLOT" => return Ok(Literal::Int(self.slot)),
+            // Programs are not loaded from files yet.
             "_FILENAME" => return Ok(Literal::Str(Vec::new())),
             _ => {}
         }
