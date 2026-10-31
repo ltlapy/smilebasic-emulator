@@ -248,3 +248,19 @@ fn hardware_the_emulator_lacks() {
         ErrorKind::WrongNumberOfOutArguments
     );
 }
+
+#[test]
+fn vibration_patterns_end() {
+    // Pattern 57 lasts 3 frames (TTEST24); the input frame comes with the
+    // machine's.
+    let mut m = sb_runtime::machine::Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    m.set_slot(0, "VIBRATE 1,57:VSYNC:VSYNC:A=VIBRATE(1,0):VSYNC:B=VIBRATE(1,0):VIBRATE 1,40:VSYNC 200:CLS:?A;B;VIBRATE(1,0)".into());
+    m.run_slot(0);
+    for _ in 0..300 {
+        m.frame();
+    }
+    let console = &m.rt.text[4];
+    let codes: Vec<u16> = (0..5).map(|x| console.cell(x, 0).code).collect();
+    assert_eq!(String::from_utf16_lossy(&codes), "57040");
+}

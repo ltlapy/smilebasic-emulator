@@ -125,8 +125,9 @@ pub struct Input {
     pub(crate) toycons: [i32; 4],
     /// IRSTATE of controllers 1 and 2.
     pub(crate) ir_state: [i32; 2],
-    /// What VIBRATE last asked of each controller's left and right side.
-    pub(crate) vibration: [[i32; 2]; PADS],
+    /// What VIBRATE last asked of each controller's left and right side,
+    /// and the frames left before a pattern ends (`None`: until stopped).
+    pub(crate) vibration: [[(i32, Option<u32>); 2]; PADS],
     /// KEY's contents for F1 to F5.
     pub function_keys: [Vec<u16>; 5],
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
@@ -170,6 +171,14 @@ impl Input {
                 } else {
                     0
                 };
+            }
+        }
+        for (state, left) in self.vibration.iter_mut().flatten() {
+            if let Some(n) = left {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    (*state, *left) = (0, None);
+                }
             }
         }
         let m = &self.now.mouse;
