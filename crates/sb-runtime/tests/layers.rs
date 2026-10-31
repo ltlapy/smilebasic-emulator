@@ -331,15 +331,28 @@ fn layer_filters() {
     // On layer 1, away from the console's OK.
     let sprite = format!("{RED_SPRITE}CLS:SPSET 0,0,0,32,16:SPLAYER 0,1\n");
     let mut m = run(&format!(
-        "{sprite}LFILTER 1,1,32:IF LFILTER(1)!=1 THEN STOP"
+        "{sprite}LFILTER 1,1,16:IF LFILTER(1)!=1 THEN STOP"
     ));
-    assert_eq!(m.render().get(5, 20), Some(0xFF40_0040));
+    let fb = m.render();
+    assert_eq!((fb.get(15, 15), fb.get(16, 0)), (Some(RED), Some(BLUE)));
     let mut m = run(&format!(
         "{sprite}LFILTER 1,1,32:LFILTER 1:IF LFILTER(1) THEN STOP"
     ));
     assert_eq!(m.render().get(0, 0), Some(RED));
     let mut m = run(&format!("{sprite}LFILTER 1,5,120,0,0"));
     assert_eq!(m.render().get(0, 0), Some(0xFF00_FF00));
+    // Not composed, the filter takes in what is behind the layer too; a
+    // composed layer filters only itself (TTEST22).
+    let mut m = run(&format!("{sprite}BACKCOLOR #C_RED:LFILTER 1,5,120,0,0"));
+    assert_eq!(m.render().get(200, 200), Some(0xFF00_FF00));
+    let mut m = run(&format!(
+        "{sprite}BACKCOLOR #C_RED:LAYER 1,1:LFILTER 1,5,120,0,0"
+    ));
+    let fb = m.render();
+    assert_eq!(
+        (fb.get(0, 0), fb.get(200, 200)),
+        (Some(0xFF00_FF00), Some(RED))
+    );
 }
 
 #[test]

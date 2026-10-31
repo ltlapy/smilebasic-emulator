@@ -4,9 +4,11 @@
 //!
 //! The manual names the effects and their parameters but not how they are
 //! worked out, so all of this is a guess.
-// UNVERIFIED: sizes are in screen pixels; mosaic and blur average each
-// block or window; color conversion adds to the hue in degrees and to the
-// saturation and brightness on HSV's 0 to 255 scale.
+// Checked on hardware with screenshots: mosaic blocks start at the
+// screen's corner and take the color of their middle pixel; color
+// conversion adds to the hue in degrees and to the saturation and
+// brightness on HSV's 0 to 255 scale.
+// UNVERIFIED: sizes are in screen pixels; blur averages a square window.
 
 use crate::framebuffer::Framebuffer;
 
@@ -54,35 +56,19 @@ impl Filter {
     }
 }
 
-/// The average of premultiplied pixels.
-fn average(pixels: impl Iterator<Item = u32>) -> u32 {
-    let (mut sum, mut n) = ([0u64; 4], 0u64);
-    for p in pixels {
-        for (s, c) in sum.iter_mut().zip(p.to_be_bytes()) {
-            *s += u64::from(c);
-        }
-        n += 1;
-    }
-    if n == 0 {
-        return 0;
-    }
-    u32::from_be_bytes(sum.map(|s| ((s + n / 2) / n) as u8))
-}
-
 fn mosaic(fb: &mut Framebuffer, size: u32) {
     if size <= 1 {
         return;
     }
     let (w, h) = (fb.width(), fb.height());
     let pixels = fb.pixels_mut();
+    let at = |x: u32, y: u32| (y * w + x) as usize;
     for by in (0..h).step_by(size as usize) {
         for bx in (0..w).step_by(size as usize) {
             let (x1, y1) = ((bx + size).min(w), (by + size).min(h));
-            let at = |x: u32, y: u32| (y * w + x) as usize;
-            let block = (by..y1).flat_map(|y| (bx..x1).map(move |x| (x, y)));
-            let color = average(block.clone().map(|(x, y)| pixels[at(x, y)]));
-            for (x, y) in block {
-                pixels[at(x, y)] = color;
+            let color = pixels[at((bx + size / 2).min(x1 - 1), (by + size / 2).min(y1 - 1))];
+            for y in by..y1 {
+                pixels[at(bx, y)..at(x1, y)].fill(color);
             }
         }
     }
@@ -169,10 +155,10 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_averages_blocks() {
-        let mut fb = frame(&[0xFF00_0000, 0xFF00_00FF, 0xFF00_00FF, 0xFF00_0000], 2);
+    fn mosaic_takes_the_middle_pixel() {
+        let mut fb = frame(&[1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
         Filter::Mosaic(2).apply(&mut fb, 1);
-        assert!(fb.pixels().iter().all(|&p| p == 0xFF00_0080));
+        assert_eq!(fb.pixels(), &[5, 5, 6, 5, 5, 6, 8, 8, 9]);
     }
 
     #[test]

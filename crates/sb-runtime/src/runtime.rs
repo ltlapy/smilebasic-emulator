@@ -1100,22 +1100,19 @@ impl Runtime {
         fb.clear(self.back_color | 0xFF00_0000);
         for layer in (0..LAYERS as i32).rev() {
             let mut in_layer = elements.iter().filter(|e| e.0 == layer).peekable();
-            if in_layer.peek().is_none() {
-                continue;
-            }
             let settings = self.fine(&self.layers[layer as usize]);
             let filter = &self.filters[layer as usize];
-            // A filtered layer is drawn on its own even when it is not
-            // composed, and then put over the frame.
-            // UNVERIFIED: that it ends up as with LAYER's mode 1.
-            let compose = match (settings.compose, filter) {
-                (Compose::Direct, Filter::None) => None,
-                (Compose::Direct, _) => Some(Compose::Normal),
-                (mode, _) => Some(mode),
-            };
-            let target = match compose {
-                None => &mut fb,
-                Some(_) => {
+            let direct = settings.compose == Compose::Direct;
+            // A layer that is not composed filters the whole frame as drawn
+            // so far, the layers behind and BACKCOLOR included (checked on
+            // hardware); a composed one only its own elements.
+            // UNVERIFIED: that it does so with no elements in the layer.
+            if in_layer.peek().is_none() && !(direct && !matches!(filter, Filter::None)) {
+                continue;
+            }
+            let target = match direct {
+                true => &mut fb,
+                false => {
                     scratch.clear(0);
                     &mut scratch
                 }
@@ -1123,9 +1120,9 @@ impl Runtime {
             for &(_, _, _, _, element) in in_layer {
                 self.draw_element(target, element, &settings, cursor);
             }
-            if let Some(mode) = compose {
-                filter.apply(&mut scratch, self.mode.sample);
-                compose::compose(&mut fb, &scratch, mode, settings.color);
+            filter.apply(target, self.mode.sample);
+            if !direct {
+                compose::compose(&mut fb, &scratch, settings.compose, settings.color);
             }
         }
         self.fade.cover(fb.pixels_mut());
