@@ -559,12 +559,9 @@ fn fixed(x: f64, digits: usize) -> String {
 
 // ---- colors ----
 
+/// A component, clamped to 0 to 255.
 fn component(v: &Value) -> Result<u32> {
-    let n = v.to_int()?;
-    u32::try_from(n)
-        .ok()
-        .filter(|&n| n <= 255)
-        .ok_or(ErrorKind::OutOfRange.into())
+    Ok(v.to_int()?.clamp(0, 255) as u32)
 }
 
 fn argb(a: u32, r: u32, g: u32, b: u32) -> Value {
@@ -997,11 +994,8 @@ mod tests {
             Value::Default,
         ];
         assert_eq!(int(call("RGB", &half).unwrap()), 0x7FFF0000);
-        let too_big = [Value::Int(256), Value::Int(0), Value::Int(0)];
-        assert_eq!(
-            call("RGB", &too_big).unwrap_err().kind,
-            ErrorKind::OutOfRange
-        );
+        let too_big = [Value::Int(256), Value::Int(0), Value::Int(-1)];
+        assert_eq!(int(call("RGB", &too_big).unwrap()), 0xFFFF0000);
         let b = get(lookup("RGB", Form::Command).unwrap());
         let Kind::Command(f) = b.kind else { panic!() };
         let out = f(&[Value::Int(0x80112233u32 as i32)], 4).unwrap();

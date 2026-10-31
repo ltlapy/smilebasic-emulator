@@ -525,6 +525,7 @@ fn color_functions() {
     );
     assert_eq!(output("HSVF RGB(0,0,255) OUT H,S,V:?H*3"), "2\n");
     assert_eq!(error("?RGBF(2,0,0)").0, ErrorKind::OutOfRange);
+    assert_eq!(output("?HEX$(RGB(584,-1,9))"), "FFFF0009\n");
     assert_eq!(error("?HSV(0,256,0)").0, ErrorKind::OutOfRange);
 }
 
