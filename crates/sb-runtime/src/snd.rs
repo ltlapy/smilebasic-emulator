@@ -619,7 +619,14 @@ impl Runtime {
             }
             (Command::Recdata, Want::Outs(2), 1) => {
                 let rec = &self.sound.recorder;
-                let at = in_range("position", &args[0], 0..=rec.samples.len() as i32 - 1)?;
+                let len = rec.samples.len() as i32;
+                // Recording round the buffer, positions go round it too:
+                // NK8_SOUNDVISUAL reads RECPOS()-I-1 from the start.
+                // UNVERIFIED: positions past the end.
+                let at = match rec.ring && len > 0 {
+                    true => args[0].to_int()?.rem_euclid(len),
+                    false => in_range("position", &args[0], 0..=len - 1)?,
+                };
                 let [l, r] = rec.samples[at as usize];
                 Ok(vec![Value::Int(i32::from(l)), Value::Int(i32::from(r))])
             }

@@ -338,6 +338,12 @@ fn recording_what_plays() {
         run_on(&mut rt, "RECSTART 61").unwrap_err().kind,
         ErrorKind::OutOfRange
     );
+    // Recording round the buffer, a position below 0 is from its end.
+    assert_eq!(
+        run_on(&mut rt, "RECSTART:RECDATA -1 OUT L,R:?\"OK\"").unwrap(),
+        "OK"
+    );
+    assert!(run_on(&mut rt, "RECSTART 1:RECDATA -1 OUT L,R").is_err());
 }
 
 #[test]
