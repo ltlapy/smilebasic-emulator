@@ -434,6 +434,9 @@ fn play(
         .ok_or("PROJECT must be a project folder")?;
     let parent = project.parent().ok_or("PROJECT must be a project folder")?;
     let mut m = machine(parent.to_path_buf())?;
+    // The script's text is typed as written, not with its case swapped
+    // as keys are when letters type upper case.
+    m.rt.settings.upper_case_letters = false;
     m.rt.storage
         .set_project(name)
         .map_err(|e| format!("{name}: {e}"))?;
