@@ -772,6 +772,8 @@ impl Machine {
     /// Starts a program from `slot`, or a direct-mode line.
     fn start(&mut self, source: &str, slot: Option<usize>) {
         self.rt.cancel_input();
+        let (line, col) = self.editors[self.active].cursor_line();
+        self.rt.help_cursor = (line.to_vec(), col);
         if slot.is_some() {
             self.forget_halted();
         }

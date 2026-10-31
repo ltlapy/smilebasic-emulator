@@ -107,6 +107,8 @@ pub(crate) enum Command {
     Gyroa,
     Gyrosync,
     Gyrov,
+    Helpget,
+    Helpinfo,
     Inkey,
     Inspect,
     Irread,
@@ -320,6 +322,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GYROA", Command::Gyroa),
     ("GYROSYNC", Command::Gyrosync),
     ("GYROV", Command::Gyrov),
+    ("HELPGET", Command::Helpget),
+    ("HELPINFO", Command::Helpinfo),
     ("INKEY$", Command::Inkey),
     ("INSPECT", Command::Inspect),
     ("IRREAD", Command::Irread),
@@ -598,6 +602,11 @@ pub struct Runtime {
     /// SmileBASIC's words with their forms from the help, for completion
     /// and argument hints.
     pub library: Rc<Library>,
+    /// SmileBASIC 4's help, for HELPGET and HELPINFO.
+    pub help: Option<Rc<crate::help::Help>>,
+    /// The editor's line and cursor column when the program started,
+    /// where HELPINFO looks for a command.
+    pub(crate) help_cursor: (Vec<u16>, usize),
     /// Ctrl+Space hid completion's list and the hints in direct mode.
     line_quiet: bool,
     /// One side of a split editor, drawn before going into `editor_fb`.
@@ -776,6 +785,8 @@ impl Runtime {
             editor_fb: Framebuffer::new(width, height),
             side_fb: Framebuffer::new(0, 0),
             library: Rc::default(),
+            help: None,
+            help_cursor: Default::default(),
             line_quiet: false,
             split_at: None,
             sprite_page: None,
@@ -1430,6 +1441,7 @@ impl Runtime {
                 _,
             ) => self.env_command(command, args, want),
             (Command::Dialog, _) => self.dialog_command(command, args, want),
+            (Command::Helpget | Command::Helpinfo, _) => self.help_command(command, args, want),
             (Command::Inspect, Want::Outs(0)) if args.len() == 1 => Ok(self.inspect(&args[0])),
             (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
                 self.loadsave_command(command, args, want)

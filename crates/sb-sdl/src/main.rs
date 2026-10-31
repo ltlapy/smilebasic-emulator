@@ -124,7 +124,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut rt = Runtime::new(screen.width, screen.height, font);
     let (sprite_page, sprite_defs) = resources::load_sprites(&resource_dir()?);
     let bank = resources::load_instruments(&resource_dir()?).map(Arc::new);
-    let help = resources::load_help(&resource_dir()?);
+    let help = resources::load_help(&resource_dir()?).map(std::rc::Rc::new);
     rt.sound
         .set_sequences(resources::load_sequences(&resource_dir()?).map(Arc::new));
     if let Some(page) = sprite_page {
@@ -143,7 +143,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         rt.settings = Settings::from_text(&text);
     }
     // Completion and argument hints take the forms of the help's pages.
-    rt.library = std::rc::Rc::new(sb_runtime::complete::Library::new(help.as_ref()));
+    rt.library = std::rc::Rc::new(sb_runtime::complete::Library::new(help.as_deref()));
+    rt.help = help.clone();
     let mut saved_settings = rt.settings.clone();
     let mut machine = Machine::new(rt);
     machine.boot();
@@ -763,7 +764,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         }
                         let size = (display_w, display_h);
                         if let Some(panel) =
-                            open_help(&mut machine, help.as_ref(), &mut toasts, size)
+                            open_help(&mut machine, help.as_deref(), &mut toasts, size)
                         {
                             side = Some(panel);
                             side_focus = true;
@@ -945,7 +946,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } if machine.is_editing() => {
                     let size = (display_w, display_h);
-                    if let Some(panel) = open_help(&mut machine, help.as_ref(), &mut toasts, size) {
+                    if let Some(panel) = open_help(&mut machine, help.as_deref(), &mut toasts, size)
+                    {
                         side = Some(panel);
                         side_focus = true;
                     }

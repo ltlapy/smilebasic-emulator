@@ -1,6 +1,7 @@
 //! SmileBASIC 4's in-game help, read from the `HelpData.idx` and
-//! `HelpData.dat` of the user's own copy, and finding the command that the
-//! editor's cursor is on.
+//! `HelpData.dat` of the user's own copy, finding the command that the
+//! editor's cursor is on, and HELPGET and HELPINFO, which give the help
+//! to programs.
 //!
 //! The index holds a count, then for each topic `{name_off, name_len,
 //! list_off, list_count}` (all `u32`): the topic's ASCII name and a list of
@@ -8,10 +9,19 @@
 //! the data file and its high half the byte length of an example program
 //! stored right after the page header (the Japanese help only). A page is
 //! a `u32` line count, the example, and the lines: `{type, span_count,
-//! byte_len}` (`u32`), `span_count` color spans of 16 bytes, and the
-//! UTF-16LE text.
+//! byte_len}` (`u32`), `span_count` color spans of 16 bytes (`i32`
+//! position, `i32` length, `u32` color and an `i32` that is always -1),
+//! and the UTF-16LE text.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
+
+use sb_core::bytecode::Want;
+use sb_core::error::{Error, ErrorKind, Result};
+use sb_core::value::{Array, ArrayData, ElemType, Value, new_str};
+
+use crate::runtime::{Command, Runtime, no_form};
 
 /// The topic that the help opens on when nothing is asked for.
 pub const INTRO: &str = "DEFAULTHELPKEY";
@@ -41,15 +51,34 @@ pub enum Style {
     Rule,
 }
 
+/// A run of a line in another color.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Span {
+    pub pos: i32,
+    pub len: i32,
+    pub color: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     pub style: Style,
+    /// The type as stored, which HELPGET reports: 0 to 8.
+    pub kind: u32,
+    pub spans: Vec<Span>,
     pub text: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Page {
     pub lines: Vec<Line>,
+    /// The example program, if the page stores one.
+    pub example: String,
+}
+
+fn utf16le(raw: &[u8]) -> Vec<u16> {
+    raw.chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect()
 }
 
 pub struct Help {
@@ -75,23 +104,35 @@ fn u32_at(bytes: &[u8], at: usize) -> Option<usize> {
 
 fn page_at(data: &[u8], reference: u64) -> Option<Page> {
     let mut at = (reference & 0xFFFF_FFFF) as usize;
-    let example = (reference >> 32) as usize;
+    let example_len = (reference >> 32) as usize;
     let count = u32_at(data, at)?;
-    at = at.checked_add(4)?.checked_add(example)?;
+    at = at.checked_add(4)?;
+    let example = data.get(at..at.checked_add(example_len)?)?;
+    let example = String::from_utf16_lossy(&utf16le(example))
+        .trim_end_matches('\0')
+        .to_string();
+    at += example_len;
     let mut lines = Vec::new();
     for _ in 0..count {
         let kind = u32_at(data, at)?;
-        let spans = u32_at(data, at + 4)?;
+        let span_count = u32_at(data, at + 4)?;
         let len = u32_at(data, at + 8)?;
-        at = at.checked_add(12)?.checked_add(spans.checked_mul(16)?)?;
+        at = at.checked_add(12)?;
+        let spans = (0..span_count)
+            .map(|i| {
+                let s = at.checked_add(i.checked_mul(16)?)?;
+                Some(Span {
+                    pos: u32_at(data, s)? as i32,
+                    len: u32_at(data, s + 4)? as i32,
+                    color: u32_at(data, s + 8)? as u32,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        at = at.checked_add(span_count.checked_mul(16)?)?;
         let raw = data.get(at..at.checked_add(len)?)?;
         at += len;
-        let units: Vec<u16> = raw
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            // The help marks some line ends with zero-width spaces.
-            .filter(|&u| u != 0x200B)
-            .collect();
+        // The help marks some line ends with zero-width spaces.
+        let units: Vec<u16> = utf16le(raw).into_iter().filter(|&u| u != 0x200B).collect();
         let text = String::from_utf16_lossy(&units);
         let style = match kind {
             1 => Style::Title,
@@ -101,9 +142,14 @@ fn page_at(data: &[u8], reference: u64) -> Option<Page> {
             6..=8 => Style::Rule,
             _ => Style::Body,
         };
-        lines.push(Line { style, text });
+        lines.push(Line {
+            style,
+            kind: kind as u32,
+            spans,
+            text,
+        });
     }
-    Some(Page { lines })
+    Some(Page { lines, example })
 }
 
 impl Help {
@@ -172,6 +218,116 @@ impl Help {
     }
 }
 
+fn array(elem: ElemType, dims: Vec<usize>, data: ArrayData) -> Value {
+    let mut array = Array::new(elem, dims);
+    array.data = data;
+    Value::Array(Rc::new(RefCell::new(array)))
+}
+
+fn string(text: &str) -> Value {
+    Value::Str(new_str(text.encode_utf16().collect()))
+}
+
+/// HELPINFO's array: each page's number of lines.
+fn line_counts(pages: &[Page]) -> Value {
+    let counts = pages.iter().map(|p| p.lines.len() as i32).collect();
+    array(ElemType::Int, vec![pages.len()], ArrayData::Int(counts))
+}
+
+impl Runtime {
+    fn help_pages(&self, name: &Value) -> Result<(String, Vec<Page>)> {
+        let help = self.help.as_ref().ok_or_else(|| {
+            Error::with_detail(ErrorKind::IllegalFunctionCall, "no help imported")
+        })?;
+        let name =
+            String::from_utf16_lossy(&name.clone().into_str()?.borrow()).to_ascii_uppercase();
+        // UNVERIFIED: the error for a name the help does not have.
+        if !help.has(&name) {
+            return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, name));
+        }
+        let pages = help.pages(&name);
+        Ok((name, pages))
+    }
+
+    /// HELPGET and HELPINFO, which SmileBASIC 4's own help viewer uses.
+    pub(crate) fn help_command(
+        &mut self,
+        command: Command,
+        args: &[Value],
+        want: Want,
+    ) -> Result<Vec<Value>> {
+        match (command, want, args) {
+            // The lines, their types, their colored runs as position,
+            // length and color, and the example.
+            // UNVERIFIED: pages count from 0; the runs' array is at least
+            // one run wide.
+            (Command::Helpget, Want::Outs(4), [name, page]) => {
+                let (_, pages) = self.help_pages(name)?;
+                let n = page.to_int()?;
+                let page = usize::try_from(n)
+                    .ok()
+                    .and_then(|i| pages.get(i))
+                    .ok_or_else(|| {
+                        Error::with_detail(ErrorKind::OutOfRange, format!("page {n}"))
+                    })?;
+                let rows = page.lines.len();
+                let width = page
+                    .lines
+                    .iter()
+                    .map(|l| l.spans.len())
+                    .max()
+                    .unwrap_or(0)
+                    .max(1);
+                let mut runs = vec![0.0; rows * width * 3];
+                for (r, line) in page.lines.iter().enumerate() {
+                    for k in 0..width {
+                        let at = (r * width + k) * 3;
+                        let run = match line.spans.get(k) {
+                            Some(s) => [f64::from(s.pos), f64::from(s.len), f64::from(s.color)],
+                            None => [-1.0, 0.0, 0.0],
+                        };
+                        runs[at..at + 3].copy_from_slice(&run);
+                    }
+                }
+                let texts = page
+                    .lines
+                    .iter()
+                    .map(|l| new_str(l.text.encode_utf16().collect()));
+                Ok(vec![
+                    array(ElemType::Str, vec![rows], ArrayData::Str(texts.collect())),
+                    array(
+                        ElemType::Int,
+                        vec![rows],
+                        ArrayData::Int(page.lines.iter().map(|l| l.kind as i32).collect()),
+                    ),
+                    array(ElemType::Real, vec![rows, width, 3], ArrayData::Real(runs)),
+                    string(&page.example),
+                ])
+            }
+            // The topic at the editor's cursor as it was when the program
+            // started.
+            (Command::Helpinfo, Want::Outs(2), []) => {
+                let topic = match self.help.as_ref().map(|h| {
+                    let (line, col) = &self.help_cursor;
+                    h.lookup(line, *col)
+                }) {
+                    Some(Lookup::Topic(topic)) => topic,
+                    _ => INTRO.to_string(),
+                };
+                let pages = self
+                    .help_pages(&string(&topic))
+                    .map_or_else(|_| Vec::new(), |p| p.1);
+                Ok(vec![string(&topic), line_counts(&pages)])
+            }
+            (Command::Helpinfo, Want::Outs(1), [name]) => {
+                let (_, pages) = self.help_pages(name)?;
+                Ok(vec![line_counts(&pages)])
+            }
+            _ => Err(no_form()),
+        }
+    }
+}
+
 fn is_word(c: u16) -> bool {
     c == u16::from(b'_') || (c < 0x80 && (c as u8).is_ascii_alphanumeric())
 }
@@ -229,16 +385,34 @@ mod tests {
         word_at(&utf16(line), col)
     }
 
-    /// A help with the topics DEFAULTHELPKEY, IF and LEFT$, one page each.
+    /// A help with the topics DEFAULTHELPKEY, IF and LEFT$, one page each;
+    /// IF's has an example and a line with an orange run.
     fn help() -> Help {
         let mut data = Vec::new();
         let mut refs = Vec::new();
+        let utf16le = |s: &str| {
+            s.encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>()
+        };
         for text in ["intro", "if form", "left form"] {
-            refs.push(data.len() as u64);
+            let example = if text == "if form" {
+                utf16le("IF 1 THEN")
+            } else {
+                vec![]
+            };
+            refs.push(data.len() as u64 | (example.len() as u64) << 32);
             data.extend(1u32.to_le_bytes());
-            data.extend([1, 0, 0, 0, 0, 0, 0, 0]);
+            data.extend(&example);
+            let spans: &[[i32; 4]] = match text {
+                "if form" => &[[3, 4, 0xF39800, -1]],
+                _ => &[],
+            };
+            data.extend(1u32.to_le_bytes());
+            data.extend((spans.len() as u32).to_le_bytes());
             data.extend((text.len() as u32 * 2).to_le_bytes());
-            data.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+            data.extend(spans.iter().flatten().flat_map(|n| n.to_le_bytes()));
+            data.extend(utf16le(text));
         }
         let names = [INTRO, "IF", "LEFT$"];
         let mut index = (names.len() as u32).to_le_bytes().to_vec();
@@ -267,6 +441,8 @@ mod tests {
             pages[0].lines,
             [Line {
                 style: Style::Title,
+                kind: 1,
+                spans: vec![],
                 text: "left form".into()
             }]
         );
@@ -306,5 +482,33 @@ mod tests {
         assert_eq!(at("IF% 1", 1), Lookup::Topic("IF".into()));
         assert_eq!(at("FOO=1", 1), Lookup::Unknown("FOO".into()));
         assert_eq!(at("  ", 1), Lookup::Nothing);
+    }
+
+    #[test]
+    fn programs_read_the_help() {
+        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        rt.help = Some(Rc::new(help()));
+        let source = "HELPGET \"if\",0 OUT L$,T,A,E$\n\
+            ?L$[0];T[0];A[0,0,0];A[0,0,1];HEX$(A[0,0,2]);E$\n\
+            HELPINFO \"LEFT$\" OUT P:?LEN(P);P[0]\n\
+            HELPINFO OUT N$,P:?N$;LEN(P)";
+        let mut vm = sb_core::vm::Vm::new(sb_core::compile(source, &rt).unwrap());
+        while vm.run(&mut rt, 100_000).unwrap() != sb_core::vm::Status::Ended {}
+        let console = &rt.text[crate::text::CONSOLE];
+        let row = |y| {
+            let codes: Vec<u16> = (0..console.size().0)
+                .map(|x| console.cell(x, y).code)
+                .take_while(|&c| c != 0)
+                .collect();
+            String::from_utf16(&codes).unwrap()
+        };
+        assert_eq!(row(0), "if form134F39800IF 1 THEN");
+        assert_eq!(row(1), "11");
+        assert_eq!(row(2), "DEFAULTHELPKEY1");
+
+        let mut vm =
+            sb_core::vm::Vm::new(sb_core::compile("HELPINFO \"PRINT\" OUT P", &rt).unwrap());
+        let err = vm.run(&mut rt, 100_000).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::IllegalFunctionCall);
     }
 }

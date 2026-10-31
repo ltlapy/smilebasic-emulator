@@ -98,6 +98,9 @@ Without them:
 - There are no subprograms yet, so `ENVTYPE`, `ENVSTAT` and the other
   `ENV` commands always answer for the main interpreter, where `ENVLOAD`
   and `ENVSAVE` do nothing.
+- `HELPINFO OUT` looks for a command where the editor's cursor was when
+  the program started, since no subprogram runs beside the editor. It
+  and `HELPGET` need SmileBASIC 4's help imported.
 - `DIALOG` is drawn as the emulator's own window, in English. Besides
   the controller's A and B, it answers clicks and Enter.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands
