@@ -292,6 +292,12 @@ fn variadic_defs() {
 }
 
 #[test]
+fn array_parameters_may_say_so() {
+    let src = "DEF F(A[],B)\nRETURN A[1]+B\nEND\nDEF G A[] OUT C\nC=A[0]\nEND\nDIM X[]=[1,2]\nG X OUT D\n?F(X,3);D";
+    assert_eq!(output(src), "51\n");
+}
+
+#[test]
 fn locals_and_globals() {
     // G is used at top level, so the DEF sees the global; L stays local.
     let src = "G=1\nDEF F\nG=G+1\nL=5\nEND\nF:F\n?G";

@@ -852,7 +852,17 @@ impl Parser {
         if at_end(self) {
             return Ok(Params::Fixed(Vec::new()));
         }
-        Ok(Params::Fixed(self.comma_list(Self::var_name)?))
+        Ok(Params::Fixed(self.comma_list(Self::param)?))
+    }
+
+    /// A DEF's parameter: a name, which may end in `[]` to say that it
+    /// takes an array.
+    fn param(&mut self) -> PResult<Var> {
+        let name = self.var_name()?;
+        if self.eat(&TokenKind::LBracket) {
+            self.expect(&TokenKind::RBracket, "']'")?;
+        }
+        Ok(name)
     }
 
     fn def(&mut self, common: bool) -> PResult<Def> {
