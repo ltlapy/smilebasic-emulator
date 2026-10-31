@@ -531,3 +531,52 @@ fn keys_left_by_a_program_are_dropped() {
     enter(&mut m, "?2");
     assert_eq!(rows(&m)[rows(&m).len() - 2], "2");
 }
+
+#[test]
+fn stop_and_cont() {
+    let mut m = machine();
+    m.set_slot(0, "A=1\nSTOP\n?A\nSTOP \"HI\"\n?\"END\"".to_string());
+    enter(&mut m, "RUN");
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["Break on 0:2", "OK"]);
+    enter(&mut m, "?ENVSTAT():A=5");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
+    // Direct mode's changes reach the program.
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 5..], ["cont", "5", "HI", "Break on 0:4", "OK"]);
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["END", "OK"]);
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+}
+
+#[test]
+fn cont_refuses_after_edits_errors_and_input() {
+    let mut m = machine();
+    m.set_slot(0, "STOP\n?1".to_string());
+    enter(&mut m, "RUN");
+    m.set_slot(0, "STOP\n?2".to_string());
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+
+    m.set_slot(0, "A=0\n?1/A".to_string());
+    enter(&mut m, "RUN");
+    enter(&mut m, "?ENVSTAT()");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "2");
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+
+    m.set_slot(0, "INPUT A".to_string());
+    m.run_slot(0);
+    m.frame();
+    m.frame();
+    m.stop();
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+}

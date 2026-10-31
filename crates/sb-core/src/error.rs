@@ -50,6 +50,8 @@ pub enum ErrorKind {
     IllegalFormat,
     /// EXEC of a slot with code that may still run.
     CantUseSpecifiedSlot,
+    /// CONT or TRACE with nothing to go on with.
+    CantContinue,
     /// RESTORE "POP" with nothing kept.
     StackUnderflow,
     /// RETURN while places RESTORE "PUSH" kept in the subroutine remain.
@@ -94,6 +96,7 @@ impl ErrorKind {
             ErrorKind::IllegalFormat => "Illegal format",
             ErrorKind::StackUnderflow => "Stack underflow",
             ErrorKind::CantUseSpecifiedSlot => "Can't use the specified slot",
+            ErrorKind::CantContinue => "Can't continue",
             ErrorKind::UseRestorePop => "Use RESTORE POP before RETURN",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }

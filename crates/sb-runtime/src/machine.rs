@@ -13,7 +13,7 @@ use sb_core::vm::{Status, Vm};
 use crate::complete::Options;
 use crate::editor::Editor;
 use crate::framebuffer::Framebuffer;
-use crate::runtime::{Request, Runtime, SLOTS, keys};
+use crate::runtime::{Request, Runtime, SLOTS, Stopped, keys};
 use crate::screen::ScreenMode;
 use crate::storage;
 use crate::text::CONSOLE;
@@ -54,6 +54,20 @@ pub struct Machine {
     /// Where the last program error happened, for LIST ERR and F4: the
     /// slot, line and column of the statement.
     last_error: Option<(usize, u32, u32)>,
+    /// The program that STOP, the + button or an error stopped, kept for
+    /// CONT.
+    halted: Option<Halted>,
+}
+
+/// A stopped program.
+struct Halted {
+    vm: Vm,
+    /// The slots as they were when it stopped: once they are edited, it
+    /// cannot go on.
+    slots: Vec<String>,
+    /// Whether CONT may go on with it at all: not after an error or from
+    /// INPUT.
+    resumable: bool,
 }
 
 /// What a direct-mode LIST asks for.
@@ -128,6 +142,7 @@ impl Machine {
             editing: false,
             running_slot: None,
             last_error: None,
+            halted: None,
         }
     }
 
@@ -493,16 +508,18 @@ impl Machine {
     /// Stops the running program or direct-mode line, as the Break key
     /// does, and returns to direct mode.
     pub fn stop(&mut self) {
-        self.stop_on(None);
+        self.stop_on(None, true);
     }
 
-    /// Stops, naming `line` rather than the one about to run.
-    fn stop_on(&mut self, line: Option<u32>) {
+    /// Stops, naming `line` rather than the one about to run: by the user
+    /// ("User break") or by STOP ("Break").
+    fn stop_on(&mut self, line: Option<u32>, user: bool) {
         let Some(vm) = self.vm.take() else {
             return;
         };
         self.vars.extend(vm.globals());
-        if self.running_slot.is_some() {
+        let program = self.running_slot.is_some();
+        if program {
             self.rt.clear_input();
         }
         self.running_slot = None;
@@ -513,9 +530,48 @@ impl Machine {
         // hardware, as is the program's form, which a forced stop shares).
         let slot = vm.slot().unwrap_or(0);
         let at = format!("{slot}:{}", line.unwrap_or(vm.line()));
-        let text: Vec<u16> = format!("User break on {at}").encode_utf16().collect();
+        // The format is SmileBASIC 4's own, from SmileBASIC 4.
+        let what = if user { "User break" } else { "Break" };
+        let text: Vec<u16> = format!("{what} on {at}").encode_utf16().collect();
         self.print_line(&text);
+        // UNVERIFIED: a line typed in direct mode cannot go on.
+        if program {
+            let resumable = !vm.is_reading_input();
+            self.halt(vm, resumable);
+        }
         self.ready();
+    }
+
+    /// Keeps a stopped program for CONT, or after an error for nothing
+    /// yet.
+    fn halt(&mut self, vm: Vm, resumable: bool) {
+        self.rt.stopped = match resumable {
+            true => Stopped::Paused { can_continue: true },
+            false => Stopped::Error,
+        };
+        let slots = self.rt.slots.clone();
+        self.halted = Some(Halted {
+            vm,
+            slots,
+            resumable,
+        });
+    }
+
+    /// CONT: goes on with the stopped program, with the variables as
+    /// direct mode left them.
+    fn resume(&mut self) {
+        let Some(Halted { mut vm, .. }) = self.halted.take() else {
+            return self.ready();
+        };
+        self.rt.stopped = Stopped::No;
+        vm.set_globals(&self.vars);
+        self.rt.direct = false;
+        self.running_slot = vm.slot();
+        self.rt.running_slot = vm.slot();
+        self.rt.program = Some(vm.program());
+        self.vm = Some(vm);
+        self.wait = 0;
+        self.vsync_at = self.frame + 1;
     }
 
     /// The editor, after it has taken the keys typed so far, so that its
@@ -637,7 +693,8 @@ impl Machine {
                     }
                 }
                 Ok(Status::Ended) => self.finish(None),
-                Ok(Status::Break { line }) => self.stop_on(Some(line)),
+                Ok(Status::Break { line }) => self.stop_on(Some(line), true),
+                Ok(Status::Stop { line }) => self.stop_on(Some(line), false),
                 Err(e) => self.finish(Some(e)),
             }
             break;
@@ -703,6 +760,17 @@ impl Machine {
     /// Starts a program from `slot`, or a direct-mode line.
     fn start(&mut self, source: &str, slot: Option<usize>) {
         self.rt.cancel_input();
+        match (slot, &self.halted) {
+            (Some(_), _) => {
+                self.halted = None;
+                self.rt.stopped = Stopped::No;
+            }
+            (None, Some(h)) if h.resumable => {
+                let can_continue = h.slots == self.rt.slots;
+                self.rt.stopped = Stopped::Paused { can_continue };
+            }
+            (None, _) => {}
+        }
         self.rt.direct = slot.is_none();
         self.running_slot = slot;
         self.rt.running_slot = slot;
@@ -736,27 +804,42 @@ impl Machine {
     fn finish(&mut self, error: Option<Error>) {
         let vm = self.vm.take().expect("finish follows a run");
         self.vars.extend(vm.globals());
-        if let Some(e) = error {
+        let program = self.running_slot.is_some();
+        if let Some(e) = &error {
             if let Some(slot) = e.slot {
                 self.last_error = Some((slot as usize, e.line, e.col));
             }
-            self.report(&e);
+            self.report(e);
         }
-        if self.running_slot.is_some() {
+        if program {
             self.rt.clear_input();
+            match error {
+                Some(_) => self.halt(vm, false),
+                None => {
+                    self.halted = None;
+                    self.rt.stopped = Stopped::No;
+                }
+            }
         }
         self.running_slot = None;
         self.rt.running_slot = None;
         let mut run = None;
+        let mut cont = false;
         for request in self.rt.take_requests() {
             match request {
                 Request::Run(slot) => run = Some(slot),
-                Request::Clear => self.vars.clear(),
+                Request::Clear => {
+                    self.vars.clear();
+                    self.halted = None;
+                    self.rt.stopped = Stopped::No;
+                }
+                Request::Cont => cont = true,
             }
         }
-        match run {
-            Some(slot) => self.run_slot(slot),
-            None => self.ready(),
+        match (run, cont) {
+            (Some(slot), _) => self.run_slot(slot),
+            (None, true) => self.resume(),
+            (None, false) => self.ready(),
         }
     }
 

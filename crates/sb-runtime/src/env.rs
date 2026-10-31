@@ -15,7 +15,7 @@ use sb_core::value::{Array, ArrayData, Value, new_str};
 
 use crate::confirm::{FileAction, project_label};
 use crate::image::{self, Image};
-use crate::runtime::{Command, Runtime, no_form, opt_int};
+use crate::runtime::{Command, Runtime, Stopped, no_form, opt_int};
 use crate::sbfile;
 use crate::storage;
 
@@ -79,6 +79,8 @@ impl Default for Meta {
 /// What the main interpreter is doing, as ENVSTAT reports it.
 mod status {
     pub const DIRECT: i32 = 0;
+    pub const PAUSED: i32 = 1;
+    pub const ERROR: i32 = 2;
     pub const RUNNING: i32 = 3;
 }
 
@@ -112,9 +114,11 @@ impl Runtime {
     }
 
     fn status(&self) -> i32 {
-        match self.running_slot {
-            Some(_) => status::RUNNING,
-            None => status::DIRECT,
+        match (self.running_slot, self.stopped) {
+            (Some(_), _) => status::RUNNING,
+            (None, Stopped::No) => status::DIRECT,
+            (None, Stopped::Paused { .. }) => status::PAUSED,
+            (None, Stopped::Error) => status::ERROR,
         }
     }
 

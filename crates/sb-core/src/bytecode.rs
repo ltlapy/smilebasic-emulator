@@ -164,6 +164,10 @@ pub enum Op {
     ChkVar,
     /// `[value] -> []`: INSPECT prints the value's details.
     Inspect,
+    /// `[message?] -> []`: STOP.
+    Stop {
+        has_message: bool,
+    },
     /// `[n] -> [arg n]`
     DefArg,
     DefOutc,

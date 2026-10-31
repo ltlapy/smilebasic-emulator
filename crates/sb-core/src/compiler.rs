@@ -943,6 +943,19 @@ impl Compiler<'_> {
                 self.emit(Op::Exec(args.len() as u8));
                 return Ok(());
             }
+            "STOP" => {
+                no_outs(self)?;
+                let has_message = match args {
+                    [] => false,
+                    [Some(message)] => {
+                        self.expr(message)?;
+                        true
+                    }
+                    _ => return Err(self.illegal_call(&full)),
+                };
+                self.emit(Op::Stop { has_message });
+                return Ok(());
+            }
             "INSPECT" => {
                 no_outs(self)?;
                 let [Some(value)] = args else {

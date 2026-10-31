@@ -41,14 +41,21 @@ pub enum Status {
     Break {
         line: u32,
     },
+    /// STOP on `line`. [`Vm::run`] goes on after it.
+    Stop {
+        line: u32,
+    },
 }
 
 /// Commands and functions the compiler turns into instructions of their
 /// own rather than calls, for CHKCALL.
 const VM_CALLS: &[&str] = &[
     "CALLIDX", "DEFARG", "DEFARGC", "DEFOUTC", "CHKLABEL", "CHKCALL", "CHKVAR", "INC", "DEC",
-    "VSYNC", "WAIT", "EXEC", "DEFOUT", "INSPECT",
+    "VSYNC", "WAIT", "EXEC", "DEFOUT", "INSPECT", "STOP",
 ];
+
+/// The characters of STOP's message that are shown.
+const STOP_MESSAGE: usize = 255;
 
 /// Waits a frame and runs the same instruction again.
 const RETRY: Status = Status::Retry;
@@ -305,6 +312,22 @@ impl Vm {
     /// Column of the statement the next instruction belongs to.
     pub fn col(&self) -> u32 {
         self.program.cols.get(self.pc).copied().unwrap_or(0)
+    }
+
+    /// Whether an INPUT or LINPUT waits for its line, so that a program
+    /// stopped there cannot go on.
+    pub fn is_reading_input(&self) -> bool {
+        self.reading_input
+    }
+
+    /// Gives this slot's globals the values of the same names, as direct
+    /// mode left them before CONT.
+    pub fn set_globals(&mut self, values: &HashMap<String, Value>) {
+        for (var, global) in self.program.globals.iter().zip(&mut self.globals) {
+            if let Some(v) = values.get(&var.full_name()) {
+                *global = v.clone();
+            }
+        }
     }
 
     pub fn is_ended(&self) -> bool {
@@ -1006,6 +1029,19 @@ impl Vm {
                 let name = name_of(&self.pop())?;
                 let found = self.dynamic_slot(&name).is_ok();
                 self.stack.push(Value::Int(found.into()));
+            }
+            Op::Stop { has_message } => {
+                if *has_message {
+                    // UNVERIFIED: that the message comes on a line of its
+                    // own before "Break on", and how 255 characters are
+                    // kept to.
+                    let message = text_of(&self.pop())?;
+                    host.print(None, &message[..message.len().min(STOP_MESSAGE)])?;
+                    host.print_newline(None)?;
+                }
+                let line = self.line();
+                self.pc = next;
+                return Ok(Some(Status::Stop { line }));
             }
             Op::Inspect => {
                 let value = self.pop();

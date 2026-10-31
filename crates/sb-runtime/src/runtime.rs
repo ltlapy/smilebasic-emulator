@@ -63,6 +63,7 @@ pub(crate) enum Command {
     Clipboard,
     Cls,
     Color,
+    Cont,
     Controller,
     Date,
     Delete,
@@ -252,6 +253,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("CLIPBOARD", Command::Clipboard),
     ("CLS", Command::Cls),
     ("COLOR", Command::Color),
+    ("CONT", Command::Cont),
     ("CONTROLLER", Command::Controller),
     ("DATE$", Command::Date),
     ("DELETE", Command::Delete),
@@ -418,6 +420,20 @@ pub const SLOTS: usize = 6;
 pub enum Request {
     Run(usize),
     Clear,
+    Cont,
+}
+
+/// How the last program stopped, if it has not ended.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Stopped {
+    #[default]
+    No,
+    /// By STOP or the + button. CONT can go on unless it stopped at
+    /// INPUT or a program has been edited since.
+    Paused {
+        can_continue: bool,
+    },
+    Error,
 }
 
 /// UNVERIFIED: how many unread keys SmileBASIC keeps.
@@ -486,6 +502,8 @@ pub struct Runtime {
     pub slot_modified: Vec<bool>,
     /// The slot whose program is running; `None` in direct mode.
     pub(crate) running_slot: Option<usize>,
+    /// How the last program stopped, kept up to date by the machine.
+    pub(crate) stopped: Stopped,
     /// The slot and line that PRGEDIT chose, for PRGGET$ and the rest.
     pub(crate) prg_edit: Option<crate::prg::PrgEdit>,
     /// The slot the editor shows, or last showed.
@@ -679,6 +697,7 @@ impl Runtime {
             slot_names: vec![String::new(); SLOTS],
             slot_modified: vec![false; SLOTS],
             running_slot: None,
+            stopped: Stopped::No,
             prg_edit: None,
             edit_slot: 0,
             history: Default::default(),
@@ -1276,6 +1295,15 @@ impl Runtime {
                     self.slot_modified[slot] = false;
                 }
                 Ok(vec![])
+            }
+            // CONT: direct mode only (UNVERIFIED: with the same Syntax
+            // error as CLEAR in a program).
+            (Command::Cont, Want::Outs(0)) if args.is_empty() => {
+                self.direct_only()?;
+                match self.stopped {
+                    Stopped::Paused { can_continue: true } => self.request(Request::Cont),
+                    _ => Err(ErrorKind::CantContinue.into()),
+                }
             }
             (Command::Run, Want::Outs(0)) if args.len() <= 1 => {
                 let slot = slot_arg(args.first())?;
