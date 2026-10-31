@@ -361,6 +361,12 @@ fn option_strict() {
         error("OPTION STRICT\nVAR A\nA=1\nB=2").0,
         ErrorKind::UndefinedVariable
     );
+    // It holds from where it stands; a variable used before it exists.
+    assert_eq!(output("A=1\nOPTION STRICT\nVAR B=A+1\n?B"), "2\n");
+    assert_eq!(
+        error("A=1\nOPTION STRICT\nB=2").0,
+        ErrorKind::UndefinedVariable
+    );
     assert_eq!(output("OPTION DEFINT\nA=7/2\n?A,TYPEOF(A)"), "3.5 2\n");
     assert_eq!(output("OPTION DEFINT\n?TYPEOF(A)"), "1\n");
 }

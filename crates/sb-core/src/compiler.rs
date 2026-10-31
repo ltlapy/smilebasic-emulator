@@ -38,16 +38,20 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool) -> Result<Compi
         col: 0,
         temp_count: 0,
     };
-    c.prepare(program)?;
-    for stmt in &program.stmts {
+    let strict_at = c.prepare(program)?;
+    // OPTION STRICT holds from where it stands, DEFs included.
+    let strict = |i: usize| strict_at.is_some_and(|at| i >= at);
+    for (i, stmt) in program.stmts.iter().enumerate() {
         if !matches!(stmt.kind, StmtKind::Def(_)) {
+            c.strict = strict(i);
             c.stmt(stmt)?;
         }
     }
     c.emit(Op::End);
     c.resolve_patches(None)?;
-    for stmt in &program.stmts {
+    for (i, stmt) in program.stmts.iter().enumerate() {
         if let StmtKind::Def(def) = &stmt.kind {
+            c.strict = strict(i);
             c.line = stmt.line;
             c.def(def)?;
         }
@@ -133,11 +137,13 @@ fn expr_to_lvalue(expr: &Expr) -> Option<LValue> {
 impl Compiler<'_> {
     // ---- pre-pass ----
 
-    fn prepare(&mut self, program: &Program) -> Result<()> {
-        for stmt in &program.stmts {
+    /// Returns where OPTION STRICT is among the statements, if anywhere.
+    fn prepare(&mut self, program: &Program) -> Result<Option<usize>> {
+        let mut strict_at = None;
+        for (i, stmt) in program.stmts.iter().enumerate() {
             (self.line, self.col) = (stmt.line, stmt.col);
             match &stmt.kind {
-                StmtKind::Option(o) if o == "STRICT" => self.strict = true,
+                StmtKind::Option(o) if o == "STRICT" => _ = strict_at.get_or_insert(i),
                 StmtKind::Option(o) if o == "DEFINT" => self.out.default_int = true,
                 StmtKind::Option(o) => {
                     return Err(err(ErrorKind::SyntaxError, format!("OPTION {o}"))
@@ -178,16 +184,21 @@ impl Compiler<'_> {
         // Every variable named in top-level code is global, and DEFs see it.
         let mut used = Vec::new();
         let mut declared = Vec::new();
-        for stmt in &program.stmts {
+        for (i, stmt) in program.stmts.iter().enumerate() {
             if !matches!(stmt.kind, StmtKind::Def(_)) {
                 collect_vars(std::slice::from_ref(stmt), &mut used, &mut declared);
+            }
+            // Variables made by using them before OPTION STRICT count as
+            // declared after it.
+            if strict_at == Some(i + 1) {
+                declared.extend(used.iter().cloned());
             }
         }
         for k in used.into_iter().chain(declared.iter().cloned()) {
             self.global_slot(k);
         }
         self.global_declared.extend(declared);
-        Ok(())
+        Ok(strict_at)
     }
 
     /// CONST/ENUM definitions and DATA, in source order across DEFs.
