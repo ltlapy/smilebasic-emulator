@@ -278,6 +278,21 @@ pub enum DataValues {
 }
 
 const STR_TYPE: u16 = 6;
+/// SmileBASIC 3's 16-bit pixels, in GRP files SmileBASIC 4 converted.
+const PIXEL16_TYPE: u16 = 3;
+
+/// A 16-bit pixel, 5 bits each of red, green and blue from the top and
+/// the lowest bit opaque, as an ARGB colour.
+// UNVERIFIED: how SmileBASIC 4 widens the 5 bits; the top bits are
+// repeated below, as is usual.
+fn argb_from_5551(p: u16) -> i32 {
+    let wide = |v: u16| {
+        let v = u32::from(v & 31);
+        v << 3 | v >> 2
+    };
+    let alpha = if p & 1 == 1 { 0xFF00_0000 } else { 0 };
+    (alpha | wide(p >> 11) << 16 | wide(p >> 6) << 8 | wide(p >> 1)) as i32
+}
 
 pub const DATA_MAGIC: &[u8; 8] = b"PCBN0004";
 const DATA_HEADER: usize = 28;
@@ -287,7 +302,8 @@ pub const MAX_STR_BYTES: usize = 0x7FFF;
 /// `PCBN0004`, u16 element type, u16 dimension count, u32 x 4 dimensions
 /// (unused ones may hold anything), then the elements, little-endian.
 pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
-    if body.len() < DATA_HEADER || &body[..8] != DATA_MAGIC {
+    // Files SmileBASIC 4 converted from SmileBASIC 3 say PCBN0001.
+    if body.len() < DATA_HEADER || !body.starts_with(b"PCBN000") {
         return Err(FileError::BadData);
     }
     let elem = u16_at(body, 8);
@@ -303,9 +319,8 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
         .try_fold(1usize, |a, &d| a.checked_mul(d))
         .ok_or(FileError::BadData)?;
     let payload = &body[DATA_HEADER..];
-    // UNVERIFIED: element types other than 4, 5 and 6 (SB3 used 3 for
-    // 16-bit pixels) have not been seen in SB4 files.
     let width = match elem {
+        PIXEL16_TYPE => 2,
         4 => 4,
         5 => 8,
         STR_TYPE => return parse_strings(payload, count).map(|v| Data { dims, values: v }),
@@ -315,6 +330,12 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
         return Err(FileError::BadData);
     }
     let values = match elem {
+        PIXEL16_TYPE => DataValues::Int(
+            payload
+                .chunks_exact(2)
+                .map(|c| argb_from_5551(u16::from_le_bytes([c[0], c[1]])))
+                .collect(),
+        ),
         4 => DataValues::Int(
             payload
                 .chunks_exact(4)
@@ -454,6 +475,21 @@ pub fn meta_body(meta: &ProjectMeta) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sixteen_bit_pixels() {
+        assert_eq!(argb_from_5551(0xFFFF) as u32, 0xFFFF_FFFF);
+        assert_eq!(argb_from_5551(0x07FF) as u32, 0xFF00_FFFF);
+        assert_eq!(argb_from_5551(0x07FE), 0x0000_FFFF);
+        let mut body = b"PCBN0001".to_vec();
+        body.extend_from_slice(&3u16.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&[1, 0, 0, 0]);
+        body.resize(DATA_HEADER, 0);
+        body.extend_from_slice(&0xF801u16.to_le_bytes());
+        let data = parse_data(&body).unwrap();
+        assert_eq!(data.values, DataValues::Int(vec![0xFFFF_0000_u32 as i32]));
+    }
+
     const DATE: Date = Date {
         year: 2026,
         month: 10,
@@ -580,8 +616,8 @@ mod tests {
             FileError::BadData
         );
         assert_eq!(
-            parse_data(&dat(3, &[1], &[0; 2])).unwrap_err(),
-            FileError::UnsupportedType(3)
+            parse_data(&dat(2, &[1], &[0; 2])).unwrap_err(),
+            FileError::UnsupportedType(2)
         );
         assert_eq!(
             parse_data(&dat(4, &[u32::MAX, u32::MAX, u32::MAX], &[])).unwrap_err(),

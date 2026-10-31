@@ -83,6 +83,9 @@ DAT files and GRP images hold one array:
 - A GRP image stores its width first, then its height. Its pixels go row
   by row from the top left. `LOADV "GRP:..."` turns it into an array of
   `[height, width]`.
+- GRP files SmileBASIC 4 converted from SmileBASIC 3 say `PCBN0001` and
+  use element type 3: 16-bit pixels with 5 bits each of red, green and
+  blue from the top and the lowest bit set when opaque.
 
 ## META
 
