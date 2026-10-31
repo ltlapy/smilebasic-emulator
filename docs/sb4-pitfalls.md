@@ -167,6 +167,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not
   available`; `TCPIANO` without Toy-Con set up is `Illegal control
   style`. `IRSTATE` starts at 0.
+- Vibration patterns have lengths of their own: pattern 40 still read
+  40 after five seconds, pattern 1 was over within half a second.
 - `VIBRATE()` reads back what was asked for, also where nothing
   vibrates: after `VIBRATE 1,40` it is 2621480 (40 on the right times
   65536, plus 40 on the left) and `VIBRATE(1,0)` 40; with frequencies
@@ -244,7 +246,13 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   each time. A write to it is seen at once by `GPGET`, also where
   `GPSET` drew next to it.
 - `GUPDATE` with a coordinate of 2048 is `Out of range`.
-- `LFILTER layer,0,n` is `Out of range`.
+- `LFILTER layer,0,n` is `Out of range`. 4.4.9 has no raster
+  deformation: types 3 and 4 are `Out of range` with any array shape,
+  and `Type mismatch` for the array when the repeat flag follows.
+- On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
+  the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
+  On a composed layer it filters only that layer. Mosaic blocks start at
+  the screen's corner and take their middle pixel's color.
 
 ## Signal processing
 
@@ -334,9 +342,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   number of OUT arguments`.
 - A program run after one that set `MOUSECURSOR` to 1 reads 0 again;
   `END` leaves it set, so direct mode still reads 1.
-- `FREEMEM` is 134216720 at start; `DIM A[100000]` (Real) takes 800064
-  bytes and a 10000-character string 20160. Both of its results are
-  the same.
+- `FREEMEM` is 134216720 at start, and the program and its numeric
+  variables take none of it. A string takes 2 bytes a character plus
+  about 98, an array its elements (Int 4, Real and string 8) plus 64,
+  rounded up to 64 bytes; contents of up to 40 bytes take nothing (17
+  characters, 10 Ints). `DIM A[100000]` takes 800064 bytes, 1000
+  characters 2112. `GARRAY` and `TARRAY` take nothing. Memory let go of
+  (emptying a string or array, a DEF's locals after it returns) does
+  not come back at once. Both of its results are the same.
 - `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
   string is `Can't use empty string`, a user-defined character `Can't
   use user-derined character` (spelt so).
