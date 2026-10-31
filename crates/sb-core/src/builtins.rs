@@ -2,6 +2,7 @@
 //! numbers, strings and arrays.
 
 mod arrays;
+mod signal;
 
 use crate::bytecode::{Compiled, Literal};
 use crate::error::{Error, ErrorKind, Result};
@@ -150,6 +151,12 @@ table! {
     "RESIZE" 2..=5 Command arrays::resize;
     "ARYOP" 4..=5 Command arrays::aryop;
     "RINGCOPY" 3..=5 Command arrays::ringcopy;
+    "CLASSIFY" 1..=1 Function signal::classify;
+    "FFT" 4..=5 Command signal::fft;
+    "IFFT" 4..=4 Command signal::ifft;
+    "FFTWFN" 2..=2 Command signal::fftwfn;
+    "BIQUAD" 3..=3 Command signal::biquad;
+    "BQPARAM" 5..=6 Command signal::bqparam;
 }
 
 pub fn lookup(name: &str, form: Form) -> Option<u16> {

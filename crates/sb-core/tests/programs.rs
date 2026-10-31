@@ -808,3 +808,23 @@ fn ring_copies() {
         ErrorKind::IllegalFunctionCall
     );
 }
+
+#[test]
+fn signal_processing() {
+    assert_eq!(
+        output(
+            "DIM R[4]=[1,2,3,4],I[4],W[4]:FFTWFN W,#WFRECT:FFT R,I,R,I,W:?R[0];I[1]\nIFFT R,I,R,I:?R[3]"
+        ),
+        "102\n4\n"
+    );
+    assert_eq!(
+        output("?CLASSIFY(0.5);CLASSIFY(POW(10,400));CLASSIFY(POW(10,400)-POW(10,400))"),
+        "012\n"
+    );
+    assert_eq!(
+        output(
+            "DIM OD[2,4],ID[2,4],FP[13]:ID[0,0]=1:BQPARAM FP,#BQLPF,48000,8000,1/SQR(2)\nBIQUAD OD,ID,FP:?OD[0,0]>0;OD[1,0]"
+        ),
+        "10\n"
+    );
+}
