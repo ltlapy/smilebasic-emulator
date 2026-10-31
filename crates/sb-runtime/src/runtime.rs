@@ -132,6 +132,8 @@ pub(crate) enum Command {
     Metaload,
     Metasave,
     Millisec,
+    Perfbegin,
+    Perfend,
     Mouse,
     New,
     Pcmcont,
@@ -347,6 +349,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("METALOAD", Command::Metaload),
     ("METASAVE", Command::Metasave),
     ("MILLISEC", Command::Millisec),
+    ("PERFBEGIN", Command::Perfbegin),
+    ("PERFEND", Command::Perfend),
     ("MOUSE", Command::Mouse),
     ("NEW", Command::New),
     ("PCMCONT", Command::Pcmcont),
@@ -1625,6 +1629,8 @@ impl Runtime {
                 | Command::Fontinfo
                 | Command::Maincnt
                 | Command::Millisec
+                | Command::Perfbegin
+                | Command::Perfend
                 | Command::Randomize
                 | Command::Rnd
                 | Command::Rndf

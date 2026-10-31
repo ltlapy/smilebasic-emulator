@@ -85,6 +85,8 @@ pub struct System {
     sysbeep: bool,
     /// SYSPARAM "MOUSECURSOR": programs show the mouse cursor.
     pub mouse_cursor: bool,
+    /// When PERFBEGIN started each of its eight measurements.
+    perf: [Option<Instant>; 8],
 }
 
 /// SYSPARAM "KEYREPEAT": frames before a held key repeats, and between
@@ -99,12 +101,22 @@ impl Default for System {
             frames: 0,
             sysbeep: true,
             mouse_cursor: false,
+            perf: [None; 8],
         }
     }
 }
 
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
+}
+
+/// PERFBEGIN's and PERFEND's measurement number, 0 to 7.
+fn perf_id(v: &Value) -> Result<usize> {
+    let n = int(v)?;
+    usize::try_from(n)
+        .ok()
+        .filter(|&n| n < 8)
+        .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("measurement {n}")))
 }
 
 fn series_id(v: &Value) -> Result<usize> {
@@ -195,6 +207,25 @@ impl Runtime {
                 Ok(vec![Value::Int(sys.started.elapsed().as_millis() as i32)])
             }
             (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(sys.frames as i32)]),
+            // PERFBEGIN and PERFEND measure time; SmileBASIC 4.4.9 shows no
+            // gauge for them, nor does the emulator.
+            (Command::Perfbegin, Want::Outs(0), 1 | 2) => {
+                let n = perf_id(&args[0])?;
+                if let Some(color) = args.get(1) {
+                    int(color)?;
+                }
+                sys.perf[n] = Some(Instant::now());
+                Ok(vec![])
+            }
+            (Command::Perfend, Want::Outs(0) | Want::Value, 1) => {
+                let n = perf_id(&args[0])?;
+                // UNVERIFIED: PERFEND without PERFBEGIN gives 0.
+                let micros = sys.perf[n].map_or(0, |t| t.elapsed().as_micros() as i32);
+                Ok(match want {
+                    Want::Value => vec![Value::Int(micros)],
+                    _ => vec![],
+                })
+            }
             (Command::Date, Want::Value, 0) => {
                 Ok(vec![string(Local::now().format("%Y/%m/%d").to_string())])
             }
