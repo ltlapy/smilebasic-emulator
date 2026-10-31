@@ -804,6 +804,13 @@ fn initialized_arrays_keep_their_sizes() {
 }
 
 #[test]
+fn defs_see_only_globals_from_before_them() {
+    // I is first used at top level after F, so F's I is its own.
+    assert_eq!(output("A=1\nDEF F\n I=5:A=2\nEND\nI=1:F:?I;A"), "12\n");
+    assert_eq!(output("I=1\nDEF F\n I=5\nEND\nF:?I"), "5\n");
+}
+
+#[test]
 fn loop_ends_inside_blocks_continue() {
     assert_eq!(
         output("FOR I=0 TO 4\n IF I==2 THEN NEXT\n ?I;\nNEXT"),

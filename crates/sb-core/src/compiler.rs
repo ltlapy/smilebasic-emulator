@@ -30,6 +30,8 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> R
         global_declared: HashSet::new(),
         global_var_seen: HashSet::new(),
         global_used: HashSet::new(),
+        global_first: HashMap::new(),
+        def_at: 0,
         strict: false,
         constants: HashMap::new(),
         def: None,
@@ -54,6 +56,7 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> R
         if let StmtKind::Def(def) = &stmt.kind {
             c.strict = strict(i);
             c.line = stmt.line;
+            c.def_at = i;
             c.def(def)?;
         }
     }
@@ -91,6 +94,11 @@ struct Compiler<'h> {
     global_var_seen: HashSet<Key>,
     /// Globals that top-level code has used so far, in source order.
     global_used: HashSet<Key>,
+    /// The top-level statement each global first appears in. A DEF sees
+    /// only those from before it: SmileBASIC compiles in one pass.
+    global_first: HashMap<Key, usize>,
+    /// The statement the DEF being compiled is.
+    def_at: usize,
     direct: bool,
     /// The program slot compiled for, `#_SLOT`.
     slot: i32,
@@ -190,7 +198,11 @@ impl Compiler<'_> {
         let mut declared = Vec::new();
         for (i, stmt) in program.stmts.iter().enumerate() {
             if !matches!(stmt.kind, StmtKind::Def(_)) {
+                let (u, d) = (used.len(), declared.len());
                 collect_vars(std::slice::from_ref(stmt), &mut used, &mut declared);
+                for k in used[u..].iter().chain(&declared[d..]) {
+                    self.global_first.entry(k.clone()).or_insert(i);
+                }
             }
             // Variables made by using them before OPTION STRICT count as
             // declared after it.
@@ -470,7 +482,8 @@ impl Compiler<'_> {
                 return Ok(Slot::Local(slot));
             }
             if let Some(&slot) = self.global_slots.get(&k) {
-                if !self.strict || self.global_declared.contains(&k) {
+                let before = self.global_first.get(&k).is_some_and(|&i| i < self.def_at);
+                if before && (!self.strict || self.global_declared.contains(&k)) {
                     return Ok(Slot::Global(slot));
                 }
             }
