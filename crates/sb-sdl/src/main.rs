@@ -2,7 +2,6 @@
 
 mod audio;
 mod colors;
-mod complete_window;
 mod controls;
 mod dialog;
 mod file_dialogs;
@@ -12,6 +11,7 @@ mod keyhint;
 mod menu;
 mod program_dialog;
 mod projects;
+mod settings_window;
 mod shortcuts;
 mod toast;
 mod ui;
@@ -22,7 +22,6 @@ use std::time::{Duration, Instant};
 
 use audio::Audio;
 use colors::ColorWindow;
-use complete_window::CompleteWindow;
 use controls::Controls;
 use dialog::{Answer, Dialog};
 use file_dialogs::{FilePicker, SaveDialog};
@@ -58,6 +57,7 @@ use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator}
 use sdl3::sys::render::SDL_SetDefaultTextureScaleMode;
 use sdl3::sys::surface::SDL_ScaleMode;
 use sdl3::video::{Window, WindowContext};
+use settings_window::SettingsWindow;
 use shortcuts::ShortcutsWindow;
 use toast::Toasts;
 
@@ -212,7 +212,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
     let mut color_window: Option<ColorWindow> = None;
-    let mut complete_window: Option<CompleteWindow> = None;
+    let mut settings_window: Option<SettingsWindow> = None;
     let mut shortcuts_window: Option<ShortcutsWindow> = None;
     // Ctrl+S's and Ctrl+L's windows.
     let mut file_dialog: Option<FileDialog> = None;
@@ -262,7 +262,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     || program_dialog.is_some()
                     || manager.is_some()
                     || file_dialog.is_some()
-                    || complete_window.is_some()
+                    || settings_window.is_some()
                     || shortcuts_window.is_some()
                     || color_window.is_some()
                     || (side.is_some() && side_focus);
@@ -612,16 +612,16 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 continue;
             }
-            if let Some(open) = &mut complete_window {
+            if let Some(open) = &mut settings_window {
                 let settings = &mut machine.rt.settings;
                 let outcome = match event {
                     Event::Quit { .. } => {
                         quit = true;
-                        complete_window::Outcome::Stay
+                        settings_window::Outcome::Stay
                     }
                     Event::MouseMotion { x, y, .. } => {
                         open.mouse_move(to_display(x, y));
-                        complete_window::Outcome::Stay
+                        settings_window::Outcome::Stay
                     }
                     Event::MouseButtonDown {
                         mouse_btn: MouseButton::Left,
@@ -632,10 +632,24 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Event::KeyDown {
                         keycode: Some(key), ..
                     } => open.key(key, settings),
-                    _ => complete_window::Outcome::Stay,
+                    _ => settings_window::Outcome::Stay,
                 };
-                if outcome == complete_window::Outcome::Close {
-                    complete_window = None;
+                match outcome {
+                    settings_window::Outcome::Stay => {}
+                    settings_window::Outcome::Close => settings_window = None,
+                    settings_window::Outcome::Instruments => {
+                        if machine.rt.settings.smilebasic_instruments && bank.is_none() {
+                            toasts.push(
+                                "SmileBASIC 4's instruments are not imported \
+                                 (see smilebasic-import)"
+                                    .into(),
+                            );
+                        }
+                        use_instruments(&mut machine, bank.as_ref(), &mut toasts);
+                    }
+                    settings_window::Outcome::ChooseSoundFont => {
+                        choose_sound_font(canvas.window(), chosen_font.clone(), &mut toasts);
+                    }
                 }
                 continue;
             }
@@ -803,45 +817,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             _ => editor.start_find(true),
                         }
                     }
-                    Click::Chosen(Action::ChooseSoundFont) => {
-                        let send = chosen_font.clone();
-                        let filters = [sdl3::dialog::DialogFileFilter {
-                            name: "SoundFont",
-                            pattern: "sf2",
-                        }];
-                        let shown = sdl3::dialog::show_open_file_dialog(
-                            &filters,
-                            None::<&Path>,
-                            false,
-                            canvas.window(),
-                            Box::new(move |chosen, _| {
-                                if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
-                                    let _ = send.send(path);
-                                }
-                            }),
-                        );
-                        if let Err(e) = shown {
-                            toasts.push(format!("Could not open a file dialog: {e}"));
-                        }
-                    }
-                    Click::Chosen(Action::CompleteOptions) => {
-                        complete_window = Some(CompleteWindow::new((display_w, display_h)));
+                    Click::Chosen(Action::Settings) => {
+                        settings_window = Some(SettingsWindow::new((display_w, display_h)));
                     }
                     Click::Chosen(Action::EditColors) => {
                         color_window = Some(ColorWindow::new((display_w, display_h)));
-                    }
-                    Click::Chosen(
-                        choice @ (Action::SmileBasicInstruments | Action::BundledSoundFont),
-                    ) => {
-                        choice.toggle(&mut machine.rt.settings);
-                        if choice == Action::SmileBasicInstruments && bank.is_none() {
-                            toasts.push(
-                                "SmileBASIC 4's instruments are not imported \
-                                 (see smilebasic-import)"
-                                    .into(),
-                            );
-                        }
-                        use_instruments(&mut machine, bank.as_ref(), &mut toasts);
                     }
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored
@@ -1101,7 +1081,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let modal = dialog.is_some()
             || manager.is_some()
             || color_window.is_some()
-            || complete_window.is_some()
+            || settings_window.is_some()
             || shortcuts_window.is_some()
             || file_dialog.is_some();
         if !machine.is_editing() {
@@ -1251,7 +1231,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if let Some(open) = &color_window {
                 open.draw(&mut overlay, font, &machine.rt.settings.editor_colors);
             }
-            if let Some(open) = &complete_window {
+            if let Some(open) = &settings_window {
                 open.draw(&mut overlay, font, &machine.rt.settings);
             }
             if let Some(open) = &shortcuts_window {
@@ -1461,6 +1441,28 @@ enum Asking {
     Discard(String),
     /// Something told, such as About, with OK alone.
     Notice,
+}
+
+/// Asks for a SoundFont file; the choice comes through `send`.
+fn choose_sound_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, toasts: &mut Toasts) {
+    let filters = [sdl3::dialog::DialogFileFilter {
+        name: "SoundFont",
+        pattern: "sf2",
+    }];
+    let shown = sdl3::dialog::show_open_file_dialog(
+        &filters,
+        None::<&Path>,
+        false,
+        window,
+        Box::new(move |chosen, _| {
+            if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
+                let _ = send.send(path);
+            }
+        }),
+    );
+    if let Err(e) = shown {
+        toasts.push(format!("Could not open a file dialog: {e}"));
+    }
 }
 
 /// What the menu bar's items depend on.

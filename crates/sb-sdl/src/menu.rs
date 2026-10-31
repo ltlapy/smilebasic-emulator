@@ -3,13 +3,11 @@
 //! so it takes no keys away from programs.
 
 use sb_runtime::Framebuffer;
-use sb_runtime::confirm::FileConfirm;
 use sb_runtime::editor::EditorSize;
 use sb_runtime::font::{Font, FontSize};
 use sb_runtime::palette::PRESETS;
 use sb_runtime::runtime::Settings;
 use sb_runtime::screen::Filter;
-use sb_runtime::settings::Language;
 
 use crate::ui::{
     BACKGROUND, BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, outline, text_width,
@@ -24,6 +22,8 @@ pub enum Action {
     SaveSlot,
     LoadSlot,
     OpenFolder,
+    /// The settings window.
+    Settings,
     Quit,
     Undo,
     Redo,
@@ -46,33 +46,17 @@ pub enum Action {
     Index,
     Split,
     ToggleUpperCase,
-    ToggleCtrlC,
-    ToggleHalfWidth,
     ToggleWrap,
     ToggleNumberTiles,
     ToggleMap,
     ToggleKeyboardButtons,
-    ToggleKeepCursor,
-    ToggleCompleteDirect,
-    ToggleCompleteEditor,
-    /// Open the autocomplete window.
-    CompleteOptions,
-    Language(Language),
-    TabStep(u32),
     EditorFont(FontSize),
     EditorSize(EditorSize),
     /// Use one of the preset palettes in the editor.
     ColorPreset(usize),
     /// Open the editor colors window.
     EditColors,
-    FileAccess(FileConfirm),
     ScreenFilter(Option<Filter>),
-    /// Use SmileBASIC 4's own instruments, imported.
-    SmileBasicInstruments,
-    /// Use the bundled SoundFont.
-    BundledSoundFont,
-    /// Pick a SoundFont file.
-    ChooseSoundFont,
     /// The help for the command at the editor's cursor (F1).
     Help,
     /// The window listing the keys.
@@ -94,68 +78,17 @@ impl Action {
         let check = |on: bool| if on { "[x]" } else { "[ ]" };
         match self {
             Action::ToggleUpperCase => check(settings.upper_case_letters),
-            Action::ToggleCtrlC => check(settings.ctrl_c_stops),
-            Action::ToggleHalfWidth => check(settings.half_width_on_save),
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::ToggleMap => check(settings.editor_map),
             Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
-            Action::ToggleKeepCursor => check(settings.keep_mouse_cursor),
-            Action::ToggleCompleteDirect => check(settings.complete_direct),
-            Action::ToggleCompleteEditor => check(settings.complete_editor),
-            Action::Language(l) if settings.language == l => "(*)",
-            Action::TabStep(n) if settings.editor_tab_step == n => "(*)",
-            Action::Language(_) | Action::TabStep(_) => "( )",
             Action::EditorFont(f) if settings.editor_font == f => "(*)",
             Action::EditorSize(size) if settings.editor_size == size => "(*)",
             Action::ColorPreset(i) if settings.editor_colors == PRESETS[i].1 => "(*)",
             Action::EditorFont(_) | Action::EditorSize(_) | Action::ColorPreset(_) => "( )",
-            Action::FileAccess(mode) if settings.file_confirm == mode => "(*)",
-            Action::FileAccess(_) => "( )",
             Action::ScreenFilter(f) if settings.screen_filter == f => "(*)",
             Action::ScreenFilter(_) => "( )",
-            Action::SmileBasicInstruments if settings.smilebasic_instruments => "(*)",
-            Action::BundledSoundFont
-                if !settings.smilebasic_instruments && settings.sound_font.is_none() =>
-            {
-                "(*)"
-            }
-            Action::ChooseSoundFont
-                if !settings.smilebasic_instruments && settings.sound_font.is_some() =>
-            {
-                "(*)"
-            }
-            Action::SmileBasicInstruments | Action::BundledSoundFont | Action::ChooseSoundFont => {
-                "( )"
-            }
-            Action::Projects
-            | Action::SaveSlot
-            | Action::LoadSlot
-            | Action::Undo
-            | Action::Redo
-            | Action::Cut
-            | Action::Copy
-            | Action::Paste
-            | Action::SelectAll
-            | Action::Comment
-            | Action::Uncomment
-            | Action::Run
-            | Action::Help
-            | Action::Shortcuts
-            | Action::About
-            | Action::OpenFolder
-            | Action::Quit
-            | Action::Stop
-            | Action::Pause
-            | Action::ToggleEditor
-            | Action::EditColors
-            | Action::CompleteOptions
-            | Action::EditSlot(_)
-            | Action::GoToLine
-            | Action::Find
-            | Action::Replace
-            | Action::Index
-            | Action::Split => "   ",
+            _ => "   ",
         }
     }
 
@@ -163,27 +96,10 @@ impl Action {
     pub fn toggle(self, settings: &mut Settings) {
         let flag = match self {
             Action::ToggleUpperCase => &mut settings.upper_case_letters,
-            Action::ToggleCtrlC => &mut settings.ctrl_c_stops,
-            Action::ToggleHalfWidth => &mut settings.half_width_on_save,
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::ToggleMap => &mut settings.editor_map,
             Action::ToggleKeyboardButtons => &mut settings.keyboard_buttons,
-            Action::ToggleKeepCursor => &mut settings.keep_mouse_cursor,
-            Action::ToggleCompleteDirect => &mut settings.complete_direct,
-            Action::ToggleCompleteEditor => &mut settings.complete_editor,
-            Action::Language(l) => {
-                settings.language = l;
-                return;
-            }
-            Action::TabStep(n) => {
-                settings.editor_tab_step = n;
-                return;
-            }
-            Action::FileAccess(mode) => {
-                settings.file_confirm = mode;
-                return;
-            }
             Action::ScreenFilter(f) => {
                 settings.screen_filter = f;
                 return;
@@ -200,44 +116,7 @@ impl Action {
                 settings.editor_colors = PRESETS[i].1;
                 return;
             }
-            Action::SmileBasicInstruments => {
-                settings.smilebasic_instruments = true;
-                return;
-            }
-            Action::BundledSoundFont => {
-                settings.smilebasic_instruments = false;
-                settings.sound_font = None;
-                return;
-            }
-            Action::ChooseSoundFont
-            | Action::CompleteOptions
-            | Action::EditColors
-            | Action::SaveSlot
-            | Action::LoadSlot
-            | Action::Undo
-            | Action::Redo
-            | Action::Cut
-            | Action::Copy
-            | Action::Paste
-            | Action::SelectAll
-            | Action::Comment
-            | Action::Uncomment
-            | Action::Run
-            | Action::Help
-            | Action::Shortcuts
-            | Action::About
-            | Action::Projects
-            | Action::OpenFolder
-            | Action::Quit
-            | Action::Stop
-            | Action::Pause
-            | Action::ToggleEditor
-            | Action::EditSlot(_)
-            | Action::GoToLine
-            | Action::Find
-            | Action::Replace
-            | Action::Index
-            | Action::Split => return,
+            _ => return,
         };
         *flag = !*flag;
     }
@@ -342,6 +221,7 @@ const MENUS: &[Menu] = &[
             keyed("Load into slot...", "Ctrl+L", Action::LoadSlot),
             LINE,
             item("Open projects folder", Action::OpenFolder),
+            item("Settings...", Action::Settings),
             LINE,
             item("Quit", Action::Quit),
         ],
@@ -364,6 +244,8 @@ const MENUS: &[Menu] = &[
             LINE,
             keyed("Comment out", "Ctrl+K", Action::Comment),
             keyed("Uncomment", "Ctrl+Shift+K", Action::Uncomment),
+            LINE,
+            item("Upper-case letters", Action::ToggleUpperCase),
         ],
     },
     Menu {
@@ -424,59 +306,8 @@ const MENUS: &[Menu] = &[
             keyed("Run PRG0", "F5", Action::Run),
             keyed("Stop", "Pause", Action::Stop),
             keyed("Pause/Resume", "F8", Action::Pause),
-        ],
-    },
-    Menu {
-        title: "Settings",
-        items: &[
-            item("Upper-case letters", Action::ToggleUpperCase),
-            item("Ctrl+C stops program", Action::ToggleCtrlC),
-            item("Half-width on SAVE", Action::ToggleHalfWidth),
-            sub(
-                "System language",
-                &[
-                    item("English (en-US)", Action::Language(Language::English)),
-                    item("Japanese (ja)", Action::Language(Language::Japanese)),
-                ],
-            ),
             LINE,
             item("Keys press buttons", Action::ToggleKeyboardButtons),
-            item("Always show mouse cursor", Action::ToggleKeepCursor),
-            LINE,
-            sub(
-                "Instruments",
-                &[
-                    item("SmileBASIC 4 (imported)", Action::SmileBasicInstruments),
-                    item("GeneralUser GS (bundled)", Action::BundledSoundFont),
-                    item("Choose a file...", Action::ChooseSoundFont),
-                ],
-            ),
-            sub(
-                "File access",
-                &[
-                    item("Always ask", Action::FileAccess(FileConfirm::Ask)),
-                    item("Notify", Action::FileAccess(FileConfirm::Notify)),
-                    item("Silent", Action::FileAccess(FileConfirm::Silent)),
-                ],
-            ),
-            LINE,
-            sub(
-                "Autocomplete",
-                &[
-                    item("In direct mode", Action::ToggleCompleteDirect),
-                    item("In the editor", Action::ToggleCompleteEditor),
-                    item("Advanced...", Action::CompleteOptions),
-                ],
-            ),
-            sub(
-                "Tab width",
-                &[
-                    item("1", Action::TabStep(1)),
-                    item("2", Action::TabStep(2)),
-                    item("4", Action::TabStep(4)),
-                    item("8", Action::TabStep(8)),
-                ],
-            ),
         ],
     },
     Menu {
@@ -832,22 +663,23 @@ mod tests {
     fn open_menu_and_choose() {
         let mut bar = MenuBar::default();
         bar.mouse_move(Some((10, 5)));
-        let settings_menu = menu("Settings");
-        assert_eq!(
-            bar.click(at(title_rect(settings_menu)), IDLE),
-            Click::Consumed
-        );
+        let run = menu("Run");
+        let keys = (MENUS[run].items.iter())
+            .position(|i| i.label == "Keys press buttons")
+            .unwrap();
+        assert_eq!(bar.click(at(title_rect(run)), IDLE), Click::Consumed);
         bar.mouse_move(Some((500, 500)));
         assert!(bar.visible(), "an open menu stays visible");
         assert_eq!(
-            bar.click(at(item_rect(settings_menu, 1)), IDLE),
-            Click::Chosen(Action::ToggleCtrlC)
+            bar.click(at(item_rect(run, keys)), IDLE),
+            Click::Chosen(Action::ToggleKeyboardButtons)
         );
         assert!(!bar.visible());
 
         let mut settings = Settings::default();
-        Action::ToggleCtrlC.toggle(&mut settings);
-        assert!(settings.ctrl_c_stops);
+        Action::ToggleKeyboardButtons.toggle(&mut settings);
+        assert!(!settings.keyboard_buttons);
+        assert_eq!(Action::ToggleKeyboardButtons.mark(&settings), "[ ]");
     }
 
     #[test]
@@ -890,44 +722,41 @@ mod tests {
         // Keys sit right of the widest label.
         let width = list_width(MENUS[edit].items);
         assert!(width > text_width("Labels and DEFs") + text_width("Ctrl+Shift+K"));
-        assert!(!has_marks(MENUS[edit].items) && has_marks(MENUS[menu("View")].items));
+        assert!(!has_marks(MENUS[menu("File")].items) && has_marks(MENUS[edit].items));
     }
 
     #[test]
-    fn file_access_is_a_submenu() {
+    fn filters_are_a_submenu() {
         let mut bar = MenuBar::default();
-        let settings_menu = menu("Settings");
-        let parent = (MENUS[settings_menu].items.iter())
-            .position(|i| i.label == "File access")
+        let view = menu("View");
+        let parent = (MENUS[view].items.iter())
+            .position(|i| i.label == "Screen filter")
             .unwrap();
         bar.mouse_move(Some((10, 5)));
-        bar.click(at(title_rect(settings_menu)), IDLE);
-        bar.mouse_move(Some(at(item_rect(settings_menu, parent))));
+        bar.click(at(title_rect(view)), IDLE);
+        bar.mouse_move(Some(at(item_rect(view, parent))));
         assert_eq!(bar.sub, Some(parent), "hovering opens the submenu");
-        let silent = sub_rect(settings_menu, parent, 2);
-        let p = item_rect(settings_menu, parent);
-        assert!(silent.x >= p.x + p.w);
-        bar.mouse_move(Some(at(silent)));
+        let bilinear = sub_rect(view, parent, 3);
+        let p = item_rect(view, parent);
+        assert!(bilinear.x >= p.x + p.w);
+        bar.mouse_move(Some(at(bilinear)));
         assert_eq!(bar.sub, Some(parent), "moving into it keeps it open");
         assert_eq!(
-            bar.click(at(silent), IDLE),
-            Click::Chosen(Action::FileAccess(FileConfirm::Silent))
+            bar.click(at(bilinear), IDLE),
+            Click::Chosen(Action::ScreenFilter(Some(Filter::Bilinear)))
         );
         // Clicking the parent opens it too, and another item closes it.
-        bar.mouse_move(Some(at(title_rect(settings_menu))));
-        bar.click(at(title_rect(settings_menu)), IDLE);
+        bar.mouse_move(Some(at(title_rect(view))));
+        bar.click(at(title_rect(view)), IDLE);
         assert_eq!(bar.click(at(p), IDLE), Click::Consumed);
         assert_eq!(bar.sub, Some(parent));
-        bar.mouse_move(Some(at(item_rect(settings_menu, 0))));
+        bar.mouse_move(Some(at(item_rect(view, 0))));
         assert_eq!(bar.sub, None);
 
         let mut settings = Settings::default();
-        Action::FileAccess(FileConfirm::Notify).toggle(&mut settings);
-        assert_eq!(settings.file_confirm, FileConfirm::Notify);
-        assert_eq!(
-            Action::FileAccess(FileConfirm::Notify).mark(&settings),
-            "(*)"
-        );
+        Action::ScreenFilter(None).toggle(&mut settings);
+        assert_eq!(settings.screen_filter, None);
+        assert_eq!(Action::ScreenFilter(None).mark(&settings), "(*)");
     }
 
     #[test]
@@ -939,12 +768,6 @@ mod tests {
         assert!(bar.visible());
         assert!(!Action::Pause.enabled(IDLE));
         assert!(Action::Pause.enabled(RUNNING));
-
-        let mut settings = Settings::default();
-        Action::Language(Language::Japanese).toggle(&mut settings);
-        Action::TabStep(8).toggle(&mut settings);
-        assert_eq!(settings.language, Language::Japanese);
-        assert_eq!(Action::TabStep(8).mark(&settings), "(*)");
     }
 
     #[test]

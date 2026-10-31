@@ -37,7 +37,7 @@ fn table() -> Vec<(String, String)> {
 }
 
 /// `text` broken at spaces into lines of at most `width` characters.
-fn wrap(text: &str, width: usize) -> Vec<String> {
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = vec![String::new()];
     for word in text.split(' ') {
         let line = lines.last_mut().expect("never empty");

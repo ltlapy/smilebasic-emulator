@@ -45,8 +45,8 @@ Without them:
 - Controller 1 is the keyboard and the first gamepad together, reported
   as a handheld controller; other gamepads are Pro Controllers.
   `XCTRLSTYLE` shows no connection screen and always succeeds.
-- The keyboard also presses controller 1's buttons; Settings turns this
-  off.
+- The keyboard also presses controller 1's buttons; Run > Keys press
+  buttons turns this off.
 - A program that hides the mouse cursor (`SYSPARAM "MOUSECURSOR",0`,
   as programs start) hides the computer's cursor over the window, until
   the menu bar shows; Settings can keep it shown.
@@ -54,9 +54,9 @@ Without them:
 ## System settings
 
 - `SYSPARAM("LANG")` answers `en-US`, as the English edition does, or
-  `ja`, as set in Settings > System language.
-- `SYSPARAM("TABSTEP")` is the editor's tab width, set in the Editor
-  menu.
+  `ja`, as set in File > Settings > General.
+- `SYSPARAM("TABSTEP")` is the editor's tab width, set in File > Settings >
+  Editor.
 - `SYSPARAM("TVMODE")` is always 1, and `SYSBEEP` keeps its value: the
   emulator has no system sounds. `TOOL1` to `TOOL3` name SmileBASIC 4's
   own tools, which the emulator does not have.
@@ -114,6 +114,6 @@ Without them:
   while the cursor is down there, or by the cursor if set so), with the
   argument being typed marked. Ctrl+Space hides the list and the hints
   until it is pressed again. When they show and what they offer are
-  set in Settings > Autocomplete.
+  set in File > Settings > Editor.
 - Ctrl+S takes the file name typed on the computer's keyboard rather
   than SmileBASIC 4's on-screen one.
