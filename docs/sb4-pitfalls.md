@@ -102,7 +102,9 @@ follows all of it. Items still waiting for a check are marked
   and `END`, and 1 for `VSYNC`, `WAIT`, `INSPECT`, `CALLIDX`, `DEFARGC`,
   `PROJECT`, `FILES`, `ACLS`, `LOAD` and `SAVE`. It ignores case.
   `CHKLABEL` needs the `@`: `CHKLABEL("P1")` is 0. `CHKLABEL("1:@X")` on
-  a slot `EXEC` has not run is 0.
+  a slot `EXEC` has not run is 0. With a slot, it looks at that slot's
+  top level, also from a DEF in the same slot: FINITI finds its own
+  models so.
 - `? ?1` prints an empty line, then 1.
 
 - Variables stay until `CLEAR`, however they came about: by `DIM`,
@@ -298,6 +300,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   set, W grows along X and the picture narrows that way as OpenGL's
   perspective divide would. Raster deformation applies to the screen
   after LMATRIX has placed the layer (TTEST27, pixel for pixel).
+  Sprites on such a layer show whole, also the parts at negative
+  coordinates or past the screen's size, as FINITI's floors running to
+  the horizon show.
 - On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
   the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
   On a composed layer it filters only that layer. Mosaic blocks start at

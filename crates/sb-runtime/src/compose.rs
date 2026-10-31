@@ -384,12 +384,7 @@ pub fn project(
     sample: u32,
     clip: Option<&Clip>,
 ) {
-    // From the layer's (x, y, 1) to clip space's (X, Y, W).
-    let h = [
-        [m[0], m[4], m[12]],
-        [m[1], m[5], m[13]],
-        [m[3], m[7], m[15]],
-    ];
+    let h = homography(m);
     let Some(inv) = invert3(&h) else {
         return;
     };
@@ -398,34 +393,11 @@ pub fn project(
     };
     let (w, hh) = (dst.width(), dst.height());
     let (fw, fh) = (f64::from(w), f64::from(hh));
-    let (mut x0, mut y0, mut x1, mut y1) = (0, 0, w, hh);
-    if let Some(c) = clip {
-        x0 = x0.max(c.x0.max(0) as u32);
-        y0 = y0.max(c.y0.max(0) as u32);
-        x1 = x1.min((c.x1 + 1).max(0) as u32);
-        y1 = y1.min((c.y1 + 1).max(0) as u32);
-    }
-    // Only where the drawn part of the layer lands, when all of it is in
-    // front, with a pixel to spare.
     let sample = f64::from(sample);
     let (cx1, cy1) = (cx1 + 1, cy1 + 1);
-    let corners = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)].map(|(x, y)| {
-        let (x, y) = (f64::from(x) / sample, f64::from(y) / sample);
-        let q = h[2][0] * x + h[2][1] * y + h[2][2];
-        let nx = (h[0][0] * x + h[0][1] * y + h[0][2]) / q;
-        let ny = (h[1][0] * x + h[1][1] * y + h[1][2]) / q;
-        (q > 0.0).then_some(((nx + 1.0) / 2.0 * fw, (1.0 - ny) / 2.0 * fh))
-    });
-    if corners.iter().all(Option::is_some) {
-        let pts = corners.map(|c| c.expect("all in front"));
-        let lo = |f: fn(&(f64, f64)) -> f64| pts.iter().map(f).fold(f64::MAX, f64::min) - 1.0;
-        let hi = |f: fn(&(f64, f64)) -> f64| pts.iter().map(f).fold(f64::MIN, f64::max) + 2.0;
-        let fit = |v: f64, n: u32| v.clamp(0.0, f64::from(n)) as u32;
-        x0 = x0.max(fit(lo(|p| p.0), w));
-        y0 = y0.max(fit(lo(|p| p.1), hh));
-        x1 = x1.min(fit(hi(|p| p.0), w));
-        y1 = y1.min(fit(hi(|p| p.1), hh));
-    }
+    let corners = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)]
+        .map(|(x, y)| (f64::from(x) / sample, f64::from(y) / sample));
+    let (x0, y0, x1, y1) = window(&h, corners, (w, hh), clip);
     let (sw, sh) = (i64::from(src.width()), i64::from(src.height()));
     let width = w as usize;
     let (from, pixels) = (src.pixels(), dst.pixels_mut());
@@ -455,6 +427,165 @@ pub fn project(
             }
             let d = &mut pixels[py as usize * width + px as usize];
             *d = over_premultiplied(*d, s);
+        }
+    }
+}
+
+/// The frame pixels, from `(x0, y0)` up to but not including `(x1, y1)`,
+/// that a quadrilateral of the layer with `corners` may cover through the
+/// homography `h`, within `clip`: only around it when all of it is in
+/// front, with a pixel to spare.
+fn window(
+    h: &[[f64; 3]; 3],
+    corners: [(f64, f64); 4],
+    (w, hh): (u32, u32),
+    clip: Option<&Clip>,
+) -> (u32, u32, u32, u32) {
+    let (fw, fh) = (f64::from(w), f64::from(hh));
+    let (mut x0, mut y0, mut x1, mut y1) = (0, 0, w, hh);
+    if let Some(c) = clip {
+        x0 = x0.max(c.x0.max(0) as u32);
+        y0 = y0.max(c.y0.max(0) as u32);
+        x1 = x1.min((c.x1 + 1).max(0) as u32);
+        y1 = y1.min((c.y1 + 1).max(0) as u32);
+    }
+    let corners = corners.map(|(x, y)| {
+        let q = h[2][0] * x + h[2][1] * y + h[2][2];
+        let nx = (h[0][0] * x + h[0][1] * y + h[0][2]) / q;
+        let ny = (h[1][0] * x + h[1][1] * y + h[1][2]) / q;
+        (q > 0.0).then_some(((nx + 1.0) / 2.0 * fw, (1.0 - ny) / 2.0 * fh))
+    });
+    if corners.iter().all(Option::is_some) {
+        let pts = corners.map(|c| c.expect("all in front"));
+        let lo = |f: fn(&(f64, f64)) -> f64| pts.iter().map(f).fold(f64::MAX, f64::min) - 1.0;
+        let hi = |f: fn(&(f64, f64)) -> f64| pts.iter().map(f).fold(f64::MIN, f64::max) + 2.0;
+        let fit = |v: f64, n: u32| v.clamp(0.0, f64::from(n)) as u32;
+        x0 = x0.max(fit(lo(|p| p.0), w));
+        y0 = y0.max(fit(lo(|p| p.1), hh));
+        x1 = x1.min(fit(hi(|p| p.0), w));
+        y1 = y1.min(fit(hi(|p| p.1), hh));
+    }
+    (x0, y0, x1, y1)
+}
+
+/// The homography LMATRIX's 4x4 matrix `m` makes of a layer's plane:
+/// from the layer's (x, y, 1) to clip space's (X, Y, W).
+fn homography(m: &[f64; 16]) -> [[f64; 3]; 3] {
+    [
+        [m[0], m[4], m[12]],
+        [m[1], m[5], m[13]],
+        [m[3], m[7], m[15]],
+    ]
+}
+
+/// Draws a `w` x `h` image as [`draw_image`] does, but on a layer with
+/// LMATRIX's 4x4 matrix `m`, as [`project`] puts one: `place` takes the
+/// image to the layer drawn flat, `sample` frame pixels to one of the
+/// layer's. Unlike drawing the layer flat first, this keeps what lies off
+/// the flat screen, as a sprite's corners do on SmileBASIC 4's GPU.
+#[allow(clippy::too_many_arguments)]
+pub fn project_image(
+    dst: &mut Framebuffer,
+    m: &[f64; 16],
+    sample: u32,
+    place: &Placement,
+    w: i32,
+    h: i32,
+    pixel: impl Fn(i32, i32) -> u32,
+) {
+    let hm = homography(m);
+    let (Some(inv), Some(back)) = (invert3(&hm), place.matrix.inverse()) else {
+        return;
+    };
+    let s = f64::from(sample);
+    let corners = [(0, 0), (w, 0), (0, h), (w, h)].map(|(x, y)| {
+        let (x, y) = place.matrix.apply(f64::from(x), f64::from(y));
+        (x / s, y / s)
+    });
+    let (fw, fh) = (f64::from(dst.width()), f64::from(dst.height()));
+    let (x0, y0, x1, y1) = window(&hm, corners, (dst.width(), dst.height()), place.clip);
+    // From the layer's points straight to the image's.
+    let back = Affine {
+        a: back.a * s,
+        b: back.b * s,
+        c: back.c * s,
+        d: back.d * s,
+        ..back
+    };
+    let width = dst.width() as usize;
+    let pixels = dst.pixels_mut();
+    let step = 2.0 / fw;
+    let (iw, ih) = (f64::from(w), f64::from(h));
+    let n = f64::from(x1.saturating_sub(x0));
+    for py in y0..y1 {
+        let ny = 1.0 - (f64::from(py) + 0.5) / fh * 2.0;
+        let nx0 = (f64::from(x0) + 0.5) / fw * 2.0 - 1.0;
+        let at = |r: usize, nx: f64| inv[r][0] * nx + inv[r][1] * ny + inv[r][2];
+        // The layer point (gx, gy) / q, t pixels along the row.
+        let (gx, gy, q) = (at(0, nx0), at(1, nx0), at(2, nx0));
+        let (dx, dy, dq) = (inv[0][0] * step, inv[1][0] * step, inv[2][0] * step);
+        // The image point times q is linear in t too, so where it falls
+        // inside the image is found once a row, on either side of where
+        // q changes sign; each pixel is still tested exactly below.
+        let (ax, kx) = (
+            back.a * gx + back.b * gy + back.tx * q,
+            back.a * dx + back.b * dy + back.tx * dq,
+        );
+        let (ay, ky) = (
+            back.c * gx + back.d * gy + back.ty * q,
+            back.c * dx + back.d * dy + back.ty * dq,
+        );
+        let line = &mut pixels[py as usize * width..][..x1 as usize];
+        for sign in [1.0, -1.0] {
+            // Each (k, c) asks for k * t + c above 0.
+            let bounds = [
+                (dq, q),
+                (kx, ax),
+                (iw * dq - kx, iw * q - ax),
+                (ky, ay),
+                (ih * dq - ky, ih * q - ay),
+            ];
+            let (mut lo, mut hi) = (0.0, n);
+            for (k, c) in bounds {
+                let (k, c) = (k * sign, c * sign);
+                if k == 0.0 {
+                    if c < 0.0 {
+                        hi = lo;
+                    }
+                } else if k > 0.0 {
+                    lo = f64::max(lo, -c / k);
+                } else {
+                    hi = f64::min(hi, -c / k);
+                }
+            }
+            if lo >= hi {
+                continue;
+            }
+            let from = (lo - 1.0).max(0.0) as u32;
+            let to = ((hi + 1.0).min(n) as u32).min(x1 - x0);
+            let ft = f64::from(from);
+            let (mut gx, mut gy, mut qt) = (gx + dx * ft, gy + dy * ft, q + dq * ft);
+            for t in from..to {
+                let (lx, ly) = (gx / qt, gy / qt);
+                (gx, gy, qt) = (gx + dx, gy + dy, qt + dq);
+                // In front only; a NaN is not.
+                if (hm[2][0] * lx + hm[2][1] * ly + hm[2][2]).partial_cmp(&0.0)
+                    != Some(Ordering::Greater)
+                {
+                    continue;
+                }
+                let (ix, iy) = back.apply(lx, ly);
+                let (Some(ix), Some(iy)) = (floor_in(ix, i64::from(w)), floor_in(iy, i64::from(h)))
+                else {
+                    continue;
+                };
+                let src = pixel(ix as i32, iy as i32);
+                if src >> 24 == 0 {
+                    continue;
+                }
+                let d = &mut line[(x0 + t) as usize];
+                *d = blend(*d, src, place.add);
+            }
         }
     }
 }

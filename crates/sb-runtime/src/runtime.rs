@@ -927,6 +927,7 @@ impl Runtime {
 
     fn draw_element(&self, fb: &mut Framebuffer, e: Element, layer: &Layer, cursor: bool) {
         let clip = layer.clip.as_ref();
+        let projection = layer.projection.as_ref().map(|m| (m, self.mode.sample));
         match e {
             Element::Text(i) => self.text[i].draw_placed(
                 fb,
@@ -943,6 +944,7 @@ impl Runtime {
                 fb,
                 &layer.matrix,
                 clip,
+                projection,
             ),
         }
     }
@@ -1138,17 +1140,35 @@ impl Runtime {
                         self.draw_element(target, element, &settings, cursor);
                     }
                 }
+                // Sprites go through the matrix themselves, whole; text
+                // screens are drawn flat on the screen first, each run of
+                // them put on in its turn.
                 Some(m) => {
-                    flat.clear(0);
                     let unclipped = Layer {
                         clip: None,
+                        projection: None,
                         ..settings
                     };
+                    let clip = settings.clip.as_ref();
+                    let mut flat_drawn = false;
                     for &(_, _, _, _, element) in in_layer {
+                        if let Element::Sprite(..) = element {
+                            if flat_drawn {
+                                compose::project(target, &flat, m, self.mode.sample, clip);
+                                flat_drawn = false;
+                            }
+                            self.draw_element(target, element, &settings, cursor);
+                            continue;
+                        }
+                        if !flat_drawn {
+                            flat.clear(0);
+                            flat_drawn = true;
+                        }
                         self.draw_element(&mut flat, element, &unclipped, cursor);
                     }
-                    let clip = settings.clip.as_ref();
-                    compose::project(target, &flat, m, self.mode.sample, clip);
+                    if flat_drawn {
+                        compose::project(target, &flat, m, self.mode.sample, clip);
+                    }
                 }
             }
             filter.apply(target, self.mode.sample);

@@ -548,11 +548,12 @@ pub fn sample(grp: &Graphics, page: i32, x: i32, y: i32) -> u32 {
 
 /// Draws one sprite over the frame, as if it had no parent or layer.
 pub fn draw(s: &Sprite, grp: &Graphics, fb: &mut Framebuffer) {
-    draw_posed(s, &Pose::of(s), grp, fb, &Affine::IDENTITY, None);
+    draw_posed(s, &Pose::of(s), grp, fb, &Affine::IDENTITY, None, None);
 }
 
 /// Draws one sprite over the frame in the given pose, then through its
-/// layer's matrix and clipping.
+/// layer's matrix and clipping, and through LMATRIX's 4x4 matrix with the
+/// frame's pixels to a layer pixel when the layer has one.
 pub fn draw_posed(
     s: &Sprite,
     pose: &Pose,
@@ -560,6 +561,7 @@ pub fn draw_posed(
     fb: &mut Framebuffer,
     layer: &Affine,
     clip: Option<&Clip>,
+    projection: Option<(&[f64; 16], u32)>,
 ) {
     // A blank page shows nothing, as GRP0 does through #GSPRITE until
     // something is drawn there.
@@ -582,6 +584,35 @@ pub fn draw_posed(
     // Roughly how many pixels the sprite covers.
     let area = (f64::from(bw * bh) * (pose.scale.0 * pose.scale.1).abs()).min(1e7) as usize;
     let tint = Tint::new(pose.color, area);
+    if let Some((m, sample)) = projection {
+        struct Projected<'a, 'b> {
+            fb: &'a mut Framebuffer,
+            place: &'a Placement<'b>,
+            m: &'a [f64; 16],
+            sample: u32,
+            size: (i32, i32),
+            source: &'a Source<'a>,
+        }
+        impl TintJob for Projected<'_, '_> {
+            type Out = ();
+            fn run(self, tint: impl Fn(u32) -> u32 + Copy) {
+                let (bw, bh) = self.size;
+                let source = self.source;
+                compose::project_image(self.fb, self.m, self.sample, self.place, bw, bh, |x, y| {
+                    let (x, y) = source.page_xy(x, y);
+                    tint(source.pixel(x, y))
+                });
+            }
+        }
+        return tint.with(Projected {
+            fb,
+            place: &place,
+            m,
+            sample,
+            size: (bw, bh),
+            source: &source,
+        });
+    }
     if place.is_upright() {
         return draw_upright(&source, &tint, fb, &place, (bw, bh));
     }

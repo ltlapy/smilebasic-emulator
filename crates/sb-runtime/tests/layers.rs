@@ -404,3 +404,17 @@ fn scaled_sprites_take_the_left_column_on_a_boundary() {
     let row: Vec<u32> = (100..106).map(|x| fb.get(x, 101).unwrap()).collect();
     assert_eq!(row, [RED, RED, BLUE, RED, RED, BLUE]);
 }
+
+#[test]
+fn projected_sprites_keep_what_is_off_the_screen() {
+    // The layer's origin goes to the middle of the screen, so a sprite at
+    // negative coordinates still shows, left of and above it.
+    let mut m = run(&format!(
+        "{RED_SPRITE}SPSET 0,0,0,16,16:SPOFS 0,-20,-20\n\
+         DIM M#[16]:M#[0]=1/200:M#[5]=-1/120:M#[10]=1:M#[15]=1:LMATRIX 0,M#"
+    ));
+    let fb = m.render();
+    assert_eq!(fb.get(185, 105), Some(RED));
+    assert_eq!(fb.get(205, 105), Some(0xFF00_0000));
+    assert_eq!(fb.get(185, 125), Some(0xFF00_0000));
+}
