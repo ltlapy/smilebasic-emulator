@@ -813,9 +813,9 @@ fn ring_copies() {
 fn signal_processing() {
     assert_eq!(
         output(
-            "DIM R[4]=[1,2,3,4],I[4],W[4]:FFTWFN W,#WFRECT:FFT R,I,R,I,W:?R[0];I[1]\nIFFT R,I,R,I:?R[3]"
+            "DIM R[4]=[1,2,3,4],I[4],W[4]:FFTWFN W,#WFRECT:FFT R,I,R,I,W:?R[0];I[1]\nIFFT R,I,R,I:?R[3];\",\";I[3]"
         ),
-        "102\n4\n"
+        "102\n4,0\n"
     );
     assert_eq!(
         output("?CLASSIFY(0.5);CLASSIFY(POW(10,400));CLASSIFY(POW(10,400)-POW(10,400))"),

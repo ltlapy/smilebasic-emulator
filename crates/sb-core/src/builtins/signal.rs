@@ -41,6 +41,16 @@ pub(super) fn classify(args: &[Value]) -> Result<Value> {
     }))
 }
 
+/// The sine and cosine of `k / len` of a turn, exact at quarter turns, so
+/// that small transforms give exact zeros: SmileBASIC 4's IFFT of
+/// 1,2,3,4 prints 0 where `sin(PI)` would leave -0.
+fn turn(k: usize, len: usize) -> (f64, f64) {
+    if (4 * k).is_multiple_of(len) {
+        return [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)][4 * k / len % 4];
+    }
+    (2.0 * PI * k as f64 / len as f64).sin_cos()
+}
+
 /// In-place radix-2 transform; `inverse` turns the sign of the angle.
 fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let n = re.len();
@@ -60,10 +70,10 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let sign = if inverse { 1.0 } else { -1.0 };
     let mut len = 2;
     while len <= n {
-        let step = sign * 2.0 * PI / len as f64;
         for start in (0..n).step_by(len) {
             for k in 0..len / 2 {
-                let (s, c) = (step * k as f64).sin_cos();
+                let (s, c) = turn(k, len);
+                let s = sign * s;
                 let (a, b) = (start + k, start + k + len / 2);
                 let tr = re[b] * c - im[b] * s;
                 let ti = re[b] * s + im[b] * c;
@@ -118,8 +128,8 @@ pub(super) fn ifft(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 }
 
 /// FFTWFN array, type: fills the array with `#WFRECT`, `#WFHAMM`,
-/// `#WFHANN` or `#WFBLKM`.
-// UNVERIFIED: the symmetric forms, which divide by the length minus one.
+/// `#WFHANN` or `#WFBLKM`, in the periodic forms that divide by the
+/// length, which must be a power of two (both checked on hardware).
 pub(super) fn fftwfn(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let array = number_array(&args[0])?;
     let kind = args[1].to_int()?;
@@ -127,7 +137,13 @@ pub(super) fn fftwfn(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
         return Err(Error::with_detail(ErrorKind::OutOfRange, "window type"));
     }
     let n = array.borrow().len();
-    let span = (n.max(2) - 1) as f64;
+    if !n.is_power_of_two() {
+        return Err(Error::with_detail(
+            ErrorKind::IllegalFunctionCall,
+            "array length",
+        ));
+    }
+    let span = n as f64;
     let values: Vec<f64> = (0..n)
         .map(|i| {
             let x = 2.0 * PI * i as f64 / span;
@@ -209,7 +225,9 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 /// coefficients of Robert Bristow-Johnson's Audio EQ Cookbook, divided by
 /// a0. Elements 5 to 12 are left alone.
 // UNVERIFIED: the cookbook's formulas, the band-pass with a 0 dB peak, and
-// shelves taking Q; the errors for a zero rate or Q and a missing gain.
+// shelves taking Q; the error for a zero Q.
+// Checked on hardware: the gain is given for types 5 to 7 only, else
+// Wrong number of arguments, and a zero rate is an Illegal function call.
 pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let params = coefficient_array(&args[0])?;
     let kind = args[1].to_int()?;
@@ -220,15 +238,21 @@ pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let cutoff = args[3].to_real()?;
     let q = args[4].to_real()?;
     if rate == 0.0 {
-        return Err(Error::with_detail(ErrorKind::OutOfRange, "sampling rate"));
+        return Err(Error::with_detail(
+            ErrorKind::IllegalFunctionCall,
+            "sampling rate",
+        ));
     }
     if q == 0.0 {
-        return Err(Error::with_detail(ErrorKind::OutOfRange, "Q or bandwidth"));
+        return Err(Error::with_detail(
+            ErrorKind::IllegalFunctionCall,
+            "Q or bandwidth",
+        ));
     }
-    let gain = match opt(args, 5) {
-        Some(v) => v.to_real()?,
-        None if kind >= 5 => return Err(ErrorKind::WrongNumberOfArguments.into()),
-        None => 0.0,
+    let gain = match (opt(args, 5), kind >= 5) {
+        (Some(v), true) => v.to_real()?,
+        (None, false) => 0.0,
+        _ => return Err(ErrorKind::WrongNumberOfArguments.into()),
     };
     let w0 = 2.0 * PI * cutoff / rate;
     let (sin, cos) = w0.sin_cos();
@@ -344,12 +368,15 @@ mod tests {
 
     #[test]
     fn windows() {
-        let w = real_array(&[0.0; 5]);
+        let w = real_array(&[0.0; 4]);
         fftwfn(&[w.clone(), Value::Int(2)], 0).unwrap();
-        assert!(close(&values(&w), &[0.0, 0.5, 1.0, 0.5, 0.0]));
+        assert!(close(&values(&w), &[0.0, 0.5, 1.0, 0.5]));
         fftwfn(&[w.clone(), Value::Int(0)], 0).unwrap();
-        assert!(close(&values(&w), &[1.0; 5]));
+        assert!(close(&values(&w), &[1.0; 4]));
         assert!(fftwfn(&[w, Value::Int(4)], 0).is_err());
+        let five = real_array(&[0.0; 5]);
+        let err = fftwfn(&[five, Value::Int(0)], 0).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::IllegalFunctionCall);
     }
 
     #[test]
