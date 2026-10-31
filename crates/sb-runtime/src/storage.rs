@@ -221,9 +221,13 @@ pub fn parse_listing(spec: &str) -> Result<(Option<FileKind>, Option<String>)> {
         ),
         None => (None, spec),
     };
+    // A `/` may follow the project (`TXT:NAME/`); on its own it is the
+    // workspace.
+    // UNVERIFIED: that `TXT:/` lists the workspace.
     let project = match project {
         "" => None,
-        p => Some(check_project_name(p)?),
+        "/" => Some(String::new()),
+        p => Some(check_project_name(p.strip_suffix('/').unwrap_or(p))?),
     };
     Ok((kind, project))
 }

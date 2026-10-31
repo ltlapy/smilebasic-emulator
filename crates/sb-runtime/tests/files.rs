@@ -195,10 +195,13 @@ fn projects_rename_delete() {
     assert_eq!(tail(&m, 2), ["TXT:B", "OK"]);
     enter(&mut m, "delete \"b\":f$=files():?len(f$)");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
+    // Projects end in `/`, after the workspace's own `/`.
     enter(&mut m, "files \"//\"");
-    assert_eq!(tail(&m, 2), ["MYGAME", "OK"]);
-    enter(&mut m, "dim n$[0]:files \"//\",n$:?n$[0]");
-    assert_eq!(tail(&m, 2), ["MYGAME", "OK"]);
+    assert_eq!(tail(&m, 3), ["/", "MYGAME/", "OK"]);
+    enter(&mut m, "dim n$[0]:files \"//\",n$:?n$[1]");
+    assert_eq!(tail(&m, 2), ["MYGAME/", "OK"]);
+    enter(&mut m, "?len(files(\"txt:mygame/\"))");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
 }
 
 #[test]

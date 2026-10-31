@@ -161,6 +161,9 @@ follows all of it. Items still waiting for a check are marked
 - `EXEC` of a slot with code still to run, such as `EXEC 0` in a DEF of
   slot 1 that slot 0 called, is `Can't use the specified slot`. Slots
   that `EXEC` ran are gone after the next `RUN`.
+- `FILES("//")` ends each project's name with `/`, lists the workspace as
+  `/`, and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`). A `/`
+  may follow a project's name in a listing (`FILES("TXT:NAME/")`).
 
 ## Order of evaluation
 

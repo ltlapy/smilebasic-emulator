@@ -507,8 +507,20 @@ impl Runtime {
     /// with its `TYPE:` prefix, also when one type was asked for (checked
     /// on hardware: `FILES "DAT:"` lists `DAT:T5A`).
     fn listing(&self, spec: &str) -> storage::Result<Vec<String>> {
+        // Projects end in `/`, the workspace is `/` itself, and the system's
+        // `#` projects come twice, as SmileBASIC 4 lists them.
         if spec == "//" {
-            return self.storage.projects();
+            let mut names: Vec<String> = Vec::new();
+            for p in self.storage.projects()? {
+                let twice = p.starts_with('#');
+                names.push(format!("{p}/"));
+                if twice {
+                    names.push(format!("{p}/"));
+                }
+            }
+            names.push("/".to_string());
+            names.sort();
+            return Ok(names);
         }
         let (kind, project) = parse_listing(spec)?;
         let files = self.storage.list(kind, project.as_deref())?;
