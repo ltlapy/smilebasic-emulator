@@ -31,7 +31,11 @@ const USAGE: &str = "usage:
       ours are printed.
       With --screen, each part's screen is also saved into DIR as a PNG
       once it has run for two seconds, and then Enter is pressed, for
-      parts that show a picture and wait for a key to end.";
+      parts that show a picture and wait for a key to end.
+  smilebasic-check --bench FRAMES PROJECT PROGRAM [PNG]
+      run PROGRAM for FRAMES frames, rendering each one, and print how
+      long running and rendering took, and the console at the end; with
+      PNG, also save the last screen there.";
 
 /// Result files start with this, after the TXT type letter.
 const RESULT_PREFIX: &str = "TRES";
@@ -50,6 +54,17 @@ fn main() {
 }
 
 fn run(mut args: Vec<String>) -> Result<(), AnyError> {
+    if args.first().is_some_and(|a| a == "--bench") {
+        return match args.as_slice() {
+            [_, frames, project, program, png @ ..] if png.len() <= 1 => bench(
+                frames.parse().map_err(|_| USAGE)?,
+                Path::new(project),
+                program,
+                png.first().map(Path::new),
+            ),
+            _ => Err(USAGE.into()),
+        };
+    }
     let screens = match args.iter().position(|a| a == "--screen") {
         Some(at) if at + 1 < args.len() => {
             let dir = PathBuf::from(args.remove(at + 1));
@@ -162,6 +177,78 @@ fn check_part(
         }
         let theirs = screen_rows(&read_text(&theirs)?);
         compare(file, &theirs, rows);
+    }
+    Ok(())
+}
+
+/// Runs a program as the window would, timing each frame's two halves.
+fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Result<(), AnyError> {
+    use std::time::{Duration, Instant};
+    let name = project
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("PROJECT must be a project folder")?;
+    let parent = project.parent().ok_or("PROJECT must be a project folder")?;
+    let mut m = machine(parent.to_path_buf())?;
+    m.rt.storage
+        .set_project(name)
+        .map_err(|e| format!("{name}: {e}"))?;
+    let started = Instant::now();
+    m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
+    println!("loaded and compiled in {:?}", started.elapsed());
+    let (mut run, mut draw) = (Vec::new(), Vec::new());
+    for _ in 0..frames {
+        if !m.is_running() {
+            break;
+        }
+        let t = Instant::now();
+        m.frame();
+        let t2 = Instant::now();
+        m.render();
+        run.push(t2 - t);
+        draw.push(t2.elapsed());
+    }
+    let report = |what: &str, times: &mut Vec<Duration>| {
+        if times.is_empty() {
+            return;
+        }
+        let total: Duration = times.iter().sum();
+        times.sort();
+        println!(
+            "{what}: mean {:?}, median {:?}, 99% {:?}, max {:?}",
+            total / times.len() as u32,
+            times[times.len() / 2],
+            times[times.len() * 99 / 100],
+            times[times.len() - 1],
+        );
+    };
+    println!("{} frames", run.len());
+    report("run ", &mut run);
+    report("draw", &mut draw);
+    if m.is_running() {
+        println!("still running");
+    }
+    if std::env::var_os("BENCH_DEBUG").is_some() {
+        let order = m.rt.sprites.draw_order();
+        let area: f64 = order
+            .iter()
+            .map(|(i, p)| {
+                let s = &m.rt.sprites.list[*i];
+                f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs()
+            })
+            .sum();
+        println!("{} sprites shown, {area} pixels", order.len());
+        for (i, t) in m.rt.text.iter().enumerate() {
+            println!("text {i}: visible {} size {:?}", t.visible, t.size());
+        }
+        for l in 0..8 {
+            println!("layer {l}: {:?} {:?}", m.rt.layers[l], m.rt.filters[l]);
+        }
+        println!("mode {:?}", m.rt.screen_mode());
+    }
+    print_rows(&console_rows(&m));
+    if let Some(file) = png {
+        save_screen(&mut m, file)?;
     }
     Ok(())
 }
