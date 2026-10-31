@@ -599,57 +599,69 @@ fn inspect_pages_long_arrays() {
         &r[r.len() - 3..],
         ["REAL: 1.50000000", "STRING: (2)\"ab\"", "OK"]
     );
-    // From the third row, as after CLS, OK and the typed line.
-    enter(&mut m, "CLS:DIM LA%[40]");
-    m.type_text("??LA%");
-    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    // TTEST19 P5 on hardware: 28 lines a page, the last row kept for the
+    // prompt, and the screen it left.
+    let src = "ACLS:?\"PART? 5\"\nFOR I=0 TO 9:?\"LINE\";I:NEXT\nDIM LB%[60]\n??LB%";
+    m.set_slot(0, src.to_string());
+    m.run_slot(0);
     for _ in 0..5 {
         m.frame();
     }
-    assert!(m.is_running());
-    let r = rows(&m);
-    assert_eq!(r[2], "INT[40]:");
-    assert_eq!(r.len(), 29);
-    assert_eq!(&r[r.len() - 2..], [" [24]: 0", "=== Press ENTER ==="]);
+    let screen = |m: &Machine| -> Vec<String> {
+        let console = &m.rt.text[4];
+        let (w, h) = console.size();
+        (0..h)
+            .map(|y| {
+                let codes: Vec<u16> = (0..w).map(|x| console.cell(x, y).code).collect();
+                let row = String::from_utf16(&codes).unwrap();
+                row.trim_end_matches(['\0', ' ']).to_string()
+            })
+            .collect()
+    };
+    let s = screen(&m);
+    assert_eq!(s[0], "INT[60]:");
+    assert_eq!(s[27], " [26]: 0");
+    assert_eq!(s[28], "");
+    assert_eq!(s[29], "=== Press ENTER ===");
     m.rt.key_press(sb_runtime::runtime::keys::ENTER);
-    for _ in 0..5 {
+    for _ in 0..3 {
         m.frame();
     }
-    assert!(!m.is_running());
-    let r = rows(&m);
-    assert_eq!(&r[r.len() - 2..], [" [39]: 0", "OK"]);
+    let s = screen(&m);
+    assert_eq!(s[27], " [54]: 0");
+    assert_eq!(s[29], "=== Press ENTER ===");
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    for _ in 0..3 {
+        m.frame();
+    }
+    let s = screen(&m);
+    assert_eq!(s[0], " [33]: 0");
+    assert_eq!(s[26], " [59]: 0");
+    assert_eq!(s[27], "");
 }
 
 #[test]
 fn backtrace_and_trace() {
     let mut m = machine();
     let def = "DEF DF N\n STOP\n ?\"IN DF\";N\nEND\nDEF DE N\n ?1/N\nEND";
-    m.set_slot(
-        0,
-        format!("GOSUB @G\nEND\n@G\nDF 1\nRETURN\n{def}\n@E\nDE 0"),
-    );
+    m.set_slot(0, format!("GOSUB @G\nEND\n@G\nDF 1\nRETURN\n{def}"));
     enter(&mut m, "RUN");
+    // TRACE works inside a DEF.
+    enter(&mut m, "TRACE");
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 3..], ["IN DF1", "Break on 0:8", "OK"]);
     enter(&mut m, "BACKTRACE");
     let r = rows(&m);
     assert_eq!(
         &r[r.len() - 4..],
-        ["0:     7", "0:     4", "0:     1", "OK"]
+        ["0:     8", "0:     4", "0:     1", "OK"]
     );
-    // In a DEF, TRACE fails and the program cannot go on.
-    enter(&mut m, "TRACE");
-    let r = rows(&m);
-    assert!(r[r.len() - 2].starts_with("Can't trace"), "{r:?}");
+    // After BACKTRACE the program cannot go on.
     enter(&mut m, "CONT");
     let r = rows(&m);
     assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
-    enter(&mut m, "BACKTRACE");
-    let r = rows(&m);
-    assert_eq!(
-        &r[r.len() - 4..],
-        ["0:     7", "0:     4", "0:     1", "OK"]
-    );
 
-    // After an error too.
+    // After an error, BACKTRACE still works.
     m.set_slot(0, format!("GOSUB @E\nEND\n@E\nDE 0\nRETURN\n{def}"));
     enter(&mut m, "RUN");
     enter(&mut m, "BACKTRACE");
@@ -658,14 +670,26 @@ fn backtrace_and_trace() {
         &r[r.len() - 4..],
         ["0:    11", "0:     4", "0:     1", "OK"]
     );
+}
 
-    // Elsewhere TRACE runs one statement at a time.
-    m.set_slot(0, "STOP\n?\"A\":?\"B\"\n?\"C\"".to_string());
+/// TTEST19T on hardware: TRACE runs a statement and says where, with a
+/// FOR together with its body's first statement.
+#[test]
+fn trace_statement_by_statement() {
+    let mut m = machine();
+    let src = "STOP\n?\"A\":?\"B\"\n?\"C\"\nFOR I=0 TO 1\n?I\nNEXT\nX=0\n?1/X\n?\"END\"";
+    m.set_slot(0, src.to_string());
     enter(&mut m, "RUN");
-    enter(&mut m, "TRACE");
-    assert_eq!(rows(&m)[rows(&m).len() - 2], "A");
-    enter(&mut m, "TRACE");
-    assert_eq!(rows(&m)[rows(&m).len() - 2], "B");
+    for (out, at) in [("A", 2), ("B", 2), ("C", 3), ("0", 5)] {
+        enter(&mut m, "TRACE");
+        let r = rows(&m);
+        assert_eq!(&r[r.len() - 3..], [out, &format!("Break on 0:{at}"), "OK"]);
+    }
     enter(&mut m, "CONT");
-    assert_eq!(rows(&m)[rows(&m).len() - 2], "C");
+    let r = rows(&m);
+    assert_eq!(r[r.len() - 3], "1");
+    assert!(r[r.len() - 2].starts_with("Divide by zero in 0:8"), "{r:?}");
+    enter(&mut m, "TRACE");
+    let r = rows(&m);
+    assert!(r[r.len() - 2].starts_with("Can't trace"), "{r:?}");
 }

@@ -875,6 +875,7 @@ impl Parser {
         let body = self.block(&[]);
         self.in_def = false;
         let body = body?;
+        let end = self.span();
         self.expect_keyword(Keyword::End, "END")?;
         Ok(Def {
             name,
@@ -883,6 +884,7 @@ impl Parser {
             params,
             outs,
             body,
+            end: (end.line, end.col),
         })
     }
 

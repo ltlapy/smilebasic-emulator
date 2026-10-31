@@ -1392,13 +1392,16 @@ impl Compiler<'_> {
             self.local_slot(k);
         }
         self.block(&def.body)?;
-        if def.is_function {
+        (self.line, self.col) = def.end;
+        let end = if def.is_function {
             // UNVERIFIED: a function that ends without RETURN gives no value.
             self.emit(Op::Default);
-            self.emit(Op::ReturnValue);
+            self.emit(Op::ReturnValue)
         } else {
-            self.emit(Op::Return);
-        }
+            self.emit(Op::Return)
+        };
+        let start = if def.is_function { end - 1 } else { end };
+        self.mark_start(start);
         self.resolve_patches(Some(index))?;
         self.def = None;
         Ok(())

@@ -45,22 +45,30 @@ pub enum Status {
     Stop {
         line: u32,
     },
-    /// The statement [`Vm::trace`] asked for has run.
-    Traced,
+    /// The statement [`Vm::trace`] asked for, on `line`, has run.
+    Traced {
+        line: u32,
+    },
 }
 
 /// Commands and functions the compiler turns into instructions of their
 /// own rather than calls, for CHKCALL.
-// UNVERIFIED: WAIT, EXEC and DEFOUT, which may answer 0 like INC.
 const VM_CALLS: &[&str] = &[
     "CALLIDX", "DEFARG", "DEFARGC", "DEFOUTC", "CHKLABEL", "CHKCALL", "CHKVAR", "VSYNC", "WAIT",
-    "EXEC", "DEFOUT",
 ];
 
 /// Names CHKCALL does not count although they are commands here.
-// UNVERIFIED: NEW and CLEAR, which are direct-mode commands like RUN and
-// CONT.
-const NOT_CALLS: &[&str] = &["INC", "DEC", "STOP", "RUN", "CONT", "NEW", "CLEAR"];
+const NOT_CALLS: &[&str] = &[
+    "INC",
+    "DEC",
+    "STOP",
+    "RUN",
+    "CONT",
+    "NEW",
+    "CLEAR",
+    "TRACE",
+    "BACKTRACE",
+];
 
 /// The characters of STOP's message that are shown.
 const STOP_MESSAGE: usize = 255;
@@ -155,8 +163,10 @@ pub struct Vm {
     break_pending: Option<(u64, u32)>,
     /// STOP's message, shown after the line it stopped on.
     stop_message: Option<Str>,
-    /// The instruction count when TRACE asked for one statement.
+    /// The instruction count when TRACE asked for one statement, and the
+    /// last instruction run since.
     trace_from: Option<u64>,
+    traced_pc: usize,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -288,6 +298,7 @@ impl Vm {
             break_pending: None,
             stop_message: None,
             trace_from: None,
+            traced_pc: 0,
         }
     }
 
@@ -348,9 +359,15 @@ impl Vm {
         self.trace_from = Some(self.executed);
     }
 
-    /// Whether a DEF is running.
-    pub fn in_def(&self) -> bool {
-        !self.frames.is_empty()
+    /// Whether the last instruction went from a FOR's test into its body,
+    /// which TRACE runs together with the body's first statement.
+    // UNVERIFIED: that NEXT going round again does the same.
+    fn entered_for_body(&self) -> bool {
+        let code = &self.program.code;
+        self.pc == self.traced_pc + 1
+            && matches!(code.get(self.traced_pc), Some(Op::JumpIfFalse(_)))
+            && self.traced_pc > 0
+            && matches!(code.get(self.traced_pc - 1), Some(Op::ForTest))
     }
 
     /// Where the running code was called from, outermost first: the slot
@@ -467,11 +484,16 @@ impl Vm {
             if let Some(at) = self.trace_from
                 && self.executed > at
                 && self.program.starts.get(self.pc) == Some(&true)
+                && !self.entered_for_body()
             {
                 self.trace_from = None;
-                return Ok(Status::Traced);
+                let line = self.program.lines.get(self.traced_pc).copied();
+                return Ok(Status::Traced {
+                    line: line.unwrap_or(0),
+                });
             }
             let pc = self.pc;
+            self.traced_pc = pc;
             self.executed += 1;
             match self.step(host) {
                 Ok(None) => {}

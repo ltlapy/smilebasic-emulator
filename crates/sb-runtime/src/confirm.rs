@@ -105,6 +105,7 @@ impl Runtime {
         self.dialog = None;
         self.dialog_answer = None;
         self.listing_left = None;
+        self.inspect_left = None;
     }
 
     /// Notices for the frontend to show briefly, since the last call.

@@ -4,9 +4,9 @@
 use crate::value::{Array, ArrayData, Str, Value, format_number};
 
 /// Characters of a string shown before the rest is left out.
-// UNVERIFIED: SmileBASIC 4's limit (more than 50), and how it marks what
+// UNVERIFIED: SmileBASIC 4's limit (more than 300), and how it marks what
 // it leaves out.
-pub const STRING_CHARS: usize = 255;
+pub const STRING_CHARS: usize = 1024;
 
 /// The lines INSPECT prints for `value`: `INT: 1`, `REAL: 1.50000000` or
 /// `STRING: (2)"AB"`; for an array, `INT[2,2]:`, a line ` [0,1]: 0` for
@@ -97,8 +97,8 @@ mod tests {
         assert_eq!(text(&Value::Int(12)), ["INT: 12"]);
         assert_eq!(text(&Value::Real(1.5)), ["REAL: 1.50000000"]);
         assert_eq!(text(&Value::Str(str_from("AB"))), ["STRING: (2)\"AB\""]);
-        let long = "1234567890".repeat(30);
-        let shown = format!("STRING: (300)\"{}\"...", &long[..STRING_CHARS]);
+        let long = "1234567890".repeat(110);
+        let shown = format!("STRING: (1100)\"{}\"...", &long[..STRING_CHARS]);
         assert_eq!(text(&Value::Str(str_from(&long))), [shown]);
     }
 

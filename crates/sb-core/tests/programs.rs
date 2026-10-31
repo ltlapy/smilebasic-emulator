@@ -21,7 +21,7 @@ fn run_with_input(source: &str, input: &[&str]) -> Result<String, sb_core::error
             Status::Ended => return Ok(host.output),
             Status::Running | Status::Wait { .. } | Status::Retry => {}
             Status::Break { .. } => unreachable!("nothing presses the + button"),
-            Status::Stop { .. } | Status::Traced => {}
+            Status::Stop { .. } | Status::Traced { .. } => {}
         }
     }
     panic!("program did not end; output so far: {:?}", host.output);

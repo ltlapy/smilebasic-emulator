@@ -437,7 +437,7 @@ pub enum Stopped {
     No,
     /// By STOP or the + button, so that CONT can go on.
     Paused,
-    /// By an error, or a TRACE that could not go on.
+    /// By an error; also after BACKTRACE.
     Error,
 }
 
@@ -512,8 +512,6 @@ pub struct Runtime {
     /// Where it stopped, innermost first, as slots and lines: the line
     /// itself, then each DEF call and GOSUB it was in.
     pub(crate) backtrace: Vec<(usize, u32)>,
-    /// Whether it stopped inside a DEF.
-    pub(crate) stopped_in_def: bool,
     /// The slot and line that PRGEDIT chose, for PRGGET$ and the rest.
     pub(crate) prg_edit: Option<crate::prg::PrgEdit>,
     /// The slot the editor shows, or last showed.
@@ -527,6 +525,8 @@ pub struct Runtime {
     pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
     /// Lines of a FILES listing still to show, after a key is pressed.
     pub(crate) listing_left: Option<VecDeque<Vec<u16>>>,
+    /// Lines of an INSPECT still to show, after a key is pressed.
+    pub(crate) inspect_left: Option<VecDeque<Vec<u16>>>,
     /// The project metadata that METAEDIT edits.
     pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
@@ -709,7 +709,6 @@ impl Runtime {
             running_slot: None,
             stopped: Stopped::No,
             backtrace: Vec::new(),
-            stopped_in_def: false,
             prg_edit: None,
             edit_slot: 0,
             history: Default::default(),
@@ -724,6 +723,7 @@ impl Runtime {
             answer: None,
             retry: false,
             listing_left: None,
+            inspect_left: None,
             notices: Vec::new(),
             program: None,
             data_pos: Cell::new(0),
@@ -1317,7 +1317,9 @@ impl Runtime {
                     _ => Err(ErrorKind::CantContinue.into()),
                 }
             }
-            // UNVERIFIED: what BACKTRACE shows with no program stopped.
+            // BACKTRACE leaves the program unable to go on.
+            // UNVERIFIED: that this, rather than TRACE in a DEF or CONT
+            // after TRACE in a GOSUB, is what TTEST18 and TTEST19 showed.
             (Command::Backtrace, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only()?;
                 for (slot, line) in self.backtrace.clone() {
@@ -1325,18 +1327,15 @@ impl Runtime {
                     self.text[CONSOLE].print(&text);
                     self.text[CONSOLE].newline();
                 }
+                if self.stopped == Stopped::Paused {
+                    self.stopped = Stopped::Error;
+                }
                 Ok(vec![])
             }
-            // TRACE inside a DEF fails and leaves the program unable to
-            // go on. UNVERIFIED: that it runs one statement elsewhere.
             (Command::Trace, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only()?;
                 match self.stopped {
-                    Stopped::Paused if !self.stopped_in_def => self.request(Request::Trace),
-                    Stopped::Paused => {
-                        self.stopped = Stopped::Error;
-                        Err(ErrorKind::CantTrace.into())
-                    }
+                    Stopped::Paused => self.request(Request::Trace),
                     _ => Err(ErrorKind::CantTrace.into()),
                 }
             }

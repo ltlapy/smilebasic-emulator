@@ -59,12 +59,11 @@ pub struct Machine {
     halted: Option<Vm>,
 }
 
-/// What stopped a program: the + button, STOP, or TRACE's statement.
+/// What stopped a program: the + button, or STOP and TRACE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Halt {
     User,
     Stop,
-    Trace,
 }
 
 /// What a direct-mode LIST asks for.
@@ -527,20 +526,15 @@ impl Machine {
         let slot = vm.slot().unwrap_or(0);
         let line = line.unwrap_or(vm.line());
         // The format is SmileBASIC 4's own, from SmileBASIC 4.
-        // UNVERIFIED: that TRACE says nothing.
         let what = match how {
-            Halt::User => Some("User break"),
-            Halt::Stop => Some("Break"),
-            Halt::Trace => None,
+            Halt::User => "User break",
+            Halt::Stop => "Break",
         };
-        if let Some(what) = what {
-            let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
-            // Out of INPUT, it follows the prompt on the same line.
-            // UNVERIFIED: that it does after PRINT with a semicolon too.
-            let console = &mut self.rt.text[CONSOLE];
-            console.print(&text);
-            console.newline();
-        }
+        let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
+        // It follows whatever the line printed, as after INPUT's prompt.
+        let console = &mut self.rt.text[CONSOLE];
+        console.print(&text);
+        console.newline();
         let mut vm = vm;
         if let Some(message) = vm.take_stop_message() {
             self.print_line(&message);
@@ -560,7 +554,6 @@ impl Machine {
         self.rt.backtrace = std::iter::once(at)
             .chain(vm.call_sites().into_iter().rev())
             .collect();
-        self.rt.stopped_in_def = vm.in_def();
         self.rt.stopped = how;
         self.halted = Some(vm);
     }
@@ -713,7 +706,7 @@ impl Machine {
                 Ok(Status::Ended) => self.finish(None),
                 Ok(Status::Break { line }) => self.stop_on(Some(line), Halt::User),
                 Ok(Status::Stop { line }) => self.stop_on(Some(line), Halt::Stop),
-                Ok(Status::Traced) => self.stop_on(None, Halt::Trace),
+                Ok(Status::Traced { line }) => self.stop_on(Some(line), Halt::Stop),
                 Err(e) => self.finish(Some(e)),
             }
             break;
