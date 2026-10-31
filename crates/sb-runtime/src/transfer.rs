@@ -218,6 +218,7 @@ pub fn import_project(storage: &Storage, source: &Path, project: &str) -> Result
             };
             let meta = Meta {
                 project: project.to_string(),
+                home: project.to_string(),
                 title: meta.title,
                 description: meta.description,
                 icon: meta.icon.into_iter().map(|p| p as i32).collect(),

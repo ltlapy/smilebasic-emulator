@@ -14,6 +14,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, ArrayData, Value, new_str};
 
 use crate::confirm::{FileAction, project_label};
+use crate::files::str_arg;
 use crate::image::{self, Image};
 use crate::runtime::{Command, Runtime, no_form, opt_int};
 use crate::sbfile;
@@ -60,6 +61,9 @@ impl Clipboard for MemoryClipboard {
 pub struct Meta {
     /// The project they belong to.
     pub project: String,
+    /// The current project when they were loaded: METALOAD may load
+    /// another's, which switching projects drops.
+    pub home: String,
     pub title: Vec<u16>,
     pub description: Vec<u16>,
     pub icon: Vec<i32>,
@@ -69,6 +73,7 @@ impl Default for Meta {
     fn default() -> Self {
         Meta {
             project: String::new(),
+            home: String::new(),
             title: Vec::new(),
             description: Vec::new(),
             icon: vec![0; ICON_SIZE * ICON_SIZE],
@@ -100,7 +105,7 @@ impl Runtime {
     /// The metadata being edited. Switching projects starts it afresh,
     /// titled with the project's name.
     fn meta(&mut self) -> &mut Meta {
-        if self.meta.project != self.storage.project() {
+        if self.meta.home != self.storage.project() {
             self.meta = self.blank_meta();
         }
         &mut self.meta
@@ -207,7 +212,22 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Metaload, Want::Outs(0), []) => {
-                self.meta = self.read_meta();
+                self.meta = self.read_meta(self.storage.project().to_string());
+                Ok(vec![])
+            }
+            (Command::Metaload, Want::Outs(0), [name]) => {
+                let name = match str_arg(name)?.as_str() {
+                    "" => String::new(),
+                    name => storage::check_project_name(name).map_err(|_| {
+                        Error::with_detail(ErrorKind::IllegalProjectName, format!("{name:?}"))
+                    })?,
+                };
+                // UNVERIFIED: the error for a project that is not there.
+                if !self.storage.project_exists(&name) {
+                    let detail = format!("no project {name}");
+                    return Err(Error::with_detail(ErrorKind::UndefinedProjectName, detail));
+                }
+                self.meta = self.read_meta(name);
                 Ok(vec![])
             }
             (Command::Metaedit, Want::Outs(0), [item, value]) => {
@@ -276,18 +296,24 @@ impl Runtime {
         }
     }
 
-    /// The project's metadata, read again from its files.
-    fn read_meta(&self) -> Meta {
+    /// A project's metadata, read again from its files.
+    fn read_meta(&self, project: String) -> Meta {
         let storage = &self.storage;
-        project_meta(storage.project(), |name| {
-            storage.read_project_file(name).ok()
-        })
+        let meta = project_meta(&project, |name| storage.read_file_in(&project, name).ok());
+        Meta {
+            home: storage.project().to_string(),
+            ..meta
+        }
     }
 
+    /// Into the project the metadata belong to.
+    // UNVERIFIED: that METASAVE after METALOAD of another project saves
+    // into that project.
     fn write_meta(&mut self) -> storage::Result<()> {
         self.meta();
         for (name, bytes) in meta_files(&self.meta) {
-            self.storage.write_project_file(name, &bytes)?;
+            self.storage
+                .write_file_in(&self.meta.project, name, &bytes)?;
         }
         Ok(())
     }
@@ -300,6 +326,7 @@ impl Runtime {
 pub fn project_meta(project: &str, read: impl Fn(&str) -> Option<Vec<u8>>) -> Meta {
     let mut meta = Meta {
         project: project.to_string(),
+        home: project.to_string(),
         title: project_label(project).encode_utf16().collect(),
         ..Meta::default()
     };
