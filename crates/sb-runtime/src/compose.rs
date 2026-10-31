@@ -2,6 +2,8 @@
 //! placement by an affine transform, clipping, blending, and composing
 //! layers.
 
+use std::cmp::Ordering;
+
 use crate::framebuffer::Framebuffer;
 use crate::graphics::Clip;
 
@@ -350,6 +352,10 @@ pub struct Layer {
     pub color: u32,
     pub clip: Option<Clip>,
     pub matrix: Affine,
+    /// LMATRIX's 4x4 form, column by column as OpenGL keeps it, taking
+    /// the layer's coordinates to clip space. It stands instead of
+    /// `matrix`.
+    pub projection: Option<[f64; 16]>,
 }
 
 impl Default for Layer {
@@ -359,8 +365,157 @@ impl Default for Layer {
             color: 0xFFFF_FFFF,
             clip: None,
             matrix: Affine::IDENTITY,
+            projection: None,
         }
     }
+}
+
+/// Puts a layer drawn flat in its own coordinates, `sample` frame pixels
+/// to one of them, onto `dst` through LMATRIX's 4x4 matrix `m`: a point
+/// of the layer goes in as (x, y, 0, 1), and the result's X and Y, divided
+/// by its W, run from -1 to 1 across the screen and up it. Only points in
+/// front (W above 0) show; `clip` is in frame pixels.
+// UNVERIFIED: that Z is 0 and nothing is clipped by depth, and that the
+// layer is sampled without smoothing.
+pub fn project(
+    dst: &mut Framebuffer,
+    src: &Framebuffer,
+    m: &[f64; 16],
+    sample: u32,
+    clip: Option<&Clip>,
+) {
+    // From the layer's (x, y, 1) to clip space's (X, Y, W).
+    let h = [
+        [m[0], m[4], m[12]],
+        [m[1], m[5], m[13]],
+        [m[3], m[7], m[15]],
+    ];
+    let Some(inv) = invert3(&h) else {
+        return;
+    };
+    let Some((cx0, cy0, cx1, cy1)) = drawn_bounds(src) else {
+        return;
+    };
+    let (w, hh) = (dst.width(), dst.height());
+    let (fw, fh) = (f64::from(w), f64::from(hh));
+    let (mut x0, mut y0, mut x1, mut y1) = (0, 0, w, hh);
+    if let Some(c) = clip {
+        x0 = x0.max(c.x0.max(0) as u32);
+        y0 = y0.max(c.y0.max(0) as u32);
+        x1 = x1.min((c.x1 + 1).max(0) as u32);
+        y1 = y1.min((c.y1 + 1).max(0) as u32);
+    }
+    // Only where the drawn part of the layer lands, when all of it is in
+    // front, with a pixel to spare.
+    let sample = f64::from(sample);
+    let (cx1, cy1) = (cx1 + 1, cy1 + 1);
+    let corners = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)].map(|(x, y)| {
+        let (x, y) = (f64::from(x) / sample, f64::from(y) / sample);
+        let q = h[2][0] * x + h[2][1] * y + h[2][2];
+        let nx = (h[0][0] * x + h[0][1] * y + h[0][2]) / q;
+        let ny = (h[1][0] * x + h[1][1] * y + h[1][2]) / q;
+        (q > 0.0).then_some(((nx + 1.0) / 2.0 * fw, (1.0 - ny) / 2.0 * fh))
+    });
+    if corners.iter().all(Option::is_some) {
+        let pts = corners.map(|c| c.expect("all in front"));
+        let lo = |f: fn(&(f64, f64)) -> f64| pts.iter().map(f).fold(f64::MAX, f64::min) - 1.0;
+        let hi = |f: fn(&(f64, f64)) -> f64| pts.iter().map(f).fold(f64::MIN, f64::max) + 2.0;
+        let fit = |v: f64, n: u32| v.clamp(0.0, f64::from(n)) as u32;
+        x0 = x0.max(fit(lo(|p| p.0), w));
+        y0 = y0.max(fit(lo(|p| p.1), hh));
+        x1 = x1.min(fit(hi(|p| p.0), w));
+        y1 = y1.min(fit(hi(|p| p.1), hh));
+    }
+    let (sw, sh) = (i64::from(src.width()), i64::from(src.height()));
+    let width = w as usize;
+    let (from, pixels) = (src.pixels(), dst.pixels_mut());
+    // Down a row the homogeneous coordinates change by a constant step.
+    let step = 2.0 / fw;
+    for py in y0..y1 {
+        let ny = 1.0 - (f64::from(py) + 0.5) / fh * 2.0;
+        let nx0 = (f64::from(x0) + 0.5) / fw * 2.0 - 1.0;
+        let at = |r: usize, nx: f64| inv[r][0] * nx + inv[r][1] * ny + inv[r][2];
+        let (mut gx, mut gy, mut q) = (at(0, nx0), at(1, nx0), at(2, nx0));
+        let (dx, dy, dq) = (inv[0][0] * step, inv[1][0] * step, inv[2][0] * step);
+        for px in x0..x1 {
+            let (lx, ly) = (gx / q, gy / q);
+            (gx, gy, q) = (gx + dx, gy + dy, q + dq);
+            // In front only; a NaN is not.
+            if (h[2][0] * lx + h[2][1] * ly + h[2][2]).partial_cmp(&0.0) != Some(Ordering::Greater)
+            {
+                continue;
+            }
+            let (Some(sx), Some(sy)) = (floor_in(lx * sample, sw), floor_in(ly * sample, sh))
+            else {
+                continue;
+            };
+            let s = from[sy * sw as usize + sx];
+            if s == 0 {
+                continue;
+            }
+            let d = &mut pixels[py as usize * width + px as usize];
+            *d = over_premultiplied(*d, s);
+        }
+    }
+}
+
+/// `v` rounded down, if that is from 0 up to `n`; without the library
+/// call `f64::floor` makes on processors before SSE4.1.
+#[inline]
+fn floor_in(v: f64, n: i64) -> Option<usize> {
+    // Also false for NaN; truncation is the floor from here on.
+    if !(v >= 0.0 && v < n as f64) {
+        return None;
+    }
+    Some(v as usize)
+}
+
+/// The smallest rectangle, inclusive, holding every pixel drawn on a
+/// frame that started clear.
+fn drawn_bounds(fb: &Framebuffer) -> Option<(u32, u32, u32, u32)> {
+    let w = fb.width() as usize;
+    if w == 0 {
+        return None;
+    }
+    let rows: Vec<&[u32]> = fb.pixels().chunks_exact(w).collect();
+    let top = rows.iter().position(|r| r.iter().any(|&p| p != 0))?;
+    let bottom = rows.iter().rposition(|r| r.iter().any(|&p| p != 0))?;
+    let (mut left, mut right) = (w, 0);
+    for r in &rows[top..=bottom] {
+        if let Some(l) = r[..left].iter().position(|&p| p != 0) {
+            left = l;
+        }
+        if let Some(rr) = r[right..].iter().rposition(|&p| p != 0) {
+            right += rr;
+        }
+    }
+    Some((left as u32, top as u32, right as u32, bottom as u32))
+}
+
+/// The inverse of a 3x3 matrix, if it has one.
+fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let c =
+        |r0: usize, c0: usize, r1: usize, c1: usize| m[r0][c0] * m[r1][c1] - m[r0][c1] * m[r1][c0];
+    let det = m[0][0] * c(1, 1, 2, 2) - m[0][1] * c(1, 0, 2, 2) + m[0][2] * c(1, 0, 2, 1);
+    if det == 0.0 || !det.is_finite() {
+        return None;
+    }
+    let d = 1.0 / det;
+    Some([
+        [c(1, 1, 2, 2) * d, -c(0, 1, 2, 2) * d, c(0, 1, 1, 2) * d],
+        [-c(1, 0, 2, 2) * d, c(0, 0, 2, 2) * d, -c(0, 0, 1, 2) * d],
+        [c(1, 0, 2, 1) * d, -c(0, 0, 2, 1) * d, c(0, 0, 1, 1) * d],
+    ])
+}
+
+/// A premultiplied color over another.
+#[inline]
+fn over_premultiplied(dst: u32, src: u32) -> u32 {
+    let a = u64::from(src >> 24);
+    if a == 0xFF {
+        return src;
+    }
+    gather(spread(src) + div255_lanes(spread(dst) * (255 - a)))
 }
 
 /// How LAYER puts a layer over the ones behind it.
@@ -506,6 +661,23 @@ mod tests {
         draw_image(&mut fb, &place, 8, 1, |_, _| 0xFFFF_FFFF);
         let row: Vec<u32> = (0..5).map(|x| fb.get(x, 0).unwrap()).collect();
         assert_eq!(row, [0xFF00_0000, 0xFF00_0000, !0, !0, 0xFF00_0000]);
+    }
+
+    #[test]
+    fn projection_shows_clip_space() {
+        // The identity puts the layer's first unit square on the top right
+        // quarter of the screen, as SmileBASIC 4 does.
+        let mut src = Framebuffer::new(8, 8);
+        src.clear(0);
+        src.set(0, 0, 0xFFFF_0000);
+        let mut dst = Framebuffer::new(8, 8);
+        let mut m = [0.0; 16];
+        (m[0], m[5], m[10], m[15]) = (1.0, 1.0, 1.0, 1.0);
+        project(&mut dst, &src, &m, 1, None);
+        assert_eq!(dst.get(6, 1), Some(0xFFFF_0000));
+        assert_eq!(dst.get(1, 1), Some(0xFF00_0000));
+        assert_eq!(dst.get(6, 6), Some(0xFF00_0000));
+        assert_eq!(over_premultiplied(0xFF00_0000, 0x8080_0000), 0xFF80_0000);
     }
 
     #[test]

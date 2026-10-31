@@ -596,6 +596,9 @@ pub struct Runtime {
     pub(crate) fade: Fade,
     /// Where a layer that is composed is drawn first.
     scratch: Framebuffer,
+    /// A layer with LMATRIX's 4x4 form, drawn flat before it is put
+    /// through the matrix.
+    flat: Framebuffer,
     /// XSCREEN, and what ACLS goes back to.
     pub(crate) mode: ScreenMode,
     startup_mode: ScreenMode,
@@ -789,6 +792,7 @@ impl Runtime {
             back_color: 0xFF00_0000,
             fade: Fade::default(),
             scratch: Framebuffer::new(width, height),
+            flat: Framebuffer::new(width, height),
             mode,
             startup_mode: mode,
             editor_fb: Framebuffer::new(width, height),
@@ -835,6 +839,7 @@ impl Runtime {
         let (fw, fh) = mode.frame();
         self.fb = Framebuffer::new(fw, fh);
         self.scratch = Framebuffer::new(fw, fh);
+        self.flat = Framebuffer::new(fw, fh);
         let console = &mut self.text[CONSOLE];
         let (ft, cs) = console.font();
         console.set_font(ft, cs, mode.width / cs, mode.height / cs);
@@ -1100,6 +1105,7 @@ impl Runtime {
         });
         let mut fb = std::mem::replace(&mut self.fb, Framebuffer::new(0, 0));
         let mut scratch = std::mem::replace(&mut self.scratch, Framebuffer::new(0, 0));
+        let mut flat = std::mem::replace(&mut self.flat, Framebuffer::new(0, 0));
         fb.clear(self.back_color | 0xFF00_0000);
         for layer in (0..LAYERS as i32).rev() {
             let mut in_layer = elements.iter().filter(|e| e.0 == layer).peekable();
@@ -1120,8 +1126,24 @@ impl Runtime {
                     &mut scratch
                 }
             };
-            for &(_, _, _, _, element) in in_layer {
-                self.draw_element(target, element, &settings, cursor);
+            match &settings.projection {
+                None => {
+                    for &(_, _, _, _, element) in in_layer {
+                        self.draw_element(target, element, &settings, cursor);
+                    }
+                }
+                Some(m) => {
+                    flat.clear(0);
+                    let unclipped = Layer {
+                        clip: None,
+                        ..settings
+                    };
+                    for &(_, _, _, _, element) in in_layer {
+                        self.draw_element(&mut flat, element, &unclipped, cursor);
+                    }
+                    let clip = settings.clip.as_ref();
+                    compose::project(target, &flat, m, self.mode.sample, clip);
+                }
             }
             filter.apply(target, self.mode.sample);
             // The frame stays opaque where deformation left nothing, which
@@ -1194,6 +1216,7 @@ impl Runtime {
         }
         self.fb = fb;
         self.scratch = scratch;
+        self.flat = flat;
         &self.fb
     }
 

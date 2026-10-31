@@ -363,17 +363,42 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Lmatrix, Want::Outs(0), 1) => {
-                self.layers[layer_id(&args[0])?].matrix = Affine::IDENTITY;
+                let layer = &mut self.layers[layer_id(&args[0])?];
+                (layer.matrix, layer.projection) = (Affine::IDENTITY, None);
                 Ok(vec![])
             }
-            // TODO: 4x4 matrices with projection.
-            (Command::Lmatrix, Want::Outs(0), 2) => Err(Error::with_detail(
-                ErrorKind::IllegalFunctionCall,
-                "4x4 not supported yet",
-            )),
+            // UNVERIFIED: the errors for an array that is not real, not 16
+            // long, or holds values past single precision.
+            (Command::Lmatrix, Want::Outs(0), 2) => {
+                let id = layer_id(&args[0])?;
+                let a = args[1].clone().into_array()?;
+                let a = a.borrow();
+                if a.elem_type() != sb_core::value::ElemType::Real {
+                    return Err(ErrorKind::TypeMismatch.into());
+                }
+                if a.len() != 16 {
+                    return Err(Error::with_detail(
+                        ErrorKind::IllegalFunctionCall,
+                        "16 elements",
+                    ));
+                }
+                let mut m = [0.0; 16];
+                for (i, v) in m.iter_mut().enumerate() {
+                    let x = a.get(i).to_real()?;
+                    if x.is_finite() && x.abs() > f64::from(f32::MAX) {
+                        return Err(out_of_range("matrix", i as i32));
+                    }
+                    // Kept as the GPU takes it.
+                    *v = f64::from(x as f32);
+                }
+                let layer = &mut self.layers[id];
+                (layer.matrix, layer.projection) = (Affine::IDENTITY, Some(m));
+                Ok(vec![])
+            }
             (Command::Lmatrix, Want::Outs(0), 3 | 5 | 7 | 8) => {
                 let id = layer_id(&args[0])?;
                 let n = |i: usize, default: f64| args.get(i).map_or(Ok(default), real);
+                self.layers[id].projection = None;
                 self.layers[id].matrix = Affine::place(
                     (n(3, 0.0)?, n(4, 0.0)?),
                     (n(1, 0.0)?, n(2, 0.0)?),
