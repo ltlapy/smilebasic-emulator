@@ -72,6 +72,17 @@ follows all of it. Items still waiting for a check are marked
 
 ## Direct mode
 
+- `INSPECT` (or `??`) prints `INT: 1`, `REAL: 1.50000000` (always 8
+  decimals) or `STRING: (2)"AB"` (a 50-character string still whole).
+  An array prints `INT[2,2]:`, then ` [0,1]: 0` for each element
+  (strings as `(2)"HI"`), then an empty line. A long array stops with
+  `=== Press ENTER ===` on the row above the last.
+- `CHKCALL` is 0 for `PRINT`, `GOTO`, `INC`, `STOP`, `CONT` and `RUN`, and
+  1 for `VSYNC`, `INSPECT`, `CALLIDX` and `DEFARGC`. It ignores case.
+  `CHKLABEL` needs the `@`: `CHKLABEL("P1")` is 0. `CHKLABEL("1:@X")` on
+  a slot `EXEC` has not run is 0.
+- `? ?1` prints an empty line, then 1.
+
 - Variables stay until `CLEAR`, however they came about: by `DIM`,
   `VAR`, assigning or only reading them (an unknown variable reads as the
   real 0). Declaring one of them again is `Duplicate variable`.
@@ -251,6 +262,23 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   first statement only), it is acted on again: it jumps to a label that
   statement set with `ON BREAK GOTO`, or stops with `User break on` that
   statement's line. Printing goes on after the prompt.
+- `STOP` says `Break on 0:60`, then its message, if it has one, on the
+  next line. In direct mode it is `Can't use from direct mode`.
+- Against the manual, `CONT` goes on after a program has been edited,
+  even with lines added, and after the + button stopped it at `INPUT`:
+  it goes on with the next statement, and `User break on` follows the
+  prompt on the same line. After an error it is `Can't continue`. In a
+  program it is a `Syntax error` when it runs.
+- `BACKTRACE` lists, innermost first, the line it stopped on and the
+  line of each DEF call and `GOSUB` it is in, as `0:    92` (the line
+  right-aligned in 6 places). It works after an error too.
+- `TRACE` inside a DEF is `Can't trace`, and `CONT` cannot go on after
+  that.
+- `ENVSTAT()` on the main interpreter is 3 (running), also typed in
+  direct mode while a program is stopped or after an error; its OUT
+  forms then report no error.
+- `PERFEND()` gives microseconds; `PERFBEGIN` and `PERFEND` show no
+  gauge on their own.
 
 ## System settings
 
