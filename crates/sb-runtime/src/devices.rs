@@ -110,42 +110,67 @@ impl Runtime {
                 in_range("sprite", &args[1], 0..=SPRITES as i32 - 1)?;
                 Ok(vec![])
             }
-            // Nothing vibrates, so VIBRATE() is always 0.
-            (Command::Vibrate, Want::Outs(0), 0) => Ok(vec![]),
+            // Nothing vibrates, but VIBRATE() reports what was asked for:
+            // the pattern, or 65535 for frequencies, on each side.
+            // UNVERIFIED: patterns go on until stopped; a frequency form
+            // with any 0 stops.
+            (Command::Vibrate, Want::Outs(0), 0) => {
+                self.input.vibration = Default::default();
+                Ok(vec![])
+            }
             (Command::Vibrate, Want::Outs(0), 2 | 3 | 5 | 6) => {
-                in_range("controller", &args[0], 1..=4)?;
+                let id = in_range("controller", &args[0], 1..=4)? as usize - 1;
                 // Three or six arguments name the side.
-                let rest = match args.len() {
-                    3 | 6 => {
-                        in_range("side", &args[1], 0..=1)?;
-                        &args[2..]
-                    }
-                    _ => &args[1..],
+                let (side, rest) = match args.len() {
+                    3 | 6 => (
+                        Some(in_range("side", &args[1], 0..=1)? as usize),
+                        &args[2..],
+                    ),
+                    _ => (None, &args[1..]),
                 };
-                match rest {
-                    [pattern] => {
-                        in_range("pattern", pattern, 0..=62)?;
-                    }
+                let state = match rest {
+                    [pattern] => in_range("pattern", pattern, 0..=62)?,
                     [low_freq, low, high_freq, high] => {
-                        low_freq.to_real()?;
-                        high_freq.to_real()?;
+                        let mut all = low_freq.to_real()? != 0.0 && high_freq.to_real()? != 0.0;
                         for amp in [low, high] {
                             let a = amp.to_real()?;
                             if !(-128.0..=127.0).contains(&a) {
                                 return Err(Error::with_detail(ErrorKind::OutOfRange, "amplitude"));
                             }
+                            all &= a != 0.0;
                         }
+                        if all { 65535 } else { 0 }
                     }
                     _ => return Err(no_form()),
+                };
+                // Held sideways or upright, a controller has one side.
+                let one_side = matches!(self.input.style.1, 2 | 3);
+                let v = &mut self.input.vibration[id];
+                match (side, one_side) {
+                    (Some(1), true) => {}
+                    (Some(s), _) => v[s] = state,
+                    (None, _) => *v = [state; 2],
                 }
                 Ok(vec![])
             }
             (Command::Vibrate, Want::Value, 1..=2) => {
-                in_range("controller", &args[0], 1..=4)?;
-                if let Some(side) = args.get(1) {
-                    in_range("side", side, 0..=1)?;
-                }
-                Ok(ints(&[0]))
+                let id = in_range("controller", &args[0], 1..=4)? as usize - 1;
+                let [left, right] = self.input.vibration[id];
+                let one_side = matches!(self.input.style.1, 2 | 3);
+                let state = match args
+                    .get(1)
+                    .map(|s| in_range("side", s, 0..=1))
+                    .transpose()?
+                {
+                    Some(1) if one_side => 0,
+                    Some(1) => right,
+                    Some(_) => left,
+                    None if one_side => left,
+                    // Checked on hardware: 40 on both sides reads 2621480,
+                    // frequencies -1.
+                    None => right.wrapping_mul(65536).wrapping_add(left),
+                };
+                Ok(ints(&[state]))
             }
             // Toy-Con are set up but never recognized.
             (Command::Tcpiano, Want::Outs(_), 1) => {

@@ -41,8 +41,8 @@ Without them:
 ## Input
 
 - There are no motion sensors: `ACCEL`, `GYROA` and `GYROV` read 0.
-- Nothing vibrates: `VIBRATE` checks its arguments and does nothing, and
-  `VIBRATE()` reads 0.
+- Nothing vibrates. `VIBRATE()` still reads back the pattern or
+  frequencies last asked for, until `VIBRATE` stops them.
 - The IR Motion Camera starts and stops (`IRSTART`, `IRSTOP`, `IRSTATE`)
   but never sees anything: `IRREAD` gives no clusters, or 48 dark
   blocks in moment mode, and `IRSPRITE` shows no image.

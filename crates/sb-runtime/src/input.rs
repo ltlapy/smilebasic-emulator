@@ -125,6 +125,8 @@ pub struct Input {
     pub(crate) toycons: [i32; 4],
     /// IRSTATE of controllers 1 and 2.
     pub(crate) ir_state: [i32; 2],
+    /// What VIBRATE last asked of each controller's left and right side.
+    pub(crate) vibration: [[i32; 2]; PADS],
     /// KEY's contents for F1 to F5.
     pub function_keys: [Vec<u16>; 5],
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
@@ -147,6 +149,7 @@ impl Default for Input {
             ir_allowed: false,
             toycons: [0; 4],
             ir_state: [0; 2],
+            vibration: Default::default(),
             function_keys: Default::default(),
             buttons_read: false,
         }

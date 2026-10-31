@@ -207,11 +207,14 @@ fn function_keys_start_as_smilebasic_4s() {
 fn hardware_the_emulator_lacks() {
     let ok = |s| run(&[], s).unwrap();
     let err = |s| run(&[], s).unwrap_err().kind;
-    // Nothing vibrates.
+    // Nothing vibrates, but VIBRATE() reads what was asked (TTEST21).
     assert_eq!(
-        ok("VIBRATE 1,40:VIBRATE 1,0,1:VIBRATE 1,440,127,220,64:VIBRATE:?VIBRATE(1);VIBRATE(1,0)"),
-        "00"
+        ok(
+            "VIBRATE 1,40:?VIBRATE(1);VIBRATE(1,0);VIBRATE(1,1);\nVIBRATE 1,440,127,220,64:?VIBRATE(1);:VIBRATE:?VIBRATE(1)"
+        ),
+        "26214804040-10"
     );
+    assert_eq!(ok("VIBRATE 2,1,7:?VIBRATE(2);VIBRATE(2,0)"), "4587520");
     assert_eq!(err("VIBRATE 0,40"), ErrorKind::OutOfRange);
     assert_eq!(err("VIBRATE 1,63"), ErrorKind::OutOfRange);
     // The IR camera runs once allowed, and sees nothing.
