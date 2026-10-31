@@ -341,7 +341,7 @@ fn chklabel_chkcall_chkvar() {
 fn inspect() {
     assert_eq!(
         output("A=1.5\nINSPECT A\n?? \"AB\"*2:??7"),
-        "REAL 1.5\nSTRING(4) \"ABAB\"\nINT 7\n"
+        "REAL: 1.50000000\nSTRING: (4)\"ABAB\"\nINT: 7\n"
     );
     assert_eq!(
         output("DIM A%[2]\n??A%"),

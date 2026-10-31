@@ -7,10 +7,11 @@ use crate::value::{Array, ArrayData, Str, Value, format_number};
 // UNVERIFIED: SmileBASIC 4's limit, and how it marks what it leaves out.
 pub const STRING_CHARS: usize = 40;
 
-/// The lines INSPECT prints for `value`.
-// UNVERIFIED: the whole layout. The manual says only that it shows the
-// type and value, an array's element count and every element, and a
-// string's length.
+/// The lines INSPECT prints for `value`. A single value follows the
+/// formats in SmileBASIC 4: `INT: %d`, `REAL: %.8f` and
+/// `STRING: (%d)"`, with `(%d)"` for strings without the type, as in
+/// arrays.
+// UNVERIFIED: how arrays are laid out; the formats above are all SmileBASIC 4 shows.
 pub fn lines(value: &Value) -> Vec<Str> {
     match value {
         Value::Array(a) => array_lines(&a.borrow()),
@@ -50,9 +51,9 @@ fn index_text(dims: &[usize], mut flat: usize) -> String {
 
 fn scalar(value: &Value) -> Str {
     let kind = match value {
-        Value::Int(_) => "INT ",
-        Value::Real(_) => "REAL ",
-        Value::Str(_) => "STRING",
+        Value::Int(_) => "INT: ",
+        Value::Real(_) => "REAL: ",
+        Value::Str(_) => "STRING: ",
         Value::Default | Value::Array(_) => "",
     };
     let mut line: Str = kind.encode_utf16().collect();
@@ -62,11 +63,13 @@ fn scalar(value: &Value) -> Str {
 
 /// An array element: a number, or a string's length and its text.
 fn element(value: &Value) -> Str {
-    let Value::Str(s) = value else {
-        return format_number(value);
+    let s = match value {
+        Value::Real(x) => return format!("{x:.8}").encode_utf16().collect(),
+        Value::Str(s) => s,
+        v => return format_number(v),
     };
     let s = s.borrow();
-    let mut out: Str = format!("({}) \"", s.len()).encode_utf16().collect();
+    let mut out: Str = format!("({})\"", s.len()).encode_utf16().collect();
     out.extend(s.iter().take(STRING_CHARS));
     out.push(u16::from(b'"'));
     if s.len() > STRING_CHARS {
@@ -91,11 +94,11 @@ mod tests {
 
     #[test]
     fn scalars() {
-        assert_eq!(text(&Value::Int(12)), ["INT 12"]);
-        assert_eq!(text(&Value::Real(1.5)), ["REAL 1.5"]);
-        assert_eq!(text(&Value::Str(str_from("AB"))), ["STRING(2) \"AB\""]);
+        assert_eq!(text(&Value::Int(12)), ["INT: 12"]);
+        assert_eq!(text(&Value::Real(1.5)), ["REAL: 1.50000000"]);
+        assert_eq!(text(&Value::Str(str_from("AB"))), ["STRING: (2)\"AB\""]);
         let long = "1234567890".repeat(5);
-        let shown = format!("STRING(50) \"{}\"...", &long[..STRING_CHARS]);
+        let shown = format!("STRING: (50)\"{}\"...", &long[..STRING_CHARS]);
         assert_eq!(text(&Value::Str(str_from(&long))), [shown]);
     }
 
@@ -116,6 +119,6 @@ mod tests {
         );
         let s = Array::new(ElemType::Str, vec![1]);
         let s = Value::Array(Rc::new(RefCell::new(s)));
-        assert_eq!(text(&s), ["STRING[1] 1 elements", "[0] (0) \"\""]);
+        assert_eq!(text(&s), ["STRING[1] 1 elements", "[0] (0)\"\""]);
     }
 }
