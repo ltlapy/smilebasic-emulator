@@ -53,7 +53,9 @@ const USAGE: &str = "usage:
         F stick X Y N     the left stick tilted (-1 to 1) for N frames
         F usb ID N        the keyboard key with USB usage ID (such as
                           0x28 for Enter) held for N frames, for KEYBOARD
-        F touch X Y N     the screen touched at X,Y for N frames
+        F touch X Y N     the screen touched at X,Y for N frames; the
+                          pointer stays there afterwards; the
+                          pointer stays there afterwards
         F shot NAME       the screen saved as DIR/NAME.png
         F console         the console's text printed
         F end             the run stops
@@ -439,6 +441,9 @@ fn play(
     let mut steps = steps.into_iter().peekable();
     // Input held, and the frame it lets go at.
     let mut held: Vec<(Hold, u32)> = Vec::new();
+    // Where the last touch was: the pointer stays there once let go, as
+    // a mouse does.
+    let mut pointer = None;
     let mut frame = 0;
     'run: while frame < frames && m.is_running() {
         while let Some((_, action)) = steps.next_if(|(at, _)| *at <= frame) {
@@ -460,15 +465,17 @@ fn play(
         }
         held.retain(|&(_, until)| until > frame);
         let mut state = State::default();
+        if let Some((x, y)) = pointer {
+            set_pointer(&mut state, &m, x, y);
+        }
         for &(hold, _) in &held {
             match hold {
                 Hold::Buttons(bits) => state.pads[0].buttons |= bits,
                 Hold::Stick(x, y) => state.pads[0].sticks[0] = (x, y),
                 Hold::Usb(usage) => state.set_key(usage, true),
                 Hold::Touch(x, y) => {
-                    state.mouse.x = x;
-                    state.mouse.y = y;
-                    state.mouse.on_screen = true;
+                    pointer = Some((x, y));
+                    set_pointer(&mut state, &m, x, y);
                     state.mouse.buttons |= 1;
                 }
             }
@@ -487,6 +494,20 @@ fn play(
     save_screen(&mut m, &file)?;
     println!("screen saved to {}", file.display());
     Ok(())
+}
+
+/// Puts the mouse pointer at a screen pixel, and where that is on the
+/// 1280x720 display, taking the screen as stretched over all of it.
+fn set_pointer(state: &mut State, m: &Machine, x: i32, y: i32) {
+    let mode = m.screen_mode();
+    let scale = |v: i32, from: u32, to: i32| match i32::try_from(from) {
+        Ok(from) if from > 0 => v * to / from,
+        _ => v,
+    };
+    let mouse = &mut state.mouse;
+    (mouse.x, mouse.y) = (x, y);
+    mouse.display = (scale(x, mode.width, 1280), scale(y, mode.height, 720));
+    mouse.on_screen = true;
 }
 
 fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
