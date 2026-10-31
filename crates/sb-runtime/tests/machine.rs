@@ -461,6 +461,39 @@ fn split_editor_sides() {
 }
 
 #[test]
+fn split_editor_shows_the_side_with_the_keys() {
+    let mut m = machine();
+    m.edit_slot(0);
+    m.toggle_split();
+    let fb = m.render();
+    let (w, h) = (fb.width(), fb.height());
+    let second = w - (w - 2) / 2;
+    let edges = |m: &mut Machine| {
+        let fb = m.render();
+        (
+            fb.get(1, h / 2).unwrap(),
+            fb.get(second + 1, h / 2).unwrap(),
+        )
+    };
+    // A frame shows around the side that gets the keys, then fades out.
+    let (left, right) = edges(&mut m);
+    assert_ne!(left, right);
+    m.switch_side();
+    let (left2, right2) = edges(&mut m);
+    assert_eq!((left2, right2), (right, left));
+    for _ in 0..60 {
+        m.render();
+    }
+    let (left3, right3) = edges(&mut m);
+    // Once it is gone, blank margins match on both sides...
+    assert_eq!(left3, right3);
+    // ...but the status line of the side without the keys is dimmer.
+    let fb = m.render();
+    let bar = |x| fb.get(x, h - 1).unwrap() & 0xFF;
+    assert!(bar(w / 4) < bar(second + w / 4));
+}
+
+#[test]
 fn direct_mode_completes_words() {
     use sb_runtime::runtime::keys;
     let mut m = machine();

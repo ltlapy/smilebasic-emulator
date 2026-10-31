@@ -190,8 +190,12 @@ struct Map {
     first: usize,
 }
 
+/// How far, out of 256, the margins of a split display's side without the
+/// keys fade toward the background.
+const MARGIN_DIM: u32 = 160;
+
 /// `over` mixed into `under` by `alpha` out of 256.
-fn blend(under: u32, over: u32, alpha: u32) -> u32 {
+pub(crate) fn blend(under: u32, over: u32, alpha: u32) -> u32 {
     let mix = |shift: u32| {
         let (a, b) = ((under >> shift) & 0xFF, (over >> shift) & 0xFF);
         ((a * (256 - alpha) + b * alpha) / 256) << shift
@@ -1680,6 +1684,23 @@ impl Editor {
                 for px in 0..w {
                     let (fx, fy) = (x * cell + px, grid.top + y * cell + py);
                     fb.set(fx as u32, fy as u32, colors[Part::Character]);
+                }
+            }
+        }
+    }
+
+    /// Fades the line numbers, the ruler and the status line of the last
+    /// [`Editor::draw`] toward `background`, on the side of a split
+    /// display without the keys.
+    pub fn dim_margins(&self, fb: &mut Framebuffer, background: u32) {
+        let grid = self.grid;
+        let gutter = (self.gutter() * grid.cell) as u32;
+        let footer = (grid.top + self.size().1 * grid.cell) as u32;
+        for y in grid.top as u32..fb.height() {
+            let right = if y >= footer { fb.width() } else { gutter };
+            for x in 0..right.min(fb.width()) {
+                if let Some(c) = fb.get(x, y) {
+                    fb.set(x, y, blend(c, background, MARGIN_DIM));
                 }
             }
         }

@@ -14,7 +14,7 @@ use crate::complete::{self, Completion, Library, Options};
 use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
-use crate::editor::{Editor, Look, frame_size, menu_height};
+use crate::editor::{Editor, Look, blend, frame_size, menu_height};
 use crate::filter::Filter;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
@@ -22,6 +22,7 @@ use crate::graphics::{Clip, Graphics};
 use crate::hint;
 use crate::input::Input;
 use crate::line::LineEdit;
+use crate::palette::Part;
 use crate::screen::{Fade, ScreenMode};
 pub use crate::settings::Settings;
 use crate::sound::Sound;
@@ -500,6 +501,12 @@ const CURSOR_BLINK: u32 = 25;
 /// The pixels between the sides of a split editor, and their color.
 const SPLIT_DIVIDER: u32 = 2;
 const SPLIT_COLOR: u32 = 0xFF30_3040;
+/// The frame drawn around the side of a split editor that gets the keys,
+/// when it changes: shown whole for `SPLIT_FLASH_HOLD` frames, then
+/// fading out over `SPLIT_FLASH_FADE`.
+const SPLIT_FLASH: u32 = 0xFF58_A0FF;
+const SPLIT_FLASH_HOLD: u32 = 12;
+const SPLIT_FLASH_FADE: u32 = 30;
 
 /// Character codes for keys that do not produce text, as INKEY$ returns them.
 pub mod keys {
@@ -626,6 +633,11 @@ pub struct Runtime {
     /// Where the second side of a split editor starts on its frame: a
     /// column, or a row when the sides are one above the other.
     pub(crate) split_at: Option<u32>,
+    /// The last split drawn, as whether its sides were one above the
+    /// other and which side had the keys, and the frame that side's
+    /// frame started to show.
+    split_shown: Option<(bool, usize)>,
+    split_flash: u32,
     /// GRP4 at start-up, which ACLS puts back.
     sprite_page: Option<Vec<u32>>,
 }
@@ -808,6 +820,8 @@ impl Runtime {
             help_cursor: Default::default(),
             line_quiet: false,
             split_at: None,
+            split_shown: None,
+            split_flash: 0,
             sprite_page: None,
         }
         .with_font_page()
@@ -1331,6 +1345,7 @@ impl Runtime {
         };
         let Some(rows) = split else {
             self.split_at = None;
+            self.split_shown = None;
             let name = name(&editors[active]);
             editors[active].draw(&mut self.editor_fb, &self.font, &name, look, blink);
             return &self.editor_fb;
@@ -1341,6 +1356,10 @@ impl Runtime {
         let half = (length - SPLIT_DIVIDER) / 2;
         let second = length - half;
         self.split_at = Some(second);
+        if self.split_shown != Some((rows, active)) {
+            self.split_shown = Some((rows, active));
+            self.split_flash = self.frame;
+        }
         let side_size = if rows { (w, half) } else { (half, h) };
         if (self.side_fb.width(), self.side_fb.height()) != side_size {
             self.side_fb = Framebuffer::new(side_size.0, side_size.1);
@@ -1355,6 +1374,9 @@ impl Runtime {
             };
             let look = Look { top, ..look };
             editor.draw(&mut self.side_fb, &self.font, &name, look, blink);
+            if side != active {
+                editor.dim_margins(&mut self.side_fb, s.editor_colors[Part::Background]);
+            }
             let at = if side == 0 { 0 } else { second };
             let (x0, y0) = if rows { (0, at) } else { (at, 0) };
             for y in 0..side_size.1 {
@@ -1368,6 +1390,32 @@ impl Runtime {
             for j in 0..if rows { w } else { h } {
                 let (x, y) = if rows { (j, i) } else { (i, j) };
                 self.editor_fb.set(x, y, SPLIT_COLOR);
+            }
+        }
+        let age = self.frame.wrapping_sub(self.split_flash);
+        let alpha = match age.checked_sub(SPLIT_FLASH_HOLD) {
+            None => 256,
+            Some(fading) => 256 * SPLIT_FLASH_FADE.saturating_sub(fading) / SPLIT_FLASH_FADE,
+        };
+        if alpha > 0 {
+            // Below the menu bar, which only the upper side leaves room for.
+            let at = if active == 0 { 0 } else { second };
+            let (x0, y0) = if rows { (0, at) } else { (at, 0) };
+            let top = if rows && active == 1 {
+                y0
+            } else {
+                menu_height(h)
+            };
+            let (x1, y1) = (x0 + side_size.0, y0 + side_size.1);
+            let thick = (s.editor_font as u32 / 4).max(1);
+            for y in top..y1 {
+                for x in x0..x1 {
+                    let edge =
+                        x < x0 + thick || x >= x1 - thick || y < top + thick || y >= y1 - thick;
+                    if let (true, Some(c)) = (edge, self.editor_fb.get(x, y)) {
+                        self.editor_fb.set(x, y, blend(c, SPLIT_FLASH, alpha));
+                    }
+                }
             }
         }
         &self.editor_fb
