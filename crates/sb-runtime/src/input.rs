@@ -171,6 +171,15 @@ impl Input {
         );
     }
 
+    /// Forgets what was pressed and for how long, so that buttons held
+    /// when a program ends give no presses or repeats to the next one.
+    pub fn forget(&mut self) {
+        self.now = self.live;
+        self.before = self.live;
+        self.held = [[0; BUTTONS]; PADS + 1];
+        self.touch = (0, 0);
+    }
+
     /// Whether the program has read buttons or sticks since the last call,
     /// for the frontend to show where they are on the keyboard.
     pub fn take_buttons_read(&mut self) -> bool {

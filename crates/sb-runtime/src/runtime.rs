@@ -972,6 +972,13 @@ impl Runtime {
         }
     }
 
+    /// Drops the keys a program left unread and what its buttons were
+    /// doing, so that none of it reaches direct mode or the next run.
+    pub(crate) fn clear_input(&mut self) {
+        self.keys.clear();
+        self.input.forget();
+    }
+
     /// Takes the next unread key, for the editor.
     pub(crate) fn next_key(&mut self) -> Option<u16> {
         self.keys.pop_front()

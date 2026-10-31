@@ -216,9 +216,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // A panel beside the editor, and whether it takes the keys.
     let mut side: Option<Side> = None;
     let mut side_focus = false;
-    // The space some systems type for Ctrl+Space, which only shows or
-    // hides the hints.
-    let mut eat_space = false;
+    // The text of a key that something else took: the space some systems
+    // type for Ctrl+Space, or a digit that chose a slot in a window that
+    // then closed, which would otherwise reach the program or the editor.
+    let mut eat_text = false;
 
     let mut events = sdl.event_pump()?;
     let mut next_frame = Instant::now();
@@ -254,7 +255,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         for event in events.poll_iter() {
             controls.event(&event);
             if matches!(event, Event::KeyDown { .. }) {
-                eat_space = false;
+                eat_text = dialog.is_some()
+                    || program_dialog.is_some()
+                    || manager.is_some()
+                    || file_dialog.is_some()
+                    || complete_window.is_some()
+                    || color_window.is_some()
+                    || (side.is_some() && side_focus);
             }
             match event {
                 Event::MouseMotion { x, y, .. } => {
@@ -788,7 +795,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     } else {
                         machine.rt.toggle_line_popups();
                     }
-                    eat_space = true;
+                    eat_text = true;
                 }
                 // Editing the line typed in direct mode or for INPUT.
                 Event::KeyDown {
@@ -1005,7 +1012,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         machine.rt.key_press(code);
                     }
                 }
-                Event::TextInput { text, .. } if eat_space && text == " " => eat_space = false,
+                Event::TextInput { .. } if eat_text => eat_text = false,
                 Event::TextInput { text, .. } => machine.type_text(&text),
                 _ => {}
             }

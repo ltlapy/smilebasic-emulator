@@ -505,3 +505,29 @@ fn simple_save_and_load() {
     assert!(m.unsaved_slots().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn keys_left_by_a_program_are_dropped() {
+    let mut m = machine();
+    // Stopped, and ending by itself.
+    m.set_slot(0, "@L:VSYNC:GOTO @L".to_string());
+    m.set_slot(1, "FOR I=0 TO 4:VSYNC:NEXT".to_string());
+    m.type_text("RUN");
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    m.frame();
+    m.type_text("XYZ");
+    m.frame();
+    m.stop();
+    enter(&mut m, "?1");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
+    m.type_text("RUN 1");
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    m.frame();
+    m.type_text("ABC");
+    for _ in 0..20 {
+        m.frame();
+    }
+    assert!(!m.is_running());
+    enter(&mut m, "?2");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "2");
+}

@@ -502,6 +502,9 @@ impl Machine {
             return;
         };
         self.vars.extend(vm.globals());
+        if self.running_slot.is_some() {
+            self.rt.clear_input();
+        }
         self.running_slot = None;
         self.rt.running_slot = None;
         self.rt.take_requests();
@@ -738,6 +741,9 @@ impl Machine {
                 self.last_error = Some((slot as usize, e.line, e.col));
             }
             self.report(&e);
+        }
+        if self.running_slot.is_some() {
+            self.rt.clear_input();
         }
         self.running_slot = None;
         self.rt.running_slot = None;
