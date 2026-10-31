@@ -690,6 +690,15 @@ fn div255(x: u32) -> u32 {
 // black, and, with lossless screenshots, that mode 0 draws the layer's
 // elements straight onto the frame without its color, pixel for pixel.
 pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color: u32) {
+    // The usual case, a plain layer, as one blend a pixel.
+    if matches!(mode, Compose::Direct | Compose::Normal) && color == 0xFFFF_FFFF {
+        for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+            if l != 0 {
+                *d = over_premultiplied(*d, l) & 0x00FF_FFFF | *d & 0xFF00_0000;
+            }
+        }
+        return;
+    }
     let [ca, cr, cg, cb] = color.to_be_bytes().map(u32::from);
     for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
         if l == 0 {
@@ -736,6 +745,35 @@ mod tests {
             Affine::place((0.0, 0.0), (0.0, 0.0), 0.0, (0.0, 1.0)).inverse(),
             None
         );
+    }
+
+    #[test]
+    fn plain_layers_compose_as_any_other() {
+        // The general formula, for a premultiplied layer pixel.
+        let reference = |dst: u32, l: u32| {
+            let [la, lr, lg, lb] = l.to_be_bytes().map(u32::from);
+            let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
+            let c = |p: u32, d: u32| (p + div255(d * (255 - la))).min(255) as u8;
+            u32::from_be_bytes([da as u8, c(lr, dr), c(lg, dg), c(lb, db)])
+        };
+        let mut seed = 0x9E37_79B9_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let (mut dst, mut layer) = (Framebuffer::new(256, 256), Framebuffer::new(256, 256));
+        for (d, l) in dst.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
+            let a = next() >> 24;
+            let [_, r, g, b] = next().to_be_bytes().map(|c| u32::from(c) * a / 255);
+            (*d, *l) = (next(), a << 24 | r << 16 | g << 8 | b);
+        }
+        let expected: Vec<u32> = (dst.pixels().iter().zip(layer.pixels()))
+            .map(|(&d, &l)| if l == 0 { d } else { reference(d, l) })
+            .collect();
+        compose(&mut dst, &layer, Compose::Normal, 0xFFFF_FFFF);
+        assert_eq!(dst.pixels(), &expected[..]);
     }
 
     #[test]
