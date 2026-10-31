@@ -501,7 +501,6 @@ impl Runtime {
             }
             // A number is one key's code; those past the Basic Multilingual
             // Plane, such as #SOFTKEY_HIDDEN's &H10056, type nothing.
-            // UNVERIFIED: what the system does with those.
             (Command::Pushkey, Want::Outs(0), 1) if !matches!(args[0], Value::Str(_)) => {
                 if let Ok(code) = u16::try_from(args[0].to_int()?) {
                     self.key_press(code);

@@ -921,9 +921,8 @@ impl Runtime {
     /// `"@label"`. As on hardware, they move READ's place: RESTORE to
     /// the label, then READ.
     /// A callback's name as SPFUNC and TFUNC keep it: with the slot they
-    /// were set in, whose DEFs CALL SPRITE and CALL TEXT look in from any
-    /// slot.
-    // UNVERIFIED: that a label is also that slot's.
+    /// were set in, whose DEFs and labels CALL SPRITE and CALL TEXT look
+    /// in from any slot.
     pub(crate) fn callback_name(&self, name: &[u16]) -> Vec<u16> {
         match self.running_slot {
             Some(slot) if !self.direct && !name.contains(&u16::from(b':')) => {

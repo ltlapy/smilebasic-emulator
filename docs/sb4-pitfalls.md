@@ -172,7 +172,8 @@ follows all of it. Items still waiting for a check are marked
   that `EXEC` ran are gone after the next `RUN`.
 - `FILES("//")` ends each project's name with `/`, lists the workspace as
   `/`, and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`). A `/`
-  may follow a project's name in a listing (`FILES("TXT:NAME/")`).
+  may follow a project's name in a listing (`FILES("TXT:NAME/")`), and
+  `FILES("TXT:/")` lists the workspace.
 
 ## Order of evaluation
 
@@ -227,6 +228,7 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   65536, plus 40 on the left) and `VIBRATE(1,0)` 40; with frequencies
   it is -1, still a second later. `VIBRATE` alone clears it.
 - `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`).
+  One above `&HFFFF` types nothing.
 
 ## Screens and text
 
@@ -277,15 +279,17 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A relative color animation (`"C+"`) multiplies the start color by the
   key per channel and divides by 256, rounding down: `&H80808080` with
   `&H10101010` gives `&H08080808`, and `&HFF` with `&HFF` gives `&HFE`.
-- A callback `SPFUNC` names is a DEF of the slot `SPFUNC` ran in, or a
-  `COMMON DEF`; `CALL SPRITE` finds it from any slot.
-- `SPANIM id,n` with a number `ANIMDEF` never set does nothing.
+- A callback `SPFUNC` names is a DEF or label of the slot `SPFUNC` ran
+  in, or a `COMMON DEF`; `CALL SPRITE` finds it from any slot.
+- `SPANIM id,n` and `TANIM id,n` with a number `ANIMDEF` never set do
+  nothing.
 - `SPHITSP` of a sprite that is not set is -1, and `SPHITSP(id,other)`
   with `other` not set is 0; neither is an error. `SPFUNC` takes a
   sprite that is not set.
 - Setting what an animation changes stops it, and `SPCHK` no longer
   shows it: `SPOFS` during an `"XY"` animation, `SPCOLOR` during `"C"`,
-  `SPCHR` during `"UV"`.
+  `SPCHR` during `"UV"` or `"I"`, `SPROT` during `"R"`, `SPSCALE`
+  during `"S"` and `SPOFS` during `"Z"`.
 - Spaces after an animation target's name are left out (`"S "`).
 
 ## Graphics and layers
@@ -392,6 +396,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their
   first argument left out with a comma after it (`BGMSTOP ,1`,
   `BGMPLAY ,0,64`).
+- `BGMSTOP 0,1` keeps `BGMCHK` at 1 for 60 frames while it fades. Called
+  again 10 frames in, it fades for 60 frames from there.
 - MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
   length (`N60`), macro names with `_` and macros used inside a macro's
   definition (`{X=CDE}{Y={X}F}`).
@@ -493,7 +499,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `HSV 120,255,255 OUT C`.
 - A `DEF` with an `OUT` may be called as a function, giving the `OUT`
   value (`DEF F A OUT R` as `?F(3)`), and a `DEF` that returns a value
-  may be called with one `OUT` (`T OUT X`).
+  may be called with one `OUT` (`T OUT X`). One with two `OUT`s called as
+  a function is `Wrong number of OUT arguments` when the call runs.
 - An unknown `#constant` is `Undefined constant`.
 
 - After an error, F4 puts the cursor at the start of the statement that

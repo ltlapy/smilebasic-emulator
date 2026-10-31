@@ -249,8 +249,7 @@ impl Runtime {
             (Command::Tanim, Want::Outs(0), 2) => {
                 let id = screen_id(&args[0])?;
                 let n = anim_id(&args[1])?;
-                // UNVERIFIED: that, as with SPANIM, a number ANIMDEF never
-                // set starts nothing.
+                // As with SPANIM, a number ANIMDEF never set starts nothing.
                 if let Some(anim) = self.sprites.anim_defs[n].clone() {
                     self.start_text_anim(id, anim);
                 }

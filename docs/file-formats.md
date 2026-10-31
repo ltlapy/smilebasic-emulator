@@ -85,7 +85,9 @@ DAT files and GRP images hold one array:
   `[height, width]`.
 - GRP files SmileBASIC 4 converted from SmileBASIC 3 say `PCBN0001` and
   use element type 3: 16-bit pixels with 5 bits each of red, green and
-  blue from the top and the lowest bit set when opaque.
+  blue from the top and the lowest bit set when opaque. Each 5 bits widen
+  to 8 with their top 3 bits repeated below (`&H01` is `&H08`, `&H10` is
+  `&H84`).
 
 ## META
 

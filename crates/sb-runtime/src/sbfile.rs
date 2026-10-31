@@ -283,8 +283,7 @@ const PIXEL16_TYPE: u16 = 3;
 
 /// A 16-bit pixel, 5 bits each of red, green and blue from the top and
 /// the lowest bit opaque, as an ARGB colour.
-// UNVERIFIED: how SmileBASIC 4 widens the 5 bits; the top bits are
-// repeated below, as is usual.
+// The top bits are repeated below to widen each to 8.
 fn argb_from_5551(p: u16) -> i32 {
     let wide = |v: u16| {
         let v = u32::from(v & 31);

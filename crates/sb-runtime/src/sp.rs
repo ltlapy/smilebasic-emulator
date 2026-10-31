@@ -834,8 +834,6 @@ fn optional_real(v: &Value) -> Result<Option<f64>> {
 
 /// Setting what an animation changes stops that animation, so that SPCHK
 /// no longer shows it.
-// UNVERIFIED for Z, R, S and I: SPOFS's X,Y, SPCOLOR and SPCHR's U,V
-// were checked.
 fn stop(s: &mut Sprite, target: Target) {
     s.anims[target.index()] = None;
 }
