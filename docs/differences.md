@@ -63,6 +63,9 @@ Without them:
 
 ## Other
 
+- `FREEMEM` always answers what SmileBASIC 4 shows at start-up
+  (134216720 bytes): the emulator does not count the memory that
+  strings and arrays take.
 - `RND` and `RNDF` use a generator of their own, so a seeded series
   gives other numbers than on hardware.
 - Error messages add detail in parentheses, such as which argument was

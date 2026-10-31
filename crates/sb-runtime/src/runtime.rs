@@ -83,6 +83,8 @@ pub(crate) enum Command {
     Fade,
     Fadechk,
     Files,
+    Fontinfo,
+    Freemem,
     Gbox,
     Gcircle,
     Gclip,
@@ -276,6 +278,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("FADE", Command::Fade),
     ("FADECHK", Command::Fadechk),
     ("FILES", Command::Files),
+    ("FONTINFO", Command::Fontinfo),
+    ("FREEMEM", Command::Freemem),
     ("GBOX", Command::Gbox),
     ("GCIRCLE", Command::Gcircle),
     ("GCLIP", Command::Gclip),
@@ -1519,6 +1523,8 @@ impl Runtime {
             (
                 Command::Date
                 | Command::Dtread
+                | Command::Fontinfo
+                | Command::Freemem
                 | Command::Maincnt
                 | Command::Millisec
                 | Command::Randomize

@@ -102,3 +102,21 @@ fn system_settings() {
         assert_eq!(run(source).unwrap_err().kind, error, "{source}");
     }
 }
+
+#[test]
+fn free_memory_and_font_places() {
+    assert_eq!(
+        run("FREEMEM OUT T,C:?FREEMEM()==T;T==C;FREEMEM()>0").unwrap(),
+        "111"
+    );
+    assert_eq!(run("FONTINFO \"AB\",8 OUT X,Y:?X;\",\";Y").unwrap(), "8,8");
+    assert_eq!(run("FONTINFO 65,8 OUT X,Y:?X;\",\";Y").unwrap(), "8,8");
+    assert_eq!(
+        run("FONTINFO 65,12 OUT X,Y").unwrap_err().kind,
+        ErrorKind::OutOfRange
+    );
+    assert_eq!(
+        run("FONTINFO &HE800,8 OUT X,Y").unwrap_err().kind,
+        ErrorKind::IllegalFunctionCall
+    );
+}

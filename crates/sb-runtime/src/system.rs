@@ -1,5 +1,6 @@
 //! Random numbers, time and the system's settings: RND, RNDF, RANDOMIZE,
-//! MILLISEC, MAINCNT, DATE$, TIME$, DTREAD, TMREAD and SYSPARAM.
+//! MILLISEC, MAINCNT, DATE$, TIME$, DTREAD, TMREAD, SYSPARAM, FREEMEM and
+//! FONTINFO.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,7 +9,10 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
+use crate::font::FontSize;
+use crate::machine::FREE_MEMORY;
 use crate::runtime::{Command, Runtime, no_form};
+use crate::text::USER_CHARS;
 
 /// RND's series 0 to 7.
 const SERIES: usize = 8;
@@ -277,6 +281,41 @@ impl Runtime {
                     (_, None) if want.count() == values.len() => Ok(values),
                     _ => Err(wrong()),
                 }
+            }
+            // FREEMEM: always what SmileBASIC 4 shows at start-up; the
+            // emulator does not count the memory programs use.
+            // UNVERIFIED: that the largest free block is the whole of it.
+            (Command::Freemem, Want::Value, 0) => Ok(vec![Value::Int(FREE_MEMORY as i32)]),
+            (Command::Freemem, Want::Outs(2), 0) => Ok(vec![Value::Int(FREE_MEMORY as i32); 2]),
+            (Command::Fontinfo, Want::Outs(2), 2) => {
+                let code = match &args[0] {
+                    Value::Str(s) => s.borrow().first().copied().ok_or_else(|| {
+                        Error::with_detail(ErrorKind::IllegalFunctionCall, "empty string")
+                    })?,
+                    v => u16::try_from(int(v)?)
+                        .map_err(|_| Error::with_detail(ErrorKind::OutOfRange, "character code"))?,
+                };
+                let size = match int(&args[1])? {
+                    8 => FontSize::Small,
+                    16 => FontSize::Large,
+                    n => {
+                        return Err(Error::with_detail(
+                            ErrorKind::OutOfRange,
+                            format!("font type {n}"),
+                        ));
+                    }
+                };
+                // UNVERIFIED: the error for a user-defined character.
+                if USER_CHARS.contains(&code) {
+                    return Err(Error::with_detail(
+                        ErrorKind::IllegalFunctionCall,
+                        "user-defined character",
+                    ));
+                }
+                let (x, y) = self.font.origin(code, size).ok_or_else(|| {
+                    Error::with_detail(ErrorKind::IllegalFunctionCall, "no glyph on GRPF")
+                })?;
+                Ok(vec![Value::Int(x as i32), Value::Int(y as i32)])
             }
             _ => Err(no_form()),
         }
