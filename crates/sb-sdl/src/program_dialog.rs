@@ -18,6 +18,8 @@ const NAME_BUTTONS: [&str; 2] = ["Cancel", "OK"];
 
 pub struct ProgramView {
     dialog: ProgramDialog,
+    /// The message, wrapped to fit the display.
+    lines: Vec<String>,
     /// Display size the window is centered in.
     size: (u32, u32),
     /// Index of the chosen button: the right one at first, as A chooses.
@@ -32,8 +34,11 @@ impl ProgramView {
             DialogKind::Name { initial, .. } => initial.clone(),
             _ => String::new(),
         };
+        // Room for the window's padding and a margin around it.
+        let room = (size.0.saturating_sub(8 * PAD) / CHAR).max(1) as usize;
         let mut view = ProgramView {
             dialog: dialog.clone(),
+            lines: dialog.lines.iter().flat_map(|l| wrap(l, room)).collect(),
             size,
             focus: 0,
             name,
@@ -59,7 +64,7 @@ impl ProgramView {
     fn body_lines(&self) -> usize {
         match self.dialog.kind {
             DialogKind::Name { .. } => 1,
-            _ => self.dialog.lines.len(),
+            _ => self.lines.len(),
         }
     }
 
@@ -82,7 +87,7 @@ impl ProgramView {
             DialogKind::Name { max, .. } => max as u32 * CHAR + 2 * PAD,
             _ => 0,
         };
-        let text = (self.dialog.lines.iter())
+        let text = (self.lines.iter())
             .chain([&self.dialog.caption])
             .map(|l| text_width(l))
             .max()
@@ -208,7 +213,7 @@ impl ProgramView {
                 );
             }
             _ => {
-                for (i, line) in self.dialog.lines.iter().enumerate() {
+                for (i, line) in self.lines.iter().enumerate() {
                     let y = line_y(i as u32) + (LINE - CHAR) / 2;
                     draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
                 }
@@ -221,6 +226,24 @@ impl ProgramView {
             draw_text(fb, font, x, r.y + 4, label, TEXT);
         }
     }
+}
+
+/// Splits a line into pieces of at most `max` characters, after a space
+/// where there is one, as Japanese text has none.
+fn wrap(line: &str, max: usize) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut rest: Vec<char> = line.chars().collect();
+    while rest.len() > max {
+        let cut = match rest[..=max].iter().rposition(|&c| c == ' ') {
+            Some(space) if space > 0 => space,
+            _ => max,
+        };
+        pieces.push(rest[..cut].iter().collect());
+        let skip = usize::from(rest.get(cut) == Some(&' '));
+        rest.drain(..cut + skip);
+    }
+    pieces.push(rest.into_iter().collect());
+    pieces
 }
 
 #[cfg(test)]
@@ -237,6 +260,18 @@ mod tests {
             lines: vec!["Hello".to_string()],
             kind,
         }
+    }
+
+    #[test]
+    fn long_lines_wrap() {
+        assert_eq!(wrap("AB CD EF", 5), ["AB CD", "EF"]);
+        assert_eq!(wrap("ABCDEFG", 3), ["ABC", "DEF", "G"]);
+        assert_eq!(wrap("", 3), [""]);
+        let mut d = dialog(DialogKind::Choice(vec!["OK"]));
+        d.lines = vec!["W ".repeat(200)];
+        let v = ProgramView::new(&d, (1280, 720));
+        assert!(v.lines.len() > 1);
+        assert!(v.frame().w <= 1280);
     }
 
     #[test]
