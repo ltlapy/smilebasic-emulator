@@ -1154,6 +1154,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             next_frame += FRAME;
             skipped += 1;
         }
+        // A pointer the program moved with MOUSE stays there until the
+        // real one moves.
+        let (sent, now) = (&mut controls.mouse, machine.rt.input.live.mouse);
+        let fed = !modal && !paused && !machine.is_editing();
+        if fed && (sent.x, sent.y, sent.display) != (now.x, now.y, now.display) {
+            (sent.x, sent.y, sent.display) = (now.x, now.y, now.display);
+        }
         // The editor leaves its top row for the menu bar.
         menu.pinned = machine.is_editing();
         // Settings change through the menu, keys and questions; keep each
