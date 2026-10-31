@@ -457,7 +457,10 @@ impl Runtime {
             (Command::Spvar, Want::Outs(0), 3) => {
                 let key = var_key(&args[1])?;
                 let value = match &args[2] {
-                    Value::Int(_) | Value::Real(_) | Value::Str(_) => args[2].clone(),
+                    // An array is kept as itself, not copied.
+                    Value::Int(_) | Value::Real(_) | Value::Str(_) | Value::Array(_) => {
+                        args[2].clone()
+                    }
                     _ => return Err(ErrorKind::TypeMismatch.into()),
                 };
                 self.sprites.list[sprite_id(&args[0])?]
