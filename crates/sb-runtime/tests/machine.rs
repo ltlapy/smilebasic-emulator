@@ -879,3 +879,23 @@ fn run_to_a_line_once() {
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), None);
 }
+
+#[test]
+fn breakpoints_follow_edited_lines() {
+    use sb_runtime::runtime::keys;
+    let mut m = machine();
+    m.set_slot(0, "A=1\nB=2\nC=3\nD=4".to_string());
+    m.toggle_breakpoint(0, 2);
+    m.toggle_breakpoint(0, 4);
+    enter(&mut m, "LIST 2");
+    // A line broken at its start moves down with its text.
+    press(&mut m, &[keys::HOME, keys::ENTER]);
+    m.edit();
+    assert_eq!(m.breakpoints(0), [3, 5]);
+    // A line taken out takes its breakpoint along.
+    m.edit().delete_line();
+    assert_eq!(m.breakpoints(0), [4]);
+    m.toggle_editor();
+    enter(&mut m, "RUN");
+    assert_eq!(m.paused_at(), Some((0, 4)));
+}

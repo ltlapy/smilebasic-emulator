@@ -667,6 +667,7 @@ impl Machine {
     /// Sets or clears a breakpoint on a slot's 1-based line; true when
     /// it is set now.
     pub fn toggle_breakpoint(&mut self, slot: usize, line: u32) -> bool {
+        self.follow_edits();
         let lines = &mut self.breakpoints[slot];
         let set = lines.insert(line) || !lines.remove(&line);
         self.arm_all();
@@ -674,8 +675,28 @@ impl Machine {
     }
 
     /// The lines of a slot with breakpoints, in order.
-    pub fn breakpoints(&self, slot: usize) -> Vec<u32> {
+    pub fn breakpoints(&mut self, slot: usize) -> Vec<u32> {
+        self.follow_edits();
         self.breakpoints[slot].iter().copied().collect()
+    }
+
+    /// Moves the breakpoints with the lines the editor moved, and drops
+    /// those of lines it took out.
+    fn follow_edits(&mut self) {
+        let mut moved = false;
+        for editor in &mut self.editors {
+            for (slot, shift) in editor.take_shifts() {
+                let lines = &mut self.breakpoints[slot];
+                *lines = (lines.iter())
+                    .filter_map(|&line| shift.map(line as usize - 1))
+                    .map(|line| line as u32 + 1)
+                    .collect();
+                moved = true;
+            }
+        }
+        if moved {
+            self.arm_all();
+        }
     }
 
     pub fn clear_breakpoints(&mut self) {
@@ -683,18 +704,18 @@ impl Machine {
         self.arm_all();
     }
 
-    /// Gives a program the breakpoints.
-    fn arm(&self, vm: &mut Vm) {
-        for (slot, lines) in self.breakpoints.iter().enumerate() {
-            vm.set_breakpoints(slot, &lines.iter().copied().collect::<Vec<_>>());
-        }
+    /// Gives a program the breakpoints, with the lines as the editor left
+    /// them.
+    fn arm(&mut self, vm: &mut Vm) {
+        self.follow_edits();
+        give_breakpoints(&self.breakpoints, vm);
     }
 
     /// Gives the running and the stopped program the breakpoints.
     fn arm_all(&mut self) {
         let mut vms = [self.vm.take(), self.halted.take()];
         for vm in vms.iter_mut().flatten() {
-            self.arm(vm);
+            give_breakpoints(&self.breakpoints, vm);
         }
         [self.vm, self.halted] = vms;
     }
@@ -760,6 +781,7 @@ impl Machine {
     /// editing.
     pub fn frame(&mut self) {
         self.frame += 1;
+        self.follow_edits();
         self.rt.begin_frame();
         self.rt.sound.render_frame();
         // Animations play in direct mode too, and go on while the editor
@@ -992,6 +1014,12 @@ impl Machine {
         }
         console.print(text);
         console.newline();
+    }
+}
+
+fn give_breakpoints(breakpoints: &[BTreeSet<u32>], vm: &mut Vm) {
+    for (slot, lines) in breakpoints.iter().enumerate() {
+        vm.set_breakpoints(slot, &lines.iter().copied().collect::<Vec<_>>());
     }
 }
 

@@ -169,7 +169,7 @@ struct View {
 pub struct Place(View);
 
 /// A line and a column in it.
-type Pos = (usize, usize);
+pub type Pos = (usize, usize);
 
 /// The overview's pixels per line, of which the characters fill the
 /// first two, one pixel wide each.
@@ -338,6 +338,47 @@ pub struct Editor {
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
     screen: TextScreen,
+    /// How edits since they were last taken moved the lines, by slot.
+    shifts: Vec<(usize, LineShift)>,
+}
+
+/// How an edit moved a program's lines, for what is kept by line, such
+/// as breakpoints. Lines and columns count from 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineShift {
+    /// The text from `start` to `end`, on a later line, was taken out.
+    Joined { start: Pos, end: Pos },
+    /// `count` line breaks were put in at `at`.
+    Broken { at: Pos, count: usize },
+}
+
+impl LineShift {
+    /// Where a line is after the edit, or `None` once its start is gone.
+    /// A line keeps its place while its start does, and moves with it
+    /// when text is put in before it.
+    pub fn map(self, line: usize) -> Option<usize> {
+        match self {
+            LineShift::Joined { start, end } => {
+                let whole = start.1 == 0 && end.1 == 0;
+                if line < start.0 || (line == start.0 && !whole) {
+                    Some(line)
+                } else if line == end.0 && whole {
+                    Some(start.0)
+                } else if line > end.0 {
+                    Some(line - (end.0 - start.0))
+                } else {
+                    None
+                }
+            }
+            LineShift::Broken { at, count } => {
+                if line < at.0 || (line == at.0 && at.1 > 0) {
+                    Some(line)
+                } else {
+                    Some(line + count)
+                }
+            }
+        }
+    }
 }
 
 /// Splits a program into lines the way the lexer counts them.
@@ -396,6 +437,7 @@ impl Editor {
             map_drag: false,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
+            shifts: Vec::new(),
         };
         editor.fit(screen_w, screen_h, FontSize::Small, None);
         editor
@@ -468,6 +510,12 @@ impl Editor {
         self.merge = Merge::Alone;
         self.mode = Mode::Edit;
         self.note = None;
+    }
+
+    /// How the edits since the last call moved the lines, by slot, in
+    /// order.
+    pub fn take_shifts(&mut self) -> Vec<(usize, LineShift)> {
+        std::mem::take(&mut self.shifts)
     }
 
     /// Takes over the program and its undo history from the other side of
@@ -555,6 +603,7 @@ impl Editor {
         if start.0 == end.0 {
             return vec![self.lines[start.0].drain(start.1..end.1).collect()];
         }
+        (self.shifts).push((self.slot, LineShift::Joined { start, end }));
         let rest = self.lines[end.0].split_off(end.1);
         let mut taken = vec![self.lines[start.0].split_off(start.1)];
         taken.extend(self.lines.drain(start.0 + 1..=end.0));
@@ -564,6 +613,10 @@ impl Editor {
 
     /// Puts text in at a place; returns where it ends.
     fn put(&mut self, at: Pos, text: &Lines) -> Pos {
+        if text.len() > 1 {
+            let count = text.len() - 1;
+            (self.shifts).push((self.slot, LineShift::Broken { at, count }));
+        }
         let rest = self.lines[at.0].split_off(at.1);
         self.lines[at.0].extend_from_slice(&text[0]);
         self.lines
@@ -1803,6 +1856,27 @@ fn put_str(screen: &mut TextScreen, x: usize, y: usize, text: &str, color: u32) 
 mod tests {
     use super::*;
     use crate::palette::SMILEBASIC;
+
+    #[test]
+    fn line_shifts() {
+        let joined = |start, end| LineShift::Joined { start, end };
+        let broken = |at, count| LineShift::Broken { at, count };
+        // Whole lines 2 and 3 taken out: 4 takes 2's place.
+        let whole = joined((2, 0), (4, 0));
+        let mapped: Vec<_> = (0..6).map(|l| whole.map(l)).collect();
+        assert_eq!(mapped, [Some(0), Some(1), None, None, Some(2), Some(3)]);
+        // Line 3 joined onto the end of 2: 2 stays, 3 is gone.
+        let join = joined((2, 5), (3, 0));
+        let mapped: Vec<_> = (1..5).map(|l| join.map(l)).collect();
+        assert_eq!(mapped, [Some(1), Some(2), None, Some(3)]);
+        // Text within a line moves nothing.
+        assert_eq!(joined((2, 1), (2, 4)).map(2), Some(2));
+        // Lines put in at a line's start push it down; within it, not.
+        assert_eq!(broken((2, 0), 2).map(2), Some(4));
+        assert_eq!(broken((2, 3), 2).map(2), Some(2));
+        assert_eq!(broken((2, 3), 2).map(3), Some(5));
+        assert_eq!(broken((2, 3), 2).map(1), Some(1));
+    }
 
     fn look(tiles: bool) -> Look<'static> {
         Look {
