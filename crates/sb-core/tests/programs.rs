@@ -896,3 +896,20 @@ fn free_memory() {
         ErrorKind::WrongNumberOfArguments
     );
 }
+
+#[test]
+fn statements_run_together_without_colons() {
+    assert_eq!(output("?\"A\" B=1:?B"), "A\n1\n");
+    assert_eq!(output("FOR I=1 TO 2:NEXT?I"), "3\n");
+    assert_eq!(output("CONST #2P=7:?#2P"), "7\n");
+    assert_eq!(output("A=0#:?A;1.5#"), "01.5\n");
+    assert_eq!(output("?1\\ XYZ\n+2"), "3\n");
+}
+
+#[test]
+fn input_guides_may_be_expressions() {
+    let run = |s: &str| run_with_input(s, &["ABC"]).unwrap();
+    assert_eq!(run("INPUT \"A\"+\"B\";A$:?A$"), "AB? ABC\nABC\n");
+    assert_eq!(run("LINPUT@G;A$:?A$\n@G"), "@GABC\nABC\n");
+    assert_eq!(run("P$=\"Q\":INPUT P$;A$:?A$"), "Q? ABC\nABC\n");
+}

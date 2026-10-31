@@ -590,15 +590,21 @@ impl Parser {
         Ok(items)
     }
 
+    /// The items end at anything but a separator after an expression, so
+    /// that `?"A" B=1` prints A and then assigns B.
     fn print_items(&mut self) -> PResult<Vec<PrintItem>> {
         let mut items = Vec::new();
+        let mut after_expr = false;
         while !self.at_stmt_end() {
             if self.eat(&TokenKind::Semicolon) {
                 items.push(PrintItem::Semicolon);
+                after_expr = false;
             } else if self.eat(&TokenKind::Comma) {
                 items.push(PrintItem::Comma);
-            } else if self.can_start_expr() {
+                after_expr = false;
+            } else if !after_expr && self.can_start_expr() {
                 items.push(PrintItem::Expr(self.expr()?));
+                after_expr = true;
             } else {
                 break;
             }
@@ -607,15 +613,30 @@ impl Parser {
     }
 
     fn input(&mut self, whole_line: bool) -> PResult<StmtKind> {
-        // A `,` after the guide string hides the `?`.
-        let (prompt, semicolon) = if matches!(self.peek(), TokenKind::Str(_))
-            && matches!(self.peek_at(1), TokenKind::Semicolon | TokenKind::Comma)
-        {
-            let prompt = self.expr()?;
-            let semicolon = self.advance() == TokenKind::Semicolon;
-            (Some(prompt), semicolon)
-        } else {
-            (None, true)
+        // A `,` after the guide string hides the `?`. The guide may be any
+        // string expression, a label among them; a variable is one only
+        // when a `;` follows it, as `INPUT A,B` reads two values.
+        let start = self.pos;
+        let guide = match self.peek() {
+            TokenKind::Str(_) | TokenKind::Label(_) | TokenKind::LParen => {
+                Some((self.expr()?, true))
+            }
+            TokenKind::Ident { .. } => self.expr().ok().map(|e| (e, false)),
+            _ => None,
+        };
+        let (prompt, semicolon) = match (guide, self.peek()) {
+            (Some((prompt, _)), TokenKind::Semicolon) => {
+                self.advance();
+                (Some(prompt), true)
+            }
+            (Some((prompt, true)), TokenKind::Comma) => {
+                self.advance();
+                (Some(prompt), false)
+            }
+            _ => {
+                self.pos = start;
+                (None, true)
+            }
         };
         let targets = self.comma_list(Self::lvalue)?;
         Ok(StmtKind::Input {
@@ -771,7 +792,8 @@ impl Parser {
         };
         let body = self.block_until(Keyword::Next, "NEXT")?;
         // UNVERIFIED: NEXT may name the loop variable, as in SB3. It is not checked.
-        if !self.at_stmt_end() {
+        // Anything else starts the next statement (`NEXT?I`).
+        if matches!(self.peek(), TokenKind::Ident { .. }) {
             self.lvalue()?;
         }
         Ok(StmtKind::For {

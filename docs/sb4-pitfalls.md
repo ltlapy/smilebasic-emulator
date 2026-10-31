@@ -90,6 +90,18 @@ follows all of it. Items still waiting for a check are marked
   without `VAR` can be used after it, and a DEF before it is not checked.
 - A DEF's parameters may be written `A[]`; passing a number for one and
   indexing it is `Type mismatch` on the indexing line.
+- Statements need no colon between them where one cannot go on: a
+  `PRINT` item ends where no `;` or `,` follows it (`?"A" B=1` prints A,
+  then sets B), and `NEXT` takes a loop variable only if a name follows
+  (`NEXT?I`).
+- `T?` is short for `TPRINT`.
+- A constant's name may start with a digit, as a label's may (`#2P`).
+- A `#` after a number makes it a real (`0#`).
+- A `\` joins its line with the next; the rest of its line is left out
+  (`?1\ XYZ` and `+2` on the next line prints 3).
+- `INPUT` and `LINPUT` take any string expression as the guide, a label
+  among them (`LINPUT@G;A$` shows `@G`). A string variable is a guide
+  only with `;`.
 
 ## Direct mode
 

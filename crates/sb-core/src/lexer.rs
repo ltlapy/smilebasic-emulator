@@ -240,19 +240,13 @@ impl Lexer {
         }
     }
 
-    /// A `\\` at the end of a line joins it with the next one. The reference
-    /// does not describe this, but SmileBASIC 4's bundled programs use it.
-    /// UNVERIFIED: spaces may follow the backslash.
+    /// A `\\` joins its line with the next one, and whatever follows it on
+    /// the line is left out. The reference does not describe this, but
+    /// SmileBASIC 4's bundled programs use it.
     fn continues_line(&mut self) -> bool {
         let mut i = 1;
-        while matches!(self.peek_at(i), Some(' ' | '\t')) {
+        while !matches!(self.peek_at(i), None | Some('\r' | '\n')) {
             i += 1;
-        }
-        // A comment may follow: `\\ 'note`.
-        if self.peek_at(i) == Some('\'') {
-            while !matches!(self.peek_at(i), None | Some('\r' | '\n')) {
-                i += 1;
-            }
         }
         let newline_len = match (self.peek_at(i), self.peek_at(i + 1)) {
             (Some('\r'), Some('\n')) => 2,
@@ -311,8 +305,9 @@ impl Lexer {
                 }
                 '#' => {
                     self.bump();
+                    // Like a label, a constant may start with a digit (`#2P`).
                     let mut name = self
-                        .word()
+                        .word_from(is_ident_char)
                         .ok_or(self.error(LexErrorKind::MissingDigits, start))?;
                     // Constants can carry a type suffix too (`#LF$`).
                     if let Some(c @ ('$' | '%' | '#')) = self.peek() {
@@ -351,6 +346,12 @@ impl Lexer {
 
     fn ident(&mut self, start: Span) {
         let name = self.word().expect("caller checked is_ident_start");
+        // `T?` is short for TPRINT, as `?` is for PRINT.
+        if name == "T" && self.peek() == Some('?') && self.peek_at(1) != Some('?') {
+            self.bump();
+            self.push(TokenKind::Keyword(Keyword::Tprint), start);
+            return;
+        }
         let suffix = match self.peek() {
             Some('%') => Some(Suffix::Int),
             Some('#') => Some(Suffix::Real),
@@ -420,6 +421,11 @@ impl Lexer {
                 }
                 self.take_digits(&mut text);
             }
+        }
+        // A `#` after the digits makes the number a real (`0#`).
+        if self.peek() == Some('#') && !self.peek_at(1).is_some_and(is_ident_char) {
+            is_real = true;
+            self.bump();
         }
         // Integer literals go up to 2147483647.
         // UNVERIFIED: a larger decimal literal becomes real instead of an error.
@@ -656,13 +662,32 @@ mod tests {
     }
 
     #[test]
-    fn labels_may_start_with_a_digit() {
+    fn labels_and_constants_may_start_with_a_digit() {
         assert_eq!(
-            kinds("@1ST @_2"),
-            [T::Label("1ST".into()), T::Label("_2".into())]
+            kinds("@1ST @_2 #2P"),
+            [
+                T::Label("1ST".into()),
+                T::Label("_2".into()),
+                T::Constant("2P".into())
+            ]
         );
         assert_eq!(error("@"), LexErrorKind::MissingDigits);
-        assert_eq!(error("#1"), LexErrorKind::MissingDigits);
+        assert_eq!(error("#"), LexErrorKind::MissingDigits);
+    }
+
+    #[test]
+    fn short_forms_and_real_suffix() {
+        assert_eq!(
+            kinds("T?0 0# 1.5#"),
+            [
+                T::Keyword(Keyword::Tprint),
+                T::Int(0),
+                T::Real(0.0),
+                T::Real(1.5)
+            ]
+        );
+        // Text after a backslash is left out and the lines are joined.
+        assert_eq!(kinds("1\\ XYZ\n+2"), [T::Int(1), T::Plus, T::Int(2)]);
     }
 
     #[test]
