@@ -287,10 +287,10 @@ fn exec_runs_other_slots() {
     assert_eq!(tail(&m, 3)[..2], ["1", "Syntax error in 0:1 (HIDDEN)"]);
     run(&mut m, &["?ADD(1,2)"]);
     assert!(tail(&m, 2)[0].starts_with("Syntax error in 0:1"));
-    // The running slot cannot be EXEC'd, nor one a DEF returns to, nor
-    // EXEC used in direct mode (checked on hardware).
-    run(&mut m, &["EXEC 0"]);
-    assert!(tail(&m, 2)[0].starts_with("Can't use the specified slot in 0:1"));
+    // The running slot starts again; one a DEF returns to cannot be
+    // EXEC'd, nor can EXEC be used in direct mode (checked on hardware).
+    run(&mut m, &["?\"R\";:LOCATE OUT X,Y:IF X<3 THEN EXEC 0"]);
+    assert_eq!(tail(&m, 2), ["RRR", "OK"]);
     m.set_slot(3, "COMMON DEF BACK\nEXEC 0\nEND".to_string());
     run(&mut m, &["EXEC 3:BACK"]);
     assert!(tail(&m, 2)[0].starts_with("Can't use the specified slot in 3:2"));

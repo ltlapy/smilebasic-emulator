@@ -1153,11 +1153,11 @@ impl Vm {
                 || self.frames.iter().any(|f| f.caller == s || f.home == s)
                 || self.gosubs.iter().any(|g| g.0 == s)
         };
-        // EXEC of a slot must not start one that is running, and loading
-        // may replace only the slot running now (checked on hardware: EXEC
-        // 0 in a DEF of slot 1 called from slot 0 is Can't use the
-        // specified slot).
-        let own = file.is_some() && slot == self.slot as i32;
+        // EXEC of a slot must not start one that is running, but the slot
+        // running now may be started again, from its file or as it is
+        // (checked on hardware: EXEC 0 in a DEF of slot 1 called from slot
+        // 0 is Can't use the specified slot).
+        let own = slot == self.slot as i32;
         if running(slot) && !own {
             return Err(Error::with_detail(
                 ErrorKind::CantUseSpecifiedSlot,
