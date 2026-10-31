@@ -315,7 +315,7 @@ impl Runtime {
             }
             (Command::Tfunc, Want::Outs(0), 1 | 2) => {
                 let func = match args.get(1) {
-                    Some(Value::Str(name)) => Some(name.borrow().clone()),
+                    Some(Value::Str(name)) => Some(self.callback_name(&name.borrow())),
                     Some(_) => return Err(ErrorKind::TypeMismatch.into()),
                     None => None,
                 };

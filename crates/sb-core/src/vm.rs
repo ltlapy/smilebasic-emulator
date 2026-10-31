@@ -1217,16 +1217,36 @@ impl Vm {
         target: &Value,
         host: &mut dyn Host,
     ) -> Result<()> {
-        if target.clone().into_str()?.borrow().first() == Some(&u16::from(b'@')) {
+        let text = target.clone().into_str()?;
+        let is_label = {
+            let text = text.borrow();
+            let name_at = text
+                .iter()
+                .position(|&c| c == u16::from(b':'))
+                .map_or(0, |i| i + 1);
+            text.get(name_at) == Some(&u16::from(b'@'))
+        };
+        if is_label {
             let (slot, label) = self.find_label(target)?;
             return self.gosub(slot, label, host);
         }
-        let name = name_of(target)?;
-        let def = *program
-            .def_names
-            .get(&name)
+        // A DEF of the slot the callback was set in, or a COMMON DEF.
+        let (slot, name) = slot_and_name(target)?;
+        let slot = slot.unwrap_or(self.slot);
+        let own = match slot == self.slot {
+            true => Some(program),
+            false => self.program_in(slot).map(|p| &**p),
+        };
+        if let Some(&def) = own.and_then(|p| p.def_names.get(&name)) {
+            return match slot == self.slot {
+                true => self.enter_def(def, Vec::new(), Want::Outs(0), self.slot),
+                false => self.call_in(slot, def, Vec::new(), Want::Outs(0), host),
+            };
+        }
+        let (slot, def) = self
+            .find_common(&name)
             .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedFunction, name))?;
-        self.enter_def(def, Vec::new(), Want::Outs(0), self.slot)
+        self.call_in(slot, def, Vec::new(), Want::Outs(0), host)
     }
 
     /// RESTORE "PUSH", "POP", "BEGIN" and "n:BEGIN" (SmileBASIC 4.4):

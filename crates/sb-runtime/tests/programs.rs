@@ -353,3 +353,15 @@ fn commands_read_data_in_slots_exec_ran() {
     run(&mut m, &["BGMSETD 128,\"2:@M\""]);
     assert!(tail(&m, 2)[0].starts_with("Undefined label"));
 }
+
+#[test]
+fn callbacks_are_found_in_the_slot_that_set_them() {
+    let mut m = machine();
+    m.set_slot(
+        1,
+        "END\nCOMMON DEF INIT\n SPSET 0,0:SPFUNC 0,\"CB\"\nEND\nDEF CB\n ?\"CB\";CALLIDX()\nEND"
+            .to_string(),
+    );
+    run(&mut m, &["EXEC 1:INIT:CALL SPRITE"]);
+    assert_eq!(tail(&m, 2), ["CB0", "OK"]);
+}

@@ -920,6 +920,21 @@ impl Runtime {
     /// The DATA values from `label` on, for commands that take a
     /// `"@label"`. As on hardware, they move READ's place: RESTORE to
     /// the label, then READ.
+    /// A callback's name as SPFUNC and TFUNC keep it: with the slot they
+    /// were set in, whose DEFs CALL SPRITE and CALL TEXT look in from any
+    /// slot.
+    // UNVERIFIED: that a label is also that slot's.
+    pub(crate) fn callback_name(&self, name: &[u16]) -> Vec<u16> {
+        match self.running_slot {
+            Some(slot) if !self.direct && !name.contains(&u16::from(b':')) => {
+                let mut kept: Vec<u16> = format!("{slot}:").encode_utf16().collect();
+                kept.extend_from_slice(name);
+                kept
+            }
+            _ => name.to_vec(),
+        }
+    }
+
     /// `"n:@LABEL"` reads slot n's DATA, once the run has gone on there.
     pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader<'_>> {
         let text =
