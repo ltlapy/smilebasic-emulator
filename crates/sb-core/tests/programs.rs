@@ -782,6 +782,11 @@ fn initialized_arrays_keep_their_sizes() {
     // DEFs too: one with an OUT as a function, a function with one OUT.
     assert_eq!(output("?F(3)\nDEF F A OUT R\n R=A*2\nEND"), "6\n");
     assert_eq!(output("T OUT X:?X\nDEF T()\n RETURN 5\nEND"), "5\n");
+    // An OUT variable never set gives the omitted value.
+    assert_eq!(
+        output("A=E():?TYPEOF(A)\nE OUT B:?TYPEOF(B)\nDEF E OUT X\nEND"),
+        "0\n0\n"
+    );
     // Not one with two OUTs, at run time: checked on hardware.
     assert_eq!(
         error("?\"S\"\n?G()\nEND\nDEF G OUT X,Y\nEND"),
@@ -796,6 +801,31 @@ fn initialized_arrays_keep_their_sizes() {
     // Only one-dimensional arrays may be empty.
     assert_eq!(error("DIM R#[0,0]").0, ErrorKind::SubscriptOutOfRange);
     assert_eq!(output("DIM A[0]:?LEN(A)"), "0\n");
+}
+
+#[test]
+fn loop_ends_inside_blocks_continue() {
+    assert_eq!(
+        output("FOR I=0 TO 4\n IF I==2 THEN NEXT\n ?I;\nNEXT"),
+        "0134"
+    );
+    assert_eq!(
+        output("FOR I=0 TO 3\n IF I<2 THEN\n  NEXT I\n ENDIF\n ?I;\nNEXT"),
+        "23"
+    );
+    assert_eq!(
+        output("I=0\nWHILE I<4\n INC I:IF I==2 THEN WEND\n ?I;\nWEND"),
+        "134"
+    );
+    assert_eq!(
+        output("I=0\nLOOP\n INC I:IF I<3 THEN ENDLOOP\n ?I:BREAK\nENDLOOP"),
+        "3\n"
+    );
+    // Only the innermost loop's.
+    assert_eq!(
+        error("FOR I=0 TO 1\nWHILE 1\nIF 1 THEN NEXT\nWEND\nNEXT").0,
+        ErrorKind::SyntaxError
+    );
 }
 
 #[test]

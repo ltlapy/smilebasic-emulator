@@ -93,6 +93,7 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
         tokens,
         pos: 0,
         in_def: false,
+        loops: Vec::new(),
         depth: 0,
     }
     .program()
@@ -105,6 +106,8 @@ struct Parser {
     pos: usize,
     in_def: bool,
     depth: u32,
+    /// The closing keywords of the loops being parsed, innermost last.
+    loops: Vec<Keyword>,
 }
 
 /// Operator and its precedence level, 0 binding loosest.
@@ -265,6 +268,15 @@ impl Parser {
         Ok(body)
     }
 
+    /// A loop's body, during which its closing keyword inside another
+    /// block means CONTINUE.
+    fn loop_body(&mut self, end: Keyword, expected: &'static str) -> PResult<Vec<Stmt>> {
+        self.loops.push(end);
+        let body = self.block_until(end, expected);
+        self.loops.pop();
+        body
+    }
+
     /// Statements of a one-line IF branch, up to the end of the line or ELSE.
     fn line_stmts(&mut self) -> PResult<Vec<Stmt>> {
         let mut stmts = Vec::new();
@@ -337,7 +349,7 @@ impl Parser {
                 let cond = self.expr()?;
                 StmtKind::While {
                     cond,
-                    body: self.block_until(K::Wend, "WEND")?,
+                    body: self.loop_body(K::Wend, "WEND")?,
                 }
             }
             K::Repeat => {
@@ -348,10 +360,19 @@ impl Parser {
                 }
             }
             K::Loop => StmtKind::Loop {
-                body: self.block_until(K::Endloop, "ENDLOOP")?,
+                body: self.loop_body(K::Endloop, "ENDLOOP")?,
             },
             K::Break => StmtKind::Break,
             K::Continue => StmtKind::Continue,
+            // Inside an IF or another block of the loop, its closing
+            // keyword goes on with the next turn (`IF A THEN NEXT`), as
+            // SmileBASIC Debugger describes.
+            K::Next | K::Wend | K::Endloop if self.loops.last() == Some(&keyword) => {
+                if keyword == K::Next && matches!(self.peek(), TokenKind::Ident { .. }) {
+                    self.lvalue()?;
+                }
+                StmtKind::Continue
+            }
             K::Goto => StmtKind::Goto(self.target()?),
             K::Gosub => StmtKind::Gosub(self.target()?),
             K::On => self.on_statement()?,
@@ -799,7 +820,7 @@ impl Parser {
         } else {
             None
         };
-        let body = self.block_until(Keyword::Next, "NEXT")?;
+        let body = self.loop_body(Keyword::Next, "NEXT")?;
         // UNVERIFIED: NEXT may name the loop variable, as in SB3. It is not checked.
         // Anything else starts the next statement (`NEXT?I`).
         if matches!(self.peek(), TokenKind::Ident { .. }) {
