@@ -475,7 +475,10 @@ fn play(
             match hold {
                 Hold::Buttons(bits) => state.pads[0].buttons |= bits,
                 Hold::Stick(x, y) => state.pads[0].sticks[0] = (x, y),
-                Hold::Usb(usage) => state.set_key(usage, true),
+                Hold::Usb(usage) => {
+                    state.set_key(usage, true);
+                    state.modifiers |= modifier(usage);
+                }
                 Hold::Touch(x, y) => {
                     pointer = Some((x, y));
                     set_pointer(&mut state, &m, x, y);
@@ -497,6 +500,18 @@ fn play(
     save_screen(&mut m, &file)?;
     println!("screen saved to {}", file.display());
     Ok(())
+}
+
+/// KEYBOARD's bit for a modifier key's USB usage: Windows key, Shift,
+/// Ctrl and Alt, left (0xE0-0xE3) or right (0xE4-0xE7).
+fn modifier(usage: u8) -> u32 {
+    match usage {
+        0xE0 | 0xE4 => 1 << 2,
+        0xE1 | 0xE5 => 1 << 1,
+        0xE2 | 0xE6 => 1 << 3,
+        0xE3 | 0xE7 => 1,
+        _ => 0,
+    }
 }
 
 /// Puts the mouse pointer at a screen pixel, and where that is on the
