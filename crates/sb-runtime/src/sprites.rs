@@ -314,11 +314,14 @@ impl Sprites {
     }
 
     /// Sprite 4095 shows the top-left `w` x `h` of GRP0 behind everything
-    /// else.
+    /// else, on the layer `SPLAYER` gives new sprites.
+    // UNVERIFIED: the layer. HSKN_FONTEDIT's dialogs, which hardware
+    // shows, put the console on layer 6 after `SPLAYER 6`, then XSCREEN.
     pub fn reset_gsprite(&mut self, (w, h): (u32, u32)) {
+        let layer = self.new_layer;
         let g = &mut self.list[GSPRITE];
         *g = Sprite::unused();
-        (g.used, g.shown, g.page) = (true, true, 0);
+        (g.used, g.shown, g.page, g.layer) = (true, true, 0, layer);
         (g.w, g.h) = (w as i32, h as i32);
         g.z = 4095;
     }

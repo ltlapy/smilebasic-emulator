@@ -323,3 +323,11 @@ fn callbacks_see_sprites_set_and_cleared_by_earlier_ones() {
          RETURN");
     assert_eq!(out, "20 22 23 ");
 }
+
+#[test]
+fn xscreen_puts_the_graphics_sprite_on_new_sprites_layer() {
+    let (_, out) = run("SPLAYER 6:XSCREEN 320,240:?SPLAYER(4095)");
+    assert_eq!(out, "6");
+    let (_, out) = run("SPLAYER 6:ACLS:?SPLAYER(4095)");
+    assert_eq!(out, "0");
+}

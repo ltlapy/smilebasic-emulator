@@ -891,6 +891,8 @@ impl Runtime {
         keep_anims: bool,
     ) {
         self.text = startup_screens(&self.startup_mode);
+        // Before set_mode, which puts #GSPRITE on SPLAYER's layer.
+        self.sprites.reset(keep_defs, keep_anims);
         self.set_mode(self.startup_mode);
         self.back_color = 0xFF00_0000;
         // UNVERIFIED: ACLS clears FADE.
@@ -898,7 +900,6 @@ impl Runtime {
         self.layers = [Layer::default(); LAYERS];
         // UNVERIFIED: ACLS clears LFILTER.
         self.filters = Default::default();
-        self.sprites.reset(keep_defs, keep_anims);
         if !keep_grp {
             for page in 0..FONT_PAGE {
                 self.grp.clear_page(page);
