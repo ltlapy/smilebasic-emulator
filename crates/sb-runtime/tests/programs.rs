@@ -224,6 +224,27 @@ fn dialogs_wait_for_an_answer() {
 }
 
 #[test]
+fn other_slots_data_and_variables() {
+    // FINITI reads models from the DATA of the slot that calls it, and
+    // its demos write other slots' variables with VAR("n:NAME").
+    let mut m = machine();
+    m.set_slot(
+        1,
+        "VAR D0=5\nCOMMON DEF R()\n RESTORE \"0:@M\"\n READ A$\n RETURN A$\nEND".to_string(),
+    );
+    run(
+        &mut m,
+        &[
+            "EXEC 1",
+            "?R()",
+            "VAR(\"1:D0\")=VAR(\"1:D0\")+2:?VAR(\"1:D0\");CHKVAR(\"2:D0\")",
+            "@M:DATA \"MODEL\"",
+        ],
+    );
+    assert_eq!(tail(&m, 3), ["MODEL", "70", "OK"]);
+}
+
+#[test]
 fn exec_runs_other_slots() {
     let mut m = machine();
     m.set_slot(

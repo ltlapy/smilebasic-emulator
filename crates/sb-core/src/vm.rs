@@ -100,6 +100,7 @@ struct Unit {
     globals: Vec<Value>,
     declared: Vec<bool>,
     data_pos: usize,
+    data_from: Option<Rc<Compiled>>,
 }
 
 impl Unit {
@@ -112,6 +113,7 @@ impl Unit {
             program: Rc::new(program),
             globals,
             data_pos: 0,
+            data_from: None,
         }
     }
 }
@@ -144,8 +146,10 @@ pub struct Vm {
     /// RESTORE "PUSH" had kept then.
     gosubs: Vec<(usize, usize, usize)>,
     data_pos: usize,
+    /// Another slot's program, when RESTORE "n:@LABEL" sent READ there.
+    data_from: Option<Rc<Compiled>>,
     /// READ places kept by RESTORE "PUSH".
-    data_kept: Vec<usize>,
+    data_kept: Vec<(usize, Option<Rc<Compiled>>)>,
     /// The program slot running, and whether errors name it (not in
     /// direct mode).
     slot: usize,
@@ -289,6 +293,7 @@ impl Vm {
             frames: Vec::new(),
             gosubs: Vec::new(),
             data_pos: 0,
+            data_from: None,
             data_kept: Vec::new(),
             slot: 0,
             in_slot: false,
@@ -763,6 +768,7 @@ impl Vm {
             globals: std::mem::take(&mut self.globals),
             declared: std::mem::take(&mut self.declared),
             data_pos: self.data_pos,
+            data_from: self.data_from.take(),
         }
     }
 
@@ -778,6 +784,7 @@ impl Vm {
         self.globals = unit.globals;
         self.declared = unit.declared;
         self.data_pos = unit.data_pos;
+        self.data_from = unit.data_from;
         self.slot = slot;
         host.entered_slot(slot, &self.program);
     }
@@ -936,10 +943,13 @@ impl Vm {
                 if self.data_kept.len() >= MAX_DATA_KEPT {
                     return Err(ErrorKind::StackOverflow.into());
                 }
-                self.data_kept.push(self.data_pos);
+                self.data_kept.push((self.data_pos, self.data_from.clone()));
             }
-            "POP" => self.data_pos = self.data_kept.pop().ok_or(ErrorKind::StackUnderflow)?,
-            "BEGIN" => self.data_pos = 0,
+            "POP" => {
+                (self.data_pos, self.data_from) =
+                    self.data_kept.pop().ok_or(ErrorKind::StackUnderflow)?;
+            }
+            "BEGIN" => (self.data_pos, self.data_from) = (0, None),
             _ => {
                 let Some((slot, "BEGIN")) = s.split_once(':') else {
                     return Ok(false);
@@ -1200,16 +1210,26 @@ impl Vm {
                 }
             }
             Op::LoadDyn => {
-                let name = name_of(&self.pop())?;
-                let slot = self.dynamic_slot(&name)?;
-                let v = self.load(slot);
+                let target = self.pop();
+                let v = match self.other_global(&target)? {
+                    Some(v) => v.clone(),
+                    None => {
+                        let slot = self.dynamic_slot(&name_of(&target)?)?;
+                        self.load(slot)
+                    }
+                };
                 self.stack.push(v);
             }
             Op::StoreDyn => {
-                let name = name_of(&self.pop())?;
-                let slot = self.dynamic_slot(&name)?;
+                let target = self.pop();
                 let v = self.pop();
-                self.store(slot, v);
+                match self.other_global(&target)? {
+                    Some(place) => *place = v,
+                    None => {
+                        let slot = self.dynamic_slot(&name_of(&target)?)?;
+                        self.store(slot, v);
+                    }
+                }
             }
             Op::CallbacksStart(kind) => self.callbacks.push((*kind, -1)),
             Op::CallbackNext(end) => {
@@ -1247,8 +1267,14 @@ impl Vm {
                 self.stack.push(Value::Int(found.into()));
             }
             Op::ChkVar => {
-                let name = name_of(&self.pop())?;
-                let found = self.dynamic_slot(&name).is_ok();
+                let target = self.pop();
+                let name = name_of(&target)?;
+                // Another slot's, as VAR("n:NAME") would find it.
+                let found = match self.other_global(&target) {
+                    Ok(Some(_)) => true,
+                    Ok(None) => self.dynamic_slot(&name).is_ok(),
+                    Err(_) => false,
+                };
                 self.stack.push(Value::Int(found.into()));
             }
             Op::FreeMem { both } => {
@@ -1388,22 +1414,34 @@ impl Vm {
                     }
                 }
             }
-            Op::Restore(pos) => self.data_pos = *pos as usize,
+            Op::Restore(pos) => (self.data_pos, self.data_from) = (*pos as usize, None),
             Op::RestoreDyn => {
                 let target = self.pop();
                 if !self.restore_special(&target)? {
-                    let name = label_name(&target)?;
-                    let pos = program.data_labels.get(&name).ok_or_else(|| {
-                        Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}"))
-                    })?;
-                    self.data_pos = *pos as usize;
+                    // "n:@LABEL" sends READ to another slot's DATA, as
+                    // FINITI does to read models from the program that
+                    // calls it.
+                    // UNVERIFIED: that a slot EXEC has not run gives
+                    // Undefined label.
+                    let (slot, name) = slot_and_name(&target)?;
+                    let from = slot
+                        .filter(|&s| s != self.slot)
+                        .map(|s| self.program_in(s).cloned());
+                    let undefined =
+                        || Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}"));
+                    let from = match from {
+                        Some(None) => return Err(undefined()),
+                        Some(Some(p)) => Some(p),
+                        None => None,
+                    };
+                    let source = from.as_deref().unwrap_or(program);
+                    let pos = *source.data_labels.get(&name).ok_or_else(undefined)?;
+                    (self.data_pos, self.data_from) = (pos as usize, from);
                 }
             }
             Op::Read => {
-                let item = program
-                    .data
-                    .get(self.data_pos)
-                    .ok_or(ErrorKind::OutOfData)?;
+                let source = self.data_from.as_deref().unwrap_or(program);
+                let item = source.data.get(self.data_pos).ok_or(ErrorKind::OutOfData)?;
                 self.data_pos += 1;
                 self.stack.push(match item {
                     Literal::Int(n) => Value::Int(*n),
@@ -1428,6 +1466,27 @@ impl Vm {
         } else {
             Ok(None)
         }
+    }
+
+    /// VAR("n:NAME") of another slot that EXEC has run: its global, or
+    /// `None` for a name without another slot.
+    // UNVERIFIED: the error for a slot EXEC has not run.
+    fn other_global(&mut self, target: &Value) -> Result<Option<&mut Value>> {
+        let (slot, name) = slot_and_name(target)?;
+        let Some(slot) = slot.filter(|&s| s != self.slot) else {
+            return Ok(None);
+        };
+        let undefined =
+            || Error::with_detail(ErrorKind::UndefinedVariable, format!("{slot}:{name}"));
+        let unit = self
+            .units
+            .get_mut(slot)
+            .and_then(Option::as_mut)
+            .ok_or_else(undefined)?;
+        let i = (unit.program.globals.iter())
+            .position(|v| v.full_name() == name)
+            .ok_or_else(undefined)?;
+        Ok(Some(&mut unit.globals[i]))
     }
 
     fn dynamic_slot(&self, name: &str) -> Result<Slot> {
