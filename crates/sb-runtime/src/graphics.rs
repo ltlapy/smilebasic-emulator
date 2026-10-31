@@ -648,6 +648,74 @@ impl Graphics {
         }
     }
 
+    /// GPUTCHRP's view of a character: the first column with anything
+    /// drawn and how many columns it spans, or `None` for a blank one.
+    fn ink(&self, font: &Font, code: u16, size: FontSize) -> Option<(i32, i32)> {
+        let n = size as u32;
+        let inked =
+            |gx: u32| (0..n).any(|gy| glyph_pixel(font, self, code, size, gx, gy) >> 24 != 0);
+        let left = (0..n).find(|&gx| inked(gx))?;
+        let right = (0..n).rev().find(|&gx| inked(gx))?;
+        Some((left as i32, (right - left + 1) as i32))
+    }
+
+    /// How far GPUTCHRP moves on after a character, before the spacing.
+    // UNVERIFIED: that a character is as wide as what is drawn of it, and
+    // a blank one a quarter of the font size, as font.map's widths
+    // suggest for the space.
+    fn advance(&self, font: &Font, code: u16, size: FontSize) -> i32 {
+        self.ink(font, code, size)
+            .map_or(size as i32 / 4, |(_, w)| w)
+    }
+
+    /// GPUTCHRP's function form: how wide `text` is drawn.
+    // UNVERIFIED: that the spacing comes only between characters and is
+    // not scaled.
+    pub fn proportional_width(
+        &self,
+        font: &Font,
+        text: &[u16],
+        size: FontSize,
+        sx: i32,
+        spacing: i32,
+    ) -> i32 {
+        let widths: i32 = text.iter().map(|&c| self.advance(font, c, size) * sx).sum();
+        widths + spacing * (text.len() as i32 - 1).max(0)
+    }
+
+    /// GPUTCHRP: characters as wide as each is, `spacing` pixels apart.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_chars_proportional(
+        &mut self,
+        font: &Font,
+        (x, y): (i32, i32),
+        text: &[u16],
+        size: FontSize,
+        (sx, sy): (i32, i32),
+        color: u32,
+        blend: Blend,
+        spacing: i32,
+    ) {
+        let mut left = x;
+        for &code in text {
+            if let Some((ink, width)) = self.ink(font, code, size) {
+                for gy in 0..size as i32 {
+                    for gx in ink..ink + width {
+                        let glyph = glyph_pixel(font, self, code, size, gx as u32, gy as u32);
+                        let p = multiply(glyph, color);
+                        for py in 0..sy {
+                            for px in 0..sx {
+                                let at = left.saturating_add((gx - ink) * sx + px);
+                                self.plot(at, y + gy * sy + py, p, blend);
+                            }
+                        }
+                    }
+                }
+            }
+            left = left.saturating_add(self.advance(font, code, size) * sx + spacing);
+        }
+    }
+
     /// GSAVE: a rectangle of a page, row by row.
     pub fn save_rect(&self, page: usize, (x, y, w, h): (i32, i32, i32, i32)) -> Vec<u32> {
         let mut pixels = Vec::with_capacity((w.max(0) * h.max(0)) as usize);

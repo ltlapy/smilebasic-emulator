@@ -234,26 +234,10 @@ impl Runtime {
             }
             (Command::Gputchr, Want::Outs(0), 3..=8) => {
                 let v = ints(2)?;
-                let text = match &args[2] {
-                    Value::Str(s) => s.borrow().clone(),
-                    // A number stands for one character code.
-                    other => vec![int(other)? as u16],
-                };
-                let size = match args.get(3).map(opt_int).transpose()?.flatten() {
-                    None | Some(16) => FontSize::Large,
-                    Some(8) => FontSize::Small,
-                    Some(n) => return Err(out_of_range("font size", n)),
-                };
+                let text = chars_arg(&args[2])?;
+                let size = font_size_arg(args.get(3))?;
                 let (scale, rest) = match args.len() {
-                    7 | 8 => {
-                        let (sx, sy) = (int(&args[4])?, int(&args[5])?);
-                        for s in [sx, sy] {
-                            if !(1..=32767).contains(&s) {
-                                return Err(out_of_range("scale", s));
-                            }
-                        }
-                        ((sx, sy), &args[6..])
-                    }
+                    7 | 8 => (scale_args(&args[4], &args[5])?, &args[6..]),
                     _ => ((1, 1), args.get(4..).unwrap_or(&[])),
                 };
                 let (color, blend) = self.color_and_blend(rest)?;
@@ -261,6 +245,55 @@ impl Runtime {
                 self.grp
                     .put_chars(font, (v[0], v[1]), &text, size, scale, color, blend);
                 Ok(vec![])
+            }
+            // GPUTCHRP X,Y,text[,font[,color[,method]]] or
+            // X,Y,text,font,scale X,scale Y,color[,method[,spacing]]:
+            // proportional characters, drawn over transparent pixels by
+            // default.
+            (Command::Gputchrp, Want::Outs(0), 3..=9) => {
+                let v = ints(2)?;
+                let text = chars_arg(&args[2])?;
+                let size = font_size_arg(args.get(3))?;
+                let (scale, rest) = match args.len() {
+                    7..=9 => (scale_args(&args[4], &args[5])?, &args[6..]),
+                    3..=6 => ((1, 1), args.get(4..).unwrap_or(&[])),
+                    _ => return Err(no_form()),
+                };
+                let color = match rest.first().map(opt_int).transpose()?.flatten() {
+                    Some(c) => c as u32,
+                    None => self.grp.color,
+                };
+                let blend = match rest.get(1) {
+                    None | Some(Value::Default) => Blend::Normal2,
+                    Some(v) => blend_arg(v)?,
+                };
+                let spacing = spacing_arg(rest.get(2))?;
+                let font = &self.font;
+                self.grp.put_chars_proportional(
+                    font,
+                    (v[0], v[1]),
+                    &text,
+                    size,
+                    scale,
+                    color,
+                    blend,
+                    spacing,
+                );
+                Ok(vec![])
+            }
+            // GPUTCHRP(text[,font[,scale X[,spacing]]]): the width drawn.
+            (Command::Gputchrp, Want::Value, 1..=4) => {
+                let text = chars_arg(&args[0])?;
+                let size = font_size_arg(args.get(1))?;
+                let sx = match args.get(2).map(opt_int).transpose()?.flatten() {
+                    None => 1,
+                    Some(s) => scale_args(&Value::Int(s), &Value::Int(1))?.0,
+                };
+                let spacing = spacing_arg(args.get(3))?;
+                let width = self
+                    .grp
+                    .proportional_width(&self.font, &text, size, sx, spacing);
+                Ok(vec![Value::Int(width)])
             }
             (Command::Gsave, Want::Outs(0), 1 | 2 | 5 | 6) => {
                 let (page, rest) = match args.len() {
@@ -347,5 +380,42 @@ impl Runtime {
             }
             _ => Err(no_form()),
         }
+    }
+}
+
+/// GPUTCHR's and GPUTCHRP's text: a string, or a number for one character.
+fn chars_arg(v: &Value) -> Result<Vec<u16>> {
+    Ok(match v {
+        Value::Str(s) => s.borrow().clone(),
+        other => vec![int(other)? as u16],
+    })
+}
+
+/// A font type of 8 or 16, 16 when left out.
+fn font_size_arg(v: Option<&Value>) -> Result<FontSize> {
+    match v.map(opt_int).transpose()?.flatten() {
+        None | Some(16) => Ok(FontSize::Large),
+        Some(8) => Ok(FontSize::Small),
+        Some(n) => Err(out_of_range("font size", n)),
+    }
+}
+
+/// Scales of 1 to 32767.
+fn scale_args(x: &Value, y: &Value) -> Result<(i32, i32)> {
+    let (sx, sy) = (int(x)?, int(y)?);
+    for s in [sx, sy] {
+        if !(1..=32767).contains(&s) {
+            return Err(out_of_range("scale", s));
+        }
+    }
+    Ok((sx, sy))
+}
+
+/// GPUTCHRP's space between characters: 0 to 64 pixels, 1 when left out.
+fn spacing_arg(v: Option<&Value>) -> Result<i32> {
+    match v.map(opt_int).transpose()?.flatten() {
+        None => Ok(1),
+        Some(n @ 0..=64) => Ok(n),
+        Some(n) => Err(out_of_range("spacing", n)),
     }
 }

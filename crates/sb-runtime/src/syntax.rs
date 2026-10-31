@@ -136,6 +136,7 @@ pub(crate) const COMMANDS: &[&str] = &[
     "GPGET",
     "GPSET",
     "GPUTCHR",
+    "GPUTCHRP",
     "GSAMPLE",
     "GSAVE",
     "GTARGET",

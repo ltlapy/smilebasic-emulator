@@ -99,6 +99,7 @@ pub(crate) enum Command {
     Gpget,
     Gpset,
     Gputchr,
+    Gputchrp,
     Gsample,
     Gsave,
     Gtarget,
@@ -316,6 +317,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GPGET", Command::Gpget),
     ("GPSET", Command::Gpset),
     ("GPUTCHR", Command::Gputchr),
+    ("GPUTCHRP", Command::Gputchrp),
     ("GSAMPLE", Command::Gsample),
     ("GSAVE", Command::Gsave),
     ("GTARGET", Command::Gtarget),
@@ -1523,6 +1525,7 @@ impl Runtime {
                 | Command::Gpget
                 | Command::Gpset
                 | Command::Gputchr
+                | Command::Gputchrp
                 | Command::Gsample
                 | Command::Gsave
                 | Command::Garray
