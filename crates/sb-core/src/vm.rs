@@ -1577,7 +1577,11 @@ impl Vm {
     fn enter_def(&mut self, def: u32, args: Vec<Value>, want: Want, caller: usize) -> Result<()> {
         let info = &self.program.defs[def as usize];
         let call_ok = match want {
-            Want::Value => info.is_function,
+            // A DEF with any number of OUTs may be called as a function,
+            // giving its first.
+            // UNVERIFIED: FINITI does so with TEXTURE_LINK and runs on
+            // hardware.
+            Want::Value => info.is_function || info.outs.is_none(),
             Want::Outs(n) => !info.is_function && info.outs.is_none_or(|m| m == n),
         };
         let args_ok = info.params.is_none_or(|p| usize::from(p) == args.len());

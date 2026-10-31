@@ -298,6 +298,12 @@ fn variadic_defs() {
 }
 
 #[test]
+fn variadic_outs_as_a_function() {
+    let src = "DEF F * OUT *\nDEFOUT 0,DEFARG(0)*2+DEFOUTC()\nEND\n?F(20)";
+    assert_eq!(output(src), "41\n");
+}
+
+#[test]
 fn array_parameters_may_say_so() {
     let src = "DEF F(A[],B)\nRETURN A[1]+B\nEND\nDEF G A[] OUT C\nC=A[0]\nEND\nDIM X[]=[1,2]\nG X OUT D\n?F(X,3);D";
     assert_eq!(output(src), "51\n");
