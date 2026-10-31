@@ -289,9 +289,9 @@ impl Runtime {
             (Command::Freemem, Want::Outs(2), 0) => Ok(vec![Value::Int(FREE_MEMORY as i32); 2]),
             (Command::Fontinfo, Want::Outs(2), 2) => {
                 let code = match &args[0] {
-                    Value::Str(s) => s.borrow().first().copied().ok_or_else(|| {
-                        Error::with_detail(ErrorKind::IllegalFunctionCall, "empty string")
-                    })?,
+                    Value::Str(s) => {
+                        (s.borrow().first().copied()).ok_or(ErrorKind::CantUseEmptyString)?
+                    }
                     v => u16::try_from(int(v)?)
                         .map_err(|_| Error::with_detail(ErrorKind::OutOfRange, "character code"))?,
                 };
@@ -305,12 +305,8 @@ impl Runtime {
                         ));
                     }
                 };
-                // UNVERIFIED: the error for a user-defined character.
                 if USER_CHARS.contains(&code) {
-                    return Err(Error::with_detail(
-                        ErrorKind::IllegalFunctionCall,
-                        "user-defined character",
-                    ));
+                    return Err(ErrorKind::CantUseUserDefinedCharacter.into());
                 }
                 let (x, y) = self.font.origin(code, size).ok_or_else(|| {
                     Error::with_detail(ErrorKind::IllegalFunctionCall, "no glyph on GRPF")

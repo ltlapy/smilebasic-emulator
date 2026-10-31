@@ -117,6 +117,10 @@ fn free_memory_and_font_places() {
     );
     assert_eq!(
         run("FONTINFO &HE800,8 OUT X,Y").unwrap_err().kind,
-        ErrorKind::IllegalFunctionCall
+        ErrorKind::CantUseUserDefinedCharacter
+    );
+    assert_eq!(
+        run("FONTINFO \"\",8 OUT X,Y").unwrap_err().kind,
+        ErrorKind::CantUseEmptyString
     );
 }

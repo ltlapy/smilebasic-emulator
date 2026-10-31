@@ -360,7 +360,9 @@ impl Runtime {
                         saturation: real(s)?,
                         value: real(v)?,
                     },
-                    (0..=5, _) => return Err(no_form()),
+                    // Checked on hardware for type 0 with a parameter.
+                    (0, _) => return Err(out_of_range("filter type", 0)),
+                    (1..=5, _) => return Err(no_form()),
                     (n, _) => return Err(out_of_range("filter type", n)),
                 };
                 Ok(vec![])

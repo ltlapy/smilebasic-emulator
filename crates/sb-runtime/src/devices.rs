@@ -44,18 +44,15 @@ fn unrecognized(outs: usize, allowed: &[usize]) -> Result<Vec<Value>> {
 
 impl Runtime {
     /// The Toy-Con that XCTRLSTYLE set up for a controller must be one of
-    /// `types` on either side.
-    // UNVERIFIED: the error when it is not.
+    /// `types` on either side: Illegal control style otherwise (checked
+    /// on hardware without any Toy-Con set up).
     fn toycon_set(&self, pad: usize, types: &[i32]) -> Result<()> {
         let input = &self.input;
         let sides = &input.toycons[pad * 2..pad * 2 + 2];
         if input.style.1 == TOYCON_STYLE && sides.iter().any(|t| types.contains(t)) {
             Ok(())
         } else {
-            Err(Error::with_detail(
-                ErrorKind::IllegalFunctionCall,
-                "Toy-Con not set up by XCTRLSTYLE",
-            ))
+            Err(ErrorKind::IllegalControlStyle.into())
         }
     }
 
@@ -67,8 +64,9 @@ impl Runtime {
     ) -> Result<Vec<Value>> {
         let outs = want.count();
         match (command, want, args.len()) {
-            // The camera starts and stops, and never sees anything.
-            // UNVERIFIED: the error when XCTRLSTYLE did not allow it.
+            // The camera starts and stops, and never sees anything. Without
+            // XCTRLSTYLE's IR flag it is not available (checked on
+            // hardware).
             (Command::Irstart, Want::Outs(0), 2..=8) => {
                 let pad = pad(&args[0])?;
                 let mode = in_range("recognition type", &args[1], 0..=2)?;
@@ -76,10 +74,7 @@ impl Runtime {
                     return Err(out_of_range("controller", pad as i32 + 1));
                 }
                 if !self.input.ir_allowed {
-                    return Err(Error::with_detail(
-                        ErrorKind::IllegalFunctionCall,
-                        "IR camera not allowed by XCTRLSTYLE",
-                    ));
+                    return Err(ErrorKind::IrCameraNotAvailable.into());
                 }
                 for a in &args[2..] {
                     crate::runtime::opt_int(a)?;
