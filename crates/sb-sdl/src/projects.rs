@@ -53,8 +53,8 @@ enum Button {
 const PROJECT_BUTTONS: [Button; 4] = [Button::New, Button::Rename, Button::Delete, Button::More];
 /// The buttons under the files.
 const FILE_BUTTONS: [Button; 4] = [
-    Button::LoadTo,
     Button::Run,
+    Button::LoadTo,
     Button::CopyTo,
     Button::DeleteFile,
 ];
@@ -1719,7 +1719,7 @@ mod tests {
         assert!(last.x + last.w <= list.x + list.w, "under the projects");
         let last = m.button(Button::DeleteFile);
         assert!(last.x + last.w <= files.x + files.w, "under the files");
-        assert!(m.button(Button::LoadTo).y > files.y + files.h);
+        assert!(m.button(Button::Run).y > files.y + files.h);
         assert!(m.button(Button::Close).y > m.button(Button::LoadTo).y + LINE);
         let last = m.slot_button(SLOTS - 1);
         assert!(last.x + last.w < m.slot_button(SLOTS).x);
