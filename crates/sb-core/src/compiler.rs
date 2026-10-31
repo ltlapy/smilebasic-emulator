@@ -160,6 +160,7 @@ impl Compiler<'_> {
                     self.out.defs.push(DefInfo {
                         name,
                         entry: 0,
+                        end: 0,
                         is_function: def.is_function,
                         common: def.common,
                         params: match &def.params {
@@ -1456,6 +1457,7 @@ impl Compiler<'_> {
         } else {
             self.emit(Op::Return);
         }
+        self.out.defs[index as usize].end = self.here();
         self.resolve_patches(Some(index))?;
         self.def = None;
         Ok(())

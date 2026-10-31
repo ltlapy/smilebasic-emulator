@@ -509,6 +509,27 @@ impl Vm {
         self.stop_at = Some(at);
     }
 
+    /// Goes on from `line` of the running slot instead, as GOTO would, if
+    /// that is in the same DEF, or outside DEFs as the program is. False
+    /// when it is not.
+    pub fn jump_to(&mut self, line: u32) -> bool {
+        let program = &self.program;
+        let def_at = |pc: usize| {
+            (program.defs.iter()).position(|d| (d.entry as usize..d.end as usize).contains(&pc))
+        };
+        let here = def_at(self.pc);
+        let to = (program.lines.iter().enumerate()).position(|(pc, &l)| {
+            l == line && (pc == 0 || program.lines[pc - 1] != l) && def_at(pc) == here
+        });
+        let Some(to) = to else {
+            return false;
+        };
+        self.pc = to;
+        self.trace = None;
+        self.passed = None;
+        true
+    }
+
     /// The program's top level and the DEFs and GOSUBs under way, with
     /// where each one is; the innermost last.
     pub fn calls(&self) -> Vec<Call> {

@@ -628,6 +628,24 @@ impl Machine {
         true
     }
 
+    /// Makes the stopped program go on from a line of its slot, in the
+    /// same DEF, or outside DEFs as it is. False when it cannot.
+    pub fn jump_to(&mut self, line: u32) -> bool {
+        if self.rt.stopped != Stopped::Paused {
+            return false;
+        }
+        let Some(vm) = &mut self.halted else {
+            return false;
+        };
+        if !vm.jump_to(line) {
+            return false;
+        }
+        if let Some(top) = self.rt.backtrace.first_mut() {
+            top.1 = line;
+        }
+        true
+    }
+
     /// Where the stopped program goes on: its slot and the line about to
     /// run.
     pub fn paused_at(&self) -> Option<(usize, u32)> {

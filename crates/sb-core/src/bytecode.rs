@@ -250,6 +250,8 @@ pub fn full_name(name: &str, suffix: Option<Suffix>) -> String {
 pub struct DefInfo {
     pub name: String,
     pub entry: Addr,
+    /// Where the code after the body starts.
+    pub end: Addr,
     pub is_function: bool,
     /// COMMON DEF: callable from other program slots.
     pub common: bool,

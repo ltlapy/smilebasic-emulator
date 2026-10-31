@@ -899,3 +899,27 @@ fn breakpoints_follow_edited_lines() {
     enter(&mut m, "RUN");
     assert_eq!(m.paused_at(), Some((0, 4)));
 }
+
+#[test]
+fn jump_to_a_line_in_the_same_def() {
+    use sb_runtime::machine::Resume;
+    let src = "STOP\n?\"A\"\n?\"B\"\nF\nEND\nDEF F\n ?\"C\"\n STOP\n ?\"D\"\nEND";
+    let mut m = machine();
+    m.set_slot(0, src.to_string());
+    enter(&mut m, "RUN");
+    assert!(m.jump_to(3));
+    assert_eq!(m.paused_at(), Some((0, 3)));
+    debug(&mut m, Resume::Cont);
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 4..], ["B", "C", "Break on 0:8", "OK"]);
+    // Not out of the DEF, nor onto a line without code.
+    assert!(!m.jump_to(3));
+    assert!(!m.jump_to(6));
+    assert!(m.jump_to(7));
+    debug(&mut m, Resume::Cont);
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 3..], ["C", "Break on 0:8", "OK"]);
+    // Nor once the program has ended.
+    debug(&mut m, Resume::Cont);
+    assert!(!m.jump_to(2));
+}
