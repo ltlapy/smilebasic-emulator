@@ -223,9 +223,9 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 
 /// BQPARAM coefficients, type, rate, cutoff, Q or bandwidth [, gain]: the
 /// coefficients of Robert Bristow-Johnson's Audio EQ Cookbook, divided by
-/// a0. Elements 5 to 12 are left alone.
-// UNVERIFIED: the cookbook's formulas, the band-pass with a 0 dB peak, and
-// shelves taking Q; the error for a zero Q.
+/// a0, with the band-pass at a 0 dB peak and shelves taking Q (all eight
+/// types match hardware to five places). Elements 5 to 12 are left alone.
+// UNVERIFIED: the error for a zero Q.
 // Checked on hardware: the gain is given for types 5 to 7 only, else
 // Wrong number of arguments, and a zero rate is an Illegal function call.
 pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
