@@ -200,11 +200,16 @@ impl Runtime {
     ) -> Result<Vec<Value>> {
         match (command, want, args.len()) {
             (Command::Tofs, Want::Outs(0), 3 | 4) => {
-                let (x, y) = (real(&args[1])?, real(&args[2])?);
+                // X and Y may be left out (`TOFS 0,,,10`).
+                let coord = |v: &Value| match v {
+                    Value::Default => Ok(None),
+                    v => real(v).map(Some),
+                };
+                let (x, y) = (coord(&args[1])?, coord(&args[2])?);
                 let z = args.get(3).map(opt_int).transpose()?.flatten();
                 let z = z.map(|n| self::z(&Value::Int(n))).transpose()?;
                 let t = &mut self.text[screen_id(&args[0])?];
-                t.pos = (x, y);
+                t.pos = (x.unwrap_or(t.pos.0), y.unwrap_or(t.pos.1));
                 t.z = z.unwrap_or(t.z);
                 Ok(vec![])
             }

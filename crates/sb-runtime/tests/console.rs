@@ -46,7 +46,8 @@ fn omitted_coordinates_and_screens() {
 #[test]
 fn errors() {
     let kind = |src| run(src).err().map(|e| e.kind);
-    assert_eq!(kind("LOCATE 50,0"), Some(ErrorKind::OutOfRange));
+    assert_eq!(kind("LOCATE 50,0"), None);
+    assert_eq!(kind("LOCATE 51,0"), Some(ErrorKind::OutOfRange));
     assert_eq!(kind("CLS 5"), Some(ErrorKind::OutOfRange));
     // No form takes that many arguments, as LOCATE and TOFS on hardware.
     assert_eq!(kind("COLOR 1,2,3"), Some(ErrorKind::WrongNumberOfArguments));

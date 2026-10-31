@@ -214,6 +214,7 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   vibrates: after `VIBRATE 1,40` it is 2621480 (40 on the right times
   65536, plus 40 on the left) and `VIBRATE(1,0)` 40; with frequencies
   it is -1, still a second later. `VIBRATE` alone clears it.
+- `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`).
 
 ## Screens and text
 
@@ -232,6 +233,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   indexes past the palette are no error.
 - `TCHK` reports nothing for `"I"` and `"UV"`, which text screens ignore.
   `SPCHK` and `TCHK` give 0 while the animations are stopped.
+- `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on
+  the 50-column console).
+- `TOFS` takes X and Y left out (`TOFS 0,,,10`).
 
 ## Sprites
 
@@ -453,6 +457,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `KEY` 1 to 5 start as `FILES`, `LOAD"`, `SAVE"`, `LIST ERR` and `RUN`
   (the settings can change them). `KEY` ignores a string over 256
   characters; `PUSHKEY` over 64 is `String is too long`.
+- `XSUBSCREEN` and the undocumented `UISTATE` are there for the main
+  program too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
 
 ## Errors and the editor
 

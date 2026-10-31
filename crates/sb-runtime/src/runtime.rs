@@ -249,6 +249,8 @@ pub(crate) enum Command {
     Wavseta,
     Xctrlstyle,
     Xscreen,
+    Xsubscreen,
+    Uistate,
 }
 
 const COMMANDS: &[(&str, Command)] = &[
@@ -467,6 +469,8 @@ const COMMANDS: &[(&str, Command)] = &[
     ("WAVSETA", Command::Wavseta),
     ("XCTRLSTYLE", Command::Xctrlstyle),
     ("XSCREEN", Command::Xscreen),
+    ("XSUBSCREEN", Command::Xsubscreen),
+    ("UISTATE", Command::Uistate),
 ];
 
 /// Program slots PRG0 to PRG5.
@@ -1555,6 +1559,8 @@ impl Runtime {
             (
                 Command::Clipboard
                 | Command::Envfocus
+                | Command::Uistate
+                | Command::Xsubscreen
                 | Command::Envinput
                 | Command::Envload
                 | Command::Envproject

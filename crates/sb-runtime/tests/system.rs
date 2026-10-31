@@ -124,3 +124,12 @@ fn free_memory_and_font_places() {
         ErrorKind::CantUseEmptyString
     );
 }
+
+#[test]
+fn what_only_subprograms_use() {
+    assert_eq!(
+        run("XSUBSCREEN 0,0,400,240:XSUBSCREEN OUT X,Y:?UISTATE(0);X;Y").unwrap(),
+        "000"
+    );
+    assert_eq!(run("PUSHKEY 65622:PUSHKEY 65:?INKEY$()").unwrap(), "A");
+}

@@ -310,7 +310,9 @@ impl TextScreen {
         let x = x.unwrap_or(self.cursor.0 as i32);
         let y = y.unwrap_or(self.cursor.1 as i32);
         let fits = |v: i32, max: u32| u32::try_from(v).is_ok_and(|v| v < max);
-        if !fits(x, self.width) || !fits(y, self.height) {
+        // The column just past the right edge is where a full line leaves
+        // the cursor.
+        if !fits(x, self.width + 1) || !fits(y, self.height) {
             return false;
         }
         self.cursor = (x as u32, y as u32);
@@ -750,7 +752,9 @@ mod tests {
         assert_eq!(row(&s, 0), "A   B");
         assert!(s.locate(Some(9), None));
         assert_eq!(s.cursor(), (9, 0));
-        assert!(!s.locate(Some(10), Some(0)));
+        // Just past the right edge is allowed; beyond it is not.
+        assert!(s.locate(Some(10), Some(0)));
+        assert!(!s.locate(Some(11), Some(0)));
         assert!(!s.locate(None, Some(-1)));
         s.cls();
         assert_eq!((s.cursor(), row(&s, 0).as_str()), ((0, 0), ""));

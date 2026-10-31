@@ -145,6 +145,28 @@ impl Runtime {
                 Ok(out)
             }
             (Command::Envfocus, Want::Value, []) => Ok(vec![int(1)]),
+            // The sub-screen does nothing outside a subprogram, and gives
+            // 0s.
+            (Command::Xsubscreen, Want::Outs(0), [_] | [_, _, _, _]) => {
+                for a in args {
+                    a.to_int()?;
+                }
+                Ok(vec![])
+            }
+            (Command::Xsubscreen, Want::Outs(n @ 2..=4), []) => Ok(vec![int(0); usize::from(n)]),
+            // The system's own UI state (soft keyboard and help shown), which
+            // reads 0 for the main interpreter.
+            // UNVERIFIED: the other numbers, and that setting it does nothing
+            // here.
+            (Command::Uistate, Want::Value, [n]) => {
+                n.to_int()?;
+                Ok(vec![int(0)])
+            }
+            (Command::Uistate, Want::Outs(0), [n, v]) => {
+                n.to_int()?;
+                v.to_int()?;
+                Ok(vec![])
+            }
             (Command::Envfocus, Want::Outs(0), [flag]) => {
                 flag.to_int()?;
                 Ok(vec![])
