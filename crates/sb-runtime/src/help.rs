@@ -259,8 +259,8 @@ impl Runtime {
         match (command, want, args) {
             // The lines, their types, their colored runs as position,
             // length and color, and the example.
-            // UNVERIFIED: pages count from 0; the runs' array is at least
-            // one run wide.
+            // Checked on hardware: pages count from 0; the runs' array is
+            // one run wide where no line has more.
             (Command::Helpget, Want::Outs(4), [name, page]) => {
                 let (_, pages) = self.help_pages(name)?;
                 let n = page.to_int()?;
@@ -283,7 +283,12 @@ impl Runtime {
                     for k in 0..width {
                         let at = (r * width + k) * 3;
                         let run = match line.spans.get(k) {
-                            Some(s) => [f64::from(s.pos), f64::from(s.len), f64::from(s.color)],
+                            // The color comes opaque (checked on hardware).
+                            Some(s) => [
+                                f64::from(s.pos),
+                                f64::from(s.len),
+                                f64::from((s.color | 0xFF00_0000) as i32),
+                            ],
                             None => [-1.0, 0.0, 0.0],
                         };
                         runs[at..at + 3].copy_from_slice(&run);
@@ -502,7 +507,7 @@ mod tests {
                 .collect();
             String::from_utf16(&codes).unwrap()
         };
-        assert_eq!(row(0), "if form134F39800IF 1 THEN");
+        assert_eq!(row(0), "if form134FFF39800IF 1 THEN");
         assert_eq!(row(1), "11");
         assert_eq!(row(2), "DEFAULTHELPKEY1");
 
