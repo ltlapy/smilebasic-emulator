@@ -20,6 +20,12 @@ follows all of it. Items still waiting for a check are marked
   after they are set. They also play in direct mode, and go on while the
   editor is open.
 - An animation key that lasts 0 frames is `Illegal animation data`.
+- How much a program runs in a frame (4.4.9, timed with `MAINCNT()`):
+  in 60 frames a `WHILE MAINCNT()-T<60:INC N:WEND` loop goes round
+  2395924 times on a Switch, 5962406 on a Switch 2 and 2837664 in
+  Ryujinx; a loop of `FOR J=1 TO 100:X=X+J*2:Y=Y XOR J:NEXT` 21371,
+  52145 and 29141 times. No program needs that speed: the emulator runs
+  code as fast as it can.
 
 ## Values and variables
 
@@ -67,8 +73,19 @@ follows all of it. Items still waiting for a check are marked
   changing a later size `Illegal function call`.
 - `RINGCOPY` reading past the end of its source is `Illegal function
   call`, not `Out of range` as for `COPY`.
+- `REMOVE` with a count of 0 removes nothing and is no error, also on an
+  empty array and at the position just past the end.
+- `RGB` takes components outside 0 to 255 and clamps them:
+  `RGB(584,0,0)` is `&HFFFF0000`, a component of -1 gives 0, and so
+  do alpha 300 and `RGB(C,,256,,)`.
 - `TVAR` cuts a real key down to an integer: keys 1.5 and 1 are the
   same.
+- `SPVAR` and `TVAR` keep an array given to them as the same array, not a
+  copy: what is changed through one shows through the other.
+- `OPTION STRICT` holds from where it stands. A variable used before it
+  without `VAR` can be used after it, and a DEF before it is not checked.
+- A DEF's parameters may be written `A[]`; passing a number for one and
+  indexing it is `Type mismatch` on the indexing line.
 
 ## Direct mode
 
@@ -152,6 +169,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `SPANIM` with a `"@label"` reads its DATA with `READ`'s own place: it
   restores to the label, and `READ` goes on after the values it took.
 - `COPY` from a `"@label"` leaves `READ`'s place alone.
+- `BGMSETD`'s MML may end with the program's last DATA instead of a 0,
+  and any number ends it: in `"..",5,"..",0` the strings after the 5 are
+  not played.
+- `RESTORE @LABEL` to a label that is not there is `Undefined label`
+  only when it runs.
 - `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack
   underflow`. A subroutine that keeps a place must take it back before
   `RETURN`, which is otherwise `Use RESTORE POP before RETURN`. A
@@ -247,9 +269,24 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   each time. A write to it is seen at once by `GPGET`, also where
   `GPSET` drew next to it.
 - `GUPDATE` with a coordinate of 2048 is `Out of range`.
-- `LFILTER layer,0,n` is `Out of range`. 4.4.9 has no raster
-  deformation: types 3 and 4 are `Out of range` with any array shape,
-  and `Type mismatch` for the array when the repeat flag follows.
+- `LFILTER layer,0,n` is `Out of range`. Raster deformation (types 3
+  and 4) needs the repeat flag: `LFILTER 1,3,A,#TRUE` with a real
+  `A[240,4]` or `A[240,2]` works, while without the flag it is `Out of
+  range` for the type whatever the array; `A[4,100]` or an Int array with
+  the flag is `Type mismatch`.
+- Raster deformation works as OpenGL would: each row (type 3) or column
+  (type 4) takes an entry of X offset, X scale, Y offset and Y scale in
+  screen axes for either type, and a pixel shows the source at its
+  center times the scale plus the offset in screen widths or heights,
+  measured from the left and from the bottom. A positive X offset moves
+  the picture left; a Y scale of 0.5 stretches the bottom half over the
+  screen. Without repeat, what falls off shows black, BACKCOLOR included
+  on a layer that is not composed. Checked pixel for pixel with
+  screenshots (TTEST26).
+- `LMATRIX layer,M` with 16 reals takes the layer's coordinates as
+  (x, y, 0, 1) through M to clip space, X right and Y up: the identity
+  puts the layer's square from (0,0) to (1,1) over the screen's top
+  right quarter.
 - On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
   the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
   On a composed layer it filters only that layer. Mosaic blocks start at
