@@ -75,10 +75,14 @@ follows all of it. Items still waiting for a check are marked
 - `INSPECT` (or `??`) prints `INT: 1`, `REAL: 1.50000000` (always 8
   decimals) or `STRING: (2)"AB"` (a 50-character string still whole).
   An array prints `INT[2,2]:`, then ` [0,1]: 0` for each element
-  (strings as `(2)"HI"`), then an empty line. A long array stops with
-  `=== Press ENTER ===` on the row above the last.
-- `CHKCALL` is 0 for `PRINT`, `GOTO`, `INC`, `STOP`, `CONT` and `RUN`, and
-  1 for `VSYNC`, `INSPECT`, `CALLIDX` and `DEFARGC`. It ignores case.
+  (strings as `(2)"HI"`), then an empty line. A 300-character string is
+  shown whole. A long listing stops every 28 lines with
+  `=== Press ENTER ===` on the last row, which stays free while it
+  prints.
+- `CHKCALL` is 0 for `PRINT`, `GOTO`, `INC`, `DEC`, `STOP`, `CONT`,
+  `RUN`, `NEW`, `CLEAR`, `LIST`, `TRACE`, `BACKTRACE`, `EXEC`, `DEFOUT`
+  and `END`, and 1 for `VSYNC`, `WAIT`, `INSPECT`, `CALLIDX`, `DEFARGC`,
+  `PROJECT`, `FILES`, `ACLS`, `LOAD` and `SAVE`. It ignores case.
   `CHKLABEL` needs the `@`: `CHKLABEL("P1")` is 0. `CHKLABEL("1:@X")` on
   a slot `EXEC` has not run is 0.
 - `? ?1` prints an empty line, then 1.
@@ -271,9 +275,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   program it is a `Syntax error` when it runs.
 - `BACKTRACE` lists, innermost first, the line it stopped on and the
   line of each DEF call and `GOSUB` it is in, as `0:    92` (the line
-  right-aligned in 6 places). It works after an error too.
-- `TRACE` inside a DEF is `Can't trace`, and `CONT` cannot go on after
-  that.
+  right-aligned in 6 places). It works after an error too, and prints
+  nothing when no program has stopped. After it, `CONT` and `TRACE`
+  could not go on.
+- `TRACE` runs one statement and says `Break on 0:2` with that
+  statement's line, also inside a `GOSUB`. A `FOR` runs together with
+  the first statement of its body. After an error it is `Can't trace`.
+- `Break on` follows whatever was printed: after `?"X";` it reads
+  `XBreak on 0:16`.
 - `ENVSTAT()` on the main interpreter is 3 (running), also typed in
   direct mode while a program is stopped or after an error; its OUT
   forms then report no error.
