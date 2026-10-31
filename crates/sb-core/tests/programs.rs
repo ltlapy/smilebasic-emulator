@@ -771,6 +771,9 @@ fn initialized_arrays_keep_their_sizes() {
     assert_eq!(output("ABS -3 OUT A:?A"), "3\n");
     assert_eq!(output("HSV 120,255,255 OUT C:?HEX$(C,8)"), "FF00FF00\n");
     assert_eq!(output("CALL \"LEN\",\"AB\" OUT L:?L"), "2\n");
+    // DEFs too: one with an OUT as a function, a function with one OUT.
+    assert_eq!(output("?F(3)\nDEF F A OUT R\n R=A*2\nEND"), "6\n");
+    assert_eq!(output("T OUT X:?X\nDEF T()\n RETURN 5\nEND"), "5\n");
     // A variable used before its DIM is a duplicate, checked on hardware.
     assert_eq!(
         error("S$=\"A\"\nDIM S$[4]"),

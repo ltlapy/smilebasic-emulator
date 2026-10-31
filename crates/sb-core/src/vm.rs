@@ -1889,12 +1889,15 @@ impl Vm {
     fn enter_def(&mut self, def: u32, args: Vec<Value>, want: Want, caller: usize) -> Result<()> {
         let info = &self.program.defs[def as usize];
         let call_ok = match want {
-            // A DEF with any number of OUTs may be called as a function,
-            // giving its first.
-            // UNVERIFIED: FINITI does so with TEXTURE_LINK and runs on
-            // hardware.
-            Want::Value => info.is_function || info.outs.is_none(),
-            Want::Outs(n) => !info.is_function && info.outs.is_none_or(|m| m == n),
+            // A DEF with OUTs may be called as a function, giving its
+            // first.
+            // UNVERIFIED: the first of several, not only of one.
+            Want::Value => info.is_function || info.outs.is_none_or(|m| m > 0),
+            // A function may be called with one OUT for its value.
+            Want::Outs(n) => match info.is_function {
+                true => n == 1,
+                false => info.outs.is_none_or(|m| m == n),
+            },
         };
         let args_ok = info.params.is_none_or(|p| usize::from(p) == args.len());
         // UNVERIFIED: that a DEF given the wrong number of arguments is
@@ -1975,7 +1978,7 @@ impl Vm {
             return Err(ErrorKind::ReturnWithoutGosub.into());
         };
         let info = &self.program.defs[frame.def as usize];
-        let results = match (info.is_function, info.outs) {
+        let mut results = match (info.is_function, info.outs) {
             // UNVERIFIED: a bare RETURN in a function gives no value.
             (true, _) => vec![Value::Default],
             (false, Some(n)) => {
@@ -1984,6 +1987,9 @@ impl Vm {
             }
             (false, None) => frame.outs.clone(),
         };
+        if frame.want == Want::Value {
+            results.truncate(1);
+        }
         self.leave_def(results, host)
     }
 

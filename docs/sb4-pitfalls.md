@@ -440,6 +440,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A function may be called as a command with one `OUT` variable for its
   result: `ABS -3 OUT A`, `SPCHR 0 OUT D`, `SPSET 242 OUT IX`,
   `HSV 120,255,255 OUT C`.
+- A `DEF` with an `OUT` may be called as a function, giving the `OUT`
+  value (`DEF F A OUT R` as `?F(3)`), and a `DEF` that returns a value
+  may be called with one `OUT` (`T OUT X`).
 - An unknown `#constant` is `Undefined constant`.
 
 - After an error, F4 puts the cursor at the start of the statement that
