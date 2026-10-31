@@ -164,6 +164,13 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   one frames: 20,3 fires at 0, 20, 24, 28...
 - `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14
   to 16). `BUTTON()` without arguments is `Wrong number of arguments`.
+- `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not
+  available`; `TCPIANO` without Toy-Con set up is `Illegal control
+  style`. `IRSTATE` starts at 0.
+- `VIBRATE()` reads back what was asked for, also where nothing
+  vibrates: after `VIBRATE 1,40` it is 2621480 (40 on the right times
+  65536, plus 40 on the left) and `VIBRATE(1,0)` 40; with frequencies
+  it is -1, still a second later. `VIBRATE` alone clears it.
 
 ## Screens and text
 
@@ -233,6 +240,25 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `LMATRIX layer,hx,hy` moves the layer by minus the home point.
 - An additive sprite inside a composed layer adds light without
   covering anything, so it also brightens what is under the layer.
+- `GARRAY(page)` is a 2048x2048 Int array indexed `[y,x]`, the same one
+  each time. A write to it is seen at once by `GPGET`, also where
+  `GPSET` drew next to it.
+- `GUPDATE` with a coordinate of 2048 is `Out of range`.
+- `LFILTER layer,0,n` is `Out of range`.
+
+## Signal processing
+
+- `FFT` does not scale; `IFFT` divides by the length, and its result of
+  1,2,3,4 prints exact zeros. A length that is not a power of two is
+  `Illegal function call`, for `FFTWFN` too.
+- `FFTWFN` gives the periodic windows, dividing by the length:
+  Hamming of 8 is .080 .215 .540 .865 1 .865 .540 .215.
+- `BIQUAD` keeps each channel's last two inputs and outputs in the
+  coefficients' elements 5 to 8 (left or mono) and 9 to 12 (right), as
+  in[-1], in[-2], out[-1], out[-2].
+- `BQPARAM` takes the gain for types 5 to 7 only: leaving it out there,
+  or giving it for types 0 to 4, is `Wrong number of arguments`. A
+  sampling rate of 0 is `Illegal function call`.
 
 ## Sound
 
@@ -308,6 +334,17 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   number of OUT arguments`.
 - A program run after one that set `MOUSECURSOR` to 1 reads 0 again;
   `END` leaves it set, so direct mode still reads 1.
+- `FREEMEM` is 134216720 at start; `DIM A[100000]` (Real) takes 800064
+  bytes and a 10000-character string 20160. Both of its results are
+  the same.
+- `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
+  string is `Can't use empty string`, a user-defined character `Can't
+  use user-derined character` (spelt so).
+- `HELPGET` and `HELPINFO` read the help of the console's language.
+  Pages count from 0; colored runs come as position, length and an
+  opaque color (`&HFFF39800`), in an array one run wide when no line
+  has more. Names may be in lower case. `HELPINFO OUT` names the word at
+  the editor's cursor at that moment.
 - `KEY` 1 to 5 start as `FILES`, `LOAD"`, `SAVE"`, `LIST ERR` and `RUN`
   (the settings can change them). `KEY` ignores a string over 256
   characters; `PUSHKEY` over 64 is `String is too long`.
