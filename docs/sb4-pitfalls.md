@@ -49,7 +49,10 @@ follows all of it. Items still waiting for a check are marked
   guide there is neither. Extra values typed are left out. After `?Redo from
   start`, the line is typed again on the next line, without the prompt.
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
-  A component above 1.0 is `Out of range` (`RGBF(2,-1,0.5)`).
+  Components outside 0 to 1.0 are clamped (`R=1.1:?HEX$(RGBF(R,0,0))` is
+  `FFFF0000`), but a constant one above 1.0 is `Out of range` when the
+  program is compiled (`RGBF(1.1,0.5,0)`, `RGBF(2,-1,0.5)`).
+- `CONST` and `DATA` take `HSV` as well as `RGB`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
   for 400x240.
 - Only one-dimensional arrays may be empty: `DIM A[0]` is fine, but

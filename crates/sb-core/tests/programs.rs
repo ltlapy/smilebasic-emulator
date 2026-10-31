@@ -549,6 +549,14 @@ fn color_functions() {
     );
     assert_eq!(output("HSVF RGB(0,0,255) OUT H,S,V:?H*3"), "2\n");
     assert_eq!(error("?RGBF(2,0,0)").0, ErrorKind::OutOfRange);
+    // Only constants are checked, before the program runs; values from
+    // variables are clamped.
+    assert!(sb_core::compile("?1\n?RGBF(1.1,0,0)", &TextHost::default()).is_err());
+    assert_eq!(
+        output("R=1.1:A=2:?HEX$(RGBF(R,0.5,0));HEX$(RGBF(1,1,1,A))"),
+        "FFFF7F00FFFFFFFF\n"
+    );
+    assert_eq!(output("CONST #C=HSV(120,255,255):?HEX$(#C)"), "FF00FF00\n");
     assert_eq!(output("?HEX$(RGBF(1,-1,0.5))"), "FFFF007F\n");
     assert_eq!(output("?HEX$(RGB(584,-1,9))"), "FFFF0009\n");
     assert_eq!(error("?HSV(0,256,0)").0, ErrorKind::OutOfRange);

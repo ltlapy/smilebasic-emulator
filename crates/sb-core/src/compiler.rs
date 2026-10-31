@@ -323,6 +323,7 @@ impl Compiler<'_> {
                             .map_or(Ok(Value::Default), |a| self.const_value(a))
                     })
                     .collect::<Result<Vec<_>>>()?;
+                builtins::check_constant_args(b.name, &args)?;
                 match b.kind {
                     Kind::Function(f) if b.accepts(args.len()) => f(&args)?,
                     Kind::Function(_) => return Err(ErrorKind::WrongNumberOfArguments.into()),
@@ -1395,6 +1396,13 @@ impl Compiler<'_> {
         if let Some(&def) = self.out.def_names.get(&full) {
             self.emit(Op::CallDef { def, argc, want });
         } else if let Some(id) = builtins::lookup(&full, Form::Function) {
+            let constants = args
+                .iter()
+                .map(|a| a.as_ref().and_then(|a| self.const_value(a).ok()))
+                .collect::<Option<Vec<_>>>();
+            if let Some(constants) = constants {
+                builtins::check_constant_args(&full, &constants)?;
+            }
             // The VM checks the argument count when the call runs, as
             // SmileBASIC 4 does (checked on hardware).
             self.emit(Op::CallBuiltin { id, argc, want });

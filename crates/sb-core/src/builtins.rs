@@ -610,16 +610,10 @@ fn rgb_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
 }
 
 /// A component from 0 to 1.0, scaled to 0-255 and rounded down (checked
-/// on hardware: 0.5 gives &H7F).
-/// Above 1.0 is out of range.
-// UNVERIFIED: that negative ones are clamped to 0; FINITI's cake demo
-// passes them and runs on hardware.
+/// on hardware: 0.5 gives &H7F). Those outside are clamped.
 fn unit_component(v: &Value) -> Result<u32> {
     let x = v.to_real()?;
-    if x > 1.0 {
-        return Err(ErrorKind::OutOfRange.into());
-    }
-    Ok((x.max(0.0) * 255.0) as u32)
+    Ok((x.clamp(0.0, 1.0) * 255.0) as u32)
 }
 
 /// `RGBF`: `RGB` with components from 0 to 1.0.
@@ -862,9 +856,23 @@ fn fill(args: &[Value]) -> Result<()> {
 
 /// Used by the compiler to fold constant expressions.
 pub fn is_constant_function(name: &str) -> bool {
-    // The reference allows these in CONST and DATA. RGB/HSV live in the
-    // host's graphics code and are not folded yet.
-    matches!(name, "CHR$" | "DEG" | "RAD" | "RGB")
+    // The reference allows these in CONST and DATA.
+    matches!(
+        name,
+        "CHR$" | "DEG" | "RAD" | "RGB" | "RGBF" | "HSV" | "HSVF"
+    )
+}
+
+/// Constant arguments a function rejects when the program is compiled,
+/// though it takes the same values at run time: `RGBF(1.1,0,0)` stops the
+/// program before it runs, while `RGBF(R,0,0)` clamps R.
+// UNVERIFIED: that a negative constant component is fine.
+pub fn check_constant_args(name: &str, args: &[Value]) -> Result<()> {
+    let over = |v: &Value| v.to_real().is_ok_and(|x| x > 1.0);
+    if name == "RGBF" && matches!(args.len(), 3 | 4) && args.iter().any(over) {
+        return Err(ErrorKind::OutOfRange.into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
