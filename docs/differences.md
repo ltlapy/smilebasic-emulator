@@ -137,3 +137,17 @@ Without them:
   set in File > Settings > Editor.
 - Ctrl+S takes the file name typed on the computer's keyboard rather
   than SmileBASIC 4's on-screen one.
+
+## Speed
+
+SmileBASIC 4 runs a fixed amount of code each frame (see
+[sb4-pitfalls.md](sb4-pitfalls.md)); the emulator runs code that does not
+wait for the next frame for as long as the frame leaves after drawing,
+which is far more on any recent computer. Programs time themselves with
+`VSYNC`, `WAIT` and `MAINCNT`, so none needs the slower speed. Headless
+runs (`smilebasic-check`, the tests) instead run a fixed million
+instructions a frame, so that they come out the same each time.
+
+When drawing a frame takes longer than a frame, the window skips
+drawing up to three frames while the program and its sound go on, so
+that games and their music keep time.

@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use sb_core::error::{Error, ErrorKind};
 use sb_core::host::Host;
@@ -18,9 +19,13 @@ use crate::screen::ScreenMode;
 use crate::storage;
 use crate::text::CONSOLE;
 
-/// UNVERIFIED: instructions per frame for code that does not VSYNC;
-/// SmileBASIC 4's real speed has not been measured.
-pub const FRAME_BUDGET: u32 = 200_000;
+/// Instructions a frame runs for code that does not VSYNC, when the
+/// frame has no time limit (see [`Machine::time_limit`]), so that tests
+/// and headless runs come out the same each time.
+pub const FRAME_BUDGET: u32 = 1_000_000;
+/// With a time limit, how many instructions run between looks at the
+/// clock.
+const SLICE: u32 = 20_000;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
 pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
 
@@ -55,6 +60,11 @@ pub struct Machine {
     /// The program that STOP, the + button or an error stopped, kept for
     /// CONT; `rt.stopped` says which.
     halted: Option<Vm>,
+    /// How long a frame may run code that does not VSYNC: programs run
+    /// as fast as the computer allows rather than at SmileBASIC 4's
+    /// speed, which no program needs. `None` runs [`FRAME_BUDGET`]
+    /// instructions instead.
+    pub time_limit: Option<Duration>,
 }
 
 /// What stopped a program: the + button, or STOP and TRACE.
@@ -137,6 +147,7 @@ impl Machine {
             running_slot: None,
             last_error: None,
             halted: None,
+            time_limit: None,
         }
     }
 
@@ -665,9 +676,18 @@ impl Machine {
         }
         // A VSYNC that is behind goes on within the frame's budget.
         let start = vm.executed();
+        let deadline = self.time_limit.map(|limit| Instant::now() + limit);
+        let has_time = |vm: &Vm| match deadline {
+            Some(deadline) => Instant::now() < deadline,
+            None => vm.executed() - start < u64::from(FRAME_BUDGET),
+        };
         loop {
-            let left = FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32);
+            let left = match deadline {
+                Some(_) => SLICE,
+                None => FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32),
+            };
             match vm.run(&mut self.rt, left) {
+                Ok(Status::Running) if has_time(vm) => continue,
                 Ok(Status::Running) => {}
                 Ok(Status::Retry) => self.wait = 1,
                 // WAIT, WAIT 0 too, starts VSYNC's count anew; INPUT does
@@ -678,7 +698,7 @@ impl Machine {
                 }) => {
                     self.wait = frames;
                     self.vsync_at = self.frame + u64::from(frames);
-                    if frames == 0 && vm.executed() - start < u64::from(FRAME_BUDGET) {
+                    if frames == 0 && has_time(vm) {
                         continue;
                     }
                 }
@@ -696,7 +716,7 @@ impl Machine {
                         self.wait = (self.vsync_at - self.frame) as u32;
                     } else {
                         self.vsync_at = self.frame;
-                        if vm.executed() - start < u64::from(FRAME_BUDGET) {
+                        if has_time(vm) {
                             continue;
                         }
                     }

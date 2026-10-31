@@ -74,6 +74,13 @@ const TITLE: &str = "SmileBASIC emulator";
 const SETTINGS_FILE: &str = "settings.txt";
 /// SmileBASIC runs at 60 frames a second.
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
+/// Frames run without drawing them, at most, when drawing falls behind.
+const MOST_SKIPPED: u32 = 3;
+/// How long a frame runs a program that does not wait for the next one,
+/// leaving the rest of the frame for drawing.
+const RUN_TIME: Duration = Duration::from_millis(10);
+/// The same for frames run to catch up.
+const CATCH_UP_RUN_TIME: Duration = Duration::from_millis(1);
 /// Holding F5, SmileBASIC 4's + button, this long stops a program even
 /// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
@@ -1130,9 +1137,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             });
         }
         if !paused {
+            machine.time_limit = Some(RUN_TIME);
             machine.frame();
         }
         audio.play(&machine.rt.sound.take_samples());
+        // Behind by a frame or more, as when drawing takes too long: the
+        // program and its sound catch up, and only the last of these
+        // frames is drawn, so that the game and its music keep time.
+        // Those frames run code briefly, so that catching up does not
+        // fall further behind.
+        let mut skipped = 0;
+        while !paused && skipped < MOST_SKIPPED && Instant::now() >= next_frame + FRAME {
+            machine.time_limit = Some(CATCH_UP_RUN_TIME);
+            machine.frame();
+            audio.play(&machine.rt.sound.take_samples());
+            next_frame += FRAME;
+            skipped += 1;
+        }
         // The editor leaves its top row for the menu bar.
         menu.pinned = machine.is_editing();
         // Settings change through the menu, keys and questions; keep each
