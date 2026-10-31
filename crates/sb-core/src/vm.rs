@@ -49,6 +49,43 @@ pub enum Status {
     Traced {
         line: u32,
     },
+    /// A breakpoint, or a step [`Vm::step_by`] asked for, stops the
+    /// program before the statement on `line`.
+    Debug {
+        line: u32,
+    },
+}
+
+/// How far a debugger's step runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// To the next statement, into DEFs and GOSUBs.
+    Into,
+    /// To the next statement that is not in a DEF or GOSUB it calls.
+    Over,
+    /// Out of the DEF or GOSUB under way, to the statement after.
+    Out,
+}
+
+/// A DEF or GOSUB under way, or the program's top level, as a debugger
+/// lists them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Call {
+    /// Where it is: the line of the call it made, or for the innermost
+    /// one, the line about to run.
+    pub slot: usize,
+    pub line: u32,
+    pub kind: CallKind,
+    /// The DEF call whose locals it sees, as an index for
+    /// [`Vm::frame_locals`]; `None` sees the globals only.
+    pub frame: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CallKind {
+    Top,
+    Def(String),
+    Gosub,
 }
 
 /// Commands and functions the compiler turns into instructions of their
@@ -119,9 +156,18 @@ impl Unit {
 }
 
 /// TRACE runs until the start of the statement after the first one it
-/// runs into, and names that one's line.
+/// runs into, and names that one's line. A debugger's step stops there
+/// only within `depth` calls, and names the line it stops before.
 struct Trace {
     line: Option<u32>,
+    depth: Option<usize>,
+}
+
+/// Where breakpoints stop one slot's program: whether each instruction
+/// is one, for the program they were worked out for.
+struct Stops {
+    program: Rc<Compiled>,
+    at: Rc<[bool]>,
 }
 
 /// Where EXEC goes back to when the slot it started ends.
@@ -176,6 +222,16 @@ pub struct Vm {
     stop_message: Option<Str>,
     /// TRACE's statement under way.
     trace: Option<Trace>,
+    /// Lines with breakpoints, by slot, and the one a debugger runs to
+    /// once.
+    breakpoints: Vec<Vec<u32>>,
+    run_to: Option<(usize, u32)>,
+    /// Worked out from them by slot, and the running program's.
+    stops: Vec<Option<Stops>>,
+    stop_at: Option<Rc<[bool]>>,
+    /// The slot and instruction of the breakpoint the program stopped
+    /// at, which it passes over when it goes on.
+    passed: Option<(usize, usize)>,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -308,6 +364,11 @@ impl Vm {
             break_pending: None,
             stop_message: None,
             trace: None,
+            breakpoints: Vec::new(),
+            run_to: None,
+            stops: Vec::new(),
+            stop_at: None,
+            passed: None,
         }
     }
 
@@ -315,6 +376,7 @@ impl Vm {
     pub fn in_slot(mut self, slot: usize) -> Self {
         self.slot = slot;
         self.in_slot = true;
+        self.update_stops();
         self
     }
 
@@ -365,33 +427,193 @@ impl Vm {
     /// TRACE: the next [`Vm::run`] runs one statement and returns
     /// [`Status::Traced`].
     pub fn trace(&mut self) {
-        self.trace = Some(Trace { line: None });
+        self.trace = Some(Trace {
+            line: None,
+            depth: None,
+        });
+    }
+
+    /// A debugger's step: the next [`Vm::run`] runs at least one
+    /// statement and returns [`Status::Debug`] before the one it stops
+    /// at. Stepping out of the top level runs on as CONT does.
+    pub fn step_by(&mut self, step: Step) {
+        let depth = self.depth();
+        let depth = match step {
+            Step::Into => usize::MAX,
+            Step::Over => depth,
+            Step::Out => match depth.checked_sub(1) {
+                Some(depth) => depth,
+                None => return,
+            },
+        };
+        self.trace = Some(Trace {
+            line: None,
+            depth: Some(depth),
+        });
+    }
+
+    /// How many DEFs and GOSUBs are under way.
+    fn depth(&self) -> usize {
+        self.frames.len() + self.gosubs.len()
+    }
+
+    /// Sets the lines of `slot` that stop the program before they run.
+    /// A breakpoint stops where the line's code follows another line's,
+    /// so a loop within the line stops there once.
+    pub fn set_breakpoints(&mut self, slot: usize, lines: &[u32]) {
+        if self.breakpoints.len() <= slot {
+            self.breakpoints.resize_with(slot + 1, Vec::new);
+        }
+        self.breakpoints[slot] = lines.to_vec();
+        self.stops.clear();
+        self.update_stops();
+    }
+
+    /// Stops the program once before `line` of `slot` runs, with the
+    /// breakpoints, or not with `None`.
+    pub fn run_to(&mut self, to: Option<(usize, u32)>) {
+        self.run_to = to;
+        self.stops.clear();
+        self.update_stops();
+    }
+
+    /// Works out where the running program's breakpoints stop it.
+    fn update_stops(&mut self) {
+        self.stop_at = None;
+        if !self.in_slot {
+            return;
+        }
+        let slot = self.slot;
+        if let Some(Some(stops)) = self.stops.get(slot)
+            && Rc::ptr_eq(&stops.program, &self.program)
+        {
+            self.stop_at = Some(Rc::clone(&stops.at));
+            return;
+        }
+        let mut lines: Vec<u32> = self.breakpoints.get(slot).cloned().unwrap_or_default();
+        lines.extend(self.run_to.filter(|to| to.0 == slot).map(|to| to.1));
+        if lines.is_empty() {
+            return;
+        }
+        let program = &self.program;
+        let at: Rc<[bool]> = (program.lines.iter().enumerate())
+            .map(|(pc, line)| lines.contains(line) && (pc == 0 || program.lines[pc - 1] != *line))
+            .collect();
+        if self.stops.len() <= slot {
+            self.stops.resize_with(slot + 1, || None);
+        }
+        self.stops[slot] = Some(Stops {
+            program: Rc::clone(program),
+            at: Rc::clone(&at),
+        });
+        self.stop_at = Some(at);
+    }
+
+    /// The program's top level and the DEFs and GOSUBs under way, with
+    /// where each one is; the innermost last.
+    pub fn calls(&self) -> Vec<Call> {
+        let mut calls = vec![Call {
+            slot: 0,
+            line: 0,
+            kind: CallKind::Top,
+            frame: None,
+        }];
+        let mut gosubs = 0;
+        let mut frame = None;
+        for (i, f) in self.frames.iter().enumerate() {
+            let base = f.gosub_base.max(gosubs);
+            for &(s, r, _) in &self.gosubs[gosubs..base] {
+                self.called_from(&mut calls, s, r, CallKind::Gosub, frame);
+            }
+            let name = (self.program_in(f.home))
+                .and_then(|p| p.defs.get(f.def as usize))
+                .map_or_else(String::new, |d| d.name.clone());
+            frame = Some(i);
+            self.called_from(
+                &mut calls,
+                f.caller,
+                f.return_pc,
+                CallKind::Def(name),
+                frame,
+            );
+            gosubs = base;
+        }
+        for &(s, r, _) in &self.gosubs[gosubs..] {
+            self.called_from(&mut calls, s, r, CallKind::Gosub, frame);
+        }
+        let last = calls.last_mut().expect("the top level is there");
+        last.slot = self.slot;
+        last.line = self.line();
+        calls
+    }
+
+    /// Adds a call made from `slot`, returning to `ret`: the caller gets
+    /// the call's line.
+    fn called_from(
+        &self,
+        calls: &mut Vec<Call>,
+        slot: usize,
+        ret: usize,
+        kind: CallKind,
+        frame: Option<usize>,
+    ) {
+        // The call is the instruction before the one it returns to.
+        let line = (self.program_in(slot))
+            .and_then(|p| p.lines.get(ret.wrapping_sub(1)).copied())
+            .unwrap_or(0);
+        let caller = calls.last_mut().expect("the top level is there");
+        (caller.slot, caller.line) = (slot, line);
+        calls.push(Call {
+            slot,
+            line: 0,
+            kind,
+            frame,
+        });
+    }
+
+    /// The locals of a DEF call under way, by [`Call::frame`], with
+    /// their values.
+    pub fn frame_locals(&self, frame: usize) -> Vec<(String, Value)> {
+        let Some(f) = self.frames.get(frame) else {
+            return Vec::new();
+        };
+        let Some(def) = self
+            .program_in(f.home)
+            .and_then(|p| p.defs.get(f.def as usize))
+        else {
+            return Vec::new();
+        };
+        (def.locals.iter())
+            .zip(&f.locals)
+            .filter(|(info, _)| !info.name.starts_with('\0'))
+            .map(|(info, value)| (info.full_name(), value.clone()))
+            .collect()
+    }
+
+    /// The globals of a slot's program that has run, with their values.
+    pub fn slot_globals(&self, slot: usize) -> Vec<(String, Value)> {
+        let (program, values) = if slot == self.slot {
+            (&self.program, &self.globals)
+        } else {
+            match self.units.get(slot) {
+                Some(Some(unit)) => (&unit.program, &unit.globals),
+                _ => return Vec::new(),
+            }
+        };
+        (program.globals.iter())
+            .zip(values)
+            .filter(|(info, _)| !info.name.starts_with('\0'))
+            .map(|(info, value)| (info.full_name(), value.clone()))
+            .collect()
     }
 
     /// Where the running code was called from, outermost first: the slot
     /// and line of each GOSUB and DEF call under way, as BACKTRACE lists
     /// them.
     pub fn call_sites(&self) -> Vec<(usize, u32)> {
-        // The call is the instruction before the one it returns to.
-        let site = |slot: usize, ret: usize| {
-            let program = self.program_in(slot);
-            let line = program.and_then(|p| p.lines.get(ret.wrapping_sub(1)).copied());
-            (slot, line.unwrap_or(0))
-        };
-        let mut sites = Vec::new();
-        let mut gosubs = 0;
-        for f in &self.frames {
-            let base = f.gosub_base.max(gosubs);
-            sites.extend(
-                self.gosubs[gosubs..base]
-                    .iter()
-                    .map(|&(s, r, _)| site(s, r)),
-            );
-            sites.push(site(f.caller, f.return_pc));
-            gosubs = base;
-        }
-        sites.extend(self.gosubs[gosubs..].iter().map(|&(s, r, _)| site(s, r)));
-        sites
+        let calls = self.calls();
+        let n = calls.len() - 1;
+        calls[..n].iter().map(|c| (c.slot, c.line)).collect()
     }
 
     /// The message of the STOP that stopped the program, once.
@@ -473,6 +695,10 @@ impl Vm {
         while self.executed < stop {
             if self.break_pending.is_none()
                 && self.trace.is_none()
+                && !self
+                    .stop_at
+                    .as_ref()
+                    .is_some_and(|at| at.get(self.pc) == Some(&true))
                 && let Some(op) = program.code.get(self.pc)
             {
                 // The commonest instructions, run here without the rest of
@@ -547,14 +773,33 @@ impl Vm {
                     self.break_pending = Some((at, self.line()));
                 }
             }
+            if let Some(at) = &self.stop_at
+                && at.get(self.pc) == Some(&true)
+                && self.passed.take() != Some((self.slot, self.pc))
+            {
+                self.passed = Some((self.slot, self.pc));
+                self.trace = None;
+                if self.run_to.is_some() {
+                    self.run_to(None);
+                }
+                return Ok(Status::Debug { line: self.line() });
+            }
+            let depth = self.depth();
             if let Some(trace) = &mut self.trace
                 && self.program.starts.get(self.pc) == Some(&true)
             {
-                if let Some(line) = trace.line {
-                    self.trace = None;
-                    return Ok(Status::Traced { line });
+                match (trace.line, trace.depth) {
+                    (Some(line), None) => {
+                        self.trace = None;
+                        return Ok(Status::Traced { line });
+                    }
+                    (Some(_), Some(most)) if depth <= most => {
+                        self.trace = None;
+                        return Ok(Status::Debug { line: self.line() });
+                    }
+                    (Some(_), Some(_)) => {}
+                    (None, _) => trace.line = self.program.lines.get(self.pc).copied(),
                 }
-                trace.line = self.program.lines.get(self.pc).copied();
             }
             let pc = self.pc;
             self.executed += 1;
@@ -787,6 +1032,7 @@ impl Vm {
         self.data_pos = unit.data_pos;
         self.data_from = unit.data_from;
         self.slot = slot;
+        self.update_stops();
         host.entered_slot(slot, &self.program);
     }
 
@@ -1647,7 +1893,10 @@ impl Vm {
             self.switch_to(slot, host);
             // TRACE names the line of the GOSUB it came back to (checked
             // on hardware).
-            if let Some(Trace { line: Some(line) }) = &mut self.trace {
+            if let Some(Trace {
+                line: Some(line), ..
+            }) = &mut self.trace
+            {
                 *line = self
                     .program
                     .lines

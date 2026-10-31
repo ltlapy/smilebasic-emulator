@@ -2,14 +2,14 @@
 //! program running on the [`Runtime`]. Frontends feed it keys, call
 //! [`Machine::frame`] once per frame and show [`Machine::render`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use sb_core::error::{Error, ErrorKind};
 use sb_core::host::Host;
 use sb_core::value::Value;
-use sb_core::vm::{Status, Vm};
+use sb_core::vm::{Call, Status, Step, Vm};
 
 use crate::complete::Options;
 use crate::editor::Editor;
@@ -65,6 +65,20 @@ pub struct Machine {
     /// speed, which no program needs. `None` runs [`FRAME_BUDGET`]
     /// instructions instead.
     pub time_limit: Option<Duration>,
+    /// Lines with breakpoints, by slot. They last for the session.
+    breakpoints: Vec<BTreeSet<u32>>,
+}
+
+/// How a stopped program goes on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resume {
+    Cont,
+    /// TRACE: one statement, naming its line.
+    Trace,
+    /// A debugger's step, stopping before the next statement.
+    Step(Step),
+    /// On until the slot's line, or a breakpoint, is about to run.
+    RunTo(usize, u32),
 }
 
 /// What stopped a program: the + button, or STOP and TRACE.
@@ -147,6 +161,7 @@ impl Machine {
             running_slot: None,
             last_error: None,
             halted: None,
+            breakpoints: vec![BTreeSet::new(); SLOTS],
             time_limit: None,
         }
     }
@@ -574,16 +589,23 @@ impl Machine {
         self.rt.backtrace.clear();
     }
 
-    /// CONT, or TRACE for one statement: goes on with the stopped
-    /// program, with the variables as direct mode left them.
-    fn resume(&mut self, trace: bool) {
+    /// Goes on with the stopped program, with the variables as direct
+    /// mode left them.
+    fn resume(&mut self, how: Resume) {
         let Some(mut vm) = self.halted.take() else {
             return self.ready();
         };
         self.forget_halted();
         vm.set_globals(&self.vars);
-        if trace {
-            vm.trace();
+        self.arm(&mut vm);
+        // A line run to earlier is forgotten once something else stopped
+        // the program.
+        vm.run_to(None);
+        match how {
+            Resume::Cont => {}
+            Resume::Trace => vm.trace(),
+            Resume::Step(step) => vm.step_by(step),
+            Resume::RunTo(slot, line) => vm.run_to(Some((slot, line))),
         }
         self.rt.direct = false;
         self.running_slot = vm.slot();
@@ -592,6 +614,89 @@ impl Machine {
         self.vm = Some(vm);
         self.wait = 0;
         self.vsync_at = self.frame + 1;
+    }
+
+    /// Goes on with a program that STOP, the + button or the debugger
+    /// stopped, as CONT does from direct mode. False when there is none
+    /// that can go on.
+    pub fn debug(&mut self, how: Resume) -> bool {
+        if self.vm.is_some() || self.halted.is_none() || self.rt.stopped != Stopped::Paused {
+            return false;
+        }
+        self.rt.cancel_input();
+        self.resume(how);
+        true
+    }
+
+    /// Where the stopped program goes on: its slot and the line about to
+    /// run.
+    pub fn paused_at(&self) -> Option<(usize, u32)> {
+        let vm = self.halted.as_ref()?;
+        Some((vm.slot()?, vm.line()))
+    }
+
+    /// The stopped program's top level and DEFs and GOSUBs under way,
+    /// the innermost last.
+    pub fn calls(&self) -> Vec<Call> {
+        self.halted.as_ref().map(Vm::calls).unwrap_or_default()
+    }
+
+    /// The locals of one of the stopped program's DEF calls, by
+    /// [`Call::frame`].
+    pub fn frame_locals(&self, frame: usize) -> Vec<(String, Value)> {
+        (self.halted.as_ref()).map_or_else(Vec::new, |vm| vm.frame_locals(frame))
+    }
+
+    /// The globals of a slot of the stopped program, with what direct
+    /// mode has changed since it stopped.
+    pub fn slot_globals(&self, slot: usize) -> Vec<(String, Value)> {
+        let Some(vm) = &self.halted else {
+            return Vec::new();
+        };
+        let mut globals = vm.slot_globals(slot);
+        if vm.slot() == Some(slot) {
+            for (name, value) in &mut globals {
+                if let Some(v) = self.vars.get(name) {
+                    *value = v.clone();
+                }
+            }
+        }
+        globals
+    }
+
+    /// Sets or clears a breakpoint on a slot's 1-based line; true when
+    /// it is set now.
+    pub fn toggle_breakpoint(&mut self, slot: usize, line: u32) -> bool {
+        let lines = &mut self.breakpoints[slot];
+        let set = lines.insert(line) || !lines.remove(&line);
+        self.arm_all();
+        set
+    }
+
+    /// The lines of a slot with breakpoints, in order.
+    pub fn breakpoints(&self, slot: usize) -> Vec<u32> {
+        self.breakpoints[slot].iter().copied().collect()
+    }
+
+    pub fn clear_breakpoints(&mut self) {
+        self.breakpoints.iter_mut().for_each(BTreeSet::clear);
+        self.arm_all();
+    }
+
+    /// Gives a program the breakpoints.
+    fn arm(&self, vm: &mut Vm) {
+        for (slot, lines) in self.breakpoints.iter().enumerate() {
+            vm.set_breakpoints(slot, &lines.iter().copied().collect::<Vec<_>>());
+        }
+    }
+
+    /// Gives the running and the stopped program the breakpoints.
+    fn arm_all(&mut self) {
+        let mut vms = [self.vm.take(), self.halted.take()];
+        for vm in vms.iter_mut().flatten() {
+            self.arm(vm);
+        }
+        [self.vm, self.halted] = vms;
     }
 
     /// The editor, after it has taken the keys typed so far, so that its
@@ -725,6 +830,7 @@ impl Machine {
                 Ok(Status::Break { line }) => self.stop_on(Some(line), Halt::User),
                 Ok(Status::Stop { line }) => self.stop_on(Some(line), Halt::Stop),
                 Ok(Status::Traced { line }) => self.stop_on(Some(line), Halt::Stop),
+                Ok(Status::Debug { line }) => self.stop_on(Some(line), Halt::Stop),
                 Err(e) => self.finish(Some(e)),
             }
             break;
@@ -805,10 +911,11 @@ impl Machine {
         match compiled {
             Ok(program) => {
                 let vm = Vm::with_globals(program, &self.vars);
-                let vm = match slot {
+                let mut vm = match slot {
                     Some(slot) => vm.in_slot(slot),
                     None => vm,
                 };
+                self.arm(&mut vm);
                 self.rt.program = Some(vm.program());
                 self.vm = Some(vm);
                 self.wait = 0;
@@ -854,13 +961,13 @@ impl Machine {
                     self.vars.clear();
                     self.forget_halted();
                 }
-                Request::Cont => cont = Some(false),
-                Request::Trace => cont = Some(true),
+                Request::Cont => cont = Some(Resume::Cont),
+                Request::Trace => cont = Some(Resume::Trace),
             }
         }
         match (run, cont) {
             (Some(slot), _) => self.run_slot(slot),
-            (None, Some(trace)) => self.resume(trace),
+            (None, Some(how)) => self.resume(how),
             (None, None) => self.ready(),
         }
     }

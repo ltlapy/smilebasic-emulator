@@ -761,3 +761,121 @@ fn trace_statement_by_statement() {
     ];
     traces(src, Some("2"), &expected);
 }
+
+/// Goes on with the stopped program from the debugger and runs until it
+/// stops or ends.
+fn debug(m: &mut Machine, how: sb_runtime::machine::Resume) {
+    assert!(m.debug(how));
+    for _ in 0..100 {
+        m.frame();
+        if !m.is_running() {
+            break;
+        }
+    }
+}
+
+/// A global of the stopped program's slot 0, as PRINT shows it.
+fn global(m: &Machine, name: &str) -> Option<String> {
+    let globals = m.slot_globals(0);
+    let (_, value) = globals.iter().find(|(n, _)| n == name)?;
+    Some(format!("{value:?}"))
+}
+
+#[test]
+fn breakpoints_stop_before_their_line() {
+    use sb_core::vm::CallKind;
+    use sb_runtime::machine::Resume;
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "A=1\nFOR I=0 TO 2:B=I:NEXT\nFOR J=0 TO 1\n X=J\nNEXT\nGOSUB @S\nEND\n@S\nD=4\nRETURN"
+            .to_string(),
+    );
+    assert!(m.toggle_breakpoint(0, 2));
+    assert!(m.toggle_breakpoint(0, 4));
+    assert!(m.toggle_breakpoint(0, 9));
+    assert!(!m.toggle_breakpoint(0, 9));
+    assert!(m.toggle_breakpoint(0, 9));
+    assert_eq!(m.breakpoints(0), [2, 4, 9]);
+    enter(&mut m, "RUN");
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+    assert!(rows(&m).contains(&"Break on 0:2".to_string()));
+    assert_eq!(m.paused_at(), Some((0, 2)));
+    assert_eq!(global(&m, "A"), Some("Int(1)".to_string()));
+    assert_eq!(global(&m, "B"), Some("Real(0.0)".to_string()));
+    // A loop within the line stops there once; one over lines, each time.
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 9)));
+    let calls = m.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        (calls[0].line, calls[1].line, &calls[1].kind),
+        (6, 9, &CallKind::Gosub)
+    );
+    // CONT typed in direct mode passes the breakpoint too.
+    enter(&mut m, "CONT");
+    assert!(!m.debug(Resume::Cont));
+    m.clear_breakpoints();
+    assert!(m.breakpoints(0).is_empty());
+    enter(&mut m, "RUN");
+    assert_eq!(m.paused_at(), None);
+}
+
+#[test]
+fn debugger_steps() {
+    use sb_core::vm::{CallKind, Step};
+    use sb_runtime::machine::Resume;
+    let src = "STOP\nF 1\nY=2\nEND\nDEF F N\n X=N\n Z=3\nEND";
+    let mut m = machine();
+    m.set_slot(0, src.to_string());
+    enter(&mut m, "RUN");
+    assert_eq!(m.paused_at(), Some((0, 2)));
+    // Over the call; the line it stops before is named.
+    debug(&mut m, Resume::Step(Step::Over));
+    assert_eq!(m.paused_at(), Some((0, 3)));
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "Break on 0:3");
+
+    enter(&mut m, "RUN");
+    debug(&mut m, Resume::Step(Step::Into));
+    assert_eq!(m.paused_at(), Some((0, 6)));
+    let calls = m.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!((calls[0].line, calls[0].frame), (2, None));
+    assert_eq!(calls[1].kind, CallKind::Def("F".to_string()));
+    assert_eq!((calls[1].line, calls[1].frame), (6, Some(0)));
+    let locals = m.frame_locals(0);
+    assert_eq!(locals[0].0, "N");
+    assert_eq!(format!("{:?}", locals[0].1), "Int(1)");
+    debug(&mut m, Resume::Step(Step::Over));
+    assert_eq!(m.paused_at(), Some((0, 7)));
+    debug(&mut m, Resume::Step(Step::Out));
+    assert_eq!(m.paused_at(), Some((0, 3)));
+    // Out of the top level, the program runs on to its end.
+    debug(&mut m, Resume::Step(Step::Out));
+    assert_eq!(m.paused_at(), None);
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+}
+
+#[test]
+fn run_to_a_line_once() {
+    use sb_runtime::machine::Resume;
+    let src = "STOP\nF 1\nSTOP\nF 2\nEND\nDEF F N\n X=N\nEND";
+    let mut m = machine();
+    m.set_slot(0, src.to_string());
+    enter(&mut m, "RUN");
+    debug(&mut m, Resume::RunTo(0, 7));
+    assert_eq!(m.paused_at(), Some((0, 7)));
+    // The line is forgotten once reached.
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    // ...or once something else stops the program first.
+    enter(&mut m, "RUN");
+    debug(&mut m, Resume::RunTo(0, 5));
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), None);
+}
