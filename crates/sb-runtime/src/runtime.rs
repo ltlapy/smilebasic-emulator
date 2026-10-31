@@ -603,6 +603,9 @@ pub struct Runtime {
     pub(crate) notices: Vec<String>,
     /// The program last started, whose DATA commands like SPANIM read.
     pub(crate) program: Option<Rc<Compiled>>,
+    /// Each slot's program once the run has gone on in it, for DATA
+    /// named `"n:@LABEL"`.
+    pub(crate) slot_programs: [Option<Rc<Compiled>>; SLOTS],
     /// READ's place in the program's DATA, during a command.
     data_pos: Cell<usize>,
     pub layers: [Layer; LAYERS],
@@ -812,6 +815,7 @@ impl Runtime {
             inspect_left: None,
             notices: Vec::new(),
             program: None,
+            slot_programs: Default::default(),
             data_pos: Cell::new(0),
             layers: [Layer::default(); LAYERS],
             filters: Default::default(),
@@ -916,16 +920,23 @@ impl Runtime {
     /// The DATA values from `label` on, for commands that take a
     /// `"@label"`. As on hardware, they move READ's place: RESTORE to
     /// the label, then READ.
+    /// `"n:@LABEL"` reads slot n's DATA, once the run has gone on there.
     pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader<'_>> {
         let text =
             String::from_utf16_lossy(&label.clone().into_str()?.borrow()).to_ascii_uppercase();
-        let name = text.split_once(':').map_or(text.as_str(), |(_, rest)| rest);
+        let (slot, name) = match text.split_once(':') {
+            Some((slot, rest)) => (slot.trim().parse::<usize>().ok(), rest),
+            None => (None, text.as_str()),
+        };
         let name = name.strip_prefix('@').unwrap_or(name);
-        let program = self.program.clone().unwrap_or_default();
-        let pos = *program
-            .data_labels
-            .get(name)
-            .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))?;
+        let undefined = || Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}"));
+        let program = match slot {
+            Some(slot) => {
+                (self.slot_programs.get(slot).cloned().flatten()).ok_or_else(undefined)?
+            }
+            None => self.program.clone().unwrap_or_default(),
+        };
+        let pos = *program.data_labels.get(name).ok_or_else(undefined)?;
         self.data_pos.set(pos as usize);
         Ok(DataReader {
             program,
@@ -1864,6 +1875,7 @@ impl Host for Runtime {
 
     fn entered_slot(&mut self, slot: usize, program: &Rc<Compiled>) {
         self.program = Some(Rc::clone(program));
+        self.slot_programs[slot] = Some(Rc::clone(program));
         self.running_slot = Some(slot);
     }
 

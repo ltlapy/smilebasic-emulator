@@ -979,6 +979,10 @@ impl Machine {
                 };
                 self.arm(&mut vm);
                 self.rt.program = Some(vm.program());
+                if let Some(slot) = slot {
+                    self.rt.slot_programs = Default::default();
+                    self.rt.slot_programs[slot] = Some(vm.program());
+                }
                 self.vm = Some(vm);
                 self.wait = 0;
                 // The VM first runs on the next frame.

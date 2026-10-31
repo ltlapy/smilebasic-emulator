@@ -343,3 +343,13 @@ fn slot_constant_follows_the_slot() {
     run(&mut m, &["EXEC 3", "?#_SLOT;#_FILENAME"]);
     assert_eq!(tail(&m, 3), ["S31", "0", "OK"]);
 }
+
+#[test]
+fn commands_read_data_in_slots_exec_ran() {
+    let mut m = machine();
+    m.set_slot(1, "END\n@M\nDATA \"T120CDE\",0".to_string());
+    run(&mut m, &["EXEC 1:BGMSETD 128,\"1:@M\":?\"OK\""]);
+    assert_eq!(tail(&m, 2), ["OK", "OK"]);
+    run(&mut m, &["BGMSETD 128,\"2:@M\""]);
+    assert!(tail(&m, 2)[0].starts_with("Undefined label"));
+}
