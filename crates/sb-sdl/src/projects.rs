@@ -1,27 +1,30 @@
 //! The project manager: lists the projects and their files, and switches,
 //! creates, renames, deletes, imports and exports projects. It also loads
-//! a program into a slot, and runs a project's MAIN.PRG. Drawn over the screen like the
-//! menu bar, it takes all input while it is open.
+//! a program into a slot, runs one, and copies and deletes files. Drawn
+//! over the screen like the menu bar, it takes all input while it is open.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::{project_label, switch_lines};
 use sb_runtime::font::Font;
 use sb_runtime::runtime::SLOTS;
-use sb_runtime::storage::{Storage, check_project_name, suggest_project_name};
+use sb_runtime::storage::{FileKind, Storage, check_project_name, suggest_project_name};
 use sb_runtime::transfer;
 use sdl3::keyboard::Keycode;
 use std::path::{Path, PathBuf};
 
 use crate::dialog::{Answer, Dialog};
+use crate::file_dialogs::{self, FilePicker};
 use crate::ui::{
-    BORDER, CHAR, HIGHLIGHT, LINE, PAD, Rect, TEXT, button, draw_text, fill, outline, text_width,
-    window,
+    BACKGROUND, BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, button, draw_text, fill,
+    outline, text_width, window,
 };
 
 const WIDTH: u32 = 1200;
 const HEIGHT: u32 = 600;
 /// The width of the project list; the files take the rest.
-const LIST_WIDTH: u32 = 600;
+const LIST_WIDTH: u32 = 460;
+/// How far the mouse moves with a file before it is being dragged.
+const DRAG_START: i32 = 6;
 const ERROR: u32 = 0xFFFF_8080;
 /// The longest name the name box takes, a little over the limit so that
 /// a name that is too long gets an error rather than being cut short.
@@ -33,31 +36,39 @@ enum Button {
     New,
     Rename,
     Delete,
+    /// Opens a menu of the rest: Import and Export.
+    More,
     Import,
     Export,
-    OpenFolder,
     Close,
-    /// Under the files: load the selected program into a slot.
+    /// Load the selected program into a slot.
     LoadTo,
-    /// Under the files: run the project's MAIN.PRG.
+    /// Run the selected program, or else the project's MAIN.PRG.
     Run,
+    CopyTo,
+    DeleteFile,
 }
 
+/// The buttons under the projects.
+const PROJECT_BUTTONS: [Button; 4] = [Button::New, Button::Rename, Button::Delete, Button::More];
 /// The buttons under the files.
-const FILE_BUTTONS: [Button; 2] = [Button::LoadTo, Button::Run];
-/// The program that Run runs.
-const MAIN: &str = "MAIN.PRG";
-
-const BUTTONS: [Button; 8] = [
+const FILE_BUTTONS: [Button; 4] = [
+    Button::LoadTo,
+    Button::Run,
+    Button::CopyTo,
+    Button::DeleteFile,
+];
+/// The buttons at the bottom right.
+const WINDOW_BUTTONS: [Button; 2] = [Button::Switch, Button::Close];
+/// The menus of a right click on a project and on a file.
+const PROJECT_MENU: [Button; 4] = [
     Button::Switch,
-    Button::New,
     Button::Rename,
     Button::Delete,
-    Button::Import,
     Button::Export,
-    Button::OpenFolder,
-    Button::Close,
 ];
+/// The program that Run runs when no program is selected.
+const MAIN: &str = "MAIN.PRG";
 
 impl Button {
     fn label(self) -> &'static str {
@@ -65,15 +76,56 @@ impl Button {
             Button::Switch => "Switch",
             Button::New => "New",
             Button::Rename => "Rename",
-            Button::Delete => "Delete",
-            Button::Import => "Import",
-            Button::Export => "Export",
-            Button::OpenFolder => "Open folder",
+            Button::Delete | Button::DeleteFile => "Delete",
+            Button::More => "...",
+            Button::Import => "Import...",
+            Button::Export => "Export...",
             Button::Close => "Close",
             Button::LoadTo => "Load to...",
-            Button::Run => "Run MAIN.PRG",
+            Button::Run => "Run",
+            Button::CopyTo => "Copy to...",
         }
     }
+}
+
+/// A file of the selected project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct File {
+    kind: FileKind,
+    name: String,
+    /// Its size and date.
+    info: Option<(u64, String)>,
+}
+
+impl File {
+    /// `TXT:NAME`.
+    fn label(&self) -> String {
+        format!("{}:{}", self.kind.name(), self.name)
+    }
+}
+
+/// A file to copy or delete, wherever it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Source {
+    project: String,
+    kind: FileKind,
+    name: String,
+}
+
+/// A right click's menu, or the one of the `...` button.
+struct Popup {
+    at: (u32, u32),
+    items: Vec<Button>,
+    chosen: Option<usize>,
+}
+
+/// A file pressed on in the list, which moving the mouse drags onto a
+/// project to copy it there.
+#[derive(Clone, Copy, Debug)]
+struct Drag {
+    file: usize,
+    from: (i32, i32),
+    moving: bool,
 }
 
 /// What the frontend should do after an event.
@@ -83,8 +135,6 @@ pub enum Outcome {
     Close,
     /// The current project changed to the one named; the manager closes.
     Switched(String),
-    /// Open the folder that holds the projects.
-    OpenFolder,
     /// Ask for a folder, then call [`ProjectManager::folder_chosen`].
     ChooseFolder(Transfer),
     /// Load a TXT file of the current project into a slot, or run it;
@@ -141,6 +191,9 @@ enum Pending {
     Delete(String),
     /// Export a project into a folder that already holds one.
     Export(String, PathBuf),
+    DeleteFile(Source),
+    /// Copy a file over one of the same name, in a project and as a name.
+    Copy(Source, String, String),
 }
 
 enum Mode {
@@ -149,6 +202,9 @@ enum Mode {
     Ask(Dialog, Pending),
     /// Choosing the slot to load the selected file into.
     Slot,
+    Menu(Popup),
+    /// Choosing where to copy a file to.
+    Copy(Box<FilePicker>, Source),
 }
 
 /// Which list Up and Down move in; Tab switches.
@@ -167,8 +223,8 @@ pub struct ProjectManager {
     selected: usize,
     /// The first project row shown.
     scroll: usize,
-    /// Files of the selected project, as `TXT:NAME`.
-    files: Vec<String>,
+    /// Files of the selected project.
+    files: Vec<File>,
     file_selected: Option<usize>,
     /// The first file row shown.
     file_scroll: usize,
@@ -176,6 +232,7 @@ pub struct ProjectManager {
     status: Option<(String, bool)>,
     mode: Mode,
     mouse: Option<(i32, i32)>,
+    drag: Option<Drag>,
 }
 
 /// Whether a folder's name can be used as a project name as it is.
@@ -209,6 +266,7 @@ impl ProjectManager {
             status: None,
             mode: Mode::Browse,
             mouse: None,
+            drag: None,
         };
         manager.refresh(storage, None);
         let current = manager.current.clone();
@@ -245,10 +303,15 @@ impl ProjectManager {
         }
         self.file_selected = None;
         self.file_scroll = 0;
-        self.files = match storage.list(None, Some(self.selected_name())) {
+        let project = self.selected_name().to_string();
+        self.files = match storage.list(None, Some(&project)) {
             Ok(files) => files
                 .into_iter()
-                .map(|(kind, name)| format!("{}:{name}", kind.name()))
+                .map(|(kind, name)| File {
+                    info: storage.file_info(&project, kind, &name),
+                    kind,
+                    name,
+                })
                 .collect(),
             Err(e) => {
                 self.status = Some((format!("Could not list the files: {e}"), true));
@@ -263,7 +326,18 @@ impl ProjectManager {
 
     /// The selected file's name, if it is a TXT file.
     fn selected_program(&self) -> Option<&str> {
-        self.files.get(self.file_selected?)?.strip_prefix("TXT:")
+        let file = self.files.get(self.file_selected?)?;
+        (file.kind == FileKind::Txt).then_some(file.name.as_str())
+    }
+
+    /// The selected file, in the selected project.
+    fn selected_file(&self) -> Option<Source> {
+        let file = self.files.get(self.file_selected?)?;
+        Some(Source {
+            project: self.selected_name().to_string(),
+            kind: file.kind,
+            name: file.name.clone(),
+        })
     }
 
     fn select_file(&mut self, i: usize) {
@@ -286,13 +360,12 @@ impl ProjectManager {
             Button::Switch => name != self.current,
             Button::Rename | Button::Delete => !name.is_empty(),
             Button::LoadTo => self.selected_program().is_some(),
-            Button::Run => self
-                .files
-                .iter()
-                .any(|f| f.strip_prefix("TXT:") == Some(MAIN)),
-            Button::New | Button::Import | Button::Export | Button::OpenFolder | Button::Close => {
-                true
+            Button::Run => {
+                self.selected_program().is_some()
+                    || (self.files.iter()).any(|f| f.kind == FileKind::Txt && f.name == MAIN)
             }
+            Button::CopyTo | Button::DeleteFile => self.selected_file().is_some(),
+            Button::New | Button::More | Button::Import | Button::Export | Button::Close => true,
         }
     }
 
@@ -309,13 +382,26 @@ impl ProjectManager {
     /// The project list; the files sit to its right.
     fn list(&self) -> Rect {
         let f = self.frame();
+        let y = f.y + 2 * LINE + 2 * PAD;
         Rect {
             x: f.x + 2 * PAD,
-            y: f.y + 2 * LINE + 2 * PAD,
+            y,
             w: LIST_WIDTH,
-            // Under the list: the status line and the buttons.
-            h: f.h - 4 * LINE - 6 * PAD,
+            // Under the list: its buttons, then the status line and the
+            // window's buttons.
+            h: self.group_y() - PAD - y,
         }
+    }
+
+    /// The row of the buttons under the lists.
+    fn group_y(&self) -> u32 {
+        self.bottom_y() - PAD - LINE
+    }
+
+    /// The bottom row: the status line, Switch and Close.
+    fn bottom_y(&self) -> u32 {
+        let f = self.frame();
+        f.y + f.h - 2 * PAD - LINE
     }
 
     fn rows(&self) -> usize {
@@ -329,8 +415,6 @@ impl ProjectManager {
         Rect {
             x,
             w: f.x + f.w - 2 * PAD - x,
-            // Under the files: their buttons.
-            h: list.h - LINE - PAD,
             ..list
         }
     }
@@ -361,55 +445,122 @@ impl ProjectManager {
         }
     }
 
+    /// A button of the rows under the lists, or of the bottom right.
+    /// Import and Export, which are in the `...` menu, have no place.
     fn button(&self, button: Button) -> Rect {
         let f = self.frame();
         let width = |b: Button| text_width(b.label()) + 4 * PAD;
-        let y = f.y + f.h - 2 * PAD - LINE;
-        if FILE_BUTTONS.contains(&button) {
-            let files = self.files_rect();
-            let before: u32 = FILE_BUTTONS
-                .iter()
+        let before = |row: &[Button]| -> u32 {
+            (row.iter())
                 .take_while(|&&b| b != button)
                 .map(|&b| width(b) + PAD)
-                .sum();
+                .sum()
+        };
+        let (x, y) = if PROJECT_BUTTONS.contains(&button) {
+            (self.list().x + before(&PROJECT_BUTTONS), self.group_y())
+        } else if FILE_BUTTONS.contains(&button) {
+            (self.files_rect().x + before(&FILE_BUTTONS), self.group_y())
+        } else if WINDOW_BUTTONS.contains(&button) {
+            let all: u32 = WINDOW_BUTTONS.iter().map(|&b| width(b) + PAD).sum();
+            let left = f.x + f.w - 2 * PAD + PAD - all;
+            (left + before(&WINDOW_BUTTONS), self.bottom_y())
+        } else {
             return Rect {
-                x: files.x + before,
-                y: files.y + files.h + PAD,
-                w: width(button),
-                h: LINE,
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
             };
-        }
-        if button == Button::Close {
-            let w = width(button);
-            return Rect {
-                x: f.x + f.w - 2 * PAD - w,
-                y,
-                w,
-                h: LINE,
-            };
-        }
-        let before: u32 = BUTTONS
-            .iter()
-            .take_while(|&&b| b != button)
-            .map(|&b| width(b) + PAD)
-            .sum();
+        };
         Rect {
-            x: f.x + 2 * PAD + before,
+            x,
             y,
             w: width(button),
             h: LINE,
         }
     }
 
+    fn buttons() -> impl Iterator<Item = Button> {
+        PROJECT_BUTTONS
+            .into_iter()
+            .chain(FILE_BUTTONS)
+            .chain(WINDOW_BUTTONS)
+    }
+
+    fn project_at(&self, at: (i32, i32)) -> Option<usize> {
+        let shown = self.scroll..self.projects.len().min(self.scroll + self.rows());
+        shown.into_iter().find(|&i| self.row(i).contains(at))
+    }
+
+    fn file_at(&self, at: (i32, i32)) -> Option<usize> {
+        self.shown_files().find(|&i| self.file_row(i).contains(at))
+    }
+
+    fn popup_width(items: &[Button]) -> u32 {
+        items
+            .iter()
+            .map(|b| text_width(b.label()))
+            .max()
+            .unwrap_or(0)
+            + 4 * PAD
+    }
+
+    /// A menu item's place, kept inside the window.
+    fn popup_item(&self, popup: &Popup, i: usize) -> Rect {
+        let f = self.frame();
+        let w = Self::popup_width(&popup.items);
+        let h = popup.items.len() as u32 * LINE;
+        let x = popup.at.0.min(f.x + f.w - w - 2);
+        let y = popup.at.1.min(f.y + f.h - h - 2);
+        Rect {
+            x,
+            y: y + i as u32 * LINE,
+            w,
+            h: LINE,
+        }
+    }
+
+    fn open_menu(&mut self, at: (u32, u32), items: &[Button]) {
+        self.mode = Mode::Menu(Popup {
+            at,
+            items: items.to_vec(),
+            chosen: None,
+        });
+    }
+
     pub fn mouse_move(&mut self, at: (i32, i32)) {
         self.mouse = Some(at);
-        if let Mode::Ask(dialog, _) = &mut self.mode {
-            dialog.mouse_move(at);
+        match &mut self.mode {
+            Mode::Ask(dialog, _) => dialog.mouse_move(at),
+            Mode::Copy(picker, _) => picker.mouse_move(at),
+            Mode::Menu(popup) => {
+                let items = popup.items.len();
+                let hit = (0..items).find(|&i| self.popup_item_at(i).contains(at));
+                if let Mode::Menu(popup) = &mut self.mode {
+                    popup.chosen = hit;
+                }
+            }
+            _ => {}
+        }
+        if let Some(drag) = &mut self.drag {
+            let (dx, dy) = (at.0 - drag.from.0, at.1 - drag.from.1);
+            drag.moving |= dx.abs().max(dy.abs()) >= DRAG_START;
+        }
+    }
+
+    fn popup_item_at(&self, i: usize) -> Rect {
+        match &self.mode {
+            Mode::Menu(popup) => self.popup_item(popup, i),
+            _ => unreachable!("only a menu has items"),
         }
     }
 
     /// Scrolls the list under the mouse by `lines`, down for positive.
     pub fn wheel(&mut self, lines: i32) {
+        if let Mode::Copy(picker, _) = &mut self.mode {
+            picker.wheel(lines);
+            return;
+        }
         if !matches!(self.mode, Mode::Browse) {
             return;
         }
@@ -424,12 +575,16 @@ impl ProjectManager {
 
     /// Typed text, for the name box.
     pub fn text(&mut self, text: &str) {
-        if let Mode::Name(name) = &mut self.mode {
-            for c in text.chars().filter(char::is_ascii_graphic) {
-                if name.text.len() < MAX_TYPED {
-                    name.text.push(c);
+        match &mut self.mode {
+            Mode::Name(name) => {
+                for c in text.chars().filter(char::is_ascii_graphic) {
+                    if name.text.len() < MAX_TYPED {
+                        name.text.push(c);
+                    }
                 }
             }
+            Mode::Copy(picker, _) => picker.text(text),
+            _ => {}
         }
     }
 
@@ -460,23 +615,108 @@ impl ProjectManager {
                 }
                 Outcome::Stay
             }
+            Mode::Menu(popup) => {
+                let items = popup.items.clone();
+                let hit = (0..items.len()).find(|&i| self.popup_item_at(i).contains(at));
+                self.mode = Mode::Browse;
+                match hit {
+                    Some(i) => self.press(items[i], storage, unsaved),
+                    None => Outcome::Stay,
+                }
+            }
+            Mode::Copy(picker, _) => {
+                let outcome = picker.click(at, storage);
+                self.picked(outcome, storage)
+            }
             Mode::Browse => {
-                let all = BUTTONS.iter().chain(&FILE_BUTTONS);
-                if let Some(&b) = all.into_iter().find(|&&b| self.button(b).contains(at)) {
+                if let Some(b) = Self::buttons().find(|&b| self.button(b).contains(at)) {
+                    if b == Button::More {
+                        let r = self.button(b);
+                        self.open_menu((r.x, r.y + r.h), &[Button::Import, Button::Export]);
+                        return Outcome::Stay;
+                    }
                     return self.press(b, storage, unsaved);
                 }
-                let shown = self.scroll..self.projects.len().min(self.scroll + self.rows());
-                if let Some(i) = shown.into_iter().find(|&i| self.row(i).contains(at)) {
+                if let Some(i) = self.project_at(at) {
                     self.select(i, storage);
                     self.focus = Focus::Projects;
                 }
-                if let Some(i) = self.shown_files().find(|&i| self.file_row(i).contains(at)) {
+                if let Some(i) = self.file_at(at) {
                     self.select_file(i);
                     self.focus = Focus::Files;
+                    self.drag = Some(Drag {
+                        file: i,
+                        from: at,
+                        moving: false,
+                    });
                 }
                 Outcome::Stay
             }
         }
+    }
+
+    /// A double click on a project switches to it and closes.
+    pub fn double_click(
+        &mut self,
+        at: (i32, i32),
+        storage: &mut Storage,
+        unsaved: &[usize],
+    ) -> Outcome {
+        if !matches!(self.mode, Mode::Browse) {
+            return Outcome::Stay;
+        }
+        match self.project_at(at) {
+            Some(i) if self.projects[i] == self.current => Outcome::Close,
+            Some(i) => {
+                self.select(i, storage);
+                self.press(Button::Switch, storage, unsaved)
+            }
+            None => Outcome::Stay,
+        }
+    }
+
+    /// A right click on a project or a file opens a menu of what can be
+    /// done with it.
+    pub fn right_click(&mut self, at: (i32, i32), storage: &Storage) {
+        if !matches!(self.mode, Mode::Browse | Mode::Menu(_)) {
+            return;
+        }
+        self.mode = Mode::Browse;
+        let place = (at.0.max(0) as u32, at.1.max(0) as u32);
+        if let Some(i) = self.project_at(at) {
+            self.select(i, storage);
+            self.focus = Focus::Projects;
+            self.open_menu(place, &PROJECT_MENU);
+        } else if let Some(i) = self.file_at(at) {
+            self.select_file(i);
+            self.focus = Focus::Files;
+            self.open_menu(place, &FILE_BUTTONS);
+        }
+    }
+
+    /// Letting go of the left button: a file dragged onto a project is
+    /// copied there under its own name.
+    pub fn release(&mut self, at: (i32, i32), storage: &Storage) {
+        let Some(drag) = self.drag.take() else {
+            return;
+        };
+        if !drag.moving || !matches!(self.mode, Mode::Browse) {
+            return;
+        }
+        let (Some(file), Some(to)) = (self.files.get(drag.file), self.project_at(at)) else {
+            return;
+        };
+        if to == self.selected {
+            return;
+        }
+        let source = Source {
+            project: self.selected_name().to_string(),
+            kind: file.kind,
+            name: file.name.clone(),
+        };
+        let to = self.projects[to].clone();
+        let name = source.name.clone();
+        self.copy(source, to, name, storage, false);
     }
 
     /// Up and Down choose a project, or a file after Tab. Enter switches to
@@ -499,6 +739,29 @@ impl ProjectManager {
                 }
                 _ => Outcome::Stay,
             },
+            Mode::Menu(popup) => {
+                let n = popup.items.len();
+                match key {
+                    Keycode::Escape => self.mode = Mode::Browse,
+                    Keycode::Up => {
+                        popup.chosen = Some(popup.chosen.map_or(n - 1, |i| (i + n - 1) % n))
+                    }
+                    Keycode::Down => popup.chosen = Some(popup.chosen.map_or(0, |i| (i + 1) % n)),
+                    Keycode::Return | Keycode::KpEnter => {
+                        if let Some(i) = popup.chosen {
+                            let chosen = popup.items[i];
+                            self.mode = Mode::Browse;
+                            return self.press(chosen, storage, unsaved);
+                        }
+                    }
+                    _ => {}
+                }
+                Outcome::Stay
+            }
+            Mode::Copy(picker, _) => {
+                let outcome = picker.key(key, storage);
+                self.picked(outcome, storage)
+            }
             Mode::Slot => {
                 let digit = (key as i32).checked_sub(Keycode::_0 as i32);
                 match digit {
@@ -537,6 +800,7 @@ impl ProjectManager {
                     Keycode::Return | Keycode::KpEnter => {
                         return self.press(Button::LoadTo, storage, unsaved);
                     }
+                    Keycode::Delete => return self.press(Button::DeleteFile, storage, unsaved),
                     Keycode::Escape => return Outcome::Close,
                     _ => return Outcome::Stay,
                 };
@@ -577,11 +841,40 @@ impl ProjectManager {
             Button::LoadTo => self.mode = Mode::Slot,
             Button::Run => {
                 let open = Open {
-                    file: MAIN.to_string(),
+                    file: self.selected_program().unwrap_or(MAIN).to_string(),
                     slot: 0,
                     run: true,
                 };
                 return self.open(open, storage, unsaved, false);
+            }
+            Button::CopyTo => {
+                let source = self.selected_file().expect("enabled");
+                let picker = FilePicker::copy(
+                    self.size,
+                    (source.kind, &source.name),
+                    &source.project,
+                    storage,
+                );
+                self.mode = Mode::Copy(Box::new(picker), source);
+            }
+            Button::DeleteFile => {
+                let source = self.selected_file().expect("enabled");
+                let lines = vec![
+                    format!(
+                        "Delete {}:{} from {}.",
+                        source.kind.name(),
+                        source.name,
+                        project_label(&source.project)
+                    ),
+                    String::new(),
+                    "This cannot be undone.".to_string(),
+                ];
+                let dialog = Dialog::new("Delete file", lines, "Delete", self.size);
+                self.mode = Mode::Ask(dialog, Pending::DeleteFile(source));
+            }
+            Button::More => {
+                let r = self.button(Button::More);
+                self.open_menu((r.x, r.y + r.h), &[Button::Import, Button::Export]);
             }
             Button::New => self.ask_name(Naming::New, String::new(), None),
             Button::Rename => {
@@ -610,7 +903,6 @@ impl ProjectManager {
             }
             Button::Import => return Outcome::ChooseFolder(Transfer::Import),
             Button::Export => return Outcome::ChooseFolder(Transfer::Export(name)),
-            Button::OpenFolder => return Outcome::OpenFolder,
             Button::Close => return Outcome::Close,
         }
         Outcome::Stay
@@ -642,6 +934,60 @@ impl ProjectManager {
                 ];
                 let dialog = Dialog::new("Export project", lines, "Replace", self.size);
                 self.mode = Mode::Ask(dialog, Pending::Export(name, folder));
+            }
+        }
+    }
+
+    /// What the window choosing where to copy to gave.
+    fn picked(&mut self, outcome: file_dialogs::Outcome, storage: &Storage) -> Outcome {
+        match outcome {
+            file_dialogs::Outcome::Close => self.mode = Mode::Browse,
+            file_dialogs::Outcome::Copy { project, name } => {
+                let Mode::Copy(_, source) = std::mem::replace(&mut self.mode, Mode::Browse) else {
+                    unreachable!("only copying picks")
+                };
+                self.copy(source, project, name, storage, false);
+            }
+            _ => {}
+        }
+        Outcome::Stay
+    }
+
+    /// Copies a file to `to` as `name`, first asking before replacing a
+    /// file there (unless `asked`).
+    fn copy(&mut self, source: Source, to: String, name: String, storage: &Storage, asked: bool) {
+        let name = name.to_ascii_uppercase();
+        let kind = source.kind.name();
+        if to == source.project && name == source.name {
+            self.status = Some((format!("{kind}:{name} is already there."), true));
+            return;
+        }
+        if !asked && storage.exists_in(&to, source.kind, &name) {
+            let lines = vec![
+                format!("{kind}:{name} is already in {}.", project_label(&to)),
+                String::new(),
+                "It will be replaced.".to_string(),
+            ];
+            let dialog = Dialog::new("Copy file", lines, "Replace", self.size);
+            self.mode = Mode::Ask(dialog, Pending::Copy(source, to, name));
+            return;
+        }
+        let from = (source.project.as_str(), source.name.as_str());
+        self.status = Some(match storage.copy_file(source.kind, from, (&to, &name)) {
+            Ok(name) => {
+                let place = project_label(&to);
+                (
+                    format!("Copied {kind}:{} to {place} as {name}.", source.name),
+                    false,
+                )
+            }
+            Err(e) => (format!("Could not copy {kind}:{}: {e}", source.name), true),
+        });
+        if to == self.selected_name() {
+            let kept = self.file_selected;
+            self.select(self.selected, storage);
+            if let Some(i) = kept {
+                self.select_file(i);
             }
         }
     }
@@ -765,6 +1111,20 @@ impl ProjectManager {
             Pending::Switch(name, then) => return self.switch(name, storage, unsaved, true, then),
             Pending::Open(open) => return self.open(open, storage, unsaved, true),
             Pending::Export(name, folder) => self.export(&name, &folder, storage),
+            Pending::Copy(source, to, name) => self.copy(source, to, name, storage, true),
+            Pending::DeleteFile(source) => {
+                let label = format!("{}:{}", source.kind.name(), source.name);
+                let done = storage.delete_in(&source.project, source.kind, &source.name);
+                self.status = Some(match done {
+                    Ok(()) => (format!("Deleted {label}."), false),
+                    Err(e) => (format!("Could not delete {label}: {e}"), true),
+                });
+                let kept = self.file_selected;
+                self.select(self.selected, storage);
+                if let Some(i) = kept {
+                    self.select_file(i);
+                }
+            }
             Pending::Delete(name) => {
                 let was_current = name == self.current;
                 self.status = Some(match storage.delete_project(&name) {
@@ -841,7 +1201,7 @@ impl ProjectManager {
         }
     }
 
-    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font, blink: bool) {
         let f = self.frame();
         window(fb, font, f, "Projects");
         let current = format!("Current: {}", project_label(&self.current));
@@ -851,9 +1211,10 @@ impl ProjectManager {
         let list = self.list();
         let files = self.files_rect();
         let heading_y = list.y - LINE + 4;
-        draw_text(fb, font, list.x, heading_y, "Project", TEXT);
-        let heading = format!("Files ({})", self.files.len());
-        draw_text(fb, font, files.x, heading_y, &heading, TEXT);
+        draw_text(fb, font, list.x, heading_y, "Projects", TEXT);
+        let place = project_label(self.selected_name());
+        let heading = format!("Files in {place} ({})", self.files.len());
+        draw_text(fb, font, files.x, heading_y, &fit(&heading, files.w), TEXT);
 
         let shown = self.scroll..self.projects.len().min(self.scroll + self.rows());
         for i in shown {
@@ -892,21 +1253,50 @@ impl ProjectManager {
                 };
                 fill(fb, r, color);
             }
-            let text = fit(&self.files[i], r.w - 2 * PAD);
+            // The size and the date to the minute on the right, if the
+            // name leaves room.
+            let file = &self.files[i];
+            let info = (file.info.as_ref())
+                .map(|(size, date)| format!("{size:>7}  {}", date.get(..16).unwrap_or(date)));
+            let info_w = info.as_ref().map_or(0, |i| text_width(i) + 2 * PAD);
+            let text = fit(&file.label(), r.w - 2 * PAD - info_w);
             draw_text(fb, font, r.x + PAD, r.y + 4, &text, TEXT);
+            if let Some(info) = info {
+                let x = r.x + r.w - PAD - text_width(&info);
+                draw_text(fb, font, x, r.y + 4, &info, DISABLED);
+            }
         }
         outline(fb, files, BORDER);
 
         if let Some((status, error)) = &self.status {
-            let y = list.y + list.h + PAD + 4;
+            let y = self.bottom_y() + 4;
             let color = if *error { ERROR } else { TEXT };
-            draw_text(fb, font, list.x, y, &fit(status, f.w - 4 * PAD), color);
+            let room = self.button(Button::Switch).x.saturating_sub(list.x + PAD);
+            draw_text(fb, font, list.x, y, &fit(status, room), color);
         }
         let browsing = matches!(self.mode, Mode::Browse);
-        for b in BUTTONS.into_iter().chain(FILE_BUTTONS) {
+        for b in Self::buttons() {
             let hovered = browsing && self.mouse.is_some_and(|m| self.button(b).contains(m));
             let enabled = self.enabled(b);
             button(fb, font, self.button(b), b.label(), hovered, enabled);
+        }
+        // The file being dragged, by the mouse.
+        if let (Some(drag), Some(at)) = (self.drag, self.mouse)
+            && drag.moving
+            && let Some(file) = self.files.get(drag.file)
+        {
+            if let Some(to) = self.project_at(at).filter(|&to| to != self.selected) {
+                outline(fb, self.row(to), TEXT);
+            }
+            let label = file.label();
+            let r = Rect {
+                x: at.0.max(0) as u32 + PAD,
+                y: at.1.max(0) as u32,
+                w: text_width(&label) + 2 * PAD,
+                h: LINE,
+            };
+            fill(fb, r, HIGHLIGHT);
+            draw_text(fb, font, r.x + PAD, r.y + 4, &label, TEXT);
         }
 
         match &self.mode {
@@ -914,7 +1304,28 @@ impl ProjectManager {
             Mode::Ask(dialog, _) => dialog.draw(fb, font),
             Mode::Name(name) => self.draw_name(fb, font, name),
             Mode::Slot => self.draw_slot(fb, font),
+            Mode::Copy(picker, _) => picker.draw(fb, font, blink),
+            Mode::Menu(popup) => self.draw_menu(fb, font, popup),
         }
+    }
+
+    fn draw_menu(&self, fb: &mut Framebuffer, font: &Font, popup: &Popup) {
+        let first = self.popup_item(popup, 0);
+        let all = Rect {
+            h: popup.items.len() as u32 * LINE,
+            ..first
+        };
+        fill(fb, all, BACKGROUND | 0xFF00_0000);
+        for (i, &item) in popup.items.iter().enumerate() {
+            let r = self.popup_item(popup, i);
+            let enabled = self.enabled(item);
+            if popup.chosen == Some(i) && enabled {
+                fill(fb, r, HIGHLIGHT);
+            }
+            let color = if enabled { TEXT } else { DISABLED };
+            draw_text(fb, font, r.x + 2 * PAD, r.y + 4, item.label(), color);
+        }
+        outline(fb, all, BORDER);
     }
 
     fn slot_frame(&self) -> Rect {
@@ -1197,7 +1608,8 @@ mod tests {
         m.text("2");
         m.key(Keycode::Return, &mut s, &[]);
         assert_eq!(m.selected_name(), "GAME2");
-        assert_eq!(m.files, ["TXT:MAIN.PRG"]);
+        let files: Vec<String> = m.files.iter().map(File::label).collect();
+        assert_eq!(files, ["TXT:MAIN.PRG"]);
     }
 
     #[test]
@@ -1296,20 +1708,119 @@ mod tests {
         let s = Storage::new(tmp.0.clone());
         let m = ProjectManager::new(&s, (1280, 720));
         let f = m.frame();
-        for pair in BUTTONS.windows(2) {
-            let (a, b) = (m.button(pair[0]), m.button(pair[1]));
-            assert!(a.x + a.w < b.x, "{pair:?}");
+        for row in [&PROJECT_BUTTONS[..], &FILE_BUTTONS, &WINDOW_BUTTONS] {
+            for pair in row.windows(2) {
+                let (a, b) = (m.button(pair[0]), m.button(pair[1]));
+                assert!(a.x + a.w < b.x, "{pair:?}");
+            }
         }
-        for pair in FILE_BUTTONS.windows(2) {
-            let (a, b) = (m.button(pair[0]), m.button(pair[1]));
-            assert!(a.x + a.w < b.x, "{pair:?}");
-        }
-        let files = m.files_rect();
+        let (list, files) = (m.list(), m.files_rect());
+        let last = m.button(Button::More);
+        assert!(last.x + last.w <= list.x + list.w, "under the projects");
+        let last = m.button(Button::DeleteFile);
+        assert!(last.x + last.w <= files.x + files.w, "under the files");
         assert!(m.button(Button::LoadTo).y > files.y + files.h);
+        assert!(m.button(Button::Close).y > m.button(Button::LoadTo).y + LINE);
         let last = m.slot_button(SLOTS - 1);
         assert!(last.x + last.w < m.slot_button(SLOTS).x);
         let close = m.button(Button::Close);
         assert!(close.x + close.w <= f.x + f.w);
         assert!(m.rows() >= 10);
+    }
+
+    #[test]
+    fn double_click_switches_and_closes() {
+        let tmp = TempDir::new("double");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let current = centre(m.row(0));
+        assert_eq!(m.double_click(current, &mut s, &[]), Outcome::Close);
+        let game = centre(m.row(1));
+        assert_eq!(
+            m.double_click(game, &mut s, &[]),
+            Outcome::Switched("GAME".to_string())
+        );
+    }
+
+    #[test]
+    fn files_are_copied_and_deleted() {
+        let tmp = TempDir::new("files");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "A.PRG", b"?1", None).unwrap();
+        s.write(FileKind::Dat, "D", b"", None).unwrap();
+        s.create_project("GAME").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let label =
+            |m: &ProjectManager| -> Vec<String> { m.files.iter().map(File::label).collect() };
+
+        // Dragging a file onto a project copies it there.
+        let a = centre(m.file_row(0));
+        m.click(a, &mut s, &[]);
+        m.mouse_move((a.0 + 20, a.1));
+        m.release(centre(m.row(1)), &s);
+        assert!(s.exists_in("GAME", FileKind::Txt, "A.PRG"));
+        // Again, it asks before replacing.
+        m.click(a, &mut s, &[]);
+        m.mouse_move((a.0 + 20, a.1));
+        m.release(centre(m.row(1)), &s);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Copy(..))));
+        m.key(Keycode::Escape, &mut s, &[]);
+        // A click without moving copies nothing.
+        m.click(a, &mut s, &[]);
+        m.release(centre(m.row(1)), &s);
+        assert!(matches!(m.mode, Mode::Browse));
+
+        // Copy to... names the copy in the file list.
+        m.press(Button::CopyTo, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Copy(..)));
+        m.text("B.PRG");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        assert_eq!(label(&m), ["TXT:A.PRG", "TXT:A.PRGB.PRG", "DAT:D"]);
+        m.press(Button::CopyTo, &mut s, &[]);
+        // Erasing the whole name, then once more, goes up to the projects.
+        for _ in 0.."A.PRG".len() {
+            m.key(Keycode::Backspace, &mut s, &[]);
+        }
+        m.text("B");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert_eq!(label(&m), ["TXT:A.PRG", "TXT:A.PRGB.PRG", "TXT:B", "DAT:D"]);
+
+        // A right click on a file opens its menu; Delete asks first.
+        let d = centre(m.file_row(3));
+        m.right_click(d, &s);
+        let Mode::Menu(popup) = &m.mode else {
+            panic!("a menu")
+        };
+        assert_eq!(popup.items, FILE_BUTTONS);
+        assert!(!m.enabled(Button::LoadTo), "a DAT file");
+        let delete = m.popup_item(popup, 3);
+        m.click(centre(delete), &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::DeleteFile(_))));
+        m.key(Keycode::Left, &mut s, &[]);
+        m.key(Keycode::Return, &mut s, &[]);
+        assert!(!s.exists_in("", FileKind::Dat, "D"));
+        assert_eq!(m.file_selected, Some(2), "the last one left");
+    }
+
+    #[test]
+    fn run_takes_the_selected_program() {
+        let tmp = TempDir::new("run");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "A.PRG", b"?1", None).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert_eq!(
+            m.press(Button::Run, &mut s, &[]),
+            Outcome::Open {
+                switched: None,
+                open: Open {
+                    file: "A.PRG".to_string(),
+                    slot: 0,
+                    run: true
+                }
+            }
+        );
     }
 }

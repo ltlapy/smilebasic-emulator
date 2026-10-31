@@ -433,6 +433,49 @@ impl Storage {
         Ok(())
     }
 
+    /// Whether a file is in a project, which need not be the current one.
+    pub fn exists_in(&self, project: &str, kind: FileKind, name: &str) -> bool {
+        self.dir(project)
+            .is_ok_and(|d| d.join(format!("{}{name}", kind.prefix())).is_file())
+    }
+
+    /// Deletes a file of a project, which need not be the current one.
+    pub fn delete_in(&self, project: &str, kind: FileKind, name: &str) -> Result<()> {
+        if !self.exists_in(project, kind, name) {
+            return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));
+        }
+        std::fs::remove_file(self.dir(project)?.join(format!("{}{name}", kind.prefix())))?;
+        Ok(())
+    }
+
+    /// Copies a file from one project to another (or the same one) under
+    /// the name `to.1`, replacing a file of that name. Returns the name
+    /// as checked, in upper case.
+    pub fn copy_file(
+        &self,
+        kind: FileKind,
+        (from_project, name): (&str, &str),
+        (to_project, to_name): (&str, &str),
+    ) -> Result<String> {
+        let to_name = check_name(to_name)?;
+        if !self.project_exists(to_project) {
+            return Err(StorageError::NotFound(to_project.to_string()));
+        }
+        let file = |project: &str, name: &str| -> Result<PathBuf> {
+            Ok(self.dir(project)?.join(format!("{}{name}", kind.prefix())))
+        };
+        let from = file(from_project, name)?;
+        if !from.is_file() {
+            return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));
+        }
+        let to = file(to_project, &to_name)?;
+        if from != to {
+            std::fs::create_dir_all(to.parent().expect("file in a project folder"))?;
+            std::fs::copy(from, to)?;
+        }
+        Ok(to_name)
+    }
+
     pub fn rename(&self, kind: FileKind, from: &str, to: &str) -> Result<()> {
         if !self.exists(kind, from) {
             return Err(StorageError::NotFound(format!("{}:{from}", kind.name())));
@@ -621,6 +664,28 @@ mod tests {
         s.create_project("#sys").unwrap();
         s.set_project("#sys").unwrap();
         assert_eq!(s.project(), "#SYS");
+    }
+
+    #[test]
+    fn copying_between_projects() {
+        let tmp = TempDir::new("copy");
+        let s = Storage::new(tmp.0.clone());
+        s.create_project("B").unwrap();
+        s.write(FileKind::Txt, "A", b"?1", None).unwrap();
+        let name = s
+            .copy_file(FileKind::Txt, ("", "A"), ("B", "c.prg"))
+            .unwrap();
+        assert_eq!(name, "C.PRG");
+        assert!(s.exists_in("B", FileKind::Txt, "C.PRG"));
+        assert!(s.copy_file(FileKind::Txt, ("", "A"), ("B", "a/b")).is_err());
+        assert!(
+            s.copy_file(FileKind::Txt, ("", "A"), ("NONE", "A"))
+                .is_err()
+        );
+        assert!(s.copy_file(FileKind::Dat, ("", "A"), ("B", "A")).is_err());
+        s.delete_in("B", FileKind::Txt, "C.PRG").unwrap();
+        assert!(!s.exists_in("B", FileKind::Txt, "C.PRG"));
+        assert!(s.delete_in("B", FileKind::Txt, "C.PRG").is_err());
     }
 
     #[test]

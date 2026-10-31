@@ -420,10 +420,32 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     }
                     Event::MouseButtonDown {
                         mouse_btn: MouseButton::Left,
+                        clicks,
                         x,
                         y,
                         ..
-                    } => open.click(to_display(x, y), storage, &unsaved),
+                    } => match clicks {
+                        2 => open.double_click(to_display(x, y), storage, &unsaved),
+                        _ => open.click(to_display(x, y), storage, &unsaved),
+                    },
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Right,
+                        x,
+                        y,
+                        ..
+                    } => {
+                        open.right_click(to_display(x, y), storage);
+                        Outcome::Stay
+                    }
+                    Event::MouseButtonUp {
+                        mouse_btn: MouseButton::Left,
+                        x,
+                        y,
+                        ..
+                    } => {
+                        open.release(to_display(x, y), storage);
+                        Outcome::Stay
+                    }
                     Event::MouseWheel { y, .. } => {
                         open.wheel(-y.round() as i32);
                         Outcome::Stay
@@ -444,7 +466,6 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         toasts.push(format!("Switched to project {name}"));
                         manager = None;
                     }
-                    Outcome::OpenFolder => open_folder(&machine.rt.storage, &mut toasts),
                     Outcome::Open { switched, open } => {
                         if let Some(name) = switched {
                             toasts.push(format!("Switched to project {name}"));
@@ -518,6 +539,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         d.text(&text);
                         file_dialogs::Outcome::Stay
                     }
+                    (FileDialog::Load(p), Event::TextInput { text, .. }) => {
+                        p.text(&text);
+                        file_dialogs::Outcome::Stay
+                    }
                     _ => file_dialogs::Outcome::Stay,
                 };
                 let slot = machine.edited_slot();
@@ -539,6 +564,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             save_edited(&mut machine, &name, &mut toasts);
                         }
                     }
+                    // Only the projects window copies.
+                    file_dialogs::Outcome::Copy { .. } => file_dialog = None,
                     file_dialogs::Outcome::Load(spec) => {
                         file_dialog = None;
                         if machine.unsaved_slots().contains(&slot) {
@@ -1167,7 +1194,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             overlay.clear(if dims { 0x8000_0000 } else { 0 });
             let font = machine.rt.font();
             if let Some(open) = &manager {
-                open.draw(&mut overlay, font);
+                open.draw(&mut overlay, font, (blink / 25).is_multiple_of(2));
             }
             match &side {
                 Some(Side::Help(help)) => help.draw(&mut overlay, font, side_focus),
@@ -1187,7 +1214,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Some(FileDialog::Save(d)) => {
                     d.draw(&mut overlay, font, (blink / 25).is_multiple_of(2))
                 }
-                Some(FileDialog::Load(p)) => p.draw(&mut overlay, font),
+                Some(FileDialog::Load(p)) => {
+                    p.draw(&mut overlay, font, (blink / 25).is_multiple_of(2))
+                }
                 None => {}
             }
             if key_hint.visible() {

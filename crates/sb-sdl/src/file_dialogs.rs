@@ -28,6 +28,11 @@ pub enum Outcome {
     Save(String),
     /// Load this file (`PROJECT/NAME`) into the slot.
     Load(String),
+    /// Copy the file into `project` as `name`.
+    Copy {
+        project: String,
+        name: String,
+    },
 }
 
 fn centered((w, h): (u32, u32), width: u32, height: u32) -> Rect {
@@ -133,54 +138,104 @@ struct Entry {
     info: Option<(u64, String)>,
 }
 
-/// Ctrl+L: the programs of a project, or the projects, to load from.
+/// What the file list is for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// Ctrl+L: a program to load into this slot. What is typed narrows
+    /// the list.
+    Load(usize),
+    /// A file to copy into the project chosen here, under the name typed.
+    Copy { kind: FileKind, name: String },
+}
+
+/// Ctrl+L's list of the programs of a project, or of the projects, to load
+/// from; also where the projects window copies a file to.
 pub struct FilePicker {
     size: (u32, u32),
-    slot: usize,
+    purpose: Purpose,
     /// The project whose files are listed; `None` while listing the
     /// projects.
     project: Option<String>,
+    /// The project's files, or the projects, before narrowing.
+    all: Vec<Entry>,
+    /// The rows shown: the way up to the projects first, in a project.
     entries: Vec<Entry>,
     chosen: usize,
     scroll: usize,
     error: Option<String>,
+    /// The name box: what narrows the list, or the name to copy to.
+    field: String,
 }
 
 impl FilePicker {
     /// The current project's programs.
     pub fn new(size: (u32, u32), slot: usize, storage: &Storage) -> FilePicker {
+        FilePicker::open_at(size, Purpose::Load(slot), storage.project(), storage)
+    }
+
+    /// For copying a file: the files of its kind in `project`, with its
+    /// name in the name box.
+    pub fn copy(
+        size: (u32, u32),
+        (kind, name): (FileKind, &str),
+        project: &str,
+        storage: &Storage,
+    ) -> FilePicker {
+        let purpose = Purpose::Copy {
+            kind,
+            name: name.to_string(),
+        };
+        FilePicker::open_at(size, purpose, project, storage)
+    }
+
+    fn open_at(size: (u32, u32), purpose: Purpose, project: &str, storage: &Storage) -> FilePicker {
+        let field = match &purpose {
+            Purpose::Load(_) => String::new(),
+            Purpose::Copy { name, .. } => name.clone(),
+        };
         let mut picker = FilePicker {
             size,
-            slot,
+            purpose,
             project: None,
+            all: Vec::new(),
             entries: Vec::new(),
             chosen: 0,
             scroll: 0,
             error: None,
+            field,
         };
-        picker.open(Some(storage.project().to_string()), storage);
-        // The first program rather than the way up.
+        picker.open(Some(project.to_string()), storage);
+        // The first file rather than the way up.
         picker.choose(1);
         picker
     }
 
+    fn kind(&self) -> FileKind {
+        match &self.purpose {
+            Purpose::Load(_) => FileKind::Txt,
+            Purpose::Copy { kind, .. } => *kind,
+        }
+    }
+
+    fn narrows(&self) -> bool {
+        matches!(self.purpose, Purpose::Load(_))
+    }
+
     fn open(&mut self, project: Option<String>, storage: &Storage) {
         self.error = None;
-        self.entries = match &project {
-            Some(project) => {
-                let mut entries = vec![Entry {
-                    name: UP.to_string(),
-                    info: None,
-                }];
-                match storage.list(Some(FileKind::Txt), Some(project)) {
-                    Ok(files) => entries.extend(files.into_iter().map(|(kind, name)| Entry {
+        self.all = match &project {
+            Some(project) => match storage.list(Some(self.kind()), Some(project)) {
+                Ok(files) => (files.into_iter())
+                    .map(|(kind, name)| Entry {
                         info: storage.file_info(project, kind, &name),
                         name,
-                    })),
-                    Err(e) => self.error = Some(e.to_string()),
+                    })
+                    .collect(),
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    Vec::new()
                 }
-                entries
-            }
+            },
             None => {
                 let mut names = vec![String::new()];
                 match storage.projects() {
@@ -193,6 +248,31 @@ impl FilePicker {
             }
         };
         self.project = project;
+        self.narrow();
+    }
+
+    /// Shows the rows that hold what is typed, when it narrows the list.
+    fn narrow(&mut self) {
+        let typed = self.field.to_ascii_uppercase();
+        let fits = |e: &Entry| {
+            let shown = match self.project {
+                Some(_) => e.name.as_str(),
+                None => project_label(&e.name),
+            };
+            !self.narrows() || shown.to_ascii_uppercase().contains(&typed)
+        };
+        let mut entries = Vec::new();
+        if self.project.is_some() {
+            entries.push(Entry {
+                name: UP.to_string(),
+                info: None,
+            });
+        }
+        entries.extend(self.all.iter().filter(|e| fits(e)).map(|e| Entry {
+            name: e.name.clone(),
+            info: e.info.clone(),
+        }));
+        self.entries = entries;
         self.chosen = 0;
         self.scroll = 0;
     }
@@ -207,7 +287,20 @@ impl FilePicker {
             x: f.x + 2 * PAD,
             y: f.y + LINE + 2 * PAD,
             w: f.w - 4 * PAD,
-            h: f.h - 2 * LINE - 4 * PAD,
+            // Under the list: the name box and the hint.
+            h: f.h - 3 * LINE - 6 * PAD,
+        }
+    }
+
+    fn field_rect(&self) -> Rect {
+        let f = self.frame();
+        let list = self.list();
+        let label = text_width("Name: ");
+        Rect {
+            x: list.x + label,
+            y: f.y + f.h - 2 * LINE - 3 * PAD,
+            w: list.w - label,
+            h: LINE,
         }
     }
 
@@ -225,16 +318,26 @@ impl FilePicker {
     }
 
     /// Enter on the chosen row: up to the projects, into a project, or
-    /// load a file.
+    /// load a file. In copying, Enter in a project copies there.
     fn act(&mut self, storage: &Storage) -> Outcome {
         let Some(entry) = self.entries.get(self.chosen) else {
             return Outcome::Stay;
         };
-        match &self.project {
-            Some(_) if self.chosen == 0 => self.up(storage),
-            Some(project) => return Outcome::Load(format!("{project}/{}", entry.name)),
-            None => {
+        match (&self.project, &self.purpose) {
+            (Some(project), Purpose::Copy { .. }) if !self.field.is_empty() => {
+                return Outcome::Copy {
+                    project: project.clone(),
+                    name: self.field.clone(),
+                };
+            }
+            (Some(_), Purpose::Copy { .. }) => {}
+            (Some(_), _) if self.chosen == 0 => self.up(storage),
+            (Some(project), _) => return Outcome::Load(format!("{project}/{}", entry.name)),
+            (None, _) => {
                 let project = entry.name.clone();
+                if self.narrows() {
+                    self.field.clear();
+                }
                 self.open(Some(project), storage);
                 self.choose(1);
             }
@@ -245,6 +348,9 @@ impl FilePicker {
     /// To the projects, with the one left chosen.
     fn up(&mut self, storage: &Storage) {
         let left = self.project.take();
+        if self.narrows() {
+            self.field.clear();
+        }
         self.open(None, storage);
         if let Some(i) = self
             .entries
@@ -252,6 +358,19 @@ impl FilePicker {
             .position(|e| Some(&e.name) == left.as_ref())
         {
             self.choose(i);
+        }
+    }
+
+    /// Typed text goes into the name box.
+    pub fn text(&mut self, text: &str) {
+        for c in text.chars().filter(char::is_ascii_graphic) {
+            if self.field.len() < MAX_TYPED {
+                self.field.push(c.to_ascii_uppercase());
+            }
+        }
+        if self.narrows() {
+            self.narrow();
+            self.choose(1);
         }
     }
 
@@ -265,6 +384,14 @@ impl FilePicker {
             Keycode::PageDown => self.choose(self.chosen + page),
             Keycode::Home => self.choose(0),
             Keycode::End => self.choose(usize::MAX),
+            // Backspace erases what is typed, then goes up.
+            Keycode::Backspace if !self.field.is_empty() => {
+                self.field.pop();
+                if self.narrows() {
+                    self.narrow();
+                    self.choose(1);
+                }
+            }
             Keycode::Backspace if self.project.is_some() => self.up(storage),
             Keycode::Return | Keycode::KpEnter => return self.act(storage),
             _ => {}
@@ -287,18 +414,22 @@ impl FilePicker {
         }
     }
 
-    /// A click on a row acts on it; one outside the window closes it.
+    /// A click on a row acts on it, except that in copying a file's row
+    /// gives its name to copy over; one outside the window closes it.
     pub fn click(&mut self, at: (i32, i32), storage: &Storage) -> Outcome {
         if !self.frame().contains(at) {
             return Outcome::Close;
         }
-        match self.row_at(at) {
-            Some(i) => {
-                self.chosen = i;
-                self.act(storage)
-            }
-            None => Outcome::Stay,
+        let Some(i) = self.row_at(at) else {
+            return Outcome::Stay;
+        };
+        self.chosen = i;
+        match (&self.project, &self.purpose) {
+            (Some(_), Purpose::Copy { .. }) if i == 0 => self.up(storage),
+            (Some(_), Purpose::Copy { .. }) => self.field = self.entries[i].name.clone(),
+            _ => return self.act(storage),
         }
+        Outcome::Stay
     }
 
     pub fn wheel(&mut self, rows: i32) {
@@ -309,11 +440,15 @@ impl FilePicker {
             .min(most);
     }
 
-    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font, blink: bool) {
         let f = self.frame();
-        let title = match &self.project {
-            Some(project) => format!("Slot {}: Load file - {}", self.slot, project_label(project)),
-            None => format!("Slot {}: Load file - Projects", self.slot),
+        let place = match &self.project {
+            Some(project) => project_label(project),
+            None => "Projects",
+        };
+        let title = match &self.purpose {
+            Purpose::Load(slot) => format!("Slot {slot}: Load file - {place}"),
+            Purpose::Copy { kind, name } => format!("Copy {}:{name} to - {place}", kind.name()),
         };
         window(fb, font, f, &title);
         let list = self.list();
@@ -342,9 +477,34 @@ impl FilePicker {
                 draw_text(fb, font, x, y + 4, &info, TEXT);
             }
         }
-        let hint = match &self.error {
-            Some(e) => e.clone(),
-            None => "Enter: load  Backspace: projects  Esc: cancel".to_string(),
+        outline(fb, list, BORDER);
+        let field = self.field_rect();
+        let label = if self.narrows() { "Find:" } else { "Name:" };
+        draw_text(fb, font, list.x, field.y + 4, label, TEXT);
+        fill(fb, field, 0xFF00_0000);
+        outline(fb, field, BORDER);
+        draw_text(fb, font, field.x + PAD, field.y + 4, &self.field, TEXT);
+        if blink {
+            let x = field.x + PAD + text_width(&self.field);
+            let cursor = Rect {
+                x,
+                y: field.y + 4,
+                w: 2,
+                h: CHAR,
+            };
+            fill(fb, cursor, TEXT);
+        }
+        let hint = match (&self.error, &self.purpose, &self.project) {
+            (Some(e), _, _) => e.clone(),
+            (None, Purpose::Load(_), _) => {
+                "Type to narrow  Enter: load  Backspace: projects  Esc: cancel".to_string()
+            }
+            (None, Purpose::Copy { .. }, None) => {
+                "Enter: open the project  Esc: cancel".to_string()
+            }
+            (None, Purpose::Copy { .. }, Some(_)) => {
+                "Enter: copy here  Click a file: its name  Esc: cancel".to_string()
+            }
         };
         draw_text(
             fb,
@@ -401,6 +561,32 @@ mod tests {
         p.key(Keycode::Return, &storage);
         assert_eq!(p.project, None, "the way up");
         assert_eq!(p.key(Keycode::Escape, &storage), Outcome::Close);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn typing_narrows_the_list() {
+        let dir = std::env::temp_dir().join(format!("sb-narrow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage = Storage::new(dir.clone());
+        for name in ["GAME.PRG", "TOOL.PRG", "MYGAME.PRG"] {
+            storage.write(FileKind::Txt, name, b"", None).unwrap();
+        }
+        let mut p = FilePicker::new((1280, 720), 0, &storage);
+        p.text("game");
+        let names: Vec<&str> = p.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, [UP, "GAME.PRG", "MYGAME.PRG"]);
+        assert_eq!(
+            p.key(Keycode::Return, &storage),
+            Outcome::Load("/GAME.PRG".into())
+        );
+        // Backspace erases, then goes up.
+        for _ in 0..4 {
+            p.key(Keycode::Backspace, &storage);
+        }
+        assert_eq!(p.entries.len(), 4);
+        p.key(Keycode::Backspace, &storage);
+        assert_eq!(p.project, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
