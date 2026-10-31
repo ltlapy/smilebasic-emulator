@@ -957,12 +957,10 @@ impl Compiler<'_> {
                 let place = self.place(&target)?;
                 self.load_place(&place);
                 self.emit(Op::Swap);
-                let op = if full == "INC" {
-                    BinaryOp::Add
-                } else {
-                    BinaryOp::Sub
-                };
-                self.emit(Op::Binary(op));
+                self.emit(match full == "INC" {
+                    true => Op::Append,
+                    false => Op::Binary(BinaryOp::Sub),
+                });
                 self.store_place(&place);
                 return Ok(());
             }

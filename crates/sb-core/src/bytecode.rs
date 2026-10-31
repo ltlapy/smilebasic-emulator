@@ -84,6 +84,9 @@ pub enum Op {
     },
     Unary(UnaryOp),
     Binary(BinaryOp),
+    /// INC's `+`: a string is added to where it is, so that the caller's
+    /// string grows when a DEF's parameter does.
+    Append,
     /// `[array, v1..vn] -> [array]`: sets the first elements.
     FillArray(u32),
     /// `[v] -> [0 or 1]`

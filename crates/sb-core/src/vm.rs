@@ -1388,6 +1388,20 @@ impl Vm {
                     .expect("compiler keeps the stack balanced");
                 *lhs = ops::binary(*op, lhs, &rhs)?;
             }
+            Op::Append => {
+                let rhs = self.pop();
+                let lhs = self
+                    .stack
+                    .last_mut()
+                    .expect("compiler keeps the stack balanced");
+                match (&*lhs, &rhs) {
+                    (Value::Str(l), Value::Str(r)) => {
+                        let added = r.borrow().clone();
+                        l.borrow_mut().extend_from_slice(&added);
+                    }
+                    _ => *lhs = ops::binary(BinaryOp::Add, lhs, &rhs)?,
+                }
+            }
             Op::Truthy => {
                 let b = self.pop().is_true()?;
                 self.stack.push(Value::Int(i32::from(b)));

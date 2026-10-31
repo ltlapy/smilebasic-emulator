@@ -86,6 +86,8 @@ follows all of it. Items still waiting for a check are marked
   same.
 - `SPVAR` and `TVAR` keep an array given to them as the same array, not a
   copy: what is changed through one shows through the other.
+- `INC` adds to a string where it is, as `PUSH` does: `INC T$,C$` on a
+  DEF's parameter adds to the caller's string.
 - `OPTION STRICT` holds from where it stands. A variable used before it
   without `VAR` can be used after it, and a DEF before it is not checked.
 - A DEF's parameters may be written `A[]`; passing a number for one and

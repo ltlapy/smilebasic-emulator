@@ -913,3 +913,12 @@ fn input_guides_may_be_expressions() {
     assert_eq!(run("LINPUT@G;A$:?A$\n@G"), "@GABC\nABC\n");
     assert_eq!(run("P$=\"Q\":INPUT P$;A$:?A$"), "Q? ABC\nABC\n");
 }
+
+#[test]
+fn inc_adds_to_a_string_where_it_is() {
+    assert_eq!(
+        output("VAR B$=\"Y\":P B$,\"X\":?B$\nDEF P T$,C$\n INC T$,C$\nEND"),
+        "YX\n"
+    );
+    assert_eq!(output("A=1:INC A,2:A$=\"Q\":INC A$,A$:?A;A$"), "3QQ\n");
+}
