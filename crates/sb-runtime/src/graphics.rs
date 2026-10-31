@@ -416,9 +416,44 @@ impl Graphics {
     /// GFILL.
     pub fn fill(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
         let c = self.clip;
-        for y in y0.min(y1).max(c.y0)..=y0.max(y1).min(c.y1) {
-            for x in x0.min(x1).max(c.x0)..=x0.max(x1).min(c.x1) {
-                self.plot(x, y, color, blend);
+        let (left, right) = (x0.min(x1).max(c.x0), x0.max(x1).min(c.x1));
+        let (top, bottom) = (y0.min(y1).max(c.y0), y0.max(y1).min(c.y1));
+        if left > right || top > bottom {
+            return;
+        }
+        let page = self.target;
+        self.page_pixels(page);
+        // A row at a time, as plot would draw each pixel: reading the
+        // GARRAY array where there is one, and writing both.
+        let array = self.arrays[page].clone();
+        let mut array = array.as_ref().and_then(|a| a.try_borrow_mut().ok());
+        let mut mirror = match array.as_deref_mut() {
+            Some(sb_core::value::Array {
+                data: ArrayData::Int(v),
+                ..
+            }) => Some(v),
+            _ => None,
+        };
+        let pixels = &mut self.pages[page];
+        for y in top..=bottom {
+            let (from, to) = (index(left, y), index(right, y) + 1);
+            let row = &mut pixels[from..to];
+            match mirror.as_deref_mut() {
+                None if blend == Blend::Normal => row.fill(color),
+                None => {
+                    for p in row {
+                        *p = blend.apply(*p, color);
+                    }
+                }
+                Some(v) => {
+                    for (i, p) in (from..to).zip(row) {
+                        let dst = v.get(i).map_or(*p, |&d| d as u32);
+                        *p = blend.apply(dst, color);
+                        if let Some(d) = v.get_mut(i) {
+                            *d = *p as i32;
+                        }
+                    }
+                }
             }
         }
     }
