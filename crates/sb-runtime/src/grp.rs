@@ -305,10 +305,16 @@ impl Runtime {
                     _ => self.clip_rect(),
                 };
                 let array = numeric_array(rest.last().expect("an array"))?;
-                let pixels: Vec<i32> = (self.grp.save_rect(page, rect).into_iter())
-                    .map(|p| p as i32)
-                    .collect();
-                store_ints(&array, &pixels)?;
+                let pixels = self.grp.save_rect(page, rect);
+                let as_ints = || pixels.iter().map(|&p| p as i32).collect::<Vec<_>>();
+                store_ints(&array, &as_ints())?;
+                // A real array takes the colours unsigned, &HFF000000 as
+                // 4278190080.
+                if let ArrayData::Real(v) = &mut array.borrow_mut().data {
+                    for (d, &p) in v.iter_mut().zip(&pixels) {
+                        *d = f64::from(p);
+                    }
+                }
                 Ok(vec![])
             }
             (Command::Gload, Want::Outs(0), 2..=4 | 6..=8) => {

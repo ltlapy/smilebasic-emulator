@@ -237,6 +237,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `TSAVE`, `GSAVE` and `GLOAD` accept rectangles reaching off the
   screen or page; what lies outside reads as empty. `GLOAD` palette
   indexes past the palette are no error.
+- `GSAVE` into a real array gives the colours unsigned: opaque red is
+  4294901760, where an integer array has -65536.
 - `TCHK` reports nothing for `"I"` and `"UV"`, which text screens ignore.
   `SPCHK` and `TCHK` give 0 while the animations are stopped.
 - `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on

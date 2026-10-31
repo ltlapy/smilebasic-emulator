@@ -113,11 +113,11 @@ fn putchr_draws_glyphs() {
 #[test]
 fn gsave_and_gload() {
     let (m, out) = run("GFILL 0,0,1,0,#C_RED:GPSET 0,1,#C_BLUE\n\
-         DIM W[0]\n\
-         GSAVE 0,0,0,2,2,W\n\
-         ?LEN(W);\" \";HEX$(W[0]);\" \";HEX$(W[2])\n\
-         GLOAD 10,10,2,2,W,0\n\
-         GLOAD 20,20,2,2,W,&HFF00FFFF,0\n\
+         DIM W%[0]\n\
+         GSAVE 0,0,0,2,2,W%\n\
+         ?LEN(W%);\" \";HEX$(W%[0]);\" \";HEX$(W%[2])\n\
+         GLOAD 10,10,2,2,W%,0\n\
+         GLOAD 20,20,2,2,W%,&HFF00FFFF,0\n\
          DIM I[4]:I[0]=1:I[3]=1\n\
          DIM P[2]:P[0]=0:P[1]=#C_WHITE\n\
          GLOAD 30,30,2,2,I,P,1\n\
@@ -135,8 +135,14 @@ fn gsave_needs_room_in_multi_dimensional_arrays() {
     let (_, out) = run("DIM W[1,1]:GSAVE 0,0,2,2,W");
     assert!(out.starts_with("Subscript out of range"), "{out}");
     // Off the page reads as 0.
-    let (_, out) = run("GPSET 2047,0,#C_RED:DIM W[0]:GSAVE 2047,0,2,1,W:?LEN(W);HEX$(W[0]);W[1]");
+    let (_, out) =
+        run("GPSET 2047,0,#C_RED:DIM W%[0]:GSAVE 2047,0,2,1,W%:?LEN(W%);HEX$(W%[0]);W%[1]");
     assert_eq!(out, "2FFFF00000");
+    // Reals take the colours unsigned, integers signed.
+    let (_, out) = run(
+        "GPSET 0,0,#C_RED:DIM R#[1],I%[1]:GSAVE 0,0,1,1,R#:GSAVE 0,0,1,1,I%:?R#[0];\" \";I%[0]",
+    );
+    assert_eq!(out, "4294901760 -65536");
     let (_, out) = run("DIM W[3]:GLOAD 0,0,2,2,W,0");
     assert!(out.starts_with("Subscript out of range"), "{out}");
 }
