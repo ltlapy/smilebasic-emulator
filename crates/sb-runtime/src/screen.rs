@@ -330,39 +330,22 @@ impl Runtime {
                     let n = v.to_int()?;
                     u32::try_from(n).map_err(|_| out_of_range("filter size", n))
                 };
+                // SmileBASIC 4.4.9 has no raster deformation (types 3 and
+                // 4), whatever the array: with an array it is Out of range
+                // for the type, and with the repeat flag Type mismatch for
+                // the array, as if no form took an array (checked on
+                // hardware).
+                // UNVERIFIED: the errors for other types and counts.
                 self.filters[id] = match (kind, &args[2.min(args.len())..]) {
                     (0, []) => LayerFilter::None,
                     (1, [n]) => LayerFilter::Mosaic(size(n)?),
                     (2, [n]) => LayerFilter::Blur(size(n)?),
-                    (3 | 4, [info, rest @ ..]) if rest.len() <= 1 => {
-                        let info = info.clone().into_array()?;
-                        {
-                            let a = info.borrow();
-                            if a.elem_type() == sb_core::value::ElemType::Str {
-                                return Err(ErrorKind::TypeMismatch.into());
-                            }
-                            if !matches!(a.dims[..], [_, 2 | 4]) {
-                                return Err(Error::with_detail(
-                                    ErrorKind::IllegalFunctionCall,
-                                    "deformation array must be [n,2] or [n,4]",
-                                ));
-                            }
-                        }
-                        let repeat = rest.first().map(opt_int).transpose()?.flatten();
-                        LayerFilter::Raster {
-                            vertical: kind == 4,
-                            info,
-                            repeat: repeat.unwrap_or(0) != 0,
-                        }
-                    }
                     (5, [h, s, v]) => LayerFilter::Color {
                         hue: real(h)?,
                         saturation: real(s)?,
                         value: real(v)?,
                     },
-                    // Checked on hardware for type 0 with a parameter.
-                    (0, _) => return Err(out_of_range("filter type", 0)),
-                    (1..=5, _) => return Err(no_form()),
+                    (_, [Value::Array(_), _]) => return Err(ErrorKind::TypeMismatch.into()),
                     (n, _) => return Err(out_of_range("filter type", n)),
                 };
                 Ok(vec![])

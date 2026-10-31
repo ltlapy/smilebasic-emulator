@@ -338,14 +338,21 @@ fn layer_filters() {
         "{sprite}LFILTER 1,1,32:LFILTER 1:IF LFILTER(1) THEN STOP"
     ));
     assert_eq!(m.render().get(0, 0), Some(RED));
-    let mut m = run(&format!(
-        "{sprite}DIM R#[240,2]:FOR I=0 TO 239:R#[I,0]=0.1:R#[I,1]=1:NEXT\nLFILTER 1,3,R#"
-    ));
-    let fb = m.render();
-    assert_eq!(
-        (fb.get(0, 0), fb.get(40, 0)),
-        (Some(0xFF00_0000), Some(RED))
-    );
     let mut m = run(&format!("{sprite}LFILTER 1,5,120,0,0"));
     assert_eq!(m.render().get(0, 0), Some(0xFF00_FF00));
+}
+
+#[test]
+fn no_raster_filters() {
+    let err = |source: &str| {
+        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut vm = sb_core::vm::Vm::new(sb_core::compile(source, &rt).unwrap());
+        vm.run(&mut rt, 100_000).unwrap_err().kind
+    };
+    use sb_core::error::ErrorKind;
+    // As SmileBASIC 4.4.9 answers (TTEST22).
+    assert_eq!(err("DIM Q[4,240]:LFILTER 1,3,Q"), ErrorKind::OutOfRange);
+    assert_eq!(err("DIM Q[240,2]:LFILTER 1,3,Q"), ErrorKind::OutOfRange);
+    assert_eq!(err("DIM Q[4,100]:LFILTER 1,4,Q,1"), ErrorKind::TypeMismatch);
+    assert_eq!(err("LFILTER 1,0,5"), ErrorKind::OutOfRange);
 }
