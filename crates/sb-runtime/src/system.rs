@@ -219,8 +219,9 @@ impl Runtime {
             }
             (Command::Perfend, Want::Outs(0) | Want::Value, 1) => {
                 let n = perf_id(&args[0])?;
-                // UNVERIFIED: PERFEND without PERFBEGIN gives 0.
-                let micros = sys.perf[n].map_or(0, |t| t.elapsed().as_micros() as i32);
+                // Without PERFBEGIN, the time since SmileBASIC started.
+                let since = sys.perf[n].unwrap_or(sys.started);
+                let micros = since.elapsed().as_micros() as i32;
                 Ok(match want {
                     Want::Value => vec![Value::Int(micros)],
                     _ => vec![],
