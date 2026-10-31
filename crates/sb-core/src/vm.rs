@@ -687,12 +687,13 @@ impl Vm {
         }
         let (slot, name) = slot_and_name(value)?;
         Ok(match slot {
+            // With a slot, the top level of that slot's program, also in
+            // a DEF of its own: FINITI looks for its own models so.
+            Some(slot) if slot == self.slot => self.program.labels.contains_key(&name),
             // UNVERIFIED: a slot that EXEC has not run reports 0 rather
             // than an error.
-            Some(slot) if slot != self.slot => {
-                (self.program_in(slot)).is_some_and(|p| p.labels.contains_key(&name))
-            }
-            _ => {
+            Some(slot) => (self.program_in(slot)).is_some_and(|p| p.labels.contains_key(&name)),
+            None => {
                 self.labels().contains_key(&name)
                     || (outer && self.program.labels.contains_key(&name))
             }

@@ -230,7 +230,9 @@ fn other_slots_data_and_variables() {
     let mut m = machine();
     m.set_slot(
         1,
-        "VAR D0=5\nCOMMON DEF R()\n RESTORE \"0:@M\"\n READ A$\n RETURN A$\nEND".to_string(),
+        "VAR D0=5\nCOMMON DEF R()\n RESTORE \"0:@M\"\n READ A$\n RETURN A$\nEND\n\
+         COMMON DEF L(N)\n RETURN CHKLABEL(STR$(N)+\":@OWN\")\nEND\n@OWN:DATA 1"
+            .to_string(),
     );
     run(
         &mut m,
@@ -238,10 +240,12 @@ fn other_slots_data_and_variables() {
             "EXEC 1",
             "?R()",
             "VAR(\"1:D0\")=VAR(\"1:D0\")+2:?VAR(\"1:D0\");CHKVAR(\"2:D0\")",
+            // A slot's top level, also from a DEF in it.
+            "?L(0);L(1)",
             "@M:DATA \"MODEL\"",
         ],
     );
-    assert_eq!(tail(&m, 3), ["MODEL", "70", "OK"]);
+    assert_eq!(tail(&m, 4), ["MODEL", "70", "01", "OK"]);
 }
 
 #[test]
