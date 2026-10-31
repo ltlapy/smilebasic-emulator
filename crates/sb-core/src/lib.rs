@@ -17,6 +17,7 @@ pub mod ops;
 pub mod parser;
 pub mod value;
 pub mod vm;
+pub mod wtf8;
 
 use error::{Error, ErrorKind};
 use parser::ParseErrorKind;

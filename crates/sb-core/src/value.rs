@@ -17,7 +17,7 @@ pub fn new_str(s: Str) -> StrRef {
 }
 
 pub fn str_from(s: &str) -> StrRef {
-    new_str(s.encode_utf16().collect())
+    new_str(crate::wtf8::to_utf16(s))
 }
 
 #[derive(Clone, Debug)]

@@ -38,12 +38,14 @@ pub fn half_width(text: &str) -> String {
 /// A program file's text: SmileBASIC 4's container or plain UTF-8.
 pub(crate) fn program_text(bytes: &[u8]) -> storage::Result<String> {
     let bad = |e: String| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
-    if bytes.starts_with(&[4, 0]) {
-        let file = sbfile::parse(bytes).map_err(|e| bad(e.to_string()))?;
-        Ok(file.text().map_err(|e| bad(e.to_string()))?.to_owned())
+    let file;
+    let body = if bytes.starts_with(&[4, 0]) {
+        file = sbfile::parse(bytes).map_err(|e| bad(e.to_string()))?;
+        &file.body
     } else {
-        String::from_utf8(bytes.to_vec()).map_err(|_| bad("not UTF-8 text".to_string()))
-    }
+        bytes
+    };
+    sb_core::wtf8::decode(body).ok_or_else(|| bad("not UTF-8 text".to_string()))
 }
 
 fn str_array(items: Vec<String>) -> Array {
@@ -481,8 +483,12 @@ impl Runtime {
             true => half_width(&self.slots[slot]),
             false => self.slots[slot].clone(),
         };
-        self.storage
-            .write(kind, &name, text.as_bytes(), Some(storage::BACKUP_NAME))?;
+        self.storage.write(
+            kind,
+            &name,
+            &sb_core::wtf8::encode(&text),
+            Some(storage::BACKUP_NAME),
+        )?;
         self.slot_names[slot] = name;
         self.slot_modified[slot] = false;
         Ok(())

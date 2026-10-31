@@ -374,7 +374,7 @@ impl Lexer {
     // usual workaround).
     fn string(&mut self, start: Span) {
         self.bump();
-        let mut text = String::new();
+        let mut text = Vec::new();
         while let Some(c) = self.peek() {
             if matches!(c, '\n' | '\r') {
                 break;
@@ -384,12 +384,15 @@ impl Lexer {
                 break;
             }
             // Only the Basic Multilingual Plane is supported; the specification
-            // says surrogate pairs are ignored.
-            if c <= '\u{FFFF}' {
-                text.push(c);
+            // says surrogate pairs are ignored. Lone surrogates the file held
+            // come back as themselves.
+            if let Some(unit) = crate::wtf8::unit_of(c) {
+                text.push(unit);
+            } else if c <= '\u{FFFF}' {
+                text.extend_from_slice(c.encode_utf16(&mut [0; 2]));
             }
         }
-        self.push(TokenKind::Str(text.encode_utf16().collect()), start);
+        self.push(TokenKind::Str(text), start);
     }
 
     fn number(&mut self, start: Span) {
