@@ -59,6 +59,14 @@ pub struct Machine {
     halted: Option<Vm>,
 }
 
+/// What stopped a program: the + button, STOP, or TRACE's statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Halt {
+    User,
+    Stop,
+    Trace,
+}
+
 /// What a direct-mode LIST asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum List {
@@ -497,12 +505,11 @@ impl Machine {
     /// Stops the running program or direct-mode line, as the Break key
     /// does, and returns to direct mode.
     pub fn stop(&mut self) {
-        self.stop_on(None, true);
+        self.stop_on(None, Halt::User);
     }
 
-    /// Stops, naming `line` rather than the one about to run: by the user
-    /// ("User break") or by STOP ("Break").
-    fn stop_on(&mut self, line: Option<u32>, user: bool) {
+    /// Stops, naming `line` rather than the one about to run.
+    fn stop_on(&mut self, line: Option<u32>, how: Halt) {
         let Some(vm) = self.vm.take() else {
             return;
         };
@@ -518,15 +525,22 @@ impl Machine {
         // A direct-mode line counts as slot 0's line 1 (checked on
         // hardware, as is the program's form, which a forced stop shares).
         let slot = vm.slot().unwrap_or(0);
-        let at = format!("{slot}:{}", line.unwrap_or(vm.line()));
+        let line = line.unwrap_or(vm.line());
         // The format is SmileBASIC 4's own, from SmileBASIC 4.
-        let what = if user { "User break" } else { "Break" };
-        let text: Vec<u16> = format!("{what} on {at}").encode_utf16().collect();
-        // Out of INPUT, it follows the prompt on the same line.
-        // UNVERIFIED: that it does after PRINT with a semicolon too.
-        let console = &mut self.rt.text[CONSOLE];
-        console.print(&text);
-        console.newline();
+        // UNVERIFIED: that TRACE says nothing.
+        let what = match how {
+            Halt::User => Some("User break"),
+            Halt::Stop => Some("Break"),
+            Halt::Trace => None,
+        };
+        if let Some(what) = what {
+            let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
+            // Out of INPUT, it follows the prompt on the same line.
+            // UNVERIFIED: that it does after PRINT with a semicolon too.
+            let console = &mut self.rt.text[CONSOLE];
+            console.print(&text);
+            console.newline();
+        }
         let mut vm = vm;
         if let Some(message) = vm.take_stop_message() {
             self.print_line(&message);
@@ -534,25 +548,41 @@ impl Machine {
         // UNVERIFIED: a line typed in direct mode cannot go on.
         if program {
             vm.leave_input();
-            self.halt(vm, Stopped::Paused);
+            self.halt(vm, Stopped::Paused, line);
         }
         self.ready();
     }
 
-    /// Keeps a stopped program for CONT, or for BACKTRACE after an error.
-    fn halt(&mut self, vm: Vm, how: Stopped) {
+    /// Keeps a program stopped on `line` for CONT, or for BACKTRACE after
+    /// an error.
+    fn halt(&mut self, vm: Vm, how: Stopped, line: u32) {
+        let at = (vm.slot().unwrap_or(0), line);
+        self.rt.backtrace = std::iter::once(at)
+            .chain(vm.call_sites().into_iter().rev())
+            .collect();
+        self.rt.stopped_in_def = vm.in_def();
         self.rt.stopped = how;
         self.halted = Some(vm);
     }
 
-    /// CONT: goes on with the stopped program, with the variables as
-    /// direct mode left them.
-    fn resume(&mut self) {
+    /// Forgets the stopped program, once another starts or CLEAR runs.
+    fn forget_halted(&mut self) {
+        self.halted = None;
+        self.rt.stopped = Stopped::No;
+        self.rt.backtrace.clear();
+    }
+
+    /// CONT, or TRACE for one statement: goes on with the stopped
+    /// program, with the variables as direct mode left them.
+    fn resume(&mut self, trace: bool) {
         let Some(mut vm) = self.halted.take() else {
             return self.ready();
         };
-        self.rt.stopped = Stopped::No;
+        self.forget_halted();
         vm.set_globals(&self.vars);
+        if trace {
+            vm.trace();
+        }
         self.rt.direct = false;
         self.running_slot = vm.slot();
         self.rt.running_slot = vm.slot();
@@ -681,8 +711,9 @@ impl Machine {
                     }
                 }
                 Ok(Status::Ended) => self.finish(None),
-                Ok(Status::Break { line }) => self.stop_on(Some(line), true),
-                Ok(Status::Stop { line }) => self.stop_on(Some(line), false),
+                Ok(Status::Break { line }) => self.stop_on(Some(line), Halt::User),
+                Ok(Status::Stop { line }) => self.stop_on(Some(line), Halt::Stop),
+                Ok(Status::Traced) => self.stop_on(None, Halt::Trace),
                 Err(e) => self.finish(Some(e)),
             }
             break;
@@ -749,8 +780,7 @@ impl Machine {
     fn start(&mut self, source: &str, slot: Option<usize>) {
         self.rt.cancel_input();
         if slot.is_some() {
-            self.halted = None;
-            self.rt.stopped = Stopped::No;
+            self.forget_halted();
         }
         self.rt.direct = slot.is_none();
         self.running_slot = slot;
@@ -794,33 +824,31 @@ impl Machine {
         }
         if program {
             self.rt.clear_input();
-            match error {
-                Some(_) => self.halt(vm, Stopped::Error),
-                None => {
-                    self.halted = None;
-                    self.rt.stopped = Stopped::No;
-                }
+            match &error {
+                Some(e) => self.halt(vm, Stopped::Error, e.line),
+                None => self.forget_halted(),
             }
         }
         self.running_slot = None;
         self.rt.running_slot = None;
         let mut run = None;
-        let mut cont = false;
+        // CONT, or TRACE for one statement.
+        let mut cont = None;
         for request in self.rt.take_requests() {
             match request {
                 Request::Run(slot) => run = Some(slot),
                 Request::Clear => {
                     self.vars.clear();
-                    self.halted = None;
-                    self.rt.stopped = Stopped::No;
+                    self.forget_halted();
                 }
-                Request::Cont => cont = true,
+                Request::Cont => cont = Some(false),
+                Request::Trace => cont = Some(true),
             }
         }
         match (run, cont) {
             (Some(slot), _) => self.run_slot(slot),
-            (None, true) => self.resume(),
-            (None, false) => self.ready(),
+            (None, Some(trace)) => self.resume(trace),
+            (None, None) => self.ready(),
         }
     }
 

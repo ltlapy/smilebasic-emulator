@@ -619,3 +619,53 @@ fn inspect_pages_long_arrays() {
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], [" [39]: 0", "OK"]);
 }
+
+#[test]
+fn backtrace_and_trace() {
+    let mut m = machine();
+    let def = "DEF DF N\n STOP\n ?\"IN DF\";N\nEND\nDEF DE N\n ?1/N\nEND";
+    m.set_slot(
+        0,
+        format!("GOSUB @G\nEND\n@G\nDF 1\nRETURN\n{def}\n@E\nDE 0"),
+    );
+    enter(&mut m, "RUN");
+    enter(&mut m, "BACKTRACE");
+    let r = rows(&m);
+    assert_eq!(
+        &r[r.len() - 4..],
+        ["0:     7", "0:     4", "0:     1", "OK"]
+    );
+    // In a DEF, TRACE fails and the program cannot go on.
+    enter(&mut m, "TRACE");
+    let r = rows(&m);
+    assert!(r[r.len() - 2].starts_with("Can't trace"), "{r:?}");
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+    enter(&mut m, "BACKTRACE");
+    let r = rows(&m);
+    assert_eq!(
+        &r[r.len() - 4..],
+        ["0:     7", "0:     4", "0:     1", "OK"]
+    );
+
+    // After an error too.
+    m.set_slot(0, format!("GOSUB @E\nEND\n@E\nDE 0\nRETURN\n{def}"));
+    enter(&mut m, "RUN");
+    enter(&mut m, "BACKTRACE");
+    let r = rows(&m);
+    assert_eq!(
+        &r[r.len() - 4..],
+        ["0:    11", "0:     4", "0:     1", "OK"]
+    );
+
+    // Elsewhere TRACE runs one statement at a time.
+    m.set_slot(0, "STOP\n?\"A\":?\"B\"\n?\"C\"".to_string());
+    enter(&mut m, "RUN");
+    enter(&mut m, "TRACE");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "A");
+    enter(&mut m, "TRACE");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "B");
+    enter(&mut m, "CONT");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "C");
+}

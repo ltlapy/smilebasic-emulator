@@ -37,6 +37,7 @@ pub(crate) enum Command {
     Animdef,
     Attr,
     Backcolor,
+    Backtrace,
     Beep,
     Beeppan,
     Beeppit,
@@ -207,6 +208,7 @@ pub(crate) enum Command {
     Touch,
     Tpage,
     Tput,
+    Trace,
     Trot,
     Tsave,
     Tscale,
@@ -228,6 +230,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("ANIMDEF", Command::Animdef),
     ("ATTR", Command::Attr),
     ("BACKCOLOR", Command::Backcolor),
+    ("BACKTRACE", Command::Backtrace),
     ("BEEP", Command::Beep),
     ("BEEPPAN", Command::Beeppan),
     ("BEEPPIT", Command::Beeppit),
@@ -398,6 +401,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TOUCH", Command::Touch),
     ("TPAGE", Command::Tpage),
     ("TPUT", Command::Tput),
+    ("TRACE", Command::Trace),
     ("TROT", Command::Trot),
     ("TSAVE", Command::Tsave),
     ("TSCALE", Command::Tscale),
@@ -423,6 +427,7 @@ pub enum Request {
     Run(usize),
     Clear,
     Cont,
+    Trace,
 }
 
 /// How the last program stopped, if it has not ended.
@@ -432,6 +437,7 @@ pub enum Stopped {
     No,
     /// By STOP or the + button, so that CONT can go on.
     Paused,
+    /// By an error, or a TRACE that could not go on.
     Error,
 }
 
@@ -503,6 +509,11 @@ pub struct Runtime {
     pub(crate) running_slot: Option<usize>,
     /// How the last program stopped, kept up to date by the machine.
     pub(crate) stopped: Stopped,
+    /// Where it stopped, innermost first, as slots and lines: the line
+    /// itself, then each DEF call and GOSUB it was in.
+    pub(crate) backtrace: Vec<(usize, u32)>,
+    /// Whether it stopped inside a DEF.
+    pub(crate) stopped_in_def: bool,
     /// The slot and line that PRGEDIT chose, for PRGGET$ and the rest.
     pub(crate) prg_edit: Option<crate::prg::PrgEdit>,
     /// The slot the editor shows, or last showed.
@@ -697,6 +708,8 @@ impl Runtime {
             slot_modified: vec![false; SLOTS],
             running_slot: None,
             stopped: Stopped::No,
+            backtrace: Vec::new(),
+            stopped_in_def: false,
             prg_edit: None,
             edit_slot: 0,
             history: Default::default(),
@@ -1302,6 +1315,29 @@ impl Runtime {
                 match self.stopped {
                     Stopped::Paused => self.request(Request::Cont),
                     _ => Err(ErrorKind::CantContinue.into()),
+                }
+            }
+            // UNVERIFIED: what BACKTRACE shows with no program stopped.
+            (Command::Backtrace, Want::Outs(0)) if args.is_empty() => {
+                self.direct_only()?;
+                for (slot, line) in self.backtrace.clone() {
+                    let text: Vec<u16> = format!("{slot}:{line:6}").encode_utf16().collect();
+                    self.text[CONSOLE].print(&text);
+                    self.text[CONSOLE].newline();
+                }
+                Ok(vec![])
+            }
+            // TRACE inside a DEF fails and leaves the program unable to
+            // go on. UNVERIFIED: that it runs one statement elsewhere.
+            (Command::Trace, Want::Outs(0)) if args.is_empty() => {
+                self.direct_only()?;
+                match self.stopped {
+                    Stopped::Paused if !self.stopped_in_def => self.request(Request::Trace),
+                    Stopped::Paused => {
+                        self.stopped = Stopped::Error;
+                        Err(ErrorKind::CantTrace.into())
+                    }
+                    _ => Err(ErrorKind::CantTrace.into()),
                 }
             }
             (Command::Run, Want::Outs(0)) if args.len() <= 1 => {

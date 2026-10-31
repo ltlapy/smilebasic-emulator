@@ -45,6 +45,8 @@ pub enum Status {
     Stop {
         line: u32,
     },
+    /// The statement [`Vm::trace`] asked for has run.
+    Traced,
 }
 
 /// Commands and functions the compiler turns into instructions of their
@@ -153,6 +155,8 @@ pub struct Vm {
     break_pending: Option<(u64, u32)>,
     /// STOP's message, shown after the line it stopped on.
     stop_message: Option<Str>,
+    /// The instruction count when TRACE asked for one statement.
+    trace_from: Option<u64>,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -283,6 +287,7 @@ impl Vm {
             on_break: None,
             break_pending: None,
             stop_message: None,
+            trace_from: None,
         }
     }
 
@@ -335,6 +340,43 @@ impl Vm {
         while self.program.starts.get(self.pc) == Some(&false) {
             self.pc += 1;
         }
+    }
+
+    /// TRACE: the next [`Vm::run`] runs one statement and returns
+    /// [`Status::Traced`].
+    pub fn trace(&mut self) {
+        self.trace_from = Some(self.executed);
+    }
+
+    /// Whether a DEF is running.
+    pub fn in_def(&self) -> bool {
+        !self.frames.is_empty()
+    }
+
+    /// Where the running code was called from, outermost first: the slot
+    /// and line of each GOSUB and DEF call under way, as BACKTRACE lists
+    /// them.
+    pub fn call_sites(&self) -> Vec<(usize, u32)> {
+        // The call is the instruction before the one it returns to.
+        let site = |slot: usize, ret: usize| {
+            let program = self.program_in(slot);
+            let line = program.and_then(|p| p.lines.get(ret.wrapping_sub(1)).copied());
+            (slot, line.unwrap_or(0))
+        };
+        let mut sites = Vec::new();
+        let mut gosubs = 0;
+        for f in &self.frames {
+            let base = f.gosub_base.max(gosubs);
+            sites.extend(
+                self.gosubs[gosubs..base]
+                    .iter()
+                    .map(|&(s, r, _)| site(s, r)),
+            );
+            sites.push(site(f.caller, f.return_pc));
+            gosubs = base;
+        }
+        sites.extend(self.gosubs[gosubs..].iter().map(|&(s, r, _)| site(s, r)));
+        sites
     }
 
     /// The message of the STOP that stopped the program, once.
@@ -421,6 +463,13 @@ impl Vm {
                 } else {
                     self.break_pending = Some((at, self.line()));
                 }
+            }
+            if let Some(at) = self.trace_from
+                && self.executed > at
+                && self.program.starts.get(self.pc) == Some(&true)
+            {
+                self.trace_from = None;
+                return Ok(Status::Traced);
             }
             let pc = self.pc;
             self.executed += 1;
