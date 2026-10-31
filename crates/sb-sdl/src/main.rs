@@ -12,6 +12,7 @@ mod keyhint;
 mod menu;
 mod program_dialog;
 mod projects;
+mod shortcuts;
 mod toast;
 mod ui;
 
@@ -28,13 +29,13 @@ use file_dialogs::{FilePicker, SaveDialog};
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
-use menu::{Action, Click, MenuBar};
+use menu::{Action, Click, Context, MenuBar};
 use program_dialog::ProgramView;
 use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
 use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
-use sb_runtime::help::Lookup;
+use sb_runtime::help::{Help, Lookup};
 use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
 use sb_runtime::palette::Palette;
@@ -57,6 +58,7 @@ use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator}
 use sdl3::sys::render::SDL_SetDefaultTextureScaleMode;
 use sdl3::sys::surface::SDL_ScaleMode;
 use sdl3::video::{Window, WindowContext};
+use shortcuts::ShortcutsWindow;
 use toast::Toasts;
 
 const USAGE: &str = "usage:
@@ -211,6 +213,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut manager: Option<ProjectManager> = None;
     let mut color_window: Option<ColorWindow> = None;
     let mut complete_window: Option<CompleteWindow> = None;
+    let mut shortcuts_window: Option<ShortcutsWindow> = None;
     // Ctrl+S's and Ctrl+L's windows.
     let mut file_dialog: Option<FileDialog> = None;
     // A panel beside the editor, and whether it takes the keys.
@@ -260,6 +263,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     || manager.is_some()
                     || file_dialog.is_some()
                     || complete_window.is_some()
+                    || shortcuts_window.is_some()
                     || color_window.is_some()
                     || (side.is_some() && side_focus);
             }
@@ -318,7 +322,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         load_edited(&mut machine, &name, &mut toasts);
                         dialog = None;
                     }
-                    (Some(Answer::Cancel), _) => dialog = None,
+                    (Some(_), Asking::Notice) | (Some(Answer::Cancel), _) => dialog = None,
                     (None, _) => {}
                 }
                 continue;
@@ -582,6 +586,32 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 continue;
             }
+            if let Some(open) = &mut shortcuts_window {
+                let outcome = match event {
+                    Event::Quit { .. } => {
+                        quit = true;
+                        shortcuts::Outcome::Stay
+                    }
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => open.key(key),
+                    Event::MouseWheel { y, .. } => {
+                        open.wheel(-y.round() as i32);
+                        shortcuts::Outcome::Stay
+                    }
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Left,
+                        x,
+                        y,
+                        ..
+                    } => open.click(to_display(x, y)),
+                    _ => shortcuts::Outcome::Stay,
+                };
+                if outcome == shortcuts::Outcome::Close {
+                    shortcuts_window = None;
+                }
+                continue;
+            }
             if let Some(open) = &mut complete_window {
                 let settings = &mut machine.rt.settings;
                 let outcome = match event {
@@ -696,8 +726,51 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     x,
                     y,
                     ..
-                } => match menu.click(to_display(x, y), machine.is_running()) {
+                } => match menu.click(to_display(x, y), menu_context(&machine)) {
                     Click::Chosen(Action::Quit) => quit = true,
+                    Click::Chosen(action @ (Action::SaveSlot | Action::LoadSlot)) => {
+                        let size = (display_w, display_h);
+                        let save = action == Action::SaveSlot;
+                        file_dialog = Some(open_file_dialog(&machine, save, size));
+                    }
+                    Click::Chosen(Action::Undo) => machine.edit().undo(),
+                    Click::Chosen(Action::Redo) => machine.edit().redo(),
+                    Click::Chosen(action @ (Action::Cut | Action::Copy)) => {
+                        copy_selection(&mut machine, &clipboard, &mut toasts, action == Action::Cut)
+                    }
+                    Click::Chosen(Action::Paste) => paste(&mut machine, &clipboard, &mut toasts),
+                    Click::Chosen(Action::SelectAll) => machine.edit().select_all(),
+                    Click::Chosen(Action::Comment) => machine.edit().comment(),
+                    Click::Chosen(Action::Uncomment) => machine.edit().uncomment(),
+                    Click::Chosen(Action::Run) => machine.sysreq(),
+                    Click::Chosen(Action::Help) => {
+                        if !machine.is_editing() {
+                            machine.toggle_editor();
+                        }
+                        let size = (display_w, display_h);
+                        if let Some(panel) =
+                            open_help(&mut machine, help.as_ref(), &mut toasts, size)
+                        {
+                            side = Some(panel);
+                            side_focus = true;
+                        }
+                    }
+                    Click::Chosen(Action::Shortcuts) => {
+                        shortcuts_window = Some(ShortcutsWindow::new((display_w, display_h)));
+                    }
+                    Click::Chosen(Action::About) => {
+                        let version = env!("CARGO_PKG_VERSION");
+                        let lines = vec![
+                            format!("SmileBASIC emulator {version}"),
+                            "An emulator for SmileBASIC 4 programs.".to_string(),
+                            String::new(),
+                            "MIT OR Apache-2.0.".to_string(),
+                            "Bundled fonts: SIL Open Font License 1.1.".to_string(),
+                            "GeneralUser GS: its own license.".to_string(),
+                        ];
+                        let about = Dialog::notice("About", lines, (display_w, display_h));
+                        dialog = Some((about, Asking::Notice));
+                    }
                     Click::Chosen(Action::Projects) => {
                         let size = (display_w, display_h);
                         manager = Some(ProjectManager::new(&machine.rt.storage, size));
@@ -890,43 +963,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::F1),
                     repeat: false,
                     ..
-                } if machine.is_editing() => match &help {
-                    None => toasts
-                        .push("SmileBASIC 4's help is not imported (see smilebasic-import)".into()),
-                    Some(help) => {
-                        let (line, col) = machine.edit().cursor_line();
-                        let topic = match help.lookup(line, col) {
-                            Lookup::Topic(topic) => Some(topic),
-                            Lookup::Nothing => Some(sb_runtime::help::INTRO.to_string()),
-                            Lookup::Unknown(word) => {
-                                toasts.push(format!("No help for {word}"));
-                                None
-                            }
-                        };
-                        if let Some(topic) = topic {
-                            let size = (display_w, display_h);
-                            let pages = help.pages(&topic);
-                            let scale = machine.rt.settings.help_text_size;
-                            side = Some(Side::Help(HelpViewer::new(size, &topic, &pages, scale)));
-                            side_focus = true;
-                        }
+                } if machine.is_editing() => {
+                    let size = (display_w, display_h);
+                    if let Some(panel) = open_help(&mut machine, help.as_ref(), &mut toasts, size) {
+                        side = Some(panel);
+                        side_focus = true;
                     }
-                },
+                }
                 // Simple save and load, as SmileBASIC 4 has them.
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::S | Keycode::L)),
                     keymod,
                     ..
                 } if ctrl(keymod) && !machine.is_running() => {
-                    let slot = machine.edited_slot();
                     let size = (display_w, display_h);
-                    let storage = &machine.rt.storage;
-                    file_dialog = Some(if key == Keycode::S {
-                        let name = &machine.rt.slot_names[slot];
-                        FileDialog::Save(SaveDialog::new(size, slot, name, storage.project()))
-                    } else {
-                        FileDialog::Load(FilePicker::new(size, slot, storage))
-                    });
+                    file_dialog = Some(open_file_dialog(&machine, key == Keycode::S, size));
                 }
                 Event::KeyDown {
                     keycode: Some(key),
@@ -946,15 +997,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Keycode::End => machine.edit().file_end(),
                     Keycode::A => machine.edit().select_all(),
                     Keycode::C | Keycode::X => {
-                        let editor = machine.edit();
-                        let text = if key == Keycode::X {
-                            editor.cut()
-                        } else {
-                            editor.copy()
-                        };
-                        if let Some(Err(e)) = text.map(|t| clipboard.set_clipboard_text(&t)) {
-                            toasts.push(format!("Could not copy: {e}"));
-                        }
+                        copy_selection(&mut machine, &clipboard, &mut toasts, key == Keycode::X)
                     }
                     Keycode::V => paste(&mut machine, &clipboard, &mut toasts),
                     Keycode::Z if shift(keymod) => machine.edit().redo(),
@@ -1059,6 +1102,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             || manager.is_some()
             || color_window.is_some()
             || complete_window.is_some()
+            || shortcuts_window.is_some()
             || file_dialog.is_some();
         if !machine.is_editing() {
             side = None;
@@ -1073,7 +1117,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             machine.stop();
         }
         let paused = menu.shown && machine.is_running();
-        menu.paused = paused;
+        menu.status = status_line(&machine, paused);
         machine.rt.input.live = if modal || paused || machine.is_editing() {
             State::default()
         } else {
@@ -1210,6 +1254,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if let Some(open) = &complete_window {
                 open.draw(&mut overlay, font, &machine.rt.settings);
             }
+            if let Some(open) = &shortcuts_window {
+                open.draw(&mut overlay, font);
+            }
             match &file_dialog {
                 Some(FileDialog::Save(d)) => {
                     d.draw(&mut overlay, font, (blink / 25).is_multiple_of(2))
@@ -1226,8 +1273,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if let Some((open, _)) = &dialog {
                 open.draw(&mut overlay, font);
             } else if !modal && menu.visible() {
-                let running = machine.is_running();
-                menu.draw(&mut overlay, font, &machine.rt.settings, running);
+                let context = menu_context(&machine);
+                menu.draw(&mut overlay, font, &machine.rt.settings, context);
             }
             overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
             canvas.copy(&overlay_texture, None, display)?;
@@ -1412,6 +1459,90 @@ enum Asking {
     Overwrite(String),
     /// Ctrl+L over unsaved changes, with the file to load.
     Discard(String),
+    /// Something told, such as About, with OK alone.
+    Notice,
+}
+
+/// What the menu bar's items depend on.
+fn menu_context(machine: &Machine) -> Context {
+    Context {
+        running: machine.is_running(),
+        editing: machine.is_editing(),
+    }
+}
+
+/// The bar's right side: the project, the slot being edited (with `*`
+/// for unsaved changes) or direct mode, and a running or paused program.
+fn status_line(machine: &Machine, paused: bool) -> String {
+    let project = sb_runtime::confirm::project_label(machine.rt.storage.project());
+    let place = if machine.is_editing() {
+        let slot = machine.edited_slot();
+        let unsaved = if machine.unsaved_slots().contains(&slot) {
+            "*"
+        } else {
+            ""
+        };
+        format!("EDIT PRG{slot}{unsaved}")
+    } else {
+        "DIRECT".to_string()
+    };
+    match (machine.is_running(), paused) {
+        (true, true) => format!("{project} - Paused, F8 resumes"),
+        (true, false) => format!("{project} - Running"),
+        _ => format!("{project} - {place}"),
+    }
+}
+
+/// Ctrl+S's window to save the edited slot, or Ctrl+L's to load into it.
+fn open_file_dialog(machine: &Machine, save: bool, size: (u32, u32)) -> FileDialog {
+    let slot = machine.edited_slot();
+    let storage = &machine.rt.storage;
+    if save {
+        let name = &machine.rt.slot_names[slot];
+        FileDialog::Save(SaveDialog::new(size, slot, name, storage.project()))
+    } else {
+        FileDialog::Load(FilePicker::new(size, slot, storage))
+    }
+}
+
+/// F1: the help for the command at the editor's cursor, or its first
+/// page away from any command.
+fn open_help(
+    machine: &mut Machine,
+    help: Option<&Help>,
+    toasts: &mut Toasts,
+    size: (u32, u32),
+) -> Option<Side> {
+    let Some(help) = help else {
+        toasts.push("SmileBASIC 4's help is not imported (see smilebasic-import)".into());
+        return None;
+    };
+    let (line, col) = machine.edit().cursor_line();
+    let topic = match help.lookup(line, col) {
+        Lookup::Topic(topic) => topic,
+        Lookup::Nothing => sb_runtime::help::INTRO.to_string(),
+        Lookup::Unknown(word) => {
+            toasts.push(format!("No help for {word}"));
+            return None;
+        }
+    };
+    let pages = help.pages(&topic);
+    let scale = machine.rt.settings.help_text_size;
+    Some(Side::Help(HelpViewer::new(size, &topic, &pages, scale)))
+}
+
+/// Ctrl+C and Ctrl+X in the editor.
+fn copy_selection(
+    machine: &mut Machine,
+    clipboard: &ClipboardUtil,
+    toasts: &mut Toasts,
+    cut: bool,
+) {
+    let editor = machine.edit();
+    let text = if cut { editor.cut() } else { editor.copy() };
+    if let Some(Err(e)) = text.map(|t| clipboard.set_clipboard_text(&t)) {
+        toasts.push(format!("Could not copy: {e}"));
+    }
 }
 
 /// Saves the edited slot (Ctrl+S); says how it went.

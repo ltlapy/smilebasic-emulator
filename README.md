@@ -31,7 +31,7 @@ symbols at U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 
 Music plays with [GeneralUser GS](https://www.schristiancollins.com/generaluser)
 by S. Christian Collins, bundled in `crates/sb-sdl/sounds`, until
-SmileBASIC's own instruments are imported. Options > Instruments picks
+SmileBASIC's own instruments are imported. Settings > Instruments picks
 between them and another SoundFont (`.sf2`).
 
 To see and hear SmileBASIC's own font, sprites and sounds, import them
@@ -110,14 +110,14 @@ SmileBASIC 4's own files.
 | Ctrl+J | List the labels and DEFs; type to narrow the list, Enter to go there, Esc to go back |
 | Esc | Close the help or the list beside the editor |
 | Ctrl+/, Ctrl+Tab | Split the editor side by side, then one above the other, then join it again; move between the sides |
-| Up, Down, Enter, Tab, Esc | While the list of words shows: pick a word and take it with Enter, or take the first with Tab; Esc closes it. In direct mode Up and Down keep to the history (Options > Autocomplete) |
+| Up, Down, Enter, Tab, Esc | While the list of words shows: pick a word and take it with Enter, or take the first with Tab; Esc closes it. In direct mode Up and Down keep to the history (Settings > Autocomplete) |
 | Ctrl+Space | Hide the list of words and the hints, or show them again |
 | Ctrl+Shift+V | Paste anywhere; outside the editor the text is typed as keys |
 
 ### Buttons
 
 Gamepads work as controllers 1 to 4. The keyboard also presses controller
-1's buttons, unless *Keys press buttons* is turned off in Options:
+1's buttons, unless *Keys press buttons* is turned off in Settings:
 
 | Key | Button |
 |---|---|

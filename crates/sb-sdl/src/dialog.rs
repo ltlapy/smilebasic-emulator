@@ -23,8 +23,8 @@ const ANSWERS: [Answer; 2] = [Answer::Accept, Answer::Cancel];
 pub struct Dialog {
     title: String,
     lines: Vec<String>,
-    /// Labels of the Accept and Cancel buttons.
-    labels: [String; 2],
+    /// Labels of the Accept and Cancel buttons, or of OK alone.
+    labels: Vec<String>,
     /// Display size the dialog is centered in.
     size: (u32, u32),
     /// Index of the chosen button; Cancel at first, so Enter does not
@@ -37,9 +37,20 @@ impl Dialog {
         Dialog {
             title: title.to_string(),
             lines,
-            labels: [accept.to_string(), "Cancel".to_string()],
+            labels: vec![accept.to_string(), "Cancel".to_string()],
             size,
             focus: 1,
+        }
+    }
+
+    /// Tells something, with OK alone, which accepts.
+    pub fn notice(title: &str, lines: Vec<String>, size: (u32, u32)) -> Dialog {
+        Dialog {
+            title: title.to_string(),
+            lines,
+            labels: vec!["OK".to_string()],
+            size,
+            focus: 0,
         }
     }
 
@@ -81,8 +92,10 @@ impl Dialog {
     fn button(&self, i: usize) -> Rect {
         let f = self.frame();
         let w = self.button_width();
+        let n = self.labels.len() as u32;
+        let i = i as u32;
         Rect {
-            x: f.x + f.w - 2 * PAD - (2 - i as u32) * w - (1 - i as u32) * PAD,
+            x: f.x + f.w - 2 * PAD - (n - i) * w - (n - 1 - i) * PAD,
             y: f.y + f.h - 2 * PAD - LINE,
             w,
             h: LINE,
@@ -90,13 +103,13 @@ impl Dialog {
     }
 
     pub fn mouse_move(&mut self, at: (i32, i32)) {
-        if let Some(i) = (0..ANSWERS.len()).find(|&i| self.button(i).contains(at)) {
+        if let Some(i) = (0..self.labels.len()).find(|&i| self.button(i).contains(at)) {
             self.focus = i;
         }
     }
 
     pub fn click(&mut self, at: (i32, i32)) -> Option<Answer> {
-        (0..ANSWERS.len())
+        (0..self.labels.len())
             .find(|&i| self.button(i).contains(at))
             .map(|i| ANSWERS[i])
     }
@@ -106,7 +119,7 @@ impl Dialog {
     pub fn key(&mut self, key: Keycode) -> Option<Answer> {
         match key {
             Keycode::Left | Keycode::Right | Keycode::Tab => {
-                self.focus = 1 - self.focus;
+                self.focus = (self.focus + 1) % self.labels.len();
                 None
             }
             Keycode::Return | Keycode::KpEnter | Keycode::Space => Some(ANSWERS[self.focus]),

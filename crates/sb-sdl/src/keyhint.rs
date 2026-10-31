@@ -19,7 +19,7 @@ const STEP: u32 = CAP + GAP;
 /// Button names stand out from the keys.
 const BUTTON_TEXT: u32 = 0xFF7F_BFFF;
 const TITLE: &str = "Keys for the buttons";
-const FOOTER: &str = "Off: Options menu";
+const FOOTER: &str = "Off: Settings menu";
 
 /// BUTTON's names, by id.
 const NAMES: [&str; 12] = ["X", "B", "Y", "A", "", "", "", "", "L", "R", "ZL", "ZR"];

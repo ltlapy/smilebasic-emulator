@@ -22,7 +22,7 @@ Without them:
 
 - MML's sound effect tones (`@256` and up) are silent.
 - Instruments `@0` to `@127` come from a General MIDI SoundFont
-  (GeneralUser GS, or one chosen in Options), so they sound different.
+  (GeneralUser GS, or one chosen in Settings), so they sound different.
 - The drum sets `@128` to `@148` are the GS drum kits nearest by name.
 
 ## Sound that is not played
@@ -45,16 +45,16 @@ Without them:
 - Controller 1 is the keyboard and the first gamepad together, reported
   as a handheld controller; other gamepads are Pro Controllers.
   `XCTRLSTYLE` shows no connection screen and always succeeds.
-- The keyboard also presses controller 1's buttons; Options turns this
+- The keyboard also presses controller 1's buttons; Settings turns this
   off.
 - A program that hides the mouse cursor (`SYSPARAM "MOUSECURSOR",0`,
   as programs start) hides the computer's cursor over the window, until
-  the menu bar shows; Options can keep it shown.
+  the menu bar shows; Settings can keep it shown.
 
 ## System settings
 
 - `SYSPARAM("LANG")` answers `en-US`, as the English edition does, or
-  `ja`, as set in Options > System language.
+  `ja`, as set in Settings > System language.
 - `SYSPARAM("TABSTEP")` is the editor's tab width, set in the Editor
   menu.
 - `SYSPARAM("TVMODE")` is always 1, and `SYSBEEP` keeps its value: the
@@ -67,7 +67,7 @@ Without them:
   gives other numbers than on hardware.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
-- File commands ask, notify or stay silent as set in Options, rather
+- File commands ask, notify or stay silent as set in Settings, rather
   than always asking. A file command that fails in a program shows a
   notice, rather than a dialog to close, unless file access is silent.
 - `SAVE` and `SAVEV "TXT:..."` write plain UTF-8 text, and `SAVEG` and
@@ -86,7 +86,7 @@ Without them:
   the controller's A and B, it answers clicks and Enter.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands
   count lines of the source, which wrapping does not change.
-- The screen's scaling filter can be chosen in Options instead of
+- The screen's scaling filter can be chosen in View > Screen filter instead of
   following `XSCREEN`.
 
 ## Editor
@@ -114,6 +114,6 @@ Without them:
   while the cursor is down there, or by the cursor if set so), with the
   argument being typed marked. Ctrl+Space hides the list and the hints
   until it is pressed again. When they show and what they offer are
-  set in Options > Autocomplete.
+  set in Settings > Autocomplete.
 - Ctrl+S takes the file name typed on the computer's keyboard rather
   than SmileBASIC 4's on-screen one.

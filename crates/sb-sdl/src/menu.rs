@@ -20,8 +20,21 @@ const ROW_HEIGHT: u32 = 24;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Projects,
+    /// Ctrl+S's and Ctrl+L's windows.
+    SaveSlot,
+    LoadSlot,
     OpenFolder,
     Quit,
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Comment,
+    Uncomment,
+    /// Run PRG0, as F5 does.
+    Run,
     Stop,
     /// Pause or resume the program, with the menu bar shown (F8).
     Pause,
@@ -60,6 +73,18 @@ pub enum Action {
     BundledSoundFont,
     /// Pick a SoundFont file.
     ChooseSoundFont,
+    /// The help for the command at the editor's cursor (F1).
+    Help,
+    /// The window listing the keys.
+    Shortcuts,
+    About,
+}
+
+/// What the menu bar needs to know of the emulator to enable its items.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Context {
+    pub running: bool,
+    pub editing: bool,
 }
 
 impl Action {
@@ -104,6 +129,20 @@ impl Action {
                 "( )"
             }
             Action::Projects
+            | Action::SaveSlot
+            | Action::LoadSlot
+            | Action::Undo
+            | Action::Redo
+            | Action::Cut
+            | Action::Copy
+            | Action::Paste
+            | Action::SelectAll
+            | Action::Comment
+            | Action::Uncomment
+            | Action::Run
+            | Action::Help
+            | Action::Shortcuts
+            | Action::About
             | Action::OpenFolder
             | Action::Quit
             | Action::Stop
@@ -173,6 +212,20 @@ impl Action {
             Action::ChooseSoundFont
             | Action::CompleteOptions
             | Action::EditColors
+            | Action::SaveSlot
+            | Action::LoadSlot
+            | Action::Undo
+            | Action::Redo
+            | Action::Cut
+            | Action::Copy
+            | Action::Paste
+            | Action::SelectAll
+            | Action::Comment
+            | Action::Uncomment
+            | Action::Run
+            | Action::Help
+            | Action::Shortcuts
+            | Action::About
             | Action::Projects
             | Action::OpenFolder
             | Action::Quit
@@ -190,18 +243,31 @@ impl Action {
     }
 
     /// Stop needs a running program; the editor and the project manager
-    /// cannot open during one.
-    fn enabled(self, running: bool) -> bool {
+    /// cannot open during one. Editing text needs the editor open; the
+    /// commands that open the editor need no program running.
+    fn enabled(self, context: Context) -> bool {
         match self {
-            Action::Stop | Action::Pause => running,
+            Action::Stop | Action::Pause => context.running,
+            Action::Undo
+            | Action::Redo
+            | Action::Cut
+            | Action::Copy
+            | Action::Paste
+            | Action::SelectAll
+            | Action::Comment
+            | Action::Uncomment
+            | Action::Split => context.editing,
             Action::ToggleEditor
             | Action::EditSlot(_)
             | Action::Projects
+            | Action::SaveSlot
+            | Action::LoadSlot
+            | Action::Run
+            | Action::Help
             | Action::GoToLine
             | Action::Find
             | Action::Replace
-            | Action::Index
-            | Action::Split => !running,
+            | Action::Index => !context.running,
             _ => true,
         }
     }
@@ -211,70 +277,136 @@ enum Entry {
     Do(Action),
     /// Opens a submenu to the right.
     Sub(&'static [Item]),
+    /// A line between groups of items.
+    Line,
 }
 
 struct Item {
     label: &'static str,
+    /// The keys that do the same, shown on the right.
+    keys: &'static str,
     entry: Entry,
 }
 
 const fn item(label: &'static str, action: Action) -> Item {
+    keyed(label, "", action)
+}
+
+const fn keyed(label: &'static str, keys: &'static str, action: Action) -> Item {
     Item {
         label,
+        keys,
         entry: Entry::Do(action),
     }
 }
+
+const fn sub(label: &'static str, items: &'static [Item]) -> Item {
+    Item {
+        label,
+        keys: "",
+        entry: Entry::Sub(items),
+    }
+}
+
+const LINE: Item = Item {
+    label: "",
+    keys: "",
+    entry: Entry::Line,
+};
+
+/// The height of a line between items.
+const LINE_HEIGHT: u32 = 9;
 
 struct Menu {
     title: &'static str,
     items: &'static [Item],
 }
 
+const COLORS: &[Item] = &[
+    item(PRESETS[0].0, Action::ColorPreset(0)),
+    item(PRESETS[1].0, Action::ColorPreset(1)),
+    item(PRESETS[2].0, Action::ColorPreset(2)),
+    item(PRESETS[3].0, Action::ColorPreset(3)),
+    item(PRESETS[4].0, Action::ColorPreset(4)),
+    item(PRESETS[5].0, Action::ColorPreset(5)),
+    LINE,
+    item("Edit colors...", Action::EditColors),
+];
+
 const MENUS: &[Menu] = &[
     Menu {
-        title: "SmileBASIC",
+        title: "File",
         items: &[
-            item("Projects... (F12)", Action::Projects),
+            keyed("Projects...", "F12", Action::Projects),
+            keyed("Save slot...", "Ctrl+S", Action::SaveSlot),
+            keyed("Load into slot...", "Ctrl+L", Action::LoadSlot),
+            LINE,
             item("Open projects folder", Action::OpenFolder),
+            LINE,
             item("Quit", Action::Quit),
         ],
     },
     Menu {
-        title: "Program",
+        title: "Edit",
         items: &[
-            item("Stop (F5, Pause/Break)", Action::Stop),
-            item("Editor/Direct (F4)", Action::ToggleEditor),
-            Item {
-                label: "Edit slot",
-                entry: Entry::Sub(&[
-                    item("PRG0 (Ctrl+1)", Action::EditSlot(0)),
-                    item("PRG1 (Ctrl+2)", Action::EditSlot(1)),
-                    item("PRG2 (Ctrl+3)", Action::EditSlot(2)),
-                    item("PRG3 (Ctrl+4)", Action::EditSlot(3)),
-                    item("PRG4 (Ctrl+5)", Action::EditSlot(4)),
-                    item("PRG5 (Ctrl+6)", Action::EditSlot(5)),
-                ]),
-            },
-            item("Pause/Resume (F8)", Action::Pause),
+            keyed("Undo", "Ctrl+Z", Action::Undo),
+            keyed("Redo", "Ctrl+Y", Action::Redo),
+            LINE,
+            keyed("Cut", "Ctrl+X", Action::Cut),
+            keyed("Copy", "Ctrl+C", Action::Copy),
+            keyed("Paste", "Ctrl+V", Action::Paste),
+            keyed("Select all", "Ctrl+A", Action::SelectAll),
+            LINE,
+            keyed("Find", "Ctrl+F", Action::Find),
+            keyed("Replace", "Ctrl+H", Action::Replace),
+            keyed("Go to line", "Ctrl+G", Action::GoToLine),
+            keyed("Labels and DEFs", "Ctrl+J", Action::Index),
+            LINE,
+            keyed("Comment out", "Ctrl+K", Action::Comment),
+            keyed("Uncomment", "Ctrl+Shift+K", Action::Uncomment),
         ],
     },
     Menu {
-        title: "Options",
+        title: "View",
         items: &[
-            item("Upper-case letters", Action::ToggleUpperCase),
-            item("Ctrl+C stops program", Action::ToggleCtrlC),
-            item("Half-width on SAVE", Action::ToggleHalfWidth),
-            Item {
-                label: "File access",
-                entry: Entry::Sub(&[
-                    item("Always ask", Action::FileAccess(FileConfirm::Ask)),
-                    item("Notify", Action::FileAccess(FileConfirm::Notify)),
-                    item("Silent", Action::FileAccess(FileConfirm::Silent)),
-                ]),
-            },
-            Item {
-                label: "Screen filter",
-                entry: Entry::Sub(&[
+            keyed("Editor/Direct", "F4", Action::ToggleEditor),
+            sub(
+                "Edit slot",
+                &[
+                    keyed("PRG0", "Ctrl+1", Action::EditSlot(0)),
+                    keyed("PRG1", "Ctrl+2", Action::EditSlot(1)),
+                    keyed("PRG2", "Ctrl+3", Action::EditSlot(2)),
+                    keyed("PRG3", "Ctrl+4", Action::EditSlot(3)),
+                    keyed("PRG4", "Ctrl+5", Action::EditSlot(4)),
+                    keyed("PRG5", "Ctrl+6", Action::EditSlot(5)),
+                ],
+            ),
+            keyed("Split display", "Ctrl+/", Action::Split),
+            LINE,
+            keyed("Wrap lines", "Ctrl+W", Action::ToggleWrap),
+            item("Overview on the right", Action::ToggleMap),
+            item("Line number tiles", Action::ToggleNumberTiles),
+            sub(
+                "Font",
+                &[
+                    item("8 pixels", Action::EditorFont(FontSize::Small)),
+                    item("16 pixels", Action::EditorFont(FontSize::Large)),
+                ],
+            ),
+            sub(
+                "Size (F2)",
+                &[
+                    item("Large", Action::EditorSize(EditorSize::Large)),
+                    item("Medium", Action::EditorSize(EditorSize::Medium)),
+                    item("Small", Action::EditorSize(EditorSize::Small)),
+                    item("Tiny", Action::EditorSize(EditorSize::Tiny)),
+                ],
+            ),
+            sub("Colors", COLORS),
+            LINE,
+            sub(
+                "Screen filter",
+                &[
                     item("Program (XSCREEN)", Action::ScreenFilter(None)),
                     item("Nearest", Action::ScreenFilter(Some(Filter::Nearest))),
                     item(
@@ -282,83 +414,78 @@ const MENUS: &[Menu] = &[
                         Action::ScreenFilter(Some(Filter::SmartNearest)),
                     ),
                     item("Bilinear", Action::ScreenFilter(Some(Filter::Bilinear))),
-                ]),
-            },
-            item("Keys press buttons", Action::ToggleKeyboardButtons),
-            Item {
-                label: "Instruments",
-                entry: Entry::Sub(&[
-                    item("SmileBASIC 4 (imported)", Action::SmileBasicInstruments),
-                    item("GeneralUser GS (bundled)", Action::BundledSoundFont),
-                    item("Choose a file...", Action::ChooseSoundFont),
-                ]),
-            },
-            Item {
-                label: "System language",
-                entry: Entry::Sub(&[
-                    item("English (en-US)", Action::Language(Language::English)),
-                    item("Japanese (ja)", Action::Language(Language::Japanese)),
-                ]),
-            },
-            item("Always show mouse cursor", Action::ToggleKeepCursor),
-            Item {
-                label: "Autocomplete",
-                entry: Entry::Sub(&[
-                    item("In direct mode", Action::ToggleCompleteDirect),
-                    item("In the editor", Action::ToggleCompleteEditor),
-                    item("Advanced...", Action::CompleteOptions),
-                ]),
-            },
+                ],
+            ),
         ],
     },
     Menu {
-        title: "Editor",
+        title: "Run",
         items: &[
-            item("Go to line (Ctrl+G)", Action::GoToLine),
-            item("Find (F3, Ctrl+F)", Action::Find),
-            item("Replace (Ctrl+H)", Action::Replace),
-            item("Labels and DEFs (Ctrl+J)", Action::Index),
-            item("Split display (Ctrl+/)", Action::Split),
-            item("Wrap lines (Ctrl+W)", Action::ToggleWrap),
-            item("Line number tiles", Action::ToggleNumberTiles),
-            item("Overview on the right", Action::ToggleMap),
-            Item {
-                label: "Font",
-                entry: Entry::Sub(&[
-                    item("8 pixels", Action::EditorFont(FontSize::Small)),
-                    item("16 pixels", Action::EditorFont(FontSize::Large)),
-                ]),
-            },
-            Item {
-                label: "Size (F2, Ctrl+B)",
-                entry: Entry::Sub(&[
-                    item("Large", Action::EditorSize(EditorSize::Large)),
-                    item("Medium", Action::EditorSize(EditorSize::Medium)),
-                    item("Small", Action::EditorSize(EditorSize::Small)),
-                    item("Tiny", Action::EditorSize(EditorSize::Tiny)),
-                ]),
-            },
-            Item {
-                label: "Tab width",
-                entry: Entry::Sub(&[
+            keyed("Run PRG0", "F5", Action::Run),
+            keyed("Stop", "Pause", Action::Stop),
+            keyed("Pause/Resume", "F8", Action::Pause),
+        ],
+    },
+    Menu {
+        title: "Settings",
+        items: &[
+            item("Upper-case letters", Action::ToggleUpperCase),
+            item("Ctrl+C stops program", Action::ToggleCtrlC),
+            item("Half-width on SAVE", Action::ToggleHalfWidth),
+            sub(
+                "System language",
+                &[
+                    item("English (en-US)", Action::Language(Language::English)),
+                    item("Japanese (ja)", Action::Language(Language::Japanese)),
+                ],
+            ),
+            LINE,
+            item("Keys press buttons", Action::ToggleKeyboardButtons),
+            item("Always show mouse cursor", Action::ToggleKeepCursor),
+            LINE,
+            sub(
+                "Instruments",
+                &[
+                    item("SmileBASIC 4 (imported)", Action::SmileBasicInstruments),
+                    item("GeneralUser GS (bundled)", Action::BundledSoundFont),
+                    item("Choose a file...", Action::ChooseSoundFont),
+                ],
+            ),
+            sub(
+                "File access",
+                &[
+                    item("Always ask", Action::FileAccess(FileConfirm::Ask)),
+                    item("Notify", Action::FileAccess(FileConfirm::Notify)),
+                    item("Silent", Action::FileAccess(FileConfirm::Silent)),
+                ],
+            ),
+            LINE,
+            sub(
+                "Autocomplete",
+                &[
+                    item("In direct mode", Action::ToggleCompleteDirect),
+                    item("In the editor", Action::ToggleCompleteEditor),
+                    item("Advanced...", Action::CompleteOptions),
+                ],
+            ),
+            sub(
+                "Tab width",
+                &[
                     item("1", Action::TabStep(1)),
                     item("2", Action::TabStep(2)),
                     item("4", Action::TabStep(4)),
                     item("8", Action::TabStep(8)),
-                ]),
-            },
-            Item {
-                label: "Colors",
-                entry: Entry::Sub(&[
-                    item(PRESETS[0].0, Action::ColorPreset(0)),
-                    item(PRESETS[1].0, Action::ColorPreset(1)),
-                    item(PRESETS[2].0, Action::ColorPreset(2)),
-                    item(PRESETS[3].0, Action::ColorPreset(3)),
-                    item(PRESETS[4].0, Action::ColorPreset(4)),
-                    item(PRESETS[5].0, Action::ColorPreset(5)),
-                    item("Edit colors...", Action::EditColors),
-                ]),
-            },
+                ],
+            ),
+        ],
+    },
+    Menu {
+        title: "Help",
+        items: &[
+            keyed("Help for the command", "F1", Action::Help),
+            item("Keyboard shortcuts", Action::Shortcuts),
+            LINE,
+            item("About", Action::About),
         ],
     },
 ];
@@ -375,11 +502,40 @@ pub enum Click {
 
 /// An item's text: a check box or radio button for settings, an arrow
 /// for submenus, or the same width of space otherwise.
-fn item_text(item: &Item, settings: &Settings) -> String {
+fn item_text(item: &Item, settings: &Settings, marks: bool) -> String {
     match item.entry {
+        _ if !marks => item.label.to_string(),
         Entry::Do(action) => format!("{} {}", action.mark(settings), item.label),
-        Entry::Sub(_) => format!("    {} >", item.label),
+        Entry::Sub(_) => format!("    {}", item.label),
+        Entry::Line => String::new(),
     }
+}
+
+/// Whether a list has check boxes or radio buttons, which leave room
+/// before every label.
+fn has_marks(items: &[Item]) -> bool {
+    let settings = Settings::default();
+    (items.iter()).any(|i| matches!(i.entry, Entry::Do(a) if a.mark(&settings) != "   "))
+}
+
+/// What goes on an item's right: its keys, or the arrow of a submenu.
+fn item_keys(item: &Item) -> &'static str {
+    match item.entry {
+        Entry::Sub(_) => ">",
+        _ => item.keys,
+    }
+}
+
+fn item_height(item: &Item) -> u32 {
+    match item.entry {
+        Entry::Line => LINE_HEIGHT,
+        _ => ROW_HEIGHT,
+    }
+}
+
+/// How far down a list item `i` starts.
+fn item_top(items: &[Item], i: usize) -> u32 {
+    items[..i].iter().map(item_height).sum()
 }
 
 fn title_rect(index: usize) -> Rect {
@@ -398,20 +554,20 @@ fn title_rect(index: usize) -> Rect {
 /// The width of a dropdown holding `items`.
 fn list_width(items: &[Item]) -> u32 {
     let settings = Settings::default();
-    items
-        .iter()
-        .map(|i| text_width(&item_text(i, &settings)))
-        .max()
-        .unwrap_or(0)
-        + 2 * PAD
+    let widest = |text: &dyn Fn(&Item) -> u32| items.iter().map(text).max().unwrap_or(0);
+    let marks = has_marks(items);
+    let labels = widest(&|i| text_width(&item_text(i, &settings, marks)));
+    let keys = widest(&|i| text_width(item_keys(i)));
+    labels + if keys > 0 { keys + 4 * PAD } else { 0 } + 3 * PAD
 }
 
 fn item_rect(menu: usize, item: usize) -> Rect {
+    let items = MENUS[menu].items;
     Rect {
         x: title_rect(menu).x,
-        y: ROW_HEIGHT * (1 + item as u32),
-        w: list_width(MENUS[menu].items),
-        h: ROW_HEIGHT,
+        y: ROW_HEIGHT + item_top(items, item),
+        w: list_width(items),
+        h: item_height(&items[item]),
     }
 }
 
@@ -423,17 +579,9 @@ fn sub_rect(menu: usize, parent: usize, item: usize) -> Rect {
     };
     Rect {
         x: p.x + p.w,
-        y: p.y + ROW_HEIGHT * item as u32,
+        y: p.y + item_top(items, item),
         w: list_width(items),
-        h: ROW_HEIGHT,
-    }
-}
-
-/// The rectangle around a list of `len` rows starting at `first`.
-fn list_rect(first: Rect, len: usize) -> Rect {
-    Rect {
-        h: ROW_HEIGHT * len as u32,
-        ..first
+        h: item_height(&items[item]),
     }
 }
 
@@ -449,8 +597,9 @@ pub struct MenuBar {
     /// F8 shows the bar, and pauses a running program, until pressed
     /// again.
     pub shown: bool,
-    /// A program is paused; the bar says so.
-    pub paused: bool,
+    /// What the emulator is doing, on the bar's right: the project, the
+    /// slot, a running or paused program.
+    pub status: String,
 }
 
 impl MenuBar {
@@ -468,7 +617,7 @@ impl MenuBar {
         let (menu, parent) = (self.open?, self.sub?);
         match MENUS[menu].items[parent].entry {
             Entry::Sub(items) => Some((menu, parent, items)),
-            Entry::Do(_) => None,
+            Entry::Do(_) | Entry::Line => None,
         }
     }
 
@@ -489,15 +638,15 @@ impl MenuBar {
         self.sub = None;
     }
 
-    /// A left click at a display position. `running` tells whether a
-    /// program is running, which enables Stop and disables the editor.
-    pub fn click(&mut self, at: (i32, i32), running: bool) -> Click {
+    /// A left click at a display position. `context` enables and
+    /// disables items.
+    pub fn click(&mut self, at: (i32, i32), context: Context) -> Click {
         if let Some((menu, parent, items)) = self.submenu() {
             for (i, item) in items.iter().enumerate() {
                 if let Entry::Do(action) = item.entry
                     && sub_rect(menu, parent, i).contains(at)
                 {
-                    if !action.enabled(running) {
+                    if !action.enabled(context) {
                         return Click::Consumed;
                     }
                     self.close();
@@ -511,7 +660,7 @@ impl MenuBar {
                     continue;
                 }
                 return match item.entry {
-                    Entry::Do(action) if !action.enabled(running) => Click::Consumed,
+                    Entry::Do(action) if !action.enabled(context) => Click::Consumed,
                     Entry::Do(action) => {
                         self.close();
                         Click::Chosen(action)
@@ -520,6 +669,7 @@ impl MenuBar {
                         self.sub = Some(i);
                         Click::Consumed
                     }
+                    Entry::Line => Click::Consumed,
                 };
             }
         }
@@ -542,7 +692,7 @@ impl MenuBar {
     }
 
     /// Draws the bar, and the open menus, onto a transparent overlay.
-    pub fn draw(&self, fb: &mut Framebuffer, font: &Font, settings: &Settings, running: bool) {
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font, settings: &Settings, context: Context) {
         let bar = Rect {
             x: 0,
             y: 0,
@@ -567,18 +717,18 @@ impl MenuBar {
             }
             draw_text(fb, font, r.x + PAD, r.y + 4, menu.title, TEXT);
         }
-        if self.paused {
-            let note = "Paused - F8 resumes";
-            let x = fb.width().saturating_sub(text_width(note) + PAD);
-            draw_text(fb, font, x, 4, note, TEXT);
+        let last = title_rect(MENUS.len() - 1);
+        let x = fb.width().saturating_sub(text_width(&self.status) + PAD);
+        if x > last.x + last.w + PAD {
+            draw_text(fb, font, x, 4, &self.status, TEXT);
         }
         let Some(open) = self.open else { return };
         let items = MENUS[open].items;
         let rects: Vec<Rect> = (0..items.len()).map(|i| item_rect(open, i)).collect();
-        self.draw_list(fb, font, settings, running, items, &rects, self.sub);
+        self.draw_list(fb, font, settings, context, items, &rects, self.sub);
         if let Some((menu, parent, sub)) = self.submenu() {
             let rects: Vec<Rect> = (0..sub.len()).map(|i| sub_rect(menu, parent, i)).collect();
-            self.draw_list(fb, font, settings, running, sub, &rects, None);
+            self.draw_list(fb, font, settings, context, sub, &rects, None);
         }
     }
 
@@ -590,16 +740,28 @@ impl MenuBar {
         fb: &mut Framebuffer,
         font: &Font,
         settings: &Settings,
-        running: bool,
+        context: Context,
         items: &[Item],
         rects: &[Rect],
         selected: Option<usize>,
     ) {
+        let marks = has_marks(items);
         for (i, (item, &r)) in items.iter().zip(rects).enumerate() {
+            if matches!(item.entry, Entry::Line) {
+                fill(fb, r, BACKGROUND);
+                let line = Rect {
+                    x: r.x + PAD,
+                    y: r.y + r.h / 2,
+                    w: r.w - 2 * PAD,
+                    h: 1,
+                };
+                fill(fb, line, BORDER);
+                continue;
+            }
             let hovered = self.mouse.is_some_and(|m| r.contains(m)) || selected == Some(i);
             let enabled = match item.entry {
-                Entry::Do(action) => action.enabled(running),
-                Entry::Sub(_) => true,
+                Entry::Do(action) => action.enabled(context),
+                Entry::Sub(_) | Entry::Line => true,
             };
             let back = if hovered && enabled {
                 HIGHLIGHT
@@ -613,12 +775,19 @@ impl MenuBar {
                 font,
                 r.x + PAD,
                 r.y + 4,
-                &item_text(item, settings),
+                &item_text(item, settings, marks),
                 color,
             );
+            let keys = item_keys(item);
+            let x = r.x + r.w - PAD - text_width(keys);
+            draw_text(fb, font, x, r.y + 4, keys, color);
         }
-        if let Some(&first) = rects.first() {
-            outline(fb, list_rect(first, rects.len()), BORDER);
+        if let (Some(&first), Some(&last)) = (rects.first(), rects.last()) {
+            let all = Rect {
+                h: last.y + last.h - first.y,
+                ..first
+            };
+            outline(fb, all, BORDER);
         }
     }
 }
@@ -627,11 +796,32 @@ impl MenuBar {
 mod tests {
     use super::*;
 
+    const IDLE: Context = Context {
+        running: false,
+        editing: false,
+    };
+    const RUNNING: Context = Context {
+        running: true,
+        editing: false,
+    };
+    const EDITING: Context = Context {
+        running: false,
+        editing: true,
+    };
+
+    fn menu(title: &str) -> usize {
+        MENUS.iter().position(|m| m.title == title).unwrap()
+    }
+
+    fn at(r: Rect) -> (i32, i32) {
+        ((r.x + 1) as i32, (r.y + 1) as i32)
+    }
+
     #[test]
     fn hidden_until_the_mouse_reaches_the_top() {
         let mut bar = MenuBar::default();
         assert!(!bar.visible());
-        assert_eq!(bar.click((10, 5), false), Click::Ignored);
+        assert_eq!(bar.click((10, 5), IDLE), Click::Ignored);
         bar.mouse_move(Some((10, 300)));
         assert!(!bar.visible());
         bar.mouse_move(Some((10, 5)));
@@ -642,13 +832,15 @@ mod tests {
     fn open_menu_and_choose() {
         let mut bar = MenuBar::default();
         bar.mouse_move(Some((10, 5)));
-        let options = title_rect(2);
-        let at = |r: Rect| ((r.x + 1) as i32, (r.y + 1) as i32);
-        assert_eq!(bar.click(at(options), false), Click::Consumed);
+        let settings_menu = menu("Settings");
+        assert_eq!(
+            bar.click(at(title_rect(settings_menu)), IDLE),
+            Click::Consumed
+        );
         bar.mouse_move(Some((500, 500)));
         assert!(bar.visible(), "an open menu stays visible");
         assert_eq!(
-            bar.click(at(item_rect(2, 1)), false),
+            bar.click(at(item_rect(settings_menu, 1)), IDLE),
             Click::Chosen(Action::ToggleCtrlC)
         );
         assert!(!bar.visible());
@@ -659,46 +851,74 @@ mod tests {
     }
 
     #[test]
-    fn stop_needs_a_running_program() {
+    fn items_need_a_program_or_the_editor() {
         let mut bar = MenuBar::default();
         bar.mouse_move(Some((10, 5)));
-        let at = |r: Rect| ((r.x + 1) as i32, (r.y + 1) as i32);
-        bar.click(at(title_rect(1)), false);
-        assert_eq!(bar.click(at(item_rect(1, 0)), false), Click::Consumed);
+        let run = menu("Run");
+        bar.click(at(title_rect(run)), IDLE);
+        assert_eq!(bar.click(at(item_rect(run, 1)), IDLE), Click::Consumed);
         assert_eq!(
-            bar.click(at(item_rect(1, 0)), true),
+            bar.click(at(item_rect(run, 1)), RUNNING),
             Click::Chosen(Action::Stop)
         );
-        bar.click(at(title_rect(1)), true);
-        assert_eq!(bar.click(at(item_rect(1, 1)), true), Click::Consumed);
+        bar.click(at(title_rect(run)), RUNNING);
+        assert_eq!(bar.click(at(item_rect(run, 0)), RUNNING), Click::Consumed);
         assert_eq!(
-            bar.click(at(item_rect(1, 1)), false),
-            Click::Chosen(Action::ToggleEditor)
+            bar.click(at(item_rect(run, 0)), IDLE),
+            Click::Chosen(Action::Run)
         );
+        let edit = menu("Edit");
+        bar.click(at(title_rect(edit)), IDLE);
+        assert_eq!(bar.click(at(item_rect(edit, 0)), IDLE), Click::Consumed);
+        assert_eq!(
+            bar.click(at(item_rect(edit, 0)), EDITING),
+            Click::Chosen(Action::Undo)
+        );
+    }
+
+    #[test]
+    fn lines_part_groups() {
+        let edit = menu("Edit");
+        let (redo, line, cut) = (item_rect(edit, 1), item_rect(edit, 2), item_rect(edit, 3));
+        assert_eq!(line.h, LINE_HEIGHT);
+        assert_eq!((line.y, cut.y), (redo.y + redo.h, line.y + LINE_HEIGHT));
+        let mut bar = MenuBar::default();
+        bar.mouse_move(Some((10, 5)));
+        bar.click(at(title_rect(edit)), EDITING);
+        assert_eq!(bar.click(at(line), EDITING), Click::Consumed);
+        assert!(bar.open.is_some(), "a line does nothing");
+        // Keys sit right of the widest label.
+        let width = list_width(MENUS[edit].items);
+        assert!(width > text_width("Labels and DEFs") + text_width("Ctrl+Shift+K"));
+        assert!(!has_marks(MENUS[edit].items) && has_marks(MENUS[menu("View")].items));
     }
 
     #[test]
     fn file_access_is_a_submenu() {
         let mut bar = MenuBar::default();
-        let at = |r: Rect| ((r.x + 1) as i32, (r.y + 1) as i32);
+        let settings_menu = menu("Settings");
+        let parent = (MENUS[settings_menu].items.iter())
+            .position(|i| i.label == "File access")
+            .unwrap();
         bar.mouse_move(Some((10, 5)));
-        bar.click(at(title_rect(2)), false);
-        bar.mouse_move(Some(at(item_rect(2, 3))));
-        assert_eq!(bar.sub, Some(3), "hovering opens the submenu");
-        let silent = sub_rect(2, 3, 2);
-        assert!(silent.x >= item_rect(2, 3).x + item_rect(2, 3).w);
+        bar.click(at(title_rect(settings_menu)), IDLE);
+        bar.mouse_move(Some(at(item_rect(settings_menu, parent))));
+        assert_eq!(bar.sub, Some(parent), "hovering opens the submenu");
+        let silent = sub_rect(settings_menu, parent, 2);
+        let p = item_rect(settings_menu, parent);
+        assert!(silent.x >= p.x + p.w);
         bar.mouse_move(Some(at(silent)));
-        assert_eq!(bar.sub, Some(3), "moving into it keeps it open");
+        assert_eq!(bar.sub, Some(parent), "moving into it keeps it open");
         assert_eq!(
-            bar.click(at(silent), false),
+            bar.click(at(silent), IDLE),
             Click::Chosen(Action::FileAccess(FileConfirm::Silent))
         );
         // Clicking the parent opens it too, and another item closes it.
-        bar.mouse_move(Some(at(title_rect(2))));
-        bar.click(at(title_rect(2)), false);
-        assert_eq!(bar.click(at(item_rect(2, 3)), false), Click::Consumed);
-        assert_eq!(bar.sub, Some(3));
-        bar.mouse_move(Some(at(item_rect(2, 0))));
+        bar.mouse_move(Some(at(title_rect(settings_menu))));
+        bar.click(at(title_rect(settings_menu)), IDLE);
+        assert_eq!(bar.click(at(p), IDLE), Click::Consumed);
+        assert_eq!(bar.sub, Some(parent));
+        bar.mouse_move(Some(at(item_rect(settings_menu, 0))));
         assert_eq!(bar.sub, None);
 
         let mut settings = Settings::default();
@@ -717,8 +937,8 @@ mod tests {
             ..MenuBar::default()
         };
         assert!(bar.visible());
-        assert!(!Action::Pause.enabled(false));
-        assert!(Action::Pause.enabled(true));
+        assert!(!Action::Pause.enabled(IDLE));
+        assert!(Action::Pause.enabled(RUNNING));
 
         let mut settings = Settings::default();
         Action::Language(Language::Japanese).toggle(&mut settings);
@@ -731,20 +951,15 @@ mod tests {
     fn clicking_outside_closes() {
         let mut bar = MenuBar::default();
         bar.mouse_move(Some((10, 5)));
-        bar.click((10, 5), false);
-        assert_eq!(bar.click((600, 400), false), Click::Consumed);
+        bar.click((10, 5), IDLE);
+        assert_eq!(bar.click((600, 400), IDLE), Click::Consumed);
         bar.mouse_move(Some((600, 400)));
         assert!(!bar.visible());
     }
 
     #[test]
-    fn editor_menu_offers_every_preset() {
-        let editor = MENUS.iter().find(|m| m.title == "Editor").unwrap();
-        let colors = editor.items.iter().find(|i| i.label == "Colors").unwrap();
-        let Entry::Sub(items) = colors.entry else {
-            panic!("a submenu")
-        };
-        let presets: Vec<_> = items
+    fn view_menu_offers_every_preset() {
+        let presets: Vec<_> = COLORS
             .iter()
             .filter_map(|i| match i.entry {
                 Entry::Do(Action::ColorPreset(n)) => Some((n, i.label)),
