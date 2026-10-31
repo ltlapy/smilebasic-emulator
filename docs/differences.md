@@ -15,8 +15,9 @@ BEEP pans an effect are guesses.
 
 Without them:
 
-- Preset songs (`BGMPLAY 0` to `45`) play silence, until stopped, so
-  that programs waiting on `BGMCHK` still wait.
+- Preset songs (`BGMPLAY 0` to `73`) play silence, so that programs
+  waiting on `BGMCHK` still wait: the three short ones (4 to 6) for as
+  long as they last, the others, which loop, until stopped.
 - Preset sound effects (`BEEP 0` to `155`) are silent. They still take
   a handle.
 

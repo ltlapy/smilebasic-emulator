@@ -321,3 +321,15 @@ fn recording_what_plays() {
         ErrorKind::OutOfRange
     );
 }
+
+#[test]
+fn silent_jingles_still_end() {
+    // Without SmileBASIC's own songs, preset 5 ends after its length and
+    // preset 0, which loops, goes on.
+    let mut rt = runtime();
+    run_on(&mut rt, "BGMPLAY 0,5:BGMPLAY 1,0").unwrap();
+    frames(&mut rt, 100);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "11");
+    frames(&mut rt, 20);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "01");
+}

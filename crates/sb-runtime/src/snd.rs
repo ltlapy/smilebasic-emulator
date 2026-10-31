@@ -19,6 +19,12 @@ use crate::sound::seq::Kind;
 use crate::sound::wave::{Envelope, Wave};
 use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, Recorder, TRACKS, frames};
 
+/// The preset songs that end rather than loop, and their lengths in
+/// frames, worked out by playing SmileBASIC 4's own sequences through the
+/// emulator's player; every other preset loops until stopped.
+// UNVERIFIED: whether BGMCHK also waits for the last notes to die away.
+const JINGLES: [(i32, u32); 3] = [(4, 167), (5, 111), (6, 342)];
+
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
 }
@@ -164,18 +170,21 @@ impl Runtime {
                 };
                 let song = match music {
                     0..=PRESET_SONGS => {
-                        if let Some(seq) = self.sound.sequence(Kind::Song, music) {
-                            let idle = self.sound.idle();
-                            self.sound.track(track).play_sequence(seq, volume, fade);
-                            if idle {
-                                self.sound.wake(track);
-                            }
-                            return Ok(vec![]);
+                        let idle = self.sound.idle();
+                        match self.sound.sequence(Kind::Song, music) {
+                            Some(seq) => self.sound.track(track).play_sequence(seq, volume, fade),
+                            // Without SmileBASIC's own songs, presets play
+                            // silence, so programs waiting on BGMCHK still
+                            // wait.
+                            None => self.sound.play(track, None, volume, fade),
                         }
-                        // UNVERIFIED: without SmileBASIC's own songs, presets
-                        // play silence until stopped, so programs waiting on
-                        // BGMCHK still wait.
-                        None
+                        if let Some(&(_, n)) = JINGLES.iter().find(|j| j.0 == music) {
+                            self.sound.track(track).end_silent_after(n);
+                        }
+                        if idle {
+                            self.sound.wake(track);
+                        }
+                        return Ok(vec![]);
                     }
                     // A song number with nothing set plays nothing, so
                     // BGMCHK says 0 (checked on hardware).

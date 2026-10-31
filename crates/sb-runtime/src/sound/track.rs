@@ -96,6 +96,8 @@ pub(crate) struct Track {
     pub(crate) vars: [i32; 8],
     /// Frames before the song starts, while the sound system wakes up.
     pub(crate) hold: u32,
+    /// Frames left of a preset that plays silent but would end.
+    silent_left: Option<u32>,
     /// Samples until the next tick.
     until_tick: f64,
     /// Plays: a song that has not ended, or a preset that is not there.
@@ -132,6 +134,7 @@ impl Track {
             song_key: 0,
             vars: [0; 8],
             hold: 0,
+            silent_left: None,
             until_tick: 0.0,
             playing: false,
             paused: false,
@@ -176,6 +179,7 @@ impl Track {
         // Variables the song has not set read -1 (checked on hardware).
         self.vars = [-1; 8];
         self.hold = 0;
+        self.silent_left = None;
         self.until_tick = 0.0;
         self.song = None;
         self.seq = None;
@@ -517,6 +521,14 @@ impl Track {
         }
     }
 
+    /// A preset that ends after `frames` but plays silent here, without
+    /// its sequence or instruments, still ends then.
+    pub(crate) fn end_silent_after(&mut self, frames: u32) {
+        if self.seq.is_none() || self.synth.is_none() {
+            self.silent_left = Some(frames);
+        }
+    }
+
     /// Adds `left.len()` samples of the track to the buffers.
     pub(crate) fn render(
         &mut self,
@@ -527,6 +539,13 @@ impl Track {
         if self.hold > 0 {
             self.hold -= 1;
             return;
+        }
+        if let (Some(n), true, false) = (&mut self.silent_left, self.playing, self.paused) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.silent_left = None;
+                self.playing = false;
+            }
         }
         let n = left.len();
         let [l, r] = scratch;
