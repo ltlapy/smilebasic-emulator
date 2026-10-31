@@ -526,6 +526,9 @@ impl Sprites {
     }
 }
 
+/// How far left of a column boundary a sprite's sample point is taken.
+const TIE: f64 = 1e-9;
+
 /// The page pixel a sprite shows at `(x, y)` of its own rectangle (before
 /// rotation and flipping). GRP-1 is white everywhere; off a page is
 /// transparent.
@@ -576,7 +579,11 @@ pub fn draw_posed(
         add: s.attr & attr::ADD != 0,
     };
     draw_image(fb, &place, bw, bh, |x, y| {
-        let (lx, ly) = (x as i32, y as i32);
+        // A point exactly on a column boundary takes the column to its
+        // left, while rows take the one below as usual: at a scale of 1.5,
+        // the second pixel across shows the first column (checked on
+        // hardware with lossless screenshots at 1.5 and 2.5).
+        let (lx, ly) = ((x - TIE).max(0.0) as i32, y as i32);
         // The image is flipped, then turned (checked on hardware): undo
         // the turn, then the flips.
         let (mut ix, mut iy) = match quarter {

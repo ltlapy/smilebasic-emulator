@@ -369,3 +369,15 @@ fn no_raster_filters() {
     assert_eq!(err("DIM Q[4,100]:LFILTER 1,4,Q,1"), ErrorKind::TypeMismatch);
     assert_eq!(err("LFILTER 1,0,5"), ErrorKind::OutOfRange);
 }
+
+#[test]
+fn scaled_sprites_take_the_left_column_on_a_boundary() {
+    // Columns of red, blue, red, blue at a scale of 1.5, as SmileBASIC 4
+    // draws them (TTEST24): two, one, two and one pixels wide.
+    let mut m = run(
+        "GTARGET 4:GCLS:FOR X=0 TO 3:GLINE X,0,X,3,(X MOD 2)*&HFF0000FF+(1-X MOD 2)*&HFFFF0000:NEXT:GTARGET 0\nCLS:SPSET 0,0,0,4,4:SPSCALE 0,1.5,1.5:SPOFS 0,100,100",
+    );
+    let fb = m.render();
+    let row: Vec<u32> = (100..106).map(|x| fb.get(x, 101).unwrap()).collect();
+    assert_eq!(row, [RED, RED, BLUE, RED, RED, BLUE]);
+}

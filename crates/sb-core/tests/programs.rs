@@ -839,8 +839,13 @@ fn free_memory() {
         "134216720 134216720\n800064\n2112\n0\n"
     );
     assert_eq!(
-        output("DIM A$[3]:A$[1]=\"X\"*100:B=FREEMEM():A$[1]=\"\":?FREEMEM()-B;CHKCALL(\"FREEMEM\")"),
+        output(
+            "DIM A$[3]:A$[1]=\"X\"*100:B=FREEMEM():A$[1]=\"\":?FREEMEM()-B;CHKCALL(\"FREEMEM\")"
+        ),
         "3201\n"
     );
-    assert_eq!(error("FREEMEM 1 OUT A,B").0, ErrorKind::WrongNumberOfArguments);
+    assert_eq!(
+        error("FREEMEM 1 OUT A,B").0,
+        ErrorKind::WrongNumberOfArguments
+    );
 }
