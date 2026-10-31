@@ -12,7 +12,7 @@ use sb_core::value::Value;
 use sb_core::vm::{Call, Status, Step, Vm};
 
 use crate::complete::Options;
-use crate::editor::Editor;
+use crate::editor::{Editor, Marks};
 use crate::framebuffer::Framebuffer;
 use crate::runtime::{Request, Runtime, SLOTS, Stopped, keys};
 use crate::screen::ScreenMode;
@@ -67,6 +67,11 @@ pub struct Machine {
     pub time_limit: Option<Duration>,
     /// Lines with breakpoints, by slot. They last for the session.
     breakpoints: Vec<BTreeSet<u32>>,
+    /// A debugger's step started from the editor, which stays shown
+    /// while it runs unless the program waits for input.
+    stepping: Option<Step>,
+    /// The slot RUN last started, for the debugger's restart.
+    last_run: Option<usize>,
     /// Slots whose lines the editor moved since the program started. Its
     /// code there is the old one, as CONT goes on with it (checked on
     /// hardware), so it keeps the breakpoints it had.
@@ -85,11 +90,13 @@ pub enum Resume {
     RunTo(usize, u32),
 }
 
-/// What stopped a program: the + button, or STOP and TRACE.
+/// What stopped a program: the + button, STOP and TRACE, or a
+/// breakpoint or a debugger's step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Halt {
     User,
     Stop,
+    Debug,
 }
 
 /// What a direct-mode LIST asks for.
@@ -167,6 +174,8 @@ impl Machine {
             halted: None,
             breakpoints: vec![BTreeSet::new(); SLOTS],
             moved: vec![false; SLOTS],
+            stepping: None,
+            last_run: None,
             time_limit: None,
         }
     }
@@ -480,6 +489,7 @@ impl Machine {
         // Each program starts with the mouse cursor hidden; END leaves it
         // as the program set it (checked on hardware).
         self.rt.system.mouse_cursor = false;
+        self.last_run = Some(slot);
         self.start(&self.rt.slots[slot].clone(), Some(slot));
     }
 
@@ -557,7 +567,7 @@ impl Machine {
         // The format is SmileBASIC 4's own, from SmileBASIC 4.
         let what = match how {
             Halt::User => "User break",
-            Halt::Stop => "Break",
+            Halt::Stop | Halt::Debug => "Break",
         };
         let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
         // It follows whatever the line printed, as after INPUT's prompt.
@@ -575,6 +585,24 @@ impl Machine {
             self.halt(vm, Stopped::Paused, line);
         }
         self.ready();
+        let stepped = self.stepping.take().is_some();
+        if program && (stepped || how == Halt::Debug && self.rt.settings.debug_open_editor) {
+            self.show_paused();
+        }
+    }
+
+    /// Opens the editor at the line the stopped program goes on from,
+    /// keeping what is being edited.
+    fn show_paused(&mut self) {
+        let Some((slot, line)) = self.paused_at() else {
+            return;
+        };
+        if !self.editing {
+            self.open_editor(slot, Some((line as usize, 0)));
+            return;
+        }
+        self.edit_slot(slot);
+        self.edit().go_to(line as usize);
     }
 
     /// Keeps a program stopped on `line` for CONT, or for BACKTRACE after
@@ -625,6 +653,8 @@ impl Machine {
     /// Goes on with a program that STOP, the + button or the debugger
     /// stopped, as CONT does from direct mode. False when there is none
     /// that can go on.
+    /// From the editor, CONT shows the screen again, while a step leaves
+    /// the editor shown until the program waits for input.
     pub fn debug(&mut self, how: Resume) -> bool {
         if self.vm.is_some() || self.halted.is_none() || self.rt.stopped != Stopped::Paused {
             return false;
@@ -634,9 +664,71 @@ impl Machine {
         {
             return false;
         }
+        if self.editing {
+            match how {
+                Resume::Cont | Resume::Trace => self.close_editor(),
+                Resume::Step(step) => self.stepping = Some(step),
+                Resume::RunTo(..) => self.stepping = Some(Step::Over),
+            }
+        }
+        self.rt.input.polled = false;
         self.rt.cancel_input();
         self.resume(how);
         true
+    }
+
+    /// Runs the program RUN last started again from the start, showing
+    /// the screen. False when there is none.
+    pub fn restart(&mut self) -> bool {
+        let Some(slot) = self.last_run else {
+            return false;
+        };
+        if self.vm.is_some() {
+            self.stop();
+        }
+        if self.editing {
+            self.close_editor();
+        }
+        self.rt.cancel_input();
+        self.run_slot(slot);
+        true
+    }
+
+    /// Whether the debugger's panel shows below the editor: while a
+    /// program is stopped, or a step runs.
+    fn panel_shown(&self) -> bool {
+        self.editing && (self.halted.is_some() || self.stepping.is_some())
+    }
+
+    /// Where the debugger's panel starts on the frame [`Machine::render`]
+    /// last returned, when it shows.
+    pub fn panel_at(&self) -> Option<u32> {
+        self.rt.panel_at.filter(|_| self.panel_shown())
+    }
+
+    /// The screens as the program left them, while the editor shows
+    /// instead, for the debugger's panel.
+    pub fn render_screens(&mut self) -> &Framebuffer {
+        self.rt.render()
+    }
+
+    /// Gives each side of the editor the breakpoints and the stopped line
+    /// of its slot.
+    fn mark_editors(&mut self) {
+        self.follow_edits();
+        let at = self.paused_at();
+        for i in 0..2 {
+            let slot = self.editors[i].slot();
+            let stale = self.moved[slot];
+            self.editors[i].marks = Marks {
+                breakpoints: self.breakpoints[slot]
+                    .iter()
+                    .map(|&l| l as usize - 1)
+                    .collect(),
+                stopped: at.filter(|at| at.0 == slot).map(|at| at.1 as usize - 1),
+                stale,
+            };
+        }
     }
 
     /// Makes the stopped program go on from a line of its slot, in the
@@ -825,8 +917,12 @@ impl Machine {
         self.rt.animate();
         if self.editing {
             self.edit();
-            return;
+            // A step from the editor runs with it shown.
+            if self.stepping.is_none() || self.vm.is_none() {
+                return;
+            }
         }
+        let mut vsynced = false;
         let Some(vm) = &mut self.vm else {
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));
@@ -859,6 +955,7 @@ impl Machine {
                     frames,
                     vsync: false,
                 }) => {
+                    vsynced = true;
                     self.wait = frames;
                     self.vsync_at = self.frame + u64::from(frames);
                     if frames == 0 && has_time(vm) {
@@ -874,6 +971,7 @@ impl Machine {
                     frames,
                     vsync: true,
                 }) => {
+                    vsynced = true;
                     self.vsync_at += u64::from(frames);
                     if self.vsync_at > self.frame {
                         self.wait = (self.vsync_at - self.frame) as u32;
@@ -889,10 +987,19 @@ impl Machine {
                 Ok(Status::Break { line }) => self.stop_on(Some(line), Halt::User),
                 Ok(Status::Stop { line }) => self.stop_on(Some(line), Halt::Stop),
                 Ok(Status::Traced { line }) => self.stop_on(Some(line), Halt::Stop),
-                Ok(Status::Debug { line }) => self.stop_on(Some(line), Halt::Stop),
+                Ok(Status::Debug { line }) => self.stop_on(Some(line), Halt::Debug),
                 Err(e) => self.finish(Some(e)),
             }
             break;
+        }
+        // A step that waits for input shows the screen until it stops: an
+        // INPUT, or one going over lines that read the controls and waited
+        // for a frame.
+        if self.editing
+            && let (Some(step), Some(vm)) = (self.stepping, &self.vm)
+            && (vm.is_reading_input() || step != Step::Into && vsynced && self.rt.input.polled)
+        {
+            self.close_editor();
         }
     }
 
@@ -909,6 +1016,8 @@ impl Machine {
 
     pub fn render(&mut self) -> &Framebuffer {
         if self.editing {
+            self.mark_editors();
+            let panel = self.panel_shown();
             if self.mirrors() {
                 let [first, second] = &mut self.editors;
                 match self.active {
@@ -920,6 +1029,7 @@ impl Machine {
                 &mut self.editors,
                 self.active,
                 self.split.then_some(self.split_rows),
+                panel,
             )
         } else {
             self.rt.render()
@@ -1000,6 +1110,7 @@ impl Machine {
 
     /// The program or line ended, by itself or with an error.
     fn finish(&mut self, error: Option<Error>) {
+        self.stepping = None;
         let vm = self.vm.take().expect("finish follows a run");
         self.vars.extend(vm.globals());
         let program = self.running_slot.is_some();

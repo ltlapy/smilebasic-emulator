@@ -132,6 +132,9 @@ pub struct Input {
     pub function_keys: [Vec<u16>; 5],
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
     buttons_read: bool,
+    /// The program has read the controllers, the keyboard, the mouse or
+    /// the touch screen since this was last cleared, for the debugger.
+    pub(crate) polled: bool,
 }
 
 impl Default for Input {
@@ -153,6 +156,7 @@ impl Default for Input {
             vibration: Default::default(),
             function_keys: Default::default(),
             buttons_read: false,
+            polled: false,
         }
     }
 }
@@ -317,6 +321,7 @@ impl Runtime {
         want: Want,
     ) -> Result<Vec<Value>> {
         let input = &mut self.input;
+        input.polled = true;
         if matches!(command, Command::Button | Command::Stick) {
             input.buttons_read = true;
         }

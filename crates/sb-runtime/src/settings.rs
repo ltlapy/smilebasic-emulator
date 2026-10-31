@@ -82,6 +82,9 @@ pub struct Settings {
     pub complete_hints: bool,
     /// Hints show by the cursor instead of at the bottom of the screen.
     pub complete_above: bool,
+    /// A breakpoint or a debugger's step opens the editor at the line the
+    /// program stopped before.
+    pub debug_open_editor: bool,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -126,6 +129,7 @@ impl Default for Settings {
             complete_enter: true,
             complete_hints: true,
             complete_above: false,
+            debug_open_editor: true,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
         }
@@ -238,6 +242,7 @@ impl Settings {
                 "complete_commands" => &mut s.complete_commands,
                 "complete_names" => &mut s.complete_names,
                 "complete_enter" => &mut s.complete_enter,
+                "debug_open_editor" => &mut s.debug_open_editor,
                 "complete_hints" => &mut s.complete_hints,
                 "complete_above" => &mut s.complete_above,
                 "complete_after" => {
@@ -339,6 +344,7 @@ impl Settings {
              complete_enter={}\n\
              complete_hints={}\n\
              complete_above={}\n\
+             debug_open_editor={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -365,6 +371,7 @@ impl Settings {
             self.complete_enter,
             self.complete_hints,
             self.complete_above,
+            self.debug_open_editor,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),

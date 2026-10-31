@@ -667,6 +667,11 @@ impl Vm {
         }
     }
 
+    /// Whether an INPUT or LINPUT waits for its line.
+    pub fn is_reading_input(&self) -> bool {
+        self.reading_input
+    }
+
     pub fn is_ended(&self) -> bool {
         self.ended
     }

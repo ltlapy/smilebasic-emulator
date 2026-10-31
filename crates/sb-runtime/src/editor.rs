@@ -31,6 +31,45 @@ const BAR: u32 = 0xFF30_3040;
 const DIM: u32 = 0xFF70_7080;
 const LINE_NUMBER: u32 = 0xFF80_8080;
 const RETURN_MARK: u32 = 0xFF50_5868;
+const BREAKPOINT: u32 = 0xFFDC_2828;
+const STOPPED: u32 = 0xFFFF_DC00;
+/// How far, out of 256, the stopped line's background takes `STOPPED`.
+const STOPPED_LINE: u32 = 100;
+
+/// A breakpoint, in the line numbers' margin.
+const DOT_GLYPH: [u8; 8] = [
+    0b0011_1100,
+    0b0111_1110,
+    0b1111_1111,
+    0b1111_1111,
+    0b1111_1111,
+    0b1111_1111,
+    0b0111_1110,
+    0b0011_1100,
+];
+
+/// The line a stopped program goes on from.
+const ARROW_GLYPH: [u8; 8] = [
+    0b0100_0000,
+    0b0110_0000,
+    0b0111_0000,
+    0b0111_1000,
+    0b0111_1000,
+    0b0111_0000,
+    0b0110_0000,
+    0b0100_0000,
+];
+
+/// What the debugger shows of the slot shown, by 0-based line.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub breakpoints: Vec<usize>,
+    /// The line the stopped program goes on from.
+    pub stopped: Option<usize>,
+    /// The program runs code from before the text was edited, so the
+    /// stopped line is where it was then.
+    pub stale: bool,
+}
 
 /// The mark drawn after each line's last character.
 const RETURN_GLYPH: [u8; 8] = [
@@ -112,6 +151,8 @@ pub struct Look<'a> {
     /// Pixels left at the top for the menu bar; `None` for its share of
     /// the frame.
     pub top: Option<u32>,
+    /// Pixels left at the bottom, for the debugger's panel.
+    pub bottom: u32,
     pub font: FontSize,
     pub colors: &'a Palette,
 }
@@ -340,6 +381,8 @@ pub struct Editor {
     screen: TextScreen,
     /// How edits since they were last taken moved the lines, by slot.
     shifts: Vec<(usize, LineShift)>,
+    /// Breakpoints and the stopped line, which the machine sets.
+    pub marks: Marks,
 }
 
 /// How an edit moved a program's lines, for what is kept by line, such
@@ -439,6 +482,7 @@ impl Editor {
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
             shifts: Vec::new(),
+            marks: Marks::default(),
         };
         editor.fit(screen_w, screen_h, FontSize::Small, None);
         editor
@@ -517,6 +561,13 @@ impl Editor {
     /// order.
     pub fn take_shifts(&mut self) -> Vec<(usize, LineShift)> {
         std::mem::take(&mut self.shifts)
+    }
+
+    /// Puts the cursor at the start of a 1-based line, in view.
+    pub fn go_to(&mut self, line: usize) {
+        self.anchor = None;
+        self.go(line.saturating_sub(1), 0);
+        self.want_col = 0;
     }
 
     /// Takes over the program and its undo history from the other side of
@@ -1525,7 +1576,8 @@ impl Editor {
             ..
         } = look;
         self.number_tiles = tiles;
-        self.fit(fb.width(), fb.height(), look.font, look.top);
+        let height = fb.height().saturating_sub(look.bottom);
+        self.fit(fb.width(), height, look.font, look.top);
         self.scroll(wrap);
         let (cols, rows) = self.size();
         let gutter = self.gutter();
@@ -1540,6 +1592,7 @@ impl Editor {
         screen.cls();
         let width = screen.size().0 as usize;
         let mut marks = Vec::new();
+        let mut margin_marks = Vec::new();
         let mut cursor = None;
 
         let mut row = 0;
@@ -1556,6 +1609,12 @@ impl Editor {
                 colors[Part::CursorLine]
             } else {
                 colors.line_background(kind)
+            };
+            let stopped = self.marks.stopped == Some(line);
+            let back = if stopped && !self.marks.stale {
+                blend(back, STOPPED, STOPPED_LINE)
+            } else {
+                back
             };
             let chunks = if wrap { rows_of(text, cols) } else { 1 };
             for chunk in 0..chunks {
@@ -1579,6 +1638,13 @@ impl Editor {
                     } else {
                         let number = format!("{:>1$}", line + 1, gutter - 1);
                         put_str(screen, 0, row, &number, color);
+                    }
+                    if self.marks.breakpoints.contains(&line) {
+                        margin_marks.push((0, row, &DOT_GLYPH, BREAKPOINT));
+                    }
+                    if stopped {
+                        let color = if self.marks.stale { DIM } else { STOPPED };
+                        margin_marks.push((gutter.min(3) / 2, row, &ARROW_GLYPH, color));
                     }
                 }
                 let start = if wrap { chunk * cols } else { v.left };
@@ -1692,6 +1758,9 @@ impl Editor {
         }
         for (x, y) in marks {
             grid.glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
+        }
+        for (x, y, glyph, color) in margin_marks {
+            grid.glyph(fb, x, y, glyph, color);
         }
         if let (Some(x), true) = (prompt_cursor, blink) {
             for py in 0..cell {
@@ -1892,6 +1961,7 @@ mod tests {
             tiles,
             map: false,
             top: None,
+            bottom: 0,
             font: FontSize::Small,
             colors: &SMILEBASIC,
         }

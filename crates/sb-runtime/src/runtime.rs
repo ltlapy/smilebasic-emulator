@@ -511,6 +511,9 @@ const SPLIT_COLOR: u32 = 0xFF30_3040;
 const SPLIT_FLASH: u32 = 0xFF58_A0FF;
 const SPLIT_FLASH_HOLD: u32 = 12;
 const SPLIT_FLASH_FADE: u32 = 30;
+/// The share of the editor's frame, out of 20, below it for the
+/// debugger's panel.
+const PANEL_SHARE: u32 = 7;
 
 /// Character codes for keys that do not produce text, as INKEY$ returns them.
 pub mod keys {
@@ -645,6 +648,9 @@ pub struct Runtime {
     /// frame started to show.
     split_shown: Option<(bool, usize)>,
     split_flash: u32,
+    /// Where the debugger's panel starts on the editor's frame, when it
+    /// is shown.
+    pub(crate) panel_at: Option<u32>,
     /// GRP4 at start-up, which ACLS puts back.
     sprite_page: Option<Vec<u32>>,
 }
@@ -834,6 +840,7 @@ impl Runtime {
             split_at: None,
             split_shown: None,
             split_flash: 0,
+            panel_at: None,
             sprite_page: None,
         }
         .with_font_page()
@@ -1345,12 +1352,13 @@ impl Runtime {
 
     /// Composes a frame showing the editor instead of the screens.
     /// `split` is `None` for one side, else whether the sides are one
-    /// above the other.
+    /// above the other. `panel` leaves room below for the debugger's.
     pub(crate) fn render_editors(
         &mut self,
         editors: &mut [Editor; 2],
         active: usize,
         split: Option<bool>,
+        panel: bool,
     ) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
         let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
@@ -1360,11 +1368,14 @@ impl Runtime {
         if (self.editor_fb.width(), self.editor_fb.height()) != (w, h) {
             self.editor_fb = Framebuffer::new(w, h);
         }
+        let reserve = if panel { h * PANEL_SHARE / 20 } else { 0 };
+        self.panel_at = panel.then_some(h - reserve);
         let look = Look {
             wrap: s.editor_wrap,
             tiles: s.editor_number_tiles,
             map: s.editor_map,
             top: None,
+            bottom: reserve,
             font: s.editor_font,
             colors: &s.editor_colors,
         };
@@ -1386,7 +1397,7 @@ impl Runtime {
         };
         // Two sides with a divider between them; only the upper one
         // leaves room for the menu bar.
-        let length = if rows { h } else { w };
+        let length = if rows { h - reserve } else { w };
         let half = (length - SPLIT_DIVIDER) / 2;
         let second = length - half;
         self.split_at = Some(second);
@@ -1406,7 +1417,13 @@ impl Runtime {
                 (true, _) => Some(0),
                 (false, _) => None,
             };
-            let look = Look { top, ..look };
+            // One above the other, the room is left below both.
+            let bottom = if rows { 0 } else { reserve };
+            let look = Look {
+                top,
+                bottom,
+                ..look
+            };
             editor.draw(&mut self.side_fb, &self.font, &name, look, blink);
             if side != active {
                 editor.dim_margins(&mut self.side_fb, s.editor_colors[Part::Background]);
@@ -1423,6 +1440,11 @@ impl Runtime {
         for i in half..second {
             for j in 0..if rows { w } else { h } {
                 let (x, y) = if rows { (j, i) } else { (i, j) };
+                self.editor_fb.set(x, y, SPLIT_COLOR);
+            }
+        }
+        for y in h - reserve..h {
+            for x in 0..w {
                 self.editor_fb.set(x, y, SPLIT_COLOR);
             }
         }
@@ -1550,6 +1572,7 @@ impl Runtime {
                 self.request(Request::Run(slot))
             }
             (Command::Inkey, Want::Value) if args.len() <= 1 => {
+                self.input.polled = true;
                 // TODO: without the flag, controller buttons also count as keys.
                 if let Some(flag) = args.first() {
                     opt_int(flag)?;

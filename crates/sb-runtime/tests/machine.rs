@@ -762,6 +762,14 @@ fn trace_statement_by_statement() {
     traces(src, Some("2"), &expected);
 }
 
+/// A machine whose debugger stops leave the editor closed, for tests of
+/// where programs stop.
+fn debug_machine() -> Machine {
+    let mut m = machine();
+    m.rt.settings.debug_open_editor = false;
+    m
+}
+
 /// Goes on with the stopped program from the debugger and runs until it
 /// stops or ends.
 fn debug(m: &mut Machine, how: sb_runtime::machine::Resume) {
@@ -785,7 +793,7 @@ fn global(m: &Machine, name: &str) -> Option<String> {
 fn breakpoints_stop_before_their_line() {
     use sb_core::vm::CallKind;
     use sb_runtime::machine::Resume;
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(
         0,
         "A=1\nFOR I=0 TO 2:B=I:NEXT\nFOR J=0 TO 1\n X=J\nNEXT\nGOSUB @S\nEND\n@S\nD=4\nRETURN"
@@ -830,7 +838,7 @@ fn debugger_steps() {
     use sb_core::vm::{CallKind, Step};
     use sb_runtime::machine::Resume;
     let src = "STOP\nF 1\nY=2\nEND\nDEF F N\n X=N\n Z=3\nEND";
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, src.to_string());
     enter(&mut m, "RUN");
     assert_eq!(m.paused_at(), Some((0, 2)));
@@ -864,7 +872,7 @@ fn debugger_steps() {
 fn run_to_a_line_once() {
     use sb_runtime::machine::Resume;
     let src = "STOP\nF 1\nSTOP\nF 2\nEND\nDEF F N\n X=N\nEND";
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, src.to_string());
     enter(&mut m, "RUN");
     debug(&mut m, Resume::RunTo(0, 7));
@@ -883,7 +891,7 @@ fn run_to_a_line_once() {
 #[test]
 fn breakpoints_follow_edited_lines() {
     use sb_runtime::runtime::keys;
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, "A=1\nB=2\nC=3\nD=4".to_string());
     m.toggle_breakpoint(0, 2);
     m.toggle_breakpoint(0, 4);
@@ -904,7 +912,7 @@ fn breakpoints_follow_edited_lines() {
 fn jump_to_a_line_in_the_same_def() {
     use sb_runtime::machine::Resume;
     let src = "STOP\n?\"A\"\n?\"B\"\nF\nEND\nDEF F\n ?\"C\"\n STOP\n ?\"D\"\nEND";
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, src.to_string());
     enter(&mut m, "RUN");
     assert!(m.jump_to(3));
@@ -928,7 +936,7 @@ fn jump_to_a_line_in_the_same_def() {
 fn stopped_program_keeps_its_lines_after_edits() {
     use sb_runtime::machine::Resume;
     use sb_runtime::runtime::keys;
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, "STOP\nA=1\nB=2\nC=3\nD=4".to_string());
     m.toggle_breakpoint(0, 4);
     enter(&mut m, "RUN");
@@ -956,7 +964,7 @@ fn steps_stop_at_the_next_line_from_anywhere() {
     use sb_core::vm::Step;
     use sb_runtime::machine::Resume;
     // From a breakpoint on a FOR, whose set-up starts no statement.
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, "FOR I=0 TO 2\n A=I\n B=I\nNEXT".to_string());
     m.toggle_breakpoint(0, 1);
     enter(&mut m, "RUN");
@@ -974,7 +982,7 @@ fn steps_stop_at_the_next_line_from_anywhere() {
 #[test]
 fn breakpoints_where_the_program_goes_on_are_passed() {
     use sb_runtime::machine::Resume;
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, "STOP\nA=1\n?\"X\"\nC=3".to_string());
     m.toggle_breakpoint(0, 3);
     enter(&mut m, "RUN");
@@ -1003,7 +1011,7 @@ fn breakpoints_where_the_program_goes_on_are_passed() {
 #[test]
 fn undo_gives_breakpoints_back() {
     use sb_runtime::runtime::keys;
-    let mut m = machine();
+    let mut m = debug_machine();
     m.set_slot(0, "A=1\nB=2\nC=3".to_string());
     m.toggle_breakpoint(0, 2);
     enter(&mut m, "LIST 2");
@@ -1013,4 +1021,98 @@ fn undo_gives_breakpoints_back() {
     assert_eq!(m.breakpoints(0), [3]);
     m.edit().undo();
     assert_eq!(m.breakpoints(0), [2]);
+}
+
+#[test]
+fn debugger_stops_open_the_editor() {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    let mut m = machine();
+    m.set_slot(0, "A=1\nB=2\nC=3\nD=4".to_string());
+    m.toggle_breakpoint(0, 2);
+    enter(&mut m, "RUN");
+    // At the line it stopped before, with room for the panel.
+    assert!(m.is_editing());
+    assert_eq!(m.editor().cursor().0, 2);
+    let h = m.render().height();
+    assert!(m.panel_at().is_some_and(|at| at < h));
+    // A step keeps the editor, which follows it.
+    debug(&mut m, Resume::Step(Step::Over));
+    assert!(m.is_editing());
+    assert_eq!((m.paused_at(), m.editor().cursor().0), (Some((0, 3)), 3));
+    // CONT shows the screen again.
+    debug(&mut m, Resume::Cont);
+    assert!(!m.is_editing());
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+    assert_eq!(m.panel_at(), None);
+    // Off, the stop stays in direct mode.
+    m.rt.settings.debug_open_editor = false;
+    enter(&mut m, "RUN");
+    assert!(!m.is_editing());
+    assert_eq!(m.paused_at(), Some((0, 2)));
+    assert!(m.restart());
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert_eq!(m.paused_at(), Some((0, 2)));
+}
+
+#[test]
+fn steps_waiting_for_input_show_the_screen() {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    use sb_runtime::runtime::keys;
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "STOP\nINPUT X\n?X*2\nWAITKEY\n?\"K\"\nDEF WAITKEY\n REPEAT VSYNC UNTIL BUTTON(0)\nEND"
+            .to_string(),
+    );
+    enter(&mut m, "RUN");
+    m.edit_slot(0);
+    assert!(m.debug(Resume::Step(Step::Into)));
+    for _ in 0..3 {
+        m.frame();
+    }
+    // INPUT takes its line on the screen; the stop after brings the
+    // editor back.
+    assert!(!m.is_editing());
+    m.type_text("21");
+    m.rt.key_press(keys::ENTER);
+    for _ in 0..3 {
+        m.frame();
+    }
+    assert!(m.is_editing());
+    assert_eq!(m.paused_at(), Some((0, 3)));
+    debug(&mut m, Resume::Step(Step::Into));
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    // Over a DEF that waits for a button, once a frame has gone by.
+    assert!(m.debug(Resume::Step(Step::Over)));
+    for _ in 0..3 {
+        m.frame();
+    }
+    assert!(!m.is_editing() && m.is_running());
+    // A step into such a loop stays in the editor.
+    m.stop();
+    m.edit_slot(0);
+    assert!(m.debug(Resume::Step(Step::Into)));
+    for _ in 0..3 {
+        m.frame();
+    }
+    assert!(m.is_editing());
+}
+
+#[test]
+fn editor_marks_breakpoints_and_the_stopped_line() {
+    let mut m = machine();
+    m.set_slot(0, "A=1\nB=2\nC=3".to_string());
+    m.toggle_breakpoint(0, 3);
+    m.edit_slot(0);
+    let plain: Vec<u32> = m.render().pixels().to_vec();
+    m.toggle_editor();
+    enter(&mut m, "RUN");
+    let marked = m.render().pixels().to_vec();
+    assert_ne!(plain, marked);
+    assert_eq!(m.editor().marks.breakpoints, [2]);
+    assert_eq!(m.editor().marks.stopped, Some(2));
 }
