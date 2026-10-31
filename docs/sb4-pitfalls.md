@@ -437,6 +437,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   mismatch`. The `OUT` form needs at least three results too; fewer is
   `Wrong number of OUT arguments`, but S and V may be left empty, which
   is what the 4.4.9 notes mean: `HSV C OUT H,,`.
+- A function may be called as a command with one `OUT` variable for its
+  result: `ABS -3 OUT A`, `SPCHR 0 OUT D`, `SPSET 242 OUT IX`,
+  `HSV 120,255,255 OUT C`.
 - An unknown `#constant` is `Undefined constant`.
 
 - After an error, F4 puts the cursor at the start of the statement that

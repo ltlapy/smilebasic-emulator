@@ -728,6 +728,10 @@ pub(crate) fn no_form() -> Error {
     ErrorKind::WrongNumberOfArguments.into()
 }
 
+fn is_no_form(e: &Error) -> bool {
+    e.kind == ErrorKind::WrongNumberOfArguments && e.detail.is_none()
+}
+
 pub(crate) fn screen_id(v: &Value) -> Result<usize> {
     let id = v.to_int()?;
     usize::try_from(id)
@@ -1788,7 +1792,14 @@ impl Host for Runtime {
 
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
         let command = COMMANDS[id as usize].1;
-        self.run(command, args, want)
+        match self.run(command, args, want) {
+            // A function called as a command with one OUT variable, such
+            // as `SPSET 242 OUT IX`, runs as the function.
+            Err(e) if want == Want::Outs(1) && is_no_form(&e) => {
+                self.run(command, args, Want::Value)
+            }
+            result => result,
+        }
     }
 
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {

@@ -1039,6 +1039,13 @@ impl Compiler<'_> {
             // The VM checks the argument count when the call runs, as
             // SmileBASIC 4 does (checked on hardware).
             self.emit(Op::CallBuiltin { id, argc, want });
+        } else if let Some(id) = (outs.len() == 1)
+            .then(|| builtins::lookup(&full, Form::Function))
+            .flatten()
+        {
+            // A function with one OUT variable: `ABS -3 OUT A` is A=ABS(-3).
+            let want = Want::Value;
+            self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
         } else {

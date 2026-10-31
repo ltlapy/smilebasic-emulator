@@ -1498,6 +1498,10 @@ impl Vm {
                     return Ok(None);
                 } else if let Some(id) = builtins::lookup(&name, form(*want)) {
                     self.call_builtin(program, id, &args, *want)?;
+                } else if *want == Want::Outs(1)
+                    && let Some(id) = builtins::lookup(&name, Form::Function)
+                {
+                    self.call_builtin(program, id, &args, Want::Value)?;
                 } else if let Some(id) = host.lookup(&name) {
                     if !self.call_host(host, id, &args, *want)? {
                         self.stack.push(name_value);
@@ -1819,6 +1823,15 @@ impl Vm {
         want: Want,
     ) -> Result<()> {
         let b = builtins::get(id);
+        if want == Want::Outs(1)
+            && !b.accepts(args.len())
+            && let Some(f) = builtins::lookup(b.name, Form::Function)
+            && builtins::get(f).accepts(args.len())
+        {
+            // `HSV H,S,V OUT C`: arguments that only the function form
+            // takes, with one OUT variable for its result.
+            return self.call_builtin(program, f, args, Want::Value);
+        }
         if !b.accepts(args.len()) {
             // Arguments that fit the other form make the results the
             // wrong ones: HSV(120) is read as HSV's OUT form (checked on

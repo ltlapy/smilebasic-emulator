@@ -92,6 +92,12 @@ fn variables_of_unset_sprites() {
 }
 
 #[test]
+fn functions_called_with_one_out() {
+    let (_, out) = run("SPSET 0,5:SPCHR 0 OUT D:SPSET 242 OUT I:?D;I");
+    assert_eq!(out, "51");
+}
+
+#[test]
 fn errors() {
     for (source, error) in [
         ("SPOFS 3,0,0", "Sprite not set"),

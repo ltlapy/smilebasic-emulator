@@ -767,6 +767,10 @@ fn initialized_arrays_keep_their_sizes() {
         (ErrorKind::WrongNumberOfArguments, 2)
     );
     assert_eq!(error("?ABS(#NOSUCH)").0, ErrorKind::UndefinedConstant);
+    // A function with one OUT variable runs as the function.
+    assert_eq!(output("ABS -3 OUT A:?A"), "3\n");
+    assert_eq!(output("HSV 120,255,255 OUT C:?HEX$(C,8)"), "FF00FF00\n");
+    assert_eq!(output("CALL \"LEN\",\"AB\" OUT L:?L"), "2\n");
     // A variable used before its DIM is a duplicate, checked on hardware.
     assert_eq!(
         error("S$=\"A\"\nDIM S$[4]"),
