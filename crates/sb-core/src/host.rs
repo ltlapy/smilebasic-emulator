@@ -57,6 +57,12 @@ pub trait Host {
         Err(ErrorKind::IllegalFunctionCall.into())
     }
 
+    /// The name of the file program slot `slot` was loaded from or saved
+    /// to, as PRGNAME$ gives it; `#_FILENAME` in that slot's program.
+    fn program_name(&self, _slot: usize) -> Vec<u16> {
+        Vec::new()
+    }
+
     /// The VM went on in program slot `slot`, which runs `program`.
     fn entered_slot(&mut self, _slot: usize, _program: &Rc<Compiled>) {}
 

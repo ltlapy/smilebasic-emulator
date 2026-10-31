@@ -1839,6 +1839,12 @@ impl Host for Runtime {
         Ok(Exec::Run(self.slots[slot].clone()))
     }
 
+    fn program_name(&self, slot: usize) -> Vec<u16> {
+        self.slot_names
+            .get(slot)
+            .map_or(Vec::new(), |n| n.encode_utf16().collect())
+    }
+
     fn entered_slot(&mut self, slot: usize, program: &Rc<Compiled>) {
         self.program = Some(Rc::clone(program));
         self.running_slot = Some(slot);

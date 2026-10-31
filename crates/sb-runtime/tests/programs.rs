@@ -338,7 +338,8 @@ fn exec_loads_files() {
 fn slot_constant_follows_the_slot() {
     // FINITI, run with EXEC into slot 5, tells its caller's slot so.
     let mut m = machine();
-    m.set_slot(3, "?\"S\";#_SLOT".to_string());
-    run(&mut m, &["EXEC 3", "?#_SLOT"]);
-    assert_eq!(tail(&m, 3), ["S3", "0", "OK"]);
+    m.set_slot(3, "?\"S\";#_SLOT;#_FILENAME==PRGNAME$()".to_string());
+    m.rt.slot_names[3] = "LIB".to_string();
+    run(&mut m, &["EXEC 3", "?#_SLOT;#_FILENAME"]);
+    assert_eq!(tail(&m, 3), ["S31", "0", "OK"]);
 }
