@@ -325,3 +325,27 @@ fn fade_covers_everything_and_moves_in_steps() {
     // From clear, only the alpha moves.
     assert!(rows.iter().any(|r| r == "17FFFFFFF0FFFFFFFF"), "{rows:?}");
 }
+
+#[test]
+fn layer_filters() {
+    // On layer 1, away from the console's OK.
+    let sprite = format!("{RED_SPRITE}CLS:SPSET 0,0,0,32,16:SPLAYER 0,1\n");
+    let mut m = run(&format!(
+        "{sprite}LFILTER 1,1,32:IF LFILTER(1)!=1 THEN STOP"
+    ));
+    assert_eq!(m.render().get(5, 20), Some(0xFF40_0040));
+    let mut m = run(&format!(
+        "{sprite}LFILTER 1,1,32:LFILTER 1:IF LFILTER(1) THEN STOP"
+    ));
+    assert_eq!(m.render().get(0, 0), Some(RED));
+    let mut m = run(&format!(
+        "{sprite}DIM R#[240,2]:FOR I=0 TO 239:R#[I,0]=0.1:R#[I,1]=1:NEXT\nLFILTER 1,3,R#"
+    ));
+    let fb = m.render();
+    assert_eq!(
+        (fb.get(0, 0), fb.get(40, 0)),
+        (Some(0xFF00_0000), Some(RED))
+    );
+    let mut m = run(&format!("{sprite}LFILTER 1,5,120,0,0"));
+    assert_eq!(m.render().get(0, 0), Some(0xFF00_FF00));
+}

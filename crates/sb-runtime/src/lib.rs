@@ -12,6 +12,7 @@ pub mod dialog;
 pub mod editor;
 pub mod env;
 mod files;
+pub mod filter;
 pub mod font;
 pub mod framebuffer;
 pub mod graphics;

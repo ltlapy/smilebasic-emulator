@@ -1,6 +1,6 @@
 //! Placing text screens (TOFS, THOME, TROT, TSCALE, TCOLOR, TBLEND, TSHOW,
 //! THIDE, TLAYER), the layers they and sprites belong to (LAYER, LCLIP,
-//! LMATRIX), BACKCOLOR, what text screens show (TSCREEN, TPAGE and
+//! LMATRIX, LFILTER), BACKCOLOR, what text screens show (TSCREEN, TPAGE and
 //! ATTR), the resolution (XSCREEN), ACLS, and FADE over everything.
 
 use sb_core::bytecode::Want;
@@ -8,6 +8,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
 use crate::compose::{Affine, Compose, LAYERS};
+use crate::filter::Filter as LayerFilter;
 use crate::graphics::Clip;
 use crate::runtime::{Command, Runtime, no_form, opt_int, screen_id, with_screen};
 use crate::text::CONSOLE;
@@ -318,6 +319,51 @@ impl Runtime {
                     y1: h as i32 - 1,
                 });
                 Ok([c.x0, c.y0, c.x1, c.y1].map(Value::Int).to_vec())
+            }
+            (Command::Lfilter, Want::Value, 1) => {
+                Ok(vec![Value::Int(self.filters[layer_id(&args[0])?].kind())])
+            }
+            (Command::Lfilter, Want::Outs(0), 1..=5) => {
+                let id = layer_id(&args[0])?;
+                let kind = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0);
+                let size = |v: &Value| -> Result<u32> {
+                    let n = v.to_int()?;
+                    u32::try_from(n).map_err(|_| out_of_range("filter size", n))
+                };
+                self.filters[id] = match (kind, &args[2.min(args.len())..]) {
+                    (0, []) => LayerFilter::None,
+                    (1, [n]) => LayerFilter::Mosaic(size(n)?),
+                    (2, [n]) => LayerFilter::Blur(size(n)?),
+                    (3 | 4, [info, rest @ ..]) if rest.len() <= 1 => {
+                        let info = info.clone().into_array()?;
+                        {
+                            let a = info.borrow();
+                            if a.elem_type() == sb_core::value::ElemType::Str {
+                                return Err(ErrorKind::TypeMismatch.into());
+                            }
+                            if !matches!(a.dims[..], [_, 2 | 4]) {
+                                return Err(Error::with_detail(
+                                    ErrorKind::IllegalFunctionCall,
+                                    "deformation array must be [n,2] or [n,4]",
+                                ));
+                            }
+                        }
+                        let repeat = rest.first().map(opt_int).transpose()?.flatten();
+                        LayerFilter::Raster {
+                            vertical: kind == 4,
+                            info,
+                            repeat: repeat.unwrap_or(0) != 0,
+                        }
+                    }
+                    (5, [h, s, v]) => LayerFilter::Color {
+                        hue: real(h)?,
+                        saturation: real(s)?,
+                        value: real(v)?,
+                    },
+                    (0..=5, _) => return Err(no_form()),
+                    (n, _) => return Err(out_of_range("filter type", n)),
+                };
+                Ok(vec![])
             }
             (Command::Lmatrix, Want::Outs(0), 1) => {
                 self.layers[layer_id(&args[0])?].matrix = Affine::IDENTITY;

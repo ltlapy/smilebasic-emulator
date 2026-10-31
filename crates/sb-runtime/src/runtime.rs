@@ -15,6 +15,7 @@ use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
 use crate::editor::{Editor, Look, frame_size, menu_height};
+use crate::filter::Filter;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -120,6 +121,7 @@ pub(crate) enum Command {
     Keyboard,
     Layer,
     Lclip,
+    Lfilter,
     Lmatrix,
     Load,
     Loadg,
@@ -335,6 +337,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("KEYBOARD", Command::Keyboard),
     ("LAYER", Command::Layer),
     ("LCLIP", Command::Lclip),
+    ("LFILTER", Command::Lfilter),
     ("LMATRIX", Command::Lmatrix),
     ("LOAD", Command::Load),
     ("LOADG", Command::Loadg),
@@ -588,6 +591,8 @@ pub struct Runtime {
     /// READ's place in the program's DATA, during a command.
     data_pos: Cell<usize>,
     pub layers: [Layer; LAYERS],
+    /// LFILTER of each layer.
+    pub filters: [crate::filter::Filter; LAYERS],
     /// BACKCOLOR: what shows behind every layer.
     pub back_color: u32,
     pub(crate) fade: Fade,
@@ -777,6 +782,7 @@ impl Runtime {
             program: None,
             data_pos: Cell::new(0),
             layers: [Layer::default(); LAYERS],
+            filters: Default::default(),
             back_color: 0xFF00_0000,
             fade: Fade::default(),
             scratch: Framebuffer::new(width, height),
@@ -850,6 +856,8 @@ impl Runtime {
         // UNVERIFIED: ACLS clears FADE.
         self.fade = Fade::default();
         self.layers = [Layer::default(); LAYERS];
+        // UNVERIFIED: ACLS clears LFILTER.
+        self.filters = Default::default();
         self.sprites.reset(keep_defs, keep_anims);
         if !keep_grp {
             for page in 0..FONT_PAGE {
@@ -1096,9 +1104,18 @@ impl Runtime {
                 continue;
             }
             let settings = self.fine(&self.layers[layer as usize]);
-            let target = match settings.compose {
-                Compose::Direct => &mut fb,
-                _ => {
+            let filter = &self.filters[layer as usize];
+            // A filtered layer is drawn on its own even when it is not
+            // composed, and then put over the frame.
+            // UNVERIFIED: that it ends up as with LAYER's mode 1.
+            let compose = match (settings.compose, filter) {
+                (Compose::Direct, Filter::None) => None,
+                (Compose::Direct, _) => Some(Compose::Normal),
+                (mode, _) => Some(mode),
+            };
+            let target = match compose {
+                None => &mut fb,
+                Some(_) => {
                     scratch.clear(0);
                     &mut scratch
                 }
@@ -1106,8 +1123,9 @@ impl Runtime {
             for &(_, _, _, _, element) in in_layer {
                 self.draw_element(target, element, &settings, cursor);
             }
-            if settings.compose != Compose::Direct {
-                compose::compose(&mut fb, &scratch, settings.compose, settings.color);
+            if let Some(mode) = compose {
+                filter.apply(&mut scratch, self.mode.sample);
+                compose::compose(&mut fb, &scratch, mode, settings.color);
             }
         }
         self.fade.cover(fb.pixels_mut());
@@ -1487,6 +1505,7 @@ impl Runtime {
                 | Command::Fadechk
                 | Command::Layer
                 | Command::Lclip
+                | Command::Lfilter
                 | Command::Lmatrix
                 | Command::Tblend
                 | Command::Tcolor
