@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use sb_profiles::Profile;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
+use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::ScreenMode;
@@ -35,7 +36,28 @@ const USAGE: &str = "usage:
   smilebasic-check --bench FRAMES PROJECT PROGRAM [PNG]
       run PROGRAM for FRAMES frames, rendering each one, and print how
       long running and rendering took, and the console at the end; with
-      PNG, also save the last screen there.";
+      PNG, also save the last screen there.
+  smilebasic-check --play FRAMES PROJECT PROGRAM SCRIPT DIR
+      run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
+      (a file, or - for none) asks for, and save the screens it asks for
+      into DIR, the last one as end.png. Like --bench, the program runs
+      in PROJECT itself, so give it a copy if it may save files. Each
+      SCRIPT line is a frame number and what happens then:
+        F key NAME        a key typed for INKEY$ and INPUT: ENTER, UP,
+                          DOWN, LEFT, RIGHT, ESC, TAB, BACKSPACE,
+                          DELETE, HOME, END, SPACE or one character
+        F type TEXT       the rest of the line typed
+        F button NAMES N  buttons held for N frames, NAMES such as A or
+                          A+UP: A B X Y UP DOWN LEFT RIGHT L R ZL ZR
+                          LSTICK RSTICK
+        F stick X Y N     the left stick tilted (-1 to 1) for N frames
+        F usb ID N        the keyboard key with USB usage ID (such as
+                          0x28 for Enter) held for N frames, for KEYBOARD
+        F touch X Y N     the screen touched at X,Y for N frames
+        F shot NAME       the screen saved as DIR/NAME.png
+        F console         the console's text printed
+        F end             the run stops
+      Lines starting with # are comments.";
 
 /// Result files start with this, after the TXT type letter.
 const RESULT_PREFIX: &str = "TRES";
@@ -61,6 +83,18 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
                 Path::new(project),
                 program,
                 png.first().map(Path::new),
+            ),
+            _ => Err(USAGE.into()),
+        };
+    }
+    if args.first().is_some_and(|a| a == "--play") {
+        return match args.as_slice() {
+            [_, frames, project, program, script, dir] => play(
+                frames.parse().map_err(|_| USAGE)?,
+                Path::new(project),
+                program,
+                script,
+                Path::new(dir),
             ),
             _ => Err(USAGE.into()),
         };
@@ -253,6 +287,208 @@ fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Resu
     Ok(())
 }
 
+/// What a --play script does at a frame.
+#[derive(Debug, PartialEq)]
+enum Action {
+    Key(u16),
+    Type(String),
+    Hold(Hold, u32),
+    Shot(String),
+    Console,
+    End,
+}
+
+/// Input held for some frames.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Hold {
+    Buttons(u32),
+    Stick(f64, f64),
+    Usb(u8),
+    Touch(i32, i32),
+}
+
+/// BUTTON's ids by the names on a controller.
+const BUTTON_NAMES: [(&str, u32); 14] = [
+    ("X", 0),
+    ("B", 1),
+    ("Y", 2),
+    ("A", 3),
+    ("UP", 4),
+    ("DOWN", 5),
+    ("LEFT", 6),
+    ("RIGHT", 7),
+    ("L", 8),
+    ("R", 9),
+    ("ZL", 10),
+    ("ZR", 11),
+    ("LSTICK", 12),
+    ("RSTICK", 13),
+];
+
+/// A --play script's lines, in frame order.
+fn parse_script(text: &str) -> Result<Vec<(u32, Action)>, AnyError> {
+    let mut steps = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let bad = || format!("script line {}: {line}", n + 1);
+        let mut words = line.split_whitespace();
+        let frame: u32 = words.next().and_then(|w| w.parse().ok()).ok_or_else(bad)?;
+        let what = words.next().ok_or_else(bad)?.to_ascii_lowercase();
+        let args: Vec<&str> = words.collect();
+        let int = |w: &str| -> Option<i64> {
+            match w.strip_prefix("0x") {
+                Some(hex) => i64::from_str_radix(hex, 16).ok(),
+                None => w.parse().ok(),
+            }
+        };
+        let action = match (what.as_str(), args.as_slice()) {
+            ("key", [name]) => Action::Key(key_code(name).ok_or_else(bad)?),
+            ("type", _) => {
+                let rest = line.split_once(char::is_whitespace).map_or("", |r| r.1);
+                let rest = rest.trim_start().split_once(char::is_whitespace);
+                Action::Type(rest.map_or("", |r| r.1).to_owned())
+            }
+            ("button", [names, frames]) => {
+                let mut bits = 0;
+                for name in names.split('+') {
+                    let name = name.to_ascii_uppercase();
+                    let (_, id) = BUTTON_NAMES
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .ok_or_else(bad)?;
+                    bits |= 1 << id;
+                }
+                Action::Hold(Hold::Buttons(bits), frames.parse().map_err(|_| bad())?)
+            }
+            ("stick", [x, y, frames]) => Action::Hold(
+                Hold::Stick(x.parse()?, y.parse()?),
+                frames.parse().map_err(|_| bad())?,
+            ),
+            ("usb", [id, frames]) => Action::Hold(
+                Hold::Usb(int(id).and_then(|i| u8::try_from(i).ok()).ok_or_else(bad)?),
+                frames.parse().map_err(|_| bad())?,
+            ),
+            ("touch", [x, y, frames]) => Action::Hold(
+                Hold::Touch(x.parse()?, y.parse()?),
+                frames.parse().map_err(|_| bad())?,
+            ),
+            ("shot", [name]) => Action::Shot((*name).to_owned()),
+            ("console", []) => Action::Console,
+            ("end", []) => Action::End,
+            _ => return Err(bad().into()),
+        };
+        steps.push((frame, action));
+    }
+    steps.sort_by_key(|(frame, _)| *frame);
+    Ok(steps)
+}
+
+fn key_code(name: &str) -> Option<u16> {
+    let code = match name.to_ascii_uppercase().as_str() {
+        "ENTER" => keys::ENTER,
+        "UP" => keys::UP,
+        "DOWN" => keys::DOWN,
+        "LEFT" => keys::LEFT,
+        "RIGHT" => keys::RIGHT,
+        "ESC" => keys::ESCAPE,
+        "TAB" => keys::TAB,
+        "BACKSPACE" => keys::BACKSPACE,
+        "DELETE" => keys::DELETE,
+        "HOME" => keys::HOME,
+        "END" => keys::END,
+        "SPACE" => u16::from(b' '),
+        _ => {
+            let mut chars = name.chars();
+            let c = chars.next()?;
+            return chars
+                .next()
+                .is_none()
+                .then(|| u16::try_from(u32::from(c)).ok())
+                .flatten();
+        }
+    };
+    Some(code)
+}
+
+/// Runs a program with scripted input, saving the screens it asks for.
+fn play(
+    frames: u32,
+    project: &Path,
+    program: &str,
+    script: &str,
+    dir: &Path,
+) -> Result<(), AnyError> {
+    let steps = match script {
+        "-" => Vec::new(),
+        file => parse_script(&std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?)?,
+    };
+    std::fs::create_dir_all(dir)?;
+    let name = project
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("PROJECT must be a project folder")?;
+    let parent = project.parent().ok_or("PROJECT must be a project folder")?;
+    let mut m = machine(parent.to_path_buf())?;
+    m.rt.storage
+        .set_project(name)
+        .map_err(|e| format!("{name}: {e}"))?;
+    m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
+    let mut steps = steps.into_iter().peekable();
+    // Input held, and the frame it lets go at.
+    let mut held: Vec<(Hold, u32)> = Vec::new();
+    let mut frame = 0;
+    'run: while frame < frames && m.is_running() {
+        while let Some((_, action)) = steps.next_if(|(at, _)| *at <= frame) {
+            match action {
+                Action::Key(code) => m.rt.key_press(code),
+                Action::Type(text) => m.type_text(&text),
+                Action::Hold(hold, n) => held.push((hold, frame + n)),
+                Action::Shot(shot) => {
+                    let file = dir.join(format!("{shot}.png"));
+                    save_screen(&mut m, &file)?;
+                    println!("frame {frame}: screen saved to {}", file.display());
+                }
+                Action::Console => {
+                    println!("frame {frame}: the console:");
+                    print_rows(&console_rows(&m));
+                }
+                Action::End => break 'run,
+            }
+        }
+        held.retain(|&(_, until)| until > frame);
+        let mut state = State::default();
+        for &(hold, _) in &held {
+            match hold {
+                Hold::Buttons(bits) => state.pads[0].buttons |= bits,
+                Hold::Stick(x, y) => state.pads[0].sticks[0] = (x, y),
+                Hold::Usb(usage) => state.set_key(usage, true),
+                Hold::Touch(x, y) => {
+                    state.mouse.x = x;
+                    state.mouse.y = y;
+                    state.mouse.on_screen = true;
+                    state.mouse.buttons |= 1;
+                }
+            }
+        }
+        m.rt.input.live = state;
+        m.frame();
+        frame += 1;
+    }
+    if m.is_running() {
+        println!("still running at frame {frame}");
+    } else {
+        println!("ended at frame {frame}");
+    }
+    print_rows(&console_rows(&m));
+    let file = dir.join("end.png");
+    save_screen(&mut m, &file)?;
+    println!("screen saved to {}", file.display());
+    Ok(())
+}
+
 fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
     let screen = Profile::default().screen();
     let resources = resources::data_dir()?.join(resources::RESOURCE_DIR);
@@ -380,6 +616,26 @@ mod tests {
         );
         assert!(parse_parts("1-x").is_err());
         assert!(parse_parts("").is_err());
+    }
+
+    #[test]
+    fn scripts() {
+        let steps = parse_script(
+            "# menu\n30 button A+down 6\n10 key enter\n20 type LOAD \"X\"\n40 usb 0x28 2\n50 end\n",
+        )
+        .unwrap();
+        assert_eq!(
+            steps,
+            [
+                (10, Action::Key(keys::ENTER)),
+                (20, Action::Type("LOAD \"X\"".into())),
+                (30, Action::Hold(Hold::Buttons(1 << 3 | 1 << 5), 6)),
+                (40, Action::Hold(Hold::Usb(0x28), 2)),
+                (50, Action::End),
+            ]
+        );
+        assert!(parse_script("5 button C 1").is_err());
+        assert!(parse_script("x key A").is_err());
     }
 
     #[test]
