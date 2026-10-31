@@ -276,6 +276,10 @@ fn effector_balance_and_talk_are_accepted() {
         "1101"
     );
     assert_eq!(run_on(&mut rt, "?TALKCHK()").unwrap(), "0");
+    assert_eq!(
+        run_on(&mut rt, "?EFCEN();SNDMSBAL();SNDMVOL();PCMPOS()").unwrap(),
+        "1101270"
+    );
     run_on(&mut rt, "TALK \"こんにちは\"").unwrap();
     frames(&mut rt, 60);
     assert_eq!(run_on(&mut rt, "?TALKCHK()").unwrap(), "0");

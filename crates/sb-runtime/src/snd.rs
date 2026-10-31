@@ -316,7 +316,7 @@ impl Runtime {
                 self.sound.master.to(f64::from(volume) / 127.0, fade);
                 Ok(vec![])
             }
-            (Command::Sndmvol, Want::Outs(1), 0) => Ok(vec![Value::Int(
+            (Command::Sndmvol, Want::Outs(1) | Want::Value, 0) => Ok(vec![Value::Int(
                 (self.sound.master.value * 127.0).round() as i32,
             )]),
             (Command::Wavset, Want::Outs(0), 6..=7) => {
@@ -496,7 +496,7 @@ impl Runtime {
                 pcm.pos = i as f64;
                 Ok(vec![])
             }
-            (Command::Pcmpos, Want::Outs(1), 0) => {
+            (Command::Pcmpos, Want::Outs(1) | Want::Value, 0) => {
                 Ok(vec![Value::Int(self.sound.pcm.index() as i32)])
             }
             (Command::Pcmvol, Want::Outs(0), 1..=3) => {
@@ -528,7 +528,7 @@ impl Runtime {
                 self.sound.effector.on = in_range("state", &args[0], 0..=1)? == 1;
                 Ok(vec![])
             }
-            (Command::Efcen, Want::Outs(1), 0) => {
+            (Command::Efcen, Want::Outs(1) | Want::Value, 0) => {
                 Ok(vec![Value::Int(i32::from(self.sound.effector.on))])
             }
             (Command::Efcset, Want::Outs(0), 1) => {
@@ -558,7 +558,9 @@ impl Runtime {
                 opt_in_range("time", args.get(1), 0..=32767, 0)?;
                 Ok(vec![])
             }
-            (Command::Sndmsbal, Want::Outs(1), 0) => Ok(vec![Value::Int(self.sound.balance)]),
+            (Command::Sndmsbal, Want::Outs(1) | Want::Value, 0) => {
+                Ok(vec![Value::Int(self.sound.balance)])
+            }
             // UNVERIFIED: a new TALK cuts off what is being said.
             (Command::Talk, Want::Outs(0), 1) => {
                 self.sound.talk.say(&text(&args[0])?);
