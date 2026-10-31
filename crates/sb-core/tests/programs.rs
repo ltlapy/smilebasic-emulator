@@ -813,6 +813,11 @@ fn array_operations() {
         ),
         "11121112\n11.5\n17.5\n"
     );
+    // Crossed bounds: below the lower one gives it, else above the upper.
+    assert_eq!(
+        output("DIM R[3]:DIM X[]=[0,5,9]:ARYOP #AOPCLP,R,X,2,X:?R[0];R[1];R[2]"),
+        "259\n"
+    );
     assert_eq!(
         error("DIM R[2]:ARYOP 4,R,1,2").0,
         ErrorKind::IllegalFunctionCall

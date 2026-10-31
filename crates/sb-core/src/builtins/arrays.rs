@@ -383,7 +383,20 @@ pub(super) fn aryop(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
             3 => p(0) / p(1),
             4 => p(0) * p(1) + p(2),
             5 => p(0) * p(2) + p(1) * (1.0 - p(2)),
-            _ => p(0).max(p(1)).min(p(2)),
+            // A plain comparison, the lower bound first: FINITI gives a
+            // bound above the other to mean "at least" and "at most".
+            // UNVERIFIED: that the lower bound wins when both apply, and
+            // that NaN goes through.
+            _ => {
+                let (x, lo, hi) = (p(0), p(1), p(2));
+                if x < lo {
+                    lo
+                } else if x > hi {
+                    hi
+                } else {
+                    x
+                }
+            }
         };
         result.set(i, Value::Real(x))?;
     }
