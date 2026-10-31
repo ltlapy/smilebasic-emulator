@@ -67,6 +67,10 @@ pub struct Machine {
     pub time_limit: Option<Duration>,
     /// Lines with breakpoints, by slot. They last for the session.
     breakpoints: Vec<BTreeSet<u32>>,
+    /// Slots whose lines the editor moved since the program started. Its
+    /// code there is the old one, as CONT goes on with it (checked on
+    /// hardware), so it keeps the breakpoints it had.
+    moved: Vec<bool>,
 }
 
 /// How a stopped program goes on.
@@ -162,6 +166,7 @@ impl Machine {
             last_error: None,
             halted: None,
             breakpoints: vec![BTreeSet::new(); SLOTS],
+            moved: vec![false; SLOTS],
             time_limit: None,
         }
     }
@@ -565,6 +570,7 @@ impl Machine {
         }
         // UNVERIFIED: a line typed in direct mode cannot go on.
         if program {
+            vm.pass_here();
             vm.leave_input();
             self.halt(vm, Stopped::Paused, line);
         }
@@ -623,6 +629,11 @@ impl Machine {
         if self.vm.is_some() || self.halted.is_none() || self.rt.stopped != Stopped::Paused {
             return false;
         }
+        if let Resume::RunTo(slot, _) = how
+            && self.lines_moved(slot)
+        {
+            return false;
+        }
         self.rt.cancel_input();
         self.resume(how);
         true
@@ -631,7 +642,8 @@ impl Machine {
     /// Makes the stopped program go on from a line of its slot, in the
     /// same DEF, or outside DEFs as it is. False when it cannot.
     pub fn jump_to(&mut self, line: u32) -> bool {
-        if self.rt.stopped != Stopped::Paused {
+        let slot = self.paused_at().map(|at| at.0);
+        if self.rt.stopped != Stopped::Paused || slot.is_none_or(|slot| self.lines_moved(slot)) {
             return false;
         }
         let Some(vm) = &mut self.halted else {
@@ -685,6 +697,9 @@ impl Machine {
     /// Sets or clears a breakpoint on a slot's 1-based line; true when
     /// it is set now.
     pub fn toggle_breakpoint(&mut self, slot: usize, line: u32) -> bool {
+        if slot >= SLOTS || line == 0 {
+            return false;
+        }
         self.follow_edits();
         let lines = &mut self.breakpoints[slot];
         let set = lines.insert(line) || !lines.remove(&line);
@@ -698,10 +713,16 @@ impl Machine {
         self.breakpoints[slot].iter().copied().collect()
     }
 
+    /// Whether the editor moved a slot's lines since the program
+    /// started, so that the stopped program's lines are not the text's.
+    pub fn lines_moved(&mut self, slot: usize) -> bool {
+        self.follow_edits();
+        self.moved.get(slot).copied().unwrap_or(false)
+    }
+
     /// Moves the breakpoints with the lines the editor moved, and drops
     /// those of lines it took out.
     fn follow_edits(&mut self) {
-        let mut moved = false;
         for editor in &mut self.editors {
             for (slot, shift) in editor.take_shifts() {
                 let lines = &mut self.breakpoints[slot];
@@ -709,11 +730,8 @@ impl Machine {
                     .filter_map(|&line| shift.map(line as usize - 1))
                     .map(|line| line as u32 + 1)
                     .collect();
-                moved = true;
+                self.moved[slot] = true;
             }
-        }
-        if moved {
-            self.arm_all();
         }
     }
 
@@ -726,14 +744,14 @@ impl Machine {
     /// them.
     fn arm(&mut self, vm: &mut Vm) {
         self.follow_edits();
-        give_breakpoints(&self.breakpoints, vm);
+        give_breakpoints(&self.breakpoints, &self.moved, vm);
     }
 
     /// Gives the running and the stopped program the breakpoints.
     fn arm_all(&mut self) {
         let mut vms = [self.vm.take(), self.halted.take()];
         for vm in vms.iter_mut().flatten() {
-            give_breakpoints(&self.breakpoints, vm);
+            give_breakpoints(&self.breakpoints, &self.moved, vm);
         }
         [self.vm, self.halted] = vms;
     }
@@ -950,6 +968,10 @@ impl Machine {
         };
         match compiled {
             Ok(program) => {
+                if slot.is_some() {
+                    self.follow_edits();
+                    self.moved.fill(false);
+                }
                 let vm = Vm::with_globals(program, &self.vars);
                 let mut vm = match slot {
                     Some(slot) => vm.in_slot(slot),
@@ -1035,9 +1057,13 @@ impl Machine {
     }
 }
 
-fn give_breakpoints(breakpoints: &[BTreeSet<u32>], vm: &mut Vm) {
+/// Gives a program the breakpoints of the slots whose lines have not
+/// moved since it started.
+fn give_breakpoints(breakpoints: &[BTreeSet<u32>], moved: &[bool], vm: &mut Vm) {
     for (slot, lines) in breakpoints.iter().enumerate() {
-        vm.set_breakpoints(slot, &lines.iter().copied().collect::<Vec<_>>());
+        if !moved[slot] {
+            vm.set_breakpoints(slot, &lines.iter().copied().collect::<Vec<_>>());
+        }
     }
 }
 

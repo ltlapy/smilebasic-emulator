@@ -156,11 +156,14 @@ impl Unit {
 }
 
 /// TRACE runs until the start of the statement after the first one it
-/// runs into, and names that one's line. A debugger's step stops there
-/// only within `depth` calls, and names the line it stops before.
+/// runs into, and names that one's line. A debugger's step instead stops
+/// at the first statement start after an instruction has run, within
+/// `depth` calls, and names the line it stops before: it starts where
+/// `executed` was `from`.
 struct Trace {
     line: Option<u32>,
     depth: Option<usize>,
+    from: u64,
 }
 
 /// Where breakpoints stop one slot's program: whether each instruction
@@ -229,8 +232,8 @@ pub struct Vm {
     /// Worked out from them by slot, and the running program's.
     stops: Vec<Option<Stops>>,
     stop_at: Option<Rc<[bool]>>,
-    /// The slot and instruction of the breakpoint the program stopped
-    /// at, which it passes over when it goes on.
+    /// The slot and instruction the program goes on from, which a
+    /// breakpoint there does not stop it at.
     passed: Option<(usize, usize)>,
 }
 
@@ -422,6 +425,7 @@ impl Vm {
         while self.program.starts.get(self.pc) == Some(&false) {
             self.pc += 1;
         }
+        self.pass_here();
     }
 
     /// TRACE: the next [`Vm::run`] runs one statement and returns
@@ -430,6 +434,7 @@ impl Vm {
         self.trace = Some(Trace {
             line: None,
             depth: None,
+            from: self.executed,
         });
     }
 
@@ -449,12 +454,19 @@ impl Vm {
         self.trace = Some(Trace {
             line: None,
             depth: Some(depth),
+            from: self.executed,
         });
     }
 
-    /// How many DEFs and GOSUBs are under way.
+    /// How many DEFs, GOSUBs and EXECs are under way.
     fn depth(&self) -> usize {
-        self.frames.len() + self.gosubs.len()
+        self.frames.len() + self.gosubs.len() + self.execs.len()
+    }
+
+    /// Lets the program go on from here without a breakpoint here
+    /// stopping it again at once.
+    pub fn pass_here(&mut self) {
+        self.passed = Some((self.slot, self.pc));
     }
 
     /// Sets the lines of `slot` that stop the program before they run.
@@ -526,7 +538,7 @@ impl Vm {
         };
         self.pc = to;
         self.trace = None;
-        self.passed = None;
+        self.pass_here();
         true
     }
 
@@ -708,6 +720,23 @@ impl Vm {
 
     /// Executes up to `budget` instructions.
     pub fn run(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
+        let status = self.run_code(host, budget)?;
+        // Where it stopped, or an instruction to be run again.
+        if matches!(
+            status,
+            Status::Break { .. }
+                | Status::Stop { .. }
+                | Status::Traced { .. }
+                | Status::Debug { .. }
+                | Status::Retry
+        ) {
+            self.pass_here();
+        }
+        Ok(status)
+    }
+
+    fn run_code(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
+        let mut passed = self.passed.take();
         if self.ended {
             return Ok(Status::Ended);
         }
@@ -794,33 +823,34 @@ impl Vm {
                     self.break_pending = Some((at, self.line()));
                 }
             }
+            let (depth, executed) = (self.depth(), self.executed);
+            if let Some(trace) = &mut self.trace
+                && self.program.starts.get(self.pc) == Some(&true)
+            {
+                match (trace.depth, trace.line) {
+                    (None, Some(line)) => {
+                        self.trace = None;
+                        return Ok(Status::Traced { line });
+                    }
+                    (None, None) => trace.line = self.program.lines.get(self.pc).copied(),
+                    (Some(most), _) if executed > trace.from && depth <= most => {
+                        self.trace = None;
+                        return Ok(Status::Debug { line: self.line() });
+                    }
+                    (Some(_), _) => {}
+                }
+            }
+            // The first breakpoint looked at is passed over if the program
+            // goes on from it.
             if let Some(at) = &self.stop_at
                 && at.get(self.pc) == Some(&true)
-                && self.passed.take() != Some((self.slot, self.pc))
+                && passed.take() != Some((self.slot, self.pc))
             {
-                self.passed = Some((self.slot, self.pc));
                 self.trace = None;
                 if self.run_to.is_some() {
                     self.run_to(None);
                 }
                 return Ok(Status::Debug { line: self.line() });
-            }
-            let depth = self.depth();
-            if let Some(trace) = &mut self.trace
-                && self.program.starts.get(self.pc) == Some(&true)
-            {
-                match (trace.line, trace.depth) {
-                    (Some(line), None) => {
-                        self.trace = None;
-                        return Ok(Status::Traced { line });
-                    }
-                    (Some(_), Some(most)) if depth <= most => {
-                        self.trace = None;
-                        return Ok(Status::Debug { line: self.line() });
-                    }
-                    (Some(_), Some(_)) => {}
-                    (None, _) => trace.line = self.program.lines.get(self.pc).copied(),
-                }
             }
             let pc = self.pc;
             self.executed += 1;

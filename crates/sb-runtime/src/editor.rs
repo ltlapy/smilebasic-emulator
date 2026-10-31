@@ -353,16 +353,17 @@ pub enum LineShift {
 }
 
 impl LineShift {
-    /// Where a line is after the edit, or `None` once its start is gone.
-    /// A line keeps its place while its start does, and moves with it
-    /// when text is put in before it.
+    /// Where a line is after the edit, or `None` once it is gone. Text
+    /// taken out from a line's start leaves the line to the one whose
+    /// rest moves there; text put in at a line's start pushes the line
+    /// down.
     pub fn map(self, line: usize) -> Option<usize> {
         match self {
             LineShift::Joined { start, end } => {
-                let whole = start.1 == 0 && end.1 == 0;
-                if line < start.0 || (line == start.0 && !whole) {
+                let from_start = start.1 == 0;
+                if line < start.0 || (line == start.0 && !from_start) {
                     Some(line)
-                } else if line == end.0 && whole {
+                } else if line == end.0 && from_start {
                     Some(start.0)
                 } else if line > end.0 {
                     Some(line - (end.0 - start.0))
@@ -1865,6 +1866,13 @@ mod tests {
         let whole = joined((2, 0), (4, 0));
         let mapped: Vec<_> = (0..6).map(|l| whole.map(l)).collect();
         assert_eq!(mapped, [Some(0), Some(1), None, None, Some(2), Some(3)]);
+        // Text up to within line 3 taken from line 2's start, as undoing
+        // a paste there: 3 takes 2's place.
+        let undo = joined((2, 0), (3, 3));
+        assert_eq!(
+            (undo.map(2), undo.map(3), undo.map(4)),
+            (None, Some(2), Some(3))
+        );
         // Line 3 joined onto the end of 2: 2 stays, 3 is gone.
         let join = joined((2, 5), (3, 0));
         let mapped: Vec<_> = (1..5).map(|l| join.map(l)).collect();

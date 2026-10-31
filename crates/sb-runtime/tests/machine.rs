@@ -923,3 +923,94 @@ fn jump_to_a_line_in_the_same_def() {
     debug(&mut m, Resume::Cont);
     assert!(!m.jump_to(2));
 }
+
+#[test]
+fn stopped_program_keeps_its_lines_after_edits() {
+    use sb_runtime::machine::Resume;
+    use sb_runtime::runtime::keys;
+    let mut m = machine();
+    m.set_slot(0, "STOP\nA=1\nB=2\nC=3\nD=4".to_string());
+    m.toggle_breakpoint(0, 4);
+    enter(&mut m, "RUN");
+    enter(&mut m, "LIST 1");
+    press(&mut m, &[keys::HOME, keys::ENTER]);
+    m.toggle_editor();
+    // The text's breakpoint moved; the old code CONT goes on with keeps
+    // its own, and lines of the text are not its lines.
+    assert_eq!(m.breakpoints(0), [5]);
+    assert!(m.lines_moved(0));
+    assert!(!m.jump_to(3));
+    assert!(!m.debug(Resume::RunTo(0, 3)));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    // A new run takes the text's.
+    enter(&mut m, "CONT");
+    enter(&mut m, "RUN");
+    assert!(!m.lines_moved(0));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 5)));
+}
+
+#[test]
+fn steps_stop_at_the_next_line_from_anywhere() {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    // From a breakpoint on a FOR, whose set-up starts no statement.
+    let mut m = machine();
+    m.set_slot(0, "FOR I=0 TO 2\n A=I\n B=I\nNEXT".to_string());
+    m.toggle_breakpoint(0, 1);
+    enter(&mut m, "RUN");
+    assert_eq!(m.paused_at(), Some((0, 1)));
+    debug(&mut m, Resume::Step(Step::Into));
+    assert_eq!(m.paused_at(), Some((0, 2)));
+    // From a STOP within an IF.
+    m.clear_breakpoints();
+    m.set_slot(0, "IF 1 THEN STOP\nA=1\nB=2".to_string());
+    enter(&mut m, "RUN");
+    debug(&mut m, Resume::Step(Step::Into));
+    assert_eq!(m.paused_at(), Some((0, 2)));
+}
+
+#[test]
+fn breakpoints_where_the_program_goes_on_are_passed() {
+    use sb_runtime::machine::Resume;
+    let mut m = machine();
+    m.set_slot(0, "STOP\nA=1\n?\"X\"\nC=3".to_string());
+    m.toggle_breakpoint(0, 3);
+    enter(&mut m, "RUN");
+    assert!(m.jump_to(3));
+    debug(&mut m, Resume::Cont);
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["X", "OK"]);
+    // STOP just before one.
+    m.set_slot(0, "STOP\n?\"Y\"".to_string());
+    m.toggle_breakpoint(0, 2);
+    enter(&mut m, "RUN");
+    debug(&mut m, Resume::Cont);
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["Y", "OK"]);
+    // TRACE names the line it ran, as without breakpoints.
+    m.set_slot(0, "STOP\nA=1\nB=2\nC=3".to_string());
+    m.clear_breakpoints();
+    m.toggle_breakpoint(0, 3);
+    enter(&mut m, "RUN");
+    enter(&mut m, "TRACE");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "Break on 0:2");
+    enter(&mut m, "TRACE");
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "Break on 0:3");
+}
+
+#[test]
+fn undo_gives_breakpoints_back() {
+    use sb_runtime::runtime::keys;
+    let mut m = machine();
+    m.set_slot(0, "A=1\nB=2\nC=3".to_string());
+    m.toggle_breakpoint(0, 2);
+    enter(&mut m, "LIST 2");
+    press(&mut m, &[keys::HOME]);
+    m.edit();
+    m.paste("X=1\nY=2");
+    assert_eq!(m.breakpoints(0), [3]);
+    m.edit().undo();
+    assert_eq!(m.breakpoints(0), [2]);
+}
