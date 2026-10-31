@@ -238,6 +238,12 @@ RETURN
     assert_eq!(error("RETURN").0, ErrorKind::ReturnWithoutGosub);
     assert_eq!(error("GOTO @NOWHERE"), (ErrorKind::UndefinedLabel, 1));
     assert_eq!(error("L$=\"@X\"\nGOTO L$"), (ErrorKind::UndefinedLabel, 2));
+    // RESTORE finds out only when it runs.
+    assert_eq!(output("IF 0 THEN RESTORE @NOWHERE\n?1"), "1\n");
+    assert_eq!(
+        error("?1\nRESTORE @NOWHERE"),
+        (ErrorKind::UndefinedLabel, 2)
+    );
 }
 
 #[test]

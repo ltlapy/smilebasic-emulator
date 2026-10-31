@@ -738,14 +738,16 @@ impl Compiler<'_> {
                     self.store(t)?;
                 }
             }
-            StmtKind::Restore(Target::Label(l)) => {
-                let pos = *self
-                    .out
-                    .data_labels
-                    .get(l)
-                    .ok_or_else(|| err(ErrorKind::UndefinedLabel, format!("@{l}")))?;
-                self.emit(Op::Restore(pos));
-            }
+            // A label that is not there is an error only when the RESTORE
+            // runs.
+            StmtKind::Restore(Target::Label(l)) => match self.out.data_labels.get(l) {
+                Some(&pos) => _ = self.emit(Op::Restore(pos)),
+                None => {
+                    let name = self.string_const(format!("@{l}").encode_utf16().collect());
+                    self.emit(Op::Str(name));
+                    self.emit(Op::RestoreDyn);
+                }
+            },
             StmtKind::Restore(Target::Expr(e)) => {
                 self.expr(e)?;
                 self.emit(Op::RestoreDyn);
