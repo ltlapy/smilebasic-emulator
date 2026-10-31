@@ -57,6 +57,9 @@ follows all of it. Items still waiting for a check are marked
   for 400x240.
 - Only one-dimensional arrays may be empty: `DIM A[0]` is fine, but
   `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`.
+- An array holds nothing (`TYPEOF` 0) until its `DIM` runs, as when a DEF
+  reads it before. `DIM A[,]` compiles, and is `Type mismatch` when it
+  runs.
 - `RND(0)` is 0 and takes no number from the series; a negative maximum
   is `Out of range`.
 - Each random series is TinyMT32 with its standard parameters, seeded

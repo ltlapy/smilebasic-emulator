@@ -231,6 +231,9 @@ pub enum Literal {
 pub struct VarInfo {
     pub name: String,
     pub suffix: Option<Suffix>,
+    /// Declared by a DIM (or VAR) with sizes: until that runs, it holds
+    /// nothing (#T_DEFAULT).
+    pub array: bool,
 }
 
 impl VarInfo {

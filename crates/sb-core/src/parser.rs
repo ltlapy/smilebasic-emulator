@@ -564,10 +564,19 @@ impl Parser {
 
     fn var_decl(&mut self) -> PResult<VarDecl> {
         let var = self.var_name()?;
-        let dims = if self.eat(&TokenKind::LBracket) {
-            Some(self.bracket_list()?)
-        } else {
+        let dims = if !self.eat(&TokenKind::LBracket) {
             None
+        } else if *self.peek() == TokenKind::Comma {
+            // `DIM A[,]` compiles; its sizes are no numbers when it runs,
+            // which is Type mismatch.
+            let mut n = 1;
+            while self.eat(&TokenKind::Comma) {
+                n += 1;
+            }
+            self.expect(&TokenKind::RBracket, "']'")?;
+            Some(vec![Expr::Str(Vec::new()); n])
+        } else {
+            Some(self.bracket_list()?)
         };
         let init = if !self.eat(&TokenKind::Assign) {
             None

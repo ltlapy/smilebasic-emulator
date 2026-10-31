@@ -241,6 +241,9 @@ pub struct Vm {
 /// keep whatever value they are given (checked on hardware: `A%=1E10`
 /// keeps the real, `A$` takes a number and `A%` a string).
 fn initial_value(var: &VarInfo, default_int: bool) -> Value {
+    if var.array {
+        return Value::Default;
+    }
     match var.suffix {
         Some(Suffix::Int) => Value::Int(0),
         Some(Suffix::Real) => Value::Real(0.0),

@@ -931,3 +931,14 @@ fn labels_keep_their_case_as_strings() {
     assert_eq!(output("RESTORE @dd:READ X:?X\n@DD\nDATA 5"), "5\n");
     assert_eq!(output("ON BREAK GOTO \"\":?4"), "4\n");
 }
+
+#[test]
+fn arrays_hold_nothing_until_their_dim_runs() {
+    assert_eq!(
+        output("OPTION STRICT\nGOTO @M\nDIM B[]\nDEF F\n ?TYPEOF(B)\nEND\n@M\nF"),
+        "0\n"
+    );
+    assert_eq!(output("DIM B[2]:?TYPEOF(B)"), "6\n");
+    // Empty sizes compile, and are no numbers when the DIM runs.
+    assert_eq!(error("?1\nDIM A[,]"), (ErrorKind::TypeMismatch, 2));
+}

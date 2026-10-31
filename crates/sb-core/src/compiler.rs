@@ -441,6 +441,7 @@ impl Compiler<'_> {
         self.out.globals.push(VarInfo {
             name: k.0.clone(),
             suffix: k.1,
+            array: false,
         });
         self.global_slots.insert(k, slot);
         slot
@@ -456,6 +457,7 @@ impl Compiler<'_> {
         info.locals.push(VarInfo {
             name: k.0.clone(),
             suffix: k.1,
+            array: false,
         });
         def.locals.insert(k, slot);
         slot
@@ -832,6 +834,16 @@ impl Compiler<'_> {
             Some(_) => Slot::Local(self.local_slot(k)),
             None => Slot::Global(self.global_slot(k)),
         };
+        if d.dims.is_some() {
+            let info = match slot {
+                Slot::Global(n) => &mut self.out.globals[n as usize],
+                Slot::Local(n) => {
+                    let def = self.def.as_ref().expect("a local is in a DEF").index;
+                    &mut self.out.defs[def as usize].locals[n as usize]
+                }
+            };
+            info.array = true;
+        }
         if let (true, None, Slot::Global(slot)) = (self.direct, &self.def, slot) {
             let array = d.dims.is_some();
             self.emit(Op::Declare { slot, array });
