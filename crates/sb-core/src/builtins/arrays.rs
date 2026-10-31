@@ -255,7 +255,8 @@ pub(super) fn remove(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let mut a = a.borrow_mut();
     check_1d(&a)?;
     let at = count(&args[1])?;
-    let n = positive(opt(args, 2))?;
+    // A count of 0 removes nothing, even from an empty array.
+    let n = opt(args, 2).map_or(Ok(1), count)?;
     if at + n > a.len() {
         return Err(out_of_range("position"));
     }

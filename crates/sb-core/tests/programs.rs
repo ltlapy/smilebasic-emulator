@@ -719,6 +719,7 @@ fn inserting_and_removing() {
     );
     assert_eq!(error("DIM A[3]:INSERT A,4").0, ErrorKind::OutOfRange);
     assert_eq!(error("DIM A[3]:REMOVE A,2,2").0, ErrorKind::OutOfRange);
+    assert_eq!(output("DIM A[0]:REMOVE A,0,LEN(A):?LEN(A)"), "0\n");
 }
 
 #[test]
