@@ -213,12 +213,12 @@ impl Runtime {
                 let n = user_song(&args[0])?;
                 let mut mml = String::new();
                 let mut data = self.label_data(&args[1])?;
-                loop {
+                // The MML ends at a number, or after the program's last
+                // DATA.
+                while !data.at_end() {
                     match data.literal()? {
                         Literal::Str(s) => mml.push_str(&String::from_utf16_lossy(&s)),
-                        Literal::Int(0) => break,
-                        Literal::Real(0.0) => break,
-                        _ => return Err(ErrorKind::TypeMismatch.into()),
+                        Literal::Int(_) | Literal::Real(_) => break,
                     }
                 }
                 let song = parse(&mml)?;

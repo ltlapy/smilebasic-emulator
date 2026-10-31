@@ -674,6 +674,11 @@ impl DataReader<'_> {
         }
     }
 
+    /// Whether the program's DATA has all been read.
+    pub(crate) fn at_end(&self) -> bool {
+        self.pos.get() >= self.program.data.len()
+    }
+
     /// The next value, of whatever type.
     pub(crate) fn literal(&mut self) -> Result<Literal> {
         let item = self
