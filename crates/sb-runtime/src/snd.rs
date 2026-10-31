@@ -614,11 +614,24 @@ impl Runtime {
                 let rec = &self.sound.recorder;
                 let len = rec.samples.len() as i32;
                 let n = opt_in_range("count", args.get(1), 0..=len, rec.pos as i32)? as usize;
-                let from = opt_in_range("position", args.get(2), 0..=len, 0)? as usize;
-                if from + n > rec.samples.len() {
-                    return Err(Error::with_detail(ErrorKind::OutOfRange, "count"));
-                }
-                let taken = &rec.samples[from..from + n];
+                // Recording round the buffer, positions go round it too.
+                // UNVERIFIED: which samples a position past either end
+                // takes (it is no error).
+                let taken: Vec<[i16; 2]> = if rec.ring && len > 0 {
+                    let from = match args.get(2) {
+                        Some(v) => v.to_int()?.rem_euclid(len) as usize,
+                        None => 0,
+                    };
+                    (0..n)
+                        .map(|i| rec.samples[(from + i) % len as usize])
+                        .collect()
+                } else {
+                    let from = opt_in_range("position", args.get(2), 0..=len, 0)? as usize;
+                    if from + n > rec.samples.len() {
+                        return Err(Error::with_detail(ErrorKind::OutOfRange, "count"));
+                    }
+                    rec.samples[from..from + n].to_vec()
+                };
                 let a = args[0].clone().into_array()?;
                 let mut a = a.borrow_mut();
                 let elem = a.elem_type();
