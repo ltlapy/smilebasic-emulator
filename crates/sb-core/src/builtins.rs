@@ -611,12 +611,10 @@ fn rgb_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
 
 /// A component from 0 to 1.0, scaled to 0-255 and rounded down (checked
 /// on hardware: 0.5 gives &H7F).
+// UNVERIFIED: that values outside 0 to 1.0 are clamped as RGB's are;
+// FINITI's cake demo passes negative ones and runs on hardware.
 fn unit_component(v: &Value) -> Result<u32> {
-    let x = v.to_real()?;
-    if !(0.0..=1.0).contains(&x) {
-        return Err(ErrorKind::OutOfRange.into());
-    }
-    Ok((x * 255.0) as u32)
+    Ok((v.to_real()?.clamp(0.0, 1.0) * 255.0) as u32)
 }
 
 /// `RGBF`: `RGB` with components from 0 to 1.0.
