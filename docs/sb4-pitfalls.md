@@ -75,8 +75,8 @@ follows all of it. Items still waiting for a check are marked
 - `INSPECT` (or `??`) prints `INT: 1`, `REAL: 1.50000000` (always 8
   decimals) or `STRING: (2)"AB"` (a 50-character string still whole).
   An array prints `INT[2,2]:`, then ` [0,1]: 0` for each element
-  (strings as `(2)"HI"`), then an empty line. A 300-character string is
-  shown whole. A long listing stops every 28 lines with
+  (strings as `(2)"HI"`), then an empty line. A string shows at most 256
+  characters; a longer one is cut there, without its closing quote. A long listing stops every 28 lines with
   `=== Press ENTER ===` on the last row, which stays free while it
   prints.
 - `CHKCALL` is 0 for `PRINT`, `GOTO`, `INC`, `DEC`, `STOP`, `CONT`,
@@ -277,10 +277,16 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   line of each DEF call and `GOSUB` it is in, as `0:    92` (the line
   right-aligned in 6 places). It works after an error too, and prints
   nothing when no program has stopped. After it, `CONT` and `TRACE`
-  could not go on.
+  cannot go on.
 - `TRACE` runs one statement and says `Break on 0:2` with that
-  statement's line, also inside a `GOSUB`. A `FOR` runs together with
-  the first statement of its body. After an error it is `Can't trace`.
+  statement's line, in DEFs and GOSUBs too. Some places are no
+  statement of their own: a `FOR` runs on into the first statement of
+  its body, and a DEF's `END` runs on through the return into the
+  caller's next statement. `NEXT` takes two TRACEs that both say the
+  FOR's line (the step, then the test). After a GOSUB's `RETURN` it
+  names the GOSUB's line. After an error it is `Can't trace`.
+- `Can't continue`, `Can't trace` and `Can't use from direct mode` name
+  no line.
 - `Break on` follows whatever was printed: after `?"X";` it reads
   `XBreak on 0:16`.
 - `ENVSTAT()` on the main interpreter is 3 (running), also typed in
