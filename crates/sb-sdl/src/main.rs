@@ -1155,10 +1155,24 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             skipped += 1;
         }
         // A pointer the program moved with MOUSE stays there until the
-        // real one moves.
+        // real one moves, and the real one goes there too.
         let (sent, now) = (&mut controls.mouse, machine.rt.input.live.mouse);
         let fed = !modal && !paused && !machine.is_editing();
         if fed && (sent.x, sent.y, sent.display) != (now.x, now.y, now.display) {
+            let px = out_w as f32 / win_w.max(1) as f32;
+            let (x, y) = if (sent.x, sent.y) != (now.x, now.y) {
+                (
+                    shown.x + (now.x as f32 + 0.5) * shown.w / pointer_space.0 as f32,
+                    shown.y + (now.y as f32 + 0.5) * shown.h / pointer_space.1 as f32,
+                )
+            } else {
+                let scale = display.w / display_w as f32;
+                (
+                    display.x + (now.display.0 as f32 + 0.5) * scale,
+                    display.y + (now.display.1 as f32 + 0.5) * scale,
+                )
+            };
+            mouse.warp_mouse_in_window(canvas.window(), x / px, y / px);
             (sent.x, sent.y, sent.display) = (now.x, now.y, now.display);
         }
         // The editor leaves its top row for the menu bar.
