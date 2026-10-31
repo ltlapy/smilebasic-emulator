@@ -5,7 +5,9 @@
 //! contents plus a header, rounded up to 64 bytes, and small contents take
 //! nothing. Values are counted as they are now, so memory a program lets
 //! go of is free at once; SmileBASIC 4 frees it only later.
-// UNVERIFIED: where small contents end, between 40 and 62 bytes.
+// Checked on hardware: strings of up to 24 characters (48 bytes) and
+// arrays of up to 64 bytes of elements take nothing.
+// UNVERIFIED: arrays of 65 to 79 bytes.
 
 use std::collections::HashSet;
 
@@ -13,16 +15,17 @@ use crate::value::{ArrayData, Value};
 
 /// FREEMEM right after start-up, which the start-up screen shows too.
 pub const TOTAL: u32 = 134_216_720;
-/// Contents up to this size take no memory of their own.
-const SMALL: usize = 48;
+/// Contents up to these sizes take no memory of their own.
+const SMALL_STRING: usize = 48;
+const SMALL_ARRAY: usize = 64;
 /// A string's header and terminator: 1000 characters take 2112 bytes.
 const STRING_HEADER: usize = 98;
 /// An array's header: 100 Reals take 896 bytes, 100000 take 800064.
 const ARRAY_HEADER: usize = 64;
 
-fn block(contents: usize, header: usize) -> usize {
+fn block(contents: usize, small: usize, header: usize) -> usize {
     match contents {
-        n if n <= SMALL => 0,
+        n if n <= small => 0,
         n => (n + header).div_ceil(64) * 64,
     }
 }
@@ -44,7 +47,7 @@ impl Tally {
         match value {
             Value::Str(s) => {
                 if self.seen.insert(s.as_ptr() as usize) {
-                    self.bytes += block(s.borrow().len() * 2, STRING_HEADER);
+                    self.bytes += block(s.borrow().len() * 2, SMALL_STRING, STRING_HEADER);
                 }
             }
             Value::Array(a) => {
@@ -58,7 +61,7 @@ impl Tally {
                     ArrayData::Real(v) => v.len() * 8,
                     ArrayData::Str(v) => v.len() * 8,
                 };
-                self.bytes += block(contents, ARRAY_HEADER);
+                self.bytes += block(contents, SMALL_ARRAY, ARRAY_HEADER);
                 if let ArrayData::Str(v) = &a.data {
                     for s in v {
                         self.add(&Value::Str(s.clone()));
@@ -100,6 +103,8 @@ mod tests {
     fn sizes_seen_on_hardware() {
         for (len, bytes) in [
             (17, 0),
+            (24, 0),
+            (25, 192),
             (31, 192),
             (32, 192),
             (100, 320),
@@ -110,6 +115,8 @@ mod tests {
         }
         for (elem, len, bytes) in [
             (ElemType::Int, 10, 0),
+            (ElemType::Int, 16, 0),
+            (ElemType::Real, 8, 0),
             (ElemType::Int, 100, 512),
             (ElemType::Real, 1, 0),
             (ElemType::Real, 100, 896),
