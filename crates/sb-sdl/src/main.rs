@@ -252,7 +252,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             )
         };
         // ...and the editor's pixels, which fill the screen's rectangle.
-        let shown = screen_rect(&mode, filter, out_w, out_h);
+        let shown = screen_rect(&mode, filter, out_w, display.h);
         let to_screen = |x: f32, y: f32| {
             let px = out_w as f32 / win_w.max(1) as f32;
             (
@@ -1195,7 +1195,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
 
         mode = machine.screen_mode();
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
-        let rect = screen_rect(&mode, filter, out_w, out_h);
+        let rect = screen_rect(&mode, filter, out_w, display.h);
         let editing = machine.is_editing();
         let fb = machine.render();
         let frame = (fb.width(), fb.height());
@@ -1593,11 +1593,12 @@ fn load_edited(machine: &mut Machine, name: &str, toasts: &mut Toasts) {
 }
 
 /// Where the display (emulator UI coordinates) goes in a window of
-/// `out_w` x `out_h` pixels: scaled to fit and centered.
+/// `out_w` x `out_h` pixels: scaled to fit, centered across and at the
+/// top, so the menu bar stays at the window's top in a narrow window.
 fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
     let scale = (out_w as f32 / width as f32).min(out_h as f32 / height as f32);
     let (w, h) = (width as f32 * scale, height as f32 * scale);
-    FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
+    FRect::new((out_w as f32 - w) / 2.0, 0.0, w, h)
 }
 
 /// A texture for frames of `w` x `h` pixels, scaled with `filter`:
@@ -1619,19 +1620,20 @@ fn frame_texture<'a>(
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
 }
 
-/// Where the screen goes in a window of `out_w` x `out_h` pixels:
-/// centered, at XSCREEN's aspect ratio, and scaled to fit, by a whole
-/// factor when the filter is nearest neighbor.
-fn screen_rect(mode: &ScreenMode, filter: Filter, out_w: u32, out_h: u32) -> FRect {
+/// Where the screen goes in a window `out_w` pixels wide whose display
+/// is `out_h` high: centered in the display, at XSCREEN's aspect ratio,
+/// and scaled to fit, by a whole factor when the filter is nearest
+/// neighbor.
+fn screen_rect(mode: &ScreenMode, filter: Filter, out_w: u32, out_h: f32) -> FRect {
     let height = mode.height as f32;
     let width = height * mode.aspect() as f32;
-    let fit = (out_w as f32 / width).min(out_h as f32 / height);
+    let fit = (out_w as f32 / width).min(out_h / height);
     let scale = match filter {
         Filter::Nearest => fit.floor().max(1.0),
         _ => fit,
     };
     let (w, h) = (width * scale, height * scale);
-    FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h)
+    FRect::new((out_w as f32 - w) / 2.0, (out_h - h) / 2.0, w, h)
 }
 
 /// How the editor's frame is scaled into `rect`: sharp when it fits a
