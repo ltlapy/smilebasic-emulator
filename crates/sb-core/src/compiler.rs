@@ -967,6 +967,17 @@ impl Compiler<'_> {
                 self.emit(Op::Stop { has_message });
                 return Ok(());
             }
+            // UNVERIFIED: the errors for other forms.
+            "FREEMEM" => {
+                if !args.is_empty() {
+                    return Err(err(ErrorKind::WrongNumberOfArguments, full));
+                }
+                if outs.len() != 2 {
+                    return Err(err(ErrorKind::WrongNumberOfOutArguments, full));
+                }
+                self.emit(Op::FreeMem { both: true });
+                return self.store_outs(outs);
+            }
             "DEFOUT" => {
                 no_outs(self)?;
                 self.require_def()?;
@@ -1314,6 +1325,10 @@ impl Compiler<'_> {
                 self.emit(Op::ChkLabel {
                     has_flag: args.len() == 2,
                 });
+                return Ok(());
+            }
+            ("FREEMEM", []) => {
+                self.emit(Op::FreeMem { both: false });
                 return Ok(());
             }
             ("CHKCALL", [Some(name)]) | ("CHKVAR", [Some(name)]) => {

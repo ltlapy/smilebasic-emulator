@@ -828,3 +828,19 @@ fn signal_processing() {
         "10\n"
     );
 }
+
+#[test]
+fn free_memory() {
+    // Sizes from SmileBASIC 4 (TTEST21 and TTEST23).
+    assert_eq!(
+        output(
+            "FREEMEM OUT T,C:?T;\" \";C\nB=FREEMEM():DIM A[100000]:?B-FREEMEM()\nB=FREEMEM():S$=\"X\"*1000:T$=S$:?B-FREEMEM()\nB=FREEMEM():Q=ARRAY%(10):?B-FREEMEM()"
+        ),
+        "134216720 134216720\n800064\n2112\n0\n"
+    );
+    assert_eq!(
+        output("DIM A$[3]:A$[1]=\"X\"*100:B=FREEMEM():A$[1]=\"\":?FREEMEM()-B;CHKCALL(\"FREEMEM\")"),
+        "3201\n"
+    );
+    assert_eq!(error("FREEMEM 1 OUT A,B").0, ErrorKind::WrongNumberOfArguments);
+}

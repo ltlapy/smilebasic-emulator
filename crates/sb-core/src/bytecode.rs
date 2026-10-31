@@ -162,6 +162,11 @@ pub enum Op {
     ChkCall,
     /// `[name] -> [found]`: CHKVAR.
     ChkVar,
+    /// `[] -> [free, free largest]` or `[] -> [free]`: FREEMEM, which
+    /// looks at all of the program's values.
+    FreeMem {
+        both: bool,
+    },
     /// `[message?] -> []`: STOP.
     Stop {
         has_message: bool,

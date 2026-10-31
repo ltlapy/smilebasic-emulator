@@ -85,7 +85,6 @@ pub(crate) enum Command {
     Fadechk,
     Files,
     Fontinfo,
-    Freemem,
     Garray,
     Gbox,
     Gcircle,
@@ -301,7 +300,6 @@ const COMMANDS: &[(&str, Command)] = &[
     ("FADECHK", Command::Fadechk),
     ("FILES", Command::Files),
     ("FONTINFO", Command::Fontinfo),
-    ("FREEMEM", Command::Freemem),
     ("GARRAY", Command::Garray),
     ("GBOX", Command::Gbox),
     ("GCIRCLE", Command::Gcircle),
@@ -1590,7 +1588,6 @@ impl Runtime {
                 Command::Date
                 | Command::Dtread
                 | Command::Fontinfo
-                | Command::Freemem
                 | Command::Maincnt
                 | Command::Millisec
                 | Command::Randomize
@@ -1742,6 +1739,12 @@ impl Host for Runtime {
             Callbacks::Sprite => sprites::SPRITES as i32,
             Callbacks::Text => SCREENS as i32,
         }
+    }
+
+    // Checked on hardware: GARRAY and TARRAY take nothing from FREEMEM.
+    fn own_arrays(&self) -> Vec<sb_core::value::ArrayRef> {
+        let text = self.text.iter().filter_map(|t| t.array_if_made());
+        text.chain(self.grp.arrays()).collect()
     }
 
     fn set_data_pos(&mut self, pos: usize) {

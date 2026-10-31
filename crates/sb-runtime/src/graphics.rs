@@ -222,6 +222,11 @@ impl Graphics {
         array
     }
 
+    /// The GARRAY arrays programs have asked for.
+    pub fn arrays(&self) -> impl Iterator<Item = ArrayRef> + '_ {
+        self.arrays.iter().flatten().cloned()
+    }
+
     /// Copies a whole page to its GARRAY array, if it has one.
     fn mirror_page(&mut self, page: usize) {
         let Some(array) = &self.arrays[page] else {

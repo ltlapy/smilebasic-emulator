@@ -82,6 +82,12 @@ pub trait Host {
     fn data_pos(&self) -> Option<usize> {
         None
     }
+
+    /// Arrays the host keeps in memory of its own, such as a graphic
+    /// page's, which FREEMEM leaves out.
+    fn own_arrays(&self) -> Vec<crate::value::ArrayRef> {
+        Vec::new()
+    }
 }
 
 /// A host with no commands that records PRINT output and answers INPUT

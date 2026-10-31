@@ -55,6 +55,7 @@ pub enum Status {
 /// own rather than calls, for CHKCALL.
 const VM_CALLS: &[&str] = &[
     "CALLIDX", "DEFARG", "DEFARGC", "DEFOUTC", "CHKLABEL", "CHKCALL", "CHKVAR", "VSYNC", "WAIT",
+    "FREEMEM",
 ];
 
 /// Names CHKCALL does not count although they are commands here.
@@ -596,6 +597,30 @@ impl Vm {
         })
     }
 
+    /// FREEMEM: the memory left after every value the program can reach,
+    /// in every slot.
+    fn free_memory(&self, host: &dyn Host) -> i32 {
+        let mut tally = crate::memory::Tally::default();
+        for array in host.own_arrays() {
+            tally.skip(&array);
+        }
+        let frames = self
+            .frames
+            .iter()
+            .flat_map(|f| f.locals.iter().chain(&f.args).chain(&f.outs));
+        let units = self.units.iter().flatten().flat_map(|u| &u.globals);
+        for v in self
+            .globals
+            .iter()
+            .chain(&self.stack)
+            .chain(frames)
+            .chain(units)
+        {
+            tally.add(v);
+        }
+        tally.free()
+    }
+
     /// CHKCALL: whether CALL could call the name, as a DEF of this slot,
     /// a COMMON DEF of another, or a command or function of the system.
     // UNVERIFIED: reserved statements such as PRINT and GOTO report 0.
@@ -1123,6 +1148,15 @@ impl Vm {
                 let name = name_of(&self.pop())?;
                 let found = self.dynamic_slot(&name).is_ok();
                 self.stack.push(Value::Int(found.into()));
+            }
+            Op::FreeMem { both } => {
+                let free = Value::Int(self.free_memory(host));
+                // The largest free block is all of it (checked on
+                // hardware).
+                if *both {
+                    self.stack.push(free.clone());
+                }
+                self.stack.push(free);
             }
             Op::Stop { has_message } => {
                 let message = match has_message {

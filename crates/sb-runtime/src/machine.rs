@@ -22,9 +22,7 @@ use crate::text::CONSOLE;
 /// SmileBASIC 4's real speed has not been measured.
 pub const FRAME_BUDGET: u32 = 200_000;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
-// TODO: report the memory programs can really use, together with FREEMEM,
-// once memory such as graphic pages is accounted for.
-pub const FREE_MEMORY: u32 = 134_216_720;
+pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
 
 pub struct Machine {
     pub rt: Runtime,

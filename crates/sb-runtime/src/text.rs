@@ -264,6 +264,11 @@ impl TextScreen {
         array
     }
 
+    /// TARRAY's array, if a program has asked for it.
+    pub fn array_if_made(&self) -> Option<ArrayRef> {
+        self.array.clone()
+    }
+
     /// TUPDATE: the cells of `rect` from TARRAY's array.
     pub fn update(&mut self, (x, y, w, h): CellRect) {
         let Some(array) = &self.array else { return };

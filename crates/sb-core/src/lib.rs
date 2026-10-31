@@ -12,6 +12,7 @@ pub mod error;
 pub mod host;
 pub mod inspect;
 pub mod lexer;
+pub mod memory;
 pub mod ops;
 pub mod parser;
 pub mod value;

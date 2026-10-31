@@ -1,6 +1,5 @@
 //! Random numbers, time and the system's settings: RND, RNDF, RANDOMIZE,
-//! MILLISEC, MAINCNT, DATE$, TIME$, DTREAD, TMREAD, SYSPARAM, FREEMEM and
-//! FONTINFO.
+//! MILLISEC, MAINCNT, DATE$, TIME$, DTREAD, TMREAD, SYSPARAM and FONTINFO.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -10,7 +9,6 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
 use crate::font::FontSize;
-use crate::machine::FREE_MEMORY;
 use crate::runtime::{Command, Runtime, no_form};
 use crate::text::USER_CHARS;
 
@@ -282,11 +280,6 @@ impl Runtime {
                     _ => Err(wrong()),
                 }
             }
-            // FREEMEM: always what SmileBASIC 4 shows at start-up; the
-            // emulator does not count the memory programs use.
-            // UNVERIFIED: that the largest free block is the whole of it.
-            (Command::Freemem, Want::Value, 0) => Ok(vec![Value::Int(FREE_MEMORY as i32)]),
-            (Command::Freemem, Want::Outs(2), 0) => Ok(vec![Value::Int(FREE_MEMORY as i32); 2]),
             (Command::Fontinfo, Want::Outs(2), 2) => {
                 let code = match &args[0] {
                     Value::Str(s) => {

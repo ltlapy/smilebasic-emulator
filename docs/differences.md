@@ -74,9 +74,10 @@ Without them:
   after `GUPDATE`; `GPGET` and other commands that read the page see it
   at once, as on SmileBASIC 4. There, drawing commands near the writes
   also bring them to the screen.
-- `FREEMEM` always answers what SmileBASIC 4 shows at start-up
-  (134216720 bytes): the emulator does not count the memory that
-  strings and arrays take.
+- `FREEMEM` counts what strings and arrays take as SmileBASIC 4 does,
+  but memory a program lets go of is free again at once. SmileBASIC 4
+  frees it later: emptying a string or an array, or leaving a DEF, does
+  not raise `FREEMEM` there straight away.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
 - File commands ask, notify or stay silent as set in Settings, rather
