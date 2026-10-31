@@ -1,6 +1,6 @@
 //! Graphic commands: GTARGET, GCOLOR, GCLIP, GCLS, GPGET, GPSET, GLINE,
-//! GBOX, GFILL, GCIRCLE, GTRI, GPAINT, GCOPY, GPUTCHR, GSAVE, GLOAD and
-//! GSAMPLE.
+//! GBOX, GFILL, GCIRCLE, GTRI, GPAINT, GCOPY, GPUTCHR, GSAVE, GLOAD,
+//! GSAMPLE, GARRAY and GUPDATE.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -316,6 +316,33 @@ impl Runtime {
                     n @ (0 | 1) => n,
                     n => return Err(out_of_range("sampling type", n)),
                 };
+                Ok(vec![])
+            }
+            (Command::Garray, Want::Value, 1) => {
+                let page = page_arg(&args[0])?;
+                Ok(vec![Value::Array(self.grp.array(page))])
+            }
+            // The array's writes show only after GUPDATE: on hardware,
+            // drawing near them shows them too.
+            (Command::Gupdate, Want::Outs(0), 1 | 5) => {
+                let page = page_arg(&args[0])?;
+                let rect = match &args[1..] {
+                    [] => Clip::PAGE,
+                    corners => {
+                        let c = corners
+                            .iter()
+                            .map(|v| {
+                                let n = int(v)?;
+                                (0..GRP_SIZE)
+                                    .contains(&n)
+                                    .then_some(n)
+                                    .ok_or_else(|| out_of_range("coordinate", n))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        Clip::new(c[0], c[1], c[2], c[3])
+                    }
+                };
+                self.grp.update(page, rect);
                 Ok(vec![])
             }
             _ => Err(no_form()),

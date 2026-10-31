@@ -85,6 +85,7 @@ pub(crate) enum Command {
     Files,
     Fontinfo,
     Freemem,
+    Garray,
     Gbox,
     Gcircle,
     Gclip,
@@ -102,6 +103,7 @@ pub(crate) enum Command {
     Gsave,
     Gtarget,
     Gtri,
+    Gupdate,
     Gyroa,
     Gyrosync,
     Gyrov,
@@ -280,6 +282,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("FILES", Command::Files),
     ("FONTINFO", Command::Fontinfo),
     ("FREEMEM", Command::Freemem),
+    ("GARRAY", Command::Garray),
     ("GBOX", Command::Gbox),
     ("GCIRCLE", Command::Gcircle),
     ("GCLIP", Command::Gclip),
@@ -297,6 +300,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GSAVE", Command::Gsave),
     ("GTARGET", Command::Gtarget),
     ("GTRI", Command::Gtri),
+    ("GUPDATE", Command::Gupdate),
     ("GYROA", Command::Gyroa),
     ("GYROSYNC", Command::Gyrosync),
     ("GYROV", Command::Gyrov),
@@ -1425,8 +1429,10 @@ impl Runtime {
                 | Command::Gputchr
                 | Command::Gsample
                 | Command::Gsave
+                | Command::Garray
                 | Command::Gtarget
-                | Command::Gtri,
+                | Command::Gtri
+                | Command::Gupdate,
                 _,
             ) => self.grp_command(command, args, want),
             (

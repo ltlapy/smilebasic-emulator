@@ -1,6 +1,11 @@
 //! Graphic pages GRP0-GRP5 and drawing on them. A page takes memory only
 //! once something is drawn on it; until then every pixel is 0.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
+
 use crate::font::{Font, FontSize};
 use crate::text::glyph_pixel;
 
@@ -125,6 +130,9 @@ pub struct Graphics {
     /// GSAMPLE of each page: 0 for border, 1 for repeat. Kept for sprites
     /// and text screens, which read pages.
     pub sample: [i32; PAGES],
+    /// GARRAY's array of each page, `[y, x]`: every pixel drawn is
+    /// written to it as well, and GUPDATE brings its writes back.
+    arrays: [Option<ArrayRef>; PAGES],
 }
 
 impl Default for Graphics {
@@ -135,6 +143,7 @@ impl Default for Graphics {
             color: 0xFFFF_FFFF,
             clip: Clip::PAGE,
             sample: [0; PAGES],
+            arrays: Default::default(),
         }
     }
 }
@@ -163,20 +172,76 @@ impl Graphics {
     pub fn set_page(&mut self, page: usize, pixels: Vec<u32>) {
         assert_eq!(pixels.len(), (GRP_SIZE * GRP_SIZE) as usize);
         self.pages[page] = pixels;
+        self.mirror_page(page);
     }
 
     /// Empties a page, as GCLS does with 0.
     pub fn clear_page(&mut self, page: usize) {
         self.pages[page] = Vec::new();
+        self.mirror_page(page);
     }
 
     /// GTARGET, GCOLOR, GCLIP and GSAMPLE as at start-up.
     pub fn reset_state(&mut self) {
         let pages = std::mem::take(&mut self.pages);
+        let arrays = std::mem::take(&mut self.arrays);
         *self = Graphics {
             pages,
+            arrays,
             ..Graphics::default()
         };
+    }
+
+    /// GARRAY: the page as a 2048x2048 Int array, the same one each time.
+    pub fn array(&mut self, page: usize) -> ArrayRef {
+        if let Some(array) = &self.arrays[page] {
+            return array.clone();
+        }
+        let size = GRP_SIZE as usize;
+        let mut array = Array::new(ElemType::Int, vec![size, size]);
+        array.data = ArrayData::Int(self.page_pixels(page).iter().map(|&p| p as i32).collect());
+        let array = Rc::new(RefCell::new(array));
+        self.arrays[page] = Some(array.clone());
+        array
+    }
+
+    /// Copies a whole page to its GARRAY array, if it has one.
+    fn mirror_page(&mut self, page: usize) {
+        let Some(array) = &self.arrays[page] else {
+            return;
+        };
+        let pixels = &self.pages[page];
+        if let Ok(mut array) = array.try_borrow_mut()
+            && let ArrayData::Int(v) = &mut array.data
+        {
+            for (i, d) in v.iter_mut().enumerate() {
+                *d = pixels.get(i).map_or(0, |&p| p as i32);
+            }
+        }
+    }
+
+    /// GUPDATE: the pixels of an inclusive rectangle from the page's
+    /// GARRAY array. An array the program has resized is left alone.
+    pub fn update(&mut self, page: usize, rect: Clip) {
+        let Some(array) = self.arrays[page].clone() else {
+            return;
+        };
+        let Ok(array) = array.try_borrow() else {
+            return;
+        };
+        let ArrayData::Int(v) = &array.data else {
+            return;
+        };
+        if v.len() != (GRP_SIZE * GRP_SIZE) as usize {
+            return;
+        }
+        let pixels = self.page_pixels(page);
+        for y in rect.y0..=rect.y1 {
+            let row = index(rect.x0, y)..=index(rect.x1, y);
+            for i in row {
+                pixels[i] = v[i] as u32;
+            }
+        }
     }
 
     fn target_pixels(&mut self) -> &mut Vec<u32> {
@@ -198,7 +263,15 @@ impl Graphics {
         }
         let pixels = self.target_pixels();
         let i = index(x, y);
-        pixels[i] = blend.apply(pixels[i], color);
+        let p = blend.apply(pixels[i], color);
+        pixels[i] = p;
+        if let Some(array) = &self.arrays[self.target]
+            && let Ok(mut array) = array.try_borrow_mut()
+            && let ArrayData::Int(v) = &mut array.data
+            && let Some(d) = v.get_mut(i)
+        {
+            *d = p as i32;
+        }
     }
 
     /// GCLS: fills the clipping rectangle.
@@ -460,6 +533,7 @@ impl Graphics {
                 }
             }
         }
+        self.mirror_page(page);
     }
 
     /// GLOAD: draws row-by-row pixels into a rectangle of the target page.

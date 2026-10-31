@@ -140,3 +140,20 @@ fn gsave_needs_room_in_multi_dimensional_arrays() {
     let (_, out) = run("DIM W[3]:GLOAD 0,0,2,2,W,0");
     assert!(out.starts_with("Subscript out of range"), "{out}");
 }
+
+#[test]
+fn garray_follows_the_page() {
+    let (m, out) = run("G=GARRAY(0)\n\
+         GPSET 3,2,#C_RED\n\
+         G[5,4]=#C_BLUE\n\
+         ?HEX$(G[2,3]);\" \";HEX$(GPGET(4,5));\" \";\n\
+         GUPDATE 0\n\
+         H=GARRAY(0):H[0,0]=7\n\
+         ?HEX$(GPGET(4,5));\" \";G[0,0];\" \";DIM(G,0)");
+    assert_eq!(out, "FFFF0000 0 FF0000FF 7 2048");
+    assert_eq!(m.rt.grp.pixel(0, 4, 5), 0xFF00_00FF);
+    let (_, out) = run("G=GARRAY(1):G[0,0]=-1:GUPDATE 1,0,0,0,0:GTARGET 1:?HEX$(GPGET(0,0))");
+    assert_eq!(out, "FFFFFFFF");
+    let (_, out) = run("GUPDATE 0,0,0,2048,0");
+    assert!(out.starts_with("Out of range"), "{out}");
+}
