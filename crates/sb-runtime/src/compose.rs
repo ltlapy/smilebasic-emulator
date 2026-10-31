@@ -88,14 +88,39 @@ impl Affine {
 // composed (checked on hardware).
 
 /// `src`, an element's straight color, over `dst`, premultiplied.
+#[inline]
 pub fn over(dst: u32, src: u32) -> u32 {
-    if src >> 24 == 0xFF {
+    let sa = u64::from(src >> 24);
+    if sa == 0xFF {
         return src;
     }
-    let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
-    let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-    let mix = |s: u32, d: u32| div255(s * sa + d * (255 - sa)) as u8;
-    u32::from_be_bytes([mix(255, da), mix(sr, dr), mix(sg, dg), mix(sb, db)])
+    // All four channels at once, 16 bits apiece: each sum is at most
+    // 255 * 255, so none carries into the next.
+    let s = spread(src | 0xFF00_0000) * sa + spread(dst) * (255 - sa);
+    gather(div255_lanes(s))
+}
+
+/// The channels of a color, one to each 16 bits: blue, red, green and
+/// alpha from the bottom.
+#[inline]
+fn spread(c: u32) -> u64 {
+    let c = u64::from(c);
+    c & 0x00FF_00FF | (c >> 8 & 0x00FF_00FF) << 32
+}
+
+/// Back from [`spread`]; the lanes must hold 8 bits.
+#[inline]
+fn gather(x: u64) -> u32 {
+    (x as u32) | ((x >> 32) as u32) << 8
+}
+
+/// [`div255`] of each 16-bit lane.
+#[inline]
+fn div255_lanes(x: u64) -> u64 {
+    // Rounds x / 255 to the nearest for x up to 255 * 255, as div255 does.
+    const LANES: u64 = 0x00FF_00FF_00FF_00FF;
+    let t = x + 0x0080_0080_0080_0080;
+    ((t + (t >> 8 & LANES)) >> 8) & LANES
 }
 
 /// `src`, an element's straight color, added to `dst` in proportion to
@@ -144,10 +169,79 @@ pub fn draw_image_part(
     part: (i32, i32, i32, i32),
     sample: impl Fn(f64, f64) -> u32,
 ) {
-    let m = &place.matrix;
-    let Some(inv) = m.inverse() else { return };
-    if w <= 0 || h <= 0 {
+    let Some(inv) = place.matrix.inverse() else {
         return;
+    };
+    let Some((x0, y0, x1, y1)) = span(fb, place, w, h, part) else {
+        return;
+    };
+    let (w, h) = (f64::from(w), f64::from(h));
+    let width = fb.width() as usize;
+    let pixels = fb.pixels_mut();
+    for py in y0..y1 {
+        let line = &mut pixels[py as usize * width..][..x1 as usize];
+        let fy = f64::from(py) + 0.5;
+        // Only the columns near where the row crosses the image need
+        // trying; each is still tested exactly below.
+        let (from, to) = crossing(inv.a, inv.b * fy + inv.tx, w)
+            .and_then(|(f, t)| {
+                let (g, u) = crossing(inv.c, inv.d * fy + inv.ty, h)?;
+                Some((f.max(g), t.min(u)))
+            })
+            .map_or((1.0, 0.0), |(f, t)| (f - 1.5, t + 0.5));
+        let from = (from.max(f64::from(x0)) as u32).max(x0);
+        let to = if to < f64::from(x1) {
+            (to.max(0.0) as u32) + 1
+        } else {
+            x1
+        };
+        for px in from..to.min(x1) {
+            let (lx, ly) = inv.apply(f64::from(px) + 0.5, f64::from(py) + 0.5);
+            if lx < 0.0 || ly < 0.0 || lx >= w || ly >= h {
+                continue;
+            }
+            let src = sample(lx, ly);
+            if src >> 24 == 0 {
+                continue;
+            }
+            let dst = &mut line[px as usize];
+            *dst = blend(*dst, src, place.add);
+        }
+    }
+}
+
+/// Where `k * x + base` lies from 0 up to `len`: the range of x, which
+/// may be empty; `None` if it never does.
+fn crossing(k: f64, base: f64, len: f64) -> Option<(f64, f64)> {
+    if k == 0.0 {
+        return (0.0..len).contains(&base).then_some((f64::MIN, f64::MAX));
+    }
+    let (a, b) = ((0.0 - base) / k, (len - base) / k);
+    Some((a.min(b), a.max(b)))
+}
+
+/// `src` over `dst`, or added to it.
+#[inline]
+pub fn blend(dst: u32, src: u32, add_light: bool) -> u32 {
+    if add_light {
+        add(dst, src)
+    } else {
+        over(dst, src)
+    }
+}
+
+/// The frame pixels, from `(x0, y0)` up to but not including `(x1, y1)`,
+/// that the part of the image may cover.
+fn span(
+    fb: &Framebuffer,
+    place: &Placement,
+    w: i32,
+    h: i32,
+    part: (i32, i32, i32, i32),
+) -> Option<(u32, u32, u32, u32)> {
+    let m = &place.matrix;
+    if w <= 0 || h <= 0 {
+        return None;
     }
     let (w, h) = (f64::from(w), f64::from(h));
     let (mut x0, mut y0) = (f64::from(0), f64::from(0));
@@ -174,31 +268,62 @@ pub fn draw_image_part(
     let y0 = ly0.max(py0 - 1.0).max(y0).floor();
     let x1 = lx1.min(px1 + 1.0).min(x1).ceil();
     let y1 = ly1.min(py1 + 1.0).min(y1).ceil();
-    if x0 >= x1 || y0 >= y1 {
-        return;
+    // Also false for NaN, from a matrix far out of range.
+    if !(x0 < x1 && y0 < y1) {
+        return None;
     }
-    for py in y0 as u32..y1 as u32 {
-        for px in x0 as u32..x1 as u32 {
-            let (lx, ly) = inv.apply(f64::from(px) + 0.5, f64::from(py) + 0.5);
-            if lx < 0.0 || ly < 0.0 || lx >= w || ly >= h {
-                continue;
-            }
-            let src = sample(lx, ly);
-            if src >> 24 == 0 {
-                continue;
-            }
-            let Some(dst) = fb.get(px, py) else { continue };
-            fb.set(
-                px,
-                py,
-                if place.add {
-                    add(dst, src)
-                } else {
-                    over(dst, src)
-                },
-            );
-        }
+    Some((x0 as u32, y0 as u32, x1 as u32, y1 as u32))
+}
+
+/// Where a placement that neither turns nor shears the image takes the
+/// frame: the image x under each frame column from `x0` and the image y
+/// under each row from `y0`, as [`draw_image`] works them out, for the
+/// columns and rows that fall on the image.
+pub struct Grid {
+    pub x0: u32,
+    pub y0: u32,
+    pub xs: Vec<f64>,
+    pub ys: Vec<f64>,
+}
+
+impl Placement<'_> {
+    /// Whether [`grid`] can stand for the placement.
+    pub fn is_upright(&self) -> bool {
+        self.matrix.b == 0.0 && self.matrix.c == 0.0
     }
+}
+
+/// The [`Grid`] of an upright placement, or `None` where it shows
+/// nothing.
+pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid> {
+    debug_assert!(place.is_upright());
+    let inv = place.matrix.inverse()?;
+    let (x0, y0, x1, y1) = span(fb, place, w, h, (0, 0, w, h))?;
+    let (w, h) = (f64::from(w), f64::from(h));
+    // With b and c zero, x depends on the column alone and y on the row
+    // alone, to the bit; both only grow or only shrink along the frame,
+    // so the ones on the image are a run.
+    let at = |px: u32, py: u32| inv.apply(f64::from(px) + 0.5, f64::from(py) + 0.5);
+    let on = |range: std::ops::Range<u32>, f: &dyn Fn(u32) -> f64, len: f64| {
+        let all: Vec<(u32, f64)> = range.map(|p| (p, f(p))).collect();
+        let first = all.iter().position(|&(_, v)| v >= 0.0 && v < len)?;
+        let n = all[first..]
+            .iter()
+            .take_while(|&&(_, v)| v >= 0.0 && v < len)
+            .count();
+        Some((
+            all[first].0,
+            all[first..first + n].iter().map(|&(_, v)| v).collect(),
+        ))
+    };
+    let (gx0, xs) = on(x0..x1, &|px| at(px, y0).0, w)?;
+    let (gy0, ys) = on(y0..y1, &|py| at(x0, py).1, h)?;
+    Some(Grid {
+        x0: gx0,
+        y0: gy0,
+        xs,
+        ys,
+    })
 }
 
 /// The smallest and largest x and y that `m` takes the corners of the
@@ -325,6 +450,34 @@ mod tests {
             Affine::place((0.0, 0.0), (0.0, 0.0), 0.0, (0.0, 1.0)).inverse(),
             None
         );
+    }
+
+    #[test]
+    fn over_matches_channel_by_channel() {
+        let reference = |dst: u32, src: u32| {
+            let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
+            let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
+            let mix = |s: u32, d: u32| div255(s * sa + d * (255 - sa)) as u8;
+            u32::from_be_bytes([mix(255, da), mix(sr, dr), mix(sg, dg), mix(sb, db)])
+        };
+        let mut seed = 0x1234_5678_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for _ in 0..200_000 {
+            let (dst, src) = (next(), next());
+            assert_eq!(over(dst, src), reference(dst, src), "{dst:08X} {src:08X}");
+        }
+        for a in 0..=255u32 {
+            for v in [0, 1, 127, 128, 254, 255u32] {
+                let src = (a << 24) | (v * 0x0001_0101);
+                let dst = (255 - v) * 0x0101_0101;
+                assert_eq!(over(dst, src), reference(dst, src));
+            }
+        }
     }
 
     #[test]

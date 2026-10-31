@@ -84,6 +84,75 @@ pub fn multiply(a: u32, b: u32) -> u32 {
     }))
 }
 
+/// [`multiply`] by one color, by table when many pixels are to be
+/// multiplied.
+// Made for one sprite on the stack and dropped; boxing the tables would
+// only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum Tint {
+    /// White, which changes nothing.
+    White,
+    /// Too few pixels to be worth the tables.
+    Few(u32),
+    /// White but for the alpha, the usual way to fade a sprite.
+    Alpha([u8; 256]),
+    /// Blue, green, red and alpha.
+    Tables([[u8; 256]; 4]),
+}
+
+impl Tint {
+    /// For about `pixels` pixels.
+    pub fn new(color: u32, pixels: usize) -> Tint {
+        let table = |shift: u32| {
+            let c = color >> shift & 0xFF;
+            std::array::from_fn(|v| (v as u32 * c / 255) as u8)
+        };
+        match color {
+            0xFFFF_FFFF => Tint::White,
+            _ if pixels < 4096 => Tint::Few(color),
+            _ if color | 0xFF00_0000 == 0xFFFF_FFFF => Tint::Alpha(table(24)),
+            _ => Tint::Tables([table(0), table(8), table(16), table(24)]),
+        }
+    }
+
+    #[inline]
+    pub fn apply(&self, p: u32) -> u32 {
+        self.with(Apply(p))
+    }
+
+    /// Runs `job` with the tint as a plain function, decided once rather
+    /// than for every pixel.
+    #[inline]
+    pub fn with<J: TintJob>(&self, job: J) -> J::Out {
+        match self {
+            Tint::White => job.run(|p| p),
+            Tint::Few(color) => job.run(|p| multiply(p, *color)),
+            Tint::Alpha(a) => job.run(|p| p & 0x00FF_FFFF | u32::from(a[(p >> 24) as usize]) << 24),
+            Tint::Tables([b, g, r, a]) => job.run(|p| {
+                u32::from(b[(p & 0xFF) as usize])
+                    | u32::from(g[(p >> 8 & 0xFF) as usize]) << 8
+                    | u32::from(r[(p >> 16 & 0xFF) as usize]) << 16
+                    | u32::from(a[(p >> 24) as usize]) << 24
+            }),
+        }
+    }
+}
+
+/// Work done with a [`Tint`], see [`Tint::with`].
+pub trait TintJob {
+    type Out;
+    fn run(self, tint: impl Fn(u32) -> u32 + Copy) -> Self::Out;
+}
+
+struct Apply(u32);
+
+impl TintJob for Apply {
+    type Out = u32;
+    fn run(self, tint: impl Fn(u32) -> u32 + Copy) -> u32 {
+        tint(self.0)
+    }
+}
+
 /// An inclusive rectangle of page coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clip {
@@ -163,6 +232,12 @@ impl Graphics {
             return 0;
         }
         pixels[index(x, y)]
+    }
+
+    /// A page's pixels row by row as shown, 2048 to a row; empty while the
+    /// page is blank.
+    pub fn page(&self, page: usize) -> &[u32] {
+        &self.pages[page]
     }
 
     /// A pixel of a page as programs read it: from its GARRAY array if it
@@ -682,6 +757,29 @@ fn clip_line(x0: i32, y0: i32, x1: i32, y1: i32) -> Option<(i32, i32, i32, i32)>
     let at = |t: f64| ((fx0 + dx * t).round() as i32, (fy0 + dy * t).round() as i32);
     let ((a, b), (c, d)) = (at(t0), at(t1));
     Some((a, b, c, d))
+}
+
+#[cfg(test)]
+mod tint_tests {
+    use super::*;
+
+    #[test]
+    fn tint_matches_multiply() {
+        for color in [
+            0xFFFF_FFFF,
+            0x80FF_FFFF,
+            0xFF80_40C0,
+            0x0000_0000,
+            0x7F12_3456,
+        ] {
+            for pixels in [1, 1 << 20] {
+                let tint = Tint::new(color, pixels);
+                for p in [0u32, 0xFFFF_FFFF, 0x8040_2010, 0x01FE_7F80, 0xDEAD_BEEF] {
+                    assert_eq!(tint.apply(p), multiply(p, color), "{color:08X} {p:08X}");
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

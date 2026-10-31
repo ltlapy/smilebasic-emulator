@@ -7,9 +7,9 @@ use sb_core::value::Value;
 
 use crate::anim::{self, ANIM_VAR, Anim, Animated, Target, Track};
 use crate::collision::{Body, Collision, HitInfo, Search};
-use crate::compose::{Affine, Placement, draw_image};
+use crate::compose::{self, Affine, Placement, draw_image};
 use crate::framebuffer::Framebuffer;
-use crate::graphics::{Clip, GRP_SIZE, Graphics, PAGES, multiply};
+use crate::graphics::{Clip, GRP_SIZE, Graphics, PAGES, Tint, TintJob, multiply};
 
 pub const SPRITES: usize = 4096;
 pub const DEFS: usize = 8192;
@@ -578,27 +578,201 @@ pub fn draw_posed(
         clip,
         add: s.attr & attr::ADD != 0,
     };
-    draw_image(fb, &place, bw, bh, |x, y| {
-        // A point exactly on a column boundary takes the column to its
-        // left, while rows take the one below as usual: at a scale of 1.5,
-        // the second pixel across shows the first column (checked on
-        // hardware with lossless screenshots at 1.5 and 2.5).
-        let (lx, ly) = ((x - TIE).max(0.0) as i32, y as i32);
-        // The image is flipped, then turned (checked on hardware): undo
-        // the turn, then the flips.
-        let (mut ix, mut iy) = match quarter {
-            0 => (lx, ly),
-            1 => (ly, s.h - 1 - lx),
-            2 => (s.w - 1 - lx, s.h - 1 - ly),
-            _ => (s.w - 1 - ly, lx),
+    let source = Source::new(s, grp);
+    // Roughly how many pixels the sprite covers.
+    let area = (f64::from(bw * bh) * (pose.scale.0 * pose.scale.1).abs()).min(1e7) as usize;
+    let tint = Tint::new(pose.color, area);
+    if place.is_upright() {
+        return draw_upright(&source, &tint, fb, &place, (bw, bh));
+    }
+    struct Turned<'a, 'b> {
+        fb: &'a mut Framebuffer,
+        place: &'a Placement<'b>,
+        size: (i32, i32),
+        source: &'a Source<'a>,
+    }
+    impl TintJob for Turned<'_, '_> {
+        type Out = ();
+        fn run(self, tint: impl Fn(u32) -> u32 + Copy) {
+            let (bw, bh) = self.size;
+            let source = self.source;
+            draw_image(self.fb, self.place, bw, bh, |x, y| {
+                // A point exactly on a column boundary takes the column to
+                // its left, while rows take the one below as usual: at a
+                // scale of 1.5, the second pixel across shows the first
+                // column (checked on hardware with lossless screenshots at
+                // 1.5 and 2.5).
+                let (lx, ly) = ((x - TIE).max(0.0) as i32, y as i32);
+                let (x, y) = source.page_xy(lx, ly);
+                tint(source.pixel(x, y))
+            });
+        }
+    }
+    tint.with(Turned {
+        fb,
+        place: &place,
+        size: (bw, bh),
+        source: &source,
+    });
+}
+
+/// Where a sprite's pixels come from.
+struct Source<'a> {
+    page: &'a [u32],
+    /// GSAMPLE 1: the page repeats in every direction.
+    repeat: bool,
+    /// GRP-1, white everywhere.
+    white: bool,
+    u: i32,
+    v: i32,
+    w: i32,
+    h: i32,
+    attr: i32,
+}
+
+impl Source<'_> {
+    /// For a sprite whose page is GRP-1 or one that is not blank.
+    fn new<'a>(s: &Sprite, grp: &'a Graphics) -> Source<'a> {
+        let (page, repeat, white) = match usize::try_from(s.page) {
+            Ok(p) => (grp.page(p), grp.sample[p] == 1, false),
+            Err(_) => (&[][..], true, true),
         };
-        if s.attr & attr::REVH != 0 {
-            ix = s.w - 1 - ix;
+        Source {
+            page,
+            repeat,
+            white,
+            u: s.u,
+            v: s.v,
+            w: s.w,
+            h: s.h,
+            attr: s.attr,
         }
-        if s.attr & attr::REVV != 0 {
-            iy = s.h - 1 - iy;
+    }
+
+    /// The page point under the point (lx, ly) of the shown rectangle.
+    /// The image is flipped, then turned (checked on hardware): undo the
+    /// turn, then the flips.
+    #[inline]
+    fn page_xy(&self, lx: i32, ly: i32) -> (i32, i32) {
+        let (w, h) = (self.w, self.h);
+        let (mut ix, mut iy) = match self.attr & attr::ROTATION {
+            0 => (lx, ly),
+            1 => (ly, h - 1 - lx),
+            2 => (w - 1 - lx, h - 1 - ly),
+            _ => (w - 1 - ly, lx),
+        };
+        if self.attr & attr::REVH != 0 {
+            ix = w - 1 - ix;
         }
-        multiply(sample(grp, s.page, s.u + ix, s.v + iy), pose.color)
+        if self.attr & attr::REVV != 0 {
+            iy = h - 1 - iy;
+        }
+        (self.u + ix, self.v + iy)
+    }
+
+    /// A page coordinate as it is read: wrapped around when the page
+    /// repeats, or `None` off the page.
+    #[inline]
+    fn wrap(&self, v: i32) -> Option<usize> {
+        match self.repeat {
+            true => Some(v.rem_euclid(GRP_SIZE) as usize),
+            false => (0..GRP_SIZE).contains(&v).then_some(v as usize),
+        }
+    }
+
+    /// The page pixel at a page point, as [`sample`] gives it.
+    #[inline]
+    fn pixel(&self, x: i32, y: i32) -> u32 {
+        if self.white {
+            return 0xFFFF_FFFF;
+        }
+        match (self.wrap(x), self.wrap(y)) {
+            (Some(x), Some(y)) => self.page[y * GRP_SIZE as usize + x],
+            _ => 0,
+        }
+    }
+}
+
+/// Off the page, as an offset into it.
+const NONE: usize = usize::MAX;
+
+/// [`draw_posed`] for a sprite neither turned nor sheared on the frame,
+/// the usual case: which page column and row each frame column and row
+/// shows is worked out once, so each pixel is a lookup and a blend.
+fn draw_upright(
+    source: &Source,
+    tint: &Tint,
+    fb: &mut Framebuffer,
+    place: &Placement,
+    (bw, bh): (i32, i32),
+) {
+    let Some(grid) = compose::grid(fb, place, bw, bh) else {
+        return;
+    };
+    let stride = GRP_SIZE as usize;
+    let at = |v: i32, step: usize| source.wrap(v).map_or(NONE, |v| v * step);
+    // A quarter turn makes frame columns go down the page, and rows
+    // across it.
+    let turned = (source.attr & attr::ROTATION) % 2 == 1;
+    let cols: Vec<usize> = (grid.xs.iter())
+        .map(|&x| {
+            let (px, py) = source.page_xy((x - TIE).max(0.0) as i32, 0);
+            match turned {
+                false => at(px, 1),
+                true => at(py, stride),
+            }
+        })
+        .collect();
+    let rows = grid.ys.iter().map(|&y| {
+        let (px, py) = source.page_xy(0, y as i32);
+        match turned {
+            false => at(py, stride),
+            true => at(px, 1),
+        }
+    });
+    struct Rows<'a, R> {
+        fb: &'a mut Framebuffer,
+        grid: &'a compose::Grid,
+        cols: &'a [usize],
+        rows: R,
+        source: &'a Source<'a>,
+        add: bool,
+    }
+    impl<R: Iterator<Item = usize>> TintJob for Rows<'_, R> {
+        type Out = ();
+        fn run(self, tint: impl Fn(u32) -> u32 + Copy) {
+            let width = self.fb.width() as usize;
+            let pixels = self.fb.pixels_mut();
+            let (page, white) = (self.source.page, tint(0xFFFF_FFFF));
+            for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
+                if row == NONE {
+                    continue;
+                }
+                let at = fy * width + self.grid.x0 as usize;
+                let line = &mut pixels[at..at + self.cols.len()];
+                for (dst, &col) in line.iter_mut().zip(self.cols) {
+                    if col == NONE {
+                        continue;
+                    }
+                    let src = match self.source.white {
+                        true => white,
+                        false => tint(page[col + row]),
+                    };
+                    if src >> 24 == 0 {
+                        continue;
+                    }
+                    *dst = compose::blend(*dst, src, self.add);
+                }
+            }
+        }
+    }
+    tint.with(Rows {
+        fb,
+        grid: &grid,
+        cols: &cols,
+        rows,
+        source,
+        add: place.add,
     });
 }
 
