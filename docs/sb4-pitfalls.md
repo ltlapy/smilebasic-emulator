@@ -396,8 +396,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their
   first argument left out with a comma after it (`BGMSTOP ,1`,
   `BGMPLAY ,0,64`).
-- `BGMSTOP 0,1` keeps `BGMCHK` at 1 for 60 frames while it fades. Called
-  again 10 frames in, it fades for 60 frames from there.
+- After `BGMSTOP` with a fade, `BGMCHK` is 0 two frames later, whatever
+  the fade's length (0.5, 1 or 2 seconds); calling it again meanwhile,
+  in the same frame or later, does not change that.
 - MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
   length (`N60`), macro names with `_` and macros used inside a macro's
   definition (`{X=CDE}{Y={X}F}`).

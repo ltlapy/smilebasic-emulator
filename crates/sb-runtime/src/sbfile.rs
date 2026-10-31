@@ -282,13 +282,10 @@ const STR_TYPE: u16 = 6;
 const PIXEL16_TYPE: u16 = 3;
 
 /// A 16-bit pixel, 5 bits each of red, green and blue from the top and
-/// the lowest bit opaque, as an ARGB colour.
-// The top bits are repeated below to widen each to 8.
+/// the lowest bit opaque, as an ARGB colour. Each 5 bits become the top
+/// of 8, the low 3 left 0 (checked on hardware: 31 is &HF8).
 fn argb_from_5551(p: u16) -> i32 {
-    let wide = |v: u16| {
-        let v = u32::from(v & 31);
-        v << 3 | v >> 2
-    };
+    let wide = |v: u16| u32::from(v & 31) << 3;
     let alpha = if p & 1 == 1 { 0xFF00_0000 } else { 0 };
     (alpha | wide(p >> 11) << 16 | wide(p >> 6) << 8 | wide(p >> 1)) as i32
 }
@@ -476,9 +473,10 @@ mod tests {
 
     #[test]
     fn sixteen_bit_pixels() {
-        assert_eq!(argb_from_5551(0xFFFF) as u32, 0xFFFF_FFFF);
-        assert_eq!(argb_from_5551(0x07FF) as u32, 0xFF00_FFFF);
-        assert_eq!(argb_from_5551(0x07FE), 0x0000_FFFF);
+        assert_eq!(argb_from_5551(0xFFFF) as u32, 0xFFF8_F8F8);
+        assert_eq!(argb_from_5551(0x07FF) as u32, 0xFF00_F8F8);
+        assert_eq!(argb_from_5551(0x07FE), 0x0000_F8F8);
+        assert_eq!(argb_from_5551(0x8001) as u32, 0xFF80_0000);
         let mut body = b"PCBN0001".to_vec();
         body.extend_from_slice(&3u16.to_le_bytes());
         body.extend_from_slice(&1u16.to_le_bytes());
@@ -486,7 +484,7 @@ mod tests {
         body.resize(DATA_HEADER, 0);
         body.extend_from_slice(&0xF801u16.to_le_bytes());
         let data = parse_data(&body).unwrap();
-        assert_eq!(data.values, DataValues::Int(vec![0xFFFF_0000_u32 as i32]));
+        assert_eq!(data.values, DataValues::Int(vec![0xFFF8_0000_u32 as i32]));
     }
 
     const DATE: Date = Date {
