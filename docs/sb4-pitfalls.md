@@ -259,6 +259,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A relative color animation (`"C+"`) multiplies the start color by the
   key per channel and divides by 256, rounding down: `&H80808080` with
   `&H10101010` gives `&H08080808`, and `&HFF` with `&HFF` gives `&HFE`.
+- `SPANIM id,n` with a number `ANIMDEF` never set does nothing.
+- `SPHITSP` of a sprite that is not set is -1, and `SPHITSP(id,other)`
+  with `other` not set is 0; neither is an error. `SPFUNC` takes a
+  sprite that is not set.
+- Setting what an animation changes stops it, and `SPCHK` no longer
+  shows it: `SPOFS` during an `"XY"` animation, `SPCOLOR` during `"C"`,
+  `SPCHR` during `"UV"`.
+- Spaces after an animation target's name are left out (`"S "`).
 
 ## Graphics and layers
 

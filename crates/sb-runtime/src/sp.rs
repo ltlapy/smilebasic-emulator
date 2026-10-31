@@ -8,7 +8,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{ArrayData, Value};
 
-use crate::anim::{self, Anim, MAX_KEYS, Mode, Track};
+use crate::anim::{self, Anim, MAX_KEYS, Mode, Target, Track};
 use crate::collision::{Body, Collision, Search};
 use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
 use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey, WithDefs};
@@ -352,6 +352,12 @@ impl Runtime {
                     z => z,
                 };
                 let s = self.sprite(&args[0])?;
+                if x.is_some() || y.is_some() {
+                    stop(s, Target::Xy);
+                }
+                if z.is_some() {
+                    stop(s, Target::Z);
+                }
                 s.pos = (x.unwrap_or(s.pos.0), y.unwrap_or(s.pos.1));
                 s.z = z.unwrap_or(s.z);
                 Ok(vec![])
@@ -377,13 +383,17 @@ impl Runtime {
             }
             (Command::Sprot, Want::Outs(0), 2) => {
                 let angle = real(&args[1])?;
-                self.sprite(&args[0])?.rot = angle;
+                let s = self.sprite(&args[0])?;
+                stop(s, Target::R);
+                s.rot = angle;
                 Ok(vec![])
             }
             (Command::Sprot, Want::Value, 1) => Ok(vec![Value::Real(self.sprite(&args[0])?.rot)]),
             (Command::Spscale, Want::Outs(0), 3) => {
                 let scale = (real(&args[1])?, real(&args[2])?);
-                self.sprite(&args[0])?.scale = scale;
+                let s = self.sprite(&args[0])?;
+                stop(s, Target::S);
+                s.scale = scale;
                 Ok(vec![])
             }
             (Command::Spscale, Want::Outs(2), 1) => {
@@ -392,7 +402,9 @@ impl Runtime {
             }
             (Command::Spcolor, Want::Outs(0), 2) => {
                 let color = int(&args[1])? as u32;
-                self.sprite(&args[0])?.color = color;
+                let s = self.sprite(&args[0])?;
+                stop(s, Target::C);
+                s.color = color;
                 Ok(vec![])
             }
             (Command::Spcolor, Want::Value, 1) => {
@@ -401,7 +413,10 @@ impl Runtime {
             (Command::Spchr, Want::Outs(0), 2) => {
                 let n = def_id(&args[1])?;
                 let def = self.sprites.defs[n];
-                self.sprite(&args[0])?.set_def(n as i32, &def);
+                let s = self.sprite(&args[0])?;
+                stop(s, Target::I);
+                stop(s, Target::Uv);
+                s.set_def(n as i32, &def);
                 Ok(vec![])
             }
             (Command::Spchr, Want::Outs(0), 3..=6) => {
@@ -413,6 +428,7 @@ impl Runtime {
                     }
                 }
                 let s = self.sprite(&args[0])?;
+                stop(s, Target::Uv);
                 // Omitted U and V stay; W and H become 16 and the
                 // attributes 0, as the reference describes.
                 s.u = u.unwrap_or(s.u);
@@ -496,10 +512,14 @@ impl Runtime {
             }
             (Command::Spanim, Want::Outs(0), 2) => {
                 let n = anim_id(&args[1])?;
-                let anim = self.sprites.anim_defs[n].clone().ok_or_else(|| {
-                    Error::with_detail(ErrorKind::IllegalFunctionCall, format!("no animation {n}"))
-                })?;
-                self.start_anim(&args[0], anim)
+                // A number ANIMDEF never set starts nothing.
+                match self.sprites.anim_defs[n].clone() {
+                    Some(anim) => self.start_anim(&args[0], anim),
+                    None => {
+                        self.sprite(&args[0])?;
+                        Ok(vec![])
+                    }
+                }
             }
             (Command::Spanim, Want::Outs(0), _) => {
                 let anim = self.anim_args(&args[1..])?;
@@ -568,9 +588,9 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Sphitsp, Want::Value, 0) => Ok(vec![Value::Int(self.hit(false, None))]),
+            // A sprite that is not set hits nothing.
             (Command::Sphitsp, Want::Value, 1 | 3) => {
                 let id = sprite_id(&args[0])?;
-                self.sprite(&args[0])?;
                 let (first, last) = match args {
                     [_, a, b] => (sprite_id(a)?, sprite_id(b)?),
                     _ => (0, SPRITES - 1),
@@ -588,8 +608,6 @@ impl Runtime {
             }
             (Command::Sphitsp, Want::Value, 2) => {
                 let (id, other) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
-                self.sprite(&args[0])?;
-                self.sprite(&args[1])?;
                 let hit = match self.sprites.body(id) {
                     Some(source) if id != other => {
                         let mut search = Search::new(source, other, other, None);
@@ -675,7 +693,8 @@ impl Runtime {
                     Some(_) => return Err(ErrorKind::TypeMismatch.into()),
                     None => None,
                 };
-                self.sprite(&args[0])?.func = func;
+                // A sprite that is not set takes it too.
+                self.sprites.list[sprite_id(&args[0])?].func = func;
                 Ok(vec![])
             }
             (Command::Spused, Want::Value, 1) => {
@@ -811,4 +830,12 @@ fn optional_real(v: &Value) -> Result<Option<f64>> {
         Value::Default => Ok(None),
         v => v.to_real().map(Some),
     }
+}
+
+/// Setting what an animation changes stops that animation, so that SPCHK
+/// no longer shows it.
+// UNVERIFIED for Z, R, S and I: SPOFS's X,Y, SPCOLOR and SPCHR's U,V
+// were checked.
+fn stop(s: &mut Sprite, target: Target) {
+    s.anims[target.index()] = None;
 }

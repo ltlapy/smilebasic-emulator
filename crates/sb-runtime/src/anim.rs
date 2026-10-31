@@ -68,7 +68,9 @@ impl Mode {
     pub fn parse(v: &Value) -> Result<Mode> {
         match v {
             Value::Str(s) => {
+                // Spaces after the name are left out (`"S "`).
                 let text = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
+                let text = text.trim_end_matches(' ');
                 let name = text.trim_end_matches(['+', '.']);
                 let flags = &text[name.len()..];
                 let target = NAMES

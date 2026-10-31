@@ -92,6 +92,19 @@ fn variables_of_unset_sprites() {
 }
 
 #[test]
+fn what_sets_or_needs_no_sprite() {
+    // An animation number never defined starts nothing; a sprite that is
+    // not set hits nothing and still takes SPFUNC.
+    let (_, out) = run(
+        "SPSET 0,0:SPANIM 0,5:SPCOL 0:SPCLR 1:SPFUNC 1,\"@X\":?SPCHK(0);SPHITSP(1);SPHITSP(0,1)\n@X",
+    );
+    assert_eq!(out, "0-10");
+    // Setting what an animation changes stops it.
+    let (_, out) = run("SPSET 0,0:SPANIM 0,\"C \",-4,-1,240,-1:SPCOLOR 0,0:?SPCHK(0)");
+    assert_eq!(out, "0");
+}
+
+#[test]
 fn functions_called_with_one_out() {
     let (_, out) = run("SPSET 0,5:SPCHR 0 OUT D:SPSET 242 OUT I:?D;I");
     assert_eq!(out, "51");
@@ -113,7 +126,6 @@ fn errors() {
         ("SPSET 0,0:SPLINK 0,0", "Illegal function call"),
         ("SPSET 0,0:SPANIM 0,\"XY\",1,2", "Illegal function call"),
         ("SPSET 0,0:SPANIM 0,\"Q\",1,2", "Out of range"),
-        ("SPSET 0,0:SPANIM 0,5", "Illegal function call"),
         ("SPSET 0,0:SPANIM 0,\"Z\",\"@NOPE\"", "Undefined label"),
     ] {
         let (_, out) = run(source);
