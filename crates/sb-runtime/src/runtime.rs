@@ -109,6 +109,11 @@ pub(crate) enum Command {
     Gyrov,
     Inkey,
     Inspect,
+    Irread,
+    Irsprite,
+    Irstart,
+    Irstate,
+    Irstop,
     Key,
     Keyboard,
     Layer,
@@ -196,10 +201,20 @@ pub(crate) enum Command {
     Tanim,
     Tarray,
     Tblend,
+    Tcbike,
+    Tccar,
+    Tcfishing,
     Tchk,
+    Tchouse,
     Tcolor,
     Tcoord,
     Tcopy,
+    Tcpiano,
+    Tcplane,
+    Tcrobot,
+    Tcsubm,
+    Tcvehicle,
+    Tcvisor,
     Tfill,
     Tfunc,
     Thide,
@@ -222,6 +237,7 @@ pub(crate) enum Command {
     Tstop,
     Tupdate,
     Tvar,
+    Vibrate,
     Wavset,
     Wavseta,
     Xctrlstyle,
@@ -306,6 +322,11 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GYROV", Command::Gyrov),
     ("INKEY$", Command::Inkey),
     ("INSPECT", Command::Inspect),
+    ("IRREAD", Command::Irread),
+    ("IRSPRITE", Command::Irsprite),
+    ("IRSTART", Command::Irstart),
+    ("IRSTATE", Command::Irstate),
+    ("IRSTOP", Command::Irstop),
     ("KEY", Command::Key),
     ("KEYBOARD", Command::Keyboard),
     ("LAYER", Command::Layer),
@@ -393,10 +414,20 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TANIM", Command::Tanim),
     ("TARRAY", Command::Tarray),
     ("TBLEND", Command::Tblend),
+    ("TCBIKE", Command::Tcbike),
+    ("TCCAR", Command::Tccar),
+    ("TCFISHING", Command::Tcfishing),
     ("TCHK", Command::Tchk),
+    ("TCHOUSE", Command::Tchouse),
     ("TCOLOR", Command::Tcolor),
     ("TCOORD", Command::Tcoord),
     ("TCOPY", Command::Tcopy),
+    ("TCPIANO", Command::Tcpiano),
+    ("TCPLANE", Command::Tcplane),
+    ("TCROBOT", Command::Tcrobot),
+    ("TCSUBM", Command::Tcsubm),
+    ("TCVEHICLE", Command::Tcvehicle),
+    ("TCVISOR", Command::Tcvisor),
     ("TFILL", Command::Tfill),
     ("TFUNC", Command::Tfunc),
     ("THIDE", Command::Thide),
@@ -419,6 +450,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("TSTOP", Command::Tstop),
     ("TUPDATE", Command::Tupdate),
     ("TVAR", Command::Tvar),
+    ("VIBRATE", Command::Vibrate),
     ("WAVSET", Command::Wavset),
     ("WAVSETA", Command::Wavseta),
     ("XCTRLSTYLE", Command::Xctrlstyle),
@@ -1585,6 +1617,25 @@ impl Runtime {
                 | Command::Sndstop,
                 _,
             ) => self.sound_command(command, args, want),
+            (
+                Command::Irread
+                | Command::Irsprite
+                | Command::Irstart
+                | Command::Irstate
+                | Command::Irstop
+                | Command::Tcbike
+                | Command::Tccar
+                | Command::Tcfishing
+                | Command::Tchouse
+                | Command::Tcpiano
+                | Command::Tcplane
+                | Command::Tcrobot
+                | Command::Tcsubm
+                | Command::Tcvehicle
+                | Command::Tcvisor
+                | Command::Vibrate,
+                _,
+            ) => self.device_command(command, args, want),
             _ => Err(no_form()),
         }
     }

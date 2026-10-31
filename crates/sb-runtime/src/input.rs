@@ -117,7 +117,14 @@ pub struct Input {
     /// Frames the left button has been held, anywhere and on the screen.
     touch: (u32, u32),
     /// XCTRLSTYLE's maximum number of controllers and operation style.
-    style: (i32, i32),
+    pub(crate) style: (i32, i32),
+    /// XCTRLSTYLE's IR Motion Camera flag.
+    pub(crate) ir_allowed: bool,
+    /// XCTRLSTYLE's Toy-Con types under operation style 100: left and
+    /// right of controller 1, then of controller 2.
+    pub(crate) toycons: [i32; 4],
+    /// IRSTATE of controllers 1 and 2.
+    pub(crate) ir_state: [i32; 2],
     /// KEY's contents for F1 to F5.
     pub function_keys: [Vec<u16>; 5],
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
@@ -137,6 +144,9 @@ impl Default for Input {
             }),
             touch: (0, 0),
             style: (1, 0),
+            ir_allowed: false,
+            toycons: [0; 4],
+            ir_state: [0; 2],
             function_keys: Default::default(),
             buttons_read: false,
         }
@@ -230,11 +240,11 @@ fn int(v: &Value) -> Result<i32> {
     v.to_int()
 }
 
-fn out_of_range(what: &str, n: i32) -> Error {
+pub(crate) fn out_of_range(what: &str, n: i32) -> Error {
     Error::with_detail(ErrorKind::OutOfRange, format!("{what} {n}"))
 }
 
-fn in_range(what: &str, v: &Value, range: std::ops::RangeInclusive<i32>) -> Result<i32> {
+pub(crate) fn in_range(what: &str, v: &Value, range: std::ops::RangeInclusive<i32>) -> Result<i32> {
     let n = int(v)?;
     if range.contains(&n) {
         Ok(n)
@@ -271,11 +281,11 @@ fn condition(v: Option<&Value>) -> Result<i32> {
     opt_in_range("function", v, 0..=3, 0)
 }
 
-fn reals(values: &[f64]) -> Vec<Value> {
+pub(crate) fn reals(values: &[f64]) -> Vec<Value> {
     values.iter().map(|&x| Value::Real(x)).collect()
 }
 
-fn ints(values: &[i32]) -> Vec<Value> {
+pub(crate) fn ints(values: &[i32]) -> Vec<Value> {
     values.iter().map(|&n| Value::Int(n)).collect()
 }
 
@@ -356,6 +366,8 @@ impl Runtime {
             (Command::Xctrlstyle, Want::Outs(0), 1) => {
                 in_range("style", &args[0], 0..=0)?;
                 input.style = (1, 0);
+                input.ir_allowed = false;
+                input.toycons = [0; 4];
                 self.result = 1;
                 Ok(vec![])
             }
@@ -367,12 +379,24 @@ impl Runtime {
                     n => return Err(out_of_range("style", n)),
                 };
                 let max = in_range("controllers", &args[0], most)?;
-                for a in &args[2..] {
-                    opt_int(a)?;
-                }
+                let flags = (args[2..].iter())
+                    .map(|a| Ok(opt_int(a)?.unwrap_or(0)))
+                    .collect::<Result<Vec<_>>>()?;
                 // The connection screen has nothing to ask: all controllers
                 // there are are connected.
                 input.style = (max, style);
+                input.ir_allowed = style != 100 && flags.get(1).is_some_and(|&f| f != 0);
+                input.toycons = [0; 4];
+                if style == 100 {
+                    // Two types for controller 1 or four for both, then
+                    // the connection screen's flag.
+                    let n = if flags.len() >= 4 {
+                        4
+                    } else {
+                        flags.len().min(2)
+                    };
+                    input.toycons[..n].copy_from_slice(&flags[..n]);
+                }
                 self.result = 1;
                 Ok(vec![])
             }

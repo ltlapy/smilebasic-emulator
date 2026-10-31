@@ -41,6 +41,13 @@ Without them:
 ## Input
 
 - There are no motion sensors: `ACCEL`, `GYROA` and `GYROV` read 0.
+- Nothing vibrates: `VIBRATE` checks its arguments and does nothing, and
+  `VIBRATE()` reads 0.
+- The IR Motion Camera starts and stops (`IRSTART`, `IRSTOP`, `IRSTATE`)
+  but never sees anything: `IRREAD` gives no clusters, or 48 dark
+  blocks in moment mode, and `IRSPRITE` shows no image.
+- Toy-Con set up with `XCTRLSTYLE` are never recognized: `TCPIANO` and
+  the other `TC` commands answer 0 for everything.
 - The mouse's left button is the touch screen (touch 0 only).
 - Controller 1 is the keyboard and the first gamepad together, reported
   as a handheld controller; other gamepads are Pro Controllers.

@@ -202,3 +202,46 @@ fn function_keys_start_as_smilebasic_4s() {
         "{rows:?}"
     );
 }
+
+#[test]
+fn hardware_the_emulator_lacks() {
+    let ok = |s| run(&[], s).unwrap();
+    let err = |s| run(&[], s).unwrap_err().kind;
+    // Nothing vibrates.
+    assert_eq!(
+        ok("VIBRATE 1,40:VIBRATE 1,0,1:VIBRATE 1,440,127,220,64:VIBRATE:?VIBRATE(1);VIBRATE(1,0)"),
+        "00"
+    );
+    assert_eq!(err("VIBRATE 0,40"), ErrorKind::OutOfRange);
+    assert_eq!(err("VIBRATE 1,63"), ErrorKind::OutOfRange);
+    // The IR camera runs once allowed, and sees nothing.
+    assert_eq!(err("IRSTART 1,0"), ErrorKind::IllegalFunctionCall);
+    assert_eq!(
+        ok(
+            "XCTRLSTYLE 1,1,0,1:?IRSTATE(1);:IRSTART 1,0:?IRSTATE(1);\nIRREAD 1 OUT S,N,C,D:?S;N;C;DIM(D,1);:IRSTOP 1:?IRSTATE(1)"
+        ),
+        "0200081"
+    );
+    assert_eq!(
+        ok("XCTRLSTYLE 1,1,0,1:IRSTART 2,2:IRREAD 2 OUT S,N,C,D:?C;DIM(D,0)"),
+        "4848"
+    );
+    // Toy-Con are set up but never recognized.
+    assert_eq!(err("TCPIANO 1 OUT F"), ErrorKind::IllegalFunctionCall);
+    assert_eq!(
+        ok("XCTRLSTYLE 1,100,0,1:TCPIANO 1 OUT F,K,D,V:?F;K;D;V;TCVEHICLE(1)"),
+        "00000"
+    );
+    assert_eq!(
+        err("XCTRLSTYLE 1,100,0,1:TCHOUSE 1 OUT F,A"),
+        ErrorKind::IllegalFunctionCall
+    );
+    assert_eq!(
+        ok("XCTRLSTYLE 2,100,10,10,6,5:TCCAR 1 OUT F,A,W:TCROBOT 2 OUT R,L:?F;R;DIM(L,0)"),
+        "004"
+    );
+    assert_eq!(
+        err("XCTRLSTYLE 1,100,0,1:TCPIANO 1 OUT F,K,D,V,X"),
+        ErrorKind::WrongNumberOfOutArguments
+    );
+}

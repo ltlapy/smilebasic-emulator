@@ -7,6 +7,7 @@ pub mod collision;
 pub mod complete;
 pub mod compose;
 pub mod confirm;
+mod devices;
 pub mod dialog;
 pub mod editor;
 pub mod env;
