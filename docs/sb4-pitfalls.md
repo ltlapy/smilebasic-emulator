@@ -369,6 +369,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 - `TALK` reads は as "wa", falling in pitch, when 、 comes right after
   it, as for a particle; before 。 or anywhere else it is "ha".
+- `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their
+  first argument left out with a comma after it (`BGMSTOP ,1`,
+  `BGMPLAY ,0,64`).
+- MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
+  length (`N60`), macro names with `_` and macros used inside a macro's
+  definition (`{X=CDE}{Y={X}F}`).
 
 ## Stopping
 

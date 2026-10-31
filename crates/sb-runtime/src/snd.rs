@@ -46,6 +46,15 @@ fn track_id(v: &Value) -> Result<usize> {
     in_range("track", v, 0..=TRACKS as i32 - 1).map(|n| n as usize)
 }
 
+/// A track that may be left out, also with a comma after it
+/// (`BGMSTOP ,1`).
+fn opt_track(v: Option<&Value>) -> Result<Option<usize>> {
+    match v {
+        None | Some(Value::Default) => Ok(None),
+        Some(v) => track_id(v).map(Some),
+    }
+}
+
 fn user_song(v: &Value) -> Result<i32> {
     in_range("song", v, 128..=255)
 }
@@ -158,7 +167,7 @@ impl Runtime {
             (Command::Bgmplay, Want::Outs(0), 1..=4) => {
                 let (track, music) = match args.len() {
                     1 => (0, int(&args[0])?),
-                    _ => (track_id(&args[0])?, int(&args[1])?),
+                    _ => (opt_track(args.first())?.unwrap_or(0), int(&args[1])?),
                 };
                 let volume = match args.get(2) {
                     None | Some(Value::Default) => 127,
@@ -226,7 +235,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Bgmstop, Want::Outs(0), 0..=2) => {
-                let track = args.first().map(track_id).transpose()?;
+                let track = opt_track(args.first())?;
                 let fade = seconds(args.get(1))?;
                 for t in Self::tracks_named(track) {
                     self.sound.stop(t, fade);
@@ -234,7 +243,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Bgmpause, Want::Outs(0), 0..=2) => {
-                let track = args.first().map(track_id).transpose()?;
+                let track = opt_track(args.first())?;
                 let fade = seconds(args.get(1))?;
                 for t in Self::tracks_named(track) {
                     self.sound.pause(t, fade);
@@ -242,7 +251,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Bgmcont, Want::Outs(0), 0..=2) => {
-                let track = args.first().map(track_id).transpose()?;
+                let track = opt_track(args.first())?;
                 let fade = seconds(args.get(1))?;
                 for t in Self::tracks_named(track) {
                     self.sound.resume(t, fade);
@@ -450,7 +459,9 @@ impl Runtime {
             (Command::Beepstop, Want::Outs(0), 0..=2) => {
                 let fade = seconds(args.get(1))?;
                 match args.first() {
-                    None => (0..HANDLES).for_each(|h| self.sound.beeps.stop(h, fade)),
+                    None | Some(Value::Default) => {
+                        (0..HANDLES).for_each(|h| self.sound.beeps.stop(h, fade))
+                    }
                     Some(v) => self.sound.beeps.stop(handle(v)?, fade),
                 }
                 Ok(vec![])

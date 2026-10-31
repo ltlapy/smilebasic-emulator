@@ -90,6 +90,7 @@ pub enum Cmd {
     PanWave([Num; 4]),
     PanWaveOff,
     ModulationOff,
+    ModulationOn,
     RepeatStart,
     /// Back to the matching RepeatStart; 0 repeats for ever.
     RepeatEnd(Num),
@@ -147,13 +148,24 @@ fn expand_into(
             continue;
         }
         let at = out.len();
-        let close = (i..text.len()).find(|&j| text[j] == '}').ok_or(at)?;
+        // A definition may use other macros: `{Y={X}F}`.
+        let mut open = 0;
+        let close = (i..text.len())
+            .find(|&j| {
+                match text[j] {
+                    '{' => open += 1,
+                    '}' => open -= 1,
+                    _ => {}
+                }
+                open == 0
+            })
+            .ok_or(at)?;
         let inside = &text[i + 1..close];
         let (name, body) = match inside.iter().position(|&c| c == '=') {
             Some(eq) => (&inside[..eq], Some(&inside[eq + 1..])),
             None => (inside, None),
         };
-        if name.is_empty() || !name.iter().all(char::is_ascii_alphanumeric) {
+        if name.is_empty() || !name.iter().all(|&c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(at);
         }
         let name: String = name.iter().collect();
@@ -313,6 +325,18 @@ impl Parser {
         self.song.channels[self.channel].push(cmd);
     }
 
+    /// The note before, if a tie follows it.
+    fn tied_pitch(&self) -> Option<Pitch> {
+        match self.song.channels[self.channel].last() {
+            Some(Cmd::Note {
+                pitch,
+                link: Link::Tie,
+                ..
+            }) => Some(*pitch),
+            _ => None,
+        }
+    }
+
     /// `&` or `_` written apart from the note before it.
     fn link_last(&mut self, link: Link, at: usize) -> Result<(), Error> {
         match self.song.channels[self.channel].last_mut() {
@@ -364,6 +388,7 @@ impl Parser {
             ("MAOF", Cmd::TremoloOff),
             ("MLOF", Cmd::PanWaveOff),
             ("MOF", Cmd::ModulationOff),
+            ("MON", Cmd::ModulationOn),
             ("ER", Cmd::EnvelopeOff),
         ] {
             if self.starts(word) {
@@ -415,10 +440,11 @@ impl Parser {
             },
             'N' => {
                 let key = self.num(0..=127)?;
-                if !self.eat(',') {
-                    return Err(self.at);
-                }
-                let len = self.len()?;
+                // Without `,length`, the note takes L's length.
+                let len = match self.eat(',') {
+                    true => self.len()?,
+                    false => Len { div: None, dots: 0 },
+                };
                 let link = self.link();
                 Cmd::Note {
                     pitch: Pitch::Number(key),
@@ -471,6 +497,16 @@ impl Parser {
                 return Ok(());
             }
             '&' => return self.link_last(Link::Tie, at),
+            // `C4&2`: a length after a tie goes on with the same note.
+            c if c.is_ascii_digit() => {
+                let Some(pitch) = self.tied_pitch() else {
+                    return Err(at);
+                };
+                self.at = at;
+                let len = self.len()?;
+                let link = self.link();
+                Cmd::Note { pitch, len, link }
+            }
             '_' => return self.link_last(Link::Porta, at),
             c => match note_name(c) {
                 Some(s) => {
@@ -675,5 +711,25 @@ mod tests {
         assert_eq!(parse("{NOPE}"), Err(0));
         assert_eq!(parse(":16C"), Err(0));
         assert!(parse("[[O4CEG]3<C2.]").is_ok());
+    }
+
+    #[test]
+    fn forms_bundled_and_shared_songs_use() {
+        // A tie followed by a bare length goes on with the same note.
+        let c = &parse("C4&2").unwrap().channels[0];
+        assert!(matches!(
+            c[1],
+            Cmd::Note {
+                pitch: Pitch::Name(0),
+                ..
+            }
+        ));
+        assert_eq!(parse("&2"), Err(0));
+        let c = &parse("{X=CD}{Y_1={X}E}{Y_1}").unwrap().channels[0];
+        assert_eq!(c.len(), 3);
+        assert_eq!(
+            parse("@MP19,19,19,0@MOF@MON N60").unwrap().channels[0].len(),
+            4
+        );
     }
 }

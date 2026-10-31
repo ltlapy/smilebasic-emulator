@@ -47,6 +47,8 @@ struct Channel {
     pan: i32,
     /// @E's, over the waveform's own.
     envelope: Option<Envelope>,
+    /// @MP's depth, which @MON turns back on after @MOF.
+    vibrato: i32,
     voice: Voice,
     /// Notes sounding now, as MIDI keys.
     sounding: Vec<i32>,
@@ -73,6 +75,7 @@ impl Default for Channel {
             detune: 0,
             pan: 64,
             envelope: None,
+            vibrato: 0,
             voice: Voice::Synth(0),
             sounding: Vec::new(),
             link: Link::None,
@@ -431,6 +434,12 @@ impl Track {
                 // UNVERIFIED: how depth, range, speed and delay map.
                 Cmd::Vibrato([depth, ..]) => {
                     let depth = self.var(*depth).clamp(0, 127);
+                    self.channels[c].vibrato = depth;
+                    self.synth(|s| s.modulation(c, depth));
+                }
+                // UNVERIFIED: that @MON turns @MP's vibrato back on.
+                Cmd::ModulationOn => {
+                    let depth = self.channels[c].vibrato;
                     self.synth(|s| s.modulation(c, depth));
                 }
                 Cmd::VibratoOff | Cmd::ModulationOff => self.synth(|s| s.modulation(c, 0)),
