@@ -1927,9 +1927,7 @@ impl Vm {
     fn enter_def(&mut self, def: u32, args: Vec<Value>, want: Want, caller: usize) -> Result<()> {
         let info = &self.program.defs[def as usize];
         let call_ok = match want {
-            // A DEF with OUTs may be called as a function, giving its
-            // first.
-            // UNVERIFIED: the first of several, not only of one.
+            // A DEF with one OUT may be called as a function, giving it.
             Want::Value => info.is_function || info.outs.is_none_or(|m| m > 0),
             // A function may be called with one OUT for its value.
             Want::Outs(n) => match info.is_function {
@@ -1940,10 +1938,13 @@ impl Vm {
         let args_ok = info.params.is_none_or(|p| usize::from(p) == args.len());
         // UNVERIFIED: that a DEF given the wrong number of arguments is
         // the same error as a builtin.
-        if !call_ok || !args_ok {
-            let kind = match call_ok {
-                true => ErrorKind::WrongNumberOfArguments,
-                false => ErrorKind::IllegalFunctionCall,
+        // Several OUTs for one value is the wrong number of them.
+        let too_many_outs = want == Want::Value && info.outs.is_some_and(|m| m > 1);
+        if !call_ok || !args_ok || too_many_outs {
+            let kind = match (call_ok, too_many_outs) {
+                (_, true) => ErrorKind::WrongNumberOfOutArguments,
+                (true, false) => ErrorKind::WrongNumberOfArguments,
+                (false, false) => ErrorKind::IllegalFunctionCall,
             };
             return Err(Error::with_detail(kind, info.name.clone()));
         }

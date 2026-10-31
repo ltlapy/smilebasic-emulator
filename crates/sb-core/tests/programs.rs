@@ -782,6 +782,11 @@ fn initialized_arrays_keep_their_sizes() {
     // DEFs too: one with an OUT as a function, a function with one OUT.
     assert_eq!(output("?F(3)\nDEF F A OUT R\n R=A*2\nEND"), "6\n");
     assert_eq!(output("T OUT X:?X\nDEF T()\n RETURN 5\nEND"), "5\n");
+    // Not one with two OUTs, at run time: checked on hardware.
+    assert_eq!(
+        error("?\"S\"\n?G()\nEND\nDEF G OUT X,Y\nEND"),
+        (ErrorKind::WrongNumberOfOutArguments, 2)
+    );
     // A variable used before its DIM is a duplicate, checked on hardware.
     assert_eq!(
         error("S$=\"A\"\nDIM S$[4]"),
