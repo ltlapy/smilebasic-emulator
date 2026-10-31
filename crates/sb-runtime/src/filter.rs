@@ -116,34 +116,88 @@ fn raster(fb: &mut Framebuffer, rows: &[[f64; 4]], vertical: bool, repeat: bool)
     if rows.is_empty() {
         return;
     }
+    thread_local! {
+        /// The frame as it was, kept between frames so as not to
+        /// allocate a frame's worth for every layer every frame.
+        static SOURCE: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    SOURCE.with_borrow_mut(|source| {
+        source.clear();
+        source.extend_from_slice(fb.pixels());
+        raster_from(fb, source, rows, vertical, repeat);
+    });
+}
+
+fn raster_from(
+    fb: &mut Framebuffer,
+    source: &[u32],
+    rows: &[[f64; 4]],
+    vertical: bool,
+    repeat: bool,
+) {
     let (w, h) = (fb.width() as usize, fb.height() as usize);
-    let source = fb.pixels().to_vec();
     let (fw, fh) = (w as f64, h as f64);
+    // The source point's index along a line of n, or None off it.
     let wrap = |v: f64, n: usize| -> Option<usize> {
-        if !v.is_finite() {
+        // NaN and the far off show nothing.
+        if v.is_nan() || v.abs() >= 1e15 {
             return None;
         }
-        let v = v.floor() as i64;
-        match repeat {
-            true => Some(v.rem_euclid(n as i64) as usize),
-            false => usize::try_from(v).ok().filter(|&v| v < n),
+        // Rounded down without the library call f64::floor makes on
+        // processors before SSE4.1.
+        let t = v as i64;
+        let t = t - i64::from(t as f64 > v);
+        match usize::try_from(t).ok().filter(|&t| t < n) {
+            Some(t) => Some(t),
+            None if repeat => Some(t.rem_euclid(n as i64) as usize),
+            None => None,
         }
     };
     let entry = |i: usize, n: usize| rows[i * rows.len() / n];
+    // Where a pixel's center lands in the source, across and down.
+    let across = |x: usize, [ox, sx, _, _]: [f64; 4]| wrap(sx * (x as f64 + 0.5) + ox * fw, w);
+    let down =
+        |y: usize, [_, _, oy, sy]: [f64; 4]| wrap(fh - (sy * (fh - (y as f64 + 0.5)) + oy * fh), h);
     let pixels = fb.pixels_mut();
+    if vertical {
+        // Each column takes its own entry.
+        let columns: Vec<([f64; 4], Option<usize>)> = (0..w)
+            .map(|x| {
+                let e = entry(x, w);
+                (e, across(x, e))
+            })
+            .collect();
+        for y in 0..h {
+            let row = &mut pixels[y * w..][..w];
+            for (dst, &(e, sx)) in row.iter_mut().zip(&columns) {
+                *dst = match (sx, down(y, e)) {
+                    (Some(a), Some(b)) => source[b * w + a],
+                    _ => 0,
+                };
+            }
+        }
+        return;
+    }
+    // Each row takes its own entry, so it reads one row of the source;
+    // a layer of its own is mostly rows with nothing in them.
+    let blank: Vec<bool> = source
+        .chunks_exact(w)
+        .map(|r| r.iter().all(|&p| p == 0))
+        .collect();
     for y in 0..h {
-        let gl_y = fh - (y as f64 + 0.5);
-        for x in 0..w {
-            let [ox, sx, oy, sy] = match vertical {
-                false => entry(y, h),
-                true => entry(x, w),
-            };
-            let sx_ = wrap(sx * (x as f64 + 0.5) + ox * fw, w);
-            let sy_ = wrap(fh - (sy * gl_y + oy * fh), h);
-            pixels[y * w + x] = match (sx_, sy_) {
-                (Some(a), Some(b)) => source[b * w + a],
-                _ => 0,
-            };
+        let e = entry(y, h);
+        let row = &mut pixels[y * w..][..w];
+        let Some(b) = down(y, e).filter(|&b| !blank[b]) else {
+            row.fill(0);
+            continue;
+        };
+        let from = &source[b * w..][..w];
+        if e[0] == 0.0 && e[1] == 1.0 {
+            row.copy_from_slice(from);
+            continue;
+        }
+        for (x, dst) in row.iter_mut().enumerate() {
+            *dst = across(x, e).map_or(0, |a| from[a]);
         }
     }
 }
