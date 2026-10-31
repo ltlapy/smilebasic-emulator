@@ -161,3 +161,12 @@ fn garray_follows_the_page() {
     let (_, out) = run("GUPDATE 0,0,0,2048,0");
     assert!(out.starts_with("Out of range"), "{out}");
 }
+
+#[test]
+fn proportional_widths() {
+    // The blank test font has blank characters only, a quarter of the
+    // font size wide; the spacing comes between them and scales.
+    let (_, out) =
+        run("?GPUTCHRP(\"AB\");\" \";GPUTCHRP(\"AB\",8,1,0);\" \";GPUTCHRP(\"AB\",16,2,3)");
+    assert_eq!(out, "9 4 22");
+}

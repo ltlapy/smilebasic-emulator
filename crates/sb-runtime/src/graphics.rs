@@ -648,29 +648,27 @@ impl Graphics {
         }
     }
 
-    /// GPUTCHRP's view of a character: the first column with anything
-    /// drawn and how many columns it spans, or `None` for a blank one.
+    /// GPUTCHRP's view of a character: the first column it takes and how
+    /// many, or `None` for a blank one. It takes what is drawn and one
+    /// empty column before that, where the glyph has one.
     fn ink(&self, font: &Font, code: u16, size: FontSize) -> Option<(i32, i32)> {
         let n = size as u32;
         let inked =
             |gx: u32| (0..n).any(|gy| glyph_pixel(font, self, code, size, gx, gy) >> 24 != 0);
-        let left = (0..n).find(|&gx| inked(gx))?;
+        let left = (0..n).find(|&gx| inked(gx))?.saturating_sub(1);
         let right = (0..n).rev().find(|&gx| inked(gx))?;
         Some((left as i32, (right - left + 1) as i32))
     }
 
-    /// How far GPUTCHRP moves on after a character, before the spacing.
-    // UNVERIFIED: that a character is as wide as what is drawn of it, and
-    // a blank one a quarter of the font size, as font.map's widths
-    // suggest for the space.
+    /// How far GPUTCHRP moves on after a character, before the spacing; a
+    /// blank one is a quarter of the font size.
     fn advance(&self, font: &Font, code: u16, size: FontSize) -> i32 {
         self.ink(font, code, size)
             .map_or(size as i32 / 4, |(_, w)| w)
     }
 
-    /// GPUTCHRP's function form: how wide `text` is drawn.
-    // UNVERIFIED: that the spacing comes only between characters and is
-    // not scaled.
+    /// GPUTCHRP's function form: how wide `text` is drawn, the spacing
+    /// coming between characters and scaled with them.
     pub fn proportional_width(
         &self,
         font: &Font,
@@ -679,8 +677,8 @@ impl Graphics {
         sx: i32,
         spacing: i32,
     ) -> i32 {
-        let widths: i32 = text.iter().map(|&c| self.advance(font, c, size) * sx).sum();
-        widths + spacing * (text.len() as i32 - 1).max(0)
+        let widths: i32 = text.iter().map(|&c| self.advance(font, c, size)).sum();
+        (widths + spacing * (text.len() as i32 - 1).max(0)) * sx
     }
 
     /// GPUTCHRP: characters as wide as each is, `spacing` pixels apart.
@@ -712,7 +710,8 @@ impl Graphics {
                     }
                 }
             }
-            left = left.saturating_add(self.advance(font, code, size) * sx + spacing);
+            // UNVERIFIED: that drawing scales the spacing as the width does.
+            left = left.saturating_add((self.advance(font, code, size) + spacing) * sx);
         }
     }
 
