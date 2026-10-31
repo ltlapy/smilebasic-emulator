@@ -49,6 +49,7 @@ follows all of it. Items still waiting for a check are marked
   guide there is neither. Extra values typed are left out. After `?Redo from
   start`, the line is typed again on the next line, without the prompt.
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
+  A component above 1.0 is `Out of range` (`RGBF(2,-1,0.5)`).
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
   for 400x240.
 - Only one-dimensional arrays may be empty: `DIM A[0]` is fine, but
@@ -261,6 +262,13 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   flag draws only the outline.
 - `GPUTCHR` with mode 0 clears the page under the character's
   transparent pixels.
+- `GPUTCHRP` takes each character from one empty column before what is
+  drawn of it (none if the glyph starts at its first column) to its last
+  drawn column, and moves on that many pixels plus the spacing (1 when
+  left out). A blank character is a quarter of the font size wide. In
+  the 16-pixel font this is the width font.map holds in bits 7-15 of
+  each code's second u16. The function form's width scales the spacing
+  with the characters: `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
 - `LCLIP`'s corners are inclusive.
 - `LMATRIX layer,hx,hy` moves the layer by minus the home point.
 - An additive sprite inside a composed layer adds light without
@@ -286,7 +294,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `LMATRIX layer,M` with 16 reals takes the layer's coordinates as
   (x, y, 0, 1) through M to clip space, X right and Y up: the identity
   puts the layer's square from (0,0) to (1,1) over the screen's top
-  right quarter.
+  right quarter. M is column-major: M[12] moves along X. With M[3]
+  set, W grows along X and the picture narrows that way as OpenGL's
+  perspective divide would. Raster deformation applies to the screen
+  after LMATRIX has placed the layer (TTEST27, pixel for pixel).
 - On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
   the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
   On a composed layer it filters only that layer. Mosaic blocks start at
@@ -373,7 +384,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   direct mode while a program is stopped or after an error; its OUT
   forms then report no error.
 - `PERFEND()` gives microseconds; `PERFBEGIN` and `PERFEND` show no
-  gauge on their own.
+  gauge on their own. Without a `PERFBEGIN`, `PERFEND` counts from when
+  SmileBASIC started.
 
 ## System settings
 
