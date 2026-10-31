@@ -455,6 +455,9 @@ impl TextScreen {
             clip,
             add: self.add,
         };
+        if place.is_upright() {
+            return self.draw_upright(fb, font, grp, &place, cursor);
+        }
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
         let size = f64::from(cs);
         // The cell's character in its colors, looked up once rather than
@@ -468,21 +471,7 @@ impl TextScreen {
                 if cell.code == 0 && !at_cursor {
                     continue;
                 }
-                for (i, pixel) in glyph.iter_mut().enumerate() {
-                    let (gx, gy) = (i as u32 % ft, i as u32 / ft);
-                    let pixel_color = if cell.code == 0 {
-                        0
-                    } else {
-                        let p = self.glyph_pixel(font, grp, cell.code, gx, gy);
-                        multiply(p, cell.color)
-                    };
-                    let pixel_color = if at_cursor {
-                        over(pixel_color, self.color)
-                    } else {
-                        pixel_color
-                    };
-                    *pixel = multiply(pixel_color, self.tint);
-                }
+                self.glyph(font, grp, cell, at_cursor, &mut glyph);
                 let (x0, y0) = ((cx * cs) as i32, (cy * cs) as i32);
                 let part = (x0, y0, x0 + cs as i32, y0 + cs as i32);
                 draw_image_part(fb, &place, w, h, part, |x, y| {
@@ -509,6 +498,137 @@ impl TextScreen {
                     let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
                     glyph[(at(py) * ft + at(px)) as usize]
                 });
+            }
+        }
+    }
+}
+
+impl TextScreen {
+    /// A cell's character in its colors, `ft` x `ft`, as draw_placed
+    /// works it out.
+    fn glyph(&self, font: &Font, grp: &Graphics, cell: Cell, at_cursor: bool, out: &mut [u32]) {
+        let ft = self.font_type;
+        let color = |p: u32| {
+            let p = if cell.code == 0 {
+                0
+            } else {
+                multiply(p, cell.color)
+            };
+            let p = if at_cursor { over(p, self.color) } else { p };
+            multiply(p, self.tint)
+        };
+        // Where the character comes from is looked up once, not for
+        // every pixel; the pixels are those glyph_pixel gives.
+        let mut fill = |pixel: &dyn Fn(u32, u32) -> u32| {
+            for (i, p) in out.iter_mut().enumerate() {
+                *p = color(pixel(i as u32 % ft, i as u32 / ft));
+            }
+        };
+        let size = match ft {
+            8 => Some(FontSize::Small),
+            16 => Some(FontSize::Large),
+            _ => None,
+        };
+        match (cell.code, size) {
+            (0, _) => fill(&|_, _| 0),
+            (code, _) if USER_CHARS.contains(&code) => {
+                fill(&|x, y| self.glyph_pixel(font, grp, code, x, y))
+            }
+            (code, Some(size)) => match font.origin(code, size) {
+                Some((gx, gy)) => {
+                    fill(&|x, y| grp.pixel(FONT_PAGE, (gx + x) as i32, (gy + y) as i32))
+                }
+                None => fill(&|x, y| font.pixel(code, size, x, y)),
+            },
+            // Larger font types show only user-defined characters.
+            (_, None) => fill(&|_, _| 0),
+        }
+    }
+
+    /// draw_placed for a screen neither turned nor sheared on the frame:
+    /// which cell and which point of it each frame column and row shows
+    /// is worked out once, and each row of cells' characters once.
+    fn draw_upright(
+        &self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        grp: &Graphics,
+        place: &Placement,
+        cursor: Option<(u32, u32)>,
+    ) {
+        let (cs, ft) = (self.char_size, self.font_type);
+        let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
+        let Some(grid) = crate::compose::grid(fb, place, w, h) else {
+            return;
+        };
+        let size = f64::from(cs);
+        let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
+        // For each column (or row): its cell, and the glyph column (or
+        // row) for the point in the cell, for the point flipped, and for
+        // it flipped twice, as draw_placed's arithmetic gives them.
+        let axis = |v: f64| {
+            let c = (v / size) as u32;
+            let p = v - f64::from(c * cs);
+            (c, [at(p), at(size - p), at(size - (size - p))])
+        };
+        let cols: Vec<(u32, [u32; 3])> = grid.xs.iter().map(|&x| axis(x)).collect();
+        // Which of those each glyph coordinate comes from, by ATTR: the
+        // column's (false) or the row's (true) table, and which entry.
+        let pick = |a: u8| -> ((bool, usize), (bool, usize)) {
+            let (mut p, mut q) = match a & attr::ROTATION {
+                0 => ((false, 0), (true, 0)),
+                1 => ((true, 0), (false, 1)),
+                2 => ((false, 1), (true, 1)),
+                _ => ((true, 1), (false, 0)),
+            };
+            if a & attr::REVH != 0 {
+                p.1 += 1;
+            }
+            if a & attr::REVV != 0 {
+                q.1 += 1;
+            }
+            (p, q)
+        };
+        let glyph_len = (ft * ft) as usize;
+        // Each character in each color once, however many cells show it.
+        let mut glyphs: Vec<u32> = Vec::new();
+        let mut made: HashMap<(u16, u32, bool), usize> = HashMap::new();
+        // Per cell of the row, if it shows anything: its picks and where
+        // its character is in `glyphs`.
+        let mut shown = vec![None; self.width as usize];
+        let mut row_of = None;
+        let width = fb.width() as usize;
+        let pixels = fb.pixels_mut();
+        for (fy, &y) in (grid.y0 as usize..).zip(&grid.ys) {
+            let (cy, rat) = axis(y);
+            if row_of != Some(cy) {
+                row_of = Some(cy);
+                for cx in 0..self.width {
+                    let cell = self.cell(cx, cy);
+                    let at_cursor = cursor == Some((cx, cy));
+                    shown[cx as usize] = (cell.code != 0 || at_cursor).then(|| {
+                        let key = (cell.code, cell.color, at_cursor);
+                        let at = *made.entry(key).or_insert_with(|| {
+                            let at = glyphs.len();
+                            glyphs.resize(at + glyph_len, 0);
+                            self.glyph(font, grp, cell, at_cursor, &mut glyphs[at..]);
+                            at
+                        });
+                        (pick(cell.attr), at)
+                    });
+                }
+            }
+            let line = &mut pixels[fy * width + grid.x0 as usize..][..cols.len()];
+            for (dst, &(cx, cat)) in line.iter_mut().zip(&cols) {
+                let Some(((p, q), at)) = shown[cx as usize] else {
+                    continue;
+                };
+                let coord = |(row, k): (bool, usize)| if row { rat[k] } else { cat[k] };
+                let src = glyphs[at + (coord(q) * ft + coord(p)) as usize];
+                if src >> 24 == 0 {
+                    continue;
+                }
+                *dst = crate::compose::blend(*dst, src, place.add);
             }
         }
     }
