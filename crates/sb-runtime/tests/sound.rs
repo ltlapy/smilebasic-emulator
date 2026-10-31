@@ -61,6 +61,20 @@ fn tracks_repeat_stop_and_pause() {
 }
 
 #[test]
+fn a_fading_stop_shows_two_frames_later() {
+    let mut rt = runtime();
+    run_on(&mut rt, "BGMPLAY 0,1:BGMPLAY 1,1").unwrap();
+    frames(&mut rt, 30);
+    run_on(&mut rt, "BGMSTOP 0,2:BGMSTOP 1,1").unwrap();
+    frames(&mut rt, 1);
+    // Again, a frame later: no longer to wait.
+    run_on(&mut rt, "BGMSTOP 1,1").unwrap();
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "11");
+    frames(&mut rt, 1);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "00");
+}
+
+#[test]
 fn variables_and_data() {
     let mut m = Machine::new(runtime());
     m.boot();
