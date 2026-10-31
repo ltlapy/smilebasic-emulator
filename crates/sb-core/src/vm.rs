@@ -1957,6 +1957,15 @@ impl Vm {
             .iter()
             .map(|v| initial_value(v, default_int))
             .collect();
+        // OUT variables hold nothing until set: a DEF that never sets
+        // one gives the omitted value, as SmileBASIC Debugger's EMPTY()
+        // relies on.
+        // UNVERIFIED: for OUT variables with a suffix too.
+        let first_out = usize::from(info.params.unwrap_or(0));
+        let out_count = usize::from(info.outs.unwrap_or(0));
+        for v in locals.iter_mut().skip(first_out).take(out_count) {
+            *v = Value::Default;
+        }
         let variadic_args = match info.params {
             Some(_) => {
                 for (i, a) in args.into_iter().enumerate() {
