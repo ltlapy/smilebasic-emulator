@@ -474,6 +474,14 @@ impl Lexer {
 
     fn operator(&mut self, c: char, start: Span) -> Result<(), LexError> {
         let rest = &self.chars[self.pos..];
+        // `??` is short for the INSPECT command, as `?` is for PRINT.
+        if rest.starts_with(&['?', '?']) {
+            self.bump();
+            self.bump();
+            let name = "INSPECT".to_string();
+            self.push(TokenKind::Ident { name, suffix: None }, start);
+            return Ok(());
+        }
         let (spelling, kind) = OPERATORS
             .iter()
             .find(|(op, _)| op.len() <= rest.len() && op.chars().zip(rest).all(|(a, &b)| a == b))

@@ -320,6 +320,36 @@ fn dynamic_access() {
 }
 
 #[test]
+fn chklabel_chkcall_chkvar() {
+    let src = "@MAIN\nVAR COUNTX$\n\
+        ?CHKLABEL(\"@MAIN\");CHKLABEL(\"MAIN\");CHKLABEL(\"@NONE\")\n\
+        ?CHKCALL(\"KEYCHECK\");CHKCALL(\"SIN\");CHKCALL(\"DEFARGC\");CHKCALL(\"NONE\")\n\
+        ?CHKVAR(\"COUNTX$\");CHKVAR(\"COUNTX\");CHKVAR(\"L\")\n\
+        KEYCHECK\n\
+        DEF KEYCHECK\nVAR L\n@INNER\n\
+        ?CHKLABEL(\"@INNER\");CHKLABEL(\"@MAIN\");CHKLABEL(\"@MAIN\",1);CHKVAR(\"L\");CHKVAR(\"COUNTX$\")\n\
+        END";
+    assert_eq!(output(src), "110\n1110\n100\n10111\n");
+    assert_eq!(error("?CHKVAR(1)").0, ErrorKind::TypeMismatch);
+    assert_eq!(
+        output("?CHKCALL(\"VSYNC\");CHKCALL(\"INC\");CHKCALL(\"INSPECT\")"),
+        "111\n"
+    );
+}
+
+#[test]
+fn inspect() {
+    assert_eq!(
+        output("A=1.5\nINSPECT A\n?? \"AB\"*2:??7"),
+        "REAL 1.5\nSTRING(4) \"ABAB\"\nINT 7\n"
+    );
+    assert_eq!(
+        output("DIM A%[2]\n??A%"),
+        "INT[2] 2 elements\n[0] 0\n[1] 0\n"
+    );
+}
+
+#[test]
 fn constants_and_data() {
     let src = "CONST #C1=1,#C2=\"ABC\",#C3=RAD(180)\n?#C1;#C2;#C3==#PI\nENUM #TYPE1=2,#TYPE2,#TYPE3\n?#TYPE1;#TYPE2;#TYPE3";
     assert_eq!(output(src), "1ABC1\n234\n");

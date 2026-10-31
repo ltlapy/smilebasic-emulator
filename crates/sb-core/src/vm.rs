@@ -43,6 +43,13 @@ pub enum Status {
     },
 }
 
+/// Commands and functions the compiler turns into instructions of their
+/// own rather than calls, for CHKCALL.
+const VM_CALLS: &[&str] = &[
+    "CALLIDX", "DEFARG", "DEFARGC", "DEFOUTC", "CHKLABEL", "CHKCALL", "CHKVAR", "INC", "DEC",
+    "VSYNC", "WAIT", "EXEC", "DEFOUT", "INSPECT",
+];
+
 /// Waits a frame and runs the same instruction again.
 const RETRY: Status = Status::Retry;
 
@@ -456,6 +463,39 @@ impl Vm {
             _ => self.labels().get(&name).map(|&a| (self.slot, a as usize)),
         };
         found.ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))
+    }
+
+    /// CHKLABEL: whether a label exists where GOTO would look for it.
+    /// In a DEF, `outer` also looks at the top level.
+    fn has_label(&self, value: &Value, outer: bool) -> Result<bool> {
+        let (slot, name) = slot_and_name(value)?;
+        Ok(match slot {
+            // UNVERIFIED: a slot that EXEC has not run reports 0 rather
+            // than an error.
+            Some(slot) if slot != self.slot => {
+                (self.program_in(slot)).is_some_and(|p| p.labels.contains_key(&name))
+            }
+            _ => {
+                self.labels().contains_key(&name)
+                    || (outer && self.program.labels.contains_key(&name))
+            }
+        })
+    }
+
+    /// CHKCALL: whether CALL could call the name, as a DEF of this slot,
+    /// a COMMON DEF of another, or a command or function of the system.
+    // UNVERIFIED: reserved statements such as PRINT and GOTO report 0.
+    fn has_call(&self, value: &Value, host: &dyn Host) -> Result<bool> {
+        let (slot, name) = slot_and_name(value)?;
+        if let Some(slot) = slot.filter(|&s| s != self.slot) {
+            return Ok((self.program_in(slot)).is_some_and(|p| p.def_names.contains_key(&name)));
+        }
+        Ok(self.program.def_names.contains_key(&name)
+            || self.find_common(&name).is_some()
+            || builtins::lookup(&name, Form::Function).is_some()
+            || builtins::lookup(&name, Form::Command).is_some()
+            || host.lookup(&name).is_some()
+            || VM_CALLS.contains(&name.as_str()))
     }
 
     /// The program of a slot that runs or that EXEC has run.
@@ -948,6 +988,32 @@ impl Vm {
                 }
             }
             Op::CallIdx => self.stack.push(Value::Int(self.call_idx)),
+            Op::ChkLabel { has_flag } => {
+                let outer = match has_flag {
+                    true => self.pop().to_int()? != 0,
+                    false => false,
+                };
+                let name = self.pop();
+                let found = self.has_label(&name, outer)?;
+                self.stack.push(Value::Int(found.into()));
+            }
+            Op::ChkCall => {
+                let name = self.pop();
+                let found = self.has_call(&name, host)?;
+                self.stack.push(Value::Int(found.into()));
+            }
+            Op::ChkVar => {
+                let name = name_of(&self.pop())?;
+                let found = self.dynamic_slot(&name).is_ok();
+                self.stack.push(Value::Int(found.into()));
+            }
+            Op::Inspect => {
+                let value = self.pop();
+                for line in crate::inspect::lines(&value) {
+                    host.print(None, &line)?;
+                    host.print_newline(None)?;
+                }
+            }
             Op::DefArgc => {
                 let f = self.frame()?;
                 let n = match program.defs[f.def as usize].params {

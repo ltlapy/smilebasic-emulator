@@ -10,6 +10,7 @@ pub mod compiler;
 pub mod constants;
 pub mod error;
 pub mod host;
+pub mod inspect;
 pub mod lexer;
 pub mod ops;
 pub mod parser;

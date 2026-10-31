@@ -943,6 +943,15 @@ impl Compiler<'_> {
                 self.emit(Op::Exec(args.len() as u8));
                 return Ok(());
             }
+            "INSPECT" => {
+                no_outs(self)?;
+                let [Some(value)] = args else {
+                    return Err(self.illegal_call(&full));
+                };
+                self.expr(value)?;
+                self.emit(Op::Inspect);
+                return Ok(());
+            }
             "DEFOUT" => {
                 no_outs(self)?;
                 self.require_def()?;
@@ -1280,6 +1289,25 @@ impl Compiler<'_> {
                 self.require_def()?;
                 self.expr(n)?;
                 self.emit(Op::DefArg);
+                return Ok(());
+            }
+            ("CHKLABEL", [Some(name)]) | ("CHKLABEL", [Some(name), Some(_)]) => {
+                self.expr(name)?;
+                if let [_, Some(flag)] = args {
+                    self.expr(flag)?;
+                }
+                self.emit(Op::ChkLabel {
+                    has_flag: args.len() == 2,
+                });
+                return Ok(());
+            }
+            ("CHKCALL", [Some(name)]) | ("CHKVAR", [Some(name)]) => {
+                self.expr(name)?;
+                self.emit(if full == "CHKCALL" {
+                    Op::ChkCall
+                } else {
+                    Op::ChkVar
+                });
                 return Ok(());
             }
             _ => {}

@@ -154,6 +154,16 @@ pub enum Op {
     CallbackNext(Addr),
     /// `CALLIDX()`
     CallIdx,
+    /// `[name, flag?] -> [found]`: CHKLABEL.
+    ChkLabel {
+        has_flag: bool,
+    },
+    /// `[name] -> [found]`: CHKCALL.
+    ChkCall,
+    /// `[name] -> [found]`: CHKVAR.
+    ChkVar,
+    /// `[value] -> []`: INSPECT prints the value's details.
+    Inspect,
     /// `[n] -> [arg n]`
     DefArg,
     DefOutc,
