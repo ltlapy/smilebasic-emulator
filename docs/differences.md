@@ -70,9 +70,10 @@ Without them:
 
 ## Other
 
-- What a program writes to a `GARRAY` array shows on the page only after
-  `GUPDATE`. On SmileBASIC 4, drawing commands near those writes show
-  them too.
+- What a program writes to a `GARRAY` array shows on the screen only
+  after `GUPDATE`; `GPGET` and other commands that read the page see it
+  at once, as on SmileBASIC 4. There, drawing commands near the writes
+  also bring them to the screen.
 - `FREEMEM` always answers what SmileBASIC 4 shows at start-up
   (134216720 bytes): the emulator does not count the memory that
   strings and arrays take.

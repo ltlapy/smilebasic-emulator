@@ -130,8 +130,11 @@ pub struct Graphics {
     /// GSAMPLE of each page: 0 for border, 1 for repeat. Kept for sprites
     /// and text screens, which read pages.
     pub sample: [i32; PAGES],
-    /// GARRAY's array of each page, `[y, x]`: every pixel drawn is
-    /// written to it as well, and GUPDATE brings its writes back.
+    /// GARRAY's array of each page, `[y, x]`, which stands for the page's
+    /// memory: every pixel drawn is written to it as well, and commands
+    /// that read the page read it. The page itself is what the screen
+    /// shows, which takes the array's writes on GUPDATE (checked on
+    /// hardware: GPGET sees them before).
     arrays: [Option<ArrayRef>; PAGES],
 }
 
@@ -160,6 +163,20 @@ impl Graphics {
             return 0;
         }
         pixels[index(x, y)]
+    }
+
+    /// A pixel of a page as programs read it: from its GARRAY array if it
+    /// has one, else as shown.
+    pub fn read(&self, page: usize, x: i32, y: i32) -> u32 {
+        if let Some(array) = &self.arrays[page]
+            && Clip::PAGE.contains(x, y)
+            && let Ok(array) = array.try_borrow()
+            && let ArrayData::Int(v) = &array.data
+            && let Some(&p) = v.get(index(x, y))
+        {
+            return p as u32;
+        }
+        self.pixel(page, x, y)
     }
 
     /// Whether a page is empty, as at start-up or after GCLS with 0.
@@ -261,9 +278,10 @@ impl Graphics {
         if !self.clip.contains(x, y) {
             return;
         }
+        let dst = self.read(self.target, x, y);
         let pixels = self.target_pixels();
         let i = index(x, y);
-        let p = blend.apply(pixels[i], color);
+        let p = blend.apply(dst, color);
         pixels[i] = p;
         if let Some(array) = &self.arrays[self.target]
             && let Ok(mut array) = array.try_borrow_mut()
@@ -422,7 +440,7 @@ impl Graphics {
             return;
         }
         let page = self.target;
-        let start = self.pixel(page, x, y);
+        let start = self.read(page, x, y);
         let fills = |p: u32| match border {
             Some(b) => p != b && p != color,
             None => p == start,
@@ -438,7 +456,7 @@ impl Graphics {
                 continue;
             }
             let i = (y - c.y0) as usize * w + (x - c.x0) as usize;
-            if seen[i] || !fills(self.pixel(page, x, y)) {
+            if seen[i] || !fills(self.read(page, x, y)) {
                 continue;
             }
             seen[i] = true;
@@ -464,7 +482,7 @@ impl Graphics {
         let mut pixels = Vec::with_capacity((w * h) as usize);
         for y in 0..h {
             for x in 0..w {
-                pixels.push(self.pixel(src, from.x0 + x, from.y0 + y));
+                pixels.push(self.read(src, from.x0 + x, from.y0 + y));
             }
         }
         let c = self.clip;
@@ -514,7 +532,7 @@ impl Graphics {
         let mut pixels = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
         for py in y..y + h {
             for px in x..x + w {
-                pixels.push(self.pixel(page, px, py));
+                pixels.push(self.read(page, px, py));
             }
         }
         pixels

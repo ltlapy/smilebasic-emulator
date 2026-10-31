@@ -162,7 +162,7 @@ impl Runtime {
             }
             (Command::Gpget, Want::Value, 2) => {
                 let v = ints(2)?;
-                let p = self.grp.pixel(self.grp.target, v[0], v[1]);
+                let p = self.grp.read(self.grp.target, v[0], v[1]);
                 Ok(vec![Value::Int(p as i32)])
             }
             (Command::Gpset, Want::Outs(0), 2..=4) => {
@@ -322,8 +322,8 @@ impl Runtime {
                 let page = page_arg(&args[0])?;
                 Ok(vec![Value::Array(self.grp.array(page))])
             }
-            // The array's writes show only after GUPDATE: on hardware,
-            // drawing near them shows them too.
+            // The array's writes show on screen after GUPDATE: on
+            // hardware, drawing near them shows them too.
             (Command::Gupdate, Want::Outs(0), 1 | 5) => {
                 let page = page_arg(&args[0])?;
                 let rect = match &args[1..] {

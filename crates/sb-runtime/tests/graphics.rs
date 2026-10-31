@@ -150,8 +150,12 @@ fn garray_follows_the_page() {
          GUPDATE 0\n\
          H=GARRAY(0):H[0,0]=7\n\
          ?HEX$(GPGET(4,5));\" \";G[0,0];\" \";DIM(G,0)");
-    assert_eq!(out, "FFFF0000 0 FF0000FF 7 2048");
+    // GPGET reads the array; the screen takes it on GUPDATE (TTEST21).
+    assert_eq!(out, "FFFF0000 FF0000FF FF0000FF 7 2048");
     assert_eq!(m.rt.grp.pixel(0, 4, 5), 0xFF00_00FF);
+    let (m, out) = run("G=GARRAY(0):G[20,20]=#C_LIME:GPSET 21,20,#C_RED:?HEX$(GPGET(20,20))");
+    assert_eq!(out, "FF00FF00");
+    assert_eq!(m.rt.grp.pixel(0, 20, 20), 0);
     let (_, out) = run("G=GARRAY(1):G[0,0]=-1:GUPDATE 1,0,0,0,0:GTARGET 1:?HEX$(GPGET(0,0))");
     assert_eq!(out, "FFFFFFFF");
     let (_, out) = run("GUPDATE 0,0,0,2048,0");
