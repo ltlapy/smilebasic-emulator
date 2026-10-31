@@ -40,6 +40,7 @@ fn error(source: &str) -> (ErrorKind, u32) {
 fn print_separators() {
     assert_eq!(output("PRINT 1;2\n?\"A\",\"B\"\nPRINT"), "12\nA   B\n\n");
     assert_eq!(output("?1;:?2"), "12\n");
+    assert_eq!(output("? ?1"), "\n1\n");
 }
 
 #[test]
@@ -330,23 +331,11 @@ fn chklabel_chkcall_chkvar() {
         DEF KEYCHECK\nVAR L\n@INNER\n\
         ?CHKLABEL(\"@INNER\");CHKLABEL(\"@MAIN\");CHKLABEL(\"@MAIN\",1);CHKVAR(\"L\");CHKVAR(\"COUNTX$\")\n\
         END";
-    assert_eq!(output(src), "110\n1110\n100\n10111\n");
+    assert_eq!(output(src), "100\n1110\n100\n10111\n");
     assert_eq!(error("?CHKVAR(1)").0, ErrorKind::TypeMismatch);
     assert_eq!(
-        output("?CHKCALL(\"VSYNC\");CHKCALL(\"INC\");CHKCALL(\"INSPECT\")"),
-        "111\n"
-    );
-}
-
-#[test]
-fn inspect() {
-    assert_eq!(
-        output("A=1.5\nINSPECT A\n?? \"AB\"*2:??7"),
-        "REAL: 1.50000000\nSTRING: (4)\"ABAB\"\nINT: 7\n"
-    );
-    assert_eq!(
-        output("DIM A%[2]\n??A%"),
-        "INT[2] 2 elements\n[0] 0\n[1] 0\n"
+        output("?CHKCALL(\"VSYNC\");CHKCALL(\"INC\");CHKCALL(\"STOP\")"),
+        "100\n"
     );
 }
 

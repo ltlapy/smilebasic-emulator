@@ -539,44 +539,83 @@ fn stop_and_cont() {
     enter(&mut m, "RUN");
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["Break on 0:2", "OK"]);
+    // The main interpreter is running whatever asks.
     enter(&mut m, "?ENVSTAT():A=5");
-    assert_eq!(rows(&m)[rows(&m).len() - 2], "1");
-    // Direct mode's changes reach the program.
+    assert_eq!(rows(&m)[rows(&m).len() - 2], "3");
+    // Direct mode's changes reach the program; the message follows the
+    // line.
     enter(&mut m, "CONT");
     let r = rows(&m);
-    assert_eq!(&r[r.len() - 5..], ["cont", "5", "HI", "Break on 0:4", "OK"]);
+    assert_eq!(&r[r.len() - 5..], ["cont", "5", "Break on 0:4", "HI", "OK"]);
     enter(&mut m, "CONT");
     let r = rows(&m);
     assert_eq!(&r[r.len() - 2..], ["END", "OK"]);
     enter(&mut m, "CONT");
     let r = rows(&m);
     assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+    enter(&mut m, "STOP");
+    let r = rows(&m);
+    assert!(
+        r[r.len() - 2].starts_with("Can't use from direct mode"),
+        "{r:?}"
+    );
 }
 
 #[test]
-fn cont_refuses_after_edits_errors_and_input() {
+fn cont_after_edits_and_input_but_not_errors() {
     let mut m = machine();
     m.set_slot(0, "STOP\n?1".to_string());
     enter(&mut m, "RUN");
     m.set_slot(0, "STOP\n?2".to_string());
     enter(&mut m, "CONT");
     let r = rows(&m);
-    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+    assert_eq!(&r[r.len() - 2..], ["1", "OK"]);
 
-    m.set_slot(0, "A=0\n?1/A".to_string());
-    enter(&mut m, "RUN");
-    enter(&mut m, "?ENVSTAT()");
-    assert_eq!(rows(&m)[rows(&m).len() - 2], "2");
-    enter(&mut m, "CONT");
-    let r = rows(&m);
-    assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
-
-    m.set_slot(0, "INPUT A".to_string());
+    // + at INPUT stops after the prompt; CONT goes on after the INPUT.
+    m.set_slot(0, "X=7\nINPUT \"IN\";X\n?\"AFTER\";X".to_string());
     m.run_slot(0);
     m.frame();
     m.frame();
     m.stop();
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["IN? User break on 0:2", "OK"]);
+    enter(&mut m, "CONT");
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["AFTER7", "OK"]);
+
+    m.set_slot(0, "A=0\n?1/A".to_string());
+    enter(&mut m, "RUN");
     enter(&mut m, "CONT");
     let r = rows(&m);
     assert!(r[r.len() - 2].starts_with("Can't continue"), "{r:?}");
+}
+
+#[test]
+fn inspect_pages_long_arrays() {
+    let mut m = machine();
+    enter(&mut m, "??1.5:?? \"AB\"");
+    let r = rows(&m);
+    assert_eq!(
+        &r[r.len() - 3..],
+        ["REAL: 1.50000000", "STRING: (2)\"ab\"", "OK"]
+    );
+    // From the third row, as after CLS, OK and the typed line.
+    enter(&mut m, "CLS:DIM LA%[40]");
+    m.type_text("??LA%");
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    for _ in 0..5 {
+        m.frame();
+    }
+    assert!(m.is_running());
+    let r = rows(&m);
+    assert_eq!(r[2], "INT[40]:");
+    assert_eq!(r.len(), 29);
+    assert_eq!(&r[r.len() - 2..], [" [24]: 0", "=== Press ENTER ==="]);
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    for _ in 0..5 {
+        m.frame();
+    }
+    assert!(!m.is_running());
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], [" [39]: 0", "OK"]);
 }

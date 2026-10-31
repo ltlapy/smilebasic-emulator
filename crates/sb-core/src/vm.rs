@@ -14,7 +14,7 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::host::{Exec, Host};
 use crate::lexer::Suffix;
 use crate::ops;
-use crate::value::{Array, Value, format_number, new_str};
+use crate::value::{Array, Str, Value, format_number, new_str};
 
 /// UNVERIFIED: SmileBASIC's own nesting limits are not documented.
 pub const MAX_CALL_DEPTH: usize = 4096;
@@ -49,10 +49,16 @@ pub enum Status {
 
 /// Commands and functions the compiler turns into instructions of their
 /// own rather than calls, for CHKCALL.
+// UNVERIFIED: WAIT, EXEC and DEFOUT, which may answer 0 like INC.
 const VM_CALLS: &[&str] = &[
-    "CALLIDX", "DEFARG", "DEFARGC", "DEFOUTC", "CHKLABEL", "CHKCALL", "CHKVAR", "INC", "DEC",
-    "VSYNC", "WAIT", "EXEC", "DEFOUT", "INSPECT", "STOP",
+    "CALLIDX", "DEFARG", "DEFARGC", "DEFOUTC", "CHKLABEL", "CHKCALL", "CHKVAR", "VSYNC", "WAIT",
+    "EXEC", "DEFOUT",
 ];
+
+/// Names CHKCALL does not count although they are commands here.
+// UNVERIFIED: NEW and CLEAR, which are direct-mode commands like RUN and
+// CONT.
+const NOT_CALLS: &[&str] = &["INC", "DEC", "STOP", "RUN", "CONT", "NEW", "CLEAR"];
 
 /// The characters of STOP's message that are shown.
 const STOP_MESSAGE: usize = 255;
@@ -145,6 +151,8 @@ pub struct Vm {
     /// statement has run: the instruction count at the jump, and the line
     /// of the last instruction run since.
     break_pending: Option<(u64, u32)>,
+    /// STOP's message, shown after the line it stopped on.
+    stop_message: Option<Str>,
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -274,6 +282,7 @@ impl Vm {
             executed: 0,
             on_break: None,
             break_pending: None,
+            stop_message: None,
         }
     }
 
@@ -314,10 +323,23 @@ impl Vm {
         self.program.cols.get(self.pc).copied().unwrap_or(0)
     }
 
-    /// Whether an INPUT or LINPUT waits for its line, so that a program
-    /// stopped there cannot go on.
-    pub fn is_reading_input(&self) -> bool {
-        self.reading_input
+    /// Gives up an INPUT or LINPUT that waits for its line, so that CONT
+    /// goes on with the next statement.
+    pub fn leave_input(&mut self) {
+        if !self.reading_input {
+            return;
+        }
+        self.reading_input = false;
+        self.pop();
+        self.pc += 1;
+        while self.program.starts.get(self.pc) == Some(&false) {
+            self.pc += 1;
+        }
+    }
+
+    /// The message of the STOP that stopped the program, once.
+    pub fn take_stop_message(&mut self) -> Option<Str> {
+        self.stop_message.take()
     }
 
     /// Gives this slot's globals the values of the same names, as direct
@@ -491,6 +513,15 @@ impl Vm {
     /// CHKLABEL: whether a label exists where GOTO would look for it.
     /// In a DEF, `outer` also looks at the top level.
     fn has_label(&self, value: &Value, outer: bool) -> Result<bool> {
+        let text = value.clone().into_str()?;
+        let text = text.borrow();
+        let name_at = text
+            .iter()
+            .position(|&c| c == u16::from(b':'))
+            .map_or(0, |i| i + 1);
+        if text.get(name_at) != Some(&u16::from(b'@')) {
+            return Ok(false);
+        }
         let (slot, name) = slot_and_name(value)?;
         Ok(match slot {
             // UNVERIFIED: a slot that EXEC has not run reports 0 rather
@@ -512,6 +543,9 @@ impl Vm {
         let (slot, name) = slot_and_name(value)?;
         if let Some(slot) = slot.filter(|&s| s != self.slot) {
             return Ok((self.program_in(slot)).is_some_and(|p| p.def_names.contains_key(&name)));
+        }
+        if NOT_CALLS.contains(&name.as_str()) {
+            return Ok(false);
         }
         Ok(self.program.def_names.contains_key(&name)
             || self.find_common(&name).is_some()
@@ -1031,24 +1065,21 @@ impl Vm {
                 self.stack.push(Value::Int(found.into()));
             }
             Op::Stop { has_message } => {
-                if *has_message {
-                    // UNVERIFIED: that the message comes on a line of its
-                    // own before "Break on", and how 255 characters are
-                    // kept to.
-                    let message = text_of(&self.pop())?;
-                    host.print(None, &message[..message.len().min(STOP_MESSAGE)])?;
-                    host.print_newline(None)?;
+                let message = match has_message {
+                    true => Some(text_of(&self.pop())?),
+                    false => None,
+                };
+                if !self.in_slot {
+                    return Err(ErrorKind::CantUseFromDirectMode.into());
                 }
+                // UNVERIFIED: how 255 characters are kept to.
+                self.stop_message = message.map(|mut m| {
+                    m.truncate(STOP_MESSAGE);
+                    m
+                });
                 let line = self.line();
                 self.pc = next;
                 return Ok(Some(Status::Stop { line }));
-            }
-            Op::Inspect => {
-                let value = self.pop();
-                for line in crate::inspect::lines(&value) {
-                    host.print(None, &line)?;
-                    host.print_newline(None)?;
-                }
             }
             Op::DefArgc => {
                 let f = self.frame()?;

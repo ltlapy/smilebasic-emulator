@@ -224,9 +224,11 @@ impl Runtime {
                             console.newline();
                         }
                         // UNVERIFIED: the header for project lists and for one file.
-                        let mut lines = VecDeque::from([format!("-- {} files --", items.len())]);
-                        lines.extend(items);
-                        return Ok(self.show_listing_page(lines));
+                        let header = format!("-- {} files --", items.len());
+                        let lines = std::iter::once(header).chain(items);
+                        let lines = lines.map(|l| l.encode_utf16().collect()).collect();
+                        let page = self.text[CONSOLE].size().1.saturating_sub(1);
+                        return Ok(self.show_listing_page(lines, page));
                     }
                 }
                 Ok(vec![])
@@ -235,32 +237,51 @@ impl Runtime {
         }
     }
 
-    /// Goes on with a FILES listing once a key or button is pressed. A
-    /// key held down goes on as it repeats (checked on hardware).
-    fn show_listing(&mut self, left: VecDeque<String>) -> Vec<Value> {
+    /// INSPECT (`??`): prints a value's details, a screen at a time.
+    pub(crate) fn inspect(&mut self, value: &Value) -> Vec<Value> {
+        if let Some(left) = self.listing_left.take() {
+            return self.show_listing(left);
+        }
+        let console = &mut self.text[CONSOLE];
+        if console.cursor().0 != 0 {
+            console.newline();
+        }
+        // The prompt goes on the row above the last, however far down the
+        // listing starts. UNVERIFIED: for listings that start below the
+        // second row.
+        let rows = console.size().1;
+        let page = rows.saturating_sub(2).saturating_sub(console.cursor().1);
+        let lines = sb_core::inspect::lines(value).into();
+        self.show_listing_page(lines, page)
+    }
+
+    /// Goes on with a FILES or INSPECT listing once a key or button is
+    /// pressed. A key held down goes on as it repeats (checked on hardware
+    /// for FILES).
+    fn show_listing(&mut self, left: VecDeque<Vec<u16>>) -> Vec<Value> {
         if self.keys.pop_front().is_some() || self.input.pressed() != 0 {
             // UNVERIFIED: that the prompt is taken away.
             let console = &mut self.text[CONSOLE];
             LISTING_PROMPT.chars().for_each(|_| console.backspace());
-            return self.show_listing_page(left);
+            let page = console.size().1.saturating_sub(1);
+            return self.show_listing_page(left, page);
         }
         self.listing_left = Some(left);
         self.retry = true;
         vec![]
     }
 
-    /// Prints a screen of a FILES listing, and waits to print the rest,
-    /// as SmileBASIC 4 does in direct mode and in programs: all the
-    /// console's rows but the last, which says to press Enter, however
-    /// many rows XSCREEN gives it (checked on hardware).
-    fn show_listing_page(&mut self, mut lines: VecDeque<String>) -> Vec<Value> {
+    /// Prints `page` lines of a listing, and waits to print the rest, as
+    /// SmileBASIC 4 does in direct mode and in programs. A FILES page is
+    /// all the console's rows but the last, which says to press Enter,
+    /// however many rows XSCREEN gives it (checked on hardware).
+    fn show_listing_page(&mut self, mut lines: VecDeque<Vec<u16>>, page: u32) -> Vec<Value> {
         let console = &mut self.text[CONSOLE];
-        let page = console.size().1.saturating_sub(1).max(1);
-        for _ in 0..page {
+        for _ in 0..page.max(1) {
             let Some(line) = lines.pop_front() else {
                 return vec![];
             };
-            console.print(&line.encode_utf16().collect::<Vec<_>>());
+            console.print(&line);
             console.newline();
         }
         if !lines.is_empty() {

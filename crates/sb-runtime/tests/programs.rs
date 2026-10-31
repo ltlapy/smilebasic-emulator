@@ -148,8 +148,9 @@ fn surroundings_of_the_main_interpreter() {
         tail(&m, 5),
         ["0 0 0 3 1", "3 0 0", "RUN A=1 []", "COPIED", "OK"]
     );
+    // Typed in direct mode, it is running too.
     enter(&mut m, "?envstat()");
-    assert_eq!(tail(&m, 2), ["0", "OK"]);
+    assert_eq!(tail(&m, 2), ["3", "OK"]);
     // Only subprograms copy; here it does nothing.
     run(&mut m, &["ENVLOAD 0,1,1"]);
     assert_eq!(tail(&m, 2), ["RUN", "OK"]);

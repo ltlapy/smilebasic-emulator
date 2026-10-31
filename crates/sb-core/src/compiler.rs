@@ -956,15 +956,6 @@ impl Compiler<'_> {
                 self.emit(Op::Stop { has_message });
                 return Ok(());
             }
-            "INSPECT" => {
-                no_outs(self)?;
-                let [Some(value)] = args else {
-                    return Err(self.illegal_call(&full));
-                };
-                self.expr(value)?;
-                self.emit(Op::Inspect);
-                return Ok(());
-            }
             "DEFOUT" => {
                 no_outs(self)?;
                 self.require_def()?;

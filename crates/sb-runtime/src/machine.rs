@@ -55,19 +55,8 @@ pub struct Machine {
     /// slot, line and column of the statement.
     last_error: Option<(usize, u32, u32)>,
     /// The program that STOP, the + button or an error stopped, kept for
-    /// CONT.
-    halted: Option<Halted>,
-}
-
-/// A stopped program.
-struct Halted {
-    vm: Vm,
-    /// The slots as they were when it stopped: once they are edited, it
-    /// cannot go on.
-    slots: Vec<String>,
-    /// Whether CONT may go on with it at all: not after an error or from
-    /// INPUT.
-    resumable: bool,
+    /// CONT; `rt.stopped` says which.
+    halted: Option<Vm>,
 }
 
 /// What a direct-mode LIST asks for.
@@ -533,34 +522,33 @@ impl Machine {
         // The format is SmileBASIC 4's own, from SmileBASIC 4.
         let what = if user { "User break" } else { "Break" };
         let text: Vec<u16> = format!("{what} on {at}").encode_utf16().collect();
-        self.print_line(&text);
+        // Out of INPUT, it follows the prompt on the same line.
+        // UNVERIFIED: that it does after PRINT with a semicolon too.
+        let console = &mut self.rt.text[CONSOLE];
+        console.print(&text);
+        console.newline();
+        let mut vm = vm;
+        if let Some(message) = vm.take_stop_message() {
+            self.print_line(&message);
+        }
         // UNVERIFIED: a line typed in direct mode cannot go on.
         if program {
-            let resumable = !vm.is_reading_input();
-            self.halt(vm, resumable);
+            vm.leave_input();
+            self.halt(vm, Stopped::Paused);
         }
         self.ready();
     }
 
-    /// Keeps a stopped program for CONT, or after an error for nothing
-    /// yet.
-    fn halt(&mut self, vm: Vm, resumable: bool) {
-        self.rt.stopped = match resumable {
-            true => Stopped::Paused { can_continue: true },
-            false => Stopped::Error,
-        };
-        let slots = self.rt.slots.clone();
-        self.halted = Some(Halted {
-            vm,
-            slots,
-            resumable,
-        });
+    /// Keeps a stopped program for CONT, or for BACKTRACE after an error.
+    fn halt(&mut self, vm: Vm, how: Stopped) {
+        self.rt.stopped = how;
+        self.halted = Some(vm);
     }
 
     /// CONT: goes on with the stopped program, with the variables as
     /// direct mode left them.
     fn resume(&mut self) {
-        let Some(Halted { mut vm, .. }) = self.halted.take() else {
+        let Some(mut vm) = self.halted.take() else {
             return self.ready();
         };
         self.rt.stopped = Stopped::No;
@@ -760,16 +748,9 @@ impl Machine {
     /// Starts a program from `slot`, or a direct-mode line.
     fn start(&mut self, source: &str, slot: Option<usize>) {
         self.rt.cancel_input();
-        match (slot, &self.halted) {
-            (Some(_), _) => {
-                self.halted = None;
-                self.rt.stopped = Stopped::No;
-            }
-            (None, Some(h)) if h.resumable => {
-                let can_continue = h.slots == self.rt.slots;
-                self.rt.stopped = Stopped::Paused { can_continue };
-            }
-            (None, _) => {}
+        if slot.is_some() {
+            self.halted = None;
+            self.rt.stopped = Stopped::No;
         }
         self.rt.direct = slot.is_none();
         self.running_slot = slot;
@@ -814,7 +795,7 @@ impl Machine {
         if program {
             self.rt.clear_input();
             match error {
-                Some(_) => self.halt(vm, false),
+                Some(_) => self.halt(vm, Stopped::Error),
                 None => {
                     self.halted = None;
                     self.rt.stopped = Stopped::No;

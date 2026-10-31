@@ -162,8 +162,6 @@ pub enum Op {
     ChkCall,
     /// `[name] -> [found]`: CHKVAR.
     ChkVar,
-    /// `[value] -> []`: INSPECT prints the value's details.
-    Inspect,
     /// `[message?] -> []`: STOP.
     Stop {
         has_message: bool,

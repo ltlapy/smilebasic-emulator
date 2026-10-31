@@ -103,6 +103,7 @@ pub(crate) enum Command {
     Gyrosync,
     Gyrov,
     Inkey,
+    Inspect,
     Key,
     Keyboard,
     Layer,
@@ -293,6 +294,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("GYROSYNC", Command::Gyrosync),
     ("GYROV", Command::Gyrov),
     ("INKEY$", Command::Inkey),
+    ("INSPECT", Command::Inspect),
     ("KEY", Command::Key),
     ("KEYBOARD", Command::Keyboard),
     ("LAYER", Command::Layer),
@@ -428,11 +430,8 @@ pub enum Request {
 pub enum Stopped {
     #[default]
     No,
-    /// By STOP or the + button. CONT can go on unless it stopped at
-    /// INPUT or a program has been edited since.
-    Paused {
-        can_continue: bool,
-    },
+    /// By STOP or the + button, so that CONT can go on.
+    Paused,
     Error,
 }
 
@@ -516,7 +515,7 @@ pub struct Runtime {
     pub(crate) dialog: Option<crate::dialog::Waiting>,
     pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
     /// Lines of a FILES listing still to show, after a key is pressed.
-    pub(crate) listing_left: Option<VecDeque<String>>,
+    pub(crate) listing_left: Option<VecDeque<Vec<u16>>>,
     /// The project metadata that METAEDIT edits.
     pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
@@ -1301,7 +1300,7 @@ impl Runtime {
             (Command::Cont, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only()?;
                 match self.stopped {
-                    Stopped::Paused { can_continue: true } => self.request(Request::Cont),
+                    Stopped::Paused => self.request(Request::Cont),
                     _ => Err(ErrorKind::CantContinue.into()),
                 }
             }
@@ -1357,6 +1356,7 @@ impl Runtime {
                 _,
             ) => self.env_command(command, args, want),
             (Command::Dialog, _) => self.dialog_command(command, args, want),
+            (Command::Inspect, Want::Outs(0)) if args.len() == 1 => Ok(self.inspect(&args[0])),
             (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
                 self.loadsave_command(command, args, want)
             }

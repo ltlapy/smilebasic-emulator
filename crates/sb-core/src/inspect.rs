@@ -4,14 +4,13 @@
 use crate::value::{Array, ArrayData, Str, Value, format_number};
 
 /// Characters of a string shown before the rest is left out.
-// UNVERIFIED: SmileBASIC 4's limit, and how it marks what it leaves out.
-pub const STRING_CHARS: usize = 40;
+// UNVERIFIED: SmileBASIC 4's limit (more than 50), and how it marks what
+// it leaves out.
+pub const STRING_CHARS: usize = 255;
 
-/// The lines INSPECT prints for `value`. A single value follows the
-/// formats in SmileBASIC 4: `INT: %d`, `REAL: %.8f` and
-/// `STRING: (%d)"`, with `(%d)"` for strings without the type, as in
-/// arrays.
-// UNVERIFIED: how arrays are laid out; the formats above are all SmileBASIC 4 shows.
+/// The lines INSPECT prints for `value`: `INT: 1`, `REAL: 1.50000000` or
+/// `STRING: (2)"AB"`; for an array, `INT[2,2]:`, a line ` [0,1]: 0` for
+/// each element and an empty line.
 pub fn lines(value: &Value) -> Vec<Str> {
     match value {
         Value::Array(a) => array_lines(&a.borrow()),
@@ -26,15 +25,16 @@ fn array_lines(array: &Array) -> Vec<Str> {
         ArrayData::Str(_) => "STRING",
     };
     let dims: Vec<String> = array.dims.iter().map(usize::to_string).collect();
-    let header = format!("{kind}[{}] {} elements", dims.join(","), array.len());
+    let header = format!("{kind}[{}]:", dims.join(","));
     let mut out = vec![header.encode_utf16().collect()];
     for i in 0..array.len() {
-        let mut line: Str = format!("[{}] ", index_text(&array.dims, i))
+        let mut line: Str = format!(" [{}]: ", index_text(&array.dims, i))
             .encode_utf16()
             .collect();
         line.extend(element(&array.get(i)));
         out.push(line);
     }
+    out.push(Str::new());
     out
 }
 
@@ -97,8 +97,8 @@ mod tests {
         assert_eq!(text(&Value::Int(12)), ["INT: 12"]);
         assert_eq!(text(&Value::Real(1.5)), ["REAL: 1.50000000"]);
         assert_eq!(text(&Value::Str(str_from("AB"))), ["STRING: (2)\"AB\""]);
-        let long = "1234567890".repeat(5);
-        let shown = format!("STRING: (50)\"{}\"...", &long[..STRING_CHARS]);
+        let long = "1234567890".repeat(30);
+        let shown = format!("STRING: (300)\"{}\"...", &long[..STRING_CHARS]);
         assert_eq!(text(&Value::Str(str_from(&long))), [shown]);
     }
 
@@ -107,18 +107,17 @@ mod tests {
         let mut a = Array::new(ElemType::Int, vec![2, 2]);
         a.set(3, Value::Int(7)).unwrap();
         let a = Value::Array(Rc::new(RefCell::new(a)));
-        assert_eq!(
-            text(&a),
-            [
-                "INT[2,2] 4 elements",
-                "[0,0] 0",
-                "[0,1] 0",
-                "[1,0] 0",
-                "[1,1] 7"
-            ]
-        );
+        let expected = [
+            "INT[2,2]:",
+            " [0,0]: 0",
+            " [0,1]: 0",
+            " [1,0]: 0",
+            " [1,1]: 7",
+            "",
+        ];
+        assert_eq!(text(&a), expected);
         let s = Array::new(ElemType::Str, vec![1]);
         let s = Value::Array(Rc::new(RefCell::new(s)));
-        assert_eq!(text(&s), ["STRING[1] 1 elements", "[0] (0)\"\""]);
+        assert_eq!(text(&s), ["STRING[1]:", " [0]: (0)\"\"", ""]);
     }
 }
