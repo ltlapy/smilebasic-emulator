@@ -283,12 +283,18 @@ impl Graphics {
         if !self.clip.contains(x, y) {
             return;
         }
-        let dst = self.read(self.target, x, y);
-        let pixels = self.target_pixels();
         let i = index(x, y);
+        // Without a GARRAY array, the page is the only copy.
+        let shared = self.arrays[self.target].is_some();
+        let dst = if shared {
+            self.read(self.target, x, y)
+        } else {
+            self.target_pixels()[i]
+        };
         let p = blend.apply(dst, color);
-        pixels[i] = p;
-        if let Some(array) = &self.arrays[self.target]
+        self.target_pixels()[i] = p;
+        if shared
+            && let Some(array) = &self.arrays[self.target]
             && let Ok(mut array) = array.try_borrow_mut()
             && let ArrayData::Int(v) = &mut array.data
             && let Some(d) = v.get_mut(i)
