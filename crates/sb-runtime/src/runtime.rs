@@ -1124,6 +1124,13 @@ impl Runtime {
                 self.draw_element(target, element, &settings, cursor);
             }
             filter.apply(target, self.mode.sample);
+            // The frame stays opaque where deformation left nothing, which
+            // shows black.
+            if direct && matches!(filter, Filter::Raster { .. }) {
+                for p in target.pixels_mut() {
+                    *p |= 0xFF00_0000;
+                }
+            }
             if !direct {
                 compose::compose(&mut fb, &scratch, settings.compose, settings.color);
             }

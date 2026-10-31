@@ -330,16 +330,28 @@ impl Runtime {
                     let n = v.to_int()?;
                     u32::try_from(n).map_err(|_| out_of_range("filter size", n))
                 };
-                // SmileBASIC 4.4.9 has no raster deformation (types 3 and
-                // 4), whatever the array: with an array it is Out of range
-                // for the type, and with the repeat flag Type mismatch for
-                // the array, as if no form took an array (checked on
-                // hardware).
-                // UNVERIFIED: the errors for other types and counts.
+                // Raster deformation needs the repeat flag: with the array
+                // alone it is Out of range for the type. An array that is
+                // not a real [n,2] or [n,4] is Type mismatch.
                 self.filters[id] = match (kind, &args[2.min(args.len())..]) {
                     (0, []) => LayerFilter::None,
                     (1, [n]) => LayerFilter::Mosaic(size(n)?),
                     (2, [n]) => LayerFilter::Blur(size(n)?),
+                    (3 | 4, [Value::Array(info), repeat]) => {
+                        {
+                            let a = info.borrow();
+                            if a.elem_type() != sb_core::value::ElemType::Real
+                                || !matches!(a.dims[..], [_, 2 | 4])
+                            {
+                                return Err(ErrorKind::TypeMismatch.into());
+                            }
+                        }
+                        LayerFilter::Raster {
+                            vertical: kind == 4,
+                            info: info.clone(),
+                            repeat: repeat.to_int()? != 0,
+                        }
+                    }
                     (5, [h, s, v]) => LayerFilter::Color {
                         hue: real(h)?,
                         saturation: real(s)?,

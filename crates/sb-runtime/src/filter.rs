@@ -1,6 +1,5 @@
-//! LFILTER's effects on a layer drawn on its own frame: mosaic, blur and
-//! color conversion. The manual's raster deformation (types 3 and 4) is
-//! not in SmileBASIC 4.4.9.
+//! LFILTER's effects on a layer drawn on its own frame: mosaic, blur,
+//! raster deformation and color conversion.
 //!
 //! The manual names the effects and their parameters but not how they are
 //! worked out, so all of this is a guess.
@@ -9,6 +8,8 @@
 // conversion adds to the hue in degrees and to the saturation and
 // brightness on HSV's 0 to 255 scale.
 // UNVERIFIED: mosaic sizes are in screen pixels.
+
+use sb_core::value::ArrayRef;
 
 use crate::framebuffer::Framebuffer;
 
@@ -19,6 +20,14 @@ pub enum Filter {
     None,
     Mosaic(u32),
     Blur(u32),
+    /// Types 3 (each line moves sideways) and 4 (each column up and
+    /// down), from rows of offset and scale, or of X offset, X scale, Y
+    /// offset and Y scale, read from the program's array every frame.
+    Raster {
+        vertical: bool,
+        info: ArrayRef,
+        repeat: bool,
+    },
     Color {
         hue: f64,
         saturation: f64,
@@ -32,6 +41,7 @@ impl Filter {
             Filter::None => 0,
             Filter::Mosaic(_) => 1,
             Filter::Blur(_) => 2,
+            Filter::Raster { vertical, .. } => 3 + i32::from(*vertical),
             Filter::Color { .. } => 5,
         }
     }
@@ -43,6 +53,17 @@ impl Filter {
             Filter::None => {}
             Filter::Mosaic(n) => mosaic(fb, n.saturating_mul(sample)),
             Filter::Blur(n) => blur(fb, *n),
+            Filter::Raster {
+                vertical,
+                info,
+                repeat,
+            } => {
+                let rows = match info.try_borrow() {
+                    Ok(a) => raster_rows(&a, *vertical),
+                    Err(_) => return,
+                };
+                raster(fb, &rows, *vertical, *repeat);
+            }
             Filter::Color {
                 hue,
                 saturation,
@@ -61,6 +82,68 @@ impl Filter {
                     };
                 }
             }
+        }
+    }
+}
+
+/// A raster array's entries as X offset, X scale, Y offset and Y scale.
+/// With two to an entry they are the offset and scale along the
+/// deformation: X for type 3, Y for type 4.
+// UNVERIFIED: the two-value form's meaning.
+fn raster_rows(info: &sb_core::value::Array, vertical: bool) -> Vec<[f64; 4]> {
+    let width = match info.dims[..] {
+        [_, w @ (2 | 4)] => w,
+        _ => return Vec::new(),
+    };
+    let at = |i: usize| info.get(i).to_real().unwrap_or(0.0);
+    (0..info.len() / width)
+        .map(|r| match (width, vertical) {
+            (2, false) => [at(r * 2), at(r * 2 + 1), 0.0, 1.0],
+            (2, true) => [0.0, 1.0, at(r * 2), at(r * 2 + 1)],
+            _ => std::array::from_fn(|k| at(r * 4 + k)),
+        })
+        .collect()
+}
+
+/// Raster deformation. Each row of the frame (type 3) or column (type 4)
+/// takes an entry, and each pixel shows the source pixel at its center
+/// scaled and then moved by that entry, in OpenGL's way: from the left
+/// for X and from the bottom for Y, offsets in widths and heights.
+/// Without `repeat`, points off the frame show nothing.
+// UNVERIFIED: the direction of Y offsets, and whether scale comes before
+// the offset.
+fn raster(fb: &mut Framebuffer, rows: &[[f64; 4]], vertical: bool, repeat: bool) {
+    if rows.is_empty() {
+        return;
+    }
+    let (w, h) = (fb.width() as usize, fb.height() as usize);
+    let source = fb.pixels().to_vec();
+    let (fw, fh) = (w as f64, h as f64);
+    let wrap = |v: f64, n: usize| -> Option<usize> {
+        if !v.is_finite() {
+            return None;
+        }
+        let v = v.floor() as i64;
+        match repeat {
+            true => Some(v.rem_euclid(n as i64) as usize),
+            false => usize::try_from(v).ok().filter(|&v| v < n),
+        }
+    };
+    let entry = |i: usize, n: usize| rows[i * rows.len() / n];
+    let pixels = fb.pixels_mut();
+    for y in 0..h {
+        let gl_y = fh - (y as f64 + 0.5);
+        for x in 0..w {
+            let [ox, sx, oy, sy] = match vertical {
+                false => entry(y, h),
+                true => entry(x, w),
+            };
+            let sx_ = wrap(sx * (x as f64 + 0.5) + ox * fw, w);
+            let sy_ = wrap(fh - (sy * gl_y + oy * fh), h);
+            pixels[y * w + x] = match (sx_, sy_) {
+                (Some(a), Some(b)) => source[b * w + a],
+                _ => 0,
+            };
         }
     }
 }
@@ -336,6 +419,28 @@ mod tests {
         let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0, 0xFFFF_FFFF, 0, 0, 0], 4);
         Filter::Blur(1).apply(&mut fb, 1);
         assert_eq!(fb.pixels()[1], 0x7F7F_7F7F);
+    }
+
+    #[test]
+    fn raster_moves_lines() {
+        use sb_core::value::{Array, ArrayData, ElemType};
+        let mut info = Array::new(ElemType::Real, vec![2, 2]);
+        // The first line takes from a quarter further right, the second
+        // stays.
+        info.data = ArrayData::Real(vec![0.25, 1.0, 0.0, 1.0]);
+        let info = std::rc::Rc::new(std::cell::RefCell::new(info));
+        let row = [1, 2, 3, 4];
+        let mut fb = frame(&[row, row].concat(), 4);
+        let filter = |repeat| Filter::Raster {
+            vertical: false,
+            info: info.clone(),
+            repeat,
+        };
+        filter(false).apply(&mut fb, 1);
+        assert_eq!(fb.pixels(), &[2, 3, 4, 0, 1, 2, 3, 4]);
+        let mut fb = frame(&[row, row].concat(), 4);
+        filter(true).apply(&mut fb, 1);
+        assert_eq!(&fb.pixels()[..4], &[2, 3, 4, 1]);
     }
 
     #[test]
