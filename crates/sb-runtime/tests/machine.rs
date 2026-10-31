@@ -652,11 +652,12 @@ fn backtrace_and_trace() {
         &r[r.len() - 4..],
         ["0:     7", "0:     4", "0:     1", "OK"]
     );
-    // After BACKTRACE the program cannot go on.
-    enter(&mut m, "CONT");
-    assert_eq!(rows(&m)[rows(&m).len() - 2], "Can't continue");
+    // Unlike SmileBASIC 4, the program goes on after BACKTRACE.
     enter(&mut m, "TRACE");
-    assert_eq!(rows(&m)[rows(&m).len() - 2], "Can't trace");
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 3..], ["IN DF1", "Break on 0:8", "OK"]);
+    enter(&mut m, "CONT");
+    assert_eq!(rows(&m).last().unwrap(), "OK");
 
     // After an error, BACKTRACE still works.
     m.set_slot(0, format!("GOSUB @E\nEND\n@E\nDE 0\nRETURN\n{def}"));

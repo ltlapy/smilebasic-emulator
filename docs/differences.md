@@ -79,6 +79,9 @@ Without them:
 - `METASAVE` keeps a project's title and description in `@META.TXT`
   and its icon in `@ICON.PNG`, in the project's folder. `METALOAD`
   reads SmileBASIC 4's own `META` file when those are missing.
+- After `BACKTRACE`, `CONT` and `TRACE` still go on with the stopped
+  program; on SmileBASIC 4 they cannot. Programs cannot tell, since all
+  three work in direct mode only.
 - There are no subprograms yet, so `ENVTYPE`, `ENVSTAT` and the other
   `ENV` commands always answer for the main interpreter, where `ENVLOAD`
   and `ENVSAVE` do nothing.

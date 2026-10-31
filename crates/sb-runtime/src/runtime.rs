@@ -437,7 +437,7 @@ pub enum Stopped {
     No,
     /// By STOP or the + button, so that CONT can go on.
     Paused,
-    /// By an error; also after BACKTRACE.
+    /// By an error.
     Error,
 }
 
@@ -1317,9 +1317,8 @@ impl Runtime {
                     _ => Err(ErrorKind::CantContinue.into()),
                 }
             }
-            // BACKTRACE leaves the program unable to go on.
-            // UNVERIFIED: that this, rather than TRACE in a DEF or CONT
-            // after TRACE in a GOSUB, is what TTEST18 and TTEST19 showed.
+            // Unlike SmileBASIC 4, the program can go on afterwards. To
+            // stop it as SmileBASIC 4 does, bring back the lines below.
             (Command::Backtrace, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only()?;
                 for (slot, line) in self.backtrace.clone() {
@@ -1327,9 +1326,9 @@ impl Runtime {
                     self.text[CONSOLE].print(&text);
                     self.text[CONSOLE].newline();
                 }
-                if self.stopped == Stopped::Paused {
-                    self.stopped = Stopped::Error;
-                }
+                // if self.stopped == Stopped::Paused {
+                //     self.stopped = Stopped::Error;
+                // }
                 Ok(vec![])
             }
             (Command::Trace, Want::Outs(0)) if args.is_empty() => {
