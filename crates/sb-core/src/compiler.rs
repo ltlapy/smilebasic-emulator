@@ -342,6 +342,23 @@ impl Compiler<'_> {
         }
     }
 
+    /// Puts the two values pushed from `at`, the second one on top, back
+    /// in order. Where each was a single push that cannot be seen to
+    /// happen early, such as a constant or a variable, the two pushes
+    /// trade places instead, which saves a Swap each time it runs.
+    fn put_back_two(&mut self, at: usize) {
+        let simple = |op: &Op| matches!(op, Op::Int(_) | Op::Real(_) | Op::Str(_) | Op::Load(_));
+        let code = &mut self.out.code;
+        if code.len() == at + 2 && simple(&code[at]) && simple(&code[at + 1]) {
+            code.swap(at, at + 1);
+            self.out.lines.swap(at, at + 1);
+            self.out.cols.swap(at, at + 1);
+            self.out.starts.swap(at, at + 1);
+        } else {
+            self.emit(Op::Swap);
+        }
+    }
+
     fn here(&self) -> Addr {
         self.out.code.len() as Addr
     }
@@ -1283,9 +1300,10 @@ impl Compiler<'_> {
             // calls F(3), F(2), then F(1)).
             Expr::Binary { op, lhs, rhs } => {
                 self.check_constant(expr)?;
+                let at = self.out.code.len();
                 self.expr(rhs)?;
                 self.expr(lhs)?;
-                self.emit(Op::Swap);
+                self.put_back_two(at);
                 self.emit(Op::Binary(*op));
             }
         }

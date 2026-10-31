@@ -463,7 +463,75 @@ impl Vm {
         if self.ended {
             return Ok(Status::Ended);
         }
-        for _ in 0..budget {
+        let stop = self.executed + u64::from(budget);
+        let mut program = Rc::clone(&self.program);
+        while self.executed < stop {
+            if self.break_pending.is_none()
+                && self.trace.is_none()
+                && let Some(op) = program.code.get(self.pc)
+            {
+                // The commonest instructions, run here without the rest of
+                // step's machinery; they are what most loops are made of.
+                let pc = self.pc;
+                let mut next = pc + 1;
+                let done: Result<bool> = match op {
+                    Op::Int(n) => {
+                        self.stack.push(Value::Int(*n));
+                        Ok(true)
+                    }
+                    Op::Real(x) => {
+                        self.stack.push(Value::Real(*x));
+                        Ok(true)
+                    }
+                    Op::Load(slot) => {
+                        let v = self.load(*slot);
+                        self.stack.push(v);
+                        Ok(true)
+                    }
+                    Op::Store(slot) => {
+                        let v = self.pop();
+                        self.store(*slot, v);
+                        Ok(true)
+                    }
+                    Op::Swap => {
+                        let n = self.stack.len();
+                        self.stack.swap(n - 1, n - 2);
+                        Ok(true)
+                    }
+                    Op::Binary(op) => {
+                        let rhs = self.pop();
+                        let lhs = self
+                            .stack
+                            .last_mut()
+                            .expect("compiler keeps the stack balanced");
+                        ops::binary(*op, lhs, &rhs).map(|v| {
+                            *lhs = v;
+                            true
+                        })
+                    }
+                    Op::Jump(a) => {
+                        next = *a as usize;
+                        Ok(true)
+                    }
+                    Op::JumpIfFalse(a) => self.pop().is_true().map(|t| {
+                        if !t {
+                            next = *a as usize;
+                        }
+                        true
+                    }),
+                    Op::Nop => Ok(true),
+                    _ => Ok(false),
+                };
+                match done {
+                    Ok(true) => {
+                        self.executed += 1;
+                        self.pc = next;
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(e) => return Err(self.fail(pc, e)),
+                }
+            }
             if let Some((at, line)) = self.break_pending {
                 if self.executed > at && self.program.starts.get(self.pc) == Some(&true) {
                     self.break_pending = None;
@@ -485,7 +553,12 @@ impl Vm {
             }
             let pc = self.pc;
             self.executed += 1;
-            match self.step(host) {
+            let outcome = self.step(&program, host);
+            // Calls into other slots change the running program.
+            if !Rc::ptr_eq(&program, &self.program) {
+                program = Rc::clone(&self.program);
+            }
+            match outcome {
                 Ok(None) => {}
                 Ok(Some(status)) => {
                     if status == Status::Ended {
@@ -493,18 +566,23 @@ impl Vm {
                     }
                     return Ok(status);
                 }
-                Err(e) => {
-                    self.ended = true;
-                    let line = self.program.lines.get(pc).copied().unwrap_or(0);
-                    let col = self.program.cols.get(pc).copied().unwrap_or(0);
-                    let slot = self.slot().map(|s| s as u32);
-                    return Err(e.at_pos(line, col).in_slot(slot));
-                }
+                Err(e) => return Err(self.fail(pc, e)),
             }
         }
         Ok(Status::Running)
     }
 
+    /// Ends the program with an error at instruction `pc`.
+    #[cold]
+    fn fail(&mut self, pc: usize, e: Error) -> Error {
+        self.ended = true;
+        let line = self.program.lines.get(pc).copied().unwrap_or(0);
+        let col = self.program.cols.get(pc).copied().unwrap_or(0);
+        let slot = self.slot().map(|s| s as u32);
+        e.at_pos(line, col).in_slot(slot)
+    }
+
+    #[inline]
     fn pop(&mut self) -> Value {
         self.stack.pop().expect("compiler keeps the stack balanced")
     }
@@ -542,8 +620,27 @@ impl Vm {
         }
     }
 
-    fn indices(&mut self, n: u8) -> Result<Vec<i32>> {
-        self.pop_n(n.into()).iter().map(Value::to_int).collect()
+    /// The `n` indices on top of the stack, taken off it. Arrays have at
+    /// most four dimensions, so they fit without allocating.
+    fn indices(&mut self, n: u8) -> Result<Indices> {
+        let n = usize::from(n);
+        let at = self.stack.len() - n;
+        let mut idx = Indices {
+            buf: [0; 4],
+            len: n,
+            more: Vec::new(),
+        };
+        let taken: Result<()> = match n {
+            0..=4 => (idx.buf.iter_mut().zip(&self.stack[at..]))
+                .try_for_each(|(i, v)| v.to_int().map(|v| *i = v)),
+            _ => self.stack[at..]
+                .iter()
+                .map(Value::to_int)
+                .collect::<Result<Vec<_>>>()
+                .map(|v| idx.more = v),
+        };
+        self.stack.truncate(at);
+        taken.map(|()| idx)
     }
 
     /// The DEF running in this slot, if any.
@@ -879,8 +976,10 @@ impl Vm {
     }
 
     /// Runs one instruction. `Some` stops the current slice.
-    fn step(&mut self, host: &mut dyn Host) -> Result<Option<Status>> {
-        let program = Rc::clone(&self.program);
+    /// Runs the instruction at the program counter; `program` is the
+    /// running program, which the caller keeps rather than this cloning
+    /// it for every instruction.
+    fn step(&mut self, program: &Rc<Compiled>, host: &mut dyn Host) -> Result<Option<Status>> {
         let Some(op) = program.code.get(self.pc) else {
             return Ok(self.end(host));
         };
@@ -974,8 +1073,11 @@ impl Vm {
             }
             Op::Binary(op) => {
                 let rhs = self.pop();
-                let lhs = self.pop();
-                self.stack.push(ops::binary(*op, &lhs, &rhs)?);
+                let lhs = self
+                    .stack
+                    .last_mut()
+                    .expect("compiler keeps the stack balanced");
+                *lhs = ops::binary(*op, lhs, &rhs)?;
             }
             Op::Truthy => {
                 let b = self.pop().is_true()?;
@@ -1058,7 +1160,7 @@ impl Vm {
             }
             Op::CallBuiltin { id, argc, want } => {
                 let args = self.pop_n((*argc).into());
-                self.call_builtin(&program, *id, &args, *want)?;
+                self.call_builtin(program, *id, &args, *want)?;
             }
             Op::CallHost { id, argc, want } => {
                 let args = self.pop_n((*argc).into());
@@ -1086,7 +1188,7 @@ impl Vm {
                     self.call_in(slot, def, args, *want, host)?;
                     return Ok(None);
                 } else if let Some(id) = builtins::lookup(&name, form(*want)) {
-                    self.call_builtin(&program, id, &args, *want)?;
+                    self.call_builtin(program, id, &args, *want)?;
                 } else if let Some(id) = host.lookup(&name) {
                     if !self.call_host(host, id, &args, *want)? {
                         self.stack.push(name_value);
@@ -1124,7 +1226,7 @@ impl Vm {
                     Some((idx, target)) => {
                         *at = idx;
                         self.call_idx = idx;
-                        self.run_callback(&program, &Value::Str(new_str(target)), host)?;
+                        self.run_callback(program, &Value::Str(new_str(target)), host)?;
                         return Ok(None);
                     }
                 }
@@ -1514,6 +1616,23 @@ impl Vm {
         self.push_results(results, frame.want)?;
         self.switch_to(frame.caller, host);
         Ok(frame.return_pc)
+    }
+}
+
+/// Indices popped by [`Vm::indices`].
+struct Indices {
+    buf: [i32; 4],
+    len: usize,
+    more: Vec<i32>,
+}
+
+impl std::ops::Deref for Indices {
+    type Target = [i32];
+    fn deref(&self) -> &[i32] {
+        match self.len {
+            0..=4 => &self.buf[..self.len],
+            _ => &self.more,
+        }
     }
 }
 
