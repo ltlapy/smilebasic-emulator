@@ -959,14 +959,14 @@ impl ProjectManager {
         let name = name.to_ascii_uppercase();
         let kind = source.kind.name();
         if to == source.project && name == source.name {
-            self.status = Some((format!("{kind}:{name} is already there."), true));
+            self.status = Some((format!("Can't copy {kind}:{name} onto itself."), true));
             return;
         }
         if !asked && storage.exists_in(&to, source.kind, &name) {
             let lines = vec![
-                format!("{kind}:{name} is already in {}.", project_label(&to)),
+                format!("{} already has {kind}:{name}.", project_label(&to)),
                 String::new(),
-                "It will be replaced.".to_string(),
+                "Copying replaces it.".to_string(),
             ];
             let dialog = Dialog::new("Copy file", lines, "Replace", self.size);
             self.mode = Mode::Ask(dialog, Pending::Copy(source, to, name));
@@ -976,10 +976,11 @@ impl ProjectManager {
         self.status = Some(match storage.copy_file(source.kind, from, (&to, &name)) {
             Ok(name) => {
                 let place = project_label(&to);
-                (
-                    format!("Copied {kind}:{} to {place} as {name}.", source.name),
-                    false,
-                )
+                let from = &source.name;
+                match name == *from {
+                    true => (format!("Copied {kind}:{from} to {place}."), false),
+                    false => (format!("Copied {kind}:{from} to {place} as {name}."), false),
+                }
             }
             Err(e) => (format!("Could not copy {kind}:{}: {e}", source.name), true),
         });

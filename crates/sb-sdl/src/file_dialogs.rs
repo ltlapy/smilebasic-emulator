@@ -295,7 +295,7 @@ impl FilePicker {
     fn field_rect(&self) -> Rect {
         let f = self.frame();
         let list = self.list();
-        let label = text_width("Name: ");
+        let label = text_width("Copy as: ");
         Rect {
             x: list.x + label,
             y: f.y + f.h - 2 * LINE - 3 * PAD,
@@ -448,7 +448,10 @@ impl FilePicker {
         };
         let title = match &self.purpose {
             Purpose::Load(slot) => format!("Slot {slot}: Load file - {place}"),
-            Purpose::Copy { kind, name } => format!("Copy {}:{name} to - {place}", kind.name()),
+            Purpose::Copy { kind, name } => match &self.project {
+                Some(_) => format!("Copy {}:{name} into {place}", kind.name()),
+                None => format!("Copy {}:{name}: choose a project", kind.name()),
+            },
         };
         window(fb, font, f, &title);
         let list = self.list();
@@ -479,7 +482,7 @@ impl FilePicker {
         }
         outline(fb, list, BORDER);
         let field = self.field_rect();
-        let label = if self.narrows() { "Find:" } else { "Name:" };
+        let label = if self.narrows() { "Find:" } else { "Copy as:" };
         draw_text(fb, font, list.x, field.y + 4, label, TEXT);
         fill(fb, field, 0xFF00_0000);
         outline(fb, field, BORDER);
@@ -499,11 +502,9 @@ impl FilePicker {
             (None, Purpose::Load(_), _) => {
                 "Type to narrow  Enter: load  Backspace: projects  Esc: cancel".to_string()
             }
-            (None, Purpose::Copy { .. }, None) => {
-                "Enter: open the project  Esc: cancel".to_string()
-            }
+            (None, Purpose::Copy { .. }, None) => "Enter: open  Esc: cancel".to_string(),
             (None, Purpose::Copy { .. }, Some(_)) => {
-                "Enter: copy here  Click a file: its name  Esc: cancel".to_string()
+                "Enter: copy  Click a file: take its name  Esc: cancel".to_string()
             }
         };
         draw_text(
