@@ -1698,7 +1698,7 @@ impl Runtime {
                     self.drop_prg_edit(slot);
                     self.slots[slot].clear();
                     self.slot_changes[slot] += 1;
-                    self.replaced_lines(slot);
+                    self.replaced_lines(slot, None);
                     self.slot_names[slot].clear();
                     self.slot_modified[slot] = false;
                 }
@@ -2074,6 +2074,7 @@ impl Host for Runtime {
                 Some(true) => {}
             }
         }
+        self.slot_edits.push((slot, crate::prg::SlotEdit::Compiled));
         Ok(Exec::Run(self.slots[slot].clone()))
     }
 

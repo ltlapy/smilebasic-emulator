@@ -1088,6 +1088,18 @@ fn breakpoints_follow_prgins_and_prgdel() {
 }
 
 #[test]
+fn exec_gives_the_new_code_its_breakpoints() {
+    let mut m = debug_machine();
+    m.set_slot(1, "A=1\nB=2".to_string());
+    m.toggle_breakpoint(1, 2);
+    // A line put in before slot 1's first moves its breakpoint to line 3,
+    // which EXEC runs at once.
+    m.set_slot(0, "PRGEDIT 1:PRGINS \"Z=0\"\nEXEC 1".to_string());
+    enter(&mut m, "RUN");
+    assert_eq!(m.paused_at(), Some((1, 3)));
+}
+
+#[test]
 fn breakpoints_go_with_the_program_new_replaces() {
     let mut m = debug_machine();
     m.set_slot(1, "A=1\nB=2".to_string());

@@ -35,12 +35,18 @@ pub struct PrgEdit {
 
 /// How a command changed a slot's lines, for what is kept by line, such
 /// as breakpoints.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SlotEdit {
     /// Lines moved, or went, as an edit in the editor moves them.
     Shift(LineShift),
     /// Another program took the slot's place: LOAD, NEW and the like.
-    Replaced,
+    /// The programs' files, as `PROJECT/NAME`, when they have one.
+    Replaced {
+        from: Option<String>,
+        to: Option<String>,
+    },
+    /// EXEC compiled the slot's program as it is now.
+    Compiled,
 }
 
 /// `count` lines put in before line `at`, from 0.
@@ -151,11 +157,24 @@ impl Runtime {
         self.prg_edit.ok_or_else(|| ErrorKind::UsePrgedit.into())
     }
 
-    /// Notes that a slot's program was replaced, so that what is kept by
-    /// its lines goes. Earlier changes to its lines no longer matter.
-    pub(crate) fn replaced_lines(&mut self, slot: usize) {
+    /// Notes that a slot's program was replaced by file `to`'s, so that
+    /// what is kept by its lines goes with the old one. Earlier changes
+    /// to its lines no longer matter.
+    pub(crate) fn replaced_lines(&mut self, slot: usize, to: Option<String>) {
+        let earlier = self.slot_edits.iter().find_map(|(s, edit)| match edit {
+            SlotEdit::Replaced { from, .. } if *s == slot => Some(from.clone()),
+            _ => None,
+        });
+        let from = earlier.unwrap_or_else(|| self.slot_file(slot));
         self.slot_edits.retain(|&(s, _)| s != slot);
-        self.slot_edits.push((slot, SlotEdit::Replaced));
+        self.slot_edits
+            .push((slot, SlotEdit::Replaced { from, to }));
+    }
+
+    /// The file a slot's program came from or went to, as `PROJECT/NAME`.
+    pub(crate) fn slot_file(&self, slot: usize) -> Option<String> {
+        let name = &self.slot_names[slot];
+        (!name.is_empty()).then(|| format!("{}/{name}", self.storage.project()))
     }
 
     /// Changes the edited slot's lines, marking it as unsaved. `f` tells

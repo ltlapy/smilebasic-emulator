@@ -78,6 +78,9 @@ pub struct Machine {
     /// Lines with breakpoints, with their conditions, by slot. They last
     /// for the session.
     breakpoints: Vec<BTreeMap<u32, Option<Rc<Watch>>>>,
+    /// The breakpoints of files no slot holds, by `PROJECT/NAME`, for
+    /// when one is loaded again.
+    kept: HashMap<String, BTreeMap<u32, Option<Rc<Watch>>>>,
     /// Watches that stop programs when their values change.
     changes: Vec<Rc<Watch>>,
     /// Why the stopped program stopped.
@@ -243,6 +246,7 @@ impl Machine {
             last_error: None,
             halted: None,
             breakpoints: vec![BTreeMap::new(); SLOTS],
+            kept: HashMap::new(),
             changes: Vec::new(),
             stop_reason: None,
             moved: vec![false; SLOTS],
@@ -1197,31 +1201,24 @@ impl Machine {
     }
 
     /// Moves the breakpoints with the lines the editor, PRGINS and PRGDEL
-    /// moved, and drops those of lines they took out and of programs
-    /// LOAD or NEW replaced.
+    /// moved, and drops those of lines they took out. A program LOAD or
+    /// NEW replaced keeps its own for its file, and a file loaded again
+    /// gets back those it had.
     fn follow_edits(&mut self) {
-        let edits = (self.editors.iter_mut())
+        let edits: Vec<_> = (self.editors.iter_mut())
             .flat_map(|e| e.take_shifts())
             .map(|(slot, shift)| (slot, SlotEdit::Shift(shift)))
+            .collect();
+        let edits = edits
+            .into_iter()
             .chain(std::mem::take(&mut self.rt.slot_edits));
-        for (slot, edit) in edits {
-            let lines = &mut self.breakpoints[slot];
-            match edit {
-                SlotEdit::Shift(shift) => {
-                    *lines = std::mem::take(lines)
-                        .into_iter()
-                        .filter_map(|(line, c)| Some((shift.map(line as usize - 1)? as u32 + 1, c)))
-                        .collect();
-                }
-                SlotEdit::Replaced => lines.clear(),
-            }
-            // A running program goes on with the code it had.
-            self.moved[slot] = true;
-        }
+        let (lines, kept, moved) = (&mut self.breakpoints, &mut self.kept, &mut self.moved);
+        follow(lines, kept, moved, &self.rt.slots, edits.collect());
     }
 
     pub fn clear_breakpoints(&mut self) {
         self.breakpoints.iter_mut().for_each(BTreeMap::clear);
+        self.kept.clear();
         self.arm_all();
     }
 
@@ -1400,8 +1397,20 @@ impl Machine {
                 None => vm.run(&mut self.rt, left),
             };
             match status {
-                Ok(Status::Running) if has_time(vm) => continue,
-                Ok(Status::Running) => {}
+                Ok(Status::Running) => {
+                    // EXEC, PRGINS and the like changed slots: the program
+                    // runs on with their breakpoints moved.
+                    if !self.rt.slot_edits.is_empty() {
+                        let edits = std::mem::take(&mut self.rt.slot_edits);
+                        let (lines, kept, moved) =
+                            (&mut self.breakpoints, &mut self.kept, &mut self.moved);
+                        follow(lines, kept, moved, &self.rt.slots, edits);
+                        give_breakpoints(&self.breakpoints, &self.moved, vm);
+                    }
+                    if has_time(vm) {
+                        continue;
+                    }
+                }
                 Ok(Status::Retry) => self.wait = 1,
                 // WAIT, WAIT 0 too, starts VSYNC's count anew; INPUT does
                 // not (checked on hardware).
@@ -1667,6 +1676,52 @@ impl Machine {
         }
         console.print(text);
         console.newline();
+    }
+}
+
+/// Moves, keeps and brings back breakpoints as [`Machine::follow_edits`]
+/// says; `slots` are the programs as they are now.
+fn follow(
+    breakpoints: &mut [BTreeMap<u32, Option<Rc<Watch>>>],
+    kept: &mut HashMap<String, BTreeMap<u32, Option<Rc<Watch>>>>,
+    moved: &mut [bool],
+    slots: &[String],
+    edits: Vec<(usize, SlotEdit)>,
+) {
+    for (slot, edit) in edits {
+        let lines = &mut breakpoints[slot];
+        match edit {
+            SlotEdit::Shift(shift) => {
+                *lines = std::mem::take(lines)
+                    .into_iter()
+                    .filter_map(|(line, c)| Some((shift.map(line as usize - 1)? as u32 + 1, c)))
+                    .collect();
+            }
+            SlotEdit::Replaced { from, to } => {
+                let old = std::mem::take(lines);
+                if let Some(from) = from {
+                    match old.is_empty() {
+                        true => kept.remove(&from),
+                        false => kept.insert(from, old),
+                    };
+                }
+                // The file may have changed since: lines past its end go.
+                let count = slots[slot].matches('\n').count() as u32 + 1;
+                let back = to.and_then(|to| kept.remove(&to)).unwrap_or_default();
+                *lines = back
+                    .into_iter()
+                    .filter(|&(line, _)| line <= count)
+                    .collect();
+            }
+            // The program runs the code as it is now, so it can have
+            // the breakpoints as they are.
+            SlotEdit::Compiled => {
+                moved[slot] = false;
+                continue;
+            }
+        }
+        // A running program goes on with the code it had.
+        moved[slot] = true;
     }
 }
 

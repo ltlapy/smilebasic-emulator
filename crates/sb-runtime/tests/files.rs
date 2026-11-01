@@ -180,15 +180,28 @@ fn save_load_and_list() {
 }
 
 #[test]
-fn load_takes_the_slots_breakpoints_away() {
+fn breakpoints_go_and_come_back_with_their_file() {
     let dir = TempDir::new("breakpoints");
     let mut m = machine(&dir);
     m.set_slot(1, "A=1\nB=2".to_string());
     enter(&mut m, "save \"b\",1");
+    m.set_slot(3, "C=1".to_string());
+    enter(&mut m, "save \"c\",3");
     m.toggle_breakpoint(1, 2);
     m.toggle_breakpoint(2, 1);
     enter(&mut m, "load \"b\",1");
+    assert_eq!(m.all_breakpoints(), [(1, 2, None), (2, 1, None)]);
+    enter(&mut m, "load \"c\",1");
     assert_eq!(m.all_breakpoints(), [(2, 1, None)]);
+    enter(&mut m, "load \"b\",1");
+    assert_eq!(m.all_breakpoints(), [(1, 2, None), (2, 1, None)]);
+    // Lines past the end of the file as it is now go.
+    m.toggle_breakpoint(1, 1);
+    enter(&mut m, "load \"c\",1");
+    m.set_slot(3, "A=1".to_string());
+    enter(&mut m, "save \"b\",3");
+    enter(&mut m, "load \"b\",1");
+    assert_eq!(m.all_breakpoints(), [(1, 1, None), (2, 1, None)]);
 }
 
 #[test]

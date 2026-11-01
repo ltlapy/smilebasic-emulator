@@ -141,7 +141,7 @@ fn copy_across(
             dest.slots[to] = source.slots[from].clone();
             dest.slot_names[to] = source.slot_names[from].clone();
             dest.slot_changes[to] += 1;
-            dest.replaced_lines(to);
+            dest.replaced_lines(to, source.slot_file(from));
         }
         1 => {
             let (from, to) = (index(from, PAGES)?, index(to, PAGES)?);

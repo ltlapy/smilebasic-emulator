@@ -1434,7 +1434,9 @@ impl Vm {
         }
         self.put_unit(unit, slot, host);
         self.pc = 0;
-        Ok(None)
+        // Back to the host, which may give the new code its breakpoints
+        // before it runs.
+        Ok(Some(Status::Running))
     }
 
     /// Calls one callback of CALL SPRITE or CALL TEXT: GOSUB to a
