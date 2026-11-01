@@ -254,6 +254,33 @@ fn errors_carry_their_number_and_a_line_under_them() {
 }
 
 #[test]
+fn envstat_tells_of_an_error_found_before_the_program_runs() {
+    let dir = TempDir::new("errsyntax");
+    let mut m = machine(
+        &dir,
+        "ENVSTAT OUT S,N,A,SL,C,L\n\
+         ENVFOCUS 0\n\
+         PUSHKEY \"?\"+STR$(N)+\",\"+STR$(A)+\",\"+STR$(SL)+\",\"+STR$(L)+CHR$(13)\n\
+         LOOP:VSYNC:ENDLOOP\n",
+    );
+    m.set_slot(2, "'\n?\"A\"\nGOTO\n".to_string());
+    enter(&mut m, "run 2");
+    assert!(
+        rows(&m)
+            .iter()
+            .any(|r| r.starts_with("Syntax error in 2:3"))
+    );
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 5);
+    // Syntax error is 3, in slot 2's third line.
+    assert!(
+        rows(&m).iter().any(|r| r == "3   -1  2   3"),
+        "{:?}",
+        rows(&m)
+    );
+}
+
+#[test]
 fn the_focus_moves_a_few_frames_after_envfocus() {
     let dir = TempDir::new("delay");
     let mut m = machine(

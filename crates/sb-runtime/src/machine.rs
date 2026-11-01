@@ -1580,6 +1580,11 @@ impl Machine {
                     return self.end_sub(Some(e.to_string()));
                 }
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
+                // UNVERIFIED: that ENVSTAT tells of an error found before
+                // the program runs too, at the token the error names.
+                if let Some(slot) = e.slot {
+                    self.rt.env_error = self.error_place(slot as usize, &e);
+                }
                 self.report(&e);
                 self.ready();
             }

@@ -104,7 +104,9 @@ Without them:
   direct mode and the tools on F9 to F11. Run > "Switch keys to/from subprogram" moves the focus as
   `ENVFOCUS` does, and Run > "Stop subprogram" does `SUBSTOP`, so a
   subprogram cannot keep the keys from direct mode.
-- `ENVSTAT` gives -1 for the argument of every error.
+- `ENVSTAT` gives -1 for the argument of every error, as SmileBASIC 4
+  does for `Divide by zero`; its help says it gives the argument's
+  number for errors that know it.
 - Settings > General > "Explain errors in Japanese" prints the Japanese
   line SmileBASIC 4's Japanese edition shows under each error message,
   in the English edition too.
