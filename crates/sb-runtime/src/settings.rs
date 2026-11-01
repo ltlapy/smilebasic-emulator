@@ -85,6 +85,8 @@ pub struct Settings {
     /// A breakpoint or a debugger's step opens the editor at the line the
     /// program stopped before.
     pub debug_open_editor: bool,
+    /// The debugger's panel draws its glyphs this many times their size.
+    pub debug_text_size: u32,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -130,6 +132,7 @@ impl Default for Settings {
             complete_hints: true,
             complete_above: false,
             debug_open_editor: true,
+            debug_text_size: 2,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
         }
@@ -167,6 +170,8 @@ const EDITOR_SIZE: [(EditorSize, &str); 4] = [
 pub const TAB_STEPS: std::ops::RangeInclusive<u32> = 1..=8;
 
 pub const HELP_TEXT_SIZES: std::ops::RangeInclusive<u32> = 1..=3;
+/// The debugger panel's text sizes.
+pub const DEBUG_TEXT_SIZES: std::ops::RangeInclusive<u32> = 1..=2;
 
 pub const COMPLETE_AFTER: std::ops::RangeInclusive<u32> = 1..=4;
 
@@ -263,6 +268,12 @@ impl Settings {
                     }
                     continue;
                 }
+                "debug_text_size" => {
+                    if let Some(n) = value.parse().ok().filter(|n| DEBUG_TEXT_SIZES.contains(n)) {
+                        s.debug_text_size = n;
+                    }
+                    continue;
+                }
                 "editor_tab_step" => {
                     if let Some(n) = value.parse().ok().filter(|n| TAB_STEPS.contains(n)) {
                         s.editor_tab_step = n;
@@ -345,6 +356,7 @@ impl Settings {
              complete_hints={}\n\
              complete_above={}\n\
              debug_open_editor={}\n\
+             debug_text_size={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -372,6 +384,7 @@ impl Settings {
             self.complete_hints,
             self.complete_above,
             self.debug_open_editor,
+            self.debug_text_size,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),

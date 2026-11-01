@@ -1463,7 +1463,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             match &debug {
                 Some((place, view, size)) => {
-                    debug_panel.draw(&mut overlay, font, *place, *size, view)
+                    let scale = machine.rt.settings.debug_text_size;
+                    debug_panel.draw(&mut overlay, font, *place, *size, view, scale)
                 }
                 None => debug_panel.hide(),
             }

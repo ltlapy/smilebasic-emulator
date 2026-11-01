@@ -71,6 +71,8 @@ pub enum Action {
     /// Put the debugger's panel away, or show it again.
     DebugPanel,
     ToggleDebugOpenEditor,
+    /// How large the debugger panel's text is drawn.
+    DebugTextSize(u32),
     /// The help for the command at the editor's cursor (F1).
     Help,
     /// The window listing the keys.
@@ -99,6 +101,8 @@ impl Action {
             Action::ToggleMap => check(settings.editor_map),
             Action::ToggleKeyboardButtons => check(settings.keyboard_buttons),
             Action::ToggleDebugOpenEditor => check(settings.debug_open_editor),
+            Action::DebugTextSize(n) if settings.debug_text_size == n => "(*)",
+            Action::DebugTextSize(_) => "( )",
             Action::EditorFont(f) if settings.editor_font == f => "(*)",
             Action::EditorSize(size) if settings.editor_size == size => "(*)",
             Action::ColorPreset(i) if settings.editor_colors == PRESETS[i].1 => "(*)",
@@ -132,6 +136,10 @@ impl Action {
             }
             Action::ColorPreset(i) => {
                 settings.editor_colors = PRESETS[i].1;
+                return;
+            }
+            Action::DebugTextSize(n) => {
+                settings.debug_text_size = n;
                 return;
             }
             _ => return,
@@ -348,6 +356,13 @@ const MENUS: &[Menu] = &[
             item("Clear breakpoints", Action::ClearBreakpoints),
             LINE,
             item("Show or hide the panel", Action::DebugPanel),
+            sub(
+                "Panel text",
+                &[
+                    item("Large", Action::DebugTextSize(2)),
+                    item("Small", Action::DebugTextSize(1)),
+                ],
+            ),
             keyed("Restart", "Ctrl+Shift+F5", Action::Restart),
             LINE,
             item("Open the editor on stops", Action::ToggleDebugOpenEditor),

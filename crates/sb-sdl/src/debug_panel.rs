@@ -9,7 +9,7 @@ use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
 use sdl3::keyboard::Keycode;
 
-use crate::ui::{BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, fill};
+use crate::ui::{BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text_scaled, fill};
 
 const HEADING: u32 = 0xFF80_8080;
 const NUMBER: u32 = 0xFFF0_4090;
@@ -111,6 +111,35 @@ pub struct DebugPanel {
     /// their values, with the whole value's lines.
     pointer: Option<(i32, i32)>,
     tips: Vec<(Rect, Vec<String>)>,
+    /// How many times its size the 8-pixel font is drawn, as last drawn.
+    scale: u32,
+}
+
+/// The panel's character width, row height, padding and text offset in a
+/// row, for the font drawn `scale` times its size.
+struct Metrics {
+    char: u32,
+    line: u32,
+    pad: u32,
+    text: u32,
+    scale: u32,
+}
+
+impl Metrics {
+    fn new(scale: u32) -> Metrics {
+        let scale = scale.max(1);
+        Metrics {
+            char: 8 * scale,
+            line: 12 * scale,
+            pad: 4 * scale,
+            text: 2 * scale,
+            scale,
+        }
+    }
+
+    fn draw(&self, fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
+        draw_text_scaled(fb, font, x, y, text, color, self.scale);
+    }
 }
 
 /// A value whole, for a tip: an array's elements as INSPECT lists them,
@@ -372,7 +401,10 @@ impl DebugPanel {
         f: Rect,
         size: (u32, u32),
         view: &View,
+        scale: u32,
     ) {
+        self.scale = scale;
+        let m = Metrics::new(scale);
         self.frame = Some(f);
         self.hits.clear();
         self.tips.clear();
@@ -397,67 +429,67 @@ impl DebugPanel {
         let (x0, w) = (screen.x, screen.w);
 
         let close = Rect {
-            x: inner.x + inner.w - LINE - PAD / 2,
-            y: inner.y + PAD / 2,
-            w: LINE,
-            h: LINE,
+            x: inner.x + inner.w - m.line - m.pad / 2,
+            y: inner.y + m.pad / 2,
+            w: m.line,
+            h: m.line,
         };
         fill(fb, close, TAB);
-        draw_text(
+        m.draw(
             fb,
             font,
-            close.x + (LINE - CHAR) / 2,
-            close.y + 4,
+            close.x + (m.line - m.char) / 2,
+            close.y + m.text,
             "x",
             TEXT,
         );
         self.hits.push((close, Hit::Close));
 
         // The calls, innermost last as BACKTRACE lists them reversed.
-        let cx = x0 + w + 2 * PAD;
-        let mut y = inner.y + PAD;
-        draw_text(fb, font, cx, y + 4, "CALLS", HEADING);
-        y += LINE;
+        let cx = x0 + w + 2 * m.pad;
+        let mut y = inner.y + m.pad;
+        m.draw(fb, font, cx, y + m.text, "CALLS", HEADING);
+        y += m.line;
         let chosen = self.chosen_call(view.calls.len());
-        let call_w = CALL_CHARS * CHAR + PAD;
-        let bottom = inner.y + inner.h - LINE;
+        let call_w = CALL_CHARS * m.char + m.pad;
+        let bottom = inner.y + inner.h - m.line;
         for (n, (i, call)) in view.calls.iter().enumerate().rev().enumerate() {
-            if y + LINE > bottom {
+            if y + m.line > bottom {
                 break;
             }
             let row = Rect {
-                x: cx - PAD / 2,
+                x: cx - m.pad / 2,
                 y,
                 w: call_w,
-                h: LINE,
+                h: m.line,
             };
             if i == chosen {
                 fill(fb, row, HIGHLIGHT);
             } else if n % 2 == 1 {
                 fill(fb, row, STRIPE);
             }
-            draw_text(fb, font, cx, y + 4, &call_text(call), TEXT);
+            m.draw(fb, font, cx, y + m.text, &call_text(call), TEXT);
             self.hits.push((row, Hit::Call(i)));
-            y += LINE;
+            y += m.line;
         }
 
         // The watches, and a row to add one.
-        y += PAD;
-        if y + 2 * LINE <= bottom {
-            draw_text(fb, font, cx, y + 4, "WATCH", HEADING);
-            y += LINE;
+        y += m.pad;
+        if y + 2 * m.line <= bottom {
+            m.draw(fb, font, cx, y + m.text, "WATCH", HEADING);
+            y += m.line;
         }
         let typing = self.typing.clone();
         let cursor = |t: &str| format!("{t}_");
         for (i, expr) in self.watches.iter().enumerate() {
-            if y + 2 * LINE > bottom {
+            if y + 2 * m.line > bottom {
                 break;
             }
             let row = Rect {
-                x: cx - PAD / 2,
+                x: cx - m.pad / 2,
                 y,
                 w: call_w,
-                h: LINE,
+                h: m.line,
             };
             if self.selected == Some(Hit::Watch(i)) {
                 fill(fb, row, SELECTED);
@@ -467,10 +499,10 @@ impl DebugPanel {
             if let Some((Target::Watch(t), typed)) = &typing
                 && *t == i
             {
-                draw_text(fb, font, cx, y + 4, &cursor(typed), TEXT);
+                m.draw(fb, font, cx, y + m.text, &cursor(typed), TEXT);
             } else {
-                draw_text(fb, font, cx, y + 4, &cut(expr, WATCH_CHARS), TEXT);
-                let x = cx + (WATCH_CHARS as u32 + 1) * CHAR;
+                m.draw(fb, font, cx, y + m.text, &cut(expr, WATCH_CHARS), TEXT);
+                let x = cx + (WATCH_CHARS as u32 + 1) * m.char;
                 let room = CALL_CHARS as usize - WATCH_CHARS - 1;
                 let (text, color, whole) = match view.watches.get(i) {
                     Some(Ok(v)) => {
@@ -480,7 +512,7 @@ impl DebugPanel {
                     Some(Err(e)) => (cut(e, room), ERROR, vec![e.clone()]),
                     None => (String::new(), TEXT, Vec::new()),
                 };
-                draw_text(fb, font, x, y + 4, &text, color);
+                m.draw(fb, font, x, y + m.text, &text, color);
                 if expr.chars().count() > WATCH_CHARS || text.ends_with('…') {
                     let mut lines = vec![format!("{expr} =")];
                     lines.extend(whole);
@@ -488,28 +520,28 @@ impl DebugPanel {
                 }
             }
             self.hits.push((row, Hit::Watch(i)));
-            y += LINE;
+            y += m.line;
         }
-        if y + LINE <= bottom {
+        if y + m.line <= bottom {
             let row = Rect {
-                x: cx - PAD / 2,
+                x: cx - m.pad / 2,
                 y,
                 w: call_w,
-                h: LINE,
+                h: m.line,
             };
             match &typing {
                 Some((Target::NewWatch, typed)) => {
-                    draw_text(fb, font, cx, y + 4, &cursor(typed), TEXT)
+                    m.draw(fb, font, cx, y + m.text, &cursor(typed), TEXT)
                 }
-                _ => draw_text(fb, font, cx, y + 4, "+ add", DISABLED),
+                _ => m.draw(fb, font, cx, y + m.text, "+ add", DISABLED),
             }
             self.hits.push((row, Hit::AddWatch));
         }
 
         // The variables, under their tabs.
-        let vx = cx + call_w + 2 * PAD;
+        let vx = cx + call_w + 2 * m.pad;
         let mut tx = vx;
-        let ty = inner.y + PAD;
+        let ty = inner.y + m.pad;
         let tab = self
             .tab
             .filter(|t| view.tabs.contains(t))
@@ -522,18 +554,18 @@ impl DebugPanel {
             let r = Rect {
                 x: tx,
                 y: ty,
-                w: crate::ui::text_width(&label) + PAD,
-                h: LINE - 2,
+                w: label.chars().count() as u32 * m.char + m.pad,
+                h: m.line - 2,
             };
             fill(fb, r, if Some(t) == tab { HIGHLIGHT } else { TAB });
-            draw_text(fb, font, tx + PAD / 2, ty + 3, &label, TEXT);
+            m.draw(fb, font, tx + m.pad / 2, ty + m.text - 1, &label, TEXT);
             self.hits.push((r, Hit::Tab(t)));
-            tx += r.w + PAD / 2;
+            tx += r.w + m.pad / 2;
         }
-        let mut y = ty + LINE + 2;
-        self.rows = ((bottom.saturating_sub(y)) / LINE) as usize;
+        let mut y = ty + m.line + 2;
+        self.rows = ((bottom.saturating_sub(y)) / m.line) as usize;
         if view.variables.is_empty() {
-            draw_text(fb, font, vx, y + 4, "No variables", DISABLED);
+            m.draw(fb, font, vx, y + m.text, "No variables", DISABLED);
         }
         // The names and types take what they need, the values the rest.
         let longest = |f: &dyn Fn(&(String, Value)) -> usize| {
@@ -541,33 +573,40 @@ impl DebugPanel {
         };
         let name_chars = longest(&|(n, _)| n.chars().count()).clamp(4, NAME_CHARS as u32);
         let type_chars = longest(&|(_, v)| type_text(v).chars().count());
-        let value_x = vx + (name_chars + 1) * CHAR;
-        let type_x = (inner.x + inner.w - PAD).saturating_sub(type_chars * CHAR);
-        let value_chars = (type_x.saturating_sub(value_x) / CHAR)
+        let value_x = vx + (name_chars + 1) * m.char;
+        let type_x = (inner.x + inner.w - m.pad).saturating_sub(type_chars * m.char);
+        let value_chars = (type_x.saturating_sub(value_x) / m.char)
             .saturating_sub(1)
             .max(4) as usize;
         let shown = view.variables.iter().enumerate().skip(self.scroll);
         for (i, (name, value)) in shown.take(self.rows) {
             let row = Rect {
-                x: vx - PAD / 2,
+                x: vx - m.pad / 2,
                 y,
                 w: inner.x + inner.w - vx,
-                h: LINE,
+                h: m.line,
             };
             if self.selected == Some(Hit::Variable(i)) {
                 fill(fb, row, SELECTED);
             } else if i % 2 == 1 {
                 fill(fb, row, STRIPE);
             }
-            draw_text(fb, font, vx, y + 4, &cut(name, name_chars as usize), TEXT);
+            m.draw(
+                fb,
+                font,
+                vx,
+                y + m.text,
+                &cut(name, name_chars as usize),
+                TEXT,
+            );
             match &typing {
                 Some((Target::Variable(n), typed)) if n == name => {
-                    draw_text(fb, font, value_x, y + 4, &cursor(typed), TEXT)
+                    m.draw(fb, font, value_x, y + m.text, &cursor(typed), TEXT)
                 }
                 _ => {
                     let (text, color) = value_text(value, value_chars, self.hex);
-                    draw_text(fb, font, value_x, y + 4, &text, color);
-                    draw_text(fb, font, type_x, y + 4, &type_text(value), HEADING);
+                    m.draw(fb, font, value_x, y + m.text, &text, color);
+                    m.draw(fb, font, type_x, y + m.text, &type_text(value), HEADING);
                     let cut_name = name.chars().count() > name_chars as usize;
                     if cut_name || text.ends_with('…') || matches!(value, Value::Array(_)) {
                         let mut lines = vec![format!("{name} =")];
@@ -577,20 +616,20 @@ impl DebugPanel {
                 }
             }
             self.hits.push((row, Hit::Variable(i)));
-            y += LINE;
+            y += m.line;
         }
 
         let status = Rect {
-            x: cx - PAD / 2,
+            x: cx - m.pad / 2,
             y: bottom,
             w: inner.x + inner.w - cx,
-            h: LINE,
+            h: m.line,
         };
-        draw_text(
+        m.draw(
             fb,
             font,
-            status.x + PAD / 2,
-            status.y + 4,
+            status.x + m.pad / 2,
+            status.y + m.text,
             &view.status,
             DISABLED,
         );
@@ -600,6 +639,7 @@ impl DebugPanel {
     /// The whole value of the row under the pointer, above it, if the row
     /// cuts it.
     fn draw_tip(&self, fb: &mut Framebuffer, font: &Font) {
+        let m = Metrics::new(self.scale);
         let Some(at) = self.pointer else {
             return;
         };
@@ -607,7 +647,10 @@ impl DebugPanel {
             return;
         };
         let chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u32;
-        let (w, h) = (chars * CHAR + 2 * PAD, lines.len() as u32 * LINE + PAD);
+        let (w, h) = (
+            chars * m.char + 2 * m.pad,
+            lines.len() as u32 * m.line + m.pad,
+        );
         let x = (at.0.max(0) as u32).min(fb.width().saturating_sub(w));
         let y = row.y.saturating_sub(h + 2);
         let tip = Rect { x, y, w, h };
@@ -615,11 +658,11 @@ impl DebugPanel {
         crate::ui::outline(fb, tip, BORDER);
         for (i, line) in lines.iter().enumerate() {
             let color = if i == 0 { HEADING } else { TEXT };
-            draw_text(
+            m.draw(
                 fb,
                 font,
-                x + PAD,
-                y + PAD / 2 + i as u32 * LINE + 4,
+                x + m.pad,
+                y + m.pad / 2 + i as u32 * m.line + m.text,
                 line,
                 color,
             );
