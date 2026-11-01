@@ -377,7 +377,7 @@ const MENUS: &[Menu] = &[
             item("Breakpoint condition...", Action::BreakpointCondition),
             item("Clear breakpoints", Action::ClearBreakpoints),
             LINE,
-            item("Show or hide the panel", Action::DebugPanel),
+            keyed("Show or hide the panel", "Ctrl+F7", Action::DebugPanel),
             sub(
                 "Panel text",
                 &[

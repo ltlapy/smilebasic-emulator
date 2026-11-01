@@ -1762,9 +1762,6 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let font = machine.rt.font();
         ui::set_font(machine.rt.settings.ui_font);
         let cursor_on = (blink / 25).is_multiple_of(2);
-        if let Some(open) = &manager {
-            open.draw(overlays[ui], font, cursor_on);
-        }
         match &debug {
             Some((place, view, size)) => {
                 let scale = machine.rt.settings.debug_text_size;
@@ -1776,6 +1773,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             Some(Side::Help(help)) => help.draw(overlays[ed], font, side_focus),
             Some(Side::Index(index, _)) => index.draw(overlays[ed], font, side_focus),
             None => {}
+        }
+        // Windows over the editor go over its panels too.
+        if let Some(open) = &manager {
+            open.draw(overlays[ui], font, cursor_on);
         }
         if let Some(open) = &program_dialog {
             open.draw(overlays[0], font, cursor_on);
@@ -2121,7 +2122,8 @@ fn menu_context(machine: &Machine) -> Context {
 
 /// The debugger's keys: Shift+F5 continues and Ctrl+Shift+F5 restarts;
 /// F6 steps into, F7 over and Shift+F6 out; Ctrl+F6 runs to the cursor
-/// and Ctrl+Shift+F6 goes on from it; Shift+F7 sets a breakpoint.
+/// and Ctrl+Shift+F6 goes on from it; Shift+F7 sets a breakpoint and
+/// Ctrl+F7 shows or hides the panel.
 fn debug_key(key: Keycode, shift: bool, ctrl: bool) -> Option<Action> {
     Some(match (key, shift, ctrl) {
         (Keycode::F5, true, false) => Action::Continue,
@@ -2132,6 +2134,7 @@ fn debug_key(key: Keycode, shift: bool, ctrl: bool) -> Option<Action> {
         (Keycode::F6, true, true) => Action::JumpToCursor,
         (Keycode::F7, false, false) => Action::StepOver,
         (Keycode::F7, true, false) => Action::ToggleBreakpoint,
+        (Keycode::F7, false, true) => Action::DebugPanel,
         _ => return None,
     })
 }
@@ -2257,7 +2260,7 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         })
         .collect();
     let (status, status_failed, keys) = match machine.paused_at() {
-        _ if machine.is_running() => ("Running".to_string(), false, ""),
+        _ if machine.is_running() => ("Running".to_string(), false, "Ctrl+F7: close"),
         Some((slot, line)) if machine.stop_reason().is_some() || !machine.stopped_by_error() => {
             let (mut status, failed) = stop_text(machine.stop_reason(), slot, line);
             if machine.lines_moved(slot) {
@@ -2265,7 +2268,7 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
             }
             (status, failed, "F6/F7: step  Shift+F5: go on")
         }
-        _ => ("Not running".to_string(), false, "F5: run"),
+        _ => ("Not running".to_string(), false, "F5: run  Ctrl+F7: close"),
     };
     let changed = match machine.stop_reason() {
         Some(StopReason::Changed { watch, .. }) => Some(watch.clone()),
