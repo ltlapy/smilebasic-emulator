@@ -18,7 +18,7 @@ const MAX_VOICES: usize = 48;
 const SILENCE: i32 = -723 * 128;
 /// Scales the mix so that a few loud notes do not clip.
 // UNVERIFIED: SmileBASIC 4's output level.
-const OUTPUT_GAIN: f32 = 0.5;
+pub(crate) const OUTPUT_GAIN: f32 = 0.5;
 /// The vibrato's speed, and its depth at full modulation, in cents.
 // UNVERIFIED: how SmileBASIC 4's vibrato maps to these.
 const VIBRATO_HZ: f32 = 6.0;
@@ -60,7 +60,7 @@ fn level(value: u8) -> i32 {
 }
 
 /// A 0-127 value as a gain, squared.
-fn square(value: i32) -> f32 {
+pub(crate) fn square(value: i32) -> f32 {
     let v = value.clamp(0, 127) as f32 / 127.0;
     v * v
 }

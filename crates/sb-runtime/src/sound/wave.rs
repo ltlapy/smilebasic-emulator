@@ -272,9 +272,12 @@ impl Voice {
     }
 }
 
-/// The gains for a volume, velocity and pan, each 0 to 127.
+/// The gains for a volume, velocity and pan, each 0 to 127, on the same
+/// curve and level as SmileBASIC's own instruments.
+// UNVERIFIED: that waveforms and instruments share SmileBASIC 4's curve
+// and level.
 pub fn gains(volume: i32, velocity: i32, pan: i32) -> (f32, f32) {
-    let v = (volume.clamp(0, 127) * velocity.clamp(0, 127)) as f32 / (127.0 * 127.0);
+    let v = sampler::OUTPUT_GAIN * sampler::square(volume) * sampler::square(velocity);
     let pan = pan.clamp(0, 127) as f32 / 127.0;
     let angle = pan * std::f32::consts::FRAC_PI_2;
     (v * angle.cos(), v * angle.sin())
@@ -357,6 +360,14 @@ mod tests {
         v.modulation = 0;
         peak(&mut v, sampler::TICK);
         assert_eq!(v.step, steady);
+    }
+
+    #[test]
+    fn waveforms_are_as_loud_as_instruments() {
+        // Volume and velocity are squared, as the instruments' are.
+        let (l, r) = gains(127, 64, 0);
+        assert_eq!(r, 0.0);
+        assert!((l - sampler::OUTPUT_GAIN * sampler::square(64)).abs() < 1e-6);
     }
 
     #[test]
