@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+mod bench;
 mod colors;
 mod controls;
 mod debug_panel;
@@ -289,7 +290,22 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // When the + button, F5 or a controller's, went down, while it is
     // held.
     let mut plus_down: Option<Instant> = None;
+    let mut bench = bench::Bench::from_env();
+    // A stage of the frame's drawing ends, for the bench.
+    macro_rules! lap {
+        ($stage:ident) => {
+            if let Some(b) = &mut bench {
+                b.lap(bench::Stage::$stage);
+            }
+        };
+    }
     'running: loop {
+        if let Some(b) = &mut bench
+            && b.step(&mut machine)
+        {
+            b.report(&canvas.renderer_name);
+            break 'running;
+        }
         // The editor shows in a window of its own while it is open, if
         // chosen.
         machine.set_detached(machine.rt.settings.editor_window);
@@ -1641,7 +1657,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         menu.running = machine.is_running();
         // Settings change through the menu, keys and questions; keep each
         // change at once so that nothing is lost if the emulator crashes.
-        if machine.rt.settings != saved_settings {
+        if machine.rt.settings != saved_settings && bench.is_none() {
             saved_settings = machine.rt.settings.clone();
             save_settings(&settings_path, &saved_settings);
         }
@@ -1671,6 +1687,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         blink = blink.wrapping_add(1);
 
+        if let Some(b) = &mut bench {
+            b.skip();
+        }
         mode = machine.screen_mode();
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
         let rect = screen_rect(&mode, filter, out_w, display.h);
@@ -1689,7 +1708,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             texture_kind = kind;
             texture = frame_texture(&canvas, &texture_creator, kind)?;
         }
+        bench::uploaded(fb.pixels().len() * 4);
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        lap!(Screen);
         // The editor in its own window, where the debugger's panel goes
         // too: where its frame and display are there.
         let mut editor_place = (rect, frame, display);
@@ -1709,10 +1730,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 editor_texture = Some((made, kind));
             }
             if let Some((tex, _)) = &mut editor_texture {
+                bench::uploaded(fb.pixels().len() * 4);
                 tex.update(None, as_bytes(fb.pixels()), (frame.0 * 4) as usize)?;
             }
             editor_place = (rect, frame, display);
         }
+        lap!(Editor);
         // The debugger's panel fills the room the editor leaves below.
         let mut debug = None;
         if let Some(at) = machine.panel_at() {
@@ -1751,6 +1774,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 if let Some((tex, _)) = &mut panel_screens {
                     let pixels = as_bytes(screens.pixels());
+                    bench::uploaded(pixels.len());
                     tex.update(None, pixels, (size.0 * 4) as usize)?;
                 }
             }
@@ -1761,6 +1785,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             debug = Some((place, view, screens.then_some(size)));
         }
         panel_was_shown = debug.is_some();
+        lap!(Gather);
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         canvas.copy(&texture, None, rect)?;
@@ -1775,6 +1800,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 sub_texture = Some((made, kind));
             }
             if let Some((tex, _)) = &mut sub_texture {
+                bench::uploaded(fb.pixels().len() * 4);
                 tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
                 let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
                 let dst = FRect::new(
@@ -1969,10 +1995,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             bar.draw(overlays[1], font, &machine.rt.settings, context);
         }
         if used[0] {
+            bench::uploaded(overlay.pixels().len() * 4);
             overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
             canvas.copy(&overlay_texture, None, display)?;
         }
+        lap!(Overlays);
         canvas.present();
+        lap!(Present);
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
             let mut editor_canvas = gfx.canvas.borrow_mut();
             editor_canvas.set_draw_color(Color::BLACK);
@@ -1994,10 +2023,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             if let Some(tex) = &mut editor_overlay_texture {
                 let pixels = as_bytes(editor_overlay.pixels());
+                bench::uploaded(pixels.len());
                 tex.update(None, pixels, (display_w * 4) as usize)?;
                 editor_canvas.copy(tex, None, editor_place.2)?;
             }
+            lap!(Overlays);
             editor_canvas.present();
+            lap!(Present);
         }
         next_frame += FRAME;
         let now = Instant::now();

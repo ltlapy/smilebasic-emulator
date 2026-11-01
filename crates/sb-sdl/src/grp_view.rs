@@ -582,6 +582,7 @@ impl<'a> PageTexture<'a> {
                 let end = ((y1 - 1) * SIZE + x1) as usize;
                 let rect =
                     sdl3::rect::Rect::new(x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32);
+                crate::bench::uploaded((end - start) * 4);
                 tex.update(
                     rect,
                     crate::as_bytes(&pixels[start..end]),
@@ -595,6 +596,7 @@ impl<'a> PageTexture<'a> {
                 self.sampled.extend(
                     (0..side).flat_map(|y| (0..side).map(move |x| pixels[y * row + x * step])),
                 );
+                crate::bench::uploaded(self.sampled.len() * 4);
                 tex.update(None, crate::as_bytes(&self.sampled), side * 4)?;
             }
             self.copied = Some((page, changes, needed));
