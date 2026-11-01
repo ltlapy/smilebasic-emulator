@@ -2061,6 +2061,15 @@ impl Machine {
         self.sub.as_ref().is_some_and(|s| s.vm.is_some())
     }
 
+    /// The running subprogram's runtime, for the debugger to look into,
+    /// and where its screen shows on the 1280x720 display while it does,
+    /// as [`Machine::sub_screen`] gives it but without rendering it.
+    pub fn sub_runtime(&self) -> Option<(&Runtime, Option<[i32; 4]>)> {
+        let sub = self.sub.as_ref().filter(|s| s.vm.is_some())?;
+        let place = sub.rt.sub_screen.filter(|_| self.sub_shown);
+        Some((&sub.rt, place))
+    }
+
     /// SUBSTOP, for the frontend's menu.
     pub fn stop_sub(&mut self) {
         self.substop();

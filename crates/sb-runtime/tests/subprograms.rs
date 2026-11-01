@@ -109,6 +109,30 @@ fn a_subprogram_runs_beside_direct_mode_and_reaches_the_main_one() {
 }
 
 #[test]
+fn the_debugger_sees_the_subprograms_own_sprites() {
+    let dir = TempDir::new("sprites");
+    let mut m = machine(
+        &dir,
+        "XSUBSCREEN 10,20,300,200\n\
+         SPSET 3,0:SPOFS 3,50,60\n\
+         WHILE 1:VSYNC:WEND\n",
+    );
+    assert!(m.sub_runtime().is_none());
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    let (rt, place) = m.sub_runtime().expect("running");
+    assert_eq!(place, Some([10, 20, 300, 200]));
+    assert!(rt.sprites.list[3].used);
+    let corners = rt.sprite_corners(3).expect("set");
+    assert_eq!(corners[0], (50.0, 60.0));
+    // The main interpreter's sprites are its own.
+    assert!(!m.rt.sprites.list[3].used);
+    m.stop_sub();
+    frames(&mut m, 1);
+    assert!(m.sub_runtime().is_none());
+}
+
+#[test]
 fn the_focus_takes_the_keys_and_comes_back_when_the_subprogram_ends() {
     let dir = TempDir::new("focus");
     let mut m = machine(
