@@ -421,8 +421,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             };
             let from_editor = apart && from_editor;
             source.set(usize::from(from_editor));
-            // The event is on the editor, wherever it shows...
-            let on_editor = machine.is_editing() && (!apart || from_editor);
+            // The event is on the editor, wherever it shows, unless a
+            // subprogram beside it has the keys...
+            let on_editor =
+                machine.is_editing() && (!apart || from_editor) && !machine.sub_has_focus();
             // ...or on the window it shows in when open, or on the window
             // with the menu bar and the emulator's windows.
             let editor_window = !apart || from_editor;
@@ -1733,8 +1735,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.clear();
         canvas.copy(&texture, None, rect)?;
         // The subprogram's screen goes where XSUBSCREEN puts it on the
-        // 1280x720 display.
-        if !editing && let Some((fb, [x, y, w, h])) = machine.sub_screen() {
+        // 1280x720 display, over the editor too.
+        if let Some((fb, [x, y, w, h])) = machine.sub_screen() {
             let kind = ((fb.width(), fb.height()), filter);
             if sub_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = frame_texture(&canvas, &texture_creator, kind)?;
@@ -1757,7 +1759,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         // Where the focus has just gone: a yellow line on the edge, one
         // pixel out and two in, then a dark band two pixels wide, fading
         // out together.
-        if !editing && let Some(([x, y, w, h], alpha)) = machine.focus_border() {
+        if let Some(([x, y, w, h], alpha)) = machine.focus_border() {
             let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
             let place = |x: i32, y: i32, w: i32, h: i32| {
                 let at = |v: i32, s: f32| v as f32 * s;

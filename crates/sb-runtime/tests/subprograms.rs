@@ -319,8 +319,45 @@ fn the_tool_keys_start_the_tools_set_in_the_settings() {
     frames(&mut m, 3);
     assert!(!m.sub_running());
     assert!(m.is_editing());
-    // A failed start leaves a running tool be.
+    // A failed start leaves a running tool going.
     assert!(m.run_tool(0).unwrap());
     assert!(m.run_tool(1).is_err());
     assert!(m.sub_running());
+}
+
+#[test]
+fn a_subprogram_types_into_the_editor_beside_it() {
+    let dir = TempDir::new("editor");
+    // As SmileBASIC 4's SMILETOOL types what was picked, on a key.
+    let mut m = machine(
+        &dir,
+        "XSUBSCREEN 0,0,1280,720\n\
+         WHILE INKEY$()!=\"Q\":VSYNC:WEND\n\
+         IF ENVSTAT()==4 THEN M$=\"PRINT\" ELSE M$=\"?\"\n\
+         ENVFOCUS 0\n\
+         PUSHKEY M$\n\
+         VSYNC 4\n\
+         ENVFOCUS 1\n\
+         LOOP:VSYNC:ENDLOOP\n",
+    );
+    m.set_slot(0, String::new());
+    m.toggle_editor();
+    enter_sub_from_editor(&mut m);
+    // The keys go to the subprogram, not the editor, while it has the
+    // focus.
+    m.type_text("q");
+    m.edit();
+    frames(&mut m, 12);
+    assert_eq!(m.editor().text(), "PRINT");
+    assert!(m.sub_running() && m.sub_has_focus());
+    assert!(!m.editor_has_keys());
+    // Its screen shows over the editor.
+    assert!(m.sub_screen().is_some());
+}
+
+/// Starts `SUB` as tool 1, with the editor open.
+fn enter_sub_from_editor(m: &mut Machine) {
+    m.rt.settings.tools[0] = "SUB".to_string();
+    assert!(m.run_tool(0).unwrap());
+    frames(m, 2);
 }

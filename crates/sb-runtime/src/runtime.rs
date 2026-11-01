@@ -1387,14 +1387,8 @@ impl Runtime {
                 );
             }
         }
-        // Beside a subprogram, the side without the focus shows a little
-        // darker, each channel to 225/256: 255 to 224, 96 to 84.
         if self.dimmed {
-            for p in fb.pixels_mut() {
-                let rb = (((*p & 0x00FF_00FF) * 225) >> 8) & 0x00FF_00FF;
-                let g = (((*p & 0x0000_FF00) * 225) >> 8) & 0x0000_FF00;
-                *p = *p & 0xFF00_0000 | rb | g;
-            }
+            dim(&mut fb);
         }
         self.fb = fb;
         self.scratch = scratch;
@@ -1534,6 +1528,11 @@ impl Runtime {
             self.split_shown = None;
             let name = name(&editors[active]);
             editors[active].draw(&mut self.editor_fb, &self.font, &name, look, blink);
+            // UNVERIFIED: that the editor is darker too while a
+            // subprogram has the focus.
+            if self.dimmed {
+                dim(&mut self.editor_fb);
+            }
             return &self.editor_fb;
         };
         // Two sides with a divider between them; only the upper one
@@ -1614,6 +1613,9 @@ impl Runtime {
                     }
                 }
             }
+        }
+        if self.dimmed {
+            dim(&mut self.editor_fb);
         }
         &self.editor_fb
     }
@@ -2161,5 +2163,15 @@ impl Host for Runtime {
             }
         }
         Ok(None)
+    }
+}
+
+/// Beside a subprogram, the side without the focus shows a little
+/// darker, each channel to 225/256: 255 to 224, 96 to 84.
+fn dim(fb: &mut Framebuffer) {
+    for p in fb.pixels_mut() {
+        let rb = (((*p & 0x00FF_00FF) * 225) >> 8) & 0x00FF_00FF;
+        let g = (((*p & 0x0000_FF00) * 225) >> 8) & 0x0000_FF00;
+        *p = *p & 0xFF00_0000 | rb | g;
     }
 }

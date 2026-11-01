@@ -321,9 +321,10 @@ impl Machine {
         self.editor_focus = focused;
     }
 
-    /// Whether the editor is open and takes the keys.
+    /// Whether the editor is open and takes the keys: not while a
+    /// subprogram beside it has the focus.
     pub fn editor_has_keys(&self) -> bool {
-        self.editing && (!self.detached || self.editor_focus)
+        self.editing && (!self.detached || self.editor_focus) && !self.sub_has_focus()
     }
 
     /// Whether the editor can open or change slots now: not while code
@@ -1335,6 +1336,14 @@ impl Machine {
         let start = Instant::now();
         self.run_frame(None);
         self.time_limit = limit;
+        if self.sub_running() {
+            // A subprogram's HELPINFO OUT looks at the editor's cursor as
+            // it is now.
+            let (line, col) = self.editors[self.active].cursor_line();
+            if self.rt.help_cursor.1 != col || self.rt.help_cursor.0 != line {
+                self.rt.help_cursor = (line.to_vec(), col);
+            }
+        }
         self.run_sub(start.elapsed());
     }
 
@@ -1722,7 +1731,7 @@ impl Machine {
             Some((project, name)) => (project, name),
             None => (self.rt.storage.project(), file),
         };
-        // A file that cannot be loaded leaves a running subprogram be.
+        // A file that cannot be loaded leaves a running subprogram going.
         // UNVERIFIED: SmileBASIC 4 may stop it all the same.
         let before = sub.rt.storage.project().to_string();
         let loaded = sub.rt.storage.set_project(project);

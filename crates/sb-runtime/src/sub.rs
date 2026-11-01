@@ -49,8 +49,8 @@ impl Runtime {
         rt
     }
 
-    /// ENVFOCUS, ENVLOAD, ENVSAVE, ENVSTAT, ENVINPUT$, ENVPROJECT, PUSHKEY
-    /// and CLIPBOARD on the sub interpreter, which reach the main one, or
+    /// ENVFOCUS, ENVLOAD, ENVSAVE, ENVSTAT, ENVINPUT$, ENVPROJECT, PUSHKEY,
+    /// CLIPBOARD and HELPINFO OUT on the sub interpreter, which reach the main one, or
     /// `None` for a call that is the sub interpreter's own.
     fn linked_command(
         &mut self,
@@ -88,9 +88,8 @@ impl Runtime {
                 let load = command == Command::Envload;
                 copy_across(main, self, load, kind, from, to).map(|()| vec![])
             }
-            (Command::Envinput | Command::Envlocate | Command::Clipboard, _, _) => {
-                main.run(command, args, want)
-            }
+            (Command::Envinput | Command::Envlocate | Command::Clipboard, _, _)
+            | (Command::Helpinfo, Want::Outs(2), []) => main.run(command, args, want),
             (Command::Envproject, Want::Outs(0), []) => {
                 // The main interpreter's project was set before, so it
                 // can be set again.

@@ -310,7 +310,7 @@ impl Runtime {
                 ])
             }
             // The topic at the editor's cursor as it was when the program
-            // started.
+            // started, or for a subprogram, as it is now.
             (Command::Helpinfo, Want::Outs(2), []) => {
                 let topic = match self.help.as_ref().map(|h| {
                     let (line, col) = &self.help_cursor;
