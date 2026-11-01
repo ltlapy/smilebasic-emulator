@@ -234,7 +234,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 ## Input
 
 - A `DIALOG` with buttons closes when A is let go, not when it goes
-  down.
+  down. Once it has closed, `KEYBOARD` shows no Enter press:
+  `KEYBOARD(40,2)` and `KEYBOARD(40,0)` stay 0 over the next 6 frames,
+  whether Enter or A closed it.
 - `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16.
   A held button repeats at its start frame and then every interval plus
   one frames: 20,3 fires at 0, 20, 24, 28...
