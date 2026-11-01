@@ -1,8 +1,10 @@
 //! The debugger's panel below the editor while a program is stopped: room
 //! for the screens as the program left them, which the frontend draws at
 //! the window's resolution, its calls under way, the watch expressions,
-//! and the variables of the call chosen or of a slot, or what PERFEND
-//! has timed.
+//! and the variables of the call chosen or of a slot, what PERFEND has
+//! timed, or the sprites in use.
+
+pub mod sprites;
 
 use sb_core::value::{ArrayData, ElemType, Value, format_number};
 use sb_core::vm::{Call, CallKind};
@@ -50,6 +52,8 @@ pub enum Tab {
     /// Not variables: PERFBEGIN's and PERFEND's measurements, which
     /// SmileBASIC 4 shows nowhere.
     Perf,
+    /// The sprites in use, which only this tab gathers.
+    Sprites,
 }
 
 /// What the panel shows, gathered from the machine each frame.
@@ -76,6 +80,18 @@ pub struct View {
     pub breakpoints: Vec<(usize, u32, Option<String>)>,
     /// What PERFEND has timed since RUN.
     pub perf: [PerfStats; 8],
+    /// The sprites in use, while the Sprites tab shows.
+    pub sprites: Option<sprites::List>,
+}
+
+impl View {
+    /// How many rows the tab shown has to scroll through.
+    pub fn scrolled(&self) -> usize {
+        match &self.sprites {
+            Some(list) => list.total,
+            None => self.variables.len(),
+        }
+    }
 }
 
 /// What a click on the panel chose.
@@ -92,6 +108,10 @@ pub enum Hit {
     Breakpoint(usize),
     /// The Perf tab's measurements.
     Perf,
+    /// A sprite in the Sprites tab, by its number.
+    Sprite(usize),
+    /// The rest of the Sprites tab.
+    Sprites,
     /// The button that puts the panel away.
     Close,
 }
@@ -140,6 +160,8 @@ pub struct DebugPanel {
     tips: Vec<(Rect, Vec<String>)>,
     /// How many times its size the 8-pixel font is drawn, as last drawn.
     scale: u32,
+    /// The sprite chosen in the Sprites tab, outlined on the screens.
+    pub sprite: Option<usize>,
 }
 
 /// The panel's character width, row height, padding and text offset in a
@@ -298,11 +320,21 @@ impl DebugPanel {
     }
 
     /// Goes back to the innermost call and its variables, as after a new
-    /// stop.
+    /// stop. The tabs that have nothing to do with the call stay, so that
+    /// a sprite can be followed step by step.
     pub fn reset(&mut self) {
         self.chosen = None;
-        self.tab = None;
-        self.scroll = 0;
+        if !matches!(self.tab, Some(Tab::Perf | Tab::Sprites)) {
+            self.tab = None;
+            self.scroll = 0;
+        }
+    }
+
+    /// The rows the Sprites tab has room for, from the first shown.
+    pub fn sprite_rows(&self) -> (usize, usize) {
+        // Before the tab is first drawn, enough for a tall panel.
+        let rows = if self.rows == 0 { 64 } else { self.rows };
+        (self.scroll, rows)
     }
 
     /// Forgets where it was drawn and what was typed, once it is not
@@ -349,7 +381,11 @@ impl DebugPanel {
             Hit::AddWatch => self.add_watch(String::new()),
             Hit::Close => {}
             Hit::Watch(i) if double => self.edit_watch(i),
-            Hit::Watch(_) | Hit::Variable(_) | Hit::Breakpoint(_) | Hit::Perf => {}
+            // A second click lets go of the sprite.
+            Hit::Sprite(id) => {
+                self.sprite = (self.sprite != Some(id)).then_some(id);
+            }
+            Hit::Watch(_) | Hit::Variable(_) | Hit::Breakpoint(_) | Hit::Perf | Hit::Sprites => {}
         }
         hit
     }
@@ -695,6 +731,7 @@ impl DebugPanel {
                 Tab::Locals => "Locals".to_string(),
                 Tab::Globals(slot) => format!("PRG{slot}"),
                 Tab::Perf => "Perf".to_string(),
+                Tab::Sprites => "Sprites".to_string(),
             };
             let r = Rect {
                 x: tx,
@@ -709,9 +746,20 @@ impl DebugPanel {
         }
         let mut y = ty + m.line + 2;
         self.rows = ((bottom.saturating_sub(y)) / m.line) as usize;
+        let right = inner.x + inner.w - m.pad;
         if tab == Some(Tab::Perf) {
-            let right = inner.x + inner.w - m.pad;
             self.draw_perf(fb, font, &m, (vx, y), (right, bottom), &view.perf);
+        } else if let (Some(Tab::Sprites), Some(list)) = (tab, &view.sprites) {
+            // The headings take a row.
+            self.rows = self.rows.saturating_sub(1);
+            // Scrolled past sprites cleared since, it comes back next frame.
+            self.scroll = self.scroll.min(list.total.saturating_sub(self.rows));
+            self.draw_sprites(fb, font, &m, (vx, y), (right, bottom), list);
+            if let (Some(size), Some(outline)) = (size, &list.outline) {
+                let s = Self::screen_place(f, size);
+                let place = (s.x.into(), s.y.into(), s.w.into(), s.h.into());
+                sprites::draw_outline(fb, outline, size, place, s, m.scale);
+            }
         } else if view.variables.is_empty() {
             m.draw(fb, font, vx, y + m.text, "No variables", DISABLED);
         }
@@ -879,6 +927,92 @@ impl DebugPanel {
         }
     }
 
+    /// The sprites in use from `(x, y)` to `(right, bottom)`, a row each
+    /// with a thumbnail of its image; the columns that do not fit, and
+    /// everything else, are in its tip. A sprite that does not show is
+    /// greyed.
+    fn draw_sprites(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        m: &Metrics,
+        (x, mut y): (u32, u32),
+        (right, bottom): (u32, u32),
+        list: &sprites::List,
+    ) {
+        let area = Rect {
+            x: x - m.pad / 2,
+            y,
+            w: (right + m.pad / 2).saturating_sub(x),
+            h: bottom.saturating_sub(y),
+        };
+        if list.total == 0 {
+            m.draw(fb, font, x, y + m.text, "No sprites in use", DISABLED);
+            self.hits.push((area, Hit::Sprites));
+            return;
+        }
+        // The thumbnail takes two characters after the number.
+        let room = (right.saturating_sub(x) / m.char) as usize;
+        let shown = sprites::fitting(room, 2);
+        let mut columns = Vec::with_capacity(shown);
+        let mut at = 0;
+        for (i, &(heading, chars, _)) in sprites::COLUMNS[..shown].iter().enumerate() {
+            columns.push((x + at as u32 * m.char, heading, chars));
+            at += chars + if i == 0 { 2 } else { 0 };
+        }
+        if y + m.line <= bottom {
+            for &(cx, heading, _) in &columns {
+                m.draw(fb, font, cx, y + m.text, heading, HEADING);
+            }
+            y += m.line;
+        }
+        for (n, row) in list.rows.iter().enumerate() {
+            if y + m.line > bottom {
+                break;
+            }
+            let r = Rect {
+                y,
+                h: m.line,
+                ..area
+            };
+            if self.sprite == Some(row.id) {
+                fill(fb, r, SELECTED);
+            } else if (list.first + n) % 2 == 1 {
+                fill(fb, r, STRIPE);
+            }
+            let cells = sprites::cells(row);
+            for (i, &(cx, heading, chars)) in columns.iter().enumerate() {
+                let color = match (row.shows, i) {
+                    (false, _) => DISABLED,
+                    (true, 2..=6) => NUMBER,
+                    _ => TEXT,
+                };
+                if heading == "C" {
+                    let swatch = Rect {
+                        x: cx,
+                        y: y + m.text,
+                        w: m.char,
+                        h: m.line - 2 * m.text,
+                    };
+                    fill(fb, swatch, row.color | 0xFF00_0000);
+                    continue;
+                }
+                let text = cut(&cells[i], chars - 1);
+                m.draw(fb, font, cx, y + m.text, &text, color);
+            }
+            if let Some(thumb) = &row.thumb {
+                let side = m.line - m.scale;
+                let (tx, ty) = (x + 5 * m.char, y + m.scale / 2);
+                draw_thumb(fb, thumb, (tx, ty), side);
+            }
+            self.tips.push((r, sprites::details(row, self.hex)));
+            self.hits.push((r, Hit::Sprite(row.id)));
+            y += m.line;
+        }
+        // After the rows, which go first.
+        self.hits.push((area, Hit::Sprites));
+    }
+
     /// The whole value of the row under the pointer, above it, if the row
     /// cuts it.
     fn draw_tip(&self, fb: &mut Framebuffer, font: &Font) {
@@ -909,6 +1043,22 @@ impl DebugPanel {
                 line,
                 color,
             );
+        }
+    }
+}
+
+/// A sprite's thumbnail drawn `side` pixels across at `(x, y)`.
+fn draw_thumb(fb: &mut Framebuffer, thumb: &[u32], (x, y): (u32, u32), side: u32) {
+    let n = sprites::THUMB as u32;
+    for dy in 0..side {
+        let ty = (dy * n / side) as usize;
+        for dx in 0..side {
+            let p = thumb[ty * sprites::THUMB + (dx * n / side) as usize];
+            if p >> 24 != 0
+                && let Some(d) = fb.get(x + dx, y + dy)
+            {
+                fb.set(x + dx, y + dy, sb_runtime::compose::over(d, p));
+            }
         }
     }
 }
@@ -955,6 +1105,72 @@ mod tests {
             ..begun
         };
         assert_eq!(perf_times(&timed, false), ["1000us", "2000us", "3000us"]);
+    }
+
+    #[test]
+    fn sprites_tab_chooses_and_outlines_a_sprite() {
+        use sb_runtime::machine::Machine;
+        let mut m = Machine::new(sb_runtime::Runtime::new(400, 240, Font::blank()));
+        m.boot();
+        m.set_slot(0, "SPSET 2,0:SPOFS 2,100,100:SPSET 9,0".to_string());
+        m.run_slot(0);
+        m.frame();
+        let mut p = DebugPanel {
+            tab: Some(Tab::Sprites),
+            sprite: Some(2),
+            ..DebugPanel::default()
+        };
+        let (first, rows) = p.sprite_rows();
+        let view = View {
+            calls: Vec::new(),
+            tabs: vec![Tab::Globals(0), Tab::Perf, Tab::Sprites],
+            variables: Vec::new(),
+            frame: None,
+            slot: 0,
+            watches: Vec::new(),
+            status: String::new(),
+            status_failed: false,
+            keys: String::new(),
+            changed: None,
+            breakpoints: Vec::new(),
+            perf: [PerfStats::default(); 8],
+            sprites: Some(sprites::list(&m.rt, first, rows, p.sprite)),
+        };
+        assert_eq!(view.scrolled(), 3);
+        let mut fb = Framebuffer::new(1280, 300);
+        let f = Rect {
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 300,
+        };
+        p.draw(&mut fb, &Font::blank(), f, Some((400, 240)), &view, 2);
+        // The outline is on the screens' place, around (100, 100) of 400.
+        let s = DebugPanel::screen_place(f, (400, 240));
+        let (x, y) = (s.x + 100 * s.w / 400, s.y + 100 * s.h / 240);
+        let lit = |x: u32, y: u32| fb.get(x, y).is_some_and(|c| c >> 24 != 0);
+        assert!(lit(x + 2, y) && !lit(x + 8, y + 8));
+        // Rows under the headings, and the tab's own menu below them.
+        let rows: Vec<(Rect, Hit)> = (p.hits.iter())
+            .filter(|(_, h)| matches!(h, Hit::Sprite(_)))
+            .copied()
+            .collect();
+        assert_eq!(rows.len(), 3);
+        let (r, hit) = rows[1];
+        assert_eq!(hit, Hit::Sprite(9));
+        let at = ((r.x + 4) as i32, (r.y + 4) as i32);
+        assert_eq!(p.click(at, false), Some(Hit::Sprite(9)));
+        assert_eq!(p.sprite, Some(9));
+        p.click(at, false);
+        assert_eq!(p.sprite, None, "a second click lets go");
+        let below = ((r.x + 4) as i32, (rows[2].0.y + r.h + 4) as i32);
+        assert_eq!(p.hit_at(below), Some(Hit::Sprites));
+        // A new stop keeps the tab.
+        p.reset();
+        assert_eq!(p.tab, Some(Tab::Sprites));
+        p.tab = Some(Tab::Locals);
+        p.reset();
+        assert_eq!(p.tab, None);
     }
 
     #[test]

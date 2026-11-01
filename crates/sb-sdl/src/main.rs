@@ -588,7 +588,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 && editor_window
                 && debug_panel.contains(to_display(mouse_x, mouse_y))
             {
-                let shown = debug_view(&mut machine, &debug_panel).variables.len();
+                let shown = debug_view(&mut machine, &debug_panel).scrolled();
                 debug_panel.wheel(-y.round() as i32, shown);
                 continue;
             }
@@ -1821,6 +1821,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         used[ui] |= modal || dims || menu.visible() || toasts.visible();
         let side_on = if side_direct { 0 } else { ed };
         used[ed] |= debug.is_some() || debug_menu.is_some();
+        // Beside the editor's own window, the chosen sprite is outlined
+        // on the main one's screen.
+        let outline = (debug.as_ref())
+            .and_then(|(_, view, _)| view.sprites.as_ref()?.outline)
+            .filter(|_| apart);
+        used[0] |= outline.is_some();
         used[side_on] |= side.is_some();
         used[0] |= program_dialog.is_some() || key_hint.visible();
         // The editor's window always shows the menu bar.
@@ -1843,6 +1849,22 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 debug_panel.draw(overlays[ed], font, *place, *size, view, scale)
             }
             None => debug_panel.hide(),
+        }
+        if let Some(outline) = &outline {
+            let (sx, sy) = (display_w as f32 / display.w, display_h as f32 / display.h);
+            let place = (
+                f64::from((rect.x - display.x) * sx),
+                f64::from((rect.y - display.y) * sy),
+                f64::from(rect.w * sx),
+                f64::from(rect.h * sy),
+            );
+            let clip = ui::Rect {
+                x: place.0.max(0.0) as u32,
+                y: place.1.max(0.0) as u32,
+                w: (place.2 as u32).min(display_w),
+                h: (place.3 as u32).min(display_h),
+            };
+            debug_panel::sprites::draw_outline(overlays[0], outline, frame, place, clip, 2);
         }
         match &side {
             Some(Side::Help(help)) => help.draw(overlays[side_on], font, side_focus),
@@ -2358,17 +2380,18 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         }
     }
     tabs.push(Tab::Perf);
+    tabs.push(Tab::Sprites);
     let tab = panel.tab.filter(|t| tabs.contains(t)).unwrap_or(tabs[0]);
     let call_frame = call.as_ref().and_then(|c| c.frame);
     let (frame, slot) = match tab {
         Tab::Locals => (call_frame, home),
         Tab::Globals(slot) => (None, slot),
-        Tab::Perf => (None, home),
+        Tab::Perf | Tab::Sprites => (None, home),
     };
     let variables = match (tab, frame) {
         (Tab::Locals, Some(frame)) => machine.frame_locals(frame),
         (Tab::Globals(slot), _) => machine.slot_globals(slot),
-        (Tab::Locals, None) | (Tab::Perf, _) => Vec::new(),
+        (Tab::Locals, None) | (Tab::Perf | Tab::Sprites, _) => Vec::new(),
     };
     // Watches see the chosen call's locals and its slot's globals.
     let watches = (panel.watches.iter())
@@ -2406,6 +2429,11 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         changed,
         breakpoints: machine.all_breakpoints(),
         perf: *machine.rt.perf_stats(),
+        // Only gathered while shown.
+        sprites: (tab == Tab::Sprites).then(|| {
+            let (first, rows) = panel.sprite_rows();
+            debug_panel::sprites::list(&machine.rt, first, rows, panel.sprite)
+        }),
     }
 }
 
@@ -2448,6 +2476,8 @@ enum Choice {
     RemoveBreakpoint(usize, u32),
     /// Forget what PERFEND has timed, as RUN does.
     ResetPerf,
+    /// Outline a sprite on the screens, or none.
+    Highlight(Option<usize>),
     AddWatch,
     Hex,
     /// Go to the label or DEF of a name.
@@ -2523,6 +2553,34 @@ fn panel_menu(
         Some(Hit::Perf | Hit::Tab(Tab::Perf)) => {
             vec![("Reset measurements".to_string(), true, Choice::ResetPerf)]
         }
+        Some(Hit::Sprite(id)) => {
+            let row = (view.sprites.iter())
+                .flat_map(|l| &l.rows)
+                .find(|r| r.id == id);
+            let details = row.map(|r| debug_panel::sprites::details(r, panel.hex).join("\n"));
+            let chosen = panel.sprite == Some(id);
+            vec![
+                (
+                    format!("{} Highlight", if chosen { "[x]" } else { "[ ]" }),
+                    true,
+                    Choice::Highlight((!chosen).then_some(id)),
+                ),
+                (
+                    "Copy details".to_string(),
+                    details.is_some(),
+                    Choice::CopyValue(details.unwrap_or_default()),
+                ),
+                hex,
+            ]
+        }
+        Some(Hit::Sprites | Hit::Tab(Tab::Sprites)) => vec![
+            (
+                "Stop highlighting".to_string(),
+                panel.sprite.is_some(),
+                Choice::Highlight(None),
+            ),
+            hex,
+        ],
         _ => vec![("Add watch".to_string(), true, Choice::AddWatch), hex],
     }
 }
@@ -2608,6 +2666,7 @@ fn choose(
         Choice::Condition(slot, line) => return Some(condition_dialog(machine, slot, line, size)),
         Choice::RemoveBreakpoint(slot, line) => _ = machine.toggle_breakpoint(slot, line),
         Choice::ResetPerf => machine.rt.reset_perf_stats(),
+        Choice::Highlight(sprite) => panel.sprite = sprite,
         Choice::AddWatch => panel.add_watch(String::new()),
         Choice::Hex => panel.hex = !panel.hex,
         Choice::Definition(name) => {
