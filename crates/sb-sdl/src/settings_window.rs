@@ -180,6 +180,13 @@ const PAGES: &[Page] = &[
                 ),
             },
             check(
+                "Editor in its own window",
+                "The editor opens in a window of its own beside the screen, \
+                 and programs go on running while it is open.",
+                |s| s.editor_window,
+                |s| s.editor_window ^= true,
+            ),
+            check(
                 "Complete words in direct mode",
                 "A list of words that fit what is typed shows under it.",
                 |s| s.complete_direct,

@@ -84,7 +84,7 @@ SmileBASIC 4's own files.
 | Up, Down | In direct mode, bring back the lines typed before; Down returns to what was being typed |
 | Left, Right, Home, End | Move along the line typed in direct mode or for `INPUT`; with Shift, select |
 | F1 | In the editor, show SmileBASIC 4's help for the command at the cursor beside the code (needs the imported help); F2 there changes its text size |
-| F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line |
+| F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line. With View > Editor in its own window, the editor opens beside the screen and programs keep running; F4 on the screen brings it to the front |
 | F12 | Open the projects: switch (or double-click), load or run a program, copy files (or drag them onto a project) and delete them; right-click for a menu |
 | Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
 | Ctrl+0 | Leave the editor for direct mode |

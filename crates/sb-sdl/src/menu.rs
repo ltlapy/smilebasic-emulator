@@ -39,6 +39,8 @@ pub enum Action {
     /// Pause or resume the program, with the menu bar shown (F8).
     Pause,
     ToggleEditor,
+    /// Show the editor in a window of its own.
+    ToggleEditorWindow,
     EditSlot(usize),
     GoToLine,
     Find,
@@ -87,6 +89,9 @@ pub struct Context {
     pub editing: bool,
     /// A program is stopped where it can go on.
     pub paused: bool,
+    /// The editor shows in a window of its own, and can open while a
+    /// program runs.
+    pub detached: bool,
 }
 
 impl Action {
@@ -96,6 +101,7 @@ impl Action {
         let check = |on: bool| if on { "[x]" } else { "[ ]" };
         match self {
             Action::ToggleUpperCase => check(settings.upper_case_letters),
+            Action::ToggleEditorWindow => check(settings.editor_window),
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::ToggleMap => check(settings.editor_map),
@@ -117,6 +123,7 @@ impl Action {
     pub fn toggle(self, settings: &mut Settings) {
         let flag = match self {
             Action::ToggleUpperCase => &mut settings.upper_case_letters,
+            Action::ToggleEditorWindow => &mut settings.editor_window,
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::ToggleMap => &mut settings.editor_map,
@@ -170,15 +177,14 @@ impl Action {
             | Action::Split => context.editing,
             Action::ToggleEditor
             | Action::EditSlot(_)
-            | Action::Projects
-            | Action::SaveSlot
-            | Action::LoadSlot
-            | Action::Run
             | Action::Help
             | Action::GoToLine
             | Action::Find
             | Action::Replace
-            | Action::Index => !context.running,
+            | Action::Index => !context.running || context.detached,
+            Action::Projects | Action::SaveSlot | Action::LoadSlot | Action::Run => {
+                !context.running
+            }
             _ => true,
         }
     }
@@ -296,6 +302,7 @@ const MENUS: &[Menu] = &[
                 ],
             ),
             keyed("Split display", "Ctrl+/", Action::Split),
+            item("Editor in its own window", Action::ToggleEditorWindow),
             LINE,
             keyed("Wrap lines", "Ctrl+W", Action::ToggleWrap),
             item("Overview on the right", Action::ToggleMap),
@@ -474,7 +481,7 @@ fn sub_rect(menu: usize, parent: usize, item: usize) -> Rect {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MenuBar {
     /// Mouse position in display pixels, if it is over the window.
     mouse: Option<(i32, i32)>,
@@ -525,6 +532,20 @@ impl MenuBar {
     fn close(&mut self) {
         self.open = None;
         self.sub = None;
+    }
+
+    /// Forgets the pointer and closes the open menu, as when the bar's
+    /// window loses the keys.
+    pub fn leave(&mut self) {
+        self.mouse = None;
+        self.close();
+    }
+
+    /// The bar as another window shows it, with nothing hovered or open.
+    pub fn closed(&self) -> MenuBar {
+        let mut bar = self.clone();
+        bar.leave();
+        bar
     }
 
     /// A left click at a display position. `context` enables and
@@ -689,16 +710,19 @@ mod tests {
         running: false,
         editing: false,
         paused: false,
+        detached: false,
     };
     const RUNNING: Context = Context {
         running: true,
         editing: false,
         paused: false,
+        detached: false,
     };
     const EDITING: Context = Context {
         running: false,
         editing: true,
         paused: false,
+        detached: false,
     };
 
     fn menu(title: &str) -> usize {
@@ -767,6 +791,28 @@ mod tests {
             bar.click(at(item_rect(edit, 0)), EDITING),
             Click::Chosen(Action::Undo)
         );
+    }
+
+    #[test]
+    fn the_editor_opens_during_a_program_in_its_own_window() {
+        assert!(!Action::ToggleEditor.enabled(RUNNING));
+        let apart = Context {
+            detached: true,
+            ..RUNNING
+        };
+        assert!(Action::ToggleEditor.enabled(apart));
+        assert!(Action::EditSlot(1).enabled(apart));
+        assert!(!Action::Projects.enabled(apart));
+    }
+
+    #[test]
+    fn a_closed_copy_has_nothing_open() {
+        let mut bar = MenuBar::default();
+        bar.mouse_move(Some((10, 5)));
+        bar.click(at(title_rect(0)), IDLE);
+        let closed = bar.closed();
+        assert!(closed.open.is_none() && closed.mouse.is_none());
+        assert!(bar.open.is_some());
     }
 
     #[test]

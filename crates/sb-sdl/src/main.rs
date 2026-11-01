@@ -18,6 +18,7 @@ mod shortcuts;
 mod toast;
 mod ui;
 
+use std::cell::{Cell, OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -50,6 +51,7 @@ use sb_runtime::sound::synth::Instruments;
 use sb_runtime::sprites::Sprites;
 use sb_runtime::storage::Storage;
 use sb_runtime::{Framebuffer, Runtime, resources, sbfile};
+use sdl3::VideoSubsystem;
 use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
 use sdl3::event::WindowEvent;
@@ -74,6 +76,7 @@ SmileBASIC 4's own font and sprites come from smilebasic-import; without
 them, a bundled font and blank sprites are used";
 
 const TITLE: &str = "SmileBASIC emulator";
+const EDITOR_TITLE: &str = "SmileBASIC editor";
 /// In the data directory.
 const SETTINGS_FILE: &str = "settings.txt";
 /// SmileBASIC runs at 60 frames a second.
@@ -212,6 +215,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     overlay_texture.set_scale_mode(ScaleMode::Nearest);
     overlay_texture.set_blend_mode(BlendMode::Blend);
     let mut menu = MenuBar::default();
+    // The editor's own window, made the first time the editor opens apart
+    // from the screen and hidden while it is closed, with its frame's
+    // texture, its own overlay, and the pixels its pointer positions are
+    // given in.
+    let editor_gfx: OnceCell<EditorWindow> = OnceCell::new();
+    let mut editor_texture: Option<(Texture, TextureKind)> = None;
+    let mut editor_overlay = Framebuffer::new(display_w, display_h);
+    let mut editor_overlay_texture: Option<Texture> = None;
+    let mut editor_space = (1, 1);
+    let mut editor_shown = false;
+    // Whether it has the keys, and the pointer.
+    let mut editor_focused = false;
+    let mut pointer_in_editor = false;
+    // Whether the menu bar and the emulator's windows show in the editor's
+    // window. They follow the keys, but a dialog or window stays where it
+    // opened until it closes.
+    let mut ui_on_editor = false;
     let mouse = sdl.mouse();
     let mut cursor_shown = true;
     // A question, which takes all input while it is open: before quitting
@@ -253,32 +273,142 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // When F5 went down, while it is held.
     let mut f5_down: Option<Instant> = None;
     'running: loop {
+        // The editor shows in a window of its own while it is open, if
+        // chosen.
+        machine.set_detached(machine.rt.settings.editor_window);
+        let apart = machine.is_detached() && machine.is_editing();
+        if apart && editor_gfx.get().is_none() {
+            let made = EditorWindow::open(&video, (display_w, display_h), canvas.window())?;
+            let _ = editor_gfx.set(made);
+            let gfx = editor_gfx.get().expect("set above");
+            let mut made = gfx.creator.create_texture_streaming(
+                PixelFormat::ARGB8888,
+                display_w,
+                display_h,
+            )?;
+            made.set_scale_mode(ScaleMode::Nearest);
+            made.set_blend_mode(BlendMode::Blend);
+            editor_overlay_texture = Some(made);
+        }
+        if let Some(gfx) = editor_gfx.get()
+            && apart != editor_shown
+        {
+            editor_shown = apart;
+            let mut editor_canvas = gfx.canvas.borrow_mut();
+            let window = editor_canvas.window_mut();
+            if apart {
+                window.show();
+                window.raise();
+            } else {
+                window.hide();
+                editor_focused = false;
+                pointer_in_editor = false;
+            }
+        }
+        machine.focus_editor(apart && editor_focused);
+        // The menu bar and the emulator's windows show in the window with
+        // the keys.
+        macro_rules! modal_shown {
+            () => {
+                dialog.is_some()
+                    || manager.is_some()
+                    || file_dialog.is_some()
+                    || settings_window.is_some()
+                    || shortcuts_window.is_some()
+                    || color_window.is_some()
+            };
+        }
+        if !modal_shown!() {
+            ui_on_editor = editor_focused;
+        }
+        let mut ui_editor = apart && ui_on_editor;
         let (out_w, out_h) = canvas.output_size()?;
         let (win_w, _) = canvas.window().size();
         let display = display_rect(display_w, display_h, out_w, out_h);
-        // Mouse positions come in window coordinates; the display is in pixels.
-        let to_display = |x: f32, y: f32| {
-            let px = out_w as f32 / win_w.max(1) as f32;
-            let scale = display.w / display_w as f32;
-            (
-                ((x * px - display.x) / scale) as i32,
-                ((y * px - display.y) / scale) as i32,
-            )
-        };
-        // ...and the editor's pixels, which fill the screen's rectangle.
         let shown = screen_rect(&mode, filter, out_w, display.h);
-        let to_screen = |x: f32, y: f32| {
-            let px = out_w as f32 / win_w.max(1) as f32;
-            (
-                ((x * px - shown.x) * pointer_space.0 as f32 / shown.w).floor() as i32,
-                ((y * px - shown.y) * pointer_space.1 as f32 / shown.h).floor() as i32,
-            )
+        let main_map = Mapping {
+            px: out_w as f32 / win_w.max(1) as f32,
+            display,
+            display_w,
+            shown,
+            space: pointer_space,
         };
+        let editor_map = match editor_gfx.get().filter(|_| apart) {
+            Some(gfx) => {
+                let editor_canvas = gfx.canvas.borrow();
+                let (out_w, out_h) = editor_canvas.output_size()?;
+                let (win_w, _) = editor_canvas.window().size();
+                let display = display_rect(display_w, display_h, out_w, out_h);
+                let mode = machine.editor_mode();
+                let filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
+                Mapping {
+                    px: out_w as f32 / win_w.max(1) as f32,
+                    display,
+                    display_w,
+                    shown: screen_rect(&mode, filter, out_w, display.h),
+                    space: editor_space,
+                }
+            }
+            None => main_map,
+        };
+        // The window the event being handled came from: the main one, or
+        // the editor's.
+        let maps = [main_map, editor_map];
+        let source = Cell::new(0);
+        // Mouse positions come in window coordinates; the display is in
+        // pixels...
+        let to_display = |x: f32, y: f32| maps[source.get()].to_display(x, y);
+        // ...and so are the screen's or the editor's, which fill their
+        // rectangle.
+        let to_screen = |x: f32, y: f32| maps[source.get()].to_screen(x, y);
         let shift = |keymod: Mod| keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
         let ctrl = |keymod: Mod| keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         let mut quit = false;
         for event in events.poll_iter() {
             controls.event(&event);
+            let editor_id = editor_gfx.get().map(|gfx| gfx.id);
+            let from_editor = editor_id.is_some() && event.get_window_id() == editor_id;
+            if let (true, Event::Window { win_event, .. }) = (from_editor, &event) {
+                match win_event {
+                    WindowEvent::FocusGained => editor_focused = true,
+                    WindowEvent::FocusLost => editor_focused = false,
+                    WindowEvent::MouseEnter => pointer_in_editor = true,
+                    WindowEvent::MouseLeave => pointer_in_editor = false,
+                    _ => {}
+                }
+                if !modal_shown!() && editor_focused != ui_on_editor {
+                    ui_on_editor = editor_focused;
+                    ui_editor = apart && ui_on_editor;
+                    menu.leave();
+                }
+            }
+            // Closing the editor's window closes the editor; closing the
+            // main one quits even with the editor's shown.
+            let event = match event {
+                Event::Window {
+                    win_event: WindowEvent::CloseRequested,
+                    ..
+                } if from_editor => {
+                    if machine.is_editing() {
+                        machine.toggle_editor();
+                    }
+                    continue;
+                }
+                Event::Window {
+                    win_event: WindowEvent::CloseRequested,
+                    timestamp,
+                    ..
+                } => Event::Quit { timestamp },
+                event => event,
+            };
+            let from_editor = apart && from_editor;
+            source.set(usize::from(from_editor));
+            // The event is on the editor, wherever it shows...
+            let on_editor = machine.is_editing() && (!apart || from_editor);
+            // ...or on the window it shows in when open, or on the window
+            // with the menu bar and the emulator's windows.
+            let editor_window = !apart || from_editor;
+            let ui_window = from_editor == ui_editor;
             if matches!(event, Event::KeyDown { .. }) {
                 eat_text = dialog.is_some()
                     || program_dialog.is_some()
@@ -290,15 +420,27 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     || debug_panel.typing()
                     || (side.is_some() && side_focus);
             }
+            // Only the main window's pointer reaches the program, and only
+            // the window with the emulator's windows takes theirs.
+            let pointer = matches!(
+                event,
+                Event::MouseMotion { .. }
+                    | Event::MouseButtonDown { .. }
+                    | Event::MouseButtonUp { .. }
+                    | Event::MouseWheel { .. }
+            );
+            if pointer && modal_shown!() && !ui_window {
+                continue;
+            }
             match event {
-                Event::MouseMotion { x, y, .. } => {
+                Event::MouseMotion { x, y, .. } if !from_editor => {
                     let (sx, sy) = to_screen(x, y);
                     let m = &mut controls.mouse;
                     (m.x, m.y, m.display) = (sx, sy, to_display(x, y));
                     m.on_screen = (0..mode.width as i32).contains(&sx)
                         && (0..mode.height as i32).contains(&sy);
                 }
-                Event::MouseWheel { y, .. } if manager.is_none() && !machine.is_editing() => {
+                Event::MouseWheel { y, .. } if manager.is_none() && !on_editor && !from_editor => {
                     controls.mouse.wheel += y.round() as i32;
                 }
                 // The + button acts when let go, unless it was held until
@@ -350,7 +492,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 }
                 continue;
             }
-            if let Some(open) = &mut program_dialog {
+            if let (Some(open), false) = (&mut program_dialog, from_editor) {
                 let (taken, answer) = match event {
                     Event::MouseMotion { x, y, .. } => {
                         open.mouse_move(to_display(x, y));
@@ -378,7 +520,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     continue;
                 }
             }
-            if let Some(open) = &mut side {
+            if let (Some(open), true) = (&mut side, editor_window) {
                 match event {
                     Event::MouseWheel {
                         y,
@@ -400,13 +542,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 mouse_y,
                 ..
             } = event
+                && editor_window
                 && debug_panel.contains(to_display(mouse_x, mouse_y))
             {
                 let shown = debug_view(&mut machine, &debug_panel).variables.len();
                 debug_panel.wheel(-y.round() as i32, shown);
                 continue;
             }
-            if let Some(open) = &mut debug_menu {
+            if let (Some(open), true) = (&mut debug_menu, editor_window) {
                 match event {
                     Event::MouseMotion { x, y, .. } => open.hover(to_display(x, y)),
                     Event::MouseButtonDown {
@@ -429,7 +572,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     _ => {}
                 }
             }
-            if debug_panel.typing() {
+            if debug_panel.typing() && editor_window {
                 match event {
                     Event::KeyDown {
                         keycode: Some(key), ..
@@ -446,7 +589,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     _ => {}
                 }
             }
-            if let (Some(open), true) = (&mut side, side_focus) {
+            if let (Some(open), true) = (&mut side, side_focus && editor_window) {
                 let (taken, outcome) = match (open, &event) {
                     (
                         Side::Help(help),
@@ -797,9 +940,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             match event {
                 Event::Quit { .. } => quit = true,
                 Event::MouseMotion { x, y, .. } => {
-                    menu.mouse_move(Some(to_display(x, y)));
-                    debug_panel.pointer(Some(to_display(x, y)));
-                    if dragging && machine.is_editing() {
+                    if ui_window {
+                        menu.mouse_move(Some(to_display(x, y)));
+                    }
+                    if editor_window {
+                        debug_panel.pointer(Some(to_display(x, y)));
+                    }
+                    if dragging && on_editor {
                         let (x, y) = to_screen(x, y);
                         machine.editor_mouse_drag(x, y);
                     }
@@ -812,8 +959,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     win_event: WindowEvent::MouseLeave,
                     ..
                 } => {
-                    menu.mouse_move(None);
-                    debug_panel.pointer(None);
+                    if ui_window {
+                        menu.mouse_move(None);
+                    }
+                    if editor_window {
+                        debug_panel.pointer(None);
+                    }
                 }
                 // A right click on the editor or the debugger's panel opens a
                 // menu of what can be done there.
@@ -822,7 +973,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     x,
                     y,
                     ..
-                } if machine.is_editing()
+                } if on_editor
                     && !side
                         .as_ref()
                         .is_some_and(|s| s.frame().contains(to_display(x, y))) =>
@@ -845,7 +996,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     y,
                     clicks,
                     ..
-                } => match menu.click(to_display(x, y), menu_context(&machine)) {
+                } => match if ui_window {
+                    menu.click(to_display(x, y), menu_context(&machine))
+                } else {
+                    Click::Ignored
+                } {
                     Click::Chosen(Action::Quit) => quit = true,
                     Click::Chosen(action @ (Action::SaveSlot | Action::LoadSlot)) => {
                         let size = (display_w, display_h);
@@ -943,6 +1098,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(toggle) => toggle.toggle(&mut machine.rt.settings),
                     Click::Ignored
                         if let Some(open) = &mut side
+                            && editor_window
                             && open.frame().contains(to_display(x, y)) =>
                     {
                         side_focus = true;
@@ -951,9 +1107,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             side_outcome(&mut side, &mut side_focus, &mut machine, outcome);
                         }
                     }
-                    Click::Ignored
-                        if machine.is_editing() && debug_panel.contains(to_display(x, y)) =>
-                    {
+                    Click::Ignored if on_editor && debug_panel.contains(to_display(x, y)) => {
                         match debug_panel.click(to_display(x, y), clicks == 2) {
                             Some(Hit::Call(i)) => {
                                 if let Some(call) = machine.calls().get(i) {
@@ -974,7 +1128,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             _ => {}
                         }
                     }
-                    Click::Ignored if machine.is_editing() => {
+                    Click::Ignored if on_editor => {
                         side_focus = false;
                         let (x, y) = to_screen(x, y);
                         if !machine.editor_margin_click(x, y) {
@@ -1012,15 +1166,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 } => menu.shown = !menu.shown,
                 // A paused program takes no keys.
                 Event::KeyDown { .. } | Event::TextInput { .. }
-                    if menu.shown && machine.is_running() => {}
+                    if menu.shown && machine.is_running() && !on_editor => {}
                 // Ctrl+Space hides completion's list and the hints, or
                 // shows them again.
                 Event::KeyDown {
                     keycode: Some(Keycode::Space),
                     keymod,
                     ..
-                } if ctrl(keymod) && (machine.is_editing() || machine.rt.wants_line()) => {
-                    if machine.is_editing() {
+                } if ctrl(keymod) && (on_editor || machine.rt.wants_line()) => {
+                    if on_editor {
                         machine.edit().toggle_popups();
                     } else {
                         machine.rt.toggle_line_popups();
@@ -1032,7 +1186,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(key),
                     keymod,
                     ..
-                } if !machine.is_editing()
+                } if !on_editor
                     && machine.rt.wants_line()
                     && let Some(code) = line_command(key, shift(keymod), ctrl(keymod)) =>
                 {
@@ -1043,7 +1197,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     ..
                 } if ctrl(keymod)
-                    && !machine.is_editing()
+                    && !on_editor
                     && let Some(text) = machine.rt.line_selection() =>
                 {
                     if let Err(e) = clipboard.set_clipboard_text(&text) {
@@ -1056,14 +1210,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::V),
                     keymod,
                     ..
-                } if ctrl(keymod) && !machine.is_editing() && machine.rt.wants_line() => {
+                } if ctrl(keymod) && !on_editor && machine.rt.wants_line() => {
                     paste(&mut machine, &clipboard, &mut toasts)
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::C),
                     keymod,
                     ..
-                } if machine.rt.settings.ctrl_c_stops && ctrl(keymod) && !machine.is_editing() => {
+                } if machine.rt.settings.ctrl_c_stops && ctrl(keymod) && !on_editor => {
                     machine.stop()
                 }
                 // Ctrl+Shift+V pastes everywhere, also as keys to programs.
@@ -1072,6 +1226,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     ..
                 } if ctrl(keymod) && shift(keymod) => paste(&mut machine, &clipboard, &mut toasts),
+                // From the screen, F4 brings the editor's own window up.
+                Event::KeyDown {
+                    keycode: Some(Keycode::F4),
+                    ..
+                } if apart && !from_editor => {
+                    if let Some(gfx) = editor_gfx.get() {
+                        gfx.canvas.borrow_mut().window_mut().raise();
+                    }
+                }
                 Event::KeyDown {
                     keycode: Some(Keycode::F4),
                     ..
@@ -1087,13 +1250,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
                     ..
-                } if machine.is_editing() => next_editor_size(&mut machine),
+                } if on_editor => next_editor_size(&mut machine),
                 // F1 shows the help for the command at the cursor.
                 Event::KeyDown {
                     keycode: Some(Keycode::F1),
                     repeat: false,
                     ..
-                } if machine.is_editing() => {
+                } if on_editor => {
                     let size = (display_w, display_h);
                     if let Some(panel) = open_help(&mut machine, help.as_deref(), &mut toasts, size)
                     {
@@ -1106,7 +1269,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(key @ (Keycode::S | Keycode::L)),
                     keymod,
                     ..
-                } if ctrl(keymod) && !machine.is_running() => {
+                } if ctrl(keymod) && (!machine.is_running() || on_editor && apart) => {
                     let size = (display_w, display_h);
                     file_dialog = Some(open_file_dialog(&machine, key == Keycode::S, size));
                 }
@@ -1114,14 +1277,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(key),
                     keymod,
                     ..
-                } if ctrl(keymod) && !machine.is_running() && slot_key(key).is_some() => {
+                } if ctrl(keymod)
+                    && (!machine.is_running() || on_editor && apart)
+                    && slot_key(key).is_some() =>
+                {
                     machine.edit_slot(slot_key(key).expect("checked"));
                 }
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
                     ..
-                } if machine.is_editing() && ctrl(keymod) => match key {
+                } if on_editor && ctrl(keymod) => match key {
                     Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
                     Keycode::B => next_editor_size(&mut machine),
                     Keycode::Home => machine.edit().file_top(),
@@ -1161,13 +1327,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::KeyDown {
                     keycode: Some(Keycode::Escape),
                     ..
-                } if side.is_some()
-                    && machine.is_editing()
-                    && machine.edit().mode() == Mode::Edit =>
-                {
+                } if side.is_some() && on_editor && machine.edit().mode() == Mode::Edit => {
                     side = None;
                 }
-                Event::MouseWheel { y, .. } if machine.is_editing() => {
+                Event::MouseWheel { y, .. } if on_editor => {
                     machine.edit().wheel(-3 * y.round() as i32);
                 }
                 // F3 finds, and in finding goes to the next match.
@@ -1175,7 +1338,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::F3),
                     keymod,
                     ..
-                } if machine.is_editing() => {
+                } if on_editor => {
                     let editor = machine.edit();
                     if shift(keymod) || matches!(editor.mode(), Mode::Find | Mode::Replace) {
                         editor.find_next(!shift(keymod));
@@ -1187,10 +1350,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::Tab),
                     keymod,
                     ..
-                } if machine.is_editing()
-                    && shift(keymod)
-                    && machine.edit().mode() == Mode::Edit =>
-                {
+                } if on_editor && shift(keymod) && machine.edit().mode() == Mode::Edit => {
                     machine.edit().unindent()
                 }
                 // Shift and the cursor keys select in the editor.
@@ -1198,10 +1358,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(key),
                     keymod,
                     ..
-                } if machine.is_editing()
-                    && shift(keymod)
-                    && special_key(key).is_some_and(is_movement) =>
-                {
+                } if on_editor && shift(keymod) && special_key(key).is_some_and(is_movement) => {
                     machine
                         .edit()
                         .key_select(special_key(key).expect("checked"));
@@ -1219,6 +1376,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
         }
 
+        // Opened or closed since its window was shown or hidden above, the
+        // editor shows where it did until the next frame.
+        let apart = apart && machine.is_editing();
+        let ui_editor = ui_editor && apart;
         if quit {
             let unsaved = machine.unsaved_slots();
             if unsaved.is_empty() {
@@ -1249,7 +1410,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         let paused = menu.shown && machine.is_running();
         menu.status = status_line(&machine, paused);
-        machine.rt.input.live = if modal || paused || machine.is_editing() {
+        machine.focus_editor(editor_focused);
+        machine.rt.input.live = if modal || paused || machine.editor_has_keys() {
             State::default()
         } else {
             controls.state(
@@ -1299,7 +1461,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         // A pointer the program moved with MOUSE stays there until the
         // real one moves, and the real one goes there too.
         let (sent, now) = (&mut controls.mouse, machine.rt.input.live.mouse);
-        let fed = !modal && !paused && !machine.is_editing();
+        let fed = !modal && !paused && !machine.editor_has_keys();
         if fed && (sent.x, sent.y, sent.display) != (now.x, now.y, now.display) {
             let px = out_w as f32 / win_w.max(1) as f32;
             let (x, y) = if (sent.x, sent.y) != (now.x, now.y) {
@@ -1318,7 +1480,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             (sent.x, sent.y, sent.display) = (now.x, now.y, now.display);
         }
         // The editor leaves its top row for the menu bar.
-        menu.pinned = machine.is_editing();
+        menu.pinned = machine.is_editing() && (!machine.is_detached() || ui_editor);
         // Settings change through the menu, keys and questions; keep each
         // change at once so that nothing is lost if the emulator crashes.
         if machine.rt.settings != saved_settings {
@@ -1359,7 +1521,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         mode = machine.screen_mode();
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
         let rect = screen_rect(&mode, filter, out_w, display.h);
-        let editing = machine.is_editing();
+        let editing = machine.is_editing() && !machine.is_detached();
         let fb = machine.render();
         let frame = (fb.width(), fb.height());
         // The editor's frame can be finer than the screen it is shown in.
@@ -1375,9 +1537,33 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             texture = frame_texture(&canvas, &texture_creator, kind)?;
         }
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        // The editor in its own window, where the debugger's panel goes
+        // too: where its frame and display are there.
+        let mut editor_place = (rect, frame, display);
+        if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
+            let editor_canvas = gfx.canvas.borrow();
+            let (out_w, out_h) = editor_canvas.output_size()?;
+            let display = display_rect(display_w, display_h, out_w, out_h);
+            let mode = machine.editor_mode();
+            let filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
+            let rect = screen_rect(&mode, filter, out_w, display.h);
+            let fb = machine.render_editor();
+            let frame = (fb.width(), fb.height());
+            editor_space = frame;
+            let kind = (frame, editor_filter(rect, frame, filter));
+            if editor_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
+                let made = frame_texture(&editor_canvas, &gfx.creator, kind)?;
+                editor_texture = Some((made, kind));
+            }
+            if let Some((tex, _)) = &mut editor_texture {
+                tex.update(None, as_bytes(fb.pixels()), (frame.0 * 4) as usize)?;
+            }
+            editor_place = (rect, frame, display);
+        }
         // The debugger's panel fills the room the editor leaves below.
         let mut debug = None;
         if let Some(at) = machine.panel_at() {
+            let (rect, frame, display) = editor_place;
             let top = (rect.y + at as f32 * rect.h / frame.1 as f32) * display_h as f32 / display.h;
             let top = (top.round() as u32).min(display_h);
             let place = ui::Rect {
@@ -1392,8 +1578,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 shown_stop = machine.paused_at();
                 debug_panel.reset();
             }
-            // The screens change only while a step runs.
-            if fresh || machine.is_running() || panel_screens.is_none() {
+            // The screens change only while a step runs. Beside the
+            // editor's own window, they show in the main one.
+            if !apart && (fresh || machine.is_running() || panel_screens.is_none()) {
                 let screens = machine.render_screens();
                 let size = (screens.width(), screens.height());
                 let shown = DebugPanel::screen_place(place, size);
@@ -1417,14 +1604,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 .as_ref()
                 .map_or((1, 1), |(_, (size, _))| *size);
             let view = debug_view(&mut machine, &debug_panel);
-            debug = Some((place, view, size));
+            debug = Some((place, view, (!apart).then_some(size)));
         }
         panel_was_shown = debug.is_some();
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         canvas.copy(&texture, None, rect)?;
         // The debugger's panel leaves the screens' place clear.
-        if let (Some((place, _, size)), Some((tex, _))) = (&debug, &panel_screens) {
+        if let (Some((place, _, Some(size))), Some((tex, _))) = (&debug, &panel_screens) {
             let s = DebugPanel::screen_place(*place, *size);
             let scale = display.w / display_w as f32;
             let at = |v: u32| v as f32 * scale;
@@ -1433,84 +1620,112 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         // The colors window leaves the editor behind it bright, to show
         // its colors.
-        let dims = dialog.is_some() || manager.is_some() || program_dialog.is_some();
+        let dims = dialog.is_some() || manager.is_some();
         // A running program shows the mouse cursor only if it asks to,
-        // unless the emulator's own screens need it.
+        // unless the emulator's own screens or the editor's window need
+        // it.
         let show_cursor = !machine.is_running()
             || modal
             || dims
+            || program_dialog.is_some()
             || menu.visible()
+            || apart && pointer_in_editor
             || machine.rt.settings.keep_mouse_cursor
             || machine.rt.mouse_cursor();
         if show_cursor != cursor_shown {
             cursor_shown = show_cursor;
             mouse.show_cursor(show_cursor);
         }
-        if modal
-            || dims
-            || debug.is_some()
-            || debug_menu.is_some()
-            || side.is_some()
-            || menu.visible()
-            || toasts.visible()
-            || key_hint.visible()
-        {
-            // A dialog or the project manager dims the screen behind it.
-            overlay.clear(if dims { 0x8000_0000 } else { 0 });
-            let font = machine.rt.font();
-            if let Some(open) = &manager {
-                open.draw(&mut overlay, font, (blink / 25).is_multiple_of(2));
+        // Which overlay each part goes on: the main window's, or the
+        // editor's window's. The menu bar and the emulator's windows go
+        // with the keys, the editor's panels and menu with the editor.
+        let ui = usize::from(ui_editor);
+        let ed = usize::from(apart);
+        let mut used = [false; 2];
+        used[ui] |= modal || dims || menu.visible() || toasts.visible();
+        used[ed] |= debug.is_some() || debug_menu.is_some() || side.is_some();
+        used[0] |= program_dialog.is_some() || key_hint.visible();
+        // The editor's window always shows the menu bar.
+        used[1] |= apart;
+        let mut overlays = [&mut overlay, &mut editor_overlay];
+        for (i, fb) in overlays.iter_mut().enumerate() {
+            // A dialog or the project manager dims the screen behind it,
+            // as a program's DIALOG does.
+            let dim = i == ui && dims || i == 0 && program_dialog.is_some();
+            if used[i] {
+                fb.clear(if dim { 0x8000_0000 } else { 0 });
             }
-            match &debug {
-                Some((place, view, size)) => {
-                    let scale = machine.rt.settings.debug_text_size;
-                    debug_panel.draw(&mut overlay, font, *place, *size, view, scale)
-                }
-                None => debug_panel.hide(),
+        }
+        let font = machine.rt.font();
+        let cursor_on = (blink / 25).is_multiple_of(2);
+        if let Some(open) = &manager {
+            open.draw(overlays[ui], font, cursor_on);
+        }
+        match &debug {
+            Some((place, view, size)) => {
+                let scale = machine.rt.settings.debug_text_size;
+                debug_panel.draw(overlays[ed], font, *place, *size, view, scale)
             }
-            match &side {
-                Some(Side::Help(help)) => help.draw(&mut overlay, font, side_focus),
-                Some(Side::Index(index, _)) => index.draw(&mut overlay, font, side_focus),
-                None => {}
-            }
-            if let Some(open) = &program_dialog {
-                open.draw(&mut overlay, font, (blink / 25).is_multiple_of(2));
-            }
-            if let Some(open) = &color_window {
-                open.draw(&mut overlay, font, &machine.rt.settings.editor_colors);
-            }
-            if let Some(open) = &settings_window {
-                open.draw(&mut overlay, font, &machine.rt.settings);
-            }
-            if let Some(open) = &shortcuts_window {
-                open.draw(&mut overlay, font);
-            }
-            match &file_dialog {
-                Some(FileDialog::Save(d)) => {
-                    d.draw(&mut overlay, font, (blink / 25).is_multiple_of(2))
-                }
-                Some(FileDialog::Load(p)) => {
-                    p.draw(&mut overlay, font, (blink / 25).is_multiple_of(2))
-                }
-                None => {}
-            }
-            if let Some(open) = &debug_menu {
-                open.draw(&mut overlay, font);
-            }
-            if key_hint.visible() {
-                key_hint.draw(&mut overlay, font);
-            }
-            toasts.draw(&mut overlay, font);
-            if let Some((open, _)) = &dialog {
-                open.draw(&mut overlay, font);
-            } else if !modal && menu.visible() {
-                let context = menu_context(&machine);
-                menu.draw(&mut overlay, font, &machine.rt.settings, context);
-            }
+            None => debug_panel.hide(),
+        }
+        match &side {
+            Some(Side::Help(help)) => help.draw(overlays[ed], font, side_focus),
+            Some(Side::Index(index, _)) => index.draw(overlays[ed], font, side_focus),
+            None => {}
+        }
+        if let Some(open) = &program_dialog {
+            open.draw(overlays[0], font, cursor_on);
+        }
+        if let Some(open) = &color_window {
+            open.draw(overlays[ui], font, &machine.rt.settings.editor_colors);
+        }
+        if let Some(open) = &settings_window {
+            open.draw(overlays[ui], font, &machine.rt.settings);
+        }
+        if let Some(open) = &shortcuts_window {
+            open.draw(overlays[ui], font);
+        }
+        match &file_dialog {
+            Some(FileDialog::Save(d)) => d.draw(overlays[ui], font, cursor_on),
+            Some(FileDialog::Load(p)) => p.draw(overlays[ui], font, cursor_on),
+            None => {}
+        }
+        if let Some(open) = &debug_menu {
+            open.draw(overlays[ed], font);
+        }
+        if key_hint.visible() {
+            key_hint.draw(overlays[0], font);
+        }
+        toasts.draw(overlays[ui], font);
+        let context = menu_context(&machine);
+        if let Some((open, _)) = &dialog {
+            open.draw(overlays[ui], font);
+        } else if !modal && menu.visible() {
+            menu.draw(overlays[ui], font, &machine.rt.settings, context);
+        }
+        if apart && ui == 0 {
+            let bar = menu.closed();
+            bar.draw(overlays[1], font, &machine.rt.settings, context);
+        }
+        if used[0] {
             overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
             canvas.copy(&overlay_texture, None, display)?;
         }
         canvas.present();
+        if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
+            let mut editor_canvas = gfx.canvas.borrow_mut();
+            editor_canvas.set_draw_color(Color::BLACK);
+            editor_canvas.clear();
+            if let Some((tex, _)) = &editor_texture {
+                editor_canvas.copy(tex, None, editor_place.0)?;
+            }
+            if let Some(tex) = &mut editor_overlay_texture {
+                let pixels = as_bytes(editor_overlay.pixels());
+                tex.update(None, pixels, (display_w * 4) as usize)?;
+                editor_canvas.copy(tex, None, editor_place.2)?;
+            }
+            editor_canvas.present();
+        }
         next_frame += FRAME;
         let now = Instant::now();
         if next_frame > now {
@@ -1521,6 +1736,77 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
     }
     Ok(())
+}
+
+/// The editor's own window, with its renderer.
+struct EditorWindow {
+    canvas: RefCell<Canvas<Window>>,
+    creator: TextureCreator<WindowContext>,
+    id: u32,
+}
+
+impl EditorWindow {
+    /// Makes the window, hidden until the editor opens: beside the main
+    /// window if the display has room on one of its sides, else where the
+    /// system puts it.
+    fn open(
+        video: &VideoSubsystem,
+        (w, h): (u32, u32),
+        main: &Window,
+    ) -> Result<EditorWindow, AnyError> {
+        const GAP: i32 = 16;
+        let mut builder = video.window(EDITOR_TITLE, w, h);
+        let ((x, y), (main_w, _)) = (main.position(), main.size());
+        if let Ok(room) = main.get_display().and_then(|d| d.get_usable_bounds()) {
+            let right = x + main_w as i32 + GAP;
+            let left = x - GAP - w as i32;
+            if right + w as i32 <= room.x() + room.width() as i32 {
+                builder.position(right, y);
+            } else if left >= room.x() {
+                builder.position(left, y);
+            }
+        }
+        let window = builder.resizable().high_pixel_density().hidden().build()?;
+        video.text_input().start(&window);
+        let id = window.id();
+        let canvas = window.into_canvas();
+        let creator = canvas.texture_creator();
+        Ok(EditorWindow {
+            canvas: RefCell::new(canvas),
+            creator,
+            id,
+        })
+    }
+}
+
+/// How a window's pointer positions map to the display's pixels and to
+/// those of the frame shown in `shown`, which has `space` pixels.
+#[derive(Clone, Copy)]
+struct Mapping {
+    /// Pixels to a window coordinate.
+    px: f32,
+    display: FRect,
+    display_w: u32,
+    shown: FRect,
+    space: (u32, u32),
+}
+
+impl Mapping {
+    fn to_display(self, x: f32, y: f32) -> (i32, i32) {
+        let scale = self.display.w / self.display_w as f32;
+        (
+            ((x * self.px - self.display.x) / scale) as i32,
+            ((y * self.px - self.display.y) / scale) as i32,
+        )
+    }
+
+    fn to_screen(self, x: f32, y: f32) -> (i32, i32) {
+        let (shown, (w, h)) = (self.shown, self.space);
+        (
+            ((x * self.px - shown.x) * w as f32 / shown.w).floor() as i32,
+            ((y * self.px - shown.y) * h as f32 / shown.h).floor() as i32,
+        )
+    }
 }
 
 /// Plays with SmileBASIC 4's instruments when they are imported and
@@ -1722,6 +2008,7 @@ fn menu_context(machine: &Machine) -> Context {
         running: machine.is_running(),
         editing: machine.is_editing(),
         paused: machine.paused_at().is_some() && !machine.is_running(),
+        detached: machine.is_detached(),
     }
 }
 

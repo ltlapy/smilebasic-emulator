@@ -137,6 +137,13 @@ Without them:
   set in File > Settings > Editor.
 - Ctrl+S takes the file name typed on the computer's keyboard rather
   than SmileBASIC 4's on-screen one.
+- With View > Editor in its own window, the editor opens in a second
+  window beside the screen, and programs and direct mode go on while it
+  is open. Its edits reach the slot at once, so RUN, SAVE and the PRG
+  commands see them, and a slot that a program or LOAD changes shows
+  the change in the editor. CONT and the debugger's commands leave it
+  open. In SmileBASIC 4 the editor replaces the screen and no program
+  runs while it shows.
 
 ## Speed
 

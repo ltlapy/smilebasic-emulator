@@ -394,13 +394,14 @@ impl DebugPanel {
     }
 
     /// Draws the panel into `f`, leaving the place of screens of `size`
-    /// clear for the frontend to draw them.
+    /// clear for the frontend to draw them. Without a size, the screens
+    /// show elsewhere and the panel has no place for them.
     pub fn draw(
         &mut self,
         fb: &mut Framebuffer,
         font: &Font,
         f: Rect,
-        size: (u32, u32),
+        size: Option<(u32, u32)>,
         view: &View,
         scale: u32,
     ) {
@@ -418,16 +419,21 @@ impl DebugPanel {
         };
         fill(fb, inner, FACE | 0xFF00_0000);
 
-        let screen = Self::screen_place(f, size);
-        fill(fb, screen, 0);
-        let frame = Rect {
-            x: screen.x - 2,
-            y: screen.y - 2,
-            w: screen.w + 4,
-            h: screen.h + 4,
+        let (x0, w) = match size {
+            Some(size) => {
+                let screen = Self::screen_place(f, size);
+                fill(fb, screen, 0);
+                let frame = Rect {
+                    x: screen.x - 2,
+                    y: screen.y - 2,
+                    w: screen.w + 4,
+                    h: screen.h + 4,
+                };
+                crate::ui::outline(fb, frame, BORDER);
+                (screen.x, screen.w)
+            }
+            None => (f.x, 0),
         };
-        crate::ui::outline(fb, frame, BORDER);
-        let (x0, w) = (screen.x, screen.w);
 
         let close = Rect {
             x: inner.x + inner.w - m.line - m.pad / 2,
