@@ -788,6 +788,7 @@ impl Compiler<'_> {
                 }
             }
             StmtKind::End => _ = self.emit(Op::End),
+            StmtKind::Fail(kind) => _ = self.emit(Op::Fail(*kind)),
             StmtKind::Def(_) => unreachable!("DEFs are compiled separately"),
             StmtKind::Read(targets) => {
                 for t in targets {

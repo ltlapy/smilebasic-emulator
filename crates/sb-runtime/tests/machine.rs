@@ -1512,3 +1512,19 @@ fn a_program_that_ends_can_leave_a_clean_screen_and_silence() {
     assert!(playing);
     assert_eq!(ended(true), (0xFF00_0000, false));
 }
+
+#[test]
+fn return_with_two_values_fails_only_when_it_runs() {
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "?\"RUNS\"\nDEF F OUT A,B\n RETURN 1,2\nEND\nF OUT X,Y\n".to_string(),
+    );
+    enter(&mut m, "RUN");
+    let r = rows(&m);
+    assert!(r.iter().any(|l| l == "RUNS"), "{r:?}");
+    assert!(
+        r.iter().any(|l| l.starts_with("Syntax error in 0:3")),
+        "{r:?}"
+    );
+}

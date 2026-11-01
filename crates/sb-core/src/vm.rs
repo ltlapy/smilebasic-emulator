@@ -2042,6 +2042,7 @@ impl Vm {
             }
             Op::End => return Ok(self.end(host)),
             Op::Nop => {}
+            Op::Fail(kind) => return Err((*kind).into()),
             Op::Exec(argc) => {
                 let args = self.pop_n((*argc).into());
                 return self.exec(args, host);

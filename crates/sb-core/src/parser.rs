@@ -396,11 +396,23 @@ impl Parser {
             K::Goto => StmtKind::Goto(self.jump_target()?),
             K::Gosub => StmtKind::Gosub(self.jump_target()?),
             K::On => self.on_statement()?,
-            K::Return => StmtKind::Return(if self.at_stmt_end() {
-                None
-            } else {
-                Some(self.expr()?)
-            }),
+            K::Return if self.at_stmt_end() => StmtKind::Return(None),
+            K::Return => {
+                let value = self.expr()?;
+                // RETURN with more values is a Syntax error on hardware,
+                // but a published program with one in a DEF it never
+                // calls runs there, so it fails only when it runs.
+                // UNVERIFIED: that it is not refused before running.
+                if self.eat(&TokenKind::Comma) {
+                    self.expr()?;
+                    while self.eat(&TokenKind::Comma) {
+                        self.expr()?;
+                    }
+                    StmtKind::Fail(crate::error::ErrorKind::SyntaxError)
+                } else {
+                    StmtKind::Return(Some(value))
+                }
+            }
             K::End => StmtKind::End,
             K::Def | K::Common => {
                 if !top_level {
