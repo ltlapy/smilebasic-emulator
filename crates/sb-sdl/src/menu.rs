@@ -68,6 +68,8 @@ pub enum Action {
     ClearBreakpoints,
     /// Run the program RUN last started again.
     Restart,
+    /// Put the debugger's panel away, or show it again.
+    DebugPanel,
     ToggleDebugOpenEditor,
     /// The help for the command at the editor's cursor (F1).
     Help,
@@ -147,6 +149,7 @@ impl Action {
                 context.paused
             }
             Action::RunToCursor | Action::JumpToCursor => context.paused && context.editing,
+            Action::DebugPanel => context.paused,
             Action::ToggleBreakpoint => context.editing,
             Action::Undo
             | Action::Redo
@@ -344,6 +347,7 @@ const MENUS: &[Menu] = &[
             keyed("Breakpoint", "Shift+F7", Action::ToggleBreakpoint),
             item("Clear breakpoints", Action::ClearBreakpoints),
             LINE,
+            item("Show or hide the panel", Action::DebugPanel),
             keyed("Restart", "Ctrl+Shift+F5", Action::Restart),
             LINE,
             item("Open the editor on stops", Action::ToggleDebugOpenEditor),

@@ -1,6 +1,7 @@
-//! The debugger's panel below the editor while a program is stopped: the
-//! screens as the program left them, its calls under way, the watch
-//! expressions, and the variables of the call chosen or of a slot.
+//! The debugger's panel below the editor while a program is stopped: room
+//! for the screens as the program left them, which the frontend draws at
+//! the window's resolution, its calls under way, the watch expressions,
+//! and the variables of the call chosen or of a slot.
 
 use sb_core::value::{ArrayData, ElemType, Value, format_number};
 use sb_core::vm::{Call, CallKind};
@@ -16,7 +17,9 @@ const STRING: u32 = 0xFF60_80F0;
 const FACE: u32 = 0xFF18_1818;
 const TAB: u32 = 0xFF40_4040;
 const ERROR: u32 = 0xFFF0_6060;
-const SELECTED: u32 = 0xFF30_3040;
+const SELECTED: u32 = 0xFF30_3850;
+/// Every other row of the lists.
+const STRIPE: u32 = 0xFF24_2428;
 /// Characters of the calls' and watches' column, of a watch's
 /// expression, and of the variables' names and values.
 const CALL_CHARS: u32 = 20;
@@ -60,6 +63,8 @@ pub enum Hit {
     Variable(usize),
     Watch(usize),
     AddWatch,
+    /// The button that puts the panel away.
+    Close,
 }
 
 /// What is being typed into the panel.
@@ -227,6 +232,7 @@ impl DebugPanel {
                 self.scroll = 0;
             }
             Hit::AddWatch => self.add_watch(String::new()),
+            Hit::Close => {}
             Hit::Watch(i) if double => self.edit_watch(i),
             Hit::Watch(_) | Hit::Variable(_) => {}
         }
@@ -302,12 +308,27 @@ impl DebugPanel {
 
     /// Draws the panel into `f`, with the screens scaled down to fit on
     /// its left.
+    /// Where the screens go in the panel at `f`, for screens of `size`:
+    /// its height, at their shape.
+    pub fn screen_place(f: Rect, (sw, sh): (u32, u32)) -> Rect {
+        let h = f.h.saturating_sub(2 + PAD + 4);
+        let w = (u64::from(h) * u64::from(sw.max(1)) / u64::from(sh.max(1))) as u32;
+        Rect {
+            x: f.x + PAD + 2,
+            y: f.y + 2 + PAD / 2 + 2,
+            w,
+            h,
+        }
+    }
+
+    /// Draws the panel into `f`, leaving the place of screens of `size`
+    /// clear for the frontend to draw them.
     pub fn draw(
         &mut self,
         fb: &mut Framebuffer,
         font: &Font,
         f: Rect,
-        screen: &Framebuffer,
+        size: (u32, u32),
         view: &View,
     ) {
         self.frame = Some(f);
@@ -321,26 +342,33 @@ impl DebugPanel {
         };
         fill(fb, inner, FACE | 0xFF00_0000);
 
-        // The screens, at a whole fraction of their size if they are
-        // taller than the room.
-        let room = inner.h - PAD;
-        let (sw, sh) = (screen.width().max(1), screen.height().max(1));
-        let down = sh.div_ceil(room).max(1);
-        let (w, h) = (sw / down, sh / down);
-        let (x0, y0) = (inner.x + PAD, inner.y + PAD / 2 + (room - h) / 2);
-        for y in 0..h {
-            for x in 0..w {
-                let c = screen.get(x * down, y * down).unwrap_or(0xFF00_0000);
-                fb.set(x0 + x, y0 + y, c | 0xFF00_0000);
-            }
-        }
+        let screen = Self::screen_place(f, size);
+        fill(fb, screen, 0);
         let frame = Rect {
-            x: x0 - 1,
-            y: y0 - 1,
-            w: w + 2,
-            h: h + 2,
+            x: screen.x - 2,
+            y: screen.y - 2,
+            w: screen.w + 4,
+            h: screen.h + 4,
         };
         crate::ui::outline(fb, frame, BORDER);
+        let (x0, w) = (screen.x, screen.w);
+
+        let close = Rect {
+            x: inner.x + inner.w - LINE - PAD / 2,
+            y: inner.y + PAD / 2,
+            w: LINE,
+            h: LINE,
+        };
+        fill(fb, close, TAB);
+        draw_text(
+            fb,
+            font,
+            close.x + (LINE - CHAR) / 2,
+            close.y + 4,
+            "x",
+            TEXT,
+        );
+        self.hits.push((close, Hit::Close));
 
         // The calls, innermost last as BACKTRACE lists them reversed.
         let cx = x0 + w + 2 * PAD;
@@ -350,7 +378,7 @@ impl DebugPanel {
         let chosen = self.chosen_call(view.calls.len());
         let call_w = CALL_CHARS * CHAR + PAD;
         let bottom = inner.y + inner.h - LINE;
-        for (i, call) in view.calls.iter().enumerate().rev() {
+        for (n, (i, call)) in view.calls.iter().enumerate().rev().enumerate() {
             if y + LINE > bottom {
                 break;
             }
@@ -362,6 +390,8 @@ impl DebugPanel {
             };
             if i == chosen {
                 fill(fb, row, HIGHLIGHT);
+            } else if n % 2 == 1 {
+                fill(fb, row, STRIPE);
             }
             draw_text(fb, font, cx, y + 4, &call_text(call), TEXT);
             self.hits.push((row, Hit::Call(i)));
@@ -388,6 +418,8 @@ impl DebugPanel {
             };
             if self.selected == Some(Hit::Watch(i)) {
                 fill(fb, row, SELECTED);
+            } else if i % 2 == 1 {
+                fill(fb, row, STRIPE);
             }
             if let Some((Target::Watch(t), typed)) = &typing
                 && *t == i
@@ -464,6 +496,8 @@ impl DebugPanel {
             };
             if self.selected == Some(Hit::Variable(i)) {
                 fill(fb, row, SELECTED);
+            } else if i % 2 == 1 {
+                fill(fb, row, STRIPE);
             }
             draw_text(fb, font, vx, y + 4, &cut(name, NAME_CHARS), TEXT);
             match &typing {

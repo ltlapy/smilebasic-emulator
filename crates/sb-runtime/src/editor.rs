@@ -31,34 +31,13 @@ const BAR: u32 = 0xFF30_3040;
 const DIM: u32 = 0xFF70_7080;
 const LINE_NUMBER: u32 = 0xFF80_8080;
 const RETURN_MARK: u32 = 0xFF50_5868;
+/// A breakpoint's line number, and the cursor's.
 const BREAKPOINT: u32 = 0xFFDC_2828;
+const BREAKPOINT_CURSOR: u32 = 0xFFFF_7070;
+/// The stopped line's background, or a grey one when edits moved the
+/// lines since, taking this much out of 256.
 const STOPPED: u32 = 0xFFFF_DC00;
-/// How far, out of 256, the stopped line's background takes `STOPPED`.
 const STOPPED_LINE: u32 = 100;
-
-/// A breakpoint, in the line numbers' margin.
-const DOT_GLYPH: [u8; 8] = [
-    0b0011_1100,
-    0b0111_1110,
-    0b1111_1111,
-    0b1111_1111,
-    0b1111_1111,
-    0b1111_1111,
-    0b0111_1110,
-    0b0011_1100,
-];
-
-/// The line a stopped program goes on from.
-const ARROW_GLYPH: [u8; 8] = [
-    0b0100_0000,
-    0b0110_0000,
-    0b0111_0000,
-    0b0111_1000,
-    0b0111_1000,
-    0b0111_0000,
-    0b0110_0000,
-    0b0100_0000,
-];
 
 /// What the debugger shows of the slot shown, by 0-based line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1656,7 +1635,6 @@ impl Editor {
         screen.cls();
         let width = screen.size().0 as usize;
         let mut marks = Vec::new();
-        let mut margin_marks = Vec::new();
         let mut cursor = None;
 
         let mut row = 0;
@@ -1674,11 +1652,10 @@ impl Editor {
             } else {
                 colors.line_background(kind)
             };
-            let stopped = self.marks.stopped == Some(line);
-            let back = if stopped && !self.marks.stale {
-                blend(back, STOPPED, STOPPED_LINE)
-            } else {
-                back
+            let back = match self.marks.stopped == Some(line) {
+                true if self.marks.stale => blend(back, DIM, STOPPED_LINE),
+                true => blend(back, STOPPED, STOPPED_LINE),
+                false => back,
             };
             let chunks = if wrap { rows_of(text, cols) } else { 1 };
             for chunk in 0..chunks {
@@ -1689,10 +1666,14 @@ impl Editor {
                     grid.fill(fb, row, 0, width, back);
                 }
                 if chunk == 0 {
-                    let color = if current {
-                        colors[Part::Character]
-                    } else {
-                        LINE_NUMBER
+                    // A breakpoint turns the number's tiles red, or the
+                    // digits' background.
+                    let breakpoint = self.marks.breakpoints.contains(&line);
+                    let color = match (breakpoint, current) {
+                        (true, true) => BREAKPOINT_CURSOR,
+                        (true, false) => BREAKPOINT,
+                        (false, true) => colors[Part::Character],
+                        (false, false) => LINE_NUMBER,
                     };
                     if tiles {
                         for (x, &c) in number_tiles(line + 1).iter().enumerate() {
@@ -1701,14 +1682,11 @@ impl Editor {
                         screen.put_at(3, row as u32, TILE_CAP, color);
                     } else {
                         let number = format!("{:>1$}", line + 1, gutter - 1);
-                        put_str(screen, 0, row, &number, color);
-                    }
-                    if self.marks.breakpoints.contains(&line) {
-                        margin_marks.push((0, row, &DOT_GLYPH, BREAKPOINT));
-                    }
-                    if stopped {
-                        let color = if self.marks.stale { DIM } else { STOPPED };
-                        margin_marks.push((gutter.min(3) / 2, row, &ARROW_GLYPH, color));
+                        if breakpoint {
+                            grid.fill(fb, row, 0, gutter - 1, color);
+                        }
+                        let digits = if breakpoint { TEXT } else { color };
+                        put_str(screen, 0, row, &number, digits);
                     }
                 }
                 let start = if wrap { chunk * cols } else { v.left };
@@ -1822,9 +1800,6 @@ impl Editor {
         }
         for (x, y) in marks {
             grid.glyph(fb, x, y, &RETURN_GLYPH, RETURN_MARK);
-        }
-        for (x, y, glyph, color) in margin_marks {
-            grid.glyph(fb, x, y, glyph, color);
         }
         if let (Some(x), true) = (prompt_cursor, blink) {
             for py in 0..cell {

@@ -1140,3 +1140,23 @@ fn watches_and_changed_variables() {
     debug(&mut m, Resume::Cont);
     assert!(rows(&m).contains(&"50".to_string()));
 }
+
+#[test]
+fn the_panel_closes_until_the_next_stop() {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    let mut m = machine();
+    m.set_slot(0, "A=1\nB=2\nC=3".to_string());
+    m.toggle_breakpoint(0, 1);
+    enter(&mut m, "RUN");
+    m.render();
+    assert!(m.panel_at().is_some());
+    m.show_panel(false);
+    m.render();
+    assert_eq!((m.panel_at(), m.editor().marks.stopped), (None, None));
+    // The program is still stopped, and the next stop shows them again.
+    debug(&mut m, Resume::Step(Step::Into));
+    m.render();
+    assert!(m.panel_at().is_some());
+    assert_eq!(m.editor().marks.stopped, Some(1));
+}

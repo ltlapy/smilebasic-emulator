@@ -72,6 +72,9 @@ pub struct Machine {
     stepping: Option<Step>,
     /// The slot RUN last started, for the debugger's restart.
     last_run: Option<usize>,
+    /// The debugger's panel and the stopped line were put away until the
+    /// next stop.
+    panel_closed: bool,
     /// Slots whose lines the editor moved since the program started. Its
     /// code there is the old one, as CONT goes on with it (checked on
     /// hardware), so it keeps the breakpoints it had.
@@ -176,6 +179,7 @@ impl Machine {
             moved: vec![false; SLOTS],
             stepping: None,
             last_run: None,
+            panel_closed: false,
             time_limit: None,
         }
     }
@@ -607,6 +611,7 @@ impl Machine {
             self.halt(vm, Stopped::Paused, line);
         }
         self.ready();
+        self.panel_closed = false;
         let stepped = self.stepping.take().is_some();
         if program && (stepped || how == Halt::Debug && self.rt.settings.debug_open_editor) {
             self.show_paused();
@@ -701,6 +706,7 @@ impl Machine {
             }
         }
         self.rt.input.polled = false;
+        self.panel_closed = false;
         self.rt.cancel_input();
         self.resume(how);
         true
@@ -732,7 +738,18 @@ impl Machine {
     /// Whether the debugger's panel shows below the editor: while a
     /// program is stopped, or a step runs.
     fn panel_shown(&self) -> bool {
-        self.editing && (self.halted.is_some() || self.stepping.is_some())
+        self.editing && !self.panel_closed && (self.halted.is_some() || self.stepping.is_some())
+    }
+
+    /// Puts the debugger's panel and the stopped line away until the next
+    /// stop, or shows them again.
+    pub fn show_panel(&mut self, shown: bool) {
+        self.panel_closed = !shown;
+    }
+
+    /// Whether the debugger's panel would show for a stopped program.
+    pub fn panel_open(&self) -> bool {
+        !self.panel_closed
     }
 
     /// Where the debugger's panel starts on the frame [`Machine::render`]
@@ -751,7 +768,7 @@ impl Machine {
     /// of its slot.
     fn mark_editors(&mut self) {
         self.follow_edits();
-        let at = self.paused_at();
+        let at = self.paused_at().filter(|_| !self.panel_closed);
         for i in 0..2 {
             let slot = self.editors[i].slot();
             let stale = self.moved[slot];

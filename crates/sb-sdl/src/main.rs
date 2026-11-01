@@ -199,6 +199,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, &texture_creator, texture_kind)?;
+    // The screens in the debugger's panel, drawn at the window's
+    // resolution, with their size and filter.
+    let mut panel_screens: Option<(Texture, TextureKind)> = None;
     // The pixels that mouse positions are given in: the screen's, or the
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
@@ -231,6 +234,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The debugger's panel below the editor, and the stop it last showed.
     let mut debug_panel = DebugPanel::default();
     let mut shown_stop = None;
+    // Whether the panel showed in the last frame.
+    let mut panel_was_shown = false;
     // The menu a right click opens on the editor or the debugger's panel.
     let mut debug_menu: Option<Popup<Choice>> = None;
     // A panel beside the editor, and whether it takes the keys.
@@ -862,7 +867,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         | Action::JumpToCursor
                         | Action::ToggleBreakpoint
                         | Action::ClearBreakpoints
-                        | Action::Restart),
+                        | Action::Restart
+                        | Action::DebugPanel),
                     ) => debug_action(&mut machine, action, &mut toasts),
                     Click::Chosen(Action::Help) => {
                         if !machine.is_editing() {
@@ -950,6 +956,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                                     machine.show_line(call.slot, call.line);
                                 }
                             }
+                            Some(Hit::Close) => machine.show_panel(false),
                             Some(Hit::Variable(i)) if clicks == 2 => {
                                 let panel = &mut debug_panel;
                                 choose(
@@ -1365,7 +1372,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         // The debugger's panel fills the room the editor leaves below.
-        let debug = machine.panel_at().map(|at| {
+        let mut debug = None;
+        if let Some(at) = machine.panel_at() {
             let top = (rect.y + at as f32 * rect.h / frame.1 as f32) * display_h as f32 / display.h;
             let top = (top.round() as u32).min(display_h);
             let place = ui::Rect {
@@ -1374,16 +1382,51 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 w: display_w,
                 h: display_h - top,
             };
-            if machine.paused_at() != shown_stop {
+            // A stop, though at the same place, shows the panel anew.
+            let fresh = machine.paused_at() != shown_stop || !panel_was_shown;
+            if fresh {
                 shown_stop = machine.paused_at();
                 debug_panel.reset();
             }
+            // The screens change only while a step runs.
+            if fresh || machine.is_running() || panel_screens.is_none() {
+                let screens = machine.render_screens();
+                let size = (screens.width(), screens.height());
+                let shown = DebugPanel::screen_place(place, size);
+                let filter = match shown.h as f32 * display.h / display_h as f32 >= size.1 as f32 {
+                    true => Filter::Nearest,
+                    false => Filter::Bilinear,
+                };
+                if panel_screens
+                    .as_ref()
+                    .is_none_or(|(_, kind)| *kind != (size, filter))
+                {
+                    let made = frame_texture(&canvas, &texture_creator, (size, filter))?;
+                    panel_screens = Some((made, (size, filter)));
+                }
+                if let Some((tex, _)) = &mut panel_screens {
+                    let pixels = as_bytes(screens.pixels());
+                    tex.update(None, pixels, (size.0 * 4) as usize)?;
+                }
+            }
+            let size = panel_screens
+                .as_ref()
+                .map_or((1, 1), |(_, (size, _))| *size);
             let view = debug_view(&mut machine, &debug_panel);
-            (place, view, machine.render_screens().clone())
-        });
+            debug = Some((place, view, size));
+        }
+        panel_was_shown = debug.is_some();
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         canvas.copy(&texture, None, rect)?;
+        // The debugger's panel leaves the screens' place clear.
+        if let (Some((place, _, size)), Some((tex, _))) = (&debug, &panel_screens) {
+            let s = DebugPanel::screen_place(*place, *size);
+            let scale = display.w / display_w as f32;
+            let at = |v: u32| v as f32 * scale;
+            let dst = FRect::new(display.x + at(s.x), display.y + at(s.y), at(s.w), at(s.h));
+            canvas.copy(tex, None, dst)?;
+        }
         // The colors window leaves the editor behind it bright, to show
         // its colors.
         let dims = dialog.is_some() || manager.is_some() || program_dialog.is_some();
@@ -1415,8 +1458,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 open.draw(&mut overlay, font, (blink / 25).is_multiple_of(2));
             }
             match &debug {
-                Some((place, view, screens)) => {
-                    debug_panel.draw(&mut overlay, font, *place, screens, view)
+                Some((place, view, size)) => {
+                    debug_panel.draw(&mut overlay, font, *place, *size, view)
                 }
                 None => debug_panel.hide(),
             }
@@ -1724,6 +1767,7 @@ fn debug_action(machine: &mut Machine, action: Action, toasts: &mut Toasts) {
             return;
         }
         Action::ClearBreakpoints => return machine.clear_breakpoints(),
+        Action::DebugPanel => return machine.show_panel(!machine.panel_open()),
         Action::Restart => {
             if !machine.restart() {
                 toasts.push("Nothing has run yet".to_string());
@@ -2071,12 +2115,15 @@ fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
     FRect::new((out_w as f32 - w) / 2.0, 0.0, w, h)
 }
 
+/// The size of a texture's frames and how they are scaled.
+type TextureKind = ((u32, u32), Filter);
+
 /// A texture for frames of `w` x `h` pixels, scaled with `filter`:
 /// XSCREEN's, or the one chosen in the menu.
 fn frame_texture<'a>(
     canvas: &Canvas<Window>,
     creator: &'a TextureCreator<WindowContext>,
-    ((w, h), filter): ((u32, u32), Filter),
+    ((w, h), filter): TextureKind,
 ) -> Result<Texture<'a>, AnyError> {
     // The Rust bindings lack SDL 3.4's pixel art mode for a single
     // texture, but the renderer's default for new ones takes it.
