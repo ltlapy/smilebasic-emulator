@@ -1116,3 +1116,27 @@ fn editor_marks_breakpoints_and_the_stopped_line() {
     assert_eq!(m.editor().marks.breakpoints, [2]);
     assert_eq!(m.editor().marks.stopped, Some(2));
 }
+
+#[test]
+fn watches_and_changed_variables() {
+    use sb_core::value::Value;
+    use sb_runtime::machine::Resume;
+    let mut m = debug_machine();
+    m.set_slot(
+        0,
+        "A=1\nSTOP\n?A\nF 2\nDEF F N\n STOP\n ?N*10\nEND".to_string(),
+    );
+    enter(&mut m, "RUN");
+    let shown = |v: Result<Value, _>| format!("{:?}", v.unwrap());
+    assert_eq!(shown(m.watch("A*3", None, 0)), "Int(3)");
+    assert!(m.set_variable("A", Value::Int(7), None, 0));
+    assert!(!m.set_variable("NOPE", Value::Int(7), None, 0));
+    debug(&mut m, Resume::Cont);
+    assert!(rows(&m).contains(&"7".to_string()));
+    // In the DEF, its locals come before the globals.
+    let frame = m.calls().last().unwrap().frame;
+    assert_eq!(shown(m.watch("N+A", frame, 0)), "Int(9)");
+    assert!(m.set_variable("N", Value::Int(5), frame, 0));
+    debug(&mut m, Resume::Cont);
+    assert!(rows(&m).contains(&"50".to_string()));
+}

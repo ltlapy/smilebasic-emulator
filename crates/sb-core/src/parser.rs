@@ -99,6 +99,26 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
     .program()
 }
 
+/// Parses one expression and nothing after it, for a debugger's watch.
+pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
+    let tokens = lexer::tokenize(source)?;
+    let mut parser = Parser {
+        tokens,
+        pos: 0,
+        in_def: false,
+        loops: Vec::new(),
+        depth: 0,
+    };
+    let expr = parser.expr()?;
+    while matches!(parser.peek(), TokenKind::Newline) {
+        parser.pos += 1;
+    }
+    if !matches!(parser.peek(), TokenKind::Eof) {
+        return parser.expected("the end of the expression");
+    }
+    Ok(expr)
+}
+
 type PResult<T> = Result<T, ParseError>;
 
 struct Parser {

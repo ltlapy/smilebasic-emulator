@@ -815,6 +815,44 @@ impl Machine {
         globals
     }
 
+    /// Evaluates a watch expression with the stopped program's variables:
+    /// a DEF call's locals, by [`Call::frame`], before a slot's globals.
+    pub fn watch(&self, source: &str, frame: Option<usize>, slot: usize) -> Result<Value, Error> {
+        let locals = frame.map(|f| self.frame_locals(f)).unwrap_or_default();
+        let globals = self.slot_globals(slot);
+        let var = |name: &str| {
+            let mut all = locals.iter().chain(&globals);
+            all.find(|(n, _)| n == name).map(|(_, v)| v.clone())
+        };
+        sb_core::watch::eval(source, &var)
+    }
+
+    /// Gives a variable of the stopped program a new value: a local of a
+    /// DEF call if it has one by that name, else a global of the slot.
+    /// False when there is no such variable.
+    pub fn set_variable(
+        &mut self,
+        name: &str,
+        value: Value,
+        frame: Option<usize>,
+        slot: usize,
+    ) -> bool {
+        let Some(vm) = &mut self.halted else {
+            return false;
+        };
+        if frame.is_some_and(|f| vm.set_local(f, name, value.clone())) {
+            return true;
+        }
+        if !vm.set_slot_global(slot, name, value.clone()) {
+            return false;
+        }
+        // CONT gives the running slot direct mode's values.
+        if vm.slot() == Some(slot) {
+            self.vars.insert(name.to_string(), value);
+        }
+        true
+    }
+
     /// Sets or clears a breakpoint on a slot's 1-based line; true when
     /// it is set now.
     pub fn toggle_breakpoint(&mut self, slot: usize, line: u32) -> bool {

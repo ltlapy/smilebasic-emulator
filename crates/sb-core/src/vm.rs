@@ -626,6 +626,38 @@ impl Vm {
             .collect()
     }
 
+    /// Gives a local of a DEF call under way, by [`Call::frame`], a new
+    /// value. False when it has no such local.
+    pub fn set_local(&mut self, frame: usize, name: &str, value: Value) -> bool {
+        let Some(f) = self.frames.get(frame) else {
+            return false;
+        };
+        let def = (self.program_in(f.home)).and_then(|p| p.defs.get(f.def as usize));
+        let Some(i) = def.and_then(|d| d.locals.iter().position(|l| l.full_name() == name)) else {
+            return false;
+        };
+        self.frames[frame].locals[i] = value;
+        true
+    }
+
+    /// Gives a global of a slot's program that has run a new value. False
+    /// when it has no such global.
+    pub fn set_slot_global(&mut self, slot: usize, name: &str, value: Value) -> bool {
+        let (program, values) = if slot == self.slot {
+            (&self.program, &mut self.globals)
+        } else {
+            match self.units.get_mut(slot) {
+                Some(Some(unit)) => (&unit.program, &mut unit.globals),
+                _ => return false,
+            }
+        };
+        let Some(i) = program.globals.iter().position(|g| g.full_name() == name) else {
+            return false;
+        };
+        values[i] = value;
+        true
+    }
+
     /// The globals of a slot's program that has run, with their values.
     pub fn slot_globals(&self, slot: usize) -> Vec<(String, Value)> {
         let (program, values) = if slot == self.slot {
