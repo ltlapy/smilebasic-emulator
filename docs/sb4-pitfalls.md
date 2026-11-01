@@ -464,6 +464,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   side between about 0.77 and 1.2 of the middle's level, which fits
   gains of sqrt((1-p)/2) and sqrt((1+p)/2) for a pan p of -1 to 1.
   `@MP7,1,7,48` did not move within 1.5 s at T120.
+- `RECSTART` records the sound before the effector, or the effector
+  did nothing: a short note recorded alike, to the unit, with `EFCEN`
+  off, with `#EFCCAVE` at `EFCWET 0,127,0,0`, with a hall set by
+  `EFCSET #EFCREFHALL,...` and with `EFCEN` off again.
 - `WAVSET` while a note of that instrument sounds changes the note at
   once, keeping its envelope: a square swapped for a square of two
   cycles doubles the pitch at the same level. A `WAVSET` square swapped

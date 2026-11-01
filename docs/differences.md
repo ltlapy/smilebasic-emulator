@@ -29,7 +29,9 @@ Without them:
 ## Sound that is not played
 
 - The effector (`EFCEN`, `EFCSET`, `EFCWET`, `BGMWET`) keeps its
-  settings but does not change the sound.
+  settings but does not change the sound. What `RECSTART` records is
+  as on SmileBASIC 4, where the effector does not reach the recording
+  either.
 - `TALK` speaks with a voice of the emulator's own, a Klatt formant
   synthesizer (klattsch-core) reading the kana or phoneme letters, so it
   says the same words in another voice. In MML, a sung note (`*WA,C4`)
