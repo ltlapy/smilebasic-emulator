@@ -560,10 +560,16 @@ Checked with TTEST36.
 - `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again,
   while it goes on running. A clear `BACKCOLOR` shows the main screen
   through.
-- `ENVLOCATE OUT X,Y`, which the manual leaves out, gave 64,168 with
-  the 400x240 console's cursor at the start of row 7: the screen is 1200
-  pixels wide in the middle of the display, so X is a character to the
-  right of the cursor's cell, and Y its top.
+- `ENVLOCATE OUT X,Y`, which the manual leaves out, gives the right
+  edge and top of the main console's cursor cell on the display: with
+  the 400x240 screen 1200 pixels wide in its middle, the cursor at
+  column C of row R is at 40+24*(C+1), 24*R (TTEST37).
+- `END` in a subprogram hides its screen and prints nothing; the line
+  being typed in direct mode stays as it was (TTEST37).
+- `ENVFOCUS` does not move the focus at once. After `ENVFOCUS 0`,
+  `ENVFOCUS()` still gave 1 ten frames later and 0 thirty frames later;
+  an `ENVFOCUS 1` in between was lost. `ENVFOCUS 1` from a subprogram
+  without the focus had it within ten frames (TTEST36, TTEST37).
 
 ## Errors and the editor
 

@@ -1497,8 +1497,7 @@ impl Machine {
     /// When the subprogram has ended, the focus comes back, and the main
     /// interpreter prints why it ended, if not by itself, between lines
     /// of its own; `again` takes up the direct-mode line afresh after it.
-    // UNVERIFIED: that the focus comes back after END too, and that END
-    // prints nothing.
+    // UNVERIFIED: that the focus comes back after END too.
     fn sub_ended(&mut self, again: bool) {
         let Some(sub) = &mut self.sub else {
             return;

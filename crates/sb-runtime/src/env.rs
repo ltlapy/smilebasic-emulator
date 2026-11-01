@@ -128,8 +128,7 @@ impl Runtime {
     /// keyboard does. The command is not in the manual. The screen is
     /// scaled to fit the display and centered, and the point is the top
     /// of the cursor's cell, a character to its right.
-    // UNVERIFIED: the character to the right away from the start of a
-    // row, and whether the editor's cursor counts while it is open.
+    // UNVERIFIED: whether the editor's cursor counts while it is open.
     pub(crate) fn cursor_on_display(&self) -> (i32, i32) {
         let console = &self.text[crate::text::CONSOLE];
         let (cx, cy) = console.cursor();
