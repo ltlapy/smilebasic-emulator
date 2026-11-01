@@ -138,6 +138,11 @@ pub struct Voice {
     cents: i32,
     pos: f64,
     step: f64,
+    /// The step before vibrato.
+    base_step: f64,
+    /// MML's vibrato depth, 0 to 127, and how far round it has gone.
+    pub modulation: i32,
+    vibrato_phase: f32,
     /// The envelope's gain, moving in a straight line to the next step's.
     level: f32,
     level_step: f32,
@@ -168,6 +173,9 @@ impl Voice {
             cents,
             pos: 0.0,
             step: 0.0,
+            base_step: 0.0,
+            modulation: 0,
+            vibrato_phase: 0.0,
             level: 0.0,
             level_step: 0.0,
             target: 0.0,
@@ -184,7 +192,7 @@ impl Voice {
         self.cents = cents;
         let ratio = 2f64
             .powf((f64::from(self.key - self.wave.base_note) * 100.0 + f64::from(cents)) / 1200.0);
-        self.step = match self.wave.rate {
+        self.base_step = match self.wave.rate {
             Some(rate) => rate * ratio / f64::from(RATE),
             // One cycle at the base note is A=440 Hz shifted to the note.
             None => {
@@ -192,6 +200,7 @@ impl Voice {
                 self.wave.samples.len() as f64 * freq * ratio / f64::from(RATE)
             }
         };
+        self.step = self.base_step;
     }
 
     /// Goes on with `wave` in place of the one the note started with, as
@@ -232,6 +241,10 @@ impl Voice {
                     self.envelope.gain()
                 };
                 self.level_step = (self.target - self.level) / sampler::TICK as f32;
+                self.step = match sampler::vibrato(&mut self.vibrato_phase, self.modulation) {
+                    0.0 => self.base_step,
+                    cents => self.base_step * f64::from(2f32.powf(cents / 1200.0)),
+                };
             }
             self.in_tick = (self.in_tick + 1) % sampler::TICK;
             if self.pos >= end as f64 {
@@ -327,6 +340,23 @@ mod tests {
         let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
         v.render(&mut l, &mut r);
         assert!(l[0] < -0.1);
+    }
+
+    #[test]
+    fn vibrato_moves_the_pitch_and_stops() {
+        let mut v = Voice::new(Rc::new(pulse(219)), None, 69, 0, false);
+        let steady = v.step;
+        v.modulation = 127;
+        let mut steps = Vec::new();
+        for _ in 0..40 {
+            peak(&mut v, sampler::TICK);
+            steps.push(v.step);
+        }
+        assert!(steps.iter().any(|&s| s > steady * 1.01));
+        assert!(steps.iter().any(|&s| s < steady * 0.99));
+        v.modulation = 0;
+        peak(&mut v, sampler::TICK);
+        assert_eq!(v.step, steady);
     }
 
     #[test]

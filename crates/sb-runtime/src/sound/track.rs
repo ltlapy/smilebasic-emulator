@@ -50,6 +50,8 @@ struct Channel {
     envelope: Option<Envelope>,
     /// @MP's depth, which @MON turns back on after @MOF.
     vibrato: i32,
+    /// The vibrato's depth now: @MP's, or 0 after @MOF or @MPOF.
+    modulation: i32,
     voice: Voice,
     /// @'s number, which `voice` plays or not.
     program: i32,
@@ -81,6 +83,7 @@ impl Default for Channel {
             pan: 64,
             envelope: None,
             vibrato: 0,
+            modulation: 0,
             voice: Voice::Synth(0),
             program: 0,
             sounding: Vec::new(),
@@ -470,14 +473,19 @@ impl Track {
                 Cmd::Vibrato([depth, ..]) => {
                     let depth = self.var(*depth).clamp(0, 127);
                     self.channels[c].vibrato = depth;
+                    self.channels[c].modulation = depth;
                     self.synth(|s| s.modulation(c, depth));
                 }
                 // UNVERIFIED: that @MON turns @MP's vibrato back on.
                 Cmd::ModulationOn => {
                     let depth = self.channels[c].vibrato;
+                    self.channels[c].modulation = depth;
                     self.synth(|s| s.modulation(c, depth));
                 }
-                Cmd::VibratoOff | Cmd::ModulationOff => self.synth(|s| s.modulation(c, 0)),
+                Cmd::VibratoOff | Cmd::ModulationOff => {
+                    self.channels[c].modulation = 0;
+                    self.synth(|s| s.modulation(c, 0));
+                }
                 Cmd::Envelope(e) => {
                     let [attack, decay, sustain, release] = e.map(|n| self.var(n));
                     let envelope = Envelope {
@@ -686,6 +694,7 @@ impl Track {
                 }
                 let ch = &self.channels[*vc];
                 v.gains = wave::gains(ch.volume, ch.velocity, ch.pan);
+                v.modulation = ch.modulation;
                 v.render(cl, cr);
             }
             drop(waves);

@@ -65,6 +65,17 @@ fn square(value: i32) -> f32 {
     v * v
 }
 
+/// The vibrato's pitch at a step, in cents, for a depth of 0 to 127;
+/// moves `phase` on a step.
+pub(crate) fn vibrato(phase: &mut f32, depth: i32) -> f32 {
+    if depth <= 0 {
+        return 0.0;
+    }
+    *phase = (*phase + VIBRATO_HZ * TICK as f32 / RATE as f32).fract();
+    let depth = VIBRATO_CENTS * depth.min(127) as f32 / 127.0;
+    depth * (*phase * std::f32::consts::TAU).sin()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Attack,
@@ -238,13 +249,7 @@ impl Voice {
         let angle = pan * std::f32::consts::FRAC_PI_2;
         let target = [gain * angle.cos(), gain * angle.sin()];
         self.deltas = [0, 1].map(|i| (target[i] - self.gains[i]) / TICK as f32);
-        let mut cents = ch.bend as f32;
-        if ch.modulation > 0 {
-            self.vibrato_phase =
-                (self.vibrato_phase + VIBRATO_HZ * TICK as f32 / RATE as f32).fract();
-            let depth = VIBRATO_CENTS * ch.modulation as f32 / 127.0;
-            cents += depth * (self.vibrato_phase * std::f32::consts::TAU).sin();
-        }
+        let cents = ch.bend as f32 + vibrato(&mut self.vibrato_phase, ch.modulation);
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
     }
 
