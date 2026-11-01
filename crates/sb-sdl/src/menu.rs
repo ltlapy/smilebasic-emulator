@@ -39,6 +39,11 @@ pub enum Action {
     Stop,
     /// Pause or resume the program, with the menu bar shown (F8).
     Pause,
+    /// Give the keys and controls to the subprogram, or back to the main
+    /// program, as ENVFOCUS does.
+    SwitchFocus,
+    /// SUBSTOP.
+    StopSub,
     ToggleEditor,
     /// Show the editor in a window of its own.
     ToggleEditorWindow,
@@ -93,6 +98,8 @@ pub struct Context {
     /// The editor shows in a window of its own, and can open while a
     /// program runs.
     pub detached: bool,
+    /// A subprogram runs beside the main program.
+    pub sub: bool,
 }
 
 impl Action {
@@ -161,6 +168,7 @@ impl Action {
     fn enabled(self, context: Context) -> bool {
         match self {
             Action::Stop | Action::Pause => context.running,
+            Action::SwitchFocus | Action::StopSub => context.sub,
             Action::Continue | Action::StepInto | Action::StepOver | Action::StepOut => {
                 context.paused
             }
@@ -346,6 +354,9 @@ const MENUS: &[Menu] = &[
             keyed("Run PRG0", "F5", Action::Run),
             keyed("Stop", "Pause", Action::Stop),
             keyed("Pause/Resume", "F8", Action::Pause),
+            LINE,
+            item("Switch keys to/from subprogram", Action::SwitchFocus),
+            item("Stop subprogram", Action::StopSub),
             LINE,
             item("Keys press buttons", Action::ToggleKeyboardButtons),
         ],
@@ -715,18 +726,21 @@ mod tests {
         editing: false,
         paused: false,
         detached: false,
+        sub: false,
     };
     const RUNNING: Context = Context {
         running: true,
         editing: false,
         paused: false,
         detached: false,
+        sub: false,
     };
     const EDITING: Context = Context {
         running: false,
         editing: true,
         paused: false,
         detached: false,
+        sub: false,
     };
 
     fn menu(title: &str) -> usize {

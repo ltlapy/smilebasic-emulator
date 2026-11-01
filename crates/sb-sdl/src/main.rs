@@ -61,7 +61,8 @@ use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator};
-use sdl3::sys::render::SDL_SetDefaultTextureScaleMode;
+use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
+use sdl3::sys::render::{SDL_SetDefaultTextureScaleMode, SDL_SetTextureBlendMode};
 use sdl3::sys::surface::SDL_ScaleMode;
 use sdl3::video::{Window, WindowContext};
 use settings_window::SettingsWindow;
@@ -206,6 +207,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The screens in the debugger's panel, drawn at the window's
     // resolution, with their size and filter.
     let mut panel_screens: Option<(Texture, TextureKind)> = None;
+    // The subprogram's screen, over the main one.
+    let mut sub_texture: Option<(Texture, TextureKind)> = None;
     // The pixels that mouse positions are given in: the screen's, or the
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
@@ -1075,6 +1078,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         open_folder(&machine.rt.storage, &mut toasts)
                     }
                     Click::Chosen(Action::Stop) => machine.stop(),
+                    Click::Chosen(Action::SwitchFocus) => {
+                        machine.focus_sub(!machine.sub_has_focus());
+                    }
+                    Click::Chosen(Action::StopSub) => machine.stop_sub(),
                     Click::Chosen(Action::Pause) => menu.shown = !menu.shown,
                     Click::Chosen(Action::ToggleEditor) => machine.toggle_editor(),
                     Click::Chosen(Action::EditSlot(slot)) => machine.edit_slot(slot),
@@ -1454,7 +1461,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             machine.time_limit = Some(RUN_TIME);
             machine.frame();
         }
-        audio.play(&machine.rt.sound.take_samples());
+        audio.play(&machine.take_samples());
         // Behind by a frame or more, as when drawing takes too long: the
         // program and its sound catch up, and only the last of these
         // frames is drawn, so that the game and its music keep time.
@@ -1464,7 +1471,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         while !paused && skipped < MOST_SKIPPED && Instant::now() >= next_frame + FRAME {
             machine.time_limit = Some(CATCH_UP_RUN_TIME);
             machine.frame();
-            audio.play(&machine.rt.sound.take_samples());
+            audio.play(&machine.take_samples());
             next_frame += FRAME;
             skipped += 1;
         }
@@ -1621,6 +1628,28 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         canvas.copy(&texture, None, rect)?;
+        // The subprogram's screen goes where XSUBSCREEN puts it on the
+        // 1280x720 display.
+        if !editing && let Some((fb, [x, y, w, h])) = machine.sub_screen() {
+            let kind = ((fb.width(), fb.height()), filter);
+            if sub_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
+                let made = frame_texture(&canvas, &texture_creator, kind)?;
+                // SAFETY: the texture is valid while `made` lives.
+                unsafe { SDL_SetTextureBlendMode(made.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
+                sub_texture = Some((made, kind));
+            }
+            if let Some((tex, _)) = &mut sub_texture {
+                tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+                let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
+                let dst = FRect::new(
+                    display.x + x as f32 * sx,
+                    display.y + y as f32 * sy,
+                    w as f32 * sx,
+                    h as f32 * sy,
+                );
+                canvas.copy(tex, None, dst)?;
+            }
+        }
         // The debugger's panel leaves the screens' place clear.
         if let (Some((place, _, Some(size))), Some((tex, _))) = (&debug, &panel_screens) {
             let s = DebugPanel::screen_place(*place, *size);
@@ -2021,6 +2050,7 @@ fn menu_context(machine: &Machine) -> Context {
         editing: machine.is_editing(),
         paused: machine.paused_at().is_some() && !machine.is_running(),
         detached: machine.is_detached(),
+        sub: machine.sub_running(),
     }
 }
 
