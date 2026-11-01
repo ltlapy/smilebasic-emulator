@@ -2030,6 +2030,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             canvas.copy(&overlay_texture, None, display)?;
         }
         lap!(Overlays);
+        if let Some(b) = &bench {
+            b.shoot(&canvas, "main");
+        }
         canvas.present();
         lap!(Present);
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
@@ -2058,6 +2061,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 editor_canvas.copy(tex, None, editor_place.2)?;
             }
             lap!(Overlays);
+            if let Some(b) = &bench {
+                b.shoot(&editor_canvas, "editor");
+            }
             editor_canvas.present();
             lap!(Present);
         }

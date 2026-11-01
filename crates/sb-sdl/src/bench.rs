@@ -11,12 +11,16 @@
 //! - `run=PROJECT/PROGRAM`: runs a program of a project from the start;
 //! - `stop`: stops it, as the Break key does, a second in;
 //! - `editor`: opens the editor; `apart` in its own window;
-//! - `panel`: shows the debugger's panel with it.
+//! - `panel`: shows the debugger's panel with it;
+//! - `shot=PATH`: saves the last frame timed of each window shown, as
+//!   `PATH-main.pam` and `PATH-editor.pam`, to compare drawings.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use sb_runtime::machine::Machine;
+use sdl3::render::Canvas;
+use sdl3::video::Window;
 
 /// Bytes given to textures since the frame began.
 static UPLOADED: AtomicU64 = AtomicU64::new(0);
@@ -56,6 +60,7 @@ pub struct Bench {
     editor: bool,
     apart: bool,
     panel: bool,
+    shot: Option<String>,
     /// Frames since the start.
     frame: u32,
     /// Each timed frame's stages, and the bytes it uploaded.
@@ -75,6 +80,7 @@ impl Bench {
         for part in spec.split(',').map(str::trim) {
             match part.split_once('=') {
                 Some(("frames", n)) => bench.frames = n.parse().unwrap_or(600),
+                Some(("shot", path)) => bench.shot = Some(path.to_string()),
                 Some(("run", path)) => {
                     let (project, program) = path.split_once('/').unwrap_or((path, "MAIN.PRG"));
                     bench.run = Some((project.to_string(), program.to_string()));
@@ -128,6 +134,36 @@ impl Bench {
         UPLOADED.store(0, Ordering::Relaxed);
         self.last = (self.frame > set_up + SETTLE).then(Instant::now);
         self.timed.len() >= self.frames as usize
+    }
+
+    /// Saves what `canvas` shows as `PATH-name.pam`, in the last frame
+    /// timed, before it is presented.
+    pub fn shoot(&self, canvas: &Canvas<Window>, name: &str) {
+        let (Some(path), Some(_)) = (&self.shot, self.last) else {
+            return;
+        };
+        if self.timed.len() + 1 != self.frames as usize {
+            return;
+        }
+        let shot = canvas
+            .read_pixels(None)
+            .and_then(|s| s.convert_format(sdl3::pixels::PixelFormat::ABGR8888));
+        let Ok(shot) = shot else {
+            eprintln!("SB_UI_BENCH: could not read the {name} window");
+            return;
+        };
+        let (w, h, pitch) = (shot.width(), shot.height(), shot.pitch() as usize);
+        let mut out =
+            format!("P7\nWIDTH {w}\nHEIGHT {h}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n")
+                .into_bytes();
+        shot.with_lock(|pixels| {
+            for row in pixels.chunks(pitch).take(h as usize) {
+                out.extend_from_slice(&row[..w as usize * 4]);
+            }
+        });
+        if let Err(e) = std::fs::write(format!("{path}-{name}.pam"), out) {
+            eprintln!("SB_UI_BENCH: {e}");
+        }
     }
 
     /// Ends a stage of the frame's drawing, which began where the last
