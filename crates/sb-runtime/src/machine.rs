@@ -879,6 +879,7 @@ impl Machine {
                         self.wait = (self.vsync_at - self.frame) as u32;
                     } else {
                         self.vsync_at = self.frame;
+                        self.rt.sound.synced();
                         if has_time(vm) {
                             continue;
                         }

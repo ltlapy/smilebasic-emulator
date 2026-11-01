@@ -45,10 +45,25 @@ fn songs_play_for_their_length() {
 }
 
 #[test]
-fn a_song_stopped_before_it_begins_never_sounds() {
+fn bgmchk_after_a_fading_stop() {
+    // Stopped in the frame it started in, the song never sounds.
     let mut rt = runtime();
     run_on(&mut rt, "BGMPLAY 0,1:BGMSTOP 0,1").unwrap();
     frames(&mut rt, 1);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");
+    // After a VSYNC that did not wait, BGMCHK says 0 two frames on.
+    run_on(&mut rt, "BGMPLAY 0,1").unwrap();
+    rt.sound.synced();
+    run_on(&mut rt, "BGMSTOP 0,1").unwrap();
+    frames(&mut rt, 1);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "1");
+    frames(&mut rt, 1);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");
+    // A frame later it fades, and BGMCHK says 0 a frame after the fade.
+    run_on(&mut rt, "BGMPLAY 0,1").unwrap();
+    frames(&mut rt, 1);
+    run_on(&mut rt, "BGMSTOP 0,0.5").unwrap();
+    frames(&mut rt, 30);
     assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "1");
     frames(&mut rt, 1);
     assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");

@@ -25,7 +25,7 @@ use pcm::Pcm;
 use seq::{Kind, Sequences};
 use synth::Instruments;
 use talk::Talk;
-use track::{AfterFade, Track};
+use track::{AfterFade, Fresh, Track};
 use wave::Waves;
 
 /// Samples a second.
@@ -209,8 +209,19 @@ impl Sound {
         self.tracks.iter_mut().flatten()
     }
 
+    /// A VSYNC that went straight on.
+    pub fn synced(&mut self) {
+        for t in self.tracks.iter_mut().flatten() {
+            if t.fresh == Fresh::Started {
+                t.fresh = Fresh::Synced;
+            }
+        }
+    }
+
     pub(crate) fn playing(&self, n: usize) -> bool {
-        self.tracks[n].as_ref().is_some_and(|t| t.playing)
+        self.tracks[n]
+            .as_ref()
+            .is_some_and(|t| t.playing || t.linger > 0)
     }
 
     pub(crate) fn play(&mut self, n: usize, song: Option<Rc<Song>>, volume: i32, fade: u32) {
@@ -219,8 +230,15 @@ impl Sound {
 
     pub(crate) fn stop(&mut self, n: usize, fade: u32) {
         if let Some(t) = self.tracks[n].as_mut() {
-            if fade == 0 {
+            // Stopped with a fade in the frame it started in, a song
+            // never sounds. BGMCHK says 0 a frame on, or two after a
+            // VSYNC that did not wait (checked on hardware).
+            if fade == 0 || t.fresh != Fresh::No {
+                let synced = t.fresh == Fresh::Synced;
                 t.stop();
+                if fade > 0 && synced {
+                    t.linger = 2;
+                }
             } else {
                 t.fade.to(0.0, fade);
                 t.after_fade = AfterFade::Stop;

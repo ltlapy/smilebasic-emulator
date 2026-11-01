@@ -403,10 +403,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their
   first argument left out with a comma after it (`BGMSTOP ,1`,
   `BGMPLAY ,0,64`).
-- After `BGMSTOP` with a fade, `BGMCHK` stays 1 until the fade has
-  ended. A song stopped that way before it began (`BGMPLAY 0,1` and
-  `BGMSTOP 0,1` in the same frame) never sounds, and `BGMCHK` is 0 two
-  frames later.
+- After `BGMSTOP` with a fade, `BGMCHK` stays 1 until a frame after the
+  fade has ended: 61 frames for `BGMSTOP 0,1`, even when it comes a
+  frame after `BGMPLAY`. Stopped that way in the frame `BGMPLAY` ran in,
+  a song never sounds, and `BGMCHK` is 0 a frame later, or two if a
+  `VSYNC` that did not wait ran in between.
 - `SNDMSBAL` starts at 63, though the manual calls 64 even.
   `SNDMSBAL()` and `PCMPOS()` work as functions.
 - While `RECSTART` without a time records round its buffer, `RECDATA`

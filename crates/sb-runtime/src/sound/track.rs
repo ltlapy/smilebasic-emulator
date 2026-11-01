@@ -105,6 +105,10 @@ pub(crate) struct Track {
     until_tick: f64,
     /// Plays: a song that has not ended, or a preset that is not there.
     pub(crate) playing: bool,
+    /// How far a song started since the last frame was mixed has got.
+    pub(crate) fresh: Fresh,
+    /// Frames BGMCHK still says 1 after a fade out ended.
+    pub(crate) linger: u32,
     pub(crate) paused: bool,
     /// BGMVOL, 0 to 127.
     pub(crate) volume: i32,
@@ -115,6 +119,14 @@ pub(crate) struct Track {
     /// BGMPITCH, in cents.
     pub(crate) pitch: i32,
     pub(crate) wet: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fresh {
+    No,
+    Started,
+    /// A VSYNC has run since, without waiting.
+    Synced,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,6 +152,8 @@ impl Track {
             silent_left: None,
             until_tick: 0.0,
             playing: false,
+            fresh: Fresh::No,
+            linger: 0,
             paused: false,
             volume: 127,
             fade: Ramp::at(1.0),
@@ -187,6 +201,8 @@ impl Track {
         self.song = None;
         self.seq = None;
         self.playing = true;
+        self.fresh = Fresh::Started;
+        self.linger = 0;
         self.paused = false;
         self.volume = volume;
         self.fade = Ramp::at(if fade_frames > 0 { 0.0 } else { 1.0 });
@@ -196,6 +212,7 @@ impl Track {
 
     pub(crate) fn stop(&mut self) {
         self.playing = false;
+        self.linger = 0;
         self.paused = false;
         self.song = None;
         self.seq = None;
@@ -545,13 +562,14 @@ impl Track {
         right: &mut [f32],
         scratch: &mut [Vec<f32>; 2],
     ) {
+        self.fresh = Fresh::No;
+        self.linger = self.linger.saturating_sub(1);
         if self.hold > 0 {
             self.hold -= 1;
-            // Stopped with a fade before it began, it never sounds:
-            // BGMCHK says 0 once it would have begun (checked on
-            // hardware: two frames after BGMPLAY and BGMSTOP 0,1).
-            if self.hold == 0 && self.after_fade == AfterFade::Stop {
-                self.stop();
+            // A fade out goes on while the song waits to begin.
+            if self.after_fade == AfterFade::Stop {
+                (0..left.len()).for_each(|_| self.fade.step_sample());
+                self.end_fade();
             }
             return;
         }
@@ -603,10 +621,19 @@ impl Track {
             right[i] += r[i] * gain;
             self.fade.step_sample();
         }
+        self.end_fade();
+    }
+
+    fn end_fade(&mut self) {
         if self.fade.done() {
             match std::mem::replace(&mut self.after_fade, AfterFade::Nothing) {
                 AfterFade::Nothing => {}
-                AfterFade::Stop => self.stop(),
+                // BGMCHK says 0 a frame after the fade ends (checked on
+                // hardware).
+                AfterFade::Stop => {
+                    self.stop();
+                    self.linger = 1;
+                }
                 AfterFade::Pause => {
                     self.paused = true;
                     self.silence();
