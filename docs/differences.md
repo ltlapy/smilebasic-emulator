@@ -154,8 +154,10 @@ Without them:
   is open. Its edits reach the slot at once, so RUN, SAVE and the PRG
   commands see them, and a slot that a program or LOAD changes shows
   the change in the editor. CONT and the debugger's commands leave it
-  open. In SmileBASIC 4 the editor replaces the screen and no program
-  runs while it shows.
+  open; a step that waits for input brings the screen's window to the
+  front for typing, and the editor's back when it stops. The window
+  opens where it was last. In SmileBASIC 4 the editor replaces the
+  screen and no program runs while it shows.
 
 ## Speed
 
