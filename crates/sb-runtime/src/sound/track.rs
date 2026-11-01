@@ -516,7 +516,6 @@ impl Track {
         if let Some(letters) = lyric {
             // A sung note starts again whatever joins it to the last; the
             // instrument does not play it.
-            // UNVERIFIED: that the channel's instrument stays silent.
             let old = std::mem::take(&mut self.channels[c].sounding);
             self.keys_off(c, &old);
             let length = if link == Link::None { gate } else { ticks };

@@ -496,7 +496,11 @@ impl Parser {
                 while self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
                     self.at += 1;
                 }
-                let letters: String = self.text[start..self.at].iter().collect();
+                let letters = &self.text[start..self.at];
+                if let Some(bad) = super::talk::bad_letter(letters) {
+                    return Err(start + bad);
+                }
+                let letters: String = letters.iter().collect();
                 if !self.eat(',') {
                     return Err(self.at);
                 }
@@ -730,6 +734,32 @@ mod tests {
         assert_eq!(c[3], Cmd::Sing("K".into()));
         assert_eq!(c.len(), 5);
         assert!(parse("*WA C4").is_err());
+    }
+
+    /// A sung note's letters must make syllables: ん is Q, and the error
+    /// is at the first letter that cannot go on.
+    #[test]
+    fn sung_notes_take_only_syllables() {
+        assert_eq!(parse("T60@0O4*KONNICHIWA,C1").err(), Some(11));
+        assert!(parse("T60@0O4*KOQNICHIWA,C1").is_ok());
+        for ok in [
+            "*KYA,C", "*SHI,C", "*CHI,C", "*TSU,C", "*CLTO,C", "*FA,C", "*JI,C", "*N,C", "*K,C",
+            "*DYU,C", "*RYO,C", "*Q,C", "*AIUEO,C",
+        ] {
+            assert!(parse(ok).is_ok(), "{ok}");
+        }
+        for (bad, at) in [
+            ("*L,C", 1),
+            ("*KK,C", 2),
+            ("*XA,C", 1),
+            ("*C,C", 2),
+            ("*CA,C", 2),
+            ("*SHYA,C", 3),
+            ("*WYA,C", 2),
+            ("*VA,C", 1),
+        ] {
+            assert_eq!(parse(bad).err(), Some(at), "{bad}");
+        }
     }
 
     #[test]

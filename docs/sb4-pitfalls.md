@@ -542,6 +542,15 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   values from the offset on, with the loop counted from the offset, and
   drops what comes after; values are cut to 16 bits. A value v sounds
   like the 8-bit form's v/256 + 128.
+- A sung note (`*A,C2`) is the voice alone: the channel's instrument
+  stays silent under it, and plays again on the next plain note. Each
+  channel sings with a voice of its own, so two channels' sung notes
+  overlap, and `TALK` and sung notes sound together without cutting each
+  other off.
+- A sung note's letters must make syllables, or the MML is `Illegal
+  MML`, with the caret at the first letter that cannot go on:
+  `*KONNICHIWA,C1` fails at its second N. ん is `Q` (`*KOQNICHIWA,C1`),
+  as in `TALK "$..."`.
 - MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
   length (`N60`), macro names with `_` and macros used inside a macro's
   definition (`{X=CDE}{Y={X}F}`).

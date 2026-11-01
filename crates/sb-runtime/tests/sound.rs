@@ -326,6 +326,33 @@ fn effector_balance_and_talk_are_accepted() {
     );
 }
 
+/// TALK and a sung note do not cut each other, whichever starts first;
+/// a sung note's letters must make syllables.
+#[test]
+fn talk_and_sung_notes_sound_together() {
+    let mut rt = runtime();
+    for src in [
+        "TALK \"あいうえお\":BGMPLAY \"T120@0O4*U,C1\"",
+        "BGMPLAY \"T120@0O4*U,C1\":TALK \"あいうえお\"",
+    ] {
+        run_on(&mut rt, src).unwrap();
+        frames(&mut rt, 10);
+        assert_eq!(
+            run_on(&mut rt, "?TALKCHK();BGMCHK()").unwrap(),
+            "11",
+            "{src}"
+        );
+        run_on(&mut rt, "SNDSTOP").unwrap();
+    }
+    assert_eq!(
+        run_on(&mut rt, "BGMPLAY \"T60@0O4*KONNICHIWA,C1\"")
+            .unwrap_err()
+            .kind,
+        ErrorKind::IllegalMml
+    );
+    run_on(&mut rt, "BGMPLAY \"T60@0O4*KOQNICHIWA,C1\"").unwrap();
+}
+
 #[test]
 fn the_effector_rings_on_after_a_note_but_is_not_recorded() {
     let tail = |setup: &str| {
