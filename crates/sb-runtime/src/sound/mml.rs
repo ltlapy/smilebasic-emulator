@@ -96,6 +96,8 @@ pub enum Cmd {
     /// Back to the matching RepeatStart; 0 repeats for ever.
     RepeatEnd(Num),
     SetVar(u8, i32),
+    /// `*WA,`: the next note sings these phoneme letters.
+    Sing(Rc<str>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -488,16 +490,20 @@ impl Parser {
                     _ => return Err(self.at),
                 }
             }
-            // Singing: the phoneme is not spoken, the note plays.
-            // UNVERIFIED: what SmileBASIC plays for it without speech.
+            // Singing: the next note sings the phonemes.
             '*' => {
+                let start = self.at;
                 while self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
                     self.at += 1;
                 }
+                let letters: String = self.text[start..self.at].iter().collect();
                 if !self.eat(',') {
                     return Err(self.at);
                 }
-                return Ok(());
+                if letters.is_empty() {
+                    return Ok(());
+                }
+                Cmd::Sing(letters.into())
             }
             '&' => return self.link_last(Link::Tie, at),
             // `C4&2`: a length after a tie goes on with the same note.
@@ -715,6 +721,15 @@ mod tests {
         assert_eq!(parse("{NOPE}"), Err(0));
         assert_eq!(parse(":16C"), Err(0));
         assert!(parse("[[O4CEG]3<C2.]").is_ok());
+    }
+
+    #[test]
+    fn sung_notes_keep_their_phonemes() {
+        let c = &parse("*wa,O3C1*K,C16").unwrap().channels[0];
+        assert_eq!(c[0], Cmd::Sing("WA".into()));
+        assert_eq!(c[3], Cmd::Sing("K".into()));
+        assert_eq!(c.len(), 5);
+        assert!(parse("*WA C4").is_err());
     }
 
     #[test]

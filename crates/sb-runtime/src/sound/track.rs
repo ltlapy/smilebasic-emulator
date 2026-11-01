@@ -10,6 +10,7 @@ use super::mml::{ChordPart, Cmd, Link, Num, Pitch, Song, WHOLE, ticks};
 use super::sampler::{self, Lfo, LfoTarget};
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
+use super::talk::{Singer, key_hz};
 use super::wave::{self, Envelope, Waves};
 use super::{RATE, Ramp};
 
@@ -18,6 +19,9 @@ const QUARTER: u32 = WHOLE / 4;
 /// Commands a channel may run on one tick before it is taken to be stuck
 /// in a loop that plays nothing.
 const COMMANDS_PER_TICK: u32 = 10_000;
+/// A sung note's level, as TALK's.
+// UNVERIFIED: how loud singing is beside the instruments.
+const SUNG_GAIN: f32 = 0.7;
 /// Samples in a unit of an LFO's delay: 40 ms, whatever the tempo.
 const LFO_DELAY_UNIT: u32 = RATE / 25;
 /// What a channel plays with, from @.
@@ -67,6 +71,10 @@ struct Channel {
     link: Link,
     /// A portamento under way.
     glide: Option<Glide>,
+    /// `*WA,`'s phonemes, for the next note to sing.
+    lyric: Option<Rc<str>>,
+    /// The notes sounding are sung.
+    singing: bool,
     done: bool,
 }
 
@@ -107,6 +115,8 @@ impl Default for Channel {
             notes: 0,
             link: Link::None,
             glide: None,
+            lyric: None,
+            singing: false,
             done: false,
         }
     }
@@ -118,6 +128,8 @@ pub(crate) struct Track {
     waves: Rc<RefCell<Waves>>,
     /// Waveform notes sounding, with their channels.
     voices: Vec<(usize, i32, wave::Voice)>,
+    /// The singing voices of the channels that have sung.
+    singers: Vec<(usize, Singer)>,
     song: Option<Rc<Song>>,
     /// A preset song, played instead of `song`.
     seq: Option<Player>,
@@ -174,6 +186,7 @@ impl Track {
             synth: instruments.map(Instruments::synth),
             waves,
             voices: Vec::new(),
+            singers: Vec::new(),
             song: None,
             seq: None,
             channels: Vec::new(),
@@ -224,6 +237,7 @@ impl Track {
             s.reset();
         }
         self.voices.clear();
+        self.singers.iter_mut().for_each(|(_, s)| s.stop());
         self.channels = vec![Channel::default(); super::mml::CHANNELS];
         self.tempo = 120;
         self.song_key = 0;
@@ -260,6 +274,30 @@ impl Track {
             (0..self.channels.len()).for_each(|c| s.channel_off(c));
         }
         self.voices.clear();
+        self.singers.iter_mut().for_each(|(_, s)| s.stop());
+        self.channels.iter_mut().for_each(|ch| ch.singing = false);
+    }
+
+    /// Channel `c`'s singing voice.
+    fn singer(&mut self, c: usize) -> &mut Singer {
+        let i = match self.singers.iter().position(|(sc, _)| *sc == c) {
+            Some(i) => i,
+            None => {
+                self.singers.push((c, Singer::new(c as u32 + 1)));
+                self.singers.len() - 1
+            }
+        };
+        &mut self.singers[i].1
+    }
+
+    /// Starts singing `letters` at `key` for `ticks`; false when there
+    /// is nothing to sing.
+    fn sing(&mut self, c: usize, letters: &str, key: i32, ticks: u32) -> bool {
+        let hz = key_hz(key, self.cents(c).rem_euclid(100));
+        let ms = f64::from(ticks) * 60_000.0 / f64::from(self.tempo * QUARTER);
+        let sung = self.singer(c).sing(letters, hz, ms);
+        self.channels[c].singing = sung;
+        sung
     }
 
     /// Runs `f` on the synthesizer, if there is one.
@@ -328,6 +366,10 @@ impl Track {
     }
 
     fn keys_off(&mut self, c: usize, keys: &[i32]) {
+        if self.channels[c].singing && !keys.is_empty() {
+            self.channels[c].singing = false;
+            self.singer(c).release();
+        }
         for &key in keys {
             if let Some(s) = &mut self.synth {
                 s.note_off(c, key);
@@ -345,6 +387,9 @@ impl Track {
     /// Moves the held notes of channel `c` by a portamento's `cents`.
     fn porta(&mut self, c: usize, cents: f32) {
         self.synth(|s| s.porta(c, cents));
+        if self.channels[c].singing {
+            self.singer(c).bend(cents);
+        }
         for (.., v) in self.voices.iter_mut().filter(|(vc, ..)| *vc == c) {
             if !v.released() {
                 v.porta = cents;
@@ -355,6 +400,10 @@ impl Track {
     /// The end of a portamento: the held notes `from` go on as `to`, the
     /// first to the first and any left over to the last.
     fn retune(&mut self, c: usize, from: &[i32], to: &[i32]) {
+        if let (true, Some(&key)) = (self.channels[c].singing, to.first()) {
+            let hz = key_hz(key, self.cents(c).rem_euclid(100));
+            self.singer(c).retune(hz);
+        }
         for (i, &key) in to.iter().enumerate() {
             let Some(&old) = from.get(i).or(from.last()) else {
                 return;
@@ -461,7 +510,23 @@ impl Track {
     fn sound(&mut self, c: usize, keys: Vec<i32>, ticks: u32, link: Link) {
         let tie = self.channels[c].link != Link::None;
         let keys: Vec<i32> = keys.into_iter().filter(|k| (0..128).contains(k)).collect();
-        if tie && self.channels[c].sounding == keys {
+        // A rest takes the phonemes too.
+        let lyric = self.channels[c].lyric.take().filter(|_| !keys.is_empty());
+        let gate = (ticks * (self.channels[c].quantize as u32 + 1) / 33).max(1);
+        if let Some(letters) = lyric {
+            // A sung note starts again whatever joins it to the last; the
+            // instrument does not play it.
+            // UNVERIFIED: that the channel's instrument stays silent.
+            let old = std::mem::take(&mut self.channels[c].sounding);
+            self.keys_off(c, &old);
+            let length = if link == Link::None { gate } else { ticks };
+            if !self.sing(c, &letters, keys[0], length) {
+                self.keys_on(c, &keys);
+            }
+            let ch = &mut self.channels[c];
+            ch.notes = ch.notes.wrapping_add(1);
+            ch.sounding = keys;
+        } else if tie && self.channels[c].sounding == keys {
             // A tie: the notes go on.
         } else if tie && !keys.is_empty() && !self.channels[c].sounding.is_empty() {
             // A slur or the end of a portamento: the notes go on at the
@@ -489,7 +554,6 @@ impl Track {
             _ => Vec::new(),
         };
         let ch = &mut self.channels[c];
-        let gate = (ticks * (ch.quantize as u32 + 1) / 33).max(1);
         ch.glide = match (ch.sounding.first(), next.first()) {
             (Some(&from), Some(&to)) if from != to => Some(Glide {
                 cents: ((to - from) * 100) as f32,
@@ -687,6 +751,7 @@ impl Track {
                     }
                 }
                 Cmd::SetVar(n, v) => self.vars[usize::from(*n)] = *v,
+                Cmd::Sing(letters) => self.channels[c].lyric = Some(letters.clone()),
             }
         }
     }
@@ -855,6 +920,15 @@ impl Track {
             }
             drop(waves);
             self.voices.retain(|(.., v)| !v.done());
+            for (sc, s) in &mut self.singers {
+                if s.sounding() {
+                    let ch = &self.channels[*sc];
+                    let gain =
+                        SUNG_GAIN * sampler::square(ch.volume) * sampler::square(ch.velocity);
+                    let [gl, gr] = sampler::pan_gains(sampler::pan_position(ch.pan));
+                    s.render(cl, cr, (gain * gl, gain * gr));
+                }
+            }
             if !self.paused && self.playing {
                 self.until_tick -= chunk as f64;
             }
@@ -983,5 +1057,52 @@ mod tests {
             t.render(&mut l, &mut r, &mut scratch, None);
         }
         assert_eq!(t.voices.len(), sampler::MAX_VOICES);
+    }
+
+    /// The lag, in samples, at which the signal looks most like itself,
+    /// between `from` and `to`.
+    fn period(s: &[f32], from: usize, to: usize) -> usize {
+        let score = |lag: usize| -> f32 { (0..s.len() - lag).map(|i| s[i] * s[i + lag]).sum() };
+        (from..to)
+            .max_by(|&a, &b| score(a).total_cmp(&score(b)))
+            .unwrap()
+    }
+
+    /// `*A,` sings: without instruments the note is heard all the same,
+    /// at the note's pitch, and it ends with the note.
+    #[test]
+    fn sung_notes_sing_at_their_pitch() {
+        let waves = Rc::new(RefCell::new(Waves::default()));
+        let mut scratch = Default::default();
+        let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
+        for (mml, hz) in [("T120O3*A,A2", 220.0), ("T120O4*KA,A2", 440.0)] {
+            let mut t = Track::new(None, waves.clone());
+            t.play(Some(Rc::new(parse(mml).unwrap())), 127, 0);
+            let mut sound = Vec::new();
+            for _ in 0..50 {
+                l.fill(0.0);
+                t.render(&mut l, &mut r, &mut scratch, None);
+                sound.extend_from_slice(&l);
+            }
+            let late = &sound[RATE as usize / 2..];
+            assert!(late.iter().any(|s| s.abs() > 0.02), "{mml} is heard");
+            let expected = (RATE as f32 / hz) as usize;
+            let p = period(&late[..4096], expected / 2 + 10, expected * 3 / 2);
+            assert!(p.abs_diff(expected) <= 2, "{mml}: {p} for {expected}");
+            // A half note at T120 is a second.
+            for _ in 0..30 {
+                l.fill(0.0);
+                t.render(&mut l, &mut r, &mut scratch, None);
+            }
+            assert!(l.iter().all(|s| s.abs() < 1e-3), "{mml} ends");
+        }
+        // Without the phonemes, there is no instrument to hear.
+        let mut t = Track::new(None, waves);
+        t.play(Some(Rc::new(parse("T120O4A2").unwrap())), 127, 0);
+        l.fill(0.0);
+        for _ in 0..20 {
+            t.render(&mut l, &mut r, &mut scratch, None);
+        }
+        assert!(l.iter().all(|&s| s == 0.0));
     }
 }

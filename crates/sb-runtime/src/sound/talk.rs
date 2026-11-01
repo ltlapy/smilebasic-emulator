@@ -1,11 +1,13 @@
 //! TALK: Japanese speech from kana or SmileBASIC's phoneme letters, on a
 //! Klatt formant synthesizer (klattsch-core). Kana become phoneme letters,
 //! the letters become morae, and each mora a few targets for the
-//! synthesizer to glide between.
+//! synthesizer to glide between. MML's sung notes (`*WA,C4`) use the
+//! same phonemes on a [`Singer`] of each channel's own.
 //!
 //! None of this is SmileBASIC 4's own voice; it only says the same words.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use klattsch_core::{
     BankRegistry, FormantSynth, ParamUpdate, Params, PhonemeParams, PhonemeTable, Schedule,
@@ -485,8 +487,22 @@ impl Planner<'_> {
     }
 }
 
+/// The bank's phonemes, read once for TALK and every singing channel.
+fn table() -> &'static HashMap<&'static str, PhonemeParams> {
+    static TABLE: OnceLock<HashMap<&'static str, PhonemeParams>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let registry = BankRegistry::with_bundled();
+        let bank = registry
+            .resolve(BANK)
+            .expect("klattsch-core bundles the Japanese bank");
+        PHONEMES
+            .iter()
+            .filter_map(|&n| bank.lookup(n).map(|p| (n, p)))
+            .collect()
+    })
+}
+
 pub struct Talk {
-    table: HashMap<&'static str, PhonemeParams>,
     synth: FormantSynth,
     /// Samples left to play.
     left: u64,
@@ -495,16 +511,7 @@ pub struct Talk {
 
 impl Default for Talk {
     fn default() -> Self {
-        let registry = BankRegistry::with_bundled();
-        let bank = registry
-            .resolve(BANK)
-            .expect("klattsch-core bundles the Japanese bank");
-        let table = PHONEMES
-            .iter()
-            .filter_map(|&n| bank.lookup(n).map(|p| (n, p)))
-            .collect();
         Talk {
-            table,
             synth: FormantSynth::new(RATE),
             left: 0,
             buffer: Vec::new(),
@@ -541,7 +548,7 @@ impl Talk {
         };
         let morae = morae(&letters);
         let mut plan = Planner {
-            table: &self.table,
+            table: table(),
             events: Vec::new(),
             at: 0.0,
             speed: 1.0,
@@ -651,6 +658,171 @@ impl Talk {
             right[i] += self.buffer[i] * 0.5;
         }
         self.left -= n as u64;
+    }
+}
+
+/// How long a sung note takes to fall silent once let go.
+const SUNG_RELEASE: f64 = 30.0;
+
+/// The pitch of MIDI key `key`, `cents` above it, in Hz.
+pub(crate) fn key_hz(key: i32, cents: i32) -> f32 {
+    let semitones = (key - 69) as f32 + cents as f32 / 100.0;
+    440.0 * (semitones / 12.0).exp2()
+}
+
+/// One MML channel's singing voice, for `*WA,C4`: the phonemes said at
+/// the note's pitch, the last vowel held until the note is let go.
+pub(crate) struct Singer {
+    synth: FormantSynth,
+    buffer: Vec<f32>,
+    /// The note's pitch, before a portamento moves it.
+    hz: f32,
+    /// Samples left of the release once let go.
+    release: Option<u32>,
+    sounding: bool,
+}
+
+impl Singer {
+    pub(crate) fn new(seed: u32) -> Singer {
+        Singer {
+            synth: FormantSynth::with_seed(RATE, seed),
+            buffer: Vec::new(),
+            hz: 0.0,
+            release: None,
+            sounding: false,
+        }
+    }
+
+    /// Starts singing `letters` (SmileBASIC's phoneme letters) at `hz`
+    /// over a note of `ms`. Each mora gets an even part of the note, its
+    /// consonant shortened in a short one; a lone consonant is sung with
+    /// u. False, and silent, when the letters have nothing to sing.
+    // UNVERIFIED: how SmileBASIC 4 shares a note between several morae,
+    // and how long its consonants are.
+    pub(crate) fn sing(&mut self, letters: &str, hz: f32, ms: f64) -> bool {
+        let morae: Vec<Mora> = morae(letters)
+            .into_iter()
+            .filter(|m| matches!(m, Mora::Syllable { .. } | Mora::Nasal | Mora::Hold))
+            .collect();
+        if morae.is_empty() {
+            return false;
+        }
+        let share = ms / morae.len() as f64;
+        let mut plan = Planner {
+            table: table(),
+            events: Vec::new(),
+            at: 0.0,
+            speed: (share / MORA).min(1.0),
+            pitch: hz,
+            gain: BASE_GAIN,
+        };
+        for m in &morae {
+            let end = plan.at + samples(share);
+            match *m {
+                Mora::Hold => plan.silence(share / plan.speed),
+                Mora::Nasal => {
+                    let n = plan.phoneme("N");
+                    plan.target(n, TRANSITION);
+                }
+                Mora::Syllable {
+                    consonant,
+                    glide,
+                    vowel,
+                } => {
+                    if let Some(c) = consonant {
+                        plan.consonant(c, hz);
+                    }
+                    if glide {
+                        let y = plan.phoneme("Y");
+                        plan.target(y, QUICK);
+                        plan.at += plan.ms(GLIDE);
+                    }
+                    let v = plan.phoneme(&vowel.to_ascii_uppercase().to_string());
+                    plan.target(v, TRANSITION);
+                }
+                _ => {}
+            }
+            plan.at = plan.at.max(end);
+        }
+        let mut events = plan.events;
+        // The pitch is the note's alone, which a portamento then moves.
+        for e in &mut events {
+            e.target.f0 = None;
+        }
+        self.synth.reset(Params {
+            f0: hz,
+            gain: BASE_GAIN,
+            ..Params::DEFAULT
+        });
+        self.synth
+            .queue_schedule(Schedule::from_sample_events(RATE, events));
+        self.hz = hz;
+        self.release = None;
+        self.sounding = true;
+        true
+    }
+
+    /// The note goes on at another pitch, for a slur.
+    pub(crate) fn retune(&mut self, hz: f32) {
+        self.hz = hz;
+        self.bend(0.0);
+    }
+
+    /// Moves the note by `cents`, for a portamento.
+    pub(crate) fn bend(&mut self, cents: f32) {
+        let f0 = self.hz * (cents / 1200.0).exp2();
+        let update = ParamUpdate {
+            f0: Some(f0),
+            ..ParamUpdate::default()
+        };
+        self.synth.set_target(update, samples(QUICK) as u32);
+    }
+
+    /// Lets the note go: it falls silent.
+    pub(crate) fn release(&mut self) {
+        if self.sounding && self.release.is_none() {
+            let quiet = ParamUpdate {
+                a1: Some(0.0),
+                a2: Some(0.0),
+                a3: Some(0.0),
+                voicing: Some(0.0),
+                aspiration: Some(0.0),
+                ..ParamUpdate::default()
+            };
+            // Whatever of the schedule is left would sound again.
+            self.synth.queue_schedule(Schedule::empty(RATE));
+            let n = samples(SUNG_RELEASE) as u32;
+            self.synth.set_target(quiet, n);
+            self.release = Some(n);
+        }
+    }
+
+    pub(crate) fn stop(&mut self) {
+        self.sounding = false;
+    }
+
+    pub(crate) fn sounding(&self) -> bool {
+        self.sounding
+    }
+
+    /// Adds the voice into the buffers at the gains given for each side.
+    pub(crate) fn render(&mut self, left: &mut [f32], right: &mut [f32], gains: (f32, f32)) {
+        if !self.sounding {
+            return;
+        }
+        let n = left.len();
+        self.buffer.resize(n, 0.0);
+        self.synth.process(&mut self.buffer);
+        for i in 0..n {
+            left[i] += self.buffer[i] * gains.0;
+            right[i] += self.buffer[i] * gains.1;
+        }
+        if let Some(left) = &mut self.release {
+            *left = left.saturating_sub(n as u32);
+            if *left == 0 {
+                self.sounding = false;
+            }
+        }
     }
 }
 

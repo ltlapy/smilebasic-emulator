@@ -38,7 +38,8 @@ Without them:
 - `TALK` speaks with a voice of the emulator's own, a Klatt formant
   synthesizer (klattsch-core) reading the kana or phoneme letters, so it
   says the same words in another voice. In MML, a sung note (`*WA,C4`)
-  plays as a plain note.
+  sings with that voice at the note's pitch, one voice to a channel,
+  instead of the channel's instrument.
 - With a SoundFont's instruments, MML's tremolo (`@MA`) and pan
   modulation (`@ML`) are ignored, vibrato (`@MP`) takes only its depth
   on the modulation wheel, and envelopes (`@E`) do nothing. SmileBASIC's
