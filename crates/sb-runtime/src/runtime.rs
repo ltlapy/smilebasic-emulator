@@ -1204,7 +1204,13 @@ impl Runtime {
                 // them put on in its turn.
                 Some(m) => {
                     let in_layer: Vec<_> = in_layer.collect();
-                    let origin = self.flat_area(&mut flat, &in_layer, &settings.matrix);
+                    let shown = compose::source_bounds(
+                        m,
+                        self.mode.sample,
+                        (target.width(), target.height()),
+                        settings.clip.as_ref(),
+                    );
+                    let origin = self.flat_area(&mut flat, &in_layer, &settings.matrix, shown);
                     let shift = compose::Affine {
                         tx: -f64::from(origin.0),
                         ty: -f64::from(origin.1),
@@ -1339,16 +1345,17 @@ impl Runtime {
         }
     }
 
-    /// A layer's settings for a frame that XSCREEN's sampling makes finer.
     /// Fits `flat` to what the text screens among `elements` cover through
     /// `matrix`, which may be beyond the screen, and returns the frame
-    /// pixel at its top left. It reaches at most a screen past each edge,
-    /// to keep its memory bounded.
+    /// pixel at its top left. It keeps only what `shown` (from
+    /// [`compose::source_bounds`]) says can show, and reaches at most a
+    /// screen past each edge, to keep its memory bounded.
     fn flat_area(
         &self,
         flat: &mut Framebuffer,
         elements: &[&(i32, i32, u8, usize, Element)],
         matrix: &compose::Affine,
+        shown: Option<(f64, f64, f64, f64)>,
     ) -> (i32, i32) {
         let (fw, fh) = self.mode.frame();
         let (fw, fh) = (f64::from(fw), f64::from(fh));
@@ -1359,6 +1366,13 @@ impl Runtime {
                 (x0, y0, x1, y1) = (x0.min(a), y0.min(b), x1.max(c), y1.max(d));
             }
         }
+        // A pixel to spare each side for where the edges fall.
+        let Some((a, b, c, d)) = shown else {
+            flat.resize(0, 0);
+            return (0, 0);
+        };
+        (x0, y0) = (x0.max(a - 1.0), y0.max(b - 1.0));
+        (x1, y1) = (x1.min(c + 1.0), y1.min(d + 1.0));
         if x0 > x1 || y0 > y1 {
             flat.resize(0, 0);
             return (0, 0);
@@ -1371,6 +1385,7 @@ impl Runtime {
         (x0, y0)
     }
 
+    /// A layer's settings for a frame that XSCREEN's sampling makes finer.
     fn fine(&self, layer: &Layer) -> Layer {
         let s = self.mode.sample as i32;
         if s == 1 {

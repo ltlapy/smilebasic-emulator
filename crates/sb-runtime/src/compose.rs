@@ -441,6 +441,58 @@ pub fn project(
 /// that a quadrilateral of the layer with `corners` may cover through the
 /// homography `h`, within `clip`: only around it when all of it is in
 /// front, with a pixel to spare.
+/// The smallest and largest x and y of the flat frame's pixels that
+/// [`project`] can put on a `w` x `hh` `dst` within `clip`, or None when
+/// nothing can show. Toward the horizon they reach very far.
+pub fn source_bounds(
+    m: &[f64; 16],
+    sample: u32,
+    (w, hh): (u32, u32),
+    clip: Option<&Clip>,
+) -> Option<(f64, f64, f64, f64)> {
+    let inv = invert3(&homography(m))?;
+    let (mut x0, mut y0, mut x1, mut y1) = (0, 0, w as i32, hh as i32);
+    if let Some(c) = clip {
+        (x0, y0) = (x0.max(c.x0), y0.max(c.y0));
+        (x1, y1) = (x1.min(c.x1 + 1), y1.min(c.y1 + 1));
+    }
+    let (fw, fh) = (f64::from(w), f64::from(hh));
+    // The window's corners in clip space, each with the layer point that
+    // shows there, (x, y) / q; it is in front where q is above 0.
+    let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].map(|(px, py)| {
+        let (nx, ny) = (
+            f64::from(px) / fw * 2.0 - 1.0,
+            1.0 - f64::from(py) / fh * 2.0,
+        );
+        let at = |r: usize| inv[r][0] * nx + inv[r][1] * ny + inv[r][2];
+        (at(0), at(1), at(2))
+    });
+    // The window cut at the horizon: q is linear along each edge, so the
+    // part in front is where it stays above a sliver of its largest.
+    let top = corners.iter().map(|c| c.2).fold(f64::MIN, f64::max);
+    if top.partial_cmp(&0.0) != Some(Ordering::Greater) {
+        return None;
+    }
+    let near = top * 1e-6;
+    let s = f64::from(sample);
+    let (mut lo_x, mut lo_y, mut hi_x, mut hi_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    let mut take = |(x, y, q): (f64, f64, f64)| {
+        let (x, y) = (x / q * s, y / q * s);
+        (lo_x, lo_y, hi_x, hi_y) = (lo_x.min(x), lo_y.min(y), hi_x.max(x), hi_y.max(y));
+    };
+    for (i, &a) in corners.iter().enumerate() {
+        let b = corners[(i + 1) % 4];
+        if a.2 >= near {
+            take(a);
+        }
+        if (a.2 >= near) != (b.2 >= near) {
+            let t = (near - a.2) / (b.2 - a.2);
+            take((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, near));
+        }
+    }
+    Some((lo_x, lo_y, hi_x, hi_y))
+}
+
 fn window(
     h: &[[f64; 3]; 3],
     corners: [(f64, f64); 4],
@@ -836,6 +888,26 @@ mod tests {
         draw_image(&mut fb, &place, 8, 1, |_, _| 0xFFFF_FFFF);
         let row: Vec<u32> = (0..5).map(|x| fb.get(x, 0).unwrap()).collect();
         assert_eq!(row, [0xFF00_0000, 0xFF00_0000, !0, !0, 0xFF00_0000]);
+    }
+
+    #[test]
+    fn source_bounds_stop_at_the_horizon() {
+        let mut m = [0.0; 16];
+        (m[0], m[5], m[10], m[15]) = (1.0, 1.0, 1.0, 1.0);
+        // The identity shows clip space, -1 to 1 each way.
+        let b = source_bounds(&m, 1, (8, 8), None).unwrap();
+        assert_eq!(b, (-1.0, -1.0, 1.0, 1.0));
+        // Tilted so that W is 2y + 1: the horizon crosses the screen a
+        // quarter of the way down, and below it the layer shows from
+        // y = -1/3 at the bottom edge to very far up.
+        m[7] = 2.0;
+        let (x0, y0, x1, y1) = source_bounds(&m, 1, (8, 8), None).unwrap();
+        assert!((y0 + 1.0 / 3.0).abs() < 1e-9, "{y0}");
+        assert!(y1 > 1e4 && x0 < -1e4 && x1 > 1e4, "{x0} {x1} {y1}");
+        // Turned away altogether, nothing shows.
+        m[15] = -1.0;
+        m[7] = 0.0;
+        assert_eq!(source_bounds(&m, 1, (8, 8), None), None);
     }
 
     #[test]
