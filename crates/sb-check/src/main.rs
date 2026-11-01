@@ -18,6 +18,7 @@ use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::ScreenMode;
+use sb_runtime::sound::synth::Instruments;
 use sb_runtime::sprites::Sprites;
 use sb_runtime::storage::Storage;
 use sb_runtime::text::CONSOLE;
@@ -456,9 +457,6 @@ fn play(
     let mut steps = steps.into_iter().peekable();
     // Input held, and the frame it lets go at.
     let mut held: Vec<(Hold, u32)> = Vec::new();
-    // Where the last touch was: the pointer stays there once let go, as
-    // a mouse does.
-    let mut pointer = None;
     let mut frame = 0;
     'run: while frame < frames && m.is_running() {
         while let Some((_, action)) = steps.next_if(|(at, _)| *at <= frame) {
@@ -480,9 +478,12 @@ fn play(
         }
         held.retain(|&(_, until)| until > frame);
         let mut state = State::default();
-        if let Some((x, y)) = pointer {
-            set_pointer(&mut state, &m, x, y);
-        }
+        // The pointer stays where the last touch or the program's MOUSE
+        // put it.
+        let last = m.rt.input.live.mouse;
+        (state.mouse.x, state.mouse.y) = (last.x, last.y);
+        (state.mouse.display, state.mouse.on_screen) = (last.display, last.on_screen);
+        state.mouse.wheel = last.wheel;
         for &(hold, _) in &held {
             match hold {
                 Hold::Buttons(bits) => state.pads[0].buttons |= bits,
@@ -492,7 +493,6 @@ fn play(
                     state.modifiers |= modifier(usage);
                 }
                 Hold::Touch(x, y) => {
-                    pointer = Some((x, y));
                     set_pointer(&mut state, &m, x, y);
                     state.mouse.buttons |= 1;
                 }
@@ -555,6 +555,9 @@ fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
     }
     rt.sound
         .set_sequences(resources::load_sequences(&resources).map(std::sync::Arc::new));
+    // SmileBASIC 4's instruments, so that RECSTART records the songs.
+    let bank = resources::load_instruments(&resources).map(std::sync::Arc::new);
+    rt.sound.set_instruments(bank.map(Instruments::Bank));
     rt.set_startup_mode(ScreenMode {
         sample: screen.sample,
         ..ScreenMode::new(screen.width, screen.height)
