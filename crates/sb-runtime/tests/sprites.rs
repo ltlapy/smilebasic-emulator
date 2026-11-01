@@ -325,6 +325,32 @@ fn callbacks_see_sprites_set_and_cleared_by_earlier_ones() {
 }
 
 #[test]
+fn corners_for_the_debugger() {
+    let (m, _) = run("SPSET 0,0:SPOFS 0,100,50:SPHOME 0,8,8:SPSCALE 0,2,1\n\
+         SPSET 1,0,0,16,8,1:SPOFS 1,10,20\n\
+         SPSET 2,0:SPOFS 2,10,20:SPROT 2,90\n\
+         SPSET 3,0:SPCLR 3:?1");
+    assert_eq!(
+        m.rt.sprite_corners(0),
+        Some([(84.0, 42.0), (116.0, 42.0), (116.0, 58.0), (84.0, 58.0)])
+    );
+    // A quarter turn swaps the sides.
+    assert_eq!(
+        m.rt.sprite_corners(1),
+        Some([(10.0, 20.0), (18.0, 20.0), (18.0, 36.0), (10.0, 36.0)])
+    );
+    let round = |c: [(f64, f64); 4]| c.map(|(x, y)| (x.round() as i32, y.round() as i32));
+    let turned = m.rt.sprite_corners(2).map(round);
+    assert_eq!(turned, Some([(10, 20), (10, 36), (-6, 36), (-6, 20)]));
+    assert_eq!(m.rt.sprite_corners(3), None);
+    assert_eq!(m.rt.sprite_corners(4096), None);
+    // In the frame's finer pixels.
+    let (m, _) = run("XSCREEN 400,240,2:SPSET 0,0:SPOFS 0,10,20:?1");
+    let corners = m.rt.sprite_corners(0).unwrap();
+    assert_eq!((corners[0], corners[2]), ((20.0, 40.0), (52.0, 72.0)));
+}
+
+#[test]
 fn xscreen_puts_the_graphics_sprite_on_new_sprites_layer() {
     let (_, out) = run("SPLAYER 6:XSCREEN 320,240:?SPLAYER(4095)");
     assert_eq!(out, "6");

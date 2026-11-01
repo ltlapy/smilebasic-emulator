@@ -1078,6 +1078,33 @@ impl Runtime {
         }
     }
 
+    /// For the debugger: the corners of a sprite's image where
+    /// [`Runtime::render`] draws it, in the frame's pixels, clockwise from
+    /// its top left; `None` for a sprite not in use, or one on an LMATRIX
+    /// layer with a corner behind the view.
+    pub fn sprite_corners(&self, id: usize) -> Option<[(f64, f64); 4]> {
+        let s = self.sprites.list.get(id).filter(|s| s.used)?;
+        let pose = self.sprites.pose(id);
+        let layer = self.fine(self.layers.get(usize::try_from(pose.layer).ok()?)?);
+        let (w, h) = (f64::from(s.w), f64::from(s.h));
+        let (w, h) = match s.attr & sprites::attr::ROTATION {
+            1 | 3 => (h, w),
+            _ => (w, h),
+        };
+        let m = compose::Affine::place(pose.pos, s.home, pose.rot, pose.scale).then(&layer.matrix);
+        let corners = [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)].map(|(x, y)| m.apply(x, y));
+        let Some(p) = &layer.projection else {
+            return Some(corners);
+        };
+        let sample = f64::from(self.mode.sample);
+        let frame = self.mode.frame();
+        let mut projected = [(0.0, 0.0); 4];
+        for (to, (x, y)) in projected.iter_mut().zip(corners) {
+            *to = compose::project_point(p, (x / sample, y / sample), frame)?;
+        }
+        Some(projected)
+    }
+
     pub fn font(&self) -> &Font {
         &self.font
     }

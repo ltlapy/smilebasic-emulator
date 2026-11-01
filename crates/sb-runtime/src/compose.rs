@@ -536,6 +536,23 @@ fn homography(m: &[f64; 16]) -> [[f64; 3]; 3] {
     ]
 }
 
+/// Where a layer's point `(x, y)` goes on a `w` x `hh` frame through
+/// LMATRIX's 4x4 matrix `m`, as [`project`] puts it, or `None` when it
+/// is not in front.
+pub fn project_point(m: &[f64; 16], (x, y): (f64, f64), (w, hh): (u32, u32)) -> Option<(f64, f64)> {
+    let h = homography(m);
+    let at = |r: usize| h[r][0] * x + h[r][1] * y + h[r][2];
+    let q = at(2);
+    if q.partial_cmp(&0.0) != Some(Ordering::Greater) {
+        return None;
+    }
+    let (nx, ny) = (at(0) / q, at(1) / q);
+    Some((
+        (nx + 1.0) / 2.0 * f64::from(w),
+        (1.0 - ny) / 2.0 * f64::from(hh),
+    ))
+}
+
 /// Draws a `w` x `h` image as [`draw_image`] does, but on a layer with
 /// LMATRIX's 4x4 matrix `m`, as [`project`] puts one: `place` takes the
 /// image to the layer drawn flat, `sample` frame pixels to one of the
@@ -787,6 +804,21 @@ mod tests {
 
     fn close(a: (f64, f64), b: (f64, f64)) -> bool {
         (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9
+    }
+
+    #[test]
+    fn projecting_points() {
+        // Layer pixels to clip space on a 400x240 frame, with W = 1 + x/400
+        // to put points farther away the further right they are.
+        let mut m = [0.0; 16];
+        (m[0], m[12]) = (2.0 / 400.0, -1.0);
+        (m[5], m[13]) = (-2.0 / 240.0, 1.0);
+        (m[3], m[15]) = (1.0 / 400.0, 1.0);
+        let frame = (400, 240);
+        assert_eq!(project_point(&m, (0.0, 0.0), frame), Some((0.0, 0.0)));
+        let p = project_point(&m, (400.0, 240.0), frame).unwrap();
+        assert!(close(p, (300.0, 180.0)), "{p:?}");
+        assert_eq!(project_point(&m, (-400.0, 0.0), frame), None);
     }
 
     #[test]
