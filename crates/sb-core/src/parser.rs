@@ -1292,8 +1292,8 @@ mod tests {
             expr("VAR(\"A\")"),
             Expr::DynamicVar(Box::new(Expr::Str("A".encode_utf16().collect())))
         );
-        assert!(matches!(expr("CALL(F$,1)"), Expr::DynamicCall { args, .. } if args.len() == 1));
-        assert!(matches!(expr("DIM(A)"), Expr::Call { name, .. } if name.name == "DIM"));
+        assert!(matches!(&expr("CALL(F$,1)"), Expr::DynamicCall { args, .. } if args.len() == 1));
+        assert!(matches!(&expr("DIM(A)"), Expr::Call { name, .. } if name.name == "DIM"));
         assert_eq!(expr("@L"), Expr::Label("L".into()));
     }
 

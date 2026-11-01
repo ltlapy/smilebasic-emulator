@@ -315,17 +315,29 @@ impl Compiler<'_> {
         })
     }
 
+    /// Works out a constant expression: its first operand, then each
+    /// operator up the chain in turn (see [`Expr::chain_operand`]).
     fn const_value(&self, expr: &Expr) -> Result<Value> {
+        let (links, first) = chain(expr, false);
+        let mut value = self.const_operand(first)?;
+        for link in links.iter().rev() {
+            value = match link {
+                Expr::Unary { op, .. } => ops::unary(*op, &value)?,
+                Expr::Binary { op, rhs, .. } => const_binary(*op, value, &self.const_value(rhs)?)?,
+                _ => unreachable!("chain(_, false) stops at indexing"),
+            };
+        }
+        Ok(value)
+    }
+
+    /// [`Compiler::const_value`] of anything but an operator.
+    fn const_operand(&self, expr: &Expr) -> Result<Value> {
         Ok(match expr {
             Expr::Int(n) => Value::Int(*n),
             Expr::Real(x) => Value::Real(*x),
             Expr::Str(s) => Value::Str(new_str(s.clone())),
             Expr::Label(name) => Value::Str(new_str(format!("@{name}").encode_utf16().collect())),
             Expr::Constant(name) => literal_value(&self.constant(name)?),
-            Expr::Unary { op, expr } => ops::unary(*op, &self.const_value(expr)?)?,
-            Expr::Binary { op, lhs, rhs } => {
-                ops::binary(*op, &self.const_value(lhs)?, &self.const_value(rhs)?)?
-            }
             Expr::Call { name, args } if builtins::is_constant_function(&call_name(name)) => {
                 let b = builtins::get(
                     builtins::lookup(&call_name(name), Form::Function)
@@ -1302,10 +1314,11 @@ impl Compiler<'_> {
                 let slot = self.slot(v)?;
                 self.emit(Op::Load(slot));
             }
-            Expr::Index { base, indices } => {
-                self.expr(base)?;
-                self.indices(indices)?;
-                self.emit(Op::Index(indices.len() as u8));
+            Expr::Index { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
+                let outer = self.constant_checked;
+                let result = self.chain_expr(expr);
+                self.constant_checked = outer;
+                result?;
             }
             Expr::Call { name, args } => self.call_expr(name, args)?,
             Expr::DynamicCall { name, args } => {
@@ -1320,54 +1333,85 @@ impl Compiler<'_> {
                 self.expr(name)?;
                 self.emit(Op::LoadDyn);
             }
-            Expr::Unary { op, expr: operand } => {
-                let checked = self.check_constant(expr)?;
-                self.with_constant_checked(checked, |c| c.expr(operand))?;
-                self.emit(Op::Unary(*op));
+        }
+        Ok(())
+    }
+
+    /// Compiles an operator, or indexing, down its chain in a loop (see
+    /// [`Expr::chain_operand`]): first the work before each link's chain
+    /// operand, outermost link first, then the first operand, then the
+    /// work after it, innermost link first. Leaves
+    /// [`Compiler::constant_checked`] for the caller to put back.
+    fn chain_expr(&mut self, expr: &Expr) -> Result<()> {
+        let (links, first) = chain(expr, true);
+        let mut checks = match self.constant_checked {
+            true => Vec::new(),
+            false => self.check_chain(&links, first),
+        };
+        // Where each link's right operand starts, and whether constants
+        // were checked outside the link.
+        let mut down = Vec::with_capacity(links.len());
+        for (i, link) in links.iter().enumerate() {
+            let outer = self.constant_checked;
+            let mut at = 0;
+            match link {
+                Expr::Binary {
+                    op: BinaryOp::LogicalAnd | BinaryOp::LogicalOr,
+                    ..
+                }
+                | Expr::Index { .. } => {}
+                Expr::Unary { .. } => {
+                    if !outer {
+                        self.constant_checked = std::mem::replace(&mut checks[i], Ok(false))?;
+                    }
+                }
+                // The right operand first (checked on hardware:
+                // F(1)+F(2)*F(3) calls F(3), F(2), then F(1)).
+                Expr::Binary { rhs, .. } => {
+                    if !outer {
+                        self.constant_checked = std::mem::replace(&mut checks[i], Ok(false))?;
+                    }
+                    at = self.out.code.len();
+                    self.expr(rhs)?;
+                }
+                _ => unreachable!("chain links are operators and indexing"),
             }
-            Expr::Binary {
-                op: BinaryOp::LogicalAnd,
-                lhs,
-                rhs,
-            } => {
-                self.expr(lhs)?;
-                let short = self.emit(Op::JumpIfFalse(0));
-                self.expr(rhs)?;
-                self.emit(Op::Truthy);
-                let end = self.emit(Op::Jump(0));
-                let here = self.here();
-                self.patch(short, here);
-                self.emit(Op::Int(0));
-                let here = self.here();
-                self.patch(end, here);
-            }
-            Expr::Binary {
-                op: BinaryOp::LogicalOr,
-                lhs,
-                rhs,
-            } => {
-                self.expr(lhs)?;
-                let short = self.emit(Op::JumpIfTrue(0));
-                self.expr(rhs)?;
-                self.emit(Op::Truthy);
-                let end = self.emit(Op::Jump(0));
-                let here = self.here();
-                self.patch(short, here);
-                self.emit(Op::Int(1));
-                let here = self.here();
-                self.patch(end, here);
-            }
-            // The right operand first (checked on hardware: F(1)+F(2)*F(3)
-            // calls F(3), F(2), then F(1)).
-            Expr::Binary { op, lhs, rhs } => {
-                let checked = self.check_constant(expr)?;
-                let at = self.out.code.len();
-                self.with_constant_checked(checked, |c| {
-                    c.expr(rhs)?;
-                    c.expr(lhs)
-                })?;
-                self.put_back_two(at);
-                self.emit(Op::Binary(*op));
+            down.push((at, outer));
+        }
+        self.expr(first)?;
+        for (link, (at, outer)) in links.iter().zip(down).rev() {
+            match link {
+                Expr::Index { indices, .. } => {
+                    self.constant_checked = outer;
+                    self.indices(indices)?;
+                    self.emit(Op::Index(indices.len() as u8));
+                }
+                Expr::Unary { op, .. } => _ = self.emit(Op::Unary(*op)),
+                Expr::Binary {
+                    op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
+                    rhs,
+                    ..
+                } => {
+                    self.constant_checked = outer;
+                    let (jump, otherwise) = match op {
+                        BinaryOp::LogicalAnd => (Op::JumpIfFalse(0), 0),
+                        _ => (Op::JumpIfTrue(0), 1),
+                    };
+                    let short = self.emit(jump);
+                    self.expr(rhs)?;
+                    self.emit(Op::Truthy);
+                    let end = self.emit(Op::Jump(0));
+                    let here = self.here();
+                    self.patch(short, here);
+                    self.emit(Op::Int(otherwise));
+                    let here = self.here();
+                    self.patch(end, here);
+                }
+                Expr::Binary { op, .. } => {
+                    self.put_back_two(at);
+                    self.emit(Op::Binary(*op));
+                }
+                _ => unreachable!("chain links are operators and indexing"),
             }
         }
         Ok(())
@@ -1377,42 +1421,49 @@ impl Compiler<'_> {
     /// so their errors stop the program before it runs (checked on
     /// hardware with `"A"*-1`).
     ///
-    /// Returns whether all of `expr` is a constant that worked out: then
-    /// every operation in it did too, and need not be checked again.
-    /// Checking each part of a long chain such as `"A"+#LF+"B"+...` anew
-    /// would take time growing with the square of its length.
-    fn check_constant(&self, expr: &Expr) -> Result<bool> {
-        if self.constant_checked {
-            return Ok(true);
+    /// For each link of a chain from [`chain`], whether all of it is a
+    /// constant that worked out (then every operation in it did too, and
+    /// need not be checked again), or the error of its own operation on
+    /// constant operands. `&&`, `||` and indexing are never checked.
+    ///
+    /// The chain is worked out once from its first operand up, where
+    /// checking each link anew would take time growing with the square of
+    /// the chain's length, both in a constant chain such as
+    /// `"A"+#LF+"B"+...` and in one led by a variable.
+    fn check_chain(&self, links: &[&Expr], first: &Expr) -> Vec<Result<bool>> {
+        let mut checks: Vec<Result<bool>> = links.iter().map(|_| Ok(false)).collect();
+        let mut value = self.const_value(first).ok();
+        for (link, check) in links.iter().zip(&mut checks).rev() {
+            let result = match (link, value) {
+                (_, None) | (Expr::Index { .. }, _) => None,
+                (Expr::Unary { op, .. }, Some(v)) => Some(ops::unary(*op, &v)),
+                (Expr::Binary { op, rhs, .. }, Some(l)) => {
+                    self.const_value(rhs).ok().map(|r| const_binary(*op, l, &r))
+                }
+                _ => unreachable!("chain links are operators and indexing"),
+            };
+            let logical = matches!(
+                link,
+                Expr::Binary {
+                    op: BinaryOp::LogicalAnd | BinaryOp::LogicalOr,
+                    ..
+                }
+            );
+            value = match result {
+                Some(Ok(v)) => {
+                    *check = Ok(!logical);
+                    Some(v)
+                }
+                Some(Err(e)) => {
+                    if !logical {
+                        *check = Err(e);
+                    }
+                    None
+                }
+                None => None,
+            };
         }
-        let constant = |e: &Expr| self.const_value(e).ok();
-        match expr {
-            Expr::Unary { op, expr } => match constant(expr) {
-                Some(v) => ops::unary(*op, &v).map(|_| true),
-                None => Ok(false),
-            },
-            Expr::Binary { op, lhs, rhs } => match constant(lhs) {
-                Some(l) => match constant(rhs) {
-                    Some(r) => ops::binary(*op, &l, &r).map(|_| true),
-                    None => Ok(false),
-                },
-                None => Ok(false),
-            },
-            _ => Ok(false),
-        }
-    }
-
-    /// Compiles with [`Compiler::constant_checked`] set while `checked`.
-    fn with_constant_checked(
-        &mut self,
-        checked: bool,
-        f: impl FnOnce(&mut Self) -> Result<()>,
-    ) -> Result<()> {
-        let outer = self.constant_checked;
-        self.constant_checked = outer || checked;
-        let result = f(self);
-        self.constant_checked = outer;
-        result
+        checks
     }
 
     fn call_expr(&mut self, name: &Var, args: &[Option<Expr>]) -> Result<()> {
@@ -1559,6 +1610,35 @@ impl Compiler<'_> {
     }
 }
 
+/// Splits `expr` into the links of its operator chain, outermost first,
+/// and the operand the chain starts from (see [`Expr::chain_operand`]).
+/// Indexing is a link only `with_index`.
+fn chain(expr: &Expr, with_index: bool) -> (Vec<&Expr>, &Expr) {
+    let mut links = Vec::new();
+    let mut first = expr;
+    while let Some(operand) = first.chain_operand() {
+        if !with_index && matches!(first, Expr::Index { .. }) {
+            break;
+        }
+        links.push(first);
+        first = operand;
+    }
+    (links, first)
+}
+
+/// [`ops::binary`] for working out constants, adding a string to the end
+/// of one no one else holds rather than copying it: a chain such as
+/// `"A"+"B"+...` then takes time in proportion to its length.
+fn const_binary(op: BinaryOp, lhs: Value, rhs: &Value) -> Result<Value> {
+    if let (BinaryOp::Add, Value::Str(a), Value::Str(b)) = (op, &lhs, rhs)
+        && std::rc::Rc::strong_count(a) == 1
+    {
+        a.borrow_mut().extend_from_slice(&b.borrow());
+        return Ok(lhs);
+    }
+    ops::binary(op, &lhs, rhs)
+}
+
 fn literal_value(l: &Literal) -> Value {
     match l {
         Literal::Int(n) => Value::Int(*n),
@@ -1597,25 +1677,28 @@ fn child_blocks(kind: &StmtKind) -> Vec<&[Stmt]> {
 /// Collects variable names used and VAR-declared in `stmts`, not descending
 /// into DEFs.
 fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
+    /// In the order they appear, following a chain in a loop.
     fn expr(e: &Expr, used: &mut Vec<Key>) {
-        match e {
+        let (links, first) = chain(e, true);
+        match first {
             Expr::Var(v) => used.push(key(v)),
-            Expr::Index { base, indices } => {
-                expr(base, used);
-                indices.iter().for_each(|i| expr(i, used));
-            }
             Expr::Call { args, .. } => args.iter().flatten().for_each(|a| expr(a, used)),
             Expr::DynamicCall { name, args } => {
                 expr(name, used);
                 args.iter().flatten().for_each(|a| expr(a, used));
             }
             Expr::DynamicVar(n) => expr(n, used),
-            Expr::Unary { expr: inner, .. } => expr(inner, used),
-            Expr::Binary { lhs, rhs, .. } => {
-                expr(lhs, used);
-                expr(rhs, used);
+            Expr::Index { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
+                unreachable!("chain(_, true) follows operators and indexing")
             }
             Expr::Int(_) | Expr::Real(_) | Expr::Str(_) | Expr::Label(_) | Expr::Constant(_) => {}
+        }
+        for link in links.iter().rev() {
+            match link {
+                Expr::Index { indices, .. } => indices.iter().for_each(|i| expr(i, used)),
+                Expr::Binary { rhs, .. } => expr(rhs, used),
+                _ => {}
+            }
         }
     }
     fn lvalue(l: &LValue, used: &mut Vec<Key>) {

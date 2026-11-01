@@ -672,6 +672,81 @@ fn constant_operations_fail_when_compiled() {
     // programs that write programs build such lines.
     let chain = vec!["\"ABCDEFGHIJ\"+CHR$(10)"; 200].join("+");
     assert_eq!(compiled(&format!("A$={chain}")), None);
+    // The right operand is compiled first, so its error comes first.
+    assert_eq!(compiled("?#NOPE+\"A\"*-1"), Some(ErrorKind::Overflow));
+    assert_eq!(
+        compiled("?\"A\"*-1+#NOPE"),
+        Some(ErrorKind::UndefinedConstant)
+    );
+    assert_eq!(
+        compiled("?-(\"A\"*-1)+#NOPE"),
+        Some(ErrorKind::UndefinedConstant)
+    );
+    assert_eq!(
+        compiled("?#NOPE&&\"A\"*-1"),
+        Some(ErrorKind::UndefinedConstant)
+    );
+}
+
+/// Program generators write lines of thousands of terms, such as
+/// `"A"+"B"+...`. Parsing, checking, compiling and dropping such a chain
+/// must not take stack in proportion to its length.
+#[test]
+fn long_operator_chains_fit_a_small_stack() {
+    const TERMS: usize = 20_000;
+    let chain = |first: &str, op: &str, term: &str| {
+        let mut s = first.to_string();
+        for _ in 1..TERMS {
+            s.push_str(op);
+            s.push_str(term);
+        }
+        s
+    };
+    let strings = chain("\"A\"", "+", "\"B\"");
+    let led_by_var = chain("A$", "+", "\"B\"");
+    let ints = chain("1", "+", "1");
+    let logic = chain("1", "&&", "A");
+    let mixed = chain("2", "*", "1+0");
+    let indexed = chain("A", "", "[0]");
+    let run = std::thread::Builder::new()
+        .stack_size(256 << 10)
+        .spawn(move || {
+            let b = "B".repeat(TERMS - 1);
+            assert_eq!(output(&format!("?LEN({strings})")), format!("{TERMS}\n"));
+            assert_eq!(
+                output(&format!("A$=\"A\":?{led_by_var}")),
+                format!("A{b}\n")
+            );
+            assert_eq!(
+                output(&format!("CONST #N={ints}:?#N")),
+                format!("{TERMS}\n")
+            );
+            assert_eq!(output(&format!("A=1:?{logic}")), "1\n");
+            assert_eq!(output(&format!("?{mixed}")), "2\n");
+            assert_eq!(
+                output(&format!("READ X:?X\nDATA {ints}")),
+                format!("{TERMS}\n")
+            );
+            // A failing constant part deep in the chain is still found
+            // before the program runs.
+            let bad = format!("?1\n?A$+\"X\"*-1+{strings}");
+            assert_eq!(error(&bad), (ErrorKind::Overflow, 2));
+            // Compiles; SmileBASIC 4 has no arrays of arrays, so it fails
+            // when it runs.
+            assert!(sb_core::compile(&format!("?{indexed}"), &TextHost::default()).is_ok());
+        });
+    run.unwrap().join().unwrap();
+    // Nesting that goes the other way is bounded by the parser's limit,
+    // and must fit the 1 MiB main-thread stack of Windows.
+    let depth = sb_core::parser::MAX_DEPTH as usize - 2;
+    let nested = format!("?{}1{}", "1+(".repeat(depth), ")".repeat(depth));
+    let negated = format!("?{}1{}", "1+(-".repeat(depth / 2), ")".repeat(depth / 2));
+    let run = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(move || (output(&nested), output(&negated)));
+    let (nested, negated) = run.unwrap().join().unwrap();
+    assert_eq!(nested, format!("{}\n", depth + 1));
+    assert_eq!(negated, format!("{}\n", 1 - (depth / 2) as i32));
 }
 
 #[test]

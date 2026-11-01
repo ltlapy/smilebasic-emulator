@@ -247,3 +247,44 @@ pub enum Expr {
         rhs: Box<Expr>,
     },
 }
+
+impl Expr {
+    /// The operand that a chain of operators continues down: the left
+    /// operand of a binary operator, the operand of a unary one, the base
+    /// of an index. Binary operators are left-associative, so a line such
+    /// as `"A"+"B"+...` nests thousands deep here. Walks over expressions
+    /// follow this operand in a loop rather than recursing, which keeps
+    /// the stack they need bounded by the parser's nesting limit.
+    pub fn chain_operand(&self) -> Option<&Expr> {
+        match self {
+            Expr::Binary { lhs, .. } => Some(lhs),
+            Expr::Unary { expr, .. } => Some(expr),
+            Expr::Index { base, .. } => Some(base),
+            _ => None,
+        }
+    }
+
+    /// Takes out the chain operand when it is a link of the chain itself,
+    /// leaving a placeholder.
+    fn take_chain(&mut self) -> Option<Expr> {
+        let operand = match self {
+            Expr::Binary { lhs, .. } => lhs,
+            Expr::Unary { expr, .. } => expr,
+            Expr::Index { base, .. } => base,
+            _ => return None,
+        };
+        operand.chain_operand()?;
+        Some(std::mem::replace(&mut **operand, Expr::Int(0)))
+    }
+}
+
+/// Drops a chain one link at a time, where the derived drop would
+/// recurse down all of it.
+impl Drop for Expr {
+    fn drop(&mut self) {
+        let mut next = self.take_chain();
+        while let Some(mut link) = next {
+            next = link.take_chain();
+        }
+    }
+}

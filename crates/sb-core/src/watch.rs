@@ -54,7 +54,52 @@ fn refused(what: &str) -> Error {
     Error::with_detail(ErrorKind::IllegalFunctionCall, format!("{what} in a watch"))
 }
 
+/// Works out `expr` from the first operand of its chain up (see
+/// [`Expr::chain_operand`]), the left operand before the right.
 fn value(expr: &Expr, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
+    let mut links = Vec::new();
+    let mut first = expr;
+    while let Some(operand) = first.chain_operand() {
+        links.push(first);
+        first = operand;
+    }
+    let mut value = operand(first, var)?;
+    for link in links.iter().rev() {
+        value = match link {
+            Expr::Index { indices, .. } => {
+                let Value::Array(array) = value else {
+                    return Err(ErrorKind::TypeMismatch.into());
+                };
+                let indices = (indices.iter())
+                    .map(|i| self::value(i, var)?.to_int())
+                    .collect::<Result<Vec<_>>>()?;
+                let array = array.borrow();
+                array.get(array.offset(&indices)?)
+            }
+            Expr::Unary { op, .. } => ops::unary(*op, &value)?,
+            Expr::Binary {
+                op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
+                rhs,
+                ..
+            } => {
+                let left = value.is_true()?;
+                let wants = *op == BinaryOp::LogicalAnd;
+                let truth = if left == wants {
+                    self::value(rhs, var)?.is_true()?
+                } else {
+                    left
+                };
+                Value::Int(i32::from(truth))
+            }
+            Expr::Binary { op, rhs, .. } => ops::binary(*op, &value, &self::value(rhs, var)?)?,
+            _ => unreachable!("chain links are operators and indexing"),
+        };
+    }
+    Ok(value)
+}
+
+/// [`value`] of anything but an operator or indexing.
+fn operand(expr: &Expr, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
     Ok(match expr {
         Expr::Int(n) => Value::Int(*n),
         Expr::Real(x) => Value::Real(*x),
@@ -74,32 +119,9 @@ fn value(expr: &Expr, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
             let name = full_name(&v.name, v.suffix);
             var(&name).ok_or_else(|| Error::with_detail(ErrorKind::UndefinedVariable, name))?
         }
-        Expr::Index { base, indices } => {
-            let Value::Array(array) = value(base, var)? else {
-                return Err(ErrorKind::TypeMismatch.into());
-            };
-            let indices = (indices.iter())
-                .map(|i| value(i, var)?.to_int())
-                .collect::<Result<Vec<_>>>()?;
-            let array = array.borrow();
-            array.get(array.offset(&indices)?)
+        Expr::Index { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
+            unreachable!("value() follows operators and indexing")
         }
-        Expr::Unary { op, expr } => ops::unary(*op, &value(expr, var)?)?,
-        Expr::Binary {
-            op: op @ (BinaryOp::LogicalAnd | BinaryOp::LogicalOr),
-            lhs,
-            rhs,
-        } => {
-            let left = value(lhs, var)?.is_true()?;
-            let wants = *op == BinaryOp::LogicalAnd;
-            let truth = if left == wants {
-                value(rhs, var)?.is_true()?
-            } else {
-                left
-            };
-            Value::Int(i32::from(truth))
-        }
-        Expr::Binary { op, lhs, rhs } => ops::binary(*op, &value(lhs, var)?, &value(rhs, var)?)?,
         Expr::Call { name, args } => {
             let full = full_name(&name.name, name.suffix);
             let builtin = builtins::lookup(&full, Form::Function)
@@ -163,5 +185,15 @@ mod tests {
             ErrorKind::IllegalFunctionCall
         );
         assert_eq!(watch("A+").unwrap_err().kind, ErrorKind::SyntaxError);
+    }
+
+    #[test]
+    fn long_chains_fit_a_small_stack() {
+        let source = format!("S$+{}", vec!["\"B\""; 20_000].join("+"));
+        let run = std::thread::Builder::new()
+            .stack_size(256 << 10)
+            .spawn(move || watch(&source).unwrap().len());
+        assert_eq!(run.unwrap().join().unwrap(), 5 + 20_000);
+        assert_eq!(watch("-A*-2+1>0&&LEN(S$)==5").unwrap(), "Int(1)");
     }
 }
