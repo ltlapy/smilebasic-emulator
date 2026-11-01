@@ -307,14 +307,12 @@ impl Runtime {
         }
     }
 
-    /// Into the project the metadata belong to.
-    // UNVERIFIED: that METASAVE after METALOAD of another project saves
-    // into that project.
+    /// Into the current project, as the manual says, whichever project's
+    /// METALOAD read.
     fn write_meta(&mut self) -> storage::Result<()> {
         self.meta();
         for (name, bytes) in meta_files(&self.meta) {
-            self.storage
-                .write_file_in(&self.meta.project, name, &bytes)?;
+            self.storage.write_project_file(name, &bytes)?;
         }
         Ok(())
     }

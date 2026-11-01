@@ -178,7 +178,8 @@ follows all of it. Items still waiting for a check are marked
   not there is `Undefined project name`); `METALOAD` alone loads the
   current one's again. Before any `METALOAD`, the title is the project's
   name. `METAEDIT(item)` works as a function.
-- `#_FILENAME` is the program's name (`TEST32`) and `#_SLOT` its slot.
+- `#_FILENAME` is the program's name (`TEST32`), and empty in direct
+  mode; `#_SLOT` is the program's slot.
 
 ## Order of evaluation
 
@@ -402,9 +403,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their
   first argument left out with a comma after it (`BGMSTOP ,1`,
   `BGMPLAY ,0,64`).
-- After `BGMSTOP` with a fade, `BGMCHK` is 0 two frames later, whatever
-  the fade's length (0.5, 1 or 2 seconds); calling it again meanwhile,
-  in the same frame or later, does not change that.
+- After `BGMSTOP` with a fade, `BGMCHK` stays 1 until the fade has
+  ended.
 - `SNDMSBAL` starts at 63, though the manual calls 64 even.
   `SNDMSBAL()` and `PCMPOS()` work as functions.
 - While `RECSTART` without a time records round its buffer, `RECDATA`

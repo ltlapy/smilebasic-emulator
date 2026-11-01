@@ -105,8 +105,6 @@ pub(crate) struct Track {
     until_tick: f64,
     /// Plays: a song that has not ended, or a preset that is not there.
     pub(crate) playing: bool,
-    /// Frames until BGMCHK says a track fading out to stop has stopped.
-    pub(crate) stop_shown_in: Option<u32>,
     pub(crate) paused: bool,
     /// BGMVOL, 0 to 127.
     pub(crate) volume: i32,
@@ -142,7 +140,6 @@ impl Track {
             silent_left: None,
             until_tick: 0.0,
             playing: false,
-            stop_shown_in: None,
             paused: false,
             volume: 127,
             fade: Ramp::at(1.0),
@@ -190,7 +187,6 @@ impl Track {
         self.song = None;
         self.seq = None;
         self.playing = true;
-        self.stop_shown_in = None;
         self.paused = false;
         self.volume = volume;
         self.fade = Ramp::at(if fade_frames > 0 { 0.0 } else { 1.0 });
@@ -200,7 +196,6 @@ impl Track {
 
     pub(crate) fn stop(&mut self) {
         self.playing = false;
-        self.stop_shown_in = None;
         self.paused = false;
         self.song = None;
         self.seq = None;
@@ -550,9 +545,6 @@ impl Track {
         right: &mut [f32],
         scratch: &mut [Vec<f32>; 2],
     ) {
-        if let Some(n) = &mut self.stop_shown_in {
-            *n = n.saturating_sub(1);
-        }
         if self.hold > 0 {
             self.hold -= 1;
             return;

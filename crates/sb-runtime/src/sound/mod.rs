@@ -36,8 +36,6 @@ pub const FRAME_SAMPLES: usize = (RATE / 60) as usize;
 pub const TRACKS: usize = 16;
 /// Frames a song started on an idle sound system waits.
 const WAKE_FRAMES: u32 = 2;
-/// Frames until a fading BGMSTOP shows in BGMCHK.
-const STOP_SHOWN_FRAMES: u32 = 2;
 /// The highest preset song number: 4.4.5 added 62 to 73, and 46 and up
 /// play on hardware.
 pub const PRESET_SONGS: i32 = 73;
@@ -211,14 +209,8 @@ impl Sound {
         self.tracks.iter_mut().flatten()
     }
 
-    /// BGMCHK: a track fading out to stop says it has stopped two frames
-    /// after the BGMSTOP, whatever the fade's length, and calling BGMSTOP
-    /// again does not put that off (checked on hardware).
-    // UNVERIFIED: that the fade goes on being heard.
     pub(crate) fn playing(&self, n: usize) -> bool {
-        self.tracks[n]
-            .as_ref()
-            .is_some_and(|t| t.playing && t.stop_shown_in != Some(0))
+        self.tracks[n].as_ref().is_some_and(|t| t.playing)
     }
 
     pub(crate) fn play(&mut self, n: usize, song: Option<Rc<Song>>, volume: i32, fade: u32) {
@@ -232,7 +224,6 @@ impl Sound {
             } else {
                 t.fade.to(0.0, fade);
                 t.after_fade = AfterFade::Stop;
-                t.stop_shown_in.get_or_insert(STOP_SHOWN_FRAMES);
             }
         }
     }
