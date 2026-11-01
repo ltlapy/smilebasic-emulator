@@ -1065,14 +1065,21 @@ impl Vm {
     // UNVERIFIED: reserved statements such as PRINT and GOTO report 0.
     fn has_call(&self, value: &Value, host: &dyn Host) -> Result<bool> {
         let (slot, name) = slot_and_name(value)?;
-        if let Some(slot) = slot.filter(|&s| s != self.slot) {
-            return Ok((self.program_in(slot)).is_some_and(|p| p.def_names.contains_key(&name)));
+        // With another slot, its DEFs, and the system's commands and
+        // functions still: SmileBASIC Debugger finds those with
+        // CHKCALL("n:NAME") of a slot it leaves empty.
+        let other = slot.filter(|&s| s != self.slot);
+        let program = match other {
+            Some(slot) => self.program_in(slot),
+            None => Some(&self.program),
+        };
+        if program.is_some_and(|p| p.def_names.contains_key(&name)) {
+            return Ok(true);
         }
         if NOT_CALLS.contains(&name.as_str()) {
             return Ok(false);
         }
-        Ok(self.program.def_names.contains_key(&name)
-            || self.find_common(&name).is_some()
+        Ok(self.find_common(&name).is_some()
             || builtins::lookup(&name, Form::Function).is_some()
             || builtins::lookup(&name, Form::Command).is_some()
             || host.lookup(&name).is_some()
@@ -1492,6 +1499,10 @@ impl Vm {
             }
             Op::OnBreak(a) => self.on_break = Some((self.slot, *a as usize)),
             Op::NoBreak => self.on_break = None,
+            Op::UndefinedLabel(name) => {
+                let name = String::from_utf16_lossy(&program.strings[*name as usize]);
+                return Err(Error::with_detail(ErrorKind::UndefinedLabel, name));
+            }
             Op::GotoDyn => {
                 let label = self.pop();
                 let (slot, target) = self.find_label(&label)?;
@@ -1571,6 +1582,25 @@ impl Vm {
                 } else if let Some((slot, def)) = self.find_common(&name) {
                     self.call_in(slot, def, args, *want, host)?;
                     return Ok(None);
+                } else if let ("VSYNC" | "WAIT", Want::Outs(0), 0..=1) =
+                    (name.as_str(), *want, args.len())
+                {
+                    // Commands the VM runs itself, which SmileBASIC
+                    // Debugger calls by name too.
+                    let frames = args.first().map(Value::to_int).transpose()?.unwrap_or(1);
+                    self.pc = next;
+                    return Ok(Some(Status::Wait {
+                        frames: frames.max(0) as u32,
+                        vsync: name == "VSYNC",
+                    }));
+                } else if let ("FREEMEM", Want::Value | Want::Outs(1 | 2), 0) =
+                    (name.as_str(), *want, args.len())
+                {
+                    let free = Value::Int(self.free_memory(host));
+                    if *want == Want::Outs(2) {
+                        self.stack.push(free.clone());
+                    }
+                    self.stack.push(free);
                 } else if let Some(id) = builtins::lookup(&name, form(*want)) {
                     self.call_builtin(program, id, &args, *want)?;
                 } else if *want == Want::Outs(1)

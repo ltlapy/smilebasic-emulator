@@ -804,6 +804,43 @@ fn initialized_arrays_keep_their_sizes() {
 }
 
 #[test]
+fn smilebasic_debugger_forms() {
+    // A bare label after THEN or ELSE jumps, and the rest of the line
+    // stays in the branch.
+    assert_eq!(
+        output("A=0:IF A THEN @X:?\"AFTER\"\n?\"E\":END\n@X:?\"X\""),
+        "E\n"
+    );
+    assert_eq!(
+        output("A=1:IF A THEN ?\"T\"; ELSE @X:?\"AFTER\"\n?\"E\":END\n@X"),
+        "TE\n"
+    );
+    assert_eq!(
+        output("A=0:IF A THEN ELSE @X:ENDIF\n?\"E\":END\n@X:?\"X\""),
+        "X\n"
+    );
+    // ELSEIF takes GOTO in place of THEN.
+    assert_eq!(
+        output("IF 0 THEN ?1:ELSEIF 1 GOTO @X\nEND\n@X:?\"X\""),
+        "X\n"
+    );
+    // A label that is not there fails only when the jump runs.
+    assert_eq!(output("IF 0 THEN GOTO @NONE\n?\"OK\""), "OK\n");
+    assert_eq!(error("?1\nGOSUB @NONE").0, ErrorKind::UndefinedLabel);
+    assert_eq!(error("?1\nGOSUB @NONE").1, 2);
+    // CHKCALL with another slot still finds the system's names.
+    assert_eq!(
+        output("?CHKCALL(\"1:ABS\");CHKCALL(\"1:SIN\");CHKCALL(\"1:NONE\")"),
+        "110\n"
+    );
+    // CALL reaches the commands the VM runs itself.
+    assert_eq!(
+        output("CALL \"WAIT\",1:CALL \"VSYNC\":?CALL(\"FREEMEM\")>0"),
+        "1\n"
+    );
+}
+
+#[test]
 fn defs_see_only_globals_from_before_them() {
     // I is first used at top level after F, so F's I is its own.
     assert_eq!(output("A=1\nDEF F\n I=5:A=2\nEND\nI=1:F:?I;A"), "12\n");

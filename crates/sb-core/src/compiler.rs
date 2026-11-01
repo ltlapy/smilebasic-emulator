@@ -433,10 +433,17 @@ impl Compiler<'_> {
             let outside = matches!(self.out.code[at], Op::OnBreak(_))
                 .then(|| self.out.labels.get(&label))
                 .flatten();
-            let target = *labels.get(&label).or(outside).ok_or_else(|| {
-                err(ErrorKind::UndefinedLabel, format!("@{label}"))
-                    .at_pos(self.out.lines[at], self.out.cols[at])
-            })?;
+            // A label that is not there is an error only when the jump
+            // runs: SmileBASIC Debugger's generated code jumps to labels
+            // it writes only when needed.
+            let target = match labels.get(&label).or(outside) {
+                Some(&target) => target,
+                None => {
+                    (self.line, self.col) = (self.out.lines[at], self.out.cols[at]);
+                    let name = self.string_const(format!("@{label}").encode_utf16().collect());
+                    self.emit(Op::UndefinedLabel(name)) as Addr
+                }
+            };
             self.patch(at, target);
         }
         Ok(())
@@ -1503,8 +1510,8 @@ impl Compiler<'_> {
         } else {
             self.emit(Op::Return);
         }
-        self.out.defs[index as usize].end = self.here();
         self.resolve_patches(Some(index))?;
+        self.out.defs[index as usize].end = self.here();
         self.def = None;
         Ok(())
     }

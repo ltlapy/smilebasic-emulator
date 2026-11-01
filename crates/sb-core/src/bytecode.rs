@@ -106,6 +106,9 @@ pub enum Op {
     OnBreak(Addr),
     /// `ON BREAK GOTO ""`: the + button stops the program again.
     NoBreak,
+    /// A jump to a label the program does not have: `Undefined label`
+    /// with string constant `n`, when it runs.
+    UndefinedLabel(u32),
     /// `[label string] -> []`
     GotoDyn,
     GosubDyn,
