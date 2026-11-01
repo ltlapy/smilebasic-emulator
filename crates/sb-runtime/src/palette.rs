@@ -100,7 +100,7 @@ impl From<Role> for Part {
 }
 
 /// Opaque `0xAARRGGBB` colors, in the order of [`Part::ALL`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Palette([u32; 14]);
 
 /// Builds a palette from `0xRRGGBB` values in the order of [`Part::ALL`].

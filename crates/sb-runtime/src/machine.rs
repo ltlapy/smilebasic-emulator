@@ -1531,6 +1531,17 @@ impl Machine {
         )
     }
 
+    /// Counts the frames the editor's frame was drawn: while the count
+    /// stays, [`Machine::render_editor`] gives the same pixels.
+    pub fn editor_revision(&self) -> u64 {
+        self.rt.editor_revision()
+    }
+
+    /// The editor's frame as [`Machine::render_editor`] last drew it.
+    pub fn editor_frame(&self) -> &Framebuffer {
+        self.rt.editor_frame()
+    }
+
     /// Runs a line typed in direct mode.
     fn direct(&mut self, line: &str) {
         if line.trim().is_empty() {
@@ -2129,4 +2140,61 @@ fn idle(live: &crate::input::State) -> crate::input::State {
         pad.connected = now.connected;
     }
     state
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::font::Font;
+    use crate::palette::Part;
+    use crate::runtime::keys;
+
+    /// Draws the editor's frame as the frontend does, and again from
+    /// scratch for the same frame; true if the two are alike.
+    fn drawn_alike(m: &mut Machine) -> bool {
+        let kept = m.render_editor().pixels().to_vec();
+        m.rt.frame = m.rt.frame.wrapping_sub(1);
+        m.rt.editor_key = None;
+        kept == m.render_editor().pixels()
+    }
+
+    #[test]
+    fn the_editor_is_drawn_again_only_when_it_changes() {
+        let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+        m.boot();
+        m.set_slot(0, "?1\r\n?2\r\nFOR I=0 TO 9\r\n?I\r\nNEXT".to_string());
+        m.set_slot(1, "?\"ONE\"".to_string());
+        m.toggle_editor();
+        type Step = fn(&mut Machine);
+        let steps: [Step; 13] = [
+            |_| {},
+            |m| m.rt.key_press(keys::DOWN),
+            |m| m.rt.key_press(keys::END),
+            |m| m.type_text("+3"),
+            |m| m.rt.key_press(keys::BACKSPACE),
+            |m| m.rt.key_press(keys::ENTER),
+            |m| m.edit().select_all(),
+            |m| _ = m.toggle_breakpoint(0, 2),
+            |m| m.show_panel(true),
+            |m| m.rt.settings.editor_colors[Part::Background] = 0xFF10_2030,
+            |m| m.toggle_split(),
+            |m| m.switch_side(),
+            |m| m.edit_slot(1),
+        ];
+        for (i, step) in steps.into_iter().enumerate() {
+            step(&mut m);
+            m.frame();
+            // Through two blinks of the cursor.
+            let drawn = m.editor_revision();
+            for _ in 0..60 {
+                assert!(drawn_alike(&mut m), "step {i}");
+            }
+            // Each frame above was also drawn from scratch. The ones kept
+            // for the frontend are drawn again only after the step, as the
+            // cursor blinks, and as a split's outline fades.
+            let again = m.editor_revision() - drawn - 60;
+            let most = if m.is_split() { 40 } else { 4 };
+            assert!(again <= most, "step {i}: drawn again {again} times");
+        }
+    }
 }

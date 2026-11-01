@@ -35,7 +35,7 @@ pub(crate) const SYNTAX: u32 = 0xFFE0_E090;
 const DEF: u32 = 0xFF40_C8A0;
 
 /// What goes in the list, and when it shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Options {
     /// Letters typed before the list shows.
     pub after: usize,
@@ -74,7 +74,7 @@ impl Options {
 }
 
 /// What an entry is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
     /// An instruction, used as a statement.
     Command,
@@ -119,7 +119,7 @@ impl Kind {
 }
 
 /// An entry of the list.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Item {
     pub word: String,
     pub kind: Kind,
@@ -256,7 +256,7 @@ pub enum Outcome {
     Pass,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Completion {
     /// Where the word starts in the line.
     pub start: usize,

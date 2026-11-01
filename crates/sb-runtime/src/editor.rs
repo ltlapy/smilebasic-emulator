@@ -6,7 +6,9 @@
 //! The code is colored by [`crate::syntax`] in the settings' palette, in
 //! the 8- or 16-pixel font at one of three sizes.
 
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::complete::{self, Completion, Item, Library, Options};
 use crate::font::{Font, FontSize};
@@ -43,7 +45,7 @@ const STOPPED: u32 = 0xFFFF_DC00;
 const STOPPED_LINE: u32 = 100;
 
 /// What the debugger shows of the slot shown, by 0-based line.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Marks {
     pub breakpoints: Vec<usize>,
     /// Those of the breakpoints that have a condition.
@@ -181,7 +183,7 @@ impl Grid {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct View {
     line: usize,
     col: usize,
@@ -214,6 +216,10 @@ struct Map {
     height: usize,
     first: usize,
 }
+
+/// Text revisions, taken by each change to an editor's text so that no
+/// two texts, in any editor, share one.
+static REVISIONS: AtomicU64 = AtomicU64::new(1);
 
 /// How far, out of 256, the margins of a split display's side without the
 /// keys fade toward the background.
@@ -263,7 +269,7 @@ enum Merge {
 
 /// What the editor's keys do: edit the program, or type into the status
 /// line to go to a line, find or replace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mode {
     Edit,
     GoTo,
@@ -311,6 +317,9 @@ fn end_of(at: Pos, text: &Lines) -> Pos {
 pub struct Editor {
     slot: usize,
     lines: Vec<Vec<u16>>,
+    /// Changes with the text, and with the other slots' names offered,
+    /// for [`Editor::draw_key`].
+    revision: u64,
     view: View,
     /// The column Up and Down return to after passing shorter lines.
     want_col: usize,
@@ -443,6 +452,7 @@ impl Editor {
         let mut editor = Editor {
             slot: 0,
             lines: vec![Vec::new()],
+            revision: 0,
             view: View::default(),
             want_col: 0,
             overwrite: false,
@@ -480,6 +490,22 @@ impl Editor {
         };
         editor.fit(screen_w, screen_h, FontSize::Small, None);
         editor
+    }
+
+    /// Marks the text as changed for [`Editor::draw_key`].
+    fn revise(&mut self) {
+        self.revision = REVISIONS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Feeds `state` what [`Editor::draw`] draws from, besides what it is
+    /// given: equal keys draw the same frame.
+    pub fn draw_key(&self, state: &mut impl Hasher) {
+        (self.revision, self.slot, self.modified).hash(state);
+        (self.view, self.followed, self.scrolled, self.center).hash(state);
+        (self.anchor, self.mode, self.overwrite).hash(state);
+        (&self.goto, &self.find, &self.with, &self.note).hash(state);
+        (&self.marks, &self.completion, self.quiet, self.complete).hash(state);
+        Rc::as_ptr(&self.library).hash(state);
     }
 
     /// Lays the character cells out on a frame of `width` x `height`
@@ -539,6 +565,7 @@ impl Editor {
         self.names = None;
         self.slot = slot;
         self.lines = split_lines(source);
+        self.revise();
         self.modified = false;
         self.changed = false;
         self.view = self.saved[slot];
@@ -578,6 +605,7 @@ impl Editor {
     pub fn take_document(&mut self, from: &mut Editor) {
         self.names = None;
         self.lines = from.lines.clone();
+        self.revise();
         self.undo = std::mem::take(&mut from.undo);
         self.redo = std::mem::take(&mut from.redo);
         self.modified = from.modified;
@@ -591,6 +619,7 @@ impl Editor {
         if self.lines != from.lines {
             self.names = None;
             self.lines.clone_from(&from.lines);
+            self.revise();
             self.fit_cursor();
         }
         self.modified = from.modified;
@@ -656,6 +685,7 @@ impl Editor {
 
     /// Takes the text between two places out.
     fn take(&mut self, start: Pos, end: Pos) -> Lines {
+        self.revise();
         if start.0 == end.0 {
             return vec![self.lines[start.0].drain(start.1..end.1).collect()];
         }
@@ -669,6 +699,7 @@ impl Editor {
 
     /// Puts text in at a place; returns where it ends.
     fn put(&mut self, at: Pos, text: &Lines) -> Pos {
+        self.revise();
         if text.len() > 1 {
             let count = text.len() - 1;
             (self.shifts).push((self.slot, LineShift::Broken { at, count }));
@@ -1277,6 +1308,8 @@ impl Editor {
         if !same {
             self.other_names = names;
             self.names = None;
+            // The hints may name them.
+            self.revise();
         }
     }
 

@@ -208,6 +208,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, &texture_creator, texture_kind)?;
+    // The revision of the editor's frame the texture holds, if it holds
+    // one; and the same for the editor's window.
+    let mut texture_holds = None;
+    let mut editor_holds = None;
     // The screens in the debugger's panel, drawn at the window's
     // resolution, with their size and filter.
     let mut panel_screens: Option<(Texture, TextureKind)> = None;
@@ -406,6 +410,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let mut quit = false;
         for event in events.poll_iter() {
             controls.event(&event);
+            // Some renderers lose what textures held, which then has to be
+            // given again.
+            if matches!(
+                event,
+                Event::RenderTargetsReset { .. } | Event::RenderDeviceReset { .. }
+            ) {
+                (texture_holds, editor_holds) = (None, None);
+            }
             let editor_id = editor_gfx.get().map(|gfx| gfx.id);
             let from_editor = editor_id.is_some() && event.get_window_id() == editor_id;
             if let (true, Event::Window { win_event, .. }) = (from_editor, &event) {
@@ -1694,7 +1706,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
         let rect = screen_rect(&mode, filter, out_w, display.h);
         let editing = machine.is_editing() && !machine.is_detached();
-        let fb = machine.render();
+        // The editor's frame stays as it is while its revision does.
+        let revision = editing.then(|| {
+            machine.render_editor();
+            machine.editor_revision()
+        });
+        let fb = match revision {
+            Some(_) => machine.editor_frame(),
+            None => machine.render(),
+        };
         let frame = (fb.width(), fb.height());
         // The editor's frame can be finer than the screen it is shown in.
         let kind = if editing {
@@ -1707,9 +1727,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         if kind != texture_kind {
             texture_kind = kind;
             texture = frame_texture(&canvas, &texture_creator, kind)?;
+            texture_holds = None;
         }
-        bench::uploaded(fb.pixels().len() * 4);
-        texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        if revision.is_none() || revision != texture_holds {
+            bench::uploaded(fb.pixels().len() * 4);
+            texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        }
+        texture_holds = revision;
         lap!(Screen);
         // The editor in its own window, where the debugger's panel goes
         // too: where its frame and display are there.
@@ -1721,17 +1745,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let mode = machine.editor_mode();
             let filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
             let rect = screen_rect(&mode, filter, out_w, display.h);
-            let fb = machine.render_editor();
+            machine.render_editor();
+            let revision = Some(machine.editor_revision());
+            let fb = machine.editor_frame();
             let frame = (fb.width(), fb.height());
             editor_space = frame;
             let kind = (frame, editor_filter(rect, frame, filter));
             if editor_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = frame_texture(&editor_canvas, &gfx.creator, kind)?;
                 editor_texture = Some((made, kind));
+                editor_holds = None;
             }
-            if let Some((tex, _)) = &mut editor_texture {
+            if let Some((tex, _)) = &mut editor_texture
+                && revision != editor_holds
+            {
                 bench::uploaded(fb.pixels().len() * 4);
                 tex.update(None, as_bytes(fb.pixels()), (frame.0 * 4) as usize)?;
+                editor_holds = revision;
             }
             editor_place = (rect, frame, display);
         }

@@ -28,7 +28,7 @@ pub const PAGE_SIZE: u32 = 2048;
 pub const MISSING_GLYPH: u16 = 703;
 const CODES: usize = 0x1_0000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FontSize {
     Small = 8,
     Large = 16,

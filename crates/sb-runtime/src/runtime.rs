@@ -578,7 +578,7 @@ pub struct Runtime {
     /// Where the Up and Down keys have taken the direct-mode line in the
     /// history, if it is being typed in direct mode and they have.
     recall: Option<Recall>,
-    frame: u32,
+    pub(crate) frame: u32,
     /// Whether the code running was typed in direct mode, where RUN, NEW
     /// and CLEAR are allowed.
     pub direct: bool,
@@ -684,6 +684,11 @@ pub struct Runtime {
     /// The editor draws at a multiple of the start-up resolution, for its
     /// font and size (see [`frame_size`]).
     editor_fb: Framebuffer,
+    /// What `editor_fb` shows, as [`Runtime::editor_key`] gave it, while
+    /// it can be shown again without drawing it.
+    pub(crate) editor_key: Option<u64>,
+    /// Counts the frames drawn into `editor_fb`.
+    editor_revision: u64,
     /// SmileBASIC's words with their forms from the help, for completion
     /// and argument hints.
     pub library: Rc<Library>,
@@ -901,6 +906,8 @@ impl Runtime {
             mode,
             startup_mode: mode,
             editor_fb: Framebuffer::new(width, height),
+            editor_key: None,
+            editor_revision: 0,
             side_fb: Framebuffer::new(0, 0),
             library: Rc::default(),
             help: None,
@@ -928,6 +935,7 @@ impl Runtime {
     pub fn set_startup_mode(&mut self, mode: ScreenMode) {
         self.startup_mode = mode;
         self.editor_fb = Framebuffer::new(mode.width, mode.height);
+        self.editor_key = None;
         self.text = startup_screens(&mode);
         self.set_mode(mode);
     }
@@ -1562,7 +1570,90 @@ impl Runtime {
         let (w, h) = frame_size((mode.width, mode.height), s.editor_font, s.editor_size);
         if (self.editor_fb.width(), self.editor_fb.height()) != (w, h) {
             self.editor_fb = Framebuffer::new(w, h);
+            self.editor_key = None;
         }
+        if let Some(rows) = split
+            && self.split_shown != Some((rows, active))
+        {
+            self.split_shown = Some((rows, active));
+            self.split_flash = self.frame;
+        }
+        // Nothing it shows changed since it was last drawn.
+        let key = self.editor_key(editors, active, split, panel, blink);
+        if self.editor_key == Some(key) {
+            return &self.editor_fb;
+        }
+        self.draw_editors(editors, active, split, panel, blink);
+        self.editor_revision += 1;
+        // Drawing scrolls the view to the cursor. Until it has nothing
+        // left to move, the next frame draws it again.
+        let drawn = self.editor_key(editors, active, split, panel, blink);
+        self.editor_key = (drawn == key).then_some(key);
+        &self.editor_fb
+    }
+
+    /// Counts the frames drawn into the editor's frame, which stays as
+    /// it is while the count does.
+    pub(crate) fn editor_revision(&self) -> u64 {
+        self.editor_revision
+    }
+
+    /// The editor's frame as last drawn.
+    pub(crate) fn editor_frame(&self) -> &Framebuffer {
+        &self.editor_fb
+    }
+
+    /// A fingerprint of what [`Runtime::draw_editors`] draws from.
+    fn editor_key(
+        &self,
+        editors: &[Editor; 2],
+        active: usize,
+        split: Option<bool>,
+        panel: bool,
+        blink: bool,
+    ) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut state = std::hash::DefaultHasher::new();
+        let s = &self.settings;
+        (self.editor_fb.width(), self.editor_fb.height()).hash(&mut state);
+        (s.editor_wrap, s.editor_number_tiles, s.editor_map).hash(&mut state);
+        (s.editor_font, &s.editor_colors, self.dimmed).hash(&mut state);
+        (active, split, panel, blink).hash(&mut state);
+        if split.is_some() {
+            self.split_alpha().hash(&mut state);
+        }
+        let shown = match split {
+            Some(_) => &editors[..],
+            None => std::slice::from_ref(&editors[active]),
+        };
+        for editor in shown {
+            let slot = editor.slot();
+            (&self.slot_names[slot], self.slot_modified[slot]).hash(&mut state);
+            editor.draw_key(&mut state);
+        }
+        state.finish()
+    }
+
+    /// How strongly, out of 256, the side of a split editor with the keys
+    /// is outlined, fading out after it has them.
+    fn split_alpha(&self) -> u32 {
+        let age = self.frame.wrapping_sub(self.split_flash);
+        match age.checked_sub(SPLIT_FLASH_HOLD) {
+            None => 256,
+            Some(fading) => 256 * SPLIT_FLASH_FADE.saturating_sub(fading) / SPLIT_FLASH_FADE,
+        }
+    }
+
+    fn draw_editors(
+        &mut self,
+        editors: &mut [Editor; 2],
+        active: usize,
+        split: Option<bool>,
+        panel: bool,
+        blink: bool,
+    ) {
+        let s = &self.settings;
+        let (w, h) = (self.editor_fb.width(), self.editor_fb.height());
         let reserve = if panel { h * PANEL_SHARE / 20 } else { 0 };
         self.panel_at = panel.then_some(h - reserve);
         let look = Look {
@@ -1592,7 +1683,7 @@ impl Runtime {
             if self.dimmed {
                 dim(&mut self.editor_fb);
             }
-            return &self.editor_fb;
+            return;
         };
         // Two sides with a divider between them; only the upper one
         // leaves room for the menu bar.
@@ -1600,10 +1691,6 @@ impl Runtime {
         let half = (length - SPLIT_DIVIDER) / 2;
         let second = length - half;
         self.split_at = Some(second);
-        if self.split_shown != Some((rows, active)) {
-            self.split_shown = Some((rows, active));
-            self.split_flash = self.frame;
-        }
         let side_size = if rows { (w, half) } else { (half, h) };
         if (self.side_fb.width(), self.side_fb.height()) != side_size {
             self.side_fb = Framebuffer::new(side_size.0, side_size.1);
@@ -1647,11 +1734,7 @@ impl Runtime {
                 self.editor_fb.set(x, y, SPLIT_COLOR);
             }
         }
-        let age = self.frame.wrapping_sub(self.split_flash);
-        let alpha = match age.checked_sub(SPLIT_FLASH_HOLD) {
-            None => 256,
-            Some(fading) => 256 * SPLIT_FLASH_FADE.saturating_sub(fading) / SPLIT_FLASH_FADE,
-        };
+        let alpha = self.split_alpha();
         if alpha > 0 {
             // Below the menu bar, which only the upper side leaves room for.
             let at = if active == 0 { 0 } else { second };
@@ -1676,7 +1759,6 @@ impl Runtime {
         if self.dimmed {
             dim(&mut self.editor_fb);
         }
-        &self.editor_fb
     }
 
     fn screen(&mut self, id: Option<i32>) -> Result<&mut TextScreen> {
