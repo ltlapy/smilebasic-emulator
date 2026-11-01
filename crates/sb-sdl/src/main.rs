@@ -60,11 +60,12 @@ use sdl3::keyboard::{Keycode, Mod};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
+use sdl3::rect::Rect;
 use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator};
 use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
 use sdl3::sys::render::{SDL_SetDefaultTextureScaleMode, SDL_SetTextureBlendMode};
 use sdl3::sys::surface::SDL_ScaleMode;
-use sdl3::video::{Window, WindowContext};
+use sdl3::video::{Window, WindowBuilder, WindowContext};
 use settings_window::SettingsWindow;
 use shortcuts::ShortcutsWindow;
 use toast::Toasts;
@@ -288,7 +289,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         machine.set_detached(machine.rt.settings.editor_window);
         let apart = machine.is_detached() && machine.is_editing();
         if apart && editor_gfx.get().is_none() {
-            let made = EditorWindow::open(&video, (display_w, display_h), canvas.window())?;
+            let place = machine.rt.settings.editor_window_place;
+            let made = EditorWindow::open(&video, (display_w, display_h), place, canvas.window())?;
             let _ = editor_gfx.set(made);
             let gfx = editor_gfx.get().expect("set above");
             let mut made = gfx.creator.create_texture_streaming(
@@ -310,6 +312,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 window.show();
                 window.raise();
             } else {
+                machine.rt.settings.editor_window_place = Some(window_place(window));
                 window.hide();
                 editor_focused = false;
                 pointer_in_editor = false;
@@ -1585,12 +1588,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         // change at once so that nothing is lost if the emulator crashes.
         if machine.rt.settings != saved_settings {
             saved_settings = machine.rt.settings.clone();
-            if let Err(e) = std::fs::write(&settings_path, saved_settings.to_text()) {
-                eprintln!(
-                    "could not save settings to {}: {e}",
-                    settings_path.display()
-                );
-            }
+            save_settings(&settings_path, &saved_settings);
         }
         toasts.tick();
         if machine.rt.input.take_buttons_read() {
@@ -1892,7 +1890,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             next_frame = now;
         }
     }
+    // The editor's window, shown when quitting, opens there next time.
+    if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown) {
+        let place = window_place(gfx.canvas.borrow().window());
+        if machine.rt.settings.editor_window_place != Some(place) {
+            machine.rt.settings.editor_window_place = Some(place);
+            save_settings(&settings_path, &machine.rt.settings);
+        }
+    }
     Ok(())
+}
+
+fn save_settings(path: &Path, settings: &Settings) {
+    if let Err(e) = std::fs::write(path, settings.to_text()) {
+        eprintln!("could not save settings to {}: {e}", path.display());
+    }
 }
 
 /// The editor's own window, with its renderer.
@@ -1903,15 +1915,25 @@ struct EditorWindow {
 }
 
 impl EditorWindow {
-    /// Makes the window, hidden until the editor opens: beside the main
-    /// window if the display has room on one of its sides, else where the
-    /// system puts it.
+    /// Makes the window, hidden until the editor opens: where it was last
+    /// if that is still on a display, else beside the main window if the
+    /// display has room on one of its sides, else where the system puts
+    /// it.
     fn open(
         video: &VideoSubsystem,
         (w, h): (u32, u32),
+        last: Option<[i32; 4]>,
         main: &Window,
     ) -> Result<EditorWindow, AnyError> {
         const GAP: i32 = 16;
+        let displays: Vec<Rect> = (video.displays().unwrap_or_default().iter())
+            .filter_map(|d| d.get_bounds().ok())
+            .collect();
+        if let Some([x, y, w, h]) = last.filter(|&place| on_a_display(place, &displays)) {
+            let mut builder = video.window(EDITOR_TITLE, w as u32, h as u32);
+            builder.position(x, y);
+            return EditorWindow::build(video, builder);
+        }
         let mut builder = video.window(EDITOR_TITLE, w, h);
         let ((x, y), (main_w, _)) = (main.position(), main.size());
         if let Ok(room) = main.get_display().and_then(|d| d.get_usable_bounds()) {
@@ -1923,6 +1945,10 @@ impl EditorWindow {
                 builder.position(left, y);
             }
         }
+        EditorWindow::build(video, builder)
+    }
+
+    fn build(video: &VideoSubsystem, mut builder: WindowBuilder) -> Result<EditorWindow, AnyError> {
         let window = builder.resizable().high_pixel_density().hidden().build()?;
         video.text_input().start(&window);
         let id = window.id();
@@ -1934,6 +1960,19 @@ impl EditorWindow {
             id,
         })
     }
+}
+
+/// A window's position and size, as the settings keep them.
+fn window_place(window: &Window) -> [i32; 4] {
+    let ((x, y), (w, h)) = (window.position(), window.size());
+    [x, y, w as i32, h as i32]
+}
+
+/// Whether a window placed so lies wholly on one of the displays, so that
+/// it can go back there.
+fn on_a_display([x, y, w, h]: [i32; 4], displays: &[Rect]) -> bool {
+    let place = Rect::new(x, y, w.max(1) as u32, h.max(1) as u32);
+    displays.iter().any(|d| d.contains_rect(place))
 }
 
 /// How a window's pointer positions map to the display's pixels and to
@@ -2854,5 +2893,17 @@ mod tests {
             "file:///home/a%20b/%EB%8D%B0%EC%9D%B4%ED%84%B0"
         );
         assert_eq!(file_url(Path::new("C:\\Users\\x")), "file:///C:/Users/x");
+    }
+
+    #[test]
+    fn windows_go_back_only_onto_a_display() {
+        let displays = [Rect::new(0, 0, 1920, 1080), Rect::new(1920, 0, 1280, 1024)];
+        assert!(on_a_display([100, 50, 1280, 720], &displays));
+        assert!(on_a_display([1920, 0, 1280, 1024], &displays));
+        // Off the edge, across two displays, or on one that is gone.
+        assert!(!on_a_display([-10, 50, 640, 480], &displays));
+        assert!(!on_a_display([1800, 50, 640, 480], &displays));
+        assert!(!on_a_display([3300, 50, 640, 480], &displays));
+        assert!(!on_a_display([100, 50, 640, 480], &[]));
     }
 }

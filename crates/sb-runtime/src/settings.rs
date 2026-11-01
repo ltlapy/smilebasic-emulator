@@ -45,6 +45,9 @@ pub struct Settings {
     /// The editor shows in a window of its own, beside the screen, so
     /// that programs go on while it is open.
     pub editor_window: bool,
+    /// Where that window was last, and its size: x, y, width and height
+    /// in the system's window coordinates.
+    pub editor_window_place: Option<[i32; 4]>,
     /// The editor draws the 8- or the 16-pixel font.
     pub editor_font: FontSize,
     pub editor_size: EditorSize,
@@ -119,6 +122,7 @@ impl Default for Settings {
             editor_number_tiles: true,
             editor_map: true,
             editor_window: false,
+            editor_window_place: None,
             editor_font: FontSize::Large,
             editor_size: EditorSize::Medium,
             // Characters are shown full-width, so one is already wide.
@@ -203,6 +207,16 @@ fn choice_name<T: PartialEq>(table: &[(T, &'static str)], value: &T) -> &'static
         .iter()
         .find(|(v, _)| v == value)
         .map_or("", |(_, n)| n)
+}
+
+/// Four numbers apart by commas, with a size above zero.
+fn parse_place(value: &str) -> Option<[i32; 4]> {
+    let mut parts = value.split(',').map(|n| n.trim().parse::<i32>());
+    let mut place = [0; 4];
+    for n in &mut place {
+        *n = parts.next()?.ok()?;
+    }
+    (parts.next().is_none() && place[2] > 0 && place[3] > 0).then_some(place)
 }
 
 fn parse_bool(value: &str) -> Option<bool> {
@@ -300,6 +314,12 @@ impl Settings {
                     }
                     continue;
                 }
+                "editor_window_place" => {
+                    if let Some(place) = parse_place(value) {
+                        s.editor_window_place = Some(place);
+                    }
+                    continue;
+                }
                 "sound_font" => {
                     s.sound_font = (!value.is_empty()).then(|| value.to_string());
                     continue;
@@ -355,6 +375,7 @@ impl Settings {
              editor_number_tiles={}\n\
              editor_map={}\n\
              editor_window={}\n\
+             editor_window_place={}\n\
              editor_font={}\n\
              editor_size={}\n\
              editor_tab_step={}\n\
@@ -388,6 +409,8 @@ impl Settings {
             self.editor_number_tiles,
             self.editor_map,
             self.editor_window,
+            (self.editor_window_place)
+                .map_or(String::new(), |[x, y, w, h]| format!("{x},{y},{w},{h}")),
             choice_name(&FONT_SIZE, &self.editor_font),
             choice_name(&EDITOR_SIZE, &self.editor_size),
             self.editor_tab_step,
@@ -431,6 +454,7 @@ mod tests {
             upper_case_letters: false,
             ctrl_c_stops: true,
             editor_wrap: true,
+            editor_window_place: Some([-1200, 40, 640, 480]),
             editor_number_tiles: false,
             editor_font: FontSize::Small,
             editor_size: EditorSize::Small,
@@ -461,7 +485,8 @@ mod tests {
     fn skips_what_it_does_not_know() {
         let s = Settings::from_text(
             "# comment\nfuture_option=1\nctrl_c_stops = true\neditor_wrap=maybe\n\
-             file_confirm=loud\nno equals sign\neditor_tab_step=0\nlanguage=fr\n",
+             file_confirm=loud\neditor_window_place=1,2,0,4\n\
+             editor_window_place=1,2,3\nno equals sign\neditor_tab_step=0\nlanguage=fr\n",
         );
         assert_eq!(
             s,
