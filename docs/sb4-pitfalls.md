@@ -451,6 +451,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   A held at V127 has an RMS of 850 on `@0`, and a full-scale 8-bit
   waveform an eighth of full scale on each side (a ±96 square 3063, a
   sine of amplitude 100 2257).
+- `Q8` lets a note go about 6% of its length later than a quarter of
+  it: @0's `C2` and `C4` at T120 start their release some 16 and 8 ms
+  later than 250 and 125 ms. `Q0` lets go within about 10 ms. A waveform
+  with attack 127 is at full level from its first sample.
 - `WAVSET` while a note of that instrument sounds changes the note at
   once, keeping its envelope: a square swapped for a square of two
   cycles doubles the pitch at the same level. A `WAVSET` square swapped

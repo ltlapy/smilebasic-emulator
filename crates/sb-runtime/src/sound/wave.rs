@@ -280,6 +280,12 @@ impl Voice {
                 } else {
                     self.envelope.gain()
                 };
+                if self.pos == 0.0 {
+                    // The note starts at its first step's level: a square
+                    // with attack 127 is at full level from its first
+                    // sample (TEST40).
+                    self.level = self.target;
+                }
                 self.level_step = (self.target - self.level) / sampler::TICK as f32;
                 self.step = match sampler::vibrato(&mut self.vibrato_phase, self.modulation) {
                     0.0 => self.base_step,

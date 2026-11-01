@@ -383,7 +383,14 @@ impl Track {
         ch.link = link;
         ch.wait = ticks;
         ch.gate = match link {
-            Link::None => (ticks * ch.quantize as u32 / 32).max(1),
+            // Half a step of Q more than Q/32 of the note: Q8 releases
+            // @0's notes about 6% of their length later than a quarter
+            // would, both for C2 and for C4 (TEST40).
+            // UNVERIFIED: Q other than 0 and 8.
+            Link::None if ch.quantize < 32 => {
+                ((ticks * (2 * ch.quantize as u32 + 1) + 32) / 64).clamp(1, ticks.max(1))
+            }
+            Link::None => ticks.max(1),
             // Held until the next note.
             _ => 0,
         };
