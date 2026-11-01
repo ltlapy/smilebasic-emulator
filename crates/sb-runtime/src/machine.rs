@@ -750,6 +750,9 @@ impl Machine {
         let program = self.running_slot.is_some();
         if program {
             self.rt.clear_input();
+            if how == Halt::User {
+                self.tidy_after_run();
+            }
         }
         self.running_slot = None;
         self.rt.running_slot = None;
@@ -1609,6 +1612,16 @@ impl Machine {
         }
     }
 
+    /// With the setting, a program that ended or was stopped with the
+    /// Break key leaves the screens as ACLS does and the sound stopped.
+    /// STOP, errors and the debugger's stops leave everything to look at.
+    fn tidy_after_run(&mut self) {
+        if self.rt.settings.tidy_on_end && self.rt.env_type == 0 {
+            self.rt.acls(false, false, false, false);
+            self.rt.sound.stop_all();
+        }
+    }
+
     /// A line typed in direct mode failed: ENVSTAT keeps only the last
     /// error's line (checked on hardware, after a program's error).
     // UNVERIFIED: the same without one.
@@ -1640,7 +1653,10 @@ impl Machine {
             self.rt.clear_input();
             match &error {
                 Some(e) => self.halt(vm, Stopped::Error, e.line),
-                None => self.forget_halted(),
+                None => {
+                    self.forget_halted();
+                    self.tidy_after_run();
+                }
             }
         }
         self.running_slot = None;

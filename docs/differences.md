@@ -104,6 +104,10 @@ Without them:
   direct mode and the tools on F9 to F11. Run > "Switch keys to/from subprogram" moves the focus as
   `ENVFOCUS` does, and Run > "Stop subprogram" does `SUBSTOP`, so a
   subprogram cannot keep the keys from direct mode.
+- Run > "Clear screen and sound when a program ends", off to start
+  with, does `ACLS` and `SNDSTOP` after a program ENDs or is stopped
+  with the Break key or F5. STOP, errors and the debugger's stops leave
+  the screens and sound as they were, to be looked at.
 - `ENVSTAT` gives -1 for the argument of every error, as SmileBASIC 4
   does for `Divide by zero`; for errors in a command's arguments, such
   as `LOCATE 0,999`'s `Out of range`, it gives the argument's number

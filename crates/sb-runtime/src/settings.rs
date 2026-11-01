@@ -47,6 +47,9 @@ pub struct Settings {
     pub editor_window: bool,
     /// That window opens where it was last, as large as it was.
     pub editor_window_keep_place: bool,
+    /// A program that ENDs or is stopped with the Break key leaves the
+    /// screens and sound as ACLS and SNDSTOP do. Not SmileBASIC 4's.
+    pub tidy_on_end: bool,
     /// Where that window was last, and its size: x, y, width and height
     /// in the system's window coordinates.
     pub editor_window_place: Option<[i32; 4]>,
@@ -130,6 +133,7 @@ impl Default for Settings {
             editor_map: true,
             editor_window: false,
             editor_window_keep_place: false,
+            tidy_on_end: false,
             editor_window_place: None,
             editor_font: FontSize::Large,
             editor_size: EditorSize::Medium,
@@ -277,6 +281,7 @@ impl Settings {
                 "editor_map" => &mut s.editor_map,
                 "editor_window" => &mut s.editor_window,
                 "editor_window_keep_place" => &mut s.editor_window_keep_place,
+                "tidy_on_end" => &mut s.tidy_on_end,
                 "file_hint_shown" => &mut s.file_hint_shown,
                 "keyboard_buttons" => &mut s.keyboard_buttons,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
@@ -389,6 +394,7 @@ impl Settings {
              editor_map={}\n\
              editor_window={}\n\
              editor_window_keep_place={}\n\
+             tidy_on_end={}\n\
              editor_window_place={}\n\
              editor_font={}\n\
              editor_size={}\n\
@@ -426,6 +432,7 @@ impl Settings {
             self.editor_map,
             self.editor_window,
             self.editor_window_keep_place,
+            self.tidy_on_end,
             (self.editor_window_place)
                 .map_or(String::new(), |[x, y, w, h]| format!("{x},{y},{w},{h}")),
             choice_name(&FONT_SIZE, &self.editor_font),
@@ -474,6 +481,7 @@ mod tests {
             ctrl_c_stops: true,
             editor_wrap: true,
             editor_window_keep_place: true,
+            tidy_on_end: true,
             editor_window_place: Some([-1200, 40, 640, 480]),
             editor_number_tiles: false,
             editor_font: FontSize::Small,

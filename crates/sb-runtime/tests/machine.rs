@@ -1496,3 +1496,19 @@ fn enter_no_wait(m: &mut Machine, line: &str) {
     m.rt.key_press(sb_runtime::runtime::keys::ENTER);
     m.frame();
 }
+
+#[test]
+fn a_program_that_ends_can_leave_a_clean_screen_and_silence() {
+    let ended = |tidy: bool| {
+        let mut m = machine();
+        m.rt.settings.tidy_on_end = tidy;
+        m.set_slot(0, "BACKCOLOR #C_RED\nBEEP 1\nBGMPLAY 1\n".to_string());
+        enter(&mut m, "RUN");
+        let playing = !m.rt.sound.inspect_tracks().is_empty();
+        (m.rt.back_color, playing)
+    };
+    let (color, playing) = ended(false);
+    assert_ne!(color, 0xFF00_0000);
+    assert!(playing);
+    assert_eq!(ended(true), (0xFF00_0000, false));
+}

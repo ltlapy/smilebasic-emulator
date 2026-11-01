@@ -47,6 +47,7 @@ pub enum Action {
     ToggleEditor,
     /// Show the editor in a window of its own.
     ToggleEditorWindow,
+    ToggleTidyOnEnd,
     EditSlot(usize),
     GoToLine,
     Find,
@@ -112,6 +113,7 @@ impl Action {
         match self {
             Action::ToggleUpperCase => check(settings.upper_case_letters),
             Action::ToggleEditorWindow => check(settings.editor_window),
+            Action::ToggleTidyOnEnd => check(settings.tidy_on_end),
             Action::ToggleWrap => check(settings.editor_wrap),
             Action::ToggleNumberTiles => check(settings.editor_number_tiles),
             Action::ToggleMap => check(settings.editor_map),
@@ -134,6 +136,7 @@ impl Action {
         let flag = match self {
             Action::ToggleUpperCase => &mut settings.upper_case_letters,
             Action::ToggleEditorWindow => &mut settings.editor_window,
+            Action::ToggleTidyOnEnd => &mut settings.tidy_on_end,
             Action::ToggleWrap => &mut settings.editor_wrap,
             Action::ToggleNumberTiles => &mut settings.editor_number_tiles,
             Action::ToggleMap => &mut settings.editor_map,
@@ -356,6 +359,10 @@ const MENUS: &[Menu] = &[
             keyed("Run PRG0", "F5", Action::Run),
             keyed("Stop", "Pause", Action::Stop),
             keyed("Pause/Resume", "F8", Action::Pause),
+            item(
+                "Clear screen and sound when a program ends",
+                Action::ToggleTidyOnEnd,
+            ),
             LINE,
             item("Switch keys to/from subprogram", Action::SwitchFocus),
             item("Stop subprogram", Action::StopSub),
