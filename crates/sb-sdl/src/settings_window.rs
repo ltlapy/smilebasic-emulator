@@ -520,8 +520,8 @@ mod tests {
         // Up goes round to the last row, the UI font; Left on the
         // language goes round.
         w.key(Keycode::Up, &mut s);
-        w.key(Keycode::Right, &mut s);
-        assert_eq!(s.ui_font, FontSize::Large);
+        w.key(Keycode::Left, &mut s);
+        assert_eq!(s.ui_font, FontSize::Small);
         w.key(Keycode::Up, &mut s);
         w.key(Keycode::Left, &mut s);
         assert_eq!(s.language, Language::Japanese);
