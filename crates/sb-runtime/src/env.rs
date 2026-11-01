@@ -222,7 +222,6 @@ impl Runtime {
                         Error::with_detail(ErrorKind::IllegalProjectName, format!("{name:?}"))
                     })?,
                 };
-                // UNVERIFIED: the error for a project that is not there.
                 if !self.storage.project_exists(&name) {
                     let detail = format!("no project {name}");
                     return Err(Error::with_detail(ErrorKind::UndefinedProjectName, detail));
@@ -261,20 +260,22 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            (Command::Metaedit, Want::Outs(1), [item]) => Ok(vec![match item.to_int()? {
-                0 => Value::Str(new_str(self.meta().title.clone())),
-                1 => Value::Str(new_str(self.meta().description.clone())),
-                2 => Value::Array(Rc::new(RefCell::new(Array {
-                    dims: vec![ICON_SIZE, ICON_SIZE],
-                    data: ArrayData::Int(self.meta().icon.clone()),
-                }))),
-                n => {
-                    return Err(Error::with_detail(
-                        ErrorKind::OutOfRange,
-                        format!("item {n}"),
-                    ));
-                }
-            }]),
+            (Command::Metaedit, Want::Outs(1) | Want::Value, [item]) => {
+                Ok(vec![match item.to_int()? {
+                    0 => Value::Str(new_str(self.meta().title.clone())),
+                    1 => Value::Str(new_str(self.meta().description.clone())),
+                    2 => Value::Array(Rc::new(RefCell::new(Array {
+                        dims: vec![ICON_SIZE, ICON_SIZE],
+                        data: ArrayData::Int(self.meta().icon.clone()),
+                    }))),
+                    n => {
+                        return Err(Error::with_detail(
+                            ErrorKind::OutOfRange,
+                            format!("item {n}"),
+                        ));
+                    }
+                }])
+            }
             (Command::Metasave, Want::Outs(0), []) => {
                 let action = FileAction {
                     title: "Save metadata".to_string(),

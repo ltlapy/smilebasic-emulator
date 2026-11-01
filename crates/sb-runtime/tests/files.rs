@@ -564,6 +564,9 @@ fn metadata_saves_with_the_project() {
     m.set_slot(0, "METALOAD \"\":METAEDIT 0 OUT T$:?T$".to_string());
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["My game", "OK"]);
+    m.set_slot(0, "?METAEDIT(0)".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["My game", "OK"]);
     m.set_slot(0, "METALOAD \"NONE\"".to_string());
     enter(&mut m, "run");
     assert!(tail(&m, 2)[0].starts_with("Undefined project name"));

@@ -285,6 +285,7 @@ fn pcm_streams_from_arrays() {
 #[test]
 fn effector_balance_and_talk_are_accepted() {
     let mut rt = runtime();
+    assert_eq!(run_on(&mut rt, "?SNDMSBAL()").unwrap(), "63");
     assert_eq!(
         run_on(&mut rt, "EFCEN #EFCON:EFCSET #EFCCAVE:EFCWET 1,2,3,4:EFCEN OUT E:SNDMSBAL 10:SNDMSBAL OUT B:TALK \"A\":TALKCHK OUT T:TALKSTOP:?E;B;T").unwrap(),
         "1101"

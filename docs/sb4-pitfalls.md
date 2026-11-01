@@ -174,6 +174,11 @@ follows all of it. Items still waiting for a check are marked
   `/`, and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`). A `/`
   may follow a project's name in a listing (`FILES("TXT:NAME/")`), and
   `FILES("TXT:/")` lists the workspace.
+- `METALOAD "NAME"` loads another project's metadata (a project that is
+  not there is `Undefined project name`); `METALOAD` alone loads the
+  current one's again. Before any `METALOAD`, the title is the project's
+  name. `METAEDIT(item)` works as a function.
+- `#_FILENAME` is the program's name (`TEST32`) and `#_SLOT` its slot.
 
 ## Order of evaluation
 
@@ -235,7 +240,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `ACLS` also resets `SPPAGE`, `SPLAYER`, `GSAMPLE`, `TOFS`, `COLOR`,
   `ATTR` and `TCOLOR`, which the manual's equivalent program leaves out.
 - `XSCREEN` clears the console, puts its cursor at 0,0, and resizes
-  `#GSPRITE` to the new screen.
+  `#GSPRITE` to the new screen. `#GSPRITE` goes to the layer `SPLAYER`
+  gives new sprites, whatever layer it was on.
 - `TSCREEN` clears the screen. Without a character size it uses the
   font type. An array from `TARRAY` takes the new size and goes on
   following the screen.
@@ -399,6 +405,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - After `BGMSTOP` with a fade, `BGMCHK` is 0 two frames later, whatever
   the fade's length (0.5, 1 or 2 seconds); calling it again meanwhile,
   in the same frame or later, does not change that.
+- `SNDMSBAL` starts at 63, though the manual calls 64 even.
+  `SNDMSBAL()` and `PCMPOS()` work as functions.
+- While `RECSTART` without a time records round its buffer, `RECDATA`
+  positions go round it too (-1 is the last sample, `RECLEN()` the
+  first); with a time, -1 is `Out of range`.
 - MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
   length (`N60`), macro names with `_` and macros used inside a macro's
   definition (`{X=CDE}{Y={X}F}`).
@@ -498,6 +509,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A function may be called as a command with one `OUT` variable for its
   result: `ABS -3 OUT A`, `SPCHR 0 OUT D`, `SPSET 242 OUT IX`,
   `HSV 120,255,255 OUT C`.
+- An `OUT` variable a `DEF` never sets gives the omitted value (`TYPEOF`
+  0), whatever its suffix; inside the `DEF` it reads as that too.
+- A `DEF` sees a global only if top-level code above the `DEF` names it:
+  the program compiles in one pass. Otherwise the name is the `DEF`'s own.
+- Inside an `IF` or another block of a loop, `NEXT` (also `NEXT I`),
+  `WEND` and `ENDLOOP` go on with the loop's next turn: `IF A THEN NEXT`.
 - A `DEF` with an `OUT` may be called as a function, giving the `OUT`
   value (`DEF F A OUT R` as `?F(3)`), and a `DEF` that returns a value
   may be called with one `OUT` (`T OUT X`). One with two `OUT`s called as

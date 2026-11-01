@@ -146,7 +146,8 @@ pub struct Sound {
     // UNVERIFIED: kept, but the effector does not change the sound yet.
     pub(crate) effector: Effector,
     pub(crate) recorder: Recorder,
-    /// SNDMSBAL, which only subprograms set.
+    /// SNDMSBAL, which only subprograms set. It starts at 63, though the
+    /// manual calls 64 even (checked on hardware).
     pub(crate) balance: i32,
     /// SNDMVOL, as a gain.
     pub(crate) master: Ramp,
@@ -171,7 +172,7 @@ impl Default for Sound {
             pcm: Pcm::default(),
             talk: Talk::default(),
             effector: Effector::default(),
-            balance: 64,
+            balance: 63,
             recorder: Recorder::default(),
             master: Ramp::at(1.0),
             out: Vec::new(),

@@ -285,8 +285,8 @@ impl Compiler<'_> {
         match name {
             "_LINE" => return Ok(Literal::Int(self.line as i32)),
             "_SLOT" => return Ok(Literal::Int(self.slot)),
-            // UNVERIFIED: that it is PRGNAME$'s name, and empty in direct
-            // mode.
+            // PRGNAME$'s name in a program.
+            // UNVERIFIED: empty in direct mode.
             "_FILENAME" if self.direct => return Ok(Literal::Str(Vec::new())),
             "_FILENAME" => {
                 let name = self.host.program_name(self.slot as usize);

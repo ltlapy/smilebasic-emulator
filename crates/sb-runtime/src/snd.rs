@@ -622,7 +622,6 @@ impl Runtime {
                 let len = rec.samples.len() as i32;
                 // Recording round the buffer, positions go round it too:
                 // NK8_SOUNDVISUAL reads RECPOS()-I-1 from the start.
-                // UNVERIFIED: positions past the end.
                 let at = match rec.ring && len > 0 {
                     true => args[0].to_int()?.rem_euclid(len),
                     false => in_range("position", &args[0], 0..=len - 1)?,
