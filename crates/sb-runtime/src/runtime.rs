@@ -745,6 +745,8 @@ pub struct Runtime {
     pub(crate) backtrace: Vec<(usize, u32)>,
     /// The slot and line that PRGEDIT chose, for PRGGET$ and the rest.
     pub(crate) prg_edit: Option<crate::prg::PrgEdit>,
+    /// A slot's source split into lines for the PRG commands.
+    pub(crate) prg_lines: crate::prg::LinesCache,
     /// The slot the editor shows, or last showed.
     pub(crate) edit_slot: usize,
     /// Direct-mode lines typed, newest first, for ENVINPUT$.
@@ -1023,6 +1025,7 @@ impl Runtime {
             stopped: Stopped::No,
             backtrace: Vec::new(),
             prg_edit: None,
+            prg_lines: Default::default(),
             edit_slot: 0,
             history: Default::default(),
             env_type: 0,

@@ -295,6 +295,7 @@ impl Machine {
 
     pub fn set_slot(&mut self, slot: usize, source: String) {
         self.rt.slots[slot] = source;
+        self.rt.prg_lines.forget();
     }
 
     /// Whether a program or direct-mode line is executing.
@@ -448,6 +449,7 @@ impl Machine {
         if let Some(source) = self.editors[side].close() {
             let slot = self.editors[side].slot();
             self.rt.slots[slot] = source;
+            self.rt.prg_lines.forget();
             self.rt.slot_modified[slot] = true;
         }
     }
@@ -470,6 +472,7 @@ impl Machine {
             let slot = self.editors[side].slot();
             if self.editors[side].take_changed() {
                 self.rt.slots[slot] = self.editors[side].text();
+                self.rt.prg_lines.forget();
                 self.rt.slot_modified[slot] = true;
             } else if self.slot_changes[slot] != self.rt.slot_changes[slot] {
                 let (line, col) = self.editors[side].cursor();
@@ -618,6 +621,7 @@ impl Machine {
         let slot = self.rt.edit_slot;
         if self.editing && self.editor().is_modified() {
             self.rt.slots[slot] = self.editor().text();
+            self.rt.prg_lines.forget();
         }
         self.rt.save_slot_as(name, slot)?;
         if self.editing {
