@@ -2,8 +2,9 @@
 //! for the screens as the program left them, which the frontend draws at
 //! the window's resolution, its calls under way, the watch expressions,
 //! and the variables of the call chosen or of a slot, what PERFEND has
-//! timed, the sprites in use, or a graphic page.
+//! timed, the sprites in use, a graphic page, or what BGM and BEEP play.
 
+pub mod bgm;
 pub mod sprites;
 
 use sb_core::value::{ArrayData, ElemType, Value, format_number};
@@ -58,6 +59,8 @@ pub enum Tab {
     /// A graphic page, which SmileBASIC 4 shows only as the program
     /// draws it.
     Grp,
+    /// What the BGM tracks and BEEP play, which only this tab gathers.
+    Bgm,
 }
 
 /// What the panel shows, gathered from the machine each frame.
@@ -88,14 +91,17 @@ pub struct View {
     pub sprites: Option<sprites::List>,
     /// The GRP tab's page.
     pub grp: Probe,
+    /// What plays, while the BGM tab shows.
+    pub bgm: Option<bgm::Bgm>,
 }
 
 impl View {
     /// How many rows the tab shown has to scroll through.
     pub fn scrolled(&self) -> usize {
-        match &self.sprites {
-            Some(list) => list.total,
-            None => self.variables.len(),
+        match (&self.sprites, &self.bgm) {
+            (Some(list), _) => list.total,
+            (None, Some(bgm)) => bgm.len(),
+            (None, None) => self.variables.len(),
         }
     }
 }
@@ -121,6 +127,12 @@ pub enum Hit {
     /// The GRP tab's buttons for the pages, and its view of one.
     GrpPage(usize),
     Grp,
+    /// The BGM tab's lines for a track and for a channel of it, a BEEP
+    /// handle's, and the rest of the tab.
+    BgmTrack(usize),
+    BgmChannel(usize, usize),
+    Beep(usize),
+    Bgm,
     /// The button that puts the panel away.
     Close,
 }
@@ -172,6 +184,8 @@ pub struct DebugPanel {
     /// The sprite chosen in the Sprites tab, outlined on the screens.
     pub sprite: Option<usize>,
     pub grp: GrpView,
+    /// The BGM tab's level bars.
+    meters: bgm::Meters,
 }
 
 /// The panel's character width, row height, padding and text offset in a
@@ -334,7 +348,10 @@ impl DebugPanel {
     /// a sprite can be followed step by step.
     pub fn reset(&mut self) {
         self.chosen = None;
-        if !matches!(self.tab, Some(Tab::Perf | Tab::Sprites | Tab::Grp)) {
+        if !matches!(
+            self.tab,
+            Some(Tab::Perf | Tab::Sprites | Tab::Grp | Tab::Bgm)
+        ) {
             self.tab = None;
             self.scroll = 0;
         }
@@ -414,7 +431,15 @@ impl DebugPanel {
             Hit::Sprite(id) => {
                 self.sprite = (self.sprite != Some(id)).then_some(id);
             }
-            Hit::Watch(_) | Hit::Variable(_) | Hit::Breakpoint(_) | Hit::Perf | Hit::Sprites => {}
+            Hit::Watch(_)
+            | Hit::Variable(_)
+            | Hit::Breakpoint(_)
+            | Hit::Perf
+            | Hit::Sprites
+            | Hit::BgmTrack(_)
+            | Hit::BgmChannel(..)
+            | Hit::Beep(_)
+            | Hit::Bgm => {}
         }
         hit
     }
@@ -767,6 +792,7 @@ impl DebugPanel {
                 Tab::Perf => "Perf".to_string(),
                 Tab::Sprites => "Sprites".to_string(),
                 Tab::Grp => "GRP".to_string(),
+                Tab::Bgm => "BGM".to_string(),
             };
             let r = Rect {
                 x: tx,
@@ -795,6 +821,12 @@ impl DebugPanel {
                 let place = (s.x.into(), s.y.into(), s.w.into(), s.h.into());
                 sprites::draw_outline(fb, outline, size, place, s, m.scale);
             }
+        } else if let (Some(Tab::Bgm), Some(bgm)) = (tab, &view.bgm) {
+            // The headings take a row.
+            self.rows = self.rows.saturating_sub(1);
+            // Scrolled past what ended since, it comes back.
+            self.scroll = self.scroll.min(bgm.len().saturating_sub(self.rows));
+            self.draw_bgm(fb, font, &m, (vx, y), (right, bottom), bgm);
         } else if tab == Some(Tab::Grp) {
             let right = inner.x + inner.w - m.pad;
             let (hits, tips) = (&mut self.hits, &mut self.tips);
@@ -1177,6 +1209,7 @@ mod tests {
             perf: [PerfStats::default(); 8],
             sprites: Some(sprites::list(&m.rt, first, rows, p.sprite)),
             grp: Probe::default(),
+            bgm: None,
         };
         assert_eq!(view.scrolled(), 3);
         let mut fb = Framebuffer::new(1280, 300);

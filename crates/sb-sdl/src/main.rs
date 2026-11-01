@@ -2418,17 +2418,18 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
     tabs.push(Tab::Perf);
     tabs.push(Tab::Sprites);
     tabs.push(Tab::Grp);
+    tabs.push(Tab::Bgm);
     let tab = panel.tab.filter(|t| tabs.contains(t)).unwrap_or(tabs[0]);
     let call_frame = call.as_ref().and_then(|c| c.frame);
     let (frame, slot) = match tab {
         Tab::Locals => (call_frame, home),
         Tab::Globals(slot) => (None, slot),
-        Tab::Perf | Tab::Sprites | Tab::Grp => (None, home),
+        Tab::Perf | Tab::Sprites | Tab::Grp | Tab::Bgm => (None, home),
     };
     let variables = match (tab, frame) {
         (Tab::Locals, Some(frame)) => machine.frame_locals(frame),
         (Tab::Globals(slot), _) => machine.slot_globals(slot),
-        (Tab::Locals, None) | (Tab::Perf | Tab::Sprites | Tab::Grp, _) => Vec::new(),
+        (Tab::Locals, None) | (Tab::Perf | Tab::Sprites | Tab::Grp | Tab::Bgm, _) => Vec::new(),
     };
     // Watches see the chosen call's locals and its slot's globals.
     let watches = (panel.watches.iter())
@@ -2472,6 +2473,7 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
             debug_panel::sprites::list(&machine.rt, first, rows, panel.sprite)
         }),
         grp: panel.grp_probe(&machine.rt.grp),
+        bgm: (tab == Tab::Bgm).then(|| debug_panel::bgm::gather(&machine.rt.sound)),
     }
 }
 
@@ -2632,6 +2634,22 @@ fn panel_menu(
             }
             items
         }
+        Some(
+            hit @ (Hit::BgmTrack(_)
+            | Hit::BgmChannel(..)
+            | Hit::Beep(_)
+            | Hit::Bgm
+            | Hit::Tab(Tab::Bgm)),
+        ) => (view.bgm.unwrap_or_default().copies(hit).into_iter())
+            .map(|(label, text)| {
+                let some = text.is_some();
+                (
+                    label.to_string(),
+                    some,
+                    Choice::CopyValue(text.unwrap_or_default()),
+                )
+            })
+            .collect(),
         _ => vec![("Add watch".to_string(), true, Choice::AddWatch), hex],
     }
 }
