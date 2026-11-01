@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
 use crate::anim::{self, ANIM_VAR, Animated, Target, Track};
-use crate::compose::{Affine, Placement, draw_image_part, over};
+use crate::compose::{self, Affine, Placement, draw_image_part, over};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -417,6 +417,14 @@ impl TextScreen {
     /// Where TOFS, THOME, TROT and TSCALE put the screen's pixels.
     pub fn placement(&self) -> Affine {
         Affine::place(self.pos, self.home, self.rot, self.scale)
+    }
+
+    /// The smallest and largest x and y the screen covers through its
+    /// layer's matrix `layer`.
+    pub fn extent(&self, layer: &Affine) -> (f64, f64, f64, f64) {
+        let cs = f64::from(self.char_size);
+        let (w, h) = (f64::from(self.width) * cs, f64::from(self.height) * cs);
+        compose::bounds(&self.placement().then(layer), (0.0, 0.0, w, h))
     }
 
     /// Draws the screen over `fb` where TOFS and its companions put it.

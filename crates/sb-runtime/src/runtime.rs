@@ -1203,17 +1203,26 @@ impl Runtime {
                 // screens are drawn flat on the screen first, each run of
                 // them put on in its turn.
                 Some(m) => {
+                    let in_layer: Vec<_> = in_layer.collect();
+                    let origin = self.flat_area(&mut flat, &in_layer, &settings.matrix);
+                    let shift = compose::Affine {
+                        tx: -f64::from(origin.0),
+                        ty: -f64::from(origin.1),
+                        ..compose::Affine::IDENTITY
+                    };
                     let unclipped = Layer {
                         clip: None,
                         projection: None,
+                        matrix: settings.matrix.then(&shift),
                         ..settings
                     };
                     let clip = settings.clip.as_ref();
+                    let sample = self.mode.sample;
                     let mut flat_drawn = false;
-                    for &(_, _, _, _, element) in in_layer {
+                    for &&(_, _, _, _, element) in &in_layer {
                         if let Element::Sprite(..) = element {
                             if flat_drawn {
-                                compose::project(target, &flat, m, self.mode.sample, clip);
+                                compose::project(target, &flat, origin, m, sample, clip);
                                 flat_drawn = false;
                             }
                             self.draw_element(target, element, &settings, cursor);
@@ -1226,7 +1235,7 @@ impl Runtime {
                         self.draw_element(&mut flat, element, &unclipped, cursor);
                     }
                     if flat_drawn {
-                        compose::project(target, &flat, m, self.mode.sample, clip);
+                        compose::project(target, &flat, origin, m, sample, clip);
                     }
                 }
             }
@@ -1331,6 +1340,37 @@ impl Runtime {
     }
 
     /// A layer's settings for a frame that XSCREEN's sampling makes finer.
+    /// Fits `flat` to what the text screens among `elements` cover through
+    /// `matrix`, which may be beyond the screen, and returns the frame
+    /// pixel at its top left. It reaches at most a screen past each edge,
+    /// to keep its memory bounded.
+    fn flat_area(
+        &self,
+        flat: &mut Framebuffer,
+        elements: &[&(i32, i32, u8, usize, Element)],
+        matrix: &compose::Affine,
+    ) -> (i32, i32) {
+        let (fw, fh) = self.mode.frame();
+        let (fw, fh) = (f64::from(fw), f64::from(fh));
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+        for e in elements {
+            if let Element::Text(i) = e.4 {
+                let (a, b, c, d) = self.text[i].extent(matrix);
+                (x0, y0, x1, y1) = (x0.min(a), y0.min(b), x1.max(c), y1.max(d));
+            }
+        }
+        if x0 > x1 || y0 > y1 {
+            flat.resize(0, 0);
+            return (0, 0);
+        }
+        let x0 = x0.floor().clamp(-fw, 2.0 * fw) as i32;
+        let y0 = y0.floor().clamp(-fh, 2.0 * fh) as i32;
+        let x1 = x1.ceil().clamp(-fw, 2.0 * fw) as i32;
+        let y1 = y1.ceil().clamp(-fh, 2.0 * fh) as i32;
+        flat.resize((x1 - x0) as u32, (y1 - y0) as u32);
+        (x0, y0)
+    }
+
     fn fine(&self, layer: &Layer) -> Layer {
         let s = self.mode.sample as i32;
         if s == 1 {

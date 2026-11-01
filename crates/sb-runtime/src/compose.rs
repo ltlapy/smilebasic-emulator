@@ -330,7 +330,7 @@ pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid>
 
 /// The smallest and largest x and y that `m` takes the corners of the
 /// rectangle from `(x0, y0)` to `(x1, y1)` to.
-fn bounds(m: &Affine, (x0, y0, x1, y1): (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+pub(crate) fn bounds(m: &Affine, (x0, y0, x1, y1): (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
     let corners = [
         m.apply(x0, y0),
         m.apply(x1, y0),
@@ -374,12 +374,15 @@ impl Default for Layer {
 /// to one of them, onto `dst` through LMATRIX's 4x4 matrix `m`: a point
 /// of the layer goes in as (x, y, 0, 1), and the result's X and Y, divided
 /// by its W, run from -1 to 1 across the screen and up it. Only points in
-/// front (W above 0) show; `clip` is in frame pixels.
+/// front (W above 0) show; `clip` is in frame pixels. `src`'s top left is
+/// the flat frame's pixel `origin`, so it can hold what lies off the
+/// screen.
 // UNVERIFIED: that Z is 0 and nothing is clipped by depth, and that the
 // layer is sampled without smoothing.
 pub fn project(
     dst: &mut Framebuffer,
     src: &Framebuffer,
+    origin: (i32, i32),
     m: &[f64; 16],
     sample: u32,
     clip: Option<&Clip>,
@@ -395,8 +398,9 @@ pub fn project(
     let (fw, fh) = (f64::from(w), f64::from(hh));
     let sample = f64::from(sample);
     let (cx1, cy1) = (cx1 + 1, cy1 + 1);
+    let (ox, oy) = (f64::from(origin.0), f64::from(origin.1));
     let corners = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)]
-        .map(|(x, y)| (f64::from(x) / sample, f64::from(y) / sample));
+        .map(|(x, y)| ((f64::from(x) + ox) / sample, (f64::from(y) + oy) / sample));
     let (x0, y0, x1, y1) = window(&h, corners, (w, hh), clip);
     let (sw, sh) = (i64::from(src.width()), i64::from(src.height()));
     let width = w as usize;
@@ -417,8 +421,10 @@ pub fn project(
             {
                 continue;
             }
-            let (Some(sx), Some(sy)) = (floor_in(lx * sample, sw), floor_in(ly * sample, sh))
-            else {
+            let (Some(sx), Some(sy)) = (
+                floor_in(lx * sample - ox, sw),
+                floor_in(ly * sample - oy, sh),
+            ) else {
                 continue;
             };
             let s = from[sy * sw as usize + sx];
@@ -842,7 +848,7 @@ mod tests {
         let mut dst = Framebuffer::new(8, 8);
         let mut m = [0.0; 16];
         (m[0], m[5], m[10], m[15]) = (1.0, 1.0, 1.0, 1.0);
-        project(&mut dst, &src, &m, 1, None);
+        project(&mut dst, &src, (0, 0), &m, 1, None);
         assert_eq!(dst.get(6, 1), Some(0xFFFF_0000));
         assert_eq!(dst.get(1, 1), Some(0xFF00_0000));
         assert_eq!(dst.get(6, 6), Some(0xFF00_0000));

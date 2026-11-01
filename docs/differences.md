@@ -108,6 +108,9 @@ Without them:
   count lines of the source, which wrapping does not change.
 - The screen's scaling filter can be chosen in View > Screen filter instead of
   following `XSCREEN`.
+- On a layer with `LMATRIX`'s 4x4 form, text screens show only as far as
+  one screen past each edge of the screen, before the matrix moves them,
+  to keep the memory they take bounded. Sprites have no such limit.
 
 ## Editor
 

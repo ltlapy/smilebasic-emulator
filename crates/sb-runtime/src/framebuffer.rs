@@ -34,6 +34,13 @@ impl Framebuffer {
         &mut self.pixels
     }
 
+    /// Makes the frame `width` x `height`, keeping its memory where it
+    /// can; what it holds afterwards is left to the caller to clear.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        (self.width, self.height) = (width, height);
+        self.pixels.resize((width * height) as usize, 0);
+    }
+
     pub fn clear(&mut self, color: u32) {
         self.pixels.fill(color);
     }

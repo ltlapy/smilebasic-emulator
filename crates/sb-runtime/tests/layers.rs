@@ -418,3 +418,12 @@ fn projected_sprites_keep_what_is_off_the_screen() {
     assert_eq!(fb.get(205, 105), Some(0xFF00_0000));
     assert_eq!(fb.get(185, 125), Some(0xFF00_0000));
 }
+
+#[test]
+fn projected_text_screens_keep_what_is_off_the_screen() {
+    // As above, a text screen moved off the top left still shows.
+    let (x, y) = lit_pixel_of_a();
+    let mut m = run("CLS:PRINT \"A\":TOFS 4,-200,-120\n\
+         DIM M#[16]:M#[0]=1/200:M#[5]=-1/120:M#[10]=1:M#[15]=1:LMATRIX 0,M#");
+    assert_eq!(m.render().get(x, y), Some(WHITE));
+}
