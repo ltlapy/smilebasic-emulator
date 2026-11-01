@@ -39,8 +39,8 @@ const USAGE: &str = "usage:
       parts that show a picture and wait for a key to end.
   smilebasic-check --bench FRAMES PROJECT PROGRAM [PNG]
       run PROGRAM for FRAMES frames, rendering each one, and print how
-      long running and rendering took, and the console at the end; with
-      PNG, also save the last screen there.
+      long running and rendering took, the slowest frames, and the
+      console at the end; with PNG, also save the last screen there.
   smilebasic-check --play FRAMES PROJECT PROGRAM SCRIPT DIR
       run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
       (a file, or - for none) asks for, and save the screens it asks for
@@ -275,6 +275,15 @@ fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Resu
         );
     };
     println!("{} frames", run.len());
+    // Stutter shows as a few slow frames, so name the slowest.
+    let mut slowest: Vec<(usize, Duration)> = (run.iter().zip(&draw).map(|(r, d)| *r + *d))
+        .enumerate()
+        .collect();
+    slowest.sort_by_key(|&(_, t)| std::cmp::Reverse(t));
+    let slowest: Vec<String> = (slowest.iter().take(8))
+        .map(|(i, t)| format!("{i}: {t:.1?}"))
+        .collect();
+    println!("slowest frames: {}", slowest.join(", "));
     report("run ", &mut run);
     report("draw", &mut draw);
     if m.is_running() {
@@ -290,6 +299,17 @@ fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Resu
             })
             .sum();
         println!("{} sprites shown, {area} pixels", order.len());
+        // The large ones, which take the time.
+        for (i, p) in &order {
+            let s = &m.rt.sprites.list[*i];
+            let a = f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs();
+            if a > 20000.0 {
+                println!(
+                    "sprite {i}: page {} {}x{} attr {:x} color {:08x} layer {} scale {:?} area {a}",
+                    s.page, s.w, s.h, s.attr, p.color, p.layer, p.scale
+                );
+            }
+        }
         for (i, t) in m.rt.text.iter().enumerate() {
             println!("text {i}: visible {} size {:?}", t.visible, t.size());
         }
