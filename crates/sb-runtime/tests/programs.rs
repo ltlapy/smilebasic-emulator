@@ -112,7 +112,9 @@ fn lines_as_on_hardware() {
         &["PRGEDIT 3:PRGDEL -1:A$=PRGGET$():B$=PRGGET$():?ASC(A$),LEN(B$),PRGEDIT()"],
     );
     assert_eq!(tail(&m, 2), ["10 0 1", "OK"]);
-    assert!(m.unsaved_slots().contains(&3));
+    // PRG commands' changes are not unsaved edits, so LOAD over them
+    // does not ask.
+    assert!(!m.unsaved_slots().contains(&3));
 }
 
 #[test]

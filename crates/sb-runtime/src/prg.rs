@@ -177,8 +177,11 @@ impl Runtime {
         (!name.is_empty()).then(|| format!("{}/{name}", self.storage.project()))
     }
 
-    /// Changes the edited slot's lines, marking it as unsaved. `f` tells
-    /// how it moved them, in order.
+    /// Changes the edited slot's lines. `f` tells how it moved them, in
+    /// order. The slot does not count as unsaved for that: a program
+    /// LOADing over a slot it changed so is not asked about it (checked on
+    /// hardware with a program that does so for each song).
+    // UNVERIFIED: that NEW and PROJECT do not warn of such changes either.
     fn change_lines(
         &mut self,
         edit: PrgEdit,
@@ -191,7 +194,6 @@ impl Runtime {
         (self.slot_edits).extend(shifts.into_iter().map(|s| (edit.slot, SlotEdit::Shift(s))));
         source.empty = false;
         self.slots[edit.slot] = source.text();
-        self.slot_modified[edit.slot] = true;
         self.slot_changes[edit.slot] += 1;
         self.prg_edit = Some(PrgEdit {
             slot: edit.slot,
