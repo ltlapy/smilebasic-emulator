@@ -1326,6 +1326,7 @@ impl Machine {
         self.move_focus();
         self.give_input();
         self.rt.env_status = self.env_status();
+        self.rt.editor_shown = self.editing && !self.detached;
         // With a subprogram running, a busy main program leaves it a
         // quarter of the frame's time, and it gets what the main program
         // leaves.

@@ -355,6 +355,40 @@ fn a_subprogram_types_into_the_editor_beside_it() {
     assert!(m.sub_screen().is_some());
 }
 
+#[test]
+fn envlocate_follows_the_editors_cursor() {
+    let dir = TempDir::new("locate");
+    let mut m = machine(
+        &dir,
+        "ENVLOCATE OUT X,Y\n\
+         ENVFOCUS 0\n\
+         PUSHKEY STR$(X)+\",\"+STR$(Y)+\" \"\n\
+         VSYNC 4\n\
+         ENVLOCATE OUT X2,Y2\n\
+         PUSHKEY STR$(X2-X)+\",\"+STR$(Y2-Y)\n\
+         LOOP:VSYNC:ENDLOOP\n",
+    );
+    m.set_slot(0, String::new());
+    m.toggle_editor();
+    m.render();
+    enter_sub_from_editor(&mut m);
+    for _ in 0..12 {
+        m.frame();
+        m.render();
+    }
+    let text = m.editor().text();
+    let numbers: Vec<i32> = (text.split([',', ' ']))
+        .map(|n| n.parse().unwrap())
+        .collect();
+    let [x, y, dx, dy] = numbers[..] else {
+        panic!("{text:?}");
+    };
+    // Below the menu bar's row, past the line numbers, and on to the
+    // right after the typing.
+    assert!(y > 0 && x > 40 + 3 * 8, "{text:?}");
+    assert!(dx > 0 && dy == 0, "{text:?}");
+}
+
 /// Starts `SUB` as tool 1, with the editor open.
 fn enter_sub_from_editor(m: &mut Machine) {
     m.rt.settings.tools[0] = "SUB".to_string();

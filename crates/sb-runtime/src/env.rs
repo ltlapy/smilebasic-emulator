@@ -127,15 +127,25 @@ impl Runtime {
     /// for a subprogram to show something by it, as SmileBASIC 4's soft
     /// keyboard does. The command is not in the manual. The screen is
     /// scaled to fit the display and centered, and the point is the top
-    /// of the cursor's cell, a character to its right.
-    // UNVERIFIED: whether the editor's cursor counts while it is open.
+    /// of the cursor's cell, a character to its right. While the editor
+    /// shows in the screens' place, it is the editor's cursor.
+    // UNVERIFIED: that the editor's cursor counts while it is open.
     pub(crate) fn cursor_on_display(&self) -> (i32, i32) {
-        let console = &self.text[crate::text::CONSOLE];
-        let (cx, cy) = console.cursor();
-        let size = f64::from(console.font().1);
-        let x = (f64::from(cx) + 1.0) * size + console.pos.0;
-        let y = f64::from(cy) * size + console.pos.1;
-        let (w, h) = (f64::from(self.mode.width), f64::from(self.mode.height));
+        let (x, y, w, h) = match self.editor_cursor {
+            Some((x, y)) if self.editor_shown => {
+                let mode = self.startup_mode();
+                (x, y, mode.width, mode.height)
+            }
+            _ => {
+                let console = &self.text[crate::text::CONSOLE];
+                let (cx, cy) = console.cursor();
+                let size = f64::from(console.font().1);
+                let x = (f64::from(cx) + 1.0) * size + console.pos.0;
+                let y = f64::from(cy) * size + console.pos.1;
+                (x, y, self.mode.width, self.mode.height)
+            }
+        };
+        let (w, h) = (f64::from(w), f64::from(h));
         let scale = (1280.0 / w).min(720.0 / h);
         let (left, top) = ((1280.0 - w * scale) / 2.0, (720.0 - h * scale) / 2.0);
         ((left + x * scale) as i32, (top + y * scale) as i32)

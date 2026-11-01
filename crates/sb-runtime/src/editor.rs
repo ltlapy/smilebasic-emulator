@@ -325,6 +325,9 @@ pub struct Editor {
     number_tiles: bool,
     /// The line and first column shown on each row of the last frame.
     layout: Vec<Pos>,
+    /// Where the last frame drew the cursor: its cell's top right
+    /// corner, in pixels.
+    cursor_at: Option<(usize, usize)>,
     grid: Grid,
     modified: bool,
     /// The text changed since [`Editor::take_changed`] last looked.
@@ -448,6 +451,7 @@ impl Editor {
             anchor: None,
             number_tiles: true,
             layout: Vec::new(),
+            cursor_at: None,
             grid: Grid { cell: 8, top: 0 },
             modified: false,
             changed: false,
@@ -1864,6 +1868,9 @@ impl Editor {
                 list.draw(fb, font, at, top, cell as u32, colors);
             }
         }
+        if let Some((x, y)) = cursor {
+            self.cursor_at = Some(((x + 1) * cell, grid.top + y * cell));
+        }
         if let (Some((x, y)), true) = (cursor, blink) {
             // A bar for inserting, a block for overwriting.
             let w = if self.overwrite { cell } else { cell / 4 };
@@ -1874,6 +1881,13 @@ impl Editor {
                 }
             }
         }
+    }
+
+    /// The top right corner of the cursor's cell where the last
+    /// [`Editor::draw`] showed it, in pixels of its frame; while the
+    /// cursor is out of sight, where it was shown last.
+    pub fn cursor_at(&self) -> Option<(usize, usize)> {
+        self.cursor_at
     }
 
     /// Fades the line numbers, the ruler and the status line of the last
