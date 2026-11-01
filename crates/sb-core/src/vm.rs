@@ -804,7 +804,7 @@ impl Vm {
             return false;
         };
         let def = (self.program_in(f.home)).and_then(|p| p.defs.get(f.def as usize));
-        let Some(i) = def.and_then(|d| d.locals.iter().position(|l| l.full_name() == name)) else {
+        let Some(i) = def.and_then(|d| d.locals.iter().position(|l| l.is_named(name))) else {
             return false;
         };
         self.frames[frame].locals[i] = value;
@@ -822,7 +822,7 @@ impl Vm {
                 _ => return false,
             }
         };
-        let Some(i) = program.globals.iter().position(|g| g.full_name() == name) else {
+        let Some(i) = program.globals.iter().position(|g| g.is_named(name)) else {
             return false;
         };
         values[i] = value;
@@ -882,11 +882,7 @@ impl Vm {
     /// Value of a global variable by its full name (`"A%"`), for tests and
     /// debuggers.
     pub fn global(&self, name: &str) -> Option<&Value> {
-        let i = self
-            .program
-            .globals
-            .iter()
-            .position(|g| g.full_name() == name)?;
+        let i = self.program.globals.iter().position(|g| g.is_named(name))?;
         Some(&self.globals[i])
     }
 
@@ -2076,7 +2072,7 @@ impl Vm {
             .and_then(Option::as_mut)
             .ok_or_else(undefined)?;
         let i = (unit.program.globals.iter())
-            .position(|v| v.full_name() == name)
+            .position(|v| v.is_named(&name))
             .ok_or_else(undefined)?;
         Ok(Some(&mut unit.globals[i]))
     }
@@ -2084,14 +2080,14 @@ impl Vm {
     fn dynamic_slot(&self, name: &str) -> Result<Slot> {
         if let Some(f) = self.own_frame() {
             let locals = &self.program.defs[f.def as usize].locals;
-            if let Some(i) = locals.iter().position(|v| v.full_name() == name) {
+            if let Some(i) = locals.iter().position(|v| v.is_named(name)) {
                 return Ok(Slot::Local(i as u32));
             }
         }
         self.program
             .globals
             .iter()
-            .position(|v| v.full_name() == name)
+            .position(|v| v.is_named(name))
             .map(|i| Slot::Global(i as u32))
             .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedVariable, name.to_string()))
     }

@@ -247,6 +247,18 @@ impl VarInfo {
     pub fn full_name(&self) -> String {
         full_name(&self.name, self.suffix)
     }
+
+    /// Whether `name` is the full name, without building it: VAR() looks
+    /// names up on every call.
+    pub fn is_named(&self, name: &str) -> bool {
+        let rest = match self.suffix {
+            Some(Suffix::Int) => name.strip_suffix('%'),
+            Some(Suffix::Real) => name.strip_suffix('#'),
+            Some(Suffix::Str) => name.strip_suffix('$'),
+            None => Some(name),
+        };
+        rest == Some(self.name.as_str())
+    }
 }
 
 pub fn full_name(name: &str, suffix: Option<Suffix>) -> String {
