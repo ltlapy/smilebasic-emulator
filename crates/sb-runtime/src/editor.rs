@@ -1614,8 +1614,11 @@ impl Editor {
             ..
         } = look;
         self.number_tiles = tiles;
+        // The menu bar's share is of the whole frame, whatever is left
+        // below.
+        let top = look.top.unwrap_or_else(|| menu_height(fb.height()));
         let height = fb.height().saturating_sub(look.bottom);
-        self.fit(fb.width(), height, look.font, look.top);
+        self.fit(fb.width(), height, look.font, Some(top));
         let rows = self.size().1;
         let v = &mut self.view;
         if std::mem::take(&mut self.center) && !(v.top..v.top + rows).contains(&v.line) {
@@ -1965,6 +1968,22 @@ fn put_str(screen: &mut TextScreen, x: usize, y: usize, text: &str, color: u32) 
 mod tests {
     use super::*;
     use crate::palette::SMILEBASIC;
+
+    #[test]
+    fn room_below_leaves_the_menu_bar_its_share() {
+        let mut e = editor("A=1");
+        let font = Font::blank();
+        let mut fb = Framebuffer::new(400, 300);
+        e.draw(&mut fb, &font, "", look(true), false);
+        let (top, rows) = (e.grid.top, e.size().1);
+        let below = Look {
+            bottom: 100,
+            ..look(true)
+        };
+        e.draw(&mut fb, &font, "", below, false);
+        assert_eq!(e.grid.top, top);
+        assert!(e.size().1 < rows);
+    }
 
     #[test]
     fn names_at_the_cursor() {
