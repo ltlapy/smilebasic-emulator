@@ -289,7 +289,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         machine.set_detached(machine.rt.settings.editor_window);
         let apart = machine.is_detached() && machine.is_editing();
         if apart && editor_gfx.get().is_none() {
-            let place = machine.rt.settings.editor_window_place;
+            let settings = &machine.rt.settings;
+            let place = settings
+                .editor_window_place
+                .filter(|_| settings.editor_window_keep_place);
             let made = EditorWindow::open(&video, (display_w, display_h), place, canvas.window())?;
             let _ = editor_gfx.set(made);
             let gfx = editor_gfx.get().expect("set above");
@@ -312,7 +315,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 window.show();
                 window.raise();
             } else {
-                machine.rt.settings.editor_window_place = Some(window_place(window));
+                if machine.rt.settings.editor_window_keep_place {
+                    machine.rt.settings.editor_window_place = Some(window_place(window));
+                }
                 window.hide();
                 editor_focused = false;
                 pointer_in_editor = false;
@@ -1891,7 +1896,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
     }
     // The editor's window, shown when quitting, opens there next time.
-    if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown) {
+    let keep = machine.rt.settings.editor_window_keep_place;
+    if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown && keep) {
         let place = window_place(gfx.canvas.borrow().window());
         if machine.rt.settings.editor_window_place != Some(place) {
             machine.rt.settings.editor_window_place = Some(place);

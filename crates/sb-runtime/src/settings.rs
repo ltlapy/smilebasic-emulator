@@ -45,6 +45,8 @@ pub struct Settings {
     /// The editor shows in a window of its own, beside the screen, so
     /// that programs go on while it is open.
     pub editor_window: bool,
+    /// That window opens where it was last, as large as it was.
+    pub editor_window_keep_place: bool,
     /// Where that window was last, and its size: x, y, width and height
     /// in the system's window coordinates.
     pub editor_window_place: Option<[i32; 4]>,
@@ -122,6 +124,7 @@ impl Default for Settings {
             editor_number_tiles: true,
             editor_map: true,
             editor_window: false,
+            editor_window_keep_place: false,
             editor_window_place: None,
             editor_font: FontSize::Large,
             editor_size: EditorSize::Medium,
@@ -266,6 +269,7 @@ impl Settings {
                 "editor_number_tiles" => &mut s.editor_number_tiles,
                 "editor_map" => &mut s.editor_map,
                 "editor_window" => &mut s.editor_window,
+                "editor_window_keep_place" => &mut s.editor_window_keep_place,
                 "file_hint_shown" => &mut s.file_hint_shown,
                 "keyboard_buttons" => &mut s.keyboard_buttons,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
@@ -375,6 +379,7 @@ impl Settings {
              editor_number_tiles={}\n\
              editor_map={}\n\
              editor_window={}\n\
+             editor_window_keep_place={}\n\
              editor_window_place={}\n\
              editor_font={}\n\
              editor_size={}\n\
@@ -409,6 +414,7 @@ impl Settings {
             self.editor_number_tiles,
             self.editor_map,
             self.editor_window,
+            self.editor_window_keep_place,
             (self.editor_window_place)
                 .map_or(String::new(), |[x, y, w, h]| format!("{x},{y},{w},{h}")),
             choice_name(&FONT_SIZE, &self.editor_font),
@@ -454,6 +460,7 @@ mod tests {
             upper_case_letters: false,
             ctrl_c_stops: true,
             editor_wrap: true,
+            editor_window_keep_place: true,
             editor_window_place: Some([-1200, 40, 640, 480]),
             editor_number_tiles: false,
             editor_font: FontSize::Small,

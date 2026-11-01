@@ -211,6 +211,13 @@ const PAGES: &[Page] = &[
                 |s| s.editor_window ^= true,
             ),
             check(
+                "Keep the editor window's place",
+                "The editor's own window opens where it was last, as large as it \
+                 was, if that is still on a display.",
+                |s| s.editor_window_keep_place,
+                |s| s.editor_window_keep_place ^= true,
+            ),
+            check(
                 "Complete words in direct mode",
                 "While typing in direct mode, a list of words that start with what \
                  is typed shows under it.",
