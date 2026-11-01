@@ -179,7 +179,8 @@ follows all of it. Items still waiting for a check are marked
   current one's again. Before any `METALOAD`, the title is the project's
   name. `METAEDIT(item)` works as a function.
 - `#_FILENAME` is the program's name (`TEST32`), and empty in direct
-  mode; `#_SLOT` is the program's slot.
+  mode; `#_SLOT` is the program's slot, and in direct mode the slot run
+  last.
 
 ## Order of evaluation
 

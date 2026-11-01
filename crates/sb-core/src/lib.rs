@@ -39,8 +39,13 @@ pub fn compile_in(
 
 /// Compiles a line typed in direct mode, whose DIM and VAR declare as
 /// they run (see [`bytecode::Op::Declare`]).
-pub fn compile_direct(source: &str, host: &dyn host::Host) -> error::Result<bytecode::Compiled> {
-    compile_as(source, host, true, 0)
+/// A direct-mode line, where `#_SLOT` is `slot`: the one run last.
+pub fn compile_direct(
+    source: &str,
+    host: &dyn host::Host,
+    slot: usize,
+) -> error::Result<bytecode::Compiled> {
+    compile_as(source, host, true, slot as i32)
 }
 
 fn compile_as(

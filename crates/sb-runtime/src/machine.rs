@@ -1165,7 +1165,7 @@ impl Machine {
         self.rt.running_slot = slot;
         let compiled = match slot {
             Some(slot) => sb_core::compile_in(source, &self.rt, slot),
-            None => sb_core::compile_direct(source, &self.rt),
+            None => sb_core::compile_direct(source, &self.rt, self.last_run.unwrap_or(0)),
         };
         match compiled {
             Ok(program) => {

@@ -342,6 +342,11 @@ fn slot_constant_follows_the_slot() {
     m.rt.slot_names[3] = "LIB".to_string();
     run(&mut m, &["EXEC 3", "?#_SLOT;#_FILENAME"]);
     assert_eq!(tail(&m, 3), ["S31", "0", "OK"]);
+    // In direct mode it is the slot run last (checked on hardware).
+    m.set_slot(2, "?\"R\"".to_string());
+    enter(&mut m, "run 2");
+    enter(&mut m, "?#_SLOT");
+    assert_eq!(tail(&m, 2), ["2", "OK"]);
 }
 
 #[test]
