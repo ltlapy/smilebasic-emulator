@@ -6,6 +6,7 @@ mod controls;
 mod debug_panel;
 mod dialog;
 mod file_dialogs;
+mod grp_view;
 mod help;
 mod index;
 mod keyhint;
@@ -29,6 +30,7 @@ use controls::Controls;
 use debug_panel::{DebugPanel, Hit, Tab, Typed, View, value_text};
 use dialog::{Answer, Dialog};
 use file_dialogs::{FilePicker, SaveDialog};
+use grp_view::PageTexture;
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
@@ -208,6 +210,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The screens in the debugger's panel, drawn at the window's
     // resolution, with their size and filter.
     let mut panel_screens: Option<(Texture, TextureKind)> = None;
+    // The page the panel's GRP tab shows, in this window and the
+    // editor's.
+    let mut grp_texture = PageTexture::default();
     // The subprogram's screen, over the main one.
     let mut sub_texture: Option<(Texture, TextureKind)> = None;
     // The pixels that mouse positions are given in: the screen's, or the
@@ -228,6 +233,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut editor_texture: Option<(Texture, TextureKind)> = None;
     let mut editor_overlay = Framebuffer::new(display_w, display_h);
     let mut editor_overlay_texture: Option<Texture> = None;
+    let mut editor_grp = PageTexture::default();
     let mut editor_space = (1, 1);
     let mut editor_shown = false;
     // Whether it has the keys, and the pointer.
@@ -1000,7 +1006,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     ..
-                } => dragging = false,
+                } => {
+                    dragging = false;
+                    debug_panel.release();
+                }
                 Event::Window {
                     win_event: WindowEvent::MouseLeave,
                     ..
@@ -1794,6 +1803,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let dst = FRect::new(display.x + at(s.x), display.y + at(s.y), at(s.w), at(s.h));
             canvas.copy(tex, None, dst)?;
         }
+        let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
+        match (&debug, apart) {
+            (Some(_), false) => grp_texture.draw(
+                &mut canvas,
+                &texture_creator,
+                grp,
+                panel_grp,
+                display,
+                display_w,
+            )?,
+            _ => grp_texture.release(),
+        }
+        if debug.is_none() || !apart {
+            editor_grp.release();
+        }
         // The colors window leaves the editor behind it bright, to show
         // its colors.
         let dims = dialog.is_some() || manager.is_some();
@@ -1920,6 +1944,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             editor_canvas.clear();
             if let Some((tex, _)) = &editor_texture {
                 editor_canvas.copy(tex, None, editor_place.0)?;
+            }
+            if debug.is_some() {
+                let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
+                let canvas = &mut *editor_canvas;
+                editor_grp.draw(
+                    canvas,
+                    &gfx.creator,
+                    grp,
+                    panel_grp,
+                    editor_place.2,
+                    display_w,
+                )?;
             }
             if let Some(tex) = &mut editor_overlay_texture {
                 let pixels = as_bytes(editor_overlay.pixels());
@@ -2381,17 +2417,18 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
     }
     tabs.push(Tab::Perf);
     tabs.push(Tab::Sprites);
+    tabs.push(Tab::Grp);
     let tab = panel.tab.filter(|t| tabs.contains(t)).unwrap_or(tabs[0]);
     let call_frame = call.as_ref().and_then(|c| c.frame);
     let (frame, slot) = match tab {
         Tab::Locals => (call_frame, home),
         Tab::Globals(slot) => (None, slot),
-        Tab::Perf | Tab::Sprites => (None, home),
+        Tab::Perf | Tab::Sprites | Tab::Grp => (None, home),
     };
     let variables = match (tab, frame) {
         (Tab::Locals, Some(frame)) => machine.frame_locals(frame),
         (Tab::Globals(slot), _) => machine.slot_globals(slot),
-        (Tab::Locals, None) | (Tab::Perf | Tab::Sprites, _) => Vec::new(),
+        (Tab::Locals, None) | (Tab::Perf | Tab::Sprites | Tab::Grp, _) => Vec::new(),
     };
     // Watches see the chosen call's locals and its slot's globals.
     let watches = (panel.watches.iter())
@@ -2434,6 +2471,7 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
             let (first, rows) = panel.sprite_rows();
             debug_panel::sprites::list(&machine.rt, first, rows, panel.sprite)
         }),
+        grp: panel.grp_probe(&machine.rt.grp),
     }
 }
 
@@ -2478,6 +2516,8 @@ enum Choice {
     ResetPerf,
     /// Outline a sprite on the screens, or none.
     Highlight(Option<usize>),
+    /// Zoom the GRP tab's page.
+    Zoom(grp_view::Zoom),
     AddWatch,
     Hex,
     /// Go to the label or DEF of a name.
@@ -2581,6 +2621,17 @@ fn panel_menu(
             ),
             hex,
         ],
+        Some(Hit::Grp | Hit::GrpPage(_) | Hit::Tab(Tab::Grp)) => {
+            let mark = |z| if panel.grp.zoom == z { "[x]" } else { "[ ]" };
+            let mut items: Vec<_> = (grp_view::ZOOMS.iter())
+                .map(|&z| (format!("{} {}", mark(z), z.label()), true, Choice::Zoom(z)))
+                .collect();
+            if let Some((_, color)) = view.grp.pixel {
+                let code = format!("&H{color:08X}");
+                items.push((format!("Copy {code}"), true, Choice::CopyValue(code)));
+            }
+            items
+        }
         _ => vec![("Add watch".to_string(), true, Choice::AddWatch), hex],
     }
 }
@@ -2667,6 +2718,7 @@ fn choose(
         Choice::RemoveBreakpoint(slot, line) => _ = machine.toggle_breakpoint(slot, line),
         Choice::ResetPerf => machine.rt.reset_perf_stats(),
         Choice::Highlight(sprite) => panel.sprite = sprite,
+        Choice::Zoom(zoom) => panel.grp.zoom_to(zoom, None),
         Choice::AddWatch => panel.add_watch(String::new()),
         Choice::Hex => panel.hex = !panel.hex,
         Choice::Definition(name) => {

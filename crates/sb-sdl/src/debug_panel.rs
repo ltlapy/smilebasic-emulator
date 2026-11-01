@@ -2,7 +2,7 @@
 //! for the screens as the program left them, which the frontend draws at
 //! the window's resolution, its calls under way, the watch expressions,
 //! and the variables of the call chosen or of a slot, what PERFEND has
-//! timed, or the sprites in use.
+//! timed, the sprites in use, or a graphic page.
 
 pub mod sprites;
 
@@ -12,13 +12,14 @@ use sb_runtime::font::Font;
 use sb_runtime::{Framebuffer, PerfStats};
 use sdl3::keyboard::Keycode;
 
+use crate::grp_view::{GrpView, Probe};
 use crate::ui::{BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text_scaled, fill};
 
-const HEADING: u32 = 0xFF80_8080;
+pub(crate) const HEADING: u32 = 0xFF80_8080;
 const NUMBER: u32 = 0xFFF0_4090;
 const STRING: u32 = 0xFF60_80F0;
 const FACE: u32 = 0xFF18_1818;
-const TAB: u32 = 0xFF40_4040;
+pub(crate) const TAB: u32 = 0xFF40_4040;
 const ERROR: u32 = 0xFFF0_6060;
 const SELECTED: u32 = 0xFF30_3850;
 /// The mark of a watch that stops the program when it changes, red as
@@ -54,6 +55,9 @@ pub enum Tab {
     Perf,
     /// The sprites in use, which only this tab gathers.
     Sprites,
+    /// A graphic page, which SmileBASIC 4 shows only as the program
+    /// draws it.
+    Grp,
 }
 
 /// What the panel shows, gathered from the machine each frame.
@@ -82,6 +86,8 @@ pub struct View {
     pub perf: [PerfStats; 8],
     /// The sprites in use, while the Sprites tab shows.
     pub sprites: Option<sprites::List>,
+    /// The GRP tab's page.
+    pub grp: Probe,
 }
 
 impl View {
@@ -112,6 +118,9 @@ pub enum Hit {
     Sprite(usize),
     /// The rest of the Sprites tab.
     Sprites,
+    /// The GRP tab's buttons for the pages, and its view of one.
+    GrpPage(usize),
+    Grp,
     /// The button that puts the panel away.
     Close,
 }
@@ -162,15 +171,16 @@ pub struct DebugPanel {
     scale: u32,
     /// The sprite chosen in the Sprites tab, outlined on the screens.
     pub sprite: Option<usize>,
+    pub grp: GrpView,
 }
 
 /// The panel's character width, row height, padding and text offset in a
 /// row, for the font drawn `scale` times its size.
-struct Metrics {
-    char: u32,
-    line: u32,
-    pad: u32,
-    text: u32,
+pub(crate) struct Metrics {
+    pub char: u32,
+    pub line: u32,
+    pub pad: u32,
+    pub text: u32,
     scale: u32,
 }
 
@@ -186,7 +196,7 @@ impl Metrics {
         }
     }
 
-    fn draw(&self, fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
         draw_text_scaled(fb, font, x, y, text, color, self.scale);
     }
 }
@@ -275,7 +285,7 @@ fn type_text(value: &Value) -> String {
 }
 
 /// Text cut to `chars` characters, with an ellipsis if it was longer.
-fn cut(text: &str, chars: usize) -> String {
+pub(crate) fn cut(text: &str, chars: usize) -> String {
     if text.chars().count() <= chars {
         return text.to_string();
     }
@@ -324,7 +334,7 @@ impl DebugPanel {
     /// a sprite can be followed step by step.
     pub fn reset(&mut self) {
         self.chosen = None;
-        if !matches!(self.tab, Some(Tab::Perf | Tab::Sprites)) {
+        if !matches!(self.tab, Some(Tab::Perf | Tab::Sprites | Tab::Grp)) {
             self.tab = None;
             self.scroll = 0;
         }
@@ -344,11 +354,28 @@ impl DebugPanel {
         self.hits.clear();
         self.tips.clear();
         self.typing = None;
+        self.grp.set_place(None);
+        self.grp.release();
     }
 
-    /// The pointer moved, or left the window with `None`.
+    /// The pointer moved, or left the window with `None`; it drags the
+    /// GRP tab's page while the left button is down there.
     pub fn pointer(&mut self, at: Option<(i32, i32)>) {
         self.pointer = at;
+        if let Some(at) = at {
+            self.grp.drag_to(at);
+        }
+    }
+
+    /// The left button went up.
+    pub fn release(&mut self) {
+        self.grp.release();
+    }
+
+    /// Whether the GRP tab's page is blank, and its pixel under the
+    /// pointer.
+    pub fn grp_probe(&self, grp: &sb_runtime::graphics::Graphics) -> Probe {
+        self.grp.probe(self.pointer, grp)
     }
 
     pub fn contains(&self, at: (i32, i32)) -> bool {
@@ -379,6 +406,8 @@ impl DebugPanel {
                 self.scroll = 0;
             }
             Hit::AddWatch => self.add_watch(String::new()),
+            Hit::GrpPage(page) => self.grp.page = page,
+            Hit::Grp => self.grp.press(at),
             Hit::Close => {}
             Hit::Watch(i) if double => self.edit_watch(i),
             // A second click lets go of the sprite.
@@ -487,7 +516,11 @@ impl DebugPanel {
         Typed::Stay
     }
 
+    /// The wheel scrolls the variables, or zooms the GRP tab's page.
     pub fn wheel(&mut self, rows: i32, variables: usize) {
+        if self.grp.wheel(rows, self.pointer) {
+            return;
+        }
         let most = variables.saturating_sub(self.rows);
         self.scroll = (self.scroll as i64 + i64::from(rows)).clamp(0, most as i64) as usize;
     }
@@ -524,6 +557,7 @@ impl DebugPanel {
         self.frame = Some(f);
         self.hits.clear();
         self.tips.clear();
+        self.grp.set_place(None);
         fill(fb, f, BORDER);
         let inner = Rect {
             x: f.x,
@@ -732,6 +766,7 @@ impl DebugPanel {
                 Tab::Globals(slot) => format!("PRG{slot}"),
                 Tab::Perf => "Perf".to_string(),
                 Tab::Sprites => "Sprites".to_string(),
+                Tab::Grp => "GRP".to_string(),
             };
             let r = Rect {
                 x: tx,
@@ -760,6 +795,12 @@ impl DebugPanel {
                 let place = (s.x.into(), s.y.into(), s.w.into(), s.h.into());
                 sprites::draw_outline(fb, outline, size, place, s, m.scale);
             }
+        } else if tab == Some(Tab::Grp) {
+            let right = inner.x + inner.w - m.pad;
+            let (hits, tips) = (&mut self.hits, &mut self.tips);
+            let at = ((vx, y), (right, bottom));
+            self.grp
+                .draw(fb, font, &m, at.0, at.1, &view.grp, hits, tips);
         } else if view.variables.is_empty() {
             m.draw(fb, font, vx, y + m.text, "No variables", DISABLED);
         }
@@ -1135,6 +1176,7 @@ mod tests {
             breakpoints: Vec::new(),
             perf: [PerfStats::default(); 8],
             sprites: Some(sprites::list(&m.rt, first, rows, p.sprite)),
+            grp: Probe::default(),
         };
         assert_eq!(view.scrolled(), 3);
         let mut fb = Framebuffer::new(1280, 300);
