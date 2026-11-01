@@ -343,7 +343,11 @@ impl Track {
                         let oldest = self.voices.iter().position(|(.., v)| v.released());
                         self.voices.remove(oldest.unwrap_or(0));
                     }
-                    let v = wave::Voice::new(w.clone(), envelope, key, cents, false);
+                    // A 16-bit sample loops between its loop points, the
+                    // whole of it by default; BEEP's flag is BEEP's alone.
+                    // Drivers such as DAW_MUSIC's give a 128-sample cycle
+                    // that way, which played once was a 2 ms click.
+                    let v = wave::Voice::new(w.clone(), envelope, key, cents, true);
                     self.voices.push((c, program, v));
                 }
             }
@@ -746,6 +750,30 @@ mod tests {
     use super::*;
     use crate::sound::FRAME_SAMPLES;
     use crate::sound::mml::parse;
+
+    #[test]
+    fn samples_loop_in_songs() {
+        // WAVSETA's 16-bit form with its loop over the whole sample, as
+        // drivers that build one cycle of 128 samples give it.
+        let waves = Rc::new(RefCell::new(Waves::default()));
+        waves.borrow_mut().user[0] = Some(Rc::new(wave::Wave {
+            samples: (0..128).map(|i| if i < 64 { 0.5 } else { -0.5 }).collect(),
+            rate: Some(56_000.0),
+            looped: (0, 128),
+            beep_loop: false,
+            ..wave::pulse(219)
+        }));
+        let mut t = Track::new(None, waves);
+        t.play(Some(Rc::new(parse("@224 A1").unwrap())), 127, 0);
+        let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
+        let mut scratch = Default::default();
+        for _ in 0..30 {
+            t.render(&mut l, &mut r, &mut scratch);
+        }
+        l.fill(0.0);
+        t.render(&mut l, &mut r, &mut scratch);
+        assert!(l.iter().any(|&s| s.abs() > 0.01));
+    }
 
     #[test]
     fn waveform_notes_that_never_end_do_not_pile_up() {

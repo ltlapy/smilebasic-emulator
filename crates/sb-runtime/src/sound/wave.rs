@@ -151,7 +151,7 @@ pub struct Voice {
     in_tick: usize,
     /// Left and right gains.
     pub gains: (f32, f32),
-    /// Plays the loop for ever, as BEEP does when asked.
+    /// Plays the loop for ever: always in a song, and in BEEP when asked.
     looping: bool,
     done: bool,
 }
