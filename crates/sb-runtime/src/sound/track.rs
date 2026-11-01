@@ -547,6 +547,12 @@ impl Track {
     ) {
         if self.hold > 0 {
             self.hold -= 1;
+            // Stopped with a fade before it began, it never sounds:
+            // BGMCHK says 0 once it would have begun (checked on
+            // hardware: two frames after BGMPLAY and BGMSTOP 0,1).
+            if self.hold == 0 && self.after_fade == AfterFade::Stop {
+                self.stop();
+            }
             return;
         }
         if let (Some(n), true, false) = (&mut self.silent_left, self.playing, self.paused) {

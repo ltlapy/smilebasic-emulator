@@ -404,7 +404,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   first argument left out with a comma after it (`BGMSTOP ,1`,
   `BGMPLAY ,0,64`).
 - After `BGMSTOP` with a fade, `BGMCHK` stays 1 until the fade has
-  ended.
+  ended. A song stopped that way before it began (`BGMPLAY 0,1` and
+  `BGMSTOP 0,1` in the same frame) never sounds, and `BGMCHK` is 0 two
+  frames later.
 - `SNDMSBAL` starts at 63, though the manual calls 64 even.
   `SNDMSBAL()` and `PCMPOS()` work as functions.
 - While `RECSTART` without a time records round its buffer, `RECDATA`

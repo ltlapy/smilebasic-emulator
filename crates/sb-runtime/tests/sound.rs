@@ -45,6 +45,16 @@ fn songs_play_for_their_length() {
 }
 
 #[test]
+fn a_song_stopped_before_it_begins_never_sounds() {
+    let mut rt = runtime();
+    run_on(&mut rt, "BGMPLAY 0,1:BGMSTOP 0,1").unwrap();
+    frames(&mut rt, 1);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "1");
+    frames(&mut rt, 1);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");
+}
+
+#[test]
 fn tracks_repeat_stop_and_pause() {
     let mut rt = runtime();
     run_on(&mut rt, "BGMSET 130,\"[C]\":BGMPLAY 3,130:BGMPLAY 2,0").unwrap();
