@@ -31,6 +31,15 @@ const LIST_WIDTH: u32 = 460;
 const ROW: u32 = 2 * LINE;
 /// The folder's name under the title.
 const FOLDER: u32 = 0xFFB0_B0B0;
+/// The gap between a project's icon and its title.
+const ICON_GAP: u32 = 6;
+/// The current project's row when it is not selected: a faint tint,
+/// darker and greyer than both selection colours (HIGHLIGHT, BORDER).
+const CURRENT_TINT: u32 = 0xFF2A_3240;
+/// The bar at the far left of the current project's row, left of its
+/// icon, shown whether the row is selected or not.
+const CURRENT_BAR: u32 = 0xFF8C_B8FF;
+const CURRENT_BAR_WIDTH: u32 = 4;
 /// How far the mouse moves with a file before it is being dragged.
 const DRAG_START: i32 = 6;
 const ERROR: u32 = 0xFFFF_8080;
@@ -494,6 +503,23 @@ impl ProjectManager {
             y: list.y + (i - self.scroll) as u32 * ROW,
             h: ROW,
             ..list
+        }
+    }
+
+    /// Where a project row's title and folder name start: just right of
+    /// its icon.
+    fn title_x(row: Rect) -> u32 {
+        row.x + PAD + ICON_SIZE as u32 + ICON_GAP
+    }
+
+    /// The current project's marker, at the row's far left inside the
+    /// list's two-pixel outline, left of the icon.
+    fn current_bar(row: Rect) -> Rect {
+        Rect {
+            x: row.x + 2,
+            y: row.y + 2,
+            w: CURRENT_BAR_WIDTH,
+            h: ROW - 4,
         }
     }
 
@@ -1283,12 +1309,18 @@ impl ProjectManager {
         for i in shown {
             let r = self.row(i);
             let name = &self.projects[i];
+            let current = *name == self.current;
             if i == self.selected {
                 let color = match self.focus {
                     Focus::Projects => HIGHLIGHT,
                     Focus::Files => BORDER,
                 };
                 fill(fb, r, color);
+            } else if current {
+                fill(fb, r, CURRENT_TINT);
+            }
+            if current {
+                fill(fb, Self::current_bar(r), CURRENT_BAR);
             }
             let listed = &self.listed[i];
             let side = ICON_SIZE as u32;
@@ -1297,14 +1329,12 @@ impl ProjectManager {
                 image(fb, r.x + PAD, y, side, &icon.pixels, icon.key);
             }
             // The title, then the folder's name if it says more.
-            let x = r.x + 2 * PAD + side;
+            let x = Self::title_x(r);
             let room = (r.x + r.w).saturating_sub(x + PAD);
-            let mark = if *name == self.current { "*" } else { " " };
-            let title = format!("{mark}{}", listed.title);
-            draw_text(fb, font, x, r.y + 6, &fit(&title, room), TEXT);
+            draw_text(fb, font, x, r.y + 6, &fit(&listed.title, room), TEXT);
             let folder = project_label(name);
             if folder != listed.title || !usable(name) {
-                let mut label = format!(" {folder}");
+                let mut label = folder.to_string();
                 if !usable(name) {
                     label.push_str(" (rename to use)");
                 }
@@ -1877,6 +1907,48 @@ mod tests {
         let r = m.row(1);
         let at = (r.x + PAD, r.y + (ROW - ICON_SIZE as u32) / 2);
         assert_eq!(fb.get(at.0, at.1).map(|p| p & 0xFF_FFFF), Some(0x12_3456));
+        // The title starts a few pixels after the icon.
+        assert_eq!(
+            ProjectManager::title_x(r),
+            r.x + PAD + ICON_SIZE as u32 + ICON_GAP
+        );
+    }
+
+    #[test]
+    fn the_current_project_is_tinted_and_marked() {
+        let tmp = TempDir::new("current");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("A").unwrap();
+        s.create_project("B").unwrap();
+        s.set_project("B").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        assert_eq!(m.projects, ["", "A", "B"]);
+        let pixel = |m: &ProjectManager, i: usize, (x, y): (u32, u32)| {
+            let mut fb = Framebuffer::new(1280, 720);
+            m.draw(&mut fb, &Font::blank(), false);
+            let r = m.row(i);
+            fb.get(r.x + x, r.y + y).unwrap()
+        };
+        // Past the bar and the icon, under the text.
+        let body = (PAD + ICON_SIZE as u32 + 2, ROW - 3);
+        let bar = (3, ROW / 2);
+        // The current project opens selected: the selection's colour,
+        // with the bar at the far left.
+        assert_eq!(m.selected_name(), "B");
+        assert_eq!(pixel(&m, 2, body), HIGHLIGHT);
+        assert_eq!(pixel(&m, 2, bar), CURRENT_BAR);
+        // Selecting another leaves it tinted and still marked; the other
+        // project has neither.
+        m.select_name("A", &s);
+        assert_eq!(pixel(&m, 1, body), HIGHLIGHT);
+        assert_ne!(pixel(&m, 1, bar), CURRENT_BAR);
+        assert_eq!(pixel(&m, 2, body), CURRENT_TINT);
+        assert_eq!(pixel(&m, 2, bar), CURRENT_BAR);
+        assert_ne!(pixel(&m, 0, body), CURRENT_TINT);
+        // The tint differs from both selection colours and the buttons'.
+        for other in [HIGHLIGHT, BORDER, BACKGROUND | 0xFF00_0000] {
+            assert_ne!(CURRENT_TINT, other);
+        }
     }
 
     #[test]
