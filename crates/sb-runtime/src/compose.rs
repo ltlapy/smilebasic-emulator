@@ -808,6 +808,36 @@ pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color:
         }
         return;
     }
+    // Without a layer color, adding works on the three channels at once
+    // in 16-bit lanes, as the general way below does channel by channel.
+    if mode == Compose::Add && color == 0xFFFF_FFFF {
+        for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+            if l != 0 {
+                *d = add_light(*d, spread(l & 0x00FF_FFFF));
+            }
+        }
+        return;
+    }
+    // Each mode gets its own loop, so that its sum is worked inline.
+    match mode {
+        Compose::Direct | Compose::Normal => {
+            compose_each(dst, layer, color, |p, d, a| p + div255(d * (255 - a)))
+        }
+        Compose::Add => compose_each(dst, layer, color, |p, d, _| d + p),
+        Compose::Multiply => compose_each(dst, layer, color, |p, d, a| d * (p + 255 - a) / 255),
+        Compose::Screen => compose_each(dst, layer, color, |p, d, _| d + p * (255 - d) / 255),
+    }
+}
+
+/// [`compose`] by `f`, which gives a channel from the layer's light `p`,
+/// the frame's `d` and the coverage `a`; it is held to 255.
+#[inline(always)]
+fn compose_each(
+    dst: &mut Framebuffer,
+    layer: &Framebuffer,
+    color: u32,
+    f: impl Fn(u32, u32, u32) -> u32,
+) {
     let [ca, cr, cg, cb] = color.to_be_bytes().map(u32::from);
     for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
         if l == 0 {
@@ -819,16 +849,8 @@ pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color:
         let tint = |p: u32, c: u32| div255(div255(p * c) * ca);
         let [pr, pg, pb] = [tint(lr, cr), tint(lg, cg), tint(lb, cb)];
         let [da, dr, dg, db] = d.to_be_bytes().map(u32::from);
-        let each = |f: &dyn Fn(u32, u32) -> u32| {
-            let c = |p: u32, d: u32| f(p, d).min(255) as u8;
-            u32::from_be_bytes([da as u8, c(pr, dr), c(pg, dg), c(pb, db)])
-        };
-        *d = match mode {
-            Compose::Direct | Compose::Normal => each(&|p, d| p + div255(d * (255 - a))),
-            Compose::Add => each(&|p, d| d + p),
-            Compose::Multiply => each(&|p, d| d * (p + 255 - a) / 255),
-            Compose::Screen => each(&|p, d| d + p * (255 - d) / 255),
-        };
+        let c = |p: u32, d: u32| f(p, d, a).min(255) as u8;
+        *d = u32::from_be_bytes([da as u8, c(pr, dr), c(pg, dg), c(pb, db)]);
     }
 }
 
@@ -926,6 +948,31 @@ mod tests {
                 assert_eq!(over(dst, src), reference(dst, src));
             }
         }
+    }
+
+    #[test]
+    fn adding_a_layer_without_color_matches_with_it() {
+        let mut seed = 0x9E37_79B9_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut frame = Framebuffer::new(64, 64);
+        let mut layer = Framebuffer::new(64, 64);
+        for (d, l) in frame.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
+            *d = next();
+            // Premultiplied: no channel above the alpha.
+            let a = next() >> 24;
+            let [_, r, g, b] = next().to_be_bytes().map(|c| (u32::from(c) * a / 255) as u8);
+            *l = u32::from_be_bytes([a as u8, r, g, b]);
+        }
+        let mut fast = frame.clone();
+        compose(&mut fast, &layer, Compose::Add, 0xFFFF_FFFF);
+        let mut general = frame.clone();
+        compose_each(&mut general, &layer, 0xFFFF_FFFF, |p, d, _| d + p);
+        assert_eq!(fast.pixels(), general.pixels());
     }
 
     #[test]
