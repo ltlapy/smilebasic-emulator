@@ -216,12 +216,13 @@ impl Runtime {
                 Ok(vec![])
             }
             // 1 takes the focus and 0 gives it to the other interpreter,
-            // if a subprogram runs beside the main one.
+            // if a subprogram runs beside the main one. The focus moves a
+            // few frames later, and ENVFOCUS meanwhile does nothing.
             (Command::Envfocus, Want::Outs(0), [flag]) => {
                 let take = flag.to_int()? != 0;
-                if self.env_type == 1 || self.sub_running {
-                    self.focus = take;
-                    self.focus_moved = true;
+                let other = self.env_type == 1 || self.sub_running;
+                if other && !self.focus_busy && take != self.focus {
+                    self.focus_wish.get_or_insert(take);
                 }
                 Ok(vec![])
             }

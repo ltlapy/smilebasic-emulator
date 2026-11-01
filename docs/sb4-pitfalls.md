@@ -565,11 +565,18 @@ Checked with TTEST36.
   the 400x240 screen 1200 pixels wide in its middle, the cursor at
   column C of row R is at 40+24*(C+1), 24*R (TTEST37).
 - `END` in a subprogram hides its screen and prints nothing; the line
-  being typed in direct mode stays as it was (TTEST37).
-- `ENVFOCUS` does not move the focus at once. After `ENVFOCUS 0`,
-  `ENVFOCUS()` still gave 1 ten frames later and 0 thirty frames later;
-  an `ENVFOCUS 1` in between was lost. `ENVFOCUS 1` from a subprogram
-  without the focus had it within ten frames (TTEST36, TTEST37).
+  being typed in direct mode stays as it was, and the main interpreter
+  has the focus again (TTEST37, TTEST38).
+- `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives
+  the old answer until then: `ENVFOCUS 0` took one to three frames (it
+  varied from run to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the
+  focus is moving is lost (TTEST37, TTEST38). TTEST37's ten frames
+  after `ENVFOCUS 0` were no frames at all: its `VSYNC 10` came behind
+  and went straight on.
+- The interpreter that gets the focus is framed for a moment by a
+  yellow border that fades out: three pixels on the edge of its screen,
+  one outside and two inside, with a dark band two pixels wide inside
+  it. Midway it was 156,156,0.
 
 ## Errors and the editor
 

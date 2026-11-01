@@ -252,3 +252,25 @@ fn errors_carry_their_number_and_a_line_under_them() {
     // Divide by zero is 7, in the statement at character 6.
     assert!(rows(&m).iter().any(|r| r == "7   6"), "{:?}", rows(&m));
 }
+
+#[test]
+fn the_focus_moves_a_few_frames_after_envfocus() {
+    let dir = TempDir::new("delay");
+    let mut m = machine(
+        &dir,
+        "ENVFOCUS 0:N=0\n\
+         WHILE ENVFOCUS():VSYNC:INC N:WEND\n\
+         ENVFOCUS 1:M=0\n\
+         WHILE !ENVFOCUS():VSYNC:INC M:WEND\n\
+         ENVFOCUS 0:ENVFOCUS 1\n\
+         PUSHKEY \"?\"+STR$(N)+STR$(M)+CHR$(13)\n\
+         VSYNC 10\n\
+         ENVFOCUS 1:VSYNC 5\n",
+    );
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 30);
+    // Giving it away took two frames and taking it one. The ENVFOCUS 1
+    // right after an ENVFOCUS 0 was lost, and the keys the subprogram
+    // pushed went with the focus to the main interpreter.
+    assert!(rows(&m).iter().any(|r| r == "21"), "{:?}", rows(&m));
+}

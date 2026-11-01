@@ -96,6 +96,9 @@ pub struct Machine {
     sub: Option<Box<Machine>>,
     /// SUBSHOW and SUBHIDE.
     sub_shown: bool,
+    /// The focus on its way to the subprogram (true) or the main
+    /// interpreter, and the frames before it gets there.
+    focus_moving: Option<(bool, u32)>,
     /// On the sub interpreter, how its last program ended, for the main
     /// one to tell: `Some(None)` by itself, else with the error or break
     /// message the main one prints.
@@ -207,6 +210,7 @@ impl Machine {
             slot_changes: vec![0; SLOTS],
             sub: None,
             sub_shown: true,
+            focus_moving: None,
             ended: None,
         }
     }
@@ -1108,6 +1112,7 @@ impl Machine {
     /// Runs one frame: the program, the editor, or direct-mode line
     /// editing, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
+        self.move_focus();
         self.give_input();
         self.rt.env_status = self.env_status();
         // With a subprogram running, a busy main program leaves it a
@@ -1482,6 +1487,9 @@ impl Machine {
         sub.run_slot(0);
         sub.rt.focus = true;
         self.rt.focus = false;
+        self.focus_moving = None;
+        (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
+        (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
         self.rt.sub_running = true;
         self.sub_shown = true;
     }
@@ -1497,7 +1505,6 @@ impl Machine {
     /// When the subprogram has ended, the focus comes back, and the main
     /// interpreter prints why it ended, if not by itself, between lines
     /// of its own; `again` takes up the direct-mode line afresh after it.
-    // UNVERIFIED: that the focus comes back after END too.
     fn sub_ended(&mut self, again: bool) {
         let Some(sub) = &mut self.sub else {
             return;
@@ -1507,6 +1514,9 @@ impl Machine {
         };
         sub.rt.focus = false;
         self.rt.focus = true;
+        self.focus_moving = None;
+        (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
+        (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
         self.rt.sub_running = false;
         let Some(message) = message else {
             return;
@@ -1596,12 +1606,20 @@ impl Machine {
             return;
         };
         sub.time_limit = (self.time_limit).map(|l| l.saturating_sub(used).max(l / SUB_SHARE));
-        if std::mem::take(&mut self.rt.focus_moved) {
-            sub.rt.focus = !self.rt.focus;
-        }
         sub.run_frame(Some(&mut self.rt));
-        if std::mem::take(&mut sub.rt.focus_moved) {
-            self.rt.focus = !sub.rt.focus;
+        // The main interpreter's wish first, as it ran first.
+        let to_sub = match (self.rt.focus_wish.take(), sub.rt.focus_wish.take()) {
+            (Some(main_takes), _) => Some(!main_takes),
+            (None, sub_takes) => sub_takes,
+        };
+        if let Some(to_sub) = to_sub
+            && self.focus_moving.is_none()
+        {
+            // UNVERIFIED: giving the focus away took one to three frames,
+            // taking it one.
+            self.focus_moving = Some((to_sub, if to_sub { 1 } else { 2 }));
+            sub.rt.focus_busy = true;
+            self.rt.focus_busy = true;
         }
         if std::mem::take(&mut self.rt.forget_stop) {
             self.forget_halted();
@@ -1634,9 +1652,32 @@ impl Machine {
     /// Gives the focus to the main interpreter (false) or the subprogram,
     /// as ENVFOCUS does, for the frontend's menu.
     pub fn focus_sub(&mut self, sub_focus: bool) {
+        self.focus_moving = Some((sub_focus, 0));
+        self.move_focus();
+    }
+
+    /// Counts down the frames before the focus gets where ENVFOCUS sent
+    /// it, and moves it once they are over.
+    fn move_focus(&mut self) {
+        let Some((to_sub, left)) = self.focus_moving else {
+            return;
+        };
+        if left > 1 {
+            self.focus_moving = Some((to_sub, left - 1));
+            return;
+        }
+        self.focus_moving = None;
+        self.rt.focus_busy = false;
         if let Some(sub) = &mut self.sub {
-            sub.rt.focus = sub_focus;
-            self.rt.focus = !sub_focus;
+            sub.rt.focus_busy = false;
+            sub.rt.focus = to_sub && sub.vm.is_some();
+            self.rt.focus = !sub.rt.focus;
+            // The keys follow the focus, also those not read yet: a
+            // subprogram's PUSHKEY right after ENVFOCUS 0 types into the
+            // main interpreter, as SmileBASIC 4's SMILETOOL has it.
+            if self.rt.focus {
+                self.rt.keys.extend(sub.rt.keys.drain(..));
+            }
         }
     }
 

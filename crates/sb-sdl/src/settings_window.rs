@@ -76,7 +76,7 @@ const PAGES: &[Page] = &[
             check(
                 "Localized error messages",
                 "Print a line explaining each error message under it, as SmileBASIC \
-                 4's Japanese edition does. The line is in Japanese only.",
+                 4's Japanese edition does. Only available in Japanese.",
                 |s| s.localized_errors,
                 |s| s.localized_errors ^= true,
             ),

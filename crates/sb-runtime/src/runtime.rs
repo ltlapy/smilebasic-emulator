@@ -613,8 +613,11 @@ pub struct Runtime {
     /// On the main interpreter, whether a subprogram runs beside it, which
     /// ENVFOCUS can give the focus to.
     pub(crate) sub_running: bool,
-    /// ENVFOCUS changed who has the focus during the frame.
-    pub(crate) focus_moved: bool,
+    /// ENVFOCUS asked for the focus (true) or gave it away during the
+    /// frame, which moves it some frames later.
+    pub(crate) focus_wish: Option<bool>,
+    /// The focus is moving, and ENVFOCUS does nothing until it has.
+    pub(crate) focus_busy: bool,
     /// On the main interpreter, what it is doing and its last error, as
     /// ENVSTAT gives them to the sub interpreter: a [`crate::sub::status`],
     /// then the error's number, argument, slot, character and line.
@@ -855,7 +858,8 @@ impl Runtime {
             focus: true,
             sub_screen: None,
             sub_running: false,
-            focus_moved: false,
+            focus_wish: None,
+            focus_busy: false,
             env_status: 0,
             env_error: [0, -1, -1, -1, 0],
             forget_stop: false,
