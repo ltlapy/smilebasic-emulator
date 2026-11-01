@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::inspect::{ChannelInfo, State, TrackInfo};
 use super::mml::{ChordPart, Cmd, Link, Num, Pitch, Song, WHOLE, ticks};
-use super::sampler;
+use super::sampler::{self, Lfo, LfoTarget};
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Envelope, Waves};
@@ -49,10 +49,11 @@ struct Channel {
     pan: i32,
     /// @E's, over the waveform's own.
     envelope: Option<Envelope>,
-    /// @MP's depth, which @MON turns back on after @MOF.
-    vibrato: i32,
-    /// The vibrato's depth now: @MP's, or 0 after @MOF or @MPOF.
-    modulation: i32,
+    /// @MP's, @MA's and @ML's settings, which @MON turns back on after
+    /// @MOF.
+    lfo_set: [Lfo; 3],
+    /// The LFOs now: as set, or off after @MOF or their own OF.
+    lfo: [Lfo; 3],
     voice: Voice,
     /// @'s number, which `voice` plays or not.
     program: i32,
@@ -83,8 +84,8 @@ impl Default for Channel {
             detune: 0,
             pan: 64,
             envelope: None,
-            vibrato: 0,
-            modulation: 0,
+            lfo_set: [Lfo::default(); 3],
+            lfo: [Lfo::default(); 3],
             voice: Voice::Synth(0),
             program: 0,
             sounding: Vec::new(),
@@ -396,6 +397,33 @@ impl Track {
         };
     }
 
+    /// Sets @MP's, @MA's or @ML's depth, range, speed and delay.
+    fn set_lfo(&mut self, c: usize, target: LfoTarget, v: [Num; 4]) {
+        let [depth, range, speed, delay] = v.map(|n| self.var(n).clamp(0, 128));
+        // UNVERIFIED: the delay's unit, taken as five ticks: @MP7,1,7,48
+        // did not move within 1.5 s at T120 (TEST40).
+        let tick = f64::from(RATE) * 60.0 / f64::from(self.tempo * QUARTER);
+        let lfo = Lfo {
+            depth,
+            range,
+            speed,
+            delay: (f64::from(delay * 5) * tick) as u32,
+        };
+        self.channels[c].lfo_set[target as usize] = lfo;
+        self.apply_lfo(c, target, true);
+    }
+
+    /// Turns an LFO on as set, or off.
+    fn apply_lfo(&mut self, c: usize, target: LfoTarget, on: bool) {
+        let lfo = if on {
+            self.channels[c].lfo_set[target as usize]
+        } else {
+            Lfo::default()
+        };
+        self.channels[c].lfo[target as usize] = lfo;
+        self.synth(|s| s.lfo(c, target, lfo));
+    }
+
     /// Runs channel `c`'s commands until one takes time.
     fn run_channel(&mut self, c: usize) {
         let Some(song) = self.song.clone() else {
@@ -487,23 +515,18 @@ impl Track {
                     self.channels[c].detune = self.var(*n);
                     self.apply_bend(c);
                 }
-                // The synthesizer's vibrato, through the modulation wheel.
-                // UNVERIFIED: how depth, range, speed and delay map.
-                Cmd::Vibrato([depth, ..]) => {
-                    let depth = self.var(*depth).clamp(0, 127);
-                    self.channels[c].vibrato = depth;
-                    self.channels[c].modulation = depth;
-                    self.synth(|s| s.modulation(c, depth));
-                }
-                // UNVERIFIED: that @MON turns @MP's vibrato back on.
-                Cmd::ModulationOn => {
-                    let depth = self.channels[c].vibrato;
-                    self.channels[c].modulation = depth;
-                    self.synth(|s| s.modulation(c, depth));
-                }
-                Cmd::VibratoOff | Cmd::ModulationOff => {
-                    self.channels[c].modulation = 0;
-                    self.synth(|s| s.modulation(c, 0));
+                Cmd::Vibrato(v) => self.set_lfo(c, LfoTarget::Pitch, *v),
+                Cmd::Tremolo(v) => self.set_lfo(c, LfoTarget::Volume, *v),
+                Cmd::PanWave(v) => self.set_lfo(c, LfoTarget::Pan, *v),
+                Cmd::VibratoOff => self.apply_lfo(c, LfoTarget::Pitch, false),
+                Cmd::TremoloOff => self.apply_lfo(c, LfoTarget::Volume, false),
+                Cmd::PanWaveOff => self.apply_lfo(c, LfoTarget::Pan, false),
+                // UNVERIFIED: that @MON turns the LFOs back on.
+                Cmd::ModulationOn | Cmd::ModulationOff => {
+                    let on = matches!(cmds[pc], Cmd::ModulationOn);
+                    for target in [LfoTarget::Pitch, LfoTarget::Volume, LfoTarget::Pan] {
+                        self.apply_lfo(c, target, on);
+                    }
                 }
                 Cmd::Envelope(e) => {
                     let [attack, decay, sustain, release] = e.map(|n| self.var(n));
@@ -520,9 +543,6 @@ impl Track {
                     self.channels[c].envelope = None;
                     self.synth(|s| s.envelope(c, None));
                 }
-                // UNVERIFIED: tremolo and pan modulation are read but not
-                // played.
-                Cmd::Tremolo(_) | Cmd::TremoloOff | Cmd::PanWave(_) | Cmd::PanWaveOff => {}
                 Cmd::RepeatStart => {
                     // Find the count at the matching end.
                     let mut depth = 0;
@@ -711,8 +731,8 @@ impl Track {
                     v.follow(&w);
                 }
                 let ch = &self.channels[*vc];
-                v.gains = wave::gains(ch.volume, ch.velocity, ch.pan);
-                v.modulation = ch.modulation;
+                v.set_mix(ch.volume, ch.velocity, ch.pan);
+                v.lfo = ch.lfo;
                 v.render(cl, cr);
             }
             drop(waves);

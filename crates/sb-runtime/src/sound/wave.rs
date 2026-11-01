@@ -176,17 +176,19 @@ pub struct Voice {
     step: f64,
     /// The step before vibrato.
     base_step: f64,
-    /// MML's vibrato depth, 0 to 127, and how far round it has gone.
-    pub modulation: i32,
-    vibrato_phase: f32,
-    /// The envelope's gain, moving in a straight line to the next step's.
-    level: f32,
-    level_step: f32,
-    target: f32,
+    /// The channel's @MP, @MA and @ML, and how far round they have gone.
+    pub(crate) lfo: [sampler::Lfo; 3],
+    lfos: sampler::Lfos,
+    /// The gain from volume and velocity, and the pan's position.
+    gain: f32,
+    pan: f32,
+    /// Left and right gains, envelope and all, moving in a straight line
+    /// to the next step's.
+    levels: [f32; 2],
+    steps: [f32; 2],
+    targets: [f32; 2],
     /// Samples into the envelope's step.
     in_tick: usize,
-    /// Left and right gains.
-    pub gains: (f32, f32),
     /// Plays the loop for ever: always in a song, and in BEEP when asked.
     looping: bool,
     done: bool,
@@ -210,13 +212,14 @@ impl Voice {
             pos: 0.0,
             step: 0.0,
             base_step: 0.0,
-            modulation: 0,
-            vibrato_phase: 0.0,
-            level: 0.0,
-            level_step: 0.0,
-            target: 0.0,
+            lfo: [sampler::Lfo::default(); 3],
+            lfos: sampler::Lfos::default(),
+            gain: WAVE_GAIN,
+            pan: 0.0,
+            levels: [0.0; 2],
+            steps: [0.0; 2],
+            targets: [0.0; 2],
             in_tick: 0,
-            gains: (0.5, 0.5),
             looping,
             done: false,
         };
@@ -252,6 +255,13 @@ impl Voice {
         self.envelope.release();
     }
 
+    /// Sets the volume, velocity and pan, each 0 to 127. Volume and
+    /// velocity are squared, as the instruments' are.
+    pub fn set_mix(&mut self, volume: i32, velocity: i32, pan: i32) {
+        self.gain = WAVE_GAIN * sampler::square(volume) * sampler::square(velocity);
+        self.pan = sampler::pan_position(pan);
+    }
+
     pub fn done(&self) -> bool {
         self.done
     }
@@ -275,19 +285,23 @@ impl Voice {
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             if self.in_tick == 0 {
                 self.envelope.step();
-                self.target = if self.envelope.done() {
+                let (cents, tremolo, pan) = self.lfos.step(&self.lfo);
+                let level = if self.envelope.done() {
                     0.0
                 } else {
-                    self.envelope.gain()
+                    self.envelope.gain() * self.gain * tremolo
                 };
+                let [gl, gr] = sampler::pan_gains(self.pan + pan);
+                self.targets = [level * gl, level * gr];
                 if self.pos == 0.0 {
                     // The note starts at its first step's level: a square
                     // with attack 127 is at full level from its first
                     // sample (TEST40).
-                    self.level = self.target;
+                    self.levels = self.targets;
                 }
-                self.level_step = (self.target - self.level) / sampler::TICK as f32;
-                self.step = match sampler::vibrato(&mut self.vibrato_phase, self.modulation) {
+                let tick = sampler::TICK as f32;
+                self.steps = [0, 1].map(|i| (self.targets[i] - self.levels[i]) / tick);
+                self.step = match cents {
                     0.0 => self.base_step,
                     cents => self.base_step * f64::from(2f32.powf(cents / 1200.0)),
                 };
@@ -301,29 +315,22 @@ impl Voice {
                     return;
                 }
             }
-            let s = samples[(self.pos as usize).min(samples.len() - 1)] * self.level;
-            *l += s * self.gains.0;
-            *r += s * self.gains.1;
+            let s = samples[(self.pos as usize).min(samples.len() - 1)];
+            *l += s * self.levels[0];
+            *r += s * self.levels[1];
             self.pos += self.step;
-            self.level += self.level_step;
+            self.levels[0] += self.steps[0];
+            self.levels[1] += self.steps[1];
             if self.in_tick == 0 {
                 // Land exactly on the step's level, which may be silence.
-                self.level = self.target;
-                if self.envelope.done() && self.level == 0.0 {
+                self.levels = self.targets;
+                if self.envelope.done() && self.levels == [0.0; 2] {
                     self.done = true;
                     return;
                 }
             }
         }
     }
-}
-
-/// The gains for a volume, velocity and pan, each 0 to 127. Volume and
-/// velocity are squared, as the instruments' are.
-pub fn gains(volume: i32, velocity: i32, pan: i32) -> (f32, f32) {
-    let v = WAVE_GAIN * sampler::square(volume) * sampler::square(velocity);
-    let [l, r] = sampler::pan_gains(pan);
-    (v * l, v * r)
 }
 
 /// A full-scale waveform at V127 in the middle records at an eighth of
@@ -385,38 +392,111 @@ mod tests {
         let mut v = Voice::new(wave(0.5), None, 69, 0, false);
         let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
         v.render(&mut l, &mut r);
-        assert!(l[959] > 0.1);
+        assert!(l[959] > 0.02);
         v.follow(&wave(-0.5));
         let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
         v.render(&mut l, &mut r);
-        assert!(l[0] < -0.1);
+        assert!(l[0] < -0.02);
     }
 
     #[test]
     fn vibrato_moves_the_pitch_and_stops() {
         let mut v = Voice::new(Rc::new(pulse(219)), None, 69, 0, false);
         let steady = v.step;
-        v.modulation = 127;
-        let mut steps = Vec::new();
-        for _ in 0..40 {
+        // @MP32,1,20,0: ±25 cents, 7.8 times a second.
+        v.lfo[0] = sampler::Lfo {
+            depth: 32,
+            range: 1,
+            speed: 20,
+            delay: 0,
+        };
+        let mut cents = Vec::new();
+        for _ in 0..26 {
             peak(&mut v, sampler::TICK);
-            steps.push(v.step);
+            cents.push(1200.0 * (v.step / steady).log2());
         }
-        assert!(steps.iter().any(|&s| s > steady * 1.01));
-        assert!(steps.iter().any(|&s| s < steady * 0.99));
-        v.modulation = 0;
+        let top = cents.iter().cloned().fold(f64::MIN, f64::max);
+        let bottom = cents.iter().cloned().fold(f64::MAX, f64::min);
+        assert!((top - 25.0).abs() < 0.5 && (bottom + 25.0).abs() < 0.5);
+        v.lfo[0] = sampler::Lfo::default();
         peak(&mut v, sampler::TICK);
         assert_eq!(v.step, steady);
     }
 
+    /// The RMS of the left and right sides over `n` samples.
+    fn rms(v: &mut Voice, n: usize) -> (f32, f32) {
+        let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+        v.render(&mut l, &mut r);
+        let rms = |x: &[f32]| (x.iter().map(|s| s * s).sum::<f32>() / n as f32).sqrt();
+        (rms(&l), rms(&r))
+    }
+
     #[test]
-    fn waveforms_are_as_loud_as_instruments() {
-        // Volume and velocity are squared, as the instruments' are.
-        let (l, r) = gains(127, 64, 0);
-        assert_eq!(r, 0.0);
-        assert!((l - WAVE_GAIN * sampler::square(64)).abs() < 1e-6);
-        let (l, r) = gains(127, 127, 64);
-        assert!((l - 0.125).abs() < 1e-6 && (r - 0.125).abs() < 1e-6);
+    fn tremolo_and_pan_waves_swing_the_level() {
+        let lfo = sampler::Lfo {
+            depth: 24,
+            range: 2,
+            speed: 7,
+            delay: 0,
+        };
+        let swing = |target: usize| {
+            let mut v = Voice::new(Rc::new(pulse(219)), None, 69, 0, false);
+            v.set_mix(127, 127, 64);
+            let (middle, _) = rms(&mut v, 480);
+            v.lfo[target] = lfo;
+            let sides: Vec<_> = (0..80).map(|_| rms(&mut v, 480)).collect();
+            let l = sides.iter().map(|s| s.0 / middle);
+            let r = sides.iter().map(|s| s.1 / middle);
+            (
+                l.clone().fold(f32::MAX, f32::min),
+                l.fold(0f32, f32::max),
+                r.fold(0f32, f32::max),
+            )
+        };
+        // @MA24,2,7: ±2.25 dB on both sides.
+        let (low, high, right) = swing(1);
+        assert!((low - 0.772).abs() < 0.02 && (high - 1.296).abs() < 0.02);
+        assert!((right - high).abs() < 0.01);
+        // @ML24,2,7: each side between about 0.79 and 1.17 of the middle.
+        let (low, high, _) = swing(2);
+        assert!((low - 0.79).abs() < 0.02 && (high - 1.17).abs() < 0.02);
+    }
+
+    #[test]
+    fn lfos_wait_out_their_delay() {
+        let mut v = Voice::new(Rc::new(pulse(219)), None, 69, 0, false);
+        let steady = v.step;
+        v.lfo[0] = sampler::Lfo {
+            depth: 127,
+            range: 1,
+            speed: 127,
+            delay: 4800,
+        };
+        peak(&mut v, 4800 - sampler::TICK);
+        assert_eq!(v.step, steady);
+        peak(&mut v, 4 * sampler::TICK);
+        assert_ne!(v.step, steady);
+    }
+
+    #[test]
+    fn waveforms_are_as_loud_as_measured() {
+        // A full-scale square at V127 in the middle: an eighth of full
+        // scale on each side.
+        let w = eight_bit(
+            (0..32).map(|i| if i < 16 { 0.0 } else { 256.0 }),
+            69,
+            Envelope::ORGAN,
+        );
+        let mut v = Voice::new(Rc::new(w), None, 69, 0, false);
+        v.set_mix(127, 127, 64);
+        let (l, r) = rms(&mut v, 4800);
+        assert!((l - 0.125).abs() < 0.001 && l == r);
+        // Volume and velocity are squared.
+        v.set_mix(127, 64, 0);
+        rms(&mut v, 480);
+        let (l, r) = rms(&mut v, 4800);
+        let hard_left = 0.125 * std::f32::consts::SQRT_2 * sampler::square(64);
+        assert!((l - hard_left).abs() < 0.001 && r == 0.0);
     }
 
     #[test]
@@ -430,12 +510,6 @@ mod tests {
         let v = Voice::new(Rc::new(w), None, 60, 0, false);
         let rate = 28160.0 * 2f64.powf(-9.0 / 12.0);
         assert!((v.step - rate / 48000.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn the_middle_is_even() {
-        let (l, r) = gains(127, 127, 64);
-        assert_eq!(l, r);
     }
 
     #[test]

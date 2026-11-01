@@ -102,7 +102,7 @@ impl Beeps {
         };
         let (volume, pan) = (b.volume, b.pan);
         match &mut b.sounding {
-            Sounding::Wave(v) => v.gains = wave::gains(volume, 127, pan),
+            Sounding::Wave(v) => v.set_mix(volume, 127, pan),
             Sounding::Instrument { .. } => self.synth(|s| {
                 s.volume(h, volume);
                 s.pan(h, pan);

@@ -455,6 +455,15 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   it: @0's `C2` and `C4` at T120 start their release some 16 and 8 ms
   later than 250 and 125 ms. `Q0` lets go within about 10 ms. A waveform
   with attack 127 is at full level from its first sample.
+- `@MP`, `@MA` and `@ML` (depth d, range r, speed s, delay t) swing a
+  sine of d/128 times r units at s/2.56 Hz, starting upward: a unit is
+  a semitone of pitch, 6 dB of volume, or the pan from the middle to one
+  side. `@MP7,1,7,0` moves about ±6 cents every 360 ms, `@MP32,1,20,0`
+  ±25 cents every 130 ms; `@MA24,2,7,0` swings the level 0.77 to 1.31
+  of its middle, and `@ML24,2,7,0` moves the sound right first, each
+  side between about 0.77 and 1.2 of the middle's level, which fits
+  gains of sqrt((1-p)/2) and sqrt((1+p)/2) for a pan p of -1 to 1.
+  `@MP7,1,7,48` did not move within 1.5 s at T120.
 - `WAVSET` while a note of that instrument sounds changes the note at
   once, keeping its envelope: a square swapped for a square of two
   cycles doubles the pitch at the same level. A `WAVSET` square swapped

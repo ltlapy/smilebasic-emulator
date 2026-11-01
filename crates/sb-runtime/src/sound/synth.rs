@@ -7,7 +7,7 @@ use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use super::RATE;
 use super::bank::Bank;
-use super::sampler::Sampler;
+use super::sampler::{Lfo, LfoTarget, Sampler};
 use super::wave::Envelope;
 
 /// Channels a synthesizer has: the tracks' 16 and BEEP's 16 handles.
@@ -37,8 +37,15 @@ pub(crate) trait Synth {
     fn volume(&mut self, channel: usize, value: i32);
     fn expression(&mut self, channel: usize, value: i32);
     fn pan(&mut self, channel: usize, value: i32);
-    /// The vibrato's depth.
+    /// The modulation wheel: the vibrato's depth.
     fn modulation(&mut self, channel: usize, value: i32);
+    /// MML's @MP, @MA or @ML. A SoundFont takes @MP's depth on its
+    /// modulation wheel and ignores the rest.
+    fn lfo(&mut self, channel: usize, target: LfoTarget, lfo: Lfo) {
+        if target == LfoTarget::Pitch {
+            self.modulation(channel, lfo.depth);
+        }
+    }
     fn bend(&mut self, channel: usize, cents: i32);
     /// MML's @E: the envelope the channel's notes start with from now on,
     /// in place of their instruments'; `None` for theirs. A SoundFont's

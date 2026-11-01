@@ -19,10 +19,6 @@ const SILENCE: i32 = -723 * 128;
 /// The instruments' level: @0's A at V127 in the middle records at an
 /// RMS of 850 (TEST40).
 pub(crate) const OUTPUT_GAIN: f32 = 0.256;
-/// The vibrato's speed, and its depth at full modulation, in cents.
-// UNVERIFIED: how SmileBASIC 4's vibrato maps to these.
-const VIBRATO_HZ: f32 = 6.0;
-const VIBRATO_CENTS: f32 = 50.0;
 
 /// The attack's step for attack values 109 to 127: how much of the level
 /// is left after each step, in 256ths. Below 109 it is 255 - attack.
@@ -59,35 +55,109 @@ fn level(value: u8) -> i32 {
     (db10.round() as i32 * 128).max(SILENCE)
 }
 
-/// Left and right gains for a pan of 0 to 127, at equal power, with 64
-/// in the middle (equal on hardware, TEST40).
-// UNVERIFIED: the equal-power curve.
-pub(crate) fn pan_gains(pan: i32) -> [f32; 2] {
-    let pan = pan.clamp(0, 127);
-    let x = if pan <= 64 {
-        pan as f32 / 128.0
-    } else {
-        0.5 + (pan - 64) as f32 / 126.0
-    };
-    let angle = x * std::f32::consts::FRAC_PI_2;
-    [angle.cos(), angle.sin()]
+/// A pan of 0 to 127 as -1 (left) to 1 (right), 64 in the middle.
+pub(crate) fn pan_position(pan: i32) -> f32 {
+    let pan = pan.clamp(0, 127) - 64;
+    pan as f32 / if pan < 0 { 64.0 } else { 63.0 }
+}
+
+/// Left and right gains for a pan position of -1 to 1, at equal power on
+/// a square-root curve: P64 is even on both sides, and @ML's swing fits
+/// this curve rather than a sine and cosine (TEST40).
+pub(crate) fn pan_gains(position: f32) -> [f32; 2] {
+    let p = position.clamp(-1.0, 1.0);
+    [((1.0 - p) * 0.5).sqrt(), ((1.0 + p) * 0.5).sqrt()]
+}
+
+/// What an LFO moves: MML's @MP, @MA and @ML.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LfoTarget {
+    Pitch = 0,
+    Volume = 1,
+    Pan = 2,
+}
+
+/// An LFO's settings, as MML's @MP, @MA and @ML give them: depth,
+/// range, speed and delay. They act as the Nintendo sound engine's:
+/// the wave is a sine of depth / 128 times range units at speed / 2.56
+/// Hz, a unit being a semitone of pitch, 6 dB of volume or the whole
+/// way from the middle to one side of the pan. TEST40 measured @MP7,1,7
+/// at about ±6 cents every 360 ms, @MP32,1,20 at ±25 cents every 130
+/// ms, @MA24,2,7 at ±2.3 dB and @ML24,2,7 swinging each side between
+/// 0.77 and 1.2 of the middle's level, both every 360 ms.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Lfo {
+    pub(crate) depth: i32,
+    pub(crate) range: i32,
+    pub(crate) speed: i32,
+    /// Samples from the note's start until it moves.
+    pub(crate) delay: u32,
+}
+
+impl Lfo {
+    /// The modulation wheel's vibrato, as the sound engine's sequences
+    /// set it, with their default range and speed.
+    pub(crate) fn wheel(depth: i32) -> Lfo {
+        Lfo {
+            depth,
+            range: 1,
+            speed: 16,
+            delay: 0,
+        }
+    }
+
+    pub(crate) fn off(&self) -> bool {
+        self.depth == 0 || self.range == 0 || self.speed == 0
+    }
+}
+
+/// How far round a note's LFO has gone.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LfoState {
+    phase: f32,
+    waited: u32,
+}
+
+impl LfoState {
+    /// The LFO's value at the next envelope step, in its units.
+    pub(crate) fn step(&mut self, lfo: &Lfo) -> f32 {
+        if lfo.off() {
+            return 0.0;
+        }
+        if self.waited < lfo.delay {
+            self.waited += TICK as u32;
+            return 0.0;
+        }
+        let hz = lfo.speed as f32 * 0.390_625;
+        self.phase = (self.phase + hz * TICK as f32 / RATE as f32).fract();
+        (self.phase * std::f32::consts::TAU).sin() * lfo.depth as f32 / 128.0 * lfo.range as f32
+    }
+}
+
+/// The three LFOs of a note.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Lfos {
+    states: [LfoState; 3],
+}
+
+impl Lfos {
+    /// Steps them: the pitch in cents, the gain as a factor and the pan
+    /// as a move of its position.
+    pub(crate) fn step(&mut self, lfos: &[Lfo; 3]) -> (f32, f32, f32) {
+        let [p, v, l] = [0, 1, 2].map(|i| self.states[i].step(&lfos[i]));
+        let gain = if v == 0.0 {
+            1.0
+        } else {
+            10f32.powf(v * 6.0 / 20.0)
+        };
+        (p * 100.0, gain, l)
+    }
 }
 
 /// A 0-127 value as a gain, squared.
 pub(crate) fn square(value: i32) -> f32 {
     let v = value.clamp(0, 127) as f32 / 127.0;
     v * v
-}
-
-/// The vibrato's pitch at a step, in cents, for a depth of 0 to 127;
-/// moves `phase` on a step.
-pub(crate) fn vibrato(phase: &mut f32, depth: i32) -> f32 {
-    if depth <= 0 {
-        return 0.0;
-    }
-    *phase = (*phase + VIBRATO_HZ * TICK as f32 / RATE as f32).fract();
-    let depth = VIBRATO_CENTS * depth.min(127) as f32 / 127.0;
-    depth * (*phase * std::f32::consts::TAU).sin()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,7 +253,7 @@ struct Channel {
     volume: i32,
     expression: i32,
     pan: i32,
-    modulation: i32,
+    lfos: [Lfo; 3],
     bend: i32,
     /// MML's @E, over the instruments' own.
     envelope: Option<MmlEnvelope>,
@@ -196,7 +266,7 @@ impl Default for Channel {
             volume: 100,
             expression: 127,
             pan: 64,
-            modulation: 0,
+            lfos: [Lfo::default(); 3],
             bend: 0,
             envelope: None,
         }
@@ -222,7 +292,7 @@ struct Voice {
     in_tick: usize,
     gains: [f32; 2],
     deltas: [f32; 2],
-    vibrato_phase: f32,
+    lfos: Lfos,
     /// The waveform ran out.
     wave_ended: bool,
     done: bool,
@@ -254,20 +324,22 @@ impl Voice {
     /// should be by the end of the next step.
     fn tick(&mut self, ch: &Channel) {
         self.envelope.step();
+        let (cents, tremolo, pan) = self.lfos.step(&ch.lfos);
         let gain = if self.envelope.stage == Stage::Done {
             0.0
         } else {
             OUTPUT_GAIN
+                * tremolo
                 * self.envelope.gain()
                 * square(ch.volume)
                 * square(ch.expression)
                 * square(i32::from(self.region.volume))
                 * self.velocity
         };
-        let [l, r] = pan_gains(ch.pan + i32::from(self.region.pan) - 64);
+        let [l, r] = pan_gains(pan_position(ch.pan + i32::from(self.region.pan) - 64) + pan);
         let target = [gain * l, gain * r];
         self.deltas = [0, 1].map(|i| (target[i] - self.gains[i]) / TICK as f32);
-        let cents = ch.bend as f32 + vibrato(&mut self.vibrato_phase, ch.modulation);
+        let cents = ch.bend as f32 + cents;
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
     }
 
@@ -333,7 +405,11 @@ impl Synth for Sampler {
     }
 
     fn modulation(&mut self, channel: usize, value: i32) {
-        self.channels[channel].modulation = value;
+        self.channels[channel].lfos[LfoTarget::Pitch as usize] = Lfo::wheel(value);
+    }
+
+    fn lfo(&mut self, channel: usize, target: LfoTarget, lfo: Lfo) {
+        self.channels[channel].lfos[target as usize] = lfo;
     }
 
     fn bend(&mut self, channel: usize, cents: i32) {
@@ -387,7 +463,7 @@ impl Synth for Sampler {
             in_tick: 0,
             gains: [0.0; 2],
             deltas: [0.0; 2],
-            vibrato_phase: 0.0,
+            lfos: Lfos::default(),
             wave_ended: false,
             done: false,
         });

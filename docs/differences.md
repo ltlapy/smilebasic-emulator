@@ -34,10 +34,10 @@ Without them:
   synthesizer (klattsch-core) reading the kana or phoneme letters, so it
   says the same words in another voice. In MML, a sung note (`*WA,C4`)
   plays as a plain note.
-- MML's tremolo (`@MA`) and pan modulation (`@ML`) are read and
-  ignored. Vibrato (`@MP`) takes only its depth. Envelopes (`@E`) do not
-  change a SoundFont's instruments, only SmileBASIC's own and the PSG
-  and user waveforms.
+- With a SoundFont's instruments, MML's tremolo (`@MA`) and pan
+  modulation (`@ML`) are ignored, vibrato (`@MP`) takes only its depth
+  on the modulation wheel, and envelopes (`@E`) do nothing. SmileBASIC's
+  own instruments and the PSG and user waveforms take them all.
 - `SNDMSBAL` balances a subprogram's sound against the main program's
   in a straight line, the full sound of both at 64.
 
