@@ -1528,6 +1528,7 @@ impl Machine {
         sub.rt.focus = false;
         self.rt.focus = true;
         self.focus_moving = None;
+        self.focus_flash = Some((false, 0));
         (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
         (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
         self.rt.sub_running = false;
@@ -1656,25 +1657,26 @@ impl Machine {
         Some((sub.rt.render(), rect))
     }
 
-    /// The yellow border that marks where the focus has just gone, while
-    /// a subprogram runs: the rectangle on the 1280x720 display (the
-    /// subprogram's screen, or the whole display for the main
-    /// interpreter) and its opacity. It shows whole for
-    /// [`FLASH_HOLD`] frames, then fades out over [`FLASH_FADE`].
+    /// The yellow border that marks where the focus has just gone, also
+    /// back to the main interpreter when a subprogram ends: the
+    /// rectangle on the 1280x720 display (the subprogram's screen, or the
+    /// whole display for the main interpreter) and its opacity. It shows
+    /// whole for [`FLASH_HOLD`] frames, then fades out over
+    /// [`FLASH_FADE`].
     pub fn focus_border(&self) -> Option<([i32; 4], u8)> {
         let (to_sub, age) = self.focus_flash?;
-        let sub = self
-            .sub
-            .as_ref()
-            .filter(|s| s.vm.is_some() && self.sub_shown)?;
+        let sub = self.sub.as_ref();
+        if to_sub && !sub.is_some_and(|s| s.vm.is_some() && self.sub_shown) {
+            return None;
+        }
         let alpha = match age.checked_sub(FLASH_HOLD) {
             None => 255,
             Some(n) if n < FLASH_FADE => 255 - 255 * n / FLASH_FADE,
             Some(_) => return None,
         };
-        let rect = match to_sub {
-            true => sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]),
-            false => [0, 0, 1280, 720],
+        let rect = match sub {
+            Some(sub) if to_sub => sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]),
+            _ => [0, 0, 1280, 720],
         };
         Some((rect, alpha as u8))
     }

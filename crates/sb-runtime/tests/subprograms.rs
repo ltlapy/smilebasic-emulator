@@ -274,3 +274,21 @@ fn the_focus_moves_a_few_frames_after_envfocus() {
     // pushed went with the focus to the main interpreter.
     assert!(rows(&m).iter().any(|r| r == "21"), "{:?}", rows(&m));
 }
+
+#[test]
+fn a_yellow_border_marks_where_the_focus_goes() {
+    let dir = TempDir::new("border");
+    let mut m = machine(&dir, "XSUBSCREEN 10,20,300,200\nVSYNC 30\n");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    assert_eq!(m.focus_border(), Some(([10, 20, 300, 200], 255)));
+    // Long after, it has faded out; when the subprogram ends, the main
+    // interpreter's whole display gets it.
+    frames(&mut m, 28);
+    assert!(!m.sub_running());
+    assert_eq!(m.focus_border(), Some(([0, 0, 1280, 720], 255)));
+    frames(&mut m, 14 + 8);
+    assert!(m.focus_border().is_some_and(|(_, a)| a < 255));
+    frames(&mut m, 10);
+    assert_eq!(m.focus_border(), None);
+}

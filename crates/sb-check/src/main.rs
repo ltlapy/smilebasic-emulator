@@ -578,9 +578,9 @@ fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
 }
 
 /// The screen as a PNG, as large as XSCREEN made it.
-/// With a subprogram's screen shown, the whole 1280x720 display, the
-/// screen stretched to it and the subprogram's put where XSUBSCREEN puts
-/// it.
+/// With a subprogram's screen or the border marking the focus shown, the
+/// whole 1280x720 display, the screen stretched to it and the
+/// subprogram's put where XSUBSCREEN puts it.
 fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
     let fb = m.render();
     let mut image = image::Image {
@@ -588,11 +588,16 @@ fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
         height: fb.height() as usize,
         pixels: fb.pixels().to_vec(),
     };
+    let border = m.focus_border();
     if let Some((sub, rect)) = m.sub_screen() {
-        image = with_sub_screen(&image, sub, rect);
-        if let Some((rect, alpha)) = m.focus_border() {
-            draw_focus_border(&mut image, rect, alpha);
+        image = on_display(&image);
+        put_sub_screen(&mut image, sub, rect);
+    }
+    if let Some((rect, alpha)) = border {
+        if image.width != DISPLAY.0 {
+            image = on_display(&image);
         }
+        draw_focus_border(&mut image, rect, alpha);
     }
     std::fs::write(file, image::encode_png(&image))?;
     Ok(())
@@ -622,13 +627,30 @@ fn draw_focus_border(image: &mut image::Image, [x, y, w, h]: [i32; 4], alpha: u8
     }
 }
 
-fn with_sub_screen(main: &image::Image, sub: &Framebuffer, [x, y, w, h]: [i32; 4]) -> image::Image {
-    let (dw, dh) = (1280, 720);
+/// SmileBASIC 4's display, which XSUBSCREEN and the focus's border are
+/// placed on.
+const DISPLAY: (usize, usize) = (1280, 720);
+
+/// The screen stretched to the whole display.
+fn on_display(main: &image::Image) -> image::Image {
+    let (dw, dh) = DISPLAY;
     let mut pixels = Vec::with_capacity(dw * dh);
     for py in 0..dh {
         let sy = py * main.height / dh;
         pixels.extend((0..dw).map(|px| main.pixels[sy * main.width + px * main.width / dw]));
     }
+    image::Image {
+        width: dw,
+        height: dh,
+        pixels,
+    }
+}
+
+/// Puts the subprogram's premultiplied screen over the display where
+/// XSUBSCREEN puts it.
+fn put_sub_screen(display: &mut image::Image, sub: &Framebuffer, [x, y, w, h]: [i32; 4]) {
+    let (dw, dh) = DISPLAY;
+    let pixels = &mut display.pixels;
     let (sw, sh) = (sub.width() as i64, sub.height() as i64);
     for py in y.max(0)..(y + h).min(dh as i32) {
         for px in x.max(0)..(x + w).min(dw as i32) {
@@ -642,11 +664,6 @@ fn with_sub_screen(main: &image::Image, sub: &Framebuffer, [x, y, w, h]: [i32; 4
             let under = channel(*d, 0) | channel(*d, 8) | channel(*d, 16) | channel(*d, 24);
             *d = s.wrapping_add(under);
         }
-    }
-    image::Image {
-        width: dw,
-        height: dh,
-        pixels,
     }
 }
 
