@@ -175,7 +175,7 @@ impl Action {
                 context.paused
             }
             Action::RunToCursor | Action::JumpToCursor => context.paused && context.editing,
-            Action::DebugPanel => context.paused,
+            Action::DebugPanel => context.editing,
             Action::ToggleBreakpoint | Action::BreakpointCondition => context.editing,
             Action::Undo
             | Action::Redo

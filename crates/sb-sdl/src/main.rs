@@ -1149,6 +1149,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                                 }
                             }
                             Some(Hit::Close) => machine.show_panel(false),
+                            // A breakpoint shows its line; a double click
+                            // asks for its condition.
+                            Some(Hit::Breakpoint(i)) => {
+                                if let Some(&(slot, line, _)) = machine.all_breakpoints().get(i) {
+                                    machine.show_line(slot, line);
+                                    if clicks == 2 {
+                                        let size = (display_w, display_h);
+                                        dialog =
+                                            Some(condition_dialog(&mut machine, slot, line, size));
+                                    }
+                                }
+                            }
                             Some(Hit::Variable(i)) if clicks == 2 => {
                                 let panel = &mut debug_panel;
                                 let _ = choose(
@@ -1618,7 +1630,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             // The screens change only while a step runs. Beside the
             // editor's own window, they show in the main one.
-            if !apart && (fresh || machine.is_running() || panel_screens.is_none()) {
+            let screens = !apart && machine.panel_screens();
+            if screens && (fresh || machine.is_running() || panel_screens.is_none()) {
                 let screens = machine.render_screens();
                 let size = (screens.width(), screens.height());
                 let shown = DebugPanel::screen_place(place, size);
@@ -1642,7 +1655,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 .as_ref()
                 .map_or((1, 1), |(_, (size, _))| *size);
             let view = debug_view(&mut machine, &debug_panel);
-            debug = Some((place, view, (!apart).then_some(size)));
+            debug = Some((place, view, screens.then_some(size)));
         }
         panel_was_shown = debug.is_some();
         canvas.set_draw_color(Color::BLACK);
@@ -2161,13 +2174,7 @@ fn debug_action(
         }
         Action::BreakpointCondition => {
             let (slot, line) = cursor?;
-            let text = machine.condition(slot, line).unwrap_or_default();
-            let lines = vec![
-                format!("Stop at {slot}:{line} only when this is true."),
-                "Leave it empty to stop always.".to_string(),
-            ];
-            let open = Dialog::prompt("Breakpoint condition", lines, &text, size);
-            return Some((open, Asking::Condition(slot, line)));
+            return Some(condition_dialog(machine, slot, line, size));
         }
         Action::ClearBreakpoints => {
             machine.clear_breakpoints();
@@ -2197,6 +2204,22 @@ fn debug_action(
         toasts.push(why.to_string());
     }
     None
+}
+
+/// Asks for the condition of the breakpoint on a slot's line.
+fn condition_dialog(
+    machine: &mut Machine,
+    slot: usize,
+    line: u32,
+    size: (u32, u32),
+) -> (Dialog, Asking) {
+    let text = machine.condition(slot, line).unwrap_or_default();
+    let lines = vec![
+        format!("Stop at {slot}:{line} only when this is true."),
+        "Leave it empty to stop always.".to_string(),
+    ];
+    let open = Dialog::prompt("Breakpoint condition", lines, &text, size);
+    (open, Asking::Condition(slot, line))
 }
 
 /// What the debugger's panel shows of the stopped program.
@@ -2234,15 +2257,15 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         })
         .collect();
     let (status, status_failed, keys) = match machine.paused_at() {
-        _ if machine.is_running() => ("Running... Pause stops it".to_string(), false, ""),
-        Some((slot, line)) => {
+        _ if machine.is_running() => ("Running".to_string(), false, ""),
+        Some((slot, line)) if machine.stop_reason().is_some() || !machine.stopped_by_error() => {
             let (mut status, failed) = stop_text(machine.stop_reason(), slot, line);
             if machine.lines_moved(slot) {
                 status.push_str(" - edited since RUN, the old code goes on");
             }
-            (status, failed, "F6/F7 step  Shift+F5 go on")
+            (status, failed, "F6/F7: step  Shift+F5: go on")
         }
-        None => (String::new(), false, ""),
+        _ => ("Not running".to_string(), false, "F5: run"),
     };
     let changed = match machine.stop_reason() {
         Some(StopReason::Changed { watch, .. }) => Some(watch.clone()),
@@ -2259,6 +2282,7 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         status_failed,
         keys: keys.to_string(),
         changed,
+        breakpoints: machine.all_breakpoints(),
     }
 }
 
@@ -2296,6 +2320,9 @@ enum Choice {
     RemoveWatch(usize),
     /// Stop the program when a watch's value changes, or not.
     BreakOnChange(usize),
+    /// Type the condition of the breakpoint on a slot's line.
+    Condition(usize, u32),
+    RemoveBreakpoint(usize, u32),
     AddWatch,
     Hex,
     /// Go to the label or DEF of a name.
@@ -2351,6 +2378,21 @@ fn panel_menu(
                     Choice::CopyValue(copy.unwrap_or_default()),
                 ),
                 hex,
+            ]
+        }
+        Some(Hit::Breakpoint(i)) if i < view.breakpoints.len() => {
+            let (slot, line, _) = view.breakpoints[i];
+            vec![
+                (
+                    "Condition...".to_string(),
+                    true,
+                    Choice::Condition(slot, line),
+                ),
+                (
+                    "Remove breakpoint".to_string(),
+                    true,
+                    Choice::RemoveBreakpoint(slot, line),
+                ),
             ]
         }
         _ => vec![("Add watch".to_string(), true, Choice::AddWatch), hex],
@@ -2435,6 +2477,8 @@ fn choose(
         Choice::EditWatch(i) => panel.edit_watch(i),
         Choice::RemoveWatch(i) => panel.remove_watch(i),
         Choice::BreakOnChange(i) => panel.toggle_break(i),
+        Choice::Condition(slot, line) => return Some(condition_dialog(machine, slot, line, size)),
+        Choice::RemoveBreakpoint(slot, line) => _ = machine.toggle_breakpoint(slot, line),
         Choice::AddWatch => panel.add_watch(String::new()),
         Choice::Hex => panel.hex = !panel.hex,
         Choice::Definition(name) => {

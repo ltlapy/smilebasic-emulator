@@ -89,6 +89,9 @@ pub struct Machine {
     /// The debugger's panel and the stopped line were put away until the
     /// next stop.
     panel_closed: bool,
+    /// The debugger's panel was asked for, so it shows with the editor
+    /// whether a program is stopped or not.
+    panel_pinned: bool,
     /// Slots whose lines the editor moved since the program started. Its
     /// code there is the old one, as CONT goes on with it (checked on
     /// hardware), so it keeps the breakpoints it had.
@@ -242,6 +245,7 @@ impl Machine {
             stepping: None,
             last_run: None,
             panel_closed: false,
+            panel_pinned: false,
             time_limit: None,
             detached: false,
             editor_focus: false,
@@ -916,21 +920,28 @@ impl Machine {
         self.rt.stopped == Stopped::Error
     }
 
-    /// Whether the debugger's panel shows below the editor: while a
-    /// program is stopped, or a step runs.
+    /// Whether the debugger's panel shows below the editor: once asked
+    /// for, and while a program is stopped or a step runs.
     fn panel_shown(&self) -> bool {
-        self.editing && !self.panel_closed && (self.halted.is_some() || self.stepping.is_some())
+        self.editing && (self.panel_pinned || !self.panel_closed && self.panel_screens())
     }
 
-    /// Puts the debugger's panel and the stopped line away until the next
-    /// stop, or shows them again.
+    /// Whether the panel has screens to show: those a stopped program, or
+    /// one a step runs, left.
+    pub fn panel_screens(&self) -> bool {
+        self.halted.is_some() || self.stepping.is_some()
+    }
+
+    /// Shows the debugger's panel with the editor from now on, or puts it
+    /// and the stopped line away until the next stop.
     pub fn show_panel(&mut self, shown: bool) {
+        self.panel_pinned = shown;
         self.panel_closed = !shown;
     }
 
-    /// Whether the debugger's panel would show for a stopped program.
+    /// Whether the debugger's panel shows with the editor.
     pub fn panel_open(&self) -> bool {
-        !self.panel_closed
+        self.panel_shown()
     }
 
     /// Where the debugger's panel starts on the frame [`Machine::render`]
@@ -1002,26 +1013,44 @@ impl Machine {
         Some((vm.slot()?, vm.line()))
     }
 
-    /// The stopped program's top level and DEFs and GOSUBs under way,
-    /// the innermost last.
+    /// The stopped or running program's top level and DEFs and GOSUBs
+    /// under way, the innermost last.
     pub fn calls(&self) -> Vec<Call> {
-        self.halted.as_ref().map(Vm::calls).unwrap_or_default()
+        self.inspected().map(Vm::calls).unwrap_or_default()
     }
 
-    /// The locals of one of the stopped program's DEF calls, by
-    /// [`Call::frame`].
+    /// The program the debugger's panel shows: the stopped one, else the
+    /// one running.
+    fn inspected(&self) -> Option<&Vm> {
+        self.halted.as_ref().or(self.vm.as_ref())
+    }
+
+    /// The locals of one of the stopped or running program's DEF calls,
+    /// by [`Call::frame`].
     pub fn frame_locals(&self, frame: usize) -> Vec<(String, Value)> {
-        (self.halted.as_ref()).map_or_else(Vec::new, |vm| vm.frame_locals(frame))
+        self.inspected()
+            .map_or_else(Vec::new, |vm| vm.frame_locals(frame))
     }
 
-    /// The globals of a slot of the stopped program, with what direct
-    /// mode has changed since it stopped.
+    /// The globals of a slot of the stopped or running program, with
+    /// what direct mode has changed since it stopped; without one, direct
+    /// mode's.
     pub fn slot_globals(&self, slot: usize) -> Vec<(String, Value)> {
-        let Some(vm) = &self.halted else {
-            return Vec::new();
+        let Some(vm) = self.inspected() else {
+            // Without a program, direct mode's variables, as slot 0's.
+            let mut vars: Vec<_> = match slot {
+                0 => self
+                    .vars
+                    .iter()
+                    .map(|(n, v)| (n.clone(), v.clone()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            vars.sort_by(|a, b| a.0.cmp(&b.0));
+            return vars;
         };
         let mut globals = vm.slot_globals(slot);
-        if vm.slot() == Some(slot) {
+        if self.halted.is_some() && vm.slot() == Some(slot) {
             for (name, value) in &mut globals {
                 if let Some(v) = self.vars.get(name) {
                     *value = v.clone();
@@ -1114,6 +1143,18 @@ impl Machine {
         )
     }
 
+    /// Every breakpoint, by slot and line, with its condition.
+    pub fn all_breakpoints(&mut self) -> Vec<(usize, u32, Option<String>)> {
+        self.follow_edits();
+        let mut all = Vec::new();
+        for (slot, lines) in self.breakpoints.iter().enumerate() {
+            for (&line, c) in lines {
+                all.push((slot, line, c.as_ref().map(|w| w.source().to_string())));
+            }
+        }
+        all
+    }
+
     /// The lines of a slot with breakpoints, in order.
     pub fn breakpoints(&mut self, slot: usize) -> Vec<u32> {
         self.follow_edits();
@@ -1172,7 +1213,10 @@ impl Machine {
     fn arm(&mut self, vm: &mut Vm) {
         self.follow_edits();
         give_breakpoints(&self.breakpoints, &self.moved, vm);
-        vm.set_changes(&self.changes);
+        // Direct mode's lines stop at no breakpoint, and on no change.
+        if vm.slot().is_some() {
+            vm.set_changes(&self.changes);
+        }
     }
 
     /// Gives the running and the stopped program the breakpoints.
@@ -1180,7 +1224,9 @@ impl Machine {
         let mut vms = [self.vm.take(), self.halted.take()];
         for vm in vms.iter_mut().flatten() {
             give_breakpoints(&self.breakpoints, &self.moved, vm);
-            vm.set_changes(&self.changes);
+            if vm.slot().is_some() {
+                vm.set_changes(&self.changes);
+            }
         }
         [self.vm, self.halted] = vms;
     }

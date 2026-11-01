@@ -973,11 +973,35 @@ fn watches_stop_where_their_value_changed() {
     assert_eq!(m.paused_at(), Some((0, 5)));
     let r = rows(&m);
     assert_eq!(r[r.len() - 2], "D[1] changed: 0 -> 5");
+    // Direct mode's lines are not stopped by them.
+    enter(&mut m, "B=7");
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+    assert!(!rows(&m).iter().any(|r| r == "Break on 0:1"));
     // Taking the watches away lets the program run to its end.
     m.set_changes(&[]);
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), None);
     assert_eq!(rows(&m).last().unwrap(), "OK");
+}
+
+#[test]
+fn the_panel_shows_before_a_program_runs() {
+    let mut m = debug_machine();
+    enter(&mut m, "Q=5");
+    m.set_slot(0, "A=1".to_string());
+    m.toggle_editor();
+    assert!(!m.panel_open());
+    m.show_panel(true);
+    assert!(m.panel_open());
+    assert!(!m.panel_screens());
+    // Direct mode's variables, as slot 0's.
+    assert_eq!(global(&m, "Q"), Some("Int(5)".to_string()));
+    m.set_condition(0, 1, "Q>1").unwrap();
+    m.toggle_breakpoint(1, 3);
+    let all = m.all_breakpoints();
+    assert_eq!(all, [(0, 1, Some("Q>1".to_string())), (1, 3, None)]);
+    m.show_panel(false);
+    assert!(!m.panel_open());
 }
 
 #[test]

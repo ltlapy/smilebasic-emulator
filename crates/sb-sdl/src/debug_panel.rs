@@ -21,6 +21,8 @@ const SELECTED: u32 = 0xFF30_3850;
 /// The mark of a watch that stops the program when it changes, red as
 /// the editor's breakpoints.
 const BREAKS: u32 = 0xFFDC_2828;
+/// A breakpoint's condition, orange as in the editor.
+const CONDITION: u32 = 0xFFE0_7818;
 /// The value of the watch whose change stopped the program.
 const CHANGED: u32 = 0xFFFF_DC00;
 /// Every other row of the lists.
@@ -66,6 +68,8 @@ pub struct View {
     pub keys: String,
     /// The watch whose change stopped the program.
     pub changed: Option<String>,
+    /// Every breakpoint: slot, line and condition.
+    pub breakpoints: Vec<(usize, u32, Option<String>)>,
 }
 
 /// What a click on the panel chose.
@@ -78,6 +82,8 @@ pub enum Hit {
     Variable(usize),
     Watch(usize),
     AddWatch,
+    /// A breakpoint, by its place in [`View::breakpoints`].
+    Breakpoint(usize),
     /// The button that puts the panel away.
     Close,
 }
@@ -318,7 +324,7 @@ impl DebugPanel {
             Hit::AddWatch => self.add_watch(String::new()),
             Hit::Close => {}
             Hit::Watch(i) if double => self.edit_watch(i),
-            Hit::Watch(_) | Hit::Variable(_) => {}
+            Hit::Watch(_) | Hit::Variable(_) | Hit::Breakpoint(_) => {}
         }
         hit
     }
@@ -606,6 +612,49 @@ impl DebugPanel {
                 _ => m.draw(fb, font, cx, y + m.text, "+ add", DISABLED),
             }
             self.hits.push((row, Hit::AddWatch));
+            y += m.line;
+        }
+
+        // The breakpoints, with their conditions.
+        y += m.pad;
+        if !view.breakpoints.is_empty() && y + 2 * m.line <= bottom {
+            m.draw(fb, font, cx, y + m.text, "BREAKPOINTS", HEADING);
+            y += m.line;
+        }
+        for (i, (slot, line, condition)) in view.breakpoints.iter().enumerate() {
+            if y + m.line > bottom {
+                break;
+            }
+            let row = Rect {
+                x: cx - m.pad / 2,
+                y,
+                w: call_w,
+                h: m.line,
+            };
+            if i % 2 == 1 {
+                fill(fb, row, STRIPE);
+            }
+            fill(
+                fb,
+                Rect {
+                    w: m.pad / 2,
+                    ..row
+                },
+                BREAKS,
+            );
+            let at = format!("{slot}:{line}");
+            m.draw(fb, font, cx, y + m.text, &at, TEXT);
+            if let Some(condition) = condition {
+                let x = cx + (at.len() as u32 + 1) * m.char;
+                let room = call_chars.saturating_sub(at.len() + 1);
+                m.draw(fb, font, x, y + m.text, &cut(condition, room), CONDITION);
+                if condition.chars().count() > room {
+                    self.tips
+                        .push((row, vec![format!("{at} when {condition}")]));
+                }
+            }
+            self.hits.push((row, Hit::Breakpoint(i)));
+            y += m.line;
         }
 
         // The variables, under their tabs.
@@ -703,8 +752,8 @@ impl DebugPanel {
         if reason > room {
             self.tips.push((status, vec![view.status.clone()]));
         } else if !view.keys.is_empty() && reason + 3 + view.keys.chars().count() <= room {
-            let x = x + (reason as u32 + 3) * m.char;
-            m.draw(fb, font, x, y, &view.keys, DISABLED);
+            let x = x + reason as u32 * m.char;
+            m.draw(fb, font, x, y, &format!(" / {}", view.keys), DISABLED);
         }
         self.draw_tip(fb, font);
     }
