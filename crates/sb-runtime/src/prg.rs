@@ -178,10 +178,7 @@ impl Runtime {
     }
 
     /// Changes the edited slot's lines. `f` tells how it moved them, in
-    /// order. The slot does not count as unsaved for that: a program
-    /// LOADing over a slot it changed so is not asked about it (checked on
-    /// hardware with a program that does so for each song).
-    // UNVERIFIED: that NEW and PROJECT do not warn of such changes either.
+    /// order. The slot does not count as unsaved for that.
     fn change_lines(
         &mut self,
         edit: PrgEdit,

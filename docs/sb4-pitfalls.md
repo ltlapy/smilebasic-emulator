@@ -602,6 +602,9 @@ Checked with TTEST36.
   This is found when the call runs, not when the program compiles, so
   the lines before it run. `HSV` with one argument is `Wrong number of
   OUT arguments`: it is read as the `OUT` form.
+- Changes made with `PRGSET`, `PRGINS` and `PRGDEL` do not count as
+  unsaved: `LOAD` over the slot from a program, `NEW` and `PROJECT` do
+  not ask about them (DAW_MUSIC, and by hand).
 - `RETURN 1,2` (more than one value) is a `Syntax error` only when it
   runs: a program with one in a DEF it never calls runs normally
   (KRB_OGIRI_SMBOMB). A bare `GOTO` or `GOSUB` likewise runs the lines
