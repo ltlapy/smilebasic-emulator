@@ -40,6 +40,9 @@ Without them:
   modulation (`@ML`) are ignored, vibrato (`@MP`) takes only its depth
   on the modulation wheel, and envelopes (`@E`) do nothing. SmileBASIC's
   own instruments and the PSG and user waveforms take them all.
+- A note whose envelope decays to a sustain of 0 ends there, at -72.3
+  dB, where SmileBASIC 4 holds it until it is let go: drums that ignore
+  being let go would otherwise sound, unheard, for ever.
 - `SNDMSBAL` balances a subprogram's sound against the main program's
   in a straight line, the full sound of both at 64.
 

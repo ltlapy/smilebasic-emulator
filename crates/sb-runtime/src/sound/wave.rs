@@ -48,9 +48,7 @@ impl Envelope {
 }
 
 /// The values as SmileBASIC's own instruments take them: waveforms move
-/// their level in the same steps.
-// UNVERIFIED: that WAVSET's and @E's values mean what the sound archive's
-// instruments' do.
+/// their level in the same steps, with no hold.
 impl From<Envelope> for Adshr {
     fn from(e: Envelope) -> Adshr {
         let v = |x: i32| x.clamp(0, 127) as u8;

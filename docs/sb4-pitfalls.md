@@ -485,6 +485,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   from its middle once it has passed: `@MP7,1,7,48` did not move within
   1.5 s at T120. `@MON` turns all
   three back on as last set.
+- Envelopes move a millisecond at a time in tenths of a dB: the attack
+  multiplies the level, starting from -90.4 dB, until it is within
+  0.003 dB of full; the hold lasts (h+1)^2/4 ms; decay and release take
+  off 65535 tenths a millisecond at 127, 24 at 126, (2v+1)/640 for v up
+  to 49 and 12/(126-v) above; the sustain level is 400 log10(s/127)
+  tenths, no lower than -723 (-722 for 1); a note ends below -90.4 dB.
+  `@E` sets only attack, decay, sustain and release and keeps an
+  instrument's hold; `WAVSET` and `WAVSETA` have no hold.
 - A portamento (`_`) glides during the note it follows, in a straight
   line in semitones over that note's gate, and the next note goes on
   from there without starting again: `T120O4C2_G2` slides from C to G

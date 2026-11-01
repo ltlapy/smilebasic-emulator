@@ -12,49 +12,58 @@ use super::wave::Envelope as MmlEnvelope;
 /// Samples between envelope steps: 5 ms.
 // UNVERIFIED: how often SmileBASIC 4 steps its envelopes.
 pub(crate) const TICK: usize = RATE as usize / 200;
+/// Milliseconds in a step: the envelope moves a millisecond at a time.
+const TICK_MS: u32 = 5;
 /// Notes sounding at once; the oldest makes way for a new one.
 pub(crate) const MAX_VOICES: usize = 48;
-/// The level of silence, in 1/128ths of 0.1 dB.
-const SILENCE: i32 = -723 * 128;
+/// Where the attack starts, in 0.1 dB: the note is silent below it.
+const FLOOR: f32 = -904.0;
+/// The lowest sustain level, in 0.1 dB.
+const SUSTAIN_FLOOR: f32 = -723.0;
 /// The instruments' level: @0's A at V127 in the middle records at an
 /// RMS of 850 (TEST40), its regions' volume being 88. A full-scale sample
 /// at region volume 127 then plays about as loud as a full-scale WAVSET
 /// waveform, as the PSG's do (TEST41).
 pub(crate) const OUTPUT_GAIN: f32 = 0.1774;
 
-/// The attack's step for attack values 109 to 127: how much of the level
-/// is left after each step, in 256ths. Below 109 it is 255 - attack.
-// UNVERIFIED: these are the Nintendo DS sound engine's values, assumed
-// to carry over to SmileBASIC 4.
+/// The attack for attack values 109 to 127: how much of the level is
+/// left after 5 ms, in 256ths. Below 109 it is 255 - attack.
+// These are the Nintendo DS sound engine's values; SmileBASIC 4's own
+// steps of a millisecond are their fifth roots.
 const FAST_ATTACK: [i32; 19] = [
     0, 1, 5, 14, 26, 38, 51, 63, 73, 84, 92, 100, 109, 116, 123, 127, 132, 137, 143,
 ];
 
-fn attack_factor(attack: u8) -> i32 {
-    match attack.min(127) {
+/// How much of the level is left after each millisecond of the attack.
+fn attack_factor(attack: u8) -> f32 {
+    let per_5ms = match attack.min(127) {
         a @ 109.. => FAST_ATTACK[usize::from(127 - a)],
         a => 255 - i32::from(a),
+    };
+    (per_5ms as f32 / 256.0).powf(0.2)
+}
+
+/// How far the level falls each millisecond for a decay or release
+/// value, in 0.1 dB.
+fn fall_rate(value: u8) -> f32 {
+    match value.min(127) {
+        127 => 65535.0,
+        126 => 24.0,
+        v @ 0..50 => f32::from(v * 2 + 1) / 640.0,
+        v => 12.0 / f32::from(126 - v),
     }
 }
 
-/// How far the level falls each step for a decay or release value.
-// UNVERIFIED: as attack_factor.
-fn fall_rate(value: u8) -> i32 {
-    match i32::from(value.min(127)) {
-        127 => 0xFFFF,
-        126 => 0x3C00,
-        v @ 0..50 => v * 2 + 1,
-        v => 0x1E00 / (126 - v),
+/// A 0-127 sustain level in 0.1 dB, squared as Nintendo's volumes are,
+/// and no lower than -72.3 dB (-72.2 for 1).
+fn level(value: u8) -> f32 {
+    match value.min(127) {
+        0 => SUSTAIN_FLOOR,
+        1 => SUSTAIN_FLOOR + 1.0,
+        v => (400.0 * (f32::from(v) / 127.0).log10())
+            .round()
+            .max(SUSTAIN_FLOOR),
     }
-}
-
-/// A 0-127 level as 1/128ths of 0.1 dB, squared as Nintendo's volumes are.
-fn level(value: u8) -> i32 {
-    if value == 0 {
-        return SILENCE;
-    }
-    let db10 = 400.0 * (f32::from(value.min(127)) / 127.0).log10();
-    (db10.round() as i32 * 128).max(SILENCE)
 }
 
 /// A pan of 0 to 127 as -1 (left) to 1 (right), 64 in the middle:
@@ -162,31 +171,45 @@ pub(crate) fn square(value: i32) -> f32 {
     v * v
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Stage {
     Attack,
-    Hold(u8),
+    /// Milliseconds of the hold left.
+    Hold(u32),
     Decay,
     Sustain,
     Release,
     Done,
 }
 
-/// A note's level as SmileBASIC's instruments move it, stepped every
-/// [`TICK`] samples. The PSG and user waveforms move the same way.
+/// A note's level as SmileBASIC's instruments move it, in 0.1 dB a
+/// millisecond at a time, stepped every [`TICK`] samples. The PSG and
+/// user waveforms move the same way. The attack multiplies the level,
+/// which starts at -90.4 dB; the hold lasts (hold + 1)^2 / 4 ms; decay and
+/// release take the level down in a straight line, and the note ends
+/// below -90.4 dB.
 #[derive(Clone, Debug)]
 pub(crate) struct Envelope {
-    adshr: Adshr,
     stage: Stage,
-    level: i32,
+    level: f32,
+    attack: f32,
+    hold: u32,
+    decay: f32,
+    sustain: f32,
+    release: f32,
 }
 
 impl Envelope {
     pub(crate) fn new(adshr: Adshr) -> Envelope {
+        let hold = (u32::from(adshr.hold.min(127)) + 1).pow(2) / 4;
         Envelope {
-            adshr,
             stage: Stage::Attack,
-            level: SILENCE,
+            level: FLOOR,
+            attack: attack_factor(adshr.attack),
+            hold,
+            decay: fall_rate(adshr.decay),
+            sustain: level(adshr.sustain),
+            release: fall_rate(adshr.release),
         }
     }
 
@@ -206,24 +229,37 @@ impl Envelope {
         self.stage == Stage::Done
     }
 
+    /// Moves on a step's milliseconds.
     pub(crate) fn step(&mut self) {
-        let e = self.adshr;
+        for _ in 0..TICK_MS {
+            self.step_ms();
+        }
+    }
+
+    fn step_ms(&mut self) {
         match self.stage {
             Stage::Attack => {
-                self.level = -((-self.level * attack_factor(e.attack)) >> 8);
-                if self.level == 0 {
-                    // UNVERIFIED: hold lasts a step for each unit.
-                    self.stage = Stage::Hold(e.hold);
+                self.level *= self.attack;
+                if self.level > -0.03125 {
+                    self.level = 0.0;
+                    self.stage = Stage::Hold(self.hold);
                 }
             }
-            Stage::Hold(0) => self.stage = Stage::Decay,
+            Stage::Hold(0) => {
+                self.stage = Stage::Decay;
+                self.step_ms();
+            }
             Stage::Hold(n) => self.stage = Stage::Hold(n - 1),
             Stage::Decay => {
-                let sustain = level(e.sustain);
-                self.level -= fall_rate(e.decay);
-                if self.level <= sustain {
-                    self.level = sustain;
-                    self.stage = if sustain <= SILENCE {
+                self.level -= self.decay;
+                if self.level <= self.sustain {
+                    self.level = self.sustain;
+                    // SmileBASIC 4 holds a sustain of 0 at -72.3 dB until
+                    // the note is let go; here the note ends there, so that
+                    // drums that ignore being let go cannot pile up notes
+                    // nobody hears.
+                    // self.stage = Stage::Sustain;
+                    self.stage = if self.sustain <= SUSTAIN_FLOOR {
                         Stage::Done
                     } else {
                         Stage::Sustain
@@ -232,9 +268,9 @@ impl Envelope {
             }
             Stage::Sustain | Stage::Done => {}
             Stage::Release => {
-                self.level -= fall_rate(e.release);
-                if self.level <= SILENCE {
-                    self.level = SILENCE;
+                self.level -= self.release;
+                if self.level < FLOOR {
+                    self.level = FLOOR;
                     self.stage = Stage::Done;
                 }
             }
@@ -242,10 +278,10 @@ impl Envelope {
     }
 
     pub(crate) fn gain(&self) -> f32 {
-        if self.level <= SILENCE {
+        if self.stage == Stage::Done {
             return 0.0;
         }
-        10f32.powf(self.level as f32 / (128.0 * 200.0))
+        10f32.powf(self.level / 200.0)
     }
 }
 
@@ -460,7 +496,7 @@ impl Synth for Sampler {
             step: 0.0,
             velocity: square(velocity),
             envelope: Envelope::new(match self.channels[channel].envelope {
-                // UNVERIFIED: @E keeps the instrument's hold.
+                // @E keeps the instrument's hold.
                 Some(e) => Adshr {
                     hold: region.envelope.hold,
                     ..e.into()
@@ -540,19 +576,19 @@ pub struct Times {
 }
 
 pub fn times(adshr: Adshr) -> Times {
-    let step = TICK as f64 / f64::from(RATE);
     let mut e = Envelope::new(adshr);
-    let mut steps = 0;
-    while e.stage == Stage::Attack && steps < 100_000 {
-        e.step();
-        steps += 1;
+    let mut ms = 0;
+    while e.stage == Stage::Attack && ms < 1_000_000 {
+        e.step_ms();
+        ms += 1;
     }
-    let fall = |value: u8| f64::from(-SILENCE) / f64::from(fall_rate(value)) * step;
+    // 100 dB, a thousand tenths, at so many tenths a millisecond.
+    let fall = |value: u8| 1.0 / f64::from(fall_rate(value));
     Times {
-        attack: f64::from(steps) * step,
-        hold: f64::from(adshr.hold) * step,
+        attack: f64::from(ms) / 1000.0,
+        hold: f64::from(e.hold) / 1000.0,
         decay: fall(adshr.decay),
-        sustain_db: f64::from(-level(adshr.sustain)) / 1280.0,
+        sustain_db: f64::from(-level(adshr.sustain)) / 10.0,
         release: fall(adshr.release),
     }
 }
@@ -635,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn decay_to_silence_ends_the_note() {
+    fn decay_to_a_sustain_of_0_ends_the_note() {
         let mut s = sampler(
             Adshr {
                 decay: 120,
@@ -651,14 +687,18 @@ mod tests {
 
     #[test]
     fn levels_follow_the_curves() {
-        assert_eq!(level(127), 0);
-        assert_eq!(level(0), SILENCE);
+        assert_eq!(level(127), 0.0);
+        assert_eq!(level(0), -723.0);
+        assert_eq!(level(1), -722.0);
+        assert_eq!(level(3), -651.0);
         // Half the value is about -12 dB, squared.
-        assert_eq!(level(64) / 128, -119);
-        assert_eq!(attack_factor(127), 0);
-        assert_eq!(attack_factor(0), 255);
-        assert_eq!(fall_rate(127), 0xFFFF);
-        assert_eq!(fall_rate(10), 21);
+        assert_eq!(level(64), -119.0);
+        assert_eq!(attack_factor(127), 0.0);
+        assert!((attack_factor(0) - 0.999_217_5).abs() < 1e-6);
+        assert!((attack_factor(109) - 0.890_06).abs() < 1e-4);
+        assert_eq!(fall_rate(127), 65535.0);
+        assert_eq!(fall_rate(10), 21.0 / 640.0);
+        assert_eq!(fall_rate(116), 1.2);
     }
 
     #[test]
@@ -670,9 +710,10 @@ mod tests {
             hold: 2,
             release: 127,
         });
-        assert_eq!(t.attack, 0.005);
-        assert_eq!(t.hold, 0.01);
-        assert!((t.decay - 92544.0 / 15360.0 * 0.005).abs() < 1e-9);
+        assert_eq!(t.attack, 0.001);
+        // (2 + 1)^2 / 4 ms.
+        assert_eq!(t.hold, 0.002);
+        assert!((t.decay - 1.0 / 24.0).abs() < 1e-9);
         assert_eq!(t.sustain_db, 72.3);
         assert!(times(Adshr::default()).attack > 1.0);
     }
