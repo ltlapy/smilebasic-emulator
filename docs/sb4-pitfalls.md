@@ -319,6 +319,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `SPCHR` during `"UV"` or `"I"`, `SPROT` during `"R"`, `SPSCALE`
   during `"S"` and `SPOFS` during `"Z"`.
 - Spaces after an animation target's name are left out (`"S "`).
+- The manual says W and H of `SPCHR id,[U],[V],[W],[H],[attr]` become
+  16 when omitted, but empty slots before a later argument keep the
+  sprite's size: `SPCHR id,,,,,#A_REVH` only turns a 24x32 sprite
+  around (a published game relies on it).
 
 ## Graphics and layers
 

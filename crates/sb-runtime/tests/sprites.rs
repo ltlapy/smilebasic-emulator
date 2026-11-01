@@ -61,6 +61,20 @@ fn image_forms_show_hide_and_clear() {
 }
 
 #[test]
+fn empty_image_slots_keep_the_size() {
+    // `SPCHR ID,,,,,#A_REVH` only turns a sprite around; W and H left
+    // empty before a later argument are not reset to 16.
+    let (_, out) = run("SPSET 1,32,48,24,32,4,0\n\
+         SPCHR 1,,,,,#A_REVH:SPCHR 1 OUT U,V,W,H,A\n\
+         ?U;\",\";V;\",\";W;\",\";H;\",\";A;\" \";\n\
+         SPCHR 1,,,40,,:SPCHR 1 OUT U,V,W,H,A\n\
+         ?W;\",\";H;\",\";A;\" \";\n\
+         SPCHR 1,,,40:SPCHR 1 OUT U,V,W,H,A\n\
+         ?W;\",\";H;\",\";A");
+    assert_eq!(out, "32,48,24,32,4 40,32,4 40,16,0");
+}
+
+#[test]
 fn definitions() {
     let (_, out) = run("SPDEF 20,64,96,32,16,8,4,2\n\
          SPDEF 20 OUT U,V,W,H,X,Y,A:?U;V;W;H;X;Y;A;\" \";\n\

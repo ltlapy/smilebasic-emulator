@@ -430,13 +430,19 @@ impl Runtime {
                 }
                 let s = self.sprite(&args[0])?;
                 stop(s, Target::Uv);
-                // Omitted U and V stay; W and H become 16 and the
-                // attributes 0, as the reference describes.
+                // Omitted U and V stay. W, H and the attributes left off
+                // the end become 16, 16 and 0, as the reference
+                // describes; an empty slot before a later argument keeps
+                // the sprite's own value, so `SPCHR ID,,,,,#A_REVH` only
+                // flips the sprite.
+                // UNVERIFIED: that W and H left off the end become 16
+                // rather than staying too.
+                let given = |i: usize| i < args.len();
                 s.u = u.unwrap_or(s.u);
                 s.v = v.unwrap_or(s.v);
-                s.w = w.unwrap_or(16);
-                s.h = h.unwrap_or(16);
-                s.attr = attr.unwrap_or(0);
+                s.w = w.unwrap_or(if given(3) { s.w } else { 16 });
+                s.h = h.unwrap_or(if given(4) { s.h } else { 16 });
+                s.attr = attr.unwrap_or(if given(5) { s.attr } else { 0 });
                 Ok(vec![])
             }
             (Command::Spchr, Want::Outs(n @ (2 | 4 | 5)), 1) => {
