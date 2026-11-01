@@ -348,11 +348,12 @@ impl Runtime {
                         Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform")
                     })?;
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
-                let wave = eight_bit(bytes.iter().map(|&b| f64::from(b)), base_note, envelope);
+                let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
+                let wave = eight_bit(&bytes, 512, base_note, envelope);
                 self.sound.waves.borrow_mut().user[n] = Some(Rc::new(wave));
                 Ok(vec![])
             }
-            // SmileBASIC 3's form: one cycle of 8-bit samples.
+            // The 8-bit form, SmileBASIC 3's.
             (Command::Wavseta, Want::Outs(0), 6..=9) => {
                 let (n, envelope) = wave_head(args)?;
                 let all = samples(&args[5])?;
@@ -360,7 +361,8 @@ impl Runtime {
                 let last = all.len() as i32 - 1;
                 let start = opt_in_range("start", args.get(7), 0..=last, 0)? as usize;
                 let end = opt_in_range("end", args.get(8), start as i32..=last, last)? as usize;
-                let wave = eight_bit(all[start..=end].iter().copied(), base_note, envelope);
+                let bytes = &all[start..=end];
+                let wave = eight_bit(bytes, bytes.len().next_power_of_two(), base_note, envelope);
                 self.sound.waves.borrow_mut().user[n] = Some(Rc::new(wave));
                 Ok(vec![])
             }

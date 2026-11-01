@@ -445,6 +445,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   samples lasts eight cycles of the note. Songs written for SmileBASIC 4
   repeat their cycles to fill eight (a 16-sample pattern of two cycles
   times 4, one of a single cycle times 8, both at reference pitch 69).
+  Any length from 16 to 512 plays a pass at 55 Hz at its reference
+  pitch.
+- `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its
+  n samples at 28160 Hz over the next power of two at or above n: at
+  reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16
+  samples sound 2400 cents up, 512 3600 cents down, 2048 6000 down.
 - MML's volume (`V`) and velocity (`@V`) both start at 127 and both
   scale the level by their square: `V64` and `V127@V64` record alike.
   `P64` is the middle, even on both sides. Recorded with `RECSTART`, an

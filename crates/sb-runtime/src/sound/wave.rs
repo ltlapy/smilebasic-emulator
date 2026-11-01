@@ -65,26 +65,25 @@ impl From<Envelope> for Adshr {
 // UNVERIFIED: that 8-bit and 16-bit samples share a scale.
 const EIGHT_BIT: f32 = 1.0 / 128.0;
 
-/// A user waveform from WAVSET or SmileBASIC 3's WAVSETA: 8-bit samples,
-/// offset by 128. SmileBASIC 4 plays a pass of the samples as eight
-/// cycles of A at the base note, whatever their number: 32 samples of
-/// one cycle sound three octaves down (TEST40), and songs written for
-/// SmileBASIC 4 repeat their cycles to fill eight. Past 512 samples the
-/// rate stays that of 512, 28160 Hz at the base note, the 16-bit form's
-/// own default.
-// UNVERIFIED: lengths other than 32, and the rate past 512 samples.
-pub fn eight_bit(bytes: impl IntoIterator<Item = f64>, base_note: i32, envelope: Envelope) -> Wave {
-    let samples: Vec<f32> = bytes
-        .into_iter()
-        .map(|b| (b as f32 - 128.0) * EIGHT_BIT)
+/// Samples a second 8-bit waveforms play at their reference pitch.
+pub const EIGHT_BIT_RATE: f64 = 28160.0;
+
+/// A user waveform from WAVSET or WAVSETA's 8-bit form: samples offset
+/// by 128, stretched to `pass` samples by taking the one at or before
+/// each, and played at [`EIGHT_BIT_RATE`] at the base note. WAVSET
+/// stretches to 512 samples, so a pass of any length is 55 Hz; WAVSETA
+/// to the next power of two.
+pub fn eight_bit(bytes: &[f64], pass: usize, base_note: i32, envelope: Envelope) -> Wave {
+    let n = bytes.len();
+    let samples: Vec<f32> = (0..pass)
+        .map(|i| (bytes[i * n / pass] as f32 - 128.0) * EIGHT_BIT)
         .collect();
-    let len = samples.len();
     Wave {
         samples,
         base_note,
-        rate: None,
-        cycle: len.min(512) as f64 / 8.0,
-        looped: (0, len),
+        rate: Some(EIGHT_BIT_RATE),
+        cycle: 0.0,
+        looped: (0, pass),
         beep_loop: true,
         envelope,
     }
@@ -481,12 +480,9 @@ mod tests {
     fn waveforms_are_as_loud_as_measured() {
         // A full-scale square at V127 in the middle: an eighth of full
         // scale on each side.
-        let w = eight_bit(
-            (0..32).map(|i| if i < 16 { 0.0 } else { 256.0 }),
-            69,
-            Envelope::ORGAN,
-        );
-        let mut v = Voice::new(Rc::new(w), None, 69, 0, false);
+        let bytes: Vec<f64> = (0..32).map(|i| if i < 16 { 0.0 } else { 256.0 }).collect();
+        let w = eight_bit(&bytes, 512, 69, Envelope::ORGAN);
+        let mut v = Voice::new(Rc::new(w), None, 69, 0, true);
         v.set_mix(127, 127, 64);
         let (l, r) = rms(&mut v, 4800);
         assert!((l - 0.125).abs() < 0.001 && l == r);
@@ -499,20 +495,23 @@ mod tests {
     }
 
     #[test]
-    fn eight_bit_waveforms_play_eight_cycles_a_pass() {
-        // 32 samples at A: a pass at 55 Hz, three octaves down.
-        let w = eight_bit((0..32).map(f64::from), 69, Envelope::ORGAN);
+    fn eight_bit_waveforms_play_a_pass_at_their_rate() {
+        // WAVSET's 32 samples at A, stretched to 512: a pass at 55 Hz,
+        // three octaves down.
+        let bytes: Vec<f64> = (0..32).map(f64::from).collect();
+        let w = eight_bit(&bytes, 512, 69, Envelope::ORGAN);
+        assert_eq!(w.samples[15], w.samples[0]);
+        assert_ne!(w.samples[16], w.samples[0]);
         let v = Voice::new(Rc::new(w), None, 69, 0, false);
-        assert!((v.step - 32.0 * 55.0 / 48000.0).abs() < 1e-9);
+        assert!((v.step - 512.0 * 55.0 / 48000.0).abs() < 1e-9);
         // The base note moves it: at 57, the same A sounds an octave up.
-        let w = eight_bit((0..32).map(f64::from), 57, Envelope::ORGAN);
+        let w = eight_bit(&bytes, 512, 57, Envelope::ORGAN);
         let v = Voice::new(Rc::new(w), None, 69, 0, false);
-        assert!((v.step - 32.0 * 110.0 / 48000.0).abs() < 1e-9);
-        // Past 512 samples, 28160 samples a second at the base note.
-        let w = eight_bit((0..2048).map(|_| 128.0), 60, Envelope::ORGAN);
-        let v = Voice::new(Rc::new(w), None, 60, 0, false);
-        let rate = 28160.0;
-        assert!((v.step - rate / 48000.0).abs() < 1e-9);
+        assert!((v.step - 512.0 * 110.0 / 48000.0).abs() < 1e-9);
+        // WAVSETA's 32 samples stay 32: a pass at 880 Hz.
+        let w = eight_bit(&bytes, 32, 69, Envelope::ORGAN);
+        let v = Voice::new(Rc::new(w), None, 69, 0, false);
+        assert!((v.step - 32.0 * 880.0 / 48000.0).abs() < 1e-9);
     }
 
     #[test]
