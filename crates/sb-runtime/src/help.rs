@@ -197,25 +197,104 @@ impl Help {
     }
 
     /// The topic for the command at the cursor, or just left of it, in a
-    /// line; `col` is the cursor's column in UTF-16 units.
+    /// line; `col` is the cursor's column in UTF-16 units. Elsewhere in a
+    /// command's arguments, up to the end of the line, it is the function
+    /// whose brackets the cursor is in, else the statement's command, as
+    /// SmileBASIC 4's F1 finds it.
     pub fn lookup(&self, line: &[u16], col: usize) -> Lookup {
-        let Some(word) = word_at(line, col) else {
-            return Lookup::Nothing;
-        };
+        let word = word_at(line, col);
+        let around = word.iter().cloned().chain(enclosing(line, col));
+        for name in around {
+            if let Some(topic) = self.topic(&name) {
+                return Lookup::Topic(topic);
+            }
+        }
+        match word {
+            Some(word) => Lookup::Unknown(word),
+            None => Lookup::Nothing,
+        }
+    }
+
+    /// The topic a word names, if any.
+    fn topic(&self, word: &str) -> Option<String> {
         let alias = ALIASES.iter().find(|(w, _)| *w == word).map(|&(_, t)| t);
         // A name with a type suffix (`LEFT$`) is a topic of its own, as
         // are `ARRAY%`; for others the suffix belongs to a variable of
         // the same name.
         let bare = word.trim_end_matches(['$', '%', '#']);
-        [Some(word.as_str()), alias, Some(bare)]
+        [Some(word), alias, Some(bare)]
             .into_iter()
             .flatten()
             .find(|t| self.has(t))
-            .map_or_else(
-                || Lookup::Unknown(word.clone()),
-                |t| Lookup::Topic(t.into()),
-            )
+            .map(String::from)
     }
+}
+
+/// The names whose arguments the cursor at `col` is among, innermost
+/// first: the functions whose brackets are still open, then the
+/// statement's command. Strings and comments are skipped.
+fn enclosing(line: &[u16], col: usize) -> Vec<String> {
+    let upper = |r: &[u16]| String::from_utf16_lossy(r).to_ascii_uppercase();
+    let mut statement = None;
+    // The word before each open bracket.
+    let mut calls: Vec<Option<String>> = Vec::new();
+    let mut word_start = None;
+    let mut last_word: Option<(usize, usize)> = None;
+    let mut i = 0;
+    let end = col.min(line.len());
+    while i < end {
+        let c = line[i];
+        if is_word(c) || (word_start.is_some() && is_suffix(c)) {
+            word_start.get_or_insert(i);
+            i += 1;
+            continue;
+        }
+        if let Some(start) = word_start.take() {
+            let word = upper(&line[start..i]);
+            last_word = Some((start, i));
+            match word.as_str() {
+                // A new statement starts after THEN and ELSE.
+                "THEN" | "ELSE" => (statement, last_word) = (None, None),
+                "REM" => return Vec::new(),
+                _ if statement.is_none() && !word.starts_with(|c: char| c.is_ascii_digit()) => {
+                    statement = Some(word)
+                }
+                _ => {}
+            }
+        }
+        match c {
+            0x22 => {
+                // A string runs to its closing quote.
+                i += 1;
+                while i < end && line[i] != 0x22 {
+                    i += 1;
+                }
+            }
+            // In a comment, nothing.
+            0x27 => return Vec::new(),
+            0x3A => {
+                (statement, last_word) = (None, None);
+                calls.clear();
+            }
+            0x3F if statement.is_none() => statement = Some("?".into()),
+            0x28 => {
+                let before = last_word
+                    .filter(|&(_, e)| e == i)
+                    .map(|(s, e)| upper(&line[s..e]));
+                calls.push(before);
+            }
+            0x29 => _ = calls.pop(),
+            _ => {}
+        }
+        i += 1;
+    }
+    // The cursor in a word that started a statement counts for it.
+    if statement.is_none()
+        && let Some(start) = word_start
+    {
+        statement = Some(upper(&line[start..end]));
+    }
+    calls.into_iter().rev().flatten().chain(statement).collect()
 }
 
 fn array(elem: ElemType, dims: Vec<usize>, data: ArrayData) -> Value {
@@ -488,6 +567,24 @@ mod tests {
         assert_eq!(at("IF% 1", 1), Lookup::Topic("IF".into()));
         assert_eq!(at("FOO=1", 1), Lookup::Unknown("FOO".into()));
         assert_eq!(at("  ", 1), Lookup::Nothing);
+    }
+
+    #[test]
+    fn looks_up_the_command_whose_arguments_the_cursor_is_in() {
+        let help = help();
+        let at = |line: &str, col| help.lookup(&utf16(line), col);
+        let topic = |t: &str| Lookup::Topic(t.into());
+        // Up to the end of the line, past the arguments.
+        assert_eq!(at("IF A==1 ", 8), topic("IF"));
+        assert_eq!(at("X=LEFT$(A$, 1)", 11), topic("LEFT$"));
+        assert_eq!(at("X=LEFT$(A$, 1)", 14), Lookup::Nothing);
+        // Not within strings, nor across statements or a comment.
+        assert_eq!(at("IF \"(\" ", 8), topic("IF"));
+        assert_eq!(at("IF A THEN B=1 ", 14), Lookup::Nothing);
+        assert_eq!(at("IF A:B=1 ", 9), Lookup::Nothing);
+        assert_eq!(at("IF A '", 6), Lookup::Nothing);
+        // A word that is no topic gives way to the command around it.
+        assert_eq!(at("IF FOO", 6), topic("IF"));
     }
 
     #[test]
