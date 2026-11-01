@@ -1866,10 +1866,37 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let side_on = if side_direct { 0 } else { ed };
         used[ed] |= debug.is_some() || debug_menu.is_some();
         // Beside the editor's own window, the chosen sprite is outlined
-        // on the main one's screen.
-        let outline = (debug.as_ref())
-            .and_then(|(_, view, _)| view.sprites.as_ref()?.outline)
-            .filter(|_| apart);
+        // on the main one's screen, and a subprogram's always on its own,
+        // where the panel leaves it.
+        let outline = (debug.as_ref()).and_then(|(place, view, _)| {
+            let list = view.sprites.as_ref()?;
+            let outline = list.outline?;
+            match list.sub {
+                Some(sub) => {
+                    let top = if apart { display_h } else { place.y };
+                    let (at, clip) =
+                        debug_panel::sprites::sub_place(sub.place?, (display_w, display_h), top)?;
+                    Some((outline, sub.frame, at, clip))
+                }
+                None if apart => {
+                    let (sx, sy) = (display_w as f32 / display.w, display_h as f32 / display.h);
+                    let at = (
+                        f64::from((rect.x - display.x) * sx),
+                        f64::from((rect.y - display.y) * sy),
+                        f64::from(rect.w * sx),
+                        f64::from(rect.h * sy),
+                    );
+                    let clip = ui::Rect {
+                        x: at.0.max(0.0) as u32,
+                        y: at.1.max(0.0) as u32,
+                        w: (at.2 as u32).min(display_w),
+                        h: (at.3 as u32).min(display_h),
+                    };
+                    Some((outline, frame, at, clip))
+                }
+                None => None,
+            }
+        });
         used[0] |= outline.is_some();
         used[side_on] |= side.is_some();
         used[0] |= program_dialog.is_some() || key_hint.visible();
@@ -1894,21 +1921,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             None => debug_panel.hide(),
         }
-        if let Some(outline) = &outline {
-            let (sx, sy) = (display_w as f32 / display.w, display_h as f32 / display.h);
-            let place = (
-                f64::from((rect.x - display.x) * sx),
-                f64::from((rect.y - display.y) * sy),
-                f64::from(rect.w * sx),
-                f64::from(rect.h * sy),
-            );
-            let clip = ui::Rect {
-                x: place.0.max(0.0) as u32,
-                y: place.1.max(0.0) as u32,
-                w: (place.2 as u32).min(display_w),
-                h: (place.3 as u32).min(display_h),
-            };
-            debug_panel::sprites::draw_outline(overlays[0], outline, frame, place, clip, 2);
+        if let Some((outline, frame, place, clip)) = &outline {
+            debug_panel::sprites::draw_outline(overlays[0], outline, *frame, *place, *clip, 2);
         }
         match &side {
             Some(Side::Help(help)) => help.draw(overlays[side_on], font, side_focus),
@@ -2437,6 +2451,9 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
     }
     tabs.push(Tab::Perf);
     tabs.push(Tab::Sprites);
+    if machine.sub_runtime().is_some() {
+        tabs.push(Tab::SubSprites);
+    }
     tabs.push(Tab::Grp);
     tabs.push(Tab::Bgm);
     let tab = panel.tab.filter(|t| tabs.contains(t)).unwrap_or(tabs[0]);
@@ -2444,12 +2461,13 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
     let (frame, slot) = match tab {
         Tab::Locals => (call_frame, home),
         Tab::Globals(slot) => (None, slot),
-        Tab::Perf | Tab::Sprites | Tab::Grp | Tab::Bgm => (None, home),
+        Tab::Perf | Tab::Sprites | Tab::SubSprites | Tab::Grp | Tab::Bgm => (None, home),
     };
     let variables = match (tab, frame) {
         (Tab::Locals, Some(frame)) => machine.frame_locals(frame),
         (Tab::Globals(slot), _) => machine.slot_globals(slot),
-        (Tab::Locals, None) | (Tab::Perf | Tab::Sprites | Tab::Grp | Tab::Bgm, _) => Vec::new(),
+        (Tab::Locals, None)
+        | (Tab::Perf | Tab::Sprites | Tab::SubSprites | Tab::Grp | Tab::Bgm, _) => Vec::new(),
     };
     // Watches see the chosen call's locals and its slot's globals.
     let watches = (panel.watches.iter())
@@ -2488,10 +2506,25 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         breakpoints: machine.all_breakpoints(),
         perf: *machine.rt.perf_stats(),
         // Only gathered while shown.
-        sprites: (tab == Tab::Sprites).then(|| {
-            let (first, rows) = panel.sprite_rows();
-            debug_panel::sprites::list(&machine.rt, first, rows, panel.sprite)
-        }),
+        sprites: match tab {
+            Tab::Sprites => {
+                let (first, rows) = panel.sprite_rows();
+                Some(debug_panel::sprites::list(
+                    &machine.rt,
+                    first,
+                    rows,
+                    panel.sprite,
+                ))
+            }
+            Tab::SubSprites => machine.sub_runtime().map(|(rt, place)| {
+                let (first, rows) = panel.sprite_rows();
+                let list = debug_panel::sprites::list(rt, first, rows, panel.sub_sprite);
+                let frame = rt.screen_mode().frame();
+                let sub = Some(debug_panel::sprites::SubScreen { place, frame });
+                debug_panel::sprites::List { sub, ..list }
+            }),
+            _ => None,
+        },
         grp: panel.grp_probe(&machine.rt.grp),
         bgm: (tab == Tab::Bgm).then(|| debug_panel::bgm::gather(&machine.rt.sound)),
     }
@@ -2536,8 +2569,9 @@ enum Choice {
     RemoveBreakpoint(usize, u32),
     /// Forget what PERFEND has timed, as RUN does.
     ResetPerf,
-    /// Outline a sprite on the screens, or none.
-    Highlight(Option<usize>),
+    /// Outline a sprite on the screens, or none: one of the
+    /// subprogram's, or the main interpreter's.
+    Highlight(bool, Option<usize>),
     /// Zoom the GRP tab's page.
     Zoom(grp_view::Zoom),
     AddWatch,
@@ -2620,12 +2654,13 @@ fn panel_menu(
                 .flat_map(|l| &l.rows)
                 .find(|r| r.id == id);
             let details = row.map(|r| debug_panel::sprites::details(r, panel.hex).join("\n"));
-            let chosen = panel.sprite == Some(id);
+            let sub = panel.sub_tab();
+            let chosen = panel.sprite_in(sub) == Some(id);
             vec![
                 (
                     format!("{} Highlight", if chosen { "[x]" } else { "[ ]" }),
                     true,
-                    Choice::Highlight((!chosen).then_some(id)),
+                    Choice::Highlight(sub, (!chosen).then_some(id)),
                 ),
                 (
                     "Copy details".to_string(),
@@ -2635,14 +2670,21 @@ fn panel_menu(
                 hex,
             ]
         }
-        Some(Hit::Sprites | Hit::Tab(Tab::Sprites)) => vec![
-            (
-                "Stop highlighting".to_string(),
-                panel.sprite.is_some(),
-                Choice::Highlight(None),
-            ),
-            hex,
-        ],
+        Some(hit @ (Hit::Sprites | Hit::Tab(Tab::Sprites | Tab::SubSprites))) => {
+            // A tab's button is for its own sprites, shown or not.
+            let sub = match hit {
+                Hit::Tab(tab) => tab == Tab::SubSprites,
+                _ => panel.sub_tab(),
+            };
+            vec![
+                (
+                    "Stop highlighting".to_string(),
+                    panel.sprite_in(sub).is_some(),
+                    Choice::Highlight(sub, None),
+                ),
+                hex,
+            ]
+        }
         Some(Hit::Grp | Hit::GrpPage(_) | Hit::Tab(Tab::Grp)) => {
             let mark = |z| if panel.grp.zoom == z { "[x]" } else { "[ ]" };
             let mut items: Vec<_> = (grp_view::ZOOMS.iter())
@@ -2755,7 +2797,7 @@ fn choose(
         Choice::Condition(slot, line) => return Some(condition_dialog(machine, slot, line, size)),
         Choice::RemoveBreakpoint(slot, line) => _ = machine.toggle_breakpoint(slot, line),
         Choice::ResetPerf => machine.rt.reset_perf_stats(),
-        Choice::Highlight(sprite) => panel.sprite = sprite,
+        Choice::Highlight(sub, sprite) => panel.choose_sprite(sub, sprite),
         Choice::Zoom(zoom) => panel.grp.zoom_to(zoom, None),
         Choice::AddWatch => panel.add_watch(String::new()),
         Choice::Hex => panel.hex = !panel.hex,

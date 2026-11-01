@@ -56,6 +56,8 @@ pub enum Tab {
     Perf,
     /// The sprites in use, which only this tab gathers.
     Sprites,
+    /// The running subprogram's, kept apart from the main interpreter's.
+    SubSprites,
     /// A graphic page, which SmileBASIC 4 shows only as the program
     /// draws it.
     Grp,
@@ -87,7 +89,7 @@ pub struct View {
     pub breakpoints: Vec<(usize, u32, Option<String>)>,
     /// What PERFEND has timed since RUN.
     pub perf: [PerfStats; 8],
-    /// The sprites in use, while the Sprites tab shows.
+    /// The sprites in use, while the Sprites or Sub sprites tab shows.
     pub sprites: Option<sprites::List>,
     /// The GRP tab's page.
     pub grp: Probe,
@@ -120,9 +122,9 @@ pub enum Hit {
     Breakpoint(usize),
     /// The Perf tab's measurements.
     Perf,
-    /// A sprite in the Sprites tab, by its number.
+    /// A sprite in the Sprites or Sub sprites tab shown, by its number.
     Sprite(usize),
-    /// The rest of the Sprites tab.
+    /// The rest of that tab.
     Sprites,
     /// The GRP tab's buttons for the pages, and its view of one.
     GrpPage(usize),
@@ -181,8 +183,10 @@ pub struct DebugPanel {
     tips: Vec<(Rect, Vec<String>)>,
     /// How many times its size the 8-pixel font is drawn, as last drawn.
     scale: u32,
-    /// The sprite chosen in the Sprites tab, outlined on the screens.
+    /// The sprite chosen in the Sprites tab, outlined on the screens,
+    /// and in the Sub sprites tab, outlined on the subprogram's.
     pub sprite: Option<usize>,
+    pub sub_sprite: Option<usize>,
     pub grp: GrpView,
     /// The BGM tab's level bars.
     meters: bgm::Meters,
@@ -350,10 +354,34 @@ impl DebugPanel {
         self.chosen = None;
         if !matches!(
             self.tab,
-            Some(Tab::Perf | Tab::Sprites | Tab::Grp | Tab::Bgm)
+            Some(Tab::Perf | Tab::Sprites | Tab::SubSprites | Tab::Grp | Tab::Bgm)
         ) {
             self.tab = None;
             self.scroll = 0;
+        }
+    }
+
+    /// Whether the tab shown lists the subprogram's sprites rather than
+    /// the main interpreter's.
+    pub fn sub_tab(&self) -> bool {
+        self.tab == Some(Tab::SubSprites)
+    }
+
+    /// The sprite chosen among the subprogram's sprites, or the main
+    /// interpreter's.
+    pub fn sprite_in(&self, sub: bool) -> Option<usize> {
+        match sub {
+            true => self.sub_sprite,
+            false => self.sprite,
+        }
+    }
+
+    /// Chooses a sprite, or none, among the subprogram's sprites or the
+    /// main interpreter's.
+    pub fn choose_sprite(&mut self, sub: bool, sprite: Option<usize>) {
+        match sub {
+            true => self.sub_sprite = sprite,
+            false => self.sprite = sprite,
         }
     }
 
@@ -438,7 +466,8 @@ impl DebugPanel {
             Hit::Watch(i) if double => self.edit_watch(i),
             // A second click lets go of the sprite.
             Hit::Sprite(id) => {
-                self.sprite = (self.sprite != Some(id)).then_some(id);
+                let sub = self.sub_tab();
+                self.choose_sprite(sub, (self.sprite_in(sub) != Some(id)).then_some(id));
             }
             Hit::Watch(_)
             | Hit::Variable(_)
@@ -800,6 +829,7 @@ impl DebugPanel {
                 Tab::Globals(slot) => format!("PRG{slot}"),
                 Tab::Perf => "Perf".to_string(),
                 Tab::Sprites => "Sprites".to_string(),
+                Tab::SubSprites => "Sub sprites".to_string(),
                 Tab::Grp => "GRP".to_string(),
                 Tab::Bgm => "BGM".to_string(),
             };
@@ -819,13 +849,14 @@ impl DebugPanel {
         let right = inner.x + inner.w - m.pad;
         if tab == Some(Tab::Perf) {
             self.draw_perf(fb, font, &m, (vx, y), (right, bottom), &view.perf);
-        } else if let (Some(Tab::Sprites), Some(list)) = (tab, &view.sprites) {
+        } else if let (Some(Tab::Sprites | Tab::SubSprites), Some(list)) = (tab, &view.sprites) {
             // The headings take a row.
             self.rows = self.rows.saturating_sub(1);
             // Scrolled past sprites cleared since, it comes back next frame.
             self.scroll = self.scroll.min(list.total.saturating_sub(self.rows));
             self.draw_sprites(fb, font, &m, (vx, y), (right, bottom), list);
-            if let (Some(size), Some(outline)) = (size, &list.outline) {
+            // The frontend outlines a subprogram's sprite on its screen.
+            if let (Some(size), Some(outline), None) = (size, &list.outline, list.sub) {
                 let s = Self::screen_place(f, size);
                 let place = (s.x.into(), s.y.into(), s.w.into(), s.h.into());
                 sprites::draw_outline(fb, outline, size, place, s, m.scale);
@@ -1057,7 +1088,7 @@ impl DebugPanel {
                 h: m.line,
                 ..area
             };
-            if self.sprite == Some(row.id) {
+            if self.sprite_in(list.sub.is_some()) == Some(row.id) {
                 fill(fb, r, SELECTED);
             } else if (list.first + n) % 2 == 1 {
                 fill(fb, r, STRIPE);
@@ -1320,6 +1351,68 @@ mod tests {
         p.tab = Some(Tab::Locals);
         p.reset();
         assert_eq!(p.tab, None);
+    }
+
+    #[test]
+    fn sub_sprites_keep_their_own_choice_and_screen() {
+        use sb_runtime::machine::Machine;
+        let mut m = Machine::new(sb_runtime::Runtime::new(400, 240, Font::blank()));
+        m.boot();
+        m.set_slot(0, "SPSET 2,0:SPOFS 2,100,100:SPSET 9,0".to_string());
+        m.run_slot(0);
+        m.frame();
+        let mut p = DebugPanel {
+            tab: Some(Tab::SubSprites),
+            sprite: Some(9),
+            sub_sprite: Some(2),
+            ..DebugPanel::default()
+        };
+        assert!(p.sub_tab());
+        let (first, rows) = p.sprite_rows();
+        let list = sprites::list(&m.rt, first, rows, p.sub_sprite);
+        assert!(list.outline.is_some());
+        let sub = Some(sprites::SubScreen {
+            place: Some([10, 20, 300, 200]),
+            frame: (400, 240),
+        });
+        let view = View {
+            sprites: Some(sprites::List { sub, ..list }),
+            ..view(vec![Tab::Globals(0), Tab::Sprites, Tab::SubSprites])
+        };
+        let mut fb = Framebuffer::new(1280, 300);
+        let f = Rect {
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 300,
+        };
+        p.draw(&mut fb, &Font::blank(), f, Some((400, 240)), &view, 2);
+        // Not outlined on the main screens: the frontend does it on the
+        // subprogram's.
+        let s = DebugPanel::screen_place(f, (400, 240));
+        let (x, y) = (s.x + 100 * s.w / 400, s.y + 100 * s.h / 240);
+        assert_eq!(fb.get(x + 2, y), Some(0));
+        let rows: Vec<(Rect, Hit)> = (p.hits.iter())
+            .filter(|(_, h)| matches!(h, Hit::Sprite(_)))
+            .copied()
+            .collect();
+        assert_eq!(rows.len(), 3);
+        let (r, hit) = rows[1];
+        assert_eq!(hit, Hit::Sprite(9));
+        p.click(((r.x + 4) as i32, (r.y + 4) as i32), false);
+        assert_eq!((p.sub_sprite, p.sprite), (Some(9), Some(9)));
+        p.click(((r.x + 4) as i32, (r.y + 4) as i32), false);
+        assert_eq!((p.sub_sprite, p.sprite), (None, Some(9)));
+        // The main tab's choice is its own.
+        p.tab = Some(Tab::Sprites);
+        assert!(!p.sub_tab());
+        p.choose_sprite(false, None);
+        p.choose_sprite(true, Some(2));
+        assert_eq!((p.sub_sprite, p.sprite), (Some(2), None));
+        // A new stop keeps the tab.
+        p.tab = Some(Tab::SubSprites);
+        p.reset();
+        assert_eq!(p.tab, Some(Tab::SubSprites));
     }
 
     #[test]

@@ -1,7 +1,8 @@
-//! The debugger panel's Sprites tab: the sprites SPSET has set on the
-//! main interpreter's screen, gathered only while the tab shows, and the
-//! outline of the one chosen on the screens. SmileBASIC 4 has no such
-//! list; this is the emulator's own.
+//! The debugger panel's Sprites tabs: the sprites SPSET has set on the
+//! main interpreter's screen, or on a subprogram's in a tab of their
+//! own, gathered only while the tab shows, and the outline of the one
+//! chosen on its screen. SmileBASIC 4 has no such list; this is the
+//! emulator's own.
 
 use sb_core::value::{Value, format_number};
 use sb_runtime::Runtime;
@@ -65,6 +66,16 @@ pub struct Outline {
     pub shows: bool,
 }
 
+/// The subprogram's screen, for the outline of one of its sprites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubScreen {
+    /// Where XSUBSCREEN puts it on the 1280x720 display: x, y, width
+    /// and height, while it shows.
+    pub place: Option<[i32; 4]>,
+    /// The size of its frame, which the outline's corners are on.
+    pub frame: (u32, u32),
+}
+
 /// The sprites in use, of which only the rows shown are gathered.
 #[derive(Clone, Debug, Default)]
 pub struct List {
@@ -73,6 +84,9 @@ pub struct List {
     pub first: usize,
     pub rows: Vec<Row>,
     pub outline: Option<Outline>,
+    /// For a subprogram's sprites, its screen; `None` for the main
+    /// interpreter's, outlined on the main screens.
+    pub sub: Option<SubScreen>,
 }
 
 /// The sprites in use on `rt`'s screen, with rows for `count` of them
@@ -380,6 +394,32 @@ pub fn draw_outline(
     }
 }
 
+/// Where the outline of a subprogram's sprite goes on the display, whose
+/// pixels are those of the 1280x720 display: the place of its screen,
+/// and that within the `display`'s `(w, h)` and above `top`, where what
+/// is below covers the screen. `None` once nothing of it is left.
+pub fn sub_place(
+    [x, y, w, h]: [i32; 4],
+    (dw, dh): (u32, u32),
+    top: u32,
+) -> Option<((f64, f64, f64, f64), Rect)> {
+    let place = (f64::from(x), f64::from(y), f64::from(w), f64::from(h));
+    let span = |from: i32, len: i32, end: u32| {
+        let a = i64::from(from).clamp(0, i64::from(end));
+        let b = (i64::from(from) + i64::from(len)).clamp(a, i64::from(end));
+        (a as u32, (b - a) as u32)
+    };
+    let (cx, cw) = span(x, w, dw);
+    let (cy, ch) = span(y, h, dh.min(top));
+    let clip = Rect {
+        x: cx,
+        y: cy,
+        w: cw,
+        h: ch,
+    };
+    (cw > 0 && ch > 0).then_some((place, clip))
+}
+
 /// A line from `a` to `b` of squares `thick` pixels across, within
 /// `clip`, every other few pixels left out if `dashed`.
 fn line(
@@ -569,5 +609,34 @@ mod tests {
             clip_line((0.0, 15.0), (40.0, 15.0), clip),
             Some(((10.0, 15.0), (30.0, 15.0)))
         );
+    }
+
+    #[test]
+    fn a_subprograms_outline_keeps_to_its_screen() {
+        let place = [10, 20, 300, 200];
+        let (at, clip) = sub_place(place, (1280, 720), 720).unwrap();
+        assert_eq!(at, (10.0, 20.0, 300.0, 200.0));
+        assert_eq!(
+            clip,
+            Rect {
+                x: 10,
+                y: 20,
+                w: 300,
+                h: 200
+            }
+        );
+        // Off the display's left edge, and under the panel from 650 down.
+        let (_, clip) = sub_place([-50, 600, 100, 200], (1280, 720), 650).unwrap();
+        assert_eq!(
+            clip,
+            Rect {
+                x: 0,
+                y: 600,
+                w: 50,
+                h: 50
+            }
+        );
+        assert_eq!(sub_place(place, (1280, 720), 20), None);
+        assert_eq!(sub_place([0, 0, 0, 10], (1280, 720), 720), None);
     }
 }
