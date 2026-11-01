@@ -159,6 +159,7 @@ impl Runtime {
                 self.sound.songs.insert(255, song.clone());
                 let idle = self.sound.idle();
                 self.sound.play(0, Some(song), 127, 0);
+                self.sound.track(0).number = 255;
                 if idle {
                     self.sound.wake(0);
                 }
@@ -187,6 +188,7 @@ impl Runtime {
                             // wait.
                             None => self.sound.play(track, None, volume, fade),
                         }
+                        self.sound.track(track).number = music;
                         if let Some(&(_, n)) = JINGLES.iter().find(|j| j.0 == music) {
                             self.sound.track(track).end_silent_after(n);
                         }
@@ -206,6 +208,7 @@ impl Runtime {
                 };
                 let idle = self.sound.idle();
                 self.sound.play(track, song, volume, fade);
+                self.sound.track(track).number = music;
                 if idle {
                     self.sound.wake(track);
                 }
@@ -432,7 +435,7 @@ impl Runtime {
                     256..=383 => BeepSound::Instrument(n - 256),
                     n => return Err(out_of_range("sound", n)),
                 };
-                let h = self.sound.beeps.play(what, pitch, volume, pan);
+                let h = self.sound.beeps.play(n, what, pitch, volume, pan);
                 Ok(match want {
                     Want::Value => vec![Value::Int(h as i32)],
                     _ => vec![],

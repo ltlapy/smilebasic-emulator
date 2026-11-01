@@ -3,6 +3,7 @@
 
 pub mod bank;
 pub mod beep;
+pub mod inspect;
 pub mod mml;
 pub mod pcm;
 pub mod sampler;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 pub use rustysynth::SoundFont;
 
 use beep::Beeps;
+use inspect::{BeepInfo, TrackInfo};
 use mml::Song;
 use pcm::Pcm;
 use seq::{Kind, Sequences};
@@ -279,6 +281,18 @@ impl Sound {
     /// later, as on hardware.
     pub(crate) fn var(&self, n: usize, var: usize) -> i32 {
         self.shown[n][var]
+    }
+
+    /// What the tracks that play or are paused play, for the debugger.
+    pub fn inspect_tracks(&self) -> Vec<TrackInfo> {
+        (self.tracks.iter().enumerate())
+            .filter_map(|(n, t)| t.as_ref()?.inspect(n))
+            .collect()
+    }
+
+    /// The BEEP handles that sound, for the debugger.
+    pub fn inspect_beeps(&self) -> Vec<BeepInfo> {
+        self.beeps.inspect()
     }
 
     /// Whether no BGM track plays.

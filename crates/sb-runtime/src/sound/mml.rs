@@ -3,6 +3,7 @@
 //! left to the player, since repeats and BGMVAR change them as it plays.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub const CHANNELS: usize = 16;
 /// Ticks in a whole note: every length divides it.
@@ -102,6 +103,8 @@ pub struct Song {
     pub channels: Vec<Vec<Cmd>>,
     /// `!`: < and > swapped in every channel.
     pub reversed: bool,
+    /// The MML as given, for the debugger to show.
+    pub source: Rc<str>,
 }
 
 impl Song {
@@ -549,6 +552,7 @@ pub fn parse(text: &str) -> Result<Song, Error> {
         song: Song {
             channels: vec![Vec::new(); CHANNELS],
             reversed: false,
+            source: text.into(),
         },
         channel: 0,
         in_channel: false,

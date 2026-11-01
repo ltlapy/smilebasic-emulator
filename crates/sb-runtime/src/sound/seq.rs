@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 
+use super::inspect::ChannelInfo;
 use super::synth::{CHANNELS, Synth};
 
 const MAGIC: &[u8; 8] = b"SBSEQ001";
@@ -159,11 +160,38 @@ impl SeqTrack {
     }
 }
 
+/// What a sequence last set a channel to, kept only for the debugger:
+/// the synthesizer has it already.
+#[derive(Clone, Copy, Debug)]
+struct Settings {
+    program: i32,
+    volume: i32,
+    expression: i32,
+    pan: i32,
+    velocity: i32,
+    notes: u32,
+}
+
+impl Default for Settings {
+    /// MIDI's, as a synthesizer starts.
+    fn default() -> Self {
+        Settings {
+            program: 0,
+            volume: 100,
+            expression: 127,
+            pan: 64,
+            velocity: 0,
+            notes: 0,
+        }
+    }
+}
+
 /// One sequence playing on a synthesizer, track n on channel n.
 #[derive(Clone, Debug)]
 pub(crate) struct Player {
     seq: Arc<Sequence>,
     tracks: [Option<SeqTrack>; CHANNELS],
+    settings: [Settings; CHANNELS],
     /// Quarter notes a minute.
     pub(crate) tempo: u32,
     /// Ticks in a quarter note.
@@ -179,10 +207,33 @@ impl Player {
         Player {
             seq,
             tracks,
+            settings: Default::default(),
             tempo: 120,
             timebase: 48,
             pitch: 0,
         }
+    }
+
+    /// The channels with a track, for the debugger.
+    pub(crate) fn channels(&self) -> Vec<ChannelInfo> {
+        (self.tracks.iter().enumerate())
+            .filter_map(|(c, t)| Some((c, t.as_ref()?)))
+            .map(|(c, t)| {
+                let s = &self.settings[c];
+                ChannelInfo {
+                    channel: c,
+                    program: s.program,
+                    octave: None,
+                    // CC7 and CC11 both scale the channel.
+                    volume: s.volume * s.expression / 127,
+                    velocity: s.velocity,
+                    pan: s.pan,
+                    keys: t.notes.iter().map(|&(key, _)| key).collect(),
+                    notes: s.notes,
+                    ended: t.ended,
+                }
+            })
+            .collect()
     }
 
     pub(crate) fn volume(&self) -> f32 {
@@ -283,6 +334,9 @@ impl Player {
                 let len = r.varlen()?;
                 let key = i32::from(op);
                 synth.note_on(c, key, velocity);
+                let s = &mut self.settings[c];
+                s.velocity = velocity;
+                s.notes = s.notes.wrapping_add(1);
                 let t = self.tracks[c].as_mut()?;
                 if len > 0 {
                     t.notes.push((key, len));
@@ -292,7 +346,11 @@ impl Player {
                 }
             }
             0x80 => self.tracks[c].as_mut()?.wait = r.varlen()?,
-            0x81 => synth.program(c, i32::try_from(r.varlen()?).ok()?),
+            0x81 => {
+                let program = i32::try_from(r.varlen()?).ok()?;
+                self.settings[c].program = program;
+                synth.program(c, program);
+            }
             0x88 => {
                 let track = usize::from(r.u8()?);
                 let at = r.u24()?;
@@ -319,8 +377,16 @@ impl Player {
             0xFD => next_pc = Some(self.tracks[c].as_mut()?.calls.pop()?),
             0xFF => return None,
             0xB0 => self.timebase = u32::from(r.u8()?).max(1),
-            0xC0 => synth.pan(c, i32::from(r.u8()?)),
-            0xC1 => synth.volume(c, i32::from(r.u8()?)),
+            0xC0 => {
+                let pan = i32::from(r.u8()?);
+                self.settings[c].pan = pan;
+                synth.pan(c, pan);
+            }
+            0xC1 => {
+                let volume = i32::from(r.u8()?);
+                self.settings[c].volume = volume;
+                synth.volume(c, volume);
+            }
             0xC4 => {
                 self.tracks[c].as_mut()?.bend = i32::from(r.u8()? as i8);
                 self.apply_bend(c, synth);
@@ -331,7 +397,11 @@ impl Player {
             }
             0xC7 => self.tracks[c].as_mut()?.note_wait = r.u8()? != 0,
             0xCA => synth.modulation(c, i32::from(r.u8()?)),
-            0xD5 => synth.expression(c, i32::from(r.u8()?)),
+            0xD5 => {
+                let expression = i32::from(r.u8()?);
+                self.settings[c].expression = expression;
+                synth.expression(c, expression);
+            }
             0xE1 => self.tempo = u32::from(r.u16()?).max(1),
             0xFE => {
                 r.u16()?;
@@ -565,6 +635,14 @@ mod tests {
             0x80, 1, // wait
             0xFF,
         ];
+        // What the debugger sees: both tracks, track 0 ended, and the
+        // chord sounding on channel 1.
+        let channels = run(code.clone(), 3).0.channels();
+        assert_eq!(channels.len(), 2);
+        assert!(channels[0].ended);
+        let one = &channels[1];
+        assert_eq!((one.program, one.velocity, one.notes), (257, 90, 3));
+        assert_eq!(one.keys, [64, 67]);
         let (p, log) = run(code, 5);
         assert_eq!(p.tempo, 150);
         assert_eq!(

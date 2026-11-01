@@ -4,6 +4,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::inspect::{BeepInfo, BeepKind};
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Wave};
@@ -44,6 +45,10 @@ enum Sounding {
 
 struct Beep {
     sounding: Sounding,
+    /// BEEP's sound number, and the pitch BEEPPIT last set, for the
+    /// debugger.
+    sound: i32,
+    pitch: i32,
     /// The pitch at the start, in cents: what BEEPPIT bends from.
     start_pitch: i32,
     volume: i32,
@@ -106,9 +111,17 @@ impl Beeps {
         }
     }
 
-    /// Plays an instrument (`program` 0 to 127) or a waveform, or holds a
-    /// handle for a preset effect, and gives the handle.
-    pub fn play(&mut self, what: BeepSound, pitch: i32, volume: i32, pan: i32) -> usize {
+    /// Plays BEEP's `sound`, an instrument (`program` 0 to 127) or a
+    /// waveform, or holds a handle for a preset effect, and gives the
+    /// handle.
+    pub fn play(
+        &mut self,
+        sound: i32,
+        what: BeepSound,
+        pitch: i32,
+        volume: i32,
+        pan: i32,
+    ) -> usize {
         let h = self.handle();
         let sounding = match what {
             BeepSound::Preset => Sounding::Preset,
@@ -150,6 +163,8 @@ impl Beeps {
         };
         self.beeps[h] = Some(Beep {
             sounding,
+            sound,
+            pitch,
             start_pitch: pitch,
             volume,
             pan,
@@ -164,6 +179,7 @@ impl Beeps {
         let Some(b) = &mut self.beeps[h] else {
             return;
         };
+        b.pitch = pitch;
         match &mut b.sounding {
             Sounding::Wave(v) => v.set_pitch(pitch),
             Sounding::Instrument { .. } => {
@@ -209,6 +225,30 @@ impl Beeps {
             }
             _ => self.stop_now(h),
         }
+    }
+
+    /// The handles that sound, for the debugger.
+    pub fn inspect(&self) -> Vec<BeepInfo> {
+        (self.beeps.iter().enumerate())
+            .filter_map(|(handle, b)| {
+                let b = b.as_ref()?;
+                let kind = match &b.sounding {
+                    Sounding::Preset => BeepKind::Silent,
+                    Sounding::Sequence { .. } => BeepKind::Effect,
+                    Sounding::Instrument { .. } => BeepKind::Instrument(b.sound - 256),
+                    Sounding::Wave(_) => BeepKind::Wave,
+                };
+                Some(BeepInfo {
+                    handle,
+                    sound: b.sound,
+                    kind,
+                    pitch: b.pitch,
+                    volume: b.volume,
+                    pan: b.pan,
+                    stopping: b.stopping,
+                })
+            })
+            .collect()
     }
 
     pub fn stop_all(&mut self) {

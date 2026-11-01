@@ -369,3 +369,60 @@ fn silent_jingles_still_end() {
     frames(&mut rt, 20);
     assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "01");
 }
+
+#[test]
+fn the_debugger_sees_what_tracks_and_beeps_play() {
+    use sb_runtime::sound::inspect::{BeepKind, State};
+    let mut rt = runtime();
+    let mml = "T90$2=7:1@3O5V90P20[C4]:4R1";
+    run_on(&mut rt, &format!("BGMSET 130,\"{mml}\":BGMPLAY 3,130,100")).unwrap();
+    run_on(&mut rt, "BGMPLAY 1,0,,1").unwrap();
+    // Waking, then a tick or so a frame at 90 quarters a minute.
+    assert_eq!(rt.sound.inspect_tracks()[1].state, State::Waking);
+    frames(&mut rt, 6);
+    let tracks = rt.sound.inspect_tracks();
+    assert_eq!(tracks.len(), 2);
+    let (preset, user) = (&tracks[0], &tracks[1]);
+    assert_eq!((preset.track, preset.song, preset.silent), (1, 0, true));
+    assert_eq!(preset.state, State::FadingIn);
+    assert_eq!((user.track, user.song, user.volume), (3, 130, 100));
+    assert_eq!(user.source.as_deref(), Some(mml));
+    assert_eq!(
+        (user.state, user.tempo, user.quarter),
+        (State::Playing, 90, 48)
+    );
+    assert_eq!((user.ticks, user.vars[2]), (5, 7));
+    // The channels the song uses, with what they last set.
+    let c: Vec<usize> = user.channels.iter().map(|c| c.channel).collect();
+    assert_eq!(c, [0, 1, 4]);
+    let one = &user.channels[1];
+    assert_eq!(
+        (one.program, one.octave, one.volume, one.pan),
+        (3, Some(5), 90, 20)
+    );
+    assert_eq!((one.keys.as_slice(), one.notes), ([72].as_slice(), 1));
+    assert!(user.channels[0].ended && !one.ended);
+    // BGMPLAY with MML is song 255; paused tracks still show.
+    run_on(&mut rt, "BGMPLAY \"CDE\":BGMPAUSE 3:BGMSTOP 1").unwrap();
+    let tracks = rt.sound.inspect_tracks();
+    assert_eq!(tracks.len(), 2);
+    assert_eq!((tracks[0].song, tracks[1].state), (255, State::Paused));
+    assert_eq!(tracks[0].source.as_deref(), Some("CDE"));
+
+    run_on(&mut rt, "BEEP 300,-50,90,10:BEEP 2").unwrap();
+    run_on(&mut rt, "BEEPPIT 0,120").unwrap();
+    let beeps = rt.sound.inspect_beeps();
+    assert_eq!(beeps.len(), 2);
+    assert_eq!(
+        (beeps[0].sound, beeps[0].kind),
+        (300, BeepKind::Instrument(44))
+    );
+    assert_eq!(
+        (beeps[0].pitch, beeps[0].volume, beeps[0].pan),
+        (120, 90, 10)
+    );
+    assert_eq!((beeps[1].sound, beeps[1].kind), (2, BeepKind::Silent));
+    // Nothing for a silent preset to play, it ends at once.
+    frames(&mut rt, 1);
+    assert_eq!(rt.sound.inspect_beeps().len(), 1);
+}

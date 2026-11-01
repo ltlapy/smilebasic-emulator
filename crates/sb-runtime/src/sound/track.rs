@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::inspect::{ChannelInfo, State, TrackInfo};
 use super::mml::{ChordPart, Cmd, Link, Num, Pitch, Song, WHOLE, ticks};
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
@@ -50,8 +51,12 @@ struct Channel {
     /// @MP's depth, which @MON turns back on after @MOF.
     vibrato: i32,
     voice: Voice,
+    /// @'s number, which `voice` plays or not.
+    program: i32,
     /// Notes sounding now, as MIDI keys.
     sounding: Vec<i32>,
+    /// Notes started, for the debugger.
+    notes: u32,
     /// How the last note joins the next.
     link: Link,
     done: bool,
@@ -77,7 +82,9 @@ impl Default for Channel {
             envelope: None,
             vibrato: 0,
             voice: Voice::Synth(0),
+            program: 0,
             sounding: Vec::new(),
+            notes: 0,
             link: Link::None,
             done: false,
         }
@@ -97,6 +104,9 @@ pub(crate) struct Track {
     tempo: u32,
     song_key: i32,
     pub(crate) vars: [i32; 8],
+    /// BGMPLAY's song number, and ticks played of it, for the debugger.
+    pub(crate) number: i32,
+    ticks: u64,
     /// Frames before the song starts, while the sound system wakes up.
     pub(crate) hold: u32,
     /// Frames left of a preset that plays silent but would end.
@@ -148,6 +158,8 @@ impl Track {
             tempo: 120,
             song_key: 0,
             vars: [0; 8],
+            number: 0,
+            ticks: 0,
             hold: 0,
             silent_left: None,
             until_tick: 0.0,
@@ -195,6 +207,7 @@ impl Track {
         self.song_key = 0;
         // Variables the song has not set read -1 (checked on hardware).
         self.vars = [-1; 8];
+        self.ticks = 0;
         self.hold = 0;
         self.silent_left = None;
         self.until_tick = 0.0;
@@ -235,6 +248,7 @@ impl Track {
     }
 
     fn set_program(&mut self, c: usize, program: i32) {
+        self.channels[c].program = program;
         self.channels[c].voice = match program {
             216..=255 => Voice::Wave(program),
             _ if self.synth.as_ref().is_some_and(|s| s.plays(program)) => Voice::Synth(program),
@@ -344,7 +358,11 @@ impl Track {
             // A slur starts the new notes before ending the old.
             self.keys_on(c, &keys);
             self.keys_off(c, &old);
-            self.channels[c].sounding = keys;
+            let ch = &mut self.channels[c];
+            if !keys.is_empty() {
+                ch.notes = ch.notes.wrapping_add(1);
+            }
+            ch.sounding = keys;
         }
         let ch = &mut self.channels[c];
         ch.link = link;
@@ -515,6 +533,7 @@ impl Track {
 
     /// One tick: notes whose time is up stop, and channels go on.
     fn tick(&mut self) {
+        self.ticks += 1;
         if let Some(p) = &mut self.seq {
             // Without instruments a preset goes on, silent, until stopped.
             if let Some(s) = &mut self.synth {
@@ -545,6 +564,55 @@ impl Track {
         if self.song.is_some() && self.channels.iter().all(|c| c.done && c.wait == 0) {
             self.playing = false;
         }
+    }
+
+    /// What the track plays, while it plays or is paused.
+    pub(crate) fn inspect(&self, track: usize) -> Option<TrackInfo> {
+        if !self.playing {
+            return None;
+        }
+        let state = match (self.after_fade, self.fade.done()) {
+            _ if self.hold > 0 => State::Waking,
+            _ if self.paused => State::Paused,
+            (AfterFade::Stop, _) => State::FadingOut,
+            (AfterFade::Pause, _) => State::Pausing,
+            (AfterFade::Nothing, false) => State::FadingIn,
+            (AfterFade::Nothing, true) => State::Playing,
+        };
+        let (tempo, quarter, channels) = match (&self.seq, &self.song) {
+            (Some(p), _) => (p.tempo, p.timebase, p.channels()),
+            (None, Some(song)) => {
+                let used = song.used().map(|(c, _)| (c, &self.channels[c]));
+                let channels = used.map(|(c, ch)| ChannelInfo {
+                    channel: c,
+                    program: ch.program,
+                    octave: Some(ch.octave),
+                    volume: ch.volume,
+                    velocity: ch.velocity,
+                    pan: ch.pan,
+                    keys: ch.sounding.clone(),
+                    notes: ch.notes,
+                    ended: ch.done,
+                });
+                (self.tempo, QUARTER, channels.collect())
+            }
+            (None, None) => (self.tempo, QUARTER, Vec::new()),
+        };
+        Some(TrackInfo {
+            track,
+            song: self.number,
+            source: self.song.as_ref().map(|s| s.source.clone()),
+            silent: self.seq.is_none() && self.song.is_none(),
+            state,
+            fade: self.fade.value,
+            volume: self.volume,
+            pitch: self.pitch,
+            tempo,
+            quarter,
+            ticks: self.ticks,
+            vars: self.vars,
+            channels,
+        })
     }
 
     /// A preset that ends after `frames` but plays silent here, without
