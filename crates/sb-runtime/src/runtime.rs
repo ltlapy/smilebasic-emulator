@@ -652,8 +652,6 @@ pub enum Stopped {
 
 /// UNVERIFIED: how many unread keys SmileBASIC keeps.
 pub const KEY_BUFFER: usize = 256;
-/// The mark on a key in the buffer that PUSHKEY typed.
-const PUSHED: u32 = 1 << 16;
 /// Frames per half period of the INPUT cursor's blink: at 60 fps, a full
 /// blink takes about 833 ms.
 const CURSOR_BLINK: u32 = 25;
@@ -711,9 +709,8 @@ pub struct Runtime {
     pub input: Input,
     pub(crate) system: System,
     pub sound: Sound,
-    /// Typed characters not yet read by INKEY$ or INPUT, with
-    /// [`PUSHED`] on those PUSHKEY typed.
-    pub(crate) keys: VecDeque<u32>,
+    /// Typed characters not yet read by INKEY$ or INPUT.
+    pub(crate) keys: VecDeque<u16>,
     /// The line being typed for INPUT, LINPUT or direct mode.
     line: Option<LineEdit>,
     /// Where the Up and Down keys have taken the direct-mode line in the
@@ -1429,19 +1426,8 @@ impl Runtime {
     pub fn key_press(&mut self, code: u16) {
         self.changed = true;
         if self.keys.len() < KEY_BUFFER {
-            self.keys.push_back(u32::from(code));
+            self.keys.push_back(code);
         }
-    }
-
-    /// Queues a key PUSHKEY types, which INPUT keeps.
-    pub(crate) fn push_key(&mut self, code: u16) {
-        if self.keys.len() < KEY_BUFFER {
-            self.keys.push_back(u32::from(code) | PUSHED);
-        }
-    }
-
-    fn pop_key(&mut self) -> Option<u16> {
-        self.keys.pop_front().map(|k| k as u16)
     }
 
     /// Drops the keys a program left unread and what its buttons were
@@ -1453,7 +1439,7 @@ impl Runtime {
 
     /// Takes the next unread key, for the editor.
     pub(crate) fn next_key(&mut self) -> Option<u16> {
-        self.pop_key()
+        self.keys.pop_front()
     }
 
     /// Marks the screens as possibly changed, to be drawn again.
@@ -2099,7 +2085,7 @@ impl Runtime {
                 if let Some(flag) = args.first() {
                     opt_int(flag)?;
                 }
-                let key = self.pop_key();
+                let key = self.keys.pop_front();
                 Ok(vec![Value::Str(new_str(key.into_iter().collect()))])
             }
             (Command::Locate, Want::Outs(0)) => {
@@ -2415,13 +2401,9 @@ impl Host for Runtime {
     }
 
     fn input_start(&mut self) -> Result<()> {
-        // Keys typed on the keyboard while the program read none are not
-        // typed into the line: WIM_VOCARO reads its piano keys with
-        // KEYBOARD alone, and its settings' INPUT showed every one of
-        // them. What PUSHKEY typed stays, as for `PUSHKEY "10":INPUT A`.
-        // UNVERIFIED: that SmileBASIC 4 drops the typed keys at INPUT
-        // and keeps PUSHKEY's.
-        self.keys.retain(|k| k & PUSHED != 0);
+        // Keys queued while the program read none, PUSHKEY's too, are not
+        // typed into the line.
+        self.keys.clear();
         self.line = Some(LineEdit::new(&self.text[CONSOLE]));
         self.recall = None;
         Ok(())
@@ -2514,7 +2496,7 @@ impl Host for Runtime {
             Some(_) => Options::from_settings(&self.settings, false),
             None => None,
         };
-        while let Some(key) = self.pop_key() {
+        while let Some(key) = self.keys.pop_front() {
             let console = &mut self.text[CONSOLE];
             let line = self.line.as_mut().expect("checked above");
             // Up and Down stay the history's; Tab takes a word.

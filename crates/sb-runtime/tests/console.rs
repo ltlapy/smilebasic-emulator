@@ -74,20 +74,31 @@ fn inkey_reads_queued_keys() {
     assert_eq!(row(&rt, 4, 0), "BA300");
 }
 
-/// Keys typed before INPUT, which nothing read, are not typed into its
-/// line; what PUSHKEY typed is.
+/// Keys queued before INPUT, which nothing read, are not typed into its
+/// line, PUSHKEY's included.
 #[test]
-fn input_drops_keys_typed_before_it_but_not_pushed_ones() {
+fn input_drops_keys_queued_before_it() {
     let mut rt = Runtime::new(400, 240, Font::blank());
     type_keys(&mut rt, "ZSX");
-    let src = "PUSHKEY \"7\":INPUT A$\n?A$";
+    let src = "PUSHKEY \"7\":INPUT A$\n?\"[\";A$;\"]\"";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    rt.key_press(keys::ENTER);
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
+    assert_eq!(row(&rt, 4, 1), "[]");
+}
+
+/// Keys typed while INPUT waits are typed into its line.
+#[test]
+fn input_takes_keys_typed_while_it_waits() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let src = "INPUT A$\n?\"[\";A$;\"]\"";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     type_keys(&mut rt, "8");
     rt.key_press(keys::ENTER);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
-    assert_eq!(row(&rt, 4, 0), "? 78");
-    assert_eq!(row(&rt, 4, 1), "78");
+    assert_eq!(row(&rt, 4, 1), "[8]");
 }
 
 #[test]

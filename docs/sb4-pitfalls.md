@@ -252,6 +252,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   it is -1, still a second later. `VIBRATE` alone clears it.
 - `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`).
   One above `&HFFFF` types nothing.
+- Typed keys wait in the buffer until something reads them:
+  `WAIT 180:?INKEY$();INKEY$();INKEY$()` shows what was typed during the
+  wait. `INPUT` and `LINPUT` drop every key waiting when they start,
+  `PUSHKEY`'s included: `PUSHKEY "7":INPUT A$` waits with an empty
+  line.
 
 ## Screens and text
 

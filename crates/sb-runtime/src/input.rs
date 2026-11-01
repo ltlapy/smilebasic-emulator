@@ -524,7 +524,7 @@ impl Runtime {
             // Plane, such as #SOFTKEY_HIDDEN's &H10056, type nothing.
             (Command::Pushkey, Want::Outs(0), 1) if !matches!(args[0], Value::Str(_)) => {
                 if let Ok(code) = u16::try_from(args[0].to_int()?) {
-                    self.push_key(code);
+                    self.key_press(code);
                 }
                 Ok(vec![])
             }
@@ -534,7 +534,7 @@ impl Runtime {
                     return Err(Error::with_detail(ErrorKind::StringTooLong, "PUSHKEY"));
                 }
                 for c in s {
-                    self.push_key(c);
+                    self.key_press(c);
                 }
                 Ok(vec![])
             }
