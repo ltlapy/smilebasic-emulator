@@ -30,7 +30,12 @@ pub struct Dialog {
     /// Index of the chosen button; Cancel at first, so Enter does not
     /// throw work away.
     focus: usize,
+    /// What has been typed, for a question with a field to type in.
+    field: Option<String>,
 }
+
+/// Characters of a field shown.
+const FIELD_CHARS: usize = 40;
 
 impl Dialog {
     pub fn new(title: &str, lines: Vec<String>, accept: &str, size: (u32, u32)) -> Dialog {
@@ -40,7 +45,34 @@ impl Dialog {
             labels: vec![accept.to_string(), "Cancel".to_string()],
             size,
             focus: 1,
+            field: None,
         }
+    }
+
+    /// Asks for a line of text, starting with `text`; Enter accepts it.
+    pub fn prompt(title: &str, lines: Vec<String>, text: &str, size: (u32, u32)) -> Dialog {
+        Dialog {
+            focus: 0,
+            field: Some(text.to_string()),
+            ..Dialog::new(title, lines, "OK", size)
+        }
+    }
+
+    /// What has been typed in the field.
+    pub fn field(&self) -> &str {
+        self.field.as_deref().unwrap_or("")
+    }
+
+    /// Typed text, for the field.
+    pub fn text(&mut self, text: &str) {
+        if let Some(field) = &mut self.field {
+            field.push_str(text);
+        }
+    }
+
+    /// The body's lines, with a line for the field.
+    fn body_lines(&self) -> u32 {
+        self.lines.len() as u32 + u32::from(self.field.is_some())
     }
 
     /// Tells something, with OK alone, which accepts.
@@ -51,6 +83,7 @@ impl Dialog {
             labels: vec!["OK".to_string()],
             size,
             focus: 0,
+            field: None,
         }
     }
 
@@ -76,11 +109,16 @@ impl Dialog {
             .iter()
             .chain([&self.title])
             .map(|l| text_width(l))
+            .chain(
+                self.field
+                    .as_ref()
+                    .map(|_| FIELD_CHARS as u32 * CHAR + 2 * PAD),
+            )
             .max()
             .unwrap_or(0);
         let w = text.max(2 * self.button_width() + PAD) + 4 * PAD;
         // Title bar, body, buttons.
-        let h = LINE + self.lines.len() as u32 * LINE + LINE + 6 * PAD;
+        let h = LINE + self.body_lines() * LINE + LINE + 6 * PAD;
         Rect {
             x: self.size.0.saturating_sub(w) / 2,
             y: self.size.1.saturating_sub(h) / 2,
@@ -115,8 +153,20 @@ impl Dialog {
     }
 
     /// Left, Right and Tab move between the buttons, Enter chooses and
-    /// Esc cancels.
+    /// Esc cancels. With a field, Backspace deletes from it and Enter
+    /// accepts.
     pub fn key(&mut self, key: Keycode) -> Option<Answer> {
+        if let Some(field) = &mut self.field {
+            match key {
+                Keycode::Backspace => {
+                    field.pop();
+                    return None;
+                }
+                Keycode::Return | Keycode::KpEnter => return Some(Answer::Accept),
+                Keycode::Space => return None,
+                _ => {}
+            }
+        }
         match key {
             Keycode::Left | Keycode::Right | Keycode::Tab => {
                 self.focus = (self.focus + 1) % self.labels.len();
@@ -145,6 +195,23 @@ impl Dialog {
             let y = f.y + LINE + 2 * PAD + i as u32 * LINE + (LINE - CHAR) / 2;
             draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
         }
+        if let Some(text) = &self.field {
+            let field = Rect {
+                x: f.x + 2 * PAD,
+                y: f.y + LINE + 2 * PAD + self.lines.len() as u32 * LINE,
+                w: f.w - 4 * PAD,
+                h: LINE,
+            };
+            fill(fb, field, BORDER);
+            // The end of a long text shows, with the cursor.
+            let room = (field.w - 2 * PAD) / CHAR - 1;
+            let chars: Vec<char> = text.chars().collect();
+            let shown: String = chars[chars.len().saturating_sub(room as usize)..]
+                .iter()
+                .collect();
+            let y = field.y + (LINE - CHAR) / 2;
+            draw_text(fb, font, field.x + PAD, y, &format!("{shown}_"), TEXT);
+        }
         for (i, label) in self.labels.iter().enumerate() {
             let r = self.button(i);
             fill(fb, r, if i == self.focus { HIGHLIGHT } else { BORDER });
@@ -168,6 +235,18 @@ mod tests {
         assert_eq!(d.lines[2], "Slots 0, 2 have unsaved changes,");
         assert_eq!(d.key(Keycode::Return), Some(Answer::Cancel));
         assert_eq!(d.key(Keycode::Left), None);
+        assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
+        assert_eq!(d.key(Keycode::Escape), Some(Answer::Cancel));
+    }
+
+    #[test]
+    fn a_prompt_takes_typing() {
+        let mut d = Dialog::prompt("Condition", Vec::new(), "A", (1280, 720));
+        d.text("> 1");
+        assert_eq!(d.key(Keycode::Space), None);
+        assert_eq!(d.key(Keycode::Backspace), None);
+        d.text("2");
+        assert_eq!(d.field(), "A> 2");
         assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
         assert_eq!(d.key(Keycode::Escape), Some(Answer::Cancel));
     }

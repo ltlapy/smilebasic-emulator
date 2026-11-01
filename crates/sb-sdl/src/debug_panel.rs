@@ -18,6 +18,9 @@ const FACE: u32 = 0xFF18_1818;
 const TAB: u32 = 0xFF40_4040;
 const ERROR: u32 = 0xFFF0_6060;
 const SELECTED: u32 = 0xFF30_3850;
+/// The mark of a watch that stops the program when it changes, red as
+/// the editor's breakpoints.
+const BREAKS: u32 = 0xFFDC_2828;
 /// Every other row of the lists.
 const STRIPE: u32 = 0xFF24_2428;
 /// Characters of the calls' and watches' column, and of a watch's
@@ -103,6 +106,8 @@ pub struct DebugPanel {
     rows: usize,
     /// The watch expressions, kept while the emulator runs.
     pub watches: Vec<String>,
+    /// Those of them that stop the program when their values change.
+    breaks: Vec<String>,
     /// The row last clicked.
     selected: Option<Hit>,
     typing: Option<(Target, String)>,
@@ -326,7 +331,35 @@ impl DebugPanel {
         if i < self.watches.len() {
             self.watches.remove(i);
             self.selected = None;
+            self.forget_breaks();
         }
+    }
+
+    /// Whether a watch stops the program when its value changes.
+    pub fn breaks(&self, i: usize) -> bool {
+        self.watches.get(i).is_some_and(|w| self.breaks.contains(w))
+    }
+
+    /// Makes a watch stop the program when its value changes, or not.
+    pub fn toggle_break(&mut self, i: usize) {
+        let Some(watch) = self.watches.get(i) else {
+            return;
+        };
+        match self.breaks.iter().position(|b| b == watch) {
+            Some(at) => _ = self.breaks.remove(at),
+            None => self.breaks.push(watch.clone()),
+        }
+    }
+
+    /// The watches that stop the program when their values change.
+    pub fn change_watches(&self) -> Vec<&str> {
+        self.breaks.iter().map(String::as_str).collect()
+    }
+
+    /// Lets go of the breaks of watches there are no more.
+    fn forget_breaks(&mut self) {
+        let watches = &self.watches;
+        self.breaks.retain(|b| watches.contains(b));
     }
 
     /// Starts typing a new value for a variable, beginning with its
@@ -357,7 +390,14 @@ impl DebugPanel {
                 match target {
                     Target::NewWatch if !typed.is_empty() => self.watches.push(typed),
                     Target::Watch(i) if typed.is_empty() => self.remove_watch(i),
-                    Target::Watch(i) => self.watches[i] = typed,
+                    // A watch that breaks goes on breaking as edited.
+                    Target::Watch(i) => {
+                        let old = std::mem::replace(&mut self.watches[i], typed.clone());
+                        if self.breaks.contains(&old) && !self.breaks.contains(&typed) {
+                            self.breaks.push(typed);
+                        }
+                        self.forget_breaks();
+                    }
                     Target::Variable(name) => return Typed::Value(name, typed),
                     Target::NewWatch => {}
                 }
@@ -504,6 +544,16 @@ impl DebugPanel {
                 fill(fb, row, SELECTED);
             } else if i % 2 == 1 {
                 fill(fb, row, STRIPE);
+            }
+            if self.breaks.contains(expr) {
+                fill(
+                    fb,
+                    Rect {
+                        w: m.pad / 2,
+                        ..row
+                    },
+                    BREAKS,
+                );
             }
             if let Some((Target::Watch(t), typed)) = &typing
                 && *t == i
@@ -715,6 +765,19 @@ mod tests {
         p.text("3");
         p.key(Keycode::Return);
         assert_eq!(p.watches, ["A*3"]);
+        // A watch that breaks goes on breaking once edited.
+        p.toggle_break(0);
+        assert!(p.breaks(0));
+        p.edit_watch(0);
+        p.text("+1");
+        p.key(Keycode::Return);
+        assert_eq!(p.change_watches(), ["A*3+1"]);
+        p.toggle_break(0);
+        assert!(!p.breaks(0));
+        p.edit_watch(0);
+        p.key(Keycode::Backspace);
+        p.key(Keycode::Backspace);
+        p.key(Keycode::Return);
         // Emptied, a watch goes.
         p.edit_watch(0);
         for _ in 0..3 {

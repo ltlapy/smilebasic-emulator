@@ -73,6 +73,8 @@ pub enum Action {
     RunToCursor,
     JumpToCursor,
     ToggleBreakpoint,
+    /// Type the condition of the breakpoint at the editor's cursor.
+    BreakpointCondition,
     ClearBreakpoints,
     /// Run the program RUN last started again.
     Restart,
@@ -174,7 +176,7 @@ impl Action {
             }
             Action::RunToCursor | Action::JumpToCursor => context.paused && context.editing,
             Action::DebugPanel => context.paused,
-            Action::ToggleBreakpoint => context.editing,
+            Action::ToggleBreakpoint | Action::BreakpointCondition => context.editing,
             Action::Undo
             | Action::Redo
             | Action::Cut
@@ -372,6 +374,7 @@ const MENUS: &[Menu] = &[
             keyed("Go on from cursor", "Ctrl+Shift+F6", Action::JumpToCursor),
             LINE,
             keyed("Breakpoint", "Shift+F7", Action::ToggleBreakpoint),
+            item("Breakpoint condition...", Action::BreakpointCondition),
             item("Clear breakpoints", Action::ClearBreakpoints),
             LINE,
             item("Show or hide the panel", Action::DebugPanel),

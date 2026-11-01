@@ -484,6 +484,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Event::KeyDown {
                         keycode: Some(key), ..
                     } => open.key(key),
+                    Event::TextInput { ref text, .. } => {
+                        open.text(text);
+                        None
+                    }
                     _ => None,
                 };
                 match (answer, asking.clone()) {
@@ -499,6 +503,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     (Some(Answer::Accept), Asking::Discard(name)) => {
                         load_edited(&mut machine, &name, &mut toasts);
                         dialog = None;
+                    }
+                    (Some(Answer::Accept), Asking::Condition(slot, line)) => {
+                        match machine.set_condition(slot, line, open.field()) {
+                            Ok(()) => dialog = None,
+                            Err(e) => toasts.push(format!("Condition: {e}")),
+                        }
                     }
                     (Some(_), Asking::Notice) | (Some(Answer::Cancel), _) => dialog = None,
                     (None, _) => {}
@@ -574,7 +584,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         debug_menu = None;
                         if let Some(choice) = chosen {
                             let panel = &mut debug_panel;
-                            choose(choice, &mut machine, panel, &clipboard, &mut toasts);
+                            let size = (display_w, display_h);
+                            let asks =
+                                choose(choice, &mut machine, panel, &clipboard, &mut toasts, size);
+                            dialog = asks.or(dialog);
                         }
                         continue;
                     }
@@ -1038,10 +1051,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         | Action::RunToCursor
                         | Action::JumpToCursor
                         | Action::ToggleBreakpoint
+                        | Action::BreakpointCondition
                         | Action::ClearBreakpoints
                         | Action::Restart
                         | Action::DebugPanel),
-                    ) => debug_action(&mut machine, action, &mut toasts),
+                    ) => {
+                        let size = (display_w, display_h);
+                        dialog = debug_action(&mut machine, action, &mut toasts, size).or(dialog);
+                    }
                     Click::Chosen(Action::Help) => {
                         if !machine.is_editing() {
                             machine.toggle_editor();
@@ -1134,12 +1151,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             Some(Hit::Close) => machine.show_panel(false),
                             Some(Hit::Variable(i)) if clicks == 2 => {
                                 let panel = &mut debug_panel;
-                                choose(
+                                let _ = choose(
                                     Choice::ChangeValue(i),
                                     &mut machine,
                                     panel,
                                     &clipboard,
                                     &mut toasts,
+                                    (display_w, display_h),
                                 );
                             }
                             _ => {}
@@ -1166,7 +1184,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     ..
                 } if let Some(action) = debug_key(key, shift(keymod), ctrl(keymod)) => {
-                    debug_action(&mut machine, action, &mut toasts)
+                    let size = (display_w, display_h);
+                    dialog = debug_action(&mut machine, action, &mut toasts, size).or(dialog);
                 }
                 // SmileBASIC 4's F5 is the + button.
                 Event::KeyDown {
@@ -1457,6 +1476,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 load_colors(palette, &path)
             });
         }
+        machine.set_changes(&debug_panel.change_watches());
         if !paused {
             machine.time_limit = Some(RUN_TIME);
             machine.frame();
@@ -2049,6 +2069,8 @@ enum Asking {
     Discard(String),
     /// Something told, such as About, with OK alone.
     Notice,
+    /// The condition of a breakpoint, by slot and 1-based line.
+    Condition(usize, u32),
 }
 
 /// Asks for a SoundFont file; the choice comes through `send`.
@@ -2101,8 +2123,15 @@ fn debug_key(key: Keycode, shift: bool, ctrl: bool) -> Option<Action> {
     })
 }
 
-/// Does one of the debugger's commands, or says why it cannot.
-fn debug_action(machine: &mut Machine, action: Action, toasts: &mut Toasts) {
+/// Does one of the debugger's commands, or says why it cannot; a
+/// command that asks something gives the dialog to show.
+#[must_use]
+fn debug_action(
+    machine: &mut Machine,
+    action: Action,
+    toasts: &mut Toasts,
+    size: (u32, u32),
+) -> Option<(Dialog, Asking)> {
     use sb_core::vm::Step;
     use sb_runtime::machine::Resume;
     let cursor = machine
@@ -2115,30 +2144,46 @@ fn debug_action(machine: &mut Machine, action: Action, toasts: &mut Toasts) {
         Action::StepOut => Resume::Step(Step::Out),
         Action::RunToCursor => match cursor {
             Some((slot, line)) => Resume::RunTo(slot, line),
-            None => return,
+            None => return None,
         },
         Action::JumpToCursor => {
             let here = cursor.zip(machine.paused_at());
             if !here.is_some_and(|((slot, line), at)| slot == at.0 && machine.jump_to(line)) {
                 toasts.push("Can only go on from a line of the stopped DEF".to_string());
             }
-            return;
+            return None;
         }
         Action::ToggleBreakpoint => {
             if let Some((slot, line)) = cursor {
                 machine.toggle_breakpoint(slot, line);
             }
-            return;
+            return None;
         }
-        Action::ClearBreakpoints => return machine.clear_breakpoints(),
-        Action::DebugPanel => return machine.show_panel(!machine.panel_open()),
+        Action::BreakpointCondition => {
+            let (slot, line) = cursor?;
+            let text = machine.condition(slot, line).unwrap_or_default();
+            let lines = vec![
+                format!("Stop at {slot}:{line} only when this is true."),
+                "Leave it empty to stop always.".to_string(),
+            ];
+            let open = Dialog::prompt("Breakpoint condition", lines, &text, size);
+            return Some((open, Asking::Condition(slot, line)));
+        }
+        Action::ClearBreakpoints => {
+            machine.clear_breakpoints();
+            return None;
+        }
+        Action::DebugPanel => {
+            machine.show_panel(!machine.panel_open());
+            return None;
+        }
         Action::Restart => {
             if !machine.restart() {
                 toasts.push("Nothing has run yet".to_string());
             }
-            return;
+            return None;
         }
-        _ => return,
+        _ => return None,
     };
     if !machine.debug(resume) {
         let why = match resume {
@@ -2151,6 +2196,7 @@ fn debug_action(machine: &mut Machine, action: Action, toasts: &mut Toasts) {
         };
         toasts.push(why.to_string());
     }
+    None
 }
 
 /// What the debugger's panel shows of the stopped program.
@@ -2215,6 +2261,8 @@ enum Choice {
     Watch(String),
     EditWatch(usize),
     RemoveWatch(usize),
+    /// Stop the program when a watch's value changes, or not.
+    BreakOnChange(usize),
     AddWatch,
     Hex,
     /// Go to the label or DEF of a name.
@@ -2255,9 +2303,15 @@ fn panel_menu(
                 Some(Ok(value)) => Some(value_text(value, usize::MAX, panel.hex).0),
                 _ => None,
             };
+            let breaks = if panel.breaks(i) { "[x]" } else { "[ ]" };
             vec![
                 ("Edit watch".to_string(), true, Choice::EditWatch(i)),
                 ("Remove watch".to_string(), true, Choice::RemoveWatch(i)),
+                (
+                    format!("{breaks} Break on change"),
+                    true,
+                    Choice::BreakOnChange(i),
+                ),
                 (
                     "Copy value".to_string(),
                     copy.is_some(),
@@ -2292,6 +2346,11 @@ fn editor_menu(machine: &mut Machine) -> Vec<(String, bool, Choice)> {
             Choice::Debug(Action::ToggleBreakpoint),
         ),
         (
+            "Breakpoint condition...".to_string(),
+            true,
+            Choice::Debug(Action::BreakpointCondition),
+        ),
+        (
             "Run to cursor".to_string(),
             paused,
             Choice::Debug(Action::RunToCursor),
@@ -2316,14 +2375,17 @@ fn editor_menu(machine: &mut Machine) -> Vec<(String, bool, Choice)> {
     items
 }
 
-/// Does what was chosen in a right click's menu.
+/// Does what was chosen in a right click's menu, giving the dialog to
+/// show for one that asks something.
+#[must_use]
 fn choose(
     choice: Choice,
     machine: &mut Machine,
     panel: &mut DebugPanel,
     clipboard: &ClipboardUtil,
     toasts: &mut Toasts,
-) {
+    size: (u32, u32),
+) -> Option<(Dialog, Asking)> {
     match choice {
         Choice::ChangeValue(i) => {
             let view = debug_view(machine, panel);
@@ -2339,6 +2401,7 @@ fn choose(
         Choice::Watch(text) => panel.watches.push(text),
         Choice::EditWatch(i) => panel.edit_watch(i),
         Choice::RemoveWatch(i) => panel.remove_watch(i),
+        Choice::BreakOnChange(i) => panel.toggle_break(i),
         Choice::AddWatch => panel.add_watch(String::new()),
         Choice::Hex => panel.hex = !panel.hex,
         Choice::Definition(name) => {
@@ -2346,12 +2409,13 @@ fn choose(
                 toasts.push(format!("No label or DEF named {name}"));
             }
         }
-        Choice::Debug(action) => debug_action(machine, action, toasts),
+        Choice::Debug(action) => return debug_action(machine, action, toasts, size),
         Choice::Cut | Choice::Copy => {
             copy_selection(machine, clipboard, toasts, choice == Choice::Cut)
         }
         Choice::Paste => paste(machine, clipboard, toasts),
     }
+    None
 }
 
 /// Gives a variable shown in the debugger's panel the value of what was
