@@ -41,7 +41,7 @@ use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
 use sb_runtime::help::{Help, Lookup};
 use sb_runtime::input::State;
-use sb_runtime::machine::Machine;
+use sb_runtime::machine::{Machine, StopReason};
 use sb_runtime::palette::Palette;
 use sb_runtime::runtime::{SLOTS, keys};
 use sb_runtime::screen::{Filter, ScreenMode};
@@ -2233,13 +2233,20 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
                 .map_err(|e| e.to_string())
         })
         .collect();
-    let status = match machine.paused_at() {
-        _ if machine.is_running() => "Running... Pause stops it".to_string(),
-        Some((slot, _)) if machine.lines_moved(slot) => {
-            "Edited since RUN: the old code goes on".to_string()
+    let (status, status_failed, keys) = match machine.paused_at() {
+        _ if machine.is_running() => ("Running... Pause stops it".to_string(), false, ""),
+        Some((slot, line)) => {
+            let (mut status, failed) = stop_text(machine.stop_reason(), slot, line);
+            if machine.lines_moved(slot) {
+                status.push_str(" - edited since RUN, the old code goes on");
+            }
+            (status, failed, "F6/F7 step  Shift+F5 go on")
         }
-        Some((slot, line)) => format!("Stopped at {slot}:{line}  F6/F7 step  Shift+F5 go on"),
-        None => String::new(),
+        None => (String::new(), false, ""),
+    };
+    let changed = match machine.stop_reason() {
+        Some(StopReason::Changed { watch, .. }) => Some(watch.clone()),
+        _ => None,
     };
     View {
         calls,
@@ -2249,7 +2256,33 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         slot,
         watches,
         status,
+        status_failed,
+        keys: keys.to_string(),
+        changed,
     }
+}
+
+/// Why and where the program stopped, as the debugger's panel says it,
+/// and whether it was a failure.
+fn stop_text(reason: Option<&StopReason>, slot: usize, line: u32) -> (String, bool) {
+    let at = format!("{slot}:{line}");
+    let text = match reason {
+        Some(StopReason::Paused) => format!("Paused at {at}"),
+        Some(StopReason::Stop) => format!("STOP at {at}"),
+        Some(StopReason::Traced) => format!("TRACE at {at}"),
+        Some(StopReason::Stepped) => format!("Stepped to {at}"),
+        Some(StopReason::RanTo) => format!("Ran to {at}"),
+        Some(StopReason::Breakpoint(None)) => format!("Breakpoint at {at}"),
+        Some(StopReason::Breakpoint(Some(c))) => format!("Breakpoint at {at} when {c}"),
+        Some(StopReason::Changed { watch, from, to }) => {
+            format!("{watch} changed {from} -> {to}, at {at}")
+        }
+        Some(StopReason::ConditionFailed(e)) => {
+            return (format!("Condition failed at {at}: {e}"), true);
+        }
+        None => format!("Stopped at {at}"),
+    };
+    (text, false)
 }
 
 /// What a right click's menu on the editor or the debugger's panel can do.

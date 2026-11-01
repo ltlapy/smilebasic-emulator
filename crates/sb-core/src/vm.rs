@@ -249,15 +249,20 @@ pub struct Vm {
     /// Watches that stop the program when their values change, looked at
     /// before each statement.
     changes: Vec<Change>,
-    /// Why the debugger last stopped the program, when a statement start
-    /// does not say it all: the watch that changed, or a condition that
-    /// could not be worked out.
+    /// Why the debugger last stopped the program.
     debug_note: Option<DebugNote>,
 }
 
-/// What [`Vm::take_debug_note`] tells of a stop.
+/// Why the debugger stopped the program, as [`Vm::take_debug_note`]
+/// tells.
 #[derive(Clone, Debug)]
 pub enum DebugNote {
+    /// A step ended.
+    Step,
+    /// A breakpoint, with its condition when it has one.
+    Breakpoint(Option<Rc<Watch>>),
+    /// The line a debugger ran to.
+    RanTo,
     /// The watch at this place in [`Vm::set_changes`]'s list changed
     /// from one value to the other.
     Changed(usize, Value, Value),
@@ -596,18 +601,25 @@ impl Vm {
     fn breakpoint_holds(&mut self) -> bool {
         let line = self.line();
         if self.run_to == Some((self.slot, line)) {
+            self.debug_note = Some(DebugNote::RanTo);
             return true;
         }
         let breakpoint =
             (self.breakpoints.get(self.slot).into_iter().flatten()).find(|b| b.0 == line);
         let Some(watch) = breakpoint.and_then(|b| b.1.clone()) else {
+            self.debug_note = Some(DebugNote::Breakpoint(None));
             return true;
         };
         match watch
             .eval(&|name| self.var_here(name))
             .and_then(|v| v.is_true())
         {
-            Ok(holds) => holds,
+            Ok(holds) => {
+                if holds {
+                    self.debug_note = Some(DebugNote::Breakpoint(Some(watch)));
+                }
+                holds
+            }
             Err(e) => {
                 self.debug_note = Some(DebugNote::Condition(e));
                 true
@@ -1042,6 +1054,7 @@ impl Vm {
                     (None, None) => trace.line = self.program.lines.get(self.pc).copied(),
                     (Some(most), _) if executed > trace.from && depth <= most => {
                         self.trace = None;
+                        self.debug_note = Some(DebugNote::Step);
                         return Ok(Status::Debug { line: self.line() });
                     }
                     (Some(_), _) => {}

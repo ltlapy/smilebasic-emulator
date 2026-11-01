@@ -79,6 +79,8 @@ pub struct Machine {
     breakpoints: Vec<BTreeMap<u32, Option<Rc<Watch>>>>,
     /// Watches that stop programs when their values change.
     changes: Vec<Rc<Watch>>,
+    /// Why the stopped program stopped.
+    stop_reason: Option<StopReason>,
     /// A debugger's step started from the editor, which stays shown
     /// while it runs unless the program waits for input.
     stepping: Option<Step>,
@@ -134,7 +136,30 @@ pub enum Resume {
 enum Halt {
     User,
     Stop,
+    Trace,
     Debug,
+}
+
+/// Why the stopped program stopped, for the debugger's panel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StopReason {
+    /// The Break key or the + button.
+    Paused,
+    Stop,
+    Traced,
+    Stepped,
+    RanTo,
+    /// A breakpoint, with its condition when it has one.
+    Breakpoint(Option<String>),
+    /// A watch's value changed from one to the other, written as a note
+    /// shows values.
+    Changed {
+        watch: String,
+        from: String,
+        to: String,
+    },
+    /// A breakpoint's condition could not be worked out.
+    ConditionFailed(String),
 }
 
 /// What a direct-mode LIST asks for.
@@ -212,6 +237,7 @@ impl Machine {
             halted: None,
             breakpoints: vec![BTreeMap::new(); SLOTS],
             changes: Vec::new(),
+            stop_reason: None,
             moved: vec![false; SLOTS],
             stepping: None,
             last_run: None,
@@ -690,7 +716,7 @@ impl Machine {
             if let Some(vm) = &self.vm {
                 let what = match how {
                     Halt::User => "User break",
-                    Halt::Stop | Halt::Debug => "Break",
+                    Halt::Stop | Halt::Trace | Halt::Debug => "Break",
                 };
                 let (slot, line) = (vm.slot().unwrap_or(0), line.unwrap_or(vm.line()));
                 self.end_sub(Some(format!("{what} on {slot}:{line}")));
@@ -716,7 +742,7 @@ impl Machine {
         // The format is SmileBASIC 4's own, from SmileBASIC 4.
         let what = match how {
             Halt::User => "User break",
-            Halt::Stop | Halt::Debug => "Break",
+            Halt::Stop | Halt::Trace | Halt::Debug => "Break",
         };
         let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
         // It follows whatever the line printed, as after INPUT's prompt.
@@ -727,15 +753,33 @@ impl Machine {
         if let Some(message) = vm.take_stop_message() {
             self.print_line(&message);
         }
-        let note = match vm.take_debug_note() {
-            Some(DebugNote::Changed(i, from, to)) => {
-                let source = self.changes.get(i).map_or("", |w| w.source());
-                let (from, to) = (note_value(&from), note_value(&to));
-                Some(format!("{source} changed: {from} -> {to}"))
+        let reason = match (how, vm.take_debug_note()) {
+            (Halt::User, _) => StopReason::Paused,
+            (Halt::Stop, _) => StopReason::Stop,
+            (Halt::Trace, _) => StopReason::Traced,
+            (Halt::Debug, Some(DebugNote::Breakpoint(c))) => {
+                StopReason::Breakpoint(c.map(|w| w.source().to_string()))
             }
-            Some(DebugNote::Condition(e)) => Some(format!("Condition failed: {e}")),
-            None => None,
+            (Halt::Debug, Some(DebugNote::RanTo)) => StopReason::RanTo,
+            (Halt::Debug, Some(DebugNote::Changed(i, from, to))) => StopReason::Changed {
+                watch: self.changes.get(i).map_or("", |w| w.source()).to_string(),
+                from: note_value(&from),
+                to: note_value(&to),
+            },
+            (Halt::Debug, Some(DebugNote::Condition(e))) => {
+                StopReason::ConditionFailed(e.to_string())
+            }
+            (Halt::Debug, Some(DebugNote::Step) | None) => StopReason::Stepped,
         };
+        // Those the screen alone does not tell are noted after the line.
+        let note = match &reason {
+            StopReason::Changed { watch, from, to } => {
+                Some(format!("{watch} changed: {from} -> {to}"))
+            }
+            StopReason::ConditionFailed(e) => Some(format!("Condition failed: {e}")),
+            _ => None,
+        };
+        self.stop_reason = program.then_some(reason);
         if let Some(note) = note {
             let note: Vec<u16> = note.encode_utf16().collect();
             self.print_line(&note);
@@ -937,10 +981,18 @@ impl Machine {
         if !vm.jump_to(line) {
             return false;
         }
+        // What stopped it is no longer where it is.
+        self.stop_reason = None;
         if let Some(top) = self.rt.backtrace.first_mut() {
             top.1 = line;
         }
         true
+    }
+
+    /// Why the stopped program stopped, while it can go on.
+    pub fn stop_reason(&self) -> Option<&StopReason> {
+        let paused = self.halted.is_some() && self.rt.stopped == Stopped::Paused;
+        self.stop_reason.as_ref().filter(|_| paused)
     }
 
     /// Where the stopped program goes on: its slot and the line about to
@@ -1307,7 +1359,7 @@ impl Machine {
                 Ok(Status::Ended) => self.finish(None),
                 Ok(Status::Break { line }) => self.stop_on(Some(line), Halt::User),
                 Ok(Status::Stop { line }) => self.stop_on(Some(line), Halt::Stop),
-                Ok(Status::Traced { line }) => self.stop_on(Some(line), Halt::Stop),
+                Ok(Status::Traced { line }) => self.stop_on(Some(line), Halt::Trace),
                 Ok(Status::Debug { line }) => self.stop_on(Some(line), Halt::Debug),
                 Err(e) => self.finish(Some(e)),
             }

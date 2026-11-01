@@ -2,7 +2,7 @@
 
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
-use sb_runtime::machine::Machine;
+use sb_runtime::machine::{Machine, StopReason};
 
 fn machine() -> Machine {
     let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
@@ -875,8 +875,10 @@ fn run_to_a_line_once() {
     let mut m = debug_machine();
     m.set_slot(0, src.to_string());
     enter(&mut m, "RUN");
+    assert_eq!(m.stop_reason(), Some(&StopReason::Stop));
     debug(&mut m, Resume::RunTo(0, 7));
     assert_eq!(m.paused_at(), Some((0, 7)));
+    assert_eq!(m.stop_reason(), Some(&StopReason::RanTo));
     // The line is forgotten once reached.
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
@@ -901,6 +903,8 @@ fn conditional_breakpoints_stop_when_true() {
     enter(&mut m, "RUN");
     assert_eq!(m.paused_at(), Some((0, 2)));
     assert_eq!(global(&m, "I"), Some("Int(4)".to_string()));
+    let condition = Some("I==4 || I==8".to_string());
+    assert_eq!(m.stop_reason(), Some(&StopReason::Breakpoint(condition)));
     debug(&mut m, Resume::Cont);
     assert_eq!(global(&m, "I"), Some("Int(8)".to_string()));
     // A DEF's local, in a condition on one of its lines.
@@ -910,8 +914,10 @@ fn conditional_breakpoints_stop_when_true() {
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 4)));
     // A step over a call whose breakpoint does not stop goes on as a step.
+    assert_eq!(m.stop_reason(), Some(&StopReason::Breakpoint(None)));
     debug(&mut m, Resume::Step(Step::Over));
     assert_eq!(m.paused_at(), Some((0, 5)));
+    assert_eq!(m.stop_reason(), Some(&StopReason::Stepped));
     debug(&mut m, Resume::Cont);
     assert_eq!(m.paused_at(), Some((0, 8)));
     assert_eq!(format!("{:?}", m.frame_locals(0)[0].1), "Int(7)");
@@ -928,6 +934,16 @@ fn conditional_breakpoints_stop_when_true() {
         r[r.len() - 2].starts_with("Condition failed: Undefined variable"),
         "{r:?}"
     );
+    assert!(matches!(
+        m.stop_reason(),
+        Some(StopReason::ConditionFailed(_))
+    ));
+    // A jump leaves what stopped it behind; the end, any reason.
+    assert!(m.jump_to(8));
+    assert_eq!(m.stop_reason(), None);
+    m.clear_breakpoints();
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.stop_reason(), None);
 }
 
 #[test]
@@ -945,6 +961,12 @@ fn watches_stop_where_their_value_changed() {
     assert_eq!(global(&m, "I"), Some("Int(4)".to_string()));
     let r = rows(&m);
     assert_eq!(r[r.len() - 2], "B changed: 0 -> 1");
+    let changed = StopReason::Changed {
+        watch: "B".to_string(),
+        from: "0".to_string(),
+        to: "1".to_string(),
+    };
+    assert_eq!(m.stop_reason(), Some(&changed));
     debug(&mut m, Resume::Cont);
     assert_eq!(global(&m, "I"), Some("Int(8)".to_string()));
     debug(&mut m, Resume::Cont);

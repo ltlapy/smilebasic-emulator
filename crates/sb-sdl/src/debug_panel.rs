@@ -21,6 +21,8 @@ const SELECTED: u32 = 0xFF30_3850;
 /// The mark of a watch that stops the program when it changes, red as
 /// the editor's breakpoints.
 const BREAKS: u32 = 0xFFDC_2828;
+/// The value of the watch whose change stopped the program.
+const CHANGED: u32 = 0xFFFF_DC00;
 /// Every other row of the lists.
 const STRIPE: u32 = 0xFF24_2428;
 /// Characters of the calls' and watches' column, and of a watch's
@@ -56,9 +58,14 @@ pub struct View {
     pub slot: usize,
     /// The value of each watch, or why it has none.
     pub watches: Vec<Result<Value, String>>,
-    /// A line at the bottom: where the program stopped, or that a step
-    /// runs.
+    /// A line at the bottom: why and where the program stopped, or that
+    /// a step runs, red for a failure; then the keys, which go first when
+    /// there is no room.
     pub status: String,
+    pub status_failed: bool,
+    pub keys: String,
+    /// The watch whose change stopped the program.
+    pub changed: Option<String>,
 }
 
 /// What a click on the panel chose.
@@ -571,6 +578,10 @@ impl DebugPanel {
                     Some(Err(e)) => (cut(e, room), ERROR, vec![e.clone()]),
                     None => (String::new(), TEXT, Vec::new()),
                 };
+                let color = match view.changed.as_ref() == Some(expr) {
+                    true => CHANGED,
+                    false => color,
+                };
                 m.draw(fb, font, x, y + m.text, &text, color);
                 if expr.chars().count() > watch_chars || text.ends_with('…') {
                     let mut lines = vec![format!("{expr} =")];
@@ -684,14 +695,17 @@ impl DebugPanel {
             w: inner.x + inner.w - cx,
             h: m.line,
         };
-        m.draw(
-            fb,
-            font,
-            status.x + m.pad / 2,
-            status.y + m.text,
-            &view.status,
-            DISABLED,
-        );
+        let room = (status.w.saturating_sub(m.pad) / m.char) as usize;
+        let reason = view.status.chars().count();
+        let color = if view.status_failed { ERROR } else { DISABLED };
+        let (x, y) = (status.x + m.pad / 2, status.y + m.text);
+        m.draw(fb, font, x, y, &cut(&view.status, room), color);
+        if reason > room {
+            self.tips.push((status, vec![view.status.clone()]));
+        } else if !view.keys.is_empty() && reason + 3 + view.keys.chars().count() <= room {
+            let x = x + (reason as u32 + 3) * m.char;
+            m.draw(fb, font, x, y, &view.keys, DISABLED);
+        }
         self.draw_tip(fb, font);
     }
 
