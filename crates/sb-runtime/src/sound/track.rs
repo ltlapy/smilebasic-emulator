@@ -149,7 +149,8 @@ pub(crate) struct Track {
     pub(crate) after_fade: AfterFade,
     /// BGMPITCH, in cents.
     pub(crate) pitch: i32,
-    pub(crate) wet: i32,
+    /// BGMWET, once set.
+    pub(crate) wet: Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,7 +193,7 @@ impl Track {
             fade: Ramp::at(1.0),
             after_fade: AfterFade::Nothing,
             pitch: 0,
-            wet: 0,
+            wet: None,
         }
     }
 
@@ -791,12 +792,14 @@ impl Track {
         }
     }
 
-    /// Adds `left.len()` samples of the track to the buffers.
+    /// Adds `left.len()` samples of the track to the buffers, and to the
+    /// effector's as much as it sends there.
     pub(crate) fn render(
         &mut self,
         left: &mut [f32],
         right: &mut [f32],
         scratch: &mut [Vec<f32>; 2],
+        mut aux: Option<(&mut [f32], &mut [f32], f32)>,
     ) {
         self.fresh = Fresh::No;
         self.linger = self.linger.saturating_sub(1);
@@ -864,8 +867,13 @@ impl Track {
         let volume = self.volume as f32 / 64.0 * self.seq.as_ref().map_or(1.0, Player::volume);
         for i in 0..n {
             let gain = volume * self.fade.value as f32;
-            left[i] += l[i] * gain;
-            right[i] += r[i] * gain;
+            let (x, y) = (l[i] * gain, r[i] * gain);
+            left[i] += x;
+            right[i] += y;
+            if let Some((al, ar, send)) = &mut aux {
+                al[i] += x * *send;
+                ar[i] += y * *send;
+            }
             self.fade.step_sample();
         }
         self.end_fade();
@@ -913,10 +921,10 @@ mod tests {
         let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
         let mut scratch = Default::default();
         for _ in 0..30 {
-            t.render(&mut l, &mut r, &mut scratch);
+            t.render(&mut l, &mut r, &mut scratch, None);
         }
         l.fill(0.0);
-        t.render(&mut l, &mut r, &mut scratch);
+        t.render(&mut l, &mut r, &mut scratch, None);
         assert!(l.iter().any(|&s| s.abs() > 0.01));
     }
 
@@ -929,13 +937,13 @@ mod tests {
         let mut scratch = Default::default();
         // Half way through C2, half way to G.
         for _ in 0..30 {
-            t.render(&mut l, &mut r, &mut scratch);
+            t.render(&mut l, &mut r, &mut scratch, None);
         }
         assert_eq!(t.voices.len(), 1);
         assert!((t.voices[0].2.porta - 350.0).abs() < 15.0);
         // G2: the same note, at G.
         for _ in 0..60 {
-            t.render(&mut l, &mut r, &mut scratch);
+            t.render(&mut l, &mut r, &mut scratch, None);
         }
         assert_eq!(t.voices.len(), 1);
         assert_eq!((t.voices[0].2.key, t.voices[0].2.porta), (67, 0.0));
@@ -960,7 +968,7 @@ mod tests {
         let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
         let mut scratch = Default::default();
         for _ in 0..600 {
-            t.render(&mut l, &mut r, &mut scratch);
+            t.render(&mut l, &mut r, &mut scratch, None);
         }
         assert_eq!(t.voices.len(), sampler::MAX_VOICES);
     }

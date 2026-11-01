@@ -15,6 +15,7 @@ use crate::runtime::{Command, Runtime, illegal, no_form};
 use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
+use crate::sound::reverb::Settings;
 use crate::sound::seq::Kind;
 use crate::sound::wave::{Envelope, Wave, eight_bit};
 use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, Recorder, TRACKS, frames};
@@ -277,9 +278,8 @@ impl Runtime {
             }
             (Command::Bgmwet, Want::Outs(0), 1..=2) => {
                 let (track, rest) = split_track(args, 1)?;
-                // UNVERIFIED: kept for the effector, which does not play.
                 let wet = in_range("wet", &rest[0], 0..=127)?;
-                self.sound.track(track.unwrap_or(0)).wet = wet;
+                self.sound.track(track.unwrap_or(0)).wet = Some(wet);
                 Ok(vec![])
             }
             // Without a track, BGMPITCH sets every track's.
@@ -538,15 +538,19 @@ impl Runtime {
                 Ok(vec![Value::Int(i32::from(self.sound.effector.on))])
             }
             (Command::Efcset, Want::Outs(0), 1) => {
-                self.sound.effector.preset = in_range("preset", &args[0], 0..=3)?;
+                let preset = in_range("preset", &args[0], 0..=3)?;
+                self.sound.effector.preset = preset;
+                self.sound.set_reverb(Settings::preset(preset));
                 Ok(vec![])
             }
             (Command::Efcset, Want::Outs(0), 9) => {
                 in_range("reflections", &args[0], 0..=4)?;
                 in_range("echo", &args[3], 0..=4)?;
-                for a in args {
-                    a.to_real()?;
+                let mut v = [0.0; 9];
+                for (v, a) in v.iter_mut().zip(args) {
+                    *v = a.to_real()?;
                 }
+                self.sound.set_reverb(Some(Settings::detailed(v)));
                 Ok(vec![])
             }
             (Command::Efcwet, Want::Outs(0), 4) => {

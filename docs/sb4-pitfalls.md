@@ -498,6 +498,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   from there without starting again: `T120O4C2_G2` slides from C to G
   over the first second and holds G for the second, and on a piano
   (`@0`) the G does not strike again.
+- With the effector on, `EFCWET`'s four values (BEEP, BGM, TALK and
+  PCM) each send that part of the sound to the reverb: wet/127 of it
+  goes there and the rest straight out, in a straight line. With it
+  off, they change nothing.
 - `RECSTART` records the sound before the effector, or the effector
   did nothing: a short note recorded alike, to the unit, with `EFCEN`
   off, with `#EFCCAVE` at `EFCWET 0,127,0,0`, with a hall set by

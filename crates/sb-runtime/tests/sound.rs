@@ -325,6 +325,30 @@ fn effector_balance_and_talk_are_accepted() {
 }
 
 #[test]
+fn the_effector_rings_on_after_a_note_but_is_not_recorded() {
+    let tail = |setup: &str| {
+        let mut rt = runtime();
+        let program = format!(
+            "{setup}:WAVSET 224,127,0,127,127,\"E020\"*16,69:RECSTART 1:BGMPLAY \"T120@224O4A16\""
+        );
+        run_on(&mut rt, &program).unwrap();
+        // A sixteenth lasts 125 ms; listen from 300 ms to 600 ms.
+        frames(&mut rt, 20);
+        rt.sound.take_samples();
+        frames(&mut rt, 18);
+        let heard = peak(&mut rt);
+        let recorded = run_on(&mut rt, "RECDATA 24000 OUT L,R:?ABS(L)+ABS(R)").unwrap();
+        (heard, recorded)
+    };
+    assert_eq!(tail("EFCEN 0"), (0.0, "0".to_string()));
+    let (heard, recorded) = tail("EFCSET #EFCCAVE:EFCWET 0,127,0,0:EFCEN 1");
+    assert!(heard > 0.001, "{heard}");
+    assert_eq!(recorded, "0");
+    // Sending nothing, nothing rings.
+    assert_eq!(tail("EFCSET #EFCCAVE:EFCWET 127,0,127,127:EFCEN 1").0, 0.0);
+}
+
+#[test]
 fn recording_what_plays() {
     let mut rt = runtime();
     run_on(
