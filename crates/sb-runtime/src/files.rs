@@ -452,6 +452,7 @@ impl Runtime {
     /// on, although the manual says otherwise (checked on hardware).
     fn load_ref(&mut self, file: &FileRef, slot: usize) -> storage::Result<()> {
         self.slots[slot] = program_text(&self.storage.read_ref(file)?)?;
+        self.slot_changes[slot] += 1;
         self.drop_prg_edit(slot);
         self.slot_names[slot] = file.name.clone();
         self.slot_modified[slot] = false;

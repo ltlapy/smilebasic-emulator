@@ -79,6 +79,13 @@ pub struct Machine {
     /// code there is the old one, as CONT goes on with it (checked on
     /// hardware), so it keeps the breakpoints it had.
     moved: Vec<bool>,
+    /// The editor shows apart from the screens, in a window of its own,
+    /// so that programs and direct mode go on while it is open.
+    detached: bool,
+    /// With the editor apart, whether it takes the keys.
+    editor_focus: bool,
+    /// The slots' change counts the editor's sides last took.
+    slot_changes: Vec<u32>,
 }
 
 /// How a stopped program goes on.
@@ -181,6 +188,9 @@ impl Machine {
             last_run: None,
             panel_closed: false,
             time_limit: None,
+            detached: false,
+            editor_focus: false,
+            slot_changes: vec![0; SLOTS],
         }
     }
 
@@ -219,10 +229,44 @@ impl Machine {
         self.editing
     }
 
+    /// Shows the editor apart from the screens, or in their place. Put
+    /// back in their place while a program runs, it closes.
+    pub fn set_detached(&mut self, detached: bool) {
+        if self.detached == detached {
+            return;
+        }
+        self.detached = detached;
+        self.editor_focus = false;
+        if !detached && self.editing && self.vm.is_some() {
+            self.close_editor();
+        }
+    }
+
+    pub fn is_detached(&self) -> bool {
+        self.detached
+    }
+
+    /// With the editor apart, whether keys go to it rather than to the
+    /// program or direct mode.
+    pub fn focus_editor(&mut self, focused: bool) {
+        self.editor_focus = focused;
+    }
+
+    /// Whether the editor is open and takes the keys.
+    pub fn editor_has_keys(&self) -> bool {
+        self.editing && (!self.detached || self.editor_focus)
+    }
+
+    /// Whether the editor can open or change slots now: not while code
+    /// runs in its place.
+    fn can_edit(&self) -> bool {
+        self.vm.is_none() || self.detached
+    }
+
     /// Switches between direct mode and the editor, as F4 does. Entering
     /// the editor shows the last error's line once, like LIST ERR.
     pub fn toggle_editor(&mut self) {
-        if self.vm.is_some() {
+        if !self.can_edit() {
             return;
         }
         if self.editing {
@@ -261,7 +305,7 @@ impl Machine {
     /// (Ctrl+1 to Ctrl+6, like SmileBASIC 4's EDIT0 to EDIT3). A slot that
     /// the other side of a split display shows gets the keys there.
     pub fn edit_slot(&mut self, slot: usize) {
-        if self.vm.is_some() || slot >= SLOTS {
+        if !self.can_edit() || slot >= SLOTS {
             return;
         }
         if self.editing {
@@ -316,15 +360,44 @@ impl Machine {
         } else {
             self.editors[a].open(slot, &self.rt.slots[slot], at);
         }
+        self.slot_changes.clone_from(&self.rt.slot_changes);
         self.editing = true;
     }
 
     /// Closes one side, keeping its changes in the slot.
     fn close_side(&mut self, side: usize) {
+        self.editors[side].take_changed();
         if let Some(source) = self.editors[side].close() {
             let slot = self.editors[side].slot();
             self.rt.slots[slot] = source;
             self.rt.slot_modified[slot] = true;
+        }
+    }
+
+    /// The sides of the editor with text of their own: not one that
+    /// mirrors the other.
+    fn own_sides(&self) -> [Option<usize>; 2] {
+        let other = (self.split && !self.mirrors()).then_some(self.other());
+        [Some(self.active), other]
+    }
+
+    /// Keeps the editor and the slots it shows the same while code can
+    /// run with it open: its edits go into the slots, and a slot that a
+    /// program or command changed comes into the editor.
+    fn sync_slots(&mut self) {
+        if !self.editing {
+            return;
+        }
+        for side in self.own_sides().into_iter().flatten() {
+            let slot = self.editors[side].slot();
+            if self.editors[side].take_changed() {
+                self.rt.slots[slot] = self.editors[side].text();
+                self.rt.slot_modified[slot] = true;
+            } else if self.slot_changes[slot] != self.rt.slot_changes[slot] {
+                let (line, col) = self.editors[side].cursor();
+                self.editors[side].open(slot, &self.rt.slots[slot], Some((line, col + 1)));
+            }
+            self.slot_changes[slot] = self.rt.slot_changes[slot];
         }
     }
 
@@ -516,6 +589,7 @@ impl Machine {
         // as the program set it (checked on hardware).
         self.rt.system.mouse_cursor = false;
         self.last_run = Some(slot);
+        self.sync_slots();
         self.start(&self.rt.slots[slot].clone(), Some(slot));
     }
 
@@ -560,7 +634,7 @@ impl Machine {
             }
             return;
         }
-        if self.editing {
+        if self.editing && !self.detached {
             self.close_editor();
         }
         self.run_slot(0);
@@ -628,7 +702,7 @@ impl Machine {
 
     /// Shows a slot's 1-based line in the editor, opening it if need be.
     pub fn show_line(&mut self, slot: usize, line: u32) {
-        if self.vm.is_some() || slot >= SLOTS {
+        if !self.can_edit() || slot >= SLOTS {
             return;
         }
         if !self.editing {
@@ -700,6 +774,7 @@ impl Machine {
         }
         if self.editing {
             match how {
+                Resume::Cont | Resume::Trace if self.detached => {}
                 Resume::Cont | Resume::Trace => self.close_editor(),
                 Resume::Step(step) => self.stepping = Some(step),
                 Resume::RunTo(..) => self.stepping = Some(Step::Over),
@@ -721,7 +796,7 @@ impl Machine {
         if self.vm.is_some() {
             self.stop();
         }
-        if self.editing {
+        if self.editing && !self.detached {
             self.close_editor();
         }
         self.rt.cancel_input();
@@ -940,14 +1015,17 @@ impl Machine {
 
     /// The editor, after it has taken the keys typed so far, so that its
     /// other commands come in order with them.
+    /// Apart from the screens, it takes only the keys typed into its
+    /// window.
     pub fn edit(&mut self) -> &mut Editor {
+        let keys = self.editor_has_keys();
         let editor = &mut self.editors[self.active];
         editor.tab_step = self.rt.settings.editor_tab_step as usize;
         editor.complete = Options::from_settings(&self.rt.settings, true);
         if !Rc::ptr_eq(&editor.library, &self.rt.library) {
             editor.library = self.rt.library.clone();
         }
-        while let Some(key) = self.rt.next_key() {
+        while let Some(key) = keys.then(|| self.rt.next_key()).flatten() {
             editor.key(key);
         }
         editor
@@ -956,7 +1034,7 @@ impl Machine {
     /// Pasted text: into the editor, or typed as keys, with line breaks
     /// as Enter and letters as they are.
     pub fn paste(&mut self, text: &str) {
-        if self.editing {
+        if self.editor_has_keys() {
             self.edit().paste(text);
             return;
         }
@@ -1007,8 +1085,9 @@ impl Machine {
         self.rt.animate();
         if self.editing {
             self.edit();
+            self.sync_slots();
             // A step from the editor runs with it shown.
-            if self.stepping.is_none() || self.vm.is_none() {
+            if !self.detached && (self.stepping.is_none() || self.vm.is_none()) {
                 return;
             }
         }
@@ -1085,7 +1164,9 @@ impl Machine {
         // A step that waits for input shows the screen until it stops: an
         // INPUT, or one going over lines that read the controls and waited
         // for a frame.
+        self.sync_slots();
         if self.editing
+            && !self.detached
             && let (Some(step), Some(vm)) = (self.stepping, &self.vm)
             && (vm.is_reading_input() || step != Step::Into && vsynced && self.rt.input.polled)
         {
@@ -1096,34 +1177,45 @@ impl Machine {
     /// How the frame that [`Machine::render`] returns is to be shown. The
     /// editor keeps the start-up resolution, sampled once.
     pub fn screen_mode(&self) -> ScreenMode {
-        if self.editing {
-            let m = self.rt.startup_mode();
-            ScreenMode::new(m.width, m.height)
+        if self.editing && !self.detached {
+            self.editor_mode()
         } else {
             self.rt.screen_mode()
         }
     }
 
+    /// How the editor's frame is to be shown.
+    pub fn editor_mode(&self) -> ScreenMode {
+        let m = self.rt.startup_mode();
+        ScreenMode::new(m.width, m.height)
+    }
+
+    /// The editor, or the screens while it is closed or shows apart.
     pub fn render(&mut self) -> &Framebuffer {
-        if self.editing {
-            self.mark_editors();
-            let panel = self.panel_shown();
-            if self.mirrors() {
-                let [first, second] = &mut self.editors;
-                match self.active {
-                    0 => second.mirror(first),
-                    _ => first.mirror(second),
-                }
-            }
-            self.rt.render_editors(
-                &mut self.editors,
-                self.active,
-                self.split.then_some(self.split_rows),
-                panel,
-            )
+        if self.editing && !self.detached {
+            self.render_editor()
         } else {
             self.rt.render()
         }
+    }
+
+    /// The editor's frame, which shows apart from the screens.
+    pub fn render_editor(&mut self) -> &Framebuffer {
+        self.mark_editors();
+        let panel = self.panel_shown();
+        if self.mirrors() {
+            let [first, second] = &mut self.editors;
+            match self.active {
+                0 => second.mirror(first),
+                _ => first.mirror(second),
+            }
+        }
+        self.rt.render_editors(
+            &mut self.editors,
+            self.active,
+            self.split.then_some(self.split_rows),
+            panel,
+        )
     }
 
     /// Runs a line typed in direct mode.

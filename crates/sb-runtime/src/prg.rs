@@ -135,6 +135,7 @@ impl Runtime {
         source.empty = false;
         self.slots[edit.slot] = source.text();
         self.slot_modified[edit.slot] = true;
+        self.slot_changes[edit.slot] += 1;
         self.prg_edit = Some(PrgEdit {
             slot: edit.slot,
             line: line.min(source.lines.len()),

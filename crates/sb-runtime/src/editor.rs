@@ -322,6 +322,8 @@ pub struct Editor {
     layout: Vec<Pos>,
     grid: Grid,
     modified: bool,
+    /// The text changed since [`Editor::take_changed`] last looked.
+    changed: bool,
     undo: Vec<Step>,
     redo: Vec<Step>,
     /// How the last edit may be joined by the next one.
@@ -443,6 +445,7 @@ impl Editor {
             layout: Vec::new(),
             grid: Grid { cell: 8, top: 0 },
             modified: false,
+            changed: false,
             undo: Vec::new(),
             redo: Vec::new(),
             merge: Merge::Alone,
@@ -497,6 +500,12 @@ impl Editor {
         self.modified
     }
 
+    /// Whether the text changed since the last call, or since it was
+    /// opened.
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+
     /// The cursor as a 1-based line and 0-based column.
     pub fn cursor(&self) -> (usize, usize) {
         (self.view.line + 1, self.view.col)
@@ -523,6 +532,7 @@ impl Editor {
         self.slot = slot;
         self.lines = split_lines(source);
         self.modified = false;
+        self.changed = false;
         self.view = self.saved[slot];
         if let Some((line, col)) = at {
             self.view.line = line.saturating_sub(1);
@@ -563,6 +573,7 @@ impl Editor {
         self.undo = std::mem::take(&mut from.undo);
         self.redo = std::mem::take(&mut from.redo);
         self.modified = from.modified;
+        self.changed |= std::mem::take(&mut from.changed);
         self.merge = Merge::Alone;
         self.fit_cursor();
     }
@@ -698,6 +709,7 @@ impl Editor {
         });
         step.after = after;
         self.modified = true;
+        self.changed = true;
         after
     }
 
@@ -715,6 +727,7 @@ impl Editor {
             self.moved_to(step.before);
             self.redo.push(step);
             self.modified = true;
+            self.changed = true;
             break;
         }
     }
@@ -730,6 +743,7 @@ impl Editor {
             self.moved_to(step.after);
             self.undo.push(step);
             self.modified = true;
+            self.changed = true;
         }
     }
 

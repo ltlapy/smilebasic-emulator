@@ -1160,3 +1160,92 @@ fn the_panel_closes_until_the_next_stop() {
     assert!(m.panel_at().is_some());
     assert_eq!(m.editor().marks.stopped, Some(1));
 }
+
+/// A machine whose editor shows apart from the screens.
+fn detached_machine() -> Machine {
+    let mut m = debug_machine();
+    m.set_detached(true);
+    m
+}
+
+#[test]
+fn detached_editor_opens_while_a_program_runs() {
+    let mut m = detached_machine();
+    m.set_slot(0, "@L\nVSYNC\nGOTO @L".to_string());
+    enter_no_wait(&mut m, "RUN");
+    m.edit_slot(0);
+    assert!(m.is_editing() && m.is_running());
+    m.frame();
+    assert!(m.is_running());
+    // Put back in place of the screens, it closes.
+    m.set_detached(false);
+    assert!(!m.is_editing() && m.is_running());
+    // ...and cannot open again until the program stops.
+    m.toggle_editor();
+    assert!(!m.is_editing());
+}
+
+#[test]
+fn detached_editor_takes_only_its_own_keys() {
+    let mut m = detached_machine();
+    m.set_slot(0, "A=1".to_string());
+    m.edit_slot(0);
+    // Without the keys, typing goes to direct mode.
+    enter(&mut m, "?6*7");
+    assert!(rows(&m).iter().any(|r| r == "42"));
+    assert_eq!(m.editor().text(), "A=1");
+    m.focus_editor(true);
+    // Unshifted letters type capitals.
+    m.type_text("b");
+    m.frame();
+    assert_eq!(m.editor().text(), "BA=1");
+}
+
+#[test]
+fn detached_editor_edits_run_without_closing_it() {
+    let mut m = detached_machine();
+    m.set_slot(0, "?\"OLD\"".to_string());
+    m.edit_slot(0);
+    m.focus_editor(true);
+    m.edit().select_all();
+    m.paste("?\"NEW\"");
+    m.focus_editor(false);
+    enter(&mut m, "RUN");
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["NEW", "OK"]);
+    assert!(m.is_editing());
+    assert_eq!(m.slot(0), "?\"NEW\"");
+    assert!(m.unsaved_slots().contains(&0));
+}
+
+#[test]
+fn detached_editor_takes_a_programs_changes_to_its_slot() {
+    let mut m = detached_machine();
+    m.set_slot(0, "A=1".to_string());
+    m.set_slot(1, "PRGEDIT 0\nPRGSET \"B=2\"".to_string());
+    m.edit_slot(0);
+    enter(&mut m, "RUN 1");
+    m.frame();
+    assert!(m.slot(0).starts_with("B=2"));
+    assert_eq!(m.editor().text(), m.slot(0));
+}
+
+#[test]
+fn detached_editor_stays_open_on_cont() {
+    use sb_runtime::machine::Resume;
+    let mut m = detached_machine();
+    m.set_slot(0, "STOP\n?\"GO\"".to_string());
+    enter(&mut m, "RUN");
+    m.edit_slot(0);
+    debug(&mut m, Resume::Cont);
+    let r = rows(&m);
+    assert_eq!(&r[r.len() - 2..], ["GO", "OK"]);
+    assert!(m.is_editing());
+}
+
+/// Types a line and presses Enter, running one frame for it.
+fn enter_no_wait(m: &mut Machine, line: &str) {
+    m.type_text(line);
+    m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+    m.frame();
+}

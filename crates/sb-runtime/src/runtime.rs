@@ -570,6 +570,9 @@ pub struct Runtime {
     pub slot_names: Vec<String>,
     /// Slots changed in the editor since they were last loaded or saved.
     pub slot_modified: Vec<bool>,
+    /// Counts each slot's changes by programs and commands, so that an
+    /// editor showing it while code runs can take them.
+    pub(crate) slot_changes: Vec<u32>,
     /// The slot whose program is running; `None` in direct mode.
     pub(crate) running_slot: Option<usize>,
     /// How the last program stopped, kept up to date by the machine.
@@ -801,6 +804,7 @@ impl Runtime {
             slots: vec![String::new(); SLOTS],
             slot_names: vec![String::new(); SLOTS],
             slot_modified: vec![false; SLOTS],
+            slot_changes: vec![0; SLOTS],
             running_slot: None,
             stopped: Stopped::No,
             backtrace: Vec::new(),
@@ -1532,6 +1536,7 @@ impl Runtime {
                 for slot in slots {
                     self.drop_prg_edit(slot);
                     self.slots[slot].clear();
+                    self.slot_changes[slot] += 1;
                     self.slot_names[slot].clear();
                     self.slot_modified[slot] = false;
                 }
