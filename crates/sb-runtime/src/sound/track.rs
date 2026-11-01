@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use super::inspect::{ChannelInfo, State, TrackInfo};
 use super::mml::{ChordPart, Cmd, Link, Num, Pitch, Song, WHOLE, ticks};
+use super::sampler;
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Envelope, Waves};
@@ -335,6 +336,13 @@ impl Track {
                 };
                 let (envelope, cents) = (ch.envelope, self.cents(c).rem_euclid(100));
                 for &key in keys {
+                    // As many as the sampler keeps, so that long releases
+                    // (and a release of 0, which never ends) cannot pile
+                    // up notes: the oldest let go makes way.
+                    if self.voices.len() >= sampler::MAX_VOICES {
+                        let oldest = self.voices.iter().position(|(.., v)| v.released());
+                        self.voices.remove(oldest.unwrap_or(0));
+                    }
                     let v = wave::Voice::new(w.clone(), envelope, key, cents, false);
                     self.voices.push((c, program, v));
                 }
@@ -730,5 +738,36 @@ impl Track {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sound::FRAME_SAMPLES;
+    use crate::sound::mml::parse;
+
+    #[test]
+    fn waveform_notes_that_never_end_do_not_pile_up() {
+        let waves = Rc::new(RefCell::new(Waves::default()));
+        waves.borrow_mut().user[0] = Some(Rc::new(wave::Wave {
+            envelope: wave::Envelope {
+                release: 0,
+                ..wave::Envelope::ORGAN
+            },
+            ..wave::pulse(219)
+        }));
+        let mut t = Track::new(None, waves);
+        t.play(
+            Some(Rc::new(parse("T240 @224 L32 [CDEFGAB]").unwrap())),
+            127,
+            0,
+        );
+        let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
+        let mut scratch = Default::default();
+        for _ in 0..600 {
+            t.render(&mut l, &mut r, &mut scratch);
+        }
+        assert_eq!(t.voices.len(), sampler::MAX_VOICES);
     }
 }

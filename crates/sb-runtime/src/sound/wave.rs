@@ -220,6 +220,10 @@ impl Voice {
         self.done
     }
 
+    pub fn released(&self) -> bool {
+        self.envelope.released()
+    }
+
     /// Adds the voice into the buffers.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         let wave = self.wave.clone();

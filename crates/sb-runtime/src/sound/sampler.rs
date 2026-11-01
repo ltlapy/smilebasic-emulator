@@ -13,7 +13,7 @@ use super::wave::Envelope as MmlEnvelope;
 // UNVERIFIED: how often SmileBASIC 4 steps its envelopes.
 pub(crate) const TICK: usize = RATE as usize / 200;
 /// Notes sounding at once; the oldest makes way for a new one.
-const MAX_VOICES: usize = 48;
+pub(crate) const MAX_VOICES: usize = 48;
 /// The level of silence, in 1/128ths of 0.1 dB.
 const SILENCE: i32 = -723 * 128;
 /// Scales the mix so that a few loud notes do not clip.
@@ -108,6 +108,11 @@ impl Envelope {
         if self.stage != Stage::Done {
             self.stage = Stage::Release;
         }
+    }
+
+    /// Whether the note has been let go.
+    pub(crate) fn released(&self) -> bool {
+        matches!(self.stage, Stage::Release | Stage::Done)
     }
 
     /// Whether the note has fallen silent for good.
