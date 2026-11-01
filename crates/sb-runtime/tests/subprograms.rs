@@ -254,7 +254,7 @@ fn errors_carry_their_number_and_a_line_under_them() {
 }
 
 #[test]
-fn envstat_tells_of_an_error_found_before_the_program_runs() {
+fn envstat_tells_of_a_bare_goto() {
     let dir = TempDir::new("errsyntax");
     let mut m = machine(
         &dir,
@@ -268,13 +268,13 @@ fn envstat_tells_of_an_error_found_before_the_program_runs() {
     assert!(
         rows(&m)
             .iter()
-            .any(|r| r.starts_with("Syntax error in 2:3"))
+            .any(|r| r.starts_with("Type mismatch in 2:3"))
     );
     enter(&mut m, "subrun \"sub\"");
     frames(&mut m, 5);
-    // Syntax error is 3, in slot 2's third line.
+    // Type mismatch is 8, in slot 2's third line.
     assert!(
-        rows(&m).iter().any(|r| r == "3   -1  2   3"),
+        rows(&m).iter().any(|r| r == "8   -1  2   3"),
         "{:?}",
         rows(&m)
     );
@@ -346,10 +346,18 @@ fn the_tool_keys_start_the_tools_set_in_the_settings() {
     frames(&mut m, 3);
     assert!(!m.sub_running());
     assert!(m.is_editing());
-    // A failed start leaves a running tool going.
+    // A running tool stops with User break, even when the next cannot
+    // start.
     assert!(m.run_tool(0).unwrap());
+    frames(&mut m, 2);
     assert!(m.run_tool(1).is_err());
-    assert!(m.sub_running());
+    frames(&mut m, 2);
+    assert!(!m.sub_running());
+    assert!(
+        rows(&m).iter().any(|r| r.starts_with("User break on 0:2")),
+        "{:?}",
+        rows(&m)
+    );
 }
 
 #[test]
@@ -382,43 +390,50 @@ fn a_subprogram_types_into_the_editor_beside_it() {
     assert!(m.sub_screen().is_some());
 }
 
-#[test]
-fn envlocate_follows_the_editors_cursor() {
-    let dir = TempDir::new("locate");
-    let mut m = machine(
-        &dir,
-        "ENVLOCATE OUT X,Y\n\
-         ENVFOCUS 0\n\
-         PUSHKEY STR$(X)+\",\"+STR$(Y)+\" \"\n\
-         VSYNC 4\n\
-         ENVLOCATE OUT X2,Y2\n\
-         PUSHKEY STR$(X2-X)+\",\"+STR$(Y2-Y)\n\
-         LOOP:VSYNC:ENDLOOP\n",
-    );
-    m.set_slot(0, String::new());
-    m.toggle_editor();
-    m.render();
-    enter_sub_from_editor(&mut m);
-    for _ in 0..12 {
-        m.frame();
-        m.render();
-    }
-    let text = m.editor().text();
-    let numbers: Vec<i32> = (text.split([',', ' ']))
-        .map(|n| n.parse().unwrap())
-        .collect();
-    let [x, y, dx, dy] = numbers[..] else {
-        panic!("{text:?}");
-    };
-    // Below the menu bar's row, past the line numbers, and on to the
-    // right after the typing.
-    assert!(y > 0 && x > 40 + 3 * 8, "{text:?}");
-    assert!(dx > 0 && dy == 0, "{text:?}");
-}
-
 /// Starts `SUB` as tool 1, with the editor open.
 fn enter_sub_from_editor(m: &mut Machine) {
     m.rt.settings.tools[0] = "SUB".to_string();
     assert!(m.run_tool(0).unwrap());
     frames(m, 2);
+}
+
+/// A subprogram that types the main interpreter's ENVSTAT and ENVLOCATE
+/// where the keys go.
+const TELL_STATUS: &str = "ENVSTAT OUT S,N,A,SL,C,L\n\
+     ENVLOCATE OUT X,Y\n\
+     ENVFOCUS 0\n\
+     VSYNC 4\n\
+     PUSHKEY STR$(S)+\",\"+STR$(N)+\",\"+STR$(A)+\",\"+STR$(SL)+\",\"+STR$(C)+\",\"+STR$(L)+\" \"+STR$(X)+\",\"+STR$(Y)\n\
+     LOOP:VSYNC:ENDLOOP\n";
+
+#[test]
+fn an_error_in_direct_mode_leaves_the_main_interpreter_suspended() {
+    let dir = TempDir::new("direrr");
+    let mut m = machine(&dir, TELL_STATUS);
+    m.set_slot(0, "?\"A\"\nGOTO\n".to_string());
+    enter(&mut m, "run");
+    enter(&mut m, "?1/0");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 12);
+    m.rt.key_press(keys::ENTER);
+    frames(&mut m, 2);
+    assert!(
+        rows(&m).iter().any(|r| r.starts_with("1,0,-1,-1,-1,2 ")),
+        "{:?}",
+        rows(&m)
+    );
+}
+
+#[test]
+fn the_editor_hides_the_last_error_and_the_cursor_from_subprograms() {
+    let dir = TempDir::new("editing");
+    let mut m = machine(&dir, TELL_STATUS);
+    m.set_slot(0, "?1/0\n".to_string());
+    enter(&mut m, "run");
+    m.set_slot(0, String::new());
+    m.toggle_editor();
+    enter_sub_from_editor(&mut m);
+    m.edit();
+    frames(&mut m, 12);
+    assert_eq!(m.editor().text(), "4,0,0,0,0,0 0,0");
 }

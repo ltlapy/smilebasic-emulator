@@ -700,12 +700,6 @@ pub struct Runtime {
     /// Where the debugger's panel starts on the editor's frame, when it
     /// is shown.
     pub(crate) panel_at: Option<u32>,
-    /// Where the editor's frame last showed the cursor (the top right
-    /// corner of its cell) in pixels of the start-up screen, whose place
-    /// it fills, and whether the editor shows in the screens' place now,
-    /// for ENVLOCATE.
-    pub(crate) editor_cursor: Option<(f64, f64)>,
-    pub(crate) editor_shown: bool,
     /// GRP4 at start-up, which ACLS puts back.
     sprite_page: Option<Vec<u32>>,
 }
@@ -908,8 +902,6 @@ impl Runtime {
             split_shown: None,
             split_flash: 0,
             panel_at: None,
-            editor_cursor: None,
-            editor_shown: false,
             sprite_page: None,
         }
         .with_font_page()
@@ -1558,18 +1550,12 @@ impl Runtime {
             }
             name
         };
-        let on_screen = |(x, y): (usize, usize)| {
-            let scale = |v: usize, to: u32, from: u32| v as f64 * f64::from(to) / f64::from(from);
-            (scale(x, mode.width, w), scale(y, mode.height, h))
-        };
         let Some(rows) = split else {
             self.split_at = None;
             self.split_shown = None;
             let name = name(&editors[active]);
             editors[active].draw(&mut self.editor_fb, &self.font, &name, look, blink);
-            self.editor_cursor = editors[active].cursor_at().map(on_screen);
-            // UNVERIFIED: that the editor is darker too while a
-            // subprogram has the focus.
+            // The editor is darker too while a subprogram has the focus.
             if self.dimmed {
                 dim(&mut self.editor_fb);
             }
@@ -1610,10 +1596,6 @@ impl Runtime {
             }
             let at = if side == 0 { 0 } else { second };
             let (x0, y0) = if rows { (0, at) } else { (at, 0) };
-            if side == active {
-                self.editor_cursor = (editor.cursor_at())
-                    .map(|(x, y)| on_screen((x0 as usize + x, y0 as usize + y)));
-            }
             for y in 0..side_size.1 {
                 for x in 0..side_size.0 {
                     let pixel = self.side_fb.get(x, y).unwrap_or(0);

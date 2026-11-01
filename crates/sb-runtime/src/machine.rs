@@ -103,6 +103,9 @@ pub struct Machine {
     /// code there is the old one, as CONT goes on with it (checked on
     /// hardware), so it keeps the breakpoints it had.
     moved: Vec<bool>,
+    /// A line typed in direct mode failed since the last program: for
+    /// ENVSTAT, the main interpreter is then suspended.
+    direct_failed: bool,
     /// The editor shows apart from the screens, in a window of its own,
     /// so that programs and direct mode go on while it is open.
     detached: bool,
@@ -250,6 +253,7 @@ impl Machine {
             changes: Vec::new(),
             stop_reason: None,
             moved: vec![false; SLOTS],
+            direct_failed: false,
             stepping: None,
             step_waited: false,
             last_run: None,
@@ -659,6 +663,7 @@ impl Machine {
         self.rt.prg_edit = None;
         // The last error's line stays.
         self.rt.env_error = [0, -1, -1, -1, self.rt.env_error[4]];
+        self.direct_failed = false;
         self.vars.clear();
         self.rt.clear_vars();
         // Each program starts with the mouse cursor hidden; END leaves it
@@ -848,6 +853,7 @@ impl Machine {
     /// Forgets the stopped program, once another starts or CLEAR runs.
     fn forget_halted(&mut self) {
         self.halted = None;
+        self.direct_failed = false;
         self.rt.stopped = Stopped::No;
         self.rt.backtrace.clear();
     }
@@ -1323,7 +1329,6 @@ impl Machine {
         self.move_focus();
         self.give_input();
         self.rt.env_status = self.env_status();
-        self.rt.editor_shown = self.editing && !self.detached;
         // With a subprogram running, a busy main program leaves it a
         // quarter of the frame's time, and it gets what the main program
         // leaves.
@@ -1591,13 +1596,22 @@ impl Machine {
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
                 // UNVERIFIED: that ENVSTAT tells of an error found before
                 // the program runs too, at the token the error names.
-                if let Some(slot) = e.slot {
-                    self.rt.env_error = self.error_place(slot as usize, &e);
+                match e.slot {
+                    Some(slot) => self.rt.env_error = self.error_place(slot as usize, &e),
+                    None => self.direct_error(),
                 }
                 self.report(&e);
                 self.ready();
             }
         }
+    }
+
+    /// A line typed in direct mode failed: ENVSTAT keeps only the last
+    /// error's line (checked on hardware, after a program's error).
+    // UNVERIFIED: the same without one.
+    fn direct_error(&mut self) {
+        self.rt.env_error = [0, -1, -1, -1, self.rt.env_error[4]];
+        self.direct_failed = true;
     }
 
     /// The program or line ended, by itself or with an error.
@@ -1613,6 +1627,9 @@ impl Machine {
             if let Some(slot) = e.slot {
                 self.last_error = Some((slot as usize, e.line, e.col));
                 self.rt.env_error = self.error_place(slot as usize, e);
+            }
+            if !program {
+                self.direct_error();
             }
             self.report(e);
         }
@@ -1770,14 +1787,12 @@ impl Machine {
     }
 
     /// F9 to F11: starts tool `n`, 0 to 2, from the settings as SUBRUN
-    /// does, from direct mode or the editor. Gives false when the setting
-    /// is empty or code is running, and the error when the file cannot be
-    /// loaded, for the frontend to show rather than the console.
-    // UNVERIFIED: that a tool started again while one runs starts afresh,
-    // as SUBRUN does, and that the keys do nothing while a program runs.
+    /// does, also while a program runs. Gives false when the setting is
+    /// empty, and the error when the file cannot be loaded, for the
+    /// frontend to show rather than the console.
     pub fn run_tool(&mut self, n: usize) -> storage::Result<bool> {
         let file = self.rt.settings.tools[n].clone();
-        if file.is_empty() || self.vm.is_some() {
+        if file.is_empty() {
             return Ok(false);
         }
         self.start_sub(&file)?;
@@ -1792,8 +1807,11 @@ impl Machine {
             Some((project, name)) => (project, name),
             None => (self.rt.storage.project(), file),
         };
-        // A file that cannot be loaded leaves a running subprogram going.
-        // UNVERIFIED: SmileBASIC 4 may stop it all the same.
+        // A running subprogram stops with User break first, whether the
+        // file can be loaded or not.
+        if sub.vm.is_some() {
+            sub.stop();
+        }
         let before = sub.rt.storage.project().to_string();
         let loaded = sub.rt.storage.set_project(project);
         if let Err(e) = loaded.and_then(|()| sub.rt.load_file(name, 0)) {
@@ -1812,7 +1830,6 @@ impl Machine {
         sub.run_slot(0);
         sub.rt.focus = true;
         self.rt.focus = false;
-        // UNVERIFIED: that starting a subprogram marks it too.
         self.focus_flash = Some((true, 0));
         self.focus_moving = None;
         (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
@@ -1896,6 +1913,7 @@ impl Machine {
             status::RUNNING
         } else {
             match self.rt.stopped {
+                _ if self.direct_failed => status::PAUSED,
                 Stopped::No => status::DIRECT,
                 Stopped::Paused => status::PAUSED,
                 Stopped::Error => status::ERROR,

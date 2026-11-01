@@ -1242,13 +1242,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     repeat: false,
                     ..
                 } => menu.shown = !menu.shown,
-                // F9 to F11 start the tools set in the settings, from
-                // direct mode or the editor.
+                // F9 to F11 start the tools set in the settings, also
+                // while a program runs.
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::F9 | Keycode::F10 | Keycode::F11)),
                     repeat: false,
                     ..
-                } if !machine.is_running() => {
+                } if !(menu.shown && machine.is_running()) => {
                     let n = match key {
                         Keycode::F9 => 0,
                         Keycode::F10 => 1,

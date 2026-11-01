@@ -105,11 +105,15 @@ Without them:
   `ENVFOCUS` does, and Run > "Stop subprogram" does `SUBSTOP`, so a
   subprogram cannot keep the keys from direct mode.
 - `ENVSTAT` gives -1 for the argument of every error, as SmileBASIC 4
-  does for `Divide by zero`; its help says it gives the argument's
-  number for errors that know it.
+  does for `Divide by zero`; for errors in a command's arguments, such
+  as `LOCATE 0,999`'s `Out of range`, it gives the argument's number
+  from 0.
 - Settings > General > "Explain errors in Japanese" prints the Japanese
   line SmileBASIC 4's Japanese edition shows under each error message,
   in the English edition too.
+- `ENVLOCATE OUT X,Y`, which is not in the manual, follows the
+  console's cursor while the editor is open in its own window, where
+  SmileBASIC 4 would give 0,0 for the editor.
 - `HELPINFO` and `HELPGET` need SmileBASIC 4's help imported.
 - `DIALOG` is drawn as the emulator's own window, in English. Besides
   the controller's A and B, it answers clicks and Enter.
@@ -161,10 +165,9 @@ Without them:
   was last. In SmileBASIC 4 the editor replaces the screen and no
   program runs while it shows. A program's `HELPINFO OUT` looks where
   the editor's cursor was when the program started. A subprogram's
-  screen shows over the screens rather than the editor's window, and
-  its `ENVLOCATE OUT X,Y` follows the console's cursor, but what it
-  types with `PUSHKEY` still goes into the editor while that window has
-  the keys.
+  screen shows over the screens rather than the editor's window, but
+  what it types with `PUSHKEY` still goes into the editor while that
+  window has the keys.
 
 ## Speed
 

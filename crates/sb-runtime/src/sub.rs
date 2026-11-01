@@ -79,9 +79,13 @@ impl Runtime {
                 int(main.running_slot.unwrap_or(0) as i32),
                 int(main.edit_slot as i32),
             ]),
+            // While the editor shows, nothing of the last error.
             (Command::Envstat, Want::Outs(6), []) => {
                 let mut out = vec![int(main.env_status)];
-                out.extend(main.env_error.map(int));
+                match main.env_status {
+                    status::EDITING => out.extend([0; 5].map(int)),
+                    _ => out.extend(main.env_error.map(int)),
+                }
                 Ok(out)
             }
             (Command::Envload | Command::Envsave, Want::Outs(0), [kind, from, to]) => {

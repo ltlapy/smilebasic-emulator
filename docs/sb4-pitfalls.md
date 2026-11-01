@@ -531,7 +531,8 @@ Checked with TTEST36.
 - A subprogram starts with the focus. While a subprogram runs, the side
   without the focus is drawn darker, each color channel to 7/8 (255
   shows as 224, 96 as 84): the main screen while the subprogram has the
-  focus, and the subprogram's screen once it gives it up.
+  focus, and the subprogram's screen once it gives it up. The editor is
+  darkened the same way while a tool started from it has the focus.
 - `ENVTYPE OUT T,P` gives P -1 in a subprogram. `XSUBSCREEN OUT` before
   any `XSUBSCREEN` gives the whole display, 0,0,1280,720.
 - `SNDMSBAL()` starts at 63 there too, and `PROJECT()` is the project
@@ -577,10 +578,22 @@ Checked with TTEST36.
   yellow (255,255,0) border: three display pixels on the edge of its
   screen, one outside and two inside, with a black band two pixels wide
   inside that. The subprogram's frame is its XSUBSCREEN rectangle, the
-  main interpreter's the whole display. Both show whole for about 0.23
+  main interpreter's the whole display, every time the focus moves,
+  `SUBRUN`'s start and a subprogram's end included. Both show whole for about 0.23
   seconds and then fade out evenly over about 0.25 seconds, drawn over
   what is under them. A frame for the other side, coming before that,
   takes its place at once (a screen recording at 24 frames a second).
+- From TTEST39: after `LOCATE 0,999`'s `Out of range`, `ENVSTAT OUT`
+  gives N 10 and A 1, the failing argument counted from 0; C is the
+  statement's start. A `GOTO` with nothing after it runs the lines
+  before it and stops with `Type mismatch` (N 8) at its statement. An
+  error typed in direct mode after that gives status 1, N 0, A, SL and
+  C -1, and L the program error's line. While the editor shows, status
+  4 comes with N, A, SL, C and L all 0, and `ENVLOCATE` gives 0,0.
+- The tools on F9 to F11 start also while a program runs. `SUBRUN`, or
+  a tool key, while a subprogram runs stops it first with `User break`,
+  printed on the main console as above, also when the new file cannot
+  be loaded.
 
 ## Errors and the editor
 
