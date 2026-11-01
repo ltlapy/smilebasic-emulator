@@ -4,6 +4,7 @@
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::{Confirm, unsaved_lines};
 use sb_runtime::font::Font;
+use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
 
 use crate::ui::{
@@ -178,6 +179,19 @@ impl Dialog {
         }
     }
 
+    /// A controller: left and right on the pad move between the buttons,
+    /// A (the right face button) chooses and B (the bottom one) cancels,
+    /// as SmileBASIC 4's buttons are placed.
+    pub fn pad(&mut self, button: Button) -> Option<Answer> {
+        match button {
+            Button::DPadLeft | Button::DPadRight => self.key(Keycode::Right),
+            Button::East if self.field.is_some() => Some(Answer::Accept),
+            Button::East => Some(ANSWERS[self.focus]),
+            Button::South => Some(Answer::Cancel),
+            _ => None,
+        }
+    }
+
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
         let f = self.frame();
         fill(fb, f, BORDER);
@@ -237,6 +251,15 @@ mod tests {
         assert_eq!(d.key(Keycode::Left), None);
         assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
         assert_eq!(d.key(Keycode::Escape), Some(Answer::Cancel));
+    }
+
+    #[test]
+    fn a_controller_answers() {
+        let mut d = Dialog::quit(&[0], (1280, 720));
+        assert_eq!(d.pad(Button::East), Some(Answer::Cancel));
+        assert_eq!(d.pad(Button::DPadLeft), None);
+        assert_eq!(d.pad(Button::East), Some(Answer::Accept));
+        assert_eq!(d.pad(Button::South), Some(Answer::Cancel));
     }
 
     #[test]

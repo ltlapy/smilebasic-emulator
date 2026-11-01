@@ -515,6 +515,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Event::KeyDown {
                         keycode: Some(key), ..
                     } => open.key(key),
+                    Event::GamepadButtonDown { button, .. } => open.pad(button),
                     Event::TextInput { ref text, .. } => {
                         open.text(text);
                         None
