@@ -19,9 +19,9 @@ use super::RATE;
 /// The bank with Japanese vowels (Mokhtari & Tanaka 2000) over Klatt's
 /// English consonants.
 const BANK: &str = "ja-mokhtari-2000";
-const PHONEMES: [&str; 25] = [
-    "A", "I", "U", "E", "O", "K", "G", "S", "SH", "Z", "JH", "T", "CH", "D", "N", "NG", "HH", "F",
-    "B", "P", "M", "Y", "DX", "W", "_",
+const PHONEMES: [&str; 26] = [
+    "A", "I", "U", "E", "O", "K", "G", "S", "SH", "Z", "ZH", "JH", "T", "CH", "D", "N", "NG", "HH",
+    "F", "B", "P", "M", "Y", "DX", "W", "_",
 ];
 
 /// Milliseconds at the standard speed, `<S128>`.
@@ -29,6 +29,11 @@ const MORA: f64 = 130.0;
 const CLOSURE: f64 = 45.0;
 const BURST: f64 = 15.0;
 const FRICATIVE: f64 = 70.0;
+/// ち, じ and つ: a shorter closure and burst than a stop's, then the
+/// fricative they are released into.
+const AFFRICATE_CLOSURE: f64 = 30.0;
+const AFFRICATE_BURST: f64 = 8.0;
+const AFFRICATE_FRICATION: f64 = 45.0;
 const SONORANT: f64 = 45.0;
 const GLIDE: f64 = 40.0;
 /// 、 and 。, as long as the help's example says: it writes
@@ -448,23 +453,38 @@ impl Planner<'_> {
     /// The consonant's part of a mora; gives the milliseconds it took.
     fn consonant(&mut self, name: &'static str, f0: f32) -> f64 {
         match name {
-            "K" | "G" | "T" | "D" | "P" | "B" | "CH" | "JH" | "TS" => {
-                self.silence(CLOSURE);
-                let stop = if name == "TS" { "T" } else { name };
+            "CH" | "JH" | "TS" => {
+                // A stop released into a fricative: ち is t then し's
+                // hiss, じ the same voiced, つ t then す's.
+                let (stop, fricative) = match name {
+                    "CH" => ("CH", "SH"),
+                    "JH" => ("JH", "ZH"),
+                    _ => ("T", "S"),
+                };
+                self.silence(AFFRICATE_CLOSURE);
                 let mut burst = self.phoneme(stop);
                 burst.f0 = Some(f0);
                 if voiceless(Some(name)) {
                     burst.aspiration = Some(0.6);
                 }
                 self.target(burst, 2.0);
-                self.at += self.ms(BURST);
-                let mut taken = CLOSURE + BURST;
-                if name == "TS" {
-                    self.target(self.phoneme("S"), QUICK);
-                    self.at += self.ms(FRICATIVE / 2.0);
-                    taken += FRICATIVE / 2.0;
+                self.at += self.ms(AFFRICATE_BURST);
+                let mut f = self.phoneme(fricative);
+                f.f0 = Some(f0);
+                self.target(f, QUICK);
+                self.at += self.ms(AFFRICATE_FRICATION);
+                AFFRICATE_CLOSURE + AFFRICATE_BURST + AFFRICATE_FRICATION
+            }
+            "K" | "G" | "T" | "D" | "P" | "B" => {
+                self.silence(CLOSURE);
+                let mut burst = self.phoneme(name);
+                burst.f0 = Some(f0);
+                if voiceless(Some(name)) {
+                    burst.aspiration = Some(0.6);
                 }
-                taken
+                self.target(burst, 2.0);
+                self.at += self.ms(BURST);
+                CLOSURE + BURST
             }
             "S" | "SH" | "Z" | "F" | "HH" => {
                 let mut f = self.phoneme(name);
@@ -888,5 +908,39 @@ mod tests {
         talk.render(&mut l, &mut r);
         assert!(l.iter().any(|s| s.abs() > 0.05));
         assert!(!talk.speaking());
+    }
+
+    /// Milliseconds of hiss from a sung syllable's first sound until its
+    /// vowel: 5 ms frames whose sound is mostly high (its slope against
+    /// its level) above `hiss`.
+    fn frication_ms(letters: &str, hiss: f32) -> usize {
+        let mut singer = Singer::new(1);
+        assert!(singer.sing(letters, key_hz(60, 0), 600.0));
+        let (mut l, mut r) = (vec![0.0; 9600], vec![0.0; 9600]);
+        singer.render(&mut l, &mut r, (1.0, 0.0));
+        let frame = (RATE / 200) as usize;
+        let onset = l.iter().position(|s| s.abs() > 0.01).unwrap();
+        l[onset..]
+            .chunks(frame)
+            .take_while(|f| {
+                let level: f32 = f.iter().map(|s| s * s).sum();
+                let slope: f32 = f.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum();
+                slope > level * hiss * hiss
+            })
+            .count()
+            * 5
+    }
+
+    /// ち, つ and じ are released into a fricative, not straight into
+    /// the vowel as てぃ's ti and でぃ's di are.
+    #[test]
+    fn affricates_hiss_after_the_burst() {
+        assert!(table().contains_key("ZH"));
+        assert!(frication_ms("chi", 0.3) >= 40);
+        assert!(frication_ms("ti", 0.3) <= 25);
+        assert!(frication_ms("tsu", 0.3) >= 40);
+        // Voicing under じ's hiss keeps its sound lower.
+        assert!(frication_ms("ji", 0.1) >= 40);
+        assert!(frication_ms("di", 0.1) <= 25);
     }
 }
