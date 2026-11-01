@@ -354,7 +354,7 @@ impl Runtime {
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
                 let wave = eight_bit(&bytes, 512, base_note, envelope);
-                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(wave));
+                self.sound.waves.borrow_mut().define(n, wave);
                 Ok(vec![])
             }
             // The 8-bit form, SmileBASIC 3's.
@@ -367,7 +367,7 @@ impl Runtime {
                 let end = opt_in_range("end", args.get(8), start as i32..=last, last)? as usize;
                 let bytes = &all[start..=end];
                 let wave = eight_bit(bytes, bytes.len().next_power_of_two(), base_note, envelope);
-                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(wave));
+                self.sound.waves.borrow_mut().define(n, wave);
                 Ok(vec![])
             }
             // A 16-bit sample with a loop and its own sample rate.
@@ -377,26 +377,33 @@ impl Runtime {
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let last = all.len() as i32 - 1;
                 let offset = opt_in_range("offset", args.get(10), 0..=last.max(0), 0)? as usize;
-                let loop_start = opt_in_range("loop start", args.get(7), 0..=last, 0)? as usize;
-                let loop_end = opt_in_range("loop end", args.get(8), 0..=last, last)? as usize;
+                // The sample is the loop's end + 1 values from the offset
+                // on, and the loop counts from the offset: what comes after
+                // the loop is dropped.
+                let left = last - offset as i32;
+                let loop_end = opt_in_range("loop end", args.get(8), 0..=left, left)? as usize;
+                let loop_start =
+                    opt_in_range("loop start", args.get(7), 0..=loop_end as i32, 0)? as usize;
                 let rate = opt_in_range("frequency", args.get(9), 1..=96000, 28160)?;
                 let beep_loop = opt_in_range("flag", args.get(11), 0..=1, 0)? == 1;
-                let samples: Vec<f32> = all[offset..].iter().map(|&x| x as f32 / 32768.0).collect();
-                // UNVERIFIED: the loop's indices count from the array's start,
-                // offset included, and its end is the last sample played.
-                let looped = (
-                    loop_start.saturating_sub(offset),
-                    (loop_end + 1).saturating_sub(offset).max(1),
+                // Values are cut to 16 bits, reals towards zero first.
+                let samples: Vec<f32> = all[offset..=offset + loop_end]
+                    .iter()
+                    .map(|&x| f32::from(x.trunc() as i64 as i16) / 32768.0)
+                    .collect();
+                let looped = (loop_start, loop_end + 1);
+                self.sound.waves.borrow_mut().define(
+                    n,
+                    Wave {
+                        samples,
+                        base_note,
+                        rate: Some(f64::from(rate)),
+                        cycle: 0.0,
+                        looped,
+                        beep_loop,
+                        envelope,
+                    },
                 );
-                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(Wave {
-                    samples,
-                    base_note,
-                    rate: Some(f64::from(rate)),
-                    cycle: 0.0,
-                    looped,
-                    beep_loop,
-                    envelope,
-                }));
                 Ok(vec![])
             }
             (Command::Beep, Want::Outs(0) | Want::Value, 0..=4) => {

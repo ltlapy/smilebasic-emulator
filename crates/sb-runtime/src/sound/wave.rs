@@ -11,6 +11,8 @@ use super::sampler;
 /// A waveform: one cycle, or a sample with a loop.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Wave {
+    /// The instrument's wave memory: this definition's samples, up to the
+    /// end of its loop, then what earlier ones left past that.
     pub samples: Vec<f32>,
     /// The note the waveform plays at as it is.
     pub base_note: i32,
@@ -18,7 +20,8 @@ pub struct Wave {
     /// steps through `cycle` samples in one cycle of its base note.
     pub rate: Option<f64>,
     pub cycle: f64,
-    /// Where the loop starts and ends (exclusive).
+    /// Where the loop starts and ends (exclusive); the end is also where
+    /// the definition ends.
     pub looped: (usize, usize),
     /// Whether BEEP loops it.
     pub beep_loop: bool,
@@ -155,6 +158,22 @@ impl Default for Waves {
 }
 
 impl Waves {
+    /// Sets WAVSET's instrument `n` (0 for @224) to `wave`. Its samples
+    /// overwrite the instrument's memory from the start, and notes that
+    /// sound go on reading it with the length, loop and rate they started
+    /// with: a 32-sample sine written while a 512-sample square sounds
+    /// plays as the sine's cycle and then the rest of the square (TEST40,
+    /// TEST41).
+    pub fn define(&mut self, n: usize, mut wave: Wave) {
+        if let Some(old) = &self.user[n]
+            && old.samples.len() > wave.samples.len()
+        {
+            wave.samples
+                .extend_from_slice(&old.samples[wave.samples.len()..]);
+        }
+        self.user[n] = Some(Rc::new(wave));
+    }
+
     pub fn get(&self, program: i32) -> Option<Rc<Wave>> {
         match program {
             216..=222 => Some(self.pulses[(program - 216) as usize].clone()),
@@ -176,6 +195,12 @@ pub struct Voice {
     step: f64,
     /// The step before vibrato.
     base_step: f64,
+    /// The step at the base note, and that note, as the note started.
+    rate: f64,
+    base_note: i32,
+    /// The loop, and whether it plays for ever, as the note started.
+    looped: (usize, usize),
+    loops: bool,
     /// The channel's @MP, @MA and @ML, and how far round they have gone.
     pub(crate) lfo: [sampler::Lfo; 3],
     lfos: sampler::Lfos,
@@ -191,8 +216,6 @@ pub struct Voice {
     targets: [f32; 2],
     /// Samples into the envelope's step.
     in_tick: usize,
-    /// Plays the loop for ever: always in a song, and in BEEP when asked.
-    looping: bool,
     done: bool,
 }
 
@@ -206,7 +229,19 @@ impl Voice {
         looping: bool,
     ) -> Voice {
         let envelope = sampler::Envelope::new(envelope.unwrap_or(wave.envelope).into());
+        let rate = match wave.rate {
+            Some(rate) => rate / f64::from(RATE),
+            // A cycle at the base note is A=440 Hz: a waveform with base
+            // note 57 sounds an octave higher.
+            None => wave.cycle * 440.0 / f64::from(RATE),
+        };
+        let end = wave.looped.1.clamp(1, wave.samples.len().max(1));
+        let looped = (wave.looped.0.min(end - 1), end);
         let mut v = Voice {
+            rate,
+            base_note: wave.base_note,
+            looped,
+            loops: wave.rate.is_none() || looping || looped.0 > 0,
             wave,
             envelope,
             key,
@@ -223,7 +258,6 @@ impl Voice {
             steps: [0.0; 2],
             targets: [0.0; 2],
             in_tick: 0,
-            looping,
             done: false,
         };
         v.set_pitch(cents);
@@ -232,23 +266,18 @@ impl Voice {
 
     pub fn set_pitch(&mut self, cents: i32) {
         self.cents = cents;
-        let ratio = 2f64
-            .powf((f64::from(self.key - self.wave.base_note) * 100.0 + f64::from(cents)) / 1200.0);
-        self.base_step = match self.wave.rate {
-            Some(rate) => rate * ratio / f64::from(RATE),
-            // A cycle at the base note is A=440 Hz: a waveform with base
-            // note 57 sounds an octave higher.
-            None => self.wave.cycle * 440.0 * ratio / f64::from(RATE),
-        };
+        let ratio =
+            2f64.powf((f64::from(self.key - self.base_note) * 100.0 + f64::from(cents)) / 1200.0);
+        self.base_step = self.rate * ratio;
         self.step = self.base_step;
     }
 
-    /// Goes on with `wave` in place of the one the note started with, as
-    /// when WAVSET sets the instrument again while the note sounds.
+    /// Goes on reading `wave`'s memory in place of the one the note
+    /// started with, as when WAVSET sets the instrument again while the
+    /// note sounds; see [`Waves::define`].
     pub fn follow(&mut self, wave: &Rc<Wave>) {
         if !Rc::ptr_eq(&self.wave, wave) {
             self.wave = wave.clone();
-            self.set_pitch(self.cents);
         }
     }
 
@@ -286,10 +315,7 @@ impl Voice {
             self.done = true;
             return;
         }
-        let (start, end) = wave.looped;
-        let end = end.clamp(1, samples.len());
-        let start = start.min(end - 1);
-        let loops = wave.rate.is_none() || self.looping || wave.looped != (0, samples.len());
+        let (start, end) = self.looped;
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             if self.in_tick == 0 {
                 self.envelope.step();
@@ -316,7 +342,7 @@ impl Voice {
             }
             self.in_tick = (self.in_tick + 1) % sampler::TICK;
             if self.pos >= end as f64 {
-                if loops {
+                if self.loops {
                     self.pos = start as f64 + (self.pos - end as f64) % (end - start) as f64;
                 } else {
                     self.done = true;
@@ -405,6 +431,31 @@ mod tests {
         let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
         v.render(&mut l, &mut r);
         assert!(l[0] < -0.02);
+    }
+
+    #[test]
+    fn notes_keep_their_length_when_a_shorter_waveform_is_written() {
+        let mut waves = Waves::default();
+        let square = |n: usize, level: f32| Wave {
+            samples: (0..n)
+                .map(|i| if i < n / 2 { level } else { -level })
+                .collect(),
+            rate: Some(EIGHT_BIT_RATE),
+            looped: (0, n),
+            ..pulse(219)
+        };
+        waves.define(0, square(512, 0.5));
+        let mut v = Voice::new(waves.get(224).unwrap(), None, 69, 0, true);
+        waves.define(0, square(32, 0.25));
+        let w = waves.get(224).unwrap();
+        // The memory keeps the old square past the new 32 samples, and
+        // new notes play 32 of it.
+        assert_eq!((w.samples.len(), w.looped), (512, (0, 32)));
+        assert_eq!((w.samples[31], w.samples[300]), (-0.25, -0.5));
+        // The note that sounded goes on over all 512 at its old rate.
+        let steady = v.step;
+        v.follow(&w);
+        assert_eq!((v.looped, v.step), ((0, 512), steady));
     }
 
     #[test]

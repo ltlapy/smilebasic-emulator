@@ -492,12 +492,18 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   did nothing: a short note recorded alike, to the unit, with `EFCEN`
   off, with `#EFCCAVE` at `EFCWET 0,127,0,0`, with a hall set by
   `EFCSET #EFCREFHALL,...` and with `EFCEN` off again.
-- `WAVSET` while a note of that instrument sounds changes the note at
-  once, keeping its envelope: a square swapped for a square of two
-  cycles doubles the pitch at the same level. A `WAVSET` square swapped
-  for a `WAVSETA` sine of the same length, though, went on near the
-  square's level (3015 to 3023 against 3063; the sine alone is 2257)
-  at twice the pitch, so the swap does not simply play the new samples.
+- `WAVSET` or `WAVSETA` while a note of that instrument sounds writes
+  the new samples over the start of the instrument's memory, and the
+  note goes on reading it with the length, loop and rate it started
+  with, keeping its envelope: a square swapped for a square of two
+  cycles doubles the pitch at the same level, but a `WAVSET` square (512
+  samples once stretched) swapped for a 32-sample sine plays the sine's
+  one cycle and then the rest of the square on each pass, near the
+  square's level (2981 to 3023 against 3063) with twice the crossings.
+- `WAVSETA`'s 16-bit form (10 arguments or more) takes the loop's end + 1
+  values from the offset on, with the loop counted from the offset, and
+  drops what comes after; values are cut to 16 bits. A value v sounds
+  like the 8-bit form's v/256 + 128.
 - MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
   length (`N60`), macro names with `_` and macros used inside a macro's
   definition (`{X=CDE}{Y={X}F}`).
