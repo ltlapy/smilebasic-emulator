@@ -14,7 +14,8 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::host::{Exec, Host};
 use crate::lexer::Suffix;
 use crate::ops;
-use crate::value::{Array, Str, Value, format_number, new_str};
+use crate::value::{Array, ArrayData, Str, Value, format_number, new_str};
+use crate::watch::Watch;
 
 /// UNVERIFIED: SmileBASIC's own nesting limits are not documented.
 pub const MAX_CALL_DEPTH: usize = 4096;
@@ -166,6 +167,17 @@ struct Trace {
     from: u64,
 }
 
+/// A line that stops the program before it runs, when its condition, if
+/// it has one, is true.
+pub type Breakpoint = (u32, Option<Rc<Watch>>);
+
+/// A watch that stops the program when its value changes, with the value
+/// it had last, when it could be worked out.
+struct Change {
+    watch: Rc<Watch>,
+    last: Option<Value>,
+}
+
 /// Where breakpoints stop one slot's program: whether each instruction
 /// is one, for the program they were worked out for.
 struct Stops {
@@ -225,9 +237,8 @@ pub struct Vm {
     stop_message: Option<Str>,
     /// TRACE's statement under way.
     trace: Option<Trace>,
-    /// Lines with breakpoints, by slot, and the one a debugger runs to
-    /// once.
-    breakpoints: Vec<Vec<u32>>,
+    /// Breakpoints, by slot, and the line a debugger runs to once.
+    breakpoints: Vec<Vec<Breakpoint>>,
     run_to: Option<(usize, u32)>,
     /// Worked out from them by slot, and the running program's.
     stops: Vec<Option<Stops>>,
@@ -235,6 +246,58 @@ pub struct Vm {
     /// The slot and instruction the program goes on from, which a
     /// breakpoint there does not stop it at.
     passed: Option<(usize, usize)>,
+    /// Watches that stop the program when their values change, looked at
+    /// before each statement.
+    changes: Vec<Change>,
+    /// Why the debugger last stopped the program, when a statement start
+    /// does not say it all: the watch that changed, or a condition that
+    /// could not be worked out.
+    debug_note: Option<DebugNote>,
+}
+
+/// What [`Vm::take_debug_note`] tells of a stop.
+#[derive(Clone, Debug)]
+pub enum DebugNote {
+    /// The watch at this place in [`Vm::set_changes`]'s list changed
+    /// from one value to the other.
+    Changed(usize, Value, Value),
+    /// A breakpoint's condition failed, so it stopped.
+    Condition(Error),
+}
+
+/// Whether two values are alike: the same number, whether integer or
+/// real, or the same characters or elements.
+fn same(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Default, Value::Default) => true,
+        (Value::Int(a), Value::Int(b)) => a == b,
+        (Value::Int(_) | Value::Real(_), Value::Int(_) | Value::Real(_)) => {
+            let (a, b) = (a.to_real(), b.to_real());
+            a.ok().map(f64::to_bits) == b.ok().map(f64::to_bits)
+        }
+        (Value::Str(a), Value::Str(b)) => *a.borrow() == *b.borrow(),
+        (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
+        _ => false,
+    }
+}
+
+/// A copy of a value that changes to the string or array it came from
+/// leave alone.
+fn snapshot(value: &Value) -> Value {
+    match value {
+        Value::Str(s) => Value::Str(new_str(s.borrow().clone())),
+        Value::Array(a) => {
+            let mut copy = a.borrow().clone();
+            if let ArrayData::Str(items) = &mut copy.data {
+                for s in items {
+                    let text = s.borrow().clone();
+                    *s = new_str(text);
+                }
+            }
+            Value::Array(Rc::new(std::cell::RefCell::new(copy)))
+        }
+        v => v.clone(),
+    }
 }
 
 /// A variable's starting value. The suffix decides only this: variables
@@ -375,6 +438,8 @@ impl Vm {
             stops: Vec::new(),
             stop_at: None,
             passed: None,
+            changes: Vec::new(),
+            debug_note: None,
         }
     }
 
@@ -475,11 +540,11 @@ impl Vm {
     /// Sets the lines of `slot` that stop the program before they run.
     /// A breakpoint stops where the line's code follows another line's,
     /// so a loop within the line stops there once.
-    pub fn set_breakpoints(&mut self, slot: usize, lines: &[u32]) {
+    pub fn set_breakpoints(&mut self, slot: usize, breakpoints: &[Breakpoint]) {
         if self.breakpoints.len() <= slot {
             self.breakpoints.resize_with(slot + 1, Vec::new);
         }
-        self.breakpoints[slot] = lines.to_vec();
+        self.breakpoints[slot] = breakpoints.to_vec();
         self.stops.clear();
         self.update_stops();
     }
@@ -505,7 +570,9 @@ impl Vm {
             self.stop_at = Some(Rc::clone(&stops.at));
             return;
         }
-        let mut lines: Vec<u32> = self.breakpoints.get(slot).cloned().unwrap_or_default();
+        let mut lines: Vec<u32> = (self.breakpoints.get(slot).into_iter().flatten())
+            .map(|b| b.0)
+            .collect();
         lines.extend(self.run_to.filter(|to| to.0 == slot).map(|to| to.1));
         if lines.is_empty() {
             return;
@@ -522,6 +589,98 @@ impl Vm {
             at: Rc::clone(&at),
         });
         self.stop_at = Some(at);
+    }
+
+    /// Whether a breakpoint the program has come to stops it: the line it
+    /// runs to does, and so does a condition that is true or fails.
+    fn breakpoint_holds(&mut self) -> bool {
+        let line = self.line();
+        if self.run_to == Some((self.slot, line)) {
+            return true;
+        }
+        let breakpoint =
+            (self.breakpoints.get(self.slot).into_iter().flatten()).find(|b| b.0 == line);
+        let Some(watch) = breakpoint.and_then(|b| b.1.clone()) else {
+            return true;
+        };
+        match watch
+            .eval(&|name| self.var_here(name))
+            .and_then(|v| v.is_true())
+        {
+            Ok(holds) => holds,
+            Err(e) => {
+                self.debug_note = Some(DebugNote::Condition(e));
+                true
+            }
+        }
+    }
+
+    /// Sets the watches that stop the program, before the statement
+    /// after the one that changed one of their values. Their values now
+    /// are what changes are told from.
+    pub fn set_changes(&mut self, watches: &[Rc<Watch>]) {
+        self.changes = (watches.iter())
+            .map(|w| Change {
+                watch: Rc::clone(w),
+                last: w
+                    .eval(&|name| self.var_here(name))
+                    .ok()
+                    .as_ref()
+                    .map(snapshot),
+            })
+            .collect();
+    }
+
+    /// Whether a watch's value changed since it was last looked at,
+    /// noting the first that did. A watch that cannot be worked out
+    /// here, such as one of another DEF's locals, keeps its last value.
+    fn watch_changed(&mut self) -> bool {
+        let mut changes = std::mem::take(&mut self.changes);
+        let mut changed = None;
+        for (i, change) in changes.iter_mut().enumerate() {
+            let Ok(value) = change.watch.eval(&|name| self.var_here(name)) else {
+                continue;
+            };
+            match change.last.replace(snapshot(&value)) {
+                Some(last) if changed.is_none() && !same(&last, &value) => {
+                    changed = Some(DebugNote::Changed(i, last, value));
+                }
+                _ => {}
+            }
+        }
+        self.changes = changes;
+        let stops = changed.is_some();
+        if stops {
+            self.debug_note = changed;
+        }
+        stops
+    }
+
+    /// Why the debugger stopped the program, beyond its line, once.
+    pub fn take_debug_note(&mut self) -> Option<DebugNote> {
+        self.debug_note.take()
+    }
+
+    /// A variable the running code sees, by full name: a local of the
+    /// innermost DEF call, else a global of the running slot.
+    fn var_here(&self, name: &str) -> Option<Value> {
+        let named = |var: &VarInfo| {
+            let suffix = match var.suffix {
+                Some(Suffix::Int) => "%",
+                Some(Suffix::Real) => "#",
+                Some(Suffix::Str) => "$",
+                None => "",
+            };
+            name.strip_prefix(var.name.as_str()) == Some(suffix)
+        };
+        if let Some(f) = self.frames.last()
+            && let Some(def) = (self.program_in(f.home)).and_then(|p| p.defs.get(f.def as usize))
+            && let Some(i) = def.locals.iter().position(named)
+        {
+            return f.locals.get(i).cloned();
+        }
+        let i = self.program.globals.iter().position(named)?;
+        self.globals.get(i).cloned()
     }
 
     /// Goes on from `line` of the running slot instead, as GOTO would, if
@@ -785,6 +944,7 @@ impl Vm {
         while self.executed < stop {
             if self.break_pending.is_none()
                 && self.trace.is_none()
+                && self.changes.is_empty()
                 && !self
                     .stop_at
                     .as_ref()
@@ -863,6 +1023,13 @@ impl Vm {
                     self.break_pending = Some((at, self.line()));
                 }
             }
+            if !self.changes.is_empty()
+                && self.program.starts.get(self.pc) == Some(&true)
+                && self.watch_changed()
+            {
+                self.trace = None;
+                return Ok(Status::Debug { line: self.line() });
+            }
             let (depth, executed) = (self.depth(), self.executed);
             if let Some(trace) = &mut self.trace
                 && self.program.starts.get(self.pc) == Some(&true)
@@ -885,6 +1052,7 @@ impl Vm {
             if let Some(at) = &self.stop_at
                 && at.get(self.pc) == Some(&true)
                 && passed.take() != Some((self.slot, self.pc))
+                && self.breakpoint_holds()
             {
                 self.trace = None;
                 if self.run_to.is_some() {

@@ -34,6 +34,9 @@ const RETURN_MARK: u32 = 0xFF50_5868;
 /// A breakpoint's line number, and the cursor's.
 const BREAKPOINT: u32 = 0xFFDC_2828;
 const BREAKPOINT_CURSOR: u32 = 0xFFFF_7070;
+/// A breakpoint with a condition, and the cursor's.
+const CONDITIONAL: u32 = 0xFFE0_7818;
+const CONDITIONAL_CURSOR: u32 = 0xFFFF_A860;
 /// The stopped line's background, or a grey one when edits moved the
 /// lines since, taking this much out of 256.
 const STOPPED: u32 = 0xFFFF_DC00;
@@ -43,6 +46,8 @@ const STOPPED_LINE: u32 = 100;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Marks {
     pub breakpoints: Vec<usize>,
+    /// Those of the breakpoints that have a condition.
+    pub conditional: Vec<usize>,
     /// The line the stopped program goes on from.
     pub stopped: Option<usize>,
     /// The program runs code from before the text was edited, so the
@@ -1684,9 +1689,12 @@ impl Editor {
                 }
                 if chunk == 0 {
                     // A breakpoint turns the number's tiles red, or the
-                    // digits' background.
+                    // digits' background; orange with a condition.
                     let breakpoint = self.marks.breakpoints.contains(&line);
+                    let conditional = breakpoint && self.marks.conditional.contains(&line);
                     let color = match (breakpoint, current) {
+                        (true, true) if conditional => CONDITIONAL_CURSOR,
+                        (true, false) if conditional => CONDITIONAL,
                         (true, true) => BREAKPOINT_CURSOR,
                         (true, false) => BREAKPOINT,
                         (false, true) => colors[Part::Character],

@@ -2,14 +2,15 @@
 //! program running on the [`Runtime`]. Frontends feed it keys, call
 //! [`Machine::frame`] once per frame and show [`Machine::render`].
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use sb_core::error::{Error, ErrorKind};
 use sb_core::host::Host;
-use sb_core::value::Value;
-use sb_core::vm::{Call, Status, Step, Vm};
+use sb_core::value::{Value, format_number};
+use sb_core::vm::{Breakpoint, Call, DebugNote, Status, Step, Vm};
+use sb_core::watch::Watch;
 
 use crate::complete::Options;
 use crate::editor::{Editor, Marks};
@@ -73,8 +74,11 @@ pub struct Machine {
     /// speed, which no program needs. `None` runs [`FRAME_BUDGET`]
     /// instructions instead.
     pub time_limit: Option<Duration>,
-    /// Lines with breakpoints, by slot. They last for the session.
-    breakpoints: Vec<BTreeSet<u32>>,
+    /// Lines with breakpoints, with their conditions, by slot. They last
+    /// for the session.
+    breakpoints: Vec<BTreeMap<u32, Option<Rc<Watch>>>>,
+    /// Watches that stop programs when their values change.
+    changes: Vec<Rc<Watch>>,
     /// A debugger's step started from the editor, which stays shown
     /// while it runs unless the program waits for input.
     stepping: Option<Step>,
@@ -206,7 +210,8 @@ impl Machine {
             running_slot: None,
             last_error: None,
             halted: None,
-            breakpoints: vec![BTreeSet::new(); SLOTS],
+            breakpoints: vec![BTreeMap::new(); SLOTS],
+            changes: Vec::new(),
             moved: vec![false; SLOTS],
             stepping: None,
             last_run: None,
@@ -722,6 +727,19 @@ impl Machine {
         if let Some(message) = vm.take_stop_message() {
             self.print_line(&message);
         }
+        let note = match vm.take_debug_note() {
+            Some(DebugNote::Changed(i, from, to)) => {
+                let source = self.changes.get(i).map_or("", |w| w.source());
+                let (from, to) = (note_value(&from), note_value(&to));
+                Some(format!("{source} changed: {from} -> {to}"))
+            }
+            Some(DebugNote::Condition(e)) => Some(format!("Condition failed: {e}")),
+            None => None,
+        };
+        if let Some(note) = note {
+            let note: Vec<u16> = note.encode_utf16().collect();
+            self.print_line(&note);
+        }
         // UNVERIFIED: a line typed in direct mode cannot go on.
         if program {
             vm.pass_here();
@@ -893,8 +911,12 @@ impl Machine {
             let stale = self.moved[slot];
             self.editors[i].marks = Marks {
                 breakpoints: self.breakpoints[slot]
-                    .iter()
+                    .keys()
                     .map(|&l| l as usize - 1)
+                    .collect(),
+                conditional: (self.breakpoints[slot].iter())
+                    .filter(|(_, c)| c.is_some())
+                    .map(|(&l, _)| l as usize - 1)
                     .collect(),
                 stopped: at.filter(|at| at.0 == slot).map(|at| at.1 as usize - 1),
                 stale,
@@ -1003,15 +1025,67 @@ impl Machine {
         }
         self.follow_edits();
         let lines = &mut self.breakpoints[slot];
-        let set = lines.insert(line) || !lines.remove(&line);
+        let set = lines.remove(&line).is_none();
+        if set {
+            lines.insert(line, None);
+        }
         self.arm_all();
         set
+    }
+
+    /// Sets a breakpoint on a slot's 1-based line that stops only when
+    /// `condition` is true, or always when it is empty.
+    pub fn set_condition(&mut self, slot: usize, line: u32, condition: &str) -> Result<(), Error> {
+        if slot >= SLOTS || line == 0 {
+            return Err(ErrorKind::OutOfRange.into());
+        }
+        let condition = condition.trim();
+        let watch = match condition.is_empty() {
+            true => None,
+            false => Some(Rc::new(Watch::new(condition)?)),
+        };
+        self.follow_edits();
+        self.breakpoints[slot].insert(line, watch);
+        self.arm_all();
+        Ok(())
+    }
+
+    /// The condition of the breakpoint on a slot's 1-based line, empty
+    /// for one without, or `None` when there is none there.
+    pub fn condition(&mut self, slot: usize, line: u32) -> Option<String> {
+        self.follow_edits();
+        let breakpoint = self.breakpoints.get(slot)?.get(&line)?;
+        Some(
+            breakpoint
+                .as_ref()
+                .map_or_else(String::new, |w| w.source().to_string()),
+        )
     }
 
     /// The lines of a slot with breakpoints, in order.
     pub fn breakpoints(&mut self, slot: usize) -> Vec<u32> {
         self.follow_edits();
-        self.breakpoints[slot].iter().copied().collect()
+        self.breakpoints[slot].keys().copied().collect()
+    }
+
+    /// Sets the watch expressions that stop programs, before the
+    /// statement after the one that changed one of their values; those
+    /// that do not parse are left out. Setting the same ones again keeps
+    /// the values changes are told from.
+    pub fn set_changes(&mut self, sources: &[&str]) {
+        let same = sources.len() == self.changes.len()
+            && sources
+                .iter()
+                .zip(&self.changes)
+                .all(|(s, w)| *s == w.source());
+        if same {
+            return;
+        }
+        self.changes = (sources.iter())
+            .filter_map(|s| Watch::new(s).ok())
+            .map(Rc::new)
+            .collect();
+        self.arm_all();
     }
 
     /// Whether the editor moved a slot's lines since the program
@@ -1027,9 +1101,9 @@ impl Machine {
         for editor in &mut self.editors {
             for (slot, shift) in editor.take_shifts() {
                 let lines = &mut self.breakpoints[slot];
-                *lines = (lines.iter())
-                    .filter_map(|&line| shift.map(line as usize - 1))
-                    .map(|line| line as u32 + 1)
+                *lines = std::mem::take(lines)
+                    .into_iter()
+                    .filter_map(|(line, c)| Some((shift.map(line as usize - 1)? as u32 + 1, c)))
                     .collect();
                 self.moved[slot] = true;
             }
@@ -1037,7 +1111,7 @@ impl Machine {
     }
 
     pub fn clear_breakpoints(&mut self) {
-        self.breakpoints.iter_mut().for_each(BTreeSet::clear);
+        self.breakpoints.iter_mut().for_each(BTreeMap::clear);
         self.arm_all();
     }
 
@@ -1046,6 +1120,7 @@ impl Machine {
     fn arm(&mut self, vm: &mut Vm) {
         self.follow_edits();
         give_breakpoints(&self.breakpoints, &self.moved, vm);
+        vm.set_changes(&self.changes);
     }
 
     /// Gives the running and the stopped program the breakpoints.
@@ -1053,6 +1128,7 @@ impl Machine {
         let mut vms = [self.vm.take(), self.halted.take()];
         for vm in vms.iter_mut().flatten() {
             give_breakpoints(&self.breakpoints, &self.moved, vm);
+            vm.set_changes(&self.changes);
         }
         [self.vm, self.halted] = vms;
     }
@@ -1450,11 +1526,23 @@ impl Machine {
 
 /// Gives a program the breakpoints of the slots whose lines have not
 /// moved since it started.
-fn give_breakpoints(breakpoints: &[BTreeSet<u32>], moved: &[bool], vm: &mut Vm) {
+fn give_breakpoints(breakpoints: &[BTreeMap<u32, Option<Rc<Watch>>>], moved: &[bool], vm: &mut Vm) {
     for (slot, lines) in breakpoints.iter().enumerate() {
         if !moved[slot] {
-            vm.set_breakpoints(slot, &lines.iter().copied().collect::<Vec<_>>());
+            let lines: Vec<Breakpoint> = lines.iter().map(|(&l, c)| (l, c.clone())).collect();
+            vm.set_breakpoints(slot, &lines);
         }
+    }
+}
+
+/// A value as a debugger's note shows it: numbers as PRINT does, strings
+/// quoted, and arrays by their size.
+fn note_value(value: &Value) -> String {
+    match value {
+        Value::Default => "(none)".to_string(),
+        Value::Int(_) | Value::Real(_) => String::from_utf16_lossy(&format_number(value)),
+        Value::Str(s) => format!("\"{}\"", String::from_utf16_lossy(&s.borrow())),
+        Value::Array(a) => format!("array of {}", a.borrow().len()),
     }
 }
 

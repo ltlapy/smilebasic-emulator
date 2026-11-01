@@ -889,6 +889,76 @@ fn run_to_a_line_once() {
 }
 
 #[test]
+fn conditional_breakpoints_stop_when_true() {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    let mut m = debug_machine();
+    let src = "FOR I=0 TO 9\n A=I\nNEXT\nF 3\nF 7\nEND\nDEF F N\n X=N\nEND";
+    m.set_slot(0, src.to_string());
+    m.set_condition(0, 2, "I==4 || I==8").unwrap();
+    assert_eq!(m.condition(0, 2), Some("I==4 || I==8".to_string()));
+    assert_eq!(m.condition(0, 3), None);
+    enter(&mut m, "RUN");
+    assert_eq!(m.paused_at(), Some((0, 2)));
+    assert_eq!(global(&m, "I"), Some("Int(4)".to_string()));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(global(&m, "I"), Some("Int(8)".to_string()));
+    // A DEF's local, in a condition on one of its lines.
+    m.toggle_breakpoint(0, 2);
+    m.set_condition(0, 8, "N>5").unwrap();
+    m.toggle_breakpoint(0, 4);
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    // A step over a call whose breakpoint does not stop goes on as a step.
+    debug(&mut m, Resume::Step(Step::Over));
+    assert_eq!(m.paused_at(), Some((0, 5)));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 8)));
+    assert_eq!(format!("{:?}", m.frame_locals(0)[0].1), "Int(7)");
+    // An empty condition stops always; a failing one stops and says why.
+    m.set_condition(0, 8, "").unwrap();
+    assert_eq!(m.condition(0, 8), Some(String::new()));
+    assert!(m.set_condition(0, 8, "N+").is_err());
+    m.set_condition(0, 8, "Q$").unwrap();
+    m.toggle_breakpoint(0, 4);
+    enter(&mut m, "RUN");
+    assert_eq!(m.paused_at(), Some((0, 8)));
+    let r = rows(&m);
+    assert!(
+        r[r.len() - 2].starts_with("Condition failed: Undefined variable"),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn watches_stop_where_their_value_changed() {
+    use sb_runtime::machine::Resume;
+    let mut m = debug_machine();
+    m.set_slot(
+        0,
+        "DIM D[3]\nA=1\nFOR I=0 TO 9:B=I DIV 4:NEXT\nD[1]=5\nC$=\"X\"\nEND".to_string(),
+    );
+    m.set_changes(&["B", "D[1]"]);
+    enter(&mut m, "RUN");
+    // The loop within one line stops at the statement after the change.
+    assert_eq!(m.paused_at(), Some((0, 3)));
+    assert_eq!(global(&m, "I"), Some("Int(4)".to_string()));
+    let r = rows(&m);
+    assert_eq!(r[r.len() - 2], "B changed: 0 -> 1");
+    debug(&mut m, Resume::Cont);
+    assert_eq!(global(&m, "I"), Some("Int(8)".to_string()));
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), Some((0, 5)));
+    let r = rows(&m);
+    assert_eq!(r[r.len() - 2], "D[1] changed: 0 -> 5");
+    // Taking the watches away lets the program run to its end.
+    m.set_changes(&[]);
+    debug(&mut m, Resume::Cont);
+    assert_eq!(m.paused_at(), None);
+    assert_eq!(rows(&m).last().unwrap(), "OK");
+}
+
+#[test]
 fn breakpoints_follow_edited_lines() {
     use sb_runtime::runtime::keys;
     let mut m = debug_machine();

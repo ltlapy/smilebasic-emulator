@@ -18,9 +18,36 @@ const CHANGES: &[&str] = &["POP", "SHIFT"];
 
 /// Evaluates `source`, finding variables by full name (`A%`) with `var`.
 pub fn eval(source: &str, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
-    let expr = parser::parse_expression(source)
-        .map_err(|e| Error::with_detail(ErrorKind::SyntaxError, e.detail().unwrap_or_default()))?;
-    value(&expr, var)
+    Watch::new(source)?.eval(var)
+}
+
+/// A watch expression parsed once, to be worked out again and again, as
+/// a breakpoint's condition is.
+#[derive(Debug)]
+pub struct Watch {
+    source: String,
+    expr: Expr,
+}
+
+impl Watch {
+    pub fn new(source: &str) -> Result<Watch> {
+        let expr = parser::parse_expression(source).map_err(|e| {
+            Error::with_detail(ErrorKind::SyntaxError, e.detail().unwrap_or_default())
+        })?;
+        Ok(Watch {
+            source: source.to_string(),
+            expr,
+        })
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Its value, finding variables by full name (`A%`) with `var`.
+    pub fn eval(&self, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
+        value(&self.expr, var)
+    }
 }
 
 fn refused(what: &str) -> Error {
