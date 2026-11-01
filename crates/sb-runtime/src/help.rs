@@ -314,6 +314,25 @@ fn line_counts(pages: &[Page]) -> Value {
 }
 
 impl Runtime {
+    /// HELPINFO OUT: the topic at the editor's cursor, for SmileBASIC 4's
+    /// own help, which runs from #SYS (`system`). Other programs get the
+    /// first page's, as on hardware, unless the settings let them see the
+    /// cursor.
+    pub(crate) fn helpinfo_out(&self, system: bool) -> Vec<Value> {
+        let allowed = system || self.settings.helpinfo_cursor;
+        let topic = match self.help.as_ref().filter(|_| allowed).map(|h| {
+            let (line, col) = &self.help_cursor;
+            h.lookup(line, *col)
+        }) {
+            Some(Lookup::Topic(topic)) => topic,
+            _ => INTRO.to_string(),
+        };
+        let pages = self
+            .help_pages(&string(&topic))
+            .map_or_else(|_| Vec::new(), |p| p.1);
+        vec![string(&topic), line_counts(&pages)]
+    }
+
     fn help_pages(&self, name: &Value) -> Result<(String, Vec<Page>)> {
         let help = self.help.as_ref().ok_or_else(|| {
             Error::with_detail(ErrorKind::IllegalFunctionCall, "no help imported")
@@ -391,17 +410,8 @@ impl Runtime {
             // The topic at the editor's cursor as it was when the program
             // started, or for a subprogram, as it is now.
             (Command::Helpinfo, Want::Outs(2), []) => {
-                let topic = match self.help.as_ref().map(|h| {
-                    let (line, col) = &self.help_cursor;
-                    h.lookup(line, *col)
-                }) {
-                    Some(Lookup::Topic(topic)) => topic,
-                    _ => INTRO.to_string(),
-                };
-                let pages = self
-                    .help_pages(&string(&topic))
-                    .map_or_else(|_| Vec::new(), |p| p.1);
-                Ok(vec![string(&topic), line_counts(&pages)])
+                let system = self.storage.project().eq_ignore_ascii_case("#SYS");
+                Ok(self.helpinfo_out(system))
             }
             // Also as a function (checked on hardware).
             (Command::Helpinfo, Want::Outs(1) | Want::Value, [name]) => {
@@ -585,6 +595,20 @@ mod tests {
         assert_eq!(at("IF A '", 6), Lookup::Nothing);
         // A word that is no topic gives way to the command around it.
         assert_eq!(at("IF FOO", 6), topic("IF"));
+    }
+
+    #[test]
+    fn only_allowed_programs_see_the_topic_at_the_cursor() {
+        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        rt.help = Some(Rc::new(help()));
+        rt.help_cursor = (utf16("IF A"), 4);
+        let topic = |out: Vec<Value>| {
+            String::from_utf16_lossy(&out[0].clone().into_str().unwrap().borrow())
+        };
+        assert_eq!(topic(rt.helpinfo_out(false)), INTRO);
+        assert_eq!(topic(rt.helpinfo_out(true)), "IF");
+        rt.settings.helpinfo_cursor = true;
+        assert_eq!(topic(rt.helpinfo_out(false)), "IF");
     }
 
     #[test]

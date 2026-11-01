@@ -79,6 +79,9 @@ pub struct Settings {
     /// The mouse cursor stays shown when a program hides it with
     /// SYSPARAM "MOUSECURSOR".
     pub keep_mouse_cursor: bool,
+    /// Any program's HELPINFO OUT reads the editor's cursor, as only
+    /// #SYS's programs do otherwise.
+    pub helpinfo_cursor: bool,
     /// The help panel draws its glyphs this many times their size.
     pub help_text_size: u32,
     /// Completion's list shows in direct mode, and in the editor.
@@ -141,6 +144,7 @@ impl Default for Settings {
             localized_errors: false,
             ui_font: FontSize::Large,
             keep_mouse_cursor: false,
+            helpinfo_cursor: false,
             help_text_size: 2,
             complete_direct: true,
             complete_editor: true,
@@ -274,6 +278,7 @@ impl Settings {
                 "keyboard_buttons" => &mut s.keyboard_buttons,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
                 "keep_mouse_cursor" => &mut s.keep_mouse_cursor,
+                "helpinfo_cursor" => &mut s.helpinfo_cursor,
                 "complete_direct" => &mut s.complete_direct,
                 "complete_editor" => &mut s.complete_editor,
                 "complete_commands" => &mut s.complete_commands,
@@ -395,6 +400,7 @@ impl Settings {
              localized_errors={}\n\
              ui_font={}\n\
              keep_mouse_cursor={}\n\
+             helpinfo_cursor={}\n\
              help_text_size={}\n\
              complete_direct={}\n\
              complete_editor={}\n\
@@ -429,6 +435,7 @@ impl Settings {
             self.localized_errors,
             choice_name(&FONT_SIZE, &self.ui_font),
             self.keep_mouse_cursor,
+            self.helpinfo_cursor,
             self.help_text_size,
             self.complete_direct,
             self.complete_editor,
@@ -477,6 +484,7 @@ mod tests {
             localized_errors: true,
             ui_font: FontSize::Small,
             keep_mouse_cursor: true,
+            helpinfo_cursor: true,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             ..Settings::default()

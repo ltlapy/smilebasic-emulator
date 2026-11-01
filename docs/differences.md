@@ -115,6 +115,11 @@ Without them:
   console's cursor while the editor is open in its own window, where
   SmileBASIC 4 would give 0,0 for the editor.
 - `HELPINFO` and `HELPGET` need SmileBASIC 4's help imported.
+  `HELPINFO OUT` gives the topic at the editor's cursor only to
+  programs started from `#SYS`, as SmileBASIC 4's own help is; others
+  get `DEFAULTHELPKEY`, as on hardware, unless Settings let every
+  program see it (`helpinfo_cursor`). It looks where the cursor was
+  when the program started, or where it is now for a subprogram.
 - `DIALOG` is drawn as the emulator's own window, in English. Besides
   the controller's A and B, it answers clicks and Enter.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands
@@ -163,8 +168,7 @@ Without them:
   front for typing, and the editor's back when it stops. With Settings
   > Editor > "Keep the editor window's place" the window opens where it
   was last. In SmileBASIC 4 the editor replaces the screen and no
-  program runs while it shows. A program's `HELPINFO OUT` looks where
-  the editor's cursor was when the program started. A subprogram's
+  program runs while it shows. A subprogram's
   screen shows over the screens rather than the editor's window, but
   what it types with `PUSHKEY` still goes into the editor while that
   window has the keys.

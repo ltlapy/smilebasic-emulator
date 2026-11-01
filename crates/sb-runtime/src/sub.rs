@@ -92,8 +92,14 @@ impl Runtime {
                 let load = command == Command::Envload;
                 copy_across(main, self, load, kind, from, to).map(|()| vec![])
             }
-            (Command::Envinput | Command::Envlocate | Command::Clipboard, _, _)
-            | (Command::Helpinfo, Want::Outs(2), []) => main.run(command, args, want),
+            (Command::Envinput | Command::Envlocate | Command::Clipboard, _, _) => {
+                main.run(command, args, want)
+            }
+            // The main interpreter's cursor, if this program may see it.
+            (Command::Helpinfo, Want::Outs(2), []) => {
+                let system = self.storage.project().eq_ignore_ascii_case("#SYS");
+                Ok(main.helpinfo_out(system))
+            }
             (Command::Envproject, Want::Outs(0), []) => {
                 // The main interpreter's project was set before, so it
                 // can be set again.
