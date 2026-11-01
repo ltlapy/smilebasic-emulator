@@ -103,6 +103,11 @@ pub struct TextScreen {
     width: u32,
     height: u32,
     cells: Vec<Cell>,
+    /// A cell has been written since [`TextScreen::take_changed`] last
+    /// asked.
+    cells_changed: bool,
+    /// The cells as [`TextScreen::take_changed`] last saw them.
+    cells_seen: Vec<Cell>,
     cursor: (u32, u32),
     color: u32,
     /// ATTR for characters written from now on.
@@ -145,6 +150,8 @@ impl TextScreen {
             width,
             height,
             cells: vec![EMPTY; (width * height) as usize],
+            cells_changed: true,
+            cells_seen: Vec::new(),
             cursor: (0, 0),
             color: WHITE,
             attr: 0,
@@ -201,6 +208,7 @@ impl TextScreen {
         (self.font_type, self.char_size) = (font_type, char_size);
         (self.width, self.height) = (width, height);
         self.cells = vec![EMPTY; (width * height) as usize];
+        self.cells_changed = true;
         self.cursor = (0, 0);
         // TARRAY's array takes the new size and goes on following the
         // screen (checked on hardware).
@@ -239,6 +247,7 @@ impl TextScreen {
     }
 
     fn set(&mut self, i: usize, cell: Cell) {
+        self.cells_changed |= self.cells[i] != cell;
         self.cells[i] = cell;
         if let Some(array) = &self.array
             && let ArrayData::Int(v) = &mut array.borrow_mut().data
@@ -319,6 +328,18 @@ impl TextScreen {
                 self.cells[i] = Cell::from_ints([v[i * 2], v[i * 2 + 1]]);
             }
         }
+        self.cells_changed = true;
+    }
+
+    /// Whether the cells differ from the last time this was asked. Cells
+    /// written over with what they held, as when a program clears the
+    /// screen and prints the same again every frame, do not count.
+    pub fn take_changed(&mut self) -> bool {
+        if !std::mem::take(&mut self.cells_changed) || self.cells == self.cells_seen {
+            return false;
+        }
+        self.cells_seen.clone_from(&self.cells);
+        true
     }
 
     /// Clears the screen and homes the cursor.
@@ -422,11 +443,15 @@ impl TextScreen {
         self.scroll(0, 1);
     }
 
-    /// Plays one frame of the animations.
-    pub fn animate(&mut self) {
-        if self.anim_stopped {
-            return;
+    /// Plays one frame of the animations, and gives whether the screen
+    /// shows differently.
+    pub fn animate(&mut self) -> bool {
+        if self.anim_stopped || self.anims.iter().all(Option::is_none) {
+            return false;
         }
+        // What TANIM can change besides TVAR's variable.
+        let place = |t: &TextScreen| (t.pos, t.z, t.rot, t.scale, t.tint);
+        let before = place(self);
         let mut tracks = std::mem::take(&mut self.anims);
         for slot in &mut tracks {
             if let Some(track) = slot
@@ -436,6 +461,7 @@ impl TextScreen {
             }
         }
         self.anims = tracks;
+        place(self) != before
     }
 
     /// Where TOFS, THOME, TROT and TSCALE put the screen's pixels.

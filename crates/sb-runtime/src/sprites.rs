@@ -232,7 +232,40 @@ impl Pose {
     }
 }
 
+/// Everything of a sprite that its drawing depends on, to tell whether a
+/// command changed how it shows.
+#[derive(Clone, Copy, PartialEq)]
+pub struct Appearance {
+    used: bool,
+    shown: bool,
+    image: (i32, i32, i32, i32, i32, i32),
+    home: (f64, f64),
+    pos: (f64, f64),
+    z: i32,
+    rot: f64,
+    scale: (f64, f64),
+    color: u32,
+    layer: i32,
+    link: (Option<usize>, i32),
+}
+
 impl Sprite {
+    pub fn appearance(&self) -> Appearance {
+        Appearance {
+            used: self.used,
+            shown: self.shown,
+            image: (self.page, self.u, self.v, self.w, self.h, self.attr),
+            home: self.home,
+            pos: self.pos,
+            z: self.z,
+            rot: self.rot,
+            scale: self.scale,
+            color: self.color,
+            layer: self.layer,
+            link: (self.parent, self.link_flags),
+        }
+    }
+
     fn unused() -> Sprite {
         Sprite {
             used: false,
@@ -447,12 +480,15 @@ impl Sprites {
         pose
     }
 
-    /// Plays one frame of every sprite's animations. Sprites whose
-    /// animation asks for it are cleared when it ends.
-    pub fn animate(&mut self) {
+    /// Plays one frame of every sprite's animations, and gives whether
+    /// any sprite shows differently. Sprites whose animation asks for it
+    /// are cleared when it ends.
+    pub fn animate(&mut self) -> bool {
+        let mut moved = false;
         for id in 0..SPRITES {
             if self.list[id].clear_pending {
                 self.clear(id);
+                moved = true;
             }
         }
         for id in 0..SPRITES {
@@ -461,6 +497,11 @@ impl Sprites {
                 s.anim_move = (0.0, 0.0);
                 continue;
             }
+            if s.anims.iter().all(Option::is_none) {
+                s.anim_move = (0.0, 0.0);
+                continue;
+            }
+            let shown_as = s.appearance();
             let mut tracks = std::mem::take(&mut s.anims);
             let mut delete = false;
             let before = s.pos;
@@ -477,11 +518,14 @@ impl Sprites {
                 }
             }
             s.anims = tracks;
+            moved |= s.appearance() != shown_as;
             if delete {
                 // UNVERIFIED: #GSPRITE is cleared like any other.
                 self.clear(id);
+                moved = true;
             }
         }
+        moved
     }
 
     /// The body a sprite collides with, if SPCOL has been set.

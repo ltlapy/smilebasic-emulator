@@ -1528,3 +1528,43 @@ fn return_with_two_values_fails_only_when_it_runs() {
         "{r:?}"
     );
 }
+
+/// How often the screens were drawn again over `frames` frames of the
+/// program, and whether the last frame given matches one drawn afresh.
+fn redraws(program: &str, frames: u32) -> (u32, bool) {
+    let mut m = machine();
+    m.set_slot(0, program.to_string());
+    m.run_slot(0);
+    // The first frames set the screens up.
+    for _ in 0..3 {
+        m.frame();
+        m.render();
+    }
+    let mut drawn = 0;
+    for _ in 0..frames {
+        let before = m.screen_revision();
+        m.frame();
+        m.render();
+        drawn += u32::from(m.screen_revision() != before);
+    }
+    assert!(m.is_running());
+    let kept = m.screen_frame().pixels().to_vec();
+    m.rt.touch();
+    m.render();
+    (drawn, m.screen_frame().pixels() == &kept[..])
+}
+
+#[test]
+fn screens_are_drawn_again_only_when_changed() {
+    // Writing what is already there changes nothing.
+    let same = "SPSET 0,1:SPOFS 0,10,10\n\
+                @L:CLS:LOCATE 2,3:COLOR 7:PRINT \"SAME\"\n\
+                SPOFS 0,10,10:SPCOLOR 0,-1:X=SPROT(0):VSYNC:GOTO @L";
+    assert_eq!(redraws(same, 10), (0, true));
+    let moving = "SPSET 0,1\n@L:SPOFS 0,MAINCNT() MOD 100,10:VSYNC:GOTO @L";
+    assert_eq!(redraws(moving, 10), (10, true));
+    let printing = "@L:LOCATE 0,0:PRINT MAINCNT():VSYNC:GOTO @L";
+    assert_eq!(redraws(printing, 10), (10, true));
+    let drawing = "@L:GPSET MAINCNT() MOD 100,0:VSYNC:GOTO @L";
+    assert_eq!(redraws(drawing, 10), (10, true));
+}

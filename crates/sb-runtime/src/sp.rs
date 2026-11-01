@@ -36,7 +36,7 @@ fn in_range(v: &Value, what: &str, range: std::ops::RangeInclusive<i32>) -> Resu
     })
 }
 
-fn sprite_id(v: &Value) -> Result<usize> {
+pub(crate) fn sprite_id(v: &Value) -> Result<usize> {
     Ok(in_range(v, "sprite", 0..=SPRITES as i32 - 1)? as usize)
 }
 

@@ -258,6 +258,144 @@ pub(crate) enum Command {
     Uistate,
 }
 
+impl Command {
+    /// Whether the command never changes what the screens show, so that
+    /// a program that only runs such commands leaves the frame as it is.
+    fn unseen(self) -> bool {
+        use Command::*;
+        matches!(
+            self,
+            Accel
+                | Beep
+                | Beeppan
+                | Beeppit
+                | Beepstop
+                | Beepvol
+                | Bgmchk
+                | Bgmclear
+                | Bgmcont
+                | Bgmpause
+                | Bgmpitch
+                | Bgmplay
+                | Bgmset
+                | Bgmsetd
+                | Bgmstop
+                | Bgmvar
+                | Bgmvol
+                | Bgmwet
+                | Brepeat
+                | Button
+                | Chkchr
+                | Chkfile
+                | Chkmml
+                | Date
+                | Efcen
+                | Efcset
+                | Efcwet
+                | Envstat
+                | Envtype
+                | Fadechk
+                | Fontinfo
+                | Gpget
+                | Gyroa
+                | Gyrosync
+                | Gyrov
+                | Inkey
+                | Irread
+                | Irstate
+                | Maincnt
+                | Mbutton
+                | Millisec
+                | Mouse
+                | Pcmcont
+                | Pcmpos
+                | Pcmstop
+                | Pcmstream
+                | Pcmvol
+                | Perfbegin
+                | Perfend
+                | Randomize
+                | Recchk
+                | Recdata
+                | Reclen
+                | Recpos
+                | Recsave
+                | Recstart
+                | Recstop
+                | Rnd
+                | Rndf
+                | Sndmsbal
+                | Sndmvol
+                | Sndstop
+                | Spchk
+                // Templates show only once SPSET or SPCHR uses them.
+                | Spdef
+                | Sphitinfo
+                | Sphitrc
+                | Sphitsp
+                | Spused
+                | Spvar
+                | Stick
+                | Talk
+                | Talkchk
+                | Talkstop
+                | Tchk
+                | Time
+                | Touch
+                | Tvar
+                | Vibrate
+                | Wavset
+                | Wavseta
+        )
+    }
+
+    /// Whether the command's forms that give values only read, so that
+    /// they leave the screens as they are.
+    fn reads(self) -> bool {
+        use Command::*;
+        matches!(
+            self,
+            Attr | Backcolor
+                | Color
+                | Gcolor
+                | Gtarget
+                | Keyboard
+                | Locate
+                | Prgget
+                | Spchr
+                | Spcol
+                | Spcolor
+                | Sphide
+                | Sphome
+                | Splayer
+                | Splink
+                | Spofs
+                | Sppage
+                | Sprot
+                | Spscale
+                | Spshow
+                | Tcolor
+                | Thome
+                | Tlayer
+                | Tmread
+                | Tofs
+                | Trot
+                | Tscale
+                | Xscreen
+        )
+    }
+}
+
+/// What a command call can do to the screens.
+enum Sight {
+    /// Nothing, or nothing beyond what render notices itself.
+    Unseen,
+    /// Change how one sprite shows, and nothing else.
+    Sprite(usize),
+    /// Anything.
+    Seen,
+}
+
 pub(crate) const COMMANDS: &[(&str, Command)] = &[
     ("ACCEL", Command::Accel),
     ("ACLS", Command::Acls),
@@ -639,6 +777,14 @@ pub struct Runtime {
     /// Drawn darker, as the side without the focus while a subprogram
     /// runs.
     pub(crate) dimmed: bool,
+    /// Something may have changed what the screens show since the last
+    /// frame was drawn.
+    changed: bool,
+    /// What the last frame was drawn with besides the screens' state: the
+    /// cursor's blink and the dimming.
+    drawn_with: Option<(bool, bool)>,
+    /// Counts the frames drawn, for the frontend to upload only new ones.
+    revision: u64,
     /// What CLIPBOARD reads and writes.
     pub clipboard: Box<dyn crate::env::Clipboard>,
     /// The DIALOG the program waits on, and the frontend's answer.
@@ -889,6 +1035,9 @@ impl Runtime {
             env_error: [0, -1, -1, -1, 0],
             forget_stop: false,
             dimmed: false,
+            changed: true,
+            drawn_with: None,
+            revision: 0,
             clipboard: Box::new(crate::env::MemoryClipboard::default()),
             meta: Default::default(),
             dialog: None,
@@ -1275,6 +1424,7 @@ impl Runtime {
     /// Queues a typed character, or one of the [`keys`] codes. Keys typed
     /// while the buffer is full are dropped.
     pub fn key_press(&mut self, code: u16) {
+        self.changed = true;
         if self.keys.len() < KEY_BUFFER {
             self.keys.push_back(code);
         }
@@ -1292,10 +1442,38 @@ impl Runtime {
         self.keys.pop_front()
     }
 
-    /// Composes the current frame: layers 7 to 0, each back to front.
+    /// Marks the screens as possibly changed, to be drawn again.
+    pub fn touch(&mut self) {
+        self.changed = true;
+    }
+
+    /// Which frame [`Runtime::render`] gave last: it changes only when the
+    /// frame was drawn again.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// The frame [`Runtime::render`] gave last.
+    pub fn screen_frame(&self) -> &Framebuffer {
+        &self.fb
+    }
+
+    /// Composes the current frame: layers 7 to 0, each back to front. The
+    /// last one is given again while nothing has changed.
     pub fn render(&mut self) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
         let cursor = self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2);
+        let with = Some((cursor, self.dimmed));
+        let mut cells = false;
+        for t in &mut self.text {
+            cells |= t.take_changed();
+        }
+        if !self.changed && !cells && self.drawn_with == with {
+            return &self.fb;
+        }
+        self.changed = false;
+        self.drawn_with = with;
+        self.revision += 1;
         // Within a layer, larger Z is further back; at equal Z text screens
         // go behind sprites, and among either, higher ids go behind.
         let mut elements: Vec<(i32, i32, u8, usize, Element)> = (self.text.iter().enumerate())
@@ -1482,11 +1660,13 @@ impl Runtime {
     pub fn animate(&mut self) {
         // UNVERIFIED: a fade steps with the animations, starting on the
         // frame after FADE.
+        let mut moved = self.fade.fading();
         self.fade.step();
-        self.sprites.animate();
+        moved |= self.sprites.animate();
         for t in &mut self.text {
-            t.animate();
+            moved |= t.animate();
         }
+        self.changed |= moved;
     }
 
     /// Clears SPVAR's and TVAR's variables, as starting a program does.
@@ -1775,6 +1955,35 @@ impl Runtime {
             Some(id) => screen_id(&Value::Int(id))?,
         };
         Ok(&mut self.text[id])
+    }
+
+    /// What calling `command` can do to the screens.
+    fn sight(&self, command: Command, args: &[Value], want: Want) -> Sight {
+        use Command::*;
+        if command.unseen() || (want != Want::Outs(0) && command.reads()) {
+            return Sight::Unseen;
+        }
+        // A DIALOG asks again every frame until answered; the frontend
+        // shows it over the screens.
+        if command == Dialog && self.dialog.is_some() {
+            return Sight::Unseen;
+        }
+        if want != Want::Outs(0) {
+            return Sight::Seen;
+        }
+        match command {
+            // They change only the cells, which tell when they change, and
+            // the cursor, which shows only while a line is typed.
+            Attr | Cls | Color | Locate | Tfill | Tput if self.line.is_none() => Sight::Unseen,
+            // What SPSET gives new sprites.
+            Sppage | Splayer if args.len() == 1 => Sight::Unseen,
+            Spchr | Spcolor | Sphide | Sphome | Splayer | Spofs | Sppage | Sprot | Spscale
+            | Spshow => match args.first().map(crate::sp::sprite_id) {
+                Some(Ok(i)) => Sight::Sprite(i),
+                _ => Sight::Seen,
+            },
+            _ => Sight::Seen,
+        }
     }
 
     pub(crate) fn run(
@@ -2150,17 +2359,33 @@ impl Host for Runtime {
 
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
         let command = COMMANDS[id as usize].1;
-        match self.run(command, args, want) {
+        let sight = self.sight(command, args, want);
+        let before = match sight {
+            Sight::Unseen => None,
+            Sight::Sprite(i) => Some((i, self.sprites.list[i].appearance())),
+            Sight::Seen => {
+                self.changed = true;
+                None
+            }
+        };
+        let result = match self.run(command, args, want) {
             // A function called as a command with one OUT variable, such
             // as `SPSET 242 OUT IX`, runs as the function.
             Err(e) if want == Want::Outs(1) && is_no_form(&e) => {
                 self.run(command, args, Want::Value)
             }
             result => result,
+        };
+        if let Some((i, before)) = before {
+            self.changed |= self.sprites.list[i].appearance() != before;
         }
+        result
     }
 
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {
+        // The cells tell when they change; the cursor shows while a line
+        // is typed.
+        self.changed |= self.line.is_some();
         self.screen(screen)?.print(text);
         Ok(())
     }

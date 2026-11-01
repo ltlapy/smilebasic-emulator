@@ -1508,8 +1508,24 @@ impl Machine {
         if self.editing && !self.detached {
             self.render_editor()
         } else {
-            self.rt.render()
+            self.render_screens_now()
         }
+    }
+
+    /// The screens. While a program runs on its own, they are drawn again
+    /// only when it may have changed them; in direct mode, under the
+    /// debugger or beside a subprogram, which change them in other ways
+    /// too, every frame.
+    fn render_screens_now(&mut self) -> &Framebuffer {
+        if self.running_slot.is_none() || self.stepping.is_some() || self.sub_running() {
+            self.rt.touch();
+        }
+        self.rt.render()
+    }
+
+    /// Which frame of the screens [`Machine::render`] gave last.
+    pub fn screen_revision(&self) -> u64 {
+        self.rt.revision()
     }
 
     /// The editor's frame, which shows apart from the screens.
@@ -1540,6 +1556,11 @@ impl Machine {
     /// The editor's frame as [`Machine::render_editor`] last drew it.
     pub fn editor_frame(&self) -> &Framebuffer {
         self.rt.editor_frame()
+    }
+
+    /// The screens' frame as [`Machine::render`] last drew it.
+    pub fn screen_frame(&self) -> &Framebuffer {
+        self.rt.screen_frame()
     }
 
     /// Runs a line typed in direct mode.
