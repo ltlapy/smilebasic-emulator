@@ -445,6 +445,7 @@ impl Runtime {
                     ));
                 }
                 self.text[id].set_font(ft, cs, w, h);
+                self.text[id].restart_look();
                 Ok(vec![])
             }
             (Command::Tscreen, Want::Outs(4), 0 | 1) => {
