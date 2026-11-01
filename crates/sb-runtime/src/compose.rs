@@ -127,11 +127,45 @@ fn div255_lanes(x: u64) -> u64 {
 
 /// `src`, an element's straight color, added to `dst` in proportion to
 /// its alpha, leaving `dst`'s alpha as it is.
+#[inline]
 pub fn add(dst: u32, src: u32) -> u32 {
-    let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
-    let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-    let plus = |s: u32, d: u32| (d + s * sa / 255).min(255) as u8;
-    u32::from_be_bytes([da as u8, plus(sr, dr), plus(sg, dg), plus(sb, db)])
+    add_light(dst, light(src))
+}
+
+const LANES: u64 = 0x00FF_00FF_00FF_00FF;
+const ONES: u64 = 0x0001_0001_0001_0001;
+
+/// The light [`add`] puts on: each channel times the alpha / 255,
+/// rounded down, in [`spread`]'s lanes.
+#[inline]
+fn light(src: u32) -> u64 {
+    let m = spread(src & 0x00FF_FFFF) * u64::from(src >> 24);
+    // m / 255 rounded down, exact for m up to 255 * 255.
+    (m + ONES + (m >> 8 & LANES)) >> 8 & LANES
+}
+
+/// `light` added to `dst`, each channel held to 255.
+#[inline]
+fn add_light(dst: u32, light: u64) -> u32 {
+    let sum = spread(dst & 0x00FF_FFFF) + light;
+    let held = (sum | ((sum >> 8 & ONES) * 0xFF)) & LANES;
+    gather(held) | dst & 0xFF00_0000
+}
+
+/// [`blend`] of the one color `src` over many pixels, with what it
+/// gives worked out once.
+#[inline]
+pub fn blend_one(src: u32, add: bool) -> impl Fn(u32) -> u32 + Copy {
+    let sa = u64::from(src >> 24);
+    let (base, keep) = match add {
+        true => (light(src), 0),
+        false => (spread(src | 0xFF00_0000) * sa, 255 - sa),
+    };
+    move |dst| match (add, keep) {
+        (true, _) => add_light(dst, base),
+        (false, 0) => src,
+        (false, _) => gather(div255_lanes(base + spread(dst) * keep)),
+    }
 }
 
 /// Where a layer's elements may draw.
@@ -890,6 +924,27 @@ mod tests {
                 let src = (a << 24) | (v * 0x0001_0101);
                 let dst = (255 - v) * 0x0101_0101;
                 assert_eq!(over(dst, src), reference(dst, src));
+            }
+        }
+    }
+
+    #[test]
+    fn add_matches_channel_by_channel() {
+        let reference = |dst: u32, src: u32| {
+            let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
+            let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
+            let plus = |s: u32, d: u32| (d + s * sa / 255).min(255) as u8;
+            u32::from_be_bytes([da as u8, plus(sr, dr), plus(sg, dg), plus(sb, db)])
+        };
+        // Every alpha, light and what is under it, each in its own
+        // channel.
+        for sa in 0..=255u32 {
+            for s in 0..=255u32 {
+                for d in (0..=255u32).step_by(3).chain([254, 255]) {
+                    let src = sa << 24 | s << 16 | (255 - s) << 8 | s;
+                    let dst = 0x8000_0000 | d << 16 | (255 - d) << 8 | (d / 2);
+                    assert_eq!(add(dst, src), reference(dst, src), "{dst:08X} {src:08X}");
+                }
             }
         }
     }

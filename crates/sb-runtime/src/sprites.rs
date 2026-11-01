@@ -781,6 +781,27 @@ fn draw_upright(
             let width = self.fb.width() as usize;
             let pixels = self.fb.pixels_mut();
             let (page, white) = (self.source.page, tint(0xFFFF_FFFF));
+            // GRP-1 is one color all over, as large boxes and fades use:
+            // its blend is worked out once.
+            if self.source.white {
+                if white >> 24 == 0 {
+                    return;
+                }
+                let paint = compose::blend_one(white, self.add);
+                for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
+                    if row == NONE {
+                        continue;
+                    }
+                    let at = fy * width + self.grid.x0 as usize;
+                    let line = &mut pixels[at..at + self.cols.len()];
+                    for (dst, &col) in line.iter_mut().zip(self.cols) {
+                        if col != NONE {
+                            *dst = paint(*dst);
+                        }
+                    }
+                }
+                return;
+            }
             for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
                 if row == NONE {
                     continue;
