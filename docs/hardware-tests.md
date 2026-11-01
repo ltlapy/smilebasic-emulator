@@ -67,7 +67,10 @@ END
    program's name as SmileBASIC 4 loads it, and the last argument lists the
    parts (`1-26`, `2,5,7`). Each part runs on a fresh copy of the folder.
    The projects beside it are copied once, `###` as the workspace, for
-   parts that read them.
+   parts that read them. The part's number is typed after three seconds,
+   as a person would: a `VSYNC` right after `INPUT` counts from the
+   `VSYNC` before it, so how long the answer takes changes how long it
+   waits.
    With `--screen DIR`, the emulator's screen is also saved as a PNG for
    each part two seconds in, and Enter is then pressed: a part that
    draws a picture should wait for a key or button before it ends, since

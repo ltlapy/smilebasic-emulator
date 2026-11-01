@@ -66,6 +66,10 @@ const USAGE: &str = "usage:
 /// Result files start with this, after the TXT type letter.
 const RESULT_PREFIX: &str = "TRES";
 /// How long a part may run, in frames: five minutes at 60 a second.
+/// Frames before the part's number is typed, as a person takes: VSYNC
+/// counts from the VSYNC before INPUT, so `VSYNC 60` right after it
+/// returns at once on hardware.
+const TYPING_FRAMES: u32 = 180;
 const FRAME_LIMIT: u32 = 5 * 60 * 60;
 /// Frames after the part's number before --screen takes the picture.
 const SCREEN_AFTER: u32 = 120;
@@ -177,8 +181,11 @@ fn check_part(
     let mut frames = 0;
     // Frames since the part's number went in, for --screen.
     let mut shown = part.is_none().then_some(0);
+    // Frames the program has waited at INPUT.
+    let mut asked = 0;
     while m.is_running() && frames < FRAME_LIMIT {
-        if m.rt.wants_line()
+        asked = if m.rt.wants_line() { asked + 1 } else { 0 };
+        if asked > TYPING_FRAMES
             && let Some(text) = answer.take()
         {
             m.type_text(&text);
