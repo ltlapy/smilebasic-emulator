@@ -138,7 +138,8 @@ impl Meters {
     /// the drawing moves them, so the sound pays nothing.
     pub(super) fn update(&mut self, bgm: &Bgm) {
         for t in &bgm.tracks {
-            let gain = t.volume as f32 / 127.0 * t.fade as f32;
+            // BGMPLAY's own volume, 64, is full; BGMVOL goes louder.
+            let gain = (t.volume as f32 / 64.0).min(1.0) * t.fade as f32;
             for c in t.channels.iter().filter(|c| c.channel < CHANNELS) {
                 let (level, notes) = (
                     &mut self.levels[t.track][c.channel],
@@ -752,7 +753,7 @@ mod tests {
         assert_eq!(bgm.len(), 6);
         assert_eq!(bgm.lines().len(), 6);
         let t = &bgm.tracks[0];
-        assert!(track_line(t).starts_with("TRACK 2  Playing  SONG 140  VOL 127  T150  POS "));
+        assert!(track_line(t).starts_with("TRACK 2  Playing  SONG 140  VOL 64  T150  POS "));
         assert_eq!(
             vars_text(t),
             "$0=-1 $1=3 $2=-1 $3=-1 $4=-1 $5=-1 $6=-1 $7=-1"

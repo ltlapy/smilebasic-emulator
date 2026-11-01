@@ -451,6 +451,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   n samples at 28160 Hz over the next power of two at or above n: at
   reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16
   samples sound 2400 cents up, 512 3600 cents down, 2048 6000 down.
+- `BGMPLAY` without a volume plays at 64, and `BGMVOL` (like
+  `BGMPLAY`'s volume) is a linear gain of v/127 over that range: on a
+  square that records at 3063 by default, `BGMVOL 127` gives 6079, 95
+  gives 4547, 63 3015 and 31 1484.
 - MML's volume (`V`) and velocity (`@V`) both start at 127 and both
   scale the level by their square: `V64` and `V127@V64` record alike.
   `P64` is the middle, even on both sides. Recorded with `RECSTART`, an

@@ -90,6 +90,10 @@ fn opt_in_range(
     }
 }
 
+/// BGMPLAY's volume when it is left out: half of BGMVOL's 127, which
+/// plays twice as loud (TEST41).
+const BGM_VOLUME: i32 = 64;
+
 /// WAVSET's instrument number and envelope.
 fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
     let n = in_range("instrument", &args[0], 224..=255)? as usize - 224;
@@ -158,7 +162,7 @@ impl Runtime {
                 let song = Rc::new(parse(&text(&args[0])?)?);
                 self.sound.songs.insert(255, song.clone());
                 let idle = self.sound.idle();
-                self.sound.play(0, Some(song), 127, 0);
+                self.sound.play(0, Some(song), BGM_VOLUME, 0);
                 self.sound.track(0).number = 255;
                 if idle {
                     self.sound.wake(0);
@@ -171,7 +175,7 @@ impl Runtime {
                     _ => (opt_track(args.first())?.unwrap_or(0), int(&args[1])?),
                 };
                 let volume = match args.get(2) {
-                    None | Some(Value::Default) => 127,
+                    None | Some(Value::Default) => BGM_VOLUME,
                     Some(v) => in_range("volume", v, 0..=127)?,
                 };
                 let fade = match args.get(3) {

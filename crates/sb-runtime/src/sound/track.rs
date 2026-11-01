@@ -141,7 +141,7 @@ pub(crate) struct Track {
     /// Frames BGMCHK still says 1 after a fade out ended.
     pub(crate) linger: u32,
     pub(crate) paused: bool,
-    /// BGMVOL, 0 to 127.
+    /// BGMVOL, 0 to 127, as a linear gain: BGMPLAY's 64 unless given.
     pub(crate) volume: i32,
     /// Fades in, out and around pauses.
     pub(crate) fade: Ramp,
@@ -188,7 +188,7 @@ impl Track {
             fresh: Fresh::No,
             linger: 0,
             paused: false,
-            volume: 127,
+            volume: 64,
             fade: Ramp::at(1.0),
             after_fade: AfterFade::Nothing,
             pitch: 0,
@@ -854,7 +854,9 @@ impl Track {
             }
             done += chunk;
         }
-        let volume = self.volume as f32 / 127.0 * self.seq.as_ref().map_or(1.0, Player::volume);
+        // Levels are measured at BGMPLAY's own volume of 64; BGMVOL goes
+        // on up to twice that.
+        let volume = self.volume as f32 / 64.0 * self.seq.as_ref().map_or(1.0, Player::volume);
         for i in 0..n {
             let gain = volume * self.fade.value as f32;
             left[i] += l[i] * gain;
