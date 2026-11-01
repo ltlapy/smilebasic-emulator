@@ -463,7 +463,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   gives 4547, 63 3015 and 31 1484.
 - MML's volume (`V`) and velocity (`@V`) both start at 127 and both
   scale the level by their square: `V64` and `V127@V64` record alike.
-  `P64` is the middle, even on both sides. Recorded with `RECSTART`, an
+  `P64` is the middle, even on both sides; the pan's position is
+  (P-64)/63, so `P0` and `P1` are both hard left. Recorded with `RECSTART`, an
   A held at V127 has an RMS of 850 on `@0`, and a full-scale 8-bit
   waveform an eighth of full scale on each side (a ±96 square 3063, a
   sine of amplitude 100 2257).

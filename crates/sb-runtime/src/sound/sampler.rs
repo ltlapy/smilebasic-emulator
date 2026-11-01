@@ -57,10 +57,10 @@ fn level(value: u8) -> i32 {
     (db10.round() as i32 * 128).max(SILENCE)
 }
 
-/// A pan of 0 to 127 as -1 (left) to 1 (right), 64 in the middle.
+/// A pan of 0 to 127 as -1 (left) to 1 (right), 64 in the middle:
+/// (P - 64) / 63, so that 0 and 1 are both hard left.
 pub(crate) fn pan_position(pan: i32) -> f32 {
-    let pan = pan.clamp(0, 127) - 64;
-    pan as f32 / if pan < 0 { 64.0 } else { 63.0 }
+    ((pan.clamp(0, 127) - 64) as f32 / 63.0).max(-1.0)
 }
 
 /// Left and right gains for a pan position of -1 to 1, at equal power on
