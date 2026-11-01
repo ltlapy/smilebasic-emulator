@@ -811,10 +811,28 @@ pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color:
     // Without a layer color, adding works on the three channels at once
     // in 16-bit lanes, as the general way below does channel by channel.
     if mode == Compose::Add && color == 0xFFFF_FFFF {
+        // Each channel added and held to 255 is a byte's saturating add,
+        // which the compiler does many pixels at a time; adding nothing
+        // where the layer is clear, and to the alpha, changes nothing.
         for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-            if l != 0 {
-                *d = add_light(*d, spread(l & 0x00FF_FFFF));
+            let (a, b) = (d.to_le_bytes(), (l & 0x00FF_FFFF).to_le_bytes());
+            *d = u32::from_le_bytes(std::array::from_fn(|i| a[i].saturating_add(b[i])));
+        }
+        return;
+    }
+    // Multiplying without a layer color, as for shadows: the general
+    // way below with the color's steps, which change nothing, left out.
+    if mode == Compose::Multiply && color == 0xFFFF_FFFF {
+        for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+            if l == 0 {
+                continue;
             }
+            let keep = 255 - (l >> 24);
+            let c = |shift: u32| {
+                let (p, v) = (l >> shift & 0xFF, *d >> shift & 0xFF);
+                (v * (p + keep) / 255).min(255) << shift
+            };
+            *d = *d & 0xFF00_0000 | c(16) | c(8) | c(0);
         }
         return;
     }
@@ -920,6 +938,32 @@ mod tests {
             .collect();
         compose(&mut dst, &layer, Compose::Normal, 0xFFFF_FFFF);
         assert_eq!(dst.pixels(), &expected[..]);
+    }
+
+    #[test]
+    fn multiplying_a_layer_without_color_matches_with_it() {
+        let mut seed = 0x2545_F491_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut frame = Framebuffer::new(64, 64);
+        let mut layer = Framebuffer::new(64, 64);
+        for (d, l) in frame.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
+            *d = next();
+            let a = next() >> 24;
+            let [_, r, g, b] = next().to_be_bytes().map(|c| (u32::from(c) * a / 255) as u8);
+            *l = u32::from_be_bytes([a as u8, r, g, b]);
+        }
+        let mut fast = frame.clone();
+        compose(&mut fast, &layer, Compose::Multiply, 0xFFFF_FFFF);
+        let mut general = frame.clone();
+        compose_each(&mut general, &layer, 0xFFFF_FFFF, |p, d, a| {
+            d * (p + 255 - a) / 255
+        });
+        assert_eq!(fast.pixels(), general.pixels());
     }
 
     #[test]
