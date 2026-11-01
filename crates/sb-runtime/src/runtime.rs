@@ -588,6 +588,9 @@ pub struct Runtime {
     /// Counts each slot's changes by programs and commands, so that an
     /// editor showing it while code runs can take them.
     pub(crate) slot_changes: Vec<u32>,
+    /// How PRGINS, LOAD and the rest changed slots' lines since the
+    /// machine last took them, in order.
+    pub(crate) slot_edits: Vec<(usize, crate::prg::SlotEdit)>,
     /// The slot whose program is running; `None` in direct mode.
     pub(crate) running_slot: Option<usize>,
     /// How the last program stopped, kept up to date by the machine.
@@ -848,6 +851,7 @@ impl Runtime {
             slot_names: vec![String::new(); SLOTS],
             slot_modified: vec![false; SLOTS],
             slot_changes: vec![0; SLOTS],
+            slot_edits: Vec::new(),
             running_slot: None,
             stopped: Stopped::No,
             backtrace: Vec::new(),
@@ -1675,6 +1679,7 @@ impl Runtime {
                     self.drop_prg_edit(slot);
                     self.slots[slot].clear();
                     self.slot_changes[slot] += 1;
+                    self.replaced_lines(slot);
                     self.slot_names[slot].clear();
                     self.slot_modified[slot] = false;
                 }

@@ -23,6 +23,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
+use crate::editor::LineShift;
 use crate::runtime::{Command, Runtime, no_form, opt_int, slot_arg};
 
 /// The slot PRGEDIT chose and its current line, from 0.
@@ -30,6 +31,29 @@ use crate::runtime::{Command, Runtime, no_form, opt_int, slot_arg};
 pub struct PrgEdit {
     pub slot: usize,
     pub line: usize,
+}
+
+/// How a command changed a slot's lines, for what is kept by line, such
+/// as breakpoints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlotEdit {
+    /// Lines moved, or went, as an edit in the editor moves them.
+    Shift(LineShift),
+    /// Another program took the slot's place: LOAD, NEW and the like.
+    Replaced,
+}
+
+/// `count` lines put in before line `at`, from 0.
+fn inserted(at: usize, count: usize) -> LineShift {
+    LineShift::Broken { at: (at, 0), count }
+}
+
+/// Line `at`, from 0, taken out.
+fn deleted(at: usize) -> LineShift {
+    LineShift::Joined {
+        start: (at, 0),
+        end: (at + 1, 0),
+    }
 }
 
 /// What a slot holds, counting PRGSIZE's free characters: 1 MiB less one
@@ -127,11 +151,25 @@ impl Runtime {
         self.prg_edit.ok_or_else(|| ErrorKind::UsePrgedit.into())
     }
 
-    /// Changes the edited slot's lines, marking it as unsaved.
-    fn change_lines(&mut self, edit: PrgEdit, f: impl FnOnce(&mut Vec<Vec<u16>>, &mut usize)) {
+    /// Notes that a slot's program was replaced, so that what is kept by
+    /// its lines goes. Earlier changes to its lines no longer matter.
+    pub(crate) fn replaced_lines(&mut self, slot: usize) {
+        self.slot_edits.retain(|&(s, _)| s != slot);
+        self.slot_edits.push((slot, SlotEdit::Replaced));
+    }
+
+    /// Changes the edited slot's lines, marking it as unsaved. `f` tells
+    /// how it moved them, in order.
+    fn change_lines(
+        &mut self,
+        edit: PrgEdit,
+        f: impl FnOnce(&mut Vec<Vec<u16>>, &mut usize, &mut Vec<LineShift>),
+    ) {
         let mut source = Source::of(&self.slots[edit.slot]);
         let mut line = edit.line;
-        f(&mut source.lines, &mut line);
+        let mut shifts = Vec::new();
+        f(&mut source.lines, &mut line, &mut shifts);
+        (self.slot_edits).extend(shifts.into_iter().map(|s| (edit.slot, SlotEdit::Shift(s))));
         source.empty = false;
         self.slots[edit.slot] = source.text();
         self.slot_modified[edit.slot] = true;
@@ -221,10 +259,14 @@ impl Runtime {
             (Command::Prgset, Want::Outs(0), [text]) => {
                 let new = new_lines(text)?;
                 let edit = self.editing()?;
-                self.change_lines(edit, |lines, line| {
+                self.change_lines(edit, |lines, line, shifts| {
                     let n = new.len();
                     let past = *line >= lines.len();
                     let at = (*line).min(lines.len() - 1);
+                    // The replaced line keeps what it had, as one whose
+                    // text is typed over in the editor does; the lines
+                    // after it move down past the new ones.
+                    shifts.push(inserted(at + 1, n - 1));
                     if past {
                         // Past the last line, the last is replaced and an
                         // empty line follows, still past the end.
@@ -254,13 +296,14 @@ impl Runtime {
                     }
                 };
                 let edit = self.editing()?;
-                self.change_lines(edit, |lines, line| {
+                self.change_lines(edit, |lines, line, shifts| {
                     // Past the last line, it is the last line that lines
                     // go before or after, and the place stays past the end.
                     let past = *line >= lines.len();
                     let cur = (*line).min(lines.len() - 1);
                     let at = cur + usize::from(after);
                     let n = new.len();
+                    shifts.push(inserted(at, n));
                     lines.splice(at..at, new);
                     *line = match (past, after) {
                         (true, _) => lines.len(),
@@ -274,7 +317,7 @@ impl Runtime {
             (Command::Prgdel, Want::Outs(0), _) if args.len() <= 1 => {
                 let n = flag(args.first(), 1)?;
                 let edit = self.editing()?;
-                self.change_lines(edit, |lines, line| {
+                self.change_lines(edit, |lines, line, shifts| {
                     let past = *line >= lines.len();
                     match usize::try_from(n) {
                         // Lines after the current one go first; at the end
@@ -286,6 +329,7 @@ impl Runtime {
                                     break;
                                 }
                                 lines.remove(cur);
+                                shifts.push(deleted(cur));
                                 if cur == lines.len() {
                                     cur = cur.saturating_sub(1);
                                 }
@@ -297,6 +341,10 @@ impl Runtime {
                             *line = if past { lines.len() } else { cur };
                         }
                         Err(_) => {
+                            shifts.push(LineShift::Joined {
+                                start: (0, 0),
+                                end: (lines.len(), 0),
+                            });
                             *lines = vec![vec![LF]];
                             *line = if past { 1 } else { 0 };
                         }

@@ -15,6 +15,7 @@ use sb_core::watch::Watch;
 use crate::complete::Options;
 use crate::editor::{Editor, Marks};
 use crate::framebuffer::Framebuffer;
+use crate::prg::SlotEdit;
 use crate::runtime::{Request, Runtime, SLOTS, Stopped, keys};
 use crate::screen::ScreenMode;
 use crate::storage;
@@ -1194,18 +1195,27 @@ impl Machine {
         self.moved.get(slot).copied().unwrap_or(false)
     }
 
-    /// Moves the breakpoints with the lines the editor moved, and drops
-    /// those of lines it took out.
+    /// Moves the breakpoints with the lines the editor, PRGINS and PRGDEL
+    /// moved, and drops those of lines they took out and of programs
+    /// LOAD or NEW replaced.
     fn follow_edits(&mut self) {
-        for editor in &mut self.editors {
-            for (slot, shift) in editor.take_shifts() {
-                let lines = &mut self.breakpoints[slot];
-                *lines = std::mem::take(lines)
-                    .into_iter()
-                    .filter_map(|(line, c)| Some((shift.map(line as usize - 1)? as u32 + 1, c)))
-                    .collect();
-                self.moved[slot] = true;
+        let edits = (self.editors.iter_mut())
+            .flat_map(|e| e.take_shifts())
+            .map(|(slot, shift)| (slot, SlotEdit::Shift(shift)))
+            .chain(std::mem::take(&mut self.rt.slot_edits));
+        for (slot, edit) in edits {
+            let lines = &mut self.breakpoints[slot];
+            match edit {
+                SlotEdit::Shift(shift) => {
+                    *lines = std::mem::take(lines)
+                        .into_iter()
+                        .filter_map(|(line, c)| Some((shift.map(line as usize - 1)? as u32 + 1, c)))
+                        .collect();
+                }
+                SlotEdit::Replaced => lines.clear(),
             }
+            // A running program goes on with the code it had.
+            self.moved[slot] = true;
         }
     }
 

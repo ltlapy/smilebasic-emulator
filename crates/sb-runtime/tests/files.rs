@@ -180,6 +180,18 @@ fn save_load_and_list() {
 }
 
 #[test]
+fn load_takes_the_slots_breakpoints_away() {
+    let dir = TempDir::new("breakpoints");
+    let mut m = machine(&dir);
+    m.set_slot(1, "A=1\nB=2".to_string());
+    enter(&mut m, "save \"b\",1");
+    m.toggle_breakpoint(1, 2);
+    m.toggle_breakpoint(2, 1);
+    enter(&mut m, "load \"b\",1");
+    assert_eq!(m.all_breakpoints(), [(2, 1, None)]);
+}
+
+#[test]
 fn projects_rename_delete() {
     let dir = TempDir::new("project");
     let mut m = machine(&dir);

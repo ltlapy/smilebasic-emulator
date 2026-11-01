@@ -1053,6 +1053,52 @@ fn breakpoints_follow_edited_lines() {
 }
 
 #[test]
+fn breakpoints_follow_prgins_and_prgdel() {
+    let mut m = debug_machine();
+    m.set_slot(1, "A=1\nB=2\nC=3\nD=4\nE=5".to_string());
+    m.toggle_breakpoint(1, 2);
+    m.set_condition(1, 3, "A>0").unwrap();
+    m.toggle_breakpoint(1, 4);
+    m.toggle_breakpoint(1, 5);
+    // Two lines put in before line 2, line 6 (D) taken out, and line 1
+    // typed over with two lines, which keeps its place.
+    m.set_slot(
+        0,
+        "PRGEDIT 1,2:PRGINS \"X=0\"+CHR$(10)+\"W=0\"\nPRGEDIT 1,6:PRGDEL\n\
+         PRGEDIT 1,1:PRGSET \"Y=1\"+CHR$(10)+\"Z=2\"\nSTOP"
+            .to_string(),
+    );
+    enter(&mut m, "RUN");
+    assert_eq!(m.slot(1), "Y=1\nZ=2\nX=0\nW=0\nB=2\nC=3\nE=5\n");
+    let all = m.all_breakpoints();
+    assert_eq!(
+        all,
+        [(1, 5, None), (1, 6, Some("A>0".to_string())), (1, 7, None)]
+    );
+    // The stopped program goes on with the code it had in slot 1.
+    assert!(m.lines_moved(1));
+    enter(&mut m, "CONT");
+    enter(&mut m, "RUN 1");
+    assert_eq!(m.paused_at(), Some((1, 5)));
+    // A negative count takes every line, and their breakpoints.
+    enter(&mut m, "CONT");
+    m.set_slot(0, "PRGEDIT 1:PRGDEL -1".to_string());
+    enter(&mut m, "RUN");
+    assert!(m.breakpoints(1).is_empty());
+}
+
+#[test]
+fn breakpoints_go_with_the_program_new_replaces() {
+    let mut m = debug_machine();
+    m.set_slot(1, "A=1\nB=2".to_string());
+    m.set_slot(2, "A=1\nB=2".to_string());
+    m.toggle_breakpoint(1, 2);
+    m.toggle_breakpoint(2, 2);
+    enter(&mut m, "NEW 1");
+    assert_eq!(m.all_breakpoints(), [(2, 2, None)]);
+}
+
+#[test]
 fn jump_to_a_line_in_the_same_def() {
     use sb_runtime::machine::Resume;
     let src = "STOP\n?\"A\"\n?\"B\"\nF\nEND\nDEF F\n ?\"C\"\n STOP\n ?\"D\"\nEND";
