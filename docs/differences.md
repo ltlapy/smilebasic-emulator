@@ -69,9 +69,9 @@ Without them:
 - `SYSPARAM("TVMODE")` is always 1, and `SYSBEEP` keeps its value: the
   emulator has no system sounds. `TOOL1` to `TOOL3`, which F9 to F11
   start, name SmileBASIC 4's own tools. The emulator does not have
-  them: they start only from a `#TOOL` project copied from SmileBASIC 4
-  into the projects folder. A tool that is not there, or a key with no
-  tool, shows a notice.
+  them: they start only from the `#TOOL` project that the importer copies
+  from SmileBASIC 4 into the projects folder. A tool that is not there,
+  or a key with no tool, shows a notice.
 
 ## Other
 

@@ -1,12 +1,14 @@
 //! `smilebasic-import`: copies SmileBASIC 4's own resources from the
 //! user's extracted RomFS and ExeFS directories into the emulator's data
-//! directory. It is kept apart from the emulator, which only reads what
-//! this has imported.
+//! directory, and its own projects into the emulator's projects folder.
+//! It is kept apart from the emulator, which only reads what this has
+//! imported.
 
 mod bfsar;
 mod import;
 mod midi;
 mod nso;
+mod projects;
 mod sf2;
 mod spdef;
 
@@ -14,14 +16,22 @@ use std::path::PathBuf;
 
 use sb_runtime::resources::{RESOURCE_DIR, data_dir};
 
+/// The folder of the emulator's data directory that holds the projects.
+const PROJECTS_DIR: &str = "projects";
+
 const USAGE: &str = "usage: smilebasic-import [options] DIR...
 
 Imports the font, sprites and sounds from your own extracted SmileBASIC 4
-RomFS and ExeFS directories. List the update's directories after the base
-game's so that its files win.
+RomFS and ExeFS directories, and copies its projects #SYS, #TOOL, #EXAMPLE
+and #GUIDE into the emulator's projects folder, keeping files already
+there. List the update's directories after the base game's so that its
+files win.
 
 options:
   -o OUT       import into OUT instead of the emulator's data directory
+  --projects DIR
+               copy the projects into DIR instead of the emulator's
+               projects folder
   --sf2 FILE   also write the instruments as a SoundFont
   --midi DIR   also write the preset songs as MIDI files
   --gm         with --sf2 and --midi, number @0-@127 and the drum sets as
@@ -62,6 +72,10 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         }
         None => sf2::Layout::Own,
     };
+    let projects_dir = match option(&mut args, "--projects")? {
+        Some(dir) => dir,
+        None => data_dir()?.join(PROJECTS_DIR),
+    };
     let sf2 = option(&mut args, "--sf2")?;
     let midi = option(&mut args, "--midi")?;
     if args.is_empty() || args.iter().any(|a| a.starts_with('-')) {
@@ -75,6 +89,29 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
     println!("into {}", dest.display());
     for missing in &imported.missing {
         println!("not found: {missing}");
+    }
+    let projects = projects::import_projects(&dirs, &projects_dir)?;
+    for (project, source, written) in &projects.copied {
+        let files = match written {
+            1 => "1 file".to_string(),
+            n => format!("{n} files"),
+        };
+        println!("copied {project} ({files}) from {}", source.display());
+    }
+    if !projects.copied.is_empty() {
+        println!("into {}", projects_dir.display());
+    }
+    if projects.unchanged > 0 {
+        println!("already there: {} files", projects.unchanged);
+    }
+    for file in &projects.kept {
+        println!("kept {file}: it differs from SmileBASIC 4's");
+    }
+    for (file, why) in &projects.skipped {
+        println!("left out {file}: {why}");
+    }
+    for missing in &projects.missing {
+        println!("not found: {missing} (a project, in the RomFS)");
     }
     if let Some(path) = sf2 {
         let bank = imported
