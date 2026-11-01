@@ -622,14 +622,52 @@ impl Graphics {
         let (w, h) = (from.x1 - from.x0 + 1, from.y1 - from.y0 + 1);
         // Read first, so that a copy within one page may overlap.
         let mut pixels = Vec::with_capacity((w * h) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                pixels.push(self.read(src, from.x0 + x, from.y0 + y));
+        if self.arrays[src].is_none() {
+            // The source lies within the page; read it a row at a time.
+            let page = &self.pages[src];
+            if page.is_empty() {
+                pixels.resize((w * h) as usize, 0);
+            } else {
+                for y in from.y0..=from.y1 {
+                    pixels.extend_from_slice(&page[index(from.x0, y)..=index(from.x1, y)]);
+                }
+            }
+        } else {
+            for y in 0..h {
+                for x in 0..w {
+                    pixels.push(self.read(src, from.x0 + x, from.y0 + y));
+                }
             }
         }
         let c = self.clip;
-        for y in (c.y0 - dy).max(0)..=(c.y1 - dy).min(h - 1) {
-            for x in (c.x0 - dx).max(0)..=(c.x1 - dx).min(w - 1) {
+        let (ys, xs) = (
+            (c.y0 - dy).max(0)..=(c.y1 - dy).min(h - 1),
+            (c.x0 - dx).max(0)..=(c.x1 - dx).min(w - 1),
+        );
+        if ys.is_empty() || xs.is_empty() {
+            return;
+        }
+        if self.arrays[self.target].is_none() {
+            // Without a GARRAY array to keep the same, rows go straight
+            // into the page, inside the clipping rectangle.
+            let n = (xs.end() - xs.start() + 1) as usize;
+            let target = self.target_pixels();
+            for y in ys {
+                let from = &pixels[(y * w + xs.start()) as usize..][..n];
+                let to = &mut target[index(dx + xs.start(), dy + y)..][..n];
+                match (tint, blend) {
+                    (None, Blend::Normal) => to.copy_from_slice(from),
+                    _ => {
+                        for (d, &p) in to.iter_mut().zip(from) {
+                            *d = blend.apply(*d, tint.map_or(p, |t| multiply(p, t)));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        for y in ys {
+            for x in xs.clone() {
                 let p = pixels[(y * w + x) as usize];
                 let p = tint.map_or(p, |t| multiply(p, t));
                 self.plot(dx + x, dy + y, p, blend);
@@ -1093,6 +1131,38 @@ mod tests {
         assert_eq!(area(&g, 4, 1), ["###."]);
         g.copy(0, (1, 0, 1, 0), (0, 1), Some(0xFF00_FFFF), Blend::Normal);
         assert_eq!(g.pixel(0, 0, 1), 0xFF00_0000);
+    }
+
+    /// Rows copied straight into a page give what drawing pixel by pixel
+    /// gives, which pages with GARRAY arrays still do.
+    #[test]
+    fn copy_by_rows_matches_pixels() {
+        let draw = |arrays: bool| {
+            let mut g = Graphics::default();
+            if arrays {
+                g.array(0);
+                g.array(1);
+            }
+            for (i, color) in [RED, 0x8000_FF00, 0, 0xFF12_3456].into_iter().enumerate() {
+                let i = i as i32;
+                g.fill(i * 3, i, i * 3 + 5, i + 4, color, Blend::Normal);
+            }
+            g.target = 1;
+            g.copy(0, (0, 0, 15, 8), (2045, 3), None, Blend::Normal);
+            g.copy(0, (15, 8, 0, 0), (-4, -2), Some(0xFF80_80FF), Blend::Alpha);
+            g.clip = Clip::new(3, 3, 9, 7);
+            g.copy(0, (0, 0, 15, 8), (1, 1), None, Blend::Normal2);
+            g.copy(2, (0, 0, 15, 8), (0, 5), None, Blend::Add);
+            g.clip = Clip::PAGE;
+            g.target = 0;
+            g.copy(0, (0, 0, 12, 6), (2, 1), None, Blend::Normal);
+            (0..2)
+                .flat_map(|page| (0..GRP_SIZE).map(move |x| (page, x)))
+                .flat_map(|(page, x)| (0..12).map(move |y| (page, x, y)))
+                .map(|(page, x, y)| g.pixel(page, x, y))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(draw(false), draw(true));
     }
 
     #[test]
