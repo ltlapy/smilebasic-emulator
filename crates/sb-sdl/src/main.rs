@@ -201,7 +201,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // Vsync paces frames on a 60 Hz display; on faster ones, or without
     // vsync, the loop waits for the next frame's time itself.
     // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
-    if !unsafe { sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1) } {
+    let vsync = unsafe { sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1) };
+    if !vsync {
         eprintln!("vsync unavailable: {}", sdl3::get_error());
     }
     let texture_creator = canvas.texture_creator();
@@ -303,6 +304,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         };
     }
     'running: loop {
+        if let Some(b) = &mut bench {
+            b.sound(audio.stats());
+        }
         if let Some(b) = &mut bench
             && b.step(&mut machine)
         {
@@ -1624,6 +1628,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         if !paused {
             machine.time_limit = Some(RUN_TIME);
             machine.frame();
+            if let Some(b) = &mut bench {
+                b.ran_frame();
+            }
         }
         audio.play(&machine.take_samples());
         // Behind by a frame or more, as when drawing takes too long: the
@@ -1635,6 +1642,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         while !paused && skipped < MOST_SKIPPED && Instant::now() >= next_frame + FRAME {
             machine.time_limit = Some(CATCH_UP_RUN_TIME);
             machine.frame();
+            if let Some(b) = &mut bench {
+                b.ran_frame();
+            }
             audio.play(&machine.take_samples());
             next_frame += FRAME;
             skipped += 1;
@@ -2100,6 +2110,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             b.shoot(&canvas, "main");
         }
         canvas.present();
+        if let Some(b) = &bench {
+            b.present(vsync);
+        }
         lap!(Present);
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
             let mut editor_canvas = gfx.canvas.borrow_mut();

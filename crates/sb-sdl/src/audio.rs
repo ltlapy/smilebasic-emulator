@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use sb_runtime::sound::output::Output;
+use sb_runtime::sound::output::{Output, Stats};
 use sb_runtime::sound::{RATE, SoundFont};
 use sdl3::audio::{AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback};
 
@@ -76,6 +76,12 @@ impl Audio {
         if let Ok(mut o) = self.output.lock() {
             o.push(samples);
         }
+    }
+
+    /// What the device's buffer went through, if there is a device.
+    pub fn stats(&self) -> Option<Stats> {
+        self._stream.as_ref()?;
+        self.output.lock().ok().map(|o| o.stats)
     }
 }
 

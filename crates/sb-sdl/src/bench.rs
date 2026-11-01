@@ -16,12 +16,23 @@
 //!   `PATH-main.pam` and `PATH-editor.pam`, to compare drawings;
 //! - `menu`, `help`, `about`, `colors`, `toast`: shows the menu bar (as
 //!   F8 does), the help beside the editor, the About dialog, the editor
-//!   colors window, or a notice, once the rest is set up.
+//!   colors window, or a notice, once the rest is set up;
+//! - `slow=MS`: makes each present of the main window that waits for
+//!   vsync take MS milliseconds more, as a compositor that throttles a
+//!   covered window does (SDL's Wayland backend waits up to 50 ms).
+//!
+//! Besides the stages, it reports the program frames run per second of
+//! the time timed and what the sound device's buffer went through, so
+//! that the frames keep time whatever happens to the drawing. For the
+//! sound, `SDL_AUDIO_DRIVER=dummy` with `SDL_AUDIO_DEVICE_SAMPLE_FRAMES`
+//! at 960 takes samples at very nearly the real rate without a device.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use sb_runtime::machine::Machine;
+use sb_runtime::sound::RATE;
+use sb_runtime::sound::output::Stats;
 use sdl3::render::Canvas;
 use sdl3::video::Window;
 
@@ -64,6 +75,8 @@ pub struct Bench {
     apart: bool,
     panel: bool,
     shot: Option<String>,
+    /// Added to each present that waits for vsync.
+    slow: Duration,
     /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
     extras: Vec<String>,
     /// Frames since the start.
@@ -72,6 +85,12 @@ pub struct Bench {
     timed: Vec<([Duration; STAGES], u64)>,
     current: [Duration; STAGES],
     last: Option<Instant>,
+    /// When the timing began.
+    began: Option<Instant>,
+    /// Program frames run since then.
+    ran: u32,
+    /// The sound device's buffer's stats when the timing began, and now.
+    sound: Option<(Stats, Stats)>,
 }
 
 impl Bench {
@@ -86,6 +105,9 @@ impl Bench {
             match part.split_once('=') {
                 Some(("frames", n)) => bench.frames = n.parse().unwrap_or(600),
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
+                Some(("slow", ms)) => {
+                    bench.slow = Duration::from_millis(ms.parse().unwrap_or(50));
+                }
                 Some(("run", path)) => {
                     let (project, program) = path.split_once('/').unwrap_or((path, "MAIN.PRG"));
                     bench.run = Some((project.to_string(), program.to_string()));
@@ -141,7 +163,35 @@ impl Bench {
         self.current = [Duration::ZERO; STAGES];
         UPLOADED.store(0, Ordering::Relaxed);
         self.last = (self.frame > set_up + SETTLE).then(Instant::now);
+        if self.last.is_some() && self.began.is_none() {
+            self.began = self.last;
+            self.ran = 0;
+        }
         self.timed.len() >= self.frames as usize
+    }
+
+    /// Counts a program frame run.
+    pub fn ran_frame(&mut self) {
+        self.ran += 1;
+    }
+
+    /// Notes the sound device's buffer's stats, if there is a device.
+    pub fn sound(&mut self, stats: Option<Stats>) {
+        let Some(stats) = stats else {
+            return;
+        };
+        match &mut self.sound {
+            Some((_, now)) if self.began.is_some() => *now = stats,
+            _ => self.sound = Some((stats, stats)),
+        }
+    }
+
+    /// Stands for a compositor's throttling, after a present of the main
+    /// window; `vsync` is whether it waits for vsync.
+    pub fn present(&self, vsync: bool) {
+        if vsync && !self.slow.is_zero() {
+            std::thread::sleep(self.slow);
+        }
     }
 
     /// Saves what `canvas` shows as `PATH-name.pam`, in the last frame
@@ -225,6 +275,22 @@ impl Bench {
             "drawing",
             self.timed.iter().map(|(t, _)| drawing(t)).collect(),
         );
+        if let Some(began) = self.began {
+            let secs = began.elapsed().as_secs_f64();
+            println!(
+                "frames    {:.2} run a second, {} in {secs:.2} s",
+                self.ran as f64 / secs,
+                self.ran
+            );
+        }
+        if let Some((from, to)) = self.sound {
+            println!(
+                "sound     ran out {}, skipped {}, {:.1} ms silent",
+                to.ran_out - from.ran_out,
+                to.skips - from.skips,
+                (to.silent - from.silent) as f64 * 1000.0 / RATE as f64
+            );
+        }
         let bytes: u64 = self.timed.iter().map(|&(_, b)| b).sum();
         let frames = self.timed.len().max(1) as u64;
         let uploads = self.timed.iter().filter(|&&(_, b)| b > 0).count();
