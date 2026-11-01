@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
 
@@ -205,10 +206,18 @@ pub struct Graphics {
     /// shows, which takes the array's writes on GUPDATE (checked on
     /// hardware: GPGET sees them before).
     arrays: [Option<ArrayRef>; PAGES],
+    /// Of each page, a count that moves on whenever its pixels may have
+    /// changed, for the debugger's viewer to copy a page only then.
+    changes: [u64; PAGES],
 }
+
+/// Where the next [`Graphics`] starts counting its pages' changes, so
+/// that a count is never one that another seen before had.
+static CHANGES_FROM: AtomicU64 = AtomicU64::new(0);
 
 impl Default for Graphics {
     fn default() -> Self {
+        let from = CHANGES_FROM.fetch_add(1, Ordering::Relaxed) << 40;
         Graphics {
             pages: vec![Vec::new(); PAGES],
             target: 0,
@@ -216,6 +225,7 @@ impl Default for Graphics {
             clip: Clip::PAGE,
             sample: [0; PAGES],
             arrays: Default::default(),
+            changes: [from; PAGES],
         }
     }
 }
@@ -259,17 +269,25 @@ impl Graphics {
         self.pages[page].is_empty()
     }
 
+    /// A count that differs from the last one read whenever the page's
+    /// pixels may have changed since.
+    pub fn changes(&self, page: usize) -> u64 {
+        self.changes[page]
+    }
+
     /// Replaces a whole page, such as GRP4 with the default sprite image.
     /// `pixels` holds 2048x2048 pixels row by row.
     pub fn set_page(&mut self, page: usize, pixels: Vec<u32>) {
         assert_eq!(pixels.len(), (GRP_SIZE * GRP_SIZE) as usize);
         self.pages[page] = pixels;
+        self.changes[page] += 1;
         self.mirror_page(page);
     }
 
     /// Empties a page, as GCLS does with 0.
     pub fn clear_page(&mut self, page: usize) {
         self.pages[page] = Vec::new();
+        self.changes[page] += 1;
         self.mirror_page(page);
     }
 
@@ -280,6 +298,7 @@ impl Graphics {
         *self = Graphics {
             pages,
             arrays,
+            changes: self.changes,
             ..Graphics::default()
         };
     }
@@ -345,7 +364,9 @@ impl Graphics {
         self.page_pixels(self.target)
     }
 
+    /// A page's pixels to change.
     fn page_pixels(&mut self, page: usize) -> &mut Vec<u32> {
+        self.changes[page] += 1;
         let pixels = &mut self.pages[page];
         if pixels.is_empty() {
             *pixels = vec![0; (GRP_SIZE * GRP_SIZE) as usize];
@@ -914,6 +935,22 @@ mod tests {
         assert_eq!(g.pixel(0, -1, 0), 0);
         assert_eq!(g.pixel(0, 2048, 0), 0);
         assert_eq!(g.pixel(1, 5, 5), 0);
+    }
+
+    #[test]
+    fn changes_are_counted_per_page() {
+        let mut g = Graphics::default();
+        let before = (g.changes(0), g.changes(1));
+        g.pset(5, 5, RED, Blend::Normal);
+        assert_ne!(g.changes(0), before.0);
+        assert_eq!(g.changes(1), before.1);
+        let drawn = g.changes(0);
+        g.reset_state();
+        assert_eq!(g.changes(0), drawn);
+        g.clear_page(0);
+        assert_ne!(g.changes(0), drawn);
+        // Another set of pages never counts as this one did.
+        assert_ne!(Graphics::default().changes(1), before.1);
     }
 
     #[test]
