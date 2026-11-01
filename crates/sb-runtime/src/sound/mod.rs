@@ -5,6 +5,7 @@ pub mod bank;
 pub mod beep;
 pub mod inspect;
 pub mod mml;
+pub mod output;
 pub mod pcm;
 pub mod sampler;
 pub mod seq;
