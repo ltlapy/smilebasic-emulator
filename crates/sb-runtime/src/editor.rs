@@ -1461,6 +1461,45 @@ impl Editor {
             .collect()
     }
 
+    pub fn has_selection(&self) -> bool {
+        self.selection().is_some()
+    }
+
+    /// The selected text if it is within a line, or else the name at the
+    /// cursor with its `@` or suffix, for a watch or a definition.
+    pub fn word_or_selection(&self) -> Option<String> {
+        if let Some((start, end)) = self.selection() {
+            return (start.0 == end.0)
+                .then(|| String::from_utf16_lossy(&self.lines[start.0][start.1..end.1]));
+        }
+        let (line, col) = self.cursor_line();
+        let part = |c: u16| is_ident_char(c) || c == u16::from(b'@');
+        let suffix = |c: u16| matches!(c, 0x23..=0x25);
+        let mut start = col.min(line.len());
+        while start > 0 && part(line[start - 1]) {
+            start -= 1;
+        }
+        let mut end = col.min(line.len());
+        while end < line.len() && part(line[end]) {
+            end += 1;
+        }
+        if end < line.len() && suffix(line[end]) {
+            end += 1;
+        }
+        (start < end).then(|| String::from_utf16_lossy(&line[start..end]))
+    }
+
+    /// Goes to the line with a label or the DEF of a name; false when the
+    /// program has none.
+    pub fn go_to_definition(&mut self, name: &str) -> bool {
+        let found = (self.index().into_iter()).find(|(_, d)| d.eq_ignore_ascii_case(name));
+        let Some((line, _)) = found else {
+            return false;
+        };
+        self.go_to(line + 1);
+        true
+    }
+
     /// Where the editor is now, for [`Editor::go_back`].
     pub fn place(&self) -> Place {
         Place(self.view)
@@ -1951,6 +1990,21 @@ fn put_str(screen: &mut TextScreen, x: usize, y: usize, text: &str, color: u32) 
 mod tests {
     use super::*;
     use crate::palette::SMILEBASIC;
+
+    #[test]
+    fn names_at_the_cursor() {
+        let mut e = editor("GOSUB @SUB\nA$=NAME$(1)\n@SUB\nDEF NAME$(N)\nEND");
+        e.go(0, 8);
+        assert_eq!(e.word_or_selection().as_deref(), Some("@SUB"));
+        e.go(1, 5);
+        assert_eq!(e.word_or_selection().as_deref(), Some("NAME$"));
+        assert!(e.go_to_definition("@sub"));
+        assert_eq!(e.cursor().0, 3);
+        assert!(!e.go_to_definition("NOPE"));
+        e.go(1, 0);
+        e.anchor = Some((1, 2));
+        assert_eq!(e.word_or_selection().as_deref(), Some("A$"));
+    }
 
     #[test]
     fn line_shifts() {

@@ -10,6 +10,7 @@ mod help;
 mod index;
 mod keyhint;
 mod menu;
+mod popup;
 mod program_dialog;
 mod projects;
 mod settings_window;
@@ -24,13 +25,14 @@ use std::time::{Duration, Instant};
 use audio::Audio;
 use colors::ColorWindow;
 use controls::Controls;
-use debug_panel::{DebugPanel, Hit, Tab, View};
+use debug_panel::{DebugPanel, Hit, Tab, Typed, View, value_text};
 use dialog::{Answer, Dialog};
 use file_dialogs::{FilePicker, SaveDialog};
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
 use menu::{Action, Click, Context, MenuBar};
+use popup::Popup;
 use program_dialog::ProgramView;
 use projects::{Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
@@ -229,6 +231,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The debugger's panel below the editor, and the stop it last showed.
     let mut debug_panel = DebugPanel::default();
     let mut shown_stop = None;
+    // The menu a right click opens on the editor or the debugger's panel.
+    let mut debug_menu: Option<Popup<Choice>> = None;
     // A panel beside the editor, and whether it takes the keys.
     let mut side: Option<Side> = None;
     let mut side_focus = false;
@@ -278,6 +282,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     || settings_window.is_some()
                     || shortcuts_window.is_some()
                     || color_window.is_some()
+                    || debug_panel.typing()
                     || (side.is_some() && side_focus);
             }
             match event {
@@ -368,18 +373,6 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     continue;
                 }
             }
-            if let Event::MouseWheel {
-                y,
-                mouse_x,
-                mouse_y,
-                ..
-            } = event
-                && debug_panel.contains(to_display(mouse_x, mouse_y))
-            {
-                let shown = debug_view(&mut machine, &debug_panel).variables.len();
-                debug_panel.wheel(-y.round() as i32, shown);
-                continue;
-            }
             if let Some(open) = &mut side {
                 match event {
                     Event::MouseWheel {
@@ -392,6 +385,59 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         continue;
                     }
                     Event::MouseMotion { x, y, .. } => open.mouse_move(to_display(x, y)),
+                    _ => {}
+                }
+            }
+            // The help or the index beside the editor is over the panel.
+            if let Event::MouseWheel {
+                y,
+                mouse_x,
+                mouse_y,
+                ..
+            } = event
+                && debug_panel.contains(to_display(mouse_x, mouse_y))
+            {
+                let shown = debug_view(&mut machine, &debug_panel).variables.len();
+                debug_panel.wheel(-y.round() as i32, shown);
+                continue;
+            }
+            if let Some(open) = &mut debug_menu {
+                match event {
+                    Event::MouseMotion { x, y, .. } => open.hover(to_display(x, y)),
+                    Event::MouseButtonDown {
+                        mouse_btn, x, y, ..
+                    } => {
+                        let chosen = (mouse_btn == MouseButton::Left)
+                            .then(|| open.click(to_display(x, y)))
+                            .flatten();
+                        debug_menu = None;
+                        if let Some(choice) = chosen {
+                            let panel = &mut debug_panel;
+                            choose(choice, &mut machine, panel, &clipboard, &mut toasts);
+                        }
+                        continue;
+                    }
+                    Event::KeyDown { .. } => {
+                        debug_menu = None;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            if debug_panel.typing() {
+                match event {
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => {
+                        if let Typed::Value(name, text) = debug_panel.key(key) {
+                            set_value(&mut machine, &debug_panel, &name, &text, &mut toasts);
+                        }
+                        continue;
+                    }
+                    Event::TextInput { text, .. } => {
+                        debug_panel.text(&text);
+                        continue;
+                    }
                     _ => {}
                 }
             }
@@ -760,10 +806,35 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     win_event: WindowEvent::MouseLeave,
                     ..
                 } => menu.mouse_move(None),
+                // A right click on the editor or the debugger's panel opens a
+                // menu of what can be done there.
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Right,
+                    x,
+                    y,
+                    ..
+                } if machine.is_editing()
+                    && !side
+                        .as_ref()
+                        .is_some_and(|s| s.frame().contains(to_display(x, y))) =>
+                {
+                    let at = to_display(x, y);
+                    let items = if debug_panel.contains(at) {
+                        panel_menu(&mut machine, &debug_panel, at)
+                    } else {
+                        let (x, y) = to_screen(x, y);
+                        if !machine.editor().has_selection() {
+                            machine.editor_mouse_down(x, y, false);
+                        }
+                        editor_menu(&mut machine)
+                    };
+                    debug_menu = Some(Popup::new(at, items, (display_w, display_h)));
+                }
                 Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     x,
                     y,
+                    clicks,
                     ..
                 } => match menu.click(to_display(x, y), menu_context(&machine)) {
                     Click::Chosen(Action::Quit) => quit = true,
@@ -873,10 +944,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Ignored
                         if machine.is_editing() && debug_panel.contains(to_display(x, y)) =>
                     {
-                        if let Some(Hit::Call(i)) = debug_panel.click(to_display(x, y))
-                            && let Some(call) = machine.calls().get(i)
-                        {
-                            machine.show_line(call.slot, call.line);
+                        match debug_panel.click(to_display(x, y), clicks == 2) {
+                            Some(Hit::Call(i)) => {
+                                if let Some(call) = machine.calls().get(i) {
+                                    machine.show_line(call.slot, call.line);
+                                }
+                            }
+                            Some(Hit::Variable(i)) if clicks == 2 => {
+                                let panel = &mut debug_panel;
+                                choose(
+                                    Choice::ChangeValue(i),
+                                    &mut machine,
+                                    panel,
+                                    &clipboard,
+                                    &mut toasts,
+                                );
+                            }
+                            _ => {}
                         }
                     }
                     Click::Ignored if machine.is_editing() => {
@@ -1318,6 +1402,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         if modal
             || dims
             || debug.is_some()
+            || debug_menu.is_some()
             || side.is_some()
             || menu.visible()
             || toasts.visible()
@@ -1360,6 +1445,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     p.draw(&mut overlay, font, (blink / 25).is_multiple_of(2))
                 }
                 None => {}
+            }
+            if let Some(open) = &debug_menu {
+                open.draw(&mut overlay, font);
             }
             if key_hint.visible() {
                 key_hint.draw(&mut overlay, font);
@@ -1650,6 +1738,7 @@ fn debug_action(machine: &mut Machine, action: Action, toasts: &mut Toasts) {
                 "The stopped program's lines have moved: run it again"
             }
             _ if machine.is_running() => "The program is running",
+            _ if machine.stopped_by_error() => "A program stopped by an error cannot go on",
             _ => "No stopped program: set a breakpoint or use STOP",
         };
         toasts.push(why.to_string());
@@ -1672,11 +1761,24 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         }
     }
     let tab = panel.tab.filter(|t| tabs.contains(t)).unwrap_or(tabs[0]);
-    let variables = match (tab, call.as_ref().and_then(|c| c.frame)) {
+    let call_frame = call.as_ref().and_then(|c| c.frame);
+    let (frame, slot) = match tab {
+        Tab::Locals => (call_frame, home),
+        Tab::Globals(slot) => (None, slot),
+    };
+    let variables = match (tab, frame) {
         (Tab::Locals, Some(frame)) => machine.frame_locals(frame),
         (Tab::Globals(slot), _) => machine.slot_globals(slot),
         (Tab::Locals, None) => Vec::new(),
     };
+    // Watches see the chosen call's locals and its slot's globals.
+    let watches = (panel.watches.iter())
+        .map(|w| {
+            machine
+                .watch(w, call_frame, home)
+                .map_err(|e| e.to_string())
+        })
+        .collect();
     let status = match machine.paused_at() {
         _ if machine.is_running() => "Running... Pause stops it".to_string(),
         Some((slot, _)) if machine.lines_moved(slot) => {
@@ -1689,7 +1791,178 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         calls,
         tabs,
         variables,
+        frame,
+        slot,
+        watches,
         status,
+    }
+}
+
+/// What a right click's menu on the editor or the debugger's panel can do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Choice {
+    /// Type a new value for a variable shown, by its place in the list.
+    ChangeValue(usize),
+    CopyValue(String),
+    Watch(String),
+    EditWatch(usize),
+    RemoveWatch(usize),
+    AddWatch,
+    Hex,
+    /// Go to the label or DEF of a name.
+    Definition(String),
+    Debug(Action),
+    Cut,
+    Copy,
+    Paste,
+}
+
+/// A right click's menu on the debugger's panel: for a variable, a
+/// watch, or the panel.
+fn panel_menu(
+    machine: &mut Machine,
+    panel: &DebugPanel,
+    at: (i32, i32),
+) -> Vec<(String, bool, Choice)> {
+    let hex = (
+        format!("{} Hexadecimal", if panel.hex { "[x]" } else { "[ ]" }),
+        true,
+        Choice::Hex,
+    );
+    let view = debug_view(machine, panel);
+    let stopped = !machine.is_running();
+    match panel.hit_at(at) {
+        Some(Hit::Variable(i)) if i < view.variables.len() => {
+            let (name, value) = view.variables[i].clone();
+            let copy = value_text(&value, usize::MAX, panel.hex).0;
+            vec![
+                ("Change value".to_string(), stopped, Choice::ChangeValue(i)),
+                ("Copy value".to_string(), true, Choice::CopyValue(copy)),
+                (format!("Watch {name}"), true, Choice::Watch(name)),
+                hex,
+            ]
+        }
+        Some(Hit::Watch(i)) => {
+            let copy = match view.watches.get(i) {
+                Some(Ok(value)) => Some(value_text(value, usize::MAX, panel.hex).0),
+                _ => None,
+            };
+            vec![
+                ("Edit watch".to_string(), true, Choice::EditWatch(i)),
+                ("Remove watch".to_string(), true, Choice::RemoveWatch(i)),
+                (
+                    "Copy value".to_string(),
+                    copy.is_some(),
+                    Choice::CopyValue(copy.unwrap_or_default()),
+                ),
+                hex,
+            ]
+        }
+        _ => vec![("Add watch".to_string(), true, Choice::AddWatch), hex],
+    }
+}
+
+/// A right click's menu on the editor: the name at the cursor, the
+/// debugger's commands for its line, and the clipboard.
+fn editor_menu(machine: &mut Machine) -> Vec<(String, bool, Choice)> {
+    let paused = menu_context(machine).paused;
+    let mut items = Vec::new();
+    if let Some(word) = machine.editor().word_or_selection() {
+        let short: String = word.chars().take(20).collect();
+        let defined = (machine.editor().index().iter()).any(|(_, d)| d.eq_ignore_ascii_case(&word));
+        items.push((
+            format!("Go to {short}"),
+            defined,
+            Choice::Definition(word.clone()),
+        ));
+        items.push((format!("Watch {short}"), true, Choice::Watch(word)));
+    }
+    items.extend([
+        (
+            "Breakpoint".to_string(),
+            true,
+            Choice::Debug(Action::ToggleBreakpoint),
+        ),
+        (
+            "Run to cursor".to_string(),
+            paused,
+            Choice::Debug(Action::RunToCursor),
+        ),
+        (
+            "Go on from cursor".to_string(),
+            paused,
+            Choice::Debug(Action::JumpToCursor),
+        ),
+        (
+            "Cut".to_string(),
+            machine.editor().has_selection(),
+            Choice::Cut,
+        ),
+        (
+            "Copy".to_string(),
+            machine.editor().has_selection(),
+            Choice::Copy,
+        ),
+        ("Paste".to_string(), true, Choice::Paste),
+    ]);
+    items
+}
+
+/// Does what was chosen in a right click's menu.
+fn choose(
+    choice: Choice,
+    machine: &mut Machine,
+    panel: &mut DebugPanel,
+    clipboard: &ClipboardUtil,
+    toasts: &mut Toasts,
+) {
+    match choice {
+        Choice::ChangeValue(i) => {
+            let view = debug_view(machine, panel);
+            if let Some((name, value)) = view.variables.get(i) {
+                panel.edit_variable(name.clone(), value_text(value, usize::MAX, false).0);
+            }
+        }
+        Choice::CopyValue(text) => {
+            if let Err(e) = clipboard.set_clipboard_text(&text) {
+                toasts.push(format!("Could not copy: {e}"));
+            }
+        }
+        Choice::Watch(text) => panel.watches.push(text),
+        Choice::EditWatch(i) => panel.edit_watch(i),
+        Choice::RemoveWatch(i) => panel.remove_watch(i),
+        Choice::AddWatch => panel.add_watch(String::new()),
+        Choice::Hex => panel.hex = !panel.hex,
+        Choice::Definition(name) => {
+            if !machine.edit().go_to_definition(&name) {
+                toasts.push(format!("No label or DEF named {name}"));
+            }
+        }
+        Choice::Debug(action) => debug_action(machine, action, toasts),
+        Choice::Cut | Choice::Copy => {
+            copy_selection(machine, clipboard, toasts, choice == Choice::Cut)
+        }
+        Choice::Paste => paste(machine, clipboard, toasts),
+    }
+}
+
+/// Gives a variable shown in the debugger's panel the value of what was
+/// typed, worked out as a watch.
+fn set_value(
+    machine: &mut Machine,
+    panel: &DebugPanel,
+    name: &str,
+    typed: &str,
+    toasts: &mut Toasts,
+) {
+    let view = debug_view(machine, panel);
+    match machine.watch(typed, view.frame, view.slot) {
+        Ok(value) => {
+            if !machine.set_variable(name, value, view.frame, view.slot) {
+                toasts.push(format!("Could not change {name}"));
+            }
+        }
+        Err(e) => toasts.push(format!("{name}: {e}")),
     }
 }
 

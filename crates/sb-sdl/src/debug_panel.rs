@@ -1,11 +1,12 @@
 //! The debugger's panel below the editor while a program is stopped: the
-//! screens as the program left them, its calls under way and the
-//! variables of the one chosen.
+//! screens as the program left them, its calls under way, the watch
+//! expressions, and the variables of the call chosen or of a slot.
 
 use sb_core::value::{ArrayData, ElemType, Value, format_number};
 use sb_core::vm::{Call, CallKind};
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
+use sdl3::keyboard::Keycode;
 
 use crate::ui::{BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, fill};
 
@@ -14,11 +15,14 @@ const NUMBER: u32 = 0xFFF0_4090;
 const STRING: u32 = 0xFF60_80F0;
 const FACE: u32 = 0xFF18_1818;
 const TAB: u32 = 0xFF40_4040;
-/// Characters of the call stack's column, and of the variables' names
-/// and values.
-const CALL_CHARS: u32 = 18;
+const ERROR: u32 = 0xFFF0_6060;
+const SELECTED: u32 = 0xFF30_3040;
+/// Characters of the calls' and watches' column, of a watch's
+/// expression, and of the variables' names and values.
+const CALL_CHARS: u32 = 20;
+const WATCH_CHARS: usize = 9;
 const NAME_CHARS: usize = 8;
-const VALUE_CHARS: usize = 16;
+const VALUE_CHARS: usize = 14;
 
 /// Which variables the panel lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +39,12 @@ pub struct View {
     /// The tabs there are, and the variables of the one shown.
     pub tabs: Vec<Tab>,
     pub variables: Vec<(String, Value)>,
+    /// Where the variables shown are: a DEF call's, by
+    /// [`Call::frame`], or a slot's globals.
+    pub frame: Option<usize>,
+    pub slot: usize,
+    /// The value of each watch, or why it has none.
+    pub watches: Vec<Result<Value, String>>,
     /// A line at the bottom: where the program stopped, or that a step
     /// runs.
     pub status: String,
@@ -46,6 +56,27 @@ pub enum Hit {
     /// A call, by its place in the list from the outermost.
     Call(usize),
     Tab(Tab),
+    /// A variable shown, by its place in [`View::variables`].
+    Variable(usize),
+    Watch(usize),
+    AddWatch,
+}
+
+/// What is being typed into the panel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    NewWatch,
+    Watch(usize),
+    /// A new value for the variable of this name.
+    Variable(String),
+}
+
+/// What a key typed into the panel did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Typed {
+    Stay,
+    /// Enter on a new value for a variable, which the machine takes.
+    Value(String, String),
 }
 
 #[derive(Default)]
@@ -60,20 +91,33 @@ pub struct DebugPanel {
     hits: Vec<(Rect, Hit)>,
     /// Rows of variables the last frame had room for.
     rows: usize,
+    /// The watch expressions, kept while the emulator runs.
+    pub watches: Vec<String>,
+    /// The row last clicked.
+    selected: Option<Hit>,
+    typing: Option<(Target, String)>,
+    /// Integers show in hexadecimal.
+    pub hex: bool,
 }
 
-/// A value on one line: numbers as PRINT shows them, strings in quotes,
-/// arrays with their first elements, cut to `chars`.
-fn value_text(value: &Value, chars: usize) -> (String, u32) {
+/// A value on one line: numbers as PRINT shows them, or integers in
+/// hexadecimal, strings in quotes, arrays with their first elements, cut
+/// to `chars`.
+pub fn value_text(value: &Value, chars: usize, hex: bool) -> (String, u32) {
     let quoted = |s: &[u16]| format!("\"{}\"", String::from_utf16_lossy(s));
+    let int = |n: i32| match hex {
+        true => format!("&H{:X}", n as u32),
+        false => n.to_string(),
+    };
     let (text, color) = match value {
         Value::Default => ("(none)".to_string(), DISABLED),
-        Value::Int(_) | Value::Real(_) => (String::from_utf16_lossy(&format_number(value)), NUMBER),
+        Value::Int(n) => (int(*n), NUMBER),
+        Value::Real(_) => (String::from_utf16_lossy(&format_number(value)), NUMBER),
         Value::Str(s) => (quoted(&s.borrow()), STRING),
         Value::Array(a) => {
             let a = a.borrow();
             let items: Vec<String> = match &a.data {
-                ArrayData::Int(v) => v.iter().take(chars).map(i32::to_string).collect(),
+                ArrayData::Int(v) => v.iter().take(chars).map(|&n| int(n)).collect(),
                 ArrayData::Real(v) => (v.iter().take(chars))
                     .map(|&x| String::from_utf16_lossy(&format_number(&Value::Real(x))))
                     .collect(),
@@ -147,29 +191,108 @@ impl DebugPanel {
         self.scroll = 0;
     }
 
-    /// Forgets where it was drawn, once it is not shown.
+    /// Forgets where it was drawn and what was typed, once it is not
+    /// shown.
     pub fn hide(&mut self) {
         self.frame = None;
         self.hits.clear();
+        self.typing = None;
     }
 
     pub fn contains(&self, at: (i32, i32)) -> bool {
         self.frame.is_some_and(|f| f.contains(at))
     }
 
-    pub fn click(&mut self, at: (i32, i32)) -> Option<Hit> {
-        let hit = (self.hits.iter())
+    /// The clickable part under a point, from the last frame drawn.
+    pub fn hit_at(&self, at: (i32, i32)) -> Option<Hit> {
+        (self.hits.iter())
             .find(|(r, _)| r.contains(at))
-            .map(|&(_, hit)| hit)?;
-        match hit {
+            .map(|&(_, hit)| hit)
+    }
+
+    /// A click: chooses a call or a tab, selects a row, or starts a new
+    /// watch; a double click edits a watch.
+    pub fn click(&mut self, at: (i32, i32), double: bool) -> Option<Hit> {
+        let hit = self.hit_at(at);
+        self.typing = None;
+        self.selected = hit.filter(|h| matches!(h, Hit::Variable(_) | Hit::Watch(_)));
+        match hit? {
             Hit::Call(i) => {
                 self.chosen = Some(i);
                 self.tab = None;
+                self.scroll = 0;
             }
-            Hit::Tab(tab) => self.tab = Some(tab),
+            Hit::Tab(tab) => {
+                self.tab = Some(tab);
+                self.scroll = 0;
+            }
+            Hit::AddWatch => self.add_watch(String::new()),
+            Hit::Watch(i) if double => self.edit_watch(i),
+            Hit::Watch(_) | Hit::Variable(_) => {}
         }
-        self.scroll = 0;
-        Some(hit)
+        hit
+    }
+
+    /// Starts typing a new watch, beginning with `text`.
+    pub fn add_watch(&mut self, text: String) {
+        self.typing = Some((Target::NewWatch, text));
+    }
+
+    pub fn edit_watch(&mut self, i: usize) {
+        if let Some(text) = self.watches.get(i) {
+            self.typing = Some((Target::Watch(i), text.clone()));
+        }
+    }
+
+    pub fn remove_watch(&mut self, i: usize) {
+        if i < self.watches.len() {
+            self.watches.remove(i);
+            self.selected = None;
+        }
+    }
+
+    /// Starts typing a new value for a variable, beginning with its
+    /// current one.
+    pub fn edit_variable(&mut self, name: String, text: String) {
+        self.typing = Some((Target::Variable(name), text));
+    }
+
+    /// Whether keys go to the panel's typing.
+    pub fn typing(&self) -> bool {
+        self.typing.is_some()
+    }
+
+    pub fn text(&mut self, text: &str) {
+        if let Some((_, typed)) = &mut self.typing {
+            typed.push_str(text);
+        }
+    }
+
+    /// A key while typing: Enter keeps what was typed, Esc forgets it.
+    pub fn key(&mut self, key: Keycode) -> Typed {
+        match key {
+            Keycode::Return | Keycode::KpEnter => {
+                let Some((target, typed)) = self.typing.take() else {
+                    return Typed::Stay;
+                };
+                let typed = typed.trim().to_string();
+                match target {
+                    Target::NewWatch if !typed.is_empty() => self.watches.push(typed),
+                    Target::Watch(i) if typed.is_empty() => self.remove_watch(i),
+                    Target::Watch(i) => self.watches[i] = typed,
+                    Target::Variable(name) => return Typed::Value(name, typed),
+                    Target::NewWatch => {}
+                }
+            }
+            Keycode::Escape => self.typing = None,
+            Keycode::Backspace => {
+                if let Some((_, typed)) = &mut self.typing {
+                    typed.pop();
+                }
+            }
+            _ => {}
+        }
+        Typed::Stay
     }
 
     pub fn wheel(&mut self, rows: i32, variables: usize) {
@@ -245,6 +368,61 @@ impl DebugPanel {
             y += LINE;
         }
 
+        // The watches, and a row to add one.
+        y += PAD;
+        if y + 2 * LINE <= bottom {
+            draw_text(fb, font, cx, y + 4, "WATCH", HEADING);
+            y += LINE;
+        }
+        let typing = self.typing.clone();
+        let cursor = |t: &str| format!("{t}_");
+        for (i, expr) in self.watches.iter().enumerate() {
+            if y + 2 * LINE > bottom {
+                break;
+            }
+            let row = Rect {
+                x: cx - PAD / 2,
+                y,
+                w: call_w,
+                h: LINE,
+            };
+            if self.selected == Some(Hit::Watch(i)) {
+                fill(fb, row, SELECTED);
+            }
+            if let Some((Target::Watch(t), typed)) = &typing
+                && *t == i
+            {
+                draw_text(fb, font, cx, y + 4, &cursor(typed), TEXT);
+            } else {
+                draw_text(fb, font, cx, y + 4, &cut(expr, WATCH_CHARS), TEXT);
+                let x = cx + (WATCH_CHARS as u32 + 1) * CHAR;
+                let room = CALL_CHARS as usize - WATCH_CHARS - 1;
+                let (text, color) = match view.watches.get(i) {
+                    Some(Ok(v)) => value_text(v, room, self.hex),
+                    Some(Err(e)) => (cut(e, room), ERROR),
+                    None => (String::new(), TEXT),
+                };
+                draw_text(fb, font, x, y + 4, &text, color);
+            }
+            self.hits.push((row, Hit::Watch(i)));
+            y += LINE;
+        }
+        if y + LINE <= bottom {
+            let row = Rect {
+                x: cx - PAD / 2,
+                y,
+                w: call_w,
+                h: LINE,
+            };
+            match &typing {
+                Some((Target::NewWatch, typed)) => {
+                    draw_text(fb, font, cx, y + 4, &cursor(typed), TEXT)
+                }
+                _ => draw_text(fb, font, cx, y + 4, "+ add", DISABLED),
+            }
+            self.hits.push((row, Hit::AddWatch));
+        }
+
         // The variables, under their tabs.
         let vx = cx + call_w + 2 * PAD;
         let mut tx = vx;
@@ -276,11 +454,29 @@ impl DebugPanel {
         }
         let value_x = vx + (NAME_CHARS as u32 + 1) * CHAR;
         let type_x = value_x + (VALUE_CHARS as u32 + 1) * CHAR;
-        for (name, value) in view.variables.iter().skip(self.scroll).take(self.rows) {
+        let shown = view.variables.iter().enumerate().skip(self.scroll);
+        for (i, (name, value)) in shown.take(self.rows) {
+            let row = Rect {
+                x: vx - PAD / 2,
+                y,
+                w: inner.x + inner.w - vx,
+                h: LINE,
+            };
+            if self.selected == Some(Hit::Variable(i)) {
+                fill(fb, row, SELECTED);
+            }
             draw_text(fb, font, vx, y + 4, &cut(name, NAME_CHARS), TEXT);
-            let (text, color) = value_text(value, VALUE_CHARS);
-            draw_text(fb, font, value_x, y + 4, &text, color);
-            draw_text(fb, font, type_x, y + 4, &type_text(value), HEADING);
+            match &typing {
+                Some((Target::Variable(n), typed)) if n == name => {
+                    draw_text(fb, font, value_x, y + 4, &cursor(typed), TEXT)
+                }
+                _ => {
+                    let (text, color) = value_text(value, VALUE_CHARS, self.hex);
+                    draw_text(fb, font, value_x, y + 4, &text, color);
+                    draw_text(fb, font, type_x, y + 4, &type_text(value), HEADING);
+                }
+            }
+            self.hits.push((row, Hit::Variable(i)));
             y += LINE;
         }
 
@@ -311,16 +507,45 @@ mod tests {
 
     #[test]
     fn values_on_one_line() {
-        assert_eq!(value_text(&Value::Int(-3), 8).0, "-3");
-        assert_eq!(value_text(&Value::Real(0.5), 8).0, "0.5");
+        assert_eq!(value_text(&Value::Int(-3), 8, false).0, "-3");
+        assert_eq!(value_text(&Value::Real(0.5), 8, false).0, "0.5");
         let s = Value::Str(new_str("HELLO".encode_utf16().collect()));
-        assert_eq!(value_text(&s, 16).0, "\"HELLO\"");
-        assert_eq!(value_text(&s, 5).0, "\"HEL…");
+        assert_eq!(value_text(&s, 16, false).0, "\"HELLO\"");
+        assert_eq!(value_text(&s, 5, false).0, "\"HEL…");
         let mut a = Array::new(ElemType::Int, vec![2, 3]);
         a.data = ArrayData::Int(vec![1, 2, 3, 4, 5, 6]);
         let a = Value::Array(Rc::new(RefCell::new(a)));
-        assert_eq!(value_text(&a, 16).0, "[1,2,3,4,5,6]");
-        assert_eq!(value_text(&a, 8).0, "[1,2,3,…");
+        assert_eq!(value_text(&a, 16, false).0, "[1,2,3,4,5,6]");
+        assert_eq!(value_text(&a, 8, false).0, "[1,2,3,…");
         assert_eq!(type_text(&a), "INT[2,3]");
+        assert_eq!(value_text(&Value::Int(-1), 12, true).0, "&HFFFFFFFF");
+    }
+
+    #[test]
+    fn typing_watches_and_values() {
+        let mut p = DebugPanel::default();
+        p.add_watch(String::new());
+        p.text("A*2");
+        assert_eq!(p.key(Keycode::Return), Typed::Stay);
+        assert_eq!(p.watches, ["A*2"]);
+        p.edit_watch(0);
+        p.key(Keycode::Backspace);
+        p.text("3");
+        p.key(Keycode::Return);
+        assert_eq!(p.watches, ["A*3"]);
+        // Emptied, a watch goes.
+        p.edit_watch(0);
+        for _ in 0..3 {
+            p.key(Keycode::Backspace);
+        }
+        p.key(Keycode::Return);
+        assert!(p.watches.is_empty());
+        p.edit_variable("X".to_string(), "1".to_string());
+        p.text("0");
+        let typed = p.key(Keycode::Return);
+        assert_eq!(typed, Typed::Value("X".to_string(), "10".to_string()));
+        p.add_watch("B".to_string());
+        p.key(Keycode::Escape);
+        assert!(!p.typing() && p.watches.is_empty());
     }
 }

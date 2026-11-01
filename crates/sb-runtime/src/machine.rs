@@ -723,6 +723,12 @@ impl Machine {
         true
     }
 
+    /// Whether the stopped program was stopped by an error, so that it
+    /// cannot go on.
+    pub fn stopped_by_error(&self) -> bool {
+        self.rt.stopped == Stopped::Error
+    }
+
     /// Whether the debugger's panel shows below the editor: while a
     /// program is stopped, or a step runs.
     fn panel_shown(&self) -> bool {
