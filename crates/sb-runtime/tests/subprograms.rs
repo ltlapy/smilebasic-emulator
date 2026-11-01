@@ -305,6 +305,35 @@ fn envstat_tells_of_a_bare_goto() {
 }
 
 #[test]
+fn envstat_tells_which_argument_was_wrong() {
+    for (program, expected) in [
+        // As on hardware: Out of range (10), Y counted from 0.
+        ("LOCATE 0,999", "10  1"),
+        ("BGMPLAY 0,1,200", "10  2"),
+        ("X=0:?1/X", "7   -1"),
+    ] {
+        let dir = TempDir::new("errarg");
+        let mut m = machine(
+            &dir,
+            "ENVSTAT OUT S,N,A,SL,C,L\n\
+             ENVFOCUS 0\n\
+             PUSHKEY \"?\"+STR$(N)+\",\"+STR$(A)+CHR$(13)\n\
+             LOOP:VSYNC:ENDLOOP\n",
+        );
+        m.set_slot(0, format!("'\n{program}\n"));
+        m.run_slot(0);
+        frames(&mut m, 2);
+        enter(&mut m, "subrun \"sub\"");
+        frames(&mut m, 5);
+        assert!(
+            rows(&m).iter().any(|r| r == expected),
+            "{program}: {:?}",
+            rows(&m)
+        );
+    }
+}
+
+#[test]
 fn the_focus_moves_a_few_frames_after_envfocus() {
     let dir = TempDir::new("delay");
     let mut m = machine(

@@ -340,17 +340,22 @@ impl TextScreen {
 
     /// Moves the cursor; `None` keeps that coordinate. Returns false if the
     /// position is off the screen.
-    pub fn locate(&mut self, x: Option<i32>, y: Option<i32>) -> bool {
+    /// Moves the cursor, or gives which of X (0) and Y (1) is off the
+    /// screen.
+    pub fn locate(&mut self, x: Option<i32>, y: Option<i32>) -> std::result::Result<(), usize> {
         let x = x.unwrap_or(self.cursor.0 as i32);
         let y = y.unwrap_or(self.cursor.1 as i32);
         let fits = |v: i32, max: u32| u32::try_from(v).is_ok_and(|v| v < max);
         // The column just past the right edge is where a full line leaves
         // the cursor.
-        if !fits(x, self.width + 1) || !fits(y, self.height) {
-            return false;
+        if !fits(x, self.width + 1) {
+            return Err(0);
+        }
+        if !fits(y, self.height) {
+            return Err(1);
         }
         self.cursor = (x as u32, y as u32);
-        true
+        Ok(())
     }
 
     pub fn print(&mut self, text: &[u16]) {
@@ -778,7 +783,7 @@ mod tests {
         s.backspace();
         assert_eq!((row(&s, 0).as_str(), row(&s, 1).as_str()), ("ABC", ""));
         assert_eq!(s.cursor(), (3, 0));
-        s.locate(Some(0), Some(0));
+        let _ = s.locate(Some(0), Some(0));
         s.backspace();
         assert_eq!(s.cursor(), (0, 0));
     }
@@ -790,12 +795,12 @@ mod tests {
         s.tab();
         s.print(&text("B"));
         assert_eq!(row(&s, 0), "A   B");
-        assert!(s.locate(Some(9), None));
+        assert!(s.locate(Some(9), None).is_ok());
         assert_eq!(s.cursor(), (9, 0));
         // Just past the right edge is allowed; beyond it is not.
-        assert!(s.locate(Some(10), Some(0)));
-        assert!(!s.locate(Some(11), Some(0)));
-        assert!(!s.locate(None, Some(-1)));
+        assert!(s.locate(Some(10), Some(0)).is_ok());
+        assert_eq!(s.locate(Some(11), Some(0)), Err(0));
+        assert_eq!(s.locate(None, Some(-1)), Err(1));
         s.cls();
         assert_eq!((s.cursor(), row(&s, 0).as_str()), ((0, 0), ""));
     }

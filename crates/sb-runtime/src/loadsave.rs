@@ -15,7 +15,7 @@ use crate::confirm::FileAction;
 use crate::files::{program_text, str_arg};
 use crate::graphics::{GRP_SIZE, PAGES};
 use crate::image::{self, Image};
-use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
+use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
 use crate::sbfile::{self, Data, DataValues};
 use crate::storage::{self, FileKind, StorageError, parse_file_name};
 
@@ -27,11 +27,13 @@ fn out_of_range(what: &str, n: i32) -> Error {
 }
 
 fn page_arg(v: &Value) -> Result<usize> {
-    let n = v.to_int()?;
-    usize::try_from(n)
-        .ok()
-        .filter(|&p| p < PAGES)
-        .ok_or_else(|| out_of_range("graphic page", n))
+    checking(v, || {
+        let n = v.to_int()?;
+        usize::try_from(n)
+            .ok()
+            .filter(|&p| p < PAGES)
+            .ok_or_else(|| out_of_range("graphic page", n))
+    })
 }
 
 /// A file name whose type cannot be left out.

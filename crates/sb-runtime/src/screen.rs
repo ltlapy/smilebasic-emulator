@@ -10,7 +10,7 @@ use sb_core::value::Value;
 use crate::compose::{Affine, Compose, LAYERS};
 use crate::filter::Filter as LayerFilter;
 use crate::graphics::Clip;
-use crate::runtime::{Command, Runtime, no_form, opt_int, screen_id, with_screen};
+use crate::runtime::{Command, Runtime, checking, no_form, opt_int, screen_id, with_screen};
 use crate::text::CONSOLE;
 
 /// XSCREEN: the screen's resolution and how it is shown.
@@ -79,11 +79,13 @@ fn int_value(n: i32) -> Vec<Value> {
 }
 
 fn layer_id(v: &Value) -> Result<usize> {
-    let n = v.to_int()?;
-    usize::try_from(n)
-        .ok()
-        .filter(|&n| n < LAYERS)
-        .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("layer {n}")))
+    checking(v, || {
+        let n = v.to_int()?;
+        usize::try_from(n)
+            .ok()
+            .filter(|&n| n < LAYERS)
+            .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("layer {n}")))
+    })
 }
 
 fn out_of_range(what: &str, n: i32) -> Error {
@@ -92,12 +94,14 @@ fn out_of_range(what: &str, n: i32) -> Error {
 
 /// TSCREEN's font type: 8 to 64 in steps of 8.
 fn font_type(v: &Value) -> Result<u32> {
-    let n = v.to_int()?;
-    if (8..=64).contains(&n) && n % 8 == 0 {
-        Ok(n as u32)
-    } else {
-        Err(out_of_range("font type", n))
-    }
+    checking(v, || {
+        let n = v.to_int()?;
+        if (8..=64).contains(&n) && n % 8 == 0 {
+            Ok(n as u32)
+        } else {
+            Err(out_of_range("font type", n))
+        }
+    })
 }
 
 /// FADE: a color over the whole screen, and its way to another one.
@@ -174,21 +178,25 @@ impl Fade {
 }
 
 fn char_size(v: &Value) -> Result<u32> {
-    let n = v.to_int()?;
-    if (8..=64).contains(&n) {
-        Ok(n as u32)
-    } else {
-        Err(out_of_range("character size", n))
-    }
+    checking(v, || {
+        let n = v.to_int()?;
+        if (8..=64).contains(&n) {
+            Ok(n as u32)
+        } else {
+            Err(out_of_range("character size", n))
+        }
+    })
 }
 
 fn z(v: &Value) -> Result<i32> {
-    let z = v.to_int()?;
-    if (-4095..=4095).contains(&z) {
-        Ok(z)
-    } else {
-        Err(Error::with_detail(ErrorKind::OutOfRange, format!("Z {z}")))
-    }
+    checking(v, || {
+        let z = v.to_int()?;
+        if (-4095..=4095).contains(&z) {
+            Ok(z)
+        } else {
+            Err(Error::with_detail(ErrorKind::OutOfRange, format!("Z {z}")))
+        }
+    })
 }
 
 impl Runtime {

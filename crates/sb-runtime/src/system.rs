@@ -9,7 +9,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
 use crate::font::FontSize;
-use crate::runtime::{Command, Runtime, no_form};
+use crate::runtime::{Command, Runtime, checking, no_form};
 use crate::text::USER_CHARS;
 
 /// RND's series 0 to 7.
@@ -151,19 +151,23 @@ fn int(v: &Value) -> Result<i32> {
 
 /// PERFBEGIN's and PERFEND's measurement number, 0 to 7.
 fn perf_id(v: &Value) -> Result<usize> {
-    let n = int(v)?;
-    usize::try_from(n)
-        .ok()
-        .filter(|&n| n < 8)
-        .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("measurement {n}")))
+    checking(v, || {
+        let n = int(v)?;
+        usize::try_from(n)
+            .ok()
+            .filter(|&n| n < 8)
+            .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("measurement {n}")))
+    })
 }
 
 fn series_id(v: &Value) -> Result<usize> {
-    let n = int(v)?;
-    usize::try_from(n)
-        .ok()
-        .filter(|&n| n < SERIES)
-        .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("series {n}")))
+    checking(v, || {
+        let n = int(v)?;
+        usize::try_from(n)
+            .ok()
+            .filter(|&n| n < SERIES)
+            .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("series {n}")))
+    })
 }
 
 fn string(s: String) -> Value {

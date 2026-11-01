@@ -10,7 +10,7 @@ use sb_core::value::{ArrayData, Value};
 
 use crate::anim::{self, Anim, MAX_KEYS, Mode, Target, Track};
 use crate::collision::{Body, Collision, Search};
-use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
+use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
 use crate::sprites::{DEFS, SPRITES, Sprite, SpriteDef, VarKey, WithDefs};
 
 fn int(v: &Value) -> Result<i32> {
@@ -26,12 +26,14 @@ fn out_of_range(what: &str, n: i32) -> Error {
 }
 
 fn in_range(v: &Value, what: &str, range: std::ops::RangeInclusive<i32>) -> Result<i32> {
-    let n = int(v)?;
-    if range.contains(&n) {
-        Ok(n)
-    } else {
-        Err(out_of_range(what, n))
-    }
+    checking(v, || {
+        let n = int(v)?;
+        if range.contains(&n) {
+            Ok(n)
+        } else {
+            Err(out_of_range(what, n))
+        }
+    })
 }
 
 fn sprite_id(v: &Value) -> Result<usize> {
@@ -90,10 +92,10 @@ fn flag(v: Option<&Value>) -> Result<bool> {
 }
 
 pub(crate) fn var_key(v: &Value) -> Result<VarKey> {
-    match v {
+    checking(v, || match v {
         Value::Str(s) => Ok(VarKey::Str(s.borrow().clone())),
         v => Ok(VarKey::Int(int(v)?)),
-    }
+    })
 }
 
 fn reals(values: &[f64]) -> Vec<Value> {
@@ -825,10 +827,10 @@ impl Runtime {
 
 /// An omittable real argument.
 fn optional_real(v: &Value) -> Result<Option<f64>> {
-    match v {
+    checking(v, || match v {
         Value::Default => Ok(None),
         v => v.to_real().map(Some),
-    }
+    })
 }
 
 /// Setting what an animation changes stops that animation, so that SPCHK

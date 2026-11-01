@@ -806,20 +806,28 @@ fn is_no_form(e: &Error) -> bool {
     e.kind == ErrorKind::WrongNumberOfArguments && e.detail.is_none()
 }
 
+/// Runs `check` on `v`, so that an error it gives names `v` as the
+/// argument that was wrong, for ENVSTAT.
+pub(crate) fn checking<T>(v: &Value, check: impl FnOnce() -> Result<T>) -> Result<T> {
+    check().map_err(|e| e.of_value(v))
+}
+
 pub(crate) fn screen_id(v: &Value) -> Result<usize> {
-    let id = v.to_int()?;
-    usize::try_from(id)
-        .ok()
-        .filter(|&id| id < SCREENS)
-        .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("screen {id}")))
+    checking(v, || {
+        let id = v.to_int()?;
+        usize::try_from(id)
+            .ok()
+            .filter(|&id| id < SCREENS)
+            .ok_or_else(|| Error::with_detail(ErrorKind::OutOfRange, format!("screen {id}")))
+    })
 }
 
 /// An omittable integer argument.
 pub(crate) fn opt_int(v: &Value) -> Result<Option<i32>> {
-    match v {
+    checking(v, || match v {
         Value::Default => Ok(None),
         v => v.to_int().map(Some),
-    }
+    })
 }
 
 /// An optional program slot number, 0 when omitted.
@@ -1874,10 +1882,9 @@ impl Runtime {
             (Command::Locate, Want::Outs(0)) => {
                 let (id, rest) = with_screen(args, 2)?;
                 let (x, y) = (opt_int(&rest[0])?, opt_int(&rest[1])?);
-                if self.text[id].locate(x, y) {
-                    Ok(vec![])
-                } else {
-                    Err(ErrorKind::OutOfRange.into())
+                match self.text[id].locate(x, y) {
+                    Ok(()) => Ok(vec![]),
+                    Err(n) => Err(Error::new(ErrorKind::OutOfRange).of_value(&rest[n])),
                 }
             }
             (Command::Locate, Want::Outs(2)) => {

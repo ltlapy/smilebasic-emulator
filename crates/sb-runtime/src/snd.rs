@@ -11,7 +11,7 @@ use sb_core::bytecode::{Literal, Want};
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, Value};
 
-use crate::runtime::{Command, Runtime, illegal, no_form};
+use crate::runtime::{Command, Runtime, checking, illegal, no_form};
 use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
@@ -35,12 +35,14 @@ fn out_of_range(what: &str, n: i32) -> Error {
 }
 
 fn in_range(what: &str, v: &Value, range: std::ops::RangeInclusive<i32>) -> Result<i32> {
-    let n = int(v)?;
-    if range.contains(&n) {
-        Ok(n)
-    } else {
-        Err(out_of_range(what, n))
-    }
+    checking(v, || {
+        let n = int(v)?;
+        if range.contains(&n) {
+            Ok(n)
+        } else {
+            Err(out_of_range(what, n))
+        }
+    })
 }
 
 fn track_id(v: &Value) -> Result<usize> {
@@ -113,15 +115,17 @@ fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
 
 /// The numbers in a one-dimensional array.
 fn samples(v: &Value) -> Result<Vec<f64>> {
-    let a = v.clone().into_array()?;
-    let a = a.borrow();
-    if a.dims.len() != 1 {
-        return Err(Error::with_detail(
-            ErrorKind::IllegalFunctionCall,
-            "1D array",
-        ));
-    }
-    (0..a.len()).map(|i| a.get(i).to_real()).collect()
+    checking(v, || {
+        let a = v.clone().into_array()?;
+        let a = a.borrow();
+        if a.dims.len() != 1 {
+            return Err(Error::with_detail(
+                ErrorKind::IllegalFunctionCall,
+                "1D array",
+            ));
+        }
+        (0..a.len()).map(|i| a.get(i).to_real()).collect()
+    })
 }
 
 fn text(v: &Value) -> Result<String> {

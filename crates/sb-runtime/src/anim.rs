@@ -4,6 +4,8 @@
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
+use crate::runtime::checking;
+
 /// Keyframes in one animation, at most.
 pub const MAX_KEYS: usize = 32;
 /// ANIMDEF numbers 0-1023.
@@ -66,37 +68,41 @@ fn bad_target(detail: String) -> Error {
 
 impl Mode {
     pub fn parse(v: &Value) -> Result<Mode> {
-        match v {
-            Value::Str(s) => {
-                // Spaces after the name are left out (`"S "`).
-                let text = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
-                let text = text.trim_end_matches(' ');
-                let name = text.trim_end_matches(['+', '.']);
-                let flags = &text[name.len()..];
-                let target = NAMES
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|&(_, t)| t)
-                    .filter(|_| flags.matches('+').count() <= 1 && flags.matches('.').count() <= 1)
-                    .ok_or_else(|| bad_target(format!("animation target \"{text}\"")))?;
-                Ok(Mode {
-                    target,
-                    relative: flags.contains('+'),
-                    delete: flags.contains('.'),
-                })
-            }
-            v => {
-                let n = v.to_int()?;
-                if !(0..32).contains(&n) {
-                    return Err(bad_target(format!("animation target {n}")));
+        checking(v, || {
+            match v {
+                Value::Str(s) => {
+                    // Spaces after the name are left out (`"S "`).
+                    let text = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
+                    let text = text.trim_end_matches(' ');
+                    let name = text.trim_end_matches(['+', '.']);
+                    let flags = &text[name.len()..];
+                    let target = NAMES
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .map(|&(_, t)| t)
+                        .filter(|_| {
+                            flags.matches('+').count() <= 1 && flags.matches('.').count() <= 1
+                        })
+                        .ok_or_else(|| bad_target(format!("animation target \"{text}\"")))?;
+                    Ok(Mode {
+                        target,
+                        relative: flags.contains('+'),
+                        delete: flags.contains('.'),
+                    })
                 }
-                Ok(Mode {
-                    target: NAMES[(n & 7) as usize].1,
-                    relative: n & 8 != 0,
-                    delete: n & 16 != 0,
-                })
+                v => {
+                    let n = v.to_int()?;
+                    if !(0..32).contains(&n) {
+                        return Err(bad_target(format!("animation target {n}")));
+                    }
+                    Ok(Mode {
+                        target: NAMES[(n & 7) as usize].1,
+                        relative: n & 8 != 0,
+                        delete: n & 16 != 0,
+                    })
+                }
             }
-        }
+        })
     }
 }
 

@@ -2138,14 +2138,14 @@ impl Vm {
             return Err(Error::with_detail(kind, b.name));
         }
         let results = match (b.kind, want) {
-            (Kind::Function(f), Want::Value) => vec![f(args)?],
-            (Kind::Command(f), Want::Outs(n)) => f(args, n.into())?,
+            (Kind::Function(f), Want::Value) => vec![f(args).map_err(|e| e.in_args(args))?],
+            (Kind::Command(f), Want::Outs(n)) => f(args, n.into()).map_err(|e| e.in_args(args))?,
             (Kind::Data(f), Want::Outs(n)) => {
                 let mut data = builtins::Data {
                     program,
                     pos: &mut self.data_pos,
                 };
-                f(args, n.into(), &mut data)?
+                f(args, n.into(), &mut data).map_err(|e| e.in_args(args))?
             }
             _ => return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, b.name)),
         };
@@ -2166,7 +2166,7 @@ impl Vm {
         if let Some(pos) = host.data_pos() {
             self.data_pos = pos;
         }
-        let results = results?;
+        let results = results.map_err(|e| e.in_args(args))?;
         if host.retry() {
             return Ok(false);
         }

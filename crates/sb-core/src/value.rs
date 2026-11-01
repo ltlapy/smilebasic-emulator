@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::error::{ErrorKind, Result};
+use crate::error::{Error, ErrorKind, Result};
 
 pub type Str = Vec<u16>;
 pub type StrRef = Rc<RefCell<Str>>;
@@ -143,8 +143,8 @@ impl Value {
     pub fn to_int(&self) -> Result<i32> {
         match *self {
             Value::Int(n) => Ok(n),
-            Value::Real(x) => real_to_int(x),
-            _ => Err(ErrorKind::TypeMismatch.into()),
+            Value::Real(x) => real_to_int(x).map_err(|e| e.of_value(self)),
+            _ => Err(Error::new(ErrorKind::TypeMismatch).of_value(self)),
         }
     }
 
@@ -152,7 +152,7 @@ impl Value {
         match *self {
             Value::Int(n) => Ok(f64::from(n)),
             Value::Real(x) => Ok(x),
-            _ => Err(ErrorKind::TypeMismatch.into()),
+            _ => Err(Error::new(ErrorKind::TypeMismatch).of_value(self)),
         }
     }
 

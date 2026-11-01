@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::value::Value;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     SyntaxError,
@@ -174,7 +176,7 @@ impl ErrorKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Error {
     pub kind: ErrorKind,
     /// Source line; 0 until the VM or compiler fills it in.
@@ -186,7 +188,34 @@ pub struct Error {
     pub detail: Option<String>,
     /// The program slot it happened in; `None` in direct mode.
     pub slot: Option<u32>,
+    /// Which of a command's arguments was wrong, from 0, for ENVSTAT.
+    pub arg: Option<u8>,
+    /// Where the value that was wrong is, until the call it was an
+    /// argument of turns it into `arg`.
+    value_at: usize,
 }
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        (
+            self.kind,
+            self.line,
+            self.col,
+            &self.detail,
+            self.slot,
+            self.arg,
+        ) == (
+            other.kind,
+            other.line,
+            other.col,
+            &other.detail,
+            other.slot,
+            other.arg,
+        )
+    }
+}
+
+impl Eq for Error {}
 
 impl Error {
     pub fn new(kind: ErrorKind) -> Self {
@@ -196,17 +225,47 @@ impl Error {
             col: 0,
             detail: None,
             slot: None,
+            arg: None,
+            value_at: 0,
         }
     }
 
     pub fn with_detail(kind: ErrorKind, detail: impl Into<String>) -> Self {
         Error {
-            kind,
-            line: 0,
-            col: 0,
             detail: Some(detail.into()),
-            slot: None,
+            ..Error::new(kind)
         }
+    }
+
+    /// Marks `value` as what was wrong: if it is one of a command's
+    /// arguments, the error tells which.
+    pub fn of_value(mut self, value: &Value) -> Self {
+        if self.value_at == 0 {
+            self.value_at = value as *const Value as usize;
+        }
+        self
+    }
+
+    /// Marks the argument that was wrong by its number, from 0.
+    pub fn of_arg(mut self, arg: usize) -> Self {
+        self.arg = self.arg.or(u8::try_from(arg).ok());
+        self
+    }
+
+    /// Turns the value marked by [`Error::of_value`] into the number of
+    /// the argument it is, if it is one of `args`.
+    pub fn in_args(mut self, args: &[Value]) -> Self {
+        let size = std::mem::size_of::<Value>();
+        let start = args.as_ptr() as usize;
+        if self.arg.is_none()
+            && self.value_at >= start
+            && self.value_at < start + std::mem::size_of_val(args)
+        {
+            let arg = (self.value_at - start) / size;
+            self = self.of_arg(arg);
+        }
+        self.value_at = 0;
+        self
     }
 
     pub fn at(mut self, line: u32) -> Self {

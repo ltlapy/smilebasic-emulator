@@ -117,10 +117,10 @@ Without them:
   with, does `ACLS` and `SNDSTOP` after a program ENDs or is stopped
   with the Break key or F5. STOP, errors and the debugger's stops leave
   the screens and sound as they were, to be looked at.
-- `ENVSTAT` gives -1 for the argument of every error, as SmileBASIC 4
-  does for `Divide by zero`; for errors in a command's arguments, such
-  as `LOCATE 0,999`'s `Out of range`, it gives the argument's number
-  from 0.
+- `ENVSTAT` gives the wrong argument's number, from 0, for errors that
+  come from checking one argument, such as `LOCATE 0,999`'s `Out of
+  range` (1, as SmileBASIC 4 gives). Errors found by checking several
+  arguments together give -1, which SmileBASIC 4 may number.
 - Settings > General > "Japanese explanation under errors" prints the Japanese
   line SmileBASIC 4's Japanese edition shows under each error message,
   in the English edition too.

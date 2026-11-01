@@ -24,7 +24,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
 use crate::editor::LineShift;
-use crate::runtime::{Command, Runtime, no_form, opt_int, slot_arg};
+use crate::runtime::{Command, Runtime, checking, no_form, opt_int, slot_arg};
 
 /// The slot PRGEDIT chose and its current line, from 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,9 +125,11 @@ fn split(text: &[u16]) -> Vec<Vec<u16>> {
 /// The lines a PRGSET or PRGINS string makes: it ends with a line break
 /// of its own.
 fn new_lines(v: &Value) -> Result<Vec<Vec<u16>>> {
-    let mut text = v.clone().into_str()?.borrow().clone();
-    text.push(LF);
-    Ok(split(&text))
+    checking(v, || {
+        let mut text = v.clone().into_str()?.borrow().clone();
+        text.push(LF);
+        Ok(split(&text))
+    })
 }
 
 /// The line number PRGEDIT() reports for an index: never past the last.

@@ -8,7 +8,7 @@ use sb_core::value::{ArrayData, ArrayRef, Value};
 
 use crate::font::FontSize;
 use crate::graphics::{Blend, Clip, GRP_SIZE, PAGES};
-use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
+use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
 use crate::text::CONSOLE;
 
 fn int(v: &Value) -> Result<i32> {
@@ -20,11 +20,13 @@ fn out_of_range(what: &str, n: i32) -> Error {
 }
 
 fn page_arg(v: &Value) -> Result<usize> {
-    let n = int(v)?;
-    usize::try_from(n)
-        .ok()
-        .filter(|&p| p < PAGES)
-        .ok_or_else(|| out_of_range("graphic page", n))
+    checking(v, || {
+        let n = int(v)?;
+        usize::try_from(n)
+            .ok()
+            .filter(|&p| p < PAGES)
+            .ok_or_else(|| out_of_range("graphic page", n))
+    })
 }
 
 /// A color code as given (`&HAARRGGBB`).
@@ -33,15 +35,17 @@ fn color_arg(v: &Value) -> Result<u32> {
 }
 
 fn blend_arg(v: &Value) -> Result<Blend> {
-    let n = int(v)?;
-    Blend::from_int(n).ok_or_else(|| out_of_range("drawing method", n))
+    checking(v, || {
+        let n = int(v)?;
+        Blend::from_int(n).ok_or_else(|| out_of_range("drawing method", n))
+    })
 }
 
 pub(crate) fn numeric_array(v: &Value) -> Result<ArrayRef> {
-    match v {
+    checking(v, || match v {
         Value::Array(a) if !matches!(a.borrow().data, ArrayData::Str(_)) => Ok(a.clone()),
         _ => Err(ErrorKind::TypeMismatch.into()),
-    }
+    })
 }
 
 /// Writes `values` to the start of a numeric array. Only one-dimensional
@@ -397,9 +401,11 @@ impl Runtime {
 
 /// GPUTCHR's and GPUTCHRP's text: a string, or a number for one character.
 fn chars_arg(v: &Value) -> Result<Vec<u16>> {
-    Ok(match v {
-        Value::Str(s) => s.borrow().clone(),
-        other => vec![int(other)? as u16],
+    checking(v, || {
+        Ok(match v {
+            Value::Str(s) => s.borrow().clone(),
+            other => vec![int(other)? as u16],
+        })
     })
 }
 
@@ -417,13 +423,13 @@ fn font_size_arg(v: Option<&Value>) -> Result<FontSize> {
 
 /// Scales of 1 to 32767.
 fn scale_args(x: &Value, y: &Value) -> Result<(i32, i32)> {
-    let (sx, sy) = (int(x)?, int(y)?);
-    for s in [sx, sy] {
-        if !(1..=32767).contains(&s) {
-            return Err(out_of_range("scale", s));
-        }
-    }
-    Ok((sx, sy))
+    let scale = |v: &Value| {
+        checking(v, || match int(v)? {
+            s @ 1..=32767 => Ok(s),
+            s => Err(out_of_range("scale", s)),
+        })
+    };
+    Ok((scale(x)?, scale(y)?))
 }
 
 /// GPUTCHRP's space between characters: 0 to 64 pixels, 1 when left out.

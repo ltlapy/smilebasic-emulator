@@ -62,13 +62,11 @@ fn compile_as(
         // The editor shows the statement, as SmileBASIC 4 does (checked on
         // hardware), unless the error is on a later line of it.
         let at = e.stmt.filter(|s| s.line == e.span.line).unwrap_or(e.span);
-        Error {
-            kind,
-            line: at.line,
-            col: at.col,
-            detail: e.detail(),
-            slot: None,
-        }
+        let error = match e.detail() {
+            Some(detail) => Error::with_detail(kind, detail),
+            None => Error::new(kind),
+        };
+        error.at_pos(at.line, at.col)
     })?;
     compiler::compile(&program, host, direct, slot)
 }

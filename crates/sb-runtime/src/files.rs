@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::confirm::{Ask, Confirm, FileAction, FileConfirm, project_label, switch_lines};
-use crate::runtime::{Command, Runtime, SLOTS, no_form, slot_arg};
+use crate::runtime::{Command, Runtime, SLOTS, checking, no_form, slot_arg};
 use crate::sbfile;
 use crate::storage::{
     self, FileKind, FileRef, StorageError, parse_file_name, parse_listing, parse_read_name,
@@ -61,15 +61,17 @@ fn str_array(items: Vec<String>) -> Array {
 
 /// Replaces the contents of a one-dimensional string array.
 fn fill_array(target: &Value, items: Vec<String>) -> Result<()> {
-    let Value::Array(array) = target else {
-        return Err(ErrorKind::TypeMismatch.into());
-    };
-    let mut array = array.borrow_mut();
-    if array.elem_type() != ElemType::Str || array.dims.len() != 1 {
-        return Err(ErrorKind::TypeMismatch.into());
-    }
-    *array = str_array(items);
-    Ok(())
+    checking(target, || {
+        let Value::Array(array) = target else {
+            return Err(ErrorKind::TypeMismatch.into());
+        };
+        let mut array = array.borrow_mut();
+        if array.elem_type() != ElemType::Str || array.dims.len() != 1 {
+            return Err(ErrorKind::TypeMismatch.into());
+        }
+        *array = str_array(items);
+        Ok(())
+    })
 }
 
 /// What FILES shows while it waits between screens.
@@ -249,10 +251,10 @@ impl Runtime {
             }
             let console = &mut self.text[CONSOLE];
             let rows = console.size().1 as i32;
-            console.locate(Some(0), Some(rows - 1));
+            let _ = console.locate(Some(0), Some(rows - 1));
             let blank = vec![u16::from(b' '); LISTING_PROMPT.len()];
             console.print(&blank);
-            console.locate(Some(0), Some(rows - 2));
+            let _ = console.locate(Some(0), Some(rows - 2));
             return self.inspect_page(left);
         }
         let console = &mut self.text[CONSOLE];
@@ -276,11 +278,11 @@ impl Runtime {
             console.newline();
             if rows >= 2 && console.cursor().1 == rows - 1 {
                 console.newline();
-                console.locate(Some(0), Some(rows as i32 - 2));
+                let _ = console.locate(Some(0), Some(rows as i32 - 2));
             }
         }
         if !lines.is_empty() {
-            console.locate(Some(0), Some(rows as i32 - 1));
+            let _ = console.locate(Some(0), Some(rows as i32 - 1));
             console.print(&LISTING_PROMPT.encode_utf16().collect::<Vec<_>>());
             self.inspect_left = Some(lines);
             self.retry = true;

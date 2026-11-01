@@ -7,7 +7,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
-use crate::runtime::{Command, Runtime, no_form, opt_int};
+use crate::runtime::{Command, Runtime, checking, no_form, opt_int};
 
 /// Controllers 1 to 4; controller 0 combines them.
 pub const PADS: usize = 4;
@@ -265,12 +265,14 @@ pub(crate) fn out_of_range(what: &str, n: i32) -> Error {
 }
 
 pub(crate) fn in_range(what: &str, v: &Value, range: std::ops::RangeInclusive<i32>) -> Result<i32> {
-    let n = int(v)?;
-    if range.contains(&n) {
-        Ok(n)
-    } else {
-        Err(out_of_range(what, n))
-    }
+    checking(v, || {
+        let n = int(v)?;
+        if range.contains(&n) {
+            Ok(n)
+        } else {
+            Err(out_of_range(what, n))
+        }
+    })
 }
 
 /// An omittable argument in `range`, `default` when left out.

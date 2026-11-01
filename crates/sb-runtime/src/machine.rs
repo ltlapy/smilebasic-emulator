@@ -1922,17 +1922,20 @@ impl Machine {
         self.ended = Some(message);
     }
 
-    /// What ENVSTAT gives for an error in a slot: its number, argument
-    /// (-1 when not known), slot, character of the statement from the
-    /// start of the program, counting from 0, and line.
-    // UNVERIFIED: which errors know their argument.
+    /// What ENVSTAT gives for an error in a slot: its number, the
+    /// argument that was wrong (from 0, -1 when none or not known), slot,
+    /// character of the statement from the start of the program, counting
+    /// from 0, and line.
+    // UNVERIFIED: which errors SmileBASIC 4 gives an argument for besides
+    // a command's range checks; here those that check one value do.
     fn error_place(&self, slot: usize, e: &Error) -> [i32; 5] {
         let before: usize = (self.rt.slots[slot].split_inclusive('\n'))
             .take(e.line.saturating_sub(1) as usize)
             .map(|l| l.encode_utf16().count())
             .sum();
         let at = before + (e.col as usize).saturating_sub(1);
-        [e.kind.code(), -1, slot as i32, at as i32, e.line as i32]
+        let arg = e.arg.map_or(-1, i32::from);
+        [e.kind.code(), arg, slot as i32, at as i32, e.line as i32]
     }
 
     /// The main interpreter's state for ENVSTAT.

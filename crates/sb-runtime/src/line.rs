@@ -193,7 +193,7 @@ impl LineEdit {
         }
         self.shown = self.text.len();
         let p = (self.origin + self.cursor as i64).max(0);
-        console.locate(Some((p % w) as i32), Some((p / w) as i32));
+        let _ = console.locate(Some((p % w) as i32), Some((p / w) as i32));
     }
 
     /// Ends the line with Enter: the console goes on below its end.
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn wraps_and_scrolls() {
         let mut c = console();
-        c.locate(Some(2), Some(2));
+        let _ = c.locate(Some(2), Some(2));
         let mut line = LineEdit::new(&c);
         typing(&mut line, "ABCDEF");
         line.draw(&mut c);

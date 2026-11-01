@@ -8,7 +8,7 @@ use sb_core::value::Value;
 
 use crate::anim::{Anim, Target, Track};
 use crate::grp::{array_colors, numeric_array, store_ints};
-use crate::runtime::{Command, Runtime, no_form, screen_id, with_screen};
+use crate::runtime::{Command, Runtime, checking, no_form, screen_id, with_screen};
 use crate::sp::{anim_id, var_key};
 use crate::text::{Cell, CellRect, TextScreen};
 
@@ -22,13 +22,13 @@ fn out_of_range(what: &str, n: i32) -> Error {
 
 /// A character code, or the characters of a string.
 fn codes(v: &Value) -> Result<Vec<u16>> {
-    match v {
+    checking(v, || match v {
         Value::Str(s) => Ok(s.borrow().clone()),
         v => match int(v)? {
             n @ 0..=0xFFFF => Ok(vec![n as u16]),
             n => Err(out_of_range("character code", n)),
         },
-    }
+    })
 }
 
 /// An ATTR value, or the screen's own when omitted.
