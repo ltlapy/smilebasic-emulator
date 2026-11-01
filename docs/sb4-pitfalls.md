@@ -485,7 +485,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   gains of sqrt((1-p)/2) and sqrt((1+p)/2) for a pan p of -1 to 1.
   The delay counts 40 ms a unit whatever the tempo, and the wave starts
   from its middle once it has passed: `@MP7,1,7,48` did not move within
-  1.5 s at T120. `@MON` turns all
+  1.5 s at T120. The sine runs 5 ms behind the note, or behind the end
+  of the delay: `@MP64,1,20,0` is at 0 5 ms in, and `@MP64,1,20,8`
+  begins at 325 ms at T60 as at T120. `@MON` turns all
   three back on as last set.
 - Envelopes move a millisecond at a time in tenths of a dB: the attack
   multiplies the level, starting from -90.4 dB, until it is within

@@ -139,9 +139,12 @@ impl LfoState {
             self.waited += TICK as u32;
             return 0.0;
         }
+        // The wave starts from 0 at the step after the delay, and moves
+        // from the next.
+        let value = (self.phase * std::f32::consts::TAU).sin();
         let hz = lfo.speed as f32 * 0.390_625;
         self.phase = (self.phase + hz * TICK as f32 / RATE as f32).fract();
-        (self.phase * std::f32::consts::TAU).sin() * lfo.depth as f32 / 128.0 * lfo.range as f32
+        value * lfo.depth as f32 / 128.0 * lfo.range as f32
     }
 }
 
