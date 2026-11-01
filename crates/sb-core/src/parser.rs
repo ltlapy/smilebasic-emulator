@@ -724,8 +724,9 @@ impl Parser {
             // A one-line IF can chain ELSEIF too.
             while self.eat_keyword(Keyword::Elseif) {
                 let cond = self.expr()?;
-                self.expect_keyword(Keyword::Then, "THEN")?;
-                branches.push((cond, self.one_line_branch()?));
+                let mut body = self.then_or_goto()?;
+                body.extend(self.one_line_branch()?);
+                branches.push((cond, body));
             }
             let otherwise = self.one_line_else()?;
             return Ok(StmtKind::If {
@@ -743,8 +744,8 @@ impl Parser {
             match self.advance() {
                 TokenKind::Keyword(Keyword::Elseif) => {
                     let cond = self.expr()?;
-                    self.expect_keyword(Keyword::Then, "THEN")?;
-                    let body = self.block(&[Keyword::Elseif, Keyword::Else, Keyword::Endif])?;
+                    let mut body = self.then_or_goto()?;
+                    body.extend(self.block(&[Keyword::Elseif, Keyword::Else, Keyword::Endif])?);
                     branches.push((cond, body));
                 }
                 TokenKind::Keyword(Keyword::Else) => {
@@ -761,18 +762,34 @@ impl Parser {
         })
     }
 
-    /// Statements after a one-line THEN or ELSE; a bare label means GOTO.
+    /// ELSEIF's THEN, or a GOTO in its place (`ELSEIF B GOTO @L`), which
+    /// starts the branch.
+    fn then_or_goto(&mut self) -> PResult<Vec<Stmt>> {
+        if !self.eat_keyword(Keyword::Goto) {
+            self.expect_keyword(Keyword::Then, "THEN")?;
+            return Ok(Vec::new());
+        }
+        let Span { line, col } = self.span();
+        let kind = StmtKind::Goto(self.target()?);
+        Ok(vec![Stmt { kind, line, col }])
+    }
+
+    /// Statements after a one-line THEN or ELSE; a bare label first means
+    /// GOTO, and the rest of the line still belongs to the branch
+    /// (`THEN @L:ENDIF`, as SmileBASIC Debugger writes it).
     fn one_line_branch(&mut self) -> PResult<Vec<Stmt>> {
+        let mut stmts = Vec::new();
         if let TokenKind::Label(name) = self.peek().clone() {
             let Span { line, col } = self.span();
             self.advance();
-            return Ok(vec![Stmt {
+            stmts.push(Stmt {
                 kind: StmtKind::Goto(Target::Label(name.to_ascii_uppercase())),
                 line,
                 col,
-            }]);
+            });
         }
-        self.line_stmts()
+        stmts.extend(self.line_stmts()?);
+        Ok(stmts)
     }
 
     fn one_line_else(&mut self) -> PResult<Option<Vec<Stmt>>> {
