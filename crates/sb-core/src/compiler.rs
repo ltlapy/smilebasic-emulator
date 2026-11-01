@@ -40,6 +40,7 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> R
         line: 0,
         col: 0,
         temp_count: 0,
+        constant_checked: false,
     };
     let strict_at = c.prepare(program)?;
     // OPTION STRICT holds from where it stands, DEFs included.
@@ -111,6 +112,9 @@ struct Compiler<'h> {
     line: u32,
     col: u32,
     temp_count: u32,
+    /// The expression being compiled is part of a constant one already
+    /// worked out without error, so its parts need no check of their own.
+    constant_checked: bool,
 }
 
 fn err(kind: ErrorKind, detail: impl Into<String>) -> Error {
@@ -1317,8 +1321,8 @@ impl Compiler<'_> {
                 self.emit(Op::LoadDyn);
             }
             Expr::Unary { op, expr: operand } => {
-                self.check_constant(expr)?;
-                self.expr(operand)?;
+                let checked = self.check_constant(expr)?;
+                self.with_constant_checked(checked, |c| c.expr(operand))?;
                 self.emit(Op::Unary(*op));
             }
             Expr::Binary {
@@ -1356,10 +1360,12 @@ impl Compiler<'_> {
             // The right operand first (checked on hardware: F(1)+F(2)*F(3)
             // calls F(3), F(2), then F(1)).
             Expr::Binary { op, lhs, rhs } => {
-                self.check_constant(expr)?;
+                let checked = self.check_constant(expr)?;
                 let at = self.out.code.len();
-                self.expr(rhs)?;
-                self.expr(lhs)?;
+                self.with_constant_checked(checked, |c| {
+                    c.expr(rhs)?;
+                    c.expr(lhs)
+                })?;
                 self.put_back_two(at);
                 self.emit(Op::Binary(*op));
             }
@@ -1370,17 +1376,43 @@ impl Compiler<'_> {
     /// SmileBASIC 4 works out operations on constants when it compiles,
     /// so their errors stop the program before it runs (checked on
     /// hardware with `"A"*-1`).
-    fn check_constant(&self, expr: &Expr) -> Result<()> {
-        let constant = |e: &Expr| self.const_value(e).is_ok();
-        let operands = match expr {
-            Expr::Unary { expr, .. } => constant(expr),
-            Expr::Binary { lhs, rhs, .. } => constant(lhs) && constant(rhs),
-            _ => false,
-        };
-        if operands {
-            self.const_value(expr)?;
+    ///
+    /// Returns whether all of `expr` is a constant that worked out: then
+    /// every operation in it did too, and need not be checked again.
+    /// Checking each part of a long chain such as `"A"+#LF+"B"+...` anew
+    /// would take time growing with the square of its length.
+    fn check_constant(&self, expr: &Expr) -> Result<bool> {
+        if self.constant_checked {
+            return Ok(true);
         }
-        Ok(())
+        let constant = |e: &Expr| self.const_value(e).ok();
+        match expr {
+            Expr::Unary { op, expr } => match constant(expr) {
+                Some(v) => ops::unary(*op, &v).map(|_| true),
+                None => Ok(false),
+            },
+            Expr::Binary { op, lhs, rhs } => match constant(lhs) {
+                Some(l) => match constant(rhs) {
+                    Some(r) => ops::binary(*op, &l, &r).map(|_| true),
+                    None => Ok(false),
+                },
+                None => Ok(false),
+            },
+            _ => Ok(false),
+        }
+    }
+
+    /// Compiles with [`Compiler::constant_checked`] set while `checked`.
+    fn with_constant_checked(
+        &mut self,
+        checked: bool,
+        f: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        let outer = self.constant_checked;
+        self.constant_checked = outer || checked;
+        let result = f(self);
+        self.constant_checked = outer;
+        result
     }
 
     fn call_expr(&mut self, name: &Var, args: &[Option<Expr>]) -> Result<()> {

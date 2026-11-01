@@ -662,6 +662,16 @@ fn constant_operations_fail_when_compiled() {
     assert_eq!(compiled("IF 0 THEN ?\"A\"*-1"), Some(ErrorKind::Overflow));
     assert_eq!(compiled("?-2147483648 DIV -1"), None);
     assert_eq!(output("?VAL(\" 12 \");VAL(\"12\")"), "012\n");
+    // Inside an expression that is not constant, and deep in one that is.
+    assert_eq!(compiled("A=1:?A+(\"A\"*-1)"), Some(ErrorKind::Overflow));
+    assert_eq!(
+        compiled("?\"B\"+(\"A\"*-1)+\"C\""),
+        Some(ErrorKind::Overflow)
+    );
+    // A long constant chain is worked out once, not once for each part:
+    // programs that write programs build such lines.
+    let chain = vec!["\"ABCDEFGHIJ\"+CHR$(10)"; 200].join("+");
+    assert_eq!(compiled(&format!("A$={chain}")), None);
 }
 
 #[test]
