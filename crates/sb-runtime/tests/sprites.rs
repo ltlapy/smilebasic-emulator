@@ -62,8 +62,8 @@ fn image_forms_show_hide_and_clear() {
 
 #[test]
 fn image_forms_by_argument_count() {
-    // From SPSET 1,32,48,24,32,1, each form reads back U,V,W,H,A as SB4
-    // gave them.
+    // From SPSET 1,32,48,24,32,1 (turned 90 degrees), each form reads
+    // back U,V,W,H,A as SB4 gave them.
     let forms = [
         ("1,,,5", "32 48 16 16 5"),
         ("1,8,8,4", "8 8 16 16 4"),
@@ -78,7 +78,7 @@ fn image_forms_by_argument_count() {
         ("1,,,40,,5", "32 48 24 40 5"),
         ("1,,,,40,5", "32 48 40 32 5"),
         ("1,,,,,", "32 48 24 32 1"),
-        ("1,,,,,#A_REVH", "32 48 24 32 4"),
+        ("1,,,,,9", "32 48 24 32 9"),
     ];
     for (form, want) in forms {
         let (_, out) = run(&format!(
@@ -86,6 +86,13 @@ fn image_forms_by_argument_count() {
              ?U;\" \";V;\" \";W;\" \";H;\" \";A"
         ));
         assert_eq!(out, want, "SPCHR {form}");
+    }
+    // Unturned, the six-argument form keeps W and H in order.
+    for (form, want) in [("0,0,64,16,0", "64 16"), ("0,0,16,64,0", "16 64")] {
+        let (_, out) = run(&format!(
+            "SPSET 1,0,0,16,16,0:SPCHR 1,{form}:SPCHR 1 OUT U,V,W,H:?W;\" \";H"
+        ));
+        assert_eq!(out, want, "SPCHR 1,{form}");
     }
     let (_, out) = run("SPSET 1,0:SPCHR 1,,,40");
     assert!(out.contains("Out of range"), "{out}");

@@ -424,14 +424,14 @@ impl Runtime {
                 let field = |i: usize| args.get(i).map(opt_int).transpose().map(Option::flatten);
                 let (u, v) = (field(1)?, field(2)?);
                 // SPCHR ID,U,V,ATTR takes its fourth argument as the
-                // attributes; the six-argument form puts its W into H and
-                // its H into W, and the five-argument form fills an empty
-                // W from H and an empty H from W.
+                // attributes. W and H are the size as shown: with a
+                // rotation of 90 or 270 degrees an empty W takes the
+                // image's H, and a rotated result keeps W as the image's H.
                 let (w, h, attr) = match n {
                     3 => (None, None, None),
                     4 => (None, None, field(3)?),
                     5 => (field(3)?, field(4)?, None),
-                    _ => (field(4)?, field(3)?, field(5)?),
+                    _ => (field(3)?, field(4)?, field(5)?),
                 };
                 for (size, what) in [(w, "width"), (h, "height")] {
                     if let Some(n) = size.filter(|n| !(0..=2048).contains(n)) {
@@ -446,10 +446,19 @@ impl Runtime {
                 stop(s, Target::Uv);
                 s.u = u.unwrap_or(s.u);
                 s.v = v.unwrap_or(s.v);
+                let turned = |a: i32| a & 1 != 0;
+                let (cw, ch) = if turned(s.attr) {
+                    (s.h, s.w)
+                } else {
+                    (s.w, s.h)
+                };
                 (s.w, s.h, s.attr) = match n {
                     3 | 4 => (16, 16, attr.unwrap_or(0)),
-                    5 => (w.unwrap_or(s.h), h.unwrap_or(s.w), 0),
-                    _ => (w.unwrap_or(s.w), h.unwrap_or(s.h), attr.unwrap_or(s.attr)),
+                    5 => (w.unwrap_or(cw), h.unwrap_or(ch), 0),
+                    _ => {
+                        let (w, h, a) = (w.unwrap_or(cw), h.unwrap_or(ch), attr.unwrap_or(s.attr));
+                        if turned(a) { (h, w, a) } else { (w, h, a) }
+                    }
                 };
                 Ok(vec![])
             }

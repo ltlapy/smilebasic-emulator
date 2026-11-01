@@ -332,12 +332,16 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   - `SPCHR id,U,V` sets W and H to 16 and the attributes to 0.
   - `SPCHR id,U,V,attr`: the fourth argument is the attributes (W and H
     become 16), so `SPCHR 1,,,40` is Out of range on argument 4.
-  - `SPCHR id,U,V,W,H` sets the attributes to 0; an empty W takes the
-    sprite's H and an empty H its W.
-  - `SPCHR id,U,V,W,H,attr` swaps them: the fourth argument becomes H and
-    the fifth W (`SPCHR 1,8,8,40,50,5` reads back W 50, H 40). Empty
-    slots keep the sprite's own values, so `SPCHR id,,,,,#A_REVH` only
-    turns a sprite around (a published game relies on it).
+  - W and H are the size as shown (TEST45, TEST46). While the sprite is
+    turned 90 or 270 degrees (attribute bit 0), an empty W takes the
+    image's H and an empty H its W.
+  - `SPCHR id,U,V,W,H` sets the attributes to 0 and stores W and H as
+    given.
+  - `SPCHR id,U,V,W,H,attr`: when the resulting attributes turn the
+    sprite 90 or 270 degrees, the image is stored as H by W, so
+    `SPCHR 1,8,8,40,50,5` reads back W 50, H 40. Empty slots keep the
+    sprite's own values, so `SPCHR id,,,,,#A_REVH` only turns a sprite
+    around (a published game relies on it).
 
 ## Graphics and layers
 
