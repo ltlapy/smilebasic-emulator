@@ -4,12 +4,13 @@
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::{Font, FontSize};
-use sb_runtime::settings::{Language, Settings};
+use sb_runtime::settings::{Language, Settings, TOOLS};
 use sdl3::keyboard::Keycode;
 
 use crate::shortcuts::wrap;
 use crate::ui::{
-    BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, fill, outline, window,
+    BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, button, draw_text, fill, outline,
+    window,
 };
 
 const WIDTH: u32 = 1100;
@@ -26,7 +27,16 @@ enum Control {
         fn(&Settings) -> usize,
         fn(&mut Settings, usize),
     ),
+    /// The program F9, F10 or F11 (0 to 2) starts, with buttons under it
+    /// to choose one, set none or go back to the default.
+    Tool(usize),
 }
+
+/// A tool row's buttons, in the order Left and Right go through them.
+const TOOL_BUTTONS: [&str; 3] = ["Choose...", "None", "Default"];
+const CHOOSE: usize = 0;
+const NONE: usize = 1;
+const DEFAULT: usize = 2;
 
 struct Row {
     label: &'static str,
@@ -49,6 +59,24 @@ const fn check(
         label,
         about,
         control: Control::Check(get, flip),
+    }
+}
+
+const fn tool(n: usize) -> Row {
+    Row {
+        label: ["F9 tool", "F10 tool", "F11 tool"][n],
+        about: "The program the key starts as a subprogram, from direct mode or \
+                the editor; programs read it with SYSPARAM \"TOOL1\" to \"TOOL3\". \
+                Left/Right: pick a button. Delete: none.",
+        control: Control::Tool(n),
+    }
+}
+
+/// What a tool row shows for the program set.
+fn tool_label(file: &str) -> &str {
+    match file {
+        "" => "(none)",
+        file => file,
     }
 }
 
@@ -158,6 +186,10 @@ const PAGES: &[Page] = &[
                 ),
             },
         ],
+    },
+    Page {
+        title: "Tools",
+        rows: &[tool(0), tool(1), tool(2)],
     },
     Page {
         title: "Sound",
@@ -285,6 +317,8 @@ pub enum Outcome {
     Instruments,
     /// Ask for a SoundFont file to play with.
     ChooseSoundFont,
+    /// Ask for the program tool `n` (0 to 2) starts.
+    ChooseTool(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -294,6 +328,8 @@ pub struct SettingsWindow {
     chosen: usize,
     /// Up and Down move in the pages rather than in the settings.
     in_pages: bool,
+    /// The chosen tool row's button.
+    button: usize,
 }
 
 impl SettingsWindow {
@@ -303,6 +339,7 @@ impl SettingsWindow {
             page: 0,
             chosen: 0,
             in_pages: false,
+            button: CHOOSE,
         }
     }
 
@@ -350,7 +387,7 @@ impl SettingsWindow {
     fn row_height(row: &Row) -> u32 {
         match row.control {
             Control::Check(..) => LINE,
-            Control::Choice(..) => 2 * LINE,
+            Control::Choice(..) | Control::Tool(_) => 2 * LINE,
         }
     }
 
@@ -369,11 +406,14 @@ impl SettingsWindow {
         }
     }
 
-    /// Option `i` of a choice row, on its second line.
+    /// Option `i` of a choice row, or button `i` of a tool row, on its
+    /// second line.
     fn option_rect(&self, row: usize, i: usize) -> Rect {
         let r = self.row_rect(row);
-        let Control::Choice(options, ..) = self.rows()[row].control else {
-            unreachable!("only choices have options")
+        let options = match self.rows()[row].control {
+            Control::Choice(options, ..) => options,
+            Control::Tool(_) => &TOOL_BUTTONS,
+            Control::Check(..) => unreachable!("only choices and tools have options"),
         };
         let x = r.x
             + 4 * CHAR
@@ -391,14 +431,29 @@ impl SettingsWindow {
     fn open_page(&mut self, page: usize) {
         self.page = page;
         self.chosen = 0;
+        self.button = CHOOSE;
     }
 
-    /// Sets row `row`: flips a check, or picks option `pick` of a choice
-    /// (the next one if `None`, the one before if `back`).
+    fn choose(&mut self, row: usize) {
+        if row != self.chosen {
+            self.button = CHOOSE;
+        }
+        self.chosen = row;
+    }
+
+    /// Sets row `row`: flips a check, picks option `pick` of a choice
+    /// (the next one if `None`, the one before if `back`), or presses
+    /// button `pick` of a tool row (the chosen one if `None`).
     fn set(&mut self, row: usize, pick: Option<usize>, back: bool, s: &mut Settings) -> Outcome {
         let row = &self.rows()[row];
         match row.control {
             Control::Check(_, flip) => flip(s),
+            Control::Tool(n) => match pick.unwrap_or(self.button) {
+                CHOOSE => return Outcome::ChooseTool(n),
+                NONE => s.tools[n].clear(),
+                DEFAULT => s.tools[n] = TOOLS[n].to_string(),
+                _ => {}
+            },
             Control::Choice(options, get, put) => {
                 let n = options.len();
                 let at = get(s);
@@ -423,9 +478,21 @@ impl SettingsWindow {
             Keycode::Tab => self.in_pages = !self.in_pages,
             Keycode::Up if self.in_pages => self.open_page((self.page + pages - 1) % pages),
             Keycode::Down if self.in_pages => self.open_page((self.page + 1) % pages),
-            Keycode::Up => self.chosen = (self.chosen + rows - 1) % rows,
-            Keycode::Down => self.chosen = (self.chosen + 1) % rows,
+            Keycode::Up => self.choose((self.chosen + rows - 1) % rows),
+            Keycode::Down => self.choose((self.chosen + 1) % rows),
             Keycode::Right if self.in_pages => self.in_pages = false,
+            Keycode::Left | Keycode::Right
+                if matches!(self.rows()[self.chosen].control, Control::Tool(_)) =>
+            {
+                let n = TOOL_BUTTONS.len();
+                let step = if key == Keycode::Left { n - 1 } else { 1 };
+                self.button = (self.button + step) % n;
+            }
+            Keycode::Delete | Keycode::Backspace
+                if matches!(self.rows()[self.chosen].control, Control::Tool(_)) =>
+            {
+                return self.set(self.chosen, Some(NONE), false, settings);
+            }
             Keycode::Left | Keycode::Right
                 if matches!(self.rows()[self.chosen].control, Control::Choice(..)) =>
             {
@@ -442,13 +509,19 @@ impl SettingsWindow {
 
     pub fn mouse_move(&mut self, at: (i32, i32)) {
         if let Some(i) = (0..self.rows().len()).find(|&i| self.row_rect(i).contains(at)) {
-            self.chosen = i;
+            self.choose(i);
             self.in_pages = false;
+            if let Control::Tool(_) = self.rows()[i].control
+                && let Some(b) =
+                    (0..TOOL_BUTTONS.len()).find(|&b| self.option_rect(i, b).contains(at))
+            {
+                self.button = b;
+            }
         }
     }
 
     /// A click on a page opens it; on a check flips it; on an option picks
-    /// it. One outside the window closes it.
+    /// it; on a button presses it. One outside the window closes it.
     pub fn click(&mut self, at: (i32, i32), settings: &mut Settings) -> Outcome {
         if !self.frame().contains(at) {
             return Outcome::Close;
@@ -461,9 +534,18 @@ impl SettingsWindow {
         let Some(row) = (0..self.rows().len()).find(|&i| self.row_rect(i).contains(at)) else {
             return Outcome::Stay;
         };
-        self.chosen = row;
+        self.choose(row);
         match self.rows()[row].control {
             Control::Check(..) => self.set(row, None, false, settings),
+            Control::Tool(_) => {
+                match (0..TOOL_BUTTONS.len()).find(|&i| self.option_rect(row, i).contains(at)) {
+                    Some(i) => {
+                        self.button = i;
+                        self.set(row, Some(i), false, settings)
+                    }
+                    None => Outcome::Stay,
+                }
+            }
             Control::Choice(options, ..) => {
                 match (0..options.len()).find(|&i| self.option_rect(row, i).contains(at)) {
                     Some(i) => self.set(row, Some(i), false, settings),
@@ -495,8 +577,20 @@ impl SettingsWindow {
                     format!("{mark} {}", row.label)
                 }
                 Control::Choice(..) => format!("    {}", row.label),
+                Control::Tool(n) => {
+                    let label = format!("    {}: {}", row.label, tool_label(&settings.tools[n]));
+                    fit(&label, (r.w - 2 * PAD) / CHAR)
+                }
             };
             draw_text(fb, font, r.x + PAD, r.y + 4, &label, TEXT);
+            if let Control::Tool(n) = row.control {
+                let file = &settings.tools[n];
+                let can = [true, !file.is_empty(), file != TOOLS[n]];
+                for (j, name) in TOOL_BUTTONS.iter().enumerate() {
+                    let on = i == self.chosen && !self.in_pages && j == self.button;
+                    button(fb, font, self.option_rect(i, j), name, on, can[j]);
+                }
+            }
             if let Control::Choice(options, get, _) = row.control {
                 let at = get(settings);
                 for (j, option) in options.iter().enumerate() {
@@ -519,6 +613,16 @@ impl SettingsWindow {
         let y = f.y + f.h - LINE - PAD + 4;
         draw_text(fb, font, f.x + 2 * PAD, y, HINT, DISABLED);
     }
+}
+
+/// `text` cut to `chars` characters, ending in "..." when cut.
+fn fit(text: &str, chars: u32) -> String {
+    let chars = chars as usize;
+    if text.chars().count() <= chars {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(chars.saturating_sub(3)).collect();
+    kept + "..."
 }
 
 #[cfg(test)]
@@ -575,6 +679,43 @@ mod tests {
     }
 
     #[test]
+    fn tools_choose_clear_and_restore() {
+        let mut s = Settings::default();
+        let mut w = SettingsWindow::new((1280, 720));
+        let tools = PAGES.iter().position(|p| p.title == "Tools").unwrap();
+        w.click(centre(w.page_row(tools)), &mut s);
+        // Enter asks for a program; Delete sets none.
+        w.key(Keycode::Tab, &mut s);
+        assert_eq!(w.key(Keycode::Return, &mut s), Outcome::ChooseTool(0));
+        w.key(Keycode::Delete, &mut s);
+        assert_eq!(s.tools[0], "");
+        // Left goes round to Default, which a move to another row forgets.
+        w.key(Keycode::Left, &mut s);
+        w.key(Keycode::Space, &mut s);
+        assert_eq!(s.tools[0], TOOLS[0]);
+        w.key(Keycode::Down, &mut s);
+        assert_eq!(w.key(Keycode::Return, &mut s), Outcome::ChooseTool(1));
+        // Clicks on the buttons.
+        w.click(centre(w.option_rect(1, NONE)), &mut s);
+        assert_eq!(s.tools[1], "");
+        w.click(centre(w.option_rect(1, DEFAULT)), &mut s);
+        assert_eq!(s.tools[1], TOOLS[1]);
+        assert_eq!(
+            w.click(centre(w.option_rect(2, CHOOSE)), &mut s),
+            Outcome::ChooseTool(2)
+        );
+        assert_eq!(w.chosen, 2);
+    }
+
+    #[test]
+    fn tool_labels() {
+        assert_eq!(tool_label(""), "(none)");
+        assert_eq!(tool_label("#TOOL/SBSMILE.PRG"), "#TOOL/SBSMILE.PRG");
+        assert_eq!(fit("F9 tool: /A.PRG", 20), "F9 tool: /A.PRG");
+        assert_eq!(fit("F9 tool: /ABCDEFGH.PRG", 12), "F9 tool: ...");
+    }
+
+    #[test]
     fn everything_fits() {
         let w = SettingsWindow::new((1280, 720));
         for (page, p) in PAGES.iter().enumerate() {
@@ -584,8 +725,13 @@ mod tests {
             let rows = w.rows_rect();
             assert!(last.y + last.h <= rows.y + rows.h, "{}", p.title);
             for (i, row) in p.rows.iter().enumerate() {
-                if let Control::Choice(options, ..) = row.control {
-                    let o = w.option_rect(i, options.len() - 1);
+                let last = match row.control {
+                    Control::Choice(options, ..) => Some(options.len() - 1),
+                    Control::Tool(_) => Some(TOOL_BUTTONS.len() - 1),
+                    Control::Check(..) => None,
+                };
+                if let Some(last) = last {
+                    let o = w.option_rect(i, last);
                     assert!(o.x + o.w <= rows.x + rows.w, "{}", row.label);
                 }
             }

@@ -1,6 +1,7 @@
 //! The windows of Ctrl+S and Ctrl+L, after SmileBASIC 4's: a name to save
 //! the edited slot as, starting with its own, and a list of the programs
-//! in the projects to load into it.
+//! in the projects to load into it. The settings pick F9 to F11's tools
+//! from the same list.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::project_label;
@@ -33,6 +34,14 @@ pub enum Outcome {
         project: String,
         name: String,
     },
+    /// Make this file (`PROJECT/NAME`) tool `n`, 0 to 2.
+    Tool(usize, String),
+}
+
+/// A file as SUBRUN, SYSPARAM "TOOL1" and the picker's outcomes name it:
+/// `PROJECT/NAME`, with an empty project for the workspace.
+pub fn file_spec(project: &str, name: &str) -> String {
+    format!("{project}/{name}")
 }
 
 fn centered((w, h): (u32, u32), width: u32, height: u32) -> Rect {
@@ -146,6 +155,9 @@ pub enum Purpose {
     Load(usize),
     /// A file to copy into the project chosen here, under the name typed.
     Copy { kind: FileKind, name: String },
+    /// The settings: a program for F9, F10 or F11 (0 to 2) to start.
+    /// What is typed narrows the list, as in loading.
+    Tool(usize),
 }
 
 /// Ctrl+L's list of the programs of a project, or of the projects, to load
@@ -188,9 +200,24 @@ impl FilePicker {
         FilePicker::open_at(size, purpose, project, storage)
     }
 
+    /// For tool `n`, 0 to 2: the programs of the project it is in now,
+    /// with it chosen, or of the current project if that one is gone.
+    pub fn tool(size: (u32, u32), n: usize, now: &str, storage: &Storage) -> FilePicker {
+        let (project, name) = now.split_once('/').unwrap_or(("", ""));
+        let project = match storage.project_exists(project) {
+            true if !now.is_empty() => project,
+            _ => storage.project(),
+        };
+        let mut picker = FilePicker::open_at(size, Purpose::Tool(n), project, storage);
+        if let Some(i) = picker.entries.iter().skip(1).position(|e| e.name == name) {
+            picker.choose(i + 1);
+        }
+        picker
+    }
+
     fn open_at(size: (u32, u32), purpose: Purpose, project: &str, storage: &Storage) -> FilePicker {
         let field = match &purpose {
-            Purpose::Load(_) => String::new(),
+            Purpose::Load(_) | Purpose::Tool(_) => String::new(),
             Purpose::Copy { name, .. } => name.clone(),
         };
         let mut picker = FilePicker {
@@ -212,13 +239,13 @@ impl FilePicker {
 
     fn kind(&self) -> FileKind {
         match &self.purpose {
-            Purpose::Load(_) => FileKind::Txt,
+            Purpose::Load(_) | Purpose::Tool(_) => FileKind::Txt,
             Purpose::Copy { kind, .. } => *kind,
         }
     }
 
     fn narrows(&self) -> bool {
-        matches!(self.purpose, Purpose::Load(_))
+        matches!(self.purpose, Purpose::Load(_) | Purpose::Tool(_))
     }
 
     fn open(&mut self, project: Option<String>, storage: &Storage) {
@@ -332,7 +359,10 @@ impl FilePicker {
             }
             (Some(_), Purpose::Copy { .. }) => {}
             (Some(_), _) if self.chosen == 0 => self.up(storage),
-            (Some(project), _) => return Outcome::Load(format!("{project}/{}", entry.name)),
+            (Some(project), Purpose::Tool(n)) => {
+                return Outcome::Tool(*n, file_spec(project, &entry.name));
+            }
+            (Some(project), _) => return Outcome::Load(file_spec(project, &entry.name)),
             (None, _) => {
                 let project = entry.name.clone();
                 if self.narrows() {
@@ -448,6 +478,7 @@ impl FilePicker {
         };
         let title = match &self.purpose {
             Purpose::Load(slot) => format!("Slot {slot}: Load file - {place}"),
+            Purpose::Tool(n) => format!("F{} tool: choose a program - {place}", n + 9),
             Purpose::Copy { kind, name } => match &self.project {
                 Some(_) => format!("Copy {}:{name} into {place}", kind.name()),
                 None => format!("Copy {}:{name}: choose a project", kind.name()),
@@ -501,6 +532,9 @@ impl FilePicker {
             (Some(e), _, _) => e.clone(),
             (None, Purpose::Load(_), _) => {
                 "Type to narrow  Enter: load  Backspace: projects  Esc: cancel".to_string()
+            }
+            (None, Purpose::Tool(_), _) => {
+                "Type to narrow  Enter: choose  Backspace: projects  Esc: cancel".to_string()
             }
             (None, Purpose::Copy { .. }, None) => "Enter: open  Esc: cancel".to_string(),
             (None, Purpose::Copy { .. }, Some(_)) => "Enter: copy  Esc: cancel".to_string(),
@@ -560,6 +594,47 @@ mod tests {
         p.key(Keycode::Return, &storage);
         assert_eq!(p.project, None, "the way up");
         assert_eq!(p.key(Keycode::Escape, &storage), Outcome::Close);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn picks_a_tool_where_it_is() {
+        let dir = std::env::temp_dir().join(format!("sb-tool-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut storage = Storage::new(dir.clone());
+        storage.create_project("#TOOL").unwrap();
+        storage.set_project("#TOOL").unwrap();
+        for name in ["GAHAKU.PRG", "SBSMILE.PRG"] {
+            storage.write(FileKind::Txt, name, b"", None).unwrap();
+        }
+        storage.set_project("").unwrap();
+        storage.write(FileKind::Txt, "MINE.PRG", b"", None).unwrap();
+
+        // In the tool's project, with it chosen.
+        let mut p = FilePicker::tool((1280, 720), 0, "#TOOL/SBSMILE.PRG", &storage);
+        assert_eq!(p.project.as_deref(), Some("#TOOL"));
+        assert_eq!(
+            p.key(Keycode::Return, &storage),
+            Outcome::Tool(0, "#TOOL/SBSMILE.PRG".into())
+        );
+        // None set, or its project gone: the current project.
+        for now in ["", "GONE/X.PRG"] {
+            let mut p = FilePicker::tool((1280, 720), 2, now, &storage);
+            assert_eq!(p.project.as_deref(), Some(""), "{now:?}");
+            assert_eq!(
+                p.key(Keycode::Return, &storage),
+                Outcome::Tool(2, "/MINE.PRG".into())
+            );
+        }
+        // Other projects, as in loading.
+        let mut p = FilePicker::tool((1280, 720), 1, "", &storage);
+        p.key(Keycode::Backspace, &storage);
+        p.text("#t");
+        p.key(Keycode::Return, &storage);
+        assert_eq!(
+            p.key(Keycode::Return, &storage),
+            Outcome::Tool(1, "#TOOL/GAHAKU.PRG".into())
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -841,6 +841,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     }
                     // Only the projects window copies.
                     file_dialogs::Outcome::Copy { .. } => file_dialog = None,
+                    file_dialogs::Outcome::Tool(n, file) => {
+                        file_dialog = None;
+                        machine.rt.settings.tools[n] = file;
+                    }
                     file_dialogs::Outcome::Load(spec) => {
                         file_dialog = None;
                         if machine.unsaved_slots().contains(&slot) {
@@ -920,6 +924,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     }
                     settings_window::Outcome::ChooseSoundFont => {
                         choose_sound_font(canvas.window(), chosen_font.clone(), &mut toasts);
+                    }
+                    // The picker goes over the settings, which stay open.
+                    settings_window::Outcome::ChooseTool(n) => {
+                        let storage = &machine.rt.storage;
+                        let now = &machine.rt.settings.tools[n];
+                        let size = (display_w, display_h);
+                        let picker = FilePicker::tool(size, n, now, storage);
+                        file_dialog = Some(FileDialog::Load(picker));
                     }
                 }
                 continue;
@@ -2172,7 +2184,7 @@ fn file_url(path: &Path) -> String {
     url
 }
 
-/// Ctrl+S's or Ctrl+L's window.
+/// Ctrl+S's or Ctrl+L's window, or the settings' to pick a tool.
 enum FileDialog {
     Save(SaveDialog),
     Load(FilePicker),
