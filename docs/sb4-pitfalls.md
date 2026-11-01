@@ -418,7 +418,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   variables as they were when the frame started, so a value set by the
   song, by `BGMVAR` or by stopping shows a frame later. A song started
   while no other plays takes about two frames more to begin: its first
-  `$0=` showed four frames after `BGMPLAY`.
+  `$0=` showed four frames after `BGMPLAY`. `RECSTART` right before
+  such a `BGMPLAY` waits with it: the song sounds within 50 samples of
+  the recording's start.
 - `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45), and
   `BEEP` sounds 0 to 156 (4.4.5 added 156). A user
   song number with nothing set is no error; it plays nothing, and

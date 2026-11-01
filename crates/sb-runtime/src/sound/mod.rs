@@ -104,6 +104,8 @@ pub(crate) struct Recorder {
     pub(crate) recording: bool,
     /// Without a time, recording goes round the buffer until RECSTOP.
     pub(crate) ring: bool,
+    /// Whether it has taken a sample yet.
+    pub(crate) begun: bool,
 }
 
 impl Recorder {
@@ -111,6 +113,7 @@ impl Recorder {
         if !self.recording || self.samples.is_empty() {
             return;
         }
+        self.begun = true;
         let s = |x: f32| (x * 32767.0).round() as i16;
         self.samples[self.pos] = [s(left), s(right)];
         self.pos += 1;
@@ -377,6 +380,10 @@ impl Sound {
             aux_l.resize(n, 0.0);
             aux_r.resize(n, 0.0);
         }
+        // A recording not yet begun waits with a song that waits for the
+        // sound system to wake, and so begins with it.
+        let waking = self.tracks.iter().flatten().any(|t| t.hold > 0);
+        let record = self.recorder.begun || !waking;
         for t in self.tracks.iter_mut().flatten() {
             // UNVERIFIED: that BGMWET takes the place of EFCWET's BGM for
             // its track once set.
@@ -428,7 +435,9 @@ impl Sound {
         for i in 0..n {
             let gain = self.master.value as f32;
             let (l, r) = (left[i] * gain, right[i] * gain);
-            self.recorder.record(l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0));
+            if record {
+                self.recorder.record(l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0));
+            }
             let (l, r) = match (aux_l.get(i), aux_r.get(i)) {
                 (Some(al), Some(ar)) => (l + al * gain, r + ar * gain),
                 _ => (l, r),

@@ -600,6 +600,7 @@ impl Runtime {
                     pos: 0,
                     recording: true,
                     ring,
+                    begun: false,
                 };
                 Ok(vec![])
             }

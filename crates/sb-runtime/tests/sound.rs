@@ -349,6 +349,20 @@ fn the_effector_rings_on_after_a_note_but_is_not_recorded() {
 }
 
 #[test]
+fn a_recording_waits_for_a_song_waking_the_sound_system() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "WAVSET 224,127,0,127,100,\"E020\"*16,69:RECSTART 0.5:BGMPLAY \"T120@224V127O4A1\"",
+    )
+    .unwrap();
+    frames(&mut rt, 10);
+    // The first sample already sounds, as on hardware.
+    let first = run_on(&mut rt, "RECDATA 0 OUT L,R:?ABS(L)+ABS(R)>64").unwrap();
+    assert_eq!(first, "1");
+}
+
+#[test]
 fn recording_what_plays() {
     let mut rt = runtime();
     run_on(
