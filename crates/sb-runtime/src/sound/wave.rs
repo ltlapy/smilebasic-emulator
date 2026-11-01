@@ -312,6 +312,24 @@ mod tests {
     }
 
     #[test]
+    fn notes_follow_a_waveform_set_again() {
+        let wave = |level: f32| {
+            Rc::new(Wave {
+                samples: vec![level; 16],
+                ..pulse(219)
+            })
+        };
+        let mut v = Voice::new(wave(0.5), None, 69, 0, false);
+        let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
+        v.render(&mut l, &mut r);
+        assert!(l[959] > 0.1);
+        v.follow(&wave(-0.5));
+        let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
+        v.render(&mut l, &mut r);
+        assert!(l[0] < -0.1);
+    }
+
+    #[test]
     fn a_cycle_plays_at_the_note() {
         // 8 samples a cycle at 440 Hz: a step of 8 * 440 / 48000.
         let v = Voice::new(Rc::new(pulse(219)), None, 81, 0, false);

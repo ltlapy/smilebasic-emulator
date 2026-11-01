@@ -675,11 +675,20 @@ impl Track {
                 Some(s) => s.render(cl, cr),
                 None => cl.iter_mut().chain(cr.iter_mut()).for_each(|x| *x = 0.0),
             }
-            for (vc, _, v) in &mut self.voices {
+            let waves = self.waves.borrow();
+            for (vc, program, v) in &mut self.voices {
+                // A waveform WAVSET sets again changes the notes that
+                // sound with it, as programs that shape their waveforms
+                // each frame expect.
+                // UNVERIFIED: that SmileBASIC 4's sounding notes change.
+                if let Some(w) = waves.get(*program) {
+                    v.follow(&w);
+                }
                 let ch = &self.channels[*vc];
                 v.gains = wave::gains(ch.volume, ch.velocity, ch.pan);
                 v.render(cl, cr);
             }
+            drop(waves);
             self.voices.retain(|(.., v)| !v.done());
             if !self.paused && self.playing {
                 self.until_tick -= chunk as f64;
