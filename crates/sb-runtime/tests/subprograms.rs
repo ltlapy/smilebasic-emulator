@@ -228,3 +228,27 @@ fn the_side_without_the_focus_shows_darker() {
     );
     assert_eq!(m.render().get(399, 239), Some(0xFFE0_E0E0));
 }
+
+#[test]
+fn errors_carry_their_number_and_a_line_under_them() {
+    let dir = TempDir::new("errnum");
+    let mut m = machine(
+        &dir,
+        "ENVSTAT OUT S,N,A,SL,C,L\n\
+         ENVFOCUS 0\n\
+         PUSHKEY \"?\"+STR$(N)+\",\"+STR$(C)+CHR$(13)\n\
+         LOOP:VSYNC:ENDLOOP\n",
+    );
+    m.rt.settings.localized_errors = true;
+    m.set_slot(0, "'\nX=0:?1/X\n".to_string());
+    m.run_slot(0);
+    frames(&mut m, 2);
+    assert_eq!(
+        last_rows(&m, 3)[..2],
+        ["Divide by zero in 0:2", "ゼロで除算しました"]
+    );
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 5);
+    // Divide by zero is 7, in the statement at character 6.
+    assert!(rows(&m).iter().any(|r| r == "7   6"), "{:?}", rows(&m));
+}

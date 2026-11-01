@@ -11,6 +11,7 @@ mod devices;
 pub mod dialog;
 pub mod editor;
 pub mod env;
+pub mod error_lines;
 mod files;
 pub mod filter;
 pub mod font;

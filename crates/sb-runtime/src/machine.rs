@@ -1409,9 +1409,16 @@ impl Machine {
         self.rt.direct_input_start();
     }
 
+    /// Prints an error's message, and with localized error messages on,
+    /// the Japanese line under it that explains it.
     fn report(&mut self, error: &Error) {
         let text: Vec<u16> = error.to_string().encode_utf16().collect();
         self.print_line(&text);
+        if self.rt.settings.localized_errors
+            && let Some(line) = crate::error_lines::japanese(error.kind.code())
+        {
+            self.print_line(&line.encode_utf16().collect::<Vec<_>>());
+        }
     }
 
     /// Prints on a line of its own on the console.
@@ -1533,15 +1540,14 @@ impl Machine {
     /// What ENVSTAT gives for an error in a slot: its number, argument
     /// (-1 when not known), slot, character of the statement from the
     /// start of the program, counting from 0, and line.
-    // SmileBASIC 4 numbers its errors (Divide by zero is 7); here every
-    // error is 1. UNVERIFIED: which errors know their argument.
+    // UNVERIFIED: which errors know their argument.
     fn error_place(&self, slot: usize, e: &Error) -> [i32; 5] {
         let before: usize = (self.rt.slots[slot].split_inclusive('\n'))
             .take(e.line.saturating_sub(1) as usize)
             .map(|l| l.encode_utf16().count())
             .sum();
         let at = before + (e.col as usize).saturating_sub(1);
-        [1, -1, slot as i32, at as i32, e.line as i32]
+        [e.kind.code(), -1, slot as i32, at as i32, e.line as i32]
     }
 
     /// The main interpreter's state for ENVSTAT.

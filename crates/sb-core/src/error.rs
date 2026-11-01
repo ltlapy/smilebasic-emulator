@@ -71,6 +71,59 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    /// SmileBASIC's number for the error, as ENVSTAT gives it; the same
+    /// as SmileBASIC 3's.
+    pub fn code(self) -> i32 {
+        match self {
+            ErrorKind::SyntaxError => 3,
+            ErrorKind::IllegalFunctionCall => 4,
+            ErrorKind::StackOverflow => 5,
+            ErrorKind::StackUnderflow => 6,
+            ErrorKind::DivideByZero => 7,
+            ErrorKind::TypeMismatch => 8,
+            ErrorKind::Overflow => 9,
+            ErrorKind::OutOfRange => 10,
+            ErrorKind::OutOfData => 13,
+            ErrorKind::UndefinedLabel => 14,
+            ErrorKind::UndefinedVariable => 15,
+            ErrorKind::UndefinedFunction => 16,
+            ErrorKind::DuplicateLabel => 17,
+            ErrorKind::DuplicateVariable => 18,
+            ErrorKind::DuplicateFunction => 19,
+            ErrorKind::ReturnWithoutGosub => 30,
+            ErrorKind::SubscriptOutOfRange => 31,
+            ErrorKind::CantContinue => 33,
+            ErrorKind::CantTrace => 34,
+            ErrorKind::IllegalFileName => 37,
+            ErrorKind::IllegalFileFormat => 38,
+            ErrorKind::UsePrgedit => 39,
+            ErrorKind::IllegalAnimationData => 41,
+            ErrorKind::StringTooLong => 42,
+            ErrorKind::CantUseFromDirectMode => 43,
+            ErrorKind::LoadFailed => 45,
+            ErrorKind::UndefinedConstant => 50,
+            ErrorKind::WrongNumberOfArguments => 52,
+            ErrorKind::WrongNumberOfOutArguments => 53,
+            ErrorKind::SpriteNotSet => 57,
+            ErrorKind::IllegalFontType => 58,
+            ErrorKind::IrCameraNotAvailable => 63,
+            ErrorKind::CantUseEmptyString => 67,
+            ErrorKind::CantUseUserDefinedCharacter => 68,
+            ErrorKind::IllegalFormat => 71,
+            ErrorKind::UndefinedProjectName => 76,
+            ErrorKind::IllegalProjectName => 78,
+            ErrorKind::IllegalMml => 81,
+            ErrorKind::IllegalControlStyle => 107,
+            ErrorKind::CantEditRunningProgram => 111,
+            ErrorKind::IllegalSystemArgumentName => 112,
+            ErrorKind::UseRestorePop => 118,
+            ErrorKind::CantUseSpecifiedSlot => 120,
+            // The emulator's own: a statement out of its place, which
+            // SmileBASIC reports with a more particular error.
+            ErrorKind::IllegalStatement => 3,
+        }
+    }
+
     pub fn message(self) -> &'static str {
         match self {
             ErrorKind::SyntaxError => "Syntax error",

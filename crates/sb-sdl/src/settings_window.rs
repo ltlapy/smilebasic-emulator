@@ -73,6 +73,13 @@ const PAGES: &[Page] = &[
                 |s| s.ctrl_c_stops,
                 |s| s.ctrl_c_stops ^= true,
             ),
+            check(
+                "Localized error messages",
+                "Print a line explaining each error message under it, as SmileBASIC \
+                 4's Japanese edition does. The line is in Japanese only.",
+                |s| s.localized_errors,
+                |s| s.localized_errors ^= true,
+            ),
             Row {
                 label: "System language",
                 about: "What SYSPARAM(\"LANG\") tells programs: en-US as the English \

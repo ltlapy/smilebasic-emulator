@@ -65,6 +65,9 @@ pub struct Settings {
     /// bundled one.
     pub sound_font: Option<String>,
     pub language: Language,
+    /// Error messages are followed by a line explaining them in Japanese,
+    /// as SmileBASIC 4's Japanese edition prints.
+    pub localized_errors: bool,
     /// The emulator's menus and windows draw the 8-pixel font doubled or
     /// the 16-pixel one.
     pub ui_font: FontSize,
@@ -128,6 +131,7 @@ impl Default for Settings {
             smilebasic_instruments: true,
             sound_font: None,
             language: Language::English,
+            localized_errors: false,
             ui_font: FontSize::Large,
             keep_mouse_cursor: false,
             help_text_size: 2,
@@ -242,6 +246,7 @@ impl Settings {
             let flag = match key {
                 "upper_case_letters" => &mut s.upper_case_letters,
                 "ctrl_c_stops" => &mut s.ctrl_c_stops,
+                "localized_errors" => &mut s.localized_errors,
                 "half_width_on_save" => &mut s.half_width_on_save,
                 "editor_wrap" => &mut s.editor_wrap,
                 "editor_number_tiles" => &mut s.editor_number_tiles,
@@ -361,6 +366,7 @@ impl Settings {
              smilebasic_instruments={}\n\
              sound_font={}\n\
              language={}\n\
+             localized_errors={}\n\
              ui_font={}\n\
              keep_mouse_cursor={}\n\
              help_text_size={}\n\
@@ -391,6 +397,7 @@ impl Settings {
             self.smilebasic_instruments,
             self.sound_font.as_deref().unwrap_or(""),
             choice_name(&LANGUAGE, &self.language),
+            self.localized_errors,
             choice_name(&FONT_SIZE, &self.ui_font),
             self.keep_mouse_cursor,
             self.help_text_size,
@@ -436,6 +443,7 @@ mod tests {
             sound_font: Some("/fonts/a b.sf2".to_string()),
             editor_tab_step: 2,
             language: Language::Japanese,
+            localized_errors: true,
             ui_font: FontSize::Small,
             keep_mouse_cursor: true,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
