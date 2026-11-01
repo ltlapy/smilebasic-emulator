@@ -508,7 +508,7 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   not come back at once. Both of its results are the same.
 - `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
   string is `Can't use empty string`, a user-defined character `Can't
-  use user-derined character` (spelt so).
+  use user-defined character`.
 - `HELPGET` and `HELPINFO` read the help of the console's language.
   Pages count from 0; colored runs come as position, length and an
   opaque color (`&HFFF39800`), in an array one run wide when no line

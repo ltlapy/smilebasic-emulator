@@ -112,8 +112,7 @@ impl ErrorKind {
             ErrorKind::CantTrace => "Can't trace",
             ErrorKind::UseRestorePop => "Use RESTORE POP before RETURN",
             ErrorKind::CantUseEmptyString => "Can't use empty string",
-            // SmileBASIC 4's own spelling.
-            ErrorKind::CantUseUserDefinedCharacter => "Can't use user-derined character",
+            ErrorKind::CantUseUserDefinedCharacter => "Can't use user-defined character",
             ErrorKind::IrCameraNotAvailable => "IR Camera is not available",
             ErrorKind::IllegalControlStyle => "Illegal control style",
             ErrorKind::IllegalFontType => "Illegal font type",
