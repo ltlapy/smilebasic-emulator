@@ -69,20 +69,7 @@ impl Filter {
                 hue,
                 saturation,
                 value,
-            } => {
-                // Neighbors are mostly the same color.
-                let mut last = None;
-                for p in fb.pixels_mut() {
-                    *p = match last {
-                        Some((from, to)) if from == *p => to,
-                        _ => {
-                            let to = shift_color(*p, *hue, *saturation, *value);
-                            last = Some((*p, to));
-                            to
-                        }
-                    };
-                }
-            }
+            } => color(fb, *hue, *saturation, *value),
         }
     }
 }
@@ -118,24 +105,21 @@ fn raster(fb: &mut Framebuffer, rows: &[[f64; 4]], vertical: bool, repeat: bool)
         return;
     }
     thread_local! {
-        /// The frame as it was, kept between frames so as not to
+        /// The frame being made, kept between frames so as not to
         /// allocate a frame's worth for every layer every frame.
-        static SOURCE: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+        static OUT: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
     }
-    SOURCE.with_borrow_mut(|source| {
-        source.clear();
-        source.extend_from_slice(fb.pixels());
-        raster_from(fb, source, rows, vertical, repeat);
+    OUT.with_borrow_mut(|out| {
+        out.clear();
+        out.resize(fb.pixels().len(), 0);
+        raster_into(fb, out, rows, vertical, repeat);
+        fb.swap_pixels(out);
     });
 }
 
-fn raster_from(
-    fb: &mut Framebuffer,
-    source: &[u32],
-    rows: &[[f64; 4]],
-    vertical: bool,
-    repeat: bool,
-) {
+/// Raster deformation of `fb`, written into `out`, which is as large.
+fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: bool, repeat: bool) {
+    let source = fb.pixels();
     let (w, h) = (fb.width() as usize, fb.height() as usize);
     let (fw, fh) = (w as f64, h as f64);
     // The source point's index along a line of n, or None off it.
@@ -155,25 +139,45 @@ fn raster_from(
         }
     };
     let entry = |i: usize, n: usize| rows[i * rows.len() / n];
-    // Where a pixel's center lands in the source, across and down.
-    let across = |x: usize, [ox, sx, _, _]: [f64; 4]| wrap(sx * (x as f64 + 0.5) + ox * fw, w);
-    let down =
-        |y: usize, [_, _, oy, sy]: [f64; 4]| wrap(fh - (sy * (fh - (y as f64 + 0.5)) + oy * fh), h);
-    let pixels = fb.pixels_mut();
+    // Where a pixel's center lands in the source, across and down, each
+    // from the entry's scale and its offset in pixels.
+    let across_at = |x: usize, sx: f64, off: f64| sx * (x as f64 + 0.5) + off;
+    let down_at = |y: usize, sy: f64, off: f64| fh - (sy * (fh - (y as f64 + 0.5)) + off);
+    let across = |x: usize, [ox, sx, _, _]: [f64; 4]| wrap(across_at(x, sx, ox * fw), w);
+    let down = |y: usize, [_, _, oy, sy]: [f64; 4]| wrap(down_at(y, sy, oy * fh), h);
+    // Each line of points moves steadily one way, so when both its ends
+    // land on the frame, all of it does, and each point rounds down by a
+    // plain cast: the fast way, with the same points.
+    let inside = |a: f64, b: f64, n: usize| {
+        let n = n as f64;
+        (0.0..n).contains(&a) && (0.0..n).contains(&b)
+    };
     if vertical {
         // Each column takes its own entry.
-        let columns: Vec<([f64; 4], Option<usize>)> = (0..w)
+        struct Column {
+            from: Option<usize>,
+            sy: f64,
+            off: f64,
+            inside: bool,
+        }
+        let columns: Vec<Column> = (0..w)
             .map(|x| {
-                let e = entry(x, w);
-                (e, across(x, e))
+                let [_, _, oy, sy] = entry(x, w);
+                let off = oy * fh;
+                Column {
+                    from: across(x, entry(x, w)),
+                    sy,
+                    off,
+                    inside: inside(down_at(0, sy, off), down_at(h - 1, sy, off), h),
+                }
             })
             .collect();
-        for y in 0..h {
-            let row = &mut pixels[y * w..][..w];
-            for (dst, &(e, sx)) in row.iter_mut().zip(&columns) {
-                *dst = match (sx, down(y, e)) {
-                    (Some(a), Some(b)) => source[b * w + a],
-                    _ => 0,
+        for (y, row) in out.chunks_exact_mut(w).enumerate() {
+            for (dst, c) in row.iter_mut().zip(&columns) {
+                *dst = match c.from {
+                    Some(a) if c.inside => source[down_at(y, c.sy, c.off) as usize * w + a],
+                    Some(a) => wrap(down_at(y, c.sy, c.off), h).map_or(0, |b| source[b * w + a]),
+                    None => 0,
                 };
             }
         }
@@ -185,16 +189,23 @@ fn raster_from(
         .chunks_exact(w)
         .map(|r| r.iter().all(|&p| p == 0))
         .collect();
-    for y in 0..h {
+    for (y, row) in out.chunks_exact_mut(w).enumerate() {
         let e = entry(y, h);
-        let row = &mut pixels[y * w..][..w];
         let Some(b) = down(y, e).filter(|&b| !blank[b]) else {
             row.fill(0);
             continue;
         };
         let from = &source[b * w..][..w];
-        if e[0] == 0.0 && e[1] == 1.0 {
+        let [ox, sx, _, _] = e;
+        if ox == 0.0 && sx == 1.0 {
             row.copy_from_slice(from);
+            continue;
+        }
+        let off = ox * fw;
+        if inside(across_at(0, sx, off), across_at(w - 1, sx, off), w) {
+            for (x, dst) in row.iter_mut().enumerate() {
+                *dst = from[across_at(x, sx, off) as usize];
+            }
             continue;
         }
         for (x, dst) in row.iter_mut().enumerate() {
@@ -275,22 +286,32 @@ fn gauss_columns(v: &[[u16; 4]], w: usize, kernel: &[u32], half: &mut [u32]) {
 /// A box blur `r` each way along each row by running sums, clamped.
 fn box_rows(half: &mut [u32], w: usize, r: usize, line: &mut Vec<u32>) {
     let inv = (1u32 << 24) / (2 * r + 1) as u32;
+    // The four channels side by side in 32-bit lanes, so that the running
+    // sum takes one add and one subtract a pixel.
+    let lanes = |p: u32| {
+        let p = u128::from(p);
+        p & 0xFF | (p >> 8 & 0xFF) << 32 | (p >> 16 & 0xFF) << 64 | (p >> 24) << 96
+    };
+    let mean = |sum: u128| {
+        let ch = |k: u32| {
+            (((sum >> (32 * k)) as u32)
+                .wrapping_mul(inv)
+                .wrapping_add(1 << 23)
+                >> 24)
+                .min(255)
+        };
+        ch(0) | ch(1) << 8 | ch(2) << 16 | ch(3) << 24
+    };
     for row in half.chunks_exact_mut(w) {
         line.clear();
         line.extend_from_slice(row);
-        let get = |i: isize| channels(line[i.clamp(0, w as isize - 1) as usize]);
-        let mut sum = [0u32; 4];
-        for k in -(r as isize)..=r as isize {
-            let c = get(k);
-            (0..4).for_each(|ch| sum[ch] += c[ch]);
-        }
+        let get = |i: usize| lanes(line[i.min(w - 1)]);
+        // Before the row, its first pixel again.
+        let mut sum = lanes(line[0]) * r as u128 + (0..=r).map(get).sum::<u128>();
         for (i, o) in row.iter_mut().enumerate() {
-            *o = u32::from_be_bytes(sum.map(|s| ((s * inv + (1 << 23)) >> 24).min(255) as u8));
-            let (add, sub) = (
-                get(i as isize + r as isize + 1),
-                get(i as isize - r as isize),
-            );
-            (0..4).for_each(|ch| sum[ch] = sum[ch] + add[ch] - sub[ch]);
+            *o = mean(sum);
+            sum += get(i + r + 1);
+            sum -= lanes(line[i.saturating_sub(r)]);
         }
     }
 }
@@ -346,29 +367,33 @@ fn blur(fb: &mut Framebuffer, amount: u32) {
     let mut half = vec![0u32; hw * hh];
     // Two channels to a word: sums of four 8-bit values fit 16 bits.
     const LO: u32 = 0x00FF_00FF;
+    // The sum of n pixels / n with halves rounded down, both lanes at
+    // once; n is 1, 2 or 4, so a shift divides, and what the shift brings
+    // down from the lane above is masked off.
+    let mean =
+        |sum: u32, n: u32| (2 * sum + (n - 1) * 0x0001_0001) >> (2 * n).trailing_zeros() & LO;
+    let block = |ps: &[u32], n: u32| {
+        let lo = ps.iter().map(|p| p & LO).sum();
+        let hi = ps.iter().map(|p| p >> 8 & LO).sum();
+        mean(lo, n) | mean(hi, n) << 8
+    };
     for (hy, out) in half.chunks_exact_mut(hw).enumerate() {
         let (y0, y1) = (hy * 2, (hy * 2 + 1).min(h - 1));
         let (r0, r1) = (&pixels[y0 * w..y0 * w + w], &pixels[y1 * w..y1 * w + w]);
-        for (hx, o) in out.iter_mut().enumerate() {
-            let (x0, x1) = (hx * 2, (hx * 2 + 1).min(w - 1));
-            let ps = [r0[x0], r0[x1], r1[x0], r1[x1]];
-            let n = (1 + u32::from(x1 != x0)) * (1 + u32::from(y1 != y0));
-            let (mut lo, mut hi) = (0, 0);
-            // Edge blocks count each pixel once.
-            for (k, p) in ps.iter().enumerate() {
-                let counted = (k & 1 == 0 || x1 != x0) && (k < 2 || y1 != y0);
-                if counted {
-                    lo += p & LO;
-                    hi += (p >> 8) & LO;
-                }
+        // Edge blocks count each pixel once.
+        let pairs = (r0.chunks_exact(2).zip(r1.chunks_exact(2))).zip(out.iter_mut());
+        if y1 != y0 {
+            for ((a, b), o) in pairs {
+                *o = block(&[a[0], a[1], b[0], b[1]], 4);
             }
-            // sum / n with halves rounded down, lane by lane.
-            let div = |v: u32| {
-                let (a, b) = (v & 0xFFFF, v >> 16);
-                let f = |s: u32| (2 * s + n - 1) / (2 * n);
-                f(a) | f(b) << 16
-            };
-            *o = div(lo) | div(hi) << 8;
+        } else {
+            for ((a, _), o) in pairs {
+                *o = block(a, 2);
+            }
+        }
+        if w % 2 == 1 {
+            let n = 1 + u32::from(y1 != y0);
+            out[hw - 1] = block(&[r0[w - 1], r1[w - 1]][..n as usize], n);
         }
     }
     let sigma = amount as f32 * BLUR_SIGMA;
@@ -410,6 +435,32 @@ fn blur(fb: &mut Framebuffer, amount: u32) {
         for y in hy * 2..(hy * 2 + 2).min(h) {
             pixels[y * w..y * w + w].copy_from_slice(&row);
         }
+    }
+}
+
+/// Color conversion over the frame. A screen has few colors, so each is
+/// worked out once and kept in a small table by its bits.
+fn color(fb: &mut Framebuffer, hue: f64, saturation: f64, value: f64) {
+    // Left at zero, as programs leave it when an effect ends, it changes
+    // nothing: each pixel comes back as it was.
+    if hue.rem_euclid(360.0) == 0.0 && saturation == 0.0 && value == 0.0 {
+        return;
+    }
+    const SLOTS: usize = 1 << 10;
+    // Slot 0's key, 0, is clear and stays clear, so the table starts
+    // right.
+    let mut table = [(0u32, 0u32); SLOTS];
+    for p in fb.pixels_mut() {
+        let key = *p;
+        // Fibonacci hashing: the top bits of the product mix all of the
+        // key's.
+        let slot = (key.wrapping_mul(0x9E37_79B9) >> (32 - SLOTS.trailing_zeros())) as usize;
+        let (from, to) = &mut table[slot];
+        if *from != key {
+            *from = key;
+            *to = shift_color(key, hue, saturation, value);
+        }
+        *p = *to;
     }
 }
 
@@ -511,5 +562,39 @@ mod tests {
         }
         .apply(&mut fb, 1);
         assert_eq!(fb.pixels(), &[0xFF00_FF00, 0x8000_8000]);
+    }
+
+    #[test]
+    fn color_works_out_each_color() {
+        // Colors that come back after others, and clear.
+        let pixels = [
+            0xFFFF_0000,
+            0xFF00_00FF,
+            0,
+            0xFFFF_0000,
+            0x8080_0000,
+            0xFF00_00FF,
+        ];
+        let mut fb = frame(&pixels, 3);
+        color(&mut fb, 120.0, 0.0, 0.0);
+        let one_by_one = pixels.map(|p| shift_color(p, 120.0, 0.0, 0.0));
+        assert_eq!(fb.pixels(), &one_by_one);
+    }
+
+    #[test]
+    fn color_at_zero_keeps_the_frame() {
+        let pixels = [0xFF12_3456, 0x8040_2010, 0, 0xFFFF_FFFF];
+        let mut fb = frame(&pixels, 2);
+        Filter::Color {
+            hue: 360.0,
+            saturation: -0.0,
+            value: 0.0,
+        }
+        .apply(&mut fb, 1);
+        assert_eq!(fb.pixels(), &pixels);
+        // As working each one out would.
+        for p in pixels {
+            assert_eq!(shift_color(p, 0.0, 0.0, 0.0), p);
+        }
     }
 }

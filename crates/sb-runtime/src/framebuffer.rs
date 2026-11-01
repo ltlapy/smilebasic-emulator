@@ -41,6 +41,14 @@ impl Framebuffer {
         self.pixels.resize((width * height) as usize, 0);
     }
 
+    /// Trades pixels with `other`, which must hold as many: a pass that
+    /// reads the frame while it writes a new one can then write into a
+    /// buffer it keeps instead of copying the frame first.
+    pub fn swap_pixels(&mut self, other: &mut Vec<u32>) {
+        assert_eq!(other.len(), self.pixels.len());
+        std::mem::swap(&mut self.pixels, other);
+    }
+
     pub fn clear(&mut self, color: u32) {
         self.pixels.fill(color);
     }
