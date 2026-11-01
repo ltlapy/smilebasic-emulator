@@ -265,6 +265,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // A panel beside the editor, and whether it takes the keys.
     let mut side: Option<Side> = None;
     let mut side_focus = false;
+    // The help was opened in direct mode, over the screen.
+    let mut side_direct = false;
     // The text of a key that something else took: the space some systems
     // type for Ctrl+Space, or a digit that chose a slot in a window that
     // then closed, which would otherwise reach the program or the editor.
@@ -543,7 +545,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     continue;
                 }
             }
-            if let (Some(open), true) = (&mut side, editor_window) {
+            let side_window = if side_direct {
+                !from_editor
+            } else {
+                editor_window
+            };
+            if let (Some(open), true) = (&mut side, side_window) {
                 match event {
                     Event::MouseWheel {
                         y,
@@ -615,7 +622,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     _ => {}
                 }
             }
-            if let (Some(open), true) = (&mut side, side_focus && editor_window) {
+            if let (Some(open), true) = (&mut side, side_focus && side_window) {
                 let (taken, outcome) = match (open, &event) {
                     (
                         Side::Help(help),
@@ -1069,6 +1076,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         {
                             side = Some(panel);
                             side_focus = true;
+                            side_direct = false;
                         }
                     }
                     Click::Chosen(Action::Shortcuts) => {
@@ -1274,6 +1282,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     ..
                 } if ctrl(keymod) && shift(keymod) => paste(&mut machine, &clipboard, &mut toasts),
+                // Ctrl+F1 to F5 type what KEY set for them.
+                Event::KeyDown {
+                    keycode: Some(key),
+                    keymod,
+                    ..
+                } if ctrl(keymod)
+                    && !shift(keymod)
+                    && (on_editor || !machine.is_running())
+                    && let Some(n) = function_key(key) =>
+                {
+                    machine.type_function_key(n);
+                    eat_text = true;
+                }
                 // From the screen, F4 brings the editor's own window up.
                 Event::KeyDown {
                     keycode: Some(Keycode::F4),
@@ -1299,17 +1320,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::F2),
                     ..
                 } if on_editor => next_editor_size(&mut machine),
-                // F1 shows the help for the command at the cursor.
+                // F1 shows the help for the command at the cursor, in the
+                // editor or on the line typed in direct mode.
                 Event::KeyDown {
                     keycode: Some(Keycode::F1),
+                    keymod,
                     repeat: false,
                     ..
-                } if on_editor => {
+                } if !ctrl(keymod)
+                    && (on_editor
+                        || !machine.is_editing() && !machine.is_running() && !from_editor) =>
+                {
                     let size = (display_w, display_h);
                     if let Some(panel) = open_help(&mut machine, help.as_deref(), &mut toasts, size)
                     {
                         side = Some(panel);
                         side_focus = true;
+                        side_direct = !on_editor;
                     }
                 }
                 // Simple save and load, as SmileBASIC 4 has them.
@@ -1444,8 +1471,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             || settings_window.is_some()
             || shortcuts_window.is_some()
             || file_dialog.is_some();
-        if !machine.is_editing() {
+        // The help opened in direct mode closes when the editor opens or
+        // a program runs; the editor's panels close with the editor.
+        if side_direct && (machine.is_editing() || machine.is_running())
+            || !side_direct && !machine.is_editing()
+        {
             side = None;
+        }
+        if side.is_none() {
+            side_direct = false;
         }
         // Panels go on the side away from the code being edited.
         if let Some(open) = &mut side {
@@ -1746,7 +1780,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let ed = usize::from(apart);
         let mut used = [false; 2];
         used[ui] |= modal || dims || menu.visible() || toasts.visible();
-        used[ed] |= debug.is_some() || debug_menu.is_some() || side.is_some();
+        let side_on = if side_direct { 0 } else { ed };
+        used[ed] |= debug.is_some() || debug_menu.is_some();
+        used[side_on] |= side.is_some();
         used[0] |= program_dialog.is_some() || key_hint.visible();
         // The editor's window always shows the menu bar.
         used[1] |= apart;
@@ -1770,8 +1806,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             None => debug_panel.hide(),
         }
         match &side {
-            Some(Side::Help(help)) => help.draw(overlays[ed], font, side_focus),
-            Some(Side::Index(index, _)) => index.draw(overlays[ed], font, side_focus),
+            Some(Side::Help(help)) => help.draw(overlays[side_on], font, side_focus),
+            Some(Side::Index(index, _)) => index.draw(overlays[side_on], font, side_focus),
             None => {}
         }
         // Windows over the editor go over its panels too.
@@ -2552,8 +2588,9 @@ fn open_file_dialog(machine: &Machine, save: bool, size: (u32, u32)) -> FileDial
     }
 }
 
-/// F1: the help for the command at the editor's cursor, or its first
-/// page away from any command.
+/// F1: the help for the command at the editor's cursor, or at the cursor
+/// of the line typed in direct mode, or its first page away from any
+/// command.
 fn open_help(
     machine: &mut Machine,
     help: Option<&Help>,
@@ -2564,8 +2601,14 @@ fn open_help(
         toasts.push("SmileBASIC 4's help is not imported (see smilebasic-import)".into());
         return None;
     };
-    let (line, col) = machine.edit().cursor_line();
-    let topic = match help.lookup(line, col) {
+    let lookup = match machine.rt.line_and_cursor() {
+        Some((line, col)) if !machine.is_editing() => help.lookup(line, col),
+        _ => {
+            let (line, col) = machine.edit().cursor_line();
+            help.lookup(line, col)
+        }
+    };
+    let topic = match lookup {
         Lookup::Topic(topic) => topic,
         Lookup::Nothing => sb_runtime::help::INTRO.to_string(),
         Lookup::Unknown(word) => {
@@ -2733,6 +2776,18 @@ fn line_command(key: Keycode, shift: bool, ctrl: bool) -> Option<u16> {
         (Keycode::A, _, true) => SELECT_ALL,
         (Keycode::Backspace, _, true) => DELETE_LINE,
         (Keycode::Delete, _, true) => DELETE_TO_END,
+        _ => return None,
+    })
+}
+
+/// F1 to F5's number, for Ctrl+F1 to F5.
+fn function_key(key: Keycode) -> Option<usize> {
+    Some(match key {
+        Keycode::F1 => 1,
+        Keycode::F2 => 2,
+        Keycode::F3 => 3,
+        Keycode::F4 => 4,
+        Keycode::F5 => 5,
         _ => return None,
     })
 }

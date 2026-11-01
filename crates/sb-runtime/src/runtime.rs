@@ -1119,6 +1119,11 @@ impl Runtime {
         self.line.is_some()
     }
 
+    /// The line being typed and the cursor's place in it.
+    pub fn line_and_cursor(&self) -> Option<(&[u16], usize)> {
+        self.line.as_ref().map(|l| (&l.text[..], l.cursor))
+    }
+
     /// Stops waiting for an INPUT line, if one is being typed.
     pub fn cancel_input(&mut self) {
         self.line = None;

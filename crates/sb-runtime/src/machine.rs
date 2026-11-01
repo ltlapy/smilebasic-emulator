@@ -1291,6 +1291,15 @@ impl Machine {
         }
     }
 
+    /// Ctrl+F1 to F5: types what KEY set for function key `n`, 1 to 5,
+    /// as it is.
+    pub fn type_function_key(&mut self, n: usize) {
+        let keys = self.rt.input.function_keys[n - 1].clone();
+        for code in keys {
+            self.rt.key_press(code);
+        }
+    }
+
     /// Runs one frame: the program, the editor, or direct-mode line
     /// editing, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
