@@ -184,15 +184,17 @@ impl TextScreen {
     }
 
     /// TSCREEN also takes the screen's look back to the start: its
-    /// animations stop, THOME, TROT, TSCALE and TCOLOR are undone, and
-    /// TOFS goes back to 0,0 at the same depth.
-    // UNVERIFIED: that TLAYER, TBLEND, TPAGE, TVAR and TFUNC are kept.
+    /// animations stop, THOME, TROT, TSCALE, TCOLOR and TBLEND are undone,
+    /// and TOFS goes back to 0,0 at the same depth. TLAYER, TPAGE and TVAR
+    /// stay.
+    // UNVERIFIED: that TFUNC stays.
     pub fn restart_look(&mut self) {
         self.home = (0.0, 0.0);
         self.rot = 0.0;
         self.scale = (1.0, 1.0);
         self.tint = WHITE;
         self.pos = (0.0, 0.0);
+        self.add = false;
         self.stop_anims();
     }
 
@@ -708,8 +710,7 @@ impl TextScreen {
 }
 
 /// Text screens have no image to animate: "UV" and "I" do nothing.
-// UNVERIFIED: Z and the color take the value rounded towards zero, as
-// for sprites.
+/// Z and the color take the value rounded towards zero, as for sprites.
 impl Animated for TextScreen {
     fn value(&self, target: Target) -> [f64; 2] {
         match target {

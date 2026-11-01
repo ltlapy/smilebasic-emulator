@@ -1144,10 +1144,8 @@ impl Runtime {
         self.sprites.reset(keep_defs, keep_anims);
         self.set_mode(self.startup_mode);
         self.back_color = 0xFF00_0000;
-        // UNVERIFIED: ACLS clears FADE.
         self.fade = Fade::default();
         self.layers = [Layer::default(); LAYERS];
-        // UNVERIFIED: ACLS clears LFILTER.
         self.filters = Default::default();
         if !keep_grp {
             for page in 0..FONT_PAGE {
@@ -1661,8 +1659,8 @@ impl Runtime {
 
     /// Plays one frame of the sprites' and text screens' animations.
     pub fn animate(&mut self) {
-        // UNVERIFIED: a fade steps with the animations, starting on the
-        // frame after FADE.
+        // A fade steps with the animations, starting on the frame after
+        // FADE.
         let mut moved = self.fade.fading();
         self.fade.step();
         moved |= self.sprites.animate();

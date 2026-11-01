@@ -232,6 +232,12 @@ fn tscreen_undoes_the_screens_look() {
     let t = &rt.text[0];
     assert_eq!((t.home, t.rot, t.scale), ((0.0, 0.0), 0.0, (1.0, 1.0)));
     assert_eq!(row(&rt, 4, 0, 16).trim_end_matches('.'), "FFFFFFFF0007");
+    // TEST47 part 22: TBLEND goes back to 0; TLAYER, TPAGE and TVAR stay.
+    let rt = run("TLAYER 1,3:TBLEND 1,1:TPAGE 1,3,16,32:TVAR 1,0,123\n\
+         TSCREEN 1,8,8:TPAGE 1 OUT I,J,K\n\
+         ?TLAYER(1);TBLEND(1);I;J;K;TVAR(1,0)")
+    .unwrap();
+    assert_eq!(row(&rt, 4, 0, 16).trim_end_matches('.'), "3031632123");
 }
 
 #[test]

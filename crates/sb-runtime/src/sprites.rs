@@ -127,7 +127,7 @@ impl Animated for WithDefs<'_> {
         }
     }
 
-    // UNVERIFIED: integer properties take the value rounded towards zero.
+    // Integer properties take the value rounded towards zero.
     fn set_value(&mut self, target: Target, v: [f64; 2]) {
         let s = &mut self.sprite;
         match target {

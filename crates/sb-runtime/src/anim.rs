@@ -176,14 +176,26 @@ fn from_channels(c: [f64; 4]) -> f64 {
     f64::from(u32::from_be_bytes(c.map(|x| x.clamp(0.0, 255.0) as u8)))
 }
 
-/// `a` moved towards `b` by the fraction `f`; colors move per channel.
-fn mix(target: Target, a: [f64; 2], b: [f64; 2], f: f64) -> [f64; 2] {
+/// `a` moved towards `b` on frame `elapsed` of `frames`. Colors move per
+/// channel, the two ends weighted by the frames left and gone in single
+/// precision and rounded down, so that &HFF to &HFF over three frames
+/// passes &HFF and &HFE. Positions are rounded towards zero.
+// UNVERIFIED: whether rotation and scale are rounded too.
+fn mix(target: Target, a: [f64; 2], b: [f64; 2], (elapsed, frames): (u32, u32)) -> [f64; 2] {
     if target == Target::C {
         let (a, b) = (channels(a[0]), channels(b[0]));
-        let c = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * f);
+        let left = (frames - elapsed) as f32 / frames as f32;
+        let c = std::array::from_fn(|i| {
+            f64::from((a[i] as f32 * left + b[i] as f32 * (1.0 - left)).floor())
+        });
         return [from_channels(c), 0.0];
     }
-    [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]
+    let f = f64::from(elapsed) / f64::from(frames);
+    let v = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+    if target == Target::Xy {
+        return v.map(f64::trunc);
+    }
+    v
 }
 
 /// A relative key's value: the start value plus the key's, or for colors
@@ -272,12 +284,7 @@ impl Track {
         self.elapsed += 1;
         self.slid = time < 0;
         let value = if time < 0 {
-            mix(
-                target,
-                self.from,
-                to,
-                f64::from(self.elapsed) / f64::from(frames),
-            )
+            mix(target, self.from, to, (self.elapsed, frames))
         } else {
             to
         };
@@ -393,5 +400,38 @@ mod tests {
         let mut t = Track::new(anim, &WithDefs::new(&mut s, &defs));
         assert!(t.step(&mut WithDefs::new(&mut s, &defs)));
         assert_eq!(s.color, 0xBF7F_7F00);
+    }
+
+    /// TEST47 part 20, read back on hardware: over three frames, X goes
+    /// 0, -3, -6, -10 and the colours' alpha dips to &HFE on the second.
+    #[test]
+    fn slides_round_like_hardware() {
+        let anim = Anim::new(mode(Target::Xy), &[-3.0, -10.0, -10.0], 0).unwrap();
+        let defs = vec![SpriteDef::default(); DEFS];
+        let mut s = sprite();
+        let mut t = Track::new(anim, &WithDefs::new(&mut s, &defs));
+        let xs: Vec<f64> = play(&mut t, &mut s, 3).iter().map(|p| p.0).collect();
+        assert_eq!(xs, [-3.0, -6.0, -10.0]);
+        for (from, to, seen) in [
+            (
+                0xFF00_0000u32,
+                0xFF0A_0A0Au32,
+                [0xFF03_0303u32, 0xFE06_0606, 0xFF0A_0A0A],
+            ),
+            (
+                0xFF0A_0A0A,
+                0xFF00_0000,
+                [0xFF06_0606, 0xFE03_0303, 0xFF00_0000],
+            ),
+        ] {
+            let anim = Anim::new(mode(Target::C), &[-3.0, f64::from(to)], 0).unwrap();
+            let mut s = sprite();
+            s.color = from;
+            let mut t = Track::new(anim, &WithDefs::new(&mut s, &defs));
+            for expected in seen {
+                t.step(&mut WithDefs::new(&mut s, &defs));
+                assert_eq!(s.color, expected, "{from:X}");
+            }
+        }
     }
 }
