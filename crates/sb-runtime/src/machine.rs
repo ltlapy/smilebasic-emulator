@@ -654,6 +654,7 @@ impl Machine {
         // Each program starts with the mouse cursor hidden; END leaves it
         // as the program set it (checked on hardware).
         self.rt.system.mouse_cursor = false;
+        self.rt.reset_perf_stats();
         self.last_run = Some(slot);
         self.sync_slots();
         self.start(&self.rt.slots[slot].clone(), Some(slot));

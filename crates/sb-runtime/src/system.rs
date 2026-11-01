@@ -87,6 +87,44 @@ pub struct System {
     pub mouse_cursor: bool,
     /// When PERFBEGIN started each of its eight measurements.
     perf: [Option<Instant>; 8],
+    /// What PERFEND has timed of each since RUN, for the debugger's
+    /// panel.
+    perf_stats: [PerfStats; 8],
+}
+
+/// One PERFBEGIN and PERFEND measurement's times since RUN, in
+/// microseconds, which the emulator's debugger shows; programs never see
+/// them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PerfStats {
+    /// PERFENDs timed.
+    pub count: u64,
+    pub last: u64,
+    pub max: u64,
+    pub total: u64,
+    /// The colour PERFBEGIN last gave, as a colour code.
+    pub color: Option<u32>,
+    /// PERFBEGIN started it, though PERFEND may not have ended it yet.
+    pub begun: bool,
+}
+
+impl PerfStats {
+    /// Kept cheap, as PERFEND may run many times a frame.
+    fn add(&mut self, micros: u64) {
+        self.count += 1;
+        self.last = micros;
+        self.total += micros;
+        self.max = self.max.max(micros);
+    }
+
+    pub fn average(&self) -> u64 {
+        self.total.checked_div(self.count).unwrap_or(0)
+    }
+
+    /// Whether PERFBEGIN or PERFEND used it since RUN.
+    pub fn used(&self) -> bool {
+        self.begun || self.count > 0
+    }
 }
 
 /// SYSPARAM "KEYREPEAT": frames before a held key repeats, and between
@@ -102,6 +140,7 @@ impl Default for System {
             sysbeep: true,
             mouse_cursor: false,
             perf: [None; 8],
+            perf_stats: [PerfStats::default(); 8],
         }
     }
 }
@@ -208,11 +247,15 @@ impl Runtime {
             }
             (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(sys.frames as i32)]),
             // PERFBEGIN and PERFEND measure time; SmileBASIC 4.4.9 shows no
-            // gauge for them, nor does the emulator.
+            // gauge for them, nor does the emulator on its screens. Only
+            // the debugger's panel lists the times kept here.
             (Command::Perfbegin, Want::Outs(0), 1 | 2) => {
                 let n = perf_id(&args[0])?;
-                if let Some(color) = args.get(1) {
-                    int(color)?;
+                let color = args.get(1).map(int).transpose()?;
+                let stats = &mut sys.perf_stats[n];
+                stats.begun = true;
+                if let Some(color) = color {
+                    stats.color = Some(color as u32);
                 }
                 sys.perf[n] = Some(Instant::now());
                 Ok(vec![])
@@ -221,9 +264,10 @@ impl Runtime {
                 let n = perf_id(&args[0])?;
                 // Without PERFBEGIN, the time since SmileBASIC started.
                 let since = sys.perf[n].unwrap_or(sys.started);
-                let micros = since.elapsed().as_micros() as i32;
+                let micros = since.elapsed().as_micros() as u64;
+                sys.perf_stats[n].add(micros);
                 Ok(match want {
-                    Want::Value => vec![Value::Int(micros)],
+                    Want::Value => vec![Value::Int(micros as i32)],
                     _ => vec![],
                 })
             }
@@ -342,6 +386,16 @@ impl Runtime {
         }
     }
 
+    /// What PERFEND has timed of each measurement since RUN.
+    pub fn perf_stats(&self) -> &[PerfStats; 8] {
+        &self.system.perf_stats
+    }
+
+    /// Forgets what PERFEND has timed, as RUN does.
+    pub fn reset_perf_stats(&mut self) {
+        self.system.perf_stats = [PerfStats::default(); 8];
+    }
+
     /// Whether the running program shows the mouse cursor.
     pub fn mouse_cursor(&self) -> bool {
         self.system.mouse_cursor
@@ -360,5 +414,18 @@ mod tests {
         };
         assert_eq!(take(1), [2_545_341_989, 981_918_433, 3_715_302_833]);
         assert_ne!(take(1), take(2));
+    }
+
+    #[test]
+    fn perf_stats_add_up() {
+        let mut s = PerfStats::default();
+        assert!(!s.used());
+        assert_eq!(s.average(), 0);
+        for micros in [10, 30, 20] {
+            s.add(micros);
+        }
+        assert!(s.used());
+        assert_eq!((s.count, s.last, s.max, s.total), (3, 20, 30, 60));
+        assert_eq!(s.average(), 20);
     }
 }

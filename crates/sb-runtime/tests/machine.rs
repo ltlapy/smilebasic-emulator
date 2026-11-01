@@ -122,6 +122,34 @@ fn slots_run_and_new() {
 }
 
 #[test]
+fn perfend_times_add_up_until_run() {
+    let mut m = machine();
+    m.set_slot(
+        1,
+        "FOR I=0 TO 2:PERFBEGIN 3,&HFF00FF00:PERFEND 3:NEXT:PERFBEGIN 5".to_string(),
+    );
+    enter(&mut m, "run 1");
+    let stats = *m.rt.perf_stats();
+    assert_eq!(stats[3].count, 3);
+    assert_eq!(stats[3].color, Some(0xFF00_FF00));
+    assert!(stats[3].max >= stats[3].average() && stats[3].total >= stats[3].last);
+    // Begun but not ended, a measurement shows without times.
+    assert!(stats[5].used() && stats[5].count == 0);
+    assert!(!stats[0].used());
+    // PERFEND in direct mode adds on; RUN starts again.
+    enter(&mut m, "perfend 3");
+    assert_eq!(m.rt.perf_stats()[3].count, 4);
+    m.set_slot(1, String::new());
+    enter(&mut m, "run 1");
+    assert!(m.rt.perf_stats().iter().all(|s| !s.used()));
+    // Without PERFBEGIN, PERFEND still counts; the panel's Reset forgets it.
+    enter(&mut m, "perfend 2");
+    assert_eq!(m.rt.perf_stats()[2].count, 1);
+    m.rt.reset_perf_stats();
+    assert!(!m.rt.perf_stats()[2].used());
+}
+
+#[test]
 fn errors_return_to_direct_mode() {
     let mut m = machine();
     enter(&mut m, "?1/0");

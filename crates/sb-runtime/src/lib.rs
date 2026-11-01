@@ -46,3 +46,4 @@ mod txt;
 
 pub use framebuffer::Framebuffer;
 pub use runtime::Runtime;
+pub use system::PerfStats;
