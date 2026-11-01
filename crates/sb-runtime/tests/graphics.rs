@@ -169,6 +169,14 @@ fn garray_follows_the_page() {
 }
 
 #[test]
+fn gsave_takes_rows_wider_than_the_page() {
+    // TEST47 part 23: hardware takes 2049 and 4096 pixels.
+    let (_, out) = run("DIM A%[1]:GSAVE 0,0,0,2049,1,A%:GLOAD 0,0,2049,1,A%,0\n\
+         GSAVE 0,0,0,4096,1,A%:?LEN(A%)");
+    assert_eq!(out, "4096");
+}
+
+#[test]
 fn proportional_widths() {
     // The blank test font has blank characters only, a quarter of the
     // font size wide; the spacing comes between them and scales.

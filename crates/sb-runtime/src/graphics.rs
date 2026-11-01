@@ -13,9 +13,6 @@ use crate::text::{glyph_pixel, glyph_pixel_px};
 pub const PAGES: usize = 6;
 /// `#GRPWIDTH` and `#GRPHEIGHT`.
 pub const GRP_SIZE: i32 = 2048;
-/// Lines whose ends lie further out than this are clipped before they are
-/// walked, so that huge coordinates cannot stall the program.
-const LINE_LIMIT: i32 = 1 << 16;
 
 /// How drawn pixels combine with the page (`#G_NORMAL` to `#G_ADD`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,13 +54,15 @@ impl Blend {
                 let mix = |s: u32, d: u32| (s * sa + d * (255 - sa)) / 255;
                 pack(da, mix(sr, dr), mix(sg, dg), mix(sb, db))
             }
+            // The weights of the two colours are worked out on 0-255 and
+            // rounded down before they are used.
             Blend::Alpha2 => {
                 let a = sa + da - sa * da / 255;
                 if a == 0 {
                     return 0;
                 }
-                let dw = da * (255 - sa);
-                let mix = |s: u32, d: u32| (s * sa * 255 + d * dw) / (255 * a);
+                let (sw, dw) = (sa * 255 / a, da * (255 - sa) / a);
+                let mix = |s: u32, d: u32| (s * sw + d * dw) / 255;
                 pack(a, mix(sr, dr), mix(sg, dg), mix(sb, db))
             }
             Blend::Add => {
@@ -468,18 +467,21 @@ impl Graphics {
         }
     }
 
-    /// GBOX: the outline, each pixel drawn once.
+    /// GBOX: the outline as four lines: the top and bottom rows, then the
+    /// sides from the top row down to the row above the bottom one, so
+    /// that the two top corners are drawn twice (which shows with
+    /// `#G_ALPHA`). A box one pixel wide or high has no second side.
+    // UNVERIFIED: that a box given bottom to top or right to left does the
+    // same (the corners drawn twice could follow the first corner given).
     pub fn rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
         let (l, r) = (x0.min(x1), x0.max(x1));
         let (t, b) = (y0.min(y1), y0.max(y1));
         let c = self.clip;
-        for x in l.max(c.x0)..=r.min(c.x1) {
-            self.plot(x, t, color, blend);
-            if b != t {
-                self.plot(x, b, color, blend);
-            }
+        self.fill(l, t, r, t, color, blend);
+        if b != t {
+            self.fill(l, b, r, b, color, blend);
         }
-        for y in (t + 1).max(c.y0)..=(b - 1).min(c.y1) {
+        for y in t.max(c.y0)..=(b - 1).min(c.y1) {
             self.plot(l, y, color, blend);
             if r != l {
                 self.plot(r, y, color, blend);
@@ -534,7 +536,9 @@ impl Graphics {
 
     /// GCIRCLE: the whole circle, or with `arc`, the part from one angle
     /// to another (degrees, clockwise from 3 o'clock), as a sector if
-    /// `sector` is set.
+    /// `sector` is set. The arc runs between the circle's pixels nearest
+    /// the two angles: those at `round(cos*r), round(sin*r)`, ends
+    /// included, and a sector's sides are lines from the center to them.
     pub fn circle(
         &mut self,
         (cx, cy, r): (i32, i32, i32),
@@ -542,87 +546,73 @@ impl Graphics {
         color: u32,
         blend: Blend,
     ) {
-        // UNVERIFIED: circles too large to cross the page draw nothing.
-        if !(0..LINE_LIMIT).contains(&r) {
+        if r < 0 {
             return;
         }
-        let mut points = circle_points(r);
-        if let Some((start, end, _)) = arc {
+        let mut points = circle_points(cx, cy, r);
+        let mut sides = Vec::new();
+        if let Some((start, end, sector)) = arc {
             let (s, e) = (start.rem_euclid(360), end.rem_euclid(360));
             // An arc from an angle to the same angle draws nothing.
-            // UNVERIFIED: whether a sector does the same.
             if s == e {
                 return;
             }
-            points.retain(|&(dx, dy)| {
-                let a = f64::from(dy)
-                    .atan2(f64::from(dx))
-                    .to_degrees()
-                    .rem_euclid(360.0);
-                let (s, e) = (f64::from(s), f64::from(e));
-                if s <= e {
-                    (s..=e).contains(&a)
-                } else {
-                    a >= s || a <= e
-                }
+            let end_at = |angle: i32| {
+                let (sin, cos) = f64::from(angle).to_radians().sin_cos();
+                let r = f64::from(r);
+                ((cos * r).round() as i64, (sin * r).round() as i64)
+            };
+            let angle =
+                |(dx, dy): (i64, i64)| (dy as f64).atan2(dx as f64).to_degrees().rem_euclid(360.0);
+            let (from, to) = (end_at(start), end_at(end));
+            let first = angle(from);
+            let mut sweep = (angle(to) - first).rem_euclid(360.0);
+            // UNVERIFIED: an arc of more than half a turn whose two end
+            // pixels are the same is the whole circle.
+            if sweep == 0.0 && (e - s).rem_euclid(360) > 180 {
+                sweep = 360.0;
+            }
+            points.retain(|&(x, y)| {
+                let d = (i64::from(x) - i64::from(cx), i64::from(y) - i64::from(cy));
+                (angle(d) - first).rem_euclid(360.0) <= sweep
             });
-        }
-        let mut points: Vec<(i32, i32)> = points
-            .into_iter()
-            .map(|(dx, dy)| (cx + dx, cy + dy))
-            .collect();
-        if let Some((start, end, true)) = arc {
-            // A sector is outlined, not filled (checked on hardware).
-            for angle in [start, end] {
-                let (s, c) = f64::from(angle).to_radians().sin_cos();
-                let x = cx + (c * f64::from(r)).round() as i32;
-                let y = cy + (s * f64::from(r)).round() as i32;
-                points.extend(line_points(cx, cy, x, y));
+            if sector {
+                // A sector is outlined, not filled (checked on hardware).
+                let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                for (dx, dy) in [from, to] {
+                    let (x, y) = (i64::from(cx) + dx, i64::from(cy) + dy);
+                    sides.extend(line_points(cx, cy, near(x), near(y)));
+                }
             }
         }
-        points.sort_unstable();
-        points.dedup();
+        if !sides.is_empty() {
+            points.extend(sides);
+            points.sort_unstable();
+            points.dedup();
+        }
         for (x, y) in points {
             self.plot(x, y, color, blend);
         }
     }
 
-    /// GTRI: a filled triangle, edges included.
+    /// GTRI: a filled triangle, drawn a row at a time from the leftmost
+    /// to the rightmost pixel any of its edges reaches in the row, so that
+    /// each pixel is drawn once. See [`edge_span`] for an edge's pixels.
     pub fn triangle(&mut self, p: [(i32, i32); 3], color: u32, blend: Blend) {
         let c = self.clip;
-        let x0 = p.iter().map(|p| p.0).min().unwrap().max(c.x0);
-        let x1 = p.iter().map(|p| p.0).max().unwrap().min(c.x1);
-        let y0 = p.iter().map(|p| p.1).min().unwrap().max(c.y0);
-        let y1 = p.iter().map(|p| p.1).max().unwrap().min(c.y1);
-        // i128, since products of far-off coordinates overflow i64.
-        let p = p.map(|(x, y)| (i128::from(x), i128::from(y)));
-        let edge = |a: (i128, i128), b: (i128, i128), x: i128, y: i128| {
-            (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0)
-        };
-        let area = edge(p[0], p[1], p[2].0, p[2].1);
-        if area == 0 {
-            // Degenerate: the three points are on one line.
-            for (a, b) in [(0, 1), (1, 2), (2, 0)] {
-                let (a, b) = (p[a], p[b]);
-                for (x, y) in line_points(a.0 as i32, a.1 as i32, b.0 as i32, b.1 as i32) {
-                    if c.contains(x, y) {
-                        self.plot(x, y, color, blend);
-                    }
-                }
+        let top = p.iter().map(|p| p.1).min().unwrap().max(c.y0);
+        let bottom = p.iter().map(|p| p.1).max().unwrap().min(c.y1);
+        for y in top..=bottom {
+            let spans = [(0, 1), (1, 2), (2, 0)]
+                .into_iter()
+                .filter_map(|(a, b)| edge_span(p[a], p[b], y));
+            let (mut l, mut r) = (i64::MAX, i64::MIN);
+            for (a, b) in spans {
+                (l, r) = (l.min(a), r.max(b));
             }
-            return;
-        }
-        let sign = area.signum();
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let (x, y) = (i128::from(x), i128::from(y));
-                let inside = [(0, 1), (1, 2), (2, 0)]
-                    .iter()
-                    .all(|&(a, b)| edge(p[a], p[b], x, y) * sign >= 0);
-                let (x, y) = (x as i32, y as i32);
-                if inside {
-                    self.plot(x, y, color, blend);
-                }
+            if l <= r {
+                let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                self.fill(near(l), y, near(r), y, color, blend);
             }
         }
     }
@@ -822,7 +812,7 @@ impl Graphics {
                     }
                 }
             }
-            // UNVERIFIED: that drawing scales the spacing as the width does.
+            // Drawing scales the spacing as the width does.
             left = left.saturating_add((self.advance(font, code, size) + spacing) * sx);
         }
     }
@@ -855,45 +845,150 @@ impl Graphics {
     }
 
     /// GLOAD: draws row-by-row pixels into a rectangle of the target page.
+    /// With a palette, the pixels are its indexes; one past its end leaves
+    /// the page as it is.
     pub fn load_rect(
         &mut self,
         (x, y, w, _h): (i32, i32, i32, i32),
         pixels: &[u32],
+        palette: Option<&[u32]>,
         tint: Option<u32>,
         blend: Blend,
     ) {
         for (i, &p) in pixels.iter().enumerate() {
             let (px, py) = (x + i as i32 % w, y + i as i32 / w);
+            let p = match palette {
+                None => p,
+                Some(colors) => match colors.get(p as usize) {
+                    Some(&c) => c,
+                    None => continue,
+                },
+            };
             let p = tint.map_or(p, |t| multiply(p, t));
             self.plot(px, py, p, blend);
         }
     }
 }
 
-/// The points of a circle of radius `r` around the origin, without
-/// repeats.
-fn circle_points(r: i32) -> Vec<(i32, i32)> {
+/// The pixels of the circle of radius `r` around `(cx, cy)` that lie on
+/// the page, without repeats: the midpoint circle, whose pixel in each
+/// row of the first octant is the largest `x` with `x² - x + y² < r²`.
+/// Only the rows and columns that reach the page are worked out, so that
+/// huge circles take no longer than small ones.
+fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
+    let on_page = |x: i64, y: i64| {
+        (0..i64::from(GRP_SIZE)).contains(&x) && (0..i64::from(GRP_SIZE)).contains(&y)
+    };
+    let (cx, cy, r) = (i64::from(cx), i64::from(cy), i64::from(r));
     let mut points = Vec::new();
-    let (mut x, mut y, mut err) = (r, 0, 1 - r);
-    while x >= y {
-        for (px, py) in [
-            (x, y),
-            (y, x),
-            (-y, x),
-            (-x, y),
-            (-x, -y),
-            (-y, -x),
-            (y, -x),
-            (x, -y),
-        ] {
-            points.push((px, py));
+    if r == 0 {
+        if on_page(cx, cy) {
+            points.push((cx as i32, cy as i32));
         }
-        y += 1;
-        if err < 0 {
-            err += 2 * y + 1;
-        } else {
+        return points;
+    }
+    // r is at most 2^31, so r² and x² fit in an i64.
+    let rr = r * r;
+    // The octant's pixel in row y.
+    let x_at = |y: i64| {
+        let k = rr - y * y;
+        let mut x = ((1.0 + (1.0 + 4.0 * k as f64).sqrt()) / 2.0) as i64;
+        while x > 0 && x * (x - 1) >= k {
             x -= 1;
-            err += 2 * (y - x) + 1;
+        }
+        while (x + 1) * x < k {
+            x += 1;
+        }
+        x
+    };
+    // The octant ends at the last row whose pixel is not past the diagonal.
+    let (mut lo, mut hi) = (0, r);
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2;
+        if x_at(mid) >= mid {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let last = lo;
+    let page = i64::from(GRP_SIZE) - 1;
+    if r <= cx.min(cy) && cx.max(cy) + r <= page {
+        // All on the page: one walk of the octant.
+        let (mut x, at) = (r, |x: i64, y: i64| ((cx + x) as i32, (cy + y) as i32));
+        points.reserve(8 * (last as usize + 1));
+        for y in 0..=last {
+            while x * (x - 1) >= rr - y * y {
+                x -= 1;
+            }
+            points.extend([
+                at(x, y),
+                at(y, x),
+                at(-y, x),
+                at(-x, y),
+                at(-x, -y),
+                at(-y, -x),
+                at(y, -x),
+                at(x, -y),
+            ]);
+        }
+        points.sort_unstable();
+        points.dedup();
+        return points;
+    }
+    // Rows of the octant whose points land on the page: those whose
+    // offset from the center (as a row, or as a column) is on it. Each
+    // group of rows is walked once, its pixel worked out from the last.
+    let groups = [
+        (cy, 1, false),
+        (cy, -1, false),
+        (cx, 1, true),
+        (cx, -1, true),
+    ]
+    .map(|(base, sign, column)| {
+        let (from, to) = if sign > 0 {
+            (-base, page - base)
+        } else {
+            (base - page, base)
+        };
+        (from.max(0), to.min(last), sign, column)
+    });
+    let mut walks: Vec<(i64, i64)> = groups
+        .iter()
+        .filter(|g| g.0 <= g.1)
+        .map(|g| (g.0, g.1))
+        .collect();
+    walks.sort_unstable();
+    let mut merged: Vec<(i64, i64)> = Vec::new();
+    for (from, to) in walks {
+        match merged.last_mut() {
+            Some(m) if from <= m.1 + 1 => m.1 = m.1.max(to),
+            _ => merged.push((from, to)),
+        }
+    }
+    for (from, to) in merged {
+        let mut x = x_at(from);
+        for y in from..=to {
+            let k = rr - y * y;
+            while x * (x - 1) >= k {
+                x -= 1;
+            }
+            for &(lo, hi, sign, column) in &groups {
+                if !(lo..=hi).contains(&y) {
+                    continue;
+                }
+                let near = sign * y;
+                let pair = if column {
+                    [(cx + near, cy + x), (cx + near, cy - x)]
+                } else {
+                    [(cx + x, cy + near), (cx - x, cy + near)]
+                };
+                for (px, py) in pair {
+                    if on_page(px, py) {
+                        points.push((px as i32, py as i32));
+                    }
+                }
+            }
         }
     }
     points.sort_unstable();
@@ -901,76 +996,105 @@ fn circle_points(r: i32) -> Vec<(i32, i32)> {
     points
 }
 
+/// The pixels of a GLINE from `(x0, y0)` to `(x1, y1)` that lie on the
+/// page: the same whichever end comes first, walked along the longer axis
+/// from the end with the smaller coordinate on it, `major` steps long
+/// and `minor` across (taken as positive); the offset across at step
+/// `t` is `(2·t·minor + k) / (2·major)` rounded down, with `k` =
+/// `major + minor + 1` for slopes below 1/2 and `2·minor - major` from
+/// 1/2 up. Lines far off the page take the same pixels; only the steps
+/// on it are worked out.
+// UNVERIFIED: the `+ 1` for shallow slopes (`+ 2` or `major + 3` fit the
+// lines checked as well).
 fn line_points(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
-    let Some((x0, y0, x1, y1)) = clip_line(x0, y0, x1, y1) else {
-        return Vec::new();
-    };
-    // Walk the longer axis. The rule below was worked out from lines read
-    // back on SmileBASIC 4: the same pixels whichever end comes first, as
-    // if drawn from the end with the smaller major coordinate, with the
-    // minor offset rounded down for slopes of 1/2 and more, and up below.
-    let x_major = (x1 - x0).abs() >= (y1 - y0).abs();
-    let swap = |(x, y): (i32, i32)| if x_major { (x, y) } else { (y, x) };
-    let (mut a, mut b) = (swap((x0, y0)), swap((x1, y1)));
-    if a.0 > b.0 {
-        std::mem::swap(&mut a, &mut b);
-    }
-    let major = i64::from(b.0 - a.0);
-    let minor = i64::from(b.1 - a.1);
-    let bias = if 2 * minor.abs() < major {
-        major - 1
+    let x_major = (i64::from(x1) - i64::from(x0)).abs() >= (i64::from(y1) - i64::from(y0)).abs();
+    let swap = |(x, y): (i64, i64)| if x_major { (x, y) } else { (y, x) };
+    let ends = (
+        swap((i64::from(x0), i64::from(y0))),
+        swap((i64::from(x1), i64::from(y1))),
+    );
+    let (a, b) = if ends.0.0 <= ends.1.0 {
+        ends
     } else {
-        0
+        (ends.1, ends.0)
     };
-    (0..=major)
-        .map(|t| {
-            let offset = if major == 0 {
-                0
-            } else {
-                (t * minor.abs() + bias) / major
-            };
-            let p = (a.0 + t as i32, a.1 + (minor.signum() * offset) as i32);
-            swap(p)
-        })
-        .collect()
+    let major = i128::from(b.0 - a.0);
+    let minor = i128::from(b.1 - a.1);
+    let (across, sign) = (minor.abs(), minor.signum() as i64);
+    let k = if 2 * across < major {
+        major + across + 1
+    } else {
+        2 * across - major
+    };
+    let page = i64::from(GRP_SIZE) - 1;
+    let from = (-a.0).max(0);
+    let to = (page - a.0).min(b.0 - a.0);
+    let mut points = Vec::with_capacity((to - from + 1).max(0) as usize);
+    if from > to {
+        return points;
+    }
+    // The offset and what is left over, stepped along without dividing.
+    let step = 2 * major.max(1);
+    let start = 2 * i128::from(from) * across + k;
+    let (mut offset, mut left) = ((start / step) as i64, (start % step) as i64);
+    let (step, rise) = (step as i64, 2 * across as i64);
+    for t in from..=to {
+        let (x, y) = swap((a.0 + t, a.1 + sign * offset));
+        if (0..=page).contains(&x) && (0..=page).contains(&y) {
+            points.push((x as i32, y as i32));
+        }
+        left += rise;
+        if left >= step {
+            left -= step;
+            offset += 1;
+        }
+    }
+    points
 }
 
-/// Shortens a line whose ends lie far outside every page to the part
-/// near the pages (Liang-Barsky). `None` if none of it is near.
-fn clip_line(x0: i32, y0: i32, x1: i32, y1: i32) -> Option<(i32, i32, i32, i32)> {
-    let near = |v: i32| (-LINE_LIMIT..=LINE_LIMIT).contains(&v);
-    if near(x0) && near(y0) && near(x1) && near(y1) {
-        return Some((x0, y0, x1, y1));
+/// The pixels a GTRI edge from `a` to `b` takes in row `y`, as the first
+/// and last column, or `None` if it does not reach the row:
+/// - an edge at least as tall as it is wide takes one pixel per row, its
+///   X at the row rounded (halves up);
+/// - a wider one takes the columns `x` for which some point of the edge
+///   with X in `[x, x+1)` has Y in `[y-1/2, y+1/2)`.
+// UNVERIFIED: how halves round for the tall edges (none in the check).
+fn edge_span(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i64)> {
+    let ((x0, y0), (x1, y1)) = (a, b);
+    if y < y0.min(y1) || y > y0.max(y1) {
+        return None;
     }
-    let (lo, hi) = (-1.0, f64::from(GRP_SIZE));
-    let (fx0, fy0) = (f64::from(x0), f64::from(y0));
-    let (dx, dy) = (f64::from(x1) - fx0, f64::from(y1) - fy0);
-    let (mut t0, mut t1) = (0.0f64, 1.0f64);
-    for (p, q) in [
-        (-dx, fx0 - lo),
-        (dx, hi - fx0),
-        (-dy, fy0 - lo),
-        (dy, hi - fy0),
-    ] {
-        if p == 0.0 {
-            if q < 0.0 {
-                return None;
-            }
-            continue;
-        }
-        let t = q / p;
-        if p < 0.0 {
-            t0 = t0.max(t);
+    let (x0, y0, y) = (i128::from(x0), i128::from(y0), i128::from(y));
+    let (dx, dy) = (i128::from(x1) - x0, i128::from(y1) - y0);
+    let (left, right) = (x0.min(x0 + dx), x0.max(x0 + dx));
+    let floor = |n: i128, d: i128| {
+        if d < 0 {
+            (-n).div_euclid(-d)
         } else {
-            t1 = t1.min(t);
+            n.div_euclid(d)
         }
-        if t0 > t1 {
-            return None;
-        }
+    };
+    let narrow = |v: i128| v as i64;
+    if dy == 0 {
+        return Some((narrow(left), narrow(right)));
     }
-    let at = |t: f64| ((fx0 + dx * t).round() as i32, (fy0 + dy * t).round() as i32);
-    let ((a, b), (c, d)) = (at(t0), at(t1));
-    Some((a, b, c, d))
+    if dx.abs() <= dy.abs() {
+        // x0 + dx*(y-y0)/dy, rounded.
+        let x = x0 + floor(2 * dx * (y - y0) + dy, 2 * dy);
+        return Some((narrow(x), narrow(x)));
+    }
+    // X where the edge meets Y = y - 1/2 (included) and y + 1/2 (not),
+    // as a fraction over 2*dy.
+    let at = |half: i128| (2 * x0 * dy + dx * (2 * (y - y0) + half), 2 * dy);
+    let ((nin, din), (nout, dout)) = (at(-1), at(1));
+    let (l, r) = if (dx > 0) == (dy > 0) {
+        // Left to right going down: in from the top, out at the bottom.
+        let ceil = -floor(-nout, dout);
+        (floor(nin, din).max(left), (ceil - 1).min(right))
+    } else {
+        (floor(nout, dout).max(left), floor(nin, din).min(right))
+    };
+    (l <= r).then(|| (narrow(l), narrow(r)))
 }
 
 #[cfg(test)]
@@ -1229,6 +1353,291 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(draw(false), draw(true));
+    }
+
+    /// The rows `y0..y0+h` of columns `0..w`, as on hardware's readback:
+    /// a pixel's red nibble, or `.` where it is 0.
+    fn nibbles(g: &Graphics, y0: i32, w: i32, h: i32) -> Vec<String> {
+        (y0..y0 + h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| match g.pixel(0, x, y) >> 20 & 15 {
+                        0 => '.',
+                        n => char::from_digit(n, 16).unwrap().to_ascii_uppercase(),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The circle walked row by row, as the midpoint algorithm does.
+    fn midpoint(r: i32) -> Vec<(i32, i32)> {
+        let mut points = Vec::new();
+        let (mut x, mut y, mut err) = (r, 0, 1 - r);
+        while x >= y {
+            for p in [
+                (x, y),
+                (y, x),
+                (-y, x),
+                (-x, y),
+                (-x, -y),
+                (-y, -x),
+                (y, -x),
+                (x, -y),
+            ] {
+                points.push(p);
+            }
+            y += 1;
+            if err < 0 {
+                err += 2 * y + 1;
+            } else {
+                x -= 1;
+                err += 2 * (y - x) + 1;
+            }
+        }
+        points.sort_unstable();
+        points.dedup();
+        points
+    }
+
+    #[test]
+    fn circle_points_are_the_midpoint_circle() {
+        for r in 0..600 {
+            let mut expected: Vec<(i32, i32)> = midpoint(r)
+                .into_iter()
+                .map(|(x, y)| (x + 1000, y + 900))
+                .collect();
+            expected.sort_unstable();
+            assert_eq!(circle_points(1000, 900, r), expected, "radius {r}");
+        }
+        // Off the edges, only what lands on the page.
+        let mut expected: Vec<(i32, i32)> = midpoint(300)
+            .into_iter()
+            .map(|(x, y)| (x + 100, y - 50))
+            .filter(|&(x, y)| x >= 0 && y >= 0)
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(circle_points(100, -50, 300), expected);
+    }
+
+    /// TEST47 part 17: circles of radius 1000 and 70000 whose right edge
+    /// is at X 10 show it there, on rows 1 to 9 at least.
+    #[test]
+    fn huge_circles_are_drawn() {
+        for (cx, r) in [(-990, 1000), (-69990, 70000)] {
+            let mut g = Graphics::default();
+            g.circle((cx, 5, r), None, RED, Blend::Normal);
+            assert_eq!(&area(&g, 12, 10)[1..], ["..........#."; 9], "radius {r}");
+        }
+        let mut g = Graphics::default();
+        g.circle(
+            (-69990, 5, 70000),
+            Some((170, 190, true)),
+            RED,
+            Blend::Normal,
+        );
+        assert!(area(&g, 40, 20).iter().all(|r| !r.contains('#')));
+    }
+
+    /// TEST47 parts 4 and 5 as read back on hardware: an arc from 30 to
+    /// 120 degrees includes the pixel at 29.7 degrees, the one nearest 30,
+    /// and sector sides follow the line rule.
+    #[test]
+    fn arcs_and_sectors_match_hardware() {
+        let mut g = Graphics::default();
+        g.circle((9, 9, 8), Some((30, 120, true)), RED, Blend::Normal);
+        g.circle((28, 9, 8), Some((30, 120, false)), RED, Blend::Normal);
+        assert_eq!(
+            &area(&g, 38, 19)[9..],
+            [
+                ".........##...........................",
+                ".........#.##.........................",
+                "........#....##.......................",
+                "........#......#......................",
+                ".......#........#..................#..",
+                ".......#.......#..................#...",
+                "......#.......#..................#....",
+                ".....##.....##..........##.....##.....",
+                ".......#####..............#####.......",
+                "......................................",
+            ]
+        );
+        let mut g = Graphics::default();
+        g.circle((9, 9, 8), Some((-90, 0, false)), RED, Blend::Normal);
+        g.circle((28, 9, 8), Some((400, 500, true)), RED, Blend::Normal);
+        assert_eq!(
+            area(&g, 38, 19),
+            [
+                "......................................",
+                ".........###..........................",
+                "............##........................",
+                "..............#.......................",
+                "...............#......................",
+                "................#.....................",
+                "................#.....................",
+                ".................#....................",
+                ".................#....................",
+                ".................#..........#.........",
+                "...........................#.#........",
+                "..........................#...##......",
+                "........................##......#.....",
+                ".......................#.........#....",
+                "......................#...........#...",
+                ".......................#.........#....",
+                "........................##.....##.....",
+                "..........................#####.......",
+                "......................................",
+            ]
+        );
+        // Equal angles draw nothing, sector or not; 45 to 46 is one side.
+        let count = |g: &Graphics| {
+            (0..21)
+                .flat_map(|y| (0..21).map(move |x| (x, y)))
+                .filter(|&(x, y)| g.pixel(0, x, y) != 0)
+                .count()
+        };
+        let mut g = Graphics::default();
+        g.circle((10, 10, 8), Some((45, 45, true)), RED, Blend::Normal);
+        assert_eq!(count(&g), 0);
+        g.circle((10, 10, 8), Some((45, 46, true)), RED, Blend::Normal);
+        assert_eq!(count(&g), 7);
+    }
+
+    /// TEST47 part 16: a shallow line from its end, and the same line
+    /// running far off the page both ways.
+    #[test]
+    fn far_lines_match_hardware() {
+        let runs = |g: &Graphics| -> Vec<(i32, i32, i32)> {
+            (24..28)
+                .filter_map(|y| {
+                    let xs: Vec<i32> = (0..40).filter(|&x| g.pixel(0, x, y) != 0).collect();
+                    Some((y, *xs.first()?, *xs.last()?))
+                })
+                .collect()
+        };
+        let mut g = Graphics::default();
+        g.line(0, 25, 40, 26, RED, Blend::Normal);
+        assert_eq!(runs(&g), [(25, 0, 18), (26, 19, 39)]);
+        for (x0, y0, x1, y1) in [
+            (-1000, 0, 1040, 51),
+            (1040, 51, -1000, 0),
+            (-100000, -2475, 104000, 2625),
+        ] {
+            let mut g = Graphics::default();
+            g.line(x0, y0, x1, y1, RED, Blend::Normal);
+            assert_eq!(runs(&g), [(25, 0, 19), (26, 20, 39)], "{x0},{y0}");
+        }
+        let mut g = Graphics::default();
+        g.line(-100000, 3, 100000, 5, RED, Blend::Normal);
+        assert!((0..40).all(|x| g.pixel(0, x, 4) == RED && g.pixel(0, x, 3) == 0));
+    }
+
+    /// TEST47 parts 6 and 7: triangles read back on hardware, each pixel
+    /// drawn once (with `#G_ALPHA` over black, the red nibble is 8).
+    #[test]
+    fn triangles_match_hardware() {
+        let mut g = Graphics::default();
+        g.fill(0, 0, 25, 15, 0xFF00_0000, Blend::Normal);
+        for p in [
+            [(0, 0), (12, 3), (4, 11)],
+            [(15, 0), (20, 5), (25, 10)],
+            [(0, 13), (20, 14), (10, 15)],
+        ] {
+            g.triangle(p, 0x80FF_FFFF, Blend::Alpha);
+        }
+        assert_eq!(
+            nibbles(&g, 0, 26, 16),
+            [
+                "88.............8..........",
+                "888888..........8.........",
+                ".888888888.......8........",
+                ".888888888888.....8.......",
+                ".88888888888.......8......",
+                "..888888888.........8.....",
+                "..88888888...........8....",
+                "...888888.............8...",
+                "...88888...............8..",
+                "...8888.................8.",
+                "....88...................8",
+                "....8.....................",
+                "..........................",
+                "8888888888................",
+                "..8888888888888888888.....",
+                ".......888888888..........",
+            ]
+        );
+    }
+
+    /// TEST47 part 8: GBOX with `#G_ALPHA` blends its top corners twice.
+    #[test]
+    fn boxes_match_hardware() {
+        let mut g = Graphics::default();
+        g.fill(0, 0, 20, 13, 0xFF00_0000, Blend::Normal);
+        for (x0, y0, x1, y1) in [
+            (2, 2, 10, 8),
+            (10, 11, 2, 11),
+            (13, 1, 13, 9),
+            (16, 3, 16, 3),
+        ] {
+            g.rect(x0, y0, x1, y1, 0x80FF_0000, Blend::Alpha);
+        }
+        assert_eq!(
+            nibbles(&g, 0, 21, 13),
+            [
+                ".....................",
+                ".............B.......",
+                "..B8888888B..8.......",
+                "..8.......8..8..8....",
+                "..8.......8..8.......",
+                "..8.......8..8.......",
+                "..8.......8..8.......",
+                "..8.......8..8.......",
+                "..888888888..8.......",
+                ".............8.......",
+                ".....................",
+                "..888888888..........",
+                ".....................",
+            ]
+        );
+        assert_eq!(
+            (g.pixel(0, 2, 2), g.pixel(0, 6, 2)),
+            (0xFFBF_0000, 0xFF80_0000)
+        );
+    }
+
+    /// TEST47 part 11: `#G_ALPHA2` of &HF09030 at alphas 1, &H80 and &HFE
+    /// over &H2060A0 at alphas 0, &H40, &H80 and &HFF, read back.
+    #[test]
+    fn alpha2_matches_hardware() {
+        let read = [
+            [0x01F0_9030, 0x80F0_9030, 0xFEF0_9030],
+            [0x4122_5F9D, 0xA0C6_8645, 0xFFEF_8F2F],
+            [0x8120_5F9E, 0xC0AA_7F54, 0xFFEF_8F2F],
+            [0xFF20_609F, 0xFF88_7867, 0xFFEF_8F30],
+        ];
+        for (da, row) in [0u32, 0x40, 0x80, 0xFF].into_iter().zip(read) {
+            for (sa, expected) in [1u32, 0x80, 0xFE].into_iter().zip(row) {
+                let (dst, src) = (da << 24 | 0x2060A0, sa << 24 | 0xF09030);
+                assert_eq!(Blend::Alpha2.apply(dst, src), expected, "{da:X} {sa:X}");
+            }
+        }
+    }
+
+    /// TEST47 part 15: palette indexes past the palette leave the page.
+    #[test]
+    fn load_skips_indexes_past_the_palette() {
+        let mut g = Graphics::default();
+        g.fill(0, 0, 5, 0, 0xFFFF_FFFF, Blend::Normal);
+        let palette = [0xFFFF_0000, 0xFF00_FF00, 0xFF00_00FF];
+        g.load_rect(
+            (0, 0, 6, 1),
+            &[0, 1, 2, 3, 4, 100],
+            Some(&palette),
+            None,
+            Blend::Normal,
+        );
+        let row: Vec<u32> = (0..6).map(|x| g.pixel(0, x, 0)).collect();
+        assert_eq!(row, [0xFFFF_0000, 0xFF00_FF00, 0xFF00_00FF, !0, !0, !0]);
     }
 
     #[test]

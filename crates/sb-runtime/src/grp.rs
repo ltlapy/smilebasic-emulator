@@ -92,13 +92,13 @@ pub(crate) fn array_colors(array: &ArrayRef, n: usize) -> Result<Vec<u32>> {
 }
 
 /// A rectangle given as X,Y,width,height. It may reach off the page
-/// (checked on hardware: GSAVE reads 0 there), but not be empty or larger
-/// than a page.
-// UNVERIFIED: the limits on width and height.
+/// (checked on hardware: GSAVE reads 0 there) and be wider than it, but
+/// not be empty.
+// UNVERIFIED: the limits on width and height (taken as TSAVE's 4096).
 fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
     let (x, y, w, h) = (v[0], v[1], v[2], v[3]);
-    let fits = |len: i32| (1..=GRP_SIZE).contains(&len);
+    let fits = |len: i32| (1..=2 * GRP_SIZE).contains(&len);
     if fits(w) && fits(h) {
         Ok((x, y, w, h))
     } else {
@@ -343,17 +343,18 @@ impl Runtime {
                     _ => return Err(illegal()),
                 };
                 let n = (rect.2 * rect.3) as usize;
-                let mut pixels = array_colors(&numeric_array(&rest[0])?, n)?;
-                if let Some(palette) = palette {
-                    let len = palette.borrow().len();
-                    let colors = array_colors(&palette, len)?;
-                    // Indexes past the palette are no error (checked on
-                    // hardware). UNVERIFIED: that they draw transparent.
-                    for p in &mut pixels {
-                        *p = colors.get(*p as usize).copied().unwrap_or(0);
+                let pixels = array_colors(&numeric_array(&rest[0])?, n)?;
+                // Indexes past the palette are no error (checked on
+                // hardware).
+                let colors = match palette {
+                    Some(palette) => {
+                        let len = palette.borrow().len();
+                        Some(array_colors(&palette, len)?)
                     }
-                }
-                self.grp.load_rect(rect, &pixels, tint, blend);
+                    None => None,
+                };
+                self.grp
+                    .load_rect(rect, &pixels, colors.as_deref(), tint, blend);
                 Ok(vec![])
             }
             (Command::Gsample, Want::Value, 1) => {
