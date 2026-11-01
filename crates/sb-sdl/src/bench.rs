@@ -13,7 +13,10 @@
 //! - `editor`: opens the editor; `apart` in its own window;
 //! - `panel`: shows the debugger's panel with it;
 //! - `shot=PATH`: saves the last frame timed of each window shown, as
-//!   `PATH-main.pam` and `PATH-editor.pam`, to compare drawings.
+//!   `PATH-main.pam` and `PATH-editor.pam`, to compare drawings;
+//! - `menu`, `help`, `about`, `colors`, `toast`: shows the menu bar (as
+//!   F8 does), the help beside the editor, the About dialog, the editor
+//!   colors window, or a notice, once the rest is set up.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -61,6 +64,8 @@ pub struct Bench {
     apart: bool,
     panel: bool,
     shot: Option<String>,
+    /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
+    extras: Vec<String>,
     /// Frames since the start.
     frame: u32,
     /// Each timed frame's stages, and the bytes it uploaded.
@@ -90,6 +95,9 @@ impl Bench {
                     "editor" => bench.editor = true,
                     "apart" => bench.apart = true,
                     "panel" => bench.panel = true,
+                    "menu" | "help" | "about" | "colors" | "toast" => {
+                        bench.extras.push(part.to_string())
+                    }
                     "" => {}
                     _ => eprintln!("SB_UI_BENCH: unknown part {part:?}"),
                 },
@@ -164,6 +172,12 @@ impl Bench {
         if let Err(e) = std::fs::write(format!("{path}-{name}.pam"), out) {
             eprintln!("SB_UI_BENCH: {e}");
         }
+    }
+
+    /// Whether the frontend is to show `part` of its UI now.
+    pub fn opens(&self, part: &str) -> bool {
+        let set_up = if self.stop { SETTLE } else { 0 } + 1;
+        self.frame == set_up + 1 && self.extras.iter().any(|e| e == part)
     }
 
     /// Ends a stage of the frame's drawing, which began where the last

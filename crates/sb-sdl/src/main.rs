@@ -310,6 +310,23 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             b.report(&canvas.renderer_name);
             break 'running;
         }
+        if let Some(b) = &bench {
+            let size = (display_w, display_h);
+            menu.shown |= b.opens("menu");
+            if b.opens("help") {
+                side = open_help(&mut machine, help.as_deref(), &mut toasts, size);
+            }
+            if b.opens("about") {
+                let lines = vec!["A notice".to_string()];
+                dialog = Some((Dialog::notice("About", lines, size), Asking::Notice));
+            }
+            if b.opens("colors") {
+                color_window = Some(ColorWindow::new(size));
+            }
+            if b.opens("toast") {
+                toasts.push("A notice".to_string());
+            }
+        }
         // The editor shows in a window of its own while it is open, if
         // chosen.
         machine.set_detached(machine.rt.settings.editor_window);
