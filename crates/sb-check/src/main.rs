@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use sb_profiles::Profile;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
+use sb_runtime::framebuffer::Framebuffer;
 use sb_runtime::input::State;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
@@ -43,7 +44,9 @@ const USAGE: &str = "usage:
   smilebasic-check --play FRAMES PROJECT PROGRAM SCRIPT DIR
       run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
       (a file, or - for none) asks for, and save the screens it asks for
-      into DIR, the last one as end.png. Like --bench, the program runs
+      into DIR, the last one as end.png. Direct mode goes on after the
+      program while the script has more, such as a SUBRUN line, and
+      while a subprogram runs. Like --bench, the program runs
       in PROJECT itself, so give it a copy if it may save files. Each
       SCRIPT line is a frame number and what happens then:
         F key NAME        a key typed for INKEY$ and INPUT: ENTER, UP,
@@ -458,7 +461,9 @@ fn play(
     // Input held, and the frame it lets go at.
     let mut held: Vec<(Hold, u32)> = Vec::new();
     let mut frame = 0;
-    'run: while frame < frames && m.is_running() {
+    // Direct mode goes on while the script has more to type, as for
+    // SUBRUN, and while a subprogram runs.
+    'run: while frame < frames && (m.is_running() || m.sub_running() || steps.peek().is_some()) {
         while let Some((_, action)) = steps.next_if(|(at, _)| *at <= frame) {
             match action {
                 Action::Key(code) => m.rt.key_press(code),
@@ -472,6 +477,9 @@ fn play(
                 Action::Console => {
                     println!("frame {frame}: the console:");
                     print_rows(&console_rows(&m));
+                    for notice in m.rt.take_notices() {
+                        println!("notice: {notice}");
+                    }
                 }
                 Action::End => break 'run,
             }
@@ -570,15 +578,49 @@ fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
 }
 
 /// The screen as a PNG, as large as XSCREEN made it.
+/// With a subprogram's screen shown, the whole 1280x720 display, the
+/// screen stretched to it and the subprogram's put where XSUBSCREEN puts
+/// it.
 fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
     let fb = m.render();
-    let image = image::Image {
+    let mut image = image::Image {
         width: fb.width() as usize,
         height: fb.height() as usize,
         pixels: fb.pixels().to_vec(),
     };
+    if let Some((sub, rect)) = m.sub_screen() {
+        image = with_sub_screen(&image, sub, rect);
+    }
     std::fs::write(file, image::encode_png(&image))?;
     Ok(())
+}
+
+fn with_sub_screen(main: &image::Image, sub: &Framebuffer, [x, y, w, h]: [i32; 4]) -> image::Image {
+    let (dw, dh) = (1280, 720);
+    let mut pixels = Vec::with_capacity(dw * dh);
+    for py in 0..dh {
+        let sy = py * main.height / dh;
+        pixels.extend((0..dw).map(|px| main.pixels[sy * main.width + px * main.width / dw]));
+    }
+    let (sw, sh) = (sub.width() as i64, sub.height() as i64);
+    for py in y.max(0)..(y + h).min(dh as i32) {
+        for px in x.max(0)..(x + w).min(dw as i32) {
+            let sx = i64::from(px - x) * sw / i64::from(w);
+            let sy = i64::from(py - y) * sh / i64::from(h);
+            let s = sub.pixels()[(sy * sw + sx) as usize];
+            let d = &mut pixels[py as usize * dw + px as usize];
+            // Premultiplied over.
+            let a = 255 - (s >> 24);
+            let channel = |c: u32, shift: u32| ((c >> shift & 0xFF) * a / 255) << shift;
+            let under = channel(*d, 0) | channel(*d, 8) | channel(*d, 16) | channel(*d, 24);
+            *d = s.wrapping_add(under);
+        }
+    }
+    image::Image {
+        width: dw,
+        height: dh,
+        pixels,
+    }
 }
 
 /// Copies the projects beside PROJECT into `scratch` once, for parts that
