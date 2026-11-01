@@ -7,7 +7,7 @@ use std::rc::Rc;
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
 
 use crate::font::{Font, FontSize};
-use crate::text::glyph_pixel;
+use crate::text::{glyph_pixel, glyph_pixel_px};
 
 pub const PAGES: usize = 6;
 /// `#GRPWIDTH` and `#GRPHEIGHT`.
@@ -625,17 +625,17 @@ impl Graphics {
         font: &Font,
         (x, y): (i32, i32),
         text: &[u16],
-        size: FontSize,
+        px: u32,
         (sx, sy): (i32, i32),
         color: u32,
         blend: Blend,
     ) {
-        let n = size as i32;
+        let n = px as i32;
         for (i, &code) in text.iter().enumerate() {
             let left = x.saturating_add((i as i32).saturating_mul(n * sx));
             for gy in 0..n {
                 for gx in 0..n {
-                    let glyph = glyph_pixel(font, self, code, size, gx as u32, gy as u32);
+                    let glyph = glyph_pixel_px(font, self, code, px, gx as u32, gy as u32);
                     let p = multiply(glyph, color);
                     for py in 0..sy {
                         for px in 0..sx {

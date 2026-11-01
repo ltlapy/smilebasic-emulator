@@ -79,7 +79,7 @@ fn bad_arguments_are_errors() {
     for (source, error) in [
         ("GTARGET 6", "Out of range"),
         ("GPSET 0,0,0,5", "Out of range"),
-        ("GPUTCHR 0,0,\"A\",12", "Out of range"),
+        ("GPUTCHR 0,0,\"A\",24", "Illegal font type"),
         ("GCIRCLE 0,0,5,0,90,2", "Out of range"),
         ("GLINE 0,0", "Wrong number of arguments"),
     ] {

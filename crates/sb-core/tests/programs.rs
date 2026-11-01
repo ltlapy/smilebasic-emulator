@@ -557,7 +557,9 @@ fn color_functions() {
         "FFFF7F00FFFFFFFF\n"
     );
     assert_eq!(output("CONST #C=HSV(120,255,255):?HEX$(#C)"), "FF00FF00\n");
-    assert_eq!(output("?HEX$(RGBF(1,-1,0.5))"), "FFFF007F\n");
+    // Below 0 too, as constants; a variable is clamped.
+    assert!(sb_core::compile("?RGBF(1,-1,0)", &TextHost::default()).is_err());
+    assert_eq!(output("I=-1:?HEX$(RGBF(1,I,0.5))"), "FFFF007F\n");
     assert_eq!(output("?HEX$(RGB(584,-1,9))"), "FFFF0009\n");
     assert_eq!(error("?HSV(0,256,0)").0, ErrorKind::OutOfRange);
 }

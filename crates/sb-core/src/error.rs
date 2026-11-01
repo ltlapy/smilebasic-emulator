@@ -66,6 +66,8 @@ pub enum ErrorKind {
     IrCameraNotAvailable,
     /// A Toy-Con command without XCTRLSTYLE setting up that Toy-Con.
     IllegalControlStyle,
+    /// GPUTCHR with a font type other than 8 or 16.
+    IllegalFontType,
 }
 
 impl ErrorKind {
@@ -114,6 +116,7 @@ impl ErrorKind {
             ErrorKind::CantUseUserDefinedCharacter => "Can't use user-derined character",
             ErrorKind::IrCameraNotAvailable => "IR Camera is not available",
             ErrorKind::IllegalControlStyle => "Illegal control style",
+            ErrorKind::IllegalFontType => "Illegal font type",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }

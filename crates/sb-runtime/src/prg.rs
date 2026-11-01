@@ -10,7 +10,8 @@
 //!   empty string; PRGEDIT() then still reports the last line.
 //!
 //! The rest follows the model of these commands in SmileBASIC Debugger
-//! (otya's SBDBG 1.2.8, which tests it against the real ones), with the
+//! (otya's SBDBG 1.2.8, which tests it against the real ones; TEST35
+//! checked the cases below on hardware too), with the
 //! place past the last line kept as the line count:
 //! - PRGSET replaces the current line, and puts the lines after it. On the
 //!   last line it adds an empty line first, and past the last line it

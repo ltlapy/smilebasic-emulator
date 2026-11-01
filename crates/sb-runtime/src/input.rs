@@ -218,6 +218,10 @@ impl Input {
         self.buttons(0, 2)
     }
 
+    pub(crate) fn released(&self) -> u32 {
+        self.buttons(0, 3)
+    }
+
     /// Whether the touch screen was touched this frame.
     pub(crate) fn touched(&self) -> bool {
         self.touch.1 == 1

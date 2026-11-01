@@ -286,6 +286,13 @@ impl Font {
     /// Top-left corner of a code's glyph on the font page, as FONTINFO
     /// reports it. `None` for fallback glyphs that did not fit on the page.
     pub fn origin(&self, code: u16, size: FontSize) -> Option<(u32, u32)> {
+        self.glyph_index(code).map(|n| slot_origin(n, size))
+    }
+
+    /// The glyph number font.map gives a code, which places it on the
+    /// font page for every font size. `None` for fallback glyphs that did
+    /// not fit on the page.
+    pub fn glyph_index(&self, code: u16) -> Option<u32> {
         let n = match &self.0 {
             Source::Page { glyphs, .. } => glyphs[usize::from(code)],
             Source::Cells { slots, index, .. } => {
@@ -300,7 +307,7 @@ impl Font {
                 }
             }
         };
-        (n != NO_CELL).then(|| slot_origin(u32::from(n), size))
+        (n != NO_CELL).then_some(u32::from(n))
     }
 
     /// Pixel `(x, y)` of a code's glyph, `0xAARRGGBB`; both coordinates

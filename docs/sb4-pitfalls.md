@@ -50,8 +50,9 @@ follows all of it. Items still waiting for a check are marked
   start`, the line is typed again on the next line, without the prompt.
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
   Components outside 0 to 1.0 are clamped (`R=1.1:?HEX$(RGBF(R,0,0))` is
-  `FFFF0000`), but a constant one above 1.0 is `Out of range` when the
-  program is compiled (`RGBF(1.1,0.5,0)`, `RGBF(2,-1,0.5)`).
+  `FFFF0000`, an integer variable too), but a constant one outside them
+  is `Out of range` when the program is compiled (`RGBF(1.1,0.5,0)`,
+  `RGBF(1,-1,0)`).
 - `CONST` and `DATA` take `HSV` as well as `RGB`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
   for 400x240.
@@ -149,6 +150,19 @@ follows all of it. Items still waiting for a check are marked
 
 ## Program slots and files
 
+- `GOTO` and `GOSUB` to a label that is not there are `Undefined label`
+  only when they run. `THEN @L` may be followed by more statements on
+  the line, which belong to the branch, and `ELSEIF A GOTO @L` takes
+  GOTO in place of THEN.
+- `CHKCALL("1:ACLS")` is 1 for the system's commands and functions,
+  whatever is in slot 1. `CALL "WAIT",n`, `CALL "VSYNC",n` and
+  `CALL("FREEMEM")` work.
+- `PRGEDIT slot,n` past the last line goes to the last line, and
+  `PRGEDIT slot,-1` past it, where `PRGGET$` is empty. `PRGSEEK 1` from
+  the last line goes past it and gives 0. `PRGDEL` at the end of a slot
+  deletes back towards its start. `PRGSET` on an empty line in the
+  middle replaces it. (SmileBASIC Debugger's model of these commands
+  agrees with all of this.)
 - A call to a name defined nowhere compiles, and is a `Syntax error`
   only when it is reached: the name may be a `COMMON DEF` of a slot that
   `EXEC` runs later.
@@ -219,6 +233,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ## Input
 
+- A `DIALOG` with buttons closes when A is let go, not when it goes
+  down.
 - `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16.
   A held button repeats at its start frame and then every interval plus
   one frames: 20,3 fires at 0, 20, 24, 28...
@@ -319,6 +335,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   flag draws only the outline.
 - `GPUTCHR` with mode 0 clears the page under the character's
   transparent pixels.
+- `GPUTCHR` without a font type uses the console's: after `TSCREEN 24`
+  it draws 24-pixel characters from GRP5, glyph i (font.map's number,
+  as for 8 and 16) at column i%64 and row i/64 of 24-pixel cells, which
+  is how `#GUIDE/DEFFONT24` is laid out. A font type other than 8 or 16
+  given to it is `Illegal font type`. `PRINT` on such a console shows
+  only user-defined characters.
 - `GPUTCHRP` takes each character from one empty column before what is
   drawn of it (none if the glyph starts at its first column) to its last
   drawn column, and moves on that many pixels plus the spacing (1 when
@@ -491,7 +513,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   Pages count from 0; colored runs come as position, length and an
   opaque color (`&HFFF39800`), in an array one run wide when no line
   has more. Names may be in lower case. `HELPINFO OUT` names the word at
-  the editor's cursor at that moment.
+  the editor's cursor at that moment. `HELPINFO("NAME")` works as a
+  function.
 - `KEY` 1 to 5 start as `FILES`, `LOAD"`, `SAVE"`, `LIST ERR` and `RUN`
   (the settings can change them). `KEY` ignores a string over 256
   characters; `PUSHKEY` over 64 is `String is too long`.

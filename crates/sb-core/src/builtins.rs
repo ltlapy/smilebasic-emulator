@@ -864,11 +864,11 @@ pub fn is_constant_function(name: &str) -> bool {
 }
 
 /// Constant arguments a function rejects when the program is compiled,
-/// though it takes the same values at run time: `RGBF(1.1,0,0)` stops the
-/// program before it runs, while `RGBF(R,0,0)` clamps R.
-// UNVERIFIED: that a negative constant component is fine.
+/// though it takes the same values at run time: `RGBF(1.1,0,0)` and
+/// `RGBF(1,-1,0)` stop the program before it runs, while `RGBF(R,0,0)`
+/// clamps R (checked on hardware).
 pub fn check_constant_args(name: &str, args: &[Value]) -> Result<()> {
-    let over = |v: &Value| v.to_real().is_ok_and(|x| x > 1.0);
+    let over = |v: &Value| v.to_real().is_ok_and(|x| !(0.0..=1.0).contains(&x));
     if name == "RGBF" && matches!(args.len(), 3 | 4) && args.iter().any(over) {
         return Err(ErrorKind::OutOfRange.into());
     }

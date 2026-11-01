@@ -324,7 +324,8 @@ impl Runtime {
                     .map_or_else(|_| Vec::new(), |p| p.1);
                 Ok(vec![string(&topic), line_counts(&pages)])
             }
-            (Command::Helpinfo, Want::Outs(1), [name]) => {
+            // Also as a function (checked on hardware).
+            (Command::Helpinfo, Want::Outs(1) | Want::Value, [name]) => {
                 let (_, pages) = self.help_pages(name)?;
                 Ok(vec![line_counts(&pages)])
             }

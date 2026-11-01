@@ -9,6 +9,7 @@ use sb_core::value::{ArrayData, ArrayRef, Value};
 use crate::font::FontSize;
 use crate::graphics::{Blend, Clip, GRP_SIZE, PAGES};
 use crate::runtime::{Command, Runtime, illegal, no_form, opt_int};
+use crate::text::CONSOLE;
 
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
@@ -235,7 +236,12 @@ impl Runtime {
             (Command::Gputchr, Want::Outs(0), 3..=8) => {
                 let v = ints(2)?;
                 let text = chars_arg(&args[2])?;
-                let size = font_size_arg(args.get(3))?;
+                // Left out, it is the console's font type, 24 and up too
+                // (checked on hardware after TSCREEN 24).
+                let px = match args.get(3).map(opt_int).transpose()?.flatten() {
+                    None => self.text[CONSOLE].font().0,
+                    Some(_) => font_size_arg(args.get(3))? as u32,
+                };
                 let (scale, rest) = match args.len() {
                     7 | 8 => (scale_args(&args[4], &args[5])?, &args[6..]),
                     _ => ((1, 1), args.get(4..).unwrap_or(&[])),
@@ -243,7 +249,7 @@ impl Runtime {
                 let (color, blend) = self.color_and_blend(rest)?;
                 let font = &self.font;
                 self.grp
-                    .put_chars(font, (v[0], v[1]), &text, size, scale, color, blend);
+                    .put_chars(font, (v[0], v[1]), &text, px, scale, color, blend);
                 Ok(vec![])
             }
             // GPUTCHRP X,Y,text[,font[,color[,method]]] or
@@ -402,7 +408,10 @@ fn font_size_arg(v: Option<&Value>) -> Result<FontSize> {
     match v.map(opt_int).transpose()?.flatten() {
         None | Some(16) => Ok(FontSize::Large),
         Some(8) => Ok(FontSize::Small),
-        Some(n) => Err(out_of_range("font size", n)),
+        Some(n) => Err(Error::with_detail(
+            ErrorKind::IllegalFontType,
+            format!("{n}"),
+        )),
     }
 }
 

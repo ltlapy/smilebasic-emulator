@@ -32,6 +32,21 @@ pub fn glyph_pixel(font: &Font, grp: &Graphics, code: u16, size: FontSize, x: u3
     }
 }
 
+/// Like [`glyph_pixel`] for any font type: 24 to 64 take glyph number i
+/// from GRP5 at (i % 64, i / 64) cells of that size, as
+/// `#GUIDE/DEFFONT24` lays them out (GPUTCHR drew it on hardware after
+/// `TSCREEN 24`).
+pub fn glyph_pixel_px(font: &Font, grp: &Graphics, code: u16, px: u32, x: u32, y: u32) -> u32 {
+    match px {
+        8 => glyph_pixel(font, grp, code, FontSize::Small, x, y),
+        16 => glyph_pixel(font, grp, code, FontSize::Large, x, y),
+        _ => font.glyph_index(code).map_or(0, |i| {
+            let (gx, gy) = (i % 64 * px + x, i / 64 * px + y);
+            grp.pixel(FONT_PAGE, gx as i32, gy as i32)
+        }),
+    }
+}
+
 /// User-defined characters sit in a grid this many characters wide.
 const USER_GRID: i32 = 64;
 

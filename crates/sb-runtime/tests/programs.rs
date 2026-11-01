@@ -201,6 +201,24 @@ fn dialogs_wait_for_an_answer() {
     settle(&mut m);
     assert_eq!(tail(&m, 2), ["0", "OK"]);
 
+    // A chooses when let go, and only after being pressed with the dialog
+    // open (checked on hardware).
+    let a = 1 << sb_runtime::input::A;
+    m.rt.input.live.pads[0].buttons = a;
+    until_dialog(&mut m, "DIALOG \"Hold\",0:?\"CLOSED\"");
+    m.frame();
+    m.rt.input.live.pads[0].buttons = 0;
+    m.frame();
+    assert!(m.rt.program_dialog().is_some(), "held from before");
+    m.rt.input.live.pads[0].buttons = a;
+    for _ in 0..5 {
+        m.frame();
+    }
+    assert!(m.rt.program_dialog().is_some(), "still held");
+    m.rt.input.live.pads[0].buttons = 0;
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["CLOSED", "OK"]);
+
     // Waiting for buttons: B is pressed, but only A and B count.
     until_dialog(&mut m, "?DIALOG(\"Press\",&B1010)");
     m.rt.input.live.pads[0].buttons = 1 << 1;

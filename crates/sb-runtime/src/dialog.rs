@@ -53,6 +53,8 @@ pub(crate) struct Waiting {
     dialog: ProgramDialog,
     /// Frames before it closes by itself.
     frames_left: Option<u32>,
+    /// Buttons pressed since it opened, which choose when let go.
+    pressed: u32,
 }
 
 /// Labels of SELECTION types 0 to 5.
@@ -194,11 +196,15 @@ impl Runtime {
                 self.dialog = Some(Waiting {
                     dialog,
                     frames_left: frames,
+                    pressed: 0,
                 });
                 None
             }
             Some(waiting) => self.dialog_answer.take().or_else(|| {
-                let answer = self.input.dialog_answer(&waiting.dialog.kind);
+                waiting.pressed |= self.input.pressed();
+                let answer = self
+                    .input
+                    .dialog_answer(&waiting.dialog.kind, waiting.pressed);
                 match &mut waiting.frames_left {
                     _ if answer.is_some() => answer,
                     // Timing out answers 0, for a choice as for buttons.
@@ -243,16 +249,18 @@ impl Runtime {
 
 impl crate::input::Input {
     /// What the controllers and touch screen answer a dialog with this
-    /// frame: A chooses the right (or only) button and B the left of two;
-    /// a wait for buttons ends on any of them going down.
-    // UNVERIFIED: which buttons choose in SmileBASIC 4's dialogs.
-    pub(crate) fn dialog_answer(&self, kind: &DialogKind) -> Option<DialogAnswer> {
-        let pressed = self.pressed();
+    /// frame: A chooses the right (or only) button and B the left of two,
+    /// when let go after being pressed with the dialog open (checked on
+    /// hardware for A); a wait for buttons ends on
+    /// any of them going down.
+    // UNVERIFIED: B, and the wait for buttons.
+    pub(crate) fn dialog_answer(&self, kind: &DialogKind, since: u32) -> Option<DialogAnswer> {
+        let (pressed, released) = (self.pressed(), self.released() & since);
         match kind {
-            DialogKind::Choice(labels) if pressed & 1 << A != 0 => {
+            DialogKind::Choice(labels) if released & 1 << A != 0 => {
                 Some(DialogAnswer::Choice(labels.len() - 1))
             }
-            DialogKind::Choice(labels) if labels.len() == 2 && pressed & 1 << B != 0 => {
+            DialogKind::Choice(labels) if labels.len() == 2 && released & 1 << B != 0 => {
                 Some(DialogAnswer::Choice(0))
             }
             DialogKind::Buttons(mask) => {
