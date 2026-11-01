@@ -423,6 +423,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let mut quit = false;
         for event in events.poll_iter() {
             controls.event(&event);
+            // Whatever the event does may show on the screens.
+            machine.rt.touch();
             // Some renderers lose what textures held, which then has to be
             // given again.
             if matches!(
@@ -1741,14 +1743,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
         let rect = screen_rect(&mode, filter, out_w, display.h);
         let editing = machine.is_editing() && !machine.is_detached();
-        // The editor's frame stays as it is while its revision does.
-        let revision = editing.then(|| {
-            machine.render_editor();
-            machine.editor_revision()
-        });
-        let fb = match revision {
-            Some(_) => machine.editor_frame(),
-            None => machine.render(),
+        // The editor's frame, and the screens', stay as they are while
+        // their revision does.
+        let revision = match editing {
+            true => {
+                machine.render_editor();
+                (true, machine.editor_revision())
+            }
+            false => {
+                machine.render();
+                (false, machine.screen_revision())
+            }
+        };
+        let fb = match editing {
+            true => machine.editor_frame(),
+            false => machine.screen_frame(),
         };
         let frame = (fb.width(), fb.height());
         // The editor's frame can be finer than the screen it is shown in.
@@ -1764,11 +1773,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             texture = frame_texture(&canvas, &texture_creator, kind)?;
             texture_holds = None;
         }
-        if revision.is_none() || revision != texture_holds {
+        if Some(revision) != texture_holds {
             bench::uploaded(fb.pixels().len() * 4);
             texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         }
-        texture_holds = revision;
+        texture_holds = Some(revision);
         lap!(Screen);
         // The editor in its own window, where the debugger's panel goes
         // too: where its frame and display are there.
