@@ -131,6 +131,9 @@ fn draw_cap(fb: &mut Framebuffer, font: &Font, cap: Rect, key: Scancode, button:
 
 /// A filled triangle pointing `dir` in the middle of `cap`.
 fn draw_arrow(fb: &mut Framebuffer, cap: Rect, (dx, dy): (i32, i32)) {
+    if crate::ui::dry(fb, cap, ("arrow", cap, dx, dy)) {
+        return;
+    }
     let size = cap.w as i32 / 4;
     let (cx, cy) = ((cap.x + cap.w / 2) as i32, (cap.y + cap.h / 2) as i32);
     for along in -size..=size {

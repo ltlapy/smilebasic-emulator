@@ -67,6 +67,7 @@ impl Toasts {
         self.items.retain(|t| t.frames_left > 0);
     }
 
+    #[cfg(test)]
     pub fn visible(&self) -> bool {
         !self.items.is_empty()
     }

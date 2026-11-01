@@ -603,10 +603,51 @@ impl DebugPanel {
         }
     }
 
-    /// Draws the panel into `f`, leaving the place of screens of `size`
-    /// clear for the frontend to draw them. Without a size, the screens
-    /// show elsewhere and the panel has no place for them.
+    /// A frame on, for what the panel animates: the BGM tab's level bars.
+    pub fn advance(&mut self, view: &View) {
+        if let Some(bgm) = &view.bgm {
+            self.meters.update(bgm);
+        }
+    }
+
+    /// Draws the panel at `f` on the display into `fb`, a frame of `f`'s
+    /// size, leaving the place of screens of `size` clear for the
+    /// frontend to draw them. Without a size, the screens show elsewhere
+    /// and the panel has no place for them. The whole value of a row cut
+    /// short goes elsewhere too: see [`DebugPanel::draw_tip`].
     pub fn draw(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        f: Rect,
+        size: Option<(u32, u32)>,
+        view: &View,
+        scale: u32,
+    ) {
+        self.draw_at(fb, font, Rect { x: 0, y: 0, ..f }, size, view, scale);
+        // Clicks and the pointer come in display pixels.
+        let shift = |r: &mut Rect| (r.x, r.y) = (r.x + f.x, r.y + f.y);
+        self.frame = Some(f);
+        self.hits.iter_mut().for_each(|(r, _)| shift(r));
+        self.tips.iter_mut().for_each(|(r, _)| shift(r));
+        self.grp.shift(f.x, f.y);
+    }
+
+    /// Draws the panel at `f` on `fb`, a frame the size of the display,
+    /// as part of what else is drawn there.
+    pub fn draw_on_display(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        f: Rect,
+        size: Option<(u32, u32)>,
+        view: &View,
+        scale: u32,
+    ) {
+        self.draw_at(fb, font, f, size, view, scale);
+    }
+
+    fn draw_at(
         &mut self,
         fb: &mut Framebuffer,
         font: &Font,
@@ -945,7 +986,6 @@ impl DebugPanel {
             let x = x + reason as u32 * m.char;
             m.draw(fb, font, x, y, &format!(" / {}", view.keys), DISABLED);
         }
-        self.draw_tip(fb, font);
     }
 
     /// The measurements PERFBEGIN or PERFEND used since RUN, from `(x,
@@ -1127,8 +1167,8 @@ impl DebugPanel {
     }
 
     /// The whole value of the row under the pointer, above it, if the row
-    /// cuts it.
-    fn draw_tip(&self, fb: &mut Framebuffer, font: &Font) {
+    /// cuts it, on `fb` the size of the display.
+    pub fn draw_tip(&self, fb: &mut Framebuffer, font: &Font) {
         let m = Metrics::new(self.scale);
         let Some(at) = self.pointer else {
             return;
@@ -1162,6 +1202,15 @@ impl DebugPanel {
 
 /// A sprite's thumbnail drawn `side` pixels across at `(x, y)`.
 fn draw_thumb(fb: &mut Framebuffer, thumb: &[u32], (x, y): (u32, u32), side: u32) {
+    let area = Rect {
+        x,
+        y,
+        w: side,
+        h: side,
+    };
+    if crate::ui::dry(fb, area, ("thumb", area, thumb)) {
+        return;
+    }
     let n = sprites::THUMB as u32;
     for dy in 0..side {
         let ty = (dy * n / side) as usize;
@@ -1454,5 +1503,90 @@ mod tests {
         p.add_watch("B".to_string());
         p.key(Keycode::Escape);
         assert!(!p.typing() && p.watches.is_empty());
+    }
+
+    /// A panel with variables, one of them too long for its row.
+    fn busy_view(last: i32) -> View {
+        let long = Value::Str(new_str(
+            "A LONG STRING ".repeat(20).encode_utf16().collect(),
+        ));
+        View {
+            variables: vec![
+                ("COUNT".to_string(), Value::Int(last)),
+                ("NAME$".to_string(), long),
+                ("SPEED#".to_string(), Value::Real(1.5)),
+            ],
+            status: "Running".to_string(),
+            ..view(vec![Tab::Globals(0), Tab::Perf])
+        }
+    }
+
+    #[test]
+    fn drawn_on_its_own_the_panel_looks_as_on_the_display() {
+        let font = Font::fallback();
+        let f = Rect {
+            x: 0,
+            y: 420,
+            w: 1280,
+            h: 300,
+        };
+        let view = busy_view(7);
+        // As it was drawn before: on the display's overlay, the tip last.
+        let mut before = DebugPanel::default();
+        let mut display = Framebuffer::new(1280, 720);
+        display.clear(0);
+        before.draw_at(&mut display, &font, f, Some((400, 240)), &view, 2);
+        let (row, _) = before.tips[0].clone();
+        let at = (row.x as i32 + 4, row.y as i32 + 4);
+        before.motion(at, false);
+        before.draw_at(&mut display, &font, f, Some((400, 240)), &view, 2);
+        before.draw_tip(&mut display, &font);
+
+        let mut after = DebugPanel::default();
+        after.motion(at, false);
+        let mut panel = Framebuffer::new(f.w, f.h);
+        let mut overlay = Framebuffer::new(1280, 720);
+        overlay.clear(0);
+        after.draw(&mut panel, &font, f, Some((400, 240)), &view, 2);
+        after.draw_tip(&mut overlay, &font);
+        assert_eq!(after.hits, before.hits);
+        assert_eq!(after.frame, before.frame);
+        // The overlay goes over the panel, opaque where it is drawn.
+        for y in 0..720 {
+            for x in 0..1280 {
+                let over = overlay.get(x, y).unwrap();
+                let under = match y.checked_sub(f.y) {
+                    Some(py) => panel.get(x, py).unwrap(),
+                    None => 0,
+                };
+                let shown = if over >> 24 == 0 { under } else { over };
+                assert_eq!(shown, display.get(x, y).unwrap(), "at {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_dry_run_draws_nothing_and_tells_what_changed() {
+        let font = Font::fallback();
+        let f = Rect {
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 300,
+        };
+        let mut p = DebugPanel::default();
+        let mut fb = Framebuffer::new(f.w, f.h);
+        fb.clear(0);
+        let key = |p: &mut DebugPanel, view: &View, fb: &mut Framebuffer| {
+            crate::ui::dry_run(|| p.draw(fb, &font, f, None, view, 2))
+        };
+        let first = key(&mut p, &busy_view(7), &mut fb);
+        assert!(fb.pixels().iter().all(|&c| c == 0));
+        assert_eq!((first.bounds, first.translucent), (Some(f), None));
+        assert_eq!(key(&mut p, &busy_view(7), &mut fb).key, first.key);
+        assert_ne!(key(&mut p, &busy_view(8), &mut fb).key, first.key);
+        // The pointer changes nothing while it shows no tip.
+        p.motion((600, 10), false);
+        assert_eq!(key(&mut p, &busy_view(7), &mut fb).key, first.key);
     }
 }

@@ -434,6 +434,20 @@ fn line(
     let Some((a, b)) = clip_line(a, b, clip) else {
         return;
     };
+    // The squares' corners can stray past the ends by their size.
+    let (x0, y0) = (a.0.min(b.0), a.1.min(b.1));
+    let reach = f64::from(thick) + 1.0;
+    let around = Rect {
+        x: (x0 - reach).max(0.0) as u32,
+        y: (y0 - reach).max(0.0) as u32,
+        w: ((a.0 - b.0).abs() + 2.0 * reach) as u32,
+        h: ((a.1 - b.1).abs() + 2.0 * reach) as u32,
+    };
+    let ends = [a.0, a.1, b.0, b.1].map(f64::to_bits);
+    let what = ("line", ends, clip, thick, color, dashed);
+    if crate::ui::dry(fb, around, what) {
+        return;
+    }
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let steps = dx.abs().max(dy.abs()).ceil().max(1.0) as u32;
     let half = f64::from(thick) / 2.0;

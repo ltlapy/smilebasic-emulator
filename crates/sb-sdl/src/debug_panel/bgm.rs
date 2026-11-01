@@ -136,7 +136,7 @@ impl Meters {
     /// A frame on: a new note lights its channel up to its loudness, a
     /// held one fades down to part of it, and silence to nothing. Only
     /// the drawing moves them, so the sound pays nothing.
-    fn update(&mut self, bgm: &Bgm) {
+    pub(super) fn update(&mut self, bgm: &Bgm) {
         for t in &bgm.tracks {
             let gain = t.volume as f32 / 127.0 * t.fade as f32;
             for c in t.channels.iter().filter(|c| c.channel < CHANNELS) {
@@ -592,7 +592,6 @@ impl DebugPanel {
             w: (right + m.pad / 2).saturating_sub(x),
             h: bottom.saturating_sub(y),
         };
-        self.meters.update(bgm);
         if bgm.tracks.is_empty() && bgm.beeps.is_empty() {
             m.draw(fb, font, x, y + m.text, "No BGM or BEEP sounds", DISABLED);
             self.hits.push((area, Hit::Bgm));

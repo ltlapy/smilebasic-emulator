@@ -1,5 +1,7 @@
 //! Drawing for the emulator's own UI, at display resolution.
 
+use std::cell::RefCell;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use sb_runtime::Framebuffer;
@@ -21,7 +23,7 @@ pub const BORDER: u32 = 0xFF80_8080;
 /// The face of a button that cannot be pressed.
 const DISABLED_FACE: u32 = 0xFF40_4040;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rect {
     pub x: u32,
     pub y: u32,
@@ -37,6 +39,121 @@ impl Rect {
             && x < i64::from(self.x + self.w)
             && y < i64::from(self.y + self.h)
     }
+
+    /// The part of the rectangle on a frame of `w` x `h`, if any.
+    pub fn within(self, (w, h): (u32, u32)) -> Option<Rect> {
+        let (x0, y0) = (self.x.min(w), self.y.min(h));
+        let x1 = self.x.saturating_add(self.w).min(w);
+        let y1 = self.y.saturating_add(self.h).min(h);
+        (x1 > x0 && y1 > y0).then_some(Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        })
+    }
+
+    /// Whether the two share a pixel.
+    pub fn overlaps(self, other: Rect) -> bool {
+        self.x < other.x + other.w
+            && other.x < self.x + self.w
+            && self.y < other.y + other.h
+            && other.y < self.y + self.h
+    }
+
+    /// The smallest rectangle around both.
+    pub fn union(self, other: Rect) -> Rect {
+        let (x0, y0) = (self.x.min(other.x), self.y.min(other.y));
+        let x1 = (self.x + self.w).max(other.x + other.w);
+        let y1 = (self.y + self.h).max(other.y + other.h);
+        Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        }
+    }
+}
+
+/// Either rectangle, or the smallest around both.
+pub fn union(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.union(b)),
+        _ => a.or(b),
+    }
+}
+
+/// What a dry run of drawing gathers: a fingerprint of what would be
+/// drawn, and around where.
+struct Dry {
+    state: DefaultHasher,
+    bounds: Option<Rect>,
+    translucent: Option<Rect>,
+}
+
+/// What a dry run found would be drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Drawn {
+    /// A fingerprint of everything drawn, in order: drawing that gives
+    /// the same one draws the same pixels on the same ones.
+    pub key: u64,
+    /// Around everything drawn.
+    pub bounds: Option<Rect>,
+    /// Around what is filled partly see-through, which lets what is
+    /// under the frame show.
+    pub translucent: Option<Rect>,
+}
+
+thread_local! {
+    static DRY: RefCell<Option<Dry>> = const { RefCell::new(None) };
+}
+
+/// Runs `draw` without drawing anything, to find what it would have
+/// drawn. Everything drawn must go through the functions that call
+/// [`dry`].
+pub fn dry_run(draw: impl FnOnce()) -> Drawn {
+    DRY.with_borrow_mut(|dry| {
+        *dry = Some(Dry {
+            state: DefaultHasher::new(),
+            bounds: None,
+            translucent: None,
+        })
+    });
+    draw();
+    let dry = DRY.with_borrow_mut(Option::take).expect("set above");
+    Drawn {
+        key: dry.state.finish(),
+        bounds: dry.bounds,
+        translucent: dry.translucent,
+    }
+}
+
+/// During a dry run, notes that `what` would be drawn on `area` of
+/// `fb`, and returns true for the caller to draw nothing; otherwise
+/// false. `what` must tell apart whatever draws differently there.
+pub fn dry(fb: &Framebuffer, area: Rect, what: impl Hash) -> bool {
+    DRY.with_borrow_mut(|dry| {
+        let Some(dry) = dry else {
+            return false;
+        };
+        let area = area.within((fb.width(), fb.height()));
+        dry.bounds = union(dry.bounds, area);
+        what.hash(&mut dry.state);
+        true
+    })
+}
+
+/// Clears the whole frame to `color`.
+pub fn clear(fb: &mut Framebuffer, color: u32) {
+    let all = Rect {
+        x: 0,
+        y: 0,
+        w: fb.width(),
+        h: fb.height(),
+    };
+    if !dry(fb, all, ("clear", color)) {
+        fb.clear(color);
+    }
 }
 
 pub fn text_width(text: &str) -> u32 {
@@ -44,10 +161,24 @@ pub fn text_width(text: &str) -> u32 {
 }
 
 pub fn fill(fb: &mut Framebuffer, r: Rect, color: u32) {
-    for y in r.y..r.y + r.h {
-        for x in r.x..r.x + r.w {
-            fb.set(x, y, color);
+    if dry(fb, r, ("fill", r, color)) {
+        if let (1..=0xFE, Some(r)) = (color >> 24, r.within((fb.width(), fb.height()))) {
+            DRY.with_borrow_mut(|dry| {
+                if let Some(dry) = dry {
+                    dry.translucent = union(dry.translucent, Some(r));
+                }
+            });
         }
+        return;
+    }
+    let w = fb.width();
+    let Some(r) = r.within((w, fb.height())) else {
+        return;
+    };
+    let pixels = fb.pixels_mut();
+    for y in r.y..r.y + r.h {
+        let row = (y * w + r.x) as usize;
+        pixels[row..row + r.w as usize].fill(color);
     }
 }
 
@@ -97,7 +228,17 @@ pub fn draw_text_scaled(
     scale: u32,
 ) {
     let cell = 8 * scale;
-    let (size, scale) = if LARGE_FONT.load(Ordering::Relaxed) && scale.is_multiple_of(2) {
+    let large = LARGE_FONT.load(Ordering::Relaxed);
+    let area = Rect {
+        x,
+        y,
+        w: (text.encode_utf16().count() as u32).saturating_mul(cell),
+        h: cell,
+    };
+    if dry(fb, area, ("text", x, y, text, color, scale, large)) {
+        return;
+    }
+    let (size, scale) = if large && scale.is_multiple_of(2) {
         (FontSize::Large, scale / 2)
     } else {
         (FontSize::Small, scale)

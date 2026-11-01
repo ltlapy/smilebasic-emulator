@@ -193,6 +193,13 @@ impl GrpView {
         self.offset = (fit(self.offset.0, p.w), fit(self.offset.1, p.h));
     }
 
+    /// Moves where the view was drawn by `(dx, dy)`.
+    pub fn shift(&mut self, dx: u32, dy: u32) {
+        if let Some(p) = &mut self.place {
+            (p.x, p.y) = (p.x + dx, p.y + dy);
+        }
+    }
+
     /// Where the view is drawn, or `None` while the tab is not shown.
     pub fn set_place(&mut self, place: Option<Rect>) {
         self.place = place;

@@ -629,8 +629,12 @@ impl MenuBar {
         }
     }
 
-    /// Draws the bar, and the open menus, onto a transparent overlay.
-    pub fn draw(&self, fb: &mut Framebuffer, font: &Font, settings: &Settings, context: Context) {
+    /// The bar's height on the display.
+    pub const HEIGHT: u32 = ROW_HEIGHT;
+
+    /// Draws the bar onto a transparent frame as wide as the display; the
+    /// open menus go apart, with [`MenuBar::draw_lists`].
+    pub fn draw_bar(&self, fb: &mut Framebuffer, font: &Font) {
         let bar = Rect {
             x: 0,
             y: 0,
@@ -660,6 +664,16 @@ impl MenuBar {
         if x > last.x + last.w + PAD {
             draw_text(fb, font, x, 4, &self.status, TEXT);
         }
+    }
+
+    /// Draws the open menu's list and submenu, if any, below the bar.
+    pub fn draw_lists(
+        &self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        settings: &Settings,
+        context: Context,
+    ) {
         let Some(open) = self.open else { return };
         let items = MENUS[open].items;
         let rects: Vec<Rect> = (0..items.len()).map(|i| item_rect(open, i)).collect();

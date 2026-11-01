@@ -11,6 +11,7 @@ mod grp_view;
 mod help;
 mod index;
 mod keyhint;
+mod layer;
 mod menu;
 mod popup;
 mod program_dialog;
@@ -35,6 +36,7 @@ use grp_view::PageTexture;
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
+use layer::Layer;
 use menu::{Action, Click, Context, MenuBar};
 use popup::Popup;
 use program_dialog::ProgramView;
@@ -64,7 +66,7 @@ use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
-use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator};
+use sdl3::render::{BlendMode, Canvas, FRect, Texture, TextureCreator};
 use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
 use sdl3::sys::render::{SDL_SetDefaultTextureScaleMode, SDL_SetTextureBlendMode};
 use sdl3::sys::surface::SDL_ScaleMode;
@@ -223,21 +225,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The pixels that mouse positions are given in: the screen's, or the
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
-    // The menu bar and other emulator UI, drawn at display resolution.
-    let mut overlay = Framebuffer::new(display_w, display_h);
-    let mut overlay_texture =
-        texture_creator.create_texture_streaming(PixelFormat::ARGB8888, display_w, display_h)?;
-    overlay_texture.set_scale_mode(ScaleMode::Nearest);
-    overlay_texture.set_blend_mode(BlendMode::Blend);
     let mut menu = MenuBar::default();
     // The editor's own window, made the first time the editor opens apart
     // from the screen and hidden while it is closed, with its frame's
-    // texture, its own overlay, and the pixels its pointer positions are
-    // given in.
+    // texture and the pixels its pointer positions are given in.
     let editor_gfx: OnceCell<EditorWindow> = OnceCell::new();
+    // The emulator's UI over the screens or the editor, drawn at display
+    // resolution, in each window: the debugger's panel, the menu bar, and
+    // everything else, each drawn and uploaded only as it changes.
+    let mut panel_layers: [Layer; 2] = Default::default();
+    let mut bar_layers: [Layer; 2] = Default::default();
+    let mut overlay_layers: [Layer; 2] = Default::default();
     let mut editor_texture: Option<(Texture, TextureKind)> = None;
-    let mut editor_overlay = Framebuffer::new(display_w, display_h);
-    let mut editor_overlay_texture: Option<Texture> = None;
     let mut editor_grp = PageTexture::default();
     let mut editor_space = (1, 1);
     let mut editor_shown = false;
@@ -338,15 +337,6 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 .filter(|_| settings.editor_window_keep_place);
             let made = EditorWindow::open(&video, (display_w, display_h), place, canvas.window())?;
             let _ = editor_gfx.set(made);
-            let gfx = editor_gfx.get().expect("set above");
-            let mut made = gfx.creator.create_texture_streaming(
-                PixelFormat::ARGB8888,
-                display_w,
-                display_h,
-            )?;
-            made.set_scale_mode(ScaleMode::Nearest);
-            made.set_blend_mode(BlendMode::Blend);
-            editor_overlay_texture = Some(made);
         }
         if let Some(gfx) = editor_gfx.get()
             && apart != editor_shown
@@ -434,6 +424,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::RenderTargetsReset { .. } | Event::RenderDeviceReset { .. }
             ) {
                 (texture_holds, editor_holds) = (None, None);
+                let layers = panel_layers.iter_mut().chain(&mut bar_layers);
+                layers.chain(&mut overlay_layers).for_each(Layer::forget);
             }
             let editor_id = editor_gfx.get().map(|gfx| gfx.id);
             let from_editor = editor_id.is_some() && event.get_window_id() == editor_id;
@@ -1930,15 +1922,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             cursor_shown = show_cursor;
             mouse.show_cursor(show_cursor);
         }
-        // Which overlay each part goes on: the main window's, or the
-        // editor's window's. The menu bar and the emulator's windows go
-        // with the keys, the editor's panels and menu with the editor.
+        // Which window each part goes on: the main one, or the editor's.
+        // The menu bar and the emulator's windows go with the keys, the
+        // editor's panels and menu with the editor.
         let ui = usize::from(ui_editor);
         let ed = usize::from(apart);
-        let mut used = [false; 2];
-        used[ui] |= modal || dims || menu.visible() || toasts.visible();
         let side_on = if side_direct { 0 } else { ed };
-        used[ed] |= debug.is_some() || debug_menu.is_some();
         // Beside the editor's own window, the chosen sprite is outlined
         // on the main one's screen, and a subprogram's always on its own,
         // where the panel leaves it.
@@ -1971,80 +1960,140 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 None => None,
             }
         });
-        used[0] |= outline.is_some();
-        used[side_on] |= side.is_some();
-        used[0] |= program_dialog.is_some() || key_hint.visible();
-        // The editor's window always shows the menu bar.
-        used[1] |= apart;
-        let mut overlays = [&mut overlay, &mut editor_overlay];
-        for (i, fb) in overlays.iter_mut().enumerate() {
-            // A dialog or the project manager dims the screen behind it,
-            // as a program's DIALOG does.
-            let dim = i == ui && dims || i == 0 && program_dialog.is_some();
-            if used[i] {
-                fb.clear(if dim { 0x8000_0000 } else { 0 });
-            }
-        }
+        // The menu bar shows over everything in the window with the keys,
+        // and the editor's window always shows it.
+        let mut bar_shown = [false; 2];
+        bar_shown[ui] = dialog.is_none() && !modal && menu.visible();
+        bar_shown[1] |= apart && ui == 0;
+        let closed_bar = menu.closed();
         let font = machine.rt.font();
         ui::set_font(machine.rt.settings.ui_font);
         let cursor_on = (blink / 25).is_multiple_of(2);
-        match &debug {
-            Some((place, view, size)) => {
-                let scale = machine.rt.settings.debug_text_size;
-                debug_panel.draw(overlays[ed], font, *place, *size, view, scale)
-            }
-            None => debug_panel.hide(),
-        }
-        if let Some((outline, frame, place, clip)) = &outline {
-            debug_panel::sprites::draw_outline(overlays[0], outline, *frame, *place, *clip, 2);
-        }
-        match &side {
-            Some(Side::Help(help)) => help.draw(overlays[side_on], font, side_focus),
-            Some(Side::Index(index, _)) => index.draw(overlays[side_on], font, side_focus),
-            None => {}
-        }
-        // Windows over the editor go over its panels too.
-        if let Some(open) = &manager {
-            open.draw(overlays[ui], font, cursor_on);
-        }
-        if let Some(open) = &program_dialog {
-            open.draw(overlays[0], font, cursor_on);
-        }
-        if let Some(open) = &color_window {
-            open.draw(overlays[ui], font, &machine.rt.settings.editor_colors);
-        }
-        if let Some(open) = &settings_window {
-            open.draw(overlays[ui], font, &machine.rt.settings);
-        }
-        if let Some(open) = &shortcuts_window {
-            open.draw(overlays[ui], font);
-        }
-        match &file_dialog {
-            Some(FileDialog::Save(d)) => d.draw(overlays[ui], font, cursor_on),
-            Some(FileDialog::Load(p)) => p.draw(overlays[ui], font, cursor_on),
-            None => {}
-        }
-        if let Some(open) = &debug_menu {
-            open.draw(overlays[ed], font);
-        }
-        if key_hint.visible() {
-            key_hint.draw(overlays[0], font);
-        }
-        toasts.draw(overlays[ui], font);
         let context = menu_context(&machine);
-        if let Some((open, _)) = &dialog {
-            open.draw(overlays[ui], font);
-        } else if !modal && menu.visible() {
-            menu.draw(overlays[ui], font, &machine.rt.settings, context);
+        let settings = &machine.rt.settings;
+        let editor_creator = editor_gfx.get().filter(|_| apart).map(|gfx| &gfx.creator);
+        let creators = [Some(&texture_creator), editor_creator];
+        let scale = settings.debug_text_size;
+        match &debug {
+            Some((_, view, _)) => {
+                debug_panel.advance(view);
+                panel_layers[1 - ed].release();
+            }
+            None => {
+                debug_panel.hide();
+                panel_layers.iter_mut().for_each(Layer::release);
+            }
         }
-        if apart && ui == 0 {
-            let bar = menu.closed();
-            bar.draw(overlays[1], font, &machine.rt.settings, context);
+        // Whether the panel is drawn with the rest of the window's UI
+        // rather than on its own.
+        let mut panel_inside = [false; 2];
+        for (i, creator) in creators.into_iter().enumerate() {
+            let Some(creator) = creator else {
+                continue;
+            };
+            if bar_shown[i] {
+                let bar = if i == ui { &menu } else { &closed_bar };
+                bar_layers[i].update(creator, (display_w, MenuBar::HEIGHT), |fb| {
+                    bar.draw_bar(fb, font)
+                })?;
+            }
+            // A dialog or the project manager dims the screen behind it,
+            // as a program's DIALOG does, but not the panel and the bar
+            // over it.
+            let dim = i == ui && dims || i == 0 && program_dialog.is_some();
+            let panel = debug.as_ref().filter(|_| i == ed).map(|(place, ..)| *place);
+            let bar = ui::Rect {
+                x: 0,
+                y: 0,
+                w: display_w,
+                h: MenuBar::HEIGHT,
+            };
+            let inside = Cell::new(false);
+            let parts = |fb: &mut Framebuffer, debug_panel: &mut DebugPanel| {
+                if dim {
+                    ui::clear(fb, 0x8000_0000);
+                    if let (Some(panel), false) = (panel, inside.get()) {
+                        ui::fill(fb, panel, 0);
+                    }
+                }
+                if let (true, Some((place, view, size))) = (inside.get(), &debug) {
+                    debug_panel.draw_on_display(fb, font, *place, *size, view, scale);
+                }
+                if panel.is_some() {
+                    debug_panel.draw_tip(fb, font);
+                }
+                if let (0, Some((outline, frame, place, clip))) = (i, &outline) {
+                    debug_panel::sprites::draw_outline(fb, outline, *frame, *place, *clip, 2);
+                }
+                match &side {
+                    _ if i != side_on => {}
+                    Some(Side::Help(help)) => help.draw(fb, font, side_focus),
+                    Some(Side::Index(index, _)) => index.draw(fb, font, side_focus),
+                    None => {}
+                }
+                // Windows over the editor go over its panels too.
+                if let (true, Some(open)) = (i == ui, &manager) {
+                    open.draw(fb, font, cursor_on);
+                }
+                if let (0, Some(open)) = (i, &program_dialog) {
+                    open.draw(fb, font, cursor_on);
+                }
+                if i == ui {
+                    if let Some(open) = &color_window {
+                        open.draw(fb, font, &settings.editor_colors);
+                    }
+                    if let Some(open) = &settings_window {
+                        open.draw(fb, font, settings);
+                    }
+                    if let Some(open) = &shortcuts_window {
+                        open.draw(fb, font);
+                    }
+                    match &file_dialog {
+                        Some(FileDialog::Save(d)) => d.draw(fb, font, cursor_on),
+                        Some(FileDialog::Load(p)) => p.draw(fb, font, cursor_on),
+                        None => {}
+                    }
+                }
+                if let (true, Some(open)) = (i == ed, &debug_menu) {
+                    open.draw(fb, font);
+                }
+                if i == 0 && key_hint.visible() {
+                    key_hint.draw(fb, font);
+                }
+                if i == ui {
+                    toasts.draw(fb, font);
+                    match &dialog {
+                        Some((open, _)) => open.draw(fb, font),
+                        None if bar_shown[i] => menu.draw_lists(fb, font, settings, context),
+                        None => {}
+                    }
+                }
+                // The bar covers what is under it.
+                if dim && bar_shown[i] {
+                    ui::fill(fb, bar, 0);
+                }
+            };
+            let size = (display_w, display_h);
+            if let (Some(place), Some((_, view, screens))) = (panel, &debug) {
+                // What is partly see-through over the panel shows what is
+                // under the panel, as it always did, if drawn with it.
+                let probe = overlay_layers[i].dry_run(size, |fb| parts(fb, &mut debug_panel));
+                inside.set(probe.translucent.is_some_and(|t| t.overlaps(place)));
+                panel_inside[i] = inside.get();
+                if !inside.get() {
+                    panel_layers[i].update(creator, (place.w, place.h), |fb| {
+                        debug_panel.draw(fb, font, place, *screens, view, scale)
+                    })?;
+                }
+            }
+            overlay_layers[i].update(creator, size, |fb| parts(fb, &mut debug_panel))?;
         }
-        if used[0] {
-            bench::uploaded(overlay.pixels().len() * 4);
-            overlay_texture.update(None, as_bytes(overlay.pixels()), (display_w * 4) as usize)?;
-            canvas.copy(&overlay_texture, None, display)?;
+        if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
+            panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w)?;
+        }
+        overlay_layers[0].copy(&mut canvas, (0, 0), display, display_w)?;
+        if bar_shown[0] {
+            bar_layers[0].copy(&mut canvas, (0, 0), display, display_w)?;
         }
         lap!(Overlays);
         if let Some(b) = &bench {
@@ -2059,23 +2108,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if let Some((tex, _)) = &editor_texture {
                 editor_canvas.copy(tex, None, editor_place.0)?;
             }
-            if debug.is_some() {
+            let display = editor_place.2;
+            let canvas = &mut *editor_canvas;
+            if let Some((place, ..)) = &debug {
                 let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
-                let canvas = &mut *editor_canvas;
-                editor_grp.draw(
-                    canvas,
-                    &gfx.creator,
-                    grp,
-                    panel_grp,
-                    editor_place.2,
-                    display_w,
-                )?;
+                editor_grp.draw(canvas, &gfx.creator, grp, panel_grp, display, display_w)?;
+                if !panel_inside[1] {
+                    panel_layers[1].copy(canvas, (place.x, place.y), display, display_w)?;
+                }
             }
-            if let Some(tex) = &mut editor_overlay_texture {
-                let pixels = as_bytes(editor_overlay.pixels());
-                bench::uploaded(pixels.len());
-                tex.update(None, pixels, (display_w * 4) as usize)?;
-                editor_canvas.copy(tex, None, editor_place.2)?;
+            overlay_layers[1].copy(canvas, (0, 0), display, display_w)?;
+            if bar_shown[1] {
+                bar_layers[1].copy(canvas, (0, 0), display, display_w)?;
             }
             lap!(Overlays);
             if let Some(b) = &bench {
