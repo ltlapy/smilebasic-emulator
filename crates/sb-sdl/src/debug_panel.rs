@@ -375,13 +375,22 @@ impl DebugPanel {
         self.grp.release();
     }
 
-    /// The pointer moved, or left the window with `None`; it drags the
-    /// GRP tab's page while the left button is down there.
-    pub fn pointer(&mut self, at: Option<(i32, i32)>) {
-        self.pointer = at;
-        if let Some(at) = at {
-            self.grp.drag_to(at);
+    /// The pointer moved to `at`, with the left button `held` or not as
+    /// the motion tells; it drags the GRP tab's page only while the
+    /// button stays down since it went down on the page. A motion with
+    /// the button up ends a drag whose button-up never came, so that the
+    /// page does not follow a pointer it was let go of.
+    pub fn motion(&mut self, at: (i32, i32), held: bool) {
+        self.pointer = Some(at);
+        if !held {
+            self.grp.release();
         }
+        self.grp.drag_to(at);
+    }
+
+    /// The pointer left the window.
+    pub fn leave(&mut self) {
+        self.pointer = None;
     }
 
     /// The left button went up.
@@ -1144,6 +1153,84 @@ mod tests {
 
     use sb_core::value::{Array, new_str};
 
+    /// What the panel shows with nothing in it but `tabs`.
+    fn view(tabs: Vec<Tab>) -> View {
+        View {
+            calls: Vec::new(),
+            tabs,
+            variables: Vec::new(),
+            frame: None,
+            slot: 0,
+            watches: Vec::new(),
+            status: String::new(),
+            status_failed: false,
+            keys: String::new(),
+            changed: None,
+            breakpoints: Vec::new(),
+            perf: [PerfStats::default(); 8],
+            sprites: None,
+            grp: Probe::default(),
+            bgm: None,
+        }
+    }
+
+    #[test]
+    fn the_grp_page_moves_only_while_dragged() {
+        let mut p = DebugPanel {
+            tab: Some(Tab::Grp),
+            ..DebugPanel::default()
+        };
+        p.grp.zoom = crate::grp_view::Zoom::Times(2);
+        let mut fb = Framebuffer::new(1280, 300);
+        let f = Rect {
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 300,
+        };
+        let view = view(vec![Tab::Globals(0), Tab::Grp]);
+        p.draw(&mut fb, &Font::blank(), f, Some((400, 240)), &view, 1);
+        let (page, _) = *(p.hits.iter())
+            .find(|(_, h)| *h == Hit::Grp)
+            .expect("the page's view");
+        let corner = (page.x as i32, page.y as i32);
+        let at = (corner.0 + 100, corner.1 + 50);
+        assert_eq!(p.grp.page_at(corner), Some((0, 0)));
+        // Hovering moves nothing.
+        p.motion(at, false);
+        p.motion((at.0 - 40, at.1 - 20), false);
+        assert_eq!(p.grp.page_at(corner), Some((0, 0)));
+        // Nor does a press elsewhere, as on the tab's own button.
+        let (tab, _) = *(p.hits.iter())
+            .find(|(_, h)| *h == Hit::Tab(Tab::Grp))
+            .expect("the tab");
+        let on_tab = (tab.x as i32 + 2, tab.y as i32 + 2);
+        assert_eq!(p.click(on_tab, false), Some(Hit::Tab(Tab::Grp)));
+        p.motion((on_tab.0 + 40, on_tab.1 + 40), true);
+        p.motion(at, true);
+        assert_eq!(p.grp.page_at(corner), Some((0, 0)));
+        p.release();
+        // A press on the page drags it while the button stays down.
+        assert_eq!(p.click(at, false), Some(Hit::Grp));
+        p.motion((at.0 - 40, at.1 - 20), true);
+        assert_eq!(p.grp.page_at(corner), Some((20, 10)));
+        p.release();
+        p.motion((at.0 - 80, at.1 - 40), false);
+        assert_eq!(p.grp.page_at(corner), Some((20, 10)));
+        // A button-up that never came, taken by a dialog or lost on the
+        // way, ends with the first motion that has the button up.
+        p.click(at, false);
+        p.motion((at.0 - 40, at.1 - 20), false);
+        p.motion((at.0 - 80, at.1 - 40), false);
+        assert_eq!(p.grp.page_at(corner), Some((20, 10)));
+        // Hidden, the panel forgets the drag too.
+        p.click(at, false);
+        p.hide();
+        p.draw(&mut fb, &Font::blank(), f, Some((400, 240)), &view, 1);
+        p.motion((at.0 - 40, at.1 - 20), true);
+        assert_eq!(p.grp.page_at(corner), Some((20, 10)));
+    }
+
     #[test]
     fn values_on_one_line() {
         assert_eq!(value_text(&Value::Int(-3), 8, false).0, "-3");
@@ -1195,21 +1282,8 @@ mod tests {
         };
         let (first, rows) = p.sprite_rows();
         let view = View {
-            calls: Vec::new(),
-            tabs: vec![Tab::Globals(0), Tab::Perf, Tab::Sprites],
-            variables: Vec::new(),
-            frame: None,
-            slot: 0,
-            watches: Vec::new(),
-            status: String::new(),
-            status_failed: false,
-            keys: String::new(),
-            changed: None,
-            breakpoints: Vec::new(),
-            perf: [PerfStats::default(); 8],
             sprites: Some(sprites::list(&m.rt, first, rows, p.sprite)),
-            grp: Probe::default(),
-            bgm: None,
+            ..view(vec![Tab::Globals(0), Tab::Perf, Tab::Sprites])
         };
         assert_eq!(view.scrolled(), 3);
         let mut fb = Framebuffer::new(1280, 300);

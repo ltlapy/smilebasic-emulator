@@ -469,6 +469,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::MouseWheel { y, .. } if manager.is_none() && !on_editor && !from_editor => {
                     controls.mouse.wheel += y.round() as i32;
                 }
+                // Here, before the dialogs and menus below take the event
+                // and go on to the next, so that the page lets go of
+                // the pointer whatever is shown.
+                Event::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => debug_panel.release(),
                 // The + button acts when let go, unless it was held until
                 // the program stopped (checked on hardware).
                 Event::KeyUp {
@@ -1003,12 +1010,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             match event {
                 Event::Quit { .. } => quit = true,
-                Event::MouseMotion { x, y, .. } => {
+                Event::MouseMotion {
+                    x, y, mousestate, ..
+                } => {
                     if ui_window {
                         menu.mouse_move(Some(to_display(x, y)));
                     }
                     if editor_window {
-                        debug_panel.pointer(Some(to_display(x, y)));
+                        debug_panel.motion(to_display(x, y), mousestate.left());
                     }
                     if dragging && on_editor {
                         let (x, y) = to_screen(x, y);
@@ -1020,7 +1029,6 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } => {
                     dragging = false;
-                    debug_panel.release();
                 }
                 Event::Window {
                     win_event: WindowEvent::MouseLeave,
@@ -1030,7 +1038,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         menu.mouse_move(None);
                     }
                     if editor_window {
-                        debug_panel.pointer(None);
+                        debug_panel.leave();
                     }
                 }
                 // A right click on the editor or the debugger's panel opens a
