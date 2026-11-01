@@ -1466,6 +1466,16 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     let size = (display_w, display_h);
                     manager = Some(ProjectManager::new(&machine.rt.storage, size));
                 }
+                // A controller's Select (-) opens them in direct mode, so
+                // that a game can be picked with the pad alone. Programs
+                // never see this button: BUTTON has no bit for it.
+                Event::GamepadButtonDown {
+                    button: Button::Back,
+                    ..
+                } if !machine.is_running() && !on_editor => {
+                    let size = (display_w, display_h);
+                    manager = Some(ProjectManager::new(&machine.rt.storage, size));
+                }
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
                     ..

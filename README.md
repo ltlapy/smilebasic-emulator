@@ -139,6 +139,11 @@ Gamepads work as controllers 1 to 4. The keyboard also presses controller
 Without a gamepad, the first time a program reads the buttons, a picture of
 these keys shows for a few seconds. The mouse's left button touches the screen.
 
+In direct mode, a gamepad's − (Select) opens the projects. There A runs the
+project's MAIN.PRG or the selected file (or views a file that is not a
+program), X moves between the projects and the files, L or R opens the menu,
+Y expands the info and B goes back.
+
 ## License
 
 MIT OR Apache-2.0. The bundled fonts in `crates/sb-runtime/fonts/galmuri`

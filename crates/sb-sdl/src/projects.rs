@@ -66,8 +66,9 @@ const INFO_EXPANDED: u32 = 420;
 const PANEL: u32 = 0xFF12_141A;
 /// Where text and pictures are shown inside the info area.
 const WELL: u32 = 0xFF0B_0C10;
-/// The project's icon in the info area, from the 40-pixel one.
-const BIG_ICON: u32 = 64;
+/// The project's icon in the info area: the 40-pixel one at twice its
+/// size, each pixel a 2x2 square.
+const BIG_ICON: u32 = 2 * ICON_SIZE as u32;
 /// The gap between that icon and the text beside it.
 const BIG_ICON_GAP: u32 = 12;
 /// The width of the labels before the fields: "Description" and a gap.
@@ -333,6 +334,8 @@ enum Deferred {
     DoubleClick((i32, i32), Option<usize>),
     RightClick((i32, i32)),
     Key(Keycode),
+    /// A controller's A on a list.
+    Run,
 }
 
 enum Pending {
@@ -1452,11 +1455,20 @@ impl ProjectManager {
         self.sync(storage);
     }
 
-    /// A controller, as keys: the pad moves, A (the right face button)
-    /// is Enter and B (the bottom one) Esc, as SmileBASIC 4's buttons are
-    /// placed; X opens the `⋯` menu of the list, Y expands or collapses
-    /// the info area, and the shoulder buttons go between the lists.
+    /// A controller, mostly as keys: the pad moves and B (the bottom face
+    /// button) is Esc, as SmileBASIC 4's buttons are placed. A (the right
+    /// one) runs: the project's MAIN.PRG on the project list, the file (or
+    /// views it) on the files, as the toolbars' green buttons do; in the
+    /// menus, dialogs, viewer and the info area's fields it is Enter. X
+    /// goes between the lists (Tab), Y expands or collapses the info area,
+    /// and either shoulder button opens the list's `⋯` menu, or closes it.
     pub fn pad(&mut self, button: Pad, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        let browsing = matches!(self.mode, Mode::Browse);
+        if browsing && button == Pad::East && !self.in_field() {
+            let outcome = self.pad_run(storage, unsaved);
+            self.sync(storage);
+            return outcome;
+        }
         let outcome = match &mut self.mode {
             Mode::Ask(dialog, _) => match dialog.pad(button) {
                 Some(answer) => self.answer(answer, storage, unsaved),
@@ -1476,8 +1488,15 @@ impl ProjectManager {
                     Pad::DPadRight => Keycode::Right,
                     Pad::East => Keycode::Return,
                     Pad::South => Keycode::Escape,
-                    Pad::North => Keycode::Application,
+                    Pad::North if browsing => Keycode::Tab,
                     Pad::West => Keycode::Space,
+                    Pad::LeftShoulder | Pad::RightShoulder if browsing => Keycode::Application,
+                    // The button that opened the menu closes it.
+                    Pad::LeftShoulder | Pad::RightShoulder
+                        if matches!(self.mode, Mode::Menu(_)) =>
+                    {
+                        Keycode::Escape
+                    }
                     Pad::LeftShoulder | Pad::RightShoulder => Keycode::Tab,
                     _ => return Outcome::Stay,
                 };
@@ -1486,6 +1505,24 @@ impl ProjectManager {
         };
         self.sync(storage);
         outcome
+    }
+
+    /// Whether one of the info area's fields has the keys.
+    fn in_field(&self) -> bool {
+        self.edit.as_ref().is_some_and(|e| e.focus.is_some())
+    }
+
+    /// A on a list: Run on the projects, Run selected or View on the
+    /// files. Nothing while the expanded info area covers the files.
+    fn pad_run(&mut self, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        if self.dirty() {
+            return self.ask_discard(Deferred::Run);
+        }
+        match self.focus {
+            Focus::Projects => self.press(Button::Run, storage, unsaved),
+            Focus::Files if self.expanded => Outcome::Stay,
+            Focus::Files => self.press(self.file_action(), storage, unsaved),
+        }
     }
 
     /// Up and Down choose a project, or a file after Tab. Enter switches to
@@ -2146,6 +2183,7 @@ impl ProjectManager {
                         Outcome::Stay
                     }
                     Deferred::Key(key) => self.key_in(key, storage, unsaved),
+                    Deferred::Run => self.pad_run(storage, unsaved),
                 };
             }
         }
@@ -3071,6 +3109,47 @@ mod tests {
     }
 
     #[test]
+    fn the_info_area_shows_the_icon_at_twice_its_size() {
+        let tmp = TempDir::new("big");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        // One pixel at (1, 0), so that its square starts at (2, 0).
+        let mut icon = vec![0; ICON_SIZE * ICON_SIZE];
+        icon[1] = 0xFF12_3456_u32 as i32;
+        let meta = sb_runtime::env::Meta {
+            icon,
+            ..Default::default()
+        };
+        for (name, bytes) in sb_runtime::env::meta_files(&meta) {
+            s.write_file_in("GAME", name, &bytes).unwrap();
+        }
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        assert_eq!(BIG_ICON, 80);
+        let at = m.big_icon_rect();
+        assert_eq!((at.w, at.h), (2 * ICON_SIZE as u32, 2 * ICON_SIZE as u32));
+        let mut fb = Framebuffer::new(1280, 720);
+        m.draw(&mut fb, &Font::blank(), false);
+        let rgb = |x, y| fb.get(at.x + x, at.y + y).map(|p| p & 0xFF_FFFF);
+        for (x, y) in [(2, 0), (3, 0), (2, 1), (3, 1)] {
+            assert_eq!(rgb(x, y), Some(0x12_3456), "({x}, {y})");
+        }
+        assert_ne!(rgb(1, 0), Some(0x12_3456));
+        assert_ne!(rgb(4, 0), Some(0x12_3456));
+        // The collapsed area keeps its height: the icon and the
+        // description's line under it fit above its bottom, left of the
+        // expand button.
+        let info = m.info_rect();
+        assert_eq!(info.h, INFO_HEIGHT);
+        let description_bottom = at.y + BIG_ICON + PAD + LINE;
+        assert!(description_bottom <= info.y + info.h - 2 - PAD);
+        // Expanded, the fields still fit above the expand button.
+        m.key(Keycode::Space, &mut s, &[]);
+        let icon_row = m.field_rect(Field::Change);
+        assert!(icon_row.y + icon_row.h <= m.button(Button::Toggle).y);
+    }
+
+    #[test]
     fn the_current_project_is_tinted_and_marked() {
         let tmp = TempDir::new("current");
         let mut s = Storage::new(tmp.0.clone());
@@ -3508,35 +3587,104 @@ mod tests {
         let tmp = TempDir::new("pad");
         let mut s = Storage::new(tmp.0.clone());
         s.write(FileKind::Txt, "A.PRG", b"?1", None).unwrap();
+        s.write(FileKind::Dat, "B", b"", None).unwrap();
         s.create_project("GAME").unwrap();
+        s.set_project("GAME").unwrap();
+        s.write(FileKind::Txt, MAIN, b"?2", None).unwrap();
+        s.set_project("").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
         m.pad(Pad::DPadDown, &mut s, &[]);
         assert_eq!(m.selected_name(), "GAME");
         m.pad(Pad::DPadUp, &mut s, &[]);
-        // The shoulder buttons go to the files; A loads into a slot chosen
-        // with the pad.
-        m.pad(Pad::RightShoulder, &mut s, &[]);
-        assert_eq!(m.focus, Focus::Files);
-        m.pad(Pad::East, &mut s, &[]);
-        assert!(matches!(m.mode, Mode::Slot(0)));
-        m.pad(Pad::DPadRight, &mut s, &[]);
-        assert_eq!(
-            m.pad(Pad::East, &mut s, &[]),
-            Outcome::Open {
-                switched: None,
-                open: Open {
-                    file: "A.PRG".to_string(),
-                    slot: 1,
-                    run: false
-                }
-            }
-        );
-        // X opens the list's menu, B closes it; Y expands the info area.
-        m.mode = Mode::Browse;
+        // X goes to the files and back.
         m.pad(Pad::North, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Files);
+        m.pad(Pad::North, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Projects);
+        m.pad(Pad::North, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Files);
+        // A runs the selected program...
+        let run = |file: &str| Outcome::Open {
+            switched: None,
+            open: Open {
+                file: file.to_string(),
+                slot: 0,
+                run: true,
+            },
+        };
+        assert_eq!(m.pad(Pad::East, &mut s, &[]), run("A.PRG"));
+        // ...and views the other files.
+        m.pad(Pad::DPadDown, &mut s, &[]);
+        assert_eq!(m.selected_file().unwrap().name, "B");
+        assert_eq!(m.pad(Pad::East, &mut s, &[]), Outcome::Stay);
+        assert!(matches!(m.mode, Mode::View(_)));
+        // In the viewer B goes back.
+        m.pad(Pad::South, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        // Either shoulder opens the list's menu, where A chooses; the same
+        // button or B closes it.
+        m.pad(Pad::RightShoulder, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Menu(_)));
+        m.pad(Pad::RightShoulder, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        m.pad(Pad::LeftShoulder, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Menu(_)));
         m.pad(Pad::South, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
+        m.pad(Pad::DPadUp, &mut s, &[]);
+        m.pad(Pad::RightShoulder, &mut s, &[]);
+        // The file menu starts on View.
+        m.pad(Pad::East, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::View(_)));
+        // On the project list, A runs MAIN.PRG, switching first; with no
+        // MAIN.PRG it does nothing, as Run is disabled.
+        m.mode = Mode::Browse;
+        m.pad(Pad::North, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Projects);
+        assert_eq!(m.pad(Pad::East, &mut s, &[]), Outcome::Stay);
+        assert!(matches!(m.mode, Mode::Browse));
+        m.pad(Pad::DPadDown, &mut s, &[]);
+        assert_eq!(m.selected_name(), "GAME");
+        assert_eq!(
+            m.pad(Pad::East, &mut s, &[]),
+            Outcome::Open {
+                switched: Some("GAME".to_string()),
+                open: Open {
+                    file: MAIN.to_string(),
+                    slot: 0,
+                    run: true
+                }
+            }
+        );
+        // Over an unsaved title, A asks first, then runs.
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.pad(Pad::DPadDown, &mut s, &[]);
+        m.pad(Pad::West, &mut s, &[]);
+        m.pad(Pad::North, &mut s, &[]);
+        assert!(m.in_field());
+        m.text("X");
+        while m.in_field() {
+            m.pad(Pad::North, &mut s, &[]);
+        }
+        m.pad(Pad::East, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Discard(_))));
+        m.pad(Pad::DPadLeft, &mut s, &[]);
+        assert!(matches!(
+            m.pad(Pad::East, &mut s, &[]),
+            Outcome::Open {
+                open: Open { run: true, .. },
+                ..
+            }
+        ));
+        // The keyboard's Enter still switches.
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Up, &mut s, &[]);
+        assert_eq!(
+            m.key(Keycode::Return, &mut s, &[]),
+            Outcome::Switched("[WORKSPACE]".to_string())
+        );
+        // Y expands the info area, B collapses it, then closes.
+        let mut m = ProjectManager::new(&s, (1280, 720));
         m.pad(Pad::West, &mut s, &[]);
         assert!(m.expanded);
         m.pad(Pad::South, &mut s, &[]);
