@@ -65,7 +65,20 @@ struct Channel {
     notes: u32,
     /// How the last note joins the next.
     link: Link,
+    /// A portamento under way.
+    glide: Option<Glide>,
     done: bool,
+}
+
+/// A note glides to the next one's key over its gate, in a straight line
+/// in semitones, then the next note goes on from there without starting
+/// again: `C2_G2` slides up from C for a second and holds G for a second
+/// (TEST41).
+#[derive(Clone, Copy, Debug)]
+struct Glide {
+    cents: f32,
+    ticks: u32,
+    done: u32,
 }
 
 impl Default for Channel {
@@ -93,6 +106,7 @@ impl Default for Channel {
             sounding: Vec::new(),
             notes: 0,
             link: Link::None,
+            glide: None,
             done: false,
         }
     }
@@ -322,6 +336,78 @@ impl Track {
         }
     }
 
+    /// Moves the held notes of channel `c` by a portamento's `cents`.
+    fn porta(&mut self, c: usize, cents: f32) {
+        self.synth(|s| s.porta(c, cents));
+        for (.., v) in self.voices.iter_mut().filter(|(vc, ..)| *vc == c) {
+            if !v.released() {
+                v.porta = cents;
+            }
+        }
+    }
+
+    /// The end of a portamento: the held notes `from` go on as `to`, the
+    /// first to the first and any left over to the last.
+    fn retune(&mut self, c: usize, from: &[i32], to: &[i32]) {
+        for (i, &key) in to.iter().enumerate() {
+            let Some(&old) = from.get(i).or(from.last()) else {
+                return;
+            };
+            if i >= from.len() {
+                self.keys_on(c, &[key]);
+                continue;
+            }
+            self.synth(|s| s.retune(c, old, key));
+            for (.., v) in self.voices.iter_mut().filter(|(vc, ..)| *vc == c) {
+                if v.key == old && !v.released() {
+                    v.retune(key);
+                }
+            }
+        }
+        if from.len() > to.len() {
+            self.keys_off(c, &from[to.len()..]);
+        }
+        self.porta(c, 0.0);
+    }
+
+    /// The keys the next note of channel `c` from command `pc` on plays,
+    /// none for a rest.
+    fn next_keys(&self, c: usize, pc: usize) -> Vec<i32> {
+        let Some(song) = &self.song else {
+            return Vec::new();
+        };
+        let up = if song.reversed { -1 } else { 1 };
+        let mut octave = self.channels[c].octave;
+        for cmd in &song.channels[c][pc..] {
+            match cmd {
+                Cmd::Octave(n) => octave = self.var(*n),
+                Cmd::Up => octave += up,
+                Cmd::Down => octave -= up,
+                Cmd::Note { pitch, .. } => {
+                    return match *pitch {
+                        Pitch::Rest => Vec::new(),
+                        Pitch::Name(s) => vec![self.midi_key(c, octave, s)],
+                        Pitch::Number(n) => vec![self.var(n) + self.midi_key(c, -1, 0)],
+                    };
+                }
+                Cmd::Chord { parts, .. } => {
+                    let mut keys = Vec::new();
+                    for part in parts {
+                        match *part {
+                            ChordPart::Note(s) => keys.push(self.midi_key(c, octave, s)),
+                            ChordPart::Octave(n) => octave = self.var(n),
+                            ChordPart::Up => octave += up,
+                            ChordPart::Down => octave -= up,
+                        }
+                    }
+                    return keys;
+                }
+                _ => {}
+            }
+        }
+        Vec::new()
+    }
+
     fn keys_on(&mut self, c: usize, keys: &[i32]) {
         let ch = &self.channels[c];
         match ch.voice {
@@ -368,26 +454,51 @@ impl Track {
     /// asked.
     fn sound(&mut self, c: usize, keys: Vec<i32>, ticks: u32, link: Link) {
         let tie = self.channels[c].link != Link::None;
+        let keys: Vec<i32> = keys.into_iter().filter(|k| (0..128).contains(k)).collect();
         if tie && self.channels[c].sounding == keys {
             // A tie: the notes go on.
+        } else if self.channels[c].link == Link::Porta
+            && !keys.is_empty()
+            && !self.channels[c].sounding.is_empty()
+        {
+            let old = std::mem::take(&mut self.channels[c].sounding);
+            self.retune(c, &old, &keys);
+            self.channels[c].sounding = keys;
         } else {
             let old = std::mem::take(&mut self.channels[c].sounding);
-            let keys: Vec<i32> = keys.into_iter().filter(|k| (0..128).contains(k)).collect();
             // A slur starts the new notes before ending the old.
             self.keys_on(c, &keys);
             self.keys_off(c, &old);
+            if self.channels[c].glide.is_some() {
+                // A glide that did not reach its note: the new notes
+                // start at their own key.
+                self.porta(c, 0.0);
+            }
             let ch = &mut self.channels[c];
             if !keys.is_empty() {
                 ch.notes = ch.notes.wrapping_add(1);
             }
             ch.sounding = keys;
         }
+        let next = match link {
+            Link::Porta => self.next_keys(c, self.channels[c].pc),
+            _ => Vec::new(),
+        };
         let ch = &mut self.channels[c];
+        let gate = (ticks * (ch.quantize as u32 + 1) / 33).max(1);
+        ch.glide = match (ch.sounding.first(), next.first()) {
+            (Some(&from), Some(&to)) if from != to => Some(Glide {
+                cents: ((to - from) * 100) as f32,
+                ticks: gate,
+                done: 0,
+            }),
+            _ => None,
+        };
         ch.link = link;
         ch.wait = ticks;
         ch.gate = match link {
             // (Q+1)/33 of the note, cut to whole ticks: Q32 is all of it.
-            Link::None => (ticks * (ch.quantize as u32 + 1) / 33).max(1),
+            Link::None => gate,
             // Held until the next note.
             _ => 0,
         };
@@ -590,6 +701,13 @@ impl Track {
             return;
         }
         for c in 0..self.channels.len() {
+            if let Some(g) = &mut self.channels[c].glide
+                && g.done < g.ticks
+            {
+                g.done += 1;
+                let cents = g.cents * g.done as f32 / g.ticks as f32;
+                self.porta(c, cents);
+            }
             let ch = &mut self.channels[c];
             if ch.gate > 0 {
                 ch.gate -= 1;
@@ -793,6 +911,27 @@ mod tests {
         l.fill(0.0);
         t.render(&mut l, &mut r, &mut scratch);
         assert!(l.iter().any(|&s| s.abs() > 0.01));
+    }
+
+    #[test]
+    fn portamento_glides_over_the_first_note_and_holds_the_next() {
+        let waves = Rc::new(RefCell::new(Waves::default()));
+        let mut t = Track::new(None, waves);
+        t.play(Some(Rc::new(parse("T120@219O4C2_G2").unwrap())), 127, 0);
+        let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
+        let mut scratch = Default::default();
+        // Half way through C2, half way to G.
+        for _ in 0..30 {
+            t.render(&mut l, &mut r, &mut scratch);
+        }
+        assert_eq!(t.voices.len(), 1);
+        assert!((t.voices[0].2.porta - 350.0).abs() < 15.0);
+        // G2: the same note, at G.
+        for _ in 0..60 {
+            t.render(&mut l, &mut r, &mut scratch);
+        }
+        assert_eq!(t.voices.len(), 1);
+        assert_eq!((t.voices[0].2.key, t.voices[0].2.porta), (67, 0.0));
     }
 
     #[test]

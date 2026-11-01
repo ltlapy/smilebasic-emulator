@@ -293,6 +293,8 @@ struct Voice {
     gains: [f32; 2],
     deltas: [f32; 2],
     lfos: Lfos,
+    /// A portamento's glide, in cents.
+    porta: f32,
     /// The waveform ran out.
     wave_ended: bool,
     done: bool,
@@ -339,7 +341,7 @@ impl Voice {
         let [l, r] = pan_gains(pan_position(ch.pan + i32::from(self.region.pan) - 64) + pan);
         let target = [gain * l, gain * r];
         self.deltas = [0, 1].map(|i| (target[i] - self.gains[i]) / TICK as f32);
-        let cents = ch.bend as f32 + cents;
+        let cents = ch.bend as f32 + cents + self.porta;
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
     }
 
@@ -464,6 +466,7 @@ impl Synth for Sampler {
             gains: [0.0; 2],
             deltas: [0.0; 2],
             lfos: Lfos::default(),
+            porta: 0.0,
             wave_ended: false,
             done: false,
         });
@@ -477,6 +480,24 @@ impl Synth for Sampler {
                 && v.envelope.stage != Stage::Done
             {
                 v.envelope.stage = Stage::Release;
+            }
+        }
+    }
+
+    fn porta(&mut self, channel: usize, cents: f32) {
+        let held = |v: &&mut Voice| v.channel == channel && !v.envelope.released();
+        self.voices
+            .iter_mut()
+            .filter(held)
+            .for_each(|v| v.porta = cents);
+    }
+
+    fn retune(&mut self, channel: usize, from: i32, to: i32) {
+        for v in &mut self.voices {
+            if v.channel == channel && v.key == from && !v.envelope.released() {
+                v.base_step *= 2f64.powf(f64::from(to - from) / 12.0);
+                v.key = to;
+                v.porta = 0.0;
             }
         }
     }

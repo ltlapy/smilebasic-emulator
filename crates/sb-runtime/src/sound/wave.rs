@@ -179,6 +179,8 @@ pub struct Voice {
     /// The channel's @MP, @MA and @ML, and how far round they have gone.
     pub(crate) lfo: [sampler::Lfo; 3],
     lfos: sampler::Lfos,
+    /// A portamento's glide, in cents.
+    pub(crate) porta: f32,
     /// The gain from volume and velocity, and the pan's position.
     gain: f32,
     pan: f32,
@@ -214,6 +216,7 @@ impl Voice {
             base_step: 0.0,
             lfo: [sampler::Lfo::default(); 3],
             lfos: sampler::Lfos::default(),
+            porta: 0.0,
             gain: WAVE_GAIN,
             pan: 0.0,
             levels: [0.0; 2],
@@ -247,6 +250,13 @@ impl Voice {
             self.wave = wave.clone();
             self.set_pitch(self.cents);
         }
+    }
+
+    /// A portamento's end: the note goes on as `key`.
+    pub fn retune(&mut self, key: i32) {
+        self.key = key;
+        self.porta = 0.0;
+        self.set_pitch(self.cents);
     }
 
     pub fn release(&mut self) {
@@ -299,7 +309,7 @@ impl Voice {
                 }
                 let tick = sampler::TICK as f32;
                 self.steps = [0, 1].map(|i| (self.targets[i] - self.levels[i]) / tick);
-                self.step = match cents {
+                self.step = match cents + self.porta {
                     0.0 => self.base_step,
                     cents => self.base_step * f64::from(2f32.powf(cents / 1200.0)),
                 };

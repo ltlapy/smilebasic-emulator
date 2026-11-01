@@ -53,6 +53,15 @@ pub(crate) trait Synth {
     fn envelope(&mut self, _channel: usize, _envelope: Option<Envelope>) {}
     fn note_on(&mut self, channel: usize, key: i32, velocity: i32);
     fn note_off(&mut self, channel: usize, key: i32);
+    /// A portamento: the channel's notes that are held sound `cents`
+    /// off their key.
+    fn porta(&mut self, _channel: usize, _cents: f32) {}
+    /// A portamento's end: the held note `from` goes on as `to`, without
+    /// starting again where the synthesizer can.
+    fn retune(&mut self, channel: usize, from: i32, to: i32) {
+        self.note_off(channel, from);
+        self.note_on(channel, to, 100);
+    }
     /// Every note on the channel stops at once.
     fn channel_off(&mut self, channel: usize);
     /// Every note stops at once and the channels go back to how they
@@ -77,19 +86,31 @@ pub const DRUM_KITS: [i32; 21] = [
     0, 24, 25, 1, 2, 8, 25, 26, 25, 26, 16, 24, 25, 26, 25, 32, 40, 48, 56, 56, 0,
 ];
 
-pub(crate) struct FontSynth(Synthesizer);
+pub(crate) struct FontSynth {
+    synth: Synthesizer,
+    /// Each channel's bend and portamento, in cents, which share MIDI's
+    /// pitch bend.
+    bends: [(i32, f32); CHANNELS],
+    /// Each channel's last velocity, for a portamento's new key.
+    velocities: [i32; CHANNELS],
+}
 
 impl FontSynth {
     fn new(font: &Arc<SoundFont>) -> FontSynth {
         let mut settings = SynthesizerSettings::new(RATE as i32);
         settings.enable_reverb_and_chorus = false;
-        let mut s = FontSynth(Synthesizer::new(font, &settings).expect("valid settings"));
+        let mut s = FontSynth {
+            synth: Synthesizer::new(font, &settings).expect("valid settings"),
+            bends: [(0, 0.0); CHANNELS],
+            velocities: [100; CHANNELS],
+        };
         s.bend_range();
         s
     }
 
     fn midi(&mut self, channel: usize, command: i32, a: i32, b: i32) {
-        self.0.process_midi_message(channel as i32, command, a, b);
+        self.synth
+            .process_midi_message(channel as i32, command, a, b);
     }
 
     fn bend_range(&mut self) {
@@ -103,6 +124,13 @@ impl FontSynth {
 
     fn controller(&mut self, channel: usize, number: i32, value: i32) {
         self.midi(channel, 0xB0, number, value.clamp(0, 127));
+    }
+
+    fn send_bend(&mut self, channel: usize) {
+        let (bend, porta) = self.bends[channel];
+        let cents = (bend + porta.round() as i32).clamp(-BEND_RANGE * 100, BEND_RANGE * 100);
+        let bend = (8192 + cents * 8192 / (BEND_RANGE * 100)).clamp(0, 16383);
+        self.midi(channel, 0xE0, bend & 0x7F, bend >> 7);
     }
 }
 
@@ -144,29 +172,41 @@ impl Synth for FontSynth {
     }
 
     fn bend(&mut self, channel: usize, cents: i32) {
-        let cents = cents.clamp(-BEND_RANGE * 100, BEND_RANGE * 100);
-        let bend = (8192 + cents * 8192 / (BEND_RANGE * 100)).clamp(0, 16383);
-        self.midi(channel, 0xE0, bend & 0x7F, bend >> 7);
+        self.bends[channel].0 = cents;
+        self.send_bend(channel);
+    }
+
+    fn porta(&mut self, channel: usize, cents: f32) {
+        self.bends[channel].1 = cents;
+        self.send_bend(channel);
+    }
+
+    /// A SoundFont's notes cannot change key: the new key starts again.
+    fn retune(&mut self, channel: usize, from: i32, to: i32) {
+        self.note_off(channel, from);
+        self.note_on(channel, to, self.velocities[channel]);
     }
 
     fn note_on(&mut self, channel: usize, key: i32, velocity: i32) {
-        self.0.note_on(channel as i32, key, velocity);
+        self.velocities[channel] = velocity;
+        self.synth.note_on(channel as i32, key, velocity);
     }
 
     fn note_off(&mut self, channel: usize, key: i32) {
-        self.0.note_off(channel as i32, key);
+        self.synth.note_off(channel as i32, key);
     }
 
     fn channel_off(&mut self, channel: usize) {
-        self.0.note_off_all_channel(channel as i32, true);
+        self.synth.note_off_all_channel(channel as i32, true);
     }
 
     fn reset(&mut self) {
-        self.0.reset();
+        self.synth.reset();
+        self.bends = [(0, 0.0); CHANNELS];
         self.bend_range();
     }
 
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.0.render(left, right);
+        self.synth.render(left, right);
     }
 }

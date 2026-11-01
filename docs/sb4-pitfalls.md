@@ -474,6 +474,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   from its middle once it has passed: `@MP7,1,7,48` did not move within
   1.5 s at T120. `@MON` turns all
   three back on as last set.
+- A portamento (`_`) glides during the note it follows, in a straight
+  line in semitones over that note's gate, and the next note goes on
+  from there without starting again: `T120O4C2_G2` slides from C to G
+  over the first second and holds G for the second, and on a piano
+  (`@0`) the G does not strike again.
 - `RECSTART` records the sound before the effector, or the effector
   did nothing: a short note recorded alike, to the unit, with `EFCEN`
   off, with `#EFCCAVE` at `EFCWET 0,127,0,0`, with a hall set by
