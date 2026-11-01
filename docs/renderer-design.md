@@ -314,7 +314,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
 | A linked child's offset turns and scales with the parent; the flags decide the child's own image | `Sprites::pose` | C: pitfalls (the `pose` UNVERIFIED comment is partly stale) |
 | Children without link bit 0 stay where they showed, Z included, when the parent is cleared | `Sprites::clear` | S: pitfalls ("Z included"); marker at `sprites.rs` "that Z also becomes absolute" |
-| Animated integer properties take the value rounded towards zero | `WithDefs::set_value` | **U (R7)** |
+| Animated integer properties take the value rounded towards zero; a sliding XY too; colours mixed in single precision by the frames left, rounded down | `WithDefs::set_value`, `anim::mix` | C: pitfalls; TEST47 (R7). U: whether rotation and scale round |
 | SPDEF's default table when none was imported (grid of 16x16) | `grid_defs` | Stand-in, not a rule. The real table is imported |
 
 ### 2.3 Text screens
@@ -327,9 +327,9 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Tab stops every 4 columns | `TAB_WIDTH` | S: pitfalls; marker in `text.rs` |
 | `CHR$(10)` starts a new line | `TextScreen::print` | S: pitfalls; marker in `text.rs` |
 | TSCREEN clears the screen | `set_font` | S: pitfalls; marker in `text.rs` |
-| TSCREEN keeps TLAYER, TBLEND, TPAGE, TVAR, TFUNC | `restart_look` | U (state, not pixels; in R7's batch) |
+| TSCREEN keeps TLAYER, TPAGE and TVAR, and sets TBLEND back to 0 | `restart_look` | C: pitfalls; TEST47. U: TFUNC |
 | INPUT cursor is the cell filled with the text colour | `draw_placed` | **U (R9)** |
-| Text animations: Z and colour rounded towards zero | `impl Animated for TextScreen` | **U (R7)** |
+| Text animations: as for sprites | `impl Animated for TextScreen` | C: pitfalls; TEST47 (R7) |
 | TBLEND 1 is additive, as for sprites | `screen.rs` | C: manual (TBLEND); arithmetic as R1 |
 
 ### 2.4 Priorities and Z order
@@ -374,7 +374,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Colour conversion: hue in degrees, S and V on 0-255 | `filter::shift_color` | C: `filter.rs` header (screenshots) |
 | Colour conversion arithmetic (HSV in f64 on un-premultiplied colour, `round`) | `shift_color` | **U (R18)** |
 | Filter before the layer colour is multiplied in (modes 1-4) | `Runtime::render` | **U (R19)** |
-| ACLS clears LFILTER | `Runtime::acls` | **U (R20)** |
+| ACLS clears LFILTER | `Runtime::acls` | C: pitfalls; TEST47 (R20) |
 
 ### 2.7 FADE
 
@@ -383,7 +383,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Fade steps: single-precision mix, rounded down; a clear end takes the other end's colour | `Fade::step`, `Fade::start` | C: pitfalls |
 | ACLS clears FADE | `acls` | S: pitfalls; marker in `runtime.rs` |
 | Fade cover: `(c*a + p*(255-a) + 127) / 255` (nearest), over the final frame | `Fade::cover` | **U (R21)** |
-| A fade steps with the animations, starting on the frame after FADE | `Runtime::animate` | **U (R22)** |
+| A fade steps with the animations, starting on the frame after FADE | `Runtime::animate` | C: pitfalls; TEST47 (R22) |
 
 ### 2.8 Display (XSCREEN composite mode)
 
@@ -397,34 +397,38 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 | Rule | Where | Status |
 |---|---|---|
-| GLINE pixels: same whichever end first, minor offset rounded down for slopes >= 1/2, up below | `line_points` | C: comment says read back on hardware; `lines_match_hardware` test |
-| GLINE far outside the page: clipped (Liang-Barsky) first | `clip_line` | U (R24, same pixels expected) |
-| GBOX outline, each pixel drawn once | `Graphics::rect` | **U (R24)** (visible with `#G_ALPHA`) |
+| GLINE pixels: same whichever end first, offset `(2t*minor + k) / (2*major)` with `k = 2*minor - major` for slopes >= 1/2 | `line_points` | C: pitfalls; TEST47; `lines_match_hardware`, `far_lines_match_hardware` tests |
+| GLINE below slope 1/2: `k = major + minor + 1` | `line_points` | **U (R24)**: `+2` and `major + 3` fit the readings too |
+| GLINE far outside the page: the pixels of the whole line (only the steps on the page are walked) | `line_points` | C: pitfalls; TEST47 (R24; clipping first gave other pixels) |
+| GBOX outline: top and bottom rows, then the sides from the top row down, so the top corners are drawn twice | `Graphics::rect` | C: pitfalls; TEST47 (R24). U: a box given bottom to top |
 | GFILL inclusive | `Graphics::fill` | C: manual |
-| GCIRCLE pixel set (midpoint circle) | `circle_points` | **U (R25)** |
-| GCIRCLE arc membership by `atan2` of integer offsets, both ends inclusive | `Graphics::circle` | **U (R25)** |
+| GCIRCLE pixel set (midpoint circle) | `circle_points` | C: pitfalls; TEST47 (R25) |
+| GCIRCLE arc: between the pixels at `round(cos*r), round(sin*r)` of the two angles, both included | `Graphics::circle` | C: pitfalls; TEST47 (R25). U: an arc of more than half a turn whose two end pixels are one |
 | GCIRCLE: equal angles draw nothing; the sector flag draws only the outline | `Graphics::circle` | C: pitfalls |
-| Sector edges from `round(cos*r), round(sin*r)` | `Graphics::circle` | **U (R25)** |
-| Equal angles with the sector flag; radius past 65536 draws nothing | `Graphics::circle` | **U (R25)** |
-| GTRI: edges included, degenerate triangle drawn as its three lines | `Graphics::triangle` | **U (R26)** |
-| GPAINT: 4-connected flood, border mode stops at the border colour | `Graphics::paint` | **U (R27)** |
+| Sector edges: GLINEs from the center to those pixels | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
+| Equal angles with the sector flag draw nothing; radii of 1000 and 70000 draw | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
+| GTRI: rows from the leftmost to the rightmost pixel the edges reach (`edge_span`), each pixel once, a degenerate triangle too | `Graphics::triangle` | C: pitfalls; TEST47 (R26). U: how halves round on tall edges |
+| GPAINT: 4-connected flood, border mode stops at the border colour | `Graphics::paint` | C: pitfalls; TEST47 (R27) |
 | GCLIP shared by all pages | `Graphics::clip` | C: pitfalls |
 | `#G_NORMAL`, `#G_NORMAL2` | `Blend::apply` | C: manual |
 | `#G_ALPHA`, `#G_ADD` rounding (floor) | `Blend::apply` | C: comment "rounding matches values read back on hardware" |
-| `#G_ALPHA2` formula and rounding | `Blend::apply` | **U (R28)**: the comment does not say mode 3 was read back |
-| GCOPY colour-code multiply (floor), then blend; overlapping copy within a page reads first | `Graphics::copy` | **U (R29)** |
+| `#G_ALPHA2`: alpha `sa + da - floor(sa*da/255)`, the two colours' weights on 0-255 rounded down | `Blend::apply` | C: pitfalls; TEST47 (R28) |
+| GCOPY colour-code multiply (floor), then blend; overlapping copy within a page reads first | `Graphics::copy` | C: pitfalls; TEST47 (R29) |
 | GPUTCHR mode 0 clears under transparent glyph pixels | `put_chars` | C: pitfalls |
 | GPUTCHRP widths, function form scales spacing | `put_chars_proportional` | C: pitfalls; TTEST27 |
-| GPUTCHRP drawing scales the spacing as the width does | `put_chars_proportional` | **U (R30)** |
-| GLOAD palette indexes past the palette draw transparent | `grp.rs` | **U (R31)** (no error: C) |
+| GPUTCHRP drawing scales the spacing as the width does | `put_chars_proportional` | C: pitfalls; TEST47 (R30) |
+| GLOAD palette indexes past the palette leave the page's pixel | `load_rect` | C: pitfalls; TEST47 (R31) |
 | GSAVE/GLOAD rectangles off the page read as empty | `save_rect`, `load_rect` | C: pitfalls |
-| Limits on GSAVE/GLOAD/TSAVE width and height | `grp.rs`, `txt.rs` | U (R31) |
+| Limits on GSAVE/GLOAD/TSAVE width and height | `grp.rs`, `txt.rs` | 2049 and 4096 wide work (TEST47); the limit itself (taken as 4096) U (R31) |
 | GARRAY/GUPDATE: GPGET sees array writes at once; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](differences.md) for the omission) |
 
-**Count.** There are 31 open items, R1 to R31, plus 6 stale markers
-that can be dropped from the code at once:
+**Count.** There were 31 open items, R1 to R31. TEST47 (batches A and
+F) settled R7, R20, R22 and R24-R31, apart from the smaller points left
+U in the table above; R1-R6, R8-R19, R21 and R23 are open. 5 stale
+markers can be dropped from the code at once (ACLS clearing FADE was
+dropped with TEST47):
 
-- `runtime.rs`: filter on an empty direct layer; ACLS clears FADE;
+- `runtime.rs`: filter on an empty direct layer;
 - `text.rs`: TAB_WIDTH; `CHR$(10)`; TSCREEN clears;
 - `sprites.rs`: child Z on SPCLR.
 

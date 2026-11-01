@@ -18,7 +18,15 @@ follows all of it. Items still waiting for a check are marked
   plain variables, always 0 to begin with.
 - Animations (`SPANIM`, `TANIM`) take their first step on the frame
   after they are set. They also play in direct mode, and go on while the
-  editor is open.
+  editor is open. So does `FADE color,time`: `FADE()` still gives the
+  start right after it, and the first step shows after one `VSYNC 1`
+  (TEST47).
+- A sliding animation rounds towards zero: X, Y and Z going from 0 to
+  -10 over three frames read -3, -6, -10. Colors are mixed per channel
+  in single precision as `from*left + to*(1-left)`, `left` being the
+  share of frames still to go, and rounded down, so an alpha of `&HFF`
+  at both ends reads `&HFE` on the second of three frames. Text screens
+  (`TANIM`) do the same (TEST47).
 - An animation key that lasts 0 frames is `Illegal animation data`.
 - How much a program runs in a frame (4.4.9, timed with `MAINCNT()`):
   in 60 frames a `WHILE MAINCNT()-T<60:INC N:WEND` loop goes round
@@ -271,15 +279,17 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   and keeps their `THOME`, `TROT`, `TSCALE`, `TOFS` and `TCOLOR`.
 - `TSCREEN` clears the screen. Without a character size it uses the
   font type. It also stops the screen's animations and undoes `THOME`,
-  `TROT`, `TSCALE` and `TCOLOR`; `TOFS` goes back to 0,0 but keeps its
-  depth. An array from `TARRAY` takes the new size and goes on
-  following the screen.
+  `TROT`, `TSCALE`, `TCOLOR` and `TBLEND`; `TOFS` goes back to 0,0 but
+  keeps its depth. `TLAYER`, `TPAGE` and `TVAR` stay (TEST47). An array
+  from `TARRAY` takes the new size and goes on following the screen.
 - `CHR$(10)` starts a new line; tab stops are every 4 columns.
 - `TPUT` off the screen is `Out of range`; `CHKCHR` off the screen gives
   0.
 - `TSAVE`, `GSAVE` and `GLOAD` accept rectangles reaching off the
-  screen or page; what lies outside reads as empty. `GLOAD` palette
-  indexes past the palette are no error.
+  screen or page; what lies outside reads as empty. `GSAVE` and `GLOAD`
+  also take rectangles wider than the page: 2049x1 and 4096x1 work
+  (TEST47). `GLOAD` palette indexes past the palette are no error and
+  leave the page's pixel as it is, with mode 0 too (TEST47).
 - `GSAVE` into a real array gives the colours unsigned: opaque red is
   4294901760, where an integer array has -65536.
 - `TCHK` reports nothing for `"I"` and `"UV"`, which text screens ignore.
@@ -360,6 +370,43 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `GCLIP` is shared by all pages.
 - `GCIRCLE` with equal start and end angles draws nothing; the sector
   flag draws only the outline.
+- Drawing rules read back with `GPGET` (TEST47, all 23 parts matched):
+  - `GCIRCLE`'s pixels are the midpoint circle's: in each row of the
+    first octant, the largest x with x² - x + y² < r². Radii of 1000 and
+    70000 far off the page still draw what reaches it.
+  - An arc runs between the circle pixels nearest its two angles, at
+    `round(r*cos a), round(r*sin a)`, both included: 30 to 120 degrees
+    takes the pixel (7,4) at 29.7 degrees. Angles past 360 or negative
+    are taken modulo 360. A sector's two sides are `GLINE`s from the
+    center to those pixels.
+  - `GLINE` takes the same pixels whichever end comes first. Walked
+    along the longer axis from the end with the smaller coordinate on
+    it, `major` steps long and `minor` across, the offset across at step
+    t is `(2*t*minor + k) / (2*major)` rounded down, with `k` =
+    `2*minor - major` for slopes of 1/2 and more and `major + minor + 1`
+    below (`+2` or `major + 3` fit what was read back as well). A line
+    from far off the page takes the pixels the whole line would:
+    `GLINE -1000,0,1040,51` gives rows 25 for X 0-19 and 26 from 20,
+    while `GLINE 0,25,40,26` steps at X 19.
+  - `GTRI` draws each pixel once (with `#G_ALPHA`, also where edges
+    meet), a row at a time from the leftmost to the rightmost pixel an
+    edge reaches in the row. An edge at least as tall as it is wide
+    reaches one pixel per row, its X at the row rounded; a wider edge
+    reaches the columns x for which a point of it with X in [x, x+1)
+    has Y in [y-1/2, y+1/2). A triangle whose corners lie on one line is
+    that line, drawn once.
+  - `GBOX` draws the top and bottom rows, then the sides from the top
+    row to the row above the bottom: with `#G_ALPHA` the two top corners
+    are blended twice and the bottom ones once. A box one pixel wide
+    or high draws each pixel once, except the top of a one-pixel-wide
+    box.
+  - `#G_ALPHA2` (mode 3): alpha `a = sa + da - floor(sa*da/255)`; each
+    channel `(s*floor(sa*255/a) + d*floor(da*(255-sa)/a)) / 255`
+    rounded down. Over an opaque pixel that is mode 2's result.
+  - `GPAINT` fills 4-connected areas; `GCOPY`'s color code multiplies
+    and rounds down, and an overlapping copy within a page reads the
+    source first; `GPUTCHRP` drawing scales its spacing with the
+    characters.
 - `GPUTCHR` with mode 0 clears the page under the character's
   transparent pixels.
 - `GPUTCHR` without a font type uses the console's: after `TSCREEN 24`
@@ -383,6 +430,7 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   each time. A write to it is seen at once by `GPGET`, also where
   `GPSET` drew next to it.
 - `GUPDATE` with a coordinate of 2048 is `Out of range`.
+- `ACLS` clears every layer's `LFILTER` (TEST47).
 - `LFILTER layer,0,n` is `Out of range`. Raster deformation (types 3
   and 4) needs the repeat flag: `LFILTER 1,3,A,#TRUE` with a real
   `A[240,4]` or `A[240,2]` works, while without the flag it is `Out of
