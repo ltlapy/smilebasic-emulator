@@ -117,8 +117,8 @@ Without them:
 - `HELPINFO` and `HELPGET` need SmileBASIC 4's help imported.
   `HELPINFO OUT` gives the topic at the editor's cursor only to
   programs started from `#SYS`, as SmileBASIC 4's own help is; others
-  get `DEFAULTHELPKEY`, as on hardware, unless Settings > General > "Let any
-  program read the help topic at the cursor" is on. It looks where the cursor was
+  get `DEFAULTHELPKEY`, as on hardware, unless Settings > General > "Allow
+  system-only features in every program" is on. It looks where the cursor was
   when the program started, or where it is now for a subprogram.
 - `DIALOG` is drawn as the emulator's own window, in English. Besides
   the controller's A and B, it answers clicks and Enter.

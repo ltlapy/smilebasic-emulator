@@ -544,6 +544,24 @@ fn direct_mode_completes_words() {
 }
 
 #[test]
+fn completion_offers_other_slots_names_when_asked() {
+    use sb_runtime::runtime::keys;
+    let typed = |all: bool| {
+        let mut m = machine();
+        m.rt.settings.complete_names = true;
+        m.rt.settings.complete_all_slots = all;
+        m.set_slot(2, "HIGH_SCORE=5".to_string());
+        m.type_text("?high_s");
+        m.rt.key_press(keys::TAB);
+        m.frame();
+        m.rt.line_and_cursor()
+            .map(|(t, _)| String::from_utf16_lossy(t))
+    };
+    assert_eq!(typed(false).as_deref(), Some("?HIGH_S"));
+    assert_eq!(typed(true).as_deref(), Some("?HIGH_SCORE"));
+}
+
+#[test]
 fn simple_save_and_load() {
     use sb_runtime::storage::Storage;
     let dir = std::env::temp_dir().join(format!("sb-simple-{}", std::process::id()));

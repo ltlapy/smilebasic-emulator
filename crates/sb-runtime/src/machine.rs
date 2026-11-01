@@ -1257,7 +1257,10 @@ impl Machine {
     /// window.
     pub fn edit(&mut self) -> &mut Editor {
         let keys = self.editor_has_keys();
+        let slot = self.editors[self.active].slot();
+        let others = self.rt.other_slot_names(slot);
         let editor = &mut self.editors[self.active];
+        editor.set_other_names(others);
         editor.tab_step = self.rt.settings.editor_tab_step as usize;
         editor.complete = Options::from_settings(&self.rt.settings, true);
         if !Rc::ptr_eq(&editor.library, &self.rt.library) {

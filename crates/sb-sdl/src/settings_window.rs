@@ -127,10 +127,10 @@ const PAGES: &[Page] = &[
                 |s| s.localized_errors ^= true,
             ),
             check(
-                "Let any program read the help topic at the cursor",
-                "HELPINFO OUT gives the command at the editor's cursor to every \
-                 program, not only to those started from #SYS (SmileBASIC 4's own \
-                 help). Off by default, as on hardware: others get DEFAULTHELPKEY.",
+                "Allow system-only features in every program",
+                "Features SmileBASIC 4 keeps for programs started from #SYS work in \
+                 any program: HELPINFO OUT gives the command at the editor's cursor \
+                 instead of DEFAULTHELPKEY. Off by default, as on hardware.",
                 |s| s.helpinfo_cursor,
                 |s| s.helpinfo_cursor ^= true,
             ),
@@ -324,6 +324,14 @@ const PAGES: &[Page] = &[
                  Labels after GOTO and # constants show either way.",
                 |s| s.complete_names,
                 |s| s.complete_names ^= true,
+            ),
+            check(
+                "Suggest from all slots",
+                "With the option above, the names of every slot's program are \
+                 suggested too, after those of the slot being edited. Off by \
+                 default.",
+                |s| s.complete_all_slots,
+                |s| s.complete_all_slots ^= true,
             ),
             check(
                 "Enter accepts the chosen suggestion",

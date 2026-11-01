@@ -79,8 +79,8 @@ pub struct Settings {
     /// The mouse cursor stays shown when a program hides it with
     /// SYSPARAM "MOUSECURSOR".
     pub keep_mouse_cursor: bool,
-    /// Any program's HELPINFO OUT reads the editor's cursor, as only
-    /// #SYS's programs do otherwise.
+    /// What only #SYS's programs may do works in any program: so far,
+    /// HELPINFO OUT reading the editor's cursor.
     pub helpinfo_cursor: bool,
     /// The help panel draws its glyphs this many times their size.
     pub help_text_size: u32,
@@ -92,6 +92,8 @@ pub struct Settings {
     /// The list has SmileBASIC's words, and the program's names.
     pub complete_commands: bool,
     pub complete_names: bool,
+    /// Those names come from every slot, the edited one first.
+    pub complete_all_slots: bool,
     /// Enter takes the chosen word, besides Tab.
     pub complete_enter: bool,
     /// How commands are used shows under the list and while typing
@@ -151,6 +153,7 @@ impl Default for Settings {
             complete_after: 1,
             complete_commands: true,
             complete_names: false,
+            complete_all_slots: false,
             complete_enter: true,
             complete_hints: true,
             complete_above: false,
@@ -283,6 +286,7 @@ impl Settings {
                 "complete_editor" => &mut s.complete_editor,
                 "complete_commands" => &mut s.complete_commands,
                 "complete_names" => &mut s.complete_names,
+                "complete_all_slots" => &mut s.complete_all_slots,
                 "complete_enter" => &mut s.complete_enter,
                 "debug_open_editor" => &mut s.debug_open_editor,
                 "complete_hints" => &mut s.complete_hints,
@@ -407,6 +411,7 @@ impl Settings {
              complete_after={}\n\
              complete_commands={}\n\
              complete_names={}\n\
+             complete_all_slots={}\n\
              complete_enter={}\n\
              complete_hints={}\n\
              complete_above={}\n\
@@ -442,6 +447,7 @@ impl Settings {
             self.complete_after,
             self.complete_commands,
             self.complete_names,
+            self.complete_all_slots,
             self.complete_enter,
             self.complete_hints,
             self.complete_above,
@@ -485,6 +491,7 @@ mod tests {
             ui_font: FontSize::Small,
             keep_mouse_cursor: true,
             helpinfo_cursor: true,
+            complete_all_slots: true,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             ..Settings::default()

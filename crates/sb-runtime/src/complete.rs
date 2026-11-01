@@ -333,6 +333,13 @@ fn const_value(text: &str) -> String {
     format!("= {}", value[..end].trim())
 }
 
+/// `names` followed by those of `more` it does not have.
+pub fn merge(mut names: Vec<Item>, more: &[Item]) -> Vec<Item> {
+    let have: std::collections::HashSet<String> = names.iter().map(|i| i.word.clone()).collect();
+    names.extend(more.iter().filter(|i| !have.contains(&i.word)).cloned());
+    names
+}
+
 /// The names a program uses: variables, DEFs, labels and constants, as
 /// first written. A DEF or an array keeps what its line says of it.
 pub fn names<'a>(lines: impl IntoIterator<Item = &'a [u16]>) -> Vec<Item> {

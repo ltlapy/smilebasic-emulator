@@ -360,6 +360,8 @@ pub struct Editor {
     pub library: Rc<Library>,
     /// The program's names, until the text changes.
     names: Option<Rc<Vec<Item>>>,
+    /// The other slots' names, offered after the program's own.
+    other_names: Option<Rc<Vec<Item>>>,
     /// What completion offers; `None` when it is off.
     pub complete: Option<Options>,
     /// Where each slot was left, restored when it is opened again.
@@ -466,6 +468,7 @@ impl Editor {
             quiet: false,
             library: Rc::default(),
             names: None,
+            other_names: None,
             complete: None,
             map: None,
             map_drag: false,
@@ -1251,13 +1254,30 @@ impl Editor {
         }
     }
 
-    /// The names the program uses, worked out again after a change.
+    /// The names the program uses, worked out again after a change, then
+    /// those of the other slots if given.
     fn program_names(&mut self) -> Rc<Vec<Item>> {
-        let lines = &self.lines;
-        (self
-            .names
-            .get_or_insert_with(|| Rc::new(complete::names(lines.iter().map(Vec::as_slice)))))
+        let (lines, others) = (&self.lines, &self.other_names);
+        (self.names.get_or_insert_with(|| {
+            let own = complete::names(lines.iter().map(Vec::as_slice));
+            Rc::new(match others {
+                Some(others) => complete::merge(own, others),
+                None => own,
+            })
+        }))
         .clone()
+    }
+
+    /// Sets the other slots' names to offer too, or none.
+    pub fn set_other_names(&mut self, names: Option<Rc<Vec<Item>>>) {
+        let same = match (&self.other_names, &names) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        if !same {
+            self.other_names = names;
+            self.names = None;
+        }
     }
 
     /// Puts the chosen word of completion's list in place of the word

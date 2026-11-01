@@ -557,6 +557,10 @@ struct Recall {
     draft: Vec<u16>,
 }
 
+/// The slot left out of the other slots' names, and the slots' change
+/// counts they were found at.
+type NamesKey = (usize, Vec<u32>);
+
 pub struct Runtime {
     pub text: Vec<TextScreen>,
     pub(crate) font: Font,
@@ -588,6 +592,9 @@ pub struct Runtime {
     /// Counts each slot's changes by programs and commands, so that an
     /// editor showing it while code runs can take them.
     pub(crate) slot_changes: Vec<u32>,
+    /// The other slots' names for completion, by the slot left out and
+    /// the slots' change counts they were found at.
+    other_names: Option<(NamesKey, Rc<Vec<complete::Item>>)>,
     /// How PRGINS, LOAD and the rest changed slots' lines since the
     /// machine last took them, in order.
     pub(crate) slot_edits: Vec<(usize, crate::prg::SlotEdit)>,
@@ -851,6 +858,7 @@ impl Runtime {
             slot_names: vec![String::new(); SLOTS],
             slot_modified: vec![false; SLOTS],
             slot_changes: vec![0; SLOTS],
+            other_names: None,
             slot_edits: Vec::new(),
             running_slot: None,
             stopped: Stopped::No,
@@ -1130,12 +1138,37 @@ impl Runtime {
         }
     }
 
+    /// The names of the slots but `except`, in order, when the settings
+    /// offer every slot's; kept until a slot changes.
+    pub(crate) fn other_slot_names(&mut self, except: usize) -> Option<Rc<Vec<complete::Item>>> {
+        if !self.settings.complete_all_slots {
+            return None;
+        }
+        let key = (except, self.slot_changes.clone());
+        if let Some((cached, names)) = &self.other_names
+            && *cached == key
+        {
+            return Some(names.clone());
+        }
+        let mut names = Vec::new();
+        for (_, text) in self.slots.iter().enumerate().filter(|&(s, _)| s != except) {
+            let lines = split_lines(text);
+            names = complete::merge(names, &complete::names(lines.iter().map(Vec::as_slice)));
+        }
+        let names = Rc::new(names);
+        self.other_names = Some((key, names.clone()));
+        Some(names)
+    }
+
     /// Completion's list for the word before the cursor of the line typed
     /// in direct mode.
     fn line_words(&mut self, options: Options) {
         // The edited slot's names, also for labels after GOTO.
         let lines = split_lines(&self.slots[self.edit_slot]);
-        let names = complete::names(lines.iter().map(Vec::as_slice));
+        let mut names = complete::names(lines.iter().map(Vec::as_slice));
+        if let Some(others) = self.other_slot_names(self.edit_slot) {
+            names = complete::merge(names, &others);
+        }
         if let Some(line) = &mut self.line
             && line.selection().is_none()
         {
