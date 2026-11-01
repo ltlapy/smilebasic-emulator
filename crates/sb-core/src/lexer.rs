@@ -460,9 +460,10 @@ impl Lexer {
         let mut value: u64 = 0;
         let mut digits = 0;
         loop {
-            // `_` separates digit groups, as in `&B0000_0001`.
-            // UNVERIFIED: whether it may lead or repeat.
-            if self.peek() == Some('_') && digits > 0 {
+            // `_` separates digit groups, as in `&B0000_0001`, and may
+            // also lead and repeat, as in `&H_3F__BF_BF`.
+            // UNVERIFIED: whether `&H_` with no digit at all is an error.
+            if self.peek() == Some('_') {
                 self.bump();
                 continue;
             }
@@ -661,7 +662,16 @@ mod tests {
             kinds("&B000_00000_0000_0001 &HFF_FF"),
             [T::Int(1), T::Int(0xFFFF)]
         );
-        assert_eq!(error("&H_1"), LexErrorKind::MissingDigits);
+        assert_eq!(
+            kinds("&h_FFFF7FFF &h_3F__BF_BF_BF &b____1 &h1___00"),
+            [
+                T::Int(-32769),
+                T::Int(0x3FBF_BFBF),
+                T::Int(1),
+                T::Int(0x100)
+            ]
+        );
+        assert_eq!(error("&H_"), LexErrorKind::MissingDigits);
     }
 
     #[test]
