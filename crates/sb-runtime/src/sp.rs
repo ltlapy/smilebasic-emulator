@@ -228,7 +228,6 @@ impl Runtime {
         };
         let s = self.sprite(&args[0])?;
         // Without a rectangle, the sprite's own at the time, from its home.
-        // UNVERIFIED: the start point is minus the home point.
         let (x, y, w, h) = rect.unwrap_or((-s.home.0 as i32, -s.home.1 as i32, s.w, s.h));
         s.col = Some(Collision {
             x,
