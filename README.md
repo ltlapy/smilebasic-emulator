@@ -91,7 +91,7 @@ SmileBASIC 4's own files.
 | Ctrl+S | Save the edited slot: type a name, its own to start with |
 | Ctrl+L | Load a program from a project's files into the edited slot; type to narrow the list |
 | Pause/Break | Stop the program |
-| F5 | Run PRG0, or stop the running program; hold to stop it past `ON BREAK GOTO` |
+| F5, controller + | Run PRG0, or stop the running program; hold to stop it past `ON BREAK GOTO` |
 | F8 | Show the menu bar and pause the program; press again to resume |
 | Shift+F7 | Set or clear a breakpoint on the cursor's line, as a click on its number does; the program stops before it and the editor opens there |
 | F6, F7, Shift+F6 | With a program stopped: run one statement, run over a DEF or GOSUB, or run out of the one under way |

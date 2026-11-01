@@ -55,6 +55,7 @@ use sdl3::VideoSubsystem;
 use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
 use sdl3::event::WindowEvent;
+use sdl3::gamepad::Button;
 use sdl3::keyboard::{Keycode, Mod};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
@@ -88,7 +89,7 @@ const MOST_SKIPPED: u32 = 3;
 const RUN_TIME: Duration = Duration::from_millis(10);
 /// The same for frames run to catch up.
 const CATCH_UP_RUN_TIME: Duration = Duration::from_millis(1);
-/// Holding F5, SmileBASIC 4's + button, this long stops a program even
+/// Holding the + button, or F5 for it, this long stops a program even
 /// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
 type AnyError = Box<dyn std::error::Error>;
@@ -270,8 +271,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut next_frame = Instant::now();
     // The left button went down on the editor and is still held.
     let mut dragging = false;
-    // When F5 went down, while it is held.
-    let mut f5_down: Option<Instant> = None;
+    // When the + button, F5 or a controller's, went down, while it is
+    // held.
+    let mut plus_down: Option<Instant> = None;
     'running: loop {
         // The editor shows in a window of its own while it is open, if
         // chosen.
@@ -448,7 +450,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::KeyUp {
                     keycode: Some(Keycode::F5),
                     ..
-                } if f5_down.take().is_some() => machine.sysreq(),
+                }
+                | Event::GamepadButtonUp {
+                    button: Button::Start,
+                    ..
+                } if plus_down.take().is_some() => machine.sysreq(),
+                Event::GamepadButtonDown {
+                    button: Button::Start,
+                    ..
+                } if !modal_shown!() => plus_down = Some(Instant::now()),
                 _ => {}
             }
             if let Some((open, asking)) = &mut dialog {
@@ -1157,7 +1167,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     repeat: false,
                     ..
-                } if !ctrl(keymod) => f5_down = Some(Instant::now()),
+                } if !ctrl(keymod) => plus_down = Some(Instant::now()),
                 // F8 leaves F9 to F11 for SmileBASIC 4's tools.
                 Event::KeyDown {
                     keycode: Some(Keycode::F8),
@@ -1404,8 +1414,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let right_side = !machine.is_split_rows() && machine.active_side() == 1;
             open.set_left(machine.is_split() && right_side);
         }
-        if f5_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
-            f5_down = None;
+        if plus_down.is_some_and(|t| t.elapsed() >= FORCED_STOP) {
+            plus_down = None;
             machine.stop();
         }
         let paused = menu.shown && machine.is_running();
