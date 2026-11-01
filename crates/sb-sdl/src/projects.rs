@@ -1,30 +1,43 @@
-//! The project manager: lists the projects and their files, and switches,
-//! creates, renames, deletes, imports and exports projects. It also loads
-//! a program into a slot, runs one, and copies and deletes files. Drawn
-//! over the screen like the menu bar, it takes all input while it is open.
+//! The project manager: lists the projects and their files, and runs,
+//! switches, creates, renames, duplicates, deletes, imports and exports
+//! projects. It loads a program into a slot, runs one, shows, copies,
+//! renames and deletes files, and edits a project's title, description
+//! and icon. Drawn over the screen like the menu bar, it takes all input
+//! while it is open.
+//!
+//! The projects are on the left; on the right, an info area above the
+//! files shows what the list clicked last has selected: the project, or
+//! a preview of the file. Expanded, it covers the files and edits the
+//! project's metadata.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::{project_label, switch_lines};
-use sb_runtime::env::{ICON_SIZE, project_meta};
+use sb_runtime::env::{DESCRIPTION_CHARS, ICON_SIZE, Meta, TITLE_CHARS, meta_files, project_meta};
 use sb_runtime::font::Font;
+use sb_runtime::image;
 use sb_runtime::runtime::SLOTS;
 use sb_runtime::storage::{FileKind, Storage, check_project_name, suggest_project_name};
 use sb_runtime::transfer;
+use sdl3::gamepad::Button as Pad;
 use sdl3::keyboard::Keycode;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use crate::dialog::{Answer, Dialog};
 use crate::file_dialogs::{self, FilePicker};
+use crate::file_view::Viewer;
+use crate::preview::{self, Content, Picture};
+use crate::text_field::{Keyed, TextField};
 use crate::ui::{
-    BACKGROUND, BORDER, CHAR, DISABLED, GO, GO_HOVERED, HIGHLIGHT, LINE, PAD, Rect, TEXT, button,
-    colored_button, draw_text, fill, image, outline, text_width, window,
+    BACKGROUND, BORDER, CHAR, DISABLED, GO, GO_HOVERED, HIGHLIGHT, LINE, Mark, PAD, Rect, TEXT,
+    button, draw_text, fill, image, mark, mark_button, mark_button_width, outline, text_width,
+    window,
 };
 
 const WIDTH: u32 = 1200;
 /// On a 720-line display, it leaves the menu bar shown above it.
 const HEIGHT: u32 = 672;
-/// The width of the project list; the files take the rest.
+/// The width of the project list; the info area and the files take the
+/// rest.
 const LIST_WIDTH: u32 = 460;
 /// The height of a project's row: its icon, beside its title over its
 /// folder's name.
@@ -46,61 +59,164 @@ const ERROR: u32 = 0xFFFF_8080;
 /// The longest name the name box takes, a little over the limit so that
 /// a name that is too long gets an error rather than being cut short.
 const MAX_TYPED: usize = 40;
+/// The info area's height, and its height expanded over the files.
+const INFO_HEIGHT: u32 = 136;
+const INFO_EXPANDED: u32 = 420;
+/// The face of the info area and of the lists.
+const PANEL: u32 = 0xFF12_141A;
+/// Where text and pictures are shown inside the info area.
+const WELL: u32 = 0xFF0B_0C10;
+/// The project's icon in the info area, from the 40-pixel one.
+const BIG_ICON: u32 = 64;
+/// The gap between that icon and the text beside it.
+const BIG_ICON_GAP: u32 = 12;
+/// The width of the labels before the fields: "Description" and a gap.
+const LABEL_WIDTH: u32 = 11 * CHAR + PAD;
+/// The lines of the description's field.
+const DESCRIPTION_ROWS: u32 = 9;
+/// The width of a button showing only a mark: `⋯`, `▼` and `▲`.
+const MARK_WIDTH: u32 = CHAR + 3 * PAD;
+/// The View button's face, and its face under the mouse.
+const VIEW: (u32, u32) = (0xFF1E_4E9A, HIGHLIGHT);
+/// The files' text and outline while the info area covers them.
+const DIM_TEXT: u32 = 0xFF50_5050;
+const DIM_BORDER: u32 = 0xFF40_4040;
+/// A menu's line between groups of items.
+const SEPARATOR: u32 = 0xFF44_485A;
+/// The program that Run runs.
+const MAIN: &str = "MAIN.PRG";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Button {
+    /// Run the selected project's MAIN.PRG, switching to it first.
+    Run,
     Switch,
+    /// Opens the menu of the rest that can be done with projects.
+    ProjectMore,
     New,
     Rename,
-    Delete,
-    /// Opens a menu of the rest: Import and Export.
-    More,
+    /// Copy the project under a free name, then offer to rename it.
+    Duplicate,
     Import,
     Export,
-    Close,
+    Delete,
+    /// Run the selected program.
+    RunFile,
+    /// Show the selected file large.
+    View,
     /// Load the selected program into a slot.
     LoadTo,
-    /// Run the selected program, or else the project's MAIN.PRG.
-    Run,
+    /// Opens the menu of the rest that can be done with files.
+    FileMore,
     CopyTo,
+    RenameFile,
     DeleteFile,
+    /// The window's `×`.
+    Close,
+    /// Expands or collapses the info area.
+    Toggle,
+    /// Write the edited title, description and icon.
+    Save,
+    /// Choose an image file for the icon.
+    ChangeIcon,
+    RemoveIcon,
 }
 
-/// The buttons under the projects.
-const PROJECT_BUTTONS: [Button; 4] = [Button::New, Button::Rename, Button::Delete, Button::More];
-/// The buttons under the files.
-const FILE_BUTTONS: [Button; 4] = [
-    Button::Run,
-    Button::LoadTo,
-    Button::CopyTo,
-    Button::DeleteFile,
+/// The buttons above the projects, right of their heading.
+const PROJECT_TOOLBAR: [Button; 3] = [Button::Run, Button::Switch, Button::ProjectMore];
+/// The buttons above the files; Run selected gives its place to View
+/// for a file that is not a program.
+const FILE_TOOLBAR: [Button; 3] = [Button::RunFile, Button::LoadTo, Button::FileMore];
+/// The menus of the `⋯` buttons, with `None` between groups.
+const PROJECT_MORE: [Option<Button>; 8] = [
+    Some(Button::New),
+    Some(Button::Rename),
+    Some(Button::Duplicate),
+    None,
+    Some(Button::Import),
+    Some(Button::Export),
+    None,
+    Some(Button::Delete),
 ];
-/// The buttons at the bottom right.
-const WINDOW_BUTTONS: [Button; 2] = [Button::Switch, Button::Close];
+/// View is here as well, for the TXT files whose place in the toolbar
+/// Run selected takes.
+const FILE_MORE: [Option<Button>; 6] = [
+    Some(Button::View),
+    None,
+    Some(Button::CopyTo),
+    Some(Button::RenameFile),
+    None,
+    Some(Button::DeleteFile),
+];
 /// The menus of a right click on a project and on a file.
-const PROJECT_MENU: [Button; 4] = [
-    Button::Switch,
-    Button::Rename,
-    Button::Delete,
-    Button::Export,
+const PROJECT_MENU: [Option<Button>; 8] = [
+    Some(Button::Run),
+    Some(Button::Switch),
+    None,
+    Some(Button::Rename),
+    Some(Button::Duplicate),
+    Some(Button::Export),
+    None,
+    Some(Button::Delete),
 ];
-/// The program that Run runs when no program is selected.
-const MAIN: &str = "MAIN.PRG";
+const FILE_MENU: [Option<Button>; 8] = [
+    Some(Button::RunFile),
+    Some(Button::View),
+    Some(Button::LoadTo),
+    None,
+    Some(Button::CopyTo),
+    Some(Button::RenameFile),
+    None,
+    Some(Button::DeleteFile),
+];
 
 impl Button {
     fn label(self) -> &'static str {
         match self {
+            Button::Run => "Run",
             Button::Switch => "Switch",
-            Button::New => "New",
-            Button::Rename => "Rename",
-            Button::Delete | Button::DeleteFile => "Delete",
-            Button::More => "...",
+            Button::New => "New...",
+            Button::Rename | Button::RenameFile => "Rename...",
+            Button::Duplicate => "Duplicate",
             Button::Import => "Import...",
             Button::Export => "Export...",
-            Button::Close => "Close",
+            Button::Delete | Button::DeleteFile => "Delete...",
+            Button::RunFile => "Run selected",
+            Button::View => "View",
             Button::LoadTo => "Load to...",
-            Button::Run => "Run",
             Button::CopyTo => "Copy to...",
+            Button::Save => "Save",
+            Button::ChangeIcon => "Change...",
+            Button::RemoveIcon => "Remove",
+            Button::ProjectMore | Button::FileMore | Button::Close | Button::Toggle => "",
+        }
+    }
+
+    fn mark(self) -> Option<Mark> {
+        match self {
+            Button::Run | Button::RunFile => Some(Mark::Play),
+            Button::ProjectMore | Button::FileMore => Some(Mark::More),
+            Button::Close => Some(Mark::Close),
+            _ => None,
+        }
+    }
+
+    fn width(self) -> u32 {
+        match self {
+            Button::ProjectMore | Button::FileMore | Button::Toggle => MARK_WIDTH,
+            Button::Close => LINE,
+            // The two take the same place.
+            Button::RunFile | Button::View => mark_button_width(Some(Mark::Play), "Run selected")
+                .max(mark_button_width(None, "View")),
+            b => mark_button_width(b.mark(), b.label()),
+        }
+    }
+
+    fn faces(self) -> (u32, u32) {
+        match self {
+            Button::Run | Button::RunFile => (GO, GO_HOVERED),
+            Button::View => VIEW,
+            _ => (BORDER, HIGHLIGHT),
         }
     }
 }
@@ -121,7 +237,7 @@ impl File {
     }
 }
 
-/// A file to copy or delete, wherever it is.
+/// A file to copy, rename or delete, wherever it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Source {
     project: String,
@@ -129,10 +245,11 @@ struct Source {
     name: String,
 }
 
-/// A right click's menu, or the one of the `...` button.
+/// A right click's menu, or the one of a `⋯` button.
 struct Popup {
     at: (u32, u32),
-    items: Vec<Button>,
+    /// `None` between groups of items.
+    items: Vec<Option<Button>>,
     chosen: Option<usize>,
 }
 
@@ -154,6 +271,9 @@ pub enum Outcome {
     Switched(String),
     /// Ask for a folder, then call [`ProjectManager::folder_chosen`].
     ChooseFolder(Transfer),
+    /// Ask for a file, in the folder given if any, then call
+    /// [`ProjectManager::folder_chosen`] with it.
+    ChooseFile(Transfer, Option<PathBuf>),
     /// Load a TXT file of the current project into a slot, or run it;
     /// the manager closes. `switched` names the project switched to first.
     Open {
@@ -171,13 +291,15 @@ pub struct Open {
     pub run: bool,
 }
 
-/// What a chosen folder is for.
+/// What a chosen folder or file is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Transfer {
     /// Export the named project into it, in SmileBASIC 4's files.
     Export(String),
     /// Import SmileBASIC 4's project in it as a new project.
     Import,
+    /// An image to make the named project's icon of.
+    Icon(String),
 }
 
 enum Naming {
@@ -192,12 +314,25 @@ enum Naming {
     Import {
         from: PathBuf,
     },
+    RenameFile(Source),
 }
 
 struct NameBox {
     naming: Naming,
     text: String,
     message: Option<String>,
+}
+
+/// An event put off to ask first whether to drop unsaved edits of the
+/// metadata, done again if they are dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Deferred {
+    Click((i32, i32)),
+    /// With the project clicked before it, which the question's own
+    /// click forgets.
+    DoubleClick((i32, i32), Option<usize>),
+    RightClick((i32, i32)),
+    Key(Keycode),
 }
 
 enum Pending {
@@ -211,57 +346,156 @@ enum Pending {
     DeleteFile(Source),
     /// Copy a file over one of the same name, in a project and as a name.
     Copy(Source, String, String),
+    /// Drop the metadata's edits, then go on with the event.
+    Discard(Deferred),
 }
 
 enum Mode {
     Browse,
     Name(NameBox),
     Ask(Dialog, Pending),
-    /// Choosing the slot to load the selected file into.
-    Slot,
+    /// Choosing the slot to load the selected file into; the one the
+    /// keys or the controller are on.
+    Slot(usize),
     Menu(Popup),
     /// Choosing where to copy a file to.
     Copy(Box<FilePicker>, Source),
+    /// A file shown large.
+    View(Box<Viewer>),
 }
 
-/// Which list Up and Down move in; Tab switches.
+/// Which list Up and Down move in; Tab switches. The info area shows
+/// what this list has selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Focus {
     Projects,
     Files,
 }
 
-/// A project's title and icon from its metadata, read when the list is.
+/// A project's title, description and icon from its metadata, read when
+/// the list is.
 struct Listed {
     title: String,
-    icon: Option<Icon>,
-}
-
-struct Icon {
-    /// `ICON_SIZE` square, row by row.
-    pixels: Box<[u32]>,
-    /// Tells icons apart for dry runs of drawing.
-    key: u64,
+    description: String,
+    icon: Option<Picture>,
 }
 
 impl Listed {
     fn read(storage: &Storage, project: &str) -> Listed {
         let meta = project_meta(project, |name| storage.read_file_in(project, name).ok());
         let pixels: Box<[u32]> = meta.icon.iter().map(|&p| p as u32).collect();
-        let shown = pixels.len() == ICON_SIZE * ICON_SIZE && pixels.iter().any(|p| p >> 24 != 0);
-        let icon = shown.then(|| {
-            let mut hash = DefaultHasher::new();
-            pixels.hash(&mut hash);
-            Icon {
-                pixels,
-                key: hash.finish(),
-            }
-        });
+        let side = ICON_SIZE as u32;
+        let icon =
+            shown_icon(&pixels).then(|| Picture::scaled(&pixels, (side, side), (side, side)));
         Listed {
             title: String::from_utf16_lossy(&meta.title),
+            description: String::from_utf16_lossy(&meta.description),
             icon,
         }
     }
+}
+
+/// Whether an icon has any pixel to show.
+fn shown_icon<T: Copy + Into<u64>>(pixels: &[T]) -> bool {
+    pixels.len() == ICON_SIZE * ICON_SIZE && pixels.iter().any(|&p| p.into() >> 24 & 0xFF != 0)
+}
+
+/// The icon as large as the info area shows it.
+fn big_icon(pixels: &[u32]) -> Option<Picture> {
+    let side = ICON_SIZE as u32;
+    shown_icon(pixels).then(|| Picture::scaled(pixels, (side, side), (BIG_ICON, BIG_ICON)))
+}
+
+/// An image made an icon: fitted into its square, keeping its shape,
+/// and centred on transparent pixels.
+fn icon_from(img: &image::Image) -> Vec<i32> {
+    let side = ICON_SIZE as u32;
+    let (w, h) = (img.width as u32, img.height as u32);
+    let p = Picture::fitted(&img.pixels, (w, h), (side, side));
+    let (x0, y0) = ((side - p.w) / 2, (side - p.h) / 2);
+    let mut icon = vec![0; ICON_SIZE * ICON_SIZE];
+    for y in 0..p.h {
+        for x in 0..p.w {
+            icon[((y0 + y) * side + x0 + x) as usize] = p.pixels[(y * p.w + x) as usize] as i32;
+        }
+    }
+    icon
+}
+
+/// The parts of the metadata's editor that the keys go to in turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Field {
+    Title,
+    Description,
+    Change,
+    Remove,
+    Save,
+}
+
+const FIELDS: [Field; 5] = [
+    Field::Title,
+    Field::Description,
+    Field::Change,
+    Field::Remove,
+    Field::Save,
+];
+
+/// The selected project's title, description and icon being edited, in
+/// the expanded info area.
+struct MetaEdit {
+    project: String,
+    title: TextField,
+    description: TextField,
+    icon: Vec<i32>,
+    picture: Option<Picture>,
+    /// As read, or as last saved.
+    saved: (String, String, Vec<i32>),
+    /// Whether anything differs from `saved`, kept up as it is edited.
+    dirty: bool,
+    /// Where the keys go; `None` leaves them to the project list.
+    focus: Option<Field>,
+}
+
+impl MetaEdit {
+    fn changed(&mut self) {
+        self.dirty = self.title.text() != self.saved.0
+            || self.description.text() != self.saved.1
+            || self.icon != self.saved.2;
+    }
+
+    fn set_icon(&mut self, icon: Vec<i32>) {
+        let pixels: Vec<u32> = icon.iter().map(|&p| p as u32).collect();
+        self.picture = big_icon(&pixels);
+        self.icon = icon;
+        self.changed();
+    }
+}
+
+/// What the info area shows, read when the selection changes.
+enum Info {
+    Project {
+        /// How many files, and their size.
+        summary: String,
+        icon: Option<Picture>,
+    },
+    File {
+        label: String,
+        /// The lines, the picture's size or the array's shape.
+        about: String,
+        /// The size.
+        info: String,
+        lines: Vec<String>,
+        picture: Option<Picture>,
+        failed: Option<String>,
+    },
+}
+
+/// What [`Info`] was read for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct InfoKey {
+    project: String,
+    file: Option<(FileKind, String)>,
+    expanded: bool,
 }
 
 pub struct ProjectManager {
@@ -284,6 +518,11 @@ pub struct ProjectManager {
     /// The first file row shown.
     file_scroll: usize,
     focus: Focus,
+    /// Whether the info area covers the files.
+    expanded: bool,
+    info: Info,
+    info_key: Option<InfoKey>,
+    edit: Option<MetaEdit>,
     status: Option<(String, bool)>,
     mode: Mode,
     mouse: Option<(i32, i32)>,
@@ -306,6 +545,42 @@ fn fit(text: &str, width: u32) -> String {
     cut
 }
 
+fn item_height(item: Option<Button>) -> u32 {
+    if item.is_some() { LINE } else { PAD }
+}
+
+/// A menu's place, kept inside the window's `frame`.
+fn popup_rect(frame: Rect, popup: &Popup) -> Rect {
+    let w = (popup.items.iter().flatten())
+        .map(|b| text_width(b.label()))
+        .max()
+        .unwrap_or(0)
+        + 4 * PAD;
+    let h: u32 = popup.items.iter().map(|&i| item_height(i)).sum();
+    Rect {
+        x: popup.at.0.min(frame.x + frame.w - w - 2),
+        y: popup.at.1.min(frame.y + frame.h - h - 2),
+        w,
+        h,
+    }
+}
+
+/// A menu item's place, or a line's between groups.
+fn popup_item(frame: Rect, popup: &Popup, i: usize) -> Rect {
+    let all = popup_rect(frame, popup);
+    let above: u32 = popup.items[..i].iter().map(|&i| item_height(i)).sum();
+    Rect {
+        y: all.y + above,
+        h: item_height(popup.items[i]),
+        ..all
+    }
+}
+
+fn popup_hit(frame: Rect, popup: &Popup, at: (i32, i32)) -> Option<usize> {
+    (0..popup.items.len())
+        .find(|&i| popup.items[i].is_some() && popup_item(frame, popup, i).contains(at))
+}
+
 impl ProjectManager {
     pub fn new(storage: &Storage, size: (u32, u32)) -> ProjectManager {
         let mut manager = ProjectManager {
@@ -320,6 +595,13 @@ impl ProjectManager {
             file_selected: None,
             file_scroll: 0,
             focus: Focus::Projects,
+            expanded: false,
+            info: Info::Project {
+                summary: String::new(),
+                icon: None,
+            },
+            info_key: None,
+            edit: None,
             status: None,
             mode: Mode::Browse,
             mouse: None,
@@ -328,6 +610,7 @@ impl ProjectManager {
         manager.refresh(storage, None);
         let current = manager.current.clone();
         manager.select_name(&current, storage);
+        manager.sync(storage);
         manager
     }
 
@@ -364,6 +647,8 @@ impl ProjectManager {
         }
         self.file_selected = None;
         self.file_scroll = 0;
+        // The files may have changed: read the info again.
+        self.info_key = None;
         let project = self.selected_name().to_string();
         self.files = match storage.list(None, Some(&project)) {
             Ok(files) => files
@@ -379,6 +664,9 @@ impl ProjectManager {
                 Vec::new()
             }
         };
+        if self.files.is_empty() {
+            self.focus = Focus::Projects;
+        }
     }
 
     fn selected_name(&self) -> &str {
@@ -415,19 +703,52 @@ impl ProjectManager {
         }
     }
 
+    /// Whether the info area shows the selected file rather than the
+    /// project.
+    fn shows_file(&self) -> bool {
+        self.focus == Focus::Files && self.file_selected.is_some()
+    }
+
+    /// Run selected for a program or when no file is selected, which
+    /// leaves it disabled; View for the other files.
+    fn file_action(&self) -> Button {
+        match self.file_selected.and_then(|i| self.files.get(i)) {
+            Some(f) if f.kind != FileKind::Txt => Button::View,
+            _ => Button::RunFile,
+        }
+    }
+
+    fn dirty(&self) -> bool {
+        self.edit.as_ref().is_some_and(|e| e.dirty)
+    }
+
     fn enabled(&self, button: Button) -> bool {
         let name = self.selected_name();
         match button {
+            Button::Run => (self.files.iter()).any(|f| f.kind == FileKind::Txt && f.name == MAIN),
             Button::Switch => name != self.current,
             Button::Rename | Button::Delete => !name.is_empty(),
-            Button::LoadTo => self.selected_program().is_some(),
-            Button::Run => {
-                self.selected_program().is_some()
-                    || (self.files.iter()).any(|f| f.kind == FileKind::Txt && f.name == MAIN)
+            Button::RunFile | Button::LoadTo => self.selected_program().is_some(),
+            Button::View | Button::CopyTo | Button::RenameFile | Button::DeleteFile => {
+                self.selected_file().is_some()
             }
-            Button::CopyTo | Button::DeleteFile => self.selected_file().is_some(),
-            Button::New | Button::More | Button::Import | Button::Export | Button::Close => true,
+            Button::Save => self.dirty(),
+            Button::ChangeIcon => self.edit.is_some(),
+            Button::RemoveIcon => self.edit.as_ref().is_some_and(|e| e.picture.is_some()),
+            Button::New
+            | Button::Duplicate
+            | Button::ProjectMore
+            | Button::FileMore
+            | Button::Import
+            | Button::Export
+            | Button::Close
+            | Button::Toggle => true,
         }
+    }
+
+    /// Whether the expanded info area covers the button.
+    fn blocked(&self, button: Button) -> bool {
+        self.expanded && (FILE_TOOLBAR.contains(&button) || button == Button::View)
     }
 
     fn frame(&self) -> Rect {
@@ -440,44 +761,67 @@ impl ProjectManager {
         }
     }
 
-    /// The project list; the files sit to its right.
+    /// The top of the toolbars and of the info area, under the title.
+    fn top(&self) -> u32 {
+        self.frame().y + LINE + 2 * PAD
+    }
+
+    fn bottom(&self) -> u32 {
+        let f = self.frame();
+        f.y + f.h - 2 * PAD
+    }
+
+    /// The project list, under its toolbar.
     fn list(&self) -> Rect {
         let f = self.frame();
-        let y = f.y + 2 * LINE + 2 * PAD;
+        let y = self.top() + LINE + PAD;
         Rect {
             x: f.x + 2 * PAD,
             y,
             w: LIST_WIDTH,
-            // Under the list: its buttons, then the status line and the
-            // window's buttons.
-            h: self.group_y() - PAD - y,
+            h: self.bottom() - y,
         }
     }
 
-    /// The row of the buttons under the lists.
-    fn group_y(&self) -> u32 {
-        self.bottom_y() - PAD - LINE
+    /// The column right of the projects: the info area, then the files.
+    fn right(&self) -> Rect {
+        let f = self.frame();
+        let list = self.list();
+        let x = list.x + list.w + 2 * PAD;
+        let top = self.top();
+        Rect {
+            x,
+            y: top,
+            w: f.x + f.w - 2 * PAD - x,
+            h: self.bottom() - top,
+        }
     }
 
-    /// The bottom row: the status line, Switch and Close.
-    fn bottom_y(&self) -> u32 {
-        let f = self.frame();
-        f.y + f.h - 2 * PAD - LINE
+    fn info_rect(&self) -> Rect {
+        let h = if self.expanded {
+            INFO_EXPANDED
+        } else {
+            INFO_HEIGHT
+        };
+        Rect { h, ..self.right() }
+    }
+
+    /// The files' toolbar, under the collapsed info area.
+    fn files_toolbar_y(&self) -> u32 {
+        self.top() + INFO_HEIGHT + PAD
+    }
+
+    fn files_rect(&self) -> Rect {
+        let y = self.files_toolbar_y() + LINE + PAD;
+        Rect {
+            y,
+            h: self.bottom() - y,
+            ..self.right()
+        }
     }
 
     fn rows(&self) -> usize {
         (self.list().h / ROW) as usize
-    }
-
-    fn files_rect(&self) -> Rect {
-        let f = self.frame();
-        let list = self.list();
-        let x = list.x + list.w + 2 * PAD;
-        Rect {
-            x,
-            w: f.x + f.w - 2 * PAD - x,
-            ..list
-        }
     }
 
     fn file_rows(&self) -> usize {
@@ -523,46 +867,125 @@ impl ProjectManager {
         }
     }
 
-    /// A button of the rows under the lists, or of the bottom right.
-    /// Import and Export, which are in the `...` menu, have no place.
-    fn button(&self, button: Button) -> Rect {
-        let f = self.frame();
-        let width = |b: Button| text_width(b.label()) + 4 * PAD;
-        let before = |row: &[Button]| -> u32 {
-            (row.iter())
-                .take_while(|&&b| b != button)
-                .map(|&b| width(b) + PAD)
-                .sum()
-        };
-        let (x, y) = if PROJECT_BUTTONS.contains(&button) {
-            (self.list().x + before(&PROJECT_BUTTONS), self.group_y())
-        } else if FILE_BUTTONS.contains(&button) {
-            (self.files_rect().x + before(&FILE_BUTTONS), self.group_y())
-        } else if WINDOW_BUTTONS.contains(&button) {
-            let all: u32 = WINDOW_BUTTONS.iter().map(|&b| width(b) + PAD).sum();
-            let left = f.x + f.w - 2 * PAD + PAD - all;
-            (left + before(&WINDOW_BUTTONS), self.bottom_y())
-        } else {
-            return Rect {
-                x: 0,
-                y: 0,
-                w: 0,
-                h: 0,
-            };
-        };
+    /// `button`'s place in a row of them that ends at `right`.
+    fn in_row(row: &[Button], button: Button, right: u32, y: u32) -> Rect {
+        let all: u32 = row.iter().map(|b| b.width() + PAD).sum::<u32>() - PAD;
+        let before: u32 = (row.iter())
+            .take_while(|&&b| b != button)
+            .map(|b| b.width() + PAD)
+            .sum();
         Rect {
-            x,
+            x: right - all + before,
             y,
-            w: width(button),
+            w: button.width(),
             h: LINE,
         }
     }
 
-    fn buttons() -> impl Iterator<Item = Button> {
-        PROJECT_BUTTONS
+    /// The big icon's place in the info area.
+    fn big_icon_rect(&self) -> Rect {
+        let r = self.info_rect();
+        Rect {
+            x: r.x + 2 + PAD,
+            y: r.y + 2 + PAD,
+            w: BIG_ICON,
+            h: BIG_ICON,
+        }
+    }
+
+    /// The fields of the expanded info area: the title, the description,
+    /// and the row of the icon's buttons.
+    fn field_rect(&self, field: Field) -> Rect {
+        let r = self.info_rect();
+        let x = r.x + 2 + PAD + LABEL_WIDTH;
+        let w = r.x + r.w - 2 - PAD - x;
+        let title_y = self.big_icon_rect().y + BIG_ICON + PAD;
+        let description_y = title_y + LINE + PAD;
+        let icon_y = description_y + DESCRIPTION_ROWS * LINE + PAD;
+        let row = |y, h| Rect { x, y, w, h };
+        match field {
+            Field::Title => row(title_y, LINE),
+            Field::Description => row(description_y, DESCRIPTION_ROWS * LINE),
+            Field::Change | Field::Remove | Field::Save => row(icon_y, LINE),
+        }
+    }
+
+    /// Where the preview of a file goes in the info area, under its name.
+    fn preview_rect(&self) -> Rect {
+        let r = self.info_rect();
+        let x = r.x + 2 + PAD;
+        let y = r.y + 2 + PAD + LINE + PAD / 2;
+        Rect {
+            x,
+            y,
+            w: r.x + r.w - 2 - PAD - MARK_WIDTH - PAD - x,
+            h: r.y + r.h - 2 - PAD - y,
+        }
+    }
+
+    fn button(&self, button: Button) -> Rect {
+        let f = self.frame();
+        let info = self.info_rect();
+        let info_right = info.x + info.w - 2 - PAD;
+        let list = self.list();
+        let right = self.right();
+        match button {
+            Button::Close => Rect {
+                x: f.x + f.w - 2 - LINE,
+                y: f.y + 2,
+                w: LINE,
+                h: LINE,
+            },
+            Button::Toggle => Rect {
+                x: info_right - MARK_WIDTH,
+                y: info.y + info.h - 2 - PAD - LINE,
+                w: MARK_WIDTH,
+                h: LINE,
+            },
+            Button::Save => Rect {
+                x: info_right - button.width(),
+                y: info.y + 2 + PAD,
+                w: button.width(),
+                h: LINE,
+            },
+            Button::ChangeIcon | Button::RemoveIcon => {
+                let r = self.field_rect(Field::Change);
+                let change = Button::ChangeIcon.width();
+                Rect {
+                    x: if button == Button::ChangeIcon {
+                        r.x
+                    } else {
+                        r.x + change + PAD
+                    },
+                    w: button.width(),
+                    ..r
+                }
+            }
+            b if PROJECT_TOOLBAR.contains(&b) => {
+                Self::in_row(&PROJECT_TOOLBAR, b, list.x + list.w, self.top())
+            }
+            Button::View => self.button(Button::RunFile),
+            b if FILE_TOOLBAR.contains(&b) => {
+                Self::in_row(&FILE_TOOLBAR, b, right.x + right.w, self.files_toolbar_y())
+            }
+            // In menus only.
+            _ => Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+        }
+    }
+
+    /// The buttons shown, which the mouse can press.
+    fn buttons(&self) -> impl Iterator<Item = Button> + '_ {
+        let edit = [Button::Save, Button::ChangeIcon, Button::RemoveIcon];
+        PROJECT_TOOLBAR
             .into_iter()
-            .chain(FILE_BUTTONS)
-            .chain(WINDOW_BUTTONS)
+            .chain([self.file_action(), Button::LoadTo, Button::FileMore])
+            .chain([Button::Close, Button::Toggle])
+            .chain(edit.into_iter().filter(|_| self.edit.is_some()))
     }
 
     fn project_at(&self, at: (i32, i32)) -> Option<usize> {
@@ -571,53 +994,178 @@ impl ProjectManager {
     }
 
     fn file_at(&self, at: (i32, i32)) -> Option<usize> {
+        if self.expanded {
+            return None;
+        }
         self.shown_files().find(|&i| self.file_row(i).contains(at))
     }
 
-    fn popup_width(items: &[Button]) -> u32 {
-        items
-            .iter()
-            .map(|b| text_width(b.label()))
-            .max()
-            .unwrap_or(0)
-            + 4 * PAD
+    /// The part of the window the expanded info area leaves dimmed, which
+    /// takes no input.
+    fn covered(&self, at: (i32, i32)) -> bool {
+        self.expanded && self.right().contains(at) && !self.info_rect().contains(at)
     }
 
-    /// A menu item's place, kept inside the window.
-    fn popup_item(&self, popup: &Popup, i: usize) -> Rect {
-        let f = self.frame();
-        let w = Self::popup_width(&popup.items);
-        let h = popup.items.len() as u32 * LINE;
-        let x = popup.at.0.min(f.x + f.w - w - 2);
-        let y = popup.at.1.min(f.y + f.h - h - 2);
-        Rect {
-            x,
-            y: y + i as u32 * LINE,
-            w,
-            h: LINE,
-        }
+    /// The item `step` on from `from` that can be chosen, round the end.
+    fn next_item(&self, popup: &Popup, from: Option<usize>, step: isize) -> Option<usize> {
+        let n = popup.items.len() as isize;
+        let start = from.map_or(if step > 0 { -1 } else { n }, |i| i as isize);
+        (1..=n)
+            .map(|k| (start + k * step).rem_euclid(n) as usize)
+            .find(|&i| popup.items[i].is_some_and(|b| self.enabled(b)))
     }
 
-    fn open_menu(&mut self, at: (u32, u32), items: &[Button]) {
-        self.mode = Mode::Menu(Popup {
+    fn open_menu(&mut self, at: (u32, u32), items: &[Option<Button>], keyed: bool) {
+        let mut popup = Popup {
             at,
             items: items.to_vec(),
             chosen: None,
-        });
+        };
+        if keyed {
+            popup.chosen = self.next_item(&popup, None, 1);
+        }
+        self.mode = Mode::Menu(popup);
+    }
+
+    /// The menu of a `⋯` button, under it.
+    fn open_more(&mut self, more: Button, keyed: bool) {
+        let r = self.button(more);
+        let items: &[Option<Button>] = match more {
+            Button::ProjectMore => &PROJECT_MORE,
+            _ => &FILE_MORE,
+        };
+        self.open_menu((r.x, r.y + r.h), items, keyed);
+    }
+
+    /// Reads the info area's contents again if the selection changed,
+    /// and starts or ends editing the metadata to match. Every event
+    /// that can change what is selected ends with this.
+    fn sync(&mut self, storage: &Storage) {
+        let key = InfoKey {
+            project: self.selected_name().to_string(),
+            file: (self.shows_file())
+                .then(|| self.selected_file().map(|s| (s.kind, s.name)))
+                .flatten(),
+            expanded: self.expanded,
+        };
+        if self.info_key.as_ref() != Some(&key) {
+            self.info = self.read_info(storage, &key);
+            self.info_key = Some(key);
+        }
+        let editing = self.expanded && !self.shows_file();
+        let same = self
+            .edit
+            .as_ref()
+            .is_some_and(|e| e.project == self.selected_name());
+        match (editing, same) {
+            (true, true) => {}
+            (true, false) => {
+                // Moving to another project keeps the keys where they were;
+                // expanding puts them in the title.
+                let focus = self.edit.as_ref().map_or(Some(Field::Title), |e| e.focus);
+                self.edit = Some(self.new_edit(focus));
+            }
+            (false, _) => self.edit = None,
+        }
+    }
+
+    fn new_edit(&self, focus: Option<Field>) -> MetaEdit {
+        let listed = &self.listed[self.selected];
+        let icon: Vec<i32> = match &listed.icon {
+            Some(p) => p.pixels.iter().map(|&p| p as i32).collect(),
+            None => vec![0; ICON_SIZE * ICON_SIZE],
+        };
+        let title = TextField::new(
+            &listed.title,
+            TITLE_CHARS,
+            false,
+            self.field_rect(Field::Title),
+        );
+        let description = TextField::new(
+            &listed.description,
+            DESCRIPTION_CHARS,
+            true,
+            self.field_rect(Field::Description),
+        );
+        let pixels: Vec<u32> = icon.iter().map(|&p| p as u32).collect();
+        MetaEdit {
+            project: self.selected_name().to_string(),
+            saved: (title.text(), description.text(), icon.clone()),
+            title,
+            description,
+            picture: big_icon(&pixels),
+            icon,
+            dirty: false,
+            focus,
+        }
+    }
+
+    fn read_info(&self, storage: &Storage, key: &InfoKey) -> Info {
+        let Some((kind, name)) = &key.file else {
+            let bytes = self
+                .files
+                .iter()
+                .filter_map(|f| f.info.as_ref())
+                .map(|i| i.0)
+                .sum();
+            let count = match self.files.len() {
+                1 => "1 file".to_string(),
+                n => format!("{n} files"),
+            };
+            let icon = (self.listed[self.selected].icon.as_ref()).and_then(|p| big_icon(&p.pixels));
+            return Info::Project {
+                summary: format!("{count}, {}", preview::size_text(bytes)),
+                icon,
+            };
+        };
+        let file = self.files[self.file_selected.expect("a file is shown")].clone();
+        // The list beside it shows the date.
+        let info = (file.info.as_ref()).map_or(String::new(), |i| preview::size_text(i.0));
+        let room = self.preview_rect();
+        let rows = (room.h.saturating_sub(4) / LINE) as usize;
+        let cols = (room.w.saturating_sub(2 * PAD) / CHAR) as usize;
+        let (mut about, mut lines, mut picture, mut failed) = (String::new(), vec![], None, None);
+        match preview::read(storage, &key.project, *kind, name) {
+            Content::Text { lines: text, count } => {
+                about = match count {
+                    1 => "1 line".to_string(),
+                    n => format!("{n} lines"),
+                };
+                lines = text.into_iter().take(rows).collect();
+            }
+            Content::Image { w, h, pixels } => {
+                about = format!("{w}x{h}");
+                let room = (room.w.saturating_sub(4), room.h.saturating_sub(4));
+                picture = Some(Picture::fitted(&pixels, (w, h), room));
+            }
+            Content::Data(data) => {
+                about = format!(
+                    "{} {}",
+                    preview::element_type(&data),
+                    preview::dims_text(&data)
+                );
+                lines = preview::data_lines(&data, cols, rows);
+            }
+            Content::Failed(e) => failed = Some(e),
+        }
+        Info::File {
+            label: file.label(),
+            about,
+            info,
+            lines,
+            picture,
+            failed,
+        }
     }
 
     pub fn mouse_move(&mut self, at: (i32, i32)) {
         self.mouse = Some(at);
+        let frame = self.frame();
         match &mut self.mode {
             Mode::Ask(dialog, _) => dialog.mouse_move(at),
             Mode::Copy(picker, _) => picker.mouse_move(at),
-            Mode::Menu(popup) => {
-                let items = popup.items.len();
-                let hit = (0..items).find(|&i| self.popup_item_at(i).contains(at));
-                if let Mode::Menu(popup) = &mut self.mode {
-                    popup.chosen = hit;
-                }
-            }
+            Mode::View(viewer) => viewer.mouse_move(at),
+            Mode::Menu(popup) => popup.chosen = popup_hit(frame, popup, at),
             _ => {}
         }
         if let Some(drag) = &mut self.drag {
@@ -626,23 +1174,21 @@ impl ProjectManager {
         }
     }
 
-    fn popup_item_at(&self, i: usize) -> Rect {
-        match &self.mode {
-            Mode::Menu(popup) => self.popup_item(popup, i),
-            _ => unreachable!("only a menu has items"),
-        }
-    }
-
     /// Scrolls the list under the mouse by `lines`, down for positive.
     pub fn wheel(&mut self, lines: i32) {
-        if let Mode::Copy(picker, _) = &mut self.mode {
-            picker.wheel(lines);
+        match &mut self.mode {
+            Mode::Copy(picker, _) => return picker.wheel(lines),
+            Mode::View(viewer) => return viewer.wheel(lines),
+            Mode::Browse => {}
+            _ => return,
+        }
+        let Some(at) = self.mouse else {
+            return;
+        };
+        if self.covered(at) || self.info_rect().contains(at) {
             return;
         }
-        if !matches!(self.mode, Mode::Browse) {
-            return;
-        }
-        if self.mouse.is_some_and(|m| self.files_rect().contains(m)) {
+        if self.files_rect().contains(at) {
             let last = self.files.len().saturating_sub(self.file_rows());
             self.file_scroll = (self.file_scroll.saturating_add_signed(lines as isize)).min(last);
             return;
@@ -651,7 +1197,7 @@ impl ProjectManager {
         self.scroll = self.scroll.saturating_add_signed(lines as isize).min(last);
     }
 
-    /// Typed text, for the name box.
+    /// Typed text, for the name box and the metadata's fields.
     pub fn text(&mut self, text: &str) {
         match &mut self.mode {
             Mode::Name(name) => {
@@ -662,14 +1208,48 @@ impl ProjectManager {
                 }
             }
             Mode::Copy(picker, _) => picker.text(text),
+            Mode::Browse => {
+                if let Some(edit) = &mut self.edit {
+                    match edit.focus {
+                        Some(Field::Title) => edit.title.insert(text),
+                        Some(Field::Description) => edit.description.insert(text),
+                        _ => return,
+                    }
+                    edit.changed();
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Asks before `deferred` drops the metadata's unsaved edits.
+    fn ask_discard(&mut self, deferred: Deferred) -> Outcome {
+        let project = self.edit.as_ref().map_or("", |e| e.project.as_str());
+        let lines = vec![
+            format!(
+                "The title, description or icon of {}",
+                project_label(project)
+            ),
+            "were changed and not saved.".to_string(),
+            String::new(),
+            "Discard the changes?".to_string(),
+        ];
+        let dialog = Dialog::new("Unsaved changes", lines, "Discard", self.size);
+        self.mode = Mode::Ask(dialog, Pending::Discard(deferred));
+        Outcome::Stay
     }
 
     /// `unsaved` lists the slots with unsaved edits, for the warning
     /// before switching.
     pub fn click(&mut self, at: (i32, i32), storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        let outcome = self.click_in(at, storage, unsaved);
+        self.sync(storage);
+        outcome
+    }
+
+    fn click_in(&mut self, at: (i32, i32), storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         self.clicked = None;
+        let frame = self.frame();
         match &mut self.mode {
             Mode::Ask(dialog, _) => match dialog.click(at) {
                 Some(answer) => self.answer(answer, storage, unsaved),
@@ -685,7 +1265,7 @@ impl ProjectManager {
                     Outcome::Stay
                 }
             }
-            Mode::Slot => {
+            Mode::Slot(_) => {
                 let chosen = (0..=SLOTS).find(|&i| self.slot_button(i).contains(at));
                 match chosen {
                     Some(SLOTS) => self.mode = Mode::Browse,
@@ -695,11 +1275,10 @@ impl ProjectManager {
                 Outcome::Stay
             }
             Mode::Menu(popup) => {
-                let items = popup.items.clone();
-                let hit = (0..items.len()).find(|&i| self.popup_item_at(i).contains(at));
+                let hit = popup_hit(frame, popup, at).and_then(|i| popup.items[i]);
                 self.mode = Mode::Browse;
                 match hit {
-                    Some(i) => self.press(items[i], storage, unsaved),
+                    Some(b) => self.press(b, storage, unsaved),
                     None => Outcome::Stay,
                 }
             }
@@ -707,38 +1286,89 @@ impl ProjectManager {
                 let outcome = picker.click(at, storage);
                 self.picked(outcome, storage)
             }
-            Mode::Browse => {
-                if let Some(b) = Self::buttons().find(|&b| self.button(b).contains(at)) {
-                    if b == Button::More {
-                        let r = self.button(b);
-                        self.open_menu((r.x, r.y + r.h), &[Button::Import, Button::Export]);
-                        return Outcome::Stay;
-                    }
-                    return self.press(b, storage, unsaved);
-                }
-                if let Some(i) = self.project_at(at) {
-                    self.select(i, storage);
-                    self.focus = Focus::Projects;
-                    self.clicked = Some(i);
-                }
-                if let Some(i) = self.file_at(at) {
-                    self.select_file(i);
-                    self.focus = Focus::Files;
-                    self.drag = Some(Drag {
-                        file: i,
-                        from: at,
-                        moving: false,
-                    });
+            Mode::View(viewer) => {
+                if viewer.click(at) {
+                    self.mode = Mode::Browse;
                 }
                 Outcome::Stay
             }
+            Mode::Browse => self.browse_click(at, storage, unsaved),
         }
     }
 
-    /// A double click on a project switches to it and closes. It counts
-    /// only if the click before it hit the same project; one that went
-    /// to another project is a click on this one.
+    fn browse_click(
+        &mut self,
+        at: (i32, i32),
+        storage: &mut Storage,
+        unsaved: &[usize],
+    ) -> Outcome {
+        let hit = self
+            .buttons()
+            .find(|&b| !self.blocked(b) && self.button(b).contains(at));
+        if let Some(b) = hit {
+            let keeps_edit = matches!(b, Button::Save | Button::ChangeIcon | Button::RemoveIcon);
+            if self.dirty() && !keeps_edit {
+                return self.ask_discard(Deferred::Click(at));
+            }
+            return self.press(b, storage, unsaved);
+        }
+        if self.edit.is_some() && self.info_rect().contains(at) {
+            let title = self.field_rect(Field::Title).contains(at);
+            let description = self.field_rect(Field::Description).contains(at);
+            if let Some(edit) = &mut self.edit {
+                if title {
+                    edit.focus = Some(Field::Title);
+                } else if description {
+                    edit.focus = Some(Field::Description);
+                }
+            }
+            return Outcome::Stay;
+        }
+        if self.covered(at) {
+            return Outcome::Stay;
+        }
+        if let Some(i) = self.project_at(at) {
+            if self.dirty() && i != self.selected {
+                return self.ask_discard(Deferred::Click(at));
+            }
+            if i != self.selected || self.focus != Focus::Projects {
+                self.select(i, storage);
+            }
+            self.focus = Focus::Projects;
+            self.clicked = Some(i);
+            // The keys go to the list clicked.
+            if let Some(edit) = &mut self.edit {
+                edit.focus = None;
+            }
+        }
+        if let Some(i) = self.file_at(at) {
+            self.select_file(i);
+            self.focus = Focus::Files;
+            self.drag = Some(Drag {
+                file: i,
+                from: at,
+                moving: false,
+            });
+        }
+        Outcome::Stay
+    }
+
+    /// A double click on a project runs it, or switches to it if it has
+    /// no MAIN.PRG; on the current project with none, it closes. It
+    /// counts only if the click before it hit the same project; one that
+    /// went to another project is a click on this one.
     pub fn double_click(
+        &mut self,
+        at: (i32, i32),
+        storage: &mut Storage,
+        unsaved: &[usize],
+    ) -> Outcome {
+        let outcome = self.double_click_in(at, storage, unsaved);
+        self.sync(storage);
+        outcome
+    }
+
+    fn double_click_in(
         &mut self,
         at: (i32, i32),
         storage: &mut Storage,
@@ -749,11 +1379,15 @@ impl ProjectManager {
         }
         let hit = self.project_at(at);
         if hit.is_some() && hit != self.clicked {
-            return self.click(at, storage, unsaved);
+            return self.click_in(at, storage, unsaved);
+        }
+        if hit.is_some() && self.dirty() {
+            return self.ask_discard(Deferred::DoubleClick(at, self.clicked));
         }
         // The next click starts over.
         self.clicked = None;
         match hit {
+            Some(_) if self.enabled(Button::Run) => self.press(Button::Run, storage, unsaved),
             Some(i) if self.projects[i] == self.current => Outcome::Close,
             Some(i) => {
                 self.select(i, storage);
@@ -772,14 +1406,24 @@ impl ProjectManager {
         self.mode = Mode::Browse;
         let place = (at.0.max(0) as u32, at.1.max(0) as u32);
         if let Some(i) = self.project_at(at) {
-            self.select(i, storage);
+            if self.dirty() && i != self.selected {
+                self.ask_discard(Deferred::RightClick(at));
+                return;
+            }
+            if i != self.selected {
+                self.select(i, storage);
+            }
             self.focus = Focus::Projects;
-            self.open_menu(place, &PROJECT_MENU);
+            if let Some(edit) = &mut self.edit {
+                edit.focus = None;
+            }
+            self.open_menu(place, &PROJECT_MENU, false);
         } else if let Some(i) = self.file_at(at) {
             self.select_file(i);
             self.focus = Focus::Files;
-            self.open_menu(place, &FILE_BUTTONS);
+            self.open_menu(place, &FILE_MENU, false);
         }
+        self.sync(storage);
     }
 
     /// Letting go of the left button: a file dragged onto a project is
@@ -805,11 +1449,56 @@ impl ProjectManager {
         let to = self.projects[to].clone();
         let name = source.name.clone();
         self.copy(source, to, name, storage, false);
+        self.sync(storage);
+    }
+
+    /// A controller, as keys: the pad moves, A (the right face button)
+    /// is Enter and B (the bottom one) Esc, as SmileBASIC 4's buttons are
+    /// placed; X opens the `⋯` menu of the list, Y expands or collapses
+    /// the info area, and the shoulder buttons go between the lists.
+    pub fn pad(&mut self, button: Pad, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        let outcome = match &mut self.mode {
+            Mode::Ask(dialog, _) => match dialog.pad(button) {
+                Some(answer) => self.answer(answer, storage, unsaved),
+                None => Outcome::Stay,
+            },
+            Mode::View(viewer) => {
+                if viewer.pad(button) {
+                    self.mode = Mode::Browse;
+                }
+                Outcome::Stay
+            }
+            _ => {
+                let key = match button {
+                    Pad::DPadUp => Keycode::Up,
+                    Pad::DPadDown => Keycode::Down,
+                    Pad::DPadLeft => Keycode::Left,
+                    Pad::DPadRight => Keycode::Right,
+                    Pad::East => Keycode::Return,
+                    Pad::South => Keycode::Escape,
+                    Pad::North => Keycode::Application,
+                    Pad::West => Keycode::Space,
+                    Pad::LeftShoulder | Pad::RightShoulder => Keycode::Tab,
+                    _ => return Outcome::Stay,
+                };
+                return self.key(key, storage, unsaved);
+            }
+        };
+        self.sync(storage);
+        outcome
     }
 
     /// Up and Down choose a project, or a file after Tab. Enter switches to
-    /// the project, or loads the file into a slot. Esc and F12 close.
+    /// the project, or loads the file into a slot. Space expands the info
+    /// area, and the menu key opens the list's `⋯` menu. Esc collapses the
+    /// info area or closes; F12 closes.
     pub fn key(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        let outcome = self.key_in(key, storage, unsaved);
+        self.sync(storage);
+        outcome
+    }
+
+    fn key_in(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         match &mut self.mode {
             Mode::Ask(dialog, _) => match dialog.key(key) {
                 Some(answer) => self.answer(answer, storage, unsaved),
@@ -828,21 +1517,30 @@ impl ProjectManager {
                 _ => Outcome::Stay,
             },
             Mode::Menu(popup) => {
-                let n = popup.items.len();
+                let (chosen, items) = (popup.chosen, popup.items.clone());
+                let shape = Popup {
+                    at: popup.at,
+                    items,
+                    chosen,
+                };
+                let moved = match key {
+                    Keycode::Up => Some(self.next_item(&shape, chosen, -1)),
+                    Keycode::Down => Some(self.next_item(&shape, chosen, 1)),
+                    _ => None,
+                };
                 match key {
                     Keycode::Escape => self.mode = Mode::Browse,
-                    Keycode::Up => {
-                        popup.chosen = Some(popup.chosen.map_or(n - 1, |i| (i + n - 1) % n))
-                    }
-                    Keycode::Down => popup.chosen = Some(popup.chosen.map_or(0, |i| (i + 1) % n)),
-                    Keycode::Return | Keycode::KpEnter => {
-                        if let Some(i) = popup.chosen {
-                            let chosen = popup.items[i];
+                    Keycode::Return | Keycode::KpEnter | Keycode::Space => {
+                        if let Some(b) = chosen.and_then(|i| shape.items[i]) {
                             self.mode = Mode::Browse;
-                            return self.press(chosen, storage, unsaved);
+                            return self.press(b, storage, unsaved);
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if let (Some(to), Mode::Menu(popup)) = (moved, &mut self.mode) {
+                            popup.chosen = to.or(popup.chosen);
+                        }
+                    }
                 }
                 Outcome::Stay
             }
@@ -850,73 +1548,175 @@ impl ProjectManager {
                 let outcome = picker.key(key, storage);
                 self.picked(outcome, storage)
             }
-            Mode::Slot => {
+            Mode::Slot(chosen) => {
                 let digit = (key as i32).checked_sub(Keycode::_0 as i32);
-                match digit {
-                    Some(d @ 0..) if (d as usize) < SLOTS => {
+                match (key, digit) {
+                    (_, Some(d @ 0..)) if (d as usize) < SLOTS => {
                         return self.load_to(d as usize, storage, unsaved);
                     }
-                    _ if key == Keycode::Escape => self.mode = Mode::Browse,
+                    (Keycode::Left, _) => *chosen = (*chosen + SLOTS) % (SLOTS + 1),
+                    (Keycode::Right | Keycode::Tab, _) => *chosen = (*chosen + 1) % (SLOTS + 1),
+                    (Keycode::Return | Keycode::KpEnter | Keycode::Space, _) => match *chosen {
+                        SLOTS => self.mode = Mode::Browse,
+                        slot => return self.load_to(slot, storage, unsaved),
+                    },
+                    (Keycode::Escape, _) => self.mode = Mode::Browse,
                     _ => {}
                 }
                 Outcome::Stay
             }
-            Mode::Browse if key == Keycode::Tab => {
-                self.focus = match self.focus {
-                    Focus::Projects if !self.files.is_empty() => {
+            Mode::View(viewer) => {
+                if viewer.key(key) {
+                    self.mode = Mode::Browse;
+                }
+                Outcome::Stay
+            }
+            Mode::Browse => self.browse_key(key, storage, unsaved),
+        }
+    }
+
+    /// A key for the metadata's editor, or `None` when it is not for it.
+    fn edit_key(&mut self, key: Keycode, storage: &mut Storage) -> Option<Outcome> {
+        let edit = self.edit.as_mut()?;
+        let field = edit.focus?;
+        let used = match field {
+            Field::Title => edit.title.key(key),
+            Field::Description => edit.description.key(key),
+            _ => Keyed::Passed,
+        };
+        edit.changed();
+        if used == Keyed::Used {
+            return Some(Outcome::Stay);
+        }
+        let at = FIELDS.iter().position(|&f| f == field).expect("a field");
+        let next = FIELDS.get(at + 1).copied();
+        let press = |button| match field {
+            Field::Change => Some(Button::ChangeIcon),
+            Field::Remove => Some(Button::RemoveIcon),
+            Field::Save => Some(Button::Save),
+            _ => button,
+        };
+        match key {
+            // From the last back to the project list.
+            Keycode::Tab => edit.focus = next,
+            Keycode::Down if field == Field::Title => edit.focus = next,
+            Keycode::Up if field == Field::Description => edit.focus = Some(Field::Title),
+            Keycode::Up if at >= 2 => edit.focus = Some(Field::Description),
+            Keycode::Left if at > 2 => edit.focus = Some(FIELDS[at - 1]),
+            Keycode::Right if (2..4).contains(&at) => edit.focus = next,
+            Keycode::Return | Keycode::KpEnter | Keycode::Space => match press(None) {
+                Some(b) => return Some(self.press(b, storage, &[])),
+                None if key != Keycode::Space => edit.focus = next,
+                None => {}
+            },
+            // Collapsing and closing; the rest stays with the editor.
+            Keycode::Escape | Keycode::F12 => return None,
+            _ => {}
+        }
+        Some(Outcome::Stay)
+    }
+
+    fn browse_key(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        if let Some(outcome) = self.edit_key(key, storage) {
+            return outcome;
+        }
+        let leaves = matches!(
+            key,
+            Keycode::Escape
+                | Keycode::F12
+                | Keycode::Space
+                | Keycode::Up
+                | Keycode::Down
+                | Keycode::PageUp
+                | Keycode::PageDown
+                | Keycode::Home
+                | Keycode::End
+                | Keycode::Return
+                | Keycode::KpEnter
+                | Keycode::Delete
+                | Keycode::F2
+                | Keycode::Application
+        );
+        if self.dirty() && leaves {
+            return self.ask_discard(Deferred::Key(key));
+        }
+        match key {
+            Keycode::F12 => return Outcome::Close,
+            Keycode::Escape if self.expanded => {
+                return self.press(Button::Toggle, storage, unsaved);
+            }
+            Keycode::Escape => return Outcome::Close,
+            Keycode::Space => return self.press(Button::Toggle, storage, unsaved),
+            Keycode::Application => {
+                let more = match self.focus {
+                    Focus::Files if !self.expanded => Button::FileMore,
+                    _ => Button::ProjectMore,
+                };
+                self.open_more(more, true);
+                return Outcome::Stay;
+            }
+            Keycode::Tab => {
+                match (self.expanded, &mut self.edit, self.focus) {
+                    // From the project list into the fields.
+                    (true, Some(edit), _) => edit.focus = Some(Field::Title),
+                    (true, None, _) => self.focus = Focus::Projects,
+                    (false, _, Focus::Projects) if !self.files.is_empty() => {
                         if self.file_selected.is_none() {
                             self.select_file(0);
                         }
-                        Focus::Files
+                        self.focus = Focus::Files;
                     }
-                    _ => Focus::Projects,
-                };
-                Outcome::Stay
+                    (false, ..) => self.focus = Focus::Projects,
+                }
+                return Outcome::Stay;
             }
-            Mode::Browse if key == Keycode::F12 => Outcome::Close,
-            Mode::Browse if self.focus == Focus::Files => {
-                let last = self.files.len().saturating_sub(1);
-                let page = self.file_rows().saturating_sub(1).max(1);
-                let at = self.file_selected.unwrap_or(0);
-                let to = match key {
-                    Keycode::Up => at.saturating_sub(1),
-                    Keycode::Down => (at + 1).min(last),
-                    Keycode::PageUp => at.saturating_sub(page),
-                    Keycode::PageDown => (at + page).min(last),
-                    Keycode::Home => 0,
-                    Keycode::End => last,
-                    Keycode::Return | Keycode::KpEnter => {
-                        return self.press(Button::LoadTo, storage, unsaved);
-                    }
-                    Keycode::Delete => return self.press(Button::DeleteFile, storage, unsaved),
-                    Keycode::Escape => return Outcome::Close,
-                    _ => return Outcome::Stay,
-                };
-                self.select_file(to);
-                Outcome::Stay
-            }
-            Mode::Browse => {
-                let last = self.projects.len() - 1;
-                let page = self.rows().saturating_sub(1).max(1);
-                let to = match key {
-                    Keycode::Up => self.selected.saturating_sub(1),
-                    Keycode::Down => (self.selected + 1).min(last),
-                    Keycode::PageUp => self.selected.saturating_sub(page),
-                    Keycode::PageDown => (self.selected + page).min(last),
-                    Keycode::Home => 0,
-                    Keycode::End => last,
-                    Keycode::Return | Keycode::KpEnter => {
-                        return self.press(Button::Switch, storage, unsaved);
-                    }
-                    Keycode::Delete => return self.press(Button::Delete, storage, unsaved),
-                    Keycode::F2 => return self.press(Button::Rename, storage, unsaved),
-                    Keycode::Escape => return Outcome::Close,
-                    _ => return Outcome::Stay,
-                };
-                self.select(to, storage);
-                Outcome::Stay
-            }
+            _ => {}
         }
+        if self.focus == Focus::Files {
+            // The expanded info area covers the files.
+            if self.expanded {
+                return Outcome::Stay;
+            }
+            let last = self.files.len().saturating_sub(1);
+            let page = self.file_rows().saturating_sub(1).max(1);
+            let at = self.file_selected.unwrap_or(0);
+            let to = match key {
+                Keycode::Up => at.saturating_sub(1),
+                Keycode::Down => (at + 1).min(last),
+                Keycode::PageUp => at.saturating_sub(page),
+                Keycode::PageDown => (at + page).min(last),
+                Keycode::Home => 0,
+                Keycode::End => last,
+                Keycode::Return | Keycode::KpEnter => {
+                    return self.press(Button::LoadTo, storage, unsaved);
+                }
+                Keycode::Delete => return self.press(Button::DeleteFile, storage, unsaved),
+                Keycode::F2 => return self.press(Button::RenameFile, storage, unsaved),
+                _ => return Outcome::Stay,
+            };
+            self.select_file(to);
+            return Outcome::Stay;
+        }
+        let last = self.projects.len() - 1;
+        let page = self.rows().saturating_sub(1).max(1);
+        let to = match key {
+            Keycode::Up => self.selected.saturating_sub(1),
+            Keycode::Down => (self.selected + 1).min(last),
+            Keycode::PageUp => self.selected.saturating_sub(page),
+            Keycode::PageDown => (self.selected + page).min(last),
+            Keycode::Home => 0,
+            Keycode::End => last,
+            Keycode::Return | Keycode::KpEnter => {
+                return self.press(Button::Switch, storage, unsaved);
+            }
+            Keycode::Delete => return self.press(Button::Delete, storage, unsaved),
+            Keycode::F2 => return self.press(Button::Rename, storage, unsaved),
+            _ => return Outcome::Stay,
+        };
+        if to != self.selected {
+            self.select(to, storage);
+        }
+        Outcome::Stay
     }
 
     fn press(&mut self, button: Button, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
@@ -926,14 +1726,33 @@ impl ProjectManager {
         let name = self.selected_name().to_string();
         match button {
             Button::Switch => return self.switch(name, storage, unsaved, false, None),
-            Button::LoadTo => self.mode = Mode::Slot,
+            Button::LoadTo => self.mode = Mode::Slot(0),
             Button::Run => {
                 let open = Open {
-                    file: self.selected_program().unwrap_or(MAIN).to_string(),
+                    file: MAIN.to_string(),
                     slot: 0,
                     run: true,
                 };
                 return self.open(open, storage, unsaved, false);
+            }
+            Button::RunFile => {
+                let open = Open {
+                    file: self.selected_program().expect("enabled").to_string(),
+                    slot: 0,
+                    run: true,
+                };
+                return self.open(open, storage, unsaved, false);
+            }
+            Button::View => {
+                let source = self.selected_file().expect("enabled");
+                let viewer = Viewer::open(
+                    self.frame(),
+                    storage,
+                    &source.project,
+                    source.kind,
+                    &source.name,
+                );
+                self.mode = Mode::View(Box::new(viewer));
             }
             Button::CopyTo => {
                 let source = self.selected_file().expect("enabled");
@@ -944,6 +1763,11 @@ impl ProjectManager {
                     storage,
                 );
                 self.mode = Mode::Copy(Box::new(picker), source);
+            }
+            Button::RenameFile => {
+                let source = self.selected_file().expect("enabled");
+                let text = source.name.clone();
+                self.ask_name(Naming::RenameFile(source), text, None);
             }
             Button::DeleteFile => {
                 let source = self.selected_file().expect("enabled");
@@ -960,10 +1784,7 @@ impl ProjectManager {
                 let dialog = Dialog::new("Delete file", lines, "Delete", self.size);
                 self.mode = Mode::Ask(dialog, Pending::DeleteFile(source));
             }
-            Button::More => {
-                let r = self.button(Button::More);
-                self.open_menu((r.x, r.y + r.h), &[Button::Import, Button::Export]);
-            }
+            Button::ProjectMore | Button::FileMore => self.open_more(button, false),
             Button::New => self.ask_name(Naming::New, String::new(), None),
             Button::Rename => {
                 let text = suggest_project_name(&name);
@@ -973,6 +1794,22 @@ impl ProjectManager {
                 };
                 self.ask_name(naming, text, None);
             }
+            Button::Duplicate => match storage.duplicate_project(&name) {
+                Ok(copy) => {
+                    let label = project_label(&name);
+                    self.status = Some((format!("Copied {label} to {copy}."), false));
+                    self.refresh(storage, Some(&copy));
+                    let naming = Naming::Rename {
+                        from: copy.clone(),
+                        then_switch: false,
+                    };
+                    self.ask_name(naming, copy, None);
+                }
+                Err(e) => {
+                    let label = project_label(&name);
+                    self.status = Some((format!("Could not copy {label}: {e}"), true));
+                }
+            },
             Button::Delete => {
                 let count = self.files.len();
                 let files = match count {
@@ -992,12 +1829,58 @@ impl ProjectManager {
             Button::Import => return Outcome::ChooseFolder(Transfer::Import),
             Button::Export => return Outcome::ChooseFolder(Transfer::Export(name)),
             Button::Close => return Outcome::Close,
+            Button::Toggle => {
+                self.expanded = !self.expanded;
+                if !self.expanded {
+                    self.edit = None;
+                }
+            }
+            Button::Save => self.save_meta(storage),
+            Button::ChangeIcon => {
+                let start = storage.project_dir(&name).ok().filter(|d| d.is_dir());
+                return Outcome::ChooseFile(Transfer::Icon(name), start);
+            }
+            Button::RemoveIcon => {
+                if let Some(edit) = &mut self.edit {
+                    edit.set_icon(vec![0; ICON_SIZE * ICON_SIZE]);
+                }
+            }
         }
         Outcome::Stay
     }
 
-    /// Goes on with `transfer` once the frontend's folder dialog has
-    /// given `folder`.
+    /// Writes the edited metadata as the emulator keeps it (as METASAVE
+    /// does): `@META.TXT` and `@ICON.PNG`, each whole or not at all. A
+    /// SmileBASIC 4 META file stays as it is; these are read before it.
+    fn save_meta(&mut self, storage: &Storage) {
+        let Some(edit) = &mut self.edit else {
+            return;
+        };
+        let (title, description) = (edit.title.text(), edit.description.text());
+        let meta = Meta {
+            project: edit.project.clone(),
+            home: edit.project.clone(),
+            title: title.encode_utf16().collect(),
+            description: description.encode_utf16().collect(),
+            icon: edit.icon.clone(),
+        };
+        let label = project_label(&edit.project).to_string();
+        let written = (meta_files(&meta).into_iter())
+            .try_for_each(|(file, bytes)| storage.write_file_in(&edit.project, file, &bytes));
+        match written {
+            Ok(()) => {
+                edit.saved = (title, description, edit.icon.clone());
+                edit.changed();
+                self.status = Some((format!("Saved the title and icon of {label}."), false));
+                self.listed[self.selected] = Listed::read(storage, &meta.project);
+                self.info_key = None;
+            }
+            Err(e) => self.status = Some((format!("Could not save {label}: {e}"), true)),
+        }
+    }
+
+    /// Goes on with `transfer` once the frontend's folder or file dialog
+    /// has given `folder`.
     pub fn folder_chosen(&mut self, transfer: Transfer, folder: PathBuf, storage: &Storage) {
         if !matches!(self.mode, Mode::Browse) {
             return;
@@ -1023,6 +1906,17 @@ impl ProjectManager {
                 let dialog = Dialog::new("Export project", lines, "Replace", self.size);
                 self.mode = Mode::Ask(dialog, Pending::Export(name, folder));
             }
+            Transfer::Icon(project) => {
+                let Some(edit) = self.edit.as_mut().filter(|e| e.project == project) else {
+                    return;
+                };
+                let read = std::fs::read(&folder).map_err(|e| e.to_string());
+                match read.and_then(|bytes| image::decode(&bytes)) {
+                    Ok(img) if img.width > 0 && img.height > 0 => edit.set_icon(icon_from(&img)),
+                    Ok(_) => self.status = Some(("The image is empty.".to_string(), true)),
+                    Err(e) => self.status = Some((format!("Could not use that image: {e}"), true)),
+                }
+            }
         }
     }
 
@@ -1039,6 +1933,22 @@ impl ProjectManager {
             _ => {}
         }
         Outcome::Stay
+    }
+
+    /// Selects the project's files again, keeping the selected one's
+    /// place, or selecting the file named.
+    fn reselect_files(&mut self, storage: &Storage, name: Option<(FileKind, &str)>) {
+        let (kept, focus) = (self.file_selected, self.focus);
+        self.select(self.selected, storage);
+        let found = name.and_then(|(kind, name)| {
+            (self.files.iter()).position(|f| f.kind == kind && f.name == name)
+        });
+        if let Some(i) = found.or(kept) {
+            self.select_file(i);
+            if !self.files.is_empty() {
+                self.focus = focus;
+            }
+        }
     }
 
     /// Copies a file to `to` as `name`, first asking before replacing a
@@ -1073,11 +1983,7 @@ impl ProjectManager {
             Err(e) => (format!("Could not copy {kind}:{}: {e}", source.name), true),
         });
         if to == self.selected_name() {
-            let kept = self.file_selected;
-            self.select(self.selected, storage);
-            if let Some(i) = kept {
-                self.select_file(i);
-            }
+            self.reselect_files(storage, None);
         }
     }
 
@@ -1208,11 +2114,7 @@ impl ProjectManager {
                     Ok(()) => (format!("Deleted {label}."), false),
                     Err(e) => (format!("Could not delete {label}: {e}"), true),
                 });
-                let kept = self.file_selected;
-                self.select(self.selected, storage);
-                if let Some(i) = kept {
-                    self.select_file(i);
-                }
+                self.reselect_files(storage, None);
             }
             Pending::Delete(name) => {
                 let was_current = name == self.current;
@@ -1226,6 +2128,26 @@ impl ProjectManager {
                 });
                 self.refresh(storage, None);
             }
+            Pending::Discard(deferred) => {
+                // Dropped; the event finds nothing unsaved now.
+                self.edit = None;
+                self.sync(storage);
+                if let Some(edit) = &mut self.edit {
+                    edit.focus = None;
+                }
+                return match deferred {
+                    Deferred::Click(at) => self.click_in(at, storage, unsaved),
+                    Deferred::DoubleClick(at, clicked) => {
+                        self.clicked = clicked;
+                        self.double_click_in(at, storage, unsaved)
+                    }
+                    Deferred::RightClick(at) => {
+                        self.right_click(at, storage);
+                        Outcome::Stay
+                    }
+                    Deferred::Key(key) => self.key_in(key, storage, unsaved),
+                };
+            }
         }
         Outcome::Stay
     }
@@ -1237,6 +2159,9 @@ impl ProjectManager {
         let done = match &name.naming {
             Naming::New | Naming::Import { .. } => storage.create_project(&name.text),
             Naming::Rename { from, .. } => storage.rename_project(from, &name.text),
+            Naming::RenameFile(source) => {
+                storage.rename_in(&source.project, source.kind, &source.name, &name.text)
+            }
         };
         let new = match done {
             Ok(new) => new,
@@ -1248,6 +2173,13 @@ impl ProjectManager {
         let Mode::Name(name) = std::mem::replace(&mut self.mode, Mode::Browse) else {
             unreachable!()
         };
+        if let Naming::RenameFile(source) = &name.naming {
+            let kind = source.kind.name();
+            let from = &source.name;
+            self.status = Some((format!("Renamed {kind}:{from} to {new}."), false));
+            self.reselect_files(storage, Some((source.kind, &new)));
+            return Outcome::Stay;
+        }
         self.refresh(storage, Some(&new));
         match name.naming {
             Naming::New => self.status = Some((format!("Created project {new}."), false)),
@@ -1264,6 +2196,7 @@ impl ProjectManager {
             Naming::Rename { from, .. } => {
                 self.status = Some((format!("Renamed project {from} to {new}."), false));
             }
+            Naming::RenameFile(_) => unreachable!("done above"),
         }
         Outcome::Stay
     }
@@ -1293,98 +2226,49 @@ impl ProjectManager {
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font, blink: bool) {
         let f = self.frame();
         window(fb, font, f, "Projects");
-        let current = format!("Current: {}", project_label(&self.current));
-        let x = f.x + f.w - 2 * PAD - text_width(&current);
-        draw_text(fb, font, x, f.y + 6, &current, TEXT);
-
-        let list = self.list();
-        let files = self.files_rect();
-        let heading_y = list.y - LINE + 4;
-        draw_text(fb, font, list.x, heading_y, "Projects", TEXT);
-        let place = project_label(self.selected_name());
-        let heading = format!("Files in {place} ({})", self.files.len());
-        draw_text(fb, font, files.x, heading_y, &fit(&heading, files.w), TEXT);
-
-        let shown = self.scroll..self.projects.len().min(self.scroll + self.rows());
-        for i in shown {
-            let r = self.row(i);
-            let name = &self.projects[i];
-            let current = *name == self.current;
-            if i == self.selected {
-                let color = match self.focus {
-                    Focus::Projects => HIGHLIGHT,
-                    Focus::Files => BORDER,
-                };
-                fill(fb, r, color);
-            } else if current {
-                fill(fb, r, CURRENT_TINT);
-            }
-            if current {
-                fill(fb, Self::current_bar(r), CURRENT_BAR);
-            }
-            let listed = &self.listed[i];
-            let side = ICON_SIZE as u32;
-            if let Some(icon) = &listed.icon {
-                let y = r.y + (ROW - side) / 2;
-                image(fb, r.x + PAD, y, side, &icon.pixels, icon.key);
-            }
-            // The title, then the folder's name if it says more.
-            let x = Self::title_x(r);
-            let room = (r.x + r.w).saturating_sub(x + PAD);
-            draw_text(fb, font, x, r.y + 6, &fit(&listed.title, room), TEXT);
-            let folder = project_label(name);
-            if folder != listed.title || !usable(name) {
-                let mut label = folder.to_string();
-                if !usable(name) {
-                    label.push_str(" (rename to use)");
-                }
-                let color = if usable(name) { FOLDER } else { ERROR };
-                draw_text(fb, font, x, r.y + 26, &fit(&label, room), color);
-            }
-        }
-        outline(fb, list, BORDER);
-
-        for i in self.shown_files() {
-            let r = self.file_row(i);
-            if self.file_selected == Some(i) {
-                let color = match self.focus {
-                    Focus::Files => HIGHLIGHT,
-                    Focus::Projects => BORDER,
-                };
-                fill(fb, r, color);
-            }
-            // The size and the date to the minute on the right, if the
-            // name leaves room.
-            let file = &self.files[i];
-            let info = (file.info.as_ref())
-                .map(|(size, date)| format!("{size:>7}  {}", date.get(..16).unwrap_or(date)));
-            let info_w = info.as_ref().map_or(0, |i| text_width(i) + 2 * PAD);
-            let text = fit(&file.label(), r.w - 2 * PAD - info_w);
-            draw_text(fb, font, r.x + PAD, r.y + 4, &text, TEXT);
-            if let Some(info) = info {
-                let x = r.x + r.w - PAD - text_width(&info);
-                draw_text(fb, font, x, r.y + 4, &info, DISABLED);
-            }
-        }
-        outline(fb, files, BORDER);
-
-        if let Some((status, error)) = &self.status {
-            let y = self.bottom_y() + 4;
-            let color = if *error { ERROR } else { TEXT };
-            let room = self.button(Button::Switch).x.saturating_sub(list.x + PAD);
-            draw_text(fb, font, list.x, y, &fit(status, room), color);
-        }
         let browsing = matches!(self.mode, Mode::Browse);
-        for b in Self::buttons() {
-            let hovered = browsing && self.mouse.is_some_and(|m| self.button(b).contains(m));
-            let (r, enabled) = (self.button(b), self.enabled(b));
-            match b {
-                Button::Run => {
-                    colored_button(fb, font, r, b.label(), hovered, enabled, (GO, GO_HOVERED))
-                }
-                _ => button(fb, font, r, b.label(), hovered, enabled),
-            }
+        let hovered = |r: Rect| browsing && self.mouse.is_some_and(|m| r.contains(m));
+        // The last message, or else the current project, left of `×`.
+        let close = self.button(Button::Close);
+        let room = close
+            .x
+            .saturating_sub(f.x + 2 * PAD + text_width("Projects") + 2 * PAD);
+        let (top, color) = match &self.status {
+            Some((status, error)) => (fit(status, room), if *error { ERROR } else { TEXT }),
+            None => (format!("Current: {}", project_label(&self.current)), TEXT),
+        };
+        let x = close.x - PAD - text_width(&top);
+        draw_text(fb, font, x, f.y + 6, &top, color);
+        if hovered(close) {
+            fill(fb, close, BORDER);
         }
+        mark(fb, Mark::Close, close.x + 4, close.y + 4, TEXT);
+
+        self.draw_projects(fb, font);
+        self.draw_files(fb, font);
+        for b in PROJECT_TOOLBAR.into_iter().chain([
+            self.file_action(),
+            Button::LoadTo,
+            Button::FileMore,
+        ]) {
+            let r = self.button(b);
+            let blocked = self.blocked(b);
+            let state = (!blocked && hovered(r), !blocked && self.enabled(b));
+            mark_button(fb, font, r, b.mark(), b.label(), state, b.faces());
+        }
+        self.draw_info(fb, font, blink);
+        let toggle = self.button(Button::Toggle);
+        let m = if self.expanded { Mark::Up } else { Mark::Down };
+        mark_button(
+            fb,
+            font,
+            toggle,
+            Some(m),
+            "",
+            (hovered(toggle), true),
+            Button::Toggle.faces(),
+        );
+
         // The file being dragged, by the mouse.
         if let (Some(drag), Some(at)) = (self.drag, self.mouse)
             && drag.moving
@@ -1408,21 +2292,242 @@ impl ProjectManager {
             Mode::Browse => {}
             Mode::Ask(dialog, _) => dialog.draw(fb, font),
             Mode::Name(name) => self.draw_name(fb, font, name),
-            Mode::Slot => self.draw_slot(fb, font),
+            Mode::Slot(chosen) => self.draw_slot(fb, font, *chosen),
             Mode::Copy(picker, _) => picker.draw(fb, font, blink),
             Mode::Menu(popup) => self.draw_menu(fb, font, popup),
+            Mode::View(viewer) => viewer.draw(fb, font),
+        }
+    }
+
+    fn draw_projects(&self, fb: &mut Framebuffer, font: &Font) {
+        let list = self.list();
+        draw_text(fb, font, list.x, self.top() + 4, "Projects", TEXT);
+        fill(fb, list, PANEL);
+        let shown = self.scroll..self.projects.len().min(self.scroll + self.rows());
+        for i in shown {
+            let r = self.row(i);
+            let name = &self.projects[i];
+            let current = *name == self.current;
+            if i == self.selected {
+                let color = match self.focus {
+                    Focus::Projects => HIGHLIGHT,
+                    Focus::Files => BORDER,
+                };
+                fill(fb, r, color);
+            } else if current {
+                fill(fb, r, CURRENT_TINT);
+            }
+            if current {
+                fill(fb, Self::current_bar(r), CURRENT_BAR);
+            }
+            let listed = &self.listed[i];
+            let side = ICON_SIZE as u32;
+            if let Some(icon) = &listed.icon {
+                let y = r.y + (ROW - side) / 2;
+                image(fb, r.x + PAD, y, side, &icon.pixels, icon.key);
+            }
+            // The title over the folder's name, always shown.
+            let x = Self::title_x(r);
+            let room = (r.x + r.w).saturating_sub(x + PAD);
+            draw_text(fb, font, x, r.y + 6, &fit(&listed.title, room), TEXT);
+            let folder = project_label(name);
+            let (label, color) = match usable(name) {
+                true => (fit(folder, room), FOLDER),
+                false => (fit(&format!("{folder} (rename to use)"), room), ERROR),
+            };
+            draw_text(fb, font, x, r.y + 26, &label, color);
+        }
+        outline(fb, list, BORDER);
+    }
+
+    fn draw_files(&self, fb: &mut Framebuffer, font: &Font) {
+        let files = self.files_rect();
+        let dim = self.expanded;
+        let text = if dim { DIM_TEXT } else { TEXT };
+        let heading = format!("Files ({})", self.files.len());
+        draw_text(
+            fb,
+            font,
+            files.x,
+            self.files_toolbar_y() + 4,
+            &heading,
+            text,
+        );
+        fill(fb, files, PANEL);
+        for i in self.shown_files() {
+            let r = self.file_row(i);
+            if self.file_selected == Some(i) {
+                let color = match (dim, self.focus) {
+                    (true, _) => DIM_BORDER,
+                    (false, Focus::Files) => HIGHLIGHT,
+                    (false, Focus::Projects) => BORDER,
+                };
+                fill(fb, r, color);
+            }
+            // The size and the date to the minute on the right, if the
+            // name leaves room.
+            let file = &self.files[i];
+            let info = (file.info.as_ref())
+                .map(|(size, date)| format!("{size:>7}  {}", date.get(..16).unwrap_or(date)));
+            let info_w = info.as_ref().map_or(0, |i| text_width(i) + 2 * PAD);
+            let label = fit(&file.label(), r.w - 2 * PAD - info_w);
+            draw_text(fb, font, r.x + PAD, r.y + 4, &label, text);
+            if let Some(info) = info {
+                let x = r.x + r.w - PAD - text_width(&info);
+                let color = if dim { DIM_TEXT } else { DISABLED };
+                draw_text(fb, font, x, r.y + 4, &info, color);
+            }
+        }
+        outline(fb, files, if dim { DIM_BORDER } else { BORDER });
+    }
+
+    fn draw_info(&self, fb: &mut Framebuffer, font: &Font, blink: bool) {
+        let r = self.info_rect();
+        fill(fb, r, PANEL);
+        outline(fb, r, BORDER);
+        match &self.info {
+            Info::Project { summary, icon } => {
+                let listed = &self.listed[self.selected];
+                let name = self.selected_name();
+                let at = self.big_icon_rect();
+                let icon = match &self.edit {
+                    Some(edit) => edit.picture.as_ref(),
+                    None => icon.as_ref(),
+                };
+                match icon {
+                    Some(p) => image(fb, at.x, at.y, p.w, &p.pixels, p.key),
+                    None => outline(fb, at, DIM_BORDER),
+                }
+                let x = at.x + BIG_ICON + BIG_ICON_GAP;
+                let save = self.edit.as_ref().map_or(0, |_| Button::Save.width() + PAD);
+                let room = (r.x + r.w - 2 - PAD).saturating_sub(x + save);
+                draw_text(fb, font, x, at.y + 4, &fit(&listed.title, room), TEXT);
+                let (folder, color) = match usable(name) {
+                    true => (project_label(name).to_string(), FOLDER),
+                    false => (format!("{name} (rename to use)"), ERROR),
+                };
+                draw_text(fb, font, x, at.y + LINE + 4, &fit(&folder, room), color);
+                draw_text(
+                    fb,
+                    font,
+                    x,
+                    at.y + 2 * LINE + 4,
+                    &fit(summary, room),
+                    DISABLED,
+                );
+                match &self.edit {
+                    Some(edit) => self.draw_edit(fb, font, edit, blink),
+                    None => {
+                        let y = at.y + BIG_ICON + PAD + 4;
+                        let room = self.button(Button::Toggle).x.saturating_sub(at.x + PAD);
+                        let first = listed.description.lines().next().unwrap_or("");
+                        match first {
+                            "" => draw_text(fb, font, at.x, y, "(no description)", DISABLED),
+                            line => draw_text(fb, font, at.x, y, &fit(line, room), TEXT),
+                        }
+                    }
+                }
+            }
+            Info::File {
+                label,
+                about,
+                info,
+                lines,
+                picture,
+                failed,
+            } => {
+                let x = r.x + 2 + PAD;
+                let y = r.y + 2 + PAD + 4;
+                let right = r.x + r.w - 2 - PAD;
+                let label_w = text_width(label) + 2 * PAD;
+                draw_text(fb, font, x, y, &fit(label, right - x), TEXT);
+                let about_w = text_width(about) + 2 * PAD;
+                if label_w + about_w <= right - x {
+                    draw_text(fb, font, x + label_w, y, about, DISABLED);
+                }
+                if label_w + about_w + text_width(info) <= right - x {
+                    draw_text(fb, font, right - text_width(info), y, info, DISABLED);
+                }
+                let room = self.preview_rect();
+                if let Some(e) = failed {
+                    draw_text(fb, font, room.x, room.y + 4, &fit(e, room.w), ERROR);
+                } else if let Some(p) = picture {
+                    let well = Rect {
+                        w: p.w + 4,
+                        h: p.h + 4,
+                        ..room
+                    };
+                    fill(fb, well, WELL);
+                    outline(fb, well, DIM_BORDER);
+                    image(fb, well.x + 2, well.y + 2, p.w, &p.pixels, p.key);
+                } else {
+                    fill(fb, room, WELL);
+                    outline(fb, room, DIM_BORDER);
+                    for (i, line) in lines.iter().enumerate() {
+                        let y = room.y + 4 + i as u32 * LINE;
+                        let text = fit(line, room.w - 2 * PAD);
+                        draw_text(fb, font, room.x + PAD, y, &text, TEXT);
+                    }
+                }
+            }
+        }
+    }
+
+    fn draw_edit(&self, fb: &mut Framebuffer, font: &Font, edit: &MetaEdit, blink: bool) {
+        let x = self.info_rect().x + 2 + PAD;
+        let focused = |f: Field| edit.focus == Some(f);
+        for (field, label) in [
+            (Field::Title, "Title"),
+            (Field::Description, "Description"),
+            (Field::Change, "Icon"),
+        ] {
+            let r = self.field_rect(field);
+            draw_text(fb, font, x, r.y + 4, label, TEXT);
+        }
+        let title = self.field_rect(Field::Title);
+        edit.title
+            .draw(fb, font, title, focused(Field::Title), blink);
+        let description = self.field_rect(Field::Description);
+        (edit.description).draw(fb, font, description, focused(Field::Description), blink);
+        let browsing = matches!(self.mode, Mode::Browse);
+        for (b, field) in [
+            (Button::ChangeIcon, Field::Change),
+            (Button::RemoveIcon, Field::Remove),
+            (Button::Save, Field::Save),
+        ] {
+            let r = self.button(b);
+            let hovered = browsing && self.mouse.is_some_and(|m| r.contains(m));
+            mark_button(
+                fb,
+                font,
+                r,
+                None,
+                b.label(),
+                (hovered, self.enabled(b)),
+                b.faces(),
+            );
+            if focused(field) {
+                outline(fb, r, TEXT);
+            }
         }
     }
 
     fn draw_menu(&self, fb: &mut Framebuffer, font: &Font, popup: &Popup) {
-        let first = self.popup_item(popup, 0);
-        let all = Rect {
-            h: popup.items.len() as u32 * LINE,
-            ..first
-        };
+        let frame = self.frame();
+        let all = popup_rect(frame, popup);
         fill(fb, all, BACKGROUND | 0xFF00_0000);
         for (i, &item) in popup.items.iter().enumerate() {
-            let r = self.popup_item(popup, i);
+            let r = popup_item(frame, popup, i);
+            let Some(item) = item else {
+                let line = Rect {
+                    x: r.x + 2,
+                    y: r.y + r.h / 2 - 1,
+                    w: r.w - 4,
+                    h: 2,
+                };
+                fill(fb, line, SEPARATOR);
+                continue;
+            };
             let enabled = self.enabled(item);
             if popup.chosen == Some(i) && enabled {
                 fill(fb, r, HIGHLIGHT);
@@ -1465,7 +2570,7 @@ impl ProjectManager {
         }
     }
 
-    fn draw_slot(&self, fb: &mut Framebuffer, font: &Font) {
+    fn draw_slot(&self, fb: &mut Framebuffer, font: &Font, chosen: usize) {
         let f = self.slot_frame();
         let file = self.selected_program().unwrap_or_default();
         window(
@@ -1489,7 +2594,7 @@ impl ProjectManager {
                 SLOTS => "Cancel".to_string(),
                 i => format!("PRG{i}"),
             };
-            let hovered = self.mouse.is_some_and(|m| r.contains(m));
+            let hovered = i == chosen || self.mouse.is_some_and(|m| r.contains(m));
             button(fb, font, r, &label, hovered, true);
         }
     }
@@ -1503,10 +2608,15 @@ impl ProjectManager {
                 let folder = from.file_name().unwrap_or_default().to_string_lossy();
                 format!("Import project {folder}")
             }
+            Naming::RenameFile(source) => format!("Rename {}:{}", source.kind.name(), source.name),
         };
         window(fb, font, f, &fit(&title, f.w - 4 * PAD));
         let x = f.x + 2 * PAD;
         let line = |i: u32| f.y + LINE + 2 * PAD + i * LINE + 4;
+        let hint = match name.naming {
+            Naming::RenameFile(_) => "@ first for a backup's name.",
+            _ => "# first for a system project.",
+        };
         draw_text(
             fb,
             font,
@@ -1515,7 +2625,7 @@ impl ProjectManager {
             "Letters, digits, _ - and . (up to 32);",
             TEXT,
         );
-        draw_text(fb, font, x, line(1), "# first for a system project.", TEXT);
+        draw_text(fb, font, x, line(1), hint, TEXT);
         let field = Rect {
             x,
             y: line(2) - 4 + PAD / 2,
@@ -1572,10 +2682,14 @@ mod tests {
         let mut m = ProjectManager::new(&s, (1280, 720));
         assert_eq!(m.projects, [""]);
         assert!(!m.enabled(Button::Switch), "already in the workspace");
-        assert_eq!(
-            m.click(centre(m.button(Button::New)), &mut s, &[]),
-            Outcome::Stay
-        );
+        m.click(centre(m.button(Button::ProjectMore)), &mut s, &[]);
+        let Mode::Menu(popup) = &m.mode else {
+            panic!("a menu")
+        };
+        assert_eq!(popup.items, PROJECT_MORE);
+        let new = popup_item(m.frame(), popup, 0);
+        assert_eq!(m.click(centre(new), &mut s, &[]), Outcome::Stay);
+        assert!(matches!(m.mode, Mode::Name(_)));
         m.text("game");
         assert_eq!(m.key(Keycode::Return, &mut s, &[]), Outcome::Stay);
         assert_eq!(m.projects, ["", "GAME"]);
@@ -1729,7 +2843,8 @@ mod tests {
         s.write(FileKind::Txt, MAIN, b"?2", None).unwrap();
         s.set_project("").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
-        assert!(!m.enabled(Button::LoadTo) && !m.enabled(Button::Run));
+        assert!(!m.enabled(Button::LoadTo) && !m.enabled(Button::RunFile));
+        assert!(!m.enabled(Button::Run), "the workspace has no MAIN.PRG");
 
         // Tab moves to the files; DAT files cannot be loaded.
         m.key(Keycode::Tab, &mut s, &[]);
@@ -1738,7 +2853,7 @@ mod tests {
         assert!(!m.enabled(Button::LoadTo));
         m.key(Keycode::Up, &mut s, &[]);
         m.key(Keycode::Return, &mut s, &[]);
-        assert!(matches!(m.mode, Mode::Slot));
+        assert!(matches!(m.mode, Mode::Slot(0)));
         let open = Open {
             file: "A.PRG".to_string(),
             slot: 2,
@@ -1764,9 +2879,10 @@ mod tests {
             }
         );
 
-        // Run switches to the project first.
+        // Run runs the project's MAIN.PRG, switching to it first.
         m.key(Keycode::Tab, &mut s, &[]);
         m.key(Keycode::Down, &mut s, &[]);
+        assert_eq!(m.selected_name(), "GAME");
         assert!(m.enabled(Button::Run));
         let at = centre(m.button(Button::Run));
         assert_eq!(
@@ -1808,29 +2924,69 @@ mod tests {
     }
 
     #[test]
-    fn buttons_fit_and_do_not_overlap() {
+    fn the_layout_follows_the_mockup() {
         let tmp = TempDir::new("layout");
         let s = Storage::new(tmp.0.clone());
-        let m = ProjectManager::new(&s, (1280, 720));
+        let mut m = ProjectManager::new(&s, (1280, 720));
         let f = m.frame();
-        for row in [&PROJECT_BUTTONS[..], &FILE_BUTTONS, &WINDOW_BUTTONS] {
+        assert_eq!((f.w, f.h), (1200, 672));
+        let (list, info, files) = (m.list(), m.info_rect(), m.files_rect());
+        assert_eq!(list.w, LIST_WIDTH);
+        assert_eq!(m.row(0).h, 48);
+        assert!(m.rows() >= 11);
+        // The info area over the files, beside the projects.
+        assert_eq!((info.y, info.h), (m.top(), INFO_HEIGHT));
+        assert!(info.x > list.x + list.w);
+        assert!(files.y > info.y + info.h + LINE, "the toolbar between");
+        assert_eq!(files.x + files.w, info.x + info.w);
+        assert!(m.file_rows() >= 16);
+        assert!(list.y + list.h <= f.y + f.h && files.y + files.h <= f.y + f.h);
+        // Each toolbar in a row at the right of its column, above its list.
+        let rows = [
+            (&PROJECT_TOOLBAR, list, "Projects"),
+            (&FILE_TOOLBAR, files, "Files (999)"),
+        ];
+        for (row, column, heading) in rows {
             for pair in row.windows(2) {
                 let (a, b) = (m.button(pair[0]), m.button(pair[1]));
-                assert!(a.x + a.w < b.x, "{pair:?}");
+                assert!(a.x + a.w < b.x && a.y == b.y, "{pair:?}");
             }
+            let (first, last) = (m.button(row[0]), m.button(row[2]));
+            assert_eq!(last.x + last.w, column.x + column.w);
+            assert!(first.x > column.x + text_width(heading));
+            assert!(last.y + last.h < column.y);
         }
-        let (list, files) = (m.list(), m.files_rect());
-        let last = m.button(Button::More);
-        assert!(last.x + last.w <= list.x + list.w, "under the projects");
-        let last = m.button(Button::DeleteFile);
-        assert!(last.x + last.w <= files.x + files.w, "under the files");
-        assert!(m.button(Button::Run).y > files.y + files.h);
-        assert!(m.button(Button::Close).y > m.button(Button::LoadTo).y + LINE);
+        assert_eq!(m.button(Button::View), m.button(Button::RunFile));
+        let toggle = m.button(Button::Toggle);
+        assert!(info.contains(centre(toggle)));
+        assert_eq!(
+            toggle.x + toggle.w + PAD + 2,
+            info.x + info.w,
+            "bottom right"
+        );
+        let close = m.button(Button::Close);
+        assert!(close.x + close.w <= f.x + f.w && close.y < list.y);
         let last = m.slot_button(SLOTS - 1);
         assert!(last.x + last.w < m.slot_button(SLOTS).x);
-        let close = m.button(Button::Close);
-        assert!(close.x + close.w <= f.x + f.w);
-        assert!(m.rows() >= 10);
+
+        // Expanded, it covers most of the files; its fields fit.
+        m.expanded = true;
+        let info = m.info_rect();
+        assert_eq!(info.h, INFO_EXPANDED);
+        assert!(info.y + info.h > files.y && info.y + info.h < files.y + files.h);
+        let toggle = m.button(Button::Toggle);
+        assert_eq!(toggle.y + toggle.h + PAD + 2, info.y + info.h);
+        let remove = m.button(Button::RemoveIcon);
+        assert!(remove.y + remove.h < toggle.y);
+        let change = m.button(Button::ChangeIcon);
+        assert!(change.x + change.w < remove.x);
+        let save = m.button(Button::Save);
+        assert!(save.y + save.h < m.field_rect(Field::Title).y);
+        let description = m.field_rect(Field::Description);
+        assert!(description.y + description.h < remove.y);
+        assert!(description.x + description.w <= info.x + info.w);
+        let preview = m.preview_rect();
+        assert!(preview.x + preview.w < toggle.x);
     }
 
     #[test]
@@ -1870,7 +3026,7 @@ mod tests {
         // A button between the two clicks breaks them up too.
         let mut m = ProjectManager::new(&s, (1280, 720));
         let a = centre(m.row(1));
-        m.click(centre(m.button(Button::More)), &mut s, &[]);
+        m.click(centre(m.button(Button::ProjectMore)), &mut s, &[]);
         m.mode = Mode::Browse;
         assert_eq!(m.double_click(a, &mut s, &[]), Outcome::Stay);
         assert_eq!(m.selected_name(), "A");
@@ -2001,9 +3157,12 @@ mod tests {
         let Mode::Menu(popup) = &m.mode else {
             panic!("a menu")
         };
-        assert_eq!(popup.items, FILE_BUTTONS);
+        assert_eq!(popup.items, FILE_MENU);
         assert!(!m.enabled(Button::LoadTo), "a DAT file");
-        let delete = m.popup_item(popup, 3);
+        let at = FILE_MENU
+            .iter()
+            .position(|&b| b == Some(Button::DeleteFile));
+        let delete = popup_item(m.frame(), popup, at.unwrap());
         m.click(centre(delete), &mut s, &[]);
         assert!(matches!(m.mode, Mode::Ask(_, Pending::DeleteFile(_))));
         m.key(Keycode::Left, &mut s, &[]);
@@ -2020,7 +3179,7 @@ mod tests {
         let mut m = ProjectManager::new(&s, (1280, 720));
         m.key(Keycode::Tab, &mut s, &[]);
         assert_eq!(
-            m.press(Button::Run, &mut s, &[]),
+            m.press(Button::RunFile, &mut s, &[]),
             Outcome::Open {
                 switched: None,
                 open: Open {
@@ -2030,5 +3189,378 @@ mod tests {
                 }
             }
         );
+    }
+
+    /// A GRP file of `w` x `h` pixels, as SAVEG writes it (a PNG).
+    fn grp(w: usize, h: usize) -> Vec<u8> {
+        let img = image::Image {
+            width: w,
+            height: h,
+            pixels: vec![0xFF00_FF00; w * h],
+        };
+        image::encode_png(&img)
+    }
+
+    #[test]
+    fn run_selected_turns_into_view() {
+        let tmp = TempDir::new("view");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "A.PRG", b"?1\n?2\n", None).unwrap();
+        s.write(FileKind::Dat, "D", b"", None).unwrap();
+        s.write(FileKind::Grp, "G", &grp(8, 4), None).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        // Nothing selected: Run selected, disabled.
+        assert_eq!(m.file_action(), Button::RunFile);
+        assert!(!m.enabled(Button::RunFile));
+        let names = ["A.PRG", "D", "G"];
+        let expected = [Button::RunFile, Button::View, Button::View];
+        m.key(Keycode::Tab, &mut s, &[]);
+        for (name, action) in names.into_iter().zip(expected) {
+            assert_eq!(m.selected_file().unwrap().name, name);
+            assert_eq!(m.file_action(), action, "{name}");
+            assert!(m.enabled(action));
+            m.key(Keycode::Down, &mut s, &[]);
+        }
+        // View opens the viewer over the window; Esc closes it.
+        let view = centre(m.button(Button::View));
+        assert_eq!(m.click(view, &mut s, &[]), Outcome::Stay);
+        assert!(matches!(m.mode, Mode::View(_)));
+        let mut fb = Framebuffer::new(1280, 720);
+        m.draw(&mut fb, &Font::blank(), false);
+        m.key(Keycode::Escape, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        // The menu's View shows a program too.
+        m.key(Keycode::Home, &mut s, &[]);
+        m.key(Keycode::Application, &mut s, &[]);
+        let Mode::Menu(popup) = &m.mode else {
+            panic!("the files' menu")
+        };
+        assert_eq!(popup.items, FILE_MORE);
+        assert_eq!(popup.chosen, Some(0), "View, the first item");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::View(_)));
+    }
+
+    #[test]
+    fn the_info_follows_the_list_clicked_last() {
+        let tmp = TempDir::new("info");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "A.PRG", b"OPTION STRICT\n\tVAR A\n", None)
+            .unwrap();
+        let data = sb_runtime::sbfile::Data {
+            dims: vec![2, 2],
+            values: sb_runtime::sbfile::DataValues::Int(vec![1, 2, 3, 4]),
+        };
+        let body = sb_runtime::sbfile::data_body(&data);
+        s.write(FileKind::Dat, "D", &body, None).unwrap();
+        s.write(FileKind::Grp, "G", &grp(512, 256), None).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let Info::Project { summary, .. } = &m.info else {
+            panic!("the project's info")
+        };
+        assert!(summary.starts_with("3 files, "), "{summary}");
+        m.click(centre(m.file_row(0)), &mut s, &[]);
+        let Info::File { about, lines, .. } = &m.info else {
+            panic!("the file's info")
+        };
+        assert_eq!(about, "2 lines");
+        assert_eq!(lines, &["OPTION STRICT", "    VAR A"]);
+        m.click(centre(m.file_row(1)), &mut s, &[]);
+        let Info::File { about, lines, .. } = &m.info else {
+            panic!("the file's info")
+        };
+        assert_eq!(
+            (about.as_str(), &lines[..]),
+            ("int 2x2", &["1 2".into(), "3 4".into()][..])
+        );
+        m.click(centre(m.file_row(2)), &mut s, &[]);
+        let Info::File { about, picture, .. } = &m.info else {
+            panic!("the file's info")
+        };
+        assert_eq!(about, "512x256");
+        let p = picture.as_ref().unwrap();
+        let room = m.preview_rect();
+        assert!(p.w <= room.w && p.h <= room.h && p.w == 2 * p.h);
+        // Expanded, the picture is larger.
+        let small = p.w;
+        m.key(Keycode::Space, &mut s, &[]);
+        let Info::File { picture, .. } = &m.info else {
+            panic!("the file's info")
+        };
+        assert!(picture.as_ref().unwrap().w > small);
+        m.key(Keycode::Space, &mut s, &[]);
+        // A click on a project shows it again.
+        m.click(centre(m.row(0)), &mut s, &[]);
+        assert!(matches!(m.info, Info::Project { .. }));
+        let mut fb = Framebuffer::new(1280, 720);
+        m.draw(&mut fb, &Font::blank(), false);
+    }
+
+    #[test]
+    fn the_expanded_info_takes_the_files_input() {
+        let tmp = TempDir::new("expand");
+        let mut s = Storage::new(tmp.0.clone());
+        for i in 0..30 {
+            s.write(FileKind::Dat, &format!("D{i:02}"), b"", None)
+                .unwrap();
+        }
+        s.create_project("GAME").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let (low_file, toolbar) = (centre(m.file_row(17)), centre(m.button(Button::LoadTo)));
+        m.click(centre(m.button(Button::Toggle)), &mut s, &[]);
+        assert!(m.expanded && m.edit.is_some());
+        assert_eq!(m.edit.as_ref().unwrap().focus, Some(Field::Title));
+        // The files under it and beside it take no clicks, wheels or drags.
+        m.click(low_file, &mut s, &[]);
+        assert_eq!(m.file_selected, None);
+        m.click(toolbar, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        m.mouse_move(low_file);
+        m.wheel(5);
+        assert_eq!(m.file_scroll, 0);
+        m.right_click(low_file, &s);
+        assert!(matches!(m.mode, Mode::Browse));
+        // The projects still do, and the info follows.
+        m.click(centre(m.row(1)), &mut s, &[]);
+        assert_eq!(m.selected_name(), "GAME");
+        assert_eq!(m.edit.as_ref().unwrap().project, "GAME");
+        assert_eq!(m.edit.as_ref().unwrap().focus, None, "the keys on the list");
+        // Esc collapses, then closes.
+        assert_eq!(m.key(Keycode::Escape, &mut s, &[]), Outcome::Stay);
+        assert!(!m.expanded && m.edit.is_none());
+        m.click(low_file, &mut s, &[]);
+        assert!(m.file_selected.is_none(), "GAME has no files");
+        m.click(centre(m.row(0)), &mut s, &[]);
+        m.click(low_file, &mut s, &[]);
+        assert_eq!(m.file_selected, Some(17));
+        // Expanded over a file, the file list takes no keys.
+        m.key(Keycode::Space, &mut s, &[]);
+        assert!(m.expanded && m.edit.is_none());
+        m.key(Keycode::Down, &mut s, &[]);
+        assert_eq!(m.file_selected, Some(17));
+        m.click(centre(m.button(Button::Toggle)), &mut s, &[]);
+        assert!(!m.expanded);
+        assert_eq!(m.key(Keycode::Escape, &mut s, &[]), Outcome::Close);
+    }
+
+    #[test]
+    fn metadata_is_edited_and_saved() {
+        let tmp = TempDir::new("meta-save");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        // SmileBASIC 4's own META stays as it was.
+        let sb4 = sb_runtime::transfer::export_meta(
+            &Meta {
+                title: "Old".encode_utf16().collect(),
+                ..Meta::default()
+            },
+            sb_runtime::sbfile::Date::now(),
+        );
+        s.write_file_in("GAME", "META", &sb4).unwrap();
+        s.write_file_in("GAME", "G", &grp(80, 40)).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        assert_eq!(m.listed[1].title, "Old");
+        m.key(Keycode::Space, &mut s, &[]);
+        assert!(!m.enabled(Button::Save));
+        m.key(Keycode::End, &mut s, &[]);
+        m.text(" Game!");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert_eq!(m.edit.as_ref().unwrap().focus, Some(Field::Description));
+        m.text("Line 1\n");
+        m.key(Keycode::Return, &mut s, &[]);
+        m.text("Line 2");
+        assert!(m.enabled(Button::Save));
+        // The arrows stay in the fields, not moving the project list.
+        for key in [Keycode::Up, Keycode::Up, Keycode::Down, Keycode::PageDown] {
+            m.key(key, &mut s, &[]);
+        }
+        assert!(matches!(m.mode, Mode::Browse));
+        assert_eq!(m.selected_name(), "GAME");
+        // An image file becomes the icon, fitted into its square.
+        let image = tmp.0.join("GAME").join("G");
+        m.folder_chosen(Transfer::Icon("GAME".into()), image, &s);
+        let edit = m.edit.as_ref().unwrap();
+        assert_eq!(edit.icon[10 * ICON_SIZE], 0xFF00_FF00_u32 as i32);
+        assert_eq!(edit.icon[0], 0, "a margin above the wide image");
+        // Leaving asks first; Cancel stays.
+        m.key(Keycode::Escape, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Discard(_))));
+        m.key(Keycode::Escape, &mut s, &[]);
+        assert!(m.expanded && m.dirty());
+        m.click(centre(m.button(Button::Save)), &mut s, &[]);
+        assert!(!m.dirty());
+        let meta = project_meta("GAME", |name| s.read_file_in("GAME", name).ok());
+        assert_eq!(String::from_utf16_lossy(&meta.title), "Old Game!");
+        assert_eq!(
+            String::from_utf16_lossy(&meta.description),
+            "Line 1\n\nLine 2"
+        );
+        assert_eq!(meta.icon[10 * ICON_SIZE], 0xFF00_FF00_u32 as i32);
+        assert_eq!(s.read_file_in("GAME", "META").unwrap(), sb4);
+        assert_eq!(m.listed[1].title, "Old Game!");
+        // Removing the icon, and dropping that change.
+        m.click(centre(m.button(Button::RemoveIcon)), &mut s, &[]);
+        assert!(m.dirty() && !m.enabled(Button::RemoveIcon));
+        m.key(Keycode::Escape, &mut s, &[]);
+        m.key(Keycode::Left, &mut s, &[]);
+        m.key(Keycode::Return, &mut s, &[]);
+        assert!(!m.expanded, "discarded, then collapsed");
+        let meta = project_meta("GAME", |name| s.read_file_in("GAME", name).ok());
+        assert_ne!(meta.icon[10 * ICON_SIZE], 0);
+        // A title is cut at SmileBASIC's limit.
+        m.key(Keycode::Space, &mut s, &[]);
+        m.text(&"x".repeat(100));
+        assert_eq!(m.edit.as_ref().unwrap().title.text().len(), TITLE_CHARS);
+    }
+
+    #[test]
+    fn double_click_runs_a_project_with_a_main() {
+        let tmp = TempDir::new("double-run");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.write_file_in("GAME", "TMAIN.PRG", b"?1").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let game = centre(m.row(1));
+        m.click(game, &mut s, &[]);
+        assert!(m.enabled(Button::Run));
+        assert_eq!(
+            m.double_click(game, &mut s, &[]),
+            Outcome::Open {
+                switched: Some("GAME".to_string()),
+                open: Open {
+                    file: MAIN.to_string(),
+                    slot: 0,
+                    run: true
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn menus_duplicate_and_rename() {
+        let tmp = TempDir::new("menus");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.write_file_in("GAME", "TMAIN.PRG", b"?1").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        // The menu key opens the projects' menu on its first item, and the
+        // keys skip the lines between groups.
+        m.key(Keycode::Application, &mut s, &[]);
+        let chosen = |m: &ProjectManager| match &m.mode {
+            Mode::Menu(popup) => popup.chosen.and_then(|i| popup.items[i]),
+            _ => None,
+        };
+        assert_eq!(chosen(&m), Some(Button::New));
+        m.key(Keycode::Up, &mut s, &[]);
+        assert_eq!(chosen(&m), Some(Button::Delete));
+        m.key(Keycode::Up, &mut s, &[]);
+        assert_eq!(chosen(&m), Some(Button::Export));
+        m.key(Keycode::Up, &mut s, &[]);
+        m.key(Keycode::Up, &mut s, &[]);
+        assert_eq!(chosen(&m), Some(Button::Duplicate));
+        m.key(Keycode::Return, &mut s, &[]);
+        // Duplicate copies, then offers to rename the copy.
+        assert!(s.exists_in("GAME2", FileKind::Txt, "MAIN.PRG"));
+        let Mode::Name(name) = &m.mode else {
+            panic!("asks for a name")
+        };
+        assert_eq!(name.text, "GAME2");
+        for _ in 0..5 {
+            m.key(Keycode::Backspace, &mut s, &[]);
+        }
+        m.text("copy");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert_eq!(m.projects, ["", "COPY", "GAME"]);
+        assert_eq!(m.selected_name(), "COPY");
+
+        // Renaming a file, from the files' menu.
+        m.key(Keycode::Tab, &mut s, &[]);
+        m.click(centre(m.button(Button::FileMore)), &mut s, &[]);
+        let Mode::Menu(popup) = &m.mode else {
+            panic!("a menu")
+        };
+        let at = FILE_MORE
+            .iter()
+            .position(|&b| b == Some(Button::RenameFile));
+        let rename = popup_item(m.frame(), popup, at.unwrap());
+        m.click(centre(rename), &mut s, &[]);
+        let Mode::Name(name) = &m.mode else {
+            panic!("asks for a name")
+        };
+        assert_eq!(name.text, "MAIN.PRG");
+        m.key(Keycode::Backspace, &mut s, &[]);
+        m.key(Keycode::Backspace, &mut s, &[]);
+        m.key(Keycode::Backspace, &mut s, &[]);
+        m.text("TXT");
+        m.key(Keycode::Return, &mut s, &[]);
+        assert!(s.exists_in("COPY", FileKind::Txt, "MAIN.TXT"));
+        assert_eq!(m.selected_file().unwrap().name, "MAIN.TXT");
+        assert_eq!(m.focus, Focus::Files);
+        // F2 renames too.
+        m.key(Keycode::F2, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Name(_)));
+    }
+
+    #[test]
+    fn a_controller_drives_the_window() {
+        let tmp = TempDir::new("pad");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "A.PRG", b"?1", None).unwrap();
+        s.create_project("GAME").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.pad(Pad::DPadDown, &mut s, &[]);
+        assert_eq!(m.selected_name(), "GAME");
+        m.pad(Pad::DPadUp, &mut s, &[]);
+        // The shoulder buttons go to the files; A loads into a slot chosen
+        // with the pad.
+        m.pad(Pad::RightShoulder, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Files);
+        m.pad(Pad::East, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Slot(0)));
+        m.pad(Pad::DPadRight, &mut s, &[]);
+        assert_eq!(
+            m.pad(Pad::East, &mut s, &[]),
+            Outcome::Open {
+                switched: None,
+                open: Open {
+                    file: "A.PRG".to_string(),
+                    slot: 1,
+                    run: false
+                }
+            }
+        );
+        // X opens the list's menu, B closes it; Y expands the info area.
+        m.mode = Mode::Browse;
+        m.pad(Pad::North, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Menu(_)));
+        m.pad(Pad::South, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        m.pad(Pad::West, &mut s, &[]);
+        assert!(m.expanded);
+        m.pad(Pad::South, &mut s, &[]);
+        assert!(!m.expanded);
+        assert_eq!(m.pad(Pad::South, &mut s, &[]), Outcome::Close);
+    }
+
+    #[test]
+    fn drawing_is_the_same_until_something_changes() {
+        let tmp = TempDir::new("dry");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Grp, "G", &grp(64, 64), None).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let font = Font::blank();
+        let key = |m: &ProjectManager| {
+            let mut fb = Framebuffer::new(1280, 720);
+            crate::ui::dry_run(|| m.draw(&mut fb, &font, false)).key
+        };
+        let before = key(&m);
+        assert_eq!(key(&m), before);
+        m.click(centre(m.file_row(0)), &mut s, &[]);
+        let file = key(&m);
+        assert_ne!(file, before);
+        m.key(Keycode::Space, &mut s, &[]);
+        assert_ne!(key(&m), file);
     }
 }

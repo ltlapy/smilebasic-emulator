@@ -7,6 +7,7 @@ mod controls;
 mod debug_panel;
 mod dialog;
 mod file_dialogs;
+mod file_view;
 mod grp_view;
 mod help;
 mod index;
@@ -15,10 +16,12 @@ mod layer;
 mod menu;
 mod pacing;
 mod popup;
+mod preview;
 mod program_dialog;
 mod projects;
 mod settings_window;
 mod shortcuts;
+mod text_field;
 mod toast;
 mod ui;
 
@@ -797,6 +800,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Event::KeyDown {
                         keycode: Some(key), ..
                     } => open.key(key, storage, &unsaved),
+                    Event::GamepadButtonDown { button, .. } => open.pad(button, storage, &unsaved),
                     Event::TextInput { text, .. } => {
                         open.text(&text);
                         Outcome::Stay
@@ -826,6 +830,33 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             Err(e) => toasts.push(format!("Could not load {}: {e}", open.file)),
                         }
                         manager = None;
+                    }
+                    Outcome::ChooseFile(transfer, start) => {
+                        let send = chosen_folder.clone();
+                        let filters = [
+                            sdl3::dialog::DialogFileFilter {
+                                name: "Images",
+                                pattern: "png;jpg;jpeg",
+                            },
+                            sdl3::dialog::DialogFileFilter {
+                                name: "All files (GRP too)",
+                                pattern: "*",
+                            },
+                        ];
+                        let shown = sdl3::dialog::show_open_file_dialog(
+                            &filters,
+                            start.as_deref(),
+                            false,
+                            canvas.window(),
+                            Box::new(move |chosen, _| {
+                                if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
+                                    let _ = send.send((path, transfer.clone()));
+                                }
+                            }),
+                        );
+                        if let Err(e) = shown {
+                            toasts.push(format!("Could not open a file dialog: {e}"));
+                        }
                     }
                     Outcome::ChooseFolder(transfer) => {
                         let send = chosen_folder.clone();

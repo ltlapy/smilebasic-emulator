@@ -322,13 +322,92 @@ pub fn colored_button(
     enabled: bool,
     faces: (u32, u32),
 ) {
+    mark_button(fb, font, r, None, label, (hovered, enabled), faces);
+}
+
+/// A small drawing in a glyph's square, for buttons whose symbols the
+/// console's font lacks (it has no ▶ or ⋯).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Mark {
+    /// ▶, for buttons that run something.
+    Play,
+    /// ⋯, for buttons that open a menu.
+    More,
+    /// ▼
+    Down,
+    /// ▲
+    Up,
+    /// ×, for closing a window.
+    Close,
+}
+
+/// Draws `mark` in the `CHAR`-square cell at `x`, `y`.
+pub fn mark(fb: &mut Framebuffer, mark: Mark, x: u32, y: u32, color: u32) {
+    let px =
+        |fb: &mut Framebuffer, x: u32, y: u32, w: u32, h: u32| fill(fb, Rect { x, y, w, h }, color);
+    match mark {
+        Mark::Play => {
+            for row in 0..11 {
+                let w = (row + 1).min(11 - row);
+                px(fb, x + 4, y + 2 + row, w, 1);
+            }
+        }
+        Mark::More => {
+            for i in 0..3 {
+                px(fb, x + 1 + 5 * i, y + 7, 3, 3);
+            }
+        }
+        Mark::Down | Mark::Up => {
+            for row in 0..6 {
+                let y = match mark {
+                    Mark::Down => y + 5 + row,
+                    _ => y + 10 - row,
+                };
+                px(fb, x + 2 + row, y, 12 - 2 * row, 1);
+            }
+        }
+        Mark::Close => {
+            for i in 0..10 {
+                px(fb, x + 3 + i, y + 3 + i, 2, 2);
+                px(fb, x + 11 - i, y + 3 + i, 2, 2);
+            }
+        }
+    }
+}
+
+/// The width of a button's face holding `mark`, if any, and `label`,
+/// with room on both sides.
+pub fn mark_button_width(mark: Option<Mark>, label: &str) -> u32 {
+    content_width(mark, label) + 4 * PAD
+}
+
+fn content_width(mark: Option<Mark>, label: &str) -> u32 {
+    let gap = if label.is_empty() { 0 } else { PAD / 2 };
+    mark.map_or(0, |_| CHAR + gap) + text_width(label)
+}
+
+/// A button with `mark` left of `label`, both centred; `state` is
+/// whether it is under the mouse and whether it can be pressed.
+pub fn mark_button(
+    fb: &mut Framebuffer,
+    font: &Font,
+    r: Rect,
+    mark_drawn: Option<Mark>,
+    label: &str,
+    (hovered, enabled): (bool, bool),
+    faces: (u32, u32),
+) {
     let (face, color) = match (enabled, hovered) {
         (false, _) => (DISABLED_FACE, DISABLED),
         (true, true) => (faces.1, TEXT),
         (true, false) => (faces.0, TEXT),
     };
     fill(fb, r, face);
-    let x = r.x + (r.w - text_width(label)) / 2;
+    let mut x = r.x + r.w.saturating_sub(content_width(mark_drawn, label)) / 2;
+    if let Some(m) = mark_drawn {
+        mark(fb, m, x, r.y + (r.h.saturating_sub(CHAR)) / 2, color);
+        x += CHAR + PAD / 2;
+    }
     draw_text(fb, font, x, r.y + 4, label, color);
 }
 
