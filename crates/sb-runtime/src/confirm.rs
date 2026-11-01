@@ -50,10 +50,7 @@ pub(crate) struct FileAction {
     pub in_programs: bool,
 }
 
-const HINT: [&str; 2] = [
-    "To stop these questions, choose File access",
-    "in the Options menu (top of the window).",
-];
+const HINT: [&str; 2] = ["To stop these questions, go to", "File > Settings > Files."];
 
 /// Warns that `slots` have unsaved changes that will be lost.
 pub fn unsaved_lines(slots: &[usize]) -> Vec<String> {

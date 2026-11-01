@@ -357,8 +357,8 @@ fn direct_file_commands_ask_notify_or_stay_silent() {
             "  Project:  [WORKSPACE]",
             "  File:     TXT:A",
             "",
-            "To stop these questions, choose File access",
-            "in the Options menu (top of the window).",
+            "To stop these questions, go to",
+            "File > Settings > Files.",
         ]
     );
     m.rt.answer(true);

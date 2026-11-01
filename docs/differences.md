@@ -102,7 +102,7 @@ Without them:
   `ENVFOCUS` does, and Run > "Stop subprogram" does `SUBSTOP`, so a
   subprogram cannot keep the keys from direct mode.
 - `ENVSTAT` gives -1 for the argument of every error.
-- Settings > General > "Localized error messages" prints the Japanese
+- Settings > General > "Explain errors in Japanese" prints the Japanese
   line SmileBASIC 4's Japanese edition shows under each error message,
   in the English edition too.
 - `ENVLOCATE OUT X,Y`, which is not in the manual, follows the

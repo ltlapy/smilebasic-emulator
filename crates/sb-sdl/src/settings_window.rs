@@ -68,22 +68,23 @@ const PAGES: &[Page] = &[
                 |s| s.upper_case_letters ^= true,
             ),
             check(
-                "Ctrl+C stops program",
-                "Ctrl+C stops a running program, besides F5 and Pause/Break.",
+                "Ctrl+C stops programs",
+                "Ctrl+C also stops a running program, as F5 and Pause/Break do. Off \
+                 by default, since programs can read Ctrl+C.",
                 |s| s.ctrl_c_stops,
                 |s| s.ctrl_c_stops ^= true,
             ),
             check(
-                "Localized error messages",
-                "Print a line explaining each error message under it, as SmileBASIC \
-                 4's Japanese edition does. Only available in Japanese.",
+                "Explain errors in Japanese",
+                "Under each error message, print the Japanese line that SmileBASIC \
+                 4's Japanese edition shows for it.",
                 |s| s.localized_errors,
                 |s| s.localized_errors ^= true,
             ),
             Row {
                 label: "System language",
-                about: "What SYSPARAM(\"LANG\") tells programs: en-US as the English \
-                        edition, or ja.",
+                about: "What SYSPARAM(\"LANG\") reports to programs: en-US, as in the \
+                        English edition, or ja, as in the Japanese one.",
                 control: Control::Choice(
                     &["English (en-US)", "Japanese (ja)"],
                     |s| usize::from(s.language == Language::Japanese),
@@ -97,8 +98,8 @@ const PAGES: &[Page] = &[
             },
             Row {
                 label: "Menu and window font",
-                about: "The emulator's menus and windows draw SmileBASIC's 8-pixel font \
-                        at twice its size, or the 16-pixel one.",
+                about: "The font of the emulator's menus and windows: SmileBASIC's \
+                        8-pixel font at twice its size, or its 16-pixel font.",
                 control: Control::Choice(
                     &["8 pixels", "16 pixels"],
                     |s| usize::from(s.ui_font == FontSize::Large),
@@ -123,7 +124,7 @@ const PAGES: &[Page] = &[
             ),
             check(
                 "Always show mouse cursor",
-                "Keep the computer's cursor shown over the window when a program \
+                "Keep the mouse cursor visible over the window, even when a program \
                  hides it with SYSPARAM \"MOUSECURSOR\".",
                 |s| s.keep_mouse_cursor,
                 |s| s.keep_mouse_cursor ^= true,
@@ -140,9 +141,10 @@ const PAGES: &[Page] = &[
                 |s| s.half_width_on_save ^= true,
             ),
             Row {
-                label: "File access",
-                about: "Whether file commands ask first, as on SmileBASIC 4, go ahead \
-                        with a notice, or go ahead silently.",
+                label: "Confirm file commands",
+                about: "Always ask: file commands ask first, as on SmileBASIC 4. \
+                        Notify: they go ahead and show a notice. Silent: they go \
+                        ahead without one.",
                 control: Control::Choice(
                     &["Always ask", "Notify", "Silent"],
                     |s| s.file_confirm as usize,
@@ -161,9 +163,9 @@ const PAGES: &[Page] = &[
         title: "Sound",
         rows: &[Row {
             label: INSTRUMENTS,
-            about: "What plays MML and BGM: SmileBASIC 4's own instruments (imported \
-                    with smilebasic-import), the bundled GeneralUser GS SoundFont, or a \
-                    SoundFont file.",
+            about: "The sounds MML and BGM play with: SmileBASIC 4's own instruments, \
+                    once imported with smilebasic-import; the bundled GeneralUser GS \
+                    SoundFont; or a SoundFont file you choose.",
             control: Control::Choice(
                 &["SmileBASIC 4", "GeneralUser GS", "File..."],
                 |s| match (s.smilebasic_instruments, &s.sound_font) {
@@ -188,8 +190,8 @@ const PAGES: &[Page] = &[
         rows: &[
             Row {
                 label: "Tab width",
-                about: "How far Tab moves in the editor; programs read it as \
-                        SYSPARAM(\"TABSTEP\").",
+                about: "How many spaces Tab puts in, in the editor. Programs read it \
+                        with SYSPARAM(\"TABSTEP\").",
                 control: Control::Choice(
                     &["1", "2", "4", "8"],
                     |s| match s.editor_tab_step {
@@ -203,20 +205,21 @@ const PAGES: &[Page] = &[
             },
             check(
                 "Editor in its own window",
-                "The editor opens in a window of its own beside the screen, \
-                 and programs go on running while it is open.",
+                "The editor opens in a window of its own beside the screen, so \
+                 programs go on running while it is open. Also in the View menu.",
                 |s| s.editor_window,
                 |s| s.editor_window ^= true,
             ),
             check(
                 "Complete words in direct mode",
-                "A list of words that fit what is typed shows under it.",
+                "While typing in direct mode, a list of words that start with what \
+                 is typed shows under it.",
                 |s| s.complete_direct,
                 |s| s.complete_direct ^= true,
             ),
             check(
                 "Complete words in the editor",
-                "The same in the editor.",
+                "The same list, while typing in the editor.",
                 |s| s.complete_editor,
                 |s| s.complete_editor ^= true,
             ),
@@ -231,33 +234,35 @@ const PAGES: &[Page] = &[
                 ),
             },
             check(
-                "SmileBASIC's words",
+                "Offer SmileBASIC's words",
                 "The list offers SmileBASIC's instructions, functions and reserved words.",
                 |s| s.complete_commands,
                 |s| s.complete_commands ^= true,
             ),
             check(
-                "Names in the program",
+                "Offer the program's names",
                 "The list also offers the program's variables, labels, constants and DEFs.",
                 |s| s.complete_names,
                 |s| s.complete_names ^= true,
             ),
             check(
                 "Enter takes a picked word",
-                "Once Up or Down picks a word, Enter puts it in, as Tab always does.",
+                "After Up or Down picks a word in the list, Enter puts it in. Tab \
+                 always does.",
                 |s| s.complete_enter,
                 |s| s.complete_enter ^= true,
             ),
             check(
-                "Show how commands are used",
-                "While a command's arguments are typed, the forms the help gives for it \
-                 show, with the argument being typed marked. Ctrl+Space hides them.",
+                "Show command usage",
+                "While a command's arguments are typed, show its forms from the help, \
+                 with the argument at the cursor marked. Ctrl+Space hides them.",
                 |s| s.complete_hints,
                 |s| s.complete_hints ^= true,
             ),
             check(
-                "Show them by the cursor",
-                "The forms show by the cursor rather than at the bottom of the screen.",
+                "Show usage by the cursor",
+                "Command usage shows next to the cursor instead of at the bottom of \
+                 the screen.",
                 |s| s.complete_above,
                 |s| s.complete_above ^= true,
             ),
