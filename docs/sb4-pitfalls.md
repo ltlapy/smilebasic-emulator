@@ -388,7 +388,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `LFILTER`'s blur halves the layer: 2x2 blocks are averaged (halves
   rounded down, so a dot becomes a 2x2 block at 64 and a line 127),
   blurred by a Gaussian of about amount/25 half-size pixels, and scaled
-  back without smoothing. Amounts 1 to 4 look the same.
+  back without smoothing. Amounts 1 to 4 look the same; amount 0 leaves
+  the layer sharp.
 - Scaled sprites are drawn without smoothing. Where a pixel's sample
   point falls exactly on a column boundary, it takes the column to the
   left (at 1.5, columns are 2, 1, 2, 1... pixels wide); rows do not.

@@ -50,7 +50,8 @@ impl Filter {
     /// how many frame pixels make one screen pixel.
     pub fn apply(&self, fb: &mut Framebuffer, sample: u32) {
         match self {
-            Filter::None => {}
+            // Amount 0 leaves the layer as it is, not halved.
+            Filter::None | Filter::Blur(0) => {}
             Filter::Mosaic(n) => mosaic(fb, n.saturating_mul(sample)),
             Filter::Blur(n) => blur(fb, *n),
             Filter::Raster {
@@ -473,6 +474,9 @@ mod tests {
         let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0, 0xFFFF_FFFF, 0, 0, 0], 4);
         Filter::Blur(1).apply(&mut fb, 1);
         assert_eq!(fb.pixels()[1], 0x7F7F_7F7F);
+        let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0], 4);
+        Filter::Blur(0).apply(&mut fb, 1);
+        assert_eq!(fb.pixels(), &[0xFFFF_FFFF, 0, 0, 0]);
     }
 
     #[test]
