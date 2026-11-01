@@ -189,6 +189,14 @@ impl Sound {
         self.tracks.iter_mut().for_each(|t| *t = None);
     }
 
+    pub(crate) fn instruments(&self) -> Option<&Instruments> {
+        self.instruments.as_ref()
+    }
+
+    pub(crate) fn sequences(&self) -> Option<Arc<Sequences>> {
+        self.sequences.clone()
+    }
+
     pub fn set_sequences(&mut self, sequences: Option<Arc<Sequences>>) {
         self.sequences = sequences;
     }

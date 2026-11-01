@@ -36,6 +36,7 @@ pub mod sound;
 mod sp;
 pub mod sprites;
 pub mod storage;
+mod sub;
 pub mod syntax;
 mod system;
 pub mod text;

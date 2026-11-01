@@ -231,6 +231,7 @@ pub fn parse_listing(spec: &str) -> Result<(Option<FileKind>, Option<String>)> {
     Ok((kind, project))
 }
 
+#[derive(Clone)]
 pub struct Storage {
     root: Option<PathBuf>,
     project: String,

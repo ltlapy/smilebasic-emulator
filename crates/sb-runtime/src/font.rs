@@ -31,8 +31,10 @@ pub enum FontSize {
     Large = 16,
 }
 
+#[derive(Clone)]
 pub struct Font(Source);
 
+#[derive(Clone)]
 enum Source {
     /// SmileBASIC 4's own font.
     Page {

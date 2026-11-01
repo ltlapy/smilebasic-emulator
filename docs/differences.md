@@ -37,7 +37,8 @@ Without them:
 - MML's tremolo (`@MA`) and pan modulation (`@ML`) are read and
   ignored. Vibrato (`@MP`) takes only its depth. Envelopes (`@E`) shape
   the PSG and user waveforms only.
-- `SNDMSBAL` keeps its value; there are no subprograms to balance.
+- `SNDMSBAL` balances a subprogram's sound against the main program's
+  in a straight line, the full sound of both at 64.
 
 ## Input
 
@@ -96,9 +97,18 @@ Without them:
 - After `BACKTRACE`, `CONT` and `TRACE` still go on with the stopped
   program; on SmileBASIC 4 they cannot. Programs cannot tell, since all
   three work in direct mode only.
-- There are no subprograms yet, so `ENVTYPE`, `ENVSTAT` and the other
-  `ENV` commands always answer for the main interpreter, where `ENVLOAD`
-  and `ENVSAVE` do nothing.
+- Subprograms have no Smile button to start them from, only `SUBRUN` in
+  direct mode. Run > "Switch keys to/from subprogram" moves the focus as
+  `ENVFOCUS` does, and Run > "Stop subprogram" does `SUBSTOP`, so a
+  subprogram cannot keep the keys from direct mode.
+- When a subprogram ends, the main program gets the focus back, and an
+  error it ended with shows as a notice rather than on a screen.
+- `ENVSTAT`'s error number is 1 for every error, and its argument
+  number 0. `ENVSTAT 0` leaves a stopped program able to go on with
+  `CONT`.
+- `ENVLOCATE OUT X,Y`, which is not in the manual, gives where the
+  console's cursor is on the 1280x720 display, also while the editor is
+  open.
 - `HELPINFO OUT` looks for a command where the editor's cursor was when
   the program started, since no subprogram runs beside the editor. It
   and `HELPGET` need SmileBASIC 4's help imported.

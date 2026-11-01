@@ -17,6 +17,7 @@ use crate::framebuffer::Framebuffer;
 use crate::runtime::{Request, Runtime, SLOTS, Stopped, keys};
 use crate::screen::ScreenMode;
 use crate::storage;
+use crate::sub::{Linked, status};
 use crate::text::CONSOLE;
 
 /// Instructions a frame runs for code that does not VSYNC, when the
@@ -86,6 +87,15 @@ pub struct Machine {
     editor_focus: bool,
     /// The slots' change counts the editor's sides last took.
     slot_changes: Vec<u32>,
+    /// The sub interpreter, once SUBRUN has started a program on it. It
+    /// stays after the program ends, keeping its pages and screens for
+    /// the next one, but shows only while one runs.
+    sub: Option<Box<Machine>>,
+    /// SUBSHOW and SUBHIDE.
+    sub_shown: bool,
+    /// On the sub interpreter, how its last program ended, for the main
+    /// one to tell: `Some(None)` by itself, `Some(Some(error))` with one.
+    ended: Option<Option<Error>>,
 }
 
 /// How a stopped program goes on.
@@ -191,6 +201,9 @@ impl Machine {
             detached: false,
             editor_focus: false,
             slot_changes: vec![0; SLOTS],
+            sub: None,
+            sub_shown: true,
+            ended: None,
         }
     }
 
@@ -583,6 +596,7 @@ impl Machine {
     pub fn run_slot(&mut self, slot: usize) {
         // Running a program ends PRGEDIT's editing.
         self.rt.prg_edit = None;
+        self.rt.env_error = [0; 5];
         self.vars.clear();
         self.rt.clear_vars();
         // Each program starts with the mouse cursor hidden; END leaves it
@@ -648,6 +662,14 @@ impl Machine {
 
     /// Stops, naming `line` rather than the one about to run.
     fn stop_on(&mut self, line: Option<u32>, how: Halt) {
+        // A subprogram has no direct mode to stop in.
+        // UNVERIFIED: what STOP does in one.
+        if self.rt.env_type == 1 {
+            if self.vm.is_some() {
+                self.end_sub(None);
+            }
+            return;
+        }
         let Some(vm) = self.vm.take() else {
             return;
         };
@@ -1074,8 +1096,17 @@ impl Machine {
     }
 
     /// Runs one frame: the program, the editor, or direct-mode line
-    /// editing.
+    /// editing, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
+        self.give_input();
+        self.rt.env_status = self.env_status();
+        self.run_frame(None);
+        self.run_sub();
+    }
+
+    /// One frame of this interpreter; `main` is the main interpreter's
+    /// runtime when this is the sub interpreter.
+    fn run_frame(&mut self, mut main: Option<&mut Runtime>) {
         self.frame += 1;
         self.follow_edits();
         self.rt.begin_frame();
@@ -1114,7 +1145,17 @@ impl Machine {
                 Some(_) => SLICE,
                 None => FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32),
             };
-            match vm.run(&mut self.rt, left) {
+            let status = match main.as_deref_mut() {
+                Some(main) => {
+                    let mut linked = Linked {
+                        sub: &mut self.rt,
+                        main,
+                    };
+                    vm.run(&mut linked, left)
+                }
+                None => vm.run(&mut self.rt, left),
+            };
+            match status {
                 Ok(Status::Running) if has_time(vm) => continue,
                 Ok(Status::Running) => {}
                 Ok(Status::Retry) => self.wait = 1,
@@ -1283,6 +1324,9 @@ impl Machine {
             }
             Err(e) => {
                 let e = e.in_slot(slot.map(|s| s as u32));
+                if self.rt.env_type == 1 {
+                    return self.end_sub(Some(e));
+                }
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
                 self.report(&e);
                 self.ready();
@@ -1292,6 +1336,9 @@ impl Machine {
 
     /// The program or line ended, by itself or with an error.
     fn finish(&mut self, error: Option<Error>) {
+        if self.rt.env_type == 1 {
+            return self.end_sub(error);
+        }
         self.stepping = None;
         let vm = self.vm.take().expect("finish follows a run");
         self.vars.extend(vm.globals());
@@ -1299,6 +1346,7 @@ impl Machine {
         if let Some(e) = &error {
             if let Some(slot) = e.slot {
                 self.last_error = Some((slot as usize, e.line, e.col));
+                self.rt.env_error = self.error_place(slot as usize, e);
             }
             self.report(e);
         }
@@ -1323,6 +1371,9 @@ impl Machine {
                 }
                 Request::Cont => cont = Some(Resume::Cont),
                 Request::Trace => cont = Some(Resume::Trace),
+                Request::Subrun(file) => self.subrun(&file),
+                Request::Substop => self.substop(),
+                Request::Subshow(shown) => self.sub_shown = shown,
             }
         }
         match (run, cont) {
@@ -1372,4 +1423,215 @@ fn swap_case(c: char) -> char {
     } else {
         c.to_ascii_lowercase()
     }
+}
+
+/// The sub interpreter, as the main one runs it.
+impl Machine {
+    /// SUBRUN: loads `file`, as `"PROJECT/NAME"` or a name in the current
+    /// project, into the sub interpreter's PRG0 and runs it there with the
+    /// focus. The sub interpreter keeps its pages and screens from the
+    /// last time.
+    fn subrun(&mut self, file: &str) {
+        let sub = self
+            .sub
+            .get_or_insert_with(|| Box::new(Machine::new(self.rt.new_sub())));
+        let (project, name) = match file.split_once('/') {
+            Some((project, name)) => (project, name),
+            None => (self.rt.storage.project(), file),
+        };
+        sub.end_sub(None);
+        sub.ended = None;
+        let loaded = sub.rt.storage.set_project(project);
+        if let Err(e) = loaded.and_then(|()| sub.rt.load_file(name, 0)) {
+            let detail = format!("{file}: {e}");
+            return self.report(&Error::with_detail(ErrorKind::LoadFailed, detail));
+        }
+        // Its variables, SPFUNC and TFUNC go; the rest stays.
+        for sprite in &mut sub.rt.sprites.list {
+            sprite.func = None;
+        }
+        for screen in &mut sub.rt.text {
+            screen.func = None;
+        }
+        sub.run_slot(0);
+        sub.rt.focus = true;
+        self.rt.focus = false;
+        self.rt.sub_running = true;
+        self.sub_shown = true;
+    }
+
+    /// SUBSTOP: stops the subprogram.
+    fn substop(&mut self) {
+        if let Some(sub) = &mut self.sub
+            && sub.vm.is_some()
+        {
+            sub.end_sub(None);
+        }
+    }
+
+    /// On the sub interpreter: the program is over, and the main
+    /// interpreter is told.
+    fn end_sub(&mut self, error: Option<Error>) {
+        self.stepping = None;
+        self.vm = None;
+        self.halted = None;
+        self.running_slot = None;
+        self.rt.running_slot = None;
+        self.rt.take_requests();
+        self.rt.cancel_input();
+        self.rt.cancel_confirm();
+        self.rt.clear_input();
+        self.ended = Some(error);
+    }
+
+    /// What ENVSTAT gives for an error in a slot: its number, argument,
+    /// slot, character from the start of the program, and line.
+    // UNVERIFIED: the error numbers, which are 1 here for every error, and
+    // the argument, 0.
+    fn error_place(&self, slot: usize, e: &Error) -> [i32; 5] {
+        let before: usize = (self.rt.slots[slot].split_inclusive('\n'))
+            .take(e.line.saturating_sub(1) as usize)
+            .map(|l| l.encode_utf16().count())
+            .sum();
+        let at = before + e.col as usize;
+        [1, 0, slot as i32, at as i32, e.line as i32]
+    }
+
+    /// The main interpreter's state for ENVSTAT.
+    fn env_status(&self) -> i32 {
+        if self.editing && !self.detached {
+            status::EDITING
+        } else if self.running_slot.is_some() {
+            status::RUNNING
+        } else {
+            match self.rt.stopped {
+                Stopped::No => status::DIRECT,
+                Stopped::Paused => status::PAUSED,
+                Stopped::Error => status::ERROR,
+            }
+        }
+    }
+
+    /// Hands the frame's controls and keys to the interpreter with the
+    /// focus; the other sees nothing pressed.
+    fn give_input(&mut self) {
+        let Some(sub) = &mut self.sub else {
+            return;
+        };
+        let live = self.rt.input.live;
+        let idle = idle(&live);
+        if !sub.rt.focus {
+            sub.rt.input.live = idle;
+            return;
+        }
+        sub.rt.keys.extend(self.rt.keys.drain(..));
+        self.rt.input.live = idle;
+        // The pointer, in the sub-screen's pixels.
+        let mut mouse = live.mouse;
+        let (fw, fh) = (sub.rt.mode.width as i32, sub.rt.mode.height as i32);
+        let [x, y, w, h] = sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]);
+        let (dx, dy) = (mouse.display.0 - x, mouse.display.1 - y);
+        mouse.x = dx * fw / w.max(1);
+        mouse.y = dy * fh / h.max(1);
+        mouse.on_screen = (0..w).contains(&dx) && (0..h).contains(&dy) && self.sub_shown;
+        sub.rt.input.live = crate::input::State { mouse, ..live };
+    }
+
+    /// Runs the subprogram's frame, if there is a sub interpreter, and
+    /// passes the focus as ENVFOCUS asked.
+    fn run_sub(&mut self) {
+        let Some(sub) = &mut self.sub else {
+            return;
+        };
+        if std::mem::take(&mut self.rt.focus_moved) {
+            sub.rt.focus = !self.rt.focus;
+        }
+        sub.run_frame(Some(&mut self.rt));
+        if std::mem::take(&mut sub.rt.focus_moved) {
+            self.rt.focus = !sub.rt.focus;
+        }
+        // UNVERIFIED: that the focus comes back when the subprogram ends.
+        if let Some(error) = sub.ended.take() {
+            sub.rt.focus = false;
+            self.rt.focus = true;
+            self.rt.sub_running = false;
+            if let Some(e) = error {
+                self.rt.notices.push(format!("Subprogram: {e}"));
+            }
+        }
+    }
+
+    /// The subprogram's screen and where on the 1280x720 display it
+    /// shows, as x, y, width and height, while it shows. Where its
+    /// BACKCOLOR is clear, it is too, with its colors premultiplied.
+    // SmileBASIC 4's own SMILETOOL ends without hiding its screen, so it
+    // goes when the subprogram ends. UNVERIFIED: whether SUBSTOP hides it
+    // too.
+    pub fn sub_screen(&mut self) -> Option<(&Framebuffer, [i32; 4])> {
+        let sub = (self.sub.as_mut()).filter(|s| self.sub_shown && s.vm.is_some())?;
+        let rect = sub.rt.sub_screen?;
+        Some((sub.rt.render(), rect))
+    }
+
+    /// Whether the subprogram, rather than the main interpreter, has the
+    /// focus.
+    pub fn sub_has_focus(&self) -> bool {
+        self.sub.as_ref().is_some_and(|s| s.rt.focus)
+    }
+
+    /// Gives the focus to the main interpreter (false) or the subprogram,
+    /// as ENVFOCUS does, for the frontend's menu.
+    pub fn focus_sub(&mut self, sub_focus: bool) {
+        if let Some(sub) = &mut self.sub {
+            sub.rt.focus = sub_focus;
+            self.rt.focus = !sub_focus;
+        }
+    }
+
+    /// Whether a subprogram is running.
+    pub fn sub_running(&self) -> bool {
+        self.sub.as_ref().is_some_and(|s| s.vm.is_some())
+    }
+
+    /// SUBSTOP, for the frontend's menu.
+    pub fn stop_sub(&mut self) {
+        self.substop();
+        self.run_sub();
+    }
+
+    /// The sound mixed since the last call, the subprogram's with the
+    /// main interpreter's as its SNDMSBAL balances them: left and right
+    /// in turn.
+    pub fn take_samples(&mut self) -> Vec<f32> {
+        let mut out = self.rt.sound.take_samples();
+        let Some(sub) = &mut self.sub else {
+            return out;
+        };
+        let theirs = sub.rt.sound.take_samples();
+        // 0 is the subprogram's sound only, 64 both in full and 127 the
+        // main interpreter's only. UNVERIFIED: the curve between.
+        let balance = sub.rt.sound.balance as f32;
+        let (main_gain, sub_gain) = (
+            (balance / 64.0).min(1.0),
+            ((127.0 - balance) / 63.0).min(1.0),
+        );
+        if out.len() < theirs.len() {
+            out.resize(theirs.len(), 0.0);
+        }
+        for (i, s) in out.iter_mut().enumerate() {
+            let t = theirs.get(i).copied().unwrap_or(0.0);
+            *s = (*s * main_gain + t * sub_gain).clamp(-1.0, 1.0);
+        }
+        out
+    }
+}
+
+/// What an interpreter without the focus reads: controllers still
+/// connected, but nothing pressed or touched.
+fn idle(live: &crate::input::State) -> crate::input::State {
+    let mut state = crate::input::State::default();
+    for (pad, now) in state.pads.iter_mut().zip(&live.pads) {
+        pad.connected = now.connected;
+    }
+    state
 }

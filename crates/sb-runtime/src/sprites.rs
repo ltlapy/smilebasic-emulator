@@ -297,6 +297,11 @@ impl Default for Sprites {
 }
 
 impl Sprites {
+    /// The definitions that ACLS and SPDEF with no arguments go back to.
+    pub(crate) fn default_defs(&self) -> &[SpriteDef] {
+        &self.default_defs
+    }
+
     pub fn new(defs: Vec<SpriteDef>) -> Sprites {
         let mut s = Sprites {
             list: vec![Sprite::unused(); SPRITES],

@@ -2,8 +2,8 @@
 //! ENVLOAD, ENVSAVE and ENVPROJECT as the main interpreter sees them,
 //! CLIPBOARD, and the project's metadata (METALOAD, METAEDIT, METASAVE).
 //!
-//! There are no subprograms yet, so programs always run on the main
-//! interpreter, which has the focus.
+//! The sub interpreter's own side of them is here too; where they reach
+//! the main interpreter, see [`crate::sub`].
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -16,7 +16,8 @@ use sb_core::value::{Array, ArrayData, Value, new_str};
 use crate::confirm::{FileAction, project_label};
 use crate::files::str_arg;
 use crate::image::{self, Image};
-use crate::runtime::{Command, Runtime, no_form, opt_int};
+use crate::input::in_range;
+use crate::runtime::{Command, Request, Runtime, no_form, opt_int};
 use crate::sbfile;
 use crate::storage;
 
@@ -122,6 +123,23 @@ impl Runtime {
         status::RUNNING
     }
 
+    /// ENVLOCATE: where the console's cursor is on the 1280x720 display,
+    /// for a subprogram to show something by it, as SmileBASIC 4's soft
+    /// keyboard does. The command is not in the manual.
+    // UNVERIFIED: all of it, and that the editor's cursor counts while it
+    // is open, which here it does not.
+    pub(crate) fn cursor_on_display(&self) -> (i32, i32) {
+        let console = &self.text[crate::text::CONSOLE];
+        let (cx, cy) = console.cursor();
+        let size = console.font().1;
+        let (x, y) = (
+            f64::from(cx * size) + console.pos.0,
+            f64::from(cy * size) + console.pos.1,
+        );
+        let (w, h) = (f64::from(self.mode.width), f64::from(self.mode.height));
+        ((x * 1280.0 / w) as i32, (y * 720.0 / h) as i32)
+    }
+
     pub(crate) fn env_command(
         &mut self,
         command: Command,
@@ -130,9 +148,9 @@ impl Runtime {
     ) -> Result<Vec<Value>> {
         let int = |n: i32| Value::Int(n);
         match (command, want, args) {
-            (Command::Envtype, Want::Value, []) => Ok(vec![int(0)]),
+            (Command::Envtype, Want::Value, []) => Ok(vec![int(self.env_type)]),
             // The manual says -1 for user programs; it is 0 on hardware.
-            (Command::Envtype, Want::Outs(2), []) => Ok(vec![int(0), int(0)]),
+            (Command::Envtype, Want::Outs(2), []) => Ok(vec![int(self.env_type), int(0)]),
             (Command::Envstat, Want::Value, []) => Ok(vec![int(self.status())]),
             // Only subprograms set the main interpreter's status.
             (Command::Envstat, Want::Outs(0), [s]) => {
@@ -149,7 +167,28 @@ impl Runtime {
                 out.extend([0; 5].map(int));
                 Ok(out)
             }
-            (Command::Envfocus, Want::Value, []) => Ok(vec![int(1)]),
+            (Command::Envfocus, Want::Value, []) => Ok(vec![int(self.focus.into())]),
+            (Command::Xsubscreen, Want::Outs(0), [off]) if self.env_type == 1 => {
+                match off.to_int()? {
+                    0 => self.sub_screen = None,
+                    n => return Err(Error::with_detail(ErrorKind::OutOfRange, format!("{n}"))),
+                }
+                Ok(vec![])
+            }
+            (Command::Xsubscreen, Want::Outs(0), [x, y, w, h]) if self.env_type == 1 => {
+                self.sub_screen = Some([
+                    in_range("x", x, -32768..=32767)?,
+                    in_range("y", y, -32768..=32767)?,
+                    in_range("width", w, 1..=1280)?,
+                    in_range("height", h, 1..=720)?,
+                ]);
+                Ok(vec![])
+            }
+            // UNVERIFIED: what a subprogram gets before XSUBSCREEN.
+            (Command::Xsubscreen, Want::Outs(n @ 2..=4), []) if self.env_type == 1 => {
+                let rect = self.sub_screen.unwrap_or_default();
+                Ok(rect[..usize::from(n)].iter().map(|&v| int(v)).collect())
+            }
             // The sub-screen does nothing outside a subprogram, and gives
             // 0s.
             (Command::Xsubscreen, Want::Outs(0), [_] | [_, _, _, _]) => {
@@ -172,10 +211,25 @@ impl Runtime {
                 v.to_int()?;
                 Ok(vec![])
             }
+            // 1 takes the focus and 0 gives it to the other interpreter,
+            // if a subprogram runs beside the main one.
             (Command::Envfocus, Want::Outs(0), [flag]) => {
-                flag.to_int()?;
+                let take = flag.to_int()? != 0;
+                if self.env_type == 1 || self.sub_running {
+                    self.focus = take;
+                    self.focus_moved = true;
+                }
                 Ok(vec![])
             }
+            // Direct mode only: SUBRUN starts the file's program on the sub
+            // interpreter, and the others stop, show or hide it.
+            (Command::Subrun, Want::Outs(0), [file]) => {
+                let file = str_arg(file)?;
+                self.request(Request::Subrun(file))
+            }
+            (Command::Substop, Want::Outs(0), []) => self.request(Request::Substop),
+            (Command::Subshow, Want::Outs(0), []) => self.request(Request::Subshow(true)),
+            (Command::Subhide, Want::Outs(0), []) => self.request(Request::Subshow(false)),
             (Command::Envinput, Want::Value, _) if args.len() <= 1 => {
                 let n = args
                     .first()
@@ -202,6 +256,10 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Envproject, Want::Outs(0), []) => Ok(vec![]),
+            (Command::Envlocate, Want::Outs(2), []) => {
+                let (x, y) = self.cursor_on_display();
+                Ok(vec![int(x), int(y)])
+            }
             (Command::Clipboard, Want::Value, []) => {
                 let text = self.clipboard.text();
                 Ok(vec![Value::str(&text)])

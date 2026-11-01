@@ -78,6 +78,7 @@ pub(crate) enum Command {
     Envfocus,
     Envinput,
     Envload,
+    Envlocate,
     Envproject,
     Envsave,
     Envstat,
@@ -201,6 +202,10 @@ pub(crate) enum Command {
     Spused,
     Spvar,
     Stick,
+    Subhide,
+    Subrun,
+    Subshow,
+    Substop,
     Sysparam,
     Talk,
     Talkchk,
@@ -253,7 +258,7 @@ pub(crate) enum Command {
     Uistate,
 }
 
-const COMMANDS: &[(&str, Command)] = &[
+pub(crate) const COMMANDS: &[(&str, Command)] = &[
     ("ACCEL", Command::Accel),
     ("ACLS", Command::Acls),
     ("ANIMDEF", Command::Animdef),
@@ -298,6 +303,7 @@ const COMMANDS: &[(&str, Command)] = &[
     ("ENVFOCUS", Command::Envfocus),
     ("ENVINPUT$", Command::Envinput),
     ("ENVLOAD", Command::Envload),
+    ("ENVLOCATE", Command::Envlocate),
     ("ENVPROJECT", Command::Envproject),
     ("ENVSAVE", Command::Envsave),
     ("ENVSTAT", Command::Envstat),
@@ -421,6 +427,10 @@ const COMMANDS: &[(&str, Command)] = &[
     ("SPUSED", Command::Spused),
     ("SPVAR", Command::Spvar),
     ("STICK", Command::Stick),
+    ("SUBHIDE", Command::Subhide),
+    ("SUBRUN", Command::Subrun),
+    ("SUBSHOW", Command::Subshow),
+    ("SUBSTOP", Command::Substop),
     ("SYSPARAM", Command::Sysparam),
     ("TALK", Command::Talk),
     ("TALKCHK", Command::Talkchk),
@@ -478,12 +488,17 @@ pub const SLOTS: usize = 6;
 
 /// Work for the [`crate::machine::Machine`] around the runtime, asked for
 /// by direct-mode commands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
     Run(usize),
     Clear,
     Cont,
     Trace,
+    /// SUBRUN's file name, as typed.
+    Subrun(String),
+    Substop,
+    /// SUBSHOW (true) or SUBHIDE.
+    Subshow(bool),
 }
 
 /// How the last program stopped, if it has not ended.
@@ -586,6 +601,25 @@ pub struct Runtime {
     pub(crate) edit_slot: usize,
     /// Direct-mode lines typed, newest first, for ENVINPUT$.
     pub(crate) history: crate::env::History,
+    /// Which interpreter this is, as ENVTYPE gives it: 0 for the main
+    /// one, 1 for the sub interpreter that runs SUBRUN's program.
+    pub(crate) env_type: i32,
+    /// Whether this interpreter has the focus, and so the controls and
+    /// the keyboard.
+    pub(crate) focus: bool,
+    /// On the sub interpreter, XSUBSCREEN's rectangle on the display:
+    /// x, y, width and height. It shows nothing until one is set.
+    pub(crate) sub_screen: Option<[i32; 4]>,
+    /// On the main interpreter, whether a subprogram runs beside it, which
+    /// ENVFOCUS can give the focus to.
+    pub(crate) sub_running: bool,
+    /// ENVFOCUS changed who has the focus during the frame.
+    pub(crate) focus_moved: bool,
+    /// On the main interpreter, what it is doing and its last error, as
+    /// ENVSTAT gives them to the sub interpreter: a [`crate::sub::status`],
+    /// then the error's number, argument, slot, character and line.
+    pub(crate) env_status: i32,
+    pub(crate) env_error: [i32; 5],
     /// What CLIPBOARD reads and writes.
     pub clipboard: Box<dyn crate::env::Clipboard>,
     /// The DIALOG the program waits on, and the frontend's answer.
@@ -811,6 +845,13 @@ impl Runtime {
             prg_edit: None,
             edit_slot: 0,
             history: Default::default(),
+            env_type: 0,
+            focus: true,
+            sub_screen: None,
+            sub_running: false,
+            focus_moved: false,
+            env_status: 0,
+            env_error: [0; 5],
             clipboard: Box::new(crate::env::MemoryClipboard::default()),
             meta: Default::default(),
             dialog: None,
@@ -868,6 +909,11 @@ impl Runtime {
     }
 
     /// The sprite image on GRP4, also put back by ACLS.
+    /// The page that sprites start on, as set by [`Runtime::set_sprite_page`].
+    pub(crate) fn sprite_page(&self) -> Option<&[u32]> {
+        self.sprite_page.as_deref()
+    }
+
     pub fn set_sprite_page(&mut self, pixels: Vec<u32>) {
         self.grp.set_page(SPRITE_PAGE, pixels.clone());
         self.sprite_page = Some(pixels);
@@ -1123,7 +1169,7 @@ impl Runtime {
         }
     }
 
-    fn request(&mut self, request: Request) -> Result<Vec<Value>> {
+    pub(crate) fn request(&mut self, request: Request) -> Result<Vec<Value>> {
         self.direct_only()?;
         self.requests.push(request);
         Ok(vec![])
@@ -1173,7 +1219,13 @@ impl Runtime {
         let mut fb = std::mem::replace(&mut self.fb, Framebuffer::new(0, 0));
         let mut scratch = std::mem::replace(&mut self.scratch, Framebuffer::new(0, 0));
         let mut flat = std::mem::replace(&mut self.flat, Framebuffer::new(0, 0));
-        fb.clear(self.back_color | 0xFF00_0000);
+        // The sub interpreter's screen is clear where its BACKCOLOR is,
+        // over the main one's, and so is drawn premultiplied.
+        // UNVERIFIED: how a partly clear BACKCOLOR shows there.
+        fb.clear(match self.env_type {
+            0 => self.back_color | 0xFF00_0000,
+            _ => compose::over(0, self.back_color),
+        });
         for layer in (0..LAYERS as i32).rev() {
             let mut in_layer = elements.iter().filter(|e| e.0 == layer).peekable();
             let settings = self.fine(&self.layers[layer as usize]);
@@ -1544,7 +1596,12 @@ impl Runtime {
         Ok(&mut self.text[id])
     }
 
-    fn run(&mut self, command: Command, args: &[Value], want: Want) -> Result<Vec<Value>> {
+    pub(crate) fn run(
+        &mut self,
+        command: Command,
+        args: &[Value],
+        want: Want,
+    ) -> Result<Vec<Value>> {
         match (command, want) {
             (Command::Cls, Want::Outs(0)) => {
                 let (id, _) = with_screen(args, 0)?;
@@ -1672,10 +1729,15 @@ impl Runtime {
                 | Command::Xsubscreen
                 | Command::Envinput
                 | Command::Envload
+                | Command::Envlocate
                 | Command::Envproject
                 | Command::Envsave
                 | Command::Envstat
                 | Command::Envtype
+                | Command::Subhide
+                | Command::Subrun
+                | Command::Subshow
+                | Command::Substop
                 | Command::Metaedit
                 | Command::Metaload
                 | Command::Metasave,
