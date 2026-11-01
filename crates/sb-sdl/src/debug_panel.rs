@@ -1,12 +1,13 @@
 //! The debugger's panel below the editor while a program is stopped: room
 //! for the screens as the program left them, which the frontend draws at
 //! the window's resolution, its calls under way, the watch expressions,
-//! and the variables of the call chosen or of a slot.
+//! and the variables of the call chosen or of a slot, or what PERFEND
+//! has timed.
 
 use sb_core::value::{ArrayData, ElemType, Value, format_number};
 use sb_core::vm::{Call, CallKind};
-use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
+use sb_runtime::{Framebuffer, PerfStats};
 use sdl3::keyboard::Keycode;
 
 use crate::ui::{BORDER, DISABLED, HIGHLIGHT, PAD, Rect, TEXT, draw_text_scaled, fill};
@@ -46,6 +47,9 @@ pub enum Tab {
     Locals,
     /// A slot's globals.
     Globals(usize),
+    /// Not variables: PERFBEGIN's and PERFEND's measurements, which
+    /// SmileBASIC 4 shows nowhere.
+    Perf,
 }
 
 /// What the panel shows, gathered from the machine each frame.
@@ -70,6 +74,8 @@ pub struct View {
     pub changed: Option<String>,
     /// Every breakpoint: slot, line and condition.
     pub breakpoints: Vec<(usize, u32, Option<String>)>,
+    /// What PERFEND has timed since RUN.
+    pub perf: [PerfStats; 8],
 }
 
 /// What a click on the panel chose.
@@ -84,6 +90,8 @@ pub enum Hit {
     AddWatch,
     /// A breakpoint, by its place in [`View::breakpoints`].
     Breakpoint(usize),
+    /// The Perf tab's measurements.
+    Perf,
     /// The button that puts the panel away.
     Close,
 }
@@ -254,6 +262,23 @@ fn cut(text: &str, chars: usize) -> String {
     cut
 }
 
+/// A PERFEND time in microseconds, and in milliseconds too with `ms`.
+fn perf_time(micros: u64, ms: bool) -> String {
+    match ms {
+        true => format!("{micros}us {}.{:03}ms", micros / 1000, micros % 1000),
+        false => format!("{micros}us"),
+    }
+}
+
+/// A measurement's last, average and longest times, which are dashes
+/// before its first PERFEND.
+fn perf_times(stats: &PerfStats, ms: bool) -> [String; 3] {
+    match stats.count {
+        0 => std::array::from_fn(|_| "-".to_string()),
+        _ => [stats.last, stats.average(), stats.max].map(|t| perf_time(t, ms)),
+    }
+}
+
 fn call_text(call: &Call, chars: usize) -> String {
     let name = match &call.kind {
         CallKind::Top => "(top level)",
@@ -324,7 +349,7 @@ impl DebugPanel {
             Hit::AddWatch => self.add_watch(String::new()),
             Hit::Close => {}
             Hit::Watch(i) if double => self.edit_watch(i),
-            Hit::Watch(_) | Hit::Variable(_) | Hit::Breakpoint(_) => {}
+            Hit::Watch(_) | Hit::Variable(_) | Hit::Breakpoint(_) | Hit::Perf => {}
         }
         hit
     }
@@ -669,6 +694,7 @@ impl DebugPanel {
             let label = match t {
                 Tab::Locals => "Locals".to_string(),
                 Tab::Globals(slot) => format!("PRG{slot}"),
+                Tab::Perf => "Perf".to_string(),
             };
             let r = Rect {
                 x: tx,
@@ -683,7 +709,10 @@ impl DebugPanel {
         }
         let mut y = ty + m.line + 2;
         self.rows = ((bottom.saturating_sub(y)) / m.line) as usize;
-        if view.variables.is_empty() {
+        if tab == Some(Tab::Perf) {
+            let right = inner.x + inner.w - m.pad;
+            self.draw_perf(fb, font, &m, (vx, y), (right, bottom), &view.perf);
+        } else if view.variables.is_empty() {
             m.draw(fb, font, vx, y + m.text, "No variables", DISABLED);
         }
         // The names and types take what they need, the values the rest.
@@ -758,6 +787,98 @@ impl DebugPanel {
         self.draw_tip(fb, font);
     }
 
+    /// The measurements PERFBEGIN or PERFEND used since RUN, from `(x,
+    /// y)` to `(right, bottom)`: PERFBEGIN's colour, the last, average
+    /// and longest times, and how many PERFENDs there were. Times show in
+    /// milliseconds too where there is room, else in a tip.
+    fn draw_perf(
+        &mut self,
+        fb: &mut Framebuffer,
+        font: &Font,
+        m: &Metrics,
+        (x, mut y): (u32, u32),
+        (right, bottom): (u32, u32),
+        perf: &[PerfStats; 8],
+    ) {
+        let area = Rect {
+            x: x - m.pad / 2,
+            y,
+            w: (right + m.pad / 2).saturating_sub(x),
+            h: bottom.saturating_sub(y),
+        };
+        self.hits.push((area, Hit::Perf));
+        let used: Vec<(usize, &PerfStats)> = (perf.iter().enumerate())
+            .filter(|(_, s)| s.used())
+            .collect();
+        if used.is_empty() {
+            let text = "No PERFBEGIN or PERFEND since RUN";
+            m.draw(fb, font, x, y + m.text, text, DISABLED);
+            return;
+        }
+        let count = |s: &PerfStats| s.count.to_string();
+        let count_chars = (used.iter().map(|(_, s)| count(s).len()).max())
+            .unwrap_or(0)
+            .max("COUNT".len());
+        // A swatch and the number take four characters.
+        let room = (right.saturating_sub(x) / m.char) as usize;
+        let time_chars = room.saturating_sub(4 + count_chars) / 3;
+        let widest = |ms| {
+            (used.iter())
+                .flat_map(|(_, s)| perf_times(s, ms))
+                .map(|t| t.len() + 1)
+                .max()
+                .unwrap_or(0)
+        };
+        let ms = widest(true) <= time_chars;
+        let time_chars = time_chars.max(widest(false));
+        let column = |i: usize| x + (4 + i * time_chars) as u32 * m.char;
+        let headings = ["LAST", "AVERAGE", "MAX", "COUNT"];
+        if y + m.line <= bottom {
+            m.draw(fb, font, x + 2 * m.char, y + m.text, "#", HEADING);
+            for (i, heading) in headings.iter().enumerate() {
+                m.draw(fb, font, column(i), y + m.text, heading, HEADING);
+            }
+            y += m.line;
+        }
+        for (n, (id, stats)) in used.into_iter().enumerate() {
+            if y + m.line > bottom {
+                break;
+            }
+            let row = Rect {
+                y,
+                h: m.line,
+                ..area
+            };
+            if n % 2 == 1 {
+                fill(fb, row, STRIPE);
+            }
+            if let Some(color) = stats.color {
+                let swatch = Rect {
+                    x,
+                    y: y + m.text,
+                    w: m.char,
+                    h: m.line - 2 * m.text,
+                };
+                // Opaque, so that a colour code without alpha still shows.
+                fill(fb, swatch, color | 0xFF00_0000);
+            }
+            m.draw(fb, font, x + 2 * m.char, y + m.text, &id.to_string(), TEXT);
+            let times = perf_times(stats, ms);
+            for (i, time) in times.iter().enumerate() {
+                m.draw(fb, font, column(i), y + m.text, time, NUMBER);
+            }
+            m.draw(fb, font, column(3), y + m.text, &count(stats), TEXT);
+            if !ms && stats.count > 0 {
+                let mut lines = vec![format!("PERFEND {id}")];
+                let whole = perf_times(stats, true);
+                lines.extend((headings.iter().zip(whole)).map(|(h, t)| format!("{h:<8}{t}")));
+                lines.push(format!("{:<8}{}", headings[3], stats.count));
+                self.tips.push((row, lines));
+            }
+            y += m.line;
+        }
+    }
+
     /// The whole value of the row under the pointer, above it, if the row
     /// cuts it.
     fn draw_tip(&self, fb: &mut Framebuffer, font: &Font) {
@@ -814,6 +935,26 @@ mod tests {
         assert_eq!(value_text(&a, 8, false).0, "[1,2,3,…");
         assert_eq!(type_text(&a), "INT[2,3]");
         assert_eq!(value_text(&Value::Int(-1), 12, true).0, "&HFFFFFFFF");
+    }
+
+    #[test]
+    fn perf_times_in_both_units() {
+        assert_eq!(perf_time(16_667, true), "16667us 16.667ms");
+        assert_eq!(perf_time(5, true), "5us 0.005ms");
+        assert_eq!(perf_time(5, false), "5us");
+        let begun = PerfStats {
+            begun: true,
+            ..PerfStats::default()
+        };
+        assert_eq!(perf_times(&begun, true), ["-", "-", "-"]);
+        let timed = PerfStats {
+            count: 2,
+            last: 1000,
+            max: 3000,
+            total: 4000,
+            ..begun
+        };
+        assert_eq!(perf_times(&timed, false), ["1000us", "2000us", "3000us"]);
     }
 
     #[test]

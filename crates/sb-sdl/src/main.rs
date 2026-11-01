@@ -2276,16 +2276,18 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
             tabs.push(Tab::Globals(slot));
         }
     }
+    tabs.push(Tab::Perf);
     let tab = panel.tab.filter(|t| tabs.contains(t)).unwrap_or(tabs[0]);
     let call_frame = call.as_ref().and_then(|c| c.frame);
     let (frame, slot) = match tab {
         Tab::Locals => (call_frame, home),
         Tab::Globals(slot) => (None, slot),
+        Tab::Perf => (None, home),
     };
     let variables = match (tab, frame) {
         (Tab::Locals, Some(frame)) => machine.frame_locals(frame),
         (Tab::Globals(slot), _) => machine.slot_globals(slot),
-        (Tab::Locals, None) => Vec::new(),
+        (Tab::Locals, None) | (Tab::Perf, _) => Vec::new(),
     };
     // Watches see the chosen call's locals and its slot's globals.
     let watches = (panel.watches.iter())
@@ -2322,6 +2324,7 @@ fn debug_view(machine: &mut Machine, panel: &DebugPanel) -> View {
         keys: keys.to_string(),
         changed,
         breakpoints: machine.all_breakpoints(),
+        perf: *machine.rt.perf_stats(),
     }
 }
 
@@ -2362,6 +2365,8 @@ enum Choice {
     /// Type the condition of the breakpoint on a slot's line.
     Condition(usize, u32),
     RemoveBreakpoint(usize, u32),
+    /// Forget what PERFEND has timed, as RUN does.
+    ResetPerf,
     AddWatch,
     Hex,
     /// Go to the label or DEF of a name.
@@ -2433,6 +2438,9 @@ fn panel_menu(
                     Choice::RemoveBreakpoint(slot, line),
                 ),
             ]
+        }
+        Some(Hit::Perf | Hit::Tab(Tab::Perf)) => {
+            vec![("Reset measurements".to_string(), true, Choice::ResetPerf)]
         }
         _ => vec![("Add watch".to_string(), true, Choice::AddWatch), hex],
     }
@@ -2518,6 +2526,7 @@ fn choose(
         Choice::BreakOnChange(i) => panel.toggle_break(i),
         Choice::Condition(slot, line) => return Some(condition_dialog(machine, slot, line, size)),
         Choice::RemoveBreakpoint(slot, line) => _ = machine.toggle_breakpoint(slot, line),
+        Choice::ResetPerf => machine.rt.reset_perf_stats(),
         Choice::AddWatch => panel.add_watch(String::new()),
         Choice::Hex => panel.hex = !panel.hex,
         Choice::Definition(name) => {
