@@ -246,6 +246,40 @@ fn dialogs_wait_for_an_answer() {
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
 }
 
+/// The key that closes a dialog is not a fresh press for the program
+/// afterwards: WIM_VOCARO closes its help with Enter and then reads
+/// Enter's press with KEYBOARD to start typing a phrase.
+#[test]
+fn the_key_that_closes_a_dialog_is_not_pressed_after_it() {
+    use sb_runtime::dialog::DialogAnswer;
+    let mut m = machine();
+    let program = "DIALOG \"X\"\n\
+        FOR I=0 TO 3:IF KEYBOARD(40,2) THEN ?\"PRESSED\"\n\
+        VSYNC:NEXT:?\"DONE\"";
+    until_dialog(&mut m, program);
+    m.frame();
+    // Enter goes down, and the frontend's dialog takes it as its answer.
+    m.rt.input.live.set_key(40, true);
+    m.rt.answer_dialog(DialogAnswer::Choice(0));
+    for _ in 0..10 {
+        m.frame();
+    }
+    m.rt.input.live.set_key(40, false);
+    settle(&mut m);
+    let rows = tail(&m, 3);
+    assert_eq!(rows[1..], ["DONE", "OK"]);
+    assert_ne!(rows[0], "PRESSED");
+
+    // A press after the dialog is one.
+    until_dialog(&mut m, program);
+    m.rt.answer_dialog(DialogAnswer::Choice(0));
+    m.frame();
+    m.rt.input.live.set_key(40, true);
+    settle(&mut m);
+    m.rt.input.live.set_key(40, false);
+    assert_eq!(tail(&m, 3), ["PRESSED", "DONE", "OK"]);
+}
+
 #[test]
 fn other_slots_data_and_variables() {
     // FINITI reads models from the DATA of the slot that calls it, and

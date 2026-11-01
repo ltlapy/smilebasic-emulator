@@ -206,6 +206,16 @@ impl Input {
         self.touch = (0, 0);
     }
 
+    /// Keyboard keys held now count as held before too, so that the key
+    /// that closed a dialog is no press for KEYBOARD afterwards.
+    // UNVERIFIED: that SmileBASIC 4 hides the closing key from KEYBOARD,
+    // and that controller buttons keep their presses.
+    pub(crate) fn hide_key_presses(&mut self) {
+        for (before, now) in self.before.keys.iter_mut().zip(self.now.keys) {
+            *before |= now;
+        }
+    }
+
     /// Whether the program has read buttons or sticks since the last call,
     /// for the frontend to show where they are on the keyboard.
     pub fn take_buttons_read(&mut self) -> bool {

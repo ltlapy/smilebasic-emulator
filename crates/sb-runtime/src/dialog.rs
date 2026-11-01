@@ -222,6 +222,9 @@ impl Runtime {
             return Ok(vec![Value::Int(0)]);
         };
         let kind = self.dialog.take().expect("a dialog was open").dialog.kind;
+        // The frontend answers on Enter going down, which the program
+        // would see as a press in the frame the dialog returns in.
+        self.input.hide_key_presses();
         match (kind, answer) {
             (DialogKind::Choice(labels), DialogAnswer::Choice(i)) => {
                 self.result = choice_result(labels.len(), i);
