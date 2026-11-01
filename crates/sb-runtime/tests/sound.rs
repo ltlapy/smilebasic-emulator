@@ -261,6 +261,14 @@ fn beeps_take_handles() {
             .kind,
         ErrorKind::IllegalFunctionCall
     );
+    // 16 to 512 samples, any number of them.
+    run_on(&mut rt, "WAVSET 224,0,0,0,0,\"FF00\"*12").unwrap();
+    assert_eq!(
+        run_on(&mut rt, "WAVSET 224,0,0,0,0,\"FF00\"*257")
+            .unwrap_err()
+            .kind,
+        ErrorKind::IllegalFunctionCall
+    );
 }
 
 #[test]

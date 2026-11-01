@@ -344,10 +344,10 @@ impl Runtime {
                             .and_then(|h| u8::from_str_radix(h, 16).ok())
                     })
                     .collect();
+                // Any length from 16 to 512 samples, as SmileBASIC 4
+                // takes; longer is an error, not cut short.
                 let bytes = bytes
-                    .filter(|b| {
-                        hex.len() % 2 == 0 && [16, 32, 64, 128, 256, 512].contains(&b.len())
-                    })
+                    .filter(|b| hex.len() % 2 == 0 && (16..=512).contains(&b.len()))
                     .ok_or_else(|| {
                         Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform")
                     })?;

@@ -445,8 +445,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   samples lasts eight cycles of the note. Songs written for SmileBASIC 4
   repeat their cycles to fill eight (a 16-sample pattern of two cycles
   times 4, one of a single cycle times 8, both at reference pitch 69).
-  Any length from 16 to 512 plays a pass at 55 Hz at its reference
-  pitch.
+  Any number of samples from 16 to 512 (not only powers of two) plays a
+  pass at 55 Hz at its reference pitch; fewer or more is `Illegal
+  function call`.
 - `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its
   n samples at 28160 Hz over the next power of two at or above n: at
   reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16
