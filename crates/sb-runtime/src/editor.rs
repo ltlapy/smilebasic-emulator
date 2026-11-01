@@ -206,6 +206,10 @@ const MAP_BLOCK: usize = 2;
 const MAP_WIDTH: usize = 120;
 /// How strongly the overview shows over the background, out of 256.
 const MAP_ALPHA: u32 = 120;
+/// How strongly the lines on screen are filled and outlined in the
+/// overview, out of 256, in the text's color.
+const VIEW_FILL: u32 = 40;
+const VIEW_EDGE: u32 = 170;
 
 /// Where the overview was drawn: from pixel `x` rightwards and from
 /// pixel `top` down for `height`, starting with line `first`.
@@ -1609,13 +1613,20 @@ impl Editor {
                 }
             }
         };
-        // The lines on screen.
+        // The lines on screen, filled and outlined so that the view
+        // stands out of the code around it.
         let shown =
             self.view.top.saturating_sub(first)..(self.view.top + rows).saturating_sub(first);
-        for x in x0..x0 + width {
-            let y = top + shown.start.min(fit) * MAP_PITCH;
-            let h = (shown.end.min(fit) - shown.start.min(fit)) * MAP_PITCH;
-            paint(x, y, h, 0xFFFF_FFFF, 20);
+        let y = top + shown.start.min(fit) * MAP_PITCH;
+        let h = (shown.end.min(fit) - shown.start.min(fit)) * MAP_PITCH;
+        let edge = colors[Part::Character];
+        if h > 0 {
+            for x in x0..x0 + width {
+                paint(x, y, h, edge, VIEW_FILL);
+                paint(x, y, 1, edge, VIEW_EDGE);
+                paint(x, y + h - 1, 1, edge, VIEW_EDGE);
+            }
+            paint(x0, y + 1, h.saturating_sub(2), edge, VIEW_EDGE);
         }
         for (i, text) in self.lines[first..].iter().take(fit).enumerate() {
             let y = top + i * MAP_PITCH;
