@@ -457,10 +457,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   A held at V127 has an RMS of 850 on `@0`, and a full-scale 8-bit
   waveform an eighth of full scale on each side (a ±96 square 3063, a
   sine of amplitude 100 2257).
-- `Q8` lets a note go about 6% of its length later than a quarter of
-  it: @0's `C2` and `C4` at T120 start their release some 16 and 8 ms
-  later than 250 and 125 ms. `Q0` lets go within about 10 ms. A waveform
-  with attack 127 is at full level from its first sample.
+- `Qn` holds a note for (n+1)/33 of its length, cut to whole ticks (48
+  to a quarter note) and at least one: at T120 a `C4` is let go after
+  10 ms with `Q0`, 135 with `Q8`, 250 with `Q16`, 375 with `Q24`, and
+  `Q32` holds it all. A waveform with attack 127 is at full level from
+  its first sample.
 - `@MP`, `@MA` and `@ML` (depth d, range r, speed s, delay t) swing a
   sine of d/128 times r units at s/2.56 Hz, starting upward: a unit is
   a semitone of pitch, 6 dB of volume, or the pan from the middle to one
