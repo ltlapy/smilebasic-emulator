@@ -27,6 +27,9 @@ pub const FRAME_BUDGET: u32 = 1_000_000;
 /// With a time limit, how many instructions run between looks at the
 /// clock.
 const SLICE: u32 = 20_000;
+/// With a time limit, the part of a frame's that a subprogram is sure of:
+/// a quarter.
+const SUB_SHARE: u32 = 4;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
 pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
 
@@ -1100,8 +1103,17 @@ impl Machine {
     pub fn frame(&mut self) {
         self.give_input();
         self.rt.env_status = self.env_status();
+        // With a subprogram running, a busy main program leaves it a
+        // quarter of the frame's time, and it gets what the main program
+        // leaves.
+        let limit = self.time_limit;
+        if self.sub_running() {
+            self.time_limit = limit.map(|l| l - l / SUB_SHARE);
+        }
+        let start = Instant::now();
         self.run_frame(None);
-        self.run_sub();
+        self.time_limit = limit;
+        self.run_sub(start.elapsed());
     }
 
     /// One frame of this interpreter; `main` is the main interpreter's
@@ -1539,10 +1551,11 @@ impl Machine {
 
     /// Runs the subprogram's frame, if there is a sub interpreter, and
     /// passes the focus as ENVFOCUS asked.
-    fn run_sub(&mut self) {
+    fn run_sub(&mut self, used: Duration) {
         let Some(sub) = &mut self.sub else {
             return;
         };
+        sub.time_limit = (self.time_limit).map(|l| l.saturating_sub(used).max(l / SUB_SHARE));
         if std::mem::take(&mut self.rt.focus_moved) {
             sub.rt.focus = !self.rt.focus;
         }
@@ -1596,7 +1609,7 @@ impl Machine {
     /// SUBSTOP, for the frontend's menu.
     pub fn stop_sub(&mut self) {
         self.substop();
-        self.run_sub();
+        self.run_sub(Duration::ZERO);
     }
 
     /// The sound mixed since the last call, the subprogram's with the
