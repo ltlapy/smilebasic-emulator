@@ -67,10 +67,11 @@ const EIGHT_BIT: f32 = 1.0 / 128.0;
 
 /// A user waveform from WAVSET or SmileBASIC 3's WAVSETA: 8-bit samples,
 /// offset by 128. SmileBASIC 4 plays a pass of the samples as eight
-/// cycles of the note, whatever their number: 32 samples of one cycle
-/// sound three octaves down (TEST40), and songs written for SmileBASIC 4
-/// repeat their cycles to fill eight. Past 512 samples the rate stays
-/// that of 512, 28160 Hz at A, the 16-bit form's own default.
+/// cycles of A at the base note, whatever their number: 32 samples of
+/// one cycle sound three octaves down (TEST40), and songs written for
+/// SmileBASIC 4 repeat their cycles to fill eight. Past 512 samples the
+/// rate stays that of 512, 28160 Hz at the base note, the 16-bit form's
+/// own default.
 // UNVERIFIED: lengths other than 32, and the rate past 512 samples.
 pub fn eight_bit(bytes: impl IntoIterator<Item = f64>, base_note: i32, envelope: Envelope) -> Wave {
     let samples: Vec<f32> = bytes
@@ -233,11 +234,9 @@ impl Voice {
             .powf((f64::from(self.key - self.wave.base_note) * 100.0 + f64::from(cents)) / 1200.0);
         self.base_step = match self.wave.rate {
             Some(rate) => rate * ratio / f64::from(RATE),
-            // A cycle at the base note is A=440 Hz shifted to the note.
-            None => {
-                let freq = 440.0 * 2f64.powf(f64::from(self.wave.base_note - 69) / 12.0);
-                self.wave.cycle * freq * ratio / f64::from(RATE)
-            }
+            // A cycle at the base note is A=440 Hz: a waveform with base
+            // note 57 sounds an octave higher.
+            None => self.wave.cycle * 440.0 * ratio / f64::from(RATE),
         };
         self.step = self.base_step;
     }
@@ -505,10 +504,14 @@ mod tests {
         let w = eight_bit((0..32).map(f64::from), 69, Envelope::ORGAN);
         let v = Voice::new(Rc::new(w), None, 69, 0, false);
         assert!((v.step - 32.0 * 55.0 / 48000.0).abs() < 1e-9);
+        // The base note moves it: at 57, the same A sounds an octave up.
+        let w = eight_bit((0..32).map(f64::from), 57, Envelope::ORGAN);
+        let v = Voice::new(Rc::new(w), None, 69, 0, false);
+        assert!((v.step - 32.0 * 110.0 / 48000.0).abs() < 1e-9);
         // Past 512 samples, 28160 samples a second at the base note.
         let w = eight_bit((0..2048).map(|_| 128.0), 60, Envelope::ORGAN);
         let v = Voice::new(Rc::new(w), None, 60, 0, false);
-        let rate = 28160.0 * 2f64.powf(-9.0 / 12.0);
+        let rate = 28160.0;
         assert!((v.step - rate / 48000.0).abs() < 1e-9);
     }
 
