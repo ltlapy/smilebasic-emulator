@@ -451,6 +451,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   n samples at 28160 Hz over the next power of two at or above n: at
   reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16
   samples sound 2400 cents up, 512 3600 cents down, 2048 6000 down.
+- The PSG (`@216` to `@222`) and noise (`@223`) are instruments of the
+  sound archive like `@0`: each PSG tone records at an RMS of about 4031
+  (peak 4090) at V127, whatever its width, and the noise at 2839, never
+  going below zero. An instrument region's own volume is a linear gain
+  (`@0`'s is 88), unlike `V` and `@V`.
 - `BGMPLAY` without a volume plays at 64, and `BGMVOL` (like
   `BGMPLAY`'s volume) is a linear gain of v/127 over that range: on a
   square that records at 3063 by default, `BGMVOL 127` gives 6079, 95

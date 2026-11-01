@@ -17,8 +17,10 @@ pub(crate) const MAX_VOICES: usize = 48;
 /// The level of silence, in 1/128ths of 0.1 dB.
 const SILENCE: i32 = -723 * 128;
 /// The instruments' level: @0's A at V127 in the middle records at an
-/// RMS of 850 (TEST40).
-pub(crate) const OUTPUT_GAIN: f32 = 0.256;
+/// RMS of 850 (TEST40), its regions' volume being 88. A full-scale sample
+/// at region volume 127 then plays about as loud as a full-scale WAVSET
+/// waveform, as the PSG's do (TEST41).
+pub(crate) const OUTPUT_GAIN: f32 = 0.1774;
 
 /// The attack's step for attack values 109 to 127: how much of the level
 /// is left after each step, in 256ths. Below 109 it is 255 - attack.
@@ -335,7 +337,10 @@ impl Voice {
                 * self.envelope.gain()
                 * square(ch.volume)
                 * square(ch.expression)
-                * square(i32::from(self.region.volume))
+                // Unlike V and @V, the region's volume is linear: with it
+                // squared the PSG played 45% too loud next to @0.
+                * f32::from(self.region.volume)
+                / 127.0
                 * self.velocity
         };
         let [l, r] = pan_gains(pan_position(ch.pan + i32::from(self.region.pan) - 64) + pan);

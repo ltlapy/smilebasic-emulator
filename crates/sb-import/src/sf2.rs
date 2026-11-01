@@ -165,7 +165,8 @@ pub fn write(bank: &Bank, layout: Layout, out: &mut impl Write) -> io::Result<()
                 17,
                 ((i16::from(region.pan) - 64) * 500 / 64).clamp(-500, 500),
             );
-            igen.add(48, (-400.0 * volume.log10()).round() as i16);
+            // A region's volume is a linear gain.
+            igen.add(48, (-200.0 * volume.log10()).round() as i16);
             let looped = bank.waves[usize::from(region.wave)].loop_start.is_some();
             igen.add(54, i16::from(looped));
             igen.add(58, i16::from(region.original_key));

@@ -90,12 +90,12 @@ pub fn eight_bit(bytes: &[f64], pass: usize, base_note: i32, envelope: Envelope)
 }
 
 /// The PSG's pulse widths for @216 to @222, as eighths of a cycle.
-// UNVERIFIED: SmileBASIC 4's PSG tones.
+// UNVERIFIED: the widths of SmileBASIC 4's PSG tones.
 const PULSES: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
 
 /// @216 to @222 as one cycle of a pulse wave, as loud as a full-scale
-/// 8-bit waveform.
-// UNVERIFIED: the PSG's and the noise's levels.
+/// 8-bit waveform, which SmileBASIC 4's own are near (TEST41). They play
+/// when the instruments do not come from SmileBASIC 4's sound archive.
 pub fn pulse(program: i32) -> Wave {
     let high = PULSES[(program - 216) as usize];
     Wave {
@@ -112,7 +112,8 @@ pub fn pulse(program: i32) -> Wave {
 }
 
 /// @223: noise, read as one cycle of random samples so that higher notes
-/// sound brighter.
+/// sound brighter. SmileBASIC 4's own noise steps between silence and
+/// full scale, never below (TEST41), so this does too.
 pub fn noise() -> Wave {
     let mut x: u32 = 0x1234_5678;
     let samples = (0..4096)
@@ -120,9 +121,8 @@ pub fn noise() -> Wave {
             x ^= x << 13;
             x ^= x >> 17;
             x ^= x << 5;
-            (x >> 16) as f32 / 32768.0 - 1.0
+            if x & 0x8000 != 0 { 1.0 } else { 0.0 }
         })
-        .map(|s| s * 128.0 * EIGHT_BIT)
         .collect();
     Wave {
         samples,

@@ -271,6 +271,11 @@ impl Track {
     fn set_program(&mut self, c: usize, program: i32) {
         self.channels[c].program = program;
         self.channels[c].voice = match program {
+            // SmileBASIC 4's own PSG and noise, from its sound archive,
+            // when the instruments came from there.
+            216..=223 if self.synth.as_ref().is_some_and(|s| s.plays(program)) => {
+                Voice::Synth(program)
+            }
             216..=255 => Voice::Wave(program),
             _ if self.synth.as_ref().is_some_and(|s| s.plays(program)) => Voice::Synth(program),
             _ => Voice::Silent,
