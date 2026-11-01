@@ -590,9 +590,36 @@ fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
     };
     if let Some((sub, rect)) = m.sub_screen() {
         image = with_sub_screen(&image, sub, rect);
+        if let Some((rect, alpha)) = m.focus_border() {
+            draw_focus_border(&mut image, rect, alpha);
+        }
     }
     std::fs::write(file, image::encode_png(&image))?;
     Ok(())
+}
+
+/// The border marking where the focus has just gone, as the frontend
+/// draws it: yellow one pixel out and two in, then two dark pixels.
+fn draw_focus_border(image: &mut image::Image, [x, y, w, h]: [i32; 4], alpha: u8) {
+    let a = u32::from(alpha);
+    for (inset, width, color) in [(-1, 3, 0x00FF_FF00u32), (2, 2, 0)] {
+        let (x0, y0, x1, y1) = (x + inset, y + inset, x + w - inset, y + h - inset);
+        for py in y0.max(0)..y1.min(image.height as i32) {
+            for px in x0.max(0)..x1.min(image.width as i32) {
+                let edge =
+                    px < x0 + width || px >= x1 - width || py < y0 + width || py >= y1 - width;
+                if !edge {
+                    continue;
+                }
+                let d = &mut image.pixels[py as usize * image.width + px as usize];
+                let mix = |shift: u32| {
+                    let (c, under) = (color >> shift & 0xFF, *d >> shift & 0xFF);
+                    ((c * a + under * (255 - a)) / 255) << shift
+                };
+                *d = 0xFF00_0000 | mix(16) | mix(8) | mix(0);
+            }
+        }
+    }
 }
 
 fn with_sub_screen(main: &image::Image, sub: &Framebuffer, [x, y, w, h]: [i32; 4]) -> image::Image {

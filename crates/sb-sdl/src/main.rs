@@ -1650,6 +1650,36 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 canvas.copy(tex, None, dst)?;
             }
         }
+        // Where the focus has just gone: a yellow line on the edge, one
+        // pixel out and two in, then a dark band two pixels wide, fading
+        // out together.
+        if !editing && let Some(([x, y, w, h], alpha)) = machine.focus_border() {
+            let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
+            let place = |x: i32, y: i32, w: i32, h: i32| {
+                let at = |v: i32, s: f32| v as f32 * s;
+                FRect::new(
+                    display.x + at(x, sx),
+                    display.y + at(y, sy),
+                    at(w, sx),
+                    at(h, sy),
+                )
+            };
+            canvas.set_blend_mode(BlendMode::Blend);
+            for (inset, width, color) in [
+                (-1, 3, Color::RGBA(255, 255, 0, alpha)),
+                (2, 2, Color::RGBA(0, 0, 0, alpha)),
+            ] {
+                let (x, y, w, h) = (x + inset, y + inset, w - 2 * inset, h - 2 * inset);
+                canvas.set_draw_color(color);
+                canvas.fill_rects(&[
+                    place(x, y, w, width),
+                    place(x, y + h - width, w, width),
+                    place(x, y + width, width, h - 2 * width),
+                    place(x + w - width, y + width, width, h - 2 * width),
+                ])?;
+            }
+            canvas.set_blend_mode(BlendMode::None);
+        }
         // The debugger's panel leaves the screens' place clear.
         if let (Some((place, _, Some(size))), Some((tex, _))) = (&debug, &panel_screens) {
             let s = DebugPanel::screen_place(*place, *size);

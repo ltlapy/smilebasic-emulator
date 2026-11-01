@@ -574,9 +574,13 @@ Checked with TTEST36.
   after `ENVFOCUS 0` were no frames at all: its `VSYNC 10` came behind
   and went straight on.
 - The interpreter that gets the focus is framed for a moment by a
-  yellow border that fades out: three pixels on the edge of its screen,
-  one outside and two inside, with a dark band two pixels wide inside
-  it. Midway it was 156,156,0.
+  yellow (255,255,0) border: three display pixels on the edge of its
+  screen, one outside and two inside, with a black band two pixels wide
+  inside that. The subprogram's frame is its XSUBSCREEN rectangle, the
+  main interpreter's the whole display. Both show whole for about 0.23
+  seconds and then fade out evenly over about 0.25 seconds, drawn over
+  what is under them. A frame for the other side, coming before that,
+  takes its place at once (a screen recording at 24 frames a second).
 
 ## Errors and the editor
 

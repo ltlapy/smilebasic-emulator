@@ -27,6 +27,10 @@ pub const FRAME_BUDGET: u32 = 1_000_000;
 /// With a time limit, how many instructions run between looks at the
 /// clock.
 const SLICE: u32 = 20_000;
+/// The frames the border marking the focus shows whole, and then takes
+/// to fade out.
+pub const FLASH_HOLD: u32 = 14;
+pub const FLASH_FADE: u32 = 15;
 /// With a time limit, the part of a frame's that a subprogram is sure of:
 /// a quarter.
 const SUB_SHARE: u32 = 4;
@@ -99,6 +103,9 @@ pub struct Machine {
     /// The focus on its way to the subprogram (true) or the main
     /// interpreter, and the frames before it gets there.
     focus_moving: Option<(bool, u32)>,
+    /// Where the focus went last (the subprogram: true) and the frames
+    /// since, for the border that marks it.
+    focus_flash: Option<(bool, u32)>,
     /// On the sub interpreter, how its last program ended, for the main
     /// one to tell: `Some(None)` by itself, else with the error or break
     /// message the main one prints.
@@ -211,6 +218,7 @@ impl Machine {
             sub: None,
             sub_shown: true,
             focus_moving: None,
+            focus_flash: None,
             ended: None,
         }
     }
@@ -1112,6 +1120,9 @@ impl Machine {
     /// Runs one frame: the program, the editor, or direct-mode line
     /// editing, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
+        if let Some((_, age)) = &mut self.focus_flash {
+            *age += 1;
+        }
         self.move_focus();
         self.give_input();
         self.rt.env_status = self.env_status();
@@ -1487,6 +1498,8 @@ impl Machine {
         sub.run_slot(0);
         sub.rt.focus = true;
         self.rt.focus = false;
+        // UNVERIFIED: that starting a subprogram marks it too.
+        self.focus_flash = Some((true, 0));
         self.focus_moving = None;
         (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
         (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
@@ -1643,6 +1656,29 @@ impl Machine {
         Some((sub.rt.render(), rect))
     }
 
+    /// The yellow border that marks where the focus has just gone, while
+    /// a subprogram runs: the rectangle on the 1280x720 display (the
+    /// subprogram's screen, or the whole display for the main
+    /// interpreter) and its opacity. It shows whole for
+    /// [`FLASH_HOLD`] frames, then fades out over [`FLASH_FADE`].
+    pub fn focus_border(&self) -> Option<([i32; 4], u8)> {
+        let (to_sub, age) = self.focus_flash?;
+        let sub = self
+            .sub
+            .as_ref()
+            .filter(|s| s.vm.is_some() && self.sub_shown)?;
+        let alpha = match age.checked_sub(FLASH_HOLD) {
+            None => 255,
+            Some(n) if n < FLASH_FADE => 255 - 255 * n / FLASH_FADE,
+            Some(_) => return None,
+        };
+        let rect = match to_sub {
+            true => sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]),
+            false => [0, 0, 1280, 720],
+        };
+        Some((rect, alpha as u8))
+    }
+
     /// Whether the subprogram, rather than the main interpreter, has the
     /// focus.
     pub fn sub_has_focus(&self) -> bool {
@@ -1672,6 +1708,7 @@ impl Machine {
             sub.rt.focus_busy = false;
             sub.rt.focus = to_sub && sub.vm.is_some();
             self.rt.focus = !sub.rt.focus;
+            self.focus_flash = Some((sub.rt.focus, 0));
             // The keys follow the focus, also those not read yet: a
             // subprogram's PUSHKEY right after ENVFOCUS 0 types into the
             // main interpreter, as SmileBASIC 4's SMILETOOL has it.
