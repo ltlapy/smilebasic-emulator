@@ -4,7 +4,8 @@
 //! Both files come from the user's own copy of SmileBASIC 4 (see
 //! [`crate::resources`]); nothing from them is part of this repository.
 //! Without them, [`Font::fallback`] draws the 8-pixel font with
-//! GalmuriMono7 and the 16-pixel one with a subset of Noto Sans Mono CJK.
+//! GalmuriMono7 and the 16-pixel one with M PLUS 1p Bold, the face
+//! SmileBASIC 4's own 16-pixel font is drawn from.
 //!
 //! Glyph `n` of the 8-pixel font is at `((n % 64) * 8, (n / 64) * 8)` on the
 //! page, and of the 16-pixel font at `((n % 64) * 16, 1024 + (n / 64) * 16)`.
@@ -72,14 +73,18 @@ const FIRST_ON_PAGE: &[std::ops::RangeInclusive<u16>] = &[
     0xFF00..=0xFFEF,
 ];
 
-/// The 16-pixel fallback font's outlines (see `fonts/noto-cjk`).
-static OUTLINES: &[u8] = include_bytes!("../fonts/noto-cjk/SBEmulatorMonoCJK-Regular.ttf");
+/// The 16-pixel fallback font's outlines (see `fonts/mplus`).
+static OUTLINES: &[u8] = include_bytes!("../fonts/mplus/SBEmulator1p-Bold.ttf");
 /// Top of the outline font's em box above the baseline, in font units of
-/// 1000: Noto CJK's ideographic em box runs from -120 to 880.
-const EM_TOP: f32 = 880.0;
+/// 1000: M+'s typographic ascender, 860 over a descender of -140.
+const EM_TOP: f32 = 860.0;
+/// SmileBASIC 4 draws its 16-pixel font with a 15-pixel em in the top left
+/// of the cell.
+const EM_PIXELS: f32 = 15.0;
 const LARGE: usize = FontSize::Large as usize;
 
-/// A 16-pixel glyph drawn from the outlines: one alpha byte per pixel.
+/// A 16-pixel glyph drawn from the outlines: one alpha byte per pixel, in
+/// the 16 steps of SmileBASIC 4's font page.
 type Bitmap = [u8; LARGE * LARGE];
 
 fn outlines() -> &'static FontRef<'static> {
@@ -107,20 +112,20 @@ fn draw_outline(c: char) -> Option<Bitmap> {
     if id.0 == 0 {
         return None;
     }
-    let size = LARGE as f32;
     let em = font.units_per_em().unwrap_or(1000.0);
-    // ab_glyph scales by ascent minus descent; one em should be 16 pixels.
-    let scale = PxScale::from(size * font.height_unscaled() / em);
-    // Narrow glyphs sit in the middle of the cell.
-    let advance = font.h_advance_unscaled(id) * size / em;
-    let origin = point((size - advance) / 2.0, size * EM_TOP / em);
+    // ab_glyph scales by ascent minus descent; one em should be EM_PIXELS.
+    let scale = PxScale::from(EM_PIXELS * font.height_unscaled() / em);
+    // Narrow glyphs sit in the middle of the em.
+    let advance = font.h_advance_unscaled(id) * EM_PIXELS / em;
+    let origin = point((EM_PIXELS - advance) / 2.0, EM_PIXELS * EM_TOP / em);
     let mut bitmap = [0; LARGE * LARGE];
     if let Some(outline) = font.outline_glyph(id.with_scale_and_position(scale, origin)) {
         let min = outline.px_bounds().min;
         outline.draw(|x, y, coverage| {
             let (x, y) = (min.x as i32 + x as i32, min.y as i32 + y as i32);
             if (0..LARGE as i32).contains(&x) && (0..LARGE as i32).contains(&y) {
-                bitmap[y as usize * LARGE + x as usize] = (coverage * 255.0).round() as u8;
+                bitmap[y as usize * LARGE + x as usize] =
+                    (coverage.min(1.0) * 15.0).round() as u8 * 17;
             }
         });
     }
@@ -451,7 +456,7 @@ mod tests {
         assert!(alphas.contains(&255) && alphas.iter().any(|&a| a > 0 && a < 255));
         // ...except for SmileBASIC's symbols and characters the outlines
         // lack, which are the 8-pixel drawings doubled.
-        for code in [0xE100, 'Ą' as u16] {
+        for code in [0xE100, '가' as u16] {
             assert_eq!(
                 font.pixel(code, FontSize::Large, 6, 3),
                 font.pixel(code, FontSize::Small, 3, 1)

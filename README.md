@@ -22,9 +22,9 @@ development headers listed in SDL's `docs/README-linux.md` first.
 ## Resources
 
 Without any setup, text uses bundled fonts under the SIL Open Font License
-1.1: [GalmuriMono7](https://github.com/quiple/galmuri) at 8 pixels, and a
-subset of [Noto Sans Mono CJK JP](https://github.com/notofonts/noto-cjk) at
-16 pixels.
+1.1: [GalmuriMono7](https://github.com/quiple/galmuri) at 8 pixels, and
+[M PLUS 1p](https://mplusfonts.github.io/) Bold, the face SmileBASIC 4's own
+font is drawn from, at 16 pixels.
 SmileBASIC's own characters (number tiles, buttons, box drawing and other
 symbols at U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 `crates/sb-runtime/fonts/symbols.txt`.
@@ -136,6 +136,6 @@ these keys shows for a few seconds. The mouse's left button touches the screen.
 ## License
 
 MIT OR Apache-2.0. The bundled fonts in `crates/sb-runtime/fonts/galmuri`
-and `crates/sb-runtime/fonts/noto-cjk` are under the SIL Open Font License
+and `crates/sb-runtime/fonts/mplus` are under the SIL Open Font License
 1.1. GeneralUser GS in `crates/sb-sdl/sounds` is under its own license, in
 `GeneralUser-GS-LICENSE.txt` there.
