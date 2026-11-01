@@ -1481,6 +1481,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         // The editor leaves its top row for the menu bar.
         menu.pinned = machine.is_editing() && (!machine.is_detached() || ui_editor);
+        menu.running = machine.is_running();
         // Settings change through the menu, keys and questions; keep each
         // change at once so that nothing is lost if the emulator crashes.
         if machine.rt.settings != saved_settings {

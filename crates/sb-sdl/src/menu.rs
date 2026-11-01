@@ -1,6 +1,7 @@
 //! The emulator's menu bar, drawn over the screen at display resolution.
 //! It stays hidden until the mouse reaches the top edge or F8 shows it,
-//! so it takes no keys away from programs.
+//! so it takes no keys away from programs; while one runs, only F8 shows
+//! it, as the top of the screen is the program's.
 
 use sb_runtime::Framebuffer;
 use sb_runtime::editor::EditorSize;
@@ -493,6 +494,8 @@ pub struct MenuBar {
     /// F8 shows the bar, and pauses a running program, until pressed
     /// again.
     pub shown: bool,
+    /// A program runs, so the mouse at the top edge leaves the bar hidden.
+    pub running: bool,
     /// What the emulator is doing, on the bar's right: the project, the
     /// slot, a running or paused program.
     pub status: String,
@@ -503,9 +506,10 @@ impl MenuBar {
         self.pinned
             || self.shown
             || self.open.is_some()
-            || self
-                .mouse
-                .is_some_and(|(_, y)| y >= 0 && y < ROW_HEIGHT as i32)
+            || !self.running
+                && self
+                    .mouse
+                    .is_some_and(|(_, y)| y >= 0 && y < ROW_HEIGHT as i32)
     }
 
     /// The submenu items, with the open menu and parent item.
@@ -741,6 +745,19 @@ mod tests {
         bar.mouse_move(Some((10, 300)));
         assert!(!bar.visible());
         bar.mouse_move(Some((10, 5)));
+        assert!(bar.visible());
+    }
+
+    #[test]
+    fn only_f8_shows_the_bar_over_a_running_program() {
+        let mut bar = MenuBar {
+            running: true,
+            ..MenuBar::default()
+        };
+        bar.mouse_move(Some((10, 5)));
+        assert!(!bar.visible());
+        assert_eq!(bar.click((10, 5), RUNNING), Click::Ignored);
+        bar.shown = true;
         assert!(bar.visible());
     }
 
