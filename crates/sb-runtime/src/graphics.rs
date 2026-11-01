@@ -491,10 +491,31 @@ impl Graphics {
 
     /// GFILL.
     pub fn fill(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
+        let (left, right) = (x0.min(x1), x0.max(x1));
+        let rows = y0.min(y1)..=y0.max(y1);
+        self.fill_rows(rows, |_| Some((left, right)), color, blend);
+    }
+
+    /// Fills, in each row of `rows`, the columns `span` gives for it, both
+    /// ends included, inside the clipping rectangle.
+    fn fill_rows(
+        &mut self,
+        rows: std::ops::RangeInclusive<i32>,
+        mut span: impl FnMut(i32) -> Option<(i32, i32)>,
+        color: u32,
+        blend: Blend,
+    ) {
         let c = self.clip;
-        let (left, right) = (x0.min(x1).max(c.x0), x0.max(x1).min(c.x1));
-        let (top, bottom) = (y0.min(y1).max(c.y0), y0.max(y1).min(c.y1));
-        if left > right || top > bottom {
+        let (top, bottom) = ((*rows.start()).max(c.y0), (*rows.end()).min(c.y1));
+        let mut clipped = |y| {
+            let (l, r) = span(y)?;
+            let (l, r) = (l.max(c.x0), r.min(c.x1));
+            (l <= r).then_some((l, r))
+        };
+        let mut rows = (top..=bottom)
+            .filter_map(|y| Some((y, clipped(y)?)))
+            .peekable();
+        if rows.peek().is_none() {
             return;
         }
         let page = self.target;
@@ -511,7 +532,7 @@ impl Graphics {
             _ => None,
         };
         let pixels = &mut self.pages[page];
-        for y in top..=bottom {
+        for (y, (left, right)) in rows {
             let (from, to) = (index(left, y), index(right, y) + 1);
             let row = &mut pixels[from..to];
             match mirror.as_deref_mut() {
@@ -599,10 +620,9 @@ impl Graphics {
     /// to the rightmost pixel any of its edges reaches in the row, so that
     /// each pixel is drawn once. See [`edge_span`] for an edge's pixels.
     pub fn triangle(&mut self, p: [(i32, i32); 3], color: u32, blend: Blend) {
-        let c = self.clip;
-        let top = p.iter().map(|p| p.1).min().unwrap().max(c.y0);
-        let bottom = p.iter().map(|p| p.1).max().unwrap().min(c.y1);
-        for y in top..=bottom {
+        let top = p.iter().map(|p| p.1).min().unwrap();
+        let bottom = p.iter().map(|p| p.1).max().unwrap();
+        let span = |y| {
             let spans = [(0, 1), (1, 2), (2, 0)]
                 .into_iter()
                 .filter_map(|(a, b)| edge_span(p[a], p[b], y));
@@ -610,11 +630,10 @@ impl Graphics {
             for (a, b) in spans {
                 (l, r) = (l.min(a), r.max(b));
             }
-            if l <= r {
-                let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-                self.fill(near(l), y, near(r), y, color, blend);
-            }
-        }
+            let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            (l <= r).then(|| (near(l), near(r)))
+        };
+        self.fill_rows(top..=bottom, span, color, blend);
     }
 
     /// GPAINT: fills the area around a point that has the point's color,
@@ -1064,37 +1083,90 @@ fn edge_span(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i64)> {
     if y < y0.min(y1) || y > y0.max(y1) {
         return None;
     }
-    let (x0, y0, y) = (i128::from(x0), i128::from(y0), i128::from(y));
-    let (dx, dy) = (i128::from(x1) - x0, i128::from(y1) - y0);
+    // Products of two coordinates and a few doublings fit in i64 while
+    // the coordinates are small, as on screen; dividing i128s is slow.
+    const SMALL: i32 = 1 << 28;
+    if [x0, y0, x1, y1, y]
+        .iter()
+        .all(|v| (-SMALL..SMALL).contains(v))
+    {
+        return edge_span_in::<i64>(a, b, y);
+    }
+    edge_span_in::<i128>(a, b, y)
+}
+
+/// Integers [`edge_span`] can work in.
+trait Wide:
+    Copy
+    + Ord
+    + From<i32>
+    + std::ops::Add<Output = Self>
+    + std::ops::Sub<Output = Self>
+    + std::ops::Mul<Output = Self>
+    + std::ops::Neg<Output = Self>
+{
+    fn div_euclid(self, d: Self) -> Self;
+    fn abs(self) -> Self;
+    fn narrow(self) -> i64;
+}
+
+impl Wide for i64 {
+    fn div_euclid(self, d: Self) -> Self {
+        i64::div_euclid(self, d)
+    }
+    fn abs(self) -> Self {
+        i64::abs(self)
+    }
+    fn narrow(self) -> i64 {
+        self
+    }
+}
+
+impl Wide for i128 {
+    fn div_euclid(self, d: Self) -> Self {
+        i128::div_euclid(self, d)
+    }
+    fn abs(self) -> Self {
+        i128::abs(self)
+    }
+    fn narrow(self) -> i64 {
+        self as i64
+    }
+}
+
+fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i64)> {
+    let ((x0, y0), (x1, y1)) = (a, b);
+    let (x0, y0, y) = (T::from(x0), T::from(y0), T::from(y));
+    let (dx, dy) = (T::from(x1) - x0, T::from(y1) - y0);
     let (left, right) = (x0.min(x0 + dx), x0.max(x0 + dx));
-    let floor = |n: i128, d: i128| {
-        if d < 0 {
+    let (zero, one, two) = (T::from(0), T::from(1), T::from(2));
+    let floor = |n: T, d: T| {
+        if d < zero {
             (-n).div_euclid(-d)
         } else {
             n.div_euclid(d)
         }
     };
-    let narrow = |v: i128| v as i64;
-    if dy == 0 {
-        return Some((narrow(left), narrow(right)));
+    if dy == zero {
+        return Some((left.narrow(), right.narrow()));
     }
     if dx.abs() <= dy.abs() {
         // x0 + dx*(y-y0)/dy, rounded.
-        let x = x0 + floor(2 * dx * (y - y0) + dy, 2 * dy);
-        return Some((narrow(x), narrow(x)));
+        let x = x0 + floor(two * dx * (y - y0) + dy, two * dy);
+        return Some((x.narrow(), x.narrow()));
     }
     // X where the edge meets Y = y - 1/2 (included) and y + 1/2 (not),
     // as a fraction over 2*dy.
-    let at = |half: i128| (2 * x0 * dy + dx * (2 * (y - y0) + half), 2 * dy);
-    let ((nin, din), (nout, dout)) = (at(-1), at(1));
-    let (l, r) = if (dx > 0) == (dy > 0) {
+    let at = |half: T| (two * x0 * dy + dx * (two * (y - y0) + half), two * dy);
+    let ((nin, din), (nout, dout)) = (at(-one), at(one));
+    let (l, r) = if (dx > zero) == (dy > zero) {
         // Left to right going down: in from the top, out at the bottom.
         let ceil = -floor(-nout, dout);
-        (floor(nin, din).max(left), (ceil - 1).min(right))
+        (floor(nin, din).max(left), (ceil - one).min(right))
     } else {
         (floor(nout, dout).max(left), floor(nin, din).min(right))
     };
-    (l <= r).then(|| (narrow(l), narrow(r)))
+    (l <= r).then(|| (l.narrow(), r.narrow()))
 }
 
 #[cfg(test)]
@@ -1530,6 +1602,28 @@ mod tests {
         let mut g = Graphics::default();
         g.line(-100000, 3, 100000, 5, RED, Blend::Normal);
         assert!((0..40).all(|x| g.pixel(0, x, 4) == RED && g.pixel(0, x, 3) == 0));
+    }
+
+    #[test]
+    fn edge_spans_agree_in_i64_and_i128() {
+        let mut seed = 0x2545_f491_u64;
+        let mut next = |range: i32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % (2 * range as u64 + 1)) as i32 - range
+        };
+        for range in [8, 300, 5000, (1 << 28) - 1] {
+            for _ in 0..20000 {
+                let (a, b) = ((next(range), next(range)), (next(range), next(range)));
+                let y = next(range);
+                assert_eq!(
+                    edge_span_in::<i64>(a, b, y),
+                    edge_span_in::<i128>(a, b, y),
+                    "{a:?} {b:?} {y}"
+                );
+            }
+        }
     }
 
     /// TEST47 parts 6 and 7: triangles read back on hardware, each pixel
