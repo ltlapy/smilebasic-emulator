@@ -470,12 +470,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     controls.mouse.wheel += y.round() as i32;
                 }
                 // Here, before the dialogs and menus below take the event
-                // and go on to the next, so that the page lets go of
-                // the pointer whatever is shown.
+                // and go on to the next, so that the page and the editor's
+                // selection let go of the pointer whatever is shown.
                 Event::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     ..
-                } => debug_panel.release(),
+                } => {
+                    debug_panel.release();
+                    dragging = false;
+                }
                 // The + button acts when let go, unless it was held until
                 // the program stopped (checked on hardware).
                 Event::KeyUp {
@@ -1019,16 +1022,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     if editor_window {
                         debug_panel.motion(to_display(x, y), mousestate.left());
                     }
+                    // A button let go where this loop did not see it ends
+                    // the selection too.
+                    dragging &= mousestate.left();
                     if dragging && on_editor {
                         let (x, y) = to_screen(x, y);
                         machine.editor_mouse_drag(x, y);
                     }
-                }
-                Event::MouseButtonUp {
-                    mouse_btn: MouseButton::Left,
-                    ..
-                } => {
-                    dragging = false;
                 }
                 Event::Window {
                     win_event: WindowEvent::MouseLeave,
