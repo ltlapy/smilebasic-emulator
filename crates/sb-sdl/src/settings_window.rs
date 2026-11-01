@@ -3,7 +3,7 @@
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
-use sb_runtime::font::Font;
+use sb_runtime::font::{Font, FontSize};
 use sb_runtime::settings::{Language, Settings};
 use sdl3::keyboard::Keycode;
 
@@ -84,6 +84,21 @@ const PAGES: &[Page] = &[
                         s.language = match i {
                             0 => Language::English,
                             _ => Language::Japanese,
+                        }
+                    },
+                ),
+            },
+            Row {
+                label: "Menu and window font",
+                about: "The emulator's menus and windows draw SmileBASIC's 8-pixel font \
+                        at twice its size, or the 16-pixel one.",
+                control: Control::Choice(
+                    &["8 pixels", "16 pixels"],
+                    |s| usize::from(s.ui_font == FontSize::Large),
+                    |s, i| {
+                        s.ui_font = match i {
+                            0 => FontSize::Small,
+                            _ => FontSize::Large,
                         }
                     },
                 ),
@@ -502,7 +517,11 @@ mod tests {
         // General: Space flips Upper-case letters.
         w.key(Keycode::Space, &mut s);
         assert!(!s.upper_case_letters);
-        // Left on the language goes round.
+        // Up goes round to the last row, the UI font; Left on the
+        // language goes round.
+        w.key(Keycode::Up, &mut s);
+        w.key(Keycode::Right, &mut s);
+        assert_eq!(s.ui_font, FontSize::Large);
         w.key(Keycode::Up, &mut s);
         w.key(Keycode::Left, &mut s);
         assert_eq!(s.language, Language::Japanese);

@@ -65,6 +65,9 @@ pub struct Settings {
     /// bundled one.
     pub sound_font: Option<String>,
     pub language: Language,
+    /// The emulator's menus and windows draw the 8-pixel font doubled or
+    /// the 16-pixel one.
+    pub ui_font: FontSize,
     /// The mouse cursor stays shown when a program hides it with
     /// SYSPARAM "MOUSECURSOR".
     pub keep_mouse_cursor: bool,
@@ -125,6 +128,7 @@ impl Default for Settings {
             smilebasic_instruments: true,
             sound_font: None,
             language: Language::English,
+            ui_font: FontSize::Small,
             keep_mouse_cursor: false,
             help_text_size: 2,
             complete_direct: true,
@@ -161,7 +165,7 @@ const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
     (FileConfirm::Silent, "silent"),
 ];
 
-const EDITOR_FONT: [(FontSize, &str); 2] = [(FontSize::Small, "8"), (FontSize::Large, "16")];
+const FONT_SIZE: [(FontSize, &str); 2] = [(FontSize::Small, "8"), (FontSize::Large, "16")];
 
 const EDITOR_SIZE: [(EditorSize, &str); 4] = [
     (EditorSize::Large, "large"),
@@ -296,8 +300,14 @@ impl Settings {
                     continue;
                 }
                 "editor_font" => {
-                    if let Some(f) = choice(&EDITOR_FONT, value) {
+                    if let Some(f) = choice(&FONT_SIZE, value) {
                         s.editor_font = f;
+                    }
+                    continue;
+                }
+                "ui_font" => {
+                    if let Some(f) = choice(&FONT_SIZE, value) {
+                        s.ui_font = f;
                     }
                     continue;
                 }
@@ -351,6 +361,7 @@ impl Settings {
              smilebasic_instruments={}\n\
              sound_font={}\n\
              language={}\n\
+             ui_font={}\n\
              keep_mouse_cursor={}\n\
              help_text_size={}\n\
              complete_direct={}\n\
@@ -371,7 +382,7 @@ impl Settings {
             self.editor_number_tiles,
             self.editor_map,
             self.editor_window,
-            choice_name(&EDITOR_FONT, &self.editor_font),
+            choice_name(&FONT_SIZE, &self.editor_font),
             choice_name(&EDITOR_SIZE, &self.editor_size),
             self.editor_tab_step,
             self.editor_colors.lines(EDITOR_COLOR),
@@ -380,6 +391,7 @@ impl Settings {
             self.smilebasic_instruments,
             self.sound_font.as_deref().unwrap_or(""),
             choice_name(&LANGUAGE, &self.language),
+            choice_name(&FONT_SIZE, &self.ui_font),
             self.keep_mouse_cursor,
             self.help_text_size,
             self.complete_direct,
@@ -424,6 +436,7 @@ mod tests {
             sound_font: Some("/fonts/a b.sf2".to_string()),
             editor_tab_step: 2,
             language: Language::Japanese,
+            ui_font: FontSize::Large,
             keep_mouse_cursor: true,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),

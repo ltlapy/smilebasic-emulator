@@ -1657,6 +1657,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
         }
         let font = machine.rt.font();
+        ui::set_font(machine.rt.settings.ui_font);
         let cursor_on = (blink / 25).is_multiple_of(2);
         if let Some(open) = &manager {
             open.draw(overlays[ui], font, cursor_on);
