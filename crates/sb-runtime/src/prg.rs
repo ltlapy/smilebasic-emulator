@@ -8,9 +8,15 @@
 //!   1 character.
 //! - The current line may go one past the last, where PRGGET$ gives an
 //!   empty string; PRGEDIT() then still reports the last line.
-//! - PRGSET on an empty line (or past the last) inserts before it, and
-//!   otherwise replaces the line; either way the current line moves past
-//!   what was set.
+//!
+//! The rest follows the model of these commands in SmileBASIC Debugger
+//! (otya's SBDBG 1.2.8, which tests it against the real ones), with the
+//! place past the last line kept as the line count:
+//! - PRGSET replaces the current line, and puts the lines after it. On the
+//!   last line it adds an empty line first, and past the last line it
+//!   replaces the last one and stays past the new last line.
+//! - PRGSEEK 1 from the last line goes past it, and PRGDEL deletes back
+//!   towards the start once it reaches the end.
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
@@ -153,10 +159,12 @@ impl Runtime {
                         detail,
                     ));
                 }
-                let last = Source::of(&self.slots[slot]).count().max(1);
+                let source = Source::of(&self.slots[slot]);
                 let line = match flag(rest.first(), 1)? {
-                    -1 => last - 1,
-                    n @ 1.. if n as usize <= last => n as usize - 1,
+                    // Past the last line, and lines after the last go to
+                    // it.
+                    -1 => source.lines.len(),
+                    n @ 1.. => (n as usize).min(source.lines.len()) - 1,
                     n => {
                         let detail = format!("line {n}");
                         return Err(Error::with_detail(ErrorKind::OutOfRange, detail));
@@ -186,25 +194,25 @@ impl Runtime {
                 }
                 Ok(vec![Value::Str(sb_core::value::new_str(text))])
             }
-            // PRGSEEK stops at the last line, while PRGGET$ goes one past
-            // it (checked on hardware).
             (Command::Prgseek, Want::Value | Want::Outs(0), _) if args.len() <= 1 => {
                 let edit = self.editing()?;
                 let len = Source::of(&self.slots[edit.slot]).lines.len();
-                let to = match flag(args.first(), 1)? {
-                    1 if edit.line + 1 < len => Some(edit.line + 1),
-                    -1 if edit.line > 0 => Some(edit.line - 1),
-                    1 | -1 => None,
+                let cur = edit.line.min(len - 1);
+                let (to, moved) = match flag(args.first(), 1)? {
+                    1 if cur + 1 < len => (cur + 1, true),
+                    // From the last line it goes past it, and says it
+                    // did not move.
+                    1 => (len, false),
+                    -1 if cur > 0 => (cur - 1, true),
+                    -1 => (cur, false),
                     n => {
                         let detail = format!("direction {n}");
                         return Err(Error::with_detail(ErrorKind::OutOfRange, detail));
                     }
                 };
-                if let Some(line) = to {
-                    self.prg_edit = Some(PrgEdit { line, ..edit });
-                }
+                self.prg_edit = Some(PrgEdit { line: to, ..edit });
                 Ok(match want {
-                    Want::Value => vec![Value::Int(i32::from(to.is_some()))],
+                    Want::Value => vec![Value::Int(i32::from(moved))],
                     _ => vec![],
                 })
             }
@@ -213,15 +221,21 @@ impl Runtime {
                 let edit = self.editing()?;
                 self.change_lines(edit, |lines, line| {
                     let n = new.len();
-                    match lines.get(*line) {
-                        Some(old) if *old != [LF] => {
-                            lines.splice(*line..=*line, new);
+                    let past = *line >= lines.len();
+                    let at = (*line).min(lines.len() - 1);
+                    if past {
+                        // Past the last line, the last is replaced and an
+                        // empty line follows, still past the end.
+                        lines.splice(at..=at, new);
+                        lines.push(vec![LF]);
+                        *line = lines.len();
+                    } else {
+                        if at + 1 == lines.len() {
+                            lines.push(vec![LF]);
                         }
-                        _ => {
-                            lines.splice(*line..*line, new);
-                        }
+                        lines.splice(at..=at, new);
+                        *line = at + n;
                     }
-                    *line += n;
                 });
                 Ok(vec![])
             }
@@ -239,10 +253,18 @@ impl Runtime {
                 };
                 let edit = self.editing()?;
                 self.change_lines(edit, |lines, line| {
-                    let at = (*line + usize::from(after)).min(lines.len());
+                    // Past the last line, it is the last line that lines
+                    // go before or after, and the place stays past the end.
+                    let past = *line >= lines.len();
+                    let cur = (*line).min(lines.len() - 1);
+                    let at = cur + usize::from(after);
                     let n = new.len();
                     lines.splice(at..at, new);
-                    *line = if after { at + n - 1 } else { *line + n };
+                    *line = match (past, after) {
+                        (true, _) => lines.len(),
+                        (false, true) => at + n - 1,
+                        (false, false) => cur + n,
+                    };
                 });
                 Ok(vec![])
             }
@@ -250,14 +272,32 @@ impl Runtime {
             (Command::Prgdel, Want::Outs(0), _) if args.len() <= 1 => {
                 let n = flag(args.first(), 1)?;
                 let edit = self.editing()?;
-                self.change_lines(edit, |lines, line| match usize::try_from(n) {
-                    Ok(n) => {
-                        let start = (*line).min(lines.len());
-                        lines.drain(start..(start + n).min(lines.len()));
-                    }
-                    Err(_) => {
-                        lines.clear();
-                        *line = 0;
+                self.change_lines(edit, |lines, line| {
+                    let past = *line >= lines.len();
+                    match usize::try_from(n) {
+                        // Lines after the current one go first; at the end
+                        // it deletes back towards the start.
+                        Ok(n) => {
+                            let mut cur = (*line).min(lines.len() - 1);
+                            for _ in 0..n {
+                                if lines.is_empty() {
+                                    break;
+                                }
+                                lines.remove(cur);
+                                if cur == lines.len() {
+                                    cur = cur.saturating_sub(1);
+                                }
+                            }
+                            if lines.is_empty() {
+                                lines.push(vec![LF]);
+                                cur = 0;
+                            }
+                            *line = if past { lines.len() } else { cur };
+                        }
+                        Err(_) => {
+                            *lines = vec![vec![LF]];
+                            *line = if past { 1 } else { 0 };
+                        }
                     }
                 });
                 Ok(vec![])

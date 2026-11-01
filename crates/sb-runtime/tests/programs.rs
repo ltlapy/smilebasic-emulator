@@ -122,8 +122,11 @@ fn errors() {
     assert!(tail(&m, 2)[0].starts_with("Use PRGEDIT before any PRG function"));
     run(&mut m, &["PRGEDIT 0"]);
     assert!(tail(&m, 2)[0].starts_with("Can't edit running program"));
-    run(&mut m, &["PRGEDIT 1,2"]);
+    run(&mut m, &["PRGEDIT 1,0"]);
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
+    // Lines after the last go to the last.
+    run(&mut m, &["PRGEDIT 1,5:?PRGEDIT()"]);
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
     // Running a program ends the editing.
     enter(&mut m, "prgedit 1");
     run(&mut m, &["?PRGEDIT()"]);
