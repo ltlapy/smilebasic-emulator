@@ -292,3 +292,35 @@ fn a_yellow_border_marks_where_the_focus_goes() {
     frames(&mut m, 10);
     assert_eq!(m.focus_border(), None);
 }
+
+#[test]
+fn the_tool_keys_start_the_tools_set_in_the_settings() {
+    let dir = TempDir::new("tools");
+    let mut m = machine(&dir, "END\n");
+    let storage = m.rt.storage.clone();
+    storage.create_project("#TOOL").unwrap();
+    let tool = "?PROJECT();ENVSTAT()\nWHILE INKEY$()!=\"Q\":VSYNC:WEND\n";
+    storage
+        .write_file_in("#TOOL", "TT.PRG", tool.as_bytes())
+        .unwrap();
+    m.rt.settings.tools = ["#TOOL/T.PRG", "#TOOL/NONE.PRG", ""].map(String::from);
+    let before = rows(&m);
+    // An empty setting does nothing, and a missing file only says so.
+    assert!(!m.run_tool(2).unwrap());
+    assert!(m.run_tool(1).is_err());
+    assert!(!m.sub_running());
+    assert_eq!(rows(&m), before);
+    // From the editor too, where the main interpreter is editing.
+    m.toggle_editor();
+    assert!(m.run_tool(0).unwrap());
+    assert!(m.sub_running() && m.sub_has_focus());
+    frames(&mut m, 2);
+    m.type_text("q");
+    frames(&mut m, 3);
+    assert!(!m.sub_running());
+    assert!(m.is_editing());
+    // A failed start leaves a running tool be.
+    assert!(m.run_tool(0).unwrap());
+    assert!(m.run_tool(1).is_err());
+    assert!(m.sub_running());
+}

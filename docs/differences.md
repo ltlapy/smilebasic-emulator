@@ -67,8 +67,11 @@ Without them:
 - `SYSPARAM("TABSTEP")` is the editor's tab width, set in File > Settings >
   Editor.
 - `SYSPARAM("TVMODE")` is always 1, and `SYSBEEP` keeps its value: the
-  emulator has no system sounds. `TOOL1` to `TOOL3` name SmileBASIC 4's
-  own tools, which the emulator does not have.
+  emulator has no system sounds. `TOOL1` to `TOOL3`, which F9 to F11
+  start, name SmileBASIC 4's own tools. The emulator does not have
+  them: they start only from a `#TOOL` project copied from SmileBASIC 4
+  into the projects folder. A tool that is not there, or a key with no
+  tool, shows a notice.
 
 ## Other
 
@@ -98,7 +101,7 @@ Without them:
   program; on SmileBASIC 4 they cannot. Programs cannot tell, since all
   three work in direct mode only.
 - Subprograms have no Smile button to start them from, only `SUBRUN` in
-  direct mode. Run > "Switch keys to/from subprogram" moves the focus as
+  direct mode and the tools on F9 to F11. Run > "Switch keys to/from subprogram" moves the focus as
   `ENVFOCUS` does, and Run > "Stop subprogram" does `SUBSTOP`, so a
   subprogram cannot keep the keys from direct mode.
 - `ENVSTAT` gives -1 for the argument of every error.

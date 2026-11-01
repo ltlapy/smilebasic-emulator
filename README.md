@@ -94,6 +94,7 @@ SmileBASIC 4's own files.
 | Pause/Break | Stop the program |
 | F5, controller + | Run PRG0, or stop the running program; hold to stop it past `ON BREAK GOTO` |
 | F8 | Show the menu bar and pause the program; press again to resume |
+| F9, F10, F11 | Start the tools set for `TOOL1` to `TOOL3` as subprograms, from direct mode or the editor: SmileBASIC 4's SMILETOOL and GAHAKU at first, from a `#TOOL` project copied from it |
 | Shift+F7 | Set or clear a breakpoint on the cursor's line, as a click on its number does; the program stops before it and the editor opens there |
 | Ctrl+F7 | Show or hide the debugger's panel below the editor; once shown it stays, so watches can be set before running |
 | F6, F7, Shift+F6 | With a program stopped: run one statement, run over a DEF or GOSUB, or run out of the one under way |

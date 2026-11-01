@@ -1693,6 +1693,28 @@ impl Machine {
     /// focus. The sub interpreter keeps its pages and screens from the
     /// last time.
     fn subrun(&mut self, file: &str) {
+        if let Err(e) = self.start_sub(file) {
+            let detail = format!("{file}: {e}");
+            self.report(&Error::with_detail(ErrorKind::LoadFailed, detail));
+        }
+    }
+
+    /// F9 to F11: starts tool `n`, 0 to 2, from the settings as SUBRUN
+    /// does, from direct mode or the editor. Gives false when the setting
+    /// is empty or code is running, and the error when the file cannot be
+    /// loaded, for the frontend to show rather than the console.
+    // UNVERIFIED: that a tool started again while one runs starts afresh,
+    // as SUBRUN does, and that the keys do nothing while a program runs.
+    pub fn run_tool(&mut self, n: usize) -> storage::Result<bool> {
+        let file = self.rt.settings.tools[n].clone();
+        if file.is_empty() || self.vm.is_some() {
+            return Ok(false);
+        }
+        self.start_sub(&file)?;
+        Ok(true)
+    }
+
+    fn start_sub(&mut self, file: &str) -> storage::Result<()> {
         let sub = self
             .sub
             .get_or_insert_with(|| Box::new(Machine::new(self.rt.new_sub())));
@@ -1700,13 +1722,16 @@ impl Machine {
             Some((project, name)) => (project, name),
             None => (self.rt.storage.project(), file),
         };
-        sub.end_sub(None);
-        sub.ended = None;
+        // A file that cannot be loaded leaves a running subprogram be.
+        // UNVERIFIED: SmileBASIC 4 may stop it all the same.
+        let before = sub.rt.storage.project().to_string();
         let loaded = sub.rt.storage.set_project(project);
         if let Err(e) = loaded.and_then(|()| sub.rt.load_file(name, 0)) {
-            let detail = format!("{file}: {e}");
-            return self.report(&Error::with_detail(ErrorKind::LoadFailed, detail));
+            let _ = sub.rt.storage.set_project(&before);
+            return Err(e);
         }
+        sub.end_sub(None);
+        sub.ended = None;
         // Its variables, SPFUNC and TFUNC go; the rest stays.
         for sprite in &mut sub.rt.sprites.list {
             sprite.func = None;
@@ -1724,6 +1749,7 @@ impl Machine {
         (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
         self.rt.sub_running = true;
         self.sub_shown = true;
+        Ok(())
     }
 
     /// SUBSTOP: stops the subprogram.
