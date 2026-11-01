@@ -22,6 +22,10 @@ pub const DISABLED: u32 = 0xFF80_8080;
 pub const BORDER: u32 = 0xFF80_8080;
 /// The face of a button that cannot be pressed.
 const DISABLED_FACE: u32 = 0xFF40_4040;
+/// The face of a button that starts something, like Run, and its face
+/// under the mouse. White text on both is over 4.5:1.
+pub const GO: u32 = 0xFF2E_7D32;
+pub const GO_HOVERED: u32 = 0xFF38_8E3C;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rect {
@@ -304,12 +308,57 @@ pub fn button(
     hovered: bool,
     enabled: bool,
 ) {
+    colored_button(fb, font, r, label, hovered, enabled, (BORDER, HIGHLIGHT));
+}
+
+/// A button whose face is `faces.0`, or `faces.1` under the mouse,
+/// while it can be pressed.
+pub fn colored_button(
+    fb: &mut Framebuffer,
+    font: &Font,
+    r: Rect,
+    label: &str,
+    hovered: bool,
+    enabled: bool,
+    faces: (u32, u32),
+) {
     let (face, color) = match (enabled, hovered) {
         (false, _) => (DISABLED_FACE, DISABLED),
-        (true, true) => (HIGHLIGHT, TEXT),
-        (true, false) => (BORDER, TEXT),
+        (true, true) => (faces.1, TEXT),
+        (true, false) => (faces.0, TEXT),
     };
     fill(fb, r, face);
     let x = r.x + (r.w - text_width(label)) / 2;
     draw_text(fb, font, x, r.y + 4, label, color);
+}
+
+/// Draws `pixels`, `w` wide and row by row, with its top left at `x`,
+/// `y`, blending by their alpha. `key` must differ for pixels that
+/// differ, for dry runs, which do not look at them.
+pub fn image(fb: &mut Framebuffer, x: u32, y: u32, w: u32, pixels: &[u32], key: u64) {
+    let h = pixels.len() as u32 / w.max(1);
+    if dry(fb, Rect { x, y, w, h }, ("image", x, y, w, key)) {
+        return;
+    }
+    for (i, &src) in pixels.iter().enumerate() {
+        let (px, py) = (x + i as u32 % w, y + i as u32 / w);
+        let a = src >> 24;
+        if a == 0 {
+            continue;
+        }
+        let Some(dst) = fb.get(px, py) else {
+            continue;
+        };
+        let out = if a == 0xFF { src } else { blend(dst, src, a) };
+        fb.set(px, py, (dst & 0xFF00_0000) | (out & 0x00FF_FFFF));
+    }
+}
+
+/// `src` over `dst` at alpha `a` of 255, by channel.
+fn blend(dst: u32, src: u32, a: u32) -> u32 {
+    let mix = |shift: u32| {
+        let (d, s) = ((dst >> shift) & 0xFF, (src >> shift) & 0xFF);
+        ((s * a + d * (255 - a)) / 255) << shift
+    };
+    mix(16) | mix(8) | mix(0)
 }

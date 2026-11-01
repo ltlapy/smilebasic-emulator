@@ -767,7 +767,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         y,
                         ..
                     } => match clicks {
-                        2 => open.double_click(to_display(x, y), storage, &unsaved),
+                        2.. => open.double_click(to_display(x, y), storage, &unsaved),
                         _ => open.click(to_display(x, y), storage, &unsaved),
                     },
                     Event::MouseButtonDown {

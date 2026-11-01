@@ -5,24 +5,32 @@
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::{project_label, switch_lines};
+use sb_runtime::env::{ICON_SIZE, project_meta};
 use sb_runtime::font::Font;
 use sb_runtime::runtime::SLOTS;
 use sb_runtime::storage::{FileKind, Storage, check_project_name, suggest_project_name};
 use sb_runtime::transfer;
 use sdl3::keyboard::Keycode;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use crate::dialog::{Answer, Dialog};
 use crate::file_dialogs::{self, FilePicker};
 use crate::ui::{
-    BACKGROUND, BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, button, draw_text, fill,
-    outline, text_width, window,
+    BACKGROUND, BORDER, CHAR, DISABLED, GO, GO_HOVERED, HIGHLIGHT, LINE, PAD, Rect, TEXT, button,
+    colored_button, draw_text, fill, image, outline, text_width, window,
 };
 
 const WIDTH: u32 = 1200;
-const HEIGHT: u32 = 600;
+/// On a 720-line display, it leaves the menu bar shown above it.
+const HEIGHT: u32 = 672;
 /// The width of the project list; the files take the rest.
 const LIST_WIDTH: u32 = 460;
+/// The height of a project's row: its icon, beside its title over its
+/// folder's name.
+const ROW: u32 = 2 * LINE;
+/// The folder's name under the title.
+const FOLDER: u32 = 0xFFB0_B0B0;
 /// How far the mouse moves with a file before it is being dragged.
 const DRAG_START: i32 = 6;
 const ERROR: u32 = 0xFFFF_8080;
@@ -214,11 +222,49 @@ enum Focus {
     Files,
 }
 
+/// A project's title and icon from its metadata, read when the list is.
+struct Listed {
+    title: String,
+    icon: Option<Icon>,
+}
+
+struct Icon {
+    /// `ICON_SIZE` square, row by row.
+    pixels: Box<[u32]>,
+    /// Tells icons apart for dry runs of drawing.
+    key: u64,
+}
+
+impl Listed {
+    fn read(storage: &Storage, project: &str) -> Listed {
+        let meta = project_meta(project, |name| storage.read_file_in(project, name).ok());
+        let pixels: Box<[u32]> = meta.icon.iter().map(|&p| p as u32).collect();
+        let shown = pixels.len() == ICON_SIZE * ICON_SIZE && pixels.iter().any(|p| p >> 24 != 0);
+        let icon = shown.then(|| {
+            let mut hash = DefaultHasher::new();
+            pixels.hash(&mut hash);
+            Icon {
+                pixels,
+                key: hash.finish(),
+            }
+        });
+        Listed {
+            title: String::from_utf16_lossy(&meta.title),
+            icon,
+        }
+    }
+}
+
 pub struct ProjectManager {
     /// Display size the window is centered in.
     size: (u32, u32),
     /// The workspace (`""`) first, then the folders as named on disk.
     projects: Vec<String>,
+    /// The projects' titles and icons, in the same order.
+    listed: Vec<Listed>,
+    /// The project that the last click hit, for a double click to count
+    /// only on the same one.
+    clicked: Option<usize>,
     current: String,
     selected: usize,
     /// The first project row shown.
@@ -256,6 +302,8 @@ impl ProjectManager {
         let mut manager = ProjectManager {
             size,
             projects: Vec::new(),
+            listed: Vec::new(),
+            clicked: None,
             current: String::new(),
             selected: 0,
             scroll: 0,
@@ -282,6 +330,10 @@ impl ProjectManager {
             Ok(names) => self.projects.extend(names),
             Err(e) => self.status = Some((format!("Could not list the projects: {e}"), true)),
         }
+        self.listed = (self.projects.iter())
+            .map(|p| Listed::read(storage, p))
+            .collect();
+        self.clicked = None;
         match select {
             Some(name) => self.select_name(name, storage),
             None => self.select(self.selected, storage),
@@ -405,7 +457,7 @@ impl ProjectManager {
     }
 
     fn rows(&self) -> usize {
-        (self.list().h / LINE) as usize
+        (self.list().h / ROW) as usize
     }
 
     fn files_rect(&self) -> Rect {
@@ -439,8 +491,8 @@ impl ProjectManager {
     fn row(&self, i: usize) -> Rect {
         let list = self.list();
         Rect {
-            y: list.y + (i - self.scroll) as u32 * LINE,
-            h: LINE,
+            y: list.y + (i - self.scroll) as u32 * ROW,
+            h: ROW,
             ..list
         }
     }
@@ -591,6 +643,7 @@ impl ProjectManager {
     /// `unsaved` lists the slots with unsaved edits, for the warning
     /// before switching.
     pub fn click(&mut self, at: (i32, i32), storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        self.clicked = None;
         match &mut self.mode {
             Mode::Ask(dialog, _) => match dialog.click(at) {
                 Some(answer) => self.answer(answer, storage, unsaved),
@@ -640,6 +693,7 @@ impl ProjectManager {
                 if let Some(i) = self.project_at(at) {
                     self.select(i, storage);
                     self.focus = Focus::Projects;
+                    self.clicked = Some(i);
                 }
                 if let Some(i) = self.file_at(at) {
                     self.select_file(i);
@@ -655,7 +709,9 @@ impl ProjectManager {
         }
     }
 
-    /// A double click on a project switches to it and closes.
+    /// A double click on a project switches to it and closes. It counts
+    /// only if the click before it hit the same project; one that went
+    /// to another project is a click on this one.
     pub fn double_click(
         &mut self,
         at: (i32, i32),
@@ -665,7 +721,13 @@ impl ProjectManager {
         if !matches!(self.mode, Mode::Browse) {
             return Outcome::Stay;
         }
-        match self.project_at(at) {
+        let hit = self.project_at(at);
+        if hit.is_some() && hit != self.clicked {
+            return self.click(at, storage, unsaved);
+        }
+        // The next click starts over.
+        self.clicked = None;
+        match hit {
             Some(i) if self.projects[i] == self.current => Outcome::Close,
             Some(i) => {
                 self.select(i, storage);
@@ -1228,20 +1290,27 @@ impl ProjectManager {
                 };
                 fill(fb, r, color);
             }
-            let mark = if *name == self.current { "*" } else { " " };
-            let mut label = format!("{mark} {}", project_label(name));
-            if !usable(name) {
-                label.push_str(" (rename to use)");
+            let listed = &self.listed[i];
+            let side = ICON_SIZE as u32;
+            if let Some(icon) = &listed.icon {
+                let y = r.y + (ROW - side) / 2;
+                image(fb, r.x + PAD, y, side, &icon.pixels, icon.key);
             }
-            let color = if usable(name) { TEXT } else { ERROR };
-            draw_text(
-                fb,
-                font,
-                r.x + PAD,
-                r.y + 4,
-                &fit(&label, r.w - 2 * PAD),
-                color,
-            );
+            // The title, then the folder's name if it says more.
+            let x = r.x + 2 * PAD + side;
+            let room = (r.x + r.w).saturating_sub(x + PAD);
+            let mark = if *name == self.current { "*" } else { " " };
+            let title = format!("{mark}{}", listed.title);
+            draw_text(fb, font, x, r.y + 6, &fit(&title, room), TEXT);
+            let folder = project_label(name);
+            if folder != listed.title || !usable(name) {
+                let mut label = format!(" {folder}");
+                if !usable(name) {
+                    label.push_str(" (rename to use)");
+                }
+                let color = if usable(name) { FOLDER } else { ERROR };
+                draw_text(fb, font, x, r.y + 26, &fit(&label, room), color);
+            }
         }
         outline(fb, list, BORDER);
 
@@ -1278,8 +1347,13 @@ impl ProjectManager {
         let browsing = matches!(self.mode, Mode::Browse);
         for b in Self::buttons() {
             let hovered = browsing && self.mouse.is_some_and(|m| self.button(b).contains(m));
-            let enabled = self.enabled(b);
-            button(fb, font, self.button(b), b.label(), hovered, enabled);
+            let (r, enabled) = (self.button(b), self.enabled(b));
+            match b {
+                Button::Run => {
+                    colored_button(fb, font, r, b.label(), hovered, enabled, (GO, GO_HOVERED))
+                }
+                _ => button(fb, font, r, b.label(), hovered, enabled),
+            }
         }
         // The file being dragged, by the mouse.
         if let (Some(drag), Some(at)) = (self.drag, self.mouse)
@@ -1736,12 +1810,73 @@ mod tests {
         s.create_project("GAME").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
         let current = centre(m.row(0));
+        assert_eq!(m.click(current, &mut s, &[]), Outcome::Stay);
         assert_eq!(m.double_click(current, &mut s, &[]), Outcome::Close);
         let game = centre(m.row(1));
+        assert_eq!(m.click(game, &mut s, &[]), Outcome::Stay);
         assert_eq!(
             m.double_click(game, &mut s, &[]),
             Outcome::Switched("GAME".to_string())
         );
+    }
+
+    #[test]
+    fn double_clicks_count_on_one_project_only() {
+        let tmp = TempDir::new("double-two");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("A").unwrap();
+        s.create_project("B").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let (a, b) = (centre(m.row(1)), centre(m.row(2)));
+        // A, then B quickly: a click on B, not a double click.
+        assert_eq!(m.click(a, &mut s, &[]), Outcome::Stay);
+        assert_eq!(m.double_click(b, &mut s, &[]), Outcome::Stay);
+        assert_eq!(m.selected_name(), "B");
+        // A third click on B is its second.
+        assert_eq!(
+            m.double_click(b, &mut s, &[]),
+            Outcome::Switched("B".to_string())
+        );
+        // A button between the two clicks breaks them up too.
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let a = centre(m.row(1));
+        m.click(centre(m.button(Button::More)), &mut s, &[]);
+        m.mode = Mode::Browse;
+        assert_eq!(m.double_click(a, &mut s, &[]), Outcome::Stay);
+        assert_eq!(m.selected_name(), "A");
+    }
+
+    #[test]
+    fn rows_show_titles_and_icons() {
+        let tmp = TempDir::new("meta");
+        let s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.create_project("PLAIN").unwrap();
+        let mut icon = vec![0; ICON_SIZE * ICON_SIZE];
+        icon[0] = 0xFF12_3456_u32 as i32;
+        let meta = sb_runtime::env::Meta {
+            title: "Space game".encode_utf16().collect(),
+            icon,
+            ..Default::default()
+        };
+        for (name, bytes) in sb_runtime::env::meta_files(&meta) {
+            s.write_file_in("GAME", name, &bytes).unwrap();
+        }
+        let m = ProjectManager::new(&s, (1280, 720));
+        let game = &m.listed[1];
+        assert_eq!(game.title, "Space game");
+        assert_eq!(game.icon.as_ref().unwrap().pixels[0], 0xFF12_3456);
+        let plain = &m.listed[2];
+        assert_eq!(plain.title, "PLAIN");
+        assert!(plain.icon.is_none());
+        assert_eq!(m.listed[0].title, "[WORKSPACE]");
+        // Two lines of text to a row.
+        assert_eq!(m.row(1).h, 2 * LINE);
+        let mut fb = Framebuffer::new(1280, 720);
+        m.draw(&mut fb, &Font::blank(), false);
+        let r = m.row(1);
+        let at = (r.x + PAD, r.y + (ROW - ICON_SIZE as u32) / 2);
+        assert_eq!(fb.get(at.0, at.1).map(|p| p & 0xFF_FFFF), Some(0x12_3456));
     }
 
     #[test]
