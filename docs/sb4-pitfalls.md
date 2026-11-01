@@ -500,6 +500,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   from there without starting again: `T120O4C2_G2` slides from C to G
   over the first second and holds G for the second, and on a piano
   (`@0`) the G does not strike again.
+- A slur (`&`) to another note goes on at that note at once without
+  striking again: on `@0`, `C4&G4` keeps decaying from the C through
+  the G, where `C4G4` strikes the G anew.
 - With the effector on, `EFCWET`'s four values (BEEP, BGM, TALK and
   PCM) each send that part of the sound to the reverb: wet/127 of it
   goes there and the rest straight out, in a straight line. With it

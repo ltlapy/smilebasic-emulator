@@ -463,16 +463,14 @@ impl Track {
         let keys: Vec<i32> = keys.into_iter().filter(|k| (0..128).contains(k)).collect();
         if tie && self.channels[c].sounding == keys {
             // A tie: the notes go on.
-        } else if self.channels[c].link == Link::Porta
-            && !keys.is_empty()
-            && !self.channels[c].sounding.is_empty()
-        {
+        } else if tie && !keys.is_empty() && !self.channels[c].sounding.is_empty() {
+            // A slur or the end of a portamento: the notes go on at the
+            // new keys without striking again.
             let old = std::mem::take(&mut self.channels[c].sounding);
             self.retune(c, &old, &keys);
             self.channels[c].sounding = keys;
         } else {
             let old = std::mem::take(&mut self.channels[c].sounding);
-            // A slur starts the new notes before ending the old.
             self.keys_on(c, &keys);
             self.keys_off(c, &old);
             if self.channels[c].glide.is_some() {
@@ -943,6 +941,20 @@ mod tests {
         assert!((t.voices[0].2.porta - 350.0).abs() < 15.0);
         // G2: the same note, at G.
         for _ in 0..60 {
+            t.render(&mut l, &mut r, &mut scratch, None);
+        }
+        assert_eq!(t.voices.len(), 1);
+        assert_eq!((t.voices[0].2.key, t.voices[0].2.porta), (67, 0.0));
+    }
+
+    #[test]
+    fn a_slur_goes_on_at_the_new_key_without_striking_again() {
+        let waves = Rc::new(RefCell::new(Waves::default()));
+        let mut t = Track::new(None, waves);
+        t.play(Some(Rc::new(parse("T120@219O4C2&G2").unwrap())), 127, 0);
+        let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
+        let mut scratch = Default::default();
+        for _ in 0..75 {
             t.render(&mut l, &mut r, &mut scratch, None);
         }
         assert_eq!(t.voices.len(), 1);
