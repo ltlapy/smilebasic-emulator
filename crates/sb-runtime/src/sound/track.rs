@@ -77,9 +77,9 @@ impl Default for Channel {
             // UNVERIFIED: notes sound for their whole length until Q.
             quantize: 32,
             key: 0,
-            // UNVERIFIED: the starting volume and velocity.
-            volume: 100,
-            velocity: 100,
+            // Both start full (TEST40).
+            volume: 127,
+            velocity: 127,
             detune: 0,
             pan: 64,
             envelope: None,
@@ -186,7 +186,7 @@ impl Track {
         for c in 0..self.channels.len() {
             self.apply_voice(c);
             if let Some(s) = &mut self.synth {
-                s.volume(c, 100);
+                s.volume(c, 127);
             }
         }
     }

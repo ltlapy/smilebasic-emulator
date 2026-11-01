@@ -445,6 +445,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   samples lasts eight cycles of the note. Songs written for SmileBASIC 4
   repeat their cycles to fill eight (a 16-sample pattern of two cycles
   times 4, one of a single cycle times 8, both at reference pitch 69).
+- MML's volume (`V`) and velocity (`@V`) both start at 127 and both
+  scale the level by their square: `V64` and `V127@V64` record alike.
+  `P64` is the middle, even on both sides. Recorded with `RECSTART`, an
+  A held at V127 has an RMS of 850 on `@0`, and a full-scale 8-bit
+  waveform an eighth of full scale on each side (a ±96 square 3063, a
+  sine of amplitude 100 2257).
 - `WAVSET` while a note of that instrument sounds changes the note at
   once, keeping its envelope: a square swapped for a square of two
   cycles doubles the pitch at the same level. A `WAVSET` square swapped

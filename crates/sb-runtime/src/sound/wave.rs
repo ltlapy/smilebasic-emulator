@@ -93,11 +93,15 @@ pub fn eight_bit(bytes: impl IntoIterator<Item = f64>, base_note: i32, envelope:
 // UNVERIFIED: SmileBASIC 4's PSG tones.
 const PULSES: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
 
-/// @216 to @222 as one cycle of a pulse wave.
+/// @216 to @222 as one cycle of a pulse wave, as loud as a full-scale
+/// 8-bit waveform.
+// UNVERIFIED: the PSG's and the noise's levels.
 pub fn pulse(program: i32) -> Wave {
     let high = PULSES[(program - 216) as usize];
     Wave {
-        samples: (0..8).map(|i| if i < high { 0.5 } else { -0.5 }).collect(),
+        samples: (0..8)
+            .map(|i| if i < high { 127.0 } else { -128.0 } * EIGHT_BIT)
+            .collect(),
         base_note: 69,
         rate: None,
         cycle: 8.0,
@@ -118,7 +122,7 @@ pub fn noise() -> Wave {
             x ^= x << 5;
             (x >> 16) as f32 / 32768.0 - 1.0
         })
-        .map(|s| s * 0.5)
+        .map(|s| s * 128.0 * EIGHT_BIT)
         .collect();
     Wave {
         samples,
@@ -308,16 +312,17 @@ impl Voice {
     }
 }
 
-/// The gains for a volume, velocity and pan, each 0 to 127, on the same
-/// curve and level as SmileBASIC's own instruments.
-// UNVERIFIED: that waveforms and instruments share SmileBASIC 4's curve
-// and level.
+/// The gains for a volume, velocity and pan, each 0 to 127. Volume and
+/// velocity are squared, as the instruments' are.
 pub fn gains(volume: i32, velocity: i32, pan: i32) -> (f32, f32) {
-    let v = sampler::OUTPUT_GAIN * sampler::square(volume) * sampler::square(velocity);
-    let pan = pan.clamp(0, 127) as f32 / 127.0;
-    let angle = pan * std::f32::consts::FRAC_PI_2;
-    (v * angle.cos(), v * angle.sin())
+    let v = WAVE_GAIN * sampler::square(volume) * sampler::square(velocity);
+    let [l, r] = sampler::pan_gains(pan);
+    (v * l, v * r)
 }
+
+/// A full-scale waveform at V127 in the middle records at an eighth of
+/// full scale on each side (TEST40), the pan taking 3 dB.
+const WAVE_GAIN: f32 = 0.125 * std::f32::consts::SQRT_2;
 
 #[cfg(test)]
 mod tests {
@@ -403,7 +408,9 @@ mod tests {
         // Volume and velocity are squared, as the instruments' are.
         let (l, r) = gains(127, 64, 0);
         assert_eq!(r, 0.0);
-        assert!((l - sampler::OUTPUT_GAIN * sampler::square(64)).abs() < 1e-6);
+        assert!((l - WAVE_GAIN * sampler::square(64)).abs() < 1e-6);
+        let (l, r) = gains(127, 127, 64);
+        assert!((l - 0.125).abs() < 1e-6 && (r - 0.125).abs() < 1e-6);
     }
 
     #[test]
@@ -417,6 +424,12 @@ mod tests {
         let v = Voice::new(Rc::new(w), None, 60, 0, false);
         let rate = 28160.0 * 2f64.powf(-9.0 / 12.0);
         assert!((v.step - rate / 48000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_middle_is_even() {
+        let (l, r) = gains(127, 127, 64);
+        assert_eq!(l, r);
     }
 
     #[test]

@@ -16,9 +16,9 @@ pub(crate) const TICK: usize = RATE as usize / 200;
 pub(crate) const MAX_VOICES: usize = 48;
 /// The level of silence, in 1/128ths of 0.1 dB.
 const SILENCE: i32 = -723 * 128;
-/// Scales the mix so that a few loud notes do not clip.
-// UNVERIFIED: SmileBASIC 4's output level.
-pub(crate) const OUTPUT_GAIN: f32 = 0.5;
+/// The instruments' level: @0's A at V127 in the middle records at an
+/// RMS of 850 (TEST40).
+pub(crate) const OUTPUT_GAIN: f32 = 0.256;
 /// The vibrato's speed, and its depth at full modulation, in cents.
 // UNVERIFIED: how SmileBASIC 4's vibrato maps to these.
 const VIBRATO_HZ: f32 = 6.0;
@@ -57,6 +57,20 @@ fn level(value: u8) -> i32 {
     }
     let db10 = 400.0 * (f32::from(value.min(127)) / 127.0).log10();
     (db10.round() as i32 * 128).max(SILENCE)
+}
+
+/// Left and right gains for a pan of 0 to 127, at equal power, with 64
+/// in the middle (equal on hardware, TEST40).
+// UNVERIFIED: the equal-power curve.
+pub(crate) fn pan_gains(pan: i32) -> [f32; 2] {
+    let pan = pan.clamp(0, 127);
+    let x = if pan <= 64 {
+        pan as f32 / 128.0
+    } else {
+        0.5 + (pan - 64) as f32 / 126.0
+    };
+    let angle = x * std::f32::consts::FRAC_PI_2;
+    [angle.cos(), angle.sin()]
 }
 
 /// A 0-127 value as a gain, squared.
@@ -250,9 +264,8 @@ impl Voice {
                 * square(i32::from(self.region.volume))
                 * self.velocity
         };
-        let pan = (ch.pan + i32::from(self.region.pan) - 64).clamp(0, 127) as f32 / 127.0;
-        let angle = pan * std::f32::consts::FRAC_PI_2;
-        let target = [gain * angle.cos(), gain * angle.sin()];
+        let [l, r] = pan_gains(ch.pan + i32::from(self.region.pan) - 64);
+        let target = [gain * l, gain * r];
         self.deltas = [0, 1].map(|i| (target[i] - self.gains[i]) / TICK as f32);
         let cents = ch.bend as f32 + vibrato(&mut self.vibrato_phase, ch.modulation);
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
@@ -492,7 +505,7 @@ mod tests {
     fn a_note_sounds_and_releases() {
         let mut s = sampler(ORGAN, false);
         s.note_on(0, 60, 127);
-        assert!(peak(&mut s, 960) > 0.1);
+        assert!(peak(&mut s, 960) > 0.02);
         s.note_off(0, 60);
         peak(&mut s, 48_000);
         assert!(s.voices.is_empty());
