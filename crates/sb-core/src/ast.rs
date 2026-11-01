@@ -38,6 +38,8 @@ pub enum LValue {
 pub enum Target {
     Label(String),
     Expr(Expr),
+    /// GOTO or GOSUB with nothing after it, a Type mismatch when it runs.
+    Missing,
 }
 
 #[derive(Clone, Debug, PartialEq)]

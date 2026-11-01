@@ -393,8 +393,8 @@ impl Parser {
                 }
                 StmtKind::Continue
             }
-            K::Goto => StmtKind::Goto(self.target()?),
-            K::Gosub => StmtKind::Gosub(self.target()?),
+            K::Goto => StmtKind::Goto(self.jump_target()?),
+            K::Gosub => StmtKind::Gosub(self.jump_target()?),
             K::On => self.on_statement()?,
             K::Return => StmtKind::Return(if self.at_stmt_end() {
                 None
@@ -707,7 +707,7 @@ impl Parser {
             branches.push((
                 cond,
                 vec![Stmt {
-                    kind: StmtKind::Goto(self.target()?),
+                    kind: StmtKind::Goto(self.jump_target()?),
                     line,
                     col,
                 }],
@@ -770,7 +770,7 @@ impl Parser {
             return Ok(Vec::new());
         }
         let Span { line, col } = self.span();
-        let kind = StmtKind::Goto(self.target()?);
+        let kind = StmtKind::Goto(self.jump_target()?);
         Ok(vec![Stmt { kind, line, col }])
     }
 
@@ -870,6 +870,15 @@ impl Parser {
             step,
             body,
         })
+    }
+
+    /// GOTO's and GOSUB's target, which may be missing until the jump
+    /// runs (checked on hardware: a bare GOTO is a Type mismatch there).
+    fn jump_target(&mut self) -> PResult<Target> {
+        match self.at_stmt_end() {
+            true => Ok(Target::Missing),
+            false => self.target(),
+        }
     }
 
     fn target(&mut self) -> PResult<Target> {

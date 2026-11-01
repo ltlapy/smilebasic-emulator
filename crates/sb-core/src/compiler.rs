@@ -751,6 +751,14 @@ impl Compiler<'_> {
                 self.expr(e)?;
                 self.emit(Op::GosubDyn);
             }
+            StmtKind::Goto(Target::Missing) => {
+                self.emit(Op::Default);
+                self.emit(Op::GotoDyn);
+            }
+            StmtKind::Gosub(Target::Missing) => {
+                self.emit(Op::Default);
+                self.emit(Op::GosubDyn);
+            }
             StmtKind::On {
                 selector,
                 labels,
@@ -801,6 +809,7 @@ impl Compiler<'_> {
                 self.expr(e)?;
                 self.emit(Op::RestoreDyn);
             }
+            StmtKind::Restore(Target::Missing) => unreachable!("RESTORE's target is optional"),
             StmtKind::Swap(a, b) => {
                 // Each place is worked out once, the second first (checked
                 // on hardware).
