@@ -452,8 +452,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   repeat their cycles to fill eight (a 16-sample pattern of two cycles
   times 4, one of a single cycle times 8, both at reference pitch 69).
   Any of the lengths the manual gives, 16 to 512 samples, plays a pass
-  at 55 Hz at its reference pitch; 17 samples, or more than 512, is
-  `Illegal function call`.
+  at 55 Hz at its reference pitch; any other length (17, 24 or 1024
+  samples) is `Illegal function call`.
 - `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its
   n samples at 28160 Hz over the next power of two at or above n: at
   reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16
