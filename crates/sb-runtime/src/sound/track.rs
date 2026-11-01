@@ -96,7 +96,7 @@ pub(crate) struct Track {
     synth: Option<Box<dyn Synth>>,
     waves: Rc<RefCell<Waves>>,
     /// Waveform notes sounding, with their channels.
-    voices: Vec<(usize, wave::Voice)>,
+    voices: Vec<(usize, i32, wave::Voice)>,
     song: Option<Rc<Song>>,
     /// A preset song, played instead of `song`.
     seq: Option<Player>,
@@ -272,7 +272,7 @@ impl Track {
     fn apply_bend(&mut self, c: usize) {
         let fraction = self.cents(c).rem_euclid(100);
         self.synth(|s| s.bend(c, fraction));
-        for (_, v) in self.voices.iter_mut().filter(|(vc, _)| *vc == c) {
+        for (.., v) in self.voices.iter_mut().filter(|(vc, ..)| *vc == c) {
             v.set_pitch(fraction);
         }
     }
@@ -306,10 +306,10 @@ impl Track {
                 s.note_off(c, key);
             }
         }
-        for (_, v) in self
+        for (.., v) in self
             .voices
             .iter_mut()
-            .filter(|(vc, v)| *vc == c && keys.contains(&v.key))
+            .filter(|(vc, _, v)| *vc == c && keys.contains(&v.key))
         {
             v.release();
         }
@@ -333,7 +333,7 @@ impl Track {
                 let (envelope, cents) = (ch.envelope, self.cents(c).rem_euclid(100));
                 for &key in keys {
                     let v = wave::Voice::new(w.clone(), envelope, key, cents, false);
-                    self.voices.push((c, v));
+                    self.voices.push((c, program, v));
                 }
             }
             Voice::Silent => {}
@@ -480,17 +480,21 @@ impl Track {
                 Cmd::VibratoOff | Cmd::ModulationOff => self.synth(|s| s.modulation(c, 0)),
                 Cmd::Envelope(e) => {
                     let [attack, decay, sustain, release] = e.map(|n| self.var(n));
-                    self.channels[c].envelope = Some(Envelope {
+                    let envelope = Envelope {
                         attack,
                         decay,
                         sustain,
                         release,
-                    });
+                    };
+                    self.channels[c].envelope = Some(envelope);
+                    self.synth(|s| s.envelope(c, Some(envelope)));
                 }
-                Cmd::EnvelopeOff => self.channels[c].envelope = None,
-                // UNVERIFIED: envelopes only shape waveforms, not the
-                // synthesizer's instruments; tremolo and pan modulation are read but
-                // not played.
+                Cmd::EnvelopeOff => {
+                    self.channels[c].envelope = None;
+                    self.synth(|s| s.envelope(c, None));
+                }
+                // UNVERIFIED: tremolo and pan modulation are read but not
+                // played.
                 Cmd::Tremolo(_) | Cmd::TremoloOff | Cmd::PanWave(_) | Cmd::PanWaveOff => {}
                 Cmd::RepeatStart => {
                     // Find the count at the matching end.
@@ -671,12 +675,12 @@ impl Track {
                 Some(s) => s.render(cl, cr),
                 None => cl.iter_mut().chain(cr.iter_mut()).for_each(|x| *x = 0.0),
             }
-            for (vc, v) in &mut self.voices {
+            for (vc, _, v) in &mut self.voices {
                 let ch = &self.channels[*vc];
                 v.gains = wave::gains(ch.volume, ch.velocity, ch.pan);
                 v.render(cl, cr);
             }
-            self.voices.retain(|(_, v)| !v.done());
+            self.voices.retain(|(.., v)| !v.done());
             if !self.paused && self.playing {
                 self.until_tick -= chunk as f64;
             }

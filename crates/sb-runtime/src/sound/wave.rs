@@ -5,6 +5,8 @@
 use std::rc::Rc;
 
 use super::RATE;
+use super::bank::Adshr;
+use super::sampler;
 
 /// A waveform: one cycle, or a sample with a loop.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,16 +42,21 @@ impl Envelope {
     };
 }
 
-/// Seconds a stage takes for its value.
-// UNVERIFIED: SmileBASIC's curve; 127 is 2 ms, every 10 down twice as long,
-// so 0 is about 13 s.
-fn stage_seconds(value: i32) -> f64 {
-    0.002 * 2f64.powf(f64::from(127 - value.clamp(0, 127)) / 10.0)
-}
-
-/// The change in level a sample for a stage of `value`.
-fn stage_step(value: i32) -> f64 {
-    1.0 / (stage_seconds(value) * f64::from(RATE))
+/// The values as SmileBASIC's own instruments take them: waveforms move
+/// their level in the same steps.
+// UNVERIFIED: that WAVSET's and @E's values mean what the sound archive's
+// instruments' do.
+impl From<Envelope> for Adshr {
+    fn from(e: Envelope) -> Adshr {
+        let v = |x: i32| x.clamp(0, 127) as u8;
+        Adshr {
+            attack: v(e.attack),
+            decay: v(e.decay),
+            sustain: v(e.sustain),
+            hold: 0,
+            release: v(e.release),
+        }
+    }
 }
 
 /// The PSG's pulse widths for @216 to @222, as eighths of a cycle.
@@ -122,29 +129,26 @@ impl Waves {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Stage {
-    Attack,
-    Decay,
-    Sustain,
-    Release,
-    Done,
-}
-
 /// One note of a waveform.
 #[derive(Clone, Debug)]
 pub struct Voice {
     wave: Rc<Wave>,
-    envelope: Envelope,
+    envelope: sampler::Envelope,
     pub key: i32,
+    cents: i32,
     pos: f64,
     step: f64,
-    stage: Stage,
-    level: f64,
+    /// The envelope's gain, moving in a straight line to the next step's.
+    level: f32,
+    level_step: f32,
+    target: f32,
+    /// Samples into the envelope's step.
+    in_tick: usize,
     /// Left and right gains.
     pub gains: (f32, f32),
     /// Plays the loop for ever, as BEEP does when asked.
     looping: bool,
+    done: bool,
 }
 
 impl Voice {
@@ -156,23 +160,28 @@ impl Voice {
         cents: i32,
         looping: bool,
     ) -> Voice {
-        let envelope = envelope.unwrap_or(wave.envelope);
+        let envelope = sampler::Envelope::new(envelope.unwrap_or(wave.envelope).into());
         let mut v = Voice {
             wave,
             envelope,
             key,
+            cents,
             pos: 0.0,
             step: 0.0,
-            stage: Stage::Attack,
             level: 0.0,
+            level_step: 0.0,
+            target: 0.0,
+            in_tick: 0,
             gains: (0.5, 0.5),
             looping,
+            done: false,
         };
         v.set_pitch(cents);
         v
     }
 
     pub fn set_pitch(&mut self, cents: i32) {
+        self.cents = cents;
         let ratio = 2f64
             .powf((f64::from(self.key - self.wave.base_note) * 100.0 + f64::from(cents)) / 1200.0);
         self.step = match self.wave.rate {
@@ -185,49 +194,21 @@ impl Voice {
         };
     }
 
-    pub fn release(&mut self) {
-        if self.stage != Stage::Done {
-            self.stage = Stage::Release;
+    /// Goes on with `wave` in place of the one the note started with, as
+    /// when WAVSET sets the instrument again while the note sounds.
+    pub fn follow(&mut self, wave: &Rc<Wave>) {
+        if !Rc::ptr_eq(&self.wave, wave) {
+            self.wave = wave.clone();
+            self.set_pitch(self.cents);
         }
+    }
+
+    pub fn release(&mut self) {
+        self.envelope.release();
     }
 
     pub fn done(&self) -> bool {
-        self.stage == Stage::Done
-    }
-
-    fn envelope_step(&mut self) {
-        let e = self.envelope;
-        let sustain = f64::from(e.sustain.clamp(0, 127)) / 127.0;
-        match self.stage {
-            Stage::Attack => {
-                self.level += stage_step(e.attack);
-                if self.level >= 1.0 {
-                    self.level = 1.0;
-                    self.stage = Stage::Decay;
-                }
-            }
-            Stage::Decay => {
-                self.level -= stage_step(e.decay);
-                if self.level <= sustain {
-                    self.level = sustain;
-                    self.stage = Stage::Sustain;
-                }
-            }
-            Stage::Sustain => {}
-            // Release 0 does not stop the note; only SNDSTOP does.
-            Stage::Release if e.release == 0 => {}
-            Stage::Release => {
-                self.level -= stage_step(e.release);
-                if self.level <= 0.0 {
-                    self.level = 0.0;
-                    self.stage = Stage::Done;
-                }
-            }
-            Stage::Done => {}
-        }
-        if self.stage == Stage::Sustain && sustain == 0.0 {
-            self.stage = Stage::Done;
-        }
+        self.done
     }
 
     /// Adds the voice into the buffers.
@@ -235,32 +216,45 @@ impl Voice {
         let wave = self.wave.clone();
         let samples = &wave.samples;
         if samples.is_empty() {
-            self.stage = Stage::Done;
+            self.done = true;
             return;
         }
-        let (start, end) = self.wave.looped;
+        let (start, end) = wave.looped;
         let end = end.clamp(1, samples.len());
         let start = start.min(end - 1);
-        let loops =
-            self.wave.rate.is_none() || self.looping || self.wave.looped != (0, samples.len());
+        let loops = wave.rate.is_none() || self.looping || wave.looped != (0, samples.len());
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            if self.stage == Stage::Done {
-                return;
+            if self.in_tick == 0 {
+                self.envelope.step();
+                self.target = if self.envelope.done() {
+                    0.0
+                } else {
+                    self.envelope.gain()
+                };
+                self.level_step = (self.target - self.level) / sampler::TICK as f32;
             }
-            let i = self.pos as usize;
-            if i >= end {
+            self.in_tick = (self.in_tick + 1) % sampler::TICK;
+            if self.pos >= end as f64 {
                 if loops {
                     self.pos = start as f64 + (self.pos - end as f64) % (end - start) as f64;
                 } else {
-                    self.stage = Stage::Done;
+                    self.done = true;
                     return;
                 }
             }
-            let s = samples[(self.pos as usize).min(samples.len() - 1)] * self.level as f32;
+            let s = samples[(self.pos as usize).min(samples.len() - 1)] * self.level;
             *l += s * self.gains.0;
             *r += s * self.gains.1;
             self.pos += self.step;
-            self.envelope_step();
+            self.level += self.level_step;
+            if self.in_tick == 0 {
+                // Land exactly on the step's level, which may be silence.
+                self.level = self.target;
+                if self.envelope.done() && self.level == 0.0 {
+                    self.done = true;
+                    return;
+                }
+            }
         }
     }
 }
@@ -288,6 +282,33 @@ mod tests {
         let (mut l, mut r) = (vec![0.0; 480], vec![0.0; 480]);
         v.render(&mut l, &mut r);
         assert!(v.done());
+    }
+
+    /// The loudest sample of `n` more of the voice.
+    fn peak(v: &mut Voice, n: usize) -> f32 {
+        let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+        v.render(&mut l, &mut r);
+        l.iter().fold(0f32, |m, x| m.max(x.abs()))
+    }
+
+    #[test]
+    fn releases_take_as_long_as_the_instruments_do() {
+        // @E127,116,111,32 rings on long after its note ends; a release
+        // of 122, as songs give notes cut short with Q0, still leaves a
+        // tail of a few dozen milliseconds.
+        for (release, ms, sounding) in [(32, 500, true), (122, 30, true), (122, 400, false)] {
+            let e = Envelope {
+                attack: 127,
+                decay: 116,
+                sustain: 111,
+                release,
+            };
+            let mut v = Voice::new(Rc::new(pulse(219)), Some(e), 69, 0, false);
+            peak(&mut v, 960);
+            v.release();
+            peak(&mut v, ms * 48 - 480);
+            assert_eq!(peak(&mut v, 480) > 0.001, sounding, "{release} {ms}");
+        }
     }
 
     #[test]

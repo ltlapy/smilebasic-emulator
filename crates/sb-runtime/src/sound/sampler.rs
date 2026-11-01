@@ -7,10 +7,11 @@ use std::sync::Arc;
 use super::RATE;
 use super::bank::{Adshr, Bank, Reader, Region};
 use super::synth::{CHANNELS, Synth};
+use super::wave::Envelope as MmlEnvelope;
 
 /// Samples between envelope steps: 5 ms.
 // UNVERIFIED: how often SmileBASIC 4 steps its envelopes.
-const TICK: usize = RATE as usize / 200;
+pub(crate) const TICK: usize = RATE as usize / 200;
 /// Notes sounding at once; the oldest makes way for a new one.
 const MAX_VOICES: usize = 48;
 /// The level of silence, in 1/128ths of 0.1 dB.
@@ -74,15 +75,17 @@ enum Stage {
     Done,
 }
 
+/// A note's level as SmileBASIC's instruments move it, stepped every
+/// [`TICK`] samples. The PSG and user waveforms move the same way.
 #[derive(Clone, Debug)]
-struct Envelope {
+pub(crate) struct Envelope {
     adshr: Adshr,
     stage: Stage,
     level: i32,
 }
 
 impl Envelope {
-    fn new(adshr: Adshr) -> Envelope {
+    pub(crate) fn new(adshr: Adshr) -> Envelope {
         Envelope {
             adshr,
             stage: Stage::Attack,
@@ -90,7 +93,18 @@ impl Envelope {
         }
     }
 
-    fn step(&mut self) {
+    pub(crate) fn release(&mut self) {
+        if self.stage != Stage::Done {
+            self.stage = Stage::Release;
+        }
+    }
+
+    /// Whether the note has fallen silent for good.
+    pub(crate) fn done(&self) -> bool {
+        self.stage == Stage::Done
+    }
+
+    pub(crate) fn step(&mut self) {
         let e = self.adshr;
         match self.stage {
             Stage::Attack => {
@@ -125,7 +139,7 @@ impl Envelope {
         }
     }
 
-    fn gain(&self) -> f32 {
+    pub(crate) fn gain(&self) -> f32 {
         if self.level <= SILENCE {
             return 0.0;
         }
@@ -141,6 +155,8 @@ struct Channel {
     pan: i32,
     modulation: i32,
     bend: i32,
+    /// MML's @E, over the instruments' own.
+    envelope: Option<MmlEnvelope>,
 }
 
 impl Default for Channel {
@@ -152,6 +168,7 @@ impl Default for Channel {
             pan: 64,
             modulation: 0,
             bend: 0,
+            envelope: None,
         }
     }
 }
@@ -300,6 +317,10 @@ impl Synth for Sampler {
         self.channels[channel].bend = cents;
     }
 
+    fn envelope(&mut self, channel: usize, envelope: Option<MmlEnvelope>) {
+        self.channels[channel].envelope = envelope;
+    }
+
     fn note_on(&mut self, channel: usize, key: i32, velocity: i32) {
         let Some(&region) = self.bank.region(self.channels[channel].program, key) else {
             return;
@@ -332,7 +353,14 @@ impl Synth for Sampler {
             base_step: f64::from(wave.rate) / f64::from(RATE) * 2f64.powf(semitones / 12.0),
             step: 0.0,
             velocity: square(velocity),
-            envelope: Envelope::new(region.envelope),
+            envelope: Envelope::new(match self.channels[channel].envelope {
+                // UNVERIFIED: @E keeps the instrument's hold.
+                Some(e) => Adshr {
+                    hold: region.envelope.hold,
+                    ..e.into()
+                },
+                None => region.envelope,
+            }),
             in_tick: 0,
             gains: [0.0; 2],
             deltas: [0.0; 2],
@@ -522,6 +550,35 @@ mod tests {
         assert!((t.decay - 92544.0 / 15360.0 * 0.005).abs() < 1e-9);
         assert_eq!(t.sustain_db, 72.3);
         assert!(times(Adshr::default()).attack > 1.0);
+    }
+
+    #[test]
+    fn mml_envelopes_take_over_from_the_instruments() {
+        let quick = Adshr {
+            release: 127,
+            ..ORGAN
+        };
+        let mut s = sampler(quick, false);
+        // A slow release, as songs give with @E127,116,111,32.
+        let slow = MmlEnvelope {
+            attack: 127,
+            decay: 116,
+            sustain: 111,
+            release: 32,
+        };
+        s.envelope(0, Some(slow));
+        s.note_on(0, 60, 127);
+        peak(&mut s, 960);
+        s.note_off(0, 60);
+        peak(&mut s, 4800);
+        assert!(peak(&mut s, 960) > 0.01);
+        // @ER: the instrument's quick release again.
+        s.envelope(0, None);
+        s.note_on(0, 62, 127);
+        peak(&mut s, 960);
+        s.note_off(0, 62);
+        peak(&mut s, 4800);
+        assert_eq!(s.voices.iter().filter(|v| v.key == 62).count(), 0);
     }
 
     #[test]

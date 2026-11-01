@@ -8,6 +8,7 @@ use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use super::RATE;
 use super::bank::Bank;
 use super::sampler::Sampler;
+use super::wave::Envelope;
 
 /// Channels a synthesizer has: the tracks' 16 and BEEP's 16 handles.
 pub const CHANNELS: usize = 16;
@@ -39,6 +40,10 @@ pub(crate) trait Synth {
     /// The vibrato's depth.
     fn modulation(&mut self, channel: usize, value: i32);
     fn bend(&mut self, channel: usize, cents: i32);
+    /// MML's @E: the envelope the channel's notes start with from now on,
+    /// in place of their instruments'; `None` for theirs. A SoundFont's
+    /// instruments keep their own.
+    fn envelope(&mut self, _channel: usize, _envelope: Option<Envelope>) {}
     fn note_on(&mut self, channel: usize, key: i32, velocity: i32);
     fn note_off(&mut self, channel: usize, key: i32);
     /// Every note on the channel stops at once.

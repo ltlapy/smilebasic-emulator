@@ -35,8 +35,9 @@ Without them:
   says the same words in another voice. In MML, a sung note (`*WA,C4`)
   plays as a plain note.
 - MML's tremolo (`@MA`) and pan modulation (`@ML`) are read and
-  ignored. Vibrato (`@MP`) takes only its depth. Envelopes (`@E`) shape
-  the PSG and user waveforms only.
+  ignored. Vibrato (`@MP`) takes only its depth. Envelopes (`@E`) do not
+  change a SoundFont's instruments, only SmileBASIC's own and the PSG
+  and user waveforms.
 - `SNDMSBAL` balances a subprogram's sound against the main program's
   in a straight line, the full sound of both at 64.
 
