@@ -429,9 +429,7 @@ impl TextScreen {
 
     /// Draws the screen over `fb` where TOFS and its companions put it.
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
-        let mut grp = Graphics::default();
-        grp.set_page(FONT_PAGE, font.page_image());
-        self.draw_placed(fb, font, &grp, &Affine::IDENTITY, None, false);
+        self.draw_placed(fb, font, font.pages(), &Affine::IDENTITY, None, false);
     }
 
     /// The pixel at `(x, y)` of a character's `font_type`-sized image.

@@ -11,12 +11,15 @@
 //! page, and of the 16-pixel font at `((n % 64) * 16, 1024 + (n / 64) * 16)`.
 //! This matches FONTINFO on real hardware.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::fmt;
+use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
 use ab_glyph::{Font as _, FontRef, PxScale, point};
 
+use crate::graphics::Graphics;
 use crate::sbfile::{self, DataValues, FileError};
 
 /// Width and height of the font page in pixels.
@@ -32,7 +35,13 @@ pub enum FontSize {
 }
 
 #[derive(Clone)]
-pub struct Font(Source);
+pub struct Font(Source, Pages);
+
+/// The font page on GRP5 of pages otherwise blank, for text drawn with
+/// the font alone, as the editor's: made the first time it is wanted and
+/// kept, as copying the page for every frame took longer than drawing.
+#[derive(Clone, Default)]
+struct Pages(OnceCell<Rc<Graphics>>);
 
 #[derive(Clone)]
 enum Source {
@@ -208,7 +217,7 @@ impl Font {
             }
             _ => return Err(FontError::PageShape),
         };
-        Ok(Font(Source::Page { glyphs, page }))
+        Ok(Font(Source::Page { glyphs, page }, Pages::default()))
     }
 
     /// The bundled GalmuriMono7 plus this emulator's drawings of
@@ -244,12 +253,24 @@ impl Font {
                 used += 1;
             }
         }
-        Font(Source::Cells {
-            index,
-            cells,
-            symbols,
-            missing,
-            slots,
+        Font(
+            Source::Cells {
+                index,
+                cells,
+                symbols,
+                missing,
+                slots,
+            },
+            Pages::default(),
+        )
+    }
+
+    /// Pages with only GRP5, the font page.
+    pub fn pages(&self) -> &Graphics {
+        self.1.0.get_or_init(|| {
+            let mut grp = Graphics::default();
+            grp.set_page(crate::text::FONT_PAGE, self.page_image());
+            Rc::new(grp)
         })
     }
 
@@ -371,14 +392,18 @@ impl Font {
     /// A page font with every code mapped to glyph `code % 4096` on a
     /// blank page, for tests that do not have the real files.
     pub fn blank() -> Font {
-        Font(Source::Page {
-            glyphs: (0..CODES).map(|c| (c % 4096) as u16).collect(),
-            page: vec![0; (PAGE_SIZE * PAGE_SIZE) as usize],
-        })
+        Font(
+            Source::Page {
+                glyphs: (0..CODES).map(|c| (c % 4096) as u16).collect(),
+                page: vec![0; (PAGE_SIZE * PAGE_SIZE) as usize],
+            },
+            Pages::default(),
+        )
     }
 
     #[cfg(test)]
     pub(crate) fn page_mut(&mut self) -> &mut [u32] {
+        self.1 = Pages::default();
         match &mut self.0 {
             Source::Page { page, .. } => page,
             Source::Cells { .. } => unreachable!("tests draw on page fonts"),
