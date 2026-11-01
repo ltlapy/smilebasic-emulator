@@ -125,19 +125,21 @@ impl Runtime {
 
     /// ENVLOCATE: where the console's cursor is on the 1280x720 display,
     /// for a subprogram to show something by it, as SmileBASIC 4's soft
-    /// keyboard does. The command is not in the manual.
-    // UNVERIFIED: all of it, and that the editor's cursor counts while it
-    // is open, which here it does not.
+    /// keyboard does. The command is not in the manual. The screen is
+    /// scaled to fit the display and centered, and the point is the top
+    /// of the cursor's cell, a character to its right.
+    // UNVERIFIED: the character to the right away from the start of a
+    // row, and whether the editor's cursor counts while it is open.
     pub(crate) fn cursor_on_display(&self) -> (i32, i32) {
         let console = &self.text[crate::text::CONSOLE];
         let (cx, cy) = console.cursor();
-        let size = console.font().1;
-        let (x, y) = (
-            f64::from(cx * size) + console.pos.0,
-            f64::from(cy * size) + console.pos.1,
-        );
+        let size = f64::from(console.font().1);
+        let x = (f64::from(cx) + 1.0) * size + console.pos.0;
+        let y = f64::from(cy) * size + console.pos.1;
         let (w, h) = (f64::from(self.mode.width), f64::from(self.mode.height));
-        ((x * 1280.0 / w) as i32, (y * 720.0 / h) as i32)
+        let scale = (1280.0 / w).min(720.0 / h);
+        let (left, top) = ((1280.0 - w * scale) / 2.0, (720.0 - h * scale) / 2.0);
+        ((left + x * scale) as i32, (top + y * scale) as i32)
     }
 
     pub(crate) fn env_command(
@@ -150,7 +152,10 @@ impl Runtime {
         match (command, want, args) {
             (Command::Envtype, Want::Value, []) => Ok(vec![int(self.env_type)]),
             // The manual says -1 for user programs; it is 0 on hardware.
-            (Command::Envtype, Want::Outs(2), []) => Ok(vec![int(self.env_type), int(0)]),
+            // A subprogram's is -1.
+            (Command::Envtype, Want::Outs(2), []) => {
+                Ok(vec![int(self.env_type), int(-self.env_type)])
+            }
             (Command::Envstat, Want::Value, []) => Ok(vec![int(self.status())]),
             // Only subprograms set the main interpreter's status.
             (Command::Envstat, Want::Outs(0), [s]) => {
@@ -184,9 +189,9 @@ impl Runtime {
                 ]);
                 Ok(vec![])
             }
-            // UNVERIFIED: what a subprogram gets before XSUBSCREEN.
+            // Before XSUBSCREEN, the whole display.
             (Command::Xsubscreen, Want::Outs(n @ 2..=4), []) if self.env_type == 1 => {
-                let rect = self.sub_screen.unwrap_or_default();
+                let rect = self.sub_screen.unwrap_or([0, 0, 1280, 720]);
                 Ok(rect[..usize::from(n)].iter().map(|&v| int(v)).collect())
             }
             // The sub-screen does nothing outside a subprogram, and gives

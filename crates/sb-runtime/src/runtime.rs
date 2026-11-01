@@ -620,6 +620,12 @@ pub struct Runtime {
     /// then the error's number, argument, slot, character and line.
     pub(crate) env_status: i32,
     pub(crate) env_error: [i32; 5],
+    /// A subprogram's ENVSTAT 0 asked the main interpreter to forget its
+    /// stopped program.
+    pub(crate) forget_stop: bool,
+    /// Drawn darker, as the side without the focus while a subprogram
+    /// runs.
+    pub(crate) dimmed: bool,
     /// What CLIPBOARD reads and writes.
     pub clipboard: Box<dyn crate::env::Clipboard>,
     /// The DIALOG the program waits on, and the frontend's answer.
@@ -851,7 +857,9 @@ impl Runtime {
             sub_running: false,
             focus_moved: false,
             env_status: 0,
-            env_error: [0; 5],
+            env_error: [0, -1, -1, -1, 0],
+            forget_stop: false,
+            dimmed: false,
             clipboard: Box::new(crate::env::MemoryClipboard::default()),
             meta: Default::default(),
             dialog: None,
@@ -1364,6 +1372,15 @@ impl Runtime {
                     scale as u32,
                     colors,
                 );
+            }
+        }
+        // Beside a subprogram, the side without the focus shows a little
+        // darker, each channel to 225/256: 255 to 224, 96 to 84.
+        if self.dimmed {
+            for p in fb.pixels_mut() {
+                let rb = (((*p & 0x00FF_00FF) * 225) >> 8) & 0x00FF_00FF;
+                let g = (((*p & 0x0000_FF00) * 225) >> 8) & 0x0000_FF00;
+                *p = *p & 0xFF00_0000 | rb | g;
             }
         }
         self.fb = fb;

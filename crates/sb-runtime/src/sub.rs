@@ -62,10 +62,16 @@ impl Runtime {
         let int = Value::Int;
         let result = match (command, want, args) {
             (Command::Envstat, Want::Value, []) => Ok(vec![int(main.env_status)]),
-            // UNVERIFIED: what setting it to 0 does to a stopped program;
-            // here it can still go on with CONT.
+            // A stopped program, by STOP or an error, can no longer go
+            // on.
             (Command::Envstat, Want::Outs(0), [s]) => s.to_int().and_then(|s| match s {
-                0 => Ok(vec![]),
+                0 => {
+                    if matches!(main.env_status, status::PAUSED | status::ERROR) {
+                        main.env_status = status::DIRECT;
+                        main.forget_stop = true;
+                    }
+                    Ok(vec![])
+                }
                 s => Err(Error::with_detail(ErrorKind::OutOfRange, format!("{s}"))),
             }),
             (Command::Envstat, Want::Outs(3), []) => Ok(vec![

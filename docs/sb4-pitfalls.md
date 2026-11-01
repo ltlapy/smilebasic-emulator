@@ -379,7 +379,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   after LMATRIX has placed the layer (TTEST27, pixel for pixel).
   Sprites on such a layer show whole, also the parts at negative
   coordinates or past the screen's size, as FINITI's floors running to
-  the horizon show.
+  the horizon show. So do text screens: a console moved to (-200,-120)
+  or to (500,300) of a 400x240 screen shows where the matrix puts it
+  (TTEST36, pixel for pixel).
 - On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
   the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
   On a composed layer it filters only that layer. Mosaic blocks start at
@@ -522,6 +524,47 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `XSUBSCREEN` and the undocumented `UISTATE` are there for the main
   program too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
 
+## Subprograms
+
+Checked with TTEST36.
+
+- A subprogram starts with the focus. While a subprogram runs, the side
+  without the focus is drawn darker, each color channel to 7/8 (255
+  shows as 224, 96 as 84): the main screen while the subprogram has the
+  focus, and the subprogram's screen once it gives it up.
+- `ENVTYPE OUT T,P` gives P -1 in a subprogram. `XSUBSCREEN OUT` before
+  any `XSUBSCREEN` gives the whole display, 0,0,1280,720.
+- `SNDMSBAL()` starts at 63 there too, and `PROJECT()` is the project
+  `SUBRUN` loaded the file from.
+- `ENVSTAT OUT S,N,A,SL,C,L` after the main program's `Divide by zero`
+  gives N 7, A -1, SL 0, C the statement's character from the start of
+  the program counting from 0, and L its line. After a `STOP`, N is 0
+  and A, SL and C are -1, but L keeps the line of the error before.
+- A subprogram's `ENVSTAT 0` turns a stopped program's status 1 or 2 to
+  0, and `CONT` can no longer go on with it.
+- `ENVINPUT$(1)` is the direct-mode line typed last, the `SUBRUN` itself.
+- After `ENVFOCUS 0`, the subprogram's `PUSHKEY` types into the main
+  interpreter's direct mode, which runs the line.
+- An error, a `STOP` or `SUBSTOP` ends the subprogram, hides its screen
+  and gives the focus back. The main console prints why, between lines
+  of its own, without OK unless a line of its own ran:
+
+  ```
+  === From subinterpreter ===
+  User break on 0:11
+  ===========================
+  ```
+
+  For an error the middle line is its message (`Divide by zero in
+  0:8`), for `STOP` `Break on 0:7`.
+- `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again,
+  while it goes on running. A clear `BACKCOLOR` shows the main screen
+  through.
+- `ENVLOCATE OUT X,Y`, which the manual leaves out, gave 64,168 with
+  the 400x240 console's cursor at the start of row 7: the screen is 1200
+  pixels wide in the middle of the display, so X is a character to the
+  right of the cursor's cell, and Y its top.
+
 ## Errors and the editor
 
 - A command or function given a number of arguments none of its forms
@@ -548,6 +591,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   may be called with one `OUT` (`T OUT X`). One with two `OUT`s called as
   a function is `Wrong number of OUT arguments` when the call runs.
 - An unknown `#constant` is `Undefined constant`.
+- `RETURN` with more than one value, as in a `DEF` with two `OUT`s, is a
+  `Syntax error` when the program compiles.
 
 - After an error, F4 puts the cursor at the start of the statement that
   failed, syntax errors included.

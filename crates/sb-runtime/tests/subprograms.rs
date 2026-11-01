@@ -163,3 +163,68 @@ fn a_busy_subprogram_keeps_to_the_frames_time() {
     assert!(per_frame < limit * 2, "{per_frame:?}");
     assert!(m.sub_running() && m.is_running());
 }
+
+#[test]
+fn the_main_interpreter_tells_why_a_subprogram_stopped() {
+    let dir = TempDir::new("stopped");
+    let mut m = machine(&dir, "XSUBSCREEN 0,0,100,100\nSTOP\n");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    let rule = "=".repeat(27);
+    let block = ["=== From subinterpreter ===", "Break on 0:2", rule.as_str()];
+    assert_eq!(last_rows(&m, 3), block);
+    assert!(!m.sub_has_focus());
+
+    m.set_slot(1, "ENVFOCUS 0:LOOP:VSYNC:ENDLOOP\n".to_string());
+    enter(&mut m, "save \"sub\",1");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    enter(&mut m, "substop");
+    let block = [
+        "=== From subinterpreter ===",
+        "User break on 0:1",
+        rule.as_str(),
+        "OK",
+    ];
+    assert_eq!(last_rows(&m, 4), block);
+}
+
+#[test]
+fn envstat_0_drops_the_main_programs_stop() {
+    let dir = TempDir::new("envstat");
+    let mut m = machine(&dir, "ENVSTAT 0\n");
+    m.set_slot(0, "STOP\n?\"GONE ON\"\n".to_string());
+    m.run_slot(0);
+    frames(&mut m, 2);
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    enter(&mut m, "cont");
+    assert!(last_rows(&m, 2)[0].starts_with("Can't continue"));
+}
+
+#[test]
+fn the_side_without_the_focus_shows_darker() {
+    let dir = TempDir::new("dim");
+    let mut m = machine(
+        &dir,
+        "ENVTYPE OUT T,P:XSUBSCREEN OUT X,Y,W,H\n\
+         ENVFOCUS 0\n\
+         PUSHKEY \"?\"+STR$(P)+\",\"+STR$(W)+CHR$(13)\n\
+         VSYNC 5:ENVFOCUS 1\n\
+         LOOP:VSYNC:ENDLOOP\n",
+    );
+    enter(&mut m, "backcolor #c_white");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    // ENVFOCUS 0: the subprogram's own screen goes darker, not the main.
+    assert_eq!(m.render().get(399, 239), Some(0xFFFF_FFFF));
+    frames(&mut m, 8);
+    // A subprogram's ENVTYPE parameter, and its XSUBSCREEN before one
+    // is set.
+    assert!(
+        rows(&m)
+            .iter()
+            .any(|r| r.starts_with("-1") && r.ends_with("1280"))
+    );
+    assert_eq!(m.render().get(399, 239), Some(0xFFE0_E0E0));
+}

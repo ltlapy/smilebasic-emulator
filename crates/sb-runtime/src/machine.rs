@@ -97,8 +97,9 @@ pub struct Machine {
     /// SUBSHOW and SUBHIDE.
     sub_shown: bool,
     /// On the sub interpreter, how its last program ended, for the main
-    /// one to tell: `Some(None)` by itself, `Some(Some(error))` with one.
-    ended: Option<Option<Error>>,
+    /// one to tell: `Some(None)` by itself, else with the error or break
+    /// message the main one prints.
+    ended: Option<Option<String>>,
 }
 
 /// How a stopped program goes on.
@@ -599,7 +600,8 @@ impl Machine {
     pub fn run_slot(&mut self, slot: usize) {
         // Running a program ends PRGEDIT's editing.
         self.rt.prg_edit = None;
-        self.rt.env_error = [0; 5];
+        // The last error's line stays.
+        self.rt.env_error = [0, -1, -1, -1, self.rt.env_error[4]];
         self.vars.clear();
         self.rt.clear_vars();
         // Each program starts with the mouse cursor hidden; END leaves it
@@ -665,11 +667,16 @@ impl Machine {
 
     /// Stops, naming `line` rather than the one about to run.
     fn stop_on(&mut self, line: Option<u32>, how: Halt) {
-        // A subprogram has no direct mode to stop in.
-        // UNVERIFIED: what STOP does in one.
+        // A subprogram has no direct mode to stop in: it ends, and the
+        // main interpreter prints why.
         if self.rt.env_type == 1 {
-            if self.vm.is_some() {
-                self.end_sub(None);
+            if let Some(vm) = &self.vm {
+                let what = match how {
+                    Halt::User => "User break",
+                    Halt::Stop | Halt::Debug => "Break",
+                };
+                let (slot, line) = (vm.slot().unwrap_or(0), line.unwrap_or(vm.line()));
+                self.end_sub(Some(format!("{what} on {slot}:{line}")));
             }
             return;
         }
@@ -1337,7 +1344,7 @@ impl Machine {
             Err(e) => {
                 let e = e.in_slot(slot.map(|s| s as u32));
                 if self.rt.env_type == 1 {
-                    return self.end_sub(Some(e));
+                    return self.end_sub(Some(e.to_string()));
                 }
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
                 self.report(&e);
@@ -1349,7 +1356,7 @@ impl Machine {
     /// The program or line ended, by itself or with an error.
     fn finish(&mut self, error: Option<Error>) {
         if self.rt.env_type == 1 {
-            return self.end_sub(error);
+            return self.end_sub(error.map(|e| e.to_string()));
         }
         self.stepping = None;
         let vm = self.vm.take().expect("finish follows a run");
@@ -1474,16 +1481,43 @@ impl Machine {
 
     /// SUBSTOP: stops the subprogram.
     fn substop(&mut self) {
-        if let Some(sub) = &mut self.sub
-            && sub.vm.is_some()
-        {
-            sub.end_sub(None);
+        if let Some(sub) = &mut self.sub {
+            sub.stop_on(None, Halt::User);
+        }
+        self.sub_ended(false);
+    }
+
+    /// When the subprogram has ended, the focus comes back, and the main
+    /// interpreter prints why it ended, if not by itself, between lines
+    /// of its own; `again` takes up the direct-mode line afresh after it.
+    // UNVERIFIED: that the focus comes back after END too, and that END
+    // prints nothing.
+    fn sub_ended(&mut self, again: bool) {
+        let Some(sub) = &mut self.sub else {
+            return;
+        };
+        let Some(message) = sub.ended.take() else {
+            return;
+        };
+        sub.rt.focus = false;
+        self.rt.focus = true;
+        self.rt.sub_running = false;
+        let Some(message) = message else {
+            return;
+        };
+        let title = "=== From subinterpreter ===";
+        let rule = "=".repeat(title.len());
+        for line in [title, &message, &rule] {
+            self.print_line(&line.encode_utf16().collect::<Vec<_>>());
+        }
+        if again && self.vm.is_none() && self.rt.direct {
+            self.rt.direct_input_start();
         }
     }
 
     /// On the sub interpreter: the program is over, and the main
     /// interpreter is told.
-    fn end_sub(&mut self, error: Option<Error>) {
+    fn end_sub(&mut self, message: Option<String>) {
         self.stepping = None;
         self.vm = None;
         self.halted = None;
@@ -1493,20 +1527,21 @@ impl Machine {
         self.rt.cancel_input();
         self.rt.cancel_confirm();
         self.rt.clear_input();
-        self.ended = Some(error);
+        self.ended = Some(message);
     }
 
-    /// What ENVSTAT gives for an error in a slot: its number, argument,
-    /// slot, character from the start of the program, and line.
-    // UNVERIFIED: the error numbers, which are 1 here for every error, and
-    // the argument, 0.
+    /// What ENVSTAT gives for an error in a slot: its number, argument
+    /// (-1 when not known), slot, character of the statement from the
+    /// start of the program, counting from 0, and line.
+    // SmileBASIC 4 numbers its errors (Divide by zero is 7); here every
+    // error is 1. UNVERIFIED: which errors know their argument.
     fn error_place(&self, slot: usize, e: &Error) -> [i32; 5] {
         let before: usize = (self.rt.slots[slot].split_inclusive('\n'))
             .take(e.line.saturating_sub(1) as usize)
             .map(|l| l.encode_utf16().count())
             .sum();
-        let at = before + e.col as usize;
-        [1, 0, slot as i32, at as i32, e.line as i32]
+        let at = before + (e.col as usize).saturating_sub(1);
+        [1, -1, slot as i32, at as i32, e.line as i32]
     }
 
     /// The main interpreter's state for ENVSTAT.
@@ -1563,14 +1598,14 @@ impl Machine {
         if std::mem::take(&mut sub.rt.focus_moved) {
             self.rt.focus = !sub.rt.focus;
         }
-        // UNVERIFIED: that the focus comes back when the subprogram ends.
-        if let Some(error) = sub.ended.take() {
-            sub.rt.focus = false;
-            self.rt.focus = true;
-            self.rt.sub_running = false;
-            if let Some(e) = error {
-                self.rt.notices.push(format!("Subprogram: {e}"));
-            }
+        if std::mem::take(&mut self.rt.forget_stop) {
+            self.forget_halted();
+        }
+        self.sub_ended(true);
+        if let Some(sub) = &mut self.sub {
+            let running = sub.vm.is_some();
+            sub.rt.dimmed = running && !sub.rt.focus;
+            self.rt.dimmed = running && sub.rt.focus;
         }
     }
 
@@ -1578,8 +1613,7 @@ impl Machine {
     /// shows, as x, y, width and height, while it shows. Where its
     /// BACKCOLOR is clear, it is too, with its colors premultiplied.
     // SmileBASIC 4's own SMILETOOL ends without hiding its screen, so it
-    // goes when the subprogram ends. UNVERIFIED: whether SUBSTOP hides it
-    // too.
+    // goes when the subprogram ends, as it does after an error or SUBSTOP.
     pub fn sub_screen(&mut self) -> Option<(&Framebuffer, [i32; 4])> {
         let sub = (self.sub.as_mut()).filter(|s| self.sub_shown && s.vm.is_some())?;
         let rect = sub.rt.sub_screen?;
@@ -1609,7 +1643,9 @@ impl Machine {
     /// SUBSTOP, for the frontend's menu.
     pub fn stop_sub(&mut self) {
         self.substop();
-        self.run_sub(Duration::ZERO);
+        if self.vm.is_none() && self.rt.direct {
+            self.rt.direct_input_start();
+        }
     }
 
     /// The sound mixed since the last call, the subprogram's with the

@@ -101,14 +101,10 @@ Without them:
   direct mode. Run > "Switch keys to/from subprogram" moves the focus as
   `ENVFOCUS` does, and Run > "Stop subprogram" does `SUBSTOP`, so a
   subprogram cannot keep the keys from direct mode.
-- When a subprogram ends, the main program gets the focus back, and an
-  error it ended with shows as a notice rather than on a screen.
 - `ENVSTAT`'s error number is 1 for every error, and its argument
-  number 0. `ENVSTAT 0` leaves a stopped program able to go on with
-  `CONT`.
-- `ENVLOCATE OUT X,Y`, which is not in the manual, gives where the
-  console's cursor is on the 1280x720 display, also while the editor is
-  open.
+  number -1.
+- `ENVLOCATE OUT X,Y`, which is not in the manual, follows the
+  console's cursor also while the editor is open.
 - `HELPINFO OUT` looks for a command where the editor's cursor was when
   the program started, since no subprogram runs beside the editor. It
   and `HELPGET` need SmileBASIC 4's help imported.
@@ -120,7 +116,8 @@ Without them:
   following `XSCREEN`.
 - On a layer with `LMATRIX`'s 4x4 form, text screens show only as far as
   one screen past each edge of the screen, before the matrix moves them,
-  to keep the memory they take bounded. Sprites have no such limit.
+  to keep the memory they take bounded. SmileBASIC 4 shows them
+  wherever they are, as it does sprites.
 
 ## Editor
 
