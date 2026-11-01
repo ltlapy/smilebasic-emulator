@@ -420,29 +420,37 @@ impl Runtime {
                 s.set_def(n as i32, &def);
                 Ok(vec![])
             }
-            (Command::Spchr, Want::Outs(0), 3..=6) => {
+            (Command::Spchr, Want::Outs(0), n @ 3..=6) => {
                 let field = |i: usize| args.get(i).map(opt_int).transpose().map(Option::flatten);
-                let (u, v, w, h, attr) = (field(1)?, field(2)?, field(3)?, field(4)?, field(5)?);
+                let (u, v) = (field(1)?, field(2)?);
+                // SPCHR ID,U,V,ATTR takes its fourth argument as the
+                // attributes; the six-argument form puts its W into H and
+                // its H into W, and the five-argument form fills an empty
+                // W from H and an empty H from W.
+                let (w, h, attr) = match n {
+                    3 => (None, None, None),
+                    4 => (None, None, field(3)?),
+                    5 => (field(3)?, field(4)?, None),
+                    _ => (field(4)?, field(3)?, field(5)?),
+                };
                 for (size, what) in [(w, "width"), (h, "height")] {
                     if let Some(n) = size.filter(|n| !(0..=2048).contains(n)) {
                         return Err(out_of_range(what, n));
                     }
                 }
+                // UNVERIFIED: the highest attribute value accepted.
+                if let Some(a) = attr.filter(|a| !(0..=0x1F).contains(a)) {
+                    return Err(out_of_range("attribute", a));
+                }
                 let s = self.sprite(&args[0])?;
                 stop(s, Target::Uv);
-                // Omitted U and V stay. W, H and the attributes left off
-                // the end become 16, 16 and 0, as the reference
-                // describes; an empty slot before a later argument keeps
-                // the sprite's own value, so `SPCHR ID,,,,,#A_REVH` only
-                // flips the sprite.
-                // UNVERIFIED: that W and H left off the end become 16
-                // rather than staying too.
-                let given = |i: usize| i < args.len();
                 s.u = u.unwrap_or(s.u);
                 s.v = v.unwrap_or(s.v);
-                s.w = w.unwrap_or(if given(3) { s.w } else { 16 });
-                s.h = h.unwrap_or(if given(4) { s.h } else { 16 });
-                s.attr = attr.unwrap_or(if given(5) { s.attr } else { 0 });
+                (s.w, s.h, s.attr) = match n {
+                    3 | 4 => (16, 16, attr.unwrap_or(0)),
+                    5 => (w.unwrap_or(s.h), h.unwrap_or(s.w), 0),
+                    _ => (w.unwrap_or(s.w), h.unwrap_or(s.h), attr.unwrap_or(s.attr)),
+                };
                 Ok(vec![])
             }
             (Command::Spchr, Want::Outs(n @ (2 | 4 | 5)), 1) => {

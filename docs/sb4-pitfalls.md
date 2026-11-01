@@ -326,10 +326,18 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `SPCHR` during `"UV"` or `"I"`, `SPROT` during `"R"`, `SPSCALE`
   during `"S"` and `SPOFS` during `"Z"`.
 - Spaces after an animation target's name are left out (`"S "`).
-- The manual says W and H of `SPCHR id,[U],[V],[W],[H],[attr]` become
-  16 when omitted, but empty slots before a later argument keep the
-  sprite's size: `SPCHR id,,,,,#A_REVH` only turns a 24x32 sprite
-  around (a published game relies on it).
+- `SPCHR` reads its arguments by how many there are (TEST45), not as the
+  manual's `SPCHR id,[U],[V],[W],[H],[attr]`. Empty U and V always keep
+  the sprite's own.
+  - `SPCHR id,U,V` sets W and H to 16 and the attributes to 0.
+  - `SPCHR id,U,V,attr`: the fourth argument is the attributes (W and H
+    become 16), so `SPCHR 1,,,40` is Out of range on argument 4.
+  - `SPCHR id,U,V,W,H` sets the attributes to 0; an empty W takes the
+    sprite's H and an empty H its W.
+  - `SPCHR id,U,V,W,H,attr` swaps them: the fourth argument becomes H and
+    the fifth W (`SPCHR 1,8,8,40,50,5` reads back W 50, H 40). Empty
+    slots keep the sprite's own values, so `SPCHR id,,,,,#A_REVH` only
+    turns a sprite around (a published game relies on it).
 
 ## Graphics and layers
 

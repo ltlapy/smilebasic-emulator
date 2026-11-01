@@ -51,27 +51,44 @@ fn image_forms_show_hide_and_clear() {
     let (m, out) = run("SPSET 1,32,48,24,8,4,0\n\
          SPCHR 1 OUT U,V,W,H,A\n\
          ?U;V;W;H;A;SPSHOW(1);SPHIDE(1);\" \";\n\
-         SPSHOW 1:SPCHR 1,,,32:SPCHR 1 OUT U,V,W,H\n\
+         SPSHOW 1:SPCHR 1,,,3:SPCHR 1 OUT U,V,W,H\n\
          ?U;V;W;H;SPSHOW(1);\" \";\n\
          ID=SPSET(100,98,7):?ID;SPSET(3);\" \";\n\
          SPCLR 2,99:?SPUSED(1);SPUSED(100);\n\
          SPCLR:?SPUSED(4095)");
-    assert_eq!(out, "3248248401 324832161 1000 111");
+    assert_eq!(out, "3248248401 324816161 1000 111");
     assert!(!m.rt.sprites.list[0].used);
 }
 
 #[test]
-fn empty_image_slots_keep_the_size() {
-    // `SPCHR ID,,,,,#A_REVH` only turns a sprite around; W and H left
-    // empty before a later argument are not reset to 16.
-    let (_, out) = run("SPSET 1,32,48,24,32,4,0\n\
-         SPCHR 1,,,,,#A_REVH:SPCHR 1 OUT U,V,W,H,A\n\
-         ?U;\",\";V;\",\";W;\",\";H;\",\";A;\" \";\n\
-         SPCHR 1,,,40,,:SPCHR 1 OUT U,V,W,H,A\n\
-         ?W;\",\";H;\",\";A;\" \";\n\
-         SPCHR 1,,,40:SPCHR 1 OUT U,V,W,H,A\n\
-         ?W;\",\";H;\",\";A");
-    assert_eq!(out, "32,48,24,32,4 40,32,4 40,16,0");
+fn image_forms_by_argument_count() {
+    // From SPSET 1,32,48,24,32,1, each form reads back U,V,W,H,A as SB4
+    // gave them.
+    let forms = [
+        ("1,,,5", "32 48 16 16 5"),
+        ("1,8,8,4", "8 8 16 16 4"),
+        ("1,0,0", "0 0 16 16 0"),
+        ("1,,", "32 48 16 16 0"),
+        ("1,,,40,50", "32 48 40 50 0"),
+        ("1,,,40,", "32 48 40 24 0"),
+        ("1,,,,40", "32 48 32 40 0"),
+        ("1,8,8,40,50,5", "8 8 50 40 5"),
+        ("1,,,40,50,", "32 48 50 40 1"),
+        ("1,,,40,,", "32 48 24 40 1"),
+        ("1,,,40,,5", "32 48 24 40 5"),
+        ("1,,,,40,5", "32 48 40 32 5"),
+        ("1,,,,,", "32 48 24 32 1"),
+        ("1,,,,,#A_REVH", "32 48 24 32 4"),
+    ];
+    for (form, want) in forms {
+        let (_, out) = run(&format!(
+            "SPSET 1,32,48,24,32,1:SPCHR {form}:SPCHR 1 OUT U,V,W,H,A\n\
+             ?U;\" \";V;\" \";W;\" \";H;\" \";A"
+        ));
+        assert_eq!(out, want, "SPCHR {form}");
+    }
+    let (_, out) = run("SPSET 1,0:SPCHR 1,,,40");
+    assert!(out.contains("Out of range"), "{out}");
 }
 
 #[test]
