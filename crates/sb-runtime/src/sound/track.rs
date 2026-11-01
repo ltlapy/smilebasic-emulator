@@ -18,6 +18,8 @@ const QUARTER: u32 = WHOLE / 4;
 /// Commands a channel may run on one tick before it is taken to be stuck
 /// in a loop that plays nothing.
 const COMMANDS_PER_TICK: u32 = 10_000;
+/// Samples in a unit of an LFO's delay: 40 ms, whatever the tempo.
+const LFO_DELAY_UNIT: u32 = RATE / 25;
 /// What a channel plays with, from @.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Voice {
@@ -394,14 +396,11 @@ impl Track {
     /// Sets @MP's, @MA's or @ML's depth, range, speed and delay.
     fn set_lfo(&mut self, c: usize, target: LfoTarget, v: [Num; 4]) {
         let [depth, range, speed, delay] = v.map(|n| self.var(n).clamp(0, 128));
-        // UNVERIFIED: the delay's unit, taken as five ticks: @MP7,1,7,48
-        // did not move within 1.5 s at T120 (TEST40).
-        let tick = f64::from(RATE) * 60.0 / f64::from(self.tempo * QUARTER);
         let lfo = Lfo {
             depth,
             range,
             speed,
-            delay: (f64::from(delay * 5) * tick) as u32,
+            delay: delay as u32 * LFO_DELAY_UNIT,
         };
         self.channels[c].lfo_set[target as usize] = lfo;
         self.apply_lfo(c, target, true);
@@ -515,7 +514,8 @@ impl Track {
                 Cmd::VibratoOff => self.apply_lfo(c, LfoTarget::Pitch, false),
                 Cmd::TremoloOff => self.apply_lfo(c, LfoTarget::Volume, false),
                 Cmd::PanWaveOff => self.apply_lfo(c, LfoTarget::Pan, false),
-                // UNVERIFIED: that @MON turns the LFOs back on.
+                // @MON sends the last settings of all three again.
+                // UNVERIFIED: that @MOF turns all three off.
                 Cmd::ModulationOn | Cmd::ModulationOff => {
                     let on = matches!(cmds[pc], Cmd::ModulationOn);
                     for target in [LfoTarget::Pitch, LfoTarget::Volume, LfoTarget::Pan] {

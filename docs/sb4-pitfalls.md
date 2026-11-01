@@ -470,7 +470,10 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   of its middle, and `@ML24,2,7,0` moves the sound right first, each
   side between about 0.77 and 1.2 of the middle's level, which fits
   gains of sqrt((1-p)/2) and sqrt((1+p)/2) for a pan p of -1 to 1.
-  `@MP7,1,7,48` did not move within 1.5 s at T120.
+  The delay counts 40 ms a unit whatever the tempo, and the wave starts
+  from its middle once it has passed: `@MP7,1,7,48` did not move within
+  1.5 s at T120. `@MON` turns all
+  three back on as last set.
 - `RECSTART` records the sound before the effector, or the effector
   did nothing: a short note recorded alike, to the unit, with `EFCEN`
   off, with `#EFCCAVE` at `EFCWET 0,127,0,0`, with a hall set by
