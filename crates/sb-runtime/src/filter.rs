@@ -305,13 +305,20 @@ fn box_rows(half: &mut [u32], w: usize, r: usize, line: &mut Vec<u32>) {
     for row in half.chunks_exact_mut(w) {
         line.clear();
         line.extend_from_slice(row);
-        let get = |i: usize| lanes(line[i.min(w - 1)]);
+        let get = |i: usize| line[i.min(w - 1)];
         // Before the row, its first pixel again.
-        let mut sum = lanes(line[0]) * r as u128 + (0..=r).map(get).sum::<u128>();
+        let mut sum = lanes(line[0]) * r as u128 + (0..=r).map(|i| lanes(get(i))).sum::<u128>();
+        let mut out = mean(sum);
         for (i, o) in row.iter_mut().enumerate() {
-            *o = mean(sum);
-            sum += get(i + r + 1);
-            sum -= lanes(line[i.saturating_sub(r)]);
+            *o = out;
+            // Where the same color comes in as goes out, as across most
+            // of a frame, the sum and so the mean stay as they are.
+            let (enter, leave) = (get(i + r + 1), line[i.saturating_sub(r)]);
+            if enter != leave {
+                sum += lanes(enter);
+                sum -= lanes(leave);
+                out = mean(sum);
+            }
         }
     }
 }
@@ -326,6 +333,8 @@ fn box_columns(half: &mut [u32], w: usize, r: usize, copy: &mut Vec<u32>) {
         let y = y.clamp(0, h as isize - 1) as usize;
         &copy[y * w..y * w + w]
     };
+    let mean =
+        |s: &[u32; 4]| u32::from_be_bytes(s.map(|s| ((s * inv + (1 << 23)) >> 24).min(255) as u8));
     let mut sum = vec![[0u32; 4]; w];
     for k in -(r as isize)..=r as isize {
         for (s, &p) in sum.iter_mut().zip(row(k)) {
@@ -333,18 +342,99 @@ fn box_columns(half: &mut [u32], w: usize, r: usize, copy: &mut Vec<u32>) {
             (0..4).for_each(|ch| s[ch] += c[ch]);
         }
     }
+    let mut means: Vec<u32> = sum.iter().map(mean).collect();
     for (y, out) in half.chunks_exact_mut(w).enumerate() {
         let y = y as isize;
-        for (o, s) in out.iter_mut().zip(&sum) {
-            *o = u32::from_be_bytes(s.map(|s| ((s * inv + (1 << 23)) >> 24).min(255) as u8));
-        }
-        for ((s, &a), &b) in sum
-            .iter_mut()
-            .zip(row(y + r as isize + 1))
-            .zip(row(y - r as isize))
-        {
+        out.copy_from_slice(&means);
+        let (enter, leave) = (row(y + r as isize + 1), row(y - r as isize));
+        for (((s, m), &a), &b) in sum.iter_mut().zip(&mut means).zip(enter).zip(leave) {
+            // The same color coming in as going out leaves the mean.
+            if a == b {
+                continue;
+            }
             let (a, b) = (channels(a), channels(b));
             (0..4).for_each(|ch| s[ch] = s[ch] + a[ch] - b[ch]);
+            *m = mean(s);
+        }
+    }
+}
+
+/// The channels of a color, one to each 16 bits: blue, red, green and
+/// alpha from the bottom.
+#[inline]
+fn spread(c: u32) -> u64 {
+    let c = u64::from(c);
+    c & 0x00FF_00FF | (c >> 8 & 0x00FF_00FF) << 32
+}
+
+/// What [`box_rows`] and [`box_columns`] make of each sum of a box `r`
+/// each way, by the sum.
+fn box_means(r: usize) -> Vec<u8> {
+    let n = 2 * r as u32 + 1;
+    let inv = (1u32 << 24) / n;
+    (0..=n * 255)
+        .map(|s| ((s * inv + (1 << 23)) >> 24).min(255) as u8)
+        .collect()
+}
+
+/// The color whose channels are the means of the sums in [`spread`]'s
+/// lanes, from [`box_means`].
+#[inline]
+fn box_mean(means: &[u8], sum: u64) -> u32 {
+    let m = |lane: u32| u32::from(means[(sum >> (16 * lane) & 0xFFFF) as usize]);
+    m(0) | m(2) << 8 | m(1) << 16 | m(3) << 24
+}
+
+/// [`box_rows`] for a box narrow enough that its sums fit [`spread`]'s
+/// lanes, with one added before one is taken away.
+fn box_rows_narrow(half: &mut [u32], w: usize, r: usize, means: &[u8], line: &mut Vec<u32>) {
+    for row in half.chunks_exact_mut(w) {
+        line.clear();
+        line.extend_from_slice(row);
+        let get = |i: usize| line[i.min(w - 1)];
+        // Before the row, its first pixel again.
+        let mut sum = spread(line[0]) * r as u64 + (0..=r).map(|i| spread(get(i))).sum::<u64>();
+        let mut out = box_mean(means, sum);
+        for (i, o) in row.iter_mut().enumerate() {
+            *o = out;
+            // Where the same color comes in as goes out, as across most
+            // of a frame, the sum and so the mean stay as they are.
+            let (enter, leave) = (get(i + r + 1), line[i.saturating_sub(r)]);
+            if enter != leave {
+                sum = sum + spread(enter) - spread(leave);
+                out = box_mean(means, sum);
+            }
+        }
+    }
+}
+
+/// [`box_columns`] for a box narrow enough that its sums fit
+/// [`spread`]'s lanes, with one added before one is taken away.
+fn box_columns_narrow(half: &mut [u32], w: usize, r: usize, means: &[u8], copy: &mut Vec<u32>) {
+    let h = half.len() / w;
+    copy.clear();
+    copy.extend_from_slice(half);
+    let row = |y: isize| {
+        let y = y.clamp(0, h as isize - 1) as usize;
+        &copy[y * w..y * w + w]
+    };
+    let mut sum = vec![0u64; w];
+    for k in -(r as isize)..=r as isize {
+        for (s, &p) in sum.iter_mut().zip(row(k)) {
+            *s += spread(p);
+        }
+    }
+    let mut out: Vec<u32> = sum.iter().map(|&s| box_mean(means, s)).collect();
+    for (y, to) in half.chunks_exact_mut(w).enumerate() {
+        let y = y as isize;
+        to.copy_from_slice(&out);
+        let (enter, leave) = (row(y + r as isize + 1), row(y - r as isize));
+        for (((s, o), &a), &b) in sum.iter_mut().zip(&mut out).zip(enter).zip(leave) {
+            // The same color coming in as going out leaves the mean.
+            if a != b {
+                *s = *s + spread(a) - spread(b);
+                *o = box_mean(means, *s);
+            }
         }
     }
 }
@@ -410,9 +500,19 @@ fn blur(fb: &mut Framebuffer, amount: u32) {
                 .round()
                 .max(1.0) as usize;
             let mut scratch = Vec::new();
-            for _ in 0..2 {
-                box_rows(&mut half, hw, b, &mut scratch);
-                box_columns(&mut half, hw, b, &mut scratch);
+            // Sums of a box's channels fit 16 bits up to this width, so
+            // all four can be added at once.
+            if (2 * b + 2) * 255 <= 0xFFFF {
+                let means = box_means(b);
+                for _ in 0..2 {
+                    box_rows_narrow(&mut half, hw, b, &means, &mut scratch);
+                    box_columns_narrow(&mut half, hw, b, &means, &mut scratch);
+                }
+            } else {
+                for _ in 0..2 {
+                    box_rows(&mut half, hw, b, &mut scratch);
+                    box_columns(&mut half, hw, b, &mut scratch);
+                }
             }
         } else {
             let mut kernel: Vec<u32> = raw
@@ -503,6 +603,35 @@ fn shift_color(p: u32, hue: f64, saturation: f64, value: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_boxes_blur_as_wide_ones() {
+        let mut seed = 0x0BAD_F00D_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let (w, h) = (37, 29);
+        // Runs of one color, as frames have, and noise.
+        let pixels: Vec<u32> = (0..w * h)
+            .map(|i| match i % 11 < 6 {
+                true => 0xFF10_2030,
+                false => next(),
+            })
+            .collect();
+        for r in [1, 3, 12, 40] {
+            let (mut narrow, mut wide) = (pixels.clone(), pixels.clone());
+            let mut scratch = Vec::new();
+            let means = box_means(r);
+            box_rows_narrow(&mut narrow, w, r, &means, &mut scratch);
+            box_columns_narrow(&mut narrow, w, r, &means, &mut scratch);
+            box_rows(&mut wide, w, r, &mut scratch);
+            box_columns(&mut wide, w, r, &mut scratch);
+            assert_eq!(narrow, wide, "r {r}");
+        }
+    }
 
     fn frame(pixels: &[u32], w: u32) -> Framebuffer {
         let mut fb = Framebuffer::new(w, pixels.len() as u32 / w);
