@@ -726,6 +726,10 @@ Checked with TTEST36.
 - An unknown `#constant` is `Undefined constant`.
 - `RETURN` with more than one value, as in a `DEF` with two `OUT`s, is a
   `Syntax error` when the program compiles.
+- `RETURN` with one value in a `DEF` that is not a function, also one
+  with an `OUT`, is accepted and the value ignored; under `OPTION STRICT`
+  it may even name a variable never declared (`RETURN UNDECLARED` in
+  `DEF T OUT Y`, SMILEBOY).
 
 - After an error, F4 puts the cursor at the start of the statement that
   failed, syntax errors included.

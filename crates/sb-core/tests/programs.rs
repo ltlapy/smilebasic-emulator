@@ -384,6 +384,14 @@ fn option_strict() {
 }
 
 #[test]
+fn return_value_in_a_command_def_is_ignored() {
+    // Not even compiled: OPTION STRICT does not see the undeclared name.
+    let src =
+        "OPTION STRICT\nVAR A\nT OUT A\n?A\nDEF T OUT Y\n Y=\"OK\"\n RETURN NOT_DECLARED\nEND";
+    assert_eq!(output(src), "OK\n");
+}
+
+#[test]
 fn inc_dec_swap() {
     assert_eq!(output("A=1:INC A:INC A,5:DEC A,2\n?A"), "5\n");
     assert_eq!(output("VAR X[2]:INC X[1],3:?X[1]"), "3\n");

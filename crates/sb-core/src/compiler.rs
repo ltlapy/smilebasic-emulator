@@ -777,13 +777,13 @@ impl Compiler<'_> {
             StmtKind::OnBreakGoto(l) => self.jump_to_label(Op::OnBreak(0), l),
             StmtKind::Return(None) => _ = self.emit(Op::Return),
             StmtKind::Return(Some(e)) => {
-                self.expr(e)?;
                 if self.def.as_ref().is_some_and(|d| d.is_function) {
+                    self.expr(e)?;
                     self.emit(Op::ReturnValue);
                 } else {
-                    // A bundled program returns a value from a command DEF.
-                    // UNVERIFIED: the value is discarded.
-                    self.emit(Op::Pop);
+                    // The value of a RETURN in a command DEF is ignored,
+                    // and not even compiled. UNVERIFIED: whether a function
+                    // called in it runs.
                     self.emit(Op::Return);
                 }
             }
