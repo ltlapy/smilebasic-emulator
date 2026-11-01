@@ -177,20 +177,20 @@ impl TextScreen {
     }
 
     /// TSCREEN also takes the screen's look back to the start: its
-    /// animations stop, and THOME, TROT, TSCALE and TCOLOR are undone.
-    /// Programs rely on it: one seen on hardware leaves a screen faded out
-    /// by TANIM "C", turning and with THOME set before TSCREEN, and shows
-    /// it plain after.
-    // UNVERIFIED: which settings go back. That program shows that the
-    // animations, home, rotation and colour do (XSCREEN, the only other
-    // candidate, keeps the text screens' settings by the manual); scale
-    // going too is a guess. TOFS, TLAYER, TBLEND, TPAGE, TVAR and TFUNC
-    // are assumed kept.
+    /// animations stop, THOME, TROT, TSCALE and TCOLOR are undone, and
+    /// TOFS goes back to 0,0 at the same depth.
+    // UNVERIFIED: that TLAYER, TBLEND, TPAGE, TVAR and TFUNC are kept.
     pub fn restart_look(&mut self) {
         self.home = (0.0, 0.0);
         self.rot = 0.0;
         self.scale = (1.0, 1.0);
         self.tint = WHITE;
+        self.pos = (0.0, 0.0);
+        self.stop_anims();
+    }
+
+    /// XSCREEN stops the screen's animations where they are.
+    pub fn stop_anims(&mut self) {
         self.anims = Default::default();
         self.anim_stopped = false;
     }

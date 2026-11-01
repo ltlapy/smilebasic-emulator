@@ -231,5 +231,16 @@ fn tscreen_undoes_the_screens_look() {
     .unwrap();
     let t = &rt.text[0];
     assert_eq!((t.home, t.rot, t.scale), ((0.0, 0.0), 0.0, (1.0, 1.0)));
-    assert_eq!(row(&rt, 4, 0, 16).trim_end_matches('.'), "FFFFFFFF0567");
+    assert_eq!(row(&rt, 4, 0, 16).trim_end_matches('.'), "FFFFFFFF0007");
+}
+
+#[test]
+fn xscreen_stops_text_animations_and_keeps_the_look() {
+    let rt = run("DIM A[]=[-10,-1],B[]=[-10,45]\n\
+         TANIM 0,\"C\",A,0:TANIM 0,\"R\",B,0:TCOLOR 0,RGB(255,0,0)\n\
+         THOME 0,8,4:TROT 0,30:TSCALE 0,2,2:TOFS 0,5,6,7\n\
+         XSCREEN 400,240:THOME 0 OUT HX,HY:TOFS 0 OUT X,Y,Z\n\
+         ?HEX$(TCOLOR(0));TCHK(0);HX;HY;TROT(0);X;Y;Z")
+    .unwrap();
+    assert_eq!(row(&rt, 4, 0, 20).trim_end_matches('.'), "FFFF000008430567");
 }

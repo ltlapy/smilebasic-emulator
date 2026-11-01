@@ -553,6 +553,7 @@ impl Runtime {
                     filter,
                     aspect,
                 });
+                self.text.iter_mut().for_each(|t| t.stop_anims());
                 Ok(vec![])
             }
             (Command::Xscreen, Want::Outs(n @ 2..=5), 0) => {

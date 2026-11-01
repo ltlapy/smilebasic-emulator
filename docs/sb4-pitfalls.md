@@ -260,8 +260,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `XSCREEN` clears the console, puts its cursor at 0,0, and resizes
   `#GSPRITE` to the new screen. `#GSPRITE` goes to the layer `SPLAYER`
   gives new sprites, whatever layer it was on.
+- `XSCREEN` stops the text screens' `TANIM` animations (`TCHK` gives 0)
+  and keeps their `THOME`, `TROT`, `TSCALE`, `TOFS` and `TCOLOR`.
 - `TSCREEN` clears the screen. Without a character size it uses the
-  font type. An array from `TARRAY` takes the new size and goes on
+  font type. It also stops the screen's animations and undoes `THOME`,
+  `TROT`, `TSCALE` and `TCOLOR`; `TOFS` goes back to 0,0 but keeps its
+  depth. An array from `TARRAY` takes the new size and goes on
   following the screen.
 - `CHR$(10)` starts a new line; tab stops are every 4 columns.
 - `TPUT` off the screen is `Out of range`; `CHKCHR` off the screen gives
