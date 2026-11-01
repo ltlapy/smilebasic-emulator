@@ -1551,6 +1551,24 @@ mod tests {
         after.draw_tip(&mut overlay, &font);
         assert_eq!(after.hits, before.hits);
         assert_eq!(after.frame, before.frame);
+        // The GRP tab's page goes where it went.
+        let grp = View {
+            tabs: vec![Tab::Globals(0), Tab::Grp],
+            ..busy_view(7)
+        };
+        (before.tab, after.tab) = (Some(Tab::Grp), Some(Tab::Grp));
+        before.draw_at(&mut display, &font, f, Some((400, 240)), &grp, 2);
+        after.draw(&mut panel, &font, f, Some((400, 240)), &grp, 2);
+        assert!(before.grp.shown().is_some());
+        assert_eq!(after.grp.shown(), before.grp.shown());
+        assert_eq!(after.hits, before.hits);
+        // Back to the variables, whose tip is checked below.
+        let (mut display, mut panel) = (Framebuffer::new(1280, 720), Framebuffer::new(f.w, f.h));
+        display.clear(0);
+        (before.tab, after.tab) = (None, None);
+        before.draw_at(&mut display, &font, f, Some((400, 240)), &view, 2);
+        before.draw_tip(&mut display, &font);
+        after.draw(&mut panel, &font, f, Some((400, 240)), &view, 2);
         // The overlay goes over the panel, opaque where it is drawn.
         for y in 0..720 {
             for x in 0..1280 {
