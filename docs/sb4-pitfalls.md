@@ -602,6 +602,10 @@ Checked with TTEST36.
   This is found when the call runs, not when the program compiles, so
   the lines before it run. `HSV` with one argument is `Wrong number of
   OUT arguments`: it is read as the `OUT` form.
+- `RETURN 1,2` (more than one value) is a `Syntax error` only when it
+  runs: a program with one in a DEF it never calls runs normally
+  (KRB_OGIRI_SMBOMB). A bare `GOTO` or `GOSUB` likewise runs the lines
+  before it and stops there with `Type mismatch` (TTEST39).
 - `HSV` and `HSVF` as functions need all three of H, S and V: two are
   `Wrong number of arguments`, and empty ones (`HSV(120,,)`) are `Type
   mismatch`. The `OUT` form needs at least three results too; fewer is

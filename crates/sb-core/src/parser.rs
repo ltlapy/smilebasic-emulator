@@ -399,10 +399,7 @@ impl Parser {
             K::Return if self.at_stmt_end() => StmtKind::Return(None),
             K::Return => {
                 let value = self.expr()?;
-                // RETURN with more values is a Syntax error on hardware,
-                // but a published program with one in a DEF it never
-                // calls runs there, so it fails only when it runs.
-                // UNVERIFIED: that it is not refused before running.
+                // RETURN with more values is a Syntax error when it runs.
                 if self.eat(&TokenKind::Comma) {
                     self.expr()?;
                     while self.eat(&TokenKind::Comma) {
