@@ -474,7 +474,9 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   to a quarter note) and at least one: at T120 a `C4` is let go after
   10 ms with `Q0`, 135 with `Q8`, 250 with `Q16`, 375 with `Q24`, and
   `Q32` holds it all. A waveform with attack 127 is at full level from
-  its first sample.
+  its first sample. An instrument's note also starts at the level of
+  its first 5 ms step rather than rising from silence: `@0`'s C4 passes
+  64 by its 11th sample.
 - `@MP`, `@MA` and `@ML` (depth d, range r, speed s, delay t) swing a
   sine of d/128 times r units at s/2.56 Hz, starting upward: a unit is
   a semitone of pitch, 6 dB of volume, or the pan from the middle to one

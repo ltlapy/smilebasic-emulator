@@ -331,6 +331,8 @@ struct Voice {
     envelope: Envelope,
     /// Samples into the current envelope step.
     in_tick: usize,
+    /// Whether the first step has been taken.
+    begun: bool,
     gains: [f32; 2],
     deltas: [f32; 2],
     lfos: Lfos,
@@ -384,6 +386,12 @@ impl Voice {
         };
         let [l, r] = pan_gains(pan_position(ch.pan + i32::from(self.region.pan) - 64) + pan);
         let target = [gain * l, gain * r];
+        if !self.begun {
+            // The note starts at its first step's level, as waveforms do:
+            // @0's C4 sounded from its 11th sample (TEST40).
+            self.begun = true;
+            self.gains = target;
+        }
         self.deltas = [0, 1].map(|i| (target[i] - self.gains[i]) / TICK as f32);
         let cents = ch.bend as f32 + cents + self.porta;
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
@@ -507,6 +515,7 @@ impl Synth for Sampler {
                 None => region.envelope,
             }),
             in_tick: 0,
+            begun: false,
             gains: [0.0; 2],
             deltas: [0.0; 2],
             lfos: Lfos::default(),
