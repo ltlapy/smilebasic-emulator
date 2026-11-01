@@ -17,9 +17,12 @@
 //! - `menu`, `help`, `about`, `colors`, `toast`: shows the menu bar (as
 //!   F8 does), the help beside the editor, the About dialog, the editor
 //!   colors window, or a notice, once the rest is set up;
-//! - `slow=MS`: makes each present of the main window that waits for
-//!   vsync take MS milliseconds more, as a compositor that throttles a
-//!   covered window does (SDL's Wayland backend waits up to 50 ms).
+//! - `slow=MS`: from when the timing begins, makes each present of the
+//!   main window that waits for vsync take MS milliseconds more, as a
+//!   compositor that throttles a covered window does (SDL's Wayland
+//!   backend waits up to 50 ms);
+//! - `occluded`: from then too, has the main window count as covered, as
+//!   the system reports it when it can.
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed and what the sound device's buffer went through, so
@@ -77,6 +80,7 @@ pub struct Bench {
     shot: Option<String>,
     /// Added to each present that waits for vsync.
     slow: Duration,
+    occluded: bool,
     /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
     extras: Vec<String>,
     /// Frames since the start.
@@ -117,6 +121,7 @@ impl Bench {
                     "editor" => bench.editor = true,
                     "apart" => bench.apart = true,
                     "panel" => bench.panel = true,
+                    "occluded" => bench.occluded = true,
                     "menu" | "help" | "about" | "colors" | "toast" => {
                         bench.extras.push(part.to_string())
                     }
@@ -186,10 +191,15 @@ impl Bench {
         }
     }
 
+    /// Whether the main window is to count as covered.
+    pub fn occluded(&self) -> bool {
+        self.occluded && self.began.is_some()
+    }
+
     /// Stands for a compositor's throttling, after a present of the main
     /// window; `vsync` is whether it waits for vsync.
     pub fn present(&self, vsync: bool) {
-        if vsync && !self.slow.is_zero() {
+        if vsync && !self.slow.is_zero() && self.began.is_some() {
             std::thread::sleep(self.slow);
         }
     }

@@ -13,6 +13,7 @@ mod index;
 mod keyhint;
 mod layer;
 mod menu;
+mod pacing;
 mod popup;
 mod program_dialog;
 mod projects;
@@ -198,13 +199,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // ...and the project manager's, for importing and exporting.
     let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
     let mut canvas = window.into_canvas();
-    // Vsync paces frames on a 60 Hz display; on faster ones, or without
-    // vsync, the loop waits for the next frame's time itself.
-    // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
-    let vsync = unsafe { sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), 1) };
-    if !vsync {
-        eprintln!("vsync unavailable: {}", sdl3::get_error());
-    }
+    // Vsync paces frames on a 60 Hz display; on others, without vsync,
+    // or while the window is not shown, the loop goes by the clock.
+    let mut main_presents = pacing::Presents::new(&canvas, true);
+    let mut editor_presents = None;
+    // Whether the display shows about 60 frames a second, checked now
+    // and then as the window can move to another.
+    let mut at_60_hz = false;
+    let mut iterations = 0u32;
     let texture_creator = canvas.texture_creator();
     let mut mode = machine.screen_mode();
     let mut filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
@@ -288,7 +290,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut eat_text = false;
 
     let mut events = sdl.event_pump()?;
-    let mut next_frame = Instant::now();
+    let mut clock = pacing::Clock::new(Instant::now());
     // The left button went down on the editor and is still held.
     let mut dragging = false;
     // When the + button, F5 or a controller's, went down, while it is
@@ -433,6 +435,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             let editor_id = editor_gfx.get().map(|gfx| gfx.id);
             let from_editor = editor_id.is_some() && event.get_window_id() == editor_id;
+            // A window shown again tries vsync again.
+            if let Event::Window {
+                win_event:
+                    WindowEvent::Exposed
+                    | WindowEvent::Shown
+                    | WindowEvent::Restored
+                    | WindowEvent::FocusGained,
+                ..
+            } = event
+                && !from_editor
+            {
+                main_presents.retry(&canvas);
+            }
             if let (true, Event::Window { win_event, .. }) = (from_editor, &event) {
                 match win_event {
                     WindowEvent::FocusGained => editor_focused = true,
@@ -1633,20 +1648,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
         }
         audio.play(&machine.take_samples());
-        // Behind by a frame or more, as when drawing takes too long: the
+        // Behind by a frame or more, as when drawing takes too long or the
+        // compositor held a present back before vsync was dropped: the
         // program and its sound catch up, and only the last of these
         // frames is drawn, so that the game and its music keep time.
         // Those frames run code briefly, so that catching up does not
         // fall further behind.
         let mut skipped = 0;
-        while !paused && skipped < MOST_SKIPPED && Instant::now() >= next_frame + FRAME {
+        while !paused && skipped < MOST_SKIPPED && clock.behind(Instant::now()) {
             machine.time_limit = Some(CATCH_UP_RUN_TIME);
             machine.frame();
             if let Some(b) = &mut bench {
                 b.ran_frame();
             }
             audio.play(&machine.take_samples());
-            next_frame += FRAME;
+            clock.caught_up();
             skipped += 1;
         }
         // A step that waits for input needs the keys on the screen, and
@@ -2109,10 +2125,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         if let Some(b) = &bench {
             b.shoot(&canvas, "main");
         }
-        canvas.present();
-        if let Some(b) = &bench {
-            b.present(vsync);
-        }
+        let vsync = main_presents.vsync();
+        let presented = main_presents.present(&mut canvas, bench.as_ref());
         lap!(Present);
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
             let mut editor_canvas = gfx.canvas.borrow_mut();
@@ -2138,17 +2152,20 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if let Some(b) = &bench {
                 b.shoot(&editor_canvas, "editor");
             }
-            editor_canvas.present();
+            let presents =
+                editor_presents.get_or_insert_with(|| pacing::Presents::new(&editor_canvas, false));
+            presents.present(&mut editor_canvas, None);
             lap!(Present);
         }
-        next_frame += FRAME;
-        let now = Instant::now();
-        if next_frame > now {
-            std::thread::sleep(next_frame - now);
-        } else if now - next_frame > FRAME {
-            // Too far behind to catch up; carry on from now.
-            next_frame = now;
+        if iterations.is_multiple_of(60) {
+            at_60_hz = pacing::at_60_hz(canvas.window());
         }
+        iterations = iterations.wrapping_add(1);
+        // The frames follow the vsync of a display at about 60 Hz, when
+        // the present waited for it and was not so slow that vsync was
+        // dropped; otherwise they go by the clock.
+        let locked = presented && vsync && main_presents.vsync() && at_60_hz;
+        pacing::delay(clock.end(Instant::now(), locked));
     }
     // The editor's window, shown when quitting, opens there next time.
     let keep = machine.rt.settings.editor_window_keep_place;
