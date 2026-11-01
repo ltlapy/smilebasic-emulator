@@ -20,8 +20,9 @@ const ERROR: u32 = 0xFFF0_6060;
 const SELECTED: u32 = 0xFF30_3850;
 /// Every other row of the lists.
 const STRIPE: u32 = 0xFF24_2428;
-/// Characters of the calls' and watches' column, of a watch's
-/// expression, and of the variables' names and values.
+/// Characters of the calls' and watches' column, and of a watch's
+/// expression, in large text; small text keeps the column's width and
+/// fits twice as many.
 const CALL_CHARS: u32 = 20;
 const WATCH_CHARS: usize = 9;
 /// The most characters a variable's name takes before it is cut.
@@ -235,14 +236,14 @@ fn cut(text: &str, chars: usize) -> String {
     cut
 }
 
-fn call_text(call: &Call) -> String {
+fn call_text(call: &Call, chars: usize) -> String {
     let name = match &call.kind {
         CallKind::Top => "(top level)",
         CallKind::Def(name) => name,
         CallKind::Gosub => "GOSUB",
     };
     let at = format!(" {}:{}", call.slot, call.line);
-    let room = (CALL_CHARS as usize).saturating_sub(at.chars().count());
+    let room = chars.saturating_sub(at.chars().count());
     format!("{:<room$}{at}", cut(name, room))
 }
 
@@ -451,7 +452,9 @@ impl DebugPanel {
         m.draw(fb, font, cx, y + m.text, "CALLS", HEADING);
         y += m.line;
         let chosen = self.chosen_call(view.calls.len());
-        let call_w = CALL_CHARS * m.char + m.pad;
+        let call_chars = (CALL_CHARS * 2 / m.scale) as usize;
+        let watch_chars = WATCH_CHARS * 2 / m.scale as usize;
+        let call_w = call_chars as u32 * m.char + m.pad;
         let bottom = inner.y + inner.h - m.line;
         for (n, (i, call)) in view.calls.iter().enumerate().rev().enumerate() {
             if y + m.line > bottom {
@@ -468,7 +471,7 @@ impl DebugPanel {
             } else if n % 2 == 1 {
                 fill(fb, row, STRIPE);
             }
-            m.draw(fb, font, cx, y + m.text, &call_text(call), TEXT);
+            m.draw(fb, font, cx, y + m.text, &call_text(call, call_chars), TEXT);
             self.hits.push((row, Hit::Call(i)));
             y += m.line;
         }
@@ -501,9 +504,9 @@ impl DebugPanel {
             {
                 m.draw(fb, font, cx, y + m.text, &cursor(typed), TEXT);
             } else {
-                m.draw(fb, font, cx, y + m.text, &cut(expr, WATCH_CHARS), TEXT);
-                let x = cx + (WATCH_CHARS as u32 + 1) * m.char;
-                let room = CALL_CHARS as usize - WATCH_CHARS - 1;
+                m.draw(fb, font, cx, y + m.text, &cut(expr, watch_chars), TEXT);
+                let x = cx + (watch_chars as u32 + 1) * m.char;
+                let room = call_chars - watch_chars - 1;
                 let (text, color, whole) = match view.watches.get(i) {
                     Some(Ok(v)) => {
                         let (text, color) = value_text(v, room, self.hex);
@@ -513,7 +516,7 @@ impl DebugPanel {
                     None => (String::new(), TEXT, Vec::new()),
                 };
                 m.draw(fb, font, x, y + m.text, &text, color);
-                if expr.chars().count() > WATCH_CHARS || text.ends_with('…') {
+                if expr.chars().count() > watch_chars || text.ends_with('…') {
                     let mut lines = vec![format!("{expr} =")];
                     lines.extend(whole);
                     self.tips.push((row, lines));
