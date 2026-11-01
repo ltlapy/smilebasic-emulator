@@ -16,7 +16,7 @@ use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
 use crate::sound::seq::Kind;
-use crate::sound::wave::{Envelope, Wave};
+use crate::sound::wave::{Envelope, Wave, eight_bit};
 use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, Recorder, TRACKS, frames};
 
 /// The preset songs that end rather than loop, and their lengths in
@@ -348,19 +348,8 @@ impl Runtime {
                         Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform")
                     })?;
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
-                let samples: Vec<f32> = bytes
-                    .iter()
-                    .map(|&b| (f32::from(b) - 128.0) / 128.0)
-                    .collect();
-                let len = samples.len();
-                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(Wave {
-                    samples,
-                    base_note,
-                    rate: None,
-                    looped: (0, len),
-                    beep_loop: true,
-                    envelope,
-                }));
+                let wave = eight_bit(bytes.iter().map(|&b| f64::from(b)), base_note, envelope);
+                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(wave));
                 Ok(vec![])
             }
             // SmileBASIC 3's form: one cycle of 8-bit samples.
@@ -371,19 +360,8 @@ impl Runtime {
                 let last = all.len() as i32 - 1;
                 let start = opt_in_range("start", args.get(7), 0..=last, 0)? as usize;
                 let end = opt_in_range("end", args.get(8), start as i32..=last, last)? as usize;
-                let samples: Vec<f32> = all[start..=end]
-                    .iter()
-                    .map(|&x| (x as f32 - 128.0) / 128.0)
-                    .collect();
-                let len = samples.len();
-                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(Wave {
-                    samples,
-                    base_note,
-                    rate: None,
-                    looped: (0, len),
-                    beep_loop: true,
-                    envelope,
-                }));
+                let wave = eight_bit(all[start..=end].iter().copied(), base_note, envelope);
+                self.sound.waves.borrow_mut().user[n] = Some(Rc::new(wave));
                 Ok(vec![])
             }
             // A 16-bit sample with a loop and its own sample rate.
@@ -408,6 +386,7 @@ impl Runtime {
                     samples,
                     base_note,
                     rate: Some(f64::from(rate)),
+                    cycle: 0.0,
                     looped,
                     beep_loop,
                     envelope,

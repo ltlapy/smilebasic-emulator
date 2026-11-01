@@ -700,7 +700,6 @@ impl Track {
                 // A waveform WAVSET sets again changes the notes that
                 // sound with it, as programs that shape their waveforms
                 // each frame expect.
-                // UNVERIFIED: that SmileBASIC 4's sounding notes change.
                 if let Some(w) = waves.get(*program) {
                     v.follow(&w);
                 }

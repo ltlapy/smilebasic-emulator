@@ -439,6 +439,18 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - While `RECSTART` without a time records round its buffer, `RECDATA`
   positions go round it too (-1 is the last sample, `RECLEN()` the
   first); with a time, -1 is `Out of range`.
+- `WAVSET`'s waveform does not play as one cycle of the note. 32
+  samples of one cycle with reference pitch 69 play `O4A` at 55 Hz and
+  `O5A` 3600 cents below A5: three octaves down, so a pass of the
+  samples lasts eight cycles of the note. Songs written for SmileBASIC 4
+  repeat their cycles to fill eight (a 16-sample pattern of two cycles
+  times 4, one of a single cycle times 8, both at reference pitch 69).
+- `WAVSET` while a note of that instrument sounds changes the note at
+  once, keeping its envelope: a square swapped for a square of two
+  cycles doubles the pitch at the same level. A `WAVSET` square swapped
+  for a `WAVSETA` sine of the same length, though, went on near the
+  square's level (3015 to 3023 against 3063; the sine alone is 2257)
+  at twice the pitch, so the swap does not simply play the new samples.
 - MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
   length (`N60`), macro names with `_` and macros used inside a macro's
   definition (`{X=CDE}{Y={X}F}`).

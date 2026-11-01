@@ -14,8 +14,10 @@ pub struct Wave {
     pub samples: Vec<f32>,
     /// The note the waveform plays at as it is.
     pub base_note: i32,
-    /// Samples a second for a sample; `None` for one cycle of a wave.
+    /// Samples a second for a sample; `None` for a repeating wave, which
+    /// steps through `cycle` samples in one cycle of its base note.
     pub rate: Option<f64>,
+    pub cycle: f64,
     /// Where the loop starts and ends (exclusive).
     pub looped: (usize, usize),
     /// Whether BEEP loops it.
@@ -59,6 +61,34 @@ impl From<Envelope> for Adshr {
     }
 }
 
+/// An 8-bit sample's unit, full scale as a 16-bit sample's.
+// UNVERIFIED: that 8-bit and 16-bit samples share a scale.
+const EIGHT_BIT: f32 = 1.0 / 128.0;
+
+/// A user waveform from WAVSET or SmileBASIC 3's WAVSETA: 8-bit samples,
+/// offset by 128. SmileBASIC 4 plays a pass of the samples as eight
+/// cycles of the note, whatever their number: 32 samples of one cycle
+/// sound three octaves down (TEST40), and songs written for SmileBASIC 4
+/// repeat their cycles to fill eight. Past 512 samples the rate stays
+/// that of 512, 28160 Hz at A, the 16-bit form's own default.
+// UNVERIFIED: lengths other than 32, and the rate past 512 samples.
+pub fn eight_bit(bytes: impl IntoIterator<Item = f64>, base_note: i32, envelope: Envelope) -> Wave {
+    let samples: Vec<f32> = bytes
+        .into_iter()
+        .map(|b| (b as f32 - 128.0) * EIGHT_BIT)
+        .collect();
+    let len = samples.len();
+    Wave {
+        samples,
+        base_note,
+        rate: None,
+        cycle: len.min(512) as f64 / 8.0,
+        looped: (0, len),
+        beep_loop: true,
+        envelope,
+    }
+}
+
 /// The PSG's pulse widths for @216 to @222, as eighths of a cycle.
 // UNVERIFIED: SmileBASIC 4's PSG tones.
 const PULSES: [usize; 7] = [1, 2, 3, 4, 5, 6, 7];
@@ -70,6 +100,7 @@ pub fn pulse(program: i32) -> Wave {
         samples: (0..8).map(|i| if i < high { 0.5 } else { -0.5 }).collect(),
         base_note: 69,
         rate: None,
+        cycle: 8.0,
         looped: (0, 8),
         beep_loop: true,
         envelope: Envelope::ORGAN,
@@ -94,6 +125,7 @@ pub fn noise() -> Wave {
         base_note: 69,
         // The whole sound repeats too rarely to hear as a pitch.
         rate: Some(f64::from(RATE)),
+        cycle: 4096.0,
         looped: (0, 4096),
         beep_loop: true,
         envelope: Envelope::ORGAN,
@@ -194,10 +226,10 @@ impl Voice {
             .powf((f64::from(self.key - self.wave.base_note) * 100.0 + f64::from(cents)) / 1200.0);
         self.base_step = match self.wave.rate {
             Some(rate) => rate * ratio / f64::from(RATE),
-            // One cycle at the base note is A=440 Hz shifted to the note.
+            // A cycle at the base note is A=440 Hz shifted to the note.
             None => {
                 let freq = 440.0 * 2f64.powf(f64::from(self.wave.base_note - 69) / 12.0);
-                self.wave.samples.len() as f64 * freq * ratio / f64::from(RATE)
+                self.wave.cycle * freq * ratio / f64::from(RATE)
             }
         };
         self.step = self.base_step;
@@ -372,6 +404,19 @@ mod tests {
         let (l, r) = gains(127, 64, 0);
         assert_eq!(r, 0.0);
         assert!((l - sampler::OUTPUT_GAIN * sampler::square(64)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn eight_bit_waveforms_play_eight_cycles_a_pass() {
+        // 32 samples at A: a pass at 55 Hz, three octaves down.
+        let w = eight_bit((0..32).map(f64::from), 69, Envelope::ORGAN);
+        let v = Voice::new(Rc::new(w), None, 69, 0, false);
+        assert!((v.step - 32.0 * 55.0 / 48000.0).abs() < 1e-9);
+        // Past 512 samples, 28160 samples a second at the base note.
+        let w = eight_bit((0..2048).map(|_| 128.0), 60, Envelope::ORGAN);
+        let v = Voice::new(Rc::new(w), None, 60, 0, false);
+        let rate = 28160.0 * 2f64.powf(-9.0 / 12.0);
+        assert!((v.step - rate / 48000.0).abs() < 1e-9);
     }
 
     #[test]
