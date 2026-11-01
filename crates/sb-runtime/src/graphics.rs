@@ -209,6 +209,25 @@ pub struct Graphics {
     /// Of each page, a count that moves on whenever its pixels may have
     /// changed, for the debugger's viewer to copy a page only then.
     changes: [u64; PAGES],
+    /// Which parts of each page's rows hold something, for sprites to
+    /// pass over the clear rest; see [`Graphics::pieces`].
+    coverage: RefCell<[Coverage; PAGES]>,
+}
+
+/// How many pixels along a row one bit of [`Graphics::pieces`] stands for.
+pub const PIECE: usize = 32;
+
+/// Of a page's rows, which [`PIECE`]-pixel pieces have a pixel that is not
+/// clear, worked out a piece at a time as asked for, until the page
+/// changes.
+#[derive(Default)]
+struct Coverage {
+    /// The page's [`Graphics::changes`] these hold for.
+    changes: u64,
+    /// Of each row, the pieces worked out.
+    known: Vec<u64>,
+    /// Of each row, the pieces worked out that hold something.
+    filled: Vec<u64>,
 }
 
 /// Where the next [`Graphics`] starts counting its pages' changes, so
@@ -226,6 +245,7 @@ impl Default for Graphics {
             sample: [0; PAGES],
             arrays: Default::default(),
             changes: [from; PAGES],
+            coverage: RefCell::new(std::array::from_fn(|_| Coverage::default())),
         }
     }
 }
@@ -273,6 +293,39 @@ impl Graphics {
     /// pixels may have changed since.
     pub fn changes(&self, page: usize) -> u64 {
         self.changes[page]
+    }
+
+    /// Of the pieces `from..=to` of row `y` of a page that is not blank,
+    /// each [`PIECE`] pixels wide from the page's left edge, those with a
+    /// pixel that is not clear (alpha 0), as the bits of their numbers.
+    /// Where a sprite's image has nothing, it draws nothing, so it need
+    /// only look at these.
+    pub fn pieces(&self, page: usize, y: usize, from: usize, to: usize) -> u64 {
+        let want = (u64::MAX >> (63 - to)) & (u64::MAX << from);
+        let mut all = self.coverage.borrow_mut();
+        let c = &mut all[page];
+        let rows = GRP_SIZE as usize;
+        if c.changes != self.changes[page] || c.known.len() != rows {
+            c.changes = self.changes[page];
+            c.known.clear();
+            c.known.resize(rows, 0);
+            c.filled.resize(rows, 0);
+        }
+        let mut missing = want & !c.known[y];
+        if missing != 0 {
+            let row = &self.pages[page][y * rows..][..rows];
+            c.known[y] |= missing;
+            c.filled[y] &= !missing;
+            while missing != 0 {
+                let b = missing.trailing_zeros() as usize;
+                missing &= missing - 1;
+                let piece = &row[b * PIECE..][..PIECE];
+                if piece.iter().fold(0, |a, &p| a | p) >> 24 != 0 {
+                    c.filled[y] |= 1 << b;
+                }
+            }
+        }
+        c.filled[y] & want
     }
 
     /// Replaces a whole page, such as GRP4 with the default sprite image.
@@ -946,6 +999,19 @@ mod tint_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pieces_follow_the_page() {
+        let mut g = Graphics::default();
+        g.pset(40, 3, 0x0100_0000, Blend::Normal);
+        g.pset(100, 3, 0x00FF_FFFF, Blend::Normal);
+        assert_eq!(g.pieces(0, 3, 0, 63), 1 << 1);
+        assert_eq!(g.pieces(0, 3, 2, 63), 0);
+        assert_eq!(g.pieces(0, 4, 0, 63), 0);
+        g.pset(2047, 3, 0xFF00_0000, Blend::Normal);
+        g.pset(40, 3, 0, Blend::Normal);
+        assert_eq!(g.pieces(0, 3, 0, 63), 1 << 63);
+    }
 
     const RED: u32 = 0xFFFF_0000;
 

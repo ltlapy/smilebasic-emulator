@@ -9,7 +9,7 @@ use crate::anim::{self, ANIM_VAR, Anim, Animated, Target, Track};
 use crate::collision::{Body, Collision, HitInfo, Search};
 use crate::compose::{self, Affine, Placement, draw_image};
 use crate::framebuffer::Framebuffer;
-use crate::graphics::{Clip, GRP_SIZE, Graphics, PAGES, Tint, TintJob, multiply};
+use crate::graphics::{Clip, GRP_SIZE, Graphics, PAGES, PIECE, Tint, TintJob, multiply};
 
 pub const SPRITES: usize = 4096;
 pub const DEFS: usize = 8192;
@@ -618,6 +618,10 @@ pub fn draw_posed(
     if usize::try_from(s.page).is_ok_and(|p| p >= PAGES || grp.is_blank(p)) {
         return;
     }
+    // A clear color makes every pixel clear, which draws nothing.
+    if pose.color >> 24 == 0 {
+        return;
+    }
     // The shown rectangle swaps sides for quarter turns.
     let quarter = s.attr & attr::ROTATION;
     let (bw, bh) = if quarter % 2 == 1 {
@@ -664,7 +668,7 @@ pub fn draw_posed(
         });
     }
     if place.is_upright() {
-        return draw_upright(&source, &tint, fb, &place, (bw, bh));
+        return draw_upright(&source, &tint, fb, &place, (bw, bh), grp);
     }
     struct Turned<'a, 'b> {
         fb: &'a mut Framebuffer,
@@ -700,6 +704,8 @@ pub fn draw_posed(
 /// Where a sprite's pixels come from.
 struct Source<'a> {
     page: &'a [u32],
+    /// Which page it is; `None` for GRP-1.
+    page_no: Option<usize>,
     /// GSAMPLE 1: the page repeats in every direction.
     repeat: bool,
     /// GRP-1, white everywhere.
@@ -720,6 +726,7 @@ impl Source<'_> {
         };
         Source {
             page,
+            page_no: usize::try_from(s.page).ok(),
             repeat,
             white,
             u: s.u,
@@ -776,6 +783,8 @@ impl Source<'_> {
 
 /// Off the page, as an offset into it.
 const NONE: usize = usize::MAX;
+/// Frame pixels from which a sprite is drawn piece by piece.
+const LARGE: usize = 4096;
 
 /// [`draw_posed`] for a sprite neither turned nor sheared on the frame,
 /// the usual case: which page column and row each frame column and row
@@ -786,6 +795,7 @@ fn draw_upright(
     fb: &mut Framebuffer,
     place: &Placement,
     (bw, bh): (i32, i32),
+    grp: &Graphics,
 ) {
     let Some(grid) = compose::grid(fb, place, bw, bh) else {
         return;
@@ -811,6 +821,15 @@ fn draw_upright(
             true => at(px, 1),
         }
     });
+    // Without a flip or a turn, the frame columns show page columns
+    // from left to right, so the pieces of each row with nothing in them
+    // (see Graphics::pieces) can be passed over.
+    // Small sprites, the many, are not worth the setting up.
+    let large = cols.len() * grid.ys.len() >= LARGE;
+    let run = match (turned, source.white, source.page_no) {
+        (false, false, Some(page)) if large => steady(&cols).map(|run| (run, page)),
+        _ => None,
+    };
     struct Rows<'a, R> {
         fb: &'a mut Framebuffer,
         grid: &'a compose::Grid,
@@ -818,6 +837,10 @@ fn draw_upright(
         rows: R,
         source: &'a Source<'a>,
         add: bool,
+        run: Option<(Run, usize)>,
+        grp: &'a Graphics,
+        /// Neither tinted nor added: what is opaque is put as it is.
+        plain: bool,
     }
     impl<R: Iterator<Item = usize>> TintJob for Rows<'_, R> {
         type Out = ();
@@ -841,6 +864,85 @@ fn draw_upright(
                     for (dst, &col) in line.iter_mut().zip(self.cols) {
                         if col != NONE {
                             *dst = paint(*dst);
+                        }
+                    }
+                }
+                return;
+            }
+            if let Some((run, page_no)) = self.run {
+                let stride = GRP_SIZE as usize;
+                let shown = &self.cols[run.at..][..run.len];
+                let (first, last) = (shown[0], shown[run.len - 1]);
+                let (p0, p1) = (first / PIECE, last / PIECE);
+                // Where among the shown columns each piece's start.
+                let mut starts = [0; GRP_SIZE as usize / PIECE + 1];
+                for (b, start) in starts.iter_mut().enumerate().take(p1 + 2).skip(p0) {
+                    *start = shown.partition_point(|&c| c < b * PIECE);
+                }
+                // At a scale of 1, the usual way to put a large image up,
+                // a row of the frame is a run of a row of the page.
+                let side_by_side = last - first + 1 == run.len;
+                // The page pixel `paint` blends, which a clear one never
+                // is.
+                let (mut held, mut paint) = (0, compose::blend_one(0, self.add));
+                for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
+                    if row == NONE {
+                        continue;
+                    }
+                    let mut pieces = (self.grp).pieces(page_no, row / stride, p0, p1);
+                    let at = fy * width + self.grid.x0 as usize + run.at;
+                    let line = &mut pixels[at..at + run.len];
+                    let put = |dst: &mut u32, p: u32| {
+                        if p >> 24 == 0 {
+                            return;
+                        }
+                        let src = tint(p);
+                        if src >> 24 != 0 {
+                            *dst = compose::blend(*dst, src, self.add);
+                        }
+                    };
+                    while pieces != 0 {
+                        let b = pieces.trailing_zeros() as usize;
+                        pieces &= pieces - 1;
+                        let (start, end) = (starts[b], starts[b + 1]);
+                        let line = &mut line[start..end];
+                        if side_by_side {
+                            let from = &page[row + first + start..][..end - start];
+                            // Eight at a time, so that clear stretches
+                            // inside a piece cost one test.
+                            for (dst, from) in line.chunks_mut(8).zip(from.chunks(8)) {
+                                if from.iter().fold(0, |a, &p| a | p) >> 24 == 0 {
+                                    continue;
+                                }
+                                // Opaque pixels as they are cover what
+                                // is under them.
+                                if self.plain && from.iter().fold(!0, |a, &p| a & p) >> 24 == 0xFF {
+                                    dst.copy_from_slice(from);
+                                    continue;
+                                }
+                                for (dst, &p) in dst.iter_mut().zip(from) {
+                                    put(dst, p);
+                                }
+                            }
+                        } else {
+                            // Scaled up, neighbors show the same page
+                            // pixel, whose blend is worked out once.
+                            for (dst, &col) in line.iter_mut().zip(&shown[start..end]) {
+                                let p = page[row + col];
+                                match p >> 24 {
+                                    0 => continue,
+                                    0xFF if self.plain => {
+                                        *dst = p;
+                                        continue;
+                                    }
+                                    _ => {}
+                                }
+                                if p != held {
+                                    held = p;
+                                    paint = compose::blend_one(tint(p), self.add);
+                                }
+                                *dst = paint(*dst);
+                            }
                         }
                     }
                 }
@@ -875,7 +977,29 @@ fn draw_upright(
         rows,
         source,
         add: place.add,
+        run,
+        grp,
+        plain: matches!(tint, Tint::White) && !place.add,
     });
+}
+
+/// Frame columns of a sprite that show page columns from left to
+/// right: from the `at`th of the sprite's frame columns on, `len` of
+/// them, the rest showing none.
+#[derive(Clone, Copy)]
+struct Run {
+    at: usize,
+    len: usize,
+}
+
+/// The [`Run`] that `cols` (as [`draw_upright`] works them out) are, if
+/// they are one.
+fn steady(cols: &[usize]) -> Option<Run> {
+    let at = cols.iter().position(|&c| c != NONE)?;
+    let len = cols[at..].iter().take_while(|&&c| c != NONE).count();
+    let rightwards = cols[at..at + len].windows(2).all(|w| w[0] <= w[1]);
+    let rest_off = cols[at + len..].iter().all(|&c| c == NONE);
+    (rightwards && rest_off).then_some(Run { at, len })
 }
 
 #[cfg(test)]
@@ -907,6 +1031,61 @@ mod tests {
 
     fn row(fb: &Framebuffer, y: u32, x: std::ops::Range<u32>) -> Vec<u32> {
         x.map(|x| fb.get(x, y).unwrap()).collect()
+    }
+
+    /// Drawing a large sprite piece by piece gives the same frame as
+    /// drawing its image as small sprites, which go pixel by pixel.
+    #[test]
+    fn large_sprites_draw_as_small_ones() {
+        let mut g = Graphics::default();
+        g.target = 0;
+        let mut seed = 0x1357_9BDF_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        // Mostly clear, with some opaque, some partly clear and some
+        // clear but colored pixels, and an opaque block.
+        for _ in 0..300 {
+            let (x, y) = ((next() % 120) as i32, (next() % 80) as i32);
+            let color = match next() % 3 {
+                0 => next() | 0xFF00_0000,
+                1 => next(),
+                _ => next() & 0x00FF_FFFF,
+            };
+            g.pset(x, y, color, Blend::Normal);
+        }
+        g.fill(70, 20, 109, 39, 0xFF33_6699, Blend::Normal);
+        for (scale, color, attr) in [
+            (1.0, 0xFFFF_FFFF, 0),
+            (1.0, 0x80FF_FFFF, attr::ADD),
+            (1.0, 0xFF80_C040, 0),
+            (2.0, 0xFFFF_FFFF, 0),
+            (2.0, 0xC0FF_80FF, attr::ADD),
+        ] {
+            let at = |u: i32, v: i32, w: i32, h: i32| {
+                let mut s = Sprite::unused();
+                (s.used, s.shown, s.page, s.attr, s.color) = (true, true, 0, attr, color);
+                (s.u, s.v, s.w, s.h) = (u, v, w, h);
+                s.scale = (scale, scale);
+                s.pos = (3.0 + f64::from(u) * scale, 5.0 + f64::from(v) * scale);
+                s
+            };
+            let mut whole = Framebuffer::new(320, 200);
+            draw(&at(0, 0, 120, 80), &g, &mut whole);
+            let mut tiles = Framebuffer::new(320, 200);
+            for v in (0..80).step_by(20) {
+                for u in (0..120).step_by(20) {
+                    draw(&at(u, v, 20, 20), &g, &mut tiles);
+                }
+            }
+            assert!(
+                whole.pixels() == tiles.pixels(),
+                "scale {scale} color {color:08X}"
+            );
+        }
     }
 
     #[test]
