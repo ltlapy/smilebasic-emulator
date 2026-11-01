@@ -798,6 +798,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::Quit { .. } => quit = true,
                 Event::MouseMotion { x, y, .. } => {
                     menu.mouse_move(Some(to_display(x, y)));
+                    debug_panel.pointer(Some(to_display(x, y)));
                     if dragging && machine.is_editing() {
                         let (x, y) = to_screen(x, y);
                         machine.editor_mouse_drag(x, y);
@@ -810,7 +811,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::Window {
                     win_event: WindowEvent::MouseLeave,
                     ..
-                } => menu.mouse_move(None),
+                } => {
+                    menu.mouse_move(None);
+                    debug_panel.pointer(None);
+                }
                 // A right click on the editor or the debugger's panel opens a
                 // menu of what can be done there.
                 Event::MouseButtonDown {

@@ -24,8 +24,12 @@ const STRIPE: u32 = 0xFF24_2428;
 /// expression, and of the variables' names and values.
 const CALL_CHARS: u32 = 20;
 const WATCH_CHARS: usize = 9;
-const NAME_CHARS: usize = 8;
-const VALUE_CHARS: usize = 14;
+/// The most characters a variable's name takes before it is cut.
+const NAME_CHARS: usize = 10;
+/// A value shown whole when the pointer rests on a row that cuts it:
+/// characters to a line, and lines.
+const TIP_CHARS: usize = 60;
+const TIP_LINES: usize = 14;
 
 /// Which variables the panel lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +107,37 @@ pub struct DebugPanel {
     typing: Option<(Target, String)>,
     /// Integers show in hexadecimal.
     pub hex: bool,
+    /// Where the pointer is, and the rows of the last frame that cut
+    /// their values, with the whole value's lines.
+    pointer: Option<(i32, i32)>,
+    tips: Vec<(Rect, Vec<String>)>,
+}
+
+/// A value whole, for a tip: an array's elements as INSPECT lists them,
+/// and other values broken into lines.
+fn tip_lines(value: &Value, hex: bool) -> Vec<String> {
+    let lines: Vec<String> = match value {
+        Value::Array(_) => (sb_core::inspect::lines(value).iter())
+            .map(|l| String::from_utf16_lossy(l))
+            .filter(|l| !l.is_empty())
+            .collect(),
+        _ => vec![value_text(value, usize::MAX, hex).0],
+    };
+    let mut wrapped: Vec<String> = Vec::new();
+    for line in lines {
+        let chars: Vec<char> = line.chars().collect();
+        wrapped.extend(
+            chars
+                .chunks(TIP_CHARS)
+                .map(|c| c.iter().collect::<String>()),
+        );
+    }
+    if wrapped.len() > TIP_LINES {
+        let more = wrapped.len() - (TIP_LINES - 1);
+        wrapped.truncate(TIP_LINES - 1);
+        wrapped.push(format!("... {more} more lines"));
+    }
+    wrapped
 }
 
 /// A value on one line: numbers as PRINT shows them, or integers in
@@ -140,12 +175,13 @@ pub fn value_text(value: &Value, chars: usize, hex: bool) -> (String, u32) {
     (cut(&text, chars), color)
 }
 
-/// A value's type as TYPEOF tells them apart, with an array's sizes.
+/// A value's type as TYPEOF tells them apart, with an array's sizes;
+/// STR for an array of strings, to leave the value room.
 fn type_text(value: &Value) -> String {
     let elem = |e: ElemType| match e {
         ElemType::Int => "INT",
         ElemType::Real => "REAL",
-        ElemType::Str => "STRING",
+        ElemType::Str => "STR",
     };
     match value {
         Value::Default => "DEFAULT".to_string(),
@@ -201,7 +237,13 @@ impl DebugPanel {
     pub fn hide(&mut self) {
         self.frame = None;
         self.hits.clear();
+        self.tips.clear();
         self.typing = None;
+    }
+
+    /// The pointer moved, or left the window with `None`.
+    pub fn pointer(&mut self, at: Option<(i32, i32)>) {
+        self.pointer = at;
     }
 
     pub fn contains(&self, at: (i32, i32)) -> bool {
@@ -333,6 +375,7 @@ impl DebugPanel {
     ) {
         self.frame = Some(f);
         self.hits.clear();
+        self.tips.clear();
         fill(fb, f, BORDER);
         let inner = Rect {
             x: f.x,
@@ -429,12 +472,20 @@ impl DebugPanel {
                 draw_text(fb, font, cx, y + 4, &cut(expr, WATCH_CHARS), TEXT);
                 let x = cx + (WATCH_CHARS as u32 + 1) * CHAR;
                 let room = CALL_CHARS as usize - WATCH_CHARS - 1;
-                let (text, color) = match view.watches.get(i) {
-                    Some(Ok(v)) => value_text(v, room, self.hex),
-                    Some(Err(e)) => (cut(e, room), ERROR),
-                    None => (String::new(), TEXT),
+                let (text, color, whole) = match view.watches.get(i) {
+                    Some(Ok(v)) => {
+                        let (text, color) = value_text(v, room, self.hex);
+                        (text, color, tip_lines(v, self.hex))
+                    }
+                    Some(Err(e)) => (cut(e, room), ERROR, vec![e.clone()]),
+                    None => (String::new(), TEXT, Vec::new()),
                 };
                 draw_text(fb, font, x, y + 4, &text, color);
+                if expr.chars().count() > WATCH_CHARS || text.ends_with('…') {
+                    let mut lines = vec![format!("{expr} =")];
+                    lines.extend(whole);
+                    self.tips.push((row, lines));
+                }
             }
             self.hits.push((row, Hit::Watch(i)));
             y += LINE;
@@ -484,8 +535,17 @@ impl DebugPanel {
         if view.variables.is_empty() {
             draw_text(fb, font, vx, y + 4, "No variables", DISABLED);
         }
-        let value_x = vx + (NAME_CHARS as u32 + 1) * CHAR;
-        let type_x = value_x + (VALUE_CHARS as u32 + 1) * CHAR;
+        // The names and types take what they need, the values the rest.
+        let longest = |f: &dyn Fn(&(String, Value)) -> usize| {
+            view.variables.iter().map(f).max().unwrap_or(0) as u32
+        };
+        let name_chars = longest(&|(n, _)| n.chars().count()).clamp(4, NAME_CHARS as u32);
+        let type_chars = longest(&|(_, v)| type_text(v).chars().count());
+        let value_x = vx + (name_chars + 1) * CHAR;
+        let type_x = (inner.x + inner.w - PAD).saturating_sub(type_chars * CHAR);
+        let value_chars = (type_x.saturating_sub(value_x) / CHAR)
+            .saturating_sub(1)
+            .max(4) as usize;
         let shown = view.variables.iter().enumerate().skip(self.scroll);
         for (i, (name, value)) in shown.take(self.rows) {
             let row = Rect {
@@ -499,15 +559,21 @@ impl DebugPanel {
             } else if i % 2 == 1 {
                 fill(fb, row, STRIPE);
             }
-            draw_text(fb, font, vx, y + 4, &cut(name, NAME_CHARS), TEXT);
+            draw_text(fb, font, vx, y + 4, &cut(name, name_chars as usize), TEXT);
             match &typing {
                 Some((Target::Variable(n), typed)) if n == name => {
                     draw_text(fb, font, value_x, y + 4, &cursor(typed), TEXT)
                 }
                 _ => {
-                    let (text, color) = value_text(value, VALUE_CHARS, self.hex);
+                    let (text, color) = value_text(value, value_chars, self.hex);
                     draw_text(fb, font, value_x, y + 4, &text, color);
                     draw_text(fb, font, type_x, y + 4, &type_text(value), HEADING);
+                    let cut_name = name.chars().count() > name_chars as usize;
+                    if cut_name || text.ends_with('…') || matches!(value, Value::Array(_)) {
+                        let mut lines = vec![format!("{name} =")];
+                        lines.extend(tip_lines(value, self.hex));
+                        self.tips.push((row, lines));
+                    }
                 }
             }
             self.hits.push((row, Hit::Variable(i)));
@@ -528,6 +594,36 @@ impl DebugPanel {
             &view.status,
             DISABLED,
         );
+        self.draw_tip(fb, font);
+    }
+
+    /// The whole value of the row under the pointer, above it, if the row
+    /// cuts it.
+    fn draw_tip(&self, fb: &mut Framebuffer, font: &Font) {
+        let Some(at) = self.pointer else {
+            return;
+        };
+        let Some((row, lines)) = self.tips.iter().find(|(r, _)| r.contains(at)) else {
+            return;
+        };
+        let chars = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u32;
+        let (w, h) = (chars * CHAR + 2 * PAD, lines.len() as u32 * LINE + PAD);
+        let x = (at.0.max(0) as u32).min(fb.width().saturating_sub(w));
+        let y = row.y.saturating_sub(h + 2);
+        let tip = Rect { x, y, w, h };
+        fill(fb, tip, FACE | 0xFF00_0000);
+        crate::ui::outline(fb, tip, BORDER);
+        for (i, line) in lines.iter().enumerate() {
+            let color = if i == 0 { HEADING } else { TEXT };
+            draw_text(
+                fb,
+                font,
+                x + PAD,
+                y + PAD / 2 + i as u32 * LINE + 4,
+                line,
+                color,
+            );
+        }
     }
 }
 
