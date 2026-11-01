@@ -1387,6 +1387,33 @@ fn detached_editor_stays_open_on_cont() {
     assert!(m.is_editing());
 }
 
+#[test]
+fn detached_editor_stays_open_while_a_step_waits_for_input() {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    use sb_runtime::runtime::keys;
+    let mut m = detached_machine();
+    m.set_slot(0, "STOP\nINPUT X\n?X*2".to_string());
+    enter(&mut m, "RUN");
+    m.edit_slot(0);
+    assert!(!m.step_wants_keys());
+    assert!(m.debug(Resume::Step(Step::Into)));
+    for _ in 0..3 {
+        m.frame();
+    }
+    assert!(m.is_editing() && m.step_wants_keys());
+    m.type_text("21");
+    m.rt.key_press(keys::ENTER);
+    for _ in 0..3 {
+        m.frame();
+    }
+    assert_eq!(m.paused_at(), Some((0, 3)));
+    assert!(!m.step_wants_keys());
+    // The next step does not wait.
+    debug(&mut m, Resume::Step(Step::Into));
+    assert!(!m.step_wants_keys());
+}
+
 /// Types a line and presses Enter, running one frame for it.
 fn enter_no_wait(m: &mut Machine, line: &str) {
     m.type_text(line);

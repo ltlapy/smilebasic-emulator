@@ -231,6 +231,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut editor_shown = false;
     // Whether it has the keys, and the pointer.
     let mut editor_focused = false;
+    // The main window took the keys from it for a step that waits for
+    // input, to give them back when the step stops.
+    let mut keys_lent = false;
     let mut pointer_in_editor = false;
     // Whether the menu bar and the emulator's windows show in the editor's
     // window. They follow the keys, but a dialog or window stays where it
@@ -1540,6 +1543,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             audio.play(&machine.take_samples());
             next_frame += FRAME;
             skipped += 1;
+        }
+        // A step that waits for input needs the keys on the screen, and
+        // the editor takes them back at the stop, unless the user has
+        // gone to another window meanwhile.
+        let step_waits = machine.step_wants_keys();
+        if step_waits && editor_shown && editor_focused && !keys_lent {
+            canvas.window_mut().raise();
+            keys_lent = true;
+        } else if !step_waits && std::mem::take(&mut keys_lent) && canvas.window().has_input_focus()
+        {
+            if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown) {
+                gfx.canvas.borrow_mut().window_mut().raise();
+            }
         }
         // A pointer the program moved with MOUSE stays there until the
         // real one moves, and the real one goes there too.

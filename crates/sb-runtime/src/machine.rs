@@ -84,6 +84,9 @@ pub struct Machine {
     /// A debugger's step started from the editor, which stays shown
     /// while it runs unless the program waits for input.
     stepping: Option<Step>,
+    /// The step running has waited for input, so it shows the screen
+    /// until it stops.
+    step_waited: bool,
     /// The slot RUN last started, for the debugger's restart.
     last_run: Option<usize>,
     /// The debugger's panel and the stopped line were put away until the
@@ -243,6 +246,7 @@ impl Machine {
             stop_reason: None,
             moved: vec![false; SLOTS],
             stepping: None,
+            step_waited: false,
             last_run: None,
             panel_closed: false,
             panel_pinned: false,
@@ -891,6 +895,7 @@ impl Machine {
                 Resume::RunTo(..) => self.stepping = Some(Step::Over),
             }
         }
+        self.step_waited = false;
         self.rt.input.polled = false;
         self.panel_closed = false;
         self.rt.cancel_input();
@@ -1424,14 +1429,22 @@ impl Machine {
         // A step that waits for input shows the screen until it stops: an
         // INPUT, or one going over lines that read the controls and waited
         // for a frame.
+        // The editor apart stays open, and gives the keys to the screen.
         self.sync_slots();
-        if self.editing
-            && !self.detached
-            && let (Some(step), Some(vm)) = (self.stepping, &self.vm)
+        if let (Some(step), Some(vm)) = (self.stepping, &self.vm)
             && (vm.is_reading_input() || step != Step::Into && vsynced && self.rt.input.polled)
         {
-            self.close_editor();
+            self.step_waited = true;
+            if self.editing && !self.detached {
+                self.close_editor();
+            }
         }
+    }
+
+    /// Whether a debugger's step is running and has waited for input, so
+    /// that the keys belong on the screen until it stops.
+    pub fn step_wants_keys(&self) -> bool {
+        self.stepping.is_some() && self.step_waited
     }
 
     /// How the frame that [`Machine::render`] returns is to be shown. The
