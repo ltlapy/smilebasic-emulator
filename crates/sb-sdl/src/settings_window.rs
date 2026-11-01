@@ -126,6 +126,14 @@ const PAGES: &[Page] = &[
                 |s| s.localized_errors,
                 |s| s.localized_errors ^= true,
             ),
+            check(
+                "Let any program read the help topic at the cursor",
+                "HELPINFO OUT gives the command at the editor's cursor to every \
+                 program, not only to those started from #SYS (SmileBASIC 4's own \
+                 help). Off by default, as on hardware: others get DEFAULTHELPKEY.",
+                |s| s.helpinfo_cursor,
+                |s| s.helpinfo_cursor ^= true,
+            ),
             Row {
                 label: "Language reported to programs",
                 about: "The value SYSPARAM(\"LANG\") returns: \"en-US\" as in the \
