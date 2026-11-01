@@ -44,6 +44,7 @@ pub mod text;
 pub mod transfer;
 mod txt;
 
+pub use files::program_text;
 pub use framebuffer::Framebuffer;
 pub use runtime::Runtime;
 pub use system::PerfStats;

@@ -25,8 +25,8 @@ use crate::storage;
 pub const HISTORY: usize = 32;
 /// The icon's side in pixels.
 pub const ICON_SIZE: usize = 40;
-const TITLE_CHARS: usize = 24;
-const DESCRIPTION_CHARS: usize = 240;
+pub const TITLE_CHARS: usize = 24;
+pub const DESCRIPTION_CHARS: usize = 240;
 /// The metadata's files in the project folder: the title on the first
 /// line and the description after it, and the icon as a PNG. Their names
 /// start with `@`, so they never clash with SmileBASIC's typed files.

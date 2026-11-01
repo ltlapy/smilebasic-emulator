@@ -36,7 +36,7 @@ pub fn half_width(text: &str) -> String {
 }
 
 /// A program file's text: SmileBASIC 4's container or plain UTF-8.
-pub(crate) fn program_text(bytes: &[u8]) -> storage::Result<String> {
+pub fn program_text(bytes: &[u8]) -> storage::Result<String> {
     let bad = |e: String| StorageError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
     let file;
     let body = if bytes.starts_with(&[4, 0]) {

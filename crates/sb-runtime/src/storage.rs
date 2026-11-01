@@ -431,10 +431,18 @@ impl Storage {
         })
     }
 
+    /// Writes a file of a project's own, such as its metadata, whole or
+    /// not at all: into a temporary file first, which then replaces it.
     pub fn write_file_in(&self, project: &str, name: &str, bytes: &[u8]) -> Result<()> {
         let dir = self.dir(project)?;
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join(name), bytes)?;
+        // A leading `.` keeps the temporary file out of the listings.
+        let temporary = dir.join(format!(".{name}.tmp"));
+        std::fs::write(&temporary, bytes)?;
+        if let Err(e) = std::fs::rename(&temporary, dir.join(name)) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -495,6 +503,53 @@ impl Storage {
         }
         std::fs::rename(self.path(kind, from)?, self.path(kind, to)?)?;
         Ok(())
+    }
+
+    /// Renames a file of a project, which need not be the current one,
+    /// and returns the new name as checked, in upper case. A file of that
+    /// name already there is not replaced.
+    pub fn rename_in(&self, project: &str, kind: FileKind, from: &str, to: &str) -> Result<String> {
+        let to = check_name(to)?;
+        if !self.exists_in(project, kind, from) {
+            return Err(StorageError::NotFound(format!("{}:{from}", kind.name())));
+        }
+        // A change of case only finds itself on case-insensitive disks.
+        if !to.eq_ignore_ascii_case(from) && self.exists_in(project, kind, &to) {
+            return Err(StorageError::Exists(format!("{}:{to}", kind.name())));
+        }
+        let dir = self.dir(project)?;
+        let file = |name: &str| dir.join(format!("{}{name}", kind.prefix()));
+        std::fs::rename(file(from), file(&to))?;
+        Ok(to)
+    }
+
+    /// Copies a project, the workspace included, to a new project named
+    /// after it with the first free number on the end (`GAME2`, `GAME3`),
+    /// and returns the new name.
+    pub fn duplicate_project(&self, name: &str) -> Result<String> {
+        let from = match name {
+            "" => self.dir("")?,
+            name => self.existing_project(name)?,
+        };
+        let base = match name {
+            "" => "WORKSPACE".to_string(),
+            name => suggest_project_name(name),
+        };
+        let free = (2..1000)
+            .map(|n| {
+                let n = n.to_string();
+                let kept: String = base.chars().take(MAX_NAME - n.len()).collect();
+                format!("{kept}{n}")
+            })
+            .find(|to| self.dir(to).is_ok_and(|d| !d.exists()))
+            .ok_or_else(|| StorageError::Exists(base.clone()))?;
+        let to = self.dir(&free)?;
+        std::fs::create_dir_all(&to)?;
+        if let Err(e) = copy_folder(&from, &to) {
+            let _ = std::fs::remove_dir_all(&to);
+            return Err(e.into());
+        }
+        Ok(free)
     }
 
     /// A file's size, and when it last changed in local time as
@@ -562,6 +617,21 @@ impl Storage {
         projects.sort();
         Ok(projects)
     }
+}
+
+/// Copies the files and the folders in `from` into `to`, which exists.
+fn copy_folder(from: &Path, to: &Path) -> io::Result<()> {
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            copy_folder(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -733,5 +803,48 @@ mod tests {
             Storage::none().read(FileKind::Txt, "A"),
             Err(StorageError::Unavailable)
         ));
+    }
+
+    #[test]
+    fn duplicating_and_renaming_in_projects() {
+        let tmp = TempDir::new("duplicate");
+        let s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.write_file_in("GAME", "TMAIN.PRG", b"?1").unwrap();
+        s.write_file_in("GAME", "@META.TXT", b"Game\n").unwrap();
+        assert_eq!(s.duplicate_project("GAME").unwrap(), "GAME2");
+        assert_eq!(s.duplicate_project("GAME").unwrap(), "GAME3");
+        assert_eq!(s.read_file_in("GAME3", "TMAIN.PRG").unwrap(), b"?1");
+        assert_eq!(s.read_file_in("GAME3", "@META.TXT").unwrap(), b"Game\n");
+        s.write(FileKind::Dat, "D", b"", None).unwrap();
+        assert_eq!(s.duplicate_project("").unwrap(), "WORKSPACE2");
+        assert!(s.exists_in("WORKSPACE2", FileKind::Dat, "D"));
+        assert!(s.duplicate_project("NONE").is_err());
+        let long = "L".repeat(MAX_NAME);
+        s.create_project(&long).unwrap();
+        let copy = s.duplicate_project(&long).unwrap();
+        assert_eq!(copy.len(), MAX_NAME);
+        assert!(copy.ends_with('2'));
+
+        assert_eq!(
+            s.rename_in("GAME", FileKind::Txt, "MAIN.PRG", "start.prg")
+                .unwrap(),
+            "START.PRG"
+        );
+        assert!(s.exists_in("GAME", FileKind::Txt, "START.PRG"));
+        assert!(!s.exists_in("GAME", FileKind::Txt, "MAIN.PRG"));
+        s.write_file_in("GAME", "TB", b"").unwrap();
+        assert!(matches!(
+            s.rename_in("GAME", FileKind::Txt, "START.PRG", "B"),
+            Err(StorageError::Exists(_))
+        ));
+        assert!(s.rename_in("GAME", FileKind::Txt, "B", "a/b").is_err());
+        // The metadata is written whole, leaving no temporary file.
+        s.write_file_in("GAME", "@META.TXT", b"New\n").unwrap();
+        let names: Vec<_> = std::fs::read_dir(tmp.0.join("GAME"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");
     }
 }
