@@ -16,6 +16,8 @@ use crate::ui::{
 const WIDTH: u32 = 1100;
 const HEIGHT: u32 = 620;
 const PAGES_WIDTH: u32 = 180;
+/// Lines under the settings for what the chosen one does.
+const ABOUT_LINES: usize = 3;
 const HINT: &str = "Up/Down: choose  Tab: pages  Space, Left/Right: set  Esc: close";
 
 /// How a setting is set.
@@ -65,12 +67,24 @@ const fn check(
 const fn tool(n: usize) -> Row {
     Row {
         label: ["F9 tool", "F10 tool", "F11 tool"][n],
-        about: "The program the key starts as a subprogram, from direct mode or \
-                the editor; programs read it with SYSPARAM \"TOOL1\" to \"TOOL3\". \
-                Left/Right: pick a button. Delete: none.",
+        about: [
+            "The program F9 starts as a subprogram, also while a program runs. \
+             SYSPARAM(\"TOOL1\") returns it. Default: #TOOL/SBSMILE.PRG \
+             (SMILETOOL). Left/Right: pick a button, Delete: None.",
+            "The program F10 starts as a subprogram, also while a program runs. \
+             SYSPARAM(\"TOOL2\") returns it. Default: #TOOL/GAHAKU.PRG \
+             (GAHAKU). Left/Right: pick a button, Delete: None.",
+            "The program F11 starts as a subprogram, also while a program runs. \
+             SYSPARAM(\"TOOL3\") returns it. Default: none. Left/Right: pick a \
+             button, Delete: None.",
+        ][n],
         control: Control::Tool(n),
     }
 }
+
+/// The tool rows' labels are padded to this width, so that their colons
+/// line up.
+const TOOL_LABEL_WIDTH: usize = 8;
 
 /// What a tool row shows for the program set.
 fn tool_label(file: &str) -> &str {
@@ -82,37 +96,41 @@ fn tool_label(file: &str) -> &str {
 
 /// The instruments row's option that asks for a SoundFont file.
 const SOUND_FONT_FILE: usize = 2;
-const INSTRUMENTS: &str = "Instruments";
+const INSTRUMENTS: &str = "Instruments for MML and BGM";
 
 const PAGES: &[Page] = &[
     Page {
         title: "General",
         rows: &[
             check(
-                "Upper-case letters",
-                "Keys type capitals unless Shift or Caps Lock is on, as on SmileBASIC 4. \
-                 Also in the Edit menu.",
+                "Type capitals without Shift",
+                "Letter keys type capitals, and Shift or Caps Lock types lower case, \
+                 as SmileBASIC 4's keyboard does. On by default. Also in the Edit \
+                 menu.",
                 |s| s.upper_case_letters,
                 |s| s.upper_case_letters ^= true,
             ),
             check(
-                "Ctrl+C stops programs",
-                "Ctrl+C also stops a running program, as F5 and Pause/Break do. Off \
-                 by default, since programs can read Ctrl+C.",
+                "Ctrl+C stops the running program",
+                "Ctrl+C stops a running program, as Pause/Break and F5 do. Off by \
+                 default, so that programs can read Ctrl+C as a key. In the editor \
+                 Ctrl+C still copies.",
                 |s| s.ctrl_c_stops,
                 |s| s.ctrl_c_stops ^= true,
             ),
             check(
-                "Explain errors in Japanese",
-                "Under each error message, print the Japanese line that SmileBASIC \
-                 4's Japanese edition shows for it.",
+                "Japanese explanation under errors",
+                "Under each error message, also print the Japanese line that the \
+                 Japanese edition of SmileBASIC 4 shows for that error. Off by \
+                 default.",
                 |s| s.localized_errors,
                 |s| s.localized_errors ^= true,
             ),
             Row {
-                label: "System language",
-                about: "What SYSPARAM(\"LANG\") reports to programs: en-US, as in the \
-                        English edition, or ja, as in the Japanese one.",
+                label: "Language reported to programs",
+                about: "The value SYSPARAM(\"LANG\") returns: \"en-US\" as in the \
+                        English edition (default), or \"ja\" as in the Japanese one. \
+                        The emulator's own menus stay in English.",
                 control: Control::Choice(
                     &["English (en-US)", "Japanese (ja)"],
                     |s| usize::from(s.language == Language::Japanese),
@@ -125,11 +143,12 @@ const PAGES: &[Page] = &[
                 ),
             },
             Row {
-                label: "Menu and window font",
-                about: "The font of the emulator's menus and windows: SmileBASIC's \
-                        8-pixel font at twice its size, or its 16-pixel font.",
+                label: "Font of the emulator's menus and windows",
+                about: "The font of the menu bar, this window and the emulator's other \
+                        windows (not the SmileBASIC screen): the 8-pixel font drawn \
+                        twice its size, or the 16-pixel font (default).",
                 control: Control::Choice(
-                    &["8 pixels", "16 pixels"],
+                    &["8-pixel font, doubled", "16-pixel font"],
                     |s| usize::from(s.ui_font == FontSize::Large),
                     |s, i| {
                         s.ui_font = match i {
@@ -145,15 +164,18 @@ const PAGES: &[Page] = &[
         title: "Input",
         rows: &[
             check(
-                "Keys press buttons",
-                "The keyboard also presses controller 1's buttons. Also in the Run menu.",
+                "Use the keyboard as a controller",
+                "Keys also press controller 1's buttons for BUTTON and the like: \
+                 cursor keys, Z X A S for A B X Y, Q W for L R, 1 2 for ZL ZR. On \
+                 by default. Also in the Run menu.",
                 |s| s.keyboard_buttons,
                 |s| s.keyboard_buttons ^= true,
             ),
             check(
-                "Always show mouse cursor",
-                "Keep the mouse cursor visible over the window, even when a program \
-                 hides it with SYSPARAM \"MOUSECURSOR\".",
+                "Ignore programs hiding the mouse cursor",
+                "Keep the mouse cursor visible over the screen even while a program \
+                 hides it with SYSPARAM \"MOUSECURSOR\",0, as programs do when they \
+                 start. Off by default.",
                 |s| s.keep_mouse_cursor,
                 |s| s.keep_mouse_cursor ^= true,
             ),
@@ -163,18 +185,20 @@ const PAGES: &[Page] = &[
         title: "Files",
         rows: &[
             check(
-                "Half-width on SAVE",
-                "SAVE turns full-width letters and digits into ASCII.",
+                "SAVE turns full-width letters into ASCII",
+                "When SAVE writes a program, full-width letters A-Z, a-z and digits \
+                 0-9 become plain ASCII ones. Other full-width characters are kept. \
+                 On by default.",
                 |s| s.half_width_on_save,
                 |s| s.half_width_on_save ^= true,
             ),
             Row {
-                label: "Confirm file commands",
-                about: "Always ask: file commands ask first, as on SmileBASIC 4. \
-                        Notify: they go ahead and show a notice. Silent: they go \
-                        ahead without one.",
+                label: "Before file commands such as SAVE and LOAD",
+                about: "Ask first: a Yes/No question, as SmileBASIC 4 asks (default). \
+                        Show a notice: go ahead and say what was done. Silent: just go \
+                        ahead. Losing unsaved edits always asks.",
                 control: Control::Choice(
-                    &["Always ask", "Notify", "Silent"],
+                    &["Ask first", "Show a notice", "Silent"],
                     |s| s.file_confirm as usize,
                     |s, i| {
                         s.file_confirm = match i {
@@ -195,9 +219,9 @@ const PAGES: &[Page] = &[
         title: "Sound",
         rows: &[Row {
             label: INSTRUMENTS,
-            about: "The sounds MML and BGM play with: SmileBASIC 4's own instruments, \
-                    once imported with smilebasic-import; the bundled GeneralUser GS \
-                    SoundFont; or a SoundFont file you choose.",
+            about: "The sounds BGMPLAY's MML and built-in songs play with: SmileBASIC \
+                    4's own instruments (default; import them with smilebasic-import), \
+                    the bundled GeneralUser GS SoundFont, or a .sf2 file you choose.",
             control: Control::Choice(
                 &["SmileBASIC 4", "GeneralUser GS", "File..."],
                 |s| match (s.smilebasic_instruments, &s.sound_font) {
@@ -222,8 +246,9 @@ const PAGES: &[Page] = &[
         rows: &[
             Row {
                 label: "Tab width",
-                about: "How many spaces Tab puts in, in the editor. Programs read it \
-                        with SYSPARAM(\"TABSTEP\").",
+                about: "Tab in the editor pads with spaces to the next multiple of this \
+                        many columns. SYSPARAM(\"TABSTEP\") returns it. Default 1, as \
+                        the editor's characters are already wide.",
                 control: Control::Choice(
                     &["1", "2", "4", "8"],
                     |s| match s.editor_tab_step {
@@ -236,36 +261,41 @@ const PAGES: &[Page] = &[
                 ),
             },
             check(
-                "Editor in its own window",
-                "The editor opens in a window of its own beside the screen, so \
-                 programs go on running while it is open. Also in the View menu.",
+                "Open the editor in a separate window",
+                "F4 opens the editor in a second window beside the screen instead of \
+                 in place of it, so the screen stays visible and programs and direct \
+                 mode keep running. Also in the View menu.",
                 |s| s.editor_window,
                 |s| s.editor_window ^= true,
             ),
             check(
-                "Keep the editor window's place",
-                "The editor's own window opens where it was last, as large as it \
-                 was, if that is still on a display.",
+                "Remember the editor window's position and size",
+                "The separate editor window opens where it was last, at the same \
+                 size, if that place is still on a display. Off: it opens beside the \
+                 screen each time. Off by default.",
                 |s| s.editor_window_keep_place,
                 |s| s.editor_window_keep_place ^= true,
             ),
             check(
-                "Complete words in direct mode",
-                "While typing in direct mode, a list of words that start with what \
-                 is typed shows under it.",
+                "Inline suggestions in direct mode",
+                "While you type a line in direct mode, a list of words that start \
+                 with what is typed shows under the cursor; Tab puts the first in. \
+                 On by default.",
                 |s| s.complete_direct,
                 |s| s.complete_direct ^= true,
             ),
             check(
-                "Complete words in the editor",
-                "The same list, while typing in the editor.",
+                "Inline suggestions in the editor",
+                "The same list of suggestions while you type in the editor. On by \
+                 default.",
                 |s| s.complete_editor,
                 |s| s.complete_editor ^= true,
             ),
             Row {
-                label: "Letters before the list shows",
-                about: "How many letters to type before the list shows. After GOTO, @ \
-                        and # it shows at once.",
+                label: "Minimum letters to show suggestions",
+                about: "How many letters of a word to type before suggestions show. \
+                        Default 1, as in SmileBASIC 4. After GOTO, GOSUB, RESTORE, a \
+                        lone @ or # they show at once.",
                 control: Control::Choice(
                     &["1", "2", "3", "4"],
                     |s| s.complete_after as usize - 1,
@@ -273,35 +303,41 @@ const PAGES: &[Page] = &[
                 ),
             },
             check(
-                "Offer SmileBASIC's words",
-                "The list offers SmileBASIC's instructions, functions and reserved words.",
+                "Suggest SmileBASIC instructions",
+                "Suggestions include SmileBASIC 4's instructions, functions and \
+                 reserved words, such as PRINT, RND and ENDIF. On by default.",
                 |s| s.complete_commands,
                 |s| s.complete_commands ^= true,
             ),
             check(
-                "Offer the program's names",
-                "The list also offers the program's variables, labels, constants and DEFs.",
+                "Suggest names from the edited program",
+                "Suggestions also include the variables, DEFs and labels written in \
+                 the slot open in the editor, also in direct mode. Off by default. \
+                 Labels after GOTO and # constants show either way.",
                 |s| s.complete_names,
                 |s| s.complete_names ^= true,
             ),
             check(
-                "Enter takes a picked word",
-                "After Up or Down picks a word in the list, Enter puts it in. Tab \
-                 always does.",
+                "Enter accepts the chosen suggestion",
+                "In the editor, after Up or Down chooses a suggestion, Enter puts it \
+                 in instead of a new line. Off: only Tab does. In direct mode Up and \
+                 Down recall history, and Tab puts in the first.",
                 |s| s.complete_enter,
                 |s| s.complete_enter ^= true,
             ),
             check(
                 "Show command usage",
-                "While a command's arguments are typed, show its forms from the help, \
-                 with the argument at the cursor marked. Ctrl+Space hides them.",
+                "While you type a command's or DEF's arguments, show its forms from \
+                 the help, with the argument being typed marked; also under the \
+                 suggestions. Ctrl+Space hides them.",
                 |s| s.complete_hints,
                 |s| s.complete_hints ^= true,
             ),
             check(
-                "Show usage by the cursor",
+                "Show command usage next to the cursor",
                 "Command usage shows next to the cursor instead of at the bottom of \
-                 the screen.",
+                 the screen (or the top while the cursor is down there). Off by \
+                 default.",
                 |s| s.complete_above,
                 |s| s.complete_above ^= true,
             ),
@@ -578,7 +614,11 @@ impl SettingsWindow {
                 }
                 Control::Choice(..) => format!("    {}", row.label),
                 Control::Tool(n) => {
-                    let label = format!("    {}: {}", row.label, tool_label(&settings.tools[n]));
+                    let label = format!(
+                        "    {:<TOOL_LABEL_WIDTH$}: {}",
+                        row.label,
+                        tool_label(&settings.tools[n])
+                    );
                     fit(&label, (r.w - 2 * PAD) / CHAR)
                 }
             };
@@ -606,7 +646,10 @@ impl SettingsWindow {
         let about = self.rows()[self.chosen].about;
         let width = (f.w - 4 * PAD) / CHAR;
         let top = rows.y + rows.h + PAD;
-        for (i, line) in wrap(about, width as usize).iter().take(3).enumerate() {
+        for (i, line) in (wrap(about, width as usize).iter())
+            .take(ABOUT_LINES)
+            .enumerate()
+        {
             let y = top + i as u32 * LINE + 4;
             draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
         }
@@ -724,7 +767,17 @@ mod tests {
             let last = w.row_rect(p.rows.len() - 1);
             let rows = w.rows_rect();
             assert!(last.y + last.h <= rows.y + rows.h, "{}", p.title);
+            let f = w.frame();
+            // What the chosen setting does, above the hint.
+            let about_bottom = rows.y + rows.h + PAD + ABOUT_LINES as u32 * LINE;
+            assert!(about_bottom <= f.y + f.h - LINE - PAD, "{}", p.title);
+            let about_width = ((f.w - 4 * PAD) / CHAR) as usize;
+            let label_width = ((rows.w - 2 * PAD) / CHAR) as usize;
             for (i, row) in p.rows.iter().enumerate() {
+                let lines = wrap(row.about, about_width);
+                assert!(lines.len() <= ABOUT_LINES, "{}: {lines:?}", row.label);
+                // After "[x] " or four spaces.
+                assert!(row.label.len() + 4 <= label_width, "{}", row.label);
                 let last = match row.control {
                     Control::Choice(options, ..) => Some(options.len() - 1),
                     Control::Tool(_) => Some(TOOL_BUTTONS.len() - 1),

@@ -88,7 +88,7 @@ SmileBASIC 4's own files.
 | Left, Right, Home, End | Move along the line typed in direct mode or for `INPUT`; with Shift, select |
 | F1 | Show SmileBASIC 4's help for the command at the cursor, in the editor or on the line typed in direct mode (needs the imported help); F2 there changes its text size |
 | Ctrl+F1 to Ctrl+F5 | Type what `KEY` set for the key, `FILES` to `RUN` to start with |
-| F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line. With View > Editor in its own window, the editor opens beside the screen and programs keep running; F4 on the screen brings it to the front |
+| F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line. With View > Editor in a separate window, the editor opens beside the screen and programs keep running; F4 on the screen brings it to the front |
 | F12 | Open the projects: switch (or double-click), load or run a program, copy files (or drag them onto a project) and delete them; right-click for a menu |
 | Ctrl+1 to Ctrl+6 | Open slot PRG0 to PRG5 in the editor |
 | Ctrl+0 | Leave the editor for direct mode |
@@ -127,7 +127,7 @@ SmileBASIC 4's own files.
 ### Buttons
 
 Gamepads work as controllers 1 to 4. The keyboard also presses controller
-1's buttons, unless *Keys press buttons* is turned off in the Run menu:
+1's buttons, unless *Use the keyboard as a controller* is turned off in the Run menu:
 
 | Key | Button |
 |---|---|

@@ -54,8 +54,8 @@ Without them:
 - Controller 1 is the keyboard and the first gamepad together, reported
   as a handheld controller; other gamepads are Pro Controllers.
   `XCTRLSTYLE` shows no connection screen and always succeeds.
-- The keyboard also presses controller 1's buttons; Run > Keys press
-  buttons turns this off.
+- The keyboard also presses controller 1's buttons; Run > "Use the
+  keyboard as a controller" turns this off.
 - A program that hides the mouse cursor (`SYSPARAM "MOUSECURSOR",0`,
   as programs start) hides the computer's cursor over the window, until
   the menu bar shows; Settings can keep it shown.
@@ -108,7 +108,7 @@ Without them:
   does for `Divide by zero`; for errors in a command's arguments, such
   as `LOCATE 0,999`'s `Out of range`, it gives the argument's number
   from 0.
-- Settings > General > "Explain errors in Japanese" prints the Japanese
+- Settings > General > "Japanese explanation under errors" prints the Japanese
   line SmileBASIC 4's Japanese edition shows under each error message,
   in the English edition too.
 - `ENVLOCATE OUT X,Y`, which is not in the manual, follows the
@@ -159,14 +159,14 @@ Without them:
   set in File > Settings > Editor.
 - Ctrl+S takes the file name typed on the computer's keyboard rather
   than SmileBASIC 4's on-screen one.
-- With View > Editor in its own window, the editor opens in a second
+- With View > Editor in a separate window, the editor opens in a second
   window beside the screen, and programs and direct mode go on while it
   is open. Its edits reach the slot at once, so RUN, SAVE and the PRG
   commands see them, and a slot that a program or LOAD changes shows
   the change in the editor. CONT and the debugger's commands leave it
   open; a step that waits for input brings the screen's window to the
   front for typing, and the editor's back when it stops. With Settings
-  > Editor > "Keep the editor window's place" the window opens where it
+  > Editor > "Remember the editor window's position and size" the window opens where it
   was last. In SmileBASIC 4 the editor replaces the screen and no
   program runs while it shows. A subprogram's
   screen shows over the screens rather than the editor's window, but

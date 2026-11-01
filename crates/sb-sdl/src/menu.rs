@@ -294,7 +294,7 @@ const MENUS: &[Menu] = &[
             keyed("Comment out", "Ctrl+K", Action::Comment),
             keyed("Uncomment", "Ctrl+Shift+K", Action::Uncomment),
             LINE,
-            item("Upper-case letters", Action::ToggleUpperCase),
+            item("Type capitals without Shift", Action::ToggleUpperCase),
         ],
     },
     Menu {
@@ -313,7 +313,7 @@ const MENUS: &[Menu] = &[
                 ],
             ),
             keyed("Split display", "Ctrl+/", Action::Split),
-            item("Editor in its own window", Action::ToggleEditorWindow),
+            item("Editor in a separate window", Action::ToggleEditorWindow),
             LINE,
             keyed("Wrap lines", "Ctrl+W", Action::ToggleWrap),
             item("Overview on the right", Action::ToggleMap),
@@ -360,7 +360,10 @@ const MENUS: &[Menu] = &[
             item("Switch keys to/from subprogram", Action::SwitchFocus),
             item("Stop subprogram", Action::StopSub),
             LINE,
-            item("Keys press buttons", Action::ToggleKeyboardButtons),
+            item(
+                "Use the keyboard as a controller",
+                Action::ToggleKeyboardButtons,
+            ),
         ],
     },
     Menu {
@@ -784,7 +787,7 @@ mod tests {
         bar.mouse_move(Some((10, 5)));
         let run = menu("Run");
         let keys = (MENUS[run].items.iter())
-            .position(|i| i.label == "Keys press buttons")
+            .position(|i| i.label == "Use the keyboard as a controller")
             .unwrap();
         assert_eq!(bar.click(at(title_rect(run)), IDLE), Click::Consumed);
         bar.mouse_move(Some((500, 500)));
