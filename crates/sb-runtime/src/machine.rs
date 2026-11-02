@@ -732,6 +732,49 @@ impl Machine {
         self.stop_on(None, Halt::User);
     }
 
+    /// After a panic out of [`Machine::frame`], which the frontend caught:
+    /// back to direct mode, with what the panic says on the console. The
+    /// programs in the slots and the editors' text stay, as neither is
+    /// taken apart while a frame runs.
+    ///
+    /// The programs that were running are gone rather than stopped, with
+    /// their variables and without CONT, as they stopped at no statement.
+    /// What they had already changed (screens, sprites, sounds, arrays
+    /// shared with direct mode) stays as the panic left it: safe to touch,
+    /// since no borrow outlives the unwinding, but maybe half done.
+    pub fn recover_from_panic(&mut self, why: &str) {
+        if let Some(sub) = &mut self.sub {
+            sub.end_sub(None);
+            sub.ended = None;
+            sub.rt.focus = false;
+            sub.rt.dimmed = false;
+            (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
+            sub.rt.sound.stop_all();
+        }
+        self.rt.sub_running = false;
+        self.rt.focus = true;
+        self.rt.dimmed = false;
+        self.focus_moving = None;
+        self.focus_flash = None;
+        (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
+        self.stepping = None;
+        self.vm = None;
+        self.wait = 0;
+        self.forget_halted();
+        self.running_slot = None;
+        self.rt.running_slot = None;
+        self.rt.take_requests();
+        self.rt.cancel_input();
+        self.rt.cancel_confirm();
+        self.rt.clear_input();
+        self.rt.sound.stop_all();
+        // The name SmileBASIC 4 has for code 1, which no ErrorKind stands
+        // for as nothing but a panic comes to it.
+        let text: Vec<u16> = format!("Internal Error ({why})").encode_utf16().collect();
+        self.print_line(&text);
+        self.ready();
+    }
+
     /// Stops, naming `line` rather than the one about to run.
     fn stop_on(&mut self, line: Option<u32>, how: Halt) {
         // A subprogram has no direct mode to stop in: it ends, and the

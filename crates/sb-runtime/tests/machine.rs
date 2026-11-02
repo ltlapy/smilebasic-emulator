@@ -4,6 +4,45 @@ use sb_runtime::Runtime;
 use sb_runtime::font::Font;
 use sb_runtime::machine::{Machine, StopReason};
 
+#[test]
+fn recovering_from_a_panic_keeps_the_editors_text() {
+    let mut m = machine();
+    m.set_slot(0, "A=1\n".to_string());
+    m.toggle_editor();
+    m.frame();
+    m.type_text("?2\n");
+    m.frame();
+    m.toggle_editor();
+    m.frame();
+    let edited = m.rt.slots[0].clone();
+    assert_ne!(edited, "A=1\n", "typed in the editor");
+
+    m.set_slot(1, "WHILE 1:VSYNC:WEND\n".to_string());
+    m.run_slot(1);
+    m.frame();
+    assert!(m.is_running());
+    m.recover_from_panic("a bug");
+    assert!(!m.is_running());
+    assert_eq!(m.rt.slots[0], edited);
+    assert_eq!(m.rt.slots[1], "WHILE 1:VSYNC:WEND\n");
+    assert!(
+        rows(&m).iter().any(|r| r == "Internal Error (a bug)"),
+        "{:?}",
+        rows(&m)
+    );
+    // Direct mode takes lines again.
+    enter(&mut m, "?\"back\"");
+    assert!(rows(&m).iter().any(|r| r == "BACK"), "{:?}", rows(&m));
+
+    // With the editor open, it stays open and keeps its place.
+    m.toggle_editor();
+    m.frame();
+    m.recover_from_panic("a bug");
+    assert!(m.is_editing());
+    m.frame();
+    assert_eq!(m.rt.slots[0], edited);
+}
+
 fn machine() -> Machine {
     let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
     m.boot();

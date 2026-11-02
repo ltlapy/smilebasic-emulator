@@ -25,7 +25,9 @@ mod text_field;
 mod toast;
 mod ui;
 
+use std::any::Any;
 use std::cell::{Cell, OnceCell, RefCell};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,6 +121,53 @@ fn main() {
         // Release builds on Windows have no console to print to.
         let _ = show_simple_message_box(MessageBoxFlag::ERROR, TITLE, &e.to_string(), None);
         std::process::exit(1);
+    }
+}
+
+/// Panics on frames in a row after which frames stop: the machine cannot be
+/// put right, but the window can still save what is in the editor.
+const MOST_PANICS: u32 = 3;
+
+/// What keeps a panic in a program's frame from taking unsaved work with
+/// it. A failed allocation aborts and cannot be caught, nor can a panic
+/// outside of the frame, as when drawing.
+#[derive(Debug, Default)]
+struct FrameGuard {
+    panics_in_a_row: u32,
+    stopped: bool,
+}
+
+impl FrameGuard {
+    /// Runs a frame. Costs nothing but a test and a store until a panic.
+    #[inline]
+    fn run(
+        &mut self,
+        machine: &mut Machine,
+        toasts: &mut Toasts,
+        frame: impl FnOnce(&mut Machine),
+    ) {
+        if self.stopped {
+            return;
+        }
+        match catch_unwind(AssertUnwindSafe(|| frame(machine))) {
+            Ok(()) => self.panics_in_a_row = 0,
+            Err(panic) => self.panicked(machine, toasts, &*panic),
+        }
+    }
+
+    #[cold]
+    fn panicked(&mut self, machine: &mut Machine, toasts: &mut Toasts, panic: &(dyn Any + Send)) {
+        let why = (panic.downcast_ref::<&str>().map(|s| s.to_string()))
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic".to_string());
+        self.panics_in_a_row += 1;
+        let recovered = catch_unwind(AssertUnwindSafe(|| machine.recover_from_panic(&why)));
+        self.stopped = recovered.is_err() || self.panics_in_a_row >= MOST_PANICS;
+        toasts.push(if self.stopped {
+            "The emulator failed and has stopped: save your programs and restart it.".to_string()
+        } else {
+            format!("The emulator failed and stopped the program: {why}")
+        });
     }
 }
 
@@ -267,6 +316,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut program_dialog: Option<ProgramView> = None;
     let mut blink = 0u32;
     let mut toasts = Toasts::default();
+    let mut frame_guard = FrameGuard::default();
     let mut key_hint = KeyHint::default();
     use_instruments(&mut machine, bank.as_ref(), &mut toasts);
     // Takes all input while it is open, except for a dialog over it.
@@ -1686,7 +1736,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         machine.set_changes(&debug_panel.change_watches());
         if !paused {
             machine.time_limit = Some(RUN_TIME);
-            machine.frame();
+            frame_guard.run(&mut machine, &mut toasts, Machine::frame);
             if let Some(b) = &mut bench {
                 b.ran_frame();
             }
@@ -1701,7 +1751,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let mut skipped = 0;
         while !paused && skipped < MOST_SKIPPED && clock.behind(Instant::now()) {
             machine.time_limit = Some(CATCH_UP_RUN_TIME);
-            machine.frame();
+            frame_guard.run(&mut machine, &mut toasts, Machine::frame);
             if let Some(b) = &mut bench {
                 b.ran_frame();
             }
@@ -3313,6 +3363,79 @@ fn as_bytes(pixels: &[u32]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn console_rows(m: &Machine) -> Vec<String> {
+        let console = &m.rt.text[sb_runtime::text::CONSOLE];
+        let (w, h) = console.size();
+        (0..h)
+            .map(|y| {
+                let codes: Vec<u16> = (0..w)
+                    .map(|x| console.cell(x, y).code)
+                    .take_while(|&c| c != 0)
+                    .collect();
+                String::from_utf16_lossy(&codes)
+            })
+            .collect()
+    }
+
+    fn running_machine() -> Machine {
+        let rt = Runtime::new(400, 240, Font::blank());
+        let mut m = Machine::new(rt);
+        m.boot();
+        m.set_slot(0, "WHILE 1:VSYNC:WEND\n".to_string());
+        m.run_slot(0);
+        m.frame();
+        assert!(m.is_running());
+        m
+    }
+
+    #[test]
+    fn a_panicking_frame_stops_the_program_and_keeps_its_text() {
+        let mut m = running_machine();
+        let (mut guard, mut toasts) = (FrameGuard::default(), Toasts::default());
+        guard.run(&mut m, &mut toasts, |_| panic!("a bug in frame {}", 12));
+        assert!(!m.is_running());
+        assert!(!guard.stopped);
+        assert!(toasts.visible());
+        let console = console_rows(&m);
+        assert!(
+            console
+                .iter()
+                .any(|r| r.starts_with("Internal Error (a bug in frame 12)")),
+            "{console:?}"
+        );
+        assert_eq!(m.rt.slots[0], "WHILE 1:VSYNC:WEND\n");
+        // The machine works on, and a frame without a panic clears the count.
+        guard.run(&mut m, &mut toasts, Machine::frame);
+        assert_eq!(guard.panics_in_a_row, 0);
+        m.run_slot(0);
+        guard.run(&mut m, &mut toasts, Machine::frame);
+        assert!(m.is_running());
+    }
+
+    #[test]
+    fn frames_stop_when_panics_keep_coming() {
+        let mut m = running_machine();
+        let (mut guard, mut toasts) = (FrameGuard::default(), Toasts::default());
+        for _ in 0..MOST_PANICS {
+            assert!(!guard.stopped);
+            guard.run(&mut m, &mut toasts, |_| panic!("again"));
+        }
+        assert!(guard.stopped);
+        let mut ran = false;
+        guard.run(&mut m, &mut toasts, |_| ran = true);
+        assert!(!ran);
+    }
+
+    #[test]
+    fn no_profile_turns_panics_into_aborts() {
+        let manifest = include_str!("../../../Cargo.toml");
+        assert!(
+            !manifest.contains("panic ="),
+            "catch_unwind needs unwinding"
+        );
+        assert!(!manifest.contains("panic="), "catch_unwind needs unwinding");
+    }
 
     #[test]
     fn file_urls_encode_the_path() {

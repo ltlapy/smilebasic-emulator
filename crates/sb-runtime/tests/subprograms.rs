@@ -493,6 +493,22 @@ fn a_subprograms_name_cannot_leave_the_storage_folder() {
 }
 
 #[test]
+fn recovering_from_a_panic_ends_a_subprogram_too() {
+    let dir = TempDir::new("panic");
+    let mut m = machine(&dir, "WHILE 1:VSYNC:WEND\n");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    assert!(m.sub_running() && m.sub_has_focus());
+    m.recover_from_panic("a bug");
+    assert!(!m.sub_running() && !m.sub_has_focus());
+    frames(&mut m, 2);
+    enter(&mut m, "?\"here\"");
+    assert!(rows(&m).iter().any(|r| r == "HERE"), "{:?}", rows(&m));
+    enter(&mut m, "subrun \"sub\"");
+    assert!(m.sub_running());
+}
+
+#[test]
 fn a_subprogram_types_into_the_editor_beside_it() {
     let dir = TempDir::new("editor");
     // As SmileBASIC 4's SMILETOOL types what was picked, on a key.
