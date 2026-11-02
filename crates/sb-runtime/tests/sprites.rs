@@ -196,7 +196,7 @@ fn sprites_are_drawn_by_z_around_text() {
 #[test]
 fn animations_slide_and_end() {
     // Each frame after SPANIM plays one step; VSYNC 2 lets two pass.
-    let (_, out) = run("SPSET 0,0:SPOFS 0,0,0\n\
+    let (_, out) = run("SPSET 0,0:SPOFS 0,0,0:VSYNC 1\n\
          DIM A[3]:A[0]=-4:A[1]=40:A[2]=20\n\
          SPANIM 0,\"XY\",A\n\
          VSYNC 2:SPOFS 0 OUT X,Y:?X;\",\";Y;\" \";SPCHK(0);\" \";\n\
@@ -204,9 +204,22 @@ fn animations_slide_and_end() {
     assert_eq!(out, "20,10 1 40,20 0");
 }
 
+/// TEST48 part 7: set in the frame of SPSET, an animation's first step
+/// shows a frame late; set a frame later, after one VSYNC. Rotation and
+/// scale are single precision, set or slid.
+#[test]
+fn animations_wait_a_frame_after_spset() {
+    let (_, out) = run("SPSET 0,0:SPANIM 0,\"R\",-3,-10\n\
+         VSYNC 1:?SPROT(0);\" \";:VSYNC 1:?SPROT(0);\" \";\n\
+         SPSET 1,0:VSYNC 1:SPANIM 1,\"S\",-3,3,-0.5\n\
+         VSYNC 1:SPSCALE 1 OUT X,Y:?X;\",\";Y;\" \";\n\
+         SPROT 1,-3.3:?SPROT(1)");
+    assert_eq!(out, "0 -3.33333302 1.66666663,0.5 -3.29999995");
+}
+
 #[test]
 fn animations_from_data_can_clear_the_sprite() {
-    let (_, out) = run("SPSET 0,0:SPOFS 0,100,0\n\
+    let (_, out) = run("SPSET 0,0:SPOFS 0,100,0:VSYNC 1\n\
          SPANIM 0,\"XY+.\",\"@MV\"\n\
          VSYNC 1:SPOFS 0 OUT X,Y:?X;\" \";\n\
          VSYNC 2:?SPUSED(0)\n\
@@ -221,7 +234,7 @@ fn animations_from_data_can_clear_the_sprite() {
 #[test]
 fn animation_definitions_stop_and_start() {
     let (_, out) = run("ANIMDEF 3,\"Z\",1,1,1,2,0\n\
-         SPSET 0,0:SPANIM 0,3\n\
+         SPSET 0,0:VSYNC 1:SPANIM 0,3\n\
          VSYNC 1:SPOFS 0 OUT X,Y,Z:?Z;\" \";\n\
          SPSTOP 0:VSYNC 2:SPOFS 0 OUT X,Y,Z:?Z;\" \";\n\
          SPSTART:VSYNC 1:SPOFS 0 OUT X,Y,Z:?Z;\" \";SPCHK(0);\" \";\n\
@@ -260,9 +273,9 @@ fn moving_rectangles_hit_sprites() {
 
 #[test]
 fn sliding_sprites_collide_with_their_motion() {
-    let (_, out) = run("SPSET 0,0:SPOFS 0,0,0:SPCOL 0:SPANIM 0,\"XY\",-10,100,0\n\
+    let (_, out) = run("SPSET 0,0:SPOFS 0,0,0:SPCOL 0\n\
          SPSET 1,0:SPOFS 1,30,0:SPCOL 1\n\
-         VSYNC 1\n\
+         VSYNC 1:SPANIM 0,\"XY\",-10,100,0:VSYNC 1\n\
          ?SPHITSP(0,1);\" \";\n\
          SPHITINFO OUT T,X1,Y1,VX1,VY1,X2,Y2,VX2,VY2:?T;\" \";X1;\" \";VX1;\" \";\n\
          SPCOLVEC 0,0,0:?SPHITSP(0,1)");
@@ -339,13 +352,13 @@ fn label_data_moves_reads_place() {
 #[test]
 fn relative_colors_multiply() {
     let (_, out) = run(
-        "SPSET 0,0:SPCOLOR 0,&H80808080:SPANIM 0,\"C+\",1,&H10101010\n\
+        "SPSET 0,0:SPCOLOR 0,&H80808080:VSYNC 1:SPANIM 0,\"C+\",1,&H10101010\n\
          VSYNC 1:?HEX$(SPCOLOR(0))",
     );
     assert_eq!(out, "8080808");
     // Divided by 256, as TEST12 showed.
     let (_, out) = run(
-        "SPSET 0,0:SPCOLOR 0,&HFFFF80C8:SPANIM 0,\"C+\",1,&HFF80FF80\n\
+        "SPSET 0,0:SPCOLOR 0,&HFFFF80C8:VSYNC 1:SPANIM 0,\"C+\",1,&HFF80FF80\n\
          VSYNC 1:?HEX$(SPCOLOR(0))",
     );
     assert_eq!(out, "FE7F7F64");

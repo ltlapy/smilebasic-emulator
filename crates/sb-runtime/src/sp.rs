@@ -386,7 +386,7 @@ impl Runtime {
                 let angle = real(&args[1])?;
                 let s = self.sprite(&args[0])?;
                 stop(s, Target::R);
-                s.rot = angle;
+                s.rot = crate::sprites::single(angle);
                 Ok(vec![])
             }
             (Command::Sprot, Want::Value, 1) => Ok(vec![Value::Real(self.sprite(&args[0])?.rot)]),
@@ -394,7 +394,10 @@ impl Runtime {
                 let scale = (real(&args[1])?, real(&args[2])?);
                 let s = self.sprite(&args[0])?;
                 stop(s, Target::S);
-                s.scale = scale;
+                s.scale = (
+                    crate::sprites::single(scale.0),
+                    crate::sprites::single(scale.1),
+                );
                 Ok(vec![])
             }
             (Command::Spscale, Want::Outs(2), 1) => {

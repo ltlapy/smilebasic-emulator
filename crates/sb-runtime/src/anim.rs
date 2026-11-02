@@ -176,22 +176,23 @@ fn from_channels(c: [f64; 4]) -> f64 {
     f64::from(u32::from_be_bytes(c.map(|x| x.clamp(0.0, 255.0) as u8)))
 }
 
-/// `a` moved towards `b` on frame `elapsed` of `frames`. Colors move per
-/// channel, the two ends weighted by the frames left and gone in single
-/// precision and rounded down, so that &HFF to &HFF over three frames
-/// passes &HFF and &HFE. Positions are rounded towards zero.
-// UNVERIFIED: whether rotation and scale are rounded too.
+/// `a` moved towards `b` on frame `elapsed` of `frames`: the two ends
+/// weighted by the share of frames left and gone, `a*left + b*(1-left)`,
+/// in single precision. Colors mix per channel that way and round down,
+/// so that &HFF to &HFF over three frames passes &HFF and &HFE; positions
+/// are rounded towards zero.
+// UNVERIFIED: that positions, Z, UV, V and I mix in single precision
+// too (a slide that lands on a whole number then reads one less: 0 to 3
+// over three frames would give 0, 1, 3).
 fn mix(target: Target, a: [f64; 2], b: [f64; 2], (elapsed, frames): (u32, u32)) -> [f64; 2] {
+    let left = (frames - elapsed) as f32 / frames as f32;
+    let weigh = |a: f64, b: f64| a as f32 * left + b as f32 * (1.0 - left);
     if target == Target::C {
         let (a, b) = (channels(a[0]), channels(b[0]));
-        let left = (frames - elapsed) as f32 / frames as f32;
-        let c = std::array::from_fn(|i| {
-            f64::from((a[i] as f32 * left + b[i] as f32 * (1.0 - left)).floor())
-        });
+        let c = std::array::from_fn(|i| f64::from(weigh(a[i], b[i]).floor()));
         return [from_channels(c), 0.0];
     }
-    let f = f64::from(elapsed) / f64::from(frames);
-    let v = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+    let v = [weigh(a[0], b[0]), weigh(a[1], b[1])].map(f64::from);
     if target == Target::Xy {
         return v.map(f64::trunc);
     }

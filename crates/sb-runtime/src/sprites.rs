@@ -133,8 +133,8 @@ impl Animated for WithDefs<'_> {
         match target {
             Target::Xy => s.pos = (v[0], v[1]),
             Target::Z => s.z = (v[0] as i32).clamp(-4095, 4095),
-            Target::R => s.rot = v[0],
-            Target::S => s.scale = (v[0], v[1]),
+            Target::R => s.rot = single(v[0]),
+            Target::S => s.scale = (single(v[0]), single(v[1])),
             Target::C => s.color = v[0] as i64 as u32,
             Target::V => {
                 s.vars.insert(VarKey::Int(ANIM_VAR), Value::Real(v[0]));
@@ -179,7 +179,8 @@ pub struct Sprite {
     pub pos: (f64, f64),
     /// Smaller is nearer the front: -4095 to 4095.
     pub z: i32,
-    /// Degrees, clockwise.
+    /// Degrees, clockwise. Rotation and scale are kept in single
+    /// precision; see [`single`].
     pub rot: f64,
     pub scale: (f64, f64),
     pub color: u32,
@@ -201,8 +202,17 @@ pub struct Sprite {
     pub link_flags: i32,
     /// Cleared on the next frame, as its parent was.
     pub clear_pending: bool,
+    /// Set by SPSET until the next frame's animations, which leave the
+    /// sprite as it is.
+    pub fresh: bool,
     /// SPFUNC's callback for CALL SPRITE: a `"@label"` or a DEF name.
     pub func: Option<Vec<u16>>,
+}
+
+/// A number as SmileBASIC 4 keeps a sprite's rotation and scale: in
+/// single precision, so that `SPROT 0,-3.3` reads back -3.29999995.
+pub fn single(v: f64) -> f64 {
+    f64::from(v as f32)
 }
 
 /// Where and how a sprite shows once its links are followed.
@@ -293,6 +303,7 @@ impl Sprite {
             parent: None,
             link_flags: 0,
             clear_pending: false,
+            fresh: false,
             func: None,
         }
     }
@@ -392,7 +403,7 @@ impl Sprites {
     pub fn create(&mut self, id: usize, shown: bool) -> &mut Sprite {
         let s = &mut self.list[id];
         *s = Sprite::unused();
-        (s.used, s.shown) = (true, shown);
+        (s.used, s.shown, s.fresh) = (true, shown, true);
         (s.page, s.layer) = (self.new_page, self.new_layer);
         s
     }
@@ -493,6 +504,14 @@ impl Sprites {
         }
         for id in 0..SPRITES {
             let s = &mut self.list[id];
+            // An animation set in the frame of the sprite's SPSET takes
+            // its first step a frame late.
+            // UNVERIFIED: that it is SPSET that counts, not an SPCLR before
+            // it or a VSYNC that did not wait between it and SPANIM.
+            if std::mem::take(&mut s.fresh) {
+                s.anim_move = (0.0, 0.0);
+                continue;
+            }
             if !s.used || s.anim_stopped {
                 s.anim_move = (0.0, 0.0);
                 continue;
