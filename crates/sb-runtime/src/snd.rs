@@ -113,30 +113,23 @@ fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
     ))
 }
 
-/// WAVSETA's arguments after the array can be left off the end, by how many
-/// are given, but none can be left out in between; this comes before the
-/// array is looked at.
-fn none_omitted(args: &[Value]) -> Result<()> {
-    match (6..args.len()).find(|&i| matches!(args[i], Value::Default)) {
-        Some(i) => {
+/// One of WAVSETA's arguments after the array: these can be left off the
+/// end, by how many are given, but none can be left out in between.
+fn wave_arg(
+    what: &str,
+    args: &[Value],
+    i: usize,
+    range: std::ops::RangeInclusive<i32>,
+    default: i32,
+) -> Result<i32> {
+    match args.get(i) {
+        None => Ok(default),
+        Some(Value::Default) => {
             let omitted = format!("argument {} omitted", i + 1);
             Err(Error::with_detail(ErrorKind::TypeMismatch, omitted).of_arg(i))
         }
-        None => Ok(()),
+        Some(v) => in_range(what, v, range),
     }
-}
-
-/// WAVSETA's samples, of which there must be some: every default range
-/// below counts from the last one.
-fn wave_samples(v: &Value) -> Result<Vec<f64>> {
-    let all = samples(v)?;
-    if all.is_empty() {
-        return Err(Error::with_detail(
-            ErrorKind::IllegalFunctionCall,
-            "empty array",
-        ));
-    }
-    Ok(all)
 }
 
 /// The numbers in a one-dimensional array.
@@ -389,42 +382,55 @@ impl Runtime {
                 self.sound.waves.borrow_mut().define(n, wave);
                 Ok(vec![])
             }
-            // The 8-bit form, SmileBASIC 3's.
-            (Command::Wavseta, Want::Outs(0), 6..=9) => {
+            // Ten arguments or more make a 16-bit sample with a loop and its
+            // own sample rate, fewer the 8-bit form, SmileBASIC 3's.
+            (Command::Wavseta, Want::Outs(0), 6..=12) => {
                 let (n, envelope) = wave_head(args)?;
-                none_omitted(args)?;
-                let all = wave_samples(&args[5])?;
-                let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
-                let last = all.len() as i32 - 1;
-                let start = opt_in_range("start", args.get(7), 0..=last, 0)? as usize;
-                let end = opt_in_range("end", args.get(8), start as i32..=last, last)? as usize;
-                let bytes = &all[start..=end];
-                let wave = eight_bit(bytes, bytes.len().next_power_of_two(), base_note, envelope);
-                self.sound.waves.borrow_mut().define(n, wave);
-                Ok(vec![])
-            }
-            // A 16-bit sample with a loop and its own sample rate.
-            (Command::Wavseta, Want::Outs(0), 10..=12) => {
-                let (n, envelope) = wave_head(args)?;
-                none_omitted(args)?;
-                let all = wave_samples(&args[5])?;
-                let base_note = in_range("pitch", &args[6], 0..=127)?;
-                let last = all.len() as i32 - 1;
-                let offset = opt_in_range("offset", args.get(10), 0..=last, 0)? as usize;
+                let Value::Array(array) = &args[5] else {
+                    return Err(Error::from(ErrorKind::TypeMismatch).of_arg(5));
+                };
+                let last = array.borrow().len() as i32 - 1;
+                let base_note = wave_arg("pitch", args, 6, 0..=127, 69)?;
+                let start = wave_arg("start", args, 7, 0..=last, 0)?;
+                let end = wave_arg("end", args, 8, 0..=last, last)?;
+                let rate = wave_arg("frequency", args, 9, 1..=96000, 28160)?;
+                let offset = wave_arg("offset", args, 10, 0..=last, 0)?;
+                let beep_loop = wave_arg("flag", args, 11, i32::MIN..=i32::MAX, 0)? != 0;
+                if start > end {
+                    let detail = if last < 0 {
+                        "empty array"
+                    } else {
+                        "start past end"
+                    };
+                    return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, detail));
+                }
+                if start == end {
+                    return Ok(vec![]);
+                }
+                let (start, end) = (start as usize, end as usize);
+                if args.len() < 10 {
+                    let all = samples(&args[5])?;
+                    let bytes = &all[start..=end];
+                    let wave =
+                        eight_bit(bytes, bytes.len().next_power_of_two(), base_note, envelope);
+                    self.sound.waves.borrow_mut().define(n, wave);
+                    return Ok(vec![]);
+                }
+                let offset = offset as usize;
                 // The sample is the loop's end + 1 values from the offset
                 // on, and the loop counts from the offset: what comes after
                 // the loop is dropped.
-                let left = last - offset as i32;
-                let loop_end = in_range("loop end", &args[8], 0..=left)? as usize;
-                let loop_start = in_range("loop start", &args[7], 0..=loop_end as i32)? as usize;
-                let rate = in_range("frequency", &args[9], 1..=96000)?;
-                let beep_loop = opt_in_range("flag", args.get(11), 0..=1, 0)? == 1;
+                if end > (last as usize) - offset {
+                    let e = Error::with_detail(ErrorKind::OutOfRange, "offset leaves too little");
+                    return Err(e.of_arg(10));
+                }
                 // Values are cut to 16 bits, reals towards zero first.
-                let samples: Vec<f32> = all[offset..=offset + loop_end]
+                let all = samples(&args[5])?;
+                let samples: Vec<f32> = all[offset..=offset + end]
                     .iter()
                     .map(|&x| f32::from(x.trunc() as i64 as i16) / 32768.0)
                     .collect();
-                let looped = (loop_start, loop_end + 1);
+                let looped = (start, end + 1);
                 self.sound.waves.borrow_mut().define(
                     n,
                     Wave {

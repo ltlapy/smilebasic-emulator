@@ -240,14 +240,71 @@ fn wavseta_refuses_an_empty_array() {
     for source in [
         "DIM A[0]:WAVSETA 224,0,0,0,0,A",
         "DIM A[0]:WAVSETA 224,0,0,0,0,A,69",
-        "DIM A[0]:WAVSETA 224,0,0,0,0,A,69,0,0,28160",
-        "DIM A[0]:WAVSETA 224,0,0,0,0,A,69,0,0,28160,0,1",
     ] {
         let e = run_on(&mut runtime(), source).unwrap_err();
         assert_eq!(e.kind, ErrorKind::IllegalFunctionCall, "{source}");
         assert_eq!(e.detail.as_deref(), Some("empty array"), "{source}");
     }
-    // One sample is enough, in both forms.
+    for source in [
+        "DIM A[0]:WAVSETA 224,0,0,0,0,A,69,0,0,28160",
+        "DIM A[0]:WAVSETA 224,0,0,0,0,A,69,0,0,28160,0,1",
+    ] {
+        let e = run_on(&mut runtime(), source).unwrap_err();
+        assert_eq!(
+            (e.kind, e.arg),
+            (ErrorKind::OutOfRange, Some(7)),
+            "{source}"
+        );
+    }
+}
+
+/// WAVSETA looks at its arguments in order, then at the range: one with
+/// nothing in it defines nothing and is no error, in both forms (TEST57).
+#[test]
+fn wavseta_checks_in_order() {
+    let wrong = |source: &str, kind: ErrorKind, arg: Option<u8>| {
+        let source = format!("DIM A%[16]:WAVSETA 224,0,0,0,0,A%,{source}");
+        let e = run_on(&mut runtime(), &source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, arg), "{source}");
+    };
+    let range = ErrorKind::OutOfRange;
+    let illegal = ErrorKind::IllegalFunctionCall;
+    wrong("128", range, Some(6));
+    wrong("69,16", range, Some(7));
+    wrong("69,-1", range, Some(7));
+    wrong("69,0,16", range, Some(8));
+    wrong("69,0,15,0", range, Some(9));
+    wrong("69,0,15,96001", range, Some(9));
+    wrong("69,0,15,28160,16", range, Some(10));
+    // An argument left out counts where it is.
+    wrong("128,,15", range, Some(6));
+    wrong("69,0,15,28160,", ErrorKind::TypeMismatch, Some(10));
+    wrong("69,0,15,28160,0,\"X\"", ErrorKind::TypeMismatch, Some(11));
+    // Then the range, which comes before the offset's check.
+    wrong("69,10,5", illegal, None);
+    wrong("69,10,5,28160", illegal, None);
+    wrong("69,10,5,28160,15", illegal, None);
+    wrong("69,0,15,28160,4", range, Some(10));
+    wrong("69,0,12,28160,4", range, Some(10));
+    for (source, shows) in [
+        ("69,5,5", "0"),
+        ("69,5,5,28160", "0"),
+        ("69,5,5,28160,15", "0"),
+        ("69,0,11,28160,4", "1"),
+        // The flag can be any number.
+        ("69,0,11,28160,4,-7", "1"),
+        ("69,0,1", "1"),
+    ] {
+        let mut rt = runtime();
+        let program = format!(
+            "DIM A%[16]:FILL A%,20000:WAVSETA 224,0,0,0,0,A%,{source}:BGMPLAY \"@224 V127 C4\""
+        );
+        run_on(&mut rt, &program).unwrap();
+        rt.sound.take_samples();
+        frames(&mut rt, 5);
+        assert_eq!(u8::from(peak(&mut rt) > 0.0).to_string(), shows, "{source}");
+    }
+    // One sample has no range, and an array of it is no error either.
     for source in [
         "DIM A[1]:WAVSETA 224,0,0,0,0,A",
         "DIM A[1]:WAVSETA 224,0,0,0,0,A,69,0,0,28160",

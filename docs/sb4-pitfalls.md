@@ -813,7 +813,17 @@ yet seen on hardware; TEST56 looks at each:
   the array can be left off the end, but one left out in between is `Type
   mismatch` with its number, in both forms and ahead of the check for an empty
   array: `WAVSETA 224,0,0,0,0,A%,,0,15` is `(WAVSETA:7)`, and `...,A%,69,,15`
-  and `...,A%,69,,,28160` are `(WAVSETA:8)` (TEST51, TEST52).
+  and `...,A%,69,,,28160` are `(WAVSETA:8)` (TEST51, TEST52). A trailing comma
+  counts: `...,A%,69,0,15,28160,` is `(WAVSETA:11)` (TEST57).
+- `WAVSETA` looks at its arguments in order: reference note 0 to 127 (`:7`),
+  start and end 0 to the last element (`:8`, `:9`), rate 1 to 96000 (`:10`),
+  offset 0 to the last element (`:11`), and a flag of any integer, true if not 0
+  (`:12`). Then a start past the end is `Illegal function
+  call`, no number: `...,A%,69,10,5` and `...,A%,69,10,5,28160` (TEST57). A start
+  equal to the end is no error and defines nothing, in both forms, so neither
+  does an array of one element: `...,A%,69,5,5` (TEST57). Then in the 16-bit
+  form an end the offset leaves no room for is `Out of range`: `...,A%,69,0,15,
+  28160,4` on 16 elements is `(WAVSETA:11)` (TEST57).
 - `CHKMML` gives -1 for 16 million characters of notes, and for macros
   nested six and seven levels deep that would come to 10^7 and 10^8
   characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even
