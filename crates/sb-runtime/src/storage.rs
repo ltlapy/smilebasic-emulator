@@ -169,10 +169,45 @@ fn check_name(name: &str) -> Result<String> {
 
 fn check_plain_name(name: &str) -> Result<String> {
     let ok = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
-    if name.is_empty() || name.len() > MAX_NAME || name.starts_with('.') || !name.chars().all(ok) {
+    if name.is_empty()
+        || name.len() > MAX_NAME
+        || name.starts_with('.')
+        || !name.chars().all(ok)
+        || (cfg!(windows) && name.ends_with('.'))
+    {
         return Err(StorageError::BadName(name.to_string()));
     }
     Ok(name.to_ascii_uppercase())
+}
+
+/// Whether Windows takes a name for a device, whatever follows its first
+/// dot, rather than for a folder. Files escape this by their type letter;
+/// only a project's folder can be named so.
+///
+/// UNVERIFIED: whether SmileBASIC 4 takes these names, and names ending in
+/// a dot. It runs on no Windows disk, so a project called `CON` may well
+/// exist; only Windows, which cannot hold them, refuses them.
+fn is_windows_device(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    match stem.as_bytes() {
+        b"CON" | b"PRN" | b"AUX" | b"NUL" => true,
+        [b'C', b'O', b'M', digit] | [b'L', b'P', b'T', digit] => digit.is_ascii_digit(),
+        _ => false,
+    }
+}
+
+/// `name` made into one that Windows can hold as a folder, for
+/// [`suggest_project_name`].
+fn windows_folder_name(name: String) -> String {
+    let trimmed = name.trim_end_matches('.');
+    match trimmed {
+        "" | "#" => format!("{trimmed}PROJECT"),
+        _ if is_windows_device(trimmed) => {
+            let kept = trimmed.chars().take(MAX_NAME - 1);
+            format!("_{}", kept.collect::<String>())
+        }
+        _ => trimmed.to_string(),
+    }
 }
 
 /// A file named for reading: `[TYPE:][PROJECT/]NAME`, where an empty
@@ -225,7 +260,7 @@ pub fn check_project_name(name: &str) -> Result<String> {
     // `@` stays out of project names, so `@WORKSPACE` never clashes.
     check_plain_name(rest)
         .ok()
-        .filter(|_| name.len() <= MAX_NAME)
+        .filter(|_| name.len() <= MAX_NAME && !(cfg!(windows) && is_windows_device(name)))
         .ok_or(())
         .map(|n| format!("{}{n}", &name[..name.len() - rest.len()]))
         .map_err(|_| StorageError::BadName(name.to_string()))
@@ -247,9 +282,13 @@ pub fn suggest_project_name(name: &str) -> String {
         .collect();
     let room = MAX_NAME - hash.len();
     let fixed: String = fixed.trim_start_matches('.').chars().take(room).collect();
-    match fixed.as_str() {
+    let suggested = match fixed.as_str() {
         "" => format!("{hash}PROJECT"),
         _ => format!("{hash}{fixed}"),
+    };
+    match cfg!(windows) {
+        true => windows_folder_name(suggested),
+        false => suggested,
     }
 }
 
@@ -616,6 +655,8 @@ impl Storage {
                 let kept: String = base.chars().take(MAX_NAME - n.len()).collect();
                 format!("{kept}{n}")
             })
+            // `COM` and 2 are a device on Windows.
+            .filter(|to| check_project_name(to).is_ok())
             .find(|to| self.dir(to).is_ok_and(|d| !d.exists()))
             .ok_or_else(|| StorageError::Exists(base.clone()))?;
         let to = self.dir(&free)?;
@@ -786,6 +827,34 @@ mod tests {
             parse_listing("mygame").unwrap(),
             (None, Some("MYGAME".to_string()))
         );
+    }
+
+    #[test]
+    fn names_windows_cannot_hold() {
+        for device in [
+            "CON", "con", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9", "NUL.TXT", "CON.A.B",
+        ] {
+            assert!(is_windows_device(device), "{device}");
+            assert_eq!(check_project_name(device).is_err(), cfg!(windows));
+        }
+        for fine in ["CONSOLE", "COM", "COM10", "#CON", "ACON", "LPTX", "NULL"] {
+            assert!(!is_windows_device(fine), "{fine}");
+            assert!(check_project_name(fine).is_ok(), "{fine}");
+        }
+        // A file's type letter keeps its name from being a device.
+        assert!(check_name("CON").is_ok());
+        for dotted in ["A.", "A..", "@A."] {
+            assert_eq!(check_name(dotted).is_err(), cfg!(windows), "{dotted}");
+        }
+        assert_eq!(check_project_name("A.").is_err(), cfg!(windows));
+        assert_eq!(windows_folder_name("CON".to_string()), "_CON");
+        assert_eq!(windows_folder_name("NUL.TXT".to_string()), "_NUL.TXT");
+        assert_eq!(windows_folder_name("#CON".to_string()), "#CON");
+        assert_eq!(windows_folder_name("GAME.".to_string()), "GAME");
+        assert_eq!(windows_folder_name("#.".to_string()), "#PROJECT");
+        assert_eq!(windows_folder_name("GAME".to_string()), "GAME");
+        // Spaces never were legal, trailing or not.
+        assert!(check_project_name("A ").is_err());
     }
 
     #[test]
