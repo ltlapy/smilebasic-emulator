@@ -79,107 +79,111 @@ enum Mora {
     Control(char, i32),
 }
 
+/// Kana and punctuation as phoneme letters.
+const TABLE: &[(char, &str)] = &[
+    ('あ', "a"),
+    ('い', "i"),
+    ('う', "u"),
+    ('え', "e"),
+    ('お', "o"),
+    ('か', "ka"),
+    ('き', "ki"),
+    ('く', "ku"),
+    ('け', "ke"),
+    ('こ', "ko"),
+    ('が', "ga"),
+    ('ぎ', "gi"),
+    ('ぐ', "gu"),
+    ('げ', "ge"),
+    ('ご', "go"),
+    ('さ', "sa"),
+    ('し', "shi"),
+    ('す', "su"),
+    ('せ', "se"),
+    ('そ', "so"),
+    ('ざ', "za"),
+    ('じ', "ji"),
+    ('ず', "zu"),
+    ('ぜ', "ze"),
+    ('ぞ', "zo"),
+    ('た', "ta"),
+    ('ち', "chi"),
+    ('つ', "tsu"),
+    ('て', "te"),
+    ('と', "to"),
+    ('だ', "da"),
+    ('ぢ', "ji"),
+    ('づ', "zu"),
+    ('で', "de"),
+    ('ど', "do"),
+    ('な', "na"),
+    ('に', "ni"),
+    ('ぬ', "nu"),
+    ('ね', "ne"),
+    ('の', "no"),
+    ('は', "ha"),
+    ('ひ', "hi"),
+    ('ふ', "fu"),
+    ('へ', "he"),
+    ('ほ', "ho"),
+    ('ば', "ba"),
+    ('び', "bi"),
+    ('ぶ', "bu"),
+    ('べ', "be"),
+    ('ぼ', "bo"),
+    ('ぱ', "pa"),
+    ('ぴ', "pi"),
+    ('ぷ', "pu"),
+    ('ぺ', "pe"),
+    ('ぽ', "po"),
+    ('ま', "ma"),
+    ('み', "mi"),
+    ('む', "mu"),
+    ('め', "me"),
+    ('も', "mo"),
+    ('や', "ya"),
+    ('ゆ', "yu"),
+    ('よ', "yo"),
+    ('ら', "ra"),
+    ('り', "ri"),
+    ('る', "ru"),
+    ('れ', "re"),
+    ('ろ', "ro"),
+    ('わ', "wa"),
+    ('ゐ', "i"),
+    ('ゑ', "e"),
+    ('を', "o"),
+    ('ん', "q"),
+    ('ゔ', "bu"),
+    ('っ', "cl"),
+    ('ゎ', "wa"),
+    ('、', ","),
+    ('，', ","),
+    (',', ","),
+    ('.', "."),
+    ('　', ","),
+    (' ', ","),
+    ('。', "."),
+    ('．', "."),
+    ('！', "."),
+    ('？', "."),
+    ('!', "."),
+    ('?', "."),
+];
+
 /// Kana as SmileBASIC's phoneme letters: `q` for ん, `cl` for っ.
 fn kana_letters(text: &str) -> String {
-    const TABLE: &[(char, &str)] = &[
-        ('あ', "a"),
-        ('い', "i"),
-        ('う', "u"),
-        ('え', "e"),
-        ('お', "o"),
-        ('か', "ka"),
-        ('き', "ki"),
-        ('く', "ku"),
-        ('け', "ke"),
-        ('こ', "ko"),
-        ('が', "ga"),
-        ('ぎ', "gi"),
-        ('ぐ', "gu"),
-        ('げ', "ge"),
-        ('ご', "go"),
-        ('さ', "sa"),
-        ('し', "shi"),
-        ('す', "su"),
-        ('せ', "se"),
-        ('そ', "so"),
-        ('ざ', "za"),
-        ('じ', "ji"),
-        ('ず', "zu"),
-        ('ぜ', "ze"),
-        ('ぞ', "zo"),
-        ('た', "ta"),
-        ('ち', "chi"),
-        ('つ', "tsu"),
-        ('て', "te"),
-        ('と', "to"),
-        ('だ', "da"),
-        ('ぢ', "ji"),
-        ('づ', "zu"),
-        ('で', "de"),
-        ('ど', "do"),
-        ('な', "na"),
-        ('に', "ni"),
-        ('ぬ', "nu"),
-        ('ね', "ne"),
-        ('の', "no"),
-        ('は', "ha"),
-        ('ひ', "hi"),
-        ('ふ', "fu"),
-        ('へ', "he"),
-        ('ほ', "ho"),
-        ('ば', "ba"),
-        ('び', "bi"),
-        ('ぶ', "bu"),
-        ('べ', "be"),
-        ('ぼ', "bo"),
-        ('ぱ', "pa"),
-        ('ぴ', "pi"),
-        ('ぷ', "pu"),
-        ('ぺ', "pe"),
-        ('ぽ', "po"),
-        ('ま', "ma"),
-        ('み', "mi"),
-        ('む', "mu"),
-        ('め', "me"),
-        ('も', "mo"),
-        ('や', "ya"),
-        ('ゆ', "yu"),
-        ('よ', "yo"),
-        ('ら', "ra"),
-        ('り', "ri"),
-        ('る', "ru"),
-        ('れ', "re"),
-        ('ろ', "ro"),
-        ('わ', "wa"),
-        ('ゐ', "i"),
-        ('ゑ', "e"),
-        ('を', "o"),
-        ('ん', "q"),
-        ('ゔ', "bu"),
-        ('っ', "cl"),
-        ('ゎ', "wa"),
-        ('、', ","),
-        ('，', ","),
-        (',', ","),
-        ('.', "."),
-        ('　', ","),
-        (' ', ","),
-        ('。', "."),
-        ('．', "."),
-        ('！', "."),
-        ('？', "."),
-        ('!', "."),
-        ('?', "."),
-    ];
     let mut out = String::new();
     let chars: Vec<char> = text.chars().collect();
+    // What ー repeats: the last vowel in `out`. It is kept rather than
+    // looked for, which would make long text with few vowels quadratic.
+    let mut last_vowel = None;
     for (i, &c) in chars.iter().enumerate() {
         // Katakana sit 0x60 above hiragana.
         let c = match c {
             'ァ'..='ヶ' => char::from_u32(c as u32 - 0x60).unwrap_or(c),
             c => c,
         };
-        let last_vowel = out.chars().rev().find(|c| "aiueo".contains(*c));
         match c {
             // Small ゃゅょ: きゃ is kya, しゃ is sha.
             'ゃ' | 'ゅ' | 'ょ' if out.ends_with('i') => {
@@ -187,11 +191,13 @@ fn kana_letters(text: &str) -> String {
                 if !(out.ends_with("sh") || out.ends_with("ch") || out.ends_with('j')) {
                     out.push('y');
                 }
-                out.push(match c {
+                let v = match c {
                     'ゃ' => 'a',
                     'ゅ' => 'u',
                     _ => 'o',
-                });
+                };
+                out.push(v);
+                last_vowel = Some(v);
             }
             // Small vowels: ふぁ is fa, てぃ is ti.
             'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' => {
@@ -206,6 +212,7 @@ fn kana_letters(text: &str) -> String {
                     out.pop();
                 }
                 out.push(v);
+                last_vowel = Some(v);
             }
             'ー' | '～' | '〜' => {
                 if let Some(v) = last_vowel {
@@ -215,9 +222,17 @@ fn kana_letters(text: &str) -> String {
             // Checked on hardware: は before 、 is read "wa", falling in
             // pitch, as a particle; before 。 and other punctuation, or
             // anywhere else, it is "ha".
-            'は' if chars.get(i + 1) == Some(&'、') => out.push_str("wa↓"),
+            'は' if chars.get(i + 1) == Some(&'、') => {
+                out.push_str("wa↓");
+                last_vowel = Some('a');
+            }
             c => match TABLE.iter().find(|(k, _)| *k == c) {
-                Some((_, letters)) => out.push_str(letters),
+                Some((_, letters)) => {
+                    out.push_str(letters);
+                    if let Some(v) = letters.chars().rev().find(|c| "aiueo".contains(*c)) {
+                        last_vowel = Some(v);
+                    }
+                }
                 // UNVERIFIED: anything else is skipped.
                 None if "<>0123456789SPVspv#".contains(c) => out.push(c),
                 None => {}
@@ -891,6 +906,91 @@ impl Singer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `kana_letters` as it was when it looked for the last vowel again
+    /// for every character: the output must stay what this gives.
+    fn kana_letters_by_search(text: &str) -> String {
+        let mut out = String::new();
+        let chars: Vec<char> = text.chars().collect();
+        for (i, &c) in chars.iter().enumerate() {
+            let c = match c {
+                'ァ'..='ヶ' => char::from_u32(c as u32 - 0x60).unwrap_or(c),
+                c => c,
+            };
+            let last_vowel = out.chars().rev().find(|c| "aiueo".contains(*c));
+            match c {
+                'ゃ' | 'ゅ' | 'ょ' if out.ends_with('i') => {
+                    out.pop();
+                    if !(out.ends_with("sh") || out.ends_with("ch") || out.ends_with('j')) {
+                        out.push('y');
+                    }
+                    out.push(match c {
+                        'ゃ' => 'a',
+                        'ゅ' => 'u',
+                        _ => 'o',
+                    });
+                }
+                'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' => {
+                    let v = match c {
+                        'ぁ' => 'a',
+                        'ぃ' => 'i',
+                        'ぅ' => 'u',
+                        'ぇ' => 'e',
+                        _ => 'o',
+                    };
+                    if out.ends_with(['a', 'i', 'u', 'e', 'o']) {
+                        out.pop();
+                    }
+                    out.push(v);
+                }
+                'ー' | '～' | '〜' => {
+                    if let Some(v) = last_vowel {
+                        out.push(v);
+                    }
+                }
+                'は' if chars.get(i + 1) == Some(&'、') => out.push_str("wa↓"),
+                c => match TABLE.iter().find(|(k, _)| *k == c) {
+                    Some((_, letters)) => out.push_str(letters),
+                    None if "<>0123456789SPVspv#".contains(c) => out.push(c),
+                    None => {}
+                },
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn kana_letters_match_searching_for_the_vowel() {
+        // Every kana in the table, what changes `out` other than through
+        // it, and letters that are kept or dropped.
+        let mut alphabet: Vec<char> = TABLE.iter().map(|(k, _)| *k).collect();
+        alphabet.extend("ゃゅょぁぃぅぇぉーー～〜はは、、ャュョァィゥェォカキシチジン".chars());
+        alphabet.extend("<>0S9#aiueoxyz漢".chars());
+        let mut seed = 0x2545_F491u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as usize
+        };
+        for _ in 0..20_000 {
+            let len = next() % 24;
+            let text: String = (0..len)
+                .map(|_| alphabet[next() % alphabet.len()])
+                .collect();
+            assert_eq!(kana_letters(&text), kana_letters_by_search(&text), "{text}");
+        }
+    }
+
+    /// These took minutes when every character scanned what came before.
+    #[test]
+    fn long_text_takes_time_in_step_with_its_length() {
+        let n = 2_000_000;
+        assert_eq!(kana_letters(&"<".repeat(n)).len(), n);
+        assert_eq!(kana_letters(&"ー".repeat(n)), "");
+        assert_eq!(morae(&"<".repeat(n)).len(), 0);
+        assert_eq!(morae(&"<S1>".repeat(n / 4)).len(), n / 4);
+    }
 
     #[test]
     fn kana_become_letters() {
