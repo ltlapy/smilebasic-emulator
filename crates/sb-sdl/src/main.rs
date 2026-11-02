@@ -131,7 +131,8 @@ fn resource_dir() -> Result<PathBuf, AnyError> {
 }
 
 fn load_source(path: &Path) -> Result<String, AnyError> {
-    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes =
+        (sb_runtime::storage::read_chosen(path)).map_err(|e| format!("{}: {e}", path.display()))?;
     if bytes.starts_with(&[4, 0]) {
         let file = sbfile::parse(&bytes)?;
         Ok(file.text()?.to_owned())

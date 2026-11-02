@@ -18,6 +18,11 @@ const WORKSPACE_DIR: &str = "@WORKSPACE";
 pub const MAX_NAME: usize = 32;
 /// The previous version of a program overwritten by SAVE.
 pub const BACKUP_NAME: &str = "@BACKUP.PRG";
+/// The largest file read or saved, looked at before any of it is read, so
+/// that a huge file in a project cannot take all the memory. SmileBASIC 4
+/// has about 128 MiB for a program, so an array filling that, in strings
+/// that grow as UTF-8 too, still fits.
+pub const MAX_FILE: u64 = 4 * crate::sbfile::MAX_BODY as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FileKind {
@@ -118,8 +123,16 @@ fn is_real_file(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
 
-/// Reads a file of a project, which must be a regular file: not a link, nor
-/// a pipe that would wait forever.
+fn too_large(path: &Path, size: u64) -> io::Error {
+    let what = format!(
+        "{} is too large ({size} bytes, the most is {MAX_FILE})",
+        file_label(path)
+    );
+    io::Error::new(io::ErrorKind::InvalidData, what)
+}
+
+/// Reads a file of a project, which must be a regular file, not a link, nor
+/// a pipe that would wait forever, of [`MAX_FILE`] bytes at most.
 pub fn read_regular(path: &Path) -> io::Result<Vec<u8>> {
     let meta = std::fs::symlink_metadata(path)?;
     if meta.file_type().is_symlink() {
@@ -128,6 +141,18 @@ pub fn read_regular(path: &Path) -> io::Result<Vec<u8>> {
     if !meta.is_file() {
         let what = format!("{} is not a file", file_label(path));
         return Err(io::Error::new(io::ErrorKind::InvalidInput, what));
+    }
+    if meta.len() > MAX_FILE {
+        return Err(too_large(path, meta.len()));
+    }
+    std::fs::read(path)
+}
+
+/// Reads a file the user picked, from anywhere, so through a link too.
+pub fn read_chosen(path: &Path) -> io::Result<Vec<u8>> {
+    let meta = std::fs::metadata(path)?;
+    if meta.is_file() && meta.len() > MAX_FILE {
+        return Err(too_large(path, meta.len()));
     }
     std::fs::read(path)
 }
@@ -500,6 +525,10 @@ impl Storage {
         backup: Option<&str>,
     ) -> Result<()> {
         let path = self.path(kind, name)?;
+        // It could not be read back.
+        if bytes.len() as u64 > MAX_FILE {
+            return Err(too_large(&path, bytes.len() as u64).into());
+        }
         check_writable(&path)?;
         std::fs::create_dir_all(path.parent().expect("file in a project folder"))?;
         // A link at the backup's name is replaced, not followed.
@@ -998,6 +1027,33 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");
+    }
+
+    #[test]
+    fn a_file_over_the_limit_is_refused_without_reading_it() {
+        let tmp = TempDir::new("large");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.set_project("GAME").unwrap();
+        // Sparse, so that the test takes no room, and reading it whole would
+        // show as the time and memory the check is there to save.
+        let path = tmp.0.join("GAME/THUGE");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_FILE + 1).unwrap();
+        drop(file);
+        let too_large = |e: StorageError| e.to_string().contains("too large");
+        assert!(s.read(FileKind::Txt, "HUGE").is_err_and(too_large));
+        assert!(s.read_project_file("THUGE").is_err_and(too_large));
+        let file = parse_read_name("HUGE", FileKind::Txt).unwrap();
+        assert!(s.read_ref(&file).is_err_and(too_large));
+        assert!(read_chosen(&path).is_err());
+        assert!(s.exists(FileKind::Txt, "HUGE"), "it is still listed");
+
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(16).unwrap();
+        drop(file);
+        assert_eq!(s.read(FileKind::Txt, "HUGE").unwrap().len(), 16);
+        assert_eq!(read_chosen(&path).unwrap().len(), 16);
     }
 
     #[test]

@@ -133,9 +133,16 @@ pub fn export_meta(meta: &Meta, date: Date) -> Vec<u8> {
     sbfile::container(Kind::Meta, 0, date, &sbfile::meta_body(&meta), false)
 }
 
-/// The files of a folder, sorted by name, with their contents and when
-/// they last changed.
-fn files(dir: &Path) -> Result<Vec<(String, Vec<u8>, Date)>, String> {
+/// A file of a folder, read only when its turn comes, so that a folder's
+/// files are not all in memory at once.
+struct Entry {
+    name: String,
+    path: PathBuf,
+    changed: Date,
+}
+
+/// The files of a folder, sorted by name. Links are not among them.
+fn files(dir: &Path) -> Result<Vec<Entry>, String> {
     let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     for entry in entries {
@@ -147,11 +154,13 @@ fn files(dir: &Path) -> Result<Vec<(String, Vec<u8>, Date)>, String> {
         if !meta.is_file() {
             continue;
         }
-        let bytes = fs::read(entry.path()).map_err(|e| format!("{name}: {e}"))?;
-        let date = meta.modified().map_or_else(|_| Date::now(), Date::at);
-        files.push((name, bytes, date));
+        files.push(Entry {
+            name,
+            path: entry.path(),
+            changed: meta.modified().map_or_else(|_| Date::now(), Date::at),
+        });
     }
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(files)
 }
 
@@ -177,22 +186,27 @@ pub fn export_project(storage: &Storage, project: &str, dest: &Path) -> Result<S
         true => files(&dir)?,
         false => Vec::new(),
     };
-    for (name, bytes, date) in &present {
-        let Some(kind) = kind_of(name) else {
+    for Entry {
+        name,
+        path,
+        changed,
+    } in present
+    {
+        let Some(kind) = kind_of(&name) else {
             // The metadata's files go into META below.
-            if !env::is_meta_file(name) {
-                summary
-                    .skipped
-                    .push((name.clone(), "not a file type".to_string()));
+            if !env::is_meta_file(&name) {
+                summary.skipped.push((name, "not a file type".to_string()));
             }
             continue;
         };
-        match export_file(kind, bytes, *date) {
+        let out = (storage::read_regular(&path).map_err(|e| e.to_string()))
+            .and_then(|bytes| export_file(kind, &bytes, changed));
+        match out {
             Ok(out) => {
-                write(&target.join(name), &out)?;
+                write(&target.join(&name), &out)?;
                 summary.written += 1;
             }
-            Err(why) => summary.skipped.push((name.clone(), why)),
+            Err(why) => summary.skipped.push((name, why)),
         }
     }
     let read = |name: &str| storage.read_file_in(project, name).ok();
@@ -206,7 +220,19 @@ pub fn export_project(storage: &Storage, project: &str, dest: &Path) -> Result<S
 pub fn import_project(storage: &Storage, source: &Path, project: &str) -> Result<Summary, String> {
     let dir = storage.project_dir(project).map_err(|e| e.to_string())?;
     let mut summary = Summary::default();
-    for (name, bytes, _) in files(source)? {
+    for Entry { name, path, .. } in files(source)? {
+        let is_type = kind_of(&name).is_some();
+        if name != SB4_META && !is_type {
+            summary.skipped.push((name, "not a file type".to_string()));
+            continue;
+        }
+        let bytes = match storage::read_regular(&path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                summary.skipped.push((name, e.to_string()));
+                continue;
+            }
+        };
         if name == SB4_META {
             let meta = sbfile::parse(&bytes)
                 .ok()
@@ -229,7 +255,6 @@ pub fn import_project(storage: &Storage, source: &Path, project: &str) -> Result
             continue;
         }
         let Some(kind) = kind_of(&name) else {
-            summary.skipped.push((name, "not a file type".to_string()));
             continue;
         };
         match import_file(kind, &bytes) {

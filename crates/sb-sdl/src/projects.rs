@@ -16,7 +16,7 @@ use sb_runtime::env::{DESCRIPTION_CHARS, ICON_SIZE, Meta, TITLE_CHARS, meta_file
 use sb_runtime::font::Font;
 use sb_runtime::image;
 use sb_runtime::runtime::SLOTS;
-use sb_runtime::storage::{FileKind, Storage, check_project_name, suggest_project_name};
+use sb_runtime::storage::{self, FileKind, Storage, check_project_name, suggest_project_name};
 use sb_runtime::transfer;
 use sdl3::gamepad::Button as Pad;
 use sdl3::keyboard::Keycode;
@@ -1950,7 +1950,7 @@ impl ProjectManager {
                 let Some(edit) = self.edit.as_mut().filter(|e| e.project == project) else {
                     return;
                 };
-                let read = std::fs::read(&folder).map_err(|e| e.to_string());
+                let read = storage::read_chosen(&folder).map_err(|e| e.to_string());
                 match read.and_then(|bytes| image::decode(&bytes)) {
                     Ok(img) if img.width > 0 && img.height > 0 => edit.set_icon(icon_from(&img)),
                     Ok(_) => self.status = Some(("The image is empty.".to_string(), true)),

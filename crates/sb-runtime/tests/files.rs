@@ -605,6 +605,27 @@ fn crafted_arrays_fail_as_a_bad_file_does() {
 }
 
 #[test]
+fn a_file_too_large_to_read_fails_as_a_bad_file_does() {
+    let dir = TempDir::new("huge");
+    let mut m = machine(&dir);
+    let workspace = dir.0.join("@WORKSPACE");
+    std::fs::create_dir_all(&workspace).unwrap();
+    for name in ["TA", "BA", "GA"] {
+        let file = std::fs::File::create(workspace.join(name)).unwrap();
+        file.set_len(sb_runtime::storage::MAX_FILE + 1).unwrap();
+    }
+    let program = [
+        "LOAD \"A\",1:?RESULT()",
+        "A$=LOADV(\"TXT:A\"):?RESULT(),LEN(A$)",
+        "DIM A[1]:LOADV \"DAT:A\",A:?RESULT()",
+        "LOADG \"A\",0:?RESULT()",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(words(&tail(&m, 5)), ["0", "0 0", "0", "0", "OK"]);
+}
+
+#[test]
 fn metadata_saves_with_the_project() {
     let dir = TempDir::new("meta");
     let mut m = machine(&dir);

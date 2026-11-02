@@ -8,7 +8,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use sb_core::value::{Value, format_number};
 use sb_runtime::image;
 use sb_runtime::sbfile::{self, Data, DataValues};
-use sb_runtime::storage::{FileKind, Storage};
+use sb_runtime::storage::{FileKind, MAX_FILE, Storage};
 
 /// Pixels to draw with [`crate::ui::image`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,8 +100,13 @@ pub enum Content {
     Failed(String),
 }
 
-/// Reads a file of `project`.
+/// Reads a file of `project`. Choosing a file should not take long or say
+/// much: one too large to read just shows nothing.
 pub fn read(storage: &Storage, project: &str, kind: FileKind, name: &str) -> Content {
+    let size = storage.file_info(project, kind, name).map(|info| info.0);
+    if size.is_some_and(|size| size > MAX_FILE) {
+        return Content::Failed(String::new());
+    }
     let bytes = match storage.read_file_in(project, &format!("{}{name}", kind.prefix())) {
         Ok(bytes) => bytes,
         Err(e) => return Content::Failed(format!("Could not read it: {e}")),
@@ -224,6 +229,23 @@ mod tests {
         assert_eq!(&p.pixels[12..], [3, 3, 4, 4]);
         let other = Picture::scaled(&[1, 2, 3, 5], (2, 2), (4, 4));
         assert_ne!(p.key, other.key);
+    }
+
+    #[test]
+    fn a_file_too_large_shows_nothing() {
+        let dir = std::env::temp_dir().join(format!("sb-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage = Storage::new(dir.clone());
+        storage.create_project("GAME").unwrap();
+        let file = std::fs::File::create(dir.join("GAME/GHUGE")).unwrap();
+        file.set_len(MAX_FILE + 1).unwrap();
+        let content = read(&storage, "GAME", FileKind::Grp, "HUGE");
+        assert!(matches!(content, Content::Failed(e) if e.is_empty()));
+        // A smaller file that is no image still says so.
+        file.set_len(16).unwrap();
+        let content = read(&storage, "GAME", FileKind::Grp, "HUGE");
+        assert!(matches!(content, Content::Failed(e) if !e.is_empty()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

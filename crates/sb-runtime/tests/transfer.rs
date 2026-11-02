@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use sb_runtime::image::{self, Image};
 use sb_runtime::sbfile::{self, Data, DataValues, FOOTER_SIZE, Kind, usage};
-use sb_runtime::storage::{FileKind, Storage};
+use sb_runtime::storage::{self, FileKind, Storage};
 use sb_runtime::transfer::{self, Summary};
 
 struct TempDir(PathBuf);
@@ -162,6 +162,36 @@ fn the_workspace_and_wrong_files() {
         summary.line("Exported A"),
         "Exported A: 1 file; 1 left out (GBAD: why)."
     );
+}
+
+/// A file reading as `size` bytes, taking no room.
+fn sparse(path: &Path, size: u64) {
+    fs::File::create(path).unwrap().set_len(size).unwrap();
+}
+
+#[test]
+fn files_too_large_stay_behind_and_the_others_go() {
+    let tmp = TempDir::new("large");
+    let s = Storage::new(tmp.0.join("projects"));
+    s.create_project("GAME").unwrap();
+    let source = tmp.0.join("source");
+    fs::create_dir_all(&source).unwrap();
+    sparse(&source.join("TA"), storage::MAX_FILE + 1);
+    fs::write(source.join("TB"), "?1").unwrap();
+    let summary = transfer::import_project(&s, &source, "GAME").unwrap();
+    assert_eq!(summary.written, 1);
+    assert_eq!(summary.skipped.len(), 1);
+    assert!(summary.skipped[0].1.contains("too large"));
+    assert!(s.exists_in("GAME", FileKind::Txt, "B"));
+    assert!(!s.exists_in("GAME", FileKind::Txt, "A"));
+
+    sparse(&tmp.0.join("projects/GAME/TC"), storage::MAX_FILE + 1);
+    let summary = transfer::export_project(&s, "GAME", &tmp.0.join("dest")).unwrap();
+    assert_eq!(summary.written, 1);
+    assert_eq!(summary.skipped.len(), 1);
+    assert!(summary.skipped[0].1.contains("too large"));
+    assert!(tmp.0.join("dest/GAME/TB").exists());
+    assert!(!tmp.0.join("dest/GAME/TC").exists());
 }
 
 #[cfg(unix)]
