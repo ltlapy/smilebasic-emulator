@@ -485,7 +485,12 @@ fn a_subprograms_name_cannot_leave_the_storage_folder() {
         assert!(!m.sub_running(), "{bad}");
     }
     enter(&mut m, "subrun \"/A/../../../secret\"");
-    assert!(rows(&m).iter().any(|r| r.starts_with("Load failed")));
+    frames(&mut m, 1);
+    let rows_now = last_rows(&m, 4);
+    assert_eq!(rows_now[0], "OK");
+    assert_eq!(rows_now[1], "=== From subinterpreter ===");
+    assert!(rows_now[2].starts_with("Illegal format"), "{rows_now:?}");
+    assert_eq!(rows_now[3], "=".repeat(27));
     assert!(!m.sub_running());
     // The keys stayed with the main interpreter.
     enter(&mut m, "?\"here\"");

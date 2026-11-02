@@ -1878,9 +1878,22 @@ impl Machine {
     /// focus. The sub interpreter keeps its pages and screens from the
     /// last time.
     fn subrun(&mut self, file: &str) {
-        if let Err(e) = self.start_sub(file) {
-            let detail = format!("{file}: {e}");
-            self.report(&Error::with_detail(ErrorKind::LoadFailed, detail));
+        match self.start_sub(file) {
+            Ok(()) => {}
+            // A name it cannot use is the sub interpreter's error, which
+            // the main one then tells of like any other. UNVERIFIED: that a
+            // file type it cannot run counts as such a name.
+            Err(e @ (StorageError::BadName(_) | StorageError::BadKind(_))) => {
+                self.sub_ended(false);
+                if let Some(sub) = &mut self.sub {
+                    let message = format!("{} ({e})", ErrorKind::IllegalFormat.message());
+                    sub.ended = Some(Some(message));
+                }
+            }
+            Err(e) => {
+                let detail = format!("{file}: {e}");
+                self.report(&Error::with_detail(ErrorKind::LoadFailed, detail));
+            }
         }
     }
 
@@ -1965,7 +1978,10 @@ impl Machine {
         sub.rt.focus = false;
         self.rt.focus = true;
         self.focus_moving = None;
-        self.focus_flash = Some((false, 0));
+        // A subprogram that never started has no focus to give back.
+        if self.rt.sub_running {
+            self.focus_flash = Some((false, 0));
+        }
         (sub.rt.focus_busy, sub.rt.focus_wish) = (false, None);
         (self.rt.focus_busy, self.rt.focus_wish) = (false, None);
         self.rt.sub_running = false;
