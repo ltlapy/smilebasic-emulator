@@ -399,14 +399,57 @@ fn instr(args: &[Value]) -> Result<Value> {
     if start > haystack.len() {
         return Ok(Value::Int(-1));
     }
-    let found = if needle.is_empty() {
-        Some(0)
-    } else {
-        haystack[start..]
-            .windows(needle.len())
-            .position(|w| w == needle.as_slice())
-    };
+    let found = find_text(&haystack[start..], &needle);
     Ok(Value::Int(found.map_or(-1, |i| (start + i) as i32)))
+}
+
+/// The first place `needle` starts in `haystack`, in time linear in their
+/// lengths (Knuth-Morris-Pratt): comparing at each place in turn takes
+/// their product for text such as "AAAA...AB".
+fn find_text(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    let Some(&first) = needle.first() else {
+        return Some(0);
+    };
+    if needle.len() > haystack.len() {
+        return None;
+    }
+    if needle.len() == 1 {
+        return haystack.iter().position(|&c| c == first);
+    }
+    // For each length of `needle` matched so far, the longest shorter
+    // start of it that the match also ends with.
+    let mut short = [0usize; 16];
+    let mut long = Vec::new();
+    let border = match short.get_mut(..needle.len()) {
+        Some(border) => border,
+        None => {
+            long.resize(needle.len(), 0);
+            &mut long[..]
+        }
+    };
+    let mut k = 0;
+    for i in 1..needle.len() {
+        while k > 0 && needle[i] != needle[k] {
+            k = border[k - 1];
+        }
+        if needle[i] == needle[k] {
+            k += 1;
+        }
+        border[i] = k;
+    }
+    let mut k = 0;
+    for (i, &c) in haystack.iter().enumerate() {
+        while k > 0 && c != needle[k] {
+            k = border[k - 1];
+        }
+        if c == needle[k] {
+            k += 1;
+            if k == needle.len() {
+                return Some(i + 1 - k);
+            }
+        }
+    }
+    None
 }
 
 fn subst(args: &[Value]) -> Result<Value> {
@@ -1056,6 +1099,75 @@ mod tests {
         let text = s("AB");
         call("PUSH", &[text.clone(), s("C")]).unwrap();
         assert_eq!(as_string(text), "ABC");
+    }
+
+    #[test]
+    fn instr_finds_what_comparing_at_each_place_finds() {
+        let naive = |h: &[u16], n: &[u16]| {
+            if n.is_empty() {
+                Some(0)
+            } else {
+                h.windows(n.len()).position(|w| w == n)
+            }
+        };
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        for _ in 0..200_000 {
+            // Few letters, for many partial matches. The lengths go past
+            // the needle's table on the stack.
+            let letters = 1 + next(3);
+            let hay_len = next(60);
+            let needle_len = if next(4) == 0 { next(40) } else { next(6) };
+            let hay: Vec<u16> = (0..hay_len).map(|_| 65 + next(letters) as u16).collect();
+            let needle: Vec<u16> = match next(3) {
+                // A piece of the text, so that some are found.
+                0 if hay_len > 0 => {
+                    let from = next(hay_len) as usize;
+                    let to = (from + needle_len as usize).min(hay.len());
+                    hay[from..to].to_vec()
+                }
+                _ => (0..needle_len).map(|_| 65 + next(letters) as u16).collect(),
+            };
+            assert_eq!(
+                find_text(&hay, &needle),
+                naive(&hay, &needle),
+                "{hay:?} {needle:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn instr_start_offsets_and_empty_needles() {
+        let instr = |args: &[Value]| as_int(call("INSTR", args).unwrap());
+        let (i, abab) = (Value::Int, s("ABAB"));
+        assert_eq!(instr(&[abab.clone(), s("B")]), 1);
+        assert_eq!(instr(&[i(2), abab.clone(), s("B")]), 3);
+        assert_eq!(instr(&[i(2), abab.clone(), s("BA")]), -1);
+        assert_eq!(instr(&[i(4), abab.clone(), s("B")]), -1);
+        assert_eq!(instr(&[i(5), abab.clone(), s("B")]), -1);
+        assert_eq!(instr(&[abab.clone(), s("")]), 0);
+        assert_eq!(instr(&[i(3), abab.clone(), s("")]), 3);
+        assert_eq!(instr(&[i(4), abab.clone(), s("")]), 4);
+        assert_eq!(instr(&[i(5), abab.clone(), s("")]), -1);
+        assert_eq!(instr(&[abab.clone(), s("ABABA")]), -1);
+        assert_eq!(instr(&[s(""), s("")]), 0);
+    }
+
+    #[test]
+    fn instr_of_many_partial_matches_finishes() {
+        // Comparing at each place would take some 10^11 steps.
+        let mut needle = vec![65; 100_000];
+        let hay = vec![65; 1_000_000];
+        needle.push(66);
+        assert_eq!(find_text(&hay, &needle), None);
+        let mut hay = hay;
+        hay.extend_from_slice(&needle);
+        assert_eq!(find_text(&hay, &needle), Some(1_000_000));
     }
 
     #[test]
