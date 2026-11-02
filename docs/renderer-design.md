@@ -461,9 +461,14 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 **Count.** There were 31 open items, R1 to R31. TEST47 (batches A and
 F) settled R7, R20, R22 and R24-R31, and TEST49 (batch B) R1-R4 and
-R21, apart from the smaller points left U in the table above; R11-R19
-and R23 are open (R5, R6, R8, R9 and R10 went with TEST50, batch C, with
-the tie rule and the cursor's rate left U). TEST48 then settled most of TEST47's smaller
+R21, apart from the smaller points left U in the table above. R5, R6, R8,
+R9 and R10 went with TEST50, batch C, with the tie rule and the cursor's
+rate left U. TEST53, TEST54 and TEST55 (batches D, E and G) settled R11-R19
+and R23, with the rest of the blur and mosaic set-up from SmileBASIC 4's own
+code; the screenshots came from an emulator on a PC's GPU. TEST54's and
+TEST55's are within 1 of ours in every channel, and TEST53's within 2 but
+for four lone pixels.
+TEST48 then settled most of TEST47's smaller
 points: the shallow GLINE rule and lines from off the page, GTRI's
 edges, GSAVE and GLOAD sizes, single-precision rotation and scale, GBOX
 corner order, near-full arcs and TFUNC after TSCREEN. R1-R4 and R21
