@@ -1,6 +1,6 @@
 //! The line typed in direct mode or for INPUT and LINPUT, edited where
-//! it is on the console: the cursor moves along it, Shift selects, and
-//! the line is drawn again after each change.
+//! it is on the console: the cursor moves along it, Shift selects in
+//! direct mode, and the line is drawn again after each change.
 
 use crate::complete::Completion;
 use crate::runtime::keys;
@@ -25,6 +25,9 @@ pub mod commands {
 pub struct LineEdit {
     pub text: Vec<u16>,
     pub cursor: usize,
+    /// Whether the selection commands select: only direct mode's line
+    /// does. For INPUT and LINPUT they just move the cursor.
+    pub selects: bool,
     /// The other end of the selection.
     anchor: Option<usize>,
     /// Where the line starts on the console, counted in cells from its
@@ -47,6 +50,7 @@ impl LineEdit {
         LineEdit {
             text: Vec::new(),
             cursor: 0,
+            selects: false,
             anchor: None,
             origin: i64::from(y) * i64::from(w) + i64::from(x),
             shown: 0,
@@ -105,7 +109,7 @@ impl LineEdit {
 
     /// Moves the cursor, keeping the selection's other end if `select`.
     fn move_to(&mut self, to: usize, select: bool) {
-        if select {
+        if select && self.selects {
             self.anchor.get_or_insert(self.cursor);
         } else {
             self.anchor = None;
@@ -138,10 +142,11 @@ impl LineEdit {
             SELECT_RIGHT => self.move_to(self.cursor + 1, true),
             SELECT_HOME => self.move_to(0, true),
             SELECT_END => self.move_to(len, true),
-            SELECT_ALL => {
+            SELECT_ALL if self.selects => {
                 self.anchor = Some(0);
                 self.cursor = len;
             }
+            SELECT_ALL => {}
             DELETE_LINE => self.set_text(Vec::new()),
             DELETE_TO_END => {
                 self.anchor = None;
@@ -259,6 +264,12 @@ mod tests {
         TextScreen::new(40, 24)
     }
 
+    fn direct_line(c: &TextScreen) -> LineEdit {
+        let mut line = LineEdit::new(c);
+        line.selects = true;
+        line
+    }
+
     fn row(c: &TextScreen, y: u32) -> String {
         (0..c.size().0)
             .map(|x| match c.cell(x, y).code {
@@ -278,7 +289,7 @@ mod tests {
     fn edits_in_the_middle() {
         let mut c = console();
         c.print(&[u16::from(b'>')]);
-        let mut line = LineEdit::new(&c);
+        let mut line = direct_line(&c);
         typing(&mut line, "ACD");
         line.key(keys::LEFT);
         line.key(keys::LEFT);
@@ -303,7 +314,7 @@ mod tests {
     #[test]
     fn selected_characters_are_inverted_until_the_selection_goes() {
         let mut c = console();
-        let mut line = LineEdit::new(&c);
+        let mut line = direct_line(&c);
         typing(&mut line, "ABC");
         line.key(SELECT_LEFT);
         line.key(SELECT_LEFT);
@@ -326,10 +337,30 @@ mod tests {
         assert_eq!(c.cursor(), (0, 1));
     }
 
+    /// TEST56: Shift with a move during INPUT moves the cursor and selects
+    /// nothing, so that Backspace takes one character and nothing is drawn
+    /// inverted.
+    #[test]
+    fn input_lines_do_not_select() {
+        let mut c = console();
+        let mut line = LineEdit::new(&c);
+        typing(&mut line, "ABCD");
+        line.key(SELECT_LEFT);
+        line.key(SELECT_LEFT);
+        assert_eq!((line.cursor, line.selection()), (2, None));
+        line.key(SELECT_ALL);
+        assert_eq!((line.cursor, line.selection()), (2, None));
+        line.draw(&mut c);
+        assert_eq!(c.cell(2, 0).attr & attr::INVERT, 0);
+        line.key(keys::BACKSPACE);
+        assert_eq!(line.text, "ACD".encode_utf16().collect::<Vec<_>>());
+        assert_eq!(line.selected_text(), None);
+    }
+
     #[test]
     fn overwrites_after_insert() {
         let mut c = console();
-        let mut line = LineEdit::new(&c);
+        let mut line = direct_line(&c);
         typing(&mut line, "ABC");
         assert!(!line.key(keys::INSERT));
         assert!(line.overwrite);

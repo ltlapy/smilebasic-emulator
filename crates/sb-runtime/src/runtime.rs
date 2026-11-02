@@ -1417,6 +1417,9 @@ impl Runtime {
     /// lines typed before.
     pub(crate) fn direct_input_start(&mut self) {
         self.start_line();
+        if let Some(line) = &mut self.line {
+            line.selects = true;
+        }
         self.recall = Some(Recall {
             at: None,
             draft: Vec::new(),
