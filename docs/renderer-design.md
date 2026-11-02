@@ -81,8 +81,10 @@ and beside a subprogram, then calls `Runtime::render`.
    sprites), then id (higher first). The list is allocated anew every
    frame.
 3. **Background.** `fb.clear(BACKCOLOR | opaque)`. A sub interpreter's
-   frame (`env_type != 0`) is premultiplied, so its clear BACKCOLOR
-   lets the main screen show through.
+   frame (`env_type != 0`) is premultiplied, its alpha the coverage
+   (255 less SmileBASIC 4's transmittance), so its clear BACKCOLOR
+   lets the main screen show through; an opaque one makes the whole
+   frame opaque at the end.
 4. **Layers 7 to 0.** For each layer with elements, or with a filter
    on a direct (mode 0) layer:
    - `Runtime::fine` scales the 2D matrix and LCLIP by the sample
@@ -103,10 +105,12 @@ and beside a subprogram, then calls `Runtime::render`.
      on a direct layer then makes the frame opaque again.
    - For modes 1-4, `compose::compose` puts `scratch` over the frame,
      multiplied by the layer color.
-5. **FADE.** `Fade::cover` mixes the fade color over every pixel.
+5. **FADE.** `Fade::cover` mixes the fade color over every pixel, and
+   darkens the frame to 224/255 in the same rounding while the other
+   side has the focus beside a subprogram (`dimmed`).
 6. **Emulator UI on the frame.** In direct mode, the command hint and
    the completion list (`hint::draw_band`, `Completion::draw`) are
-   drawn after the fade, then `dim` runs while a dialog dims the screen.
+   drawn after the fade, so they are not darkened.
    These are not SmileBASIC 4 rendering. A GPU split should keep them
    as a CPU overlay ([3.6](#36-what-stays-on-the-cpu)).
 
@@ -126,8 +130,11 @@ image point `(lx, ly)` lies in `[0,w) x [0,h)`.
 - `Source` reads GRP-1 (white everywhere), or a page with GSAMPLE
   border or repeat.
 - `Source::page_xy` undoes the quarter turn and then the flips.
-- `graphics::Tint` multiplies the sprite color in: identity, per
-  pixel, an alpha-only table, or four tables.
+- `graphics::Tint` turns each page pixel into a `compose::Paint`, the
+  pixel's light and what it leaves of the frame, kept exact:
+  `Over1` (untinted, 16-bit lanes over 255), `Over3` (tinted, over
+  255³; opaque pixels by table), or `Lit` (additive). One `put` per
+  frame pixel rounds once.
 - Three paths:
   - `draw_upright`: no rotation or shear. A `compose::Grid` gives the
     image column and row for each frame column and row, worked out
@@ -136,11 +143,12 @@ image point `(lx, ly)` lies in `[0,w) x [0,h)`.
   - `compose::project_image`, for a layer with a 4x4 matrix.
 - A sample point exactly on a column boundary takes the column to its
   left: `TIE = 1e-9` is subtracted from the image x.
-- Blend: `compose::blend` is either `over` (straight source over a
-  premultiplied destination, rounded to nearest) or `add` (light =
-  channel times alpha / 255 rounded down, saturating, destination alpha
-  kept). `blend_one` hoists that for one color over many pixels: GRP-1
-  boxes and fades made of sprites.
+- Blend: the paint's `put` is either over (the exact sum of the
+  element's light and what is left of the premultiplied destination,
+  rounded to nearest once) or additive (the light rounded, added with
+  saturation, destination alpha kept). A paint is worked out once for
+  a run of the same page pixel: GRP-1 boxes and fades made of sprites,
+  and scaled-up sprites.
 
 **Text screens** (`TextScreen::draw_placed`):
 
@@ -155,9 +163,11 @@ image point `(lx, ly)` lies in `[0,w) x [0,h)`.
     64-wide grid;
   - `Font::pixel`, for fallback glyphs with no place on GRP5.
 - Font types 24-64 show only user-defined characters.
-- The cell color and TCOLOR are multiplied in (`text::multiply`,
-  rounded down). The INPUT cursor is the cell filled with the text
-  color.
+- The cell color and TCOLOR are multiplied in unrounded
+  (`compose::Mixed`, up to `Over5` over 255⁵); each glyph pixel's
+  paint is kept as one `u32` (opaque pixels as themselves, others as
+  an index into a side list). The INPUT cursor is the cell filled with
+  the text color.
 
 ### 1.4 Layers, projection, filters
 
@@ -172,9 +182,10 @@ image point `(lx, ly)` lies in `[0,w) x [0,h)`.
     along a row. `project_image` solves the row's run inside the image
     once, on both sides of the W = 0 line.
 - **Compose modes** (`compose::compose`): Normal, Add, Multiply and
-  Screen, with the layer color applied to light and coverage. Mode 0
-  (`Direct`) never gets here. There are fast paths for white layer
-  color in modes 1 and 2.
+  Screen, with the layer color applied to light and coverage, each one
+  rounding of the exact sum (`compose_tinted`). Mode 0 (`Direct`)
+  never gets here. White layer color takes fast paths that give the
+  same pixels.
 - **Filters** (`filter.rs`):
   - mosaic: blocks from the screen's corner, each the color of its
     middle pixel; the size is multiplied by the sample magnification;
@@ -288,17 +299,19 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 | Rule | Where | Status |
 |---|---|---|
-| Normal blend of an element: `s*a/255 + d*(255-a)/255`, each term **rounded to nearest** (`div255_sum_lanes`) | `compose::over` | C: pitfalls "Colour arithmetic" (TEST49; within 1 of every sample, the rest host GPU rounding); TTEST16 |
-| Frames and composed layers hold premultiplied colour; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
-| Additive element: light = `c*a/255` **rounded to nearest**, added with saturation, destination alpha kept | `compose::light`, `add_light` | C (R1): TEST49 |
-| Sprite colour (SPCOLOR) multiplies each channel, alpha included, **rounded to nearest** | `graphics::tint`, `Tint` | C (R2): TEST49. A child's link colour (`multiply`, rounded down) is still U |
-| Text colour (cell colour, then TCOLOR) the same, rounded to nearest | `text::multiply` | C (R2): TEST49 |
+| One rounding per draw: products and blends are exact (each 8-bit value is k/255) and rounded to nearest once when stored: element to layer (or frame), layer to frame, frame to display | `compose::Paint` | C: SmileBASIC 4; TEST49 (every sample within 1, the rest the host GPU's rounding); see pitfalls "How colours are worked out" |
+| Normal blend of an element: `light + d*(1-a)`, one rounding | `compose::Over1`, `Over3`, `Over5` | C: TEST49; TTEST16 |
+| Frames and composed layers hold premultiplied colour, alpha as coverage (SmileBASIC 4 keeps transmittance, 255 less it); a layer starts clear; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
+| Additive element: `d + light`, the light `t*c*a` exact and rounded once, with saturation, destination alpha kept | `compose::Lit` | C (R1): TEST49 |
+| Sprite colour (SPCOLOR) multiplies each channel, alpha included, unrounded, inside the one rounding of the draw | `graphics::Tint`, `compose::Over3` | C (R2): TEST49. A child's link colour (`multiply`, rounded down) is still U |
+| Text colour (cell colour, then TCOLOR) the same, unrounded | `compose::Mixed`, `Over5` | C (R2): TEST49. The text drawing's per-cell inverting flag (colour times 1 - glyph alpha) is not implemented; what sets it is unknown |
 | Tint is applied to the page pixel before blending | `sprites::draw_posed` | C (R2): TEST49 |
 | Relative colour animation `"C+"`: product / 256, rounded down | `anim.rs` | C: pitfalls |
 | LAYER mode 0 draws straight onto the frame, layer colour ignored | `Runtime::render` | C: pitfalls; TTEST16 |
-| Modes 1-4: the layer colour scales light (`p*c*ca/255²`, rounded once) and coverage (`div255(la*ca)`), nearest rounding | `compose::compose_each` | C (R3): TEST49, colours `C0806040`, `7F40C0FF`, `FFC08040`, `80FFFFFF`, white |
-| Mode 1: `p + div255(d*(255-a))`; mode 2: `d+p`; mode 3: `div255(d*(p+255-a))`; mode 4: `d + div255(p*(255-d))`, all nearest | `compose::compose` | C (R3): TEST49 |
-| A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's colour unmultiplied with coverage `255 - alpha` (alpha 0: clear) | `Runtime::render`, `dim` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; an opaque BACKCOLOR is U |
+| Modes 1-4: the layer colour scales light (`P = p*c*ca`) and coverage (`A = la*ca`), unrounded | `compose::compose_tinted` | C (R3): TEST49, colours `C0806040`, `7F40C0FF`, `FFC08040`, `80FFFFFF`, white |
+| Mode 1: `P + d*(1-A)`; mode 2: `d + P`; mode 3: `d*(P + 1-A)`; mode 4: `d + P*(1-d)`, one rounding each; mode 1 adds to the frame's coverage, mode 2 keeps it, modes 3 and 4 make it opaque | `compose::compose` | C (R3): TEST49. U: that modes 3 and 4 make the whole screen opaque, not only where the layer has something (shows on a subprogram's screen only) |
+| A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's colour unmultiplied with coverage `255 - alpha` (alpha 0: clear); an opaque BACKCOLOR replaces the main screen | `Runtime::render`, `Fade::cover` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; the opaque case is from SmileBASIC 4 only |
+| Beside a subprogram, the side without the focus: times 224/255, rounded in the same step as FADE | `Fade::cover`, `screen::darken` | C: TEST49 |
 
 ### 2.2 Sprites
 
@@ -384,7 +397,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | Fade steps: single-precision mix, rounded down; a clear end takes the other end's colour | `Fade::step`, `Fade::start` | C: pitfalls |
 | ACLS clears FADE | `acls` | S: pitfalls; marker in `runtime.rs` |
-| Fade cover: `(c*a + p*(255-a) + 127) / 255` (nearest), over the final frame | `Fade::cover` | C (R21): TEST49, four fade colours (alpha &H80, &H7F, &H01, &HFE) |
+| Fade cover: `(c*a + p*(255-a) + 127) / 255` (nearest), over the final frame, its alpha kept | `Fade::cover` | C (R21): TEST49, four fade colours (alpha &H80, &H7F, &H01, &HFE) |
 | A fade steps with the animations, starting on the frame after FADE | `Runtime::animate` | C: pitfalls; TEST47 (R22) |
 
 ### 2.8 Display (XSCREEN composite mode)
@@ -430,9 +443,11 @@ R21, apart from the smaller points left U in the table above; R5, R6,
 R8-R19 and R23 are open. TEST48 then settled most of TEST47's smaller
 points: the shallow GLINE rule and lines from off the page, GTRI's
 edges, GSAVE and GLOAD sizes, single-precision rotation and scale, GBOX
-corner order, near-full arcs and TFUNC after TSCREEN. TEST49's
-screenshots came from an emulator on a PC's GPU, whose blending is within
-1 of the rules above (see pitfalls). 5 stale markers can be dropped from
+corner order, near-full arcs and TFUNC after TSCREEN. R1-R4 and R21
+were then confirmed from SmileBASIC 4,
+which give the rules above exactly; TEST49's screenshots came from an
+emulator on a PC's GPU, whose stored results are within 1 of them (see
+pitfalls). 5 stale markers can be dropped from
 the code at once (ACLS clearing FADE was dropped with TEST47):
 
 - `runtime.rs`: filter on an empty direct layer;
@@ -772,18 +787,40 @@ A GPU backend for comparison runs sits outside `sb-runtime`:
 - Textured quads under an affine matrix, with **nearest sampling at
   pixel centres** and the left tie rule. Projected quads under a
   homography with W > 0 only.
-- Per-item tint, two blends (`over` rounded to nearest; `add` with a
-  floor and saturation, destination alpha kept), on an opaque frame or
+- Per-item tint, two blends (over and additive), on an opaque frame or
   a premultiplied layer target.
-- Compose modes 1-4 with layer colour, using floor and nearest rounding
-  as in `compose_each`.
+- Compose modes 1-4 with layer colour.
 - Filters: mosaic, two-stage blur, per-row/column raster resampling,
   HSV colour shift.
 - FADE, and the final scaling (linear / pixel-art / nearest).
 
-The semantics are integer arithmetic on 8-bit channels with specific
-rounding. That favours options that run our own fragment or compute
-shaders over fixed-function blending.
+SmileBASIC 4 itself does this with fixed-function blending, and its
+model maps one to one onto GPU blend states. SmileBASIC 4 output
+premultiplied colour (alpha 0 for additive items), render targets keep
+transmittance in their alpha, and every draw is rounded once, by the
+hardware, when stored to RGBA8. It uses five blend states, all with
+the ADD equation:
+
+| State | Colour (src, dst) | Alpha (src, dst) | Used for |
+|---|---|---|---|
+| BS0 | off (overwrite) | off | presenting the main screen, copies |
+| BS1 | `SRC_ALPHA`, `1-SRC_ALPHA` | `ZERO`, `ONE` | colour fills, the mouse cursor |
+| BS2 | `ONE`, `1-SRC_ALPHA` | `ZERO`, `1-SRC_ALPHA` | every element; layer modes 1 and 2; presenting a subprogram's screen |
+| BS3 | `DST_COLOR`, `1-SRC_ALPHA` | `ZERO`, `ZERO` | layer mode 3 |
+| BS4 | `1-DST_COLOR`, `ONE` | `ZERO`, `ZERO` | layer mode 4 |
+
+A GPU backend can use the same states: an RGBA8 target per layer
+cleared to transmittance 1 (coverage 0, as our layers are), the
+element shaders giving `t*c*a` and `a` (or 0 for additive items),
+the composite shaders giving `P` and `A`, and FADE with the 224/255
+dimming in the present shader. The CPU renderer works the same sums
+exactly, in integers, and rounds once per draw, so the two differ only
+where the GPU's own float-to-8-bit conversion rounds a value very near
+a half the other way (about one patch in six, by 1, on the PC GPU
+behind TEST49's screenshots). Our alpha is coverage, 255 less
+SmileBASIC 4's transmittance; a backend that keeps coverage takes the
+usual premultiplied alpha factors (`ONE`, `1-SRC_ALPHA`) for BS2 and
+writes an opaque alpha for modes 3 and 4.
 
 ### 4.2 (a) SDL_Renderer, as now
 
@@ -969,9 +1006,10 @@ These can match the CPU exactly:
   filtered sampling for page reads.
 - **Blending in integer arithmetic in a shader.** The shader reads the
   destination from the previous target (ping-pong) or works in a
-  compute pass. It uses the same formulas: `div255` with `+127`,
-  floor where the CPU floors, saturation. WGSL, GLSL ES 3.0, HLSL SM5
-  and MSL all have 32-bit unsigned integer ops.
+  compute pass. It uses the same sums as `compose::Paint`, one
+  rounding a draw, with saturation. WGSL, GLSL ES 3.0, HLSL SM5 and
+  MSL all have 32-bit unsigned integer ops; the twice-tinted text sum
+  (over 255⁵) needs 64 bits or two words.
 - **Compose modes, FADE, mosaic, blur** (already integer and 8.8 fixed
   point), and the colour filter if it is moved to an integer or
   table-based formulation first.
@@ -990,8 +1028,9 @@ These can match the CPU exactly:
   needs its own bias, chosen as part of the tie rule.
 - **Raster filter coordinates and the colour filter's HSV**: these are
   f64 on the CPU today.
-- **Fixed-function blending**, if any is used: ±1 per channel between
-  vendors.
+- **Fixed-function blending**, as SmileBASIC 4 uses (4.1): ±1 per
+  channel where a value lies very near a half, between vendors and
+  against the CPU.
 
 **Policy.**
 

@@ -368,41 +368,52 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   60 gives (255x128 + 60x127)/255 = 157.9, shown as 158. With that, the
   emulator matched lossless screenshots of mode 0 and mode 1 layers
   pixel for pixel.
-- Colour arithmetic (TEST49, about 4,500 patches read from lossless
-  screenshots). Products round to the nearest, and an element is put on
-  premultiplied:
-  - A sprite's colour (SPCOLOR) multiplies its image channel by channel,
-    alpha included; so do a text cell's colour and then the screen's
-    TCOLOR. `&H808080` times `&H7F7F7F` is `&H404040`, not `&H3F3F3F`.
-  - With colour `s` and alpha `a` after that, a normal element gives
-    `s*a/255 + d*(255-a)/255`, each term rounded on its own; an
-    additive one (`#A_ADD`, `TBLEND` 1) adds `s*a/255`, rounded, held to
-    255, so `&H80010101` adds 1 to 60.
-  - A composed layer (LAYER modes 1-4) holds premultiplied colour `p`
-    and coverage `la`. With the layer colour `c` (alpha `ca`), the light
-    is `p*c*ca/255²` and the coverage `a = la*ca/255`, each rounded.
-    Mode 1 gives `light + d*(255-a)/255`, mode 2 `d + light`, mode 3
-    `d*(light+255-a)/255` and mode 4 `d + light*(255-d)/255`, rounded
-    to the nearest and held to 255.
-  - `FADE` covers the frame with `(c*a + d*(255-a))/255`, rounded once.
-  - These screenshots come from an emulator running SmileBASIC 4 on a
-    PC's GPU. About one channel in twelve is 1 lower or higher than the
-    rules above; every one of those, and every other sample, fits the
-    GPU's own steps: a term is cut to 12 bits of fraction and halves
-    round down (`floor(x*4096)`, then `(q*255 + 2047) >> 12`), while
-    what is left of `d` rounds to the nearest. That last bit belongs to
-    the GPU, not to SmileBASIC 4.
-- A subprogram's screen over the main one (TEST49): while the
-  subprogram has the focus, the main screen shows each channel times
-  224/255, rounded (248 to 218, 255 to 224, 96 to 84). The
-  subprogram's `BACKCOLOR` adds its colour at full strength and lets
-  the main screen through in proportion to its alpha: `&H80FF4000`
-  over black shows `&HFF4000`, and over a dimmed `&H77` green
-  `&H40 + &H77*128/255`. Alpha `&HFE` lets nearly all of the main
-  screen through, `&H01` almost none; alpha 0 leaves the screen clear.
-  What the subprogram draws goes over its `BACKCOLOR` as on any screen,
-  and covers the main screen by its alpha. An opaque `BACKCOLOR`
-  (alpha `&HFF`) was not tried.
+- How colours are worked out, from SmileBASIC 4, and confirmed by TEST49 (about 4,500 patches read from
+  lossless screenshots, every one within 1):
+  - Each 8-bit value reaches the GPU as k/255, and SmileBASIC 4 work in
+    floating point with no 8-bit rounding inside a draw. A draw is
+    rounded once, to the nearest, when it is stored: an element into
+    its layer (or the screen, for mode 0), a composed layer into the
+    screen, and the screen to the display.
+  - What is drawn holds premultiplied colour, and its alpha is how much
+    of what is behind still shows through. A layer of its own starts
+    clear: black, letting everything through.
+  - An element with image pixel `t` and colour `c` (SPCOLOR; for text,
+    the cell's colour times TCOLOR, multiplied in unrounded) has alpha
+    `a = t.a*c.a` and light `t*c*a`. A normal element gives
+    `light + d*(1-a)` and leaves `1-a` of what showed through; an
+    additive one (`#A_ADD`, `TBLEND` 1) gives `d + light`, held to 1,
+    and changes no alpha. `&H808080` tinted `&H7F7F7F` is 63.75, so
+    `&H40`, and `&H80FFFFFF` over 60 is 157.9, so 158.
+  - A composed layer (LAYER modes 1-4) with premultiplied colour `p`,
+    what shows through it `T`, and the layer colour `L` gives the light
+    `P = p*L*L.a` and the coverage `A = L.a*(1-T)`. Mode 1 gives
+    `P + d*(1-A)`, mode 2 `d + P`, mode 3 `d*(P + 1-A)` and mode 4
+    `d + P*(1-d)`, each held to 1. Modes 3 and 4 leave the screen
+    opaque, which shows only on a subprogram's screen.
+  - `FADE` is done as the screen goes to the display:
+    `d + (c-d)*fade.a`, rounded once. Beside a subprogram, the side
+    without the focus is darkened in the same step, times 224/255
+    (`&HE0`): 255 to 224, 248 to 218, 96 to 84.
+  - All the divisions are by powers of 255, which is odd, so no exact
+    result lies halfway between two values.
+  - TEST49's screenshots come from an emulator running SmileBASIC 4 on a
+    PC's GPU, and that GPU stores results its own way: about one patch in
+    six has a channel 1 off the rules above, mostly where the exact
+    value is a little above a half (`&H80010101` added to 60 is 60.502,
+    shown as 60). A screen result cut to 12 bits of fraction,
+    with halves rounded down (`floor(x*4096)`, then
+    `(q*255 + 2047) >> 12`), gives every FADE sample exactly and nearly
+    every additive one. That is the PC's GPU, not SmileBASIC 4; the
+    Switch's may round differently.
+- A subprogram's screen over the main one: its `BACKCOLOR` sets its
+  colour whole and its alpha as how much of the main screen shows
+  through, so `&H80FF4000` over black shows `&HFF4000`, and over a
+  dimmed `&H77` green `&H40 + &H77*128/255`. Alpha `&HFE` lets nearly
+  all of the main screen through, `&H01` almost none, and alpha 0 leaves
+  the screen clear. With alpha `&HFF` the subprogram's screen replaces
+  the main one where it is (from SmileBASIC 4; TEST49 did not try it).
+  What the subprogram draws goes over its `BACKCOLOR` as on any screen.
 - `FADE color,time` mixes the two colors channel by channel in single
   precision and rounds down: `&HFF` to 0 over three frames passes `&HA9`
   and `&H54`, not `&HAA` and `&H55`. A clear end (alpha 0) takes the

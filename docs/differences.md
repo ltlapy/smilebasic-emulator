@@ -146,7 +146,13 @@ Without them:
 - On a layer with `LMATRIX`'s 4x4 form, text screens show only as far as
   one screen past each edge of the screen, before the matrix moves them,
   to keep the memory they take bounded. SmileBASIC 4 shows them
-  wherever they are, as it does sprites.
+  wherever they are, as it does sprites. Being drawn flat first, their
+  partly clear or tinted pixels are also rounded once more than
+  SmileBASIC 4 rounds them, which can make a channel 1 off.
+- A subprogram's screen under `FADE`, or darkened while the main
+  interpreter has the focus, is rounded to 8 bits before it goes over
+  the main screen; SmileBASIC 4 does both in one step, so a channel can
+  be 1 off where the subprogram's screen is not opaque.
 
 ## Editor
 
