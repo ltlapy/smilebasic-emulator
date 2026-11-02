@@ -311,7 +311,12 @@ impl Reader {
                 let predictor = usize::from(header >> 4 & 7);
                 let [c1, c2] = [coefs[2 * predictor], coefs[2 * predictor + 1]].map(i32::from);
                 let [h1, h2] = self.history.map(i32::from);
-                let value = ((nibble << (header & 15)) << 11) + 1024 + c1 * h1 + c2 * h2;
+                // A damaged bank's coefficients can overflow: it wraps, as
+                // it would unchecked. Real waveforms stay far inside i32.
+                let value = ((nibble << (header & 15)) << 11)
+                    .wrapping_add(1024)
+                    .wrapping_add(c1.wrapping_mul(h1))
+                    .wrapping_add(c2.wrapping_mul(h2));
                 let s = (value >> 11).clamp(-32768, 32767) as i16;
                 self.history = [s, self.history[0]];
                 s
@@ -397,6 +402,77 @@ mod tests {
         let got: Vec<i16> = (0..5).map(|_| r.next(w, &b.data).unwrap()).collect();
         let s = |lo: i16| lo | (lo + 1) << 8;
         assert_eq!(got, [s(0), s(2), s(4), s(2), s(4)]);
+    }
+
+    /// The most a predictor can ask for: both coefficients and both
+    /// samples before at their extreme. It must neither panic in a build
+    /// that checks overflow nor read outside the wave.
+    #[test]
+    fn adpcm_with_extreme_coefficients_does_not_overflow() {
+        let w = WaveInfo {
+            rate: 32000,
+            len: 14,
+            loop_start: None,
+            encoding: Encoding::Adpcm {
+                coefs: [i16::MIN; 16],
+                loop_history: [0; 2],
+            },
+            data: 0..8,
+        };
+        // Scale 2^15 and the largest nibble, to bring the history to the
+        // bottom and then keep it at extremes.
+        let data = [0x0F, 0x88, 0x88, 0x88, 0x77, 0x77, 0x77, 0x77];
+        let mut r = Reader::default();
+        for _ in 0..14 {
+            assert!(r.next(&w, &data).is_some());
+        }
+        assert_eq!(r.next(&w, &data), None);
+    }
+
+    /// What the decoder's sum was before it wrapped: the same in every
+    /// frame of valid data, whatever the build.
+    #[test]
+    fn adpcm_output_is_unchanged_inside_the_range() {
+        let mut coefs = [0; 16];
+        for (i, c) in coefs.iter_mut().enumerate() {
+            *c = (i as i16 - 8) * 256;
+        }
+        let w = WaveInfo {
+            rate: 32000,
+            len: 14 * 64,
+            loop_start: None,
+            encoding: Encoding::Adpcm {
+                coefs,
+                loop_history: [0; 2],
+            },
+            data: 0..8 * 64,
+        };
+        let mut seed = 12345u32;
+        let data: Vec<u8> = (0..8 * 64)
+            .map(|i| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let b = (seed >> 24) as u8;
+                // Frame headers: a low scale, so no sum leaves i32.
+                if i % 8 == 0 { b & 0x73 } else { b }
+            })
+            .collect();
+        let (mut r, mut h) = (Reader::default(), [0i64; 2]);
+        for pos in 0..14 * 64 {
+            let frame = pos / 14 * 8;
+            let n = pos % 14;
+            let byte = data[frame + 1 + n / 2];
+            let nibble = if n % 2 == 0 { byte >> 4 } else { byte & 15 };
+            let nibble = i64::from((nibble << 4) as i8 >> 4);
+            let header = data[frame];
+            let p = usize::from(header >> 4 & 7);
+            let value = ((nibble << (header & 15)) << 11)
+                + 1024
+                + i64::from(coefs[2 * p]) * h[0]
+                + i64::from(coefs[2 * p + 1]) * h[1];
+            let s = (value >> 11).clamp(-32768, 32767);
+            h = [s, h[0]];
+            assert_eq!(r.next(&w, &data), Some(s as i16), "sample {pos}");
+        }
     }
 
     #[test]
