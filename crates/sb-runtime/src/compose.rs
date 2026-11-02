@@ -750,11 +750,9 @@ impl Default for Layer {
 /// to one of them, onto `dst` through LMATRIX's 4x4 matrix `m`: a point
 /// of the layer goes in as (x, y, 0, 1), and the result's X and Y, divided
 /// by its W, run from -1 to 1 across the screen and up it. Only points in
-/// front (W above 0) show; `clip` is in frame pixels. `src`'s top left is
-/// the flat frame's pixel `origin`, so it can hold what lies off the
-/// screen.
-// UNVERIFIED: that Z is 0 and nothing is clipped by depth, and that the
-// layer is sampled without smoothing.
+/// front (W above 0) with Z / W from -1 to 1 show; `clip` is in frame
+/// pixels. `src`'s top left is the flat frame's pixel `origin`, so it can
+/// hold what lies off the screen. It samples without smoothing.
 pub fn project(
     dst: &mut Framebuffer,
     src: &Framebuffer,
@@ -767,6 +765,7 @@ pub fn project(
     let Some(inv) = invert3(&h) else {
         return;
     };
+    let z = depth_row(m);
     let Some((cx0, cy0, cx1, cy1)) = drawn_bounds(src) else {
         return;
     };
@@ -789,9 +788,16 @@ pub fn project(
         let at = |r: usize, nx: f64| inv[r][0] * nx + inv[r][1] * ny + inv[r][2];
         let (mut gx, mut gy, mut q) = (at(0, nx0), at(1, nx0), at(2, nx0));
         let (dx, dy, dq) = (inv[0][0] * step, inv[1][0] * step, inv[2][0] * step);
+        let mut depth = z[0] * gx + z[1] * gy + z[2] * q;
+        let depth_step = z[0] * dx + z[1] * dy + z[2] * dq;
         for px in x0..x1 {
             let (lx, ly) = (gx / q, gy / q);
             (gx, gy, q) = (gx + dx, gy + dy, q + dq);
+            let shown = depth.abs() <= 1.0;
+            depth += depth_step;
+            if !shown {
+                continue;
+            }
             // In front only; a NaN is not.
             if (h[2][0] * lx + h[2][1] * ly + h[2][2]).partial_cmp(&0.0) != Some(Ordering::Greater)
             {
@@ -912,6 +918,14 @@ fn homography(m: &[f64; 16]) -> [[f64; 3]; 3] {
     ]
 }
 
+/// The row of LMATRIX's 4x4 matrix `m` that gives a layer point's Z from
+/// (x, y, 1). With (gx, gy, q) the point a screen position maps back to
+/// through the inverse homography, q is 1 / W, so that this row times
+/// them is Z / W, which runs evenly across the screen.
+fn depth_row(m: &[f64; 16]) -> [f64; 3] {
+    [m[2], m[6], m[14]]
+}
+
 /// Where a layer's point `(x, y)` goes on a `w` x `hh` frame through
 /// LMATRIX's 4x4 matrix `m`, as [`project`] puts it, or `None` when it
 /// is not in front.
@@ -948,6 +962,7 @@ pub fn project_image<P: Paint>(
     let (Some(inv), Some(back)) = (invert3(&hm), place.matrix.inverse()) else {
         return;
     };
+    let z = depth_row(m);
     let s = f64::from(sample);
     let corners = [(0, 0), (w, 0), (0, h), (w, h)].map(|(x, y)| {
         let (x, y) = place.matrix.apply(f64::from(x), f64::from(y));
@@ -986,6 +1001,11 @@ pub fn project_image<P: Paint>(
             back.c * gx + back.d * gy + back.ty * q,
             back.c * dx + back.d * dy + back.ty * dq,
         );
+        // Z / W, linear in t.
+        let (az, kz) = (
+            z[0] * gx + z[1] * gy + z[2] * q,
+            z[0] * dx + z[1] * dy + z[2] * dq,
+        );
         let line = &mut pixels[py as usize * width..][..x1 as usize];
         for sign in [1.0, -1.0] {
             // Each (k, c) asks for k * t + c above 0.
@@ -995,6 +1015,8 @@ pub fn project_image<P: Paint>(
                 (iw * dq - kx, iw * q - ax),
                 (ky, ay),
                 (ih * dq - ky, ih * q - ay),
+                (kz, 1.0 + az),
+                (-kz, 1.0 - az),
             ];
             let (mut lo, mut hi) = (0.0, n);
             for (k, c) in bounds {
@@ -1016,9 +1038,15 @@ pub fn project_image<P: Paint>(
             let to = ((hi + 1.0).min(n) as u32).min(x1 - x0);
             let ft = f64::from(from);
             let (mut gx, mut gy, mut qt) = (gx + dx * ft, gy + dy * ft, q + dq * ft);
+            let mut depth = az + kz * ft;
             for t in from..to {
                 let (lx, ly) = (gx / qt, gy / qt);
                 (gx, gy, qt) = (gx + dx, gy + dy, qt + dq);
+                let shown = depth.abs() <= 1.0;
+                depth += kz;
+                if !shown {
+                    continue;
+                }
                 // In front only; a NaN is not.
                 if (hm[2][0] * lx + hm[2][1] * ly + hm[2][2]).partial_cmp(&0.0)
                     != Some(Ordering::Greater)
@@ -1613,6 +1641,41 @@ mod tests {
         m[15] = -1.0;
         m[7] = 0.0;
         assert_eq!(source_bounds(&m, 1, (8, 8), None), None);
+    }
+
+    #[test]
+    fn projection_clips_by_depth() {
+        // An 8x2 frame shows the layer as it is, with Z / W running from
+        // -1.5 to 2.5 across it.
+        let mut m = [0.0; 16];
+        (m[0], m[5], m[15]) = (0.25, 1.0, 1.0);
+        (m[12], m[2], m[14]) = (-1.0, 0.5, -1.5);
+        let mut src = Framebuffer::new(8, 2);
+        src.pixels_mut().fill(0xFF11_2233);
+        let mut dst = Framebuffer::new(8, 2);
+        dst.clear(0);
+        project(&mut dst, &src, (0, 0), &m, 1, None);
+        // Z at each pixel's center, x + 0.5, is (x + 0.5) / 2 - 1.5.
+        let row: Vec<bool> = dst.pixels()[..8].iter().map(|&p| p != 0).collect();
+        let want = [false, true, true, true, true, false, false, false];
+        assert_eq!(row, want);
+        let mut image = Framebuffer::new(8, 2);
+        image.clear(0);
+        project_image(
+            &mut image,
+            &m,
+            1,
+            &Placement {
+                matrix: Affine::IDENTITY,
+                clip: None,
+                add: false,
+            },
+            8,
+            2,
+            |_, _| Some(Over1::new(0xFF11_2233)),
+        );
+        let row: Vec<bool> = image.pixels()[..8].iter().map(|&p| p != 0).collect();
+        assert_eq!(row, want);
     }
 
     #[test]

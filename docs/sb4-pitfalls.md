@@ -554,7 +554,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   coordinates or past the screen's size, as FINITI's floors running to
   the horizon show. So do text screens: a console moved to (-200,-120)
   or to (500,300) of a 400x240 screen shows where the matrix puts it
-  (TTEST36, pixel for pixel).
+  (TTEST36, pixel for pixel). A sprite's Z plays no part: every point goes
+  in with z 0, so Z comes from M[2], M[6] and M[14]. What has Z/W outside
+  -1 to 1 does not show, nor what has W at 0 or below. Sampling is nearest
+  at any magnification, and perspective correct. `LCLIP` on such a layer
+  is in frame pixels after the matrix (TEST53).
+- The 2D `LMATRIX` form scales first and then turns clockwise, with x and y
+  outside, as a sprite does; it applies after each element's own placement
+  (TEST53).
 - On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
   the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
   On a composed layer it filters only that layer. Mosaic blocks start at

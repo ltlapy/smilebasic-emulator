@@ -182,7 +182,8 @@ moved again by `Placement::texel_tie`.
   - A layer point enters as `(x, y, 0, 1)`. The X, Y and W rows make a
     3x3 homography.
   - Each destination pixel centre is mapped back through its inverse.
-  - Only points with W > 0 show. Sampling is nearest.
+  - Only points with W > 0 and Z/W from -1 to 1 show. Z/W is linear
+    across the screen. Sampling is nearest.
   - Rows are walked incrementally: the homogeneous step is constant
     along a row. `project_image` solves the row's run inside the image
     once, on both sides of the W = 0 line.
@@ -370,12 +371,12 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | `LCLIP` corners inclusive | `Clip` | C: pitfalls; TEST50 part 2 at XSCREEN sample 2: grows to whole fine pixels, `[2a, 2b+1]` |
 | `LMATRIX layer,hx,hy` moves the layer by minus the home point | `screen.rs` | C: pitfalls |
-| The 2D LMATRIX form: `Affine::place(pos, home, rot, scale)` like a sprite | `screen.rs` | Partly C (home); **U (R11)** for rotation direction and scale order |
+| The 2D LMATRIX form: `Affine::place(pos, home, rot, scale)` like a sprite: scale, then turn clockwise, x and y outside; after the element's own placement | `screen.rs` | C (R11): pitfalls; TEST53 part 1 |
 | 4x4 LMATRIX: `(x,y,0,1)` to clip space, X right, Y up, column-major, perspective divide | `compose::homography` | C: pitfalls; TTEST26, TTEST27 |
 | Sprites and text screens on a 4x4 layer show whole, also off-screen parts | `project_image`, `flat_area` | C: pitfalls; TTEST36 (text bounded: [differences.md](differences.md)) |
-| 4x4: Z treated as 0, no near/far clipping, only W > 0 shown | `compose::project` | **U (R12)** |
-| 4x4: sampled without smoothing | `compose::project` | **U (R12)** |
-| LCLIP on a 4x4 layer is in frame pixels, after projection | `project(..., clip)` | **U (R13)** |
+| 4x4: a sprite's Z is not used; shown where W > 0 and Z/W is from -1 to 1 | `compose::project`, `project_image` | C (R12): pitfalls; TEST53 part 2 |
+| 4x4: sampled without smoothing | `compose::project` | C (R12): pitfalls; TEST53 part 2 |
+| LCLIP on a 4x4 layer is in frame pixels, after projection, inclusive, Y from the top | `project(..., clip)` | C (R13): pitfalls; TEST53 part 3 |
 | Errors for a bad 16-element array | `screen.rs` | U, not rendering (skip) |
 
 ### 2.6 Filters
