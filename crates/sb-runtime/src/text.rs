@@ -47,6 +47,11 @@ pub fn glyph_pixel_px(font: &Font, grp: &Graphics, code: u16, px: u32, x: u32, y
     }
 }
 
+/// From this many characters PRINT works out the scrolling first. Fewer
+/// take too little time for it to matter, and they are most of what is
+/// printed.
+const LONG_PRINT: usize = 256;
+
 /// User-defined characters sit in a grid this many characters wide.
 const USER_GRID: i32 = 64;
 
@@ -382,6 +387,14 @@ impl TextScreen {
     }
 
     pub fn print(&mut self, text: &[u16]) {
+        if text.len() >= LONG_PRINT && self.width > 0 && self.height > 0 {
+            self.print_long(text);
+            return;
+        }
+        self.print_each(text);
+    }
+
+    fn print_each(&mut self, text: &[u16]) {
         for &c in text {
             match c {
                 // UNVERIFIED: whether CHR$(10) also starts a new line.
@@ -389,6 +402,46 @@ impl TextScreen {
                 _ => self.put(c),
             }
         }
+    }
+
+    /// The same as [`Self::print_each`], but scrolling only once: each
+    /// line can move the whole screen, which for long text would take as
+    /// long as the text times the screen.
+    fn print_long(&mut self, text: &[u16]) {
+        let width = self.width;
+        // A line counts up from the cursor's row without scrolling.
+        let step = |(x, line): &mut (u32, u64), c: u16| -> Option<(u32, u64)> {
+            if matches!(c, 10 | 13) {
+                (*x, *line) = (0, *line + 1);
+                return None;
+            }
+            if *x >= width {
+                (*x, *line) = (0, *line + 1);
+            }
+            *x += 1;
+            Some((*x - 1, *line))
+        };
+        let start = (self.cursor.0, u64::from(self.cursor.1));
+        let mut end = start;
+        for &c in text {
+            step(&mut end, c);
+        }
+        let scrolled = end.1.saturating_sub(u64::from(self.height - 1));
+        // Past the height it all leaves the screen, however far it goes.
+        if scrolled > 0 {
+            self.scroll(0, scrolled.min(u64::from(self.height)) as i32);
+        }
+        let (color, attr) = (self.color, self.attr);
+        let mut pen = start;
+        for &code in text {
+            if let Some((x, line)) = step(&mut pen, code)
+                && line >= scrolled
+            {
+                let y = (line - scrolled) as u32;
+                self.set((y * width + x) as usize, Cell { code, color, attr });
+            }
+        }
+        self.cursor = (end.0, (end.1 - scrolled) as u32);
     }
 
     /// PRINT's `,`: pads with spaces to the next tab stop.
@@ -883,6 +936,85 @@ mod tests {
         assert_eq!(fb.get(0, 0), Some(0xFFFF_0000));
         assert_eq!(fb.get(1, 0), Some(0xFF80_0000));
         assert_eq!(fb.get(2, 0), Some(0xFF00_0000));
+    }
+
+    #[test]
+    fn long_prints_match_printing_each_character() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let array_of = |s: &TextScreen| match s.array.as_ref().map(|a| a.borrow().data.clone()) {
+            Some(ArrayData::Int(v)) => v,
+            _ => Vec::new(),
+        };
+        for _ in 0..4000 {
+            let (w, h) = (1 + next(7) as u32, 1 + next(6) as u32);
+            // Something to scroll away.
+            let cells: Vec<(u32, u32, u16)> = (0..next(12))
+                .map(|_| (next(8) as u32, next(7) as u32, 33 + next(9) as u16))
+                .collect();
+            // At the end of a line too, past the last column.
+            let cursor = (next(u64::from(w) + 1) as u32, next(u64::from(h)) as u32);
+            let screen = || {
+                let mut s = TextScreen::new(8, 8);
+                s.set_font(8, 8, w, h);
+                s.set_color(0xFF00_FF00);
+                for &(x, y, code) in &cells {
+                    s.put_at(x, y, code, 7);
+                }
+                s.cursor = cursor;
+                s
+            };
+            let (mut a, mut b) = (screen(), screen());
+            if next(2) == 0 {
+                // Written to the array alone: only a scroll brings the
+                // cells back over it.
+                let (ta, tb) = (a.array(), b.array());
+                for t in [ta, tb] {
+                    if let ArrayData::Int(v) = &mut t.borrow_mut().data {
+                        v[0] = 1234;
+                    }
+                }
+            }
+            a.take_changed();
+            b.take_changed();
+            let newlines = 1 + next(5);
+            let text: Vec<u16> = (0..next(60))
+                .map(|_| match next(newlines + 5) {
+                    0 => 10,
+                    1 => 13,
+                    _ => 65 + next(20) as u16,
+                })
+                .collect();
+            a.print_each(&text);
+            b.print_long(&text);
+            assert_eq!(a.cells, b.cells, "{w}x{h} {text:?}");
+            assert_eq!(a.cursor, b.cursor, "{w}x{h} {text:?}");
+            assert_eq!(array_of(&a), array_of(&b), "{w}x{h} {text:?}");
+            assert_eq!(a.take_changed(), b.take_changed(), "{w}x{h} {text:?}");
+        }
+    }
+
+    #[test]
+    fn a_very_long_print_finishes() {
+        let mut s = TextScreen::new(8, 8);
+        s.set_font(8, 8, 256, 128);
+        // One scroll for each of these would take a few minutes in all.
+        s.print(&vec![10; 10_000_000]);
+        s.print(&text("A"));
+        assert_eq!(s.cursor(), (1, 127));
+        assert_eq!(row(&s, 127), "A");
+        s.set_font(8, 8, 1, 32768);
+        let mut long = vec![65; 10_000_000];
+        long.push(66);
+        s.print(&long);
+        assert_eq!(s.cursor(), (1, 32767));
+        assert_eq!(row(&s, 32767), "B");
+        assert_eq!(row(&s, 32766), "A");
     }
 
     #[test]
