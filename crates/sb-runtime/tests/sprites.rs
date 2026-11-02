@@ -408,3 +408,10 @@ fn xscreen_puts_the_graphics_sprite_on_new_sprites_layer() {
     let (_, out) = run("SPLAYER 6:ACLS:?SPLAYER(4095)");
     assert_eq!(out, "0");
 }
+
+#[test]
+fn spdef_from_an_array_wraps_coordinates() {
+    let (_, out) = run("DIM D[7]:D[0]=2147483647:D[1]=2147483647:SPDEF D,30,1,2\n\
+         SPDEF 30 OUT U,V:?U;\",\";V");
+    assert_eq!(out, "-2147483648,-2147483647");
+}

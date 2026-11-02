@@ -462,7 +462,7 @@ impl Graphics {
         if b != t {
             self.fill(l, b, r, b, color, blend);
         }
-        for y in t.max(c.y0)..=(b - 1).min(c.y1) {
+        for y in t.max(c.y0)..=b.wrapping_sub(1).min(c.y1) {
             self.plot(l, y, color, blend);
             if r != l {
                 self.plot(r, y, color, blend);
@@ -684,8 +684,9 @@ impl Graphics {
         }
         let c = self.clip;
         let (ys, xs) = (
-            (c.y0 - dy).max(0)..=(c.y1 - dy).min(h - 1),
-            (c.x0 - dx).max(0)..=(c.x1 - dx).min(w - 1),
+            // Past the largest coordinate wraps, to nothing on the page.
+            c.y0.wrapping_sub(dy).max(0)..=c.y1.wrapping_sub(dy).min(h - 1),
+            c.x0.wrapping_sub(dx).max(0)..=c.x1.wrapping_sub(dx).min(w - 1),
         );
         if ys.is_empty() || xs.is_empty() {
             return;

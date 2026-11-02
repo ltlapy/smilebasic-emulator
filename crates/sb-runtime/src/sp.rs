@@ -782,8 +782,8 @@ impl Runtime {
                 }
                 for (i, d) in values.chunks_exact(7).enumerate() {
                     self.sprites.defs[offset + i] = SpriteDef {
-                        u: d[0] + du,
-                        v: d[1] + dv,
+                        u: d[0].wrapping_add(du),
+                        v: d[1].wrapping_add(dv),
                         w: d[2],
                         h: d[3],
                         hx: d[4],

@@ -252,6 +252,17 @@ fn xscreen_stops_text_animations_and_keeps_the_look() {
 }
 
 #[test]
+fn extreme_scrolls_and_rectangles_end() {
+    for source in [
+        "SCROLL 0,2147483647",
+        "SCROLL 2147483647,0",
+        "SCROLL -2147483648,-2147483648",
+    ] {
+        run(source).unwrap_or_else(|e| panic!("{source}: {e:?}"));
+    }
+}
+
+#[test]
 fn tscreen_with_too_many_cells_is_out_of_range() {
     let e = run("TSCREEN 0,8,8,65536,65536").err().expect("an error");
     assert_eq!(e.kind, ErrorKind::OutOfRange);

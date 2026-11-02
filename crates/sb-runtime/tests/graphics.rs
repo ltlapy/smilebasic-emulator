@@ -215,3 +215,14 @@ fn proportional_widths() {
         run("?GPUTCHRP(\"AB\");\" \";GPUTCHRP(\"AB\",8,1,0);\" \";GPUTCHRP(\"AB\",16,2,3)");
     assert_eq!(out, "9 4 22");
 }
+
+#[test]
+fn boxes_and_copies_at_extreme_coordinates_end() {
+    for source in [
+        "GBOX 0,-2147483648,5,-2147483648:?1",
+        "GCOPY 0,0,0,5,5,-2147483648,-2147483648,0:?1",
+        "GCOPY 0,0,0,5,5,2147483647,2147483647,0:?1",
+    ] {
+        assert_eq!(run(source).1, "1", "{source}");
+    }
+}

@@ -275,8 +275,9 @@ impl TextScreen {
     /// The cells of `rect` row by row, empty where it leaves the screen.
     pub fn save(&self, (x, y, w, h): CellRect) -> Vec<Cell> {
         let mut cells = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
-        for cy in y..y + h {
-            for cx in x..x + w {
+        // A rectangle past the largest coordinate wraps to an empty one.
+        for cy in y..y.wrapping_add(h) {
+            for cx in x..x.wrapping_add(w) {
                 cells.push(self.cell_at(cx, cy).unwrap_or(EMPTY));
             }
         }
@@ -288,7 +289,7 @@ impl TextScreen {
     pub fn load(&mut self, (x, y, w, _): CellRect, cells: &[Cell]) {
         for (i, &cell) in cells.iter().enumerate() {
             let i = i as i32;
-            self.set_cell(x + i % w, y + i / w, cell);
+            self.set_cell(x.wrapping_add(i % w), y.wrapping_add(i / w), cell);
         }
     }
 
@@ -882,5 +883,17 @@ mod tests {
         assert_eq!(fb.get(0, 0), Some(0xFFFF_0000));
         assert_eq!(fb.get(1, 0), Some(0xFF80_0000));
         assert_eq!(fb.get(2, 0), Some(0xFF00_0000));
+    }
+
+    #[test]
+    fn scrolling_past_the_largest_coordinate_finishes() {
+        let mut s = TextScreen::new(32, 24);
+        s.print(&text("ABCD"));
+        for (dx, dy) in [(0, i32::MAX), (i32::MAX, 0), (i32::MAX, i32::MAX)] {
+            s.scroll(dx, dy);
+            assert_eq!(row(&s, 0), "ABCD");
+        }
+        s.scroll(0, i32::MIN);
+        assert_eq!(row(&s, 0), "");
     }
 }
