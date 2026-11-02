@@ -636,37 +636,62 @@ fn format_numeric(
     if !value.is_number() {
         return Err(ErrorKind::TypeMismatch.into());
     }
-    let negative = value.to_real()? < 0.0;
-    let body = match conversion {
-        'D' => i64::from(value.to_int()?).unsigned_abs().to_string(),
-        'X' => format!("{:X}", value.to_int()? as u32),
-        'B' => format!("{:b}", value.to_int()? as u32),
-        _ => {
-            let digits = precision.unwrap_or(6);
-            // At least a digit and the point before them: no need to make
-            // what will be refused.
-            if digits.saturating_add(2) >= pad.room {
-                return Err(field_too_long(digits.saturating_add(2)));
-            }
-            fixed(value.to_real()?.abs(), digits)
+    if conversion == 'F' {
+        let negative = value.to_real()? < 0.0;
+        let digits = precision.unwrap_or(6);
+        // At least a digit and the point before them: no need to make what
+        // will be refused.
+        if digits.saturating_add(2) >= pad.room {
+            return Err(field_too_long(digits.saturating_add(2)));
         }
-    };
-    let sign = match (conversion, negative) {
-        ('X' | 'B', _) => "",
-        (_, true) => "-",
-        _ if plus => "+",
-        _ if space => " ",
-        _ => "",
-    };
-    // `%F` is written by a routine that wants room for a character more.
-    let pad = match conversion {
-        'F' => Padding {
+        let body = fixed(value.to_real()?.abs(), digits);
+        let sign = match negative {
+            true => "-",
+            false if plus => "+",
+            false if space => " ",
+            false => "",
+        };
+        // It is written by a routine that wants room for a character more.
+        let pad = Padding {
             room: pad.room.saturating_sub(1),
             ..pad
-        },
-        _ => pad,
+        };
+        let body: Str = body.encode_utf16().collect();
+        return pad.apply(out, sign, &body);
+    }
+    let n = value.to_int()?;
+    let (sign, digits) = match conversion {
+        'D' => (
+            match n {
+                ..0 => "-",
+                _ if plus => "+",
+                _ if space => " ",
+                _ => "",
+            },
+            i64::from(n).unsigned_abs().to_string(),
+        ),
+        'X' => ("", format!("{:X}", n as u32)),
+        _ => ("", format!("{:b}", n as u32)),
     };
-    let body: Str = body.encode_utf16().collect();
+    // Zero has no digits of its own, only the one the least precision of 1
+    // asks for; `%D` shows no sign for it then either.
+    let digits = if n == 0 { "" } else { digits.as_str() };
+    let sign = if n == 0 && precision == Some(0) {
+        ""
+    } else {
+        sign
+    };
+    let least = precision.unwrap_or(1);
+    if least > pad.room {
+        return Err(field_too_long(least));
+    }
+    let mut body: Str = vec![u16::from(b'0'); least.saturating_sub(digits.len())];
+    body.extend(digits.encode_utf16());
+    // A precision says how many zeros there are.
+    let pad = Padding {
+        zero: pad.zero && precision.is_none(),
+        ..pad
+    };
     pad.apply(out, sign, &body)
 }
 
@@ -1328,6 +1353,65 @@ mod tests {
         assert_eq!(refused(&[percents]), None);
         assert_eq!(refused(&[s(&format!("{}%%", "A".repeat(1024)))]), None);
         assert_eq!(refused(&[s("%1024D%%"), one]), None);
+    }
+
+    /// A precision is the least number of digits,
+    /// and takes the place of the `0` flag.
+    #[test]
+    fn format_takes_a_precision_on_integers() {
+        let show = |f: &str, v: i32| as_string(call("FORMAT$", &[s(f), Value::Int(v)]).unwrap());
+        for (f, v, shown) in [
+            ("[%.3D]", 5, "[005]"),
+            ("[%5.3D]", 5, "[  005]"),
+            ("[%-5.3D]", 5, "[005  ]"),
+            ("[%.3D]", -5, "[-005]"),
+            ("[%+.3D]", 5, "[+005]"),
+            ("[% .3D]", 5, "[ 005]"),
+            ("[%.1D]", 1234, "[1234]"),
+            ("[%.0D]", 5, "[5]"),
+            // Zero at a precision of 0 is nothing at all.
+            ("[%.0D]", 0, "[]"),
+            ("[%+.0D]", 0, "[]"),
+            ("[%3.0D]", 0, "[   ]"),
+            ("[%.D]", 0, "[]"),
+            ("[%D]", 0, "[0]"),
+            ("[%+D]", 0, "[+0]"),
+            ("[%.1D]", 0, "[0]"),
+            ("[%.2D]", 0, "[00]"),
+            // A precision takes the place of the 0 flag.
+            ("[%05D]", 5, "[00005]"),
+            ("[%05.3D]", 5, "[  005]"),
+            ("[%05.0D]", 0, "[     ]"),
+            ("[%-05D]", 5, "[5    ]"),
+            ("[%.4X]", 255, "[00FF]"),
+            ("[%6.4X]", 255, "[  00FF]"),
+            ("[%06.4X]", 255, "[  00FF]"),
+            ("[%06X]", 255, "[0000FF]"),
+            ("[%.0X]", 0, "[]"),
+            ("[%X]", 0, "[0]"),
+            ("[%.2X]", 0, "[00]"),
+            ("[%.10X]", -1, "[00FFFFFFFF]"),
+            ("[%.4B]", 5, "[0101]"),
+            ("[%6.4B]", 5, "[  0101]"),
+            ("[%06.4B]", 5, "[  0101]"),
+            ("[%.0B]", 0, "[]"),
+            ("[%B]", 0, "[0]"),
+        ] {
+            assert_eq!(show(f, v), shown, "{f} of {v}");
+        }
+        // It counts towards the limit, and is refused before it is made.
+        assert_eq!(show("%.1024D", 5).len(), 1024);
+        for f in [
+            "%.1025D",
+            "%.99999999999D",
+            "%+.1024D",
+            "%.1025X",
+            "%.1025B",
+        ] {
+            let e = call("FORMAT$", &[s(f), Value::Int(5)]).unwrap_err();
+            assert_eq!(e.kind, ErrorKind::StringTooLong, "{f}");
+            assert_eq!(e.arg, Some(1), "{f}");
+        }
     }
 
     #[test]

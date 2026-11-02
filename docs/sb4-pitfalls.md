@@ -106,6 +106,10 @@ follows all of it. Items still waiting for a check are marked
   than it gives. On `%S` the precision only limits the
   string, so `%.2000S` of a short string is fine. `%05S` pads with zeros,
   `[00ABC]`, and with `-` it pads spaces on the right (TEST57).
+- `FORMAT$`'s precision on `%D`, `%X` and `%B` is the least number of digits, not yet seen on hardware: `%.3D` of 5 is `005`, `%5.3D`
+  is `  005`, `%.4X` of 255 is `00FF`, `%.4B` of 5 is `0101`. Zero at a precision
+  of 0 is nothing, with no sign: `%.0D`, `%+.0D` and `%.0X` of 0 are empty. A
+  precision takes the place of the `0` flag, so `%05.3D` is `  005`.
 - `RINGCOPY` looks at things in this order (TEST57):
   - a destination that is no array: `Type mismatch (RINGCOPY:1)`; a source
     that is no array, or element types neither the same nor both numbers:
