@@ -1,10 +1,11 @@
 //! What FREEMEM reports: SmileBASIC 4's memory for strings and arrays, less
 //! what the program's values take.
 //!
-//! The sizes were fitted to hardware (TTEST21, TTEST23): a block takes its
-//! contents plus a header, rounded up to 64 bytes, and small contents take
-//! nothing. Values are counted as they are now, so memory a program lets
-//! go of is free at once; SmileBASIC 4 frees it only later.
+//! The sizes follow hardware (TEST57): a block takes its contents rounded
+//! up (64 bytes for an array, 128 for a string) plus a header of 64, and
+//! small contents take nothing. Values are counted as they are now, so
+//! memory a program lets go of is free at once; SmileBASIC 4 frees it only
+//! later.
 //!
 //! The same counting makes `Out of memory`. Going through every value for
 //! each allocation would be far too slow, so the sites that make data work
@@ -17,9 +18,6 @@
 //! Small requests do not stop to look; the VM counts at the start of a
 //! slice once enough has been made since the last time, and refuses there
 //! if the program holds more than there is.
-// Checked on hardware: strings of up to 24 characters (48 bytes) and
-// arrays of up to 64 bytes of elements take nothing.
-// UNVERIFIED: arrays of 65 to 79 bytes.
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -29,13 +27,12 @@ use crate::value::{ArrayData, ElemType, Value};
 
 /// FREEMEM right after start-up, which the start-up screen shows too.
 pub const TOTAL: u32 = 134_216_720;
-/// Contents up to these sizes take no memory of their own.
-const SMALL_STRING: usize = 48;
+/// Contents up to these sizes take no memory of their own: characters of
+/// a string, bytes of an array.
+const SMALL_STRING: usize = 24;
 const SMALL_ARRAY: usize = 64;
-/// A string's header and terminator: 1000 characters take 2112 bytes.
-const STRING_HEADER: usize = 98;
-/// An array's header: 100 Reals take 896 bytes, 100000 take 800064.
-const ARRAY_HEADER: usize = 64;
+/// What a block takes beside its contents.
+const BLOCK_HEADER: usize = 64;
 
 /// Requests below this size only add to the estimate. Stopping to count
 /// for them could take longer than making them many times over.
@@ -46,18 +43,17 @@ const MIN_BETWEEN_COUNTS: usize = 16 * 1024 * 1024;
 const MOST_BETWEEN_COUNTS_FOR_VALUES: usize = 256 * 1024 * 1024;
 const BETWEEN_COUNTS_PER_VALUE: usize = 256;
 
-#[inline]
-fn block(contents: usize, small: usize, header: usize) -> usize {
-    match contents {
-        n if n <= small => 0,
-        n => n.saturating_add(header).div_ceil(64).saturating_mul(64),
-    }
-}
-
 /// What a string of `chars` characters takes.
 #[inline]
 pub fn string_bytes(chars: usize) -> usize {
-    block(chars.saturating_mul(2), SMALL_STRING, STRING_HEADER)
+    if chars <= SMALL_STRING {
+        return 0;
+    }
+    chars
+        .saturating_mul(2)
+        .div_ceil(128)
+        .saturating_mul(128)
+        .saturating_add(BLOCK_HEADER)
 }
 
 /// What an array of `len` elements takes, without a string array's strings.
@@ -68,7 +64,13 @@ pub fn array_bytes(elem: ElemType, len: usize) -> usize {
         ElemType::Int => 4,
         ElemType::Real | ElemType::Str => 8,
     };
-    block(len.saturating_mul(size), SMALL_ARRAY, ARRAY_HEADER)
+    match len.saturating_mul(size) {
+        n if n <= SMALL_ARRAY => 0,
+        n => n
+            .saturating_add(BLOCK_HEADER)
+            .div_ceil(64)
+            .saturating_mul(64),
+    }
 }
 
 /// The estimate for one interpreter, which FREEMEM counts on its own.
@@ -270,7 +272,13 @@ mod tests {
             (25, 192),
             (31, 192),
             (32, 192),
+            (64, 192),
+            (65, 320),
             (100, 320),
+            (128, 320),
+            (129, 448),
+            (256, 576),
+            (257, 704),
             (1000, 2112),
             (10000, 20160),
         ] {
@@ -280,7 +288,13 @@ mod tests {
             (ElemType::Int, 10, 0),
             (ElemType::Int, 16, 0),
             (ElemType::Real, 8, 0),
+            (ElemType::Int, 17, 192),
+            (ElemType::Int, 33, 256),
+            (ElemType::Int, 49, 320),
             (ElemType::Int, 100, 512),
+            (ElemType::Int, 1000, 4096),
+            (ElemType::Real, 9, 192),
+            (ElemType::Real, 17, 256),
             (ElemType::Real, 1, 0),
             (ElemType::Real, 100, 896),
             (ElemType::Real, 100_000, 800_064),
@@ -365,6 +379,17 @@ mod tests {
         fresh(0);
         grow(mb, 2 * mb).unwrap();
         assert_eq!(leave().made, mb);
+    }
+
+    #[test]
+    fn growing_a_big_block_makes_only_the_growth() {
+        fresh(16 * (1 << 20));
+        let (old, new) = (
+            array_bytes(ElemType::Int, 4_000_000),
+            array_bytes(ElemType::Int, 4_000_001),
+        );
+        grow(old, new).unwrap();
+        assert_eq!(leave().made, 64);
     }
 
     #[test]

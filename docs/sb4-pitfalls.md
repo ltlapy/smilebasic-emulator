@@ -904,13 +904,18 @@ yet seen on hardware; TEST56 looks at each:
 - A program run after one that set `MOUSECURSOR` to 1 reads 0 again;
   `END` leaves it set, so direct mode still reads 1.
 - `FREEMEM` is 134216720 at start, and the program and its numeric
-  variables take none of it. A string takes 2 bytes a character plus
-  about 98, an array its elements (Int 4, Real and string 8) plus 64,
-  rounded up to 64 bytes. Strings of up to 24 characters and arrays of
-  up to 64 bytes of elements take nothing. `DIM A[100000]` takes 800064 bytes, 1000
-  characters 2112. `GARRAY` and `TARRAY` take nothing. Memory let go of
-  (emptying a string or array, a DEF's locals after it returns) does
-  not come back at once. Both of its results are the same.
+  variables take none of it. A string of N characters takes 2N rounded up to
+  128 bytes, plus 64: 25 and 64 characters take 192, 65 and 128 take 320, 129
+  takes 448, 256 takes 576, 257 takes 704, 1000 takes 2112 (TEST57). An array
+  takes its elements (Int 4, Real and string 8) rounded up to 64 bytes, at
+  least 128, plus 64: 17 ints 192, 33 ints 256, 49 ints 320, 1000 ints 4096, 9
+  reals 192, 17 reals 256, 100 reals 896 (TEST57), `DIM A[100000]` 800064.
+  Strings of up to 24 characters and arrays of up to 64 bytes of elements take
+  nothing. `GARRAY` and `TARRAY` take nothing. Memory let go of (emptying a
+  string or array, a DEF's locals after it returns) does not come back at once.
+  Both of its results are the same.
+- Length is limited by memory only: 63,000,000 characters, 33,000,000 ints and
+  16,000,000 reals all work (TEST57).
 - `Out of memory` comes from what fits in `FREEMEM`'s 134216720 bytes
   (TEST51). `"A"*N` and `S$+S$` make 33,554,432 characters but not
   67,108,864. `ARRAY#` makes 8,388,608 reals but not 16,777,216. Of five
