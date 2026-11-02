@@ -126,7 +126,10 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            // The characters repeat from the top left, row by row.
+            // The rectangle is clipped to the screen, then the characters
+            // repeat from its top left, row by row.
+            // UNVERIFIED: that this holds for a corner only a little off
+            // the screen as it does for the farthest ones.
             (Command::Tfill, Want::Outs(0), 6 | 7) => {
                 let t = &mut self.text[screen_id(&args[0])?];
                 let [x, y, w, h] = corners(&args[1..5])?;
@@ -135,11 +138,9 @@ impl Runtime {
                 let color = t.color();
                 if !codes.is_empty() {
                     let (xs, ys) = offsets_on(x, y, w, h, t);
-                    for cy in ys {
-                        // The characters go on from row to row of the
-                        // rectangle, on the screen or not.
-                        let at = i128::from(cy) * i128::from(w) + i128::from(xs.start);
-                        let mut i = (at % codes.len() as i128) as usize;
+                    let width = (xs.end - xs.start).max(0) as usize;
+                    for (row, cy) in ys.enumerate() {
+                        let mut i = row * width % codes.len();
                         for cx in xs.clone() {
                             let code = codes[i];
                             t.set_cell(
@@ -479,9 +480,12 @@ mod tests {
             let mut slow = cells(&rt, id);
             let (sw, sh) = rt.text[id].size();
             let (color, attr) = (rt.text[id].color(), 0);
-            for (i, &code) in codes.iter().cycle().take((w * h) as usize).enumerate() {
-                let (cx, cy) = (x + i as i32 % w, y + i as i32 / w);
-                if (0..sw as i32).contains(&cx) && (0..sh as i32).contains(&cy) {
+            let (left, right) = (x.max(0), (x + w).min(sw as i32));
+            let (top, bottom) = (y.max(0), (y + h).min(sh as i32));
+            let mut code = codes.iter().cycle();
+            for cy in top..bottom {
+                for cx in left..right {
+                    let code = *code.next().unwrap();
                     slow[(cy as u32 * sw + cx as u32) as usize] = Cell { code, color, attr };
                 }
             }
@@ -524,16 +528,15 @@ mod tests {
         for x in 0..w {
             assert_eq!(rt.text[0].cell(x, 0).code, 65 + (x % 3) as u16);
         }
-        // Each row starts where the last would have ended.
+        // The string starts at the clipped corner and goes on row by row.
         let mut args = ints(&[0, i32::MIN, i32::MIN, i32::MAX, i32::MAX]);
         args.push(codes);
         rt.text_command(Command::Tfill, &args, Want::Outs(0))
             .unwrap();
         for y in 0..h {
             for x in 0..w {
-                let (cx, cy) = (i128::from(x) + (1 << 31), i128::from(y) + (1 << 31));
-                let at = cy * (1 << 32) + cx;
-                assert_eq!(i128::from(rt.text[0].cell(x, y).code), 65 + at % 3);
+                let at = y * w + x;
+                assert_eq!(u32::from(rt.text[0].cell(x, y).code), 65 + at % 3);
             }
         }
         let args = ints(&[0, i32::MIN, i32::MIN, i32::MAX, i32::MAX]);

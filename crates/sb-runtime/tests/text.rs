@@ -268,6 +268,25 @@ fn extreme_scrolls_and_rectangles_end() {
 }
 
 #[test]
+fn a_rectangle_is_clipped_before_tfills_string_starts() {
+    let rt = run(concat!(
+        "TSCREEN 0,8,8,6,3\n",
+        "TFILL 0,-2147483648,-2147483648,2147483647,2147483647,\"ABC\"",
+    ))
+    .unwrap();
+    for y in 0..3 {
+        assert_eq!(row(&rt, 0, y, 6), "ABCABC");
+    }
+    let rt = run(concat!(
+        "TSCREEN 0,8,8,6,3\n",
+        "TFILL 0,-1,-1,4,1,\"ABCDEFG\"",
+    ))
+    .unwrap();
+    assert_eq!(row(&rt, 0, 0, 6), "ABCDE.");
+    assert_eq!(row(&rt, 0, 1, 6), "FGABC.");
+}
+
+#[test]
 fn tscreen_with_too_many_cells_is_out_of_range() {
     let e = run("TSCREEN 0,8,8,65536,65536").err().expect("an error");
     assert_eq!(e.kind, ErrorKind::OutOfRange);
