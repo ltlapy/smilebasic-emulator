@@ -492,6 +492,13 @@ fn a_subprograms_name_cannot_leave_the_storage_folder() {
     assert!(rows_now[2].starts_with("Illegal format"), "{rows_now:?}");
     assert_eq!(rows_now[3], "=".repeat(27));
     assert!(!m.sub_running());
+    // So is a file of a type it cannot run (TEST57).
+    enter(&mut m, "subrun \"DAT:BARE\"");
+    frames(&mut m, 1);
+    let rows_now = last_rows(&m, 4);
+    assert_eq!(rows_now[1], "=== From subinterpreter ===");
+    assert!(rows_now[2].starts_with("Illegal format"), "{rows_now:?}");
+    assert!(!m.sub_running());
     // The keys stayed with the main interpreter.
     enter(&mut m, "?\"here\"");
     assert!(rows(&m).iter().any(|r| r == "HERE"), "{:?}", rows(&m));

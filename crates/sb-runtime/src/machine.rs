@@ -1880,9 +1880,9 @@ impl Machine {
     fn subrun(&mut self, file: &str) {
         match self.start_sub(file) {
             Ok(()) => {}
-            // A name it cannot use is the sub interpreter's error, which
-            // the main one then tells of like any other. UNVERIFIED: that a
-            // file type it cannot run counts as such a name.
+            // A name it cannot use, or a file type it cannot run, is the sub
+            // interpreter's error, which the main one then tells of like any
+            // other.
             Err(e @ (StorageError::BadName(_) | StorageError::BadKind(_))) => {
                 self.sub_ended(false);
                 if let Some(sub) = &mut self.sub {

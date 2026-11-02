@@ -1001,7 +1001,7 @@ Checked with TTEST36.
   For an error the middle line is its message (`Divide by zero in
   0:8`), for `STOP` `Break on 0:7`.
 - `SUBRUN "/A/../B"` prints `OK`, then the same block with `Illegal
-  format` as its middle line (TEST51).
+  format` as its middle line (TEST51), and `SUBRUN "DAT:Z51A"` does too (TEST57).
 - `SUBRUN` takes a name in lower case and one starting with `TXT:`:
   `SUBRUN "test51s"` and `SUBRUN "TXT:TEST51S"` give no error and no block.
 - `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again,
