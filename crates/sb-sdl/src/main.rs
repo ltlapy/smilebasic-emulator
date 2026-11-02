@@ -74,7 +74,9 @@ use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
 use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator};
 use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
-use sdl3::sys::render::{SDL_SetDefaultTextureScaleMode, SDL_SetTextureBlendMode};
+use sdl3::sys::render::{
+    SDL_SetDefaultTextureScaleMode, SDL_SetRenderDrawBlendMode, SDL_SetTextureBlendMode,
+};
 use sdl3::sys::surface::SDL_ScaleMode;
 use sdl3::video::{Window, WindowBuilder, WindowContext};
 use settings_window::SettingsWindow;
@@ -2012,8 +2014,27 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.copy(smart.texture().unwrap_or(&texture), None, rect)?;
         // The subprogram's screen goes where XSUBSCREEN puts it on the
         // 1280x720 display, over the editor too.
-        if let Some((fb, [x, y, w, h])) = machine.sub_screen() {
-            let kind = ((fb.width(), fb.height()), filter);
+        if let Some(sub) = machine.sub_screen() {
+            let fb = sub.frame;
+            let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
+            let on_window = |[x, y, w, h]: [f32; 4]| {
+                FRect::new(display.x + x * sx, display.y + y * sy, w * sx, h * sy)
+            };
+            if let Some(bars) = sub.bars() {
+                let c = |shift: u32| (sub.back >> shift & 0xFF) as u8;
+                let before = canvas.blend_mode();
+                // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
+                unsafe {
+                    SDL_SetRenderDrawBlendMode(canvas.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED)
+                };
+                canvas.set_draw_color(Color::RGBA(c(16), c(8), c(0), c(24)));
+                for bar in bars {
+                    canvas.fill_rect(on_window(bar))?;
+                }
+                canvas.set_blend_mode(before);
+            }
+            // Whatever XSCREEN's mode, as a screen in mode 0 is.
+            let kind = ((fb.width(), fb.height()), Filter::Bilinear);
             if sub_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = frame_texture(&canvas, &texture_creator, kind)?;
                 // SAFETY: the texture is valid while `made` lives.
@@ -2023,14 +2044,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if let Some((tex, _)) = &mut sub_texture {
                 bench::uploaded(fb.pixels().len() * 4);
                 tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
-                let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
-                let dst = FRect::new(
-                    display.x + x as f32 * sx,
-                    display.y + y as f32 * sy,
-                    w as f32 * sx,
-                    h as f32 * sy,
-                );
-                canvas.copy(tex, None, dst)?;
+                canvas.copy(tex, None, on_window(sub.quad))?;
             }
         }
         // Where the focus has just gone: a yellow line on the edge, one

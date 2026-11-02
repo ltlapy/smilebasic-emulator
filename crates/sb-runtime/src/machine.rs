@@ -39,6 +39,57 @@ const SUB_SHARE: u32 = 4;
 /// Shown by FREEMEM on SmileBASIC 4.4.9 right after start-up.
 pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
 
+/// What [`Machine::sub_screen`] gives.
+pub struct SubScreen<'a> {
+    pub frame: &'a Framebuffer,
+    /// XSUBSCREEN's rectangle, as x, y, width and height.
+    pub area: [i32; 4],
+    /// Where the frame goes in it, at XSCREEN's aspect ratio. It is scaled
+    /// smoothly whatever XSCREEN's mode.
+    pub quad: [f32; 4],
+    /// BACKCOLOR, which fills the rest of the area unless clear.
+    pub back: u32,
+}
+
+impl SubScreen<'_> {
+    /// The two bars of the area that the frame leaves, if any: BACKCOLOR's
+    /// color plus the display times 1 - its alpha.
+    // UNVERIFIED: read from the code and TEST56's main screen was
+    // black there.
+    pub fn bars(&self) -> Option<[[f32; 4]; 2]> {
+        if self.back >> 24 == 0 {
+            return None;
+        }
+        let [ax, ay, aw, ah] = self.area.map(|v| v as f32);
+        let [x, y, w, h] = self.quad;
+        if x - ax >= 1.0 {
+            Some([[ax, ay, x - ax, ah], [x + w, ay, ax + aw - x - w, ah]])
+        } else if y - ay >= 1.0 {
+            Some([[ax, ay, aw, y - ay], [ax, y + h, aw, ay + ah - y - h]])
+        } else {
+            None
+        }
+    }
+}
+
+/// Where a subprogram's frame goes in XSUBSCREEN's rectangle: fitted at
+/// the aspect ratio, as x, y, width and height.
+fn sub_quad([x, y, w, h]: [i32; 4], aspect: f64) -> [f32; 4] {
+    let (x, y, w, h) = (x as f32, y as f32, w as f32, h as f32);
+    let aspect = aspect as f32;
+    let wide = aspect * h;
+    if wide <= w {
+        [x + ((w - wide) * 0.5).trunc(), y, wide, h]
+    } else {
+        let high = w / aspect;
+        [x, y + ((h - high) * 0.5).trunc(), w, high]
+    }
+}
+
+fn rounded(quad: [f32; 4]) -> [i32; 4] {
+    quad.map(|v| v.round() as i32)
+}
+
 pub struct Machine {
     pub rt: Runtime,
     vm: Option<Vm>,
@@ -2143,7 +2194,8 @@ impl Machine {
         // The pointer, in the sub-screen's pixels.
         let mut mouse = live.mouse;
         let (fw, fh) = (sub.rt.mode.width as i32, sub.rt.mode.height as i32);
-        let [x, y, w, h] = sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]);
+        let area = sub.rt.sub_screen.unwrap_or([0, 0, 1280, 720]);
+        let [x, y, w, h] = rounded(sub_quad(area, sub.rt.mode.aspect()));
         let (dx, dy) = (mouse.display.0 - x, mouse.display.1 - y);
         mouse.x = dx * fw / w.max(1);
         mouse.y = dy * fh / h.max(1);
@@ -2185,14 +2237,21 @@ impl Machine {
     }
 
     /// The subprogram's screen and where on the 1280x720 display it
-    /// shows, as x, y, width and height, while it shows. Where its
-    /// BACKCOLOR is clear, it is too, with its colors premultiplied.
+    /// shows, while it shows. Where its BACKCOLOR is clear, it is too,
+    /// with its colors premultiplied.
     // SmileBASIC 4's own SMILETOOL ends without hiding its screen, so it
     // goes when the subprogram ends, as it does after an error or SUBSTOP.
-    pub fn sub_screen(&mut self) -> Option<(&Framebuffer, [i32; 4])> {
+    pub fn sub_screen(&mut self) -> Option<SubScreen<'_>> {
         let sub = (self.sub.as_mut()).filter(|s| self.sub_shown && s.vm.is_some())?;
-        let rect = sub.rt.sub_screen?;
-        Some((sub.rt.render(), rect))
+        let area = sub.rt.sub_screen?;
+        let quad = sub_quad(area, sub.rt.mode.aspect());
+        let back = sub.rt.back_color;
+        Some(SubScreen {
+            frame: sub.rt.render(),
+            area,
+            quad,
+            back,
+        })
     }
 
     /// The yellow border that marks where the focus has just gone, also
@@ -2268,7 +2327,9 @@ impl Machine {
     /// as [`Machine::sub_screen`] gives it but without rendering it.
     pub fn sub_runtime(&self) -> Option<(&Runtime, Option<[i32; 4]>)> {
         let sub = self.sub.as_ref().filter(|s| s.vm.is_some())?;
-        let place = sub.rt.sub_screen.filter(|_| self.sub_shown);
+        let place = (sub.rt.sub_screen)
+            .filter(|_| self.sub_shown)
+            .map(|area| rounded(sub_quad(area, sub.rt.mode.aspect())));
         Some((&sub.rt, place))
     }
 
@@ -2319,6 +2380,18 @@ fn idle(live: &crate::input::State) -> crate::input::State {
 
 #[cfg(test)]
 mod tests {
+    /// TEST56: 480x272 on the whole display goes at x 4, 2.647 times.
+    #[test]
+    fn a_subprograms_frame_keeps_its_aspect_in_its_area() {
+        let area = [0, 0, 1280, 720];
+        let [x, y, w, h] = super::sub_quad(area, 480.0 / 272.0);
+        assert_eq!((x, y, h), (4.0, 0.0, 720.0));
+        assert!((w / 480.0 - 2.647).abs() < 0.001);
+        assert_eq!(super::sub_quad(area, 16.0 / 9.0), [0.0, 0.0, 1280.0, 720.0]);
+        let [x, y, w, _] = super::sub_quad([0, 100, 400, 300], 2.0);
+        assert_eq!((x, y, w), (0.0, 150.0, 400.0));
+    }
+
     use super::*;
     use crate::font::Font;
     use crate::palette::Part;

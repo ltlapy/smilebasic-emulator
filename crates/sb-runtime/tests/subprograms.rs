@@ -96,9 +96,9 @@ fn a_subprogram_runs_beside_direct_mode_and_reaches_the_main_one() {
     // The main interpreter ran the line the subprogram typed: it is the
     // main one, it was in direct mode, and the slot came across by name.
     assert_eq!(last_rows(&m, 3), ["?ENVTYPE(),0,3", "0   0   3", "OK"]);
-    let (fb, rect) = m.sub_screen().expect("shown");
-    assert_eq!(rect, [10, 20, 300, 200]);
-    assert_eq!((fb.width(), fb.height()), (400, 240));
+    let sub = m.sub_screen().expect("shown");
+    assert_eq!(sub.area, [10, 20, 300, 200]);
+    assert_eq!((sub.frame.width(), sub.frame.height()), (400, 240));
     // ENVSAVE copied the subprogram's page 0 onto the main one's page 3.
     enter(&mut m, "gtarget 3:?hex$(gpget(0,0))");
     assert_eq!(last_rows(&m, 2)[0], "FFFF0000");
@@ -121,7 +121,8 @@ fn the_debugger_sees_the_subprograms_own_sprites() {
     enter(&mut m, "subrun \"sub\"");
     frames(&mut m, 2);
     let (rt, place) = m.sub_runtime().expect("running");
-    assert_eq!(place, Some([10, 20, 300, 200]));
+    // 400x240 at its aspect ratio in that rectangle.
+    assert_eq!(place, Some([10, 30, 300, 180]));
     assert!(rt.sprites.list[3].used);
     let corners = rt.sprite_corners(3).expect("set");
     assert_eq!(corners[0], (50.0, 60.0));

@@ -14,9 +14,8 @@ use std::path::{Path, PathBuf};
 use sb_profiles::Profile;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
-use sb_runtime::framebuffer::Framebuffer;
 use sb_runtime::input::State;
-use sb_runtime::machine::Machine;
+use sb_runtime::machine::{Machine, SubScreen};
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::ScreenMode;
 use sb_runtime::sound::synth::Instruments;
@@ -884,9 +883,9 @@ fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
         pixels: fb.pixels().to_vec(),
     };
     let border = m.focus_border();
-    if let Some((sub, rect)) = m.sub_screen() {
+    if let Some(sub) = m.sub_screen() {
         image = on_display(&image);
-        put_sub_screen(&mut image, sub, rect);
+        put_sub_screen(&mut image, &sub);
     }
     if let Some((rect, alpha)) = border {
         if image.width != DISPLAY.0 {
@@ -942,26 +941,61 @@ fn on_display(main: &image::Image) -> image::Image {
 }
 
 /// Puts the subprogram's premultiplied screen over the display where
-/// XSUBSCREEN puts it.
-fn put_sub_screen(display: &mut image::Image, sub: &Framebuffer, [x, y, w, h]: [i32; 4]) {
+/// XSUBSCREEN puts it, scaled smoothly, with BACKCOLOR in the bars.
+fn put_sub_screen(display: &mut image::Image, sub: &SubScreen) {
     let (dw, dh) = DISPLAY;
     let pixels = &mut display.pixels;
-    let (sw, sh) = (sub.width() as i64, sub.height() as i64);
-    for py in y.max(0)..(y + h).min(dh as i32) {
-        for px in x.max(0)..(x + w).min(dw as i32) {
-            let sx = i64::from(px - x) * sw / i64::from(w);
-            let sy = i64::from(py - y) * sh / i64::from(h);
-            let s = sub.pixels()[(sy * sw + sx) as usize];
-            let d = &mut pixels[py as usize * dw + px as usize];
-            // Premultiplied over, each channel rounded to the nearest and
-            // held to 255 (a clear BACKCOLOR's color can be brighter than
-            // its alpha), as a GPU blends.
-            let a = 255 - (s >> 24);
-            let channel = |shift: u32| {
-                let under = ((*d >> shift & 0xFF) * a + 127) / 255;
-                ((s >> shift & 0xFF) + under).min(255) << shift
-            };
-            *d = channel(0) | channel(8) | channel(16) | channel(24);
+    // Premultiplied over, each channel rounded to the nearest and held to
+    // 255 (a clear BACKCOLOR's color can be brighter than its alpha), as a
+    // GPU blends.
+    let over = |d: &mut u32, s: [f32; 4]| {
+        let channel = |shift: u32, i: usize| {
+            let under = f64::from(*d >> shift & 0xFF) * (255.0 - f64::from(s[3])) / 255.0;
+            ((f64::from(s[i]) + under + 0.5) as u32).min(255) << shift
+        };
+        *d = channel(0, 2) | channel(8, 1) | channel(16, 0) | channel(24, 3);
+    };
+    let span = |from: f32, len: f32, end: usize| {
+        (from.max(0.0).round() as usize)..((from + len).round() as usize).min(end)
+    };
+    let back = sub.back;
+    let bar = [
+        (back >> 16 & 0xFF) as f32,
+        (back >> 8 & 0xFF) as f32,
+        (back & 0xFF) as f32,
+        (back >> 24) as f32,
+    ];
+    for [x, y, w, h] in sub.bars().into_iter().flatten() {
+        for py in span(y, h, dh) {
+            for px in span(x, w, dw) {
+                over(&mut pixels[py * dw + px], bar);
+            }
+        }
+    }
+    let [x, y, w, h] = sub.quad;
+    let (sw, sh) = (sub.frame.width() as i32, sub.frame.height() as i32);
+    let at = |sx: i32, sy: i32| {
+        let p = sub.frame.pixels()[(sy.clamp(0, sh - 1) * sw + sx.clamp(0, sw - 1)) as usize];
+        [p >> 16 & 0xFF, p >> 8 & 0xFF, p & 0xFF, p >> 24].map(|v| v as f32)
+    };
+    for py in span(y, h, dh) {
+        let v = (py as f32 + 0.5 - y) / h * sh as f32 - 0.5;
+        let (sy, ty) = (v.floor() as i32, v - v.floor());
+        for px in span(x, w, dw) {
+            let u = (px as f32 + 0.5 - x) / w * sw as f32 - 0.5;
+            let (sx, tx) = (u.floor() as i32, u - u.floor());
+            let (a, b, c, e) = (
+                at(sx, sy),
+                at(sx + 1, sy),
+                at(sx, sy + 1),
+                at(sx + 1, sy + 1),
+            );
+            let s = std::array::from_fn(|i| {
+                let top = a[i] + (b[i] - a[i]) * tx;
+                let low = c[i] + (e[i] - c[i]) * tx;
+                top + (low - top) * ty
+            });
+            over(&mut pixels[py * dw + px], s);
         }
     }
 }
