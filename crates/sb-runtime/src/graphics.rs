@@ -84,7 +84,19 @@ pub fn multiply(a: u32, b: u32) -> u32 {
     }))
 }
 
-/// [`multiply`] by one color, by table when many pixels are to be
+/// Per-channel product, alpha included, rounded to the nearest: how a
+/// sprite's color tints its image, unlike [`multiply`]'s GRP drawing.
+pub fn tint(a: u32, b: u32) -> u32 {
+    if b == 0xFFFF_FFFF {
+        return a;
+    }
+    let (a, b) = (a.to_be_bytes(), b.to_be_bytes());
+    u32::from_be_bytes(std::array::from_fn(|i| {
+        ((u32::from(a[i]) * u32::from(b[i]) + 127) / 255) as u8
+    }))
+}
+
+/// [`tint`] by one color, by table when many pixels are to be
 /// multiplied.
 // Made for one sprite on the stack and dropped; boxing the tables would
 // only add an allocation.
@@ -105,7 +117,7 @@ impl Tint {
     pub fn new(color: u32, pixels: usize) -> Tint {
         let table = |shift: u32| {
             let c = color >> shift & 0xFF;
-            std::array::from_fn(|v| (v as u32 * c / 255) as u8)
+            std::array::from_fn(|v| ((v as u32 * c + 127) / 255) as u8)
         };
         match color {
             0xFFFF_FFFF => Tint::White,
@@ -126,7 +138,7 @@ impl Tint {
     pub fn with<J: TintJob>(&self, job: J) -> J::Out {
         match self {
             Tint::White => job.run(|p| p),
-            Tint::Few(color) => job.run(|p| multiply(p, *color)),
+            Tint::Few(color) => job.run(|p| tint(p, *color)),
             Tint::Alpha(a) => job.run(|p| p & 0x00FF_FFFF | u32::from(a[(p >> 24) as usize]) << 24),
             Tint::Tables([b, g, r, a]) => job.run(|p| {
                 u32::from(b[(p & 0xFF) as usize])
@@ -1214,7 +1226,7 @@ mod tint_tests {
     use super::*;
 
     #[test]
-    fn tint_matches_multiply() {
+    fn tint_tables_match_tint() {
         for color in [
             0xFFFF_FFFF,
             0x80FF_FFFF,
@@ -1225,7 +1237,7 @@ mod tint_tests {
             for pixels in [1, 1 << 20] {
                 let tint = Tint::new(color, pixels);
                 for p in [0u32, 0xFFFF_FFFF, 0x8040_2010, 0x01FE_7F80, 0xDEAD_BEEF] {
-                    assert_eq!(tint.apply(p), multiply(p, color), "{color:08X} {p:08X}");
+                    assert_eq!(tint.apply(p), super::tint(p, color), "{color:08X} {p:08X}");
                 }
             }
         }

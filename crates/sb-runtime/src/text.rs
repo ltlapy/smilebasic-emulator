@@ -742,13 +742,13 @@ fn channels(c: u32) -> [u32; 4] {
     c.to_be_bytes().map(u32::from)
 }
 
-/// Per-channel product, as used for text colors.
+/// Per-channel product, rounded to the nearest, as used for text colors.
 fn multiply(a: u32, b: u32) -> u32 {
     if b == WHITE {
         return a;
     }
     let (a, b) = (channels(a), channels(b));
-    let c: [u8; 4] = std::array::from_fn(|i| (a[i] * b[i] / 255) as u8);
+    let c: [u8; 4] = std::array::from_fn(|i| ((a[i] * b[i] + 127) / 255) as u8);
     u32::from_be_bytes(c)
 }
 

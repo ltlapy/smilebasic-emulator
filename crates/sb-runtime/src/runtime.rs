@@ -1495,12 +1495,17 @@ impl Runtime {
         let mut fb = std::mem::replace(&mut self.fb, Framebuffer::new(0, 0));
         let mut scratch = std::mem::replace(&mut self.scratch, Framebuffer::new(0, 0));
         let mut flat = std::mem::replace(&mut self.flat, Framebuffer::new(0, 0));
-        // The sub interpreter's screen is clear where its BACKCOLOR is,
-        // over the main one's, and so is drawn premultiplied.
-        // UNVERIFIED: how a partly clear BACKCOLOR shows there.
-        fb.clear(match self.env_type {
-            0 => self.back_color | 0xFF00_0000,
-            _ => compose::over(0, self.back_color),
+        // The sub interpreter's screen goes over the main one's, and so is
+        // drawn premultiplied. Its BACKCOLOR's color is put on at full
+        // strength, and the main screen shows through it in proportion to
+        // its alpha; a BACKCOLOR of alpha 0 leaves the screen clear.
+        // UNVERIFIED: that an opaque BACKCOLOR lets the main screen show
+        // through whole.
+        let back = self.back_color;
+        fb.clear(match (self.env_type, back >> 24) {
+            (0, _) => back | 0xFF00_0000,
+            (_, 0) => 0,
+            (_, a) => (255 - a) << 24 | back & 0x00FF_FFFF,
         });
         for layer in (0..LAYERS as i32).rev() {
             let mut in_layer = elements.iter().filter(|e| e.0 == layer).peekable();
@@ -2545,11 +2550,19 @@ impl Host for Runtime {
 }
 
 /// Beside a subprogram, the side without the focus shows a little
-/// darker, each channel to 225/256: 255 to 224, 96 to 84.
+/// darker, each channel times 224/255 rounded to the nearest: 255 to
+/// 224, 248 to 218, 96 to 84.
 fn dim(fb: &mut Framebuffer) {
     for p in fb.pixels_mut() {
-        let rb = (((*p & 0x00FF_00FF) * 225) >> 8) & 0x00FF_00FF;
-        let g = (((*p & 0x0000_FF00) * 225) >> 8) & 0x0000_FF00;
+        // Red and blue in one go, then green, 16 bits apiece: each
+        // product is below 2^16, so (x + 128 + (x+128)/256) / 256 is
+        // x/255 rounded, without carrying into the next lane.
+        let lanes = |x: u32| {
+            let t = x + 0x0080_0080;
+            ((t + (t >> 8 & 0x00FF_00FF)) >> 8) & 0x00FF_00FF
+        };
+        let rb = lanes((*p & 0x00FF_00FF) * 224);
+        let g = lanes((*p >> 8 & 0xFF) * 224) << 8;
         *p = *p & 0xFF00_0000 | rb | g;
     }
 }

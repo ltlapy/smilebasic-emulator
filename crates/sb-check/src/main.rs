@@ -678,11 +678,15 @@ fn put_sub_screen(display: &mut image::Image, sub: &Framebuffer, [x, y, w, h]: [
             let sy = i64::from(py - y) * sh / i64::from(h);
             let s = sub.pixels()[(sy * sw + sx) as usize];
             let d = &mut pixels[py as usize * dw + px as usize];
-            // Premultiplied over.
+            // Premultiplied over, each channel rounded to the nearest and
+            // held to 255 (a clear BACKCOLOR's color can be brighter than
+            // its alpha), as a GPU blends.
             let a = 255 - (s >> 24);
-            let channel = |c: u32, shift: u32| ((c >> shift & 0xFF) * a / 255) << shift;
-            let under = channel(*d, 0) | channel(*d, 8) | channel(*d, 16) | channel(*d, 24);
-            *d = s.wrapping_add(under);
+            let channel = |shift: u32| {
+                let under = ((*d >> shift & 0xFF) * a + 127) / 255;
+                ((s >> shift & 0xFF) + under).min(255) << shift
+            };
+            *d = channel(0) | channel(8) | channel(16) | channel(24);
         }
     }
 }

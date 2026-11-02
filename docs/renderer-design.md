@@ -288,17 +288,17 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 | Rule | Where | Status |
 |---|---|---|
-| Normal blend of an element: `(s*a + d*(255-a)) / 255`, **rounded to nearest** (`div255_lanes`) | `compose::over` | C: pitfalls "Blending rounds to the nearest"; TTEST16 screenshots pixel for pixel |
+| Normal blend of an element: `s*a/255 + d*(255-a)/255`, each term **rounded to nearest** (`div255_sum_lanes`) | `compose::over` | C: pitfalls "Colour arithmetic" (TEST49; within 1 of every sample, the rest host GPU rounding); TTEST16 |
 | Frames and composed layers hold premultiplied colour; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
-| Additive element: light = `c*a/255` **rounded down**, added with saturation, destination alpha kept | `compose::light`, `add_light` | **U (R1)**: rounding not checked |
-| Sprite colour (SPCOLOR, link colour) multiplies each channel, alpha included, **rounded down** (`a*b/255`) | `graphics::multiply`, `Tint` | **U (R2)** |
-| Text colour (cell colour, TCOLOR) the same, rounded down | `text::multiply` | **U (R2)** |
-| Tint is applied to the page pixel before blending | `sprites::draw_posed` | U (R2, same check) |
+| Additive element: light = `c*a/255` **rounded to nearest**, added with saturation, destination alpha kept | `compose::light`, `add_light` | C (R1): TEST49 |
+| Sprite colour (SPCOLOR) multiplies each channel, alpha included, **rounded to nearest** | `graphics::tint`, `Tint` | C (R2): TEST49. A child's link colour (`multiply`, rounded down) is still U |
+| Text colour (cell colour, then TCOLOR) the same, rounded to nearest | `text::multiply` | C (R2): TEST49 |
+| Tint is applied to the page pixel before blending | `sprites::draw_posed` | C (R2): TEST49 |
 | Relative colour animation `"C+"`: product / 256, rounded down | `anim.rs` | C: pitfalls |
 | LAYER mode 0 draws straight onto the frame, layer colour ignored | `Runtime::render` | C: pitfalls; TTEST16 |
-| Modes 1-4: the layer colour scales light (`div255(div255(p*c)*ca)`) and coverage (`div255(la*ca)`), nearest rounding | `compose::compose_each` | C for modes 0-4 over a colour and over black (comment in `compose.rs`); **U (R3)** for a non-white layer colour with partial alpha |
-| Mode 1: `p + div255(d*(255-a))`; mode 2: `d+p`; mode 3: `d*(p+255-a)/255` floor; mode 4: `d + p*(255-d)/255` floor | `compose::compose` | C at the tested values; **U (R3)** for the rounding of modes 3 and 4 at intermediate values |
-| A sub interpreter's frame is premultiplied over the main one, cleared to its BACKCOLOR | `Runtime::render` | **U (R4)**: "how a partly clear BACKCOLOR shows there" |
+| Modes 1-4: the layer colour scales light (`p*c*ca/255²`, rounded once) and coverage (`div255(la*ca)`), nearest rounding | `compose::compose_each` | C (R3): TEST49, colours `C0806040`, `7F40C0FF`, `FFC08040`, `80FFFFFF`, white |
+| Mode 1: `p + div255(d*(255-a))`; mode 2: `d+p`; mode 3: `div255(d*(p+255-a))`; mode 4: `d + div255(p*(255-d))`, all nearest | `compose::compose` | C (R3): TEST49 |
+| A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's colour unmultiplied with coverage `255 - alpha` (alpha 0: clear) | `Runtime::render`, `dim` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; an opaque BACKCOLOR is U |
 
 ### 2.2 Sprites
 
@@ -384,7 +384,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | Fade steps: single-precision mix, rounded down; a clear end takes the other end's colour | `Fade::step`, `Fade::start` | C: pitfalls |
 | ACLS clears FADE | `acls` | S: pitfalls; marker in `runtime.rs` |
-| Fade cover: `(c*a + p*(255-a) + 127) / 255` (nearest), over the final frame | `Fade::cover` | **U (R21)** |
+| Fade cover: `(c*a + p*(255-a) + 127) / 255` (nearest), over the final frame | `Fade::cover` | C (R21): TEST49, four fade colours (alpha &H80, &H7F, &H01, &HFE) |
 | A fade steps with the animations, starting on the frame after FADE | `Runtime::animate` | C: pitfalls; TEST47 (R22) |
 
 ### 2.8 Display (XSCREEN composite mode)
@@ -425,13 +425,15 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GARRAY/GUPDATE: GPGET sees array writes at once; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](differences.md) for the omission) |
 
 **Count.** There were 31 open items, R1 to R31. TEST47 (batches A and
-F) settled R7, R20, R22 and R24-R31, apart from the smaller points left
-U in the table above; R1-R6, R8-R19, R21 and R23 are open. TEST48 then
-settled most of those smaller points: the shallow GLINE rule and lines
-from off the page, GTRI's edges, GSAVE and GLOAD sizes, single-precision
-rotation and scale, GBOX corner order, near-full arcs and TFUNC after
-TSCREEN. 5 stale markers can be dropped from the code at once (ACLS
-clearing FADE was dropped with TEST47):
+F) settled R7, R20, R22 and R24-R31, and TEST49 (batch B) R1-R4 and
+R21, apart from the smaller points left U in the table above; R5, R6,
+R8-R19 and R23 are open. TEST48 then settled most of TEST47's smaller
+points: the shallow GLINE rule and lines from off the page, GTRI's
+edges, GSAVE and GLOAD sizes, single-precision rotation and scale, GBOX
+corner order, near-full arcs and TFUNC after TSCREEN. TEST49's
+screenshots came from an emulator on a PC's GPU, whose blending is within
+1 of the rules above (see pitfalls). 5 stale markers can be dropped from
+the code at once (ACLS clearing FADE was dropped with TEST47):
 
 - `runtime.rs`: filter on an empty direct layer;
 - `text.rs`: TAB_WIDTH; `CHR$(10)`; TSCREEN clears;
@@ -504,6 +506,8 @@ Parts (each `GCLS` first):
     rows (confirms clipping keeps the same pixels).
 
 #### Batch B: colour arithmetic (screenshots)
+
+Done as TEST49; see the table above for the results.
 
 R1, R2, R3, R21, and R4 as its last part (it needs a subprogram).
 Sprites are 32x32 solid blocks drawn on GRP3 (`SPSET n,U,V,32,32` and
