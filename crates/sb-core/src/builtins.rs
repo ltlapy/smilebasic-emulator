@@ -514,9 +514,12 @@ fn format(args: &[Value]) -> Result<Value> {
             while at(*i).is_some_and(|c| c.is_ascii_digit()) {
                 *i += 1;
             }
-            String::from_utf16_lossy(&fmt[start..*i])
-                .parse::<usize>()
-                .ok()
+            // Digits past any size are over the limit, not absent.
+            (*i > start).then(|| {
+                String::from_utf16_lossy(&fmt[start..*i])
+                    .parse::<usize>()
+                    .unwrap_or(usize::MAX)
+            })
         };
         let width = number(&mut i).unwrap_or(0);
         let precision = if at(i) == Some('.') {
@@ -555,13 +558,8 @@ fn format(args: &[Value]) -> Result<Value> {
                     'B' => format!("{:b}", value.to_int()? as u32),
                     _ => {
                         let digits = precision.unwrap_or(6);
-                        // UNVERIFIED: SmileBASIC 4's own limit, if any, and
-                        // that it is this error.
-                        if digits > MAX_DECIMALS {
-                            return Err(Error::with_detail(
-                                ErrorKind::IllegalFormat,
-                                format!("{digits} decimals"),
-                            ));
+                        if digits > MAX_FIELD {
+                            return Err(field_too_long(format!("{digits} decimals")));
                         }
                         fixed(value.to_real()?.abs(), digits)
                     }
@@ -579,6 +577,9 @@ fn format(args: &[Value]) -> Result<Value> {
                 return Err(ErrorKind::IllegalFormat.into());
             }
         };
+        if width > MAX_FIELD {
+            return Err(field_too_long(format!("width {width}")));
+        }
         let pad = width.saturating_sub(sign.len() + body.chars().count());
         let field = if left {
             format!("{sign}{body}{}", " ".repeat(pad))
@@ -592,9 +593,14 @@ fn format(args: &[Value]) -> Result<Value> {
     Ok(string(out))
 }
 
-/// The most decimals `%F` gives, which is as many as Rust's formatting
-/// takes.
-const MAX_DECIMALS: usize = u16::MAX as usize;
+/// The most decimals `%F` gives, and the widest field.
+// UNVERIFIED: the exact limit, which lies between 1000 and 10000 decimals
+// and below a width of 1048576, and that the two are the same.
+const MAX_FIELD: usize = 1024;
+
+fn field_too_long(detail: String) -> Error {
+    Error::with_detail(ErrorKind::StringTooLong, detail).of_arg(1)
+}
 
 /// `x` with `digits` decimals, rounded to the nearest; a value exactly
 /// half way goes toward zero, as on hardware (`%.0F` of 2.5 and 3.5 gave
@@ -1171,15 +1177,22 @@ mod tests {
     }
 
     #[test]
-    fn format_with_too_many_decimals_is_an_error() {
+    fn format_with_too_long_a_field_is_an_error() {
         let format = |f: &str| call("FORMAT$", &[s(f), Value::Real(1.5)]);
         let digits = |f: &str| as_string(format(f).unwrap()).len();
-        assert_eq!(digits("%.1100F"), 1102);
-        assert_eq!(digits("%.1200F"), 1202);
-        assert_eq!(digits("%.65535F"), 65537);
-        for f in ["%.65536F", "%.99999F", "%.18446744073709551615F"] {
+        assert_eq!(digits("%.1000F"), 1002);
+        assert_eq!(digits("%1000D"), 1000);
+        for f in [
+            "%.10000F",
+            "%.99999F",
+            "%.18446744073709551615F",
+            "%.99999999999999999999999F",
+            "%1048576D",
+            "%1048576F",
+            "%99999999999999999999999D",
+        ] {
             let e = format(f).unwrap_err();
-            assert_eq!(e.kind, ErrorKind::IllegalFormat, "{f}");
+            assert_eq!(e.kind, ErrorKind::StringTooLong, "{f}");
             assert!(e.detail.is_some(), "{f}");
         }
     }
