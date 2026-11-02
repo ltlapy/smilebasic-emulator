@@ -942,9 +942,15 @@ yet seen on hardware; TEST56 looks at each:
   `VSYNC`, takes `FREEMEM` through 100662224, 67107728, 33553232 and back to
   100662224, and never fails: what was dropped goes when the next request
   would not fit (TEST52).
-- Open: the constant expression `"A"*(1<<24)` gave `Out of memory` when the
-  program compiled, with nearly all memory free and before any of it ran; the
-  same size through a variable works (TEST52). The rule is not known.
+- Constant strings are worked out as the program compiles, so what is too
+  long stops it before any of it runs (TEST52, TEST57). `?LEN("A"*(1<<N))`
+  works up to N=14 in direct mode, then is `Out of code memory`; in a program it
+  works up to N=20, then is `Out of memory`, in slots 0 and 1, with nearly all
+  memory free. Through a variable the same size works. Each statement has 4 MiB to compile in, from which every string worked out on
+  the way takes 24 bytes and its characters, rounded up to 8 bytes, and stays
+  until the statement ends: `"A"*1000000+"B"*1000000` is too long there. A string
+  then goes into the code, which is 32768 16-bit words in direct mode and
+  4194304 in a slot, taking a word a character plus its length.
 - `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
   string is `Can't use empty string`, a user-defined character `Can't
   use user-defined character`.

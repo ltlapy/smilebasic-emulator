@@ -1,5 +1,6 @@
 //! AST to bytecode.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
@@ -41,6 +42,8 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> R
         col: 0,
         temp_count: 0,
         constant_checked: false,
+        constant_bytes: Cell::new(0),
+        string_words: Cell::new(0),
     };
     let strict_at = c.prepare(program)?;
     // OPTION STRICT holds from where it stands, DEFs included.
@@ -115,6 +118,11 @@ struct Compiler<'h> {
     /// The expression being compiled is part of a constant one already
     /// worked out without error, so its parts need no check of their own.
     constant_checked: bool,
+    /// What the constant strings worked out in this statement have taken
+    /// of [`CONSTANT_BYTES`].
+    constant_bytes: Cell<usize>,
+    /// What constant strings have taken of the code memory so far.
+    string_words: Cell<usize>,
 }
 
 fn err(kind: ErrorKind, detail: impl Into<String>) -> Error {
@@ -229,6 +237,7 @@ impl Compiler<'_> {
     ) -> Result<()> {
         for stmt in stmts {
             (self.line, self.col) = (stmt.line, stmt.col);
+            self.constant_bytes.set(0);
             let at = |e: Error| e.at_pos(stmt.line, stmt.col);
             match &stmt.kind {
                 StmtKind::Label(name) => {
@@ -323,7 +332,9 @@ impl Compiler<'_> {
         for link in links.iter().rev() {
             value = match link {
                 Expr::Unary { op, .. } => ops::unary(*op, &value)?,
-                Expr::Binary { op, rhs, .. } => const_binary(*op, value, &self.const_value(rhs)?)?,
+                Expr::Binary { op, rhs, .. } => {
+                    self.const_binary(*op, value, &self.const_value(rhs)?)?
+                }
                 _ => unreachable!("chain(_, false) stops at indexing"),
             };
         }
@@ -413,6 +424,7 @@ impl Compiler<'_> {
     }
 
     fn string_const(&mut self, s: Vec<u16>) -> u32 {
+        self.take_string_words(s.len());
         self.out.strings.push(s);
         (self.out.strings.len() - 1) as u32
     }
@@ -551,7 +563,10 @@ impl Compiler<'_> {
     fn stmt(&mut self, stmt: &Stmt) -> Result<()> {
         (self.line, self.col) = (stmt.line, stmt.col);
         let start = self.out.code.len();
+        self.constant_bytes.set(0);
         self.stmt_kind(&stmt.kind)
+            .map_err(|e| e.at_pos(stmt.line, stmt.col))?;
+        self.check_code_memory()
             .map_err(|e| e.at_pos(stmt.line, stmt.col))?;
         // A FOR's own start is no statement for TRACE: it runs on into
         // the body (checked on hardware). A label emits nothing.
@@ -1433,12 +1448,22 @@ impl Compiler<'_> {
     fn check_chain(&self, links: &[&Expr], first: &Expr) -> Vec<Result<bool>> {
         let mut checks: Vec<Result<bool>> = links.iter().map(|_| Ok(false)).collect();
         let mut value = self.const_value(first).ok();
+        // How long the string worked out last is: the program holds it
+        // when what comes next is not a constant too.
+        let mut made = None;
         for (link, check) in links.iter().zip(&mut checks).rev() {
             let result = match (link, value) {
                 (_, None) | (Expr::Index { .. }, _) => None,
                 (Expr::Unary { op, .. }, Some(v)) => Some(ops::unary(*op, &v)),
                 (Expr::Binary { op, rhs, .. }, Some(l)) => {
-                    self.const_value(rhs).ok().map(|r| const_binary(*op, l, &r))
+                    // A right side that is no constant is compiled on its
+                    // own later, and takes what it takes then.
+                    let before = self.constant_bytes.get();
+                    let right = self.const_value(rhs);
+                    if right.is_err() {
+                        self.constant_bytes.set(before);
+                    }
+                    right.ok().map(|r| self.const_binary(*op, l, &r))
                 }
                 _ => unreachable!("chain links are operators and indexing"),
             };
@@ -1452,15 +1477,15 @@ impl Compiler<'_> {
             value = match result {
                 Some(Ok(v)) => {
                     *check = Ok(!logical);
+                    made = match &v {
+                        Value::Str(s) => Some(s.borrow().len()),
+                        _ => None,
+                    };
                     Some(v)
                 }
-                // Too large to work out now: it is the program's to run
-                // into, if it ever gets there.
-                Some(Err(e))
-                    if matches!(e.kind, ErrorKind::OutOfMemory | ErrorKind::MemoryCheck) =>
-                {
-                    None
-                }
+                // Too large to work out for what is free now: it is the
+                // program's to run into, if it ever gets there.
+                Some(Err(e)) if e.kind == ErrorKind::MemoryCheck => None,
                 Some(Err(e)) => {
                     if !logical {
                         *check = Err(e);
@@ -1469,8 +1494,75 @@ impl Compiler<'_> {
                 }
                 None => None,
             };
+            if value.is_none()
+                && let Some(chars) = made.take()
+            {
+                self.take_string_words(chars);
+            }
+        }
+        if let Some(chars) = made {
+            self.take_string_words(chars);
         }
         checks
+    }
+
+    /// A constant string in the code takes its characters and its length.
+    fn take_string_words(&self, chars: usize) {
+        let length = if chars >> 15 == 0 { 1 } else { 2 };
+        self.string_words
+            .set(self.string_words.get() + chars + length);
+    }
+
+    /// Whether what has been compiled so far fits in the code memory.
+    // UNVERIFIED: that the rest of the code takes a word an instruction. Ours
+    // are not SmileBASIC 4's, but it is constant strings that come near.
+    fn check_code_memory(&self) -> Result<()> {
+        let most = if self.direct {
+            DIRECT_CODE_WORDS
+        } else {
+            SLOT_CODE_WORDS
+        };
+        if self.string_words.get() + self.out.code.len() > most {
+            return Err(ErrorKind::OutOfCodeMemory.into());
+        }
+        Ok(())
+    }
+
+    /// [`ops::binary`] for working out constants, adding a string to the end
+    /// of one no one else holds rather than copying it: a chain such as
+    /// `"A"+"B"+...` then takes time in proportion to its length.
+    ///
+    /// Each string worked out stays until the statement has compiled, in
+    /// [`CONSTANT_BYTES`]. The parts of the statement that are no strings
+    /// take from there too, which is not counted: they are little.
+    fn const_binary(&self, op: BinaryOp, lhs: Value, rhs: &Value) -> Result<Value> {
+        let chars = match (op, &lhs, rhs) {
+            (BinaryOp::Add, Value::Str(a), Value::Str(b)) => {
+                Some(a.borrow().len() as i64 + b.borrow().len() as i64)
+            }
+            (BinaryOp::Mul, Value::Str(a), _) => {
+                Some((a.borrow().len() as i64).saturating_mul(i64::from(rhs.to_int()?)))
+            }
+            _ => None,
+        };
+        if let Some(chars) = chars.filter(|&c| c >= 0) {
+            let bytes = (chars as usize)
+                .saturating_mul(2)
+                .saturating_add(7 + CONSTANT_NODE_BYTES)
+                & !7;
+            let total = self.constant_bytes.get().saturating_add(bytes);
+            if total > CONSTANT_BYTES {
+                return Err(ErrorKind::OutOfMemory.into());
+            }
+            self.constant_bytes.set(total);
+        }
+        if let (BinaryOp::Add, Value::Str(a), Value::Str(b)) = (op, &lhs, rhs)
+            && std::rc::Rc::strong_count(a) == 1
+        {
+            a.borrow_mut().extend_from_slice(&b.borrow());
+            return Ok(lhs);
+        }
+        ops::binary(op, &lhs, rhs)
     }
 
     fn call_expr(&mut self, name: &Var, args: &[Option<Expr>]) -> Result<()> {
@@ -1633,27 +1725,13 @@ fn chain(expr: &Expr, with_index: bool) -> (Vec<&Expr>, &Expr) {
     (links, first)
 }
 
-/// The longest string `*` is worked out to when the program compiles.
-const MOST_CONSTANT_CHARS: i64 = 1 << 20;
-
-/// [`ops::binary`] for working out constants, adding a string to the end
-/// of one no one else holds rather than copying it: a chain such as
-/// `"A"+"B"+...` then takes time in proportion to its length.
-fn const_binary(op: BinaryOp, lhs: Value, rhs: &Value) -> Result<Value> {
-    if let (BinaryOp::Add, Value::Str(a), Value::Str(b)) = (op, &lhs, rhs)
-        && std::rc::Rc::strong_count(a) == 1
-    {
-        a.borrow_mut().extend_from_slice(&b.borrow());
-        return Ok(lhs);
-    }
-    // A long string in the program would stay there, on top of each copy.
-    if let (BinaryOp::Mul, Value::Str(a)) = (op, &lhs)
-        && (a.borrow().len() as i64).saturating_mul(i64::from(rhs.to_int()?)) > MOST_CONSTANT_CHARS
-    {
-        return Err(ErrorKind::MemoryCheck.into());
-    }
-    ops::binary(op, &lhs, rhs)
-}
+/// What one statement's constant strings can take as it compiles, and
+/// what each takes beside its characters.
+const CONSTANT_BYTES: usize = 4 << 20;
+const CONSTANT_NODE_BYTES: usize = 24;
+/// The code memory, of 16-bit words, of a program slot and of direct mode.
+const SLOT_CODE_WORDS: usize = 4 << 20;
+const DIRECT_CODE_WORDS: usize = 32768;
 
 fn literal_value(l: &Literal) -> Value {
     match l {

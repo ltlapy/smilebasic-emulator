@@ -32,6 +32,8 @@ pub enum ErrorKind {
     StringTooLong,
     /// More live strings and arrays than SmileBASIC 4's memory holds.
     OutOfMemory,
+    /// A program too long for its slot's code memory, as it compiles.
+    OutOfCodeMemory,
     /// Never seen by a program: the running estimate of what is live says
     /// a request may not fit, so the VM counts exactly and runs the
     /// instruction again. See [`crate::memory`].
@@ -92,6 +94,7 @@ impl ErrorKind {
             ErrorKind::Overflow => 9,
             ErrorKind::OutOfRange => 10,
             ErrorKind::OutOfMemory | ErrorKind::MemoryCheck => 11,
+            ErrorKind::OutOfCodeMemory => 12,
             ErrorKind::OutOfData => 13,
             ErrorKind::UndefinedLabel => 14,
             ErrorKind::UndefinedVariable => 15,
@@ -142,6 +145,7 @@ impl ErrorKind {
             ErrorKind::SubscriptOutOfRange => "Subscript out of range",
             ErrorKind::OutOfRange => "Out of range",
             ErrorKind::OutOfMemory | ErrorKind::MemoryCheck => "Out of memory",
+            ErrorKind::OutOfCodeMemory => "Out of code memory",
             ErrorKind::UndefinedVariable => "Undefined variable",
             ErrorKind::UndefinedLabel => "Undefined label",
             ErrorKind::UndefinedFunction => "Undefined function",

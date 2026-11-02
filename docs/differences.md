@@ -119,9 +119,11 @@ known.
   frees it only when a request would not fit: emptying a string or an array,
   or leaving a DEF, does not raise `FREEMEM` there, even after `VSYNC` or
   `WAIT`. A program would have to watch `FREEMEM` to see the difference.
-- A long string from a constant expression, such as `"A"*(1<<24)`, is made
-  when that line runs. SmileBASIC 4 gave `Out of memory` for this one when the
-  program compiled; what decides that is not known, so it is not copied.
+- `Out of memory` and `Out of code memory` for constant strings as a program
+  compiles count those strings only. SmileBASIC 4's limits take in the rest of
+  the statement and its code too, which here is a word an instruction and no
+  more than that, so right at the limits a program may compile that SmileBASIC 4
+  refuses. A constant string that compiles is still made when its line runs.
 - `Out of memory` comes when what a program holds, counted as `FREEMEM`
   counts it, and what it asks for do not fit in SmileBASIC 4's
   134,216,720 bytes. Values a program has dropped never count, which comes to

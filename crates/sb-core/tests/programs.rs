@@ -712,7 +712,9 @@ fn long_operator_chains_fit_a_small_stack() {
         .stack_size(256 << 10)
         .spawn(move || {
             let b = "B".repeat(TERMS - 1);
-            assert_eq!(output(&format!("?LEN({strings})")), format!("{TERMS}\n"));
+            // Each string on the way stays until the statement has compiled,
+            // and this many do not fit.
+            assert_eq!(error(&format!("?LEN({strings})")).0, ErrorKind::OutOfMemory);
             assert_eq!(
                 output(&format!("A$=\"A\":?{led_by_var}")),
                 format!("A{b}\n")
@@ -1136,10 +1138,13 @@ fn out_of_memory_at_the_sizes_seen_on_hardware() {
         let (kind, ..) = error(source);
         assert_eq!(kind, ErrorKind::OutOfMemory, "{source}");
     };
-    assert_eq!(output("?LEN(\"A\"*33554432)"), "33554432\n");
-    oom("S$=\"A\"*67108864");
-    assert_eq!(output("S$=\"A\"*16777216:S$=S$+S$:?LEN(S$)"), "33554432\n");
-    oom("S$=\"A\"*33554432:S$=S$+S$");
+    assert_eq!(output("N=33554432:?LEN(\"A\"*N)"), "33554432\n");
+    oom("N=67108864:S$=\"A\"*N");
+    assert_eq!(
+        output("N=16777216:S$=\"A\"*N:S$=S$+S$:?LEN(S$)"),
+        "33554432\n"
+    );
+    oom("N=33554432:S$=\"A\"*N:S$=S$+S$");
     assert_eq!(output("A=ARRAY#(8388608):?LEN(A)"), "8388608\n");
     oom("A=ARRAY#(16777216)");
     assert_eq!(
@@ -1178,6 +1183,7 @@ fn out_of_memory_at_the_sizes_seen_on_hardware() {
 fn absurd_requests_are_out_of_memory() {
     for source in [
         "?\"A\"*2000000000",
+        "N=2000000000:?\"A\"*N",
         "A$=\"X\":FOR I=1 TO 31:A$=A$+A$:NEXT",
         "A$=\"XX\":FOR I=1 TO 40:A$[0]=A$:NEXT",
         "A$=\"XX\":FOR I=1 TO 40:PUSH A$,A$:NEXT",
@@ -1200,7 +1206,7 @@ fn absurd_requests_are_out_of_memory() {
 #[test]
 fn garbage_causes_no_out_of_memory() {
     assert_eq!(
-        output("VAR S$,I:FOR I=1 TO 20:S$=\"\":S$=\"A\"*16777216:NEXT:?LEN(S$)"),
+        output("VAR S$,I,N=16777216:FOR I=1 TO 20:S$=\"\":S$=\"A\"*N:NEXT:?LEN(S$)"),
         "16777216\n"
     );
     assert_eq!(
@@ -1221,15 +1227,12 @@ fn garbage_causes_no_out_of_memory() {
 /// it would have: everything it took off the stack is back.
 #[test]
 fn counting_memory_leaves_the_instruction_as_it_was() {
-    let big = "VAR S$,I:FOR I=1 TO 8:S$=\"\":S$=\"A\"*16777216:NEXT:S$=\"\"\n";
+    let big = "VAR S$,I,N=16777216:FOR I=1 TO 8:S$=\"\":S$=\"A\"*N:NEXT:S$=\"\"\n";
     let run = |line: &str| output(&format!("{big}{line}"));
-    assert_eq!(run("?7+LEN(\"A\"*33554432)"), "33554439\n");
+    assert_eq!(run("?7+LEN(\"A\"*(N*2))"), "33554439\n");
+    assert_eq!(run("T$=\"A\"*N:U$=T$+T$:?1;LEN(U$);2"), "1335544322\n");
     assert_eq!(
-        run("T$=\"A\"*16777216:U$=T$+T$:?1;LEN(U$);2"),
-        "1335544322\n"
-    );
-    assert_eq!(
-        run("T$=\"A\"*16777216:T$=T$+\"B\"+\"C\":?LEN(T$);RIGHT$(T$,2)"),
+        run("T$=\"A\"*N:T$=T$+\"B\"+\"C\":?LEN(T$);RIGHT$(T$,2)"),
         "16777218BC\n"
     );
     assert_eq!(run("A=ARRAY%(1,16000000):?1;DIM(A,1);2"), "1160000002\n");
@@ -1253,11 +1256,58 @@ fn what_small_strings_add_up_to_is_out_of_memory() {
     assert_eq!(output(source), "100000\n");
 }
 
+/// Constant strings stay in memory for the compiler as a statement compiles,
+/// and then in the program's code (TEST57).
 #[test]
-fn a_long_constant_string_waits_for_the_program_to_get_there() {
-    assert_eq!(output("IF 0 THEN ?\"A\"*2000000000\n?1"), "1\n");
-    assert_eq!(output("?LEN(\"AB\"*10)"), "20\n");
-    assert_eq!(output("A$=\"A\"*2000000:?LEN(A$)"), "2000000\n");
+fn long_constant_strings_stop_the_program_compiling() {
+    let refused = |source: &str, kind: ErrorKind| {
+        let e = sb_core::compile(source, &TextHost::default()).unwrap_err();
+        assert_eq!(e.kind, kind, "{source}");
+    };
+    assert_eq!(output("?LEN(\"A\"*(1<<20))"), "1048576\n");
+    assert_eq!(output("?LEN(\"A\"*2097139)"), "2097139\n");
+    // The first line never runs.
+    for source in [
+        "?1\n?LEN(\"A\"*(1<<21))",
+        "?1\n?\"A\"*2097152",
+        "IF 0 THEN ?\"A\"*2000000000",
+        "?1\nA$=\"A\"*(1<<24)",
+        "CONST #A$=\"A\"*(1<<21)",
+        // Those worked out on the way stay too.
+        "?1\nA$=\"A\"*1000000+\"B\"*1000000",
+        "?1\nA$=(\"A\"*1500000)*1",
+        "?1\n?\"A\"*1500000,\"B\"*1500000",
+    ] {
+        refused(source, ErrorKind::OutOfMemory);
+    }
+    // For the next statement, all of that is free again.
+    assert_eq!(
+        output("?LEN(\"A\"*1500000)\n?LEN(\"B\"*1500000)"),
+        "1500000\n1500000\n"
+    );
+    // A slot's code holds four million characters.
+    assert_eq!(
+        output("A=LEN(\"A\"*2000000)\nA=LEN(\"A\"*2000000)\n?A"),
+        "2000000\n"
+    );
+    refused(
+        "A=LEN(\"A\"*2000000)\nA=LEN(\"A\"*2000000)\nA=LEN(\"A\"*2000000)",
+        ErrorKind::OutOfCodeMemory,
+    );
+    assert_eq!(ErrorKind::OutOfCodeMemory.code(), 12);
+    assert_eq!(ErrorKind::OutOfCodeMemory.message(), "Out of code memory");
+    // Through a variable it is the program's to run into, if it gets there.
+    assert_eq!(output("N=2000000000:IF 0 THEN ?\"A\"*N\n?1"), "1\n");
+    assert_eq!(output("N=1<<21:A$=\"A\"*N:?LEN(A$)"), "2097152\n");
+}
+
+/// Direct mode has far less code memory than a slot (TEST57).
+#[test]
+fn direct_mode_has_little_code_memory() {
+    let compile = |line: &str| sb_core::compile_direct(line, &TextHost::default(), 0).map(|_| ());
+    compile("?LEN(\"A\"*(1<<14))").unwrap();
+    let e = compile("?LEN(\"A\"*(1<<15))").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::OutOfCodeMemory);
 }
 
 /// PUSH and UNSHIFT need a block's new size beside the old whenever it has
