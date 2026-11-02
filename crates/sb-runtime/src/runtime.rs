@@ -883,6 +883,7 @@ fn startup_screens(mode: &ScreenMode) -> Vec<TextScreen> {
         .map(|i| {
             let mut t = TextScreen::new(w, h);
             if i == CONSOLE {
+                t.inverts = true;
                 t.z = -4095;
                 if mode.sample >= 2 {
                     t.set_font(16, 8, w / 8, h / 8);

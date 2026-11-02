@@ -60,7 +60,8 @@ pub mod attr {
     pub const ROTATION: u16 = 0b11;
     pub const REVH: u16 = 0b100;
     pub const REVV: u16 = 0b1000;
-    /// Not ATTR's: the cell is filled with its color, less the glyph.
+    /// Not ATTR's: on the console, the cell is filled with its color, less
+    /// the glyph. Other text screens keep the bit and show nothing of it.
     pub const INVERT: u16 = 0x80;
 }
 
@@ -149,6 +150,9 @@ pub struct TextScreen {
     /// TBLEND 1: additive.
     pub add: bool,
     pub layer: i32,
+    /// [`attr::INVERT`] does something here: only the console's program
+    /// has the flag.
+    pub inverts: bool,
     /// A cell may be inverted, which even an empty one shows. Few programs
     /// ever have one, so the others are spared looking at each cell's
     /// attribute to see what to skip.
@@ -191,6 +195,7 @@ impl TextScreen {
             tint: WHITE,
             add: false,
             layer: 0,
+            inverts: false,
             may_invert: false,
             array: None,
             anims: Default::default(),
@@ -275,7 +280,7 @@ impl TextScreen {
     }
 
     fn set(&mut self, i: usize, cell: Cell) {
-        self.may_invert |= cell.attr & attr::INVERT != 0;
+        self.may_invert |= self.inverts && cell.attr & attr::INVERT != 0;
         self.cells_changed |= self.cells[i] != cell;
         self.cells[i] = cell;
         if let Some(array) = &self.array
@@ -356,7 +361,7 @@ impl TextScreen {
             for cx in x.max(0)..(x + w).min(self.width as i32) {
                 let i = (cy as u32 * self.width + cx as u32) as usize;
                 let cell = Cell::from_ints([v[i * 2], v[i * 2 + 1]]);
-                self.may_invert |= cell.attr & attr::INVERT != 0;
+                self.may_invert |= self.inverts && cell.attr & attr::INVERT != 0;
                 self.cells[i] = cell;
             }
         }
@@ -700,7 +705,7 @@ impl TextScreen {
         paints: &mut Vec<Mixed>,
     ) {
         let ft = self.font_type;
-        let inverted = cell.attr & attr::INVERT != 0;
+        let inverted = self.inverts && cell.attr & attr::INVERT != 0;
         let mut color = |p: u32| {
             let p = if inverted { inverted_texel(p) } else { p };
             let paint = Mixed::new(p, cell.color, self.tint, self.add);
@@ -921,6 +926,7 @@ mod tests {
     fn inverted_cells_fill_around_the_glyph() {
         let font = Font::fallback();
         let mut screen = TextScreen::new(32, 8);
+        screen.inverts = true;
         let code = u16::from(b'A');
         let (color, invert) = (0xFF40_80C0, attr::INVERT);
         screen.set_cell(
@@ -973,6 +979,26 @@ mod tests {
                 assert_eq!((at(2), at(3)), (color, color));
             }
         }
+    }
+
+    /// TEST56: on screens 0 to 3 the bit stays in the cell and the glyph is
+    /// drawn as if it were not there.
+    #[test]
+    fn other_screens_keep_the_inverting_bit_but_show_a_plain_glyph() {
+        let font = Font::fallback();
+        let (code, color) = (u16::from(b'A'), 0xFF40_80C0);
+        let drawn = |attr: u16| {
+            let mut screen = TextScreen::new(16, 8);
+            let cell = |code| Cell { code, color, attr };
+            screen.set_cell(0, 0, cell(code));
+            screen.set_cell(1, 0, cell(0));
+            assert_eq!(screen.cell(0, 0).attr, attr);
+            let mut fb = Framebuffer::new(16, 8);
+            fb.clear(0xFF10_2030);
+            screen.draw(&mut fb, &font);
+            fb.pixels().to_vec()
+        };
+        assert_eq!(drawn(attr::INVERT), drawn(0));
     }
 
     /// The exact sum, one rounding: `(c*n)*(a*n) + d*(1 - a*n)` with n the
