@@ -273,6 +273,22 @@ fn wavseta_16_bit_form_refuses_omitted_arguments() {
     }
 }
 
+/// CHKMML reads macros that BGMPLAY would refuse for how much they copy.
+#[test]
+fn chkmml_takes_macros_bgmplay_refuses() {
+    let mut rt = runtime();
+    let bomb = "VAR L,M$=\"{M0=CCCCCCCCCC}\"\n\
+                FOR L=1 TO 7\n\
+                M$=M$+\"{M\"+STR$(L)+\"=\"+(\"{M\"+STR$(L-1)+\"}\")*10+\"}\"\n\
+                NEXT\n\
+                M$=M$+\"{M7}\"\n";
+    let chk = format!("{bomb}?CHKMML(M$)\n");
+    assert_eq!(run_on(&mut rt, &chk).unwrap(), "-1");
+    let play = format!("{bomb}BGMPLAY M$\n");
+    let e = run_on(&mut rt, &play).unwrap_err();
+    assert_eq!(e.kind, ErrorKind::IllegalMml);
+}
+
 #[test]
 fn beeps_take_handles() {
     let mut rt = runtime();

@@ -2,7 +2,7 @@
 //! list of commands for each channel. Octaves, lengths and variables are
 //! left to the player, since repeats and BGMVAR change them as it plays.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 pub const CHANNELS: usize = 16;
@@ -129,8 +129,16 @@ impl Song {
 /// Where the MML could not be read, as a character index.
 pub type Error = usize;
 
-/// Takes out `/comments/`, and puts macros in where they are used.
-fn expand(text: &[char]) -> Result<Vec<char>, Error> {
+/// Why macros could not be put in, with where.
+enum Stop {
+    Bad(Error),
+    OverLimit(Error),
+}
+
+/// Takes out `/comments/`, and puts macros in where they are used. With
+/// `seen`, a macro goes in only where it is first used, which is enough to
+/// read every body and cannot multiply.
+fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Vec<char>, Stop> {
     let mut plain = Vec::with_capacity(text.len());
     let mut comment = false;
     for &c in text {
@@ -142,7 +150,12 @@ fn expand(text: &[char]) -> Result<Vec<char>, Error> {
     }
     let mut macros: HashMap<String, Vec<char>> = HashMap::new();
     let mut out = Vec::with_capacity(plain.len());
-    expand_into(&plain, &mut macros, &mut out, 0, &mut { MACRO_CHARS })?;
+    let mut left = if seen.is_some() {
+        usize::MAX
+    } else {
+        MACRO_CHARS
+    };
+    expand_into(&plain, &mut macros, &mut out, 0, &mut left, &mut seen)?;
     Ok(out)
 }
 
@@ -152,7 +165,8 @@ fn expand_into(
     out: &mut Vec<char>,
     depth: usize,
     left: &mut usize,
-) -> Result<(), Error> {
+    seen: &mut Option<HashSet<String>>,
+) -> Result<(), Stop> {
     let mut i = 0;
     while i < text.len() {
         if text[i] != '{' {
@@ -172,32 +186,34 @@ fn expand_into(
                 }
                 open == 0
             })
-            .ok_or(at)?;
+            .ok_or(Stop::Bad(at))?;
         let inside = &text[i + 1..close];
         let (name, body) = match inside.iter().position(|&c| c == '=') {
             Some(eq) => (&inside[..eq], Some(&inside[eq + 1..])),
             None => (inside, None),
         };
         if name.is_empty() || !name.iter().all(|&c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(at);
+            return Err(Stop::Bad(at));
         }
         let name: String = name.iter().collect();
         match body {
             Some(body) => {
                 // Counted too: a macro that only defines others puts out
                 // nothing, however many times it runs.
-                *left = left.checked_sub(body.len() + 1).ok_or(at)?;
+                *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
                 macros.insert(name, body.to_vec());
             }
             None => {
-                let body = macros.get(&name).ok_or(at)?;
+                let body = macros.get(&name).ok_or(Stop::Bad(at))?;
                 if depth == MACRO_DEPTH {
-                    return Err(at);
+                    return Err(Stop::Bad(at));
                 }
                 // The 1 is for empty macros, which cost time all the same.
-                *left = left.checked_sub(body.len() + 1).ok_or(at)?;
+                *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
                 let body = body.clone();
-                expand_into(&body, macros, out, depth + 1, left)?;
+                if seen.as_mut().is_none_or(|seen| seen.insert(name)) {
+                    expand_into(&body, macros, out, depth + 1, left, seen)?;
+                }
             }
         }
         i = close + 1;
@@ -570,8 +586,30 @@ fn note_name(c: char) -> Option<i32> {
 /// Reads MML, or gives where it could not be read.
 pub fn parse(text: &str) -> Result<Song, Error> {
     let chars: Vec<char> = text.chars().collect();
+    match expand(&chars, None) {
+        Ok(plain) => parse_plain(plain, text),
+        Err(Stop::Bad(at) | Stop::OverLimit(at)) => Err(at),
+    }
+}
+
+/// CHKMML: whether the MML can be read. Macros beyond what BGMPLAY takes
+/// are read one body each rather than refused, so where it gives for an
+/// error in such MML counts from that shorter text.
+pub fn check(text: &str) -> Result<(), Error> {
+    let chars: Vec<char> = text.chars().collect();
+    let plain = match expand(&chars, None) {
+        Err(Stop::OverLimit(_)) => expand(&chars, Some(HashSet::new())),
+        expanded => expanded,
+    };
+    match plain {
+        Ok(plain) => parse_plain(plain, text).map(drop),
+        Err(Stop::Bad(at) | Stop::OverLimit(at)) => Err(at),
+    }
+}
+
+fn parse_plain(plain: Vec<char>, text: &str) -> Result<Song, Error> {
     let mut p = Parser {
-        text: expand(&chars)?,
+        text: plain,
         at: 0,
         song: Song {
             channels: vec![Vec::new(); CHANNELS],
@@ -744,6 +782,20 @@ mod tests {
         // Short of the limit they still work: 10^5 notes.
         let song = parse(&macro_bomb("CCCCCCCCCC", 4)).unwrap();
         assert_eq!(song.channels[0].len(), 100_000);
+    }
+
+    #[test]
+    fn checking_reads_macros_beyond_the_limit_once_each() {
+        for levels in [6, 7, 9, 15] {
+            let bomb = macro_bomb("CCCCCCCCCC", levels);
+            assert_eq!(check(&bomb), Ok(()), "{levels}");
+        }
+        // Each body is still read.
+        assert!(check(&macro_bomb("Q", 15)).is_err());
+        assert!(check(&(macro_bomb("CCCCCCCCCC", 9) + "Q")).is_err());
+        // Going on being refused: too deep, and not defined.
+        assert!(check(&macro_bomb("CCCCCCCCCC", 17)).is_err());
+        assert!(check("{X}").is_err());
     }
 
     #[test]

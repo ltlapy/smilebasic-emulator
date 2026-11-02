@@ -330,8 +330,8 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Chkmml, Want::Outs(1) | Want::Value, 1) => {
-                let at = match mml::parse(&text(&args[0])?) {
-                    Ok(_) => -1,
+                let at = match mml::check(&text(&args[0])?) {
+                    Ok(()) => -1,
                     Err(at) => at as i32,
                 };
                 Ok(vec![Value::Int(at)])
