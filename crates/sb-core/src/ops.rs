@@ -75,6 +75,28 @@ fn repeated(s: &StrRef, count: usize) -> Result<Value> {
     Ok(Value::Str(new_str(s.repeat(count))))
 }
 
+/// What [`binary`] gives for the operators programs mostly use on two
+/// integers, when that is an integer again. `None` leaves it to [`binary`].
+#[inline]
+pub fn binary_ints(op: BinaryOp, a: i32, b: i32) -> Option<i32> {
+    use BinaryOp as B;
+    match op {
+        B::Add => a.checked_add(b),
+        B::Sub => a.checked_sub(b),
+        B::Mul => a.checked_mul(b),
+        B::Eq => Some(i32::from(a == b)),
+        B::NotEq => Some(i32::from(a != b)),
+        B::Less => Some(i32::from(a < b)),
+        B::LessEq => Some(i32::from(a <= b)),
+        B::Greater => Some(i32::from(a > b)),
+        B::GreaterEq => Some(i32::from(a >= b)),
+        B::And => Some(a & b),
+        B::Or => Some(a | b),
+        B::Xor => Some(a ^ b),
+        _ => None,
+    }
+}
+
 pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
     use BinaryOp as B;
     match op {
@@ -149,6 +171,57 @@ pub fn unary(op: UnaryOp, value: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    /// The integer path must answer as the full one does, or leave it to it.
+    #[test]
+    fn binary_ints_agrees_with_binary() {
+        use BinaryOp as B;
+        let ops = [
+            B::Add,
+            B::Sub,
+            B::Mul,
+            B::Div,
+            B::IntDiv,
+            B::Mod,
+            B::Shl,
+            B::Eq,
+            B::NotEq,
+            B::Less,
+            B::LessEq,
+            B::Greater,
+            B::GreaterEq,
+            B::And,
+            B::Or,
+            B::Xor,
+        ];
+        let values = [
+            i32::MIN,
+            i32::MIN + 1,
+            -65536,
+            -2,
+            -1,
+            0,
+            1,
+            2,
+            3,
+            46341,
+            65536,
+            i32::MAX - 1,
+            i32::MAX,
+        ];
+        for op in ops {
+            for a in values {
+                for b in values {
+                    if let Some(n) = binary_ints(op, a, b) {
+                        match binary(op, &Value::Int(a), &Value::Int(b)) {
+                            Ok(Value::Int(m)) => assert_eq!(n, m, "{op:?} {a} {b}"),
+                            other => panic!("{op:?} {a} {b}: {n} and {other:?}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     use super::*;
     use BinaryOp as B;
 

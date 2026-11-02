@@ -1259,3 +1259,21 @@ fn a_long_constant_string_waits_for_the_program_to_get_there() {
     assert_eq!(output("?LEN(\"AB\"*10)"), "20\n");
     assert_eq!(output("A$=\"A\"*2000000:?LEN(A$)"), "2000000\n");
 }
+
+/// FOR's test takes integers by a shorter way than other numbers.
+#[test]
+fn for_counts_the_same_in_integers_and_reals() {
+    let count = |head: &str| output(&format!("N=0:FOR I={head}:N=N+1:NEXT:?N"));
+    for (head, n) in [
+        ("1 TO 3", "3"),
+        ("3 TO 1", "0"),
+        ("3 TO 1 STEP -1", "3"),
+        ("1 TO 3 STEP 0.5", "5"),
+        ("1.5 TO 3", "2"),
+        ("1 TO 3.5", "3"),
+        ("3 TO 1 STEP -0.5", "5"),
+        ("2147483646 TO 2147483647", "2"),
+    ] {
+        assert_eq!(count(head), format!("{n}\n"), "{head}");
+    }
+}

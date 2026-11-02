@@ -1120,12 +1120,21 @@ impl Vm {
                             .stack
                             .last_mut()
                             .expect("compiler keeps the stack balanced");
-                        match ops::binary(*op, lhs, &rhs) {
-                            Ok(v) => {
-                                *lhs = v;
-                                Ok(true)
+                        let fast = match (&*lhs, &rhs) {
+                            (Value::Int(a), Value::Int(b)) => ops::binary_ints(*op, *a, *b),
+                            _ => None,
+                        };
+                        if let Some(n) = fast {
+                            *lhs = Value::Int(n);
+                            Ok(true)
+                        } else {
+                            match ops::binary(*op, lhs, &rhs) {
+                                Ok(v) => {
+                                    *lhs = v;
+                                    Ok(true)
+                                }
+                                Err(e) => Err(self.run_again_with(e, rhs)),
                             }
-                            Err(e) => Err(self.run_again_with(e, rhs)),
                         }
                     }
                     Op::Jump(a) => {
@@ -1138,6 +1147,7 @@ impl Vm {
                         }
                         true
                     }),
+                    Op::ForTest => self.for_test().map(|()| true),
                     Op::Nop => Ok(true),
                     _ => Ok(false),
                 };
@@ -1237,6 +1247,27 @@ impl Vm {
         let col = self.program.cols.get(pc).copied().unwrap_or(0);
         let slot = self.slot().map(|s| s as u32);
         e.at_pos(line, col).in_slot(slot)
+    }
+
+    /// Whether a FOR goes on, from its variable, its end and its step on the
+    /// stack. Nearly all of them count in integers.
+    #[inline]
+    fn for_test(&mut self) -> Result<()> {
+        let step = self.pop();
+        let to = self.pop();
+        let var = self.pop();
+        let more = if let (Value::Int(v), Value::Int(t), Value::Int(s)) = (&var, &to, &step) {
+            Value::Int(i32::from(if *s >= 0 { v <= t } else { v >= t }))
+        } else {
+            let ordering = if step.to_real()? >= 0.0 {
+                BinaryOp::LessEq
+            } else {
+                BinaryOp::GreaterEq
+            };
+            ops::binary(ordering, &var, &to)?
+        };
+        self.stack.push(more);
+        Ok(())
     }
 
     #[inline]
@@ -2058,17 +2089,7 @@ impl Vm {
                     _ => return Err(ErrorKind::OutOfRange.into()),
                 }
             }
-            Op::ForTest => {
-                let step = self.pop();
-                let to = self.pop();
-                let var = self.pop();
-                let ordering = if step.to_real()? >= 0.0 {
-                    BinaryOp::LessEq
-                } else {
-                    BinaryOp::GreaterEq
-                };
-                self.stack.push(ops::binary(ordering, &var, &to)?);
-            }
+            Op::ForTest => self.for_test()?,
             Op::Print { screen } => {
                 let value = self.pop();
                 let screen = self.screen_arg(*screen)?;
