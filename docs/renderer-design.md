@@ -193,8 +193,9 @@ moved again by `Placement::texel_tie`.
   never gets here. White layer color takes fast paths that give the
   same pixels.
 - **Filters** (`filter.rs`):
-  - mosaic: blocks from the screen's corner, each the color of its
-    middle pixel; the size is multiplied by the sample magnification;
+  - mosaic: the frame sampled bilinearly into a small part of a half-size
+    frame, then drawn back with nearest; blocks are n frame pixels, and a
+    block of even n is the mean of its middle four;
   - blur: 2x2 average to half size, a Gaussian in 8.8 fixed point (box
     blurs past radius 4), then scaled back with nearest; all in
     integers;
@@ -386,8 +387,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | Mode-0 layer: LFILTER filters everything drawn so far, BACKCOLOR included; composed layer: only its own | `Runtime::render` | C: pitfalls; TTEST22/23 |
 | The same for a mode-0 layer with no elements | `Runtime::render` | S: pitfalls ("That holds for a layer with nothing in it, too"); marker in `runtime.rs` |
-| Mosaic blocks start at the screen's corner, middle pixel's colour | `filter::mosaic` | C: pitfalls |
-| Mosaic size is in screen pixels (multiplied by sample) | `Filter::apply` | **U (R14)** |
+| Mosaic: the whole frame drawn into `ceil(width/n)*sample` x `ceil(height/n)*sample` half-buffer pixels with bilinear sampling, then back with nearest; blocks are n frame pixels at any sample | `filter::mosaic` | C (R14): pitfalls; TEST54 part 1, no pixel more than 1 off |
 | Blur: halve in 2x2 blocks (halves down), Gaussian sigma = amount/25 half-size pixels, nearest back; amounts 1-4 same, 0 sharp | `filter::blur` | C: pitfalls; TTEST24, amounts 1, 2, 4, 8 pixel for pixel |
 | Blur beyond amount 8 (box approximation past radius 4) | `filter::blur` | **U (R15)** (NEON_DRIFTWAY uses 384) |
 | Blur halving is in frame pixels whatever XSCREEN's sample | `filter::blur` | **U (R15)** |

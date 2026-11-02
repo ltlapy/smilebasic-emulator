@@ -568,9 +568,16 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   (TEST53).
 - On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
   the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
-  On a composed layer it filters only that layer. Mosaic blocks start at
-  the screen's corner and take their middle pixel's color.
+  On a composed layer it filters only that layer.
   That holds for a layer with nothing in it, too.
+- `LFILTER`'s mosaic draws the whole frame into a few pixels with bilinear
+  sampling, and those back over the frame without smoothing. Blocks are n
+  frame pixels whatever `XSCREEN`'s sample (TEST54), and their number is
+  reckoned in screen pixels: `ceil(width/n)*sample` across. So where n does
+  not divide the size, blocks are a little smaller than n, ending at both
+  edges of the frame. Sampling puts a block of odd n on its middle pixel,
+  and a block of even n exactly between four, which it averages (halves
+  rounded down). A size below 2 does nothing.
 - `LFILTER`'s blur halves the layer: 2x2 blocks are averaged (halves
   rounded down, so a dot becomes a 2x2 block at 64 and a line 127),
   blurred by a Gaussian of about amount/25 half-size pixels, and scaled

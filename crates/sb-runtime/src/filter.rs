@@ -54,7 +54,7 @@ impl Filter {
         match self {
             // Amount 0 leaves the layer as it is, not halved.
             Filter::None | Filter::Blur(0) => {}
-            Filter::Mosaic(n) => mosaic(fb, n.saturating_mul(sample)),
+            Filter::Mosaic(n) => mosaic(fb, *n, sample),
             Filter::Blur(n) => blur(fb, *n),
             Filter::Raster {
                 vertical,
@@ -213,22 +213,176 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
     }
 }
 
-fn mosaic(fb: &mut Framebuffer, size: u32) {
-    if size <= 1 {
-        return;
-    }
-    let (w, h) = (fb.width(), fb.height());
-    let pixels = fb.pixels_mut();
-    let at = |x: u32, y: u32| (y * w + x) as usize;
-    for by in (0..h).step_by(size as usize) {
-        for bx in (0..w).step_by(size as usize) {
-            let (x1, y1) = ((bx + size).min(w), (by + size).min(h));
-            let color = pixels[at((bx + size / 2).min(x1 - 1), (by + size / 2).min(y1 - 1))];
-            for y in by..y1 {
-                pixels[at(bx, y)..at(x1, y)].fill(color);
+/// One texel coordinate of bilinear sampling: the two texels on either
+/// side and how much of the second, in 256ths.
+#[derive(Clone, Copy)]
+struct Tap {
+    first: u32,
+    second: u32,
+    part: u32,
+}
+
+/// The half-size frames that mosaic and blur work in and the lookups in
+/// and out of them, kept between frames so as not to allocate them for
+/// every filtered layer every frame.
+#[derive(Default)]
+struct Half {
+    pixels: Vec<u32>,
+    across: Vec<Tap>,
+    down: Vec<Tap>,
+    out_across: Vec<u32>,
+    expanded: Vec<u32>,
+}
+
+thread_local! {
+    static HALF: std::cell::RefCell<Half> = std::cell::RefCell::default();
+}
+
+/// Flips the alpha channel from the coverage we keep to how much shows
+/// through, and back: the GPU's frames hold the latter, so that is what
+/// filters average and scale.
+const THROUGH: u32 = 0xFF00_0000;
+
+/// Where the centers of `count` half-size pixels, stretched over `q` of
+/// them so that they span a line of `size`, fall on that line, from the
+/// line's end if `flip`.
+fn taps(out: &mut Vec<Tap>, size: u32, q: f64, count: usize, flip: bool) {
+    let last = i64::from(size) - 1;
+    let n = f64::from(size);
+    out.clear();
+    out.extend((0..count).map(|i| {
+        // Rows count from the bottom on the GPU, but the half-size frame
+        // here is kept top first.
+        let i = if flip { count - 1 - i } else { i };
+        let along = (i as f64 + 0.5) / q * n;
+        let at = if flip { n - along } else { along } - 0.5;
+        // Rounded down without the library call f64::floor makes on
+        // processors before SSE4.1.
+        let t = at as i64;
+        let t = t - i64::from((t as f64) > at);
+        let part = ((at - t as f64) * 256.0 + 0.5) as i64;
+        let (t, part) = if part == 256 { (t + 1, 0) } else { (t, part) };
+        Tap {
+            first: t.clamp(0, last) as u32,
+            second: (t + 1).clamp(0, last) as u32,
+            part: part as u32,
+        }
+    }));
+}
+
+/// Draws the frame into `half.pixels`, `hw` wide, by bilinear sampling at
+/// the texels `half.across` and `half.down` give. Channels round to the
+/// nearest, with halves down.
+fn shrink(half: &mut Half, source: &[u32], w: usize, hw: usize) {
+    const LO: u32 = 0x00FF_00FF;
+    let at = |x: u32, row: &[u32]| row[x as usize] ^ THROUGH;
+    // Exactly between four texels, as with blocks of an even size: the
+    // sum of four over four, two channels of a word at once.
+    let mean = |sum: u32| (2 * sum + 3 * 0x0001_0001) >> 3 & LO;
+    let ties = half.across.iter().all(|t| t.part == 128);
+    let on_texels = half.across.iter().all(|t| t.part == 0);
+    let Half {
+        pixels,
+        across,
+        down,
+        ..
+    } = half;
+    for (out, y) in pixels.chunks_mut(hw).zip(down.iter()) {
+        let r0 = &source[y.first as usize * w..][..w];
+        let r1 = &source[y.second as usize * w..][..w];
+        if on_texels && y.part == 0 {
+            for (o, t) in out.iter_mut().zip(across.iter()) {
+                *o = at(t.first, r0);
+            }
+        } else if ties && y.part == 128 {
+            for (o, t) in out.iter_mut().zip(across.iter()) {
+                let (a, b) = (at(t.first, r0), at(t.second, r0));
+                let (c, d) = (at(t.first, r1), at(t.second, r1));
+                *o = a;
+                if a != b || a != c || a != d {
+                    let lo = (a & LO) + (b & LO) + (c & LO) + (d & LO);
+                    let hi = (a >> 8 & LO) + (b >> 8 & LO) + (c >> 8 & LO) + (d >> 8 & LO);
+                    *o = mean(lo) | mean(hi) << 8;
+                }
+            }
+        } else {
+            for (o, t) in out.iter_mut().zip(across.iter()) {
+                let (a, b) = (at(t.first, r0), at(t.second, r0));
+                let (c, d) = (at(t.first, r1), at(t.second, r1));
+                *o = a;
+                if a != b || a != c || a != d {
+                    let (wx, wy) = (t.part, y.part);
+                    let top = |p: u32, q: u32| p * (256 - wx) + q * wx;
+                    *o = u32::from_le_bytes(std::array::from_fn(|k| {
+                        let s = 8 * k as u32;
+                        let ch = |p: u32| p >> s & 0xFF;
+                        let row0 = top(ch(a), ch(b));
+                        let row1 = top(ch(c), ch(d));
+                        ((row0 * (256 - wy) + row1 * wy + 0x7FFF) >> 16) as u8
+                    }));
+                }
             }
         }
     }
+}
+
+/// Draws `half.pixels`, `hw` wide, back over the whole `w` x `h` frame
+/// without smoothing, `q` of its pixels by `qy` of its rows spanning the
+/// frame. Where a pixel's center is exactly on the line between two rows,
+/// it takes the one nearer the frame's bottom, as rows count from there
+/// on the GPU.
+fn expand(half: &mut Half, pixels: &mut [u32], (w, h): (u32, u32), (q, qy): (f64, f64), hw: usize) {
+    let (uw, count) = (w as usize, half.down.len());
+    half.out_across.clear();
+    let per_x = q / f64::from(w);
+    half.out_across.extend((0..w).map(|x| {
+        let i = (f64::from(x) + 0.5) * per_x;
+        (i as usize).min(hw - 1) as u32
+    }));
+    half.expanded.clear();
+    half.expanded.resize(uw, 0);
+    let mut shown = usize::MAX;
+    let per_y = qy / f64::from(h);
+    for (y, line) in pixels.chunks_exact_mut(uw).enumerate() {
+        let from_bottom = (f64::from(h) - y as f64 - 0.5) * per_y;
+        let row = count - 1 - (from_bottom as usize).min(count - 1);
+        if row != shown {
+            shown = row;
+            let src = &half.pixels[row * hw..][..hw];
+            for (o, &x) in half.expanded.iter_mut().zip(&half.out_across) {
+                *o = src[x as usize] ^ THROUGH;
+            }
+        }
+        line.copy_from_slice(&half.expanded);
+    }
+}
+
+/// LFILTER's mosaic: a whole frame drawn small, into as many pixels of the
+/// half-size frame as blocks fit, and back at full size without smoothing.
+/// The number of blocks is reckoned in screen pixels, a block's size in
+/// frame pixels. Drawing small samples with smoothing, so that a block of
+/// an even size is the mean of the four pixels around its middle.
+fn mosaic(fb: &mut Framebuffer, size: u32, sample: u32) {
+    let (w, h) = (fb.width(), fb.height());
+    let (sw, sh) = (w / sample.max(1), h / sample.max(1));
+    let (hw, hh) = (w / 2, h / 2);
+    if size < 2 || hw == 0 || hh == 0 || sw < 2 || sh < 2 {
+        return;
+    }
+    let span = |screen: u32, half_size: u32| {
+        f64::from(screen.div_ceil(size)) * f64::from(half_size) / f64::from(screen / 2)
+    };
+    let (q, qy) = (span(sw, hw), span(sh, hh));
+    let across = (q.ceil() as usize).min(hw as usize);
+    let down = (qy.ceil() as usize).min(hh as usize);
+    HALF.with_borrow_mut(|half| {
+        half.pixels.clear();
+        half.pixels.resize(across * down, 0);
+        taps(&mut half.across, w, q, across, false);
+        taps(&mut half.down, h, qy, down, true);
+        shrink(half, fb.pixels(), w as usize, across);
+        expand(half, fb.pixels_mut(), (w, h), (q, qy), across);
+    });
 }
 
 /// How much wider the blur's Gaussian is, in half-size pixels, for each
@@ -644,11 +798,52 @@ mod tests {
         fb
     }
 
+    /// An opaque frame whose pixels each have their own red and green.
+    fn coded(w: u32, h: u32) -> Framebuffer {
+        let mut fb = Framebuffer::new(w, h);
+        for (i, p) in fb.pixels_mut().iter_mut().enumerate() {
+            let (x, y) = (i as u32 % w, i as u32 / w);
+            *p = 0xFF00_0000 | (x * 10) << 16 | (y * 10) << 8;
+        }
+        fb
+    }
+
     #[test]
-    fn mosaic_takes_the_middle_pixel() {
-        let mut fb = frame(&[1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
-        Filter::Mosaic(2).apply(&mut fb, 1, Compose::Normal);
-        assert_eq!(fb.pixels(), &[5, 5, 6, 5, 5, 6, 8, 8, 9]);
+    fn an_odd_mosaic_takes_the_middle_pixel() {
+        let mut fb = coded(9, 9);
+        Filter::Mosaic(3).apply(&mut fb, 1, Compose::Normal);
+        assert_eq!(fb.get(0, 0), Some(0xFF0A_0A00));
+        assert_eq!(fb.get(2, 2), Some(0xFF0A_0A00));
+        assert_eq!(fb.get(3, 2), Some(0xFF28_0A00));
+    }
+
+    #[test]
+    fn an_even_mosaic_takes_the_mean_of_the_middle_four() {
+        let mut fb = coded(8, 8);
+        Filter::Mosaic(4).apply(&mut fb, 1, Compose::Normal);
+        // Of columns and rows 1 and 2.
+        assert_eq!(fb.get(0, 0), Some(0xFF0F_0F00));
+        assert_eq!(fb.get(3, 3), Some(0xFF0F_0F00));
+        assert_eq!(fb.get(4, 0), Some(0xFF37_0F00));
+    }
+
+    #[test]
+    fn mosaic_blocks_are_frame_pixels_at_sample_2() {
+        let mut fb = coded(16, 8);
+        Filter::Mosaic(3).apply(&mut fb, 2, Compose::Normal);
+        // Eight screen pixels make three blocks to each sample, six in all
+        // over sixteen frame pixels: 2.67 wide, not 6.
+        let row: Vec<u32> = (0..16).map(|x| fb.get(x, 0).unwrap()).collect();
+        let blocks = row.windows(2).filter(|p| p[0] != p[1]).count() + 1;
+        assert_eq!(blocks, 6);
+    }
+
+    #[test]
+    fn a_mosaic_of_1_changes_nothing() {
+        let mut fb = coded(4, 4);
+        let before = fb.pixels().to_vec();
+        Filter::Mosaic(1).apply(&mut fb, 1, Compose::Normal);
+        assert_eq!(fb.pixels(), &before);
     }
 
     #[test]
