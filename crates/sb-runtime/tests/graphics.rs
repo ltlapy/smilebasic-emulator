@@ -228,6 +228,12 @@ fn boxes_and_copies_at_extreme_coordinates_end() {
 }
 
 #[test]
+fn a_box_on_the_smallest_row_draws_nothing_on_the_page() {
+    let (_, out) = run("GCLS 0:GBOX 0,-2147483648,5,-2147483648,#C_WHITE:?GPGET(0,0);GPGET(5,5)");
+    assert_eq!(out, "00");
+}
+
+#[test]
 fn gputchr_at_extreme_coordinates_ends() {
     for source in [
         "GPUTCHR 2147483647,0,\"AB\",16,-1:?1",

@@ -463,7 +463,7 @@ impl Graphics {
         if b != t {
             self.fill(l, b, r, b, color, blend);
         }
-        for y in t.max(c.y0)..=b.wrapping_sub(1).min(c.y1) {
+        for y in t.max(c.y0)..=b.saturating_sub(1).min(c.y1) {
             self.plot(l, y, color, blend);
             if r != l {
                 self.plot(r, y, color, blend);
