@@ -656,8 +656,8 @@ pub const KEY_BUFFER: usize = 256;
 /// blink takes about 833 ms.
 const CURSOR_BLINK: u32 = 25;
 /// Frames per half period of the INPUT cursor's blink.
-// UNVERIFIED: judged by eye as about 2 blinks a second.
-const LINE_CURSOR_BLINK: u32 = 15;
+// UNVERIFIED: expected of SmileBASIC 4, not yet counted on hardware.
+const LINE_CURSOR_BLINK: u32 = 20;
 /// The pixels between the sides of a split editor, and their color.
 const SPLIT_DIVIDER: u32 = 2;
 const SPLIT_COLOR: u32 = 0xFF30_3040;
@@ -845,6 +845,8 @@ pub struct Runtime {
     pub library: Rc<Library>,
     /// SmileBASIC 4's help, for HELPGET and HELPINFO.
     pub help: Option<Rc<crate::help::Help>>,
+    /// The frame the cursor of the line typed last started blinking.
+    line_blink_from: u32,
     /// The editor's line and cursor column when the program started,
     /// where HELPINFO looks for a command.
     pub(crate) help_cursor: (Vec<u16>, usize),
@@ -1074,6 +1076,7 @@ impl Runtime {
             side_fb: Framebuffer::new(0, 0),
             library: Rc::default(),
             help: None,
+            line_blink_from: 0,
             help_cursor: Default::default(),
             line_quiet: false,
             split_at: None,
@@ -1400,6 +1403,7 @@ impl Runtime {
     /// lines typed before.
     pub(crate) fn direct_input_start(&mut self) {
         self.line = Some(LineEdit::new(&self.text[CONSOLE]));
+        self.line_blink_from = self.system.frames;
         self.recall = Some(Recall {
             at: None,
             draft: Vec::new(),
@@ -1462,6 +1466,13 @@ impl Runtime {
         self.revision
     }
 
+    /// Whether the line's cursor shows this frame. The period after a
+    /// restart is one frame short, the frame it comes in being counted.
+    fn line_blink_on(&self) -> bool {
+        let n = self.system.frames.wrapping_sub(self.line_blink_from);
+        (n.wrapping_add(1) / LINE_CURSOR_BLINK).is_multiple_of(2)
+    }
+
     /// The frame [`Runtime::render`] gave last.
     pub fn screen_frame(&self) -> &Framebuffer {
         &self.fb
@@ -1473,8 +1484,7 @@ impl Runtime {
         self.frame = self.frame.wrapping_add(1);
         // Counted in frames played, not in frames drawn, which are not
         // one a frame when frames are skipped or only some are looked at.
-        let cursor =
-            self.line.is_some() && (self.system.frames / LINE_CURSOR_BLINK).is_multiple_of(2);
+        let cursor = self.line.is_some() && self.line_blink_on();
         let with = Some((cursor, self.dimmed));
         let mut cells = false;
         for t in &mut self.text {
@@ -2427,6 +2437,7 @@ impl Host for Runtime {
         // typed into the line.
         self.keys.clear();
         self.line = Some(LineEdit::new(&self.text[CONSOLE]));
+        self.line_blink_from = self.system.frames;
         self.recall = None;
         Ok(())
     }
@@ -2539,11 +2550,13 @@ impl Host for Runtime {
                 }
                 if outcome != complete::Outcome::Pass {
                     line.draw(console);
+                    self.line_blink_from = self.system.frames;
                     continue;
                 }
             }
             if matches!(key, keys::UP | keys::DOWN) {
                 self.recall_line(key == keys::UP);
+                self.line_blink_from = self.system.frames;
                 continue;
             }
             if key == keys::ENTER {
@@ -2551,7 +2564,9 @@ impl Host for Runtime {
                 return Ok(Some(line.finish(console)));
             }
             let listing = line.completion.take().is_some();
-            line.key(key);
+            if line.key(key) {
+                self.line_blink_from = self.system.frames;
+            }
             let looks = match key {
                 keys::BACKSPACE => listing,
                 c => is_ident_char(c) || c == 0x40 || c == 0x23,

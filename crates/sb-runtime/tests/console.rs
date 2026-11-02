@@ -150,10 +150,49 @@ fn input_cursor_is_a_white_bar_that_blinks() {
         assert_eq!(at(&fb, 24, 8), BACK);
         assert_eq!(at(&fb, 23, 0), BACK);
     }
-    // 15 frames on and 15 off; the first run may have started earlier.
+    // 20 frames on and 20 off, starting on, the first run a frame short
+    // for the frame INPUT came in (this loop starts one frame after it).
+    assert!(shown[0]);
     let flips: Vec<usize> = (1..60).filter(|&i| shown[i] != shown[i - 1]).collect();
-    assert!(flips.len() >= 3);
-    assert!(flips.windows(2).all(|w| w[1] - w[0] == 15), "{flips:?}");
+    assert_eq!(flips, [18, 38, 58]);
+}
+
+#[test]
+fn input_cursor_starts_again_on_each_key_that_does_something() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut vm = Vm::new(sb_core::compile("INPUT A$", &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    let flips_after = |rt: &mut Runtime, from: u32| -> usize {
+        rt.begin_frame();
+        let bar = |fb: &sb_runtime::framebuffer::Framebuffer, x: u32| {
+            fb.pixels()[x as usize] == 0xFFFF_FFFF
+        };
+        let first = bar(rt.render(), from);
+        (1..)
+            .find(|_| {
+                rt.begin_frame();
+                bar(rt.render(), from) != first
+            })
+            .unwrap()
+    };
+    // The cursor stands in the first cell after "? ".
+    for _ in 0..10 {
+        rt.begin_frame();
+    }
+    type_keys(&mut rt, "7");
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    assert_eq!(flips_after(&mut rt, 24), 18);
+    // Off now. Left to the first character moves, and shows it again.
+    rt.key_press(keys::LEFT);
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    assert_eq!(flips_after(&mut rt, 16), 18);
+    for _ in 0..5 {
+        rt.begin_frame();
+    }
+    // Off, and it stays so: Left at the line's start moves nothing.
+    rt.key_press(keys::LEFT);
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    assert_eq!(flips_after(&mut rt, 16), 14);
 }
 
 #[test]
@@ -166,7 +205,7 @@ fn input_cursor_redraws_only_when_it_changes() {
     for _ in 0..60 {
         next_frame(&mut rt);
     }
-    assert_eq!(rt.revision() - before, 4);
+    assert_eq!(rt.revision() - before, 3);
 }
 
 #[test]

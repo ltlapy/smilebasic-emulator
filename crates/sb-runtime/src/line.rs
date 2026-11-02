@@ -83,6 +83,7 @@ impl LineEdit {
 
     fn delete_selection(&mut self) -> bool {
         let Some((from, to)) = self.selection() else {
+            self.anchor = None;
             return false;
         };
         self.text.drain(from..to);
@@ -114,8 +115,18 @@ impl LineEdit {
     }
 
     /// Edits with a typed character, a [`keys`] code or one of the
-    /// [`commands`]. Enter and the history keys are the caller's.
-    pub fn key(&mut self, code: u16) {
+    /// [`commands`]. Enter and the history keys are the caller's. Tells
+    /// whether the cursor's blink starts again, as it does for all but a
+    /// move that could not move.
+    pub fn key(&mut self, code: u16) -> bool {
+        use commands::*;
+        let before = (self.cursor, self.anchor);
+        self.edit(code);
+        let moves = matches!(code, keys::LEFT | keys::RIGHT | SELECT_LEFT | SELECT_RIGHT);
+        !moves || (self.cursor, self.anchor) != before
+    }
+
+    fn edit(&mut self, code: u16) {
         use commands::*;
         let len = self.text.len();
         let left = self.cursor.saturating_sub(1);
