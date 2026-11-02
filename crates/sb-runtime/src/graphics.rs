@@ -600,14 +600,23 @@ impl Graphics {
 
     /// GTRI: a filled triangle, drawn a row at a time from the leftmost
     /// to the rightmost pixel any of its edges reaches in the row, so that
-    /// each pixel is drawn once. See [`edge_span`] for an edge's pixels.
+    /// each pixel is drawn once. See [`edge_span`] for an edge's pixels; a
+    /// level edge has none of its own, its ends being on the other edges.
     pub fn triangle(&mut self, p: [(i32, i32); 3], color: u32, blend: Blend) {
-        let top = p.iter().map(|p| p.1).min().unwrap();
-        let bottom = p.iter().map(|p| p.1).max().unwrap();
+        let mut sorted = p;
+        sorted.sort_by_key(|p| p.1);
+        let [a, b, c] = sorted;
+        let (top, bottom) = (a.1, c.1);
+        if top == bottom {
+            let (l, r) = (p.iter().map(|p| p.0).min(), p.iter().map(|p| p.0).max());
+            let (l, r) = (l.unwrap(), r.unwrap());
+            self.fill_rows(top..=bottom, |_| Some((l, r)), color, blend);
+            return;
+        }
         let span = |y| {
-            let spans = [(0, 1), (1, 2), (2, 0)]
+            let spans = [(a, c), (a, b), (b, c)]
                 .into_iter()
-                .filter_map(|(a, b)| edge_span(p[a], p[b], y));
+                .filter_map(|(a, b)| edge_span(a, b, y));
             let (mut l, mut r) = (i64::MAX, i64::MIN);
             for (a, b) in spans {
                 (l, r) = (l.min(a), r.max(b));
@@ -1146,16 +1155,13 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip) -> Vec<(i32, i32)
     points
 }
 
-/// The pixels a GTRI edge from `a` to `b` takes in row `y`, as the first
-/// and last column, or `None` if it does not reach the row. An edge is
-/// walked like a GLINE, one pixel per step along its longer axis
-/// (`major` steps, `minor` across), the offset across at step `t` being
-/// `(2·t·minor + k) / (2·major)` rounded down:
-/// - an edge taller than it is wide is walked down from its top end with
-///   `k = major` (the edge rounded, halves towards its bottom end);
-/// - one at least as wide as it is tall is walked up from its bottom end
-///   with `k = (major - 2·minor) mod (2·major)`: the edge rounded one step
-///   back, moved so that it starts at that end.
+/// The pixels a GTRI edge takes in row `y`, as the first and last column,
+/// or `None` if it does not reach the row or is level. Going down from its
+/// top end, each row adds `2*wide` to a sum that starts at `-wide` if the
+/// edge is wider than tall, or `tall` if not, and the edge takes a step
+/// across for each `2*tall` in the sum, at most one past its bottom end; a
+/// row has the columns from the one the last row ended at to the one before
+/// where this row ends.
 fn edge_span(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i64)> {
     let ((x0, y0), (x1, y1)) = (a, b);
     if y < y0.min(y1) || y > y0.max(y1) {
@@ -1215,6 +1221,9 @@ impl Wide for i128 {
 fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i64)> {
     // From the top end to the bottom one.
     let ((x0, y0), (x1, y1)) = if a.1 <= b.1 { (a, b) } else { (b, a) };
+    if y0 == y1 {
+        return None;
+    }
     let (x0, y0, x1, y1, y) = (
         T::from(x0),
         T::from(y0),
@@ -1223,34 +1232,24 @@ fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i
         T::from(y),
     );
     let (zero, one, two) = (T::from(0), T::from(1), T::from(2));
-    let (dx, dy) = (x1 - x0, y1 - y0);
+    let (dx, tall, row) = (x1 - x0, y1 - y0, y - y0);
     let wide = dx.abs();
-    if wide < dy {
-        // Down from the top: one pixel a row.
-        let x = (two * (y - y0) * wide + dy).div_euclid(two * dy);
-        let x = if dx < zero { x0 - x } else { x0 + x };
-        return Some((x.narrow(), x.narrow()));
-    }
-    if dy == zero {
-        return Some((x0.min(x1).narrow(), x0.max(x1).narrow()));
-    }
-    // Up from the bottom: the steps `t` whose offset is `j`.
-    let (major, minor, j) = (wide, dy, y1 - y);
-    let mut k = major - two * minor;
-    if k < zero {
-        k = k + two * major;
-    }
-    let ceil = |n: T, d: T| -(-n).div_euclid(d);
-    let first = ceil(two * major * j - k, two * minor).max(zero);
-    let last = (ceil(two * major * (j + one) - k, two * minor) - one).min(major);
-    if first > last {
-        return None;
-    }
-    // X runs from the bottom end towards the top one.
+    let start = if tall < wide { -wide } else { tall };
+    // Steps taken by the end of a row.
+    let steps = |row: T| {
+        if row < zero {
+            return zero;
+        }
+        (start + two * wide * (row + one))
+            .div_euclid(two * tall)
+            .min(wide + one)
+    };
+    let (from, to) = (steps(row - one), steps(row));
+    let last = if to > from { to - one } else { to };
     let (l, r) = if dx < zero {
-        (x1 + first, x1 + last)
+        (x0 - last, x0 - from)
     } else {
-        (x1 - last, x1 - first)
+        (x0 + from, x0 + last)
     };
     Some((l.narrow(), r.narrow()))
 }
@@ -1591,6 +1590,60 @@ mod tests {
         assert_eq!(
             steps(120, 120, 400, 141)[..4],
             [(120, 120), (126, 121), (139, 122), (153, 123)]
+        );
+    }
+
+    /// TEST56 part 3: rows read back on hardware, corners off the page
+    /// not clamped.
+    #[test]
+    fn triangles_past_the_page_match_hardware() {
+        let rows = |p: [(i32, i32); 3], want: &[(i32, i32, i32)]| {
+            let mut g = Graphics {
+                target: 1,
+                ..Graphics::default()
+            };
+            g.triangle(p, RED, Blend::Normal);
+            for &(y, l, r) in want {
+                let row: Vec<i32> = (0..2048).filter(|&x| g.read(1, x, y) != 0).collect();
+                assert_eq!((row[0], row[row.len() - 1]), (l, r), "{p:?} row {y}");
+            }
+        };
+        rows(
+            [(-20, 10), (60, -30), (100, 80)],
+            &[
+                (0, 0, 71),
+                (22, 0, 79),
+                (23, 1, 79),
+                (24, 3, 80),
+                (80, 99, 100),
+            ],
+        );
+        rows(
+            [(0, 10), (60, 0), (100, 80)],
+            &[
+                (0, 58, 60),
+                (10, 0, 65),
+                (11, 0, 66),
+                (12, 2, 66),
+                (80, 99, 100),
+            ],
+        );
+        rows(
+            [(2040, 100), (2100, 140), (1990, 180)],
+            &[
+                (100, 2040, 2040),
+                (101, 2039, 2041),
+                (102, 2039, 2042),
+                (104, 2037, 2045),
+            ],
+        );
+        rows(
+            [(10, 2040), (60, 2047), (0, 2047)],
+            &[(2040, 10, 12), (2041, 9, 19), (2043, 6, 34), (2047, 1, 60)],
+        );
+        rows(
+            [(-40, -40), (90, -10), (-10, 60)],
+            &[(0, 0, 77), (1, 0, 75), (54, 0, 0)],
         );
     }
 
