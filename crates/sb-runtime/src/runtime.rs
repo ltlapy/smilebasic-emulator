@@ -1589,7 +1589,7 @@ impl Runtime {
                     }
                 }
             }
-            filter.apply(target, self.mode.sample);
+            filter.apply(target, self.mode.sample, settings.compose);
             // The frame stays opaque where deformation left nothing, which
             // shows black.
             if direct && matches!(filter, Filter::Raster { .. }) {

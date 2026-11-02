@@ -576,6 +576,15 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   blurred by a Gaussian of about amount/25 half-size pixels, and scaled
   back without smoothing. Amounts 1 to 4 look the same; amount 0 leaves
   the layer sharp.
+- `LFILTER`'s colour conversion works on the layer's premultiplied pixels
+  as they are: hue in degrees, saturation and value on 0 to 255, and a grey
+  has no saturation to raise. So half-covered white starts from a value of
+  128, not 255, and a value of 30 on it gives 158 (TEST54). On a layer in
+  mode 1, a clear pixel stays clear. On one in mode 2, 3 or 4, a raised
+  value lights every clear pixel too, so the whole screen takes on the
+  value times the layer's colour: `LAYER 5,4,&HFF404080` with
+  `LFILTER 5,5,200,-50,30` hazes everything by (7,7,15), also where layer
+  5 has nothing (TEST53). The filter comes before the layer's colour.
 - Scaled and turned sprites and text are drawn without smoothing, at the
   centres of the frame's pixels; at `XSCREEN`'s sample 2, of the fine
   pixels. A pixel whose centre is exactly on the image's edge is drawn if

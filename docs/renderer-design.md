@@ -200,7 +200,8 @@ moved again by `Placement::texel_tie`.
     integers;
   - raster: per-row or per-column offset and scale, OpenGL-style
     coordinates. The array is read every frame;
-  - color: HSV shift of each distinct color, through a small hash table.
+  - color: HSV shift of each distinct color, through a small hash table,
+    on the premultiplied texel in f32 as SmileBASIC 4 does.
 
 ### 1.5 The frontend (`crates/sb-sdl`)
 
@@ -395,9 +396,10 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Raster `[n,2]` form acts along the deformation; a row takes entry `floor((i+.5)*n/size)` | `raster_rows`, `raster_into` | C (R17): pitfalls; TEST54 parts 5, 6 |
 | Raster on a direct layer: what falls off shows black | `Runtime::render` | C: pitfalls |
 | Raster after LMATRIX | `Runtime::render` | C: pitfalls; TTEST27 |
-| Colour conversion: hue in degrees, S and V on 0-255 | `filter::shift_color` | C: `filter.rs` header (screenshots) |
-| Colour conversion arithmetic (HSV in f64 on un-premultiplied colour, `round`) | `shift_color` | **U (R18)** |
-| Filter before the layer colour is multiplied in (modes 1-4) | `Runtime::render` | **U (R19)** |
+| Colour conversion: hue in degrees, S and V on 0-255 | `filter::shift_color` | C: pitfalls; TEST54 part 7 |
+| Colour conversion arithmetic: the shader's formulas in f32 on the premultiplied texel; a grey keeps saturation 0 | `shift_color` | C (R18): SmileBASIC 4; TEST54 part 7, no pixel more than 1 off |
+| Filter before the layer colour (modes 1-4) | `Runtime::render` | C (R19): TEST53 part 4. Ours rounds to 8 bits between the two, SB4 does not: up to 1 off |
+| A clear pixel is left alone in mode 1 only; in modes 0, 2, 3, 4 a raised value lights it | `filter::color` | C (R19): TEST53 part 4, layer 5 |
 | ACLS clears LFILTER | `Runtime::acls` | C: pitfalls; TEST47 (R20) |
 
 ### 2.7 FADE

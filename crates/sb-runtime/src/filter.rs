@@ -11,6 +11,7 @@
 
 use sb_core::value::ArrayRef;
 
+use crate::compose::Compose;
 use crate::framebuffer::Framebuffer;
 
 /// LFILTER's filter types 0 to 5.
@@ -47,8 +48,9 @@ impl Filter {
     }
 
     /// Applies the filter to a layer's premultiplied frame; `sample` is
-    /// how many frame pixels make one screen pixel.
-    pub fn apply(&self, fb: &mut Framebuffer, sample: u32) {
+    /// how many frame pixels make one screen pixel, and `mode` how the
+    /// layer is composed afterwards.
+    pub fn apply(&self, fb: &mut Framebuffer, sample: u32, mode: Compose) {
         match self {
             // Amount 0 leaves the layer as it is, not halved.
             Filter::None | Filter::Blur(0) => {}
@@ -69,7 +71,7 @@ impl Filter {
                 hue,
                 saturation,
                 value,
-            } => color(fb, *hue, *saturation, *value),
+            } => color(fb, *hue, *saturation, *value, mode),
         }
     }
 }
@@ -536,17 +538,23 @@ fn blur(fb: &mut Framebuffer, amount: u32) {
 }
 
 /// Color conversion over the frame. A screen has few colors, so each is
-/// worked out once and kept in a small table by its bits.
-fn color(fb: &mut Framebuffer, hue: f64, saturation: f64, value: f64) {
+/// worked out once and kept in a small table by its bits. A clear pixel
+/// stays clear only on a layer composed in mode 1; otherwise a raised
+/// value lights it, so that the filter shows all over the layer.
+fn color(fb: &mut Framebuffer, hue: f64, saturation: f64, value: f64, mode: Compose) {
     // Left at zero, as programs leave it when an effect ends, it changes
     // nothing: each pixel comes back as it was.
     if hue.rem_euclid(360.0) == 0.0 && saturation == 0.0 && value == 0.0 {
         return;
     }
+    let shift = [hue / 360.0, saturation / 255.0, value / 255.0].map(|v| v as f32);
+    let clear = match mode {
+        Compose::Normal => 0,
+        _ => shift_color(0, shift),
+    };
     const SLOTS: usize = 1 << 10;
-    // Slot 0's key, 0, is clear and stays clear, so the table starts
-    // right.
-    let mut table = [(0u32, 0u32); SLOTS];
+    // Slot 0's key, 0, is the clear pixel, so the table starts right.
+    let mut table = [(0u32, clear); SLOTS];
     for p in fb.pixels_mut() {
         let key = *p;
         // Fibonacci hashing: the top bits of the product mix all of the
@@ -555,46 +563,46 @@ fn color(fb: &mut Framebuffer, hue: f64, saturation: f64, value: f64) {
         let (from, to) = &mut table[slot];
         if *from != key {
             *from = key;
-            *to = shift_color(key, hue, saturation, value);
+            *to = match key {
+                0 => clear,
+                _ => shift_color(key, shift),
+            };
         }
         *p = *to;
     }
 }
 
-/// A premultiplied pixel with HSV's hue, saturation and value moved.
-fn shift_color(p: u32, hue: f64, saturation: f64, value: f64) -> u32 {
-    let [a, r, g, b] = p.to_be_bytes().map(f64::from);
-    if a == 0.0 {
-        return p;
-    }
-    let straight = |c: f64| (c * 255.0 / a).min(255.0);
-    let (r, g, b) = (straight(r), straight(g), straight(b));
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let d = max - min;
-    let h = match d {
+/// A premultiplied pixel with HSV's hue, saturation and value moved by
+/// `[h, s, v]`, each as a part of its whole range. The conversion works on
+/// the premultiplied color as it is and in single precision, with the
+/// usual GPU formulas; a grey has no saturation to raise. The coverage
+/// stays.
+fn shift_color(p: u32, [dh, ds, dv]: [f32; 3]) -> u32 {
+    const EPSILON: f32 = 1e-10;
+    let fract = |v: f32| v - v.floor();
+    let [a, r, g, b] = p.to_be_bytes();
+    let [r, g, b] = [r, g, b].map(|c| f32::from(c) / 255.0);
+    let (px, py, pz, pw) = match g < b {
+        true => (b, g, -1.0, 2.0 / 3.0),
+        false => (g, b, 0.0, -1.0 / 3.0),
+    };
+    let (qx, qy, qz, qw) = match r < px {
+        true => (px, py, pw, r),
+        false => (r, py, pz, px),
+    };
+    let d = qx - qw.min(qy);
+    let h = fract((qz + (qw - qy) / (6.0 * d + EPSILON)).abs() + dh);
+    let s = match d / (qx + EPSILON) {
         0.0 => 0.0,
-        _ if max == r => 60.0 * ((g - b) / d),
-        _ if max == g => 60.0 * ((b - r) / d + 2.0),
-        _ => 60.0 * ((r - g) / d + 4.0),
+        s => (s + ds).clamp(0.0, 1.0),
     };
-    let s = if max == 0.0 { 0.0 } else { d / max * 255.0 };
-    let h = (h + hue).rem_euclid(360.0);
-    let s = (s + saturation).clamp(0.0, 255.0) / 255.0;
-    let v = (max + value).clamp(0.0, 255.0);
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let (r, g, b) = match (h / 60.0) as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
+    let v = (qx + dv).clamp(0.0, 1.0);
+    let channel = |k: f32| {
+        let t = ((fract(h + k) * 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
+        // To the nearest, with halves down, as seen under the GPU tested.
+        (v * (1.0 + s * (t - 1.0)) * 255.0 + 0.499) as u8
     };
-    let m = v - c;
-    let pre = |c: f64| ((c + m) * a / 255.0).round().clamp(0.0, 255.0) as u8;
-    u32::from_be_bytes([a as u8, pre(r), pre(g), pre(b)])
+    u32::from_be_bytes([a, channel(1.0), channel(2.0 / 3.0), channel(1.0 / 3.0)])
 }
 
 #[cfg(test)]
@@ -639,20 +647,20 @@ mod tests {
     #[test]
     fn mosaic_takes_the_middle_pixel() {
         let mut fb = frame(&[1, 2, 3, 4, 5, 6, 7, 8, 9], 3);
-        Filter::Mosaic(2).apply(&mut fb, 1);
+        Filter::Mosaic(2).apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &[5, 5, 6, 5, 5, 6, 8, 8, 9]);
     }
 
     #[test]
     fn blur_halves_the_layer() {
         let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0, 0, 0, 0, 0], 4);
-        Filter::Blur(1).apply(&mut fb, 1);
+        Filter::Blur(1).apply(&mut fb, 1, Compose::Normal);
         assert_eq!(&fb.pixels()[..4], &[0x4040_4040, 0x4040_4040, 0, 0]);
         let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0, 0xFFFF_FFFF, 0, 0, 0], 4);
-        Filter::Blur(1).apply(&mut fb, 1);
+        Filter::Blur(1).apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels()[1], 0x7F7F_7F7F);
         let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0], 4);
-        Filter::Blur(0).apply(&mut fb, 1);
+        Filter::Blur(0).apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &[0xFFFF_FFFF, 0, 0, 0]);
     }
 
@@ -671,10 +679,10 @@ mod tests {
             info: info.clone(),
             repeat,
         };
-        filter(false).apply(&mut fb, 1);
+        filter(false).apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &[2, 3, 4, 0, 1, 2, 3, 4]);
         let mut fb = frame(&[row, row].concat(), 4);
-        filter(true).apply(&mut fb, 1);
+        filter(true).apply(&mut fb, 1, Compose::Normal);
         assert_eq!(&fb.pixels()[..4], &[2, 3, 4, 1]);
     }
 
@@ -691,7 +699,7 @@ mod tests {
             repeat: false,
         };
         let mut fb = frame(&[1, 2, 1, 2, 1, 2], 2);
-        filter.apply(&mut fb, 1);
+        filter.apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &[1, 2, 2, 0, 2, 0]);
     }
 
@@ -703,7 +711,7 @@ mod tests {
             saturation: 0.0,
             value: 0.0,
         }
-        .apply(&mut fb, 1);
+        .apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &[0xFF00_FF00, 0x8000_8000]);
     }
 
@@ -719,8 +727,8 @@ mod tests {
             0xFF00_00FF,
         ];
         let mut fb = frame(&pixels, 3);
-        color(&mut fb, 120.0, 0.0, 0.0);
-        let one_by_one = pixels.map(|p| shift_color(p, 120.0, 0.0, 0.0));
+        color(&mut fb, 120.0, 0.0, 0.0, Compose::Normal);
+        let one_by_one = pixels.map(|p| shift_color(p, [1.0 / 3.0, 0.0, 0.0]));
         assert_eq!(fb.pixels(), &one_by_one);
     }
 
@@ -733,11 +741,50 @@ mod tests {
             saturation: -0.0,
             value: 0.0,
         }
-        .apply(&mut fb, 1);
+        .apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &pixels);
         // As working each one out would.
         for p in pixels {
-            assert_eq!(shift_color(p, 0.0, 0.0, 0.0), p);
+            assert_eq!(shift_color(p, [0.0; 3]), p);
+        }
+    }
+
+    #[test]
+    fn color_works_on_the_premultiplied_texel() {
+        // Half-covered white: 80 of light with 80 of coverage is a grey,
+        // not white, so raising the value starts from 80.
+        assert_eq!(
+            shift_color(0x8080_8080, [0.0, 0.0, 16.0 / 255.0]),
+            0x8090_9090
+        );
+        // A grey has no saturation to raise, and no hue to turn.
+        assert_eq!(shift_color(0xFFD7_D7D7, [0.25, 0.5, 0.0]), 0xFFD7_D7D7);
+        // An orange turned a third of the way round.
+        assert_eq!(shift_color(0xFFFF_8040, [1.0 / 3.0, 0.0, 0.0]), 0xFF40_FF80);
+        // A negative turn goes round the other way.
+        assert_eq!(
+            shift_color(0xFF00_FF00, [-1.0 / 3.0, 0.0, 0.0]),
+            0xFFFF_0000
+        );
+    }
+
+    #[test]
+    fn a_raised_value_lights_clear_pixels_unless_mode_1() {
+        let filter = Filter::Color {
+            hue: 200.0,
+            saturation: -50.0,
+            value: 30.0,
+        };
+        for (mode, want) in [
+            (Compose::Direct, 0x001E_1E1E),
+            (Compose::Normal, 0),
+            (Compose::Add, 0x001E_1E1E),
+            (Compose::Multiply, 0x001E_1E1E),
+            (Compose::Screen, 0x001E_1E1E),
+        ] {
+            let mut fb = frame(&[0, 0], 2);
+            filter.apply(&mut fb, 1, mode);
+            assert_eq!(fb.pixels(), &[want, want], "{mode:?}");
         }
     }
 }
