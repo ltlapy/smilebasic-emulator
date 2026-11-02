@@ -445,7 +445,7 @@ impl Graphics {
 
     /// GLINE: both ends included.
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
-        for (x, y) in line_points(x0, y0, x1, y1) {
+        for (x, y) in line_points(x0, y0, x1, y1, self.clip) {
             self.plot(x, y, color, blend);
         }
     }
@@ -584,7 +584,7 @@ impl Graphics {
                 let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
                 for (dx, dy) in [from, to] {
                     let (x, y) = (i64::from(cx) + dx, i64::from(cy) + dy);
-                    sides.extend(line_points(cx, cy, near(x), near(y)));
+                    sides.extend(line_points(cx, cy, near(x), near(y), Clip::PAGE));
                 }
             }
         }
@@ -1091,16 +1091,13 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
 /// from the end with the smaller coordinate on it, `major` steps long
 /// and `minor` across (taken as positive). The offset across at step `t`
 /// is `(2·t·minor + k) / (2·major)` rounded down, where `k` is
-/// `(major + 2·minor) mod (2·major)` when the walk starts on the page:
+/// `(major + 2·minor) mod (2·major)` when the walk starts inside GCLIP:
 /// the line as rounded one step further on, moved back so that it starts
 /// at its first end (`round((t+1)·minor/major) - round(minor/major)`,
-/// halves up). A walk that starts off the page takes `k = major`, the
+/// halves up). A walk that starts outside takes `k = major`, the
 /// line itself rounded (halves up), counted from its real start; only
 /// the steps on the page are worked out.
-// UNVERIFIED: that it is the page that counts (not GCLIP's rectangle),
-// and that a start off the page across the walk (an X-major line
-// starting above the page, say) counts as off the page too.
-fn line_points(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
+fn line_points(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip) -> Vec<(i32, i32)> {
     let x_major = (i64::from(x1) - i64::from(x0)).abs() >= (i64::from(y1) - i64::from(y0)).abs();
     let swap = |(x, y): (i64, i64)| if x_major { (x, y) } else { (y, x) };
     let ends = (
@@ -1116,8 +1113,10 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
     let minor = i128::from(b.1 - a.1);
     let (across, sign) = (minor.abs(), minor.signum() as i64);
     let page = i64::from(GRP_SIZE) - 1;
-    let on_page = |v: i64| (0..=page).contains(&v);
-    let k = if on_page(a.0) && on_page(a.1) {
+    let (sx, sy) = swap(a);
+    let starts_inside = (i64::from(clip.x0)..=i64::from(clip.x1)).contains(&sx)
+        && (i64::from(clip.y0)..=i64::from(clip.y1)).contains(&sy);
+    let k = if starts_inside {
         (major + 2 * across) % (2 * major).max(1)
     } else {
         major
@@ -1399,7 +1398,7 @@ mod tests {
             ((3, 3), &[0, 1, 2, 3]),
         ];
         for ((dx, dy), minors) in read {
-            let mut points = line_points(50, 50, 50 + dx, 50 + dy);
+            let mut points = line_points(50, 50, 50 + dx, 50 + dy, Clip::PAGE);
             points.sort_unstable();
             let mut expected: Vec<(i32, i32)> = minors
                 .iter()
@@ -1450,9 +1449,9 @@ mod tests {
                     (major * sx, minor * sy)
                 };
                 let mut points = if reverse {
-                    line_points(50 + dx, 50 + dy, 50, 50)
+                    line_points(50 + dx, 50 + dy, 50, 50, Clip::PAGE)
                 } else {
-                    line_points(50, 50, 50 + dx, 50 + dy)
+                    line_points(50, 50, 50 + dx, 50 + dy, Clip::PAGE)
                 };
                 points.sort_unstable();
                 let mut expected: Vec<(i32, i32)> = offsets
@@ -1499,7 +1498,7 @@ mod tests {
                 .collect();
             expected.sort_unstable();
             for (a, b) in [((x0, y0), (x1, y1)), ((x1, y1), (x0, y0))] {
-                let mut points = line_points(a.0, a.1, b.0, b.1);
+                let mut points = line_points(a.0, a.1, b.0, b.1, Clip::PAGE);
                 points.sort_unstable();
                 assert_eq!(points, expected, "{a:?} to {b:?}");
             }
@@ -1558,6 +1557,40 @@ mod tests {
         assert_eq!(
             &area(&g, 7, 7)[3..],
             ["...###.", "...#.#.", "...##..", "......."]
+        );
+    }
+
+    /// TEST56: what counts is GCLIP's rectangle: a start outside it takes
+    /// `k = major`, one inside the usual rule.
+    #[test]
+    fn lines_starting_outside_gclip_match_hardware() {
+        let steps = |x0, y0, x1, y1| {
+            let mut g = Graphics {
+                clip: Clip::new(100, 100, 200, 160),
+                ..Graphics::default()
+            };
+            g.line(x0, y0, x1, y1, RED, Blend::Normal);
+            let (mut out, mut last) = (Vec::new(), -1);
+            for x in 100..=200 {
+                let hit = (100..=160).rev().find(|&y| g.read(g.target, x, y) != 0);
+                if let Some(y) = hit.filter(|&y| y != last) {
+                    out.push((x, y));
+                    last = y;
+                }
+            }
+            out
+        };
+        let l0 = [(100, 115), (105, 116), (115, 117), (125, 118)];
+        assert_eq!(steps(50, 110, 250, 130)[..4], l0);
+        assert_eq!(steps(250, 130, 50, 110)[..4], l0);
+        assert_eq!(
+            steps(20, 99, 300, 140)[..4],
+            [(100, 111), (106, 112), (113, 113), (120, 114)]
+        );
+        // Starting inside.
+        assert_eq!(
+            steps(120, 120, 400, 141)[..4],
+            [(120, 120), (126, 121), (139, 122), (153, 123)]
         );
     }
 
