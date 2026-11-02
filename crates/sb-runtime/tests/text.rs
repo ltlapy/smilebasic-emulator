@@ -250,3 +250,10 @@ fn xscreen_stops_text_animations_and_keeps_the_look() {
     .unwrap();
     assert_eq!(row(&rt, 4, 0, 20).trim_end_matches('.'), "FFFF000008430567");
 }
+
+#[test]
+fn tscreen_with_too_many_cells_is_out_of_range() {
+    let e = run("TSCREEN 0,8,8,65536,65536").err().expect("an error");
+    assert_eq!(e.kind, ErrorKind::OutOfRange);
+    assert!(e.detail.is_some());
+}

@@ -165,6 +165,9 @@ fn tscreen_sizes_and_attributes() {
     );
     assert!(first_row("CLS:TSCREEN 12").starts_with("Out of range"));
     assert!(first_row("CLS:TSCREEN 1,8,8,300,300").starts_with("Out of range"));
+    // More cells than 32 bits count.
+    assert!(first_row("CLS:TSCREEN 1,8,8,65536,65536").starts_with("Out of range"));
+    assert!(first_row("CLS:TSCREEN 1,8,8,2147483647,2").starts_with("Out of range"));
 }
 
 #[test]

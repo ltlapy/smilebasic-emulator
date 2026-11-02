@@ -484,7 +484,7 @@ impl Runtime {
                 };
                 let w = fill(size.map(|s| s.0), fw)?;
                 let h = fill(size.map(|s| s.1), fh)?;
-                if w * h > 32768 {
+                if u64::from(w) * u64::from(h) > 32768 {
                     return Err(Error::with_detail(
                         ErrorKind::OutOfRange,
                         format!("{w}x{h} characters"),
