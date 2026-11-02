@@ -23,6 +23,13 @@ impl fmt::Display for NsoError {
 
 impl std::error::Error for NsoError {}
 
+/// The most a segment may decompress to. SmileBASIC 4's are a few MB; the
+/// header can ask for 4 GB.
+const SEGMENT_BYTES: usize = 1 << 28;
+/// The most a byte of LZ4 can become: a match gets 255 more bytes for each
+/// byte of its length, and nothing makes more.
+const LZ4_RATIO: usize = 255;
+
 fn u32_at(b: &[u8], at: usize) -> Result<usize, NsoError> {
     let bytes = b.get(at..at + 4).ok_or(NsoError::Truncated)?;
     Ok(u32::from_le_bytes(bytes.try_into().expect("four bytes")) as usize)
@@ -39,9 +46,8 @@ pub fn segments(nso: &[u8]) -> Result<[Vec<u8>; 3], NsoError> {
         let offset = u32_at(nso, 0x10 + i * 0x10)?;
         let size = u32_at(nso, 0x18 + i * 0x10)?;
         let stored = u32_at(nso, 0x60 + i * 4)?;
-        let bytes = nso
-            .get(offset..offset + stored)
-            .ok_or(NsoError::Truncated)?;
+        let end = offset.checked_add(stored).ok_or(NsoError::Truncated)?;
+        let bytes = nso.get(offset..end).ok_or(NsoError::Truncated)?;
         *segment = if flags & (1 << i) != 0 {
             lz4_block(bytes, size)?
         } else {
@@ -53,6 +59,11 @@ pub fn segments(nso: &[u8]) -> Result<[Vec<u8>; 3], NsoError> {
 
 /// Decompresses one LZ4 block of known decompressed size.
 fn lz4_block(src: &[u8], size: usize) -> Result<Vec<u8>, NsoError> {
+    // Checked first: the size comes from the file, and only then is
+    // memory set aside for it.
+    if size > SEGMENT_BYTES || size / LZ4_RATIO > src.len() {
+        return Err(NsoError::BadCompression);
+    }
     let mut out = Vec::with_capacity(size);
     let mut i = 0;
     let byte = |i: usize| src.get(i).copied().ok_or(NsoError::BadCompression);
@@ -63,7 +74,9 @@ fn lz4_block(src: &[u8], size: usize) -> Result<Vec<u8>, NsoError> {
             loop {
                 let b = byte(*i)?;
                 *i += 1;
-                len += usize::from(b);
+                len = len
+                    .checked_add(usize::from(b))
+                    .ok_or(NsoError::BadCompression)?;
                 if b != 255 {
                     break;
                 }
@@ -75,6 +88,9 @@ fn lz4_block(src: &[u8], size: usize) -> Result<Vec<u8>, NsoError> {
         let token = usize::from(byte(i)?);
         i += 1;
         let literals = length(token >> 4, &mut i)?;
+        if literals > size - out.len() {
+            return Err(NsoError::BadCompression);
+        }
         let run = src.get(i..i + literals).ok_or(NsoError::BadCompression)?;
         out.extend_from_slice(run);
         i += literals;
@@ -83,17 +99,14 @@ fn lz4_block(src: &[u8], size: usize) -> Result<Vec<u8>, NsoError> {
         }
         let back = usize::from(byte(i)?) | usize::from(byte(i + 1)?) << 8;
         i += 2;
-        let len = length(token & 15, &mut i)? + 4;
-        if back == 0 || back > out.len() {
+        let len = length(token & 15, &mut i)?.saturating_add(4);
+        if back == 0 || back > out.len() || len > size - out.len() {
             return Err(NsoError::BadCompression);
         }
         // Copies may overlap the bytes they produce.
         let from = out.len() - back;
         for k in 0..len {
             out.push(out[from + k]);
-        }
-        if out.len() > size {
-            return Err(NsoError::BadCompression);
         }
     }
     if out.len() == size {
@@ -118,6 +131,46 @@ mod tests {
             lz4_block(&[0x22, b'a', b'b', 9, 0], 8),
             Err(NsoError::BadCompression)
         );
+    }
+
+    #[test]
+    fn lz4_stays_within_its_stated_size() {
+        // A size no block this small can make is refused before any
+        // memory is set aside; this would take 4 GB otherwise.
+        assert_eq!(
+            lz4_block(&[0x10, b'x'], u32::MAX as usize),
+            Err(NsoError::BadCompression)
+        );
+        assert_eq!(
+            lz4_block(&[0x10, b'x'], SEGMENT_BYTES + 1),
+            Err(NsoError::BadCompression)
+        );
+        // Literals past the size.
+        assert_eq!(
+            lz4_block(&[0x30, b'x', b'y', b'z'], 2),
+            Err(NsoError::BadCompression)
+        );
+        // A match past the size, with a long length: stopped before it is
+        // copied, not after.
+        let mut block = vec![0x1F, b'a', 1, 0];
+        block.extend(std::iter::repeat_n(255, 1000));
+        block.push(0);
+        assert_eq!(lz4_block(&block, 10), Err(NsoError::BadCompression));
+        // Exactly the size is fine, and so is the most LZ4 can do.
+        assert_eq!(lz4_block(&[0x10, b'x'], 1), Ok(b"x".to_vec()));
+        let mut block = vec![0x1F, b'a', 1, 0];
+        block.extend(std::iter::repeat_n(255, 100));
+        block.push(0);
+        assert_eq!(lz4_block(&block, 1 + 19 + 25500).unwrap().len(), 25520);
+    }
+
+    #[test]
+    fn segments_outside_the_file_are_an_error() {
+        let mut nso = vec![0u8; 0x100];
+        nso[..4].copy_from_slice(b"NSO0");
+        nso[0x10..0x14].copy_from_slice(&u32::MAX.to_le_bytes());
+        nso[0x60..0x64].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(segments(&nso), Err(NsoError::Truncated));
     }
 
     #[test]
