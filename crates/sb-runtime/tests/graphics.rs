@@ -226,3 +226,19 @@ fn boxes_and_copies_at_extreme_coordinates_end() {
         assert_eq!(run(source).1, "1", "{source}");
     }
 }
+
+#[test]
+fn gputchr_at_extreme_coordinates_ends() {
+    for source in [
+        "GPUTCHR 2147483647,0,\"AB\",16,-1:?1",
+        "GPUTCHR 0,2147483647,\"AB\",16,-1:?1",
+        "GPUTCHR 2147483647,2147483647,\"AB\",16,32767,32767,-1:?1",
+        "GPUTCHR -2147483648,-2147483648,\"AB\",16,32767,32767,-1:?1",
+        "GPUTCHRP 2147483647,2147483647,\"AB\",16,32767,32767,-1:?1",
+        "GPUTCHRP -2147483648,-2147483648,\"AB\",16,32767,32767,-1:?1",
+        "GPUTCHR 0,0,\"A\"*100000,16,1024,1024,-1:?1",
+        "GPUTCHRP 0,0,\"A\"*2000,16,32767,32767,-1:?1",
+    ] {
+        assert_eq!(run(source).1, "1", "{source}");
+    }
+}

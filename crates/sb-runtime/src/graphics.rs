@@ -2,6 +2,7 @@
 //! once something is drawn on it; until then every pixel is 0.
 
 use std::cell::RefCell;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -9,7 +10,7 @@ use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
 
 use crate::compose::{Lit, Over1, Over3, Paint};
 use crate::font::{Font, FontSize};
-use crate::text::{glyph_pixel, glyph_pixel_px};
+use crate::text::{FONT_PAGE, glyph_pixel, glyph_pixel_px};
 
 pub const PAGES: usize = 6;
 /// `#GRPWIDTH` and `#GRPHEIGHT`.
@@ -734,17 +735,66 @@ impl Graphics {
         blend: Blend,
     ) {
         let n = px as i32;
+        let (top, cell) = (i64::from(y), i64::from(n) * i64::from(sx));
+        if !self.reaches_rows(top, n, sy) {
+            return;
+        }
         for (i, &code) in text.iter().enumerate() {
-            let left = x.saturating_add((i as i32).saturating_mul(n * sx));
-            for gy in 0..n {
-                for gx in 0..n {
-                    let glyph = glyph_pixel_px(font, self, code, px, gx as u32, gy as u32);
-                    let p = multiply(glyph, color);
-                    for py in 0..sy {
-                        for px in 0..sx {
-                            let (x, y) = (left + gx * sx + px, y + gy * sy + py);
-                            self.plot(x, y, p, blend);
-                        }
+            let left = i64::from(x) + i as i64 * cell;
+            if left > i64::from(self.clip.x1) {
+                break;
+            }
+            if left + cell > i64::from(self.clip.x0) {
+                self.put_glyph((left, top), 0..n, n, (sx, sy), color, blend, |g, gx, gy| {
+                    glyph_pixel_px(font, g, code, px, gx, gy)
+                });
+            }
+        }
+    }
+
+    /// Whether `rows` rows of glyph pixels, `scale` high from `top`, reach
+    /// into the clipping rectangle.
+    fn reaches_rows(&self, top: i64, rows: i32, scale: i32) -> bool {
+        top <= i64::from(self.clip.y1)
+            && top + i64::from(rows) * i64::from(scale) > i64::from(self.clip.y0)
+    }
+
+    /// Draws `columns` of a glyph, scaled, with the first at `left` and
+    /// the top of the glyph's `rows` at `top`. A scale can make a glyph
+    /// far larger than a page, so this goes only through what lands in
+    /// the clipping rectangle, in the order the whole glyph would be.
+    #[allow(clippy::too_many_arguments)]
+    fn put_glyph(
+        &mut self,
+        (left, top): (i64, i64),
+        columns: Range<i32>,
+        rows: i32,
+        (sx, sy): (i32, i32),
+        color: u32,
+        blend: Blend,
+        glyph: impl Fn(&Graphics, u32, u32) -> u32,
+    ) {
+        let clip = self.clip;
+        let (sx, sy) = (i64::from(sx), i64::from(sy));
+        // The glyph pixels in reach, and of each, the page pixels in reach.
+        let steps = |start: i64, scale: i64, count: i32, low: i32, high: i32| {
+            let step = |at: i32| (i64::from(at) - start).div_euclid(scale);
+            let count = i64::from(count);
+            step(low).clamp(0, count)..(step(high) + 1).clamp(0, count)
+        };
+        let inner = |start: i64, scale: i64, low: i32, high: i32| {
+            (i64::from(low) - start).max(0)..(i64::from(high) - start + 1).min(scale)
+        };
+        let across = steps(left, sx, columns.end - columns.start, clip.x0, clip.x1);
+        for gy in steps(top, sy, rows, clip.y0, clip.y1) {
+            let y0 = top + gy * sy;
+            for col in across.clone() {
+                let gx = i64::from(columns.start) + col;
+                let p = multiply(glyph(self, gx as u32, gy as u32), color);
+                let x0 = left + col * sx;
+                for py in inner(y0, sy, clip.y0, clip.y1) {
+                    for px in inner(x0, sx, clip.x0, clip.x1) {
+                        self.plot((x0 + px) as i32, (y0 + py) as i32, p, blend);
                     }
                 }
             }
@@ -763,13 +813,6 @@ impl Graphics {
         Some((left as i32, (right - left + 1) as i32))
     }
 
-    /// How far GPUTCHRP moves on after a character, before the spacing; a
-    /// blank one is a quarter of the font size.
-    fn advance(&self, font: &Font, code: u16, size: FontSize) -> i32 {
-        self.ink(font, code, size)
-            .map_or(size as i32 / 4, |(_, w)| w)
-    }
-
     /// GPUTCHRP's function form: how wide `text` is drawn, the spacing
     /// coming between characters and scaled with them.
     pub fn proportional_width(
@@ -780,8 +823,13 @@ impl Graphics {
         sx: i32,
         spacing: i32,
     ) -> i32 {
-        let widths: i32 = text.iter().map(|&c| self.advance(font, c, size)).sum();
-        (widths + spacing * (text.len() as i32 - 1).max(0)) * sx
+        let mut inks = Inks::for_text(text);
+        let widths: i64 = (text.iter())
+            .map(|&c| i64::from(advance(inks.of(self, font, c, size), size)))
+            .sum();
+        let gaps = i64::from(spacing) * (text.len() as i64 - 1).max(0);
+        // Too wide for an integer wraps round.
+        ((widths + gaps) * i64::from(sx)) as i32
     }
 
     /// GPUTCHRP: characters as wide as each is, `spacing` pixels apart.
@@ -797,24 +845,40 @@ impl Graphics {
         blend: Blend,
         spacing: i32,
     ) {
-        let mut left = x;
+        let n = size as i32;
+        let top = i64::from(y);
+        if !self.reaches_rows(top, n, sy) {
+            return;
+        }
+        let mut inks = Inks::for_text(text);
+        let mut left = i64::from(x);
         for &code in text {
-            if let Some((ink, width)) = self.ink(font, code, size) {
-                for gy in 0..size as i32 {
-                    for gx in ink..ink + width {
-                        let glyph = glyph_pixel(font, self, code, size, gx as u32, gy as u32);
-                        let p = multiply(glyph, color);
-                        for py in 0..sy {
-                            for px in 0..sx {
-                                let at = left.saturating_add((gx - ink) * sx + px);
-                                self.plot(at, y + gy * sy + py, p, blend);
-                            }
-                        }
-                    }
+            // The spacing is never negative, so nothing later comes back.
+            if left > i64::from(self.clip.x1) {
+                break;
+            }
+            let mut ink = inks.of(self, font, code, size);
+            if let Some((first, width)) = ink
+                && left + i64::from(width) * i64::from(sx) > i64::from(self.clip.x0)
+            {
+                let columns = first..first + width;
+                self.put_glyph(
+                    (left, top),
+                    columns,
+                    n,
+                    (sx, sy),
+                    color,
+                    blend,
+                    |g, gx, gy| glyph_pixel(font, g, code, size, gx, gy),
+                );
+                // Drawing on the font's own page can change the glyphs.
+                if self.target == FONT_PAGE {
+                    inks.forget();
+                    ink = inks.of(self, font, code, size);
                 }
             }
             // Drawing scales the spacing as the width does.
-            left = left.saturating_add((self.advance(font, code, size) + spacing) * sx);
+            left += i64::from(advance(ink, size) + spacing) * i64::from(sx);
         }
     }
 
@@ -1190,6 +1254,52 @@ fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i
         (x1 - last, x1 - first)
     };
     Some((l.narrow(), r.narrow()))
+}
+
+/// How far GPUTCHRP moves on after a character with this [`Graphics::ink`],
+/// before the spacing; a blank one is a quarter of the font size.
+fn advance(ink: Option<(i32, i32)>, size: FontSize) -> i32 {
+    ink.map_or(size as i32 / 4, |(_, w)| w)
+}
+
+/// Finding a character's ink can look at every pixel of its glyph. Long
+/// text, however many characters it has, has this to do once for each code.
+struct Inks(Vec<u16>);
+
+impl Inks {
+    /// Texts up to this long take less time than the table.
+    const SHORT: usize = 256;
+    const UNKNOWN: u16 = 0;
+    const BLANK: u16 = u16::MAX;
+
+    fn for_text(text: &[u16]) -> Inks {
+        match text.len() {
+            0..=Inks::SHORT => Inks(Vec::new()),
+            _ => Inks(vec![Inks::UNKNOWN; 1 << 16]),
+        }
+    }
+
+    fn of(&mut self, g: &Graphics, font: &Font, code: u16, size: FontSize) -> Option<(i32, i32)> {
+        let Some(slot) = self.0.get_mut(usize::from(code)) else {
+            return g.ink(font, code, size);
+        };
+        match *slot {
+            Inks::UNKNOWN => {
+                let ink = g.ink(font, code, size);
+                // A width is at least 1, so neither is UNKNOWN or BLANK.
+                *slot = ink.map_or(Inks::BLANK, |(first, width)| {
+                    (first as u16) << 8 | width as u16
+                });
+                ink
+            }
+            Inks::BLANK => None,
+            v => Some((i32::from(v >> 8), i32::from(v & 0xFF))),
+        }
+    }
+
+    fn forget(&mut self) {
+        self.0.fill(Inks::UNKNOWN);
+    }
 }
 
 #[cfg(test)]
@@ -1881,5 +1991,354 @@ mod tests {
             let mode = Blend::from_int(2 + (i % 3) as i32).unwrap();
             assert_eq!(mode.apply(dst, half_red), expected, "case {i}");
         }
+    }
+
+    /// GPUTCHR as it was before it took the clipping rectangle into
+    /// account, adding as a release build did.
+    #[allow(clippy::too_many_arguments)]
+    fn put_chars_unclipped(
+        g: &mut Graphics,
+        font: &Font,
+        (x, y): (i32, i32),
+        text: &[u16],
+        px: u32,
+        (sx, sy): (i32, i32),
+        color: u32,
+        blend: Blend,
+    ) {
+        let n = px as i32;
+        for (i, &code) in text.iter().enumerate() {
+            let left = x.saturating_add((i as i32).saturating_mul(n * sx));
+            for gy in 0..n {
+                for gx in 0..n {
+                    let glyph = glyph_pixel_px(font, g, code, px, gx as u32, gy as u32);
+                    let p = multiply(glyph, color);
+                    for py in 0..sy {
+                        for px in 0..sx {
+                            let at = left.wrapping_add(gx * sx + px);
+                            g.plot(at, y.wrapping_add(gy * sy + py), p, blend);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// GPUTCHRP the same way.
+    #[allow(clippy::too_many_arguments)]
+    fn put_chars_proportional_unclipped(
+        g: &mut Graphics,
+        font: &Font,
+        (x, y): (i32, i32),
+        text: &[u16],
+        size: FontSize,
+        (sx, sy): (i32, i32),
+        color: u32,
+        blend: Blend,
+        spacing: i32,
+    ) {
+        let mut left = x;
+        for &code in text {
+            if let Some((ink, width)) = g.ink(font, code, size) {
+                for gy in 0..size as i32 {
+                    for gx in ink..ink + width {
+                        let glyph = glyph_pixel(font, g, code, size, gx as u32, gy as u32);
+                        let p = multiply(glyph, color);
+                        for py in 0..sy {
+                            for px in 0..sx {
+                                let at = left.saturating_add((gx - ink) * sx + px);
+                                g.plot(at, y.wrapping_add(gy * sy + py), p, blend);
+                            }
+                        }
+                    }
+                }
+            }
+            let ink = g.ink(font, code, size);
+            left = left.saturating_add((advance(ink, size) + spacing) * sx);
+        }
+    }
+
+    fn chars_rng() -> impl FnMut(u64) -> u64 {
+        let mut seed = 0x1234_5678_9ABC_DEF1u64;
+        move |n| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        }
+    }
+
+    /// Something for the blends to mix with, with the font on its page.
+    fn chars_pages(font: &Font) -> (Graphics, Vec<u32>) {
+        let mut g = Graphics::default();
+        let base: Vec<u32> = (0..GRP_SIZE * GRP_SIZE)
+            .map(|i| (i as u32).wrapping_mul(0x9E37_79B1))
+            .collect();
+        g.set_page(FONT_PAGE, font.page_image());
+        (g, base)
+    }
+
+    /// Text with blanks and characters the font lacks.
+    fn chars_text(next: &mut impl FnMut(u64) -> u64) -> Vec<u16> {
+        const CODES: [u16; 8] = [65, 73, 32, 46, 0x30, 0xE100, 0x3042, 0xFFFF];
+        (0..1 + next(5))
+            .map(|_| CODES[next(CODES.len() as u64) as usize])
+            .collect()
+    }
+
+    const CHARS_BLENDS: [Blend; 3] = [Blend::Normal, Blend::Normal2, Blend::Alpha];
+
+    fn chars_clip(next: &mut impl FnMut(u64) -> u64) -> Clip {
+        match next(4) {
+            0 => Clip::PAGE,
+            1 => Clip::new(0, 0, 399, 239),
+            _ => {
+                let (x0, y0) = (next(GRP_SIZE as u64) as i32, next(GRP_SIZE as u64) as i32);
+                Clip::new(x0, y0, x0 + next(70) as i32, y0 + next(70) as i32)
+            }
+        }
+    }
+
+    /// Near the clipping rectangle's edges in both directions, or far.
+    fn chars_pos(next: &mut impl FnMut(u64) -> u64, low: i32, high: i32, reach: i32) -> i32 {
+        let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+        let reach = i64::from(reach);
+        match next(12) {
+            0 => i32::MAX - next(3) as i32,
+            1 => i32::MIN + next(3) as i32,
+            2..=5 => near(i64::from(low) - next(2 * reach as u64 + 1) as i64),
+            6..=8 => near(i64::from(high) - next(2 * reach as u64 + 1) as i64 + reach / 2),
+            _ => low + next((high - low + 1) as u64) as i32,
+        }
+    }
+
+    #[test]
+    fn clipped_chars_match_drawing_every_pixel() {
+        let font = Font::fallback();
+        let (mut slow, base) = chars_pages(&font);
+        let (mut fast, _) = chars_pages(&font);
+        let mut next = chars_rng();
+        const SCALES: [i32; 8] = [1, 1, 2, 3, 5, 8, 17, 40];
+        // Each draw goes over the last, as copying the pages takes longer
+        // than any of them.
+        for g in [&mut slow, &mut fast] {
+            g.set_page(0, base.clone());
+        }
+        for case in 0..1500 {
+            let clip = chars_clip(&mut next);
+            let (sx, sy) = (SCALES[next(8) as usize], SCALES[next(8) as usize]);
+            let px = [8, 16][next(2) as usize];
+            let n = px as i32;
+            let x = chars_pos(&mut next, clip.x0, clip.x1, 2 * n * sx);
+            let y = chars_pos(&mut next, clip.y0, clip.y1, n * sy);
+            let text = chars_text(&mut next);
+            let blend = CHARS_BLENDS[next(3) as usize];
+            let color = [0xFFFF_FFFF, 0x80FF_8040][next(2) as usize];
+            let size = [FontSize::Small, FontSize::Large][next(2) as usize];
+            let spacing = next(65) as i32;
+            let target = [0, FONT_PAGE][usize::from(next(64) == 0)];
+            for g in [&mut slow, &mut fast] {
+                g.target = target;
+                g.clip = clip;
+            }
+            let what = format!("#{case} {clip:?} {x},{y} {sx}x{sy} {px} {text:?} {blend:?}");
+            put_chars_unclipped(&mut slow, &font, (x, y), &text, px, (sx, sy), color, blend);
+            fast.put_chars(&font, (x, y), &text, px, (sx, sy), color, blend);
+            assert!(slow.page(target) == fast.page(target), "GPUTCHR {what}");
+            put_chars_proportional_unclipped(
+                &mut slow,
+                &font,
+                (x, y),
+                &text,
+                size,
+                (sx, sy),
+                color,
+                blend,
+                spacing,
+            );
+            fast.put_chars_proportional(
+                &font,
+                (x, y),
+                &text,
+                size,
+                (sx, sy),
+                color,
+                blend,
+                spacing,
+            );
+            assert!(
+                slow.page(target) == fast.page(target),
+                "GPUTCHRP {what} {spacing}"
+            );
+            // Glyphs drawn over would go on to change the rest.
+            if target == FONT_PAGE {
+                for g in [&mut slow, &mut fast] {
+                    g.set_page(FONT_PAGE, font.page_image());
+                }
+            }
+        }
+    }
+
+    /// Long text has its inks from a table, which must hold for changing
+    /// glyphs too.
+    #[test]
+    fn long_proportional_text_matches_drawing_every_pixel() {
+        let font = Font::fallback();
+        let (mut slow, base) = chars_pages(&font);
+        let (mut fast, _) = chars_pages(&font);
+        let mut next = chars_rng();
+        for target in [0, FONT_PAGE] {
+            for x in [-3000, -50, 5] {
+                let text: Vec<u16> = (0..Inks::SHORT + 300)
+                    .map(|_| [65, 73, 32, 0xE100, 0x3042][next(5) as usize])
+                    .collect();
+                for g in [&mut slow, &mut fast] {
+                    g.target = target;
+                    g.set_page(0, base.clone());
+                    g.set_page(FONT_PAGE, font.page_image());
+                }
+                let (size, scale) = (FontSize::Large, (2, 2));
+                let y = 10;
+                put_chars_proportional_unclipped(
+                    &mut slow,
+                    &font,
+                    (x, y),
+                    &text,
+                    size,
+                    scale,
+                    0xFFFF_FFFF,
+                    Blend::Normal,
+                    1,
+                );
+                fast.put_chars_proportional(
+                    &font,
+                    (x, y),
+                    &text,
+                    size,
+                    scale,
+                    0xFFFF_FFFF,
+                    Blend::Normal,
+                    1,
+                );
+                assert!(slow.page(target) == fast.page(target), "{target} {x}");
+                let width = |g: &Graphics, text: &[u16]| {
+                    let mut widths = 0i64;
+                    for &c in text {
+                        widths += i64::from(advance(g.ink(&font, c, size), size));
+                    }
+                    (widths + text.len() as i64 - 1) * 2
+                };
+                assert_eq!(
+                    i64::from(fast.proportional_width(&font, &text, size, 2, 1)),
+                    width(&fast, &text)
+                );
+            }
+        }
+    }
+
+    /// Scales too large to draw pixel by pixel, against what each pixel
+    /// of a small clipping rectangle should show.
+    #[test]
+    fn huge_scales_land_where_the_pixels_would() {
+        let font = Font::fallback();
+        let (mut g, base) = chars_pages(&font);
+        let mut next = chars_rng();
+        const CODE: u16 = 65;
+        for _ in 0..150 {
+            let (sx, sy) = (
+                [1000, 4096, 32767][next(3) as usize],
+                [1000, 4096, 32767][next(3) as usize],
+            );
+            let clip = chars_clip(&mut next);
+            let clip = Clip::new(clip.x0, clip.y0, clip.x0 + 40, clip.y0 + 40);
+            let x = chars_pos(&mut next, clip.x0, clip.x1, 16 * sx);
+            let y = chars_pos(&mut next, clip.y0, clip.y1, 16 * sy);
+            g.clip = clip;
+            g.set_page(0, base.clone());
+            g.put_chars(
+                &font,
+                (x, y),
+                &[CODE, CODE],
+                16,
+                (sx, sy),
+                RED,
+                Blend::Normal,
+            );
+            for py in clip.y0..=clip.y1 {
+                for px in clip.x0..=clip.x1 {
+                    let gx = (i64::from(px) - i64::from(x)).div_euclid(i64::from(sx));
+                    let gy = (i64::from(py) - i64::from(y)).div_euclid(i64::from(sy));
+                    let (cell, gx) = (gx.div_euclid(16), gx.rem_euclid(16));
+                    let want = if (0..2).contains(&cell) && (0..16).contains(&gy) {
+                        let glyph = glyph_pixel_px(&font, &g, CODE, 16, gx as u32, gy as u32);
+                        multiply(glyph, RED)
+                    } else {
+                        base[index(px, py)]
+                    };
+                    assert_eq!(g.pixel(0, px, py), want, "{x},{y} {sx}x{sy} at {px},{py}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn text_off_the_page_finishes() {
+        let font = Font::fallback();
+        let (mut g, _) = chars_pages(&font);
+        let text = vec![65; 10_000_000];
+        let blanks = vec![32; 10_000_000];
+        let big = (32767, 32767);
+        g.put_chars(
+            &font,
+            (0, 0),
+            &vec![65; 100_000],
+            16,
+            (1024, 1024),
+            RED,
+            Blend::Normal,
+        );
+        g.put_chars(&font, (i32::MAX, 0), &text, 16, big, RED, Blend::Normal);
+        g.put_chars(&font, (i32::MIN, 0), &text, 16, (1, 1), RED, Blend::Normal);
+        g.put_chars(&font, (0, i32::MIN), &text, 16, big, RED, Blend::Normal);
+        let (small, large) = (FontSize::Small, FontSize::Large);
+        g.put_chars_proportional(
+            &font,
+            (0, 0),
+            &[65; 2000],
+            large,
+            big,
+            RED,
+            Blend::Normal,
+            1,
+        );
+        g.put_chars_proportional(
+            &font,
+            (i32::MAX, i32::MAX),
+            &text,
+            small,
+            big,
+            RED,
+            Blend::Normal,
+            64,
+        );
+        g.put_chars_proportional(
+            &font,
+            (i32::MIN, 0),
+            &blanks,
+            large,
+            (1, 1),
+            RED,
+            Blend::Normal,
+            0,
+        );
+        assert_eq!(
+            g.proportional_width(&font, &blanks, large, 1, 0),
+            40_000_000
+        );
+        // Too wide for an integer wraps round, as it always has.
+        assert_eq!(
+            g.proportional_width(&font, &vec![32; 1 << 20], large, 32767, 64),
+            ((68i64 * (1 << 20) - 64) * 32767) as i32
+        );
     }
 }
