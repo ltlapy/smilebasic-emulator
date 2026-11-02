@@ -127,9 +127,7 @@ impl Runtime {
                 Ok(vec![])
             }
             // The rectangle is clipped to the screen, then the characters
-            // repeat from its top left, row by row.
-            // UNVERIFIED: that this holds for a corner only a little off
-            // the screen as it does for the farthest ones.
+            // repeat from its top left, row by row at its clipped width.
             (Command::Tfill, Want::Outs(0), 6 | 7) => {
                 let t = &mut self.text[screen_id(&args[0])?];
                 let [x, y, w, h] = corners(&args[1..5])?;

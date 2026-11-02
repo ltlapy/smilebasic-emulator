@@ -96,9 +96,10 @@ follows all of it. Items still waiting for a check are marked
   an array does nothing and is no error (TEST51).
 - `LOADV` loads array files with a zero in any size and keeps the sizes:
   `[0,3]` and `[3,0]` both give `RESULT()` 1 (TEST51).
-- `FORMAT$` gives `String is too long` for too long a field, shown as
-  `String is too long (FORMAT$:2)`: 1000 decimals in `%F` work (a length
-  of 1002), 10000 do not, nor does a width of 1048576 (TEST51).
+- `FORMAT$` gives `String is too long (FORMAT$:2)` for a field of more than
+  1024 characters, whether from its width or its decimals: `%1024D` works
+  and `%1025D` does not, and of 1, `%.1000F` works (a length of 1002) and
+  `%.1023F`, which would be 1025 long, does not (TEST51, TEST52).
 - `RINGCOPY` reading past the end of its source is `Illegal function
   call`, not `Out of range` as for `COPY`.
 - `REMOVE` with a count of 0 removes nothing and is no error, also on an
@@ -316,9 +317,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `TOFS` takes X and Y left out (`TOFS 0,,,10`).
 - `SCROLL 0,0,2147483647` and `SCROLL 0,2147483647,0` clear the screen,
   as any shift of a whole screen or more does (TEST51).
-- `TFILL` clips its rectangle to the screen before the string starts:
-  `TFILL 0,MIN,MIN,MAX,MAX,"ABC"` on a 6x3 screen gives `ABCABC` on every
-  row (TEST51).
+- `TFILL` clips its rectangle to the screen before the string starts, and
+  the string runs on across rows at the clipped width: on a 6x3 screen
+  `TFILL 0,MIN,MIN,MAX,MAX,"ABC"` gives `ABCABC` on every row (TEST51), and
+  `TFILL 0,-1,-1,4,1,"ABCDEFG"` gives `ABCDE` then `FGABC` and an empty third
+  row (TEST52).
 - `TCOPY` takes rectangles of any size, down to the largest coordinates,
   and copies only what is on the screens (TEST51). `TSCREEN` of 65536
   cells a side is `Out of range` (TEST51).
@@ -682,9 +685,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   samples once stretched) swapped for a 32-sample sine plays the sine's
   one cycle and then the rest of the square on each pass, near the
   square's level (2981 to 3023 against 3063) with twice the crossings.
-- `WAVSETA` with an empty array is `Illegal function call`, but in the
-  16-bit form an omitted 8th argument comes first: `DIM A%[0]:WAVSETA
-  224,0,0,0,0,A%,69,,,28160` is `Type mismatch (WAVSETA:8)` (TEST51).
+- `WAVSETA` with an empty array is `Illegal function call`. Arguments after
+  the array can be left off the end, but one left out in between is `Type
+  mismatch` with its number, in both forms and ahead of the check for an empty
+  array: `WAVSETA 224,0,0,0,0,A%,,0,15` is `(WAVSETA:7)`, and `...,A%,69,,15`
+  and `...,A%,69,,,28160` are `(WAVSETA:8)` (TEST51, TEST52).
 - `CHKMML` gives -1 for 16 million characters of notes, and for macros
   nested six and seven levels deep that would come to 10^7 and 10^8
   characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even
@@ -784,6 +789,15 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - The message names the command for functions and commands
   (`Out of memory in 0:68(ARRAY#)`, also `(RESIZE)`, `(INSERT)` and `(COPY)`)
   but not for `*`, `+` or `DIM` (`Out of memory in 0:54`). Its number is 11.
+- Dropped strings and arrays are freed on demand. A dropped string of 100,000
+  characters stays counted in `FREEMEM` after `PRINT`, a loop, two `VSYNC`s
+  and `WAIT 60`. Making 16 million characters 20 times over, with or without
+  `VSYNC`, takes `FREEMEM` through 100662224, 67107728, 33553232 and back to
+  100662224, and never fails: what was dropped goes when the next request
+  would not fit (TEST52).
+- Open: the constant expression `"A"*(1<<24)` gave `Out of memory` when the
+  program compiled, with nearly all memory free and before any of it ran; the
+  same size through a variable works (TEST52). The rule is not known.
 - `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
   string is `Can't use empty string`, a user-defined character `Can't
   use user-defined character`.

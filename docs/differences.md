@@ -109,13 +109,17 @@ known.
   also bring them to the screen.
 - `FREEMEM` counts what strings and arrays take as SmileBASIC 4 does,
   but memory a program lets go of is free again at once. SmileBASIC 4
-  frees it later: emptying a string or an array, or leaving a DEF, does
-  not raise `FREEMEM` there straight away.
+  frees it only when a request would not fit: emptying a string or an array,
+  or leaving a DEF, does not raise `FREEMEM` there, even after `VSYNC` or
+  `WAIT`. A program would have to watch `FREEMEM` to see the difference.
+- A long string from a constant expression, such as `"A"*(1<<24)`, is made
+  when that line runs. SmileBASIC 4 gave `Out of memory` for this one when the
+  program compiled; what decides that is not known, so it is not copied.
 - `Out of memory` comes when what a program holds, counted as `FREEMEM`
   counts it, and what it asks for do not fit in SmileBASIC 4's
-  134,216,720 bytes. Values a program has dropped never count, since it is
-  not known when SmileBASIC 4 frees them or whether they ever cause the
-  error there. Each interpreter has that much to itself, as `FREEMEM` shows.
+  134,216,720 bytes. Values a program has dropped never count, which comes to
+  the same as SmileBASIC 4 freeing them when a request would not fit. Each
+  interpreter has that much to itself, as `FREEMEM` shows.
   Strings under 64 KiB are not looked at one by one: what they add up to is
   refused at the next count, a little later than SmileBASIC 4 might.
 - `LOADV` into an array only needs the file's array to fit in place of the

@@ -284,6 +284,7 @@ fn a_rectangle_is_clipped_before_tfills_string_starts() {
     .unwrap();
     assert_eq!(row(&rt, 0, 0, 6), "ABCDE.");
     assert_eq!(row(&rt, 0, 1, 6), "FGABC.");
+    assert_eq!(row(&rt, 0, 2, 6), "......");
 }
 
 #[test]
