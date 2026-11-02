@@ -168,6 +168,8 @@ known.
 - Settings > General > "Japanese explanation under errors" prints the Japanese
   line SmileBASIC 4's Japanese edition shows under each error message,
   in the English edition too.
+- Insert's overwrite setting is kept apart for the typed line and for each
+  side of the editor. SmileBASIC 4 has one for all of them.
 - `ENVLOCATE OUT X,Y`, which is not in the manual, follows the
   console's cursor while the editor is open in its own window, where
   SmileBASIC 4 would give 0,0 for the editor.

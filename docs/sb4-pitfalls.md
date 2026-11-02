@@ -329,13 +329,44 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `INPUT`'s cursor is a bar 2 pixels wide and 8 tall at the left of the
   cursor's cell, opaque white whatever `COLOR` is (`COLOR &H80FFFF00`
   over a character changes only the bar's two columns, and the rest of
-  the cell is left as it was). It alternates with nothing. The rate was
-  judged by eye only, about twice a second (TEST50).
+  the cell is left as it was). It alternates with nothing (TEST50).
 - Characters typed at `INPUT` and then deleted leave their cells empty:
   whatever the console showed there before does not come back (TEST50).
 - The text drawing's per-cell inverting flag (colour times 1 minus the
-  glyph's alpha) is not what draws `INPUT`'s cursor. What sets it is
-  still unknown.
+  glyph's alpha) is not what draws `INPUT`'s cursor (TEST50).
+
+Read from SmileBASIC 4 (version 4.4.8) and SmileBASIC 4, and not
+yet seen on hardware; TEST56 looks at each:
+
+- The line's cursor blinks by a count kept with the frame count `MAINCNT`
+  reads: 20 frames on, 20 off. It starts on, with the first period a frame
+  short, when a line starts, and again at each key that moves or edits. A
+  move that cannot move does not restart it, nor does Insert or `LOCATE`.
+- Insert toggles overwriting on any typed line (it reaches a program's
+  `INKEY$` as `CHR$(&H1A)`). The setting is one the editor shares and it
+  outlives the line. While it is on, the cursor is a block over the whole
+  cell, not a bar a quarter of it (a right shift by two of the cell size).
+- The cursor's scale and turn are the text's, `TSCALE` and `LMATRIX`
+  included. It is drawn right after its own screen's cells, replacing what
+  its layer holds, alpha too. As a layer's alpha is what shows through, it
+  then adds its white to the frame rather than covering it: under a dim
+  `LAYER` colour it is added, not mixed, and in mode 3 it brightens.
+- A selection is Shift with a move, for as long as moves come with Shift. The
+  selected characters are written with attribute bit 7 and the console's
+  colour. Enter does not draw the line again, so they stay that way on the
+  console. Typing over one in overwrite mode writes the character and moves
+  on first, then deletes the selection: one made rightwards takes the
+  character with it, and one made leftwards keeps it.
+- Attribute bit 7 (bit 23 of a value from `TARRAY`, `TSAVE` or for `TLOAD`)
+  inverts the cell: its colour is multiplied by 1 minus the glyph's alpha, and
+  then, as for any text, by `TCOLOR` and the colour by the resulting alpha, so
+  the light is left with the square of it. The glyph's own colour plays no
+  part. A space is a block, and so is an empty cell, which draws only with
+  this bit. On a font type above 16, what is not a user-defined character
+  takes its alpha from the corner of the font page.
+- `ATTR`, `TPUT` and `TFILL` refuse the bit. `TLOAD`, `TUPDATE` and `TCOPY`
+  move cells raw, so all 16 attribute bits stay and come back from `TSAVE`,
+  `TARRAY` and `CHKCHR`'s `OUT`; only bits 0 to 3 and 7 do anything.
 
 ## Sprites
 
