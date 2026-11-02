@@ -510,7 +510,18 @@ fn format(args: &[Value]) -> Result<Value> {
                     'D' => i64::from(value.to_int()?).unsigned_abs().to_string(),
                     'X' => format!("{:X}", value.to_int()? as u32),
                     'B' => format!("{:b}", value.to_int()? as u32),
-                    _ => fixed(value.to_real()?.abs(), precision.unwrap_or(6)),
+                    _ => {
+                        let digits = precision.unwrap_or(6);
+                        // UNVERIFIED: SmileBASIC 4's own limit, if any, and
+                        // that it is this error.
+                        if digits > MAX_DECIMALS {
+                            return Err(Error::with_detail(
+                                ErrorKind::IllegalFormat,
+                                format!("{digits} decimals"),
+                            ));
+                        }
+                        fixed(value.to_real()?.abs(), digits)
+                    }
                 };
                 let sign = match (c, negative) {
                     ('X' | 'B', _) => "",
@@ -537,6 +548,10 @@ fn format(args: &[Value]) -> Result<Value> {
     }
     Ok(string(out))
 }
+
+/// The most decimals `%F` gives, which is as many as Rust's formatting
+/// takes.
+const MAX_DECIMALS: usize = u16::MAX as usize;
 
 /// `x` with `digits` decimals, rounded to the nearest; a value exactly
 /// half way goes toward zero, as on hardware (`%.0F` of 2.5 and 3.5 gave
@@ -1041,5 +1056,19 @@ mod tests {
         let text = s("AB");
         call("PUSH", &[text.clone(), s("C")]).unwrap();
         assert_eq!(as_string(text), "ABC");
+    }
+
+    #[test]
+    fn format_with_too_many_decimals_is_an_error() {
+        let format = |f: &str| call("FORMAT$", &[s(f), Value::Real(1.5)]);
+        let digits = |f: &str| as_string(format(f).unwrap()).len();
+        assert_eq!(digits("%.1100F"), 1102);
+        assert_eq!(digits("%.1200F"), 1202);
+        assert_eq!(digits("%.65535F"), 65537);
+        for f in ["%.65536F", "%.99999F", "%.18446744073709551615F"] {
+            let e = format(f).unwrap_err();
+            assert_eq!(e.kind, ErrorKind::IllegalFormat, "{f}");
+            assert!(e.detail.is_some(), "{f}");
+        }
     }
 }

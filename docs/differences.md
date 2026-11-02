@@ -110,6 +110,8 @@ known.
   not raise `FREEMEM` there straight away.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
+- `FORMAT$` with more than 65,535 decimals in `%F` gives `Illegal format`.
+  What SmileBASIC 4 does with so many has not been checked.
 - `GSAVE` and `GLOAD` with a rectangle of more pixels than SmileBASIC
   4's memory could hold give `Out of range` rather than running out of
   memory.
