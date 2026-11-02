@@ -605,7 +605,7 @@ fn the_sub_interpreter_has_a_memory_budget_of_its_own() {
 /// Both forms give no error on hardware, and start the file here.
 #[test]
 fn subrun_takes_lower_case_and_a_file_type() {
-    let dir = TempDir::new("forms");
+    let dir = TempDir::new("cases");
     let mut m = machine(&dir, "WHILE 1:VSYNC:WEND\n");
     for form in ["sub", "TXT:SUB", "txt:sub"] {
         enter(&mut m, &format!("subrun \"{form}\""));
