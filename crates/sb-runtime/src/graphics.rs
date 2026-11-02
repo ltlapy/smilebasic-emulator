@@ -837,12 +837,11 @@ impl Graphics {
     }
 
     /// GSAVE: a rectangle of a page, row by row.
-    pub fn save_rect(&self, page: usize, (x, y, w, h): (i32, i32, i32, i32)) -> Vec<u32> {
-        let mut pixels = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
-        for py in y..y + h {
-            for px in x..x + w {
-                pixels.push(self.read(page, px, py));
-            }
+    pub fn save_rect(&self, page: usize, rect: (i32, i32, i32, i32)) -> Vec<u32> {
+        let (w, h) = (rect.2.max(0) as usize, rect.3.max(0) as usize);
+        let mut pixels = vec![0; w * h];
+        for (col, row, x, y) in on_page(rect) {
+            pixels[row * w + col] = self.read(page, x, y);
         }
         pixels
     }
@@ -868,14 +867,17 @@ impl Graphics {
     /// the page as it is.
     pub fn load_rect(
         &mut self,
-        (x, y, w, _h): (i32, i32, i32, i32),
+        (x, y, w, h): (i32, i32, i32, i32),
         pixels: &[u32],
         palette: Option<&[u32]>,
         tint: Option<u32>,
         blend: Blend,
     ) {
-        for (i, &p) in pixels.iter().enumerate() {
-            let (px, py) = (x + i as i32 % w, y + i as i32 / w);
+        let w = w.max(0) as usize;
+        for (col, row, px, py) in on_page((x, y, w as i32, h)) {
+            let Some(&p) = pixels.get(row * w + col) else {
+                break;
+            };
             let p = match palette {
                 None => p,
                 Some(colors) => match colors.get(p as usize) {
@@ -887,6 +889,29 @@ impl Graphics {
             self.plot(px, py, p, blend);
         }
     }
+}
+
+/// The pixels of an X,Y,width,height rectangle that lie on the page, row
+/// by row, as the column and row within the rectangle and the place on
+/// the page; the rest of a rectangle far larger than the page costs
+/// nothing.
+fn on_page((x, y, w, h): (i32, i32, i32, i32)) -> impl Iterator<Item = (usize, usize, i32, i32)> {
+    let size = i64::from(GRP_SIZE);
+    let span = |from: i32, len: i32| {
+        let from = i64::from(from);
+        (from.max(0), (from + i64::from(len.max(0))).min(size), from)
+    };
+    let ((x0, x1, left), (y0, y1, top)) = (span(x, w), span(y, h));
+    (y0..y1).flat_map(move |py| {
+        (x0..x1).map(move |px| {
+            (
+                (px - left) as usize,
+                (py - top) as usize,
+                px as i32,
+                py as i32,
+            )
+        })
+    })
 }
 
 /// The pixels of the circle of radius `r` around `(cx, cy)` that lie on

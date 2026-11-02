@@ -177,6 +177,37 @@ fn gsave_takes_rows_wider_than_the_page() {
 }
 
 #[test]
+fn gsave_and_gload_take_any_size() {
+    // TEST48 parts 9-20: no limit but memory; GSAVE reads 0 off the
+    // page, GLOAD drops what falls off it, and an empty rectangle is no
+    // error.
+    for (w, h, len) in [
+        (4097, 1, 4097),
+        (8192, 1, 8192),
+        (2048, 2049, 4196352),
+        (1, 4097, 4097),
+    ] {
+        let (_, out) = run(&format!(
+            "GCLS &HFF102030:DIM A%[0]:GSAVE 0,0,0,{w},{h},A%:?LEN(A%);\" \";HEX$(A%[0],8);\" \";HEX$(A%[LEN(A%)-1],8)"
+        ));
+        assert_eq!(out, format!("{len} FF102030 00000000"), "{w},{h}");
+        let (_, out) = run(&format!(
+            "GCLS &HFF102030:DIM A%[{w}*{h}]:FILL A%,&HFF405060:GLOAD 0,0,{w},{h},A%,0\n\
+             ?HEX$(GPGET(0,0),8);\" \";HEX$(GPGET(MIN({w},2048)-1,MIN({h},2048)-1),8)"
+        ));
+        assert_eq!(out, "FF405060 FF405060", "{w},{h}");
+    }
+    let (_, out) = run("DIM A%[0]:GSAVE 0,0,0,0,1,A%:GSAVE 0,0,0,1,0,A%:?LEN(A%)");
+    assert_eq!(out, "0");
+    let (_, out) =
+        run("GCLS &HFF102030:DIM A%[1]:GLOAD 0,0,0,1,A%,0:GLOAD 0,0,1,0,A%,0:?HEX$(GPGET(0,0))");
+    assert_eq!(out, "FF102030");
+    // More pixels than memory holds.
+    let (_, out) = run("DIM A%[0]:GSAVE 0,0,0,100000,100000,A%");
+    assert!(out.starts_with("Out of range"), "{out}");
+}
+
+#[test]
 fn proportional_widths() {
     // The blank test font has blank characters only, a quarter of the
     // font size wide; the spacing comes between them and scales.

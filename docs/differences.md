@@ -95,6 +95,9 @@ Without them:
   not raise `FREEMEM` there straight away.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
+- `GSAVE` and `GLOAD` with a rectangle of more pixels than SmileBASIC
+  4's memory could hold give `Out of range` rather than running out of
+  memory.
 - File commands ask, notify or stay silent as set in Settings, rather
   than always asking. A file command that fails in a program shows a
   notice, rather than a dialog to close, unless file access is silent.

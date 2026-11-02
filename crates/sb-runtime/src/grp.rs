@@ -91,15 +91,20 @@ pub(crate) fn array_colors(array: &ArrayRef, n: usize) -> Result<Vec<u32>> {
     })
 }
 
-/// A rectangle given as X,Y,width,height. It may reach off the page
-/// (checked on hardware: GSAVE reads 0 there) and be wider than it, but
-/// not be empty.
-// UNVERIFIED: the limits on width and height (taken as TSAVE's 4096).
+/// The most pixels a GSAVE or GLOAD rectangle may have: as many 4-byte
+/// elements as SmileBASIC 4's memory holds.
+const MOST_PIXELS: i64 = sb_core::memory::TOTAL as i64 / 4;
+
+/// A rectangle given as X,Y,width,height. It may reach off the page, be
+/// wider and taller than it, and be empty (GSAVE reads 0 off the page,
+/// GLOAD drops what falls off it).
+// UNVERIFIED: a negative width or height is Out of range, and so is a
+// rectangle with more pixels than memory holds, standing in for SmileBASIC
+// 4's Out of memory.
 fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
     let (x, y, w, h) = (v[0], v[1], v[2], v[3]);
-    let fits = |len: i32| (1..=2 * GRP_SIZE).contains(&len);
-    if fits(w) && fits(h) {
+    if w >= 0 && h >= 0 && i64::from(w) * i64::from(h) <= MOST_PIXELS {
         Ok((x, y, w, h))
     } else {
         Err(Error::with_detail(
@@ -342,7 +347,7 @@ impl Runtime {
                     (4, true) => (blend_arg(&rest[3])?, Some(color_arg(&rest[2])?)),
                     _ => return Err(illegal()),
                 };
-                let n = (rect.2 * rect.3) as usize;
+                let n = (i64::from(rect.2) * i64::from(rect.3)) as usize;
                 let pixels = array_colors(&numeric_array(&rest[0])?, n)?;
                 // Indexes past the palette are no error (checked on
                 // hardware).
