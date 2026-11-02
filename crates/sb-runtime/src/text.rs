@@ -91,13 +91,6 @@ impl Cell {
         ]
     }
 
-    /// Whether it draws anything, depending on the character. An empty
-    /// cell does not, unless inverted.
-    #[inline]
-    fn shows(self) -> bool {
-        self.code != 0 || self.attr & attr::INVERT != 0
-    }
-
     pub fn from_ints([code, color]: [i32; 2]) -> Cell {
         Cell {
             code: code as u16,
@@ -155,6 +148,10 @@ pub struct TextScreen {
     /// TBLEND 1: additive.
     pub add: bool,
     pub layer: i32,
+    /// A cell may be inverted, which even an empty one shows. Few programs
+    /// ever have one, so the others are spared looking at each cell's
+    /// attribute to see what to skip.
+    may_invert: bool,
     /// TARRAY's array, kept up to date with every cell written.
     array: Option<ArrayRef>,
     /// TANIM's animations, by [`anim::Target`].
@@ -193,6 +190,7 @@ impl TextScreen {
             tint: WHITE,
             add: false,
             layer: 0,
+            may_invert: false,
             array: None,
             anims: Default::default(),
             anim_stopped: false,
@@ -236,6 +234,7 @@ impl TextScreen {
         (self.font_type, self.char_size) = (font_type, char_size);
         (self.width, self.height) = (width, height);
         self.cells = vec![EMPTY; (width * height) as usize];
+        self.may_invert = false;
         self.cells_changed = true;
         self.cursor = (0, 0);
         // TARRAY's array takes the new size and goes on following the
@@ -275,6 +274,7 @@ impl TextScreen {
     }
 
     fn set(&mut self, i: usize, cell: Cell) {
+        self.may_invert |= cell.attr & attr::INVERT != 0;
         self.cells_changed |= self.cells[i] != cell;
         self.cells[i] = cell;
         if let Some(array) = &self.array
@@ -354,7 +354,9 @@ impl TextScreen {
         for cy in y.max(0)..(y + h).min(self.height as i32) {
             for cx in x.max(0)..(x + w).min(self.width as i32) {
                 let i = (cy as u32 * self.width + cx as u32) as usize;
-                self.cells[i] = Cell::from_ints([v[i * 2], v[i * 2 + 1]]);
+                let cell = Cell::from_ints([v[i * 2], v[i * 2 + 1]]);
+                self.may_invert |= cell.attr & attr::INVERT != 0;
+                self.cells[i] = cell;
             }
         }
         self.cells_changed = true;
@@ -595,7 +597,7 @@ impl TextScreen {
             return;
         }
         let cs = self.char_size;
-        if cursor.is_none() && !self.cells.iter().any(|c| c.shows()) {
+        if cursor.is_none() && !self.may_invert && self.cells.iter().all(|c| c.code == 0) {
             return;
         }
         let place = Placement {
@@ -643,7 +645,7 @@ impl TextScreen {
             for cx in 0..self.width {
                 let cell = self.cell(cx, cy);
                 // Empty cells show nothing, so need no drawing.
-                if !cell.shows() {
+                if cell.code == 0 && (!self.may_invert || cell.attr & attr::INVERT == 0) {
                     continue;
                 }
                 paints.clear();
@@ -777,6 +779,7 @@ impl TextScreen {
         let mut paints: Vec<Mixed> = Vec::new();
         let mut made: HashMap<(u16, u32), usize> = HashMap::new();
         let mut made_inverted: HashMap<(u16, u32), usize> = HashMap::new();
+        let may_invert = self.may_invert;
         // Per cell of the row, if it shows anything: its picks and where
         // its character is in `glyphs`.
         let mut shown = vec![None; self.width as usize];
@@ -789,7 +792,8 @@ impl TextScreen {
                 row_of = Some(cy);
                 for cx in 0..self.width {
                     let cell = self.cell(cx, cy);
-                    shown[cx as usize] = cell.shows().then(|| {
+                    let shows = cell.code != 0 || (may_invert && cell.attr & attr::INVERT != 0);
+                    shown[cx as usize] = shows.then(|| {
                         let key = (cell.code, cell.color);
                         let made = match cell.attr & attr::INVERT {
                             0 => &mut made,
