@@ -617,6 +617,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   same size does.
 - `LCLIP` at `XSCREEN`'s sample 2 takes whole fine pixels: frame pixels
   `2*x0` to `2*x1+1`.
+- `XSCREEN`'s composite modes all fill as much of the display as fits, at
+  the aspect ratio, with black bars and no `BACKCOLOR` in them: 1000x600 in
+  mode 2 fills 1200x720 with uneven pixels, not 1000x600 at whole factors.
+  Mode 0 is bilinear and mode 2 nearest. Mode 1 mixes the two nearest
+  texels by `clamp(2*fract(s-.5)-.5, 0, 1)` along each axis at any scale
+  (s in texels), so a checkerboard at 3x reads 0, 42, 212, 255, 212, 42
+  (TEST55). That equals bilinear from a copy at twice the size, which is why
+  mode 0 at sample 2 looks the same as mode 1 at sample 1.
 - At equal Z text screens are behind sprites, and among either the higher
   number is behind, `#GSPRITE` among the sprites as 4095 (TEST50).
 

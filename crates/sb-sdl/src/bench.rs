@@ -17,6 +17,8 @@
 //! - `menu`, `help`, `about`, `colors`, `toast`: shows the menu bar (as
 //!   F8 does), the help beside the editor, the About dialog, the editor
 //!   colors window, or a notice, once the rest is set up;
+//! - `cpu-smart`: scales XSCREEN's mode 1 on the CPU, the fallback for a
+//!   renderer that cannot make the texture the GPU route needs;
 //! - `slow=MS`: from when the timing begins, makes each present of the
 //!   main window that waits for vsync take MS milliseconds more, as a
 //!   compositor that throttles a covered window does (SDL's Wayland
@@ -81,6 +83,8 @@ pub struct Bench {
     /// Added to each present that waits for vsync.
     slow: Duration,
     occluded: bool,
+    /// Whether XSCREEN's mode 1 is scaled on the CPU.
+    pub cpu_smart: bool,
     /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
     extras: Vec<String>,
     /// Frames since the start.
@@ -122,6 +126,7 @@ impl Bench {
                     "apart" => bench.apart = true,
                     "panel" => bench.panel = true,
                     "occluded" => bench.occluded = true,
+                    "cpu-smart" => bench.cpu_smart = true,
                     "menu" | "help" | "about" | "colors" | "toast" => {
                         bench.extras.push(part.to_string())
                     }

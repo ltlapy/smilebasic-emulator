@@ -32,6 +32,7 @@ pub mod runtime;
 pub mod sbfile;
 pub mod screen;
 pub mod settings;
+pub mod smart_scale;
 mod snd;
 pub mod sound;
 mod sp;

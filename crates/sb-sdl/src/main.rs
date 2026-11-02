@@ -72,7 +72,7 @@ use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
-use sdl3::render::{BlendMode, Canvas, FRect, Texture, TextureCreator};
+use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator};
 use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
 use sdl3::sys::render::{SDL_SetDefaultTextureScaleMode, SDL_SetTextureBlendMode};
 use sdl3::sys::surface::SDL_ScaleMode;
@@ -270,6 +270,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // one; and the same for the editor's window.
     let mut texture_holds = None;
     let mut editor_holds = None;
+    let mut smart = SmartFrame::default();
     // The screens in the debugger's panel, drawn at the window's
     // resolution, with their size and filter.
     let mut panel_screens: Option<(Texture, TextureKind)> = None;
@@ -436,7 +437,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let (out_w, out_h) = canvas.output_size()?;
         let (win_w, _) = canvas.window().size();
         let display = display_rect(display_w, display_h, out_w, out_h);
-        let shown = screen_rect(&mode, filter, out_w, display.h);
+        let shown = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
             display,
@@ -451,12 +452,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 let (win_w, _) = editor_canvas.window().size();
                 let display = display_rect(display_w, display_h, out_w, out_h);
                 let mode = machine.editor_mode();
-                let filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
                 Mapping {
                     px: out_w as f32 / win_w.max(1) as f32,
                     display,
                     display_w,
-                    shown: screen_rect(&mode, filter, out_w, display.h),
+                    shown: screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h),
                     space: editor_space,
                 }
             }
@@ -1833,7 +1833,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         mode = machine.screen_mode();
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
-        let rect = screen_rect(&mode, filter, out_w, display.h);
+        let rect = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
         let editing = machine.is_editing() && !machine.is_detached();
         // The editor's frame, and the screens', stay as they are while
         // their revision does.
@@ -1852,13 +1852,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             false => machine.screen_frame(),
         };
         let frame = (fb.width(), fb.height());
+        // XSCREEN's mode 1 starts from a frame that stays sharp.
+        let smart_frame = !editing && filter == Filter::SmartNearest;
         // The editor's frame can be finer than the screen it is shown in.
         let kind = if editing {
             pointer_space = frame;
             (frame, editor_filter(rect, frame, filter))
         } else {
             pointer_space = (mode.width, mode.height);
-            (frame, filter)
+            (frame, if smart_frame { Filter::Nearest } else { filter })
         };
         if kind != texture_kind {
             texture_kind = kind;
@@ -1868,6 +1870,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         if Some(revision) != texture_holds {
             bench::uploaded(fb.pixels().len() * 4);
             texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+        }
+        if smart_frame {
+            let cpu = bench.as_ref().is_some_and(|b| b.cpu_smart);
+            let changed = Some(revision) != texture_holds;
+            smart.prepare(
+                &mut canvas,
+                &texture_creator,
+                &texture,
+                fb,
+                rect,
+                changed,
+                cpu,
+            )?;
+        } else {
+            smart.release();
         }
         texture_holds = Some(revision);
         lap!(Screen);
@@ -1880,7 +1897,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let display = display_rect(display_w, display_h, out_w, out_h);
             let mode = machine.editor_mode();
             let filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
-            let rect = screen_rect(&mode, filter, out_w, display.h);
+            let rect = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
             machine.render_editor();
             let revision = Some(machine.editor_revision());
             let fb = machine.editor_frame();
@@ -1954,7 +1971,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         lap!(Gather);
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        canvas.copy(&texture, None, rect)?;
+        canvas.copy(smart.texture().unwrap_or(&texture), None, rect)?;
         // The subprogram's screen goes where XSUBSCREEN puts it on the
         // 1280x720 display, over the editor too.
         if let Some((fb, [x, y, w, h])) = machine.sub_screen() {
@@ -3230,16 +3247,107 @@ fn frame_texture<'a>(
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
 }
 
+/// XSCREEN's composite mode 1 on its way to the window. Its mix between
+/// texels is what bilinear sampling gives from a copy of the frame twice as
+/// large made with nearest, which any renderer can do with no shader of
+/// ours: a draw into a texture when the frame changes, and one out. Where
+/// that texture cannot be made, as past an old GPU's largest size, the
+/// frame is scaled on the CPU instead.
+#[derive(Default)]
+struct SmartFrame<'a> {
+    /// The frame at twice its size, and that size.
+    doubled: Option<(Texture<'a>, (u32, u32))>,
+    /// The frame scaled to the window on the CPU, and that size.
+    scaled: Option<(Texture<'a>, (u32, u32))>,
+    scale: sb_runtime::smart_scale::SmartScale,
+    pixels: Vec<u32>,
+    /// Sizes the renderer has refused for the doubled frame.
+    refused: Option<(u32, u32)>,
+}
+
+impl<'a> SmartFrame<'a> {
+    /// Gets the frame `fb`, which `texture` holds, ready to show in `rect`.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare(
+        &mut self,
+        canvas: &mut Canvas<Window>,
+        creator: &'a TextureCreator<WindowContext>,
+        texture: &Texture,
+        fb: &Framebuffer,
+        rect: FRect,
+        changed: bool,
+        cpu: bool,
+    ) -> Result<(), AnyError> {
+        let size = (fb.width() * 2, fb.height() * 2);
+        if !cpu && self.refused != Some(size) {
+            let mut fresh = false;
+            if self.doubled.as_ref().is_none_or(|(_, s)| *s != size) {
+                self.doubled = None;
+                match creator.create_texture_target(PixelFormat::ARGB8888, size.0, size.1) {
+                    Ok(mut made) => {
+                        made.set_scale_mode(ScaleMode::Linear);
+                        made.set_blend_mode(BlendMode::None);
+                        self.doubled = Some((made, size));
+                        fresh = true;
+                    }
+                    Err(_) => self.refused = Some(size),
+                }
+            }
+            if let Some((target, _)) = &mut self.doubled {
+                self.scaled = None;
+                if changed || fresh {
+                    let mut drawn = Ok(());
+                    canvas.with_texture_canvas(target, |c| drawn = c.copy(texture, None, None))?;
+                    drawn?;
+                }
+                return Ok(());
+            }
+        }
+        // As SDL rounds the rectangle, so as to fill it with one texel a pixel.
+        let shown = (rect.w.ceil().max(1.0) as u32, rect.h.ceil().max(1.0) as u32);
+        let fresh = self.scaled.as_ref().is_none_or(|(_, s)| *s != shown);
+        if fresh {
+            let mut made =
+                creator.create_texture_streaming(PixelFormat::ARGB8888, shown.0, shown.1)?;
+            made.set_scale_mode(ScaleMode::Nearest);
+            self.scaled = Some((made, shown));
+            self.pixels.resize((shown.0 * shown.1) as usize, 0);
+        }
+        if let Some((tex, _)) = &mut self.scaled
+            && (changed || fresh)
+        {
+            let from = (fb.width(), fb.height());
+            self.scale.scale(fb.pixels(), from, &mut self.pixels, shown);
+            bench::uploaded(self.pixels.len() * 4);
+            tex.update(None, as_bytes(&self.pixels), (shown.0 * 4) as usize)?;
+        }
+        Ok(())
+    }
+
+    /// The texture to show, once [`SmartFrame::prepare`] has run this frame.
+    fn texture(&self) -> Option<&Texture<'a>> {
+        let doubled = self.doubled.as_ref().map(|(t, _)| t);
+        doubled.or(self.scaled.as_ref().map(|(t, _)| t))
+    }
+
+    /// Frees what a frame shown another way has no use for.
+    fn release(&mut self) {
+        (self.doubled, self.scaled) = (None, None);
+        self.pixels = Vec::new();
+    }
+}
+
 /// Where the screen goes in a window `out_w` pixels wide whose display
 /// is `out_h` high: centered in the display, at XSCREEN's aspect ratio,
-/// and scaled to fit, by a whole factor when the filter is nearest
-/// neighbor.
-fn screen_rect(mode: &ScreenMode, filter: Filter, out_w: u32, out_h: f32) -> FRect {
+/// and scaled to fit, in every composite mode. The sharp choice in the
+/// Options menu, `screen_filter`'s own Nearest, keeps to whole factors,
+/// which SmileBASIC 4 does not do.
+fn screen_rect(mode: &ScreenMode, screen_filter: Option<Filter>, out_w: u32, out_h: f32) -> FRect {
     let height = mode.height as f32;
     let width = height * mode.aspect() as f32;
     let fit = (out_w as f32 / width).min(out_h / height);
-    let scale = match filter {
-        Filter::Nearest => fit.floor().max(1.0),
+    let scale = match screen_filter {
+        Some(Filter::Nearest) => fit.floor().max(1.0),
         _ => fit,
     };
     let (w, h) = (width * scale, height * scale);
@@ -3362,6 +3470,27 @@ fn as_bytes(pixels: &[u32]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_screen_fits_the_display_in_every_mode() {
+        let mode = |width, height, aspect| ScreenMode {
+            aspect,
+            ..ScreenMode::new(width, height)
+        };
+        let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
+        let show = |m: &ScreenMode| box_of(screen_rect(m, None, 1280, 720.0));
+        assert_eq!(show(&mode(400, 240, None)), (40.0, 0.0, 1200.0, 720.0));
+        assert_eq!(show(&mode(1000, 600, None)), (40.0, 0.0, 1200.0, 720.0));
+        assert_eq!(show(&mode(400, 240, Some(1.0))), (280.0, 0.0, 720.0, 720.0));
+        // At other window sizes too.
+        let tall = box_of(screen_rect(&mode(400, 240, None), None, 800, 900.0));
+        assert_eq!(tall, (0.0, 210.0, 800.0, 480.0));
+        // The menu's sharp choice keeps to whole factors.
+        let sharp = screen_rect(&mode(1000, 600, None), Some(Filter::Nearest), 1280, 720.0);
+        assert_eq!(box_of(sharp), (140.0, 60.0, 1000.0, 600.0));
+        let sharp = screen_rect(&mode(400, 240, None), Some(Filter::Bilinear), 1000, 720.0);
+        assert_eq!(box_of(sharp), (0.0, 60.0, 1000.0, 600.0));
+    }
+
     use super::*;
 
     fn console_rows(m: &Machine) -> Vec<String> {

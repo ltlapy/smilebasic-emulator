@@ -276,3 +276,14 @@ instructions a frame, so that they come out the same each time.
 When drawing a frame takes longer than a frame, the window skips
 drawing up to three frames while the program and its sound go on, so
 that games and their music keep time.
+
+## Filters and display scaling
+
+- A filter's result goes to 8 bits before the layer's colour is multiplied
+  in. SmileBASIC 4 apply both in one draw, with one
+  rounding, so a tinted, filtered layer can be 1 off.
+- `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame and
+  a subprogram's screen use SDL's pixel art filter.
+- The Options menu's sharp screen filter scales by whole factors, which no
+  `XSCREEN` mode does. It is the default; following `XSCREEN` is another of
+  its choices.

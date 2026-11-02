@@ -211,13 +211,21 @@ moved again by `Placement::texel_tie`.
   `ARGB8888` streaming texture per (frame size, filter). Before
   creating it, it sets the renderer's default scale mode:
   - XSCREEN mode 0 is `SDL_SCALEMODE_LINEAR`;
-  - mode 1 is `SDL_SCALEMODE_PIXELART`. The Rust bindings lack a
-    per-texture call for it, hence `SDL_SetDefaultTextureScaleMode`;
+  - mode 1 goes through `SmartFrame`: a nearest texture is drawn, when the
+    frame changes, into a target texture twice its size, which is shown
+    with `SDL_SCALEMODE_LINEAR`. That sum is exactly SmileBASIC 4's, with
+    no shader. `smart_scale` does the same on the CPU, the reference for
+    tests and the fallback if the target cannot be made (`SB_UI_BENCH`'s
+    `cpu-smart` forces it);
+  - the editor's frame and the sub screen in mode 1 still use
+    `SDL_SCALEMODE_PIXELART`. The Rust bindings lack a per-texture call for
+    it, hence `SDL_SetDefaultTextureScaleMode`;
   - mode 2 is `SDL_SCALEMODE_NEAREST`.
 
   The whole frame is uploaded with `Texture::update` only when
   `screen_revision` moves: 3.5 MiB at 1280x720. `screen_rect` scales it
-  to the display at the aspect ratio, by whole factors when nearest.
+  to fit the display at the aspect ratio, by whole factors only under the
+  menu's sharp choice.
   `canvas.copy` draws it.
 - **Sub interpreter screen.** `Machine::sub_screen` is a premultiplied
   frame in its own texture with `SDL_BLENDMODE_BLEND_PREMULTIPLIED`,
@@ -417,9 +425,10 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 | Rule | Where | Status |
 |---|---|---|
-| Mode 0 bilinear, mode 2 nearest | `frame_texture` | C: manual (names only) |
-| Mode 1 "smart nearest neighbour" mapped to SDL's `PIXELART` scale mode | `frame_texture` | **U (R23)** |
-| Aspect ratio other than width/height: non-square pixels, letterboxed | `screen_rect` | **U (R23)** |
+| Mode 0 bilinear, mode 2 nearest; BACKCOLOR not in the side bars (black) | `frame_texture` | C (R23): TEST55, window captures identical over the whole frame |
+| Mode 1: `t = clamp(2*fract(s-.5)-.5, 0, 1)` per axis at every scale, by bilinear from a nearest copy twice the size, or on the CPU | `SmartFrame`, `smart_scale` | C (R23): SmileBASIC 4; TEST55 parts 2, 6, window captures within 1 |
+| All modes fill the fit rectangle, not whole factors (the menu's sharp choice keeps to whole factors) | `screen_rect` | C (R23): TEST55 parts 3, 4, 5 |
+| Aspect ratio other than width/height: non-square pixels, letterboxed | `screen_rect` | C (R23): TEST55 part 4 |
 
 ### 2.9 GRP drawing primitives (raster rules)
 
