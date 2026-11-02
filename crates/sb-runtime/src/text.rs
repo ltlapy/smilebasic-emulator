@@ -57,9 +57,11 @@ const USER_GRID: i32 = 64;
 
 /// ATTR bits of a character.
 pub mod attr {
-    pub const ROTATION: u8 = 0b11;
-    pub const REVH: u8 = 0b100;
-    pub const REVV: u8 = 0b1000;
+    pub const ROTATION: u16 = 0b11;
+    pub const REVH: u16 = 0b100;
+    pub const REVV: u16 = 0b1000;
+    /// Not ATTR's: the cell is filled with its color, less the glyph.
+    pub const INVERT: u16 = 0x80;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,8 +69,10 @@ pub struct Cell {
     /// 0 is an empty cell.
     pub code: u16,
     pub color: u32,
-    /// ATTR: quarter turns and flips.
-    pub attr: u8,
+    /// ATTR, quarter turns and flips, and [`attr::INVERT`]. TLOAD and
+    /// TUPDATE store all 16 bits, which is what TSAVE and CHKCHR read;
+    /// only these do anything.
+    pub attr: u16,
 }
 
 const EMPTY: Cell = Cell {
@@ -87,11 +91,18 @@ impl Cell {
         ]
     }
 
+    /// Whether it draws anything, depending on the character. An empty
+    /// cell does not, unless inverted.
+    #[inline]
+    fn shows(self) -> bool {
+        self.code != 0 || self.attr & attr::INVERT != 0
+    }
+
     pub fn from_ints([code, color]: [i32; 2]) -> Cell {
         Cell {
             code: code as u16,
             color: color as u32,
-            attr: (code >> 16) as u8 & 0xF,
+            attr: (code >> 16) as u16,
         }
     }
 }
@@ -127,7 +138,7 @@ pub struct TextScreen {
     cursor: (u32, u32),
     color: u32,
     /// ATTR for characters written from now on.
-    pub attr: u8,
+    pub attr: u16,
     /// TPAGE: where user-defined characters come from.
     pub page: i32,
     pub page_origin: (i32, i32),
@@ -584,7 +595,7 @@ impl TextScreen {
             return;
         }
         let cs = self.char_size;
-        if cursor.is_none() && self.cells.iter().all(|c| c.code == 0) {
+        if cursor.is_none() && !self.cells.iter().any(|c| c.shows()) {
             return;
         }
         let place = Placement {
@@ -632,7 +643,7 @@ impl TextScreen {
             for cx in 0..self.width {
                 let cell = self.cell(cx, cy);
                 // Empty cells show nothing, so need no drawing.
-                if cell.code == 0 {
+                if !cell.shows() {
                     continue;
                 }
                 paints.clear();
@@ -684,7 +695,9 @@ impl TextScreen {
         paints: &mut Vec<Mixed>,
     ) {
         let ft = self.font_type;
+        let inverted = cell.attr & attr::INVERT != 0;
         let mut color = |p: u32| {
+            let p = if inverted { inverted_texel(p) } else { p };
             let paint = Mixed::new(p, cell.color, self.tint, self.add);
             glyph_paint(paint, paints)
         };
@@ -701,7 +714,9 @@ impl TextScreen {
             _ => None,
         };
         match (cell.code, size) {
-            (0, _) => fill(&|_, _| 0),
+            // An inverted one shows SmileBASIC 4's font.map entry for it,
+            // which the bundled font lacks.
+            (0, _) if !inverted || !font.is_smilebasic() => fill(&|_, _| 0),
             (code, _) if USER_CHARS.contains(&code) => {
                 fill(&|x, y| self.glyph_pixel(font, grp, code, x, y))
             }
@@ -711,7 +726,9 @@ impl TextScreen {
                 }
                 None => fill(&|x, y| font.pixel(code, size, x, y)),
             },
-            // Larger font types show only user-defined characters.
+            // Larger font types show only user-defined characters, and
+            // the font page's corner to what is inverted.
+            (_, None) if inverted => fill(&|x, y| grp.pixel(FONT_PAGE, x as i32, y as i32)),
             (_, None) => fill(&|_, _| 0),
         }
     }
@@ -739,7 +756,7 @@ impl TextScreen {
         let cols: Vec<(u32, [u32; 3])> = grid.xs.iter().map(|&x| axis(x, tx)).collect();
         // Which of those each glyph coordinate comes from, by ATTR: the
         // column's (false) or the row's (true) table, and which entry.
-        let pick = |a: u8| -> ((bool, usize), (bool, usize)) {
+        let pick = |a: u16| -> ((bool, usize), (bool, usize)) {
             let (mut p, mut q) = match a & attr::ROTATION {
                 0 => ((false, 0), (true, 0)),
                 1 => ((true, 0), (false, 1)),
@@ -759,6 +776,7 @@ impl TextScreen {
         let mut glyphs: Vec<u32> = Vec::new();
         let mut paints: Vec<Mixed> = Vec::new();
         let mut made: HashMap<(u16, u32), usize> = HashMap::new();
+        let mut made_inverted: HashMap<(u16, u32), usize> = HashMap::new();
         // Per cell of the row, if it shows anything: its picks and where
         // its character is in `glyphs`.
         let mut shown = vec![None; self.width as usize];
@@ -771,8 +789,12 @@ impl TextScreen {
                 row_of = Some(cy);
                 for cx in 0..self.width {
                     let cell = self.cell(cx, cy);
-                    shown[cx as usize] = (cell.code != 0).then(|| {
+                    shown[cx as usize] = cell.shows().then(|| {
                         let key = (cell.code, cell.color);
+                        let made = match cell.attr & attr::INVERT {
+                            0 => &mut made,
+                            _ => &mut made_inverted,
+                        };
                         let at = *made.entry(key).or_insert_with(|| {
                             let at = glyphs.len();
                             glyphs.resize(at + glyph_len, 0);
@@ -830,6 +852,14 @@ impl Animated for TextScreen {
     }
 }
 
+/// The texel an inverted cell draws with for a glyph's `p`, multiplied by
+/// the cell's color and TCOLOR as any other: SmileBASIC 4 takes the
+/// colors times `1 - alpha` in place of the glyph's, and then multiplies
+/// the colour by alpha as always, which is why the light is left squared.
+fn inverted_texel(p: u32) -> u32 {
+    (255 - (p >> 24)) * 0x0101_0101
+}
+
 /// What a glyph pixel puts on the frame, as one `u32`: 0 for nothing, an
 /// opaque color for itself, or else the place of its paint in `paints`
 /// plus one, which is never opaque.
@@ -869,6 +899,92 @@ mod tests {
             .take_while(|&c| c != 0)
             .collect();
         String::from_utf16(&codes).unwrap()
+    }
+
+    #[test]
+    fn cells_keep_all_of_their_attribute() {
+        let cell = Cell::from_ints([0xFFFF_0041_u32 as i32, 0x1234]);
+        assert_eq!((cell.code, cell.attr, cell.color), (0x41, 0xFFFF, 0x1234));
+        assert_eq!(cell.to_ints(), [0xFFFF_0041_u32 as i32, 0x1234]);
+    }
+
+    #[test]
+    fn inverted_cells_fill_around_the_glyph() {
+        let font = Font::fallback();
+        let mut screen = TextScreen::new(32, 8);
+        let code = u16::from(b'A');
+        let (color, invert) = (0xFF40_80C0, attr::INVERT);
+        screen.set_cell(
+            0,
+            0,
+            Cell {
+                code,
+                color,
+                attr: 0,
+            },
+        );
+        screen.set_cell(
+            1,
+            0,
+            Cell {
+                code,
+                color,
+                attr: invert,
+            },
+        );
+        // An empty cell and a space are filled whole.
+        screen.set_cell(
+            2,
+            0,
+            Cell {
+                code: 0,
+                color,
+                attr: invert,
+            },
+        );
+        screen.set_cell(
+            3,
+            0,
+            Cell {
+                code: 32,
+                color,
+                attr: invert,
+            },
+        );
+        const BACK: u32 = 0xFF10_2030;
+        let mut fb = Framebuffer::new(32, 8);
+        fb.clear(BACK);
+        screen.draw(&mut fb, &font);
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                let at = |cx: u32| fb.pixels()[(y * 32 + x + cx * 8) as usize];
+                let ink = font.pixel(code, FontSize::Small, x, y) >> 24 != 0;
+                assert_eq!(at(0), if ink { color } else { BACK });
+                assert_eq!(at(1), if ink { BACK } else { color });
+                assert_eq!((at(2), at(3)), (color, color));
+            }
+        }
+    }
+
+    /// The exact sum, one rounding: `(c*n)*(a*n) + d*(1 - a*n)` with n the
+    /// glyph's 1 - alpha, tints unrounded.
+    #[test]
+    fn inverted_texels_keep_the_exact_sum() {
+        let n = 0x80_u32;
+        let texel = inverted_texel(((255 - n) << 24) | 0x12_3456);
+        assert_eq!(texel, 0x8080_8080);
+        let (c, ca, tc, d) = (0xC0_u32, 0x90_u32, 0xE0_u32, 0x40_u32);
+        let paint = Mixed::new(
+            texel,
+            (ca << 24) | (c * 0x1_0101),
+            0xFF00_0000 | (tc * 0x1_0101),
+            false,
+        );
+        let got = paint.unwrap().put(0xFF00_0000 | (d * 0x1_0101)) & 0xFF;
+        let f = |v: u32| f64::from(v) / 255.0;
+        let a = f(ca) * f(n);
+        let want = f(c) * f(n) * f(tc) * a + f(d) * (1.0 - a);
+        assert_eq!(got, (want * 255.0).round() as u32);
     }
 
     #[test]

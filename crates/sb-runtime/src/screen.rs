@@ -534,7 +534,7 @@ impl Runtime {
                 if !(0..16).contains(&attr) {
                     return Err(out_of_range("attribute", attr));
                 }
-                self.text[id].attr = attr as u8;
+                self.text[id].attr = attr as u16;
                 Ok(vec![])
             }
             (Command::Attr, Want::Outs(3), 0 | 1) => {

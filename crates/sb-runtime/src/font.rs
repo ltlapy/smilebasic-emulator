@@ -317,6 +317,11 @@ impl Font {
         self.glyph_index(code).map(|n| slot_origin(n, size))
     }
 
+    /// Whether this is SmileBASIC 4's own font, not the bundled one.
+    pub fn is_smilebasic(&self) -> bool {
+        matches!(self.0, Source::Page { .. })
+    }
+
     /// The glyph number font.map gives a code, which places it on the
     /// font page for every font size. `None` for fallback glyphs that did
     /// not fit on the page.

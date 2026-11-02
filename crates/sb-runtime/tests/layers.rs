@@ -35,6 +35,46 @@ fn lit_pixel_of_a() -> (u32, u32) {
 /// A red 16x16 sprite 0 at (0,0) in GRP4, made from template-free SPSET.
 const RED_SPRITE: &str = "GTARGET 4:GFILL 0,0,15,15,#C_RED:GFILL 16,0,31,15,#C_BLUE:GTARGET 0\n";
 
+/// A cell's attribute goes whole through TLOAD, TARRAY and TCOPY, and comes
+/// back from TSAVE and CHKCHR; its bit 7 fills the cell around the glyph.
+#[test]
+fn tload_and_tarray_keep_the_whole_attribute_and_bit_7_inverts() {
+    let (x, y) = lit_pixel_of_a();
+    let m = run(concat!(
+        "BACKCOLOR &HFF000000\n",
+        "DIM T%[2]:T%[0]=&H12800041:T%[1]=&HFFFF0000:TLOAD 4,0,0,1,1,T%\n",
+        "DIM S%[2]:TSAVE 4,0,0,1,1,S%\n",
+        "CHKCHR 0,0 OUT C,A\n",
+        "TCOPY 4,0,0,0,0,2,0\n",
+        "A%=TARRAY(4):A%[0,8]=&H800041:A%[0,9]=&HFF00FF00:TUPDATE 4\n",
+        "CHKCHR 4,0 OUT D,B\n",
+        "LOCATE 0,5:?HEX$(S%[0]);\" \";C;\" \";A;\" \";D;\" \";B\n"
+    ));
+    let console = &m.rt.text[4];
+    let line: String = (0..30)
+        .map(|i| console.cell(i, 5).code)
+        .take_while(|&c| c != 0)
+        .map(|c| char::from_u32(c.into()).unwrap())
+        .collect();
+    assert_eq!(line, "12800041 65 4736 65 128");
+    let mut m = m;
+    let fb = m.rt.render();
+    let at = |x: u32, y: u32| fb.get(x, y).unwrap();
+    const BLACK: u32 = 0xFF00_0000;
+    // The glyph is a hole in the color. TLOAD's cell, then TCOPY's copy.
+    assert_eq!(at(x, y), BLACK);
+    assert_eq!(at(16 + x, y), BLACK);
+    let hole = (0..64)
+        .map(|i| (i % 8, i / 8))
+        .find(|&(a, b)| at(a, b) != BLACK)
+        .expect("something filled");
+    assert_eq!(at(hole.0, hole.1), RED);
+    assert_eq!(at(16 + hole.0, hole.1), RED);
+    // TARRAY's, with TUPDATE.
+    assert_eq!(at(32 + x, y), BLACK);
+    assert_eq!(at(32 + hole.0, hole.1), 0xFF00_FF00);
+}
+
 #[test]
 fn the_console_starts_in_front_of_sprites() {
     let (x, y) = lit_pixel_of_a();

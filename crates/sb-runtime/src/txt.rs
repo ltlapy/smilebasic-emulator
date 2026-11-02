@@ -34,11 +34,11 @@ fn codes(v: &Value) -> Result<Vec<u16>> {
 }
 
 /// An ATTR value, or the screen's own when omitted.
-fn attr_arg(v: Option<&Value>, screen: &TextScreen) -> Result<u8> {
+fn attr_arg(v: Option<&Value>, screen: &TextScreen) -> Result<u16> {
     match v {
         None | Some(Value::Default) => Ok(screen.attr),
         Some(v) => match int(v)? {
-            n @ 0..16 => Ok(n as u8),
+            n @ 0..16 => Ok(n as u16),
             n => Err(out_of_range("attribute", n)),
         },
     }
