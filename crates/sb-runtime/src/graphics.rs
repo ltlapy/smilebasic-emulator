@@ -470,9 +470,8 @@ impl Graphics {
     /// GBOX: the outline as four lines: the top and bottom rows, then the
     /// sides from the top row down to the row above the bottom one, so
     /// that the two top corners are drawn twice (which shows with
-    /// `#G_ALPHA`). A box one pixel wide or high has no second side.
-    // UNVERIFIED: that a box given bottom to top or right to left does the
-    // same (the corners drawn twice could follow the first corner given).
+    /// `#G_ALPHA`), whichever corners are given. A box one pixel wide or
+    /// high has no second side.
     pub fn rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
         let (l, r) = (x0.min(x1), x0.max(x1));
         let (t, b) = (y0.min(y1), y0.max(y1));
@@ -588,8 +587,8 @@ impl Graphics {
             let (from, to) = (end_at(start), end_at(end));
             let first = angle(from);
             let mut sweep = (angle(to) - first).rem_euclid(360.0);
-            // UNVERIFIED: an arc of more than half a turn whose two end
-            // pixels are the same is the whole circle.
+            // An arc of more than half a turn whose two end pixels are
+            // the same is the whole circle.
             if sweep == 0.0 && (e - s).rem_euclid(360) > 180 {
                 sweep = 360.0;
             }

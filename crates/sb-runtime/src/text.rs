@@ -185,9 +185,8 @@ impl TextScreen {
 
     /// TSCREEN also takes the screen's look back to the start: its
     /// animations stop, THOME, TROT, TSCALE, TCOLOR and TBLEND are undone,
-    /// and TOFS goes back to 0,0 at the same depth. TLAYER, TPAGE and TVAR
-    /// stay.
-    // UNVERIFIED: that TFUNC stays.
+    /// and TOFS goes back to 0,0 at the same depth. TLAYER, TPAGE, TVAR
+    /// and TFUNC stay.
     pub fn restart_look(&mut self) {
         self.home = (0.0, 0.0);
         self.rot = 0.0;

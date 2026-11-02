@@ -314,7 +314,9 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
 | A linked child's offset turns and scales with the parent; the flags decide the child's own image | `Sprites::pose` | C: pitfalls (the `pose` UNVERIFIED comment is partly stale) |
 | Children without link bit 0 stay where they showed, Z included, when the parent is cleared | `Sprites::clear` | S: pitfalls ("Z included"); marker at `sprites.rs` "that Z also becomes absolute" |
-| Animated integer properties take the value rounded towards zero; a sliding XY too; colours mixed in single precision by the frames left, rounded down | `WithDefs::set_value`, `anim::mix` | C: pitfalls; TEST47 (R7). U: whether rotation and scale round |
+| Animated integer properties take the value rounded towards zero; a sliding XY too; colours mixed in single precision by the frames left, rounded down | `WithDefs::set_value`, `anim::mix` | C: pitfalls; TEST47 (R7) |
+| Rotation and scale kept in single precision, slid as `from*left + to*(1-left)` in single precision and not rounded | `sprites::single`, `anim::mix` | C: pitfalls; TEST48. U: that XY, Z, UV, V and I mix in single precision too (only visible where a slide lands on a whole number) |
+| An SPANIM set in the frame of the sprite's SPSET steps first a frame late | `Sprites::animate` (`fresh`) | **U**: TEST48 fits it, but also a VSYNC that did not wait before SPANIM, or the SPCLR before SPSET |
 | SPDEF's default table when none was imported (grid of 16x16) | `grid_defs` | Stand-in, not a rule. The real table is imported |
 
 ### 2.3 Text screens
@@ -327,7 +329,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Tab stops every 4 columns | `TAB_WIDTH` | S: pitfalls; marker in `text.rs` |
 | `CHR$(10)` starts a new line | `TextScreen::print` | S: pitfalls; marker in `text.rs` |
 | TSCREEN clears the screen | `set_font` | S: pitfalls; marker in `text.rs` |
-| TSCREEN keeps TLAYER, TPAGE and TVAR, and sets TBLEND back to 0 | `restart_look` | C: pitfalls; TEST47. U: TFUNC |
+| TSCREEN keeps TLAYER, TPAGE, TVAR and TFUNC, and sets TBLEND back to 0 | `restart_look` | C: pitfalls; TEST47, TEST48 |
 | INPUT cursor is the cell filled with the text colour | `draw_placed` | **U (R9)** |
 | Text animations: as for sprites | `impl Animated for TextScreen` | C: pitfalls; TEST47 (R7) |
 | TBLEND 1 is additive, as for sprites | `screen.rs` | C: manual (TBLEND); arithmetic as R1 |
@@ -397,17 +399,16 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 | Rule | Where | Status |
 |---|---|---|
-| GLINE pixels: same whichever end first, offset `(2t*minor + k) / (2*major)` with `k = 2*minor - major` for slopes >= 1/2 | `line_points` | C: pitfalls; TEST47; `lines_match_hardware`, `far_lines_match_hardware` tests |
-| GLINE below slope 1/2: `k = major + minor + 1` | `line_points` | **U (R24)**: `+2` and `major + 3` fit the readings too |
-| GLINE far outside the page: the pixels of the whole line (only the steps on the page are walked) | `line_points` | C: pitfalls; TEST47 (R24; clipping first gave other pixels) |
-| GBOX outline: top and bottom rows, then the sides from the top row down, so the top corners are drawn twice | `Graphics::rect` | C: pitfalls; TEST47 (R24). U: a box given bottom to top |
+| GLINE pixels: same whichever end first, offset `(2t*minor + k) / (2*major)`, `k = (major + 2*minor) mod (2*major)` from an end on the page | `line_points` | C: pitfalls; TEST47, TEST48; `lines_match_hardware`, `shallow_lines_match_hardware`, `far_lines_match_hardware` tests |
+| GLINE from an end off the page: `k = major`, counted from that end (only the steps on the page are walked) | `line_points` | C: pitfalls; TEST47, TEST48 (`lines_from_off_the_page_match_hardware`). U: that the page counts, not GCLIP, and an end off the page across the walk |
+| GBOX outline: top and bottom rows, then the sides from the top row down, so the top corners are drawn twice | `Graphics::rect` | C: pitfalls; TEST47 (R24), TEST48 (any corner order) |
 | GFILL inclusive | `Graphics::fill` | C: manual |
 | GCIRCLE pixel set (midpoint circle) | `circle_points` | C: pitfalls; TEST47 (R25) |
-| GCIRCLE arc: between the pixels at `round(cos*r), round(sin*r)` of the two angles, both included | `Graphics::circle` | C: pitfalls; TEST47 (R25). U: an arc of more than half a turn whose two end pixels are one |
+| GCIRCLE arc: between the pixels at `round(cos*r), round(sin*r)` of the two angles, both included | `Graphics::circle` | C: pitfalls; TEST47 (R25), TEST48 (an arc of more than half a turn whose two end pixels are one is the circle) |
 | GCIRCLE: equal angles draw nothing; the sector flag draws only the outline | `Graphics::circle` | C: pitfalls |
 | Sector edges: GLINEs from the center to those pixels | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
 | Equal angles with the sector flag draw nothing; radii of 1000 and 70000 draw | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
-| GTRI: rows from the leftmost to the rightmost pixel the edges reach (`edge_span`), each pixel once, a degenerate triangle too | `Graphics::triangle` | C: pitfalls; TEST47 (R26). U: how halves round on tall edges |
+| GTRI: rows from the leftmost to the rightmost pixel the edges reach (`edge_span`), each pixel once, a degenerate triangle too; tall edges walked down with `k = major`, wide ones up with `k = (major - 2*minor) mod (2*major)` | `Graphics::triangle` | C: pitfalls; TEST47 (R26), TEST48 (`triangle_rows_match_hardware`). U: corners off the page |
 | GPAINT: 4-connected flood, border mode stops at the border colour | `Graphics::paint` | C: pitfalls; TEST47 (R27) |
 | GCLIP shared by all pages | `Graphics::clip` | C: pitfalls |
 | `#G_NORMAL`, `#G_NORMAL2` | `Blend::apply` | C: manual |
@@ -419,14 +420,18 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GPUTCHRP drawing scales the spacing as the width does | `put_chars_proportional` | C: pitfalls; TEST47 (R30) |
 | GLOAD palette indexes past the palette leave the page's pixel | `load_rect` | C: pitfalls; TEST47 (R31) |
 | GSAVE/GLOAD rectangles off the page read as empty | `save_rect`, `load_rect` | C: pitfalls |
-| Limits on GSAVE/GLOAD/TSAVE width and height | `grp.rs`, `txt.rs` | 2049 and 4096 wide work (TEST47); the limit itself (taken as 4096) U (R31) |
+| GSAVE/GLOAD width and height: any, 0 included, up to what memory holds | `grp.rs` (`MOST_PIXELS`) | C: pitfalls; TEST48. U: negative sizes (Out of range here), and the error past memory (Out of range here, see differences) |
+| TSAVE width and height limit | `txt.rs` | U (R31): taken as 4096 |
 | GARRAY/GUPDATE: GPGET sees array writes at once; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](differences.md) for the omission) |
 
 **Count.** There were 31 open items, R1 to R31. TEST47 (batches A and
 F) settled R7, R20, R22 and R24-R31, apart from the smaller points left
-U in the table above; R1-R6, R8-R19, R21 and R23 are open. 5 stale
-markers can be dropped from the code at once (ACLS clearing FADE was
-dropped with TEST47):
+U in the table above; R1-R6, R8-R19, R21 and R23 are open. TEST48 then
+settled most of those smaller points: the shallow GLINE rule and lines
+from off the page, GTRI's edges, GSAVE and GLOAD sizes, single-precision
+rotation and scale, GBOX corner order, near-full arcs and TFUNC after
+TSCREEN. 5 stale markers can be dropped from the code at once (ACLS
+clearing FADE was dropped with TEST47):
 
 - `runtime.rs`: filter on an empty direct layer;
 - `text.rs`: TAB_WIDTH; `CHR$(10)`; TSCREEN clears;

@@ -20,13 +20,17 @@ follows all of it. Items still waiting for a check are marked
   after they are set. They also play in direct mode, and go on while the
   editor is open. So does `FADE color,time`: `FADE()` still gives the
   start right after it, and the first step shows after one `VSYNC 1`
-  (TEST47).
-- A sliding animation rounds towards zero: X, Y and Z going from 0 to
-  -10 over three frames read -3, -6, -10. Colors are mixed per channel
-  in single precision as `from*left + to*(1-left)`, `left` being the
-  share of frames still to go, and rounded down, so an alpha of `&HFF`
+  (TEST47). An `SPANIM` set in the same frame as the sprite's `SPCLR`
+  and `SPSET` shows its first step only after two `VSYNC 1`s; set a
+  frame later, after one (TEST48).
+- A sliding animation mixes its two ends in single precision as
+  `from*left + to*(1-left)`, `left` being the share of frames still to
+  go. Rotation and scale keep the result: 0 to -10 over three frames
+  reads -3.33333302 and -6.66666603, and a scale of 1 to -0.5 reads 0.5
+  and 0.00000003. X, Y and Z are rounded towards zero (-3, -6, -10), and
+  colors are mixed per channel and rounded down, so an alpha of `&HFF`
   at both ends reads `&HFE` on the second of three frames. Text screens
-  (`TANIM`) do the same (TEST47).
+  (`TANIM`) do the same (TEST47, TEST48).
 - An animation key that lasts 0 frames is `Illegal animation data`.
 - How much a program runs in a frame (4.4.9, timed with `MAINCNT()`):
   in 60 frames a `WHILE MAINCNT()-T<60:INC N:WEND` loop goes round
@@ -280,15 +284,18 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `TSCREEN` clears the screen. Without a character size it uses the
   font type. It also stops the screen's animations and undoes `THOME`,
   `TROT`, `TSCALE`, `TCOLOR` and `TBLEND`; `TOFS` goes back to 0,0 but
-  keeps its depth. `TLAYER`, `TPAGE` and `TVAR` stay (TEST47). An array
+  keeps its depth. `TLAYER`, `TPAGE` and `TVAR` stay (TEST47), and so does `TFUNC`
+  (TEST48). An array
   from `TARRAY` takes the new size and goes on following the screen.
 - `CHR$(10)` starts a new line; tab stops are every 4 columns.
 - `TPUT` off the screen is `Out of range`; `CHKCHR` off the screen gives
   0.
 - `TSAVE`, `GSAVE` and `GLOAD` accept rectangles reaching off the
   screen or page; what lies outside reads as empty. `GSAVE` and `GLOAD`
-  also take rectangles wider than the page: 2049x1 and 4096x1 work
-  (TEST47). `GLOAD` palette indexes past the palette are no error and
+  take rectangles of any size memory allows: 8192x1, 1x4097 and
+  2048x2049 work, `GSAVE` giving 0 for what lies off the page and
+  `GLOAD` dropping it, and a width or height of 0 is no error (`GSAVE`
+  then gives no elements, `GLOAD` draws nothing) (TEST47, TEST48). `GLOAD` palette indexes past the palette are no error and
   leave the page's pixel as it is, with mode 0 too (TEST47).
 - `GSAVE` into a real array gives the colours unsigned: opaque red is
   4294901760, where an integer array has -65536.
@@ -377,27 +384,39 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   - An arc runs between the circle pixels nearest its two angles, at
     `round(r*cos a), round(r*sin a)`, both included: 30 to 120 degrees
     takes the pixel (7,4) at 29.7 degrees. Angles past 360 or negative
-    are taken modulo 360. A sector's two sides are `GLINE`s from the
-    center to those pixels.
-  - `GLINE` takes the same pixels whichever end comes first. Walked
-    along the longer axis from the end with the smaller coordinate on
-    it, `major` steps long and `minor` across, the offset across at step
-    t is `(2*t*minor + k) / (2*major)` rounded down, with `k` =
-    `2*minor - major` for slopes of 1/2 and more and `major + minor + 1`
-    below (`+2` or `major + 3` fit what was read back as well). A line
-    from far off the page takes the pixels the whole line would:
-    `GLINE -1000,0,1040,51` gives rows 25 for X 0-19 and 26 from 20,
-    while `GLINE 0,25,40,26` steps at X 19.
+    are taken modulo 360. An arc of more than half a turn whose two end
+    pixels are one, such as 0 to 359 or 10 to 9, is the whole circle
+    (TEST48). A sector's two sides are `GLINE`s from the center to those
+    pixels.
+  - `GLINE` takes the same pixels whichever end comes first, in all
+    four directions and with X and Y swapped. Walked along the longer
+    axis from the end with the smaller coordinate on it, `major` steps
+    long and `minor` across, the offset across at step t is
+    `(2*t*minor + k) / (2*major)` rounded down. When that end is on the
+    page, `k = (major + 2*minor) mod (2*major)`: the line rounded (halves
+    up) one step further on, `round((t+1)*minor/major)`, less
+    `round(minor/major)` so that it starts at its end. `GLINE 0,0,7,3`
+    steps across at X 1, 3 and 5 (`01122333`), `GLINE 0,0,6,1` at 2, and
+    `GLINE 0,0,4,2` at 2 and 4. When that end is off the page, `k =
+    major`: the line itself rounded, halves up, counted from its real
+    end. `GLINE -1,5,30,10` steps at X 3, 9, 15, 21 and 27, `GLINE
+    -1000,0,1040,51` gives rows 25 for X 0-19 and 26 from 20, while
+    `GLINE 0,25,40,26` steps at X 19 (TEST47, TEST48).
   - `GTRI` draws each pixel once (with `#G_ALPHA`, also where edges
     meet), a row at a time from the leftmost to the rightmost pixel an
-    edge reaches in the row. An edge at least as tall as it is wide
-    reaches one pixel per row, its X at the row rounded; a wider edge
-    reaches the columns x for which a point of it with X in [x, x+1)
-    has Y in [y-1/2, y+1/2). A triangle whose corners lie on one line is
-    that line, drawn once.
+    edge reaches in the row, whatever order the corners come in. Each
+    edge takes one pixel per step along its longer axis, like `GLINE`
+    with its own `k`: an edge taller than it is wide is walked down from
+    its top end with `k = major` (rounded, halves towards the bottom
+    end); one at least as wide as it is tall is walked up from its bottom
+    end with `k = (major - 2*minor) mod (2*major)`, the edge rounded one
+    step back. `GTRI 0,0,1,2,10,1` fills rows 0-4, 1-10 and 1-6. A
+    triangle whose corners lie on one line is that line, drawn once
+    (TEST47, TEST48).
   - `GBOX` draws the top and bottom rows, then the sides from the top
     row to the row above the bottom: with `#G_ALPHA` the two top corners
-    are blended twice and the bottom ones once. A box one pixel wide
+    are blended twice and the bottom ones once, whichever corners are
+    given first (TEST48). A box one pixel wide
     or high draws each pixel once, except the top of a one-pixel-wide
     box.
   - `#G_ALPHA2` (mode 3): alpha `a = sa + da - floor(sa*da/255)`; each
