@@ -619,7 +619,7 @@ fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
         }
         draw_focus_border(&mut image, rect, alpha);
     }
-    std::fs::write(file, image::encode_png(&image))?;
+    std::fs::write(file, image::encode_png(&image)?)?;
     Ok(())
 }
 

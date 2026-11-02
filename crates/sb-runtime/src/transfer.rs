@@ -114,7 +114,7 @@ pub fn import_file(kind: FileKind, bytes: &[u8]) -> Result<Vec<u8>, String> {
     match kind {
         FileKind::Txt => file.text().map(drop).map_err(|e| e.to_string())?,
         FileKind::Dat => file.data().map(drop).map_err(|e| e.to_string())?,
-        FileKind::Grp => return image::decode(bytes).map(|i| image::encode_png(&i)),
+        FileKind::Grp => return image::decode(bytes).and_then(|i| image::encode_png(&i)),
         FileKind::Jpg if !file.body.starts_with(JPEG_MAGIC) => {
             return Err("not a JPEG file".to_string());
         }
@@ -223,7 +223,7 @@ pub fn import_project(storage: &Storage, source: &Path, project: &str) -> Result
                 description: meta.description,
                 icon: meta.icon.into_iter().map(|p| p as i32).collect(),
             };
-            for (file, bytes) in env::meta_files(&meta) {
+            for (file, bytes) in env::meta_files(&meta)? {
                 write(&dir.join(file), &bytes)?;
             }
             continue;

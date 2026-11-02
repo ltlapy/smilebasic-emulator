@@ -377,7 +377,8 @@ impl Runtime {
     /// METALOAD read.
     fn write_meta(&mut self) -> storage::Result<()> {
         self.meta();
-        for (name, bytes) in meta_files(&self.meta) {
+        let bad = |e: String| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
+        for (name, bytes) in meta_files(&self.meta).map_err(bad)? {
             self.storage.write_project_file(name, &bytes)?;
         }
         Ok(())
@@ -424,7 +425,7 @@ pub fn is_meta_file(name: &str) -> bool {
 }
 
 /// The emulator's files for `meta`, by name.
-pub fn meta_files(meta: &Meta) -> [(&'static str, Vec<u8>); 2] {
+pub fn meta_files(meta: &Meta) -> std::result::Result<[(&'static str, Vec<u8>); 2], String> {
     let mut text = String::from_utf16_lossy(&meta.title);
     text.push('\n');
     text.push_str(&String::from_utf16_lossy(&meta.description));
@@ -433,10 +434,10 @@ pub fn meta_files(meta: &Meta) -> [(&'static str, Vec<u8>); 2] {
         height: ICON_SIZE,
         pixels: meta.icon.iter().map(|&p| p as u32).collect(),
     };
-    [
+    Ok([
         (META_TEXT, text.into_bytes()),
-        (META_ICON, image::encode_png(&icon)),
-    ]
+        (META_ICON, image::encode_png(&icon)?),
+    ])
 }
 
 /// A title or description, cut to `max` characters.

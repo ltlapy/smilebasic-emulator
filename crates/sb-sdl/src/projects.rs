@@ -1902,8 +1902,11 @@ impl ProjectManager {
             icon: edit.icon.clone(),
         };
         let label = project_label(&edit.project).to_string();
-        let written = (meta_files(&meta).into_iter())
-            .try_for_each(|(file, bytes)| storage.write_file_in(&edit.project, file, &bytes));
+        let written = meta_files(&meta).and_then(|files| {
+            (files.into_iter())
+                .try_for_each(|(file, bytes)| storage.write_file_in(&edit.project, file, &bytes))
+                .map_err(|e| e.to_string())
+        });
         match written {
             Ok(()) => {
                 edit.saved = (title, description, edit.icon.clone());
@@ -3083,7 +3086,7 @@ mod tests {
             icon,
             ..Default::default()
         };
-        for (name, bytes) in sb_runtime::env::meta_files(&meta) {
+        for (name, bytes) in sb_runtime::env::meta_files(&meta).unwrap() {
             s.write_file_in("GAME", name, &bytes).unwrap();
         }
         let m = ProjectManager::new(&s, (1280, 720));
@@ -3120,7 +3123,7 @@ mod tests {
             icon,
             ..Default::default()
         };
-        for (name, bytes) in sb_runtime::env::meta_files(&meta) {
+        for (name, bytes) in sb_runtime::env::meta_files(&meta).unwrap() {
             s.write_file_in("GAME", name, &bytes).unwrap();
         }
         let mut m = ProjectManager::new(&s, (1280, 720));
@@ -3277,7 +3280,7 @@ mod tests {
             height: h,
             pixels: vec![0xFF00_FF00; w * h],
         };
-        image::encode_png(&img)
+        image::encode_png(&img).unwrap()
     }
 
     #[test]

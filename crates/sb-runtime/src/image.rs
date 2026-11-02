@@ -46,16 +46,32 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
             _ => return Err("not a 2D integer array".to_string()),
         }
     };
-    if image.width > MAX_SIDE || image.height > MAX_SIDE {
+    check_size(&image)?;
+    Ok(image)
+}
+
+/// Whether an image is whole and of a size the file formats and the graphic
+/// pages hold.
+fn check_size(image: &Image) -> Result<(), String> {
+    let side = 1..=MAX_SIDE;
+    if !side.contains(&image.width) || !side.contains(&image.height) {
         return Err(format!("image is {}x{}", image.width, image.height));
     }
-    Ok(image)
+    if image.pixels.len() != image.width * image.height {
+        let (w, h) = (image.width, image.height);
+        return Err(format!("{}x{h} image has {} pixels", w, image.pixels.len()));
+    }
+    Ok(())
 }
 
 fn decode_png(bytes: &[u8]) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let (width, height) = (reader.info().width, reader.info().height);
+    if width as usize > MAX_SIDE || height as usize > MAX_SIDE {
+        return Err(format!("image is {width}x{height}"));
+    }
     let size = reader.output_buffer_size().ok_or("image too large")?;
     let mut buf = vec![0; size];
     let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
@@ -110,7 +126,8 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
 }
 
 /// A PNG of the image, keeping its alpha.
-pub fn encode_png(image: &Image) -> Vec<u8> {
+pub fn encode_png(image: &Image) -> Result<Vec<u8>, String> {
+    check_size(image)?;
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(&mut out, image.width as u32, image.height as u32);
     encoder.set_color(png::ColorType::Rgba);
@@ -121,15 +138,17 @@ pub fn encode_png(image: &Image) -> Vec<u8> {
             [r, g, b, a]
         })
         .collect();
-    let mut writer = encoder.write_header().expect("writing to memory");
-    writer.write_image_data(&data).expect("writing to memory");
-    writer.finish().expect("writing to memory");
-    out
+    let error = |e: png::EncodingError| e.to_string();
+    let mut writer = encoder.write_header().map_err(error)?;
+    writer.write_image_data(&data).map_err(error)?;
+    writer.finish().map_err(error)?;
+    Ok(out)
 }
 
 /// A JPEG of the image at `quality` (1 to 100); JPEG has no alpha, so
 /// transparent pixels lose it.
-pub fn encode_jpeg(image: &Image, quality: u8) -> Vec<u8> {
+pub fn encode_jpeg(image: &Image, quality: u8) -> Result<Vec<u8>, String> {
+    check_size(image)?;
     let mut out = Vec::new();
     let data: Vec<u8> = (image.pixels.iter())
         .flat_map(|&p| {
@@ -144,13 +163,14 @@ pub fn encode_jpeg(image: &Image, quality: u8) -> Vec<u8> {
             image.height as u16,
             jpeg_encoder::ColorType::Rgb,
         )
-        .expect("writing to memory");
-    out
+        .map_err(|e| e.to_string())?;
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::FileKind;
 
     fn sample() -> Image {
         Image {
@@ -169,14 +189,14 @@ mod tests {
 
     #[test]
     fn png_keeps_every_pixel() {
-        assert_eq!(decode(&encode_png(&sample())).unwrap(), sample());
+        assert_eq!(decode(&encode_png(&sample()).unwrap()).unwrap(), sample());
     }
 
     #[test]
     fn jpeg_reads_back_opaque_and_close() {
         let mut image = sample();
         image.pixels = vec![0xFFC0_4020; 6];
-        let back = decode(&encode_jpeg(&image, 90)).unwrap();
+        let back = decode(&encode_jpeg(&image, 90).unwrap()).unwrap();
         assert_eq!((back.width, back.height), (3, 2));
         for p in back.pixels {
             let [a, r, g, b] = p.to_be_bytes();
@@ -191,5 +211,71 @@ mod tests {
     fn rejects_other_bytes() {
         assert!(decode(b"hello").is_err());
         assert!(decode(PNG_MAGIC).is_err());
+    }
+
+    fn array(dims: [u32; 2], pixels: u32) -> Vec<u8> {
+        let mut body = sbfile::DATA_MAGIC.to_vec();
+        body.extend_from_slice(&4u16.to_le_bytes());
+        body.extend_from_slice(&2u16.to_le_bytes());
+        for d in [dims[0], dims[1], 0, 0] {
+            body.extend_from_slice(&d.to_le_bytes());
+        }
+        body.resize(body.len() + 4 * pixels as usize, 0);
+        body
+    }
+
+    #[test]
+    fn empty_images_are_refused_on_the_way_in_and_out() {
+        // What crashed import: a GRP of 0x16 pixels.
+        let date = sbfile::Date::at(std::time::UNIX_EPOCH);
+        for dims in [[0, 16], [16, 0], [0, 0]] {
+            let body = array(dims, 0);
+            let file = sbfile::container(sbfile::Kind::Grp, sbfile::usage::GRP, date, &body, true);
+            assert!(decode(&body).is_err(), "{dims:?}");
+            assert!(decode(&file).is_err(), "{dims:?}");
+            assert!(crate::transfer::import_file(FileKind::Grp, &file).is_err());
+        }
+        for (width, height) in [(0, 16), (16, 0), (0, 0)] {
+            let empty = Image {
+                width,
+                height,
+                pixels: Vec::new(),
+            };
+            assert!(encode_png(&empty).is_err());
+            assert!(encode_jpeg(&empty, 60).is_err());
+        }
+    }
+
+    #[test]
+    fn images_whose_pixels_do_not_fill_them_cannot_be_encoded() {
+        let mut short = sample();
+        short.pixels.pop();
+        assert!(encode_png(&short).is_err());
+        assert!(encode_jpeg(&short, 60).is_err());
+        // Nor those too large to be a page, whose sides JPEG would cut.
+        let wide = Image {
+            width: 65536 + 1,
+            height: 1,
+            pixels: vec![0; 65536 + 1],
+        };
+        assert!(encode_jpeg(&wide, 60).is_err());
+    }
+
+    #[test]
+    fn a_png_too_large_for_a_page_is_refused_before_its_memory_is_taken() {
+        let mut png = encode_png(&sample()).unwrap();
+        // IHDR's width and height, then the chunk's checksum.
+        png[16..20].copy_from_slice(&4000u32.to_be_bytes());
+        png[20..24].copy_from_slice(&4000u32.to_be_bytes());
+        let crc = !png[12..29].iter().fold(!0u32, |mut crc, &b| {
+            crc ^= u32::from(b);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+            }
+            crc
+        });
+        png[29..33].copy_from_slice(&crc.to_be_bytes());
+        let error = decode(&png).unwrap_err();
+        assert_eq!(error, "image is 4000x4000");
     }
 }

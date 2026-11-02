@@ -57,9 +57,14 @@ fn export_then_import() {
         values: DataValues::Int(vec![1, 2, 3, 4, 5, 6]),
     });
     s.write(FileKind::Dat, "MAP", &data, None).unwrap();
-    s.write(FileKind::Grp, "PIC", &image::encode_png(&picture()), None)
-        .unwrap();
-    let jpeg = image::encode_jpeg(&picture(), 90);
+    s.write(
+        FileKind::Grp,
+        "PIC",
+        &image::encode_png(&picture()).unwrap(),
+        None,
+    )
+    .unwrap();
+    let jpeg = image::encode_jpeg(&picture(), 90).unwrap();
     s.write(FileKind::Jpg, "PHOTO", &jpeg, None).unwrap();
     s.write(FileKind::Grp, "BAD", b"not an image", None)
         .unwrap();

@@ -241,6 +241,7 @@ impl Runtime {
                     }
                     (Ok((FileKind::Grp, _)), Value::Array(a)) => {
                         image::encode_png(&array_image(&a.borrow())?)
+                            .map_err(|e| Error::with_detail(ErrorKind::IllegalFileFormat, e))?
                     }
                     (Ok((FileKind::Txt | FileKind::Dat | FileKind::Grp, _)), _) => {
                         return Err(ErrorKind::TypeMismatch.into());
@@ -309,8 +310,10 @@ impl Runtime {
                 };
                 let outcome = file.and_then(|(kind, name)| {
                     let bytes = match kind {
-                        FileKind::Grp => image::encode_png(&image),
-                        FileKind::Jpg => image::encode_jpeg(&image, quality as u8),
+                        FileKind::Grp => image::encode_png(&image).map_err(bad_file)?,
+                        FileKind::Jpg => {
+                            image::encode_jpeg(&image, quality as u8).map_err(bad_file)?
+                        }
                         _ => return Err(StorageError::BadKind(kind.name().to_string())),
                     };
                     self.storage
