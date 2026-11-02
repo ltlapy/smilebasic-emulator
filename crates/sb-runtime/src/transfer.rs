@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::env::{self, Meta, SB4_META};
 use crate::image;
 use crate::sbfile::{self, Data, DataValues, Date, Kind, ProjectMeta, usage};
-use crate::storage::{FileKind, Storage};
+use crate::storage::{self, FileKind, Storage};
 
 /// The folder SmileBASIC 4 keeps the workspace in.
 pub const SB4_WORKSPACE: &str = "###";
@@ -163,7 +163,7 @@ fn kind_of(name: &str) -> Option<FileKind> {
 }
 
 fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    fs::write(path, bytes).map_err(|e| e.to_string())
+    storage::write_regular(path, bytes).map_err(|e| e.to_string())
 }
 
 /// Writes `project` into [`export_target`] of `dest`, replacing files of
@@ -195,7 +195,7 @@ pub fn export_project(storage: &Storage, project: &str, dest: &Path) -> Result<S
             Err(why) => summary.skipped.push((name.clone(), why)),
         }
     }
-    let read = |name: &str| fs::read(dir.join(name)).ok();
+    let read = |name: &str| storage.read_file_in(project, name).ok();
     let meta = env::project_meta(project, read);
     write(&target.join(SB4_META), &export_meta(&meta, Date::now()))?;
     Ok(summary)

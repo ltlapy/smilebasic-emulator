@@ -4,9 +4,13 @@
 //!
 //! The workspace project (`PROJECT ""`) lives in the `@WORKSPACE` folder;
 //! `@` cannot appear in project names, so it never clashes with one.
+//!
+//! Projects get copied in from elsewhere, so nothing here follows a symbolic
+//! link found among the projects or in one: such a link could lead a read or
+//! a write out of the storage folder. The storage folder itself may be one.
 
 use std::fmt;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 const WORKSPACE_DIR: &str = "@WORKSPACE";
@@ -98,6 +102,55 @@ impl From<io::Error> for StorageError {
 }
 
 pub type Result<T> = std::result::Result<T, StorageError>;
+
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map_or_else(|| path.display().to_string(), |n| n.display().to_string())
+}
+
+fn link_refused(path: &Path) -> io::Error {
+    let what = format!("{} is a symbolic link", file_label(path));
+    io::Error::new(io::ErrorKind::PermissionDenied, what)
+}
+
+/// Whether `path` is itself a regular file, not a link to one.
+fn is_real_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
+}
+
+/// Reads a file of a project, which must be a regular file: not a link, nor
+/// a pipe that would wait forever.
+pub fn read_regular(path: &Path) -> io::Result<Vec<u8>> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        return Err(link_refused(path));
+    }
+    if !meta.is_file() {
+        let what = format!("{} is not a file", file_label(path));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, what));
+    }
+    std::fs::read(path)
+}
+
+/// Fails unless writing to `path` would make or replace a regular file.
+fn check_writable(path: &Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(link_refused(path)),
+        Ok(meta) if !meta.is_file() => {
+            let what = format!("{} is not a file", file_label(path));
+            Err(io::Error::new(io::ErrorKind::InvalidInput, what))
+        }
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// Writes a regular file, refusing a link in its place, which would carry
+/// the write to wherever it leads, even to a file not there yet.
+pub fn write_regular(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    check_writable(path)?;
+    std::fs::write(path, bytes)
+}
 
 /// Checks a file name and returns it in upper case: up to 32 letters,
 /// digits, `_`, `-` and `.`, not starting with `.`. It may start with `@`,
@@ -341,13 +394,20 @@ impl Storage {
         self.dir(project)
     }
 
+    /// Every way to a project goes through here, so that a link in the
+    /// storage folder posing as a project, the workspace included, leads
+    /// nowhere; [`Storage::projects`] does not list one either.
     fn dir(&self, project: &str) -> Result<PathBuf> {
         let root = self.root.as_ref().ok_or(StorageError::Unavailable)?;
-        Ok(root.join(if project.is_empty() {
+        let dir = root.join(if project.is_empty() {
             WORKSPACE_DIR
         } else {
             project
-        }))
+        });
+        if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(link_refused(&dir).into());
+        }
+        Ok(dir)
     }
 
     fn path(&self, kind: FileKind, name: &str) -> Result<PathBuf> {
@@ -368,24 +428,24 @@ impl Storage {
     }
 
     pub fn exists_ref(&self, file: &FileRef) -> bool {
-        self.ref_path(file).is_ok_and(|p| p.is_file())
+        self.ref_path(file).is_ok_and(|p| is_real_file(&p))
     }
 
     pub fn read_ref(&self, file: &FileRef) -> Result<Vec<u8>> {
         let path = self.ref_path(file)?;
-        std::fs::read(&path).map_err(|e| match e.kind() {
+        read_regular(&path).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => StorageError::NotFound(file.label()),
             _ => e.into(),
         })
     }
 
     pub fn exists(&self, kind: FileKind, name: &str) -> bool {
-        self.path(kind, name).is_ok_and(|p| p.is_file())
+        self.path(kind, name).is_ok_and(|p| is_real_file(&p))
     }
 
     pub fn read(&self, kind: FileKind, name: &str) -> Result<Vec<u8>> {
         let path = self.path(kind, name)?;
-        std::fs::read(&path).map_err(|e| match e.kind() {
+        read_regular(&path).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => StorageError::NotFound(format!("{}:{name}", kind.name())),
             _ => e.into(),
         })
@@ -401,9 +461,11 @@ impl Storage {
         backup: Option<&str>,
     ) -> Result<()> {
         let path = self.path(kind, name)?;
+        check_writable(&path)?;
         std::fs::create_dir_all(path.parent().expect("file in a project folder"))?;
+        // A link at the backup's name is replaced, not followed.
         if let Some(backup) = backup
-            && path.is_file()
+            && is_real_file(&path)
             && name != backup
         {
             std::fs::rename(&path, self.path(kind, backup)?)?;
@@ -425,7 +487,7 @@ impl Storage {
     /// Like [`Storage::read_project_file`], from any project.
     pub fn read_file_in(&self, project: &str, name: &str) -> Result<Vec<u8>> {
         let path = self.dir(project)?.join(name);
-        std::fs::read(&path).map_err(|e| match e.kind() {
+        read_regular(&path).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => StorageError::NotFound(name.to_string()),
             _ => e.into(),
         })
@@ -436,10 +498,22 @@ impl Storage {
     pub fn write_file_in(&self, project: &str, name: &str, bytes: &[u8]) -> Result<()> {
         let dir = self.dir(project)?;
         std::fs::create_dir_all(&dir)?;
+        let target = dir.join(name);
+        check_writable(&target)?;
         // A leading `.` keeps the temporary file out of the listings.
         let temporary = dir.join(format!(".{name}.tmp"));
-        std::fs::write(&temporary, bytes)?;
-        if let Err(e) = std::fs::rename(&temporary, dir.join(name)) {
+        // One left by a crash goes; anything else there is refused, and
+        // `create_new` does not follow a link that appears meanwhile.
+        check_writable(&temporary)?;
+        if is_real_file(&temporary) {
+            std::fs::remove_file(&temporary)?;
+        }
+        let mut file =
+            (std::fs::OpenOptions::new().write(true).create_new(true)).open(&temporary)?;
+        let written = file.write_all(bytes);
+        // Windows cannot rename a file that is open.
+        drop(file);
+        if let Err(e) = written.and_then(|()| std::fs::rename(&temporary, target)) {
             let _ = std::fs::remove_file(&temporary);
             return Err(e.into());
         }
@@ -457,7 +531,7 @@ impl Storage {
     /// Whether a file is in a project, which need not be the current one.
     pub fn exists_in(&self, project: &str, kind: FileKind, name: &str) -> bool {
         self.dir(project)
-            .is_ok_and(|d| d.join(format!("{}{name}", kind.prefix())).is_file())
+            .is_ok_and(|d| is_real_file(&d.join(format!("{}{name}", kind.prefix()))))
     }
 
     /// Deletes a file of a project, which need not be the current one.
@@ -486,11 +560,12 @@ impl Storage {
             Ok(self.dir(project)?.join(format!("{}{name}", kind.prefix())))
         };
         let from = file(from_project, name)?;
-        if !from.is_file() {
+        if !is_real_file(&from) {
             return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));
         }
         let to = file(to_project, &to_name)?;
         if from != to {
+            check_writable(&to)?;
             std::fs::create_dir_all(to.parent().expect("file in a project folder"))?;
             std::fs::copy(from, to)?;
         }
@@ -559,7 +634,9 @@ impl Storage {
             .dir(project)
             .ok()?
             .join(format!("{}{name}", kind.prefix()));
-        let meta = std::fs::metadata(path).ok()?;
+        let meta = std::fs::symlink_metadata(path)
+            .ok()
+            .filter(|m| m.is_file())?;
         let changed = chrono::DateTime::<chrono::Local>::from(meta.modified().ok()?);
         Some((meta.len(), changed.format("%Y/%m/%d %H:%M:%S").to_string()))
     }
@@ -579,7 +656,11 @@ impl Storage {
         };
         let mut files = Vec::new();
         for entry in entries {
-            let file_name = entry?.file_name();
+            let entry = entry?;
+            if entry.file_type()?.is_symlink() {
+                continue;
+            }
+            let file_name = entry.file_name();
             let Some(file_name) = file_name.to_str() else {
                 continue;
             };
@@ -620,14 +701,16 @@ impl Storage {
 }
 
 /// Copies the files and the folders in `from` into `to`, which exists.
+/// Anything else, a link above all, stays behind, as it does on import.
 fn copy_folder(from: &Path, to: &Path) -> io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
             std::fs::create_dir_all(&target)?;
             copy_folder(&entry.path(), &target)?;
-        } else {
+        } else if kind.is_file() {
             std::fs::copy(entry.path(), target)?;
         }
     }
@@ -846,5 +929,208 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");
+    }
+
+    #[test]
+    fn a_stale_temporary_file_goes_when_the_next_write_comes() {
+        let tmp = TempDir::new("stale");
+        let s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        std::fs::write(tmp.0.join("GAME/.@META.TXT.tmp"), "old").unwrap();
+        s.write_file_in("GAME", "@META.TXT", b"new").unwrap();
+        assert_eq!(s.read_file_in("GAME", "@META.TXT").unwrap(), b"new");
+        assert!(!tmp.0.join("GAME/.@META.TXT.tmp").exists());
+    }
+
+    #[test]
+    fn something_other_than_a_file_is_not_read_or_written_as_one() {
+        let tmp = TempDir::new("folder");
+        let s = Storage::new(tmp.0.clone());
+        std::fs::create_dir_all(tmp.0.join("@WORKSPACE/TA")).unwrap();
+        assert!(s.read(FileKind::Txt, "A").is_err());
+        assert!(s.write(FileKind::Txt, "A", b"", None).is_err());
+        assert!(!s.exists(FileKind::Txt, "A"));
+    }
+
+    /// Planted links, each leading to a file outside the storage folder.
+    #[cfg(unix)]
+    mod links {
+        use super::*;
+        use std::os::unix::fs::symlink;
+
+        /// A storage folder inside a temporary folder that also holds the
+        /// file `outside`, which must never change or be read.
+        fn arena(tag: &str) -> (TempDir, Storage, PathBuf) {
+            let tmp = TempDir::new(tag);
+            let root = tmp.0.join("root");
+            std::fs::create_dir_all(root.join("@WORKSPACE")).unwrap();
+            std::fs::create_dir_all(root.join("GAME")).unwrap();
+            let outside = tmp.0.join("outside");
+            std::fs::write(&outside, "outside").unwrap();
+            (tmp, Storage::new(root), outside)
+        }
+
+        fn is_link(path: &Path) -> bool {
+            std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+        }
+
+        #[test]
+        fn a_link_at_a_temporary_files_name_takes_no_write() {
+            let (tmp, s, outside) = arena("link-temp");
+            symlink(&outside, tmp.0.join("root/GAME/.@META.TXT.tmp")).unwrap();
+            assert!(s.write_file_in("GAME", "@META.TXT", b"new").is_err());
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+            assert!(s.read_file_in("GAME", "@META.TXT").is_err());
+        }
+
+        #[test]
+        fn a_link_at_a_metadata_files_name_stays_as_it_is() {
+            let (tmp, s, outside) = arena("link-meta");
+            let link = tmp.0.join("root/GAME/@META.TXT");
+            symlink(&outside, &link).unwrap();
+            assert!(s.write_file_in("GAME", "@META.TXT", b"new").is_err());
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+            assert!(is_link(&link));
+        }
+
+        #[test]
+        fn saving_over_the_backup_refuses_a_link_there() {
+            let (tmp, s, outside) = arena("link-backup");
+            symlink(&outside, tmp.0.join("root/@WORKSPACE/T@BACKUP.PRG")).unwrap();
+            let saved = s.write(FileKind::Txt, BACKUP_NAME, b"new", Some(BACKUP_NAME));
+            assert!(saved.is_err());
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+        }
+
+        #[test]
+        fn a_backup_made_over_a_link_replaces_the_link() {
+            let (tmp, s, outside) = arena("link-backup2");
+            let link = tmp.0.join("root/@WORKSPACE/T@BACKUP.PRG");
+            symlink(&outside, &link).unwrap();
+            s.write(FileKind::Txt, "A", b"1", Some(BACKUP_NAME))
+                .unwrap();
+            s.write(FileKind::Txt, "A", b"2", Some(BACKUP_NAME))
+                .unwrap();
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+            assert!(!is_link(&link));
+            assert_eq!(s.read(FileKind::Txt, BACKUP_NAME).unwrap(), b"1");
+        }
+
+        #[test]
+        fn a_dangling_link_makes_no_file_where_it_points() {
+            let (tmp, s, _) = arena("link-dangling");
+            let target = tmp.0.join("created");
+            symlink(&target, tmp.0.join("root/@WORKSPACE/TX")).unwrap();
+            let saved = s.write(FileKind::Txt, "X", b"new", Some(BACKUP_NAME));
+            assert!(saved.is_err());
+            assert!(s.write(FileKind::Txt, "X", b"new", None).is_err());
+            assert!(!target.exists());
+        }
+
+        #[test]
+        fn copying_does_not_write_through_a_link_or_read_from_one() {
+            let (tmp, s, outside) = arena("link-copy");
+            s.write(FileKind::Txt, "A", b"mine", None).unwrap();
+            symlink(&outside, tmp.0.join("root/GAME/TB")).unwrap();
+            let copied = s.copy_file(FileKind::Txt, ("", "A"), ("GAME", "B"));
+            assert!(copied.is_err());
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+            let copied = s.copy_file(FileKind::Txt, ("GAME", "B"), ("", "C"));
+            assert!(matches!(copied, Err(StorageError::NotFound(_))));
+            assert!(!s.exists(FileKind::Txt, "C"));
+        }
+
+        #[test]
+        fn a_linked_file_reads_as_nothing() {
+            let (tmp, mut s, outside) = arena("link-read");
+            symlink(&outside, tmp.0.join("root/@WORKSPACE/TLEAK")).unwrap();
+            symlink(&outside, tmp.0.join("root/GAME/TLEAK")).unwrap();
+            assert!(!s.exists(FileKind::Txt, "LEAK"));
+            assert!(s.read(FileKind::Txt, "LEAK").is_err());
+            assert!(s.read_file_in("GAME", "TLEAK").is_err());
+            assert!(s.file_info("GAME", FileKind::Txt, "LEAK").is_none());
+            assert!(!s.exists_in("GAME", FileKind::Txt, "LEAK"));
+            assert!(s.list(None, None).unwrap().is_empty());
+            let file = parse_read_name("GAME/LEAK", FileKind::Txt).unwrap();
+            assert!(!s.exists_ref(&file));
+            assert!(s.read_ref(&file).is_err());
+            s.set_project("GAME").unwrap();
+            assert!(s.read(FileKind::Txt, "LEAK").is_err());
+        }
+
+        #[test]
+        fn a_linked_project_is_no_project() {
+            let (tmp, mut s, _) = arena("link-project");
+            let away = tmp.0.join("away");
+            std::fs::create_dir_all(&away).unwrap();
+            std::fs::write(away.join("TA"), "away").unwrap();
+            symlink(&away, tmp.0.join("root/LINK")).unwrap();
+            assert_eq!(s.projects().unwrap(), ["GAME"]);
+            assert!(!s.project_exists("LINK"));
+            assert!(matches!(
+                s.set_project("LINK"),
+                Err(StorageError::NotFound(_))
+            ));
+            let file = parse_read_name("LINK/A", FileKind::Txt).unwrap();
+            assert!(s.read_ref(&file).is_err());
+            assert!(s.read_file_in("LINK", "TA").is_err());
+            assert!(s.write_file_in("LINK", "TB", b"").is_err());
+            assert!(s.list(None, Some("LINK")).is_err());
+            assert!(s.create_project("LINK").is_err());
+            assert!(s.duplicate_project("LINK").is_err());
+            assert!(s.delete_project("LINK").is_err());
+            assert_eq!(std::fs::read_dir(&away).unwrap().count(), 1);
+        }
+
+        #[test]
+        fn a_project_that_turns_into_a_link_takes_no_more_files() {
+            let (tmp, mut s, _) = arena("link-current");
+            s.set_project("GAME").unwrap();
+            let away = tmp.0.join("away");
+            std::fs::create_dir_all(&away).unwrap();
+            std::fs::remove_dir(tmp.0.join("root/GAME")).unwrap();
+            symlink(&away, tmp.0.join("root/GAME")).unwrap();
+            assert!(s.write(FileKind::Txt, "A", b"", None).is_err());
+            assert_eq!(std::fs::read_dir(&away).unwrap().count(), 0);
+        }
+
+        #[test]
+        fn a_linked_workspace_is_refused_but_can_be_returned_to() {
+            let (tmp, mut s, _) = arena("link-workspace");
+            let away = tmp.0.join("away");
+            std::fs::create_dir_all(&away).unwrap();
+            std::fs::remove_dir(tmp.0.join("root/@WORKSPACE")).unwrap();
+            symlink(&away, tmp.0.join("root/@WORKSPACE")).unwrap();
+            s.set_project("").unwrap();
+            assert!(s.write(FileKind::Txt, "A", b"", None).is_err());
+            assert!(s.list(None, None).is_err());
+            assert_eq!(std::fs::read_dir(&away).unwrap().count(), 0);
+        }
+
+        #[test]
+        fn duplicating_leaves_links_behind() {
+            let (tmp, s, outside) = arena("link-duplicate");
+            s.write_file_in("GAME", "TMAIN.PRG", b"?1").unwrap();
+            symlink(&outside, tmp.0.join("root/GAME/TLEAK")).unwrap();
+            assert_eq!(s.duplicate_project("GAME").unwrap(), "GAME2");
+            assert!(s.exists_in("GAME2", FileKind::Txt, "MAIN.PRG"));
+            let leak = tmp.0.join("root/GAME2/TLEAK");
+            assert!(std::fs::symlink_metadata(leak).is_err());
+        }
+
+        #[test]
+        fn the_storage_folder_itself_may_be_a_link() {
+            let (tmp, _, _) = arena("link-root");
+            let moved = tmp.0.join("moved");
+            symlink(tmp.0.join("root"), &moved).unwrap();
+            let mut s = Storage::new(moved);
+            s.write(FileKind::Txt, "A", b"1", Some(BACKUP_NAME))
+                .unwrap();
+            assert_eq!(s.read(FileKind::Txt, "A").unwrap(), b"1");
+            s.set_project("GAME").unwrap();
+            s.write_project_file("@META.TXT", b"t").unwrap();
+            assert_eq!(s.read_project_file("@META.TXT").unwrap(), b"t");
+            assert_eq!(s.projects().unwrap(), ["GAME"]);
+        }
     }
 }

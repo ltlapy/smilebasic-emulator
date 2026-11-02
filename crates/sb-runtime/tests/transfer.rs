@@ -158,3 +158,70 @@ fn the_workspace_and_wrong_files() {
         "Exported A: 1 file; 1 left out (GBAD: why)."
     );
 }
+
+#[cfg(unix)]
+mod links {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn importing_writes_through_no_link_in_the_project() {
+        let tmp = TempDir::new("link-import");
+        let s = Storage::new(tmp.0.join("projects"));
+        s.create_project("GAME").unwrap();
+        let outside = tmp.0.join("outside");
+        fs::write(&outside, "outside").unwrap();
+        symlink(&outside, tmp.0.join("projects/GAME/TMAIN.PRG")).unwrap();
+        let source = tmp.0.join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("TMAIN.PRG"), "?1").unwrap();
+        assert!(transfer::import_project(&s, &source, "GAME").is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"outside");
+    }
+
+    #[test]
+    fn importing_reads_no_link_in_the_source() {
+        let tmp = TempDir::new("link-source");
+        let s = Storage::new(tmp.0.join("projects"));
+        s.create_project("GAME").unwrap();
+        let outside = tmp.0.join("outside");
+        fs::write(&outside, "secret").unwrap();
+        let source = tmp.0.join("source");
+        fs::create_dir_all(&source).unwrap();
+        symlink(&outside, source.join("TLEAK.PRG")).unwrap();
+        let summary = transfer::import_project(&s, &source, "GAME").unwrap();
+        assert_eq!(summary.written, 0);
+        assert!(!s.exists_in("GAME", FileKind::Txt, "LEAK.PRG"));
+    }
+
+    #[test]
+    fn exporting_carries_no_linked_file_out() {
+        let tmp = TempDir::new("link-export");
+        let s = Storage::new(tmp.0.join("projects"));
+        s.create_project("GAME").unwrap();
+        let outside = tmp.0.join("outside");
+        fs::write(&outside, "secret title\n").unwrap();
+        symlink(&outside, tmp.0.join("projects/GAME/TLEAK.PRG")).unwrap();
+        symlink(&outside, tmp.0.join("projects/GAME/@META.TXT")).unwrap();
+        let dest = tmp.0.join("dest");
+        let summary = transfer::export_project(&s, "GAME", &dest).unwrap();
+        assert_eq!(summary.written, 0);
+        assert!(!dest.join("GAME/TLEAK.PRG").exists());
+        let meta = sbfile::parse(&fs::read(dest.join("GAME/META")).unwrap()).unwrap();
+        let meta = sbfile::parse_meta(&meta.body).unwrap();
+        assert_eq!(String::from_utf16_lossy(&meta.title), "GAME");
+    }
+
+    #[test]
+    fn a_linked_project_is_not_exported() {
+        let tmp = TempDir::new("link-export-project");
+        let s = Storage::new(tmp.0.join("projects"));
+        s.create_project("GAME").unwrap();
+        let away = tmp.0.join("away");
+        fs::create_dir_all(&away).unwrap();
+        fs::write(away.join("TMAIN.PRG"), "secret").unwrap();
+        symlink(&away, tmp.0.join("projects/LINK")).unwrap();
+        assert!(transfer::export_project(&s, "LINK", &tmp.0.join("dest")).is_err());
+        assert!(!tmp.0.join("dest/LINK/TMAIN.PRG").exists());
+    }
+}
