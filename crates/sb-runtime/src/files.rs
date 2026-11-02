@@ -441,6 +441,11 @@ impl Runtime {
 
     /// Loads the current project's TXT file `name`, as listed, into a slot.
     pub(crate) fn load_file(&mut self, name: &str, slot: usize) -> storage::Result<()> {
+        // A listed name may break the naming rules, but is only ever one
+        // file's name.
+        if name.contains(['/', '\\', ':']) {
+            return Err(StorageError::BadName(name.to_string()));
+        }
         let file = FileRef {
             kind: FileKind::Txt,
             project: None,

@@ -414,6 +414,85 @@ fn the_tool_keys_start_the_tools_set_in_the_settings() {
 }
 
 #[test]
+fn every_form_of_a_subprograms_name_finds_its_file() {
+    let dir = TempDir::new("forms");
+    let mut m = machine(&dir, "END\n");
+    let storage = m.rt.storage.clone();
+    storage.create_project("GAME").unwrap();
+    storage.create_project("#TOOL").unwrap();
+    let source = "WHILE 1:VSYNC:WEND\n";
+    storage
+        .write_file_in("", "TBARE", source.as_bytes())
+        .unwrap();
+    storage
+        .write_file_in("", "T@KEPT.PRG", source.as_bytes())
+        .unwrap();
+    storage
+        .write_file_in("GAME", "TIN.PRG", source.as_bytes())
+        .unwrap();
+    storage
+        .write_file_in("#TOOL", "TT.PRG", source.as_bytes())
+        .unwrap();
+    for (form, project) in [
+        ("BARE", ""),
+        ("bare", ""),
+        ("/BARE", ""),
+        ("@KEPT.PRG", ""),
+        ("/@KEPT.PRG", ""),
+        ("TXT:BARE", ""),
+        ("GAME/IN.PRG", "GAME"),
+        ("game/in.prg", "GAME"),
+        ("TXT:GAME/IN.PRG", "GAME"),
+        ("#TOOL/T.PRG", "#TOOL"),
+    ] {
+        m.rt.settings.tools[0] = form.to_string();
+        assert!(m.run_tool(0).unwrap(), "{form}");
+        let (sub, _) = m.sub_runtime().unwrap();
+        assert_eq!(sub.storage.project(), project, "{form}");
+        assert_eq!(sub.slots[0], source, "{form}");
+        m.stop_sub();
+        frames(&mut m, 1);
+    }
+    // A bare name is in the project the main interpreter is in.
+    m.rt.storage.set_project("GAME").unwrap();
+    m.rt.settings.tools[0] = "IN.PRG".to_string();
+    assert!(m.run_tool(0).unwrap());
+    assert_eq!(m.sub_runtime().unwrap().0.storage.project(), "GAME");
+}
+
+#[test]
+fn a_subprograms_name_cannot_leave_the_storage_folder() {
+    let outer = TempDir::new("traversal");
+    let dir = TempDir(outer.0.join("root"));
+    let mut m = machine(&dir, "END\n");
+    // What the names below would reach if they went through.
+    std::fs::create_dir_all(dir.0.join("@WORKSPACE/TA")).unwrap();
+    std::fs::create_dir_all(dir.0.join("GAME/TA")).unwrap();
+    std::fs::write(outer.0.join("secret"), "WHILE 1:VSYNC:WEND\n").unwrap();
+    for bad in [
+        "/A/../../../secret",
+        "A/../../../secret",
+        "GAME/A/../../../secret",
+        "../secret",
+        "/../secret",
+        "/:\\x",
+        ":\\x",
+        "\\..\\x",
+        "DAT:BARE",
+    ] {
+        m.rt.settings.tools[0] = bad.to_string();
+        assert!(m.run_tool(0).is_err(), "{bad}");
+        assert!(!m.sub_running(), "{bad}");
+    }
+    enter(&mut m, "subrun \"/A/../../../secret\"");
+    assert!(rows(&m).iter().any(|r| r.starts_with("Load failed")));
+    assert!(!m.sub_running());
+    // The keys stayed with the main interpreter.
+    enter(&mut m, "?\"here\"");
+    assert!(rows(&m).iter().any(|r| r == "HERE"), "{:?}", rows(&m));
+}
+
+#[test]
 fn a_subprogram_types_into_the_editor_beside_it() {
     let dir = TempDir::new("editor");
     // As SmileBASIC 4's SMILETOOL types what was picked, on a key.

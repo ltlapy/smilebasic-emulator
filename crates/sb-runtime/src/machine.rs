@@ -18,7 +18,7 @@ use crate::framebuffer::Framebuffer;
 use crate::prg::SlotEdit;
 use crate::runtime::{Request, Runtime, SLOTS, Stopped, keys};
 use crate::screen::ScreenMode;
-use crate::storage;
+use crate::storage::{self, FileKind, StorageError};
 use crate::sub::{Linked, status};
 use crate::text::CONSOLE;
 
@@ -1855,21 +1855,28 @@ impl Machine {
     }
 
     fn start_sub(&mut self, file: &str) -> storage::Result<()> {
-        let sub = self
-            .sub
-            .get_or_insert_with(|| Box::new(Machine::new(self.rt.new_sub())));
-        let (project, name) = match file.split_once('/') {
-            Some((project, name)) => (project, name),
-            None => (self.rt.storage.project(), file),
-        };
+        // It takes the focus once it runs, not before: a file that cannot
+        // be loaded leaves the keys with the main interpreter.
+        let sub = self.sub.get_or_insert_with(|| {
+            let mut sub = Box::new(Machine::new(self.rt.new_sub()));
+            sub.rt.focus = false;
+            sub
+        });
         // A running subprogram stops with User break first, whether the
         // file can be loaded or not.
         if sub.vm.is_some() {
             sub.stop();
         }
+        // Named as LOAD names a file, so that the name cannot leave its
+        // project's folder.
+        let file = storage::parse_read_name(file, FileKind::Txt)?;
+        if file.kind != FileKind::Txt {
+            return Err(StorageError::BadKind(file.kind.name().to_string()));
+        }
+        let project = file.project.as_deref().unwrap_or(self.rt.storage.project());
         let before = sub.rt.storage.project().to_string();
         let loaded = sub.rt.storage.set_project(project);
-        if let Err(e) = loaded.and_then(|()| sub.rt.load_file(name, 0)) {
+        if let Err(e) = loaded.and_then(|()| sub.rt.load_file(&file.name, 0)) {
             let _ = sub.rt.storage.set_project(&before);
             return Err(e);
         }
