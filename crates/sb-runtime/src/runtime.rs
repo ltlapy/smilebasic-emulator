@@ -23,7 +23,7 @@ use crate::hint;
 use crate::input::Input;
 use crate::line::LineEdit;
 use crate::palette::Part;
-use crate::screen::{Fade, ScreenMode};
+use crate::screen::{Fade, ScreenMode, darken};
 pub use crate::settings::Settings;
 use crate::sound::Sound;
 use crate::sprites::{self, Sprites};
@@ -1497,11 +1497,11 @@ impl Runtime {
         let mut flat = std::mem::replace(&mut self.flat, Framebuffer::new(0, 0));
         // The sub interpreter's screen goes over the main one's, and so is
         // drawn premultiplied. Its BACKCOLOR's color is put on at full
-        // strength, and the main screen shows through it in proportion to
-        // its alpha; a BACKCOLOR of alpha 0 leaves the screen clear.
-        // UNVERIFIED: that an opaque BACKCOLOR lets the main screen show
-        // through whole.
+        // strength, with its alpha as how much of the main screen shows
+        // through (coverage 255 less it); one of alpha 0 leaves the
+        // screen clear, and an opaque one hides the main screen.
         let back = self.back_color;
+        let sub_opaque = self.env_type != 0 && back >> 24 == 0xFF;
         fb.clear(match (self.env_type, back >> 24) {
             (0, _) => back | 0xFF00_0000,
             (_, 0) => 0,
@@ -1587,10 +1587,18 @@ impl Runtime {
                 }
             }
             if !direct {
-                compose::compose(&mut fb, &scratch, settings.compose, settings.color);
+                // The main screen's frame is opaque all through.
+                let opaque = self.env_type == 0;
+                compose::compose(&mut fb, &scratch, settings.compose, settings.color, opaque);
             }
         }
-        self.fade.cover(fb.pixels_mut());
+        // FADE and the darkening beside a subprogram are one step.
+        self.fade.cover(fb.pixels_mut(), self.dimmed);
+        if sub_opaque {
+            for p in fb.pixels_mut() {
+                *p |= 0xFF00_0000;
+            }
+        }
         // In direct mode, the hint for the command being typed above the
         // line and completion's list below the word.
         let options = Options::from_settings(&self.settings, false).filter(|_| !self.line_quiet);
@@ -1646,9 +1654,6 @@ impl Runtime {
                     colors,
                 );
             }
-        }
-        if self.dimmed {
-            dim(&mut fb);
         }
         self.fb = fb;
         self.scratch = scratch;
@@ -2550,19 +2555,7 @@ impl Host for Runtime {
 }
 
 /// Beside a subprogram, the side without the focus shows a little
-/// darker, each channel times 224/255 rounded to the nearest: 255 to
-/// 224, 248 to 218, 96 to 84.
+/// darker.
 fn dim(fb: &mut Framebuffer) {
-    for p in fb.pixels_mut() {
-        // Red and blue in one go, then green, 16 bits apiece: each
-        // product is below 2^16, so (x + 128 + (x+128)/256) / 256 is
-        // x/255 rounded, without carrying into the next lane.
-        let lanes = |x: u32| {
-            let t = x + 0x0080_0080;
-            ((t + (t >> 8 & 0x00FF_00FF)) >> 8) & 0x00FF_00FF
-        };
-        let rb = lanes((*p & 0x00FF_00FF) * 224);
-        let g = lanes((*p >> 8 & 0xFF) * 224) << 8;
-        *p = *p & 0xFF00_0000 | rb | g;
-    }
+    darken(fb.pixels_mut());
 }

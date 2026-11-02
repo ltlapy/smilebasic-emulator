@@ -84,27 +84,307 @@ impl Affine {
 }
 
 // Frames and layers hold premultiplied colors: each channel already
-// multiplied by the alpha. Frames are opaque, so for them it makes no
-// difference; in a layer of its own, an additive element adds light
-// without adding alpha, and lights what is under the layer once it is
-// composed (checked on hardware).
+// multiplied by the alpha. The alpha is coverage: 255 less the
+// transmittance SmileBASIC 4's render targets keep in theirs, so a clear
+// layer is 0 and an opaque frame 255. In a layer of its own, an
+// additive element adds light without adding alpha, and lights what is
+// under the layer once it is composed.
+//
+// A draw is worked out exactly and rounded once, to the nearest, when it
+// is stored: an element's color times its tint times its alpha, plus
+// what it leaves of the frame, as one sum. Every denominator here is a
+// power of 255, which is odd, so no exact result lies halfway between
+// two values: rounding half up or half down would give the same pixels,
+// and `(x + (d-1)/2) / d` is the nearest for an odd `d`. A GPU working
+// in floating point may still round a result very near a half either
+// way.
+
+/// 255³, what [`Over3`]'s numerators are over.
+const D3: u32 = 255 * 255 * 255;
+/// 255⁵, what [`Over5`]'s numerators are over.
+const D5: u64 = 255 * 255 * 255 * 255 * 255;
+
+/// One pixel of an element as it goes on the frame, with what it gives
+/// worked out once, so that drawing it many times costs only the blend.
+pub trait Paint: Copy {
+    /// The frame pixel `dst` with this put on.
+    fn put(&self, dst: u32) -> u32;
+}
+
+/// An element's straight color over `dst`, premultiplied, untinted: the
+/// light `s*a` and what is left of `dst`, `d*(255-a)`, added and
+/// divided by 255, rounded once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Over1 {
+    /// In [`spread`]'s lanes, times 255.
+    light: u64,
+    keep: u64,
+}
+
+impl Over1 {
+    #[inline]
+    pub fn new(src: u32) -> Over1 {
+        let sa = u64::from(src >> 24);
+        Over1 {
+            light: spread(src | 0xFF00_0000) * sa,
+            keep: 255 - sa,
+        }
+    }
+}
+
+impl Paint for Over1 {
+    #[inline]
+    fn put(&self, dst: u32) -> u32 {
+        // All four channels at once, 16 bits apiece: each sum is at most
+        // 255 * 255, so none carries into the next.
+        gather(div255_lanes(self.light + spread(dst) * self.keep))
+    }
+}
+
+/// An element's light added to the frame, each channel held to 255; the
+/// frame's alpha stays as it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lit(u64);
+
+impl Lit {
+    /// Of an untinted straight color: each channel times its alpha.
+    #[inline]
+    pub fn new(src: u32) -> Lit {
+        Lit(light(src))
+    }
+
+    /// Of a straight color tinted by `color`: each channel times the
+    /// other's, times both alphas, rounded once.
+    #[inline]
+    pub fn tinted(src: u32, color: u32) -> Lit {
+        let a = (src >> 24) * (color >> 24);
+        let c = |shift: u32| {
+            let l = (src >> shift & 0xFF) * (color >> shift & 0xFF) * a;
+            (l + D3 / 2) / D3
+        };
+        Lit(spread(c(16) << 16 | c(8) << 8 | c(0)))
+    }
+
+    /// Of a straight color tinted by `c1` and then `c2`, as text is by
+    /// its cell's color and TCOLOR: one rounding of the whole product.
+    #[inline]
+    pub fn tinted2(src: u32, c1: u32, c2: u32) -> Lit {
+        let a = u64::from((src >> 24) * (c1 >> 24)) * u64::from(c2 >> 24);
+        let c = |shift: u32| {
+            let ch = |v: u32| u64::from(v >> shift & 0xFF);
+            let l = ch(src) * ch(c1) * ch(c2) * a;
+            ((l + D5 / 2) / D5) as u32
+        };
+        Lit(spread(c(16) << 16 | c(8) << 8 | c(0)))
+    }
+}
+
+impl Paint for Lit {
+    #[inline]
+    fn put(&self, dst: u32) -> u32 {
+        add_light(dst, self.0)
+    }
+}
+
+/// A straight color tinted by another, over the frame: the products of
+/// the two colors' channels and alphas, and what is left of the frame,
+/// as numerators over 255³, rounded once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Over3 {
+    /// Blue, green, red and alpha; when `keep` is 0, the pixel it puts.
+    light: [u32; 4],
+    keep: u32,
+}
+
+impl Over3 {
+    #[inline]
+    pub fn new(src: u32, color: u32) -> Over3 {
+        let a = (src >> 24) * (color >> 24);
+        let ch = |v: u32, shift: u32| v >> shift & 0xFF;
+        // Opaque, the usual case, covers what is under it: the colors'
+        // product is all there is.
+        if a == 255 * 255 {
+            let c = |shift: u32| div255(ch(src, shift) * ch(color, shift));
+            return Over3::solid(0xFF00_0000 | c(16) << 16 | c(8) << 8 | c(0));
+        }
+        Over3::partial(src, color, a)
+    }
+
+    /// [`Over3::new`] with `tables` holding each channel times the
+    /// color's, divided by 255 and rounded: blue, green and red.
+    #[inline]
+    pub fn tabled(src: u32, color: u32, tables: &[[u8; 256]; 3]) -> Over3 {
+        let a = (src >> 24) * (color >> 24);
+        if a == 255 * 255 {
+            let c = |i: usize| u32::from(tables[i][(src >> (8 * i) & 0xFF) as usize]) << (8 * i);
+            return Over3::solid(0xFF00_0000 | c(2) | c(1) | c(0));
+        }
+        Over3::partial(src, color, a)
+    }
+
+    /// What covers what is under it whole.
+    #[inline]
+    fn solid(pixel: u32) -> Over3 {
+        Over3 {
+            light: [pixel, 0, 0, 0],
+            keep: 0,
+        }
+    }
+
+    /// For `src` and `color` whose alphas multiply to `a`, not 255².
+    #[inline]
+    fn partial(src: u32, color: u32, a: u32) -> Over3 {
+        let ch = |v: u32, shift: u32| v >> shift & 0xFF;
+        // Each light is at most 255² times `a`, and each `keep` times a
+        // channel at most 255² times 255² - `a`: a sum fits 32 bits.
+        let c = |shift: u32| ch(src, shift) * ch(color, shift) * a;
+        Over3 {
+            light: [c(0), c(8), c(16), 255 * 255 * a],
+            keep: 255 * (255 * 255 - a),
+        }
+    }
+}
+
+impl Paint for Over3 {
+    #[inline]
+    fn put(&self, dst: u32) -> u32 {
+        if self.keep == 0 {
+            return self.light[0];
+        }
+        let c = |i: usize| {
+            let d = dst >> (8 * i) & 0xFF;
+            ((self.light[i] + d * self.keep + D3 / 2) / D3) << (8 * i)
+        };
+        // An opaque frame stays opaque, the usual case.
+        let alpha = match dst >> 24 {
+            0xFF => 0xFF00_0000,
+            _ => c(3),
+        };
+        c(0) | c(1) | c(2) | alpha
+    }
+}
+
+/// [`Over3`] for a color tinted twice, as text is by its cell's color and
+/// TCOLOR: numerators over 255⁵.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Over5 {
+    /// Blue, green, red and alpha.
+    light: [u64; 4],
+    keep: u64,
+}
+
+impl Over5 {
+    #[inline]
+    pub fn new(src: u32, c1: u32, c2: u32) -> Over5 {
+        const A3: u64 = 255 * 255 * 255;
+        let a = u64::from((src >> 24) * (c1 >> 24)) * u64::from(c2 >> 24);
+        let c = |shift: u32| {
+            let ch = |v: u32| u64::from(v >> shift & 0xFF);
+            ch(src) * ch(c1) * ch(c2) * a
+        };
+        Over5 {
+            light: [c(0), c(8), c(16), A3 * a],
+            keep: 255 * 255 * (A3 - a),
+        }
+    }
+
+    /// The pixel it puts on whatever is under it, when it covers that
+    /// whole.
+    #[cfg(test)]
+    fn solid(&self) -> Option<u32> {
+        (self.keep == 0).then(|| self.put(0))
+    }
+}
+
+impl Paint for Over5 {
+    #[inline]
+    fn put(&self, dst: u32) -> u32 {
+        let c = |i: usize| {
+            let d = u64::from(dst >> (8 * i) & 0xFF);
+            (((self.light[i] + d * self.keep + D5 / 2) / D5) as u32) << (8 * i)
+        };
+        let alpha = match dst >> 24 {
+            0xFF => 0xFF00_0000,
+            _ => c(3),
+        };
+        c(0) | c(1) | c(2) | alpha
+    }
+}
+
+/// Any of the paints, for elements whose pixels each have their own,
+/// such as text screens' cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mixed {
+    /// Opaque: the pixel itself.
+    Solid(u32),
+    Lit(Lit),
+    Over1(Over1),
+    Over3(Over3),
+    Over5(Over5),
+}
+
+impl Mixed {
+    /// A straight color tinted by `c1` and then `c2`, put over the frame
+    /// or, with `add`, added to it; `None` if it changes nothing. A white
+    /// tint changes nothing either, so the cheapest paint that gives the
+    /// same pixels is taken.
+    pub fn new(src: u32, c1: u32, c2: u32, add: bool) -> Option<Mixed> {
+        const WHITE: u32 = 0xFFFF_FFFF;
+        if (src >> 24) * (c1 >> 24) * (c2 >> 24) == 0 {
+            return None;
+        }
+        let one = match (c1, c2) {
+            (WHITE, WHITE) => Some(WHITE),
+            (c, WHITE) | (WHITE, c) => Some(c),
+            _ => None,
+        };
+        if add {
+            return Some(Mixed::Lit(match one {
+                Some(WHITE) => Lit::new(src),
+                Some(c) => Lit::tinted(src, c),
+                None => Lit::tinted2(src, c1, c2),
+            }));
+        }
+        let opaque = src & c1 & c2 >= 0xFF00_0000;
+        let ch = |v: u32, shift: u32| v >> shift & 0xFF;
+        Some(match (one, opaque) {
+            (Some(WHITE), true) => Mixed::Solid(src),
+            (Some(WHITE), false) => Mixed::Over1(Over1::new(src)),
+            (Some(c), true) => Mixed::Solid([16, 8, 0].iter().fold(0xFF00_0000, |out, &shift| {
+                out | div255(ch(src, shift) * ch(c, shift)) << shift
+            })),
+            (Some(c), false) => Mixed::Over3(Over3::new(src, c)),
+            (None, true) => Mixed::Solid([16, 8, 0].iter().fold(0xFF00_0000, |out, &shift| {
+                let x = ch(src, shift) * ch(c1, shift) * ch(c2, shift);
+                out | ((x + 255 * 255 / 2) / (255 * 255)) << shift
+            })),
+            (None, false) => Mixed::Over5(Over5::new(src, c1, c2)),
+        })
+    }
+}
+
+impl Paint for Mixed {
+    #[inline]
+    fn put(&self, dst: u32) -> u32 {
+        match self {
+            Mixed::Solid(c) => *c,
+            Mixed::Lit(l) => l.put(dst),
+            Mixed::Over1(o) => o.put(dst),
+            Mixed::Over3(o) => o.put(dst),
+            Mixed::Over5(o) => o.put(dst),
+        }
+    }
+}
 
 /// `src`, an element's straight color, over `dst`, premultiplied: the
-/// element's light `s*a/255` and what is left of `dst`, `d*(255-a)/255`,
-/// each rounded to the nearest and added.
+/// element's light `s*a` and what is left of `dst`, `d*(255-a)`, added,
+/// divided by 255 and rounded to the nearest.
 #[inline]
 pub fn over(dst: u32, src: u32) -> u32 {
-    let sa = u64::from(src >> 24);
-    if sa == 0xFF {
+    if src >> 24 == 0xFF {
         return src;
     }
-    // All four channels at once, 16 bits apiece: each product is at most
-    // 255 * 255, so none carries into the next, and the two parts add up
-    // to at most 255.
-    gather(div255_sum_lanes(
-        spread(src | 0xFF00_0000) * sa,
-        spread(dst) * (255 - sa),
-    ))
+    Over1::new(src).put(dst)
 }
 
 /// The channels of a color, one to each 16 bits: blue, red, green and
@@ -125,21 +405,8 @@ fn gather(x: u64) -> u32 {
 #[inline]
 fn div255_lanes(x: u64) -> u64 {
     // Rounds x / 255 to the nearest for x up to 255 * 255, as div255 does.
-    const LANES: u64 = 0x00FF_00FF_00FF_00FF;
     let t = x + 0x0080_0080_0080_0080;
     ((t + (t >> 8 & LANES)) >> 8) & LANES
-}
-
-/// [`div255_lanes`] of `x` plus that of `y`, for sums that stay within 8
-/// bits a lane, with one shift and mask fewer.
-#[inline]
-fn div255_sum_lanes(x: u64, y: u64) -> u64 {
-    const ROUND: u64 = 0x0080_0080_0080_0080;
-    const HIGH: u64 = 0xFF00_FF00_FF00_FF00;
-    let (t, u) = (x + ROUND, y + ROUND);
-    // Each lane of these is the quotient times 256 plus a remainder.
-    let (t, u) = (t + (t >> 8 & LANES), u + (u >> 8 & LANES));
-    ((t & HIGH) + (u & HIGH)) >> 8
 }
 
 /// `src`, an element's straight color, added to `dst` in proportion to
@@ -162,25 +429,13 @@ fn light(src: u32) -> u64 {
 /// `light` added to `dst`, each channel held to 255.
 #[inline]
 fn add_light(dst: u32, light: u64) -> u32 {
-    let sum = spread(dst & 0x00FF_FFFF) + light;
-    let held = (sum | ((sum >> 8 & ONES) * 0xFF)) & LANES;
-    gather(held) | dst & 0xFF00_0000
+    held(spread(dst & 0x00FF_FFFF) + light) | dst & 0xFF00_0000
 }
 
-/// [`blend`] of the one color `src` over many pixels, with what it
-/// gives worked out once.
+/// Lanes of up to 9 bits held to 255 and gathered.
 #[inline]
-pub fn blend_one(src: u32, add: bool) -> impl Fn(u32) -> u32 + Copy {
-    let sa = u64::from(src >> 24);
-    let (base, keep) = match add {
-        true => (light(src), 0),
-        false => (div255_lanes(spread(src | 0xFF00_0000) * sa), 255 - sa),
-    };
-    move |dst| match (add, keep) {
-        (true, _) => add_light(dst, base),
-        (false, 0) => src,
-        (false, _) => gather(base + div255_lanes(spread(dst) * keep)),
-    }
+fn held(sum: u64) -> u32 {
+    gather((sum | ((sum >> 8 & ONES) * 0xFF)) & LANES)
 }
 
 /// Where a layer's elements may draw.
@@ -194,15 +449,15 @@ pub struct Placement<'a> {
 }
 
 /// Draws a `w` x `h` image whose pixels `sample` gives, placed by
-/// `place`. `sample` gets the image point under each frame pixel's
-/// center, which falls between whole pixels when the frame is finer than
-/// the image.
-pub fn draw_image(
+/// `place`, `None` where it is clear. `sample` gets the image point under
+/// each frame pixel's center, which falls between whole pixels when the
+/// frame is finer than the image.
+pub fn draw_image<P: Paint>(
     fb: &mut Framebuffer,
     place: &Placement,
     w: i32,
     h: i32,
-    sample: impl Fn(f64, f64) -> u32,
+    sample: impl Fn(f64, f64) -> Option<P>,
 ) {
     draw_image_part(fb, place, w, h, (0, 0, w, h), sample);
 }
@@ -212,13 +467,13 @@ pub fn draw_image(
 /// be sampled, so `sample` must give nothing there; drawing an image part
 /// by part then gives the same frame as drawing it whole, while parts
 /// with nothing in them need not be drawn at all.
-pub fn draw_image_part(
+pub fn draw_image_part<P: Paint>(
     fb: &mut Framebuffer,
     place: &Placement,
     w: i32,
     h: i32,
     part: (i32, i32, i32, i32),
-    sample: impl Fn(f64, f64) -> u32,
+    sample: impl Fn(f64, f64) -> Option<P>,
 ) {
     let Some(inv) = place.matrix.inverse() else {
         return;
@@ -251,12 +506,10 @@ pub fn draw_image_part(
             if lx < 0.0 || ly < 0.0 || lx >= w || ly >= h {
                 continue;
             }
-            let src = sample(lx, ly);
-            if src >> 24 == 0 {
-                continue;
+            if let Some(paint) = sample(lx, ly) {
+                let dst = &mut line[px as usize];
+                *dst = paint.put(*dst);
             }
-            let dst = &mut line[px as usize];
-            *dst = blend(*dst, src, place.add);
         }
     }
 }
@@ -269,16 +522,6 @@ fn crossing(k: f64, base: f64, len: f64) -> Option<(f64, f64)> {
     }
     let (a, b) = ((0.0 - base) / k, (len - base) / k);
     Some((a.min(b), a.max(b)))
-}
-
-/// `src` over `dst`, or added to it.
-#[inline]
-pub fn blend(dst: u32, src: u32, add_light: bool) -> u32 {
-    if add_light {
-        add(dst, src)
-    } else {
-        over(dst, src)
-    }
 }
 
 /// The frame pixels, from `(x0, y0)` up to but not including `(x1, y1)`,
@@ -608,14 +851,14 @@ pub fn project_point(m: &[f64; 16], (x, y): (f64, f64), (w, hh): (u32, u32)) -> 
 /// layer's. Unlike drawing the layer flat first, this keeps what lies off
 /// the flat screen, as a sprite's corners do on SmileBASIC 4's GPU.
 #[allow(clippy::too_many_arguments)]
-pub fn project_image(
+pub fn project_image<P: Paint>(
     dst: &mut Framebuffer,
     m: &[f64; 16],
     sample: u32,
     place: &Placement,
     w: i32,
     h: i32,
-    pixel: impl Fn(i32, i32) -> u32,
+    pixel: impl Fn(i32, i32) -> Option<P>,
 ) {
     let hm = homography(m);
     let (Some(inv), Some(back)) = (invert3(&hm), place.matrix.inverse()) else {
@@ -703,12 +946,10 @@ pub fn project_image(
                 else {
                     continue;
                 };
-                let src = pixel(ix as i32, iy as i32);
-                if src >> 24 == 0 {
-                    continue;
+                if let Some(paint) = pixel(ix as i32, iy as i32) {
+                    let d = &mut line[(x0 + t) as usize];
+                    *d = paint.put(*d);
                 }
-                let d = &mut line[(x0 + t) as usize];
-                *d = blend(*d, src, place.add);
             }
         }
     }
@@ -763,14 +1004,15 @@ fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     ])
 }
 
-/// A premultiplied color over another.
+/// A premultiplied color over another, each channel held to 255 (an
+/// additive element can make a layer's light more than its coverage).
 #[inline]
 fn over_premultiplied(dst: u32, src: u32) -> u32 {
     let a = u64::from(src >> 24);
     if a == 0xFF {
         return src;
     }
-    gather(spread(src) + div255_lanes(spread(dst) * (255 - a)))
+    held(spread(src) + div255_lanes(spread(dst) * (255 - a)))
 }
 
 /// How LAYER puts a layer over the ones behind it.
@@ -802,114 +1044,132 @@ impl Compose {
     }
 }
 
-/// `x / 255`, rounded to the nearest, as SmileBASIC 4 blends (checked on
-/// hardware against lossless screenshots).
+/// `x / 255`, rounded to the nearest.
 fn div255(x: u32) -> u32 {
     (x + 127) / 255
 }
 
 /// Puts a layer drawn on its own (transparent, premultiplied) frame over
-/// `dst`, its colors first multiplied by `color`.
-// Checked on hardware: the results of modes 0 to 4 over a color and over
-// black, and, with lossless screenshots, that mode 0 draws the layer's
-// elements straight onto the frame without its color, pixel for pixel.
-pub fn compose(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color: u32) {
-    // The usual case, a plain layer, as one blend a pixel.
-    if matches!(mode, Compose::Direct | Compose::Normal) && color == 0xFFFF_FFFF {
-        for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-            if l != 0 {
-                *d = over_premultiplied(*d, l) & 0x00FF_FFFF | *d & 0xFF00_0000;
-            }
-        }
-        return;
+/// `dst`, its colors first multiplied by `color`. Each mode is one
+/// rounding of the exact sum, as in [`compose_tinted`]; the frame's alpha
+/// (coverage) grows by the layer's in mode 1, stays in mode 2 and becomes
+/// opaque in modes 3 and 4. `opaque` says `dst` is opaque all over, as
+/// the main screen is, which spares that last step.
+pub fn compose(
+    dst: &mut Framebuffer,
+    layer: &Framebuffer,
+    mode: Compose,
+    color: u32,
+    opaque: bool,
+) {
+    if color != 0xFFFF_FFFF {
+        return compose_tinted(dst, layer, mode, color);
     }
-    // Without a layer color, adding works on the three channels at once
-    // in 16-bit lanes, as the general way below does channel by channel.
-    if mode == Compose::Add && color == 0xFFFF_FFFF {
-        // Each channel added and held to 255 is a byte's saturating add,
-        // which the compiler does many pixels at a time; adding nothing
-        // where the layer is clear, and to the alpha, changes nothing.
-        for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-            let (a, b) = (d.to_le_bytes(), (l & 0x00FF_FFFF).to_le_bytes());
-            *d = u32::from_le_bytes(std::array::from_fn(|i| a[i].saturating_add(b[i])));
-        }
-        return;
-    }
-    // Multiplying without a layer color, as for shadows: the general
-    // way below with the color's steps, which change nothing, left out.
-    if mode == Compose::Multiply && color == 0xFFFF_FFFF {
-        for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-            if l == 0 {
-                continue;
-            }
-            let keep = 255 - (l >> 24);
-            let c = |shift: u32| {
-                let (p, v) = (l >> shift & 0xFF, *d >> shift & 0xFF);
-                div255(v * (p + keep)).min(255) << shift
-            };
-            *d = *d & 0xFF00_0000 | c(16) | c(8) | c(0);
-        }
-        return;
-    }
-    // Each mode gets its own loop, so that its sum is worked inline.
     match mode {
+        // The usual case, a plain layer, as one blend a pixel.
         Compose::Direct | Compose::Normal => {
-            compose_each(dst, layer, color, |p, d, a| p + div255(d * (255 - a)))
-        }
-        Compose::Add => compose_each(dst, layer, color, |p, d, _| d + p),
-        Compose::Multiply => compose_each(dst, layer, color, |p, d, a| div255(d * (p + 255 - a))),
-        Compose::Screen => compose_each(dst, layer, color, |p, d, _| d + div255(p * (255 - d))),
-    }
-}
-
-/// [`compose`] by `f`, which gives a channel from the layer's light `p`,
-/// the frame's `d` and the coverage `a`; it is held to 255.
-#[inline(always)]
-fn compose_each(
-    dst: &mut Framebuffer,
-    layer: &Framebuffer,
-    color: u32,
-    f: impl Fn(u32, u32, u32) -> u32,
-) {
-    // Without a layer color its steps change nothing, and are left out.
-    if color == 0xFFFF_FFFF {
-        for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-            if l == 0 {
-                continue;
+            for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+                if l != 0 {
+                    *d = over_premultiplied(*d, l);
+                }
             }
-            let [a, pr, pg, pb] = l.to_be_bytes().map(u32::from);
-            let [da, dr, dg, db] = d.to_be_bytes().map(u32::from);
-            let c = |p: u32, d: u32| f(p, d, a).min(255) as u8;
-            *d = u32::from_be_bytes([da as u8, c(pr, dr), c(pg, dg), c(pb, db)]);
         }
-        return;
+        Compose::Add => {
+            // Each channel added and held to 255 is a byte's saturating
+            // add, which the compiler does many pixels at a time; adding
+            // nothing where the layer is clear, and to the alpha, changes
+            // nothing.
+            for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+                let (a, b) = (d.to_le_bytes(), (l & 0x00FF_FFFF).to_le_bytes());
+                *d = u32::from_le_bytes(std::array::from_fn(|i| a[i].saturating_add(b[i])));
+            }
+        }
+        // Each mode gets its own loop, so that its sum is worked inline.
+        Compose::Multiply if opaque => {
+            compose_each::<true>(dst, layer, |p, d, a| div255(d * (p + 255 - a)))
+        }
+        Compose::Multiply => compose_each::<false>(dst, layer, |p, d, a| div255(d * (p + 255 - a))),
+        Compose::Screen if opaque => {
+            compose_each::<true>(dst, layer, |p, d, _| d + div255(p * (255 - d)))
+        }
+        Compose::Screen => compose_each::<false>(dst, layer, |p, d, _| d + div255(p * (255 - d))),
     }
-    compose_tinted(dst, layer, color, f);
 }
 
-/// [`compose_each`] the general way, the layer color's steps worked
-/// even for white.
+/// [`compose`] without a layer color, for modes 3 and 4, by `f`, which
+/// gives a channel from the layer's light `p`, the frame's `d` and the
+/// layer's coverage `a`; it is held to 255. `OPAQUE` is [`compose`]'s
+/// `opaque`.
 #[inline(always)]
-fn compose_tinted(
+fn compose_each<const OPAQUE: bool>(
     dst: &mut Framebuffer,
     layer: &Framebuffer,
-    color: u32,
     f: impl Fn(u32, u32, u32) -> u32,
 ) {
-    let [ca, cr, cg, cb] = color.to_be_bytes().map(u32::from);
     for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+        // A clear pixel of the layer leaves the color as it is, but
+        // the frame becomes opaque.
+        // UNVERIFIED: that this holds over the whole screen, not only
+        // where the layer has something.
         if l == 0 {
+            if !OPAQUE {
+                *d |= 0xFF00_0000;
+            }
+            continue;
+        }
+        let [a, pr, pg, pb] = l.to_be_bytes().map(u32::from);
+        let [_, dr, dg, db] = d.to_be_bytes().map(u32::from);
+        let c = |p: u32, d: u32| f(p, d, a).min(255) as u8;
+        *d = u32::from_be_bytes([0xFF, c(pr, dr), c(pg, dg), c(pb, db)]);
+    }
+}
+
+/// [`compose`] the general way, for any layer color, even white. With
+/// the layer's premultiplied light `p` and coverage `a`, the frame's `d`
+/// and the color's `c` and alpha `ca`, the layer gives the light
+/// `P = p*c*ca` and the coverage `A = a*ca` (over 255²), and each mode
+/// rounds once:
+/// 1: `P + d*(1-A)`; 2: `d + P`; 3: `d*(P + 1-A)`; 4: `d + P*(1-d)`.
+#[inline(never)]
+fn compose_tinted(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color: u32) {
+    const N: u32 = 255 * 255;
+    const N3: u64 = 255 * 255 * 255;
+    let [ca, cr, cg, cb] = color.to_be_bytes().map(u32::from);
+    let opaque = matches!(mode, Compose::Multiply | Compose::Screen);
+    for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+        // Where the layer is clear, only the alpha can change.
+        if l == 0 {
+            if opaque {
+                *d |= 0xFF00_0000;
+            }
             continue;
         }
         let [la, lr, lg, lb] = l.to_be_bytes().map(u32::from);
-        // The layer color scales the light, and its alpha the coverage,
-        // each product rounded once.
-        let a = div255(la * ca);
-        let tint = |p: u32, c: u32| (p * c * ca + 32512) / 65025;
-        let [pr, pg, pb] = [tint(lr, cr), tint(lg, cg), tint(lb, cb)];
+        let a = la * ca;
         let [da, dr, dg, db] = d.to_be_bytes().map(u32::from);
-        let c = |p: u32, d: u32| f(p, d, a).min(255) as u8;
-        *d = u32::from_be_bytes([da as u8, c(pr, dr), c(pg, dg), c(pb, db)]);
+        let lights = [lr * cr * ca, lg * cg * ca, lb * cb * ca];
+        let [r, g, b] = [(lights[0], dr), (lights[1], dg), (lights[2], db)].map(|(p, d)| {
+            let v = match mode {
+                Compose::Direct | Compose::Normal => (p + d * (N - a) + N / 2) / N,
+                Compose::Add => d + (p + N / 2) / N,
+                Compose::Multiply => {
+                    let x = u64::from(d) * u64::from(p + 255 * (N - a));
+                    ((x + N3 / 2) / N3) as u32
+                }
+                Compose::Screen => {
+                    let x = u64::from(p) * u64::from(255 - d);
+                    d + ((x + N3 / 2) / N3) as u32
+                }
+            };
+            v.min(255)
+        });
+        let alpha = match mode {
+            Compose::Direct | Compose::Normal => (da * (N - a) + 255 * a + N / 2) / N,
+            Compose::Add => da,
+            // UNVERIFIED: as in compose_each, over the whole screen.
+            Compose::Multiply | Compose::Screen => 255,
+        };
+        *d = alpha << 24 | r << 16 | g << 8 | b;
     }
 }
 
@@ -952,163 +1212,96 @@ mod tests {
         );
     }
 
-    #[test]
-    fn plain_layers_compose_as_any_other() {
-        // The general formula, for a premultiplied layer pixel.
-        let reference = |dst: u32, l: u32| {
-            let [la, lr, lg, lb] = l.to_be_bytes().map(u32::from);
-            let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-            let c = |p: u32, d: u32| (p + div255(d * (255 - la))).min(255) as u8;
-            u32::from_be_bytes([da as u8, c(lr, dr), c(lg, dg), c(lb, db)])
-        };
-        let mut seed = 0x9E37_79B9_u32;
-        let mut next = || {
+    /// A xorshift generator, for inputs the tests try.
+    fn numbers(mut seed: u32) -> impl FnMut() -> u32 {
+        move || {
             seed ^= seed << 13;
             seed ^= seed >> 17;
             seed ^= seed << 5;
             seed
-        };
-        let (mut dst, mut layer) = (Framebuffer::new(256, 256), Framebuffer::new(256, 256));
-        for (d, l) in dst.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
-            let a = next() >> 24;
-            let [_, r, g, b] = next().to_be_bytes().map(|c| u32::from(c) * a / 255);
-            (*d, *l) = (next(), a << 24 | r << 16 | g << 8 | b);
         }
-        let expected: Vec<u32> = (dst.pixels().iter().zip(layer.pixels()))
-            .map(|(&d, &l)| if l == 0 { d } else { reference(d, l) })
-            .collect();
-        compose(&mut dst, &layer, Compose::Normal, 0xFFFF_FFFF);
-        assert_eq!(dst.pixels(), &expected[..]);
+    }
+
+    /// `n / d` rounded to the nearest, `d` odd so that there are no ties.
+    fn nearest(n: u128, d: u128) -> u32 {
+        ((2 * n + d) / (2 * d)) as u32
+    }
+
+    /// An element's straight color `src` tinted by `c1` and `c2` over the
+    /// premultiplied `dst`, or added to it, worked out exactly in the
+    /// plainest way and rounded once: each 8-bit value is v/255.
+    fn reference(dst: u32, src: u32, c1: u32, c2: u32, add: bool) -> u32 {
+        let ch = |v: u32, i: usize| u128::from(v >> (8 * i) & 0xFF);
+        let d5 = 255u128.pow(5);
+        // a = sa*c1a*c2a / 255³; light = s*c1*c2*a / 255³ (in 8-bit units,
+        // times 255 / 255).
+        let a = ch(src, 3) * ch(c1, 3) * ch(c2, 3);
+        let mut out = 0;
+        for i in 0..4 {
+            let d = ch(dst, i);
+            let v = match (i, add) {
+                (3, true) => d as u32,
+                (_, true) => {
+                    let light = ch(src, i) * ch(c1, i) * ch(c2, i) * a;
+                    nearest(d * d5 + light, d5).min(255)
+                }
+                // Coverage: d + (1 - d) * a, in 8-bit units.
+                (3, false) => nearest(d * d5 + (255 - d) * a * 255 * 255, d5),
+                (_, false) => {
+                    let light = ch(src, i) * ch(c1, i) * ch(c2, i) * a;
+                    nearest(light + d * 255 * 255 * (255u128.pow(3) - a), d5)
+                }
+            };
+            out |= v << (8 * i);
+        }
+        out
     }
 
     #[test]
-    fn multiplying_a_layer_without_color_matches_with_it() {
-        let mut seed = 0x2545_F491_u32;
-        let mut next = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed
-        };
-        let mut frame = Framebuffer::new(64, 64);
-        let mut layer = Framebuffer::new(64, 64);
-        for (d, l) in frame.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
-            *d = next();
-            let a = next() >> 24;
-            let [_, r, g, b] = next().to_be_bytes().map(|c| (u32::from(c) * a / 255) as u8);
-            *l = u32::from_be_bytes([a as u8, r, g, b]);
-        }
-        let mut fast = frame.clone();
-        compose(&mut fast, &layer, Compose::Multiply, 0xFFFF_FFFF);
-        let mut general = frame.clone();
-        compose_tinted(&mut general, &layer, 0xFFFF_FFFF, |p, d, a| {
-            div255(d * (p + 255 - a))
-        });
-        assert_eq!(fast.pixels(), general.pixels());
-    }
-
-    #[test]
-    fn over_matches_channel_by_channel() {
-        let reference = |dst: u32, src: u32| {
-            let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
-            let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-            let mix = |s: u32, d: u32| (div255(s * sa) + div255(d * (255 - sa))) as u8;
-            u32::from_be_bytes([mix(255, da), mix(sr, dr), mix(sg, dg), mix(sb, db)])
-        };
-        let mut seed = 0x1234_5678_u32;
-        let mut next = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed
+    fn paints_round_the_exact_value_once() {
+        let mut next = numbers(0x1234_5678);
+        let white = 0xFFFF_FFFF;
+        // Random colors, with alphas at the edges more often.
+        let mut color = || {
+            let c = next();
+            match c & 7 {
+                0 => c | 0xFF00_0000,
+                1 => c & 0x00FF_FFFF | 0x0100_0000,
+                2 => white,
+                _ => c,
+            }
         };
         for _ in 0..200_000 {
-            let (dst, src) = (next(), next());
-            assert_eq!(over(dst, src), reference(dst, src), "{dst:08X} {src:08X}");
-        }
-        for a in 0..=255u32 {
-            for v in [0, 1, 127, 128, 254, 255u32] {
-                let src = (a << 24) | (v * 0x0001_0101);
-                let dst = (255 - v) * 0x0101_0101;
-                assert_eq!(over(dst, src), reference(dst, src));
+            let (dst, src, c1, c2) = (color(), color(), color(), color());
+            if src >> 24 == 0 {
+                continue;
+            }
+            let all = |c1: u32, c2: u32, add: bool| reference(dst, src, c1, c2, add);
+            assert_eq!(Over1::new(src).put(dst), all(white, white, false));
+            assert_eq!(over(dst, src), all(white, white, false));
+            assert_eq!(Lit::new(src).put(dst), all(white, white, true));
+            assert_eq!(add(dst, src), all(white, white, true));
+            assert_eq!(Over3::new(src, c1).put(dst), all(c1, white, false));
+            assert_eq!(Lit::tinted(src, c1).put(dst), all(c1, white, true));
+            assert_eq!(Over5::new(src, c1, c2).put(dst), all(c1, c2, false));
+            assert_eq!(Lit::tinted2(src, c1, c2).put(dst), all(c1, c2, true));
+            for add in [false, true] {
+                let mixed = Mixed::new(src, c1, c2, add);
+                let expected = all(c1, c2, add);
+                match mixed {
+                    Some(m) => assert_eq!(m.put(dst), expected, "{dst:08X} {src:08X}"),
+                    None => assert_eq!(dst, expected),
+                }
             }
         }
-    }
-
-    #[test]
-    fn adding_a_layer_without_color_matches_with_it() {
-        let mut seed = 0x9E37_79B9_u32;
-        let mut next = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed
-        };
-        let mut frame = Framebuffer::new(64, 64);
-        let mut layer = Framebuffer::new(64, 64);
-        for (d, l) in frame.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
-            *d = next();
-            // Premultiplied: no channel above the alpha.
-            let a = next() >> 24;
-            let [_, r, g, b] = next().to_be_bytes().map(|c| (u32::from(c) * a / 255) as u8);
-            *l = u32::from_be_bytes([a as u8, r, g, b]);
-        }
-        let mut fast = frame.clone();
-        compose(&mut fast, &layer, Compose::Add, 0xFFFF_FFFF);
-        let mut general = frame.clone();
-        compose_tinted(&mut general, &layer, 0xFFFF_FFFF, |p, d, _| d + p);
-        assert_eq!(fast.pixels(), general.pixels());
-    }
-
-    #[test]
-    fn every_mode_without_color_matches_the_general_way() {
-        let mut seed = 0x51ED_270B_u32;
-        let mut next = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed
-        };
-        let mut frame = Framebuffer::new(64, 64);
-        let mut layer = Framebuffer::new(64, 64);
-        for (d, l) in frame.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
-            *d = next();
-            let a = next() >> 24;
-            let [_, r, g, b] = next().to_be_bytes().map(|c| div255(u32::from(c) * a) as u8);
-            *l = u32::from_be_bytes([a as u8, r, g, b]);
-        }
-        type Sum = fn(u32, u32, u32) -> u32;
-        let general: [(Compose, Sum); 4] = [
-            (Compose::Normal, |p, d, a| p + div255(d * (255 - a))),
-            (Compose::Add, |p, d, _| d + p),
-            (Compose::Multiply, |p, d, a| div255(d * (p + 255 - a))),
-            (Compose::Screen, |p, d, _| d + div255(p * (255 - d))),
-        ];
-        for (mode, f) in general {
-            let mut fast = frame.clone();
-            compose(&mut fast, &layer, mode, 0xFFFF_FFFF);
-            let mut slow = frame.clone();
-            compose_tinted(&mut slow, &layer, 0xFFFF_FFFF, f);
-            assert_eq!(fast.pixels(), slow.pixels(), "{mode:?}");
-        }
-    }
-
-    #[test]
-    fn add_matches_channel_by_channel() {
-        let reference = |dst: u32, src: u32| {
-            let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
-            let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-            let plus = |s: u32, d: u32| (d + div255(s * sa)).min(255) as u8;
-            u32::from_be_bytes([da as u8, plus(sr, dr), plus(sg, dg), plus(sb, db)])
-        };
-        // Every alpha, light and what is under it, each in its own
-        // channel.
-        for sa in 0..=255u32 {
+        // Every alpha and level over every level, in one channel each.
+        for sa in 1..=255u32 {
             for s in 0..=255u32 {
-                for d in (0..=255u32).step_by(3).chain([254, 255]) {
+                for d in (0..=255u32).step_by(5).chain([254, 255]) {
                     let src = sa << 24 | s << 16 | (255 - s) << 8 | s;
                     let dst = 0x8000_0000 | d << 16 | (255 - d) << 8 | (d / 2);
-                    assert_eq!(add(dst, src), reference(dst, src), "{dst:08X} {src:08X}");
+                    assert_eq!(over(dst, src), reference(dst, src, white, white, false));
+                    assert_eq!(add(dst, src), reference(dst, src, white, white, true));
                 }
             }
         }
@@ -1121,6 +1314,111 @@ mod tests {
         assert_eq!(add(0xFF80_0000, 0x80FF_0010), 0xFFFF_0008);
         // Light without coverage.
         assert_eq!(add(0, 0x8080_8080), 0x0040_4040);
+        // &H80 times &H7F is 63.75 and rounds up, only once.
+        assert_eq!(
+            Over3::new(0xFF80_8080, 0xFF7F_7F7F).put(0xFF00_0000),
+            0xFF40_4040
+        );
+        // Tinted twice: 128 * 127 * 127 / 255² = 31.75.
+        let twice = Over5::new(0xFF80_8080, 0xFF7F_7F7F, 0xFF7F_7F7F);
+        assert_eq!(twice.put(0xFF00_0000), 0xFF20_2020);
+        assert_eq!(twice.solid(), Some(0xFF20_2020));
+    }
+
+    /// A layer of premultiplied colors over a frame of any, with some
+    /// pixels' light above their coverage, as additive elements leave.
+    fn layer_and_frame(seed: u32) -> (Framebuffer, Framebuffer) {
+        let mut next = numbers(seed);
+        let mut frame = Framebuffer::new(64, 64);
+        let mut layer = Framebuffer::new(64, 64);
+        for (d, l) in frame.pixels_mut().iter_mut().zip(layer.pixels_mut()) {
+            *d = next();
+            let a = match next() % 8 {
+                0 => 0,
+                1 => 255,
+                _ => next() >> 24,
+            };
+            let lit = next().is_multiple_of(8);
+            let [_, r, g, b] = next().to_be_bytes().map(|c| {
+                if lit {
+                    c
+                } else {
+                    div255(u32::from(c) * a) as u8
+                }
+            });
+            *l = u32::from_be_bytes([a as u8, r, g, b]);
+        }
+        (frame, layer)
+    }
+
+    #[test]
+    fn every_mode_without_color_matches_the_general_way() {
+        let (frame, layer) = layer_and_frame(0x51ED_270B);
+        for mode in [
+            Compose::Direct,
+            Compose::Normal,
+            Compose::Add,
+            Compose::Multiply,
+            Compose::Screen,
+        ] {
+            let mut fast = frame.clone();
+            compose(&mut fast, &layer, mode, 0xFFFF_FFFF, false);
+            let mut slow = frame.clone();
+            compose_tinted(&mut slow, &layer, mode, 0xFFFF_FFFF);
+            assert_eq!(fast.pixels(), slow.pixels(), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn layer_colors_round_once() {
+        let (frame, layer) = layer_and_frame(0x9E37_79B9);
+        let ch = |v: u32, i: usize| u128::from(v >> (8 * i) & 0xFF);
+        let n3 = 255u128.pow(3);
+        for color in [
+            0xC080_6040,
+            0x7F40_C0FF,
+            0xFFC0_8040,
+            0x80FF_FFFF,
+            0x0100_0000,
+        ] {
+            for mode in [
+                Compose::Normal,
+                Compose::Add,
+                Compose::Multiply,
+                Compose::Screen,
+            ] {
+                let mut out = frame.clone();
+                compose(&mut out, &layer, mode, color, false);
+                for ((&got, &d), &l) in out.pixels().iter().zip(frame.pixels()).zip(layer.pixels())
+                {
+                    // In 8-bit units over 255³: the layer's light P, its
+                    // coverage A, and 1.
+                    let a = ch(l, 3) * ch(color, 3) * 255;
+                    let mut expected = 0;
+                    for i in 0..3 {
+                        let p = ch(l, i) * ch(color, i) * ch(color, 3) * 255;
+                        let d = ch(d, i);
+                        let v = match mode {
+                            Compose::Normal => nearest(p * 255 + d * (n3 - a) * 255, n3 * 255),
+                            Compose::Add => nearest(d * n3 + p, n3),
+                            Compose::Multiply => nearest(d * (p + 255 * (n3 - a)), n3 * 255),
+                            _ => nearest(d * n3 * 255 + p * (255 - d), n3 * 255),
+                        };
+                        expected |= v.min(255) << (8 * i);
+                    }
+                    let alpha = match mode {
+                        Compose::Normal => {
+                            let da = ch(d, 3);
+                            nearest(da * (n3 - a) + 255 * a, n3)
+                        }
+                        Compose::Add => d >> 24,
+                        _ => 255,
+                    };
+                    expected |= alpha << 24;
+                    assert_eq!(got, expected, "{mode:?} {color:08X} {d:08X} {l:08X}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1137,7 +1435,7 @@ mod tests {
             clip: Some(&clip),
             add: false,
         };
-        draw_image(&mut fb, &place, 8, 1, |_, _| 0xFFFF_FFFF);
+        draw_image(&mut fb, &place, 8, 1, |_, _| Some(Over1::new(0xFFFF_FFFF)));
         let row: Vec<u32> = (0..5).map(|x| fb.get(x, 0).unwrap()).collect();
         assert_eq!(row, [0xFF00_0000, 0xFF00_0000, !0, !0, 0xFF00_0000]);
     }
@@ -1186,13 +1484,13 @@ mod tests {
         let mut layer = Framebuffer::new(1, 1);
         layer.clear(0xFFFF_0000);
         let mut m = dst.clone();
-        compose(&mut m, &layer, Compose::Multiply, !0);
+        compose(&mut m, &layer, Compose::Multiply, !0, true);
         assert_eq!(m.get(0, 0), Some(0xFF80_0000));
         let mut s = dst.clone();
-        compose(&mut s, &layer, Compose::Screen, !0);
+        compose(&mut s, &layer, Compose::Screen, !0, true);
         assert_eq!(s.get(0, 0), Some(0xFFFF_8080));
         let mut tinted = dst.clone();
-        compose(&mut tinted, &layer, Compose::Normal, 0xFF00_FFFF);
+        compose(&mut tinted, &layer, Compose::Normal, 0xFF00_FFFF, true);
         assert_eq!(tinted.get(0, 0), Some(0xFF00_0000));
     }
 }

@@ -158,22 +158,60 @@ impl Fade {
         });
     }
 
-    /// Covers `pixels`, which are opaque, with the fade color.
-    pub(crate) fn cover(&self, pixels: &mut [u32]) {
+    /// Covers `pixels` with the fade color, mixing each channel with it
+    /// by its alpha, and darkens them to 224/255 when `dim` is set, both
+    /// at once with one rounding. The alpha stays as it is.
+    pub(crate) fn cover(&self, pixels: &mut [u32], dim: bool) {
         let a = self.color >> 24;
-        if a == 0 {
-            return;
+        match (a, dim) {
+            (0, false) => {}
+            (0, true) => darken(pixels),
+            (_, false) => {
+                let mix = |p: u32, c: u32, shift: u32| {
+                    let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
+                    ((c * a + p * (255 - a) + 127) / 255) << shift
+                };
+                for p in pixels {
+                    *p = *p & 0xFF00_0000
+                        | mix(*p, self.color, 16)
+                        | mix(*p, self.color, 8)
+                        | mix(*p, self.color, 0);
+                }
+            }
+            (_, true) => {
+                let mix = |p: u32, c: u32, shift: u32| {
+                    let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
+                    (((c * a + p * (255 - a)) * DIM + 255 * 255 / 2) / (255 * 255)) << shift
+                };
+                for p in pixels {
+                    *p = *p & 0xFF00_0000
+                        | mix(*p, self.color, 16)
+                        | mix(*p, self.color, 8)
+                        | mix(*p, self.color, 0);
+                }
+            }
         }
-        let mix = |p: u32, c: u32, shift: u32| {
-            let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
-            ((c * a + p * (255 - a) + 127) / 255) << shift
+    }
+}
+
+/// What the side without the focus is darkened to beside a subprogram,
+/// out of 255.
+pub(crate) const DIM: u32 = 224;
+
+/// Darkens each channel to [`DIM`]/255, rounded to the nearest: 255 to
+/// 224, 248 to 218, 96 to 84.
+pub(crate) fn darken(pixels: &mut [u32]) {
+    for p in pixels {
+        // Red and blue in one go, then green, 16 bits apiece: each
+        // product is below 2^16, so (x + 128 + (x+128)/256) / 256 is
+        // x/255 rounded, without carrying into the next lane.
+        let lanes = |x: u32| {
+            let t = x + 0x0080_0080;
+            ((t + (t >> 8 & 0x00FF_00FF)) >> 8) & 0x00FF_00FF
         };
-        for p in pixels {
-            *p = 0xFF00_0000
-                | mix(*p, self.color, 16)
-                | mix(*p, self.color, 8)
-                | mix(*p, self.color, 0);
-        }
+        let rb = lanes((*p & 0x00FF_00FF) * DIM);
+        let g = lanes((*p >> 8 & 0xFF) * DIM) << 8;
+        *p = *p & 0xFF00_0000 | rb | g;
     }
 }
 

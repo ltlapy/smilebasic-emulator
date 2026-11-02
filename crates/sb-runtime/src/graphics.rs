@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
 
+use crate::compose::{Lit, Over1, Over3, Paint};
 use crate::font::{Font, FontSize};
 use crate::text::{glyph_pixel, glyph_pixel_px};
 
@@ -84,32 +85,18 @@ pub fn multiply(a: u32, b: u32) -> u32 {
     }))
 }
 
-/// Per-channel product, alpha included, rounded to the nearest: how a
-/// sprite's color tints its image, unlike [`multiply`]'s GRP drawing.
-pub fn tint(a: u32, b: u32) -> u32 {
-    if b == 0xFFFF_FFFF {
-        return a;
-    }
-    let (a, b) = (a.to_be_bytes(), b.to_be_bytes());
-    u32::from_be_bytes(std::array::from_fn(|i| {
-        ((u32::from(a[i]) * u32::from(b[i]) + 127) / 255) as u8
-    }))
-}
-
-/// [`tint`] by one color, by table when many pixels are to be
-/// multiplied.
+/// How a sprite's color tints its image as it is drawn.
 // Made for one sprite on the stack and dropped; boxing the tables would
 // only add an allocation.
 #[allow(clippy::large_enum_variant)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tint {
     /// White, which changes nothing.
     White,
-    /// Too few pixels to be worth the tables.
-    Few(u32),
-    /// White but for the alpha, the usual way to fade a sprite.
-    Alpha([u8; 256]),
-    /// Blue, green, red and alpha.
-    Tables([[u8; 256]; 4]),
+    Color(u32),
+    /// A color with, for opaque pixels, each channel's products with it
+    /// rounded (blue, green, red), when there are many pixels to tint.
+    Tables(u32, [[u8; 256]; 3]),
 }
 
 impl Tint {
@@ -121,48 +108,31 @@ impl Tint {
         };
         match color {
             0xFFFF_FFFF => Tint::White,
-            _ if pixels < 4096 => Tint::Few(color),
-            _ if color | 0xFF00_0000 == 0xFFFF_FFFF => Tint::Alpha(table(24)),
-            _ => Tint::Tables([table(0), table(8), table(16), table(24)]),
+            c if pixels < 4096 || c >> 24 != 0xFF => Tint::Color(c),
+            c => Tint::Tables(c, [table(0), table(8), table(16)]),
         }
     }
 
-    #[inline]
-    pub fn apply(&self, p: u32) -> u32 {
-        self.with(Apply(p))
-    }
-
-    /// Runs `job` with the tint as a plain function, decided once rather
+    /// Runs `job` with what a page pixel puts on the frame, over it or,
+    /// with `add`, added to it, as a plain function decided once rather
     /// than for every pixel.
     #[inline]
-    pub fn with<J: TintJob>(&self, job: J) -> J::Out {
-        match self {
-            Tint::White => job.run(|p| p),
-            Tint::Few(color) => job.run(|p| tint(p, *color)),
-            Tint::Alpha(a) => job.run(|p| p & 0x00FF_FFFF | u32::from(a[(p >> 24) as usize]) << 24),
-            Tint::Tables([b, g, r, a]) => job.run(|p| {
-                u32::from(b[(p & 0xFF) as usize])
-                    | u32::from(g[(p >> 8 & 0xFF) as usize]) << 8
-                    | u32::from(r[(p >> 16 & 0xFF) as usize]) << 16
-                    | u32::from(a[(p >> 24) as usize]) << 24
-            }),
+    pub fn with<J: TintJob>(&self, add: bool, job: J) -> J::Out {
+        match (self, add) {
+            (Tint::White, false) => job.run(Over1::new),
+            (Tint::White, true) => job.run(Lit::new),
+            (&Tint::Color(c) | &Tint::Tables(c, _), true) => job.run(move |p| Lit::tinted(p, c)),
+            (&Tint::Color(c), false) => job.run(move |p| Over3::new(p, c)),
+            (Tint::Tables(c, tables), false) => job.run(move |p| Over3::tabled(p, *c, tables)),
         }
     }
 }
 
-/// Work done with a [`Tint`], see [`Tint::with`].
+/// Work done with a [`Tint`], see [`Tint::with`]. `paint` is only for
+/// page pixels that are not clear.
 pub trait TintJob {
     type Out;
-    fn run(self, tint: impl Fn(u32) -> u32 + Copy) -> Self::Out;
-}
-
-struct Apply(u32);
-
-impl TintJob for Apply {
-    type Out = u32;
-    fn run(self, tint: impl Fn(u32) -> u32 + Copy) -> u32 {
-        tint(self.0)
-    }
+    fn run<P: Paint>(self, paint: impl Fn(u32) -> P + Copy) -> Self::Out;
 }
 
 /// An inclusive rectangle of page coordinates.
@@ -1219,29 +1189,6 @@ fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i
         (x1 - last, x1 - first)
     };
     Some((l.narrow(), r.narrow()))
-}
-
-#[cfg(test)]
-mod tint_tests {
-    use super::*;
-
-    #[test]
-    fn tint_tables_match_tint() {
-        for color in [
-            0xFFFF_FFFF,
-            0x80FF_FFFF,
-            0xFF80_40C0,
-            0x0000_0000,
-            0x7F12_3456,
-        ] {
-            for pixels in [1, 1 << 20] {
-                let tint = Tint::new(color, pixels);
-                for p in [0u32, 0xFFFF_FFFF, 0x8040_2010, 0x01FE_7F80, 0xDEAD_BEEF] {
-                    assert_eq!(tint.apply(p), super::tint(p, color), "{color:08X} {p:08X}");
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

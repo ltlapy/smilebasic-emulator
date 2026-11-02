@@ -7,7 +7,7 @@ use sb_core::value::Value;
 
 use crate::anim::{self, ANIM_VAR, Anim, Animated, Target, Track};
 use crate::collision::{Body, Collision, HitInfo, Search};
-use crate::compose::{self, Affine, Placement, draw_image};
+use crate::compose::{self, Affine, Paint, Placement, draw_image};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, GRP_SIZE, Graphics, PAGES, PIECE, Tint, TintJob, multiply};
 
@@ -668,23 +668,27 @@ pub fn draw_posed(
         }
         impl TintJob for Projected<'_, '_> {
             type Out = ();
-            fn run(self, tint: impl Fn(u32) -> u32 + Copy) {
+            fn run<P: Paint>(self, paint: impl Fn(u32) -> P + Copy) {
                 let (bw, bh) = self.size;
                 let source = self.source;
                 compose::project_image(self.fb, self.m, self.sample, self.place, bw, bh, |x, y| {
                     let (x, y) = source.page_xy(x, y);
-                    tint(source.pixel(x, y))
+                    let p = source.pixel(x, y);
+                    (p >> 24 != 0).then(|| paint(p))
                 });
             }
         }
-        return tint.with(Projected {
-            fb,
-            place: &place,
-            m,
-            sample,
-            size: (bw, bh),
-            source: &source,
-        });
+        return tint.with(
+            place.add,
+            Projected {
+                fb,
+                place: &place,
+                m,
+                sample,
+                size: (bw, bh),
+                source: &source,
+            },
+        );
     }
     if place.is_upright() {
         return draw_upright(&source, &tint, fb, &place, (bw, bh), grp);
@@ -697,7 +701,7 @@ pub fn draw_posed(
     }
     impl TintJob for Turned<'_, '_> {
         type Out = ();
-        fn run(self, tint: impl Fn(u32) -> u32 + Copy) {
+        fn run<P: Paint>(self, paint: impl Fn(u32) -> P + Copy) {
             let (bw, bh) = self.size;
             let source = self.source;
             draw_image(self.fb, self.place, bw, bh, |x, y| {
@@ -708,16 +712,20 @@ pub fn draw_posed(
                 // 1.5 and 2.5).
                 let (lx, ly) = ((x - TIE).max(0.0) as i32, y as i32);
                 let (x, y) = source.page_xy(lx, ly);
-                tint(source.pixel(x, y))
+                let p = source.pixel(x, y);
+                (p >> 24 != 0).then(|| paint(p))
             });
         }
     }
-    tint.with(Turned {
-        fb,
-        place: &place,
-        size: (bw, bh),
-        source: &source,
-    });
+    tint.with(
+        place.add,
+        Turned {
+            fb,
+            place: &place,
+            size: (bw, bh),
+            source: &source,
+        },
+    );
 }
 
 /// Where a sprite's pixels come from.
@@ -855,7 +863,6 @@ fn draw_upright(
         cols: &'a [usize],
         rows: R,
         source: &'a Source<'a>,
-        add: bool,
         run: Option<(Run, usize)>,
         grp: &'a Graphics,
         /// Neither tinted nor added: what is opaque is put as it is.
@@ -863,17 +870,14 @@ fn draw_upright(
     }
     impl<R: Iterator<Item = usize>> TintJob for Rows<'_, R> {
         type Out = ();
-        fn run(self, tint: impl Fn(u32) -> u32 + Copy) {
+        fn run<P: Paint>(self, paint: impl Fn(u32) -> P + Copy) {
             let width = self.fb.width() as usize;
             let pixels = self.fb.pixels_mut();
-            let (page, white) = (self.source.page, tint(0xFFFF_FFFF));
+            let page = self.source.page;
             // GRP-1 is one color all over, as large boxes and fades use:
             // its blend is worked out once.
             if self.source.white {
-                if white >> 24 == 0 {
-                    return;
-                }
-                let paint = compose::blend_one(white, self.add);
+                let white = paint(0xFFFF_FFFF);
                 for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
                     if row == NONE {
                         continue;
@@ -882,7 +886,7 @@ fn draw_upright(
                     let line = &mut pixels[at..at + self.cols.len()];
                     for (dst, &col) in line.iter_mut().zip(self.cols) {
                         if col != NONE {
-                            *dst = paint(*dst);
+                            *dst = white.put(*dst);
                         }
                     }
                 }
@@ -903,7 +907,7 @@ fn draw_upright(
                 let side_by_side = last - first + 1 == run.len;
                 // The page pixel `paint` blends, which a clear one never
                 // is.
-                let (mut held, mut paint) = (0, compose::blend_one(0, self.add));
+                let (mut held, mut held_paint) = (0, paint(0));
                 for (fy, row) in (self.grid.y0 as usize..).zip(self.rows) {
                     if row == NONE {
                         continue;
@@ -912,12 +916,8 @@ fn draw_upright(
                     let at = fy * width + self.grid.x0 as usize + run.at;
                     let line = &mut pixels[at..at + run.len];
                     let put = |dst: &mut u32, p: u32| {
-                        if p >> 24 == 0 {
-                            return;
-                        }
-                        let src = tint(p);
-                        if src >> 24 != 0 {
-                            *dst = compose::blend(*dst, src, self.add);
+                        if p >> 24 != 0 {
+                            *dst = paint(p).put(*dst);
                         }
                     };
                     while pieces != 0 {
@@ -958,9 +958,9 @@ fn draw_upright(
                                 }
                                 if p != held {
                                     held = p;
-                                    paint = compose::blend_one(tint(p), self.add);
+                                    held_paint = paint(p);
                                 }
-                                *dst = paint(*dst);
+                                *dst = held_paint.put(*dst);
                             }
                         }
                     }
@@ -973,33 +973,39 @@ fn draw_upright(
                 }
                 let at = fy * width + self.grid.x0 as usize;
                 let line = &mut pixels[at..at + self.cols.len()];
+                // Scaled up, neighbors show the same page pixel, whose
+                // paint is worked out once.
+                let (mut held, mut held_paint) = (0, paint(0));
                 for (dst, &col) in line.iter_mut().zip(self.cols) {
                     if col == NONE {
                         continue;
                     }
-                    let src = match self.source.white {
-                        true => white,
-                        false => tint(page[col + row]),
-                    };
-                    if src >> 24 == 0 {
+                    let p = page[col + row];
+                    if p >> 24 == 0 {
                         continue;
                     }
-                    *dst = compose::blend(*dst, src, self.add);
+                    if p != held {
+                        held = p;
+                        held_paint = paint(p);
+                    }
+                    *dst = held_paint.put(*dst);
                 }
             }
         }
     }
-    tint.with(Rows {
-        fb,
-        grid: &grid,
-        cols: &cols,
-        rows,
-        source,
-        add: place.add,
-        run,
-        grp,
-        plain: matches!(tint, Tint::White) && !place.add,
-    });
+    tint.with(
+        place.add,
+        Rows {
+            fb,
+            grid: &grid,
+            cols: &cols,
+            rows,
+            source,
+            run,
+            grp,
+            plain: matches!(tint, Tint::White) && !place.add,
+        },
+    );
 }
 
 /// Frame columns of a sprite that show page columns from left to
@@ -1141,6 +1147,69 @@ mod tests {
         draw(&s, &page(), &mut fb);
         // Turned half around the point (4,4): blue now left of red.
         assert_eq!(row(&fb, 3, 3..5), [BLUE, RED]);
+    }
+
+    #[test]
+    fn every_way_of_drawing_paints_each_pixel_once() {
+        use crate::compose::{Lit, Over3};
+        let mut g = Graphics::default();
+        g.target = 0;
+        let mut next = {
+            let mut seed = 0x0BAD_F00D_u32;
+            move || {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed
+            }
+        };
+        for y in 0..80 {
+            for x in 0..120 {
+                let c = match next() % 4 {
+                    0 => 0,
+                    1 => next() | 0xFF00_0000,
+                    _ => next(),
+                };
+                g.pset(x, y, c, Blend::Normal);
+            }
+        }
+        // Repeats, so that scaled up neighbors show the same pixel.
+        g.fill(10, 10, 40, 30, 0x80C0_4020, Blend::Normal);
+        let mut under = Framebuffer::new(320, 200);
+        for p in under.pixels_mut() {
+            *p = next() | 0xFF00_0000;
+        }
+        for (w, h) in [(120, 80), (20, 20)] {
+            for scale in [1, 2] {
+                for color in [0xFFFF_FFFF, 0x80FF_FFFF, 0xFF80_C040, 0x7F12_C0FE] {
+                    for add in [0, attr::ADD] {
+                        let mut s = Sprite::unused();
+                        (s.used, s.shown, s.page, s.attr, s.color) = (true, true, 0, add, color);
+                        (s.w, s.h, s.pos) = (w, h, (3.0, 5.0));
+                        s.scale = (f64::from(scale), f64::from(scale));
+                        let mut fb = under.clone();
+                        draw(&s, &g, &mut fb);
+                        for (i, (&got, &d)) in fb.pixels().iter().zip(under.pixels()).enumerate() {
+                            let (x, y) = ((i % 320) as i32 - 3, (i / 320) as i32 - 5);
+                            let inside = (0..w * scale).contains(&x) && (0..h * scale).contains(&y);
+                            let p = match inside {
+                                true => g.pixel(0, x / scale, y / scale),
+                                false => 0,
+                            };
+                            let expected = match (p >> 24, add) {
+                                (0, _) => d,
+                                (_, 0) => Over3::new(p, color).put(d),
+                                _ => Lit::tinted(p, color).put(d),
+                            };
+                            assert_eq!(
+                                got, expected,
+                                "{w}x{h} x{scale} {color:08X} {add} at {x},{y}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

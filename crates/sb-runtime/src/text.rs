@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
 use crate::anim::{self, ANIM_VAR, Animated, Target, Track};
-use crate::compose::{self, Affine, Placement, draw_image_part, over};
+use crate::compose::{self, Affine, Mixed, Paint, Placement, draw_image_part, over};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -537,6 +537,7 @@ impl TextScreen {
         // The cell's character in its colors, looked up once rather than
         // for every pixel it covers.
         let mut glyph = vec![0; (ft * ft) as usize];
+        let mut paints = Vec::new();
         for cy in 0..self.height {
             for cx in 0..self.width {
                 let cell = self.cell(cx, cy);
@@ -545,13 +546,14 @@ impl TextScreen {
                 if cell.code == 0 && !at_cursor {
                     continue;
                 }
-                self.glyph(font, grp, cell, at_cursor, &mut glyph);
+                paints.clear();
+                self.glyph(font, grp, cell, at_cursor, &mut glyph, &mut paints);
                 let (x0, y0) = ((cx * cs) as i32, (cy * cs) as i32);
                 let part = (x0, y0, x0 + cs as i32, y0 + cs as i32);
                 draw_image_part(fb, &place, w, h, part, |x, y| {
                     // Pixels of the cells around are theirs to draw.
                     if ((x / size) as u32, (y / size) as u32) != (cx, cy) {
-                        return 0;
+                        return None;
                     }
                     // Where in the cell, which a fine frame splits further.
                     // As for sprites, the character is flipped, then turned
@@ -570,7 +572,7 @@ impl TextScreen {
                         py = size - py;
                     }
                     let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
-                    glyph[(at(py) * ft + at(px)) as usize]
+                    paint_at(glyph[(at(py) * ft + at(px)) as usize], &paints)
                 });
             }
         }
@@ -579,17 +581,26 @@ impl TextScreen {
 
 impl TextScreen {
     /// A cell's character in its colors, `ft` x `ft`, as draw_placed
-    /// works it out.
-    fn glyph(&self, font: &Font, grp: &Graphics, cell: Cell, at_cursor: bool, out: &mut [u32]) {
+    /// works it out: what each pixel puts on the frame, as [`glyph_paint`]
+    /// gives it, with the paints that are not opaque pushed onto `paints`.
+    fn glyph(
+        &self,
+        font: &Font,
+        grp: &Graphics,
+        cell: Cell,
+        at_cursor: bool,
+        out: &mut [u32],
+        paints: &mut Vec<Mixed>,
+    ) {
         let ft = self.font_type;
-        let color = |p: u32| {
-            let p = if cell.code == 0 {
-                0
-            } else {
-                multiply(p, cell.color)
+        let mut color = |p: u32| {
+            let (p, color) = match (cell.code, at_cursor) {
+                (_, false) => (p, cell.color),
+                (0, true) => (over(0, self.color), WHITE),
+                (_, true) => (over(multiply(p, cell.color), self.color), WHITE),
             };
-            let p = if at_cursor { over(p, self.color) } else { p };
-            multiply(p, self.tint)
+            let paint = Mixed::new(p, color, self.tint, self.add);
+            glyph_paint(paint, paints)
         };
         // Where the character comes from is looked up once, not for
         // every pixel; the pixels are those glyph_pixel gives.
@@ -666,6 +677,7 @@ impl TextScreen {
         let glyph_len = (ft * ft) as usize;
         // Each character in each color once, however many cells show it.
         let mut glyphs: Vec<u32> = Vec::new();
+        let mut paints: Vec<Mixed> = Vec::new();
         let mut made: HashMap<(u16, u32, bool), usize> = HashMap::new();
         // Per cell of the row, if it shows anything: its picks and where
         // its character is in `glyphs`.
@@ -685,7 +697,8 @@ impl TextScreen {
                         let at = *made.entry(key).or_insert_with(|| {
                             let at = glyphs.len();
                             glyphs.resize(at + glyph_len, 0);
-                            self.glyph(font, grp, cell, at_cursor, &mut glyphs[at..]);
+                            let out = &mut glyphs[at..];
+                            self.glyph(font, grp, cell, at_cursor, out, &mut paints);
                             at
                         });
                         (pick(cell.attr), at)
@@ -698,11 +711,11 @@ impl TextScreen {
                     continue;
                 };
                 let coord = |(row, k): (bool, usize)| if row { rat[k] } else { cat[k] };
-                let src = glyphs[at + (coord(q) * ft + coord(p)) as usize];
-                if src >> 24 == 0 {
-                    continue;
+                match glyphs[at + (coord(q) * ft + coord(p)) as usize] {
+                    0 => {}
+                    solid if solid >> 24 == 0xFF => *dst = solid,
+                    n => *dst = paints[n as usize - 1].put(*dst),
                 }
-                *dst = crate::compose::blend(*dst, src, place.add);
             }
         }
     }
@@ -742,7 +755,31 @@ fn channels(c: u32) -> [u32; 4] {
     c.to_be_bytes().map(u32::from)
 }
 
-/// Per-channel product, rounded to the nearest, as used for text colors.
+/// What a glyph pixel puts on the frame, as one `u32`: 0 for nothing, an
+/// opaque color for itself, or else the place of its paint in `paints`
+/// plus one, which is never opaque.
+fn glyph_paint(paint: Option<Mixed>, paints: &mut Vec<Mixed>) -> u32 {
+    match paint {
+        None => 0,
+        Some(Mixed::Solid(c)) => c,
+        Some(paint) => {
+            paints.push(paint);
+            // Memory runs out long before this reaches &HFF000000.
+            paints.len() as u32
+        }
+    }
+}
+
+/// Back from [`glyph_paint`].
+fn paint_at(v: u32, paints: &[Mixed]) -> Option<Mixed> {
+    match v {
+        0 => None,
+        solid if solid >> 24 == 0xFF => Some(Mixed::Solid(solid)),
+        n => Some(paints[n as usize - 1]),
+    }
+}
+
+/// Per-channel product, rounded to the nearest, for the INPUT cursor.
 fn multiply(a: u32, b: u32) -> u32 {
     if b == WHITE {
         return a;
