@@ -924,7 +924,15 @@ yet seen on hardware; TEST56 looks at each:
 - Growing an array needs the new block beside the old: `INSERT` of
   16,777,216 integers into 15,728,641 fails though the 130 MB it comes to
   would fit alone, and `RESIZE` from 8 to 16 million, 100 MB together, works
-  (TEST51).
+  (TEST51). `PUSH` is no different: with `DIM A%[15999999]` and `DIM F[8000000]`,
+  6216592 free, the first `PUSH` works with `FREEMEM` unchanged, its block being
+  as large as it was, and the second is `Out of memory (PUSH)` (TEST57). The block moves each time its size changes, and `UNSHIFT`,
+  string arrays and strings (each 64 characters) do the same.
+- `A%=LOADV("DAT:Q")` makes the new array beside the old: 10 MB of file with
+  4216464 free is `Out of memory (LOADV)`. `LOADV "DAT:Q",A%` fills the array,
+  gives no error and leaves `FREEMEM` as it was (TEST57). If the file is longer,
+  the array grows the way `RESIZE` does, and `A$=LOADV("TXT:Q")` makes its string
+  the same way.
 - The message names the command for functions and commands
   (`Out of memory in 0:68(ARRAY#)`, also `(RESIZE)`, `(INSERT)` and `(COPY)`)
   but not for `*`, `+` or `DIM` (`Out of memory in 0:54`). Its number is 11.

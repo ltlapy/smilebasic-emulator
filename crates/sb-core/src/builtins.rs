@@ -907,21 +907,23 @@ fn check_1d(a: &Array) -> Result<()> {
     Ok(())
 }
 
-/// Before an element goes into `v`, when that takes a larger block. The
-/// element itself is looked at when the VM next counts memory.
-// UNVERIFIED: that PUSH needs no room for a new block beside the old, as
-// RESIZE does.
+/// Before an element goes onto `len` others of `size` bytes. An array's
+/// block changes size each 64 bytes, and the new one has to fit beside the
+/// old. The element itself is looked at when the VM next counts memory.
 #[inline]
-fn room_for_one<T>(v: &Vec<T>, elem: ElemType) -> Result<()> {
-    if v.len() == v.capacity() {
-        return take_room(elem, v.len() + 1);
+fn room_for_one(len: usize, size: usize, elem: ElemType) -> Result<()> {
+    if len.wrapping_mul(size) & 63 == 0 {
+        return next_block(elem, len);
     }
     Ok(())
 }
 
-#[cold]
-fn take_room(elem: ElemType, len: usize) -> Result<()> {
-    crate::memory::take(crate::memory::array_bytes(elem, len))
+#[inline(never)]
+fn next_block(elem: ElemType, len: usize) -> Result<()> {
+    crate::memory::grow(
+        crate::memory::array_bytes(elem, len),
+        crate::memory::array_bytes(elem, len + 1),
+    )
 }
 
 fn put(target: &Value, value: Value, end: End) -> Result<()> {
@@ -929,9 +931,10 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
         Value::Str(s) => {
             let piece = text(&value)?;
             let mut s = s.borrow_mut();
-            if s.len() + piece.len() > s.capacity() {
-                crate::memory::take(crate::memory::string_bytes(s.len() + piece.len()))?;
-            }
+            crate::memory::grow(
+                crate::memory::string_bytes(s.len()),
+                crate::memory::string_bytes(s.len() + piece.len()),
+            )?;
             match end {
                 End::Back => s.extend_from_slice(&piece),
                 End::Front => {
@@ -948,16 +951,19 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
             };
             match &mut a.data {
                 ArrayData::Int(v) => {
-                    room_for_one(v, ElemType::Int)?;
-                    v.insert(at, value.to_int()?);
+                    let n = value.to_int()?;
+                    room_for_one(v.len(), 4, ElemType::Int)?;
+                    v.insert(at, n);
                 }
                 ArrayData::Real(v) => {
-                    room_for_one(v, ElemType::Real)?;
-                    v.insert(at, value.to_real()?);
+                    let x = value.to_real()?;
+                    room_for_one(v.len(), 8, ElemType::Real)?;
+                    v.insert(at, x);
                 }
                 ArrayData::Str(v) => {
-                    room_for_one(v, ElemType::Str)?;
-                    v.insert(at, value.into_str()?);
+                    let s = value.into_str()?;
+                    room_for_one(v.len(), 8, ElemType::Str)?;
+                    v.insert(at, s);
                 }
             }
             a.dims[0] = a.len();

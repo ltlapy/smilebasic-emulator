@@ -1260,6 +1260,48 @@ fn a_long_constant_string_waits_for_the_program_to_get_there() {
     assert_eq!(output("A$=\"A\"*2000000:?LEN(A$)"), "2000000\n");
 }
 
+/// PUSH and UNSHIFT need a block's new size beside the old whenever it has
+/// to grow, for arrays and strings; within a block they need nothing
+/// (TEST57).
+#[test]
+fn growing_by_one_needs_the_new_block_beside_the_old() {
+    let pushed = "DIM A%[15999999],F[8000000]:VAR B=FREEMEM()\nPUSH A%,1\n";
+    assert_eq!(
+        output(&format!("{pushed}?LEN(A%);\" \";B-FREEMEM();\" \";B")),
+        "16000000 0 6216592\n"
+    );
+    let e = run(&format!("{pushed}PUSH A%,1")).unwrap_err();
+    assert_eq!((e.kind, e.line), (ErrorKind::OutOfMemory, 3));
+    assert_eq!(e.detail.as_deref(), Some("PUSH"));
+    let e = run(&format!("{pushed}UNSHIFT A%,1")).unwrap_err();
+    assert_eq!(e.detail.as_deref(), Some("UNSHIFT"));
+    // Reals and strings go in eights.
+    let filled = |dim: &str, push: &str| {
+        run(&format!(
+            "DIM A{dim}[8000000],F%[9000000]:VAR I,M=0\nFOR I=1 TO 9:{push}:M=I:NEXT"
+        ))
+        .unwrap_err()
+    };
+    for (dim, push) in [("", "PUSH A,1"), ("$", "PUSH A$,\"\"")] {
+        let e = filled(dim, push);
+        assert_eq!(e.kind, ErrorKind::OutOfMemory, "{push}");
+    }
+    // A string's block grows each 64 characters.
+    let text = "VAR N=40000000:VAR S$=\"A\"*N\nPUSH S$,\"B\"\n";
+    let e = run(text).unwrap_err();
+    assert_eq!(e.kind, ErrorKind::OutOfMemory);
+    assert_eq!(e.detail.as_deref(), Some("PUSH"));
+    let text = "VAR N=39999999:VAR S$=\"A\"*N\nPUSH S$,\"B\":?LEN(S$)";
+    assert_eq!(output(text), "40000000\n");
+    // Growth that fits goes on, and what was dropped does not count.
+    assert_eq!(
+        output(
+            "VAR I:DIM A%[0],B[0],C$[0]\nFOR I=1 TO 1000:PUSH A%,I:UNSHIFT B,I:PUSH C$,\"X\":NEXT\n?LEN(A%);LEN(B);LEN(C$)"
+        ),
+        "100010001000\n"
+    );
+}
+
 /// What RINGCOPY looks at and in what order (TEST57).
 #[test]
 fn ringcopy_checks_in_order() {

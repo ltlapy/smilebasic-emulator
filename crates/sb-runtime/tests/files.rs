@@ -473,6 +473,64 @@ fn words(rows: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// LOADV's function form makes a new value beside what it will replace,
+/// while the statement form fills the array where it is (TEST57).
+#[test]
+fn loadv_as_a_function_needs_room_for_the_new_value() {
+    let dir = TempDir::new("loadv_room");
+    let mut m = machine(&dir);
+    let setup = "DIM A%[2500000]:SAVEV \"DAT:Q\",A%:DIM F[7000000],G[7000000],H[1000000]";
+    m.set_slot(0, format!("{setup}\nA%=LOADV(\"DAT:Q\")"));
+    enter(&mut m, "run");
+    assert!(
+        tail(&m, 2)[0].starts_with("Out of memory in 0:2 (LOADV)"),
+        "{:?}",
+        tail(&m, 2)
+    );
+    m.set_slot(
+        0,
+        format!("{setup}\nVAR B=FREEMEM():LOADV \"DAT:Q\",A%:?LEN(A%);\" \";B-FREEMEM()"),
+    );
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2)[0], "2500000 0");
+    // A string the same.
+    let setup = "VAR N=2000000:VAR S$=\"A\"*N:SAVEV \"TXT:Q\",S$:DIM F[16000000]";
+    m.set_slot(0, format!("{setup}\nS$=LOADV(\"TXT:Q\")"));
+    enter(&mut m, "run");
+    assert!(
+        tail(&m, 2)[0].starts_with("Out of memory in 0:2 (LOADV)"),
+        "{:?}",
+        tail(&m, 2)
+    );
+    // Nor does a dropped value count against it.
+    m.set_slot(
+        0,
+        "VAR N=2000000:VAR S$=\"A\"*N:SAVEV \"TXT:Q\",S$:S$=\"\":DIM F[16000000]\n\
+         S$=LOADV(\"TXT:Q\"):?LEN(S$)"
+            .to_string(),
+    );
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2)[0], "2000000");
+    // An array that has to grow needs its new block beside the old.
+    let grown = |filler: u32| {
+        format!(
+            "DEF MK:DIM B%[9000000]:SAVEV \"DAT:R\",B%:END\n\
+             MK:DIM A%[8000000],F[{filler}]\n\
+             LOADV \"DAT:R\",A%:?LEN(A%)"
+        )
+    };
+    m.set_slot(0, grown(8000000));
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2)[0], "9000000");
+    m.set_slot(0, grown(8500000));
+    enter(&mut m, "run");
+    assert!(
+        tail(&m, 2)[0].starts_with("Out of memory in 0:3 (LOADV)"),
+        "{:?}",
+        tail(&m, 2)
+    );
+}
+
 #[test]
 fn values_save_and_load() {
     let dir = TempDir::new("values");
