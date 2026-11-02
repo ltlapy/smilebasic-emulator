@@ -10,6 +10,13 @@ pub const CHANNELS: usize = 16;
 pub const WHOLE: u32 = 192;
 /// How deep macros may use other macros.
 const MACRO_DEPTH: usize = 16;
+/// Characters macros may copy for one song, counting a macro's whole body
+/// each time it is defined or used. Macros using macros multiply, so a few
+/// hundred bytes could otherwise ask for gigabytes. MML with no macros
+/// costs nothing against this.
+// UNVERIFIED: SmileBASIC 4's own limit. This is far above what any song
+// seen needs (see docs/differences.md).
+const MACRO_CHARS: usize = 1 << 22;
 
 /// A number in MML: written out, or one of the variables $0 to $7.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,7 +142,7 @@ fn expand(text: &[char]) -> Result<Vec<char>, Error> {
     }
     let mut macros: HashMap<String, Vec<char>> = HashMap::new();
     let mut out = Vec::with_capacity(plain.len());
-    expand_into(&plain, &mut macros, &mut out, 0)?;
+    expand_into(&plain, &mut macros, &mut out, 0, &mut { MACRO_CHARS })?;
     Ok(out)
 }
 
@@ -144,6 +151,7 @@ fn expand_into(
     macros: &mut HashMap<String, Vec<char>>,
     out: &mut Vec<char>,
     depth: usize,
+    left: &mut usize,
 ) -> Result<(), Error> {
     let mut i = 0;
     while i < text.len() {
@@ -176,14 +184,20 @@ fn expand_into(
         let name: String = name.iter().collect();
         match body {
             Some(body) => {
+                // Counted too: a macro that only defines others puts out
+                // nothing, however many times it runs.
+                *left = left.checked_sub(body.len() + 1).ok_or(at)?;
                 macros.insert(name, body.to_vec());
             }
             None => {
-                let body = macros.get(&name).ok_or(at)?.clone();
+                let body = macros.get(&name).ok_or(at)?;
                 if depth == MACRO_DEPTH {
                     return Err(at);
                 }
-                expand_into(&body, macros, out, depth + 1)?;
+                // The 1 is for empty macros, which cost time all the same.
+                *left = left.checked_sub(body.len() + 1).ok_or(at)?;
+                let body = body.clone();
+                expand_into(&body, macros, out, depth + 1, left)?;
             }
         }
         i = close + 1;
@@ -705,6 +719,37 @@ mod tests {
         ));
         assert_eq!(c[5], Cmd::VibratoOff);
         assert_eq!(c[6], Cmd::EnvelopeOff);
+    }
+
+    /// `first`, then macros each using the last ten times.
+    fn macro_bomb(first: &str, levels: usize) -> String {
+        let mut s = format!("{{M0={first}}}");
+        for i in 1..=levels {
+            let last = format!("{{M{}}}", i - 1);
+            s += &format!("{{M{i}={}}}", last.repeat(10));
+        }
+        s + &format!("{{M{levels}}}")
+    }
+
+    #[test]
+    fn macros_that_multiply_are_an_error() {
+        // 10^10 notes from a few hundred bytes.
+        let bomb = macro_bomb("CCCCCCCCCC", 9);
+        assert!(bomb.len() < 500);
+        assert!(parse(&bomb).is_err());
+        // Macros that put out nothing would take as long, and so would
+        // macros that only define others.
+        assert!(parse(&macro_bomb("", 15)).is_err());
+        assert!(parse(&macro_bomb("{X=C}", 15)).is_err());
+        // Short of the limit they still work: 10^5 notes.
+        let song = parse(&macro_bomb("CCCCCCCCCC", 4)).unwrap();
+        assert_eq!(song.channels[0].len(), 100_000);
+    }
+
+    #[test]
+    fn long_mml_without_macros_has_no_limit() {
+        let song = parse(&"C".repeat(MACRO_CHARS + 1)).unwrap();
+        assert_eq!(song.channels[0].len(), MACRO_CHARS + 1);
     }
 
     #[test]

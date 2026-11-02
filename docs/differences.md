@@ -57,6 +57,16 @@ cannot freeze or exhaust it. SmileBASIC 4's own answers to these are not
 known.
 - `WAVSETA` with an empty array is `Illegal function call`.
 
+## Sound limits
+
+Limits and errors the emulator adds so that a program or a damaged file
+cannot freeze or exhaust it. SmileBASIC 4's own answers to these are not
+known.
+- MML's macros may copy about four million characters for one song,
+  counting a macro's body each time it is defined or used, or the MML
+  is `Illegal MML` (`CHKMML` gives where). The largest use in any song
+  seen is about 9,000. MML without macros has no such limit.
+
 ## Input
 
 - There are no motion sensors: `ACCEL`, `GYROA` and `GYROV` read 0.
