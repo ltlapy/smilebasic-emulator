@@ -217,9 +217,12 @@ moved again by `Placement::texel_tie`.
     no shader. `smart_scale` does the same on the CPU, the reference for
     tests and the fallback if the target cannot be made (`SB_UI_BENCH`'s
     `cpu-smart` forces it);
-  - the editor's frame and the sub screen in mode 1 still use
-    `SDL_SCALEMODE_PIXELART`. The Rust bindings lack a per-texture call for
-    it, hence `SDL_SetDefaultTextureScaleMode`;
+  - the editor's frame still uses `SDL_SCALEMODE_PIXELART`. The Rust
+    bindings lack a per-texture call for it, hence
+    `SDL_SetDefaultTextureScaleMode`;
+  - a subprogram's screen is `SDL_SCALEMODE_LINEAR` in every mode: SB4 draws
+    it as it does a screen in mode 0 (TEST56 shows mode 1), fitted to
+    XSUBSCREEN's rectangle (`SubScreen::quad`) with BACKCOLOR in the bars;
   - mode 2 is `SDL_SCALEMODE_NEAREST`.
 
   The whole frame is uploaded with `Texture::update` only when
@@ -320,16 +323,16 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Normal blend of an element: `light + d*(1-a)`, one rounding | `compose::Over1`, `Over3`, `Over5` | C: TEST49; TTEST16 |
 | Frames and composed layers hold premultiplied colour, alpha as coverage (SmileBASIC 4 keeps transmittance, 255 less it); a layer starts clear; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
 | Additive element: `d + light`, the light `t*c*a` exact and rounded once, with saturation, destination alpha kept | `compose::Lit` | C (R1): TEST49 |
-| Sprite colour (SPCOLOR) multiplies each channel, alpha included, unrounded, inside the one rounding of the draw | `graphics::Tint`, `compose::Over3` | C (R2): TEST49. A child's link colour (`multiply`, rounded down) is still U |
+| Sprite colour (SPCOLOR) multiplies each channel, alpha included, unrounded, inside the one rounding of the draw | `graphics::Tint`, `compose::Over3` | C (R2): TEST49. A child's link colour `floor(a*b/255)`, alpha too, applied parent first (`multiply`): C, TEST56, no misses |
 | Text colour (cell colour, then TCOLOR) the same, unrounded | `compose::Mixed`, `Over5` | C (R2): TEST49. |
-| An inverted cell, attribute bit 7: the texel is taken as `n,n,n,n` for `n = 1 - alpha` and goes through the same sum; any character, an empty cell too | `inverted_texel`, `attr::INVERT` | U: notes; TEST56 part 1. Not the INPUT cursor (TEST50) |
-| TLOAD, TUPDATE and TCOPY keep all 16 attribute bits; TSAVE, TARRAY and CHKCHR read them | `Cell` | U: executable; TEST56 parts 1 and 4 |
+| An inverted cell, attribute bit 7, on the console only (no other screen's program has the flag; TEST56 part 1 shows plain glyphs there): the texel is taken as `n,n,n,n` for `n = 1 - alpha` and goes through the same sum; any character, an empty cell too | `inverted_texel`, `attr::INVERT`, `TextScreen::inverts` | U on the console: notes. C elsewhere: TEST56. Not the INPUT cursor (TEST50) |
+| TLOAD, TUPDATE and TCOPY keep all 16 attribute bits; TSAVE, TARRAY and CHKCHR read them | `Cell` | C: TEST56 parts 1 and 4 |
 | Tint is applied to the page pixel before blending | `sprites::draw_posed` | C (R2): TEST49 |
 | Relative colour animation `"C+"`: product / 256, rounded down | `anim.rs` | C: pitfalls |
 | LAYER mode 0 draws straight onto the frame, layer colour ignored | `Runtime::render` | C: pitfalls; TTEST16 |
 | Modes 1-4: the layer colour scales light (`P = p*c*ca`) and coverage (`A = la*ca`), unrounded | `compose::compose_tinted` | C (R3): TEST49, colours `C0806040`, `7F40C0FF`, `FFC08040`, `80FFFFFF`, white |
-| Mode 1: `P + d*(1-A)`; mode 2: `d + P`; mode 3: `d*(P + 1-A)`; mode 4: `d + P*(1-d)`, one rounding each; mode 1 adds to the frame's coverage, mode 2 keeps it, modes 3 and 4 make it opaque | `compose::compose` | C (R3): TEST49. U: that modes 3 and 4 make the whole screen opaque, not only where the layer has something (shows on a subprogram's screen only) |
-| A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's colour unmultiplied with coverage `255 - alpha` (alpha 0: clear); an opaque BACKCOLOR replaces the main screen | `Runtime::render`, `Fade::cover` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; the opaque case is from SmileBASIC 4 only |
+| Mode 1: `P + d*(1-A)`; mode 2: `d + P`; mode 3: `d*(P + 1-A)`; mode 4: `d + P*(1-d)`, one rounding each; mode 1 adds to the frame's coverage, mode 2 keeps it, modes 3 and 4 make it opaque | `compose::compose` | C (R3): TEST49. TEST56: modes 3 and 4 make the whole subprogram's screen opaque |
+| A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's colour unmultiplied with coverage `255 - alpha` (alpha 0: clear); an opaque BACKCOLOR replaces the main screen | `Runtime::render`, `Fade::cover` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; TEST56 for &HFF, and over console text for &H40 and &HC0 |
 | Beside a subprogram, the side without the focus: times 224/255, rounded in the same step as FADE | `Fade::cover`, `screen::darken` | C: TEST49 |
 
 ### 2.2 Sprites
@@ -347,9 +350,9 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
 | A linked child's offset turns and scales with the parent; the flags decide the child's own image | `Sprites::pose` | C: pitfalls (the `pose` UNVERIFIED comment is partly stale) |
 | Children without link bit 0 stay where they showed, Z included, when the parent is cleared | `Sprites::clear` | S: pitfalls ("Z included"); marker at `sprites.rs` "that Z also becomes absolute" |
-| Animated integer properties take the value rounded towards zero; a sliding XY too; colours mixed in single precision by the frames left, rounded down | `WithDefs::set_value`, `anim::mix` | C: pitfalls; TEST47 (R7) |
-| Rotation and scale kept in single precision, slid as `from*left + to*(1-left)` in single precision and not rounded | `sprites::single`, `anim::mix` | C: pitfalls; TEST48. U: that XY, Z, UV, V and I mix in single precision too (only visible where a slide lands on a whole number) |
-| An SPANIM set in the frame of the sprite's SPSET steps first a frame late | `Sprites::animate` (`fresh`) | **U**: TEST48 fits it, but also a VSYNC that did not wait before SPANIM, or the SPCLR before SPSET |
+| Animated XY, Z, UV and I keep whole numbers in 16 bits and divide, `(from*left + to*gone)/frames` dropping the fraction; colours mixed in single precision by the frames left, rounded down; V in double precision | `anim::mix` | C: pitfalls; TEST47 (R7), TEST56. U: UV, I and V, from SmileBASIC 4 |
+| Rotation and scale kept in single precision, slid as `from*left + to*(1-left)` in single precision and not rounded | `sprites::single`, `anim::mix` | C: pitfalls; TEST48 |
+| An SPANIM set while the program is behind (after a VSYNC that found its frame gone by, or code that ran out its frame) steps first a frame late; not one set after a VSYNC that waited, SPSET or not | `Sprites::behind`, `Track::late` | **U**: fits TEST48 and TEST56, 5 cases; that TANIM does not do it, and the cause, are not known |
 | SPDEF's default table when none was imported (grid of 16x16) | `grid_defs` | Stand-in, not a rule. The real table is imported |
 
 ### 2.3 Text screens
@@ -364,10 +367,10 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | TSCREEN clears the screen | `set_font` | S: pitfalls; marker in `text.rs` |
 | TSCREEN keeps TLAYER, TPAGE, TVAR and TFUNC, and sets TBLEND back to 0 | `restart_look` | C: pitfalls; TEST47, TEST48 |
 | INPUT cursor: a bar 2 by 8 at the cell's left, opaque white whatever the colour; it alternates with nothing | `draw_placed` | C (R9): TEST50, parts 6 and 7 |
-| The cursor's blink: 20 frames on, 20 off, counted in frames played; on from the start of a line and from each key that moves or edits, the first period a frame short | `LINE_CURSOR_BLINK`, `LineEdit::key` | U: executable (the count steps with `MAINCNT`'s); TEST50's by-eye "about 2 times a second" allows it; TEST56 part 1 |
-| The cursor's width is the cell's shifted right by two, or the whole cell after Insert; its height the cell's; with TSCALE and LMATRIX; right after its screen's cells, under what is in front | `LineCursor`, `draw_placed` | U: executable, the shared matrix from SmileBASIC 4; TEST56 part 1 |
-| On a composed layer the cursor has no coverage, so it adds | `LineCursor::composed` | U: from the blend state; TEST56 part 1 |
-| A selection on a typed line is drawn inverted, in the console's colour, and stays after Enter | `LineEdit::draw`, `finish` | U: executable; TEST56 parts 1 and 4 |
+| The cursor's blink: 20 frames on, 20 off, counted in frames played; on from the start of a line and from each key that moves or edits, the first period a frame short | `LINE_CURSOR_BLINK`, `LineEdit::key` | C by SmileBASIC 4, the count stepping with `MAINCNT`'s; TEST56 part 1 fits 2 of 2 shots at offsets -3..-1, weak alone |
+| The cursor's width is the cell's shifted right by two, or the whole cell after Insert; its height the cell's; with TSCALE and LMATRIX; right after its screen's cells, under what is in front | `LineCursor`, `draw_placed` | C: TEST56 part 1, 24 wide at scale 3, cut by a sprite in front |
+| On a composed layer the cursor has no coverage, so it adds | `LineCursor::composed` | C: TEST56 part 1, `E0F0FF` |
+| Only direct mode's line selects (`LineEdit::selects`), drawn inverted in the console's colour, staying after Enter | `LineEdit::draw`, `finish` | C that INPUT does not: TEST56. U: the look, from SmileBASIC 4; LINPUT |
 | Text animations: as for sprites | `impl Animated for TextScreen` | C: pitfalls; TEST47 (R7) |
 | TBLEND 1 is additive, as for sprites | `screen.rs` | C: manual (TBLEND); arithmetic as R1 |
 
@@ -400,7 +403,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | Mode-0 layer: LFILTER filters everything drawn so far, BACKCOLOR included; composed layer: only its own | `Runtime::render` | C: pitfalls; TTEST22/23 |
 | The same for a mode-0 layer with no elements | `Runtime::render` | S: pitfalls ("That holds for a layer with nothing in it, too"); marker in `runtime.rs` |
-| Mosaic: the whole frame drawn into `ceil(width/n)*sample` x `ceil(height/n)*sample` half-buffer pixels with bilinear sampling, then back with nearest; blocks are n frame pixels at any sample | `filter::mosaic` | C (R14): pitfalls; TEST54 part 1, no pixel more than 1 off |
+| Mosaic: the whole frame drawn into `ceil(width/n)*sample` x `ceil(height/n)*sample` half-buffer pixels with bilinear sampling, then back with nearest; blocks are n frame pixels at any sample | `filter::mosaic` | C (R14): pitfalls; TEST54 part 1, no pixel more than 1 off; TEST56 part 2, n=7 on 640x360, no pixel off |
 | Blur: bilinear to half size (2x2 mean, halves down), a row pass and a column pass each stored in 8 bits, nearest back; 0 sharp | `filter::blur` | C (R15): pitfalls; TEST54 parts 2, 3, TTEST24 |
 | Blur weights: a Gaussian of variance amount/10 at odd distances, normalised over 31 taps, used in the 3, 5, 7 or 9 taps that the 99% rule picks, not normalised again | `filter::blur_kernel` | C (R15): SmileBASIC 4; TEST54 parts 2, 3, no pixel more than 1 off |
 | Blur halving is in frame pixels whatever XSCREEN's sample | `filter::blur` | C (R15): TEST54 part 3 |
@@ -413,7 +416,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Colour conversion: hue in degrees, S and V on 0-255 | `filter::shift_color` | C: pitfalls; TEST54 part 7 |
 | Colour conversion arithmetic: the shader's formulas in f32 on the premultiplied texel; a grey keeps saturation 0 | `shift_color` | C (R18): SmileBASIC 4; TEST54 part 7, no pixel more than 1 off |
 | Filter before the layer colour (modes 1-4) | `Runtime::render` | C (R19): TEST53 part 4. Ours rounds to 8 bits between the two, SB4 does not: up to 1 off |
-| A clear pixel is left alone in mode 1 only; in modes 0, 2, 3, 4 a raised value lights it | `filter::color` | C (R19): TEST53 part 4, layer 5 |
+| A clear pixel is left alone in mode 1 only; in modes 0, 2, 3, 4 a raised value lights it | `filter::color` | C (R19): TEST53 part 4, layer 5; TEST56 part 2 for modes 0, 2, 3 |
 | ACLS clears LFILTER | `Runtime::acls` | C: pitfalls; TEST47 (R20) |
 
 ### 2.7 FADE
@@ -439,7 +442,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Rule | Where | Status |
 |---|---|---|
 | GLINE pixels: same whichever end first, offset `(2t*minor + k) / (2*major)`, `k = (major + 2*minor) mod (2*major)` from an end on the page | `line_points` | C: pitfalls; TEST47, TEST48; `lines_match_hardware`, `shallow_lines_match_hardware`, `far_lines_match_hardware` tests |
-| GLINE from an end off the page: `k = major`, counted from that end (only the steps on the page are walked) | `line_points` | C: pitfalls; TEST47, TEST48 (`lines_from_off_the_page_match_hardware`). U: that the page counts, not GCLIP, and an end off the page across the walk |
+| GLINE from an end outside GCLIP (the page if none): `k = major`, counted from that end (only the steps on the page are walked) | `line_points` | C: pitfalls; TEST47, TEST48, TEST56 (`lines_starting_outside_gclip_match_hardware`) |
 | GBOX outline: top and bottom rows, then the sides from the top row down, so the top corners are drawn twice | `Graphics::rect` | C: pitfalls; TEST47 (R24), TEST48 (any corner order) |
 | GFILL inclusive | `Graphics::fill` | C: manual |
 | GCIRCLE pixel set (midpoint circle) | `circle_points` | C: pitfalls; TEST47 (R25) |
@@ -447,7 +450,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GCIRCLE: equal angles draw nothing; the sector flag draws only the outline | `Graphics::circle` | C: pitfalls |
 | Sector edges: GLINEs from the center to those pixels | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
 | Equal angles with the sector flag draw nothing; radii of 1000 and 70000 draw | `Graphics::circle` | C: pitfalls; TEST47 (R25) |
-| GTRI: rows from the leftmost to the rightmost pixel the edges reach (`edge_span`), each pixel once, a degenerate triangle too; tall edges walked down with `k = major`, wide ones up with `k = (major - 2*minor) mod (2*major)` | `Graphics::triangle` | C: pitfalls; TEST47 (R26), TEST48 (`triangle_rows_match_hardware`). U: corners off the page |
+| GTRI: rows from the leftmost to the rightmost pixel the edges reach, each pixel once, a degenerate triangle too; each edge walked down from its top by SB4's sum, corners not clamped | `edge_span`, `Graphics::triangle` | C: pitfalls; TEST47 (R26), TEST48, TEST56 (`triangles_past_the_page_match_hardware`) |
 | GPAINT: 4-connected flood, border mode stops at the border colour | `Graphics::paint` | C: pitfalls; TEST47 (R27) |
 | GCLIP shared by all pages | `Graphics::clip` | C: pitfalls |
 | `#G_NORMAL`, `#G_NORMAL2` | `Blend::apply` | C: manual |
@@ -516,6 +519,22 @@ Generic angles have no misses before or after. What is left is mostly
 half of a quad at 90 and 270 degrees, where the two triangles differ;
 sizes other than powers of two starting on a half pixel; and text and
 sprites reading a pixel just off their image, which ours never does.
+
+TEST56 parts 1 and 2 add ties of sizes 8, 15, 16 and 16x15 at scales 1, 1.5
+and 2, and in places they go against the rule: a size 15 side at scale 1
+on a half pixel goes high, and 8 and 16 at scale 1.5 mostly low. Simple
+per-axis changes were measured against all of it, pixels more than 1 off:
+
+| Rule | TEST50 1 | 2 | 3 | 4 | TEST56 P1 ties | P2 ties | All |
+|---|---|---|---|---|---|---|---|
+| As it stands | 770 | 56 | 464 | 626 | 569 | 2566 | 5051 |
+| Odd side at scale 1 goes high | 1533 | 56 | 464 | 626 | 135 | 2566 | 5380 |
+| Power of two at another scale goes low on the image | 770 | 56 | 2968 | 1394 | 935 | 1278 | 7401 |
+| The same, towards the page's lower coordinates | 770 | 56 | 2968 | 1394 | 935 | 1278 | 7401 |
+| Both of the first changes | 1533 | 56 | 2968 | 1394 | 501 | 1278 | 7730 |
+
+Each fixes one test at another's cost, which is what host GPU noise would
+look like, so the rule stays.
 
 A GPU backend ([4](#4-gpu-backend-options)) gets these ties from its
 own arithmetic and will differ from the CPU rasterizer on them.

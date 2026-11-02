@@ -20,17 +20,20 @@ follows all of it. Items still waiting for a check are marked
   after they are set. They also play in direct mode, and go on while the
   editor is open. So does `FADE color,time`: `FADE()` still gives the
   start right after it, and the first step shows after one `VSYNC 1`
-  (TEST47). An `SPANIM` set in the same frame as the sprite's `SPCLR`
-  and `SPSET` shows its first step only after two `VSYNC 1`s; set a
-  frame later, after one (TEST48).
-- A sliding animation mixes its two ends in single precision as
-  `from*left + to*(1-left)`, `left` being the share of frames still to
-  go. Rotation and scale keep the result: 0 to -10 over three frames
-  reads -3.33333302 and -6.66666603, and a scale of 1 to -0.5 reads 0.5
-  and 0.00000003. X, Y and Z are rounded towards zero (-3, -6, -10), and
-  colors are mixed per channel and rounded down, so an alpha of `&HFF`
-  at both ends reads `&HFE` on the second of three frames. Text screens
-  (`TANIM`) do the same (TEST47, TEST48).
+  (TEST47). An `SPANIM` set after a `VSYNC` that waited shows its first
+  step after one `VSYNC 1`, in the frame of the sprite's `SPSET` too. Set
+  when the program is behind, after a `VSYNC` that found its frame gone by
+  or a long run of code, it takes two frames (TEST48, TEST56).
+- A sliding animation of rotation, scale or color mixes its two ends in
+  single precision as `from*left + to*(1-left)`, `left` being the share of
+  frames still to go. Rotation and scale keep the result: 0 to -10 over
+  three frames reads -3.33333302 and -6.66666603, and a scale of 1 to -0.5
+  reads 0.5 and 0.00000003. Colors are mixed per channel and rounded down,
+  so an alpha of `&HFF` at both ends reads `&HFE` on the second of three
+  frames. X, Y and Z are whole numbers that divide,
+  `(from*frames_left + to*frames_gone)/frames`, dropping the fraction: 0
+  to -10 reads -3, -6, -10, and 0 to 3 reads 1, 2, 3. Text screens (`TANIM`)
+  do the same (TEST47, TEST48, TEST56).
 - An animation key that lasts 0 frames is `Illegal animation data`.
 - How much a program runs in a frame (4.4.9, timed with `MAINCNT()`):
   in 60 frames a `WHILE MAINCNT()-T<60:INC N:WEND` loop goes round
@@ -55,6 +58,9 @@ follows all of it. Items still waiting for a check are marked
 - Reals print with eight decimals, trailing zeros removed, never in
   exponent form: `1E20` prints all 21 digits, `1/3` as `0.33333333`,
   `-1E-9` as `-0`.
+- `VAL` takes underscores in `&H` and `&B` digits as a program does:
+  `VAL("&H_FF")` and `VAL("&HFF_")` are 255. `VAL("1_000")` and `VAL("&H_")`
+  are 0 (TEST56).
 - `VAL(" 12 ")` is 0: spaces make the text not a number. `INPUT` asks
   again (`?Redo from start`) for the same reason.
 - `INPUT`'s question mark is followed by a space; with a comma after the
@@ -341,6 +347,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `SPCHK` and `TCHK` give 0 while the animations are stopped.
 - `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on
   the 50-column console).
+- `TROT` keeps the angle in single precision: `TROT 0,0.1` reads back
+  0.100000001490116 (TEST56).
 - `TOFS` takes X and Y left out (`TOFS 0,,,10`).
 - `SCROLL 0,0,2147483647` and `SCROLL 0,2147483647,0` clear the screen,
   as any shift of a whole screen or more does (TEST51).
@@ -362,38 +370,42 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - The text drawing's per-cell inverting flag (colour times 1 minus the
   glyph's alpha) is not what draws `INPUT`'s cursor (TEST50).
 
-Read from SmileBASIC 4 (version 4.4.8) and SmileBASIC 4, and not
-yet seen on hardware; TEST56 looks at each:
-
 - The line's cursor blinks by a count kept with the frame count `MAINCNT`
-  reads: 20 frames on, 20 off. It starts on, with the first period a frame
-  short, when a line starts, and again at each key that moves or edits. A
-  move that cannot move does not restart it, nor does Insert or `LOCATE`.
-- Insert toggles overwriting on any typed line (it reaches a program's
-  `INKEY$` as `CHR$(&H1A)`). The setting is one the editor shares and it
-  outlives the line. While it is on, the cursor is a block over the whole
-  cell, not a bar a quarter of it (a right shift by two of the cell size).
-- The cursor's scale and turn are the text's, `TSCALE` and `LMATRIX`
-  included. It is drawn right after its own screen's cells, replacing what
-  its layer holds, alpha too. As a layer's alpha is what shows through, it
-  then adds its white to the frame rather than covering it: under a dim
-  `LAYER` colour it is added, not mixed, and in mode 3 it brightens.
-- A selection is Shift with a move, for as long as moves come with Shift. The
-  selected characters are written with attribute bit 7 and the console's
-  colour. Enter does not draw the line again, so they stay that way on the
-  console. Typing over one in overwrite mode writes the character and moves
+  reads: 20 frames on, 20 off. TEST56's two shots, off at frame 72 and on at
+  299 of the line, fit that with the count 1 to 3 frames behind `MAINCNT`,
+  and 15/15 only at 3 ahead, which is weak support; the code says 20.
+- Insert toggles overwriting on `INPUT`'s line, and the cursor is then a
+  block over the whole cell: 24 wide at scale 3 (TEST56).
+- The cursor's scale is the text's, `TSCALE` and `LMATRIX` included. It is
+  drawn right after its own screen's cells, under a sprite in front, and it
+  replaces what its layer holds, alpha too. As a layer's alpha is what shows
+  through, on a composed layer it adds its white to the frame rather than
+  covering it: `&H203080` under `LAYER 2,1,&HFFC0C0C0` shows `&HE0F0FF`
+  (TEST56).
+- `INPUT` selects nothing: Shift with Left or Right moves the cursor, and
+  Backspace and Delete take one character (TEST56). `LINPUT` runs with the
+  same setting in SmileBASIC 4. Direct mode's line does select, cut,
+  copy and paste.
+- Bit 23 of a value for `TLOAD` or `TUPDATE` (attribute bit 7) does nothing
+  on text screens 0 to 3: a plain glyph shows, under `TCOLOR` and `TBLEND`
+  too, a space and an empty cell show nothing, and `TCOPY` carries it the
+  same (TEST56). `TLOAD`, `TUPDATE` and `TCOPY` move cells raw: all 16
+  attribute bits come back from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, the
+  others with no effect either (TEST56).
+
+Read from SmileBASIC 4 (version 4.4.8) and SmileBASIC 4, and not
+yet seen on hardware:
+
+- Only the console has a program with the per-cell flag of attribute bit 7,
+  so that on it the bit should invert a cell: its colour is multiplied by 1
+  minus the glyph's alpha, and then, as for any text, by `TCOLOR` and the
+  colour by the resulting alpha, so the light is left with the square of it.
+  A space is a block, and so is an empty cell. Direct mode's selection sets
+  the bit, and Enter does not draw the line again, so it should stay.
+- Typing over a selection in overwrite mode writes the character and moves
   on first, then deletes the selection: one made rightwards takes the
   character with it, and one made leftwards keeps it.
-- Attribute bit 7 (bit 23 of a value from `TARRAY`, `TSAVE` or for `TLOAD`)
-  inverts the cell: its colour is multiplied by 1 minus the glyph's alpha, and
-  then, as for any text, by `TCOLOR` and the colour by the resulting alpha, so
-  the light is left with the square of it. The glyph's own colour plays no
-  part. A space is a block, and so is an empty cell, which draws only with
-  this bit. On a font type above 16, what is not a user-defined character
-  takes its alpha from the corner of the font page.
-- `ATTR`, `TPUT` and `TFILL` refuse the bit. `TLOAD`, `TUPDATE` and `TCOPY`
-  move cells raw, so all 16 attribute bits stay and come back from `TSAVE`,
-  `TARRAY` and `CHKCHR`'s `OUT`; only bits 0 to 3 and 7 do anything.
+- Copying a selection in direct mode drops the selection; cutting too.
 
 ## Sprites
 
@@ -502,8 +514,14 @@ yet seen on hardware; TEST56 looks at each:
   dimmed `&H77` green `&H40 + &H77*128/255`. Alpha `&HFE` lets nearly
   all of the main screen through, `&H01` almost none, and alpha 0 leaves
   the screen clear. With alpha `&HFF` the subprogram's screen replaces
-  the main one where it is (from SmileBASIC 4; TEST49 did not try it).
-  What the subprogram draws goes over its `BACKCOLOR` as on any screen.
+  the main one where it is, and layers in modes 3 or 4 on it hide the main
+  screen whatever the alpha (TEST56). What the subprogram draws goes over
+  its `BACKCOLOR` as on any screen.
+- A subprogram's screen is stretched smoothly whatever `XSCREEN`'s mode, and
+  keeps its aspect ratio in `XSUBSCREEN`'s rectangle: 480x272 in mode 1 on
+  the whole display is 2.647 times, starting at X 4 (TEST56). By the code,
+  the rest of the rectangle takes `BACKCOLOR`'s colour plus the display times
+  1 minus its alpha, unless the alpha is 0.
 - `FADE color,time` mixes the two colors channel by channel in single
   precision and rounds down: `&HFF` to 0 over three frames passes `&HA9`
   and `&H54`, not `&HAA` and `&H55`. A clear end (alpha 0) takes the
@@ -533,22 +551,22 @@ yet seen on hardware; TEST56 looks at each:
     up) one step further on, `round((t+1)*minor/major)`, less
     `round(minor/major)` so that it starts at its end. `GLINE 0,0,7,3`
     steps across at X 1, 3 and 5 (`01122333`), `GLINE 0,0,6,1` at 2, and
-    `GLINE 0,0,4,2` at 2 and 4. When that end is off the page, `k =
-    major`: the line itself rounded, halves up, counted from its real
-    end. `GLINE -1,5,30,10` steps at X 3, 9, 15, 21 and 27, `GLINE
+    `GLINE 0,0,4,2` at 2 and 4. When that end is outside `GCLIP`, the page
+    if none is set, `k = major`: the line itself rounded, halves up, counted
+    from its real end (TEST56, ten lines, either way round). `GLINE -1,5,30,10` steps at X 3, 9, 15, 21 and 27, `GLINE
     -1000,0,1040,51` gives rows 25 for X 0-19 and 26 from 20, while
     `GLINE 0,25,40,26` steps at X 19 (TEST47, TEST48).
   - `GTRI` draws each pixel once (with `#G_ALPHA`, also where edges
     meet), a row at a time from the leftmost to the rightmost pixel an
-    edge reaches in the row, whatever order the corners come in. Each
-    edge takes one pixel per step along its longer axis, like `GLINE`
-    with its own `k`: an edge taller than it is wide is walked down from
-    its top end with `k = major` (rounded, halves towards the bottom
-    end); one at least as wide as it is tall is walked up from its bottom
-    end with `k = (major - 2*minor) mod (2*major)`, the edge rounded one
-    step back. `GTRI 0,0,1,2,10,1` fills rows 0-4, 1-10 and 1-6. A
-    triangle whose corners lie on one line is that line, drawn once
-    (TEST47, TEST48).
+    edge reaches in the row, whatever order the corners come in. Each edge
+    goes down from its top end with a sum that starts at `-wide` if it is
+    wider than tall, or `tall` if not; each row adds `2*wide`, and the edge
+    takes a step across for each `2*tall`, at most one past its bottom end.
+    A row has the columns from where the last row ended to the one before
+    where this one ends. Level edges have none of their own. Corners off
+    the page are not clamped. `GTRI 0,0,1,2,10,1` fills rows 0-4, 1-10 and
+    1-6. A triangle whose corners lie on one line is that line, drawn once
+    (TEST47, TEST48, TEST56).
   - `GBOX` draws the top and bottom rows, then the sides from the top
     row to the row above the bottom: with `#G_ALPHA` the two top corners
     are blended twice and the bottom ones once, whichever corners are
@@ -740,6 +758,13 @@ yet seen on hardware; TEST56 looks at each:
   Any of the lengths the manual gives, 16 to 512 samples, plays a pass
   at 55 Hz at its reference pitch; any other length (17, 24 or 1024
   samples) is `Illegal function call`.
+- `WAVSET` also takes groups in square brackets, which the manual leaves
+  out: `WAVSET 224,127,0,0,127,"[FF00][80][4080C0]",69` is no error
+  (TEST56). A string starting with `[` has groups of an even
+  number of digits, at most 1024 in all, and no group over 512 over their
+  number in samples. Each is stretched to that many samples, but each is
+  written from the start, so the last group alone stays and the rest of the
+  512 samples is whatever the buffer held. The sound has not been recorded.
 - `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its
   n samples at 28160 Hz over the next power of two at or above n: at
   reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16

@@ -109,7 +109,6 @@ pub struct LineCursor {
     /// Its layer is composed. The cursor replaces what its layer holds,
     /// and then shows through by its own alpha, so it adds its light to
     /// the frame without covering it.
-    // UNVERIFIED: from the blend state it is drawn with, not yet seen.
     pub composed: bool,
 }
 
@@ -626,8 +625,7 @@ impl TextScreen {
                 cell + cs as i32,
                 ((cy + 1) * cs) as i32,
             );
-            // UNVERIFIED: for the bar on other than 8-pixel cells and the
-            // block, expected of SmileBASIC 4.
+            // UNVERIFIED: for the bar on other than 8-pixel cells, expected of SmileBASIC 4.
             let width = if line.overwrite { cs } else { cs >> 2 };
             let (x0, x1) = (f64::from(part.0), f64::from(part.0) + f64::from(width));
             let paint = Mixed::Solid(if line.composed { 0x00FF_FFFF } else { WHITE });
@@ -869,7 +867,7 @@ impl Animated for TextScreen {
 /// the cell's color and TCOLOR as any other: SmileBASIC 4 takes the
 /// colors times `1 - alpha` in place of the glyph's, and then multiplies
 /// the colour by alpha as always, which is why the light is left squared.
-// UNVERIFIED: the sum is read from the text drawing, not yet seen drawn.
+// UNVERIFIED: the sum is read from the console's program, not yet seen.
 fn inverted_texel(p: u32) -> u32 {
     (255 - (p >> 24)) * 0x0101_0101
 }

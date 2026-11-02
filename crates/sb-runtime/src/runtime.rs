@@ -656,7 +656,6 @@ pub const KEY_BUFFER: usize = 256;
 /// blink takes about 833 ms.
 const CURSOR_BLINK: u32 = 25;
 /// Frames per half period of the INPUT cursor's blink.
-// UNVERIFIED: expected of SmileBASIC 4, not yet counted on hardware.
 const LINE_CURSOR_BLINK: u32 = 20;
 /// The pixels between the sides of a split editor, and their color.
 const SPLIT_DIVIDER: u32 = 2;

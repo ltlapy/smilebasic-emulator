@@ -85,7 +85,7 @@ SmileBASIC 4's own files.
 | Key | Action |
 |---|---|
 | Up, Down | In direct mode, bring back the lines typed before; Down returns to what was being typed |
-| Left, Right, Home, End | Move along the line typed in direct mode or for `INPUT`; with Shift, select |
+| Left, Right, Home, End | Move along the line typed in direct mode or for `INPUT`; with Shift in direct mode, select |
 | F1 | Show SmileBASIC 4's help for the command at the cursor, in the editor or on the line typed in direct mode (needs the imported help); F2 there changes its text size |
 | Ctrl+F1 to Ctrl+F5 | Type what `KEY` set for the key, `FILES` to `RUN` to start with |
 | F4 | Switch between direct mode and the editor; after an error, open the editor at the failing line. With View > Editor in a separate window, the editor opens beside the screen and programs keep running; F4 on the screen brings it to the front |

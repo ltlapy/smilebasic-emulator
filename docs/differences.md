@@ -290,8 +290,11 @@ scene.
 - A filter's result goes to 8 bits before the layer's colour is multiplied
   in. SmileBASIC 4 apply both in one draw, with one
   rounding, so a tinted, filtered layer can be 1 off.
-- `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame and
-  a subprogram's screen use SDL's pixel art filter.
+- `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame uses
+  SDL's pixel art filter.
+- `WAVSET` with `[..]` groups leaves silent the part of the 512 samples that
+  the last group does not fill, where SmileBASIC 4 leaves whatever its stack
+  held.
 - The Options menu's sharp screen filter scales by whole factors, which no
   `XSCREEN` mode does. It is the default; following `XSCREEN` is another of
   its choices.
