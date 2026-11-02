@@ -57,7 +57,9 @@ const USAGE: &str = "usage:
       SCRIPT line is a frame number and what happens then:
         F key NAME        a key typed for INKEY$ and INPUT: ENTER, UP,
                           DOWN, LEFT, RIGHT, ESC, TAB, BACKSPACE,
-                          DELETE, HOME, END, SPACE or one character
+                          DELETE, HOME, END, INSERT, SELECTLEFT,
+                          SELECTRIGHT (Shift with the arrow keys), SPACE
+                          or one character
         F type TEXT       the rest of the line typed
         F button NAMES N  buttons held for N frames, NAMES such as A or
                           A+UP: A B X Y UP DOWN LEFT RIGHT L R ZL ZR
@@ -502,6 +504,9 @@ fn key_code(name: &str) -> Option<u16> {
         "DELETE" => keys::DELETE,
         "HOME" => keys::HOME,
         "END" => keys::END,
+        "INSERT" => keys::INSERT,
+        "SELECTLEFT" => sb_runtime::line::commands::SELECT_LEFT,
+        "SELECTRIGHT" => sb_runtime::line::commands::SELECT_RIGHT,
         "SPACE" => u16::from(b' '),
         _ => {
             let mut chars = name.chars();

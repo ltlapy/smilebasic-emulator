@@ -30,7 +30,7 @@ use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
 use crate::syntax::is_ident_char;
 use crate::system::System;
-use crate::text::{CONSOLE, FONT_PAGE, SCREENS, SPRITE_PAGE, TextScreen};
+use crate::text::{CONSOLE, FONT_PAGE, LineCursor, SCREENS, SPRITE_PAGE, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -787,7 +787,7 @@ pub struct Runtime {
     changed: bool,
     /// What the last frame was drawn with besides the screens' state: the
     /// cursor's blink and the dimming.
-    drawn_with: Option<(bool, bool)>,
+    drawn_with: Option<(Option<bool>, bool)>,
     /// Counts the frames drawn, for the frontend to upload only new ones.
     revision: u64,
     /// What CLIPBOARD reads and writes.
@@ -847,6 +847,8 @@ pub struct Runtime {
     pub help: Option<Rc<crate::help::Help>>,
     /// The frame the cursor of the line typed last started blinking.
     line_blink_from: u32,
+    /// Lines overwrite rather than insert, from Insert on a line before.
+    line_overwrite: bool,
     /// The editor's line and cursor column when the program started,
     /// where HELPINFO looks for a command.
     pub(crate) help_cursor: (Vec<u16>, usize),
@@ -1077,6 +1079,7 @@ impl Runtime {
             library: Rc::default(),
             help: None,
             line_blink_from: 0,
+            line_overwrite: false,
             help_cursor: Default::default(),
             line_quiet: false,
             split_at: None,
@@ -1231,7 +1234,7 @@ impl Runtime {
         (self.mode.width, self.mode.height)
     }
 
-    fn draw_element(&self, fb: &mut Framebuffer, e: Element, layer: &Layer, cursor: bool) {
+    fn draw_element(&self, fb: &mut Framebuffer, e: Element, layer: &Layer, cursor: Option<bool>) {
         let clip = layer.clip.as_ref();
         let projection = layer.projection.as_ref().map(|m| (m, self.mode.sample));
         match e {
@@ -1241,7 +1244,10 @@ impl Runtime {
                 &self.grp,
                 &layer.matrix,
                 clip,
-                cursor && i == CONSOLE,
+                cursor.filter(|_| i == CONSOLE).map(|overwrite| LineCursor {
+                    overwrite,
+                    composed: layer.compose != Compose::Direct,
+                }),
             ),
             Element::Sprite(i, pose) => sprites::draw_posed(
                 &self.sprites.list[i],
@@ -1399,11 +1405,17 @@ impl Runtime {
         line.draw(&mut self.text[CONSOLE]);
     }
 
+    fn start_line(&mut self) {
+        let mut line = LineEdit::new(&self.text[CONSOLE]);
+        line.overwrite = self.line_overwrite;
+        self.line = Some(line);
+        self.line_blink_from = self.system.frames;
+    }
+
     /// Waits for a line typed in direct mode, where Up and Down recall the
     /// lines typed before.
     pub(crate) fn direct_input_start(&mut self) {
-        self.line = Some(LineEdit::new(&self.text[CONSOLE]));
-        self.line_blink_from = self.system.frames;
+        self.start_line();
         self.recall = Some(Recall {
             at: None,
             draft: Vec::new(),
@@ -1484,7 +1496,8 @@ impl Runtime {
         self.frame = self.frame.wrapping_add(1);
         // Counted in frames played, not in frames drawn, which are not
         // one a frame when frames are skipped or only some are looked at.
-        let cursor = self.line.is_some() && self.line_blink_on();
+        // Whether it is a block, if it shows.
+        let cursor = (self.line.is_some() && self.line_blink_on()).then_some(self.line_overwrite);
         let with = Some((cursor, self.dimmed));
         let mut cells = false;
         for t in &mut self.text {
@@ -2436,8 +2449,7 @@ impl Host for Runtime {
         // Keys queued while the program read none, PUSHKEY's too, are not
         // typed into the line.
         self.keys.clear();
-        self.line = Some(LineEdit::new(&self.text[CONSOLE]));
-        self.line_blink_from = self.system.frames;
+        self.start_line();
         self.recall = None;
         Ok(())
     }
@@ -2567,6 +2579,7 @@ impl Host for Runtime {
             if line.key(key) {
                 self.line_blink_from = self.system.frames;
             }
+            self.line_overwrite = line.overwrite;
             let looks = match key {
                 keys::BACKSPACE => listing,
                 c => is_ident_char(c) || c == 0x40 || c == 0x23,

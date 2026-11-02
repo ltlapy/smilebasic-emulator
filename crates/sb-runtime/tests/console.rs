@@ -196,6 +196,51 @@ fn input_cursor_starts_again_on_each_key_that_does_something() {
 }
 
 #[test]
+fn input_cursor_is_a_block_after_insert() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let src = "BACKCOLOR &HFF102030:INPUT A$:INPUT B$";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    let width = |fb: &sb_runtime::framebuffer::Framebuffer, y: usize| {
+        let row = &fb.pixels()[y * fb.width() as usize..];
+        (row[16..32].iter()).filter(|&&p| p == 0xFFFF_FFFF).count()
+    };
+    assert_eq!(width(&next_frame(&mut rt), 0), 2);
+    rt.key_press(keys::INSERT);
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    assert_eq!(width(&next_frame(&mut rt), 0), 8);
+    // The next line goes on overwriting.
+    rt.key_press(keys::ENTER);
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    assert_eq!(width(&next_frame(&mut rt), 8), 8);
+}
+
+#[test]
+fn input_cursor_scales_with_the_cell() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let src = "BACKCOLOR &HFF102030:TSCREEN 4,16,16:INPUT A$";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    let fb = next_frame(&mut rt);
+    let lit = |x: usize, y: usize| fb.pixels()[y * fb.width() as usize + x] == 0xFFFF_FFFF;
+    assert!(lit(32, 0) && lit(35, 15));
+    assert!(!lit(36, 0) && !lit(32, 16));
+}
+
+/// On a composed layer the cursor adds its light without covering what is
+/// behind, so a layer color dims it and leaves the frame showing.
+#[test]
+fn input_cursor_adds_its_light_on_a_composed_layer() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let src = "BACKCOLOR &HFF102030:LAYER 0,1,&HFF808080:INPUT A$";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    let fb = next_frame(&mut rt);
+    assert_eq!(fb.pixels()[16], 0xFF90_A0B0);
+    assert_eq!(fb.pixels()[18], 0xFF10_2030);
+}
+
+#[test]
 fn input_cursor_redraws_only_when_it_changes() {
     let mut rt = Runtime::new(400, 240, Font::blank());
     let mut vm = Vm::new(sb_core::compile("INPUT A", &rt).unwrap());

@@ -96,6 +96,17 @@ impl Cell {
     }
 }
 
+/// How [`TextScreen::draw_placed`] draws the cursor of a line being typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineCursor {
+    /// A block over the whole cell rather than a bar at its left.
+    pub overwrite: bool,
+    /// Its layer is composed. The cursor replaces what its layer holds,
+    /// and then shows through by its own alpha, so it adds its light to
+    /// the frame without covering it.
+    pub composed: bool,
+}
+
 /// A rectangle of cells: `x, y, width, height`.
 pub type CellRect = (i32, i32, i32, i32);
 
@@ -536,7 +547,7 @@ impl TextScreen {
 
     /// Draws the screen over `fb` where TOFS and its companions put it.
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
-        self.draw_placed(fb, font, font.pages(), &Affine::IDENTITY, None, false);
+        self.draw_placed(fb, font, font.pages(), &Affine::IDENTITY, None, None);
     }
 
     /// The pixel at `(x, y)` of a character's `font_type`-sized image.
@@ -559,7 +570,7 @@ impl TextScreen {
     }
 
     /// Draws the screen through its layer's matrix and clipping, with the
-    /// INPUT cursor on top if `cursor` is set.
+    /// INPUT cursor on top if `cursor` is given.
     pub fn draw_placed(
         &self,
         fb: &mut Framebuffer,
@@ -567,13 +578,12 @@ impl TextScreen {
         grp: &Graphics,
         layer: &Affine,
         clip: Option<&Clip>,
-        cursor: bool,
+        cursor: Option<LineCursor>,
     ) {
         if !self.visible {
             return;
         }
         let cs = self.char_size;
-        let cursor = cursor.then_some(self.cursor);
         if cursor.is_none() && self.cells.iter().all(|c| c.code == 0) {
             return;
         }
@@ -588,7 +598,8 @@ impl TextScreen {
         } else {
             self.draw_turned(fb, font, grp, &place);
         }
-        if let Some((cx, cy)) = cursor.filter(|&(cx, cy)| cx < self.width && cy < self.height) {
+        let (cx, cy) = self.cursor;
+        if let Some(line) = cursor.filter(|_| cx < self.width && cy < self.height) {
             let cell = (cx * cs) as i32;
             let part = (
                 cell,
@@ -596,13 +607,12 @@ impl TextScreen {
                 cell + cs as i32,
                 ((cy + 1) * cs) as i32,
             );
-            let (x0, x1) = (
-                f64::from(part.0),
-                f64::from(part.0) + f64::from(cursor_width(cs)),
-            );
+            let width = if line.overwrite { cs } else { cs >> 2 };
+            let (x0, x1) = (f64::from(part.0), f64::from(part.0) + f64::from(width));
+            let paint = Mixed::Solid(if line.composed { 0x00FF_FFFF } else { WHITE });
             let (y0, y1) = (f64::from(part.1), f64::from(part.3));
             draw_image_part(fb, &place, w, h, part, |x, y| {
-                (x >= x0 && x < x1 && y >= y0 && y < y1).then_some(Mixed::Solid(WHITE))
+                (x >= x0 && x < x1 && y >= y0 && y < y1).then_some(paint)
             });
         }
     }
@@ -842,12 +852,6 @@ fn paint_at(v: u32, paints: &[Mixed]) -> Option<Mixed> {
         solid if solid >> 24 == 0xFF => Some(Mixed::Solid(solid)),
         n => Some(paints[n as usize - 1]),
     }
-}
-
-/// How many pixels wide the INPUT cursor's bar is on a cell of `size`.
-// UNVERIFIED: that the bar scales with the cell (2 wide on 8 is measured).
-fn cursor_width(size: u32) -> u32 {
-    (size / 4).max(1)
 }
 
 #[cfg(test)]

@@ -37,6 +37,9 @@ pub struct LineEdit {
     origin: i64,
     /// Characters drawn last time, cleared if the line got shorter.
     shown: usize,
+    /// Insert has been pressed: a typed character replaces the one at the
+    /// cursor, and the cursor is a block.
+    pub overwrite: bool,
     /// Completion's list for the word being typed.
     pub completion: Option<Completion>,
 }
@@ -52,6 +55,7 @@ impl LineEdit {
             anchor: None,
             origin: i64::from(y) * i64::from(w) + i64::from(x),
             shown: 0,
+            overwrite: false,
             completion: None,
         }
     }
@@ -123,7 +127,7 @@ impl LineEdit {
         let before = (self.cursor, self.anchor);
         self.edit(code);
         let moves = matches!(code, keys::LEFT | keys::RIGHT | SELECT_LEFT | SELECT_RIGHT);
-        !moves || (self.cursor, self.anchor) != before
+        code != keys::INSERT && (!moves || (self.cursor, self.anchor) != before)
     }
 
     fn edit(&mut self, code: u16) {
@@ -157,7 +161,18 @@ impl LineEdit {
             keys::DELETE if self.cursor < len => {
                 self.text.remove(self.cursor);
             }
+            keys::INSERT => self.overwrite = !self.overwrite,
             0..0x20 | 0x7F => {}
+            // As in SmileBASIC 4, the selection goes after the character is
+            // written and the cursor moved on, so it can take the character.
+            c if self.overwrite => {
+                match self.text.get_mut(self.cursor) {
+                    Some(old) => *old = c,
+                    None => self.text.push(c),
+                }
+                self.cursor += 1;
+                self.delete_selection();
+            }
             c => {
                 self.delete_selection();
                 self.text.insert(self.cursor, c);
@@ -272,6 +287,43 @@ mod tests {
         line.key(DELETE_TO_END);
         line.draw(&mut c);
         assert_eq!((row(&c, 0).as_str(), c.cursor()), (">....", (1, 0)));
+    }
+
+    #[test]
+    fn overwrites_after_insert() {
+        let mut c = console();
+        let mut line = LineEdit::new(&c);
+        typing(&mut line, "ABC");
+        assert!(!line.key(keys::INSERT));
+        assert!(line.overwrite);
+        line.key(keys::HOME);
+        typing(&mut line, "XY");
+        assert_eq!(line.cursor, 2);
+        line.draw(&mut c);
+        assert_eq!(row(&c, 0), "XYC..");
+        // Past the end it adds, as it does when inserting.
+        typing(&mut line, "ZW");
+        line.draw(&mut c);
+        assert_eq!(row(&c, 0), "XYZW.");
+        // A selection made rightwards takes the character written after
+        // it too.
+        line.key(keys::HOME);
+        line.key(keys::RIGHT);
+        line.key(SELECT_RIGHT);
+        line.key(SELECT_RIGHT);
+        typing(&mut line, "Q");
+        assert_eq!(line.text, "X".encode_utf16().collect::<Vec<_>>());
+        assert_eq!(line.cursor, 1);
+        // One made leftwards keeps it, and loses what follows it.
+        line.set_text("ABCD".encode_utf16().collect());
+        line.key(keys::LEFT);
+        line.key(SELECT_LEFT);
+        line.key(SELECT_LEFT);
+        typing(&mut line, "Q");
+        assert_eq!(line.text, "AQD".encode_utf16().collect::<Vec<_>>());
+        assert_eq!(line.cursor, 2);
+        line.key(keys::INSERT);
+        assert!(!line.overwrite);
     }
 
     #[test]
