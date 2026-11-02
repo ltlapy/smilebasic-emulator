@@ -116,18 +116,16 @@ pub trait Paint: Copy {
 /// divided by 255, rounded once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Over1 {
-    /// In [`spread`]'s lanes, times 255.
-    light: u64,
+    src: u32,
     keep: u64,
 }
 
 impl Over1 {
     #[inline]
     pub fn new(src: u32) -> Over1 {
-        let sa = u64::from(src >> 24);
         Over1 {
-            light: spread(src | 0xFF00_0000) * sa,
-            keep: 255 - sa,
+            src,
+            keep: 255 - u64::from(src >> 24),
         }
     }
 }
@@ -135,9 +133,14 @@ impl Over1 {
 impl Paint for Over1 {
     #[inline]
     fn put(&self, dst: u32) -> u32 {
+        // Most pixels of most images are opaque.
+        if self.keep == 0 {
+            return self.src;
+        }
         // All four channels at once, 16 bits apiece: each sum is at most
         // 255 * 255, so none carries into the next.
-        gather(div255_lanes(self.light + spread(dst) * self.keep))
+        let light = spread(self.src | 0xFF00_0000) * (255 - self.keep);
+        gather(div255_lanes(light + spread(dst) * self.keep))
     }
 }
 
@@ -1025,53 +1028,50 @@ pub fn project_image<P: Paint>(
             x1.saturating_sub(x0),
         );
         let line = &mut pixels[py as usize * width..][..x1 as usize];
-        for sign in [1.0, -1.0] {
-            // Each (k, c) asks for k * t + c above 0.
-            let bounds = [
-                (dq, q),
-                (kx, ax),
-                (iw * dq - kx, iw * q - ax),
-                (ky, ay),
-                (ih * dq - ky, ih * q - ay),
-            ];
-            let (mut lo, mut hi) = (0.0, n);
-            for (k, c) in bounds {
-                let (k, c) = (k * sign, c * sign);
-                if k == 0.0 {
-                    if c < 0.0 {
-                        hi = lo;
-                    }
-                } else if k > 0.0 {
-                    lo = f64::max(lo, -c / k);
-                } else {
-                    hi = f64::min(hi, -c / k);
+        // Only where q is above 0 is the point in front: W is 1 / q. Each
+        // (k, c) asks for k * t + c above 0.
+        let bounds = [
+            (dq, q),
+            (kx, ax),
+            (iw * dq - kx, iw * q - ax),
+            (ky, ay),
+            (ih * dq - ky, ih * q - ay),
+        ];
+        let (mut lo, mut hi) = (0.0, n);
+        for (k, c) in bounds {
+            if k == 0.0 {
+                if c < 0.0 {
+                    hi = lo;
                 }
+            } else if k > 0.0 {
+                lo = f64::max(lo, -c / k);
+            } else {
+                hi = f64::min(hi, -c / k);
             }
-            if lo >= hi {
+        }
+        if lo >= hi {
+            continue;
+        }
+        let from = ((lo - 1.0).max(0.0) as u32).max(shown.0);
+        let to = ((hi + 1.0).min(n) as u32).min(x1 - x0).min(shown.1);
+        let ft = f64::from(from);
+        let (mut gx, mut gy, mut qt) = (gx + dx * ft, gy + dy * ft, q + dq * ft);
+        for t in from..to {
+            let (lx, ly) = (gx / qt, gy / qt);
+            let front = qt > 0.0;
+            (gx, gy, qt) = (gx + dx, gy + dy, qt + dq);
+            // A NaN is not in front either.
+            if !front {
                 continue;
             }
-            let from = ((lo - 1.0).max(0.0) as u32).max(shown.0);
-            let to = ((hi + 1.0).min(n) as u32).min(x1 - x0).min(shown.1);
-            let ft = f64::from(from);
-            let (mut gx, mut gy, mut qt) = (gx + dx * ft, gy + dy * ft, q + dq * ft);
-            for t in from..to {
-                let (lx, ly) = (gx / qt, gy / qt);
-                (gx, gy, qt) = (gx + dx, gy + dy, qt + dq);
-                // In front only; a NaN is not.
-                if (hm[2][0] * lx + hm[2][1] * ly + hm[2][2]).partial_cmp(&0.0)
-                    != Some(Ordering::Greater)
-                {
-                    continue;
-                }
-                let (ix, iy) = back.apply(lx, ly);
-                let (Some(ix), Some(iy)) = (floor_in(ix, i64::from(w)), floor_in(iy, i64::from(h)))
-                else {
-                    continue;
-                };
-                if let Some(paint) = pixel(ix as i32, iy as i32) {
-                    let d = &mut line[(x0 + t) as usize];
-                    *d = paint.put(*d);
-                }
+            let (ix, iy) = back.apply(lx, ly);
+            let (Some(ix), Some(iy)) = (floor_in(ix, i64::from(w)), floor_in(iy, i64::from(h)))
+            else {
+                continue;
+            };
+            if let Some(paint) = pixel(ix as i32, iy as i32) {
+                let d = &mut line[(x0 + t) as usize];
+                *d = paint.put(*d);
             }
         }
     }

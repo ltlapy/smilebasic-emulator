@@ -668,6 +668,14 @@ pub fn draw_posed(
             fn run<P: Paint>(self, paint: impl Fn(u32) -> P + Copy) {
                 let (bw, bh) = self.size;
                 let source = self.source;
+                // The usual image: every point is on the page as it is.
+                if let Some((page, u, v)) = source.plain() {
+                    let (fb, m, sample, place) = (self.fb, self.m, self.sample, self.place);
+                    return compose::project_image(fb, m, sample, place, bw, bh, |x, y| {
+                        let p = page[(v + y as usize) * GRP_SIZE as usize + u + x as usize];
+                        (p >> 24 != 0).then(|| paint(p))
+                    });
+                }
                 compose::project_image(self.fb, self.m, self.sample, self.place, bw, bh, |x, y| {
                     let (x, y) = source.page_xy(x, y);
                     let p = source.pixel(x, y);
@@ -775,6 +783,18 @@ impl Source<'_> {
             h: s.h,
             attr: s.attr,
         }
+    }
+
+    /// The page and where the image starts on it, for an image neither
+    /// turned nor flipped that lies wholly on a page.
+    fn plain(&self) -> Option<(&[u32], usize, usize)> {
+        let on_page = |at: i32, size: i32| at >= 0 && at + size <= GRP_SIZE;
+        let plain = !self.white
+            && self.attr & (attr::ROTATION | attr::REVH | attr::REVV) == 0
+            && on_page(self.u, self.w)
+            && on_page(self.v, self.h)
+            && self.page.len() == (GRP_SIZE * GRP_SIZE) as usize;
+        plain.then_some((self.page, self.u as usize, self.v as usize))
     }
 
     /// The page point under the point (lx, ly) of the shown rectangle.
