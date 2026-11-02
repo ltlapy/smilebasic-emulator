@@ -109,11 +109,14 @@ pub struct WaveInfo {
 }
 
 impl WaveInfo {
-    /// Bytes `len` samples take.
-    pub fn bytes_for(encoding: &Encoding, len: u32) -> usize {
+    /// Bytes `len` samples take, if that fits in memory at all (a 32-bit
+    /// machine's usize can be too small for a damaged file's `len`).
+    pub fn bytes_for(encoding: &Encoding, len: u32) -> Option<usize> {
         match encoding {
-            Encoding::Pcm16 => len as usize * 2,
-            Encoding::Adpcm { .. } => len.div_ceil(FRAME_SAMPLES) as usize * 8,
+            Encoding::Pcm16 => usize::try_from(len).ok()?.checked_mul(2),
+            Encoding::Adpcm { .. } => usize::try_from(len.div_ceil(FRAME_SAMPLES))
+                .ok()?
+                .checked_mul(8),
         }
     }
 
@@ -159,16 +162,17 @@ impl WaveInfo {
             }
             _ => return None,
         };
-        let (len, start) = (u(4), u(12) as usize);
+        let (len, start) = (u(4), usize::try_from(u(12)).ok()?);
         let loop_start = Some(u(8)).filter(|&s| s != u32::MAX);
         if loop_start.is_some_and(|s| s >= len) {
             return None;
         }
+        let end = start.checked_add(WaveInfo::bytes_for(&encoding, len)?)?;
         Some(WaveInfo {
             rate: u(0),
             len,
             loop_start,
-            data: start..start + WaveInfo::bytes_for(&encoding, len),
+            data: start..end,
             encoding,
         })
     }
@@ -473,6 +477,22 @@ mod tests {
             h = [s, h[0]];
             assert_eq!(r.next(&w, &data), Some(s as i16), "sample {pos}");
         }
+    }
+
+    #[test]
+    fn wave_sizes_stay_in_range() {
+        // Past what fits, a wave is refused rather than wrapped round.
+        let mut b = vec![0u8; WAVE_BYTES];
+        b[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        b[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        b[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
+        let read = WaveInfo::read(&b);
+        if usize::BITS == 64 {
+            assert_eq!(read.unwrap().data.end, (1 << 32) - 1 + (1 << 33) - 2);
+        } else {
+            assert_eq!(read, None);
+        }
+        assert_eq!(WaveInfo::bytes_for(&Encoding::Pcm16, 3), Some(6),);
     }
 
     #[test]
