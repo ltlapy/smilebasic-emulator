@@ -576,9 +576,9 @@ fn crafted_arrays_fail_as_a_bad_file_does() {
     let mut m = machine(&dir);
     let workspace = dir.0.join("@WORKSPACE");
     std::fs::create_dir_all(&workspace).unwrap();
-    // Their products are 0, so they used to load: RINGCOPY then went through
-    // four thousand million rows, and an image of no pixels ended the
-    // process when it was encoded.
+    // Their products are 0, but RINGCOPY would go through four thousand
+    // million rows, and an image of no pixels ended the process when it was
+    // encoded.
     std::fs::write(workspace.join("BHUGE"), array_file(&[u32::MAX, 0], 0)).unwrap();
     std::fs::write(workspace.join("GFLAT"), array_file(&[0, 16], 0)).unwrap();
     let program = [
@@ -602,6 +602,86 @@ fn crafted_arrays_fail_as_a_bad_file_does() {
     m.set_slot(0, "SAVEG \"JPG:PIC\",0,0,0,3,0".to_string());
     enter(&mut m, "run");
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
+}
+
+/// A zero in any size loads and keeps the sizes, and whatever is then done
+/// with so empty an array ends, with an error or without.
+#[test]
+fn arrays_with_a_zero_in_any_size_stay_harmless() {
+    let statements = [
+        "?LEN(B),DIM(B),DIM(B,0),DIM(B,1)",
+        "RESIZE B,5,DIM(B,1)",
+        "RESIZE B,0,DIM(B,1)",
+        "COPY B,B",
+        "COPY B,0,B,0,0",
+        "SORT B",
+        "RSORT B",
+        "FILL B,1",
+        "?FIND(B,0)",
+        "FIND B,0 OUT X,Y",
+        "ARYOP 0,B,1,2",
+        "ARYOP 0,B,B,B",
+        "RINGCOPY B,0,B",
+        "RINGCOPY B,0,B OUT E",
+        "RINGCOPY D,0,B",
+        "BIQUAD B,B,D",
+        "FFT B,B,B,B",
+        "FFTWFN B,0",
+        "?POP(B)",
+        "PUSH B,1",
+        "INSERT B,0,1",
+        "REMOVE B,0",
+        "INSPECT B",
+        "SAVEV \"DAT:OUT\",B",
+        "SAVEV \"GRP:OUT\",B",
+        "LOADV \"DAT:OUT\",B",
+        "GLOAD 0,0,4,4,B,1,0",
+        "GSAVE 0,0,0,4,4,B,1",
+        "GLOAD B,1",
+        "TLOAD 0,0,0,4,4,B",
+        "WAVSET 224,0,0,0,0,\"\":WAVSETA 224,0,0,0,0,B",
+        "PCMSTREAM B",
+        "LFILTER 0,3,B,0",
+        "SPPAGE 0:SPDEF B",
+        "ANIMDEF 0,B",
+        "SPANIM 0,\"XY\",B",
+        "?B[0]",
+        "B[0,0]=1",
+        "?MAX(B)",
+        "?MIN(B)",
+    ];
+    let dir = TempDir::new("zero-sizes");
+    let mut m = machine(&dir);
+    let workspace = dir.0.join("@WORKSPACE");
+    std::fs::create_dir_all(&workspace).unwrap();
+    for (name, dims) in [
+        ("Z0", [0u32, 3]),
+        ("Z1", [3, 0]),
+        ("Z2", [1 << 28, 0]),
+        ("Z3", [0, 1 << 28]),
+        ("Z4", [2, 0]),
+    ] {
+        std::fs::write(workspace.join(format!("B{name}")), array_file(&dims, 0)).unwrap();
+        std::fs::write(workspace.join(format!("G{name}")), array_file(&dims, 0)).unwrap();
+        m.set_slot(
+            0,
+            format!("DIM B[1,1]:LOADV \"DAT:{name}\",B:?RESULT();\" \";DIM(B,0);\" \";DIM(B,1)"),
+        );
+        enter(&mut m, "run");
+        let shown = format!("1 {} {}", dims[0], dims[1]);
+        assert_eq!(tail(&m, 2)[0], shown);
+        for statement in statements {
+            let head = format!("DIM D[2,2],B[1,1]:LOADV \"DAT:{name}\",B\n");
+            m.set_slot(0, format!("{head}{statement}\n"));
+            enter(&mut m, "run");
+            m.set_slot(0, format!("{head}LOADV \"GRP:{name}\",B\n{statement}\n"));
+            enter(&mut m, "run");
+        }
+        m.set_slot(0, format!("LOADG \"{name}\",0 OUT W,H:?W,H,RESULT()"));
+        enter(&mut m, "run");
+        m.set_slot(0, format!("LOAD \"GRP0:{name}\""));
+        enter(&mut m, "run");
+    }
 }
 
 #[test]

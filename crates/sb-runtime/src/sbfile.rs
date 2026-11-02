@@ -348,21 +348,19 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
     Ok(Data { dims, values })
 }
 
-/// How many elements an array of these sizes holds, if a program could
-/// have made it. Without this, `[0xFFFFFFFF, 0]` would pass for an empty
-/// array, and commands that go through its rows would run out of memory.
-///
-/// DIM makes no zero among several sizes, but RESIZE changes the first, and
-/// SAVEV writes what that left.
-// UNVERIFIED: that SmileBASIC 4's RESIZE takes 0 for it, and what it saves.
+/// How many elements an array of these sizes holds. A zero in any size
+/// makes it empty; the others must still multiply to no more than an array
+/// can hold, so that nothing later goes through `[0xFFFFFFFF, 0]`'s rows.
+// UNVERIFIED: that SmileBASIC 4 refuses such a file.
 fn checked_elements(dims: &[usize]) -> Result<usize, FileError> {
-    if dims[1..].contains(&0) {
-        return Err(FileError::BadData);
+    let mut product = 1usize;
+    for &d in dims.iter().filter(|&&d| d != 0) {
+        product = product
+            .checked_mul(d)
+            .filter(|&t| t <= MAX_ELEMENTS)
+            .ok_or(FileError::BadData)?;
     }
-    let room = |a: usize, &d: &usize| a.checked_mul(d).filter(|&t| t <= MAX_ELEMENTS);
-    let rest = dims[1..].iter().try_fold(1, room);
-    let all = rest.and_then(|rest| room(rest, &dims[0]));
-    all.ok_or(FileError::BadData)
+    Ok(if dims.contains(&0) { 0 } else { product })
 }
 
 fn parse_strings(mut payload: &[u8], count: usize) -> Result<DataValues, FileError> {
@@ -641,14 +639,13 @@ mod tests {
 
     #[test]
     fn arrays_are_limited_as_dim_limits_them() {
-        // Their products are 0, and so fit a payload of nothing.
+        // Their products are 0, and so fit a payload of nothing, but what
+        // goes through their rows would not fit.
         for dims in [
             &[u32::MAX, 0][..],
-            &[16, 0],
-            &[0, 0],
             &[0, u32::MAX],
+            &[(1 << 28) + 1, 0],
             &[0, 1 << 15, 1 << 15],
-            &[2, 0, 2],
             &[1 << 14, 1 << 14, 2, 0],
         ] {
             for elem in [4, 5, 6] {
@@ -662,11 +659,21 @@ mod tests {
         assert_eq!(checked_elements(&[1 << 28]), Ok(1 << 28));
         assert_eq!(checked_elements(&[1 << 14, 1 << 14]), Ok(1 << 28));
 
-        // Empty arrays a program can have made.
-        for elem in [4, 5, 6] {
-            assert_eq!(parse_data(&dat(elem, &[0], &[])).unwrap().dims, [0]);
+        // Empty arrays keep their sizes.
+        for dims in [
+            &[0][..],
+            &[0, 3],
+            &[3, 0],
+            &[16, 0],
+            &[0, 0],
+            &[2, 0, 2],
+            &[1 << 28, 0],
+        ] {
+            for elem in [4, 5, 6] {
+                let kept: Vec<usize> = dims.iter().map(|&d| d as usize).collect();
+                assert_eq!(parse_data(&dat(elem, dims, &[])).unwrap().dims, kept);
+            }
         }
-        assert_eq!(parse_data(&dat(4, &[0, 3], &[])).unwrap().dims, [0, 3]);
     }
 
     #[test]
