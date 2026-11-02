@@ -22,7 +22,7 @@ pub const BACKUP_NAME: &str = "@BACKUP.PRG";
 /// that a huge file in a project cannot take all the memory. SmileBASIC 4
 /// has about 128 MiB for a program, so an array filling that, in strings
 /// that grow as UTF-8 too, still fits.
-pub const MAX_FILE: u64 = 4 * crate::sbfile::MAX_BODY as u64;
+pub const MAX_FILE: u64 = crate::sbfile::MAX_BODY as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FileKind {

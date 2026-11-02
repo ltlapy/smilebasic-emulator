@@ -23,9 +23,10 @@ use sha1::Sha1;
 
 pub const HEADER_SIZE: usize = 0x70;
 pub const FOOTER_SIZE: usize = 20;
-/// Largest decompressed body accepted: a 2048x2048 page of 32-bit pixels
-/// plus headroom, so a corrupt file cannot exhaust memory.
-pub const MAX_BODY: usize = 64 << 20;
+/// Largest decompressed body accepted, so a corrupt file cannot exhaust
+/// memory. Real arrays go well past a 2048x2048 page: IRCAMERA's demos hold
+/// 115 MB.
+pub const MAX_BODY: usize = 256 << 20;
 /// The key of the footer's HMAC, the one SmileBASIC 3 used too.
 const SIGNING_KEY: &[u8] = b"nqmby+e9S?{%U*-V]51n%^xZMk8>b{?x]&?(NmmV[,g85:%6Sqd\"'U\")/8u77UL2";
 
