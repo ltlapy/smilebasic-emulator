@@ -427,36 +427,40 @@ pub(super) fn ringcopy(args: &[Value], outs: usize) -> Result<Vec<Value>> {
         [offset, n] => (Some(offset), Some(n)),
         _ => unreachable!("checked above"),
     };
-    let samples: Vec<Vec<Value>> = {
+    // Channel after channel. A file can give a million channels of no
+    // samples, which take nothing here.
+    let (source_ch, n, samples) = {
         let source = source.borrow();
         let (ch, len) = channels(&source)?;
         // Reading past the source's end is an Illegal function call on
         // hardware, not Out of range as for COPY.
         let (offset, n) =
             span(len, offset, n).map_err(|_| Error::from(ErrorKind::IllegalFunctionCall))?;
-        (0..ch)
-            .map(|c| {
-                (offset..offset + n)
-                    .map(|i| element(&source, c * len + i))
-                    .collect()
-            })
-            .collect()
+        let mut samples = Vec::new();
+        if n > 0 {
+            samples.reserve(ch * n);
+            for c in 0..ch {
+                samples.extend((offset..offset + n).map(|i| element(&source, c * len + i)));
+            }
+        }
+        (ch, n, samples)
     };
     let mut dest = dest.borrow_mut();
     let (ch, len) = channels(&dest)?;
-    // RESIZE can leave no channels at all: `[0, 3]`.
-    if len == 0 || ch == 0 {
+    if len == 0 {
         return Err(out_of_range("empty array"));
     }
-    if samples.len() != 1 && samples.len() != ch {
+    // With no channels to copy into, there is nothing to refuse.
+    if ch > 0 && source_ch != 1 && source_ch != ch {
         return Err(ErrorKind::IllegalFunctionCall.into());
     }
     let start = count(&args[1])? % len;
-    let n = samples[0].len();
-    for c in 0..ch {
-        let from = &samples[c.min(samples.len() - 1)];
-        for (k, v) in from.iter().enumerate() {
-            dest.set(c * len + (start + k) % len, v.clone())?;
+    if n > 0 {
+        for c in 0..ch {
+            let from = c.min(source_ch - 1) * n;
+            for (k, v) in samples[from..from + n].iter().enumerate() {
+                dest.set(c * len + (start + k) % len, v.clone())?;
+            }
         }
     }
     Ok(if outs == 1 {
