@@ -97,6 +97,84 @@ fn opt_in_range(
 /// plays twice as loud (TEST41).
 const BGM_VOLUME: i32 = 64;
 
+/// WAVSET's string with `[..]` groups, which the manual leaves out, as the
+/// 512 samples it gives; `Ok(None)` if it has no groups, and `None` for
+/// what SmileBASIC 4 refuses: text before the first group, an empty group,
+/// one left open or nested, an odd number of digits, other than digits in
+/// a group, more than 1024 digits in all, or a group of more samples than
+/// 512 over the number of groups.
+///
+/// Each group is stretched to that many samples, but every group is written
+/// from the start of the buffer: the last one is all that stays, and the
+/// rest of the 512 is whatever the buffer held.
+// UNVERIFIED: read from the code; TEST56 shows only that the string is
+// taken. The rest of the buffer is left silent here, where SmileBASIC 4's
+// is not cleared.
+fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let (open, close) = (u16::from(b'['), u16::from(b']'));
+    let (mut groups, mut digits) = (0usize, 0usize);
+    let mut inside: Option<usize> = None;
+    for (i, &u) in units.iter().enumerate() {
+        match inside {
+            Some(n) if u == close => {
+                if n == 0 || !n.is_multiple_of(2) {
+                    return None;
+                }
+                digits += n;
+                groups += 1;
+                inside = None;
+            }
+            Some(_) if u == open => return None,
+            Some(n) => inside = Some(n + 1),
+            None if u == open => {
+                if groups == 0 && i != 0 {
+                    return None;
+                }
+                inside = Some(0);
+            }
+            None if u == close => return None,
+            None => {}
+        }
+    }
+    if inside.is_some() || digits > 1024 {
+        return None;
+    }
+    if groups == 0 {
+        return Some(None);
+    }
+    if units.len() < 4 || !units.len().is_multiple_of(2) {
+        return None;
+    }
+    let digit = |u: u16| char::from_u32(u32::from(u)).and_then(|c| c.to_digit(16));
+    let each = 512 / groups;
+    let mut out = vec![0x80u8; 512];
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut at = 0;
+    for _ in 0..groups {
+        if units[at] == open {
+            bytes.clear();
+            at += 1;
+            while units[at] != close {
+                let high = digit(units[at])?;
+                let low = digit(units[at + 1])?;
+                bytes.push((high << 4 | low) as u8);
+                at += 2;
+            }
+            at += 1;
+        }
+        if bytes.len() > each {
+            return None;
+        }
+        // 16.16 fixed point, as SmileBASIC 4 steps.
+        let step = ((bytes.len() as i32) << 16) / each as i32;
+        for (i, sample) in out[..each].iter_mut().enumerate() {
+            *sample = bytes[((i as i32 * step) >> 16) as usize];
+        }
+    }
+    Some(Some(out))
+}
+
 /// WAVSET's instrument number and envelope.
 fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
     let n = in_range("instrument", &args[0], 224..=255)? as usize - 224;
@@ -361,6 +439,14 @@ impl Runtime {
             (Command::Wavset, Want::Outs(0), 6..=7) => {
                 let (n, envelope) = wave_head(args)?;
                 let hex = text(&args[5])?;
+                let illegal = || Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform");
+                if let Some(bytes) = wave_groups(&hex).ok_or_else(illegal)? {
+                    let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
+                    let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
+                    let wave = eight_bit(&bytes, 512, base_note, envelope);
+                    self.sound.waves.borrow_mut().define(n, wave);
+                    return Ok(vec![]);
+                }
                 let bytes: Option<Vec<u8>> = (0..hex.len() / 2)
                     .map(|i| {
                         hex.get(2 * i..2 * i + 2)
@@ -373,9 +459,7 @@ impl Runtime {
                     .filter(|b| {
                         hex.len() % 2 == 0 && [16, 32, 64, 128, 256, 512].contains(&b.len())
                     })
-                    .ok_or_else(|| {
-                        Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform")
-                    })?;
+                    .ok_or_else(illegal)?;
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
                 let wave = eight_bit(&bytes, 512, base_note, envelope);
@@ -714,5 +798,33 @@ impl Runtime {
             }
             _ => Err(no_form()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wavset_groups_keep_the_last_one() {
+        // TEST56's string is taken.
+        let out = wave_groups("[FF00][80][4080C0]").unwrap().unwrap();
+        assert_eq!(out.len(), 512);
+        // 512 / 3 = 170 samples from three bytes; then silence.
+        assert_eq!(
+            (out[0], out[56], out[57], out[113], out[114]),
+            (0x40, 0x40, 0x80, 0x80, 0xC0)
+        );
+        assert_eq!((out[169], out[170]), (0xC0, 0x80));
+        let one = wave_groups("[0080]").unwrap().unwrap();
+        assert_eq!((one[0], one[255], one[256], one[511]), (0, 0, 0x80, 0x80));
+        // No groups: the plain form's business.
+        assert_eq!(wave_groups("FF00"), Some(None));
+        for bad in ["FF[00]", "[]", "[F]", "[00", "00]", "[[00]]", "[0G]"] {
+            assert_eq!(wave_groups(bad), None, "{bad}");
+        }
+        // More than 512/2 samples in one of two groups.
+        let long = format!("[{}][00]", "00".repeat(257));
+        assert_eq!(wave_groups(&long), None);
     }
 }
