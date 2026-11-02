@@ -51,6 +51,17 @@ pub struct Machine {
     vsync_at: u64,
     /// VSYNCs the program has reached.
     vsyncs: u64,
+    /// Whether the program stopped at a VSYNC or WAIT and has run no
+    /// further: the screens show a whole trip round its main loop.
+    at_sync: bool,
+    /// The running time of the last trip from one VSYNC to the next, and
+    /// of the one under way, whatever frames it took. Kept only under a
+    /// time limit.
+    loop_time: Duration,
+    loop_so_far: Duration,
+    /// A frame leaves a program that [`Machine::at_sync`] where it is,
+    /// for a frame run to catch up that has no time for a whole trip.
+    pub hold_at_sync: bool,
     /// Globals of the last program and the direct-mode lines since, kept
     /// for the next direct-mode line; each line adds its own.
     vars: HashMap<String, Value>,
@@ -242,6 +253,10 @@ impl Machine {
             frame: 0,
             vsync_at: 0,
             vsyncs: 0,
+            at_sync: false,
+            loop_time: Duration::ZERO,
+            loop_so_far: Duration::ZERO,
+            hold_at_sync: false,
             vars: HashMap::new(),
             editors: [Editor::new(w * 8, h * 8), Editor::new(w * 8, h * 8)],
             active: 0,
@@ -311,6 +326,25 @@ impl Machine {
     /// comes round.
     pub fn vsyncs(&self) -> u64 {
         self.vsyncs
+    }
+
+    /// Whether the program stopped at a VSYNC or WAIT and has run no
+    /// further, so that a frame drawn now shows a whole trip round its
+    /// main loop.
+    pub fn at_sync(&self) -> bool {
+        self.at_sync
+    }
+
+    /// Whether the program is part-way between VSYNCs: out of time rather
+    /// than waiting. What is on the screens is then partly made.
+    pub fn mid_loop(&self) -> bool {
+        self.is_running() && !self.at_sync && self.wait == 0
+    }
+
+    /// How long the program last took between two VSYNCs, not counting
+    /// the time between frames. Known only under a time limit.
+    pub fn loop_time(&self) -> Duration {
+        self.loop_time
     }
 
     pub fn is_running(&self) -> bool {
@@ -1446,9 +1480,14 @@ impl Machine {
         if self.wait > 0 {
             return;
         }
+        if self.hold_at_sync && self.at_sync {
+            return;
+        }
+        self.at_sync = false;
         // A VSYNC that is behind goes on within the frame's budget.
         let start = vm.executed();
-        let deadline = self.time_limit.map(|limit| Instant::now() + limit);
+        let mut began = self.time_limit.map(|_| Instant::now());
+        let deadline = began.zip(self.time_limit).map(|(now, limit)| now + limit);
         let has_time = |vm: &Vm| match deadline {
             Some(deadline) => Instant::now() < deadline,
             None => vm.executed() - start < u64::from(FRAME_BUDGET),
@@ -1491,11 +1530,18 @@ impl Machine {
                     vsync: false,
                 }) => {
                     vsynced = true;
+                    if let Some(from) = began {
+                        let now = Instant::now();
+                        self.loop_time = self.loop_so_far + (now - from);
+                        self.loop_so_far = Duration::ZERO;
+                        began = Some(now);
+                    }
                     self.wait = frames;
                     self.vsync_at = self.frame + u64::from(frames);
                     if frames == 0 && has_time(vm) {
                         continue;
                     }
+                    self.at_sync = true;
                 }
                 // VSYNC n waits until n frames after the one the last VSYNC
                 // waited for. When that has gone by, it goes straight on
@@ -1508,16 +1554,33 @@ impl Machine {
                 }) => {
                     vsynced = true;
                     self.vsyncs += 1;
+                    let now = began.map(|began| (began, Instant::now()));
+                    if let Some((from, now)) = now {
+                        self.loop_time = self.loop_so_far + (now - from);
+                        self.loop_so_far = Duration::ZERO;
+                        began = Some(now);
+                    }
                     self.vsync_at += u64::from(frames);
                     if self.vsync_at > self.frame {
                         self.wait = (self.vsync_at - self.frame) as u32;
                     } else {
                         self.vsync_at = self.frame;
                         self.rt.sound.synced();
-                        if has_time(vm) {
+                        // SmileBASIC 4 goes straight on, and so does a
+                        // headless run. In a window, a trip that cannot
+                        // end in the frame's time would only leave the
+                        // screens half made when the frame is drawn.
+                        // if has_time(vm) {
+                        //     continue;
+                        // }
+                        let fits = now.is_none_or(|(_, now)| {
+                            deadline.is_some_and(|end| now + self.loop_time < end)
+                        });
+                        if fits && has_time(vm) {
                             continue;
                         }
                     }
+                    self.at_sync = true;
                 }
                 Ok(Status::Ended) => self.finish(None),
                 Ok(Status::Break { line }) => self.stop_on(Some(line), Halt::User),
@@ -1527,6 +1590,9 @@ impl Machine {
                 Err(e) => self.finish(Some(e)),
             }
             break;
+        }
+        if let Some(began) = began.filter(|_| !self.at_sync) {
+            self.loop_so_far += began.elapsed();
         }
         // A step that waits for input shows the screen until it stops: an
         // INPUT, or one going over lines that read the controls and waited

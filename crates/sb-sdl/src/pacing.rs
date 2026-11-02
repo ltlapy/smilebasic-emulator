@@ -56,6 +56,12 @@ impl Clock {
         self.next += FRAME;
     }
 
+    /// Whether a drawing that ends at `end` would end after the frame's
+    /// time.
+    pub fn late_at(&self, end: Instant) -> bool {
+        end > self.next + FRAME
+    }
+
     /// Ends a frame at `now`, after drawing it; `vsync` is whether a
     /// present waited for the vsync of a display at about 60 Hz. Gives
     /// how long to wait for the next frame.

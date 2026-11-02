@@ -340,6 +340,7 @@ const WINDOW_FRAME: std::time::Duration = std::time::Duration::from_nanos(1_000_
 const WINDOW_RUN: std::time::Duration = std::time::Duration::from_millis(10);
 const WINDOW_CATCH_UP: std::time::Duration = std::time::Duration::from_millis(1);
 const WINDOW_MOST_SKIPPED: u32 = 3;
+const WINDOW_MOST_UNDRAWN: u32 = 3;
 const WINDOW_MOST_BEHIND: std::time::Duration =
     std::time::Duration::from_nanos(8 * 1_000_000_000 / 60);
 
@@ -393,6 +394,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
     let window = window.is_some();
     let mut clock = Instant::now();
     let mut played = 0;
+    let (mut undrawn, mut draw_time) = (0, Duration::ZERO);
     'run: while played < frames && m.is_running() {
         // As the window's main loop does: a frame, then those that are
         // due at once, of which only the last is drawn.
@@ -402,7 +404,10 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
                 break 'run;
             }
             if window {
-                m.time_limit = Some(if skipped == 0 {
+                // As the window does: see its main loop.
+                let whole = 2 * m.loop_time() + draw_time <= 2 * frame_time;
+                m.hold_at_sync = skipped > 0 && !whole;
+                m.time_limit = Some(if skipped == 0 || (whole && m.at_sync()) {
                     run_time
                 } else {
                     catch_up_time
@@ -429,10 +434,29 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
             clock += frame_time;
             skipped += 1;
         }
+        if window {
+            m.hold_at_sync = false;
+            if undrawn < WINDOW_MOST_UNDRAWN
+                && m.mid_loop()
+                && Instant::now() + draw_time > clock + frame_time
+            {
+                undrawn += 1;
+                clock += frame_time;
+                let now = Instant::now();
+                if clock > now {
+                    std::thread::sleep(clock - now);
+                } else if now - clock > most_behind {
+                    clock = now;
+                }
+                continue;
+            }
+            undrawn = 0;
+        }
         let revision = m.screen_revision();
         let t2 = Instant::now();
         let screen = m.render();
         let drawn = t2.elapsed();
+        draw_time = drawn;
         if fixed && run.len().is_multiple_of(CHECKSUM_FRAMES) {
             checksum = add_to_checksum(checksum, screen.pixels());
         }

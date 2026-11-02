@@ -102,6 +102,10 @@ const MOST_SKIPPED: u32 = 3;
 const RUN_TIME: Duration = Duration::from_millis(10);
 /// The same for frames run to catch up.
 const CATCH_UP_RUN_TIME: Duration = Duration::from_millis(1);
+/// Frames in a row whose drawing is left out because the program is
+/// part-way through its main loop and drawing would make them late, so
+/// that a program that never reaches VSYNC still shows.
+const MOST_UNDRAWN: u32 = 3;
 /// Holding the + button, or F5 for it, this long stops a program even
 /// past ON BREAK GOTO (checked on hardware).
 const FORCED_STOP: Duration = Duration::from_secs(1);
@@ -316,6 +320,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // leaves the menu bar and the stop keys working.
     let mut program_dialog: Option<ProgramView> = None;
     let mut blink = 0u32;
+    let mut undrawn = 0u32;
+    let mut draw_time = Duration::ZERO;
     let mut toasts = Toasts::default();
     let mut frame_guard = FrameGuard::default();
     let mut key_hint = KeyHint::default();
@@ -1748,10 +1754,22 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         // frames is drawn, so that the game and its music keep time.
         // Those frames run code briefly, so that catching up does not
         // fall further behind.
+        //
+        // A program at its VSYNC runs a whole trip round its main loop if
+        // two trips and a drawing fit in two frames, so that it keeps
+        // time, and otherwise stays there: a part of a trip would only
+        // make the frame drawn next show a half-made scene.
         let mut skipped = 0;
         while !paused && skipped < MOST_SKIPPED && clock.behind(Instant::now()) {
-            machine.time_limit = Some(CATCH_UP_RUN_TIME);
+            let whole = 2 * machine.loop_time() + draw_time <= 2 * FRAME;
+            machine.time_limit = Some(if whole && machine.at_sync() {
+                RUN_TIME
+            } else {
+                CATCH_UP_RUN_TIME
+            });
+            machine.hold_at_sync = !whole;
             frame_guard.run(&mut machine, &mut toasts, Machine::frame);
+            machine.hold_at_sync = false;
             if let Some(b) = &mut bench {
                 b.ran_frame();
             }
@@ -1828,6 +1846,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         blink = blink.wrapping_add(1);
 
+        // A drawing that would make the frame late, of a scene the program
+        // is still making, is left for when the program gets to its VSYNC.
+        if !paused
+            && undrawn < MOST_UNDRAWN
+            && machine.mid_loop()
+            && !machine.sub_running()
+            && !machine.is_editing()
+            && clock.late_at(Instant::now() + draw_time)
+        {
+            undrawn += 1;
+            pacing::delay(clock.end(Instant::now(), false));
+            continue;
+        }
+        undrawn = 0;
+
         if let Some(b) = &mut bench {
             b.skip();
         }
@@ -1843,7 +1876,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 (true, machine.editor_revision())
             }
             false => {
+                let start = Instant::now();
+                let drawn = machine.screen_revision();
                 machine.render();
+                if machine.screen_revision() != drawn {
+                    draw_time = start.elapsed();
+                }
                 (false, machine.screen_revision())
             }
         };

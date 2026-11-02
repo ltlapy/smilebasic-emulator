@@ -430,6 +430,41 @@ fn vsync_after_falling_behind() {
     assert_eq!(frames(":WAIT 0"), "10");
 }
 
+/// Under a time limit, a frame run to catch up can leave a program at its
+/// VSYNC, so that the frame drawn next shows a whole trip round its loop.
+#[test]
+fn a_program_can_be_held_at_its_vsync() {
+    let mut m = machine();
+    m.time_limit = Some(std::time::Duration::from_secs(1));
+    m.set_slot(0, "@L:VSYNC:GOTO @L".to_string());
+    m.run_slot(0);
+    m.frame();
+    assert!(m.at_sync() && !m.mid_loop());
+    let (executed, vsyncs) = (m.executed(), m.vsyncs());
+
+    m.hold_at_sync = true;
+    m.frame();
+    m.frame();
+    assert!(m.at_sync());
+    assert_eq!((m.executed(), m.vsyncs()), (executed, vsyncs));
+
+    m.hold_at_sync = false;
+    m.frame();
+    assert!(m.at_sync());
+    assert!(m.vsyncs() > vsyncs);
+}
+
+/// A program out of time between VSYNCs has only part of a scene made.
+#[test]
+fn a_program_out_of_time_is_mid_loop() {
+    let mut m = machine();
+    m.time_limit = Some(std::time::Duration::from_micros(100));
+    m.set_slot(0, "@L:GOTO @L".to_string());
+    m.run_slot(0);
+    m.frame();
+    assert!(m.is_running() && m.mid_loop() && !m.at_sync());
+}
+
 /// The line typed after the last prompt, as Enter would run it.
 fn typed(m: &mut Machine, keys: &[u16]) -> String {
     press(m, keys);

@@ -277,7 +277,13 @@ instructions a frame, so that they come out the same each time.
 
 When drawing a frame takes longer than a frame, the window skips
 drawing up to three frames while the program and its sound go on, so
-that games and their music keep time.
+that games and their music keep time. A frame it does draw shows the
+scene the program finished: the program stops at a `VSYNC` that is behind
+when another trip round its main loop would not fit in the frame, where
+SmileBASIC 4 goes straight on, and the drawing waits up to three frames
+for a program part-way through its loop. When even that cannot keep up,
+the program's loop slows down rather than the drawing showing half a
+scene.
 
 ## Filters and display scaling
 
