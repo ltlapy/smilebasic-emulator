@@ -1,13 +1,5 @@
 //! LFILTER's effects on a layer drawn on its own frame: mosaic, blur,
 //! raster deformation and color conversion.
-//!
-//! The manual names the effects and their parameters but not how they are
-//! worked out, so all of this is a guess.
-// Checked on hardware with screenshots: mosaic blocks start at the
-// screen's corner and take the color of their middle pixel; color
-// conversion adds to the hue in degrees and to the saturation and
-// brightness on HSV's 0 to 255 scale.
-// UNVERIFIED: mosaic sizes are in screen pixels.
 
 use sb_core::value::ArrayRef;
 
@@ -228,9 +220,11 @@ struct Tap {
 #[derive(Default)]
 struct Half {
     pixels: Vec<u32>,
+    between: Vec<u32>,
     across: Vec<Tap>,
     down: Vec<Tap>,
     out_across: Vec<u32>,
+    runs: Vec<u32>,
     expanded: Vec<u32>,
 }
 
@@ -385,310 +379,199 @@ fn mosaic(fb: &mut Framebuffer, size: u32, sample: u32) {
     });
 }
 
-/// How much wider the blur's Gaussian is, in half-size pixels, for each
-/// step of LFILTER's amount (fitted to hardware at amount 8).
-const BLUR_SIGMA: f32 = 1.0 / 25.0;
-/// Kernels wider than this each way are approximated by three box blurs,
-/// which cost the same at any width.
-const GAUSS_RADIUS: usize = 4;
-
-fn channels(p: u32) -> [u32; 4] {
-    p.to_be_bytes().map(u32::from)
+/// The weights of LFILTER's blur and how many taps it takes each way.
+struct BlurKernel {
+    /// In 16.16: the middle's, then each further pair's.
+    weights: [u32; 5],
+    /// Pixels each way, 1 to 4.
+    reach: usize,
+    /// All the taps' weights added up.
+    total: u32,
 }
 
-/// A Gaussian along each row, from 8-bit channels to 8.8 fixed point;
-/// `kernel` is in 16.16 and sums to one.
-fn gauss_rows(half: &[u32], w: usize, kernel: &[u32], out: &mut [[u16; 4]]) {
-    for (row, out) in half.chunks_exact(w).zip(out.chunks_exact_mut(w)) {
+/// The kernel for a blur `amount`. The weights are a Gaussian of variance
+/// `amount / 10` at the odd distances 1, 3, 5... out to 31 from a middle
+/// that counts as distance 1, normalised over all sixteen of them, and
+/// taken in turn up to the point where they make up 99%. SmileBASIC 4 has
+/// 3, 5, 7 or 9 taps and reads those weights as they are, on neighbouring
+/// half-size pixels, so a kernel that wants more than 9 is cut off without
+/// normalising again: its plateau falls. One that needs no more than the
+/// middle leaves the next weight not normalised at all.
+fn blur_kernel(amount: u32) -> BlurKernel {
+    let v = amount as f32 / 10.0;
+    let mut raw = [0f32; 16];
+    for (k, w) in raw.iter_mut().enumerate() {
+        let d = (2 * k + 1) as f32;
+        *w = (-(d * d) / 2.0 / v).exp();
+    }
+    let sum = raw[0] + 2.0 * raw[1..].iter().sum::<f32>();
+    let mut made = raw[0] / sum;
+    raw[0] = made;
+    let mut wanted = 1;
+    if made <= 0.99 {
+        for (k, w) in raw.iter_mut().enumerate().skip(1) {
+            *w /= sum;
+            made += 2.0 * *w;
+            if made > 0.99 {
+                wanted = 2 * k + 1;
+                break;
+            }
+        }
+    }
+    let reach = match wanted {
+        0..=3 => 1,
+        4..=5 => 2,
+        6..=7 => 3,
+        _ => 4,
+    };
+    let mut weights = [0; 5];
+    for (o, w) in weights.iter_mut().zip(&raw).take(reach + 1) {
+        *o = (w * 65536.0 + 0.5) as u32;
+    }
+    let total = weights[0] + 2 * weights[1..].iter().sum::<u32>();
+    BlurKernel {
+        weights,
+        reach,
+        total,
+    }
+}
+
+/// The channels of a pixel, two to a word, each with 32 bits to grow in.
+#[inline]
+fn lanes(p: u32) -> (u64, u64) {
+    let p = u64::from(p);
+    (
+        p & 0xFF | (p >> 16 & 0xFF) << 32,
+        p >> 8 & 0xFF | (p >> 24) << 32,
+    )
+}
+
+/// The pixel from sums in 16.16 of [`lanes`], rounded to the nearest with
+/// halves down, each channel held to 255.
+#[inline]
+fn from_lanes((lo, hi): (u64, u64)) -> u32 {
+    const HALF_DOWN: u64 = 0x7FFF_0000_7FFF;
+    let ch = |v: u64| ((v >> 16 & 0xFFFF).min(255)) as u32;
+    let (lo, hi) = (lo + HALF_DOWN, hi + HALF_DOWN);
+    ch(lo) | ch(hi) << 8 | ch(lo >> 32) << 16 | ch(hi >> 32) << 24
+}
+
+/// A color all through the taps, spread to the kernel's total.
+#[inline]
+fn plateau(p: u32, total: u32) -> u32 {
+    let (lo, hi) = lanes(p);
+    from_lanes((lo * u64::from(total), hi * u64::from(total)))
+}
+
+/// One pass of [`blur`] along each row. The taps past an edge read the
+/// edge pixel. Where all of them hold one color, as across most of a frame,
+/// the answer needs only the kernel's total.
+fn blur_rows(from: &[u32], to: &mut [u32], w: usize, kernel: &BlurKernel) {
+    let r = kernel.reach;
+    let weights = kernel.weights.map(u64::from);
+    for (row, out) in from.chunks_exact(w).zip(to.chunks_exact_mut(w)) {
+        // Pixels of one color up to the window's right end.
+        let mut run = 1;
+        for k in 1..=r.min(w - 1) {
+            run = if row[k] == row[k - 1] { run + 1 } else { 1 };
+        }
+        let (mut flat, mut flat_out) = (!row[0], 0);
         for (i, o) in out.iter_mut().enumerate() {
-            let mut acc = channels(row[i]).map(|c| c * kernel[0]);
-            for (k, &wk) in kernel.iter().enumerate().skip(1) {
-                let (a, b) = (
-                    channels(row[i.saturating_sub(k)]),
-                    channels(row[(i + k).min(w - 1)]),
-                );
-                (0..4).for_each(|ch| acc[ch] += (a[ch] + b[ch]) * wk);
+            let end = (i + r).min(w - 1);
+            if i > 0 && i + r < w {
+                run = if row[end] == row[end - 1] { run + 1 } else { 1 };
             }
-            *o = acc.map(|v| ((v + 128) >> 8) as u16);
-        }
-    }
-}
-
-/// A Gaussian down each column, a row at a time, back to 8 bits with
-/// halves rounded down.
-fn gauss_columns(v: &[[u16; 4]], w: usize, kernel: &[u32], half: &mut [u32]) {
-    let h = v.len() / w;
-    let row = |y: usize| &v[y * w..y * w + w];
-    let mut acc = vec![[0u32; 4]; w];
-    for (y, out) in half.chunks_exact_mut(w).enumerate() {
-        for (a, c) in acc.iter_mut().zip(row(y)) {
-            *a = c.map(|c| u32::from(c) * kernel[0]);
-        }
-        for (k, &wk) in kernel.iter().enumerate().skip(1) {
-            let (ra, rb) = (row(y.saturating_sub(k)), row((y + k).min(h - 1)));
-            for ((a, ca), cb) in acc.iter_mut().zip(ra).zip(rb) {
-                (0..4).for_each(|ch| a[ch] += (u32::from(ca[ch]) + u32::from(cb[ch])) * wk);
-            }
-        }
-        for (o, a) in out.iter_mut().zip(&acc) {
-            *o = u32::from_be_bytes(a.map(|v| ((v + (1 << 23) - 1) >> 24).min(255) as u8));
-        }
-    }
-}
-
-/// A box blur `r` each way along each row by running sums, clamped.
-fn box_rows(half: &mut [u32], w: usize, r: usize, line: &mut Vec<u32>) {
-    let inv = (1u32 << 24) / (2 * r + 1) as u32;
-    // The four channels side by side in 32-bit lanes, so that the running
-    // sum takes one add and one subtract a pixel.
-    let lanes = |p: u32| {
-        let p = u128::from(p);
-        p & 0xFF | (p >> 8 & 0xFF) << 32 | (p >> 16 & 0xFF) << 64 | (p >> 24) << 96
-    };
-    let mean = |sum: u128| {
-        let ch = |k: u32| {
-            (((sum >> (32 * k)) as u32)
-                .wrapping_mul(inv)
-                .wrapping_add(1 << 23)
-                >> 24)
-                .min(255)
-        };
-        ch(0) | ch(1) << 8 | ch(2) << 16 | ch(3) << 24
-    };
-    for row in half.chunks_exact_mut(w) {
-        line.clear();
-        line.extend_from_slice(row);
-        let get = |i: usize| line[i.min(w - 1)];
-        // Before the row, its first pixel again.
-        let mut sum = lanes(line[0]) * r as u128 + (0..=r).map(|i| lanes(get(i))).sum::<u128>();
-        let mut out = mean(sum);
-        for (i, o) in row.iter_mut().enumerate() {
-            *o = out;
-            // Where the same color comes in as goes out, as across most
-            // of a frame, the sum and so the mean stay as they are.
-            let (enter, leave) = (get(i + r + 1), line[i.saturating_sub(r)]);
-            if enter != leave {
-                sum += lanes(enter);
-                sum -= lanes(leave);
-                out = mean(sum);
-            }
-        }
-    }
-}
-
-/// A box blur `r` each way down each column, a row at a time.
-fn box_columns(half: &mut [u32], w: usize, r: usize, copy: &mut Vec<u32>) {
-    let h = half.len() / w;
-    let inv = (1u32 << 24) / (2 * r + 1) as u32;
-    copy.clear();
-    copy.extend_from_slice(half);
-    let row = |y: isize| {
-        let y = y.clamp(0, h as isize - 1) as usize;
-        &copy[y * w..y * w + w]
-    };
-    let mean =
-        |s: &[u32; 4]| u32::from_be_bytes(s.map(|s| ((s * inv + (1 << 23)) >> 24).min(255) as u8));
-    let mut sum = vec![[0u32; 4]; w];
-    for k in -(r as isize)..=r as isize {
-        for (s, &p) in sum.iter_mut().zip(row(k)) {
-            let c = channels(p);
-            (0..4).for_each(|ch| s[ch] += c[ch]);
-        }
-    }
-    let mut means: Vec<u32> = sum.iter().map(mean).collect();
-    for (y, out) in half.chunks_exact_mut(w).enumerate() {
-        let y = y as isize;
-        out.copy_from_slice(&means);
-        let (enter, leave) = (row(y + r as isize + 1), row(y - r as isize));
-        for (((s, m), &a), &b) in sum.iter_mut().zip(&mut means).zip(enter).zip(leave) {
-            // The same color coming in as going out leaves the mean.
-            if a == b {
+            if run > end - i.saturating_sub(r) {
+                if row[end] != flat {
+                    flat = row[end];
+                    flat_out = plateau(flat, kernel.total);
+                }
+                *o = flat_out;
                 continue;
             }
-            let (a, b) = (channels(a), channels(b));
-            (0..4).for_each(|ch| s[ch] = s[ch] + a[ch] - b[ch]);
-            *m = mean(s);
-        }
-    }
-}
-
-/// The channels of a color, one to each 16 bits: blue, red, green and
-/// alpha from the bottom.
-#[inline]
-fn spread(c: u32) -> u64 {
-    let c = u64::from(c);
-    c & 0x00FF_00FF | (c >> 8 & 0x00FF_00FF) << 32
-}
-
-/// What [`box_rows`] and [`box_columns`] make of each sum of a box `r`
-/// each way, by the sum.
-fn box_means(r: usize) -> Vec<u8> {
-    let n = 2 * r as u32 + 1;
-    let inv = (1u32 << 24) / n;
-    (0..=n * 255)
-        .map(|s| ((s * inv + (1 << 23)) >> 24).min(255) as u8)
-        .collect()
-}
-
-/// The color whose channels are the means of the sums in [`spread`]'s
-/// lanes, from [`box_means`].
-#[inline]
-fn box_mean(means: &[u8], sum: u64) -> u32 {
-    let m = |lane: u32| u32::from(means[(sum >> (16 * lane) & 0xFFFF) as usize]);
-    m(0) | m(2) << 8 | m(1) << 16 | m(3) << 24
-}
-
-/// [`box_rows`] for a box narrow enough that its sums fit [`spread`]'s
-/// lanes, with one added before one is taken away.
-fn box_rows_narrow(half: &mut [u32], w: usize, r: usize, means: &[u8], line: &mut Vec<u32>) {
-    for row in half.chunks_exact_mut(w) {
-        line.clear();
-        line.extend_from_slice(row);
-        let get = |i: usize| line[i.min(w - 1)];
-        // Before the row, its first pixel again.
-        let mut sum = spread(line[0]) * r as u64 + (0..=r).map(|i| spread(get(i))).sum::<u64>();
-        let mut out = box_mean(means, sum);
-        for (i, o) in row.iter_mut().enumerate() {
-            *o = out;
-            // Where the same color comes in as goes out, as across most
-            // of a frame, the sum and so the mean stay as they are.
-            let (enter, leave) = (get(i + r + 1), line[i.saturating_sub(r)]);
-            if enter != leave {
-                sum = sum + spread(enter) - spread(leave);
-                out = box_mean(means, sum);
+            let (l0, h0) = lanes(row[i]);
+            let (mut lo, mut hi) = (l0 * weights[0], h0 * weights[0]);
+            for k in 1..=r {
+                let (la, ha) = lanes(row[i.saturating_sub(k)]);
+                let (lb, hb) = lanes(row[(i + k).min(w - 1)]);
+                lo += (la + lb) * weights[k];
+                hi += (ha + hb) * weights[k];
             }
+            *o = from_lanes((lo, hi));
         }
     }
 }
 
-/// [`box_columns`] for a box narrow enough that its sums fit
-/// [`spread`]'s lanes, with one added before one is taken away.
-fn box_columns_narrow(half: &mut [u32], w: usize, r: usize, means: &[u8], copy: &mut Vec<u32>) {
-    let h = half.len() / w;
-    copy.clear();
-    copy.extend_from_slice(half);
-    let row = |y: isize| {
-        let y = y.clamp(0, h as isize - 1) as usize;
-        &copy[y * w..y * w + w]
+/// [`blur_rows`] down each column, a row at a time.
+fn blur_columns(from: &[u32], to: &mut [u32], w: usize, runs: &mut Vec<u32>, kernel: &BlurKernel) {
+    let (r, h) = (kernel.reach, from.len() / w);
+    let weights = kernel.weights.map(u64::from);
+    let row = |y: usize| &from[y * w..][..w];
+    runs.clear();
+    runs.resize(w, 1);
+    let advance = |runs: &mut [u32], y: usize| {
+        for ((run, a), b) in runs.iter_mut().zip(row(y)).zip(row(y - 1)) {
+            *run = if a == b { *run + 1 } else { 1 };
+        }
     };
-    let mut sum = vec![0u64; w];
-    for k in -(r as isize)..=r as isize {
-        for (s, &p) in sum.iter_mut().zip(row(k)) {
-            *s += spread(p);
-        }
+    for y in 1..=r.min(h - 1) {
+        advance(runs, y);
     }
-    let mut out: Vec<u32> = sum.iter().map(|&s| box_mean(means, s)).collect();
-    for (y, to) in half.chunks_exact_mut(w).enumerate() {
-        let y = y as isize;
-        to.copy_from_slice(&out);
-        let (enter, leave) = (row(y + r as isize + 1), row(y - r as isize));
-        for (((s, o), &a), &b) in sum.iter_mut().zip(&mut out).zip(enter).zip(leave) {
-            // The same color coming in as going out leaves the mean.
-            if a != b {
-                *s = *s + spread(a) - spread(b);
-                *o = box_mean(means, *s);
+    let (mut flat, mut flat_out) = (!from[0], 0);
+    for (y, out) in to.chunks_exact_mut(w).enumerate() {
+        let end = (y + r).min(h - 1);
+        if y > 0 && y + r < h {
+            advance(runs, end);
+        }
+        let window = (end - y.saturating_sub(r)) as u32;
+        let last = row(end);
+        for (x, o) in out.iter_mut().enumerate() {
+            if runs[x] > window {
+                if last[x] != flat {
+                    flat = last[x];
+                    flat_out = plateau(flat, kernel.total);
+                }
+                *o = flat_out;
+                continue;
             }
+            let (l0, h0) = lanes(from[y * w + x]);
+            let (mut lo, mut hi) = (l0 * weights[0], h0 * weights[0]);
+            for k in 1..=r {
+                let (la, ha) = lanes(from[y.saturating_sub(k) * w + x]);
+                let (lb, hb) = lanes(from[(y + k).min(h - 1) * w + x]);
+                lo += (la + lb) * weights[k];
+                hi += (ha + hb) * weights[k];
+            }
+            *o = from_lanes((lo, hi));
         }
     }
 }
 
-/// LFILTER's blur: the layer is averaged down to half size in 2x2
-/// blocks, kept in 8 bits, blurred there by a Gaussian, and drawn back at
-/// full size without smoothing, so that even amount 1 turns a dot into a
-/// 2x2 block of a quarter of its light. Halves round down. All of this
-/// matches hardware screenshots at amounts 1, 2, 4 and 8 pixel for pixel.
-/// It is done in integers, as it runs every frame.
-// UNVERIFIED: wider blurs, approximated here by two box blurs; the
-// halving is in frame pixels whatever XSCREEN's sampling.
+/// LFILTER's blur: the layer is drawn at half size with smoothing, blurred
+/// along the rows and then down the columns, each pass stored in 8 bits,
+/// and drawn back at full size without smoothing. As the kernel is cut off
+/// at 9 taps, what shows through falls along with the light where the
+/// amount is large, so that even a clear part of the layer darkens what
+/// is behind it. It is done in integers, as it runs every frame.
 fn blur(fb: &mut Framebuffer, amount: u32) {
-    let (w, h) = (fb.width() as usize, fb.height() as usize);
-    if w == 0 || h == 0 {
+    let (w, h) = (fb.width(), fb.height());
+    let (hw, hh) = (w as usize / 2, h as usize / 2);
+    if hw == 0 || hh == 0 {
         return;
     }
-    let (hw, hh) = (w.div_ceil(2), h.div_ceil(2));
-    let pixels = fb.pixels_mut();
-    let mut half = vec![0u32; hw * hh];
-    // Two channels to a word: sums of four 8-bit values fit 16 bits.
-    const LO: u32 = 0x00FF_00FF;
-    // The sum of n pixels / n with halves rounded down, both lanes at
-    // once; n is 1, 2 or 4, so a shift divides, and what the shift brings
-    // down from the lane above is masked off.
-    let mean =
-        |sum: u32, n: u32| (2 * sum + (n - 1) * 0x0001_0001) >> (2 * n).trailing_zeros() & LO;
-    let block = |ps: &[u32], n: u32| {
-        let lo = ps.iter().map(|p| p & LO).sum();
-        let hi = ps.iter().map(|p| p >> 8 & LO).sum();
-        mean(lo, n) | mean(hi, n) << 8
-    };
-    for (hy, out) in half.chunks_exact_mut(hw).enumerate() {
-        let (y0, y1) = (hy * 2, (hy * 2 + 1).min(h - 1));
-        let (r0, r1) = (&pixels[y0 * w..y0 * w + w], &pixels[y1 * w..y1 * w + w]);
-        // Edge blocks count each pixel once.
-        let pairs = (r0.chunks_exact(2).zip(r1.chunks_exact(2))).zip(out.iter_mut());
-        if y1 != y0 {
-            for ((a, b), o) in pairs {
-                *o = block(&[a[0], a[1], b[0], b[1]], 4);
-            }
-        } else {
-            for ((a, _), o) in pairs {
-                *o = block(a, 2);
-            }
-        }
-        if w % 2 == 1 {
-            let n = 1 + u32::from(y1 != y0);
-            out[hw - 1] = block(&[r0[w - 1], r1[w - 1]][..n as usize], n);
-        }
-    }
-    let sigma = amount as f32 * BLUR_SIGMA;
-    let r = (3.0 * sigma).ceil() as usize;
-    let raw: Vec<f32> = (0..=r.max(1))
-        .map(|k| (-((k * k) as f32) / (2.0 * sigma * sigma)).exp())
-        .collect();
-    let total = raw[0] + 2.0 * raw[1..].iter().sum::<f32>();
-    // A spread that cannot move an 8-bit value is left out.
-    if raw[1] / total * 255.0 >= 0.25 {
-        if r > GAUSS_RADIUS {
-            // Two boxes of this width make about the same spread.
-            let b = (((6.0 * sigma * sigma + 1.0).sqrt() - 1.0) / 2.0)
-                .round()
-                .max(1.0) as usize;
-            let mut scratch = Vec::new();
-            // Sums of a box's channels fit 16 bits up to this width, so
-            // all four can be added at once.
-            if (2 * b + 2) * 255 <= 0xFFFF {
-                let means = box_means(b);
-                for _ in 0..2 {
-                    box_rows_narrow(&mut half, hw, b, &means, &mut scratch);
-                    box_columns_narrow(&mut half, hw, b, &means, &mut scratch);
-                }
-            } else {
-                for _ in 0..2 {
-                    box_rows(&mut half, hw, b, &mut scratch);
-                    box_columns(&mut half, hw, b, &mut scratch);
-                }
-            }
-        } else {
-            let mut kernel: Vec<u32> = raw
-                .iter()
-                .map(|w| (w / total * 65536.0).round() as u32)
-                .collect();
-            let rest: u32 = 2 * kernel[1..].iter().sum::<u32>();
-            kernel[0] = 65536 - rest;
-            let mut v = vec![[0u16; 4]; hw * hh];
-            gauss_rows(&half, hw, &kernel, &mut v);
-            gauss_columns(&v, hw, &kernel, &mut half);
-        }
-    }
-    // Back to full size, each half row making two rows.
-    let mut row = vec![0u32; w];
-    for (hy, src) in half.chunks_exact(hw).enumerate() {
-        for (x, p) in row.iter_mut().enumerate() {
-            *p = src[x / 2];
-        }
-        for y in hy * 2..(hy * 2 + 2).min(h) {
-            pixels[y * w..y * w + w].copy_from_slice(&row);
-        }
-    }
+    let kernel = blur_kernel(amount);
+    HALF.with_borrow_mut(|half| {
+        half.pixels.clear();
+        half.pixels.resize(hw * hh, 0);
+        taps(&mut half.across, w, hw as f64, hw, false);
+        taps(&mut half.down, h, hh as f64, hh, true);
+        shrink(half, fb.pixels(), w as usize, hw);
+        half.between.clear();
+        half.between.resize(hw * hh, 0);
+        blur_rows(&half.pixels, &mut half.between, hw, &kernel);
+        blur_columns(&half.between, &mut half.pixels, hw, &mut half.runs, &kernel);
+        expand(half, fb.pixels_mut(), (w, h), (hw as f64, hh as f64), hw);
+    });
 }
 
 /// Color conversion over the frame. A screen has few colors, so each is
@@ -763,35 +646,6 @@ fn shift_color(p: u32, [dh, ds, dv]: [f32; 3]) -> u32 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn narrow_boxes_blur_as_wide_ones() {
-        let mut seed = 0x0BAD_F00D_u32;
-        let mut next = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed
-        };
-        let (w, h) = (37, 29);
-        // Runs of one color, as frames have, and noise.
-        let pixels: Vec<u32> = (0..w * h)
-            .map(|i| match i % 11 < 6 {
-                true => 0xFF10_2030,
-                false => next(),
-            })
-            .collect();
-        for r in [1, 3, 12, 40] {
-            let (mut narrow, mut wide) = (pixels.clone(), pixels.clone());
-            let mut scratch = Vec::new();
-            let means = box_means(r);
-            box_rows_narrow(&mut narrow, w, r, &means, &mut scratch);
-            box_columns_narrow(&mut narrow, w, r, &means, &mut scratch);
-            box_rows(&mut wide, w, r, &mut scratch);
-            box_columns(&mut wide, w, r, &mut scratch);
-            assert_eq!(narrow, wide, "r {r}");
-        }
-    }
-
     fn frame(pixels: &[u32], w: u32) -> Framebuffer {
         let mut fb = Framebuffer::new(w, pixels.len() as u32 / w);
         fb.pixels_mut().copy_from_slice(pixels);
@@ -853,10 +707,113 @@ mod tests {
         assert_eq!(&fb.pixels()[..4], &[0x4040_4040, 0x4040_4040, 0, 0]);
         let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0, 0xFFFF_FFFF, 0, 0, 0], 4);
         Filter::Blur(1).apply(&mut fb, 1, Compose::Normal);
-        assert_eq!(fb.pixels()[1], 0x7F7F_7F7F);
+        // The light rounds its half down, and so does what shows through.
+        assert_eq!(fb.pixels()[1], 0x807F_7F7F);
         let mut fb = frame(&[0xFFFF_FFFF, 0, 0, 0], 4);
         Filter::Blur(0).apply(&mut fb, 1, Compose::Normal);
         assert_eq!(fb.pixels(), &[0xFFFF_FFFF, 0, 0, 0]);
+    }
+
+    #[test]
+    fn blur_weights_follow_the_amount() {
+        let per_255 = |k: &BlurKernel, i: usize| (k.weights[i] * 255 + 32768) >> 16;
+        // As a line of 255 shows on hardware.
+        let k = blur_kernel(128);
+        assert_eq!(k.reach, 4);
+        assert_eq!(
+            (0..5).map(|i| per_255(&k, i)).collect::<Vec<_>>(),
+            [70, 51, 27, 11, 3]
+        );
+        // The plateau of a wide block falls where the kernel is cut off.
+        for (amount, peak) in [(128, 252), (256, 228), (384, 197)] {
+            let total = blur_kernel(amount).total;
+            assert_eq!(plateau(plateau(0xFF, total), total), peak);
+        }
+        // Few taps: 3 taps at amount 8, and at 7 the next weight is not
+        // normalised, as the sum passes 99% with the middle alone.
+        assert_eq!(blur_kernel(8).reach, 1);
+        assert_eq!(blur_kernel(7).reach, 1);
+        assert!(blur_kernel(7).weights[1] < blur_kernel(8).weights[1] / 2);
+    }
+
+    /// The row and column passes the long way round, tap by tap.
+    fn slow_pass(from: &[u32], w: usize, h: usize, k: &BlurKernel, rows: bool) -> Vec<u32> {
+        (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                let at = |d: isize| {
+                    let (ax, ay) = match rows {
+                        true => ((x as isize + d).clamp(0, w as isize - 1) as usize, y),
+                        false => (x, (y as isize + d).clamp(0, h as isize - 1) as usize),
+                    };
+                    lanes(from[ay * w + ax])
+                };
+                let (mut lo, mut hi) = (0, 0);
+                for d in -(k.reach as isize)..=k.reach as isize {
+                    let (l, m) = at(d);
+                    let wd = u64::from(k.weights[d.unsigned_abs()]);
+                    (lo, hi) = (lo + l * wd, hi + m * wd);
+                }
+                from_lanes((lo, hi))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn flat_runs_blur_as_every_pixel_would() {
+        let mut seed = 0x0BAD_F00D_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for (w, h) in [(37, 29), (3, 2), (1, 1), (2, 9), (9, 1)] {
+            // Runs of one color, as frames have, and noise.
+            let pixels: Vec<u32> = (0..w * h)
+                .map(|i| match (i / 7) % 4 < 3 {
+                    true => 0xFF10_2030,
+                    false => next(),
+                })
+                .collect();
+            for amount in [1, 7, 16, 32, 64, 128, 384] {
+                let k = blur_kernel(amount);
+                let mut out = vec![0; w * h];
+                blur_rows(&pixels, &mut out, w, &k);
+                assert_eq!(
+                    out,
+                    slow_pass(&pixels, w, h, &k, true),
+                    "rows {w}x{h} {amount}"
+                );
+                let mut runs = Vec::new();
+                blur_columns(&pixels, &mut out, w, &mut runs, &k);
+                assert_eq!(
+                    out,
+                    slow_pass(&pixels, w, h, &k, false),
+                    "cols {w}x{h} {amount}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_wide_blur_darkens_a_clear_layer() {
+        let mut fb = Framebuffer::new(16, 16);
+        fb.clear(0);
+        Filter::Blur(384).apply(&mut fb, 1, Compose::Normal);
+        // Of what shows through, 197 in 255 is left.
+        assert_eq!(fb.pixels()[0] >> 24, 255 - 197);
+        assert_eq!(fb.pixels()[0] & 0x00FF_FFFF, 0);
+    }
+
+    #[test]
+    fn odd_sizes_blur_without_trouble() {
+        for (w, h) in [(1, 1), (1, 5), (5, 1), (3, 3), (5, 7)] {
+            let mut fb = coded(w, h);
+            Filter::Blur(32).apply(&mut fb, 1, Compose::Normal);
+            let mut fb = coded(w, h);
+            Filter::Mosaic(2).apply(&mut fb, 1, Compose::Normal);
+        }
     }
 
     #[test]

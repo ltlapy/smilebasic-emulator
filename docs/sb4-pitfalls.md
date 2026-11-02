@@ -578,11 +578,20 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   edges of the frame. Sampling puts a block of odd n on its middle pixel,
   and a block of even n exactly between four, which it averages (halves
   rounded down). A size below 2 does nothing.
-- `LFILTER`'s blur halves the layer: 2x2 blocks are averaged (halves
-  rounded down, so a dot becomes a 2x2 block at 64 and a line 127),
-  blurred by a Gaussian of about amount/25 half-size pixels, and scaled
-  back without smoothing. Amounts 1 to 4 look the same; amount 0 leaves
-  the layer sharp.
+- `LFILTER`'s blur halves the layer in frame pixels, whatever `XSCREEN`'s
+  sample: 2x2 blocks are averaged (halves rounded down, so a dot becomes a
+  2x2 block at 64 and a line 127), blurred along the rows and then the
+  columns, each stored in 8 bits, and scaled back without smoothing.
+  Amounts 1 to 4 look the same; amount 0 leaves the layer sharp.
+- The blur's weights are `exp(-d*d/2/v)` for v = amount/10 at d = 1, 3, 5...
+  31 (the middle counts as 1, and the next tap as 3, though they are
+  neighbours), normalised over all sixteen with those past the middle
+  counting twice. They are taken outward until they add up to more than
+  99%, which picks 3, 5, 7 or 9 taps, and no shader has more than 9. So
+  above amount 128 or so the kernel is cut off without normalising again:
+  the edges stay narrow while a plateau falls, and a wide white block
+  reaches 251, 224 and 173 at amounts 128, 256 and 384 (TEST54). What shows
+  through falls with the light, so a clear layer darkens what is behind it.
 - `LFILTER`'s colour conversion works on the layer's premultiplied pixels
   as they are: hue in degrees, saturation and value on 0 to 255, and a grey
   has no saturation to raise. So half-covered white starts from a value of

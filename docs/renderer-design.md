@@ -196,9 +196,10 @@ moved again by `Placement::texel_tie`.
   - mosaic: the frame sampled bilinearly into a small part of a half-size
     frame, then drawn back with nearest; blocks are n frame pixels, and a
     block of even n is the mean of its middle four;
-  - blur: 2x2 average to half size, a Gaussian in 8.8 fixed point (box
-    blurs past radius 4), then scaled back with nearest; all in
-    integers;
+  - blur: 2x2 average to half size, 3 to 9 taps along rows and then
+    columns in 16.16 fixed point, each pass rounded to 8 bits, then scaled
+    back with nearest; all in integers. Runs of one color take a short
+    way;
   - raster: per-row or per-column offset and scale, OpenGL-style
     coordinates. The array is read every frame;
   - color: HSV shift of each distinct color, through a small hash table,
@@ -388,9 +389,10 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Mode-0 layer: LFILTER filters everything drawn so far, BACKCOLOR included; composed layer: only its own | `Runtime::render` | C: pitfalls; TTEST22/23 |
 | The same for a mode-0 layer with no elements | `Runtime::render` | S: pitfalls ("That holds for a layer with nothing in it, too"); marker in `runtime.rs` |
 | Mosaic: the whole frame drawn into `ceil(width/n)*sample` x `ceil(height/n)*sample` half-buffer pixels with bilinear sampling, then back with nearest; blocks are n frame pixels at any sample | `filter::mosaic` | C (R14): pitfalls; TEST54 part 1, no pixel more than 1 off |
-| Blur: halve in 2x2 blocks (halves down), Gaussian sigma = amount/25 half-size pixels, nearest back; amounts 1-4 same, 0 sharp | `filter::blur` | C: pitfalls; TTEST24, amounts 1, 2, 4, 8 pixel for pixel |
-| Blur beyond amount 8 (box approximation past radius 4) | `filter::blur` | **U (R15)** (NEON_DRIFTWAY uses 384) |
-| Blur halving is in frame pixels whatever XSCREEN's sample | `filter::blur` | **U (R15)** |
+| Blur: bilinear to half size (2x2 mean, halves down), a row pass and a column pass each stored in 8 bits, nearest back; 0 sharp | `filter::blur` | C (R15): pitfalls; TEST54 parts 2, 3, TTEST24 |
+| Blur weights: a Gaussian of variance amount/10 at odd distances, normalised over 31 taps, used in the 3, 5, 7 or 9 taps that the 99% rule picks, not normalised again | `filter::blur_kernel` | C (R15): SmileBASIC 4; TEST54 parts 2, 3, no pixel more than 1 off |
+| Blur halving is in frame pixels whatever XSCREEN's sample | `filter::blur` | C (R15): TEST54 part 3 |
+| Mosaic and blur work on what shows through (255 less our coverage), so a wide blur darkens behind a clear layer | `filter::shrink`, `expand` | C: TEST54 part 2 |
 | Raster: `[n,4]` entries of X offset, X scale, Y offset, Y scale, OpenGL axes, centre times scale plus offset, repeat flag required | `filter::raster` | C: pitfalls; TTEST25/26 |
 | Raster: scale, then offset; the Y offset's sign is + from the bottom | `filter::raster` | C (R16): pitfalls; TEST54 part 4 |
 | Raster `[n,2]` form acts along the deformation; a row takes entry `floor((i+.5)*n/size)` | `raster_rows`, `raster_into` | C (R17): pitfalls; TEST54 parts 5, 6 |
@@ -466,8 +468,6 @@ the code at once (ACLS clearing FADE was dropped with TEST47):
 - `text.rs`: TAB_WIDTH; `CHR$(10)`; TSCREEN clears;
 - `sprites.rs`: child Z on SPCLR.
 
-`filter.rs`'s header ("all of this is a guess") is also out of date: the
-blur, mosaic and raster formulas are now confirmed.
 
 ### 2.10 Proposed TTEST batches
 
