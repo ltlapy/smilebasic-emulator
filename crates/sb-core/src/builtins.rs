@@ -335,13 +335,14 @@ fn val(args: &[Value]) -> Result<Value> {
     Ok(parse_number(&text(&args[0])?).unwrap_or(Value::Int(0)))
 }
 
-/// Reads a number as VAL and INPUT do: decimal, `&H` hex or `&B` binary.
-/// `None` if the text is not a number.
+/// Reads a number as VAL and INPUT do: decimal, `&H` hex or `&B` binary,
+/// whose digits take underscores as in a program (`&H_FF_`), though at
+/// least one digit is needed. `None` if the text is not a number.
 pub fn parse_number(text: &[u16]) -> Option<Value> {
     let s = String::from_utf16_lossy(text);
     let s = s.as_str();
     let upper = s.to_ascii_uppercase();
-    let radix = |digits: &str, radix| u32::from_str_radix(digits, radix).ok();
+    let radix = |digits: &str, radix| u32::from_str_radix(&digits.replace('_', ""), radix).ok();
     if let Some(hex) = upper.strip_prefix("&H") {
         radix(hex, 16).map(|n| Value::Int(n as i32))
     } else if let Some(bin) = upper.strip_prefix("&B") {
@@ -1151,6 +1152,11 @@ mod tests {
         assert_eq!(as_int(call("VAL", &[s("123")]).unwrap()), 123);
         assert!(matches!(call("VAL", &[s("-12.56")]).unwrap(), Value::Real(x) if x == -12.56));
         assert_eq!(as_int(call("VAL", &[s("&HFF")]).unwrap()), 255);
+        // TEST56.
+        assert_eq!(as_int(call("VAL", &[s("&H_FF")]).unwrap()), 255);
+        assert_eq!(as_int(call("VAL", &[s("&HFF_")]).unwrap()), 255);
+        assert_eq!(as_int(call("VAL", &[s("1_000")]).unwrap()), 0);
+        assert_eq!(as_int(call("VAL", &[s("&H_")]).unwrap()), 0);
         assert_eq!(as_int(call("ASC", &[s("XYZ")]).unwrap()), 88);
         assert_eq!(as_string(call("CHR$", &[Value::Int(65)]).unwrap()), "A");
     }
