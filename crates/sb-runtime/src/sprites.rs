@@ -319,6 +319,9 @@ impl Sprite {
 
 pub struct Sprites {
     pub list: Vec<Sprite>,
+    /// Whether SPLINK has been used, as most programs never do and looking
+    /// for a sprite's children goes through them all.
+    pub linked: bool,
     pub defs: Vec<SpriteDef>,
     /// What SPDEF without arguments restores.
     default_defs: Vec<SpriteDef>,
@@ -349,6 +352,7 @@ impl Sprites {
     pub fn new(defs: Vec<SpriteDef>) -> Sprites {
         let mut s = Sprites {
             list: vec![Sprite::unused(); SPRITES],
+            linked: false,
             defs: defs.clone(),
             default_defs: defs,
             new_page: DEFAULT_PAGE,
@@ -413,8 +417,10 @@ impl Sprites {
     /// on hardware for the position).
     // UNVERIFIED: that Z also becomes absolute.
     pub fn clear(&mut self, id: usize) {
-        for child in self.children(id).collect::<Vec<_>>() {
-            self.unlink(child);
+        if self.linked {
+            for child in self.children(id).collect::<Vec<_>>() {
+                self.unlink(child);
+            }
         }
         self.list[id] = Sprite::unused();
     }

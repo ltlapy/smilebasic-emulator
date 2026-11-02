@@ -690,6 +690,7 @@ impl Runtime {
                         "link loop",
                     ));
                 }
+                self.sprites.linked = true;
                 let s = &mut self.sprites.list[child];
                 (s.parent, s.link_flags) = (Some(parent), flags);
                 Ok(vec![])
