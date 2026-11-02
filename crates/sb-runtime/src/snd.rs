@@ -115,7 +115,6 @@ fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
 
 /// WAVSETA's samples, of which there must be some: every default range
 /// below counts from the last one.
-// UNVERIFIED: that an empty array is Illegal function call.
 fn wave_samples(v: &Value) -> Result<Vec<f64>> {
     let all = samples(v)?;
     if all.is_empty() {
@@ -393,18 +392,22 @@ impl Runtime {
             // A 16-bit sample with a loop and its own sample rate.
             (Command::Wavseta, Want::Outs(0), 10..=12) => {
                 let (n, envelope) = wave_head(args)?;
+                // UNVERIFIED: the 7th, 9th and 10th as for the 8th.
+                if let Some(i) = (6..=9).find(|&i| matches!(args[i], Value::Default)) {
+                    let omitted = format!("argument {} omitted", i + 1);
+                    return Err(Error::with_detail(ErrorKind::TypeMismatch, omitted).of_arg(i));
+                }
                 let all = wave_samples(&args[5])?;
-                let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
+                let base_note = in_range("pitch", &args[6], 0..=127)?;
                 let last = all.len() as i32 - 1;
                 let offset = opt_in_range("offset", args.get(10), 0..=last, 0)? as usize;
                 // The sample is the loop's end + 1 values from the offset
                 // on, and the loop counts from the offset: what comes after
                 // the loop is dropped.
                 let left = last - offset as i32;
-                let loop_end = opt_in_range("loop end", args.get(8), 0..=left, left)? as usize;
-                let loop_start =
-                    opt_in_range("loop start", args.get(7), 0..=loop_end as i32, 0)? as usize;
-                let rate = opt_in_range("frequency", args.get(9), 1..=96000, 28160)?;
+                let loop_end = in_range("loop end", &args[8], 0..=left)? as usize;
+                let loop_start = in_range("loop start", &args[7], 0..=loop_end as i32)? as usize;
+                let rate = in_range("frequency", &args[9], 1..=96000)?;
                 let beep_loop = opt_in_range("flag", args.get(11), 0..=1, 0)? == 1;
                 // Values are cut to 16 bits, reals towards zero first.
                 let samples: Vec<f32> = all[offset..=offset + loop_end]
