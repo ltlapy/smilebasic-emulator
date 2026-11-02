@@ -1607,3 +1607,50 @@ fn screens_are_drawn_again_only_when_changed() {
     let drawing = "@L:GPSET MAINCNT() MOD 100,0:VSYNC:GOTO @L";
     assert_eq!(redraws(drawing, 10), (10, true));
 }
+
+/// What a fixed run prints, a few frames in.
+fn fixed_run(source: &str) -> Vec<String> {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    rt.fix_time_and_chance();
+    let mut m = Machine::new(rt);
+    m.boot();
+    m.set_slot(0, source.to_string());
+    m.run_slot(0);
+    for _ in 0..300 {
+        m.frame();
+    }
+    let console = &m.rt.text[sb_runtime::text::CONSOLE];
+    let (w, h) = console.size();
+    (0..h)
+        .map(|y| {
+            let codes: Vec<u16> = (0..w)
+                .map(|x| console.cell(x, y).code)
+                .take_while(|&c| c != 0)
+                .collect();
+            String::from_utf16_lossy(&codes)
+        })
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+/// Runs that are to be compared must do the same work every time.
+#[test]
+fn fixed_runs_repeat_time_and_chance() {
+    let source = "VSYNC 120\n\
+        ?RND(1000);\" \";RND(1,1000);\" \";RNDF()\n\
+        RANDOMIZE 2,0\n\
+        ?RND(2,1000)\n\
+        ?MILLISEC();\" \";MAINCNT();\" \";PERFEND(0)\n\
+        ?DATE$();\" \";TIME$()\n\
+        WHILE 1:VSYNC:WEND\n";
+    let first = fixed_run(source);
+    assert_eq!(first, fixed_run(source));
+    assert!(
+        first.iter().any(|r| r == "2026/01/01 00:00:02"),
+        "{first:?}"
+    );
+    assert!(
+        first.iter().any(|r| r.starts_with("2016 121 0")),
+        "{first:?}"
+    );
+}

@@ -1092,6 +1092,11 @@ impl Runtime {
 
     /// The resolution to start with and to go back to on ACLS, which
     /// resets the screens for it as ACLS does. The editor uses its size.
+    /// Makes every run the same: see [`System::fix`].
+    pub fn fix_time_and_chance(&mut self) {
+        self.system.fix();
+    }
+
     pub fn set_startup_mode(&mut self, mode: ScreenMode) {
         self.startup_mode = mode;
         self.editor_fb = Framebuffer::new(mode.width, mode.height);

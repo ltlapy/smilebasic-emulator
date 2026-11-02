@@ -41,6 +41,12 @@ const USAGE: &str = "usage:
       run PROGRAM for FRAMES frames, rendering each one, and print how
       long running and rendering took, the slowest frames, and the
       console at the end; with PNG, also save the last screen there.
+  smilebasic-check --bench --fixed FRAMES PROJECT PROGRAM [PNG]
+      the same on a fresh copy of PROJECT and the projects beside it, with
+      time following the frame count and fixed random seeds, so that each
+      run does the same work, for comparing builds with perf. It also
+      prints a checksum of screens and console: only runs with the same
+      checksum did the same work. FRAMES 0 shows what start-up costs.
   smilebasic-check --play FRAMES PROJECT PROGRAM SCRIPT DIR
       run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
       (a file, or - for none) asks for, and save the screens it asks for
@@ -89,13 +95,19 @@ fn main() {
 
 fn run(mut args: Vec<String>) -> Result<(), AnyError> {
     if args.first().is_some_and(|a| a == "--bench") {
+        let fixed = args.get(1).is_some_and(|a| a == "--fixed");
+        if fixed {
+            args.remove(1);
+        }
         return match args.as_slice() {
-            [_, frames, project, program, png @ ..] if png.len() <= 1 => bench(
-                frames.parse().map_err(|_| USAGE)?,
-                Path::new(project),
-                program,
-                png.first().map(Path::new),
-            ),
+            [_, frames, project, program, png @ ..] if png.len() <= 1 => {
+                let frames = frames.parse().map_err(|_| USAGE)?;
+                let png = png.first().map(Path::new);
+                match fixed {
+                    true => bench_fixed(frames, Path::new(project), program, png),
+                    false => bench(frames, Path::new(project), program, png, false),
+                }
+            }
             _ => Err(USAGE.into()),
         };
     }
@@ -234,7 +246,45 @@ fn check_part(
 }
 
 /// Runs a program as the window would, timing each frame's two halves.
-fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Result<(), AnyError> {
+/// `--bench --fixed`: on a fresh copy of the project and those beside it,
+/// so that nothing a run saves changes the next.
+fn bench_fixed(
+    frames: u32,
+    project: &Path,
+    program: &str,
+    png: Option<&Path>,
+) -> Result<(), AnyError> {
+    let name = project
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("PROJECT must be a project folder")?;
+    let scratch = std::env::temp_dir().join(format!("smilebasic-check-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let outcome = copy_others(project, name, &scratch)
+        .and_then(|()| copy_dir(project, &scratch.join(name)))
+        .and_then(|()| bench(frames, &scratch.join(name), program, png, true));
+    let _ = std::fs::remove_dir_all(&scratch);
+    outcome
+}
+
+/// Frames between the screens a fixed run's checksum takes in: few, as
+/// reading a whole screen would otherwise outweigh what is measured.
+const CHECKSUM_FRAMES: usize = 60;
+
+/// Adds pixels to an FNV-1a checksum, a word at a time.
+fn add_to_checksum(sum: u64, pixels: &[u32]) -> u64 {
+    pixels.iter().fold(sum, |sum, &p| {
+        (sum ^ u64::from(p)).wrapping_mul(0x0000_0100_0000_01B3)
+    })
+}
+
+fn bench(
+    frames: u32,
+    project: &Path,
+    program: &str,
+    png: Option<&Path>,
+    fixed: bool,
+) -> Result<(), AnyError> {
     use std::time::{Duration, Instant};
     let name = project
         .file_name()
@@ -242,9 +292,13 @@ fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Resu
         .ok_or("PROJECT must be a project folder")?;
     let parent = project.parent().ok_or("PROJECT must be a project folder")?;
     let mut m = machine(parent.to_path_buf())?;
+    if fixed {
+        m.rt.fix_time_and_chance();
+    }
     m.rt.storage
         .set_project(name)
         .map_err(|e| format!("{name}: {e}"))?;
+    let mut checksum = 0xCBF2_9CE4_8422_2325u64;
     let started = Instant::now();
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     println!("loaded and compiled in {:?}", started.elapsed());
@@ -256,9 +310,13 @@ fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Resu
         let t = Instant::now();
         m.frame();
         let t2 = Instant::now();
-        m.render();
+        let screen = m.render();
+        let drawn = t2.elapsed();
+        if fixed && (run.len() + 1).is_multiple_of(CHECKSUM_FRAMES) {
+            checksum = add_to_checksum(checksum, screen.pixels());
+        }
         run.push(t2 - t);
-        draw.push(t2.elapsed());
+        draw.push(drawn);
     }
     let report = |what: &str, times: &mut Vec<Duration>| {
         if times.is_empty() {
@@ -275,6 +333,13 @@ fn bench(frames: u32, project: &Path, program: &str, png: Option<&Path>) -> Resu
         );
     };
     println!("{} frames", run.len());
+    if fixed {
+        // What the program did: runs that differ here cannot be compared.
+        let rows = console_rows(&m).join("\n").into_bytes();
+        let rows: Vec<u32> = rows.iter().map(|&b| u32::from(b)).collect();
+        checksum = add_to_checksum(checksum, m.render().pixels());
+        println!("checksum {:016x}", add_to_checksum(checksum, &rows));
+    }
     // Stutter shows as a few slow frames, so name the slowest.
     let mut slowest: Vec<(usize, Duration)> = (run.iter().zip(&draw).map(|(r, d)| *r + *d))
         .enumerate()

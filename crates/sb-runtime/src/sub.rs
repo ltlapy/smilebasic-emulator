@@ -35,6 +35,9 @@ impl Runtime {
         let mode = self.startup_mode();
         let mut rt = Runtime::new(mode.width, mode.height, self.font.clone());
         rt.set_startup_mode(mode);
+        if self.system.is_fixed() {
+            rt.system.fix();
+        }
         if let Some(page) = self.sprite_page() {
             rt.set_sprite_page(page.to_vec());
         }

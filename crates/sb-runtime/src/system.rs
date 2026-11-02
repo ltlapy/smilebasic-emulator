@@ -3,7 +3,7 @@
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::{Datelike, Local, NaiveDate, NaiveTime, Timelike};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
@@ -80,6 +80,11 @@ pub struct System {
     started: Instant,
     /// Frames since start-up, for MAINCNT.
     pub(crate) frames: u32,
+    /// Time and chance come from the frame count and fixed seeds, for runs
+    /// that must repeat exactly; see [`System::fix`].
+    fixed: bool,
+    /// Seeds given out since [`System::fix`].
+    fixed_seeds: u32,
     /// SYSPARAM "SYSBEEP": the system's own sounds play. The emulator has
     /// none, so this is only kept.
     sysbeep: bool,
@@ -137,11 +142,54 @@ impl Default for System {
             series: std::array::from_fn(|_| Series::seeded(entropy())),
             started: Instant::now(),
             frames: 0,
+            fixed: false,
+            fixed_seeds: 0,
             sysbeep: true,
             mouse_cursor: false,
             perf: [None; 8],
             perf_stats: [PerfStats::default(); 8],
         }
+    }
+}
+
+impl System {
+    /// Makes time and chance the same on every run: MILLISEC, DATE$ and
+    /// TIME$ follow the frame count from a set date, PERFEND gives 0, and
+    /// the random series start from set seeds. For measuring and comparing
+    /// runs, never for playing.
+    pub fn fix(&mut self) {
+        self.fixed = true;
+        self.frames = 0;
+        self.series = std::array::from_fn(|i| Series::seeded(i as u32 + 1));
+    }
+
+    pub fn is_fixed(&self) -> bool {
+        self.fixed
+    }
+
+    fn millis(&self) -> i32 {
+        match self.fixed {
+            true => (u64::from(self.frames) * 1000 / 60) as i32,
+            false => self.started.elapsed().as_millis() as i32,
+        }
+    }
+
+    fn now(&self) -> NaiveDateTime {
+        if !self.fixed {
+            return Local::now().naive_local();
+        }
+        let start = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .expect("a date that exists");
+        start + chrono::TimeDelta::seconds(i64::from(self.frames / 60))
+    }
+
+    fn next_seed(&mut self) -> u32 {
+        if !self.fixed {
+            return entropy();
+        }
+        self.fixed_seeds += 1;
+        self.fixed_seeds.wrapping_mul(0x9E37_79B1)
     }
 }
 
@@ -241,14 +289,12 @@ impl Runtime {
                     Some(v) => int(v)?,
                 };
                 sys.series[id] = Series::seeded(match seed {
-                    0 => entropy(),
+                    0 => sys.next_seed(),
                     n => n as u32,
                 });
                 Ok(vec![])
             }
-            (Command::Millisec, Want::Value, 0) => {
-                Ok(vec![Value::Int(sys.started.elapsed().as_millis() as i32)])
-            }
+            (Command::Millisec, Want::Value, 0) => Ok(vec![Value::Int(sys.millis())]),
             (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(sys.frames as i32)]),
             // PERFBEGIN and PERFEND measure time; SmileBASIC 4.4.9 shows no
             // gauge for them, nor does the emulator on its screens. Only
@@ -268,7 +314,10 @@ impl Runtime {
                 let n = perf_id(&args[0])?;
                 // Without PERFBEGIN, the time since SmileBASIC started.
                 let since = sys.perf[n].unwrap_or(sys.started);
-                let micros = since.elapsed().as_micros() as u64;
+                let micros = match sys.fixed {
+                    true => 0,
+                    false => since.elapsed().as_micros() as u64,
+                };
                 sys.perf_stats[n].add(micros);
                 Ok(match want {
                     Want::Value => vec![Value::Int(micros as i32)],
@@ -276,14 +325,14 @@ impl Runtime {
                 })
             }
             (Command::Date, Want::Value, 0) => {
-                Ok(vec![string(Local::now().format("%Y/%m/%d").to_string())])
+                Ok(vec![string(sys.now().format("%Y/%m/%d").to_string())])
             }
             (Command::Time, Want::Value, 0) => {
-                Ok(vec![string(Local::now().format("%H:%M:%S").to_string())])
+                Ok(vec![string(sys.now().format("%H:%M:%S").to_string())])
             }
             (Command::Dtread, Want::Outs(3 | 4), 0..=1) => {
                 let date = match args.first() {
-                    None => Local::now().date_naive(),
+                    None => sys.now().date(),
                     Some(v) => {
                         let s = text(v)?;
                         let [y, m, d] = fields(&s, '/', [4, 2, 2])?;
@@ -305,7 +354,7 @@ impl Runtime {
             }
             (Command::Tmread, Want::Outs(3), 0..=1) => {
                 let time = match args.first() {
-                    None => Local::now().time(),
+                    None => sys.now().time(),
                     Some(v) => {
                         let s = text(v)?;
                         let [h, m, sec] = fields(&s, ':', [2, 2, 2])?;
