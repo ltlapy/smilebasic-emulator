@@ -2,6 +2,8 @@
 //! TCOORD, TCOPY, TSAVE, TLOAD, TARRAY and TUPDATE; and their animations,
 //! variables and callbacks: TANIM, TSTART, TSTOP, TCHK, TVAR and TFUNC.
 
+use std::ops::Range;
+
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
@@ -42,12 +44,27 @@ fn attr_arg(v: Option<&Value>, screen: &TextScreen) -> Result<u8> {
     }
 }
 
-/// Corners given as X0,Y0,X1,Y1 in either order, as a rectangle.
-fn corners(args: &[Value]) -> Result<CellRect> {
-    let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
+/// Corners given as X0,Y0,X1,Y1 in either order, as X,Y,width,height. A
+/// side can be up to 2^32 long, so this is wider than a [`CellRect`].
+fn corners(args: &[Value]) -> Result<[i64; 4]> {
+    let v: Vec<i64> = (args[..4].iter())
+        .map(|v| int(v).map(i64::from))
+        .collect::<Result<_>>()?;
     let (x0, x1) = (v[0].min(v[2]), v[0].max(v[2]));
     let (y0, y1) = (v[1].min(v[3]), v[1].max(v[3]));
-    Ok((x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+    Ok([x0, y0, x1 - x0 + 1, y1 - y0 + 1])
+}
+
+/// The offsets in `0..len` that, added to `start`, land in `0..size`.
+fn on_screen(start: i64, len: i64, size: u32) -> Range<i64> {
+    (-start).max(0)..(i64::from(size) - start).min(len)
+}
+
+/// Both of [`on_screen`]'s ranges; a program can ask for far more cells
+/// than any screen has, and only these can make a difference.
+fn offsets_on(x: i64, y: i64, w: i64, h: i64, t: &TextScreen) -> (Range<i64>, Range<i64>) {
+    let (sw, sh) = t.size();
+    (on_screen(x, w, sw), on_screen(y, h, sh))
 }
 
 /// X,Y,width,height; the whole screen when `args` is empty. It may reach
@@ -112,15 +129,30 @@ impl Runtime {
             // The characters repeat from the top left, row by row.
             (Command::Tfill, Want::Outs(0), 6 | 7) => {
                 let t = &mut self.text[screen_id(&args[0])?];
-                let (x, y, w, h) = corners(&args[1..5])?;
+                let [x, y, w, h] = corners(&args[1..5])?;
                 let codes = codes(&args[5])?;
                 let attr = attr_arg(args.get(6), t)?;
                 let color = t.color();
                 if !codes.is_empty() {
-                    let cells: Vec<Cell> = (codes.iter().cycle().take((w * h) as usize))
-                        .map(|&code| Cell { code, color, attr })
-                        .collect();
-                    t.load((x, y, w, h), &cells);
+                    let (xs, ys) = offsets_on(x, y, w, h, t);
+                    for cy in ys {
+                        // The characters go on from row to row of the
+                        // rectangle, on the screen or not.
+                        let at = i128::from(cy) * i128::from(w) + i128::from(xs.start);
+                        let mut i = (at % codes.len() as i128) as usize;
+                        for cx in xs.clone() {
+                            let code = codes[i];
+                            t.set_cell(
+                                (x + cx) as i32,
+                                (y + cy) as i32,
+                                Cell { code, color, attr },
+                            );
+                            i += 1;
+                            if i == codes.len() {
+                                i = 0;
+                            }
+                        }
+                    }
                 }
                 Ok(vec![])
             }
@@ -190,16 +222,26 @@ impl Runtime {
                     8 => (screen_id(&args[1])?, &args[2..]),
                     _ => (dest, &args[1..]),
                 };
-                let (x, y, w, h) = corners(&rest[..4])?;
-                let (dx, dy) = (int(&rest[4])?, int(&rest[5])?);
+                let [x, y, w, h] = corners(&rest[..4])?;
+                let (dx, dy) = (i64::from(int(&rest[4])?), i64::from(int(&rest[5])?));
+                // Only what is on both screens makes a difference.
                 let from = &self.text[src];
-                let cells: Vec<(i32, i32, Cell)> = (0..h)
-                    .flat_map(|cy| (0..w).map(move |cx| (cx, cy)))
-                    .filter_map(|(cx, cy)| Some((cx, cy, from.cell_at(x + cx, y + cy)?)))
-                    .collect();
+                let (xs, ys) = offsets_on(x, y, w, h, from);
+                let (to_xs, to_ys) = offsets_on(dx, dy, w, h, &self.text[dest]);
+                let xs = xs.start.max(to_xs.start)..xs.end.min(to_xs.end);
+                let ys = ys.start.max(to_ys.start)..ys.end.min(to_ys.end);
+                let width = (xs.end - xs.start).max(1) as usize;
+                let mut cells = Vec::with_capacity(width * (ys.end - ys.start).max(0) as usize);
+                for cy in ys.clone() {
+                    for cx in xs.clone() {
+                        cells.push(from.cell((x + cx) as u32, (y + cy) as u32));
+                    }
+                }
                 let t = &mut self.text[dest];
-                for (cx, cy, cell) in cells {
-                    t.set_cell(dx + cx, dy + cy, cell);
+                for (cy, row) in ys.zip(cells.chunks(width)) {
+                    for (cx, &cell) in xs.clone().zip(row) {
+                        t.set_cell((dx + cx) as i32, (dy + cy) as i32, cell);
+                    }
                 }
                 Ok(vec![])
             }
@@ -230,7 +272,16 @@ impl Runtime {
                 let t = &mut self.text[screen_id(&args[0])?];
                 let (w, h) = t.size();
                 let rect = match args.len() {
-                    5 => corners(&args[1..])?,
+                    5 => {
+                        let [x, y, rw, rh] = corners(&args[1..])?;
+                        let (xs, ys) = offsets_on(x, y, rw, rh, t);
+                        (
+                            (x + xs.start) as i32,
+                            (y + ys.start) as i32,
+                            (xs.end - xs.start).max(0) as i32,
+                            (ys.end - ys.start).max(0) as i32,
+                        )
+                    }
                     _ => (0, 0, w as i32, h as i32),
                 };
                 t.update(rect);
@@ -335,5 +386,158 @@ impl Runtime {
         let t = &mut self.text[id];
         let target = anim.mode.target.index();
         t.anims[target] = Some(Track::new(anim, t));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::font::Font;
+
+    /// Gives two screens random sizes and cells.
+    fn screens(rt: &mut Runtime, next: &mut impl FnMut(i64) -> i64) {
+        for id in 0..2 {
+            let (w, h) = (1 + next(9) as u32, 1 + next(9) as u32);
+            rt.text[id].set_font(8, 8, w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    let cell = Cell {
+                        code: 1 + next(500) as u16,
+                        color: next(99) as u32,
+                        attr: 0,
+                    };
+                    rt.text[id].set_cell(x as i32, y as i32, cell);
+                }
+            }
+        }
+    }
+
+    fn rng() -> impl FnMut(i64) -> i64 {
+        let mut seed = 0x0DDB_1A5E_5BAD_5EEDu64;
+        move |n| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as i64
+        }
+    }
+
+    fn cells(rt: &Runtime, id: usize) -> Vec<Cell> {
+        let (w, h) = rt.text[id].size();
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| rt.text[id].cell(x, y))
+            .collect()
+    }
+
+    fn ints(values: &[i32]) -> Vec<Value> {
+        values.iter().map(|&v| Value::Int(v)).collect()
+    }
+
+    #[test]
+    fn tcopy_matches_copying_every_cell() {
+        let mut next = rng();
+        let mut rt = Runtime::new(400, 240, Font::blank());
+        for _ in 0..20_000 {
+            screens(&mut rt, &mut next);
+            let v: Vec<i32> = (0..6).map(|_| next(30) as i32 - 12).collect();
+            let (dest, src) = (next(2) as usize, next(2) as usize);
+            // The whole rectangle, cell by cell, into a buffer first.
+            let (x, y) = (v[0].min(v[2]), v[1].min(v[3]));
+            let (w, h) = (v[0].max(v[2]) - x + 1, v[1].max(v[3]) - y + 1);
+            let copied: Vec<(i32, i32, Cell)> = (0..h)
+                .flat_map(|cy| (0..w).map(move |cx| (cx, cy)))
+                .filter_map(|(cx, cy)| Some((cx, cy, rt.text[src].cell_at(x + cx, y + cy)?)))
+                .collect();
+            let mut slow = cells(&rt, dest);
+            let (dw, dh) = rt.text[dest].size();
+            for (cx, cy, cell) in copied {
+                let (to_x, to_y) = (v[4] + cx, v[5] + cy);
+                if (0..dw as i32).contains(&to_x) && (0..dh as i32).contains(&to_y) {
+                    slow[(to_y as u32 * dw + to_x as u32) as usize] = cell;
+                }
+            }
+            let mut args = ints(&[dest as i32, src as i32]);
+            args.extend(ints(&v));
+            rt.text_command(Command::Tcopy, &args, Want::Outs(0))
+                .unwrap();
+            assert_eq!(cells(&rt, dest), slow, "{dest} {src} {v:?}");
+        }
+    }
+
+    #[test]
+    fn tfill_matches_filling_every_cell() {
+        let mut next = rng();
+        let mut rt = Runtime::new(400, 240, Font::blank());
+        for _ in 0..20_000 {
+            screens(&mut rt, &mut next);
+            let id = next(2) as usize;
+            let v: Vec<i32> = (0..4).map(|_| next(30) as i32 - 12).collect();
+            let codes: Vec<u16> = (0..1 + next(7)).map(|i| 600 + i as u16).collect();
+            let (x, y) = (v[0].min(v[2]), v[1].min(v[3]));
+            let (w, h) = (v[0].max(v[2]) - x + 1, v[1].max(v[3]) - y + 1);
+            let mut slow = cells(&rt, id);
+            let (sw, sh) = rt.text[id].size();
+            let (color, attr) = (rt.text[id].color(), 0);
+            for (i, &code) in codes.iter().cycle().take((w * h) as usize).enumerate() {
+                let (cx, cy) = (x + i as i32 % w, y + i as i32 / w);
+                if (0..sw as i32).contains(&cx) && (0..sh as i32).contains(&cy) {
+                    slow[(cy as u32 * sw + cx as u32) as usize] = Cell { code, color, attr };
+                }
+            }
+            let mut args = ints(&[id as i32]);
+            args.extend(ints(&v));
+            args.push(Value::Str(sb_core::value::new_str(codes.clone())));
+            rt.text_command(Command::Tfill, &args, Want::Outs(0))
+                .unwrap();
+            assert_eq!(cells(&rt, id), slow, "{id} {v:?} {codes:?}");
+        }
+    }
+
+    #[test]
+    fn rectangles_larger_than_any_screen_finish() {
+        const FAR: i32 = 1_000_000_000;
+        let mut next = rng();
+        let mut rt = Runtime::new(400, 240, Font::blank());
+        screens(&mut rt, &mut next);
+        let (w, h) = rt.text[0].size();
+        let before = cells(&rt, 0);
+        // All of screen 0 onto itself, in as large a rectangle as can be
+        // asked for.
+        for far in [FAR, i32::MAX] {
+            let args = ints(&[0, -far, -far, far, far, -far, -far]);
+            rt.text_command(Command::Tcopy, &args, Want::Outs(0))
+                .unwrap();
+            assert_eq!(cells(&rt, 0), before);
+        }
+        // Off every screen.
+        let args = ints(&[0, -FAR, -FAR, FAR, FAR, i32::MAX, i32::MAX]);
+        rt.text_command(Command::Tcopy, &args, Want::Outs(0))
+            .unwrap();
+        assert_eq!(cells(&rt, 0), before);
+        // The characters from the rectangle's corner, here the screen's.
+        let codes = Value::Str(sb_core::value::new_str(vec![65, 66, 67]));
+        let mut args = ints(&[0, 0, 0, i32::MAX, 0]);
+        args.push(codes.clone());
+        rt.text_command(Command::Tfill, &args, Want::Outs(0))
+            .unwrap();
+        for x in 0..w {
+            assert_eq!(rt.text[0].cell(x, 0).code, 65 + (x % 3) as u16);
+        }
+        // Each row starts where the last would have ended.
+        let mut args = ints(&[0, i32::MIN, i32::MIN, i32::MAX, i32::MAX]);
+        args.push(codes);
+        rt.text_command(Command::Tfill, &args, Want::Outs(0))
+            .unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                let (cx, cy) = (i128::from(x) + (1 << 31), i128::from(y) + (1 << 31));
+                let at = cy * (1 << 32) + cx;
+                assert_eq!(i128::from(rt.text[0].cell(x, y).code), 65 + at % 3);
+            }
+        }
+        let args = ints(&[0, i32::MIN, i32::MIN, i32::MAX, i32::MAX]);
+        rt.text_command(Command::Tupdate, &args, Want::Outs(0))
+            .unwrap();
     }
 }
