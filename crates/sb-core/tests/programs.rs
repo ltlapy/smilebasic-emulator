@@ -1260,6 +1260,50 @@ fn a_long_constant_string_waits_for_the_program_to_get_there() {
     assert_eq!(output("A$=\"A\"*2000000:?LEN(A$)"), "2000000\n");
 }
 
+/// What RINGCOPY looks at and in what order (TEST57).
+#[test]
+fn ringcopy_checks_in_order() {
+    let wrong = |source: &str, kind: ErrorKind, arg: Option<u8>| {
+        let e = run(source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, arg), "{source}");
+    };
+    let mismatch = ErrorKind::TypeMismatch;
+    let illegal = ErrorKind::IllegalFunctionCall;
+    wrong("S$=\"\":DIM B[3]:RINGCOPY S$,0,B", mismatch, Some(0));
+    wrong("S$=\"\":DIM A[3]:RINGCOPY A,0,S$", mismatch, Some(2));
+    wrong("DIM A[3],B$[3]:RINGCOPY A,0,B$", mismatch, Some(2));
+    wrong("DIM A$[3],B[3]:RINGCOPY A$,0,B", mismatch, Some(2));
+    // Before the count, and with nothing to copy.
+    wrong("DIM A[2,2,2],B[2]:RINGCOPY A,0,B", mismatch, None);
+    wrong("DIM A[2],B[2,2,2]:RINGCOPY A,0,B,0", mismatch, None);
+    wrong("DIM A[3],B[3]:RINGCOPY A,0,B,9", illegal, Some(3));
+    wrong("DIM A[3],B[3]:RINGCOPY A,0,B,-1", illegal, Some(3));
+    wrong("DIM A[3],B[3]:RINGCOPY A,0,B,-1,1", illegal, Some(3));
+    wrong("DIM A[3],B[3]:RINGCOPY A,0,B,1,-1", illegal, Some(4));
+    wrong("DIM A[3],B[3]:RINGCOPY A,0,B,1,3", illegal, Some(4));
+    wrong("DIM A[3],B[3]:RINGCOPY A,0,B,4,0", illegal, Some(4));
+    // Nothing to copy, whatever else there is to find.
+    for (source, out) in [
+        ("DIM A[4],B[3]:RINGCOPY A,2,B,0 OUT E:?E", "0\n"),
+        ("DIM A[0],B[3]:RINGCOPY A,2,B OUT E:?E", "0\n"),
+        ("DIM A[2,4],B[3,4]:RINGCOPY A,0,B,0:?1", "1\n"),
+        ("DIM A$[3],B$[3]:RINGCOPY A$,0,B$,0:?1", "1\n"),
+    ] {
+        assert_eq!(output(source), out, "{source}");
+    }
+    wrong("DIM A[2,4],B[3,4]:RINGCOPY A,0,B", mismatch, None);
+    wrong("DIM A$[3],B$[3]:RINGCOPY A$,0,B$", mismatch, None);
+    // Int and Real mix, and a negative offset comes round from the end.
+    assert_eq!(
+        output("DIM A[4]:DIM B[]=[1,2,3]:RINGCOPY A,-1,B OUT E:?A[0];A[1];A[2];A[3];E"),
+        "23012\n"
+    );
+    assert_eq!(
+        output("DIM A%[4]:DIM B[]=[1,2,3]:RINGCOPY A%,-5,B,1,2 OUT E:?A%[3];A%[0];E"),
+        "231\n"
+    );
+}
+
 /// FOR's test takes integers by a shorter way than other numbers.
 #[test]
 fn for_counts_the_same_in_integers_and_reals() {

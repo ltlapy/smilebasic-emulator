@@ -106,8 +106,25 @@ follows all of it. Items still waiting for a check are marked
   than it gives. On `%S` the precision only limits the
   string, so `%.2000S` of a short string is fine. `%05S` pads with zeros,
   `[00ABC]`, and with `-` it pads spaces on the right (TEST57).
-- `RINGCOPY` reading past the end of its source is `Illegal function
-  call`, not `Out of range` as for `COPY`.
+- `RINGCOPY` looks at things in this order (TEST57):
+  - a destination that is no array: `Type mismatch (RINGCOPY:1)`; a source
+    that is no array, or element types neither the same nor both numbers:
+    `(RINGCOPY:3)`;
+  - either array neither 1D nor 2D: `Type mismatch`, no number. For 2D, the
+    first size is channels and the second length;
+  - with four arguments, a count below 0 or over the source's length: `Illegal
+    function call (RINGCOPY:4)`. With five, a source offset below 0 is
+    `(RINGCOPY:4)`, and a count below 0 or offset + count over the length
+    `(RINGCOPY:5)`;
+  - a count below 1 or a destination of length 0: nothing is copied, no error,
+    and `OUT` gives 0. `RINGCOPY A,2,B,0 OUT E` gives 0 and `DIM A[2,4],B[3,4]:
+    RINGCOPY A,0,B,0` is no error;
+  - source channels neither 1 nor the destination's: `Type mismatch`, no
+    number, as are string arrays that get this far.
+
+  The destination offset wraps round with a floored modulo, negative too:
+  `RINGCOPY A,-1,B OUT E` on `A[4]` and B=1,2,3 leaves 2,3,0,1 and E=2. `OUT` is
+  (start + count) modulo the length.
 - `REMOVE` with a count of 0 removes nothing and is no error, also on an
   empty array and at the position just past the end.
 - `RGB` takes components outside 0 to 255 and clamps them:

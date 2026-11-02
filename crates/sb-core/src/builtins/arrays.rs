@@ -452,58 +452,90 @@ fn channels(a: &Array) -> Result<(usize, usize)> {
     match a.dims[..] {
         [len] => Ok((1, len)),
         [ch, len] => Ok((ch, len)),
-        _ => Err(ErrorKind::IllegalFunctionCall.into()),
+        _ => Err(ErrorKind::TypeMismatch.into()),
     }
 }
 
+/// An integer argument of RINGCOPY's, by its number.
+fn ring_int(args: &[Value], i: usize) -> Result<i64> {
+    args[i].to_int().map(i64::from).map_err(|e| e.of_arg(i))
+}
+
 /// `RINGCOPY dest, offset, source [[,offset], count] [OUT end]`: copies
-/// into `dest` going round to its start, and gives where to copy next.
+/// into `dest` going round to its start, and gives where to copy next. Only
+/// numbers can be copied, but string arrays are refused only when there is
+/// something to copy.
 pub(super) fn ringcopy(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     if outs > 1 || args.len() > 5 {
         return Err(ErrorKind::IllegalFunctionCall.into());
     }
-    let dest = array(&args[0])?;
-    let source = array(&args[2])?;
-    let (offset, n) = match &args[3..] {
-        [] => (None, None),
-        [n] => (None, Some(n)),
-        [offset, n] => (Some(offset), Some(n)),
-        _ => unreachable!("checked above"),
+    let mismatch = |i| Error::from(ErrorKind::TypeMismatch).of_arg(i);
+    let Value::Array(dest) = &args[0] else {
+        return Err(mismatch(0));
     };
+    let Value::Array(source) = &args[2] else {
+        return Err(mismatch(2));
+    };
+    let elem = {
+        let (a, b) = (dest.borrow().elem_type(), source.borrow().elem_type());
+        if a != b && (a == ElemType::Str || b == ElemType::Str) {
+            return Err(mismatch(2));
+        }
+        a
+    };
+    let (ch, len) = channels(&dest.borrow())?;
+    let (source_ch, source_len) = channels(&source.borrow())?;
+    let wrap = ring_int(args, 1)?;
+    let most = source_len as i64;
+    let illegal = |i| Error::from(ErrorKind::IllegalFunctionCall).of_arg(i);
+    let (from, n) = match args.len() {
+        3 => (0, most),
+        4 => {
+            let n = ring_int(args, 3)?;
+            if !(0..=most).contains(&n) {
+                return Err(illegal(3));
+            }
+            (0, n)
+        }
+        _ => {
+            let from = ring_int(args, 3)?;
+            if from < 0 {
+                return Err(illegal(3));
+            }
+            let n = ring_int(args, 4)?;
+            if n < 0 || from + n > most {
+                return Err(illegal(4));
+            }
+            (from, n)
+        }
+    };
+    let (from, n) = (from as usize, n as usize);
+    if n == 0 || len == 0 {
+        return Ok(if outs == 1 {
+            vec![Value::Int(0)]
+        } else {
+            vec![]
+        });
+    }
+    if source_ch != 1 && source_ch != ch || elem == ElemType::Str {
+        return Err(ErrorKind::TypeMismatch.into());
+    }
+    let start = wrap.rem_euclid(len as i64) as usize;
     // Channel after channel. A file can give a million channels of no
     // samples, which take nothing here.
-    let (source_ch, n, samples) = {
+    let samples: Vec<Value> = {
         let source = source.borrow();
-        let (ch, len) = channels(&source)?;
-        // Reading past the source's end is an Illegal function call on
-        // hardware, not Out of range as for COPY.
-        let (offset, n) =
-            span(len, offset, n).map_err(|_| Error::from(ErrorKind::IllegalFunctionCall))?;
-        let mut samples = Vec::new();
-        if n > 0 {
-            samples.reserve(ch * n);
-            for c in 0..ch {
-                samples.extend((offset..offset + n).map(|i| element(&source, c * len + i)));
-            }
+        let mut samples = Vec::with_capacity(source_ch * n);
+        for c in 0..source_ch {
+            samples.extend((from..from + n).map(|i| element(&source, c * source_len + i)));
         }
-        (ch, n, samples)
+        samples
     };
     let mut dest = dest.borrow_mut();
-    let (ch, len) = channels(&dest)?;
-    if len == 0 {
-        return Err(out_of_range("empty array"));
-    }
-    // With no channels to copy into, there is nothing to refuse.
-    if ch > 0 && source_ch != 1 && source_ch != ch {
-        return Err(ErrorKind::IllegalFunctionCall.into());
-    }
-    let start = count(&args[1])? % len;
-    if n > 0 {
-        for c in 0..ch {
-            let from = c.min(source_ch - 1) * n;
-            for (k, v) in samples[from..from + n].iter().enumerate() {
-                dest.set(c * len + (start + k) % len, v.clone())?;
-            }
+    for c in 0..ch {
+        let at = c.min(source_ch - 1) * n;
+        for (k, v) in samples[at..at + n].iter().enumerate() {
+            dest.set(c * len + (start + k) % len, v.clone())?;
         }
     }
     Ok(if outs == 1 {
