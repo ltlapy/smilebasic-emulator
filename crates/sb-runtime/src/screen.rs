@@ -277,7 +277,8 @@ impl Runtime {
                 Ok(reals(&[x, y]))
             }
             (Command::Trot, Want::Outs(0), 2) => {
-                let angle = real(&args[1])?;
+                // Kept in single precision, as SPROT is.
+                let angle = f64::from(real(&args[1])? as f32);
                 self.text[screen_id(&args[0])?].rot = angle;
                 Ok(vec![])
             }

@@ -246,6 +246,14 @@ fn dialogs_wait_for_an_answer() {
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
 }
 
+/// TEST56: TROT reads back the single precision angle it keeps.
+#[test]
+fn trot_keeps_single_precision() {
+    let mut m = machine();
+    run(&mut m, &["TROT 0,0.1:TROT 0 OUT K:?FLOOR((K-0.1)*1E12)"]);
+    assert_eq!(tail(&m, 2)[0], "1490");
+}
+
 /// The key that closes a dialog is not a fresh press for the program
 /// afterwards: WIM_VOCARO closes its help with Enter and then reads
 /// Enter's press with KEYBOARD to start typing a phrase.
