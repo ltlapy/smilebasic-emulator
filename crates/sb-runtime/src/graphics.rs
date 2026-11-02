@@ -1018,13 +1018,17 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
 /// The pixels of a GLINE from `(x0, y0)` to `(x1, y1)` that lie on the
 /// page: the same whichever end comes first, walked along the longer axis
 /// from the end with the smaller coordinate on it, `major` steps long
-/// and `minor` across (taken as positive); the offset across at step
-/// `t` is `(2·t·minor + k) / (2·major)` rounded down, with `k` =
-/// `major + minor + 1` for slopes below 1/2 and `2·minor - major` from
-/// 1/2 up. Lines far off the page take the same pixels; only the steps
-/// on it are worked out.
-// UNVERIFIED: the `+ 1` for shallow slopes (`+ 2` or `major + 3` fit the
-// lines checked as well).
+/// and `minor` across (taken as positive). The offset across at step `t`
+/// is `(2·t·minor + k) / (2·major)` rounded down, where `k` is
+/// `(major + 2·minor) mod (2·major)` when the walk starts on the page:
+/// the line as rounded one step further on, moved back so that it starts
+/// at its first end (`round((t+1)·minor/major) - round(minor/major)`,
+/// halves up). A walk that starts off the page takes `k = major`, the
+/// line itself rounded (halves up), counted from its real start; only
+/// the steps on the page are worked out.
+// UNVERIFIED: that it is the page that counts (not GCLIP's rectangle),
+// and that a start off the page across the walk (an X-major line
+// starting above the page, say) counts as off the page too.
 fn line_points(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
     let x_major = (i64::from(x1) - i64::from(x0)).abs() >= (i64::from(y1) - i64::from(y0)).abs();
     let swap = |(x, y): (i64, i64)| if x_major { (x, y) } else { (y, x) };
@@ -1040,12 +1044,13 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
     let major = i128::from(b.0 - a.0);
     let minor = i128::from(b.1 - a.1);
     let (across, sign) = (minor.abs(), minor.signum() as i64);
-    let k = if 2 * across < major {
-        major + across + 1
-    } else {
-        2 * across - major
-    };
     let page = i64::from(GRP_SIZE) - 1;
+    let on_page = |v: i64| (0..=page).contains(&v);
+    let k = if on_page(a.0) && on_page(a.1) {
+        (major + 2 * across) % (2 * major).max(1)
+    } else {
+        major
+    };
     let from = (-a.0).max(0);
     let to = (page - a.0).min(b.0 - a.0);
     let mut points = Vec::with_capacity((to - from + 1).max(0) as usize);
@@ -1072,12 +1077,15 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32) -> Vec<(i32, i32)> {
 }
 
 /// The pixels a GTRI edge from `a` to `b` takes in row `y`, as the first
-/// and last column, or `None` if it does not reach the row:
-/// - an edge at least as tall as it is wide takes one pixel per row, its
-///   X at the row rounded (halves up);
-/// - a wider one takes the columns `x` for which some point of the edge
-///   with X in `[x, x+1)` has Y in `[y-1/2, y+1/2)`.
-// UNVERIFIED: how halves round for the tall edges (none in the check).
+/// and last column, or `None` if it does not reach the row. An edge is
+/// walked like a GLINE, one pixel per step along its longer axis
+/// (`major` steps, `minor` across), the offset across at step `t` being
+/// `(2·t·minor + k) / (2·major)` rounded down:
+/// - an edge taller than it is wide is walked down from its top end with
+///   `k = major` (the edge rounded, halves towards its bottom end);
+/// - one at least as wide as it is tall is walked up from its bottom end
+///   with `k = (major - 2·minor) mod (2·major)`: the edge rounded one step
+///   back, moved so that it starts at that end.
 fn edge_span(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i64)> {
     let ((x0, y0), (x1, y1)) = (a, b);
     if y < y0.min(y1) || y > y0.max(y1) {
@@ -1135,38 +1143,46 @@ impl Wide for i128 {
 }
 
 fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i64)> {
-    let ((x0, y0), (x1, y1)) = (a, b);
-    let (x0, y0, y) = (T::from(x0), T::from(y0), T::from(y));
-    let (dx, dy) = (T::from(x1) - x0, T::from(y1) - y0);
-    let (left, right) = (x0.min(x0 + dx), x0.max(x0 + dx));
+    // From the top end to the bottom one.
+    let ((x0, y0), (x1, y1)) = if a.1 <= b.1 { (a, b) } else { (b, a) };
+    let (x0, y0, x1, y1, y) = (
+        T::from(x0),
+        T::from(y0),
+        T::from(x1),
+        T::from(y1),
+        T::from(y),
+    );
     let (zero, one, two) = (T::from(0), T::from(1), T::from(2));
-    let floor = |n: T, d: T| {
-        if d < zero {
-            (-n).div_euclid(-d)
-        } else {
-            n.div_euclid(d)
-        }
-    };
-    if dy == zero {
-        return Some((left.narrow(), right.narrow()));
-    }
-    if dx.abs() <= dy.abs() {
-        // x0 + dx*(y-y0)/dy, rounded.
-        let x = x0 + floor(two * dx * (y - y0) + dy, two * dy);
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let wide = dx.abs();
+    if wide < dy {
+        // Down from the top: one pixel a row.
+        let x = (two * (y - y0) * wide + dy).div_euclid(two * dy);
+        let x = if dx < zero { x0 - x } else { x0 + x };
         return Some((x.narrow(), x.narrow()));
     }
-    // X where the edge meets Y = y - 1/2 (included) and y + 1/2 (not),
-    // as a fraction over 2*dy.
-    let at = |half: T| (two * x0 * dy + dx * (two * (y - y0) + half), two * dy);
-    let ((nin, din), (nout, dout)) = (at(-one), at(one));
-    let (l, r) = if (dx > zero) == (dy > zero) {
-        // Left to right going down: in from the top, out at the bottom.
-        let ceil = -floor(-nout, dout);
-        (floor(nin, din).max(left), (ceil - one).min(right))
+    if dy == zero {
+        return Some((x0.min(x1).narrow(), x0.max(x1).narrow()));
+    }
+    // Up from the bottom: the steps `t` whose offset is `j`.
+    let (major, minor, j) = (wide, dy, y1 - y);
+    let mut k = major - two * minor;
+    if k < zero {
+        k = k + two * major;
+    }
+    let ceil = |n: T, d: T| -(-n).div_euclid(d);
+    let first = ceil(two * major * j - k, two * minor).max(zero);
+    let last = (ceil(two * major * (j + one) - k, two * minor) - one).min(major);
+    if first > last {
+        return None;
+    }
+    // X runs from the bottom end towards the top one.
+    let (l, r) = if dx < zero {
+        (x1 + first, x1 + last)
     } else {
-        (floor(nout, dout).max(left), floor(nin, din).min(right))
+        (x1 - last, x1 - first)
     };
-    (l <= r).then(|| (l.narrow(), r.narrow()))
+    Some((l.narrow(), r.narrow()))
 }
 
 #[cfg(test)]
@@ -1305,6 +1321,94 @@ mod tests {
                 .collect();
             expected.sort_unstable();
             assert_eq!(points, expected, "line {dx},{dy}");
+        }
+    }
+
+    /// TEST48 parts 1 and 2: shallow lines from (50,50), for each delta
+    /// the offset across at each step away from the start; the same in
+    /// all four directions, either end first, and with the axes swapped.
+    #[test]
+    fn shallow_lines_match_hardware() {
+        let read = [
+            ((3, 1), "0111"),
+            ((7, 3), "01122333"),
+            ((8, 2), "011112222"),
+            ((8, 3), "011222333"),
+            ((9, 4), "0112233444"),
+            ((10, 3), "01112222333"),
+            ((10, 4), "01122233444"),
+            ((11, 5), "011223344555"),
+            ((12, 5), "0112233344555"),
+            ((13, 5), "01122233344555"),
+            ((6, 1), "0011111"),
+            ((7, 2), "01111222"),
+        ];
+        for ((major, minor), offsets) in read {
+            for (sx, sy, swap, reverse) in [
+                (1, 1, false, false),
+                (1, -1, false, true),
+                (-1, 1, true, false),
+                (1, 1, true, true),
+            ] {
+                let (dx, dy) = if swap {
+                    (minor * sx, major * sy)
+                } else {
+                    (major * sx, minor * sy)
+                };
+                let mut points = if reverse {
+                    line_points(50 + dx, 50 + dy, 50, 50)
+                } else {
+                    line_points(50, 50, 50 + dx, 50 + dy)
+                };
+                points.sort_unstable();
+                let mut expected: Vec<(i32, i32)> = offsets
+                    .bytes()
+                    .enumerate()
+                    .map(|(t, c)| {
+                        let (t, u) = (t as i32, i32::from(c - b'0'));
+                        // Along the major axis away from the start, across
+                        // towards the end.
+                        let (along, across) = if swap { (sy, sx) } else { (sx, sy) };
+                        let (a, b) = (50 + t * along, 50 + u * across);
+                        if swap { (b, a) } else { (a, b) }
+                    })
+                    .collect();
+                expected.sort_unstable();
+                assert_eq!(points, expected, "{dx},{dy}");
+            }
+        }
+    }
+
+    /// TEST48 part 3: lines whose first end is just off the page take the
+    /// line itself rounded, counted from that end; offsets from the start
+    /// row (or column) along X (or Y) 0 to 30.
+    #[test]
+    fn lines_from_off_the_page_match_hardware() {
+        let read = [
+            ((-1, 5, 30, 10), "0001111112222223333334444445555"),
+            ((-2, 5, 30, 10), "0011111122222233333334444445555"),
+            ((-3, 5, 30, 10), "0111111222222233333334444445555"),
+            ((-1, 5, 30, 12), "0011112222233334444555556666777"),
+            ((-3, 0, 30, 5), "0111111222222233333334444445555"),
+            ((5, -1, 10, 30), "0001111112222223333334444445555"),
+            ((5, -2, 10, 30), "0011111122222233333334444445555"),
+            ((5, -3, 10, 30), "0111111222222233333334444445555"),
+        ];
+        for ((x0, y0, x1, y1), offsets) in read {
+            let mut expected: Vec<(i32, i32)> = offsets
+                .bytes()
+                .enumerate()
+                .map(|(t, c)| {
+                    let (t, u) = (t as i32, i32::from(c - b'0'));
+                    if y0 < 0 { (x0 + u, t) } else { (t, y0 + u) }
+                })
+                .collect();
+            expected.sort_unstable();
+            for (a, b) in [((x0, y0), (x1, y1)), ((x1, y1), (x0, y0))] {
+                let mut points = line_points(a.0, a.1, b.0, b.1);
+                points.sort_unstable();
+                assert_eq!(points, expected, "{a:?} to {b:?}");
+            }
         }
     }
 
@@ -1660,6 +1764,36 @@ mod tests {
                 ".......888888888..........",
             ]
         );
+    }
+
+    /// TEST48 part 4: each row's run from left to right, the same
+    /// whichever order the corners come in.
+    #[test]
+    fn triangle_rows_match_hardware() {
+        let read: [([(i32, i32); 3], &str); 4] = [
+            ([(0, 0), (1, 2), (10, 1)], "0-4 1-10 1-6"),
+            ([(10, 0), (9, 2), (0, 1)], "6-10 0-9 4-9"),
+            ([(0, 0), (3, 6), (20, 3)], "0-2 1-9 1-15 2-20 2-18 3-12 3-6"),
+            (
+                [(20, 0), (17, 6), (0, 3)],
+                "18-20 11-19 5-19 0-18 2-18 8-17 14-17",
+            ),
+        ];
+        for (p, rows) in read {
+            for p in [p, [p[2], p[1], p[0]], [p[1], p[0], p[2]]] {
+                let mut g = Graphics::default();
+                g.triangle(p, RED, Blend::Normal);
+                let runs: Vec<String> = (0..7)
+                    .filter_map(|y| {
+                        let xs: Vec<i32> = (0..31).filter(|&x| g.pixel(0, x, y) != 0).collect();
+                        let (l, r) = (*xs.first()?, *xs.last()?);
+                        assert_eq!(xs.len() as i32, r - l + 1, "{p:?} row {y}");
+                        Some(format!("{l}-{r}"))
+                    })
+                    .collect();
+                assert_eq!(runs.join(" "), rows, "{p:?}");
+            }
+        }
     }
 
     /// TEST47 part 8: GBOX with `#G_ALPHA` blends its top corners twice.
