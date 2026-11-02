@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use super::RATE;
@@ -206,7 +208,118 @@ impl Synth for FontSynth {
         self.bend_range();
     }
 
+    /// rustysynth reads outside its samples, and panics, when a note's
+    /// steps are longer than its loop: a damaged file can ask for that, and
+    /// it finds out only as the note plays. The notes stop; the song goes
+    /// on. This is once a tick at most, not per sample.
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
-        self.synth.render(left, right);
+        let synth = &mut self.synth;
+        let rendered = catch_unwind(AssertUnwindSafe(|| synth.render(left, right)));
+        if rendered.is_err() {
+            self.synth.note_off_all(true);
+            left.fill(0.0);
+            right.fill(0.0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut out = id.to_vec();
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn list(kind: &[u8; 4], chunks: &[Vec<u8>]) -> Vec<u8> {
+        let mut body = kind.to_vec();
+        chunks.iter().for_each(|c| body.extend_from_slice(c));
+        chunk(b"LIST", &body)
+    }
+
+    /// A SoundFont of one sound: 1000 samples at `rate`, looping one.
+    fn font(rate: u32) -> Arc<SoundFont> {
+        let named = |name: &[u8], rest: &[u8]| {
+            let mut out = name.to_vec();
+            out.resize(20, 0);
+            out.extend_from_slice(rest);
+            out
+        };
+        let words = |w: &[u16]| -> Vec<u8> { w.iter().flat_map(|v| v.to_le_bytes()).collect() };
+        let phdr = [
+            named(b"P", &[0; 18]),
+            named(b"EOP", &[&[0, 0, 0, 0, 1, 0][..], &[0; 12]].concat()),
+        ]
+        .concat();
+        let shdr = [
+            (0u32, 900u32, 100u32, 101u32, rate, b"S".as_slice()),
+            (0, 0, 0, 0, 0, b"EOS"),
+        ]
+        .iter()
+        .flat_map(|&(s, e, ls, le, r, n)| {
+            let mut rest: Vec<u8> = [s, e, ls, le, r]
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            rest.extend_from_slice(&[60, 0, 0, 0, 1, 0]);
+            named(n, &rest)
+        })
+        .collect::<Vec<u8>>();
+        let samples: Vec<u8> = (0..1000i16).flat_map(|i| (i * 30).to_le_bytes()).collect();
+        let info = list(
+            b"INFO",
+            &[
+                chunk(b"ifil", &[2, 0, 1, 0]),
+                chunk(b"isng", b"EMU8000\0"),
+                chunk(b"INAM", b"test\0\0"),
+            ],
+        );
+        let pdta = list(
+            b"pdta",
+            &[
+                chunk(b"phdr", &phdr),
+                chunk(b"pbag", &words(&[0, 0, 1, 0])),
+                chunk(b"pmod", &[0; 10]),
+                // The instrument.
+                chunk(b"pgen", &words(&[41, 0, 0, 0])),
+                chunk(
+                    b"inst",
+                    &[named(b"I", &[0, 0]), named(b"EOI", &[1, 0])].concat(),
+                ),
+                chunk(b"ibag", &words(&[0, 0, 2, 0])),
+                chunk(b"imod", &[0; 10]),
+                // It loops, on the sample.
+                chunk(b"igen", &words(&[54, 1, 53, 0, 0, 0])),
+                chunk(b"shdr", &shdr),
+            ],
+        );
+        let sdta = list(b"sdta", &[chunk(b"smpl", &samples)]);
+        let bytes = chunk(b"RIFF", &[b"sfbk".to_vec(), info, sdta, pdta].concat());
+        Arc::new(SoundFont::new(&mut std::io::Cursor::new(bytes)).expect("loads"))
+    }
+
+    fn render(s: &mut FontSynth) -> f32 {
+        let (mut l, mut r) = (vec![0.0; 800], vec![0.0; 800]);
+        s.render(&mut l, &mut r);
+        l.iter().chain(&r).fold(0.0, |m, x| m.max(x.abs()))
+    }
+
+    /// Steps of 100 samples round a loop of 1 run off the end of the data.
+    #[test]
+    fn a_note_that_reads_past_its_samples_stops_and_the_rest_goes_on() {
+        let mut s = FontSynth::new(&font(4_800_000));
+        s.note_on(0, 60, 127);
+        for _ in 0..4 {
+            render(&mut s);
+        }
+        // Stopped: silence, and no voices left to do it again.
+        assert_eq!(render(&mut s), 0.0);
+        // A note at a sane rate on the same synthesizer still sounds.
+        let mut sane = FontSynth::new(&font(48000));
+        sane.note_on(0, 60, 127);
+        assert!(render(&mut sane) > 0.0);
     }
 }
