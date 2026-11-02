@@ -326,6 +326,17 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   and copies only what is on the screens (TEST51). `TSCREEN` of 65536
   cells a side is `Out of range` (TEST51).
 
+- `INPUT`'s cursor is a bar 2 pixels wide and 8 tall at the left of the
+  cursor's cell, opaque white whatever `COLOR` is (`COLOR &H80FFFF00`
+  over a character changes only the bar's two columns, and the rest of
+  the cell is left as it was). It alternates with nothing. The rate was
+  judged by eye only, about twice a second (TEST50).
+- Characters typed at `INPUT` and then deleted leave their cells empty:
+  whatever the console showed there before does not come back (TEST50).
+- The text drawing (colour times 1 minus the glyph's alpha,
+  per cell) is not what draws `INPUT`'s cursor. What sets its flag is
+  still unknown.
+
 ## Sprites
 
 - Using a sprite before `SPSET` is `Sprite not set`, except for its

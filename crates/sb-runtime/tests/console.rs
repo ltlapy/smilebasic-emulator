@@ -117,3 +117,69 @@ fn input_waits_for_enter_and_edits() {
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
     assert_eq!(row(&rt, 4, 1), "26");
 }
+
+/// What a program waiting in INPUT shows a frame on.
+fn next_frame(rt: &mut Runtime) -> sb_runtime::framebuffer::Framebuffer {
+    rt.begin_frame();
+    rt.render().clone()
+}
+
+#[test]
+fn input_cursor_is_a_white_bar_that_blinks() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let src = "BACKCOLOR &HFF102030:COLOR &H80FFFF00:INPUT \"N\";A";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    // "N? " leaves it in the fourth cell. It is 2 by 8 at the cell's left,
+    // white whatever COLOR is, and leaves the rest of the cell alone.
+    let at = |fb: &sb_runtime::framebuffer::Framebuffer, x: usize, y: usize| {
+        fb.pixels()[y * fb.width() as usize + x]
+    };
+    const BACK: u32 = 0xFF10_2030;
+    let mut shown = Vec::new();
+    for _ in 0..60 {
+        let fb = next_frame(&mut rt);
+        let on = at(&fb, 24, 0) == 0xFFFF_FFFF;
+        shown.push(on);
+        for y in 0..8 {
+            let bar = if on { 0xFFFF_FFFF } else { BACK };
+            assert_eq!((at(&fb, 24, y), at(&fb, 25, y)), (bar, bar));
+            assert_eq!(at(&fb, 26, y), BACK);
+            assert_eq!(at(&fb, 31, y), BACK);
+        }
+        assert_eq!(at(&fb, 24, 8), BACK);
+        assert_eq!(at(&fb, 23, 0), BACK);
+    }
+    // 15 frames on and 15 off; the first run may have started earlier.
+    let flips: Vec<usize> = (1..60).filter(|&i| shown[i] != shown[i - 1]).collect();
+    assert!(flips.len() >= 3);
+    assert!(flips.windows(2).all(|w| w[1] - w[0] == 15), "{flips:?}");
+}
+
+#[test]
+fn input_cursor_redraws_only_when_it_changes() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut vm = Vm::new(sb_core::compile("INPUT A", &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    next_frame(&mut rt);
+    let before = rt.revision();
+    for _ in 0..60 {
+        next_frame(&mut rt);
+    }
+    assert_eq!(rt.revision() - before, 4);
+}
+
+#[test]
+fn input_clears_the_cells_it_typed_over_and_deleted() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let src = "?\"@@@@@@\";:LOCATE 0,0:INPUT \"\",A$";
+    let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    type_keys(&mut rt, "XY");
+    rt.key_press(keys::BACKSPACE);
+    rt.key_press(keys::BACKSPACE);
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    let s = &rt.text[4];
+    let codes: Vec<u16> = (0..6).map(|x| s.cell(x, 0).code).collect();
+    assert_eq!(codes, [0, 0, 64, 64, 64, 64]);
+}

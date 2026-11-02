@@ -652,9 +652,12 @@ pub enum Stopped {
 
 /// UNVERIFIED: how many unread keys SmileBASIC keeps.
 pub const KEY_BUFFER: usize = 256;
-/// Frames per half period of the INPUT cursor's blink: at 60 fps, a full
+/// Frames per half period of the editor cursor's blink: at 60 fps, a full
 /// blink takes about 833 ms.
 const CURSOR_BLINK: u32 = 25;
+/// Frames per half period of the INPUT cursor's blink.
+// UNVERIFIED: judged by eye as about 2 blinks a second.
+const LINE_CURSOR_BLINK: u32 = 15;
 /// The pixels between the sides of a split editor, and their color.
 const SPLIT_DIVIDER: u32 = 2;
 const SPLIT_COLOR: u32 = 0xFF30_3040;
@@ -1468,7 +1471,10 @@ impl Runtime {
     /// last one is given again while nothing has changed.
     pub fn render(&mut self) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
-        let cursor = self.line.is_some() && (self.frame / CURSOR_BLINK).is_multiple_of(2);
+        // Counted in frames played, not in frames drawn, which are not
+        // one a frame when frames are skipped or only some are looked at.
+        let cursor =
+            self.line.is_some() && (self.system.frames / LINE_CURSOR_BLINK).is_multiple_of(2);
         let with = Some((cursor, self.dimmed));
         let mut cells = false;
         for t in &mut self.text {

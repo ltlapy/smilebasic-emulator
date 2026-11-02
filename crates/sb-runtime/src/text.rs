@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use sb_core::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
 use crate::anim::{self, ANIM_VAR, Animated, Target, Track};
-use crate::compose::{self, Affine, Mixed, Paint, Placement, draw_image_part, over};
+use crate::compose::{self, Affine, Mixed, Paint, Placement, draw_image_part};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -559,9 +559,7 @@ impl TextScreen {
     }
 
     /// Draws the screen through its layer's matrix and clipping, with the
-    /// INPUT cursor if `cursor` is set.
-    // UNVERIFIED: the shape of SmileBASIC's INPUT cursor (a cell filled
-    // with the text color).
+    /// INPUT cursor on top if `cursor` is set.
     pub fn draw_placed(
         &self,
         fb: &mut Framebuffer,
@@ -575,7 +573,6 @@ impl TextScreen {
             return;
         }
         let cs = self.char_size;
-        let ft = self.font_type;
         let cursor = cursor.then_some(self.cursor);
         if cursor.is_none() && self.cells.iter().all(|c| c.code == 0) {
             return;
@@ -585,9 +582,35 @@ impl TextScreen {
             clip,
             add: self.add,
         };
+        let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
         if place.is_upright() {
-            return self.draw_upright(fb, font, grp, &place, cursor);
+            self.draw_upright(fb, font, grp, &place);
+        } else {
+            self.draw_turned(fb, font, grp, &place);
         }
+        if let Some((cx, cy)) = cursor.filter(|&(cx, cy)| cx < self.width && cy < self.height) {
+            let cell = (cx * cs) as i32;
+            let part = (
+                cell,
+                (cy * cs) as i32,
+                cell + cs as i32,
+                ((cy + 1) * cs) as i32,
+            );
+            let (x0, x1) = (
+                f64::from(part.0),
+                f64::from(part.0) + f64::from(cursor_width(cs)),
+            );
+            let (y0, y1) = (f64::from(part.1), f64::from(part.3));
+            draw_image_part(fb, &place, w, h, part, |x, y| {
+                (x >= x0 && x < x1 && y >= y0 && y < y1).then_some(Mixed::Solid(WHITE))
+            });
+        }
+    }
+
+    /// draw_placed for a screen turned or sheared on the frame, cell by
+    /// cell.
+    fn draw_turned(&self, fb: &mut Framebuffer, font: &Font, grp: &Graphics, place: &Placement) {
+        let (cs, ft) = (self.char_size, self.font_type);
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
         let size = f64::from(cs);
         // The cell's character in its colors, looked up once rather than
@@ -597,16 +620,15 @@ impl TextScreen {
         for cy in 0..self.height {
             for cx in 0..self.width {
                 let cell = self.cell(cx, cy);
-                let at_cursor = cursor == Some((cx, cy));
                 // Empty cells show nothing, so need no drawing.
-                if cell.code == 0 && !at_cursor {
+                if cell.code == 0 {
                     continue;
                 }
                 paints.clear();
-                self.glyph(font, grp, cell, at_cursor, &mut glyph, &mut paints);
+                self.glyph(font, grp, cell, &mut glyph, &mut paints);
                 let (x0, y0) = ((cx * cs) as i32, (cy * cs) as i32);
                 let part = (x0, y0, x0 + cs as i32, y0 + cs as i32);
-                draw_image_part(fb, &place, w, h, part, |x, y| {
+                draw_image_part(fb, place, w, h, part, |x, y| {
                     // Pixels of the cells around are theirs to draw.
                     if ((x / size) as u32, (y / size) as u32) != (cx, cy) {
                         return None;
@@ -644,18 +666,12 @@ impl TextScreen {
         font: &Font,
         grp: &Graphics,
         cell: Cell,
-        at_cursor: bool,
         out: &mut [u32],
         paints: &mut Vec<Mixed>,
     ) {
         let ft = self.font_type;
         let mut color = |p: u32| {
-            let (p, color) = match (cell.code, at_cursor) {
-                (_, false) => (p, cell.color),
-                (0, true) => (over(0, self.color), WHITE),
-                (_, true) => (over(multiply(p, cell.color), self.color), WHITE),
-            };
-            let paint = Mixed::new(p, color, self.tint, self.add);
+            let paint = Mixed::new(p, cell.color, self.tint, self.add);
             glyph_paint(paint, paints)
         };
         // Where the character comes from is looked up once, not for
@@ -689,14 +705,7 @@ impl TextScreen {
     /// draw_placed for a screen neither turned nor sheared on the frame:
     /// which cell and which point of it each frame column and row shows
     /// is worked out once, and each row of cells' characters once.
-    fn draw_upright(
-        &self,
-        fb: &mut Framebuffer,
-        font: &Font,
-        grp: &Graphics,
-        place: &Placement,
-        cursor: Option<(u32, u32)>,
-    ) {
+    fn draw_upright(&self, fb: &mut Framebuffer, font: &Font, grp: &Graphics, place: &Placement) {
         let (cs, ft) = (self.char_size, self.font_type);
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
         let Some(grid) = crate::compose::grid(fb, place, w, h) else {
@@ -734,7 +743,7 @@ impl TextScreen {
         // Each character in each color once, however many cells show it.
         let mut glyphs: Vec<u32> = Vec::new();
         let mut paints: Vec<Mixed> = Vec::new();
-        let mut made: HashMap<(u16, u32, bool), usize> = HashMap::new();
+        let mut made: HashMap<(u16, u32), usize> = HashMap::new();
         // Per cell of the row, if it shows anything: its picks and where
         // its character is in `glyphs`.
         let mut shown = vec![None; self.width as usize];
@@ -747,14 +756,13 @@ impl TextScreen {
                 row_of = Some(cy);
                 for cx in 0..self.width {
                     let cell = self.cell(cx, cy);
-                    let at_cursor = cursor == Some((cx, cy));
-                    shown[cx as usize] = (cell.code != 0 || at_cursor).then(|| {
-                        let key = (cell.code, cell.color, at_cursor);
+                    shown[cx as usize] = (cell.code != 0).then(|| {
+                        let key = (cell.code, cell.color);
                         let at = *made.entry(key).or_insert_with(|| {
                             let at = glyphs.len();
                             glyphs.resize(at + glyph_len, 0);
                             let out = &mut glyphs[at..];
-                            self.glyph(font, grp, cell, at_cursor, out, &mut paints);
+                            self.glyph(font, grp, cell, out, &mut paints);
                             at
                         });
                         (pick(cell.attr), at)
@@ -807,10 +815,6 @@ impl Animated for TextScreen {
     }
 }
 
-fn channels(c: u32) -> [u32; 4] {
-    c.to_be_bytes().map(u32::from)
-}
-
 /// What a glyph pixel puts on the frame, as one `u32`: 0 for nothing, an
 /// opaque color for itself, or else the place of its paint in `paints`
 /// plus one, which is never opaque.
@@ -835,14 +839,10 @@ fn paint_at(v: u32, paints: &[Mixed]) -> Option<Mixed> {
     }
 }
 
-/// Per-channel product, rounded to the nearest, for the INPUT cursor.
-fn multiply(a: u32, b: u32) -> u32 {
-    if b == WHITE {
-        return a;
-    }
-    let (a, b) = (channels(a), channels(b));
-    let c: [u8; 4] = std::array::from_fn(|i| ((a[i] * b[i] + 127) / 255) as u8);
-    u32::from_be_bytes(c)
+/// How many pixels wide the INPUT cursor's bar is on a cell of `size`.
+// UNVERIFIED: that the bar scales with the cell (2 wide on 8 is measured).
+fn cursor_width(size: u32) -> u32 {
+    (size / 4).max(1)
 }
 
 #[cfg(test)]

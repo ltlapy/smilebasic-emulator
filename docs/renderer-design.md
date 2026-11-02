@@ -154,7 +154,7 @@ image point `(lx, ly)` lies in `[0,w) x [0,h)`.
 
 - Upright screens go through `draw_upright`. A `Grid` maps each frame
   column and row to a (cell, glyph column or row) pair. Each distinct
-  (code, color, cursor) glyph is worked out once per frame into a
+  (code, color) glyph is worked out once per frame into a
   `HashMap` and a `Vec`, both allocated per frame.
 - Other screens are drawn cell by cell with `draw_image_part`.
 - Glyphs come from three places:
@@ -166,8 +166,8 @@ image point `(lx, ly)` lies in `[0,w) x [0,h)`.
 - The cell color and TCOLOR are multiplied in unrounded
   (`compose::Mixed`, up to `Over5` over 255⁵); each glyph pixel's
   paint is kept as one `u32` (opaque pixels as themselves, others as
-  an index into a side list). The INPUT cursor is the cell filled with
-  the text color.
+  an index into a side list). The INPUT cursor is a white bar over all
+  this: see [2.3](#23-text-screens).
 
 ### 1.4 Layers, projection, filters
 
@@ -304,7 +304,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Frames and composed layers hold premultiplied colour, alpha as coverage (SmileBASIC 4 keeps transmittance, 255 less it); a layer starts clear; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
 | Additive element: `d + light`, the light `t*c*a` exact and rounded once, with saturation, destination alpha kept | `compose::Lit` | C (R1): TEST49 |
 | Sprite colour (SPCOLOR) multiplies each channel, alpha included, unrounded, inside the one rounding of the draw | `graphics::Tint`, `compose::Over3` | C (R2): TEST49. A child's link colour (`multiply`, rounded down) is still U |
-| Text colour (cell colour, then TCOLOR) the same, unrounded | `compose::Mixed`, `Over5` | C (R2): TEST49. The text drawing's per-cell inverting flag (colour times 1 - glyph alpha) is not implemented; what sets it is unknown |
+| Text colour (cell colour, then TCOLOR) the same, unrounded | `compose::Mixed`, `Over5` | C (R2): TEST49. The text drawing's per-cell inverting flag (colour times 1 - glyph alpha) is not implemented; what sets it is unknown (TEST50: not the INPUT cursor) |
 | Tint is applied to the page pixel before blending | `sprites::draw_posed` | C (R2): TEST49 |
 | Relative colour animation `"C+"`: product / 256, rounded down | `anim.rs` | C: pitfalls |
 | LAYER mode 0 draws straight onto the frame, layer colour ignored | `Runtime::render` | C: pitfalls; TTEST16 |
@@ -343,7 +343,9 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | `CHR$(10)` starts a new line | `TextScreen::print` | S: pitfalls; marker in `text.rs` |
 | TSCREEN clears the screen | `set_font` | S: pitfalls; marker in `text.rs` |
 | TSCREEN keeps TLAYER, TPAGE, TVAR and TFUNC, and sets TBLEND back to 0 | `restart_look` | C: pitfalls; TEST47, TEST48 |
-| INPUT cursor is the cell filled with the text colour | `draw_placed` | **U (R9)** |
+| INPUT cursor: a bar 2 by 8 at the cell's left, opaque white whatever the colour; it alternates with nothing | `draw_placed` | C (R9): TEST50, parts 6 and 7 |
+| The cursor's blink: 15 frames on, 15 off, counted in frames played | `LINE_CURSOR_BLINK` | U: by eye only, "about 2 times a second" (TEST50) |
+| The cursor's bar scales with the cell (a quarter of its width), and with TSCALE and LMATRIX; on top of its screen, under what is in front of it | `cursor_width`, `draw_placed` | U |
 | Text animations: as for sprites | `impl Animated for TextScreen` | C: pitfalls; TEST47 (R7) |
 | TBLEND 1 is additive, as for sprites | `screen.rs` | C: manual (TBLEND); arithmetic as R1 |
 
@@ -676,7 +678,7 @@ How the current code maps onto it:
   arithmetic, the blank-page rule, `Affine::place` and `Runtime::fine`
   stay in the builder.
 - **Text screens** become one `Item` per non-empty cell, plus the
-  cursor cell. A cell sources GRP5, the TPAGE page, or a **glyph atlas**
+  cursor's bar. A cell sources GRP5, the TPAGE page, or a **glyph atlas**
   for `Font::pixel` fallbacks. The atlas is a CPU-built page, rebuilt
   only when the font changes. Per-cell items are equivalent to today's
   whole-screen drawing: today a frame pixel belongs to the cell under
