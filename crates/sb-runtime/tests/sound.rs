@@ -233,6 +233,29 @@ fn user_waveforms_and_the_psg_play_without_a_soundfont() {
     assert!(peak(&mut rt) > 0.05);
 }
 
+/// Both of WAVSETA's forms count their ranges from the last sample, and an
+/// empty array has none.
+#[test]
+fn wavseta_refuses_an_empty_array() {
+    for source in [
+        "DIM A[0]:WAVSETA 224,0,0,0,0,A",
+        "DIM A[0]:WAVSETA 224,0,0,0,0,A,69",
+        "DIM A[0]:WAVSETA 224,0,0,0,0,A,69,,,28160",
+        "DIM A[0]:WAVSETA 224,0,0,0,0,A,69,,,28160,0,1",
+    ] {
+        let e = run_on(&mut runtime(), source).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::IllegalFunctionCall, "{source}");
+        assert_eq!(e.detail.as_deref(), Some("empty array"), "{source}");
+    }
+    // One sample is enough, in both forms.
+    for source in [
+        "DIM A[1]:WAVSETA 224,0,0,0,0,A",
+        "DIM A[1]:WAVSETA 224,0,0,0,0,A,69,,,28160",
+    ] {
+        run_on(&mut runtime(), source).unwrap();
+    }
+}
+
 #[test]
 fn beeps_take_handles() {
     let mut rt = runtime();

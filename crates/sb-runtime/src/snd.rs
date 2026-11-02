@@ -113,6 +113,20 @@ fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
     ))
 }
 
+/// WAVSETA's samples, of which there must be some: every default range
+/// below counts from the last one.
+// UNVERIFIED: that an empty array is Illegal function call.
+fn wave_samples(v: &Value) -> Result<Vec<f64>> {
+    let all = samples(v)?;
+    if all.is_empty() {
+        return Err(Error::with_detail(
+            ErrorKind::IllegalFunctionCall,
+            "empty array",
+        ));
+    }
+    Ok(all)
+}
+
 /// The numbers in a one-dimensional array.
 fn samples(v: &Value) -> Result<Vec<f64>> {
     checking(v, || {
@@ -366,7 +380,7 @@ impl Runtime {
             // The 8-bit form, SmileBASIC 3's.
             (Command::Wavseta, Want::Outs(0), 6..=9) => {
                 let (n, envelope) = wave_head(args)?;
-                let all = samples(&args[5])?;
+                let all = wave_samples(&args[5])?;
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let last = all.len() as i32 - 1;
                 let start = opt_in_range("start", args.get(7), 0..=last, 0)? as usize;
@@ -379,10 +393,10 @@ impl Runtime {
             // A 16-bit sample with a loop and its own sample rate.
             (Command::Wavseta, Want::Outs(0), 10..=12) => {
                 let (n, envelope) = wave_head(args)?;
-                let all = samples(&args[5])?;
+                let all = wave_samples(&args[5])?;
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let last = all.len() as i32 - 1;
-                let offset = opt_in_range("offset", args.get(10), 0..=last.max(0), 0)? as usize;
+                let offset = opt_in_range("offset", args.get(10), 0..=last, 0)? as usize;
                 // The sample is the loop's end + 1 values from the offset
                 // on, and the loop counts from the offset: what comes after
                 // the loop is dropped.

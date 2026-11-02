@@ -50,6 +50,13 @@ Without them:
 - `SNDMSBAL` balances a subprogram's sound against the main program's
   in a straight line, the full sound of both at 64.
 
+## Sound limits
+
+Limits and errors the emulator adds so that a program or a damaged file
+cannot freeze or exhaust it. SmileBASIC 4's own answers to these are not
+known.
+- `WAVSETA` with an empty array is `Illegal function call`.
+
 ## Input
 
 - There are no motion sensors: `ACCEL`, `GYROA` and `GYROV` read 0.
