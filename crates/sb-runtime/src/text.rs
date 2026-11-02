@@ -613,6 +613,7 @@ impl TextScreen {
         let (cs, ft) = (self.char_size, self.font_type);
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
         let size = f64::from(cs);
+        let (tx, ty) = place.texel_tie((cs as i32, cs as i32), (false, false));
         // The cell's character in its colors, looked up once rather than
         // for every pixel it covers.
         let mut glyph = vec![0; (ft * ft) as usize];
@@ -636,7 +637,10 @@ impl TextScreen {
                     // Where in the cell, which a fine frame splits further.
                     // As for sprites, the character is flipped, then turned
                     // (checked on hardware): undo the turn, then the flips.
-                    let (px, py) = (x - f64::from(cx * cs), y - f64::from(cy * cs));
+                    let (px, py) = (
+                        (x + tx - f64::from(cx * cs)).max(0.0),
+                        (y + ty - f64::from(cy * cs)).max(0.0),
+                    );
                     let (mut px, mut py) = match cell.attr & attr::ROTATION {
                         0 => (px, py),
                         1 => (py, size - px),
@@ -713,15 +717,16 @@ impl TextScreen {
         };
         let size = f64::from(cs);
         let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
+        let (tx, ty) = place.texel_tie((cs as i32, cs as i32), (false, false));
         // For each column (or row): its cell, and the glyph column (or
         // row) for the point in the cell, for the point flipped, and for
         // it flipped twice, as draw_placed's arithmetic gives them.
-        let axis = |v: f64| {
+        let axis = |v: f64, tie: f64| {
             let c = (v / size) as u32;
-            let p = v - f64::from(c * cs);
+            let p = (v + tie - f64::from(c * cs)).max(0.0);
             (c, [at(p), at(size - p), at(size - (size - p))])
         };
-        let cols: Vec<(u32, [u32; 3])> = grid.xs.iter().map(|&x| axis(x)).collect();
+        let cols: Vec<(u32, [u32; 3])> = grid.xs.iter().map(|&x| axis(x, tx)).collect();
         // Which of those each glyph coordinate comes from, by ATTR: the
         // column's (false) or the row's (true) table, and which entry.
         let pick = |a: u8| -> ((bool, usize), (bool, usize)) {
@@ -751,7 +756,7 @@ impl TextScreen {
         let width = fb.width() as usize;
         let pixels = fb.pixels_mut();
         for (fy, &y) in (grid.y0 as usize..).zip(&grid.ys) {
-            let (cy, rat) = axis(y);
+            let (cy, rat) = axis(y, ty);
             if row_of != Some(cy) {
                 row_of = Some(cy);
                 for cx in 0..self.width {

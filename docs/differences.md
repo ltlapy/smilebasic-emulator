@@ -103,6 +103,13 @@ known.
 
 ## Other
 
+- Where a turned or scaled sprite's or text's sample point lands exactly
+  between two texels, SmileBASIC 4's result comes from the GPU's
+  arithmetic, and can change along a sprite's diagonal or with where it
+  is on the screen. The emulator takes one rule for each case, the most
+  usual outcome (`Placement::texel_tie`), so a few of these pixels show
+  the neighbouring texel. It also never reads the page just outside the
+  image at such a tie, which SmileBASIC 4 can do.
 - What a program writes to a `GARRAY` array shows on the screen only
   after `GUPDATE`; `GPGET` and other commands that read the page see it
   at once, as on SmileBASIC 4. There, drawing commands near the writes

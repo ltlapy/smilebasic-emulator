@@ -121,8 +121,12 @@ point to the position, scaled and then turned clockwise. It is followed
 by the layer's matrix (`Affine::then`). Every rasterizer works by
 inverse mapping. For each frame pixel in the element's bounding box
 (`compose::span`, clipped to LCLIP), the pixel centre `(px+0.5, py+0.5)`
-goes through the inverse matrix. The pixel is drawn when the resulting
-image point `(lx, ly)` lies in `[0,w) x [0,h)`.
+goes through the inverse matrix, moved a tiny way right and less up
+(`Placement::sampling`). The pixel is drawn when the resulting image
+point `(lx, ly)` lies in `[0,w) x [0,h)`: an edge exactly through a
+centre takes the pixel if it is the left or the bottom edge, whichever
+way the image is turned. The texel read is the whole part of the point
+moved again by `Placement::texel_tie`.
 
 **Sprites** (`sprites::draw_posed`):
 
@@ -141,8 +145,9 @@ image point `(lx, ly)` lies in `[0,w) x [0,h)`.
     once per sprite.
   - general `compose::draw_image`, for rotated or sheared sprites;
   - `compose::project_image`, for a layer with a 4x4 matrix.
-- A sample point exactly on a column boundary takes the column to its
-  left: `TIE = 1e-9` is subtracted from the image x.
+- A sample point exactly between texels goes the way
+  [2.2](#22-sprites) says (`Placement::texel_tie`); the amounts are far
+  above floating point noise, so a tie is never left to chance.
 - Blend: the paint's `put` is either over (the exact sum of the
   element's light and what is left of the premultiplied destination,
   rounded to nearest once) or additive (the light rounded, added with
@@ -319,10 +324,11 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | Placement: home to position, scale, then clockwise rotation in degrees | `Affine::place` | C: manual (SPHOME, SPSCALE, SPROT) |
 | Flip first, then quarter turn | `Source::page_xy` | C: pitfalls |
-| Sampled without smoothing, at frame pixel centres; ties on a column boundary take the left column, rows do not | `TIE`, `draw_upright` | C: pitfalls; TTEST24 (scales 1.5 and 2.5) |
-| The same rule for rotated sprites (no special edge rule, centre in `[0,w) x [0,h)`) | `draw_image` | **U (R5)** |
-| With XSCREEN sample > 1, sprites are sampled at the finer pixels' centres; LCLIP grows to whole fine pixels | `Runtime::fine` | **U (R6)** |
-| Coverage: a pixel is drawn when its mapped centre lies in the half-open image rectangle | `draw_image_part` | C for upright scaled sprites (TTEST24); U for rotation (R5) |
+| Sampled without smoothing, at frame pixel centres; away from ties every rotation and scale fits with no misses | `draw_image`, `draw_upright` | C (R5): TEST50 generic angles |
+| With XSCREEN sample > 1, sprites are sampled at the finer pixels' centres; LCLIP grows to whole fine pixels | `Runtime::fine` | C (R6): TEST50 part 2 (LCLIP exact; the fine grid misses only 56 tie pixels of 54298) |
+| Coverage: a pixel is drawn when its centre, nudged right then up, lies on the image, at any rotation: an edge through the centre takes it if it is the left or bottom edge on the frame | `Placement::sampling` | C (R5): TEST50, no coverage miss in any part, text included (consistent with a rasteriser's top-left rule on a target drawn flipped) |
+| A sample point exactly between texels, at a multiple of 90 degrees: image side a power of two and scale a power of two: the higher texel; power of two with another scale: towards the frame's left and bottom; another side: towards the page's lower coordinates | `Placement::texel_tie` | U (R5, R8): the usual outcome only; see below |
+| The same at other angles (only 45-degree multiples can tie): image x higher, image y lower; kept on the image | `Placement::texel_tie` | U (R5): TEST50, no misses but 21 pixels reading the row above the image |
 | SPCHR W and H are the size as shown (turned size rule) | `sp.rs` | C: pitfalls; TEST45, TEST46 |
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
 | A linked child's offset turns and scales with the parent; the flags decide the child's own image | `Sprites::pose` | C: pitfalls (the `pose` UNVERIFIED comment is partly stale) |
@@ -337,7 +343,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Rule | Where | Status |
 |---|---|---|
 | Flip then turn for ATTR | `draw_placed` | C: pitfalls |
-| Cell boundary ties: text uses plain truncation (`(x / size) as u32`), with no left tie like sprites | `draw_placed`, `draw_upright` | **U (R8)** |
+| Ties: as for sprites of the cell's size, per cell (a block of cells shows what a sprite of the same size does) | `draw_turned`, `draw_upright` | C (R8) that text and sprites go alike: TEST50, parts 3 and 4; U for the rule itself, as for sprites |
 | Font types 24-64 show only user-defined characters; GPUTCHR with them reads GRP5 in 24-pixel cells | `glyph_pixel_px` | C: pitfalls |
 | Tab stops every 4 columns | `TAB_WIDTH` | S: pitfalls; marker in `text.rs` |
 | `CHR$(10)` starts a new line | `TextScreen::print` | S: pitfalls; marker in `text.rs` |
@@ -355,14 +361,14 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | Layers 7 to 0, lower layers in front | `Runtime::render` | C: manual (LAYER) |
 | Within a layer: larger Z further back | sort key | C: manual (display priority -4095 to 4095) |
-| Equal Z: text screens behind sprites; among either, higher id behind | sort key | **U (R10)** |
+| Equal Z: text screens behind sprites; among either, higher id behind | sort key | C (R10): TEST50 part 5, 16 pairs of 16, `#GSPRITE` too |
 | `#GSPRITE` goes to the layer SPLAYER gives new sprites after XSCREEN | `set_mode` | C: pitfalls |
 
 ### 2.5 Layers and projection
 
 | Rule | Where | Status |
 |---|---|---|
-| `LCLIP` corners inclusive | `Clip` | C: pitfalls |
+| `LCLIP` corners inclusive | `Clip` | C: pitfalls; TEST50 part 2 at XSCREEN sample 2: grows to whole fine pixels, `[2a, 2b+1]` |
 | `LMATRIX layer,hx,hy` moves the layer by minus the home point | `screen.rs` | C: pitfalls |
 | The 2D LMATRIX form: `Affine::place(pos, home, rot, scale)` like a sprite | `screen.rs` | Partly C (home); **U (R11)** for rotation direction and scale order |
 | 4x4 LMATRIX: `(x,y,0,1)` to clip space, X right, Y up, column-major, perspective divide | `compose::homography` | C: pitfalls; TTEST26, TTEST27 |
@@ -441,8 +447,9 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 **Count.** There were 31 open items, R1 to R31. TEST47 (batches A and
 F) settled R7, R20, R22 and R24-R31, and TEST49 (batch B) R1-R4 and
-R21, apart from the smaller points left U in the table above; R5, R6,
-R8-R19 and R23 are open. TEST48 then settled most of TEST47's smaller
+R21, apart from the smaller points left U in the table above; R11-R19
+and R23 are open (R5, R6, R8, R9 and R10 went with TEST50, batch C, with
+the tie rule and the cursor's rate left U). TEST48 then settled most of TEST47's smaller
 points: the shallow GLINE rule and lines from off the page, GTRI's
 edges, GSAVE and GLOAD sizes, single-precision rotation and scale, GBOX
 corner order, near-full arcs and TFUNC after TSCREEN. R1-R4 and R21
@@ -460,6 +467,37 @@ the code at once (ACLS clearing FADE was dropped with TEST47):
 blur, mosaic and raster formulas are now confirmed.
 
 ### 2.10 Proposed TTEST batches
+
+#### What TEST50 says about ties
+
+Every page pixel in TEST50 has its own colour, so each screenshot pixel
+names the texel sampled. Away from ties all rules agree. At ties the
+screenshots show the GPU's arithmetic: in one quad the texel changes
+along the quad's diagonal, between its two triangles, and the same image at the same scale goes different ways at
+different places. Simulating the quad in single precision (vertices
+through the matrix and viewport, attributes by plane equations and by
+barycentrics, snapped to 1/256 or not) did not reproduce which way each
+tie goes, so what remains seems to be the host GPU's, and a real Switch
+may differ. The rule in [2.2](#22-sprites) takes the usual outcome:
+
+| Part, group | Pixels | Misses before | After |
+|---|---|---|---|
+| 1, sprites at multiples of 90 | 20310 | 3930 | 749 |
+| 1, sprites at multiples of 45 | 3078 | 54 | 21 |
+| 2, sprites at multiples of 90 | 38414 | 1136 | 56 |
+| 2, sprites at multiples of 45 | 2450 | 17 | 0 |
+| 3, sprites | 7844 | 800 | 192 |
+| 3, text | 7844 | 1424 | 272 |
+| 4, sprites at multiples of 90 | 6691 | 1489 | 352 |
+| 4, text at multiples of 90 | 6691 | 1472 | 274 |
+
+Generic angles have no misses before or after. What is left is mostly
+half of a quad at 90 and 270 degrees, where the two triangles differ;
+sizes other than powers of two starting on a half pixel; and text and
+sprites reading a pixel just off their image, which ours never does.
+
+A GPU backend ([4](#4-gpu-backend-options)) gets these ties from its
+own arithmetic and will differ from the CPU rasterizer on them.
 
 The batches follow [hardware-tests.md](hardware-tests.md):
 
@@ -668,7 +706,6 @@ pub struct Item {
     pub matrix: Affine,             // image -> layer -> frame, already including fine()
     pub tint: u32,                  // SPCOLOR, or cell colour times TCOLOR
     pub add: bool,                  // #A_ADD / TBLEND 1
-    pub tie_left: bool,             // sprites true; text cells per R8
 }
 ```
 
@@ -787,7 +824,7 @@ A GPU backend for comparison runs sits outside `sb-runtime`:
 ### 4.1 What the backend has to do
 
 - Textured quads under an affine matrix, with **nearest sampling at
-  pixel centres** and the left tie rule. Projected quads under a
+  pixel centres**. Projected quads under a
   homography with W > 0 only.
 - Per-item tint, two blends (over and additive), on an opaque frame or
   a premultiplied layer target.
@@ -1025,9 +1062,10 @@ These can match the CPU exactly:
   CPU maps pixel centres through an f64 inverse matrix (and LMATRIX
   values are stored at f32, then used in f64). A shader works in f32,
   with a 24-bit mantissa. Pixels whose sample point lies within about
-  1e-4 of a texel or image boundary can fall the other way. The left
-  tie rule (`TIE = 1e-9`) cannot be reproduced in f32 as written; it
-  needs its own bias, chosen as part of the tie rule.
+  1e-4 of a texel or image boundary can fall the other way. The tie rule
+  (`Placement::texel_tie`) cannot be reproduced in f32 as written; it
+  needs its own bias. SmileBASIC 4's own ties depend on the GPU's
+  arithmetic in any case ([2.10](#210-proposed-ttest-batches)).
 - **Raster filter coordinates and the colour filter's HSV**: these are
   f64 on the CPU today.
 - **Fixed-function blending**, as SmileBASIC 4 uses (4.1): ±1 per

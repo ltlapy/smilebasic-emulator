@@ -293,3 +293,50 @@ fn tscreen_with_too_many_cells_is_out_of_range() {
     assert_eq!(e.kind, ErrorKind::OutOfRange);
     assert!(e.detail.is_some());
 }
+
+#[test]
+fn scaled_text_settles_ties_as_sprites_do() {
+    // TEST50: a user character's texels at TSCALE 1.5 and 0.5, on an 8-pixel
+    // cell: the frame's left and bottom at 1.5, the higher texel at 0.5.
+    let texels = |scale: &str, along: (u32, u32), step: (u32, u32), n: u32| -> Vec<u32> {
+        let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+        m.boot();
+        m.set_slot(
+            0,
+            format!(
+                "GTARGET 3:FOR Y=0 TO 7:FOR X=0 TO 7:GPSET X,Y,RGB(X*7+8,Y*7+8,100):NEXT:NEXT\n\
+                 GTARGET 0:TSCREEN 0,8,8:TPAGE 0,3,0,0:TOFS 0,40,40:TSCALE 0,{scale}\n\
+                 LOCATE 0,0,0:TPRINT 0,CHR$(&HE800);"
+            ),
+        );
+        m.run_slot(0);
+        for _ in 0..100 {
+            m.frame();
+            if !m.is_running() {
+                break;
+            }
+        }
+        let fb = m.rt.render();
+        (0..n)
+            .map(|i| {
+                let p = fb.get(along.0 + i * step.0, along.1 + i * step.1).unwrap();
+                let v = if step.0 > 0 {
+                    p >> 16 & 255
+                } else {
+                    p >> 8 & 255
+                };
+                (v - 8) / 7
+            })
+            .collect()
+    };
+    assert_eq!(
+        texels("1.5,1.5", (40, 44), (1, 0), 7),
+        [0, 0, 1, 2, 2, 3, 4]
+    );
+    assert_eq!(
+        texels("1.5,1.5", (44, 40), (0, 1), 7),
+        [0, 1, 1, 2, 3, 3, 4]
+    );
+    assert_eq!(texels("0.5,0.5", (40, 42), (1, 0), 4), [1, 3, 5, 7]);
+    assert_eq!(texels("0.5,0.5", (42, 40), (0, 1), 4), [1, 3, 5, 7]);
+}

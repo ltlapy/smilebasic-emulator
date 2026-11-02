@@ -415,3 +415,73 @@ fn spdef_from_an_array_wraps_coordinates() {
          SPDEF 30 OUT U,V:?U;\",\";V");
     assert_eq!(out, "-2147483648,-2147483647");
 }
+
+/// The columns (along a row) or rows (along a column) of a page of unique
+/// colors that a program's sprite shows, past the first `skip` pixels.
+fn texels(setup: &str, along: (u32, u32), step: (u32, u32), n: u32) -> Vec<Option<u32>> {
+    let source = format!(
+        "GTARGET 3:FOR Y=0 TO 32:FOR X=0 TO 32:GPSET X,Y,RGB(X*7+8,Y*7+8,100):NEXT:NEXT\n\
+         GTARGET 0\n{setup}"
+    );
+    let (mut m, _) = run(&source);
+    let fb = m.rt.render();
+    (0..n)
+        .map(|i| {
+            let p = fb.get(along.0 + i * step.0, along.1 + i * step.1)?;
+            let (x, y) = ((p >> 16 & 255) as i32 - 8, (p >> 8 & 255) as i32 - 8);
+            if p & 255 != 100 {
+                return None;
+            }
+            Some(if step.0 > 0 { x / 7 } else { y / 7 } as u32)
+        })
+        .collect()
+}
+
+fn shown(list: &[u32]) -> Vec<Option<u32>> {
+    list.iter().map(|&v| Some(v)).collect()
+}
+
+#[test]
+fn scaled_sprites_settle_ties_by_size_and_scale() {
+    // TEST50: 16 wide at 1.5 takes the frame's left and bottom on a tie...
+    let sp = "SPSET 0,0,0,16,16:SPPAGE 0,3:SPOFS 0,40,40:SPSCALE 0,1.5,1.5";
+    assert_eq!(
+        texels(sp, (40, 44), (1, 0), 7),
+        shown(&[0, 0, 1, 2, 2, 3, 4])
+    );
+    assert_eq!(
+        texels(sp, (44, 40), (0, 1), 7),
+        shown(&[0, 1, 1, 2, 3, 3, 4])
+    );
+    // ...at 0.5 the higher texel each way...
+    let sp = "SPSET 0,0,0,16,16:SPPAGE 0,3:SPOFS 0,40,40:SPSCALE 0,0.5,0.5";
+    assert_eq!(texels(sp, (40, 44), (1, 0), 4), shown(&[1, 3, 5, 7]));
+    assert_eq!(texels(sp, (44, 40), (0, 1), 4), shown(&[1, 3, 5, 7]));
+    // ...and 15 wide the lower each way.
+    let sp = "SPSET 0,0,0,15,15:SPPAGE 0,3:SPOFS 0,40,40:SPSCALE 0,1.5,1.5";
+    assert_eq!(texels(sp, (44, 40), (0, 1), 4), shown(&[0, 0, 1, 2]));
+    let sp = "SPSET 0,0,0,15,15:SPPAGE 0,3:SPOFS 0,40,40:SPSCALE 0,0.5,0.5";
+    assert_eq!(texels(sp, (40, 44), (1, 0), 4), shown(&[0, 2, 4, 6]));
+}
+
+#[test]
+fn half_pixel_sprites_cover_by_left_and_bottom_edges() {
+    let sp = "SPSET 0,0,0,16,16:SPPAGE 0,3:SPOFS 0,40.5,40.5";
+    let mut across = vec![None];
+    across.extend((0..16).map(Some));
+    across.push(None);
+    // From the pixel the left edge runs through to the last before the
+    // right edge's; the last texel shows twice nowhere.
+    assert_eq!(
+        texels(sp, (39, 44), (1, 0), 17)[1..],
+        shown(&(0..16).collect::<Vec<_>>())
+    );
+    // Not the pixel the top edge runs through, but the bottom edge's.
+    let down = texels(sp, (44, 40), (0, 1), 18);
+    assert_eq!(down[0], None);
+    assert_eq!(
+        down[1..=16],
+        shown(&(1..16).chain([15]).collect::<Vec<_>>())
+    );
+    assert_eq!(down[17], None);
+}

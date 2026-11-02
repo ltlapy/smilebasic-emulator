@@ -333,8 +333,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   judged by eye only, about twice a second (TEST50).
 - Characters typed at `INPUT` and then deleted leave their cells empty:
   whatever the console showed there before does not come back (TEST50).
-- The text drawing (colour times 1 minus the glyph's alpha,
-  per cell) is not what draws `INPUT`'s cursor. What sets its flag is
+- The text drawing's per-cell inverting flag (colour times 1 minus the
+  glyph's alpha) is not what draws `INPUT`'s cursor. What sets it is
   still unknown.
 
 ## Sprites
@@ -565,9 +565,24 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   blurred by a Gaussian of about amount/25 half-size pixels, and scaled
   back without smoothing. Amounts 1 to 4 look the same; amount 0 leaves
   the layer sharp.
-- Scaled sprites are drawn without smoothing. Where a pixel's sample
-  point falls exactly on a column boundary, it takes the column to the
-  left (at 1.5, columns are 2, 1, 2, 1... pixels wide); rows do not.
+- Scaled and turned sprites and text are drawn without smoothing, at the
+  centres of the frame's pixels; at `XSCREEN`'s sample 2, of the fine
+  pixels. A pixel whose centre is exactly on the image's edge is drawn if
+  that is the left or the bottom edge on the screen, however the image is
+  turned (`SPOFS 0,0.5,0.5` draws from the first column, and from the
+  second row to one row past the image's height).
+- A pixel's sample point exactly between two texels shows the GPU's
+  arithmetic, seen in TEST50 under an emulator on a PC's GPU: one quad's
+  two triangles can differ along their shared diagonal. Mostly: with
+  power-of-two sides at a scale of 1.5 or 2.5, the left and lower of the
+  two on the screen (at 1.5, columns are 2, 1, 2, 1... pixels wide and
+  rows 1, 2, 1, 2...); at a power-of-two scale, the higher texel; with
+  other sides, the texel lower on the page. Text does as a sprite of the
+  same size does.
+- `LCLIP` at `XSCREEN`'s sample 2 takes whole fine pixels: frame pixels
+  `2*x0` to `2*x1+1`.
+- At equal Z text screens are behind sprites, and among either the higher
+  number is behind, `#GSPRITE` among the sprites as 4095 (TEST50).
 
 ## Signal processing
 

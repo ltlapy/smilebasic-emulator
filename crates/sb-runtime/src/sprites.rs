@@ -595,9 +595,6 @@ impl Sprites {
     }
 }
 
-/// How far left of a column boundary a sprite's sample point is taken.
-const TIE: f64 = 1e-9;
-
 /// The page pixel a sprite shows at `(x, y)` of its own rectangle (before
 /// rotation and flipping). GRP-1 is white everywhere; off a page is
 /// transparent.
@@ -690,13 +687,18 @@ pub fn draw_posed(
             },
         );
     }
+    let tie = match place.is_aligned() {
+        true => (0.0, 0.0),
+        false => place.texel_tie((bw, bh), source.reversed()),
+    };
     if place.is_upright() {
-        return draw_upright(&source, &tint, fb, &place, (bw, bh), grp);
+        return draw_upright(&source, &tint, fb, &place, (bw, bh), tie, grp);
     }
     struct Turned<'a, 'b> {
         fb: &'a mut Framebuffer,
         place: &'a Placement<'b>,
         size: (i32, i32),
+        tie: (f64, f64),
         source: &'a Source<'a>,
     }
     impl TintJob for Turned<'_, '_> {
@@ -704,14 +706,17 @@ pub fn draw_posed(
         fn run<P: Paint>(self, paint: impl Fn(u32) -> P + Copy) {
             let (bw, bh) = self.size;
             let source = self.source;
+            let (tx, ty) = self.tie;
+            // At most angles nothing ties, and this is for each pixel.
+            if (tx, ty) == (0.0, 0.0) {
+                return draw_image(self.fb, self.place, bw, bh, |x, y| {
+                    let (x, y) = source.page_xy(x as i32, y as i32);
+                    let p = source.pixel(x, y);
+                    (p >> 24 != 0).then(|| paint(p))
+                });
+            }
             draw_image(self.fb, self.place, bw, bh, |x, y| {
-                // A point exactly on a column boundary takes the column to
-                // its left, while rows take the one below as usual: at a
-                // scale of 1.5, the second pixel across shows the first
-                // column (checked on hardware with lossless screenshots at
-                // 1.5 and 2.5).
-                let (lx, ly) = ((x - TIE).max(0.0) as i32, y as i32);
-                let (x, y) = source.page_xy(lx, ly);
+                let (x, y) = source.page_xy(texel(x + tx, bw), texel(y + ty, bh));
                 let p = source.pixel(x, y);
                 (p >> 24 != 0).then(|| paint(p))
             });
@@ -723,9 +728,17 @@ pub fn draw_posed(
             fb,
             place: &place,
             size: (bw, bh),
+            tie,
             source: &source,
         },
     );
+}
+
+/// The texel of an image `size` long that a point lies in. A point moved
+/// to settle a tie can land just off the image.
+#[inline]
+fn texel(v: f64, size: i32) -> i32 {
+    (v as i32).min(size - 1)
 }
 
 /// Where a sprite's pixels come from.
@@ -785,6 +798,15 @@ impl Source<'_> {
         (self.u + ix, self.v + iy)
     }
 
+    /// Whether the page's coordinates go down along the shown rectangle's
+    /// x and y.
+    fn reversed(&self) -> (bool, bool) {
+        let (x, y) = self.page_xy(0, 0);
+        let (x1, y1) = self.page_xy(1, 0);
+        let (x2, y2) = self.page_xy(0, 1);
+        (x1 + y1 < x + y, x2 + y2 < x + y)
+    }
+
     /// A page coordinate as it is read: wrapped around when the page
     /// repeats, or `None` off the page.
     #[inline]
@@ -822,6 +844,7 @@ fn draw_upright(
     fb: &mut Framebuffer,
     place: &Placement,
     (bw, bh): (i32, i32),
+    (tx, ty): (f64, f64),
     grp: &Graphics,
 ) {
     let Some(grid) = compose::grid(fb, place, bw, bh) else {
@@ -834,7 +857,7 @@ fn draw_upright(
     let turned = (source.attr & attr::ROTATION) % 2 == 1;
     let cols: Vec<usize> = (grid.xs.iter())
         .map(|&x| {
-            let (px, py) = source.page_xy((x - TIE).max(0.0) as i32, 0);
+            let (px, py) = source.page_xy(texel(x + tx, bw), 0);
             match turned {
                 false => at(px, 1),
                 true => at(py, stride),
@@ -842,7 +865,7 @@ fn draw_upright(
         })
         .collect();
     let rows = grid.ys.iter().map(|&y| {
-        let (px, py) = source.page_xy(0, y as i32);
+        let (px, py) = source.page_xy(0, texel(y + ty, bh));
         match turned {
             false => at(py, stride),
             true => at(px, 1),

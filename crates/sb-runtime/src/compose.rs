@@ -451,7 +451,8 @@ pub struct Placement<'a> {
 /// Draws a `w` x `h` image whose pixels `sample` gives, placed by
 /// `place`, `None` where it is clear. `sample` gets the image point under
 /// each frame pixel's center, which falls between whole pixels when the
-/// frame is finer than the image.
+/// frame is finer than the image. The point is [`Placement::sampling`]'s;
+/// add [`Placement::texel_tie`] before reading a texel with it.
 pub fn draw_image<P: Paint>(
     fb: &mut Framebuffer,
     place: &Placement,
@@ -475,7 +476,7 @@ pub fn draw_image_part<P: Paint>(
     part: (i32, i32, i32, i32),
     sample: impl Fn(f64, f64) -> Option<P>,
 ) {
-    let Some(inv) = place.matrix.inverse() else {
+    let Some(inv) = place.sampling() else {
         return;
     };
     let Some((x0, y0, x1, y1)) = span(fb, place, w, h, part) else {
@@ -580,10 +581,93 @@ pub struct Grid {
     pub ys: Vec<f64>,
 }
 
+/// How far a frame pixel's center is moved to settle whether it lies on
+/// the image when it is exactly on an edge: to the right, and then, far
+/// less so that it decides only what the first leaves open, up. An edge
+/// through the center thus takes the pixel if it is the image's left or
+/// bottom edge. Well above what rounding does to a point of the frame.
+const COVER_NUDGE: (f64, f64) = (1e-8, -1e-10);
+/// How far an image point is moved, along the image, to settle which
+/// texel it reads when it is exactly between two.
+const TIE: f64 = 1e-9;
+
+/// Whether a length, up to rounding, is 2 to a whole power.
+fn is_power_of_two(v: f64) -> bool {
+    const FRACTION: u64 = (1 << 52) - 1;
+    const ROUNDING: u64 = 1 << 16;
+    let bits = v.to_bits() & FRACTION;
+    !(ROUNDING..=FRACTION - ROUNDING).contains(&bits)
+}
+
 impl Placement<'_> {
     /// Whether [`grid`] can stand for the placement.
     pub fn is_upright(&self) -> bool {
         self.matrix.b == 0.0 && self.matrix.c == 0.0
+    }
+
+    /// Whether the placement puts the image's pixels on the frame's, so
+    /// that sampling one to one nothing can tie.
+    pub fn is_aligned(&self) -> bool {
+        let m = &self.matrix;
+        (m.a, m.b, m.c, m.d) == (1.0, 0.0, 0.0, 1.0) && m.tx.fract() == 0.0 && m.ty.fract() == 0.0
+    }
+
+    /// From the frame to the image, for what lies under a frame pixel's
+    /// center moved by [`COVER_NUDGE`].
+    fn sampling(&self) -> Option<Affine> {
+        let mut inv = self.matrix.inverse()?;
+        let (nx, ny) = COVER_NUDGE;
+        inv.tx += inv.a * nx + inv.b * ny;
+        inv.ty += inv.c * nx + inv.d * ny;
+        Some(inv)
+    }
+
+    /// What to add to an image point from [`Placement::sampling`] to get
+    /// the point whose whole part is the texel it reads, for an image of
+    /// `size`. `reversed` says along which of the image's axes the page's
+    /// coordinates go down. Exactly zero where nothing can tie, so that
+    /// callers may leave out the adding.
+    // UNVERIFIED: the usual outcome of ties, from sizes 8, 15, 16 and 32
+    // with both sides alike, on a PC's GPU; see renderer-design.md.
+    pub fn texel_tie(&self, size: (i32, i32), reversed: (bool, bool)) -> (f64, f64) {
+        let m = &self.matrix;
+        let (nx, ny) = COVER_NUDGE;
+        let Some(inv) = m.inverse() else {
+            return (0.0, 0.0);
+        };
+        let moved = (inv.a * nx + inv.b * ny, inv.c * nx + inv.d * ny);
+        let along = |tie: (f64, f64)| (tie.0 - moved.0, tie.1 - moved.1);
+        let (sx, sy) = (m.a.abs() + m.c.abs(), m.b.abs() + m.d.abs());
+        let none_of = |p: f64, q: f64| p.abs() <= 1e-9 * q.abs();
+        let right_angle =
+            (none_of(m.a, m.c) && none_of(m.d, m.b)) || (none_of(m.c, m.a) && none_of(m.b, m.d));
+        if !right_angle {
+            // Only at multiples of 45 degrees can a center land exactly
+            // between texels at all.
+            let even = |p: f64, q: f64| (p.abs() - q.abs()).abs() <= 1e-9 * (p.abs() + q.abs());
+            return match even(m.a, m.c) || even(m.b, m.d) {
+                true => along((TIE, -TIE)),
+                false => (0.0, 0.0),
+            };
+        }
+        // Towards the frame's left and bottom, along the image.
+        let frame = (
+            (inv.b - inv.a).signum() * TIE,
+            (inv.d - inv.c).signum() * TIE,
+        );
+        let axis = |size: i32, scale: f64, reversed: bool, frame: f64| match (
+            size.unsigned_abs().is_power_of_two(),
+            is_power_of_two(scale),
+        ) {
+            (false, _) if reversed => TIE,
+            (false, _) => -TIE,
+            (true, true) => TIE,
+            (true, false) => frame,
+        };
+        along((
+            axis(size.0, sx, reversed.0, frame.0),
+            axis(size.1, sy, reversed.1, frame.1),
+        ))
     }
 }
 
@@ -591,7 +675,7 @@ impl Placement<'_> {
 /// nothing.
 pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid> {
     debug_assert!(place.is_upright());
-    let inv = place.matrix.inverse()?;
+    let inv = place.sampling()?;
     let (x0, y0, x1, y1) = span(fb, place, w, h, (0, 0, w, h))?;
     let (w, h) = (f64::from(w), f64::from(h));
     // With b and c zero, x depends on the column alone and y on the row
@@ -1438,6 +1522,77 @@ mod tests {
         draw_image(&mut fb, &place, 8, 1, |_, _| Some(Over1::new(0xFFFF_FFFF)));
         let row: Vec<u32> = (0..5).map(|x| fb.get(x, 0).unwrap()).collect();
         assert_eq!(row, [0xFF00_0000, 0xFF00_0000, !0, !0, 0xFF00_0000]);
+    }
+
+    #[test]
+    fn ties_settle_along_the_image_or_the_frame() {
+        let tie = |rot, scale, size, reversed| {
+            let place = Placement {
+                matrix: Affine::place((100.5, 50.5), (0.0, 0.0), rot, (scale, scale)),
+                clip: None,
+                add: false,
+            };
+            let (x, y) = place.texel_tie((size, size), reversed);
+            // What matters is the sign of what the point ends up moved by
+            // from where it was before covering was settled.
+            let inv = place.matrix.inverse().unwrap();
+            let (nx, ny) = COVER_NUDGE;
+            let (mx, my) = (inv.a * nx + inv.b * ny, inv.c * nx + inv.d * ny);
+            ((x + mx).signum() as i32, (y + my).signum() as i32)
+        };
+        let none = (false, false);
+        // A size that halves evenly at a scale that does: plain floor.
+        assert_eq!(tie(0.0, 0.5, 16, none), (1, 1));
+        assert_eq!(tie(90.0, 1.0, 32, none), (1, 1));
+        // At other scales: towards the frame's left and bottom.
+        assert_eq!(tie(0.0, 1.5, 16, none), (-1, 1));
+        assert_eq!(tie(180.0, 2.5, 16, none), (1, -1));
+        assert_eq!(tie(90.0, 1.5, 16, none), (1, 1));
+        assert_eq!(tie(270.0, 2.5, 16, none), (-1, -1));
+        // Other sizes: towards the page's lower coordinates.
+        assert_eq!(tie(0.0, 1.5, 15, none), (-1, -1));
+        assert_eq!(tie(0.0, 1.0, 15, (true, false)), (1, -1));
+        // Neither upright nor at a quarter turn.
+        assert_eq!(tie(45.0, 1.0, 15, none), (1, -1));
+    }
+
+    #[test]
+    fn a_point_on_an_edge_goes_with_the_left_and_bottom() {
+        let mut fb = Framebuffer::new(8, 8);
+        fb.clear(0xFF00_0000);
+        let place = Placement {
+            matrix: Affine::place((1.5, 1.5), (0.0, 0.0), 0.0, (1.0, 1.0)),
+            clip: None,
+            add: false,
+        };
+        draw_image(&mut fb, &place, 2, 2, |_, _| Some(Over1::new(!0)));
+        let drawn = |x, y| fb.get(x, y) == Some(!0);
+        // The image runs from 1.5 to 3.5 both ways; pixel centers are on
+        // those.
+        assert!(!drawn(1, 1), "top edge");
+        assert!(drawn(1, 2) && drawn(1, 3), "left and bottom edges");
+        assert!(!drawn(3, 2), "right edge");
+        assert!(drawn(2, 3));
+        assert!(!drawn(2, 4));
+    }
+
+    #[test]
+    fn a_turned_image_keeps_every_row() {
+        // Float noise in the matrix once lost a whole row here.
+        for (rot, rows) in [(90.0, 22 * 22), (180.0, 22 * 23), (270.0, 23 * 23)] {
+            let mut fb = Framebuffer::new(64, 64);
+            fb.clear(0xFF00_0000);
+            let place = Placement {
+                matrix: Affine::place((30.5, 30.5), (0.0, 0.0), rot, (1.5, 1.5)),
+                clip: None,
+                add: false,
+            };
+            draw_image(&mut fb, &place, 15, 15, |_, _| Some(Over1::new(!0)));
+            let n = (0..64 * 64)
+                .filter(|i| fb.get(i % 64, i / 64) == Some(!0))
+                .count();
+            assert_eq!(n, rows, "{rot}");
+        }
     }
 
     #[test]
