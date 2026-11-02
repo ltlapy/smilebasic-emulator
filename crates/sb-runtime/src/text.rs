@@ -362,7 +362,9 @@ impl TextScreen {
     // UNVERIFIED: that the cursor stays.
     pub fn scroll(&mut self, dx: i32, dy: i32) {
         let (w, h) = (self.width as i32, self.height as i32);
-        let moved = self.save((dx, dy, w, h));
+        // A whole screen's shift or more leaves nothing; held to that, the
+        // rectangle below cannot pass the largest coordinate.
+        let moved = self.save((dx.clamp(-w, w), dy.clamp(-h, h), w, h));
         self.load((0, 0, w, h), &moved);
     }
 
@@ -1018,14 +1020,20 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_past_the_largest_coordinate_finishes() {
-        let mut s = TextScreen::new(32, 24);
-        s.print(&text("ABCD"));
-        for (dx, dy) in [(0, i32::MAX), (i32::MAX, 0), (i32::MAX, i32::MAX)] {
+    fn scrolling_by_the_largest_shifts_clears() {
+        for (dx, dy) in [
+            (0, i32::MAX),
+            (i32::MAX, 0),
+            (i32::MAX, i32::MAX),
+            (0, i32::MIN),
+            (i32::MIN, 0),
+            (32, 0),
+            (0, 24),
+        ] {
+            let mut s = TextScreen::new(32, 24);
+            s.print(&text("ABCD"));
             s.scroll(dx, dy);
-            assert_eq!(row(&s, 0), "ABCD");
+            assert_eq!(row(&s, 0), "", "{dx},{dy}");
         }
-        s.scroll(0, i32::MIN);
-        assert_eq!(row(&s, 0), "");
     }
 }
