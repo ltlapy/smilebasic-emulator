@@ -111,11 +111,22 @@ known.
   but memory a program lets go of is free again at once. SmileBASIC 4
   frees it later: emptying a string or an array, or leaving a DEF, does
   not raise `FREEMEM` there straight away.
+- `Out of memory` comes when what a program holds, counted as `FREEMEM`
+  counts it, and what it asks for do not fit in SmileBASIC 4's
+  134,216,720 bytes. Values a program has dropped never count, since it is
+  not known when SmileBASIC 4 frees them or whether they ever cause the
+  error there. Each interpreter has that much to itself, as `FREEMEM` shows.
+  Strings under 64 KiB are not looked at one by one: what they add up to is
+  refused at the next count, a little later than SmileBASIC 4 might.
+- `LOADV` into an array only needs the file's array to fit in place of the
+  old one, so that a file filling memory can replace another of its size,
+  as IRCAMERA's do. `PUSH` needs room for what it adds, not for a new block
+  beside the old. How SmileBASIC 4 behaves in either case has not been
+  checked. `LOAD` of a program takes nothing from this memory.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
 - `GSAVE` and `GLOAD` with a rectangle of more pixels than SmileBASIC
-  4's memory could hold give `Out of range` rather than running out of
-  memory.
+  4's memory could hold give `Out of range`, not `Out of memory`.
 - File commands ask, notify or stay silent as set in Settings, rather
   than always asking. A file command that fails in a program shows a
   notice, rather than a dialog to close, unless file access is silent.

@@ -772,6 +772,18 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   characters 2112. `GARRAY` and `TARRAY` take nothing. Memory let go of
   (emptying a string or array, a DEF's locals after it returns) does
   not come back at once. Both of its results are the same.
+- `Out of memory` comes from what fits in `FREEMEM`'s 134216720 bytes
+  (TEST51). `"A"*N` and `S$+S$` make 33,554,432 characters but not
+  67,108,864. `ARRAY#` makes 8,388,608 reals but not 16,777,216. Of five
+  `DIM X%[8000000]`, the fifth fails with 6.2 million bytes free. `RESIZE`
+  and `COPY` grow to 16.7 million integers but not 33.5 million.
+- Growing an array needs the new block beside the old: `INSERT` of
+  16,777,216 integers into 15,728,641 fails though the 130 MB it comes to
+  would fit alone, and `RESIZE` from 8 to 16 million, 100 MB together, works
+  (TEST51).
+- The message names the command for functions and commands
+  (`Out of memory in 0:68(ARRAY#)`, also `(RESIZE)`, `(INSERT)` and `(COPY)`)
+  but not for `*`, `+` or `DIM` (`Out of memory in 0:54`). Its number is 11.
 - `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
   string is `Can't use empty string`, a user-defined character `Can't
   use user-defined character`.

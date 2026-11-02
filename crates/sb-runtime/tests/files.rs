@@ -684,6 +684,58 @@ fn arrays_with_a_zero_in_any_size_stay_harmless() {
     }
 }
 
+/// A file's array that fills memory can replace another of its size: 9
+/// million reals twice would not fit side by side. IRCAMERA loads its files
+/// this way.
+#[test]
+fn loadv_replaces_an_array_that_fills_memory() {
+    let dir = TempDir::new("loadv-big");
+    let mut m = machine(&dir);
+    let workspace = dir.0.join("@WORKSPACE");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("BBIG"),
+        array_file(&[3, 3_000_000], 9_000_000),
+    )
+    .unwrap();
+    let program = [
+        "DIM A[3,3000000]",
+        "FOR I=1 TO 3:LOADV \"DAT:BIG\",A:?RESULT();\" \";LEN(A):VSYNC:NEXT",
+        // Beside another of its size it does not fit, which shows once the
+        // VM counts.
+        "DIM B[1,1]:LOADV \"DAT:BIG\",B:VSYNC:?\"NOT HERE\"",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    for _ in 0..5 {
+        m.frame();
+    }
+    let console = rows(&m);
+    assert_eq!(console.iter().filter(|r| *r == "1 9000000").count(), 3);
+    assert!(
+        console.iter().any(|r| r.starts_with("Out of memory")),
+        "{console:?}"
+    );
+    assert!(!console.iter().any(|r| r == "NOT HERE"), "{console:?}");
+
+    // A real array of an integer file twice over could never fit.
+    std::fs::write(
+        workspace.join("BINTS"),
+        array_file(&[17_000_000], 17_000_000),
+    )
+    .unwrap();
+    m.set_slot(0, "DIM A[1]:LOADV \"DAT:INTS\",A".to_string());
+    enter(&mut m, "run");
+    assert!(
+        tail(&m, 2)[0].starts_with("Out of memory"),
+        "{:?}",
+        tail(&m, 2)
+    );
+    m.set_slot(0, "DIM A%[1]:LOADV \"DAT:INTS\",A%:?LEN(A%)".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2)[0], "17000000");
+}
+
 #[test]
 fn a_file_too_large_to_read_fails_as_a_bad_file_does() {
     let dir = TempDir::new("huge");

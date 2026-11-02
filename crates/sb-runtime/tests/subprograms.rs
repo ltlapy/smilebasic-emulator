@@ -590,3 +590,14 @@ fn the_editor_hides_the_last_error_and_the_cursor_from_subprograms() {
     frames(&mut m, 12);
     assert_eq!(m.editor().text(), "4,0,0,0,0,0 0,0");
 }
+
+/// Each interpreter has all of memory to itself, as FREEMEM counts it.
+#[test]
+fn the_sub_interpreter_has_a_memory_budget_of_its_own() {
+    let dir = TempDir::new("budget");
+    let mut m = machine(&dir, "DIM A%[30000000]:WHILE 1:VSYNC:WEND\n");
+    enter(&mut m, "dim a%[30000000]");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 5);
+    assert!(m.sub_running(), "{:?}", rows(&m));
+}

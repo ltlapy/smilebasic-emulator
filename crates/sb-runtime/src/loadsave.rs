@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
+use sb_core::memory;
 use sb_core::value::{Array, ArrayData, ArrayRef, Value, new_str};
 
 use crate::confirm::FileAction;
@@ -92,6 +93,17 @@ fn image_array(image: Image) -> Array {
     }
 }
 
+/// What an array holds, its strings too.
+fn array_size(array: &Array) -> usize {
+    let strings = match &array.data {
+        ArrayData::Str(v) => (v.iter())
+            .map(|s| memory::string_bytes(s.borrow().len()))
+            .sum(),
+        _ => 0,
+    };
+    memory::array_bytes(array.elem_type(), array.len()).saturating_add(strings)
+}
+
 /// Fills `target` with `source`, taking its size: numbers convert between
 /// integer and real, but strings and numbers do not mix, and the number
 /// of dimensions must agree.
@@ -100,6 +112,16 @@ fn fill(target: &ArrayRef, source: Array) -> Result<()> {
     if target.dims.len() != source.dims.len() {
         let detail = format!("{}D file", source.dims.len());
         return Err(Error::with_detail(ErrorKind::TypeMismatch, detail));
+    }
+    // A file's array that fills memory has to be able to replace another of
+    // its size, as IRCAMERA's do, so only one that could never fit is refused
+    // here. Whether the program then holds more than there is, the next
+    // count says.
+    // UNVERIFIED: that the new array takes the old one's place rather than
+    // needing room beside it.
+    let bytes = memory::array_bytes(target.elem_type(), source.len());
+    if bytes > memory::TOTAL as usize {
+        return Err(Error::with_detail(ErrorKind::OutOfMemory, "LOADV"));
     }
     let data = match (&target.data, source.data) {
         (ArrayData::Str(_), data @ ArrayData::Str(_)) => data,
@@ -197,6 +219,10 @@ impl Runtime {
                 }
                 let outcome = self.load_value(&spec);
                 let value = self.finish("LOADV", outcome);
+                if let Some(Value::Str(s)) = &value {
+                    memory::take(memory::string_bytes(s.borrow().len()))
+                        .map_err(|e| Error::with_detail(e.kind, "LOADV"))?;
+                }
                 Ok(vec![value.unwrap_or_else(|| failed_value(&spec))])
             }
             (Command::Loadv, Want::Outs(0), [spec, target]) => {
@@ -337,11 +363,15 @@ impl Runtime {
             FileKind::Txt => Ok(Value::str(&program_text(&bytes)?)),
             FileKind::Dat => {
                 let (data, _) = sbfile::read_data(&bytes).map_err(bad_file)?;
-                Ok(array_value(data_array(data)))
+                let array = data_array(data);
+                memory::charge(array_size(&array));
+                Ok(array_value(array))
             }
-            FileKind::Grp => Ok(array_value(image_array(
-                image::decode(&bytes).map_err(bad_file)?,
-            ))),
+            FileKind::Grp => {
+                let array = image_array(image::decode(&bytes).map_err(bad_file)?);
+                memory::charge(array_size(&array));
+                Ok(array_value(array))
+            }
             FileKind::Jpg => Err(StorageError::BadKind(file.kind.name().to_string())),
         }
     }
