@@ -192,7 +192,10 @@ fn text(v: &Value) -> Result<Str> {
     }
 }
 
+/// A new string for a function to give; what it takes goes on the memory
+/// estimate.
 fn string(s: Str) -> Value {
+    crate::memory::charge(crate::memory::string_bytes(s.len()));
     Value::Str(new_str(s))
 }
 
@@ -461,6 +464,8 @@ fn subst(args: &[Value]) -> Result<Value> {
         _ => unreachable!("arity checked by the caller"),
     };
     let end = start.saturating_add(count).min(s.len());
+    let chars = s.len() - (end - start) + replacement.len();
+    crate::memory::request(crate::memory::string_bytes(chars))?;
     let mut out = s[..start].to_vec();
     out.extend_from_slice(&replacement);
     out.extend_from_slice(&s[end..]);
@@ -797,11 +802,8 @@ fn hsv_out(args: &[Value], outs: usize, unit: bool) -> Result<Vec<Value>> {
 
 fn new_array(args: &[Value], elem: ElemType) -> Result<Value> {
     let dims = args.iter().map(index_arg).collect::<Result<Vec<_>>>()?;
-    let total = dims.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d));
-    // UNVERIFIED: the cap stands in for "out of memory".
-    if total.is_none_or(|t| t > i32::MAX as usize) {
-        return Err(ErrorKind::OutOfRange.into());
-    }
+    let total = dims.iter().fold(1usize, |acc, &d| acc.saturating_mul(d));
+    crate::memory::request(crate::memory::array_bytes(elem, total))?;
     Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(
         Array::new(elem, dims),
     ))))
@@ -838,11 +840,31 @@ fn check_1d(a: &Array) -> Result<()> {
     Ok(())
 }
 
+/// Before an element goes into `v`, when that takes a larger block. The
+/// element itself is looked at when the VM next counts memory.
+// UNVERIFIED: that PUSH needs no room for a new block beside the old, as
+// RESIZE does.
+#[inline]
+fn room_for_one<T>(v: &Vec<T>, elem: ElemType) -> Result<()> {
+    if v.len() == v.capacity() {
+        return take_room(elem, v.len() + 1);
+    }
+    Ok(())
+}
+
+#[cold]
+fn take_room(elem: ElemType, len: usize) -> Result<()> {
+    crate::memory::take(crate::memory::array_bytes(elem, len))
+}
+
 fn put(target: &Value, value: Value, end: End) -> Result<()> {
     match target {
         Value::Str(s) => {
             let piece = text(&value)?;
             let mut s = s.borrow_mut();
+            if s.len() + piece.len() > s.capacity() {
+                crate::memory::take(crate::memory::string_bytes(s.len() + piece.len()))?;
+            }
             match end {
                 End::Back => s.extend_from_slice(&piece),
                 End::Front => {
@@ -858,12 +880,20 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
                 End::Front => 0,
             };
             match &mut a.data {
-                ArrayData::Int(v) => v.insert(at, value.to_int()?),
-                ArrayData::Real(v) => v.insert(at, value.to_real()?),
-                ArrayData::Str(v) => v.insert(at, value.into_str()?),
+                ArrayData::Int(v) => {
+                    room_for_one(v, ElemType::Int)?;
+                    v.insert(at, value.to_int()?);
+                }
+                ArrayData::Real(v) => {
+                    room_for_one(v, ElemType::Real)?;
+                    v.insert(at, value.to_real()?);
+                }
+                ArrayData::Str(v) => {
+                    room_for_one(v, ElemType::Str)?;
+                    v.insert(at, value.into_str()?);
+                }
             }
-            let len = a.len();
-            a.dims = vec![len];
+            a.dims[0] = a.len();
         }
         _ => return Err(ErrorKind::TypeMismatch.into()),
     }
@@ -895,8 +925,7 @@ fn take(target: &Value, end: End) -> Result<Value> {
                 ArrayData::Real(v) => Value::Real(v.remove(at)),
                 ArrayData::Str(v) => Value::Str(v.remove(at)),
             };
-            let len = a.len();
-            a.dims = vec![len];
+            a.dims[0] = a.len();
             Ok(value)
         }
         _ => Err(ErrorKind::TypeMismatch.into()),

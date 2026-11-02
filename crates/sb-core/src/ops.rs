@@ -8,7 +8,8 @@ use std::cmp::Ordering;
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::error::{ErrorKind, Result};
-use crate::value::{Value, new_str};
+use crate::memory;
+use crate::value::{StrRef, Value, new_str};
 
 fn bool_value(b: bool) -> Value {
     Value::Int(i32::from(b))
@@ -54,14 +55,32 @@ fn compare_with(lhs: &Value, rhs: &Value, accept: fn(Ordering) -> bool) -> Resul
     Ok(bool_value(compare(lhs, rhs)?.is_some_and(accept)))
 }
 
+/// `a+b` for strings; out of line, for arithmetic to stay as short as it is.
+#[inline(never)]
+fn joined(a: &StrRef, b: &StrRef) -> Result<Value> {
+    let (a, b) = (a.borrow(), b.borrow());
+    let chars = a.len() + b.len();
+    memory::request(memory::string_bytes(chars))?;
+    let mut s = Vec::with_capacity(chars);
+    s.extend_from_slice(&a);
+    s.extend_from_slice(&b);
+    Ok(Value::Str(new_str(s)))
+}
+
+/// `s*count`.
+#[inline(never)]
+fn repeated(s: &StrRef, count: usize) -> Result<Value> {
+    let s = s.borrow();
+    memory::request(memory::string_bytes(s.len().saturating_mul(count)))?;
+    Ok(Value::Str(new_str(s.repeat(count))))
+}
+
 pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
     use BinaryOp as B;
     match op {
         B::Add => {
             if let (Value::Str(a), Value::Str(b)) = (lhs, rhs) {
-                let mut s = a.borrow().clone();
-                s.extend_from_slice(&b.borrow());
-                return Ok(Value::Str(new_str(s)));
+                return joined(a, b);
             }
             arith(lhs, rhs, i32::checked_add, |a, b| a + b)
         }
@@ -70,7 +89,7 @@ pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
             if let Value::Str(s) = lhs {
                 // A negative count overflows (checked on hardware).
                 let count = usize::try_from(rhs.to_int()?).map_err(|_| ErrorKind::Overflow)?;
-                return Ok(Value::Str(new_str(s.borrow().repeat(count))));
+                return repeated(s, count);
             }
             arith(lhs, rhs, i32::checked_mul, |a, b| a * b)
         }

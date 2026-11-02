@@ -13,8 +13,9 @@ use crate::bytecode::*;
 use crate::error::{Error, ErrorKind, Result};
 use crate::host::{Exec, Host};
 use crate::lexer::Suffix;
+use crate::memory;
 use crate::ops;
-use crate::value::{Array, ArrayData, Str, Value, format_number, new_str};
+use crate::value::{Array, ArrayData, ElemType, Str, Value, format_number, new_str};
 use crate::watch::Watch;
 
 /// UNVERIFIED: SmileBASIC's own nesting limits are not documented.
@@ -196,6 +197,11 @@ struct ExecReturn {
 }
 
 pub struct Vm {
+    /// This interpreter's share of [`memory`]'s estimate between slices.
+    memory: memory::Estimate,
+    /// `executed` when memory was last counted for an instruction to run
+    /// again; it asking twice means there is no room after all.
+    memory_checked: Option<u64>,
     program: Rc<Compiled>,
     pc: usize,
     stack: Vec<Value>,
@@ -415,6 +421,8 @@ impl Vm {
             })
             .collect();
         Vm {
+            memory: memory::Estimate::default(),
+            memory_checked: None,
             program: Rc::new(program),
             pc: 0,
             stack: Vec::new(),
@@ -927,7 +935,10 @@ impl Vm {
 
     /// Executes up to `budget` instructions.
     pub fn run(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
-        let status = self.run_code(host, budget)?;
+        memory::enter(self.memory);
+        let status = self.run_counted(host, budget);
+        self.memory = memory::leave();
+        let status = status?;
         // Where it stopped, or an instruction to be run again.
         if matches!(
             status,
@@ -940,6 +951,122 @@ impl Vm {
             self.pass_here();
         }
         Ok(status)
+    }
+
+    /// [`Vm::run_code`], after counting memory if enough has been made
+    /// since the last time. That is where what small requests add up to is
+    /// refused.
+    fn run_counted(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
+        if memory::count_due() {
+            self.count_for_slice(host)?;
+        }
+        self.run_code(host, budget)
+    }
+
+    #[cold]
+    fn count_for_slice(&mut self, host: &dyn Host) -> Result<()> {
+        if self.ended {
+            return Ok(());
+        }
+        let tally = self.count_memory(host);
+        memory::counted(&tally, false);
+        if tally.bytes > memory::TOTAL as usize {
+            let pc = self.pc;
+            return Err(self.fail(pc, ErrorKind::OutOfMemory.into()));
+        }
+        Ok(())
+    }
+
+    /// An error from instruction `pc`. Ends the program with it, unless
+    /// the instruction only asked for memory to be counted: then it runs
+    /// again, unless it has just done so.
+    #[cold]
+    fn failed(&mut self, pc: usize, e: Error, host: &dyn Host) -> Option<Error> {
+        if e.kind != ErrorKind::MemoryCheck {
+            return Some(self.fail(pc, e));
+        }
+        if self.memory_checked == Some(self.executed) {
+            return Some(self.fail(pc, ErrorKind::OutOfMemory.into()));
+        }
+        self.memory_checked = Some(self.executed);
+        let tally = self.count_memory(host);
+        memory::counted(&tally, true);
+        None
+    }
+
+    /// Puts back what an instruction took off the stack, if it is to run
+    /// again.
+    #[cold]
+    fn run_again(&mut self, e: Error, taken: Vec<Value>) -> Error {
+        if e.kind == ErrorKind::MemoryCheck {
+            self.stack.extend(taken);
+        }
+        e
+    }
+
+    /// The next string of a chain of `+`, added to the one made so far.
+    #[inline(never)]
+    fn append(&mut self) -> Result<()> {
+        let rhs = self.pop();
+        let lhs = self
+            .stack
+            .last_mut()
+            .expect("compiler keeps the stack balanced");
+        match (&*lhs, &rhs) {
+            (Value::Str(l), Value::Str(r)) => {
+                let added = r.borrow().clone();
+                let mut l = l.borrow_mut();
+                memory::take(memory::string_bytes(l.len() + added.len()))?;
+                l.extend_from_slice(&added);
+            }
+            _ => match ops::binary(BinaryOp::Add, lhs, &rhs) {
+                Ok(v) => *lhs = v,
+                Err(e) => return Err(self.run_again_with(e, rhs)),
+            },
+        }
+        Ok(())
+    }
+
+    /// DIM's array of the `dims` sizes on the stack.
+    #[inline(never)]
+    fn new_array(&mut self, elem: ElemType, dims: usize) -> Result<()> {
+        let sizes = self.pop_n(dims);
+        let dims = sizes
+            .iter()
+            .map(|d| usize::try_from(d.to_int()?).map_err(|_| ErrorKind::OutOfRange.into()))
+            .collect::<Result<Vec<_>>>()?;
+        // Only a one-dimensional array may be empty: DIM R#[0,0] is
+        // Subscript out of range (checked on hardware).
+        // UNVERIFIED: that one zero among other sizes is, too.
+        if dims.len() > 1 && dims.contains(&0) {
+            return Err(ErrorKind::SubscriptOutOfRange.into());
+        }
+        let len = dims.iter().fold(1usize, |all, &d| all.saturating_mul(d));
+        if let Err(e) = memory::request(memory::array_bytes(elem, len)) {
+            return Err(self.run_again(e, sizes));
+        }
+        self.stack
+            .push(Value::Array(Rc::new(Array::new(elem, dims).into())));
+        Ok(())
+    }
+
+    /// [`Vm::run_again`] for CALL, with the name it took too.
+    #[cold]
+    fn run_call_again(&mut self, e: Error, name: Value, args: Vec<Value>) -> Error {
+        if e.kind == ErrorKind::MemoryCheck {
+            self.stack.push(name);
+            self.stack.extend(args);
+        }
+        e
+    }
+
+    /// [`Vm::run_again`] with the one value a binary operator took.
+    #[cold]
+    fn run_again_with(&mut self, e: Error, taken: Value) -> Error {
+        if e.kind == ErrorKind::MemoryCheck {
+            self.stack.push(taken);
+        }
+        e
     }
 
     fn run_code(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
@@ -993,10 +1120,13 @@ impl Vm {
                             .stack
                             .last_mut()
                             .expect("compiler keeps the stack balanced");
-                        ops::binary(*op, lhs, &rhs).map(|v| {
-                            *lhs = v;
-                            true
-                        })
+                        match ops::binary(*op, lhs, &rhs) {
+                            Ok(v) => {
+                                *lhs = v;
+                                Ok(true)
+                            }
+                            Err(e) => Err(self.run_again_with(e, rhs)),
+                        }
                     }
                     Op::Jump(a) => {
                         next = *a as usize;
@@ -1018,7 +1148,10 @@ impl Vm {
                         continue;
                     }
                     Ok(false) => {}
-                    Err(e) => return Err(self.fail(pc, e)),
+                    Err(e) => match self.failed(pc, e, host) {
+                        Some(e) => return Err(e),
+                        None => continue,
+                    },
                 }
             }
             if let Some((at, line)) = self.break_pending {
@@ -1084,7 +1217,13 @@ impl Vm {
                     }
                     return Ok(status);
                 }
-                Err(e) => return Err(self.fail(pc, e)),
+                Err(e) => {
+                    self.executed -= 1;
+                    if let Some(e) = self.failed(pc, e, host) {
+                        self.executed += 1;
+                        return Err(e);
+                    }
+                }
             }
         }
         Ok(Status::Running)
@@ -1216,7 +1355,13 @@ impl Vm {
     /// FREEMEM: the memory left after every value the program can reach,
     /// in every slot.
     fn free_memory(&self, host: &dyn Host) -> i32 {
-        let mut tally = crate::memory::Tally::default();
+        let tally = self.count_memory(host);
+        memory::counted(&tally, false);
+        tally.free()
+    }
+
+    fn count_memory(&self, host: &dyn Host) -> memory::Tally {
+        let mut tally = memory::Tally::default();
         for array in host.own_arrays() {
             tally.skip(&array);
         }
@@ -1234,7 +1379,7 @@ impl Vm {
         {
             tally.add(v);
         }
-        tally.free()
+        tally
     }
 
     /// CHKCALL: whether CALL could call the name, as a DEF of this slot,
@@ -1542,9 +1687,11 @@ impl Vm {
         match op {
             Op::Int(n) => self.stack.push(Value::Int(*n)),
             Op::Real(x) => self.stack.push(Value::Real(*x)),
-            Op::Str(i) => self
-                .stack
-                .push(Value::Str(new_str(program.strings[*i as usize].clone()))),
+            Op::Str(i) => {
+                let s = program.strings[*i as usize].clone();
+                memory::charge(memory::string_bytes(s.len()));
+                self.stack.push(Value::Str(new_str(s)));
+            }
             Op::Default => self.stack.push(Value::Default),
             Op::Load(slot) => {
                 let v = self.load(*slot);
@@ -1576,31 +1723,10 @@ impl Vm {
                 let value = self.pop();
                 store_index(&base, &idx, value)?;
             }
-            Op::NewArray { elem, dims } => {
-                let dims = self.pop_n((*dims).into());
-                let dims = dims
-                    .iter()
-                    .map(|d| usize::try_from(d.to_int()?).map_err(|_| ErrorKind::OutOfRange.into()))
-                    .collect::<Result<Vec<_>>>()?;
-                // Only a one-dimensional array may be empty: DIM R#[0,0] is
-                // Subscript out of range (checked on hardware).
-                // UNVERIFIED: that one zero among other sizes is, too.
-                if dims.len() > 1 && dims.contains(&0) {
-                    return Err(ErrorKind::SubscriptOutOfRange.into());
-                }
-                // UNVERIFIED: the cap stands in for "out of memory".
-                if dims
-                    .iter()
-                    .try_fold(1usize, |a, &d| a.checked_mul(d))
-                    .is_none_or(|t| t > 1 << 28)
-                {
-                    return Err(ErrorKind::OutOfRange.into());
-                }
-                self.stack
-                    .push(Value::Array(Rc::new(Array::new(*elem, dims).into())));
-            }
+            Op::NewArray { elem, dims } => self.new_array(*elem, (*dims).into())?,
             Op::ArrayLit { elem, len } => {
                 let values = self.pop_n(*len as usize);
+                memory::take(memory::array_bytes(*elem, values.len()))?;
                 let mut array = Array::new(*elem, vec![values.len()]);
                 for (i, v) in values.into_iter().enumerate() {
                     array.set(i, v)?;
@@ -1632,22 +1758,12 @@ impl Vm {
                     .stack
                     .last_mut()
                     .expect("compiler keeps the stack balanced");
-                *lhs = ops::binary(*op, lhs, &rhs)?;
-            }
-            Op::Append => {
-                let rhs = self.pop();
-                let lhs = self
-                    .stack
-                    .last_mut()
-                    .expect("compiler keeps the stack balanced");
-                match (&*lhs, &rhs) {
-                    (Value::Str(l), Value::Str(r)) => {
-                        let added = r.borrow().clone();
-                        l.borrow_mut().extend_from_slice(&added);
-                    }
-                    _ => *lhs = ops::binary(BinaryOp::Add, lhs, &rhs)?,
+                match ops::binary(*op, lhs, &rhs) {
+                    Ok(v) => *lhs = v,
+                    Err(e) => return Err(self.run_again_with(e, rhs)),
                 }
             }
+            Op::Append => self.append()?,
             Op::Truthy => {
                 let b = self.pop().is_true()?;
                 self.stack.push(Value::Int(i32::from(b)));
@@ -1734,13 +1850,19 @@ impl Vm {
             }
             Op::CallBuiltin { id, argc, want } => {
                 let args = self.pop_n((*argc).into());
-                self.call_builtin(program, *id, &args, *want)?;
+                if let Err(e) = self.call_builtin(program, *id, &args, *want) {
+                    return Err(self.run_again(e, args));
+                }
             }
             Op::CallHost { id, argc, want } => {
                 let args = self.pop_n((*argc).into());
-                if !self.call_host(host, *id, &args, *want)? {
-                    self.stack.extend(args);
-                    return Ok(Some(RETRY));
+                match self.call_host(host, *id, &args, *want) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.stack.extend(args);
+                        return Ok(Some(RETRY));
+                    }
+                    Err(e) => return Err(self.run_again(e, args)),
                 }
             }
             Op::CallDyn { argc, want } => {
@@ -1781,16 +1903,24 @@ impl Vm {
                     }
                     self.stack.push(free);
                 } else if let Some(id) = builtins::lookup(&name, form(*want)) {
-                    self.call_builtin(program, id, &args, *want)?;
+                    if let Err(e) = self.call_builtin(program, id, &args, *want) {
+                        return Err(self.run_call_again(e, name_value, args));
+                    }
                 } else if *want == Want::Outs(1)
                     && let Some(id) = builtins::lookup(&name, Form::Function)
                 {
-                    self.call_builtin(program, id, &args, Want::Value)?;
+                    if let Err(e) = self.call_builtin(program, id, &args, Want::Value) {
+                        return Err(self.run_call_again(e, name_value, args));
+                    }
                 } else if let Some(id) = host.lookup(&name) {
-                    if !self.call_host(host, id, &args, *want)? {
-                        self.stack.push(name_value);
-                        self.stack.extend(args);
-                        return Ok(Some(RETRY));
+                    match self.call_host(host, id, &args, *want) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            self.stack.push(name_value);
+                            self.stack.extend(args);
+                            return Ok(Some(RETRY));
+                        }
+                        Err(e) => return Err(self.run_call_again(e, name_value, args)),
                     }
                 } else {
                     return Err(Error::with_detail(ErrorKind::UndefinedFunction, name));
@@ -2134,14 +2264,18 @@ impl Vm {
             return Err(Error::with_detail(kind, b.name));
         }
         let results = match (b.kind, want) {
-            (Kind::Function(f), Want::Value) => vec![f(args).map_err(|e| e.in_args(args))?],
-            (Kind::Command(f), Want::Outs(n)) => f(args, n.into()).map_err(|e| e.in_args(args))?,
+            (Kind::Function(f), Want::Value) => {
+                vec![f(args).map_err(|e| builtin_error(e, b.name, args))?]
+            }
+            (Kind::Command(f), Want::Outs(n)) => {
+                f(args, n.into()).map_err(|e| builtin_error(e, b.name, args))?
+            }
             (Kind::Data(f), Want::Outs(n)) => {
                 let mut data = builtins::Data {
                     program,
                     pos: &mut self.data_pos,
                 };
-                f(args, n.into(), &mut data).map_err(|e| e.in_args(args))?
+                f(args, n.into(), &mut data).map_err(|e| builtin_error(e, b.name, args))?
             }
             _ => return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, b.name)),
         };
@@ -2336,6 +2470,16 @@ fn index(base: &Value, idx: &[i32]) -> Result<Value> {
     }
 }
 
+/// An error from builtin `name`. Out of memory says which it was, as on
+/// hardware.
+#[cold]
+fn builtin_error(e: Error, name: &str, args: &[Value]) -> Error {
+    match e.kind {
+        ErrorKind::OutOfMemory if e.detail.is_none() => Error::with_detail(e.kind, name),
+        _ => e.in_args(args),
+    }
+}
+
 fn store_index(base: &Value, idx: &[i32], value: Value) -> Result<()> {
     match base {
         Value::Array(a) => {
@@ -2354,6 +2498,9 @@ fn store_index(base: &Value, idx: &[i32], value: Value) -> Result<()> {
                 .ok()
                 .filter(|&i| i < s.len())
                 .ok_or(ErrorKind::SubscriptOutOfRange)?;
+            if piece.len() > 1 {
+                memory::take(memory::string_bytes(s.len() + piece.len() - 1))?;
+            }
             s.splice(i..=i, piece);
             Ok(())
         }

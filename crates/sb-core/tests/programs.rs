@@ -1128,3 +1128,134 @@ fn arrays_hold_nothing_until_their_dim_runs() {
     // Empty sizes compile, and are no numbers when the DIM runs.
     assert_eq!(error("?1\nDIM A[,]"), (ErrorKind::TypeMismatch, 2));
 }
+
+/// Sizes from TEST51: what fits and what does not, and how the errors read.
+#[test]
+fn out_of_memory_at_the_sizes_seen_on_hardware() {
+    let oom = |source: &str| {
+        let (kind, ..) = error(source);
+        assert_eq!(kind, ErrorKind::OutOfMemory, "{source}");
+    };
+    assert_eq!(output("?LEN(\"A\"*33554432)"), "33554432\n");
+    oom("S$=\"A\"*67108864");
+    assert_eq!(output("S$=\"A\"*16777216:S$=S$+S$:?LEN(S$)"), "33554432\n");
+    oom("S$=\"A\"*33554432:S$=S$+S$");
+    assert_eq!(output("A=ARRAY#(8388608):?LEN(A)"), "8388608\n");
+    oom("A=ARRAY#(16777216)");
+    assert_eq!(
+        output("DIM A%[8000000],B%[8000000],C%[8000000],D%[8000000]:?FREEMEM()"),
+        "6216464\n"
+    );
+    oom("DIM A%[8000000],B%[8000000],C%[8000000],D%[8000000],E%[8000000]");
+    assert_eq!(
+        output("DIM A%[8388608]:RESIZE A%,16777216:?LEN(A%)"),
+        "16777216\n"
+    );
+    oom("DIM A%[1]:RESIZE A%,33554432");
+    oom("DIM A%[1],B%[1]:COPY A%,33554432,B%");
+    // Growing needs the new block beside the old, though it would fit
+    // alone.
+    oom("DIM A%[15728641]:INSERT A%,0,16777216");
+    assert_eq!(
+        output("DIM A%[7340033]:INSERT A%,0,8388608:?LEN(A%)"),
+        "15728641\n"
+    );
+    for (source, command) in [
+        ("A=ARRAY#(16777216)", "ARRAY#"),
+        ("DIM A%[1]:RESIZE A%,33554432", "RESIZE"),
+        ("DIM A%[15728641]:INSERT A%,0,16777216", "INSERT"),
+        ("DIM A%[1],B%[1]:COPY A%,33554432,B%", "COPY"),
+    ] {
+        let e = run(source).unwrap_err();
+        assert_eq!(e.detail.as_deref(), Some(command), "{source}");
+    }
+    // The error's number, as ENVSTAT gives it.
+    assert_eq!(ErrorKind::OutOfMemory.code(), 11);
+}
+
+/// Requests over absurd sizes end at once.
+#[test]
+fn absurd_requests_are_out_of_memory() {
+    for source in [
+        "?\"A\"*2000000000",
+        "A$=\"X\":FOR I=1 TO 31:A$=A$+A$:NEXT",
+        "A$=\"XX\":FOR I=1 TO 40:A$[0]=A$:NEXT",
+        "A$=\"XX\":FOR I=1 TO 40:PUSH A$,A$:NEXT",
+        "A$=\"XX\":FOR I=1 TO 40:A$=SUBST$(A$,0,0,A$):NEXT",
+        "A=ARRAY#(2000000000)",
+        "A=ARRAY$(2000000000,2000000000,2000000000,2000000000)",
+        "DIM A$[268435455]",
+        "DIM A%[2147483647,2147483647]",
+        "DIM A[1]:RESIZE A,2000000000",
+        "DIM A[1]:INSERT A,0,2000000000",
+        "DIM A[1],B[1]:COPY A,2000000000,B",
+        "DIM A$[1]:RESIZE A$,200000000",
+    ] {
+        assert_eq!(error(source).0, ErrorKind::OutOfMemory, "{source}");
+    }
+}
+
+/// Values dropped since the estimate was last right are not held against a
+/// program.
+#[test]
+fn garbage_causes_no_out_of_memory() {
+    assert_eq!(
+        output("VAR S$,I:FOR I=1 TO 20:S$=\"\":S$=\"A\"*16777216:NEXT:?LEN(S$)"),
+        "16777216\n"
+    );
+    assert_eq!(
+        output("VAR A,I:FOR I=1 TO 20:A=ARRAY#(1):A=ARRAY#(8388608):NEXT:?LEN(A)"),
+        "8388608\n"
+    );
+    assert_eq!(
+        output("VAR I:DIM A%[16000000]:FOR I=1 TO 20:RESIZE A%,1:RESIZE A%,16000000:NEXT:?LEN(A%)"),
+        "16000000\n"
+    );
+    assert_eq!(
+        output("DEF F:DIM B%[16000000]:END\nVAR I:FOR I=1 TO 20:F:NEXT:?1"),
+        "1\n"
+    );
+}
+
+/// An instruction that stops to have memory counted runs again exactly as
+/// it would have: everything it took off the stack is back.
+#[test]
+fn counting_memory_leaves_the_instruction_as_it_was() {
+    let big = "VAR S$,I:FOR I=1 TO 8:S$=\"\":S$=\"A\"*16777216:NEXT:S$=\"\"\n";
+    let run = |line: &str| output(&format!("{big}{line}"));
+    assert_eq!(run("?7+LEN(\"A\"*33554432)"), "33554439\n");
+    assert_eq!(
+        run("T$=\"A\"*16777216:U$=T$+T$:?1;LEN(U$);2"),
+        "1335544322\n"
+    );
+    assert_eq!(
+        run("T$=\"A\"*16777216:T$=T$+\"B\"+\"C\":?LEN(T$);RIGHT$(T$,2)"),
+        "16777218BC\n"
+    );
+    assert_eq!(run("A=ARRAY%(1,16000000):?1;DIM(A,1);2"), "1160000002\n");
+    assert_eq!(run("DIM Q%[16000000]:?LEN(Q%)"), "16000000\n");
+    assert_eq!(run("DIM Q%[1]:RESIZE Q%,16000000:?LEN(Q%)"), "16000000\n");
+    assert_eq!(run("A=CALL(\"ARRAY%\",16000000):?LEN(A)"), "16000000\n");
+    assert_eq!(
+        run("DIM Q%[1],R%[16000000]:COPY Q%,R%:?LEN(Q%)"),
+        "16000000\n"
+    );
+}
+
+/// Filling a string array asks for little at a time, and is refused when
+/// the VM next counts.
+#[test]
+fn what_small_strings_add_up_to_is_out_of_memory() {
+    let source = "DIM A$[1000000]:VAR I:FOR I=0 TO 999999:A$[I]=\"X\"*100:NEXT:?I";
+    assert_eq!(error(source).0, ErrorKind::OutOfMemory);
+    // Up to a hundred thousand strings of a hundred characters (32 MB).
+    let source = "DIM A$[100000]:VAR I:FOR I=0 TO 99999:A$[I]=\"X\"*100:NEXT:?I";
+    assert_eq!(output(source), "100000\n");
+}
+
+#[test]
+fn a_long_constant_string_waits_for_the_program_to_get_there() {
+    assert_eq!(output("IF 0 THEN ?\"A\"*2000000000\n?1"), "1\n");
+    assert_eq!(output("?LEN(\"AB\"*10)"), "20\n");
+    assert_eq!(output("A$=\"A\"*2000000:?LEN(A$)"), "2000000\n");
+}

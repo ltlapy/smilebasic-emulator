@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 
 use super::{Data, check_1d, index_arg, opt, string};
 use crate::error::{Error, ErrorKind, Result};
+use crate::memory;
 use crate::value::{Array, ArrayData, ArrayRef, ElemType, Value};
 
 fn out_of_range(what: &str) -> Error {
@@ -35,6 +36,15 @@ fn span(len: usize, offset: Option<&Value>, n: Option<&Value>) -> Result<(usize,
         return Err(out_of_range("count"));
     }
     Ok((offset, n))
+}
+
+/// What growing an array to `len` elements needs of memory.
+fn make_room(a: &Array, len: usize) -> Result<()> {
+    let elem = a.elem_type();
+    memory::grow(
+        memory::array_bytes(elem, a.len()),
+        memory::array_bytes(elem, len),
+    )
 }
 
 /// Grows a one-dimensional array to `len` elements; others must already
@@ -75,6 +85,7 @@ pub(super) fn copy_fn(args: &[Value]) -> Result<Value> {
             let a = a.borrow();
             check_1d(&a)?;
             let (offset, n) = span(a.len(), opt(args, 1), opt(args, 2))?;
+            memory::request(memory::array_bytes(a.elem_type(), n))?;
             let mut out = Array::new(a.elem_type(), vec![n]);
             for i in 0..n {
                 out.set(i, element(&a, offset + i))?;
@@ -116,6 +127,9 @@ pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<
                 return Err(out_of_range("offset"));
             }
             let end = (dest_offset + piece.len()).min(dest.len());
+            memory::take(memory::string_bytes(
+                dest.len() - (end - dest_offset) + piece.len(),
+            ))?;
             dest.splice(dest_offset..end, piece);
             Ok(vec![])
         }
@@ -128,6 +142,10 @@ pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<
             data.restore(source)?;
             let mut dest = dest.borrow_mut();
             let n = n.map_or(Ok(dest.len()), count)?;
+            if dest.dims.len() == 1 {
+                // Before anything is read: this may run again.
+                make_room(&dest, dest_offset + n)?;
+            }
             let values = (0..n).map(|_| data.read()).collect::<Result<Vec<_>>>()?;
             grow(&mut dest, dest_offset + n)?;
             for (i, v) in values.into_iter().enumerate() {
@@ -136,9 +154,15 @@ pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<
             Ok(vec![])
         }
         (Value::Array(dest), Value::Array(source)) => {
+            let (offset, n) = span(source.borrow().len(), offset, n)?;
+            {
+                let dest = dest.borrow();
+                if dest.dims.len() == 1 && dest.len() < dest_offset + n {
+                    make_room(&dest, dest_offset + n)?;
+                }
+            }
             let values: Vec<Value> = {
                 let source = source.borrow();
-                let (offset, n) = span(source.len(), offset, n)?;
                 (offset..offset + n).map(|i| element(&source, i)).collect()
             };
             let mut dest = dest.borrow_mut();
@@ -230,6 +254,7 @@ pub(super) fn insert(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     }
     let n = positive(opt(args, 2))?;
     let len = a.len();
+    make_room(&a, len + n)?;
     grow(&mut a, len + n)?;
     for i in (at..len).rev() {
         let v = a.get(i);
@@ -303,6 +328,14 @@ pub(super) fn find(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     Ok(indices.into_iter().map(Value::Int).collect())
 }
 
+/// Gives memory back to the system after shrinking a lot, as that counts as
+/// free from now on.
+fn hand_back<T>(v: &mut Vec<T>) {
+    if v.len() < v.capacity() / 4 {
+        v.shrink_to_fit();
+    }
+}
+
 /// `RESIZE array, n1 [, n2...]`: only the first size can change, and the
 /// others are given as they are (checked on hardware).
 pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
@@ -315,11 +348,21 @@ pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     if sizes[1..] != a.dims[1..] {
         return Err(ErrorKind::IllegalFunctionCall.into());
     }
-    let len = sizes.iter().product();
+    let len = sizes.iter().fold(1usize, |all, &n| all.saturating_mul(n));
+    make_room(&a, len)?;
     match &mut a.data {
-        ArrayData::Int(v) => v.resize(len, 0),
-        ArrayData::Real(v) => v.resize(len, 0.0),
-        ArrayData::Str(v) => v.resize_with(len, || crate::value::new_str(Vec::new())),
+        ArrayData::Int(v) => {
+            v.resize(len, 0);
+            hand_back(v);
+        }
+        ArrayData::Real(v) => {
+            v.resize(len, 0.0);
+            hand_back(v);
+        }
+        ArrayData::Str(v) => {
+            v.resize_with(len, || crate::value::new_str(Vec::new()));
+            hand_back(v);
+        }
     }
     a.dims = sizes;
     Ok(vec![])

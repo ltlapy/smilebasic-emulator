@@ -1454,6 +1454,13 @@ impl Compiler<'_> {
                     *check = Ok(!logical);
                     Some(v)
                 }
+                // Too large to work out now: it is the program's to run
+                // into, if it ever gets there.
+                Some(Err(e))
+                    if matches!(e.kind, ErrorKind::OutOfMemory | ErrorKind::MemoryCheck) =>
+                {
+                    None
+                }
                 Some(Err(e)) => {
                     if !logical {
                         *check = Err(e);
@@ -1626,6 +1633,9 @@ fn chain(expr: &Expr, with_index: bool) -> (Vec<&Expr>, &Expr) {
     (links, first)
 }
 
+/// The longest string `*` is worked out to when the program compiles.
+const MOST_CONSTANT_CHARS: i64 = 1 << 20;
+
 /// [`ops::binary`] for working out constants, adding a string to the end
 /// of one no one else holds rather than copying it: a chain such as
 /// `"A"+"B"+...` then takes time in proportion to its length.
@@ -1635,6 +1645,12 @@ fn const_binary(op: BinaryOp, lhs: Value, rhs: &Value) -> Result<Value> {
     {
         a.borrow_mut().extend_from_slice(&b.borrow());
         return Ok(lhs);
+    }
+    // A long string in the program would stay there, on top of each copy.
+    if let (BinaryOp::Mul, Value::Str(a)) = (op, &lhs)
+        && (a.borrow().len() as i64).saturating_mul(i64::from(rhs.to_int()?)) > MOST_CONSTANT_CHARS
+    {
+        return Err(ErrorKind::MemoryCheck.into());
     }
     ops::binary(op, &lhs, rhs)
 }
