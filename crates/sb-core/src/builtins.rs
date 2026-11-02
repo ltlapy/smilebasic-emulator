@@ -489,16 +489,16 @@ fn radix_str(args: &[Value], radix: u32, max_digits: usize) -> Result<Value> {
 /// FORMAT$: `%S`, `%D`, `%X`, `%F`, `%B` and `%%`, each with C's flags
 /// (`-`, `+`, space, `0`), width and precision. Letters in either case
 /// are conversions and values left over are ignored (checked on
-/// hardware).
+/// hardware). The whole result has to fit in [`MOST_FORMATTED`].
 fn format(args: &[Value]) -> Result<Value> {
     let fmt = text(&args[0])?;
-    let mut values = args[1..].iter();
+    let mut value_at = 0;
     let mut out: Str = Vec::new();
     let at = |i: usize| fmt.get(i).and_then(|&c| char::from_u32(c.into()));
     let mut i = 0;
     while i < fmt.len() {
         if at(i) != Some('%') {
-            out.push(fmt[i]);
+            push_formatted(&mut out, fmt[i])?;
             i += 1;
             continue;
         }
@@ -536,78 +536,142 @@ fn format(args: &[Value]) -> Result<Value> {
         let conversion = at(i).map(|c| c.to_ascii_uppercase());
         i += 1;
         if conversion == Some('%') {
-            out.push(u16::from(b'%'));
+            push_formatted(&mut out, u16::from(b'%'))?;
             continue;
         }
-        let value = values.next().ok_or_else(|| {
-            Error::with_detail(ErrorKind::WrongNumberOfArguments, "too few values")
-        })?;
-        let (sign, body): (&str, String) = match conversion {
-            Some('S') => {
-                let s = String::from_utf16_lossy(&text(value)?);
-                let s = match precision {
-                    Some(p) => s.chars().take(p).collect(),
-                    None => s,
-                };
-                zero = false;
-                ("", s)
-            }
+        value_at += 1;
+        let Some(value) = args.get(value_at) else {
+            return Err(Error::with_detail(
+                ErrorKind::WrongNumberOfArguments,
+                "too few values",
+            ));
+        };
+        let room = MOST_FORMATTED - out.len();
+        let pad = Padding {
+            width,
+            left,
+            zero,
+            room,
+        };
+        let done = match conversion {
+            // The precision only limits the string: it is no size of its own.
+            Some('S') => text(value).and_then(|s| {
+                let shown = &s[..precision.map_or(s.len(), |p| p.min(s.len()))];
+                pad.apply(&mut out, "", shown)
+            }),
             Some(c @ ('D' | 'X' | 'B' | 'F')) => {
-                if !value.is_number() {
-                    return Err(ErrorKind::TypeMismatch.into());
-                }
-                let negative = value.to_real()? < 0.0;
-                let body = match c {
-                    'D' => i64::from(value.to_int()?).unsigned_abs().to_string(),
-                    'X' => format!("{:X}", value.to_int()? as u32),
-                    'B' => format!("{:b}", value.to_int()? as u32),
-                    _ => {
-                        let digits = precision.unwrap_or(6);
-                        // At least a digit and the point before them: no
-                        // need to make what will be refused.
-                        if digits.saturating_add(2) > MAX_FIELD {
-                            return Err(field_too_long(format!("{digits} decimals")));
-                        }
-                        fixed(value.to_real()?.abs(), digits)
-                    }
-                };
-                let sign = match (c, negative) {
-                    ('X' | 'B', _) => "",
-                    (_, true) => "-",
-                    _ if plus => "+",
-                    _ if space => " ",
-                    _ => "",
-                };
-                (sign, body)
+                format_numeric(c, value, (plus, space), precision, pad, &mut out)
             }
-            _ => {
-                return Err(ErrorKind::IllegalFormat.into());
-            }
+            _ => return Err(ErrorKind::IllegalFormat.into()),
         };
-        let filled = sign.len() + body.chars().count();
-        if width.max(filled) > MAX_FIELD {
-            return Err(field_too_long(format!("{} characters", width.max(filled))));
-        }
-        let pad = width.saturating_sub(filled);
-        let field = if left {
-            format!("{sign}{body}{}", " ".repeat(pad))
-        } else if zero {
-            format!("{sign}{}{body}", "0".repeat(pad))
-        } else {
-            format!("{}{sign}{body}", " ".repeat(pad))
-        };
-        out.extend(field.encode_utf16());
+        done.map_err(|e| e.of_arg(value_at))?;
     }
     Ok(string(out))
 }
 
-/// The most characters one conversion of FORMAT$ can give.
-// UNVERIFIED: that this is per conversion rather than on the whole result,
-// and that it holds for `%S` as for numbers.
-const MAX_FIELD: usize = 1024;
+/// The most characters FORMAT$ can give: it writes into a buffer of this
+/// size.
+const MOST_FORMATTED: usize = 1024;
 
-fn field_too_long(detail: String) -> Error {
-    Error::with_detail(ErrorKind::StringTooLong, detail).of_arg(1)
+/// One character of the format string itself, whose overflow has no
+/// argument to name.
+#[inline]
+fn push_formatted(out: &mut Str, c: u16) -> Result<()> {
+    if out.len() >= MOST_FORMATTED {
+        return Err(Error::with_detail(
+            ErrorKind::StringTooLong,
+            format!("over {MOST_FORMATTED} characters"),
+        ));
+    }
+    out.push(c);
+    Ok(())
+}
+
+/// How one conversion of FORMAT$ fills its width, and the room left.
+#[derive(Clone, Copy)]
+struct Padding {
+    width: usize,
+    left: bool,
+    zero: bool,
+    room: usize,
+}
+
+impl Padding {
+    /// `sign` and `body` padded to the width, if that fits. A width too
+    /// large to fit is refused here, before anything is made of it.
+    fn apply(self, out: &mut Str, sign: &str, body: &[u16]) -> Result<()> {
+        let filled = sign.len() + body.len();
+        let total = self.width.max(filled);
+        if total > self.room {
+            return Err(field_too_long(total));
+        }
+        let pad = total - filled;
+        let sign = sign.encode_utf16();
+        if self.left {
+            out.extend(sign);
+            out.extend_from_slice(body);
+            out.resize(out.len() + pad, u16::from(b' '));
+        } else if self.zero {
+            out.extend(sign);
+            out.resize(out.len() + pad, u16::from(b'0'));
+            out.extend_from_slice(body);
+        } else {
+            out.resize(out.len() + pad, u16::from(b' '));
+            out.extend(sign);
+            out.extend_from_slice(body);
+        }
+        Ok(())
+    }
+}
+
+/// FORMAT$'s `%D`, `%X`, `%B` and `%F`.
+fn format_numeric(
+    conversion: char,
+    value: &Value,
+    (plus, space): (bool, bool),
+    precision: Option<usize>,
+    pad: Padding,
+    out: &mut Str,
+) -> Result<()> {
+    if !value.is_number() {
+        return Err(ErrorKind::TypeMismatch.into());
+    }
+    let negative = value.to_real()? < 0.0;
+    let body = match conversion {
+        'D' => i64::from(value.to_int()?).unsigned_abs().to_string(),
+        'X' => format!("{:X}", value.to_int()? as u32),
+        'B' => format!("{:b}", value.to_int()? as u32),
+        _ => {
+            let digits = precision.unwrap_or(6);
+            // At least a digit and the point before them: no need to make
+            // what will be refused.
+            if digits.saturating_add(2) >= pad.room {
+                return Err(field_too_long(digits.saturating_add(2)));
+            }
+            fixed(value.to_real()?.abs(), digits)
+        }
+    };
+    let sign = match (conversion, negative) {
+        ('X' | 'B', _) => "",
+        (_, true) => "-",
+        _ if plus => "+",
+        _ if space => " ",
+        _ => "",
+    };
+    // `%F` is written by a routine that wants room for a character more.
+    let pad = match conversion {
+        'F' => Padding {
+            room: pad.room.saturating_sub(1),
+            ..pad
+        },
+        _ => pad,
+    };
+    let body: Str = body.encode_utf16().collect();
+    pad.apply(out, sign, &body)
+}
+
+fn field_too_long(chars: usize) -> Error {
+    Error::with_detail(ErrorKind::StringTooLong, format!("{chars} characters"))
 }
 
 /// `x` with `digits` decimals, rounded to the nearest; a value exactly
@@ -1213,10 +1277,12 @@ mod tests {
         let format = |f: &str| call("FORMAT$", &[s(f), Value::Real(1.5)]);
         let digits = |f: &str| as_string(format(f).unwrap()).len();
         assert_eq!(digits("%.1000F"), 1002);
-        assert_eq!(digits("%.1022F"), 1024);
+        assert_eq!(digits("%.1021F"), 1023);
         assert_eq!(digits("%1000D"), 1000);
         assert_eq!(digits("%1024D"), 1024);
         for f in [
+            "%.1022F",
+            "%1024F",
             "%.1023F",
             "%1025D",
             "%.10000F",
@@ -1230,6 +1296,52 @@ mod tests {
             let e = format(f).unwrap_err();
             assert_eq!(e.kind, ErrorKind::StringTooLong, "{f}");
             assert!(e.detail.is_some(), "{f}");
+            assert_eq!(e.arg, Some(1), "{f}");
         }
+    }
+
+    /// The limit is on the result as a whole (TEST57).
+    #[test]
+    fn format_limits_the_whole_result() {
+        let chars = |n: usize| s(&"A".repeat(n));
+        let len = |args: &[Value]| as_string(call("FORMAT$", args).unwrap()).len();
+        let refused = |args: &[Value]| {
+            let e = call("FORMAT$", args).unwrap_err();
+            assert_eq!(e.kind, ErrorKind::StringTooLong);
+            e.arg
+        };
+        let (one, two) = (Value::Int(1), Value::Int(2));
+        assert_eq!(len(&[s("%1000D%24D"), one.clone(), two.clone()]), 1024);
+        assert_eq!(refused(&[s("%1000D%25D"), one.clone(), two]), Some(2));
+        assert_eq!(len(&[s("%S"), chars(1024)]), 1024);
+        assert_eq!(refused(&[s("%S"), chars(1025)]), Some(1));
+        // The format's own text has no argument to blame.
+        assert_eq!(len(&[chars(1024)]), 1024);
+        assert_eq!(refused(&[chars(1025)]), None);
+        let percents = s(&"%%".repeat(1025));
+        assert_eq!(refused(&[percents]), None);
+        assert_eq!(refused(&[s(&format!("{}%%", "A".repeat(1024)))]), None);
+        assert_eq!(refused(&[s("%1024D%%"), one]), None);
+    }
+
+    #[test]
+    fn format_pads_strings() {
+        let abc = s("ABC");
+        let show = |f: &str, v: &Value| as_string(call("FORMAT$", &[s(f), v.clone()]).unwrap());
+        assert_eq!(show("[%5S]", &abc), "[  ABC]");
+        assert_eq!(show("[%-5S]", &abc), "[ABC  ]");
+        assert_eq!(show("[%05S]", &abc), "[00ABC]");
+        assert_eq!(show("[%-05S]", &abc), "[ABC  ]");
+        assert_eq!(show("[%.2S]", &abc), "[AB]");
+        assert_eq!(show("[%5.2S]", &abc), "[   AB]");
+        assert_eq!(show("[%.0S]", &abc), "[]");
+        // The precision only limits the string: it can be any size.
+        assert_eq!(show("[%.2000S]", &abc), "[ABC]");
+        assert_eq!(show("[%.99999999S]", &abc), "[ABC]");
+        // Not every code is a character of its own in Rust's strings.
+        let lone = Value::Str(crate::value::new_str(vec![0xD800, 0x41]));
+        let got = call("FORMAT$", &[s("%3S"), lone]).unwrap();
+        let Value::Str(got) = got else { panic!() };
+        assert_eq!(got.borrow().as_slice(), [0x20, 0xD800, 0x41]);
     }
 }

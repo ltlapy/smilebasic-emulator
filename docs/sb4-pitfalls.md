@@ -96,10 +96,16 @@ follows all of it. Items still waiting for a check are marked
   an array does nothing and is no error (TEST51).
 - `LOADV` loads array files with a zero in any size and keeps the sizes:
   `[0,3]` and `[3,0]` both give `RESULT()` 1 (TEST51).
-- `FORMAT$` gives `String is too long (FORMAT$:2)` for a field of more than
-  1024 characters, whether from its width or its decimals: `%1024D` works
-  and `%1025D` does not, and of 1, `%.1000F` works (a length of 1002) and
-  `%.1023F`, which would be 1025 long, does not (TEST51, TEST52).
+- `FORMAT$` gives at most 1024 characters as a whole, not per field:
+  `%1000D%24D` gives 1024 and `%1000D%25D` is `String is too long (FORMAT$:3)`,
+  numbered by the value being formatted; `%S` of 1025 characters is
+  `(FORMAT$:2)`. A format of 1025 plain characters is `(FORMAT$)` with no
+  number, as is `%%` over the limit (TEST57). Of 1, `%1024D` works and `%1025D`
+  does not, `%.1000F` works (a length of 1002) and `%.1023F`, which would be
+  1025 long, does not (TEST51, TEST52). `%F` needs one character of room more
+  than it gives. On `%S` the precision only limits the
+  string, so `%.2000S` of a short string is fine. `%05S` pads with zeros,
+  `[00ABC]`, and with `-` it pads spaces on the right (TEST57).
 - `RINGCOPY` reading past the end of its source is `Illegal function
   call`, not `Out of range` as for `COPY`.
 - `REMOVE` with a count of 0 removes nothing and is no error, also on an
