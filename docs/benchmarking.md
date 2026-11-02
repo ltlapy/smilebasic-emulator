@@ -32,3 +32,37 @@ makes `PERFEND` give 0, and starts the random series from set seeds.
   without input.
 - Hash tables and addresses change a little from run to run, which moves the
   count by a tiny amount. Compare it with what two runs of one build differ by.
+
+## Comparing with SmileBASIC 4
+
+`bench/TPERF.txt` is a program of our own that runs the same way on the
+emulator and on SmileBASIC 4, so its numbers compare directly. It runs 32
+scenes in order, each isolating one kind of work (the BASIC itself,
+sprites, text, GRP, layers, a small game with bursts of extra load), and
+takes about four minutes. For each it shows and saves the time the
+program spent between `VSYNC`s (`WORK`), the time from `VSYNC` to `VSYNC`
+(`FRAME`) and the frames `MAINCNT` lost. Two more scenes raise the number of
+sprites and of triangles until 60 fps cannot be held, and give that as a
+score.
+
+Pack it as the file `TPERF`, as [hardware-tests.md](hardware-tests.md)
+says for check programs. Run `PERF` from a project and answer yes when it asks to
+save: the results go into the text file `RESPERF`. `#ONLY`, at the top of
+the program, runs one scene alone, and `#LOADPCT` scales the load. Compare
+only runs with the same values.
+
+- On SmileBASIC 4 the times are real, and `FRAME` is about 16.7 ms until the
+  load is too much.
+- A `--bench` run does not wait for the display, so `FRAME` is what the frame
+  really cost, drawn on the CPU, and can be under 16.7 ms. Use it to compare
+  builds.
+- The frontend keeps to 60 frames a second by leaving out drawing and, far
+  behind, dropping time. So its `FRAME` and `LOST` hide much of what drawing
+  costs: they show what a person would see, not the cost.
+- `--bench --fixed` gives 0 for every time and leaves out the two score
+  scenes, which go by the clock: count instructions, as above, over the
+  10500 frames it takes to reach the table.
+- `--play` draws only the frames a script asks for, so `FRAME` leaves
+  drawing out. Use it to see the table, not for its numbers.
+- The scores go by the clock, so they move between runs of one build. The
+  search stops within a sixteenth of the score.
