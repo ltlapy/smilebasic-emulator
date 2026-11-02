@@ -47,6 +47,18 @@ const USAGE: &str = "usage:
       run does the same work, for comparing builds with perf. It also
       prints a checksum of screens and console: only runs with the same
       checksum did the same work. FRAMES 0 shows what start-up costs.
+      Options, after --bench and --fixed:
+        --script FILE  give the program the input FILE asks for, in the
+                       form --play takes; shots go beside PNG, or into
+                       the current folder
+        --log FILE     write each frame's times to FILE as CSV: frame,
+                       run_us, draw_us, instructions, vsyncs (those the
+                       program reached), redrawn, end_us (since the start)
+        --window       run frames as the window does: to the clock, with
+                       its time limits, catching up without drawing. Not
+                       with --fixed, as the work then follows the clock
+        --slower N     with --window, the clock and limits divided by N,
+                       to stand for a machine N times slower than this
   smilebasic-check --play FRAMES PROJECT PROGRAM SCRIPT DIR
       run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
       (a file, or - for none) asks for, and save the screens it asks for
@@ -101,13 +113,47 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         if fixed {
             args.remove(1);
         }
+        let mut take = |name: &str| -> Result<Option<String>, AnyError> {
+            match args.iter().position(|a| a == name) {
+                Some(at) if at + 1 < args.len() => {
+                    let value = args.remove(at + 1);
+                    args.remove(at);
+                    Ok(Some(value))
+                }
+                Some(_) => Err(USAGE.into()),
+                None => Ok(None),
+            }
+        };
+        let script = take("--script")?;
+        let log = take("--log")?.map(PathBuf::from);
+        let take_slower = take("--slower")?;
+        let window = match args.iter().position(|a| a == "--window") {
+            Some(at) => {
+                args.remove(at);
+                true
+            }
+            None => false,
+        };
+        if fixed && window {
+            return Err(USAGE.into());
+        }
+        let speed = match take_slower {
+            Some(n) => n.parse::<f64>().map_err(|_| USAGE)?,
+            None => 1.0,
+        };
         return match args.as_slice() {
             [_, frames, project, program, png @ ..] if png.len() <= 1 => {
-                let frames = frames.parse().map_err(|_| USAGE)?;
-                let png = png.first().map(Path::new);
+                let options = BenchOptions {
+                    frames: frames.parse().map_err(|_| USAGE)?,
+                    png: png.first().map(Path::new),
+                    steps: read_script(script.as_deref())?,
+                    log,
+                    fixed,
+                    window: window.then_some(speed),
+                };
                 match fixed {
-                    true => bench_fixed(frames, Path::new(project), program, png),
-                    false => bench(frames, Path::new(project), program, png, false),
+                    true => bench_fixed(&options, Path::new(project), program),
+                    false => bench(&options, Path::new(project), program),
                 }
             }
             _ => Err(USAGE.into()),
@@ -250,12 +296,7 @@ fn check_part(
 /// Runs a program as the window would, timing each frame's two halves.
 /// `--bench --fixed`: on a fresh copy of the project and those beside it,
 /// so that nothing a run saves changes the next.
-fn bench_fixed(
-    frames: u32,
-    project: &Path,
-    program: &str,
-    png: Option<&Path>,
-) -> Result<(), AnyError> {
+fn bench_fixed(options: &BenchOptions, project: &Path, program: &str) -> Result<(), AnyError> {
     let name = project
         .file_name()
         .and_then(|n| n.to_str())
@@ -264,10 +305,43 @@ fn bench_fixed(
     let _ = std::fs::remove_dir_all(&scratch);
     let outcome = copy_others(project, name, &scratch)
         .and_then(|()| copy_dir(project, &scratch.join(name)))
-        .and_then(|()| bench(frames, &scratch.join(name), program, png, true));
+        .and_then(|()| bench(options, &scratch.join(name), program));
     let _ = std::fs::remove_dir_all(&scratch);
     outcome
 }
+
+/// How `--bench` runs a program.
+struct BenchOptions<'a> {
+    frames: u32,
+    png: Option<&'a Path>,
+    /// The input to give it.
+    steps: Vec<(u32, Action)>,
+    /// Where to write each frame's times.
+    log: Option<PathBuf>,
+    fixed: bool,
+    /// Whether frames run as the window runs them, on a machine this
+    /// many times slower.
+    window: Option<f64>,
+}
+
+/// One frame's row in a `--bench --log` file.
+struct FrameLog {
+    run: std::time::Duration,
+    draw: std::time::Duration,
+    instructions: u64,
+    vsyncs: u64,
+    redrawn: bool,
+    end: std::time::Duration,
+}
+
+/// The window's frame and limits (see the frontend's main loop), for
+/// `--bench --window`.
+const WINDOW_FRAME: std::time::Duration = std::time::Duration::from_nanos(1_000_000_000 / 60);
+const WINDOW_RUN: std::time::Duration = std::time::Duration::from_millis(10);
+const WINDOW_CATCH_UP: std::time::Duration = std::time::Duration::from_millis(1);
+const WINDOW_MOST_SKIPPED: u32 = 3;
+const WINDOW_MOST_BEHIND: std::time::Duration =
+    std::time::Duration::from_nanos(8 * 1_000_000_000 / 60);
 
 /// Frames between the screens a fixed run's checksum takes in: few, as
 /// reading a whole screen would otherwise outweigh what is measured.
@@ -280,14 +354,15 @@ fn add_to_checksum(sum: u64, pixels: &[u32]) -> u64 {
     })
 }
 
-fn bench(
-    frames: u32,
-    project: &Path,
-    program: &str,
-    png: Option<&Path>,
-    fixed: bool,
-) -> Result<(), AnyError> {
+fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), AnyError> {
     use std::time::{Duration, Instant};
+    let &BenchOptions {
+        frames,
+        png,
+        fixed,
+        window,
+        ..
+    } = options;
     let name = project
         .file_name()
         .and_then(|n| n.to_str())
@@ -304,21 +379,93 @@ fn bench(
     let started = Instant::now();
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     println!("loaded and compiled in {:?}", started.elapsed());
+    let shots = png.and_then(Path::parent).unwrap_or(Path::new("."));
+    let mut player = Player::new(options.steps.clone());
+    let mut frame_log = Vec::new();
     let (mut run, mut draw) = (Vec::new(), Vec::new());
-    for _ in 0..frames {
-        if !m.is_running() {
-            break;
+    let slower = window.unwrap_or(1.0);
+    let (frame_time, run_time, catch_up_time, most_behind) = (
+        WINDOW_FRAME.div_f64(slower),
+        WINDOW_RUN.div_f64(slower),
+        WINDOW_CATCH_UP.div_f64(slower),
+        WINDOW_MOST_BEHIND.div_f64(slower),
+    );
+    let window = window.is_some();
+    let mut clock = Instant::now();
+    let mut played = 0;
+    'run: while played < frames && m.is_running() {
+        // As the window's main loop does: a frame, then those that are
+        // due at once, of which only the last is drawn.
+        let mut skipped = 0;
+        loop {
+            if player.step(&mut m, played, shots)? {
+                break 'run;
+            }
+            if window {
+                m.time_limit = Some(if skipped == 0 {
+                    run_time
+                } else {
+                    catch_up_time
+                });
+            }
+            let (before, vsyncs) = (m.executed(), m.vsyncs());
+            let t = Instant::now();
+            m.frame();
+            let ran = t.elapsed();
+            frame_log.push(FrameLog {
+                run: ran,
+                draw: Duration::ZERO,
+                instructions: m.executed() - before,
+                vsyncs: m.vsyncs() - vsyncs,
+                redrawn: false,
+                end: started.elapsed(),
+            });
+            run.push(ran);
+            played += 1;
+            let due = window && Instant::now() >= clock + frame_time;
+            if !due || skipped == WINDOW_MOST_SKIPPED || played == frames || !m.is_running() {
+                break;
+            }
+            clock += frame_time;
+            skipped += 1;
         }
-        let t = Instant::now();
-        m.frame();
+        let revision = m.screen_revision();
         let t2 = Instant::now();
         let screen = m.render();
         let drawn = t2.elapsed();
-        if fixed && (run.len() + 1).is_multiple_of(CHECKSUM_FRAMES) {
+        if fixed && run.len().is_multiple_of(CHECKSUM_FRAMES) {
             checksum = add_to_checksum(checksum, screen.pixels());
         }
-        run.push(t2 - t);
         draw.push(drawn);
+        if let Some(last) = frame_log.last_mut() {
+            last.draw = drawn;
+            last.redrawn = m.screen_revision() != revision;
+            last.end = started.elapsed();
+        }
+        if window {
+            clock += frame_time;
+            let now = Instant::now();
+            if clock > now {
+                std::thread::sleep(clock - now);
+            } else if now - clock > most_behind {
+                clock = now;
+            }
+        }
+    }
+    if let Some(file) = &options.log {
+        let mut text = String::from("frame,run_us,draw_us,instructions,vsyncs,redrawn,end_us\n");
+        for (i, f) in frame_log.iter().enumerate() {
+            text += &format!(
+                "{i},{},{},{},{},{},{}\n",
+                f.run.as_micros(),
+                f.draw.as_micros(),
+                f.instructions,
+                f.vsyncs,
+                u8::from(f.redrawn),
+                f.end.as_micros()
+            );
+        }
+        std::fs::write(file, text).map_err(|e| format!("{}: {e}", file.display()))?;
     }
     let report = |what: &str, times: &mut Vec<Duration>| {
         if times.is_empty() {
@@ -343,7 +490,7 @@ fn bench(
         println!("checksum {:016x}", add_to_checksum(checksum, &rows));
     }
     // Stutter shows as a few slow frames, so name the slowest.
-    let mut slowest: Vec<(usize, Duration)> = (run.iter().zip(&draw).map(|(r, d)| *r + *d))
+    let mut slowest: Vec<(usize, Duration)> = (frame_log.iter().map(|f| f.run + f.draw))
         .enumerate()
         .collect();
     slowest.sort_by_key(|&(_, t)| std::cmp::Reverse(t));
@@ -393,7 +540,7 @@ fn bench(
 }
 
 /// What a --play script does at a frame.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Action {
     Key(u16),
     Type(String),
@@ -521,6 +668,85 @@ fn key_code(name: &str) -> Option<u16> {
     Some(code)
 }
 
+/// The script a file holds, or none.
+fn read_script(file: Option<&str>) -> Result<Vec<(u32, Action)>, AnyError> {
+    match file {
+        Some(file) => {
+            parse_script(&std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?)
+        }
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Gives a program what a script asks for.
+struct Player {
+    steps: std::iter::Peekable<std::vec::IntoIter<(u32, Action)>>,
+    /// Input held, and the frame it lets go at.
+    held: Vec<(Hold, u32)>,
+}
+
+impl Player {
+    fn new(steps: Vec<(u32, Action)>) -> Player {
+        Player {
+            steps: steps.into_iter().peekable(),
+            held: Vec::new(),
+        }
+    }
+
+    fn has_more(&mut self) -> bool {
+        self.steps.peek().is_some()
+    }
+
+    /// Does what is due before `frame` runs, and sets the input it reads;
+    /// shots go into `dir`. True if the script ends the run.
+    fn step(&mut self, m: &mut Machine, frame: u32, dir: &Path) -> Result<bool, AnyError> {
+        while let Some((_, action)) = self.steps.next_if(|(at, _)| *at <= frame) {
+            match action {
+                Action::Key(code) => m.rt.key_press(code),
+                Action::Type(text) => m.type_text(&text),
+                Action::Hold(hold, n) => self.held.push((hold, frame + n)),
+                Action::Shot(shot) => {
+                    let file = dir.join(format!("{shot}.png"));
+                    save_screen(m, &file)?;
+                    println!("frame {frame}: screen saved to {}", file.display());
+                }
+                Action::Console => {
+                    println!("frame {frame}: the console:");
+                    print_rows(&console_rows(m));
+                    for notice in m.rt.take_notices() {
+                        println!("notice: {notice}");
+                    }
+                }
+                Action::End => return Ok(true),
+            }
+        }
+        self.held.retain(|&(_, until)| until > frame);
+        let mut state = State::default();
+        // The pointer stays where the last touch or the program's MOUSE
+        // put it.
+        let last = m.rt.input.live.mouse;
+        (state.mouse.x, state.mouse.y) = (last.x, last.y);
+        (state.mouse.display, state.mouse.on_screen) = (last.display, last.on_screen);
+        state.mouse.wheel = last.wheel;
+        for &(hold, _) in &self.held {
+            match hold {
+                Hold::Buttons(bits) => state.pads[0].buttons |= bits,
+                Hold::Stick(x, y) => state.pads[0].sticks[0] = (x, y),
+                Hold::Usb(usage) => {
+                    state.set_key(usage, true);
+                    state.modifiers |= modifier(usage);
+                }
+                Hold::Touch(x, y) => {
+                    set_pointer(&mut state, m, x, y);
+                    state.mouse.buttons |= 1;
+                }
+            }
+        }
+        m.rt.input.live = state;
+        Ok(false)
+    }
+}
+
 /// Runs a program with scripted input, saving the screens it asks for.
 fn play(
     frames: u32,
@@ -529,10 +755,7 @@ fn play(
     script: &str,
     dir: &Path,
 ) -> Result<(), AnyError> {
-    let steps = match script {
-        "-" => Vec::new(),
-        file => parse_script(&std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?)?,
-    };
+    let steps = read_script((script != "-").then_some(script))?;
     std::fs::create_dir_all(dir)?;
     let name = project
         .file_name()
@@ -547,56 +770,14 @@ fn play(
         .set_project(name)
         .map_err(|e| format!("{name}: {e}"))?;
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
-    let mut steps = steps.into_iter().peekable();
-    // Input held, and the frame it lets go at.
-    let mut held: Vec<(Hold, u32)> = Vec::new();
+    let mut player = Player::new(steps);
     let mut frame = 0;
     // Direct mode goes on while the script has more to type, as for
     // SUBRUN, and while a subprogram runs.
-    'run: while frame < frames && (m.is_running() || m.sub_running() || steps.peek().is_some()) {
-        while let Some((_, action)) = steps.next_if(|(at, _)| *at <= frame) {
-            match action {
-                Action::Key(code) => m.rt.key_press(code),
-                Action::Type(text) => m.type_text(&text),
-                Action::Hold(hold, n) => held.push((hold, frame + n)),
-                Action::Shot(shot) => {
-                    let file = dir.join(format!("{shot}.png"));
-                    save_screen(&mut m, &file)?;
-                    println!("frame {frame}: screen saved to {}", file.display());
-                }
-                Action::Console => {
-                    println!("frame {frame}: the console:");
-                    print_rows(&console_rows(&m));
-                    for notice in m.rt.take_notices() {
-                        println!("notice: {notice}");
-                    }
-                }
-                Action::End => break 'run,
-            }
+    while frame < frames && (m.is_running() || m.sub_running() || player.has_more()) {
+        if player.step(&mut m, frame, dir)? {
+            break;
         }
-        held.retain(|&(_, until)| until > frame);
-        let mut state = State::default();
-        // The pointer stays where the last touch or the program's MOUSE
-        // put it.
-        let last = m.rt.input.live.mouse;
-        (state.mouse.x, state.mouse.y) = (last.x, last.y);
-        (state.mouse.display, state.mouse.on_screen) = (last.display, last.on_screen);
-        state.mouse.wheel = last.wheel;
-        for &(hold, _) in &held {
-            match hold {
-                Hold::Buttons(bits) => state.pads[0].buttons |= bits,
-                Hold::Stick(x, y) => state.pads[0].sticks[0] = (x, y),
-                Hold::Usb(usage) => {
-                    state.set_key(usage, true);
-                    state.modifiers |= modifier(usage);
-                }
-                Hold::Touch(x, y) => {
-                    set_pointer(&mut state, &m, x, y);
-                    state.mouse.buttons |= 1;
-                }
-            }
-        }
-        m.rt.input.live = state;
         m.frame();
         frame += 1;
     }

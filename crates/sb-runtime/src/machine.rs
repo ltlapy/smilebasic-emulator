@@ -49,6 +49,8 @@ pub struct Machine {
     /// The frame the last VSYNC waited for, which the next one counts
     /// from.
     vsync_at: u64,
+    /// VSYNCs the program has reached.
+    vsyncs: u64,
     /// Globals of the last program and the direct-mode lines since, kept
     /// for the next direct-mode line; each line adds its own.
     vars: HashMap<String, Value>,
@@ -239,6 +241,7 @@ impl Machine {
             wait: 0,
             frame: 0,
             vsync_at: 0,
+            vsyncs: 0,
             vars: HashMap::new(),
             editors: [Editor::new(w * 8, h * 8), Editor::new(w * 8, h * 8)],
             active: 0,
@@ -299,6 +302,17 @@ impl Machine {
     }
 
     /// Whether a program or direct-mode line is executing.
+    /// Instructions the running program has executed.
+    pub fn executed(&self) -> u64 {
+        self.vm.as_ref().map_or(0, Vm::executed)
+    }
+
+    /// VSYNCs the program has reached, for timing how often its main loop
+    /// comes round.
+    pub fn vsyncs(&self) -> u64 {
+        self.vsyncs
+    }
+
     pub fn is_running(&self) -> bool {
         self.vm.is_some()
     }
@@ -1493,6 +1507,7 @@ impl Machine {
                     vsync: true,
                 }) => {
                     vsynced = true;
+                    self.vsyncs += 1;
                     self.vsync_at += u64::from(frames);
                     if self.vsync_at > self.frame {
                         self.wait = (self.vsync_at - self.frame) as u32;

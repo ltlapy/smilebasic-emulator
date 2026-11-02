@@ -66,3 +66,19 @@ only runs with the same values.
   drawing out. Use it to see the table, not for its numbers.
 - The scores go by the clock, so they move between runs of one build. The
   search stops within a sixteenth of the score.
+
+## Per-frame costs and overload
+
+A mean hides what a player sees as stutter. `--log FILE` writes each frame's
+run and draw times, instructions and VSYNCs as CSV. `--script FILE` gives the
+program input in the form `--play` takes, so that a run reaches the states
+that need it; with `--fixed`, this still does the same work each time.
+
+On a busy machine, wall-clock times swing with other processes' load. With
+`--fixed`, run it a few times and take each frame's minimum: the frames line
+up, so this leaves the frame's own cost.
+
+`--window` runs frames as the window does: to the clock, with its time
+limits, catching up without drawing. `--slower N` divides that clock and its
+limits by N, to see how a machine N times slower would go. It has no window,
+so no upload, scaling or present is included.
