@@ -154,6 +154,37 @@ Without them:
   the main screen; SmileBASIC 4 does both in one step, so a channel can
   be 1 off where the subprogram's screen is not opaque.
 
+## Files from elsewhere
+
+Projects get copied in by hand and imported, so the emulator treats the
+files in them as untrusted, where SmileBASIC 4 has a closed file system.
+What it refuses fails like any other file that cannot be read or written:
+`RESULT()` is 0 and the message says why.
+
+- Symbolic links among the projects or inside one are not followed, read,
+  written through or copied: a linked project is no project and a linked
+  file is not there. The projects folder itself may be a link.
+- Files over 256 MiB are not read or saved, whichever command asks, and
+  show nothing when chosen in the projects window. SmileBASIC 4's own
+  limit is its memory.
+- `LOADV` and `LOADG` refuse an array file whose sizes `DIM` and `RESIZE`
+  could not have made: over 2^28 elements, or a zero after the first size.
+  What SmileBASIC 4 does with such a file is not known; it should never
+  have saved one. A zero first size loads, since `RESIZE` makes it and
+  `SAVEV` writes it, though whether SmileBASIC 4's `RESIZE` takes 0 is not
+  known either.
+- Image files of no pixels are refused rather than loaded empty.
+- Names Windows cannot keep are refused on Windows alone: `CON`, `PRN`,
+  `AUX`, `NUL`, `COM0` to `COM9` and `LPT0` to `LPT9` for projects, also
+  with an extension, and any name ending in a dot.
+- `SUBRUN`'s and the tool keys' file names follow `LOAD`'s rules, so they
+  may be in lower case or start with `TXT:`.
+
+If the emulator itself fails while a program runs, it stops the program
+and prints `Internal Error` with the reason, keeping the slots and the
+editor's text. SmileBASIC 4 has an error of that name, but what it does
+after one is not known. The stopped program cannot go on with `CONT`.
+
 ## Editor
 
 - The editor's colors start as SmileBASIC 4's, and can be swapped for
