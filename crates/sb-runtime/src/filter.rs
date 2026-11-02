@@ -224,8 +224,8 @@ struct Half {
     across: Vec<Tap>,
     down: Vec<Tap>,
     out_across: Vec<u32>,
-    runs: Vec<u32>,
     expanded: Vec<u32>,
+    lines: BlurLines,
 }
 
 thread_local! {
@@ -463,70 +463,155 @@ fn plateau(p: u32, total: u32) -> u32 {
     from_lanes((lo * u64::from(total), hi * u64::from(total)))
 }
 
+/// A line of pixels split into [`lanes`], so that a tap takes two loads
+/// and not the splitting of a pixel. It has `reach` copies of the first
+/// pixel before the line and of the last after it.
+#[derive(Default)]
+struct LaneLine {
+    lo: Vec<u64>,
+    hi: Vec<u64>,
+}
+
+impl LaneLine {
+    fn fill(&mut self, row: &[u32], reach: usize) {
+        let n = row.len() + 2 * reach;
+        self.lo.resize(n, 0);
+        self.hi.resize(n, 0);
+        let (lo, hi) = (&mut self.lo[..n], &mut self.hi[..n]);
+        let (first, last) = (lanes(row[0]), lanes(row[row.len() - 1]));
+        lo[..reach].fill(first.0);
+        hi[..reach].fill(first.1);
+        lo[n - reach..].fill(last.0);
+        hi[n - reach..].fill(last.1);
+        let middle = lo[reach..].iter_mut().zip(&mut hi[reach..]).zip(row);
+        for ((l, h), &p) in middle {
+            (*l, *h) = lanes(p);
+        }
+    }
+}
+
+/// The working lines of a blur, kept between frames.
+#[derive(Default)]
+struct BlurLines {
+    /// The line being worked along the rows.
+    row: LaneLine,
+    /// The rows around the one being worked down the columns, by row
+    /// number modulo their count.
+    rows: Vec<LaneLine>,
+    /// Pixels of one color up to the window's end, by column.
+    runs: Vec<u32>,
+}
+
 /// One pass of [`blur`] along each row. The taps past an edge read the
-/// edge pixel. Where all of them hold one color, as across most of a frame,
-/// the answer needs only the kernel's total.
-fn blur_rows(from: &[u32], to: &mut [u32], w: usize, kernel: &BlurKernel) {
+/// edge pixel. Where all of them hold one color, as across most of a
+/// frame, the answer needs only the kernel's total.
+fn blur_rows(from: &[u32], to: &mut [u32], w: usize, lines: &mut BlurLines, kernel: &BlurKernel) {
     let r = kernel.reach;
     let weights = kernel.weights.map(u64::from);
+    let (mut flat, mut flat_out) = (!from[0], 0);
+    let line = &mut lines.row;
     for (row, out) in from.chunks_exact(w).zip(to.chunks_exact_mut(w)) {
-        // Pixels of one color up to the window's right end.
-        let mut run = 1;
+        // Whole rows of one color, as a layer of its own mostly has.
+        if row.iter().all(|&p| p == row[0]) {
+            if row[0] != flat {
+                flat = row[0];
+                flat_out = plateau(flat, kernel.total);
+            }
+            out.fill(flat_out);
+            continue;
+        }
+        line.fill(row, r);
+        let (lo, hi) = (&line.lo[..w + 2 * r], &line.hi[..w + 2 * r]);
+        // Pixels of one color up to the window's right end, the copies
+        // before the row counted.
+        let mut run = r + 1;
         for k in 1..=r.min(w - 1) {
             run = if row[k] == row[k - 1] { run + 1 } else { 1 };
         }
-        let (mut flat, mut flat_out) = (!row[0], 0);
+        run += (r + 1).saturating_sub(w);
+        let full = 2 * r;
         for (i, o) in out.iter_mut().enumerate() {
-            let end = (i + r).min(w - 1);
-            if i > 0 && i + r < w {
-                run = if row[end] == row[end - 1] { run + 1 } else { 1 };
+            if i > 0 {
+                let same = i + r >= w || row[i + r] == row[i + r - 1];
+                run = if same { run + 1 } else { 1 };
             }
-            if run > end - i.saturating_sub(r) {
-                if row[end] != flat {
-                    flat = row[end];
+            if run > full {
+                let color = row[(i + r).min(w - 1)];
+                if color != flat {
+                    flat = color;
                     flat_out = plateau(flat, kernel.total);
                 }
                 *o = flat_out;
                 continue;
             }
-            let (l0, h0) = lanes(row[i]);
-            let (mut lo, mut hi) = (l0 * weights[0], h0 * weights[0]);
+            let c = i + r;
+            let (mut l, mut h) = (lo[c] * weights[0], hi[c] * weights[0]);
             for k in 1..=r {
-                let (la, ha) = lanes(row[i.saturating_sub(k)]);
-                let (lb, hb) = lanes(row[(i + k).min(w - 1)]);
-                lo += (la + lb) * weights[k];
-                hi += (ha + hb) * weights[k];
+                l += (lo[c - k] + lo[c + k]) * weights[k];
+                h += (hi[c - k] + hi[c + k]) * weights[k];
             }
-            *o = from_lanes((lo, hi));
+            *o = from_lanes((l, h));
         }
     }
 }
 
 /// [`blur_rows`] down each column, a row at a time.
-fn blur_columns(from: &[u32], to: &mut [u32], w: usize, runs: &mut Vec<u32>, kernel: &BlurKernel) {
+fn blur_columns(
+    from: &[u32],
+    to: &mut [u32],
+    w: usize,
+    lines: &mut BlurLines,
+    kernel: &BlurKernel,
+) {
     let (r, h) = (kernel.reach, from.len() / w);
     let weights = kernel.weights.map(u64::from);
     let row = |y: usize| &from[y * w..][..w];
+    let span = 2 * r + 1;
+    let BlurLines { rows, runs, .. } = lines;
+    rows.resize_with(span, LaneLine::default);
     runs.clear();
-    runs.resize(w, 1);
-    let advance = |runs: &mut [u32], y: usize| {
+    runs.resize(w, r as u32 + 1);
+    // Taps above the frame read its top row, so a run starts with them.
+    let mut held = 0;
+    let mut hold = |rows: &mut [LaneLine], y: usize| {
+        rows[y % span].fill(row(y), 0);
+        held = y;
+    };
+    hold(rows, 0);
+    for y in 1..=r.min(h - 1) {
+        hold(rows, y);
         for ((run, a), b) in runs.iter_mut().zip(row(y)).zip(row(y - 1)) {
             *run = if a == b { *run + 1 } else { 1 };
         }
-    };
-    for y in 1..=r.min(h - 1) {
-        advance(runs, y);
     }
+    if r >= h {
+        let more = (r + 1 - h) as u32;
+        runs.iter_mut().for_each(|run| *run += more);
+    }
+    let full = 2 * r as u32;
     let (mut flat, mut flat_out) = (!from[0], 0);
     for (y, out) in to.chunks_exact_mut(w).enumerate() {
-        let end = (y + r).min(h - 1);
-        if y > 0 && y + r < h {
-            advance(runs, end);
+        if y > 0 {
+            let end = y + r;
+            if end < h {
+                hold(rows, end);
+                for ((run, a), b) in runs.iter_mut().zip(row(end)).zip(row(end - 1)) {
+                    *run = if a == b { *run + 1 } else { 1 };
+                }
+            } else {
+                runs.iter_mut().for_each(|run| *run += 1);
+            }
         }
-        let window = (end - y.saturating_sub(r)) as u32;
-        let last = row(end);
+        let last = row((y + r).min(h - 1));
+        // The two rows each pair of taps reads, for k = 1 to r.
+        let pair = |k: usize| {
+            let (a, b) = (y.saturating_sub(k), (y + k).min(h - 1));
+            (&rows[a % span], &rows[b % span])
+        };
+        let center = &rows[y % span];
+        let pairs = [pair(1), pair(2), pair(3), pair(4)];
         for (x, o) in out.iter_mut().enumerate() {
-            if runs[x] > window {
+            if runs[x] > full {
                 if last[x] != flat {
                     flat = last[x];
                     flat_out = plateau(flat, kernel.total);
@@ -534,15 +619,12 @@ fn blur_columns(from: &[u32], to: &mut [u32], w: usize, runs: &mut Vec<u32>, ker
                 *o = flat_out;
                 continue;
             }
-            let (l0, h0) = lanes(from[y * w + x]);
-            let (mut lo, mut hi) = (l0 * weights[0], h0 * weights[0]);
-            for k in 1..=r {
-                let (la, ha) = lanes(from[y.saturating_sub(k) * w + x]);
-                let (lb, hb) = lanes(from[(y + k).min(h - 1) * w + x]);
-                lo += (la + lb) * weights[k];
-                hi += (ha + hb) * weights[k];
+            let (mut l, mut m) = (center.lo[x] * weights[0], center.hi[x] * weights[0]);
+            for (k, (a, b)) in pairs.iter().enumerate().take(r) {
+                l += (a.lo[x] + b.lo[x]) * weights[k + 1];
+                m += (a.hi[x] + b.hi[x]) * weights[k + 1];
             }
-            *o = from_lanes((lo, hi));
+            *o = from_lanes((l, m));
         }
     }
 }
@@ -568,8 +650,20 @@ fn blur(fb: &mut Framebuffer, amount: u32) {
         shrink(half, fb.pixels(), w as usize, hw);
         half.between.clear();
         half.between.resize(hw * hh, 0);
-        blur_rows(&half.pixels, &mut half.between, hw, &kernel);
-        blur_columns(&half.between, &mut half.pixels, hw, &mut half.runs, &kernel);
+        blur_rows(
+            &half.pixels,
+            &mut half.between,
+            hw,
+            &mut half.lines,
+            &kernel,
+        );
+        blur_columns(
+            &half.between,
+            &mut half.pixels,
+            hw,
+            &mut half.lines,
+            &kernel,
+        );
         expand(half, fb.pixels_mut(), (w, h), (hw as f64, hh as f64), hw);
     });
 }
@@ -779,14 +873,14 @@ mod tests {
             for amount in [1, 7, 16, 32, 64, 128, 384] {
                 let k = blur_kernel(amount);
                 let mut out = vec![0; w * h];
-                blur_rows(&pixels, &mut out, w, &k);
+                let mut lines = BlurLines::default();
+                blur_rows(&pixels, &mut out, w, &mut lines, &k);
                 assert_eq!(
                     out,
                     slow_pass(&pixels, w, h, &k, true),
                     "rows {w}x{h} {amount}"
                 );
-                let mut runs = Vec::new();
-                blur_columns(&pixels, &mut out, w, &mut runs, &k);
+                blur_columns(&pixels, &mut out, w, &mut lines, &k);
                 assert_eq!(
                     out,
                     slow_pass(&pixels, w, h, &k, false),
