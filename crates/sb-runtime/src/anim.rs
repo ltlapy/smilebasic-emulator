@@ -143,11 +143,15 @@ impl Anim {
                 format!("loop count {loops}"),
             ));
         }
+        let value = |v: f64| match whole(mode.target) {
+            true => whole_value(v),
+            false => v,
+        };
         let keys: Vec<Key> = data
             .chunks_exact(per)
             .map(|k| Key {
                 time: k[0] as i32,
-                values: [k[1], k.get(2).copied().unwrap_or(0.0)],
+                values: [value(k[1]), value(k.get(2).copied().unwrap_or(0.0))],
             })
             .collect();
         // Checked on hardware: a key of time 0 is refused.
@@ -176,15 +180,33 @@ fn from_channels(c: [f64; 4]) -> f64 {
     f64::from(u32::from_be_bytes(c.map(|x| x.clamp(0.0, 255.0) as u8)))
 }
 
-/// `a` moved towards `b` on frame `elapsed` of `frames`: the two ends
-/// weighted by the share of frames left and gone, `a*left + b*(1-left)`,
-/// in single precision. Colors mix per channel that way and round down,
-/// so that &HFF to &HFF over three frames passes &HFF and &HFE; positions
-/// are rounded towards zero.
-// UNVERIFIED: that positions, Z, UV, V and I mix in single precision
-// too (a slide that lands on a whole number then reads one less: 0 to 3
-// over three frames would give 0, 1, 3).
+/// Whether a target's values are whole numbers, kept in 16 bits while it
+/// plays.
+fn whole(target: Target) -> bool {
+    matches!(target, Target::Xy | Target::Z | Target::Uv | Target::I)
+}
+
+fn whole_value(v: f64) -> f64 {
+    f64::from(v as i32 as i16)
+}
+
+/// `a` moved towards `b` on frame `elapsed` of `frames`, the two ends
+/// weighted by the frames left and gone. Whole-number targets divide
+/// their sum and drop the fraction: 0 to 3 over three frames goes 1, 2, 3.
+/// Colors, rotation and scale mix in single precision, so that &HFF to
+/// &HFF over three frames passes &HFF and &HFE, and colors round down.
+/// "V" mixes in double precision.
 fn mix(target: Target, a: [f64; 2], b: [f64; 2], (elapsed, frames): (u32, u32)) -> [f64; 2] {
+    if whole(target) {
+        let (left, gone) = (i64::from(frames - elapsed), i64::from(elapsed));
+        return std::array::from_fn(|i| {
+            ((a[i] as i64 * left + b[i] as i64 * gone) / i64::from(frames)) as f64
+        });
+    }
+    if target == Target::V {
+        let left = f64::from(frames - elapsed) / f64::from(frames);
+        return [a[0] * left + b[0] * (1.0 - left), 0.0];
+    }
     let left = (frames - elapsed) as f32 / frames as f32;
     let weigh = |a: f64, b: f64| a as f32 * left + b as f32 * (1.0 - left);
     if target == Target::C {
@@ -192,11 +214,7 @@ fn mix(target: Target, a: [f64; 2], b: [f64; 2], (elapsed, frames): (u32, u32)) 
         let c = std::array::from_fn(|i| f64::from(weigh(a[i], b[i]).floor()));
         return [from_channels(c), 0.0];
     }
-    let v = [weigh(a[0], b[0]), weigh(a[1], b[1])].map(f64::from);
-    if target == Target::Xy {
-        return v.map(f64::trunc);
-    }
-    v
+    [weigh(a[0], b[0]), weigh(a[1], b[1])].map(f64::from)
 }
 
 /// A relative key's value: the start value plus the key's, or for colors
@@ -208,7 +226,11 @@ fn offset(target: Target, base: [f64; 2], by: [f64; 2]) -> [f64; 2] {
         let c = std::array::from_fn(|i| (a[i] * b[i] / 256.0).floor());
         return [from_channels(c), 0.0];
     }
-    [base[0] + by[0], base[1] + by[1]]
+    let sum = [base[0] + by[0], base[1] + by[1]];
+    match whole(target) {
+        true => sum.map(whole_value),
+        false => sum,
+    }
 }
 
 /// An animation playing on a sprite or text screen.
@@ -225,11 +247,16 @@ pub struct Track {
     loops_done: i32,
     /// Whether the last frame played was part of a slide.
     slid: bool,
+    /// Sits out the next frame: see [`crate::sprites::Sprites::behind`].
+    pub late: bool,
 }
 
 impl Track {
     pub fn new(anim: Anim, on: &impl Animated) -> Track {
-        let base = on.value(anim.mode.target);
+        let mut base = on.value(anim.mode.target);
+        if whole(anim.mode.target) {
+            base = base.map(whole_value);
+        }
         Track {
             anim,
             base,
@@ -238,6 +265,7 @@ impl Track {
             elapsed: 0,
             loops_done: 0,
             slid: false,
+            late: false,
         }
     }
 
@@ -401,6 +429,29 @@ mod tests {
         let mut t = Track::new(anim, &WithDefs::new(&mut s, &defs));
         assert!(t.step(&mut WithDefs::new(&mut s, &defs)));
         assert_eq!(s.color, 0xBF7F_7F00);
+    }
+
+    /// TEST56: whole-number targets divide, so a slide that lands on whole
+    /// numbers shows them, and "V" keeps its fractions.
+    #[test]
+    fn whole_targets_slide_in_whole_numbers() {
+        let anim = Anim::new(mode(Target::Xy), &[-3.0, 3.0, 7.0], 0).unwrap();
+        let defs = vec![SpriteDef::default(); DEFS];
+        let mut s = sprite();
+        let mut t = Track::new(anim, &WithDefs::new(&mut s, &defs));
+        let seen: Vec<_> = play(&mut t, &mut s, 3).iter().map(|p| (p.0, p.1)).collect();
+        assert_eq!(seen, [(1.0, 2.0), (2.0, 4.0), (3.0, 7.0)]);
+        assert_eq!(
+            mix(Target::V, [0.0, 0.0], [1.0, 0.0], (1, 3))[0],
+            1.0 - 2.0 / 3.0
+        );
+        assert_eq!(
+            mix(Target::R, [0.0, 0.0], [3.0, 0.0], (1, 3))[0],
+            f64::from(3.0f32 * (1.0 - 2.0f32 / 3.0))
+        );
+        // Keys and the start are cut to whole numbers.
+        let anim = Anim::new(mode(Target::Xy), &[1.0, 10.75, -2.5], 1).unwrap();
+        assert_eq!(anim.keys[0].values, [10.0, -2.0]);
     }
 
     /// TEST47 part 20, read back on hardware: over three frames, X goes

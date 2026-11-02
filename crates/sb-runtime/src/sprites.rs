@@ -202,9 +202,6 @@ pub struct Sprite {
     pub link_flags: i32,
     /// Cleared on the next frame, as its parent was.
     pub clear_pending: bool,
-    /// Set by SPSET until the next frame's animations, which leave the
-    /// sprite as it is.
-    pub fresh: bool,
     /// SPFUNC's callback for CALL SPRITE: a `"@label"` or a DEF name.
     pub func: Option<Vec<u16>>,
 }
@@ -303,7 +300,6 @@ impl Sprite {
             parent: None,
             link_flags: 0,
             clear_pending: false,
-            fresh: false,
             func: None,
         }
     }
@@ -330,6 +326,13 @@ pub struct Sprites {
     pub new_layer: i32,
     /// ANIMDEF definitions.
     pub anim_defs: Vec<Option<Anim>>,
+    /// The program has not been woken by a frame: it has not waited since
+    /// it last ran out of frame or started, or its VSYNC found the frame
+    /// gone by. An SPANIM set now starts a frame later than one set after a
+    /// VSYNC that waited.
+    // UNVERIFIED: the rule fits TEST48 and TEST56 (2 late, 3 not); the
+    // cause is likely when SmileBASIC 4's thread runs against its frame.
+    pub behind: bool,
     /// Where SPHITSP() and SPHITRC() without arguments go on searching.
     pub hit_sp: Option<Search>,
     pub hit_rc: Option<Search>,
@@ -358,6 +361,7 @@ impl Sprites {
             new_page: DEFAULT_PAGE,
             new_layer: 0,
             anim_defs: vec![None; anim::DEFINITIONS],
+            behind: true,
             hit_sp: None,
             hit_rc: None,
             hit_info: HitInfo::default(),
@@ -407,7 +411,7 @@ impl Sprites {
     pub fn create(&mut self, id: usize, shown: bool) -> &mut Sprite {
         let s = &mut self.list[id];
         *s = Sprite::unused();
-        (s.used, s.shown, s.fresh) = (true, shown, true);
+        (s.used, s.shown) = (true, shown);
         (s.page, s.layer) = (self.new_page, self.new_layer);
         s
     }
@@ -510,14 +514,6 @@ impl Sprites {
         }
         for id in 0..SPRITES {
             let s = &mut self.list[id];
-            // An animation set in the frame of the sprite's SPSET takes
-            // its first step a frame late.
-            // UNVERIFIED: that it is SPSET that counts, not an SPCLR before
-            // it or a VSYNC that did not wait between it and SPANIM.
-            if std::mem::take(&mut s.fresh) {
-                s.anim_move = (0.0, 0.0);
-                continue;
-            }
             if !s.used || s.anim_stopped {
                 s.anim_move = (0.0, 0.0);
                 continue;
@@ -533,6 +529,9 @@ impl Sprites {
             s.anim_move = (0.0, 0.0);
             for (i, slot) in tracks.iter_mut().enumerate() {
                 let Some(track) = slot else { continue };
+                if std::mem::take(&mut track.late) {
+                    continue;
+                }
                 let going = track.step(&mut WithDefs::new(s, &self.defs));
                 if i == Target::Xy.index() && track.slid() {
                     s.anim_move = (s.pos.0 - before.0, s.pos.1 - before.1);

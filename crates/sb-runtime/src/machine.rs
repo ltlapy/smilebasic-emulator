@@ -1527,6 +1527,9 @@ impl Machine {
             }
             return;
         };
+        if self.wait == 0 {
+            self.rt.sprites.behind = true;
+        }
         self.wait = self.wait.saturating_sub(1);
         if self.wait > 0 {
             return;
@@ -1588,6 +1591,7 @@ impl Machine {
                         began = Some(now);
                     }
                     self.wait = frames;
+                    self.rt.sprites.behind = frames == 0;
                     self.vsync_at = self.frame + u64::from(frames);
                     if frames == 0 && has_time(vm) {
                         continue;
@@ -1614,7 +1618,9 @@ impl Machine {
                     self.vsync_at += u64::from(frames);
                     if self.vsync_at > self.frame {
                         self.wait = (self.vsync_at - self.frame) as u32;
+                        self.rt.sprites.behind = false;
                     } else {
+                        self.rt.sprites.behind = true;
                         self.vsync_at = self.frame;
                         self.rt.sound.synced();
                         // SmileBASIC 4 goes straight on, and so does a
