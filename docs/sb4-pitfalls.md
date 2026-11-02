@@ -91,6 +91,14 @@ follows all of it. Items still waiting for a check are marked
 - `RESIZE` of a 2D array takes every size, the later ones as they are:
   `RESIZE A,3` on `DIM A[2,3]` is `Wrong number of arguments`, and
   changing a later size `Illegal function call`.
+- `RESIZE A,0,3` on `DIM A[1,3]` leaves `LEN` 0 and `DIM(A,0)` 0, and
+  `SAVEV` and `LOADV` bring that back (TEST51). `RINGCOPY A,0,A` on such
+  an array does nothing and is no error (TEST51).
+- `LOADV` loads array files with a zero in any size and keeps the sizes:
+  `[0,3]` and `[3,0]` both give `RESULT()` 1 (TEST51).
+- `FORMAT$` gives `String is too long` for too long a field, shown as
+  `String is too long (FORMAT$:2)`: 1000 decimals in `%F` work (a length
+  of 1002), 10000 do not, nor does a width of 1048576 (TEST51).
 - `RINGCOPY` reading past the end of its source is `Illegal function
   call`, not `Out of range` as for `COPY`.
 - `REMOVE` with a count of 0 removes nothing and is no error, also on an
@@ -204,6 +212,8 @@ follows all of it. Items still waiting for a check are marked
   not there is `Undefined project name`); `METALOAD` alone loads the
   current one's again. Before any `METALOAD`, the title is the project's
   name. `METAEDIT(item)` works as a function.
+- A file name may end in a dot: `SAVEV "TXT:Q51.",S$` saves, and
+  `CHKFILE("TXT:Q51.")` is 1 while `CHKFILE("TXT:Q51")` is 0 (TEST51).
 - `#_FILENAME` is the program's name (`TEST32`), and empty in direct
   mode; `#_SLOT` is the program's slot, and in direct mode the slot run
   last.
@@ -304,6 +314,14 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on
   the 50-column console).
 - `TOFS` takes X and Y left out (`TOFS 0,,,10`).
+- `SCROLL 0,0,2147483647` and `SCROLL 0,2147483647,0` clear the screen,
+  as any shift of a whole screen or more does (TEST51).
+- `TFILL` clips its rectangle to the screen before the string starts:
+  `TFILL 0,MIN,MIN,MAX,MAX,"ABC"` on a 6x3 screen gives `ABCABC` on every
+  row (TEST51).
+- `TCOPY` takes rectangles of any size, down to the largest coordinates,
+  and copies only what is on the screens (TEST51). `TSCREEN` of 65536
+  cells a side is `Out of range` (TEST51).
 
 ## Sprites
 
@@ -464,7 +482,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     are blended twice and the bottom ones once, whichever corners are
     given first (TEST48). A box one pixel wide
     or high draws each pixel once, except the top of a one-pixel-wide
-    box.
+    box. `GBOX 0,Y,5,Y` on row -2147483648 draws nothing on the page
+    (TEST51).
   - `#G_ALPHA2` (mode 3): alpha `a = sa + da - floor(sa*da/255)`; each
     channel `(s*floor(sa*255/a) + d*floor(da*(255-sa)/a)) / 255`
     rounded down. Over an opaque pixel that is mode 2's result.
@@ -663,6 +682,13 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   samples once stretched) swapped for a 32-sample sine plays the sine's
   one cycle and then the rest of the square on each pass, near the
   square's level (2981 to 3023 against 3063) with twice the crossings.
+- `WAVSETA` with an empty array is `Illegal function call`, but in the
+  16-bit form an omitted 8th argument comes first: `DIM A%[0]:WAVSETA
+  224,0,0,0,0,A%,69,,,28160` is `Type mismatch (WAVSETA:8)` (TEST51).
+- `CHKMML` gives -1 for 16 million characters of notes, and for macros
+  nested six and seven levels deep that would come to 10^7 and 10^8
+  characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even
+  the stop key does nothing (TEST51).
 - `WAVSETA`'s 16-bit form (10 arguments or more) takes the loop's end + 1
   values from the offset on, with the loop counted from the offset, and
   drops what comes after; values are cut to 16 bits. A value v sounds
@@ -795,6 +821,8 @@ Checked with TTEST36.
 
   For an error the middle line is its message (`Divide by zero in
   0:8`), for `STOP` `Break on 0:7`.
+- `SUBRUN "/A/../B"` prints `OK`, then the same block with `Illegal
+  format` as its middle line (TEST51).
 - `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again,
   while it goes on running. A clear `BACKCOLOR` shows the main screen
   through.

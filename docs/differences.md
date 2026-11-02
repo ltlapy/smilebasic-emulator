@@ -56,11 +56,14 @@ Limits and errors the emulator adds so that a program or a damaged file
 cannot freeze or exhaust it. SmileBASIC 4's own answers to these are not
 known.
 
-- `WAVSETA` with an empty array is `Illegal function call`.
-- MML's macros may copy about four million characters for one song,
-  counting a macro's body each time it is defined or used, or the MML
-  is `Illegal MML` (`CHKMML` gives where). The largest use in any song
-  seen is about 9,000. MML without macros has no such limit.
+- `BGMPLAY` and `BGMSET` take macros that copy up to about four million
+  characters for one song, counting a macro's body each time it is
+  defined or used; past that the MML is `Illegal MML`. SmileBASIC 4 has no
+  such limit in practice and hangs for good on nine nested levels, which
+  is not worth copying. The largest use in any song seen is about 9,000,
+  and MML without macros has no such limit. `CHKMML` does not apply it: it
+  reads each macro's body once and gives -1 as SmileBASIC 4 does, but for
+  an error in such MML the place it gives counts from that shorter text.
 - A preset sequence (from the importer's `sequences.bin`) that runs more
   than 20,000 commands and sounding notes in one frame is stopped.
   SmileBASIC 4's own sequences peak at 195.
@@ -110,8 +113,6 @@ known.
   not raise `FREEMEM` there straight away.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
-- `FORMAT$` with more than 65,535 decimals in `%F` gives `Illegal format`.
-  What SmileBASIC 4 does with so many has not been checked.
 - `GSAVE` and `GLOAD` with a rectangle of more pixels than SmileBASIC
   4's memory could hold give `Out of range` rather than running out of
   memory.
@@ -184,12 +185,10 @@ What it refuses fails like any other file that cannot be read or written:
 - Files over 256 MiB are not read or saved, whichever command asks, and
   show nothing when chosen in the projects window. SmileBASIC 4's own
   limit is its memory.
-- `LOADV` and `LOADG` refuse an array file whose sizes `DIM` and `RESIZE`
-  could not have made: over 2^28 elements, or a zero after the first size.
-  What SmileBASIC 4 does with such a file is not known; it should never
-  have saved one. A zero first size loads, since `RESIZE` makes it and
-  `SAVEV` writes it, though whether SmileBASIC 4's `RESIZE` takes 0 is not
-  known either.
+- `LOADV` and `LOADG` refuse an array file whose non-zero sizes multiply
+  to over 2^28, also with a zero among them (`[0xFFFFFFFF,0]`), so that
+  nothing that goes through its rows can run out of memory. What SmileBASIC
+  4 does with such a file is not known; `[0,3]` and `[3,0]` load on both.
 - Image files of no pixels are refused rather than loaded empty.
 - Names Windows cannot keep are refused on Windows alone: `CON`, `PRN`,
   `AUX`, `NUL`, `COM0` to `COM9` and `LPT0` to `LPT9` for projects, also
