@@ -563,7 +563,9 @@ fn format(args: &[Value]) -> Result<Value> {
                     'B' => format!("{:b}", value.to_int()? as u32),
                     _ => {
                         let digits = precision.unwrap_or(6);
-                        if digits > MAX_FIELD {
+                        // At least a digit and the point before them: no
+                        // need to make what will be refused.
+                        if digits.saturating_add(2) > MAX_FIELD {
                             return Err(field_too_long(format!("{digits} decimals")));
                         }
                         fixed(value.to_real()?.abs(), digits)
@@ -582,10 +584,11 @@ fn format(args: &[Value]) -> Result<Value> {
                 return Err(ErrorKind::IllegalFormat.into());
             }
         };
-        if width > MAX_FIELD {
-            return Err(field_too_long(format!("width {width}")));
+        let filled = sign.len() + body.chars().count();
+        if width.max(filled) > MAX_FIELD {
+            return Err(field_too_long(format!("{} characters", width.max(filled))));
         }
-        let pad = width.saturating_sub(sign.len() + body.chars().count());
+        let pad = width.saturating_sub(filled);
         let field = if left {
             format!("{sign}{body}{}", " ".repeat(pad))
         } else if zero {
@@ -598,9 +601,9 @@ fn format(args: &[Value]) -> Result<Value> {
     Ok(string(out))
 }
 
-/// The most decimals `%F` gives, and the widest field.
-// UNVERIFIED: the exact limit, which lies between 1000 and 10000 decimals
-// and below a width of 1048576, and that the two are the same.
+/// The most characters one conversion of FORMAT$ can give.
+// UNVERIFIED: that this is per conversion rather than on the whole result,
+// and that it holds for `%S` as for numbers.
 const MAX_FIELD: usize = 1024;
 
 fn field_too_long(detail: String) -> Error {
@@ -1210,8 +1213,12 @@ mod tests {
         let format = |f: &str| call("FORMAT$", &[s(f), Value::Real(1.5)]);
         let digits = |f: &str| as_string(format(f).unwrap()).len();
         assert_eq!(digits("%.1000F"), 1002);
+        assert_eq!(digits("%.1022F"), 1024);
         assert_eq!(digits("%1000D"), 1000);
+        assert_eq!(digits("%1024D"), 1024);
         for f in [
+            "%.1023F",
+            "%1025D",
             "%.10000F",
             "%.99999F",
             "%.18446744073709551615F",
