@@ -788,16 +788,16 @@ pub fn project(
         let at = |r: usize, nx: f64| inv[r][0] * nx + inv[r][1] * ny + inv[r][2];
         let (mut gx, mut gy, mut q) = (at(0, nx0), at(1, nx0), at(2, nx0));
         let (dx, dy, dq) = (inv[0][0] * step, inv[1][0] * step, inv[2][0] * step);
-        let mut depth = z[0] * gx + z[1] * gy + z[2] * q;
-        let depth_step = z[0] * dx + z[1] * dy + z[2] * dq;
-        for px in x0..x1 {
+        let (first, end) = depth_span(
+            z[0] * gx + z[1] * gy + z[2] * q,
+            z[0] * dx + z[1] * dy + z[2] * dq,
+            x1 - x0,
+        );
+        let skipped = f64::from(first);
+        (gx, gy, q) = (gx + dx * skipped, gy + dy * skipped, q + dq * skipped);
+        for px in x0 + first..x0 + end {
             let (lx, ly) = (gx / q, gy / q);
             (gx, gy, q) = (gx + dx, gy + dy, q + dq);
-            let shown = depth.abs() <= 1.0;
-            depth += depth_step;
-            if !shown {
-                continue;
-            }
             // In front only; a NaN is not.
             if (h[2][0] * lx + h[2][1] * ly + h[2][2]).partial_cmp(&0.0) != Some(Ordering::Greater)
             {
@@ -926,6 +926,24 @@ fn depth_row(m: &[f64; 16]) -> [f64; 3] {
     [m[2], m[6], m[14]]
 }
 
+/// The pixels `from..to` of a row of `n` where Z / W is from -1 to 1, as
+/// `at + step * t` at pixel t.
+fn depth_span(at: f64, step: f64, n: u32) -> (u32, u32) {
+    if step == 0.0 {
+        return if at.abs() <= 1.0 { (0, n) } else { (0, 0) };
+    }
+    let (a, b) = ((-1.0 - at) / step, (1.0 - at) / step);
+    let (lo, hi) = (a.min(b), a.max(b));
+    if lo.is_nan() || hi.is_nan() {
+        return (0, 0);
+    }
+    // Far past the row's ends these saturate.
+    let from = lo.ceil().max(0.0) as u32;
+    let to = (hi.floor() + 1.0).max(0.0) as u32;
+    let to = to.min(n);
+    (from.min(to), to)
+}
+
 /// Where a layer's point `(x, y)` goes on a `w` x `hh` frame through
 /// LMATRIX's 4x4 matrix `m`, as [`project`] puts it, or `None` when it
 /// is not in front.
@@ -1001,10 +1019,10 @@ pub fn project_image<P: Paint>(
             back.c * gx + back.d * gy + back.ty * q,
             back.c * dx + back.d * dy + back.ty * dq,
         );
-        // Z / W, linear in t.
-        let (az, kz) = (
+        let shown = depth_span(
             z[0] * gx + z[1] * gy + z[2] * q,
             z[0] * dx + z[1] * dy + z[2] * dq,
+            x1.saturating_sub(x0),
         );
         let line = &mut pixels[py as usize * width..][..x1 as usize];
         for sign in [1.0, -1.0] {
@@ -1015,8 +1033,6 @@ pub fn project_image<P: Paint>(
                 (iw * dq - kx, iw * q - ax),
                 (ky, ay),
                 (ih * dq - ky, ih * q - ay),
-                (kz, 1.0 + az),
-                (-kz, 1.0 - az),
             ];
             let (mut lo, mut hi) = (0.0, n);
             for (k, c) in bounds {
@@ -1034,19 +1050,13 @@ pub fn project_image<P: Paint>(
             if lo >= hi {
                 continue;
             }
-            let from = (lo - 1.0).max(0.0) as u32;
-            let to = ((hi + 1.0).min(n) as u32).min(x1 - x0);
+            let from = ((lo - 1.0).max(0.0) as u32).max(shown.0);
+            let to = ((hi + 1.0).min(n) as u32).min(x1 - x0).min(shown.1);
             let ft = f64::from(from);
             let (mut gx, mut gy, mut qt) = (gx + dx * ft, gy + dy * ft, q + dq * ft);
-            let mut depth = az + kz * ft;
             for t in from..to {
                 let (lx, ly) = (gx / qt, gy / qt);
                 (gx, gy, qt) = (gx + dx, gy + dy, qt + dq);
-                let shown = depth.abs() <= 1.0;
-                depth += kz;
-                if !shown {
-                    continue;
-                }
                 // In front only; a NaN is not.
                 if (hm[2][0] * lx + hm[2][1] * ly + hm[2][2]).partial_cmp(&0.0)
                     != Some(Ordering::Greater)
