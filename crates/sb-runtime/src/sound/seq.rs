@@ -22,6 +22,18 @@ const MAGIC: &[u8; 8] = b"SBSEQ001";
 const COMMANDS_PER_TICK: u32 = 10_000;
 /// Calls nested deeper than this end the track.
 const CALL_DEPTH: usize = 8;
+/// Commands run and sounding notes counted down in one block of sound (a
+/// frame) before the whole sequence is taken to be stuck. Tracks can start
+/// each other again for ever, so that `COMMANDS_PER_TICK` never ends them,
+/// and a block has as many ticks as samples at the highest tempo. Mixing
+/// shares the program's thread, so this must not take long. The busiest
+/// block of all 359 of SmileBASIC 4's sequences needs 195.
+// UNVERIFIED: what SmileBASIC 4 does with a sequence like this.
+const BLOCK_WORK: u32 = 20_000;
+/// The same for a whole recording, which no one is waiting to hear.
+const RECORD_WORK: u32 = 1 << 28;
+/// Events a recording keeps at most.
+const RECORD_EVENTS: usize = 1 << 22;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sequence {
@@ -198,6 +210,8 @@ pub(crate) struct Player {
     pub(crate) timebase: u32,
     /// BGMPITCH or BEEPPIT, in cents.
     pitch: i32,
+    /// What is left of `BLOCK_WORK` in this block.
+    work: u32,
 }
 
 impl Player {
@@ -211,6 +225,23 @@ impl Player {
             tempo: 120,
             timebase: 48,
             pitch: 0,
+            work: BLOCK_WORK,
+        }
+    }
+
+    /// A new block of sound starts: see [`BLOCK_WORK`].
+    pub(crate) fn begin_block(&mut self) {
+        self.work = BLOCK_WORK;
+    }
+
+    /// Stops everything, for a sequence that has used up its work.
+    fn give_up(&mut self, synth: &mut dyn Synth) {
+        for (c, track) in self.tracks.iter_mut().enumerate() {
+            let Some(t) = track else { continue };
+            t.ended = true;
+            for (key, _) in t.notes.drain(..) {
+                synth.note_off(c, key);
+            }
         }
     }
 
@@ -272,6 +303,7 @@ impl Player {
     pub(crate) fn tick(&mut self, synth: &mut dyn Synth) {
         for (c, track) in self.tracks.iter_mut().enumerate() {
             let Some(t) = track else { continue };
+            self.work = self.work.saturating_sub(t.notes.len() as u32);
             t.notes.retain_mut(|(key, left)| {
                 *left = left.saturating_sub(1);
                 if *left == 0 {
@@ -300,6 +332,11 @@ impl Player {
             if t.ended || t.wait > 0 {
                 return;
             }
+            if self.work == 0 {
+                self.give_up(synth);
+                return;
+            }
+            self.work -= 1;
             budget -= 1;
             let mut r = CodeReader { code, at: t.pc };
             let Some(op) = r.u8() else {
@@ -514,9 +551,10 @@ const RECORD_TICKS: u32 = 48 * 4 * 2000;
 /// where every track has gone round once; notes still sounding then stop.
 pub fn record(seq: Arc<Sequence>) -> (Vec<Timed>, u32) {
     let mut player = Player::new(seq);
+    player.work = RECORD_WORK;
     let mut rec = Recorder::default();
     let mut tempo = None;
-    while rec.tick < RECORD_TICKS {
+    while rec.tick < RECORD_TICKS && rec.events.len() < RECORD_EVENTS {
         player.tick(&mut rec);
         if tempo != Some(player.tempo) {
             tempo = Some(player.tempo);
@@ -718,6 +756,131 @@ mod tests {
                 at(2, Event::NoteOff(60)),
             ]
         );
+    }
+
+    /// Each track sets the volume, starts the next track and loops on the
+    /// volume without waiting. A track ended for that loop is started
+    /// again by the track before it on the next tick, for ever.
+    fn tracks_restarting_each_other() -> Vec<u8> {
+        let mut code = Vec::new();
+        for c in 0..CHANNELS as u32 {
+            let next = (c + 1) % CHANNELS as u32;
+            code.extend_from_slice(&[0x88, next as u8]);
+            code.extend_from_slice(&(next * 11).to_le_bytes()[..3]);
+            code.extend_from_slice(&[0xC1, 100]);
+            code.push(0x89);
+            code.extend_from_slice(&(c * 11 + 5).to_le_bytes()[..3]);
+        }
+        code
+    }
+
+    /// Counts what it is asked to do.
+    #[derive(Default)]
+    struct Count(usize);
+
+    impl Synth for Count {
+        fn plays(&self, _: i32) -> bool {
+            true
+        }
+        fn program(&mut self, _: usize, _: i32) {
+            self.0 += 1;
+        }
+        fn volume(&mut self, _: usize, _: i32) {
+            self.0 += 1;
+        }
+        fn expression(&mut self, _: usize, _: i32) {}
+        fn pan(&mut self, _: usize, _: i32) {
+            self.0 += 1;
+        }
+        fn modulation(&mut self, _: usize, _: i32) {}
+        fn bend(&mut self, _: usize, _: i32) {}
+        fn note_on(&mut self, _: usize, _: i32, _: i32) {
+            self.0 += 1;
+        }
+        fn note_off(&mut self, _: usize, _: i32) {
+            self.0 += 1;
+        }
+        fn channel_off(&mut self, _: usize) {}
+        fn reset(&mut self) {}
+        fn render(&mut self, _: &mut [f32], _: &mut [f32]) {}
+    }
+
+    fn player(code: Vec<u8>) -> Player {
+        Player::new(Arc::new(Sequence {
+            volume: 127,
+            start: 0,
+            code,
+        }))
+    }
+
+    /// Ticks as many as a block's samples: the most a block can hold.
+    fn stuck_within_a_block(code: Vec<u8>) -> (Player, usize) {
+        let (mut p, mut synth) = (player(code), Count::default());
+        p.begin_block();
+        for _ in 0..super::super::FRAME_SAMPLES {
+            p.tick(&mut synth);
+        }
+        (p, synth.0)
+    }
+
+    #[test]
+    fn tracks_that_keep_restarting_each_other_are_stopped() {
+        let (p, commands) = stuck_within_a_block(tracks_restarting_each_other());
+        assert!(p.ended(), "the whole sequence stops");
+        // Half its commands set the volume, and it stops at the budget.
+        assert!(commands <= BLOCK_WORK as usize, "{commands}");
+        assert!(commands > 0);
+    }
+
+    #[test]
+    fn notes_piling_up_are_stopped() {
+        // Notes that do not wait and last long, one a tick, on a track
+        // that then goes round: counting them down must not grow for ever.
+        let code = vec![
+            0xC7, 0, // notes stop waiting
+            60, 100, 0xFF, 0xFF, 0x7F, // a note of two million ticks
+            0x80, 1, // wait
+            0x89, 2, 0, 0, // again
+        ];
+        let (mut p, mut synth) = (player(code), Count::default());
+        let mut blocks = 0;
+        while !p.ended() {
+            p.begin_block();
+            for _ in 0..super::super::FRAME_SAMPLES {
+                p.tick(&mut synth);
+            }
+            blocks += 1;
+            assert!(blocks < 1000, "goes on for ever");
+        }
+        let notes_off = synth.0 / 2;
+        assert!(notes_off > 0 && notes_off < 2 * BLOCK_WORK as usize);
+    }
+
+    #[test]
+    fn work_starts_again_with_each_block() {
+        // A busy tick, far below the limit, for many blocks.
+        let mut code = [0xC1, 1].repeat(100);
+        code.extend_from_slice(&[0x80, 1, 0x89, 0, 0, 0]);
+        let (mut p, mut synth) = (player(code), Count::default());
+        for _ in 0..100 {
+            p.begin_block();
+            for _ in 0..16 {
+                p.tick(&mut synth);
+            }
+        }
+        assert!(!p.ended());
+    }
+
+    #[test]
+    fn a_recording_of_a_stuck_sequence_stops() {
+        let (events, _) = record(Arc::new(Sequence {
+            volume: 127,
+            start: 0,
+            code: tracks_restarting_each_other(),
+        }));
+        // Past the cap by at most a tick's worth of commands.
+        let tick = CHANNELS * COMMANDS_PER_TICK as usize * 2;
+        assert!(events.len() <= RECORD_EVENTS + tick, "{}", events.len());
     }
 
     #[test]

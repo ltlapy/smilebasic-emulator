@@ -885,6 +885,9 @@ impl Track {
         let [l, r] = scratch;
         l.resize(n, 0.0);
         r.resize(n, 0.0);
+        if let Some(p) = &mut self.seq {
+            p.begin_block();
+        }
         let mut done = 0;
         while done < n {
             if !self.paused && self.playing && self.until_tick <= 0.0 {

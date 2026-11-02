@@ -309,6 +309,7 @@ impl Beeps {
                     until_tick,
                     tail,
                 } => {
+                    player.begin_block();
                     let mut done = 0;
                     while done < n {
                         if *until_tick <= 0.0 && !player.ended() {
