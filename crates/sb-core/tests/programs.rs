@@ -1015,6 +1015,14 @@ fn array_operations() {
 }
 
 #[test]
+fn ringcopy_refuses_an_array_with_no_channels() {
+    assert_eq!(
+        error("DIM A[1,3]:RESIZE A,0,3:RINGCOPY A,0,A").0,
+        ErrorKind::OutOfRange
+    );
+}
+
+#[test]
 fn ring_copies() {
     assert_eq!(
         output("DIM D[4]:DIM S[]=[1,2,3]:RINGCOPY D,3,S OUT E:?D[0];D[1];D[2];D[3];E"),

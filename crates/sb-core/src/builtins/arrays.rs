@@ -444,7 +444,8 @@ pub(super) fn ringcopy(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     };
     let mut dest = dest.borrow_mut();
     let (ch, len) = channels(&dest)?;
-    if len == 0 {
+    // RESIZE can leave no channels at all: `[0, 3]`.
+    if len == 0 || ch == 0 {
         return Err(out_of_range("empty array"));
     }
     if samples.len() != 1 && samples.len() != ch {
