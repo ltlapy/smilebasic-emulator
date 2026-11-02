@@ -113,6 +113,19 @@ fn wave_head(args: &[Value]) -> Result<(usize, Envelope)> {
     ))
 }
 
+/// WAVSETA's arguments after the array can be left off the end, by how many
+/// are given, but none can be left out in between; this comes before the
+/// array is looked at.
+fn none_omitted(args: &[Value]) -> Result<()> {
+    match (6..args.len()).find(|&i| matches!(args[i], Value::Default)) {
+        Some(i) => {
+            let omitted = format!("argument {} omitted", i + 1);
+            Err(Error::with_detail(ErrorKind::TypeMismatch, omitted).of_arg(i))
+        }
+        None => Ok(()),
+    }
+}
+
 /// WAVSETA's samples, of which there must be some: every default range
 /// below counts from the last one.
 fn wave_samples(v: &Value) -> Result<Vec<f64>> {
@@ -379,6 +392,7 @@ impl Runtime {
             // The 8-bit form, SmileBASIC 3's.
             (Command::Wavseta, Want::Outs(0), 6..=9) => {
                 let (n, envelope) = wave_head(args)?;
+                none_omitted(args)?;
                 let all = wave_samples(&args[5])?;
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let last = all.len() as i32 - 1;
@@ -392,11 +406,7 @@ impl Runtime {
             // A 16-bit sample with a loop and its own sample rate.
             (Command::Wavseta, Want::Outs(0), 10..=12) => {
                 let (n, envelope) = wave_head(args)?;
-                // UNVERIFIED: the 7th, 9th and 10th as for the 8th.
-                if let Some(i) = (6..=9).find(|&i| matches!(args[i], Value::Default)) {
-                    let omitted = format!("argument {} omitted", i + 1);
-                    return Err(Error::with_detail(ErrorKind::TypeMismatch, omitted).of_arg(i));
-                }
+                none_omitted(args)?;
                 let all = wave_samples(&args[5])?;
                 let base_note = in_range("pitch", &args[6], 0..=127)?;
                 let last = all.len() as i32 - 1;

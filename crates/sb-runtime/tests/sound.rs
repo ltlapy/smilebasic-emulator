@@ -251,17 +251,21 @@ fn wavseta_refuses_an_empty_array() {
     for source in [
         "DIM A[1]:WAVSETA 224,0,0,0,0,A",
         "DIM A[1]:WAVSETA 224,0,0,0,0,A,69,0,0,28160",
-        "DIM A[1]:WAVSETA 224,0,0,0,0,A,69,0,0,28160,,1",
+        "DIM A[1]:WAVSETA 224,0,0,0,0,A,69,0,0,28160,0",
     ] {
         run_on(&mut runtime(), source).unwrap();
     }
 }
 
-/// Only the offset and the flag of the 16-bit form can be left out, and
-/// that is looked at before the array is.
+/// Arguments can be left off the end but not out in between, in either
+/// form, and that is looked at before the array is.
 #[test]
-fn wavseta_16_bit_form_refuses_omitted_arguments() {
+fn wavseta_refuses_omitted_arguments() {
     for (source, arg) in [
+        ("DIM A%[16]:WAVSETA 224,0,0,0,0,A%,,0,15", 6),
+        ("DIM A%[16]:WAVSETA 224,0,0,0,0,A%,69,,15", 7),
+        ("DIM A%[0]:WAVSETA 224,0,0,0,0,A%,,0,15", 6),
+        ("DIM A[1]:WAVSETA 224,0,0,0,0,A,69,0,0,28160,,1", 10),
         ("DIM A[0]:WAVSETA 224,0,0,0,0,A,,0,0,28160", 6),
         ("DIM A[0]:WAVSETA 224,0,0,0,0,A,69,,,28160", 7),
         ("DIM A[1]:WAVSETA 224,0,0,0,0,A,69,0,,28160", 8),
