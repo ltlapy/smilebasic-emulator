@@ -601,3 +601,22 @@ fn the_sub_interpreter_has_a_memory_budget_of_its_own() {
     frames(&mut m, 5);
     assert!(m.sub_running(), "{:?}", rows(&m));
 }
+
+/// Both forms give no error on hardware, and start the file here.
+#[test]
+fn subrun_takes_lower_case_and_a_file_type() {
+    let dir = TempDir::new("forms");
+    let mut m = machine(&dir, "WHILE 1:VSYNC:WEND\n");
+    for form in ["sub", "TXT:SUB", "txt:sub"] {
+        enter(&mut m, &format!("subrun \"{form}\""));
+        frames(&mut m, 1);
+        assert!(m.sub_running(), "{form}");
+        assert!(
+            !rows(&m).iter().any(|r| r.starts_with("=== From")),
+            "{form}"
+        );
+        m.stop_sub();
+        frames(&mut m, 1);
+        m.rt.text[4].cls();
+    }
+}

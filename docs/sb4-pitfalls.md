@@ -835,6 +835,8 @@ Checked with TTEST36.
   0:8`), for `STOP` `Break on 0:7`.
 - `SUBRUN "/A/../B"` prints `OK`, then the same block with `Illegal
   format` as its middle line (TEST51).
+- `SUBRUN` takes a name in lower case and one starting with `TXT:`:
+  `SUBRUN "test51s"` and `SUBRUN "TXT:TEST51S"` give no error and no block.
 - `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again,
   while it goes on running. A clear `BACKCOLOR` shows the main screen
   through.

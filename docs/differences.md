@@ -204,8 +204,6 @@ What it refuses fails like any other file that cannot be read or written:
 - Names Windows cannot keep are refused on Windows alone: `CON`, `PRN`,
   `AUX`, `NUL`, `COM0` to `COM9` and `LPT0` to `LPT9` for projects, also
   with an extension, and any name ending in a dot.
-- `SUBRUN`'s and the tool keys' file names follow `LOAD`'s rules, so they
-  may be in lower case or start with `TXT:`.
 
 If the emulator itself fails while a program runs, it stops the program
 and prints `Internal Error` with the reason, keeping the slots and the
