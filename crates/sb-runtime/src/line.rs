@@ -4,7 +4,7 @@
 
 use crate::complete::Completion;
 use crate::runtime::keys;
-use crate::text::{Cell, TextScreen};
+use crate::text::{Cell, TextScreen, attr};
 
 /// Editing commands that only the line takes, queued with the keys so
 /// that they come in order with them. The frontend queues them only while
@@ -20,11 +20,6 @@ pub mod commands {
     /// Ctrl+Delete: removes the line from the cursor on.
     pub const DELETE_TO_END: u16 = 0xF8F6;
 }
-
-/// The color of selected characters, which have no background of their
-/// own on the console.
-// UNVERIFIED: how SmileBASIC 4 shows a selection in direct mode.
-const SELECTED: u32 = 0xFF60_C0FF;
 
 #[derive(Clone, Debug)]
 pub struct LineEdit {
@@ -196,7 +191,7 @@ impl LineEdit {
             console.scroll(0, rows as i32);
             self.origin -= rows * w;
         }
-        let (color, attr) = (console.color(), console.attr);
+        let (color, plain) = (console.color(), console.attr);
         let selection = self.selection();
         for i in 0..self.text.len().max(self.shown) {
             let p = self.origin + i as i64;
@@ -206,7 +201,12 @@ impl LineEdit {
             let cell = match self.text.get(i) {
                 Some(&code) => {
                     let selected = selection.is_some_and(|(a, b)| a <= i && i < b);
-                    let color = if selected { SELECTED } else { color };
+                    // UNVERIFIED: expected of SmileBASIC 4, not seen.
+                    let attr = if selected {
+                        plain | attr::INVERT
+                    } else {
+                        plain
+                    };
                     Cell { code, color, attr }
                 }
                 None => Cell {
@@ -218,16 +218,26 @@ impl LineEdit {
             console.set_cell((p % w) as i32, (p / w) as i32, cell);
         }
         self.shown = self.text.len();
+        self.place_cursor(console);
+    }
+
+    /// Puts the console's cursor at the line's.
+    fn place_cursor(&self, console: &mut TextScreen) {
+        let w = i64::from(console.size().0);
         let p = (self.origin + self.cursor as i64).max(0);
         let _ = console.locate(Some((p % w) as i32), Some((p / w) as i32));
     }
 
     /// Ends the line with Enter: the console goes on below its end.
     pub fn finish(mut self, console: &mut TextScreen) -> Vec<u16> {
-        self.anchor = None;
-        self.cursor = self.text.len();
+        // UNVERIFIED: that a selection stays on the console, as SmileBASIC
+        // 4's Enter does not draw the line again.
         self.draw(console);
+        self.cursor = self.text.len();
         let w = i64::from(console.size().0);
+        if w != 0 {
+            self.place_cursor(console);
+        }
         // A line that fills its last row has its cursor on the next one
         // already.
         let p = self.origin + self.text.len() as i64;
@@ -287,6 +297,32 @@ mod tests {
         line.key(DELETE_TO_END);
         line.draw(&mut c);
         assert_eq!((row(&c, 0).as_str(), c.cursor()), (">....", (1, 0)));
+    }
+
+    #[test]
+    fn selected_characters_are_inverted_until_the_selection_goes() {
+        let mut c = console();
+        let mut line = LineEdit::new(&c);
+        typing(&mut line, "ABC");
+        line.key(SELECT_LEFT);
+        line.key(SELECT_LEFT);
+        line.draw(&mut c);
+        let inverted = |c: &TextScreen, x| c.cell(x, 0).attr & attr::INVERT != 0;
+        assert_eq!(
+            [0, 1, 2, 3].map(|x| inverted(&c, x)),
+            [false, true, true, false]
+        );
+        assert_eq!(c.cell(1, 0).color, c.color());
+        line.key(keys::RIGHT);
+        line.draw(&mut c);
+        assert!(!inverted(&c, 1) && !inverted(&c, 2));
+        // Enter does not draw the line again.
+        line.key(SELECT_LEFT);
+        line.draw(&mut c);
+        let text = line.finish(&mut c);
+        assert_eq!(text.len(), 3);
+        assert!(inverted(&c, 1) && !inverted(&c, 2));
+        assert_eq!(c.cursor(), (0, 1));
     }
 
     #[test]
