@@ -77,7 +77,6 @@ impl Filter {
 /// A raster array's entries as X offset, X scale, Y offset and Y scale.
 /// With two to an entry they are the offset and scale along the
 /// deformation: X for type 3, Y for type 4.
-// UNVERIFIED: the two-value form's meaning.
 fn raster_rows(info: &sb_core::value::Array, vertical: bool) -> Vec<[f64; 4]> {
     let width = match info.dims[..] {
         [_, w @ (2 | 4)] => w,
@@ -94,12 +93,10 @@ fn raster_rows(info: &sb_core::value::Array, vertical: bool) -> Vec<[f64; 4]> {
 }
 
 /// Raster deformation. Each row of the frame (type 3) or column (type 4)
-/// takes an entry, and each pixel shows the source pixel at its center
-/// scaled and then moved by that entry, in OpenGL's way: from the left
-/// for X and from the bottom for Y, offsets in widths and heights.
-/// Without `repeat`, points off the frame show nothing.
-// UNVERIFIED: the direction of Y offsets, and whether scale comes before
-// the offset.
+/// takes the entry its center falls in, and each pixel shows the source
+/// pixel at its center scaled and then moved by that entry, in OpenGL's
+/// way: from the left for X and from the bottom for Y, offsets in widths
+/// and heights. Without `repeat`, points off the frame show nothing.
 fn raster(fb: &mut Framebuffer, rows: &[[f64; 4]], vertical: bool, repeat: bool) {
     if rows.is_empty() {
         return;
@@ -138,7 +135,7 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
             None => None,
         }
     };
-    let entry = |i: usize, n: usize| rows[i * rows.len() / n];
+    let entry = |i: usize, n: usize| rows[(2 * i + 1) * rows.len() / (2 * n)];
     // Where a pixel's center lands in the source, across and down, each
     // from the entry's scale and its offset in pixels.
     let across_at = |x: usize, sx: f64, off: f64| sx * (x as f64 + 0.5) + off;
@@ -679,6 +676,23 @@ mod tests {
         let mut fb = frame(&[row, row].concat(), 4);
         filter(true).apply(&mut fb, 1);
         assert_eq!(&fb.pixels()[..4], &[2, 3, 4, 1]);
+    }
+
+    #[test]
+    fn raster_lines_take_the_entry_of_their_centers() {
+        use sb_core::value::{Array, ArrayData, ElemType};
+        // Two entries over three lines: the middle line's center, 1.5 of
+        // 3, falls in the second.
+        let mut info = Array::new(ElemType::Real, vec![2, 2]);
+        info.data = ArrayData::Real(vec![0.0, 1.0, 0.5, 1.0]);
+        let filter = Filter::Raster {
+            vertical: false,
+            info: std::rc::Rc::new(std::cell::RefCell::new(info)),
+            repeat: false,
+        };
+        let mut fb = frame(&[1, 2, 1, 2, 1, 2], 2);
+        filter.apply(&mut fb, 1);
+        assert_eq!(fb.pixels(), &[1, 2, 2, 0, 2, 0]);
     }
 
     #[test]

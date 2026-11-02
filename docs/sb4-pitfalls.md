@@ -542,7 +542,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   the picture left; a Y scale of 0.5 stretches the bottom half over the
   screen. Without repeat, what falls off shows black, BACKCOLOR included
   on a layer that is not composed. Checked pixel for pixel with
-  screenshots (TTEST26).
+  screenshots (TTEST26). The scale comes before the offset, and a positive
+  Y offset moves the point up from the bottom. An array of two values to
+  an entry holds the offset and scale along the deformation: X for type 3,
+  Y for type 4. With n entries, row or column i of `size` takes entry
+  `floor((i+.5)*n/size)`, the one its center falls in (TEST54).
 - `LMATRIX layer,M` with 16 reals takes the layer's coordinates as
   (x, y, 0, 1) through M to clip space, X right and Y up: the identity
   puts the layer's square from (0,0) to (1,1) over the screen's top

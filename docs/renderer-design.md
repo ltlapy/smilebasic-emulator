@@ -391,8 +391,8 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Blur beyond amount 8 (box approximation past radius 4) | `filter::blur` | **U (R15)** (NEON_DRIFTWAY uses 384) |
 | Blur halving is in frame pixels whatever XSCREEN's sample | `filter::blur` | **U (R15)** |
 | Raster: `[n,4]` entries of X offset, X scale, Y offset, Y scale, OpenGL axes, centre times scale plus offset, repeat flag required | `filter::raster` | C: pitfalls; TTEST25/26 |
-| Raster: Y offset sign, and scale before offset when both are set | `filter::raster` | **U (R16)** (still open after TTEST26) |
-| Raster `[n,2]` form's meaning | `raster_rows` | **U (R17)** |
+| Raster: scale, then offset; the Y offset's sign is + from the bottom | `filter::raster` | C (R16): pitfalls; TEST54 part 4 |
+| Raster `[n,2]` form acts along the deformation; a row takes entry `floor((i+.5)*n/size)` | `raster_rows`, `raster_into` | C (R17): pitfalls; TEST54 parts 5, 6 |
 | Raster on a direct layer: what falls off shows black | `Runtime::render` | C: pitfalls |
 | Raster after LMATRIX | `Runtime::render` | C: pitfalls; TTEST27 |
 | Colour conversion: hue in degrees, S and V on 0-255 | `filter::shift_color` | C: `filter.rs` header (screenshots) |
