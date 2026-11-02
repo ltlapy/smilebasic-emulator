@@ -25,6 +25,9 @@ use crate::runtime::{Command, Runtime, no_form};
 
 /// The topic that the help opens on when nothing is asked for.
 pub const INTRO: &str = "DEFAULTHELPKEY";
+/// The most values in HELPGET's array of colored runs. A real page has about a
+/// thousand; only a damaged file asks for more.
+const MOST_RUN_VALUES: usize = 1 << 24;
 
 /// Words that are not topics of their own, and the topic that covers them.
 const ALIASES: &[(&str, &str)] = &[
@@ -103,6 +106,12 @@ fn u32_at(bytes: &[u8], at: usize) -> Option<usize> {
 }
 
 fn page_at(data: &[u8], reference: u64) -> Option<Page> {
+    page_and_size(data, reference).map(|(page, _)| page)
+}
+
+/// A page, and how many bytes of the data file it took.
+fn page_and_size(data: &[u8], reference: u64) -> Option<(Page, usize)> {
+    let start = (reference & 0xFFFF_FFFF) as usize;
     let mut at = (reference & 0xFFFF_FFFF) as usize;
     let example_len = (reference >> 32) as usize;
     let count = u32_at(data, at)?;
@@ -149,7 +158,7 @@ fn page_at(data: &[u8], reference: u64) -> Option<Page> {
             text,
         });
     }
-    Some(Page { lines, example })
+    Some((Page { lines, example }, at - start))
 }
 
 impl Help {
@@ -157,6 +166,12 @@ impl Help {
     /// or are damaged.
     pub fn from_bytes(index: &[u8], data: Vec<u8>) -> Option<Help> {
         let mut topics = HashMap::new();
+        // Topics share pages, and each is read once. Pages do not overlap in
+        // a real help, so they add up to the data file at most. A damaged
+        // index could have every reference read most of the file, here and
+        // again each time a topic is shown.
+        let mut sizes: HashMap<u64, usize> = HashMap::new();
+        let mut read = 0usize;
         for i in 0..u32_at(index, 0)? {
             let entry = 4 + 16 * i;
             let (name, len) = (u32_at(index, entry)?, u32_at(index, entry + 4)?);
@@ -169,8 +184,21 @@ impl Help {
                 })
                 .collect::<Option<Vec<_>>>()?;
             // Only whole pages count as a help.
-            if refs.iter().any(|&r| page_at(&data, r).is_none()) {
-                return None;
+            let mut shown = 0usize;
+            for &reference in &refs {
+                let size = match sizes.get(&reference) {
+                    Some(&size) => size,
+                    None => {
+                        let (_, size) = page_and_size(&data, reference)?;
+                        sizes.insert(reference, size);
+                        read = read.checked_add(size)?;
+                        size
+                    }
+                };
+                shown = shown.checked_add(size)?;
+                if read > data.len() || shown > data.len() {
+                    return None;
+                }
             }
             topics.insert(name, refs);
         }
@@ -376,7 +404,15 @@ impl Runtime {
                     .max()
                     .unwrap_or(0)
                     .max(1);
-                let mut runs = vec![0.0; rows * width * 3];
+                let values = rows
+                    .checked_mul(width)
+                    .and_then(|cells| cells.checked_mul(3))
+                    .filter(|&values| values <= MOST_RUN_VALUES)
+                    .ok_or_else(|| {
+                        let detail = format!("help page of {rows}x{width} runs");
+                        Error::with_detail(ErrorKind::IllegalFileFormat, detail)
+                    })?;
+                let mut runs = vec![0.0; values];
                 for (r, line) in page.lines.iter().enumerate() {
                     for k in 0..width {
                         let at = (r * width + k) * 3;
@@ -478,6 +514,81 @@ mod tests {
 
     fn word(line: &str, col: usize) -> Option<String> {
         word_at(&utf16(line), col)
+    }
+
+    /// An index of one topic, with these page references.
+    fn index_of(name: &str, refs: &[u64]) -> Vec<u8> {
+        let mut index = Vec::new();
+        index.extend(1u32.to_le_bytes());
+        index.extend(20u32.to_le_bytes());
+        index.extend((name.len() as u32).to_le_bytes());
+        index.extend((20 + name.len() as u32).to_le_bytes());
+        index.extend((refs.len() as u32).to_le_bytes());
+        index.extend(name.as_bytes());
+        index.extend(refs.iter().flat_map(|r| r.to_le_bytes()));
+        index
+    }
+
+    /// A page with `rows` lines, the first of them with `spans` runs.
+    fn page_of(rows: u32, spans: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend(rows.to_le_bytes());
+        for row in 0..rows {
+            let spans = if row == 0 { spans } else { 0 };
+            data.extend(0u32.to_le_bytes());
+            data.extend(spans.to_le_bytes());
+            data.extend(0u32.to_le_bytes());
+            data.resize(data.len() + 16 * spans as usize, 0);
+        }
+        data
+    }
+
+    #[test]
+    fn helpget_refuses_a_page_that_asks_for_too_many_runs() {
+        let (index, data) = (index_of("PRINT", &[0]), page_of(5000, 5000));
+        let help = Help::from_bytes(&index, data).unwrap();
+        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        rt.help = Some(Rc::new(help));
+        let args = [Value::str("PRINT"), Value::Int(0)];
+        let got = rt.help_command(Command::Helpget, &args, Want::Outs(4));
+        assert_eq!(got.unwrap_err().kind, ErrorKind::IllegalFileFormat);
+
+        let (index, data) = (index_of("PRINT", &[0]), page_of(10, 2));
+        rt.help = Some(Rc::new(Help::from_bytes(&index, data).unwrap()));
+        let got = rt.help_command(Command::Helpget, &args, Want::Outs(4));
+        assert_eq!(got.unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_help_that_reads_its_pages_over_and_over_is_refused() {
+        let data = page_of(100, 0);
+        let (one, twice) = (index_of("A", &[0]), index_of("A", &[0; 2]));
+        assert!(Help::from_bytes(&one, data.clone()).is_some());
+        assert!(Help::from_bytes(&twice, data.clone()).is_none());
+        // The whole of the data file, taking pages at many places.
+        let repeating: Vec<u8> = (0..1000u32)
+            .flat_map(|_| [100u32, 0, 0])
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        let refs: Vec<u64> = (0..500).map(|i| i * 12).collect();
+        assert!(Help::from_bytes(&index_of("A", &refs), repeating).is_none());
+    }
+
+    #[test]
+    fn topics_may_share_a_page() {
+        let mut index = Vec::new();
+        index.extend(2u32.to_le_bytes());
+        for (name, list) in [(36u32, 38u32), (37, 38)] {
+            index.extend(name.to_le_bytes());
+            index.extend(1u32.to_le_bytes());
+            index.extend(list.to_le_bytes());
+            index.extend(1u32.to_le_bytes());
+        }
+        index.extend(b"AB");
+        index.extend(0u64.to_le_bytes());
+        let help = Help::from_bytes(&index, page_of(3, 1)).unwrap();
+        assert_eq!(help.pages("A"), help.pages("B"));
+        assert_eq!(help.pages("A")[0].lines.len(), 3);
     }
 
     /// A help with the topics DEFAULTHELPKEY, IF and LEFT$, one page each;
