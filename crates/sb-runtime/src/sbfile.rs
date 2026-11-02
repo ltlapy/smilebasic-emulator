@@ -294,6 +294,8 @@ pub const DATA_MAGIC: &[u8; 8] = b"PCBN0004";
 const DATA_HEADER: usize = 28;
 /// The longest string a DAT file can hold, in UTF-8 bytes.
 pub const MAX_STR_BYTES: usize = 0x7FFF;
+/// The most elements an array in a file holds, as for DIM.
+const MAX_ELEMENTS: usize = 1 << 28;
 
 /// `PCBN0004`, u16 element type, u16 dimension count, u32 x 4 dimensions
 /// (unused ones may hold anything), then the elements, little-endian.
@@ -310,10 +312,7 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
     let dims: Vec<usize> = (0..ndims)
         .map(|i| u32_at(body, 12 + 4 * i) as usize)
         .collect();
-    let count = dims
-        .iter()
-        .try_fold(1usize, |a, &d| a.checked_mul(d))
-        .ok_or(FileError::BadData)?;
+    let count = checked_elements(&dims)?;
     let payload = &body[DATA_HEADER..];
     let width = match elem {
         PIXEL16_TYPE => 2,
@@ -346,6 +345,23 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
         ),
     };
     Ok(Data { dims, values })
+}
+
+/// How many elements an array of these sizes holds, if a program could
+/// have made it. Without this, `[0xFFFFFFFF, 0]` would pass for an empty
+/// array, and commands that go through its rows would run out of memory.
+///
+/// DIM makes no zero among several sizes, but RESIZE changes the first, and
+/// SAVEV writes what that left.
+// UNVERIFIED: that SmileBASIC 4's RESIZE takes 0 for it, and what it saves.
+fn checked_elements(dims: &[usize]) -> Result<usize, FileError> {
+    if dims[1..].contains(&0) {
+        return Err(FileError::BadData);
+    }
+    let room = |a: usize, &d: &usize| a.checked_mul(d).filter(|&t| t <= MAX_ELEMENTS);
+    let rest = dims[1..].iter().try_fold(1, room);
+    let all = rest.and_then(|rest| room(rest, &dims[0]));
+    all.ok_or(FileError::BadData)
 }
 
 fn parse_strings(mut payload: &[u8], count: usize) -> Result<DataValues, FileError> {
@@ -620,6 +636,36 @@ mod tests {
             parse_data(&dat(4, &[u32::MAX, u32::MAX, u32::MAX], &[])).unwrap_err(),
             FileError::BadData
         );
+    }
+
+    #[test]
+    fn arrays_are_limited_as_dim_limits_them() {
+        // Their products are 0, and so fit a payload of nothing.
+        for dims in [
+            &[u32::MAX, 0][..],
+            &[16, 0],
+            &[0, 0],
+            &[0, u32::MAX],
+            &[0, 1 << 15, 1 << 15],
+            &[2, 0, 2],
+            &[1 << 14, 1 << 14, 2, 0],
+        ] {
+            for elem in [4, 5, 6] {
+                let refused = parse_data(&dat(elem, dims, &[]));
+                assert_eq!(refused, Err(FileError::BadData), "{dims:?}");
+            }
+        }
+        assert_eq!(checked_elements(&[(1 << 28) + 1]), Err(FileError::BadData));
+        let too_many = checked_elements(&[1 << 14, (1 << 14) + 1]);
+        assert_eq!(too_many, Err(FileError::BadData));
+        assert_eq!(checked_elements(&[1 << 28]), Ok(1 << 28));
+        assert_eq!(checked_elements(&[1 << 14, 1 << 14]), Ok(1 << 28));
+
+        // Empty arrays a program can have made.
+        for elem in [4, 5, 6] {
+            assert_eq!(parse_data(&dat(elem, &[0], &[])).unwrap().dims, [0]);
+        }
+        assert_eq!(parse_data(&dat(4, &[0, 3], &[])).unwrap().dims, [0, 3]);
     }
 
     #[test]

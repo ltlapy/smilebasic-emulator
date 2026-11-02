@@ -558,6 +558,52 @@ fn graphic_pages_save_and_load() {
     assert!(tail(&m, 2)[0].starts_with("Out of range"));
 }
 
+/// A bare `PCBN` integer array of these sizes, with `count` values of 0.
+fn array_file(dims: &[u32], count: usize) -> Vec<u8> {
+    let mut body = b"PCBN0004".to_vec();
+    body.extend_from_slice(&4u16.to_le_bytes());
+    body.extend_from_slice(&(dims.len() as u16).to_le_bytes());
+    for i in 0..4 {
+        body.extend_from_slice(&dims.get(i).copied().unwrap_or(0).to_le_bytes());
+    }
+    body.resize(body.len() + 4 * count, 0);
+    body
+}
+
+#[test]
+fn crafted_arrays_fail_as_a_bad_file_does() {
+    let dir = TempDir::new("crafted");
+    let mut m = machine(&dir);
+    let workspace = dir.0.join("@WORKSPACE");
+    std::fs::create_dir_all(&workspace).unwrap();
+    // Their products are 0, so they used to load: RINGCOPY then went through
+    // four thousand million rows, and an image of no pixels ended the
+    // process when it was encoded.
+    std::fs::write(workspace.join("BHUGE"), array_file(&[u32::MAX, 0], 0)).unwrap();
+    std::fs::write(workspace.join("GFLAT"), array_file(&[0, 16], 0)).unwrap();
+    let program = [
+        "DIM A[1,1]",
+        "LOADV \"DAT:HUGE\",A:?RESULT(),DIM(A,0),DIM(A,1)",
+        "LOADV \"GRP:FLAT\",A:?RESULT()",
+        "LOADG \"FLAT\",0 OUT W,H:?W,H,RESULT()",
+        // RESIZE can make what DIM cannot, and that has to come back.
+        "DIM B[1,3]:RESIZE B,0,3:SAVEV \"DAT:E\",B:?RESULT()",
+        "DIM C[1,1]:LOADV \"DAT:E\",C:?RESULT(),DIM(C,0),DIM(C,1)",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(
+        words(&tail(&m, 6)),
+        ["0 1 1", "0", "0 0 0", "1", "1 0 3", "OK"]
+    );
+    m.set_slot(0, "SAVEG \"PIC\",0,0,0,0,3".to_string());
+    enter(&mut m, "run");
+    assert!(tail(&m, 2)[0].starts_with("Out of range"));
+    m.set_slot(0, "SAVEG \"JPG:PIC\",0,0,0,3,0".to_string());
+    enter(&mut m, "run");
+    assert!(tail(&m, 2)[0].starts_with("Out of range"));
+}
+
 #[test]
 fn metadata_saves_with_the_project() {
     let dir = TempDir::new("meta");
