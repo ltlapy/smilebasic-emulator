@@ -2,7 +2,9 @@
 //! @222), noise (@223) and the user waveforms of WAVSET and WAVSETA (@224
 //! to @255), each with an envelope.
 
+use std::cell::OnceCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use super::RATE;
 use super::bank::{Adshr, Bank, Reader};
@@ -158,10 +160,11 @@ pub fn noise() -> Wave {
     }
 }
 
-/// What BEEP plays for @224 to @255 until WAVSET or WAVSETA sets them: the
-/// sound archive holds a sine for @224, and SmileBASIC 4 starts all of them
-/// on that one, with a second's note at the sine's own pitch. `None` without
-/// the sound archive's bank.
+/// What @224 to @255 play until WAVSET or WAVSETA sets them: the sound
+/// archive holds a sine for @224, and SmileBASIC 4 starts all of them on that
+/// one, with a second's note for BEEP at the sine's own pitch. `None` without
+/// the sound archive's bank. The archive also keeps a shorter copy of the sine
+/// for notes from key 96 up, which sounds the same at the same pitch.
 pub fn unset(bank: &Bank) -> Option<Wave> {
     let region = bank.region(224, 57)?;
     let info = bank.waves.get(usize::from(region.wave))?;
@@ -197,6 +200,10 @@ pub struct Waves {
     noise: Rc<Wave>,
     /// WAVSET's @224 to @255.
     pub user: Vec<Option<Rc<Wave>>>,
+    /// The sound archive's bank, for what they play until set.
+    bank: Option<Arc<Bank>>,
+    /// What they play until set, decoded once it is needed.
+    unset: OnceCell<Option<Rc<Wave>>>,
 }
 
 impl Default for Waves {
@@ -205,11 +212,25 @@ impl Default for Waves {
             pulses: (216..=222).map(|p| Rc::new(pulse(p))).collect(),
             noise: Rc::new(noise()),
             user: vec![None; 32],
+            bank: None,
+            unset: OnceCell::new(),
         }
     }
 }
 
 impl Waves {
+    /// Where @224 to @255 find the sine they play until set, if anywhere.
+    pub(crate) fn set_bank(&mut self, bank: Option<Arc<Bank>>) {
+        self.bank = bank;
+        self.unset = OnceCell::new();
+    }
+
+    fn unset(&self) -> Option<&Rc<Wave>> {
+        self.unset
+            .get_or_init(|| unset(self.bank.as_ref()?).map(Rc::new))
+            .as_ref()
+    }
+
     /// Sets WAVSET's instrument `n` (0 for @224) to `wave`. Its samples
     /// overwrite the instrument's memory from the start, and notes that
     /// sound go on reading it with the length, loop and rate they started
@@ -230,8 +251,28 @@ impl Waves {
         match program {
             216..=222 => Some(self.pulses[(program - 216) as usize].clone()),
             223 => Some(self.noise.clone()),
-            224..=255 => self.user[(program - 224) as usize].clone(),
+            224..=255 => match &self.user[(program - 224) as usize] {
+                Some(w) => Some(w.clone()),
+                None => self.unset().cloned(),
+            },
             _ => None,
+        }
+    }
+
+    /// Keeps a note of `program` reading what WAVSET last wrote there; see
+    /// [`Waves::define`]. The sine an unset waveform plays is not that
+    /// memory, so a note of it goes on with the sine.
+    pub(crate) fn follow(&self, program: i32, voice: &mut Voice) {
+        if self
+            .unset
+            .get()
+            .and_then(Option::as_ref)
+            .is_some_and(|u| voice.reads(u))
+        {
+            return;
+        }
+        if let Some(w) = self.get(program) {
+            voice.follow(&w);
         }
     }
 }
@@ -333,6 +374,10 @@ impl Voice {
         }
     }
 
+    fn reads(&self, wave: &Rc<Wave>) -> bool {
+        Rc::ptr_eq(&self.wave, wave)
+    }
+
     /// A portamento's end: the note goes on as `key`.
     pub fn retune(&mut self, key: i32) {
         self.key = key;
@@ -424,7 +469,7 @@ impl Voice {
 const WAVE_GAIN: f32 = 0.125 * std::f32::consts::SQRT_2;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -607,8 +652,8 @@ mod tests {
         assert!((l - hard_left).abs() < 0.001 && r == 0.0);
     }
 
-    #[test]
-    fn what_an_unset_waveform_plays_comes_from_the_archives_224() {
+    /// A bank with a four-sample cycle as its @224.
+    pub(crate) fn sine_bank() -> Bank {
         let samples: [i16; 4] = [0, 16384, 0, -16384];
         let adshr = Adshr {
             attack: 127,
@@ -617,7 +662,7 @@ mod tests {
             hold: 0,
             release: 127,
         };
-        let bank = Bank {
+        Bank {
             instruments: (0..225)
                 .map(|p| if p == 224 { 0..1 } else { 0..0 })
                 .collect(),
@@ -638,7 +683,12 @@ mod tests {
                 data: 0..8,
             }],
             data: samples.iter().flat_map(|s| s.to_le_bytes()).collect(),
-        };
+        }
+    }
+
+    #[test]
+    fn what_an_unset_waveform_plays_comes_from_the_archives_224() {
+        let bank = sine_bank();
         let w = unset(&bank).unwrap();
         assert_eq!(w.samples, [0.0, 0.5, 0.0, -0.5]);
         assert_eq!(w.base_note, 57);
@@ -653,6 +703,24 @@ mod tests {
             data: Vec::new(),
         };
         assert_eq!(unset(&none), None);
+
+        // All 32 play it until set, each number on its own, and nothing
+        // plays without the bank.
+        let mut waves = Waves::default();
+        assert_eq!(waves.get(224), None);
+        waves.set_bank(Some(Arc::new(bank)));
+        assert!(Rc::ptr_eq(
+            &waves.get(224).unwrap(),
+            &waves.get(255).unwrap()
+        ));
+        waves.define(16, pulse(219));
+        assert_eq!(*waves.get(240).unwrap(), pulse(219));
+        assert_eq!(waves.get(250).unwrap().samples, [0.0, 0.5, 0.0, -0.5]);
+        // WAVSET of a number does not reach a note of the sine.
+        let mut v = Voice::new(waves.get(250).unwrap(), None, 57, 0, true);
+        waves.define(26, pulse(219));
+        waves.follow(250, &mut v);
+        assert_eq!(v.wave.samples, [0.0, 0.5, 0.0, -0.5]);
     }
 
     #[test]

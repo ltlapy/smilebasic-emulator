@@ -556,7 +556,7 @@ impl Runtime {
                     // UNVERIFIED: without SmileBASIC's own sounds, presets are
                     // silent.
                     0..=PRESET_BEEPS => BeepSound::Preset,
-                    224..=255 => match self.sound.beep_wave(n) {
+                    224..=255 => match self.sound.waves.borrow().get(n) {
                         Some(w) if w.beep_ticks != Some(0) => BeepSound::Wave(w),
                         _ => BeepSound::Preset,
                     },

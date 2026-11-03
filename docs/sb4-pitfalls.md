@@ -900,8 +900,12 @@ yet seen on hardware:
 - `BEEP` 224 to 255 with nothing set plays a sine of about 440 Hz for a second,
   peak 4117, last sample at 999 ms (`BEEP 250`, TEST59). The sound archive's `@224`
   is that sine, 16384 samples at 28160 Hz; `@225` to `@255` are 140 samples of
-  silence there. All of `@224` to `@255` start on `@224`'s
-  waves, and `BEEP`'s sound for each is `T400V127P64@nT60O3A4` until set.
+  silence there, but all of `@224` to `@255` start on `@224`'s waves: in MML too,
+  `T120@250V127O4A2` and the same on `@240`, never set, peak at 4089 at an RMS of
+  2881 and sound from 0 to 999 ms (TEST61). `BEEP`'s sound
+  for each is `T400V127P64@nT60O3A4` until set, and `WAVSET` of a number replaces
+  only that number. Nothing a program can run puts them back: not `SNDSTOP`, `ACLS`
+  or `CLEAR`.
 - `BEEP`'s result is a number 0 to 15 that goes on rising with each `BEEP`, also
   after the last has ended and for a silent one, and through program runs: running
   TEST59's parts in the order 20, 16, 17, 18, 19 on a started SmileBASIC 4 gave 0,

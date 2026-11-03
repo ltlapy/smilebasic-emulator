@@ -20,8 +20,8 @@ Without them:
   waiting on `BGMCHK` still wait: the three short ones (4 to 6) for as
   long as they last, the others, which loop, until stopped.
 - Preset sound effects (`BEEP 0` to `155`) are silent. They still take
-  a handle. So is `BEEP 224` to `255` with nothing set: on SmileBASIC 4 it is
-  a second of the sound archive's sine.
+  a handle. So are `BEEP 224` to `255` and `@224` to `@255` in MML with nothing
+  set: on SmileBASIC 4 they are the sound archive's sine.
 
 - MML's sound effect tones (`@256` and up) are silent.
 - Instruments `@0` to `@127` come from a General MIDI SoundFont
@@ -34,7 +34,6 @@ Without them:
   square's peak over its level: `BEEP` and `BGMPLAY` of a square record the same
   RMS as SmileBASIC 4 but peak about 12% lower (4096 to its 4623), and a sine
   about the same as there. `RECSAVE` of a program that looks at peaks shows this.
-- `@225` to `@255` in MML, with nothing set, are silent. They start as `@224`, the sound archive's sine.
 - The effector (`EFCEN`, `EFCSET`, `EFCWET`, `BGMWET`) is a small reverb
   of the emulator's own, early reflections and a Freeverb-like tail,
   given the settings SmileBASIC 4 gives the console's reverb: the

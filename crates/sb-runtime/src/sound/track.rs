@@ -912,9 +912,7 @@ impl Track {
                 // A waveform WAVSET sets again changes the notes that
                 // sound with it, as programs that shape their waveforms
                 // each frame expect.
-                if let Some(w) = waves.get(*program) {
-                    v.follow(&w);
-                }
+                waves.follow(*program, v);
                 let ch = &self.channels[*vc];
                 v.set_mix(ch.volume, ch.velocity, ch.pan);
                 v.lfo = ch.lfo;
@@ -1001,6 +999,27 @@ mod tests {
         l.fill(0.0);
         t.render(&mut l, &mut r, &mut scratch, None);
         assert!(l.iter().any(|&s| s.abs() > 0.01));
+    }
+
+    #[test]
+    fn waveforms_never_set_play_the_archives_sine() {
+        let sounds = |bank: bool| {
+            let waves = Rc::new(RefCell::new(Waves::default()));
+            if bank {
+                let bank = wave::tests::sine_bank();
+                waves.borrow_mut().set_bank(Some(std::sync::Arc::new(bank)));
+            }
+            let mut t = Track::new(None, waves);
+            t.play(Some(Rc::new(parse("@250 V127 A1").unwrap())), 127, 0);
+            let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
+            let mut scratch = Default::default();
+            for _ in 0..30 {
+                t.render(&mut l, &mut r, &mut scratch, None);
+            }
+            l.iter().any(|&s| s.abs() > 0.01)
+        };
+        assert!(sounds(true));
+        assert!(!sounds(false));
     }
 
     #[test]
