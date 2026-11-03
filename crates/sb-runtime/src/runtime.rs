@@ -23,6 +23,8 @@ use crate::hint;
 use crate::input::Input;
 use crate::line::LineEdit;
 use crate::palette::Part;
+use crate::raster;
+use crate::scene::SpriteItem;
 use crate::screen::{Fade, ScreenMode, darken};
 pub use crate::settings::Settings;
 use crate::sound::Sound;
@@ -1238,26 +1240,20 @@ impl Runtime {
         let clip = layer.clip.as_ref();
         let projection = layer.projection.as_ref().map(|m| (m, self.mode.sample));
         match e {
-            Element::Text(i) => self.text[i].draw_placed(
-                fb,
-                &self.font,
-                &self.grp,
-                &layer.matrix,
-                clip,
-                cursor.filter(|_| i == CONSOLE).map(|overwrite| LineCursor {
+            Element::Text(i) => {
+                let line = cursor.filter(|_| i == CONSOLE).map(|overwrite| LineCursor {
                     overwrite,
                     composed: layer.compose != Compose::Direct,
-                }),
-            ),
-            Element::Sprite(i, pose) => sprites::draw_posed(
-                &self.sprites.list[i],
-                &pose,
-                &self.grp,
-                fb,
-                &layer.matrix,
-                clip,
-                projection,
-            ),
+                });
+                let item = self.text[i].item(i, &layer.matrix, line);
+                let cells = self.text[i].cells();
+                raster::text::draw(&item, cells, &self.font, &self.grp, fb, clip);
+            }
+            Element::Sprite(i, pose) => {
+                let s = &self.sprites.list[i];
+                let item = SpriteItem::new(s, &pose, &layer.matrix, &self.grp);
+                raster::sprite::draw(&item, &self.grp, fb, clip, projection);
+            }
         }
     }
 
