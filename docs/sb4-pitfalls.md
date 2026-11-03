@@ -108,14 +108,18 @@ follows all of it. Items still waiting for a check are marked
   `(FORMAT$:2)`. A format of 1025 plain characters is `(FORMAT$)` with no
   number, as is `%%` over the limit (TEST57). Of 1, `%1024D` works and `%1025D`
   does not, `%.1000F` works (a length of 1002) and `%.1023F`, which would be
-  1025 long, does not (TEST51, TEST52). `%F` needs one character of room more
-  than it gives. On `%S` the precision only limits the
+  1025 long, does not (TEST51, TEST52). `%F` of 1.5 gives 1023 characters at
+  `%.1021F` and `%1023F`; `%.1022F` and `%1024F` are `String is too long
+  (FORMAT$:2)` (TEST58): it needs one character of room more than it gives. On `%S` the precision only limits the
   string, so `%.2000S` of a short string is fine. `%05S` pads with zeros,
   `[00ABC]`, and with `-` it pads spaces on the right (TEST57).
-- `FORMAT$`'s precision on `%D`, `%X` and `%B` is the least number of digits, not yet seen on hardware: `%.3D` of 5 is `005`, `%5.3D`
-  is `  005`, `%.4X` of 255 is `00FF`, `%.4B` of 5 is `0101`. Zero at a precision
-  of 0 is nothing, with no sign: `%.0D`, `%+.0D` and `%.0X` of 0 are empty. A
-  precision takes the place of the `0` flag, so `%05.3D` is `  005`.
+- `FORMAT$`'s precision on `%D` is the least number of digits (TEST58): of 5
+  and of -5, `%.3D` gives `005` and `-005`, `%5.3D` gives `  005` and ` -005`,
+  `%-5.3D` gives `005  ` and `-005 `, and `%05.3D`, where the precision takes the
+  place of the `0` flag, gives `  005` and ` -005`. `%.1D` of 0 is `0`, `%.0D` of 5
+  is `5`, and `%.0D` of 0 is nothing. `%X` and `%B` go the
+  same way, not yet seen on hardware: `%.4X` of 255 is `00FF`, `%.4B` of 5 is
+  `0101`, `%+.0D` and `%.0X` of 0 are empty.
 - `RINGCOPY` looks at things in this order (TEST57):
   - a destination that is no array: `Type mismatch (RINGCOPY:1)`; a source
     that is no array, or element types neither the same nor both numbers:
@@ -131,6 +135,13 @@ follows all of it. Items still waiting for a check are marked
     RINGCOPY A,0,B,0` is no error;
   - source channels neither 1 nor the destination's: `Type mismatch`, no
     number, as are string arrays that get this far.
+
+  TEST58 saw these on `A[4]` and `B[3]`: `RINGCOPY A,0,B,-1,1` is `(RINGCOPY:4)`;
+  `A,0,B,4,0`, `A,0,B,1,3` and `A,0,B,0,-1` are `(RINGCOPY:5)`; `A,0,B,3,0 OUT E`
+  gives 0; a number as the first or the third argument is `Type mismatch
+  (RINGCOPY:1)` or `(RINGCOPY:3)`. With five arguments too the destination offset
+  wraps: with B=1,2,3, `RINGCOPY A,9,B,1,2 OUT E` leaves 0,2,3,0 and E=3, and
+  `A,-1,B,1,2` leaves 3,0,0,2 and E=1.
 
   The destination offset wraps round with a floored modulo, negative too:
   `RINGCOPY A,-1,B OUT E` on `A[4]` and B=1,2,3 leaves 2,3,0,1 and E=2. `OUT` is
@@ -852,7 +863,19 @@ yet seen on hardware:
   equal to the end is no error and defines nothing, in both forms, so neither
   does an array of one element: `...,A%,69,5,5` (TEST57). Then in the 16-bit
   form an end the offset leaves no room for is `Out of range`: `...,A%,69,0,15,
-  28160,4` on 16 elements is `(WAVSETA:11)` (TEST57).
+  28160,4` on 16 elements is `(WAVSETA:11)` (TEST57). On an empty array the
+  range comes first in the 16-bit form: `DIM A%[0]:WAVSETA 224,0,0,0,0,A%,69,0,0,
+  28160` is `Out of range (WAVSETA:8)` (TEST58).
+- `BEEP` of a waveform set by `WAVSETA` can be silent: `DIM W%[32]`, `WAVSETA
+  224,127,127,127,127,W%,69` and `BEEP(224)` gives a handle and no error, and
+  nothing is heard (TEST58). Not yet seen on hardware,
+  `WAVSET` and `WAVSETA` also write the sound `BEEP` plays, a note at the
+  reference pitch as long as a pass of the waveform, at most in ticks of 1/192
+  of a second: 32 samples at 28160 Hz come to no note. `WAVSET` always has a
+  note of a second; `WAVSETA`'s 8-bit form 147 samples or more, once rounded up to
+  a power of two, so 256; its 16-bit form as long as (end + 1) / rate, for ever if
+  the flag is not 0. A start equal to the end returns before any of this, so
+  the old waveform and its `BEEP` stay.
 - `CHKMML` gives -1 for 16 million characters of notes, and for macros
   nested six and seven levels deep that would come to 10^7 and 10^8
   characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even
@@ -957,11 +980,32 @@ yet seen on hardware:
   6216592 free, the first `PUSH` works with `FREEMEM` unchanged, its block being
   as large as it was, and the second is `Out of memory (PUSH)` (TEST57). The block moves each time its size changes, and `UNSHIFT`,
   string arrays and strings (each 64 characters) do the same.
+- A block that moved leaves a hole, so near the end `FREEMEM` overstates what can
+  be had (TEST58). With 1296 bytes free beyond a block's size: `UNSHIFT` on
+  `DIM A%[100000]` (400064 bytes, 401360 free) gets to length 100016 with 401296
+  free and then is `Out of memory (UNSHIFT)`; `PUSH` on `DIM A$[100000]` (800064,
+  801360 free) gets to 100008 with 801296 free; `PUSH` on a string of 512000
+  characters (1024064, 1025360 free) gets to 512064 with 1025232 free, each then
+  `Out of memory (PUSH)`.
+- A shrinking block moves too, and `POP` with no room for the new one leaves the
+  length as it is, with no error. With `DIM A%[1000001]` and 1000016 free, a
+  `PUSH` and a `POP` stay in the block, the next `POP` leaves the length at 1000001
+  and `FREEMEM` at 1000016, and a `PUSH` after it gives 1000002. Twenty `POP`s in a
+  row still leave 1000001 (TEST58). So a block stays only while its size is the
+  same, not for 64 bytes more. Not yet seen on hardware:
+  that `POP` still gives the last element; `SHIFT` still gives the first, with the
+  rest moved down and the last there twice; a string's `POP` and `SHIFT` go the
+  same way; `REMOVE` moves the rest down and then is `Out of memory (REMOVE)`; and
+  `RESIZE` to smaller is `Out of memory (RESIZE)` having changed nothing.
 - `A%=LOADV("DAT:Q")` makes the new array beside the old: 10 MB of file with
   4216464 free is `Out of memory (LOADV)`. `LOADV "DAT:Q",A%` fills the array,
   gives no error and leaves `FREEMEM` as it was (TEST57). If the file is longer,
   the array grows the way `RESIZE` does, and `A$=LOADV("TXT:Q")` makes its string
-  the same way.
+  the same way. Seen in TEST58: `S$=LOADV("TXT:Q")` of
+  1,000,000 characters (2000064 bytes) over a string as long is `Out of memory
+  (LOADV)` with 1000016 free and works with 3000016 free. `LOADV "DAT:Q",A%` of a
+  file of 9 million integers into `DIM A%[8000000]` is `Out of memory (LOADV)` with
+  34000016 free and works with 38000016 free, leaving 34000016.
 - The message names the command for functions and commands
   (`Out of memory in 0:68(ARRAY#)`, also `(RESIZE)`, `(INSERT)` and `(COPY)`)
   but not for `*`, `+` or `DIM` (`Out of memory in 0:54`). Its number is 11.
@@ -977,9 +1021,13 @@ yet seen on hardware:
   works up to N=20, then is `Out of memory`, in slots 0 and 1, with nearly all
   memory free. Through a variable the same size works. Each statement has 4 MiB to compile in, from which every string worked out on
   the way takes 24 bytes and its characters, rounded up to 8 bytes, and stays
-  until the statement ends: `"A"*1000000+"B"*1000000` is too long there. A string
+  until the statement ends: `"A"*1000000+"B"*1000000` is too long there, as are
+  `?"A"*1500000,"B"*1500000` and `A=LEN("A"*2097140)`, each `Out of memory` at its
+  line (TEST58): each constant and the rest of the statement take from the same
+  4 MiB. A string
   then goes into the code, which is 32768 16-bit words in direct mode and
-  4194304 in a slot, taking a word a character plus its length.
+  4194304 in a slot, taking a word a character plus its length: of three lines of
+  `A=LEN("A"*2000000)`, the third is `Out of code memory` (TEST58).
 - `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
   string is `Can't use empty string`, a user-defined character `Can't
   use user-defined character`.
