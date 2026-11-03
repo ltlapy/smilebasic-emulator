@@ -222,6 +222,25 @@ impl Dirty {
         self.rows == [0; TILES]
     }
 
+    /// Marks what `other` has marked.
+    pub fn add(&mut self, other: Dirty) {
+        for (row, more) in self.rows.iter_mut().zip(other.rows) {
+            *row |= more;
+        }
+    }
+
+    /// Takes off and returns what is marked of the tiles `area` touches, which
+    /// lies on the page.
+    pub fn take_area(&mut self, area: Clip) -> Dirty {
+        let mut taken = Dirty::default();
+        let mask = Dirty::columns(area.x0, area.x1);
+        for y in (area.y0 >> TILE_BITS) as usize..=(area.y1 >> TILE_BITS) as usize {
+            taken.rows[y] = self.rows[y] & mask;
+            self.rows[y] &= !mask;
+        }
+        taken
+    }
+
     /// Whether the tile that holds a pixel is marked.
     pub fn holds(&self, x: i32, y: i32) -> bool {
         self.rows[(y >> TILE_BITS) as usize] >> (x >> TILE_BITS) & 1 != 0
@@ -1765,6 +1784,17 @@ mod tests {
         g.fill(0, 0, 50, 50, RED, Blend::Normal);
         g.line(0, 0, 50, 0, RED, Blend::Normal);
         assert!(g.take_dirty(0).is_empty());
+    }
+
+    #[test]
+    fn an_area_takes_off_the_tiles_it_touches() {
+        let mut d = Dirty::ALL;
+        let taken = d.take_area(Clip::new(TILE, 0, TILE + 1, TILE));
+        let mut areas = Vec::new();
+        taken.for_each_area(|a| areas.push(a));
+        assert_eq!(areas, [Clip::new(TILE, 0, 2 * TILE - 1, 2 * TILE - 1)]);
+        assert!(!d.holds(TILE, 0) && !d.holds(TILE, TILE));
+        assert!(d.holds(0, 0) && d.holds(TILE, 2 * TILE) && d.holds(2 * TILE, 0));
     }
 
     #[test]

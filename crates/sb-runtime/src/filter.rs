@@ -410,24 +410,54 @@ fn expand(half: &mut Half, pixels: &mut [u32], (w, h): (u32, u32), (q, qy): (f64
     }
 }
 
-/// LFILTER's mosaic: a whole frame drawn small, into as many pixels of the
-/// half-size frame as blocks fit, and back at full size without smoothing.
-/// The number of blocks is reckoned in screen pixels, a block's size in
-/// frame pixels. Drawing small samples with smoothing, so that a block of
-/// an even size is the mean of the four pixels around its middle.
-fn mosaic(fb: &mut Framebuffer, size: u32, sample: u32) {
-    let (w, h) = (fb.width(), fb.height());
+/// How a mosaic's blocks lie on the half-size frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MosaicGrid {
+    /// How many half-size pixels the whole frame is drawn into, across and
+    /// down, which need not be whole numbers.
+    pub q: f64,
+    pub qy: f64,
+    /// How many half-size pixels that touches, across and down.
+    pub across: usize,
+    pub down: usize,
+}
+
+/// The grid of a mosaic of blocks of `size` on a frame of `w` by `h`, or None
+/// if it changes nothing. The number of blocks is reckoned in screen pixels, a
+/// block's size in frame pixels.
+pub fn mosaic_grid(w: u32, h: u32, size: u32, sample: u32) -> Option<MosaicGrid> {
     let (sw, sh) = (w / sample.max(1), h / sample.max(1));
     let (hw, hh) = (w / 2, h / 2);
     if size < 2 || hw == 0 || hh == 0 || sw < 2 || sh < 2 {
-        return;
+        return None;
     }
     let span = |screen: u32, half_size: u32| {
         f64::from(screen.div_ceil(size)) * f64::from(half_size) / f64::from(screen / 2)
     };
     let (q, qy) = (span(sw, hw), span(sh, hh));
-    let across = (q.ceil() as usize).min(hw as usize);
-    let down = (qy.ceil() as usize).min(hh as usize);
+    Some(MosaicGrid {
+        q,
+        qy,
+        across: (q.ceil() as usize).min(hw as usize),
+        down: (qy.ceil() as usize).min(hh as usize),
+    })
+}
+
+/// LFILTER's mosaic: a whole frame drawn small, into as many pixels of the
+/// half-size frame as blocks fit, and back at full size without smoothing.
+/// Drawing small samples with smoothing, so that a block of an even size is
+/// the mean of the four pixels around its middle.
+fn mosaic(fb: &mut Framebuffer, size: u32, sample: u32) {
+    let (w, h) = (fb.width(), fb.height());
+    let Some(MosaicGrid {
+        q,
+        qy,
+        across,
+        down,
+    }) = mosaic_grid(w, h, size, sample)
+    else {
+        return;
+    };
     HALF.with_borrow_mut(|half| {
         half.pixels.clear();
         half.pixels.resize(across * down, 0);
@@ -439,13 +469,13 @@ fn mosaic(fb: &mut Framebuffer, size: u32, sample: u32) {
 }
 
 /// The weights of LFILTER's blur and how many taps it takes each way.
-struct BlurKernel {
+pub struct BlurKernel {
     /// In 16.16: the middle's, then each further pair's.
-    weights: [u32; 5],
+    pub weights: [u32; 5],
     /// Pixels each way, 1 to 4.
-    reach: usize,
+    pub reach: usize,
     /// All the taps' weights added up.
-    total: u32,
+    pub total: u32,
 }
 
 /// The kernel for a blur `amount`. The weights are a Gaussian of variance
@@ -456,7 +486,7 @@ struct BlurKernel {
 /// half-size pixels, so a kernel that wants more than 9 is cut off without
 /// normalising again: its plateau falls. One that needs no more than the
 /// middle leaves the next weight not normalised at all.
-fn blur_kernel(amount: u32) -> BlurKernel {
+pub fn blur_kernel(amount: u32) -> BlurKernel {
     let v = amount as f32 / 10.0;
     let mut raw = [0f32; 16];
     for (k, w) in raw.iter_mut().enumerate() {
