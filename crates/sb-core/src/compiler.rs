@@ -344,11 +344,23 @@ impl Compiler<'_> {
     /// [`Compiler::const_value`] of anything but an operator.
     fn const_operand(&self, expr: &Expr) -> Result<Value> {
         Ok(match expr {
-            Expr::Int(n) => Value::Int(*n),
-            Expr::Real(x) => Value::Real(*x),
-            Expr::Str(s) => Value::Str(new_str(s.clone())),
+            Expr::Int(n) => {
+                self.take_constant_node();
+                Value::Int(*n)
+            }
+            Expr::Real(x) => {
+                self.take_constant_node();
+                Value::Real(*x)
+            }
+            Expr::Str(s) => {
+                self.take_constant_node();
+                Value::Str(new_str(s.clone()))
+            }
             Expr::Label(name) => Value::Str(new_str(format!("@{name}").encode_utf16().collect())),
-            Expr::Constant(name) => literal_value(&self.constant(name)?),
+            Expr::Constant(name) => {
+                self.take_constant_node();
+                literal_value(&self.constant(name)?)
+            }
             Expr::Call { name, args } if builtins::is_constant_function(&call_name(name)) => {
                 let b = builtins::get(
                     builtins::lookup(&call_name(name), Form::Function)
@@ -1506,6 +1518,17 @@ impl Compiler<'_> {
         checks
     }
 
+    /// Each constant of an expression has its place in [`CONSTANT_BYTES`],
+    /// though only strings worked out are refused for it: a literal string's
+    /// characters stay where they are in the source.
+    fn take_constant_node(&self) {
+        self.constant_bytes.set(
+            self.constant_bytes
+                .get()
+                .saturating_add(CONSTANT_NODE_BYTES),
+        );
+    }
+
     /// A constant string in the code takes its characters and its length.
     fn take_string_words(&self, chars: usize) {
         let length = if chars >> 15 == 0 { 1 } else { 2 };
@@ -1533,8 +1556,9 @@ impl Compiler<'_> {
     /// `"A"+"B"+...` then takes time in proportion to its length.
     ///
     /// Each string worked out stays until the statement has compiled, in
-    /// [`CONSTANT_BYTES`]. The parts of the statement that are no strings
-    /// take from there too, which is not counted: they are little.
+    /// [`CONSTANT_BYTES`], beside the constants it came from. The rest of
+    /// the statement takes from there too, which is not counted: it is
+    /// little, and this way nothing is refused that SmileBASIC 4 compiles.
     fn const_binary(&self, op: BinaryOp, lhs: Value, rhs: &Value) -> Result<Value> {
         let chars = match (op, &lhs, rhs) {
             (BinaryOp::Add, Value::Str(a), Value::Str(b)) => {

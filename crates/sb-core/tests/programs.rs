@@ -1324,7 +1324,12 @@ fn long_constant_strings_stop_the_program_compiling() {
         assert_eq!(e.kind, kind, "{source}");
     };
     assert_eq!(output("?LEN(\"A\"*(1<<20))"), "1048576\n");
-    assert_eq!(output("?LEN(\"A\"*2097139)"), "2097139\n");
+    // Its two operands take from the same 4 MiB.
+    assert_eq!(output("?LEN(\"A\"*2097116)"), "2097116\n");
+    refused("?1\n?LEN(\"A\"*2097117)", ErrorKind::OutOfMemory);
+    // TEST58.
+    refused("A=LEN(\"A\"*2097140)", ErrorKind::OutOfMemory);
+    refused("A=LEN(\"A\"*2097141)", ErrorKind::OutOfMemory);
     // The first line never runs.
     for source in [
         "?1\n?LEN(\"A\"*(1<<21))",

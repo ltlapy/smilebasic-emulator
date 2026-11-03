@@ -122,10 +122,12 @@ known.
   or leaving a DEF, does not raise `FREEMEM` there, even after `VSYNC` or
   `WAIT`. A program would have to watch `FREEMEM` to see the difference.
 - `Out of memory` and `Out of code memory` for constant strings as a program
-  compiles count those strings only. SmileBASIC 4's limits take in the rest of
-  the statement and its code too, which here is a word an instruction and no
-  more than that, so right at the limits a program may compile that SmileBASIC 4
-  refuses. A constant string that compiles is still made when its line runs.
+  compiles count those strings and the constants they are made from.
+  SmileBASIC 4's limits take in the rest of the statement and its code too,
+  which here is a word an instruction and no more than that, so right at the
+  limits a program may compile that SmileBASIC 4 refuses, but not the other way
+  round: `A=LEN("A"*2097116)` compiles here and may not there. A constant
+  string that compiles is still made when its line runs.
 - `Out of memory` comes when what a program holds, counted as `FREEMEM`
   counts it, and what it asks for do not fit in SmileBASIC 4's
   134,216,720 bytes. Values a program has dropped never count, which comes to
