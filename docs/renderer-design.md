@@ -953,12 +953,13 @@ scales it.
   vertices. So ±1 where the GPU rounds, as on SmileBASIC 4 itself
   ([phase 3](#6-phased-plan) measured it). An earlier version of this section
   said otherwise, when the CPU's formulas were floors.
-- **Filters** have no shader support. Some could be built from
-  render-to-texture tricks (mosaic from a nearest downscale; raster as
-  per-row strips), but blur and colour conversion cannot.
+- **Filters** have no shader support, but mosaic and blur can be built from
+  draws on half-size targets ([phase 3](#6-phased-plan)), and raster perhaps
+  from per-row strips. Colour conversion cannot.
 - **Rust.** No new dependencies.
 - **Verdict.** It draws sprites, text screens, blends, layers, LCLIP and FADE
-  on every driver, with no 4x4 layers and filters stay on the CPU.
+  on every driver, with no shader, and mosaic and blur; 4x4 layers, raster and
+  colour conversion stay on the CPU.
 
 ### 4.3 (b) SDL 3.4 `SDL_GPURenderState` inside SDL_Renderer
 
@@ -1225,14 +1226,16 @@ There are two ways to reduce the inexact set later:
 - The golden scenes of [5.3](#53-comparison-tests) are still to come; the
   comparisons above are not in the repository, as the projects are not ours.
 
-**Phase 2: change tracking.**
+**Phase 2: change tracking. Tiles done, the rest not.**
 
-- Tile dirty bitmaps on GRP pages, the glyph atlas, the scene-hash
-  reuse, and raster array snapshots.
-- Use the dirty bitmap in the debugger's GRP view.
+- Done: `graphics::Dirty`, a bit for each 64-pixel tile of a page. Pages are
+  private to `graphics.rs`, and `page_pixels` asks for the area to be written; a
+  test compares the marks with a diff of the page for each way of writing. The GPU
+  path sends only marked tiles that a shown element reads, the rest when one does.
+- Still to do: the scene-hash reuse and raster array snapshots. The marks have one
+  reader, so the debugger's GRP view would need a history of its own.
 - Milestone: frames that only repeat state are skipped (measure on a
-  program that sets the same `SPOFS` every frame); page uploads
-  proportional to what was drawn.
+  program that sets the same `SPOFS` every frame).
 
 **Phase 3: a GPU prototype. Done, behind `SB_GPU`, off by default.**
 
@@ -1240,11 +1243,11 @@ There are two ways to reduce the inexact set later:
 `crates/sb-sdl` is a `SceneBackend`, which the runtime offers each scene; the
 source says how to run it. It draws sprites and text screens under any matrix,
 with tint, both blends, compose modes 0-4, LCLIP and XSCREEN's sample, through
-`SDL_RenderGeometry`, with no shader on any driver. A shader of ours came in for
-one filter, to prove the way. A frame with anything else is drawn on the CPU
-whole, and a count says why. Direct mode's hint and list, the line cursor,
-inverted cells, sub screens and an image off a page that does not repeat are
-among those; mosaic, blur, raster and 4x4 are the ones that matter to games.
+`SDL_RenderGeometry`, with no shader on any driver, and mosaic and blur the same
+way. A shader of ours came in for one filter, to prove the way. A frame with
+anything else is drawn on the CPU whole, and a count says why. Direct mode's hint
+and list, the line cursor, inverted cells, sub screens and an image off a page that
+does not repeat are among those; raster and 4x4 are the ones that matter to games.
 
 Times, on one x86-64 desktop with an RTX 3060 Ti, on the opengl driver through
 EGL with no window shown: ms for each frame drawn. GPU is the CPU's side (walking
@@ -1252,17 +1255,24 @@ the scene, pages, flush) plus the wait for the GPU when read back at once, with
 no vsync and no real present. A window's present is not in these. TPERF's scenes
 and ELE2020, instructions in billions over the same run:
 
-| Scene | CPU ms | GPU ms | CPU instr | GPU instr | On the CPU | Pixels 1 off, 2, more, of those compared |
-|---|---|---|---|---|---|---|
-| TMULTI | 87.6 | 3.4 + 1.3 | 165 | 14 | 0 | 0, 0, 0.11% |
-| SPANIM | 35.1 | 0.5 + 0.7 | 86 | 5 | 0 | 7.2%, 0, 0.05% |
-| SPROT | 36.8 | 0.4 + 0.4 | 74 | 5 | 0 | 0.01%, 0.01%, 0.08% |
-| LCOMP | 38.4 | 0.5 + 0.9 | 112 | 3 | 0 | 44%, 0, 0 |
-| SPMOVE | 4.6 | 0.4 + 0.6 | 33 | 9 | 0 | 0, 0, 0 |
-| ELE2020 | 14.7 | 0.2 + 1.0 | 137 | 7 | 0 | 5.4%, 0, 0.003% |
-| GAME | 3.7 | **4.5** + 0.7 | 22 | **33** | 8% (blur) | 0.5%, 0, 0 |
-| GFILL | 1.3 | **4.3** + 0.6 | 12 | **29** | 0 | 0, 0, 0 |
-| GPUTCHR | 1.0 | **3.6** + 0.8 | 22 | **40** | 0 | 0, 0, 0 |
+| Scene | CPU ms | GPU ms | CPU instr | GPU instr | On the CPU | Pixels 1 off, 2, more, of those compared | Most off |
+|---|---|---|---|---|---|---|---|
+| TMULTI | 87.6 | 3.1 | 150 | 14 | 0 | 0, 0, 0.13% | 220 |
+| SPANIM | 35.1 | 1.0 | 86 | 5 | 0 | 6.9%, 0, 0.04% | 255 |
+| SPROT | 36.8 | 0.7 | 81 | 5 | 0 | 0.01%, 0.01%, 0.08% | 255 |
+| LCOMP | 38.4 | 1.1 | 112 | 3 | 0 | 44%, 0, 0 | 2 |
+| SPMOVE | 4.6 | 1.2 | 34 | 10 | 0 | 0, 0, 0 | 0 |
+| ELE2020 | 14.7 | 1.1 | 138 | 8 | 0 | 5.4%, 0, 0.003% | 255 |
+| GAME | 3.7 | 1.0 | 22 | 10 | 0 | 1.2%, 0.07%, 0.001% | 3 |
+| GFILL | 1.3 | 0.5 | 12 | 7 | 0 | 0, 0, 0 | 0 |
+| GPUTCHR | 1.0 | 0.7 | 21 | 17 | 0 | 0, 0, 0 | 0 |
+| LBLUR | 13.2 | 1.6 | 80 | 3 | 0 | 41%, 18%, 1.7% | 6 |
+| LMOSAIC | 6.2 | 1.1 | 33 | 3 | 0 | 1.5%, 0.04%, 0 | 3 |
+| SOLIDGUNNER_V | 2.0 | 1.2 | 26 | 8 | 0 | 0.01%, 0, 0.02% | 255 |
+| NEON_DRIFTWAY | 60 | 2.7 | 113 | 24 | 126 of 600 (4x4) | 4.4%, 0.33%, 0.03% | 12 |
+
+The GPU's time for NEON_DRIFTWAY is of the frames it drew; the 126 on the CPU come
+on top. Elements' edges and samples between texels are the 255s, as before.
 
 MAXSP's score went from 457 to 2563 in the same conditions; there it is held
 back by something other than drawing (3 ms of 16.7 in work and under 1.3 in
@@ -1302,18 +1312,36 @@ The rest:
   TEST53 part 4, where the layer's color follows; the GPU's wait was 1.3 ms a frame
   with four such layers. Windows' D3D12 needs DXIL and macOS MSL too, which SDL_shadercross makes
   from the same source; neither was tried. So far only Vulkan.
-- **Uploads.** Pages reach the GPU whole, 16.8 MB, whenever `Graphics::changes`
-  moves and a shown element reads them: 3.4 to 4.4 ms a frame here on opengl, 1.3
-  on opengles2, 5.7 on vulkan. That makes scenes that draw on a shown page
-  every frame slower than the CPU, as above. Phase 2's dirty tiles or the rectangle
-  in use would answer it; until then these numbers stand. Nothing is read back:
-  GRP commands read the CPU's pages, which stay authoritative.
-- **Memory.** Peak RSS went up by about 60 MiB (297 to 358 in SPROT), with one page
-  and the font page on the GPU, and to 1006 MiB from 310 in TMULTI on opengl and
-  opengles2, 224000 vertices a frame in SDL's and the driver's buffers; 487 on the gpu
-  driver. On the GPU: 16 MiB a page in use, at most six, 16 for the atlas if a glyph
-  needs it, three frame-sized targets. No frame of latency is added: the frame is
-  drawn in the same iteration as before.
+- **Mosaic and blur.** Fixed function, on two half-size targets. A mosaic is a
+  smoothed draw into part of one and a nearest draw back. A blur's taps cannot
+  simply add: each draw rounds to 8 bits, and 9 draws came up to 6 off in a
+  simulation of frames. So each mixes into what is there by its share of the taps so
+  far, the outermost first, and two neighbours are one draw by smoothing between
+  them; a run of one color stays exact, and the fall in the weights comes last, as
+  black over all of it, which takes what shows through down with the light. On
+  an opaque frame a tap takes one draw. A layer's alpha decides how an ordinary mix
+  would go, so there a tap takes two, down and then add, and rounds twice. TEST54
+  parts 2 and 3, against the CPU: about 1% 1 off, under 0.5% 2 off, 3 at
+  most. LBLUR, three blurred layers one over another: 6 at most, 1.7% more than 2
+  off, since the differences add up over the layers. No shader was needed.
+- **Uploads.** Pages reach the GPU by 64-pixel tiles, those marked that a shown
+  element reads: 0.5 MB a frame in GFILL and GPUTCHR, which were 16.8. GCLS fills
+  the whole page, so SOLIDGUNNER_V, which does it each frame, sends only what its
+  sprite shows. With the marks, GFILL, GPUTCHR and GAME are no slower than the CPU.
+  Nothing is read back: GRP commands read the CPU's pages, which stay authoritative.
+  With the path off, the marks cost at most 0.7% in instructions on GRP scenes;
+  GLINE, GCIRCLE and GPUTCHR got cheaper, as they now do less per pixel.
+- **Memory.** Peak RSS is up by 30 to 60 MiB (297 to 328 in SPROT), with one page and
+  the font page on the GPU, and 312 to 346 in TMULTI. That was 1006, on opengl and
+  opengles2, with 224000 vertices in one draw; 700 MiB of it went when those were
+  handed over in draws of 60000 or fewer, so a driver's keeping what it took for a
+  large draw is the likely cause, and the path now flushes every 30000. On opengles2 with
+  Mesa's llvmpipe, one draw peaked at 388. Caching a text screen in a target of its own would
+  not help TMULTI, whose cells change each frame, and SDL expands indexed geometry
+  into plain vertices in its GL drivers, so indices would not either. On the GPU: 16
+  MiB a page in use, at most six, 16 for the atlas if a glyph needs it, three
+  frame-sized targets and two of half that. No frame of latency is added: the frame
+  is drawn in the same iteration as before.
 - **Failure.** The software renderer and no Vulkan with `SB_GPU_ALONE` were tried,
   and stay on the CPU; so does a refused texture or shader, by the code, untried. Forcing a driver with
   `SDL_RENDER_DRIVER` that cannot present still panics inside the sdl3 crate's
@@ -1321,17 +1349,20 @@ The rest:
 - **Reach.** Windows, macOS, Linux: (a) on their usual drivers, untested on the first
   two; (b)'s filters on D3D12, Metal and Vulkan once SmileBASIC 4 are made. GLES
   handhelds, the RK3326 among them: (a) needs only GLES2's textures, targets and
-  blends, so the path should work, and filters and 4x4 stay on the CPU, for the whole
-  frame. Tested on GLES2 on a desktop GPU only: on Mali, timings, target switches on a
+  blends, so the path should work, and raster, color and 4x4 stay on the CPU, for the
+  whole frame. Tested on GLES2 on a desktop GPU only: on Mali, timings, target switches on a
   tiler, and uploads are unknown. Mesa's PanVK names the Mali-G31, and has a switch
   for hardware it does not call supported; whether the G31 needs it, and what an
   AmberELEC build has, are unknown.
 
 **Phase 4: full feature set.**
 
-- Rotated and scaled items, 4x4 projection (per-pixel inverse
-  homography), XSCREEN sample, LCLIP, all filters, sub interpreter
-  screens.
+- Done in phase 3: rotated and scaled items, XSCREEN sample, LCLIP, mosaic, blur.
+- 4x4 projection. NEON_DRIFTWAY's and FINITI's matrices are true perspectives, W
+  moving with X and Y, and `SDL_RenderGeometry` has no W: a grid of small quads
+  (approximate, on every driver) or a shader through `SDL_GPURenderState`.
+- Raster, sub interpreter screens, the line cursor, inverted cells. Direct mode's
+  hint and list would need drawing to a clear texture of their own on the CPU.
 - Milestone: no CPU fallback needed for any project in the bench set;
   the inexact paths' differences stay within the policy.
 
