@@ -158,6 +158,10 @@ known.
   with 5008 free keeps 1601 there and gives the last element each time; here it
   shrinks and gives each in turn.
 - `LOAD` of a program takes nothing from this memory.
+- Run on a project in the project manager returns to the manager when
+  the program ends or is stopped. After an error the screen stays, with
+  the emulator's own line `=== Press A Button or Enter to return.===`
+  below it, until A (any controller) or Enter is pressed.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
 - `GSAVE` and `GLOAD` with a rectangle of more pixels than SmileBASIC

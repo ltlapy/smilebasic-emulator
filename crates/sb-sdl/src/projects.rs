@@ -283,6 +283,13 @@ pub enum Outcome {
     },
 }
 
+/// Where the manager's focus and file selection were, to come back to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Memory {
+    files: bool,
+    file: Option<(FileKind, String)>,
+}
+
 /// A program to load from the current project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Open {
@@ -290,6 +297,9 @@ pub struct Open {
     pub slot: usize,
     /// Run it after loading (into PRG0).
     pub run: bool,
+    /// Set by Run of MAIN.PRG: the manager comes back when the program
+    /// ends.
+    pub home: bool,
 }
 
 /// What a chosen folder or file is for.
@@ -613,6 +623,31 @@ impl ProjectManager {
         manager.refresh(storage, None);
         let current = manager.current.clone();
         manager.select_name(&current, storage);
+        manager.sync(storage);
+        manager
+    }
+
+    /// What [`ProjectManager::reopen`] needs to come back as it was left.
+    pub fn memory(&self) -> Memory {
+        Memory {
+            files: self.focus == Focus::Files,
+            file: (self.file_selected.and_then(|i| self.files.get(i)))
+                .map(|f| (f.kind, f.name.clone())),
+        }
+    }
+
+    /// A manager on the current project, with the focus and the file that
+    /// `memory` says.
+    pub fn reopen(storage: &Storage, size: (u32, u32), memory: &Memory) -> ProjectManager {
+        let mut manager = ProjectManager::new(storage, size);
+        if let Some((kind, name)) = &memory.file
+            && let Some(i) = (manager.files.iter()).position(|f| f.kind == *kind && f.name == *name)
+        {
+            manager.file_selected = Some(i);
+        }
+        if memory.files && !manager.files.is_empty() {
+            manager.focus = Focus::Files;
+        }
         manager.sync(storage);
         manager
     }
@@ -1784,6 +1819,7 @@ impl ProjectManager {
                     file: MAIN.to_string(),
                     slot: 0,
                     run: true,
+                    home: true,
                 };
                 return self.open(open, storage, unsaved, false);
             }
@@ -1792,6 +1828,7 @@ impl ProjectManager {
                     file: self.selected_program().expect("enabled").to_string(),
                     slot: 0,
                     run: true,
+                    home: false,
                 };
                 return self.open(open, storage, unsaved, false);
             }
@@ -2068,6 +2105,7 @@ impl ProjectManager {
             file: file.to_string(),
             slot,
             run: false,
+            home: false,
         };
         self.open(open, storage, unsaved, false)
     }
@@ -2914,6 +2952,7 @@ mod tests {
             file: "A.PRG".to_string(),
             slot: 2,
             run: false,
+            home: false,
         };
         assert_eq!(
             m.key(Keycode::_2, &mut s, &[]),
@@ -2948,7 +2987,8 @@ mod tests {
                 open: Open {
                     file: MAIN.to_string(),
                     slot: 0,
-                    run: true
+                    run: true,
+                    home: true,
                 }
             }
         );
@@ -3282,10 +3322,30 @@ mod tests {
                 open: Open {
                     file: "A.PRG".to_string(),
                     slot: 0,
-                    run: true
+                    run: true,
+                    home: false,
                 }
             }
         );
+    }
+
+    #[test]
+    fn only_run_of_main_comes_home_and_the_manager_comes_back_as_left() {
+        let tmp = TempDir::new("home");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "MAIN.PRG", b"?1", None).unwrap();
+        s.write(FileKind::Txt, "A.PRG", b"?1", None).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        let home = |o: Outcome| matches!(o, Outcome::Open { open, .. } if open.home);
+        assert!(home(m.press(Button::Run, &mut s, &[])));
+        m.key(Keycode::Tab, &mut s, &[]);
+        m.key(Keycode::Down, &mut s, &[]);
+        assert!(!home(m.press(Button::RunFile, &mut s, &[])));
+        let left = m.memory();
+        let back = ProjectManager::reopen(&s, (1280, 720), &left);
+        assert_eq!(back.focus, Focus::Files);
+        assert_eq!(back.file_selected, m.file_selected);
+        assert_eq!(back.memory(), left);
     }
 
     /// A GRP file of `w` x `h` pixels, as SAVEG writes it (a PNG).
@@ -3528,7 +3588,8 @@ mod tests {
                 open: Open {
                     file: MAIN.to_string(),
                     slot: 0,
-                    run: true
+                    run: true,
+                    home: true,
                 }
             }
         );
@@ -3628,6 +3689,7 @@ mod tests {
                 file: file.to_string(),
                 slot: 0,
                 run: true,
+                home: false,
             },
         };
         assert_eq!(m.pad(Pad::East, &mut s, &[]), run("A.PRG"));
@@ -3680,7 +3742,8 @@ mod tests {
                 open: Open {
                     file: MAIN.to_string(),
                     slot: 0,
-                    run: true
+                    run: true,
+                    home: true,
                 }
             }
         );

@@ -194,6 +194,8 @@ pub struct Machine {
     /// one to tell: `Some(None)` by itself, else with the error or break
     /// message the main one prints.
     ended: Option<Option<String>>,
+    /// Whether the program came from the project manager's Run.
+    home: Home,
 }
 
 /// How a stopped program goes on.
@@ -217,6 +219,27 @@ enum Halt {
     Trace,
     Debug,
 }
+
+/// A program started by the project manager's Run, and what its end
+/// leaves to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Home {
+    Off,
+    /// Running; its end, by itself or by a break, brings the manager back.
+    Running,
+    /// Ended: the frontend reopens the manager.
+    Done,
+    /// Ended by an error, which stays on the screen until a button is
+    /// pressed. The count is the frames still to go before one counts, so
+    /// that a button the program was using does not dismiss it.
+    Waiting(u8),
+}
+
+/// Printed after the error of a program that Projects ran.
+pub const HOME_PROMPT: &str = "=== Press A Button or Enter to return.===";
+
+/// Frames after the error in which a press does not return yet.
+const HOME_GRACE: u8 = 20;
 
 /// Why the stopped program stopped, for the debugger's panel.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -338,6 +361,7 @@ impl Machine {
             focus_moving: None,
             focus_flash: None,
             ended: None,
+            home: Home::Off,
         }
     }
 
@@ -782,6 +806,7 @@ impl Machine {
     /// Loads the current project's TXT file `name` into a slot, for the
     /// project manager. A running program stops first.
     pub fn load_slot(&mut self, slot: usize, name: &str) -> storage::Result<()> {
+        self.home = Home::Off;
         self.stop();
         let editing = self.editing;
         if editing {
@@ -797,6 +822,7 @@ impl Machine {
     /// Loads the current project's `name` into PRG0 and runs it, as
     /// SmileBASIC 4's menu runs a project's MAIN.PRG.
     pub fn run_file(&mut self, name: &str) -> storage::Result<()> {
+        self.home = Home::Off;
         self.stop();
         if self.editing {
             self.close_editor();
@@ -804,6 +830,59 @@ impl Machine {
         self.rt.load_file(name, 0)?;
         self.run_slot(0);
         Ok(())
+    }
+
+    /// [`Machine::run_file`] for the project manager's Run: when the
+    /// program ends the frontend is told to bring the manager back (see
+    /// [`Machine::home_done`]), or, after an error, once a button is
+    /// pressed (see [`Machine::home_waiting`]). A program that fails to
+    /// load or compile counts as one that ended by an error.
+    pub fn run_home(&mut self, name: &str) -> storage::Result<()> {
+        self.home = Home::Off;
+        self.stop();
+        if self.editing {
+            self.close_editor();
+        }
+        self.rt.load_file(name, 0)?;
+        self.home = Home::Running;
+        self.run_slot(0);
+        Ok(())
+    }
+
+    /// Whether the program that Projects ran has ended, so that the
+    /// manager is to reopen. True once.
+    pub fn home_done(&mut self) -> bool {
+        let done = self.home == Home::Done;
+        if done {
+            self.home = Home::Off;
+        }
+        done
+    }
+
+    /// Whether an error stays on the screen until a button is pressed;
+    /// the frontend gives the machine no other input meanwhile.
+    pub fn home_waiting(&self) -> bool {
+        matches!(self.home, Home::Waiting(_))
+    }
+
+    /// A fresh press of A or Enter while waiting. True when it returns,
+    /// which leaves direct mode as after any end; the manager is to open.
+    pub fn home_press(&mut self) -> bool {
+        if self.home != Home::Waiting(0) {
+            return false;
+        }
+        self.home = Home::Off;
+        self.ready();
+        true
+    }
+
+    /// The manager opens some other way while waiting: back to direct
+    /// mode.
+    pub fn home_leave(&mut self) {
+        if self.home_waiting() {
+            self.home = Home::Off;
+            self.ready();
+        }
     }
 
     /// The + button (F5): stops a running program, or jumps to its ON
@@ -823,6 +902,7 @@ impl Machine {
         if self.editing && !self.detached {
             self.close_editor();
         }
+        self.home = Home::Off;
         self.run_slot(0);
     }
 
@@ -843,6 +923,7 @@ impl Machine {
     /// shared with direct mode) stays as the panic left it: safe to touch,
     /// since no borrow outlives the unwinding, but maybe half done.
     pub fn recover_from_panic(&mut self, why: &str) {
+        self.home = Home::Off;
         if let Some(sub) = &mut self.sub {
             sub.end_sub(None);
             sub.ended = None;
@@ -895,6 +976,14 @@ impl Machine {
         };
         self.vars.extend(vm.globals());
         let program = self.running_slot.is_some();
+        // Not a break the debugger takes, nor a step's.
+        let home = program
+            && self.home == Home::Running
+            && self.stepping.is_none()
+            && matches!(how, Halt::User | Halt::Stop);
+        if !program {
+            self.home = Home::Off;
+        }
         if program {
             self.rt.clear_input();
             if how == Halt::User {
@@ -961,6 +1050,9 @@ impl Machine {
             self.halt(vm, Stopped::Paused, line);
         }
         self.ready();
+        if home {
+            self.home = Home::Done;
+        }
         self.panel_closed = false;
         let stepped = self.stepping.take().is_some();
         if program && (stepped || how == Halt::Debug && self.rt.settings.debug_open_editor) {
@@ -1071,6 +1163,7 @@ impl Machine {
         let Some(slot) = self.last_run else {
             return false;
         };
+        self.home = Home::Off;
         if self.vm.is_some() {
             self.stop();
         }
@@ -1476,6 +1569,9 @@ impl Machine {
     /// Runs one frame: the program, the editor, or direct-mode line
     /// editing, and then the subprogram, if one runs.
     pub fn frame(&mut self) {
+        if let Home::Waiting(n) = &mut self.home {
+            *n = n.saturating_sub(1);
+        }
         if let Some((_, age)) = &mut self.focus_flash {
             *age += 1;
         }
@@ -1836,6 +1932,9 @@ impl Machine {
                     None => self.direct_error(),
                 }
                 self.report(&e);
+                if slot.is_some() && self.home == Home::Running {
+                    return self.home_end(true);
+                }
                 self.ready();
             }
         }
@@ -1868,6 +1967,10 @@ impl Machine {
         let vm = self.vm.take().expect("finish follows a run");
         self.vars.extend(vm.globals());
         let program = self.running_slot.is_some();
+        let home = program && self.home == Home::Running;
+        if !program {
+            self.home = Home::Off;
+        }
         if let Some(e) = &error {
             if let Some(slot) = e.slot {
                 self.last_error = Some((slot as usize, e.line, e.col));
@@ -1910,7 +2013,20 @@ impl Machine {
         match (run, cont) {
             (Some(slot), _) => self.run_slot(slot),
             (None, Some(how)) => self.resume(how),
+            (None, None) if home => self.home_end(error.is_some()),
             (None, None) => self.ready(),
+        }
+    }
+
+    /// The program that Projects ran ended: the manager is to open, after
+    /// an error once a button is pressed.
+    fn home_end(&mut self, error: bool) {
+        if error {
+            self.print_line(&HOME_PROMPT.encode_utf16().collect::<Vec<_>>());
+            self.home = Home::Waiting(HOME_GRACE);
+        } else {
+            self.ready();
+            self.home = Home::Done;
         }
     }
 
@@ -2422,6 +2538,132 @@ mod tests {
         m.rt.frame = m.rt.frame.wrapping_sub(1);
         m.rt.editor_key = None;
         kept == m.render_editor().pixels()
+    }
+
+    /// A machine that has run `code` as Projects' Run does, to its end.
+    fn home_run(code: &str) -> Machine {
+        let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+        m.boot();
+        m.set_slot(0, code.to_string());
+        m.home = Home::Running;
+        m.run_slot(0);
+        for _ in 0..100 {
+            if !m.is_running() {
+                break;
+            }
+            m.frame();
+        }
+        m
+    }
+
+    const LOOP: &str = "@L\nVSYNC\nGOTO @L";
+
+    #[test]
+    fn a_normal_end_brings_the_manager_back_at_once() {
+        for code in ["?1", "?1\nEND", "GOSUB @S\nEND\n@S\nRETURN"] {
+            let mut m = home_run(code);
+            assert!(!m.is_running() && !m.home_waiting(), "{code}");
+            assert!(m.home_done(), "{code}");
+            assert!(!m.home_done());
+        }
+    }
+
+    #[test]
+    fn an_error_waits_for_a_fresh_press_after_a_grace() {
+        for code in ["?1\nA=1/0", "BOGUS BOGUS BOGUS", "FOR"] {
+            let mut m = home_run(code);
+            assert!(m.home_waiting() && !m.home_done(), "{code}");
+            // A press at once is the program's, still held.
+            assert!(!m.home_press());
+            for _ in 0..HOME_GRACE {
+                m.frame();
+            }
+            assert!(m.home_waiting());
+            assert!(m.home_press());
+            assert!(!m.home_waiting() && !m.home_done());
+            assert!(!m.home_press());
+        }
+    }
+
+    #[test]
+    fn the_error_is_followed_by_the_prompt() {
+        let m = home_run("A=1/0");
+        let console = &m.rt.text[CONSOLE];
+        let (w, h) = console.size();
+        let rows: Vec<String> = (0..h)
+            .map(|y| {
+                let row: Vec<u16> = (0..w).map(|x| console.cell(x, y).code).collect();
+                String::from_utf16_lossy(&row)
+                    .trim_matches(['\0', ' '])
+                    .to_string()
+            })
+            .collect();
+        let at = rows.iter().position(|r| r == HOME_PROMPT).expect("printed");
+        assert!(at >= 1 && !rows[at - 1].is_empty(), "{rows:?}");
+        assert!(!rows[at..].iter().any(|r| r.starts_with("OK")));
+    }
+
+    #[test]
+    fn a_break_or_stop_brings_the_manager_back_at_once() {
+        let mut m = home_run(LOOP);
+        assert!(m.is_running());
+        m.sysreq();
+        assert!(!m.is_running() && !m.home_waiting());
+        assert!(m.home_done());
+        let m = home_run("?1\nSTOP");
+        assert!(!m.is_running());
+        let mut m = m;
+        assert!(!m.home_waiting());
+        assert!(m.home_done());
+    }
+
+    #[test]
+    fn a_running_program_is_left_alone() {
+        let m = home_run(LOOP);
+        assert!(m.is_running() && !m.home_waiting());
+        assert_eq!(m.home, Home::Running);
+    }
+
+    #[test]
+    fn other_routes_are_no_home_run() {
+        // F5 from direct mode after a home run.
+        let mut m = home_run(LOOP);
+        m.stop();
+        assert!(m.home_done());
+        m.sysreq();
+        for _ in 0..10 {
+            m.frame();
+        }
+        assert!(!m.home_done() && !m.home_waiting());
+        // A program that is not a home run.
+        let mut m = home_run(LOOP);
+        m.home = Home::Off;
+        m.stop();
+        assert!(!m.home_done());
+        // A direct-mode line clears it.
+        let mut m = home_run(LOOP);
+        m.rt.settings.debug_open_editor = false;
+        m.stop_on(None, Halt::Debug);
+        m.direct("?2");
+        for _ in 0..60 {
+            m.frame();
+        }
+        assert_eq!(m.home, Home::Off);
+    }
+
+    #[test]
+    fn a_debugger_stop_is_not_an_end() {
+        let mut m = home_run(LOOP);
+        m.stop_on(None, Halt::Debug);
+        assert!(!m.home_done() && !m.home_waiting());
+        assert_eq!(m.home, Home::Running);
+    }
+
+    #[test]
+    fn leaving_a_wait_goes_back_to_direct_mode() {
+        let mut m = home_run("A=1/0");
+        m.home_leave();
+        assert!(!m.home_waiting() && !m.home_done());
     }
 
     #[test]

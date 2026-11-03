@@ -50,7 +50,7 @@ use layer::Layer;
 use menu::{Action, Click, Context, MenuBar};
 use popup::Popup;
 use program_dialog::ProgramView;
-use projects::{Outcome, ProjectManager, Transfer};
+use projects::{Memory, Outcome, ProjectManager, Transfer};
 use sb_profiles::Profile;
 use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
@@ -334,6 +334,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     use_instruments(&mut machine, bank.as_ref(), &mut toasts);
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
+    // Where the manager was when Run left it, for the return to it.
+    let mut home_memory = Memory::default();
     let mut color_window: Option<ColorWindow> = None;
     let mut settings_window: Option<SettingsWindow> = None;
     let mut shortcuts_window: Option<ShortcutsWindow> = None;
@@ -408,6 +410,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             if b.opens("toast") {
                 toasts.push("A notice".to_string());
             }
+        }
+        // The program that Projects ran has ended: back to Projects. Opened
+        // some other way, a wait for a button is over.
+        if manager.is_some() {
+            machine.home_leave();
+        } else if machine.home_done() {
+            let size = (display_w, display_h);
+            manager = Some(ProjectManager::reopen(
+                &machine.rt.storage,
+                size,
+                &home_memory,
+            ));
         }
         // The editor shows in a window of its own while it is open, if
         // chosen.
@@ -674,6 +688,47 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             );
             if pointer && modal_shown!() && !ui_window {
                 continue;
+            }
+            // After an error of the program that Projects ran, only A or
+            // Enter, freshly pressed, does anything on the keyboard and
+            // the pad; the window and its menu bar work as ever.
+            if machine.home_waiting() && !modal_shown!() {
+                match &event {
+                    Event::KeyDown {
+                        keycode: Some(Keycode::Return | Keycode::KpEnter),
+                        repeat: false,
+                        ..
+                    }
+                    | Event::GamepadButtonDown {
+                        button: Button::East,
+                        ..
+                    } => {
+                        if machine.home_press() {
+                            let size = (display_w, display_h);
+                            manager = Some(ProjectManager::reopen(
+                                &machine.rt.storage,
+                                size,
+                                &home_memory,
+                            ));
+                        }
+                        continue;
+                    }
+                    Event::KeyDown {
+                        keycode: Some(key),
+                        keymod,
+                        ..
+                    } if function_key(*key).is_none()
+                        && !ctrl(*keymod)
+                        && !keymod.intersects(
+                            Mod::LALTMOD | Mod::RALTMOD | Mod::LGUIMOD | Mod::RGUIMOD,
+                        ) =>
+                    {
+                        continue;
+                    }
+                    Event::TextInput { .. } => continue,
+                    Event::GamepadButtonDown { button, .. } if *button != Button::Back => continue,
+                    _ => {}
+                }
             }
             match event {
                 Event::MouseMotion { x, y, .. } if !from_editor => {
@@ -974,9 +1029,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         if let Some(name) = switched {
                             toasts.push(format!("Switched to project {name}"));
                         }
-                        let done = match open.run {
-                            true => machine.run_file(&open.file),
-                            false => machine.load_slot(open.slot, &open.file),
+                        if let (true, Some(m)) = (open.home, &manager) {
+                            home_memory = m.memory();
+                        }
+                        let done = match (open.run, open.home) {
+                            (true, true) => machine.run_home(&open.file),
+                            (true, false) => machine.run_file(&open.file),
+                            (false, _) => machine.load_slot(open.slot, &open.file),
                         };
                         match done {
                             Ok(()) if !open.run => {
