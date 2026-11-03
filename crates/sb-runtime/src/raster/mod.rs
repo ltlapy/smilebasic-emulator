@@ -13,7 +13,7 @@ use crate::compose::{self, Compose};
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
-use crate::scene::{Item, Scene};
+use crate::scene::{Item, LayerPass, Scene};
 use crate::screen::cover;
 use crate::text::{Cell, SCREENS};
 
@@ -94,73 +94,121 @@ impl CpuRasterizer {
     }
 }
 
-impl Rasterizer for CpuRasterizer {
-    fn draw(&mut self, scene: &Scene, input: &RasterInput) {
-        let CpuRasterizer { fb, scratch, flat } = self;
-        let &RasterInput { grp, font, cells } = input;
-        let sample = scene.sample;
-        fb.clear(scene.back);
-        for pass in &scene.passes {
-            let direct = pass.compose == Compose::Direct;
-            let target = match direct {
-                true => &mut *fb,
-                false => {
-                    scratch.clear(0);
-                    &mut *scratch
-                }
-            };
-            let clip = pass.clip.as_ref();
-            match &pass.projection {
-                None => {
-                    for item in scene.items(pass) {
-                        match item {
-                            Item::Sprite(s) => sprite::draw(s, grp, target, clip, None),
-                            Item::Text(t) => {
-                                let cells = cells[t.screen as usize];
-                                text::draw(t, cells, font, grp, target, clip);
-                            }
-                        }
+impl CpuRasterizer {
+    /// Draws the first `count` passes of a scene, for a backend that takes it
+    /// from there: a direct layer's filter works on all that is behind it.
+    pub fn draw_first(&mut self, scene: &Scene, input: &RasterInput, count: usize) -> &Framebuffer {
+        self.fb.clear(scene.back);
+        for pass in &scene.passes[..count] {
+            self.draw_pass(scene, input, pass);
+        }
+        &self.fb
+    }
+
+    /// Draws a composed pass on a clear layer, filter and all, and does not put
+    /// it on the frame: for a backend that does that.
+    pub fn draw_layer(
+        &mut self,
+        scene: &Scene,
+        input: &RasterInput,
+        pass: &LayerPass,
+    ) -> &Framebuffer {
+        self.layer_alone(scene, input, pass);
+        &self.scratch
+    }
+
+    fn layer_alone(&mut self, scene: &Scene, input: &RasterInput, pass: &LayerPass) {
+        self.scratch.clear(0);
+        let CpuRasterizer { scratch, flat, .. } = self;
+        items_and_filter(scene, input, pass, scratch, flat);
+    }
+
+    #[inline]
+    fn draw_pass(&mut self, scene: &Scene, input: &RasterInput, pass: &LayerPass) {
+        if pass.compose == Compose::Direct {
+            let CpuRasterizer { fb, flat, .. } = self;
+            items_and_filter(scene, input, pass, fb, flat);
+            return;
+        }
+        self.layer_alone(scene, input, pass);
+        let opaque = scene.opaque_frame;
+        compose::compose(
+            &mut self.fb,
+            &self.scratch,
+            pass.compose,
+            pass.color,
+            opaque,
+        );
+    }
+}
+
+/// A pass's items on `target`, and then its filter.
+#[inline]
+fn items_and_filter(
+    scene: &Scene,
+    input: &RasterInput,
+    pass: &LayerPass,
+    target: &mut Framebuffer,
+    flat: &mut Framebuffer,
+) {
+    let &RasterInput { grp, font, cells } = input;
+    let sample = scene.sample;
+    let clip = pass.clip.as_ref();
+    match &pass.projection {
+        None => {
+            for item in scene.items(pass) {
+                match item {
+                    Item::Sprite(s) => sprite::draw(s, grp, target, clip, None),
+                    Item::Text(t) => {
+                        let cells = cells[t.screen as usize];
+                        text::draw(t, cells, font, grp, target, clip);
                     }
                 }
-                Some(p) => {
-                    flat.resize(p.flat_size.0, p.flat_size.1);
-                    let origin = p.flat_origin;
-                    let mut flat_drawn = false;
-                    for item in scene.items(pass) {
-                        match item {
-                            Item::Sprite(s) => {
-                                if flat_drawn {
-                                    compose::project(target, flat, origin, &p.matrix, sample, clip);
-                                    flat_drawn = false;
-                                }
-                                sprite::draw(s, grp, target, clip, Some((&p.matrix, sample)));
-                            }
-                            Item::Text(t) => {
-                                if !flat_drawn {
-                                    flat.clear(0);
-                                    flat_drawn = true;
-                                }
-                                let cells = cells[t.screen as usize];
-                                text::draw(t, cells, font, grp, flat, None);
-                            }
-                        }
-                    }
-                    if flat_drawn {
-                        compose::project(target, flat, origin, &p.matrix, sample, clip);
-                    }
-                }
-            }
-            (pass.filter).apply(target, sample, pass.compose, &scene.raster_rows);
-            if pass.opaque_after_filter {
-                for p in target.pixels_mut() {
-                    *p |= 0xFF00_0000;
-                }
-            }
-            if !direct {
-                let opaque = scene.opaque_frame;
-                compose::compose(fb, scratch, pass.compose, pass.color, opaque);
             }
         }
+        Some(p) => {
+            flat.resize(p.flat_size.0, p.flat_size.1);
+            let origin = p.flat_origin;
+            let mut flat_drawn = false;
+            for item in scene.items(pass) {
+                match item {
+                    Item::Sprite(s) => {
+                        if flat_drawn {
+                            compose::project(target, flat, origin, &p.matrix, sample, clip);
+                            flat_drawn = false;
+                        }
+                        sprite::draw(s, grp, target, clip, Some((&p.matrix, sample)));
+                    }
+                    Item::Text(t) => {
+                        if !flat_drawn {
+                            flat.clear(0);
+                            flat_drawn = true;
+                        }
+                        let cells = cells[t.screen as usize];
+                        text::draw(t, cells, font, grp, flat, None);
+                    }
+                }
+            }
+            if flat_drawn {
+                compose::project(target, flat, origin, &p.matrix, sample, clip);
+            }
+        }
+    }
+    (pass.filter).apply(target, sample, pass.compose, &scene.raster_rows);
+    if pass.opaque_after_filter {
+        for p in target.pixels_mut() {
+            *p |= 0xFF00_0000;
+        }
+    }
+}
+
+impl Rasterizer for CpuRasterizer {
+    fn draw(&mut self, scene: &Scene, input: &RasterInput) {
+        self.fb.clear(scene.back);
+        for pass in &scene.passes {
+            self.draw_pass(scene, input, pass);
+        }
+        let fb = &mut self.fb;
         cover(scene.fade, fb.pixels_mut(), scene.dimmed);
         if scene.opaque_end {
             for p in fb.pixels_mut() {

@@ -35,9 +35,10 @@
 //! raster filter is strips of the layer, see [`RasterStrips`]. A 4x4 matrix is a
 //! grid of small triangles, see [`crate::gpu_project`].
 //!
-//! The color filter is the one thing here with a shader of ours, through
-//! `SDL_GPURenderState`, so only on SDL's `gpu` driver, on Vulkan. Elsewhere it
-//! goes to the CPU.
+//! The color filter works in HSV, which blending cannot do. On SDL's `gpu` driver, on
+//! Vulkan, it is the one thing here with a shader of ours, through
+//! `SDL_GPURenderState`. Elsewhere that layer alone is drawn on the CPU and sent, and
+//! a direct one, which filters what is behind it too, starts the frame that way.
 
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -49,7 +50,7 @@ use sb_runtime::filter::{self, BlurKernel, FilterOp, MosaicGrid};
 use sb_runtime::font::FontSize;
 use sb_runtime::framebuffer::Framebuffer;
 use sb_runtime::graphics::{COUNT_BITS, Clip, Dirty, GRP_SIZE, Graphics, PAGES};
-use sb_runtime::raster::{RasterInput, SceneBackend};
+use sb_runtime::raster::{CpuRasterizer, RasterInput, SceneBackend};
 use sb_runtime::scene::{Item, LayerPass, Projection, Scene, SpriteItem, TextItem};
 use sb_runtime::sprites::attr;
 use sb_runtime::text::{self, Cell, FONT_PAGE, USER_CHARS};
@@ -92,7 +93,6 @@ use crate::gpu_project::{Corner, Plane};
 #[derive(Clone, Copy, Debug)]
 enum Reason {
     Raster,
-    ColorFilter,
     /// An inverted cell of a font type larger than the atlas's cells.
     Inverted,
     /// An image reaching off a page that does not repeat.
@@ -103,10 +103,9 @@ enum Reason {
     Refused,
 }
 
-const REASONS: usize = 6;
+const REASONS: usize = 5;
 const REASON_NAMES: [&str; REASONS] = [
     "raster filter",
-    "color filter",
     "inverted cells",
     "image off the page",
     "atlas full",
@@ -318,6 +317,10 @@ pub struct Gpu {
     /// Makes the target's alpha the source's, and leaves its colors.
     set_alpha: SDL_BlendMode,
     color_filter: Option<ColorFilter>,
+    /// Where there is no shader, draws what has a color filter, and is sent on
+    /// `from_cpu`; both are made when first wanted.
+    cpu: Option<CpuRasterizer>,
+    from_cpu: *mut SDL_Texture,
     size: (u32, u32),
     pages: [Option<Page>; PAGES],
     atlas: *mut SDL_Texture,
@@ -539,6 +542,8 @@ impl Gpu {
                 SDL_BLENDOPERATION_ADD,
             ),
             color_filter: ColorFilter::new(renderer),
+            cpu: None,
+            from_cpu: null_mut(),
             size: (0, 0),
             pages: [const { None }; PAGES],
             atlas: null_mut(),
@@ -1441,6 +1446,11 @@ impl Gpu {
             }
             self.flat = null_mut();
             self.flat_size = (0, 0);
+            if !self.from_cpu.is_null() {
+                SDL_DestroyTexture(self.from_cpu);
+                self.from_cpu = null_mut();
+            }
+            self.cpu = None;
             self.half = [null_mut(); 2];
             self.overlay = null_mut();
             self.overlay_holds.clear();
@@ -1489,9 +1499,6 @@ impl Gpu {
                         return Some(Reason::Raster);
                     }
                 }
-                FilterOp::Color { .. } if self.color_filter.is_none() => {
-                    return Some(Reason::ColorFilter);
-                }
                 FilterOp::Color { .. } => {}
             }
         }
@@ -1509,7 +1516,21 @@ impl Gpu {
         };
         self.target(self.frame);
         self.clear(scene.back);
-        for pass in &scene.passes {
+        // The last direct layer the CPU has to filter, and all behind it.
+        let first = match self.color_filter {
+            Some(_) => 0,
+            None => (scene.passes.iter())
+                .rposition(|p| p.compose == Compose::Direct && has_color(&p.filter))
+                .map_or(0, |last| last + 1),
+        };
+        if first > 0 {
+            self.frame_from_cpu(scene, input, first)?;
+        }
+        for pass in &scene.passes[first..] {
+            if self.color_filter.is_none() && has_color(&pass.filter) {
+                self.layer_from_cpu(scene, input, pass)?;
+                continue;
+            }
             if pass.compose == Compose::Direct {
                 self.items(scene, pass, input)?;
                 self.filter(scene, pass)?;
@@ -1522,29 +1543,7 @@ impl Gpu {
             self.clear(0);
             self.items(scene, pass, input)?;
             self.filter(scene, pass)?;
-            self.target(self.frame);
-            let blend = match pass.compose {
-                Compose::Add => SDL_BLENDMODE_ADD_PREMULTIPLIED,
-                Compose::Multiply => SDL_BLENDMODE_MUL,
-                Compose::Screen => self.screen,
-                _ => SDL_BLENDMODE_BLEND_PREMULTIPLIED,
-            };
-            let c = fcolor(pass.color);
-            let color = SDL_FColor {
-                r: c.r * c.a,
-                g: c.g * c.a,
-                b: c.b * c.a,
-                a: c.a,
-            };
-            // SAFETY: the texture is the renderer's own.
-            if !unsafe { SDL_SetTextureBlendMode(self.layer, blend) } {
-                return Err(Reason::Refused);
-            }
-            self.cover(self.layer, blend, color);
-            // These two make the frame opaque all over, as the CPU's compose does.
-            if matches!(pass.compose, Compose::Multiply | Compose::Screen) && !scene.opaque_frame {
-                self.make_opaque();
-            }
+            self.compose_layer(self.layer, scene, pass)?;
         }
         if scene.fade >> 24 != 0 || scene.dimmed {
             self.cover(
@@ -1558,6 +1557,113 @@ impl Gpu {
         }
         self.flush();
         Ok(())
+    }
+
+    /// Puts a layer on the frame, by its compose mode and color.
+    fn compose_layer(
+        &mut self,
+        layer: *mut SDL_Texture,
+        scene: &Scene,
+        pass: &LayerPass,
+    ) -> Result<(), Reason> {
+        self.target(self.frame);
+        let blend = match pass.compose {
+            Compose::Add => SDL_BLENDMODE_ADD_PREMULTIPLIED,
+            Compose::Multiply => SDL_BLENDMODE_MUL,
+            Compose::Screen => self.screen,
+            _ => SDL_BLENDMODE_BLEND_PREMULTIPLIED,
+        };
+        let c = fcolor(pass.color);
+        let color = SDL_FColor {
+            r: c.r * c.a,
+            g: c.g * c.a,
+            b: c.b * c.a,
+            a: c.a,
+        };
+        // SAFETY: the texture is the renderer's own.
+        if !unsafe { SDL_SetTextureBlendMode(layer, blend) } {
+            return Err(Reason::Refused);
+        }
+        self.cover(layer, blend, color);
+        // These two make the frame opaque all over, as the CPU's compose does.
+        if matches!(pass.compose, Compose::Multiply | Compose::Screen) && !scene.opaque_frame {
+            self.make_opaque();
+        }
+        Ok(())
+    }
+
+    /// The CPU's rasterizer, and the texture what it draws is sent on.
+    fn cpu_ready(&mut self) -> Result<(), Reason> {
+        let (w, h) = self.size;
+        if self.cpu.is_none() {
+            self.cpu = Some(CpuRasterizer::new(w, h));
+        }
+        if self.from_cpu.is_null() {
+            // SAFETY: the renderer outlives `self`.
+            self.from_cpu = unsafe {
+                SDL_CreateTexture(
+                    self.renderer,
+                    SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_STATIC,
+                    w as i32,
+                    h as i32,
+                )
+            };
+            if self.from_cpu.is_null() {
+                return Err(Reason::Refused);
+            }
+            // SAFETY: as it was just made.
+            unsafe { SDL_SetTextureScaleMode(self.from_cpu, SDL_SCALEMODE_NEAREST) };
+        }
+        Ok(())
+    }
+
+    /// Sends what the CPU drew.
+    fn send_from_cpu(&mut self, frame: &Framebuffer) {
+        let start = Instant::now();
+        let bytes = frame.pixels().len() * 4;
+        // SAFETY: the texture is at the frame's size: ready() drops it when the
+        // frame's size changes. SDL runs what is queued first, if it used it.
+        unsafe {
+            SDL_UpdateTexture(
+                self.from_cpu,
+                null(),
+                frame.pixels().as_ptr().cast(),
+                frame.width() as i32 * 4,
+            )
+        };
+        self.stats.pages += start.elapsed();
+        self.stats.page_bytes += bytes as u64;
+        crate::bench::uploaded(bytes);
+    }
+
+    /// Starts the frame with the first `count` passes, drawn on the CPU.
+    fn frame_from_cpu(
+        &mut self,
+        scene: &Scene,
+        input: &RasterInput,
+        count: usize,
+    ) -> Result<(), Reason> {
+        self.cpu_ready()?;
+        let mut cpu = self.cpu.take().ok_or(Reason::Refused)?;
+        self.send_from_cpu(cpu.draw_first(scene, input, count));
+        self.cpu = Some(cpu);
+        self.cover(self.from_cpu, SDL_BLENDMODE_NONE, WHITE);
+        Ok(())
+    }
+
+    /// A pass with a color filter, drawn on the CPU and put on the frame.
+    fn layer_from_cpu(
+        &mut self,
+        scene: &Scene,
+        input: &RasterInput,
+        pass: &LayerPass,
+    ) -> Result<(), Reason> {
+        self.cpu_ready()?;
+        let mut cpu = self.cpu.take().ok_or(Reason::Refused)?;
+        self.send_from_cpu(cpu.draw_layer(scene, input, pass));
+        self.cpu = Some(cpu);
+        self.compose_layer(self.from_cpu, scene, pass)
     }
 
     /// A layer's filter, on the current target, which is the frame for a
@@ -2105,6 +2211,13 @@ impl SceneBackend for Gpu {
     }
 }
 
+/// Whether a filter is a color filter that changes anything, which left at zero it
+/// does not, on the CPU.
+fn has_color(filter: &FilterOp) -> bool {
+    matches!(filter, &FilterOp::Color { hue, saturation, value }
+        if !(hue.rem_euclid(360.0) == 0.0 && saturation == 0.0 && value == 0.0))
+}
+
 /// LFILTER's raster deformation as quads, for no shader: on a run of rows (or for
 /// type 4, columns) with the same entry, a source point moves steadily with the
 /// pixel, so a nearest texture read between the run's ends shows what the CPU's
@@ -2294,6 +2407,7 @@ impl Drop for Gpu {
             self.overlay,
             self.flat,
             self.inverted,
+            self.from_cpu,
             half0,
             half1,
             self.atlas,
