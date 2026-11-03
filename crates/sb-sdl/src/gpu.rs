@@ -28,11 +28,12 @@
 //! window then shows nothing of it.
 //!
 //! Mosaic and blur need no shader either: they work on half-size targets by
-//! drawing with smoothing and offsets, see [`Gpu::mosaic`] and [`Gpu::blur`].
+//! drawing with smoothing and offsets, see [`Gpu::mosaic`] and [`Gpu::blur`]. A
+//! raster filter is strips of the layer, see [`raster_quads`].
 //!
 //! The color filter is the one thing here with a shader of ours, through
 //! `SDL_GPURenderState`, so only on SDL's `gpu` driver, on Vulkan. Elsewhere it
-//! goes to the CPU, as the raster filter does everywhere.
+//! goes to the CPU.
 
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -136,6 +137,14 @@ const WHITE: SDL_FColor = SDL_FColor {
     b: 1.0,
     a: 1.0,
 };
+
+/// How far a raster filter's sample is moved along the image, in texels, so that
+/// one that falls on the line between two texels takes the later, as rounding down
+/// does on the CPU, whichever way a GPU's interpolation is off.
+const RASTER_BIAS: f64 = 1.0 / 512.0;
+/// The most quads a raster filter is drawn with: scales that wrap around the frame
+/// many times on every line are left to the CPU.
+const MOST_RASTER_QUADS: usize = 20000;
 
 /// What the GPU's textures are measured in.
 const PAGE_SIZE: f32 = GRP_SIZE as f32;
@@ -288,6 +297,8 @@ pub struct Gpu {
     add_all: SDL_BlendMode,
     /// Takes all four channels down by the source's alpha.
     scale_down: SDL_BlendMode,
+    /// Makes the target's alpha the source's, and leaves its colors.
+    set_alpha: SDL_BlendMode,
     color_filter: Option<ColorFilter>,
     size: (u32, u32),
     pages: [Option<Page>; PAGES],
@@ -441,6 +452,14 @@ impl Gpu {
                 SDL_BLENDOPERATION_ADD,
                 SDL_BLENDFACTOR_ZERO,
                 SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                SDL_BLENDOPERATION_ADD,
+            ),
+            set_alpha: SDL_ComposeCustomBlendMode(
+                SDL_BLENDFACTOR_ZERO,
+                SDL_BLENDFACTOR_ONE,
+                SDL_BLENDOPERATION_ADD,
+                SDL_BLENDFACTOR_ONE,
+                SDL_BLENDFACTOR_ZERO,
                 SDL_BLENDOPERATION_ADD,
             ),
             color_filter: ColorFilter::new(renderer),
@@ -1094,14 +1113,29 @@ impl Gpu {
     }
 
     /// Why a scene needs the CPU, as far as a look over it shows.
-    fn refuses(&self, scene: &Scene) -> Option<Reason> {
+    fn refuses(&self, scene: &Scene, frame: (u32, u32)) -> Option<Reason> {
         if scene.dimmed || !scene.opaque_frame || scene.opaque_end {
             return Some(Reason::Sub);
         }
         for pass in &scene.passes {
             match pass.filter {
                 FilterOp::None | FilterOp::Mosaic(_) | FilterOp::Blur(_) => {}
-                FilterOp::Raster { .. } => return Some(Reason::Raster),
+                FilterOp::Raster {
+                    vertical,
+                    repeat,
+                    ref rows,
+                } => {
+                    let rows = &scene.raster_rows[rows.clone()];
+                    let raster = RasterStrips {
+                        rows,
+                        vertical,
+                        repeat,
+                        size: frame,
+                    };
+                    if raster.quads(|_, _| {}) > MOST_RASTER_QUADS {
+                        return Some(Reason::Raster);
+                    }
+                }
                 FilterOp::Color { .. } if self.color_filter.is_none() => {
                     return Some(Reason::ColorFilter);
                 }
@@ -1129,6 +1163,9 @@ impl Gpu {
             if pass.compose == Compose::Direct {
                 self.items(scene, pass, input)?;
                 self.filter(scene, pass)?;
+                if pass.opaque_after_filter {
+                    self.make_opaque();
+                }
                 continue;
             }
             self.target(self.layer);
@@ -1163,14 +1200,27 @@ impl Gpu {
     }
 
     /// A layer's filter, on the current target, which is the frame for a
-    /// direct layer and the layer's own otherwise. The raster filter does not
-    /// come here: refuses() left it to the CPU.
+    /// direct layer and the layer's own otherwise.
     fn filter(&mut self, scene: &Scene, pass: &LayerPass) -> Result<(), Reason> {
         let direct = pass.compose == Compose::Direct;
         let from = if direct { self.frame } else { self.layer };
         match pass.filter {
             // Amount 0 leaves the layer as it is, not halved.
-            FilterOp::None | FilterOp::Raster { .. } | FilterOp::Blur(0) => Ok(()),
+            FilterOp::None | FilterOp::Blur(0) => Ok(()),
+            FilterOp::Raster {
+                vertical,
+                repeat,
+                ref rows,
+            } => {
+                let raster = RasterStrips {
+                    rows: &scene.raster_rows[rows.clone()],
+                    vertical,
+                    repeat,
+                    size: self.size,
+                };
+                self.raster(from, &raster);
+                Ok(())
+            }
             FilterOp::Mosaic(size) => {
                 let (w, h) = self.size;
                 match filter::mosaic_grid(w, h, size, scene.sample) {
@@ -1189,6 +1239,50 @@ impl Gpu {
                 Ok(())
             }
         }
+    }
+
+    /// LFILTER's raster deformation: the strips onto a clear target, which then
+    /// takes the place of what they read.
+    fn raster(&mut self, from: *mut SDL_Texture, raster: &RasterStrips) {
+        if raster.rows.is_empty() {
+            return;
+        }
+        self.scale_mode(from, SDL_SCALEMODE_NEAREST);
+        self.target(self.spare);
+        self.clear(0);
+        self.batch(Batch {
+            texture: from,
+            blend: SDL_BLENDMODE_NONE,
+            wrap: false,
+        });
+        let mut verts = std::mem::take(&mut self.verts);
+        raster.quads(|to, sample| {
+            let vertex = |x: usize, y: usize| SDL_Vertex {
+                position: SDL_FPoint { x: to[x], y: to[y] },
+                color: WHITE,
+                tex_coord: SDL_FPoint {
+                    x: sample[x],
+                    y: sample[y],
+                },
+            };
+            let (a, b, c, d) = (vertex(0, 1), vertex(2, 1), vertex(2, 3), vertex(0, 3));
+            verts.extend_from_slice(&[a, b, c, a, c, d]);
+        });
+        self.verts = verts;
+        self.flush();
+        let spare = self.spare;
+        self.spare = from;
+        match from == self.frame {
+            true => self.frame = spare,
+            false => self.layer = spare,
+        }
+        self.scale = None;
+        self.target(spare);
+    }
+
+    /// Makes the current target opaque, leaving its colors.
+    fn make_opaque(&mut self) {
+        self.cover(null_mut(), self.set_alpha, WHITE);
     }
 
     /// Makes the half-size targets if they are not there yet.
@@ -1484,7 +1578,7 @@ impl Gpu {
 
 impl SceneBackend for Gpu {
     fn draw(&mut self, scene: &Scene, input: &RasterInput, frame: (u32, u32)) -> bool {
-        if let Some(reason) = self.refuses(scene) {
+        if let Some(reason) = self.refuses(scene, frame) {
             self.leave(reason);
             return false;
         }
@@ -1647,6 +1741,128 @@ impl SceneBackend for Gpu {
     }
 }
 
+/// LFILTER's raster deformation as quads, for no shader: on a run of rows (or for
+/// type 4, columns) with the same entry, a source point moves steadily with the
+/// pixel, so a nearest texture read between the run's ends shows what the CPU's
+/// sum gives each pixel. A frame's wrapping or its edge splits a run across, where
+/// the source point crosses it.
+struct RasterStrips<'a> {
+    rows: &'a [[f64; 4]],
+    vertical: bool,
+    repeat: bool,
+    size: (u32, u32),
+}
+
+impl RasterStrips<'_> {
+    /// Gives each quad, as left, top, right, bottom on the target and in the
+    /// source, as the texture 1 long each way. How many there are.
+    fn quads(&self, mut quad: impl FnMut([f32; 4], [f32; 4])) -> usize {
+        let n = self.rows.len();
+        if n == 0 {
+            return 0;
+        }
+        let (w, h) = (i64::from(self.size.0), i64::from(self.size.1));
+        let along = if self.vertical { w } else { h };
+        let entry = |i: i64| self.rows[(2 * i + 1) as usize * n / (2 * along) as usize];
+        let (fw, fh) = (w as f64, h as f64);
+        let mut count = 0;
+        let mut xs = Vec::new();
+        let mut ys = Vec::new();
+        let mut start = 0;
+        while start < along {
+            let e = entry(start);
+            let mut end = start + 1;
+            while end < along && entry(end) == e {
+                end += 1;
+            }
+            let [ox, sx, oy, sy] = e;
+            let (run_x, run_y) = match self.vertical {
+                true => ((start as f64, end as f64), (0.0, fh)),
+                false => ((0.0, fw), (start as f64, end as f64)),
+            };
+            // As the CPU's across_at and down_at, with the pixel's center
+            // left to the interpolation.
+            spans(&mut xs, run_x, (sx, ox * fw), fw, self.repeat);
+            spans(
+                &mut ys,
+                run_y,
+                (sy, fh * (1.0 - sy) - oy * fh),
+                fh,
+                self.repeat,
+            );
+            count += xs.len() * ys.len();
+            for x in &xs {
+                for y in &ys {
+                    quad(
+                        [x.to.0, y.to.0, x.to.1, y.to.1],
+                        [x.from.0, y.from.0, x.from.1, y.from.1],
+                    );
+                }
+            }
+            start = end;
+        }
+        count
+    }
+}
+
+/// A part of a run on one axis: where on the target, and where in the source,
+/// which is 1 long.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Span {
+    to: (f32, f32),
+    from: (f32, f32),
+}
+
+/// Fills `out` with the parts of `run` on the target whose source point,
+/// `scale * t + offset`, is on the `n` long source, or with `repeat` all of it.
+fn spans(out: &mut Vec<Span>, run: (f64, f64), (scale, offset): (f64, f64), n: f64, repeat: bool) {
+    out.clear();
+    let at = |t: f64| scale * t + offset;
+    let (first, last) = (at(run.0), at(run.1));
+    // NaN and the far off show nothing, as on the CPU. Only a point past the
+    // frame can be so far: this keeps the sums below in range.
+    if !(first.abs() < 1e15 && last.abs() < 1e15) {
+        return;
+    }
+    let mut push = |t0: f64, t1: f64, k: f64| {
+        out.push(Span {
+            to: (t0 as f32, t1 as f32),
+            from: (
+                ((at(t0) - k * n + RASTER_BIAS) / n) as f32,
+                ((at(t1) - k * n + RASTER_BIAS) / n) as f32,
+            ),
+        });
+    };
+    if scale == 0.0 {
+        let k = (first / n).floor();
+        if repeat || k == 0.0 {
+            push(run.0, run.1, k);
+        }
+        return;
+    }
+    let (lo, hi) = (first.min(last), first.max(last));
+    let (k0, k1) = match repeat {
+        true => ((lo / n).floor(), (hi / n).floor()),
+        false => (0.0, 0.0),
+    };
+    // Far more than the limit on quads wants, and known without going through.
+    if k1 - k0 > MOST_RASTER_QUADS as f64 {
+        for _ in 0..=MOST_RASTER_QUADS {
+            push(run.0, run.1, k0);
+        }
+        return;
+    }
+    let mut k = k0;
+    while k <= k1 {
+        let (a, b) = ((k * n - offset) / scale, ((k + 1.0) * n - offset) / scale);
+        let (t0, t1) = (a.min(b).max(run.0), a.max(b).min(run.1));
+        if t0 < t1 {
+            push(t0, t1, k);
+        }
+        k += 1.0;
+    }
+}
+
 /// The draws of a pass of a blur in the order they mix, up to five: how far
 /// from the middle in texels, and the weight in 16.16 of what the draw reads.
 fn blur_draws(kernel: &BlurKernel) -> [Option<(f32, u32)>; 5] {
@@ -1770,6 +1986,102 @@ mod tests {
             }
             assert_eq!(draws.last().map(|d| d.0), Some(0.0));
         }
+    }
+
+    /// What the CPU's raster takes for a pixel, against what the quads give.
+    fn strips_show(raster: &RasterStrips) -> Vec<Option<(u32, u32)>> {
+        let (w, h) = raster.size;
+        let mut shown = vec![None; (w * h) as usize];
+        raster.quads(|to, from| {
+            for y in 0..h {
+                for x in 0..w {
+                    let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
+                    if cx >= to[0] && cx < to[2] && cy >= to[1] && cy < to[3] {
+                        let part = |p: f32, a: f32, b: f32, c: f32, d: f32| {
+                            c + (d - c) * (p - a) / (b - a)
+                        };
+                        let u = part(cx, to[0], to[2], from[0], from[2]);
+                        let v = part(cy, to[1], to[3], from[1], from[3]);
+                        let texel = |t: f32, n: u32| ((t * n as f32) as u32).min(n - 1);
+                        shown[(y * w + x) as usize] = Some((texel(u, w), texel(v, h)));
+                    }
+                }
+            }
+        });
+        shown
+    }
+
+    fn cpu_raster(
+        rows: &[[f64; 4]],
+        (w, h): (u32, u32),
+        repeat: bool,
+        vertical: bool,
+    ) -> Vec<Option<(u32, u32)>> {
+        let mut source = Framebuffer::new(w, h);
+        for (i, p) in source.pixels_mut().iter_mut().enumerate() {
+            *p = i as u32 + 1;
+        }
+        let mut layer = source.clone();
+        let all = rows.to_vec();
+        let op = FilterOp::Raster {
+            vertical,
+            repeat,
+            rows: 0..all.len(),
+        };
+        op.apply(&mut layer, 1, Compose::Normal, &all);
+        layer
+            .pixels()
+            .iter()
+            .map(|&p| (p != 0).then(|| ((p - 1) % w, (p - 1) / w)))
+            .collect()
+    }
+
+    /// The strips take each pixel to the same texel as the CPU, for the forms a
+    /// raster array comes in, moved, scaled, flipped and wrapped.
+    #[test]
+    fn strips_read_what_the_cpu_reads() {
+        let size = (64, 48);
+        let forms: [&[[f64; 4]]; 7] = [
+            &[[0.0, 1.0, 0.0, 1.0]],
+            &[[0.125, 1.0, 0.0, 1.0], [0.25, 1.0, 0.0, 1.0]],
+            &[[0.3, 0.5, 0.1, 0.5]],
+            &[[1.0, -1.0, 0.0, 1.0]],
+            &[
+                [-0.7, 3.0, 0.4, 2.5],
+                [0.0, 1.0, 0.0, 1.0],
+                [0.2, -2.0, 0.0, -1.5],
+            ],
+            &[[0.0, 0.0, 0.0, 0.0]],
+            &[[5.3, 7.25, -3.1, 1.0]],
+        ];
+        for rows in forms {
+            for repeat in [false, true] {
+                for vertical in [false, true] {
+                    let raster = RasterStrips {
+                        rows,
+                        vertical,
+                        repeat,
+                        size,
+                    };
+                    let want = cpu_raster(rows, size, repeat, vertical);
+                    let got = strips_show(&raster);
+                    let off = want.iter().zip(&got).filter(|(a, b)| a != b).count();
+                    assert_eq!(off, 0, "{rows:?} repeat {repeat} vertical {vertical}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_raster_wrapping_far_too_often_says_so() {
+        let rows = [[0.0, 1e9, 0.0, 1.0]];
+        let raster = RasterStrips {
+            rows: &rows,
+            vertical: false,
+            repeat: true,
+            size: (640, 360),
+        };
+        assert!(raster.quads(|_, _| {}) > MOST_RASTER_QUADS);
     }
 
     #[test]
