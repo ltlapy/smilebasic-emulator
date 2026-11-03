@@ -138,7 +138,8 @@ impl TextItem {
         paints: &mut Vec<Mixed>,
     ) {
         let inverted = self.inverts && cell.attr & attr::INVERT != 0;
-        self.each_texel(font, grp, cell.code, inverted, out.len(), &mut |i, p| {
+        let count = out.len();
+        self.each_texel(font, grp, cell.code, inverted, count, |i, p| {
             let p = if inverted { inverted_texel(p) } else { p };
             let paint = Mixed::new(p, cell.color, self.tint, self.add);
             out[i] = glyph_paint(paint, paints);
@@ -148,13 +149,15 @@ impl TextItem {
     /// What an inverted cell's character is, `font_type` square, before its
     /// colors: for a backend, which multiplies those itself.
     pub fn inverted_glyph(&self, font: &Font, grp: &Graphics, code: u16, out: &mut [u32]) {
-        self.each_texel(font, grp, code, true, out.len(), &mut |i, p| {
+        let count = out.len();
+        self.each_texel(font, grp, code, true, count, |i, p| {
             out[i] = inverted_texel(p);
         });
     }
 
     /// Each of the `count` pixels of a character's image, as what it is before
     /// its colors.
+    #[inline]
     fn each_texel(
         &self,
         font: &Font,
@@ -162,7 +165,7 @@ impl TextItem {
         code: u16,
         inverted: bool,
         count: usize,
-        each: &mut dyn FnMut(usize, u32),
+        mut each: impl FnMut(usize, u32),
     ) {
         let ft = self.font_type;
         // Where the character comes from is looked up once, not for
