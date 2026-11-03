@@ -373,6 +373,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut pad_tick = Instant::now();
     let mut bench = bench::Bench::from_env();
     let mut gpu = gpu::Gpu::from_env(&canvas);
+    let mut gpu_off = false;
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
         ($stage:ident) => {
@@ -2041,6 +2042,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             false => {
                 let start = Instant::now();
                 let drawn = machine.screen_revision();
+                if gpu_off {
+                    gpu = None;
+                }
                 match &mut gpu {
                     // The debugger's panel wants the frame on the CPU.
                     Some(gpu) if !panel_was_shown => machine.render_screens_with(gpu),
@@ -2095,6 +2099,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 changed,
                 cpu,
             )?;
+            // Scaling on the CPU needs the frame on the CPU, from now on: this
+            // one is drawn again next time round, once there is no GPU path.
+            if on_gpu && smart.on_cpu() {
+                eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
+                gpu_off = true;
+            }
         } else {
             smart.release();
         }
@@ -3553,6 +3563,11 @@ impl<'a> SmartFrame<'a> {
     fn texture(&self) -> Option<&Texture<'a>> {
         let doubled = self.doubled.as_ref().map(|(t, _)| t);
         doubled.or(self.scaled.as_ref().map(|(t, _)| t))
+    }
+
+    /// Whether it scales on the CPU, from `fb` rather than the texture.
+    fn on_cpu(&self) -> bool {
+        self.scaled.is_some()
     }
 
     /// Frees what a frame shown another way has no use for.
