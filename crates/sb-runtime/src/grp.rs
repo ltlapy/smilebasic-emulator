@@ -348,7 +348,19 @@ impl Runtime {
                     _ => return Err(illegal()),
                 };
                 let n = (i64::from(rect.2) * i64::from(rect.3)) as usize;
-                let pixels = array_colors(&numeric_array(&rest[0])?, n)?;
+                let source = numeric_array(&rest[0])?;
+                // An integer array can be read as it is. The page's own
+                // GARRAY array has to be copied, as drawing writes to it.
+                if palette.is_none() && self.grp.load_direct() {
+                    let source = source.borrow();
+                    if let ArrayData::Int(v) = &source.data
+                        && let Some(v) = v.get(..n)
+                    {
+                        self.grp.load_ints(rect, v, tint, blend);
+                        return Ok(vec![]);
+                    }
+                }
+                let pixels = array_colors(&source, n)?;
                 // Indexes past the palette are no error (checked on
                 // hardware).
                 let colors = match palette {

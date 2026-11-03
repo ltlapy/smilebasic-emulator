@@ -10,7 +10,7 @@ use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
 
 use crate::compose::{Lit, Over1, Over3, Paint};
 use crate::font::{Font, FontSize};
-use crate::text::{FONT_PAGE, glyph_pixel, glyph_pixel_px};
+use crate::text::{FONT_PAGE, glyph_origin_px, glyph_pixel, glyph_pixel_px};
 
 pub const PAGES: usize = 6;
 /// `#GRPWIDTH` and `#GRPHEIGHT`.
@@ -40,16 +40,25 @@ impl Blend {
         })
     }
 
+    #[inline]
     fn apply(self, dst: u32, src: u32) -> u32 {
+        match self {
+            Blend::Normal => src,
+            Blend::Normal2 if src >> 24 == 0 => dst,
+            Blend::Normal2 => src,
+            _ => self.mix(dst, src),
+        }
+    }
+
+    /// The modes that weigh the two colours.
+    fn mix(self, dst: u32, src: u32) -> u32 {
         let [sa, sr, sg, sb] = src.to_be_bytes().map(u32::from);
         let [da, dr, dg, db] = dst.to_be_bytes().map(u32::from);
         let pack = |a: u32, r: u32, g: u32, b: u32| {
             u32::from_be_bytes([a as u8, r as u8, g as u8, b as u8])
         };
         match self {
-            Blend::Normal => src,
-            Blend::Normal2 if sa == 0 => dst,
-            Blend::Normal2 => src,
+            Blend::Normal | Blend::Normal2 => src,
             // Modes 2 and 4 keep the page's alpha; mode 3 combines both.
             // The rounding matches values read back on hardware.
             Blend::Alpha => {
@@ -400,6 +409,7 @@ impl Graphics {
     }
 
     /// A page's pixels to change.
+    #[inline]
     fn page_pixels(&mut self, page: usize) -> &mut Vec<u32> {
         self.changes[page] += 1;
         let pixels = &mut self.pages[page];
@@ -416,16 +426,15 @@ impl Graphics {
         }
         let i = index(x, y);
         // Without a GARRAY array, the page is the only copy.
-        let shared = self.arrays[self.target].is_some();
-        let dst = if shared {
-            self.read(self.target, x, y)
-        } else {
-            self.target_pixels()[i]
-        };
+        if self.arrays[self.target].is_none() {
+            let pixel = &mut self.target_pixels()[i];
+            *pixel = blend.apply(*pixel, color);
+            return;
+        }
+        let dst = self.read(self.target, x, y);
         let p = blend.apply(dst, color);
         self.target_pixels()[i] = p;
-        if shared
-            && let Some(array) = &self.arrays[self.target]
+        if let Some(array) = &self.arrays[self.target]
             && let Ok(mut array) = array.try_borrow_mut()
             && let ArrayData::Int(v) = &mut array.data
             && let Some(d) = v.get_mut(i)
@@ -754,8 +763,12 @@ impl Graphics {
                 break;
             }
             if left + cell > i64::from(self.clip.x0) {
+                let origin = glyph_origin_px(font, code, px);
                 self.put_glyph((left, top), 0..n, n, (sx, sy), color, blend, |g, gx, gy| {
-                    glyph_pixel_px(font, g, code, px, gx, gy)
+                    match origin {
+                        Some((ox, oy)) => g.pixel(FONT_PAGE, (ox + gx) as i32, (oy + gy) as i32),
+                        None => glyph_pixel_px(font, g, code, px, gx, gy),
+                    }
                 });
             }
         }
@@ -799,7 +812,12 @@ impl Graphics {
             let y0 = top + gy * sy;
             for col in across.clone() {
                 let gx = i64::from(columns.start) + col;
-                let p = multiply(glyph(self, gx as u32, gy as u32), color);
+                // Glyphs are mostly clear or white.
+                let p = match glyph(self, gx as u32, gy as u32) {
+                    0 => 0,
+                    0xFFFF_FFFF => color,
+                    p => multiply(p, color),
+                };
                 let x0 = left + col * sx;
                 for py in inner(y0, sy, clip.y0, clip.y1) {
                     for px in inner(x0, sx, clip.x0, clip.x1) {
@@ -929,6 +947,11 @@ impl Graphics {
         blend: Blend,
     ) {
         let w = w.max(0) as usize;
+        if palette.is_none() && self.arrays[self.target].is_none() {
+            let tint = tint.unwrap_or(0xFFFF_FFFF);
+            self.load_rows((x, y, w as i32, h), pixels, |p| p, tint, blend);
+            return;
+        }
         for (col, row, px, py) in on_page((x, y, w as i32, h)) {
             let Some(&p) = pixels.get(row * w + col) else {
                 break;
@@ -942,6 +965,66 @@ impl Graphics {
             };
             let p = tint.map_or(p, |t| multiply(p, t));
             self.plot(px, py, p, blend);
+        }
+    }
+
+    /// GLOAD straight from an integer array, when [`Graphics::load_direct`]
+    /// says that can be done, so that the array need not be copied first.
+    pub fn load_ints(
+        &mut self,
+        rect: (i32, i32, i32, i32),
+        pixels: &[i32],
+        tint: Option<u32>,
+        blend: Blend,
+    ) {
+        let tint = tint.unwrap_or(0xFFFF_FFFF);
+        self.load_rows(rect, pixels, |p| p as u32, tint, blend);
+    }
+
+    /// Whether the target page has no GARRAY array to keep in step, as
+    /// [`Graphics::load_ints`] needs.
+    pub fn load_direct(&self) -> bool {
+        self.arrays[self.target].is_none()
+    }
+
+    /// GLOAD without a palette, on a page with no GARRAY array, a row at a
+    /// time: the part of the rectangle inside the clipping rectangle, for
+    /// as far as `pixels` goes. A page nothing lands on stays as it is.
+    fn load_rows<T: Copy>(
+        &mut self,
+        (x, y, w, h): (i32, i32, i32, i32),
+        pixels: &[T],
+        color: impl Fn(T) -> u32,
+        tint: u32,
+        blend: Blend,
+    ) {
+        let c = self.clip;
+        let (x, y) = (i64::from(x), i64::from(y));
+        let (w, h) = (i64::from(w.max(0)), i64::from(h.max(0)));
+        let (left, right) = (x.max(i64::from(c.x0)), (x + w - 1).min(i64::from(c.x1)));
+        let (top, bottom) = (y.max(i64::from(c.y0)), (y + h - 1).min(i64::from(c.y1)));
+        let line_at = |py: i64| (py - y) * w + (left - x);
+        if left > right || top > bottom || line_at(top) as usize >= pixels.len() {
+            return;
+        }
+        let page = self.page_pixels(self.target);
+        for py in top..=bottom {
+            let line = pixels.get(line_at(py) as usize..).unwrap_or(&[]);
+            let line = &line[..line.len().min((right - left + 1) as usize)];
+            let start = index(left as i32, py as i32);
+            let row = &mut page[start..start + line.len()];
+            match blend {
+                Blend::Normal if tint == 0xFFFF_FFFF => {
+                    for (d, &p) in row.iter_mut().zip(line) {
+                        *d = color(p);
+                    }
+                }
+                _ => {
+                    for (d, &p) in row.iter_mut().zip(line) {
+                        *d = blend.apply(*d, multiply(color(p), tint));
+                    }
+                }
+            }
         }
     }
 }
@@ -2029,6 +2112,88 @@ mod tests {
                 assert_eq!(Blend::Alpha2.apply(dst, src), expected, "{da:X} {sa:X}");
             }
         }
+    }
+
+    /// The row-at-a-time GLOAD against drawing pixel by pixel, which a page
+    /// with a GARRAY array still does.
+    #[test]
+    fn load_by_rows_draws_as_plotting_does() {
+        let image: Vec<u32> = (0..600u32)
+            .map(|i| match i % 5 {
+                0 => 0,
+                1 => 0xFFFF_FFFF,
+                _ => i.wrapping_mul(0x0101_0705) | 0x4000_0000,
+            })
+            .collect();
+        let rects = [
+            (2, 3, 20, 10),
+            (-5, -4, 20, 10),
+            (2040, 2040, 20, 10),
+            (40, 30, 20, 10),
+            (10, 10, 0, 5),
+            (10, 10, 5, 0),
+            (i32::MAX - 1, 0, 3, 3),
+            (0, i32::MIN, 3, 3),
+        ];
+        let blends = [
+            Blend::Normal,
+            Blend::Normal2,
+            Blend::Alpha,
+            Blend::Alpha2,
+            Blend::Add,
+        ];
+        let clips = [
+            Clip::PAGE,
+            Clip::new(5, 5, 15, 9),
+            Clip::new(30, 30, 30, 30),
+        ];
+        for (rect, blend, tint, clip, len) in rects.into_iter().flat_map(|r| {
+            blends.into_iter().flat_map(move |b| {
+                [None, Some(0x80FF_8040), Some(0xFFFF_FFFF)]
+                    .into_iter()
+                    .flat_map(move |t| {
+                        clips.into_iter().flat_map(move |c| {
+                            // All of it, or running out inside a row.
+                            [600, 57, 0].into_iter().map(move |n| (r, b, t, c, n))
+                        })
+                    })
+            })
+        }) {
+            let draw = |g: &mut Graphics| {
+                g.fill(0, 0, 60, 60, 0x8020_60A0, Blend::Normal);
+                g.clip = clip;
+            };
+            let mut slow = Graphics::default();
+            draw(&mut slow);
+            slow.array(0);
+            slow.load_rect(rect, &image[..len], None, tint, blend);
+            let mut fast = Graphics::default();
+            draw(&mut fast);
+            fast.load_rect(rect, &image[..len], None, tint, blend);
+            let ints: Vec<i32> = image[..len].iter().map(|&p| p as i32).collect();
+            let mut direct = Graphics::default();
+            draw(&mut direct);
+            direct.load_ints(rect, &ints, tint, blend);
+            let case = format!("{rect:?} {blend:?} {tint:?} {clip:?} {len}");
+            assert!(slow.page(0) == fast.page(0), "{case}");
+            assert!(slow.page(0) == direct.page(0), "ints {case}");
+        }
+    }
+
+    #[test]
+    fn load_landing_nowhere_leaves_a_blank_page_blank() {
+        let mut g = Graphics {
+            clip: Clip::new(100, 100, 110, 110),
+            ..Default::default()
+        };
+        g.load_rect((0, 0, 2, 2), &[!0; 4], None, None, Blend::Normal);
+        g.load_rect((100, 100, 2, 2), &[], None, None, Blend::Normal);
+        g.load_rect((100, 100, 0, 2), &[!0; 4], None, None, Blend::Normal);
+        assert!(g.is_blank(0));
+        let changes = g.changes(0);
+        g.load_rect((100, 100, 2, 2), &[!0; 4], None, None, Blend::Normal);
+        assert!(!g.is_blank(0));
+        assert_ne!(g.changes(0), changes);
     }
 
     /// TEST47 part 15: palette indexes past the palette leave the page.

@@ -47,6 +47,16 @@ pub fn glyph_pixel_px(font: &Font, grp: &Graphics, code: u16, px: u32, x: u32, y
     }
 }
 
+/// Where [`glyph_pixel_px`] finds a character on the font page, if it
+/// does, to look up only once for all of a glyph's pixels.
+pub fn glyph_origin_px(font: &Font, code: u16, px: u32) -> Option<(u32, u32)> {
+    match px {
+        8 => font.origin(code, FontSize::Small),
+        16 => font.origin(code, FontSize::Large),
+        _ => font.glyph_index(code).map(|i| (i % 64 * px, i / 64 * px)),
+    }
+}
+
 /// From this many characters PRINT works out the scrolling first. Fewer
 /// take too little time for it to matter, and they are most of what is
 /// printed.
