@@ -1723,6 +1723,12 @@ impl Vm {
                 memory::charge(memory::string_bytes(s.len()));
                 self.stack.push(Value::Str(new_str(s)));
             }
+            Op::ShiftConstant { first, len } => {
+                memory::request(memory::string_bytes(*len as usize))
+                    .map_err(|e| builtin_error(e, "SHIFT", &[]))?;
+                let first = program.strings[*first as usize].clone();
+                self.stack.push(Value::Str(new_str(first)));
+            }
             Op::Default => self.stack.push(Value::Default),
             Op::Load(slot) => {
                 let v = self.load(*slot);

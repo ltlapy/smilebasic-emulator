@@ -441,6 +441,36 @@ impl Compiler<'_> {
         (self.out.strings.len() - 1) as u32
     }
 
+    /// POP or SHIFT of what proved a string constant, compiled from `start`
+    /// on: as a constant takes no block, it is not made for them to work on.
+    /// POP's result is known now. An empty constant is an error as it runs.
+    fn take_from_constant(&mut self, start: usize, arg: &Expr, shift: bool) -> bool {
+        let bytes = self.constant_bytes.get();
+        let value = self.const_value(arg);
+        self.constant_bytes.set(bytes);
+        let Ok(Value::Str(constant)) = value else {
+            return false;
+        };
+        let constant = constant.borrow();
+        let (Some(&first), Some(&last)) = (constant.first(), constant.last()) else {
+            return false;
+        };
+        self.out.code.truncate(start);
+        self.out.lines.truncate(start);
+        self.out.cols.truncate(start);
+        self.out.starts.truncate(start);
+        let op = if shift {
+            Op::ShiftConstant {
+                first: self.string_const(vec![first]),
+                len: constant.len() as u32,
+            }
+        } else {
+            Op::Str(self.string_const(vec![last]))
+        };
+        self.emit(op);
+        true
+    }
+
     fn scope_index(&self) -> u32 {
         self.def.as_ref().map_or(u32::MAX, |d| d.index)
     }
@@ -1636,11 +1666,15 @@ impl Compiler<'_> {
             }
             _ => {}
         }
+        let start = self.out.code.len();
         self.args(args)?;
         let argc = args.len() as u8;
         let want = Want::Value;
         if let Some(&def) = self.out.def_names.get(&full) {
             self.emit(Op::CallDef { def, argc, want });
+        } else if let ("POP" | "SHIFT", [Some(arg)]) = (full.as_str(), args)
+            && self.take_from_constant(start, arg, full == "SHIFT")
+        {
         } else if let Some(id) = builtins::lookup(&full, Form::Function) {
             let constants = args
                 .iter()

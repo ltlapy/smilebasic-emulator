@@ -1021,7 +1021,6 @@ fn smaller_block(elem: ElemType, len: usize) -> Result<bool> {
 /// POP or SHIFT of what cannot shrink: the length stays and there is no
 /// error, but the element is still given, and SHIFT has still moved the
 /// rest down, leaving the last one twice.
-// UNVERIFIED: expected of SmileBASIC 4; only POP's length was seen.
 #[cold]
 fn take_keeping_length<T: Clone>(v: &mut [T], end: End) -> T {
     let last = v.len() - 1;
@@ -1394,6 +1393,8 @@ mod tests {
         let Value::Array(array) = &a else { panic!() };
         assert_eq!(array.borrow().len(), 40001);
         assert_eq!(as_int(array.borrow().get(0)), 2);
+        assert_eq!(as_int(array.borrow().get(39999)), 40001);
+        assert_eq!(as_int(array.borrow().get(40000)), 0);
         // Asked for a count, it has changed nothing.
         plenty_free();
         let b = int_array(40001);

@@ -55,6 +55,12 @@ pub enum Op {
     /// Pushes a fresh copy of string constant `n`, so that modifying it in
     /// place cannot change the constant.
     Str(u32),
+    /// `SHIFT` of a string constant of `len` characters, not none: `[] ->
+    /// [string constant first]`. It needs a copy of the constant to work on.
+    ShiftConstant {
+        first: u32,
+        len: u32,
+    },
     Default,
     Load(Slot),
     /// `[value] -> []`

@@ -1498,3 +1498,36 @@ fn for_counts_the_same_in_integers_and_reals() {
         assert_eq!(count(head), format!("{n}\n"), "{head}");
     }
 }
+
+/// A string constant takes no block until it is stored: POP gives its last
+/// character whatever is free.
+#[test]
+fn pop_of_a_constant_takes_no_block() {
+    let got = run(
+        "DIM F[8000000]:N=((FREEMEM()-100000-64) DIV 64)*16:DIM G%[N]:\
+         M=FREEMEM():X$=POP(\"ABC\"+\"X\"*100027+\"XYZ\"):?X$;M==FREEMEM();",
+    );
+    assert_eq!(got.unwrap(), "Z1");
+    assert_eq!(run("A$=\"PQ\":B$=POP(A$):?B$;LEN(A$);").unwrap(), "Q1");
+    // An empty one is an error as it runs, and not before.
+    let empty = run("?1:?POP(\"\")").unwrap_err();
+    assert_eq!(empty.kind, ErrorKind::SubscriptOutOfRange);
+}
+
+/// SHIFT of a string constant needs a copy of it to work on.
+#[test]
+fn shift_of_a_constant_needs_a_block() {
+    let e = run(
+        "DIM F[8000000]:N=((FREEMEM()-100000-64) DIV 64)*16:DIM G%[N]:\
+         X$=SHIFT(\"ABC\"+\"X\"*100027+\"XYZ\")",
+    )
+    .unwrap_err();
+    assert_eq!(e.kind, ErrorKind::OutOfMemory);
+    assert_eq!(e.detail.as_deref(), Some("SHIFT"));
+    assert_eq!(
+        run("?SHIFT(\"ABC\"+\"X\"*100027+\"XYZ\");POP(\"PQ\");").unwrap(),
+        "AQ"
+    );
+    let empty = run("?SHIFT(\"\"+\"\")").unwrap_err();
+    assert_eq!(empty.kind, ErrorKind::SubscriptOutOfRange);
+}

@@ -292,12 +292,23 @@ pub(super) fn remove(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     )? {
         // The elements have moved down before the block is asked for, and
         // the length stays. What is left at the end is what follows the
-        // array in SmileBASIC 4's memory, so there is nothing to match.
-        // UNVERIFIED: expected of SmileBASIC 4.
+        // array in SmileBASIC 4's memory.
+        // UNVERIFIED: that it reads as the type's zero value whatever the
+        // array and however many were removed.
+        let tail = len - n;
         match &mut a.data {
-            ArrayData::Int(v) => v[at..].rotate_left(n),
-            ArrayData::Real(v) => v[at..].rotate_left(n),
-            ArrayData::Str(v) => v[at..].rotate_left(n),
+            ArrayData::Int(v) => {
+                v[at..].rotate_left(n);
+                v[tail..].fill(0);
+            }
+            ArrayData::Real(v) => {
+                v[at..].rotate_left(n);
+                v[tail..].fill(0.0);
+            }
+            ArrayData::Str(v) => {
+                v[at..].rotate_left(n);
+                v[tail..].fill_with(|| crate::value::new_str(Vec::new()));
+            }
         }
         return Err(ErrorKind::OutOfMemory.into());
     }
@@ -366,7 +377,6 @@ pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     }
     let len = sizes.iter().fold(1usize, |all, &n| all.saturating_mul(n));
     make_room(&a, len)?;
-    // UNVERIFIED: expected of SmileBASIC 4.
     if !memory::shrink(
         memory::array_bytes(a.elem_type(), a.len()),
         memory::array_bytes(a.elem_type(), len),
