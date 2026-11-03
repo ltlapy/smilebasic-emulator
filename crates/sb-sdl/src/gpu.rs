@@ -26,6 +26,12 @@
 //! `SB_GPU_TOL=PIXELS` sets how far off a texel may be inside a cell of a 4x4
 //! layer's grid, to measure it.
 //!
+//! At start-up one small scene is drawn by the path and by the CPU, see
+//! [`crate::gpu_golden`], and if they differ too much the path stays off.
+//! `SB_GPU_TEST=off` skips that, and `SB_GPU_TEST=fail` acts as if it failed.
+//! `SB_GPU_GOLDEN=1` runs all the scenes there instead of the emulator, prints how
+//! each came out and exits, with 1 if one differed too much.
+//!
 //! `SB_GPU_ALONE=1` draws on a renderer of its own with no window, through
 //! SDL's GPU driver, to measure or check that driver without a display; the
 //! window then shows nothing of it.
@@ -87,6 +93,7 @@ use sdl3::sys::surface::{
 use sdl3::sys::video::SDL_GL_GetProcAddress;
 use sdl3::video::Window;
 
+use crate::gpu_golden;
 use crate::gpu_project::{Corner, Plane};
 
 /// Why a frame was left to the CPU.
@@ -194,7 +201,7 @@ struct Stats {
 
 /// How two frames differ, in pixels by the most any channel differs.
 #[derive(Default)]
-struct Compared {
+pub struct Compared {
     frames: u64,
     pixels: u64,
     /// Exactly the same, 1 off, 2 off, more.
@@ -347,6 +354,7 @@ pub struct Gpu {
     /// Compares every so many frames drawn.
     check_every: Option<u64>,
     dump: Option<String>,
+    self_test_took: Duration,
     compared: Compared,
     stats: Stats,
 }
@@ -438,7 +446,34 @@ fn sampling(matrix: &Affine, size: (i32, i32), reversed: (bool, bool), texel: f6
     }
 }
 
+impl Compared {
+    /// Whether at most this part of the pixels is more than 2 off, or any alpha
+    /// is, which no rounding here should move by much.
+    pub fn within(&self, share: f64) -> bool {
+        let pixels = self.pixels.max(1) as f64;
+        self.by_diff[3] as f64 <= share * pixels && self.alpha_off as f64 <= 0.001 * pixels
+    }
+
+    pub fn summary(&self) -> String {
+        let [_, one, two, more] = self.by_diff;
+        format!(
+            "{} {one} {two} {more}, alpha {}; {}",
+            self.pixels, self.alpha_off, self.largest
+        )
+    }
+}
+
 impl Gpu {
+    /// A path on `renderer` that compares each frame with the CPU's, to try scenes.
+    pub fn comparing(renderer: *mut SDL_Renderer) -> Option<Gpu> {
+        Gpu::on(renderer, false, false, false, Some(1), None)
+    }
+
+    /// What it has compared so far.
+    pub fn take_compared(&mut self) -> Compared {
+        std::mem::take(&mut self.compared)
+    }
+
     /// The path for a subprogram's screens, beside this one for the main screens,
     /// on the same renderer. None when this one has no window to show them in.
     pub fn for_sub(&self) -> Option<Gpu> {
@@ -483,7 +518,26 @@ impl Gpu {
         };
         let on_gl = !alone && canvas.renderer_name.starts_with("opengl");
         let dump = std::env::var("SB_GPU_DUMP").ok();
-        Gpu::on(renderer, on_gl, alone, spec == "sync", check_every, dump)
+        let test = std::env::var("SB_GPU_TEST").unwrap_or_default();
+        let trial = match test.as_str() {
+            "off" => Ok(Duration::ZERO),
+            "fail" => Err("told to fail".to_string()),
+            _ => gpu_golden::self_test(renderer),
+        };
+        let took = match trial {
+            Ok(took) => took,
+            Err(why) => {
+                eprintln!("SB_GPU: the self-test failed, staying on the CPU ({why})");
+                if alone {
+                    // SAFETY: it was made above, for this alone.
+                    unsafe { SDL_DestroyRenderer(renderer) };
+                }
+                return None;
+            }
+        };
+        let mut gpu = Gpu::on(renderer, on_gl, alone, spec == "sync", check_every, dump)?;
+        gpu.self_test_took = took;
+        Some(gpu)
     }
 
     fn on(
@@ -572,6 +626,7 @@ impl Gpu {
             on_gl,
             check_every,
             dump,
+            self_test_took: Duration::ZERO,
             compared: Compared::default(),
             stats: Stats::default(),
         })
@@ -640,6 +695,9 @@ impl Gpu {
     /// Prints what it drew and what it left to the CPU, and why.
     pub fn report(&self, name: &str) {
         println!("{name:9} device {}", self.device_name());
+        if self.self_test_took > Duration::ZERO {
+            println!("{name:9} self-test took {:.1?}", self.self_test_took);
+        }
         let s = &self.stats;
         let n = s.drawn.max(1);
         let per = |d: Duration| d / n as u32;

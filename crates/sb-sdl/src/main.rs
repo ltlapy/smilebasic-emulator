@@ -9,6 +9,7 @@ mod dialog;
 mod file_dialogs;
 mod file_view;
 mod gpu;
+mod gpu_golden;
 mod gpu_project;
 mod grp_view;
 mod help;
@@ -374,6 +375,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut pad_screen = 0;
     let mut pad_tick = Instant::now();
     let mut bench = bench::Bench::from_env();
+    if std::env::var_os("SB_GPU_GOLDEN").is_some() {
+        if canvas.renderer_name == "software" {
+            println!("no GPU to try: the software renderer");
+            return Ok(());
+        }
+        let passed = gpu_golden::report(canvas.raw());
+        std::process::exit(if passed { 0 } else { 1 });
+    }
     let mut gpu = gpu::Gpu::from_env(&canvas);
     // A subprogram's screens have their own pages and frame.
     let mut sub_gpu: Option<gpu::Gpu> = None;
