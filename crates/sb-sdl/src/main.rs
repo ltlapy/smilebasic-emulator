@@ -2000,6 +2000,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             false => machine.screen_frame(),
         };
         let frame = (fb.width(), fb.height());
+        // The frame the GPU path drew, which is not in `fb`.
+        let on_gpu = !editing && machine.rt.frame_on_backend();
         // XSCREEN's mode 1 starts from a frame that stays sharp.
         let smart_frame = !editing && filter == Filter::SmartNearest;
         // The editor's frame can be finer than the screen it is shown in.
@@ -2015,7 +2017,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             texture = frame_texture(&canvas, &texture_creator, kind)?;
             texture_holds = None;
         }
-        if Some(revision) != texture_holds {
+        let gpu_view = (gpu.as_mut())
+            .filter(|_| on_gpu)
+            .and_then(|gpu| gpu.view(kind.1 == Filter::Bilinear));
+        if Some(revision) != texture_holds && gpu_view.is_none() {
             bench::uploaded(fb.pixels().len() * 4);
             texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         }
@@ -2025,7 +2030,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             smart.prepare(
                 &mut canvas,
                 &texture_creator,
-                &texture,
+                gpu_view.as_deref().unwrap_or(&texture),
                 fb,
                 rect,
                 changed,
@@ -2119,7 +2124,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         lap!(Gather);
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        canvas.copy(smart.texture().unwrap_or(&texture), None, rect)?;
+        let screen = smart.texture().or(gpu_view.as_deref()).unwrap_or(&texture);
+        canvas.copy(screen, None, rect)?;
         // The subprogram's screen goes where XSUBSCREEN puts it on the
         // 1280x720 display, over the editor too.
         if let Some(sub) = machine.sub_screen() {
