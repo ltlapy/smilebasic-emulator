@@ -40,7 +40,7 @@ use sb_runtime::compose::{Affine, Compose, Placement};
 use sb_runtime::filter::FilterOp;
 use sb_runtime::font::FontSize;
 use sb_runtime::framebuffer::Framebuffer;
-use sb_runtime::graphics::{GRP_SIZE, Graphics, PAGES};
+use sb_runtime::graphics::{COUNT_BITS, Dirty, GRP_SIZE, Graphics, PAGES};
 use sb_runtime::raster::{RasterInput, SceneBackend};
 use sb_runtime::scene::{Item, LayerPass, Scene, SpriteItem, TextItem};
 use sb_runtime::sprites::attr;
@@ -127,7 +127,8 @@ const ATLAS_CELL: u32 = 16;
 /// A page as the GPU holds it.
 struct Page {
     texture: *mut SDL_Texture,
-    /// [`Graphics::changes`] of what it holds.
+    /// [`Graphics::changes`] of what it holds, which tells a set of pages from
+    /// another too.
     changes: u64,
 }
 
@@ -601,18 +602,39 @@ impl Gpu {
             unsafe { SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST) };
             self.pages[page] = Some(Page {
                 texture,
-                changes: changes.wrapping_sub(1),
+                // Of no set of pages, so all of it is sent.
+                changes: !changes,
             });
         }
         let held = self.pages[page].as_mut().ok_or(Reason::Refused)?;
         if held.changes != changes {
-            held.changes = changes;
             let start = Instant::now();
+            // Another set of pages counts from elsewhere, and its marks say
+            // nothing about what this texture holds.
+            let dirty = grp.take_dirty(page);
+            let dirty = match held.changes >> COUNT_BITS == changes >> COUNT_BITS {
+                true => dirty,
+                false => Dirty::ALL,
+            };
+            held.changes = changes;
             let pixels = grp.page(page);
-            let bytes = pixels.len() * 4;
-            let pitch = GRP_SIZE * 4;
-            // SAFETY: the page is GRP_SIZE square, as the texture is.
-            unsafe { SDL_UpdateTexture(held.texture, null(), pixels.as_ptr().cast(), pitch) };
+            let mut bytes = 0;
+            dirty.for_each_area(|area| {
+                let (w, h) = (area.x1 - area.x0 + 1, area.y1 - area.y0 + 1);
+                let rect = SDL_Rect {
+                    x: area.x0,
+                    y: area.y0,
+                    w,
+                    h,
+                };
+                let first = &pixels[(area.y0 * GRP_SIZE + area.x0) as usize..];
+                // SAFETY: the page is GRP_SIZE square, as the texture is, and
+                // the rectangle lies on it.
+                unsafe {
+                    SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), GRP_SIZE * 4)
+                };
+                bytes += w as usize * h as usize * 4;
+            });
             self.stats.pages += start.elapsed();
             self.stats.page_bytes += bytes as u64;
             crate::bench::uploaded(bytes);

@@ -1,7 +1,7 @@
 //! Graphic pages GRP0-GRP5 and drawing on them. A page takes memory only
 //! once something is drawn on it; until then every pixel is 0.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -178,6 +178,78 @@ impl Clip {
     }
 }
 
+/// How many pixels a side of a tile of [`Dirty`] has, as a power of two.
+const TILE_BITS: u32 = 6;
+/// How many pixels a side of a tile of [`Dirty`] has.
+pub const TILE: i32 = 1 << TILE_BITS;
+/// How many tiles a side of a page has.
+const TILES: usize = (GRP_SIZE >> TILE_BITS) as usize;
+
+/// Which tiles of a page have changed, a tile being [`TILE`] pixels square.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Dirty {
+    /// Of each row of tiles, a bit for each tile.
+    rows: [u32; TILES],
+}
+
+impl Dirty {
+    /// Every tile.
+    pub const ALL: Dirty = Dirty {
+        rows: [u32::MAX; TILES],
+    };
+
+    /// The pixel lies on the page.
+    #[inline]
+    fn mark_pixel(&mut self, x: i32, y: i32) {
+        self.rows[(y >> TILE_BITS) as usize] |= 1 << (x >> TILE_BITS);
+    }
+
+    /// The bits of a row of tiles for the columns from `left` to `right`.
+    #[inline]
+    fn columns(left: i32, right: i32) -> u32 {
+        (u32::MAX >> (31 - (right >> TILE_BITS))) & (u32::MAX << (left >> TILE_BITS))
+    }
+
+    /// `area` lies on the page.
+    #[inline]
+    fn mark_area(&mut self, area: Clip) {
+        let mask = Dirty::columns(area.x0, area.x1);
+        let rows = (area.y0 >> TILE_BITS) as usize..=(area.y1 >> TILE_BITS) as usize;
+        self.rows[rows].iter_mut().for_each(|row| *row |= mask);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows == [0; TILES]
+    }
+
+    /// Whether the tile that holds a pixel is marked.
+    pub fn holds(&self, x: i32, y: i32) -> bool {
+        self.rows[(y >> TILE_BITS) as usize] >> (x >> TILE_BITS) & 1 != 0
+    }
+
+    /// Calls `f` with rectangles of pixels that together make up the tiles
+    /// marked, each tile in one, and neighbours together where they can be.
+    pub fn for_each_area(&self, mut f: impl FnMut(Clip)) {
+        let mut rows = self.rows;
+        for y in 0..TILES {
+            while rows[y] != 0 {
+                let first = rows[y].trailing_zeros();
+                let run = (rows[y] >> first).trailing_ones();
+                let mask = (u32::MAX >> (32 - run)) << first;
+                let height = rows[y..].iter().take_while(|r| *r & mask == mask).count();
+                rows[y..y + height].iter_mut().for_each(|r| *r &= !mask);
+                let (x, y, run, height) = (first as i32, y as i32, run as i32, height as i32);
+                f(Clip {
+                    x0: x * TILE,
+                    y0: y * TILE,
+                    x1: (x + run) * TILE - 1,
+                    y1: (y + height) * TILE - 1,
+                });
+            }
+        }
+    }
+}
+
 pub struct Graphics {
     /// Empty until drawn on.
     pages: Vec<Vec<u32>>,
@@ -200,6 +272,10 @@ pub struct Graphics {
     /// Of each page, a count that moves on whenever its pixels may have
     /// changed, for the debugger's viewer to copy a page only then.
     changes: [u64; PAGES],
+    /// Which tiles of each page have changed since the last
+    /// [`Graphics::take_dirty`]. Everything that hands out a page's pixels
+    /// to write marks what it will write: [`Graphics::page_pixels`] asks.
+    dirty: [Cell<Dirty>; PAGES],
     /// Which parts of each page's rows hold something, for sprites to
     /// pass over the clear rest; see [`Graphics::pieces`].
     coverage: RefCell<[Coverage; PAGES]>,
@@ -221,13 +297,16 @@ struct Coverage {
     filled: Vec<u64>,
 }
 
+/// A [`Graphics::changes`] above these bits says which [`Graphics`] it is of.
+pub const COUNT_BITS: u32 = 40;
+
 /// Where the next [`Graphics`] starts counting its pages' changes, so
 /// that a count is never one that another seen before had.
 static CHANGES_FROM: AtomicU64 = AtomicU64::new(0);
 
 impl Default for Graphics {
     fn default() -> Self {
-        let from = CHANGES_FROM.fetch_add(1, Ordering::Relaxed) << 40;
+        let from = CHANGES_FROM.fetch_add(1, Ordering::Relaxed) << COUNT_BITS;
         Graphics {
             pages: vec![Vec::new(); PAGES],
             target: 0,
@@ -236,6 +315,7 @@ impl Default for Graphics {
             sample: [0; PAGES],
             arrays: Default::default(),
             changes: [from; PAGES],
+            dirty: Default::default(),
             coverage: RefCell::new(std::array::from_fn(|_| Coverage::default())),
         }
     }
@@ -286,6 +366,14 @@ impl Graphics {
         self.changes[page]
     }
 
+    /// The tiles of a page that have changed since this was last called. A
+    /// page that went blank in between has them all marked, so what comes
+    /// after a blank page is whole. There is one such history per page, for
+    /// one holder of a copy of the page.
+    pub fn take_dirty(&self, page: usize) -> Dirty {
+        self.dirty[page].take()
+    }
+
     /// Of the pieces `from..=to` of row `y` of a page that is not blank,
     /// each [`PIECE`] pixels wide from the page's left edge, those with a
     /// pixel that is not clear (alpha 0), as the bits of their numbers.
@@ -325,6 +413,7 @@ impl Graphics {
         assert_eq!(pixels.len(), (GRP_SIZE * GRP_SIZE) as usize);
         self.pages[page] = pixels;
         self.changes[page] += 1;
+        self.dirty[page].set(Dirty::ALL);
         self.mirror_page(page);
     }
 
@@ -332,6 +421,7 @@ impl Graphics {
     pub fn clear_page(&mut self, page: usize) {
         self.pages[page] = Vec::new();
         self.changes[page] += 1;
+        self.dirty[page].set(Dirty::ALL);
         self.mirror_page(page);
     }
 
@@ -343,6 +433,7 @@ impl Graphics {
             pages,
             arrays,
             changes: self.changes,
+            dirty: std::mem::take(&mut self.dirty),
             ..Graphics::default()
         };
     }
@@ -354,7 +445,9 @@ impl Graphics {
         }
         let size = GRP_SIZE as usize;
         let mut array = Array::new(ElemType::Int, vec![size, size]);
-        array.data = ArrayData::Int(self.page_pixels(page).iter().map(|&p| p as i32).collect());
+        // Only read: a blank page takes memory, but its pixels stay as they were.
+        let pixels = self.pixels_to_change(page);
+        array.data = ArrayData::Int(pixels.iter().map(|&p| p as i32).collect());
         let array = Rc::new(RefCell::new(array));
         self.arrays[page] = Some(array.clone());
         array
@@ -395,7 +488,7 @@ impl Graphics {
         if v.len() != (GRP_SIZE * GRP_SIZE) as usize {
             return;
         }
-        let pixels = self.page_pixels(page);
+        let pixels = self.page_pixels(page, rect);
         for y in rect.y0..=rect.y1 {
             let row = index(rect.x0, y)..=index(rect.x1, y);
             for i in row {
@@ -404,13 +497,31 @@ impl Graphics {
         }
     }
 
-    fn target_pixels(&mut self) -> &mut Vec<u32> {
-        self.page_pixels(self.target)
+    /// Marks what falls inside the clipping rectangle of a rectangle of the
+    /// target.
+    #[inline]
+    fn mark_inside(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+        let c = self.clip;
+        if x0 <= c.x1 && x1 >= c.x0 && y0 <= c.y1 && y1 >= c.y0 {
+            self.dirty[self.target].get_mut().mark_area(Clip {
+                x0: x0.max(c.x0),
+                y0: y0.max(c.y0),
+                x1: x1.min(c.x1),
+                y1: y1.min(c.y1),
+            });
+        }
     }
 
-    /// A page's pixels to change.
+    /// A page's pixels to change, in `area` alone.
     #[inline]
-    fn page_pixels(&mut self, page: usize) -> &mut Vec<u32> {
+    fn page_pixels(&mut self, page: usize, area: Clip) -> &mut Vec<u32> {
+        self.dirty[page].get_mut().mark_area(area);
+        self.pixels_to_change(page)
+    }
+
+    /// A page's pixels, with what will change on them marked by the caller.
+    #[inline]
+    fn pixels_to_change(&mut self, page: usize) -> &mut Vec<u32> {
         self.changes[page] += 1;
         let pixels = &mut self.pages[page];
         if pixels.is_empty() {
@@ -424,22 +535,57 @@ impl Graphics {
         if !self.clip.contains(x, y) {
             return;
         }
+        self.dirty[self.target].get_mut().mark_pixel(x, y);
+        self.plot_marked(x, y, color, blend);
+    }
+
+    /// Draws a pixel inside the clipping rectangle, already marked.
+    #[inline]
+    fn plot_marked(&mut self, x: i32, y: i32, color: u32, blend: Blend) {
         let i = index(x, y);
+        let page = self.target;
         // Without a GARRAY array, the page is the only copy.
-        if self.arrays[self.target].is_none() {
-            let pixel = &mut self.target_pixels()[i];
+        if self.arrays[page].is_none() {
+            let pixel = &mut self.pixels_to_change(page)[i];
             *pixel = blend.apply(*pixel, color);
             return;
         }
-        let dst = self.read(self.target, x, y);
+        let dst = self.read(page, x, y);
         let p = blend.apply(dst, color);
-        self.target_pixels()[i] = p;
+        self.pixels_to_change(page)[i] = p;
         if let Some(array) = &self.arrays[self.target]
             && let Ok(mut array) = array.try_borrow_mut()
             && let ArrayData::Int(v) = &mut array.data
             && let Some(d) = v.get_mut(i)
         {
             *d = p as i32;
+        }
+    }
+
+    /// [`Graphics::plot`] for a list of pixels, with less to work out for
+    /// each when the page has no GARRAY array.
+    fn plot_all(&mut self, points: &[(i32, i32)], color: u32, blend: Blend) {
+        let (clip, page) = (self.clip, self.target);
+        if self.arrays[page].is_some() {
+            for &(x, y) in points {
+                self.plot(x, y, color, blend);
+            }
+            return;
+        }
+        // A page nothing lands on stays as it is.
+        let inside = |&(x, y): &(i32, i32)| clip.contains(x, y);
+        let Some(first) = points.iter().position(inside) else {
+            return;
+        };
+        self.pixels_to_change(page);
+        let pixels = &mut self.pages[page];
+        let dirty = self.dirty[page].get_mut();
+        for &(x, y) in &points[first..] {
+            if clip.contains(x, y) {
+                dirty.mark_pixel(x, y);
+                let pixel = &mut pixels[index(x, y)];
+                *pixel = blend.apply(*pixel, color);
+            }
         }
     }
 
@@ -454,9 +600,7 @@ impl Graphics {
 
     /// GLINE: both ends included.
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
-        for (x, y) in line_points(x0, y0, x1, y1, self.clip) {
-            self.plot(x, y, color, blend);
-        }
+        self.plot_all(&line_points(x0, y0, x1, y1, self.clip), color, blend);
     }
 
     /// GBOX: the outline as four lines: the top and bottom rows, then the
@@ -483,12 +627,14 @@ impl Graphics {
     /// GFILL.
     pub fn fill(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
         let (left, right) = (x0.min(x1), x0.max(x1));
-        let rows = y0.min(y1)..=y0.max(y1);
-        self.fill_rows(rows, |_| Some((left, right)), color, blend);
+        let (top, bottom) = (y0.min(y1), y0.max(y1));
+        self.mark_inside(left, top, right, bottom);
+        self.fill_rows(top..=bottom, |_| Some((left, right)), color, blend);
     }
 
     /// Fills, in each row of `rows`, the columns `span` gives for it, both
-    /// ends included, inside the clipping rectangle.
+    /// ends included, inside the clipping rectangle, which the caller has
+    /// marked.
     fn fill_rows(
         &mut self,
         rows: std::ops::RangeInclusive<i32>,
@@ -510,7 +656,7 @@ impl Graphics {
             return;
         }
         let page = self.target;
-        self.page_pixels(page);
+        self.pixels_to_change(page);
         // A row at a time, as plot would draw each pixel: reading the
         // GARRAY array where there is one, and writing both.
         let array = self.arrays[page].clone();
@@ -602,9 +748,7 @@ impl Graphics {
             points.sort_unstable();
             points.dedup();
         }
-        for (x, y) in points {
-            self.plot(x, y, color, blend);
-        }
+        self.plot_all(&points, color, blend);
     }
 
     /// GTRI: a filled triangle, drawn a row at a time from the leftmost
@@ -619,7 +763,7 @@ impl Graphics {
         if top == bottom {
             let (l, r) = (p.iter().map(|p| p.0).min(), p.iter().map(|p| p.0).max());
             let (l, r) = (l.unwrap(), r.unwrap());
-            self.fill_rows(top..=bottom, |_| Some((l, r)), color, blend);
+            self.fill(l, top, r, top, color, blend);
             return;
         }
         let span = |y| {
@@ -633,6 +777,9 @@ impl Graphics {
             let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
             (l <= r).then(|| (near(l), near(r)))
         };
+        // An edge can take at most one step past its bottom end.
+        let (l, r) = (a.0.min(b.0).min(c.0), a.0.max(b.0).max(c.0));
+        self.mark_inside(l.saturating_sub(1), top, r.saturating_add(1), bottom);
         self.fill_rows(top..=bottom, span, color, blend);
     }
 
@@ -714,7 +861,13 @@ impl Graphics {
             // Without a GARRAY array to keep the same, rows go straight
             // into the page, inside the clipping rectangle.
             let n = (xs.end() - xs.start() + 1) as usize;
-            let target = self.target_pixels();
+            let area = Clip {
+                x0: dx + xs.start(),
+                y0: dy + ys.start(),
+                x1: dx + xs.end(),
+                y1: dy + ys.end(),
+            };
+            let target = self.page_pixels(self.target, area);
             for y in ys {
                 let from = &pixels[(y * w + xs.start()) as usize..][..n];
                 let to = &mut target[index(dx + xs.start(), dy + y)..][..n];
@@ -808,6 +961,13 @@ impl Graphics {
             (i64::from(low) - start).max(0)..(i64::from(high) - start + 1).min(scale)
         };
         let across = steps(left, sx, columns.end - columns.start, clip.x0, clip.x1);
+        let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+        self.mark_inside(
+            near(left),
+            near(top),
+            near(left + i64::from(columns.end - columns.start) * sx - 1),
+            near(top + i64::from(rows) * sy - 1),
+        );
         for gy in steps(top, sy, rows, clip.y0, clip.y1) {
             let y0 = top + gy * sy;
             for col in across.clone() {
@@ -821,7 +981,7 @@ impl Graphics {
                 let x0 = left + col * sx;
                 for py in inner(y0, sy, clip.y0, clip.y1) {
                     for px in inner(x0, sx, clip.x0, clip.x1) {
-                        self.plot((x0 + px) as i32, (y0 + py) as i32, p, blend);
+                        self.plot_marked((x0 + px) as i32, (y0 + py) as i32, p, blend);
                     }
                 }
             }
@@ -922,8 +1082,13 @@ impl Graphics {
     /// LOADG: copies an image onto a page at `(x, y)` as it is, without
     /// clipping or blending; what falls off the page is dropped.
     pub fn put_image(&mut self, page: usize, (x, y): (i32, i32), image: &crate::image::Image) {
-        let pixels = self.page_pixels(page);
-        for (row, line) in image.pixels.chunks(image.width.max(1)).enumerate() {
+        let width = image.width.max(1);
+        let height = image.pixels.len().div_ceil(width);
+        let last =
+            |at: i32, len: usize| at.saturating_add(len.max(1).min(i32::MAX as usize) as i32 - 1);
+        let area = Clip::new(x, y, last(x, width), last(y, height));
+        let pixels = self.page_pixels(page, area);
+        for (row, line) in image.pixels.chunks(width).enumerate() {
             let py = y + row as i32;
             for (col, &p) in line.iter().enumerate() {
                 let px = x + col as i32;
@@ -1007,7 +1172,13 @@ impl Graphics {
         if left > right || top > bottom || line_at(top) as usize >= pixels.len() {
             return;
         }
-        let page = self.page_pixels(self.target);
+        let area = Clip {
+            x0: left as i32,
+            y0: top as i32,
+            x1: right as i32,
+            y1: bottom as i32,
+        };
+        let page = self.page_pixels(self.target, area);
         for py in top..=bottom {
             let line = pixels.get(line_at(py) as usize..).unwrap_or(&[]);
             let line = &line[..line.len().min((right - left + 1) as usize)];
@@ -1426,6 +1597,204 @@ mod tests {
         assert_eq!(g.pixel(0, -1, 0), 0);
         assert_eq!(g.pixel(0, 2048, 0), 0);
         assert_eq!(g.pixel(1, 5, 5), 0);
+    }
+
+    /// Runs `draw` and checks that every pixel it changed, on any page, is in
+    /// a tile marked as changed.
+    fn check_marks(g: &mut Graphics, name: &str, draw: impl FnOnce(&mut Graphics)) {
+        let before: Vec<Vec<u32>> = (0..PAGES).map(|p| g.page(p).to_vec()).collect();
+        (0..PAGES).for_each(|p| {
+            g.take_dirty(p);
+        });
+        draw(g);
+        let mut changed = 0;
+        for (p, was) in before.iter().enumerate() {
+            let dirty = g.take_dirty(p);
+            let now = g.page(p);
+            let at = |pixels: &[u32], i: usize| pixels.get(i).copied().unwrap_or(0);
+            for i in 0..was.len().max(now.len()) {
+                if at(was, i) != at(now, i) {
+                    changed += 1;
+                    let (x, y) = (
+                        (i % GRP_SIZE as usize) as i32,
+                        (i / GRP_SIZE as usize) as i32,
+                    );
+                    assert!(
+                        dirty.holds(x, y),
+                        "{name}: page {p} pixel {x},{y} not marked"
+                    );
+                }
+            }
+        }
+        assert!(changed > 0, "{name}: this case changes nothing");
+    }
+
+    /// Each way of writing on a page, on a page with something on it so
+    /// that a write shows, with and without a GARRAY array and GCLIP.
+    #[test]
+    fn every_write_marks_what_it_changes() {
+        let font = Font::fallback();
+        let text: Vec<u16> = "AB".encode_utf16().collect();
+        let image = crate::image::Image {
+            width: 3,
+            height: 2,
+            pixels: vec![RED; 6],
+        };
+        for (arrayed, clip) in [
+            (false, Clip::PAGE),
+            (true, Clip::PAGE),
+            (false, Clip::new(100, 100, 700, 500)),
+        ] {
+            let mut g = Graphics::default();
+            for page in 0..PAGES {
+                g.set_page(page, vec![0xFF10_2030; (GRP_SIZE * GRP_SIZE) as usize]);
+            }
+            g.clip = clip;
+            if arrayed {
+                g.array(0);
+            }
+            let n = Blend::Normal;
+            let mut check =
+                |name: &str, draw: &dyn Fn(&mut Graphics)| check_marks(&mut g, name, draw);
+            check("GPSET", &|g| g.pset(130, 140, RED, n));
+            check("GLINE", &|g| g.line(110, 120, 690, 480, RED, n));
+            check("GLINE off", &|g| g.line(-9000, 300, 9000, 330, RED, n));
+            check("GBOX", &|g| g.rect(150, 160, 600, 400, 0xFF00_FF00, n));
+            check("GFILL", &|g| g.fill(200, 210, 330, 340, 0xFF00_00FF, n));
+            check("GFILL blend", &|g| {
+                g.fill(250, 260, 400, 410, 0x80FF_FFFF, Blend::Alpha)
+            });
+            check("GCLS", &|g| g.cls(0xFF40_4040));
+            check("GCIRCLE", &|g| g.circle((300, 300, 150), None, RED, n));
+            check("GCIRCLE arc", &|g| {
+                g.circle((300, 300, 180), Some((10, 200, true)), RED, n)
+            });
+            check("GTRI", &|g| {
+                g.triangle([(120, 110), (640, 300), (200, 490)], 0xFF0F_F000, n)
+            });
+            check("GTRI thin", &|g| {
+                g.triangle([(110, 450), (690, 451), (400, 452)], RED, n)
+            });
+            check("GTRI flat", &|g| {
+                g.triangle([(110, 300), (690, 300), (400, 300)], 0xFF00_FF00, n)
+            });
+            check("GTRI wide", &|g| {
+                g.triangle([(-500, 200), (1500, 210), (-400, 220)], 0xFF12_3456, n)
+            });
+            check("GPAINT", &|g| g.paint(105, 105, 0xFF77_7777, None));
+            check("GPUTCHR", &|g| {
+                g.put_chars(&font, (300, 200), &text, 8, (3, 2), RED, n)
+            });
+            check("GPUTCHRP", &|g| {
+                g.put_chars_proportional(
+                    &font,
+                    (120, 330),
+                    &text,
+                    FontSize::Large,
+                    (2, 3),
+                    RED,
+                    n,
+                    1,
+                )
+            });
+            check("GCOPY", &|g| {
+                g.copy(1, (0, 0, 300, 300), (150, 120), None, n)
+            });
+            check("GCOPY tint", &|g| {
+                g.copy(
+                    0,
+                    (100, 100, 200, 200),
+                    (400, 300),
+                    Some(0xFF80_8080),
+                    Blend::Alpha,
+                )
+            });
+            check("GLOAD", &|g| {
+                g.load_rect((130, 140, 100, 3), &[RED; 300], None, None, n)
+            });
+            check("GLOAD palette", &|g| {
+                g.load_rect(
+                    (130, 200, 2, 1),
+                    &[0, 1],
+                    Some(&[0xFF00_1100, 0xFF00_2200]),
+                    None,
+                    n,
+                )
+            });
+            check("LOADG", &|g| g.put_image(0, (140, 150), &image));
+            check("LOADG off", &|g| g.put_image(0, (2047, 2047), &image));
+            check("page replaced", &|g| {
+                g.set_page(2, vec![RED; (GRP_SIZE * GRP_SIZE) as usize])
+            });
+            check("page emptied", &|g| g.clear_page(2));
+            check("page drawn again", &|g| {
+                g.target = 2;
+                g.fill(120, 130, 125, 135, RED, n);
+                g.target = 0;
+            });
+            if arrayed {
+                check("GUPDATE", &|g| {
+                    let array = g.array(0);
+                    if let ArrayData::Int(v) = &mut array.borrow_mut().data {
+                        v[index(160, 170)] = 0x0102_0304;
+                    }
+                    g.update(0, Clip::new(0, 0, 2047, 2047));
+                });
+            }
+            // What is written while drawing elsewhere is that page's.
+            check("another target", &|g| {
+                g.target = 3;
+                g.line(110, 120, 150, 180, RED, n);
+                g.target = 0;
+            });
+        }
+    }
+
+    #[test]
+    fn marks_stay_near_what_is_drawn_and_through_a_reset() {
+        let mut g = Graphics::default();
+        g.pset(5, 5, RED, Blend::Normal);
+        let mut areas = Vec::new();
+        g.reset_state();
+        let dirty = g.take_dirty(0);
+        dirty.for_each_area(|a| areas.push(a));
+        assert_eq!(areas, [Clip::new(0, 0, TILE - 1, TILE - 1)]);
+        assert!(g.take_dirty(0).is_empty());
+        // Past the clipping rectangle nothing is drawn or marked.
+        g.clip = Clip::new(100, 100, 110, 110);
+        g.fill(0, 0, 50, 50, RED, Blend::Normal);
+        g.line(0, 0, 50, 0, RED, Blend::Normal);
+        assert!(g.take_dirty(0).is_empty());
+    }
+
+    #[test]
+    fn marked_tiles_come_as_rectangles_that_make_up_all_of_them() {
+        let mut d = Dirty::default();
+        d.mark_area(Clip::new(0, 0, 2 * TILE - 1, TILE - 1));
+        d.mark_area(Clip::new(0, TILE, 2 * TILE - 1, 2 * TILE - 1));
+        d.mark_area(Clip::new(3 * TILE, 0, 3 * TILE, 0));
+        d.mark_area(Clip::new(
+            GRP_SIZE - 1,
+            GRP_SIZE - 1,
+            GRP_SIZE - 1,
+            GRP_SIZE - 1,
+        ));
+        let mut areas = Vec::new();
+        d.for_each_area(|a| areas.push(a));
+        assert_eq!(
+            areas,
+            [
+                Clip::new(0, 0, 2 * TILE - 1, 2 * TILE - 1),
+                Clip::new(3 * TILE, 0, 4 * TILE - 1, TILE - 1),
+                Clip::new(GRP_SIZE - TILE, GRP_SIZE - TILE, GRP_SIZE - 1, GRP_SIZE - 1),
+            ]
+        );
+        let mut all = Vec::new();
+        Dirty::ALL.for_each_area(|a| all.push(a));
+        assert_eq!(all, [Clip::PAGE]);
+        let mut none = 0;
+        Dirty::default().for_each_area(|_| none += 1);
+        assert_eq!(none, 0);
     }
 
     #[test]
