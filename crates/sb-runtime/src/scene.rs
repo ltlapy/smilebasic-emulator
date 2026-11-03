@@ -218,9 +218,11 @@ pub struct CursorBar {
     pub color: u32,
 }
 
-// A sort key, from the top: layer (7 first), Z (larger first), text screens
-// before sprites, id (higher first); then where the item is, which the rest
-// settles. Sorting these moves far less than sorting items.
+// Within a layer, larger Z is further back; at equal Z text screens go
+// behind sprites, and among either, higher ids go behind. A sort key has,
+// from the top: layer (7 first), Z, text screens before sprites, id; then
+// where the item is, which the rest settles. Sorting these moves far less
+// than sorting items.
 const KEY_LAYER: u32 = 58;
 const KEY_Z: u32 = 26;
 const KEY_SPRITE: u64 = 1 << 25;
@@ -373,9 +375,14 @@ impl Scene {
         })
     }
 
-    /// How many sprites it draws.
-    pub fn sprite_items(&self) -> usize {
-        self.sprites.len()
+    /// The bytes it holds on to.
+    pub fn memory(&self) -> usize {
+        size_of::<Scene>()
+            + self.passes.capacity() * size_of::<LayerPass>()
+            + self.raster_rows.capacity() * size_of::<[f64; 4]>()
+            + self.order.capacity() * size_of::<u64>()
+            + self.sprites.capacity() * size_of::<SpriteItem>()
+            + self.texts.capacity() * size_of::<TextItem>()
     }
 }
 

@@ -11,7 +11,7 @@ use sb_core::host::{Exec, Host};
 use sb_core::value::{Value, new_str};
 
 use crate::complete::{self, Completion, Library, Options};
-use crate::compose::{self, Compose, LAYERS, Layer};
+use crate::compose::{self, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
 use crate::editor::{Editor, Look, blend, frame_size, menu_height};
@@ -22,9 +22,9 @@ use crate::hint;
 use crate::input::Input;
 use crate::line::LineEdit;
 use crate::palette::Part;
-use crate::raster;
-use crate::scene::{Item, Scene, SceneInput};
-use crate::screen::{Fade, ScreenMode, cover, darken};
+use crate::raster::{CpuRasterizer, RasterInput, Rasterizer};
+use crate::scene::{Scene, SceneInput};
+use crate::screen::{Fade, ScreenMode, darken};
 pub use crate::settings::Settings;
 use crate::sound::Sound;
 use crate::sprites::{self, Sprites};
@@ -705,7 +705,6 @@ type NamesKey = (usize, Vec<u32>);
 pub struct Runtime {
     pub text: Vec<TextScreen>,
     pub(crate) font: Font,
-    fb: Framebuffer,
     /// Graphic pages GRP0-GRP5.
     pub grp: Graphics,
     pub sprites: Sprites,
@@ -824,13 +823,10 @@ pub struct Runtime {
     /// BACKCOLOR: what shows behind every layer.
     pub back_color: u32,
     pub(crate) fade: Fade,
-    /// Where a layer that is composed is drawn first.
-    scratch: Framebuffer,
-    /// A layer with LMATRIX's 4x4 form, drawn flat before it is put
-    /// through the matrix.
-    flat: Framebuffer,
     /// The frame being drawn, kept so as to keep its memory.
     scene: Scene,
+    /// Draws it, and holds the frame.
+    raster: CpuRasterizer,
     /// XSCREEN, and what ACLS goes back to.
     pub(crate) mode: ScreenMode,
     startup_mode: ScreenMode,
@@ -1006,7 +1002,6 @@ impl Runtime {
         Runtime {
             text: startup_screens(&mode),
             font,
-            fb: Framebuffer::new(width, height),
             grp: Graphics::default(),
             sprites: Sprites::default(),
             input: Input::default(),
@@ -1064,9 +1059,8 @@ impl Runtime {
             filters: Default::default(),
             back_color: 0xFF00_0000,
             fade: Fade::default(),
-            scratch: Framebuffer::new(width, height),
-            flat: Framebuffer::new(width, height),
             scene: Scene::default(),
+            raster: CpuRasterizer::new(width, height),
             mode,
             startup_mode: mode,
             editor_fb: Framebuffer::new(width, height),
@@ -1129,9 +1123,7 @@ impl Runtime {
     pub(crate) fn set_mode(&mut self, mode: ScreenMode) {
         self.mode = mode;
         let (fw, fh) = mode.frame();
-        self.fb = Framebuffer::new(fw, fh);
-        self.scratch = Framebuffer::new(fw, fh);
-        self.flat = Framebuffer::new(fw, fh);
+        self.raster.set_size(fw, fh);
         let console = &mut self.text[CONSOLE];
         let (ft, cs) = console.font();
         console.set_font(ft, cs, mode.width / cs, mode.height / cs);
@@ -1460,7 +1452,7 @@ impl Runtime {
 
     /// The frame [`Runtime::render`] gave last.
     pub fn screen_frame(&self) -> &Framebuffer {
-        &self.fb
+        self.raster.frame()
     }
 
     /// Composes the current frame: layers 7 to 0, each back to front. The
@@ -1477,16 +1469,11 @@ impl Runtime {
             cells |= t.take_changed();
         }
         if !self.changed && !cells && self.drawn_with == with {
-            return &self.fb;
+            return self.raster.frame();
         }
         self.changed = false;
         self.drawn_with = with;
         self.revision += 1;
-        // Within a layer, larger Z is further back; at equal Z text screens
-        // go behind sprites, and among either, higher ids go behind.
-        let mut fb = std::mem::replace(&mut self.fb, Framebuffer::new(0, 0));
-        let mut scratch = std::mem::replace(&mut self.scratch, Framebuffer::new(0, 0));
-        let mut flat = std::mem::replace(&mut self.flat, Framebuffer::new(0, 0));
         self.scene.build(&SceneInput {
             mode: &self.mode,
             layers: &self.layers,
@@ -1500,91 +1487,26 @@ impl Runtime {
             dimmed: self.dimmed,
             cursor,
         });
-        let scene = &self.scene;
-        let (grp, font) = (&self.grp, &self.font);
-        let sample = scene.sample;
-        fb.clear(scene.back);
-        for pass in &scene.passes {
-            let direct = pass.compose == Compose::Direct;
-            let target = match direct {
-                true => &mut fb,
-                false => {
-                    scratch.clear(0);
-                    &mut scratch
-                }
-            };
-            let clip = pass.clip.as_ref();
-            match &pass.projection {
-                None => {
-                    for item in scene.items(pass) {
-                        match item {
-                            Item::Sprite(s) => raster::sprite::draw(s, grp, target, clip, None),
-                            Item::Text(t) => {
-                                let cells = self.text[t.screen as usize].cells();
-                                raster::text::draw(t, cells, font, grp, target, clip);
-                            }
-                        }
-                    }
-                }
-                Some(p) => {
-                    flat.resize(p.flat_size.0, p.flat_size.1);
-                    let origin = p.flat_origin;
-                    let mut flat_drawn = false;
-                    for item in scene.items(pass) {
-                        match item {
-                            Item::Sprite(s) => {
-                                if flat_drawn {
-                                    compose::project(
-                                        target, &flat, origin, &p.matrix, sample, clip,
-                                    );
-                                    flat_drawn = false;
-                                }
-                                let projection = Some((&p.matrix, sample));
-                                raster::sprite::draw(s, grp, target, clip, projection);
-                            }
-                            Item::Text(t) => {
-                                if !flat_drawn {
-                                    flat.clear(0);
-                                    flat_drawn = true;
-                                }
-                                let cells = self.text[t.screen as usize].cells();
-                                raster::text::draw(t, cells, font, grp, &mut flat, None);
-                            }
-                        }
-                    }
-                    if flat_drawn {
-                        compose::project(target, &flat, origin, &p.matrix, sample, clip);
-                    }
-                }
-            }
-            pass.filter
-                .apply(target, sample, pass.compose, &scene.raster_rows);
-            if pass.opaque_after_filter {
-                for p in target.pixels_mut() {
-                    *p |= 0xFF00_0000;
-                }
-            }
-            if !direct {
-                compose::compose(
-                    &mut fb,
-                    &scratch,
-                    pass.compose,
-                    pass.color,
-                    scene.opaque_frame,
-                );
-            }
-        }
-        // FADE and the darkening beside a subprogram are one step.
-        cover(scene.fade, fb.pixels_mut(), scene.dimmed);
-        if scene.opaque_end {
-            for p in fb.pixels_mut() {
-                *p |= 0xFF00_0000;
-            }
-        }
+        self.raster.draw(
+            &self.scene,
+            &RasterInput {
+                grp: &self.grp,
+                font: &self.font,
+                cells: std::array::from_fn(|i| self.text[i].cells()),
+            },
+        );
+        self.draw_overlay();
+        self.raster.frame()
+    }
+
+    /// What the emulator itself shows over the frame, after FADE, which is
+    /// no part of SmileBASIC 4's picture.
+    fn draw_overlay(&mut self) {
         // In direct mode, the hint for the command being typed above the
         // line and completion's list below the word.
         let options = Options::from_settings(&self.settings, false).filter(|_| !self.line_quiet);
         if let (Some(line), Some(_), Some(options)) = (&self.line, &self.recall, options) {
+            let fb = self.raster.frame_mut();
             let console = &self.text[CONSOLE];
             let (w, _) = console.size();
             let (_, size) = console.font();
@@ -1611,15 +1533,9 @@ impl Runtime {
                         cursor: top,
                     };
                     let syntax = line.completion.as_ref().and_then(Completion::syntax);
-                    hint::draw_band(
-                        &mut fb,
-                        &self.font,
-                        band,
-                        (hint.as_ref(), syntax),
-                        scale as u32,
-                    );
+                    hint::draw_band(fb, &self.font, band, (hint.as_ref(), syntax), scale as u32);
                 } else if let Some(hint) = &hint {
-                    hint.draw(&mut fb, &self.font, left, (top, top + scale), scale as u32);
+                    hint.draw(fb, &self.font, left, (top, top + scale), scale as u32);
                 }
             }
             if let Some(list) = &line.completion
@@ -1628,7 +1544,7 @@ impl Runtime {
                 let (left, top) = at(cell);
                 let colors = &self.settings.editor_colors;
                 list.draw(
-                    &mut fb,
+                    fb,
                     &self.font,
                     (left, top + scale),
                     top,
@@ -1637,10 +1553,6 @@ impl Runtime {
                 );
             }
         }
-        self.fb = fb;
-        self.scratch = scratch;
-        self.flat = flat;
-        &self.fb
     }
 
     /// Starts a frame: the input it sees, and MAINCNT.
