@@ -8,7 +8,11 @@
 //! The variable is a comma-separated list:
 //!
 //! - `frames=N`: frames timed (600 by default);
+//! - `settle=N`: frames drawn before the timing begins (60 by default), to
+//!   get past what a program sets up;
 //! - `run=PROJECT/PROGRAM`: runs a program of a project from the start;
+//! - `end`: stops timing when the program ends, however many frames it was;
+//! - `novsync`: presents without waiting for vsync;
 //! - `stop`: stops it, as the Break key does, a second in;
 //! - `editor`: opens the editor; `apart` in its own window;
 //! - `panel`: shows the debugger's panel with it;
@@ -44,6 +48,11 @@ use sdl3::video::Window;
 /// Bytes given to textures since the frame began.
 static UPLOADED: AtomicU64 = AtomicU64::new(0);
 
+/// Whether presents are to wait for vsync: not if `SB_UI_BENCH` says so.
+pub fn wants_vsync() -> bool {
+    !std::env::var("SB_UI_BENCH").is_ok_and(|s| s.split(',').any(|p| p.trim() == "novsync"))
+}
+
 /// Counts `bytes` given to a texture.
 pub fn uploaded(bytes: usize) {
     UPLOADED.fetch_add(bytes as u64, Ordering::Relaxed);
@@ -74,8 +83,10 @@ const SETTLE: u32 = 60;
 #[derive(Default)]
 pub struct Bench {
     frames: u32,
+    settle: u32,
     run: Option<(String, String)>,
     stop: bool,
+    until_end: bool,
     editor: bool,
     apart: bool,
     panel: bool,
@@ -107,11 +118,13 @@ impl Bench {
         let spec = std::env::var("SB_UI_BENCH").ok()?;
         let mut bench = Bench {
             frames: 600,
+            settle: SETTLE,
             ..Bench::default()
         };
         for part in spec.split(',').map(str::trim) {
             match part.split_once('=') {
                 Some(("frames", n)) => bench.frames = n.parse().unwrap_or(600),
+                Some(("settle", n)) => bench.settle = n.parse().unwrap_or(SETTLE),
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
                 Some(("slow", ms)) => {
                     bench.slow = Duration::from_millis(ms.parse().unwrap_or(50));
@@ -122,6 +135,8 @@ impl Bench {
                 }
                 _ => match part {
                     "stop" => bench.stop = true,
+                    "end" => bench.until_end = true,
+                    "novsync" => {}
                     "editor" => bench.editor = true,
                     "apart" => bench.apart = true,
                     "panel" => bench.panel = true,
@@ -165,19 +180,20 @@ impl Bench {
                 machine.show_panel(true);
             }
         }
-        if self.frame >= set_up + SETTLE && self.last.is_some() {
+        if self.frame >= set_up + self.settle && self.last.is_some() {
             self.timed
                 .push((self.current, UPLOADED.load(Ordering::Relaxed)));
         }
         self.frame += 1;
         self.current = [Duration::ZERO; STAGES];
         UPLOADED.store(0, Ordering::Relaxed);
-        self.last = (self.frame > set_up + SETTLE).then(Instant::now);
+        self.last = (self.frame > set_up + self.settle).then(Instant::now);
         if self.last.is_some() && self.began.is_none() {
             self.began = self.last;
             self.ran = 0;
         }
-        self.timed.len() >= self.frames as usize
+        let ended = self.until_end && self.frame > set_up + 10 && !machine.is_running();
+        ended || self.timed.len() >= self.frames as usize
     }
 
     /// Counts a program frame run.
@@ -285,6 +301,17 @@ impl Bench {
         for (i, name) in NAMES.iter().enumerate() {
             line(name, self.timed.iter().map(|(t, _)| t[i]).collect());
         }
+        // Frames the screens were drawn again in, as a heavy scene's are not
+        // all of them.
+        let screen = Stage::Screen as usize;
+        let mut drawn: Vec<&[Duration; STAGES]> = self.timed.iter().map(|(t, _)| t).collect();
+        let longest = drawn.iter().map(|t| t[screen]).max().unwrap_or_default();
+        drawn.retain(|t| t[screen] * 4 >= longest);
+        line("busy scr", drawn.iter().map(|t| t[screen]).collect());
+        line(
+            "busy pres",
+            drawn.iter().map(|t| t[Stage::Present as usize]).collect(),
+        );
         let drawing = |t: &[Duration; STAGES]| t[..Stage::Present as usize].iter().sum();
         line(
             "drawing",

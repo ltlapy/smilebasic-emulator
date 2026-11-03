@@ -264,7 +264,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut canvas = window.into_canvas();
     // Vsync paces frames on a 60 Hz display; on others, without vsync,
     // or while the window is not shown, the loop goes by the clock.
-    let mut main_presents = pacing::Presents::new(&canvas, true);
+    let mut main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
     let mut editor_presents = None;
     // Whether the display shows about 60 frames a second, checked now
     // and then as the window can move to another.

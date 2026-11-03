@@ -44,20 +44,23 @@ use sdl3::sys::blendmode::{
     SDL_BLENDMODE_BLEND_PREMULTIPLIED, SDL_BLENDMODE_MUL, SDL_BLENDMODE_NONE,
     SDL_BLENDOPERATION_ADD, SDL_BlendMode, SDL_ComposeCustomBlendMode,
 };
+use sdl3::sys::gpu::{SDL_GetGPUDeviceProperties, SDL_PROP_GPU_DEVICE_NAME_STRING};
 use sdl3::sys::pixels::{SDL_FColor, SDL_PIXELFORMAT_ARGB8888};
+use sdl3::sys::properties::SDL_GetStringProperty;
 use sdl3::sys::rect::{SDL_FPoint, SDL_Rect};
 use sdl3::sys::render::{
-    SDL_CreateTexture, SDL_DestroyTexture, SDL_FlushRenderer, SDL_RenderClear, SDL_RenderGeometry,
-    SDL_RenderReadPixels, SDL_Renderer, SDL_SetRenderClipRect, SDL_SetRenderDrawBlendMode,
-    SDL_SetRenderDrawColor, SDL_SetRenderTarget, SDL_SetRenderTextureAddressMode,
-    SDL_SetTextureBlendMode, SDL_SetTextureScaleMode, SDL_TEXTURE_ADDRESS_AUTO,
-    SDL_TEXTURE_ADDRESS_CLAMP, SDL_TEXTURE_ADDRESS_WRAP, SDL_TEXTUREACCESS_STATIC,
-    SDL_TEXTUREACCESS_TARGET, SDL_Texture, SDL_UpdateTexture, SDL_Vertex,
+    SDL_CreateTexture, SDL_DestroyTexture, SDL_FlushRenderer, SDL_GetGPURendererDevice,
+    SDL_RenderClear, SDL_RenderGeometry, SDL_RenderReadPixels, SDL_Renderer, SDL_SetRenderClipRect,
+    SDL_SetRenderDrawBlendMode, SDL_SetRenderDrawColor, SDL_SetRenderTarget,
+    SDL_SetRenderTextureAddressMode, SDL_SetTextureBlendMode, SDL_SetTextureScaleMode,
+    SDL_TEXTURE_ADDRESS_AUTO, SDL_TEXTURE_ADDRESS_CLAMP, SDL_TEXTURE_ADDRESS_WRAP,
+    SDL_TEXTUREACCESS_STATIC, SDL_TEXTUREACCESS_TARGET, SDL_Texture, SDL_UpdateTexture, SDL_Vertex,
 };
 use sdl3::sys::surface::{
     SDL_ConvertSurface, SDL_DestroySurface, SDL_LockSurface, SDL_SCALEMODE_LINEAR,
     SDL_SCALEMODE_NEAREST, SDL_ScaleMode, SDL_Surface, SDL_UnlockSurface,
 };
+use sdl3::sys::video::SDL_GL_GetProcAddress;
 use sdl3::video::Window;
 
 /// Why a frame was left to the CPU.
@@ -73,8 +76,6 @@ enum Reason {
     ColorFilter,
     /// LMATRIX's 4x4 form.
     Projection,
-    /// A turned or sheared element, or one not at a whole scale.
-    Turned,
     /// An inverted cell may show on the console.
     Inverted,
     /// The cursor of a line being typed.
@@ -87,7 +88,7 @@ enum Reason {
     Refused,
 }
 
-const REASONS: usize = 13;
+const REASONS: usize = 12;
 const REASON_NAMES: [&str; REASONS] = [
     "overlay",
     "sub screen or dimmed",
@@ -96,7 +97,6 @@ const REASON_NAMES: [&str; REASONS] = [
     "raster filter",
     "color filter",
     "4x4 matrix",
-    "turned or scaled",
     "inverted cells",
     "line cursor",
     "image off the page",
@@ -154,6 +154,8 @@ struct Compared {
     alpha_off: u64,
     /// The frame with the most pixels differing by more than 2.
     worst: Worst,
+    /// How many of those, and how many differing at all, in the frame dumped.
+    dumped: (u64, u64),
 }
 
 #[derive(Default)]
@@ -180,6 +182,8 @@ pub struct Gpu {
     /// The scaling of the frame texture.
     scale: Option<SDL_ScaleMode>,
     sync: bool,
+    /// The renderer's driver is OpenGL or OpenGL ES.
+    on_gl: bool,
     /// Compares every so many frames drawn.
     check_every: Option<u64>,
     dump: Option<String>,
@@ -302,6 +306,7 @@ impl Gpu {
             },
             scale: None,
             sync: spec == "sync",
+            on_gl: canvas.renderer_name.starts_with("opengl"),
             check_every,
             dump: std::env::var("SB_GPU_DUMP").ok(),
             compared: Compared::default(),
@@ -334,8 +339,32 @@ impl Gpu {
         }
     }
 
+    /// The device it runs on, for telling results apart, if SDL can say.
+    fn device_name(&self) -> String {
+        const GL_RENDERER: u32 = 0x1F01;
+        // SAFETY: the renderer outlives `self`; the device and the GL function
+        // are the ones it uses, on this thread, and the strings they give are
+        // copied at once. A renderer not on GL has no such function current,
+        // so it is asked for only on those that are.
+        unsafe {
+            let device = SDL_GetGPURendererDevice(self.renderer);
+            if !device.is_null() {
+                let props = SDL_GetGPUDeviceProperties(device);
+                let name = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, null());
+                return text_of(name);
+            }
+            if let Some(get) = SDL_GL_GetProcAddress(c"glGetString".as_ptr()).filter(|_| self.on_gl)
+            {
+                let get: extern "C" fn(u32) -> *const std::ffi::c_char = std::mem::transmute(get);
+                return text_of(get(GL_RENDERER));
+            }
+        }
+        "unknown".to_string()
+    }
+
     /// Prints what it drew and what it left to the CPU, and why.
     pub fn report(&self) {
+        println!("gpu       device {}", self.device_name());
         let s = &self.stats;
         let n = s.drawn.max(1);
         let per = |d: Duration| d / n as u32;
@@ -559,7 +588,6 @@ impl Gpu {
             return Ok(());
         }
         let m = &s.matrix;
-        check_placement(m)?;
         let (w, h) = (f64::from(s.w), f64::from(s.h));
         let quarter = s.attr & attr::ROTATION;
         let (bw, bh) = if quarter % 2 == 1 { (h, w) } else { (w, h) };
@@ -632,7 +660,6 @@ impl Gpu {
             return Err(Reason::Cursor);
         }
         let m = &t.matrix;
-        check_placement(m)?;
         if t.tint >> 24 == 0 {
             return Ok(());
         }
@@ -942,15 +969,6 @@ impl Gpu {
     }
 }
 
-/// What this stage of the prototype can place.
-fn check_placement(m: &Affine) -> Result<(), Reason> {
-    let whole = |v: f64| v.fract() == 0.0 && v != 0.0;
-    match m.b == 0.0 && m.c == 0.0 && whole(m.a) && whole(m.d) {
-        true => Ok(()),
-        false => Err(Reason::Turned),
-    }
-}
-
 impl SceneBackend for Gpu {
     fn draw(&mut self, scene: &Scene, input: &RasterInput, frame: (u32, u32)) -> bool {
         if let Some(reason) = self.refuses(scene) {
@@ -1029,6 +1047,8 @@ impl SceneBackend for Gpu {
             let mut first = None;
             let c = &mut self.compared;
             c.frames += 1;
+            let before = (c.pixels, c.by_diff[0]);
+            let mut dumped = c.dumped;
             if (w, h) == (cpu.width() as usize, cpu.height() as usize) {
                 for (y, want) in cpu.pixels().chunks(w).enumerate() {
                     for (x, (&cpu, &gpu)) in want.iter().zip(row(y)).enumerate() {
@@ -1048,22 +1068,42 @@ impl SceneBackend for Gpu {
                     }
                 }
             }
+            let all_off = c.pixels - before.0 - (c.by_diff[0] - before.1);
+            let dump_now = (more, all_off) > dumped;
+            dumped = dumped.max((more, all_off));
             if more > c.worst.pixels {
                 c.worst = Worst {
                     pixels: more,
                     frame: number,
                     first,
                 };
+            }
+            if dump_now {
                 if let Some(path) = &self.dump {
                     let gpu: Vec<u32> = (0..h).flat_map(|y| row(y).iter().copied()).collect();
                     save_pam(&format!("{path}-gpu.pam"), w, h, &gpu);
                     save_pam(&format!("{path}-cpu.pam"), w, h, cpu.pixels());
                 }
             }
+            self.compared.dumped = dumped;
             SDL_UnlockSurface(shot);
             SDL_DestroySurface(shot);
         }
     }
+}
+
+/// A C string as text, if it is one.
+///
+/// # Safety
+/// `s` is null or a valid C string.
+unsafe fn text_of(s: *const std::ffi::c_char) -> String {
+    if s.is_null() {
+        return "unknown".to_string();
+    }
+    // SAFETY: as the caller says.
+    unsafe { std::ffi::CStr::from_ptr(s) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Saves `0xAARRGGBB` pixels in the form the bench's shots have.
