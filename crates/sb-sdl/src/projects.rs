@@ -1461,7 +1461,8 @@ impl ProjectManager {
     /// views it) on the files, as the toolbars' green buttons do; in the
     /// menus, dialogs, viewer and the info area's fields it is Enter. X
     /// goes between the lists (Tab), Y expands or collapses the info area,
-    /// and either shoulder button opens the list's `⋯` menu, or closes it.
+    /// and + opens the list's `⋯` menu, or closes it. While browsing, L
+    /// and R move up and down a page, one step a press.
     pub fn pad(&mut self, button: Pad, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         let browsing = matches!(self.mode, Mode::Browse);
         if browsing && button == Pad::East && !self.in_field() {
@@ -1490,9 +1491,11 @@ impl ProjectManager {
                     Pad::South => Keycode::Escape,
                     Pad::North if browsing => Keycode::Tab,
                     Pad::West => Keycode::Space,
-                    Pad::LeftShoulder | Pad::RightShoulder if browsing => Keycode::Application,
-                    // The button that opened the menu closes it.
-                    Pad::LeftShoulder | Pad::RightShoulder
+                    Pad::LeftShoulder if browsing => Keycode::PageUp,
+                    Pad::RightShoulder if browsing => Keycode::PageDown,
+                    Pad::Start if browsing => Keycode::Application,
+                    // + closes the menu it opened; L and R close it too.
+                    Pad::Start | Pad::LeftShoulder | Pad::RightShoulder
                         if matches!(self.mode, Mode::Menu(_)) =>
                     {
                         Keycode::Escape
@@ -3638,18 +3641,30 @@ mod tests {
         // In the viewer B goes back.
         m.pad(Pad::South, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
-        // Either shoulder opens the list's menu, where A chooses; the same
-        // button or B closes it.
-        m.pad(Pad::RightShoulder, &mut s, &[]);
+        // + opens the list's menu, where A chooses; + or B closes it, and so
+        // do L and R.
+        m.pad(Pad::Start, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Menu(_)));
+        m.pad(Pad::Start, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        m.pad(Pad::Start, &mut s, &[]);
+        m.pad(Pad::LeftShoulder, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Browse));
+        m.pad(Pad::Start, &mut s, &[]);
         m.pad(Pad::RightShoulder, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
-        m.pad(Pad::LeftShoulder, &mut s, &[]);
+        m.pad(Pad::Start, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Menu(_)));
         m.pad(Pad::South, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
-        m.pad(Pad::DPadUp, &mut s, &[]);
+        // L and R move a page; with two files that is to the ends.
         m.pad(Pad::RightShoulder, &mut s, &[]);
+        assert_eq!(m.selected_file().unwrap().name, "B");
+        m.pad(Pad::LeftShoulder, &mut s, &[]);
+        assert_eq!(m.selected_file().unwrap().name, "A.PRG");
+        m.pad(Pad::DPadDown, &mut s, &[]);
+        m.pad(Pad::DPadUp, &mut s, &[]);
+        m.pad(Pad::Start, &mut s, &[]);
         // The file menu starts on View.
         m.pad(Pad::East, &mut s, &[]);
         assert!(matches!(m.mode, Mode::View(_)));

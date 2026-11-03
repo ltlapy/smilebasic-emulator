@@ -11,7 +11,7 @@ use sdl3::gamepad::Button;
 const DELAY: Duration = Duration::from_millis(300);
 /// Steps a second when the repeat starts, and after `FAST_AT` held.
 const SLOW_RATE: f32 = 8.0;
-const FAST_RATE: f32 = 30.0;
+const FAST_RATE: f32 = 20.0;
 /// The rate rises in a line from `SLOW_RATE` to `FAST_RATE` by this time
 /// since the press, in seconds.
 const FAST_AT: f32 = 1.5;
@@ -213,8 +213,8 @@ mod tests {
         run(&mut r, 0.7);
         let late = run(&mut r, 0.5);
         assert!(late > early * 2, "{early} {late}");
-        // Past the speed-up it holds about 30 steps a second.
-        assert!((29..=31).contains(&run(&mut r, 1.0)));
+        // Past the speed-up it holds about 20 steps a second.
+        assert!((19..=21).contains(&run(&mut r, 1.0)));
     }
 
     #[test]
