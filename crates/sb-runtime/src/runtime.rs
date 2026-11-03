@@ -20,7 +20,7 @@ use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
 use crate::hint;
 use crate::input::Input;
-use crate::line::LineEdit;
+use crate::line::{self, LineEdit};
 use crate::palette::Part;
 use crate::raster::{CpuRasterizer, RasterInput, Rasterizer, SceneBackend};
 use crate::scene::{Scene, SceneInput};
@@ -1326,6 +1326,12 @@ impl Runtime {
         }
     }
 
+    /// Whether `count` more characters fit the line being typed. A
+    /// selection is not counted off.
+    pub(crate) fn line_has_room(&self, count: usize) -> bool {
+        (self.line.as_ref()).is_none_or(|l| l.text.len() + count <= line::LINE_MAX)
+    }
+
     /// Whether INPUT, LINPUT or direct mode waits for a line.
     pub fn wants_line(&self) -> bool {
         self.line.is_some()
@@ -1371,7 +1377,12 @@ impl Runtime {
     }
 
     fn start_line(&mut self) {
-        let mut line = LineEdit::new(&self.text[CONSOLE]);
+        let console = &mut self.text[CONSOLE];
+        let free = line::rows_kept_free(self.mode.height, self.mode.aspect(), console.font().1);
+        // UNVERIFIED: for a LINPUT without a guide, SmileBASIC 4 only
+        // scrolls with its first key or Enter.
+        line::keep_rows_free(console, free);
+        let mut line = LineEdit::new(console, free);
         line.overwrite = self.line_overwrite;
         self.line = Some(line);
         self.line_blink_from = self.system.frames;

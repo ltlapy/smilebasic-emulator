@@ -21,6 +21,40 @@ pub mod commands {
     pub const DELETE_TO_END: u16 = 0xF8F6;
 }
 
+/// The most characters a line holds; one more typed is dropped, whatever
+/// the console's size.
+// UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+pub const LINE_MAX: usize = 256;
+
+/// How many of the console's rows a line keeps free under its cursor: the
+/// one below it and those the hint bar at the bottom of the display covers
+/// whole. `height` and `aspect` are XSCREEN's, `cell` the console's
+/// character size. The bar is 16 pixels of a 1280x720 display.
+// UNVERIFIED: expected of SmileBASIC 4; only the 1 of a 240-row screen
+// has been seen.
+pub fn rows_kept_free(height: u32, aspect: f64, cell: u32) -> i64 {
+    let (height, aspect) = (height as f32, aspect as f32);
+    let shown = if 720.0 / height <= 1280.0 / (aspect * height) {
+        720.0
+    } else {
+        ((1280.0 / aspect) as i32 as f32).min(720.0)
+    };
+    1 + (16.0 / (shown / height * cell as f32)) as i64
+}
+
+/// Scrolls the console up so that its cursor is `free` rows or more above
+/// its bottom, as all that direct mode, INPUT and LINPUT print does.
+pub fn keep_rows_free(console: &mut TextScreen, free: i64) {
+    let (x, y) = console.cursor();
+    // UNVERIFIED: that a console too small for that keeps its first row.
+    let last = (i64::from(console.size().1) - 1 - free).max(0);
+    let rows = i64::from(y) - last;
+    if rows > 0 {
+        console.scroll(0, rows as i32);
+        let _ = console.locate(Some(x as i32), Some(last as i32));
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LineEdit {
     pub text: Vec<u16>,
@@ -35,6 +69,8 @@ pub struct LineEdit {
     origin: i64,
     /// Characters drawn last time, cleared if the line got shorter.
     shown: usize,
+    /// The rows kept free under the cursor: see [`rows_kept_free`].
+    free: i64,
     /// Insert has been pressed: a typed character replaces the one at the
     /// cursor, and the cursor is a block.
     pub overwrite: bool,
@@ -43,8 +79,9 @@ pub struct LineEdit {
 }
 
 impl LineEdit {
-    /// A line starting at the console's cursor.
-    pub fn new(console: &TextScreen) -> LineEdit {
+    /// A line starting at the console's cursor, keeping `free` rows free
+    /// under its own.
+    pub fn new(console: &TextScreen, free: i64) -> LineEdit {
         let (w, _) = console.size();
         let (x, y) = console.cursor();
         LineEdit {
@@ -54,6 +91,7 @@ impl LineEdit {
             anchor: None,
             origin: i64::from(y) * i64::from(w) + i64::from(x),
             shown: 0,
+            free,
             overwrite: false,
             completion: None,
         }
@@ -96,8 +134,12 @@ impl LineEdit {
     }
 
     /// Replaces the selection, or the text from `from` to the cursor,
-    /// with `text`.
+    /// with `text`, if the line then still fits.
     pub fn replace_before(&mut self, from: usize, text: &[u16]) {
+        let (start, end) = self.selection().unwrap_or((from, self.cursor));
+        if self.text.len() - (end - start) + text.len() > LINE_MAX {
+            return;
+        }
         if !self.delete_selection() {
             self.text.drain(from..self.cursor);
             self.cursor = from;
@@ -169,11 +211,14 @@ impl LineEdit {
             c if self.overwrite => {
                 match self.text.get_mut(self.cursor) {
                     Some(old) => *old = c,
-                    None => self.text.push(c),
+                    None if len < LINE_MAX => self.text.push(c),
+                    None => {}
                 }
-                self.cursor += 1;
+                self.cursor = (self.cursor + 1).min(self.text.len());
                 self.delete_selection();
             }
+            // A full line keeps its selection too.
+            _ if len >= LINE_MAX => {}
             c => {
                 self.delete_selection();
                 self.text.insert(self.cursor, c);
@@ -183,17 +228,18 @@ impl LineEdit {
     }
 
     /// Draws the line where it started, scrolling the console up if its
-    /// end or the cursor would go below it, and puts the console's cursor
-    /// at the line's.
+    /// end would go below it or the cursor into the rows kept free, and
+    /// puts the console's cursor at the line's.
     pub fn draw(&mut self, console: &mut TextScreen) {
         let (w, h) = console.size();
         let (w, h) = (i64::from(w), i64::from(h));
         if w == 0 || h == 0 {
             return;
         }
-        let bottom = (self.origin + self.text.len() as i64) / w;
-        if bottom >= h {
-            let rows = bottom - h + 1;
+        let end = (self.origin + self.text.len().saturating_sub(1) as i64) / w;
+        let at = (self.origin + self.cursor as i64) / w;
+        let rows = (end - (h - 1)).max(at - (h - 1 - self.free).max(0));
+        if rows > 0 {
             console.scroll(0, rows as i32);
             self.origin -= rows * w;
         }
@@ -250,6 +296,7 @@ impl LineEdit {
         if self.text.is_empty() || w == 0 || p % w != 0 {
             console.newline();
         }
+        keep_rows_free(console, self.free);
         self.text
     }
 }
@@ -265,7 +312,7 @@ mod tests {
     }
 
     fn direct_line(c: &TextScreen) -> LineEdit {
-        let mut line = LineEdit::new(c);
+        let mut line = LineEdit::new(c, 1);
         line.selects = true;
         line
     }
@@ -343,7 +390,7 @@ mod tests {
     #[test]
     fn input_lines_do_not_select() {
         let mut c = console();
-        let mut line = LineEdit::new(&c);
+        let mut line = LineEdit::new(&c, 1);
         typing(&mut line, "ABCD");
         line.key(SELECT_LEFT);
         line.key(SELECT_LEFT);
@@ -397,26 +444,139 @@ mod tests {
     #[test]
     fn wraps_and_scrolls() {
         let mut c = console();
-        let _ = c.locate(Some(2), Some(2));
-        let mut line = LineEdit::new(&c);
-        typing(&mut line, "ABCDEF");
+        let _ = c.locate(Some(2), Some(1));
+        let mut line = LineEdit::new(&c, 1);
+        typing(&mut line, "ABC");
         line.draw(&mut c);
-        // A row went up to make room.
+        // The cursor would go past the row above the last: a row goes up
+        // for it, and the last stays free.
         assert_eq!(
             [row(&c, 0), row(&c, 1), row(&c, 2)],
-            [".....", "..ABC", "DEF.."]
+            ["..ABC", ".....", "....."]
         );
-        assert_eq!(c.cursor(), (3, 2));
+        assert_eq!(c.cursor(), (0, 1));
+        typing(&mut line, "DE");
+        line.draw(&mut c);
+        assert_eq!(row(&c, 1), "DE...");
+        assert_eq!(c.cursor(), (2, 1));
         line.key(DELETE_LINE);
         line.draw(&mut c);
-        assert_eq!([row(&c, 1), row(&c, 2)], [".....", "....."]);
-        assert_eq!(c.cursor(), (2, 1));
+        assert_eq!([row(&c, 0), row(&c, 1)], [".....", "....."]);
+        assert_eq!(c.cursor(), (2, 0));
         typing(&mut line, "XYZ");
         // A full last row needs no second newline.
         assert_eq!(
             line.finish(&mut c),
             "XYZ".encode_utf16().collect::<Vec<_>>()
         );
-        assert_eq!(c.cursor(), (0, 2));
+        assert_eq!(c.cursor(), (0, 1));
+    }
+
+    #[test]
+    fn enter_keeps_the_last_row_free() {
+        let mut c = console();
+        for _ in 0..5 {
+            LineEdit::new(&c, 1).finish(&mut c);
+            assert!(c.cursor().1 <= 1);
+        }
+        assert_eq!(c.cursor(), (0, 1));
+        // The program's PRINT can reach the last row; the next line starts
+        // above it.
+        let _ = c.locate(Some(1), Some(2));
+        c.print(&[0x41]);
+        keep_rows_free(&mut c, 1);
+        assert_eq!(c.cursor(), (2, 1));
+        assert_eq!(row(&c, 1), ".A...");
+    }
+
+    #[test]
+    fn a_narrower_console_wraps_sooner_and_keeps_its_last_row_free() {
+        // 26 x 12, as a program's TSCREEN 4 can make it.
+        let mut c = TextScreen::new(208, 96);
+        let _ = c.locate(Some(0), Some(9));
+        let mut line = LineEdit::new(&c, 1);
+        typing(&mut line, &"A".repeat(26));
+        line.draw(&mut c);
+        assert_eq!(c.cursor(), (0, 10), "the row above the last is still free");
+        typing(&mut line, &"B".repeat(26));
+        line.draw(&mut c);
+        // Row 11 stays empty; the console scrolled instead.
+        assert_eq!(c.cursor(), (0, 10));
+        assert_eq!(c.cell(0, 9).code, u16::from(b'B'));
+        assert_eq!(c.cell(0, 8).code, u16::from(b'A'));
+        assert_eq!(c.cell(0, 11).code, 0);
+    }
+
+    #[test]
+    fn moving_back_does_not_scroll_for_the_rest_of_the_line() {
+        let mut c = console();
+        let mut line = LineEdit::new(&c, 1);
+        typing(&mut line, "ABCDEFGHIJK");
+        line.key(keys::HOME);
+        line.draw(&mut c);
+        assert_eq!(
+            [row(&c, 0), row(&c, 1), row(&c, 2)],
+            ["ABCDE", "FGHIJ", "K...."]
+        );
+        assert_eq!(c.cursor(), (0, 0));
+        line.key(keys::END);
+        line.draw(&mut c);
+        // The cursor went back to its row, which is the last: up it goes.
+        assert_eq!([row(&c, 0), row(&c, 1)], ["FGHIJ", "K...."]);
+        assert_eq!(c.cursor(), (1, 1));
+    }
+
+    #[test]
+    fn holds_256_characters_whatever_they_are() {
+        let mut c = TextScreen::new(400, 240);
+        let mut line = direct_line(&c);
+        typing(&mut line, &"\u{D55C}".repeat(300));
+        assert_eq!(line.text.len(), LINE_MAX);
+        assert_eq!(line.cursor, LINE_MAX);
+        // Nor in the middle, and a full line's selection stays.
+        line.key(keys::LEFT);
+        line.key(SELECT_LEFT);
+        line.key(0x41);
+        assert_eq!(line.text.len(), LINE_MAX);
+        assert_eq!(line.selection(), Some((254, 255)));
+        line.key(keys::END);
+        // Overwriting at the end adds nothing either.
+        line.key(keys::INSERT);
+        line.key(0x41);
+        assert_eq!(line.text.len(), LINE_MAX);
+        assert_eq!(line.cursor, LINE_MAX);
+        line.key(keys::INSERT);
+        // Backspace makes room for one again.
+        line.key(keys::BACKSPACE);
+        assert_eq!(line.text.len(), LINE_MAX - 1);
+        line.key(0x42);
+        line.key(0x43);
+        assert_eq!(line.text.len(), LINE_MAX);
+        assert_eq!(line.text[LINE_MAX - 1], 0x42);
+        line.draw(&mut c);
+    }
+
+    #[test]
+    fn a_word_that_does_not_fit_is_not_put_in() {
+        let c = console();
+        let mut line = LineEdit::new(&c, 1);
+        typing(&mut line, &"A".repeat(LINE_MAX - 1));
+        line.replace_before(LINE_MAX - 1, &[0x42, 0x43]);
+        assert_eq!(line.text.len(), LINE_MAX - 1);
+        line.replace_before(LINE_MAX - 2, &[0x42, 0x43]);
+        assert_eq!(line.text.len(), LINE_MAX);
+    }
+
+    #[test]
+    fn rows_kept_free_follow_the_screen() {
+        assert_eq!(rows_kept_free(240, 400.0 / 240.0, 8), 1);
+        assert_eq!(rows_kept_free(180, 320.0 / 180.0, 8), 1);
+        // A row of 16 display pixels is covered whole by the bar...
+        assert_eq!(rows_kept_free(360, 640.0 / 360.0, 8), 2);
+        // ... and two of 8; with a larger character, one fewer.
+        assert_eq!(rows_kept_free(720, 1280.0 / 720.0, 8), 3);
+        assert_eq!(rows_kept_free(720, 1280.0 / 720.0, 16), 2);
+        // A wide aspect shows the same rows smaller.
+        assert_eq!(rows_kept_free(240, 640.0 / 240.0, 8), 2);
     }
 }

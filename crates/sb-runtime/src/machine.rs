@@ -1522,6 +1522,14 @@ impl Machine {
             self.edit().paste(text);
             return;
         }
+        // Text that does not fit the line is left out whole. Text with line
+        // ends goes in as keys, as Enter does between them.
+        // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+        let one_line = !text.contains(['\r', '\n']);
+        let room = text.chars().filter(|&c| c >= ' ' || c == '\t').count();
+        if one_line && !self.rt.line_has_room(room) {
+            return;
+        }
         let mut chars = text.chars().peekable();
         while let Some(c) = chars.next() {
             let code = match c {

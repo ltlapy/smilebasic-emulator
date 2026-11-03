@@ -754,7 +754,7 @@ fn inspect_pages_long_arrays() {
     );
     // TTEST19 P5 on hardware: 28 lines a page, the last row kept for the
     // prompt, and the screen it left.
-    let src = "ACLS:?\"PART? 5\"\nFOR I=0 TO 9:?\"LINE\";I:NEXT\nDIM LB%[60]\n??LB%";
+    let src = "ACLS:?\"PART? 5\"\nFOR I=0 TO 9:?\"LINE\";I:NEXT\nDIM LB%[60]\n??LB%\nWAIT 9999";
     m.set_slot(0, src.to_string());
     m.run_slot(0);
     for _ in 0..5 {
@@ -791,6 +791,42 @@ fn inspect_pages_long_arrays() {
     assert_eq!(s[0], " [33]: 0");
     assert_eq!(s[26], " [59]: 0");
     assert_eq!(s[27], "");
+}
+
+#[test]
+fn paste_that_does_not_fit_the_line_is_left_out_whole() {
+    let mut m = machine();
+    m.frame();
+    m.paste(&"A".repeat(250));
+    m.frame();
+    assert_eq!(m.rt.line_and_cursor().unwrap().0.len(), 250);
+    m.paste("1234567");
+    m.frame();
+    assert_eq!(m.rt.line_and_cursor().unwrap().0.len(), 250);
+    m.paste("123456");
+    m.frame();
+    assert_eq!(m.rt.line_and_cursor().unwrap().0.len(), 256);
+    // Typed on, it stays as it is, and the cursor at its end.
+    m.rt.key_press(0x42);
+    m.frame();
+    assert_eq!(m.rt.line_and_cursor().unwrap().1, 256);
+    assert_eq!(m.rt.line_and_cursor().unwrap().0.len(), 256);
+}
+
+#[test]
+fn direct_mode_keeps_the_consoles_last_row_free() {
+    let mut m = machine();
+    for _ in 0..40 {
+        enter(&mut m, "");
+    }
+    let console = &m.rt.text[4];
+    assert_eq!(console.cursor().1 + 2, console.size().1);
+    // A narrower, shorter console too.
+    enter(&mut m, "TSCREEN 4,8,26,12");
+    for _ in 0..20 {
+        enter(&mut m, "");
+    }
+    assert_eq!(m.rt.text[4].cursor().1, 10);
 }
 
 #[test]
