@@ -119,6 +119,13 @@ const REASON_NAMES: [&str; REASONS] = [
     "renderer refused",
 ];
 
+/// How many vertices are handed to the driver at a time. SDL holds them all
+/// until it flushes, and then makes one draw of those that go together. Drivers
+/// keep what it took for a large draw: on NVIDIA's OpenGL, a frame of 224000
+/// vertices in one draw held 700 MiB more than the same frame in draws of
+/// 60000 or fewer.
+const MOST_VERTICES: usize = 30000;
+
 /// What the GPU's textures are measured in.
 const PAGE_SIZE: f32 = GRP_SIZE as f32;
 /// The cells of the atlas of fallback glyphs, up to the larger font's size.
@@ -261,6 +268,8 @@ pub struct Gpu {
     atlas_at: HashMap<(u16, u32), (u32, u32)>,
     screen: SDL_BlendMode,
     verts: Vec<SDL_Vertex>,
+    /// How many vertices SDL holds.
+    queued: usize,
     batch: Batch,
     /// The scaling of the frame texture.
     scale: Option<SDL_ScaleMode>,
@@ -394,6 +403,7 @@ impl Gpu {
             atlas_at: HashMap::new(),
             screen,
             verts: Vec::new(),
+            queued: 0,
             batch: Batch {
                 texture: null_mut(),
                 blend: SDL_BLENDMODE_NONE,
@@ -542,7 +552,13 @@ impl Gpu {
         }
         self.stats.vertices += self.verts.len() as u64;
         self.stats.batches += 1;
+        self.queued += self.verts.len();
         self.verts.clear();
+        if self.queued >= MOST_VERTICES {
+            self.queued = 0;
+            // SAFETY: the renderer outlives `self`.
+            unsafe { SDL_FlushRenderer(self.renderer) };
+        }
     }
 
     /// Makes sure what follows goes in a batch of this kind.
@@ -579,6 +595,9 @@ impl Gpu {
         };
         let (a, b, c, d) = (vertex(0), vertex(1), vertex(2), vertex(3));
         self.verts.extend_from_slice(&[a, b, c, a, c, d]);
+        if self.verts.len() >= MOST_VERTICES {
+            self.flush();
+        }
     }
 
     /// The texture of a page that is not blank, up to date.
@@ -1175,6 +1194,7 @@ impl SceneBackend for Gpu {
         // only hands the work to the GPU.
         unsafe {
             SDL_FlushRenderer(self.renderer);
+            self.queued = 0;
             if self.alone {
                 SDL_RenderPresent(self.renderer);
             }
