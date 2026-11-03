@@ -966,6 +966,22 @@ fn homography(m: &[f64; 16]) -> [[f64; 3]; 3] {
     ]
 }
 
+/// Whether a layer with LMATRIX's 4x4 matrix `m` shows anything.
+pub fn can_project(m: &[f64; 16]) -> bool {
+    invert3(&homography(m)).is_some()
+}
+
+/// X, Y, Z and W of a layer's point through LMATRIX's 4x4 matrix `m`, each as
+/// what the point's `(x, y, 1)` is multiplied by.
+pub fn clip_rows(m: &[f64; 16]) -> [[f64; 3]; 4] {
+    [
+        [m[0], m[4], m[12]],
+        [m[1], m[5], m[13]],
+        [m[2], m[6], m[14]],
+        [m[3], m[7], m[15]],
+    ]
+}
+
 /// The row of LMATRIX's 4x4 matrix `m` that gives a layer point's Z from
 /// (x, y, 1). With (gx, gy, q) the point a screen position maps back to
 /// through the inverse homography, q is 1 / W, so that this row times

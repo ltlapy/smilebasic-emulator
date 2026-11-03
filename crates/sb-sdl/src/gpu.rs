@@ -23,13 +23,17 @@
 //!   the end. `SB_GPU_DUMP=PATH` saves the frame that differed most as
 //!   `PATH-gpu.pam` and `PATH-cpu.pam`.
 //!
+//! `SB_GPU_TOL=PIXELS` sets how far off a texel may be inside a cell of a 4x4
+//! layer's grid, to measure it.
+//!
 //! `SB_GPU_ALONE=1` draws on a renderer of its own with no window, through
 //! SDL's GPU driver, to measure or check that driver without a display; the
 //! window then shows nothing of it.
 //!
 //! Mosaic and blur need no shader either: they work on half-size targets by
 //! drawing with smoothing and offsets, see [`Gpu::mosaic`] and [`Gpu::blur`]. A
-//! raster filter is strips of the layer, see [`raster_quads`].
+//! raster filter is strips of the layer, see [`RasterStrips`]. A 4x4 matrix is a
+//! grid of small triangles, see [`crate::gpu_project`].
 //!
 //! The color filter is the one thing here with a shader of ours, through
 //! `SDL_GPURenderState`, so only on SDL's `gpu` driver, on Vulkan. Elsewhere it
@@ -46,7 +50,7 @@ use sb_runtime::font::FontSize;
 use sb_runtime::framebuffer::Framebuffer;
 use sb_runtime::graphics::{COUNT_BITS, Clip, Dirty, GRP_SIZE, Graphics, PAGES};
 use sb_runtime::raster::{RasterInput, SceneBackend};
-use sb_runtime::scene::{Item, LayerPass, Scene, SpriteItem, TextItem};
+use sb_runtime::scene::{Item, LayerPass, Projection, Scene, SpriteItem, TextItem};
 use sb_runtime::sprites::attr;
 use sb_runtime::text::{self, Cell, FONT_PAGE, USER_CHARS};
 use sdl3::render::{Canvas, Texture};
@@ -82,6 +86,8 @@ use sdl3::sys::surface::{
 use sdl3::sys::video::SDL_GL_GetProcAddress;
 use sdl3::video::Window;
 
+use crate::gpu_project::{Corner, Plane};
+
 /// Why a frame was left to the CPU.
 #[derive(Clone, Copy, Debug)]
 enum Reason {
@@ -89,8 +95,6 @@ enum Reason {
     Sub,
     Raster,
     ColorFilter,
-    /// LMATRIX's 4x4 form.
-    Projection,
     /// An inverted cell may show on the console.
     Inverted,
     /// The cursor of a line being typed.
@@ -103,12 +107,11 @@ enum Reason {
     Refused,
 }
 
-const REASONS: usize = 9;
+const REASONS: usize = 8;
 const REASON_NAMES: [&str; REASONS] = [
     "sub screen or dimmed",
     "raster filter",
     "color filter",
-    "4x4 matrix",
     "inverted cells",
     "line cursor",
     "image off the page",
@@ -145,6 +148,9 @@ const RASTER_BIAS: f64 = 1.0 / 512.0;
 /// The most quads a raster filter is drawn with: scales that wrap around the frame
 /// many times on every line are left to the CPU.
 const MOST_RASTER_QUADS: usize = 20000;
+
+/// How far off, in frame pixels, a texel may be inside a cell of a 4x4 layer's grid.
+const GRID_TOLERANCE: f64 = 0.25;
 
 /// What the GPU's textures are measured in.
 const PAGE_SIZE: f32 = GRP_SIZE as f32;
@@ -290,6 +296,12 @@ pub struct Gpu {
     /// shown, with what it holds to tell whether it changed.
     overlay: *mut SDL_Texture,
     overlay_holds: Vec<u32>,
+    /// Where text screens on a 4x4 layer are drawn before going through it; made
+    /// when first wanted, and as large as any wanted so far.
+    flat: *mut SDL_Texture,
+    flat_size: (u32, u32),
+    /// How far off, in frame pixels, a 4x4 layer's image may be inside a cell.
+    grid_tolerance: f64,
     /// Half the frame's size, for mosaic and blur; made when one is first
     /// used. The second holds what a pass of a blur makes of the first.
     half: [*mut SDL_Texture; 2],
@@ -437,6 +449,12 @@ impl Gpu {
             spare: null_mut(),
             overlay: null_mut(),
             overlay_holds: Vec::new(),
+            flat: null_mut(),
+            flat_size: (0, 0),
+            grid_tolerance: std::env::var("SB_GPU_TOL")
+                .ok()
+                .and_then(|t| t.parse().ok())
+                .unwrap_or(GRID_TOLERANCE),
             half: [null_mut(); 2],
             add_all: SDL_ComposeCustomBlendMode(
                 SDL_BLENDFACTOR_ONE,
@@ -803,7 +821,12 @@ impl Gpu {
         Ok(at)
     }
 
-    fn sprite(&mut self, s: &SpriteItem, grp: &Graphics) -> Result<(), Reason> {
+    fn sprite(
+        &mut self,
+        s: &SpriteItem,
+        grp: &Graphics,
+        through: Option<(&[f64; 16], u32)>,
+    ) -> Result<(), Reason> {
         if s.shows_nothing() {
             return Ok(());
         }
@@ -855,6 +878,17 @@ impl Gpu {
             blend,
             wrap: s.repeat && !white,
         });
+        if let Some((matrix, sample)) = through {
+            // A projected element has no rule for ties on the CPU.
+            if let Some(plane) = Plane::new(matrix, sample, m, self.size) {
+                let uv = |x: f64, y: f64| {
+                    let (u, v) = page_xy(x, y);
+                    (u / f64::from(PAGE_SIZE), v / f64::from(PAGE_SIZE))
+                };
+                self.triangles(&plane, (bw, bh), uv, fcolor(s.color));
+            }
+            return Ok(());
+        }
         let at = |lx: f64, ly: f64| {
             let (x, y) = m.apply(lx, ly);
             (x, y + on.down)
@@ -1032,18 +1066,168 @@ impl Gpu {
         if clip.is_some_and(|c| c.w <= 0 || c.h <= 0) {
             return Ok(());
         }
-        // SAFETY: the renderer outlives `self`; the rectangle is copied.
-        unsafe { SDL_SetRenderClipRect(self.renderer, clip.as_ref().map_or(null(), |c| c)) };
-        for item in scene.items(pass) {
-            match item {
-                Item::Sprite(s) => self.sprite(s, input.grp)?,
-                Item::Text(t) => self.text(t, input.cells[t.screen as usize], input)?,
+        let set_clip = |renderer| {
+            // SAFETY: the renderer outlives `self`; the rectangle is copied.
+            unsafe { SDL_SetRenderClipRect(renderer, clip.as_ref().map_or(null(), |c| c)) };
+        };
+        set_clip(self.renderer);
+        match &pass.projection {
+            None => {
+                for item in scene.items(pass) {
+                    match item {
+                        Item::Sprite(s) => self.sprite(s, input.grp, None)?,
+                        Item::Text(t) => self.text(t, input.cells[t.screen as usize], input)?,
+                    }
+                }
+            }
+            Some(p) => {
+                let back = match pass.compose {
+                    Compose::Direct => self.frame,
+                    _ => self.layer,
+                };
+                let through = (&p.matrix, scene.sample);
+                let mut flat_drawn = false;
+                for item in scene.items(pass) {
+                    match item {
+                        Item::Sprite(s) => {
+                            if flat_drawn {
+                                self.end_flat(p, scene.sample, back);
+                                set_clip(self.renderer);
+                                flat_drawn = false;
+                            }
+                            self.sprite(s, input.grp, Some(through))?;
+                        }
+                        Item::Text(t) => {
+                            if !flat_drawn {
+                                self.begin_flat(p)?;
+                                flat_drawn = true;
+                            }
+                            self.on_flat(p, t, input)?;
+                        }
+                    }
+                }
+                if flat_drawn {
+                    self.end_flat(p, scene.sample, back);
+                    set_clip(self.renderer);
+                }
             }
         }
         self.flush();
         // SAFETY: as above.
         unsafe { SDL_SetRenderClipRect(self.renderer, null()) };
         Ok(())
+    }
+
+    /// Goes to the target text screens on a 4x4 layer are drawn on, cleared.
+    fn begin_flat(&mut self, p: &Projection) -> Result<(), Reason> {
+        let (w, h) = p.flat_size;
+        let (held_w, held_h) = self.flat_size;
+        if w > held_w || h > held_h {
+            let size = (w.max(held_w), h.max(held_h));
+            self.flush();
+            // SAFETY: the renderer outlives `self`; the old one, its own, has
+            // what used it queued, which SDL runs before destroying it.
+            unsafe {
+                if !self.flat.is_null() {
+                    SDL_DestroyTexture(self.flat);
+                }
+                self.flat = SDL_CreateTexture(
+                    self.renderer,
+                    SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_TARGET,
+                    size.0 as i32,
+                    size.1 as i32,
+                );
+                if self.flat.is_null() {
+                    self.flat_size = (0, 0);
+                    return Err(Reason::Refused);
+                }
+                SDL_SetTextureScaleMode(self.flat, SDL_SCALEMODE_NEAREST);
+            }
+            self.flat_size = size;
+        }
+        if self.flat.is_null() {
+            // Nothing can show, as nothing is wanted of it, but there is to
+            // be somewhere to draw.
+            self.flush();
+            return Ok(());
+        }
+        self.target(self.flat);
+        // SAFETY: the renderer outlives `self`.
+        unsafe { SDL_SetRenderClipRect(self.renderer, null()) };
+        self.clear(0);
+        Ok(())
+    }
+
+    /// A text screen on what [`Gpu::begin_flat`] made ready. Its matrix goes there.
+    fn on_flat(&mut self, p: &Projection, t: &TextItem, input: &RasterInput) -> Result<(), Reason> {
+        if p.flat_size.0 == 0 || p.flat_size.1 == 0 {
+            return Ok(());
+        }
+        let frame = self.size;
+        self.size = p.flat_size;
+        let result = self.text(t, input.cells[t.screen as usize], input);
+        self.flush();
+        self.size = frame;
+        result
+    }
+
+    /// Back on `back`, what is on the flat target through the 4x4 matrix.
+    fn end_flat(&mut self, p: &Projection, sample: u32, back: *mut SDL_Texture) {
+        self.target(back);
+        let (w, h) = (f64::from(p.flat_size.0), f64::from(p.flat_size.1));
+        if w == 0.0 || h == 0.0 || self.flat.is_null() {
+            return;
+        }
+        let place = Affine {
+            tx: f64::from(p.flat_origin.0),
+            ty: f64::from(p.flat_origin.1),
+            ..Affine::IDENTITY
+        };
+        let Some(plane) = Plane::new(&p.matrix, sample, &place, self.size) else {
+            return;
+        };
+        self.batch(Batch {
+            texture: self.flat,
+            blend: SDL_BLENDMODE_BLEND_PREMULTIPLIED,
+            wrap: false,
+        });
+        let (tw, th) = (f64::from(self.flat_size.0), f64::from(self.flat_size.1));
+        self.triangles(&plane, (w, h), |x, y| (x / tw, y / th), WHITE);
+        self.flush();
+    }
+
+    /// A grid of triangles through `plane`, with `uv` taking the element's points
+    /// to the texture, which is 1 long each way.
+    fn triangles(
+        &mut self,
+        plane: &Plane,
+        size: (f64, f64),
+        uv: impl Fn(f64, f64) -> (f64, f64),
+        color: SDL_FColor,
+    ) {
+        let mut verts = std::mem::take(&mut self.verts);
+        let vertex = |c: Corner| {
+            let (u, v) = uv(c.point.0, c.point.1);
+            SDL_Vertex {
+                position: SDL_FPoint {
+                    x: c.at.0,
+                    y: c.at.1,
+                },
+                color,
+                tex_coord: SDL_FPoint {
+                    x: u as f32,
+                    y: v as f32,
+                },
+            }
+        };
+        plane.triangles(size, self.grid_tolerance, |[a, b, c]| {
+            verts.extend_from_slice(&[vertex(a), vertex(b), vertex(c)]);
+        });
+        self.verts = verts;
+        if self.verts.len() >= MOST_VERTICES {
+            self.flush();
+        }
     }
 
     /// Clears the current target.
@@ -1080,11 +1264,13 @@ impl Gpu {
         unsafe {
             let [half0, half1] = self.half;
             let targets = [self.frame, self.layer, self.spare, half0, half1];
-            for texture in targets.into_iter().chain([self.overlay]) {
+            for texture in targets.into_iter().chain([self.overlay, self.flat]) {
                 if !texture.is_null() {
                     SDL_DestroyTexture(texture);
                 }
             }
+            self.flat = null_mut();
+            self.flat_size = (0, 0);
             self.half = [null_mut(); 2];
             self.overlay = null_mut();
             self.overlay_holds.clear();
@@ -1140,9 +1326,6 @@ impl Gpu {
                     return Some(Reason::ColorFilter);
                 }
                 FilterOp::Color { .. } => {}
-            }
-            if pass.projection.is_some() {
-                return Some(Reason::Projection);
             }
         }
         None
@@ -1928,6 +2111,7 @@ impl Drop for Gpu {
             self.layer,
             self.spare,
             self.overlay,
+            self.flat,
             half0,
             half1,
             self.atlas,

@@ -9,6 +9,7 @@ mod dialog;
 mod file_dialogs;
 mod file_view;
 mod gpu;
+mod gpu_project;
 mod grp_view;
 mod help;
 mod index;
