@@ -1507,6 +1507,20 @@ impl ProjectManager {
         outcome
     }
 
+    /// Which kind of screen the manager is on (list, name box, dialog,
+    /// ...), so that a change can be told.
+    pub fn mode_id(&self) -> usize {
+        match self.mode {
+            Mode::Browse => 0,
+            Mode::Name(_) => 1,
+            Mode::Ask(..) => 2,
+            Mode::Slot(_) => 3,
+            Mode::Menu(_) => 4,
+            Mode::Copy(..) => 5,
+            Mode::View(_) => 6,
+        }
+    }
+
     /// Whether one of the info area's fields has the keys.
     fn in_field(&self) -> bool {
         self.edit.as_ref().is_some_and(|e| e.focus.is_some())

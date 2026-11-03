@@ -142,7 +142,8 @@ these keys shows for a few seconds. The mouse's left button touches the screen.
 In direct mode, a gamepad's − (Select) opens the projects. There A runs the
 project's MAIN.PRG or the selected file (or views a file that is not a
 program), X moves between the projects and the files, L or R opens the menu,
-Y expands the info and B goes back.
+Y expands the info and B goes back. The left stick works as the D-pad
+there, and holding up or down repeats, faster the longer it is held.
 
 ## License
 

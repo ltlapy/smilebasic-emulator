@@ -15,6 +15,7 @@ mod keyhint;
 mod layer;
 mod menu;
 mod pacing;
+mod pad_repeat;
 mod popup;
 mod preview;
 mod program_dialog;
@@ -31,6 +32,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use crate::pad_repeat::{Dir, PadRepeat};
 
 use audio::Audio;
 use colors::ColorWindow;
@@ -66,7 +69,7 @@ use sdl3::VideoSubsystem;
 use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
 use sdl3::event::WindowEvent;
-use sdl3::gamepad::Button;
+use sdl3::gamepad::{Axis, Button};
 use sdl3::keyboard::{Keycode, Mod};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
@@ -359,6 +362,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // When the + button, F5 or a controller's, went down, while it is
     // held.
     let mut plus_down: Option<Instant> = None;
+    // Holding the pad's up or down repeats in the projects, and the left
+    // stick works as the pad there. `pad_screen` is the screen it was last
+    // ticked for, `pad_tick` when.
+    let mut pad_repeat = PadRepeat::default();
+    let mut pad_screen = 0;
+    let mut pad_tick = Instant::now();
     let mut bench = bench::Bench::from_env();
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
@@ -483,8 +492,91 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let shift = |keymod: Mod| keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
         let ctrl = |keymod: Mod| keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         let mut quit = false;
-        for event in events.poll_iter() {
-            controls.event(&event);
+        // The pad repeats on the screen that has it, once a frame whatever
+        // events came; a new screen or mode starts without the old hold.
+        let screen = match (&dialog, &manager) {
+            (Some(_), _) => 1,
+            (None, Some(m)) => 2 + m.mode_id(),
+            (None, None) => 0,
+        };
+        let pad_dt = pad_tick.elapsed().min(Duration::from_millis(100));
+        pad_tick = Instant::now();
+        if screen != pad_screen {
+            pad_screen = screen;
+            pad_repeat.reset();
+        }
+        let mut repeats = Vec::new();
+        if screen >= 2
+            && let Some((dir, n)) = pad_repeat.tick(pad_dt)
+        {
+            let (timestamp, which) = (0, 0.into());
+            let button = dir.button();
+            repeats.resize(
+                n as usize,
+                Event::GamepadButtonDown {
+                    timestamp,
+                    which,
+                    button,
+                },
+            );
+        }
+        let polled = events.poll_iter();
+        for (repeated, event) in
+            (repeats.into_iter().map(|e| (true, e))).chain(polled.map(|e| (false, e)))
+        {
+            // A repeat that changes the screen ends the rest of them.
+            let now = match (&dialog, &manager) {
+                (Some(_), _) => 1,
+                (None, Some(m)) => 2 + m.mode_id(),
+                (None, None) => 0,
+            };
+            if repeated && now != screen {
+                continue;
+            }
+            if !repeated {
+                controls.event(&event);
+            }
+            // The pad's up and down are held, and the left stick is the
+            // pad, on the emulator's own screens.
+            let event = match event {
+                Event::GamepadButtonDown { button, .. } if !repeated => {
+                    match button {
+                        Button::DPadUp => pad_repeat.down(Dir::Up),
+                        Button::DPadDown => pad_repeat.down(Dir::Down),
+                        _ => {}
+                    }
+                    event
+                }
+                Event::GamepadButtonUp { button, .. } => {
+                    match button {
+                        Button::DPadUp => pad_repeat.up(Dir::Up),
+                        Button::DPadDown => pad_repeat.up(Dir::Down),
+                        _ => {}
+                    }
+                    event
+                }
+                Event::GamepadAxisMotion {
+                    timestamp,
+                    which,
+                    axis,
+                    value,
+                } => {
+                    let pushed = match axis {
+                        Axis::LeftX => pad_repeat.stick_x(value),
+                        Axis::LeftY => pad_repeat.stick_y(value),
+                        _ => None,
+                    };
+                    match pushed {
+                        Some(dir) if screen != 0 => Event::GamepadButtonDown {
+                            timestamp,
+                            which,
+                            button: dir.button(),
+                        },
+                        _ => event,
+                    }
+                }
+                event => event,
+            };
             // Whatever the event does may show on the screens.
             machine.rt.touch();
             // Some renderers lose what textures held, which then has to be
