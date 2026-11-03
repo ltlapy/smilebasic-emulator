@@ -988,6 +988,7 @@ mod tests {
             rate: Some(56_000.0),
             looped: (0, 128),
             beep_loop: false,
+            beep_repeats: false,
             ..wave::pulse(219)
         }));
         let mut t = Track::new(None, waves);

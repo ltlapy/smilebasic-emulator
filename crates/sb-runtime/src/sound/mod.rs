@@ -74,6 +74,12 @@ impl Ramp {
         }
     }
 
+    /// Moves to `target` over `samples` samples.
+    pub(crate) fn over_samples(&mut self, target: f64, samples: usize) {
+        self.target = target;
+        self.step = (target - self.value) / samples as f64;
+    }
+
     pub(crate) fn step_sample(&mut self) {
         if self.step != 0.0 {
             self.value += self.step;
@@ -151,6 +157,8 @@ pub struct Sound {
     /// The PSG and WAVSET's waveforms, shared with the tracks.
     pub(crate) waves: Rc<RefCell<Waves>>,
     pub(crate) beeps: Beeps,
+    /// What BEEP plays for a waveform nobody set, once it was needed.
+    unset_wave: Option<Rc<wave::Wave>>,
     pub(crate) pcm: Pcm,
     pub(crate) talk: Talk,
     /// EFCEN, EFCSET and EFCWET's settings.
@@ -185,6 +193,7 @@ impl Default for Sound {
             songs: HashMap::new(),
             waves: Rc::default(),
             beeps: Beeps::new(None),
+            unset_wave: None,
             pcm: Pcm::default(),
             talk: Talk::default(),
             effector: Effector::default(),
@@ -206,6 +215,7 @@ impl Sound {
     /// Where instruments come from; without any, BGM is silent.
     pub fn set_instruments(&mut self, instruments: Option<Instruments>) {
         self.beeps = Beeps::new(instruments.as_ref());
+        self.unset_wave = None;
         self.instruments = instruments;
         self.tracks.iter_mut().for_each(|t| *t = None);
     }
@@ -225,6 +235,20 @@ impl Sound {
     /// SmileBASIC 4's own preset song or effect `n`, if imported.
     pub(crate) fn sequence(&self, kind: Kind, n: i32) -> Option<Arc<seq::Sequence>> {
         self.sequences.as_ref()?.get(kind, n)
+    }
+
+    /// What BEEP plays for waveform `n`: as set by WAVSET or WAVSETA, or
+    /// else what the sound archive holds for them all, if imported.
+    pub(crate) fn beep_wave(&mut self, n: i32) -> Option<Rc<wave::Wave>> {
+        if let Some(w) = self.waves.borrow().get(n) {
+            return Some(w);
+        }
+        if self.unset_wave.is_none()
+            && let Some(Instruments::Bank(bank)) = &self.instruments
+        {
+            self.unset_wave = wave::unset(bank).map(Rc::new);
+        }
+        self.unset_wave.clone()
     }
 
     pub(crate) fn track(&mut self, n: usize) -> &mut Track {

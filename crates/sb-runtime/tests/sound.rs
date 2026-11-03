@@ -395,6 +395,190 @@ fn beep_of_a_waveform_lasts_as_long_as_it() {
     assert!(beep(&song, 30) > 0.01);
 }
 
+/// The peak of `frames` frames of what `source` starts, and how many samples
+/// up to the last that is not silent.
+fn beep_recording(source: &str, n: usize) -> (i32, usize) {
+    let mut rt = runtime();
+    run_on(&mut rt, &format!("RECSTART {}:{source}", n as f64 / 60.0)).unwrap();
+    frames(&mut rt, n);
+    let got = run_on(
+        &mut rt,
+        "DIM R[1]:RECSAVE R:K=-1:FOR I=0 TO LEN(R)-1:P=MAX(P,ABS(R[I])):IF R[I] THEN K=I\nNEXT:?P;\",\";K+1;",
+    )
+    .unwrap();
+    let (peak, end) = got.split_once(',').unwrap();
+    (peak.parse().unwrap(), end.parse().unwrap())
+}
+
+const WAVSET_SQUARE: &str = "WAVSET 224,127,127,127,127,\"FFFF0000\"*8,69";
+
+/// BEEP's volume is a linear gain, by which 64 is as loud as BGMPLAY's
+/// default: an eighth of full scale on each side for a full-scale waveform.
+#[test]
+fn beep_of_a_waveform_is_as_loud_as_a_song() {
+    let beep = |volume: i32| beep_recording(&format!("{WAVSET_SQUARE}:H=BEEP(224,0,{volume})"), 30);
+    let (at_64, _) = beep(64);
+    let (song, _) = beep_recording(&format!("{WAVSET_SQUARE}:BGMPLAY \"@224O4A1\""), 30);
+    assert_eq!(at_64, 4096);
+    assert_eq!(at_64, song);
+    let (at_127, _) = beep(127);
+    assert!((at_127 - 4096 * 127 / 64).abs() <= 1, "{at_127}");
+    let (at_32, _) = beep(32);
+    assert!((at_32 - 2048).abs() <= 1, "{at_32}");
+    let (default, _) = beep_recording(&format!("{WAVSET_SQUARE}:H=BEEP(224)"), 30);
+    assert_eq!(default, at_64);
+}
+
+/// The last step of a note, of 5 ms, is its fall.
+#[test]
+fn beep_of_a_waveform_ends_on_the_sound_engines_steps() {
+    let ms = |source: &str, n: usize| beep_recording(source, n).1 * 1000 / 48000;
+    assert_eq!(ms(&format!("{WAVSET_SQUARE}:H=BEEP(224)"), 90), 1000);
+    let array = |n: usize, a: &str| {
+        format!(
+            "DIM W%[{n}]:FILL W%,228:FOR I=8 TO {n}-1 STEP 16:W%[I]=28:NEXT:WAVSETA 225,127,127,127,127,W%,69{a}:H=BEEP(225)"
+        )
+    };
+    assert_eq!(ms(&array(256, ""), 10), 10);
+    assert_eq!(ms(&array(4096, ""), 20), 145);
+    let sixteen =
+        "DIM W%[28160]:FILL W%,30000:WAVSETA 225,127,127,127,127,W%,69,0,28159,28160:H=BEEP(225)";
+    assert_eq!(ms(sixteen, 90), 1000);
+}
+
+/// With the repeat flag each pass is a new note, over the last one's fall.
+#[test]
+fn a_repeating_beep_doubles_for_a_moment_at_each_pass() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "RECSTART 2:DIM W%[28160]:FILL W%,30000:\
+         WAVSETA 225,127,127,127,127,W%,69,0,28159,28160,0,1:H=BEEP(225)",
+    )
+    .unwrap();
+    frames(&mut rt, 120);
+    let got = run_on(
+        &mut rt,
+        "DIM S[1]:RECSAVE S:FOR I=0 TO LEN(S)-1:IF ABS(S[I])>5000 THEN B=I:IF A==0 THEN A=I\n\
+         NEXT:?A DIV 48;\",\";B DIV 48;\",\";ABS(S[47000]);",
+    )
+    .unwrap();
+    // Loud from 5 ms before the first second ends, and last before the second
+    // second's end; between them, one note's level.
+    assert_eq!(got, "995,1998,3750");
+}
+
+/// BEEPSTOP takes a step to fall, and frees the handle at once.
+#[test]
+fn beepstop_of_a_waveform_takes_a_step() {
+    let mut rt = runtime();
+    run_on(&mut rt, &format!("RECSTART 1:{WAVSET_SQUARE}:H=BEEP(224)")).unwrap();
+    frames(&mut rt, 6);
+    run_on(&mut rt, "BEEPSTOP H").unwrap();
+    frames(&mut rt, 54);
+    let got = run_on(
+        &mut rt,
+        "DIM S[1]:RECSAVE S:FOR I=0 TO LEN(S)-1:IF S[I] THEN B=I\nNEXT:?B DIV 48;",
+    )
+    .unwrap();
+    assert_eq!(got, "104");
+    assert_eq!(run_on(&mut rt, "?BEEP(0);").unwrap(), "1");
+}
+
+/// BEEP's handles go on rising and round, whether the last has ended or not.
+#[test]
+fn beep_handles_go_round() {
+    let mut rt = runtime();
+    let handle = |rt: &mut Runtime, sound: i32| {
+        run_on(rt, &format!("?BEEP({sound});"))
+            .unwrap()
+            .parse::<i32>()
+            .unwrap()
+    };
+    // 0 to 15, ended or not: a preset without the sounds ends at once, and
+    // one sounding still only holds its own number.
+    run_on(&mut rt, WAVSET_SQUARE).unwrap();
+    for n in 0..8 {
+        assert_eq!(handle(&mut rt, 0), n);
+        frames(&mut rt, 1);
+    }
+    assert_eq!(handle(&mut rt, 224), 8);
+    // A BEEP with no use for its handle takes a number too.
+    run_on(&mut rt, "BEEP 0").unwrap();
+    assert_eq!(handle(&mut rt, 0), 10);
+    frames(&mut rt, 1);
+    for n in 11..16 {
+        assert_eq!(handle(&mut rt, 0), n);
+        frames(&mut rt, 1);
+    }
+    // Round again, past the one still held.
+    assert_eq!(handle(&mut rt, 0), 0);
+    frames(&mut rt, 1);
+    for n in 1..8 {
+        assert_eq!(handle(&mut rt, 0), n);
+        frames(&mut rt, 1);
+    }
+    assert_eq!(handle(&mut rt, 0), 9);
+    // BEEPSTOP lets it go.
+    run_on(&mut rt, "BEEPSTOP 8").unwrap();
+    frames(&mut rt, 1);
+    for n in 10..16 {
+        assert_eq!(handle(&mut rt, 0), n);
+        frames(&mut rt, 1);
+    }
+    for n in 0..9 {
+        assert_eq!(handle(&mut rt, 0), n);
+        frames(&mut rt, 1);
+    }
+}
+
+/// With all 16 held there is no handle, and no error; then BEEPSTOP's number
+/// is out of range, and one held but not stopped still reaches its sound.
+#[test]
+fn with_all_beep_handles_held_there_is_none() {
+    let mut rt = runtime();
+    run_on(&mut rt, WAVSET_SQUARE).unwrap();
+    let all = "FOR I=0 TO 15:H=BEEP(224):NEXT:";
+    assert_eq!(
+        run_on(&mut rt, &format!("{all}?H;BEEP(224);")).unwrap(),
+        "15-1"
+    );
+    run_on(&mut rt, "BEEP 224").unwrap();
+    assert_eq!(
+        run_on(&mut rt, "BEEPSTOP -1").unwrap_err().kind,
+        ErrorKind::OutOfRange
+    );
+    run_on(&mut rt, "BEEPSTOP 3").unwrap();
+    assert_eq!(run_on(&mut rt, "?BEEP(224);").unwrap(), "3");
+    // Once they end the numbers are free again, from where they were.
+    frames(&mut rt, 70);
+    assert_eq!(run_on(&mut rt, "?BEEP(224);").unwrap(), "4");
+}
+
+/// A handle's number reaches whatever plays on it now, as it is the number
+/// of a place to play in: an old one has no sound of its own to tell apart.
+#[test]
+fn an_old_beep_handle_reaches_what_plays_there() {
+    let mut rt = runtime();
+    run_on(&mut rt, &format!("{WAVSET_SQUARE}:H=BEEP(224)")).unwrap();
+    frames(&mut rt, 70);
+    // It ended: this does nothing, and is no error.
+    run_on(&mut rt, "BEEPVOL 0,1:BEEPPIT 0,100:BEEPPAN 0,1:BEEPSTOP 0").unwrap();
+    for _ in 1..16 {
+        run_on(&mut rt, "BEEP 0").unwrap();
+    }
+    frames(&mut rt, 1);
+    run_on(&mut rt, "H=BEEP(224)").unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 1);
+    assert!(peak(&mut rt) > 0.05);
+    run_on(&mut rt, "BEEPVOL 0,0").unwrap();
+    frames(&mut rt, 1);
+    rt.sound.take_samples();
+    frames(&mut rt, 1);
+    assert_eq!(peak(&mut rt), 0.0);
+}
+
 /// BEEP of a waveform too short for a note is no error, and gives a handle.
 #[test]
 fn a_silent_beep_still_gives_a_handle() {

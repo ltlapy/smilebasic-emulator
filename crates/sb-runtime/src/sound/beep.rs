@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::inspect::{BeepInfo, BeepKind};
+use super::sampler::TICK;
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Wave};
@@ -20,6 +21,72 @@ const INSTRUMENT_FRAMES: u32 = 30;
 /// Frames an instrument's handle stays taken after letting go, for the
 /// note to die away.
 const RELEASE_FRAMES: u32 = 60;
+/// BEEP's volume a waveform plays at as it is, as BGMPLAY's is: it is a
+/// linear gain, not squared as MML's `V` is.
+const WAVE_VOLUME: f32 = 64.0;
+
+/// Samples from the start of a waveform's sound to the end of its note, at
+/// `ticks` of [`wave::BEEP_TICKS_A_SECOND`]. The sound engine moves on a
+/// step at a time, 0.96 of these ticks in each, the first step included;
+/// the note's level then takes one more step to fall.
+fn note_end(ticks: u64) -> usize {
+    ((ticks * 25).div_ceil(24) - 1) as usize * TICK
+}
+
+/// A waveform's note, and the one before it while that dies away.
+struct WaveNote {
+    voice: wave::Voice,
+    old: Option<wave::Voice>,
+    wave: Rc<Wave>,
+    /// The ticks of the passes so far, for those that repeat.
+    ticks: u64,
+}
+
+impl WaveNote {
+    fn voice(wave: &Rc<Wave>, pitch: i32, pan: i32) -> wave::Voice {
+        let mut v = wave::Voice::new(wave.clone(), None, wave.base_note, pitch, wave.beep_loop);
+        v.set_mix(127, 127, pan);
+        v
+    }
+
+    fn new(wave: Rc<Wave>, pitch: i32, pan: i32) -> WaveNote {
+        WaveNote {
+            voice: WaveNote::voice(&wave, pitch, pan),
+            old: None,
+            ticks: wave.beep_ticks.map_or(0, u64::from),
+            wave,
+        }
+    }
+
+    /// Ends the note. With the repeat flag the next pass starts in the same
+    /// place, the old note dying away over it, and this gives the samples
+    /// until that one ends.
+    fn end_note(&mut self, pitch: i32, pan: i32) -> Option<usize> {
+        if !self.wave.beep_repeats {
+            self.voice.release();
+            return None;
+        }
+        let new = WaveNote::voice(&self.wave, pitch, pan);
+        let mut old = std::mem::replace(&mut self.voice, new);
+        old.release();
+        self.old = Some(old);
+        let pass = self.wave.beep_ticks.map_or(0, u64::from);
+        let hold = note_end(self.ticks + pass) - note_end(self.ticks);
+        self.ticks += pass;
+        Some(hold)
+    }
+
+    /// Adds samples of the notes into the buffers.
+    fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
+        self.voice.render(left, right);
+        if let Some(old) = &mut self.old {
+            old.render(left, right);
+            if old.done() {
+                self.old = None;
+            }
+        }
+    }
+}
 
 enum Sounding {
     /// A preset effect, which there is nothing to play for.
@@ -31,7 +98,7 @@ enum Sounding {
         hold: u32,
         release: u32,
     },
-    Wave(wave::Voice),
+    Wave(Box<WaveNote>),
     /// A preset effect: a sequence on a synthesizer of its own, as it may
     /// take several channels. `tail` counts the frames left after it
     /// ends, for its notes to die away.
@@ -57,13 +124,17 @@ struct Beep {
     stopping: bool,
     /// Samples until a waveform's note is released; `None` for never.
     hold: Option<usize>,
+    /// BEEP gave its handle to the program: until the sound ends or is
+    /// stopped, a new BEEP does not take this one's place.
+    kept: bool,
 }
 
 pub struct Beeps {
     instruments: Option<Instruments>,
     synth: Option<Box<dyn Synth>>,
     beeps: Vec<Option<Beep>>,
-    /// Which handle the next BEEP tries first, so that handles go round.
+    /// Which handle the next BEEP tries first: it goes on rising, whether
+    /// the last has ended or not, and round after the last handle.
     next: usize,
     scratch: [Vec<f32>; 2],
 }
@@ -86,15 +157,16 @@ impl Beeps {
         }
     }
 
-    /// A free handle, or the one taken longest ago.
-    fn handle(&mut self) -> usize {
+    /// The next handle that no program holds to a sound still going, which
+    /// ends whatever played on it before; `None` if all are held. A handle
+    /// nobody took back goes to the next BEEP that gets there.
+    fn handle(&mut self) -> Option<usize> {
         let h = (0..HANDLES)
             .map(|i| (self.next + i) % HANDLES)
-            .find(|&h| self.beeps[h].is_none())
-            .unwrap_or(self.next);
+            .find(|&h| !self.beeps[h].as_ref().is_some_and(|b| b.kept))?;
         self.next = (h + 1) % HANDLES;
         self.stop_now(h);
-        h
+        Some(h)
     }
 
     /// Applies a handle's volume and pan to what it plays.
@@ -104,7 +176,7 @@ impl Beeps {
         };
         let (volume, pan) = (b.volume, b.pan);
         match &mut b.sounding {
-            Sounding::Wave(v) => v.set_mix(volume, 127, pan),
+            Sounding::Wave(note) => note.voice.set_mix(127, 127, pan),
             Sounding::Instrument { .. } => self.synth(|s| {
                 s.volume(h, volume);
                 s.pan(h, pan);
@@ -115,6 +187,8 @@ impl Beeps {
 
     /// Plays BEEP's `sound`, an instrument (`program` 0 to 127) or a
     /// waveform, or holds a handle for a preset effect, and gives the
+    /// handle, which `keep` makes the program's while the sound goes on.
+    /// When the program holds all of them, nothing plays and there is no
     /// handle.
     pub fn play(
         &mut self,
@@ -123,12 +197,11 @@ impl Beeps {
         pitch: i32,
         volume: i32,
         pan: i32,
-    ) -> usize {
-        let h = self.handle();
+        keep: bool,
+    ) -> Option<usize> {
+        let h = self.handle()?;
         let hold = match &what {
-            BeepSound::Wave(w) => w.beep_ticks.map(|ticks| {
-                (u64::from(ticks) * u64::from(RATE) / u64::from(wave::BEEP_TICKS_A_SECOND)) as usize
-            }),
+            BeepSound::Wave(w) => w.beep_ticks.map(|ticks| note_end(u64::from(ticks))),
             _ => None,
         };
         let sounding = match what {
@@ -163,11 +236,7 @@ impl Beeps {
                     release: RELEASE_FRAMES,
                 }
             }
-            BeepSound::Wave(w) => {
-                let key = w.base_note;
-                let looping = w.beep_loop;
-                Sounding::Wave(wave::Voice::new(w, None, key, pitch, looping))
-            }
+            BeepSound::Wave(w) => Sounding::Wave(Box::new(WaveNote::new(w, pitch, pan))),
         };
         self.beeps[h] = Some(Beep {
             sounding,
@@ -179,9 +248,10 @@ impl Beeps {
             fade: Ramp::at(1.0),
             stopping: false,
             hold,
+            kept: keep,
         });
         self.mix(h);
-        h
+        Some(h)
     }
 
     pub fn set_pitch(&mut self, h: usize, pitch: i32) {
@@ -190,7 +260,7 @@ impl Beeps {
         };
         b.pitch = pitch;
         match &mut b.sounding {
-            Sounding::Wave(v) => v.set_pitch(pitch),
+            Sounding::Wave(note) => note.voice.set_pitch(pitch),
             Sounding::Instrument { .. } => {
                 let from = b.start_pitch.div_euclid(100) * 100;
                 self.synth(|s| s.bend(h, pitch - from));
@@ -225,12 +295,25 @@ impl Beeps {
         self.beeps[h] = None;
     }
 
-    /// Stops a handle's sound, fading over `frames`.
+    /// Stops a handle's sound, fading over `frames`, and lets the next BEEP
+    /// have the handle. Without a fade a waveform still takes the sound
+    /// engine's step to fall.
     pub fn stop(&mut self, h: usize, frames: u32) {
         match &mut self.beeps[h] {
             Some(b) if frames > 0 => {
                 b.fade.to(0.0, frames);
                 b.stopping = true;
+                b.kept = false;
+            }
+            Some(
+                b @ Beep {
+                    sounding: Sounding::Wave(_),
+                    ..
+                },
+            ) => {
+                b.fade.over_samples(0.0, TICK);
+                b.stopping = true;
+                b.kept = false;
             }
             _ => self.stop_now(h),
         }
@@ -300,26 +383,29 @@ impl Beeps {
             };
             let ended = match &mut b.sounding {
                 Sounding::Preset => true,
-                Sounding::Wave(v) => {
+                Sounding::Wave(note) => {
                     wl.fill(0.0);
                     wr.fill(0.0);
-                    let until = b.hold.map_or(n, |hold| hold.min(n));
-                    v.render(&mut wl[..until], &mut wr[..until]);
-                    if let Some(hold) = &mut b.hold {
-                        *hold -= until;
-                        if *hold == 0 {
-                            b.hold = None;
-                            v.release();
+                    let mut at = 0;
+                    while at < n {
+                        let until = b.hold.map_or(n, |hold| (at + hold).min(n));
+                        note.render(&mut wl[at..until], &mut wr[at..until]);
+                        if let Some(hold) = &mut b.hold {
+                            *hold -= until - at;
+                            if *hold == 0 {
+                                b.hold = note.end_note(b.pitch, b.pan);
+                            }
                         }
+                        at = until;
                     }
-                    v.render(&mut wl[until..], &mut wr[until..]);
+                    let volume = b.volume as f32 / WAVE_VOLUME;
                     for i in 0..n {
-                        let gain = b.fade.value as f32;
+                        let gain = b.fade.value as f32 * volume;
                         left[i] += wl[i] * gain;
                         right[i] += wr[i] * gain;
                         b.fade.step_sample();
                     }
-                    v.done()
+                    note.voice.done() && note.old.is_none()
                 }
                 Sounding::Sequence {
                     player,

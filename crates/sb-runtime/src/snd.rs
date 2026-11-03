@@ -525,8 +525,7 @@ impl Runtime {
                     .collect();
                 let looped = (start, end + 1);
                 // The flag repeats BEEP's note for ever, if it has one.
-                let ticks = beep_ticks(end + 1, rate as u32);
-                let beep_ticks = (!beep_loop || ticks == 0).then_some(ticks);
+                let beep_ticks = Some(beep_ticks(end + 1, rate as u32));
                 self.sound.waves.borrow_mut().define(
                     n,
                     Wave {
@@ -537,6 +536,7 @@ impl Runtime {
                         looped,
                         beep_loop,
                         beep_ticks,
+                        beep_repeats: beep_loop,
                         envelope,
                     },
                 );
@@ -556,16 +556,17 @@ impl Runtime {
                     // UNVERIFIED: without SmileBASIC's own sounds, presets are
                     // silent.
                     0..=PRESET_BEEPS => BeepSound::Preset,
-                    224..=255 => match self.sound.waves.borrow().get(n) {
+                    224..=255 => match self.sound.beep_wave(n) {
                         Some(w) if w.beep_ticks != Some(0) => BeepSound::Wave(w),
                         _ => BeepSound::Preset,
                     },
                     256..=383 => BeepSound::Instrument(n - 256),
                     n => return Err(out_of_range("sound", n)),
                 };
-                let h = self.sound.beeps.play(n, what, pitch, volume, pan);
+                let keep = matches!(want, Want::Value);
+                let h = self.sound.beeps.play(n, what, pitch, volume, pan, keep);
                 Ok(match want {
-                    Want::Value => vec![Value::Int(h as i32)],
+                    Want::Value => vec![Value::Int(h.map_or(-1, |h| h as i32))],
                     _ => vec![],
                 })
             }

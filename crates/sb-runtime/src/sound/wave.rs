@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use super::RATE;
-use super::bank::Adshr;
+use super::bank::{Adshr, Bank, Reader};
 use super::sampler;
 
 /// A waveform: one cycle, or a sample with a loop.
@@ -23,11 +23,13 @@ pub struct Wave {
     /// Where the loop starts and ends (exclusive); the end is also where
     /// the definition ends.
     pub looped: (usize, usize),
-    /// Whether BEEP loops it.
+    /// Whether BEEP's note loops it.
     pub beep_loop: bool,
     /// How long BEEP holds its note, in [`BEEP_TICKS_A_SECOND`]; `None` for
     /// as long as it is let. 0 plays nothing.
     pub beep_ticks: Option<u32>,
+    /// Whether BEEP plays one such note after another until stopped.
+    pub beep_repeats: bool,
     pub envelope: Envelope,
 }
 
@@ -77,8 +79,6 @@ pub const BEEP_TICKS_A_SECOND: u32 = 192;
 
 /// BEEP's note for a waveform of `samples` at `rate`: as long as a pass of
 /// it, cut to whole ticks, so too short a waveform has no note.
-// UNVERIFIED: expected of SmileBASIC 4; TEST58 heard only that a
-// 32-sample waveform is silent.
 pub fn beep_ticks(samples: usize, rate: u32) -> u32 {
     (samples as u64 * u64::from(BEEP_TICKS_A_SECOND) / u64::from(rate.max(1)))
         .min(u64::from(u32::MAX)) as u32
@@ -102,6 +102,7 @@ pub fn eight_bit(bytes: &[f64], pass: usize, base_note: i32, envelope: Envelope)
         looped: (0, pass),
         beep_loop: true,
         beep_ticks: Some(beep_ticks(pass, EIGHT_BIT_RATE as u32)),
+        beep_repeats: false,
         envelope,
     }
 }
@@ -125,6 +126,7 @@ pub fn pulse(program: i32) -> Wave {
         looped: (0, 8),
         beep_loop: true,
         beep_ticks: None,
+        beep_repeats: false,
         envelope: Envelope::ORGAN,
     }
 }
@@ -151,8 +153,42 @@ pub fn noise() -> Wave {
         looped: (0, 4096),
         beep_loop: true,
         beep_ticks: None,
+        beep_repeats: false,
         envelope: Envelope::ORGAN,
     }
+}
+
+/// What BEEP plays for @224 to @255 until WAVSET or WAVSETA sets them: the
+/// sound archive holds a sine for @224, and SmileBASIC 4 starts all of them
+/// on that one, with a second's note at the sine's own pitch. `None` without
+/// the sound archive's bank.
+pub fn unset(bank: &Bank) -> Option<Wave> {
+    let region = bank.region(224, 57)?;
+    let info = bank.waves.get(usize::from(region.wave))?;
+    let mut reader = Reader::default();
+    let samples: Vec<f32> = (0..info.len)
+        .map_while(|_| reader.next(info, &bank.data))
+        .map(|s| f32::from(s) / 32768.0)
+        .collect();
+    let end = samples.len();
+    let e = region.envelope;
+    let v = i32::from;
+    Some(Wave {
+        samples,
+        base_note: i32::from(region.original_key),
+        rate: Some(f64::from(info.rate)),
+        cycle: 0.0,
+        looped: (info.loop_start.map_or(0, |s| s as usize), end),
+        beep_loop: info.loop_start.is_some(),
+        beep_ticks: Some(BEEP_TICKS_A_SECOND),
+        beep_repeats: false,
+        envelope: Envelope {
+            attack: v(e.attack),
+            decay: v(e.decay),
+            sustain: v(e.sustain),
+            release: v(e.release),
+        },
+    })
 }
 
 /// The waveforms @216 to @255 play.
@@ -569,6 +605,54 @@ mod tests {
         let (l, r) = rms(&mut v, 4800);
         let hard_left = 0.125 * std::f32::consts::SQRT_2 * sampler::square(64);
         assert!((l - hard_left).abs() < 0.001 && r == 0.0);
+    }
+
+    #[test]
+    fn what_an_unset_waveform_plays_comes_from_the_archives_224() {
+        let samples: [i16; 4] = [0, 16384, 0, -16384];
+        let adshr = Adshr {
+            attack: 127,
+            decay: 127,
+            sustain: 127,
+            hold: 0,
+            release: 127,
+        };
+        let bank = Bank {
+            instruments: (0..225)
+                .map(|p| if p == 224 { 0..1 } else { 0..0 })
+                .collect(),
+            regions: vec![crate::sound::bank::Region {
+                keys: (0, 95),
+                wave: 0,
+                original_key: 57,
+                volume: 127,
+                pan: 64,
+                envelope: adshr,
+                ignore_note_off: false,
+            }],
+            waves: vec![crate::sound::bank::WaveInfo {
+                rate: 28160,
+                len: 4,
+                loop_start: Some(0),
+                encoding: crate::sound::bank::Encoding::Pcm16,
+                data: 0..8,
+            }],
+            data: samples.iter().flat_map(|s| s.to_le_bytes()).collect(),
+        };
+        let w = unset(&bank).unwrap();
+        assert_eq!(w.samples, [0.0, 0.5, 0.0, -0.5]);
+        assert_eq!(w.base_note, 57);
+        assert_eq!(w.rate, Some(28160.0));
+        assert_eq!(w.looped, (0, 4));
+        assert_eq!(w.beep_ticks, Some(BEEP_TICKS_A_SECOND));
+        assert!(w.beep_loop && !w.beep_repeats);
+        let none = Bank {
+            instruments: Vec::new(),
+            regions: Vec::new(),
+            waves: Vec::new(),
+            data: Vec::new(),
+        };
+        assert_eq!(unset(&none), None);
     }
 
     #[test]
