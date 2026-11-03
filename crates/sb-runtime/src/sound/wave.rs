@@ -25,6 +25,9 @@ pub struct Wave {
     pub looped: (usize, usize),
     /// Whether BEEP loops it.
     pub beep_loop: bool,
+    /// How long BEEP holds its note, in [`BEEP_TICKS_A_SECOND`]; `None` for
+    /// as long as it is let. 0 plays nothing.
+    pub beep_ticks: Option<u32>,
     pub envelope: Envelope,
 }
 
@@ -69,6 +72,18 @@ const EIGHT_BIT: f32 = 1.0 / 128.0;
 /// Samples a second 8-bit waveforms play at their reference pitch.
 pub const EIGHT_BIT_RATE: f64 = 28160.0;
 
+/// What BEEP's notes of a user waveform are counted in.
+pub const BEEP_TICKS_A_SECOND: u32 = 192;
+
+/// BEEP's note for a waveform of `samples` at `rate`: as long as a pass of
+/// it, cut to whole ticks, so too short a waveform has no note.
+// UNVERIFIED: expected of SmileBASIC 4; TEST58 heard only that a
+// 32-sample waveform is silent.
+pub fn beep_ticks(samples: usize, rate: u32) -> u32 {
+    (samples as u64 * u64::from(BEEP_TICKS_A_SECOND) / u64::from(rate.max(1)))
+        .min(u64::from(u32::MAX)) as u32
+}
+
 /// A user waveform from WAVSET or WAVSETA's 8-bit form: samples offset
 /// by 128, stretched to `pass` samples by taking the one at or before
 /// each, and played at [`EIGHT_BIT_RATE`] at the base note. WAVSET
@@ -86,6 +101,7 @@ pub fn eight_bit(bytes: &[f64], pass: usize, base_note: i32, envelope: Envelope)
         cycle: 0.0,
         looped: (0, pass),
         beep_loop: true,
+        beep_ticks: Some(beep_ticks(pass, EIGHT_BIT_RATE as u32)),
         envelope,
     }
 }
@@ -108,6 +124,7 @@ pub fn pulse(program: i32) -> Wave {
         cycle: 8.0,
         looped: (0, 8),
         beep_loop: true,
+        beep_ticks: None,
         envelope: Envelope::ORGAN,
     }
 }
@@ -133,6 +150,7 @@ pub fn noise() -> Wave {
         cycle: 4096.0,
         looped: (0, 4096),
         beep_loop: true,
+        beep_ticks: None,
         envelope: Envelope::ORGAN,
     }
 }

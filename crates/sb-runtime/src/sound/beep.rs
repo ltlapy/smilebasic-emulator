@@ -55,6 +55,8 @@ struct Beep {
     pan: i32,
     fade: Ramp,
     stopping: bool,
+    /// Samples until a waveform's note is released; `None` for never.
+    hold: Option<usize>,
 }
 
 pub struct Beeps {
@@ -123,6 +125,12 @@ impl Beeps {
         pan: i32,
     ) -> usize {
         let h = self.handle();
+        let hold = match &what {
+            BeepSound::Wave(w) => w.beep_ticks.map(|ticks| {
+                (u64::from(ticks) * u64::from(RATE) / u64::from(wave::BEEP_TICKS_A_SECOND)) as usize
+            }),
+            _ => None,
+        };
         let sounding = match what {
             BeepSound::Preset => Sounding::Preset,
             BeepSound::Sequence(seq) => match &self.instruments {
@@ -170,6 +178,7 @@ impl Beeps {
             pan,
             fade: Ramp::at(1.0),
             stopping: false,
+            hold,
         });
         self.mix(h);
         h
@@ -294,7 +303,16 @@ impl Beeps {
                 Sounding::Wave(v) => {
                     wl.fill(0.0);
                     wr.fill(0.0);
-                    v.render(&mut wl, &mut wr);
+                    let until = b.hold.map_or(n, |hold| hold.min(n));
+                    v.render(&mut wl[..until], &mut wr[..until]);
+                    if let Some(hold) = &mut b.hold {
+                        *hold -= until;
+                        if *hold == 0 {
+                            b.hold = None;
+                            v.release();
+                        }
+                    }
+                    v.render(&mut wl[until..], &mut wr[until..]);
                     for i in 0..n {
                         let gain = b.fade.value as f32;
                         left[i] += wl[i] * gain;

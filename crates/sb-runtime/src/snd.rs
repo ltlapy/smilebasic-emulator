@@ -17,7 +17,7 @@ use crate::sound::mml::{self, Song};
 use crate::sound::pcm::{FULL, Source};
 use crate::sound::reverb::Settings;
 use crate::sound::seq::Kind;
-use crate::sound::wave::{Envelope, Wave, eight_bit};
+use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, Wave, beep_ticks, eight_bit};
 use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, Recorder, TRACKS, frames};
 
 /// The preset songs that end rather than loop, and their lengths in
@@ -173,6 +173,15 @@ fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
         }
     }
     Some(Some(out))
+}
+
+/// WAVSET's waveform: 512 samples, with a second's note for BEEP whatever
+/// their length.
+fn wavset_wave(bytes: &[f64], base_note: i32, envelope: Envelope) -> Wave {
+    Wave {
+        beep_ticks: Some(BEEP_TICKS_A_SECOND),
+        ..eight_bit(bytes, 512, base_note, envelope)
+    }
 }
 
 /// WAVSET's instrument number and envelope.
@@ -443,7 +452,7 @@ impl Runtime {
                 if let Some(bytes) = wave_groups(&hex).ok_or_else(illegal)? {
                     let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                     let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
-                    let wave = eight_bit(&bytes, 512, base_note, envelope);
+                    let wave = wavset_wave(&bytes, base_note, envelope);
                     self.sound.waves.borrow_mut().define(n, wave);
                     return Ok(vec![]);
                 }
@@ -462,7 +471,7 @@ impl Runtime {
                     .ok_or_else(illegal)?;
                 let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
-                let wave = eight_bit(&bytes, 512, base_note, envelope);
+                let wave = wavset_wave(&bytes, base_note, envelope);
                 self.sound.waves.borrow_mut().define(n, wave);
                 Ok(vec![])
             }
@@ -515,6 +524,9 @@ impl Runtime {
                     .map(|&x| f32::from(x.trunc() as i64 as i16) / 32768.0)
                     .collect();
                 let looped = (start, end + 1);
+                // The flag repeats BEEP's note for ever, if it has one.
+                let ticks = beep_ticks(end + 1, rate as u32);
+                let beep_ticks = (!beep_loop || ticks == 0).then_some(ticks);
                 self.sound.waves.borrow_mut().define(
                     n,
                     Wave {
@@ -524,6 +536,7 @@ impl Runtime {
                         cycle: 0.0,
                         looped,
                         beep_loop,
+                        beep_ticks,
                         envelope,
                     },
                 );
@@ -544,8 +557,8 @@ impl Runtime {
                     // silent.
                     0..=PRESET_BEEPS => BeepSound::Preset,
                     224..=255 => match self.sound.waves.borrow().get(n) {
-                        Some(w) => BeepSound::Wave(w),
-                        None => BeepSound::Preset,
+                        Some(w) if w.beep_ticks != Some(0) => BeepSound::Wave(w),
+                        _ => BeepSound::Preset,
                     },
                     256..=383 => BeepSound::Instrument(n - 256),
                     n => return Err(out_of_range("sound", n)),

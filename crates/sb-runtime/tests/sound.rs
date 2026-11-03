@@ -350,6 +350,65 @@ fn chkmml_takes_macros_bgmplay_refuses() {
     assert_eq!(e.kind, ErrorKind::IllegalMml);
 }
 
+/// BEEP of a user waveform holds a note as long as a pass of it, which for a
+/// short waveform is none at all (TEST58's silence).
+#[test]
+fn beep_of_a_waveform_lasts_as_long_as_it() {
+    let beep = |source: &str, at: usize| {
+        let mut rt = runtime();
+        run_on(&mut rt, source).unwrap();
+        frames(&mut rt, at);
+        rt.sound.take_samples();
+        frames(&mut rt, 1);
+        peak(&mut rt)
+    };
+    let fill = "VAR I:FOR I=0 TO LEN(W%)-1:W%[I]=228:IF I MOD 16>=8 THEN W%[I]=28\nNEXT\n";
+    // 32 samples: a millisecond, less than the shortest note.
+    let short = format!("DIM W%[32]\n{fill}WAVSETA 224,127,127,127,127,W%,69:H=BEEP(224,0,127)");
+    assert_eq!(beep(&short, 2), 0.0);
+    // TEST58 went on with a start equal to the end, which changes nothing.
+    assert_eq!(
+        beep(
+            &format!("{short}:WAVSETA 224,127,127,127,127,W%,69,5,5:H=BEEP(224,0,127)"),
+            2
+        ),
+        0.0
+    );
+    // WAVSET's string: a second, whatever its length.
+    let wavset = "WAVSET 224,127,127,127,127,\"E020\"*8:H=BEEP(224,0,127)";
+    assert!(beep(wavset, 5) > 0.01);
+    assert!(beep(wavset, 55) > 0.01);
+    assert_eq!(beep(wavset, 65), 0.0);
+    // A longer array, by the 8-bit form, is 16384 samples once rounded up to
+    // a power of two: 0.58 seconds, 35 frames.
+    let long = format!("DIM W%[14080]\n{fill}WAVSETA 224,127,127,127,127,W%,69:H=BEEP(224,0,127)");
+    assert!(beep(&long, 30) > 0.01);
+    assert_eq!(beep(&long, 40), 0.0);
+    // By 16-bit form, at its own rate: a quarter of a second, or for ever.
+    let sixteen = "DIM W%[1000]:FILL W%,20000:WAVSETA 224,127,127,127,127,W%,69,0,999,4000";
+    assert!(beep(&format!("{sixteen}:H=BEEP(224,0,127)"), 10) > 0.01);
+    assert_eq!(beep(&format!("{sixteen}:H=BEEP(224,0,127)"), 20), 0.0);
+    let flagged = format!("{sixteen},0,1:H=BEEP(224,0,127)");
+    assert!(beep(&flagged, 60) > 0.01);
+    // The same instrument is not cut short in a song.
+    let song = format!("{short}:BEEPSTOP:BGMPLAY \"@224O4A1\"");
+    assert!(beep(&song, 30) > 0.01);
+}
+
+/// BEEP of a waveform too short for a note is no error, and gives a handle.
+#[test]
+fn a_silent_beep_still_gives_a_handle() {
+    let mut rt = runtime();
+    assert_eq!(
+        run_on(
+            &mut rt,
+            "DIM W%[32]:WAVSETA 224,127,127,127,127,W%,69:?BEEP(224)"
+        )
+        .unwrap(),
+        "0"
+    );
+}
+
 #[test]
 fn beeps_take_handles() {
     let mut rt = runtime();
