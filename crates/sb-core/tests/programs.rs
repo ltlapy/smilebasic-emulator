@@ -1416,6 +1416,27 @@ fn growing_by_one_needs_the_new_block_beside_the_old() {
     );
 }
 
+/// Which argument errors name, as TEST58 saw them.
+#[test]
+fn errors_name_their_arguments() {
+    let wrong = |source: &str, kind: ErrorKind, arg: u8| {
+        let e = run(source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, Some(arg)), "{source}");
+    };
+    let too_long = ErrorKind::StringTooLong;
+    wrong("VAR F$=\"%.1022F\",X=1.5:?FORMAT$(F$,X)", too_long, 1);
+    wrong("VAR F$=\"%1024F\",X=1.5:?FORMAT$(F$,X)", too_long, 1);
+    let illegal = ErrorKind::IllegalFunctionCall;
+    let mismatch = ErrorKind::TypeMismatch;
+    let arrays = "VAR E,X=1:DIM A[4],B[3]:";
+    wrong(&format!("{arrays}RINGCOPY A,0,B,-1,1 OUT E"), illegal, 3);
+    wrong(&format!("{arrays}RINGCOPY A,0,B,4,0 OUT E"), illegal, 4);
+    wrong(&format!("{arrays}RINGCOPY A,0,B,1,3 OUT E"), illegal, 4);
+    wrong(&format!("{arrays}RINGCOPY A,0,B,0,-1 OUT E"), illegal, 4);
+    wrong(&format!("{arrays}RINGCOPY X,0,B"), mismatch, 0);
+    wrong(&format!("{arrays}RINGCOPY A,0,X"), mismatch, 2);
+}
+
 /// What RINGCOPY looks at and in what order (TEST57).
 #[test]
 fn ringcopy_checks_in_order() {
