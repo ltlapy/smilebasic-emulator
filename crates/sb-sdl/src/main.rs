@@ -1793,9 +1793,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
         }
         // A pointer the program moved with MOUSE stays there until the
-        // real one moves, and the real one goes there too.
+        // real one moves, and the real one goes there too, unless Settings
+        // keep the computer's pointer where it is: then the program sees
+        // the move only until the next frame, which reads the real one.
         let (sent, now) = (&mut controls.mouse, machine.rt.input.live.mouse);
-        let fed = !modal && !paused && !machine.editor_has_keys();
+        let fed = !modal
+            && !paused
+            && !machine.editor_has_keys()
+            && !machine.rt.settings.keep_mouse_cursor;
         if fed && (sent.x, sent.y, sent.display) != (now.x, now.y, now.display) {
             let px = out_w as f32 / win_w.max(1) as f32;
             let (x, y) = if (sent.x, sent.y) != (now.x, now.y) {

@@ -86,7 +86,9 @@ known.
   keyboard as a controller" turns this off.
 - A program that hides the mouse cursor (`SYSPARAM "MOUSECURSOR",0`,
   as programs start) hides the computer's cursor over the window, until
-  the menu bar shows; Settings can keep it shown.
+  the menu bar shows; Settings can keep it shown. `MOUSE X,Y` moves the
+  computer's pointer too; Settings can keep it where it is (the program
+  then sees the move until the next frame).
 
 ## System settings
 

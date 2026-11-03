@@ -80,7 +80,8 @@ pub struct Settings {
     /// the 16-pixel one.
     pub ui_font: FontSize,
     /// The mouse cursor stays shown when a program hides it with
-    /// SYSPARAM "MOUSECURSOR".
+    /// SYSPARAM "MOUSECURSOR", and stays where it is when a program moves
+    /// it with MOUSE X,Y. (The key keeps its old name.)
     pub keep_mouse_cursor: bool,
     /// What only #SYS's programs may do works in any program: so far,
     /// HELPINFO OUT reading the editor's cursor.

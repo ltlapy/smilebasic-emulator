@@ -180,10 +180,10 @@ const PAGES: &[Page] = &[
                 |s| s.keyboard_buttons ^= true,
             ),
             check(
-                "Ignore programs hiding the mouse cursor",
-                "Keep the mouse cursor visible over the screen even while a program \
-                 hides it with SYSPARAM \"MOUSECURSOR\",0, as programs do when they \
-                 start. Off by default.",
+                "Ignore programs hiding or moving the mouse cursor",
+                "The cursor stays visible even while a program hides it with SYSPARAM \
+                 \"MOUSECURSOR\",0, and stays where it is when a program moves it \
+                 with MOUSE X,Y. Off by default.",
                 |s| s.keep_mouse_cursor,
                 |s| s.keep_mouse_cursor ^= true,
             ),
