@@ -999,15 +999,70 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
     Ok(())
 }
 
+/// Before an element comes off `len` others of `size` bytes: whether the
+/// array may shrink. Its block changes size each 64 bytes, and a smaller
+/// block is a new one that has to fit beside the old.
+#[inline]
+fn can_shrink(len: usize, size: usize, elem: ElemType) -> Result<bool> {
+    if (len - 1).wrapping_mul(size) & 63 == 0 {
+        return smaller_block(elem, len);
+    }
+    Ok(true)
+}
+
+#[inline(never)]
+fn smaller_block(elem: ElemType, len: usize) -> Result<bool> {
+    crate::memory::shrink(
+        crate::memory::array_bytes(elem, len),
+        crate::memory::array_bytes(elem, len - 1),
+    )
+}
+
+/// POP or SHIFT of what cannot shrink: the length stays and there is no
+/// error, but the element is still given, and SHIFT has still moved the
+/// rest down, leaving the last one twice.
+// UNVERIFIED: expected of SmileBASIC 4; only POP's length was seen.
+#[cold]
+fn take_keeping_length<T: Clone>(v: &mut [T], end: End) -> T {
+    let last = v.len() - 1;
+    match end {
+        End::Back => v[last].clone(),
+        End::Front => {
+            let first = v[0].clone();
+            v.rotate_left(1);
+            if last > 0 {
+                v[last] = v[last - 1].clone();
+            }
+            first
+        }
+    }
+}
+
 fn take(target: &Value, end: End) -> Result<Value> {
     match target {
         Value::Str(s) => {
             let mut s = s.borrow_mut();
+            let len = s.len();
+            if len == 0 {
+                return Err(ErrorKind::SubscriptOutOfRange.into());
+            }
+            // A string's block changes size each 64 characters.
+            if (len - 1) & 63 == 0
+                && !crate::memory::shrink(
+                    crate::memory::string_bytes(len),
+                    crate::memory::string_bytes(len - 1),
+                )?
+            {
+                return Ok(string(vec![take_keeping_length(&mut s, end)]));
+            }
             let c = match end {
-                End::Back => s.pop(),
-                End::Front => (!s.is_empty()).then(|| s.remove(0)),
+                End::Back => s[len - 1],
+                End::Front => s.remove(0),
             };
-            Ok(string(vec![c.ok_or(ErrorKind::SubscriptOutOfRange)?]))
+            if let End::Back = end {
+                s.truncate(len - 1);
+            }
+            Ok(string(vec![c]))
         }
         Value::Array(a) => {
             let mut a = a.borrow_mut();
@@ -1020,9 +1075,24 @@ fn take(target: &Value, end: End) -> Result<Value> {
                 End::Front => 0,
             };
             let value = match &mut a.data {
-                ArrayData::Int(v) => Value::Int(v.remove(at)),
-                ArrayData::Real(v) => Value::Real(v.remove(at)),
-                ArrayData::Str(v) => Value::Str(v.remove(at)),
+                ArrayData::Int(v) => {
+                    if !can_shrink(v.len(), 4, ElemType::Int)? {
+                        return Ok(Value::Int(take_keeping_length(v, end)));
+                    }
+                    Value::Int(v.remove(at))
+                }
+                ArrayData::Real(v) => {
+                    if !can_shrink(v.len(), 8, ElemType::Real)? {
+                        return Ok(Value::Real(take_keeping_length(v, end)));
+                    }
+                    Value::Real(v.remove(at))
+                }
+                ArrayData::Str(v) => {
+                    if !can_shrink(v.len(), 8, ElemType::Str)? {
+                        return Ok(Value::Str(take_keeping_length(v, end)));
+                    }
+                    Value::Str(v.remove(at))
+                }
             };
             a.dims[0] = a.len();
             Ok(value)
@@ -1211,6 +1281,141 @@ mod tests {
             out.iter().map(|v| as_int(v.clone())).collect::<Vec<_>>(),
             [0x80, 0x11, 0x22, 0x33]
         );
+    }
+
+    /// With little memory free, by a count just made.
+    fn little_free(free: usize) {
+        crate::memory::counted_bytes(crate::memory::TOTAL as usize - free, true);
+    }
+
+    /// With plenty free, by a count made a while ago.
+    fn plenty_free() {
+        crate::memory::counted_bytes(0, false);
+    }
+
+    fn int_array(len: usize) -> Value {
+        let a = call("ARRAY%", &[Value::Int(len as i32)]).unwrap();
+        let Value::Array(array) = &a else { panic!() };
+        let mut array = array.borrow_mut();
+        for i in 0..len {
+            array.set(i, Value::Int(i as i32 + 1)).unwrap();
+        }
+        drop(array);
+        a
+    }
+
+    fn one(name: &str, a: &Value) -> Value {
+        call(name, std::slice::from_ref(a)).unwrap()
+    }
+
+    #[test]
+    fn pop_with_no_room_for_a_smaller_block_keeps_the_length() {
+        // 40001 ints, whose next size down is another block.
+        let a = int_array(40001);
+        little_free(1000);
+        assert_eq!(as_int(one("POP", &a)), 40001);
+        assert_eq!(as_int(one("LEN", &a)), 40001);
+        little_free(1000);
+        assert_eq!(as_int(one("POP", &a)), 40001);
+        assert_eq!(as_int(one("LEN", &a)), 40001);
+        // Within a block, an element comes off with no new block.
+        little_free(1000);
+        call("PUSH", &[a.clone(), Value::Int(9)]).unwrap();
+        assert_eq!(as_int(one("POP", &a)), 9);
+        assert_eq!(as_int(one("LEN", &a)), 40001);
+        // With room it does shrink.
+        plenty_free();
+        assert_eq!(as_int(one("POP", &a)), 40001);
+        assert_eq!(as_int(one("LEN", &a)), 40000);
+    }
+
+    #[test]
+    fn taking_asks_for_a_count_before_changing_anything() {
+        let a = int_array(40001);
+        // What is known says it may not fit, with no count behind it.
+        crate::memory::counted_bytes(crate::memory::TOTAL as usize, false);
+        for name in ["POP", "SHIFT"] {
+            let e = call(name, std::slice::from_ref(&a)).unwrap_err();
+            assert_eq!(e.kind, ErrorKind::MemoryCheck);
+        }
+        let Value::Array(array) = &a else { panic!() };
+        let array = array.borrow();
+        assert_eq!(array.len(), 40001);
+        assert_eq!(as_int(array.get(0)), 1);
+        assert_eq!(as_int(array.get(40000)), 40001);
+    }
+
+    #[test]
+    fn shift_with_no_room_moves_the_rest_down_and_keeps_the_length() {
+        let a = int_array(40001);
+        little_free(1000);
+        assert_eq!(as_int(one("SHIFT", &a)), 1);
+        let Value::Array(array) = &a else { panic!() };
+        let array = array.borrow();
+        assert_eq!(array.len(), 40001);
+        assert_eq!(as_int(array.get(0)), 2);
+        assert_eq!(as_int(array.get(39999)), 40001);
+        assert_eq!(as_int(array.get(40000)), 40001);
+    }
+
+    #[test]
+    fn string_pop_and_shift_with_no_room_keep_the_length() {
+        let chars = 64 * 800 + 1;
+        let mut text = vec![u16::from(b'A'); chars];
+        text[0] = u16::from(b'F');
+        text[chars - 1] = u16::from(b'L');
+        let v = Value::Str(crate::value::new_str(text));
+        little_free(1000);
+        assert_eq!(as_string(one("POP", &v)), "L");
+        little_free(1000);
+        assert_eq!(as_string(one("SHIFT", &v)), "F");
+        let Value::Str(s) = &v else { panic!() };
+        let s = s.borrow();
+        assert_eq!(s.len(), chars);
+        assert_eq!(s[0], u16::from(b'A'));
+        assert_eq!(s[chars - 2], u16::from(b'L'));
+        assert_eq!(s[chars - 1], u16::from(b'L'));
+    }
+
+    #[test]
+    fn small_blocks_always_shrink() {
+        let a = int_array(1601);
+        little_free(0);
+        assert_eq!(as_int(one("POP", &a)), 1601);
+        assert_eq!(as_int(one("LEN", &a)), 1600);
+    }
+
+    #[test]
+    fn remove_with_no_room_moves_the_rest_down_then_is_out_of_memory() {
+        let a = int_array(40001);
+        little_free(1000);
+        let e = call("REMOVE", &[a.clone(), Value::Int(0), Value::Int(1)]).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::OutOfMemory);
+        let Value::Array(array) = &a else { panic!() };
+        assert_eq!(array.borrow().len(), 40001);
+        assert_eq!(as_int(array.borrow().get(0)), 2);
+        // Asked for a count, it has changed nothing.
+        plenty_free();
+        let b = int_array(40001);
+        crate::memory::counted_bytes(crate::memory::TOTAL as usize, false);
+        let e = call("REMOVE", &[b.clone(), Value::Int(0)]).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::MemoryCheck);
+        assert_eq!(as_int(one("LEN", &b)), 40001);
+        plenty_free();
+        assert_eq!(as_int(one("SHIFT", &b)), 1);
+    }
+
+    #[test]
+    fn resize_with_no_room_for_a_smaller_block_is_out_of_memory() {
+        let a = int_array(40001);
+        little_free(1000);
+        let e = call("RESIZE", &[a.clone(), Value::Int(40000)]).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::OutOfMemory);
+        assert_eq!(as_int(one("LEN", &a)), 40001);
+        // A block small enough is not looked at.
+        little_free(1000);
+        call("RESIZE", &[a.clone(), Value::Int(100)]).unwrap();
+        assert_eq!(as_int(one("LEN", &a)), 100);
     }
 
     #[test]

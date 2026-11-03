@@ -18,6 +18,8 @@
 //! Small requests do not stop to look; the VM counts at the start of a
 //! slice once enough has been made since the last time, and refuses there
 //! if the program holds more than there is.
+//!
+//! A block that gets smaller is a new block too, see [`shrink`].
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -160,6 +162,28 @@ pub fn grow(old: usize, new: usize) -> Result<()> {
     big_request(new, new - old)
 }
 
+/// A block going from `old` bytes to `new`, by something that has done
+/// nothing yet and can run again: whether it may. A smaller block is a new
+/// one as well, which has to fit while the old one is still held, and each
+/// caller says what happens when it does not. Blocks under [`BIG_REQUEST`]
+/// are always let through.
+#[inline]
+pub fn shrink(old: usize, new: usize) -> Result<bool> {
+    if new >= old || new < BIG_REQUEST {
+        return Ok(true);
+    }
+    big_shrink(new)
+}
+
+#[inline(never)]
+fn big_shrink(new: usize) -> Result<bool> {
+    match big_request(new, 0) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind == ErrorKind::OutOfMemory => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// `needs` has to fit in what is free, which leaves `adds` more live.
 #[inline(never)]
 fn big_request(needs: usize, adds: usize) -> Result<()> {
@@ -189,6 +213,16 @@ pub fn counted(tally: &Tally, then: bool) {
     MADE.set(0);
     DUE.set(MIN_BETWEEN_COUNTS.max(tally.bytes / 4).max(between));
     EXACT.set(then);
+}
+
+/// [`counted`], for tests elsewhere, of a count that came to `bytes`.
+#[cfg(test)]
+pub(crate) fn counted_bytes(bytes: usize, then: bool) {
+    let tally = Tally {
+        bytes,
+        ..Tally::default()
+    };
+    counted(&tally, then);
 }
 
 /// Counts each string and array once, however many values refer to it.
@@ -390,6 +424,33 @@ mod tests {
         );
         grow(old, new).unwrap();
         assert_eq!(leave().made, 64);
+    }
+
+    #[test]
+    fn shrinking_needs_the_smaller_block_beside_the_old() {
+        let mb = 1 << 20;
+        // The same block, or a small one, is never looked at.
+        fresh(TOTAL as usize);
+        assert!(shrink(4 * mb, 4 * mb).unwrap());
+        assert!(shrink(4 * mb, BIG_REQUEST - 64).unwrap());
+        // Not known yet: nothing is decided until the count.
+        let e = shrink(4 * mb, 4 * mb - 64).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::MemoryCheck);
+        // The count says it does not fit: no error, but no.
+        let tally = Tally {
+            bytes: TOTAL as usize - mb,
+            ..Tally::default()
+        };
+        counted(&tally, true);
+        assert!(!shrink(4 * mb, 4 * mb - 64).unwrap());
+        // The count says it fits, and nothing more is live for that.
+        let tally = Tally {
+            bytes: 8 * mb,
+            ..Tally::default()
+        };
+        counted(&tally, true);
+        assert!(shrink(4 * mb, 4 * mb - 64).unwrap());
+        assert_eq!(leave().made, 0);
     }
 
     #[test]

@@ -129,12 +129,18 @@ known.
 - `Out of memory` comes when what a program holds, counted as `FREEMEM`
   counts it, and what it asks for do not fit in SmileBASIC 4's
   134,216,720 bytes. Values a program has dropped never count, which comes to
-  the same as SmileBASIC 4 freeing them when a request would not fit. An array
-  that has just shrunk needs room again to grow, where SmileBASIC 4's stays in
-  its block for 64 bytes. Each interpreter has that much to itself, as `FREEMEM`
-  shows.
+  the same as SmileBASIC 4 freeing them when a request would not fit. As there,
+  a block that changes size, growing or shrinking, needs the new one to fit
+  beside the old. But SmileBASIC 4's blocks lie in one heap, and one that moved
+  leaves a hole that a larger one cannot use, so nearly full it can run out
+  earlier than here, some dozens of elements earlier in the `UNSHIFT` and `PUSH`
+  that `docs/sb4-pitfalls.md` gives. A program that works there works here. Each
+  interpreter has that much to itself, as `FREEMEM` shows.
   Strings under 64 KiB are not looked at one by one: what they add up to is
-  refused at the next count, a little later than SmileBASIC 4 might.
+  refused at the next count, a little later than SmileBASIC 4 might. Nor are
+  blocks under 64 KiB as they shrink: where SmileBASIC 4's `POP` and `SHIFT` with
+  no room for the smaller block leave the length as it is, or its `REMOVE` and
+  `RESIZE` stop with `Out of memory`, here they always go ahead.
 - `LOAD` of a program takes nothing from this memory.
 - Error messages add detail in parentheses, such as which argument was
   out of range.

@@ -1258,6 +1258,65 @@ fn what_small_strings_add_up_to_is_out_of_memory() {
 
 /// Constant strings stay in memory for the compiler as a statement compiles,
 /// and then in the program's code (TEST57).
+/// A program of TEST58 with hardly anything free, from which memory falls
+/// short of the block a smaller array needs.
+const LITTLE_FREE: &str = "DIM A%[1000001]
+DIM F[8000000]
+VAR N=((FREEMEM()-1000000-64) DIV 64)*16
+DIM G%[N]
+";
+
+#[test]
+fn pop_down_one_block_and_back_with_little_free() {
+    assert_eq!(
+        output(&format!(
+            "{LITTLE_FREE}?LEN(A%);\" \";FREEMEM()
+PUSH A%,1
+?LEN(A%);\" \";FREEMEM()
+X=POP(A%)
+?LEN(A%);\" \";FREEMEM()
+X=POP(A%)
+?LEN(A%);\" \";FREEMEM()
+PUSH A%,1
+?LEN(A%);\" \";FREEMEM()"
+        )),
+        "1000001 1000016\n\
+         1000002 1000016\n\
+         1000001 1000016\n\
+         1000001 1000016\n\
+         1000002 1000016\n"
+    );
+}
+
+#[test]
+fn pop_over_and_over_with_little_free_stays() {
+    assert_eq!(
+        output(&format!(
+            "{LITTLE_FREE}FOR I=1 TO 20:X=POP(A%):NEXT
+?LEN(A%);\" \";FREEMEM();\" \";X"
+        )),
+        "1000001 1000016 0\n"
+    );
+}
+
+/// The VM counts and runs POP again; it must take one element, once.
+#[test]
+fn pop_that_has_to_count_takes_one_element() {
+    assert_eq!(
+        output(
+            "DIM A%[7500001]
+A%[7500000]=7
+A%[7499999]=6
+FOR I=1 TO 3:X=LEN(ARRAY%(15000000)):NEXT
+X=POP(A%)
+?X;\" \";LEN(A%)
+X=POP(A%)
+?X;\" \";LEN(A%)"
+        ),
+        "7 7500000\n6 7499999\n"
+    );
+}
+
 #[test]
 fn long_constant_strings_stop_the_program_compiling() {
     let refused = |source: &str, kind: ErrorKind| {
