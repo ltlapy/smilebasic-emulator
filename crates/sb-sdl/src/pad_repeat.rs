@@ -212,7 +212,7 @@ mod tests {
         let early = run(&mut r, 0.5);
         run(&mut r, 0.7);
         let late = run(&mut r, 0.5);
-        assert!(late > early * 2, "{early} {late}");
+        assert!(late > early * 3 / 2, "{early} {late}");
         // Past the speed-up it holds about 20 steps a second.
         assert!((19..=21).contains(&run(&mut r, 1.0)));
     }

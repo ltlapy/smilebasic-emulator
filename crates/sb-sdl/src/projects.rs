@@ -1461,8 +1461,8 @@ impl ProjectManager {
     /// views it) on the files, as the toolbars' green buttons do; in the
     /// menus, dialogs, viewer and the info area's fields it is Enter. X
     /// goes between the lists (Tab), Y expands or collapses the info area,
-    /// and + opens the list's `⋯` menu, or closes it. While browsing, L
-    /// and R move up and down a page, one step a press.
+    /// and L and R move up and down a page, one step a press. The list's
+    /// `⋯` menu opens with the mouse or keys only; L, R or B closes it.
     pub fn pad(&mut self, button: Pad, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         let browsing = matches!(self.mode, Mode::Browse);
         if browsing && button == Pad::East && !self.in_field() {
@@ -1493,9 +1493,7 @@ impl ProjectManager {
                     Pad::West => Keycode::Space,
                     Pad::LeftShoulder if browsing => Keycode::PageUp,
                     Pad::RightShoulder if browsing => Keycode::PageDown,
-                    Pad::Start if browsing => Keycode::Application,
-                    // + closes the menu it opened; L and R close it too.
-                    Pad::Start | Pad::LeftShoulder | Pad::RightShoulder
+                    Pad::LeftShoulder | Pad::RightShoulder
                         if matches!(self.mode, Mode::Menu(_)) =>
                     {
                         Keycode::Escape
@@ -3641,19 +3639,17 @@ mod tests {
         // In the viewer B goes back.
         m.pad(Pad::South, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
-        // + opens the list's menu, where A chooses; + or B closes it, and so
-        // do L and R.
-        m.pad(Pad::Start, &mut s, &[]);
-        assert!(matches!(m.mode, Mode::Menu(_)));
+        // No button opens the list's menu; opened otherwise, A chooses in
+        // it and B, L or R closes it.
         m.pad(Pad::Start, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
-        m.pad(Pad::Start, &mut s, &[]);
+        m.key(Keycode::Application, &mut s, &[]);
         m.pad(Pad::LeftShoulder, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
-        m.pad(Pad::Start, &mut s, &[]);
+        m.key(Keycode::Application, &mut s, &[]);
         m.pad(Pad::RightShoulder, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
-        m.pad(Pad::Start, &mut s, &[]);
+        m.key(Keycode::Application, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Menu(_)));
         m.pad(Pad::South, &mut s, &[]);
         assert!(matches!(m.mode, Mode::Browse));
@@ -3664,7 +3660,7 @@ mod tests {
         assert_eq!(m.selected_file().unwrap().name, "A.PRG");
         m.pad(Pad::DPadDown, &mut s, &[]);
         m.pad(Pad::DPadUp, &mut s, &[]);
-        m.pad(Pad::Start, &mut s, &[]);
+        m.key(Keycode::Application, &mut s, &[]);
         // The file menu starts on View.
         m.pad(Pad::East, &mut s, &[]);
         assert!(matches!(m.mode, Mode::View(_)));
