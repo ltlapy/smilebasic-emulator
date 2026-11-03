@@ -338,6 +338,9 @@ pub struct Sprites {
     pub hit_rc: Option<Search>,
     /// What SPHITINFO reports.
     pub hit_info: HitInfo,
+    /// A bit for each sprite that may have SPCOL's settings, as most have
+    /// none and a search would otherwise go through them all.
+    may_collide: [u64; SPRITES / 64],
 }
 
 impl Default for Sprites {
@@ -365,6 +368,7 @@ impl Sprites {
             hit_sp: None,
             hit_rc: None,
             hit_info: HitInfo::default(),
+            may_collide: [0; SPRITES / 64],
         };
         s.reset_gsprite((400, 240));
         s
@@ -374,6 +378,7 @@ impl Sprites {
     /// else, on the layer `SPLAYER` gives new sprites.
     pub fn reset_gsprite(&mut self, (w, h): (u32, u32)) {
         let layer = self.new_layer;
+        self.no_collision(GSPRITE);
         let g = &mut self.list[GSPRITE];
         *g = Sprite::unused();
         (g.used, g.shown, g.page, g.layer) = (true, true, 0, layer);
@@ -409,6 +414,7 @@ impl Sprites {
 
     /// SPSET: a fresh sprite with the current SPPAGE and SPLAYER.
     pub fn create(&mut self, id: usize, shown: bool) -> &mut Sprite {
+        self.no_collision(id);
         let s = &mut self.list[id];
         *s = Sprite::unused();
         (s.used, s.shown) = (true, shown);
@@ -426,7 +432,18 @@ impl Sprites {
                 self.unlink(child);
             }
         }
+        self.no_collision(id);
         self.list[id] = Sprite::unused();
+    }
+
+    /// SPCOL's settings of a sprite.
+    pub fn set_collision(&mut self, id: usize, col: Collision) {
+        self.list[id].col = Some(col);
+        self.may_collide[id / 64] |= 1 << (id % 64);
+    }
+
+    fn no_collision(&mut self, id: usize) {
+        self.may_collide[id / 64] &= !(1 << (id % 64));
     }
 
     /// Takes a sprite off its parent, keeping where it shows.
@@ -443,6 +460,10 @@ impl Sprites {
     pub fn clear_all(&mut self) {
         for s in &mut self.list[..GSPRITE] {
             *s = Sprite::unused();
+        }
+        self.may_collide = [0; SPRITES / 64];
+        if self.list[GSPRITE].col.is_some() {
+            self.may_collide[GSPRITE / 64] |= 1 << (GSPRITE % 64);
         }
         self.unlink(GSPRITE);
     }
@@ -573,11 +594,40 @@ impl Sprites {
 
     /// The next sprite `search` hits, noting the details for SPHITINFO.
     pub fn next_hit(&mut self, search: &mut Search) -> Option<usize> {
-        while let Some(id) = search.rest.pop() {
+        while search.rest.start < search.rest.end {
+            let from = search.rest.start;
+            let bits = self.may_collide[from / 64] >> (from % 64);
+            if bits == 0 {
+                search.rest.start = (from / 64 + 1) * 64;
+                continue;
+            }
+            let id = from + bits.trailing_zeros() as usize;
+            if id >= search.rest.end {
+                search.rest.start = search.rest.end;
+                break;
+            }
+            search.rest.start = id + 1;
             if Some(id) == search.skip {
                 continue;
             }
-            if let Some(body) = self.body(id)
+            // What body() gives, without a pose for a sprite with no parent.
+            let s = &self.list[id];
+            let Some(c) = s
+                .col
+                .as_ref()
+                .filter(|c| s.used && c.mask & search.source.mask != 0)
+            else {
+                continue;
+            };
+            let body = if s.parent.is_some() {
+                self.body(id)
+            } else if s.shown {
+                let vel = s.col_vel.unwrap_or(s.anim_move);
+                Some(Body::sprite(c, s.pos, s.scale, vel))
+            } else {
+                None
+            };
+            if let Some(body) = body
                 && let Some(t) = crate::collision::sweep(&search.source, &body)
             {
                 self.hit_info = HitInfo::new(t, &search.source, &body);
@@ -1293,5 +1343,97 @@ mod tests {
         assert!(!s.list[3].used);
         assert!(s.list[GSPRITE].used);
         assert_eq!(s.draw_order()[0].0, GSPRITE);
+    }
+
+    fn colliding(s: &mut Sprites, id: usize) {
+        s.create(id, true);
+        s.set_collision(
+            id,
+            Collision {
+                x: 0,
+                y: 0,
+                w: 16,
+                h: 16,
+                scale: false,
+                mask: u32::MAX,
+            },
+        );
+    }
+
+    fn hits(s: &mut Sprites, first: usize, last: usize, skip: Option<usize>) -> Vec<usize> {
+        let source = Body::rect(0.0, 0.0, 16.0, 16.0, (0.0, 0.0), u32::MAX);
+        let mut search = Search::new(source, first, last, skip);
+        std::iter::from_fn(|| s.next_hit(&mut search)).collect()
+    }
+
+    #[test]
+    fn search_finds_hits_upwards_across_the_bit_words() {
+        let mut s = Sprites::default();
+        for id in [0, 1, 63, 64, 65, 127, 128, 1000, 4094, GSPRITE] {
+            colliding(&mut s, id);
+        }
+        let all = vec![0, 1, 63, 64, 65, 127, 128, 1000, 4094, GSPRITE];
+        assert_eq!(hits(&mut s, 0, GSPRITE, None), all);
+        assert_eq!(hits(&mut s, GSPRITE, 0, None), all);
+        assert_eq!(hits(&mut s, 63, 64, None), [63, 64]);
+        assert_eq!(hits(&mut s, 2, 62, None), [0usize; 0]);
+        assert_eq!(hits(&mut s, 64, 64, None), [64]);
+        assert_eq!(hits(&mut s, 64, 127, Some(65)), [64, 127]);
+        // The range ends inside a word with more hits after it.
+        assert_eq!(hits(&mut s, 0, 1, None), [0, 1]);
+        assert_eq!(hits(&mut s, 1000, 4094, None), [1000, 4094]);
+    }
+
+    #[test]
+    fn search_sees_what_changed_while_it_went_on() {
+        let mut s = Sprites::default();
+        for id in [1, 2, 3] {
+            colliding(&mut s, id);
+        }
+        let source = Body::rect(0.0, 0.0, 16.0, 16.0, (0.0, 0.0), u32::MAX);
+        let mut search = Search::new(source, 0, 100, None);
+        assert_eq!(s.next_hit(&mut search), Some(1));
+        s.clear(2);
+        colliding(&mut s, 70);
+        assert_eq!(s.next_hit(&mut search), Some(3));
+        assert_eq!(s.next_hit(&mut search), Some(70));
+        assert_eq!(s.next_hit(&mut search), None);
+    }
+
+    #[test]
+    fn sprites_stop_colliding_when_cleared_or_set_again() {
+        let mut s = Sprites::default();
+        for id in [1, 2, 3, GSPRITE] {
+            colliding(&mut s, id);
+        }
+        s.clear(1);
+        s.create(2, true);
+        assert_eq!(hits(&mut s, 0, GSPRITE, None), [3, GSPRITE]);
+        s.clear_all();
+        assert_eq!(hits(&mut s, 0, GSPRITE, None), [GSPRITE]);
+        s.reset_gsprite((16, 16));
+        assert_eq!(hits(&mut s, 0, GSPRITE, None), [0usize; 0]);
+    }
+
+    /// A search skips making a pose where there is no parent to follow.
+    #[test]
+    fn search_gives_the_same_body_as_a_sprites_pose() {
+        let mut s = Sprites::default();
+        colliding(&mut s, 5);
+        s.list[5].pos = (2.5, 3.0);
+        s.list[5].scale = (2.0, 2.0);
+        s.list[5].col_vel = Some((1.0, 0.0));
+        let source = Body::rect(0.0, 0.0, 4.0, 4.0, (-1.0, 0.0), u32::MAX);
+        let mut search = Search::new(source, 0, 10, None);
+        assert_eq!(s.next_hit(&mut search), Some(5));
+        let body = s.body(5).unwrap();
+        assert_eq!(s.hit_info, HitInfo::new(0.0, &source, &body));
+
+        s.list[5].shown = false;
+        assert_eq!(hits(&mut s, 0, 10, None), [0usize; 0]);
+        s.list[5].shown = true;
+        let col = s.list[5].col.unwrap();
+        s.list[5].col = Some(Collision { mask: 0, ..col });
+        assert_eq!(hits(&mut s, 0, 10, None), [0usize; 0]);
     }
 }

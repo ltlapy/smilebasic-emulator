@@ -230,17 +230,21 @@ impl Runtime {
             7 => (flag(args.get(5))?, mask(args.get(6))?),
             _ => return Err(illegal()),
         };
+        let id = sprite_id(&args[0])?;
         let s = self.sprite(&args[0])?;
         // Without a rectangle, the sprite's own at the time, from its home.
         let (x, y, w, h) = rect.unwrap_or((-s.home.0 as i32, -s.home.1 as i32, s.w, s.h));
-        s.col = Some(Collision {
-            x,
-            y,
-            w,
-            h,
-            scale,
-            mask,
-        });
+        self.sprites.set_collision(
+            id,
+            Collision {
+                x,
+                y,
+                w,
+                h,
+                scale,
+                mask,
+            },
+        );
         Ok(())
     }
 

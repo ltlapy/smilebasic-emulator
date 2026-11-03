@@ -1,6 +1,8 @@
 //! Sprite collision detection (SPCOL, SPHITSP, SPHITRC): rectangles that
 //! may move during the frame, tested for the first moment they overlap.
 
+use std::ops::Range;
+
 /// SPCOL's settings of a sprite.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Collision {
@@ -40,8 +42,24 @@ impl Body {
     }
 
     /// A sprite's body at `pos`, scaled by `scale` if its settings ask.
+    #[inline]
     pub fn sprite(c: &Collision, pos: (f64, f64), scale: (f64, f64), vel: (f64, f64)) -> Body {
-        let (sx, sy) = if c.scale { scale } else { (1.0, 1.0) };
+        if !c.scale {
+            let ends = |at: i32, len: i32| (at.min(at + len), at.max(at + len));
+            let ((x0, x1), (y0, y1)) = (ends(c.x, c.w), ends(c.y, c.h));
+            return Body {
+                rect: [
+                    pos.0 + f64::from(x0),
+                    pos.1 + f64::from(y0),
+                    pos.0 + f64::from(x1),
+                    pos.1 + f64::from(y1),
+                ],
+                pos,
+                vel,
+                mask: c.mask,
+            };
+        }
+        let (sx, sy) = scale;
         let x = [f64::from(c.x) * sx, f64::from(c.x + c.w) * sx];
         let y = [f64::from(c.y) * sy, f64::from(c.y + c.h) * sy];
         Body {
@@ -64,29 +82,41 @@ impl Body {
 
 /// The first moment in 0 to 1 at which `a` and `b` overlap, if they do.
 // UNVERIFIED: rectangles that only touch at an edge do not collide.
+#[inline]
 pub fn sweep(a: &Body, b: &Body) -> Option<f64> {
     if a.mask & b.mask == 0 {
         return None;
     }
+    let v = (a.vel.0 - b.vel.0, a.vel.1 - b.vel.1);
+    // Most bodies do not move against each other, and a search runs this
+    // for every sprite.
+    if v.0 == 0.0 && v.1 == 0.0 {
+        let overlap = |axis: usize| {
+            let (a0, a1) = (a.rect[axis], a.rect[axis + 2]);
+            let (b0, b1) = (b.rect[axis], b.rect[axis + 2]);
+            !(a0 >= a1 || b0 >= b1 || a0 >= b1 || a1 <= b0)
+        };
+        return (overlap(0) && overlap(1)).then_some(0.0);
+    }
     let mut enter = f64::NEG_INFINITY;
     let mut exit = f64::INFINITY;
-    let v = [a.vel.0 - b.vel.0, a.vel.1 - b.vel.1];
-    for (axis, v) in v.into_iter().enumerate() {
-        let (a0, a1) = (a.rect[axis], a.rect[axis + 2]);
-        let (b0, b1) = (b.rect[axis], b.rect[axis + 2]);
+    let mut axis = |a0: f64, a1: f64, b0: f64, b1: f64, v: f64| {
         if a0 >= a1 || b0 >= b1 {
-            return None;
+            return false;
         }
         if v == 0.0 {
-            if a0 >= b1 || a1 <= b0 {
-                return None;
-            }
-            continue;
+            return !(a0 >= b1 || a1 <= b0);
         }
         let t0 = (b0 - a1) / v;
         let t1 = (b1 - a0) / v;
         enter = enter.max(t0.min(t1));
         exit = exit.min(t0.max(t1));
+        true
+    };
+    if !axis(a.rect[0], a.rect[2], b.rect[0], b.rect[2], v.0)
+        || !axis(a.rect[1], a.rect[3], b.rect[1], b.rect[3], v.1)
+    {
+        return None;
     }
     (enter < exit && enter < 1.0 && exit > 0.0).then_some(enter.max(0.0))
 }
@@ -96,8 +126,8 @@ pub fn sweep(a: &Body, b: &Body) -> Option<f64> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Search {
     pub source: Body,
-    /// Sprites still to test, the next one last.
-    pub rest: Vec<usize>,
+    /// Sprites still to test, in this order.
+    pub rest: Range<usize>,
     /// The sprite the search is for, which cannot hit itself.
     pub skip: Option<usize>,
 }
@@ -106,7 +136,7 @@ impl Search {
     /// Tests sprites `first` to `last`, upwards from the lower one either
     /// way (checked on hardware for SPHITSP).
     pub fn new(source: Body, first: usize, last: usize, skip: Option<usize>) -> Search {
-        let rest: Vec<usize> = (first.min(last)..=first.max(last)).rev().collect();
+        let rest = first.min(last)..first.max(last) + 1;
         Search { source, rest, skip }
     }
 }
@@ -155,6 +185,56 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn resting_bodies_collide_only_if_they_overlap() {
+        let at = |x: f64, y: f64, w: f64, h: f64, v: (f64, f64)| Body {
+            rect: [x, y, x + w, y + h],
+            pos: (x, y),
+            vel: v,
+            mask: ALL,
+        };
+        let a = at(0.0, 0.0, 10.0, 10.0, (0.0, 0.0));
+        for (x, y, hit) in [
+            (5.0, 5.0, Some(0.0)),
+            (10.0, 0.0, None),
+            (0.0, 10.0, None),
+            (-10.0, 0.0, None),
+            (0.0, -10.0, None),
+            (20.0, 20.0, None),
+            (5.0, 20.0, None),
+        ] {
+            let b = at(x, y, 10.0, 10.0, (0.0, 0.0));
+            assert_eq!(sweep(&a, &b), hit, "{x},{y}");
+        }
+        // Empty rectangles never collide.
+        assert_eq!(sweep(&at(5.0, 5.0, 0.0, 10.0, (0.0, 0.0)), &a), None);
+        assert_eq!(sweep(&a, &at(5.0, 5.0, 10.0, -1.0, (0.0, 0.0))), None);
+        // Moving the same way is resting.
+        let b = at(5.0, 5.0, 10.0, 10.0, (3.0, 4.0));
+        assert_eq!(sweep(&at(0.0, 0.0, 10.0, 10.0, (3.0, 4.0)), &b), Some(0.0));
+    }
+
+    #[test]
+    fn a_rectangle_with_a_negative_size_is_still_the_same_rectangle() {
+        let c = Collision {
+            x: 4,
+            y: 4,
+            w: -8,
+            h: -2,
+            scale: false,
+            mask: ALL,
+        };
+        let b = Body::sprite(&c, (10.0, 20.0), (3.0, 3.0), (0.0, 0.0));
+        assert_eq!(b.rect, [6.0, 22.0, 14.0, 24.0]);
+        let b = Body::sprite(
+            &Collision { scale: true, ..c },
+            (10.0, 20.0),
+            (1.0, 1.0),
+            (0.0, 0.0),
+        );
+        assert_eq!(b.rect, [6.0, 22.0, 14.0, 24.0]);
     }
 
     #[test]
