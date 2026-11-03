@@ -868,14 +868,51 @@ yet seen on hardware:
   28160` is `Out of range (WAVSETA:8)` (TEST58).
 - `BEEP` of a waveform set by `WAVSETA` can be silent: `DIM W%[32]`, `WAVSETA
   224,127,127,127,127,W%,69` and `BEEP(224)` gives a handle and no error, and
-  nothing is heard (TEST58). Not yet seen on hardware,
-  `WAVSET` and `WAVSETA` also write the sound `BEEP` plays, a note at the
-  reference pitch as long as a pass of the waveform, at most in ticks of 1/192
-  of a second: 32 samples at 28160 Hz come to no note. `WAVSET` always has a
-  note of a second; `WAVSETA`'s 8-bit form 147 samples or more, once rounded up to
-  a power of two, so 256; its 16-bit form as long as (end + 1) / rate, for ever if
-  the flag is not 0. A start equal to the end returns before any of this, so
-  the old waveform and its `BEEP` stay.
+  nothing is heard (TEST58). `WAVSET` and `WAVSETA` also write the sound `BEEP`
+  plays, a note at the reference pitch as long as a pass of the waveform, cut to
+  ticks of 1/192 of a second: 32 and 128 samples at 28160 Hz come to no note and
+  record as silence. `WAVSET` always has a note of a second; `WAVSETA`'s 8-bit
+  form 147 samples or more, once rounded up to a power of two, so 256; its 16-bit
+  form as long as (end + 1) / rate (TEST59). A start equal to the end returns
+  before any of this, so the old waveform and its `BEEP` stay: a `WAVSET` wave
+  plays identically after it (TEST59).
+- The sound of such a `BEEP` ends on the sound engine's steps of 5 ms, each 0.96
+  of those ticks, the first included, and takes one more step to fall. The last
+  sample that is not silent is at 999 ms for `WAVSET` (192 ticks), 9 ms for an
+  8-bit 256 samples (1 tick), 144 ms for 4096 samples (27 ticks) and 999 ms for
+  16-bit 28160 samples at 28160 Hz, each with its level steady up to there
+  (TEST59).
+- With `WAVSETA`'s flag not 0, the note repeats until stopped, each pass a new
+  note over the last one's fall: 28160 samples of a ±30000 square at 28160 Hz, at
+  `BEEP`'s default, peak at 4234 and at 7905 in the last 5 ms of each second, heard
+  as a momentary noise once a second (per 1/10 s of the peak,
+  `4444444448444444444944444444494`). `BEEPSTOP` after 180 frames leaves the last
+  sample at 3004 ms, the step's fall (TEST59).
+- `BEEP`'s volume is a linear gain of v/127 the same way
+  as `BGMVOL`'s, with 64 for its default as `BGMPLAY` has. It comes out level with
+  `BGMPLAY`'s default: at envelope 127,127,127,127, a `WAVSET` square of
+  `"FFFF0000"*8` peaks at 4623, an 8-bit `WAVSETA` square of ±100 at 3613 and a
+  16-bit one of ±30000 at 4234 (TEST59), as `@224` at `V127` of a ±96 square peaks
+  at 3468 under `BGMPLAY`, for an RMS of 3063 (TEST40): these are all 4624 for full
+  scale, and an RMS of 4084. A square peaks about 13% over its RMS for how
+  the console resamples it, where a sine does not: amplitude 100 peaks at 3217 at
+  an RMS of 2257 (TEST40).
+- `BEEP` 224 to 255 with nothing set plays a sine of about 440 Hz for a second,
+  peak 4117, last sample at 999 ms (`BEEP 250`, TEST59). The sound archive's `@224`
+  is that sine, 16384 samples at 28160 Hz; `@225` to `@255` are 140 samples of
+  silence there. All of `@224` to `@255` start on `@224`'s
+  waves, and `BEEP`'s sound for each is `T400V127P64@nT60O3A4` until set.
+- `BEEP`'s result is a number 0 to 15 that goes on rising with each `BEEP`, also
+  after the last has ended and for a silent one, and through program runs: running
+  TEST59's parts in the order 20, 16, 17, 18, 19 on a started SmileBASIC 4 gave 0,
+  1, 2, 3, 4, 5, 6, 7, 8 (TEST59). It goes round at 16, each
+  interpreter counting for itself, and nothing starts it again: not `ACLS`, not
+  `RUN`. The number is a place to play in: `BEEP` used as a function holds its
+  place until the sound ends or `BEEPSTOP` names it, and the next `BEEP` passes it
+  by; `BEEP` as a command does not, and the next to get there ends it. With all 16
+  held, the result is -1, nothing plays and there is no error. `BEEPSTOP`,
+  `BEEPVOL`, `BEEPPIT` and `BEEPPAN` act on what plays in that place now, do nothing
+  if that has ended, and take 0 to 15 only, so -1 is `Out of range`.
 - `CHKMML` gives -1 for 16 million characters of notes, and for macros
   nested six and seven levels deep that would come to 10^7 and 10^8
   characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even
@@ -992,11 +1029,20 @@ yet seen on hardware:
   `PUSH` and a `POP` stay in the block, the next `POP` leaves the length at 1000001
   and `FREEMEM` at 1000016, and a `PUSH` after it gives 1000002. Twenty `POP`s in a
   row still leave 1000001 (TEST58). So a block stays only while its size is the
-  same, not for 64 bytes more. Not yet seen on hardware:
-  that `POP` still gives the last element; `SHIFT` still gives the first, with the
-  rest moved down and the last there twice; a string's `POP` and `SHIFT` go the
-  same way; `REMOVE` moves the rest down and then is `Out of memory (REMOVE)`; and
-  `RESIZE` to smaller is `Out of memory (RESIZE)` having changed nothing.
+  same, not for 64 bytes more. Then `POP` still gives the last element, the same
+  one each time; `SHIFT` still gives the first, with the rest moved down and the
+  last there twice; a string's `POP` and `SHIFT` and an array of reals or strings
+  go the same way; and `ENVSTAT` shows nothing (TEST59). The size makes no
+  difference: `DIM A%[1601]` with 5008 free, too little for its next block down of
+  6464, keeps its length and gives 901 each time with `FREEMEM` at 5008 (TEST59).
+  `REMOVE` moves the rest down and then is `Out of memory (REMOVE)`: `REMOVE D%,1`
+  on 1000001 ints leaves the length, `D%[0]`=11, `D%[1]`=13, `D%[999999]`=901, and
+  the last, `D%[1000000]`, read past the block, was 0 the one time it was seen.
+  `RESIZE` to smaller is `Out of memory (RESIZE)` having changed nothing (TEST59).
+- A string constant takes no block of its own until it is stored. With 100048
+  free, `X$=POP("ABC"+"X"*100027+"XYZ")` gives `Z` and leaves 100048, no error, where
+  `SHIFT` of it, which needs a copy, is `Out of memory (SHIFT)`. Stored in `S$` the
+  same constant takes 200256 bytes (TEST59).
 - `A%=LOADV("DAT:Q")` makes the new array beside the old: 10 MB of file with
   4216464 free is `Out of memory (LOADV)`. `LOADV "DAT:Q",A%` fills the array,
   gives no error and leaves `FREEMEM` as it was (TEST57). If the file is longer,
@@ -1024,7 +1070,9 @@ yet seen on hardware:
   until the statement ends: `"A"*1000000+"B"*1000000` is too long there, as are
   `?"A"*1500000,"B"*1500000` and `A=LEN("A"*2097140)`, each `Out of memory` at its
   line (TEST58): each constant and the rest of the statement take from the same
-  4 MiB. A string
+  4 MiB. `A=LEN("A"*2097068)` compiles and prints, and
+  2097069 and 2097116 are `Out of memory` as it compiles (TEST59), which is 168
+  bytes for such a statement, none of them for the variable it stores to. A string
   then goes into the code, which is 32768 16-bit words in direct mode and
   4194304 in a slot, taking a word a character plus its length: of three lines of
   `A=LEN("A"*2000000)`, the third is `Out of code memory` (TEST58).

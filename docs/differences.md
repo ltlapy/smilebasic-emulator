@@ -20,7 +20,8 @@ Without them:
   waiting on `BGMCHK` still wait: the three short ones (4 to 6) for as
   long as they last, the others, which loop, until stopped.
 - Preset sound effects (`BEEP 0` to `155`) are silent. They still take
-  a handle.
+  a handle. So is `BEEP 224` to `255` with nothing set: on SmileBASIC 4 it is
+  a second of the sound archive's sine.
 
 - MML's sound effect tones (`@256` and up) are silent.
 - Instruments `@0` to `@127` come from a General MIDI SoundFont
@@ -29,6 +30,11 @@ Without them:
 
 ## Sound that is not played
 
+- Waveforms are read without the console's resampling, whose ringing lifts a
+  square's peak over its level: `BEEP` and `BGMPLAY` of a square record the same
+  RMS as SmileBASIC 4 but peak about 12% lower (4096 to its 4623), and a sine
+  about the same as there. `RECSAVE` of a program that looks at peaks shows this.
+- `@225` to `@255` in MML, with nothing set, are silent. They start as `@224`, the sound archive's sine.
 - The effector (`EFCEN`, `EFCSET`, `EFCWET`, `BGMWET`) is a small reverb
   of the emulator's own, early reflections and a Freeverb-like tail,
   given the settings SmileBASIC 4 gives the console's reverb: the
@@ -126,8 +132,10 @@ known.
   SmileBASIC 4's limits take in the rest of the statement and its code too,
   which here is a word an instruction and no more than that, so right at the
   limits a program may compile that SmileBASIC 4 refuses, but not the other way
-  round: `A=LEN("A"*2097116)` compiles here and may not there. A constant
-  string that compiles is still made when its line runs.
+  round: `A=LEN("A"*2097116)` compiles here, and there 2097068 is the most. A
+  constant string that compiles is still made when its line runs, which is
+  where the memory it takes may run out, though on SmileBASIC 4 it takes none
+  until stored. `POP` and `SHIFT` of a constant are as there.
 - `Out of memory` comes when what a program holds, counted as `FREEMEM`
   counts it, and what it asks for do not fit in SmileBASIC 4's
   134,216,720 bytes. Values a program has dropped never count, which comes to
@@ -142,7 +150,9 @@ known.
   refused at the next count, a little later than SmileBASIC 4 might. Nor are
   blocks under 64 KiB as they shrink: where SmileBASIC 4's `POP` and `SHIFT` with
   no room for the smaller block leave the length as it is, or its `REMOVE` and
-  `RESIZE` stop with `Out of memory`, here they always go ahead.
+  `RESIZE` stop with `Out of memory`, here they always go ahead. `DIM A%[1601]`
+  with 5008 free keeps 1601 there and gives the last element each time; here it
+  shrinks and gives each in turn.
 - `LOAD` of a program takes nothing from this memory.
 - Error messages add detail in parentheses, such as which argument was
   out of range.
