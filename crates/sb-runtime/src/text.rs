@@ -393,8 +393,49 @@ impl TextScreen {
         let (w, h) = (self.width as i32, self.height as i32);
         // A whole screen's shift or more leaves nothing; held to that, the
         // rectangle below cannot pass the largest coordinate.
-        let moved = self.save((dx.clamp(-w, w), dy.clamp(-h, h), w, h));
+        let (dx, dy) = (dx.clamp(-w, w), dy.clamp(-h, h));
+        // Without TARRAY's array to keep in step, the cells can move in
+        // place. An inverted cell has set may_invert when it was written.
+        if self.array.is_none() {
+            self.shift(dx, dy);
+            return;
+        }
+        let moved = self.save((dx, dy, w, h));
         self.load((0, 0, w, h), &moved);
+    }
+
+    /// Each cell takes the one `(dx, dy)` away, or empty off the screen.
+    /// The shift is at most the screen's size.
+    fn shift(&mut self, dx: i32, dy: i32) {
+        if (dx, dy) == (0, 0) || self.cells.is_empty() {
+            return;
+        }
+        self.cells_changed = true;
+        let (w, h) = (self.width as usize, self.height as usize);
+        let keep = w - dx.unsigned_abs() as usize;
+        let (from, to) = (dx.max(0) as usize, (-dx).max(0) as usize);
+        let mut copy_row = |row: usize| {
+            let start = row * w;
+            match (row as i32)
+                .checked_add(dy)
+                .filter(|&r| (0..h as i32).contains(&r))
+            {
+                Some(source) => {
+                    let source = source as usize * w;
+                    self.cells
+                        .copy_within(source + from..source + from + keep, start + to);
+                    self.cells[start..start + to].fill(EMPTY);
+                    self.cells[start + to + keep..start + w].fill(EMPTY);
+                }
+                None => self.cells[start..start + w].fill(EMPTY),
+            }
+        };
+        // Rows are taken before they are written over.
+        if dy >= 0 {
+            (0..h).for_each(&mut copy_row);
+        } else {
+            (0..h).rev().for_each(&mut copy_row);
+        }
     }
 
     /// Moves the cursor; `None` keeps that coordinate. Returns false if the
@@ -902,6 +943,48 @@ mod tests {
 
     fn text(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
+    }
+
+    /// Moving cells in place against the save and load that TARRAY's array
+    /// still needs.
+    #[test]
+    fn scroll_in_place_moves_as_save_and_load_do() {
+        let (w, h) = (7, 5);
+        let filled = || {
+            let mut s = TextScreen::new(8 * w, 8 * h);
+            for y in 0..h as i32 {
+                for x in 0..w as i32 {
+                    let code = (0x41 + y * w as i32 + x) as u16;
+                    s.put_at(x as u32, y as u32, code, 0xFF00_0000 | code as u32);
+                }
+            }
+            s
+        };
+        for dy in [i32::MIN, -6, -5, -4, -1, 0, 1, 4, 5, 6, i32::MAX] {
+            for dx in [i32::MIN, -8, -7, -6, -1, 0, 1, 6, 7, 8, i32::MAX] {
+                let mut slow = filled();
+                slow.array();
+                slow.scroll(dx, dy);
+                let mut fast = filled();
+                fast.scroll(dx, dy);
+                assert!(slow.cells == fast.cells, "{dx},{dy}");
+            }
+        }
+    }
+
+    #[test]
+    fn scrolling_counts_as_a_change_only_if_cells_differ() {
+        let mut s = TextScreen::new(80, 40);
+        s.take_changed();
+        s.scroll(1, 1);
+        assert!(!s.take_changed());
+        s.put_at(0, 0, 0x41, !0);
+        s.take_changed();
+        s.scroll(0, 0);
+        assert!(!s.take_changed());
+        s.scroll(-1, 0);
+        assert!(s.take_changed());
+        assert_eq!(s.cell(1, 0).code, 0x41);
     }
 
     fn row(screen: &TextScreen, y: u32) -> String {
