@@ -737,6 +737,33 @@ pub struct Layer {
     pub projection: Option<[f64; 16]>,
 }
 
+impl Layer {
+    /// The layer's settings for a frame with `sample` pixels to one of
+    /// the screen's, as XSCREEN's sampling makes it finer.
+    pub fn fine(&self, sample: u32) -> Layer {
+        let s = sample as i32;
+        if s == 1 {
+            return *self;
+        }
+        let f = f64::from(s);
+        let scale = Affine {
+            a: f,
+            d: f,
+            ..Affine::IDENTITY
+        };
+        Layer {
+            matrix: self.matrix.then(&scale),
+            clip: self.clip.map(|c| Clip {
+                x0: c.x0 * s,
+                y0: c.y0 * s,
+                x1: c.x1 * s + s - 1,
+                y1: c.y1 * s + s - 1,
+            }),
+            ..*self
+        }
+    }
+}
+
 impl Default for Layer {
     fn default() -> Self {
         Layer {

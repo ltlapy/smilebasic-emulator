@@ -42,24 +42,85 @@ impl Filter {
     /// Applies the filter to a layer's premultiplied frame; `sample` is
     /// how many frame pixels make one screen pixel, and `mode` how the
     /// layer is composed afterwards.
+    #[cfg(test)]
     pub fn apply(&self, fb: &mut Framebuffer, sample: u32, mode: Compose) {
+        let mut rows = Vec::new();
+        self.op(&mut rows).apply(fb, sample, mode, &rows);
+    }
+
+    /// The filter as a frame uses it, with a raster filter's array read
+    /// now into the end of `rows`.
+    pub fn op(&self, rows: &mut Vec<[f64; 4]>) -> FilterOp {
         match self {
-            // Amount 0 leaves the layer as it is, not halved.
-            Filter::None | Filter::Blur(0) => {}
-            Filter::Mosaic(n) => mosaic(fb, *n, sample),
-            Filter::Blur(n) => blur(fb, *n),
+            Filter::None => FilterOp::None,
+            Filter::Mosaic(n) => FilterOp::Mosaic(*n),
+            Filter::Blur(n) => FilterOp::Blur(*n),
             Filter::Raster {
                 vertical,
                 info,
                 repeat,
             } => {
-                let rows = match info.try_borrow() {
-                    Ok(a) => raster_rows(&a, *vertical),
-                    Err(_) => return,
+                let Ok(a) = info.try_borrow() else {
+                    return FilterOp::None;
                 };
-                raster(fb, &rows, *vertical, *repeat);
+                let start = rows.len();
+                raster_rows(&a, *vertical, rows);
+                FilterOp::Raster {
+                    vertical: *vertical,
+                    repeat: *repeat,
+                    rows: start..rows.len(),
+                }
             }
             Filter::Color {
+                hue,
+                saturation,
+                value,
+            } => FilterOp::Color {
+                hue: *hue,
+                saturation: *saturation,
+                value: *value,
+            },
+        }
+    }
+}
+
+/// A layer's filter for one frame, as plain data: a raster filter's rows
+/// are in the scene, not in the program's array.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum FilterOp {
+    #[default]
+    None,
+    Mosaic(u32),
+    Blur(u32),
+    Raster {
+        vertical: bool,
+        repeat: bool,
+        /// Which of the scene's raster rows are this filter's.
+        rows: std::ops::Range<usize>,
+    },
+    Color {
+        hue: f64,
+        saturation: f64,
+        value: f64,
+    },
+}
+
+impl FilterOp {
+    /// Applies the filter to a layer's premultiplied frame; `sample` is
+    /// how many frame pixels make one screen pixel, and `mode` how the
+    /// layer is composed afterwards.
+    pub fn apply(&self, fb: &mut Framebuffer, sample: u32, mode: Compose, rows: &[[f64; 4]]) {
+        match self {
+            // Amount 0 leaves the layer as it is, not halved.
+            FilterOp::None | FilterOp::Blur(0) => {}
+            FilterOp::Mosaic(n) => mosaic(fb, *n, sample),
+            FilterOp::Blur(n) => blur(fb, *n),
+            FilterOp::Raster {
+                vertical,
+                repeat,
+                rows: range,
+            } => raster(fb, &rows[range.clone()], *vertical, *repeat),
+            FilterOp::Color {
                 hue,
                 saturation,
                 value,
@@ -71,19 +132,17 @@ impl Filter {
 /// A raster array's entries as X offset, X scale, Y offset and Y scale.
 /// With two to an entry they are the offset and scale along the
 /// deformation: X for type 3, Y for type 4.
-fn raster_rows(info: &sb_core::value::Array, vertical: bool) -> Vec<[f64; 4]> {
+fn raster_rows(info: &sb_core::value::Array, vertical: bool, rows: &mut Vec<[f64; 4]>) {
     let width = match info.dims[..] {
         [_, w @ (2 | 4)] => w,
-        _ => return Vec::new(),
+        _ => return,
     };
     let at = |i: usize| info.get(i).to_real().unwrap_or(0.0);
-    (0..info.len() / width)
-        .map(|r| match (width, vertical) {
-            (2, false) => [at(r * 2), at(r * 2 + 1), 0.0, 1.0],
-            (2, true) => [0.0, 1.0, at(r * 2), at(r * 2 + 1)],
-            _ => std::array::from_fn(|k| at(r * 4 + k)),
-        })
-        .collect()
+    rows.extend((0..info.len() / width).map(|r| match (width, vertical) {
+        (2, false) => [at(r * 2), at(r * 2 + 1), 0.0, 1.0],
+        (2, true) => [0.0, 1.0, at(r * 2), at(r * 2 + 1)],
+        _ => std::array::from_fn(|k| at(r * 4 + k)),
+    }));
 }
 
 /// Raster deformation. Each row of the frame (type 3) or column (type 4)

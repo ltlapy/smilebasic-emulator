@@ -15,24 +15,23 @@ use crate::compose::{self, Compose, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
 use crate::editor::{Editor, Look, blend, frame_size, menu_height};
-use crate::filter::Filter;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
-use crate::graphics::{Clip, Graphics};
+use crate::graphics::Graphics;
 use crate::hint;
 use crate::input::Input;
 use crate::line::LineEdit;
 use crate::palette::Part;
 use crate::raster;
-use crate::scene::SpriteItem;
-use crate::screen::{Fade, ScreenMode, darken};
+use crate::scene::{Item, Scene, SceneInput};
+use crate::screen::{Fade, ScreenMode, cover, darken};
 pub use crate::settings::Settings;
 use crate::sound::Sound;
 use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
 use crate::syntax::is_ident_char;
 use crate::system::System;
-use crate::text::{CONSOLE, FONT_PAGE, LineCursor, SCREENS, SPRITE_PAGE, TextScreen};
+use crate::text::{CONSOLE, FONT_PAGE, SCREENS, SPRITE_PAGE, TextScreen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -830,6 +829,8 @@ pub struct Runtime {
     /// A layer with LMATRIX's 4x4 form, drawn flat before it is put
     /// through the matrix.
     flat: Framebuffer,
+    /// The frame being drawn, kept so as to keep its memory.
+    scene: Scene,
     /// XSCREEN, and what ACLS goes back to.
     pub(crate) mode: ScreenMode,
     startup_mode: ScreenMode,
@@ -895,13 +896,6 @@ fn startup_screens(mode: &ScreenMode) -> Vec<TextScreen> {
             t
         })
         .collect()
-}
-
-/// Something drawn on the frame.
-#[derive(Clone, Copy)]
-enum Element {
-    Text(usize),
-    Sprite(usize, sprites::Pose),
 }
 
 /// Reads DATA values in order, moving READ's place along; see
@@ -1072,6 +1066,7 @@ impl Runtime {
             fade: Fade::default(),
             scratch: Framebuffer::new(width, height),
             flat: Framebuffer::new(width, height),
+            scene: Scene::default(),
             mode,
             startup_mode: mode,
             editor_fb: Framebuffer::new(width, height),
@@ -1236,27 +1231,6 @@ impl Runtime {
         (self.mode.width, self.mode.height)
     }
 
-    fn draw_element(&self, fb: &mut Framebuffer, e: Element, layer: &Layer, cursor: Option<bool>) {
-        let clip = layer.clip.as_ref();
-        let projection = layer.projection.as_ref().map(|m| (m, self.mode.sample));
-        match e {
-            Element::Text(i) => {
-                let line = cursor.filter(|_| i == CONSOLE).map(|overwrite| LineCursor {
-                    overwrite,
-                    composed: layer.compose != Compose::Direct,
-                });
-                let item = self.text[i].item(i, &layer.matrix, line);
-                let cells = self.text[i].cells();
-                raster::text::draw(&item, cells, &self.font, &self.grp, fb, clip);
-            }
-            Element::Sprite(i, pose) => {
-                let s = &self.sprites.list[i];
-                let item = SpriteItem::new(s, &pose, &layer.matrix, &self.grp);
-                raster::sprite::draw(&item, &self.grp, fb, clip, projection);
-            }
-        }
-    }
-
     /// For the debugger: the corners of a sprite's image where
     /// [`Runtime::render`] draws it, in the frame's pixels, clockwise from
     /// its top left; `None` for a sprite not in use, or one on an LMATRIX
@@ -1264,7 +1238,7 @@ impl Runtime {
     pub fn sprite_corners(&self, id: usize) -> Option<[(f64, f64); 4]> {
         let s = self.sprites.list.get(id).filter(|s| s.used)?;
         let pose = self.sprites.pose(id);
-        let layer = self.fine(self.layers.get(usize::try_from(pose.layer).ok()?)?);
+        let layer = (self.layers.get(usize::try_from(pose.layer).ok()?)?).fine(self.mode.sample);
         let (w, h) = (f64::from(s.w), f64::from(s.h));
         let (w, h) = match s.attr & sprites::attr::ROTATION {
             1 | 3 => (h, w),
@@ -1510,48 +1484,28 @@ impl Runtime {
         self.revision += 1;
         // Within a layer, larger Z is further back; at equal Z text screens
         // go behind sprites, and among either, higher ids go behind.
-        let mut elements: Vec<(i32, i32, u8, usize, Element)> = (self.text.iter().enumerate())
-            .filter(|(_, t)| t.visible)
-            .map(|(i, t)| (t.layer, t.z, 0, i, Element::Text(i)))
-            .collect();
-        for (i, pose) in self.sprites.draw_order() {
-            elements.push((pose.layer, pose.z, 1, i, Element::Sprite(i, pose)));
-        }
-        elements.sort_by_key(|&(layer, z, kind, id, _)| {
-            (
-                std::cmp::Reverse(layer),
-                std::cmp::Reverse(z),
-                kind,
-                std::cmp::Reverse(id),
-            )
-        });
         let mut fb = std::mem::replace(&mut self.fb, Framebuffer::new(0, 0));
         let mut scratch = std::mem::replace(&mut self.scratch, Framebuffer::new(0, 0));
         let mut flat = std::mem::replace(&mut self.flat, Framebuffer::new(0, 0));
-        // The sub interpreter's screen goes over the main one's, and so is
-        // drawn premultiplied. Its BACKCOLOR's color is put on at full
-        // strength, with its alpha as how much of the main screen shows
-        // through (coverage 255 less it); one of alpha 0 leaves the
-        // screen clear, and an opaque one hides the main screen.
-        let back = self.back_color;
-        let sub_opaque = self.env_type != 0 && back >> 24 == 0xFF;
-        fb.clear(match (self.env_type, back >> 24) {
-            (0, _) => back | 0xFF00_0000,
-            (_, 0) => 0,
-            (_, a) => (255 - a) << 24 | back & 0x00FF_FFFF,
+        self.scene.build(&SceneInput {
+            mode: &self.mode,
+            layers: &self.layers,
+            filters: &self.filters,
+            sprites: &self.sprites,
+            text: &self.text,
+            grp: &self.grp,
+            back_color: self.back_color,
+            sub: self.env_type != 0,
+            fade: self.fade.color,
+            dimmed: self.dimmed,
+            cursor,
         });
-        for layer in (0..LAYERS as i32).rev() {
-            let mut in_layer = elements.iter().filter(|e| e.0 == layer).peekable();
-            let settings = self.fine(&self.layers[layer as usize]);
-            let filter = &self.filters[layer as usize];
-            let direct = settings.compose == Compose::Direct;
-            // A layer that is not composed filters the whole frame as drawn
-            // so far, the layers behind and BACKCOLOR included (checked on
-            // hardware); a composed one only its own elements.
-            // UNVERIFIED: that it does so with no elements in the layer.
-            if in_layer.peek().is_none() && !(direct && !matches!(filter, Filter::None)) {
-                continue;
-            }
+        let scene = &self.scene;
+        let (grp, font) = (&self.grp, &self.font);
+        let sample = scene.sample;
+        fb.clear(scene.back);
+        for pass in &scene.passes {
+            let direct = pass.compose == Compose::Direct;
             let target = match direct {
                 true => &mut fb,
                 false => {
@@ -1559,75 +1513,70 @@ impl Runtime {
                     &mut scratch
                 }
             };
-            match &settings.projection {
+            let clip = pass.clip.as_ref();
+            match &pass.projection {
                 None => {
-                    for &(_, _, _, _, element) in in_layer {
-                        self.draw_element(target, element, &settings, cursor);
+                    for item in scene.items(pass) {
+                        match item {
+                            Item::Sprite(s) => raster::sprite::draw(s, grp, target, clip, None),
+                            Item::Text(t) => {
+                                let cells = self.text[t.screen as usize].cells();
+                                raster::text::draw(t, cells, font, grp, target, clip);
+                            }
+                        }
                     }
                 }
-                // Sprites go through the matrix themselves, whole; text
-                // screens are drawn flat on the screen first, each run of
-                // them put on in its turn.
-                Some(m) => {
-                    let in_layer: Vec<_> = in_layer.collect();
-                    let shown = compose::source_bounds(
-                        m,
-                        self.mode.sample,
-                        (target.width(), target.height()),
-                        settings.clip.as_ref(),
-                    );
-                    let origin = self.flat_area(&mut flat, &in_layer, &settings.matrix, shown);
-                    let shift = compose::Affine {
-                        tx: -f64::from(origin.0),
-                        ty: -f64::from(origin.1),
-                        ..compose::Affine::IDENTITY
-                    };
-                    let unclipped = Layer {
-                        clip: None,
-                        projection: None,
-                        matrix: settings.matrix.then(&shift),
-                        ..settings
-                    };
-                    let clip = settings.clip.as_ref();
-                    let sample = self.mode.sample;
+                Some(p) => {
+                    flat.resize(p.flat_size.0, p.flat_size.1);
+                    let origin = p.flat_origin;
                     let mut flat_drawn = false;
-                    for &&(_, _, _, _, element) in &in_layer {
-                        if let Element::Sprite(..) = element {
-                            if flat_drawn {
-                                compose::project(target, &flat, origin, m, sample, clip);
-                                flat_drawn = false;
+                    for item in scene.items(pass) {
+                        match item {
+                            Item::Sprite(s) => {
+                                if flat_drawn {
+                                    compose::project(
+                                        target, &flat, origin, &p.matrix, sample, clip,
+                                    );
+                                    flat_drawn = false;
+                                }
+                                let projection = Some((&p.matrix, sample));
+                                raster::sprite::draw(s, grp, target, clip, projection);
                             }
-                            self.draw_element(target, element, &settings, cursor);
-                            continue;
+                            Item::Text(t) => {
+                                if !flat_drawn {
+                                    flat.clear(0);
+                                    flat_drawn = true;
+                                }
+                                let cells = self.text[t.screen as usize].cells();
+                                raster::text::draw(t, cells, font, grp, &mut flat, None);
+                            }
                         }
-                        if !flat_drawn {
-                            flat.clear(0);
-                            flat_drawn = true;
-                        }
-                        self.draw_element(&mut flat, element, &unclipped, cursor);
                     }
                     if flat_drawn {
-                        compose::project(target, &flat, origin, m, sample, clip);
+                        compose::project(target, &flat, origin, &p.matrix, sample, clip);
                     }
                 }
             }
-            filter.apply(target, self.mode.sample, settings.compose);
-            // The frame stays opaque where deformation left nothing, which
-            // shows black.
-            if direct && matches!(filter, Filter::Raster { .. }) {
+            pass.filter
+                .apply(target, sample, pass.compose, &scene.raster_rows);
+            if pass.opaque_after_filter {
                 for p in target.pixels_mut() {
                     *p |= 0xFF00_0000;
                 }
             }
             if !direct {
-                // The main screen's frame is opaque all through.
-                let opaque = self.env_type == 0;
-                compose::compose(&mut fb, &scratch, settings.compose, settings.color, opaque);
+                compose::compose(
+                    &mut fb,
+                    &scratch,
+                    pass.compose,
+                    pass.color,
+                    scene.opaque_frame,
+                );
             }
         }
         // FADE and the darkening beside a subprogram are one step.
-        self.fade.cover(fb.pixels_mut(), self.dimmed);
-        if sub_opaque {
+        cover(scene.fade, fb.pixels_mut(), scene.dimmed);
+        if scene.opaque_end {
             for p in fb.pixels_mut() {
                 *p |= 0xFF00_0000;
             }
@@ -1718,70 +1667,6 @@ impl Runtime {
         self.sprites.clear_vars();
         for t in &mut self.text {
             t.vars.clear();
-        }
-    }
-
-    /// Fits `flat` to what the text screens among `elements` cover through
-    /// `matrix`, which may be beyond the screen, and returns the frame
-    /// pixel at its top left. It keeps only what `shown` (from
-    /// [`compose::source_bounds`]) says can show, and reaches at most a
-    /// screen past each edge, to keep its memory bounded.
-    fn flat_area(
-        &self,
-        flat: &mut Framebuffer,
-        elements: &[&(i32, i32, u8, usize, Element)],
-        matrix: &compose::Affine,
-        shown: Option<(f64, f64, f64, f64)>,
-    ) -> (i32, i32) {
-        let (fw, fh) = self.mode.frame();
-        let (fw, fh) = (f64::from(fw), f64::from(fh));
-        let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-        for e in elements {
-            if let Element::Text(i) = e.4 {
-                let (a, b, c, d) = self.text[i].extent(matrix);
-                (x0, y0, x1, y1) = (x0.min(a), y0.min(b), x1.max(c), y1.max(d));
-            }
-        }
-        // A pixel to spare each side for where the edges fall.
-        let Some((a, b, c, d)) = shown else {
-            flat.resize(0, 0);
-            return (0, 0);
-        };
-        (x0, y0) = (x0.max(a - 1.0), y0.max(b - 1.0));
-        (x1, y1) = (x1.min(c + 1.0), y1.min(d + 1.0));
-        if x0 > x1 || y0 > y1 {
-            flat.resize(0, 0);
-            return (0, 0);
-        }
-        let x0 = x0.floor().clamp(-fw, 2.0 * fw) as i32;
-        let y0 = y0.floor().clamp(-fh, 2.0 * fh) as i32;
-        let x1 = x1.ceil().clamp(-fw, 2.0 * fw) as i32;
-        let y1 = y1.ceil().clamp(-fh, 2.0 * fh) as i32;
-        flat.resize((x1 - x0) as u32, (y1 - y0) as u32);
-        (x0, y0)
-    }
-
-    /// A layer's settings for a frame that XSCREEN's sampling makes finer.
-    fn fine(&self, layer: &Layer) -> Layer {
-        let s = self.mode.sample as i32;
-        if s == 1 {
-            return *layer;
-        }
-        let f = f64::from(s);
-        let scale = compose::Affine {
-            a: f,
-            d: f,
-            ..compose::Affine::IDENTITY
-        };
-        Layer {
-            matrix: layer.matrix.then(&scale),
-            clip: layer.clip.map(|c| Clip {
-                x0: c.x0 * s,
-                y0: c.y0 * s,
-                x1: c.x1 * s + s - 1,
-                y1: c.y1 * s + s - 1,
-            }),
-            ..*layer
         }
     }
 

@@ -157,38 +157,32 @@ impl Fade {
             c | ((a * (1.0 - f) + b * f).floor() as u32) << shift
         });
     }
+}
 
-    /// Covers `pixels` with the fade color, mixing each channel with it
-    /// by its alpha, and darkens them to 224/255 when `dim` is set, both
-    /// at once with one rounding. The alpha stays as it is.
-    pub(crate) fn cover(&self, pixels: &mut [u32], dim: bool) {
-        let a = self.color >> 24;
-        match (a, dim) {
-            (0, false) => {}
-            (0, true) => darken(pixels),
-            (_, false) => {
-                let mix = |p: u32, c: u32, shift: u32| {
-                    let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
-                    ((c * a + p * (255 - a) + 127) / 255) << shift
-                };
-                for p in pixels {
-                    *p = *p & 0xFF00_0000
-                        | mix(*p, self.color, 16)
-                        | mix(*p, self.color, 8)
-                        | mix(*p, self.color, 0);
-                }
+/// Covers `pixels` with FADE's color, mixing each channel with it
+/// by its alpha, and darkens them to 224/255 when `dim` is set, both
+/// at once with one rounding. The alpha stays as it is.
+pub(crate) fn cover(color: u32, pixels: &mut [u32], dim: bool) {
+    let a = color >> 24;
+    match (a, dim) {
+        (0, false) => {}
+        (0, true) => darken(pixels),
+        (_, false) => {
+            let mix = |p: u32, c: u32, shift: u32| {
+                let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
+                ((c * a + p * (255 - a) + 127) / 255) << shift
+            };
+            for p in pixels {
+                *p = *p & 0xFF00_0000 | mix(*p, color, 16) | mix(*p, color, 8) | mix(*p, color, 0);
             }
-            (_, true) => {
-                let mix = |p: u32, c: u32, shift: u32| {
-                    let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
-                    (((c * a + p * (255 - a)) * DIM + 255 * 255 / 2) / (255 * 255)) << shift
-                };
-                for p in pixels {
-                    *p = *p & 0xFF00_0000
-                        | mix(*p, self.color, 16)
-                        | mix(*p, self.color, 8)
-                        | mix(*p, self.color, 0);
-                }
+        }
+        (_, true) => {
+            let mix = |p: u32, c: u32, shift: u32| {
+                let (p, c) = (p >> shift & 0xFF, c >> shift & 0xFF);
+                (((c * a + p * (255 - a)) * DIM + 255 * 255 / 2) / (255 * 255)) << shift
+            };
+            for p in pixels {
+                *p = *p & 0xFF00_0000 | mix(*p, color, 16) | mix(*p, color, 8) | mix(*p, color, 0);
             }
         }
     }
