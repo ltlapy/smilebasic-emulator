@@ -82,3 +82,13 @@ up, so this leaves the frame's own cost.
 limits, catching up without drawing. `--slower N` divides that clock and its
 limits by N, to see how a machine N times slower would go. It has no window,
 so no upload, scaling or present is included.
+
+## The GPU path
+
+`SB_GPU=1` draws with the GPU where it can, `SB_GPU=sync` waits for it each frame
+to time its work, and `SB_GPU=check` also draws on the CPU and counts the pixels that
+differ; see `crates/sb-sdl/src/gpu.rs` and
+[renderer-design.md](renderer-design.md). With `SB_UI_BENCH` it reports why any frame
+stayed on the CPU. `SB_UI_BENCH`'s `end` stops when the program ends, `settle=N` skips
+frames first and `novsync` turns vsync off. `SDL_VIDEO_DRIVER=offscreen` shows no window
+and, through EGL, still reaches the GPU, but leaves real presents out of the numbers.

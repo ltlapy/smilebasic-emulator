@@ -833,10 +833,10 @@ SmileBASIC 4's rules for GARRAY and GUPDATE stay in `graphics.rs`.
 For the GPU, each page that is in use is mirrored as a 2048x2048
 texture:
 
-- **Format.** `R32Uint` holds the same bytes as `Graphics` (one
-  `0xAARRGGBB` word). The shader unpacks it with integer ops, which
-  keeps texel values exact. `RGBA8Unorm`/`BGRA8Unorm` also work if the
-  shader uses `texelFetch` and does its arithmetic in integers.
+- **Format.** `ARGB8888`, the same bytes as `Graphics` (one `0xAARRGGBB`
+  word), sampled with nearest, is what SDL_Renderer takes and all the sums
+  need ([4.2](#42-a-sdl_renderer-as-now)). `R32Uint` holds the same bytes for a
+  shader that works in integers, should one ever need to.
 - **Dirty tracking.** Extend the per-page change counter to a coarse
   tile bitmap, for example 64x64-pixel tiles, so 32x32 bits a page.
   `plot`, `fill`, `copy`, `put_chars`, `put_image`, `load_rect`,
@@ -945,17 +945,20 @@ scales it.
   can be expressed. Support varies by driver: per SDL's header, opengl
   supports only `ADD` with all factors, opengles2 `ADD`, `SUBTRACT` and
   `REV_SUBTRACT`, and software none.
-- **Exactness.** Fixed-function blending computes in the GPU's own
-  precision and rounds on the way back to 8 bits, so floor-based
-  formulas (tint, additive light, modes 3 and 4) **cannot be
-  reproduced**. Even `over` may differ by 1 between drivers.
+- **Exactness.** A texel times a vertex color gives `t*c` and `a*ca`
+  unrounded, and `SDL_BLENDMODE_BLEND` then gives `t*c*a + d*(1-a)` with
+  one rounding at the store: SmileBASIC 4's own sum. `ADD` is its additive
+  element; the premultiplied blend, the premultiplied add, `MUL` and a custom
+  `1-dst, 1` are modes 1 to 4, with the layer's color times its alpha on the
+  vertices. So ±1 where the GPU rounds, as on SmileBASIC 4 itself
+  ([phase 3](#6-phased-plan) measured it). An earlier version of this section
+  said otherwise, when the CPU's formulas were floors.
 - **Filters** have no shader support. Some could be built from
   render-to-texture tricks (mosaic from a nearest downscale; raster as
   per-row strips), but blur and colour conversion cannot.
 - **Rust.** No new dependencies.
-- **Verdict.** It is fine for the final scaling it does now. As a
-  scene rasterizer it is approximate everywhere and cannot do 4x4
-  layers or filters.
+- **Verdict.** It draws sprites, text screens, blends, layers, LCLIP and FADE
+  on every driver, with no 4x4 layers and filters stay on the CPU.
 
 ### 4.3 (b) SDL 3.4 `SDL_GPURenderState` inside SDL_Renderer
 
@@ -980,23 +983,25 @@ Limits, from the vendored header (`sdl3-src` 3.4.18, `SDL_render.h`):
   `..._DXIL_BOOLEAN` / `..._MSL_BOOLEAN`. The shader is created with
   `SDL_CreateGPUShader` on the renderer's device
   (`SDL_GetGPURendererDevice`). So we would ship three shader blobs per
-  shader, built offline (glslc/dxc/spirv-cross, or SDL_shadercross)
-  and committed or generated at build time.
+  shader, built offline (glslang/dxc/spirv-cross, or SDL_shadercross)
+  and committed or generated at build time. SDL's Vulkan backend binds
+  combined image samplers: naga cannot make that (its GLSL front end refuses
+  `sampler2D`, and its output keeps the two apart).
 - **Only the fragment stage is custom.** Vertices are still 2D
-  `SDL_Vertex`. Blending is still SDL's blend mode, so integer-exact
-  blending needs the destination read in the shader. That means
-  ping-ponging between render targets, binding the previous target as
-  a sampler. A projected quad works if the shader does the inverse
+  `SDL_Vertex`. Blending is still SDL's blend mode, which is SmileBASIC 4's
+  own way of blending anyway ([4.2](#42-a-sdl_renderer-as-now)); only a sum
+  that must be bit-exact would need the destination read in the shader. A
+  filter draws its target through the shader into another, and they swap. A
+  projected quad works if the shader does the inverse
   homography per pixel, drawn over the quad's screen bounds: the same
   inverse mapping `compose::project_image` does on the CPU.
 - **Rust.** The sdl3 crate (0.20) has no safe wrapper for
   `SDL_GPURenderState`. Raw `sdl3::sys::render` calls are needed, plus
   `sdl3::gpu::Shader::raw()` or raw `SDL_CreateGPUShader`. The device
   comes from `SDL_GetGPURendererDevice` as a raw pointer.
-- **Verdict.** It is the smallest step from today's code, and the rest
-  of the UI keeps using SDL_Renderer unchanged. But it is limited to
-  Vulkan/D3D12/Metal machines, the fragment stage, and ping-pong for
-  exact blends.
+- **Verdict.** It adds what (a) lacks, on top of (a), and the rest of the UI
+  keeps using SDL_Renderer unchanged. It is limited to Vulkan/D3D12/Metal
+  machines and the fragment stage.
 
 ### 4.4 (c) The SDL3 GPU API directly
 
@@ -1083,9 +1088,10 @@ Limits, from the vendored header (`sdl3-src` 3.4.18, `SDL_render.h`):
 | ARM handhelds, GLES 2 | yes (opengles2) | no | no | no |
 | ARM handhelds, GLES 3 | yes | Vulkan if present | Vulkan if present and features suffice | GLES3 backend |
 | WASM | yes (WebGL via opengles2) | no | no | WebGL2, WebGPU |
-| Exact integer blending | no | with ping-pong | yes (compute or ping-pong) | yes (ping-pong; compute on native) |
+| SmileBASIC 4's sums, ±1 where the GPU rounds | yes | yes | yes | yes |
+| Bit-exact blending | no | with ping-pong | yes (compute or ping-pong) | yes (ping-pong; compute on native) |
 | 4x4 projection exact | no | yes (per-pixel inverse in shader) | yes | yes |
-| Filters | no | yes (fragment) | yes | yes |
+| Filters | no (CPU, the whole frame) | yes (fragment) | yes | yes |
 | New dependencies | none | none (raw sys calls) | none | wgpu tree (61 crates on Linux) |
 | Shader toolchain | none | offline, three formats | offline, three formats | none (WGSL) |
 
@@ -1228,16 +1234,98 @@ There are two ways to reduce the inexact set later:
   program that sets the same `SPOFS` every frame); page uploads
   proportional to what was drawn.
 
-**Phase 3: choose the GPU option and prototype.**
+**Phase 3: a GPU prototype. Done, behind `SB_GPU`, off by default.**
 
-- Decide between (b), (c) and (d) with section 4's trade-offs. Weigh
-  coverage against dependencies, and decide how the UI is presented.
-- Implement the exact subset: upright items at integer scale, tint, both
-  blends, compose modes 0-4, FADE. Everything else falls back to the CPU
-  per frame.
-- Milestone: CPU-vs-GPU suite green for that subset on lavapipe;
-  ELE2020 and NEON_DRIFTWAY-style scenes faster than the CPU path on a
-  mid-range GPU, measured with `SB_UI_BENCH`.
+(b) sitting on (a) was chosen, as the UI stays on SDL_Renderer. `gpu.rs` in
+`crates/sb-sdl` is a `SceneBackend`, which the runtime offers each scene; the
+source says how to run it. It draws sprites and text screens under any matrix,
+with tint, both blends, compose modes 0-4, LCLIP and XSCREEN's sample, through
+`SDL_RenderGeometry`, with no shader on any driver. A shader of ours came in for
+one filter, to prove the way. A frame with anything else is drawn on the CPU
+whole, and a count says why. Direct mode's hint and list, the line cursor,
+inverted cells, sub screens and an image off a page that does not repeat are
+among those; mosaic, blur, raster and 4x4 are the ones that matter to games.
+
+Times, on one x86-64 desktop with an RTX 3060 Ti, on the opengl driver through
+EGL with no window shown: ms for each frame drawn. GPU is the CPU's side (walking
+the scene, pages, flush) plus the wait for the GPU when read back at once, with
+no vsync and no real present. A window's present is not in these. TPERF's scenes
+and ELE2020, instructions in billions over the same run:
+
+| Scene | CPU ms | GPU ms | CPU instr | GPU instr | On the CPU | Pixels 1 off, 2, more, of those compared |
+|---|---|---|---|---|---|---|
+| TMULTI | 87.6 | 3.4 + 1.3 | 165 | 14 | 0 | 0, 0, 0.11% |
+| SPANIM | 35.1 | 0.5 + 0.7 | 86 | 5 | 0 | 7.2%, 0, 0.05% |
+| SPROT | 36.8 | 0.4 + 0.4 | 74 | 5 | 0 | 0.01%, 0.01%, 0.08% |
+| LCOMP | 38.4 | 0.5 + 0.9 | 112 | 3 | 0 | 44%, 0, 0 |
+| SPMOVE | 4.6 | 0.4 + 0.6 | 33 | 9 | 0 | 0, 0, 0 |
+| ELE2020 | 14.7 | 0.2 + 1.0 | 137 | 7 | 0 | 5.4%, 0, 0.003% |
+| GAME | 3.7 | **4.5** + 0.7 | 22 | **33** | 8% (blur) | 0.5%, 0, 0 |
+| GFILL | 1.3 | **4.3** + 0.6 | 12 | **29** | 0 | 0, 0, 0 |
+| GPUTCHR | 1.0 | **3.6** + 0.8 | 22 | **40** | 0 | 0, 0, 0 |
+
+MAXSP's score went from 457 to 2563 in the same conditions; there it is held
+back by something other than drawing (3 ms of 16.7 in work and under 1.3 in
+drawing), which was not looked into. The CPU's frames, at these times, drop:
+TPERF's TMULTI lost 263 frames of 300 on the CPU and 0 here, and SPROT 82 and 1.
+
+With the switch off, on the same runs as phase 1's that were repeated (TMULTI, SPROT,
+SPANIM, LCOMP, GAME, VINT, ELE2020, DVD_BOUNCE, TEST49, 50, 53): checksums and PNGs
+identical, instructions within 0.01%.
+
+The rest:
+
+- **Exactness.** The ±1 are the GPU's rounding of one draw's sum, and add up
+  over layers: about one pixel in six a layer in LCOMP. Everything larger seen
+  lies on elements' edges and on lines where samples fall between texels, as
+  the policy in [5.2](#52-what-will-differ) allows; upright sprites and text
+  at whole scales and places, and the GRP scenes, are identical. With the same
+  frames compared with screenshots of SmileBASIC 4 on an emulator on a PC's GPU,
+  pixels differing, CPU and then GPU: TEST49 parts 1 to 5, all by 1 or 2, 73728 and 59392; 83968 and
+  74752; 131072 and 130048; 211968 and 206848; 146432 and 134144. TEST50 parts
+  1, 2, 4, the ties, 4336 and 4415; 1209 and 1245; 3441 and 3441. On TEST49
+  the GPU is the closer, as it should be: SmileBASIC 4 rounds the same way.
+- **Ties.** A sample moved by 1/128 of a texel the way `Placement::texel_tie`
+  says, and an element that can tie moved 1/256 of a pixel down, follow the rule
+  for edges and texels (TEST50 above; 183 pixels of 921600 differ from the CPU in
+  part 1, none in parts 3 and 5). The rule's clamp to the image needs a shader
+  and a per-element uniform, which would end batching. It was not done, as
+  SmileBASIC 4's own ties depend on the host GPU.
+- **Drivers.** SPROT, LCOMP and TMULTI differ from the CPU alike on opengl,
+  opengles2 and SDL's gpu driver on the NVIDIA GPU, on SDL's vulkan driver, on the
+  gpu driver on lavapipe and on opengles2 on llvmpipe. SDL's vulkan driver costs
+  far more on the CPU (TMULTI 29 ms), so prefer another. Only the gpu driver takes
+  shaders.
+- **Shaders.** One filter, the color filter, in `crates/sb-sdl/shaders`: GLSL,
+  SPIR-V from glslang committed beside it. On the gpu driver, it matched the CPU on
+  all 39.6 million pixels compared of LCOLOR and on TEST54 part 7, and within 2 on
+  TEST53 part 4, where the layer's color follows; the GPU's wait was 1.3 ms a frame
+  with four such layers. Windows' D3D12 needs DXIL and macOS MSL too, which SDL_shadercross makes
+  from the same source; neither was tried. So far only Vulkan.
+- **Uploads.** Pages reach the GPU whole, 16.8 MB, whenever `Graphics::changes`
+  moves and a shown element reads them: 3.4 to 4.4 ms a frame here on opengl, 1.3
+  on opengles2, 5.7 on vulkan. That makes scenes that draw on a shown page
+  every frame slower than the CPU, as above. Phase 2's dirty tiles or the rectangle
+  in use would answer it; until then these numbers stand. Nothing is read back:
+  GRP commands read the CPU's pages, which stay authoritative.
+- **Memory.** Peak RSS went up by about 60 MiB (297 to 358 in SPROT), with one page
+  and the font page on the GPU, and to 1006 MiB from 310 in TMULTI on opengl and
+  opengles2, 224000 vertices a frame in SDL's and the driver's buffers; 487 on the gpu
+  driver. On the GPU: 16 MiB a page in use, at most six, 16 for the atlas if a glyph
+  needs it, three frame-sized targets. No frame of latency is added: the frame is
+  drawn in the same iteration as before.
+- **Failure.** The software renderer and no Vulkan with `SB_GPU_ALONE` were tried,
+  and stay on the CPU; so does a refused texture or shader, by the code, untried. Forcing a driver with
+  `SDL_RENDER_DRIVER` that cannot present still panics inside the sdl3 crate's
+  `into_canvas`, as it did before.
+- **Reach.** Windows, macOS, Linux: (a) on their usual drivers, untested on the first
+  two; (b)'s filters on D3D12, Metal and Vulkan once SmileBASIC 4 are made. GLES
+  handhelds, the RK3326 among them: (a) needs only GLES2's textures, targets and
+  blends, so the path should work, and filters and 4x4 stay on the CPU, for the whole
+  frame. Tested on GLES2 on a desktop GPU only: on Mali, timings, target switches on a
+  tiler, and uploads are unknown. Mesa's PanVK names the Mali-G31, and has a switch
+  for hardware it does not call supported; whether the G31 needs it, and what an
+  AmberELEC build has, are unknown.
 
 **Phase 4: full feature set.**
 
