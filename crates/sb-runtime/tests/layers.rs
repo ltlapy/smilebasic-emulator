@@ -3,7 +3,10 @@
 
 use sb_runtime::Runtime;
 use sb_runtime::font::{Font, FontSize};
+use sb_runtime::framebuffer::Framebuffer;
 use sb_runtime::machine::Machine;
+use sb_runtime::raster::{RasterInput, SceneBackend};
+use sb_runtime::scene::Scene;
 
 const RED: u32 = 0xFFFF_0000;
 const BLUE: u32 = 0xFF00_00FF;
@@ -469,4 +472,97 @@ fn projected_text_screens_keep_what_is_off_the_screen() {
     let mut m = run("CLS:PRINT \"A\":TOFS 4,-200,-120\n\
          DIM M#[16]:M#[0]=1/200:M#[5]=-1/120:M#[10]=1:M#[15]=1:LMATRIX 0,M#");
     assert_eq!(m.render().get(x, y), Some(WHITE));
+}
+
+/// Stands for a rasterizer outside the runtime.
+#[derive(Default)]
+struct Backend {
+    takes: bool,
+    compares: bool,
+    drawn: u32,
+    compared: Vec<Option<u32>>,
+}
+
+impl SceneBackend for Backend {
+    fn draw(&mut self, _: &Scene, _: &RasterInput, _: (u32, u32)) -> bool {
+        self.drawn += 1;
+        self.takes
+    }
+    fn compares(&self) -> bool {
+        self.compares
+    }
+    fn compare(&mut self, cpu: &Framebuffer) {
+        self.compared.push(cpu.get(4, 4));
+    }
+}
+
+/// A program still running with a red BACKCOLOR: in direct mode, the emulator's
+/// own hints go over the frame on the CPU, so it is not offered to a backend.
+fn running_red() -> Machine {
+    let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+    m.boot();
+    m.set_slot(0, "BACKCOLOR &HFFFF0000:WHILE 1:VSYNC:WEND".to_string());
+    m.run_slot(0);
+    for _ in 0..5 {
+        m.frame();
+    }
+    assert!(m.is_running());
+    m
+}
+
+#[test]
+fn a_backend_that_takes_a_scene_leaves_the_cpu_frame_alone() {
+    let mut m = running_red();
+    let mut backend = Backend {
+        takes: true,
+        ..Backend::default()
+    };
+    m.rt.touch();
+    m.rt.render_with(Some(&mut backend));
+    assert_eq!(backend.drawn, 1);
+    assert!(m.rt.frame_on_backend());
+    assert_ne!(m.rt.screen_frame().get(4, 4), Some(RED));
+    // Nothing changed: not drawn again, and still the backend's.
+    let revision = m.rt.revision();
+    m.rt.render_with(Some(&mut backend));
+    assert_eq!((backend.drawn, m.rt.revision()), (1, revision));
+    assert!(m.rt.frame_on_backend());
+}
+
+#[test]
+fn asking_for_the_frame_without_a_backend_draws_it_on_the_cpu() {
+    let mut m = running_red();
+    let mut backend = Backend {
+        takes: true,
+        ..Backend::default()
+    };
+    m.rt.touch();
+    m.rt.render_with(Some(&mut backend));
+    assert_eq!(m.rt.render().get(4, 4), Some(RED));
+    assert!(!m.rt.frame_on_backend());
+}
+
+#[test]
+fn a_backend_that_refuses_a_scene_leaves_it_to_the_cpu() {
+    let mut m = running_red();
+    let mut backend = Backend::default();
+    m.rt.touch();
+    m.rt.render_with(Some(&mut backend));
+    assert_eq!(backend.drawn, 1);
+    assert!(!m.rt.frame_on_backend());
+    assert_eq!(m.rt.screen_frame().get(4, 4), Some(RED));
+}
+
+#[test]
+fn a_comparing_backend_sees_the_cpu_frame_of_its_scene() {
+    let mut m = running_red();
+    let mut backend = Backend {
+        takes: true,
+        compares: true,
+        ..Backend::default()
+    };
+    m.rt.touch();
+    m.rt.render_with(Some(&mut backend));
+    assert_eq!(backend.compared, [Some(RED)]);
+    assert!(m.rt.frame_on_backend());
 }

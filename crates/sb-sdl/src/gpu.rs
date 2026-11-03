@@ -22,6 +22,14 @@
 //!   the CPU draws too, and the two are compared, printing the differences at
 //!   the end. `SB_GPU_DUMP=PATH` saves the frame that differed most as
 //!   `PATH-gpu.pam` and `PATH-cpu.pam`.
+//!
+//! `SB_GPU_ALONE=1` draws on a renderer of its own with no window, through
+//! SDL's GPU driver, to measure or check that driver without a display; the
+//! window then shows nothing of it.
+//!
+//! The color filter is the one thing here with a shader of ours, through
+//! `SDL_GPURenderState`, so only on SDL's `gpu` driver, on Vulkan. Elsewhere it
+//! goes to the CPU, as the other filters do everywhere.
 
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -44,17 +52,24 @@ use sdl3::sys::blendmode::{
     SDL_BLENDMODE_BLEND_PREMULTIPLIED, SDL_BLENDMODE_MUL, SDL_BLENDMODE_NONE,
     SDL_BLENDOPERATION_ADD, SDL_BlendMode, SDL_ComposeCustomBlendMode,
 };
-use sdl3::sys::gpu::{SDL_GetGPUDeviceProperties, SDL_PROP_GPU_DEVICE_NAME_STRING};
+use sdl3::sys::gpu::{
+    SDL_CreateGPUShader, SDL_GPU_SHADERFORMAT_SPIRV, SDL_GPU_SHADERSTAGE_FRAGMENT, SDL_GPUDevice,
+    SDL_GPUShader, SDL_GPUShaderCreateInfo, SDL_GetGPUDeviceProperties, SDL_GetGPUShaderFormats,
+    SDL_PROP_GPU_DEVICE_NAME_STRING, SDL_ReleaseGPUShader,
+};
 use sdl3::sys::pixels::{SDL_FColor, SDL_PIXELFORMAT_ARGB8888};
 use sdl3::sys::properties::SDL_GetStringProperty;
 use sdl3::sys::rect::{SDL_FPoint, SDL_Rect};
 use sdl3::sys::render::{
-    SDL_CreateTexture, SDL_DestroyTexture, SDL_FlushRenderer, SDL_GetGPURendererDevice,
-    SDL_RenderClear, SDL_RenderGeometry, SDL_RenderReadPixels, SDL_Renderer, SDL_SetRenderClipRect,
-    SDL_SetRenderDrawBlendMode, SDL_SetRenderDrawColor, SDL_SetRenderTarget,
-    SDL_SetRenderTextureAddressMode, SDL_SetTextureBlendMode, SDL_SetTextureScaleMode,
-    SDL_TEXTURE_ADDRESS_AUTO, SDL_TEXTURE_ADDRESS_CLAMP, SDL_TEXTURE_ADDRESS_WRAP,
-    SDL_TEXTUREACCESS_STATIC, SDL_TEXTUREACCESS_TARGET, SDL_Texture, SDL_UpdateTexture, SDL_Vertex,
+    SDL_CreateGPURenderState, SDL_CreateGPURenderer, SDL_CreateTexture, SDL_DestroyGPURenderState,
+    SDL_DestroyRenderer, SDL_DestroyTexture, SDL_FlushRenderer, SDL_GPURenderState,
+    SDL_GPURenderStateCreateInfo, SDL_GetGPURendererDevice, SDL_RenderClear, SDL_RenderGeometry,
+    SDL_RenderPresent, SDL_RenderReadPixels, SDL_Renderer, SDL_SetGPURenderState,
+    SDL_SetGPURenderStateFragmentUniforms, SDL_SetRenderClipRect, SDL_SetRenderDrawBlendMode,
+    SDL_SetRenderDrawColor, SDL_SetRenderTarget, SDL_SetRenderTextureAddressMode,
+    SDL_SetTextureBlendMode, SDL_SetTextureScaleMode, SDL_TEXTURE_ADDRESS_AUTO,
+    SDL_TEXTURE_ADDRESS_CLAMP, SDL_TEXTURE_ADDRESS_WRAP, SDL_TEXTUREACCESS_STATIC,
+    SDL_TEXTUREACCESS_TARGET, SDL_Texture, SDL_UpdateTexture, SDL_Vertex,
 };
 use sdl3::sys::surface::{
     SDL_ConvertSurface, SDL_DestroySurface, SDL_LockSurface, SDL_SCALEMODE_LINEAR,
@@ -166,11 +181,78 @@ struct Worst {
     first: Option<(u32, u32, u32, u32)>,
 }
 
+/// The color filter's shader, on a GPU device that can take it.
+struct ColorFilter {
+    device: *mut SDL_GPUDevice,
+    shader: *mut SDL_GPUShader,
+    state: *mut SDL_GPURenderState,
+}
+
+/// The color filter's compiled shader; see shaders/README.md.
+static COLOR_FILTER_SPIRV: &[u8] = include_bytes!("../shaders/color_filter.frag.spv");
+
+impl ColorFilter {
+    /// None where the renderer has no GPU device, or one that refuses it: the
+    /// filter then stays on the CPU.
+    fn new(renderer: *mut SDL_Renderer) -> Option<ColorFilter> {
+        // SAFETY: the renderer is valid; the device is its own, the shader's
+        // code is copied by the call, and what is made here is released in
+        // Drop before them.
+        unsafe {
+            let device = SDL_GetGPURendererDevice(renderer);
+            if device.is_null() {
+                sdl3::sys::error::SDL_ClearError();
+                return None;
+            }
+            if SDL_GetGPUShaderFormats(device) & SDL_GPU_SHADERFORMAT_SPIRV == 0 {
+                return None;
+            }
+            let info = SDL_GPUShaderCreateInfo {
+                code_size: COLOR_FILTER_SPIRV.len(),
+                code: COLOR_FILTER_SPIRV.as_ptr(),
+                entrypoint: c"main".as_ptr(),
+                format: SDL_GPU_SHADERFORMAT_SPIRV,
+                stage: SDL_GPU_SHADERSTAGE_FRAGMENT,
+                num_samplers: 1,
+                num_storage_textures: 0,
+                num_storage_buffers: 0,
+                num_uniform_buffers: 1,
+                ..Default::default()
+            };
+            let shader = SDL_CreateGPUShader(device, &info);
+            if shader.is_null() {
+                eprintln!("SB_GPU: the color filter's shader was refused");
+                return None;
+            }
+            let info = SDL_GPURenderStateCreateInfo {
+                fragment_shader: shader,
+                ..Default::default()
+            };
+            let state = SDL_CreateGPURenderState(renderer, &info);
+            if state.is_null() {
+                SDL_ReleaseGPUShader(device, shader);
+                eprintln!("SB_GPU: the color filter's render state was refused");
+                return None;
+            }
+            Some(ColorFilter {
+                device,
+                shader,
+                state,
+            })
+        }
+    }
+}
+
 pub struct Gpu {
     renderer: *mut SDL_Renderer,
+    /// It is its own renderer, with no window, to destroy with it.
+    alone: bool,
     frame: *mut SDL_Texture,
     /// Where a composed layer is drawn first.
     layer: *mut SDL_Texture,
+    /// What a filter draws into, which then takes the place of what it read.
+    spare: *mut SDL_Texture,
+    color_filter: Option<ColorFilter>,
     size: (u32, u32),
     pages: [Option<Page>; PAGES],
     atlas: *mut SDL_Texture,
@@ -275,7 +357,16 @@ impl Gpu {
             eprintln!("SB_GPU: the software renderer has no GPU; staying on the CPU");
             return None;
         }
-        let renderer = canvas.raw();
+        let alone = std::env::var_os("SB_GPU_ALONE").is_some();
+        let renderer = match alone {
+            // SAFETY: SDL makes the device, with no window to present to.
+            true => unsafe { SDL_CreateGPURenderer(null_mut(), null_mut()) },
+            false => canvas.raw(),
+        };
+        if renderer.is_null() {
+            eprintln!("SB_GPU: no GPU renderer; staying on the CPU");
+            return None;
+        }
         let screen = SDL_ComposeCustomBlendMode(
             SDL_BLENDFACTOR_ONE_MINUS_DST_COLOR,
             SDL_BLENDFACTOR_ONE,
@@ -291,8 +382,11 @@ impl Gpu {
         };
         Some(Gpu {
             renderer,
+            alone,
             frame: null_mut(),
             layer: null_mut(),
+            spare: null_mut(),
+            color_filter: ColorFilter::new(renderer),
             size: (0, 0),
             pages: [const { None }; PAGES],
             atlas: null_mut(),
@@ -306,7 +400,7 @@ impl Gpu {
             },
             scale: None,
             sync: spec == "sync",
-            on_gl: canvas.renderer_name.starts_with("opengl"),
+            on_gl: !alone && canvas.renderer_name.starts_with("opengl"),
             check_every,
             dump: std::env::var("SB_GPU_DUMP").ok(),
             compared: Compared::default(),
@@ -321,7 +415,7 @@ impl Gpu {
     /// The frame it drew, to scale as `filter_linear` says. Valid until the
     /// frame's size changes; it is not to be destroyed.
     pub fn view(&mut self, linear: bool) -> Option<ManuallyDrop<Texture<'static>>> {
-        if self.frame.is_null() {
+        if self.frame.is_null() || self.alone {
             return None;
         }
         let scale = match linear {
@@ -332,6 +426,8 @@ impl Gpu {
         // long as `self`; ManuallyDrop keeps the wrapper from destroying it.
         unsafe {
             if self.scale != Some(scale) {
+                // A filter may have swapped the frame for another target.
+                SDL_SetTextureBlendMode(self.frame, SDL_BLENDMODE_NONE);
                 SDL_SetTextureScaleMode(self.frame, scale);
                 self.scale = Some(scale);
             }
@@ -850,7 +946,7 @@ impl Gpu {
         // SAFETY: the renderer outlives `self`; the old targets are its own
         // and not in use between frames.
         unsafe {
-            for texture in [self.frame, self.layer] {
+            for texture in [self.frame, self.layer, self.spare] {
                 if !texture.is_null() {
                     SDL_DestroyTexture(texture);
                 }
@@ -866,11 +962,14 @@ impl Gpu {
             };
             self.frame = make();
             self.layer = make();
-            if self.frame.is_null() || self.layer.is_null() {
+            self.spare = make();
+            if self.frame.is_null() || self.layer.is_null() || self.spare.is_null() {
                 return Err(Reason::Refused);
             }
-            SDL_SetTextureBlendMode(self.frame, SDL_BLENDMODE_NONE);
-            SDL_SetTextureScaleMode(self.layer, SDL_SCALEMODE_NEAREST);
+            for texture in [self.frame, self.layer, self.spare] {
+                SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+                SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+            }
         }
         self.size = (w, h);
         Ok(())
@@ -887,7 +986,10 @@ impl Gpu {
                 FilterOp::Mosaic(_) => return Some(Reason::Mosaic),
                 FilterOp::Blur(_) => return Some(Reason::Blur),
                 FilterOp::Raster { .. } => return Some(Reason::Raster),
-                FilterOp::Color { .. } => return Some(Reason::ColorFilter),
+                FilterOp::Color { .. } if self.color_filter.is_none() => {
+                    return Some(Reason::ColorFilter);
+                }
+                FilterOp::Color { .. } => {}
             }
             if pass.projection.is_some() {
                 return Some(Reason::Projection);
@@ -910,11 +1012,13 @@ impl Gpu {
         for pass in &scene.passes {
             if pass.compose == Compose::Direct {
                 self.items(scene, pass, input)?;
+                self.filter(pass);
                 continue;
             }
             self.target(self.layer);
             self.clear(0);
             self.items(scene, pass, input)?;
+            self.filter(pass);
             self.target(self.frame);
             let blend = match pass.compose {
                 Compose::Add => SDL_BLENDMODE_ADD_PREMULTIPLIED,
@@ -940,6 +1044,60 @@ impl Gpu {
         }
         self.flush();
         Ok(())
+    }
+
+    /// A layer's filter, on the current target, which is the frame for a
+    /// direct layer and the layer's own otherwise. Only the color filter comes
+    /// here: refuses() left the rest to the CPU.
+    fn filter(&mut self, pass: &LayerPass) {
+        let FilterOp::Color {
+            hue,
+            saturation,
+            value,
+        } = pass.filter
+        else {
+            return;
+        };
+        let Some(state) = self.color_filter.as_ref().map(|c| c.state) else {
+            return;
+        };
+        // Left at zero it changes nothing, as on the CPU.
+        if hue.rem_euclid(360.0) == 0.0 && saturation == 0.0 && value == 0.0 {
+            return;
+        }
+        let direct = pass.compose == Compose::Direct;
+        let from = if direct { self.frame } else { self.layer };
+        let keep_clear = pass.compose == Compose::Normal;
+        let shift: [f32; 4] = [
+            (hue / 360.0) as f32,
+            (saturation / 255.0) as f32,
+            (value / 255.0) as f32,
+            f32::from(u8::from(keep_clear)),
+        ];
+        self.target(self.spare);
+        let white = fcolor(0xFFFF_FFFF);
+        // SAFETY: the state and textures are this renderer's own. The uniforms
+        // are read when SDL's queue runs, so it runs before they can change.
+        unsafe {
+            SDL_SetGPURenderStateFragmentUniforms(
+                state,
+                0,
+                shift.as_ptr().cast(),
+                size_of_val(&shift) as u32,
+            );
+            SDL_SetGPURenderState(self.renderer, state);
+            self.cover(from, SDL_BLENDMODE_NONE, white);
+            SDL_SetGPURenderState(self.renderer, null_mut());
+            SDL_FlushRenderer(self.renderer);
+        }
+        let spare = self.spare;
+        self.spare = from;
+        match direct {
+            true => self.frame = spare,
+            false => self.layer = spare,
+        }
+        self.scale = None;
+        self.target(if direct { self.frame } else { self.layer });
     }
 
     /// Back to drawing on the window, as the frontend expects.
@@ -991,8 +1149,14 @@ impl SceneBackend for Gpu {
             .elapsed()
             .saturating_sub(self.stats.pages - pages_before);
         let start = Instant::now();
-        // SAFETY: the renderer outlives `self`.
-        unsafe { SDL_FlushRenderer(self.renderer) };
+        // SAFETY: the renderer outlives `self`. With no window, a present
+        // only hands the work to the GPU.
+        unsafe {
+            SDL_FlushRenderer(self.renderer);
+            if self.alone {
+                SDL_RenderPresent(self.renderer);
+            }
+        }
         self.stats.flush += start.elapsed();
         self.stats.drawn += 1;
         if self.sync {
@@ -1122,7 +1286,7 @@ fn save_pam(path: &str, w: usize, h: usize, pixels: &[u32]) {
 impl Drop for Gpu {
     fn drop(&mut self) {
         let pages = self.pages.iter().flatten().map(|p| p.texture);
-        let all = [self.frame, self.layer, self.atlas];
+        let all = [self.frame, self.layer, self.spare, self.atlas];
         // SAFETY: these are the renderer's own, and the frontend drops `self`
         // before it.
         for texture in pages.chain(all) {
@@ -1130,5 +1294,57 @@ impl Drop for Gpu {
                 unsafe { SDL_DestroyTexture(texture) };
             }
         }
+        // SAFETY: these were made in ColorFilter::new, and the renderer, made
+        // for this alone, is not used after this.
+        unsafe {
+            if let Some(c) = self.color_filter.take() {
+                SDL_DestroyGPURenderState(c.state);
+                SDL_ReleaseGPUShader(c.device, c.shader);
+            }
+            if self.alone {
+                SDL_DestroyRenderer(self.renderer);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scaled(scale: f64, tx: f64) -> Affine {
+        Affine {
+            a: scale,
+            d: scale,
+            tx,
+            ty: tx,
+            ..Affine::IDENTITY
+        }
+    }
+
+    #[test]
+    fn what_cannot_tie_is_sampled_as_it_is() {
+        let on = sampling(&scaled(1.0, 3.0), (16, 16), (false, false), 1.0);
+        assert_eq!((on.shift, on.down), ((0.0, 0.0), 0.0));
+        let turn = (0.3_f64.sin(), 0.3_f64.cos());
+        let m = Affine {
+            a: turn.1,
+            b: -turn.0,
+            c: turn.0,
+            d: turn.1,
+            ..Affine::IDENTITY
+        };
+        let on = sampling(&m, (16, 16), (false, false), 1.0);
+        assert_eq!((on.shift, on.down), ((0.0, 0.0), 0.0));
+    }
+
+    /// A power of two at a scale of 1, on a half pixel: the higher texel, and
+    /// moving the element down does not move what lies under a pixel.
+    #[test]
+    fn a_tie_goes_as_the_cpu_rule_says() {
+        let on = sampling(&scaled(1.0, 3.5), (16, 16), (false, false), 1.0);
+        assert_eq!(on.down, COVER_BIAS);
+        assert_eq!(on.shift.0, TIE_BIAS);
+        assert_eq!(on.shift.1, TIE_BIAS + COVER_BIAS);
     }
 }

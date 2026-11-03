@@ -2020,7 +2020,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let gpu_view = (gpu.as_mut())
             .filter(|_| on_gpu)
             .and_then(|gpu| gpu.view(kind.1 == Filter::Bilinear));
-        if Some(revision) != texture_holds && gpu_view.is_none() {
+        if Some(revision) != texture_holds && !on_gpu {
             bench::uploaded(fb.pixels().len() * 4);
             texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
         }

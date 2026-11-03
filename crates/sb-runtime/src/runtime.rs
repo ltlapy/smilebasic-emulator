@@ -1511,21 +1511,28 @@ impl Runtime {
             font: &self.font,
             cells: std::array::from_fn(|i| self.text[i].cells()),
         };
-        self.on_backend = false;
-        if let Some(backend) = &mut backend {
+        // Offered first; the CPU then draws what the backend did not, and what
+        // it did only to compare.
+        self.on_backend = match &mut backend {
             // What draw_overlay draws is only on the CPU.
-            if self.line.is_some() && self.recall.is_some() {
+            Some(backend) if self.line.is_some() && self.recall.is_some() => {
                 backend.not_offered();
-            } else if backend.draw(&self.scene, &input, self.mode.frame()) {
-                self.on_backend = true;
-                if backend.compares() {
-                    self.raster.draw(&self.scene, &input);
-                    backend.compare(self.raster.frame());
-                }
-                return;
+                false
             }
+            Some(backend) => backend.draw(&self.scene, &input, self.mode.frame()),
+            None => false,
+        };
+        let compare = backend.filter(|b| self.on_backend && b.compares());
+        if self.on_backend && compare.is_none() {
+            return;
         }
         self.raster.draw(&self.scene, &input);
+        if self.on_backend {
+            if let Some(backend) = compare {
+                backend.compare(self.raster.frame());
+            }
+            return;
+        }
         self.draw_overlay();
     }
 

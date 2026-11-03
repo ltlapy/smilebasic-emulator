@@ -677,7 +677,10 @@ impl Placement<'_> {
 impl Placement<'_> {
     /// Along which side of each image axis [`Placement::texel_tie`] settles
     /// a tie, as -1 or 1, for a rasterizer that samples in its own way; 0 for
-    /// both where nothing can tie.
+    /// both where nothing can tie. Inline, so that a headless build has no
+    /// call to it, which changes what the compiler inlines on the CPU's paths
+    /// (0.4% of TMULTI's instructions, measured).
+    #[inline]
     pub fn tie_sides(&self, size: (i32, i32), reversed: (bool, bool)) -> (f64, f64) {
         let tie = self.texel_tie(size, reversed);
         let Some(inv) = self.matrix.inverse().filter(|_| tie != (0.0, 0.0)) else {
