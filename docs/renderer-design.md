@@ -866,18 +866,17 @@ A GPU backend for comparison runs sits outside `sb-runtime`:
 ### 3.6 What stays on the CPU
 
 - Emulator UI drawn on the frame: the hint band and the completion list,
-  in `Runtime::draw_overlay`. They are still drawn into the CPU frame, after
-  the rasterizer. For a GPU frame, draw them into a separate overlay
-  `Framebuffer` with its own texture (as `layer.rs` does for panels); the
-  headless tools then need the two put together to keep their pictures.
+  in `Runtime::draw_overlay`. They are drawn on the CPU either way: on its frame,
+  after the rasterizer, or for a GPU frame on a clear `Framebuffer` of their own,
+  which is sent when it changes and put over the frame.
 - Dimming is not an overlay: it shares one rounding with FADE
   (`screen::cover`), so it stays in the scene (`Scene::dimmed`).
 - The editor, menu bar, panels and dialogs. They already redraw only
   on change, and they are not SmileBASIC 4 rendering.
-- GRP drawing, and anything that has no GPU path yet. The fallback
-  rule should be per frame: if a scene needs a feature the GPU backend
-  lacks, the whole frame is drawn on the CPU. Mixing the two within one
-  frame needs readbacks, which cost more than they save.
+- GRP drawing, and anything that has no GPU path yet. If a scene needs a feature
+  the GPU backend lacks, the whole frame is drawn on the CPU. The one mix is the
+  color filter off the `gpu` driver, which needs no readback: that layer is drawn
+  on the CPU and sent ([phase 3](#6-phased-plan)).
 
 ## 4. GPU backend options
 
@@ -1139,6 +1138,12 @@ These can match the CPU exactly:
   channel where a value lies very near a half, between vendors and
   against the CPU.
 
+- **Blur, accepted.** Done with no shader it rounds at each draw: LBLUR, three
+  layers one over another, is up to 6 off and TEST54's parts up to 3. Nobody
+  compares a blur by the pixel, so this stays and is not to be worked on.
+- **Projected images, inside.** Without W a texel can be off inside a cell of the
+  grid, by up to a quarter of a pixel as chosen; edges are not ([phase 3](#6-phased-plan)).
+
 **Policy.**
 
 - Exact paths must match the CPU bit for bit.
@@ -1157,18 +1162,20 @@ There are two ways to reduce the inexact set later:
 
 ### 5.3 Comparison tests
 
-- **Golden scenes.** A set of small scenes as `.sb` programs or built
-  directly as `Scene` values, rendered by the CPU backend into checked-in
-  frame hashes (small PNGs only where a picture helps review). The
-  scenes cover every rule in section 2: each blend and compose mode,
-  tint, flips and turns, scales 1, 1.5, 2, 2.5, rotations 30/45/90,
-  XSCREEN sample 2, LCLIP, 4x4 layers (FINITI-like cube faces), each
-  filter, FADE, and text with TPAGE and fallback glyphs. These hashes
-  are also today's regression net for the split
-  ([phase 1](#6-phased-plan)).
-- **CPU vs GPU.** The same scenes are rendered by the GPU backend and
-  diffed against the CPU frames under the policy above. The report
-  counts differing pixels and checks they all lie on edges.
+- **Golden scenes.** Done, in `crates/sb-sdl/src/gpu_golden.rs`: small programs,
+  each drawn by the GPU path and by the CPU at once, which is the reference, so
+  no frames are kept. Each blend and compose mode, tint, flips and turns, whole and
+  other scales, XSCREEN sample 2, LCLIP, 4x4 layers with text, each filter, FADE,
+  repeating pages, direct mode's hint, list, cursor and selection, and sub screens.
+  Each has a limit on the pixels more than 2 off. `SB_GPU_GOLDEN=1` prints a row for
+  each and exits, 1 if one is over; `cargo test -p sb-sdl --test gpu_golden --
+  --ignored` does it with no window. It is ignored as CI has no GPU.
+- **Start-up.** The first of those scenes runs when the path starts, and the path
+  stays off if over 0.5% of its pixels are more than 2 off, or 0.1% have an alpha
+  off. Rounding is allowed for: on opengl, opengles2 and vulkan the scene was 1 off
+  at the most, 1 to 1.7% of its pixels, and none more. It took 68 to 76 ms on opengl,
+  94 on opengles2 and 133 on vulkan, on this desktop, once in a run. `SB_GPU_TEST=off`
+  skips it and `fail` tries the way out.
 - **Projects.** The `--bench` projects of [1.7](#17-measured-per-frame-costs)
   are rendered for N frames on both backends, and the frame diffs are
   summarised, in a manual or nightly job. They are not in the
@@ -1206,8 +1213,7 @@ There are two ways to reduce the inexact set later:
   `scene.rs`, `Rasterizer` and `CpuRasterizer` in `raster/`.
   `Runtime::render` is the gate, `Scene::build`, `Rasterizer::draw`,
   `draw_overlay`. The scene comparison is left to phase 2.
-- The hint and completion list are still drawn on the CPU frame, after the
-  rasterizer: an overlay texture gains nothing without a GPU frame, and
+- The hint and completion list stayed on the CPU frame, after the rasterizer, and
   dimming cannot move ([3.6](#36-what-stays-on-the-cpu)).
 - Measured against the commit before, on one x86-64 desktop, release build,
   `--bench --fixed`: checksums identical on TPERF whole (10500 frames), its
@@ -1242,12 +1248,15 @@ There are two ways to reduce the inexact set later:
 (b) sitting on (a) was chosen, as the UI stays on SDL_Renderer. `gpu.rs` in
 `crates/sb-sdl` is a `SceneBackend`, which the runtime offers each scene; the
 source says how to run it. It draws sprites and text screens under any matrix,
-with tint, both blends, compose modes 0-4, LCLIP and XSCREEN's sample, through
-`SDL_RenderGeometry`, with no shader on any driver, and mosaic and blur the same
-way. A shader of ours came in for one filter, to prove the way. A frame with
-anything else is drawn on the CPU whole, and a count says why. Direct mode's hint
-and list, the line cursor, inverted cells, sub screens and an image off a page that
-does not repeat are among those; raster and 4x4 are the ones that matter to games.
+4x4 too, with tint, both blends, compose modes 0-4, LCLIP and XSCREEN's sample,
+through `SDL_RenderGeometry`, with no shader on any driver, and mosaic, blur and
+raster the same way; also FADE and the darkening beside a subprogram, sub screens,
+the line cursor, inverted cells and direct mode's hint and list. The color filter
+has a shader on the `gpu` driver, and elsewhere its layer comes from the CPU. A frame
+is left to the CPU whole, with a count saying why, only for: an image off a page that
+does not repeat, a raster filter that takes over 20000 quads, inverted cells of a
+font type over 16, a full atlas of fallback glyphs, and a texture or blend refused.
+None of the scenes below does any of those.
 
 Times, on one x86-64 desktop with an RTX 3060 Ti, on the opengl driver through
 EGL with no window shown: ms for each frame drawn. GPU is the CPU's side (walking
@@ -1255,33 +1264,31 @@ the scene, pages, flush) plus the wait for the GPU when read back at once, with
 no vsync and no real present. A window's present is not in these. TPERF's scenes
 and ELE2020, instructions in billions over the same run:
 
-| Scene | CPU ms | GPU ms | CPU instr | GPU instr | On the CPU | Pixels 1 off, 2, more, of those compared | Most off |
+| Scene | CPU ms | GPU ms | CPU instr | GPU instr | Peak RSS, CPU, GPU | Pixels 1 off, 2, more, of those compared | Most off |
 |---|---|---|---|---|---|---|---|
-| TMULTI | 87.6 | 3.1 | 150 | 14 | 0 | 0, 0, 0.13% | 220 |
-| SPANIM | 35.1 | 1.0 | 86 | 5 | 0 | 6.9%, 0, 0.04% | 255 |
-| SPROT | 36.8 | 0.7 | 81 | 5 | 0 | 0.01%, 0.01%, 0.08% | 255 |
-| LCOMP | 38.4 | 1.1 | 112 | 3 | 0 | 44%, 0, 0 | 2 |
-| SPMOVE | 4.6 | 1.2 | 34 | 10 | 0 | 0, 0, 0 | 0 |
-| ELE2020 | 14.7 | 1.1 | 138 | 8 | 0 | 5.4%, 0, 0.003% | 255 |
-| GAME | 3.7 | 1.0 | 22 | 10 | 0 | 1.2%, 0.07%, 0.001% | 3 |
-| GFILL | 1.3 | 0.5 | 12 | 7 | 0 | 0, 0, 0 | 0 |
-| GPUTCHR | 1.0 | 0.7 | 21 | 17 | 0 | 0, 0, 0 | 0 |
-| LBLUR | 13.2 | 1.6 | 80 | 3 | 0 | 41%, 18%, 1.7% | 6 |
-| LMOSAIC | 6.2 | 1.1 | 33 | 3 | 0 | 1.5%, 0.04%, 0 | 3 |
-| SOLIDGUNNER_V | 2.0 | 1.2 | 26 | 8 | 0 | 0.01%, 0, 0.02% | 255 |
-| NEON_DRIFTWAY | 60 | 2.7 | 113 | 24 | 126 of 600 (4x4) | 4.4%, 0.33%, 0.03% | 12 |
+| TMULTI | 72.8 | 3.3 | 153 | 14 | 313, 362 | 0, 0, 0.15% | 220 |
+| SPROT | 29.1 | 0.8 | 80 | 6 | 296, 344 | 0.01%, 0.01%, 0.08% | 255 |
+| LCOMP | 37.4 | 0.9 | 112 | 3 | 311, 370 | 44%, 0, 0 | 2 |
+| LBLUR | 13.2 | 1.7 | 80 | 4 | 313, 374 | 42%, 20%, 2.0% | 6 |
+| LMOSAIC | 6.6 | 0.9 | 33 | 3 | 311, 374 | 1.6%, 0.04%, 0 | 3 |
+| LCOLOR | 10.0 | 10.2 | 49 | 52 | 311, 380 | 0, 0, 0 | 0 |
+| LMATRIX | 15.4 | 1.1 | 75 | 4 | 310, 367 | 0, 0, 0.17% | 255 |
+| LRASTER | 8.8 | 1.1 | 48 | 5 | 311, 368 | 0, 0, 0 | 0 |
+| GAME | 2.6 | 0.8 | 22 | 11 | 297, 346 | 1.2%, 0.07%, 0.001% | 3 |
+| NEON_DRIFTWAY | 65 | 3.1 | 113 | 26 | 347, 408 | 3.4%, 0.26%, 0.03% | 255 |
+| FINITI skybox | 6.8 | 4.2 | 62 | 44 | 359, 409 | 0.67%, 0.32%, 0.60% | 255 |
+| SOLIDGUNNER_V | 2.3 | 1.4 | 24 | 9 | 276, 329 | 0.01%, 0, 0.02% | 255 |
+| ELE2020 | 13.2 | 2.1 | 143 | 11 | 313, 368 | 5.4%, 0, 0.003% | 255 |
 
-The GPU's time for NEON_DRIFTWAY is of the frames it drew; the 126 on the CPU come
-on top. Elements' edges and samples between texels are the 255s, as before.
+Elements' edges and samples between texels are the 255s, as before. A plain sub
+screen and the inverted cells of direct mode cost about 1 ms either way. In a real
+window the user measured TMULTI at 2.47 ms for the screen, and SPROT and TMULTI look
+as on the CPU; the rest of this has not been in a window yet.
 
-MAXSP's score went from 457 to 2563 in the same conditions; there it is held
-back by something other than drawing (3 ms of 16.7 in work and under 1.3 in
-drawing), which was not looked into. The CPU's frames, at these times, drop:
-TPERF's TMULTI lost 263 frames of 300 on the CPU and 0 here, and SPROT 82 and 1.
-
-With the switch off, on the same runs as phase 1's that were repeated (TMULTI, SPROT,
-SPANIM, LCOMP, GAME, VINT, ELE2020, DVD_BOUNCE, TEST49, 50, 53): checksums and PNGs
-identical, instructions within 0.01%.
+With the switch off, on phase 1's bench runs, TEST48 to 56's `--screen` and `--play`
+PNGs included: checksums and PNGs identical, instructions within 0.02% but for TMULTI,
++0.84%, and TPERF, +0.17%, the text code having been split to give a backend its
+inverted glyphs.
 
 The rest:
 
@@ -1306,6 +1313,30 @@ The rest:
   gpu driver on lavapipe and on opengles2 on llvmpipe. SDL's vulkan driver costs
   far more on the CPU (TMULTI 29 ms), so prefer another. Only the gpu driver takes
   shaders.
+- **Raster filter.** A run of rows or columns with one entry is a quad read nearest,
+  split where the source point crosses the frame's edge or wraps; a sample is moved
+  1/512 of a texel to round down as the CPU does. A unit test checks each pixel takes
+  the CPU's texel. TEST54 parts 4 to 6 and LRASTER: no pixel differs.
+- **4x4.** A grid of triangles (`gpu_project.rs`), whose corners go exactly where the
+  matrix puts them, so straight edges stay straight and in place, and only a texel
+  inside a cell is off. W above 0 and Z / W from -1 to 1 are straight lines on the
+  element, so they and the frame's edges cut it first; a unit test compares what is
+  covered with the CPU's. The grid doubles until a run's middle is within a tolerance
+  where the element is nearest. FINITI's skybox, six sprites 1024 across, by tolerance
+  in pixels, against vertices a frame, pixels more than 2 off and GPU ms: 2, 3800,
+  5.0%, 3.4; 0.5, 16700, 1.25%, 3.7; **0.25, 33700, 0.59%, 4.3**; 0.1, 87500, 0.24%,
+  5.9. The differences lie scattered on texels' edges, with no line and no grid to be
+  seen in a picture of them. A quarter of a pixel was chosen. NEON_DRIFTWAY's elements
+  are small, at about 200 vertices, and do not change with it. No shader was needed.
+- **Sub screens.** A subprogram has screens and pages of its own, so it gets a second
+  path on the same renderer. A clear back keeps its alpha: no pixel's alpha was off.
+  Its frame goes to the window smoothed and premultiplied, in every XSCREEN mode.
+- **Color filter.** HSV is more than blending can do. Off the `gpu` driver, that
+  layer alone is drawn and filtered on the CPU and sent, and a direct one, which
+  filters what is behind it, starts the frame with all those passes from the CPU.
+  Nothing is read back. LCOLOR's four whole-frame layers cost as much as the CPU
+  does, 14.7 MB sent a frame, with no pixel differing; other layers stay on the GPU.
+  On the `gpu` driver the shader takes 1.4 ms there, so it stays.
 - **Shaders.** One filter, the color filter, in `crates/sb-sdl/shaders`: GLSL,
   SPIR-V from glslang committed beside it. On the gpu driver, it matched the CPU on
   all 39.6 million pixels compared of LCOLOR and on TEST54 part 7, and within 2 on
@@ -1349,28 +1380,21 @@ The rest:
 - **Reach.** Windows, macOS, Linux: (a) on their usual drivers, untested on the first
   two; (b)'s filters on D3D12, Metal and Vulkan once SmileBASIC 4 are made. GLES
   handhelds, the RK3326 among them: (a) needs only GLES2's textures, targets and
-  blends, so the path should work, and raster, color and 4x4 stay on the CPU, for the
-  whole frame. Tested on GLES2 on a desktop GPU only: on Mali, timings, target switches on a
+  blends, so the path should work, the color filter's layer coming from the CPU.
+  Tested on GLES2 on a desktop GPU only: on Mali, timings, target switches on a
   tiler, and uploads are unknown. Mesa's PanVK names the Mali-G31, and has a switch
   for hardware it does not call supported; whether the G31 needs it, and what an
   AmberELEC build has, are unknown.
 
-**Phase 4: full feature set.**
+**Phase 4: full feature set. Done, in phase 3's path.**
 
-- Done in phase 3: rotated and scaled items, XSCREEN sample, LCLIP, mosaic, blur.
-- 4x4 projection. NEON_DRIFTWAY's and FINITI's matrices are true perspectives, W
-  moving with X and Y, and `SDL_RenderGeometry` has no W: a grid of small quads
-  (approximate, on every driver) or a shader through `SDL_GPURenderState`.
-- Raster, sub interpreter screens, the line cursor, inverted cells. Direct mode's
-  hint and list would need drawing to a clear texture of their own on the CPU.
-- Milestone: no CPU fallback needed for any project in the bench set;
-  the inexact paths' differences stay within the policy.
+No project in the bench set leaves a frame on the CPU; see above for what could.
 
 **Phase 5: default and fallback.**
 
-- GPU by default where the backend initialises and a start-up self-test
-  scene matches the CPU. The CPU path otherwise, and as a menu
-  setting.
+- The start-up self-test is done ([5.3](#53-comparison-tests)). Still to do: GPU by
+  default where the backend initialises and it passes, the CPU path otherwise, and
+  as a menu setting, after runs on real windows, Windows, macOS and a Mali.
 - Document the choice in [differences.md](differences.md) if any
   visible difference remains.
 - Later: a WASM build with the CPU backend first, then WebGL2/WebGPU
