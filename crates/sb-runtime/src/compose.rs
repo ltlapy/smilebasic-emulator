@@ -674,6 +674,21 @@ impl Placement<'_> {
     }
 }
 
+impl Placement<'_> {
+    /// Along which side of each image axis [`Placement::texel_tie`] settles
+    /// a tie, as -1 or 1, for a rasterizer that samples in its own way; 0 for
+    /// both where nothing can tie.
+    pub fn tie_sides(&self, size: (i32, i32), reversed: (bool, bool)) -> (f64, f64) {
+        let tie = self.texel_tie(size, reversed);
+        let Some(inv) = self.matrix.inverse().filter(|_| tie != (0.0, 0.0)) else {
+            return (0.0, 0.0);
+        };
+        let (nx, ny) = COVER_NUDGE;
+        let moved = (inv.a * nx + inv.b * ny, inv.c * nx + inv.d * ny);
+        ((tie.0 + moved.0).signum(), (tie.1 + moved.1).signum())
+    }
+}
+
 /// The [`Grid`] of an upright placement, or `None` where it shows
 /// nothing.
 pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid> {

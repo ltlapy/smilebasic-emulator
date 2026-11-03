@@ -22,7 +22,7 @@ use crate::hint;
 use crate::input::Input;
 use crate::line::LineEdit;
 use crate::palette::Part;
-use crate::raster::{CpuRasterizer, RasterInput, Rasterizer};
+use crate::raster::{CpuRasterizer, RasterInput, Rasterizer, SceneBackend};
 use crate::scene::{Scene, SceneInput};
 use crate::screen::{Fade, ScreenMode, darken};
 pub use crate::settings::Settings;
@@ -789,6 +789,8 @@ pub struct Runtime {
     drawn_with: Option<(Option<bool>, bool)>,
     /// Counts the frames drawn, for the frontend to upload only new ones.
     revision: u64,
+    /// The last frame was drawn by a [`SceneBackend`], which holds it.
+    on_backend: bool,
     /// What CLIPBOARD reads and writes.
     pub clipboard: Box<dyn crate::env::Clipboard>,
     /// The DIALOG the program waits on, and the frontend's answer.
@@ -1039,6 +1041,7 @@ impl Runtime {
             changed: true,
             drawn_with: None,
             revision: 0,
+            on_backend: false,
             clipboard: Box::new(crate::env::MemoryClipboard::default()),
             meta: Default::default(),
             dialog: None,
@@ -1458,7 +1461,23 @@ impl Runtime {
     /// Composes the current frame: layers 7 to 0, each back to front. The
     /// last one is given again while nothing has changed.
     pub fn render(&mut self) -> &Framebuffer {
+        self.render_with(None);
+        self.raster.frame()
+    }
+
+    /// Whether the frame given last is on the [`SceneBackend`] and not in
+    /// [`Runtime::screen_frame`].
+    pub fn frame_on_backend(&self) -> bool {
+        self.on_backend
+    }
+
+    /// [`Runtime::render`], offering the scene, if one is drawn, to a backend
+    /// first.
+    pub fn render_with(&mut self, mut backend: Option<&mut dyn SceneBackend>) {
         self.frame = self.frame.wrapping_add(1);
+        // A frame the backend holds has to be drawn again for whoever wants
+        // it in the framebuffer.
+        self.changed |= self.on_backend && backend.is_none();
         // Counted in frames played, not in frames drawn, which are not
         // one a frame when frames are skipped or only some are looked at.
         // Whether it is a block, if it shows.
@@ -1469,7 +1488,7 @@ impl Runtime {
             cells |= t.take_changed();
         }
         if !self.changed && !cells && self.drawn_with == with {
-            return self.raster.frame();
+            return;
         }
         self.changed = false;
         self.drawn_with = with;
@@ -1487,16 +1506,27 @@ impl Runtime {
             dimmed: self.dimmed,
             cursor,
         });
-        self.raster.draw(
-            &self.scene,
-            &RasterInput {
-                grp: &self.grp,
-                font: &self.font,
-                cells: std::array::from_fn(|i| self.text[i].cells()),
-            },
-        );
+        let input = RasterInput {
+            grp: &self.grp,
+            font: &self.font,
+            cells: std::array::from_fn(|i| self.text[i].cells()),
+        };
+        self.on_backend = false;
+        if let Some(backend) = &mut backend {
+            // What draw_overlay draws is only on the CPU.
+            if self.line.is_some() && self.recall.is_some() {
+                backend.not_offered();
+            } else if backend.draw(&self.scene, &input, self.mode.frame()) {
+                self.on_backend = true;
+                if backend.compares() {
+                    self.raster.draw(&self.scene, &input);
+                    backend.compare(self.raster.frame());
+                }
+                return;
+            }
+        }
+        self.raster.draw(&self.scene, &input);
         self.draw_overlay();
-        self.raster.frame()
     }
 
     /// What the emulator itself shows over the frame, after FADE, which is

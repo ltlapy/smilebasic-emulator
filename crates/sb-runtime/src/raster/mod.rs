@@ -31,6 +31,28 @@ pub trait Rasterizer {
     fn draw(&mut self, scene: &Scene, input: &RasterInput);
 }
 
+/// A rasterizer outside this crate, which may draw a scene in the place of
+/// [`CpuRasterizer`] and keeps the result itself. The frontend's GPU path
+/// is one: this crate knows nothing of what it is.
+pub trait SceneBackend {
+    /// Draws a scene for a frame of `frame` pixels. False leaves it to the
+    /// CPU, for a scene with something the backend cannot draw.
+    fn draw(&mut self, scene: &Scene, input: &RasterInput, frame: (u32, u32)) -> bool;
+
+    /// A frame was drawn without being offered to the backend, because the
+    /// emulator's own UI goes over it on the CPU.
+    fn not_offered(&mut self) {}
+
+    /// Whether [`CpuRasterizer`] is to draw what the backend has drawn as
+    /// well, and [`SceneBackend::compare`] to see it.
+    fn compares(&self) -> bool {
+        false
+    }
+
+    /// Sees the CPU's frame for the scene it has just drawn.
+    fn compare(&mut self, _cpu: &Framebuffer) {}
+}
+
 /// Draws scenes into a [`Framebuffer`].
 pub struct CpuRasterizer {
     fb: Framebuffer,

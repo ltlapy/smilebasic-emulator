@@ -16,6 +16,7 @@ use crate::complete::Options;
 use crate::editor::{Editor, Marks};
 use crate::framebuffer::Framebuffer;
 use crate::prg::SlotEdit;
+use crate::raster::SceneBackend;
 use crate::runtime::{Request, Runtime, SLOTS, Stopped, keys};
 use crate::screen::ScreenMode;
 use crate::storage::{self, FileKind, StorageError};
@@ -1702,10 +1703,21 @@ impl Machine {
     /// debugger or beside a subprogram, which change them in other ways
     /// too, every frame.
     fn render_screens_now(&mut self) -> &Framebuffer {
+        self.touch_if_due();
+        self.rt.render()
+    }
+
+    /// [`Machine::render`] for the screens, offering their scene to `backend`
+    /// first. `Runtime::frame_on_backend` says who drew it.
+    pub fn render_screens_with(&mut self, backend: &mut dyn SceneBackend) {
+        self.touch_if_due();
+        self.rt.render_with(Some(backend));
+    }
+
+    fn touch_if_due(&mut self) {
         if self.running_slot.is_none() || self.stepping.is_some() || self.sub_running() {
             self.rt.touch();
         }
-        self.rt.render()
     }
 
     /// Which frame of the screens [`Machine::render`] gave last.

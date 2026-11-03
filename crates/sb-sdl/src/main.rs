@@ -8,6 +8,7 @@ mod debug_panel;
 mod dialog;
 mod file_dialogs;
 mod file_view;
+mod gpu;
 mod grp_view;
 mod help;
 mod index;
@@ -369,6 +370,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut pad_screen = 0;
     let mut pad_tick = Instant::now();
     let mut bench = bench::Bench::from_env();
+    let mut gpu = gpu::Gpu::from_env(&canvas);
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
         ($stage:ident) => {
@@ -385,6 +387,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             && b.step(&mut machine)
         {
             b.report(&canvas.renderer_name);
+            if let Some(gpu) = &gpu {
+                gpu.report();
+            }
             break 'running;
         }
         if let Some(b) = &bench {
@@ -1977,7 +1982,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             false => {
                 let start = Instant::now();
                 let drawn = machine.screen_revision();
-                machine.render();
+                match &mut gpu {
+                    // The debugger's panel wants the frame on the CPU.
+                    Some(gpu) if !panel_was_shown => machine.render_screens_with(gpu),
+                    _ => {
+                        machine.render();
+                    }
+                }
                 if machine.screen_revision() != drawn {
                     draw_time = start.elapsed();
                 }
