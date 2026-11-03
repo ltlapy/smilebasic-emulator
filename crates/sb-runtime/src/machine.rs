@@ -43,6 +43,8 @@ pub const FREE_MEMORY: u32 = sb_core::memory::TOTAL;
 /// What [`Machine::sub_screen`] gives.
 pub struct SubScreen<'a> {
     pub frame: &'a Framebuffer,
+    /// A backend drew the frame and holds it, so that `frame` is not it.
+    pub on_backend: bool,
     /// XSUBSCREEN's rectangle, as x, y, width and height.
     pub area: [i32; 4],
     /// Where the frame goes in it, at XSCREEN's aspect ratio. It is scaled
@@ -2384,16 +2386,32 @@ impl Machine {
     // SmileBASIC 4's own SMILETOOL ends without hiding its screen, so it
     // goes when the subprogram ends, as it does after an error or SUBSTOP.
     pub fn sub_screen(&mut self) -> Option<SubScreen<'_>> {
+        self.sub_screen_with(None)
+    }
+
+    /// [`Machine::sub_screen`], offering its scene to `backend` first.
+    pub fn sub_screen_with(
+        &mut self,
+        backend: Option<&mut dyn SceneBackend>,
+    ) -> Option<SubScreen<'_>> {
         let sub = (self.sub.as_mut()).filter(|s| self.sub_shown && s.vm.is_some())?;
         let area = sub.rt.sub_screen?;
         let quad = sub_quad(area, sub.rt.mode.aspect());
         let back = sub.rt.back_color;
+        sub.rt.render_with(backend);
         Some(SubScreen {
-            frame: sub.rt.render(),
+            frame: sub.rt.screen_frame(),
+            on_backend: sub.rt.frame_on_backend(),
             area,
             quad,
             back,
         })
+    }
+
+    /// Whether [`Machine::sub_screen`] would give a screen.
+    pub fn sub_shows(&self) -> bool {
+        let sub = self.sub.as_ref();
+        sub.is_some_and(|s| self.sub_shown && s.vm.is_some() && s.rt.sub_screen.is_some())
     }
 
     /// The yellow border that marks where the focus has just gone, also

@@ -190,7 +190,7 @@ pub(crate) fn cover(color: u32, pixels: &mut [u32], dim: bool) {
 
 /// What the side without the focus is darkened to beside a subprogram,
 /// out of 255.
-pub(crate) const DIM: u32 = 224;
+pub const DIM: u32 = 224;
 
 /// Darkens each channel to [`DIM`]/255, rounded to the nearest: 255 to
 /// 224, 248 to 218, 96 to 84.

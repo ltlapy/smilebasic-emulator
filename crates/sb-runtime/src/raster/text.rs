@@ -137,18 +137,39 @@ impl TextItem {
         out: &mut [u32],
         paints: &mut Vec<Mixed>,
     ) {
-        let ft = self.font_type;
         let inverted = self.inverts && cell.attr & attr::INVERT != 0;
-        let mut color = |p: u32| {
+        self.each_texel(font, grp, cell.code, inverted, out.len(), &mut |i, p| {
             let p = if inverted { inverted_texel(p) } else { p };
             let paint = Mixed::new(p, cell.color, self.tint, self.add);
-            glyph_paint(paint, paints)
-        };
+            out[i] = glyph_paint(paint, paints);
+        });
+    }
+
+    /// What an inverted cell's character is, `font_type` square, before its
+    /// colors: for a backend, which multiplies those itself.
+    pub fn inverted_glyph(&self, font: &Font, grp: &Graphics, code: u16, out: &mut [u32]) {
+        self.each_texel(font, grp, code, true, out.len(), &mut |i, p| {
+            out[i] = inverted_texel(p);
+        });
+    }
+
+    /// Each of the `count` pixels of a character's image, as what it is before
+    /// its colors.
+    fn each_texel(
+        &self,
+        font: &Font,
+        grp: &Graphics,
+        code: u16,
+        inverted: bool,
+        count: usize,
+        each: &mut dyn FnMut(usize, u32),
+    ) {
+        let ft = self.font_type;
         // Where the character comes from is looked up once, not for
         // every pixel; the pixels are those glyph_pixel gives.
         let mut fill = |pixel: &dyn Fn(u32, u32) -> u32| {
-            for (i, p) in out.iter_mut().enumerate() {
-                *p = color(pixel(i as u32 % ft, i as u32 / ft));
+            for i in 0..count {
+                each(i, pixel(i as u32 % ft, i as u32 / ft));
             }
         };
         let size = match ft {
@@ -156,7 +177,7 @@ impl TextItem {
             16 => Some(FontSize::Large),
             _ => None,
         };
-        match (cell.code, size) {
+        match (code, size) {
             // An inverted one shows SmileBASIC 4's font.map entry for it,
             // which the bundled font lacks.
             (0, _) if !inverted || !font.is_smilebasic() => fill(&|_, _| 0),

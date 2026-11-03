@@ -91,14 +91,10 @@ use crate::gpu_project::{Corner, Plane};
 /// Why a frame was left to the CPU.
 #[derive(Clone, Copy, Debug)]
 enum Reason {
-    /// A sub interpreter's frame, or darkened beside a subprogram.
-    Sub,
     Raster,
     ColorFilter,
-    /// An inverted cell may show on the console.
+    /// An inverted cell of a font type larger than the atlas's cells.
     Inverted,
-    /// The cursor of a line being typed.
-    Cursor,
     /// An image reaching off a page that does not repeat.
     OffPage,
     /// The fallback glyphs' atlas is full.
@@ -107,13 +103,11 @@ enum Reason {
     Refused,
 }
 
-const REASONS: usize = 8;
+const REASONS: usize = 6;
 const REASON_NAMES: [&str; REASONS] = [
-    "sub screen or dimmed",
     "raster filter",
     "color filter",
     "inverted cells",
-    "line cursor",
     "image off the page",
     "atlas full",
     "renderer refused",
@@ -156,6 +150,8 @@ const GRID_TOLERANCE: f64 = 0.25;
 const PAGE_SIZE: f32 = GRP_SIZE as f32;
 /// The cells of the atlas of fallback glyphs, up to the larger font's size.
 const ATLAS_CELL: u32 = 16;
+/// How long a side the atlas of inverted cells' characters has.
+const INVERTED_SIZE: i32 = 1024;
 
 /// A page as the GPU holds it.
 struct Page {
@@ -283,6 +279,16 @@ impl ColorFilter {
     }
 }
 
+/// What an inverted cell shows: a character, which for a user-defined one depends
+/// on where TPAGE's page is, in a font type's size.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct InvertedGlyph {
+    code: u16,
+    font_type: u32,
+    page: i32,
+    origin: (i32, i32),
+}
+
 pub struct Gpu {
     renderer: *mut SDL_Renderer,
     /// It is its own renderer, with no window, to destroy with it.
@@ -317,6 +323,14 @@ pub struct Gpu {
     atlas: *mut SDL_Texture,
     /// Where each fallback glyph is on the atlas.
     atlas_at: HashMap<(u16, u32), (u32, u32)>,
+    /// Inverted cells' characters; made when first wanted. They stay until a page
+    /// they may come from changes.
+    inverted: *mut SDL_Texture,
+    inverted_at: HashMap<InvertedGlyph, (u32, u32)>,
+    inverted_from: [u64; 2],
+    /// FADE's color with the darkening beside a subprogram in it, which keeps
+    /// the frame's alpha.
+    fade_blend: SDL_BlendMode,
     screen: SDL_BlendMode,
     verts: Vec<SDL_Vertex>,
     /// How many vertices SDL holds.
@@ -355,6 +369,21 @@ fn fcolor2(c1: u32, c2: u32) -> SDL_FColor {
         g: ch(8),
         b: ch(0),
         a: ch(24),
+    }
+}
+
+/// What goes over the frame, to go with [`Gpu::fade_blend`]: FADE's `c` by its
+/// alpha `a`, and the frame times `1 - a`, both times what the darkening leaves, `D`,
+/// as one draw so as to round once: light `c*a*D`, and an alpha of `1 - (1-a)*D`.
+fn fade_color(fade: u32, dimmed: bool) -> SDL_FColor {
+    const DIM: f32 = sb_runtime::screen::DIM as f32 / 255.0;
+    let c = fcolor(fade);
+    let d = if dimmed { DIM } else { 1.0 };
+    SDL_FColor {
+        r: c.r * c.a * d,
+        g: c.g * c.a * d,
+        b: c.b * c.a * d,
+        a: 1.0 - (1.0 - c.a) * d,
     }
 }
 
@@ -407,6 +436,22 @@ fn sampling(matrix: &Affine, size: (i32, i32), reversed: (bool, bool), texel: f6
 }
 
 impl Gpu {
+    /// The path for a subprogram's screens, beside this one for the main screens,
+    /// on the same renderer. None when this one has no window to show them in.
+    pub fn for_sub(&self) -> Option<Gpu> {
+        if self.alone {
+            return None;
+        }
+        Gpu::on(
+            self.renderer,
+            self.on_gl,
+            false,
+            self.sync,
+            self.check_every,
+            None,
+        )
+    }
+
     /// The path if `SB_GPU` asks for it and `canvas` can take it.
     pub fn from_env(canvas: &Canvas<Window>) -> Option<Gpu> {
         let spec = std::env::var("SB_GPU").ok()?;
@@ -428,6 +473,24 @@ impl Gpu {
             eprintln!("SB_GPU: no GPU renderer; staying on the CPU");
             return None;
         }
+        let check_every = match spec.split_once(':') {
+            Some(("check", n)) => Some(n.parse().unwrap_or(1).max(1)),
+            None if spec == "check" => Some(1),
+            _ => None,
+        };
+        let on_gl = !alone && canvas.renderer_name.starts_with("opengl");
+        let dump = std::env::var("SB_GPU_DUMP").ok();
+        Gpu::on(renderer, on_gl, alone, spec == "sync", check_every, dump)
+    }
+
+    fn on(
+        renderer: *mut SDL_Renderer,
+        on_gl: bool,
+        alone: bool,
+        sync: bool,
+        check_every: Option<u64>,
+        dump: Option<String>,
+    ) -> Option<Gpu> {
         let screen = SDL_ComposeCustomBlendMode(
             SDL_BLENDFACTOR_ONE_MINUS_DST_COLOR,
             SDL_BLENDFACTOR_ONE,
@@ -436,11 +499,6 @@ impl Gpu {
             SDL_BLENDFACTOR_ONE,
             SDL_BLENDOPERATION_ADD,
         );
-        let check_every = match spec.split_once(':') {
-            Some(("check", n)) => Some(n.parse().unwrap_or(1).max(1)),
-            None if spec == "check" => Some(1),
-            _ => None,
-        };
         Some(Gpu {
             renderer,
             alone,
@@ -485,6 +543,17 @@ impl Gpu {
             pages: [const { None }; PAGES],
             atlas: null_mut(),
             atlas_at: HashMap::new(),
+            inverted: null_mut(),
+            inverted_at: HashMap::new(),
+            inverted_from: [0; 2],
+            fade_blend: SDL_ComposeCustomBlendMode(
+                SDL_BLENDFACTOR_ONE,
+                SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                SDL_BLENDOPERATION_ADD,
+                SDL_BLENDFACTOR_ZERO,
+                SDL_BLENDFACTOR_ONE,
+                SDL_BLENDOPERATION_ADD,
+            ),
             screen,
             verts: Vec::new(),
             queued: 0,
@@ -494,10 +563,10 @@ impl Gpu {
                 wrap: false,
             },
             scale: None,
-            sync: spec == "sync",
-            on_gl: !alone && canvas.renderer_name.starts_with("opengl"),
+            sync,
+            on_gl,
             check_every,
-            dump: std::env::var("SB_GPU_DUMP").ok(),
+            dump,
             compared: Compared::default(),
             stats: Stats::default(),
         })
@@ -530,6 +599,16 @@ impl Gpu {
         }
     }
 
+    /// The frame, smoothed and to go over what is there as it is, premultiplied, as
+    /// a subprogram's does. Valid as [`Gpu::view`]'s is.
+    pub fn premultiplied_view(&mut self) -> Option<ManuallyDrop<Texture<'static>>> {
+        let view = self.view(true)?;
+        // SAFETY: the frame texture is one of this renderer's. view() sets its
+        // mode again when something else may have changed it, as a filter may.
+        unsafe { SDL_SetTextureBlendMode(self.frame, SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
+        Some(view)
+    }
+
     /// The device it runs on, for telling results apart, if SDL can say.
     fn device_name(&self) -> String {
         const GL_RENDERER: u32 = 0x1F01;
@@ -554,13 +633,13 @@ impl Gpu {
     }
 
     /// Prints what it drew and what it left to the CPU, and why.
-    pub fn report(&self) {
-        println!("gpu       device {}", self.device_name());
+    pub fn report(&self, name: &str) {
+        println!("{name:9} device {}", self.device_name());
         let s = &self.stats;
         let n = s.drawn.max(1);
         let per = |d: Duration| d / n as u32;
         println!(
-            "gpu       {} frames drawn: build {:.3?}, pages {:.3?} ({:.1} MB), flush {:.3?}, wait {:.3?}; \
+            "{name:9} {} frames drawn: build {:.3?}, pages {:.3?} ({:.1} MB), flush {:.3?}, wait {:.3?}; \
              {} vertices, {} batches, {} target switches a frame",
             s.drawn,
             per(s.build),
@@ -572,21 +651,23 @@ impl Gpu {
             s.batches / n,
             s.targets / n,
         );
-        for (n, name) in s.left_to_cpu.iter().zip(REASON_NAMES) {
+        let label = name;
+        for (n, what) in s.left_to_cpu.iter().zip(REASON_NAMES) {
             if *n > 0 {
-                println!("gpu       {n} frames on the CPU: {name}");
+                println!("{label:9} {n} frames on the CPU: {what}");
             }
         }
         let c = &self.compared;
         if c.frames > 0 {
             let [same, one, two, more] = c.by_diff;
+            let name = if name == "gpu" { "compared" } else { name };
             println!(
-                "compared  {} frames, {} pixels: same {same}, 1 off {one}, 2 off {two}, more {more}; alpha off {}; at most {} off",
+                "{name:9} {} frames, {} pixels: same {same}, 1 off {one}, 2 off {two}, more {more}; alpha off {}; at most {} off",
                 c.frames, c.pixels, c.alpha_off, c.largest,
             );
             if let Some((x, y, cpu, gpu)) = c.worst.first {
                 println!(
-                    "compared  worst frame {}: {} pixels more than 2 off, the first at \
+                    "{name:9} worst frame {}: {} pixels more than 2 off, the first at \
                      {x},{y}: CPU {cpu:08X}, GPU {gpu:08X}",
                     c.worst.frame, c.worst.pixels,
                 );
@@ -910,16 +991,7 @@ impl Gpu {
         if t.empty {
             return Ok(());
         }
-        if t.may_invert {
-            return Err(Reason::Inverted);
-        }
-        if t.cursor.is_some() {
-            return Err(Reason::Cursor);
-        }
         let m = &t.matrix;
-        if t.tint >> 24 == 0 {
-            return Ok(());
-        }
         let grp = input.grp;
         let (cs, ft) = (f64::from(t.char_size), t.font_type);
         let blend = match t.add {
@@ -976,16 +1048,22 @@ impl Gpu {
                 a: 0.,
             },
         );
-        for cy in 0..t.height {
+        // A clear TCOLOR leaves only the cursor.
+        let rows = if t.tint >> 24 == 0 { 0 } else { t.height };
+        for cy in 0..rows {
             let row = &cells[(cy * t.width) as usize..][..t.width as usize];
             let y0 = f64::from(cy) * cs;
             for (cx, cell) in row.iter().enumerate() {
-                if cell.code == 0 || cell.color >> 24 == 0 {
+                let inverted = t.may_invert && t.inverts && cell.attr & text::attr::INVERT != 0;
+                if cell.color >> 24 == 0 || (cell.code == 0 && !inverted) {
                     continue;
                 }
                 let x0 = cx as f64 * cs;
                 // Where the character's image is, and on what.
-                let (texture, gx, gy, wrap) = if USER_CHARS.contains(&cell.code) {
+                let (texture, gx, gy, wrap) = if inverted {
+                    let (gx, gy) = self.inverted_glyph(t, cell.code, input)?;
+                    (self.inverted, gx as i32, gy as i32, false)
+                } else if USER_CHARS.contains(&cell.code) {
                     let i = i32::from(cell.code - USER_CHARS.start());
                     let (ox, oy) = t.page_origin;
                     let side = ft as i32;
@@ -1034,7 +1112,13 @@ impl Gpu {
                     let (x, y) = m.apply(x, y);
                     (x, y + on.down)
                 };
-                let uv = |i: usize| (gx + glyph[i].0, gy + glyph[i].1);
+                // The inverted cells' atlas is smaller than what quad() counts in.
+                let k = if inverted {
+                    f64::from(GRP_SIZE) / f64::from(INVERTED_SIZE)
+                } else {
+                    1.0
+                };
+                let uv = |i: usize| ((gx + glyph[i].0) * k, (gy + glyph[i].1) * k);
                 self.quad(
                     [
                         at(x0, y0),
@@ -1047,7 +1131,93 @@ impl Gpu {
                 );
             }
         }
+        if let Some(bar) = &t.cursor {
+            // What the bar's color is goes on as it is, whatever is there.
+            self.batch(Batch {
+                texture: null_mut(),
+                blend: SDL_BLENDMODE_NONE,
+                wrap: false,
+            });
+            let at = |x: i32, y: i32| {
+                let (x, y) = m.apply(f64::from(x), f64::from(y));
+                (x, y + on.down)
+            };
+            let (x0, y0, y1) = (bar.part.0, bar.part.1, bar.part.3);
+            let x1 = x0 + bar.width as i32;
+            let corners = [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)];
+            self.quad(corners, [(0.0, 0.0); 4], fcolor(bar.color));
+        }
         Ok(())
+    }
+
+    /// Where an inverted cell's character is on its atlas.
+    fn inverted_glyph(
+        &mut self,
+        t: &TextItem,
+        code: u16,
+        input: &RasterInput,
+    ) -> Result<(u32, u32), Reason> {
+        if t.font_type > ATLAS_CELL {
+            return Err(Reason::Inverted);
+        }
+        let grp = input.grp;
+        let user = usize::try_from(t.page).ok().filter(|&p| p < PAGES);
+        let from = [
+            grp.changes(FONT_PAGE),
+            user.map_or(0, |page| grp.changes(page)),
+        ];
+        let key = InvertedGlyph {
+            code,
+            font_type: t.font_type,
+            page: t.page,
+            origin: t.page_origin,
+        };
+        if self.inverted.is_null() {
+            // SAFETY: the renderer outlives `self`.
+            self.inverted = unsafe {
+                SDL_CreateTexture(
+                    self.renderer,
+                    SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_STATIC,
+                    INVERTED_SIZE,
+                    INVERTED_SIZE,
+                )
+            };
+            if self.inverted.is_null() {
+                return Err(Reason::Refused);
+            }
+            // SAFETY: as it was just made.
+            unsafe { SDL_SetTextureScaleMode(self.inverted, SDL_SCALEMODE_NEAREST) };
+        }
+        if self.inverted_from != from {
+            self.inverted_from = from;
+            self.inverted_at.clear();
+        }
+        if let Some(&at) = self.inverted_at.get(&key) {
+            return Ok(at);
+        }
+        let across = INVERTED_SIZE as u32 / ATLAS_CELL;
+        let n = self.inverted_at.len() as u32;
+        if n >= across * across {
+            // Next frame it starts again, unless a frame shows all of these.
+            self.inverted_from = [u64::MAX; 2];
+            return Err(Reason::Inverted);
+        }
+        let at = (n % across * ATLAS_CELL, n / across * ATLAS_CELL);
+        let ft = t.font_type;
+        let mut pixels = [0_u32; (ATLAS_CELL * ATLAS_CELL) as usize];
+        t.inverted_glyph(input.font, grp, code, &mut pixels[..(ft * ft) as usize]);
+        let rect = SDL_Rect {
+            x: at.0 as i32,
+            y: at.1 as i32,
+            w: ft as i32,
+            h: ft as i32,
+        };
+        // SAFETY: `pixels` holds the rectangle at this pitch. SDL runs what is
+        // queued first, if that used the texture.
+        unsafe { SDL_UpdateTexture(self.inverted, &rect, pixels.as_ptr().cast(), ft as i32 * 4) };
+        self.inverted_at.insert(key, at);
+        Ok(at)
     }
 
     /// Draws a layer's elements on the current target.
@@ -1300,9 +1470,6 @@ impl Gpu {
 
     /// Why a scene needs the CPU, as far as a look over it shows.
     fn refuses(&self, scene: &Scene, frame: (u32, u32)) -> Option<Reason> {
-        if scene.dimmed || !scene.opaque_frame || scene.opaque_end {
-            return Some(Reason::Sub);
-        }
         for pass in &scene.passes {
             match pass.filter {
                 FilterOp::None | FilterOp::Mosaic(_) | FilterOp::Blur(_) => {}
@@ -1374,9 +1541,20 @@ impl Gpu {
                 return Err(Reason::Refused);
             }
             self.cover(self.layer, blend, color);
+            // These two make the frame opaque all over, as the CPU's compose does.
+            if matches!(pass.compose, Compose::Multiply | Compose::Screen) && !scene.opaque_frame {
+                self.make_opaque();
+            }
         }
-        if scene.fade >> 24 != 0 {
-            self.cover(null_mut(), SDL_BLENDMODE_BLEND, fcolor(scene.fade));
+        if scene.fade >> 24 != 0 || scene.dimmed {
+            self.cover(
+                null_mut(),
+                self.fade_blend,
+                fade_color(scene.fade, scene.dimmed),
+            );
+        }
+        if scene.opaque_end {
+            self.make_opaque();
         }
         self.flush();
         Ok(())
@@ -1411,8 +1589,11 @@ impl Gpu {
                     None => Ok(()),
                 }
             }
-            // A direct layer is on the frame, which refuses() saw is opaque.
-            FilterOp::Blur(amount) => self.blur(from, &filter::blur_kernel(amount), direct),
+            // A direct layer is on the frame, which may be opaque.
+            FilterOp::Blur(amount) => {
+                let opaque = direct && scene.opaque_frame;
+                self.blur(from, &filter::blur_kernel(amount), opaque)
+            }
             FilterOp::Color {
                 hue,
                 saturation,
@@ -2112,6 +2293,7 @@ impl Drop for Gpu {
             self.spare,
             self.overlay,
             self.flat,
+            self.inverted,
             half0,
             half1,
             self.atlas,
@@ -2266,6 +2448,28 @@ mod tests {
             size: (640, 360),
         };
         assert!(raster.quads(|_, _| {}) > MOST_RASTER_QUADS);
+    }
+
+    /// One draw gives what the CPU's cover() does with FADE and the darkening, one
+    /// rounding of the two.
+    #[test]
+    fn fade_and_dimming_are_one_sum() {
+        const DIM: u32 = sb_runtime::screen::DIM;
+        for fade in [0_u32, 0x8040_80C0, 0xFF12_3456, 0x0120_3040] {
+            for dimmed in [false, true] {
+                for d in [0_u32, 1, 96, 200, 255] {
+                    let c = fade_color(fade, dimmed);
+                    let got = c.r + d as f32 / 255.0 * (1.0 - c.a);
+                    let got = (got * 255.0).round() as u32;
+                    let (a, r) = (fade >> 24, fade >> 16 & 0xFF);
+                    let want = match dimmed {
+                        false => (r * a + d * (255 - a) + 127) / 255,
+                        true => ((r * a + d * (255 - a)) * DIM + 255 * 255 / 2) / (255 * 255),
+                    };
+                    assert_eq!(got, want, "{fade:X} {dimmed} {d}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -59,6 +59,7 @@ use sb_runtime::help::{Help, Lookup};
 use sb_runtime::input::State;
 use sb_runtime::machine::{Machine, StopReason};
 use sb_runtime::palette::Palette;
+use sb_runtime::raster::SceneBackend;
 use sb_runtime::runtime::{SLOTS, keys};
 use sb_runtime::screen::{Filter, ScreenMode};
 use sb_runtime::settings::Settings;
@@ -374,6 +375,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut pad_tick = Instant::now();
     let mut bench = bench::Bench::from_env();
     let mut gpu = gpu::Gpu::from_env(&canvas);
+    // A subprogram's screens have their own pages and frame.
+    let mut sub_gpu: Option<gpu::Gpu> = None;
     let mut gpu_off = false;
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
@@ -392,7 +395,10 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         {
             b.report(&canvas.renderer_name);
             if let Some(gpu) = &gpu {
-                gpu.report();
+                gpu.report("gpu");
+            }
+            if let Some(gpu) = &sub_gpu {
+                gpu.report("sub");
             }
             break 'running;
         }
@@ -2045,6 +2051,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 let drawn = machine.screen_revision();
                 if gpu_off {
                     gpu = None;
+                    sub_gpu = None;
                 }
                 match &mut gpu {
                     // The debugger's panel wants the frame on the CPU.
@@ -2198,7 +2205,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.copy(screen, None, rect)?;
         // The subprogram's screen goes where XSUBSCREEN puts it on the
         // 1280x720 display, over the editor too.
-        if let Some(sub) = machine.sub_screen() {
+        if sub_gpu.is_none() && machine.sub_shows() {
+            sub_gpu = gpu.as_ref().and_then(gpu::Gpu::for_sub);
+        }
+        let sub_backend = (sub_gpu.as_mut())
+            .filter(|_| !panel_was_shown)
+            .map(|g| g as &mut dyn SceneBackend);
+        if let Some(sub) = machine.sub_screen_with(sub_backend) {
             let fb = sub.frame;
             let (sx, sy) = (display.w / display_w as f32, display.h / display_h as f32);
             let on_window = |[x, y, w, h]: [f32; 4]| {
@@ -2219,13 +2232,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             // Whatever XSCREEN's mode, as a screen in mode 0 is.
             let kind = ((fb.width(), fb.height()), Filter::Bilinear);
-            if sub_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
+            let sub_view = (sub_gpu.as_mut())
+                .filter(|_| sub.on_backend)
+                .and_then(gpu::Gpu::premultiplied_view);
+            if let Some(view) = &sub_view {
+                canvas.copy(view, None, on_window(sub.quad))?;
+            } else if sub_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = frame_texture(&canvas, &texture_creator, kind)?;
                 // SAFETY: the texture is valid while `made` lives.
                 unsafe { SDL_SetTextureBlendMode(made.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
                 sub_texture = Some((made, kind));
             }
-            if let Some((tex, _)) = &mut sub_texture {
+            if let (None, Some((tex, _))) = (&sub_view, &mut sub_texture) {
                 bench::uploaded(fb.pixels().len() * 4);
                 tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
                 canvas.copy(tex, None, on_window(sub.quad))?;
