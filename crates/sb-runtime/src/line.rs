@@ -30,8 +30,9 @@ pub const LINE_MAX: usize = 256;
 /// one below it and those the hint bar at the bottom of the display covers
 /// whole. `height` and `aspect` are XSCREEN's, `cell` the console's
 /// character size. The bar is 16 pixels of a 1280x720 display.
-// UNVERIFIED: expected of SmileBASIC 4; only the 1 of a 240-row screen
-// has been seen.
+// UNVERIFIED: expected of SmileBASIC 4. One row kept free has been seen, on
+// screens of 240 and 180 rows of pixels; the further rows the bar's term adds on
+// finer screens have not.
 pub fn rows_kept_free(height: u32, aspect: f64, cell: u32) -> i64 {
     let (height, aspect) = (height as f32, aspect as f32);
     let shown = if 720.0 / height <= 1280.0 / (aspect * height) {

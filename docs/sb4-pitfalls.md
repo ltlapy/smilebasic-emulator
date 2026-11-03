@@ -404,6 +404,11 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   attribute bits come back from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, the
   others with no effect either (TEST56).
 
+Typing doesn't stop at the end of a row (TEST60 part A, on a real Switch with a
+USB keyboard: `ACLS:XSCREEN 320,180,1,2:TSCREEN 4,8,26,12:LOCATE 0,9`, then about
+60 plain letters). The line wraps at the console's width and goes on over as many
+rows as it takes, the console scrolling as it goes, and the last row stays empty.
+
 Read from SmileBASIC 4 (version 4.4.8) and SmileBASIC 4, and not
 yet seen on hardware:
 
@@ -418,18 +423,16 @@ yet seen on hardware:
   character with it, and one made leftwards keeps it.
 - Copying a selection in direct mode drops the selection; cutting too.
 - A line typed in direct mode or for `INPUT` or `LINPUT` holds 256 characters,
-  whatever they are and whatever the console's size. It wraps at the console's
-  width and goes on over as many rows as it takes. A further character is
+  whatever they are and whatever the console's size. A further character is
   dropped, also over a selection, which then stays, and pasting that would not
   fit (counting a selection as still there) pastes nothing.
-- While a line is typed, and as Enter ends it, the console scrolls so that the
-  cursor stays above its last row; `INPUT`'s and `LINPUT`'s guides, errors and
-  `OK` do the same. What a program prints can still reach the last row. On a
-  screen whose rows are 16 display pixels high or less (of the 720), the hint
-  bar at the bottom covers more of them: 2 rows stay free at 360 rows of
-  pixels, 3 at 720 with 8x8 characters. The same scrolling while `INSPECT`
-  prints has been seen (`TEST19`: the last row stays free, on the usual
-  screen); the rest is from the code.
+- As Enter ends a line, the console scrolls so that the cursor stays above its
+  last row; `INPUT`'s and `LINPUT`'s guides, errors and `OK` do the same. What a
+  program prints can still reach the last row. On a screen whose rows are 16
+  display pixels high or less (of the 720), the hint bar at the bottom covers
+  more of them: 2 rows stay free at 360 rows of pixels, 3 at 720 with 8x8
+  characters. The same scrolling while `INSPECT` prints has been seen (`TEST19`:
+  the last row stays free, on the usual screen); the rest is from the code.
 
 ## Sprites
 
