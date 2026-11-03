@@ -39,9 +39,12 @@ pub trait SceneBackend {
     /// CPU, for a scene with something the backend cannot draw.
     fn draw(&mut self, scene: &Scene, input: &RasterInput, frame: (u32, u32)) -> bool;
 
-    /// A frame was drawn without being offered to the backend, because the
-    /// emulator's own UI goes over it on the CPU.
-    fn not_offered(&mut self) {}
+    /// What the emulator itself shows goes over the scene just drawn, as a
+    /// frame of premultiplied pixels that are clear elsewhere; None if nothing
+    /// does. False leaves the frame, with this, to the CPU.
+    fn overlay(&mut self, _frame: Option<&Framebuffer>) -> bool {
+        true
+    }
 
     /// Whether [`CpuRasterizer`] is to draw what the backend has drawn as
     /// well, and [`SceneBackend::compare`] to see it.

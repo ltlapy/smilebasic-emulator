@@ -84,8 +84,6 @@ use sdl3::video::Window;
 /// Why a frame was left to the CPU.
 #[derive(Clone, Copy, Debug)]
 enum Reason {
-    /// The hint or completion list goes over it on the CPU.
-    Overlay,
     /// A sub interpreter's frame, or darkened beside a subprogram.
     Sub,
     Raster,
@@ -104,9 +102,8 @@ enum Reason {
     Refused,
 }
 
-const REASONS: usize = 10;
+const REASONS: usize = 9;
 const REASON_NAMES: [&str; REASONS] = [
-    "overlay",
     "sub screen or dimmed",
     "raster filter",
     "color filter",
@@ -280,6 +277,10 @@ pub struct Gpu {
     layer: *mut SDL_Texture,
     /// What a filter draws into, which then takes the place of what it read.
     spare: *mut SDL_Texture,
+    /// Direct mode's hint and completion list, over the frame; made when first
+    /// shown, with what it holds to tell whether it changed.
+    overlay: *mut SDL_Texture,
+    overlay_holds: Vec<u32>,
     /// Half the frame's size, for mosaic and blur; made when one is first
     /// used. The second holds what a pass of a blur makes of the first.
     half: [*mut SDL_Texture; 2],
@@ -423,6 +424,8 @@ impl Gpu {
             frame: null_mut(),
             layer: null_mut(),
             spare: null_mut(),
+            overlay: null_mut(),
+            overlay_holds: Vec::new(),
             half: [null_mut(); 2],
             add_all: SDL_ComposeCustomBlendMode(
                 SDL_BLENDFACTOR_ONE,
@@ -1057,12 +1060,15 @@ impl Gpu {
         // and not in use between frames.
         unsafe {
             let [half0, half1] = self.half;
-            for texture in [self.frame, self.layer, self.spare, half0, half1] {
+            let targets = [self.frame, self.layer, self.spare, half0, half1];
+            for texture in targets.into_iter().chain([self.overlay]) {
                 if !texture.is_null() {
                     SDL_DestroyTexture(texture);
                 }
             }
             self.half = [null_mut(); 2];
+            self.overlay = null_mut();
+            self.overlay_holds.clear();
             let make = || {
                 SDL_CreateTexture(
                     self.renderer,
@@ -1526,8 +1532,42 @@ impl SceneBackend for Gpu {
         true
     }
 
-    fn not_offered(&mut self) {
-        self.leave(Reason::Overlay);
+    fn overlay(&mut self, frame: Option<&Framebuffer>) -> bool {
+        let Some(frame) = frame else {
+            return true;
+        };
+        if self.overlay.is_null() {
+            // SAFETY: the renderer outlives `self`.
+            self.overlay = unsafe {
+                SDL_CreateTexture(
+                    self.renderer,
+                    SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_STATIC,
+                    frame.width() as i32,
+                    frame.height() as i32,
+                )
+            };
+            if self.overlay.is_null() {
+                self.leave(Reason::Refused);
+                return false;
+            }
+            // SAFETY: as it was just made.
+            unsafe { SDL_SetTextureScaleMode(self.overlay, SDL_SCALEMODE_NEAREST) };
+        }
+        if self.overlay_holds != frame.pixels() {
+            self.overlay_holds.clear();
+            self.overlay_holds.extend_from_slice(frame.pixels());
+            let pixels = frame.pixels().as_ptr().cast();
+            let pitch = frame.width() as i32 * 4;
+            // SAFETY: the texture was made at the size of what the frame is
+            // now: ready() destroys it when the frame's size changes.
+            unsafe { SDL_UpdateTexture(self.overlay, null(), pixels, pitch) };
+            crate::bench::uploaded(frame.pixels().len() * 4);
+        }
+        self.target(self.frame);
+        self.cover(self.overlay, SDL_BLENDMODE_BLEND_PREMULTIPLIED, WHITE);
+        self.done();
+        true
     }
 
     fn compares(&self) -> bool {
@@ -1667,7 +1707,15 @@ impl Drop for Gpu {
     fn drop(&mut self) {
         let pages = self.pages.iter().flatten().map(|p| p.texture);
         let [half0, half1] = self.half;
-        let all = [self.frame, self.layer, self.spare, half0, half1, self.atlas];
+        let all = [
+            self.frame,
+            self.layer,
+            self.spare,
+            self.overlay,
+            half0,
+            half1,
+            self.atlas,
+        ];
         // SAFETY: these are the renderer's own, and the frontend drops `self`
         // before it.
         for texture in pages.chain(all) {

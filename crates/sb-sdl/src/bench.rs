@@ -14,6 +14,7 @@
 //! - `end`: stops timing when the program ends, however many frames it was;
 //! - `novsync`: presents without waiting for vsync;
 //! - `stop`: stops it, as the Break key does, a second in;
+//! - `type=TEXT`: half a second after that, types TEXT, with no commas;
 //! - `editor`: opens the editor; `apart` in its own window;
 //! - `panel`: shows the debugger's panel with it;
 //! - `shot=PATH`: saves the last frame timed of each window shown, as
@@ -86,6 +87,7 @@ pub struct Bench {
     settle: u32,
     run: Option<(String, String)>,
     stop: bool,
+    typed: Option<String>,
     until_end: bool,
     editor: bool,
     apart: bool,
@@ -126,6 +128,7 @@ impl Bench {
                 Some(("frames", n)) => bench.frames = n.parse().unwrap_or(600),
                 Some(("settle", n)) => bench.settle = n.parse().unwrap_or(SETTLE),
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
+                Some(("type", text)) => bench.typed = Some(text.to_string()),
                 Some(("slow", ms)) => {
                     bench.slow = Duration::from_millis(ms.parse().unwrap_or(50));
                 }
@@ -178,6 +181,11 @@ impl Bench {
             }
             if self.panel {
                 machine.show_panel(true);
+            }
+        }
+        if self.frame == set_up + SETTLE / 2 {
+            if let Some(text) = &self.typed {
+                machine.type_text(text);
             }
         }
         if self.frame >= set_up + self.settle && self.last.is_some() {

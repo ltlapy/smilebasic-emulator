@@ -791,6 +791,8 @@ pub struct Runtime {
     revision: u64,
     /// The last frame was drawn by a [`SceneBackend`], which holds it.
     on_backend: bool,
+    /// What goes over a frame a backend draws; made when first wanted.
+    overlay: Option<Framebuffer>,
     /// What CLIPBOARD reads and writes.
     pub clipboard: Box<dyn crate::env::Clipboard>,
     /// The DIALOG the program waits on, and the frontend's answer.
@@ -1042,6 +1044,7 @@ impl Runtime {
             drawn_with: None,
             revision: 0,
             on_backend: false,
+            overlay: None,
             clipboard: Box::new(crate::env::MemoryClipboard::default()),
             meta: Default::default(),
             dialog: None,
@@ -1525,36 +1528,56 @@ impl Runtime {
         // Offered first; the CPU then draws what the backend did not, and what
         // it did only to compare.
         self.on_backend = match &mut backend {
-            // What draw_overlay draws is only on the CPU.
-            Some(backend) if self.line.is_some() && self.recall.is_some() => {
-                backend.not_offered();
-                false
-            }
             Some(backend) => backend.draw(&self.scene, &input, self.mode.frame()),
             None => false,
         };
-        let compare = backend.filter(|b| self.on_backend && b.compares());
-        if self.on_backend && compare.is_none() {
-            return;
+        let backend = backend.filter(|_| self.on_backend);
+        let compare = backend.as_ref().is_some_and(|b| b.compares());
+        if backend.is_none() || compare {
+            self.raster.draw(&self.scene, &input);
         }
-        self.raster.draw(&self.scene, &input);
-        if self.on_backend {
-            if let Some(backend) = compare {
-                backend.compare(self.raster.frame());
-            }
+        let Some(backend) = backend else {
+            self.draw_overlay(false);
             return;
+        };
+        let shows = self.draw_overlay(true);
+        let overlay = (self.overlay.as_ref()).filter(|_| shows);
+        self.on_backend = backend.overlay(overlay);
+        if !self.on_backend {
+            let input = RasterInput {
+                grp: &self.grp,
+                font: &self.font,
+                cells: std::array::from_fn(|i| self.text[i].cells()),
+            };
+            self.raster.draw(&self.scene, &input);
+            self.draw_overlay(false);
+        } else if compare {
+            self.draw_overlay(false);
+            backend.compare(self.raster.frame());
         }
-        self.draw_overlay();
     }
 
     /// What the emulator itself shows over the frame, after FADE, which is
-    /// no part of SmileBASIC 4's picture.
-    fn draw_overlay(&mut self) {
+    /// no part of SmileBASIC 4's picture: on the CPU's frame, or for a backend
+    /// on a clear one of its own. Whether anything was to be shown.
+    fn draw_overlay(&mut self, on_clear: bool) -> bool {
         // In direct mode, the hint for the command being typed above the
         // line and completion's list below the word.
         let options = Options::from_settings(&self.settings, false).filter(|_| !self.line_quiet);
+        let mut shows = false;
         if let (Some(line), Some(_), Some(options)) = (&self.line, &self.recall, options) {
-            let fb = self.raster.frame_mut();
+            let fb = match on_clear {
+                true => {
+                    let (w, h) = self.mode.frame();
+                    let fb = self.overlay.get_or_insert_with(|| Framebuffer::new(w, h));
+                    if (fb.width(), fb.height()) != (w, h) {
+                        *fb = Framebuffer::new(w, h);
+                    }
+                    fb.clear(0);
+                    fb
+                }
+                false => self.raster.frame_mut(),
+            };
             let console = &self.text[CONSOLE];
             let (w, _) = console.size();
             let (_, size) = console.font();
@@ -1581,14 +1604,17 @@ impl Runtime {
                         cursor: top,
                     };
                     let syntax = line.completion.as_ref().and_then(Completion::syntax);
+                    shows |= hint.is_some() || syntax.is_some();
                     hint::draw_band(fb, &self.font, band, (hint.as_ref(), syntax), scale as u32);
                 } else if let Some(hint) = &hint {
+                    shows = true;
                     hint.draw(fb, &self.font, left, (top, top + scale), scale as u32);
                 }
             }
             if let Some(list) = &line.completion
                 && let Some(cell) = line.cell_of(list.start, w)
             {
+                shows = true;
                 let (left, top) = at(cell);
                 let colors = &self.settings.editor_colors;
                 list.draw(
@@ -1601,6 +1627,7 @@ impl Runtime {
                 );
             }
         }
+        shows
     }
 
     /// Starts a frame: the input it sees, and MAINCNT.
