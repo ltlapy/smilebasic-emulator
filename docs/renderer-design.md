@@ -42,7 +42,7 @@ All of it lives in `Runtime` (`crates/sb-runtime/src/runtime.rs`):
 | Sprites 0-4095 | `Sprites` (`sprites.rs`) | `Sprite` holds U, V, W, H, attributes, home, position, Z, rotation, scale, color, page, layer, link. Sprite 4095 (`#GSPRITE`) shows GRP0. |
 | Text screens 0-4 | `TextScreen` (`text.rs`) | Cells (code, color, ATTR), font type, char size, TOFS/THOME/TROT/TSCALE/TCOLOR, TBLEND, TLAYER, TPAGE. Screen 4 is the console. |
 | Layers 0-7 | `compose::Layer` | `LAYER` compose mode and color, `LCLIP`, 2D `LMATRIX` (`Affine`), 4x4 `LMATRIX` (`projection: Option<[f64; 16]>`, values stored at single precision). |
-| Filters 0-7 | `filter::Filter` | `LFILTER`: mosaic, blur, raster (holds the program's array and reads it every frame), color. |
+| Filters 0-7 | `filter::Filter` | `LFILTER`: mosaic, blur, raster (holds the program's array and reads it each frame drawn), color. |
 | BACKCOLOR, FADE | `Runtime::back_color`, `screen::Fade` | |
 | XSCREEN | `screen::ScreenMode` | Width, height, sample magnification, display filter, aspect. The frame is `width*sample` by `height*sample` (`ScreenMode::frame`). |
 
@@ -74,45 +74,41 @@ and beside a subprogram, then calls `Runtime::render`.
 
    `revision` counts the frames really drawn. The frontend uploads a
    texture only when it moves.
-2. **Element list.** Visible text screens and `Sprites::draw_order()`
-   (shown sprites with their linked poses from `Sprites::pose`) go into
-   one `Vec<(layer, z, kind, id, Element)>`. It is sorted by layer
-   (7 first), then Z (larger first), then kind (text screens before
-   sprites), then id (higher first). The list is allocated anew every
-   frame.
-3. **Background.** `fb.clear(BACKCOLOR | opaque)`. A sub interpreter's
-   frame (`env_type != 0`) is premultiplied, its alpha the coverage
-   (255 less SmileBASIC 4's transmittance), so its clear BACKCOLOR
-   lets the main screen show through; an opaque one makes the whole
-   frame opaque at the end.
-4. **Layers 7 to 0.** For each layer with elements, or with a filter
-   on a direct (mode 0) layer:
-   - `Runtime::fine` scales the 2D matrix and LCLIP by the sample
-     magnification.
+2. **Scene.** `Scene::build` (`scene.rs`) turns the state into plain data,
+   in vectors it keeps from frame to frame. Each shown sprite (its pose
+   from `Sprites::pose`) and visible text screen gets an item and a packed
+   `u64` sort key: layer (7 first), Z (larger first), kind (text screens
+   before sprites), id (higher first). `Layer::fine` scales each layer's 2D
+   matrix and LCLIP by the sample magnification. A layer gets a `LayerPass`
+   if it has items, or a filter on a direct (mode 0) layer.
+3. **Drawing.** `CpuRasterizer::draw` (`raster/mod.rs`) clears the frame to
+   `Scene::back`, which for a sub interpreter's frame (`env_type != 0`) is
+   premultiplied: its alpha is the coverage (255 less SmileBASIC 4's
+   transmittance), so its clear BACKCOLOR lets the main screen show
+   through, and an opaque one makes the whole frame opaque at the end.
+4. **Passes, layer 7 to 0:**
    - The target is the frame itself for mode 0 (`Compose::Direct`), or
      `scratch` (cleared to 0, premultiplied) for modes 1-4.
-   - Without a 4x4 matrix, each element is drawn through
-     `Runtime::draw_element`. Text screens go through
-     `TextScreen::draw_placed`, and sprites through
-     `sprites::draw_posed`.
+   - Without a 4x4 matrix, each item is drawn: `raster::text::draw` or
+     `raster::sprite::draw`.
    - With a 4x4 matrix, sprites are drawn straight through it with
      `compose::project_image`. Runs of text screens are first drawn flat
-     into `flat`, sized by `Runtime::flat_area` and
-     `compose::source_bounds`, then put on with `compose::project`.
-     That is why text screens reach at most one screen past each edge
-     (see [differences.md](differences.md)).
-   - `Filter::apply` (`filter.rs`) runs on the target. A raster filter
+     into `flat`, whose place and size the builder works out
+     (`scene::flat_area`, `compose::source_bounds`), then put on with
+     `compose::project`. That is why text screens reach at most one screen
+     past each edge (see [differences.md](differences.md)).
+   - `FilterOp::apply` (`filter.rs`) runs on the target. A raster filter
      on a direct layer then makes the frame opaque again.
    - For modes 1-4, `compose::compose` puts `scratch` over the frame,
      multiplied by the layer color.
-5. **FADE.** `Fade::cover` mixes the fade color over every pixel, and
+5. **FADE.** `screen::cover` mixes the fade color over every pixel, and
    darkens the frame to 224/255 in the same rounding while the other
    side has the focus beside a subprogram (`dimmed`).
-6. **Emulator UI on the frame.** In direct mode, the command hint and
-   the completion list (`hint::draw_band`, `Completion::draw`) are
-   drawn after the fade, so they are not darkened.
-   These are not SmileBASIC 4 rendering. A GPU split should keep them
-   as a CPU overlay ([3.6](#36-what-stays-on-the-cpu)).
+6. **Emulator UI on the frame.** `Runtime::draw_overlay`: in direct mode,
+   the command hint and the completion list (`hint::draw_band`,
+   `Completion::draw`) are drawn after the fade, so they are not darkened.
+   These are not SmileBASIC 4 rendering
+   ([3.6](#36-what-stays-on-the-cpu)).
 
 ### 1.3 Drawing one element
 
@@ -128,9 +124,10 @@ centre takes the pixel if it is the left or the bottom edge, whichever
 way the image is turned. The texel read is the whole part of the point
 moved again by `Placement::texel_tie`.
 
-**Sprites** (`sprites::draw_posed`):
+**Sprites** (`raster::sprite::draw`, from a `SpriteItem`):
 
-- A page that is still blank shows nothing.
+- A page that is still blank shows nothing: `SpriteItem::new` makes such
+  a sprite, or a clear one, `SpriteItem::NOTHING`.
 - `Source` reads GRP-1 (white everywhere), or a page with GSAMPLE
   border or repeat.
 - `Source::page_xy` undoes the quarter turn and then the flips.
@@ -155,7 +152,7 @@ moved again by `Placement::texel_tie`.
   a run of the same page pixel: GRP-1 boxes and fades made of sprites,
   and scaled-up sprites.
 
-**Text screens** (`TextScreen::draw_placed`):
+**Text screens** (`raster::text::draw`, from a `TextItem` and the cells):
 
 - Upright screens go through `draw_upright`. A `Grid` maps each frame
   column and row to a (cell, glyph column or row) pair. Each distinct
@@ -327,13 +324,13 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Text colour (cell colour, then TCOLOR) the same, unrounded | `compose::Mixed`, `Over5` | C (R2): TEST49. |
 | An inverted cell, attribute bit 7, on the console only (no other screen's program has the flag; TEST56 part 1 shows plain glyphs there): the texel is taken as `n,n,n,n` for `n = 1 - alpha` and goes through the same sum; any character, an empty cell too | `inverted_texel`, `attr::INVERT`, `TextScreen::inverts` | U on the console: notes. C elsewhere: TEST56. Not the INPUT cursor (TEST50) |
 | TLOAD, TUPDATE and TCOPY keep all 16 attribute bits; TSAVE, TARRAY and CHKCHR read them | `Cell` | C: TEST56 parts 1 and 4 |
-| Tint is applied to the page pixel before blending | `sprites::draw_posed` | C (R2): TEST49 |
+| Tint is applied to the page pixel before blending | `raster::sprite::draw` | C (R2): TEST49 |
 | Relative colour animation `"C+"`: product / 256, rounded down | `anim.rs` | C: pitfalls |
 | LAYER mode 0 draws straight onto the frame, layer colour ignored | `Runtime::render` | C: pitfalls; TTEST16 |
 | Modes 1-4: the layer colour scales light (`P = p*c*ca`) and coverage (`A = la*ca`), unrounded | `compose::compose_tinted` | C (R3): TEST49, colours `C0806040`, `7F40C0FF`, `FFC08040`, `80FFFFFF`, white |
 | Mode 1: `P + d*(1-A)`; mode 2: `d + P`; mode 3: `d*(P + 1-A)`; mode 4: `d + P*(1-d)`, one rounding each; mode 1 adds to the frame's coverage, mode 2 keeps it, modes 3 and 4 make it opaque | `compose::compose` | C (R3): TEST49. TEST56: modes 3 and 4 make the whole subprogram's screen opaque |
-| A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's colour unmultiplied with coverage `255 - alpha` (alpha 0: clear); an opaque BACKCOLOR replaces the main screen | `Runtime::render`, `Fade::cover` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; TEST56 for &HFF, and over console text for &H40 and &HC0 |
-| Beside a subprogram, the side without the focus: times 224/255, rounded in the same step as FADE | `Fade::cover`, `screen::darken` | C: TEST49 |
+| A sub interpreter's frame is premultiplied over the main one (dimmed to 224/255), cleared to BACKCOLOR's colour unmultiplied with coverage `255 - alpha` (alpha 0: clear); an opaque BACKCOLOR replaces the main screen | `Scene::build`, `screen::cover` | C (R4): TEST49 for alphas 0, 1, &H7F, &H80, &HFE; TEST56 for &HFF, and over console text for &H40 and &HC0 |
+| Beside a subprogram, the side without the focus: times 224/255, rounded in the same step as FADE | `screen::cover`, `screen::darken` | C: TEST49 |
 
 ### 2.2 Sprites
 
@@ -342,7 +339,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Placement: home to position, scale, then clockwise rotation in degrees | `Affine::place` | C: manual (SPHOME, SPSCALE, SPROT) |
 | Flip first, then quarter turn | `Source::page_xy` | C: pitfalls |
 | Sampled without smoothing, at frame pixel centres; away from ties every rotation and scale fits with no misses | `draw_image`, `draw_upright` | C (R5): TEST50 generic angles |
-| With XSCREEN sample > 1, sprites are sampled at the finer pixels' centres; LCLIP grows to whole fine pixels | `Runtime::fine` | C (R6): TEST50 part 2 (LCLIP exact; the fine grid misses only 56 tie pixels of 54298) |
+| With XSCREEN sample > 1, sprites are sampled at the finer pixels' centres; LCLIP grows to whole fine pixels | `Layer::fine` | C (R6): TEST50 part 2 (LCLIP exact; the fine grid misses only 56 tie pixels of 54298) |
 | Coverage: a pixel is drawn when its centre, nudged right then up, lies on the image, at any rotation: an edge through the centre takes it if it is the left or bottom edge on the frame | `Placement::sampling` | C (R5): TEST50, no coverage miss in any part, text included (consistent with a rasteriser's top-left rule on a target drawn flipped) |
 | A sample point exactly between texels, at a multiple of 90 degrees: image side a power of two and scale a power of two: the higher texel; power of two with another scale: towards the frame's left and bottom; another side: towards the page's lower coordinates | `Placement::texel_tie` | U (R5, R8): the usual outcome only; see below |
 | The same at other angles (only 45-degree multiples can tie): image x higher, image y lower; kept on the image | `Placement::texel_tie` | U (R5): TEST50, no misses but 21 pixels reading the row above the image |
@@ -359,16 +356,16 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 
 | Rule | Where | Status |
 |---|---|---|
-| Flip then turn for ATTR | `draw_placed` | C: pitfalls |
+| Flip then turn for ATTR | `raster::text::draw` | C: pitfalls |
 | Ties: as for sprites of the cell's size, per cell (a block of cells shows what a sprite of the same size does) | `draw_turned`, `draw_upright` | C (R8) that text and sprites go alike: TEST50, parts 3 and 4; U for the rule itself, as for sprites |
 | Font types 24-64 show only user-defined characters; GPUTCHR with them reads GRP5 in 24-pixel cells | `glyph_pixel_px` | C: pitfalls |
 | Tab stops every 4 columns | `TAB_WIDTH` | S: pitfalls; marker in `text.rs` |
 | `CHR$(10)` starts a new line | `TextScreen::print` | S: pitfalls; marker in `text.rs` |
 | TSCREEN clears the screen | `set_font` | S: pitfalls; marker in `text.rs` |
 | TSCREEN keeps TLAYER, TPAGE, TVAR and TFUNC, and sets TBLEND back to 0 | `restart_look` | C: pitfalls; TEST47, TEST48 |
-| INPUT cursor: a bar 2 by 8 at the cell's left, opaque white whatever the colour; it alternates with nothing | `draw_placed` | C (R9): TEST50, parts 6 and 7 |
+| INPUT cursor: a bar 2 by 8 at the cell's left, opaque white whatever the colour; it alternates with nothing | `raster::text::draw` | C (R9): TEST50, parts 6 and 7 |
 | The cursor's blink: 20 frames on, 20 off, counted in frames played; on from the start of a line and from each key that moves or edits, the first period a frame short | `LINE_CURSOR_BLINK`, `LineEdit::key` | C by SmileBASIC 4, the count stepping with `MAINCNT`'s; TEST56 part 1 fits 2 of 2 shots at offsets -3..-1, weak alone |
-| The cursor's width is the cell's shifted right by two, or the whole cell after Insert; its height the cell's; with TSCALE and LMATRIX; right after its screen's cells, under what is in front | `LineCursor`, `draw_placed` | C: TEST56 part 1, 24 wide at scale 3, cut by a sprite in front |
+| The cursor's width is the cell's shifted right by two, or the whole cell after Insert; its height the cell's; with TSCALE and LMATRIX; right after its screen's cells, under what is in front | `LineCursor`, `raster::text::draw` | C: TEST56 part 1, 24 wide at scale 3, cut by a sprite in front |
 | On a composed layer the cursor has no coverage, so it adds | `LineCursor::composed` | C: TEST56 part 1, `E0F0FF` |
 | Only direct mode's line selects (`LineEdit::selects`), drawn inverted in the console's colour, staying after Enter | `LineEdit::draw`, `finish` | C that INPUT does not: TEST56. U: the look, from SmileBASIC 4; LINPUT |
 | Text animations: as for sprites | `impl Animated for TextScreen` | C: pitfalls; TEST47 (R7) |
@@ -391,7 +388,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | `LMATRIX layer,hx,hy` moves the layer by minus the home point | `screen.rs` | C: pitfalls |
 | The 2D LMATRIX form: `Affine::place(pos, home, rot, scale)` like a sprite: scale, then turn clockwise, x and y outside; after the element's own placement | `screen.rs` | C (R11): pitfalls; TEST53 part 1 |
 | 4x4 LMATRIX: `(x,y,0,1)` to clip space, X right, Y up, column-major, perspective divide | `compose::homography` | C: pitfalls; TTEST26, TTEST27 |
-| Sprites and text screens on a 4x4 layer show whole, also off-screen parts | `project_image`, `flat_area` | C: pitfalls; TTEST36 (text bounded: [differences.md](differences.md)) |
+| Sprites and text screens on a 4x4 layer show whole, also off-screen parts | `project_image`, `scene::flat_area` | C: pitfalls; TTEST36 (text bounded: [differences.md](differences.md)) |
 | 4x4: a sprite's Z is not used; shown where W > 0 and Z/W is from -1 to 1 | `compose::project`, `project_image` | C (R12): pitfalls; TEST53 part 2 |
 | 4x4: sampled without smoothing | `compose::project` | C (R12): pitfalls; TEST53 part 2 |
 | LCLIP on a 4x4 layer is in frame pixels, after projection, inclusive, Y from the top | `project(..., clip)` | C (R13): pitfalls; TEST53 part 3 |
@@ -425,7 +422,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 |---|---|---|
 | Fade steps: single-precision mix, rounded down; a clear end takes the other end's colour | `Fade::step`, `Fade::start` | C: pitfalls |
 | ACLS clears FADE | `acls` | S: pitfalls; marker in `runtime.rs` |
-| Fade cover: `(c*a + p*(255-a) + 127) / 255` (nearest), over the final frame, its alpha kept | `Fade::cover` | C (R21): TEST49, four fade colours (alpha &H80, &H7F, &H01, &HFE) |
+| Fade cover: `(c*a + p*(255-a) + 127) / 255` (nearest), over the final frame, its alpha kept | `screen::cover` | C (R21): TEST49, four fade colours (alpha &H80, &H7F, &H01, &HFE) |
 | A fade steps with the animations, starting on the frame after FADE | `Runtime::animate` | C: pitfalls; TEST47 (R22) |
 
 ### 2.8 Display (XSCREEN composite mode)
@@ -711,99 +708,119 @@ need its own resampling code if SDL's `PIXELART` mode is not the same.
   types (see [CONTRIBUTING.md](../CONTRIBUTING.md)). The scene must be
   plain data, so that a later WASM build can use the CPU rasterizer
   with a canvas, or a WebGL2/WebGPU backend.
-- No per-frame allocation in the steady state: the scene's vectors are
-  kept and cleared, as `scratch` and `flat` are today.
+- No per-frame allocation in the scene: its vectors are kept and cleared.
 
 ### 3.2 The scene (display list)
 
-The scene is built each frame that the redraw gate lets through:
+`crates/sb-runtime/src/scene.rs` holds it, built each frame that the redraw
+gate lets through. In short (the source has the rest):
 
 ```rust
 pub struct Scene {
-    pub frame: (u32, u32),          // ScreenMode::frame()
     pub sample: u32,
-    pub back: Background,           // Opaque(u32) | Premultiplied(u32) for a sub interpreter
-    pub passes: Vec<LayerPass>,     // layer 7 first; empty layers omitted
-    pub items: Vec<Item>,           // all passes' items, back to front
-    pub fade: u32,                  // 0 alpha: none
-    pub pages: [PageState; 6],      // change counts / dirty tiles, see 3.4
+    pub back: u32,                  // what the frame is cleared to
+    pub opaque_frame: bool,         // main screen: stays opaque under composed layers
+    pub opaque_end: bool,           // a sub interpreter's opaque BACKCOLOR
+    pub passes: Vec<LayerPass>,     // layer 7 first; those with nothing to do left out
+    pub fade: u32,
+    pub dimmed: bool,               // one rounding with the fade
+    pub raster_rows: Vec<[f64; 4]>, // raster filters' arrays, read by value
+    // Scene::items(pass) walks these back to front:
+    order: Vec<u64>, sprites: Vec<SpriteItem>, texts: Vec<TextItem>,
 }
 
 pub struct LayerPass {
     pub compose: Compose,           // Direct draws onto the frame
-    pub color: u32,                 // layer colour (ignored for Direct)
+    pub color: u32,
     pub clip: Option<Clip>,         // in frame pixels (already "fine")
-    pub projection: Option<[f32; 16]>,
-    pub filter: FilterOp,           // Mosaic(n) | Blur(n) | Raster(rows snapshot) | Color(h,s,v)
-    pub items: Range<u32>,
+    pub projection: Option<Projection>, // matrix, flat frame's place and size
+    pub filter: FilterOp,
+    pub opaque_after_filter: bool,
+    items: Range<u32>,
 }
 
-pub struct Item {
-    pub source: Source,             // Page(n) | White (GRP-1) | Glyphs (font atlas)
-    pub rect: (i32, i32, i32, i32), // U, V, W, H on the source
-    pub orient: u8,                 // quarter turn + flips, applied as page_xy does
+pub struct SpriteItem {             // 88 bytes
+    pub matrix: Affine,             // image -> layer -> frame, already fine
+    pub color: u32,                 // 0 alpha: shows nothing
+    pub area: u32,                  // decides Tint's tables
+    pub page: i32,                  // negative: GRP-1
     pub repeat: bool,               // GSAMPLE 1
-    pub matrix: Affine,             // image -> layer -> frame, already including fine()
-    pub tint: u32,                  // SPCOLOR, or cell colour times TCOLOR
-    pub add: bool,                  // #A_ADD / TBLEND 1
+    pub u: i32, pub v: i32, pub w: i32, pub h: i32,
+    pub attr: i32,                  // quarter turn, flips, additive
+}
+
+pub struct TextItem {               // one per visible text screen, not per cell
+    pub screen: u8,                 // whose cells: RasterInput::cells
+    pub matrix: Affine,             // on a 4x4 layer, to the flat frame
+    pub empty: bool,
+    pub font_type: u32, pub char_size: u32, pub width: u32, pub height: u32,
+    pub page: i32, pub page_origin: (i32, i32), // TPAGE
+    pub tint: u32, pub add: bool, pub inverts: bool, pub may_invert: bool,
+    pub cursor: Option<CursorBar>,  // rectangle and color worked out
 }
 ```
 
-How the current code maps onto it:
+How the code maps onto it:
 
-- **Sprites** become one `Item` each. The `Sprites::pose` link
-  arithmetic, the blank-page rule, `Affine::place` and `Runtime::fine`
-  stay in the builder.
-- **Text screens** become one `Item` per non-empty cell, plus the
-  cursor's bar. A cell sources GRP5, the TPAGE page, or a **glyph atlas**
-  for `Font::pixel` fallbacks. The atlas is a CPU-built page, rebuilt
-  only when the font changes. Per-cell items are equivalent to today's
-  whole-screen drawing: today a frame pixel belongs to the cell under
-  its centre (`(x / size, y / size)`), which is exactly what half-open
-  per-cell coverage gives with the same matrix. On upright screens the
-  CPU backend can merge a screen's cells back into today's
-  `draw_upright` fast path, since it knows they share one matrix.
-- **Text on a 4x4 layer** keeps today's semantics by default: a
-  `FlatGroup` item (cells drawn flat into an offscreen of
-  `flat_area`'s size, then projected). Projecting each cell directly
-  would remove the bound described in [differences.md](differences.md).
-  That is a behaviour change: decide it after TTEST36-style checks.
-- **Raster filters** snapshot the array rows into the pass when the
-  scene is built. The backends then never see `ArrayRef`, and the
-  snapshot also serves as a cache key (see [3.3](#33-redraw-on-change)).
-- **The sort** is kept exactly: layer, Z, kind, id. To avoid the
-  per-frame `Vec`, the builder can bucket by layer and keep the vector.
+- **Sprites** are one `SpriteItem` each. The `Sprites::pose` link
+  arithmetic, the blank-page rule, `Affine::place` and `Layer::fine` are
+  in the builder. A sprite that shows nothing keeps its place: its layer
+  is still cleared and composed, and it still ends a run of text screens
+  on a 4x4 layer, so leaving it out would change pixels.
+- **Text screens** are one `TextItem` each, and the cells are not copied:
+  the rasterizer gets them by reference. The earlier plan of one item per
+  cell would mean up to 14400 cells on each of five screens, 88 bytes or so
+  each, 6 MiB a frame, to redo what `draw_upright` does from the cell array.
+  A GPU backend turns cells into quads itself, with the same lookups as
+  `TextItem::glyph` (TPAGE, GRP5, then `Font::pixel`, which still needs an
+  atlas). Coverage is the same either way: a frame pixel belongs to the
+  cell under its centre (`(x / size, y / size)`).
+- **Text on a 4x4 layer** keeps its semantics: drawn flat into an offscreen
+  of the size in `Projection`, each run then projected. Projecting each cell
+  directly would remove the bound described in
+  [differences.md](differences.md). That is a behaviour change: decide it
+  after TTEST36-style checks.
+- **Raster filters** read the array rows into `Scene::raster_rows` when the
+  scene is built, so rasterizers never see `ArrayRef`.
+- **The sort** is exact: layer, Z, kind, id, on packed `u64` keys, without
+  moving items.
 
-The rasterizer trait:
+The rasterizer trait (`raster/mod.rs`), with dispatch at most once a frame.
+`Runtime` holds a `CpuRasterizer` directly, so nothing is dynamic today:
 
 ```rust
+pub struct RasterInput<'a> {        // what a scene refers to and does not copy
+    pub grp: &'a Graphics,
+    pub font: &'a Font,
+    pub cells: [&'a [Cell]; SCREENS],
+}
+
 pub trait Rasterizer {
-    /// Uploads what changed on the pages since the last frame.
-    fn sync_pages(&mut self, grp: &Graphics, dirty: &PageDirty);
-    /// Draws the scene. The CPU backend fills a Framebuffer; a GPU
-    /// backend draws into its own target (the frontend shows it).
-    fn draw(&mut self, scene: &Scene);
+    fn draw(&mut self, scene: &Scene, input: &RasterInput);
 }
 ```
 
-The CPU backend's `draw` is today's loop: draw through `draw_posed` /
-`draw_placed` equivalents, filter, compose, fade. Its output must stay
-pixel for pixel what `Runtime::render` gives now.
+The file-level split is that `scene.rs`, `sprites.rs` and `text.rs` (making
+items) decide what shows, and `raster/` decides how: path choice, ties
+(`Placement::texel_tie`), `Tint` and the glyph tables. `compose.rs` and
+`filter.rs` hold pixel arithmetic that only `raster/` and GRP drawing use.
 
 ### 3.3 Redraw on change
 
-The redraw gate stays first and cheap: `changed`, `take_changed`,
-`drawn_with`. It decides whether a scene is built at all. Then:
+The redraw gate is first and cheap: `changed`, `take_changed`,
+`drawn_with`. It decides whether a scene is built at all. For Phase 2:
 
 - The built scene is compared with the last one. Use a hash of
-  `passes`, `items`, `fade` and the page change counts. If equal, the
+  `passes`, the items, `fade`, the page change counts and a change count
+  for each screen's cells, which are not in the scene. If equal, the
   frame is reused. This catches commands that set the same values,
   such as `SPOFS` to the same place every frame, which today always set
   `changed`.
-- Inputs read by reference at render time must enter the scene by
-  value, so that the comparison sees them: raster arrays (snapshot),
-  GRP pages (change counts). Check today whether a raster array that
-  the program writes without calling a command redraws the frame.
+- Inputs read by reference at render time must enter the comparison: GRP
+  pages and cells by change counts. Raster rows are by value already, but
+  the gate comes first: a program that only writes a raster array, with no
+  command that sets `changed`, does not redraw today (measured: 1 frame of
+  80). Whether SmileBASIC 4 shows such writes at once is not checked.
 - A GPU backend can go further and cache per-pass targets: a composed
   layer whose items, inputs and pages did not change keeps its texture.
 
@@ -848,10 +865,13 @@ A GPU backend for comparison runs sits outside `sb-runtime`:
 
 ### 3.6 What stays on the CPU
 
-- Emulator UI drawn on the frame: the hint band, the completion list
-  and the dimming. Draw them into a separate overlay `Framebuffer`
-  with its own texture (as `layer.rs` does for panels) instead of into
-  the frame. Then the frame itself can come from the GPU.
+- Emulator UI drawn on the frame: the hint band and the completion list,
+  in `Runtime::draw_overlay`. They are still drawn into the CPU frame, after
+  the rasterizer. For a GPU frame, draw them into a separate overlay
+  `Framebuffer` with its own texture (as `layer.rs` does for panels); the
+  headless tools then need the two put together to keep their pictures.
+- Dimming is not an overlay: it shares one rounding with FADE
+  (`screen::cover`), so it stays in the scene (`Scene::dimmed`).
 - The editor, menu bar, panels and dialogs. They already redraw only
   on change, and they are not SmileBASIC 4 rendering.
 - GRP drawing, and anything that has no GPU path yet. The fallback
@@ -1173,18 +1193,31 @@ There are two ways to reduce the inexact set later:
   remaining ones listed here as accepted unknowns; the golden suite in
   CI.
 
-**Phase 1: scene builder, CPU backend.**
+**Phase 1: scene builder, CPU backend. Done.**
 
-- Introduce `Scene`, `LayerPass`, `Item` and the `Rasterizer` trait in
-  `sb-runtime`.
-- Move today's drawing into `CpuRasterizer`. `Runtime::render` becomes
-  "gate, build scene, compare, rasterize, overlay".
-- Move the hint, completion and dimming into an overlay framebuffer
-  shown by the frontend.
-- Milestone: all tests and golden hashes unchanged; `--bench` draw
-  times within noise of before on the projects in
-  [1.7](#17-measured-per-frame-costs) (scene building for 4096 sprites
-  must stay well under a millisecond); no new per-frame allocation.
+- `Scene`, `LayerPass`, `SpriteItem`, `TextItem` and the builder are in
+  `scene.rs`, `Rasterizer` and `CpuRasterizer` in `raster/`.
+  `Runtime::render` is the gate, `Scene::build`, `Rasterizer::draw`,
+  `draw_overlay`. The scene comparison is left to phase 2.
+- The hint and completion list are still drawn on the CPU frame, after the
+  rasterizer: an overlay texture gains nothing without a GPU frame, and
+  dimming cannot move ([3.6](#36-what-stays-on-the-cpu)).
+- Measured against the commit before, on one x86-64 desktop, release build,
+  `--bench --fixed`: checksums identical on TPERF whole (10500 frames), its
+  scenes TMULTI, SPROT, SPANIM, LCOMP, GAME, SPHIT, TSCROLL, VINT (2200) and
+  FINITI, ELE2020, RYUSI, BASICDEMO, NEON_DRIFTWAY, SOLIDGUNNER_V, DVD_BOUNCE
+  (1200); `--screen` and `--play` PNGs byte-identical on the hardware test
+  programs that have run files, including sub screens.
+- Instructions, against 0.07% between two runs of one build: TPERF -2.1%,
+  TMULTI -5.7%, SPROT -2.7%, SPANIM +0.4%, LCOMP -0.3%, GAME -1.6%, FINITI
+  -2.7%, ELE2020 -2.4%, NEON_DRIFTWAY 0.0%, DVD_BOUNCE +0.2%. Part of the falls
+  may be inlining rather than work saved, so do not count on them.
+- The largest scene, 4096 sprites and five screens of 14400 empty cells, builds
+  in 0.15 to 0.18 ms and holds 429 KiB, of which 88 bytes a sprite. It allocates
+  nothing once grown, as a test checks; peak memory is unchanged. On a run
+  of SPROT, `Scene::build` is below 0.2% of the samples.
+- The golden scenes of [5.3](#53-comparison-tests) are still to come; the
+  comparisons above are not in the repository, as the projects are not ours.
 
 **Phase 2: change tracking.**
 
