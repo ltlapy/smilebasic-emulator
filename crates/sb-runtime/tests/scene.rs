@@ -2,7 +2,7 @@
 //! items, which layers get a pass, and what it costs.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use sb_core::value::{Array, ArrayData, ElemType};
 use sb_runtime::compose::{Compose, LAYERS, Layer};
@@ -16,12 +16,16 @@ use sb_runtime::text::{CONSOLE, SCREENS, TextScreen};
 /// Counts allocations, to see that a frame's scene makes none.
 struct Counting;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    /// This thread's allocations: tests run side by side and allocate too.
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
 
 // SAFETY: passes everything on to the system allocator unchanged.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        // A thread being torn down has no counter left, and isn't counted.
+        let _ = ALLOCATIONS.try_with(|n| n.set(n.get() + 1));
         // SAFETY: the caller's obligations are the same as ours.
         unsafe { System.alloc(layout) }
     }
@@ -308,10 +312,13 @@ fn a_scene_allocates_nothing_once_its_vectors_are_large_enough() {
     let input = w.input();
     let mut scene = Scene::default();
     scene.build(&input);
-    let before = ALLOCATIONS.load(Ordering::Relaxed);
+    let before = ALLOCATIONS.get();
     scene.build(&input);
-    let made = ALLOCATIONS.load(Ordering::Relaxed) - before;
+    let made = ALLOCATIONS.get() - before;
     assert_eq!(made, 0);
+    // The counter does see this thread's allocations.
+    drop(std::hint::black_box(Box::new(0u8)));
+    assert!(ALLOCATIONS.get() > before);
 }
 
 /// Prints what building the largest scene costs. In release:
