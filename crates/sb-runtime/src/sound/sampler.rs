@@ -613,8 +613,12 @@ mod tests {
     /// One instrument: a looping square wave at 48 kHz, eight samples a
     /// cycle, sounding at key 60.
     fn sampler(adshr: Adshr, ignore_note_off: bool) -> Sampler {
+        Sampler::new(Arc::new(bank(adshr, ignore_note_off)))
+    }
+
+    fn bank(adshr: Adshr, ignore_note_off: bool) -> Bank {
         let samples: Vec<i16> = (0..8).map(|i| if i < 4 { 16384 } else { -16384 }).collect();
-        let bank = Bank {
+        Bank {
             instruments: std::iter::once(0..1).collect(),
             regions: vec![Region {
                 keys: (0, 127),
@@ -633,8 +637,7 @@ mod tests {
                 data: 0..16,
             }],
             data: samples.iter().flat_map(|s| s.to_le_bytes()).collect(),
-        };
-        Sampler::new(Arc::new(bank))
+        }
     }
 
     const ORGAN: Adshr = Adshr {
@@ -644,6 +647,59 @@ mod tests {
         hold: 0,
         release: 120,
     };
+
+    /// A long note on instrument 0, as a preset effect.
+    fn effect() -> std::sync::Arc<crate::sound::seq::Sequence> {
+        Arc::new(crate::sound::seq::Sequence {
+            volume: 127,
+            start: 0,
+            code: vec![60, 127, 0x83, 0x60, 0xFF],
+        })
+    }
+
+    /// The peak of a stretch of `render` once the note is going.
+    fn settled_peak(mut render: impl FnMut(&mut [f32], &mut [f32])) -> f32 {
+        let (mut l, mut r) = (vec![0.0; 800], vec![0.0; 800]);
+        for _ in 0..6 {
+            l.fill(0.0);
+            r.fill(0.0);
+            render(&mut l, &mut r);
+        }
+        r.iter().fold(0f32, |m, x| m.max(x.abs()))
+    }
+
+    #[test]
+    fn beep_plays_a_preset_as_it_is_at_its_default_volume_and_scales_linearly() {
+        use crate::sound::beep::{BeepSound, Beeps};
+        use crate::sound::seq::Player;
+        use crate::sound::synth::Instruments;
+        let instruments = Instruments::Bank(Arc::new(bank(ORGAN, false)));
+        let preset = |volume| {
+            let mut beeps = Beeps::new(Some(&instruments));
+            let what = BeepSound::Sequence(effect());
+            beeps.play(0, what, 0, volume, 64, false).unwrap();
+            settled_peak(|l, r| beeps.render(l, r))
+        };
+        let mut synth = instruments.synth();
+        let mut player = Player::new(effect());
+        player.begin_block();
+        player.tick(synth.as_mut());
+        let plain = settled_peak(|l, r| synth.render(l, r));
+        assert!(plain > 0.01);
+        assert!((preset(64) / plain - 1.0).abs() < 0.01);
+        assert!((preset(127) / plain - 127.0 / 64.0).abs() < 0.02);
+        assert!((preset(32) / plain - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn beep_plays_an_instrument_at_70_of_127_of_its_note_by_default() {
+        use crate::sound::beep::instrument_volume;
+        let level = |volume| square(instrument_volume(volume));
+        assert!((level(64) - 70.0 / 127.0).abs() < 0.01);
+        assert!((level(32) - 35.0 / 127.0).abs() < 0.01);
+        assert_eq!(level(0), 0.0);
+        assert_eq!(instrument_volume(127), 127);
+    }
 
     fn peak(s: &mut Sampler, samples: usize) -> f32 {
         let (mut l, mut r) = (vec![0.0; samples], vec![0.0; samples]);

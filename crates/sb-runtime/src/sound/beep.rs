@@ -21,9 +21,18 @@ const INSTRUMENT_FRAMES: u32 = 30;
 /// Frames an instrument's handle stays taken after letting go, for the
 /// note to die away.
 const RELEASE_FRAMES: u32 = 60;
-/// BEEP's volume a waveform plays at as it is, as BGMPLAY's is: it is a
-/// linear gain, not squared as MML's `V` is.
+/// BEEP's volume a waveform or preset effect plays at as it is, as BGMPLAY's
+/// is: it is a linear gain, not squared as MML's `V` is.
 const WAVE_VOLUME: f32 = 64.0;
+/// How loud BEEP's default leaves an instrument's note, by the note at `V127`.
+const INSTRUMENT_LEVEL: f32 = 70.0 / 127.0;
+
+/// The channel volume for BEEP's `volume` on an instrument, which squares it:
+/// BEEP's is linear, up to all the channel has.
+pub(crate) fn instrument_volume(volume: i32) -> i32 {
+    let level = volume as f32 / WAVE_VOLUME * INSTRUMENT_LEVEL;
+    (127.0 * level.sqrt()).round().min(127.0) as i32
+}
 
 /// Samples from the start of a waveform's sound to the end of its note, at
 /// `ticks` of [`wave::BEEP_TICKS_A_SECOND`]. The sound engine moves on a
@@ -207,7 +216,7 @@ impl Beeps {
         let Some(b) = &mut self.beeps[h] else {
             return;
         };
-        let (volume, pan) = (b.volume, b.pan);
+        let (volume, pan) = (instrument_volume(b.volume), b.pan);
         match &mut b.sounding {
             Sounding::Wave(note) => note.set_pan(pan),
             Sounding::Instrument { .. } => self.synth(|s| {
@@ -470,7 +479,7 @@ impl Beeps {
                         *until_tick -= chunk as f64;
                         done += chunk;
                     }
-                    let volume = b.volume as f32 / 127.0 * player.volume();
+                    let volume = b.volume as f32 / WAVE_VOLUME * player.volume();
                     let (pl, pr) = balance(b.pan);
                     for i in 0..n {
                         let gain = volume * b.fade.value as f32;

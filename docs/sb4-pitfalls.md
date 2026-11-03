@@ -940,6 +940,12 @@ yet seen on hardware:
   nested six and seven levels deep that would come to 10^7 and 10^8
   characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even
   the stop key does nothing (TEST51).
+- `BEEP` of a preset effect at its default volume comes out at 100/127 of its own
+  note in MML for `BEEP 0` and 70/127 for `BEEP 256`, which is the effects' own
+  volume: `BEEP 0` peaks at 703 where `T130@256V127@V101O4C24` peaks at 893, `BEEP
+  256` at 1542 where `T130@0V127O4C4` peaks at 2798, and `BEEP 95` at 1455 (RMS over
+  the first 100 ms 312, 429 and 303). The volume is linear, as for waveforms: `BEEP
+  0` at 127 and 32 peaks at 1395 and 351 (TEST61).
 - `WAVSETA`'s 16-bit form (10 arguments or more) takes the loop's end + 1
   values from the offset on, with the loop counted from the offset, and
   drops what comes after; values are cut to 16 bits. A value v sounds
