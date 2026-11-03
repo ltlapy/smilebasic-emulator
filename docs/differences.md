@@ -34,6 +34,11 @@ Without them:
   square's peak over its level: `BEEP` and `BGMPLAY` of a square record the same
   RMS as SmileBASIC 4 but peak about 12% lower (4096 to its 4623), and a sine
   about the same as there. `RECSAVE` of a program that looks at peaks shows this.
+- `BEEPSTOP` without a fade, and a `BEEP` that takes over a handle, cut a preset
+  effect at once where a waveform's notes fall by their release; by SmileBASIC 4 all of them are let go the same way, so an effect's tail goes on there.
+  Past about 48 notes piled up by repeating sounds, or 48 falling once their handles
+  have gone, the oldest make way, and a note too quiet to reach a 16-bit sample
+  ends there: SmileBASIC 4 has 96 voices shared with BGM.
 - The effector (`EFCEN`, `EFCSET`, `EFCWET`, `BGMWET`) is a small reverb
   of the emulator's own, early reflections and a Freeverb-like tail,
   given the settings SmileBASIC 4 gives the console's reverb: the

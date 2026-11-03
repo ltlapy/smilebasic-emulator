@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::inspect::{BeepInfo, BeepKind};
-use super::sampler::TICK;
+use super::sampler::{MAX_VOICES, TICK};
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Wave};
@@ -33,10 +33,22 @@ fn note_end(ticks: u64) -> usize {
     ((ticks * 25).div_ceil(24) - 1) as usize * TICK
 }
 
-/// A waveform's note, and the one before it while that dies away.
+/// Adds `voice` to `notes`, which holds [`MAX_VOICES`] at most: the oldest
+/// makes way. The list takes its memory once, when the first note joins it.
+fn pile(notes: &mut Vec<wave::Voice>, voice: wave::Voice) {
+    if notes.capacity() == 0 {
+        notes.reserve_exact(MAX_VOICES);
+    }
+    if notes.len() == MAX_VOICES {
+        notes.remove(0);
+    }
+    notes.push(voice);
+}
+
+/// A waveform's note, and those before it while they die away.
 struct WaveNote {
     voice: wave::Voice,
-    old: Option<wave::Voice>,
+    old: Vec<wave::Voice>,
     wave: Rc<Wave>,
     /// The ticks of the passes so far, for those that repeat.
     ticks: u64,
@@ -52,16 +64,18 @@ impl WaveNote {
     fn new(wave: Rc<Wave>, pitch: i32, pan: i32) -> WaveNote {
         WaveNote {
             voice: WaveNote::voice(&wave, pitch, pan),
-            old: None,
+            old: Vec::new(),
             ticks: wave.beep_ticks.map_or(0, u64::from),
             wave,
         }
     }
 
     /// Ends the note. With the repeat flag the next pass starts in the same
-    /// place, the old note dying away over it, and this gives the samples
-    /// until that one ends.
-    fn end_note(&mut self, pitch: i32, pan: i32) -> Option<usize> {
+    /// place, the old notes dying away over it however long their release
+    /// takes, and this gives the samples until that one ends. With `full`,
+    /// when all the sounds have as many old notes as they may, this note's
+    /// oldest makes way.
+    fn end_note(&mut self, pitch: i32, pan: i32, full: bool) -> Option<usize> {
         if !self.wave.beep_repeats {
             self.voice.release();
             return None;
@@ -69,7 +83,10 @@ impl WaveNote {
         let new = WaveNote::voice(&self.wave, pitch, pan);
         let mut old = std::mem::replace(&mut self.voice, new);
         old.release();
-        self.old = Some(old);
+        if full && !self.old.is_empty() {
+            self.old.remove(0);
+        }
+        pile(&mut self.old, old);
         let pass = self.wave.beep_ticks.map_or(0, u64::from);
         let hold = note_end(self.ticks + pass) - note_end(self.ticks);
         self.ticks += pass;
@@ -79,12 +96,22 @@ impl WaveNote {
     /// Adds samples of the notes into the buffers.
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         self.voice.render(left, right);
-        if let Some(old) = &mut self.old {
-            old.render(left, right);
-            if old.done() {
-                self.old = None;
+        if !self.old.is_empty() {
+            for old in &mut self.old {
+                old.render(left, right);
             }
+            self.old.retain(|old| !old.done() && old.audible());
         }
+    }
+
+    fn set_pitch(&mut self, pitch: i32) {
+        self.voice.set_pitch(pitch);
+        self.old.iter_mut().for_each(|v| v.set_pitch(pitch));
+    }
+
+    fn set_pan(&mut self, pan: i32) {
+        self.voice.set_mix(127, 127, pan);
+        self.old.iter_mut().for_each(|v| v.set_mix(127, 127, pan));
     }
 }
 
@@ -136,7 +163,11 @@ pub struct Beeps {
     /// Which handle the next BEEP tries first: it goes on rising, whether
     /// the last has ended or not, and round after the last handle.
     next: usize,
+    /// Notes of waveforms whose handles have gone, falling as their
+    /// envelopes' releases say, at the gain they had.
+    falling: Vec<wave::Voice>,
     scratch: [Vec<f32>; 2],
+    wave_scratch: [Vec<f32>; 2],
 }
 
 impl Beeps {
@@ -146,7 +177,9 @@ impl Beeps {
             synth: instruments.map(Instruments::synth),
             beeps: (0..HANDLES).map(|_| None).collect(),
             next: 0,
+            falling: Vec::new(),
             scratch: Default::default(),
+            wave_scratch: Default::default(),
         }
     }
 
@@ -176,7 +209,7 @@ impl Beeps {
         };
         let (volume, pan) = (b.volume, b.pan);
         match &mut b.sounding {
-            Sounding::Wave(note) => note.voice.set_mix(127, 127, pan),
+            Sounding::Wave(note) => note.set_pan(pan),
             Sounding::Instrument { .. } => self.synth(|s| {
                 s.volume(h, volume);
                 s.pan(h, pan);
@@ -260,7 +293,7 @@ impl Beeps {
         };
         b.pitch = pitch;
         match &mut b.sounding {
-            Sounding::Wave(note) => note.voice.set_pitch(pitch),
+            Sounding::Wave(note) => note.set_pitch(pitch),
             Sounding::Instrument { .. } => {
                 let from = b.start_pitch.div_euclid(100) * 100;
                 self.synth(|s| s.bend(h, pitch - from));
@@ -284,34 +317,36 @@ impl Beeps {
         self.mix(h);
     }
 
+    /// Ends what plays on a handle, which frees it. A waveform's notes are
+    /// let go and fall on their own, as their releases say: at release 127
+    /// that is the sound engine's one step.
     fn stop_now(&mut self, h: usize) {
-        if let Some(Beep {
-            sounding: Sounding::Instrument { .. },
-            ..
-        }) = self.beeps[h]
-        {
-            self.synth(|s| s.channel_off(h));
+        let Some(b) = self.beeps[h].take() else {
+            return;
+        };
+        match b.sounding {
+            Sounding::Instrument { .. } => self.synth(|s| s.channel_off(h)),
+            Sounding::Wave(note) => {
+                let gain = b.fade.value as f32 * b.volume as f32 / WAVE_VOLUME;
+                if gain > 0.0 {
+                    let WaveNote { mut voice, old, .. } = *note;
+                    voice.release();
+                    for mut v in old.into_iter().chain([voice]).filter(|v| !v.done()) {
+                        v.scale(gain);
+                        pile(&mut self.falling, v);
+                    }
+                }
+            }
+            Sounding::Preset | Sounding::Sequence { .. } => {}
         }
-        self.beeps[h] = None;
     }
 
     /// Stops a handle's sound, fading over `frames`, and lets the next BEEP
-    /// have the handle. Without a fade a waveform still takes the sound
-    /// engine's step to fall.
+    /// have the handle.
     pub fn stop(&mut self, h: usize, frames: u32) {
         match &mut self.beeps[h] {
             Some(b) if frames > 0 => {
                 b.fade.to(0.0, frames);
-                b.stopping = true;
-                b.kept = false;
-            }
-            Some(
-                b @ Beep {
-                    sounding: Sounding::Wave(_),
-                    ..
-                },
-            ) => {
-                b.fade.over_samples(0.0, TICK);
                 b.stopping = true;
                 b.kept = false;
             }
@@ -347,6 +382,7 @@ impl Beeps {
         for h in 0..HANDLES {
             self.stop_now(h);
         }
+        self.falling.clear();
     }
 
     /// Adds a frame of the sounds into the buffers.
@@ -376,7 +412,16 @@ impl Beeps {
             left[i] += l[i];
             right[i] += r[i];
         }
-        let (mut wl, mut wr) = (vec![0.0; n], vec![0.0; n]);
+        let old_notes: usize = (self.beeps.iter().flatten())
+            .map(|b| match &b.sounding {
+                Sounding::Wave(note) => note.old.len(),
+                _ => 0,
+            })
+            .sum();
+        let full = old_notes >= MAX_VOICES;
+        let [mut wl, mut wr] = std::mem::take(&mut self.wave_scratch);
+        wl.resize(n, 0.0);
+        wr.resize(n, 0.0);
         for h in 0..HANDLES {
             let Some(b) = &mut self.beeps[h] else {
                 continue;
@@ -393,7 +438,7 @@ impl Beeps {
                         if let Some(hold) = &mut b.hold {
                             *hold -= until - at;
                             if *hold == 0 {
-                                b.hold = note.end_note(b.pitch, b.pan);
+                                b.hold = note.end_note(b.pitch, b.pan, full);
                             }
                         }
                         at = until;
@@ -405,7 +450,7 @@ impl Beeps {
                         right[i] += wr[i] * gain;
                         b.fade.step_sample();
                     }
-                    note.voice.done() && note.old.is_none()
+                    note.voice.done() && note.old.is_empty()
                 }
                 Sounding::Sequence {
                     player,
@@ -460,6 +505,13 @@ impl Beeps {
                 self.stop_now(h);
             }
         }
+        self.wave_scratch = [wl, wr];
+        if !self.falling.is_empty() {
+            for v in &mut self.falling {
+                v.render(left, right);
+            }
+            self.falling.retain(|v| !v.done() && v.audible());
+        }
     }
 }
 
@@ -478,4 +530,106 @@ pub enum BeepSound {
     Sequence(Arc<Sequence>),
     Instrument(i32),
     Wave(Rc<Wave>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sound::wave::Envelope;
+
+    /// A waveform that repeats a tick's note, whose release never ends.
+    fn endless() -> BeepSound {
+        BeepSound::Wave(Rc::new(Wave {
+            beep_ticks: Some(1),
+            beep_repeats: true,
+            envelope: Envelope {
+                release: 0,
+                ..Envelope::ORGAN
+            },
+            ..wave::pulse(219)
+        }))
+    }
+
+    fn render(beeps: &mut Beeps, frames: usize) {
+        let (mut l, mut r) = (vec![0.0; 800], vec![0.0; 800]);
+        for _ in 0..frames {
+            beeps.render(&mut l, &mut r);
+        }
+    }
+
+    fn pile_of(beeps: &Beeps, h: usize) -> usize {
+        match &beeps.beeps[h].as_ref().unwrap().sounding {
+            Sounding::Wave(note) => note.old.len(),
+            _ => panic!("a waveform's note"),
+        }
+    }
+
+    #[test]
+    fn notes_that_never_end_stay_within_the_lists() {
+        let mut beeps = Beeps::new(None);
+        let h = beeps.play(224, endless(), 0, 64, 64, true).unwrap();
+        render(&mut beeps, 120);
+        assert_eq!(pile_of(&beeps, h), MAX_VOICES);
+        beeps.stop(h, 0);
+        assert!(beeps.beeps[h].is_none());
+        assert_eq!(beeps.falling.len(), MAX_VOICES);
+        // A second lot pushes the first out, and the memory stays as it was.
+        let h = beeps.play(224, endless(), 0, 64, 64, true).unwrap();
+        render(&mut beeps, 120);
+        beeps.stop(h, 0);
+        assert_eq!(beeps.falling.len(), MAX_VOICES);
+        assert_eq!(beeps.falling.capacity(), MAX_VOICES);
+        beeps.stop_all();
+        assert!(beeps.falling.is_empty());
+    }
+
+    #[test]
+    fn all_the_sounds_share_how_many_old_notes_they_may_have() {
+        let mut beeps = Beeps::new(None);
+        let handles: Vec<usize> = (0..16)
+            .map(|_| beeps.play(224, endless(), 0, 64, 64, true).unwrap())
+            .collect();
+        render(&mut beeps, 600);
+        let old: usize = handles.iter().map(|&h| pile_of(&beeps, h)).sum();
+        assert!((MAX_VOICES..=MAX_VOICES + HANDLES).contains(&old), "{old}");
+    }
+
+    #[test]
+    fn a_note_too_quiet_to_record_is_dropped() {
+        let mut beeps = Beeps::new(None);
+        let mut slow = wave::pulse(219);
+        slow.envelope.release = 32;
+        let h = beeps
+            .play(224, BeepSound::Wave(Rc::new(slow)), 0, 64, 64, true)
+            .unwrap();
+        render(&mut beeps, 6);
+        beeps.stop(h, 0);
+        render(&mut beeps, 60);
+        assert_eq!(beeps.falling.len(), 1);
+        render(&mut beeps, 1800);
+        assert!(beeps.falling.is_empty());
+    }
+
+    #[test]
+    fn a_sound_without_the_flag_takes_no_list() {
+        let mut beeps = Beeps::new(None);
+        let wave = Rc::new(wave::pulse(219));
+        let h = beeps
+            .play(224, BeepSound::Wave(wave), 0, 64, 64, true)
+            .unwrap();
+        render(&mut beeps, 10);
+        assert_eq!(pile_of(&beeps, h), 0);
+        assert!(beeps.falling.capacity() == 0);
+    }
+
+    #[test]
+    fn nothing_is_left_of_a_silent_sound() {
+        let mut beeps = Beeps::new(None);
+        let wave = Rc::new(wave::pulse(219));
+        let h = beeps
+            .play(224, BeepSound::Wave(wave), 0, 0, 64, false)
+            .unwrap();
+        beeps.stop(h, 0);
+        assert_eq!(beeps.falling.capacity(), 0);
+    }
 }

@@ -396,8 +396,24 @@ impl Voice {
         self.pan = sampler::pan_position(pan);
     }
 
+    /// Multiplies what [`Voice::set_mix`] set by `by`, also where the level
+    /// has got to.
+    pub(crate) fn scale(&mut self, by: f32) {
+        self.gain *= by;
+        for x in [&mut self.levels, &mut self.steps, &mut self.targets] {
+            x.iter_mut().for_each(|v| *v *= by);
+        }
+    }
+
     pub fn done(&self) -> bool {
         self.done
+    }
+
+    /// Whether the note can still reach a 16-bit sample, as a note let go
+    /// takes much longer than that to end.
+    pub(crate) fn audible(&self) -> bool {
+        const HALF_A_STEP: f32 = 1.0 / 65536.0;
+        self.levels[0].abs().max(self.levels[1].abs()) >= HALF_A_STEP
     }
 
     pub fn released(&self) -> bool {

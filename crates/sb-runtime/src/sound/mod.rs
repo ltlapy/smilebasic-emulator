@@ -74,12 +74,6 @@ impl Ramp {
         }
     }
 
-    /// Moves to `target` over `samples` samples.
-    pub(crate) fn over_samples(&mut self, target: f64, samples: usize) {
-        self.target = target;
-        self.step = (target - self.value) / samples as f64;
-    }
-
     pub(crate) fn step_sample(&mut self) {
         if self.step != 0.0 {
             self.value += self.step;

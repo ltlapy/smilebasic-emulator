@@ -888,6 +888,20 @@ yet seen on hardware:
   as a momentary noise once a second (per 1/10 s of the peak,
   `4444444448444444444944444444494`). `BEEPSTOP` after 180 frames leaves the last
   sample at 3004 ms, the step's fall (TEST59).
+- The notes before do not stop: they fall by the envelope's release however long
+  that takes, so with a slow one they pile up. 2816 samples of a ±10000 square at
+  28160 Hz with release 32, a pass of about 100 ms, one note peaking at 1411, peak
+  at 9456 at an RMS of 4333, and per 1/10 s of the peak `235567789877654` with
+  `BEEPSTOP` of the handle at 1 s (TEST61).
+- `BEEPSTOP` without a fade lets all the handle's notes go and frees the handle:
+  the sound goes on past it by the release, the 1.5 s recording above still sounding
+  at its end, and at release 127 that is one step, as when the 16th `BEEP` after a
+  statement's takes over its place: a 1 s square ends at 404 ms for a `BEEP` at
+  400 ms (TEST61). The note is the same with or without the
+  flag, and `BEEPSTOP` with a fade takes the volume to 0 first, so nothing is heard
+  after it. The sound engine has 96 voices for everything, BGM too; a new note takes
+  one from the lowest priority there is, the oldest among equals, or does not sound
+  if all are higher.
 - `BEEP`'s volume is a linear gain of v/127 the same way
   as `BGMVOL`'s, with 64 for its default as `BGMPLAY` has. It comes out level with
   `BGMPLAY`'s default: at envelope 127,127,127,127, a `WAVSET` square of
@@ -896,7 +910,10 @@ yet seen on hardware:
   at 3468 under `BGMPLAY`, for an RMS of 3063 (TEST40): these are all 4624 for full
   scale, and an RMS of 4084. A square peaks about 13% over its RMS for how
   the console resamples it, where a sine does not: amplitude 100 peaks at 3217 at
-  an RMS of 2257 (TEST40).
+  an RMS of 2257 (TEST40). `BEEP` of the same shapes records the same: the ±96 square
+  an RMS of 3050 and a peak of 3468, the sine 2257 and 3217. A square's level at
+  volume 127 and 32 is 6053 and 1525, in `BEEP`'s argument and by `BEEPVOL` alike
+  (TEST61).
 - `BEEP` 224 to 255 with nothing set plays a sine of about 440 Hz for a second,
   peak 4117, last sample at 999 ms (`BEEP 250`, TEST59). The sound archive's `@224`
   is that sine, 16384 samples at 28160 Hz; `@225` to `@255` are 140 samples of
@@ -909,14 +926,16 @@ yet seen on hardware:
 - `BEEP`'s result is a number 0 to 15 that goes on rising with each `BEEP`, also
   after the last has ended and for a silent one, and through program runs: running
   TEST59's parts in the order 20, 16, 17, 18, 19 on a started SmileBASIC 4 gave 0,
-  1, 2, 3, 4, 5, 6, 7, 8 (TEST59). It goes round at 16, each
-  interpreter counting for itself, and nothing starts it again: not `ACLS`, not
-  `RUN`. The number is a place to play in: `BEEP` used as a function holds its
-  place until the sound ends or `BEEPSTOP` names it, and the next `BEEP` passes it
-  by; `BEEP` as a command does not, and the next to get there ends it. With all 16
-  held, the result is -1, nothing plays and there is no error. `BEEPSTOP`,
-  `BEEPVOL`, `BEEPPIT` and `BEEPPAN` act on what plays in that place now, do nothing
-  if that has ended, and take 0 to 15 only, so -1 is `Out of range`.
+  1, 2, 3, 4, 5, 6, 7, 8 (TEST59). It goes round at 16 and nothing starts it again:
+  not `ACLS`, not `RUN`; by SmileBASIC 4 each interpreter counts for itself.
+  The number is a place to play in: `BEEP` used as a function holds its place until
+  the sound ends or `BEEPSTOP` names it, and the next `BEEP` passes it by; `BEEP` as
+  a command does not, and the 16th after it ends it. With all 16 held, the result is
+  -1, nothing plays and there is no error. A number stopped is the next given, and
+  the one after it next. `BEEPSTOP`, `BEEPVOL`, `BEEPPIT` and `BEEPPAN` act on what
+  plays in that place now, do nothing if that has ended, and cut a sound that has
+  since taken the number (TEST61). By the code they take 0 to 15 only, so -1 is
+  `Out of range`.
 - `CHKMML` gives -1 for 16 million characters of notes, and for macros
   nested six and seven levels deep that would come to 10^7 and 10^8
   characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even

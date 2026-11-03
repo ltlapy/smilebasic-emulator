@@ -468,6 +468,65 @@ fn a_repeating_beep_doubles_for_a_moment_at_each_pass() {
     assert_eq!(got, "995,1998,3750");
 }
 
+/// `source`'s peak and the millisecond of its last sample that is not silent,
+/// with `then` run after `first` frames and `rest` frames more.
+fn stopped_recording(source: &str, first: usize, then: &str, rest: usize) -> (i32, usize) {
+    let mut rt = runtime();
+    let seconds = (first + rest) as f64 / 60.0;
+    run_on(&mut rt, &format!("RECSTART {seconds}:{source}")).unwrap();
+    frames(&mut rt, first);
+    run_on(&mut rt, then).unwrap();
+    frames(&mut rt, rest);
+    let got = run_on(
+        &mut rt,
+        "DIM R[1]:RECSAVE R:K=-1:FOR I=0 TO LEN(R)-1:P=MAX(P,ABS(R[I])):IF R[I] THEN K=I\nNEXT:?P;\",\";K DIV 48;",
+    )
+    .unwrap();
+    let (peak, end) = got.split_once(',').unwrap();
+    (peak.parse().unwrap(), end.parse().unwrap())
+}
+
+const SLOW_SQUARE: &str = "DIM W%[2816]:FOR I=0 TO 2815:W%[I]=20000*(I MOD 64<32)-10000:NEXT";
+
+/// With a slow release the notes of a repeating BEEP pile up, and BEEPSTOP
+/// lets them all fall as they would.
+#[test]
+fn a_repeating_beeps_notes_pile_up_and_fall_after_beepstop() {
+    let flagged =
+        format!("{SLOW_SQUARE}:WAVSETA 225,127,127,127,32,W%,69,0,2815,28160,0,1:H=BEEP(225)");
+    let (peak, end) = stopped_recording(&flagged, 60, "BEEPSTOP H", 30);
+    // One note peaks at 1250.
+    assert!((8000..9500).contains(&peak), "{peak}");
+    assert_eq!(end, 1499);
+    // With a fade the notes fade too, and nothing is left at its end.
+    let (_, end) = stopped_recording(&flagged, 60, "BEEPSTOP H,0.25", 30);
+    assert!((1240..1255).contains(&end), "{end}");
+}
+
+/// BEEPSTOP of a note with a slow release and no flag does the same.
+#[test]
+fn beepstop_lets_a_slow_release_run_without_the_flag() {
+    let slow = "WAVSET 224,127,127,127,32,\"FFFF0000\"*8,69:H=BEEP(224)";
+    let (_, end) = stopped_recording(slow, 6, "BEEPSTOP H", 54);
+    assert_eq!(end, 999);
+    // The handle is free at once, and BEEPVOL of it does not reach the fall.
+    let (quiet, _) = stopped_recording(slow, 6, "BEEPSTOP H:BEEPVOL H,0", 54);
+    assert!(quiet > 3000, "{quiet}");
+}
+
+/// A BEEP that takes over a statement's handle lets its note fall too, a step
+/// for release 127, and SNDSTOP stops everything at once.
+#[test]
+fn a_note_taken_over_falls_and_sndstop_cuts() {
+    let quiet = "FOR I=1 TO 16:BEEP 225,0,0:NEXT";
+    let square = format!("{WAVSET_SQUARE}:WAVSET 225,127,127,127,127,\"FFFF0000\"*8,69");
+    let (_, end) = stopped_recording(&format!("{square}:BEEP 224"), 24, quiet, 36);
+    assert_eq!(end, 404);
+    let slow = "WAVSET 224,127,127,127,32,\"FFFF0000\"*8,69:H=BEEP(224)";
+    let (_, end) = stopped_recording(slow, 6, "BEEPSTOP H:SNDSTOP", 54);
+    assert_eq!(end, 99);
+}
+
 /// BEEPSTOP takes a step to fall, and frees the handle at once.
 #[test]
 fn beepstop_of_a_waveform_takes_a_step() {
