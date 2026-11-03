@@ -210,6 +210,17 @@ pub const SCENES: &[Golden] = &[
         0.02,
     ),
     scene(
+        "4x4 text clipped",
+        leaning!(
+            "BACKCOLOR &HFF203040\n\
+             TLAYER 4,1\n\
+             LCLIP 1,40,20,300,60\n\
+             PRINT \"THROUGH A MATRIX\"\n\
+             PRINT \"TWO LINES OF IT\"\n"
+        ),
+        0.02,
+    ),
+    scene(
         "4x4 cut by depth",
         "DIM M#[16]\n\
          M#[0]=2/400:M#[12]=-1:M#[5]=-2/240:M#[13]=1:M#[15]=1:M#[2]=1/60:M#[14]=-2\n\

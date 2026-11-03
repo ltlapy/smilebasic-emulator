@@ -1324,8 +1324,9 @@ impl Gpu {
                     match item {
                         Item::Sprite(s) => {
                             if flat_drawn {
-                                self.end_flat(p, scene.sample, back);
+                                self.target(back);
                                 set_clip(self.renderer);
+                                self.end_flat(p, scene.sample);
                                 flat_drawn = false;
                             }
                             self.sprite(s, input.grp, Some(through))?;
@@ -1340,8 +1341,9 @@ impl Gpu {
                     }
                 }
                 if flat_drawn {
-                    self.end_flat(p, scene.sample, back);
+                    self.target(back);
                     set_clip(self.renderer);
+                    self.end_flat(p, scene.sample);
                 }
             }
         }
@@ -1405,9 +1407,8 @@ impl Gpu {
         result
     }
 
-    /// Back on `back`, what is on the flat target through the 4x4 matrix.
-    fn end_flat(&mut self, p: &Projection, sample: u32, back: *mut SDL_Texture) {
-        self.target(back);
+    /// What is on the flat target, through the 4x4 matrix, on the current target.
+    fn end_flat(&mut self, p: &Projection, sample: u32) {
         let (w, h) = (f64::from(p.flat_size.0), f64::from(p.flat_size.1));
         if w == 0.0 || h == 0.0 || self.flat.is_null() {
             return;
@@ -1439,7 +1440,6 @@ impl Gpu {
         uv: impl Fn(f64, f64) -> (f64, f64),
         color: SDL_FColor,
     ) {
-        let mut verts = std::mem::take(&mut self.verts);
         let vertex = |c: Corner| {
             let (u, v) = uv(c.point.0, c.point.1);
             SDL_Vertex {
@@ -1454,13 +1454,14 @@ impl Gpu {
                 },
             }
         };
-        plane.triangles(size, self.grid_tolerance, |[a, b, c]| {
-            verts.extend_from_slice(&[vertex(a), vertex(b), vertex(c)]);
+        let tolerance = self.grid_tolerance;
+        plane.triangles(size, tolerance, |[a, b, c]| {
+            self.verts
+                .extend_from_slice(&[vertex(a), vertex(b), vertex(c)]);
+            if self.verts.len() >= MOST_VERTICES {
+                self.flush();
+            }
         });
-        self.verts = verts;
-        if self.verts.len() >= MOST_VERTICES {
-            self.flush();
-        }
     }
 
     /// Clears the current target.
