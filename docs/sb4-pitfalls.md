@@ -139,9 +139,9 @@ follows all of it. Items still waiting for a check are marked
   and of -5, `%.3D` gives `005` and `-005`, `%5.3D` gives `  005` and ` -005`,
   `%-5.3D` gives `005  ` and `-005 `, and `%05.3D`, where the precision takes the
   place of the `0` flag, gives `  005` and ` -005`. `%.1D` of 0 is `0`, `%.0D` of 5
-  is `5`, and `%.0D` of 0 is nothing. `%X` and `%B` go the
-  same way, not yet seen on hardware: `%.4X` of 255 is `00FF`, `%.4B` of 5 is
-  `0101`, `%+.0D` and `%.0X` of 0 are empty.
+  is `5`, and `%.0D` of 0 is nothing. `%X` and `%B` go the same way: `%.4X` of 255
+  is `00FF`, `%.4B` of 5 is `0101`, `%+.0D` and `%.0X` of 0 are empty, and `%6.3X` of 10 is
+  `   00A` (TEST63).
 - `RINGCOPY` looks at things in this order (TEST57):
   - a destination that is no array: `Type mismatch (RINGCOPY:1)`; a source
     that is no array, or element types neither the same nor both numbers:
@@ -498,9 +498,38 @@ yet seen on hardware:
   `TSAVE` and `GSAVE`, seen below.
 - `IRREAD` in mode 1 is `Illegal IR Camera mode`.
 - A new `TALK` cuts off what is being said.
-- `ACLS` holds the program for the frame job as `XSCREEN` does.
+
+Seen in TEST63 (4.4.9 on a Switch 2), most of it after being read in SmileBASIC 4:
+
+- `ACLS` holds the program for the frame job as `XSCREEN` does, and `MAINCNT` has yet to
+  rise when the program goes on: `T=MAINCNT():ACLS:?MAINCNT()-T` and the same with
+  `XSCREEN 400,240,2` print 0, with a `VSYNC` before or not, and `ACLS:ACLS` 1. A
+  `WAIT 1` or a `VSYNC 1` right after takes that rise, and the next one a frame:
+  `VSYNC:XSCREEN 400,240,2:T=MAINCNT():WAIT 1:U=MAINCNT():WAIT 1:?U-T;MAINCNT()-U` prints
+  1 1, and so with `VSYNC 1`.
 - `HELPGET` of a name the help does not have gives four empty arrays of strings
-  (that it gives no error is seen below).
+  (`TYPEOF` 5, `LEN` 0). `HELPINFO("NOSUCHNAME")` is no error either: it gives an array,
+  so that `?` of it is `Type mismatch (PRINT:1)`.
+- A `PUSHKEY` of keys without Enter is dropped at the prompt too, as with Enter: a line
+  typed after `PUSHKEY "?7:"` runs as it is.
+- After a clean start of SmileBASIC, before any program, `ENVSTAT`'s OUT form gives status
+  1 with line 386, of a system program that went before. A program that ends without an
+  error sets the status to 0 and leaves the line: 386 after it, and after a program's
+  error on line 3, 3 through the clean runs that follow.
+- `UISTATE(2)` read 648 at that point, and 0, 1, 3, 4, 5 read 0.
+- `CONTROLLER(0)` read 2, `CONTROLLER(1)` 1 and `CONTROLLER(2)` 0; `CONTROLLER 2 OUT A,B,C`
+  gives 0 for all three: no colours on a controller not connected.
+- `CHKCALL("PRINT")` and `CHKCALL("GOTO")` are 0, statements not being commands, and
+  `CHKCALL("3:SIN")` 1 and `CHKCALL("3:NOSUCH")` 0. For a slot that has not been run,
+  `CHKLABEL("3:@A")` is 0, `VAR("3:A")` `Undefined variable` and `RESTORE "3:@A"`
+  `Undefined label`.
+- `ARYOP 6` (clamp) takes the lower bound first: 5 between 9 and 1 gives 9, and a NaN stays.
+- `BIQUAD` with arrays of 4 and 8: `Illegal function call (BIQUAD:2)`. With `ZS[2,8]` and
+  `ZT[8]`: `Illegal function call (BIQUAD)`, no argument named.
+- `BGMPLAY` of a user's song number that holds nothing leaves what is playing as it is.
+- `PRGNAME$()` and `PRGSIZE()` at the prompt mean slot 0, whichever slot `PRGEDIT` is on.
+- `INPUT A,B` given `1,` takes A=1, B=0 at once. Given `1,2,3` it leaves the 3 out, not
+  looking at it. `INPUT VAR("A$")` and `N$="A$":INPUT VAR(N$)` both take a string.
 
 Seen in TEST62 (4.4.9 on a Switch 2), after being read in SmileBASIC 4:
 
@@ -585,9 +614,13 @@ Seen in TEST62 (4.4.9 on a Switch 2), after being read in SmileBASIC 4:
 
 ## Graphics and layers
 
-- A sprite whose pixel centers fall exactly between texels can show a pixel off its
-  image: on a half-pixel position, turned 90 degrees, the column on the image's far edge
-  reads the page's next texel (TEST62, Switch 2). See renderer-design.md for how ties go.
+- A sprite or text cell whose pixel centers fall exactly between texels can show a pixel
+  off its image: an image side and a scale that are powers of two read the page's higher
+  texel, and anything else mostly the lower, at any flip or turn (TEST63, 3831 sprites and
+  192 cells on a Switch 2; renderer-design.md has the numbers). So on a half-pixel position
+  16x16 shows the page's next row at its bottom edge, and 15x15 the column before it at
+  its left. On a cell, what lies beside it on the font page or `TPAGE`. Before the page's
+  first texel, U or V of 0, it reads the first texel; after the last, U+W of 2048, nothing.
 
 - `LAYER` mode 0 draws the layer's elements straight onto the screen and
   ignores the layer's color; only modes 1 to 4 multiply by it.
@@ -814,14 +847,10 @@ Seen in TEST62 (4.4.9 on a Switch 2), after being read in SmileBASIC 4:
   that is the left or the bottom edge on the screen, however the image is
   turned (`SPOFS 0,0.5,0.5` draws from the first column, and from the
   second row to one row past the image's height).
-- A pixel's sample point exactly between two texels shows the GPU's
-  arithmetic, seen in TEST50 under an emulator on a PC's GPU: one quad's
-  two triangles can differ along their shared diagonal. Mostly: with
-  power-of-two sides at a scale of 1.5 or 2.5, the left and lower of the
-  two on the screen (at 1.5, columns are 2, 1, 2, 1... pixels wide and
-  rows 1, 2, 1, 2...); at a power-of-two scale, the higher texel; with
-  other sides, the texel lower on the page. Text does as a sprite of the
-  same size does.
+- A pixel's sample point exactly between two texels goes by the rule above. What is not a
+  power of two shows the GPU's single-precision arithmetic besides: about 1 line in 20 goes
+  the other way, by the place on the screen, by a triangle of the two a quad is drawn as,
+  or from some line along the image on (TEST63).
 - `LCLIP` at `XSCREEN`'s sample 2 takes whole fine pixels: frame pixels
   `2*x0` to `2*x1+1`.
 - `XSCREEN`'s composite modes all fill as much of the display as fits, at
@@ -1370,9 +1399,16 @@ Checked with TTEST36.
   not checked: `J` stays as it is. A string with no closing quote ends with its line.
   A comment line after a `\` line end is no blank line: `?1\`, `'COMMENT`, `+2` is a
   `Syntax error` at the `+`. `STOP` with a message prints 255 characters of it (TEST62).
-- Nesting: `GOSUB`s go to about 259008 and a `DEF R(N)` calling itself to about 25856
-  before `Stack overflow`, in one stack with the values of expressions, so the error may
-  come on any statement there. `RESTORE "PUSH"` 70000 times is fine (TEST62).
+- Nesting: `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of expressions share a
+  stack of about 259072 slots, by the depths they reach (TEST63, 4.4.9 on a Switch 2). A
+  `GOSUB` takes 1. A command `DEF` called takes 6, a function 8, and each argument, `OUT`
+  and `VAR` of it 2: printing its depth, a program reaches 43178 with a command and no
+  arguments, 32383 with a function and none or a command and one, 25906 with a function
+  and one, 21589 with one argument and one `VAR`, 18504 with a function and three, and
+  14392 with one argument and four `VAR`s. `GOSUB` reaches 259069. `RESTORE "PUSH"` went
+  past 172672 but not 172736, at 1.5 slots each (inferred). `Stack overflow` comes on the
+  call when the call does not fit; when it fits, on the first statement that puts a value
+  there, of the body: line 2 of `DEF R(N)`, `LOCATE 0,0:?N`.
 - A digit group's `_` must lead to a digit: `?&HFF_` and `?&H_` are `Syntax
   error`, and so is `?1_000`, where a decimal number takes none (TEST60).
 

@@ -30,10 +30,10 @@ Without them:
 
 ## Limits
 
-- `GOSUB`s, `DEF` calls and the values of expressions share one stack on SmileBASIC 4.
-  Here `GOSUB`s stop at 259040 and `DEF` calls at 25888, the depths a `DEF` with one
-  argument reached there, whatever a `DEF` holds, and `Stack overflow` names the `GOSUB`
-  or call itself, where there it may name the statement after it that ran out.
+- `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of expressions share one stack on
+  SmileBASIC 4. Here the first three count as there, and values of expressions not at all,
+  so a deep call ending in a long expression can go a few levels further. For `RESTORE
+  "PUSH"`, 1.5 slots each is inferred.
 
 ## Sound that is not played
 
@@ -202,6 +202,10 @@ known.
   with, does `ACLS` and `SNDSTOP` after a program ENDs or is stopped
   with the Break key or F5. STOP, errors and the debugger's stops leave
   the screens and sound as they were, to be looked at.
+- `ENVSTAT`'s OUT form at the start, before any program, gives status 0 and line 0. On
+  SmileBASIC 4 it is status 1 and the line of a system program that ran before, which the
+  emulator does not run. `UISTATE` always reads 0, where `UISTATE(2)` read 648 on a Switch 2,
+  meaning unknown. `CONTROLLER(0)` is 1, handheld, where a Switch 2 read 2.
 - `ENVSTAT` gives the wrong argument's number, from 0, for errors that
   come from checking one argument, such as `LOCATE 0,999`'s `Out of
   range` (1, as SmileBASIC 4 gives). Errors found by checking several
