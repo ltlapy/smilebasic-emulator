@@ -29,7 +29,6 @@ const TOUCHES: i32 = 10;
 const KEY_LENGTH: usize = 256;
 const PUSHKEY_LENGTH: usize = 63;
 /// The highest code PUSHKEY takes.
-// UNVERIFIED: expected of SmileBASIC 4, not yet seen.
 const PUSHKEY_CODES: u32 = 0x10FFF;
 /// BREPEAT's start and interval for buttons 0 to 7 and for the rest, as
 /// SmileBASIC 4 starts.
@@ -355,7 +354,6 @@ impl Runtime {
             (Command::Brepeat, Want::Outs(0), 3) => {
                 let id = in_range("button", &args[0], 0..=16)? as usize;
                 // A start of 0 is taken as 1.
-                // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
                 let start = in_range("start", &args[1], 0..=i32::MAX)?.max(1);
                 let interval = in_range("interval", &args[2], 0..=i32::MAX)?;
                 input.repeat[id] = (start as u32, interval as u32);

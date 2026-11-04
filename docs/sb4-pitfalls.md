@@ -24,10 +24,17 @@ follows all of it. Items still waiting for a check are marked
   millisecond before `MAINCNT` rises (TEST60). `FADE()` still gives the start
   right after `FADE`. Animations also play in direct mode, and go on while
   the editor is open.
-- The first `VSYNC 1` after `RUN` finds its frame gone by (TEST60).
+- `RUN` leaves `VSYNC`'s count where it was, so the first `VSYNC` of a program,
+  `VSYNC 5` too, finds its frames gone by: `T=MAINCNT():VSYNC 5:?MAINCNT()-T` as
+  a program's first line prints 0 (TEST62, on a Switch 2). So does a subprogram's
+  first one, and a program waiting by a lone `VSYNC 60` at its start does not wait.
 - `XSCREEN` holds the program until the frame job has taken the new mode,
   without touching `VSYNC`'s count, so a `VSYNC 1` right after it goes
-  straight on (TEST60).
+  straight on (TEST60). The program goes on inside that job, past its
+  animation step and with `MAINCNT` still to rise. So with `ACLS:XSCREEN
+  400,240,2`, then a `SPANIM` and `VSYNC 1:SPOFS` in a loop, in a program that
+  has not waited yet, the first two rows show nothing and the third the first step: the
+  second `VSYNC 1` only sees that job end (TEST62 on a Switch 2, as TEST56 did on Ryujinx).
 - `SPCHR`'s attribute goes up to 31: 32 is `Out of range (SPCHR:6)` (TEST60).
 - `MAINCNT` follows real time while the program is busy: 180 in 3 seconds of
   a loop with no `VSYNC`. When the frame job is held up it falls behind real
@@ -370,6 +377,12 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   86; at 640x360 from row 40, on row 42 (TEST60).
 
 - Enter on an empty line of direct mode prints `OK` (TEST60).
+- The prompt drops waiting keys as it starts, after a typed line as after a
+  program: `PUSHKEY "?1"+CHR$(13)+"?2"+CHR$(13)` typed at the prompt runs neither
+  (TEST62). From a subprogram, typing into a prompt already there, they arrive.
+- `INKEY$` after `PUSHKEY &H10009` (HOME) gives one character of code 2, and
+  after `PUSHKEY &H10000` (up) code `&H1E`. `PUSHKEY &H10FFF` goes and `&H11001`
+  is `Out of range` (TEST62).
 
 ## Screens and text
 
@@ -477,24 +490,43 @@ yet seen on hardware:
   more of them: 2 rows stay free at 360 rows of pixels, 3 at 720 with 8x8
   characters. The same scrolling while `INSPECT` prints has been seen (`TEST19`:
   the last row stays free, on the usual screen); the rest is from the code.
-- `SQR` below 0, `LOG` at 0 or below, and `ASIN` and `ACOS` past -1 to 1 are `Out of
-  range` on their argument. A real outside the 32-bit range, where a command wants
-  an integer, is `Overflow`.
+- `SQR` below 0 and `ACOS` past -1 to 1 are `Out of range` on their argument, as
+  `LOG` and `ASIN` are, seen below.
 - `VSYNC` of 0 or less does not wait, and counts on from now.
-- `INSPECT` cuts a string of exactly 256 characters too: no closing quote from 256 up.
-- `BREPEAT` takes a start of 0 as 1; negative values are `Out of range`.
-- `TCOORD` mode 0 drops the fractions of what it is given. Modes 1 and 2, and
-  `CHKCHR`'s display form, give the home point for an axis scaled to 0.
-- `TSAVE`, `TLOAD`, `GSAVE` and `GLOAD` take a width and height of 0 or more; a negative
-  one is `Out of range`.
-- `LMATRIX layer,array` wants a real array of 16 elements or more and looks at the first
-  16: others are `Type mismatch`, and a value past single precision `Out of range`.
-- `BQPARAM` looks at the number of its arguments before their values. A Q of 0 is
-  `Illegal function call`, as a rate of 0 is.
-- `UISTATE` takes numbers 0 to 5, others being `Out of range`.
-- `IRREAD` on a camera never started is `IR Camera is not available`, and in mode 1
-  `Illegal IR Camera mode`.
+- `BREPEAT`'s negative values are `Out of range`.
+- `TLOAD`'s width and height have to be 1 or more, and `GLOAD`'s 0 or more, as for
+  `TSAVE` and `GSAVE`, seen below.
+- `IRREAD` in mode 1 is `Illegal IR Camera mode`.
 - A new `TALK` cuts off what is being said.
+- `ACLS` holds the program for the frame job as `XSCREEN` does.
+- `HELPGET` of a name the help does not have gives four empty arrays of strings
+  (that it gives no error is seen below).
+
+Seen in TEST62 (4.4.9 on a Switch 2), after being read in SmileBASIC 4:
+
+- `LOG(0)` and `ASIN(2)` are `Out of range (LOG:1)` and `(ASIN:1)`. `LOCATE 3E10,0` is
+  `Overflow (LOCATE:1)`.
+- `INSPECT` cuts a string of exactly 256 characters too: no closing quote from 256 up,
+  255 has it.
+- `BREPEAT` takes a start of 0 as 1: `BREPEAT 5,0,3:BREPEAT 5 OUT S,I` gives 1 and 3.
+- `TCOORD` mode 0 drops the fractions of what it is given, 3.9,2.9 with `TOFS 0,100,50`
+  giving 103,52. Mode 2 gives the home point for an axis scaled to 0.
+- `TSAVE`'s width and height have to be 1 or more: 10x0 and 10x-1 are `Out of range
+  (TSAVE:5)`, and 5000x1 goes, reaching off the screen. `GSAVE`'s -1 is `Out of range
+  (GSAVE:4)`.
+- `LMATRIX layer,array` wants a real array of 16 elements or more and looks at the first
+  16: 15 are `Type mismatch (LMATRIX:2)`, 17 go, and a value of 1E39 is `Out of range
+  (LMATRIX:2)`.
+- `BQPARAM` looks at the number of its arguments before their values: type 5 with no
+  gain is `Wrong number of arguments (BQPARAM:2)`. A Q of 0 is `Illegal function call
+  (BQPARAM:5)`.
+- `UISTATE(5)` is 0, and `UISTATE(6)` `Out of range (UISTATE:1)`.
+- `IRREAD` on a camera never started is `IR Camera is not available (IRREAD)`.
+- `HELPGET "NOSUCHNAME",0 OUT ...` gives no error.
+- `?VSYNC()` is `Wrong number of OUT arguments (VSYNC)`, and `FREEMEM 1` and `?FREEMEM(1)`
+  `Wrong number of arguments (FREEMEM)`.
+- `#B_X`, `#B_B`, `#B_Y`, `#B_A` are 0, 1, 2, 3, and `#TUSRCHR` 59392. `1E308*10` less
+  itself prints `nan`.
 
 ## Sprites
 
@@ -611,9 +643,10 @@ yet seen on hardware:
   the whole display is 2.647 times, starting at X 4 (TEST56). A screen wider
   than its rectangle gets bars above and below: 400x240 in a rectangle of
   600x600 at 60 starts at Y 180. Mode 2 is smoothed the same in a subprogram
-  (TEST60). The bars take `BACKCOLOR`'s colour; by the code also the display
-  times 1 minus its alpha, unless the alpha is 0, which has only been seen
-  over a black main screen.
+  (TEST60). The bars take `BACKCOLOR`'s colour plus the display times 1 minus
+  its alpha, unless the alpha is 0: seen over a main screen that was not cleared,
+  for 400x240 with `&HC0305070` and 1280x720 with `&H40305070` (TEST62). A
+  layer in mode 3 makes the whole subprogram's screen opaque, far from what is on it (TEST62).
 - `FADE color,time` mixes the two colors channel by channel in single
   precision and rounds down: `&HFF` to 0 over three frames passes `&HA9`
   and `&H54`, not `&HAA` and `&H55`. A clear end (alpha 0) takes the
@@ -1296,10 +1329,8 @@ Checked with TTEST36.
 - Changes made with `PRGSET`, `PRGINS` and `PRGDEL` do not count as
   unsaved: `LOAD` over the slot from a program, `NEW` and `PROJECT` do
   not ask about them (DAW_MUSIC, and by hand).
-- `RETURN 1,2` (more than one value) is a `Syntax error` only when it
-  runs: a program with one in a DEF it never calls runs normally
-  (KRB_OGIRI_SMBOMB). A bare `GOTO` or `GOSUB` likewise runs the lines
-  before it and stops there with `Type mismatch` (TTEST39).
+- A bare `GOTO` or `GOSUB` runs the lines before it and stops there with
+  `Type mismatch` (TTEST39).
 - `HSV` and `HSVF` as functions need all three of H, S and V: two are
   `Wrong number of arguments`, and empty ones (`HSV(120,,)`) are `Type
   mismatch`. The `OUT` form needs at least three results too; fewer is
@@ -1319,13 +1350,25 @@ Checked with TTEST36.
   may be called with one `OUT` (`T OUT X`). One with two `OUT`s called as
   a function is `Wrong number of OUT arguments` when the call runs.
 - An unknown `#constant` is `Undefined constant`.
-- `RETURN` with more than one value, as in a `DEF` with two `OUT`s, is a
-  `Syntax error` when the program compiles.
-- `RETURN` with one value in a `DEF` that is not a function, also one
-  with an `OUT`, is accepted and the value ignored; under `OPTION STRICT`
-  it may even name a variable never declared (`RETURN UNDECLARED` in
-  `DEF T OUT Y`, SMILEBOY). But `RETURN F()` in a `DEF A` is a `Syntax
-  error` when the program compiles, on that line (TEST60).
+- Only a function's `RETURN` takes a value. In a `DEF` without brackets, also one
+  with an `OUT`, what follows `RETURN` is simply the next statement, never run,
+  and has to compile as one: `RETURN 5`, `RETURN A+1` and `RETURN A*2` are `Syntax
+  error`s when the program compiles, at the `5`, the `+` and the `*`, as is `RETURN F()`
+  at the `F` (TEST60, TEST62). `RETURN F(1)` compiles, a command with a value in
+  brackets (TEST62). `RETURN X,Y` too, a command X, in `DEF G A OUT X,Y`
+  (KRB_OGIRI_SMBOMB); `RETURN UNDECLARED` too, under `OPTION STRICT` (SMILEBOY).
+- A compile error sets `ENVSTAT OUT S,N,A,SL,C,L` as an error when running does but for
+  the status, which stays 0: S 0, N 3, A -1, C the character of the token it names from
+  the start of the program, L its line (TEST62).
+- `VAR A` without a value only declares: in `FOR I=0 TO 1:VAR A:?A:A=5:NEXT` it reads
+  0, then 5. A function that ends without `RETURN`, or leaves by a bare one, gives
+  no value: `TYPEOF` 0. `IF 1 THEN ?1 ENDIF:?2` prints both. `NEXT J` on `FOR I` is
+  not checked: `J` stays as it is. A string with no closing quote ends with its line.
+  A comment line after a `\` line end is no blank line: `?1\`, `'COMMENT`, `+2` is a
+  `Syntax error` at the `+`. `STOP` with a message prints 255 characters of it (TEST62).
+- Nesting: `GOSUB`s go to about 259008 and a `DEF R(N)` calling itself to about 25856
+  before `Stack overflow`, in one stack with the values of expressions, so the error may
+  come on any statement there. `RESTORE "PUSH"` 70000 times is fine (TEST62).
 - A digit group's `_` must lead to a digit: `?&HFF_` and `?&H_` are `Syntax
   error`, and so is `?1_000`, where a decimal number takes none (TEST60).
 

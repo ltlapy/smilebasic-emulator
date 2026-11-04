@@ -176,7 +176,11 @@ fn bad_arguments() {
         kind("DIM A[0]:TSAVE 0,20,0,10,-1,A"),
         Some(ErrorKind::OutOfRange)
     );
-    assert_eq!(kind("DIM A[0]:TSAVE 0,20,0,10,0,A"), None);
+    assert_eq!(
+        kind("DIM A[0]:TSAVE 0,20,0,10,0,A"),
+        Some(ErrorKind::OutOfRange)
+    );
+    assert_eq!(kind("DIM A[0]:TSAVE 0,20,0,5000,1,A"), None);
     assert_eq!(
         kind("DIM A[1]:TLOAD 0,A"),
         Some(ErrorKind::SubscriptOutOfRange)

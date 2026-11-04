@@ -72,16 +72,15 @@ const MOST_CELLS: i64 = sb_core::memory::TOTAL as i64 / 8;
 
 /// X,Y,width,height; the whole screen when `args` is empty. It may reach
 /// off the screen (checked on hardware: TSAVE reads empty cells there).
-// UNVERIFIED: expected of SmileBASIC 4, not yet seen: a width or height
-// may be anything from 0 up. A rectangle past what memory holds is Out of
-// range here, standing in for SmileBASIC 4's own error, as for GSAVE.
+// A rectangle past what memory holds is Out of range here, standing in for
+// SmileBASIC 4's own error, as for GSAVE.
 fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
     let (w, h) = screen.size();
     if args.is_empty() {
         return Ok((0, 0, w as i32, h as i32));
     }
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
-    if v[2] >= 0 && v[3] >= 0 && i64::from(v[2]) * i64::from(v[3]) <= MOST_CELLS {
+    if v[2] >= 1 && v[3] >= 1 && i64::from(v[2]) * i64::from(v[3]) <= MOST_CELLS {
         Ok((v[0], v[1], v[2], v[3]))
     } else {
         Err(Error::with_detail(
@@ -93,7 +92,6 @@ fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
 
 /// Display coordinates to the screen's own pixels, which TOFS, THOME,
 /// TROT and TSCALE place. An axis scaled to nothing gives the home point.
-// UNVERIFIED: that axis is expected of SmileBASIC 4, not yet seen.
 fn screen_dots(screen: &TextScreen, x: f64, y: f64) -> (f64, f64) {
     let (dx, dy) = (x - screen.pos.0, y - screen.pos.1);
     let (sin, cos) = screen.rot.to_radians().sin_cos();
@@ -206,8 +204,6 @@ impl Runtime {
             }
             // Modes 0 and 2 give reals and mode 1 integers. Mode 0 takes
             // whole coordinates, dropping the fractions.
-            // UNVERIFIED: that dropping is expected of SmileBASIC 4, not
-            // yet seen.
             (Command::Tcoord, Want::Outs(2), 3 | 4) => {
                 let t = &self.text[screen_id(&args[0])?];
                 let (x, y) = (args[1].to_real()?, args[2].to_real()?);

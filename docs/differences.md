@@ -28,6 +28,13 @@ Without them:
   (GeneralUser GS, or one chosen in Settings), so they sound different.
 - The drum sets `@128` to `@148` are the GS drum kits nearest by name.
 
+## Limits
+
+- `GOSUB`s, `DEF` calls and the values of expressions share one stack on SmileBASIC 4.
+  Here `GOSUB`s stop at 259040 and `DEF` calls at 25888, the depths a `DEF` with one
+  argument reached there, whatever a `DEF` holds, and `Stack overflow` names the `GOSUB`
+  or call itself, where there it may name the statement after it that ran out.
+
 ## Sound that is not played
 
 - Waveforms are read without the console's resampling, whose ringing lifts a

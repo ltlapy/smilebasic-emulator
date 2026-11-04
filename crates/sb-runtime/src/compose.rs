@@ -1292,8 +1292,7 @@ fn compose_each<const OPAQUE: bool>(
     for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
         // A clear pixel of the layer leaves the color as it is, but
         // the frame becomes opaque.
-        // UNVERIFIED: that this holds over the whole screen, not only
-        // where the layer has something.
+        // This holds over the whole screen.
         if l == 0 {
             if !OPAQUE {
                 *d |= 0xFF00_0000;
@@ -1349,7 +1348,7 @@ fn compose_tinted(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, col
         let alpha = match mode {
             Compose::Direct | Compose::Normal => (da * (N - a) + 255 * a + N / 2) / N,
             Compose::Add => da,
-            // UNVERIFIED: as in compose_each, over the whole screen.
+            // As in compose_each, over the whole screen.
             Compose::Multiply | Compose::Screen => 255,
         };
         *d = alpha << 24 | r << 16 | g << 8 | b;

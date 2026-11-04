@@ -109,7 +109,6 @@ impl Runtime {
                 Ok(ints(&[self.input.ir_state[pad]]))
             }
             // A camera never started is no camera, and mode 1 cannot be read.
-            // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
             // UNVERIFIED: the array's height for the modes that work.
             (Command::Irread, Want::Outs(4), 1) => {
                 let pad = pad(&args[0])?;

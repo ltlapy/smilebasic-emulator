@@ -347,7 +347,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
 | A linked child's offset turns and scales with the parent; the flags decide the child's own image | `Sprites::pose` | C: pitfalls (the `pose` UNVERIFIED comment is partly stale) |
 | Children without link bit 0 stay where they showed, Z included, when the parent is cleared | `Sprites::clear` | S: pitfalls ("Z included"); marker at `sprites.rs` "that Z also becomes absolute" |
-| Animated XY, Z, UV and I keep whole numbers in 16 bits and divide, `(from*left + to*gone)/frames` dropping the fraction; colours mixed in single precision by the frames left, rounded down; V in double precision | `anim::mix` | C: pitfalls; TEST47 (R7), TEST56, TEST60 (UV, I). U: V's precision, from SmileBASIC 4 |
+| Animated XY, Z, UV and I keep whole numbers in 16 bits and divide, `(from*left + to*gone)/frames` dropping the fraction; colours mixed in single precision by the frames left, rounded down; V in double precision | `anim::mix` | C: pitfalls; TEST47 (R7), TEST56, TEST60 (UV, I), TEST62 (V reads 0.0333333333 in ten decimals) |
 | Rotation and scale kept in single precision, slid as `from*left + to*(1-left)` in single precision and not rounded | `sprites::single`, `anim::mix` | C: pitfalls; TEST48 |
 | SPANIM, TANIM and FADE take their first step at the frame job's first update after the command; no flag for a program that is behind | `Runtime::animate` | C: pitfalls; TEST60 on a Switch 2 |
 | SPDEF's default table when none was imported (grid of 16x16) | `grid_defs` | Stand-in, not a rule. The real table is imported |

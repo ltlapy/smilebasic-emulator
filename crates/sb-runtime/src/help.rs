@@ -367,7 +367,7 @@ impl Runtime {
         })?;
         let name =
             String::from_utf16_lossy(&name.clone().into_str()?.borrow()).to_ascii_uppercase();
-        // UNVERIFIED: the error for a name the help does not have.
+        // UNVERIFIED: the error HELPINFO gives for a name the help does not have.
         if !help.has(&name) {
             return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, name));
         }
@@ -388,7 +388,14 @@ impl Runtime {
             // Checked on hardware: pages count from 0; the runs' array is
             // one run wide where no line has more.
             (Command::Helpget, Want::Outs(4), [name, page]) => {
-                let (_, pages) = self.help_pages(name)?;
+                let (_, pages) = match self.help_pages(name) {
+                    // A name the help does not have is no error.
+                    Err(e) if self.help.is_some() && e.kind == ErrorKind::IllegalFunctionCall => {
+                        let none = || array(ElemType::Str, vec![0], ArrayData::Str(Vec::new()));
+                        return Ok(vec![none(), none(), none(), none()]);
+                    }
+                    pages => pages?,
+                };
                 let n = page.to_int()?;
                 let page = usize::try_from(n)
                     .ok()
@@ -555,6 +562,17 @@ mod tests {
 
         let (index, data) = (index_of("PRINT", &[0]), page_of(10, 2));
         rt.help = Some(Rc::new(Help::from_bytes(&index, data).unwrap()));
+        let got = rt.help_command(Command::Helpget, &args, Want::Outs(4));
+        assert_eq!(got.unwrap().len(), 4);
+    }
+
+    /// TEST62: no error, and four empty arrays.
+    #[test]
+    fn a_name_the_help_does_not_have() {
+        let (index, data) = (index_of("PRINT", &[0]), page_of(10, 2));
+        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        rt.help = Some(Rc::new(Help::from_bytes(&index, data).unwrap()));
+        let args = [Value::str("NOSUCHNAME"), Value::Int(0)];
         let got = rt.help_command(Command::Helpget, &args, Want::Outs(4));
         assert_eq!(got.unwrap().len(), 4);
     }
