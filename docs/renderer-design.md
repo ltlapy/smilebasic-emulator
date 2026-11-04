@@ -198,7 +198,7 @@ moved again by `Placement::texel_tie`.
     back with nearest; all in integers. Runs of one color take a short
     way;
   - raster: per-row or per-column offset and scale, OpenGL-style
-    coordinates. The array is read every frame;
+    coordinates, from the array as it was at `LFILTER`;
   - color: HSV shift of each distinct color, through a small hash table,
     on the premultiplied texel in f32 as SmileBASIC 4 does.
 
@@ -780,8 +780,8 @@ How the code maps onto it:
   directly would remove the bound described in
   [differences.md](differences.md). That is a behaviour change: decide it
   after TTEST36-style checks.
-- **Raster filters** read the array rows into `Scene::raster_rows` when the
-  scene is built, so rasterizers never see `ArrayRef`.
+- **Raster filters** copy the array's rows at `LFILTER`, as SmileBASIC 4
+  does, and those go into `Scene::raster_rows` when the scene is built.
 - **The sort** is exact: layer, Z, kind, id, on packed `u64` keys, without
   moving items.
 
@@ -817,10 +817,9 @@ The redraw gate is first and cheap: `changed`, `take_changed`,
   such as `SPOFS` to the same place every frame, which today always set
   `changed`.
 - Inputs read by reference at render time must enter the comparison: GRP
-  pages and cells by change counts. Raster rows are by value already, but
-  the gate comes first: a program that only writes a raster array, with no
-  command that sets `changed`, does not redraw today (measured: 1 frame of
-  80). Whether SmileBASIC 4 shows such writes at once is not checked.
+  pages and cells by change counts. Raster rows are by value already. A
+  program that only writes a raster array needs no redraw: SmileBASIC 4
+  copies the array at `LFILTER`, so such writes show nothing (TEST60).
 - A GPU backend can go further and cache per-pass targets: a composed
   layer whose items, inputs and pages did not change keeps its texture.
 

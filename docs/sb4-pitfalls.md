@@ -632,6 +632,8 @@ yet seen on hardware:
   `GPSET` drew next to it.
 - `GUPDATE` with a coordinate of 2048 is `Out of range`.
 - `ACLS` clears every layer's `LFILTER` (TEST47).
+- `LFILTER` copies a raster array when it is called: writing to the array
+  later changes nothing on the screen until the next `LFILTER` (TEST60).
 - `LFILTER layer,0,n` is `Out of range`. Raster deformation (types 3
   and 4) needs the repeat flag: `LFILTER 1,3,A,#TRUE` with a real
   `A[240,4]` or `A[240,2]` works, while without the flag it is `Out of

@@ -4,7 +4,6 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use sb_core::value::{Array, ArrayData, ElemType};
 use sb_runtime::compose::{Compose, LAYERS, Layer};
 use sb_runtime::filter::{Filter, FilterOp};
 use sb_runtime::graphics::{Blend, Clip, Graphics};
@@ -225,16 +224,12 @@ fn clip_and_items_are_in_frame_pixels() {
 #[test]
 fn a_raster_filter_keeps_its_rows_as_they_were() {
     let mut w = World::new();
-    let mut info = Array::new(ElemType::Real, vec![2, 2]);
-    info.data = ArrayData::Real(vec![0.25, 1.0, 0.5, 2.0]);
-    let info = std::rc::Rc::new(std::cell::RefCell::new(info));
     w.filters[0] = Filter::Raster {
         vertical: false,
-        info: info.clone(),
+        rows: vec![[0.25, 1.0, 0.0, 1.0], [0.5, 2.0, 0.0, 1.0]],
         repeat: false,
     };
     let scene = w.scene();
-    info.borrow_mut().data = ArrayData::Real(vec![9.0; 4]);
     assert_eq!(
         scene.raster_rows,
         vec![[0.25, 1.0, 0.0, 1.0], [0.5, 2.0, 0.0, 1.0]]

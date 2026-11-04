@@ -52,7 +52,7 @@ pub struct Scene {
     /// FADE and the darkening beside a subprogram are one step: one
     /// rounding of the two together.
     pub dimmed: bool,
-    /// The raster filters' arrays as they are for this frame.
+    /// The rows of the raster filters of this frame's passes.
     pub raster_rows: Vec<[f64; 4]>,
     /// All the passes' items back to front, each as a sort key over where
     /// it is in `sprites` or `texts`.

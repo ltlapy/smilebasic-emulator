@@ -378,24 +378,31 @@ impl Runtime {
                 };
                 // Raster deformation needs the repeat flag: with the array
                 // alone it is Out of range for the type. An array that is
-                // not a real [n,2] or [n,4] is Type mismatch.
+                // not a real [n,2] or [n,4] is Type mismatch. The array is
+                // copied here, into the rows kept from last time if there
+                // are any, as a program may do this every frame.
                 self.filters[id] = match (kind, &args[2.min(args.len())..]) {
                     (0, []) => LayerFilter::None,
                     (1, [n]) => LayerFilter::Mosaic(size(n)?),
                     (2, [n]) => LayerFilter::Blur(size(n)?),
                     (3 | 4, [Value::Array(info), repeat]) => {
+                        let a = info.borrow();
+                        if a.elem_type() != sb_core::value::ElemType::Real
+                            || !matches!(a.dims[..], [_, 2 | 4])
                         {
-                            let a = info.borrow();
-                            if a.elem_type() != sb_core::value::ElemType::Real
-                                || !matches!(a.dims[..], [_, 2 | 4])
-                            {
-                                return Err(ErrorKind::TypeMismatch.into());
-                            }
+                            return Err(ErrorKind::TypeMismatch.into());
                         }
+                        let repeat = repeat.to_int()? != 0;
+                        let mut rows = match std::mem::take(&mut self.filters[id]) {
+                            LayerFilter::Raster { rows, .. } => rows,
+                            _ => Vec::new(),
+                        };
+                        rows.clear();
+                        crate::filter::raster_rows(&a, kind == 4, &mut rows);
                         LayerFilter::Raster {
                             vertical: kind == 4,
-                            info: info.clone(),
-                            repeat: repeat.to_int()? != 0,
+                            rows,
+                            repeat,
                         }
                     }
                     (5, [h, s, v]) => LayerFilter::Color {

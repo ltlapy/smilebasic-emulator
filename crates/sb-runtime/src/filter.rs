@@ -1,8 +1,6 @@
 //! LFILTER's effects on a layer drawn on its own frame: mosaic, blur,
 //! raster deformation and color conversion.
 
-use sb_core::value::ArrayRef;
-
 use crate::compose::Compose;
 use crate::framebuffer::Framebuffer;
 
@@ -15,10 +13,11 @@ pub enum Filter {
     Blur(u32),
     /// Types 3 (each line moves sideways) and 4 (each column up and
     /// down), from rows of offset and scale, or of X offset, X scale, Y
-    /// offset and Y scale, read from the program's array every frame.
+    /// offset and Y scale. The rows are the program's array as it was at
+    /// LFILTER: later writes to the array do nothing.
     Raster {
         vertical: bool,
-        info: ArrayRef,
+        rows: Vec<[f64; 4]>,
         repeat: bool,
     },
     Color {
@@ -48,27 +47,24 @@ impl Filter {
         self.op(&mut rows).apply(fb, sample, mode, &rows);
     }
 
-    /// The filter as a frame uses it, with a raster filter's array read
-    /// now into the end of `rows`.
-    pub fn op(&self, rows: &mut Vec<[f64; 4]>) -> FilterOp {
+    /// The filter as a frame uses it, with a raster filter's rows put on
+    /// the end of `scene_rows`.
+    pub fn op(&self, scene_rows: &mut Vec<[f64; 4]>) -> FilterOp {
         match self {
             Filter::None => FilterOp::None,
             Filter::Mosaic(n) => FilterOp::Mosaic(*n),
             Filter::Blur(n) => FilterOp::Blur(*n),
             Filter::Raster {
                 vertical,
-                info,
+                rows,
                 repeat,
             } => {
-                let Ok(a) = info.try_borrow() else {
-                    return FilterOp::None;
-                };
-                let start = rows.len();
-                raster_rows(&a, *vertical, rows);
+                let start = scene_rows.len();
+                scene_rows.extend_from_slice(rows);
                 FilterOp::Raster {
                     vertical: *vertical,
                     repeat: *repeat,
-                    rows: start..rows.len(),
+                    rows: start..scene_rows.len(),
                 }
             }
             Filter::Color {
@@ -132,7 +128,7 @@ impl FilterOp {
 /// A raster array's entries as X offset, X scale, Y offset and Y scale.
 /// With two to an entry they are the offset and scale along the
 /// deformation: X for type 3, Y for type 4.
-fn raster_rows(info: &sb_core::value::Array, vertical: bool, rows: &mut Vec<[f64; 4]>) {
+pub(crate) fn raster_rows(info: &sb_core::value::Array, vertical: bool, rows: &mut Vec<[f64; 4]>) {
     let width = match info.dims[..] {
         [_, w @ (2 | 4)] => w,
         _ => return,
@@ -1006,12 +1002,13 @@ mod tests {
         // The first line takes from a quarter further right, the second
         // stays.
         info.data = ArrayData::Real(vec![0.25, 1.0, 0.0, 1.0]);
-        let info = std::rc::Rc::new(std::cell::RefCell::new(info));
+        let mut rows = Vec::new();
+        raster_rows(&info, false, &mut rows);
         let row = [1, 2, 3, 4];
         let mut fb = frame(&[row, row].concat(), 4);
         let filter = |repeat| Filter::Raster {
             vertical: false,
-            info: info.clone(),
+            rows: rows.clone(),
             repeat,
         };
         filter(false).apply(&mut fb, 1, Compose::Normal);
@@ -1028,9 +1025,11 @@ mod tests {
         // 3, falls in the second.
         let mut info = Array::new(ElemType::Real, vec![2, 2]);
         info.data = ArrayData::Real(vec![0.0, 1.0, 0.5, 1.0]);
+        let mut rows = Vec::new();
+        raster_rows(&info, false, &mut rows);
         let filter = Filter::Raster {
             vertical: false,
-            info: std::rc::Rc::new(std::cell::RefCell::new(info)),
+            rows,
             repeat: false,
         };
         let mut fb = frame(&[1, 2, 1, 2, 1, 2], 2);

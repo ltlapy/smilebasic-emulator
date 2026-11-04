@@ -409,6 +409,24 @@ fn layer_filters() {
     );
 }
 
+/// LFILTER copies a raster array: what the program writes later does nothing
+/// until the next LFILTER.
+#[test]
+fn raster_array_is_copied_at_lfilter() {
+    let sprite =
+        "GTARGET 2:GFILL 0,0,39,79,#C_RED:GTARGET 0:SPSET 0,0,0,400,80,0:SPPAGE 0,2:SPLAYER 0,1\n";
+    let setup = "DIM R#[240,2]:FOR I=0 TO 239:R#[I,1]=1:NEXT\nLFILTER 1,3,R#,0\n";
+    let write = "FOR I=0 TO 239:R#[I,0]=-0.05:NEXT\n";
+    let mut m = run(&format!("{sprite}{setup}{write}"));
+    assert_eq!(
+        m.render().get(0, 0),
+        Some(RED),
+        "the write alone is not seen"
+    );
+    let mut m = run(&format!("{sprite}{setup}{write}LFILTER 1,3,R#,0\n"));
+    assert_ne!(m.render().get(0, 0), Some(RED), "LFILTER takes it");
+}
+
 #[test]
 fn raster_filter_forms() {
     let err = |source: &str| {
