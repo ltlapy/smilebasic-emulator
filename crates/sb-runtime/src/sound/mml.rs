@@ -14,8 +14,7 @@ const MACRO_DEPTH: usize = 16;
 /// each time it is defined or used. Macros using macros multiply, so a few
 /// hundred bytes could otherwise ask for gigabytes. MML with no macros
 /// costs nothing against this.
-// UNVERIFIED: SmileBASIC 4's own limit. This is far above what any song
-// seen needs (see docs/differences.md).
+// Ours, far above what any song seen needs (see docs/differences.md).
 const MACRO_CHARS: usize = 1 << 22;
 
 /// A number in MML: written out, or one of the variables $0 to $7.

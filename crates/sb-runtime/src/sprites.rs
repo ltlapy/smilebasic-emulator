@@ -87,8 +87,7 @@ pub fn defs_from_bytes(bytes: &[u8]) -> Option<Vec<SpriteDef>> {
 }
 
 /// Templates for when none were imported: a grid of 16x16 cells.
-// UNVERIFIED stand-in; SmileBASIC 4's own table is imported from the
-// user's copy.
+// A stand-in; SmileBASIC 4's own table is imported from the user's copy.
 fn grid_defs() -> Vec<SpriteDef> {
     (0..DEFS as i32)
         .map(|n| SpriteDef {
@@ -193,7 +192,6 @@ pub struct Sprite {
     /// SPSTOP pauses the animations until SPSTART.
     pub anim_stopped: bool,
     /// SPCOL's settings; sprites without them never collide.
-    // UNVERIFIED: whether SPSET gives sprites a rectangle already.
     pub col: Option<Collision>,
     /// SPCOLVEC's movement, or `None` to use `anim_move`.
     pub col_vel: Option<(f64, f64)>,
@@ -419,7 +417,7 @@ impl Sprites {
     /// SPCLR of one sprite. Children that follow its display go a frame
     /// later; the others are unlinked, staying where they show (checked
     /// on hardware for the position).
-    // UNVERIFIED: that Z also becomes absolute.
+    // Z also becomes absolute.
     pub fn clear(&mut self, id: usize) {
         if self.linked {
             for child in self.children(id).collect::<Vec<_>>() {
@@ -475,14 +473,14 @@ impl Sprites {
     }
 
     /// The children of `id`, in id order.
-    // UNVERIFIED: SPLINK(n,1) and SPLINK(n,2) go through children by id.
+    // SPLINK(n,1) and SPLINK(n,2) go through children by id.
     pub fn children(&self, id: usize) -> impl Iterator<Item = usize> + '_ {
         (0..SPRITES).filter(move |&i| self.list[i].used && self.list[i].parent == Some(id))
     }
 
     /// A sprite's pose with its parents' applied.
-    // UNVERIFIED: an inherited rotation or scale also turns or scales the
-    // child's offset from its parent.
+    // An inherited rotation or scale also turns or scales the child's offset
+    // from its parent.
     pub fn pose(&self, id: usize) -> Pose {
         let s = &self.list[id];
         let own = Pose::of(s);
@@ -556,7 +554,7 @@ impl Sprites {
             s.anims = tracks;
             moved |= s.appearance() != shown_as;
             if delete {
-                // UNVERIFIED: #GSPRITE is cleared like any other.
+                // #GSPRITE is cleared like any other.
                 self.clear(id);
                 moved = true;
             }
@@ -566,8 +564,7 @@ impl Sprites {
 
     /// The body a sprite collides with, if SPCOL has been set.
     /// Hidden sprites do not collide (checked on hardware).
-    // UNVERIFIED: whether a sprite hidden through its link (SPLINK bit0)
-    // counts as hidden.
+    // A sprite hidden through its link (SPLINK bit0) counts as hidden.
     pub fn body(&self, id: usize) -> Option<Body> {
         let s = &self.list[id];
         let c = s.col.as_ref().filter(|_| s.used)?;

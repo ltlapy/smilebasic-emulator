@@ -33,8 +33,8 @@ fn int_op(lhs: &Value, rhs: &Value, f: impl Fn(i32, i32) -> Result<i32>) -> Resu
     Ok(Value::Int(f(lhs.to_int()?, rhs.to_int()?)?))
 }
 
-/// UNVERIFIED: the shift count is taken modulo 32, as the AArch64 shift
-/// instructions on the Switch do.
+/// The shift count is taken modulo 32, as the AArch64 shift instructions on
+/// the Switch do.
 fn shift_count(n: i32) -> u32 {
     (n & 31) as u32
 }
@@ -123,8 +123,8 @@ pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
             }
             Ok(Value::Real(dividend / divisor))
         }
-        // UNVERIFIED: MOD takes the sign of the dividend, and the one
-        // overflowing case (-2147483648 DIV -1) wraps.
+        // MOD takes the sign of the dividend, and the one overflowing case
+        // (-2147483648 DIV -1) wraps.
         B::IntDiv => int_op(lhs, rhs, |a, b| match b {
             0 => Err(ErrorKind::DivideByZero.into()),
             _ => Ok(a.wrapping_div(b)),

@@ -28,7 +28,7 @@ const CALL_DEPTH: usize = 8;
 /// and a block has as many ticks as samples at the highest tempo. Mixing
 /// shares the program's thread, so this must not take long. The busiest
 /// block of all 359 of SmileBASIC 4's sequences needs 195.
-// UNVERIFIED: what SmileBASIC 4 does with a sequence like this.
+// Ours, for a sequence built to hang the program.
 const BLOCK_WORK: u32 = 20_000;
 /// The same for a whole recording, which no one is waiting to hear.
 const RECORD_WORK: u32 = 1 << 28;

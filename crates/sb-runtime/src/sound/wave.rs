@@ -70,7 +70,6 @@ impl From<Envelope> for Adshr {
 }
 
 /// An 8-bit sample's unit, full scale as a 16-bit sample's.
-// UNVERIFIED: that 8-bit and 16-bit samples share a scale.
 const EIGHT_BIT: f32 = 1.0 / 128.0;
 
 /// Samples a second 8-bit waveforms play at their reference pitch.

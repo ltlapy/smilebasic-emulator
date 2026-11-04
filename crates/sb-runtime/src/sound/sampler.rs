@@ -10,7 +10,6 @@ use super::synth::{CHANNELS, Synth};
 use super::wave::Envelope as MmlEnvelope;
 
 /// Samples between envelope steps: 5 ms.
-// UNVERIFIED: how often SmileBASIC 4 steps its envelopes.
 pub(crate) const TICK: usize = RATE as usize / 200;
 /// Milliseconds in a step: the envelope moves a millisecond at a time.
 const TICK_MS: u32 = 5;

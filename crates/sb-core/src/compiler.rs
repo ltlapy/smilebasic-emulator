@@ -1566,8 +1566,8 @@ impl Compiler<'_> {
     }
 
     /// Whether what has been compiled so far fits in the code memory.
-    // UNVERIFIED: that the rest of the code takes a word an instruction. Ours
-    // are not SmileBASIC 4's, but it is constant strings that come near.
+    // The rest of the code is taken as a word an instruction. Ours are not
+    // SmileBASIC 4's, but it is constant strings that come near.
     fn check_code_memory(&self) -> Result<()> {
         let most = if self.direct {
             DIRECT_CODE_WORDS

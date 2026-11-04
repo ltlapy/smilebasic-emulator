@@ -20,7 +20,7 @@ pub enum ParseErrorKind {
 }
 
 /// Limit on nested expressions and blocks, so hostile input cannot overflow
-/// the stack. UNVERIFIED: SmileBASIC's own limit is not documented.
+/// the stack. Ours; SmileBASIC's own limit shows only in hostile programs.
 pub const MAX_DEPTH: u32 = 256;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -719,7 +719,7 @@ impl Parser {
         let targets = self.comma_list(Self::lvalue)?;
         Ok(StmtKind::Input {
             prompt,
-            // UNVERIFIED: LINPUT never shows `?`, and INPUT without a guide does.
+            // LINPUT never shows `?`, and INPUT without a guide does.
             question: semicolon && !whole_line,
             targets,
             whole_line,

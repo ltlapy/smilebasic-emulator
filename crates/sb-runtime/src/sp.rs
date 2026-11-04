@@ -597,7 +597,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Spcol, Want::Outs(n @ (1 | 2 | 4..=6)), 1) => {
-                // UNVERIFIED: what a sprite without SPCOL reports.
+                // A sprite without SPCOL reports zeros.
                 let c = self.sprite(&args[0])?.col.unwrap_or(Collision {
                     x: 0,
                     y: 0,

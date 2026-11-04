@@ -99,7 +99,6 @@ table! {
     "INT" 1..=1 Function |a| Ok(Value::Int(a[0].to_int()?));
     "FLOAT" 1..=1 Function |a| Ok(Value::Real(a[0].to_real()?));
     "FLOOR" 1..=1 Function |a| real_fn(a, f64::floor);
-    // UNVERIFIED: halves round away from zero.
     "ROUND" 1..=1 Function |a| real_fn(a, f64::round);
     "CEIL" 1..=1 Function |a| real_fn(a, f64::ceil);
     "ABS" 1..=1 Function abs;
@@ -212,7 +211,8 @@ fn real_fn(args: &[Value], f: fn(f64) -> f64) -> Result<Value> {
     Ok(Value::Real(f(args[0].to_real()?)))
 }
 
-/// UNVERIFIED: arguments outside a function's domain raise Out of range.
+/// Arguments outside a function's domain raise Out of range: SQR below 0,
+/// LOG at 0 or below, ASIN and ACOS past 1. UNVERIFIED: expected of SmileBASIC 4 for all but SQR, not yet seen.
 fn checked_real(args: &[Value], f: fn(f64) -> Option<f64>) -> Result<Value> {
     f(args[0].to_real()?)
         .map(Value::Real)
@@ -372,8 +372,8 @@ fn asc(args: &[Value]) -> Result<Value> {
     Ok(Value::Int(i32::from(*first)))
 }
 
-/// UNVERIFIED: a start past the end gives "" and counts are clamped,
-/// while negative positions or counts are errors.
+/// A start past the end gives "" and counts are clamped, while negative
+/// positions or counts are errors.
 fn substring(s: &[u16], start: usize, count: usize) -> Str {
     let start = start.min(s.len());
     let end = start.saturating_add(count).min(s.len());
@@ -825,7 +825,6 @@ fn rgbf_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
 /// `HSV(hue,saturation,value[,alpha])`, with the hue in degrees (wrapping
 /// at 360) and the rest from 0 to 255; `HSVF` takes everything from 0 to
 /// 1.0, the hue wrapping at 1.
-// UNVERIFIED: how SmileBASIC 4 rounds the resulting components.
 fn hsv(args: &[Value], unit: bool) -> Result<Value> {
     let part = |v: &Value| -> Result<f64> {
         let x = v.to_real()?;

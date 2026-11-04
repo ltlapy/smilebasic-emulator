@@ -552,8 +552,7 @@ impl Runtime {
                     {
                         BeepSound::Sequence(seq)
                     }
-                    // UNVERIFIED: without SmileBASIC's own sounds, presets are
-                    // silent.
+                    // Without SmileBASIC's own sounds, presets are silent.
                     0..=PRESET_BEEPS => BeepSound::Preset,
                     224..=255 => match self.sound.waves.borrow().get(n) {
                         Some(w) if w.beep_ticks != Some(0) => BeepSound::Wave(w),
@@ -697,8 +696,7 @@ impl Runtime {
                 self.sound.effector.wet = wet;
                 Ok(vec![])
             }
-            // UNVERIFIED: in the main program, SNDMSBAL is kept but changes
-            // nothing, as there are no subprograms yet.
+            // UNVERIFIED: the curve is in machine.rs; here SNDMSBAL is only kept.
             (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
                 self.sound.balance = in_range("balance", &args[0], 0..=127)?;
                 opt_in_range("time", args.get(1), 0..=32767, 0)?;
@@ -707,7 +705,8 @@ impl Runtime {
             (Command::Sndmsbal, Want::Outs(1) | Want::Value, 0) => {
                 Ok(vec![Value::Int(self.sound.balance)])
             }
-            // UNVERIFIED: a new TALK cuts off what is being said.
+            // A new TALK cuts off what is being said.
+            // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
             (Command::Talk, Want::Outs(0), 1) => {
                 self.sound.talk.say(&text(&args[0])?);
                 Ok(vec![])

@@ -415,7 +415,7 @@ impl Runtime {
             Err(e) => {
                 self.result = 0;
                 if self.direct {
-                    // UNVERIFIED: SmileBASIC 4 shows its own dialogs instead.
+                    // SmileBASIC 4 shows its own dialogs instead (see docs/differences.md).
                     let console = &mut self.text[CONSOLE];
                     if console.cursor().0 != 0 {
                         console.newline();

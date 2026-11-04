@@ -98,7 +98,7 @@ impl Default for Channel {
             repeats: Vec::new(),
             octave: 4,
             length: QUARTER,
-            // UNVERIFIED: notes sound for their whole length until Q.
+            // Notes sound for their whole length until Q.
             quantize: 32,
             key: 0,
             // Both start full (TEST40).

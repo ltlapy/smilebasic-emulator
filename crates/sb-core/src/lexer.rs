@@ -435,7 +435,7 @@ impl Lexer {
             self.bump();
         }
         // Integer literals go up to 2147483647.
-        // UNVERIFIED: a larger decimal literal becomes real instead of an error.
+        // A larger decimal literal becomes real instead of an error.
         let kind = match text.parse::<i32>() {
             Ok(n) if !is_real => TokenKind::Int(n),
             _ => TokenKind::Real(text.parse().expect("lexed digits form a valid float")),

@@ -2362,8 +2362,7 @@ impl Machine {
         if let Some(to_sub) = to_sub
             && self.focus_moving.is_none()
         {
-            // UNVERIFIED: giving the focus away took one to three frames,
-            // taking it one.
+            // Giving the focus away took one to three frames, taking it one.
             self.focus_moving = Some((to_sub, if to_sub { 1 } else { 2 }));
             sub.rt.focus_busy = true;
             self.rt.focus_busy = true;

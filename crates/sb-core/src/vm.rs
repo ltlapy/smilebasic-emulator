@@ -371,7 +371,6 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
 /// "@NAME", "NAME" or "1:@NAME" to "NAME".
 pub(crate) fn label_name(value: &Value) -> Result<String> {
     let s = String::from_utf16_lossy(&value.clone().into_str()?.borrow()).to_ascii_uppercase();
-    // UNVERIFIED: slot prefixes are ignored until there are program slots.
     let s = s.split_once(':').map_or(s.as_str(), |(_, rest)| rest);
     Ok(s.strip_prefix('@').unwrap_or(s).to_string())
 }
@@ -1037,7 +1036,7 @@ impl Vm {
             .collect::<Result<Vec<_>>>()?;
         // Only a one-dimensional array may be empty: DIM R#[0,0] is
         // Subscript out of range (checked on hardware).
-        // UNVERIFIED: that one zero among other sizes is, too.
+        // One zero among other sizes is, too.
         if dims.len() > 1 && dims.contains(&0) {
             return Err(ErrorKind::SubscriptOutOfRange.into());
         }
@@ -1851,7 +1850,7 @@ impl Vm {
                 let selector = self.pop().to_int()?;
                 let after = self.pc + 1 + *count as usize;
                 next = after;
-                // UNVERIFIED: an out-of-range selector continues after ON.
+                // An out-of-range selector continues after ON.
                 if (0..*count as i32).contains(&selector) {
                     let Op::Jump(target) = program.code[self.pc + 1 + selector as usize] else {
                         unreachable!("ON is followed by its jump table");
@@ -2111,7 +2110,8 @@ impl Vm {
             }
             Op::Wait { vsync, has_arg } => {
                 let frames = if *has_arg { self.pop().to_int()? } else { 1 };
-                // UNVERIFIED: zero or negative counts do not wait.
+                // Zero or negative counts do not wait.
+                // UNVERIFIED: expected of SmileBASIC 4 for VSYNC, not yet seen.
                 self.pc = next;
                 return Ok(Some(Status::Wait {
                     frames: frames.max(0) as u32,
@@ -2344,8 +2344,8 @@ impl Vm {
             },
         };
         let args_ok = info.params.is_none_or(|p| usize::from(p) == args.len());
-        // UNVERIFIED: that a DEF given the wrong number of arguments is
-        // the same error as a builtin.
+        // A DEF given the wrong number of arguments is the same error as a
+        // builtin.
         // Several OUTs for one value is the wrong number of them.
         let too_many_outs = want == Want::Value && info.outs.is_some_and(|m| m > 1);
         if !call_ok || !args_ok || too_many_outs {

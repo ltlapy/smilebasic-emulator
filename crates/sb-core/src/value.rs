@@ -122,7 +122,7 @@ impl Array {
 }
 
 /// Real to integer, dropping the fraction as INT() does.
-/// UNVERIFIED: values outside the 32-bit range raise Overflow.
+/// Values outside the 32-bit range raise Overflow. UNVERIFIED: expected of SmileBASIC 4, not yet seen.
 pub fn real_to_int(x: f64) -> Result<i32> {
     let t = x.trunc();
     if t.is_nan() || t < i32::MIN as f64 || t > i32::MAX as f64 {

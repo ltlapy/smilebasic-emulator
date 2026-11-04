@@ -341,7 +341,7 @@ impl Scene {
             // A layer that is not composed filters the whole frame as drawn
             // so far, the layers behind and BACKCOLOR included (checked on
             // hardware); a composed one only its own elements.
-            // UNVERIFIED: that it does so with no elements in the layer.
+            // It does so with no elements in the layer.
             if start == items && !(direct && !matches!(filter, Filter::None)) {
                 continue;
             }

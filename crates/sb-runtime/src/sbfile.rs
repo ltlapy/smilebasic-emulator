@@ -351,7 +351,7 @@ pub fn parse_data(body: &[u8]) -> Result<Data, FileError> {
 /// How many elements an array of these sizes holds. A zero in any size
 /// makes it empty; the others must still multiply to no more than an array
 /// can hold, so that nothing later goes through `[0xFFFFFFFF, 0]`'s rows.
-// UNVERIFIED: that SmileBASIC 4 refuses such a file.
+// Our own guard, for a file no SmileBASIC 4 program writes.
 fn checked_elements(dims: &[usize]) -> Result<usize, FileError> {
     let mut product = 1usize;
     for &d in dims.iter().filter(|&&d| d != 0) {

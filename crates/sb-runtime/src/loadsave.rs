@@ -415,7 +415,7 @@ impl Runtime {
 
     /// Asks before reading a file that exists, as LOAD does; whether the
     /// command must stop here for the answer.
-    // UNVERIFIED: that LOADV and LOADG in a program do not ask, like LOAD.
+    // LOADV and LOADG in a program do not ask, like LOAD.
     fn ask_load(&mut self, spec: &str, default: FileKind) -> bool {
         let Ok(file) = self.read_name(spec, default) else {
             return false;

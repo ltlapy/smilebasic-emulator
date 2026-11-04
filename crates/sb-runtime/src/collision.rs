@@ -81,7 +81,7 @@ impl Body {
 }
 
 /// The first moment in 0 to 1 at which `a` and `b` overlap, if they do.
-// UNVERIFIED: rectangles that only touch at an edge do not collide.
+// Rectangles that only touch at an edge do not collide.
 #[inline]
 pub fn sweep(a: &Body, b: &Body) -> Option<f64> {
     if a.mask & b.mask == 0 {

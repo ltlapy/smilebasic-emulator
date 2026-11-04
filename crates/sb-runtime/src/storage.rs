@@ -14,7 +14,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 const WORKSPACE_DIR: &str = "@WORKSPACE";
-/// UNVERIFIED: SmileBASIC 4's limit on file and project name length.
+/// SmileBASIC 4's limit on file and project name length.
 pub const MAX_NAME: usize = 32;
 /// The previous version of a program overwritten by SAVE.
 pub const BACKUP_NAME: &str = "@BACKUP.PRG";
@@ -60,7 +60,7 @@ impl FileKind {
             FileKind::Txt => 'T',
             FileKind::Dat => 'B',
             FileKind::Grp => 'G',
-            // UNVERIFIED: SmileBASIC 4's prefix for JPG files.
+            // SmileBASIC 4's prefix for JPG files.
             FileKind::Jpg => 'J',
         }
     }

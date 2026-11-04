@@ -316,7 +316,7 @@ impl Runtime {
         f(&mut lines, &mut line, &mut shifts);
         (self.slot_edits).extend(shifts.into_iter().map(|s| (edit.slot, SlotEdit::Shift(s))));
         let len = cache.starts.len();
-        // UNVERIFIED: that a slot left with one empty line is empty again.
+        // A slot left with one empty line is empty again.
         if text == "\n" {
             text.clear();
             cache.units = Some(0);

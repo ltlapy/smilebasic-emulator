@@ -17,7 +17,7 @@ pub const SCREENS: usize = 5;
 pub const CONSOLE: usize = 4;
 /// Characters from here to `0xF7FF` are drawn from a graphic page (TPAGE).
 pub const USER_CHARS: std::ops::RangeInclusive<u16> = 0xE800..=0xF7FF;
-/// UNVERIFIED: SB3's default TABSTEP; SB4's console has not been measured.
+/// The console's tab stops.
 pub const TAB_WIDTH: u32 = 4;
 const WHITE: u32 = 0xFFFF_FFFF;
 /// GRP5 (`#GRPF`) holds the font that text screens and GPUTCHR draw.
@@ -246,7 +246,6 @@ impl TextScreen {
     }
 
     /// TSCREEN: a new font and size, which clears the screen.
-    // UNVERIFIED: whether TSCREEN keeps the contents.
     pub fn set_font(&mut self, font_type: u32, char_size: u32, width: u32, height: u32) {
         (self.font_type, self.char_size) = (font_type, char_size);
         (self.width, self.height) = (width, height);
@@ -400,7 +399,6 @@ impl TextScreen {
 
     /// SCROLL: moves the contents `dx` cells left and `dy` up, emptying
     /// what is uncovered. The cursor stays.
-    // UNVERIFIED: that the cursor stays.
     pub fn scroll(&mut self, dx: i32, dy: i32) {
         let (w, h) = (self.width as i32, self.height as i32);
         // A whole screen's shift or more leaves nothing; held to that, the
@@ -481,7 +479,6 @@ impl TextScreen {
     fn print_each(&mut self, text: &[u16]) {
         for &c in text {
             match c {
-                // UNVERIFIED: whether CHR$(10) also starts a new line.
                 10 | 13 => self.newline(),
                 _ => self.put(c),
             }

@@ -120,7 +120,6 @@ impl Host for TextHost {
     }
 
     fn print_tab(&mut self, _screen: Option<i32>) -> Result<()> {
-        // UNVERIFIED: the console's tab width; TABSTEP defaults to 4 in SB3.
         let column = self
             .output
             .rsplit('\n')

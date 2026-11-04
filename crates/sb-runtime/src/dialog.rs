@@ -256,7 +256,7 @@ impl crate::input::Input {
     /// when let go after being pressed with the dialog open (checked on
     /// hardware for A); a wait for buttons ends on
     /// any of them going down.
-    // UNVERIFIED: B, and the wait for buttons.
+    // UNVERIFIED: the wait for buttons.
     pub(crate) fn dialog_answer(&self, kind: &DialogKind, since: u32) -> Option<DialogAnswer> {
         let (pressed, released) = (self.pressed(), self.released() & since);
         match kind {

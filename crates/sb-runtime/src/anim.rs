@@ -311,9 +311,9 @@ impl Track {
     }
 
     /// Plays one frame; false once the animation has ended.
-    // UNVERIFIED: a key of time T shows its value (or the slide's steps)
-    // on T frames, starting on the frame after SPANIM; looping slides
-    // from where the last key ended.
+    // A key of time T shows its value (or the slide's steps) on T frames,
+    // starting on the frame after SPANIM; looping slides from where the last
+    // key ended.
     pub fn step(&mut self, on: &mut impl Animated) -> bool {
         let target = self.anim.mode.target;
         let time = self.anim.keys[self.key].time;

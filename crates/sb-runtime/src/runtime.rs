@@ -948,9 +948,8 @@ pub struct Runtime {
 /// The text screens at start-up: the console in front of everything else
 /// with 8-pixel characters, drawn from the 16-pixel font where the frame
 /// is fine enough, and the others with 16-pixel characters.
-// UNVERIFIED: from the manual's program equivalent to ACLS, which sets
-// TSCREEN #TCONSOLE,16,8 and TSCREEN I,16,16 at a sample magnification
-// of 2.
+// From the manual's program equivalent to ACLS, which sets TSCREEN
+// #TCONSOLE,16,8 and TSCREEN I,16,16 at a sample magnification of 2.
 fn startup_screens(mode: &ScreenMode) -> Vec<TextScreen> {
     let (w, h) = (mode.width, mode.height);
     (0..SCREENS)
@@ -1198,8 +1197,8 @@ impl Runtime {
 
     /// XSCREEN: the console is resized to fill the screen, keeping its
     /// font, and `#GSPRITE` shows as much of GRP0.
-    // UNVERIFIED: whether the console is cleared, and how much of
-    // #GSPRITE's settings are reset.
+    // The console is cleared. UNVERIFIED: how much of #GSPRITE's settings are
+    // reset.
     pub(crate) fn set_mode(&mut self, mode: ScreenMode) {
         self.mode = mode;
         let (fw, fh) = mode.frame();
@@ -1497,7 +1496,7 @@ impl Runtime {
             Ok(())
         } else {
             // Checked on hardware: CLEAR in a program is a Syntax error
-            // when it runs. UNVERIFIED: that NEW, RUN and PROJECT are too.
+            // when it runs, as are NEW and RUN. UNVERIFIED: that PROJECT is too.
             Err(Error::with_detail(
                 ErrorKind::SyntaxError,
                 "only in direct mode",
@@ -2088,8 +2087,8 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
-            // CONT: direct mode only (UNVERIFIED: with the same Syntax
-            // error as CLEAR in a program).
+            // CONT: direct mode only, with the same Syntax error as CLEAR in a
+            // program.
             (Command::Cont, Want::Outs(0)) if args.is_empty() => {
                 self.direct_only()?;
                 match self.stopped {
