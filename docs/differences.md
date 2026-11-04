@@ -103,6 +103,8 @@ known.
 - Controller 1 is the keyboard and the first gamepad together, reported
   as a handheld controller; other gamepads are Pro Controllers.
   `XCTRLSTYLE` shows no connection screen and always succeeds.
+- Text pasted at the prompt runs line by line, though SmileBASIC 4's prompt
+  drops keys waiting for it, as `PUSHKEY` shows.
 - The keyboard also presses controller 1's buttons; Run > "Use the
   keyboard as a controller" turns this off.
 - A program that hides the mouse cursor (`SYSPARAM "MOUSECURSOR",0`,

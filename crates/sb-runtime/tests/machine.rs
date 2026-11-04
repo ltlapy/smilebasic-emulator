@@ -795,6 +795,20 @@ fn inspect_pages_long_arrays() {
 }
 
 #[test]
+fn every_line_of_a_paste_runs_though_the_prompt_drops_keys() {
+    let mut m = machine();
+    m.frame();
+    m.paste("?11\n?22\n?33\n");
+    for _ in 0..20 {
+        m.frame();
+    }
+    let rows = rows(&m);
+    for line in ["11", "22", "33"] {
+        assert!(rows.iter().any(|r| r.trim() == line), "{rows:?}");
+    }
+}
+
+#[test]
 fn paste_that_does_not_fit_the_line_is_left_out_whole() {
     let mut m = machine();
     m.frame();

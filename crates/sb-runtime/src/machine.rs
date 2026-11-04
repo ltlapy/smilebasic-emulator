@@ -2338,6 +2338,7 @@ impl Machine {
         }
         sub.rt.keys.extend(self.rt.keys.drain(..));
         sub.rt.typed.extend(self.rt.typed.drain(..));
+        sub.rt.pasted.extend(self.rt.pasted.drain(..));
         self.rt.input.live = idle;
         // The pointer, in the sub-screen's pixels.
         let mut mouse = live.mouse;
@@ -2477,6 +2478,7 @@ impl Machine {
             if self.rt.focus {
                 self.rt.keys.extend(sub.rt.keys.drain(..));
                 self.rt.typed.extend(sub.rt.typed.drain(..));
+                self.rt.pasted.extend(sub.rt.pasted.drain(..));
             }
         }
     }

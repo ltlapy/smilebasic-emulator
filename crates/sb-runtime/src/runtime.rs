@@ -783,6 +783,10 @@ pub struct Runtime {
     /// Keys on their way to [`Runtime::keys`], typed or from PUSHKEY. Each
     /// frame takes up to [`KEYS_A_FRAME`] of them there.
     pub(crate) typed: VecDeque<u32>,
+    /// Pasted text's keys, which the prompt's dropping of keys leaves alone.
+    pub(crate) pasted: VecDeque<u32>,
+    /// A pasted line has been sent, and the next waits for a line to type in.
+    paste_held: bool,
     /// The line being typed for INPUT, LINPUT or direct mode.
     line: Option<LineEdit>,
     /// Where the Up and Down keys have taken the direct-mode line in the
@@ -1084,6 +1088,8 @@ impl Runtime {
             sound: Sound::default(),
             keys: VecDeque::new(),
             typed: VecDeque::new(),
+            pasted: VecDeque::new(),
+            paste_held: false,
             line: None,
             recall: None,
             frame: 0,
@@ -1463,6 +1469,7 @@ impl Runtime {
     }
 
     fn start_line(&mut self) {
+        self.paste_held = false;
         let console = &mut self.text[CONSOLE];
         let free = line::rows_kept_free(self.mode.height, self.mode.aspect(), console.font().1);
         // UNVERIFIED: for a LINPUT without a guide, SmileBASIC 4 only
@@ -1526,12 +1533,26 @@ impl Runtime {
     /// Queues pasted text's keys, of which none may be lost, however many.
     pub(crate) fn paste_key(&mut self, code: u16) {
         self.changed = true;
-        self.typed.push_back(key_code(code));
+        self.pasted.push_back(key_code(code));
     }
 
     /// Takes the frame's keys to where programs and lines read them. A code
     /// of 0 ends it for this frame.
     pub fn take_typed_keys(&mut self) {
+        // Pasted lines go one at a time, so that the prompt after one finds
+        // the next still waiting.
+        if self.typed.is_empty() && !self.paste_held {
+            while self.typed.len() < KEYS_A_FRAME {
+                let Some(code) = self.pasted.pop_front() else {
+                    break;
+                };
+                self.typed.push_back(code);
+                if code == key_code(keys::ENTER) {
+                    self.paste_held = true;
+                    break;
+                }
+            }
+        }
         for _ in 0..KEYS_A_FRAME {
             match self.typed.pop_front() {
                 None | Some(0) => break,
@@ -1567,6 +1588,8 @@ impl Runtime {
     /// doing, so that none of it reaches direct mode or the next run.
     pub(crate) fn clear_input(&mut self) {
         self.clear_keys();
+        self.pasted.clear();
+        self.paste_held = false;
         self.input.forget();
     }
 
