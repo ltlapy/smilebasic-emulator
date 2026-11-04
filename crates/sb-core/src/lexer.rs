@@ -292,8 +292,8 @@ impl Lexer {
                 '\'' => self.skip_to_line_end(),
                 '\\' if self.continues_line() => {}
                 '"' => self.string(start),
-                '0'..='9' => self.number(start),
-                '.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => self.number(start),
+                '0'..='9' => self.number(start)?,
+                '.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => self.number(start)?,
                 '&' if self.peek_at(1) != Some('&') => self.ampersand(start)?,
                 '@' => {
                     self.bump();
@@ -399,7 +399,7 @@ impl Lexer {
         self.push(TokenKind::Str(text), start);
     }
 
-    fn number(&mut self, start: Span) {
+    fn number(&mut self, start: Span) -> Result<(), LexError> {
         let mut text = String::new();
         let mut is_real = false;
         self.take_digits(&mut text);
@@ -425,6 +425,10 @@ impl Lexer {
                 self.take_digits(&mut text);
             }
         }
+        // `1_000` is a Syntax error: only `&H` and `&B` take `_`.
+        if self.peek() == Some('_') {
+            return Err(self.error(LexErrorKind::MissingDigits, start));
+        }
         // A `#` after the digits makes the number a real (`0#`).
         if self.peek() == Some('#') && !self.peek_at(1).is_some_and(is_ident_char) {
             is_real = true;
@@ -437,6 +441,7 @@ impl Lexer {
             _ => TokenKind::Real(text.parse().expect("lexed digits form a valid float")),
         };
         self.push(kind, start);
+        Ok(())
     }
 
     fn take_digits(&mut self, text: &mut String) {
@@ -462,9 +467,16 @@ impl Lexer {
         loop {
             // `_` separates digit groups, as in `&B0000_0001`, and may
             // also lead and repeat, as in `&H_3F__BF_BF`.
-            // UNVERIFIED: whether `&H_` with no digit at all is an error.
             if self.peek() == Some('_') {
                 self.bump();
+                // It must lead to a digit: `&HFF_` is a Syntax error.
+                let mut next = 0;
+                while self.peek_at(next) == Some('_') {
+                    next += 1;
+                }
+                if !self.peek_at(next).is_some_and(|c| c.is_digit(radix)) {
+                    return Err(self.error(LexErrorKind::MissingDigits, start));
+                }
                 continue;
             }
             let Some(d) = self.peek().and_then(|c| c.to_digit(radix)) else {
@@ -672,6 +684,9 @@ mod tests {
             ]
         );
         assert_eq!(error("&H_"), LexErrorKind::MissingDigits);
+        assert_eq!(error("&HFF_"), LexErrorKind::MissingDigits);
+        assert_eq!(error("&HFF_:A=1"), LexErrorKind::MissingDigits);
+        assert_eq!(error("1_000"), LexErrorKind::MissingDigits);
     }
 
     #[test]

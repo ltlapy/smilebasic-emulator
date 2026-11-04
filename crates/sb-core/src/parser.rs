@@ -93,6 +93,7 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
         tokens,
         pos: 0,
         in_def: false,
+        in_command_def: false,
         loops: Vec::new(),
         depth: 0,
     }
@@ -106,6 +107,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
         tokens,
         pos: 0,
         in_def: false,
+        in_command_def: false,
         loops: Vec::new(),
         depth: 0,
     };
@@ -125,6 +127,8 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     in_def: bool,
+    /// In a DEF that gives no value of its own, with or without OUT.
+    in_command_def: bool,
     depth: u32,
     /// The closing keywords of the loops being parsed, innermost last.
     loops: Vec<Keyword>,
@@ -398,6 +402,21 @@ impl Parser {
             K::On => self.on_statement()?,
             K::Return if self.at_stmt_end() => StmtKind::Return(None),
             K::Return => {
+                // Only a function's RETURN takes a value; in a command DEF
+                // SmileBASIC 4 goes on with the next statement, and `F()`
+                // cannot be one.
+                // UNVERIFIED: other values that are no statement either,
+                // which are still let through here. Programs that run on it
+                // have `RETURN NAME` and `RETURN 1,2`.
+                if self.in_command_def
+                    && matches!(self.peek(), TokenKind::Ident { .. })
+                    && *self.peek_at(1) == TokenKind::LParen
+                    && *self.peek_at(2) == TokenKind::RParen
+                {
+                    self.advance();
+                    self.advance();
+                    return self.expected("statement");
+                }
                 let value = self.expr()?;
                 // RETURN with more values is a Syntax error when it runs.
                 if self.eat(&TokenKind::Comma) {
@@ -996,8 +1015,10 @@ impl Parser {
             (params, outs)
         };
         self.in_def = true;
+        self.in_command_def = !is_function;
         let body = self.block(&[]);
         self.in_def = false;
+        self.in_command_def = false;
         let body = body?;
         self.expect_keyword(Keyword::End, "END")?;
         Ok(Def {

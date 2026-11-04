@@ -391,6 +391,15 @@ fn return_value_in_a_command_def_is_ignored() {
     assert_eq!(output(src), "OK\n");
 }
 
+/// TEST60: `RETURN F()` in a command DEF is refused when the program compiles.
+#[test]
+fn a_call_with_no_arguments_after_return_in_a_command_def() {
+    let source = "?1\nDEF A\n RETURN F()\nEND\nDEF F()\nEND";
+    assert!(sb_core::parser::parse(source).is_err());
+    let source = "?1\nDEF A()\n RETURN F()\nEND\nDEF F()\nEND";
+    assert!(sb_core::parser::parse(source).is_ok());
+}
+
 #[test]
 fn inc_dec_swap() {
     assert_eq!(output("A=1:INC A:INC A,5:DEC A,2\n?A"), "5\n");

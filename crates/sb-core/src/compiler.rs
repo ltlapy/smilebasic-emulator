@@ -855,8 +855,7 @@ impl Compiler<'_> {
                     self.emit(Op::ReturnValue);
                 } else {
                     // The value of a RETURN in a command DEF is ignored,
-                    // and not even compiled. UNVERIFIED: whether a function
-                    // called in it runs.
+                    // and not even compiled.
                     self.emit(Op::Return);
                 }
             }

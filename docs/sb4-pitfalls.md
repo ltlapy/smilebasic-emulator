@@ -1289,7 +1289,10 @@ Checked with TTEST36.
 - `RETURN` with one value in a `DEF` that is not a function, also one
   with an `OUT`, is accepted and the value ignored; under `OPTION STRICT`
   it may even name a variable never declared (`RETURN UNDECLARED` in
-  `DEF T OUT Y`, SMILEBOY).
+  `DEF T OUT Y`, SMILEBOY). But `RETURN F()` in a `DEF A` is a `Syntax
+  error` when the program compiles, on that line (TEST60).
+- A digit group's `_` must lead to a digit: `?&HFF_` and `?&H_` are `Syntax
+  error`, and so is `?1_000`, where a decimal number takes none (TEST60).
 
 - After an error, F4 puts the cursor at the start of the statement that
   failed, syntax errors included.
