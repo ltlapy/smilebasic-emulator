@@ -51,7 +51,7 @@ use std::mem::ManuallyDrop;
 use std::ptr::{null, null_mut};
 use std::time::{Duration, Instant};
 
-use sb_runtime::compose::{Affine, Compose, Placement};
+use sb_runtime::compose::{Affine, Compose, Placement, page_signs};
 use sb_runtime::filter::{self, BlurKernel, FilterOp, MosaicGrid};
 use sb_runtime::font::FontSize;
 use sb_runtime::framebuffer::Framebuffer;
@@ -417,8 +417,9 @@ struct Sampling {
 }
 
 /// The [`Sampling`] of an element placed by `matrix`, `size` long on the
-/// image, whose texels are `texel` of its units.
-fn sampling(matrix: &Affine, size: (i32, i32), texel: f64) -> Sampling {
+/// image, whose texels are `texel` of its units and whose page coordinates run
+/// along it as `page` says.
+fn sampling(matrix: &Affine, size: (i32, i32), texel: f64, page: (f64, f64)) -> Sampling {
     const NONE: Sampling = Sampling {
         shift: (0.0, 0.0),
         down: 0.0,
@@ -431,7 +432,7 @@ fn sampling(matrix: &Affine, size: (i32, i32), texel: f64) -> Sampling {
     if place.is_aligned() {
         return NONE;
     }
-    let (sx, sy) = place.tie_sides(size);
+    let (sx, sy) = place.tie_sides(size, page);
     let Some(inv) = matrix.inverse().filter(|_| (sx, sy) != (0.0, 0.0)) else {
         return NONE;
     };
@@ -1000,7 +1001,12 @@ impl Gpu {
             }
             (f64::from(s.u) + ix, f64::from(s.v) + iy)
         };
-        let on = sampling(m, (bw as i32, bh as i32), 1.0);
+        let page = page_signs(
+            s.attr & attr::ROTATION,
+            s.attr & attr::REVH != 0,
+            s.attr & attr::REVV != 0,
+        );
+        let on = sampling(m, (bw as i32, bh as i32), 1.0, page);
         let (sx, sy) = on.shift;
         let texture = match usize::try_from(s.page) {
             Ok(p) => {
@@ -1068,13 +1074,19 @@ impl Gpu {
             false => SDL_BLENDMODE_BLEND,
         };
         let size_on_image = (t.char_size as i32, t.char_size as i32);
-        let on = sampling(m, size_on_image, cs / f64::from(ft));
+        let on = sampling(m, size_on_image, cs / f64::from(ft), (1.0, 1.0));
         // The corners of a cell on its glyph, for each ATTR. As the CPU's
         // draw_turned: the character is flipped, then turned.
         let scale = f64::from(ft) / cs;
         let mut corners = [[(0.0, 0.0); 4]; 16];
         for (a, out) in corners.iter_mut().enumerate() {
             let a = a as u16;
+            let page = page_signs(
+                i32::from(a & text::attr::ROTATION),
+                a & text::attr::REVH != 0,
+                a & text::attr::REVV != 0,
+            );
+            let on = sampling(m, size_on_image, cs / f64::from(ft), page);
             let point = |lx: f64, ly: f64| {
                 let (px, py) = (lx + on.shift.0, ly + on.shift.1);
                 let (mut px, mut py) = match a & text::attr::ROTATION {
@@ -2653,7 +2665,7 @@ mod tests {
 
     #[test]
     fn what_cannot_tie_is_sampled_as_it_is() {
-        let on = sampling(&scaled(1.0, 3.0), (16, 16), 1.0);
+        let on = sampling(&scaled(1.0, 3.0), (16, 16), 1.0, (1.0, 1.0));
         assert_eq!((on.shift, on.down), ((0.0, 0.0), 0.0));
         let turn = (0.3_f64.sin(), 0.3_f64.cos());
         let m = Affine {
@@ -2663,7 +2675,7 @@ mod tests {
             d: turn.1,
             ..Affine::IDENTITY
         };
-        let on = sampling(&m, (16, 16), 1.0);
+        let on = sampling(&m, (16, 16), 1.0, (1.0, 1.0));
         assert_eq!((on.shift, on.down), ((0.0, 0.0), 0.0));
     }
 
@@ -2671,7 +2683,7 @@ mod tests {
     /// moving the element down does not move what lies under a pixel.
     #[test]
     fn a_tie_goes_as_the_cpu_rule_says() {
-        let on = sampling(&scaled(1.0, 3.5), (16, 16), 1.0);
+        let on = sampling(&scaled(1.0, 3.5), (16, 16), 1.0, (1.0, 1.0));
         assert_eq!(on.down, COVER_BIAS);
         assert_eq!(on.shift.0, TIE_BIAS);
         assert_eq!(on.shift.1, TIE_BIAS + COVER_BIAS);

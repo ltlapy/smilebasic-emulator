@@ -315,8 +315,8 @@ fn tscreen_with_too_many_cells_is_out_of_range() {
 
 #[test]
 fn scaled_text_settles_ties_as_sprites_do() {
-    // TEST50: a user character's texels at TSCALE 1.5 and 0.5, on an 8-pixel
-    // cell: the frame's left and bottom at 1.5, the higher texel at 0.5.
+    // TEST63: a user character's texels at TSCALE 1.5 and 0.5, on an 8-pixel
+    // cell: the page's lower texel at 1.5, the higher at 0.5.
     let texels = |scale: &str, along: (u32, u32), step: (u32, u32), n: u32| -> Vec<u32> {
         let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
         m.boot();
@@ -354,8 +354,42 @@ fn scaled_text_settles_ties_as_sprites_do() {
     );
     assert_eq!(
         texels("1.5,1.5", (44, 40), (0, 1), 7),
-        [0, 1, 1, 2, 3, 3, 4]
+        [0, 0, 1, 2, 2, 3, 4]
     );
     assert_eq!(texels("0.5,0.5", (40, 42), (1, 0), 4), [1, 3, 5, 7]);
     assert_eq!(texels("0.5,0.5", (42, 40), (0, 1), 4), [1, 3, 5, 7]);
+}
+
+/// TEST63: on a half pixel a cell's bottom edge reads the page's next row, off the
+/// character, and at a side that is no power of two its left edge the column before.
+#[test]
+fn a_tie_can_read_the_page_past_a_cell() {
+    let run = |source: &str| {
+        let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+        m.boot();
+        m.set_slot(0, source.to_string());
+        m.run_slot(0);
+        for _ in 0..200 {
+            m.frame();
+            if !m.is_running() {
+                break;
+            }
+        }
+        m.rt.render().clone()
+    };
+    let page = "GTARGET 3:FOR Y=0 TO 47:FOR X=0 TO 47:GPSET X,Y,RGB(X*5+8,Y*5+8,100):NEXT:NEXT\n\
+                GTARGET 0:";
+    let fb = run(&format!(
+        "{page}TSCREEN 0,8,8:TPAGE 0,3,0,0:TOFS 0,40.5,40.5:LOCATE 0,0,0:TPRINT 0,CHR$(&HE800);"
+    ));
+    // The row under the cell's last, at the pixel its bottom edge runs through.
+    let green = |p: u32| ((p >> 8 & 255) - 8) / 5;
+    assert_eq!(green(fb.get(44, 48).unwrap()), 8);
+    let fb = run(&format!(
+        "{page}TSCREEN 0,24,24:TPAGE 0,3,0,0:TOFS 0,40.5,40.5:LOCATE 0,0,0:TPRINT 0,CHR$(&HE801);"
+    ));
+    // The character is the page's second of 24: its left edge reads the first's last.
+    let red = |p: u32| ((p >> 16 & 255) - 8) / 5;
+    assert_eq!(red(fb.get(40, 44).unwrap()), 23);
+    assert_eq!(red(fb.get(41, 44).unwrap()), 24);
 }

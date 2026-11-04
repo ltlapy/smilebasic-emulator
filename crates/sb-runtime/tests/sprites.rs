@@ -463,9 +463,10 @@ fn shown(list: &[u32]) -> Vec<Option<u32>> {
     list.iter().map(|&v| Some(v)).collect()
 }
 
+/// TEST63 on a Switch 2: a side and a scale that are powers of two read the
+/// page's higher texel, anything else the lower, at any flip.
 #[test]
 fn scaled_sprites_settle_ties_by_size_and_scale() {
-    // TEST50: 16 wide at 1.5 takes the frame's left and bottom on a tie...
     let sp = "SPSET 0,0,0,16,16:SPPAGE 0,3:SPOFS 0,40,40:SPSCALE 0,1.5,1.5";
     assert_eq!(
         texels(sp, (40, 44), (1, 0), 7),
@@ -473,9 +474,9 @@ fn scaled_sprites_settle_ties_by_size_and_scale() {
     );
     assert_eq!(
         texels(sp, (44, 40), (0, 1), 7),
-        shown(&[0, 1, 1, 2, 3, 3, 4])
+        shown(&[0, 0, 1, 2, 2, 3, 4])
     );
-    // ...at 0.5 the higher texel each way...
+    // At 0.5 the higher texel each way...
     let sp = "SPSET 0,0,0,16,16:SPPAGE 0,3:SPOFS 0,40,40:SPSCALE 0,0.5,0.5";
     assert_eq!(texels(sp, (40, 44), (1, 0), 4), shown(&[1, 3, 5, 7]));
     assert_eq!(texels(sp, (44, 40), (0, 1), 4), shown(&[1, 3, 5, 7]));
@@ -484,6 +485,25 @@ fn scaled_sprites_settle_ties_by_size_and_scale() {
     assert_eq!(texels(sp, (44, 40), (0, 1), 4), shown(&[0, 0, 1, 2]));
     let sp = "SPSET 0,0,0,15,15:SPPAGE 0,3:SPOFS 0,40,40:SPSCALE 0,0.5,0.5";
     assert_eq!(texels(sp, (40, 44), (1, 0), 4), shown(&[0, 2, 4, 6]));
+}
+
+#[test]
+fn a_flip_keeps_a_tie_on_the_same_side_of_the_page() {
+    // 16 flipped at a scale of 1: still the higher texel, so on the frame the
+    // texel before the plain one, and 15 the lower.
+    let sp = "SPSET 0,0,0,16,16,&H4:SPPAGE 0,3:SPOFS 0,40.5,40.5";
+    assert_eq!(texels(sp, (41, 44), (1, 0), 4), shown(&[15, 14, 13, 12]));
+    let sp = "SPSET 0,0,0,15,15,&H4:SPPAGE 0,3:SPOFS 0,40.5,40.5";
+    assert_eq!(texels(sp, (41, 44), (1, 0), 4), shown(&[13, 12, 11, 10]));
+    let sp = "SPSET 0,0,0,15,15:SPPAGE 0,3:SPOFS 0,40.5,40.5";
+    assert_eq!(texels(sp, (41, 44), (1, 0), 4), shown(&[0, 1, 2, 3]));
+}
+
+/// TEST63: a tie before the page's first texel reads that one.
+#[test]
+fn a_tie_before_the_page_reads_its_first_texel() {
+    let sp = "SPSET 0,0,0,15,15:SPPAGE 0,3:SPOFS 0,40.5,40.5";
+    assert_eq!(texels(sp, (40, 44), (1, 0), 2), shown(&[0, 0]));
 }
 
 /// TEST62 on a Switch 2: at a scale of 1 a tie goes to the higher texel, and on

@@ -76,7 +76,14 @@ pub fn draw(
     }
     let tie = match place.is_aligned() {
         true => (0.0, 0.0),
-        false => place.texel_tie((bw, bh)),
+        false => place.texel_tie(
+            (bw, bh),
+            compose::page_signs(
+                s.attr & attr::ROTATION,
+                s.attr & attr::REVH != 0,
+                s.attr & attr::REVV != 0,
+            ),
+        ),
     };
     if place.is_upright() {
         return draw_upright(&source, &tint, fb, &place, (bw, bh), tie, grp);
@@ -207,6 +214,22 @@ impl Source<'_> {
         }
     }
 
+    /// [`Source::pixel`] for a point off the page: a tie just before the page's
+    /// first texel reads that one; just after the last, nothing.
+    #[cold]
+    #[inline(never)]
+    fn pixel_off_page(&self, x: i32, y: i32) -> u32 {
+        let on = |v: i32| match v {
+            -1 => Some(0),
+            0..GRP_SIZE => Some(v as usize),
+            _ => None,
+        };
+        match (on(x), on(y)) {
+            (Some(x), Some(y)) if !self.repeat => self.page[y * GRP_SIZE as usize + x],
+            _ => 0,
+        }
+    }
+
     /// The page pixel at a page point, as [`sample`] gives it.
     #[inline]
     fn pixel(&self, x: i32, y: i32) -> u32 {
@@ -215,7 +238,7 @@ impl Source<'_> {
         }
         match (self.wrap(x), self.wrap(y)) {
             (Some(x), Some(y)) => self.page[y * GRP_SIZE as usize + x],
-            _ => 0,
+            _ => self.pixel_off_page(x, y),
         }
     }
 }
@@ -241,7 +264,12 @@ fn draw_upright(
         return;
     };
     let stride = GRP_SIZE as usize;
-    let at = |v: i32, step: usize| source.wrap(v).map_or(NONE, |v| v * step);
+    // A tie just before the page's first texel reads that one.
+    let at = |v: i32, step: usize| match source.wrap(v) {
+        Some(v) => v * step,
+        None if v == -1 => 0,
+        None => NONE,
+    };
     // A quarter turn makes frame columns go down the page, and rows
     // across it.
     let turned = (source.attr & attr::ROTATION) % 2 == 1;

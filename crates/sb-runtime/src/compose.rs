@@ -627,14 +627,13 @@ impl Placement<'_> {
 
     /// What to add to an image point from [`Placement::sampling`] to get
     /// the point whose whole part is the texel it reads, for an image of
-    /// `size`. It may land just off the image, which reads the page there.
-    /// Exactly zero where nothing can tie, so that callers may leave out the
-    /// adding.
-    // UNVERIFIED: flips, and a side of another size at most turns: a few sprites
-    // of sizes 8, 15 and 16 on a Switch 2, the rest on a PC's GPU; see
-    // renderer-design.md. A side of another size at a scale of 1 goes up on one of
-    // the quad's triangles, and down on the other, as here.
-    pub fn texel_tie(&self, size: (i32, i32)) -> (f64, f64) {
+    /// `size` whose page coordinates run along the image as `page` says, from
+    /// [`page_signs`]. An image side and a scale that are both powers of two
+    /// make the arithmetic exact, and a tie goes to the page's higher texel;
+    /// anything else, to the lower. The point may land just off the image,
+    /// which reads the page there. Exactly zero where nothing can tie, so that
+    /// callers may leave out the adding.
+    pub fn texel_tie(&self, size: (i32, i32), page: (f64, f64)) -> (f64, f64) {
         let m = &self.matrix;
         let (nx, ny) = COVER_NUDGE;
         let Some(inv) = m.inverse() else {
@@ -643,10 +642,7 @@ impl Placement<'_> {
         let moved = (inv.a * nx + inv.b * ny, inv.c * nx + inv.d * ny);
         let along = |tie: (f64, f64)| (tie.0 - moved.0, tie.1 - moved.1);
         let (sx, sy) = (m.a.abs() + m.c.abs(), m.b.abs() + m.d.abs());
-        let none_of = |p: f64, q: f64| p.abs() <= 1e-9 * q.abs();
-        let right_angle =
-            (none_of(m.a, m.c) && none_of(m.d, m.b)) || (none_of(m.c, m.a) && none_of(m.b, m.d));
-        if !right_angle {
+        if !self.is_right_angle() {
             // Only at multiples of 45 degrees can a center land exactly
             // between texels at all.
             let even = |p: f64, q: f64| (p.abs() - q.abs()).abs() <= 1e-9 * (p.abs() + q.abs());
@@ -655,38 +651,50 @@ impl Placement<'_> {
                 false => (0.0, 0.0),
             };
         }
-        // Towards the frame's left and bottom, along the image.
-        let frame = (
-            (inv.b - inv.a).signum() * TIE,
-            (inv.d - inv.c).signum() * TIE,
-        );
-        let axis = |size: i32, scale: f64, frame: f64| match (
-            size.unsigned_abs().is_power_of_two(),
-            is_power_of_two(scale),
-        ) {
-            (false, _) => -TIE,
-            (true, true) => TIE,
-            (true, false) => frame,
+        let axis = |size: i32, scale: f64, page: f64| match size.unsigned_abs().is_power_of_two()
+            && is_power_of_two(scale)
+        {
+            true => TIE * page,
+            false => -TIE * page,
         };
-        along((axis(size.0, sx, frame.0), axis(size.1, sy, frame.1)))
+        along((axis(size.0, sx, page.0), axis(size.1, sy, page.1)))
     }
-}
 
-impl Placement<'_> {
+    /// Whether the image's axes lie along the frame's, in either order.
+    pub fn is_right_angle(&self) -> bool {
+        let m = &self.matrix;
+        let none_of = |p: f64, q: f64| p.abs() <= 1e-9 * q.abs();
+        (none_of(m.a, m.c) && none_of(m.d, m.b)) || (none_of(m.c, m.a) && none_of(m.b, m.d))
+    }
+
     /// Along which side of each image axis [`Placement::texel_tie`] settles
     /// a tie, as -1 or 1, for a rasterizer that samples in its own way; 0 for
     /// both where nothing can tie. Inline, so that a headless build has no
     /// call to it, which changes what the compiler inlines on the CPU's paths
     /// (0.4% of TMULTI's instructions, measured).
     #[inline]
-    pub fn tie_sides(&self, size: (i32, i32)) -> (f64, f64) {
-        let tie = self.texel_tie(size);
+    pub fn tie_sides(&self, size: (i32, i32), page: (f64, f64)) -> (f64, f64) {
+        let tie = self.texel_tie(size, page);
         let Some(inv) = self.matrix.inverse().filter(|_| tie != (0.0, 0.0)) else {
             return (0.0, 0.0);
         };
         let (nx, ny) = COVER_NUDGE;
         let moved = (inv.a * nx + inv.b * ny, inv.c * nx + inv.d * ny);
         ((tie.0 + moved.0).signum(), (tie.1 + moved.1).signum())
+    }
+}
+
+/// Which way the page's coordinates run along the two axes of the shown
+/// rectangle, as 1 or -1, for an attribute's turn and flips: the image is
+/// flipped, then turned.
+#[inline]
+pub fn page_signs(turn: i32, revh: bool, revv: bool) -> (f64, f64) {
+    let (h, v) = (if revh { -1.0 } else { 1.0 }, if revv { -1.0 } else { 1.0 });
+    match turn & 3 {
+        0 => (h, v),
+        1 => (-v, h),
+        2 => (-h, -v),
+        _ => (v, -h),
     }
 }
 
@@ -1621,14 +1629,14 @@ mod tests {
     }
 
     #[test]
-    fn ties_settle_along_the_image_or_the_frame() {
-        let tie = |rot, scale, size| {
+    fn ties_settle_along_the_page() {
+        let tie = |rot, scale, size, page| {
             let place = Placement {
                 matrix: Affine::place((100.5, 50.5), (0.0, 0.0), rot, (scale, scale)),
                 clip: None,
                 add: false,
             };
-            let (x, y) = place.texel_tie((size, size));
+            let (x, y) = place.texel_tie((size, size), page);
             // What matters is the sign of what the point ends up moved by
             // from where it was before covering was settled.
             let inv = place.matrix.inverse().unwrap();
@@ -1636,18 +1644,29 @@ mod tests {
             let (mx, my) = (inv.a * nx + inv.b * ny, inv.c * nx + inv.d * ny);
             ((x + mx).signum() as i32, (y + my).signum() as i32)
         };
-        // A size that halves evenly at a scale that does: plain floor.
-        assert_eq!(tie(0.0, 0.5, 16), (1, 1));
-        assert_eq!(tie(90.0, 1.0, 32), (1, 1));
-        // At other scales: towards the frame's left and bottom.
-        assert_eq!(tie(0.0, 1.5, 16), (-1, 1));
-        assert_eq!(tie(180.0, 2.5, 16), (1, -1));
-        assert_eq!(tie(90.0, 1.5, 16), (1, 1));
-        assert_eq!(tie(270.0, 2.5, 16), (-1, -1));
-        // Other sizes: towards the image's lower coordinates.
-        assert_eq!(tie(0.0, 1.5, 15), (-1, -1));
+        let plain = (1.0, 1.0);
+        // A side and a scale that are powers of two: the page's higher texel.
+        assert_eq!(tie(0.0, 0.5, 16, plain), (1, 1));
+        assert_eq!(tie(90.0, 1.0, 32, plain), (1, 1));
+        assert_eq!(tie(0.0, 1.0, 16, (-1.0, 1.0)), (-1, 1));
+        // Anything else: the lower, whichever way the image lies.
+        assert_eq!(tie(0.0, 1.5, 16, plain), (-1, -1));
+        assert_eq!(tie(180.0, 1.5, 16, (-1.0, 1.0)), (1, -1));
+        assert_eq!(tie(0.0, 1.0, 15, plain), (-1, -1));
+        assert_eq!(tie(90.0, 1.0, 24, (1.0, -1.0)), (-1, 1));
         // Neither upright nor at a quarter turn.
-        assert_eq!(tie(45.0, 1.0, 15), (1, -1));
+        assert_eq!(tie(45.0, 1.0, 15, plain), (1, -1));
+    }
+
+    #[test]
+    fn the_page_runs_as_the_image_is_flipped_then_turned() {
+        assert_eq!(page_signs(0, false, false), (1.0, 1.0));
+        assert_eq!(page_signs(0, true, false), (-1.0, 1.0));
+        assert_eq!(page_signs(1, false, false), (-1.0, 1.0));
+        assert_eq!(page_signs(1, true, true), (1.0, -1.0));
+        assert_eq!(page_signs(2, false, false), (-1.0, -1.0));
+        assert_eq!(page_signs(3, false, false), (1.0, -1.0));
+        assert_eq!(page_signs(3, false, true), (-1.0, -1.0));
     }
 
     #[test]

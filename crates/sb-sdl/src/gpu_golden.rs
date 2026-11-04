@@ -126,6 +126,21 @@ pub const SCENES: &[Golden] = &[
         ),
         0.01,
     ),
+    // Where a pixel's center falls exactly between two texels, on half pixels and
+    // at 1.5, flipped and turned, sprites and a cell of each size.
+    scene(
+        "ties",
+        "ACLS:GCLS 0:GTARGET 3:FOR Y=0 TO 99:FOR X=0 TO 99\n\
+         GPSET X,Y,RGB(40+X*2,40+Y*2,128):NEXT:NEXT:GTARGET 0\n\
+         N=0:FOR S=0 TO 2:FOR A=0 TO 15:W=16-(S==1)\n\
+         SPSET N,20,20,W,W,A:SPPAGE N,3\n\
+         IF S==2 THEN SPSCALE N,1.5,1.5:SPOFS N,4+A*25,180 ELSE SPOFS N,4.5+A*25,8.5+S*30\n\
+         N=N+1:NEXT:NEXT\n\
+         TSCREEN 0,16,16,16,2:TPAGE 0,3,0,0:TOFS 0,4.5,80.5\n\
+         TSCREEN 1,16,16,16,2:TPAGE 1,3,0,0:TOFS 1,4,120:TSCALE 1,1.5,1.5\n\
+         FOR A=0 TO 15:TPUT 0,A,0,CHR$(&HE801),A:TPUT 1,A,0,CHR$(&HE801),A:NEXT\n",
+        0.01,
+    ),
     scene(
         "text",
         "BACKCOLOR &HFF102030\n\

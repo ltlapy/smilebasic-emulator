@@ -341,7 +341,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Sampled without smoothing, at frame pixel centres; away from ties every rotation and scale fits with no misses | `draw_image`, `draw_upright` | C (R5): TEST50 generic angles |
 | With XSCREEN sample > 1, sprites are sampled at the finer pixels' centres; LCLIP grows to whole fine pixels | `Layer::fine` | C (R6): TEST50 part 2 (LCLIP exact; the fine grid misses only 56 tie pixels of 54298) |
 | Coverage: a pixel is drawn when its centre, nudged right then up, lies on the image, at any rotation: an edge through the centre takes it if it is the left or bottom edge on the frame | `Placement::sampling` | C (R5): TEST50, no coverage miss in any part, text included (consistent with a rasteriser's top-left rule on a target drawn flipped) |
-| A sample point exactly between texels, at a multiple of 90 degrees: image side a power of two and scale a power of two: the higher texel; power of two with another scale: towards the frame's left and bottom; another side: towards the shown rectangle's lower coordinates. The point may land just off the image, and reads the page there | `Placement::texel_tie`, `texel` | C on a Switch 2, for sizes 8, 15, 16 at scales 1 and 1.5, a side of another size at scale 1 excepted (TEST62); U for the rest (R5, R8); see below |
+| A sample point exactly between texels, at a multiple of 90 degrees: image side a power of two and scale a power of two: the page's higher texel; anything else: the page's lower, at any turn or flip. The point may land just off the image, and reads the page there; before the page's first texel it reads that one, after the last nothing | `Placement::texel_tie`, `page_signs`, `texel`, `Source::wrap` | C on a Switch 2, 3831 sprites (TEST63); the first case without a miss on the exact shots, the second about 9 in 10 of what it covers; see below |
 | The same at other angles (only 45-degree multiples can tie): image x higher, image y lower; kept on the image | `Placement::texel_tie` | U (R5): TEST50, no misses but 21 pixels reading the row above the image |
 | SPCHR W and H are the size as shown (turned size rule) | `sp.rs` | C: pitfalls; TEST45, TEST46 |
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
@@ -357,7 +357,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Rule | Where | Status |
 |---|---|---|
 | Flip then turn for ATTR | `raster::text::draw` | C: pitfalls |
-| Ties: as for sprites of the cell's size, per cell (a block of cells shows what a sprite of the same size does) | `draw_turned`, `draw_upright` | C (R8) that text and sprites go alike: TEST50, parts 3 and 4; U for the rule itself, as for sprites |
+| Ties: as for sprites of the cell's size, per cell and by its ATTR. A cell reads the page past itself, what lies beside it on the font page or `TPAGE` | `draw_turned`, `draw_upright` | C on a Switch 2, 12 screens of 16 cells (TEST63) |
 | Font types 24-64 show only user-defined characters; GPUTCHR with them reads GRP5 in 24-pixel cells | `glyph_pixel_px` | C: pitfalls |
 | Tab stops every 4 columns | `TAB_WIDTH` | S: pitfalls; marker in `text.rs` |
 | `CHR$(10)` starts a new line | `TextScreen::print` | S: pitfalls; marker in `text.rs` |
@@ -489,6 +489,54 @@ the code at once (ACLS clearing FADE was dropped with TEST47):
 
 ### 2.10 Proposed TTEST batches
 
+#### What TEST63 says about ties
+
+TEST63 ran 3831 sprites and 12 text screens on a real Switch 2. Sizes 8 to 64 at
+scales 0.5 to 2, whole, half and quarter positions, every turn and flip. The album's
+JPEGs of the first three shots have coarse tables (quantisation sum 736, against 64),
+so one pixel's V is not to be trusted there; shots 4 to 7, 256 sprites and the text,
+read to within 1. Ties are read per line of the image and per triangle, by summing a
+line's pixels.
+
+| Rule, tie pixels missed | Sprites, all shots | Sprites, exact | Text |
+|---|---|---|---|
+| The rule before (TEST62's) | 527889 | 92622 | 30896 |
+| All lower | 562972 | 101750 | 45360 |
+| All higher | 1026837 | 229466 | 26288 |
+| Power of two side and scale higher, else lower | **143769** | **15734** | **6448** |
+| The same, frame's x going down higher | 375863 | 73048 | 8920 |
+| Of tie pixels | 1589809 | 331216 | 71648 |
+
+By class, for the rule kept, exact shots first and then all shots:
+
+| Side, scale | Missed, exact | Of | Missed, all | Of |
+|---|---|---|---|---|
+| Power of two, power of two | 0 | 86016 | 2385 | 423973 |
+| Other, power of two | 3568 | 102976 | 80879 | 599418 |
+| Power of two, other | 5172 | 64512 | 26785 | 256168 |
+| Other, other | 6994 | 77712 | 33720 | 310250 |
+
+The first row is exact arithmetic: the side and the scale leave nothing to round, and
+floor reads the higher texel. It holds at every flip and turn, which is why the rule goes
+by the page and not by the rectangle or the frame, as the rules before did. Everything else
+has rounded and comes out just low, whichever way the image runs.
+
+What is left is GPU noise, and not a simple rule: the same 16x16 at 1.5 reads its V high at
+Y 404 and low at Y 377; a line along the image can change from high to low part of the
+way through; at 270 degrees often one triangle goes the other way. A family of single-precision
+models of the rasteriser, Y flipped or not, plane equations relative to a vertex or
+to the origin, barycentrics, by division or by a reciprocal, rounding to nearest or
+truncating, at each of the 6 anchors (500 models), was scored on the exact shots: the
+best, truncating barycentrics, misses 1604 lines of 22112 where the rule misses 1135,
+and none of those models does better than the rule. So the rule stays simple, and the CPU
+needs no triangles and no fast path for them.
+
+Against the shots, pixels more than 20 of luma off: 280599 before, 67416 after, and on
+the exact shots 58124, 10662. TEST62's 22 sprites, all in the noise class where
+it counts, go from 105 to 746 off. TEST50's Ryujinx shots get better in part 1 (1249 to
+880), the same in 2, and worse in part 3 (464 to 2968) and 4 (594 to 1298). TEST56 part 2,
+Ryujinx, goes from 2128 to 649. A real Switch outranks these.
+
 #### What TEST50 says about ties
 
 Every page pixel in TEST50 has its own colour, so each screenshot pixel
@@ -499,7 +547,8 @@ different places. Simulating the quad in single precision (vertices
 through the matrix and viewport, attributes by plane equations and by
 barycentrics, snapped to 1/256 or not) did not reproduce which way each
 tie goes, so what remains seems to be the host GPU's, and a real Switch
-may differ. The rule in [2.2](#22-sprites) takes the usual outcome:
+may differ. TEST63 above settled that. What follows is the history; the rule at the time took the usual
+outcome:
 
 | Part, group | Pixels | Misses before | After |
 |---|---|---|---|
@@ -1161,8 +1210,8 @@ These can match the CPU exactly:
   with a 24-bit mantissa. Pixels whose sample point lies within about
   1e-4 of a texel or image boundary can fall the other way. The tie rule
   (`Placement::texel_tie`) cannot be reproduced in f32 as written; it
-  needs its own bias. SmileBASIC 4's own ties depend on the GPU's
-  arithmetic in any case ([2.10](#210-proposed-ttest-batches)).
+  needs its own bias. What is not a power of two on SmileBASIC 4 keeps
+  some noise of its GPU's in any case ([2.10](#210-proposed-ttest-batches)).
 - **Raster filter coordinates and the colour filter's HSV**: these are
   f64 on the CPU today.
 - **Fixed-function blending**, as SmileBASIC 4 uses (4.1): ±1 per
@@ -1336,9 +1385,11 @@ The rest:
 - **Ties.** A sample moved by 1/128 of a texel the way `Placement::texel_tie`
   says, and an element that can tie moved 1/256 of a pixel down, follow the rule
   for edges and texels (TEST50 above; 183 pixels of 921600 differ from the CPU in
-  part 1, none in parts 3 and 5). The rule's clamp to the image needs a shader
-  and a per-element uniform, which would end batching. It was not done, as
-  SmileBASIC 4's own ties depend on the host GPU.
+  part 1, none in parts 3 and 5). The golden scene `ties` of sprites and cells, on half
+  pixels and at 1.5, flipped and turned, has none off. Left to the host's own rasteriser, with
+  no bias, that scene has 24704 of 384000 pixels off: the host's arithmetic goes its
+  own way, whatever the order of the vertices, so the bias stays. A bias follows the rule, not
+  the noise a real Switch has besides.
 - **Drivers.** SPROT, LCOMP and TMULTI differ from the CPU alike on opengl,
   opengles2 and SDL's gpu driver on the NVIDIA GPU, on SDL's vulkan driver, on the
   gpu driver on lavapipe and on opengles2 on llvmpipe. SDL's vulkan driver costs
