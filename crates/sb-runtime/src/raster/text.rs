@@ -223,7 +223,9 @@ impl TextItem {
         };
         if filled * 2 >= count {
             if turned.simple && cs == ft && !turning {
-                return draw_texels(fb, place, w, h, |x, y| turned.plain(x as u32, y as u32));
+                return draw_texels(fb, place, w, h, (0.0, 0.0), |x, y| {
+                    turned.plain(x as u32, y as u32)
+                });
             }
             draw_image_part(fb, place, w, h, (0, 0, w, h), |x, y| {
                 turned.pixel(x, y, None)

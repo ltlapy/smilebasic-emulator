@@ -510,7 +510,8 @@ pub fn draw_image_part<P: Paint>(
 }
 
 /// [`draw_image`] for what reads whole texels: `pixel` gets the point under
-/// each frame pixel's center rounded down, which is on the image. Most pixels
+/// each frame pixel's center, moved by `tie` from [`Placement::texel_tie`],
+/// rounded down. That is on the image, or one off it by a tie. Most pixels
 /// take no floating point, which a small CPU feels most: the point is stepped
 /// along a row in fixed point, and only where that lies so near a whole number
 /// that it might round the other way is it worked out as `draw_image` does, so
@@ -520,6 +521,7 @@ pub fn draw_texels<P: Paint>(
     place: &Placement,
     w: i32,
     h: i32,
+    (tx, ty): (f64, f64),
     mut pixel: impl FnMut(i32, i32) -> Option<P>,
 ) {
     /// One texel, in fixed point.
@@ -528,7 +530,7 @@ pub fn draw_texels<P: Paint>(
     const FRACTION: i64 = (1 << 40) - 1;
     /// How near a whole number the fixed point may be off from the exact sum:
     /// far more than the steps of a frame's width at one unit each, and than the
-    /// exact sum's rounding within the limit below.
+    /// exact sum's rounding within the limit below. A tie adds to it.
     const NEAR: i64 = 1 << 12;
     /// Above this, for any term of a sum, the sum's rounding is not small
     /// enough, or fixed point not large enough.
@@ -546,10 +548,14 @@ pub fn draw_texels<P: Paint>(
         && inv.ty.abs() < LIMIT
         && w < 65536
         && h < 65536
-        && width < 3000.0;
+        && width < 3000.0
+        && tx.abs() < 1e-6
+        && ty.abs() < 1e-6;
+    let whole = |v: f64| v as i32 - i32::from(v < 0.0);
     if !in_limit {
-        return draw_image(fb, place, w, h, |x, y| pixel(x as i32, y as i32));
+        return draw_image(fb, place, w, h, |x, y| pixel(whole(x + tx), whole(y + ty)));
     }
+    let near = NEAR + (tx.abs().max(ty.abs()) * ONE) as i64;
     let Some((x0, y0, x1, y1)) = span(fb, place, w, h, (0, 0, w, h)) else {
         return;
     };
@@ -568,11 +574,12 @@ pub fn draw_texels<P: Paint>(
         let (mut gx, mut gy) = ((lx * ONE) as i64, (ly * ONE) as i64);
         for (px, dst) in (from..to).zip(&mut line[from as usize..to as usize]) {
             let (x, y) = (gx >> 40, gy >> 40);
-            let near = ((gx + NEAR) & FRACTION) < 2 * NEAR || ((gy + NEAR) & FRACTION) < 2 * NEAR;
+            let exact = ((gx + near) & FRACTION) < 2 * near || ((gy + near) & FRACTION) < 2 * near;
             (gx, gy) = (gx + dx, gy + dy);
-            let at = if near {
+            let at = if exact {
                 let (lx, ly) = inv.apply(f64::from(px) + 0.5, fy);
-                (lx >= 0.0 && ly >= 0.0 && lx < fw && ly < fh).then_some((lx as i32, ly as i32))
+                (lx >= 0.0 && ly >= 0.0 && lx < fw && ly < fh)
+                    .then(|| (whole(lx + tx), whole(ly + ty)))
             } else {
                 // Also false for a negative one.
                 ((x as u64) < w as u64 && (y as u64) < h as u64).then_some((x as i32, y as i32))
@@ -1546,10 +1553,11 @@ mod tests {
                 f64::from(r() % 1200) / 8.0 - 60.0,
             );
             let home = (f64::from(r() % 32), f64::from(r() % 32));
-            // Whole degrees, the 45s among them, and now and then none at all.
+            // Whole degrees, the 45s and quarter turns, which can tie, and any.
             let rot = match i % 4 {
                 0 => f64::from(r() % 360),
                 1 => f64::from(r() % 8) * 45.0,
+                2 => f64::from(r() % 4) * 90.0,
                 _ => f64::from(r()) / 1e6,
             };
             let scale = match i % 3 {
@@ -1563,12 +1571,14 @@ mod tests {
                 add: false,
             };
             let (w, h) = ((r() % 64 + 1) as i32, (r() % 64 + 1) as i32);
+            let tie = place.texel_tie((w, h), (1.0, 1.0));
+            let whole = |v: f64| v as i32 - i32::from(v < 0.0);
             let mut slow = Framebuffer::new(160, 96);
             draw_image(&mut slow, &place, w, h, |x, y| {
-                Some(Over1::new(color(x as i32, y as i32)))
+                Some(Over1::new(color(whole(x + tie.0), whole(y + tie.1))))
             });
             let mut fast = Framebuffer::new(160, 96);
-            draw_texels(&mut fast, &place, w, h, |x, y| {
+            draw_texels(&mut fast, &place, w, h, tie, |x, y| {
                 Some(Over1::new(color(x, y)))
             });
             assert_eq!(slow.pixels(), fast.pixels(), "{place:?} {w} {h}");

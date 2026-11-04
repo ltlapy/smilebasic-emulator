@@ -101,31 +101,42 @@ pub fn draw(
             let (bw, bh) = self.size;
             let source = self.source;
             let (tx, ty) = self.tie;
-            // At most angles nothing ties, and this is for each pixel.
-            if (tx, ty) == (0.0, 0.0) {
-                // GRP-1 is one color all over.
-                if source.white {
-                    let white = paint(0xFFFF_FFFF);
-                    return draw_image(self.fb, self.place, bw, bh, |_, _| Some(white));
-                }
-                // The usual image, wholly on its page: a point is a place on
-                // the page by a sum, with no ifs. Scaled up, neighbors show the
-                // same page pixel, whose paint is worked out once.
-                if let Some((base, kx, ky)) = source.linear() {
-                    let page = source.page;
-                    let (mut held, mut held_paint) = (0, paint(0));
-                    return draw_texels(self.fb, self.place, bw, bh, |x, y| {
-                        let p = page[(base + x * kx + y * ky) as usize];
-                        if p >> 24 == 0 {
-                            return None;
-                        }
-                        if p != held {
-                            held = p;
-                            held_paint = paint(p);
-                        }
-                        Some(held_paint)
+            // GRP-1 is one color all over.
+            if source.white {
+                let white = paint(0xFFFF_FFFF);
+                return draw_image(self.fb, self.place, bw, bh, |_, _| Some(white));
+            }
+            // The usual image, wholly on its page: a point on the image is a
+            // place on the page by a sum, with no ifs. Scaled up, neighbors show
+            // the same page pixel, whose paint is worked out once.
+            if let Some((base, kx, ky)) = source.linear() {
+                let page = source.page;
+                let (mut held, mut held_paint) = (0, paint(0));
+                let mut painted = move |p: u32| {
+                    if p >> 24 == 0 {
+                        return None;
+                    }
+                    if p != held {
+                        held = p;
+                        held_paint = paint(p);
+                    }
+                    Some(held_paint)
+                };
+                // At most angles nothing ties, and this is for each pixel.
+                if (tx, ty) == (0.0, 0.0) {
+                    return draw_texels(self.fb, self.place, bw, bh, self.tie, |x, y| {
+                        painted(page[(base + x * kx + y * ky) as usize])
                     });
                 }
+                return draw_texels(self.fb, self.place, bw, bh, self.tie, |x, y| {
+                    painted(if (x as u32) < bw as u32 && (y as u32) < bh as u32 {
+                        page[(base + x * kx + y * ky) as usize]
+                    } else {
+                        source.off_image(x, y)
+                    })
+                });
+            }
+            if (tx, ty) == (0.0, 0.0) {
                 return draw_image(self.fb, self.place, bw, bh, |x, y| {
                     let (x, y) = source.page_xy(x as i32, y as i32);
                     let p = source.pixel(x, y);
@@ -223,6 +234,15 @@ impl Source<'_> {
             let base = place(0, 0);
             (base, place(1, 0) - base, place(0, 1) - base)
         })
+    }
+
+    /// The page pixel under a point of the shown rectangle just off it, as a tie
+    /// reads it.
+    #[cold]
+    #[inline(never)]
+    fn off_image(&self, lx: i32, ly: i32) -> u32 {
+        let (x, y) = self.page_xy(lx, ly);
+        self.pixel(x, y)
     }
 
     /// The page point under the point (lx, ly) of the shown rectangle.
