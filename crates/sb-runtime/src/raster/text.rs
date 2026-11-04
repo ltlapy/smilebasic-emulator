@@ -99,8 +99,8 @@ impl TextItem {
         );
         // At a quarter turn a tie can read just off the cell, so what the
         // character's image holds goes one texel further each way.
-        let right_angle = place.is_right_angle();
-        let stride = ft as i32 + 2;
+        let margin = i32::from(place.is_right_angle());
+        let stride = ft as i32 + 2 * margin;
         // The cell's character in its colors, looked up once rather than
         // for every pixel it covers.
         let mut glyph = vec![0; (stride * stride) as usize];
@@ -113,7 +113,7 @@ impl TextItem {
                     continue;
                 }
                 paints.clear();
-                self.glyph(font, grp, cell, 1, &mut glyph, &mut paints);
+                self.glyph(font, grp, cell, margin, &mut glyph, &mut paints);
                 let (x0, y0) = ((cx * cs) as i32, (cy * cs) as i32);
                 let part = (x0, y0, x0 + cs as i32, y0 + cs as i32);
                 let page = page_signs(
@@ -145,11 +145,9 @@ impl TextItem {
                         py = size - py;
                     }
                     let at = |p: f64| {
-                        let t = (p * f64::from(ft) / size).floor() as i32;
-                        match right_angle {
-                            true => t.clamp(-1, ft as i32) + 1,
-                            false => t.clamp(0, ft as i32 - 1) + 1,
-                        }
+                        let t = p * f64::from(ft) / size;
+                        let t = t as i32 - i32::from(t < 0.0);
+                        t.clamp(-margin, ft as i32 - 1 + margin) + margin
                     };
                     paint_at(glyph[(at(py) * stride + at(px)) as usize], &paints)
                 });
