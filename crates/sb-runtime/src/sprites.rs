@@ -188,7 +188,7 @@ pub struct Sprite {
     pub layer: i32,
     pub vars: HashMap<VarKey, Value>,
     /// Animations playing, by [`anim::Target`].
-    pub anims: [Option<Track>; anim::TARGETS],
+    pub anims: [Option<Box<Track>>; anim::TARGETS],
     /// SPSTOP pauses the animations until SPSTART.
     pub anim_stopped: bool,
     /// SPCOL's settings; sprites without them never collide.
