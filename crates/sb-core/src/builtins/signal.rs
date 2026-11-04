@@ -226,9 +226,8 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 /// a0, with the band-pass at a 0 dB peak and shelves taking Q (all eight
 /// types match hardware to five places). Elements 5 to 12 are left alone.
 // Checked on hardware: the gain is given for types 5 to 7 only, else
-// Wrong number of arguments, and a zero rate is an Illegal function call.
-// UNVERIFIED: expected of SmileBASIC 4, not yet seen: the gain's count
-// comes first, and a zero Q is an Illegal function call too.
+// Wrong number of arguments, checked first; a zero rate or Q is an Illegal
+// function call.
 pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let params = coefficient_array(&args[0])?;
     let kind = args[1].to_int()?;

@@ -71,7 +71,6 @@ fn element(value: &Value) -> Str {
     let mut out: Str = format!("({})\"", s.len()).encode_utf16().collect();
     out.extend(s.iter().take(STRING_CHARS));
     // A string of exactly 256 characters is cut too.
-    // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
     if s.len() < STRING_CHARS {
         out.push(u16::from(b'"'));
     }

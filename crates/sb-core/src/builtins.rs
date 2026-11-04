@@ -212,7 +212,7 @@ fn real_fn(args: &[Value], f: fn(f64) -> f64) -> Result<Value> {
 }
 
 /// Arguments outside a function's domain raise Out of range: SQR below 0,
-/// LOG at 0 or below, ASIN and ACOS past 1. UNVERIFIED: expected of SmileBASIC 4 for all but SQR, not yet seen.
+/// LOG at 0 or below, ASIN and ACOS past 1.
 fn checked_real(args: &[Value], f: fn(f64) -> Option<f64>) -> Result<Value> {
     f(args[0].to_real()?)
         .map(Value::Real)

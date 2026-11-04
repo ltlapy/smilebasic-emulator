@@ -257,7 +257,7 @@ impl Lexer {
         self.line += 1;
         self.col = 1;
         // Blank lines after the backslash are skipped too; a bundled program
-        // relies on it. UNVERIFIED: whether comment-only lines are skipped.
+        // relies on it. A comment-only line is not.
         loop {
             let mut j = 0;
             while matches!(self.peek_at(j), Some(' ' | '\t')) {
@@ -373,8 +373,8 @@ impl Lexer {
         self.push(TokenKind::Ident { name, suffix }, start);
     }
 
-    // UNVERIFIED: a string missing its closing quote ends at the end of the
-    // line, and there is no escape for `"` inside a literal (CHR$(34) is the
+    // A string missing its closing quote ends at the end of the line.
+    // UNVERIFIED: there is no escape for `"` inside a literal (CHR$(34) is the
     // usual workaround).
     fn string(&mut self, start: Span) {
         self.bump();

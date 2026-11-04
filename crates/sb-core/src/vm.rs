@@ -18,11 +18,14 @@ use crate::ops;
 use crate::value::{Array, ArrayData, ElemType, Str, Value, format_number, new_str};
 use crate::watch::Watch;
 
-/// UNVERIFIED: SmileBASIC's own nesting limits are not documented.
-pub const MAX_CALL_DEPTH: usize = 4096;
-pub const MAX_GOSUB_DEPTH: usize = 4096;
+// UNVERIFIED: the exact depths, and what a DEF's arguments and variables do to
+// its own. SmileBASIC 4 counts one stack for all of it; here each has a limit of
+// its own, at the depth a real one reached.
+pub const MAX_CALL_DEPTH: usize = 25_888;
+pub const MAX_GOSUB_DEPTH: usize = 259_040;
 /// How many READ places RESTORE "PUSH" keeps.
-const MAX_DATA_KEPT: usize = 65536;
+// UNVERIFIED: the limit, if any; 70000 fit.
+const MAX_DATA_KEPT: usize = 1 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -1659,7 +1662,6 @@ impl Vm {
         let s = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
         match s.as_str() {
             "PUSH" => {
-                // UNVERIFIED: how many places it keeps; 1000 were fine.
                 if self.data_kept.len() >= MAX_DATA_KEPT {
                     return Err(ErrorKind::StackOverflow.into());
                 }
@@ -2047,7 +2049,6 @@ impl Vm {
                 if !self.in_slot {
                     return Err(ErrorKind::CantUseFromDirectMode.into());
                 }
-                // UNVERIFIED: how 255 characters are kept to.
                 self.stop_message = message.map(|mut m| {
                     m.truncate(STOP_MESSAGE);
                     m
@@ -2111,7 +2112,6 @@ impl Vm {
             Op::Wait { vsync, has_arg } => {
                 let frames = if *has_arg { self.pop().to_int()? } else { 1 };
                 // Zero or negative counts do not wait.
-                // UNVERIFIED: expected of SmileBASIC 4 for VSYNC, not yet seen.
                 self.pc = next;
                 return Ok(Some(Status::Wait {
                     frames: frames.max(0) as u32,
@@ -2434,7 +2434,7 @@ impl Vm {
         };
         let info = &self.program.defs[frame.def as usize];
         let mut results = match (info.is_function, info.outs) {
-            // UNVERIFIED: a bare RETURN in a function gives no value.
+            // A bare RETURN in a function gives no value.
             (true, _) => vec![Value::Default],
             (false, Some(n)) => {
                 let start = usize::from(info.params.unwrap_or(0));

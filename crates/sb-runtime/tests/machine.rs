@@ -1626,20 +1626,24 @@ fn a_program_that_ends_can_leave_a_clean_screen_and_silence() {
     assert_eq!(ended(true), (0xFF00_0000, false));
 }
 
+/// What follows RETURN in a command DEF is a statement; a list of values is
+/// none (TEST62), while `RETURN X,Y` is a command X (KRB_OGIRI_SMBOMB).
 #[test]
-fn return_with_two_values_fails_only_when_it_runs() {
-    let mut m = machine();
-    m.set_slot(
-        0,
-        "?\"RUNS\"\nDEF F OUT A,B\n RETURN 1,2\nEND\nF OUT X,Y\n".to_string(),
-    );
-    enter(&mut m, "RUN");
-    let r = rows(&m);
-    assert!(r.iter().any(|l| l == "RUNS"), "{r:?}");
+fn return_values_in_a_command_def_when_compiling() {
+    let run = |source: &str| {
+        let mut m = machine();
+        m.set_slot(0, source.to_string());
+        enter(&mut m, "RUN");
+        rows(&m)
+    };
+    let r = run("?\"RUNS\"\nDEF F OUT A,B\n RETURN 1,2\nEND\nF OUT X,Y\n");
+    assert!(!r.iter().any(|l| l == "RUNS"), "{r:?}");
     assert!(
         r.iter().any(|l| l.starts_with("Syntax error in 0:3")),
         "{r:?}"
     );
+    let r = run("DEF G CODE OUT X,Y\n RETURN X,Y\nEND\nG 1 OUT A,B\n?\"RUNS\"\n");
+    assert!(r.iter().any(|l| l == "RUNS"), "{r:?}");
 }
 
 /// How often the screens were drawn again over `frames` frames of the

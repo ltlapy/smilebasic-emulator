@@ -122,7 +122,7 @@ impl Array {
 }
 
 /// Real to integer, dropping the fraction as INT() does.
-/// Values outside the 32-bit range raise Overflow. UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+/// Values outside the 32-bit range raise Overflow.
 pub fn real_to_int(x: f64) -> Result<i32> {
     let t = x.trunc();
     if t.is_nan() || t < i32::MIN as f64 || t > i32::MAX as f64 {
@@ -198,7 +198,7 @@ impl Value {
 /// Number to text as PRINT and STR$ show it: integers in decimal, reals
 /// with eight decimals and the trailing zeros removed, never in exponent
 /// form (checked on hardware: 1E20 prints in full, 1/3 as 0.33333333).
-/// UNVERIFIED: how NaN shows; infinity shows as `inf` (checked).
+/// NaN shows as `nan` and infinity as `inf`.
 pub fn format_number(value: &Value) -> Str {
     let text = match *value {
         Value::Int(n) => n.to_string(),

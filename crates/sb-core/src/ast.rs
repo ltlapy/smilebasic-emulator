@@ -167,8 +167,6 @@ pub enum StmtKind {
     },
     OnBreakGoto(String),
     Return(Option<Expr>),
-    /// A statement that is an error only when it runs.
-    Fail(crate::error::ErrorKind),
     End,
     Def(Box<Def>),
     Data(Vec<Expr>),

@@ -246,7 +246,6 @@ impl Parser {
     }
 
     fn at_stmt_end(&self) -> bool {
-        // UNVERIFIED: ENDIF may close a one-line IF on the same line.
         matches!(
             self.peek(),
             TokenKind::Newline
@@ -401,34 +400,10 @@ impl Parser {
             K::Gosub => StmtKind::Gosub(self.jump_target()?),
             K::On => self.on_statement()?,
             K::Return if self.at_stmt_end() => StmtKind::Return(None),
-            K::Return => {
-                // Only a function's RETURN takes a value; in a command DEF
-                // SmileBASIC 4 goes on with the next statement, and `F()`
-                // cannot be one.
-                // UNVERIFIED: other values that are no statement either,
-                // which are still let through here. Programs that run on it
-                // have `RETURN NAME` and `RETURN 1,2`.
-                if self.in_command_def
-                    && matches!(self.peek(), TokenKind::Ident { .. })
-                    && *self.peek_at(1) == TokenKind::LParen
-                    && *self.peek_at(2) == TokenKind::RParen
-                {
-                    self.advance();
-                    self.advance();
-                    return self.expected("statement");
-                }
-                let value = self.expr()?;
-                // RETURN with more values is a Syntax error when it runs.
-                if self.eat(&TokenKind::Comma) {
-                    self.expr()?;
-                    while self.eat(&TokenKind::Comma) {
-                        self.expr()?;
-                    }
-                    StmtKind::Fail(crate::error::ErrorKind::SyntaxError)
-                } else {
-                    StmtKind::Return(Some(value))
-                }
-            }
+            // Only a function's RETURN takes a value. Anywhere else what
+            // follows is the next statement, never reached, and must be one.
+            K::Return if !self.in_def || self.in_command_def => StmtKind::Return(None),
+            K::Return => StmtKind::Return(Some(self.expr()?)),
             K::End => StmtKind::End,
             K::Def | K::Common => {
                 if !top_level {
@@ -886,8 +861,7 @@ impl Parser {
             None
         };
         let body = self.loop_body(Keyword::Next, "NEXT")?;
-        // UNVERIFIED: NEXT may name the loop variable, as in SB3. It is not checked.
-        // Anything else starts the next statement (`NEXT?I`).
+        // NEXT may name a variable, which is not checked. Anything else starts the next statement (`NEXT?I`).
         if matches!(self.peek(), TokenKind::Ident { .. }) {
             self.lvalue()?;
         }

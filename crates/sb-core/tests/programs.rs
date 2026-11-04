@@ -404,13 +404,55 @@ fn return_value_in_a_command_def_is_ignored() {
     assert_eq!(output(src), "OK\n");
 }
 
-/// TEST60: `RETURN F()` in a command DEF is refused when the program compiles.
+/// TEST60, TEST62: what follows RETURN in a command DEF is the next statement.
 #[test]
-fn a_call_with_no_arguments_after_return_in_a_command_def() {
-    let source = "?1\nDEF A\n RETURN F()\nEND\nDEF F()\nEND";
-    assert!(sb_core::parser::parse(source).is_err());
+fn what_follows_return_in_a_command_def() {
+    let compiles = |body: &str| {
+        let source = format!("DEF F(X):RETURN X:END\nDEF A\n RETURN {body}\nEND\n");
+        sb_core::parser::parse(&source).is_ok()
+    };
+    for body in ["NAME", "F(1)", "X,Y", "?1"] {
+        assert!(compiles(body), "{body}");
+    }
+    for body in ["5", "A+1", "A*2", "F()", "1,2", "\"A\""] {
+        assert!(!compiles(body), "{body}");
+    }
+    // A function's takes a value, one.
     let source = "?1\nDEF A()\n RETURN F()\nEND\nDEF F()\nEND";
     assert!(sb_core::parser::parse(source).is_ok());
+    assert!(sb_core::parser::parse("DEF A()\n RETURN 1,2\nEND").is_err());
+    // Outside a DEF, GOSUB's takes none.
+    assert!(sb_core::parser::parse("RETURN 5").is_err());
+}
+
+/// TEST62: these exist, so they fail as they run, with their own errors.
+#[test]
+fn vsync_and_freemem_as_functions() {
+    for (source, kind) in [
+        ("?VSYNC()", ErrorKind::WrongNumberOfOutArguments),
+        ("?WAIT(1)", ErrorKind::WrongNumberOfOutArguments),
+        ("?FREEMEM(1)", ErrorKind::WrongNumberOfArguments),
+    ] {
+        assert_eq!(error(source).0, kind, "{source}");
+    }
+    assert_eq!(output("IF 0 THEN ?VSYNC()\n?1"), "1\n");
+}
+
+/// TEST62 on real SB4: depths seen without a Stack overflow.
+#[test]
+fn nesting_goes_as_deep_as_on_real_sb4() {
+    assert_eq!(
+        output("DEF R(N)\nIF N==25856 THEN RETURN N\nRETURN R(N+1)\nEND\n?R(1)"),
+        "25856\n"
+    );
+    assert_eq!(
+        output("@L\nN=N+1:IF N==259008 THEN ?N:END\nGOSUB @L"),
+        "259008\n"
+    );
+    assert_eq!(
+        output("FOR I=1 TO 70000:RESTORE \"PUSH\":NEXT:?I"),
+        "70001\n"
+    );
 }
 
 #[test]

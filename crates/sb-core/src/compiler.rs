@@ -860,7 +860,6 @@ impl Compiler<'_> {
                 }
             }
             StmtKind::End => _ = self.emit(Op::End),
-            StmtKind::Fail(kind) => _ = self.emit(Op::Fail(*kind)),
             StmtKind::Def(_) => unreachable!("DEFs are compiled separately"),
             StmtKind::Read(targets) => {
                 for t in targets {
@@ -985,7 +984,7 @@ impl Compiler<'_> {
                 });
             }
             (None, Some(Init::Expr(e))) => self.expr(e)?,
-            // UNVERIFIED: VAR without a value only declares; it does not reset.
+            // VAR without a value only declares; it does not reset.
             (None, None) => return Ok(()),
             (Some(_), Some(Init::Expr(_))) | (None, Some(Init::Array(_))) => {
                 return Err(err(ErrorKind::SyntaxError, "array initializer"));
@@ -1654,6 +1653,17 @@ impl Compiler<'_> {
                 self.emit(Op::FreeMem { both: false });
                 return Ok(());
             }
+            // They exist, so these fail as they run, not as unknown names.
+            ("FREEMEM", _) => {
+                self.args(args)?;
+                self.emit(Op::Fail(ErrorKind::WrongNumberOfArguments));
+                return Ok(());
+            }
+            ("VSYNC" | "WAIT", _) => {
+                self.args(args)?;
+                self.emit(Op::Fail(ErrorKind::WrongNumberOfOutArguments));
+                return Ok(());
+            }
             ("CHKCALL", [Some(name)]) | ("CHKVAR", [Some(name)]) => {
                 self.expr(name)?;
                 self.emit(if full == "CHKCALL" {
@@ -1753,7 +1763,7 @@ impl Compiler<'_> {
         }
         self.block(&def.body)?;
         if def.is_function {
-            // UNVERIFIED: a function that ends without RETURN gives no value.
+            // A function that ends without RETURN gives no value.
             self.emit(Op::Default);
             self.emit(Op::ReturnValue);
         } else {
