@@ -1646,6 +1646,75 @@ fn return_values_in_a_command_def_when_compiling() {
     assert!(r.iter().any(|l| l == "RUNS"), "{r:?}");
 }
 
+#[test]
+fn a_prompt_drops_the_keys_of_the_line_before_it() {
+    let mut m = machine();
+    enter(&mut m, "PUSHKEY \"?1\"+CHR$(13)+\"?2\"+CHR$(13)");
+    for _ in 0..10 {
+        m.frame();
+    }
+    let r = rows(&m);
+    assert!(!r.iter().any(|l| l == "?1"), "{r:?}");
+}
+
+/// TEST62 on a Switch 2: RUN leaves VSYNC's count where it was, so a first
+/// VSYNC of any size finds its frames gone by.
+#[test]
+fn a_first_vsync_does_not_wait() {
+    for n in [5, 2, 1] {
+        let mut m = machine();
+        enter(&mut m, "?1");
+        for _ in 0..10 {
+            m.frame();
+        }
+        m.set_slot(0, format!("T=MAINCNT():VSYNC {n}:?MAINCNT()-T\n"));
+        enter(&mut m, "RUN");
+        let r = rows(&m);
+        assert!(r.iter().any(|l| l == "0"), "VSYNC {n}: {r:?}");
+    }
+    // At the very start too, with no VSYNC before it.
+    let mut m = machine();
+    m.set_slot(0, "T=MAINCNT():VSYNC 5:?MAINCNT()-T\n".to_string());
+    m.run_slot(0);
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(rows(&m).iter().any(|l| l == "0"), "{:?}", rows(&m));
+}
+
+/// TEST62 and TEST56 on real SB4: a program goes on from XSCREEN while the frame
+/// job runs, the job's update behind it and MAINCNT's rise ahead of it. So an
+/// animation started there shows on the third VSYNC 1, with a first VSYNC from
+/// long ago; with one just before, on the second (TEST60).
+#[test]
+fn an_animation_started_after_xscreen() {
+    let rows_of = |source: &str| {
+        let mut m = machine();
+        enter(&mut m, "?1");
+        for _ in 0..10 {
+            m.frame();
+        }
+        m.set_slot(0, source.to_string());
+        enter(&mut m, "ACLS");
+        enter(&mut m, "RUN");
+        rows(&m)
+    };
+    const LOOP: &str = "D=ARRAY#(3):D[0]=-3:D[1]=3:D[2]=7:SPANIM 0,\"XY\",D\n\
+        FOR I=1 TO 6:VSYNC 1:SPOFS 0 OUT K,M:?\"F\";I;\" \";K;\" \";M:NEXT\n";
+    let r = rows_of(&format!(
+        "ACLS\nXSCREEN 400,240,2\nSPSET 0,0,0,16,16,0\n{LOOP}"
+    ));
+    for row in ["F1 0 0", "F2 0 0", "F3 1 2", "F4 2 4", "F5 3 7", "F6 3 7"] {
+        assert!(r.iter().any(|l| l == row), "{row}: {r:?}");
+    }
+    let r = rows_of(&format!(
+        "SPSET 0,0,0,16,16,0\nVSYNC 1\nXSCREEN 400,240,2\nSPSET 0,0,0,16,16,0\n{LOOP}"
+    ));
+    for row in ["F1 0 0", "F2 1 2", "F3 2 4", "F4 3 7"] {
+        assert!(r.iter().any(|l| l == row), "{row}: {r:?}");
+    }
+}
+
 /// How often the screens were drawn again over `frames` frames of the
 /// program, and whether the last frame given matches one drawn afresh.
 fn redraws(program: &str, frames: u32) -> (u32, bool) {

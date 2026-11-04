@@ -239,7 +239,7 @@ fn the_side_without_the_focus_shows_darker() {
         "ENVTYPE OUT T,P:XSUBSCREEN OUT X,Y,W,H\n\
          ENVFOCUS 0\n\
          PUSHKEY \"?\"+STR$(P)+\",\"+STR$(W)+CHR$(13)\n\
-         VSYNC 5:ENVFOCUS 1\n\
+         WAIT 5:ENVFOCUS 1\n\
          LOOP:VSYNC:ENDLOOP\n",
     );
     enter(&mut m, "backcolor #c_white");
@@ -280,6 +280,29 @@ fn errors_carry_their_number_and_a_line_under_them() {
     frames(&mut m, 5);
     // Divide by zero is 7, in the statement at character 6.
     assert!(rows(&m).iter().any(|r| r == "7   6"), "{:?}", rows(&m));
+}
+
+/// TEST62: a compile error leaves the status at direct mode's, and the rest
+/// as an error that ran.
+#[test]
+fn envstat_tells_of_a_compile_error() {
+    let dir = TempDir::new("errcompile");
+    let mut m = machine(
+        &dir,
+        "ENVSTAT OUT S,N,A,SL,C,L\n\
+         ENVFOCUS 0\n\
+         PUSHKEY \"?\"+STR$(S)+\",\"+STR$(N)+\",\"+STR$(A)+\",\"+STR$(C)+\",\"+STR$(L)+CHR$(13)\n\
+         LOOP:VSYNC:ENDLOOP\n",
+    );
+    m.set_slot(2, "?\"S\"\nDEF B\nRETURN A+1\nEND\n".to_string());
+    enter(&mut m, "run 2");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 5);
+    assert!(
+        rows(&m).iter().any(|r| r == "0   3   -1  19  3"),
+        "{:?}",
+        rows(&m)
+    );
 }
 
 #[test]
@@ -363,7 +386,7 @@ fn the_focus_moves_a_few_frames_after_envfocus() {
 #[test]
 fn a_yellow_border_marks_where_the_focus_goes() {
     let dir = TempDir::new("border");
-    let mut m = machine(&dir, "XSUBSCREEN 10,20,300,200\nVSYNC 30\n");
+    let mut m = machine(&dir, "XSUBSCREEN 10,20,300,200\nWAIT 30\n");
     enter(&mut m, "subrun \"sub\"");
     frames(&mut m, 3);
     assert_eq!(m.focus_border(), Some(([10, 20, 300, 200], 255)));

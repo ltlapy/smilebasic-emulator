@@ -57,8 +57,6 @@ pub struct SubScreen<'a> {
 impl SubScreen<'_> {
     /// The two bars of the area that the frame leaves, if any: BACKCOLOR's
     /// color plus the display times 1 - its alpha.
-    // UNVERIFIED: the display showing through. The colour is seen, but only
-    // over a black main screen or with an alpha of &HFF.
     pub fn bars(&self) -> Option<[[f32; 4]; 2]> {
         if self.back >> 24 == 0 {
             return None;
@@ -100,9 +98,9 @@ pub struct Machine {
     wait: u32,
     /// Frames run so far.
     frame: u64,
-    /// The frame the last VSYNC waited for, which the next one counts
+    /// The frame the last VSYNC waited for, none being long ago, which the next one counts
     /// from.
-    vsync_at: u64,
+    vsync_at: Option<u64>,
     /// VSYNCs the program has reached.
     vsyncs: u64,
     /// Whether the program stopped at a VSYNC or WAIT and has run no
@@ -328,7 +326,7 @@ impl Machine {
             vm: None,
             wait: 0,
             frame: 0,
-            vsync_at: 0,
+            vsync_at: None,
             vsyncs: 0,
             at_sync: false,
             loop_time: Duration::ZERO,
@@ -1126,7 +1124,7 @@ impl Machine {
         self.rt.program = Some(vm.program());
         self.vm = Some(vm);
         self.wait = 0;
-        self.vsync_at = self.frame + 1;
+        self.vsync_at = Some(self.frame + 1);
     }
 
     /// Goes on with a program that STOP, the + button or the debugger
@@ -1613,6 +1611,7 @@ impl Machine {
     /// runtime when this is the sub interpreter.
     fn run_frame(&mut self, mut main: Option<&mut Runtime>) {
         self.frame += 1;
+        self.rt.in_frame_job = false;
         self.follow_edits();
         self.rt.begin_frame();
         self.rt.sound.render_frame();
@@ -1694,8 +1693,10 @@ impl Machine {
                         self.loop_so_far = Duration::ZERO;
                         began = Some(now);
                     }
+                    let frames = frames.saturating_sub(self.rt.in_frame_job.into());
+                    self.rt.in_frame_job = false;
                     self.wait = frames;
-                    self.vsync_at = self.frame + u64::from(frames);
+                    self.vsync_at = Some(self.frame + u64::from(frames));
                     if frames == 0 && has_time(vm) {
                         continue;
                     }
@@ -1718,11 +1719,17 @@ impl Machine {
                         self.loop_so_far = Duration::ZERO;
                         began = Some(now);
                     }
-                    self.vsync_at += u64::from(frames);
-                    if self.vsync_at > self.frame {
-                        self.wait = (self.vsync_at - self.frame) as u32;
+                    // Past XSCREEN or ACLS, the frame job has yet to raise
+                    // MAINCNT, which is what the count looks at.
+                    let reached = self.frame - u64::from(self.rt.in_frame_job);
+                    self.rt.in_frame_job = false;
+                    let until = self.vsync_at.map(|at| at + u64::from(frames));
+                    if let Some(until) = until.filter(|&until| until > self.frame) {
+                        self.vsync_at = Some(until);
+                        self.wait = (until - self.frame) as u32;
                     } else {
-                        self.vsync_at = self.frame;
+                        self.vsync_at =
+                            Some(until.filter(|&until| until > reached).unwrap_or(reached));
                         self.rt.sound.synced();
                         // SmileBASIC 4 goes straight on, and so does a
                         // headless run. In a window, a trip that cannot
@@ -1921,20 +1928,15 @@ impl Machine {
                 }
                 self.vm = Some(vm);
                 self.wait = 0;
-                // The VM first runs on the next frame, with a first VSYNC 1
-                // finding its frame gone by.
-                // UNVERIFIED: how far back the count starts, so what a first
-                // VSYNC of more than 1 waits.
-                self.vsync_at = self.frame;
             }
             Err(e) => {
                 let e = e.in_slot(slot.map(|s| s as u32));
                 if self.rt.env_type == 1 {
                     return self.end_sub(Some(e.to_string()));
                 }
+                self.running_slot = None;
+                self.rt.running_slot = None;
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
-                // UNVERIFIED: that ENVSTAT tells of an error found before
-                // the program runs too, at the token the error names.
                 match e.slot {
                     Some(slot) => self.rt.env_error = self.error_place(slot as usize, &e),
                     None => self.direct_error(),
@@ -1959,8 +1961,7 @@ impl Machine {
     }
 
     /// A line typed in direct mode failed: ENVSTAT keeps only the last
-    /// error's line (checked on hardware, after a program's error).
-    // UNVERIFIED: the same without one.
+    /// error's line.
     fn direct_error(&mut self) {
         self.rt.env_error = [0, -1, -1, -1, self.rt.env_error[4]];
         self.direct_failed = true;
@@ -2022,7 +2023,11 @@ impl Machine {
             (Some(slot), _) => self.run_slot(slot),
             (None, Some(how)) => self.resume(how),
             (None, None) if home => self.home_end(error.is_some()),
-            (None, None) => self.ready(),
+            // The prompt starts by dropping what is waiting, a line's PUSHKEY too.
+            (None, None) => {
+                self.rt.clear_keys();
+                self.ready();
+            }
         }
     }
 

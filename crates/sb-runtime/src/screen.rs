@@ -421,7 +421,6 @@ impl Runtime {
                 Ok(vec![])
             }
             // Past the first 16 elements nothing is looked at.
-            // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
             (Command::Lmatrix, Want::Outs(0), 2) => {
                 let id = layer_id(&args[0])?;
                 let a = args[1].clone().into_array()?;
@@ -562,7 +561,7 @@ impl Runtime {
             (Command::Fade, Want::Value, 0) => Ok(int_value(self.fade.color as i32)),
             (Command::Fadechk, Want::Value, 0) => Ok(int_value(i32::from(self.fade.fading()))),
             // It holds the program until the frame job has taken the new mode.
-            (Command::Xscreen, Want::Outs(0), 2..=5) if self.frame_wait_over() => Ok(vec![]),
+            (Command::Xscreen, Want::Outs(0), 2..=5) if self.mode_taken() => Ok(vec![]),
             (Command::Xscreen, Want::Outs(0), 2..=5) => {
                 let (w, h) = (args[0].to_int()?, args[1].to_int()?);
                 if !(128..=1280).contains(&w) || w % 4 != 0 {
@@ -613,6 +612,7 @@ impl Runtime {
                 out.truncate(n.into());
                 Ok(out)
             }
+            (Command::Acls, Want::Outs(0), 0 | 3 | 4) if self.mode_taken() => Ok(vec![]),
             (Command::Acls, Want::Outs(0), 0 | 3 | 4) => {
                 let flags: Vec<bool> = args
                     .iter()
@@ -620,6 +620,7 @@ impl Runtime {
                     .collect::<Result<_>>()?;
                 let keep = |i: usize| flags.get(i).copied().unwrap_or(false);
                 self.acls(keep(0), keep(1), keep(2), keep(3));
+                self.hold_for_a_frame();
                 Ok(vec![])
             }
             _ => Err(no_form()),

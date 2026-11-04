@@ -885,6 +885,8 @@ pub struct Runtime {
     pub(crate) retry: bool,
     /// See [`Runtime::hold_for_a_frame`].
     frame_waited: bool,
+    /// See [`Runtime::mode_taken`]; until the next frame or VSYNC.
+    pub(crate) in_frame_job: bool,
     pub(crate) notices: Vec<String>,
     /// The program last started, whose DATA commands like SPANIM read.
     pub(crate) program: Option<Rc<Compiled>>,
@@ -1017,9 +1019,7 @@ pub(crate) fn illegal() -> Error {
 }
 
 /// No form of a command takes the arguments given: SmileBASIC 4 says
-/// Wrong number of arguments (checked on hardware for LOCATE and TOFS).
-// UNVERIFIED: the same for a command used as a function or the other way
-// round.
+/// Wrong number of arguments, a command used as a function too.
 pub(crate) fn no_form() -> Error {
     ErrorKind::WrongNumberOfArguments.into()
 }
@@ -1128,6 +1128,7 @@ impl Runtime {
             answer: None,
             retry: false,
             frame_waited: false,
+            in_frame_job: false,
             listing_left: None,
             inspect_left: None,
             notices: Vec::new(),
@@ -1554,13 +1555,26 @@ impl Runtime {
         std::mem::take(&mut self.frame_waited)
     }
 
+    /// The end of XSCREEN and ACLS, which hold the program until the frame
+    /// job has taken the mode: it goes on while that job is still running.
+    pub(crate) fn mode_taken(&mut self) -> bool {
+        let over = self.frame_wait_over();
+        self.in_frame_job |= over;
+        over
+    }
+
     /// Drops the keys a program left unread and what its buttons were
     /// doing, so that none of it reaches direct mode or the next run.
     pub(crate) fn clear_input(&mut self) {
+        self.clear_keys();
+        self.input.forget();
+    }
+
+    /// Drops the keys waiting to be read.
+    pub(crate) fn clear_keys(&mut self) {
         self.frame_waited = false;
         self.keys.clear();
         self.typed.clear();
-        self.input.forget();
     }
 
     /// Takes the next unread key, for the editor.
