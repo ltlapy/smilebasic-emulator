@@ -903,6 +903,11 @@ yet seen on hardware:
   of the delay: `@MP64,1,20,0` is at 0 5 ms in, and `@MP64,1,20,8`
   begins at 325 ms at T60 as at T120. `@MON` turns all
   three back on as last set.
+- `@MA`'s swing is read in tenths of a dB, truncated, and stops at the sound
+  engine's limits: no more than +6 dB, and silence from -90.4 dB down. A wide
+  one such as `@MA127,110,12,0` (±655 dB as asked) therefore chops the note
+  into bursts at twice its level with silence between, and is no louder
+  than that: a song using three of these plays at a normal level on SB4.
 - Envelopes move a millisecond at a time in tenths of a dB: the attack
   multiplies the level, starting from -90.4 dB, until it is within
   0.003 dB of full; the hold lasts (h+1)^2/4 ms; decay and release take

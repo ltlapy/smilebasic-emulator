@@ -920,3 +920,58 @@ fn the_debugger_sees_what_tracks_and_beeps_play() {
     frames(&mut rt, 1);
     assert_eq!(rt.sound.inspect_beeps().len(), 1);
 }
+
+/// `@MA`'s depth and range together ask for ±756 dB here, which is beyond
+/// a float: at full scale and as not-a-number, the song was a blast. The
+/// level stops at +6 dB, and at silence below -90.4 dB.
+#[test]
+fn a_wide_tremolo_stops_at_the_sound_engines_limits() {
+    let square = "WAVSET 224,127,0,127,127,\"FF00\"*8,69:";
+    let mut rt = runtime();
+    run_on(&mut rt, &format!("{square}BGMPLAY \"V127@224O4A1\"")).unwrap();
+    frames(&mut rt, 30);
+    let plain = peak(&mut rt);
+    assert!(plain > 0.05 && plain < 0.5, "{plain}");
+
+    for ma in ["@MA127,127,12,0", "@MA127,110,127,0"] {
+        let mut rt = runtime();
+        run_on(&mut rt, &format!("{square}BGMPLAY \"V127@224{ma}O4A1\"")).unwrap();
+        let (mut loudest, mut silent_frames) = (0f32, 0);
+        for _ in 0..80 {
+            frames(&mut rt, 1);
+            let samples = rt.sound.take_samples();
+            assert!(samples.iter().all(|s| s.is_finite()), "{ma}");
+            let frame = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+            loudest = loudest.max(frame);
+            silent_frames += usize::from(frame == 0.0);
+        }
+        let ratio = loudest / plain;
+        assert!((1.9..2.05).contains(&ratio), "{ma}: {ratio}");
+        // The slow one has whole frames in the bottom of its swing.
+        assert!(ma.ends_with("127,0") || silent_frames > 3, "{ma}");
+    }
+}
+
+/// PCMSTREAM plays what it is given, however large: this keeps it from
+/// the output and from the effector's tail, which would ring on with it.
+#[test]
+fn samples_out_of_all_range_stay_out_of_the_mix() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "EFCSET #EFCCAVE:EFCWET 0,0,0,127:EFCEN 1:DIM W[480]:FOR I=0 TO 479:W[I]=1E308*(I MOD 2*2-1):NEXT:PCMSTREAM W",
+    )
+    .unwrap();
+    frames(&mut rt, 5);
+    let during = rt.sound.take_samples();
+    assert!(during.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+    run_on(&mut rt, "PCMSTOP").unwrap();
+    // The tail goes on, and dies away, rather than being stuck for good.
+    for _ in 0..40 {
+        frames(&mut rt, 60);
+        let after = rt.sound.take_samples();
+        assert!(after.iter().all(|s| s.is_finite()));
+    }
+    frames(&mut rt, 1);
+    assert!(peak(&mut rt) < 0.01);
+}

@@ -91,6 +91,22 @@ impl Ramp {
     }
 }
 
+/// The furthest a sample going into the effector may reach: well beyond
+/// full scale, which only a sum that would clip anyway comes near.
+const MOST_SENT: f32 = 8.0;
+
+/// Silences samples that are not numbers, which `clamp` lets through.
+/// Looking first keeps this out of the way of the mix's own loops.
+#[inline(never)]
+fn silence_nans(samples: &mut [f32]) {
+    if samples.iter().any(|s| s.is_nan()) {
+        samples
+            .iter_mut()
+            .filter(|s| s.is_nan())
+            .for_each(|s| *s = 0.0);
+    }
+}
+
 /// Seconds, as BGMSTOP and friends take them, in frames.
 pub(crate) fn frames(seconds: f64) -> u32 {
     (seconds * 60.0).round().clamp(0.0, f64::from(u32::MAX)) as u32
@@ -421,6 +437,12 @@ impl Sound {
         mix(sends[TALK_SEND], &mut |l, r| self.talk.render(l, r));
         // What the effector adds: RECSTART records the sound before it.
         if let Some(r) = self.reverb.as_mut().filter(|_| effect) {
+            // A tail remembers what goes in: one bad sample would ring on.
+            for aux in [&mut *aux_l, &mut *aux_r] {
+                silence_nans(aux);
+                aux.iter_mut()
+                    .for_each(|s| *s = s.clamp(-MOST_SENT, MOST_SENT));
+            }
             r.process(aux_l, aux_r);
         }
         for (i, shown) in self.shown.iter_mut().enumerate() {
@@ -435,6 +457,7 @@ impl Sound {
             self.out.drain(..self.out.len() - most);
         }
         self.out.reserve(2 * n);
+        let start = self.out.len();
         let [aux_l, aux_r] = &self.aux;
         for i in 0..n {
             let gain = self.master.value as f32;
@@ -450,6 +473,7 @@ impl Sound {
             self.out.push(r.clamp(-1.0, 1.0));
             self.master.step_sample();
         }
+        silence_nans(&mut self.out[start..]);
     }
 
     /// The samples mixed since the last call, left and right in turn.

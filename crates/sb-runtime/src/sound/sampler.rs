@@ -158,12 +158,20 @@ impl Lfos {
     /// as a move of its position.
     pub(crate) fn step(&mut self, lfos: &[Lfo; 3]) -> (f32, f32, f32) {
         let [p, v, l] = [0, 1, 2].map(|i| self.states[i].step(&lfos[i]));
-        let gain = if v == 0.0 {
-            1.0
-        } else {
-            10f32.powf(v * 6.0 / 20.0)
-        };
+        let gain = if v == 0.0 { 1.0 } else { volume_ratio(v * 6.0) };
         (p * 100.0, gain, l)
+    }
+}
+
+/// Decibels as a gain, as the sound engine reads them from its table of
+/// tenths of a dB: truncated, no louder than +6 dB, and silent from
+/// -90.4 dB down. Without these limits a tremolo of a wide range reaches
+/// beyond what a float holds.
+#[inline(never)]
+fn volume_ratio(db: f32) -> f32 {
+    match (db * 10.0).clamp(-904.0, 60.0) as i32 {
+        -904 => 0.0,
+        tenths => 10f32.powf(tenths as f32 / 200.0),
     }
 }
 
@@ -608,6 +616,21 @@ pub fn times(adshr: Adshr) -> Times {
 mod tests {
     use super::*;
     use crate::sound::bank::{Encoding, WaveInfo};
+
+    #[test]
+    fn decibels_as_the_engine_reads_them() {
+        let near = |db: f32, gain: f32| (volume_ratio(db) - gain).abs() < gain * 1e-3;
+        assert_eq!(volume_ratio(0.0), 1.0);
+        assert!(near(-6.0, 0.5012) && near(6.0, 1.9953));
+        // Truncated to tenths of a dB, towards 0.
+        assert!(near(0.19, 1.0116) && near(-0.19, 0.9886));
+        // No higher than +6 dB, however far it asks.
+        assert!(near(6.1, 1.9953) && near(756.0, 1.9953) && near(f32::MAX, 1.9953));
+        // Silent from -90.4 dB down.
+        assert!(near(-90.3, 3.055e-5));
+        assert_eq!(volume_ratio(-90.4), 0.0);
+        assert_eq!(volume_ratio(-756.0), 0.0);
+    }
 
     /// One instrument: a looping square wave at 48 kHz, eight samples a
     /// cycle, sounding at key 60.
