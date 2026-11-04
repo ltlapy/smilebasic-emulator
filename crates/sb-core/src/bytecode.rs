@@ -45,6 +45,8 @@ impl Want {
 pub enum InputKind {
     Number,
     Str,
+    /// As the name of a variable in this slot says, known only when it runs.
+    Named(Slot),
 }
 
 /// Stack effects are written as `[inputs] -> [outputs]`, top of stack last.

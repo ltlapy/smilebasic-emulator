@@ -669,18 +669,38 @@ impl Compiler<'_> {
                 targets,
                 whole_line,
             } => {
+                // VAR's name, when only running it tells what it holds.
+                let mut named = Vec::with_capacity(targets.len());
+                for target in targets {
+                    named.push(match target {
+                        LValue::Dynamic(name) if !matches!(&**name, Expr::Str(_)) => {
+                            self.expr(name)?;
+                            let tmp = self.temp();
+                            self.emit(Op::Store(tmp));
+                            Some(tmp)
+                        }
+                        _ => None,
+                    });
+                }
                 match prompt {
                     Some(p) => self.expr(p)?,
                     None => _ = self.emit(Op::Default),
                 }
-                let kinds = targets.iter().map(input_kind).collect();
+                let kinds = targets
+                    .iter()
+                    .zip(&named)
+                    .map(|(target, &tmp)| tmp.map_or_else(|| input_kind(target), InputKind::Named))
+                    .collect();
                 self.emit(Op::Input {
                     kinds,
                     question: *question,
                     whole_line: *whole_line,
                 });
-                for target in targets.iter().rev() {
-                    self.store(target)?;
+                for (target, tmp) in targets.iter().zip(&named).rev() {
+                    match tmp {
+                        Some(tmp) => self.store_place(&Place::Dynamic(*tmp)),
+                        None => self.store(target)?,
+                    }
                 }
             }
             StmtKind::If {
@@ -1958,8 +1978,6 @@ fn input_kind(target: &LValue) -> InputKind {
         LValue::Var(v) if v.suffix == Some(Suffix::Str) => InputKind::Str,
         LValue::Var(_) => InputKind::Number,
         LValue::Index { base, .. } => input_kind(base),
-        // UNVERIFIED: VAR("name$") targets; the name is only known at run
-        // time unless it is a literal.
         LValue::Dynamic(name) => match &**name {
             Expr::Str(s) if s.last() == Some(&u16::from(b'$')) => InputKind::Str,
             _ => InputKind::Number,

@@ -18,14 +18,23 @@ use crate::ops;
 use crate::value::{Array, ArrayData, ElemType, Str, Value, format_number, new_str};
 use crate::watch::Watch;
 
-// UNVERIFIED: the exact depths, and what a DEF's arguments and variables do to
-// its own. SmileBASIC 4 counts one stack for all of it; here each has a limit of
-// its own, at the depth a real one reached.
-pub const MAX_CALL_DEPTH: usize = 25_888;
-pub const MAX_GOSUB_DEPTH: usize = 259_040;
-/// How many READ places RESTORE "PUSH" keeps.
-// UNVERIFIED: the limit, if any; 70000 fit.
-const MAX_DATA_KEPT: usize = 1 << 20;
+/// The stack GOSUBs, DEF calls and RESTORE "PUSH" share, in half slots: 259072
+/// slots. The values of expressions share it too, which is not counted: their
+/// room is left aside, as two values take it.
+const STACK_SIZE: usize = 518_136;
+/// What is left aside for those values. A call that reaches into it fails on what
+/// follows it, a call that goes past it on the call itself.
+const VALUES_ROOM: usize = 8;
+/// What a GOSUB takes of it.
+const GOSUB_COST: usize = 2;
+/// What a place RESTORE "PUSH" keeps takes of it.
+const RESTORE_COST: usize = 3;
+/// What a DEF's call takes of it, without its variables.
+const CALL_COST: usize = 12;
+/// What a function's call takes on top, for its value.
+const VALUE_COST: usize = 4;
+/// What each of a DEF's arguments, OUTs and variables takes of it.
+const VARIABLE_COST: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -133,6 +142,8 @@ struct Frame {
     return_pc: usize,
     gosub_base: usize,
     stack_base: usize,
+    /// How much of [`STACK_SIZE`] the DEF calls so far take, this one too.
+    stack_to: usize,
 }
 
 /// A program slot's program with its variables and READ's place. The
@@ -352,8 +363,7 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
         return Some(vec![Value::Str(new_str(line.to_vec()))]);
     }
     let fields: Vec<&[u16]> = line.split(|&c| c == u16::from(b',')).collect();
-    // Extra fields are left out (checked on hardware). UNVERIFIED:
-    // whether they are checked at all.
+    // Extra fields are left out, whatever they hold.
     if fields.len() < kinds.len() {
         return None;
     }
@@ -362,11 +372,11 @@ fn parse_input(line: &[u16], kinds: &[InputKind], whole_line: bool) -> Option<Ve
         .zip(kinds)
         .map(|(field, kind)| match kind {
             InputKind::Str => Some(Value::Str(new_str(field.to_vec()))),
-            // UNVERIFIED: an empty field reads as 0.
+            // An empty field reads as 0.
             InputKind::Number if field.iter().all(|&c| c == u16::from(b' ')) => Some(Value::Int(0)),
             // Spaces around a number make it ask again (checked on
             // hardware), as VAL reads them as 0.
-            InputKind::Number => builtins::parse_number(field),
+            InputKind::Number | InputKind::Named(_) => builtins::parse_number(field),
         })
         .collect()
 }
@@ -1231,6 +1241,11 @@ impl Vm {
                 }
                 Err(e) => {
                     self.executed -= 1;
+                    // The stack may run out on what follows a GOSUB or call.
+                    let pc = match e.kind {
+                        ErrorKind::StackOverflow => self.pc,
+                        _ => pc,
+                    };
                     if let Some(e) = self.failed(pc, e, host) {
                         self.executed += 1;
                         return Err(e);
@@ -1375,8 +1390,7 @@ impl Vm {
             // With a slot, the top level of that slot's program, also in
             // a DEF of its own: FINITI looks for its own models so.
             Some(slot) if slot == self.slot => self.program.labels.contains_key(&name),
-            // UNVERIFIED: a slot that EXEC has not run reports 0 rather
-            // than an error.
+            // A slot that EXEC has not run reports 0 rather than an error.
             Some(slot) => (self.program_in(slot)).is_some_and(|p| p.labels.contains_key(&name)),
             None => {
                 self.labels().contains_key(&name)
@@ -1417,7 +1431,7 @@ impl Vm {
 
     /// CHKCALL: whether CALL could call the name, as a DEF of this slot,
     /// a COMMON DEF of another, or a command or function of the system.
-    // UNVERIFIED: reserved statements such as PRINT and GOTO report 0.
+    // Reserved statements such as PRINT and GOTO report 0.
     fn has_call(&self, value: &Value, host: &dyn Host) -> Result<bool> {
         let (slot, name) = slot_and_name(value)?;
         // With another slot, its DEFs, and the system's commands and
@@ -1662,7 +1676,7 @@ impl Vm {
         let s = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
         match s.as_str() {
             "PUSH" => {
-                if self.data_kept.len() >= MAX_DATA_KEPT {
+                if !self.stack_has_room(RESTORE_COST) {
                     return Err(ErrorKind::StackOverflow.into());
                 }
                 self.data_kept.push((self.data_pos, self.data_from.clone()));
@@ -1696,15 +1710,26 @@ impl Vm {
         Ok(true)
     }
 
+    /// Whether `cost` more of the stack GOSUBs, DEF calls and RESTORE "PUSH"
+    /// share is free.
+    fn stack_has_room(&self, cost: usize) -> bool {
+        let calls = self.frames.last().map_or(0, |f| f.stack_to);
+        calls + self.gosubs.len() * GOSUB_COST + self.data_kept.len() * RESTORE_COST + cost
+            <= STACK_SIZE
+    }
+
     fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
-        if self.gosubs.len() >= MAX_GOSUB_DEPTH {
-            return Err(ErrorKind::StackOverflow.into());
+        let room = self.stack_has_room(GOSUB_COST);
+        if room {
+            self.gosubs
+                .push((self.slot, self.pc + 1, self.data_kept.len()));
         }
-        self.gosubs
-            .push((self.slot, self.pc + 1, self.data_kept.len()));
         self.switch_to(slot, host);
         self.pc = target;
-        Ok(())
+        match room {
+            true => Ok(()),
+            false => Err(ErrorKind::StackOverflow.into()),
+        }
     }
 
     /// Runs one instruction. `Some` stops the current slice.
@@ -1858,7 +1883,8 @@ impl Vm {
                         unreachable!("ON is followed by its jump table");
                     };
                     if *gosub {
-                        if self.gosubs.len() >= MAX_GOSUB_DEPTH {
+                        if !self.stack_has_room(GOSUB_COST) {
+                            self.pc = target as usize;
                             return Err(ErrorKind::StackOverflow.into());
                         }
                         self.gosubs.push((self.slot, after, self.data_kept.len()));
@@ -2141,7 +2167,20 @@ impl Vm {
                     return Ok(Some(RETRY));
                 };
                 self.reading_input = false;
-                match parse_input(&line, kinds, *whole_line) {
+                let mut known = Vec::with_capacity(kinds.len());
+                for &kind in kinds.iter() {
+                    known.push(match kind {
+                        InputKind::Named(slot) => {
+                            let name = self.load(slot).into_str()?;
+                            match name.borrow().last() == Some(&u16::from(b'$')) {
+                                true => InputKind::Str,
+                                false => InputKind::Number,
+                            }
+                        }
+                        kind => kind,
+                    });
+                }
+                match parse_input(&line, &known, *whole_line) {
                     Some(values) => {
                         self.pop();
                         self.stack.extend(values);
@@ -2165,8 +2204,7 @@ impl Vm {
                     // "n:@LABEL" sends READ to another slot's DATA, as
                     // FINITI does to read models from the program that
                     // calls it.
-                    // UNVERIFIED: that a slot EXEC has not run gives
-                    // Undefined label.
+                    // A slot EXEC has not run gives Undefined label.
                     let (slot, name) = slot_and_name(&target)?;
                     let from = slot
                         .filter(|&s| s != self.slot)
@@ -2215,7 +2253,7 @@ impl Vm {
 
     /// VAR("n:NAME") of another slot that EXEC has run: its global, or
     /// `None` for a name without another slot.
-    // UNVERIFIED: the error for a slot EXEC has not run.
+    // A slot EXEC has not run gives Undefined variable.
     fn other_global(&mut self, target: &Value) -> Result<Option<&mut Value>> {
         let (slot, name) = slot_and_name(target)?;
         let Some(slot) = slot.filter(|&s| s != self.slot) else {
@@ -2356,9 +2394,16 @@ impl Vm {
             };
             return Err(Error::with_detail(kind, info.name.clone()));
         }
-        if self.frames.len() >= MAX_CALL_DEPTH {
+        let values = info.locals.len() + args.len() * usize::from(info.params.is_none());
+        let cost =
+            CALL_COST + values * VARIABLE_COST + if info.is_function { VALUE_COST } else { 0 };
+        if !self.stack_has_room(cost) {
+            if self.stack_has_room(cost - VALUES_ROOM.min(cost)) {
+                self.pc = info.entry as usize;
+            }
             return Err(ErrorKind::StackOverflow.into());
         }
+        let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
         let default_int = self.program.default_int;
         let mut locals: Vec<Value> = info
             .locals
@@ -2397,6 +2442,7 @@ impl Vm {
             return_pc: self.pc + 1,
             gosub_base: self.gosubs.len(),
             stack_base: self.stack.len(),
+            stack_to,
         });
         self.pc = info.entry as usize;
         Ok(())

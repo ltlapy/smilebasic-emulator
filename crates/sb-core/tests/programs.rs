@@ -438,20 +438,72 @@ fn vsync_and_freemem_as_functions() {
     assert_eq!(output("IF 0 THEN ?VSYNC()\n?1"), "1\n");
 }
 
-/// TEST62 on real SB4: depths seen without a Stack overflow.
+/// TEST63 on a Switch 2: GOSUBs, calls and RESTORE "PUSH" share one stack, a call
+/// taking 6 slots and 2 more for a function's value and for each argument, OUT and
+/// variable, a GOSUB 1.
 #[test]
 fn nesting_goes_as_deep_as_on_real_sb4() {
+    let deepest = |source: &str| {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(sb_core::compile(source, &host).unwrap());
+        let e = loop {
+            match vm.run(&mut host, 100_000_000) {
+                Ok(Status::Ended) => panic!("{source} ended"),
+                Ok(_) => {}
+                Err(e) => break e,
+            }
+        };
+        assert_eq!(e.kind, ErrorKind::StackOverflow, "{source}");
+        (host.output.lines().last().map(str::to_string), e.line)
+    };
+    for (source, depth, line) in [
+        ("@L\nN=N+1:?N\nGOSUB @L", 259_069, 2),
+        ("VAR N\nDEF R()\nN=N+1:?N\nRETURN R()\nEND\n?R()", 32_383, 3),
+        ("DEF R(N)\n?N\nRETURN R(N+1)\nEND\n?R(1)", 25_906, 2),
+        (
+            "DEF R(N,B,C)\n?N\nRETURN R(N+1,B,C)\nEND\n?R(1,2,3)",
+            18_504,
+            2,
+        ),
+        ("DEF R(N)\nVAR A\n?N\nRETURN R(N+1)\nEND\n?R(1)", 21_589, 4),
+        (
+            "DEF R(N)\nVAR A,B,C,D\n?N\nRETURN R(N+1)\nEND\n?R(1)",
+            14_392,
+            4,
+        ),
+        ("VAR N\nDEF R\nN=N+1:?N\nR\nEND\nR", 43_178, 4),
+        ("DEF R N\n?N\nR N+1\nEND\nR 1", 32_383, 2),
+        ("DEF R N,B,C\n?N\nR N+1,B,C\nEND\nR 1,2,3", 21_589, 3),
+        ("DEF R N OUT Y\n?N\nR N+1 OUT Y\nEND\nR 1 OUT Z", 25_906, 2),
+    ] {
+        assert_eq!(deepest(source), (Some(depth.to_string()), line), "{source}");
+    }
     assert_eq!(
-        output("DEF R(N)\nIF N==25856 THEN RETURN N\nRETURN R(N+1)\nEND\n?R(1)"),
-        "25856\n"
+        output("FOR I=1 TO 172000:RESTORE \"PUSH\":NEXT:?I"),
+        "172001\n"
     );
     assert_eq!(
-        output("@L\nN=N+1:IF N==259008 THEN ?N:END\nGOSUB @L"),
-        "259008\n"
+        error("FOR I=1 TO 173000:RESTORE \"PUSH\":NEXT").0,
+        ErrorKind::StackOverflow
     );
+}
+
+/// TEST63: INPUT VAR(name) goes by the name, also when only running it tells it.
+#[test]
+fn input_of_a_variable_by_name() {
+    for source in [
+        "A$=\"\":INPUT VAR(\"A$\"):?A$",
+        "A$=\"\":N$=\"A$\":INPUT VAR(N$):?A$",
+    ] {
+        assert_eq!(
+            run_with_input(source, &["XY"]).unwrap(),
+            "? XY\nXY\n",
+            "{source}"
+        );
+    }
     assert_eq!(
-        output("FOR I=1 TO 70000:RESTORE \"PUSH\":NEXT:?I"),
-        "70001\n"
+        run_with_input("A=0:N$=\"A\":INPUT VAR(N$):?A", &["12"]).unwrap(),
+        "? 12\n12\n"
     );
 }
 
