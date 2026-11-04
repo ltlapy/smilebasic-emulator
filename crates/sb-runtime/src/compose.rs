@@ -486,16 +486,20 @@ pub fn draw_image_part<P: Paint>(
         return;
     };
     let (w, h) = (f64::from(w), f64::from(h));
+    let (part_x, part_y) = (
+        (f64::from(part.0), f64::from(part.2)),
+        (f64::from(part.1), f64::from(part.3)),
+    );
     let width = fb.width() as usize;
     let pixels = fb.pixels_mut();
     for py in y0..y1 {
         let line = &mut pixels[py as usize * width..][..x1 as usize];
         let fy = f64::from(py) + 0.5;
-        // Only the columns near where the row crosses the image need
+        // Only the columns near where the row crosses the part need
         // trying; each is still tested exactly below.
-        let (from, to) = crossing(inv.a, inv.b * fy + inv.tx, w)
+        let (from, to) = crossing(inv.a, inv.b * fy + inv.tx, part_x)
             .and_then(|(f, t)| {
-                let (g, u) = crossing(inv.c, inv.d * fy + inv.ty, h)?;
+                let (g, u) = crossing(inv.c, inv.d * fy + inv.ty, part_y)?;
                 Some((f.max(g), t.min(u)))
             })
             .map_or((1.0, 0.0), |(f, t)| (f - 1.5, t + 0.5));
@@ -518,13 +522,13 @@ pub fn draw_image_part<P: Paint>(
     }
 }
 
-/// Where `k * x + base` lies from 0 up to `len`: the range of x, which
+/// Where `k * x + base` lies from `lo` up to `hi`: the range of x, which
 /// may be empty; `None` if it never does.
-fn crossing(k: f64, base: f64, len: f64) -> Option<(f64, f64)> {
+fn crossing(k: f64, base: f64, (lo, hi): (f64, f64)) -> Option<(f64, f64)> {
     if k == 0.0 {
-        return (0.0..len).contains(&base).then_some((f64::MIN, f64::MAX));
+        return (lo..hi).contains(&base).then_some((f64::MIN, f64::MAX));
     }
-    let (a, b) = ((0.0 - base) / k, (len - base) / k);
+    let (a, b) = ((lo - base) / k, (hi - base) / k);
     Some((a.min(b), a.max(b)))
 }
 
@@ -1252,7 +1256,7 @@ pub fn compose(
     opaque: bool,
 ) {
     if color != 0xFFFF_FFFF {
-        return compose_tinted(dst, layer, mode, color);
+        return compose_tinted(dst, layer, mode, color, opaque);
     }
     match mode {
         // The usual case, a plain layer, as one blend a pixel.
@@ -1275,40 +1279,71 @@ pub fn compose(
         }
         // Each mode gets its own loop, so that its sum is worked inline.
         Compose::Multiply if opaque => {
-            compose_each::<true>(dst, layer, |p, d, a| div255(d * (p + 255 - a)))
+            compose_each::<false>(dst, layer, plain(|p, d, a| div255(d * (p + 255 - a))))
         }
-        Compose::Multiply => compose_each::<false>(dst, layer, |p, d, a| div255(d * (p + 255 - a))),
+        Compose::Multiply => {
+            compose_each::<true>(dst, layer, plain(|p, d, a| div255(d * (p + 255 - a))))
+        }
         Compose::Screen if opaque => {
-            compose_each::<true>(dst, layer, |p, d, _| d + div255(p * (255 - d)))
+            compose_each::<false>(dst, layer, plain(|p, d, _| d + div255(p * (255 - d))))
         }
-        Compose::Screen => compose_each::<false>(dst, layer, |p, d, _| d + div255(p * (255 - d))),
+        Compose::Screen => {
+            compose_each::<true>(dst, layer, plain(|p, d, _| d + div255(p * (255 - d))))
+        }
     }
 }
 
-/// [`compose`] without a layer color, for modes 3 and 4, by `f`, which
-/// gives a channel from the layer's light `p`, the frame's `d` and the
-/// layer's coverage `a`; it is held to 255. `OPAQUE` is [`compose`]'s
-/// `opaque`.
+/// How many pixels [`compose_each`] tests for being clear at once.
+const COMPOSE_RUN: usize = 16;
+
+/// [`compose`] pixel by pixel: `put` gives a frame pixel with a layer pixel
+/// that is not clear put on it. A pixel clear in the layer changes nothing,
+/// but for making the frame opaque with `MAKE_OPAQUE`, which modes 3 and 4 do
+/// over the whole screen. Layers are mostly flat or clear, over frames
+/// that are too, so a stretch of clear pixels takes one test and a pixel
+/// like the last, over the same, the last's result.
 #[inline(always)]
-fn compose_each<const OPAQUE: bool>(
+fn compose_each<const MAKE_OPAQUE: bool>(
     dst: &mut Framebuffer,
     layer: &Framebuffer,
-    f: impl Fn(u32, u32, u32) -> u32,
+    put: impl Fn(u32, u32) -> u32,
 ) {
-    for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-        // A clear pixel of the layer leaves the color as it is, but
-        // the frame becomes opaque.
-        // This holds over the whole screen.
-        if l == 0 {
-            if !OPAQUE {
-                *d |= 0xFF00_0000;
+    let (mut last_l, mut last_d, mut last) = (0, 0, 0);
+    let runs = dst.pixels_mut().chunks_mut(COMPOSE_RUN);
+    for (ds, ls) in runs.zip(layer.pixels().chunks(COMPOSE_RUN)) {
+        if ls.iter().fold(0, |a, &l| a | l) == 0 {
+            if MAKE_OPAQUE {
+                for d in ds {
+                    *d |= 0xFF00_0000;
+                }
             }
             continue;
         }
+        for (d, &l) in ds.iter_mut().zip(ls) {
+            if l == 0 {
+                if MAKE_OPAQUE {
+                    *d |= 0xFF00_0000;
+                }
+                continue;
+            }
+            if l != last_l || *d != last_d {
+                (last_l, last_d, last) = (l, *d, put(*d, l));
+            }
+            *d = last;
+        }
+    }
+}
+
+/// A frame pixel for [`compose_each`] in modes 3 and 4, from `f`, which gives
+/// a channel from the layer's light `p`, the frame's `d` and the layer's
+/// coverage `a`; it is held to 255.
+#[inline(always)]
+fn plain(f: impl Fn(u32, u32, u32) -> u32) -> impl Fn(u32, u32) -> u32 {
+    move |d, l| {
         let [a, pr, pg, pb] = l.to_be_bytes().map(u32::from);
         let [_, dr, dg, db] = d.to_be_bytes().map(u32::from);
         let c = |p: u32, d: u32| f(p, d, a).min(255) as u8;
-        *d = u32::from_be_bytes([0xFF, c(pr, dr), c(pg, dg), c(pb, db)]);
+        u32::from_be_bytes([0xFF, c(pr, dr), c(pg, dg), c(pb, db)])
     }
 }
 
@@ -1319,45 +1354,75 @@ fn compose_each<const OPAQUE: bool>(
 /// rounds once:
 /// 1: `P + d*(1-A)`; 2: `d + P`; 3: `d*(P + 1-A)`; 4: `d + P*(1-d)`.
 #[inline(never)]
-fn compose_tinted(dst: &mut Framebuffer, layer: &Framebuffer, mode: Compose, color: u32) {
+fn compose_tinted(
+    dst: &mut Framebuffer,
+    layer: &Framebuffer,
+    mode: Compose,
+    color: u32,
+    opaque: bool,
+) {
     const N: u32 = 255 * 255;
     const N3: u64 = 255 * 255 * 255;
+    let multiply = tinted(
+        color,
+        |p, d, a| {
+            let x = u64::from(d) * u64::from(p + 255 * (N - a));
+            ((x + N3 / 2) / N3) as u32
+        },
+        |_, _| 255,
+    );
+    let screen = tinted(
+        color,
+        |p, d, _| {
+            let x = u64::from(p) * u64::from(255 - d);
+            d + ((x + N3 / 2) / N3) as u32
+        },
+        |_, _| 255,
+    );
+    // Each mode gets its own loop, so that its sum is worked inline.
+    match mode {
+        Compose::Direct | Compose::Normal => compose_each::<false>(
+            dst,
+            layer,
+            tinted(
+                color,
+                |p, d, a| (p + d * (N - a) + N / 2) / N,
+                |da, a| (da * (N - a) + 255 * a + N / 2) / N,
+            ),
+        ),
+        Compose::Add => compose_each::<false>(
+            dst,
+            layer,
+            tinted(color, |p, d, _| d + (p + N / 2) / N, |da, _| da),
+        ),
+        // As in plain layers, over the whole screen.
+        Compose::Multiply if opaque => compose_each::<false>(dst, layer, multiply),
+        Compose::Multiply => compose_each::<true>(dst, layer, multiply),
+        Compose::Screen if opaque => compose_each::<false>(dst, layer, screen),
+        Compose::Screen => compose_each::<true>(dst, layer, screen),
+    }
+}
+
+/// A frame pixel for [`compose_each`] under a layer color, by `sum`, which
+/// gives a channel from `P`, the frame's `d` and `A`, as [`compose_tinted`]
+/// calls them; it is held to 255. `alpha` gives the frame's alpha from its
+/// own and `A`.
+#[inline(always)]
+fn tinted(
+    color: u32,
+    sum: impl Fn(u32, u32, u32) -> u32 + Copy,
+    alpha: impl Fn(u32, u32) -> u32 + Copy,
+) -> impl Fn(u32, u32) -> u32 + Copy {
     let [ca, cr, cg, cb] = color.to_be_bytes().map(u32::from);
-    let opaque = matches!(mode, Compose::Multiply | Compose::Screen);
-    for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
-        // Where the layer is clear, only the alpha can change.
-        if l == 0 {
-            if opaque {
-                *d |= 0xFF00_0000;
-            }
-            continue;
-        }
+    move |d, l| {
         let [la, lr, lg, lb] = l.to_be_bytes().map(u32::from);
         let a = la * ca;
         let [da, dr, dg, db] = d.to_be_bytes().map(u32::from);
-        let lights = [lr * cr * ca, lg * cg * ca, lb * cb * ca];
-        let [r, g, b] = [(lights[0], dr), (lights[1], dg), (lights[2], db)].map(|(p, d)| {
-            let v = match mode {
-                Compose::Direct | Compose::Normal => (p + d * (N - a) + N / 2) / N,
-                Compose::Add => d + (p + N / 2) / N,
-                Compose::Multiply => {
-                    let x = u64::from(d) * u64::from(p + 255 * (N - a));
-                    ((x + N3 / 2) / N3) as u32
-                }
-                Compose::Screen => {
-                    let x = u64::from(p) * u64::from(255 - d);
-                    d + ((x + N3 / 2) / N3) as u32
-                }
-            };
-            v.min(255)
-        });
-        let alpha = match mode {
-            Compose::Direct | Compose::Normal => (da * (N - a) + 255 * a + N / 2) / N,
-            Compose::Add => da,
-            // As in compose_each, over the whole screen.
-            Compose::Multiply | Compose::Screen => 255,
-        };
-        *d = alpha << 24 | r << 16 | g << 8 | b;
+        let c = |p: u32, d: u32| sum(p, d, a).min(255);
+        alpha(da, a) << 24
+            | c(lr * cr * ca, dr) << 16
+            | c(lg * cg * ca, dg) << 8
+            | c(lb * cb * ca, db)
     }
 }
 
@@ -1552,7 +1617,7 @@ mod tests {
             let mut fast = frame.clone();
             compose(&mut fast, &layer, mode, 0xFFFF_FFFF, false);
             let mut slow = frame.clone();
-            compose_tinted(&mut slow, &layer, mode, 0xFFFF_FFFF);
+            compose_tinted(&mut slow, &layer, mode, 0xFFFF_FFFF, false);
             assert_eq!(fast.pixels(), slow.pixels(), "{mode:?}");
         }
     }
