@@ -1089,9 +1089,11 @@ impl Vm {
         let stop = self.executed + u64::from(budget);
         let mut program = Rc::clone(&self.program);
         while self.executed < stop {
-            if self.break_pending.is_none()
-                && self.trace.is_none()
-                && self.changes.is_empty()
+            // None of the instructions here changes these three.
+            let plain =
+                self.break_pending.is_none() && self.trace.is_none() && self.changes.is_empty();
+            while plain
+                && self.executed < stop
                 && !self
                     .stop_at
                     .as_ref()
@@ -1169,12 +1171,15 @@ impl Vm {
                         self.pc = next;
                         continue;
                     }
-                    Ok(false) => {}
+                    Ok(false) => break,
                     Err(e) => match self.failed(pc, e, host) {
                         Some(e) => return Err(e),
                         None => continue,
                     },
                 }
+            }
+            if self.executed >= stop {
+                break;
             }
             if let Some((at, line)) = self.break_pending {
                 if self.executed > at && self.program.starts.get(self.pc) == Some(&true) {
