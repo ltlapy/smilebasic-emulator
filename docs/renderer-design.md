@@ -1323,7 +1323,7 @@ There are two ways to reduce the inexact set later:
 - Milestone: frames that only repeat state are skipped (measure on a
   program that sets the same `SPOFS` every frame).
 
-**Phase 3: a GPU prototype. Done, behind `SB_GPU`, off by default.**
+**Phase 3: a GPU path. Done, chosen by a setting, see phase 5.**
 
 (b) sitting on (a) was chosen, as the UI stays on SDL_Renderer. `gpu.rs` in
 `crates/sb-sdl` is a `SceneBackend`, which the runtime offers each scene; the
@@ -1455,10 +1455,7 @@ The rest:
   MiB a page in use, at most six, 16 for the atlas if a glyph needs it, three
   frame-sized targets and two of half that. No frame of latency is added: the frame
   is drawn in the same iteration as before.
-- **Failure.** The software renderer and no Vulkan with `SB_GPU_ALONE` were tried,
-  and stay on the CPU; so does a refused texture or shader, by the code, untried. Forcing a driver with
-  `SDL_RENDER_DRIVER` that cannot present still panics inside the sdl3 crate's
-  `into_canvas`, as it did before.
+- **Failure.** See phase 5.
 - **Reach.** Windows, macOS, Linux: (a) on their usual drivers, untested on the first
   two; (b)'s filters on D3D12, Metal and Vulkan once SmileBASIC 4 are made. GLES
   handhelds, the RK3326 among them: (a) needs only GLES2's textures, targets and
@@ -1474,10 +1471,66 @@ No project in the bench set leaves a frame on the CPU; see above for what could.
 
 **Phase 5: default and fallback.**
 
-- The start-up self-test is done ([5.3](#53-comparison-tests)). Still to do: GPU by
-  default where the backend initialises and it passes, the CPU path otherwise, and
-  as a menu setting, after runs on real windows, Windows, macOS and a Mali.
-- Document the choice in [differences.md](differences.md) if any
-  visible difference remains.
+- The start-up self-test is done ([5.3](#53-comparison-tests)). It takes 30 to 100 ms
+  on a desktop GPU, about 100 on llvmpipe. Besides what it covered it now samples
+  one-texel checkers at the page's far corner, where a fragment shader holding texture
+  coordinates in 16 bits, as GLES2's mediump can, goes wrong while the page's start
+  looks right: emulated by a GL shim, that fails it, and it passed before.
+- It passes on rounding however a driver rounds, and fails on a wrong sum. What counts
+  is pixels more than 4 off, in any channel, alpha too, on at most 0.5% of the frame:
+  an element goes through three draws there, each of which may lose 1. llvmpipe rounds
+  otherwise than an NVIDIA GPU, with 16% of SPROT's pixels 1 off where that has 0.01%,
+  and passes. A shim truncating every fragment's output comes to 3 off at most, 704
+  pixels of 384000 over 2, none over 4, and passes. A shim breaking the blend function
+  fails, as do 16-bit coordinates, at 2.5% of the pixels.
+- The setting (File > Settings > Screen): Auto, or CPU. `SB_GPU` overrides it, and
+  About and the bench report say who draws and, if the CPU, why. `settings.txt` keeps
+  only a choice that differs from the default, so the default can change for those who
+  made none. `smilebasic-check` has no backend and stays on the CPU.
+- Failure, all tried with no window, through `SB_UI_BENCH` and a GL shim that lies:
+
+  | What goes wrong | What happens |
+  |---|---|
+  | No EGL or GL, the driver left to SDL | SDL takes Vulkan, or the software renderer, where the path stays off |
+  | `SDL_RENDER_DRIVER` naming a driver that cannot start | Another is tried in SDL's order; it was a panic in the sdl3 crate |
+  | SDL's gpu driver with no Vulkan | As above; with `SB_GPU_ALONE`, the CPU |
+  | Largest texture under 2048, as 1024 or 2047 | The self-test sees the frame stayed on the CPU, and the path stays off; under the frame's own 1280 the emulator cannot start on the CPU either, with a message, as before |
+  | A texture refused, at start-up or later, on opengl | Seen through glGetError, which SDL's driver looks at only in a debug context; three frames refused in a row and the path stops for the session |
+  | A texture refused on opengles2 | SDL 3.4.18 frees its texture data twice in `GLES2_CreateTexture` on GL_OUT_OF_MEMORY and aborts, on the CPU path's textures too. Not ours to fix here: to report upstream |
+  | A target made in part, for a frame or half of one | All of it let go; drawn on as it was, the next frame would have gone to the window |
+  | `RENDER_TARGETS_RESET` | The frames are drawn again, a subprogram's too |
+  | `RENDER_DEVICE_RESET` | Every texture is made again, and the path started again with its self-test: Direct3D 11, 12 and Vulkan let go of them all, and the window's own would have ended the emulator at its next upload |
+
+  Direct3D 11, 12 and Vulkan's `RENDER_DEVICE_LOST`, when a device does not come back,
+  is not handled, by the path or the rest of the frontend: uploads then fail, and the
+  emulator ends with a message. A GL context lost without SDL saying so, as some drivers
+  do on resuming from suspend, leaves pages as they are; only by the code, not tried.
+- Long runs: 12000 frames each on opengl, opengles2 and llvmpipe, 10 sizes of `XSCREEN`
+  from 128x128 to 1280x720 in modes 0 to 2, page changes, `EXEC`, a subprogram started
+  and stopped, resets, resizes, full screen and the setting off and on every 400 frames.
+  No pixel more than 2 off on the main screens in 228 frames compared, at most 7 of 6.3
+  million in the subprogram's. Live GL textures back to 0 at the end. With no events
+  RSS holds at 397 MiB from the third sample to the last. Each restart of the path adds
+  4 to 10 MiB of RSS, which on these drivers does not come back; a restart is rare.
+- In the frontend, by pictures of the window with and without the path, no pixel
+  differing: modes 0, 1, 2 in a window of 1280x720, resized and in full screen, menu,
+  About, the colors window, a notice, help, debugger's panel, editor inline and apart,
+  a stopped program, direct mode's hint, an error, an ended program with its targets
+  spoiled by hand, device reset, the setting turned on and off.
+- Other drivers, by reading SDL 3.4.18. Every driver takes all our blend modes, as their
+  factors are plain and the operation is the same for color and alpha. D3D11, D3D12,
+  Metal, GL and GLES2 keep a vertex's color as floats. Direct3D 9 packs it to 8 bits,
+  truncating, so a tint there may be 1 off, which the self-test allows, and is reached
+  only if D3D11 and D3D12 cannot start. Pages are a power of two, so wrapping needs
+  nothing of GLES2. D3D11 makes a staging texture for each `SDL_UpdateTexture`, so a
+  program writing to many tiles a frame costs more there: the report's `pages` will
+  show. Each driver's arithmetic is the self-test's to judge, as it reads back from a
+  target on all of them.
+- `SDL_GPURenderState`'s shader is SPIR-V only. On the `gpu` driver over D3D12 or Metal
+  `ColorFilter::new` finds no such format, and the layer comes from the CPU, as on every
+  other driver; the `gpu` driver is reached only when all before it fail. That is fine.
+- Windows: `cargo build --release --target x86_64-pc-windows-gnu -p sb-sdl` builds with
+  MinGW, D3D9, D3D11, D3D12, GL, GLES2 and Vulkan in it; not run. macOS needs its SDK.
+- Still to do: runs on real windows, Windows, macOS and a Mali, and then the default.
 - Later: a WASM build with the CPU backend first, then WebGL2/WebGPU
   if (d) was chosen.

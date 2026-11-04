@@ -85,10 +85,12 @@ so no upload, scaling or present is included.
 
 ## The GPU path
 
-`SB_GPU=1` draws with the GPU where it can, `SB_GPU=sync` waits for it each frame
-to time its work, and `SB_GPU=check` also draws on the CPU and counts the pixels that
-differ; see `crates/sb-sdl/src/gpu.rs` and
-[renderer-design.md](renderer-design.md). With `SB_UI_BENCH` it reports why any frame
-stayed on the CPU. `SB_UI_BENCH`'s `end` stops when the program ends, `settle=N` skips
+Without `SB_GPU`, the setting in File > Settings > Screen decides. `SB_GPU=0` keeps to
+the CPU, `SB_GPU=1` draws with the GPU where it can, `SB_GPU=sync` waits for it each
+frame to time its work, and `SB_GPU=check` also draws on the CPU and counts the pixels
+that differ; see `crates/sb-sdl/src/gpu.rs` and
+[renderer-design.md](renderer-design.md). With `SB_UI_BENCH` it reports who drew and why
+any frame stayed on the CPU, and `at=FRAME:WHAT` does things to the frontend, resets,
+resizes and the setting among them, to try the path's answers. `SB_UI_BENCH`'s `end` stops when the program ends, `settle=N` skips
 frames first and `novsync` turns vsync off. `SDL_VIDEO_DRIVER=offscreen` shows no window
 and, through EGL, still reaches the GPU, but leaves real presents out of the numbers.

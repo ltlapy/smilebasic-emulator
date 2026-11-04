@@ -19,6 +19,9 @@ cargo build --release
 SDL3 is built from source. On Linux, install the X11, Wayland and audio
 development headers listed in SDL's `docs/README-linux.md` first.
 
+File > Settings > Screen picks who draws the screens: the CPU, or the GPU where a
+test at start-up finds it draws the same.
+
 ## Resources
 
 Without any setup, text uses bundled fonts under the SIL Open Font License
