@@ -713,26 +713,39 @@ pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid>
     // alone, to the bit; both only grow or only shrink along the frame,
     // so the ones on the image are a run.
     let at = |px: u32, py: u32| inv.apply(f64::from(px) + 0.5, f64::from(py) + 0.5);
-    let on = |range: std::ops::Range<u32>, f: &dyn Fn(u32) -> f64, len: f64| {
-        let all: Vec<(u32, f64)> = range.map(|p| (p, f(p))).collect();
-        let first = all.iter().position(|&(_, v)| v >= 0.0 && v < len)?;
-        let n = all[first..]
-            .iter()
-            .take_while(|&&(_, v)| v >= 0.0 && v < len)
-            .count();
-        Some((
-            all[first].0,
-            all[first..first + n].iter().map(|&(_, v)| v).collect(),
-        ))
-    };
-    let (gx0, xs) = on(x0..x1, &|px| at(px, y0).0, w)?;
-    let (gy0, ys) = on(y0..y1, &|py| at(x0, py).1, h)?;
+    let (gx0, xs) = on_image(x0..x1, |px| at(px, y0).0, w)?;
+    let (gy0, ys) = on_image(y0..y1, |py| at(x0, py).1, h)?;
     Some(Grid {
         x0: gx0,
         y0: gy0,
         xs,
         ys,
     })
+}
+
+/// The first frame column or row in `range` on the image, of `len`, where `f`
+/// says what image x or y each shows, and those of the run from there.
+#[inline]
+fn on_image(
+    range: std::ops::Range<u32>,
+    f: impl Fn(u32) -> f64,
+    len: f64,
+) -> Option<(u32, Vec<f64>)> {
+    let on = |v: f64| v >= 0.0 && v < len;
+    let (mut first, mut run) = (None, Vec::new());
+    for p in range.clone() {
+        let v = f(p);
+        if on(v) {
+            if first.is_none() {
+                first = Some(p);
+                run.reserve_exact((range.end - p) as usize);
+            }
+            run.push(v);
+        } else if first.is_some() {
+            break;
+        }
+    }
+    Some((first?, run))
 }
 
 /// The smallest and largest x and y that `m` takes the corners of the
