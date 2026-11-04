@@ -31,6 +31,7 @@ mod ui;
 
 use std::any::Any;
 use std::cell::{Cell, OnceCell, RefCell};
+use std::ffi::CStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -79,10 +80,11 @@ use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
-use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator};
+use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator, create_renderer};
 use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
 use sdl3::sys::render::{
-    SDL_SetDefaultTextureScaleMode, SDL_SetRenderDrawBlendMode, SDL_SetTextureBlendMode,
+    SDL_GetNumRenderDrivers, SDL_GetRenderDriver, SDL_SetDefaultTextureScaleMode,
+    SDL_SetRenderDrawBlendMode, SDL_SetTextureBlendMode,
 };
 use sdl3::sys::surface::SDL_ScaleMode;
 use sdl3::video::{Window, WindowBuilder, WindowContext};
@@ -264,7 +266,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let (chosen_colors, colors_choice) = std::sync::mpsc::channel::<(PathBuf, bool)>();
     // ...and the project manager's, for importing and exporting.
     let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
-    let mut canvas = window.into_canvas();
+    let mut canvas = make_canvas(window)?;
     // Vsync paces frames on a 60 Hz display; on others, without vsync,
     // or while the window is not shown, the loop goes by the clock.
     let mut main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
@@ -2613,7 +2615,7 @@ impl EditorWindow {
         let window = builder.resizable().high_pixel_density().hidden().build()?;
         video.text_input().start(&window);
         let id = window.id();
-        let canvas = window.into_canvas();
+        let canvas = make_canvas(window)?;
         let creator = canvas.texture_creator();
         Ok(EditorWindow {
             canvas: RefCell::new(canvas),
@@ -2621,6 +2623,28 @@ impl EditorWindow {
             id,
         })
     }
+}
+
+/// A renderer for `window`: the one SDL picks or `SDL_RENDER_DRIVER` names, and if
+/// that cannot start, any other. What sdl3's `into_canvas` does here is panic.
+fn make_canvas(window: Window) -> Result<Canvas<Window>, AnyError> {
+    let first = match create_renderer(window.clone(), None) {
+        Ok(canvas) => return Ok(canvas),
+        Err(e) => e,
+    };
+    eprintln!("no renderer ({first}); trying the others");
+    // SAFETY: the names are SDL's own, kept as long as it runs.
+    let names = (0..unsafe { SDL_GetNumRenderDrivers() })
+        .map(|i| unsafe { SDL_GetRenderDriver(i) })
+        .filter(|name| !name.is_null())
+        .map(|name| unsafe { CStr::from_ptr(name) });
+    for name in names {
+        if let Ok(canvas) = create_renderer(window.clone(), Some(name)) {
+            eprintln!("using the renderer {}", canvas.renderer_name);
+            return Ok(canvas);
+        }
+    }
+    Err(format!("No renderer could start: {first}").into())
 }
 
 /// A window's position and size, as the settings keep them.
