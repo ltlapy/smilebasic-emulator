@@ -477,6 +477,24 @@ yet seen on hardware:
   more of them: 2 rows stay free at 360 rows of pixels, 3 at 720 with 8x8
   characters. The same scrolling while `INSPECT` prints has been seen (`TEST19`:
   the last row stays free, on the usual screen); the rest is from the code.
+- `SQR` below 0, `LOG` at 0 or below, and `ASIN` and `ACOS` past -1 to 1 are `Out of
+  range` on their argument. A real outside the 32-bit range, where a command wants
+  an integer, is `Overflow`.
+- `VSYNC` of 0 or less does not wait, and counts on from now.
+- `INSPECT` cuts a string of exactly 256 characters too: no closing quote from 256 up.
+- `BREPEAT` takes a start of 0 as 1; negative values are `Out of range`.
+- `TCOORD` mode 0 drops the fractions of what it is given. Modes 1 and 2, and
+  `CHKCHR`'s display form, give the home point for an axis scaled to 0.
+- `TSAVE`, `TLOAD`, `GSAVE` and `GLOAD` take a width and height of 0 or more; a negative
+  one is `Out of range`.
+- `LMATRIX layer,array` wants a real array of 16 elements or more and looks at the first
+  16: others are `Type mismatch`, and a value past single precision `Out of range`.
+- `BQPARAM` looks at the number of its arguments before their values. A Q of 0 is
+  `Illegal function call`, as a rate of 0 is.
+- `UISTATE` takes numbers 0 to 5, others being `Out of range`.
+- `IRREAD` on a camera never started is `IR Camera is not available`, and in mode 1
+  `Illegal IR Camera mode`.
+- A new `TALK` cuts off what is being said.
 
 ## Sprites
 

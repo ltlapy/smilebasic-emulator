@@ -37,6 +37,19 @@ fn error(source: &str) -> (ErrorKind, u32) {
 }
 
 #[test]
+fn bqparam_checks_the_gain_count_first() {
+    let kind = |src: &str| run(src).err().map(|e| e.kind);
+    assert_eq!(
+        kind("DIM F[13]:BQPARAM F,5,0,1,1"),
+        Some(ErrorKind::WrongNumberOfArguments)
+    );
+    assert_eq!(
+        kind("DIM F[13]:BQPARAM F,0,44100,1,0"),
+        Some(ErrorKind::IllegalFunctionCall)
+    );
+}
+
+#[test]
 fn print_separators() {
     assert_eq!(output("PRINT 1;2\n?\"A\",\"B\"\nPRINT"), "12\nA   B\n\n");
     assert_eq!(output("?1;:?2"), "12\n");

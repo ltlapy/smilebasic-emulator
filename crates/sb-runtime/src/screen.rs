@@ -420,20 +420,14 @@ impl Runtime {
                 (layer.matrix, layer.projection) = (Affine::IDENTITY, None);
                 Ok(vec![])
             }
-            // UNVERIFIED: the errors for an array that is not real, not 16
-            // long, or holds values past single precision.
+            // Past the first 16 elements nothing is looked at.
+            // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
             (Command::Lmatrix, Want::Outs(0), 2) => {
                 let id = layer_id(&args[0])?;
                 let a = args[1].clone().into_array()?;
                 let a = a.borrow();
-                if a.elem_type() != sb_core::value::ElemType::Real {
+                if a.elem_type() != sb_core::value::ElemType::Real || a.len() < 16 {
                     return Err(ErrorKind::TypeMismatch.into());
-                }
-                if a.len() != 16 {
-                    return Err(Error::with_detail(
-                        ErrorKind::IllegalFunctionCall,
-                        "16 elements",
-                    ));
                 }
                 let mut m = [0.0; 16];
                 for (i, v) in m.iter_mut().enumerate() {

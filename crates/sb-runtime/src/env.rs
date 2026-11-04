@@ -207,14 +207,15 @@ impl Runtime {
             (Command::Xsubscreen, Want::Outs(n @ 2..=4), []) => Ok(vec![int(0); usize::from(n)]),
             // The system's own UI state (soft keyboard and help shown), which
             // reads 0 for the main interpreter.
-            // UNVERIFIED: the other numbers, and that setting it does nothing
-            // here.
+            // UNVERIFIED: expected of SmileBASIC 4, not yet seen: the
+            // numbers go from 0 to 5. That the others read 0 and that setting
+            // one does nothing here are guesses.
             (Command::Uistate, Want::Value, [n]) => {
-                n.to_int()?;
+                in_range("number", n, 0..=5)?;
                 Ok(vec![int(0)])
             }
             (Command::Uistate, Want::Outs(0), [n, v]) => {
-                n.to_int()?;
+                in_range("number", n, 0..=5)?;
                 v.to_int()?;
                 Ok(vec![])
             }

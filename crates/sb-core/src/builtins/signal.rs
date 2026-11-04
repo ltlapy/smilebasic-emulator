@@ -89,8 +89,8 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
 
 /// FFT and IFFT: `out_re, out_im, in_re, in_im [, window]`, all arrays of
 /// one power-of-two length; the outputs may be the inputs.
-// UNVERIFIED: the forward transform is not scaled and the inverse divides
-// by the length; a bad length is an Illegal function call.
+// The forward transform is not scaled and the inverse divides by the
+// length; a bad length is an Illegal function call.
 fn fourier(args: &[Value], inverse: bool) -> Result<Vec<Value>> {
     let arrays = args.iter().map(number_array).collect::<Result<Vec<_>>>()?;
     let n = arrays[0].borrow().len();
@@ -186,8 +186,8 @@ fn channels(a: &Array) -> Result<(usize, usize)> {
 /// BIQUAD out, in, coefficients: filters each channel, carrying the last
 /// two inputs and outputs over from the previous call in the
 /// coefficients' elements 5 to 8 (mono or left) and 9 to 12 (right).
-// UNVERIFIED: each four is in[t-1], in[t-2], out[t-1], out[t-2]; output
-// and input must have the same shape.
+// Each four is in[t-1], in[t-2], out[t-1], out[t-2]. UNVERIFIED: that
+// output and input must have the same shape.
 pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let output = number_array(&args[0])?;
     let input = number_array(&args[1])?;
@@ -225,9 +225,10 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 /// coefficients of Robert Bristow-Johnson's Audio EQ Cookbook, divided by
 /// a0, with the band-pass at a 0 dB peak and shelves taking Q (all eight
 /// types match hardware to five places). Elements 5 to 12 are left alone.
-// UNVERIFIED: the error for a zero Q.
 // Checked on hardware: the gain is given for types 5 to 7 only, else
 // Wrong number of arguments, and a zero rate is an Illegal function call.
+// UNVERIFIED: expected of SmileBASIC 4, not yet seen: the gain's count
+// comes first, and a zero Q is an Illegal function call too.
 pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let params = coefficient_array(&args[0])?;
     let kind = args[1].to_int()?;
@@ -237,6 +238,11 @@ pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let rate = args[2].to_real()?;
     let cutoff = args[3].to_real()?;
     let q = args[4].to_real()?;
+    let gain = match (opt(args, 5), kind >= 5) {
+        (Some(v), true) => v.to_real()?,
+        (None, false) => 0.0,
+        _ => return Err(ErrorKind::WrongNumberOfArguments.into()),
+    };
     if rate == 0.0 {
         return Err(Error::with_detail(
             ErrorKind::IllegalFunctionCall,
@@ -249,11 +255,6 @@ pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
             "Q or bandwidth",
         ));
     }
-    let gain = match (opt(args, 5), kind >= 5) {
-        (Some(v), true) => v.to_real()?,
-        (None, false) => 0.0,
-        _ => return Err(ErrorKind::WrongNumberOfArguments.into()),
-    };
     let w0 = 2.0 * PI * cutoff / rate;
     let (sin, cos) = w0.sin_cos();
     let alpha = match kind {

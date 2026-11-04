@@ -108,11 +108,14 @@ impl Runtime {
                 let pad = pad(&args[0])?;
                 Ok(ints(&[self.input.ir_state[pad]]))
             }
-            // UNVERIFIED: the array's height and that reading a stopped
-            // camera is no error.
+            // A camera never started is no camera, and mode 1 cannot be read.
+            // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+            // UNVERIFIED: the array's height for the modes that work.
             (Command::Irread, Want::Outs(4), 1) => {
                 let pad = pad(&args[0])?;
                 let (count, rows) = match self.input.ir_state[pad] {
+                    0 => return Err(ErrorKind::IrCameraNotAvailable.into()),
+                    3 => return Err(ErrorKind::IllegalIrCameraMode.into()),
                     4 => (IR_BLOCKS, IR_BLOCKS),
                     _ => (0, IR_CLUSTERS),
                 };

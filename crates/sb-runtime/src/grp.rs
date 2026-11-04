@@ -98,9 +98,8 @@ const MOST_PIXELS: i64 = sb_core::memory::TOTAL as i64 / 4;
 /// A rectangle given as X,Y,width,height. It may reach off the page, be
 /// wider and taller than it, and be empty (GSAVE reads 0 off the page,
 /// GLOAD drops what falls off it).
-// UNVERIFIED: a negative width or height is Out of range, and so is a
-// rectangle with more pixels than memory holds, standing in for SmileBASIC
-// 4's Out of memory.
+// UNVERIFIED: a negative width or height being Out of range is expected of SmileBASIC 4, not yet seen. So is a rectangle with more pixels than
+// memory holds here, standing in for its Out of memory.
 fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
     let (x, y, w, h) = (v[0], v[1], v[2], v[3]);

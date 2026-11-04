@@ -253,8 +253,7 @@ impl Input {
                     // the next ones `interval` frames apart, not counting
                     // the frame that repeats (checked on hardware: 20,3
                     // repeats at 20, 24, 28...).
-                    // UNVERIFIED: a start of 0 never repeats.
-                    if start > 0 && held > start && (held - 1 - start) % (interval + 1) == 0 {
+                    if held > start && (held - 1 - start) % (interval + 1) == 0 {
                         bits |= 1 << id;
                     }
                 }
@@ -355,7 +354,9 @@ impl Runtime {
             }
             (Command::Brepeat, Want::Outs(0), 3) => {
                 let id = in_range("button", &args[0], 0..=16)? as usize;
-                let start = in_range("start", &args[1], 0..=i32::MAX)?;
+                // A start of 0 is taken as 1.
+                // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+                let start = in_range("start", &args[1], 0..=i32::MAX)?.max(1);
                 let interval = in_range("interval", &args[2], 0..=i32::MAX)?;
                 input.repeat[id] = (start as u32, interval as u32);
                 Ok(vec![])

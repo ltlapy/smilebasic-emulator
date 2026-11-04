@@ -74,6 +74,7 @@ pub enum ErrorKind {
     CantUseUserDefinedCharacter,
     /// IRSTART when XCTRLSTYLE did not ask for the IR Motion Camera.
     IrCameraNotAvailable,
+    IllegalIrCameraMode,
     /// A Toy-Con command without XCTRLSTYLE setting up that Toy-Con.
     IllegalControlStyle,
     /// GPUTCHR with a font type other than 8 or 16.
@@ -119,6 +120,7 @@ impl ErrorKind {
             ErrorKind::SpriteNotSet => 57,
             ErrorKind::IllegalFontType => 58,
             ErrorKind::IrCameraNotAvailable => 63,
+            ErrorKind::IllegalIrCameraMode => 64,
             ErrorKind::CantUseEmptyString => 67,
             ErrorKind::CantUseUserDefinedCharacter => 68,
             ErrorKind::IllegalFormat => 71,
@@ -181,6 +183,7 @@ impl ErrorKind {
             ErrorKind::CantUseEmptyString => "Can't use empty string",
             ErrorKind::CantUseUserDefinedCharacter => "Can't use user-defined character",
             ErrorKind::IrCameraNotAvailable => "IR Camera is not available",
+            ErrorKind::IllegalIrCameraMode => "Illegal IR Camera mode",
             ErrorKind::IllegalControlStyle => "Illegal control style",
             ErrorKind::IllegalFontType => "Illegal font type",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",

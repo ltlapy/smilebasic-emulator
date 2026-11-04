@@ -26,6 +26,15 @@ fn run(source: &str) -> Result<String, sb_core::error::Error> {
 }
 
 #[test]
+fn uistate_numbers_stop_at_5() {
+    assert!(run("?UISTATE(5)").is_ok());
+    assert_eq!(
+        run("?UISTATE(6)").err().map(|e| e.kind),
+        Some(ErrorKind::OutOfRange)
+    );
+}
+
+#[test]
 fn random_numbers() {
     assert_eq!(
         run("OK=1:FOR I=0 TO 999:R=RND(7):F#=RNDF(3):IF R<0 OR R>6 OR F#<0 OR F#>=1 THEN OK=0\nNEXT:?OK").unwrap(),

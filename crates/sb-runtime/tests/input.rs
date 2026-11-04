@@ -67,6 +67,10 @@ fn bad_ids() {
 #[test]
 fn repeat_settings() {
     assert_eq!(
+        run(&[], "BREPEAT 5,0,3:BREPEAT 5 OUT A,B:?A;B").unwrap(),
+        "13"
+    );
+    assert_eq!(
         run(&[], "BREPEAT 4,20,5:BREPEAT 4 OUT A,B:?A;B").unwrap(),
         "205"
     );

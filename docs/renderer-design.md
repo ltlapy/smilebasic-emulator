@@ -459,8 +459,8 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | GPUTCHRP drawing scales the spacing as the width does | `put_chars_proportional` | C: pitfalls; TEST47 (R30) |
 | GLOAD palette indexes past the palette leave the page's pixel | `load_rect` | C: pitfalls; TEST47 (R31) |
 | GSAVE/GLOAD rectangles off the page read as empty | `save_rect`, `load_rect` | C: pitfalls |
-| GSAVE/GLOAD width and height: any, 0 included, up to what memory holds | `grp.rs` (`MOST_PIXELS`) | C: pitfalls; TEST48. U: negative sizes (Out of range here), and the error past memory (Out of range here, see differences) |
-| TSAVE width and height limit | `txt.rs` | U (R31): taken as 4096 |
+| GSAVE/GLOAD width and height: any, 0 included, up to what memory holds | `grp.rs` (`MOST_PIXELS`) | C: pitfalls; TEST48. U: negative sizes (Out of range, from the code), and the error past memory (Out of range here, see differences) |
+| TSAVE and TLOAD width and height: 0 or more, as GSAVE | `txt.rs` (`MOST_CELLS`) | U (R31): from the code; the error past memory stands in as for GSAVE |
 | GARRAY/GUPDATE: GPGET sees array writes at once; the screen after GUPDATE | `Graphics::update` | C: pitfalls ([differences.md](differences.md) for the omission) |
 
 **Count.** There were 31 open items, R1 to R31. TEST47 (batches A and

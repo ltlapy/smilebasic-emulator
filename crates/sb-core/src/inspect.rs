@@ -70,8 +70,9 @@ fn element(value: &Value) -> Str {
     let s = s.borrow();
     let mut out: Str = format!("({})\"", s.len()).encode_utf16().collect();
     out.extend(s.iter().take(STRING_CHARS));
-    // UNVERIFIED: that exactly 256 characters keep the quote.
-    if s.len() <= STRING_CHARS {
+    // A string of exactly 256 characters is cut too.
+    // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+    if s.len() < STRING_CHARS {
         out.push(u16::from(b'"'));
     }
     out
@@ -97,6 +98,8 @@ mod tests {
         assert_eq!(text(&Value::Real(1.5)), ["REAL: 1.50000000"]);
         assert_eq!(text(&Value::Str(str_from("AB"))), ["STRING: (2)\"AB\""]);
         let long = "1234567890".repeat(110);
+        let exact: Value = Value::Str(str_from(&"A".repeat(STRING_CHARS)));
+        assert!(!text(&exact)[0].ends_with("A\""));
         let shown = format!("STRING: (1100)\"{}", &long[..STRING_CHARS]);
         assert_eq!(text(&Value::Str(str_from(&long))), [shown]);
     }

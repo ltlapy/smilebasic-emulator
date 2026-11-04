@@ -106,6 +106,20 @@ fn chkchr_reads_cells_or_display_points() {
 }
 
 #[test]
+fn tcoord_drops_mode_0_fractions_and_gives_home_on_a_flat_axis() {
+    let rt = run(concat!(
+        "TOFS 0,100,50\n",
+        "TCOORD 0,3.9,2.9 OUT X,Y:?X;Y\n",
+        "THOME 0,7,9:TSCALE 0,0,1:TOFS 0,0,0\n",
+        "TCOORD 0,20,30,2 OUT X,Y:?X;Y",
+    ))
+    .unwrap();
+    let text = |y| row(&rt, 4, y, 20).trim_end_matches('.').to_string();
+    assert_eq!(text(0), "10352");
+    assert_eq!(text(1), "739");
+}
+
+#[test]
 fn tcopy_within_and_between_screens() {
     let rt = run(concat!(
         "TFILL 0,0,0,2,0,\"ABC\"\n",
@@ -159,9 +173,10 @@ fn bad_arguments() {
     assert_eq!(kind("TPUT 0,0,0,65,16"), Some(ErrorKind::OutOfRange));
     assert_eq!(kind("TPUT 0,99,0,65"), Some(ErrorKind::OutOfRange));
     assert_eq!(
-        kind("DIM A[0]:TSAVE 0,20,0,10,0,A"),
+        kind("DIM A[0]:TSAVE 0,20,0,10,-1,A"),
         Some(ErrorKind::OutOfRange)
     );
+    assert_eq!(kind("DIM A[0]:TSAVE 0,20,0,10,0,A"), None);
     assert_eq!(
         kind("DIM A[1]:TLOAD 0,A"),
         Some(ErrorKind::SubscriptOutOfRange)

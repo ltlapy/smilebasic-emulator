@@ -67,17 +67,21 @@ fn offsets_on(x: i64, y: i64, w: i64, h: i64, t: &TextScreen) -> (Range<i64>, Ra
     (on_screen(x, w, sw), on_screen(y, h, sh))
 }
 
+/// The most cells TSAVE and TLOAD take at once.
+const MOST_CELLS: i64 = sb_core::memory::TOTAL as i64 / 8;
+
 /// X,Y,width,height; the whole screen when `args` is empty. It may reach
 /// off the screen (checked on hardware: TSAVE reads empty cells there).
-// UNVERIFIED: the limits on width and height.
+// UNVERIFIED: expected of SmileBASIC 4, not yet seen: a width or height
+// may be anything from 0 up. A rectangle past what memory holds is Out of
+// range here, standing in for SmileBASIC 4's own error, as for GSAVE.
 fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
     let (w, h) = screen.size();
     if args.is_empty() {
         return Ok((0, 0, w as i32, h as i32));
     }
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
-    let fits = |len: i32| (1..=4096).contains(&len);
-    if fits(v[2]) && fits(v[3]) {
+    if v[2] >= 0 && v[3] >= 0 && i64::from(v[2]) * i64::from(v[3]) <= MOST_CELLS {
         Ok((v[0], v[1], v[2], v[3]))
     } else {
         Err(Error::with_detail(
@@ -88,9 +92,17 @@ fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
 }
 
 /// Display coordinates to the screen's own pixels, which TOFS, THOME,
-/// TROT and TSCALE place; `None` if the screen is scaled to nothing.
-fn screen_dots(screen: &TextScreen, x: f64, y: f64) -> Option<(f64, f64)> {
-    Some(screen.placement().inverse()?.apply(x, y))
+/// TROT and TSCALE place. An axis scaled to nothing gives the home point.
+// UNVERIFIED: that axis is expected of SmileBASIC 4, not yet seen.
+fn screen_dots(screen: &TextScreen, x: f64, y: f64) -> (f64, f64) {
+    let (dx, dy) = (x - screen.pos.0, y - screen.pos.1);
+    let (sin, cos) = screen.rot.to_radians().sin_cos();
+    let (rx, ry) = (dx * cos + dy * sin, dy * cos - dx * sin);
+    let axis = |v: f64, scale: f64, home: f64| if scale == 0.0 { home } else { v / scale + home };
+    (
+        axis(rx, screen.scale.0, screen.home.0),
+        axis(ry, screen.scale.1, screen.home.1),
+    )
 }
 
 /// The cell under the screen's pixel `(x, y)`.
@@ -177,7 +189,7 @@ impl Runtime {
                     },
                 };
                 let cell = if display {
-                    screen_dots(t, x, y).map(|dots| cell_of(t, dots))
+                    Some(cell_of(t, screen_dots(t, x.trunc(), y.trunc())))
                 } else {
                     Some((int(&rest[0])?, int(&rest[1])?))
                 };
@@ -192,29 +204,31 @@ impl Runtime {
                 }
                 Ok(out)
             }
-            // UNVERIFIED: modes 0 and 2 give reals and mode 1 integers; a
-            // screen scaled to nothing gives 0,0.
+            // Modes 0 and 2 give reals and mode 1 integers. Mode 0 takes
+            // whole coordinates, dropping the fractions.
+            // UNVERIFIED: that dropping is expected of SmileBASIC 4, not
+            // yet seen.
             (Command::Tcoord, Want::Outs(2), 3 | 4) => {
                 let t = &self.text[screen_id(&args[0])?];
                 let (x, y) = (args[1].to_real()?, args[2].to_real()?);
                 let mode = args.get(3).map(int).transpose()?.unwrap_or(0);
                 Ok(match mode {
                     0 => {
-                        let (dx, dy) = t.placement().apply(x, y);
+                        let (dx, dy) = t.placement().apply(x.trunc(), y.trunc());
                         vec![Value::Real(dx), Value::Real(dy)]
                     }
                     1 => {
-                        let (cx, cy) = screen_dots(t, x, y).map_or((0, 0), |d| cell_of(t, d));
+                        let (cx, cy) = cell_of(t, screen_dots(t, x, y));
                         vec![Value::Int(cx), Value::Int(cy)]
                     }
                     2 => {
-                        let (sx, sy) = screen_dots(t, x, y).unwrap_or((0.0, 0.0));
+                        let (sx, sy) = screen_dots(t, x, y);
                         vec![Value::Real(sx), Value::Real(sy)]
                     }
                     n => return Err(out_of_range("mode", n)),
                 })
             }
-            // UNVERIFIED: what reaches off either screen is left out.
+            // What reaches off either screen is left out.
             (Command::Tcopy, Want::Outs(0), 7 | 8) => {
                 let dest = screen_id(&args[0])?;
                 let (src, rest) = match args.len() {
@@ -256,7 +270,7 @@ impl Runtime {
                 let id = screen_id(&args[0])?;
                 let rect = rect_on(&args[1..args.len() - 1], &self.text[id])?;
                 let array = numeric_array(args.last().expect("an array"))?;
-                let values = array_colors(&array, (rect.2 * rect.3 * 2) as usize)?;
+                let values = array_colors(&array, rect.2 as usize * rect.3 as usize * 2)?;
                 let cells: Vec<Cell> = (values.chunks(2))
                     .map(|v| Cell::from_ints([v[0] as i32, v[1] as i32]))
                     .collect();
@@ -377,7 +391,7 @@ impl Runtime {
 
     /// Text screens ignore "UV" and "I"; TCHK reports nothing for them
     /// (checked on hardware). Their animations start in step with sprites'.
-    // UNVERIFIED: that such an animation is not set at all.
+    // Such an animation is not set at all.
     fn start_text_anim(&mut self, id: usize, anim: Anim) {
         if matches!(anim.mode.target, Target::Uv | Target::I) {
             return;
