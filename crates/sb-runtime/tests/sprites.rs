@@ -300,8 +300,10 @@ fn linked_sprites_follow_their_parent() {
 
 #[test]
 fn clearing_a_parent_clears_or_frees_its_children() {
-    let (_, out) = run("SPSET 0,0:SPSET 1,0:SPSET 2,0:SPLINK 1,0,1:SPLINK 2,0\n\
-         SPCLR 0:?SPUSED(1);SPLINK(2);\" \";:VSYNC 1:?SPUSED(1);SPUSED(2)");
+    let (_, out) = run(
+        "VSYNC:SPSET 0,0:SPSET 1,0:SPSET 2,0:SPLINK 1,0,1:SPLINK 2,0\n\
+         SPCLR 0:?SPUSED(1);SPLINK(2);\" \";:VSYNC 1:?SPUSED(1);SPUSED(2)",
+    );
     assert_eq!(out, "1-1 01");
 }
 

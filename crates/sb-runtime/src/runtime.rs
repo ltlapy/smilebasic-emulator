@@ -20,7 +20,7 @@ use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
 use crate::hint;
 use crate::input::Input;
-use crate::line::{self, LineEdit};
+use crate::line::{self, LineEdit, codes};
 use crate::palette::Part;
 use crate::raster::{CpuRasterizer, RasterInput, Rasterizer, SceneBackend};
 use crate::scene::{Scene, SceneInput};
@@ -651,8 +651,11 @@ pub enum Stopped {
     Error,
 }
 
-/// UNVERIFIED: how many unread keys SmileBASIC keeps.
-pub const KEY_BUFFER: usize = 256;
+/// How many unread keys each key buffer keeps; the oldest goes for a new one.
+pub const KEY_BUFFER: usize = 128;
+/// How many keys go a frame from the buffer typed keys wait in to the one
+/// programs read.
+const KEYS_A_FRAME: usize = 32;
 /// Frames per half period of the editor cursor's blink: at 60 fps, a full
 /// blink takes about 833 ms.
 const CURSOR_BLINK: u32 = 25;
@@ -689,6 +692,70 @@ pub mod keys {
     pub const DOWN: u16 = 0x1F;
 }
 
+/// A key the frontend reports, as one of the [`keys`] values, as SmileBASIC 4's
+/// code.
+fn key_code(key: u16) -> u32 {
+    match key {
+        keys::UP => codes::UP,
+        keys::DOWN => codes::DOWN,
+        keys::LEFT => codes::LEFT,
+        keys::RIGHT => codes::RIGHT,
+        keys::BACKSPACE => codes::BACKSPACE,
+        keys::DELETE => codes::DELETE,
+        keys::PAGE_UP => codes::PAGE_UP,
+        keys::PAGE_DOWN => codes::PAGE_DOWN,
+        keys::TAB => codes::TAB,
+        keys::HOME => codes::HOME,
+        keys::END => codes::END,
+        keys::ESCAPE => codes::ESCAPE,
+        keys::INSERT => codes::INSERT,
+        c => u32::from(c),
+    }
+}
+
+/// What INKEY$ gives for a code, a [`keys`] value or a character; 0 for
+/// nothing, and it then goes on to the next key.
+pub(crate) fn key_value(code: u32) -> u16 {
+    match code {
+        codes::UP => keys::UP,
+        codes::DOWN => keys::DOWN,
+        codes::LEFT => keys::LEFT,
+        codes::RIGHT => keys::RIGHT,
+        codes::BACKSPACE => keys::BACKSPACE,
+        codes::DELETE => keys::DELETE,
+        codes::PAGE_UP => keys::PAGE_UP,
+        codes::PAGE_DOWN => keys::PAGE_DOWN,
+        codes::TAB => keys::TAB,
+        codes::HOME | 0x1000C => keys::HOME,
+        codes::END | 0x1000D => keys::END,
+        codes::ESCAPE => keys::ESCAPE,
+        codes::INSERT => keys::INSERT,
+        c => u16::try_from(c).unwrap_or(0),
+    }
+}
+
+/// A code the system takes on its way to the program, such as
+/// #SOFTKEY_HIDDEN's &H10056. No more keys go on that frame.
+fn system_key(code: u32) -> bool {
+    matches!(code,
+        0x10020..=0x10023
+        | 0x10028
+        | 0x1003A
+        | 0x1003C
+        | 0x1004A..=0x10052
+        | 0x10054..=0x10056
+        | 0x10058
+        | 0x1005A..=0x1005E
+        | 0x11000)
+}
+
+fn push_key(buffer: &mut VecDeque<u32>, code: u32) {
+    if buffer.len() == KEY_BUFFER {
+        buffer.pop_front();
+    }
+    buffer.push_back(code);
+}
+
 /// A direct-mode line that Up and Down walk through the history from.
 struct Recall {
     /// The history entry shown, newest first; `None` is the line that was
@@ -712,7 +779,10 @@ pub struct Runtime {
     pub(crate) system: System,
     pub sound: Sound,
     /// Typed characters not yet read by INKEY$ or INPUT.
-    pub(crate) keys: VecDeque<u16>,
+    pub(crate) keys: VecDeque<u32>,
+    /// Keys on their way to [`Runtime::keys`], typed or from PUSHKEY. Each
+    /// frame takes up to [`KEYS_A_FRAME`] of them there.
+    pub(crate) typed: VecDeque<u32>,
     /// The line being typed for INPUT, LINPUT or direct mode.
     line: Option<LineEdit>,
     /// Where the Up and Down keys have taken the direct-mode line in the
@@ -813,6 +883,8 @@ pub struct Runtime {
     pub(crate) answer: Option<bool>,
     /// The last command waits for an answer; see [`Host::retry`].
     pub(crate) retry: bool,
+    /// See [`Runtime::hold_for_a_frame`].
+    frame_waited: bool,
     pub(crate) notices: Vec<String>,
     /// The program last started, whose DATA commands like SPANIM read.
     pub(crate) program: Option<Rc<Compiled>>,
@@ -1012,6 +1084,7 @@ impl Runtime {
             system: System::default(),
             sound: Sound::default(),
             keys: VecDeque::new(),
+            typed: VecDeque::new(),
             line: None,
             recall: None,
             frame: 0,
@@ -1055,6 +1128,7 @@ impl Runtime {
             confirm: None,
             answer: None,
             retry: false,
+            frame_waited: false,
             listing_left: None,
             inspect_left: None,
             notices: Vec::new(),
@@ -1265,6 +1339,15 @@ impl Runtime {
         Some(self.line.as_ref()?.text.clone())
     }
 
+    /// The selection of the line being typed was copied: it ends, and the
+    /// text stays.
+    pub fn line_copied(&mut self) {
+        if let Some(line) = &mut self.line {
+            line.drop_selection();
+            line.draw(&mut self.text[CONSOLE]);
+        }
+    }
+
     /// The text selected in the line being typed.
     pub fn line_selection(&self) -> Option<String> {
         let text = self.line.as_ref()?.selected_text()?;
@@ -1428,25 +1511,68 @@ impl Runtime {
         Ok(vec![])
     }
 
-    /// Queues a typed character, or one of the [`keys`] codes. Keys typed
-    /// while the buffer is full are dropped.
+    /// Queues a typed character, or one of the [`keys`] codes.
     pub fn key_press(&mut self, code: u16) {
         self.changed = true;
-        if self.keys.len() < KEY_BUFFER {
-            self.keys.push_back(code);
+        push_key(&mut self.typed, key_code(code));
+    }
+
+    /// Queues what `PUSHKEY` gives: a character or one of the [`codes`].
+    pub(crate) fn push_code(&mut self, code: u32) {
+        self.changed = true;
+        push_key(&mut self.typed, code);
+    }
+
+    /// Queues pasted text's keys, of which none may be lost, however many.
+    pub(crate) fn paste_key(&mut self, code: u16) {
+        self.changed = true;
+        self.typed.push_back(key_code(code));
+    }
+
+    /// Takes the frame's keys to where programs and lines read them. A code
+    /// of 0 ends it for this frame.
+    pub fn take_typed_keys(&mut self) {
+        for _ in 0..KEYS_A_FRAME {
+            match self.typed.pop_front() {
+                None | Some(0) => break,
+                Some(code) if system_key(code) => break,
+                Some(code) => push_key(&mut self.keys, code),
+            }
         }
+    }
+
+    /// For a command that does its work and then holds the program until
+    /// the next frame, leaving VSYNC's count alone: at the end of its work
+    /// it calls this, and the VM calls it again on the next frame.
+    pub(crate) fn hold_for_a_frame(&mut self) {
+        self.frame_waited = true;
+        self.retry = true;
+    }
+
+    /// Whether this call of the command is the VM's second, after
+    /// [`Runtime::hold_for_a_frame`], with nothing left to do.
+    pub(crate) fn frame_wait_over(&mut self) -> bool {
+        std::mem::take(&mut self.frame_waited)
     }
 
     /// Drops the keys a program left unread and what its buttons were
     /// doing, so that none of it reaches direct mode or the next run.
     pub(crate) fn clear_input(&mut self) {
+        self.frame_waited = false;
         self.keys.clear();
+        self.typed.clear();
         self.input.forget();
     }
 
     /// Takes the next unread key, for the editor.
     pub(crate) fn next_key(&mut self) -> Option<u16> {
-        self.keys.pop_front()
+        while let Some(code) = self.keys.pop_front() {
+            match key_value(code) {
+                0 => {}
+                key => return Some(key),
+            }
+        }
+        None
     }
 
     /// Marks the screens as possibly changed, to be drawn again.
@@ -1633,6 +1759,7 @@ impl Runtime {
     /// Starts a frame: the input it sees, and MAINCNT.
     pub fn begin_frame(&mut self) {
         self.input.latch();
+        self.take_typed_keys();
         self.system.frames = self.system.frames.wrapping_add(1);
     }
 
@@ -2001,7 +2128,7 @@ impl Runtime {
                 if let Some(flag) = args.first() {
                     opt_int(flag)?;
                 }
-                let key = self.keys.pop_front();
+                let key = self.next_key();
                 Ok(vec![Value::Str(new_str(key.into_iter().collect()))])
             }
             (Command::Locate, Want::Outs(0)) => {
@@ -2416,11 +2543,13 @@ impl Host for Runtime {
             let console = &mut self.text[CONSOLE];
             let line = self.line.as_mut().expect("checked above");
             // Up and Down stay the history's; Tab takes a word.
-            if matches!(key, keys::UP | keys::DOWN) {
+            if matches!(key, codes::UP | codes::DOWN) {
                 line.completion = None;
             }
-            if let Some(list) = &mut line.completion {
-                let outcome = list.key(key, options.is_some_and(|o| o.enter));
+            // A control character that PUSHKEY gave is no key of the list's.
+            let literal = key < 0x20 && key != codes::ENTER;
+            if let Some(list) = line.completion.as_mut().filter(|_| !literal) {
+                let outcome = list.key(key_value(key), options.is_some_and(|o| o.enter));
                 match outcome {
                     complete::Outcome::Used => {}
                     complete::Outcome::Close => line.completion = None,
@@ -2437,14 +2566,34 @@ impl Host for Runtime {
                     continue;
                 }
             }
-            if matches!(key, keys::UP | keys::DOWN) {
-                self.recall_line(key == keys::UP);
+            if matches!(key, codes::UP | codes::DOWN) {
+                self.recall_line(key == codes::UP);
                 self.line_blink_from = self.system.frames;
                 continue;
             }
-            if key == keys::ENTER {
+            if key == codes::ENTER {
                 let line = self.line.take().expect("checked above");
                 return Ok(Some(line.finish(console)));
+            }
+            match key {
+                codes::COPY | codes::CUT => {
+                    if let Some(text) = line.selected_text() {
+                        self.clipboard.set_text(&String::from_utf16_lossy(&text));
+                    }
+                    if key == codes::CUT {
+                        line.key(codes::DELETE);
+                    }
+                    line.drop_selection();
+                    line.draw(console);
+                    continue;
+                }
+                codes::PASTE => {
+                    let text: Vec<u16> = self.clipboard.text().encode_utf16().collect();
+                    line.replace_before(line.cursor, &text);
+                    line.draw(console);
+                    continue;
+                }
+                _ => {}
             }
             let listing = line.completion.take().is_some();
             if line.key(key) {
@@ -2452,8 +2601,9 @@ impl Host for Runtime {
             }
             self.line_overwrite = line.overwrite;
             let looks = match key {
-                keys::BACKSPACE => listing,
-                c => is_ident_char(c) || c == 0x40 || c == 0x23,
+                codes::BACKSPACE => listing,
+                0x1_0000.. => false,
+                c => is_ident_char(c as u16) || c == 0x40 || c == 0x23,
             };
             line.draw(console);
             if let (true, Some(options), false) = (looks, options, self.line_quiet) {

@@ -16,14 +16,22 @@ follows all of it. Items still waiting for a check are marked
   `INPUT` does not.
 - `MAINCNT` and `MILLISEC` need their brackets: without them they are
   plain variables, always 0 to begin with.
-- Animations (`SPANIM`, `TANIM`) take their first step on the frame
-  after they are set. They also play in direct mode, and go on while the
-  editor is open. So does `FADE color,time`: `FADE()` still gives the
-  start right after it, and the first step shows after one `VSYNC 1`
-  (TEST47). An `SPANIM` set after a `VSYNC` that waited shows its first
-  step after one `VSYNC 1`, in the frame of the sprite's `SPSET` too. Set
-  when the program is behind, after a `VSYNC` that found its frame gone by
-  or a long run of code, it takes two frames (TEST48, TEST56).
+- `SPANIM`, `TANIM` and `FADE color,time` take their first step at the
+  first update of the frame job after the command, the three together,
+  whatever the program was doing. So after a `VSYNC` that finds its frame
+  gone by, or a long run of code, the next `VSYNC 1` goes straight on and it
+  takes a second one to see the step. On a Switch 2 the step comes about a
+  millisecond before `MAINCNT` rises (TEST60). `FADE()` still gives the start
+  right after `FADE`. Animations also play in direct mode, and go on while
+  the editor is open.
+- The first `VSYNC 1` after `RUN` finds its frame gone by (TEST60).
+- `XSCREEN` holds the program until the frame job has taken the new mode,
+  without touching `VSYNC`'s count, so a `VSYNC 1` right after it goes
+  straight on (TEST60).
+- `MAINCNT` follows real time while the program is busy: 180 in 3 seconds of
+  a loop with no `VSYNC`. When the frame job is held up it falls behind real
+  time with it: 600 sprites of 64x64 scaled by 21 on a Switch 2 gave 49 in
+  4077 ms, one `VSYNC` to each (TEST60).
 - A sliding animation of rotation, scale or color mixes its two ends in
   single precision as `from*left + to*(1-left)`, `left` being the share of
   frames still to go. Rotation and scale keep the result: 0 to -10 over
@@ -319,13 +327,40 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   vibrates: after `VIBRATE 1,40` it is 2621480 (40 on the right times
   65536, plus 40 on the left) and `VIBRATE(1,0)` 40; with frequencies
   it is -1, still a second later. `VIBRATE` alone clears it.
-- `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`).
-  One above `&HFFFF` types nothing.
+- `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`). Codes
+  from `&H10000` are keys that are not characters: `&H10000` to `&H10003` up,
+  down, left and right, `&H10004` Backspace, `&H10005` Delete, `&H10008` Tab,
+  `&H10009` Home, `&H1000A` End, `&H10013` starts selecting (plain moves then
+  select), `&H10015` Copy. `PUSHKEY 8` is not Backspace but a character, and
+  goes into a line as a cell of code 8; `PUSHKEY 9` the same (TEST60).
+- `PUSHKEY` holds the program for a frame, without touching `VSYNC`'s
+  count: ten of them take ten frames. A string of 64 characters is `String is
+  too long (PUSHKEY:1)`; 63 goes (TEST60).
+- Keys pass through two buffers of 128, each losing its oldest when full.
+  Typed and pushed keys wait in the first, and each frame takes up to 32 to
+  the second, which `INKEY$` and the line being typed read. Five `PUSHKEY`s of
+  63 in a row, with 315 keys, leave 128 to read: keys 32 to 95, 124 to 155 and
+  187 to 218; 219 on come in the frames after, with the first buffer's rest.
+  At the prompt, five `PUSHKEY`s of 60 lose keys the same way (TEST60).
 - Typed keys wait in the buffer until something reads them:
   `WAIT 180:?INKEY$();INKEY$();INKEY$()` shows what was typed during the
   wait. `INPUT` and `LINPUT` drop every key waiting when they start,
   `PUSHKEY`'s included: `PUSHKEY "7":INPUT A$` waits with an empty
   line.
+
+- Tab on a line types one space, and a selection stays after Enter. Copy on
+  a line ends the selection and keeps the text, so what is typed next goes
+  in at the cursor (TEST60). `INPUT A$`, ABCD, Shift+Left twice, X gives
+  `ABXCD`: on `INPUT`'s line Shift only moves.
+- A line holds 256 characters whatever the console's size; a character typed
+  on a full one is dropped (TEST60).
+- Enter goes on from the row under the cursor, wherever on the line that is.
+  A line that exactly fills its row leaves an empty row before what comes
+  next, as the cursor is on the next row already. With the cursor on the first
+  row of a longer line, what comes next prints over the second (TEST60).
+- A line keeps rows free under its cursor according to the hint bar: at
+  1280x720 with 8x8 characters, typing from row 85 leaves the cursor on row
+  86; at 640x360 from row 40, on row 42 (TEST60).
 
 ## Screens and text
 
@@ -1134,7 +1169,7 @@ yet seen on hardware:
   function.
 - `KEY` 1 to 5 start as `FILES`, `LOAD"`, `SAVE"`, `LIST ERR` and `RUN`
   (the settings can change them). `KEY` ignores a string over 256
-  characters; `PUSHKEY` over 64 is `String is too long`.
+  characters; `PUSHKEY` from 64 is `String is too long`.
 - `XSUBSCREEN` and the undocumented `UISTATE` are there for the main
   program too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
 

@@ -91,7 +91,7 @@ fn variables_and_data() {
     m.boot();
     m.set_slot(
         0,
-        "BGMSETD 128,\"@M\":BGMPLAY 1,128:BGMVAR 1,2,7:BGMVAR 1,2 OUT A:VSYNC:BGMVAR 1,2 OUT B\n\
+        "VSYNC:BGMSETD 128,\"@M\":BGMPLAY 1,128:BGMVAR 1,2,7:BGMVAR 1,2 OUT A:VSYNC:BGMVAR 1,2 OUT B\n\
          VSYNC 3:BGMVAR 1,2 OUT C:?A;B;C\n\
          @M:DATA \"$2=1 :0 C\",\"D\",0"
             .to_string(),

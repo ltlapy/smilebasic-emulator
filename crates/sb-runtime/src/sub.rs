@@ -123,7 +123,15 @@ impl Runtime {
             ) => Ok(vec![]),
             // The keys go to the interpreter with the focus, so that a
             // subprogram can type into the main one's direct mode.
-            (Command::Pushkey, Want::Outs(0), [_]) if !self.focus => main.run(command, args, want),
+            (Command::Pushkey, Want::Outs(0), [_]) if !self.focus => {
+                if !self.frame_wait_over() {
+                    if let Err(e) = main.pushkey(&args[0]) {
+                        return Some(Err(e));
+                    }
+                    self.hold_for_a_frame();
+                }
+                Ok(vec![])
+            }
             _ => return None,
         };
         Some(result)

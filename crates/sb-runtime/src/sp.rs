@@ -203,8 +203,7 @@ impl Runtime {
         self.sprite(id)?;
         let s = &mut self.sprites.list[sprite_id(id)?];
         let target = anim.mode.target.index();
-        let mut track = Track::new(anim, &WithDefs::new(s, &self.sprites.defs));
-        track.late = self.sprites.behind;
+        let track = Track::new(anim, &WithDefs::new(s, &self.sprites.defs));
         s.anims[target] = Some(track);
         Ok(vec![])
     }

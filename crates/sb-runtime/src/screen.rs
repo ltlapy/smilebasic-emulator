@@ -567,6 +567,8 @@ impl Runtime {
             }
             (Command::Fade, Want::Value, 0) => Ok(int_value(self.fade.color as i32)),
             (Command::Fadechk, Want::Value, 0) => Ok(int_value(i32::from(self.fade.fading()))),
+            // It holds the program until the frame job has taken the new mode.
+            (Command::Xscreen, Want::Outs(0), 2..=5) if self.frame_wait_over() => Ok(vec![]),
             (Command::Xscreen, Want::Outs(0), 2..=5) => {
                 let (w, h) = (args[0].to_int()?, args[1].to_int()?);
                 if !(128..=1280).contains(&w) || w % 4 != 0 {
@@ -602,6 +604,7 @@ impl Runtime {
                     aspect,
                 });
                 self.text.iter_mut().for_each(|t| t.stop_anims());
+                self.hold_for_a_frame();
                 Ok(vec![])
             }
             (Command::Xscreen, Want::Outs(n @ 2..=5), 0) => {

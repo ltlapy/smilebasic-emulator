@@ -1642,6 +1642,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         toasts.push(format!("Could not copy: {e}"));
                     } else if key == Keycode::X {
                         machine.rt.key_press(keys::BACKSPACE);
+                    } else {
+                        machine.rt.line_copied();
                     }
                 }
                 Event::KeyDown {

@@ -247,8 +247,6 @@ pub struct Track {
     loops_done: i32,
     /// Whether the last frame played was part of a slide.
     slid: bool,
-    /// Sits out the next frame: see [`crate::sprites::Sprites::behind`].
-    pub late: bool,
 }
 
 impl Track {
@@ -265,7 +263,6 @@ impl Track {
             elapsed: 0,
             loops_done: 0,
             slid: false,
-            late: false,
         }
     }
 

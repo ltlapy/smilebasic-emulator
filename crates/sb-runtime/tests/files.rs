@@ -39,6 +39,10 @@ fn machine(dir: &TempDir) -> Machine {
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
     m.rt.key_press(keys::ENTER);
+    // Keys go on 32 a frame.
+    for _ in 0..=line.len() / 32 {
+        m.frame();
+    }
     for _ in 0..100 {
         m.frame();
         if !m.is_running() {

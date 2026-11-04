@@ -41,6 +41,10 @@ fn machine(dir: &TempDir, source: &str) -> Machine {
 fn enter(m: &mut Machine, line: &str) {
     m.type_text(line);
     m.rt.key_press(keys::ENTER);
+    // Keys go on 32 a frame.
+    for _ in 0..=line.len() / 32 {
+        m.frame();
+    }
     for _ in 0..100 {
         m.frame();
         if !m.is_running() {
@@ -339,7 +343,7 @@ fn the_focus_moves_a_few_frames_after_envfocus() {
     let dir = TempDir::new("delay");
     let mut m = machine(
         &dir,
-        "ENVFOCUS 0:N=0\n\
+        "VSYNC:ENVFOCUS 0:N=0\n\
          WHILE ENVFOCUS():VSYNC:INC N:WEND\n\
          ENVFOCUS 1:M=0\n\
          WHILE !ENVFOCUS():VSYNC:INC M:WEND\n\

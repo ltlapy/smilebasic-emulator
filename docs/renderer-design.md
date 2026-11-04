@@ -349,7 +349,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Children without link bit 0 stay where they showed, Z included, when the parent is cleared | `Sprites::clear` | S: pitfalls ("Z included"); marker at `sprites.rs` "that Z also becomes absolute" |
 | Animated XY, Z, UV and I keep whole numbers in 16 bits and divide, `(from*left + to*gone)/frames` dropping the fraction; colours mixed in single precision by the frames left, rounded down; V in double precision | `anim::mix` | C: pitfalls; TEST47 (R7), TEST56. U: UV, I and V, from SmileBASIC 4 |
 | Rotation and scale kept in single precision, slid as `from*left + to*(1-left)` in single precision and not rounded | `sprites::single`, `anim::mix` | C: pitfalls; TEST48 |
-| An SPANIM set while the program is behind (after a VSYNC that found its frame gone by, or code that ran out its frame) steps first a frame late; not one set after a VSYNC that waited, SPSET or not | `Sprites::behind`, `Track::late` | **U**: fits TEST48 and TEST56, 5 cases; that TANIM does not do it, and the cause, are not known |
+| SPANIM, TANIM and FADE take their first step at the frame job's first update after the command; no flag for a program that is behind | `Runtime::animate` | C: pitfalls; TEST60 on a Switch 2 |
 | SPDEF's default table when none was imported (grid of 16x16) | `grid_defs` | Stand-in, not a rule. The real table is imported |
 
 ### 2.3 Text screens

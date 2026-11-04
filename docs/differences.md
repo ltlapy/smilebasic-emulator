@@ -88,6 +88,10 @@ known.
   blocks in moment mode, and `IRSPRITE` shows no image.
 - Toy-Con set up with `XCTRLSTYLE` are never recognized: `TCPIANO` and
   the other `TC` commands answer 0 for everything.
+- Pasting into a line goes through the key buffers without losing keys,
+  however long the text, 32 characters a frame. On the keyboard, Tab takes the
+  word from completion's list when one shows; with none it is a space, as in
+  SmileBASIC 4.
 - The mouse's left button is the touch screen (touch 0 only).
 - Controller 1 is the keyboard and the first gamepad together, reported
   as a handheld controller; other gamepads are Pro Controllers.

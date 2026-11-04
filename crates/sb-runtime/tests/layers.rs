@@ -350,7 +350,7 @@ fn fade_covers_everything_and_moves_in_steps() {
     m.boot();
     m.set_slot(
         0,
-        "FADE &HFFFFFFFF,4:A=FADECHK():VSYNC 2:B=FADE():VSYNC 3:?A;HEX$(B);FADECHK();HEX$(FADE())"
+        "VSYNC:FADE &HFFFFFFFF,4:A=FADECHK():VSYNC 2:B=FADE():VSYNC 3:?A;HEX$(B);FADECHK();HEX$(FADE())"
             .to_string(),
     );
     m.run_slot(0);

@@ -60,13 +60,19 @@ fn errors() {
 
 fn type_keys(rt: &mut Runtime, text: &str) {
     text.encode_utf16().for_each(|c| rt.key_press(c));
+    rt.take_typed_keys();
+}
+
+fn press(rt: &mut Runtime, key: u16) {
+    rt.key_press(key);
+    rt.take_typed_keys();
 }
 
 #[test]
 fn inkey_reads_queued_keys() {
     let mut rt = Runtime::new(400, 240, Font::blank());
     type_keys(&mut rt, "AB");
-    rt.key_press(keys::UP);
+    press(&mut rt, keys::UP);
     let src = "A$=INKEY$()+INKEY$():B$=INKEY$(1):C$=INKEY$()\n?A$;ASC(B$);LEN(C$)";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
@@ -82,8 +88,11 @@ fn input_drops_keys_queued_before_it() {
     type_keys(&mut rt, "ZSX");
     let src = "PUSHKEY \"7\":INPUT A$\n?\"[\";A$;\"]\"";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
+    // PUSHKEY holds for a frame, and then INPUT waits.
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
-    rt.key_press(keys::ENTER);
+    rt.begin_frame();
+    assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
+    press(&mut rt, keys::ENTER);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
     assert_eq!(row(&rt, 4, 1), "[]");
 }
@@ -96,7 +105,7 @@ fn input_takes_keys_typed_while_it_waits() {
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     type_keys(&mut rt, "8");
-    rt.key_press(keys::ENTER);
+    press(&mut rt, keys::ENTER);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
     assert_eq!(row(&rt, 4, 1), "[8]");
 }
@@ -109,11 +118,11 @@ fn input_waits_for_enter_and_edits() {
     let waiting = Status::Retry;
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), waiting);
     type_keys(&mut rt, "12");
-    rt.key_press(keys::BACKSPACE);
+    press(&mut rt, keys::BACKSPACE);
     type_keys(&mut rt, "3");
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), waiting);
     assert_eq!(row(&rt, 4, 0), "N? 13");
-    rt.key_press(keys::ENTER);
+    press(&mut rt, keys::ENTER);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Ended);
     assert_eq!(row(&rt, 4, 1), "26");
 }
@@ -183,14 +192,14 @@ fn input_cursor_starts_again_on_each_key_that_does_something() {
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(flips_after(&mut rt, 24), 18);
     // Off now. Left to the first character moves, and shows it again.
-    rt.key_press(keys::LEFT);
+    press(&mut rt, keys::LEFT);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(flips_after(&mut rt, 16), 18);
     for _ in 0..5 {
         rt.begin_frame();
     }
     // Off, and it stays so: Left at the line's start moves nothing.
-    rt.key_press(keys::LEFT);
+    press(&mut rt, keys::LEFT);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(flips_after(&mut rt, 16), 14);
 }
@@ -206,11 +215,11 @@ fn input_cursor_is_a_block_after_insert() {
         (row[16..32].iter()).filter(|&&p| p == 0xFFFF_FFFF).count()
     };
     assert_eq!(width(&next_frame(&mut rt), 0), 2);
-    rt.key_press(keys::INSERT);
+    press(&mut rt, keys::INSERT);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(width(&next_frame(&mut rt), 0), 8);
     // The next line goes on overwriting.
-    rt.key_press(keys::ENTER);
+    press(&mut rt, keys::ENTER);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     assert_eq!(width(&next_frame(&mut rt), 8), 8);
 }
@@ -260,8 +269,8 @@ fn input_clears_the_cells_it_typed_over_and_deleted() {
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     type_keys(&mut rt, "XY");
-    rt.key_press(keys::BACKSPACE);
-    rt.key_press(keys::BACKSPACE);
+    press(&mut rt, keys::BACKSPACE);
+    press(&mut rt, keys::BACKSPACE);
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     let s = &rt.text[4];
     let codes: Vec<u16> = (0..6).map(|x| s.cell(x, 0).code).collect();

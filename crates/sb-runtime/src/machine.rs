@@ -1548,7 +1548,7 @@ impl Machine {
                     Err(_) => continue,
                 },
             };
-            self.rt.key_press(code);
+            self.rt.paste_key(code);
         }
     }
 
@@ -1634,9 +1634,6 @@ impl Machine {
             }
             return;
         };
-        if self.wait == 0 {
-            self.rt.sprites.behind = true;
-        }
         self.wait = self.wait.saturating_sub(1);
         if self.wait > 0 {
             return;
@@ -1698,7 +1695,6 @@ impl Machine {
                         began = Some(now);
                     }
                     self.wait = frames;
-                    self.rt.sprites.behind = frames == 0;
                     self.vsync_at = self.frame + u64::from(frames);
                     if frames == 0 && has_time(vm) {
                         continue;
@@ -1725,9 +1721,7 @@ impl Machine {
                     self.vsync_at += u64::from(frames);
                     if self.vsync_at > self.frame {
                         self.wait = (self.vsync_at - self.frame) as u32;
-                        self.rt.sprites.behind = false;
                     } else {
-                        self.rt.sprites.behind = true;
                         self.vsync_at = self.frame;
                         self.rt.sound.synced();
                         // SmileBASIC 4 goes straight on, and so does a
@@ -1926,8 +1920,11 @@ impl Machine {
                 }
                 self.vm = Some(vm);
                 self.wait = 0;
-                // The VM first runs on the next frame.
-                self.vsync_at = self.frame + 1;
+                // The VM first runs on the next frame, with a first VSYNC 1
+                // finding its frame gone by.
+                // UNVERIFIED: how far back the count starts, so what a first
+                // VSYNC of more than 1 waits.
+                self.vsync_at = self.frame;
             }
             Err(e) => {
                 let e = e.in_slot(slot.map(|s| s as u32));
@@ -2334,6 +2331,7 @@ impl Machine {
             return;
         }
         sub.rt.keys.extend(self.rt.keys.drain(..));
+        sub.rt.typed.extend(self.rt.typed.drain(..));
         self.rt.input.live = idle;
         // The pointer, in the sub-screen's pixels.
         let mut mouse = live.mouse;
@@ -2473,6 +2471,7 @@ impl Machine {
             // main interpreter, as SmileBASIC 4's SMILETOOL has it.
             if self.rt.focus {
                 self.rt.keys.extend(sub.rt.keys.drain(..));
+                self.rt.typed.extend(sub.rt.typed.drain(..));
             }
         }
     }

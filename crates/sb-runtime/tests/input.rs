@@ -16,7 +16,13 @@ fn run(frames: &[State], source: &str) -> Result<String, sb_core::error::Error> 
         rt.input.latch();
     }
     let mut vm = Vm::new(sb_core::compile(source, &rt)?);
-    while vm.run(&mut rt, 100_000)? != Status::Ended {}
+    loop {
+        match vm.run(&mut rt, 100_000)? {
+            Status::Ended => break,
+            Status::Retry => rt.begin_frame(),
+            _ => {}
+        }
+    }
     let console = &rt.text[4];
     let codes: Vec<u16> = (0..console.size().0)
         .map(|x| console.cell(x, 0).code)
@@ -255,7 +261,7 @@ fn vibration_patterns_end() {
     // machine's.
     let mut m = sb_runtime::machine::Machine::new(Runtime::new(400, 240, Font::blank()));
     m.boot();
-    m.set_slot(0, "VIBRATE 1,57:VSYNC:VSYNC:A=VIBRATE(1,0):VSYNC:B=VIBRATE(1,0):VIBRATE 1,40:VSYNC 200:CLS:?A;B;VIBRATE(1,0)".into());
+    m.set_slot(0, "VSYNC:VIBRATE 1,57:VSYNC:VSYNC:A=VIBRATE(1,0):VSYNC:B=VIBRATE(1,0):VIBRATE 1,40:VSYNC 200:CLS:?A;B;VIBRATE(1,0)".into());
     m.run_slot(0);
     for _ in 0..300 {
         m.frame();

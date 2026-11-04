@@ -27,7 +27,10 @@ const TOUCHES: i32 = 10;
 /// The most characters KEY keeps; KEY ignores a longer string, while
 /// PUSHKEY's is String is too long (checked on hardware).
 const KEY_LENGTH: usize = 256;
-const PUSHKEY_LENGTH: usize = 64;
+const PUSHKEY_LENGTH: usize = 63;
+/// The highest code PUSHKEY takes.
+// UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+const PUSHKEY_CODES: u32 = 0x10FFF;
 /// BREPEAT's start and interval for buttons 0 to 7 and for the rest, as
 /// SmileBASIC 4 starts.
 const REPEAT_PADS: (u32, u32) = (20, 3);
@@ -519,26 +522,39 @@ impl Runtime {
                 let s = input.function_keys[n as usize - 1].clone();
                 Ok(vec![Value::Str(new_str(s))])
             }
-            // A number is one key's code; those past the Basic Multilingual
-            // Plane, such as #SOFTKEY_HIDDEN's &H10056, type nothing.
-            (Command::Pushkey, Want::Outs(0), 1) if !matches!(args[0], Value::Str(_)) => {
-                if let Ok(code) = u16::try_from(args[0].to_int()?) {
-                    self.key_press(code);
-                }
-                Ok(vec![])
-            }
+            // It holds the program until the keys have gone on, a frame.
+            (Command::Pushkey, Want::Outs(0), 1) if self.frame_wait_over() => Ok(vec![]),
             (Command::Pushkey, Want::Outs(0), 1) => {
-                let s = text(&args[0])?;
-                if s.len() > PUSHKEY_LENGTH {
-                    return Err(Error::with_detail(ErrorKind::StringTooLong, "PUSHKEY"));
-                }
-                for c in s {
-                    self.key_press(c);
-                }
+                self.pushkey(&args[0])?;
+                self.hold_for_a_frame();
                 Ok(vec![])
             }
             _ => Err(no_form()),
         }
+    }
+
+    /// PUSHKEY's keys: a number is one key's code, a character or one of
+    /// [`crate::line::codes`].
+    pub(crate) fn pushkey(&mut self, keys: &Value) -> Result<()> {
+        if !matches!(keys, Value::Str(_)) {
+            let code = keys.to_int()? as u32;
+            if code > PUSHKEY_CODES {
+                return Err(out_of_range("key code", code as i32));
+            }
+            self.push_code(code);
+            return Ok(());
+        }
+        let s = match keys {
+            Value::Str(s) => s.borrow(),
+            _ => unreachable!("checked above"),
+        };
+        if s.len() > PUSHKEY_LENGTH {
+            return Err(Error::with_detail(ErrorKind::StringTooLong, "PUSHKEY"));
+        }
+        for &c in s.iter() {
+            self.push_code(u32::from(c));
+        }
+        Ok(())
     }
 }
 

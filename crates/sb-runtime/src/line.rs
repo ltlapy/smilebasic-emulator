@@ -3,7 +3,6 @@
 //! direct mode, and the line is drawn again after each change.
 
 use crate::complete::Completion;
-use crate::runtime::keys;
 use crate::text::{Cell, TextScreen, attr};
 
 /// Editing commands that only the line takes, queued with the keys so
@@ -21,18 +20,40 @@ pub mod commands {
     pub const DELETE_TO_END: u16 = 0xF8F6;
 }
 
+/// SmileBASIC 4's codes of keys that are not characters, as `PUSHKEY` takes
+/// them and they wait in the key buffers. INKEY$ gives other values for them:
+/// see [`crate::runtime::key_value`].
+pub mod codes {
+    pub const UP: u32 = 0x10000;
+    pub const DOWN: u32 = 0x10001;
+    pub const LEFT: u32 = 0x10002;
+    pub const RIGHT: u32 = 0x10003;
+    pub const BACKSPACE: u32 = 0x10004;
+    pub const DELETE: u32 = 0x10005;
+    pub const PAGE_UP: u32 = 0x10006;
+    pub const PAGE_DOWN: u32 = 0x10007;
+    pub const TAB: u32 = 0x10008;
+    pub const HOME: u32 = 0x10009;
+    pub const END: u32 = 0x1000A;
+    pub const SELECT_START: u32 = 0x10013;
+    pub const SELECT_STOP: u32 = 0x10014;
+    pub const COPY: u32 = 0x10015;
+    pub const CUT: u32 = 0x10016;
+    pub const PASTE: u32 = 0x10017;
+    pub const CLEAR_LINE: u32 = 0x10018;
+    pub const ESCAPE: u32 = 0x10029;
+    pub const INSERT: u32 = 0x10053;
+    pub const ENTER: u32 = 0x0D;
+}
+
 /// The most characters a line holds; one more typed is dropped, whatever
 /// the console's size.
-// UNVERIFIED: expected of SmileBASIC 4, not yet seen.
 pub const LINE_MAX: usize = 256;
 
 /// How many of the console's rows a line keeps free under its cursor: the
 /// one below it and those the hint bar at the bottom of the display covers
 /// whole. `height` and `aspect` are XSCREEN's, `cell` the console's
 /// character size. The bar is 16 pixels of a 1280x720 display.
-// UNVERIFIED: expected of SmileBASIC 4. One row kept free has been seen, on
-// screens of 240 and 180 rows of pixels; the further rows the bar's term adds on
-// finer screens have not.
 pub fn rows_kept_free(height: u32, aspect: f64, cell: u32) -> i64 {
     let (height, aspect) = (height as f32, aspect as f32);
     let shown = if 720.0 / height <= 1280.0 / (aspect * height) {
@@ -56,6 +77,14 @@ pub fn keep_rows_free(console: &mut TextScreen, free: i64) {
     }
 }
 
+const S_LEFT: u32 = commands::SELECT_LEFT as u32;
+const S_RIGHT: u32 = commands::SELECT_RIGHT as u32;
+const S_HOME: u32 = commands::SELECT_HOME as u32;
+const S_END: u32 = commands::SELECT_END as u32;
+const S_ALL: u32 = commands::SELECT_ALL as u32;
+const D_LINE: u32 = commands::DELETE_LINE as u32;
+const D_END: u32 = commands::DELETE_TO_END as u32;
+
 #[derive(Clone, Debug)]
 pub struct LineEdit {
     pub text: Vec<u16>,
@@ -65,6 +94,8 @@ pub struct LineEdit {
     pub selects: bool,
     /// The other end of the selection.
     anchor: Option<usize>,
+    /// `SELECT_START` was given: plain moves keep the selection's other end.
+    selecting: bool,
     /// Where the line starts on the console, counted in cells from its
     /// top left. Scrolling moves it up, above the console if need be.
     origin: i64,
@@ -90,6 +121,7 @@ impl LineEdit {
             cursor: 0,
             selects: false,
             anchor: None,
+            selecting: false,
             origin: i64::from(y) * i64::from(w) + i64::from(x),
             shown: 0,
             free,
@@ -120,17 +152,23 @@ impl LineEdit {
     pub fn set_text(&mut self, text: Vec<u16>) {
         self.cursor = text.len();
         self.text = text;
+        self.drop_selection();
+    }
+
+    /// Ends the selection, leaving the text and the cursor as they are.
+    pub fn drop_selection(&mut self) {
         self.anchor = None;
+        self.selecting = false;
     }
 
     fn delete_selection(&mut self) -> bool {
         let Some((from, to)) = self.selection() else {
-            self.anchor = None;
+            self.drop_selection();
             return false;
         };
         self.text.drain(from..to);
         self.cursor = from;
-        self.anchor = None;
+        self.drop_selection();
         true
     }
 
@@ -154,77 +192,86 @@ impl LineEdit {
     fn move_to(&mut self, to: usize, select: bool) {
         if select && self.selects {
             self.anchor.get_or_insert(self.cursor);
-        } else {
+        } else if !self.selecting {
             self.anchor = None;
         }
         self.cursor = to.min(self.text.len());
     }
 
-    /// Edits with a typed character, a [`keys`] code or one of the
-    /// [`commands`]. Enter and the history keys are the caller's. Tells
-    /// whether the cursor's blink starts again, as it does for all but a
-    /// move that could not move.
-    pub fn key(&mut self, code: u16) -> bool {
-        use commands::*;
+    /// Edits with a character, one of the [`codes`] or one of the
+    /// [`commands`]. Enter, the history keys and the clipboard's are the
+    /// caller's. Any code under `&H10000` goes in as a character, control
+    /// characters too, as `PUSHKEY` can type them. Tells whether the cursor's
+    /// blink starts again, as it does for all but a move that could not move.
+    pub fn key(&mut self, code: impl Into<u32>) -> bool {
+        let code = code.into();
         let before = (self.cursor, self.anchor);
         self.edit(code);
-        let moves = matches!(code, keys::LEFT | keys::RIGHT | SELECT_LEFT | SELECT_RIGHT);
-        code != keys::INSERT && (!moves || (self.cursor, self.anchor) != before)
+        let moves = matches!(code, codes::LEFT | codes::RIGHT | S_LEFT | S_RIGHT);
+        code != codes::INSERT && (!moves || (self.cursor, self.anchor) != before)
     }
 
-    fn edit(&mut self, code: u16) {
-        use commands::*;
+    fn edit(&mut self, code: u32) {
         let len = self.text.len();
         let left = self.cursor.saturating_sub(1);
         match code {
-            keys::LEFT => self.move_to(left, false),
-            keys::RIGHT => self.move_to(self.cursor + 1, false),
-            keys::HOME => self.move_to(0, false),
-            keys::END => self.move_to(len, false),
-            SELECT_LEFT => self.move_to(left, true),
-            SELECT_RIGHT => self.move_to(self.cursor + 1, true),
-            SELECT_HOME => self.move_to(0, true),
-            SELECT_END => self.move_to(len, true),
-            SELECT_ALL if self.selects => {
+            codes::LEFT => self.move_to(left, false),
+            codes::RIGHT => self.move_to(self.cursor + 1, false),
+            codes::HOME => self.move_to(0, false),
+            codes::END => self.move_to(len, false),
+            S_LEFT => self.move_to(left, true),
+            S_RIGHT => self.move_to(self.cursor + 1, true),
+            S_HOME => self.move_to(0, true),
+            S_END => self.move_to(len, true),
+            S_ALL if self.selects => {
                 self.anchor = Some(0);
                 self.cursor = len;
             }
-            SELECT_ALL => {}
-            DELETE_LINE => self.set_text(Vec::new()),
-            DELETE_TO_END => {
-                self.anchor = None;
+            S_ALL => {}
+            codes::SELECT_START if self.selects => {
+                self.anchor = Some(self.cursor);
+                self.selecting = true;
+            }
+            codes::SELECT_STOP => self.drop_selection(),
+            D_LINE | codes::CLEAR_LINE => self.set_text(Vec::new()),
+            D_END => {
+                self.drop_selection();
                 self.text.truncate(self.cursor);
             }
-            keys::BACKSPACE if self.delete_selection() => {}
-            keys::BACKSPACE if self.cursor > 0 => {
+            codes::BACKSPACE if self.delete_selection() => {}
+            codes::BACKSPACE if self.cursor > 0 => {
                 self.cursor -= 1;
                 self.text.remove(self.cursor);
             }
-            keys::DELETE if self.delete_selection() => {}
-            keys::DELETE if self.cursor < len => {
+            codes::DELETE if self.delete_selection() => {}
+            codes::DELETE if self.cursor < len => {
                 self.text.remove(self.cursor);
             }
-            keys::INSERT => self.overwrite = !self.overwrite,
-            0..0x20 | 0x7F => {}
+            codes::INSERT => self.overwrite = !self.overwrite,
+            // Tab types a space.
+            codes::TAB => self.type_char(0x20),
+            0x1_0000.. => {}
+            c => self.type_char(c as u16),
+        }
+    }
+
+    fn type_char(&mut self, c: u16) {
+        let len = self.text.len();
+        if self.overwrite {
             // As in SmileBASIC 4, the selection goes after the character is
             // written and the cursor moved on, so it can take the character.
-            // UNVERIFIED: read, not yet seen.
-            c if self.overwrite => {
-                match self.text.get_mut(self.cursor) {
-                    Some(old) => *old = c,
-                    None if len < LINE_MAX => self.text.push(c),
-                    None => {}
-                }
-                self.cursor = (self.cursor + 1).min(self.text.len());
-                self.delete_selection();
+            match self.text.get_mut(self.cursor) {
+                Some(old) => *old = c,
+                None if len < LINE_MAX => self.text.push(c),
+                None => {}
             }
+            self.cursor = (self.cursor + 1).min(self.text.len());
+            self.delete_selection();
+        } else if len < LINE_MAX {
             // A full line keeps its selection too.
-            _ if len >= LINE_MAX => {}
-            c => {
-                self.delete_selection();
-                self.text.insert(self.cursor, c);
-                self.cursor += 1;
-            }
+            self.delete_selection();
+            self.text.insert(self.cursor, c);
+            self.cursor += 1;
         }
     }
 
@@ -254,7 +301,6 @@ impl LineEdit {
             let cell = match self.text.get(i) {
                 Some(&code) => {
                     let selected = selection.is_some_and(|(a, b)| a <= i && i < b);
-                    // UNVERIFIED: expected of SmileBASIC 4, not seen.
                     let attr = if selected {
                         plain | attr::INVERT
                     } else {
@@ -281,22 +327,15 @@ impl LineEdit {
         let _ = console.locate(Some((p % w) as i32), Some((p / w) as i32));
     }
 
-    /// Ends the line with Enter: the console goes on below its end.
+    /// Ends the line with Enter: the console goes on from the row under the
+    /// cursor, wherever on the line that is. So a line that fills its last row
+    /// leaves an empty row, as the cursor is on the next one already, and
+    /// Enter after Home has what follows printed over the line's second row.
     pub fn finish(mut self, console: &mut TextScreen) -> Vec<u16> {
-        // UNVERIFIED: that a selection stays on the console, as SmileBASIC
-        // 4's Enter does not draw the line again.
+        // A selection stays on the console: Enter does not draw the line
+        // again.
         self.draw(console);
-        self.cursor = self.text.len();
-        let w = i64::from(console.size().0);
-        if w != 0 {
-            self.place_cursor(console);
-        }
-        // A line that fills its last row has its cursor on the next one
-        // already.
-        let p = self.origin + self.text.len() as i64;
-        if self.text.is_empty() || w == 0 || p % w != 0 {
-            console.newline();
-        }
+        console.newline();
         keep_rows_free(console, self.free);
         self.text
     }
@@ -339,21 +378,21 @@ mod tests {
         c.print(&[u16::from(b'>')]);
         let mut line = direct_line(&c);
         typing(&mut line, "ACD");
-        line.key(keys::LEFT);
-        line.key(keys::LEFT);
+        line.key(codes::LEFT);
+        line.key(codes::LEFT);
         typing(&mut line, "B");
         line.draw(&mut c);
         assert_eq!(row(&c, 0), ">ABCD");
         assert_eq!(c.cursor(), (3, 0));
-        line.key(keys::HOME);
-        line.key(keys::DELETE);
+        line.key(codes::HOME);
+        line.key(codes::DELETE);
         line.key(SELECT_END);
         line.key(SELECT_LEFT);
         assert_eq!(line.selected_text(), Some("BC".encode_utf16().collect()));
         typing(&mut line, "x");
         line.draw(&mut c);
         assert_eq!(row(&c, 0), ">xD..");
-        line.key(keys::LEFT);
+        line.key(codes::LEFT);
         line.key(DELETE_TO_END);
         line.draw(&mut c);
         assert_eq!((row(&c, 0).as_str(), c.cursor()), (">....", (1, 0)));
@@ -373,7 +412,7 @@ mod tests {
             [false, true, true, false]
         );
         assert_eq!(c.cell(1, 0).color, c.color());
-        line.key(keys::RIGHT);
+        line.key(codes::RIGHT);
         line.draw(&mut c);
         assert!(!inverted(&c, 1) && !inverted(&c, 2));
         // Enter does not draw the line again.
@@ -400,9 +439,53 @@ mod tests {
         assert_eq!((line.cursor, line.selection()), (2, None));
         line.draw(&mut c);
         assert_eq!(c.cell(2, 0).attr & attr::INVERT, 0);
-        line.key(keys::BACKSPACE);
+        line.key(codes::BACKSPACE);
         assert_eq!(line.text, "ACD".encode_utf16().collect::<Vec<_>>());
         assert_eq!(line.selected_text(), None);
+    }
+
+    /// TEST60: the codes `PUSHKEY` takes. Selecting goes on through plain
+    /// moves, and Tab types a space where a control character goes in as it is.
+    #[test]
+    fn the_codes_select_and_type() {
+        let mut c = console();
+        let mut line = direct_line(&c);
+        typing(&mut line, "ABCD");
+        line.key(codes::SELECT_START);
+        line.key(codes::LEFT);
+        line.key(codes::LEFT);
+        assert_eq!(line.selected_text(), Some("CD".encode_utf16().collect()));
+        line.drop_selection();
+        assert_eq!(line.selected_text(), None);
+        line.key(codes::LEFT);
+        assert_eq!(line.selected_text(), None);
+        line.key(codes::END);
+        line.key(codes::TAB);
+        line.key(9u16);
+        assert_eq!(line.text, [65, 66, 67, 68, 32, 9]);
+        line.key(codes::HOME);
+        line.key(0x10006u32);
+        assert_eq!(line.cursor, 0);
+        line.draw(&mut c);
+        assert_eq!(c.cell(4, 0).code, 32);
+    }
+
+    /// TEST60: Enter goes on from under the cursor.
+    #[test]
+    fn enter_goes_on_under_the_cursor() {
+        let mut big = TextScreen::new(80, 80);
+        // A row and a half, Enter on the first row: the second is written over.
+        let mut line = direct_line(&big);
+        typing(&mut line, "ABCDEFGHIJKLMNO");
+        line.key(codes::HOME);
+        line.finish(&mut big);
+        assert_eq!(big.cursor(), (0, 1));
+        // Exactly a row: the cursor is on the next, and Enter leaves it empty.
+        big.locate(Some(0), Some(0)).unwrap();
+        let mut line = direct_line(&big);
+        typing(&mut line, "ABCDEFGHIJ");
+        line.finish(&mut big);
+        assert_eq!(big.cursor(), (0, 2));
     }
 
     #[test]
@@ -410,9 +493,9 @@ mod tests {
         let mut c = console();
         let mut line = direct_line(&c);
         typing(&mut line, "ABC");
-        assert!(!line.key(keys::INSERT));
+        assert!(!line.key(codes::INSERT));
         assert!(line.overwrite);
-        line.key(keys::HOME);
+        line.key(codes::HOME);
         typing(&mut line, "XY");
         assert_eq!(line.cursor, 2);
         line.draw(&mut c);
@@ -423,8 +506,8 @@ mod tests {
         assert_eq!(row(&c, 0), "XYZW.");
         // A selection made rightwards takes the character written after
         // it too.
-        line.key(keys::HOME);
-        line.key(keys::RIGHT);
+        line.key(codes::HOME);
+        line.key(codes::RIGHT);
         line.key(SELECT_RIGHT);
         line.key(SELECT_RIGHT);
         typing(&mut line, "Q");
@@ -432,13 +515,13 @@ mod tests {
         assert_eq!(line.cursor, 1);
         // One made leftwards keeps it, and loses what follows it.
         line.set_text("ABCD".encode_utf16().collect());
-        line.key(keys::LEFT);
+        line.key(codes::LEFT);
         line.key(SELECT_LEFT);
         line.key(SELECT_LEFT);
         typing(&mut line, "Q");
         assert_eq!(line.text, "AQD".encode_utf16().collect::<Vec<_>>());
         assert_eq!(line.cursor, 2);
-        line.key(keys::INSERT);
+        line.key(codes::INSERT);
         assert!(!line.overwrite);
     }
 
@@ -465,7 +548,6 @@ mod tests {
         assert_eq!([row(&c, 0), row(&c, 1)], [".....", "....."]);
         assert_eq!(c.cursor(), (2, 0));
         typing(&mut line, "XYZ");
-        // A full last row needs no second newline.
         assert_eq!(
             line.finish(&mut c),
             "XYZ".encode_utf16().collect::<Vec<_>>()
@@ -513,14 +595,14 @@ mod tests {
         let mut c = console();
         let mut line = LineEdit::new(&c, 1);
         typing(&mut line, "ABCDEFGHIJK");
-        line.key(keys::HOME);
+        line.key(codes::HOME);
         line.draw(&mut c);
         assert_eq!(
             [row(&c, 0), row(&c, 1), row(&c, 2)],
             ["ABCDE", "FGHIJ", "K...."]
         );
         assert_eq!(c.cursor(), (0, 0));
-        line.key(keys::END);
+        line.key(codes::END);
         line.draw(&mut c);
         // The cursor went back to its row, which is the last: up it goes.
         assert_eq!([row(&c, 0), row(&c, 1)], ["FGHIJ", "K...."]);
@@ -535,23 +617,23 @@ mod tests {
         assert_eq!(line.text.len(), LINE_MAX);
         assert_eq!(line.cursor, LINE_MAX);
         // Nor in the middle, and a full line's selection stays.
-        line.key(keys::LEFT);
+        line.key(codes::LEFT);
         line.key(SELECT_LEFT);
-        line.key(0x41);
+        line.key(0x41u16);
         assert_eq!(line.text.len(), LINE_MAX);
         assert_eq!(line.selection(), Some((254, 255)));
-        line.key(keys::END);
+        line.key(codes::END);
         // Overwriting at the end adds nothing either.
-        line.key(keys::INSERT);
-        line.key(0x41);
+        line.key(codes::INSERT);
+        line.key(0x41u16);
         assert_eq!(line.text.len(), LINE_MAX);
         assert_eq!(line.cursor, LINE_MAX);
-        line.key(keys::INSERT);
+        line.key(codes::INSERT);
         // Backspace makes room for one again.
-        line.key(keys::BACKSPACE);
+        line.key(codes::BACKSPACE);
         assert_eq!(line.text.len(), LINE_MAX - 1);
-        line.key(0x42);
-        line.key(0x43);
+        line.key(0x42u16);
+        line.key(0x43u16);
         assert_eq!(line.text.len(), LINE_MAX);
         assert_eq!(line.text[LINE_MAX - 1], 0x42);
         line.draw(&mut c);

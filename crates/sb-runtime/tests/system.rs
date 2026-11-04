@@ -10,7 +10,13 @@ fn run(source: &str) -> Result<String, sb_core::error::Error> {
     rt.begin_frame();
     rt.begin_frame();
     let mut vm = Vm::new(sb_core::compile(source, &rt)?);
-    while vm.run(&mut rt, 1_000_000)? != Status::Ended {}
+    loop {
+        match vm.run(&mut rt, 1_000_000)? {
+            Status::Ended => break,
+            Status::Retry => rt.begin_frame(),
+            _ => {}
+        }
+    }
     let console = &rt.text[4];
     let codes: Vec<u16> = (0..console.size().0)
         .map(|x| console.cell(x, 0).code)
@@ -132,4 +138,34 @@ fn what_only_subprograms_use() {
         "000"
     );
     assert_eq!(run("PUSHKEY 65622:PUSHKEY 65:?INKEY$()").unwrap(), "A");
+}
+
+/// TEST60: keys go to where INKEY$ reads them 32 a frame, and PUSHKEY waits a
+/// frame. Both buffers keep the newest 128.
+#[test]
+fn the_key_buffers() {
+    let keys = "VAR I,J,N,F,L,K$,S$\n\
+         FOR J=0 TO 4\n\
+         S$=\"\":FOR I=0 TO 62:S$=S$+CHR$(&H4E00+J*63+I):NEXT:PUSHKEY S$\n\
+         NEXT\n\
+         F=-1:REPEAT:K$=INKEY$()\n\
+         IF K$!=\"\" THEN N=N+1:L=ASC(K$)-&H4E00:IF F<0 THEN F=L\n\
+         UNTIL K$==\"\"\n\
+         ?N;\" \";F;\" \";L";
+    assert_eq!(run(keys).unwrap(), "128 32 218");
+    // INKEY$ skips a code it has no value for, and gives Home's and Tab's.
+    assert_eq!(
+        run("PUSHKEY &H10013:PUSHKEY &H10009:PUSHKEY &H10008:VSYNC 0:A$=INKEY$():B$=INKEY$():?LEN(A$);LEN(B$);LEN(INKEY$());\" \";ASC(A$);ASC(B$)")
+            .unwrap(),
+        "110 29"
+    );
+    assert_eq!(
+        run("PUSHKEY \"A\"*64").unwrap_err().kind,
+        sb_core::error::ErrorKind::StringTooLong
+    );
+    assert!(run("PUSHKEY \"A\"*63").is_ok());
+    assert_eq!(
+        run("PUSHKEY &H11000+1").unwrap_err().kind,
+        sb_core::error::ErrorKind::OutOfRange
+    );
 }

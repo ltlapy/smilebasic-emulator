@@ -631,7 +631,8 @@ fn completion_offers_other_slots_names_when_asked() {
         m.rt.line_and_cursor()
             .map(|(t, _)| String::from_utf16_lossy(t))
     };
-    assert_eq!(typed(false).as_deref(), Some("?HIGH_S"));
+    // With nothing to take, Tab is a space.
+    assert_eq!(typed(false).as_deref(), Some("?HIGH_S "));
     assert_eq!(typed(true).as_deref(), Some("?HIGH_SCORE"));
 }
 
@@ -798,7 +799,9 @@ fn paste_that_does_not_fit_the_line_is_left_out_whole() {
     let mut m = machine();
     m.frame();
     m.paste(&"A".repeat(250));
-    m.frame();
+    for _ in 0..8 {
+        m.frame();
+    }
     assert_eq!(m.rt.line_and_cursor().unwrap().0.len(), 250);
     m.paste("1234567");
     m.frame();
@@ -1707,7 +1710,7 @@ fn fixed_run(source: &str) -> Vec<String> {
 /// Runs that are to be compared must do the same work every time.
 #[test]
 fn fixed_runs_repeat_time_and_chance() {
-    let source = "VSYNC 120\n\
+    let source = "VSYNC:VSYNC 120\n\
         ?RND(1000);\" \";RND(1,1000);\" \";RNDF()\n\
         RANDOMIZE 2,0\n\
         ?RND(2,1000)\n\
