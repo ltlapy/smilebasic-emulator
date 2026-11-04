@@ -34,7 +34,7 @@ pub enum Renderer {
 }
 
 impl Renderer {
-    pub const DEFAULT: Renderer = Renderer::Cpu;
+    pub const DEFAULT: Renderer = Renderer::Auto;
 
     /// The one that is not this.
     pub const fn other(self) -> Renderer {

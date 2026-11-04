@@ -1542,6 +1542,6 @@ No project in the bench set leaves a frame on the CPU; see above for what could.
   other driver; the `gpu` driver is reached only when all before it fail. That is fine.
 - Windows: `cargo build --release --target x86_64-pc-windows-gnu -p sb-sdl` builds with
   MinGW, D3D9, D3D11, D3D12, GL, GLES2 and Vulkan in it; not run. macOS needs its SDK.
-- Still to do: runs on real windows, Windows, macOS and a Mali, and then the default.
+- The default is Auto: the GPU where the self-test passes, the CPU otherwise.
 - Later: a WASM build with the CPU backend first, then WebGL2/WebGPU
   if (d) was chosen.
