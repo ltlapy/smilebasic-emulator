@@ -29,7 +29,12 @@
 //!   compositor that throttles a covered window does (SDL's Wayland
 //!   backend waits up to 50 ms);
 //! - `occluded`: from then too, has the main window count as covered, as
-//!   the system reports it when it can.
+//!   the system reports it when it can;
+//! - `at=FRAME:WHAT`, any number of them: does something to the frontend at
+//!   that frame: `targets` or `device` as if the renderer reset them (the
+//!   first also spoils what the GPU path holds), `resize:W:H`, `fullscreen`,
+//!   `windowed`, `auto` and `cpu` for the renderer setting, `tool` to start
+//!   the F9 tool as a subprogram and `substop` to end it.
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed and what the sound device's buffer went through, so
@@ -100,6 +105,8 @@ pub struct Bench {
     pub cpu_smart: bool,
     /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
     extras: Vec<String>,
+    /// What happens to the frontend at which frame.
+    at: Vec<(u32, String)>,
     /// Frames since the start.
     frame: u32,
     /// Each timed frame's stages, and the bytes it uploaded.
@@ -129,6 +136,12 @@ impl Bench {
                 Some(("settle", n)) => bench.settle = n.parse().unwrap_or(SETTLE),
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
                 Some(("type", text)) => bench.typed = Some(text.to_string()),
+                Some(("at", what)) => {
+                    if let Some((frame, what)) = what.split_once(':') {
+                        let frame = frame.parse().unwrap_or(u32::MAX);
+                        bench.at.push((frame, what.to_string()));
+                    }
+                }
                 Some(("slow", ms)) => {
                     bench.slow = Duration::from_millis(ms.parse().unwrap_or(50));
                 }
@@ -261,6 +274,12 @@ impl Bench {
         if let Err(e) = std::fs::write(format!("{path}-{name}.pam"), out) {
             eprintln!("SB_UI_BENCH: {e}");
         }
+    }
+
+    /// What is to happen to the frontend at this frame.
+    pub fn due(&self) -> Vec<&str> {
+        let due = self.at.iter().filter(|(frame, _)| *frame == self.frame);
+        due.map(|(_, what)| what.as_str()).collect()
     }
 
     /// Whether the frontend is to show `part` of its UI now.

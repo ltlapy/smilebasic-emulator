@@ -1,5 +1,4 @@
-//! The GPU path, a prototype behind `SB_GPU` (see docs/renderer-design.md,
-//! section 6): draws a scene with SDL_Renderer's textured triangles in the
+//! The GPU path (see docs/renderer-design.md, section 6): draws a scene with SDL_Renderer's textured triangles in the
 //! place of the CPU rasterizer, on any render driver with no shader of ours.
 //! A frame with something it cannot draw goes to the CPU whole; the CPU's
 //! pages stay what programs read, and nothing is read back.
@@ -16,6 +15,8 @@
 //!
 //! `SB_GPU` says how it runs:
 //!
+//! - unset: as the setting says, Auto or CPU;
+//! - `0`: the CPU, whatever the setting;
 //! - `1`: draws what it can;
 //! - `sync`: as well, waits for the GPU after each frame, to time its work;
 //! - `check` or `check:N`: every Nth frame it draws (every one by default)
@@ -58,6 +59,7 @@ use sb_runtime::framebuffer::Framebuffer;
 use sb_runtime::graphics::{COUNT_BITS, Clip, Dirty, GRP_SIZE, Graphics, PAGES};
 use sb_runtime::raster::{CpuRasterizer, RasterInput, SceneBackend};
 use sb_runtime::scene::{Item, LayerPass, Projection, Scene, SpriteItem, TextItem};
+use sb_runtime::settings::Renderer;
 use sb_runtime::sprites::attr;
 use sb_runtime::text::{self, Cell, FONT_PAGE, USER_CHARS};
 use sdl3::render::{Canvas, Texture};
@@ -78,13 +80,14 @@ use sdl3::sys::rect::{SDL_FPoint, SDL_Rect};
 use sdl3::sys::render::{
     SDL_CreateGPURenderState, SDL_CreateGPURenderer, SDL_CreateTexture, SDL_DestroyGPURenderState,
     SDL_DestroyRenderer, SDL_DestroyTexture, SDL_FlushRenderer, SDL_GPURenderState,
-    SDL_GPURenderStateCreateInfo, SDL_GetGPURendererDevice, SDL_RenderClear, SDL_RenderGeometry,
-    SDL_RenderPresent, SDL_RenderReadPixels, SDL_Renderer, SDL_SetGPURenderState,
-    SDL_SetGPURenderStateFragmentUniforms, SDL_SetRenderClipRect, SDL_SetRenderDrawBlendMode,
-    SDL_SetRenderDrawColor, SDL_SetRenderTarget, SDL_SetRenderTextureAddressMode,
-    SDL_SetTextureBlendMode, SDL_SetTextureScaleMode, SDL_TEXTURE_ADDRESS_AUTO,
-    SDL_TEXTURE_ADDRESS_CLAMP, SDL_TEXTURE_ADDRESS_WRAP, SDL_TEXTUREACCESS_STATIC,
-    SDL_TEXTUREACCESS_TARGET, SDL_Texture, SDL_UpdateTexture, SDL_Vertex,
+    SDL_GPURenderStateCreateInfo, SDL_GetGPURendererDevice, SDL_GetRendererName, SDL_RenderClear,
+    SDL_RenderGeometry, SDL_RenderPresent, SDL_RenderReadPixels, SDL_Renderer,
+    SDL_SetGPURenderState, SDL_SetGPURenderStateFragmentUniforms, SDL_SetRenderClipRect,
+    SDL_SetRenderDrawBlendMode, SDL_SetRenderDrawColor, SDL_SetRenderTarget,
+    SDL_SetRenderTextureAddressMode, SDL_SetTextureBlendMode, SDL_SetTextureScaleMode,
+    SDL_TEXTURE_ADDRESS_AUTO, SDL_TEXTURE_ADDRESS_CLAMP, SDL_TEXTURE_ADDRESS_WRAP,
+    SDL_TEXTUREACCESS_STATIC, SDL_TEXTUREACCESS_TARGET, SDL_Texture, SDL_TextureAccess,
+    SDL_UpdateTexture, SDL_Vertex,
 };
 use sdl3::sys::surface::{
     SDL_ConvertSurface, SDL_DestroySurface, SDL_LockSurface, SDL_SCALEMODE_LINEAR,
@@ -131,6 +134,9 @@ const MOST_VERTICES: usize = 30000;
 /// FADE, and a GPU's blender that truncates where it should round, as a fixed-point
 /// one may, loses up to 1 in each and 1 more for the texel's tint.
 const FAR_OFF: u32 = 4;
+
+/// How many frames in a row the renderer may refuse before the path stops asking.
+const MOST_REFUSED: u32 = 3;
 
 /// How far above a sample is moved, in texels, for a pixel exactly between
 /// two rows of a half-size target: the frame's rows count from its bottom on
@@ -365,6 +371,9 @@ pub struct Gpu {
     check_every: Option<u64>,
     dump: Option<String>,
     self_test_took: Duration,
+    /// SDL has refused something since the frame began.
+    failed: bool,
+    refused_in_a_row: u32,
     compared: Compared,
     stats: Stats,
 }
@@ -483,7 +492,14 @@ impl Compared {
 impl Gpu {
     /// A path on `renderer` that compares each frame with the CPU's, to try scenes.
     pub fn comparing(renderer: *mut SDL_Renderer) -> Option<Gpu> {
-        Gpu::on(renderer, false, false, false, Some(1), None)
+        Gpu::on(
+            renderer,
+            renderer_on_gl(renderer),
+            false,
+            false,
+            Some(1),
+            None,
+        )
     }
 
     /// What it has compared so far.
@@ -507,16 +523,42 @@ impl Gpu {
         )
     }
 
-    /// The path if `SB_GPU` asks for it and `canvas` can take it.
-    pub fn from_env(canvas: &Canvas<Window>) -> Option<Gpu> {
-        let spec = std::env::var("SB_GPU").ok()?;
-        if spec.is_empty() || spec == "0" {
-            return None;
+    /// The path if `SB_GPU`, or failing that the setting, asks for it and `canvas`
+    /// can take it, and in a few words who draws then and why.
+    pub fn start(canvas: &Canvas<Window>, setting: Renderer) -> (Option<Gpu>, String) {
+        let spec = match (std::env::var("SB_GPU"), setting) {
+            (Ok(spec), _) if spec.is_empty() || spec == "0" => {
+                return (None, "CPU (SB_GPU)".to_string());
+            }
+            (Ok(spec), _) => spec,
+            (Err(_), Renderer::Cpu) => return (None, "CPU (the setting)".to_string()),
+            (Err(_), Renderer::Auto) => "1".to_string(),
+        };
+        match Gpu::try_start(canvas, &spec) {
+            Ok(gpu) => {
+                let on = format!("GPU, {}", gpu.driver_name(canvas));
+                (Some(gpu), on)
+            }
+            Err(why) => {
+                eprintln!("SB_GPU: staying on the CPU: {why}");
+                // What the self-test measured is for the log.
+                let short = why.split(',').next().unwrap_or(&why);
+                (None, format!("CPU ({short})"))
+            }
         }
+    }
+
+    fn driver_name(&self, canvas: &Canvas<Window>) -> String {
+        match self.alone {
+            true => "alone".to_string(),
+            false => canvas.renderer_name.clone(),
+        }
+    }
+
+    fn try_start(canvas: &Canvas<Window>, spec: &str) -> Result<Gpu, String> {
         // Drawing triangles there would only be the CPU again, less exactly.
         if canvas.renderer_name == "software" {
-            eprintln!("SB_GPU: the software renderer has no GPU; staying on the CPU");
-            return None;
+            return Err("the software renderer".to_string());
         }
         let alone = std::env::var_os("SB_GPU_ALONE").is_some();
         let renderer = match alone {
@@ -525,8 +567,7 @@ impl Gpu {
             false => canvas.raw(),
         };
         if renderer.is_null() {
-            eprintln!("SB_GPU: no GPU renderer; staying on the CPU");
-            return None;
+            return Err("no GPU renderer".to_string());
         }
         let check_every = match spec.split_once(':') {
             Some(("check", n)) => Some(n.parse().unwrap_or(1).max(1)),
@@ -544,17 +585,17 @@ impl Gpu {
         let took = match trial {
             Ok(took) => took,
             Err(why) => {
-                eprintln!("SB_GPU: the self-test failed, staying on the CPU ({why})");
                 if alone {
                     // SAFETY: it was made above, for this alone.
                     unsafe { SDL_DestroyRenderer(renderer) };
                 }
-                return None;
+                return Err(format!("the self-test failed, {why}"));
             }
         };
-        let mut gpu = Gpu::on(renderer, on_gl, alone, spec == "sync", check_every, dump)?;
+        let gpu = Gpu::on(renderer, on_gl, alone, spec == "sync", check_every, dump);
+        let mut gpu = gpu.ok_or("no path".to_string())?;
         gpu.self_test_took = took;
-        Some(gpu)
+        Ok(gpu)
     }
 
     fn on(
@@ -644,6 +685,8 @@ impl Gpu {
             check_every,
             dump,
             self_test_took: Duration::ZERO,
+            failed: false,
+            refused_in_a_row: 0,
             compared: Compared::default(),
             stats: Stats::default(),
         })
@@ -651,6 +694,69 @@ impl Gpu {
 
     fn leave(&mut self, reason: Reason) {
         self.stats.left_to_cpu[reason as usize] += 1;
+        if matches!(reason, Reason::Refused) {
+            self.refused_in_a_row += 1;
+        }
+    }
+
+    /// Whether the renderer has refused enough frames in a row to stop asking it:
+    /// each costs the GPU's work and then the CPU's, for a frame the CPU could have
+    /// drawn alone.
+    pub fn given_up(&self) -> bool {
+        self.refused_in_a_row >= MOST_REFUSED
+    }
+
+    /// A texture of the frame's format, or null if it was refused. SDL's OpenGL
+    /// driver looks at glGetError only in a debug context, so a target the driver
+    /// could not hold would otherwise show as black, here.
+    fn make_texture(&self, access: SDL_TextureAccess, w: i32, h: i32) -> *mut SDL_Texture {
+        // SAFETY: the renderer outlives `self`.
+        let texture =
+            unsafe { SDL_CreateTexture(self.renderer, SDL_PIXELFORMAT_ARGB8888, access, w, h) };
+        if !texture.is_null() && self.gl_out_of_memory() {
+            // SAFETY: it was just made, and nothing uses it.
+            unsafe { SDL_DestroyTexture(texture) };
+            return null_mut();
+        }
+        texture
+    }
+
+    /// Whether GL has run out of memory since this was last asked. It asks only on
+    /// a GL driver, whose context SDL has just made current for the same renderer.
+    fn gl_out_of_memory(&self) -> bool {
+        const GL_NO_ERROR: u32 = 0;
+        const GL_OUT_OF_MEMORY: u32 = 0x0505;
+        if !self.on_gl {
+            return false;
+        }
+        // SAFETY: as in device_name, on this thread and only on a GL driver.
+        unsafe {
+            let Some(get) = SDL_GL_GetProcAddress(c"glGetError".as_ptr()) else {
+                return false;
+            };
+            let get: extern "C" fn() -> u32 = std::mem::transmute(get);
+            let mut out = false;
+            // A context lost keeps giving errors; a few are all there can be here.
+            for _ in 0..8 {
+                match get() {
+                    GL_NO_ERROR => break,
+                    error => out |= error == GL_OUT_OF_MEMORY,
+                }
+            }
+            out
+        }
+    }
+
+    /// Fills what holds a frame, as a device that loses them would leave them, to try
+    /// the frontend's answer with `SB_UI_BENCH`.
+    pub fn scribble(&mut self) {
+        for texture in [self.frame, self.layer, self.spare] {
+            if !texture.is_null() {
+                self.target(texture);
+                self.clear(0xFFFF00FF);
+            }
+        }
+        self.done();
     }
 
     /// The frame it drew, to scale as `filter_linear` says. Valid until the
@@ -760,7 +866,7 @@ impl Gpu {
         self.stats.targets += 1;
         // SAFETY: the renderer outlives `self`, and the texture is a target
         // of its own or null.
-        unsafe { SDL_SetRenderTarget(self.renderer, texture) };
+        self.failed |= !unsafe { SDL_SetRenderTarget(self.renderer, texture) };
     }
 
     /// Hands the triangles gathered to SDL.
@@ -779,22 +885,23 @@ impl Gpu {
         };
         // SAFETY: the renderer outlives `self`, the texture is one of its
         // own or null, and the vertices are copied by the call.
-        unsafe {
-            if texture.is_null() {
-                SDL_SetRenderDrawBlendMode(self.renderer, blend);
-            } else {
-                SDL_SetTextureBlendMode(texture, blend);
-            }
+        let drawn = unsafe {
+            let blends = match texture.is_null() {
+                true => SDL_SetRenderDrawBlendMode(self.renderer, blend),
+                false => SDL_SetTextureBlendMode(texture, blend),
+            };
             SDL_SetRenderTextureAddressMode(self.renderer, address, address);
-            SDL_RenderGeometry(
-                self.renderer,
-                texture,
-                self.verts.as_ptr(),
-                self.verts.len() as i32,
-                null(),
-                0,
-            );
-        }
+            blends
+                && SDL_RenderGeometry(
+                    self.renderer,
+                    texture,
+                    self.verts.as_ptr(),
+                    self.verts.len() as i32,
+                    null(),
+                    0,
+                )
+        };
+        self.failed |= !drawn;
         self.stats.vertices += self.verts.len() as u64;
         self.stats.batches += 1;
         self.queued += self.verts.len();
@@ -855,16 +962,7 @@ impl Gpu {
     ) -> Result<*mut SDL_Texture, Reason> {
         let changes = grp.changes(page);
         if self.pages[page].is_none() {
-            // SAFETY: the renderer outlives `self`.
-            let texture = unsafe {
-                SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_STATIC,
-                    GRP_SIZE,
-                    GRP_SIZE,
-                )
-            };
+            let texture = self.make_texture(SDL_TEXTUREACCESS_STATIC, GRP_SIZE, GRP_SIZE);
             if texture.is_null() {
                 return Err(Reason::Refused);
             }
@@ -901,6 +999,7 @@ impl Gpu {
         held.any_pending = !held.pending.is_empty();
         let pixels = grp.page(page);
         let mut bytes = 0;
+        let mut failed = false;
         send.for_each_area(|area| {
             let (w, h) = (area.x1 - area.x0 + 1, area.y1 - area.y0 + 1);
             let rect = SDL_Rect {
@@ -912,9 +1011,12 @@ impl Gpu {
             let first = &pixels[(area.y0 * GRP_SIZE + area.x0) as usize..];
             // SAFETY: the page is GRP_SIZE square, as the texture is, and
             // the rectangle lies on it.
-            unsafe { SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), GRP_SIZE * 4) };
+            failed |= !unsafe {
+                SDL_UpdateTexture(held.texture, &rect, first.as_ptr().cast(), GRP_SIZE * 4)
+            };
             bytes += w as usize * h as usize * 4;
         });
+        self.failed |= failed;
         self.stats.pages += start.elapsed();
         self.stats.page_bytes += bytes as u64;
         if bytes > 0 {
@@ -935,16 +1037,7 @@ impl Gpu {
             return Ok(at);
         }
         if self.atlas.is_null() {
-            // SAFETY: the renderer outlives `self`.
-            self.atlas = unsafe {
-                SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_STATIC,
-                    GRP_SIZE,
-                    GRP_SIZE,
-                )
-            };
+            self.atlas = self.make_texture(SDL_TEXTUREACCESS_STATIC, GRP_SIZE, GRP_SIZE);
             if self.atlas.is_null() {
                 return Err(Reason::Refused);
             }
@@ -1270,16 +1363,8 @@ impl Gpu {
             origin: t.page_origin,
         };
         if self.inverted.is_null() {
-            // SAFETY: the renderer outlives `self`.
-            self.inverted = unsafe {
-                SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_STATIC,
-                    INVERTED_SIZE,
-                    INVERTED_SIZE,
-                )
-            };
+            self.inverted =
+                self.make_texture(SDL_TEXTUREACCESS_STATIC, INVERTED_SIZE, INVERTED_SIZE);
             if self.inverted.is_null() {
                 return Err(Reason::Refused);
             }
@@ -1400,13 +1485,8 @@ impl Gpu {
                 if !self.flat.is_null() {
                     SDL_DestroyTexture(self.flat);
                 }
-                self.flat = SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_TARGET,
-                    size.0 as i32,
-                    size.1 as i32,
-                );
+                self.flat =
+                    self.make_texture(SDL_TEXTUREACCESS_TARGET, size.0 as i32, size.1 as i32);
                 if self.flat.is_null() {
                     self.flat_size = (0, 0);
                     return Err(Reason::Refused);
@@ -1522,46 +1602,49 @@ impl Gpu {
         self.flush();
     }
 
+    /// Lets go of everything made at the frame's size.
+    fn drop_frame_targets(&mut self) {
+        let [half0, half1] = self.half;
+        let targets = [self.frame, self.layer, self.spare, half0, half1];
+        // SAFETY: the renderer outlives `self`; these are its own and not in use
+        // between frames.
+        unsafe {
+            for texture in targets
+                .into_iter()
+                .chain([self.overlay, self.flat, self.from_cpu])
+            {
+                if !texture.is_null() {
+                    SDL_DestroyTexture(texture);
+                }
+            }
+        }
+        (self.frame, self.layer, self.spare) = (null_mut(), null_mut(), null_mut());
+        self.half = [null_mut(); 2];
+        self.flat = null_mut();
+        self.flat_size = (0, 0);
+        self.from_cpu = null_mut();
+        self.cpu = None;
+        self.overlay = null_mut();
+        self.overlay_holds.clear();
+        self.size = (0, 0);
+    }
+
     fn ready(&mut self, (w, h): (u32, u32)) -> Result<(), Reason> {
         if self.size == (w, h) && !self.frame.is_null() {
             return Ok(());
         }
         self.scale = None;
-        // SAFETY: the renderer outlives `self`; the old targets are its own
-        // and not in use between frames.
+        self.drop_frame_targets();
+        self.frame = self.make_texture(SDL_TEXTUREACCESS_TARGET, w as i32, h as i32);
+        self.layer = self.make_texture(SDL_TEXTUREACCESS_TARGET, w as i32, h as i32);
+        self.spare = self.make_texture(SDL_TEXTUREACCESS_TARGET, w as i32, h as i32);
+        if self.frame.is_null() || self.layer.is_null() || self.spare.is_null() {
+            // Held in part, the next frame of this size would draw on the window.
+            self.drop_frame_targets();
+            return Err(Reason::Refused);
+        }
+        // SAFETY: as they were just made.
         unsafe {
-            let [half0, half1] = self.half;
-            let targets = [self.frame, self.layer, self.spare, half0, half1];
-            for texture in targets.into_iter().chain([self.overlay, self.flat]) {
-                if !texture.is_null() {
-                    SDL_DestroyTexture(texture);
-                }
-            }
-            self.flat = null_mut();
-            self.flat_size = (0, 0);
-            if !self.from_cpu.is_null() {
-                SDL_DestroyTexture(self.from_cpu);
-                self.from_cpu = null_mut();
-            }
-            self.cpu = None;
-            self.half = [null_mut(); 2];
-            self.overlay = null_mut();
-            self.overlay_holds.clear();
-            let make = || {
-                SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_TARGET,
-                    w as i32,
-                    h as i32,
-                )
-            };
-            self.frame = make();
-            self.layer = make();
-            self.spare = make();
-            if self.frame.is_null() || self.layer.is_null() || self.spare.is_null() {
-                return Err(Reason::Refused);
-            }
             for texture in [self.frame, self.layer, self.spare] {
                 SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
                 SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
@@ -1692,16 +1775,7 @@ impl Gpu {
             self.cpu = Some(CpuRasterizer::new(w, h));
         }
         if self.from_cpu.is_null() {
-            // SAFETY: the renderer outlives `self`.
-            self.from_cpu = unsafe {
-                SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_STATIC,
-                    w as i32,
-                    h as i32,
-                )
-            };
+            self.from_cpu = self.make_texture(SDL_TEXTUREACCESS_STATIC, w as i32, h as i32);
             if self.from_cpu.is_null() {
                 return Err(Reason::Refused);
             }
@@ -1850,21 +1924,15 @@ impl Gpu {
 
     /// Makes the half-size targets if they are not there yet.
     fn half_targets(&mut self) -> Result<(), Reason> {
-        if !self.half[0].is_null() {
+        if !self.half[1].is_null() {
             return Ok(());
         }
         let (w, h) = (self.size.0 / 2, self.size.1 / 2);
         for i in 0..2 {
-            // SAFETY: the renderer outlives `self`.
-            let texture = unsafe {
-                SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_TARGET,
-                    w as i32,
-                    h as i32,
-                )
-            };
+            if !self.half[i].is_null() {
+                continue;
+            }
+            let texture = self.make_texture(SDL_TEXTUREACCESS_TARGET, w as i32, h as i32);
             if texture.is_null() {
                 return Err(Reason::Refused);
             }
@@ -2141,6 +2209,7 @@ impl Gpu {
 
 impl SceneBackend for Gpu {
     fn draw(&mut self, scene: &Scene, input: &RasterInput, frame: (u32, u32)) -> bool {
+        self.failed = false;
         if let Some(reason) = self.refuses(scene, frame) {
             self.leave(reason);
             return false;
@@ -2153,10 +2222,17 @@ impl SceneBackend for Gpu {
         let pages_before = self.stats.pages;
         let result = self.scene(scene, input);
         self.done();
+        let refused = std::mem::take(&mut self.failed);
+        let result = result.and(if refused {
+            Err(Reason::Refused)
+        } else {
+            Ok(())
+        });
         if let Err(reason) = result {
             self.leave(reason);
             return false;
         }
+        self.refused_in_a_row = 0;
         self.stats.build += start
             .elapsed()
             .saturating_sub(self.stats.pages - pages_before);
@@ -2194,16 +2270,11 @@ impl SceneBackend for Gpu {
             return true;
         };
         if self.overlay.is_null() {
-            // SAFETY: the renderer outlives `self`.
-            self.overlay = unsafe {
-                SDL_CreateTexture(
-                    self.renderer,
-                    SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_STATIC,
-                    frame.width() as i32,
-                    frame.height() as i32,
-                )
-            };
+            self.overlay = self.make_texture(
+                SDL_TEXTUREACCESS_STATIC,
+                frame.width() as i32,
+                frame.height() as i32,
+            );
             if self.overlay.is_null() {
                 self.leave(Reason::Refused);
                 return false;
@@ -2224,6 +2295,10 @@ impl SceneBackend for Gpu {
         self.target(self.frame);
         self.cover(self.overlay, SDL_BLENDMODE_BLEND_PREMULTIPLIED, WHITE);
         self.done();
+        if std::mem::take(&mut self.failed) {
+            self.leave(Reason::Refused);
+            return false;
+        }
         true
     }
 
@@ -2304,6 +2379,13 @@ impl SceneBackend for Gpu {
             SDL_DestroySurface(shot);
         }
     }
+}
+
+/// Whether a renderer's driver is OpenGL or OpenGL ES.
+fn renderer_on_gl(renderer: *mut SDL_Renderer) -> bool {
+    // SAFETY: the renderer is valid, and the name SDL gives is its own.
+    let name = unsafe { text_of(SDL_GetRendererName(renderer)) };
+    name.starts_with("opengl")
 }
 
 /// Whether a filter is a color filter that changes anything, which left at zero it

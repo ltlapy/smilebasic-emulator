@@ -26,6 +26,25 @@ impl Language {
     }
 }
 
+/// Who draws the screens: the GPU where a test at start-up passes, or the CPU always.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Renderer {
+    Auto,
+    Cpu,
+}
+
+impl Renderer {
+    pub const DEFAULT: Renderer = Renderer::Cpu;
+
+    /// The one that is not this.
+    pub const fn other(self) -> Renderer {
+        match self {
+            Renderer::Auto => Renderer::Cpu,
+            Renderer::Cpu => Renderer::Auto,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
@@ -65,6 +84,8 @@ pub struct Settings {
     pub file_hint_shown: bool,
     /// How the screen is scaled to the window; `None` follows XSCREEN.
     pub screen_filter: Option<Filter>,
+    /// Who draws the screens.
+    pub renderer: Renderer,
     /// Keys also press the first controller's buttons.
     pub keyboard_buttons: bool,
     /// Play SmileBASIC 4's own instruments when they are imported.
@@ -144,6 +165,7 @@ impl Default for Settings {
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
+            renderer: Renderer::DEFAULT,
             keyboard_buttons: true,
             smilebasic_instruments: true,
             sound_font: None,
@@ -361,6 +383,14 @@ impl Settings {
                     }
                     continue;
                 }
+                "renderer" => {
+                    match value {
+                        "auto" => s.renderer = Renderer::Auto,
+                        "cpu" => s.renderer = Renderer::Cpu,
+                        _ => {}
+                    }
+                    continue;
+                }
                 "screen_filter" => {
                     if let Some(&(f, _)) = SCREEN_FILTER.iter().find(|(_, n)| *n == value) {
                         s.screen_filter = f;
@@ -385,6 +415,12 @@ impl Settings {
             .iter()
             .find(|(f, _)| *f == self.screen_filter)
             .map_or("nearest", |(_, n)| n);
+        // Only a choice is kept, so that the default can change for all who made none.
+        let renderer = match self.renderer {
+            r if r == Renderer::DEFAULT => "",
+            Renderer::Auto => "renderer=auto\n",
+            Renderer::Cpu => "renderer=cpu\n",
+        };
         format!(
             "# SmileBASIC emulator settings\n\
              upper_case_letters={}\n\
@@ -404,6 +440,7 @@ impl Settings {
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
+             {renderer}\
              keyboard_buttons={}\n\
              smilebasic_instruments={}\n\
              sound_font={}\n\
@@ -491,6 +528,7 @@ mod tests {
             file_confirm: FileConfirm::Notify,
             file_hint_shown: true,
             screen_filter: None,
+            renderer: Renderer::DEFAULT.other(),
             keyboard_buttons: false,
             smilebasic_instruments: false,
             sound_font: Some("/fonts/a b.sf2".to_string()),
@@ -510,6 +548,22 @@ mod tests {
             Settings::from_text(&Settings::default().to_text()),
             Settings::default()
         );
+    }
+
+    #[test]
+    fn the_renderer_is_kept_only_if_chosen() {
+        let chosen = Settings {
+            renderer: Renderer::DEFAULT.other(),
+            ..Settings::default()
+        };
+        assert!(chosen.to_text().contains("renderer="));
+        assert!(!Settings::default().to_text().contains("renderer="));
+        for (text, renderer) in [("auto", Renderer::Auto), ("cpu", Renderer::Cpu)] {
+            let s = Settings::from_text(&format!("renderer={text}\n"));
+            assert_eq!(s.renderer, renderer);
+        }
+        let s = Settings::from_text("renderer=quantum\n");
+        assert_eq!(s.renderer, Renderer::DEFAULT);
     }
 
     #[test]

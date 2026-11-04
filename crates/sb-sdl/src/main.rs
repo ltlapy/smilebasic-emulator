@@ -64,7 +64,7 @@ use sb_runtime::palette::Palette;
 use sb_runtime::raster::SceneBackend;
 use sb_runtime::runtime::{SLOTS, keys};
 use sb_runtime::screen::{Filter, ScreenMode};
-use sb_runtime::settings::Settings;
+use sb_runtime::settings::{Renderer, Settings};
 use sb_runtime::sound::bank::Bank;
 use sb_runtime::sound::synth::Instruments;
 use sb_runtime::sprites::Sprites;
@@ -385,10 +385,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let passed = gpu_golden::report(canvas.raw());
         std::process::exit(if passed { 0 } else { 1 });
     }
-    let mut gpu = gpu::Gpu::from_env(&canvas);
+    let mut gpu: Option<gpu::Gpu> = None;
     // A subprogram's screens have their own pages and frame.
     let mut sub_gpu: Option<gpu::Gpu> = None;
     let mut gpu_off = false;
+    // The setting the path was last started by, and who draws, as About says.
+    let mut renderer_applied = None;
+    let mut drawn_by = String::new();
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
         ($stage:ident) => {
@@ -405,6 +408,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             && b.step(&mut machine)
         {
             b.report(&canvas.renderer_name);
+            println!("drawn by  {drawn_by}");
             if let Some(gpu) = &gpu {
                 gpu.report("gpu");
             }
@@ -412,6 +416,48 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 gpu.report("sub");
             }
             break 'running;
+        }
+        for what in bench.iter().flat_map(bench::Bench::due) {
+            let pushed = match what {
+                "targets" => {
+                    if let Some(gpu) = gpu.iter_mut().chain(&mut sub_gpu).next() {
+                        gpu.scribble();
+                    }
+                    Some(Event::RenderTargetsReset { timestamp: 0 })
+                }
+                "device" => Some(Event::RenderDeviceReset { timestamp: 0 }),
+                "fullscreen" | "windowed" => {
+                    let _ = canvas.window_mut().set_fullscreen(what == "fullscreen");
+                    None
+                }
+                "tool" => {
+                    let _ = machine.run_tool(0);
+                    None
+                }
+                "substop" => {
+                    machine.stop_sub();
+                    None
+                }
+                "auto" => {
+                    machine.rt.settings.renderer = Renderer::Auto;
+                    None
+                }
+                "cpu" => {
+                    machine.rt.settings.renderer = Renderer::Cpu;
+                    None
+                }
+                _ => {
+                    let size = what.strip_prefix("resize:").and_then(|s| s.split_once(':'));
+                    if let Some((w, h)) = size {
+                        let (w, h) = (w.parse().unwrap_or(640), h.parse().unwrap_or(360));
+                        let _ = canvas.window_mut().set_size(w, h);
+                    }
+                    None
+                }
+            };
+            if let Some(event) = pushed {
+                let _ = sdl.event().and_then(|e| e.push_event(event));
+            }
         }
         if let Some(b) = &bench {
             let size = (display_w, display_h);
@@ -626,6 +672,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 (texture_holds, editor_holds) = (None, None);
                 let layers = panel_layers.iter_mut().chain(&mut bar_layers);
                 layers.chain(&mut overlay_layers).for_each(Layer::forget);
+                // A target comes back empty, and the frames are drawn again.
+                machine.touch_sub();
+            }
+            // Direct3D 11 and 12 and Vulkan have let go of every texture, and fail
+            // on those still held; a page sent to the GPU has to go again too.
+            if let Event::RenderDeviceReset { .. } = event {
+                (gpu, sub_gpu, gpu_off) = (None, None, false);
+                renderer_applied = None;
+                smart = SmartFrame::default();
+                (panel_screens, sub_texture, editor_texture) = (None, None, None);
+                (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
+                texture = frame_texture(&canvas, &texture_creator, texture_kind)?;
             }
             let editor_id = editor_gfx.get().map(|gfx| gfx.id);
             let from_editor = editor_id.is_some() && event.get_window_id() == editor_id;
@@ -1457,6 +1515,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             "MIT OR Apache-2.0.".to_string(),
                             "Bundled fonts: SIL Open Font License 1.1.".to_string(),
                             "GeneralUser GS: its own license.".to_string(),
+                            String::new(),
+                            format!("Screens drawn by: {drawn_by}"),
                         ];
                         let about = Dialog::notice("About", lines, (display_w, display_h));
                         dialog = Some((about, Asking::Notice));
@@ -2052,6 +2112,22 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
         let rect = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
         let editing = machine.is_editing() && !machine.is_detached();
+        let renderer = machine.rt.settings.renderer;
+        if renderer_applied != Some(renderer) {
+            renderer_applied = Some(renderer);
+            drop(gpu.take());
+            (sub_gpu, gpu_off) = (None, false);
+            (gpu, drawn_by) = gpu::Gpu::start(&canvas, renderer);
+            machine.rt.touch();
+        }
+        let refused = gpu.iter().chain(&sub_gpu).any(gpu::Gpu::given_up);
+        if refused {
+            eprintln!("SB_GPU: the renderer refused frames; staying on the CPU");
+            drawn_by = "CPU (the renderer refused frames)".to_string();
+        }
+        if gpu_off || refused {
+            (gpu, sub_gpu, gpu_off) = (None, None, false);
+        }
         // The editor's frame, and the screens', stay as they are while
         // their revision does.
         let revision = match editing {
@@ -2062,10 +2138,6 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             false => {
                 let start = Instant::now();
                 let drawn = machine.screen_revision();
-                if gpu_off {
-                    gpu = None;
-                    sub_gpu = None;
-                }
                 match &mut gpu {
                     // The debugger's panel wants the frame on the CPU.
                     Some(gpu) if !panel_was_shown => machine.render_screens_with(gpu),
@@ -2124,6 +2196,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             // one is drawn again next time round, once there is no GPU path.
             if on_gpu && smart.on_cpu() {
                 eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
+                drawn_by = "CPU (the doubled frame was refused)".to_string();
                 gpu_off = true;
             }
         } else {

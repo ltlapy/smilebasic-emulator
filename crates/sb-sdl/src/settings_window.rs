@@ -4,7 +4,7 @@
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::{Font, FontSize};
-use sb_runtime::settings::{Language, Settings, TOOLS};
+use sb_runtime::settings::{Language, Renderer, Settings, TOOLS};
 use sdl3::keyboard::Keycode;
 
 use crate::shortcuts::wrap;
@@ -358,6 +358,28 @@ const PAGES: &[Page] = &[
                 |s| s.complete_above ^= true,
             ),
         ],
+    },
+    Page {
+        title: "Screen",
+        rows: &[Row {
+            label: "Drawn by",
+            about: "Auto: the GPU, where a test at start-up finds it draws as the CPU \
+                    does, and otherwise the CPU. CPU: always the CPU, exact but slower. \
+                    Help > About says which is in use.",
+            control: Control::Choice(
+                &["Auto", "CPU"],
+                |s| match s.renderer {
+                    Renderer::Auto => 0,
+                    Renderer::Cpu => 1,
+                },
+                |s, i| {
+                    s.renderer = match i {
+                        0 => Renderer::Auto,
+                        _ => Renderer::Cpu,
+                    }
+                },
+            ),
+        }],
     },
 ];
 

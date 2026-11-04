@@ -2412,6 +2412,13 @@ impl Machine {
         })
     }
 
+    /// Has the subprogram's screen drawn again, as its frame was lost.
+    pub fn touch_sub(&mut self) {
+        if let Some(sub) = &mut self.sub {
+            sub.rt.touch();
+        }
+    }
+
     /// Whether [`Machine::sub_screen`] would give a screen.
     pub fn sub_shows(&self) -> bool {
         let sub = self.sub.as_ref();
