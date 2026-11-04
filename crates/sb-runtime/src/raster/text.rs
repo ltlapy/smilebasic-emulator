@@ -260,10 +260,20 @@ impl TextItem {
     ) {
         let inverted = self.inverts && cell.attr & attr::INVERT != 0;
         let count = out.len();
+        // Most characters have two colors, clear and the one, so the last
+        // texel's paint usually does for this one.
+        let mut last = None;
         self.each_texel(font, grp, cell.code, inverted, margin, count, |i, p| {
-            let p = if inverted { inverted_texel(p) } else { p };
-            let paint = Mixed::new(p, cell.color, self.tint, self.add);
-            out[i] = glyph_paint(paint, paints);
+            out[i] = match last {
+                Some((before, put)) if before == p => put,
+                _ => {
+                    let texel = if inverted { inverted_texel(p) } else { p };
+                    let paint = Mixed::new(texel, cell.color, self.tint, self.add);
+                    let put = glyph_paint(paint, paints);
+                    last = Some((p, put));
+                    put
+                }
+            };
         });
     }
 
