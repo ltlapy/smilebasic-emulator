@@ -1,6 +1,6 @@
 //! Draws one sprite item on the CPU.
 
-use crate::compose::{self, Paint, Placement, draw_image};
+use crate::compose::{self, Paint, Placement, draw_image, draw_texels};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, GRP_SIZE, Graphics, PIECE, Tint, TintJob};
 use crate::scene::SpriteItem;
@@ -103,6 +103,29 @@ pub fn draw(
             let (tx, ty) = self.tie;
             // At most angles nothing ties, and this is for each pixel.
             if (tx, ty) == (0.0, 0.0) {
+                // GRP-1 is one color all over.
+                if source.white {
+                    let white = paint(0xFFFF_FFFF);
+                    return draw_image(self.fb, self.place, bw, bh, |_, _| Some(white));
+                }
+                // The usual image, wholly on its page: a point is a place on
+                // the page by a sum, with no ifs. Scaled up, neighbors show the
+                // same page pixel, whose paint is worked out once.
+                if let Some((base, kx, ky)) = source.linear() {
+                    let page = source.page;
+                    let (mut held, mut held_paint) = (0, paint(0));
+                    return draw_texels(self.fb, self.place, bw, bh, |x, y| {
+                        let p = page[(base + x * kx + y * ky) as usize];
+                        if p >> 24 == 0 {
+                            return None;
+                        }
+                        if p != held {
+                            held = p;
+                            held_paint = paint(p);
+                        }
+                        Some(held_paint)
+                    });
+                }
                 return draw_image(self.fb, self.place, bw, bh, |x, y| {
                     let (x, y) = source.page_xy(x as i32, y as i32);
                     let p = source.pixel(x, y);
@@ -181,6 +204,25 @@ impl Source<'_> {
             && on_page(self.v, self.h)
             && self.page.len() == (GRP_SIZE * GRP_SIZE) as usize;
         plain.then_some((self.page, self.u as usize, self.v as usize))
+    }
+
+    /// For an image wholly on a page, however turned and flipped: the place on
+    /// the page of the point (0, 0) of the shown rectangle, and what a step
+    /// along each axis adds to it.
+    fn linear(&self) -> Option<(i32, i32, i32)> {
+        let on_page = |at: i32, size: i32| at >= 0 && at + size <= GRP_SIZE;
+        let on = !self.white
+            && on_page(self.u, self.w)
+            && on_page(self.v, self.h)
+            && self.page.len() == (GRP_SIZE * GRP_SIZE) as usize;
+        on.then(|| {
+            let place = |lx, ly| {
+                let (x, y) = self.page_xy(lx, ly);
+                y * GRP_SIZE + x
+            };
+            let base = place(0, 0);
+            (base, place(1, 0) - base, place(0, 1) - base)
+        })
     }
 
     /// The page point under the point (lx, ly) of the shown rectangle.

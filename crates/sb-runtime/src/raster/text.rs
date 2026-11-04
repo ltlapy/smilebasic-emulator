@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
-use crate::compose::{Mixed, Paint, Placement, draw_image_part, page_signs};
+use crate::compose::{Mixed, Paint, Placement, draw_image_part, draw_texels, page_signs};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics};
@@ -191,7 +191,7 @@ impl TextItem {
         // and its turn and flips.
         let count = (self.width * self.height) as usize;
         let mut shown = Vec::with_capacity(count);
-        let mut filled = 0;
+        let (mut filled, mut turning) = (0, false);
         for cell in &cells[..count] {
             // Empty cells show nothing, so need no drawing.
             if cell.code == 0 && (!self.may_invert || cell.attr & attr::INVERT == 0) {
@@ -199,6 +199,7 @@ impl TextItem {
                 continue;
             }
             filled += 1;
+            turning |= cell.attr & 15 != 0;
             let at = glyphs.at(self, font, grp, *cell, margin, glyph_len) as u32;
             shown.push(at << 4 | u32::from(cell.attr & 15));
         }
@@ -221,6 +222,9 @@ impl TextItem {
             stride,
         };
         if filled * 2 >= count {
+            if turned.simple && cs == ft && !turning {
+                return draw_texels(fb, place, w, h, |x, y| turned.plain(x as u32, y as u32));
+            }
             draw_image_part(fb, place, w, h, (0, 0, w, h), |x, y| {
                 turned.pixel(x, y, None)
             });
@@ -551,12 +555,11 @@ impl Turned<'_> {
         // screen's corner says it all. A branch between the two axes keeps the
         // compiler from working them side by side, at twice the cost.
         let gx = (x * self.glyph_scale) as u32;
-        let cx = gx >> self.ft_shift;
-        if cx >= self.width {
+        if gx >> self.ft_shift >= self.width {
             return None;
         }
         let gy = (y * self.glyph_scale) as u32;
-        let cy = gy >> self.ft_shift;
+        let (cx, cy) = (gx >> self.ft_shift, gy >> self.ft_shift);
         // Pixels of the cells around are theirs to draw.
         if only.is_some_and(|c| c != (cx, cy)) {
             return None;
@@ -568,6 +571,24 @@ impl Turned<'_> {
         if glyph & 15 != 0 {
             return self.pixel_at(x, y, only);
         }
+        self.texel(glyph, gx, gy)
+    }
+
+    /// [`Turned::pixel`] for a whole character pixel, counted from the screen's
+    /// corner, when `simple` and no cell has a turn or flip.
+    #[inline(always)]
+    fn plain(&self, gx: u32, gy: u32) -> Option<Texel<'_>> {
+        let at = (gy >> self.ft_shift) * self.width + (gx >> self.ft_shift);
+        let glyph = self.shown[at as usize];
+        if glyph == NO_GLYPH {
+            return None;
+        }
+        self.texel(glyph, gx, gy)
+    }
+
+    /// The pixel `(gx, gy)` of what `shown` holds for its cell.
+    #[inline(always)]
+    fn texel(&self, glyph: u32, gx: u32, gy: u32) -> Option<Texel<'_>> {
         let mask = self.ft as u32 - 1;
         let texel = ((gy & mask) * self.ft as u32 + (gx & mask)) as usize;
         paint_at(self.data[(glyph >> 4) as usize + texel], self.paints)

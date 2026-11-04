@@ -461,7 +461,7 @@ pub fn draw_image<P: Paint>(
     place: &Placement,
     w: i32,
     h: i32,
-    sample: impl Fn(f64, f64) -> Option<P>,
+    sample: impl FnMut(f64, f64) -> Option<P>,
 ) {
     draw_image_part(fb, place, w, h, (0, 0, w, h), sample);
 }
@@ -477,7 +477,7 @@ pub fn draw_image_part<P: Paint>(
     w: i32,
     h: i32,
     part: (i32, i32, i32, i32),
-    sample: impl Fn(f64, f64) -> Option<P>,
+    mut sample: impl FnMut(f64, f64) -> Option<P>,
 ) {
     let Some(inv) = place.sampling() else {
         return;
@@ -495,21 +495,8 @@ pub fn draw_image_part<P: Paint>(
     for py in y0..y1 {
         let line = &mut pixels[py as usize * width..][..x1 as usize];
         let fy = f64::from(py) + 0.5;
-        // Only the columns near where the row crosses the part need
-        // trying; each is still tested exactly below.
-        let (from, to) = crossing(inv.a, inv.b * fy + inv.tx, part_x)
-            .and_then(|(f, t)| {
-                let (g, u) = crossing(inv.c, inv.d * fy + inv.ty, part_y)?;
-                Some((f.max(g), t.min(u)))
-            })
-            .map_or((1.0, 0.0), |(f, t)| (f - 1.5, t + 0.5));
-        let from = (from.max(f64::from(x0)) as u32).max(x0);
-        let to = if to < f64::from(x1) {
-            (to.max(0.0) as u32) + 1
-        } else {
-            x1
-        };
-        for px in from..to.min(x1) {
+        let (from, to) = columns(&inv, fy, part_x, part_y, x0, x1);
+        for px in from..to {
             let (lx, ly) = inv.apply(f64::from(px) + 0.5, f64::from(py) + 0.5);
             if lx < 0.0 || ly < 0.0 || lx >= w || ly >= h {
                 continue;
@@ -520,6 +507,104 @@ pub fn draw_image_part<P: Paint>(
             }
         }
     }
+}
+
+/// [`draw_image`] for what reads whole texels: `pixel` gets the point under
+/// each frame pixel's center rounded down, which is on the image. Most pixels
+/// take no floating point, which a small CPU feels most: the point is stepped
+/// along a row in fixed point, and only where that lies so near a whole number
+/// that it might round the other way is it worked out as `draw_image` does, so
+/// the same texels are read.
+pub fn draw_texels<P: Paint>(
+    fb: &mut Framebuffer,
+    place: &Placement,
+    w: i32,
+    h: i32,
+    mut pixel: impl FnMut(i32, i32) -> Option<P>,
+) {
+    /// One texel, in fixed point.
+    const ONE: f64 = (1u64 << 40) as f64;
+    /// The fraction of a fixed point number.
+    const FRACTION: i64 = (1 << 40) - 1;
+    /// How near a whole number the fixed point may be off from the exact sum:
+    /// far more than the steps of a frame's width at one unit each, and than the
+    /// exact sum's rounding within the limit below.
+    const NEAR: i64 = 1 << 12;
+    /// Above this, for any term of a sum, the sum's rounding is not small
+    /// enough, or fixed point not large enough.
+    const LIMIT: f64 = 65536.0;
+    let Some(inv) = place.sampling() else {
+        return;
+    };
+    let width = f64::from(fb.width());
+    let height = f64::from(fb.height());
+    let in_limit = inv.a.abs() * width < LIMIT
+        && inv.c.abs() * width < LIMIT
+        && inv.b.abs() * height < LIMIT
+        && inv.d.abs() * height < LIMIT
+        && inv.tx.abs() < LIMIT
+        && inv.ty.abs() < LIMIT
+        && w < 65536
+        && h < 65536
+        && width < 3000.0;
+    if !in_limit {
+        return draw_image(fb, place, w, h, |x, y| pixel(x as i32, y as i32));
+    }
+    let Some((x0, y0, x1, y1)) = span(fb, place, w, h, (0, 0, w, h)) else {
+        return;
+    };
+    let (fw, fh) = (f64::from(w), f64::from(h));
+    let (dx, dy) = ((inv.a * ONE) as i64, (inv.c * ONE) as i64);
+    let stride = fb.width() as usize;
+    let pixels = fb.pixels_mut();
+    for py in y0..y1 {
+        let line = &mut pixels[py as usize * stride..][..x1 as usize];
+        let fy = f64::from(py) + 0.5;
+        let (from, to) = columns(&inv, fy, (0.0, fw), (0.0, fh), x0, x1);
+        if from >= to {
+            continue;
+        }
+        let (lx, ly) = inv.apply(f64::from(from) + 0.5, fy);
+        let (mut gx, mut gy) = ((lx * ONE) as i64, (ly * ONE) as i64);
+        for (px, dst) in (from..to).zip(&mut line[from as usize..to as usize]) {
+            let (x, y) = (gx >> 40, gy >> 40);
+            let near = ((gx + NEAR) & FRACTION) < 2 * NEAR || ((gy + NEAR) & FRACTION) < 2 * NEAR;
+            (gx, gy) = (gx + dx, gy + dy);
+            let at = if near {
+                let (lx, ly) = inv.apply(f64::from(px) + 0.5, fy);
+                (lx >= 0.0 && ly >= 0.0 && lx < fw && ly < fh).then_some((lx as i32, ly as i32))
+            } else {
+                // Also false for a negative one.
+                ((x as u64) < w as u64 && (y as u64) < h as u64).then_some((x as i32, y as i32))
+            };
+            if let Some((x, y)) = at
+                && let Some(paint) = pixel(x, y)
+            {
+                *dst = paint.put(*dst);
+            }
+        }
+    }
+}
+
+/// The columns of the frame's row with centers at `fy`, from `x0` up to but not
+/// including `x1`, that may lie within the given ranges of the image's x and
+/// y under `inv`: only those near where the row crosses them need trying, each
+/// being tested exactly after this.
+#[inline]
+fn columns(inv: &Affine, fy: f64, xs: (f64, f64), ys: (f64, f64), x0: u32, x1: u32) -> (u32, u32) {
+    let (from, to) = crossing(inv.a, inv.b * fy + inv.tx, xs)
+        .and_then(|(f, t)| {
+            let (g, u) = crossing(inv.c, inv.d * fy + inv.ty, ys)?;
+            Some((f.max(g), t.min(u)))
+        })
+        .map_or((1.0, 0.0), |(f, t)| (f - 1.5, t + 0.5));
+    let from = (from.max(f64::from(x0)) as u32).max(x0);
+    let to = if to < f64::from(x1) {
+        (to.max(0.0) as u32) + 1
+    } else {
+        x1
+    };
+    (from, to.min(x1))
 }
 
 /// Where `k * x + base` lies from `lo` up to `hi`: the range of x, which
@@ -1442,6 +1527,53 @@ fn tinted(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Texels are read as [`draw_image`] reads them, near whole numbers too.
+    #[test]
+    fn stepping_reads_the_same_texels() {
+        let mut seed = 0x1234_5678_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let color = |x: i32, y: i32| 0xFF00_0000 | ((y as u32 & 0xFFF) << 12) | (x as u32 & 0xFFF);
+        for i in 0..4000 {
+            let r = &mut next;
+            let pos = (
+                f64::from(r() % 2000) / 8.0 - 60.0,
+                f64::from(r() % 1200) / 8.0 - 60.0,
+            );
+            let home = (f64::from(r() % 32), f64::from(r() % 32));
+            // Whole degrees, the 45s among them, and now and then none at all.
+            let rot = match i % 4 {
+                0 => f64::from(r() % 360),
+                1 => f64::from(r() % 8) * 45.0,
+                _ => f64::from(r()) / 1e6,
+            };
+            let scale = match i % 3 {
+                0 => (f64::from(r() % 16 + 1) / 4.0, f64::from(r() % 16 + 1) / 4.0),
+                1 => (1.0, 1.0),
+                _ => (f64::from(r()) / 1e9 + 0.01, f64::from(r()) / 1e9 + 0.01),
+            };
+            let place = Placement {
+                matrix: Affine::place(pos, home, rot, scale),
+                clip: None,
+                add: false,
+            };
+            let (w, h) = ((r() % 64 + 1) as i32, (r() % 64 + 1) as i32);
+            let mut slow = Framebuffer::new(160, 96);
+            draw_image(&mut slow, &place, w, h, |x, y| {
+                Some(Over1::new(color(x as i32, y as i32)))
+            });
+            let mut fast = Framebuffer::new(160, 96);
+            draw_texels(&mut fast, &place, w, h, |x, y| {
+                Some(Over1::new(color(x, y)))
+            });
+            assert_eq!(slow.pixels(), fast.pixels(), "{place:?} {w} {h}");
+        }
+    }
 
     fn close(a: (f64, f64), b: (f64, f64)) -> bool {
         (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9
