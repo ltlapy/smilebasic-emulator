@@ -317,7 +317,11 @@ fn str(args: &[Value]) -> Result<Value> {
     if digits > 63 {
         return Err(ErrorKind::OutOfRange.into());
     }
-    Ok(string(pad_left(format_number(&args[0]), digits, ' ')))
+    let text = match &args[0] {
+        Value::Real(x) => crate::value::format_g(*x).encode_utf16().collect(),
+        number => format_number(number),
+    };
+    Ok(string(pad_left(text, digits, ' ')))
 }
 
 fn pad_left(mut s: Str, width: usize, fill: char) -> Str {
@@ -1202,6 +1206,10 @@ mod tests {
     #[test]
     fn conversions() {
         assert_eq!(as_string(call("STR$", &[Value::Int(123)]).unwrap()), "123");
+        assert_eq!(
+            as_string(call("STR$", &[Value::Real(2.0 / 3.0)]).unwrap()),
+            "0.666667"
+        );
         assert_eq!(
             as_string(call("STR$", &[Value::Int(7), Value::Int(3)]).unwrap()),
             "  7"

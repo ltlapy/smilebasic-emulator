@@ -208,6 +208,30 @@ pub fn format_number(value: &Value) -> Str {
     text.encode_utf16().collect()
 }
 
+/// A real as C's `%g` gives it, which is STR$'s form and not PRINT's: six
+/// significant digits, with an exponent when it is -5 or under, or 6 or over.
+pub fn format_g(x: f64) -> String {
+    if x.is_nan() {
+        return "nan".into();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "inf" } else { "-inf" }.into();
+    }
+    let e = format!("{x:.5e}");
+    let (mantissa, exponent) = e.split_once('e').expect("{:e} has an exponent");
+    let exponent: i32 = exponent.parse().expect("{:e} gives a whole exponent");
+    let bare = |s: &str| match s.contains('.') {
+        true => s.trim_end_matches('0').trim_end_matches('.').to_string(),
+        false => s.to_string(),
+    };
+    if (-4..6).contains(&exponent) {
+        bare(&format!("{x:.*}", (5 - exponent) as usize))
+    } else {
+        let sign = if exponent < 0 { '-' } else { '+' };
+        format!("{}e{sign}{:02}", bare(mantissa), exponent.abs())
+    }
+}
+
 fn format_real(x: f64) -> String {
     if x.is_nan() {
         return "nan".into();
@@ -229,6 +253,20 @@ mod tests {
 
     fn fmt(v: Value) -> String {
         String::from_utf16(&format_number(&v)).unwrap()
+    }
+
+    #[test]
+    fn g_formatting() {
+        assert_eq!(format_g(2.0 / 3.0), "0.666667");
+        assert_eq!(format_g(1.0), "1");
+        assert_eq!(format_g(-2.5), "-2.5");
+        assert_eq!(format_g(100000.0), "100000");
+        assert_eq!(format_g(999999.5), "1e+06");
+        assert_eq!(format_g(1234567.0), "1.23457e+06");
+        assert_eq!(format_g(0.0001), "0.0001");
+        assert_eq!(format_g(0.00001), "1e-05");
+        assert_eq!(format_g(1e100), "1e+100");
+        assert_eq!(format_g(0.0), "0");
     }
 
     #[test]

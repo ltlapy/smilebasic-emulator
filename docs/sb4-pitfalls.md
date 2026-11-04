@@ -52,6 +52,9 @@ follows all of it. Items still waiting for a check are marked
 
 ## Values and variables
 
+- `STR$` of a real gives six significant digits, not `PRINT`'s eight
+  decimals: `STR$(2/3)` is `0.666667` where `?2/3` shows `0.66666667`
+  (TEST60). It is C's `%g`, so a million is `1e+06`.
 - A suffix only sets a variable's starting value. `A%=1E10` keeps the
   real, `A$=1` stores a number and `A%="X"` a string.
 - Operations on constants are worked out when the program is compiled,
