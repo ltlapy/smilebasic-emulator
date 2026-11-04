@@ -1496,7 +1496,7 @@ No project in the bench set leaves a frame on the CPU; see above for what could.
   | SDL's gpu driver with no Vulkan | As above; with `SB_GPU_ALONE`, the CPU |
   | Largest texture under 2048, as 1024 or 2047 | The self-test sees the frame stayed on the CPU, and the path stays off; under the frame's own 1280 the emulator cannot start on the CPU either, with a message, as before |
   | A texture refused, at start-up or later, on opengl | Seen through glGetError, which SDL's driver looks at only in a debug context; three frames refused in a row and the path stops for the session |
-  | A texture refused on opengles2 | SDL 3.4.18 frees its texture data twice in `GLES2_CreateTexture` on GL_OUT_OF_MEMORY and aborts, on the CPU path's textures too. Not ours to fix here: to report upstream |
+  | A texture refused on opengles2 | Asked of GL first and refused as above, as SDL 3.4.18 frees its texture data twice in `GLES2_CreateTexture` on GL_OUT_OF_MEMORY and aborts, where the driver looks at errors. The frontend's own textures can still meet that: to report upstream |
   | A target made in part, for a frame or half of one | All of it let go; drawn on as it was, the next frame would have gone to the window |
   | `RENDER_TARGETS_RESET` | The frames are drawn again, a subprogram's too |
   | `RENDER_DEVICE_RESET` | Every texture is made again, and the path started again with its self-test: Direct3D 11, 12 and Vulkan let go of them all, and the window's own would have ended the emulator at its next upload |

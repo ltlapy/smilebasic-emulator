@@ -367,6 +367,8 @@ pub struct Gpu {
     sync: bool,
     /// The renderer's driver is OpenGL or OpenGL ES.
     on_gl: bool,
+    /// It is OpenGL ES.
+    on_gles2: bool,
     /// Compares every so many frames drawn.
     check_every: Option<u64>,
     dump: Option<String>,
@@ -682,6 +684,7 @@ impl Gpu {
             scale: None,
             sync,
             on_gl,
+            on_gles2: on_gl && renderer_is_gles2(renderer),
             check_every,
             dump,
             self_test_took: Duration::ZERO,
@@ -710,6 +713,9 @@ impl Gpu {
     /// driver looks at glGetError only in a debug context, so a target the driver
     /// could not hold would otherwise show as black, here.
     fn make_texture(&self, access: SDL_TextureAccess, w: i32, h: i32) -> *mut SDL_Texture {
+        if !self.gles2_can_hold(w, h) {
+            return null_mut();
+        }
         // SAFETY: the renderer outlives `self`.
         let texture =
             unsafe { SDL_CreateTexture(self.renderer, SDL_PIXELFORMAT_ARGB8888, access, w, h) };
@@ -719,6 +725,59 @@ impl Gpu {
             return null_mut();
         }
         texture
+    }
+
+    /// Whether a texture of this size fits, on SDL's GLES2 driver, asked of GL first:
+    /// where that driver looks at glGetError, SDL 3.4.18 answers GL_OUT_OF_MEMORY in
+    /// `GLES2_CreateTexture` by freeing its data twice, which aborts the emulator.
+    fn gles2_can_hold(&self, w: i32, h: i32) -> bool {
+        const GL_TEXTURE_2D: u32 = 0x0DE1;
+        const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
+        const GL_RGBA: u32 = 0x1908;
+        const GL_UNSIGNED_BYTE: u32 = 0x1401;
+        if !self.on_gles2 {
+            return true;
+        }
+        let _ = self.gl_out_of_memory();
+        type TexImage = extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const u8);
+        // SAFETY: as in device_name, on this thread and only on a GL driver. SDL
+        // remembers which texture is bound, so that goes back as it was.
+        unsafe {
+            let get = |name: &std::ffi::CStr| SDL_GL_GetProcAddress(name.as_ptr());
+            let (Some(get_int), Some(generate), Some(bind), Some(image), Some(delete)) = (
+                get(c"glGetIntegerv"),
+                get(c"glGenTextures"),
+                get(c"glBindTexture"),
+                get(c"glTexImage2D"),
+                get(c"glDeleteTextures"),
+            ) else {
+                return true;
+            };
+            let get_int: extern "C" fn(u32, *mut i32) = std::mem::transmute(get_int);
+            let generate: extern "C" fn(i32, *mut u32) = std::mem::transmute(generate);
+            let bind: extern "C" fn(u32, u32) = std::mem::transmute(bind);
+            let image: TexImage = std::mem::transmute(image);
+            let delete: extern "C" fn(i32, *const u32) = std::mem::transmute(delete);
+            let (mut bound, mut probe) = (0, 0);
+            get_int(GL_TEXTURE_BINDING_2D, &mut bound);
+            generate(1, &mut probe);
+            bind(GL_TEXTURE_2D, probe);
+            image(
+                GL_TEXTURE_2D,
+                0,
+                GL_RGBA as i32,
+                w,
+                h,
+                0,
+                GL_RGBA,
+                GL_UNSIGNED_BYTE,
+                null(),
+            );
+            let fits = !self.gl_out_of_memory();
+            bind(GL_TEXTURE_2D, bound as u32);
+            delete(1, &probe);
+            fits
+        }
     }
 
     /// Whether GL has run out of memory since this was last asked. It asks only on
@@ -2379,6 +2438,11 @@ impl SceneBackend for Gpu {
             SDL_DestroySurface(shot);
         }
     }
+}
+
+fn renderer_is_gles2(renderer: *mut SDL_Renderer) -> bool {
+    // SAFETY: the renderer is valid, and the name SDL gives is its own.
+    unsafe { text_of(SDL_GetRendererName(renderer)) == "opengles2" }
 }
 
 /// Whether a renderer's driver is OpenGL or OpenGL ES.
