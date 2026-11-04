@@ -57,8 +57,8 @@ pub struct SubScreen<'a> {
 impl SubScreen<'_> {
     /// The two bars of the area that the frame leaves, if any: BACKCOLOR's
     /// color plus the display times 1 - its alpha.
-    // UNVERIFIED: read from the code and TEST56's main screen was
-    // black there.
+    // UNVERIFIED: the display showing through. The colour is seen, but only
+    // over a black main screen or with an alpha of &HFF.
     pub fn bars(&self) -> Option<[[f32; 4]; 2]> {
         if self.back >> 24 == 0 {
             return None;

@@ -446,7 +446,6 @@ impl Runtime {
                         return Err(out_of_range(what, n));
                     }
                 }
-                // UNVERIFIED: the highest attribute value accepted.
                 if let Some(a) = attr.filter(|a| !(0..=0x1F).contains(a)) {
                     return Err(out_of_range("attribute", a));
                 }

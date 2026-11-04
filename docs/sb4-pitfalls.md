@@ -28,6 +28,7 @@ follows all of it. Items still waiting for a check are marked
 - `XSCREEN` holds the program until the frame job has taken the new mode,
   without touching `VSYNC`'s count, so a `VSYNC 1` right after it goes
   straight on (TEST60).
+- `SPCHR`'s attribute goes up to 31: 32 is `Out of range (SPCHR:6)` (TEST60).
 - `MAINCNT` follows real time while the program is busy: 180 in 3 seconds of
   a loop with no `VSYNC`. When the frame job is held up it falls behind real
   time with it: 600 sprites of 64x64 scaled by 21 on a Switch 2 gave 49 in
@@ -589,9 +590,12 @@ yet seen on hardware:
   its `BACKCOLOR` as on any screen.
 - A subprogram's screen is stretched smoothly whatever `XSCREEN`'s mode, and
   keeps its aspect ratio in `XSUBSCREEN`'s rectangle: 480x272 in mode 1 on
-  the whole display is 2.647 times, starting at X 4 (TEST56). By the code,
-  the rest of the rectangle takes `BACKCOLOR`'s colour plus the display times
-  1 minus its alpha, unless the alpha is 0.
+  the whole display is 2.647 times, starting at X 4 (TEST56). A screen wider
+  than its rectangle gets bars above and below: 400x240 in a rectangle of
+  600x600 at 60 starts at Y 180. Mode 2 is smoothed the same in a subprogram
+  (TEST60). The bars take `BACKCOLOR`'s colour; by the code also the display
+  times 1 minus its alpha, unless the alpha is 0, which has only been seen
+  over a black main screen.
 - `FADE color,time` mixes the two colors channel by channel in single
   precision and rounds down: `&HFF` to 0 over three frames passes `&HA9`
   and `&H54`, not `&HAA` and `&H55`. A clear end (alpha 0) takes the
