@@ -883,13 +883,14 @@ fn save_screen(m: &mut Machine, file: &Path) -> Result<(), AnyError> {
         pixels: fb.pixels().to_vec(),
     };
     let border = m.focus_border();
+    let aspect = m.rt.screen_mode().aspect();
     if let Some(sub) = m.sub_screen() {
-        image = on_display(&image);
+        image = on_display(&image, aspect);
         put_sub_screen(&mut image, &sub);
     }
     if let Some((rect, alpha)) = border {
         if image.width != DISPLAY.0 {
-            image = on_display(&image);
+            image = on_display(&image, aspect);
         }
         draw_focus_border(&mut image, rect, alpha);
     }
@@ -926,12 +927,19 @@ fn draw_focus_border(image: &mut image::Image, [x, y, w, h]: [i32; 4], alpha: u8
 const DISPLAY: (usize, usize) = (1280, 720);
 
 /// The screen stretched to the whole display.
-fn on_display(main: &image::Image) -> image::Image {
+fn on_display(main: &image::Image, aspect: f64) -> image::Image {
     let (dw, dh) = DISPLAY;
-    let mut pixels = Vec::with_capacity(dw * dh);
-    for py in 0..dh {
-        let sy = py * main.height / dh;
-        pixels.extend((0..dw).map(|px| main.pixels[sy * main.width + px * main.width / dw]));
+    // At XSCREEN's aspect, in the middle, with bars around it.
+    let high = ((dw as f64 / aspect) as usize).min(dh);
+    let wide = ((high as f64 * aspect) as usize).min(dw);
+    let (x0, y0) = ((dw - wide) / 2, (dh - high) / 2);
+    let mut pixels = vec![0xFF00_0000; dw * dh];
+    for py in 0..high {
+        let sy = py * main.height / high;
+        for px in 0..wide {
+            pixels[(y0 + py) * dw + x0 + px] =
+                main.pixels[sy * main.width + px * main.width / wide];
+        }
     }
     image::Image {
         width: dw,

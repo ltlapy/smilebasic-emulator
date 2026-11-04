@@ -107,9 +107,8 @@ const BGM_VOLUME: i32 = 64;
 /// Each group is stretched to that many samples, but every group is written
 /// from the start of the buffer: the last one is all that stays, and the
 /// rest of the 512 is whatever the buffer held.
-// UNVERIFIED: read from the code; TEST56 shows only that the string is
-// taken. The rest of the buffer is left silent here, where SmileBASIC 4's
-// is not cleared.
+// The rest of the buffer is left silent here, where SmileBASIC 4's is not
+// cleared: see differences.md.
 fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
     let units: Vec<u16> = text.encode_utf16().collect();
     let (open, close) = (u16::from(b'['), u16::from(b']'));

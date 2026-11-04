@@ -836,7 +836,10 @@ yet seen on hardware:
   number of digits, at most 1024 in all, and no group over 512 over their
   number in samples. Each is stretched to that many samples, but each is
   written from the start, so the last group alone stays and the rest of the
-  512 samples is whatever the buffer held. The sound has not been recorded.
+  512 samples is whatever the buffer held. `RECSAVE` shows it (TEST60):
+  `[C040]` sounds like the same 16 digits without brackets, and in
+  `[C040][F010]` the `F010` fills half of the pass with the other half loud
+  noise, the same each time (peak about 4600 at 127, a DC of about -1500).
 - `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its
   n samples at 28160 Hz over the next power of two at or above n: at
   reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16
