@@ -103,6 +103,8 @@ fn controllers() {
         .unwrap(),
         "1102"
     );
+    // TEST63: no colors on one not connected.
+    assert_eq!(run(&[], "CONTROLLER 2 OUT A,B,C:?A;B;C").unwrap(), "000");
     assert_eq!(
         run(
             &[],

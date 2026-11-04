@@ -367,7 +367,6 @@ impl Runtime {
         })?;
         let name =
             String::from_utf16_lossy(&name.clone().into_str()?.borrow()).to_ascii_uppercase();
-        // UNVERIFIED: the error HELPINFO gives for a name the help does not have.
         if !help.has(&name) {
             return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, name));
         }
@@ -458,7 +457,13 @@ impl Runtime {
             }
             // Also as a function (checked on hardware).
             (Command::Helpinfo, Want::Outs(1) | Want::Value, [name]) => {
-                let (_, pages) = self.help_pages(name)?;
+                let pages = match self.help_pages(name) {
+                    // A name the help does not have is no error.
+                    Err(e) if self.help.is_some() && e.kind == ErrorKind::IllegalFunctionCall => {
+                        Vec::new()
+                    }
+                    pages => pages?.1,
+                };
                 Ok(vec![line_counts(&pages)])
             }
             _ => Err(no_form()),
@@ -762,9 +767,11 @@ mod tests {
         assert_eq!(row(1), "11");
         assert_eq!(row(2), "DEFAULTHELPKEY1");
 
-        let mut vm =
-            sb_core::vm::Vm::new(sb_core::compile("HELPINFO \"PRINT\" OUT P", &rt).unwrap());
-        let err = vm.run(&mut rt, 100_000).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::IllegalFunctionCall);
+        // A name the help does not have: an empty array, no error.
+        let source = "HELPINFO \"PRINT\" OUT P\nLOCATE 0,3:?LEN(P)";
+        let mut vm = sb_core::vm::Vm::new(sb_core::compile(source, &rt).unwrap());
+        while vm.run(&mut rt, 100_000).unwrap() != sb_core::vm::Status::Ended {}
+        let console = &rt.text[crate::text::CONSOLE];
+        assert_eq!(console.cell(0, 3).code, u16::from(b'0'));
     }
 }

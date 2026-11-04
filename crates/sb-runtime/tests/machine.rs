@@ -1729,6 +1729,45 @@ fn an_animation_started_after_xscreen() {
     }
 }
 
+/// TEST63 on a Switch 2: MAINCNT has yet to rise when XSCREEN or ACLS gives the
+/// program back, and WAIT 1 or VSYNC 1 then only sees it rise.
+#[test]
+fn maincnt_reads_inside_the_frame_job() {
+    let printed = |source: &str| {
+        let mut m = machine();
+        m.set_slot(0, format!("{source}\n"));
+        m.run_slot(0);
+        for _ in 0..100 {
+            m.frame();
+            if !m.is_running() {
+                break;
+            }
+        }
+        rows(&m)
+            .into_iter()
+            .find(|row| !row.is_empty())
+            .unwrap_or_default()
+    };
+    for (source, want) in [
+        ("T=MAINCNT():ACLS:?MAINCNT()-T", "0"),
+        ("VSYNC:T=MAINCNT():ACLS:?MAINCNT()-T", "0"),
+        ("VSYNC:T=MAINCNT():ACLS:ACLS:?MAINCNT()-T", "1"),
+        ("VSYNC:ACLS:T=MAINCNT():WAIT 1:?MAINCNT()-T", "1"),
+        ("T=MAINCNT():XSCREEN 400,240,2:?MAINCNT()-T", "0"),
+        ("VSYNC:T=MAINCNT():XSCREEN 400,240,2:?MAINCNT()-T", "0"),
+        (
+            "VSYNC:XSCREEN 400,240,2:T=MAINCNT():WAIT 1:U=MAINCNT():WAIT 1:?U-T;MAINCNT()-U",
+            "11",
+        ),
+        (
+            "VSYNC:XSCREEN 400,240,2:T=MAINCNT():VSYNC 1:U=MAINCNT():VSYNC 1:?U-T;MAINCNT()-U",
+            "11",
+        ),
+    ] {
+        assert_eq!(printed(source), want, "{source}");
+    }
+}
+
 /// How often the screens were drawn again over `frames` frames of the
 /// program, and whether the last frame given matches one drawn afresh.
 fn redraws(program: &str, frames: u32) -> (u32, bool) {

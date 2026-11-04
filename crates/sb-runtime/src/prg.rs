@@ -254,8 +254,7 @@ impl Runtime {
     }
 
     /// The slot PRGNAME$ and PRGSIZE mean when none is given: the running
-    /// one.
-    // UNVERIFIED: slot 0 in direct mode.
+    /// one, and slot 0 in direct mode, whichever PRGEDIT is on.
     fn current_slot(&self, arg: Option<&Value>) -> Result<usize> {
         match arg.map(opt_int).transpose()?.flatten() {
             None => Ok(self.running_slot.unwrap_or(0)),

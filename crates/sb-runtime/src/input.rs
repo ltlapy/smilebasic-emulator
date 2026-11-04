@@ -386,14 +386,13 @@ impl Runtime {
                     n if input.now.pads[n - 1].connected => 2,
                     _ => 0,
                 };
-                // UNVERIFIED: the colors; black when not connected.
-                let (main, sub) = if kind == 0 {
-                    (0xFF00_0000_u32, 0xFF00_0000_u32)
-                } else {
-                    (0xFF82_8282, 0xFF0F_0F0F)
+                // 0 when not connected. UNVERIFIED: the colors of one that is.
+                let colors = match kind {
+                    0 => [0, 0, 0, 0],
+                    _ => [0xFF82_8282_u32, 0xFF0F_0F0F, 0xFF00_0000, 0xFF00_0000],
                 };
                 let mut out = vec![Value::Int(kind)];
-                out.extend([main, sub, 0xFF00_0000, 0xFF00_0000].map(|c| Value::Int(c as i32)));
+                out.extend(colors.map(|c| Value::Int(c as i32)));
                 out.truncate(want.count());
                 Ok(out)
             }

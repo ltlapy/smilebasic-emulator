@@ -295,7 +295,10 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Millisec, Want::Value, 0) => Ok(vec![Value::Int(sys.millis())]),
-            (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(sys.frames as i32)]),
+            // Past XSCREEN or ACLS, the frame job has yet to raise it.
+            (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(
+                sys.frames.wrapping_sub(self.in_frame_job.into()) as i32,
+            )]),
             // PERFBEGIN and PERFEND measure time; SmileBASIC 4.4.9 shows no
             // gauge for them, nor does the emulator on its screens. Only
             // the debugger's panel lists the times kept here.
