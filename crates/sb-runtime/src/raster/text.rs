@@ -396,7 +396,16 @@ impl TextItem {
         // Per cell of the row, if it shows anything: its picks and where
         // its character is in `glyphs`.
         let mut shown = vec![None; self.width as usize];
-        let mut row_of = None;
+        let (mut row_of, mut row_shows) = (None, false);
+        // The cell each run of frame columns lies in, and where the run starts
+        // and ends among them: a cell with nothing takes one test.
+        let mut spans: Vec<(u32, u32, u32)> = Vec::new();
+        for (i, &(cx, _)) in cols.iter().enumerate() {
+            match spans.last_mut() {
+                Some(run) if run.0 == cx => run.2 = i as u32 + 1,
+                _ => spans.push((cx, i as u32, i as u32 + 1)),
+            }
+        }
         let width = fb.width() as usize;
         let pixels = fb.pixels_mut();
         for (fy, &y) in (grid.y0 as usize..).zip(&grid.ys) {
@@ -406,25 +415,48 @@ impl TextItem {
             }
             if row_of != Some(cy) {
                 row_of = Some(cy);
+                row_shows = false;
                 for cx in 0..self.width {
                     let cell = cells[(cy * self.width + cx) as usize];
                     let shows = cell.code != 0 || (may_invert && cell.attr & attr::INVERT != 0);
+                    row_shows |= shows;
                     shown[cx as usize] = shows.then(|| {
                         let at = glyphs.at(self, font, grp, cell, margin, glyph_len);
                         (pick(cell.attr), at)
                     });
                 }
             }
+            if !row_shows {
+                continue;
+            }
             let line = &mut pixels[fy * width + grid.x0 as usize..][..cols.len()];
-            for (dst, &(cx, cat)) in line.iter_mut().zip(&cols) {
+            let Glyphs { data, paints, .. } = &glyphs;
+            for &(cx, start, end) in &spans {
                 let Some(((p, q), at)) = shown[cx as usize] else {
                     continue;
                 };
-                let coord = |(row, k): (bool, usize)| if row { rat[k] } else { cat[k] };
-                match glyphs.data[at + (coord(q) * stride + coord(p)) as usize] {
+                let (start, end) = (start as usize, end as usize);
+                let (line, cols) = (&mut line[start..end], &cols[start..end]);
+                let put = |dst: &mut u32, texel: i32| match data[at + texel as usize] {
                     0 => {}
                     solid if solid >> 24 == 0xFF => *dst = solid,
-                    n => *dst = glyphs.paints[n as usize - 1].put(*dst),
+                    n => *dst = paints[n as usize - 1].put(*dst),
+                };
+                // Not turned a quarter: the row of the character is the
+                // same all along the cell.
+                if let ((false, k), (true, r)) = (p, q) {
+                    let row = rat[r] * stride;
+                    for (dst, &(_, cat)) in line.iter_mut().zip(cols) {
+                        put(dst, row + cat[k]);
+                    }
+                    continue;
+                }
+                let coord = |(row, k): (bool, usize), cat: &[i32; 3]| match row {
+                    true => rat[k],
+                    false => cat[k],
+                };
+                for (dst, (_, cat)) in line.iter_mut().zip(cols) {
+                    put(dst, coord(q, cat) * stride + coord(p, cat));
                 }
             }
         }
