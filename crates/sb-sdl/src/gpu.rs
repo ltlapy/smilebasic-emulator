@@ -418,7 +418,7 @@ struct Sampling {
 
 /// The [`Sampling`] of an element placed by `matrix`, `size` long on the
 /// image, whose texels are `texel` of its units.
-fn sampling(matrix: &Affine, size: (i32, i32), reversed: (bool, bool), texel: f64) -> Sampling {
+fn sampling(matrix: &Affine, size: (i32, i32), texel: f64) -> Sampling {
     const NONE: Sampling = Sampling {
         shift: (0.0, 0.0),
         down: 0.0,
@@ -431,7 +431,7 @@ fn sampling(matrix: &Affine, size: (i32, i32), reversed: (bool, bool), texel: f6
     if place.is_aligned() {
         return NONE;
     }
-    let (sx, sy) = place.tie_sides(size, reversed);
+    let (sx, sy) = place.tie_sides(size);
     let Some(inv) = matrix.inverse().filter(|_| (sx, sy) != (0.0, 0.0)) else {
         return NONE;
     };
@@ -1000,15 +1000,21 @@ impl Gpu {
             }
             (f64::from(s.u) + ix, f64::from(s.v) + iy)
         };
-        let (x, y) = page_xy(0.0, 0.0);
-        let (x1, y1) = page_xy(1.0, 0.0);
-        let (x2, y2) = page_xy(0.0, 1.0);
-        let reversed = (x1 + y1 < x + y, x2 + y2 < x + y);
-        let on = sampling(m, (bw as i32, bh as i32), reversed, 1.0);
+        let on = sampling(m, (bw as i32, bh as i32), 1.0);
         let (sx, sy) = on.shift;
         let texture = match usize::try_from(s.page) {
             Ok(p) => {
-                let area = (!s.repeat).then(|| Clip::new(s.u, s.v, s.u + s.w - 1, s.v + s.h - 1));
+                // A tie can read a texel just off the image.
+                let area = (!s.repeat).then(|| {
+                    let tie = i32::from(on.shift != (0.0, 0.0));
+                    let last = GRP_SIZE - 1;
+                    let (x0, y0) = ((s.u - tie).max(0), (s.v - tie).max(0));
+                    let (x1, y1) = (
+                        (s.u + s.w - 1 + tie).min(last),
+                        (s.v + s.h - 1 + tie).min(last),
+                    );
+                    Clip::new(x0, y0, x1, y1)
+                });
                 self.page(grp, p, area)?
             }
             Err(_) => null_mut(),
@@ -1062,7 +1068,7 @@ impl Gpu {
             false => SDL_BLENDMODE_BLEND,
         };
         let size_on_image = (t.char_size as i32, t.char_size as i32);
-        let on = sampling(m, size_on_image, (false, false), cs / f64::from(ft));
+        let on = sampling(m, size_on_image, cs / f64::from(ft));
         // The corners of a cell on its glyph, for each ATTR. As the CPU's
         // draw_turned: the character is flipped, then turned.
         let scale = f64::from(ft) / cs;
@@ -2647,7 +2653,7 @@ mod tests {
 
     #[test]
     fn what_cannot_tie_is_sampled_as_it_is() {
-        let on = sampling(&scaled(1.0, 3.0), (16, 16), (false, false), 1.0);
+        let on = sampling(&scaled(1.0, 3.0), (16, 16), 1.0);
         assert_eq!((on.shift, on.down), ((0.0, 0.0), 0.0));
         let turn = (0.3_f64.sin(), 0.3_f64.cos());
         let m = Affine {
@@ -2657,7 +2663,7 @@ mod tests {
             d: turn.1,
             ..Affine::IDENTITY
         };
-        let on = sampling(&m, (16, 16), (false, false), 1.0);
+        let on = sampling(&m, (16, 16), 1.0);
         assert_eq!((on.shift, on.down), ((0.0, 0.0), 0.0));
     }
 
@@ -2665,7 +2671,7 @@ mod tests {
     /// moving the element down does not move what lies under a pixel.
     #[test]
     fn a_tie_goes_as_the_cpu_rule_says() {
-        let on = sampling(&scaled(1.0, 3.5), (16, 16), (false, false), 1.0);
+        let on = sampling(&scaled(1.0, 3.5), (16, 16), 1.0);
         assert_eq!(on.down, COVER_BIAS);
         assert_eq!(on.shift.0, TIE_BIAS);
         assert_eq!(on.shift.1, TIE_BIAS + COVER_BIAS);

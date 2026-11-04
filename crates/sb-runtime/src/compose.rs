@@ -627,12 +627,14 @@ impl Placement<'_> {
 
     /// What to add to an image point from [`Placement::sampling`] to get
     /// the point whose whole part is the texel it reads, for an image of
-    /// `size`. `reversed` says along which of the image's axes the page's
-    /// coordinates go down. Exactly zero where nothing can tie, so that
-    /// callers may leave out the adding.
-    // UNVERIFIED: the usual outcome of ties, from sizes 8, 15, 16 and 32
-    // with both sides alike, on a PC's GPU; see renderer-design.md.
-    pub fn texel_tie(&self, size: (i32, i32), reversed: (bool, bool)) -> (f64, f64) {
+    /// `size`. It may land just off the image, which reads the page there.
+    /// Exactly zero where nothing can tie, so that callers may leave out the
+    /// adding.
+    // UNVERIFIED: flips, and a side of another size at most turns: a few sprites
+    // of sizes 8, 15 and 16 on a Switch 2, the rest on a PC's GPU; see
+    // renderer-design.md. A side of another size at a scale of 1 goes up on one of
+    // the quad's triangles, and down on the other, as here.
+    pub fn texel_tie(&self, size: (i32, i32)) -> (f64, f64) {
         let m = &self.matrix;
         let (nx, ny) = COVER_NUDGE;
         let Some(inv) = m.inverse() else {
@@ -658,19 +660,15 @@ impl Placement<'_> {
             (inv.b - inv.a).signum() * TIE,
             (inv.d - inv.c).signum() * TIE,
         );
-        let axis = |size: i32, scale: f64, reversed: bool, frame: f64| match (
+        let axis = |size: i32, scale: f64, frame: f64| match (
             size.unsigned_abs().is_power_of_two(),
             is_power_of_two(scale),
         ) {
-            (false, _) if reversed => TIE,
             (false, _) => -TIE,
             (true, true) => TIE,
             (true, false) => frame,
         };
-        along((
-            axis(size.0, sx, reversed.0, frame.0),
-            axis(size.1, sy, reversed.1, frame.1),
-        ))
+        along((axis(size.0, sx, frame.0), axis(size.1, sy, frame.1)))
     }
 }
 
@@ -681,8 +679,8 @@ impl Placement<'_> {
     /// call to it, which changes what the compiler inlines on the CPU's paths
     /// (0.4% of TMULTI's instructions, measured).
     #[inline]
-    pub fn tie_sides(&self, size: (i32, i32), reversed: (bool, bool)) -> (f64, f64) {
-        let tie = self.texel_tie(size, reversed);
+    pub fn tie_sides(&self, size: (i32, i32)) -> (f64, f64) {
+        let tie = self.texel_tie(size);
         let Some(inv) = self.matrix.inverse().filter(|_| tie != (0.0, 0.0)) else {
             return (0.0, 0.0);
         };
@@ -1624,13 +1622,13 @@ mod tests {
 
     #[test]
     fn ties_settle_along_the_image_or_the_frame() {
-        let tie = |rot, scale, size, reversed| {
+        let tie = |rot, scale, size| {
             let place = Placement {
                 matrix: Affine::place((100.5, 50.5), (0.0, 0.0), rot, (scale, scale)),
                 clip: None,
                 add: false,
             };
-            let (x, y) = place.texel_tie((size, size), reversed);
+            let (x, y) = place.texel_tie((size, size));
             // What matters is the sign of what the point ends up moved by
             // from where it was before covering was settled.
             let inv = place.matrix.inverse().unwrap();
@@ -1638,20 +1636,18 @@ mod tests {
             let (mx, my) = (inv.a * nx + inv.b * ny, inv.c * nx + inv.d * ny);
             ((x + mx).signum() as i32, (y + my).signum() as i32)
         };
-        let none = (false, false);
         // A size that halves evenly at a scale that does: plain floor.
-        assert_eq!(tie(0.0, 0.5, 16, none), (1, 1));
-        assert_eq!(tie(90.0, 1.0, 32, none), (1, 1));
+        assert_eq!(tie(0.0, 0.5, 16), (1, 1));
+        assert_eq!(tie(90.0, 1.0, 32), (1, 1));
         // At other scales: towards the frame's left and bottom.
-        assert_eq!(tie(0.0, 1.5, 16, none), (-1, 1));
-        assert_eq!(tie(180.0, 2.5, 16, none), (1, -1));
-        assert_eq!(tie(90.0, 1.5, 16, none), (1, 1));
-        assert_eq!(tie(270.0, 2.5, 16, none), (-1, -1));
-        // Other sizes: towards the page's lower coordinates.
-        assert_eq!(tie(0.0, 1.5, 15, none), (-1, -1));
-        assert_eq!(tie(0.0, 1.0, 15, (true, false)), (1, -1));
+        assert_eq!(tie(0.0, 1.5, 16), (-1, 1));
+        assert_eq!(tie(180.0, 2.5, 16), (1, -1));
+        assert_eq!(tie(90.0, 1.5, 16), (1, 1));
+        assert_eq!(tie(270.0, 2.5, 16), (-1, -1));
+        // Other sizes: towards the image's lower coordinates.
+        assert_eq!(tie(0.0, 1.5, 15), (-1, -1));
         // Neither upright nor at a quarter turn.
-        assert_eq!(tie(45.0, 1.0, 15, none), (1, -1));
+        assert_eq!(tie(45.0, 1.0, 15), (1, -1));
     }
 
     #[test]

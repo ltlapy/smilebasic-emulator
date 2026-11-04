@@ -585,6 +585,10 @@ Seen in TEST62 (4.4.9 on a Switch 2), after being read in SmileBASIC 4:
 
 ## Graphics and layers
 
+- A sprite whose pixel centers fall exactly between texels can show a pixel off its
+  image: on a half-pixel position, turned 90 degrees, the column on the image's far edge
+  reads the page's next texel (TEST62, Switch 2). See renderer-design.md for how ties go.
+
 - `LAYER` mode 0 draws the layer's elements straight onto the screen and
   ignores the layer's color; only modes 1 to 4 multiply by it.
 - Blending rounds to the nearest, not down: a sprite at &H80 alpha over

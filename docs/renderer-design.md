@@ -341,7 +341,7 @@ checks are grouped into batches in [2.10](#210-proposed-ttest-batches).
 | Sampled without smoothing, at frame pixel centres; away from ties every rotation and scale fits with no misses | `draw_image`, `draw_upright` | C (R5): TEST50 generic angles |
 | With XSCREEN sample > 1, sprites are sampled at the finer pixels' centres; LCLIP grows to whole fine pixels | `Layer::fine` | C (R6): TEST50 part 2 (LCLIP exact; the fine grid misses only 56 tie pixels of 54298) |
 | Coverage: a pixel is drawn when its centre, nudged right then up, lies on the image, at any rotation: an edge through the centre takes it if it is the left or bottom edge on the frame | `Placement::sampling` | C (R5): TEST50, no coverage miss in any part, text included (consistent with a rasteriser's top-left rule on a target drawn flipped) |
-| A sample point exactly between texels, at a multiple of 90 degrees: image side a power of two and scale a power of two: the higher texel; power of two with another scale: towards the frame's left and bottom; another side: towards the page's lower coordinates | `Placement::texel_tie` | U (R5, R8): the usual outcome only; see below |
+| A sample point exactly between texels, at a multiple of 90 degrees: image side a power of two and scale a power of two: the higher texel; power of two with another scale: towards the frame's left and bottom; another side: towards the shown rectangle's lower coordinates. The point may land just off the image, and reads the page there | `Placement::texel_tie`, `texel` | C on a Switch 2, for sizes 8, 15, 16 at scales 1 and 1.5, a side of another size at scale 1 excepted (TEST62); U for the rest (R5, R8); see below |
 | The same at other angles (only 45-degree multiples can tie): image x higher, image y lower; kept on the image | `Placement::texel_tie` | U (R5): TEST50, no misses but 21 pixels reading the row above the image |
 | SPCHR W and H are the size as shown (turned size rule) | `sp.rs` | C: pitfalls; TEST45, TEST46 |
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
@@ -531,10 +531,42 @@ per-axis changes were measured against all of it, pixels more than 1 off:
 | Both of the first changes | 1533 | 56 | 2968 | 1394 | 501 | 1278 | 7730 |
 
 Each fixes one test at another's cost, which is what host GPU noise would
-look like, so the rule stays.
+look like, so the rule stayed.
+
+TEST62 then showed ties on a real Switch 2, on 21 sprites at multiples of 90
+degrees, all with SPSET's attribute 1 (a quarter turn, not meant by the test), so a
+sprite's ramp shows only one axis:
+
+- Sizes 8 and 16 at scale 1 go to the higher texel, the point on the image's
+  far edge reading the page's next texel, which ours used to keep from happening.
+- Sizes 8 and 16 at scale 1.5 go to the frame's left and bottom. Here that is also the
+  page's higher texel: nothing tells which of the two is the rule.
+- Size 15 at scale 1.5 goes towards the shown rectangle's lower coordinates on
+  both axes, where a Ryujinx run of the same sprite (TEST50, S1.5A90) was mixed.
+  The page's lower coordinates, the rule before, misses one axis of the two.
+- Size 15 at scale 1, the quad's diagonal shows: the first triangle of its
+  strip (top left, top right, bottom left of the rectangle) goes to the higher texel
+  and the second to the lower. No per-axis rule fits; ours has the second's.
+- Single-precision plane equations from the vertices, or barycentrics, with
+  any anchor, get all of sizes 8 and 16 and miss sizes 15's as above.
+
+Pixels more than 1 off (TEST50 and TEST56 from Ryujinx, on a PC's GPU; TEST62's a
+shot of the 22 sprites, 9 of luma off):
+
+| Rule | TEST50 1 | 2 | 3 | 4 | TEST56 P2 | TEST62 |
+|---|---|---|---|---|---|---|
+| Before | 770 | 56 | 464 | 626 | 2566 | 290 |
+| Reading past the image | 880 | 86 | 464 | 594 | 2128 | 266 |
+| Also other sizes along the shown rectangle | 1249 | 86 | 464 | 594 | 2128 | 105 |
+| Also power of two at other scales, the page's higher texel | 1249 | 86 | 2512 | 2720 | 2864 | 105 |
+| Other sizes towards the frame's top left, not along the rectangle | 3553 | 206 | 464 | 594 | 4037 | 120 |
+
+The third row is what the code does. What a real Switch shows decides over what
+Ryujinx shows: TEST50's part 1 gets worse, on a host GPU's noise. Text keeps to its
+own cell, off which SmileBASIC 4 reads the font page's next character's pixels.
 
 A GPU backend ([4](#4-gpu-backend-options)) gets these ties from its
-own arithmetic and will differ from the CPU rasterizer on them.
+own arithmetic unless steered, as `gpu.rs` does by `Placement::tie_sides`.
 
 The batches follow [hardware-tests.md](hardware-tests.md):
 

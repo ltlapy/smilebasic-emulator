@@ -79,7 +79,7 @@ impl TextItem {
         let (cs, ft) = (self.char_size, self.font_type);
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
         let size = f64::from(cs);
-        let (tx, ty) = place.texel_tie((cs as i32, cs as i32), (false, false));
+        let (tx, ty) = place.texel_tie((cs as i32, cs as i32));
         // The cell's character in its colors, looked up once rather than
         // for every pixel it covers.
         let mut glyph = vec![0; (ft * ft) as usize];
@@ -219,7 +219,7 @@ impl TextItem {
         };
         let size = f64::from(cs);
         let at = |p: f64| ((p * f64::from(ft) / size) as u32).min(ft - 1);
-        let (tx, ty) = place.texel_tie((cs as i32, cs as i32), (false, false));
+        let (tx, ty) = place.texel_tie((cs as i32, cs as i32));
         // For each column (or row): its cell, and the glyph column (or
         // row) for the point in the cell, for the point flipped, and for
         // it flipped twice, as [`draw`]'s arithmetic gives them.

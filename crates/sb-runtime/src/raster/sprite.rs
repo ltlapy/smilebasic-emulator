@@ -76,7 +76,7 @@ pub fn draw(
     }
     let tie = match place.is_aligned() {
         true => (0.0, 0.0),
-        false => place.texel_tie((bw, bh), source.reversed()),
+        false => place.texel_tie((bw, bh)),
     };
     if place.is_upright() {
         return draw_upright(&source, &tint, fb, &place, (bw, bh), tie, grp);
@@ -103,7 +103,7 @@ pub fn draw(
                 });
             }
             draw_image(self.fb, self.place, bw, bh, |x, y| {
-                let (x, y) = source.page_xy(texel(x + tx, bw), texel(y + ty, bh));
+                let (x, y) = source.page_xy(texel(x + tx), texel(y + ty));
                 let p = source.pixel(x, y);
                 (p >> 24 != 0).then(|| paint(p))
             });
@@ -121,11 +121,11 @@ pub fn draw(
     );
 }
 
-/// The texel of an image `size` long that a point lies in. A point moved
-/// to settle a tie can land just off the image.
+/// The texel a point lies in. A point moved to settle a tie can land just off
+/// the image, on either side, and reads the page there.
 #[inline]
-fn texel(v: f64, size: i32) -> i32 {
-    (v as i32).min(size - 1)
+fn texel(v: f64) -> i32 {
+    v as i32 - i32::from(v < 0.0)
 }
 
 /// Where a sprite's pixels come from.
@@ -197,15 +197,6 @@ impl Source<'_> {
         (self.u + ix, self.v + iy)
     }
 
-    /// Whether the page's coordinates go down along the shown rectangle's
-    /// x and y.
-    fn reversed(&self) -> (bool, bool) {
-        let (x, y) = self.page_xy(0, 0);
-        let (x1, y1) = self.page_xy(1, 0);
-        let (x2, y2) = self.page_xy(0, 1);
-        (x1 + y1 < x + y, x2 + y2 < x + y)
-    }
-
     /// A page coordinate as it is read: wrapped around when the page
     /// repeats, or `None` off the page.
     #[inline]
@@ -256,7 +247,7 @@ fn draw_upright(
     let turned = (source.attr & attr::ROTATION) % 2 == 1;
     let cols: Vec<usize> = (grid.xs.iter())
         .map(|&x| {
-            let (px, py) = source.page_xy(texel(x + tx, bw), 0);
+            let (px, py) = source.page_xy(texel(x + tx), 0);
             match turned {
                 false => at(px, 1),
                 true => at(py, stride),
@@ -264,7 +255,7 @@ fn draw_upright(
         })
         .collect();
     let rows = grid.ys.iter().map(|&y| {
-        let (px, py) = source.page_xy(0, texel(y + ty, bh));
+        let (px, py) = source.page_xy(0, texel(y + ty));
         match turned {
             false => at(py, stride),
             true => at(px, 1),

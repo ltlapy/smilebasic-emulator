@@ -486,6 +486,14 @@ fn scaled_sprites_settle_ties_by_size_and_scale() {
     assert_eq!(texels(sp, (40, 44), (1, 0), 4), shown(&[0, 2, 4, 6]));
 }
 
+/// TEST62 on a Switch 2: at a scale of 1 a tie goes to the higher texel, and on
+/// the image's far edge that is the page's next one.
+#[test]
+fn a_tie_can_read_the_page_past_the_image() {
+    let sp = "SPSET 0,0,0,16,16,1:SPPAGE 0,3:SPROT 0,90:SPOFS 0,100.5,40";
+    assert_eq!(texels(sp, (84, 44), (1, 0), 4), shown(&[16, 15, 14, 13]));
+}
+
 #[test]
 fn half_pixel_sprites_cover_by_left_and_bottom_edges() {
     let sp = "SPSET 0,0,0,16,16:SPPAGE 0,3:SPOFS 0,40.5,40.5";
@@ -498,12 +506,10 @@ fn half_pixel_sprites_cover_by_left_and_bottom_edges() {
         texels(sp, (39, 44), (1, 0), 17)[1..],
         shown(&(0..16).collect::<Vec<_>>())
     );
-    // Not the pixel the top edge runs through, but the bottom edge's.
+    // Not the pixel the top edge runs through, but the bottom edge's, which
+    // reads the page past the image.
     let down = texels(sp, (44, 40), (0, 1), 18);
     assert_eq!(down[0], None);
-    assert_eq!(
-        down[1..=16],
-        shown(&(1..16).chain([15]).collect::<Vec<_>>())
-    );
+    assert_eq!(down[1..=16], shown(&(1..=16).collect::<Vec<_>>()));
     assert_eq!(down[17], None);
 }
