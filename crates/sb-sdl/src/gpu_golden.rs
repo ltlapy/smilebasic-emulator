@@ -30,8 +30,9 @@ pub struct Golden {
     pub share: f64,
 }
 
-/// How much of the frame the start-up scene may have more than 2 off. Its elements
-/// sit on whole pixels at whole scales but for one turned, whose edges may differ.
+/// How much of the frame the start-up scene may have more than 2 off, among the golden
+/// scenes, and more than rounding can explain, at start-up. Its elements sit on whole
+/// pixels at whole scales but for one turned, whose edges may differ.
 const SELF_TEST_SHARE: f64 = 0.005;
 
 /// What goes on the sprites' page first: colors, a part half clear, a line to see
@@ -53,7 +54,10 @@ macro_rules! page {
 
 /// The scene the path has to pass at start-up: the blends, tints, compose modes,
 /// FADE, text on a fallback glyph, a turned element, and each filter that can do
-/// without a shader. It has no blur, whose differences are accepted.
+/// without a shader. It has no blur, whose differences are accepted. The checkers at
+/// the page's far corner are for a GPU whose fragment shaders hold texture coordinates
+/// in 16 bits, as GLES2's mediump may: a texel apart is all such a number can tell
+/// there, and sampling goes wrong, where near the page's start it looks right.
 pub const SELF_TEST: Golden = Golden {
     name: "self-test",
     source: page!(
@@ -69,6 +73,10 @@ pub const SELF_TEST: Golden = Golden {
          SPSET 9,0,0,32,32:SPOFS 9,48,110:SPLAYER 9,6\n\
          DIM R[8,2]:R[3,0]=0.05:R[3,1]=1:R[4,0]=-0.05:R[4,1]=1:R[0,1]=1:R[1,1]=1\n\
          R[2,1]=1:R[5,1]=1:R[6,1]=1:R[7,1]=1:LFILTER 6,3,R,1\n\
+         FOR Y=2016 TO 2047:FOR X=2016 TO 2047\n\
+         GPSET X,Y,&HFF000000+&HFFFFFF*((X+Y) AND 1)\n\
+         NEXT:NEXT\n\
+         SPSET 10,2016,2016,32,32:SPOFS 10,100,110:SPSCALE 10,2,2\n\
          PRINT \"SELF TEST\"\n\
          FADE &H20102030\n"
     ),
@@ -431,7 +439,7 @@ pub fn run(renderer: *mut SDL_Renderer, scene: &Golden, storage: Option<PathBuf>
 /// trusted, and what is printed if not.
 pub fn self_test(renderer: *mut SDL_Renderer) -> Result<Duration, String> {
     let outcome = run(renderer, &SELF_TEST, None);
-    match outcome.passes(SELF_TEST.share) {
+    match outcome.trouble.is_none() && outcome.main.near(SELF_TEST.share) {
         true => Ok(outcome.took),
         false => Err(format!(
             "{}: {}",

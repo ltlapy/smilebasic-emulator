@@ -126,6 +126,12 @@ const REASON_NAMES: [&str; REASONS] = [
 /// 60000 or fewer.
 const MOST_VERTICES: usize = 30000;
 
+/// How far off a pixel may be and still be only rounding, in the start-up scene. An
+/// element goes through at most three draws there, on a layer, onto the frame and under
+/// FADE, and a GPU's blender that truncates where it should round, as a fixed-point
+/// one may, loses up to 1 in each and 1 more for the texel's tint.
+const FAR_OFF: u32 = 4;
+
 /// How far above a sample is moved, in texels, for a pixel exactly between
 /// two rows of a half-size target: the frame's rows count from its bottom on
 /// SmileBASIC 4, so that it takes the upper one, where a GPU takes the lower.
@@ -207,6 +213,10 @@ pub struct Compared {
     /// Exactly the same, 1 off, 2 off, more.
     by_diff: [u64; 4],
     alpha_off: u64,
+    /// Those with any channel, alpha too, more than [`FAR_OFF`] off.
+    far: u64,
+    /// Those with alpha more than 2 off.
+    alpha_more: u64,
     /// The most any channel differs by, of the colors.
     largest: u32,
     /// The frame with the most pixels differing by more than 2.
@@ -448,18 +458,24 @@ fn sampling(matrix: &Affine, size: (i32, i32), texel: f64, page: (f64, f64)) -> 
 }
 
 impl Compared {
-    /// Whether at most this part of the pixels is more than 2 off, or any alpha
-    /// is, which no rounding here should move by much.
+    /// Whether at most this part of the pixels is more than 2 off, and hardly any
+    /// has an alpha that is: rounding moves alpha by 1 on some GPUs, and no more.
     pub fn within(&self, share: f64) -> bool {
         let pixels = self.pixels.max(1) as f64;
-        self.by_diff[3] as f64 <= share * pixels && self.alpha_off as f64 <= 0.001 * pixels
+        self.by_diff[3] as f64 <= share * pixels && self.alpha_more as f64 <= 0.001 * pixels
+    }
+
+    /// Whether at most this part of the pixels is more than [`FAR_OFF`] off, which
+    /// rounding alone cannot do on the start-up scene, however a driver rounds.
+    pub fn near(&self, share: f64) -> bool {
+        self.pixels > 0 && self.far as f64 <= share * self.pixels as f64
     }
 
     pub fn summary(&self) -> String {
         let [_, one, two, more] = self.by_diff;
         format!(
-            "{} {one} {two} {more}, alpha {}; {}",
-            self.pixels, self.alpha_off, self.largest
+            "{} {one} {two} {more}, far {}, alpha {}; {}",
+            self.pixels, self.far, self.alpha_off, self.largest
         )
     }
 }
@@ -2255,6 +2271,8 @@ impl SceneBackend for Gpu {
                         let off = |shift: u32| (cpu >> shift & 0xFF).abs_diff(gpu >> shift & 0xFF);
                         let most = off(0).max(off(8)).max(off(16));
                         c.alpha_off += u64::from(off(24) != 0);
+                        c.alpha_more += u64::from(off(24) > 2);
+                        c.far += u64::from(most.max(off(24)) > FAR_OFF);
                         c.by_diff[most.min(3) as usize] += 1;
                         c.largest = c.largest.max(most);
                         if most > 2 {
@@ -2643,6 +2661,31 @@ mod tests {
 
     /// One draw gives what the CPU's cover() does with FADE and the darkening, one
     /// rounding of the two.
+    #[test]
+    fn rounding_passes_and_a_wrong_sum_does_not() {
+        let compared = |far, by_diff, alpha_more| Compared {
+            pixels: 1000,
+            by_diff,
+            far,
+            alpha_more,
+            ..Compared::default()
+        };
+        // A driver that rounds its own way: much off by a little, alpha too.
+        let rounding = Compared {
+            alpha_off: 900,
+            ..compared(0, [100, 700, 200, 0], 0)
+        };
+        assert!(rounding.near(0.005) && rounding.within(0.005));
+        // A pixel or two on edges.
+        assert!(compared(5, [900, 90, 5, 5], 0).near(0.005));
+        // A blend or a sample gone wrong.
+        assert!(!compared(100, [900, 0, 0, 100], 0).near(0.005));
+        assert!(!compared(0, [0, 0, 0, 100], 0).within(0.005));
+        assert!(!compared(0, [900, 100, 0, 0], 100).within(0.005));
+        // Nothing compared is no pass.
+        assert!(!Compared::default().near(0.005));
+    }
+
     #[test]
     fn fade_and_dimming_are_one_sum() {
         const DIM: u32 = sb_runtime::screen::DIM;
