@@ -1,6 +1,7 @@
 //! Draws one text screen item on the CPU.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::compose::{Mixed, Paint, Placement, draw_image_part, page_signs};
 use crate::font::{Font, FontSize};
@@ -9,6 +10,73 @@ use crate::graphics::{Clip, Graphics};
 use crate::scene::TextItem;
 use crate::sprites::sample;
 use crate::text::{Cell, FONT_PAGE, USER_CHARS, USER_GRID, attr, glyph_pixel};
+
+/// A cell that shows nothing, where a cell's place in [`Glyphs`] is kept.
+const NO_GLYPH: u32 = u32::MAX;
+
+/// A hash for [`Glyphs`], looked up about once a cell: it need not resist
+/// anything, as a program can at worst slow its own text.
+#[derive(Clone, Copy, Default)]
+struct KeyHasher(u64);
+
+impl Hasher for KeyHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u64(&mut self, key: u64) {
+        let h = (self.0 ^ key).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ h >> 32;
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// Each character in each color worked out once, however many cells of a
+/// screen show it.
+#[derive(Default)]
+struct Glyphs {
+    /// The characters, as [`TextItem::glyph`] gives them.
+    data: Vec<u32>,
+    paints: Vec<Mixed>,
+    made: HashMap<u64, usize, BuildHasherDefault<KeyHasher>>,
+    /// The last one looked up: cells in a row are often alike.
+    last: Option<(u64, usize)>,
+}
+
+impl Glyphs {
+    /// Where the cell's character is in `data`.
+    fn at(
+        &mut self,
+        item: &TextItem,
+        font: &Font,
+        grp: &Graphics,
+        cell: Cell,
+        margin: i32,
+        len: usize,
+    ) -> usize {
+        let inverted = u64::from(cell.attr & attr::INVERT != 0);
+        let key = inverted << 48 | u64::from(cell.code) << 32 | u64::from(cell.color);
+        if let Some((_, at)) = self.last.filter(|l| l.0 == key) {
+            return at;
+        }
+        let Glyphs {
+            data, paints, made, ..
+        } = self;
+        let at = *made.entry(key).or_insert_with(|| {
+            let at = data.len();
+            data.resize(at + len, 0);
+            item.glyph(font, grp, cell, margin, &mut data[at..], paints);
+            at
+        });
+        self.last = Some((key, at));
+        at
+    }
+}
 
 /// Draws the screen, its cells being `cells`, within `clip`, with the INPUT
 /// cursor on top if it has one.
@@ -79,8 +147,10 @@ impl TextItem {
         }
     }
 
-    /// [`draw`] for a screen turned or sheared on the frame, cell by
-    /// cell.
+    /// [`draw`] for a screen turned or sheared on the frame. Each frame pixel
+    /// lies in one cell, so the order of the cells does not matter: a screen
+    /// that is mostly full is gone over once, and otherwise each cell that
+    /// shows anything for itself.
     fn draw_turned(
         &self,
         cells: &[Cell],
@@ -97,61 +167,75 @@ impl TextItem {
             place.texel_tie(side, (1.0, 1.0)),
             place.texel_tie(side, (-1.0, -1.0)),
         );
+        // What a tie moves a point by, for each turn and flip.
+        let ties: [(f64, f64); 16] = std::array::from_fn(|a| {
+            let a = a as u16;
+            let page = page_signs(
+                i32::from(a & attr::ROTATION),
+                a & attr::REVH != 0,
+                a & attr::REVV != 0,
+            );
+            (
+                if page.0 > 0.0 { up.0 } else { down.0 },
+                if page.1 > 0.0 { up.1 } else { down.1 },
+            )
+        });
         // At a quarter turn a tie can read just off the cell, so what the
         // character's image holds goes one texel further each way.
         let margin = i32::from(place.is_right_angle());
         let stride = ft as i32 + 2 * margin;
-        // The cell's character in its colors, looked up once rather than
-        // for every pixel it covers.
-        let mut glyph = vec![0; (stride * stride) as usize];
-        let mut paints = Vec::new();
-        for cy in 0..self.height {
-            for cx in 0..self.width {
-                let cell = cells[(cy * self.width + cx) as usize];
-                // Empty cells show nothing, so need no drawing.
-                if cell.code == 0 && (!self.may_invert || cell.attr & attr::INVERT == 0) {
-                    continue;
-                }
-                paints.clear();
-                self.glyph(font, grp, cell, margin, &mut glyph, &mut paints);
-                let (x0, y0) = ((cx * cs) as i32, (cy * cs) as i32);
-                let part = (x0, y0, x0 + cs as i32, y0 + cs as i32);
-                let page = page_signs(
-                    i32::from(cell.attr & attr::ROTATION),
-                    cell.attr & attr::REVH != 0,
-                    cell.attr & attr::REVV != 0,
-                );
-                let tx = if page.0 > 0.0 { up.0 } else { down.0 };
-                let ty = if page.1 > 0.0 { up.1 } else { down.1 };
-                draw_image_part(fb, place, w, h, part, |x, y| {
-                    // Pixels of the cells around are theirs to draw.
-                    if ((x / size) as u32, (y / size) as u32) != (cx, cy) {
-                        return None;
-                    }
-                    // Where in the cell, which a fine frame splits further.
-                    // As for sprites, the character is flipped, then turned
-                    // (checked on hardware): undo the turn, then the flips.
-                    let (px, py) = (x + tx - f64::from(cx * cs), y + ty - f64::from(cy * cs));
-                    let (mut px, mut py) = match cell.attr & attr::ROTATION {
-                        0 => (px, py),
-                        1 => (py, size - px),
-                        2 => (size - px, size - py),
-                        _ => (size - py, px),
-                    };
-                    if cell.attr & attr::REVH != 0 {
-                        px = size - px;
-                    }
-                    if cell.attr & attr::REVV != 0 {
-                        py = size - py;
-                    }
-                    let at = |p: f64| {
-                        let t = p * f64::from(ft) / size;
-                        let t = t as i32 - i32::from(t < 0.0);
-                        t.clamp(-margin, ft as i32 - 1 + margin) + margin
-                    };
-                    paint_at(glyph[(at(py) * stride + at(px)) as usize], &paints)
-                });
+        let glyph_len = (stride * stride) as usize;
+        let mut glyphs = Glyphs::default();
+        // Per cell, where its character is in `glyphs`, each character in
+        // each color being looked up once however many cells show it, times 16,
+        // and its turn and flips.
+        let count = (self.width * self.height) as usize;
+        let mut shown = Vec::with_capacity(count);
+        let mut filled = 0;
+        for cell in &cells[..count] {
+            // Empty cells show nothing, so need no drawing.
+            if cell.code == 0 && (!self.may_invert || cell.attr & attr::INVERT == 0) {
+                shown.push(NO_GLYPH);
+                continue;
             }
+            filled += 1;
+            let at = glyphs.at(self, font, grp, *cell, margin, glyph_len) as u32;
+            shown.push(at << 4 | u32::from(cell.attr & 15));
+        }
+        let turned = Turned {
+            shown: &shown,
+            data: &glyphs.data,
+            paints: &glyphs.paints,
+            ties,
+            width: self.width,
+            cs,
+            ft: ft as i32,
+            size,
+            simple: cs.is_power_of_two()
+                && ft.is_power_of_two()
+                && (up, down) == ((0.0, 0.0), (0.0, 0.0))
+                && margin == 0,
+            glyph_scale: f64::from(ft) / size,
+            ft_shift: ft.trailing_zeros(),
+            margin,
+            stride,
+        };
+        if filled * 2 >= count {
+            draw_image_part(fb, place, w, h, (0, 0, w, h), |x, y| {
+                turned.pixel(x, y, None)
+            });
+            return;
+        }
+        for (i, &glyph) in shown.iter().enumerate() {
+            if glyph == NO_GLYPH {
+                continue;
+            }
+            let (cx, cy) = (i as u32 % self.width, i as u32 / self.width);
+            let (x0, y0) = ((cx * cs) as i32, (cy * cs) as i32);
+            let part = (x0, y0, x0 + cs as i32, y0 + cs as i32);
+            draw_image_part(fb, place, w, h, part, |x, y| {
+                turned.pixel(x, y, Some((cx, cy)))
+            });
         }
     }
 
@@ -307,11 +391,7 @@ impl TextItem {
             (p, q)
         };
         let glyph_len = (stride * stride) as usize;
-        // Each character in each color once, however many cells show it.
-        let mut glyphs: Vec<u32> = Vec::new();
-        let mut paints: Vec<Mixed> = Vec::new();
-        let mut made: HashMap<(u16, u32), usize> = HashMap::new();
-        let mut made_inverted: HashMap<(u16, u32), usize> = HashMap::new();
+        let mut glyphs = Glyphs::default();
         let may_invert = self.may_invert;
         // Per cell of the row, if it shows anything: its picks and where
         // its character is in `glyphs`.
@@ -330,18 +410,7 @@ impl TextItem {
                     let cell = cells[(cy * self.width + cx) as usize];
                     let shows = cell.code != 0 || (may_invert && cell.attr & attr::INVERT != 0);
                     shown[cx as usize] = shows.then(|| {
-                        let key = (cell.code, cell.color);
-                        let made = match cell.attr & attr::INVERT {
-                            0 => &mut made,
-                            _ => &mut made_inverted,
-                        };
-                        let at = *made.entry(key).or_insert_with(|| {
-                            let at = glyphs.len();
-                            glyphs.resize(at + glyph_len, 0);
-                            let out = &mut glyphs[at..];
-                            self.glyph(font, grp, cell, margin, out, &mut paints);
-                            at
-                        });
+                        let at = glyphs.at(self, font, grp, cell, margin, glyph_len);
                         (pick(cell.attr), at)
                     });
                 }
@@ -352,10 +421,10 @@ impl TextItem {
                     continue;
                 };
                 let coord = |(row, k): (bool, usize)| if row { rat[k] } else { cat[k] };
-                match glyphs[at + (coord(q) * stride + coord(p)) as usize] {
+                match glyphs.data[at + (coord(q) * stride + coord(p)) as usize] {
                     0 => {}
                     solid if solid >> 24 == 0xFF => *dst = solid,
-                    n => *dst = paints[n as usize - 1].put(*dst),
+                    n => *dst = glyphs.paints[n as usize - 1].put(*dst),
                 }
             }
         }
@@ -386,12 +455,131 @@ fn glyph_paint(paint: Option<Mixed>, paints: &mut Vec<Mixed>) -> u32 {
     }
 }
 
+/// What [`glyph_paint`] gave, as a paint.
+#[derive(Clone, Copy)]
+enum Texel<'a> {
+    Solid(u32),
+    Paint(&'a Mixed),
+}
+
+impl Paint for Texel<'_> {
+    #[inline]
+    fn put(&self, dst: u32) -> u32 {
+        match self {
+            Texel::Solid(c) => *c,
+            Texel::Paint(paint) => paint.put(dst),
+        }
+    }
+}
+
 /// Back from [`glyph_paint`].
-fn paint_at(v: u32, paints: &[Mixed]) -> Option<Mixed> {
+#[inline]
+fn paint_at(v: u32, paints: &[Mixed]) -> Option<Texel<'_>> {
     match v {
         0 => None,
-        solid if solid >> 24 == 0xFF => Some(Mixed::Solid(solid)),
-        n => Some(paints[n as usize - 1]),
+        solid if solid >> 24 == 0xFF => Some(Texel::Solid(solid)),
+        n => Some(Texel::Paint(&paints[n as usize - 1])),
+    }
+}
+
+/// What [`TextItem::draw_turned`] works each pixel from.
+struct Turned<'a> {
+    /// Per cell, where its character is in `data`, times 16, and its turn and
+    /// flips; or [`NO_GLYPH`].
+    shown: &'a [u32],
+    data: &'a [u32],
+    paints: &'a [Mixed],
+    /// What a tie moves a point by, for each turn and flip.
+    ties: [(f64, f64); 16],
+    /// In cells.
+    width: u32,
+    cs: u32,
+    ft: i32,
+    size: f64,
+    /// Nothing can tie and the sizes are powers of two, so that sums on a point
+    /// are exact.
+    simple: bool,
+    /// Character pixels to a screen pixel.
+    glyph_scale: f64,
+    /// The base 2 logarithm of `ft`, when `simple`.
+    ft_shift: u32,
+    margin: i32,
+    stride: i32,
+}
+
+impl Turned<'_> {
+    /// The pixel at a point of the screen, on it, if it lies in the cell
+    /// `only`, when one is given.
+    #[inline(always)]
+    fn pixel(&self, x: f64, y: f64, only: Option<(u32, u32)>) -> Option<Texel<'_>> {
+        if !self.simple {
+            return self.pixel_at(x, y, only);
+        }
+        // With nothing to settle, a point's character pixel counted from the
+        // screen's corner says it all. A branch between the two axes keeps the
+        // compiler from working them side by side, at twice the cost.
+        let gx = (x * self.glyph_scale) as u32;
+        let cx = gx >> self.ft_shift;
+        if cx >= self.width {
+            return None;
+        }
+        let gy = (y * self.glyph_scale) as u32;
+        let cy = gy >> self.ft_shift;
+        // Pixels of the cells around are theirs to draw.
+        if only.is_some_and(|c| c != (cx, cy)) {
+            return None;
+        }
+        let glyph = *self.shown.get((cy * self.width + cx) as usize)?;
+        if glyph == NO_GLYPH {
+            return None;
+        }
+        if glyph & 15 != 0 {
+            return self.pixel_at(x, y, only);
+        }
+        let mask = self.ft as u32 - 1;
+        let texel = ((gy & mask) * self.ft as u32 + (gx & mask)) as usize;
+        paint_at(self.data[(glyph >> 4) as usize + texel], self.paints)
+    }
+
+    /// [`Turned::pixel`] whatever the character's turn and flips, the sizes
+    /// and the ties.
+    #[inline(never)]
+    fn pixel_at(&self, x: f64, y: f64, only: Option<(u32, u32)>) -> Option<Texel<'_>> {
+        let (cx, cy) = ((x / self.size) as u32, (y / self.size) as u32);
+        // Pixels of the cells around are theirs to draw.
+        if only.is_some_and(|c| c != (cx, cy)) || cx >= self.width {
+            return None;
+        }
+        let glyph = *self.shown.get((cy * self.width + cx) as usize)?;
+        if glyph == NO_GLYPH {
+            return None;
+        }
+        let a = (glyph & 15) as u16;
+        let (tx, ty) = self.ties[usize::from(a)];
+        let (cs, size) = (self.cs, self.size);
+        // Where in the cell, which a fine frame splits further.
+        // As for sprites, the character is flipped, then turned
+        // (checked on hardware): undo the turn, then the flips.
+        let (px, py) = (x + tx - f64::from(cx * cs), y + ty - f64::from(cy * cs));
+        let (mut px, mut py) = match a & attr::ROTATION {
+            0 => (px, py),
+            1 => (py, size - px),
+            2 => (size - px, size - py),
+            _ => (size - py, px),
+        };
+        if a & attr::REVH != 0 {
+            px = size - px;
+        }
+        if a & attr::REVV != 0 {
+            py = size - py;
+        }
+        let at = |p: f64| {
+            let t = p * f64::from(self.ft) / size;
+            let t = t as i32 - i32::from(t < 0.0);
+            t.clamp(-self.margin, self.ft - 1 + self.margin) + self.margin
+        };
+        let texel = (at(py) * self.stride + at(px)) as usize;
+        paint_at(self.data[(glyph >> 4) as usize + texel], self.paints)
     }
 }
 
