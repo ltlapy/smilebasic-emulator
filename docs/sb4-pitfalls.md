@@ -43,6 +43,9 @@ follows all of it. Items still waiting for a check are marked
   to -10 reads -3, -6, -10, and 0 to 3 reads 1, 2, 3. Text screens (`TANIM`)
   do the same (TEST47, TEST48, TEST56).
 - An animation key that lasts 0 frames is `Illegal animation data`.
+- `SPANIM` keys for XY, Z, UV and I outside -32768 to 32767 are `Out of range
+  (SPANIM)`; `TANIM` and `ANIMDEF` go through the same code. R has no such
+  limit (TEST60).
 - How much a program runs in a frame (4.4.9, timed with `MAINCNT()`):
   in 60 frames a `WHILE MAINCNT()-T<60:INC N:WEND` loop goes round
   2395924 times on a Switch, 5962406 on a Switch 2 and 2837664 in
@@ -364,6 +367,8 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A line keeps rows free under its cursor according to the hint bar: at
   1280x720 with 8x8 characters, typing from row 85 leaves the cursor on row
   86; at 640x360 from row 40, on row 42 (TEST60).
+
+- Enter on an empty line of direct mode prints `OK` (TEST60).
 
 ## Screens and text
 

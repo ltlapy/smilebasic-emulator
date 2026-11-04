@@ -260,6 +260,7 @@ impl LineEdit {
         if self.overwrite {
             // As in SmileBASIC 4, the selection goes after the character is
             // written and the cursor moved on, so it can take the character.
+            // UNVERIFIED: read, not yet seen.
             match self.text.get_mut(self.cursor) {
                 Some(old) => *old = c,
                 None if len < LINE_MAX => self.text.push(c),

@@ -217,6 +217,26 @@ fn animations_wait_a_frame_after_spset() {
     assert_eq!(out, "0 -3.33333302 1.66666663,0.5 -3.29999995");
 }
 
+/// TEST60: XY, Z, UV and I are kept in 16 bits and refuse more.
+#[test]
+fn animation_values_outside_16_bits_are_out_of_range() {
+    let refused = |target: &str, value: i32| {
+        let (m, _) = run(&format!(
+            "SPSET 0,0:DIM K[3]:K[0]=1:K[1]={value}:K[2]=0:DIM L[2]:L[0]=1:L[1]={value}\n\
+             IF LEN(\"{target}\")==2 THEN SPANIM 0,\"{target}\",K ELSE SPANIM 0,\"{target}\",L\n\
+             ?\"FINE\""
+        ));
+        !(0..10).any(|y| m.rt.text[4].cell(0, y).code == u16::from(b'F'))
+    };
+    for target in ["XY", "UV", "Z", "I"] {
+        assert!(!refused(target, 32767), "{target}");
+        assert!(!refused(target, -32768), "{target}");
+        assert!(refused(target, 32768), "{target}");
+        assert!(refused(target, -32769), "{target}");
+    }
+    assert!(!refused("R", 40000));
+}
+
 #[test]
 fn animations_from_data_can_clear_the_sprite() {
     let (_, out) = run("SPSET 0,0:SPOFS 0,100,0:VSYNC 1\n\

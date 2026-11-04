@@ -1862,8 +1862,9 @@ impl Machine {
 
     /// Runs a line typed in direct mode.
     fn direct(&mut self, line: &str) {
+        // Enter on an empty line says OK too.
         if line.trim().is_empty() {
-            self.rt.direct_input_start();
+            self.ready();
             return;
         }
         self.rt.remember_input(line);

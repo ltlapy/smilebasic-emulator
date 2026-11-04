@@ -143,6 +143,18 @@ impl Anim {
                 format!("loop count {loops}"),
             ));
         }
+        // Whole-number targets are kept in 16 bits, and refuse more.
+        if whole(mode.target)
+            && let Some(v) = data
+                .chunks_exact(per)
+                .flat_map(|k| &k[1..])
+                .find(|&&v| i16::try_from(v as i32).is_err())
+        {
+            return Err(Error::with_detail(
+                ErrorKind::OutOfRange,
+                format!("animation value {v}"),
+            ));
+        }
         let value = |v: f64| match whole(mode.target) {
             true => whole_value(v),
             false => v,
