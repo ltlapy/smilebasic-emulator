@@ -334,6 +334,10 @@ pub struct Sprites {
     /// A bit for each sprite that may have SPCOL's settings, as most have
     /// none and a search would otherwise go through them all.
     may_collide: [u64; SPRITES / 64],
+    /// A bit for each sprite that may be in use. Walking the list reads memory
+    /// a small machine has no room to keep near, for nothing when most sprites
+    /// are free.
+    in_use: [u64; SPRITES / 64],
 }
 
 impl Default for Sprites {
@@ -361,6 +365,7 @@ impl Sprites {
             hit_rc: None,
             hit_info: HitInfo::default(),
             may_collide: [0; SPRITES / 64],
+            in_use: [0; SPRITES / 64],
         };
         s.reset_gsprite((400, 240));
         s
@@ -374,6 +379,7 @@ impl Sprites {
         let g = &mut self.list[GSPRITE];
         *g = Sprite::unused();
         (g.used, g.shown, g.page, g.layer) = (true, true, 0, layer);
+        self.in_use[GSPRITE / 64] |= 1 << (GSPRITE % 64);
         (g.w, g.h) = (w as i32, h as i32);
         g.z = 4095;
     }
@@ -411,6 +417,7 @@ impl Sprites {
         *s = Sprite::unused();
         (s.used, s.shown) = (true, shown);
         (s.page, s.layer) = (self.new_page, self.new_layer);
+        self.in_use[id / 64] |= 1 << (id % 64);
         s
     }
 
@@ -426,6 +433,19 @@ impl Sprites {
         }
         self.no_collision(id);
         self.list[id] = Sprite::unused();
+        self.in_use[id / 64] &= !(1 << (id % 64));
+    }
+
+    /// The sprites that may be in use, in order: all those that are.
+    pub fn maybe_used(&self) -> impl Iterator<Item = usize> + use<> {
+        let words = self.in_use;
+        words.into_iter().enumerate().flat_map(|(w, mut bits)| {
+            std::iter::from_fn(move || {
+                let bit = (bits != 0).then(|| bits.trailing_zeros() as usize)?;
+                bits &= bits - 1;
+                Some(w * 64 + bit)
+            })
+        })
     }
 
     /// SPCOL's settings of a sprite.
@@ -454,6 +474,8 @@ impl Sprites {
             *s = Sprite::unused();
         }
         self.may_collide = [0; SPRITES / 64];
+        self.in_use = [0; SPRITES / 64];
+        self.in_use[GSPRITE / 64] |= 1 << (GSPRITE % 64);
         if self.list[GSPRITE].col.is_some() {
             self.may_collide[GSPRITE / 64] |= 1 << (GSPRITE % 64);
         }
@@ -519,13 +541,13 @@ impl Sprites {
     /// are cleared when it ends.
     pub fn animate(&mut self) -> bool {
         let mut moved = false;
-        for id in 0..SPRITES {
+        for id in self.maybe_used() {
             if self.list[id].clear_pending {
                 self.clear(id);
                 moved = true;
             }
         }
-        for id in 0..SPRITES {
+        for id in self.maybe_used() {
             let s = &mut self.list[id];
             if !s.used || s.anim_stopped {
                 s.anim_move = (0.0, 0.0);

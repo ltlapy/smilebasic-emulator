@@ -71,8 +71,8 @@ impl World {
     }
 
     fn sprite(&mut self, id: usize, layer: i32, z: i32) {
-        let s = &mut self.sprites.list[id];
-        (s.used, s.shown, s.page, s.layer, s.z) = (true, true, 4, layer, z);
+        let s = self.sprites.create(id, true);
+        (s.page, s.layer, s.z) = (4, layer, z);
         (s.w, s.h) = (16, 16);
     }
 

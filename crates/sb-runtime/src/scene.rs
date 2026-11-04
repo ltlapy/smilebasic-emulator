@@ -270,7 +270,7 @@ impl Scene {
         // What ends up in no layer is not drawn.
         let layer_of = |layer: i32| usize::try_from(layer).ok().filter(|&l| l < LAYERS);
 
-        for id in 0..SPRITES {
+        for id in input.sprites.maybe_used() {
             let s = &input.sprites.list[id];
             if !s.used {
                 continue;
