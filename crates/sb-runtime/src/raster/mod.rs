@@ -9,7 +9,8 @@
 pub mod sprite;
 pub mod text;
 
-use crate::compose::{self, Compose};
+use crate::compose::{self, Area, Compose};
+use crate::filter::FilterOp;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
@@ -61,6 +62,8 @@ pub struct CpuRasterizer {
     fb: Framebuffer,
     /// Where a layer that is composed is drawn first.
     scratch: Framebuffer,
+    /// The only part of `scratch` that may not be clear.
+    scratch_used: Option<Area>,
     /// A layer with LMATRIX's 4x4 form, drawn flat before it is put
     /// through the matrix.
     flat: Framebuffer,
@@ -71,6 +74,7 @@ impl CpuRasterizer {
         CpuRasterizer {
             fb: Framebuffer::new(width, height),
             scratch: Framebuffer::new(width, height),
+            scratch_used: Some(Area::all(width, height)),
             flat: Framebuffer::new(width, height),
         }
     }
@@ -80,6 +84,7 @@ impl CpuRasterizer {
     pub fn set_size(&mut self, width: u32, height: u32) {
         self.fb = Framebuffer::new(width, height);
         self.scratch = Framebuffer::new(width, height);
+        self.scratch_used = Some(Area::all(width, height));
         self.flat = Framebuffer::new(width, height);
     }
 
@@ -117,10 +122,22 @@ impl CpuRasterizer {
         &self.scratch
     }
 
-    fn layer_alone(&mut self, scene: &Scene, input: &RasterInput, pass: &LayerPass) {
-        self.scratch.clear(0);
+    /// A sparse layer costs only what it holds: what the last one left is
+    /// cleared, and the caller composes only the area this returns.
+    fn layer_alone(&mut self, scene: &Scene, input: &RasterInput, pass: &LayerPass) -> Area {
+        let size = (self.scratch.width(), self.scratch.height());
+        if let Some(used) = self.scratch_used.take() {
+            if used.covers(size.0, size.1) {
+                self.scratch.clear(0);
+            } else {
+                self.scratch.clear_area(&used);
+            }
+        }
+        let area = layer_area(scene, pass, size);
+        self.scratch_used = Some(area);
         let CpuRasterizer { scratch, flat, .. } = self;
         items_and_filter(scene, input, pass, scratch, flat);
+        area
     }
 
     #[inline]
@@ -130,16 +147,61 @@ impl CpuRasterizer {
             items_and_filter(scene, input, pass, fb, flat);
             return;
         }
-        self.layer_alone(scene, input, pass);
+        let area = self.layer_alone(scene, input, pass);
         let opaque = scene.opaque_frame;
-        compose::compose(
+        compose::compose_area(
             &mut self.fb,
             &self.scratch,
             pass.compose,
             pass.color,
             opaque,
+            &area,
         );
     }
+}
+
+/// The part of a frame a composed pass can change, on the layer and through
+/// it on the frame.
+fn layer_area(scene: &Scene, pass: &LayerPass, (width, height): (u32, u32)) -> Area {
+    let all = Area::all(width, height);
+    // A filter works on the whole layer, a 4x4 matrix reaches where it will,
+    // and modes 3 and 4 make the whole of a frame opaque if it is not yet.
+    if pass.filter != FilterOp::None
+        || pass.projection.is_some()
+        || (!scene.opaque_frame && matches!(pass.compose, Compose::Multiply | Compose::Screen))
+    {
+        return all;
+    }
+    let clip = pass.clip.as_ref();
+    let mut area = Area {
+        x0: 0,
+        y0: 0,
+        x1: 0,
+        y1: 0,
+    };
+    for item in scene.items(pass) {
+        let part = match item {
+            Item::Sprite(s) if s.shows_nothing() => continue,
+            Item::Sprite(s) => {
+                // Its sides swap for quarter turns.
+                let turned = s.attr & crate::sprites::attr::ROTATION & 1 != 0;
+                let (w, h) = if turned { (s.h, s.w) } else { (s.w, s.h) };
+                let (w, h) = (f64::from(w), f64::from(h));
+                Area::of_image(&s.matrix, w, h, clip, (width, height))
+            }
+            Item::Text(t) if t.empty => continue,
+            Item::Text(t) => {
+                let (w, h) = (t.width * t.char_size, t.height * t.char_size);
+                let (w, h) = (f64::from(w), f64::from(h));
+                Area::of_image(&t.matrix, w, h, clip, (width, height))
+            }
+        };
+        area = area.with(&part);
+        if area.covers(width, height) {
+            return all;
+        }
+    }
+    area
 }
 
 /// A pass's items on `target`, and then its filter.

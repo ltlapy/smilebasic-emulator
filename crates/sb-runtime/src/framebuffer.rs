@@ -53,6 +53,20 @@ impl Framebuffer {
         self.pixels.fill(color);
     }
 
+    /// Makes a part of the frame clear.
+    pub fn clear_area(&mut self, area: &crate::compose::Area) {
+        let width = self.width as usize;
+        if width == 0 {
+            return;
+        }
+        let (x0, x1) = (area.x0 as usize, area.x1 as usize);
+        let rows = self.pixels.chunks_exact_mut(width);
+        let range = area.y0 as usize..area.y1 as usize;
+        for row in rows.skip(range.start).take(range.len()) {
+            row[x0..x1].fill(0);
+        }
+    }
+
     pub fn set(&mut self, x: u32, y: u32, color: u32) {
         if x < self.width && y < self.height {
             self.pixels[(y * self.width + x) as usize] = color;
@@ -66,6 +80,20 @@ impl Framebuffer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clearing_a_part() {
+        let mut fb = super::Framebuffer::new(4, 3);
+        fb.clear(7);
+        let area = crate::compose::Area {
+            x0: 1,
+            y0: 1,
+            x1: 3,
+            y1: 3,
+        };
+        fb.clear_area(&area);
+        assert_eq!(fb.pixels(), [7, 7, 7, 7, 7, 0, 0, 7, 7, 0, 0, 7]);
+    }
+
     use super::*;
 
     #[test]

@@ -1587,6 +1587,80 @@ fn over_premultiplied(dst: u32, src: u32) -> u32 {
     held(spread(src) + div255_lanes(spread(dst) * (255 - a)))
 }
 
+/// A rectangle of a frame's pixels, `x1` and `y1` left out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Area {
+    pub x0: u32,
+    pub y0: u32,
+    pub x1: u32,
+    pub y1: u32,
+}
+
+impl Area {
+    /// All of a frame.
+    pub fn all(width: u32, height: u32) -> Area {
+        Area {
+            x0: 0,
+            y0: 0,
+            x1: width,
+            y1: height,
+        }
+    }
+
+    /// Whether this holds all of a frame.
+    pub fn covers(&self, width: u32, height: u32) -> bool {
+        self.x0 == 0 && self.y0 == 0 && self.x1 >= width && self.y1 >= height
+    }
+
+    /// The smallest area holding both; an empty one adds nothing.
+    pub fn with(&self, other: &Area) -> Area {
+        if other.x0 >= other.x1 || other.y0 >= other.y1 {
+            return *self;
+        }
+        if self.x0 >= self.x1 || self.y0 >= self.y1 {
+            return *other;
+        }
+        Area {
+            x0: self.x0.min(other.x0),
+            y0: self.y0.min(other.y0),
+            x1: self.x1.max(other.x1),
+            y1: self.y1.max(other.y1),
+        }
+    }
+
+    /// The pixels an image of `w` by `h` can touch through `m`, within a
+    /// `width` by `height` frame and `clip`, with some to spare; all of the
+    /// frame for a matrix out of range.
+    pub fn of_image(
+        m: &Affine,
+        w: f64,
+        h: f64,
+        clip: Option<&Clip>,
+        (width, height): (u32, u32),
+    ) -> Area {
+        const SPARE: f64 = 2.0;
+        let (x0, y0, x1, y1) = bounds(m, (0.0, 0.0, w, h));
+        let (fw, fh) = (f64::from(width), f64::from(height));
+        // Also false for NaN.
+        if !(x0 <= x1 && y0 <= y1) {
+            return Area::all(width, height);
+        }
+        let mut area = Area {
+            x0: (x0 - SPARE).clamp(0.0, fw) as u32,
+            y0: (y0 - SPARE).clamp(0.0, fh) as u32,
+            x1: (x1 + SPARE + 1.0).clamp(0.0, fw) as u32,
+            y1: (y1 + SPARE + 1.0).clamp(0.0, fh) as u32,
+        };
+        if let Some(c) = clip {
+            area.x0 = area.x0.max(c.x0.max(0) as u32);
+            area.y0 = area.y0.max(c.y0.max(0) as u32);
+            area.x1 = area.x1.min((c.x1 + 1).max(0) as u32);
+            area.y1 = area.y1.min((c.y1 + 1).max(0) as u32);
+        }
+        area
+    }
+}
+
 /// How LAYER puts a layer over the ones behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Compose {
@@ -1634,13 +1708,42 @@ pub fn compose(
     color: u32,
     opaque: bool,
 ) {
+    compose_pixels(dst.pixels_mut(), layer.pixels(), mode, color, opaque);
+}
+
+/// [`compose`] for the part of a layer that is not clear, which is all it has
+/// to do where the layer is clear only if the frame is to stay as it is
+/// there: not in modes 3 and 4 unless `opaque`.
+pub fn compose_area(
+    dst: &mut Framebuffer,
+    layer: &Framebuffer,
+    mode: Compose,
+    color: u32,
+    opaque: bool,
+    area: &Area,
+) {
+    let width = dst.width() as usize;
+    if area.covers(dst.width(), dst.height()) {
+        return compose(dst, layer, mode, color, opaque);
+    }
+    let (x0, x1) = (area.x0 as usize, area.x1 as usize);
+    let (rows, from) = (dst.pixels_mut().chunks_exact_mut(width), layer.pixels());
+    let lines = rows.zip(from.chunks_exact(width));
+    let range = area.y0 as usize..area.y1 as usize;
+    for (d, l) in lines.skip(range.start).take(range.len()) {
+        compose_pixels(&mut d[x0..x1], &l[x0..x1], mode, color, opaque);
+    }
+}
+
+#[inline]
+fn compose_pixels(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opaque: bool) {
     if color != 0xFFFF_FFFF {
         return compose_tinted(dst, layer, mode, color, opaque);
     }
     match mode {
         // The usual case, a plain layer, as one blend a pixel.
         Compose::Direct | Compose::Normal => {
-            for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+            for (d, &l) in dst.iter_mut().zip(layer) {
                 if l != 0 {
                     *d = over_premultiplied(*d, l);
                 }
@@ -1651,7 +1754,7 @@ pub fn compose(
             // add, which the compiler does many pixels at a time; adding
             // nothing where the layer is clear, and to the alpha, changes
             // nothing.
-            for (d, &l) in dst.pixels_mut().iter_mut().zip(layer.pixels()) {
+            for (d, &l) in dst.iter_mut().zip(layer) {
                 let (a, b) = (d.to_le_bytes(), (l & 0x00FF_FFFF).to_le_bytes());
                 *d = u32::from_le_bytes(std::array::from_fn(|i| a[i].saturating_add(b[i])));
             }
@@ -1683,13 +1786,13 @@ const COMPOSE_RUN: usize = 16;
 /// like the last, over the same, the last's result.
 #[inline(always)]
 fn compose_each<const MAKE_OPAQUE: bool>(
-    dst: &mut Framebuffer,
-    layer: &Framebuffer,
+    dst: &mut [u32],
+    layer: &[u32],
     put: impl Fn(u32, u32) -> u32,
 ) {
     let (mut last_l, mut last_d, mut last) = (0, 0, 0);
-    let runs = dst.pixels_mut().chunks_mut(COMPOSE_RUN);
-    for (ds, ls) in runs.zip(layer.pixels().chunks(COMPOSE_RUN)) {
+    let runs = dst.chunks_mut(COMPOSE_RUN);
+    for (ds, ls) in runs.zip(layer.chunks(COMPOSE_RUN)) {
         if ls.iter().fold(0, |a, &l| a | l) == 0 {
             if MAKE_OPAQUE {
                 for d in ds {
@@ -1733,13 +1836,7 @@ fn plain(f: impl Fn(u32, u32, u32) -> u32) -> impl Fn(u32, u32) -> u32 {
 /// rounds once:
 /// 1: `P + d*(1-A)`; 2: `d + P`; 3: `d*(P + 1-A)`; 4: `d + P*(1-d)`.
 #[inline(never)]
-fn compose_tinted(
-    dst: &mut Framebuffer,
-    layer: &Framebuffer,
-    mode: Compose,
-    color: u32,
-    opaque: bool,
-) {
+fn compose_tinted(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opaque: bool) {
     const N: u32 = 255 * 255;
     const N3: u64 = 255 * 255 * 255;
     let multiply = tinted(
@@ -2046,7 +2143,7 @@ mod tests {
             let mut fast = frame.clone();
             compose(&mut fast, &layer, mode, 0xFFFF_FFFF, false);
             let mut slow = frame.clone();
-            compose_tinted(&mut slow, &layer, mode, 0xFFFF_FFFF, false);
+            compose_tinted(slow.pixels_mut(), layer.pixels(), mode, 0xFFFF_FFFF, false);
             assert_eq!(fast.pixels(), slow.pixels(), "{mode:?}");
         }
     }
@@ -2331,6 +2428,89 @@ mod tests {
                 front: None,
             };
             along_both(&along, (0, 300), (64, 64));
+        }
+    }
+
+    #[test]
+    fn an_image_stays_in_its_area() {
+        let mut next = numbers(0x2468_ACE1);
+        let mut unit = move || f64::from(next() % 2_000_001) / 1e6 - 1.0;
+        let clip = Clip {
+            x0: 20,
+            y0: 10,
+            x1: 100,
+            y1: 60,
+        };
+        for i in 0..400 {
+            let (w, h) = (1 + (i % 40), 1 + (i / 3 % 40));
+            let matrix = Affine::place(
+                (unit() * 200.0 + 60.0, unit() * 200.0 + 40.0),
+                (unit() * 16.0, unit() * 16.0),
+                if i % 2 == 0 { 0.0 } else { unit() * 360.0 },
+                (unit() * 4.0, unit() * 4.0),
+            );
+            let clip = (i % 3 == 0).then_some(&clip);
+            let mut fb = Framebuffer::new(160, 100);
+            fb.clear(0);
+            let place = Placement {
+                matrix,
+                clip,
+                add: false,
+            };
+            draw_image(&mut fb, &place, w, h, |_, _| Some(Over1::new(0xFFFF_FFFF)));
+            let (fw, fh) = (f64::from(w), f64::from(h));
+            let area = Area::of_image(&matrix, fw, fh, clip, (160, 100));
+            for (at, &p) in fb.pixels().iter().enumerate() {
+                let (x, y) = (at as u32 % 160, at as u32 / 160);
+                let inside = x >= area.x0 && x < area.x1 && y >= area.y0 && y < area.y1;
+                assert!(p == 0 || inside, "{matrix:?} {area:?} {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_layer_clear_outside_an_area_composes_as_a_whole_one() {
+        let area = Area {
+            x0: 3,
+            y0: 2,
+            x1: 9,
+            y1: 5,
+        };
+        for seed in 1..40 {
+            let (frame, layer) = layer_and_frame(seed);
+            let (w, h) = (layer.width(), layer.height());
+            let mut only = Framebuffer::new(w, h);
+            only.clear(0);
+            for y in area.y0..area.y1.min(h) {
+                for x in area.x0..area.x1.min(w) {
+                    only.set(x, y, layer.get(x, y).unwrap());
+                }
+            }
+            for mode in [
+                Compose::Normal,
+                Compose::Add,
+                Compose::Multiply,
+                Compose::Screen,
+            ] {
+                for color in [0xFFFF_FFFF, 0xC080_40FF] {
+                    let opaque = frame.pixels().iter().map(|p| p | 0xFF00_0000);
+                    let mut whole = Framebuffer::new(w, h);
+                    whole
+                        .pixels_mut()
+                        .iter_mut()
+                        .zip(opaque)
+                        .for_each(|(d, p)| *d = p);
+                    let mut part = whole.clone();
+                    compose(&mut whole, &only, mode, color, true);
+                    let inside = Area {
+                        x1: area.x1.min(w),
+                        y1: area.y1.min(h),
+                        ..area
+                    };
+                    compose_area(&mut part, &only, mode, color, true, &inside);
+                    assert_eq!(whole.pixels(), part.pixels());
+                }
+            }
         }
     }
 
