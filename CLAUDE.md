@@ -9,4 +9,5 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for code and commit rules.
   development headers listed in SDL's `docs/README-linux.md`.
 - Check before committing: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test --workspace`.
-- This repository is public. Never write paths from the local machine into it.
+- This repository will be published. Write everything in it on that assumption, carefully:
+  no paths from the local machine, nothing you would not show a stranger.
