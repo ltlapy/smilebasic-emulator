@@ -1501,10 +1501,21 @@ No project in the bench set leaves a frame on the CPU; see above for what could.
   | `RENDER_TARGETS_RESET` | The frames are drawn again, a subprogram's too |
   | `RENDER_DEVICE_RESET` | Every texture is made again, and the path started again with its self-test: Direct3D 11, 12 and Vulkan let go of them all, and the window's own would have ended the emulator at its next upload |
 
-  Direct3D 11, 12 and Vulkan's `RENDER_DEVICE_LOST`, when a device does not come back,
-  is not handled, by the path or the rest of the frontend: uploads then fail, and the
-  emulator ends with a message. A GL context lost without SDL saying so, as some drivers
-  do on resuming from suspend, leaves pages as they are; only by the code, not tried.
+  `RENDER_DEVICE_LOST`, or anything the frontend's own drawing is refused: everything on
+  the renderers goes, a new renderer is made for the same window, by SDL's choice, then
+  any other, and after two failures in a row not the same driver again; then the path
+  starts over, pages sent again, or the CPU draws if the new driver is the software
+  one. With no renderer to be had, the program stands paused, its sound running out,
+  and programs with unsaved edits go to `@RECOVERn_SLOT.PRG` in the project, or the data
+  directory if it takes none, while a try is made each second. Eight failures with
+  no 120 good frames between, the window closed in that state, an error or a panic
+  outside `frame()`: all save the same files, say where in the message box, and the next
+  start says so once. `at=N:lost`, `fail`, `refuse:N`, `panic` and `unsaved` in the bench
+  try it. A GL context lost without SDL saying so, as some drivers do on resuming
+  from suspend, cannot be asked about: `glGetGraphicsResetStatus` needs a robust context,
+  which risks a context refused, and NVIDIA reports a purge only with an attribute SDL
+  cannot set. So a main loop that did not come round for 3 s on the wall clock counts as
+  `RENDER_DEVICE_RESET`, and all is given again. Only by the code: no real suspend tried.
 - Long runs: 12000 frames each on opengl, opengles2 and llvmpipe, 10 sizes of `XSCREEN`
   from 128x128 to 1280x720 in modes 0 to 2, page changes, `EXEC`, a subprogram started
   and stopped, resets, resizes, full screen and the setting off and on every 400 frames.

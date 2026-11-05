@@ -555,6 +555,7 @@ impl<'a> PageTexture<'a> {
         };
         if self.page.is_none() || self.halved != halved {
             let side = (SIZE >> halved) as u32;
+            crate::gpu::texture_fits(creator.raw(), side, side)?;
             let mut made = creator.create_texture_streaming(PixelFormat::ARGB8888, side, side)?;
             made.set_blend_mode(BlendMode::Blend);
             made.set_scale_mode(match halved {

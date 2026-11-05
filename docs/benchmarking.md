@@ -100,8 +100,15 @@ frame to time its work, and `SB_GPU=check` also draws on the CPU and counts the 
 that differ; see `crates/sb-sdl/src/gpu.rs` and
 [renderer-design.md](renderer-design.md). With `SB_UI_BENCH` it reports who drew and why
 any frame stayed on the CPU, and `at=FRAME:WHAT` does things to the frontend, resets,
-resizes and the setting among them, to try the path's answers. `SB_UI_BENCH`'s `end` stops when the program ends, `settle=N` skips
-frames first and `novsync` turns vsync off. `SDL_VIDEO_DRIVER=offscreen` shows no window
+resizes and the setting among them, to try the path's answers. `end` stops when the
+program ends, `settle=N` skips frames first and `novsync` turns vsync off.
+
+`luma=PATH` logs each frame's brightness as it goes to the window and reports the frames
+darker than both neighbours, a flicker, which the comparison cannot see. `log=PATH` keeps
+each frame's stages, window size and textures made. `at=FRAME:lost`, `fail`, `refuse:N`,
+`panic`, `unsaved` and `sleep:MS` try the renderer's failures.
+
+`SDL_VIDEO_DRIVER=offscreen` shows no window
 and, through EGL, still reaches the GPU, but leaves real presents out of the numbers.
 
 ## The CPU path on weak machines

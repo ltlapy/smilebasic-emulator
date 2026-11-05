@@ -23,6 +23,7 @@ mod popup;
 mod preview;
 mod program_dialog;
 mod projects;
+mod recovery;
 mod settings_window;
 mod shortcuts;
 mod text_field;
@@ -35,7 +36,7 @@ use std::ffi::CStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::pad_repeat::{Dir, PadRepeat};
 
@@ -54,6 +55,7 @@ use menu::{Action, Click, Context, MenuBar};
 use popup::Popup;
 use program_dialog::ProgramView;
 use projects::{Memory, Outcome, ProjectManager, Transfer};
+use recovery::{OwnedCreator, Recovery, RendererWatch};
 use sb_profiles::Profile;
 use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
@@ -82,6 +84,7 @@ use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
 use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode, Texture, TextureCreator, create_renderer};
 use sdl3::sys::blendmode::SDL_BLENDMODE_BLEND_PREMULTIPLIED;
+use sdl3::sys::events::{SDL_EVENT_RENDER_DEVICE_LOST, SDL_Event, SDL_PushEvent};
 use sdl3::sys::render::{
     SDL_GetNumRenderDrivers, SDL_GetRenderDriver, SDL_SetDefaultTextureScaleMode,
     SDL_SetRenderDrawBlendMode, SDL_SetTextureBlendMode,
@@ -134,7 +137,9 @@ fn main() {
     if let Err(e) = result {
         eprintln!("{e}");
         // Release builds on Windows have no console to print to.
-        let _ = show_simple_message_box(MessageBoxFlag::ERROR, TITLE, &e.to_string(), None);
+        if !headless() {
+            let _ = show_simple_message_box(MessageBoxFlag::ERROR, TITLE, &e.to_string(), None);
+        }
         std::process::exit(1);
     }
 }
@@ -172,9 +177,7 @@ impl FrameGuard {
 
     #[cold]
     fn panicked(&mut self, machine: &mut Machine, toasts: &mut Toasts, panic: &(dyn Any + Send)) {
-        let why = (panic.downcast_ref::<&str>().map(|s| s.to_string()))
-            .or_else(|| panic.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "panic".to_string());
+        let why = panic_text(panic);
         self.panics_in_a_row += 1;
         let recovered = catch_unwind(AssertUnwindSafe(|| machine.recover_from_panic(&why)));
         self.stopped = recovered.is_err() || self.panics_in_a_row >= MOST_PANICS;
@@ -184,6 +187,18 @@ impl FrameGuard {
             format!("The emulator failed and stopped the program: {why}")
         });
     }
+}
+
+/// Whether there is nobody to show a message box to.
+fn headless() -> bool {
+    std::env::var("SDL_VIDEO_DRIVER").is_ok_and(|driver| driver == "offscreen")
+}
+
+/// What a panic said.
+fn panic_text(panic: &(dyn Any + Send)) -> String {
+    (panic.downcast_ref::<&str>().map(|s| s.to_string()))
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panic".to_string())
 }
 
 fn data_dir() -> Result<PathBuf, AnyError> {
@@ -236,14 +251,60 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // Completion and argument hints take the forms of the help's pages.
     rt.library = std::rc::Rc::new(sb_runtime::complete::Library::new(help.as_deref()));
     rt.help = help.clone();
-    let mut saved_settings = rt.settings.clone();
+    let saved_settings = rt.settings.clone();
     let mut machine = Machine::new(rt);
     machine.boot();
     if let Some(source) = source {
         machine.set_slot(0, source);
         machine.run_slot(0);
     }
+    let mut recovery = Recovery::new(data_dir()?);
+    let start = Start {
+        screen,
+        bank,
+        help,
+        settings_path,
+        saved_settings,
+    };
+    let ended = catch_unwind(AssertUnwindSafe(|| {
+        frontend(&mut machine, &mut recovery, start)
+    }));
+    // Whatever ended it, the machine can still be read, for its programs' text.
+    let why = match ended {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(e)) => e.to_string(),
+        Err(panic) => format!("The emulator failed: {}", panic_text(&*panic)),
+    };
+    let saved = catch_unwind(AssertUnwindSafe(|| recovery.save(&machine)));
+    Err(failure_message(&why, saved.ok().flatten()).into())
+}
 
+/// What to say when the emulator ends for a failure.
+fn failure_message(why: &str, saved: Option<Vec<String>>) -> String {
+    match saved {
+        Some(lines) => format!("{why}\n\n{}", lines.join("\n")),
+        None => why.to_string(),
+    }
+}
+
+/// What the frontend starts from.
+struct Start {
+    screen: sb_profiles::ScreenConfig,
+    bank: Option<Arc<Bank>>,
+    help: Option<std::rc::Rc<Help>>,
+    settings_path: PathBuf,
+    saved_settings: Settings,
+}
+
+/// The window and the main loop, on a machine that is already set up.
+fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Result<(), AnyError> {
+    let Start {
+        screen,
+        bank,
+        help,
+        settings_path,
+        mut saved_settings,
+    } = start;
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
     let (display_w, display_h) = screen.display;
@@ -266,7 +327,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let (chosen_colors, colors_choice) = std::sync::mpsc::channel::<(PathBuf, bool)>();
     // ...and the project manager's, for importing and exporting.
     let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
-    let mut canvas = make_canvas(window)?;
+    let mut canvas = make_canvas(&window, &[])?;
+    drop(window);
     // Vsync paces frames on a 60 Hz display; on others, without vsync,
     // or while the window is not shown, the loop goes by the clock.
     let mut main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
@@ -275,12 +337,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // and then as the window can move to another.
     let mut at_60_hz = false;
     let mut iterations = 0u32;
-    let texture_creator = canvas.texture_creator();
+    // Replaced with the renderer, as is everything that holds textures.
+    let mut creator = OwnedCreator::new(&canvas);
+    let mut texture_creator = creator.get();
     let mut mode = machine.screen_mode();
     let mut filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
-    let mut texture = frame_texture(&canvas, &texture_creator, texture_kind)?;
+    let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
     // The revision of the editor's frame the texture holds, if it holds
     // one; and the same for the editor's window.
     let mut texture_holds = None;
@@ -301,7 +365,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The editor's own window, made the first time the editor opens apart
     // from the screen and hidden while it is closed, with its frame's
     // texture and the pixels its pointer positions are given in.
-    let editor_gfx: OnceCell<EditorWindow> = OnceCell::new();
+    let mut editor_gfx: OnceCell<EditorWindow> = OnceCell::new();
     // The emulator's UI over the screens or the editor, drawn at display
     // resolution, in each window: the debugger's panel, the menu bar, and
     // everything else, each drawn and uploaded only as it changes.
@@ -336,7 +400,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut toasts = Toasts::default();
     let mut frame_guard = FrameGuard::default();
     let mut key_hint = KeyHint::default();
-    use_instruments(&mut machine, bank.as_ref(), &mut toasts);
+    use_instruments(machine, bank.as_ref(), &mut toasts);
+    if let Some(mut lines) = recovery.take_notice() {
+        lines.splice(
+            0..0,
+            ["The emulator failed last time.".to_string(), String::new()],
+        );
+        let notice = Dialog::notice("Recovered programs", lines, (display_w, display_h));
+        dialog = Some((notice, Asking::Notice));
+    }
     // Takes all input while it is open, except for a dialog over it.
     let mut manager: Option<ProjectManager> = None;
     // Where the manager was when Run left it, for the return to it.
@@ -392,6 +464,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     // The setting the path was last started by, and who draws, as About says.
     let mut renderer_applied = None;
     let mut drawn_by = String::new();
+    // Why the renderer has to be replaced, from where it was found out.
+    let mut renderer_failed: Option<String> = None;
+    let mut watch = RendererWatch::default();
+    // Renderers to refuse, for the bench.
+    let mut refusals = 0;
+    let mut last_wall = SystemTime::now();
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
         ($stage:ident) => {
@@ -401,11 +479,87 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         };
     }
     'running: loop {
+        // A renderer that failed ends the frame here, to be replaced above it.
+        macro_rules! drawing {
+            ($result:expr) => {
+                match $result {
+                    Ok(value) => value,
+                    Err(e) => {
+                        renderer_failed = Some(e.to_string());
+                        continue 'running;
+                    }
+                }
+            };
+        }
+        if let Some(why) = renderer_failed.take() {
+            eprintln!("the renderer failed: {why}");
+            // All that lives on the renderers goes before they do.
+            (gpu, sub_gpu, gpu_off) = (None, None, false);
+            renderer_applied = None;
+            smart = SmartFrame::default();
+            (panel_screens, sub_texture, editor_texture) = (None, None, None);
+            (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
+            let layers = panel_layers.iter_mut().chain(&mut bar_layers);
+            layers.chain(&mut overlay_layers).for_each(Layer::forget);
+            (texture_holds, editor_holds) = (None, None);
+            machine.rt.touch();
+            machine.touch_sub();
+            if !watch.failed(&canvas.renderer_name) {
+                return Err(format!("Drawing keeps failing: {why}").into());
+            }
+            // The editor's window opens again when it is next wanted.
+            if let Some(gfx) = editor_gfx.take() {
+                if machine.rt.settings.editor_window_keep_place && editor_shown {
+                    let place = window_place(gfx.canvas.borrow().window());
+                    machine.rt.settings.editor_window_place = Some(place);
+                }
+            }
+            (editor_shown, editor_focused, pointer_in_editor) = (false, false, false);
+            editor_presents = None;
+            let window = canvas.window().clone();
+            drop(texture);
+            drop(creator);
+            drop(canvas);
+            let mut waiting = Waiting {
+                events: &mut events,
+                controls: &mut controls,
+                refusals: &mut refusals,
+                quiet: headless(),
+            };
+            let made = new_renderer(
+                &window,
+                texture_kind,
+                &watch,
+                machine,
+                recovery,
+                &mut waiting,
+            );
+            let Some(made) = made? else {
+                break 'running;
+            };
+            (canvas, creator, texture) = made;
+            texture_creator = creator.get();
+            main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
+            clock = pacing::Clock::new(Instant::now());
+            last_wall = SystemTime::now();
+            toasts.push("The renderer failed and was restarted.".to_string());
+        }
+        // After a suspend a GL context may have lost its textures without a word.
+        let wall = SystemTime::now();
+        if wall
+            .duration_since(last_wall)
+            .is_ok_and(|gap| gap >= recovery::SLEPT)
+        {
+            eprintln!("the clock jumped, as after a suspend: giving the renderer all again");
+            let reset = Event::RenderDeviceReset { timestamp: 0 };
+            let _ = sdl.event().and_then(|e| e.push_event(reset));
+        }
+        last_wall = wall;
         if let Some(b) = &mut bench {
             b.sound(audio.stats());
         }
         if let Some(b) = &mut bench
-            && b.step(&mut machine)
+            && b.step(machine)
         {
             b.report(&canvas.renderer_name);
             println!("drawn by  {drawn_by}");
@@ -426,6 +580,20 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Some(Event::RenderTargetsReset { timestamp: 0 })
                 }
                 "device" => Some(Event::RenderDeviceReset { timestamp: 0 }),
+                "lost" => {
+                    push_device_lost();
+                    None
+                }
+                "fail" => {
+                    renderer_failed = Some("told to fail".to_string());
+                    None
+                }
+                "panic" => panic!("told to panic"),
+                "unsaved" => {
+                    machine.set_slot(0, "?\"UNSAVED\"\n".to_string());
+                    machine.rt.slot_modified[0] = true;
+                    None
+                }
                 "fullscreen" | "windowed" => {
                     let _ = canvas.window_mut().set_fullscreen(what == "fullscreen");
                     None
@@ -446,6 +614,15 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     machine.rt.settings.renderer = Renderer::Cpu;
                     None
                 }
+                _ if what.starts_with("refuse:") => {
+                    refusals = what[7..].parse().unwrap_or(0);
+                    None
+                }
+                _ if what.starts_with("sleep:") => {
+                    let ms = what[6..].parse().unwrap_or(0);
+                    std::thread::sleep(Duration::from_millis(ms));
+                    None
+                }
                 _ => {
                     let size = what.strip_prefix("resize:").and_then(|s| s.split_once(':'));
                     if let Some((w, h)) = size {
@@ -463,7 +640,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let size = (display_w, display_h);
             menu.shown |= b.opens("menu");
             if b.opens("help") {
-                side = open_help(&mut machine, help.as_deref(), &mut toasts, size);
+                side = open_help(machine, help.as_deref(), &mut toasts, size);
             }
             if b.opens("about") {
                 let lines = vec!["A notice".to_string()];
@@ -497,7 +674,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let place = settings
                 .editor_window_place
                 .filter(|_| settings.editor_window_keep_place);
-            let made = EditorWindow::open(&video, (display_w, display_h), place, canvas.window())?;
+            let main_window = canvas.window();
+            let made = EditorWindow::open(&video, (display_w, display_h), place, main_window);
+            let made = drawing!(made);
             let _ = editor_gfx.set(made);
         }
         if let Some(gfx) = editor_gfx.get()
@@ -535,7 +714,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             ui_on_editor = editor_focused;
         }
         let mut ui_editor = apart && ui_on_editor;
-        let (out_w, out_h) = canvas.output_size()?;
+        let (out_w, out_h) = drawing!(canvas.output_size());
         if let Some(b) = &mut bench {
             b.window_size((out_w, out_h));
         }
@@ -552,7 +731,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let editor_map = match editor_gfx.get().filter(|_| apart) {
             Some(gfx) => {
                 let editor_canvas = gfx.canvas.borrow();
-                let (out_w, out_h) = editor_canvas.output_size()?;
+                let (out_w, out_h) = drawing!(editor_canvas.output_size());
                 let (win_w, _) = editor_canvas.window().size();
                 let display = display_rect(display_w, display_h, out_w, out_h);
                 let mode = machine.editor_mode();
@@ -686,7 +865,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 smart = SmartFrame::default();
                 (panel_screens, sub_texture, editor_texture) = (None, None, None);
                 (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
-                texture = frame_texture(&canvas, &texture_creator, texture_kind)?;
+                texture = drawing!(frame_texture(&canvas, texture_creator, texture_kind));
+            }
+            // It cannot come back, and SDL says to make a new renderer.
+            if let Event::Unknown { type_, .. } = event
+                && type_ == SDL_EVENT_RENDER_DEVICE_LOST.0
+            {
+                renderer_failed = Some("the graphics device was lost".to_string());
             }
             let editor_id = editor_gfx.get().map(|gfx| gfx.id);
             let from_editor = editor_id.is_some() && event.get_window_id() == editor_id;
@@ -881,11 +1066,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         dialog = None;
                     }
                     (Some(Answer::Accept), Asking::Overwrite(name)) => {
-                        save_edited(&mut machine, &name, &mut toasts);
+                        save_edited(machine, &name, &mut toasts);
                         dialog = None;
                     }
                     (Some(Answer::Accept), Asking::Discard(name)) => {
-                        load_edited(&mut machine, &name, &mut toasts);
+                        load_edited(machine, &name, &mut toasts);
                         dialog = None;
                     }
                     (Some(Answer::Accept), Asking::Condition(slot, line)) => {
@@ -957,7 +1142,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 && editor_window
                 && debug_panel.contains(to_display(mouse_x, mouse_y))
             {
-                let shown = debug_view(&mut machine, &debug_panel).scrolled();
+                let shown = debug_view(machine, &debug_panel).scrolled();
                 debug_panel.wheel(-y.round() as i32, shown);
                 continue;
             }
@@ -975,7 +1160,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             let panel = &mut debug_panel;
                             let size = (display_w, display_h);
                             let asks =
-                                choose(choice, &mut machine, panel, &clipboard, &mut toasts, size);
+                                choose(choice, machine, panel, &clipboard, &mut toasts, size);
                             dialog = asks.or(dialog);
                         }
                         continue;
@@ -993,7 +1178,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         keycode: Some(key), ..
                     } => {
                         if let Typed::Value(name, text) = debug_panel.key(key) {
-                            set_value(&mut machine, &debug_panel, &name, &text, &mut toasts);
+                            set_value(machine, &debug_panel, &name, &text, &mut toasts);
                         }
                         continue;
                     }
@@ -1039,7 +1224,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     (_, Event::TextInput { .. }) => (true, index::Outcome::Stay),
                     _ => (false, index::Outcome::Stay),
                 };
-                side_outcome(&mut side, &mut side_focus, &mut machine, outcome);
+                side_outcome(&mut side, &mut side_focus, machine, outcome);
                 if taken {
                     continue;
                 }
@@ -1231,7 +1416,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             let open = Dialog::new("Save file", lines, "Save", size);
                             dialog = Some((open, Asking::Overwrite(name)));
                         } else {
-                            save_edited(&mut machine, &name, &mut toasts);
+                            save_edited(machine, &name, &mut toasts);
                         }
                     }
                     // Only the projects window copies.
@@ -1250,7 +1435,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             let open = Dialog::new("Load file", lines, "Load", size);
                             dialog = Some((open, Asking::Discard(spec)));
                         } else {
-                            load_edited(&mut machine, &spec, &mut toasts);
+                            load_edited(machine, &spec, &mut toasts);
                         }
                     }
                 }
@@ -1315,7 +1500,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                                     .into(),
                             );
                         }
-                        use_instruments(&mut machine, bank.as_ref(), &mut toasts);
+                        use_instruments(machine, bank.as_ref(), &mut toasts);
                     }
                     settings_window::Outcome::ChooseSoundFont => {
                         choose_sound_font(canvas.window(), chosen_font.clone(), &mut toasts);
@@ -1440,13 +1625,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 {
                     let at = to_display(x, y);
                     let items = if debug_panel.contains(at) {
-                        panel_menu(&mut machine, &debug_panel, at)
+                        panel_menu(machine, &debug_panel, at)
                     } else {
                         let (x, y) = to_screen(x, y);
                         if !machine.editor().has_selection() {
                             machine.editor_mouse_down(x, y, false);
                         }
-                        editor_menu(&mut machine)
+                        editor_menu(machine)
                     };
                     debug_menu = Some(Popup::new(at, items, (display_w, display_h)));
                 }
@@ -1457,7 +1642,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     clicks,
                     ..
                 } => match if ui_window {
-                    menu.click(to_display(x, y), menu_context(&machine))
+                    menu.click(to_display(x, y), menu_context(machine))
                 } else {
                     Click::Ignored
                 } {
@@ -1465,14 +1650,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Click::Chosen(action @ (Action::SaveSlot | Action::LoadSlot)) => {
                         let size = (display_w, display_h);
                         let save = action == Action::SaveSlot;
-                        file_dialog = Some(open_file_dialog(&machine, save, size));
+                        file_dialog = Some(open_file_dialog(machine, save, size));
                     }
                     Click::Chosen(Action::Undo) => machine.edit().undo(),
                     Click::Chosen(Action::Redo) => machine.edit().redo(),
                     Click::Chosen(action @ (Action::Cut | Action::Copy)) => {
-                        copy_selection(&mut machine, &clipboard, &mut toasts, action == Action::Cut)
+                        copy_selection(machine, &clipboard, &mut toasts, action == Action::Cut)
                     }
-                    Click::Chosen(Action::Paste) => paste(&mut machine, &clipboard, &mut toasts),
+                    Click::Chosen(Action::Paste) => paste(machine, &clipboard, &mut toasts),
                     Click::Chosen(Action::SelectAll) => machine.edit().select_all(),
                     Click::Chosen(Action::Comment) => machine.edit().comment(),
                     Click::Chosen(Action::Uncomment) => machine.edit().uncomment(),
@@ -1491,15 +1676,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         | Action::DebugPanel),
                     ) => {
                         let size = (display_w, display_h);
-                        dialog = debug_action(&mut machine, action, &mut toasts, size).or(dialog);
+                        dialog = debug_action(machine, action, &mut toasts, size).or(dialog);
                     }
                     Click::Chosen(Action::Help) => {
                         if !machine.is_editing() {
                             machine.toggle_editor();
                         }
                         let size = (display_w, display_h);
-                        if let Some(panel) =
-                            open_help(&mut machine, help.as_deref(), &mut toasts, size)
+                        if let Some(panel) = open_help(machine, help.as_deref(), &mut toasts, size)
                         {
                             side = Some(panel);
                             side_focus = true;
@@ -1544,7 +1728,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         if !machine.is_editing() {
                             machine.toggle_editor();
                         }
-                        side = Some(open_index(&mut machine, (display_w, display_h)));
+                        side = Some(open_index(machine, (display_w, display_h)));
                         side_focus = true;
                     }
                     Click::Chosen(
@@ -1575,7 +1759,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         side_focus = true;
                         if let Side::Index(index, _) = open {
                             let outcome = index.click(to_display(x, y));
-                            side_outcome(&mut side, &mut side_focus, &mut machine, outcome);
+                            side_outcome(&mut side, &mut side_focus, machine, outcome);
                         }
                     }
                     Click::Ignored if on_editor && debug_panel.contains(to_display(x, y)) => {
@@ -1593,8 +1777,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                                     machine.show_line(slot, line);
                                     if clicks == 2 {
                                         let size = (display_w, display_h);
-                                        dialog =
-                                            Some(condition_dialog(&mut machine, slot, line, size));
+                                        dialog = Some(condition_dialog(machine, slot, line, size));
                                     }
                                 }
                             }
@@ -1602,7 +1785,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                                 let panel = &mut debug_panel;
                                 let _ = choose(
                                     Choice::ChangeValue(i),
-                                    &mut machine,
+                                    machine,
                                     panel,
                                     &clipboard,
                                     &mut toasts,
@@ -1634,7 +1817,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } if let Some(action) = debug_key(key, shift(keymod), ctrl(keymod)) => {
                     let size = (display_w, display_h);
-                    dialog = debug_action(&mut machine, action, &mut toasts, size).or(dialog);
+                    dialog = debug_action(machine, action, &mut toasts, size).or(dialog);
                 }
                 // SmileBASIC 4's F5 is the + button.
                 Event::KeyDown {
@@ -1716,7 +1899,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keymod,
                     ..
                 } if ctrl(keymod) && !on_editor && machine.rt.wants_line() => {
-                    paste(&mut machine, &clipboard, &mut toasts)
+                    paste(machine, &clipboard, &mut toasts)
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::C),
@@ -1730,7 +1913,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     keycode: Some(Keycode::V),
                     keymod,
                     ..
-                } if ctrl(keymod) && shift(keymod) => paste(&mut machine, &clipboard, &mut toasts),
+                } if ctrl(keymod) && shift(keymod) => paste(machine, &clipboard, &mut toasts),
                 // Ctrl+F1 to F5 type what KEY set for them.
                 Event::KeyDown {
                     keycode: Some(key),
@@ -1778,7 +1961,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 Event::KeyDown {
                     keycode: Some(Keycode::F2),
                     ..
-                } if on_editor => next_editor_size(&mut machine),
+                } if on_editor => next_editor_size(machine),
                 // F1 shows the help for the command at the cursor, in the
                 // editor or on the line typed in direct mode.
                 Event::KeyDown {
@@ -1791,8 +1974,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                         || !machine.is_editing() && !machine.is_running() && !from_editor) =>
                 {
                     let size = (display_w, display_h);
-                    if let Some(panel) = open_help(&mut machine, help.as_deref(), &mut toasts, size)
-                    {
+                    if let Some(panel) = open_help(machine, help.as_deref(), &mut toasts, size) {
                         side = Some(panel);
                         side_focus = true;
                         side_direct = !on_editor;
@@ -1805,7 +1987,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } if ctrl(keymod) && (!machine.is_running() || on_editor && apart) => {
                     let size = (display_w, display_h);
-                    file_dialog = Some(open_file_dialog(&machine, key == Keycode::S, size));
+                    file_dialog = Some(open_file_dialog(machine, key == Keycode::S, size));
                 }
                 Event::KeyDown {
                     keycode: Some(key),
@@ -1823,14 +2005,14 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     ..
                 } if on_editor && ctrl(keymod) => match key {
                     Keycode::W => Action::ToggleWrap.toggle(&mut machine.rt.settings),
-                    Keycode::B => next_editor_size(&mut machine),
+                    Keycode::B => next_editor_size(machine),
                     Keycode::Home => machine.edit().file_top(),
                     Keycode::End => machine.edit().file_end(),
                     Keycode::A => machine.edit().select_all(),
                     Keycode::C | Keycode::X => {
-                        copy_selection(&mut machine, &clipboard, &mut toasts, key == Keycode::X)
+                        copy_selection(machine, &clipboard, &mut toasts, key == Keycode::X)
                     }
-                    Keycode::V => paste(&mut machine, &clipboard, &mut toasts),
+                    Keycode::V => paste(machine, &clipboard, &mut toasts),
                     Keycode::Z if shift(keymod) => machine.edit().redo(),
                     Keycode::Z => machine.edit().undo(),
                     Keycode::Y => machine.edit().redo(),
@@ -1848,7 +2030,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     Keycode::_0 | Keycode::Kp0 => machine.toggle_editor(),
                     Keycode::Tab => machine.switch_side(),
                     Keycode::J => {
-                        side = Some(open_index(&mut machine, (display_w, display_h)));
+                        side = Some(open_index(machine, (display_w, display_h)));
                         side_focus = true;
                     }
                     Keycode::F => machine.edit().start_find(false),
@@ -1921,6 +2103,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             }
             dialog = Some((Dialog::quit(&unsaved, (display_w, display_h)), Asking::Quit));
         }
+        if renderer_failed.is_some() {
+            continue 'running;
+        }
 
         // Programs see nothing pressed while the emulator's own screens
         // take the input.
@@ -1950,7 +2135,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             machine.stop();
         }
         let paused = menu.shown && machine.is_running();
-        menu.status = status_line(&machine, paused);
+        menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
         machine.rt.input.live = if modal || paused || machine.editor_has_keys() {
             State::default()
@@ -1966,7 +2151,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let settings = &mut machine.rt.settings;
             settings.smilebasic_instruments = false;
             settings.sound_font = Some(path.to_string_lossy().into_owned());
-            use_instruments(&mut machine, bank.as_ref(), &mut toasts);
+            use_instruments(machine, bank.as_ref(), &mut toasts);
         }
         if let Ok((path, transfer)) = folder_choice.try_recv()
             && let Some(open) = &mut manager
@@ -1984,7 +2169,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         machine.set_changes(&debug_panel.change_watches());
         if !paused {
             machine.time_limit = Some(RUN_TIME);
-            frame_guard.run(&mut machine, &mut toasts, Machine::frame);
+            frame_guard.run(machine, &mut toasts, Machine::frame);
             if let Some(b) = &mut bench {
                 b.ran_frame();
             }
@@ -2010,7 +2195,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 CATCH_UP_RUN_TIME
             });
             machine.hold_at_sync = !whole;
-            frame_guard.run(&mut machine, &mut toasts, Machine::frame);
+            frame_guard.run(machine, &mut toasts, Machine::frame);
             machine.hold_at_sync = false;
             if let Some(b) = &mut bench {
                 b.ran_frame();
@@ -2173,7 +2358,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         };
         if kind != texture_kind {
             texture_kind = kind;
-            texture = frame_texture(&canvas, &texture_creator, kind)?;
+            texture = drawing!(frame_texture(&canvas, texture_creator, kind));
             texture_holds = None;
         }
         let gpu_view = (gpu.as_mut())
@@ -2181,20 +2366,20 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             .and_then(|gpu| gpu.view(kind.1 == Filter::Bilinear));
         if Some(revision) != texture_holds && !on_gpu {
             bench::uploaded(fb.pixels().len() * 4);
-            texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
+            drawing!(texture.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize));
         }
         if smart_frame {
             let cpu = bench.as_ref().is_some_and(|b| b.cpu_smart);
             let changed = Some(revision) != texture_holds;
-            smart.prepare(
+            drawing!(smart.prepare(
                 &mut canvas,
-                &texture_creator,
+                texture_creator,
                 gpu_view.as_deref().unwrap_or(&texture),
                 fb,
                 rect,
                 changed,
                 cpu,
-            )?;
+            ));
             // Scaling on the CPU needs the frame on the CPU, from now on: this
             // one is drawn again next time round, once there is no GPU path.
             if on_gpu && smart.on_cpu() {
@@ -2212,7 +2397,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let mut editor_place = (rect, frame, display);
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
             let editor_canvas = gfx.canvas.borrow();
-            let (out_w, out_h) = editor_canvas.output_size()?;
+            let (out_w, out_h) = drawing!(editor_canvas.output_size());
             let display = display_rect(display_w, display_h, out_w, out_h);
             let mode = machine.editor_mode();
             let filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
@@ -2224,7 +2409,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             editor_space = frame;
             let kind = (frame, editor_filter(rect, frame, filter));
             if editor_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
-                let made = frame_texture(&editor_canvas, &gfx.creator, kind)?;
+                let made = drawing!(frame_texture(&editor_canvas, gfx.creator.get(), kind));
                 editor_texture = Some((made, kind));
                 editor_holds = None;
             }
@@ -2232,7 +2417,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 && revision != editor_holds
             {
                 bench::uploaded(fb.pixels().len() * 4);
-                tex.update(None, as_bytes(fb.pixels()), (frame.0 * 4) as usize)?;
+                drawing!(tex.update(None, as_bytes(fb.pixels()), (frame.0 * 4) as usize));
                 editor_holds = revision;
             }
             editor_place = (rect, frame, display);
@@ -2271,19 +2456,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                     .as_ref()
                     .is_none_or(|(_, kind)| *kind != (size, filter))
                 {
-                    let made = frame_texture(&canvas, &texture_creator, (size, filter))?;
+                    let made = drawing!(frame_texture(&canvas, texture_creator, (size, filter)));
                     panel_screens = Some((made, (size, filter)));
                 }
                 if let Some((tex, _)) = &mut panel_screens {
                     let pixels = as_bytes(screens.pixels());
                     bench::uploaded(pixels.len());
-                    tex.update(None, pixels, (size.0 * 4) as usize)?;
+                    drawing!(tex.update(None, pixels, (size.0 * 4) as usize));
                 }
             }
             let size = panel_screens
                 .as_ref()
                 .map_or((1, 1), |(_, (size, _))| *size);
-            let view = debug_view(&mut machine, &debug_panel);
+            let view = debug_view(machine, &debug_panel);
             debug = Some((place, view, screens.then_some(size)));
         }
         panel_was_shown = debug.is_some();
@@ -2291,7 +2476,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
         let screen = smart.texture().or(gpu_view.as_deref()).unwrap_or(&texture);
-        canvas.copy(screen, None, rect)?;
+        drawing!(canvas.copy(screen, None, rect));
         // The subprogram's screen goes where XSUBSCREEN puts it on the
         // 1280x720 display, over the editor too.
         if sub_gpu.is_none() && machine.sub_shows() {
@@ -2315,7 +2500,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 };
                 canvas.set_draw_color(Color::RGBA(c(16), c(8), c(0), c(24)));
                 for bar in bars {
-                    canvas.fill_rect(on_window(bar))?;
+                    drawing!(canvas.fill_rect(on_window(bar)));
                 }
                 canvas.set_blend_mode(before);
             }
@@ -2325,17 +2510,17 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 .filter(|_| sub.on_backend)
                 .and_then(gpu::Gpu::premultiplied_view);
             if let Some(view) = &sub_view {
-                canvas.copy(view, None, on_window(sub.quad))?;
+                drawing!(canvas.copy(view, None, on_window(sub.quad)));
             } else if sub_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
-                let made = frame_texture(&canvas, &texture_creator, kind)?;
+                let made = drawing!(frame_texture(&canvas, texture_creator, kind));
                 // SAFETY: the texture is valid while `made` lives.
                 unsafe { SDL_SetTextureBlendMode(made.raw(), SDL_BLENDMODE_BLEND_PREMULTIPLIED) };
                 sub_texture = Some((made, kind));
             }
             if let (None, Some((tex, _))) = (&sub_view, &mut sub_texture) {
                 bench::uploaded(fb.pixels().len() * 4);
-                tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize)?;
-                canvas.copy(tex, None, on_window(sub.quad))?;
+                drawing!(tex.update(None, as_bytes(fb.pixels()), (fb.width() * 4) as usize));
+                drawing!(canvas.copy(tex, None, on_window(sub.quad)));
             }
         }
         // Where the focus has just gone: a yellow line on the edge, one
@@ -2359,12 +2544,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             ] {
                 let (x, y, w, h) = (x + inset, y + inset, w - 2 * inset, h - 2 * inset);
                 canvas.set_draw_color(color);
-                canvas.fill_rects(&[
+                drawing!(canvas.fill_rects(&[
                     place(x, y, w, width),
                     place(x, y + h - width, w, width),
                     place(x, y + width, width, h - 2 * width),
                     place(x + w - width, y + width, width, h - 2 * width),
-                ])?;
+                ]));
             }
             canvas.set_blend_mode(BlendMode::None);
         }
@@ -2374,18 +2559,18 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             let scale = display.w / display_w as f32;
             let at = |v: u32| v as f32 * scale;
             let dst = FRect::new(display.x + at(s.x), display.y + at(s.y), at(s.w), at(s.h));
-            canvas.copy(tex, None, dst)?;
+            drawing!(canvas.copy(tex, None, dst));
         }
         let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
         match (&debug, apart) {
-            (Some(_), false) => grp_texture.draw(
+            (Some(_), false) => drawing!(grp_texture.draw(
                 &mut canvas,
-                &texture_creator,
+                texture_creator,
                 grp,
                 panel_grp,
                 display,
                 display_w,
-            )?,
+            )),
             _ => grp_texture.release(),
         }
         if debug.is_none() || !apart {
@@ -2456,10 +2641,13 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let font = machine.rt.font();
         ui::set_font(machine.rt.settings.ui_font);
         let cursor_on = (blink / 25).is_multiple_of(2);
-        let context = menu_context(&machine);
+        let context = menu_context(machine);
         let settings = &machine.rt.settings;
-        let editor_creator = editor_gfx.get().filter(|_| apart).map(|gfx| &gfx.creator);
-        let creators = [Some(&texture_creator), editor_creator];
+        let editor_creator = editor_gfx
+            .get()
+            .filter(|_| apart)
+            .map(|gfx| gfx.creator.get());
+        let creators = [Some(texture_creator), editor_creator];
         let scale = settings.debug_text_size;
         match &debug {
             Some((_, view, _)) => {
@@ -2480,9 +2668,11 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             };
             if bar_shown[i] {
                 let bar = if i == ui { &menu } else { &closed_bar };
-                bar_layers[i].update(creator, (display_w, MenuBar::HEIGHT), |fb| {
-                    bar.draw_bar(fb, font)
-                })?;
+                drawing!(
+                    bar_layers[i].update(creator, (display_w, MenuBar::HEIGHT), |fb| {
+                        bar.draw_bar(fb, font)
+                    })
+                );
             }
             // A dialog or the project manager dims the screen behind it,
             // as a program's DIALOG does, but not the panel and the bar
@@ -2568,19 +2758,19 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                 inside.set(probe.translucent.is_some_and(|t| t.overlaps(place)));
                 panel_inside[i] = inside.get();
                 if !inside.get() {
-                    panel_layers[i].update(creator, (place.w, place.h), |fb| {
+                    drawing!(panel_layers[i].update(creator, (place.w, place.h), |fb| {
                         debug_panel.draw(fb, font, place, *screens, view, scale)
-                    })?;
+                    }));
                 }
             }
-            overlay_layers[i].update(creator, size, |fb| parts(fb, &mut debug_panel))?;
+            drawing!(overlay_layers[i].update(creator, size, |fb| parts(fb, &mut debug_panel)));
         }
         if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
-            panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w)?;
+            drawing!(panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w));
         }
-        overlay_layers[0].copy(&mut canvas, (0, 0), display, display_w)?;
+        drawing!(overlay_layers[0].copy(&mut canvas, (0, 0), display, display_w));
         if bar_shown[0] {
-            bar_layers[0].copy(&mut canvas, (0, 0), display, display_w)?;
+            drawing!(bar_layers[0].copy(&mut canvas, (0, 0), display, display_w));
         }
         lap!(Overlays);
         if let Some(b) = &mut bench {
@@ -2595,20 +2785,21 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             editor_canvas.set_draw_color(Color::BLACK);
             editor_canvas.clear();
             if let Some((tex, _)) = &editor_texture {
-                editor_canvas.copy(tex, None, editor_place.0)?;
+                drawing!(editor_canvas.copy(tex, None, editor_place.0));
             }
             let display = editor_place.2;
             let canvas = &mut *editor_canvas;
             if let Some((place, ..)) = &debug {
                 let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
-                editor_grp.draw(canvas, &gfx.creator, grp, panel_grp, display, display_w)?;
+                let creator = gfx.creator.get();
+                drawing!(editor_grp.draw(canvas, creator, grp, panel_grp, display, display_w));
                 if !panel_inside[1] {
-                    panel_layers[1].copy(canvas, (place.x, place.y), display, display_w)?;
+                    drawing!(panel_layers[1].copy(canvas, (place.x, place.y), display, display_w));
                 }
             }
-            overlay_layers[1].copy(canvas, (0, 0), display, display_w)?;
+            drawing!(overlay_layers[1].copy(canvas, (0, 0), display, display_w));
             if bar_shown[1] {
-                bar_layers[1].copy(canvas, (0, 0), display, display_w)?;
+                drawing!(bar_layers[1].copy(canvas, (0, 0), display, display_w));
             }
             lap!(Overlays);
             if let Some(b) = &bench {
@@ -2628,6 +2819,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         // dropped; otherwise they go by the clock.
         let locked = presented && vsync && main_presents.vsync() && at_60_hz;
         pacing::delay(clock.end(Instant::now(), locked));
+        watch.frame_shown();
     }
     // The editor's window, shown when quitting, opens there next time.
     let keep = machine.rt.settings.editor_window_keep_place;
@@ -2650,7 +2842,7 @@ fn save_settings(path: &Path, settings: &Settings) {
 /// The editor's own window, with its renderer.
 struct EditorWindow {
     canvas: RefCell<Canvas<Window>>,
-    creator: TextureCreator<WindowContext>,
+    creator: OwnedCreator,
     id: u32,
 }
 
@@ -2692,8 +2884,8 @@ impl EditorWindow {
         let window = builder.resizable().high_pixel_density().hidden().build()?;
         video.text_input().start(&window);
         let id = window.id();
-        let canvas = make_canvas(window)?;
-        let creator = canvas.texture_creator();
+        let canvas = make_canvas(&window, &[])?;
+        let creator = OwnedCreator::new(&canvas);
         Ok(EditorWindow {
             canvas: RefCell::new(canvas),
             creator,
@@ -2704,24 +2896,142 @@ impl EditorWindow {
 
 /// A renderer for `window`: the one SDL picks or `SDL_RENDER_DRIVER` names, and if
 /// that cannot start, any other. What sdl3's `into_canvas` does here is panic.
-fn make_canvas(window: Window) -> Result<Canvas<Window>, AnyError> {
-    let first = match create_renderer(window.clone(), None) {
-        Ok(canvas) => return Ok(canvas),
-        Err(e) => e,
-    };
-    eprintln!("no renderer ({first}); trying the others");
+///
+/// `avoid` names drivers that have just failed, which are not tried.
+fn make_canvas(window: &Window, avoid: &[String]) -> Result<Canvas<Window>, AnyError> {
+    let mut first = None;
+    if avoid.is_empty() {
+        match create_renderer(window.clone(), None) {
+            Ok(canvas) => return Ok(canvas),
+            Err(e) => {
+                eprintln!("no renderer ({e}); trying the others");
+                first = Some(e.to_string());
+            }
+        }
+    }
     // SAFETY: the names are SDL's own, kept as long as it runs.
     let names = (0..unsafe { SDL_GetNumRenderDrivers() })
         .map(|i| unsafe { SDL_GetRenderDriver(i) })
         .filter(|name| !name.is_null())
-        .map(|name| unsafe { CStr::from_ptr(name) });
+        .map(|name| unsafe { CStr::from_ptr(name) })
+        .filter(|name| !avoid.iter().any(|d| name.to_str() == Ok(d)));
     for name in names {
-        if let Ok(canvas) = create_renderer(window.clone(), Some(name)) {
-            eprintln!("using the renderer {}", canvas.renderer_name);
-            return Ok(canvas);
+        match create_renderer(window.clone(), Some(name)) {
+            Ok(canvas) => {
+                eprintln!("using the renderer {}", canvas.renderer_name);
+                return Ok(canvas);
+            }
+            Err(e) => {
+                first.get_or_insert_with(|| e.to_string());
+            }
         }
     }
+    let first = first.unwrap_or_else(|| "every driver failed".to_string());
     Err(format!("No renderer could start: {first}").into())
+}
+
+/// What goes on while there is no renderer to draw with.
+struct Waiting<'a> {
+    events: &'a mut sdl3::EventPump,
+    controls: &'a mut Controls,
+    /// Tries to refuse, for the bench.
+    refusals: &'a mut u32,
+    /// No message box, with no display.
+    quiet: bool,
+}
+
+/// A new renderer for `window`, with its creator and a frame's texture. With none to
+/// be had, it keeps trying every second with the program paused and its sound running
+/// out: a game nobody can see should not go on being played, and nobody can answer
+/// it. Programs go to files at once, as the wait may never end. None if the user closes
+/// the window with nothing unsaved.
+fn new_renderer(
+    window: &Window,
+    kind: TextureKind,
+    watch: &RendererWatch,
+    machine: &Machine,
+    recovery: &mut Recovery,
+    waiting: &mut Waiting,
+) -> Result<Option<(Canvas<Window>, OwnedCreator, Texture<'static>)>, AnyError> {
+    let began = Instant::now();
+    let mut told = false;
+    let mut saved = None;
+    let mut window = window.clone();
+    let mut avoid = watch.avoid().to_vec();
+    loop {
+        let made = match *waiting.refusals {
+            0 => make_canvas(&window, &avoid),
+            _ => {
+                *waiting.refusals -= 1;
+                Err("refused by the bench".into())
+            }
+        };
+        let why = match made {
+            Ok(canvas) => {
+                let creator = OwnedCreator::new(&canvas);
+                match frame_texture(&canvas, creator.get(), kind) {
+                    Ok(texture) => {
+                        let _ = window.set_title(TITLE);
+                        return Ok(Some((canvas, creator, texture)));
+                    }
+                    // It starts but cannot hold a frame: on to the next driver.
+                    Err(e) => {
+                        avoid.push(canvas.renderer_name.clone());
+                        e.to_string()
+                    }
+                }
+            }
+            // With nothing else to be had, any may do by now.
+            Err(e) => {
+                avoid.clear();
+                e.to_string()
+            }
+        };
+        if saved.is_none() {
+            eprintln!("no renderer, trying again every second: {why}");
+            let _ = window.set_title(&format!("{TITLE}: no renderer, trying again"));
+            saved = Some(recovery.save(machine));
+        }
+        if !told && !waiting.quiet && began.elapsed() >= recovery::TELL_AFTER {
+            told = true;
+            let text = "Nothing can be drawn at the moment, so the program is paused. \
+                        The emulator will keep trying.";
+            let lines = saved.clone().flatten();
+            let text = failure_message(text, lines);
+            let _ = show_simple_message_box(MessageBoxFlag::WARNING, TITLE, &text, None);
+        }
+        let until = Instant::now() + recovery::RETRY;
+        while Instant::now() < until {
+            for event in waiting.events.poll_iter() {
+                waiting.controls.event(&event);
+                let closed = matches!(
+                    event,
+                    Event::Quit { .. }
+                        | Event::Window {
+                            win_event: WindowEvent::CloseRequested,
+                            ..
+                        }
+                );
+                if closed {
+                    return match machine.unsaved_slots().is_empty() {
+                        true => Ok(None),
+                        false => Err(format!("No renderer could start: {why}").into()),
+                    };
+                }
+            }
+            pacing::delay(Duration::from_millis(50));
+        }
+    }
+}
+
+/// Stands for a device that is gone, as the sdl3 crate has no event of its own for it.
+fn push_device_lost() {
+    // SAFETY: an all-zero event is valid, and the type is the only field read.
+    unsafe {
+        let mut event: SDL_Event = std::mem::zeroed();
+        event.r#type = SDL_EVENT_RENDER_DEVICE_LOST.0;
+        SDL_PushEvent(&mut event);
+    }
 }
 
 /// A window's position and size, as the settings keep them.
@@ -3611,6 +3921,7 @@ fn frame_texture<'a>(
     // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
     unsafe { SDL_SetDefaultTextureScaleMode(canvas.raw(), scale) };
     bench::made();
+    gpu::texture_fits(canvas.raw(), w, h)?;
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
 }
 
@@ -3651,7 +3962,12 @@ impl<'a> SmartFrame<'a> {
             if self.doubled.as_ref().is_none_or(|(_, s)| *s != size) {
                 self.doubled = None;
                 bench::made();
-                match creator.create_texture_target(PixelFormat::ARGB8888, size.0, size.1) {
+                let fits = gpu::texture_fits(canvas.raw(), size.0, size.1);
+                let made = fits.map_err(|e| e.to_string()).and_then(|()| {
+                    (creator.create_texture_target(PixelFormat::ARGB8888, size.0, size.1))
+                        .map_err(|e| e.to_string())
+                });
+                match made {
                     Ok(mut made) => {
                         made.set_scale_mode(ScaleMode::Linear);
                         made.set_blend_mode(BlendMode::None);
@@ -3676,6 +3992,7 @@ impl<'a> SmartFrame<'a> {
         let fresh = self.scaled.as_ref().is_none_or(|(_, s)| *s != shown);
         if fresh {
             bench::made();
+            gpu::texture_fits(canvas.raw(), shown.0, shown.1)?;
             let mut made =
                 creator.create_texture_streaming(PixelFormat::ARGB8888, shown.0, shown.1)?;
             made.set_scale_mode(ScaleMode::Nearest);

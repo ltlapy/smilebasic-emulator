@@ -731,79 +731,13 @@ impl Gpu {
     /// where that driver looks at glGetError, SDL 3.4.18 answers GL_OUT_OF_MEMORY in
     /// `GLES2_CreateTexture` by freeing its data twice, which aborts the emulator.
     fn gles2_can_hold(&self, w: i32, h: i32) -> bool {
-        const GL_TEXTURE_2D: u32 = 0x0DE1;
-        const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
-        const GL_RGBA: u32 = 0x1908;
-        const GL_UNSIGNED_BYTE: u32 = 0x1401;
-        if !self.on_gles2 {
-            return true;
-        }
-        let _ = self.gl_out_of_memory();
-        type TexImage = extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const u8);
-        // SAFETY: as in device_name, on this thread and only on a GL driver. SDL
-        // remembers which texture is bound, so that goes back as it was.
-        unsafe {
-            let get = |name: &std::ffi::CStr| SDL_GL_GetProcAddress(name.as_ptr());
-            let (Some(get_int), Some(generate), Some(bind), Some(image), Some(delete)) = (
-                get(c"glGetIntegerv"),
-                get(c"glGenTextures"),
-                get(c"glBindTexture"),
-                get(c"glTexImage2D"),
-                get(c"glDeleteTextures"),
-            ) else {
-                return true;
-            };
-            let get_int: extern "C" fn(u32, *mut i32) = std::mem::transmute(get_int);
-            let generate: extern "C" fn(i32, *mut u32) = std::mem::transmute(generate);
-            let bind: extern "C" fn(u32, u32) = std::mem::transmute(bind);
-            let image: TexImage = std::mem::transmute(image);
-            let delete: extern "C" fn(i32, *const u32) = std::mem::transmute(delete);
-            let (mut bound, mut probe) = (0, 0);
-            get_int(GL_TEXTURE_BINDING_2D, &mut bound);
-            generate(1, &mut probe);
-            bind(GL_TEXTURE_2D, probe);
-            image(
-                GL_TEXTURE_2D,
-                0,
-                GL_RGBA as i32,
-                w,
-                h,
-                0,
-                GL_RGBA,
-                GL_UNSIGNED_BYTE,
-                null(),
-            );
-            let fits = !self.gl_out_of_memory();
-            bind(GL_TEXTURE_2D, bound as u32);
-            delete(1, &probe);
-            fits
-        }
+        !self.on_gles2 || gles2_can_hold(w, h)
     }
 
     /// Whether GL has run out of memory since this was last asked. It asks only on
     /// a GL driver, whose context SDL has just made current for the same renderer.
     fn gl_out_of_memory(&self) -> bool {
-        const GL_NO_ERROR: u32 = 0;
-        const GL_OUT_OF_MEMORY: u32 = 0x0505;
-        if !self.on_gl {
-            return false;
-        }
-        // SAFETY: as in device_name, on this thread and only on a GL driver.
-        unsafe {
-            let Some(get) = SDL_GL_GetProcAddress(c"glGetError".as_ptr()) else {
-                return false;
-            };
-            let get: extern "C" fn() -> u32 = std::mem::transmute(get);
-            let mut out = false;
-            // A context lost keeps giving errors; a few are all there can be here.
-            for _ in 0..8 {
-                match get() {
-                    GL_NO_ERROR => break,
-                    error => out |= error == GL_OUT_OF_MEMORY,
-                }
-            }
-            out
-        }
+        self.on_gl && gl_out_of_memory()
     }
 
     /// Fills what holds a frame, as a device that loses them would leave them, to try
@@ -2437,6 +2371,86 @@ impl SceneBackend for Gpu {
             SDL_UnlockSurface(shot);
             SDL_DestroySurface(shot);
         }
+    }
+}
+
+/// Whether SDL may safely be asked for a texture of this size on `renderer`, which it
+/// says as an error if not. SDL 3.4.18 frees its data twice in `GLES2_CreateTexture` on
+/// GL_OUT_OF_MEMORY and aborts, with no chance to save anything, so GL is asked first.
+pub fn texture_fits(renderer: *mut SDL_Renderer, w: u32, h: u32) -> Result<(), String> {
+    match !renderer_is_gles2(renderer) || gles2_can_hold(w as i32, h as i32) {
+        true => Ok(()),
+        false => Err(format!("a texture of {w}x{h} was refused")),
+    }
+}
+
+/// Asks GL whether it can hold a texture, on an OpenGL ES renderer.
+fn gles2_can_hold(w: i32, h: i32) -> bool {
+    const GL_TEXTURE_2D: u32 = 0x0DE1;
+    const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
+    const GL_RGBA: u32 = 0x1908;
+    const GL_UNSIGNED_BYTE: u32 = 0x1401;
+    let _ = gl_out_of_memory();
+    type TexImage = extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const u8);
+    // SAFETY: as in device_name, on this thread and only on a GL driver. SDL
+    // remembers which texture is bound, so that goes back as it was.
+    unsafe {
+        let get = |name: &std::ffi::CStr| SDL_GL_GetProcAddress(name.as_ptr());
+        let (Some(get_int), Some(generate), Some(bind), Some(image), Some(delete)) = (
+            get(c"glGetIntegerv"),
+            get(c"glGenTextures"),
+            get(c"glBindTexture"),
+            get(c"glTexImage2D"),
+            get(c"glDeleteTextures"),
+        ) else {
+            return true;
+        };
+        let get_int: extern "C" fn(u32, *mut i32) = std::mem::transmute(get_int);
+        let generate: extern "C" fn(i32, *mut u32) = std::mem::transmute(generate);
+        let bind: extern "C" fn(u32, u32) = std::mem::transmute(bind);
+        let image: TexImage = std::mem::transmute(image);
+        let delete: extern "C" fn(i32, *const u32) = std::mem::transmute(delete);
+        let (mut bound, mut probe) = (0, 0);
+        get_int(GL_TEXTURE_BINDING_2D, &mut bound);
+        generate(1, &mut probe);
+        bind(GL_TEXTURE_2D, probe);
+        image(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA as i32,
+            w,
+            h,
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            null(),
+        );
+        let fits = !gl_out_of_memory();
+        bind(GL_TEXTURE_2D, bound as u32);
+        delete(1, &probe);
+        fits
+    }
+}
+
+/// Takes GL's errors, and whether it ran out of memory among them.
+fn gl_out_of_memory() -> bool {
+    const GL_NO_ERROR: u32 = 0;
+    const GL_OUT_OF_MEMORY: u32 = 0x0505;
+    // SAFETY: as in device_name, on this thread and only on a GL driver.
+    unsafe {
+        let Some(get) = SDL_GL_GetProcAddress(c"glGetError".as_ptr()) else {
+            return false;
+        };
+        let get: extern "C" fn() -> u32 = std::mem::transmute(get);
+        let mut out = false;
+        // A context lost keeps giving errors; a few are all there can be here.
+        for _ in 0..8 {
+            match get() {
+                GL_NO_ERROR => break,
+                error => out |= error == GL_OUT_OF_MEMORY,
+            }
+        }
+        out
     }
 }
 

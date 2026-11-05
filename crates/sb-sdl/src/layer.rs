@@ -81,6 +81,7 @@ impl<'a> Layer<'a> {
             Some(texture) => texture,
             None => {
                 crate::bench::made();
+                crate::gpu::texture_fits(creator.raw(), size.0, size.1)?;
                 let mut made =
                     creator.create_texture_streaming(PixelFormat::ARGB8888, size.0, size.1)?;
                 made.set_scale_mode(ScaleMode::Nearest);

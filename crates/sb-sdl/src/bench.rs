@@ -40,7 +40,10 @@
 //!   that frame: `targets` or `device` as if the renderer reset them (the
 //!   first also spoils what the GPU path holds), `resize:W:H`, `fullscreen`,
 //!   `windowed`, `auto` and `cpu` for the renderer setting, `tool` to start
-//!   the F9 tool as a subprogram and `substop` to end it.
+//!   the F9 tool as a subprogram and `substop` to end it, `lost` as if the
+//!   device were gone, `fail` as if drawing failed, `refuse:N` to have the next N
+//!   tries at a renderer refused, `panic`, `unsaved` to give PRG0 unsaved edits,
+//!   and `sleep:MS` to stop the loop, as a suspend does.
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed and what the sound device's buffer went through, so

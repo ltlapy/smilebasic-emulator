@@ -785,6 +785,23 @@ impl Machine {
             .collect()
     }
 
+    /// What the slots with unsaved edits hold, with the editors' changes.
+    pub fn unsaved_programs(&self) -> Vec<(usize, String)> {
+        let shown = |side: usize| self.editing && (side == self.active || self.split);
+        let edited = |slot: usize| {
+            (0..2)
+                .filter(|&side| shown(side))
+                .map(|side| &self.editors[side])
+                .find(|e| e.slot() == slot && e.is_modified())
+        };
+        (self.unsaved_slots().into_iter())
+            .map(|slot| match edited(slot) {
+                Some(editor) => (slot, editor.text()),
+                None => (slot, self.rt.slots[slot].clone()),
+            })
+            .collect()
+    }
+
     /// Starts the program in a slot, as RUN does.
     pub fn run_slot(&mut self, slot: usize) {
         // Running a program ends PRGEDIT's editing.
