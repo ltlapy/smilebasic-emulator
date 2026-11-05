@@ -143,6 +143,10 @@ Gamepads work as controllers 1 to 4. The keyboard also presses controller
 | Q, W | L, R |
 | 1, 2 | ZL, ZR |
 
+A key a program reads itself, with `KEYBOARD` or `INKEY$`, presses no button
+until a second after the program stops reading it. So typing programs get
+their letters, and a game keeps these keys outside its name entry.
+
 Without a gamepad, the first time a program reads the buttons, a picture of
 these keys shows for a few seconds. The mouse's left button touches the screen.
 

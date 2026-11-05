@@ -174,8 +174,8 @@ const PAGES: &[Page] = &[
             check(
                 "Use the keyboard as a controller",
                 "Keys also press controller 1's buttons for BUTTON and the like: \
-                 cursor keys, Z X A S for A B Y X, Q W for L R, 1 2 for ZL ZR. On \
-                 by default. Also in the Run menu.",
+                 cursor keys, Z X A S for A B Y X, Q W for L R, 1 2 for ZL ZR. Not \
+                 a key the program reads with KEYBOARD or INKEY$. On by default.",
                 |s| s.keyboard_buttons,
                 |s| s.keyboard_buttons ^= true,
             ),

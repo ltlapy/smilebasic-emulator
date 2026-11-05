@@ -2261,7 +2261,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             save_settings(&settings_path, &saved_settings);
         }
         toasts.tick();
-        if machine.rt.input.take_buttons_read() {
+        controls
+            .key_buttons
+            .update(machine.rt.input.take_keys_read());
+        // A program that keeps every key to itself has no use for the
+        // picture yet; it may still come to read only buttons.
+        if machine.rt.input.take_buttons_read() && !controls.key_buttons.all_reserved() {
             let keys = machine.rt.settings.keyboard_buttons;
             key_hint.buttons_read(keys, controls.gamepads());
         }

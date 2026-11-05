@@ -2160,6 +2160,7 @@ impl Runtime {
             }
             (Command::Inkey, Want::Value) if args.len() <= 1 => {
                 self.input.polled = true;
+                self.input.keys_read.typed();
                 // TODO: without the flag, controller buttons also count as keys.
                 if let Some(flag) = args.first() {
                     opt_int(flag)?;

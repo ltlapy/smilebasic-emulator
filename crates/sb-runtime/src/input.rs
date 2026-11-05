@@ -134,9 +134,35 @@ pub struct Input {
     pub function_keys: [Vec<u16>; 5],
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
     buttons_read: bool,
+    /// What the program has read of the keyboard; see
+    /// [`Input::take_keys_read`].
+    pub(crate) keys_read: KeysRead,
     /// The program has read the controllers, the keyboard, the mouse or
     /// the touch screen since this was last cleared, for the debugger.
     pub(crate) polled: bool,
+}
+
+/// The keys a program has read for itself: those `KEYBOARD` asked about,
+/// and with `INKEY$` every key, as any of them may type.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KeysRead {
+    typed: bool,
+    keys: [u64; 4],
+}
+
+impl KeysRead {
+    pub(crate) fn typed(&mut self) {
+        self.typed = true;
+    }
+
+    pub(crate) fn key(&mut self, usage: u8) {
+        self.keys[usize::from(usage >> 6)] |= 1 << (usage & 63);
+    }
+
+    /// Whether the program has read the key with this USB usage ID.
+    pub fn covers(&self, usage: u8) -> bool {
+        self.typed || self.keys[usize::from(usage >> 6)] >> (usage & 63) & 1 != 0
+    }
 }
 
 impl Default for Input {
@@ -158,6 +184,7 @@ impl Default for Input {
             vibration: Default::default(),
             function_keys: Default::default(),
             buttons_read: false,
+            keys_read: KeysRead::default(),
             polled: false,
         }
     }
@@ -221,6 +248,12 @@ impl Input {
     /// for the frontend to show where they are on the keyboard.
     pub fn take_buttons_read(&mut self) -> bool {
         std::mem::take(&mut self.buttons_read)
+    }
+
+    /// What the program has read of the keyboard since the last call, for
+    /// the frontend to leave those keys out of what presses buttons.
+    pub fn take_keys_read(&mut self) -> KeysRead {
+        std::mem::take(&mut self.keys_read)
     }
 
     /// Buttons of any controller that went down this frame, with
@@ -496,6 +529,7 @@ impl Runtime {
             }
             (Command::Keyboard, Want::Value | Want::Outs(2), 1..=2) => {
                 let usage = in_range("scan code", &args[0], 0..=255)? as u8;
+                input.keys_read.key(usage);
                 let (now, before) = (input.now.key(usage), input.before.key(usage));
                 let result = match condition(args.get(1))? {
                     0 => now,
