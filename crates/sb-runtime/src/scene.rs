@@ -1,7 +1,7 @@
 //! What a frame shows, as plain data: the scene builder holds SmileBASIC
 //! 4's rules for what goes on the screen, in what order, and a rasterizer
 //! only draws what it is given. Nothing here knows about SDL, a GPU or the
-//! operating system. See docs/renderer-design.md.
+//! operating system. See docs/renderer.md.
 
 use std::ops::Range;
 
