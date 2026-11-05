@@ -1,12 +1,17 @@
 # SmileBASIC 4: what the manual leaves out
 
-Behaviour checked on SmileBASIC 4 for Nintendo Switch that the manual
-does not describe, or that is easy to read the wrong way. The emulator
-follows all of it. Items still waiting for a check are marked
-`UNVERIFIED` in the source instead.
+Behavior checked on SmileBASIC 4 for Nintendo Switch that the manual does not
+describe, or that is easy to read the wrong way. The emulator follows these
+facts except where [differences.md](differences.md) says otherwise. Items still
+waiting for a check are marked `UNVERIFIED` in the source instead.
+
+TEST and TTEST numbers name check programs kept outside the repository;
+[hardware-tests.md](hardware-tests.md) describes the method. Each fact keeps its
+test as evidence, and says "on a Switch 2" or "on Ryujinx" where the machine
+matters. A real Switch outranks Ryujinx where the text says so.
 
 TEST62 and TEST63 ran on 4.4.9 on a Switch 2; most of what they show had been
-read in SmileBASIC 4 first. "(Not yet seen on hardware.)" marks what was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
+read in SmileBASIC 4 first. "By SmileBASIC 4" means expected of SmileBASIC 4. "(Not yet seen on hardware.)" marks what was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 
 ## Contents
 
@@ -86,258 +91,287 @@ read in SmileBASIC 4 first. "(Not yet seen on hardware.)" marks what was expecte
 
 ### When errors appear
 
-- A command or function given a number of arguments none of its forms
-  takes is `Wrong number of arguments` (`LOCATE` with five, `TOFS 0,30`).
-  This is found when the call runs, not when the program compiles, so
-  the lines before it run. `HSV` with one argument is `Wrong number of
-  OUT arguments`: it is read as the `OUT` form.
-- A call to a name defined nowhere compiles, and is a `Syntax error`
-  only when it is reached: the name may be a `COMMON DEF` of a slot that
-  `EXEC` runs later.
-- `GOTO` and `GOSUB` to a label that is not there are `Undefined label`
-  only when they run. `THEN @L` may be followed by more statements on
-  the line, which belong to the branch, and `ELSEIF A GOTO @L` takes
-  GOTO in place of THEN.
-- A bare `GOTO` or `GOSUB` runs the lines before it and stops there with
-  `Type mismatch` (TTEST39).
-- Operations on constants are worked out when the program is compiled,
-  so `?"A"*-1` or `?1/0` stops the program before it runs, even on a line
-  that is never reached.
+- `Wrong number of arguments` comes when a command or function gets a number of
+  arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
+  finds this as it runs, not as the program compiles, so the lines before it
+  run.
+- `?VSYNC()` is `Wrong number of OUT arguments (VSYNC)`, and `FREEMEM 1` and
+  `?FREEMEM(1)` are `Wrong number of arguments (FREEMEM)`. (TEST62)
+- A call to a name defined nowhere compiles, and is a `Syntax error` only when
+  it is reached: the name may be a `COMMON DEF` of a slot that `EXEC` runs
+  later.
+- `GOTO` and `GOSUB` to a label that is not there are `Undefined label` only
+  when they run.
+- `GOTO` or `GOSUB` with nothing after it runs the lines before it and stops
+  there with `Type mismatch` (TTEST39).
+- Operations on constants are worked out when the program compiles, so `?"A"*-1`
+  or `?1/0` stops the program before it runs, even on a line that is never
+  reached.
 - An unknown `#constant` is `Undefined constant`.
-- `?VSYNC()` is `Wrong number of OUT arguments (VSYNC)`, and `FREEMEM 1` and `?FREEMEM(1)`
-  `Wrong number of arguments (FREEMEM)`. (TEST62)
 
 ### Statements, literals and names
 
-- A suffix only sets a variable's starting value. `A%=1E10` keeps the
-  real, `A$=1` stores a number and `A%="X"` a string.
+- A variable's suffix only sets its starting value. `A%=1E10` keeps the real,
+  `A$=1` stores a number and `A%="X"` a string.
 - The literal `2147483648` is a real.
 - `CONST` and `DATA` take `HSV` as well as `RGB`.
-- `OPTION STRICT` holds from where it stands. A variable used before it
-  without `VAR` can be used after it, and a DEF before it is not checked.
-- Statements need no colon between them where one cannot go on: a
-  `PRINT` item ends where no `;` or `,` follows it (`?"A" B=1` prints A,
-  then sets B), and `NEXT` takes a loop variable only if a name follows
-  (`NEXT?I`).
+- `OPTION STRICT` holds from where it stands. A variable used before it without
+  `VAR` can be used after it, and a DEF before it is not checked.
+- Statements need no colon between them where one cannot go on:
+  - A `PRINT` item ends where no `;` or `,` follows it: `?"A" B=1` prints A,
+    then sets B.
+  - `NEXT` takes a loop variable only if a name follows (`NEXT?I`).
 - `T?` is short for `TPRINT`.
-- A label used as a value keeps its case (`A$=@Lp` is `"@Lp"`); as a
-  place to go to, case does not matter.
+- A label used as a value keeps its case (`A$=@Lp` is `"@Lp"`). As a place to go
+  to, case does not matter.
+- `THEN @L` may be followed by more statements on the line, which belong to the
+  branch.
+- `ELSEIF A GOTO @L` takes GOTO in place of THEN.
 - A constant's name may start with a digit, as a label's may (`#2P`).
-- A `#` after a number makes it a real (`0#`).
-- A `\` joins its line with the next; the rest of its line is left out
-  (`?1\ XYZ` and `+2` on the next line prints 3).
-- A digit group's `_` must lead to a digit: `?&HFF_` and `?&H_` are `Syntax
-  error`, and so is `?1_000`, where a decimal number takes none (TEST60).
-- Inside an `IF` or another block of a loop, `NEXT` (also `NEXT I`),
-  `WEND` and `ENDLOOP` go on with the loop's next turn: `IF A THEN NEXT`.
-- `VAR A` without a value only declares: in `FOR I=0 TO 1:VAR A:?A:A=5:NEXT` it reads
-  0, then 5. A function that ends without `RETURN`, or leaves by a bare one, gives
-  no value: `TYPEOF` 0. `IF 1 THEN ?1 ENDIF:?2` prints both. `NEXT J` on `FOR I` is
-  not checked: `J` stays as it is. A string with no closing quote ends with its line.
-  A comment line after a `\` line end is no blank line: `?1\`, `'COMMENT`, `+2` is a
-  `Syntax error` at the `+`. `STOP` with a message prints 255 characters of it (TEST62).
+- `#` after a number makes it a real (`0#`).
+- `\` joins its line with the next, and the rest of its line is left out:
+  `?1\ XYZ` and `+2` on the next line prints 3.
+- A comment line after a `\` line end is no blank line: `?1\`, `'COMMENT`, `+2`
+  is a `Syntax error` at the `+` (TEST62).
+- `_` in a group of digits must lead to a digit: `?&HFF_` and `?&H_` are
+  `Syntax error`, and so is `?1_000`, as a decimal number takes none (TEST60).
+- A string with no closing quote ends with its line (TEST62).
+- `NEXT` (also `NEXT I`), `WEND` and `ENDLOOP` inside an `IF` or another block
+  of a loop go on with the loop's next turn: `IF A THEN NEXT`.
+- `NEXT J` on `FOR I` is not checked: `J` stays as it is (TEST62).
+- `VAR A` without a value only declares: in `FOR I=0 TO 1:VAR A:?A:A=5:NEXT` it
+  reads 0, then 5 (TEST62).
+- `IF 1 THEN ?1 ENDIF:?2` prints both (TEST62).
 
 ### `DEF`, `OUT` and `RETURN`
 
-- A DEF's parameters may be written `A[]`; passing a number for one and
-  indexing it is `Type mismatch` on the indexing line.
-- A function may be called as a command with one `OUT` variable for its
-  result: `ABS -3 OUT A`, `SPCHR 0 OUT D`, `SPSET 242 OUT IX`,
-  `HSV 120,255,255 OUT C`.
-- An `OUT` variable a `DEF` never sets gives the omitted value (`TYPEOF`
-  0), whatever its suffix; inside the `DEF` it reads as that too.
-- A `DEF` sees a global only if top-level code above the `DEF` names it:
-  the program compiles in one pass. Otherwise the name is the `DEF`'s own.
-- A `DEF` with an `OUT` may be called as a function, giving the `OUT`
-  value (`DEF F A OUT R` as `?F(3)`), and a `DEF` that returns a value
-  may be called with one `OUT` (`T OUT X`). One with two `OUT`s called as
-  a function is `Wrong number of OUT arguments` when the call runs.
-- Only a function's `RETURN` takes a value. In a `DEF` without brackets, also one
-  with an `OUT`, what follows `RETURN` is simply the next statement, never run,
-  and has to compile as one: `RETURN 5`, `RETURN A+1` and `RETURN A*2` are `Syntax
-  error`s when the program compiles, at the `5`, the `+` and the `*`, as is `RETURN F()`
-  at the `F` (TEST60, TEST62). `RETURN F(1)` compiles, a command with a value in
-  brackets (TEST62). `RETURN X,Y` too, a command X, in `DEF G A OUT X,Y`
-  (KRB_OGIRI_SMBOMB); `RETURN UNDECLARED` too, under `OPTION STRICT` (SMILEBOY).
-- Nesting: `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of expressions share a
-  stack of about 259072 slots, by the depths they reach (TEST63, 4.4.9 on a Switch 2). A
-  `GOSUB` takes 1. A command `DEF` called takes 6, a function 8, and each argument, `OUT`
-  and `VAR` of it 2: printing its depth, a program reaches 43178 with a command and no
-  arguments, 32383 with a function and none or a command and one, 25906 with a function
-  and one, 21589 with one argument and one `VAR`, 18504 with a function and three, and
-  14392 with one argument and four `VAR`s. `GOSUB` reaches 259069. `RESTORE "PUSH"` went
-  past 172672 but not 172736, at 1.5 slots each (inferred). `Stack overflow` comes on the
-  call when the call does not fit; when it fits, on the first statement that puts a value
-  there, of the body: line 2 of `DEF R(N)`, `LOCATE 0,0:?N`.
+- A DEF's parameters may be written `A[]`. Passing a number for one and indexing
+  it is `Type mismatch` on the indexing line.
+- A function may be called as a command with one `OUT` variable for its result:
+  `ABS -3 OUT A`, `SPCHR 0 OUT D`, `SPSET 242 OUT IX`, `HSV 120,255,255 OUT C`.
+- An `OUT` variable a `DEF` never sets gives the omitted value (`TYPEOF` 0),
+  whatever its suffix. Inside the `DEF` it reads as that too.
+- A `DEF` sees a global only if top-level code above the `DEF` names it, as the
+  program compiles in one pass. Otherwise the name is the `DEF`'s own.
+- A `DEF` with an `OUT` may be called as a function, giving the `OUT` value
+  (`DEF F A OUT R` as `?F(3)`). A `DEF` that returns a value may be called with
+  one `OUT` (`T OUT X`). One with two `OUT`s called as a function is
+  `Wrong number of OUT arguments` when the call runs.
+- `RETURN` takes a value only in a function. In a `DEF` without brackets, also
+  one with an `OUT`, what follows `RETURN` is the next statement, never run, and
+  it has to compile as one:
+  - `RETURN 5`, `RETURN A+1` and `RETURN A*2` are `Syntax error`s when the
+    program compiles, at the `5`, the `+` and the `*`, as is `RETURN F()` at the
+    `F` (TEST60, TEST62).
+  - `RETURN F(1)` compiles, as a command with a value in brackets (TEST62).
+  - `RETURN X,Y` compiles too, as a command X, in `DEF G A OUT X,Y`
+    (KRB_OGIRI_SMBOMB).
+  - `RETURN UNDECLARED` compiles too, under `OPTION STRICT` (SMILEBOY).
+- A function that ends without `RETURN`, or leaves by a bare one, gives no
+  value: `TYPEOF` 0 (TEST62).
+- `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of expressions share a
+  stack of about 259072 slots, by the depths they reach (TEST63, 4.4.9 on a
+  Switch 2). A `GOSUB` takes 1. A command `DEF` called takes 6, a function 8,
+  and each argument, `OUT` and `VAR` of it 2.
+
+  | What a program calls while printing its depth | Depth reached |
+  |---|---|
+  | A command with no arguments | 43178 |
+  | A function with none, or a command with one | 32383 |
+  | A function with one | 25906 |
+  | One argument and one `VAR` | 21589 |
+  | A function with three | 18504 |
+  | One argument and four `VAR`s | 14392 |
+  | `GOSUB` | 259069 |
+
+  `RESTORE "PUSH"` went past 172672 but not 172736, at 1.5 slots each
+  (inferred). `Stack overflow` comes on the call when the call does not fit.
+  When it fits, it comes on the first statement of the body that puts a value
+  there: line 2 of `DEF R(N)`, `LOCATE 0,0:?N`.
 
 ## Values and variables
 
 ### Numbers
 
-- `STR$` of a real gives six significant digits, not `PRINT`'s eight
-  decimals: `STR$(2/3)` is `0.666667` where `?2/3` shows `0.66666667`
-  (TEST60). It is C's `%g`, so a million is `1e+06`.
+- `STR$` of a real gives six significant digits, not `PRINT`'s eight decimals:
+  `STR$(2/3)` is `0.666667` where `?2/3` shows `0.66666667` (TEST60). It is C's
+  `%g`, so a million is `1e+06`.
 - `"A"*-1` is `Overflow`, not `Out of range`.
-- `-2147483648 DIV -1` wraps to -2147483648, and shift counts are taken
-  modulo 32: `1<<33` is 2, `1<<-1` is -2147483648.
-- `MOD` takes the sign of the dividend; `ROUND` rounds halves away from
-  zero.
-- Reals print with eight decimals, trailing zeros removed, never in
-  exponent form: `1E20` prints all 21 digits, `1/3` as `0.33333333`,
-  `-1E-9` as `-0`.
+- `-2147483648 DIV -1` wraps to -2147483648.
+- Shift counts are taken modulo 32: `1<<33` is 2, `1<<-1` is -2147483648.
+- `MOD` takes the sign of the dividend.
+- `ROUND` rounds halves away from zero.
+- Reals print with eight decimals, trailing zeros removed, never in exponent
+  form: `1E20` prints all 21 digits, `1/3` as `0.33333333`, `-1E-9` as `-0`.
+- `1E308*10` less itself prints `nan` (TEST62).
 - `VAL` takes underscores in `&H` and `&B` digits as a program does:
-  `VAL("&H_FF")` and `VAL("&HFF_")` are 255. `VAL("1_000")` and `VAL("&H_")`
-  are 0 (TEST56).
-- `VAL(" 12 ")` is 0: spaces make the text not a number. `INPUT` asks
-  again (`?Redo from start`) for the same reason.
-- `LOG(0)` and `ASIN(2)` are `Out of range (LOG:1)` and `(ASIN:1)`. `LOCATE 3E10,0` is
-  `Overflow (LOCATE:1)`. (TEST62)
+  `VAL("&H_FF")` and `VAL("&HFF_")` are 255. `VAL("1_000")` and `VAL("&H_")` are
+  0 (TEST56).
+- `VAL(" 12 ")` is 0: spaces make the text not a number. `INPUT` asks again
+  (`?Redo from start`) for the same reason.
+- `LOG(0)` and `ASIN(2)` are `Out of range (LOG:1)` and `(ASIN:1)` (TEST62).
 - `SQR` below 0 and `ACOS` past -1 to 1 are `Out of range` on their argument, as
-  `LOG` and `ASIN` are, seen below. (Not yet seen on hardware.)
+  `LOG` and `ASIN` are. (Not yet seen on hardware.)
 
 ### `RGB`, `RGBF` and `HSV`
 
 - `RGBF` rounds components down: `RGBF(0.5,0.5,0.5)` is `&HFF7F7F7F`.
-  Components outside 0 to 1.0 are clamped (`R=1.1:?HEX$(RGBF(R,0,0))` is
-  `FFFF0000`, an integer variable too), but a constant one outside them
-  is `Out of range` when the program is compiled (`RGBF(1.1,0.5,0)`,
-  `RGBF(1,-1,0)`).
-- `RGB` takes components outside 0 to 255 and clamps them:
-  `RGB(584,0,0)` is `&HFFFF0000`, a component of -1 gives 0, and so
-  do alpha 300 and `RGB(C,,256,,)`.
+- `RGBF` clamps components outside 0 to 1.0 (`R=1.1:?HEX$(RGBF(R,0,0))` is
+  `FFFF0000`, an integer variable too). A constant one outside them is
+  `Out of range` when the program compiles (`RGBF(1.1,0.5,0)`, `RGBF(1,-1,0)`).
+- `RGB` takes components outside 0 to 255 and clamps them: `RGB(584,0,0)` is
+  `&HFFFF0000`, a component of -1 gives 0, and so do alpha 300 and
+  `RGB(C,,256,,)`.
 - `HSV` and `HSVF` as functions need all three of H, S and V: two are
-  `Wrong number of arguments`, and empty ones (`HSV(120,,)`) are `Type
-  mismatch`. The `OUT` form needs at least three results too; fewer is
-  `Wrong number of OUT arguments`, but S and V may be left empty, which
-  is what the 4.4.9 notes mean: `HSV C OUT H,,`.
+  `Wrong number of arguments`, and empty ones (`HSV(120,,)`) are
+  `Type mismatch`.
+- `HSV` with one argument is `Wrong number of OUT arguments`, as it is read as
+  the `OUT` form.
+- `HSV`'s `OUT` form needs at least three results too, and fewer is
+  `Wrong number of OUT arguments`. S and V may be left empty, which is what the
+  4.4.9 notes mean: `HSV C OUT H,,`.
 
 ### Random numbers
 
-- `RND(0)` is 0 and takes no number from the series; a negative maximum
-  is `Out of range`.
-- Each random series is TinyMT32 with its standard parameters, seeded
-  with `RANDOMIZE`'s value as a 32-bit number (-1 is the same seed as
-  &HFFFFFFFF), whatever the series number. `RND(n)` is the next number
-  modulo n, and `RNDF()` takes two numbers and makes 53 bits of them as
-  TinyMT's `res53` does.
+- `RND(0)` is 0 and takes no number from the series. A negative maximum is
+  `Out of range`.
+- Each random series is TinyMT32 with its standard parameters, seeded with
+  `RANDOMIZE`'s value as a 32-bit number (-1 is the same seed as &HFFFFFFFF),
+  whatever the series number.
+- `RND(n)` is the next number modulo n.
+- `RNDF()` takes two numbers and makes 53 bits of them as TinyMT's `res53` does.
 
 ### `FORMAT$`
 
-- `FORMAT$` takes its conversions in lower case too and ignores values
-  left over. `%F` rounds to the nearest, but a value exactly half way goes
-  toward zero: `%.0F` gives 2 for 2.5, 3 for 3.5 and -2 for -2.5. Too few values is `Wrong number of arguments`, a value of the
-  wrong type `Type mismatch`, and a conversion it does not know (`%Q`)
+- `FORMAT$` takes its conversions in lower case too and ignores values left
+  over.
+- `FORMAT$` errors: too few values is `Wrong number of arguments`, a value of
+  the wrong type `Type mismatch`, and a conversion it does not know (`%Q`)
   `Illegal format`.
+- `%F` rounds to the nearest, but a value exactly half way goes toward zero:
+  `%.0F` gives 2 for 2.5, 3 for 3.5 and -2 for -2.5.
 - `FORMAT$` gives at most 1024 characters as a whole, not per field:
-  `%1000D%24D` gives 1024 and `%1000D%25D` is `String is too long (FORMAT$:3)`,
-  numbered by the value being formatted; `%S` of 1025 characters is
-  `(FORMAT$:2)`. A format of 1025 plain characters is `(FORMAT$)` with no
-  number, as is `%%` over the limit (TEST57). Of 1, `%1024D` works and `%1025D`
-  does not, `%.1000F` works (a length of 1002) and `%.1023F`, which would be
-  1025 long, does not (TEST51, TEST52). `%F` of 1.5 gives 1023 characters at
-  `%.1021F` and `%1023F`; `%.1022F` and `%1024F` are `String is too long
-  (FORMAT$:2)` (TEST58): it needs one character of room more than it gives. On `%S` the precision only limits the
-  string, so `%.2000S` of a short string is fine. `%05S` pads with zeros,
-  `[00ABC]`, and with `-` it pads spaces on the right (TEST57).
-- `FORMAT$`'s precision on `%D` is the least number of digits (TEST58): of 5
-  and of -5, `%.3D` gives `005` and `-005`, `%5.3D` gives `  005` and ` -005`,
-  `%-5.3D` gives `005  ` and `-005 `, and `%05.3D`, where the precision takes the
-  place of the `0` flag, gives `  005` and ` -005`. `%.1D` of 0 is `0`, `%.0D` of 5
-  is `5`, and `%.0D` of 0 is nothing. `%X` and `%B` go the same way: `%.4X` of 255
-  is `00FF`, `%.4B` of 5 is `0101`, `%+.0D` and `%.0X` of 0 are empty, and `%6.3X` of 10 is
-  `   00A` (TEST63).
+  - `%1000D%24D` gives 1024 and `%1000D%25D` is
+    `String is too long (FORMAT$:3)`, numbered by the value being formatted.
+  - `%S` of 1025 characters is `(FORMAT$:2)`.
+  - A format of 1025 plain characters is `(FORMAT$)` with no number, as is `%%`
+    over the limit (TEST57).
+  - Of 1, `%1024D` works and `%1025D` does not. `%.1000F` works (a length of
+    1002) and `%.1023F`, which would be 1025 long, does not (TEST51, TEST52).
+  - `%F` of 1.5 gives 1023 characters at `%.1021F` and `%1023F`. `%.1022F` and
+    `%1024F` are `String is too long (FORMAT$:2)` (TEST58): it
+    needs one character of room more than it gives.
+- `%S`'s precision only limits the string, so `%.2000S` of a short string is
+  fine.
+- `%05S` pads with zeros, `[00ABC]`, and with `-` it pads spaces on the right
+  (TEST57).
+- `%D`'s precision is the least number of digits (TEST58). Where the precision
+  takes the place of the `0` flag, as in `%05.3D`, the padding is spaces:
+
+  | Format | Of 5 | Of -5 |
+  |---|---|---|
+  | `%.3D` | `005` | `-005` |
+  | `%5.3D` | `  005` | ` -005` |
+  | `%-5.3D` | `005  ` | `-005 ` |
+  | `%05.3D` | `  005` | ` -005` |
+
+  `%.1D` of 0 is `0`, `%.0D` of 5 is `5`, and `%.0D` of 0 is nothing.
+- `%X` and `%B` go the same way as `%D`: `%.4X` of 255 is `00FF`, `%.4B` of 5 is
+  `0101`, `%+.0D` and `%.0X` of 0 are empty, and `%6.3X` of 10 is `   00A`
+  (TEST63).
 
 ### Arrays
 
-- Only one-dimensional arrays may be empty: `DIM A[0]` is fine, but
+- `DIM` with an empty size works only for one dimension: `DIM A[0]` is fine, but
   `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`.
-- An array holds nothing (`TYPEOF` 0) until its `DIM` runs, as when a DEF
-  reads it before. `DIM A[,]` compiles, and is `Type mismatch` when it
-  runs.
-- `SORT` keeps equal keys in their order; `RSORT` gives `SORT`'s order
-  turned round, so equal keys come out reversed. Strings sort by
-  character code: `""`, `"A"`, `"AA"`, `"B"`, `"a"`, `"b"`.
+- An array holds nothing (`TYPEOF` 0) until its `DIM` runs, as when a DEF reads
+  it before.
+- `DIM A[,]` compiles, and is `Type mismatch` when it runs.
+- `SORT` keeps equal keys in their order. `RSORT` gives `SORT`'s order turned
+  round, so equal keys come out reversed.
+- `SORT` orders strings by character code: `""`, `"A"`, `"AA"`, `"B"`, `"a"`,
+  `"b"`.
 - `RESIZE` of a 2D array takes every size, the later ones as they are:
-  `RESIZE A,3` on `DIM A[2,3]` is `Wrong number of arguments`, and
-  changing a later size `Illegal function call`.
-- `RESIZE A,0,3` on `DIM A[1,3]` leaves `LEN` 0 and `DIM(A,0)` 0, and
-  `SAVEV` and `LOADV` bring that back (TEST51). `RINGCOPY A,0,A` on such
-  an array does nothing and is no error (TEST51).
-- `LOADV` loads array files with a zero in any size and keeps the sizes:
-  `[0,3]` and `[3,0]` both give `RESULT()` 1 (TEST51).
+  `RESIZE A,3` on `DIM A[2,3]` is `Wrong number of arguments`, and changing a
+  later size `Illegal function call`.
+- `RESIZE A,0,3` on `DIM A[1,3]` leaves `LEN` 0 and `DIM(A,0)` 0, and `SAVEV`
+  and `LOADV` bring that back (TEST51).
+- `LOADV` loads array files with a zero in any size and keeps the sizes: `[0,3]`
+  and `[3,0]` both give `RESULT()` 1 (TEST51).
+- `REMOVE` with a count of 0 removes nothing and is no error, also on an empty
+  array and at the position just past the end.
+- `ARYOP 6` (clamp) takes the lower bound first: 5 between 9 and 1 gives 9, and
+  a NaN stays. (TEST63)
+- `RINGCOPY A,0,A` on an array left by `RESIZE A,0,3` does nothing and is no
+  error (TEST51).
 - `RINGCOPY` looks at things in this order (TEST57):
-  - a destination that is no array: `Type mismatch (RINGCOPY:1)`; a source
-    that is no array, or element types neither the same nor both numbers:
-    `(RINGCOPY:3)`;
-  - either array neither 1D nor 2D: `Type mismatch`, no number. For 2D, the
-    first size is channels and the second length;
-  - with four arguments, a count below 0 or over the source's length: `Illegal
-    function call (RINGCOPY:4)`. With five, a source offset below 0 is
-    `(RINGCOPY:4)`, and a count below 0 or offset + count over the length
-    `(RINGCOPY:5)`;
-  - a count below 1 or a destination of length 0: nothing is copied, no error,
-    and `OUT` gives 0. `RINGCOPY A,2,B,0 OUT E` gives 0 and `DIM A[2,4],B[3,4]:
-    RINGCOPY A,0,B,0` is no error;
-  - source channels neither 1 nor the destination's: `Type mismatch`, no
-    number, as are string arrays that get this far.
-
-  TEST58 saw these on `A[4]` and `B[3]`: `RINGCOPY A,0,B,-1,1` is `(RINGCOPY:4)`;
-  `A,0,B,4,0`, `A,0,B,1,3` and `A,0,B,0,-1` are `(RINGCOPY:5)`; `A,0,B,3,0 OUT E`
-  gives 0; a number as the first or the third argument is `Type mismatch
-  (RINGCOPY:1)` or `(RINGCOPY:3)`. With five arguments too the destination offset
-  wraps: with B=1,2,3, `RINGCOPY A,9,B,1,2 OUT E` leaves 0,2,3,0 and E=3, and
-  `A,-1,B,1,2` leaves 3,0,0,2 and E=1.
-
-  The destination offset wraps round with a floored modulo, negative too:
-  `RINGCOPY A,-1,B OUT E` on `A[4]` and B=1,2,3 leaves 2,3,0,1 and E=2. `OUT` is
-  (start + count) modulo the length.
-- `REMOVE` with a count of 0 removes nothing and is no error, also on an
-  empty array and at the position just past the end.
-- `ARYOP 6` (clamp) takes the lower bound first: 5 between 9 and 1 gives 9, and a NaN stays. (TEST63)
+  1. A destination that is no array: `Type mismatch (RINGCOPY:1)`. A source that
+  is no array, or element types neither the same nor both numbers:
+  `(RINGCOPY:3)`.
+  2. Either array neither 1D nor 2D: `Type mismatch`, no number. For 2D, the
+  first size is channels and the second length.
+  3. With four arguments, a count below 0 or over the source's length:
+  `Illegal function call (RINGCOPY:4)`. With five, a source offset below 0 is
+  `(RINGCOPY:4)`, and a count below 0 or offset + count over the length
+  `(RINGCOPY:5)`.
+  4. A count below 1 or a destination of length 0: nothing is copied, no error,
+  and `OUT` gives 0. `RINGCOPY A,2,B,0 OUT E` gives 0 and
+  `DIM A[2,4],B[3,4]:RINGCOPY A,0,B,0` is no error.
+  5. Source channels neither 1 nor the destination's: `Type mismatch`, no
+  number, as are string arrays that get this far.
+- `RINGCOPY` on `A[4]` and `B[3]`, as TEST58 saw it:
+  - `RINGCOPY A,0,B,-1,1` is `(RINGCOPY:4)`.
+  - `A,0,B,4,0`, `A,0,B,1,3` and `A,0,B,0,-1` are `(RINGCOPY:5)`.
+  - `A,0,B,3,0 OUT E` gives 0.
+  - A number as the first or the third argument is `Type mismatch (RINGCOPY:1)`
+    or `(RINGCOPY:3)`.
+  - With five arguments too the destination offset wraps: with B=1,2,3,
+    `RINGCOPY A,9,B,1,2 OUT E` leaves 0,2,3,0 and E=3, and `A,-1,B,1,2` leaves
+    3,0,0,2 and E=1.
+- `RINGCOPY`'s destination offset wraps round with a floored modulo, negative
+  too: `RINGCOPY A,-1,B OUT E` on `A[4]` and B=1,2,3 leaves 2,3,0,1 and E=2.
+  `OUT` is (start + count) modulo the length.
 
 ### `SPVAR`, `TVAR` and `INC`
 
-- `TVAR` cuts a real key down to an integer: keys 1.5 and 1 are the
-  same.
-- `SPVAR` and `TVAR` keep an array given to them as the same array, not a
-  copy: what is changed through one shows through the other.
-- `INC` adds to a string where it is, as `PUSH` does: `INC T$,C$` on a
-  DEF's parameter adds to the caller's string.
+- `TVAR` cuts a real key down to an integer: keys 1.5 and 1 are the same.
+- `SPVAR` and `TVAR` keep an array given to them as the same array, not a copy:
+  what is changed through one shows through the other.
+- `INC` adds to a string where it is, as `PUSH` does: `INC T$,C$` on a DEF's
+  parameter adds to the caller's string.
 
 ## Order of evaluation
 
-SmileBASIC 4 works things out right to left, which shows when the parts
-have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
+SmileBASIC 4 works things out right to left, which shows when the parts have
+side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
-- Both sides of an operator: the right one first. `F(1)+F(2)*F(3)` calls
-  `F(3)`, `F(2)`, then `F(1)`; `INKEY$()+INKEY$()` puts the first key
-  typed last.
-- Arguments of functions, commands and DEFs, and array indices: the last
-  first. In `A[F(1),F(2)]=F(3)` the value comes before the indices.
-- `PRINT` works out every item, last first, before it prints any of
-  them: `?P(1);P(2)` with a `P` that prints shows `<2><1>12`.
-- `FOR` works out `STEP`, then `TO`, again before every test, so they
-  are called once more at each `NEXT`.
-- Array literals and `DIM` sizes: the last first too.
-- `SWAP` works out each element's place once, the second first; `INC`
-  and `DEC` work out the amount first, then the place, once.
+- Operators evaluate the right side first. `F(1)+F(2)*F(3)` calls `F(3)`,
+  `F(2)`, then `F(1)`; `INKEY$()+INKEY$()` puts the first key typed last.
+- Arguments of functions, commands and DEFs, and array indices, go last first.
+  In `A[F(1),F(2)]=F(3)` the value comes before the indices.
+- `PRINT` works out every item, last first, before it prints any of them:
+  `?P(1);P(2)` with a `P` that prints shows `<2><1>12`.
+- `FOR` works out `STEP`, then `TO`, again before every test, so they are called
+  once more at each `NEXT`.
+- Array literals and `DIM` sizes go last first too.
+- `SWAP` works out each element's place once, the second first.
+- `INC` and `DEC` work out the amount first, then the place, once.
 - `CALL` works out its arguments before the name.
 - `&&` and `||` still go left to right and stop early.
 
 ## DATA
 
-- `SPANIM` with a `"@label"` reads its DATA with `READ`'s own place: it
-  restores to the label, and `READ` goes on after the values it took.
+- `SPANIM` with a `"@label"` reads its DATA with `READ`'s own place: it restores
+  to the label, and `READ` goes on after the values it took.
 - `COPY` from a `"@label"` leaves `READ`'s place alone.
-- `BGMSETD`'s MML may end with the program's last DATA instead of a 0,
-  and any number ends it: in `"..",5,"..",0` the strings after the 5 are
-  not played.
-- `RESTORE @LABEL` to a label that is not there is `Undefined label`
-  only when it runs.
-- `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack
-  underflow`. A subroutine that keeps a place must take it back before
-  `RETURN`, which is otherwise `Use RESTORE POP before RETURN`. A
-  thousand places can be kept.
+- `BGMSETD`'s MML may end with the program's last DATA instead of a 0, and any
+  number ends it: in `"..",5,"..",0` the strings after the 5 are not played.
+- `RESTORE @LABEL` to a label that is not there is `Undefined label` only when
+  it runs.
+- `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack underflow`.
+- `RESTORE "PUSH"` keeps up to a thousand places. A subroutine that keeps a
+  place must take it back before `RETURN`, which is otherwise
+  `Use RESTORE POP before RETURN`.
 
 ## Timing
 
