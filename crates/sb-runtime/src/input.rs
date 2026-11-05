@@ -91,6 +91,8 @@ struct PadKeyRepeat {
     code: u32,
     frames: u32,
     repeating: bool,
+    /// Nothing more is typed until all is let go.
+    spent: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -333,10 +335,15 @@ impl Input {
         self.touch = (0, 0);
         // What is held goes on counting as held, and types nothing more
         // until let go.
+        self.spend_pad_key();
+    }
+
+    /// What the controllers hold now types nothing more until let go.
+    pub(crate) fn spend_pad_key(&mut self) {
         self.pad_key_repeat = PadKeyRepeat {
             code: self.now.pad_key(),
-            frames: 0,
-            repeating: true,
+            spent: true,
+            ..PadKeyRepeat::default()
         };
     }
 
@@ -351,12 +358,12 @@ impl Input {
             *r = PadKeyRepeat::default();
             return None;
         }
-        if r.code == 0 {
+        if r.code == 0 && !r.spent {
             r.code = code;
             r.frames = 0;
             return Some(code);
         }
-        if r.code != code {
+        if r.spent || r.code != code {
             return None;
         }
         r.frames += 1;

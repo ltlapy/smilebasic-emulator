@@ -8,6 +8,13 @@ use sdl3::keyboard::{KeyboardState, Mod, Scancode};
 use sdl3::mouse::MouseState;
 use sdl3::{GamepadSubsystem, Sdl};
 
+/// The bit in BUTTON's value of one of SDL's buttons, for the bench.
+pub fn button_bit(button: Button) -> u32 {
+    (PAD_BUTTONS.iter())
+        .find(|(b, _)| *b == button)
+        .map_or(0, |(_, id)| 1 << id)
+}
+
 /// SDL's buttons for BUTTON's ids, by position: the top face button is
 /// #B_RUP whatever its label says.
 const PAD_BUTTONS: [(Button, u32); 12] = [
@@ -83,6 +90,53 @@ impl KeyButtons {
     }
 }
 
+/// How far a stick has to be tilted to count as held through a screen: where
+/// it starts to type keys for a program, past any drift.
+const CARRIED_STICK: f64 = 0.3;
+
+/// Keeps from the program what was pressed for one of the emulator's own
+/// screens, such as the A that chose Run in Projects: a button or stick held
+/// when the screen goes reads as let go until it really is, so that it
+/// neither types Enter nor reads as a press beneath or after the screen.
+#[derive(Debug, Default)]
+pub struct Carried {
+    buttons: [u32; PADS],
+    sticks: [[bool; 2]; PADS],
+    /// A screen had the controls at the end of the last frame.
+    screen: bool,
+}
+
+impl Carried {
+    /// What the program sees of `state`, once a frame. `screen`: a screen
+    /// has the controls now, so that the program sees nothing at all. The
+    /// frame it goes in has no buttons or sticks yet, as the press that closed
+    /// it came in that frame, whichever order the events came in.
+    pub fn program_sees(&mut self, mut state: State, screen: bool) -> State {
+        let was_screen = std::mem::replace(&mut self.screen, screen);
+        for (i, pad) in state.pads.iter_mut().enumerate() {
+            let tilted = pad
+                .sticks
+                .map(|(x, y)| x.abs() > CARRIED_STICK || y.abs() > CARRIED_STICK);
+            if screen || was_screen {
+                self.buttons[i] = pad.buttons;
+                self.sticks[i] = tilted;
+                pad.buttons = 0;
+                pad.sticks = Default::default();
+                continue;
+            }
+            self.buttons[i] &= pad.buttons;
+            pad.buttons &= !self.buttons[i];
+            for (id, tilted) in tilted.into_iter().enumerate() {
+                self.sticks[i][id] &= tilted;
+                if self.sticks[i][id] {
+                    pad.sticks[id] = (0.0, 0.0);
+                }
+            }
+        }
+        if screen { State::default() } else { state }
+    }
+}
+
 /// How far a trigger goes before it counts as ZL or ZR pressed.
 const TRIGGER: i16 = i16::MAX / 2;
 /// Sticks read as centered until tilted this far.
@@ -94,6 +148,7 @@ pub struct Controls {
     pads: Vec<Gamepad>,
     pub mouse: Mouse,
     pub key_buttons: KeyButtons,
+    pub carried: Carried,
 }
 
 fn stick(pad: &Gamepad, x: Axis, y: Axis) -> (f64, f64) {
@@ -113,6 +168,7 @@ impl Controls {
             pads: Vec::new(),
             mouse: Mouse::default(),
             key_buttons: KeyButtons::default(),
+            carried: Carried::default(),
         })
     }
 
@@ -207,6 +263,87 @@ mod tests {
     /// The button the A key presses: #B_RLEFT, which reads as Y.
     const A_KEY_BUTTON: u32 = 1 << 2;
     const S_KEY_BUTTON: u32 = 1 << 0;
+    /// #B_RRIGHT, which is A.
+    const A_BUTTON: u32 = 1 << 3;
+
+    fn holding(buttons: u32) -> State {
+        let mut state = State::default();
+        state.pads[0].buttons = buttons;
+        state
+    }
+
+    /// Goes through frames as the frontend does, each with the buttons held
+    /// and whether a screen has the controls, and gives what INKEY$ has then.
+    fn typed_after(frames: &[(u32, bool)]) -> usize {
+        use sb_core::vm::{Status, Vm};
+        let mut rt = sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank());
+        let mut carried = Carried::default();
+        for &(buttons, screen) in frames {
+            rt.input.live = carried.program_sees(holding(buttons), screen);
+            rt.begin_frame();
+        }
+        let source = "N=0:WHILE INKEY$()!=\"\":INC N:WEND:?N";
+        let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
+        while vm.run(&mut rt, 100_000).unwrap() != Status::Ended {}
+        let cell = rt.text[4].cell(0, 0).code;
+        usize::from(cell - u16::from(b'0'))
+    }
+
+    /// The press that runs a project comes while Projects is open, and is
+    /// still down in the frame it closes and after it.
+    #[test]
+    fn the_a_that_runs_a_project_types_nothing() {
+        // Down in the frame Projects closes in.
+        let run = [(0, true), (A_BUTTON, false), (A_BUTTON, false)];
+        assert_eq!(typed_after(&run), 0);
+        // Held long past when a held key would repeat.
+        let mut held = vec![(A_BUTTON, true)];
+        held.resize(60, (A_BUTTON, false));
+        assert_eq!(typed_after(&held), 0);
+        // While a screen is open nothing goes into the queue beneath it.
+        assert_eq!(typed_after(&[(A_BUTTON, true), (0, true)]), 0);
+    }
+
+    #[test]
+    fn a_new_press_after_a_screen_types() {
+        let again = [
+            (A_BUTTON, true),
+            (A_BUTTON, false),
+            (0, false),
+            (A_BUTTON, false),
+        ];
+        assert_eq!(typed_after(&again), 1);
+        // Pressed with the screen long gone.
+        assert_eq!(typed_after(&[(0, true), (0, false), (A_BUTTON, false)]), 1);
+    }
+
+    /// With no screen in sight, a program sees what is held as ever.
+    #[test]
+    fn carried_leaves_other_buttons_alone() {
+        let mut carried = Carried::default();
+        carried.program_sees(holding(A_BUTTON), true);
+        let closed = carried.program_sees(holding(A_BUTTON | S_KEY_BUTTON), false);
+        assert_eq!(closed.pads[0].buttons, 0, "the frame it closes in");
+        let after = carried.program_sees(holding(A_BUTTON | 1 << 1), false);
+        assert_eq!(after.pads[0].buttons, 1 << 1, "pressed after");
+    }
+
+    #[test]
+    fn a_stick_pushed_for_a_screen_waits_until_it_is_let_go() {
+        let tilted = |y| {
+            let mut state = State::default();
+            state.pads[0].sticks[0] = (0.0, y);
+            state
+        };
+        let mut carried = Carried::default();
+        carried.program_sees(tilted(-1.0), true);
+        carried.program_sees(tilted(-1.0), false);
+        let held = carried.program_sees(tilted(-1.0), false);
+        assert_eq!(held.pads[0].sticks[0], (0.0, 0.0));
+        carried.program_sees(tilted(0.0), false);
+        let again = carried.program_sees(tilted(-1.0), false);
+        assert_eq!(again.pads[0].sticks[0], (0.0, -1.0));
+    }
 
     fn read(source: &str) -> KeysRead {
         use sb_core::vm::{Status, Vm};

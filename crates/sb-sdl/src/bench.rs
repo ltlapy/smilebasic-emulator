@@ -44,8 +44,11 @@
 //!   device were gone, `fail` as if drawing failed, `refuse:N` to have the next N
 //!   tries at a renderer refused, `panic`, `unsaved` to give PRG0 unsaved edits,
 //!   `sleep:MS` to stop the loop, as a suspend does, `key:NAME` to press the key
-//!   SDL calls NAME, such as `Escape`, and `usb:USAGE` to have KEYBOARD read that
-//!   key as down for a frame, which `key` does not.
+//!   SDL calls NAME, such as `Escape`, `usb:USAGE` to have KEYBOARD read that
+//!   key as down for a frame, which `key` does not, and `pad:NAME` and `padup:NAME`
+//!   to press and let go the first controller's button SDL calls NAME, such as
+//!   `b` for the right face button (SDL goes by Xbox labels), as both the event
+//!   and what is held.
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed and what the sound device's buffer went through, so

@@ -61,7 +61,6 @@ use sb_runtime::confirm::Confirm;
 use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
 use sb_runtime::help::{Help, Lookup};
-use sb_runtime::input::State;
 use sb_runtime::machine::{Machine, StopReason};
 use sb_runtime::palette::Palette;
 use sb_runtime::raster::SceneBackend;
@@ -470,6 +469,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut watch = RendererWatch::default();
     // A USB key that reads as down for a frame, for the bench.
     let mut bench_usb: Option<u8> = None;
+    // Buttons held on the first controller, for the bench.
+    let mut bench_pad = 0;
     // Renderers to refuse, for the bench.
     let mut refusals = 0;
     let mut last_wall = SystemTime::now();
@@ -636,6 +637,27 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         repeat: false,
                         which: 0,
                         raw: 0,
+                    })
+                }
+                _ if what.starts_with("pad:") || what.starts_with("padup:") => {
+                    let (timestamp, which) = (0, 0.into());
+                    let (state, name) = what.split_once(':').expect("checked");
+                    Button::from_string(name).map(|button| {
+                        if state == "pad" {
+                            bench_pad |= controls::button_bit(button);
+                            Event::GamepadButtonDown {
+                                timestamp,
+                                which,
+                                button,
+                            }
+                        } else {
+                            bench_pad &= !controls::button_bit(button);
+                            Event::GamepadButtonUp {
+                                timestamp,
+                                which,
+                                button,
+                            }
+                        }
                     })
                 }
                 _ if what.starts_with("sleep:") => {
@@ -2171,16 +2193,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
         let editor_keys = machine.editor_has_keys() && machine.program_dialog().is_none();
-        machine.rt.input.live = if modal || paused || editor_keys {
-            State::default()
-        } else {
-            controls.state(
-                &events.keyboard_state(),
-                keyboard.mod_state(),
-                events.mouse_state(),
-                machine.rt.settings.keyboard_buttons,
-            )
-        };
+        // The help beside direct mode has the keys and the prompt is left
+        // alone, and after a Projects run's error only its A goes anywhere.
+        let waiting = machine.home_waiting() && program_dialog.is_none();
+        let beside = side_direct && side_focus && side.is_some();
+        let mut held = controls.state(
+            &events.keyboard_state(),
+            keyboard.mod_state(),
+            events.mouse_state(),
+            machine.rt.settings.keyboard_buttons,
+        );
+        held.pads[0].buttons |= bench_pad;
+        let screen = modal || paused || editor_keys || waiting || beside;
+        machine.rt.input.live = controls.carried.program_sees(held, screen);
         if let Some(usage) = bench_usb.take() {
             machine.rt.input.live.set_key(usage, true);
         }

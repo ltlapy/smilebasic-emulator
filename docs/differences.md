@@ -179,6 +179,9 @@ known.
   with 5008 free keeps 1601 there and gives the last element each time; here it
   shrinks and gives each in turn.
 - `LOAD` of a program takes nothing from this memory.
+- A button or stick held when one of the emulator's own screens closes, such as
+  the A that chose Run in the project manager, reads as let go until it is: it
+  types nothing and `BUTTON` does not show it, in the program or at the prompt.
 - Run on a project in the project manager returns to the manager when
   the program ends or is stopped. After an error the screen stays, with
   the emulator's own line `=== Press A Button or Enter to return.===`

@@ -360,3 +360,40 @@ fn vibration_patterns_end() {
     let codes: Vec<u16> = (0..5).map(|x| console.cell(x, 0).code).collect();
     assert_eq!(String::from_utf16_lossy(&codes), "57040");
 }
+
+/// A button held when a program ends types nothing into direct mode, however
+/// long it stays down, and a fresh press does.
+#[test]
+fn a_button_held_past_the_end_of_a_program_types_nothing() {
+    let a = pressed(1 << 3);
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    rt.input.live = a;
+    rt.input.forget();
+    for _ in 0..40 {
+        rt.begin_frame();
+    }
+    let mut vm = Vm::new(sb_core::compile("K$=INKEY$():?LEN(K$)", &rt).unwrap());
+    while vm.run(&mut rt, 100_000).unwrap() != Status::Ended {}
+    assert_eq!(rt.text[4].cell(0, 0).code, u16::from(b'0'));
+}
+
+/// The A that answers a DIALOG doesn't reach INKEY$ after it as Enter, nor as
+/// it repeats while still held.
+#[test]
+fn the_press_that_answers_a_dialog_types_nothing() {
+    let a = pressed(1 << 3);
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let source = "R=DIALOG(\"Q\",-1):N=0:REPEAT:VSYNC:INC N:UNTIL N==40:K$=INKEY$():?LEN(K$)";
+    let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
+    let mut frames = 0;
+    loop {
+        rt.input.live = if frames > 2 { a } else { State::default() };
+        rt.begin_frame();
+        frames += 1;
+        assert!(frames < 200, "the dialog was not answered");
+        if vm.run(&mut rt, 100_000).unwrap() == Status::Ended {
+            break;
+        }
+    }
+    assert_eq!(rt.text[4].cell(0, 0).code, u16::from(b'0'));
+}
