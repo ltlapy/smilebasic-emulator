@@ -11,11 +11,12 @@ use crate::ast::BinaryOp;
 use crate::builtins::{self, Form, Kind};
 use crate::bytecode::*;
 use crate::error::{Error, ErrorKind, Result};
+use crate::fuse::{FOR_TEST_LEN, FastOp, Var};
 use crate::host::{Exec, Host};
 use crate::lexer::Suffix;
 use crate::memory;
 use crate::ops;
-use crate::value::{Array, ArrayData, ElemType, Str, Value, format_number, new_str};
+use crate::value::{Array, ArrayData, ElemType, Num, Str, Value, format_number, new_str};
 use crate::watch::Watch;
 
 /// The stack GOSUBs, DEF calls and RESTORE "PUSH" share, in half slots: 259072
@@ -160,6 +161,7 @@ impl Unit {
     fn new(program: Compiled) -> Unit {
         let globals = (program.globals.iter())
             .map(|g| initial_value(g, program.default_int))
+            .chain(program.constants.iter().map(constant_value))
             .collect();
         Unit {
             declared: vec![false; program.globals.len()],
@@ -341,6 +343,15 @@ fn initial_value(var: &VarInfo, default_int: bool) -> Value {
     }
 }
 
+/// A constant of [`Compiled::constants`] in its place after the globals.
+fn constant_value(constant: &Literal) -> Value {
+    match constant {
+        Literal::Int(n) => Value::Int(*n),
+        Literal::Real(x) => Value::Real(*x),
+        Literal::Str(s) => Value::Str(new_str(s.clone())),
+    }
+}
+
 fn form(want: Want) -> Form {
     match want {
         Want::Value => Form::Function,
@@ -431,6 +442,7 @@ impl Vm {
                     .cloned()
                     .unwrap_or_else(|| initial_value(g, program.default_int))
             })
+            .chain(program.constants.iter().map(constant_value))
             .collect();
         Vm {
             memory: memory::Estimate::default(),
@@ -1089,94 +1101,13 @@ impl Vm {
         let stop = self.executed + u64::from(budget);
         let mut program = Rc::clone(&self.program);
         while self.executed < stop {
-            // None of the instructions here changes these three.
-            let plain =
-                self.break_pending.is_none() && self.trace.is_none() && self.changes.is_empty();
-            while plain
-                && self.executed < stop
-                && !self
-                    .stop_at
-                    .as_ref()
-                    .is_some_and(|at| at.get(self.pc) == Some(&true))
-                && let Some(op) = program.code.get(self.pc)
+            // None of what runs in larger steps changes these.
+            if self.break_pending.is_none()
+                && self.trace.is_none()
+                && self.changes.is_empty()
+                && self.stop_at.is_none()
             {
-                // The commonest instructions, run here without the rest of
-                // step's machinery; they are what most loops are made of.
-                let pc = self.pc;
-                let mut next = pc + 1;
-                let done: Result<bool> = match op {
-                    Op::Int(n) => {
-                        self.stack.push(Value::Int(*n));
-                        Ok(true)
-                    }
-                    Op::Real(x) => {
-                        self.stack.push(Value::Real(*x));
-                        Ok(true)
-                    }
-                    Op::Load(slot) => {
-                        let v = self.load(*slot);
-                        self.stack.push(v);
-                        Ok(true)
-                    }
-                    Op::Store(slot) => {
-                        let v = self.pop();
-                        self.store(*slot, v);
-                        Ok(true)
-                    }
-                    Op::Swap => {
-                        let n = self.stack.len();
-                        self.stack.swap(n - 1, n - 2);
-                        Ok(true)
-                    }
-                    Op::Binary(op) => {
-                        let rhs = self.pop();
-                        let lhs = self
-                            .stack
-                            .last_mut()
-                            .expect("compiler keeps the stack balanced");
-                        let fast = match (&*lhs, &rhs) {
-                            (Value::Int(a), Value::Int(b)) => ops::binary_ints(*op, *a, *b),
-                            _ => None,
-                        };
-                        if let Some(n) = fast {
-                            *lhs = Value::Int(n);
-                            Ok(true)
-                        } else {
-                            match ops::binary(*op, lhs, &rhs) {
-                                Ok(v) => {
-                                    *lhs = v;
-                                    Ok(true)
-                                }
-                                Err(e) => Err(self.run_again_with(e, rhs)),
-                            }
-                        }
-                    }
-                    Op::Jump(a) => {
-                        next = *a as usize;
-                        Ok(true)
-                    }
-                    Op::JumpIfFalse(a) => self.pop().is_true().map(|t| {
-                        if !t {
-                            next = *a as usize;
-                        }
-                        true
-                    }),
-                    Op::ForTest => self.for_test().map(|()| true),
-                    Op::Nop => Ok(true),
-                    _ => Ok(false),
-                };
-                match done {
-                    Ok(true) => {
-                        self.executed += 1;
-                        self.pc = next;
-                        continue;
-                    }
-                    Ok(false) => break,
-                    Err(e) => match self.failed(pc, e, host) {
-                        Some(e) => return Err(e),
-                        None => continue,
-                    },
-                }
+                self.run_fast(&program, stop);
             }
             if self.executed >= stop {
                 break;
@@ -1259,6 +1190,218 @@ impl Vm {
             }
         }
         Ok(Status::Running)
+    }
+
+    /// Runs [`Compiled::fast`] until the budget is spent or something needs
+    /// [`Vm::step`]: anything other than plain work on numbers, every failure
+    /// included. An entry that cannot do its work leaves everything as it was,
+    /// so that `step` goes on from the same place.
+    fn run_fast(&mut self, program: &Compiled, stop: u64) {
+        let Vm {
+            stack,
+            globals,
+            frames,
+            pc: at,
+            executed,
+            ..
+        } = self;
+        let locals: &mut [Value] = frames.last_mut().map_or(&mut [], |f| &mut f.locals);
+        let vars: &mut Vars = &mut [globals, locals];
+        let mut pc = *at;
+        let mut left = stop.saturating_sub(*executed);
+        while let Some(fast) = program.fast.get(pc) {
+            let len = u64::from(fast.len);
+            if len > left {
+                break;
+            }
+            let size = usize::from(fast.len);
+            let mut next = pc + size;
+            match fast.op {
+                FastOp::Slow => break,
+                FastOp::Nop => {}
+                FastOp::Push(a) => push_copy(stack, get(vars, a)),
+                FastOp::Push2(a, b) => {
+                    push_copy(stack, get(vars, a));
+                    push_copy(stack, get(vars, b));
+                }
+                FastOp::Store(to) => {
+                    let slot = at_var(vars, to);
+                    let value = top(stack);
+                    match *value {
+                        Value::Int(n) => *slot = Value::Int(n),
+                        Value::Real(x) => *slot = Value::Real(x),
+                        _ => std::mem::swap(slot, value),
+                    }
+                    stack.pop();
+                }
+                FastOp::Move { from, to } => {
+                    copy_var(vars, from, to);
+                }
+                FastOp::Swap => {
+                    let n = stack.len();
+                    stack.swap(n - 1, n - 2);
+                }
+                FastOp::Reverse(n) => {
+                    let from = stack.len() - n as usize;
+                    stack[from..].reverse();
+                }
+                FastOp::Jump(a) => next = a as usize,
+                FastOp::JumpIfFalse(a) => {
+                    let Some(yes) = stack.last().and_then(truth) else {
+                        break;
+                    };
+                    stack.pop();
+                    if !yes {
+                        next = a as usize;
+                    }
+                }
+                FastOp::Binary(op) => {
+                    let Some(n) = on_two(stack, |l, r| ops::binary_numbers(op, l, r)) else {
+                        break;
+                    };
+                    stack.pop();
+                    put(top(stack), n);
+                }
+                FastOp::Swapped(op) => {
+                    let Some(n) = on_two(stack, |l, r| ops::binary_numbers(op, r, l)) else {
+                        break;
+                    };
+                    stack.pop();
+                    put(top(stack), n);
+                }
+                FastOp::SwappedStore(op, to) => {
+                    let Some(n) = on_two(stack, |l, r| ops::binary_numbers(op, r, l)) else {
+                        break;
+                    };
+                    stack.truncate(stack.len() - 2);
+                    put(at_var(vars, to), n);
+                }
+                FastOp::Vars { op, a, b } => {
+                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                        break;
+                    };
+                    push_num(stack, n);
+                }
+                FastOp::VarsStore { op, a, b, to } => {
+                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                        break;
+                    };
+                    put(at_var(vars, to), n);
+                }
+                FastOp::VarsJump { op, a, b, target } => {
+                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                        break;
+                    };
+                    if !num_truth(n) {
+                        next = target as usize;
+                    }
+                }
+                FastOp::Under { op, a } => {
+                    let rhs = top(stack);
+                    let Some(n) = ops::binary_numbers(op, get(vars, a), rhs) else {
+                        break;
+                    };
+                    put(rhs, n);
+                }
+                FastOp::UnderStore { op, a, to } => {
+                    let Some(n) = ops::binary_numbers(op, get(vars, a), top(stack)) else {
+                        break;
+                    };
+                    stack.pop();
+                    put(at_var(vars, to), n);
+                }
+                FastOp::Index1 => {
+                    let Some(n) = on_two(stack, element1) else {
+                        break;
+                    };
+                    stack.pop();
+                    put(top(stack), n);
+                }
+                FastOp::Index2 => {
+                    let n = stack.len();
+                    let Some(v) = element2(&stack[n - 3], &stack[n - 2], &stack[n - 1]) else {
+                        break;
+                    };
+                    stack.truncate(n - 2);
+                    put(top(stack), v);
+                }
+                FastOp::Index1Vars { base, i } => {
+                    let Some(n) = element1(get(vars, base), get(vars, i)) else {
+                        break;
+                    };
+                    push_num(stack, n);
+                }
+                FastOp::Index1Store { base, i, to } => {
+                    let Some(n) = element1(get(vars, base), get(vars, i)) else {
+                        break;
+                    };
+                    put(at_var(vars, to), n);
+                }
+                FastOp::StoreIndex1 => {
+                    let n = stack.len();
+                    if !set_element1(&stack[n - 2], &stack[n - 1], &stack[n - 3]) {
+                        break;
+                    }
+                    stack.truncate(n - 3);
+                }
+                FastOp::StoreIndex2 => {
+                    let n = stack.len();
+                    let (base, i, j) = (&stack[n - 3], &stack[n - 2], &stack[n - 1]);
+                    if !set_element2(base, i, j, &stack[n - 4]) {
+                        break;
+                    }
+                    stack.truncate(n - 4);
+                }
+                FastOp::StoreIndex1Vars { base, i } => {
+                    if !set_element1(get(vars, base), get(vars, i), top(stack)) {
+                        break;
+                    }
+                    stack.pop();
+                }
+                FastOp::ForCheck {
+                    var,
+                    to,
+                    step,
+                    exit,
+                } => {
+                    let more = for_continues(get(vars, var), get(vars, to), get(vars, step));
+                    let Some(more) = more else { break };
+                    if !more {
+                        next = exit as usize;
+                    }
+                }
+                FastOp::ForNext {
+                    var,
+                    step,
+                    step_slot,
+                    to,
+                    to_slot,
+                    exit,
+                } => {
+                    let n =
+                        ops::binary_numbers(BinaryOp::Add, get(vars, var), get(vars, step_slot));
+                    let Some(n) = n else { break };
+                    put(at_var(vars, var), n);
+                    copy_var(vars, step, step_slot);
+                    copy_var(vars, to, to_slot);
+                    let more =
+                        for_continues(get(vars, var), get(vars, to_slot), get(vars, step_slot));
+                    let Some(more) = more else {
+                        // All but the test has run, and that must not.
+                        pc += size - FOR_TEST_LEN;
+                        left -= len - FOR_TEST_LEN as u64;
+                        break;
+                    };
+                    if !more {
+                        next = exit as usize;
+                    }
+                }
+            }
+            pc = next;
+            left -= len;
+        }
+        *at = pc;
+        *executed = stop - left;
     }
 
     /// Ends the program with an error at instruction `pc`.
@@ -2506,6 +2649,212 @@ impl Vm {
         self.push_results(results, frame.want)?;
         self.switch_to(frame.caller, host);
         Ok(frame.return_pc)
+    }
+}
+
+/// The variables [`Vm::run_fast`] reads and writes, by [`Var::table`].
+type Vars<'a> = [&'a mut [Value]; 2];
+
+#[inline(always)]
+fn get<'a>(vars: &'a Vars, var: Var) -> &'a Value {
+    &vars[var.table()][var.index()]
+}
+
+#[inline(always)]
+fn at_var<'a>(vars: &'a mut Vars, var: Var) -> &'a mut Value {
+    &mut vars[var.table()][var.index()]
+}
+
+/// Pushes a number. Pushing a whole [`Value`] made just now would make it first
+/// and then move it, which is what [`Num`] is there to avoid.
+#[inline(always)]
+fn push_num(stack: &mut Vec<Value>, n: Num) {
+    if stack.len() == stack.capacity() {
+        stack.reserve(1);
+    }
+    let len = stack.len();
+    let free = &mut stack.spare_capacity_mut()[0];
+    match n {
+        Num::Int(n) => free.write(Value::Int(n)),
+        Num::Real(x) => free.write(Value::Real(x)),
+    };
+    // SAFETY: the element at `len` was written just above. This is what
+    // `Vec::push` does, without the move: measured at a quarter of the cycles of
+    // the VREAL scene of TPERF, in the wait for a value written in parts to be
+    // read whole.
+    unsafe { stack.set_len(len + 1) };
+}
+
+#[inline(always)]
+fn push_copy(stack: &mut Vec<Value>, value: &Value) {
+    match *value {
+        Value::Int(n) => push_num(stack, Num::Int(n)),
+        Value::Real(x) => push_num(stack, Num::Real(x)),
+        _ => stack.push(value.clone()),
+    }
+}
+
+/// Copies a variable to another.
+#[inline(always)]
+fn copy_var(vars: &mut Vars, from: Var, to: Var) {
+    match *get(vars, from) {
+        Value::Int(n) => put(at_var(vars, to), Num::Int(n)),
+        Value::Real(x) => put(at_var(vars, to), Num::Real(x)),
+        ref value => {
+            let value = value.clone();
+            *at_var(vars, to) = value;
+        }
+    }
+}
+
+/// Puts a number where a value was.
+#[inline(always)]
+fn put(place: &mut Value, n: Num) {
+    match n {
+        Num::Int(n) => *place = Value::Int(n),
+        Num::Real(x) => *place = Value::Real(x),
+    }
+}
+
+#[inline(always)]
+fn top(stack: &mut [Value]) -> &mut Value {
+    stack.last_mut().expect("compiler keeps the stack balanced")
+}
+
+/// What `f` makes of the two values on top of the stack.
+#[inline(always)]
+fn on_two<T>(stack: &[Value], f: impl FnOnce(&Value, &Value) -> T) -> T {
+    let [.., under, top] = stack else {
+        unreachable!("compiler keeps the stack balanced");
+    };
+    f(under, top)
+}
+
+/// [`Value::is_true`] on a number.
+#[inline(always)]
+fn truth(value: &Value) -> Option<bool> {
+    match *value {
+        Value::Int(n) => Some(n != 0),
+        Value::Real(x) => Some(x != 0.0),
+        _ => None,
+    }
+}
+
+#[inline(always)]
+fn num_truth(n: Num) -> bool {
+    match n {
+        Num::Int(n) => n != 0,
+        Num::Real(x) => x != 0.0,
+    }
+}
+
+/// [`Vm::for_test`] on numbers that cannot fail.
+#[inline(always)]
+fn for_continues(var: &Value, to: &Value, step: &Value) -> Option<bool> {
+    if let (Value::Int(v), Value::Int(t), Value::Int(s)) = (var, to, step) {
+        return Some(if *s >= 0 { v <= t } else { v >= t });
+    }
+    let up = match *step {
+        Value::Int(s) => s >= 0,
+        Value::Real(s) => s >= 0.0,
+        _ => return None,
+    };
+    let order = match up {
+        true => BinaryOp::LessEq,
+        false => BinaryOp::GreaterEq,
+    };
+    ops::binary_numbers(order, var, to).map(num_truth)
+}
+
+/// [`Value::to_int`] on a number in range.
+#[inline(always)]
+fn index_number(value: &Value) -> Option<i32> {
+    match *value {
+        Value::Int(n) => Some(n),
+        Value::Real(x) if x > -2147483649.0 && x < 2147483648.0 => Some(x as i32),
+        _ => None,
+    }
+}
+
+/// An array's number by flat position, which may be outside it. Strings are
+/// left to [`index`].
+#[inline(always)]
+fn element_at(array: &Array, at: usize) -> Option<Num> {
+    match &array.data {
+        ArrayData::Int(v) => v.get(at).map(|n| Num::Int(*n)),
+        ArrayData::Real(v) => v.get(at).map(|x| Num::Real(*x)),
+        ArrayData::Str(_) => None,
+    }
+}
+
+/// What [`index`] gives on one index, when that is a number in an array.
+#[inline(always)]
+fn element1(base: &Value, i: &Value) -> Option<Num> {
+    let Value::Array(a) = base else {
+        return None;
+    };
+    // A negative index goes far beyond any array here.
+    element_at(&a.borrow(), index_number(i)? as u32 as usize)
+}
+
+/// The flat position of two indices, when they are in range; for an array of
+/// another shape, `None`.
+#[inline(always)]
+fn offset2(array: &Array, i: &Value, j: &Value) -> Option<usize> {
+    let &[rows, columns] = array.dims.as_slice() else {
+        return None;
+    };
+    let (i, j) = (
+        index_number(i)? as u32 as usize,
+        index_number(j)? as u32 as usize,
+    );
+    (i < rows && j < columns).then_some(i * columns + j)
+}
+
+/// What [`index`] gives on two indices, when that is a number in an array.
+#[inline(always)]
+fn element2(base: &Value, i: &Value, j: &Value) -> Option<Num> {
+    let Value::Array(a) = base else {
+        return None;
+    };
+    let a = a.borrow();
+    element_at(&a, offset2(&a, i, j)?)
+}
+
+/// [`Array::set`] when it cannot fail. False leaves the element alone.
+#[inline(always)]
+fn set_element(array: &mut Array, at: usize, value: &Value) -> bool {
+    match (&mut array.data, value) {
+        (ArrayData::Int(v), Value::Int(n)) => v.get_mut(at).map(|e| *e = *n).is_some(),
+        (ArrayData::Real(v), Value::Real(x)) => v.get_mut(at).map(|e| *e = *x).is_some(),
+        (ArrayData::Real(v), Value::Int(n)) => v.get_mut(at).map(|e| *e = f64::from(*n)).is_some(),
+        (ArrayData::Int(v), Value::Real(_)) => match index_number(value) {
+            Some(n) => v.get_mut(at).map(|e| *e = n).is_some(),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// [`store_index`] on one index, for numbers in an array's range.
+#[inline(always)]
+fn set_element1(base: &Value, i: &Value, value: &Value) -> bool {
+    let (Value::Array(a), Some(i)) = (base, index_number(i)) else {
+        return false;
+    };
+    set_element(&mut a.borrow_mut(), i as u32 as usize, value)
+}
+
+/// [`store_index`] on two indices, for numbers in an array's range.
+#[inline(always)]
+fn set_element2(base: &Value, i: &Value, j: &Value, value: &Value) -> bool {
+    let Value::Array(a) = base else {
+        return false;
+    };
+    let mut a = a.borrow_mut();
+    match offset2(&a, i, j) {
+        Some(at) => set_element(&mut a, at, value),
+        None => false,
     }
 }
 

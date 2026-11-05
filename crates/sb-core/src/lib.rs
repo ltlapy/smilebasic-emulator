@@ -9,6 +9,7 @@ pub mod bytecode;
 pub mod compiler;
 pub mod constants;
 pub mod error;
+pub mod fuse;
 pub mod host;
 pub mod inspect;
 pub mod lexer;

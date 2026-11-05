@@ -30,6 +30,25 @@ pub enum Value {
     Array(ArrayRef),
 }
 
+/// A value known to be a number. A [`Value`] made in parts and then moved whole
+/// makes the processor wait, so the interpreter's quickest paths carry this and
+/// write it in parts where it goes.
+#[derive(Clone, Copy, Debug)]
+pub enum Num {
+    Int(i32),
+    Real(f64),
+}
+
+impl From<Num> for Value {
+    #[inline(always)]
+    fn from(n: Num) -> Value {
+        match n {
+            Num::Int(n) => Value::Int(n),
+            Num::Real(x) => Value::Real(x),
+        }
+    }
+}
+
 /// Element type of an array, which is fixed when the array is created.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElemType {
@@ -124,11 +143,11 @@ impl Array {
 /// Real to integer, dropping the fraction as INT() does.
 /// Values outside the 32-bit range raise Overflow.
 pub fn real_to_int(x: f64) -> Result<i32> {
-    let t = x.trunc();
-    if t.is_nan() || t < i32::MIN as f64 || t > i32::MAX as f64 {
-        return Err(ErrorKind::Overflow.into());
+    // Exactly what truncates into the range; a NaN fails both.
+    if x > -2147483649.0 && x < 2147483648.0 {
+        return Ok(x as i32);
     }
-    Ok(t as i32)
+    Err(ErrorKind::Overflow.into())
 }
 
 impl Value {

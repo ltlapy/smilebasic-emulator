@@ -64,6 +64,7 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> R
             c.def(def)?;
         }
     }
+    crate::fuse::fuse(&mut c.out);
     Ok(c.out)
 }
 

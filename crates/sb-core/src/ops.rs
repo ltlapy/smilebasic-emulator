@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::error::{ErrorKind, Result};
 use crate::memory;
-use crate::value::{StrRef, Value, new_str};
+use crate::value::{Num, StrRef, Value, new_str};
 
 fn bool_value(b: bool) -> Value {
     Value::Int(i32::from(b))
@@ -93,6 +93,49 @@ pub fn binary_ints(op: BinaryOp, a: i32, b: i32) -> Option<i32> {
         B::And => Some(a & b),
         B::Or => Some(a | b),
         B::Xor => Some(a ^ b),
+        B::IntDiv if b != 0 => Some(a.wrapping_div(b)),
+        B::Mod if b != 0 => Some(a.wrapping_rem(b)),
+        B::Shl => Some(a.wrapping_shl(shift_count(b))),
+        B::Shr => Some(a.wrapping_shr(shift_count(b))),
+        B::UShr => Some((a as u32).wrapping_shr(shift_count(b)) as i32),
+        _ => None,
+    }
+}
+
+/// What [`binary`] gives for the operators programs mostly use on two reals.
+/// `None` leaves it to [`binary`].
+#[inline(always)]
+fn binary_reals(op: BinaryOp, a: f64, b: f64) -> Option<Num> {
+    use BinaryOp as B;
+    let bool_num = |b: bool| Num::Int(i32::from(b));
+    Some(match op {
+        B::Add => Num::Real(a + b),
+        B::Sub => Num::Real(a - b),
+        B::Mul => Num::Real(a * b),
+        B::Div if b != 0.0 => Num::Real(a / b),
+        B::Eq => bool_num(a == b),
+        B::NotEq => bool_num(a != b),
+        B::Less => bool_num(a < b),
+        B::LessEq => bool_num(a <= b),
+        B::Greater => bool_num(a > b),
+        B::GreaterEq => bool_num(a >= b),
+        _ => return None,
+    })
+}
+
+/// What [`binary`] gives on two numbers when it cannot fail and is quick to
+/// work out. `None` leaves it to [`binary`], which says what went wrong, if
+/// anything did.
+#[inline(always)]
+pub fn binary_numbers(op: BinaryOp, lhs: &Value, rhs: &Value) -> Option<Num> {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => match binary_ints(op, *a, *b) {
+            Some(n) => Some(Num::Int(n)),
+            None => binary_reals(op, f64::from(*a), f64::from(*b)),
+        },
+        (Value::Real(a), Value::Real(b)) => binary_reals(op, *a, *b),
+        (Value::Int(a), Value::Real(b)) => binary_reals(op, f64::from(*a), *b),
+        (Value::Real(a), Value::Int(b)) => binary_reals(op, *a, f64::from(*b)),
         _ => None,
     }
 }
@@ -183,6 +226,8 @@ mod tests {
             B::IntDiv,
             B::Mod,
             B::Shl,
+            B::Shr,
+            B::UShr,
             B::Eq,
             B::NotEq,
             B::Less,
@@ -216,6 +261,77 @@ mod tests {
                             Ok(Value::Int(m)) => assert_eq!(n, m, "{op:?} {a} {b}"),
                             other => panic!("{op:?} {a} {b}: {n} and {other:?}"),
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The quick path on numbers must answer as the full one does, whatever the
+    /// operator, or leave it to it.
+    #[test]
+    fn binary_numbers_agrees_with_binary() {
+        use BinaryOp as B;
+        let ops = [
+            B::Add,
+            B::Sub,
+            B::Mul,
+            B::Div,
+            B::IntDiv,
+            B::Mod,
+            B::Shl,
+            B::Shr,
+            B::UShr,
+            B::RotL,
+            B::RotR,
+            B::And,
+            B::Or,
+            B::Xor,
+            B::Eq,
+            B::NotEq,
+            B::Less,
+            B::LessEq,
+            B::Greater,
+            B::GreaterEq,
+            B::LogicalAnd,
+            B::LogicalOr,
+        ];
+        let values = [
+            Value::Int(i32::MIN),
+            Value::Int(-1),
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(3),
+            Value::Int(46341),
+            Value::Int(i32::MAX),
+            Value::Real(0.0),
+            Value::Real(-0.0),
+            Value::Real(0.5),
+            Value::Real(-1.5),
+            Value::Real(3.0),
+            Value::Real(1e300),
+            Value::Real(2147483648.0),
+            Value::Real(f64::INFINITY),
+            Value::Real(f64::NEG_INFINITY),
+            Value::Real(f64::NAN),
+        ];
+        let same = |a: &Value, b: &Value| match (a, b) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Real(a), Value::Real(b)) => {
+                a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
+            }
+            _ => false,
+        };
+        for op in ops {
+            for a in &values {
+                for b in &values {
+                    if let Some(quick) = binary_numbers(op, a, b) {
+                        let quick = Value::from(quick);
+                        let full = binary(op, a, b).expect("the quick path does not fail");
+                        assert!(
+                            same(&quick, &full),
+                            "{op:?} {a:?} {b:?}: {quick:?} {full:?}"
+                        );
                     }
                 }
             }

@@ -300,6 +300,10 @@ pub struct DefInfo {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Compiled {
     pub code: Vec<Op>,
+    /// The same code in larger steps, by address: see [`crate::fuse`].
+    pub fast: Vec<crate::fuse::Fast>,
+    /// The numbers `fast` reads, which the VM keeps after the globals.
+    pub constants: Vec<Literal>,
     /// Source line of each instruction.
     pub lines: Vec<u32>,
     /// Column of the statement each instruction belongs to.
