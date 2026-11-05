@@ -10,8 +10,9 @@ TEST and TTEST numbers name check programs kept outside the repository;
 test as evidence, and says "on a Switch 2" or "on Ryujinx" where the machine
 matters. A real Switch outranks Ryujinx where the text says so.
 
-TEST62 and TEST63 ran on 4.4.9 on a Switch 2; most of what they show had been
-read in SmileBASIC 4 first. "By SmileBASIC 4" means expected of SmileBASIC 4. "(Not yet seen on hardware.)" marks what was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
+TEST62 and TEST63 ran on 4.4.9 on a Switch 2. What TEST62 shows had been read in
+SmileBASIC 4 first, and so had most of what TEST63 shows. "By SmileBASIC 4" means expected of SmileBASIC 4. "(Not yet seen on hardware.)" marks what
+was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 
 ## Contents
 
@@ -179,9 +180,9 @@ read in SmileBASIC 4 first. "By SmileBASIC 4" means expected of SmileBASIC 4. "(
   | A command with no arguments | 43178 |
   | A function with none, or a command with one | 32383 |
   | A function with one | 25906 |
-  | One argument and one `VAR` | 21589 |
+  | A function with one argument and one `VAR` | 21589 |
   | A function with three | 18504 |
-  | One argument and four `VAR`s | 14392 |
+  | A function with one argument and four `VAR`s | 14392 |
   | `GOSUB` | 259069 |
 
   `RESTORE "PUSH"` went past 172672 but not 172736, at 1.5 slots each
@@ -211,7 +212,7 @@ read in SmileBASIC 4 first. "By SmileBASIC 4" means expected of SmileBASIC 4. "(
   (`?Redo from start`) for the same reason.
 - `LOG(0)` and `ASIN(2)` are `Out of range (LOG:1)` and `(ASIN:1)` (TEST62).
 - `SQR` below 0 and `ACOS` past -1 to 1 are `Out of range` on their argument, as
-  `LOG` and `ASIN` are. (Not yet seen on hardware.)
+  TEST62 saw for `LOG` and `ASIN`. (Not yet seen on hardware.)
 
 ### `RGB`, `RGBF` and `HSV`
 
@@ -262,7 +263,7 @@ read in SmileBASIC 4 first. "By SmileBASIC 4" means expected of SmileBASIC 4. "(
     `%1024F` are `String is too long (FORMAT$:2)` (TEST58): it
     needs one character of room more than it gives.
 - `%S`'s precision only limits the string, so `%.2000S` of a short string is
-  fine.
+  fine (TEST57).
 - `%05S` pads with zeros, `[00ABC]`, and with `-` it pads spaces on the right
   (TEST57).
 - `%D`'s precision is the least number of digits (TEST58). Where the precision
@@ -282,7 +283,7 @@ read in SmileBASIC 4 first. "By SmileBASIC 4" means expected of SmileBASIC 4. "(
 
 ### Arrays
 
-- `DIM` with an empty size works only for one dimension: `DIM A[0]` is fine, but
+- `DIM` with a size of 0 works only for one dimension: `DIM A[0]` is fine, but
   `DIM A[0,0]` and `DIM A[0,3]` are `Subscript out of range`.
 - An array holds nothing (`TYPEOF` 0) until its `DIM` runs, as when a DEF reads
   it before.
@@ -330,7 +331,7 @@ read in SmileBASIC 4 first. "By SmileBASIC 4" means expected of SmileBASIC 4. "(
     3,0,0,2 and E=1.
 - `RINGCOPY`'s destination offset wraps round with a floored modulo, negative
   too: `RINGCOPY A,-1,B OUT E` on `A[4]` and B=1,2,3 leaves 2,3,0,1 and E=2.
-  `OUT` is (start + count) modulo the length.
+  `OUT` is (start + count) modulo the length (TEST57).
 
 ### `SPVAR`, `TVAR` and `INC`
 
@@ -369,9 +370,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `RESTORE @LABEL` to a label that is not there is `Undefined label` only when
   it runs.
 - `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack underflow`.
-- `RESTORE "PUSH"` keeps up to a thousand places. A subroutine that keeps a
-  place must take it back before `RETURN`, which is otherwise
-  `Use RESTORE POP before RETURN`.
+- `RESTORE "PUSH"` can keep a thousand places, and many more: see the stack
+  under `DEF`, `OUT` and `RETURN`. A subroutine that keeps a place must take it
+  back before `RETURN`, which is otherwise `Use RESTORE POP before RETURN`.
 
 ## Timing
 
@@ -519,7 +520,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `PUSHKEY 8` is not Backspace but a character, and goes into a line as a cell
   of code 8; `PUSHKEY 9` the same (TEST60).
 - `PUSHKEY` holds the program for a frame, without touching `VSYNC`'s count: ten
-  of them take ten frames.
+  of them take ten frames (TEST60).
 - `PUSHKEY` of a string of 64 characters is `String is too long (PUSHKEY:1)`; 63
   goes (TEST60).
 - `PUSHKEY &H10FFF` goes and `&H11001` is `Out of range` (TEST62).
@@ -530,7 +531,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   second, which `INKEY$` and the line being typed read.
   - Five `PUSHKEY`s of 63 in a row, with 315 keys, leave 128 to read: keys 32 to
     95, 124 to 155 and 187 to 218. Keys 219 on come in the frames after, with
-    the first buffer's rest.
+    the first buffer's rest (TEST60).
   - At the prompt, five `PUSHKEY`s of 60 lose keys the same way (TEST60).
 - Typed keys wait in the buffer until something reads them:
   `WAIT 180:?INKEY$();INKEY$();INKEY$()` shows what was typed during the wait.
@@ -559,7 +560,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   setting in SmileBASIC 4. Direct mode's line does select, cut, copy and
   paste.
 - `INPUT A$`, ABCD, Shift+Left twice, X gives `ABXCD`: on `INPUT`'s line Shift
-  only moves (TEST60).
+  only moves.
 - Tab on a line types one space (TEST60).
 - A selection stays after Enter (TEST60).
 - Copy on a line ends the selection and keeps the text, so what is typed next
@@ -589,9 +590,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - The hint bar at the bottom covers more rows on a screen whose rows are 16
   display pixels high or less (of the 720): 2 rows stay free at 360 rows of
   pixels, 3 at 720 with 8x8 characters. (Not yet seen on hardware.)
-- `INSPECT` scrolls the same way as it prints, which has been seen (`TEST19`:
-  the last row stays free, on the usual screen). The rest of this scrolling
-  comes from the code.
+- `INSPECT` scrolls as Enter does while it prints, keeping the cursor above the
+  last row, which has been seen (`TEST19`, on the usual screen). The rest of
+  this scrolling comes from the code.
 - Enter on an empty line of direct mode prints `OK` (TEST60).
 - Typing over a selection in overwrite mode writes the character and moves on
   first, then deletes the selection: one made rightwards takes the character
@@ -615,7 +616,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   at 3 ahead, which is weak support; the code says 20.
 - Insert toggles overwriting on `INPUT`'s line, and the cursor is then a block
   over the whole cell: 24 wide at scale 3 (TEST56).
-- The cursor's scale is the text's, `TSCALE` and `LMATRIX` included.
+- The cursor's scale is the text's, `TSCALE` and `LMATRIX` included (TEST56).
 - The cursor is drawn right after its own screen's cells, under a sprite in
   front, and it replaces what its layer holds, alpha too. As a layer's alpha is
   what shows through, on a composed layer it adds its white to the frame rather
@@ -681,12 +682,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `TCOPY` takes rectangles of any size, down to the largest coordinates, and
   copies only what is on the screens (TEST51).
 - `TSCREEN` of 65536 cells a side is `Out of range` (TEST51).
-- `TLOAD`, `TUPDATE` and `TCOPY` move cells raw: all 16 attribute bits come back
-  from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, and the bits other than bit 7
-  have no effect either (TEST56).
 - Bit 23 of a value for `TLOAD` or `TUPDATE` (attribute bit 7) does nothing on
   text screens 0 to 3 (TEST56). A plain glyph shows, under `TCOLOR` and `TBLEND`
   too, a space and an empty cell show nothing, and `TCOPY` carries it the same.
+- `TLOAD`, `TUPDATE` and `TCOPY` move cells raw: all 16 attribute bits come back
+  from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, and on text screens 0 to 3 the
+  bits other than bit 7 have no effect either (TEST56).
 - Attribute bit 7 on the console should invert a cell, as only the console has a
   program with that per-cell flag. (Not yet seen on hardware.)
   - The cell's color is multiplied by 1 minus the glyph's alpha, and then, as
@@ -704,7 +705,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   cell off the screen for `TSAVE`: a code written there through `TARRAY` alone
   has color 0 and doesn't show. (Not yet seen on hardware.)
 - `TLOAD`'s width and height have to be 1 or more, and `GLOAD`'s 0 or more, as
-  for `TSAVE` and `GSAVE`. (Not yet seen on hardware.)
+  TEST62 saw for `TSAVE` and `GSAVE`. (Not yet seen on hardware.)
 - `TSAVE`'s width and height have to be 1 or more: 10x0 and 10x-1 are
   `Out of range (TSAVE:5)`, and 5000x1 goes, reaching off the screen. `GSAVE`'s
   -1 is `Out of range (GSAVE:4)`. (TEST62)
@@ -744,7 +745,6 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `SPHITSP` with a reversed range searches it from the lower number.
 - `SPHITSP` of a sprite that is not set is -1, and `SPHITSP(id,other)` with
   `other` not set is 0; neither is an error.
-- `SPFUNC` takes a sprite that is not set.
 
 ### `SPFUNC` and `CALL SPRITE`
 
@@ -753,6 +753,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `SPFUNC` gets it called. Afterwards `CALLIDX()` is 4096 (5 after `CALL TEXT`).
 - A callback `SPFUNC` names is a DEF or label of the slot `SPFUNC` ran in, or a
   `COMMON DEF`; `CALL SPRITE` finds it from any slot.
+- `SPFUNC` takes a sprite that is not set.
 
 ### `SPCHR`
 
@@ -814,8 +815,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
       end.
     - A row has the columns from where the last row ended to the one before
       where this one ends. Level edges have none of their own.
-    - Corners off the page are not clamped. `GTRI 0,0,1,2,10,1` fills rows 0-4,
-      1-10 and 1-6.
+    - Corners off the page are not clamped.
+    - For example, `GTRI 0,0,1,2,10,1` fills rows 0-4, 1-10 and 1-6.
     - A triangle whose corners lie on one line is that line, drawn once.
   - `GBOX` draws the top and bottom rows, then the sides from the top row to the
     row above the bottom: with `#G_ALPHA` the two top corners are blended twice
@@ -859,8 +860,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   it (none if the glyph starts at its first column) to its last drawn column. It
   then moves on that many pixels plus the spacing (1 when left out). A blank
   character is a quarter of the font size wide.
-- `GPUTCHRP` in the 16-pixel font uses the width font.map holds in bits 7-15 of
-  each code's second u16.
+- In the 16-pixel font, `GPUTCHRP`'s width is the one font.map holds in bits
+  7-15 of each code's second u16.
 - `GPUTCHRP`'s function form's width scales the spacing with the characters:
   `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
 
@@ -1089,7 +1090,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   (`N60`), macro names with `_` and macros used inside a macro's definition
   (`{X=CDE}{Y={X}F}`).
 - `CHKMML` gives -1 for 16 million characters of notes, and for macros nested
-  six and seven levels deep that would come to 10^7 and 10^8 characters.
+  six and seven levels deep that would come to 10^7 and 10^8 characters
+  (TEST51).
 - `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even the stop key
   does nothing (TEST51).
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
@@ -1191,7 +1193,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     plays the sine's one cycle and then the rest of the square on each pass,
     near the square's level (2981 to 3023 against 3063) with twice the
     crossings.
-- `WAVSETA` with an empty array is `Illegal function call`.
+- `WAVSETA` with an empty array is `Illegal function call` (TEST51, TEST52).
 - `WAVSETA`'s arguments after the array can be left off the end, but one left
   out in between is `Type mismatch` with its number, in both forms and ahead of
   the check for an empty array: `WAVSETA 224,0,0,0,0,A%,,0,15` is `(WAVSETA:7)`,
@@ -1344,8 +1346,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 - `FFT` does not scale. `IFFT` divides by the length, and its result of 1,2,3,4
   prints exact zeros.
-- `FFT` of a length that is not a power of two is `Illegal function call`, for
-  `FFTWFN` too.
+- `FFT` and `IFFT` of a length that is not a power of two are
+  `Illegal function call`, and so is `FFTWFN`.
 - `FFTWFN` gives the periodic windows, dividing by the length: Hamming of 8 is
   .080 .215 .540 .865 1 .865 .540 .215.
 - `BIQUAD` keeps each channel's last two inputs and outputs in the coefficients'
@@ -1412,9 +1414,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `STOP` with a message prints 255 characters of it (TEST62).
 - `CONT` goes on, against the manual, after a program has been edited, even with
   lines added.
-- `CONT` goes on, against the manual, after the + button stopped it at `INPUT`:
-  it goes on with the next statement, and `User break on` follows the prompt on
-  the same line.
+- `CONT` goes on, against the manual, after the + button stopped a program at
+  `INPUT`: it goes on with the next statement, and `User break on` follows the
+  prompt on the same line.
 - `CONT` after an error is `Can't continue`. In a program it is a `Syntax error`
   when it runs.
 - `BACKTRACE` lists, innermost first, the line it stopped on and the line of
@@ -1471,8 +1473,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `PRGEDIT slot,-1` past it, where `PRGGET$` is empty.
 - `PRGSEEK 1` from the last line goes past it and gives 0.
 - `PRGDEL` at the end of a slot deletes back towards its start.
-- `PRGSET` on an empty line in the middle replaces it. (SmileBASIC Debugger's
-  model of these commands agrees with all of this.)
+- `PRGSET` on an empty line in the middle replaces it.
+- SmileBASIC Debugger's model of `PRGEDIT`, `PRGSEEK`, `PRGDEL` and `PRGSET`
+  agrees with these four bullets.
 - `PRGNAME$()` and `PRGSIZE()` at the prompt mean slot 0, whichever slot
   `PRGEDIT` is on. (TEST63)
 - `PRGSET`, `PRGINS` and `PRGDEL` changes do not count as unsaved: `LOAD` over
@@ -1560,7 +1563,7 @@ TTEST36.
   (TTEST37, TTEST38). TTEST37's ten frames after `ENVFOCUS 0` were no frames at
   all: its `VSYNC 10` came behind and went straight on.
 - The interpreter that gets the focus is framed for a moment by a yellow
-  (255,255,0) border:
+  (255,255,0) border (a screen recording at 24 frames a second):
   - The border is three display pixels on the edge of its screen, one outside
     and two inside, with a black band two pixels wide inside that.
   - The subprogram's frame is its XSUBSCREEN rectangle, the main interpreter's
@@ -1568,8 +1571,7 @@ TTEST36.
     subprogram's end included.
   - Both show whole for about 0.23 seconds and then fade out evenly over about
     0.25 seconds, drawn over what is under them.
-  - A frame for the other side, coming before that, takes its place at once (a
-    screen recording at 24 frames a second).
+  - A frame for the other side, coming before that, takes its place at once.
 
 ### A subprogram's screen
 
@@ -1586,7 +1588,7 @@ TTEST36.
   keeps its aspect ratio in `XSUBSCREEN`'s rectangle: 480x272 in mode 1 on the
   whole display is 2.647 times, starting at X 4 (TEST56).
 - A screen wider than its rectangle gets bars above and below: 400x240 in a
-  rectangle of 600x600 at 60 starts at Y 180.
+  rectangle of 600x600 at 60 starts at Y 180 (TEST60).
 - Mode 2 is smoothed the same in a subprogram (TEST60).
 - The bars take `BACKCOLOR`'s color plus the display times 1 minus its alpha,
   unless the alpha is 0: seen over a main screen that was not cleared, for
@@ -1788,8 +1790,8 @@ TTEST36.
   `String is too long`.
 - `XSUBSCREEN` and the undocumented `UISTATE` are there for the main program
   too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
-- `UISTATE(2)` read 648 after a clean start of SmileBASIC, and 0, 1, 3, 4, 5
-  read 0. (TEST63)
+- `UISTATE(2)` read 648 in direct mode after TEST63's earlier parts had run, and
+  0, 1, 3, 4, 5 read 0. (TEST63)
 - `UISTATE(5)` is 0, and `UISTATE(6)` `Out of range (UISTATE:1)`. (TEST62)
 - `PERFEND()` gives microseconds; `PERFBEGIN` and `PERFEND` show no gauge on
   their own. Without a `PERFBEGIN`, `PERFEND` counts from when SmileBASIC
