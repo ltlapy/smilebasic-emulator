@@ -536,6 +536,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         }
         let mut ui_editor = apart && ui_on_editor;
         let (out_w, out_h) = canvas.output_size()?;
+        if let Some(b) = &mut bench {
+            b.window_size((out_w, out_h));
+        }
         let (win_w, _) = canvas.window().size();
         let display = display_rect(display_w, display_h, out_w, out_h);
         let shown = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
@@ -2580,8 +2583,9 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             bar_layers[0].copy(&mut canvas, (0, 0), display, display_w)?;
         }
         lap!(Overlays);
-        if let Some(b) = &bench {
+        if let Some(b) = &mut bench {
             b.shoot(&canvas, "main");
+            b.measure(&canvas);
         }
         let vsync = main_presents.vsync();
         let presented = main_presents.present(&mut canvas, bench.as_ref());
@@ -3606,6 +3610,7 @@ fn frame_texture<'a>(
     };
     // SAFETY: the renderer pointer is valid for the lifetime of `canvas`.
     unsafe { SDL_SetDefaultTextureScaleMode(canvas.raw(), scale) };
+    bench::made();
     Ok(creator.create_texture_streaming(PixelFormat::ARGB8888, w, h)?)
 }
 
@@ -3645,6 +3650,7 @@ impl<'a> SmartFrame<'a> {
             let mut fresh = false;
             if self.doubled.as_ref().is_none_or(|(_, s)| *s != size) {
                 self.doubled = None;
+                bench::made();
                 match creator.create_texture_target(PixelFormat::ARGB8888, size.0, size.1) {
                     Ok(mut made) => {
                         made.set_scale_mode(ScaleMode::Linear);
@@ -3669,6 +3675,7 @@ impl<'a> SmartFrame<'a> {
         let shown = (rect.w.ceil().max(1.0) as u32, rect.h.ceil().max(1.0) as u32);
         let fresh = self.scaled.as_ref().is_none_or(|(_, s)| *s != shown);
         if fresh {
+            bench::made();
             let mut made =
                 creator.create_texture_streaming(PixelFormat::ARGB8888, shown.0, shown.1)?;
             made.set_scale_mode(ScaleMode::Nearest);

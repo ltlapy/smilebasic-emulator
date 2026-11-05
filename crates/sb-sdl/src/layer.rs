@@ -80,6 +80,7 @@ impl<'a> Layer<'a> {
         let texture = match &mut self.texture {
             Some(texture) => texture,
             None => {
+                crate::bench::made();
                 let mut made =
                     creator.create_texture_streaming(PixelFormat::ARGB8888, size.0, size.1)?;
                 made.set_scale_mode(ScaleMode::Nearest);

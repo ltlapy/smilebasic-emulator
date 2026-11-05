@@ -19,6 +19,12 @@
 //! - `panel`: shows the debugger's panel with it;
 //! - `shot=PATH`: saves the last frame timed of each window shown, as
 //!   `PATH-main.pam` and `PATH-editor.pam`, to compare drawings;
+//! - `luma=PATH`: reads each frame timed as it goes to the window, writes
+//!   its frame number and mean brightness (0 to 255) to PATH, and reports
+//!   the frames darker than both of their neighbours, as a flicker is;
+//! - `log=PATH`: writes each frame timed to PATH: its number, the window's size
+//!   in pixels, the stages in microseconds, the bytes uploaded and the textures
+//!   made;
 //! - `menu`, `help`, `about`, `colors`, `toast`: shows the menu bar (as
 //!   F8 does), the help beside the editor, the About dialog, the editor
 //!   colors window, or a notice, once the rest is set up;
@@ -53,6 +59,8 @@ use sdl3::video::Window;
 
 /// Bytes given to textures since the frame began.
 static UPLOADED: AtomicU64 = AtomicU64::new(0);
+/// Textures made since the frame began.
+static MADE: AtomicU64 = AtomicU64::new(0);
 
 /// Whether presents are to wait for vsync: not if `SB_UI_BENCH` says so.
 pub fn wants_vsync() -> bool {
@@ -62,6 +70,11 @@ pub fn wants_vsync() -> bool {
 /// Counts `bytes` given to a texture.
 pub fn uploaded(bytes: usize) {
     UPLOADED.fetch_add(bytes as u64, Ordering::Relaxed);
+}
+
+/// Counts a texture made.
+pub fn made() {
+    MADE.fetch_add(1, Ordering::Relaxed);
 }
 
 /// The parts of a frame's drawing that are timed.
@@ -86,6 +99,19 @@ const NAMES: [&str; STAGES] = ["screen", "editor", "gather", "overlays", "presen
 /// timing begins after the last step of setting up.
 const SETTLE: u32 = 60;
 
+/// How much darker than both neighbours a frame is, out of 255, to count as a dip.
+const LEAST_DIP: f32 = 0.5;
+
+/// The frames at least `least` darker than the frames either side of them, with
+/// how much.
+fn single_frame_dips(lumas: &[f32], least: f32) -> Vec<(usize, f32)> {
+    let around = lumas.windows(3).enumerate();
+    around
+        .map(|(i, w)| (i + 1, w[0].min(w[2]) - w[1]))
+        .filter(|&(_, depth)| depth >= least)
+        .collect()
+}
+
 #[derive(Default)]
 pub struct Bench {
     frames: u32,
@@ -98,6 +124,15 @@ pub struct Bench {
     apart: bool,
     panel: bool,
     shot: Option<String>,
+    /// Where the frames' brightness goes, and what it was so far: the frame's
+    /// number and its mean brightness.
+    luma: Option<String>,
+    lumas: Vec<(u32, f32)>,
+    /// Where each frame's line goes, and the lines so far.
+    log: Option<String>,
+    lines: Vec<String>,
+    /// The window's size in pixels this frame.
+    size: (u32, u32),
     /// Added to each present that waits for vsync.
     slow: Duration,
     occluded: bool,
@@ -135,6 +170,8 @@ impl Bench {
                 Some(("frames", n)) => bench.frames = n.parse().unwrap_or(600),
                 Some(("settle", n)) => bench.settle = n.parse().unwrap_or(SETTLE),
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
+                Some(("luma", path)) => bench.luma = Some(path.to_string()),
+                Some(("log", path)) => bench.log = Some(path.to_string()),
                 Some(("type", text)) => bench.typed = Some(text.to_string()),
                 Some(("at", what)) => {
                     if let Some((frame, what)) = what.split_once(':') {
@@ -202,12 +239,20 @@ impl Bench {
             }
         }
         if self.frame >= set_up + self.settle && self.last.is_some() {
-            self.timed
-                .push((self.current, UPLOADED.load(Ordering::Relaxed)));
+            let uploaded = UPLOADED.load(Ordering::Relaxed);
+            self.timed.push((self.current, uploaded));
+            if self.log.is_some() {
+                let stages = self.current.map(|t| t.as_micros().to_string()).join(" ");
+                let made = MADE.load(Ordering::Relaxed);
+                let (frame, (w, h)) = (self.frame, self.size);
+                self.lines
+                    .push(format!("{frame} {w} {h} {stages} {uploaded} {made}"));
+            }
         }
         self.frame += 1;
         self.current = [Duration::ZERO; STAGES];
         UPLOADED.store(0, Ordering::Relaxed);
+        MADE.store(0, Ordering::Relaxed);
         self.last = (self.frame > set_up + self.settle).then(Instant::now);
         if self.last.is_some() && self.began.is_none() {
             self.began = self.last;
@@ -231,6 +276,11 @@ impl Bench {
             Some((_, now)) if self.began.is_some() => *now = stats,
             _ => self.sound = Some((stats, stats)),
         }
+    }
+
+    /// Notes the window's size in pixels this frame.
+    pub fn window_size(&mut self, size: (u32, u32)) {
+        self.size = size;
     }
 
     /// Whether the main window is to count as covered.
@@ -276,6 +326,32 @@ impl Bench {
         }
     }
 
+    /// Notes how bright the frame in `canvas` is, before it is presented.
+    pub fn measure(&mut self, canvas: &Canvas<Window>) {
+        if self.luma.is_none() || self.last.is_none() {
+            return;
+        }
+        let shot = canvas
+            .read_pixels(None)
+            .and_then(|s| s.convert_format(sdl3::pixels::PixelFormat::ABGR8888));
+        let Ok(shot) = shot else {
+            eprintln!("SB_UI_BENCH: could not read the window");
+            return;
+        };
+        let (w, h, pitch) = (shot.width() as usize, shot.height(), shot.pitch() as usize);
+        let mut sum = 0u64;
+        shot.with_lock(|pixels| {
+            for row in pixels.chunks(pitch).take(h as usize) {
+                for p in row[..w * 4].chunks_exact(4) {
+                    // Rec. 601, in fixed point.
+                    sum += 299 * u64::from(p[0]) + 587 * u64::from(p[1]) + 114 * u64::from(p[2]);
+                }
+            }
+        });
+        let luma = sum as f64 / 1000.0 / (w * h as usize).max(1) as f64;
+        self.lumas.push((self.frame, luma as f32));
+    }
+
     /// What is to happen to the frontend at this frame.
     pub fn due(&self) -> Vec<&str> {
         let due = self.at.iter().filter(|(frame, _)| *frame == self.frame);
@@ -305,11 +381,46 @@ impl Bench {
         }
     }
 
+    /// Writes the brightness of the frames and tells of their dips.
+    fn report_luma(&self) {
+        let Some(path) = &self.luma else {
+            return;
+        };
+        let lines: Vec<String> = (self.lumas.iter())
+            .map(|(frame, luma)| format!("{frame} {luma:.3}"))
+            .collect();
+        if let Err(e) = std::fs::write(path, lines.join("\n") + "\n") {
+            eprintln!("SB_UI_BENCH: {e}");
+        }
+        let lumas: Vec<f32> = self.lumas.iter().map(|&(_, luma)| luma).collect();
+        let dips = single_frame_dips(&lumas, LEAST_DIP);
+        let deepest = dips.iter().map(|&(_, depth)| depth).fold(0.0, f32::max);
+        let mut gaps: Vec<usize> = dips.windows(2).map(|d| d[1].0 - d[0].0).collect();
+        gaps.sort_unstable();
+        let least = lumas.iter().copied().fold(f32::MAX, f32::min);
+        let most = lumas.iter().copied().fold(0.0, f32::max);
+        println!(
+            "luma      {} frames from {least:.2} to {most:.2}; {} dips of a frame, deepest {deepest:.2}, \
+             frames apart: median {}",
+            lumas.len(),
+            dips.len(),
+            gaps.get(gaps.len() / 2).copied().unwrap_or(0),
+        );
+    }
+
     /// Prints each stage's mean, median, 99th percentile and longest
     /// time, the same for their sum without presenting, and the bytes
     /// uploaded.
     pub fn report(&self, renderer: &str) {
         println!("{} frames timed, renderer {renderer}", self.timed.len());
+        self.report_luma();
+        if let Some(path) = &self.log {
+            let head = format!("frame w h {} uploaded made\n", NAMES.join(" "));
+            let text = head + &self.lines.join("\n") + "\n";
+            if let Err(e) = std::fs::write(path, text) {
+                eprintln!("SB_UI_BENCH: {e}");
+            }
+        }
         let line = |name: &str, mut times: Vec<Duration>| {
             if times.is_empty() {
                 return;
@@ -368,5 +479,18 @@ impl Bench {
             bytes as f64 / frames as f64 / 1024.0,
             self.timed.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dip_is_one_frame_darker_than_both_sides() {
+        let lumas = [10.0, 10.0, 8.0, 10.0, 9.0, 8.0, 7.0, 7.0, 10.0, 9.8, 10.0];
+        // Not a slide down, a step, or what is too slight to see.
+        assert_eq!(single_frame_dips(&lumas, 0.5), [(2, 2.0)]);
+        assert_eq!(single_frame_dips(&lumas, 0.1).len(), 2);
     }
 }
