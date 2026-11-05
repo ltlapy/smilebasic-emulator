@@ -150,14 +150,35 @@ What costs what, after this:
   1280x720, whatever they hold, and a color on a layer takes three multiplications
   a channel unless the pixel is like the last, as it mostly is.
 - **Each element** allocates for its grid, about 7% of SPMOVE.
-- **The interpreter** takes about 55 instructions an operation and 24 cycles, with a
-  large share of the samples on moving a 16-byte value just written by its parts.
+- **The interpreter** takes about 20 instructions an operation on numbers, in
+  `crates/sb-core/src/fuse.rs`'s larger steps, with up to 18 of each step on choosing
+  the step. Strings, calls and anything that may fail go one instruction at a time, as
+  they do whenever a debugger, TRACE or a breakpoint is about: about 8 times slower, at
+  about 140 million instructions a second. A call costs a few hundred.
 - **Sound** is small: 16 voices of a bank instrument at 4.8 million instructions a
   frame, reverb 0.4 million more.
 - **Memory:** peak RSS is about 180 MiB, 158 of it from start-up. A sprite is now about
   360 bytes, and free ones are not walked.
 - **Uploading** a frame is a copy of 3.5 MB at 1280x720, 0.4 MB at 400x240. Its cost on
   a slow memory bus was not measured.
+
+The interpreter's own pass, on the same desktop, 100 to 300 frames, one core, start-up
+included, against the commit before it; what they run and the checksums are the same:
+
+| Scene | Instr G, release | Cycles, release | Branch misses | Instr G, dist | Cycles, dist |
+|---|---|---|---|---|---|
+| VINT | 3.71, 1.44 | -72% | 0% | 1.40 | -72% |
+| VREAL | 3.18, 1.52 | -57% | -1% | 1.48 | -59% |
+| VARRAY | 5.15, 2.39 | -66% | 0% | 2.35 | -64% |
+| VDEF | 2.17, 1.52 | -37% | 0% | 1.44 | -42% |
+| VSTR | 1.64, 1.42 | -19% | 0% | 1.36 | -25% |
+| GAME | 10.50, 7.64 | -39% | -26% | 7.21 | -46% |
+| S51_MEDAL4 | 38.88, 31.96 | -37% | -5% | 29.55 | -43% |
+| FINITI | 17.52, 14.78 | -17% | -24% | 14.22 | -28% |
+| NEON_DRIFTWAY | 2.22, 1.58 | -26% | -8% | 1.52 | -29% |
+
+Programs that spend their time drawing change by what the interpreter was of them:
+ELE2020 and BASICDEMO none, RYUSI and SOLIDGUNNER_V 1 to 2% of instructions.
 
 The rest of the options, with what each would give up, are for whoever picks up
 the handheld port. To measure on a device: cross-build `smilebasic-check` for its
