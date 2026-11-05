@@ -145,18 +145,25 @@ What costs what, after this:
   was not tried.
 - **Placing** a turned pixel takes about 15 integer instructions now, in fixed point,
   with the exact sum where it might round the other way (`draw_texels`).
-- **Through a 4x4 matrix**, two divisions a pixel. This is LMATRIX's 81%.
-- **Composed layers** take a clear and a pass over the frame each, 3.5 MB each way at
-  1280x720, whatever they hold, and a color on a layer takes three multiplications
-  a channel unless the pixel is like the last, as it mostly is.
-- **Each element** allocates for its grid, about 7% of SPMOVE.
+- **Through a 4x4 matrix**, one division in 16 pixels: what a pixel reads steps along
+  the curve in fixed point, with its second difference, and only a pixel too near a
+  whole number gets a sum of its own (`Along`).
+- **Composed layers** take a clear and a pass over only the box of what they hold, unless
+  a filter or a 4x4 matrix is at work. A full-frame sprite still means 3.5 MB each way
+  at 1280x720, and a color on a layer takes three multiplications a channel unless the
+  pixel is like the last, as it mostly is.
+- **Text** keeps each screen's characters from frame to frame, up to 4 MiB a screen, for
+  as long as the font page, the TPAGE page and its GSAMPLE, TCOLOR, TBLEND and the size
+  hold. A new color on a character still takes making it.
+- **A collision search** reads an array of boxes, brought up to date for the sprites
+  changed since the last search.
 - **The interpreter** takes about 20 instructions an operation on numbers, in
   `crates/sb-core/src/fuse.rs`'s larger steps, with up to 18 of each step on choosing
   the step. Strings, calls and anything that may fail go one instruction at a time, as
   they do whenever a debugger, TRACE or a breakpoint is about: about 8 times slower, at
   about 140 million instructions a second. A call costs a few hundred.
-- **Sound** is small: 16 voices of a bank instrument at 4.8 million instructions a
-  frame, reverb 0.4 million more.
+- **Sound** is small: 16 voices of a bank instrument at 3.5 million instructions a
+  frame, in runs of samples between envelope steps; reverb 0.4 million more.
 - **Memory:** peak RSS is about 180 MiB, 158 of it from start-up. A sprite is now about
   360 bytes, and free ones are not walked.
 - **Uploading** a frame is a copy of 3.5 MB at 1280x720, 0.4 MB at 400x240. Its cost on
@@ -179,6 +186,40 @@ included, against the commit before it; what they run and the checksums are the 
 
 Programs that spend their time drawing change by what the interpreter was of them:
 ELE2020 and BASICDEMO none, RYUSI and SOLIDGUNNER_V 1 to 2% of instructions.
+
+A second pass, from 28cf171, in the same conditions; pixels and sound the same to the
+bit. Here `SB_BENCH_SOUND` adds a checksum of the sound to a fixed run:
+
+| Scene | Instr G | Cycles change | Cache misses M | Branch misses M |
+|---|---|---|---|---|
+| LMATRIX | 44.2, 32.1 | -33% | 623, 505 | 16.1, 17.4 |
+| LRASTER | 25.3, 19.6 | -32% | 74, 65 | 7.8, 7.3 |
+| TPRINT | 13.3, 8.8 | -29% | 34, 14 | 39.9, 31.2 |
+| SPHIT | 13.1, 11.5 | -21% | 34, 17 | 23.3, 20.1 |
+| SND16 | 1.15, 0.95 | -9% | 0.7, 0.7 | 1.4, 1.4 |
+| SPMOVE | 18.7, 18.3 | -2% | 33, 41 | 6.3, 5.8 |
+| GAME | 10.5, 10.4 | -3% | 22, 22 | 6.9, 6.6 |
+| ELE2020 | 165.6, 164.1 | -3% | 354, 315 | 107.7, 106.0 |
+| SOLIDGUNNER_V | 26.5, 26.2 | -4% | 181, 188 | 17.2, 16.4 |
+| NEON_DRIFTWAY | 297.0, 293.4 | +0.5% | 387, 429 | 218.1, 218.3 |
+
+Seven composed layers of eight 32x32 sprites each, 100 frames: instructions -76%, draw
+1.16 ms to 0.30 ms. TPERF whole: instructions -4.7%, cycles -5%, cache misses -8%.
+
+Tried and left out, measured:
+
+- **The memos on missed branches.** SPANIM's and LCOMP's branch misses come from working
+  out a paint or a blend only when the pixel differs from the last. Without them,
+  SPANIM has branch misses -47% and instructions +28%, LCOMP -66% and +89%, with cycles
+  +126%. An in-order core spends few cycles on a miss and at least one on
+  each instruction, so they stay (inferred for such a core).
+- **Blending plain layers with SSE2**, in lanes with the same sums: instructions -3 to -8%
+  on layer scenes, cycles -1 to -8%, branch misses -9 to -20%. It would be the first
+  `unsafe` outside `sb-sdl` for a gain on x86 alone; NEON was not tried, as no Arm
+  target was available to build for.
+- **Comparing scenes to skip a frame:** a frame is drawn only after a command changed
+  what shows. Of about 1100 frames each in five projects, 0 to 3 had a scene, pages and
+  cells like the last, so a hash would cost every frame for nothing.
 
 The rest of the options, with what each would give up, are for whoever picks up
 the handheld port. To measure on a device: cross-build `smilebasic-check` for its
