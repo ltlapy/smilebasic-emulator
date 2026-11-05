@@ -171,9 +171,12 @@ impl Controls {
             }
         }
         if keys_press_buttons {
-            state.pads[0].buttons |= self
+            let pads = state.pads.iter().fold(0, |bits, p| bits | p.buttons);
+            let keys = self
                 .key_buttons
                 .buttons(|key| keyboard.is_scancode_pressed(key));
+            state.pads[0].buttons |= keys;
+            state.key_pressed_buttons = keys & !pads;
         }
         let held = |m: Mod| u32::from(keymod.intersects(m));
         state.modifiers = held(Mod::LGUIMOD | Mod::RGUIMOD)

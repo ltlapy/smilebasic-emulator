@@ -110,7 +110,11 @@ known.
   presses no button until a second after it stops reading it, so that one
   press doesn't act twice: `KEYBOARD` keeps the key it asks about, and
   `INKEY$` keeps them all. So a game that calls `INKEY$` every frame and
-  takes everything else from `BUTTON` needs a gamepad.
+  takes everything else from `BUTTON` needs a gamepad. Buttons the keyboard
+  presses type nothing for `INKEY$`, as the keys themselves do.
+- Controllers type keys only as SmileBASIC 4's assignment does in every mode:
+  the ones for direct mode and the editor alone (X for the editor or to run) and
+  the key settings of SmileBASIC 4's options are left out.
 - A program that hides the mouse cursor (`SYSPARAM "MOUSECURSOR",0`,
   as programs start) hides the computer's cursor over the window, until
   the menu bar shows; Settings can keep it shown. `MOUSE X,Y` moves the

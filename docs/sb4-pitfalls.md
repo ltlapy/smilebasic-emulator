@@ -328,11 +328,23 @@ have side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   whether Enter or A closed it.
 - A USB keyboard's keys press no controller button: a program that takes
   letters from `INKEY$` and delete from `BUTTON`'s Y types A as any letter.
-- `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16.
+- `BREPEAT` doesn't touch what controllers type for `INKEY$`, below. It starts
+  at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16.
   A held button repeats at its start frame and then every interval plus
   one frames: 20,3 fires at 0, 20, 24, 28...
 - `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14
   to 16). `BUTTON()` without arguments is `Wrong number of arguments`.
+- Controllers type into the same queue as the keyboard, expected of SmileBASIC 4 (4.4.8), the manual agreeing on what it lists. `INKEY$()` gives
+  A `CHR$(13)`, Y `CHR$(8)` and the +Control Pad the arrows, as the manual says,
+  and also what it leaves out: the left stick past 0.3 gives Page Up and Down
+  (`CHR$(17)`, `CHR$(18)`) and Home and End (`CHR$(2)`, `CHR$(3)`), and L or R,
+  which act as Ctrl, with left or right on the pad give `CHR$(2)` and `CHR$(3)`,
+  and with the stick up or down the same two. B types Copy, L or R with B Paste
+  and with Y Delete Line, which `INKEY$` passes over and a line being typed
+  acts on. `INKEY$(1)` drops whatever controllers typed. The first assignment
+  that holds gives the frame's one key; it comes at the press, 25 frames later
+  and then every 3, not by `BREPEAT`. A second input going down meanwhile types
+  nothing until all are let go.
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not
   available`; `TCPIANO` without Toy-Con set up is `Illegal control
   style`. `IRSTATE` starts at 0.

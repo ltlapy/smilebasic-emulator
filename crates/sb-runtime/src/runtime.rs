@@ -716,7 +716,7 @@ fn key_code(key: u16) -> u32 {
 /// What INKEY$ gives for a code, a [`keys`] value or a character; 0 for
 /// nothing, and it then goes on to the next key.
 pub(crate) fn key_value(code: u32) -> u16 {
-    match code {
+    match code & codes::CODE {
         codes::UP => keys::UP,
         codes::DOWN => keys::DOWN,
         codes::LEFT => keys::LEFT,
@@ -1602,7 +1602,16 @@ impl Runtime {
 
     /// Takes the next unread key, for the editor.
     pub(crate) fn next_key(&mut self) -> Option<u16> {
+        self.next_key_of(false)
+    }
+
+    /// Takes the next unread key; `keyboard_only` drops those a controller
+    /// typed on the way to it.
+    fn next_key_of(&mut self, keyboard_only: bool) -> Option<u16> {
         while let Some(code) = self.keys.pop_front() {
+            if keyboard_only && code >= codes::FROM_PAD {
+                continue;
+            }
             match key_value(code) {
                 0 => {}
                 key => return Some(key),
@@ -1795,6 +1804,12 @@ impl Runtime {
     /// Starts a frame: the input it sees, and MAINCNT.
     pub fn begin_frame(&mut self) {
         self.input.latch();
+        // UNVERIFIED: that a controller's key can be read on the frame the
+        // button goes down, and not on the next.
+        if let Some(code) = self.input.pad_key() {
+            self.changed = true;
+            push_key(&mut self.typed, code | codes::FROM_PAD);
+        }
         self.take_typed_keys();
         self.system.frames = self.system.frames.wrapping_add(1);
     }
@@ -2161,11 +2176,11 @@ impl Runtime {
             (Command::Inkey, Want::Value) if args.len() <= 1 => {
                 self.input.polled = true;
                 self.input.keys_read.typed();
-                // TODO: without the flag, controller buttons also count as keys.
-                if let Some(flag) = args.first() {
-                    opt_int(flag)?;
-                }
-                let key = self.next_key();
+                let keyboard_only = match args.first() {
+                    Some(flag) => opt_int(flag)?.is_some_and(|flag| flag != 0),
+                    None => false,
+                };
+                let key = self.next_key_of(keyboard_only);
                 Ok(vec![Value::Str(new_str(key.into_iter().collect()))])
             }
             (Command::Locate, Want::Outs(0)) => {
@@ -2577,6 +2592,7 @@ impl Host for Runtime {
             None => None,
         };
         while let Some(key) = self.keys.pop_front() {
+            let key = key & codes::CODE;
             let console = &mut self.text[CONSOLE];
             let line = self.line.as_mut().expect("checked above");
             // Up and Down stay the history's; Tab takes a word.

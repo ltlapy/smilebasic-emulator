@@ -7,6 +7,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
+use crate::line::codes;
 use crate::runtime::{Command, Runtime, checking, no_form, opt_int};
 
 /// Controllers 1 to 4; controller 0 combines them.
@@ -34,6 +35,63 @@ const PUSHKEY_CODES: u32 = 0x10FFF;
 /// SmileBASIC 4 starts.
 const REPEAT_PADS: (u32, u32) = (20, 3);
 const REPEAT_OTHERS: (u32, u32) = (15, 4);
+
+/// How far a stick goes before it counts as a direction for [`PAD_KEYS`].
+const PAD_KEY_STICK: f64 = 0.3;
+/// A held button's key repeats after this many frames, then every so many.
+const PAD_KEY_REPEAT: (u32, u32) = (25, 3);
+/// #B_L1 and #B_R1, either of which is Ctrl for [`PAD_KEYS`].
+const PAD_KEY_CTRL: u32 = 0b11 << 8;
+/// The keyboard's Ctrl among [`State::modifiers`].
+const MODIFIER_CTRL: u32 = 1 << 2;
+
+/// What a row of [`PAD_KEYS`] looks at.
+#[derive(Clone, Copy)]
+enum PadInput {
+    /// A button's id.
+    Button(u32),
+    /// The left stick pushed that way.
+    StickUp,
+    StickDown,
+    StickLeft,
+    StickRight,
+}
+
+/// The keys the controllers type while a program runs: what SmileBASIC 4's
+/// assignment table gives for any mode. The first row that holds gives the
+/// frame's key, so Ctrl's rows come first. `true`: only with Ctrl.
+const PAD_KEYS: [(PadInput, bool, u32); 17] = {
+    use PadInput::{Button, StickDown, StickLeft, StickRight, StickUp};
+    [
+        (Button(1), true, codes::PASTE),
+        (Button(6), true, codes::HOME),
+        (Button(7), true, codes::END),
+        (StickUp, true, codes::FILE_TOP),
+        (StickDown, true, codes::FILE_END),
+        (Button(2), true, codes::DELETE_LINE),
+        (Button(1), false, codes::COPY),
+        (StickUp, false, codes::PAGE_UP),
+        (Button(2), false, codes::BACKSPACE),
+        (StickDown, false, codes::PAGE_DOWN),
+        (StickLeft, false, codes::HOME),
+        (StickRight, false, codes::END),
+        (Button(4), false, codes::UP),
+        (Button(5), false, codes::DOWN),
+        (Button(3), false, codes::ENTER),
+        (Button(6), false, codes::LEFT),
+        (Button(7), false, codes::RIGHT),
+    ]
+};
+/// The buttons [`PAD_KEYS`] looks at, to go past it when none is down.
+const PAD_KEY_BUTTONS: u32 = 0b1111_1110;
+
+/// The key a held controller input repeats, and how long it has been held.
+#[derive(Clone, Copy, Default)]
+struct PadKeyRepeat {
+    code: u32,
+    frames: u32,
+    repeating: bool,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pad {
@@ -68,6 +126,9 @@ pub struct State {
     pub keys: [u64; 4],
     /// Windows key, Shift, Ctrl and Alt, as KEYBOARD's bits.
     pub modifiers: u32,
+    /// Buttons that are down only because keys press them. They type
+    /// nothing: the keys themselves do.
+    pub key_pressed_buttons: u32,
 }
 
 impl Default for State {
@@ -80,6 +141,7 @@ impl Default for State {
             mouse: Mouse::default(),
             keys: [0; 4],
             modifiers: 0,
+            key_pressed_buttons: 0,
         }
     }
 }
@@ -104,6 +166,39 @@ impl State {
             0 => self.pads.iter().fold(0, |b, p| b | p.buttons),
             n => self.pads[n - 1].buttons,
         }
+    }
+
+    /// The default controller's stick: the one tilted furthest.
+    // UNVERIFIED: that it is the one tilted furthest.
+    fn stick(&self, stick: usize) -> (f64, f64) {
+        (self.pads.iter().map(|p| p.sticks[stick]))
+            .max_by(|a, b| (a.0.hypot(a.1)).total_cmp(&b.0.hypot(b.1)))
+            .unwrap_or_default()
+    }
+
+    /// The first of [`PAD_KEYS`] that holds: the key the controllers ask
+    /// for now, or 0.
+    fn pad_key(&self) -> u32 {
+        let buttons = self.buttons(0) & !self.key_pressed_buttons;
+        let (x, y) = self.stick(0);
+        let stick_moved = x.abs() > PAD_KEY_STICK || y.abs() > PAD_KEY_STICK;
+        if buttons & PAD_KEY_BUTTONS == 0 && !stick_moved {
+            return 0;
+        }
+        let ctrl = buttons & PAD_KEY_CTRL != 0 || self.modifiers & MODIFIER_CTRL != 0;
+        for (input, needs_ctrl, code) in PAD_KEYS {
+            let holds = match input {
+                PadInput::Button(id) => buttons >> id & 1 != 0,
+                PadInput::StickUp => y < -PAD_KEY_STICK,
+                PadInput::StickDown => y > PAD_KEY_STICK,
+                PadInput::StickLeft => x < -PAD_KEY_STICK,
+                PadInput::StickRight => x > PAD_KEY_STICK,
+            };
+            if holds && (ctrl || !needs_ctrl) {
+                return code;
+            }
+        }
+        0
     }
 }
 
@@ -132,6 +227,8 @@ pub struct Input {
     pub(crate) vibration: [[(i32, Option<u32>); 2]; PADS],
     /// KEY's contents for F1 to F5.
     pub function_keys: [Vec<u16>; 5],
+    /// The key the controllers are holding down.
+    pad_key_repeat: PadKeyRepeat,
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
     buttons_read: bool,
     /// What the program has read of the keyboard; see
@@ -183,6 +280,7 @@ impl Default for Input {
             ir_state: [0; 2],
             vibration: Default::default(),
             function_keys: Default::default(),
+            pad_key_repeat: PadKeyRepeat::default(),
             buttons_read: false,
             keys_read: KeysRead::default(),
             polled: false,
@@ -233,6 +331,42 @@ impl Input {
         self.before = self.live;
         self.held = [[0; BUTTONS]; PADS + 1];
         self.touch = (0, 0);
+        // What is held goes on counting as held, and types nothing more
+        // until let go.
+        self.pad_key_repeat = PadKeyRepeat {
+            code: self.now.pad_key(),
+            frames: 0,
+            repeating: true,
+        };
+    }
+
+    /// The key the controllers type this frame, if any, after
+    /// [`Input::latch`]: when a button or the stick goes down, and then as
+    /// it repeats. Another input going down meanwhile types nothing until
+    /// all are let go.
+    pub(crate) fn pad_key(&mut self) -> Option<u32> {
+        let code = self.now.pad_key();
+        let r = &mut self.pad_key_repeat;
+        if code == 0 {
+            *r = PadKeyRepeat::default();
+            return None;
+        }
+        if r.code == 0 {
+            r.code = code;
+            r.frames = 0;
+            return Some(code);
+        }
+        if r.code != code {
+            return None;
+        }
+        r.frames += 1;
+        let (start, interval) = PAD_KEY_REPEAT;
+        if r.frames < if r.repeating { interval } else { start } {
+            return None;
+        }
+        r.frames = 0;
+        r.repeating = true;
+        Some(code)
     }
 
     /// Keyboard keys held now count as held before too, so that the key
@@ -401,11 +535,7 @@ impl Runtime {
                 let pad = pad_id(&args[0])?;
                 let stick = opt_in_range("stick", args.get(1), 0..=1, 0)? as usize;
                 let (x, y) = match pad {
-                    // UNVERIFIED: the default controller's stick is the one
-                    // tilted furthest.
-                    0 => (input.now.pads.iter().map(|p| p.sticks[stick]))
-                        .max_by(|a, b| (a.0.hypot(a.1)).total_cmp(&b.0.hypot(b.1)))
-                        .unwrap_or_default(),
+                    0 => input.now.stick(stick),
                     n => input.now.pads[n - 1].sticks[stick],
                 };
                 Ok(reals(&[x, y]))

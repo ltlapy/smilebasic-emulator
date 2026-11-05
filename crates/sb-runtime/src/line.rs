@@ -35,6 +35,9 @@ pub mod codes {
     pub const TAB: u32 = 0x10008;
     pub const HOME: u32 = 0x10009;
     pub const END: u32 = 0x1000A;
+    pub const FILE_TOP: u32 = 0x1000C;
+    pub const FILE_END: u32 = 0x1000D;
+    pub const DELETE_LINE: u32 = 0x1000F;
     pub const SELECT_START: u32 = 0x10013;
     pub const SELECT_STOP: u32 = 0x10014;
     pub const COPY: u32 = 0x10015;
@@ -44,6 +47,10 @@ pub mod codes {
     pub const ESCAPE: u32 = 0x10029;
     pub const INSERT: u32 = 0x10053;
     pub const ENTER: u32 = 0x0D;
+    /// Marks a key a controller typed, which `INKEY$(1)` passes over.
+    pub const FROM_PAD: u32 = 0x20000;
+    /// The code itself, without [`FROM_PAD`].
+    pub const CODE: u32 = FROM_PAD - 1;
 }
 
 /// The most characters a line holds; one more typed is dropped, whatever

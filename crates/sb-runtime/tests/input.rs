@@ -185,6 +185,90 @@ fn function_keys_and_pushkey() {
     assert_eq!(err.kind, ErrorKind::StringTooLong);
 }
 
+/// Goes through `frames` as frames do, then reads what INKEY$ has for it:
+/// `?` each key's code.
+fn typed(frames: &[State], read: &str) -> String {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    for state in frames {
+        rt.input.live = *state;
+        rt.begin_frame();
+    }
+    let source = format!("REPEAT:K$={read}:IF K$!=\"\" THEN ?ASC(K$);\" \";\nUNTIL K$==\"\"");
+    let mut vm = Vm::new(sb_core::compile(&source, &rt).unwrap());
+    while vm.run(&mut rt, 100_000).unwrap() != Status::Ended {}
+    let console = &rt.text[4];
+    let codes: Vec<u16> = (0..console.size().0)
+        .map(|x| console.cell(x, 0).code)
+        .take_while(|&c| c != 0)
+        .collect();
+    String::from_utf16(&codes).unwrap().trim_end().to_string()
+}
+
+#[test]
+fn controllers_type_keys_for_inkey() {
+    // #B_RRIGHT, #B_RLEFT and #B_LUP to #B_LRIGHT, as the manual lists them.
+    for (button, code) in [
+        (3, "13"),
+        (2, "8"),
+        (4, "30"),
+        (5, "31"),
+        (6, "29"),
+        (7, "28"),
+    ] {
+        let down = [State::default(), pressed(1 << button)];
+        assert_eq!(typed(&down, "INKEY$()"), code, "button {button}");
+        assert_eq!(typed(&down, "INKEY$(0)"), code, "button {button}");
+        assert_eq!(typed(&down, "INKEY$(1)"), "", "button {button}");
+    }
+    // B's key is none INKEY$ has a character for, as are X's and the others.
+    for button in [0, 1, 8, 9, 10, 11, 12, 13] {
+        assert_eq!(typed(&[pressed(1 << button)], "INKEY$()"), "");
+    }
+    // L or R as Ctrl.
+    assert_eq!(typed(&[pressed(1 << 8 | 1 << 6)], "INKEY$()"), "2");
+    assert_eq!(typed(&[pressed(1 << 9 | 1 << 7)], "INKEY$()"), "3");
+    assert_eq!(typed(&[pressed(1 << 8 | 1 << 4)], "INKEY$()"), "30");
+}
+
+#[test]
+fn a_controllers_key_repeats_after_25_frames_then_every_3() {
+    let down = vec![pressed(1 << 5); 32];
+    // At the press, then on frames 25, 28 and 31 after it.
+    let counts: Vec<usize> = [1, 25, 26, 28, 29, 31, 32]
+        .iter()
+        .map(|&n| typed(&down[..n], "INKEY$()").split_whitespace().count())
+        .collect();
+    assert_eq!(counts, [1, 1, 2, 2, 3, 3, 4]);
+    // A press again after letting go.
+    let again = [pressed(1 << 5), State::default(), pressed(1 << 5)];
+    assert_eq!(typed(&again, "INKEY$()"), "31 31");
+    // Another button while the first is held types nothing until all are up.
+    let both = [pressed(1 << 5), pressed(1 << 5 | 1 << 4), pressed(1 << 5)];
+    assert_eq!(typed(&both, "INKEY$()"), "31");
+}
+
+#[test]
+fn a_controllers_stick_types_keys_for_inkey() {
+    let tilted = |x, y| {
+        let mut s = State::default();
+        s.pads[0].sticks[0] = (x, y);
+        s
+    };
+    assert_eq!(typed(&[tilted(0.0, -0.31)], "INKEY$()"), "17");
+    assert_eq!(typed(&[tilted(0.0, 0.31)], "INKEY$()"), "18");
+    assert_eq!(typed(&[tilted(-0.31, 0.0)], "INKEY$()"), "2");
+    assert_eq!(typed(&[tilted(0.31, 0.0)], "INKEY$()"), "3");
+    assert_eq!(typed(&[tilted(0.3, -0.3)], "INKEY$()"), "");
+}
+
+#[test]
+fn buttons_keys_press_type_nothing_more() {
+    let mut s = pressed(1 << 3);
+    s.key_pressed_buttons = 1 << 3;
+    assert_eq!(typed(&[s], "INKEY$()"), "");
+    assert_eq!(run(&[s, s], "?BUTTON(1,3)").unwrap(), "1");
+}
+
 #[test]
 fn function_keys_start_as_smilebasic_4s() {
     // TEST15 on hardware; a string longer than 256 is ignored.
