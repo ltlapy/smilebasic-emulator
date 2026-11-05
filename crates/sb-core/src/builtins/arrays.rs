@@ -418,10 +418,11 @@ impl Param {
                 if a.is_empty() {
                     return Err(out_of_range("empty array"));
                 }
-                (0..a.len())
-                    .map(|i| a.get(i).to_real())
-                    .collect::<Result<_>>()
-                    .map(Param::Array)
+                Ok(Param::Array(match &a.data {
+                    ArrayData::Real(v) => v.clone(),
+                    ArrayData::Int(v) => v.iter().map(|n| f64::from(*n)).collect(),
+                    ArrayData::Str(_) => unreachable!("checked above"),
+                }))
             }
             v => v.to_real().map(Param::Number),
         }
@@ -430,7 +431,11 @@ impl Param {
     fn at(&self, i: usize) -> f64 {
         match self {
             Param::Number(x) => *x,
-            Param::Array(v) => v[i % v.len()],
+            // Going round is rare, and a division for each element is not cheap.
+            Param::Array(v) => match v.get(i) {
+                Some(x) => *x,
+                None => v[i % v.len()],
+            },
         }
     }
 }
@@ -450,9 +455,9 @@ pub(super) fn aryop(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     if result.elem_type() == ElemType::Str {
         return Err(ErrorKind::TypeMismatch.into());
     }
-    for i in 0..result.len() {
+    let value = |i: usize| {
         let p = |n: usize| params[n].at(i);
-        let x = match op {
+        match op {
             0 => p(0) + p(1),
             1 => p(0) - p(1),
             2 => p(0) * p(1),
@@ -473,8 +478,16 @@ pub(super) fn aryop(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
                     x
                 }
             }
-        };
-        result.set(i, Value::Real(x))?;
+        }
+    };
+    if let ArrayData::Real(elements) = &mut result.data {
+        for (i, element) in elements.iter_mut().enumerate() {
+            *element = value(i);
+        }
+    } else {
+        for i in 0..result.len() {
+            result.set(i, Value::Real(value(i)))?;
+        }
     }
     Ok(vec![])
 }
