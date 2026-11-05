@@ -377,363 +377,401 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ### `VSYNC` and `WAIT`
 
-- `VSYNC n` waits until n frames after the frame the previous `VSYNC`
-  waited for, not n frames from now. When that frame has gone by, it
-  returns at once and counts from then: a second behind, ten `VSYNC`s
-  take nine frames, while one `VSYNC 200` takes 140. After a slow
-  `ACLS`, `VSYNC:VSYNC` takes one frame.
-- `WAIT`, `WAIT 0` included, starts `VSYNC`'s count anew; waiting in
-  `INPUT` does not.
+- `VSYNC n` waits until n frames after the frame the previous `VSYNC` waited
+  for, not n frames from now. When that frame has gone by, it returns at once
+  and counts from then: a second behind, ten `VSYNC`s take nine frames, while
+  one `VSYNC 200` takes 140. After a slow `ACLS`, `VSYNC:VSYNC` takes one frame.
+- `VSYNC` of 0 or less does not wait, and counts on from the moment it runs.
+  (Not yet seen on hardware.)
+- `WAIT`, `WAIT 0` included, starts `VSYNC`'s count anew; waiting in `INPUT`
+  does not.
 - `RUN` leaves `VSYNC`'s count where it was, so the first `VSYNC` of a program,
   `VSYNC 5` too, finds its frames gone by: `T=MAINCNT():VSYNC 5:?MAINCNT()-T` as
-  a program's first line prints 0 (TEST62, on a Switch 2). So does a subprogram's
-  first one, and a program waiting by a lone `VSYNC 60` at its start does not wait.
+  a program's first line prints 0 (TEST62, on a Switch 2). A subprogram's first
+  `VSYNC` finds the same, and a program waiting by a lone `VSYNC 60` at its
+  start does not wait.
 - `XSCREEN` holds the program until the frame job has taken the new mode,
-  without touching `VSYNC`'s count, so a `VSYNC 1` right after it goes
-  straight on (TEST60). The program goes on inside that job, past its
-  animation step and with `MAINCNT` still to rise. So with `ACLS:XSCREEN
-  400,240,2`, then a `SPANIM` and `VSYNC 1:SPOFS` in a loop, in a program that
-  has not waited yet, the first two rows show nothing and the third the first step: the
-  second `VSYNC 1` only sees that job end (TEST62 on a Switch 2, as TEST56 did on Ryujinx).
-- `ACLS` holds the program for the frame job as `XSCREEN` does, and `MAINCNT` has yet to
-  rise when the program goes on: `T=MAINCNT():ACLS:?MAINCNT()-T` and the same with
-  `XSCREEN 400,240,2` print 0, with a `VSYNC` before or not, and `ACLS:ACLS` 1. A
-  `WAIT 1` or a `VSYNC 1` right after takes that rise, and the next one a frame:
-  `VSYNC:XSCREEN 400,240,2:T=MAINCNT():WAIT 1:U=MAINCNT():WAIT 1:?U-T;MAINCNT()-U` prints
-  1 1, and so with `VSYNC 1`. (TEST63)
-- `VSYNC` of 0 or less does not wait, and counts on from now. (Not yet seen on hardware.)
+  without touching `VSYNC`'s count, so a `VSYNC 1` right after it goes straight
+  on (TEST60). The program goes on inside that job, past its animation step and
+  with `MAINCNT` still to rise.
+- `ACLS:XSCREEN 400,240,2`, then a `SPANIM` and `VSYNC 1:SPOFS` in a loop, in a
+  program that has not waited yet: the first two rows show nothing and the third
+  the first step, as the second `VSYNC 1` only sees that job end (TEST62 on a
+  Switch 2, as TEST56 did on Ryujinx).
+- `ACLS` holds the program for the frame job as `XSCREEN` does, and `MAINCNT`
+  has yet to rise when the program goes on (TEST63):
+  - `T=MAINCNT():ACLS:?MAINCNT()-T` and the same with `XSCREEN 400,240,2` print
+    0, with a `VSYNC` before or not, and `ACLS:ACLS` prints 1.
+  - A `WAIT 1` or a `VSYNC 1` right after takes that rise, and the next one a
+    frame:
+    `VSYNC:XSCREEN 400,240,2:T=MAINCNT():WAIT 1:U=MAINCNT():WAIT 1:?U-T;MAINCNT()-U`
+    prints 1 1, and so with `VSYNC 1`.
 
 ### `MAINCNT`
 
-- `MAINCNT` and `MILLISEC` need their brackets: without them they are
-  plain variables, always 0 to begin with.
-- `MAINCNT` follows real time while the program is busy: 180 in 3 seconds of
-  a loop with no `VSYNC`. When the frame job is held up it falls behind real
-  time with it: 600 sprites of 64x64 scaled by 21 on a Switch 2 gave 49 in
-  4077 ms, one `VSYNC` to each (TEST60).
-- How much a program runs in a frame (4.4.9, timed with `MAINCNT()`):
-  in 60 frames a `WHILE MAINCNT()-T<60:INC N:WEND` loop goes round
-  2395924 times on a Switch, 5962406 on a Switch 2 and 2837664 in
-  Ryujinx; a loop of `FOR J=1 TO 100:X=X+J*2:Y=Y XOR J:NEXT` 21371,
-  52145 and 29141 times. No program needs that speed: the emulator runs
-  code as fast as it can.
+- `MAINCNT` and `MILLISEC` need their brackets: without them they are plain
+  variables, always 0 to begin with.
+- `MAINCNT` follows real time while the program is busy: 180 in 3 seconds of a
+  loop with no `VSYNC`. When the frame job is held up, it falls behind real time
+  with it: 600 sprites of 64x64 scaled by 21 on a Switch 2 gave 49 in 4077 ms,
+  one `VSYNC` to each (TEST60).
+- A program runs this much in 60 frames (4.4.9, timed with `MAINCNT()`). No
+  program needs that speed: the emulator runs code as fast as it can.
+
+  | Times round the loop | Switch | Switch 2 | Ryujinx |
+  |---|---|---|---|
+  | `WHILE MAINCNT()-T<60:INC N:WEND` | 2395924 | 5962406 | 2837664 |
+  | `FOR J=1 TO 100:X=X+J*2:Y=Y XOR J:NEXT` | 21371 | 52145 | 29141 |
 
 ## Animation
 
-- `SPANIM`, `TANIM` and `FADE color,time` take their first step at the
-  first update of the frame job after the command, the three together,
-  whatever the program was doing. So after a `VSYNC` that finds its frame
-  gone by, or a long run of code, the next `VSYNC 1` goes straight on and it
-  takes a second one to see the step. On a Switch 2 the step comes about a
-  millisecond before `MAINCNT` rises (TEST60). `FADE()` still gives the start
-  right after `FADE`. Animations also play in direct mode, and go on while
-  the editor is open.
-- A sliding animation of rotation, scale or color mixes its two ends in
-  single precision as `from*left + to*(1-left)`, `left` being the share of
-  frames still to go. Rotation and scale keep the result: 0 to -10 over
-  three frames reads -3.33333302 and -6.66666603, and a scale of 1 to -0.5
-  reads 0.5 and 0.00000003. Colors are mixed per channel and rounded down,
-  so an alpha of `&HFF` at both ends reads `&HFE` on the second of three
-  frames. X, Y and Z are whole numbers that divide,
-  `(from*frames_left + to*frames_gone)/frames`, dropping the fraction: 0
-  to -10 reads -3, -6, -10, and 0 to 3 reads 1, 2, 3. Text screens (`TANIM`)
-  do the same (TEST47, TEST48, TEST56).
+- `SPANIM`, `TANIM` and `FADE color,time` take their first step at the first
+  update of the frame job after the command, the three together, whatever the
+  program was doing. After a `VSYNC` that finds its frame gone by, or a long run
+  of code, the next `VSYNC 1` goes straight on and it takes a second one to see
+  the step.
+- The first step comes about a millisecond before `MAINCNT` rises on a Switch 2
+  (TEST60).
+- `FADE()` still gives the start right after `FADE`.
+- Animations also play in direct mode, and go on while the editor is open.
+- A sliding animation of rotation, scale or color mixes its two ends in single
+  precision as `from*left + to*(1-left)`, `left` being the share of frames still
+  to go. Text screens (`TANIM`) do the same as sprites in all of these (TEST47,
+  TEST48, TEST56).
+  - Rotation and scale keep the result: 0 to -10 over three frames reads
+    -3.33333302 and -6.66666603, and a scale of 1 to -0.5 reads 0.5 and
+    0.00000003.
+  - Colors are mixed per channel and rounded down, so an alpha of `&HFF` at both
+    ends reads `&HFE` on the second of three frames.
+  - X, Y and Z are whole numbers that divide,
+    `(from*frames_left + to*frames_gone)/frames`, dropping the fraction: 0 to
+    -10 reads -3, -6, -10, and 0 to 3 reads 1, 2, 3.
+- A relative color animation (`"C+"`) multiplies the start color by the key per
+  channel and divides by 256, rounding down: `&H80808080` with `&H10101010`
+  gives `&H08080808`, and `&HFF` with `&HFF` gives `&HFE`.
 - An animation key that lasts 0 frames is `Illegal animation data`.
-- `SPANIM` keys for XY, Z, UV and I outside -32768 to 32767 are `Out of range
-  (SPANIM)`; `TANIM` and `ANIMDEF` go through the same code. R has no such
-  limit (TEST60).
-- A relative color animation (`"C+"`) multiplies the start color by the
-  key per channel and divides by 256, rounding down: `&H80808080` with
-  `&H10101010` gives `&H08080808`, and `&HFF` with `&HFF` gives `&HFE`.
-- `SPANIM id,n` and `TANIM id,n` with a number `ANIMDEF` never set do
-  nothing.
-- Setting what an animation changes stops it, and `SPCHK` no longer
-  shows it: `SPOFS` during an `"XY"` animation, `SPCOLOR` during `"C"`,
-  `SPCHR` during `"UV"` or `"I"`, `SPROT` during `"R"`, `SPSCALE`
-  during `"S"` and `SPOFS` during `"Z"`.
+- `SPANIM` keys for XY, Z, UV and I outside -32768 to 32767 are
+  `Out of range (SPANIM)`, and `TANIM` and `ANIMDEF` go through the same code. R
+  has no such limit (TEST60).
+- `SPANIM id,n` and `TANIM id,n` with a number `ANIMDEF` never set do nothing.
+- Setting what an animation changes stops it, and `SPCHK` no longer shows it:
+  `SPOFS` during an `"XY"` animation, `SPCOLOR` during `"C"`, `SPCHR` during
+  `"UV"` or `"I"`, `SPROT` during `"R"`, `SPSCALE` during `"S"` and `SPOFS`
+  during `"Z"`.
 - Spaces after an animation target's name are left out (`"S "`).
 - `TCHK` reports nothing for `"I"` and `"UV"`, which text screens ignore.
-  `SPCHK` and `TCHK` give 0 while the animations are stopped.
+- `SPCHK` and `TCHK` give 0 while the animations are stopped.
 
 ## Input
 
 ### Buttons
 
-- A `DIALOG` with buttons closes when A is let go, not when it goes
-  down. Once it has closed, `KEYBOARD` shows no Enter press:
-  `KEYBOARD(40,2)` and `KEYBOARD(40,0)` stay 0 over the next 6 frames,
-  whether Enter or A closed it.
-- `BREPEAT` doesn't touch what controllers type for `INKEY$`, below. It starts
-  at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16.
-  A held button repeats at its start frame and then every interval plus
-  one frames: 20,3 fires at 0, 20, 24, 28...
+- `DIALOG` with buttons closes when A is let go, not when it goes down. Once it
+  has closed, `KEYBOARD` shows no Enter press: `KEYBOARD(40,2)` and
+  `KEYBOARD(40,0)` stay 0 over the next 6 frames, whether Enter or A closed it.
+- `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16. It
+  doesn't touch what controllers type for `INKEY$`.
+- `BREPEAT` repeats a held button at its start frame and then every interval
+  plus one frames: 20,3 fires at 0, 20, 24, 28...
 - `BREPEAT`'s negative values are `Out of range`. (Not yet seen on hardware.)
-- `BREPEAT` takes a start of 0 as 1: `BREPEAT 5,0,3:BREPEAT 5 OUT S,I` gives 1 and 3. (TEST62)
-- `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14
-  to 16). `BUTTON()` without arguments is `Wrong number of arguments`.
-- `#B_X`, `#B_B`, `#B_Y`, `#B_A` are 0, 1, 2, 3, and `#TUSRCHR` 59392. `1E308*10` less
-  itself prints `nan`. (TEST62)
+- `BREPEAT` takes a start of 0 as 1: `BREPEAT 5,0,3:BREPEAT 5 OUT S,I` gives 1
+  and 3. (TEST62)
+- `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14 to 16).
+- `BUTTON()` without arguments is `Wrong number of arguments`.
+- `#B_X`, `#B_B`, `#B_Y`, `#B_A` are 0, 1, 2, 3. (TEST62)
 
 ### Keyboards and controllers typing
 
-- A USB keyboard's keys press no controller button: a program that takes
-  letters from `INKEY$` and delete from `BUTTON`'s Y types A as any letter.
-- Controllers type into the same queue as the keyboard, expected of SmileBASIC 4 (4.4.8), the manual agreeing on what it lists. `INKEY$()` gives
-  A `CHR$(13)`, Y `CHR$(8)` and the +Control Pad the arrows, as the manual says,
-  and also what it leaves out: the left stick past 0.3 gives Page Up and Down
-  (`CHR$(17)`, `CHR$(18)`) and Home and End (`CHR$(2)`, `CHR$(3)`), and L or R,
-  which act as Ctrl, with left or right on the pad give `CHR$(2)` and `CHR$(3)`,
-  and with the stick up or down the same two. B types Copy, L or R with B Paste
-  and with Y Delete Line, which `INKEY$` passes over and a line being typed
-  acts on. `INKEY$(1)` drops whatever controllers typed. The first assignment
-  that holds gives the frame's one key; it comes at the press, 25 frames later
-  and then every 3, not by `BREPEAT`. A second input going down meanwhile types
-  nothing until all are let go.
+- A USB keyboard's keys press no controller button: a program that takes letters
+  from `INKEY$` and delete from `BUTTON`'s Y types A as any letter.
+- Controllers type into the same queue as the keyboard, and the manual
+  agrees on what it lists.
+  - `INKEY$()` gives `CHR$(13)` for A, `CHR$(8)` for Y and the arrows for the
+    +Control Pad, as the manual says.
+  - The left stick past 0.3 gives Page Up and Down (`CHR$(17)`, `CHR$(18)`) and
+    Home and End (`CHR$(2)`, `CHR$(3)`). The manual leaves this out.
+  - L or R act as Ctrl. With left or right on the pad they give `CHR$(2)` and
+    `CHR$(3)`, and with the stick up or down the same two. The manual leaves
+    this out.
+  - B types Copy, L or R with B Paste and with Y Delete Line. `INKEY$` passes
+    over these, and a line being typed acts on them.
+  - `INKEY$(1)` drops whatever controllers typed.
+  - The first assignment that holds gives the frame's one key. It comes at the
+    press, 25 frames later and then every 3, not by `BREPEAT`.
+  - A second input going down meanwhile types nothing until all are let go.
 
 ### `PUSHKEY` and the key buffers
 
-- `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`). Codes
-  from `&H10000` are keys that are not characters: `&H10000` to `&H10003` up,
-  down, left and right, `&H10004` Backspace, `&H10005` Delete, `&H10008` Tab,
-  `&H10009` Home, `&H1000A` End, `&H10013` starts selecting (plain moves then
-  select), `&H10015` Copy. `PUSHKEY 8` is not Backspace but a character, and
-  goes into a line as a cell of code 8; `PUSHKEY 9` the same (TEST60).
-- `PUSHKEY` holds the program for a frame, without touching `VSYNC`'s
-  count: ten of them take ten frames. A string of 64 characters is `String is
-  too long (PUSHKEY:1)`; 63 goes (TEST60).
-- Keys pass through two buffers of 128, each losing its oldest when full.
-  Typed and pushed keys wait in the first, and each frame takes up to 32 to
-  the second, which `INKEY$` and the line being typed read. Five `PUSHKEY`s of
-  63 in a row, with 315 keys, leave 128 to read: keys 32 to 95, 124 to 155 and
-  187 to 218; 219 on come in the frames after, with the first buffer's rest.
-  At the prompt, five `PUSHKEY`s of 60 lose keys the same way (TEST60).
-- Typed keys wait in the buffer until something reads them:
-  `WAIT 180:?INKEY$();INKEY$();INKEY$()` shows what was typed during the
-  wait. `INPUT` and `LINPUT` drop every key waiting when they start,
-  `PUSHKEY`'s included: `PUSHKEY "7":INPUT A$` waits with an empty
-  line.
-- The prompt drops waiting keys as it starts, after a typed line as after a
-  program: `PUSHKEY "?1"+CHR$(13)+"?2"+CHR$(13)` typed at the prompt runs neither
-  (TEST62). From a subprogram, typing into a prompt already there, they arrive.
+- `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`). Codes from
+  `&H10000` are keys that are not characters (TEST60):
+
+  | Code | Key |
+  |---|---|
+  | `&H10000` to `&H10003` | Up, down, left and right |
+  | `&H10004` | Backspace |
+  | `&H10005` | Delete |
+  | `&H10008` | Tab |
+  | `&H10009` | Home |
+  | `&H1000A` | End |
+  | `&H10013` | Starts selecting (plain moves then select) |
+  | `&H10015` | Copy |
+
+- `PUSHKEY 8` is not Backspace but a character, and goes into a line as a cell
+  of code 8; `PUSHKEY 9` the same (TEST60).
+- `PUSHKEY` holds the program for a frame, without touching `VSYNC`'s count: ten
+  of them take ten frames.
+- `PUSHKEY` of a string of 64 characters is `String is too long (PUSHKEY:1)`; 63
+  goes (TEST60).
+- `PUSHKEY &H10FFF` goes and `&H11001` is `Out of range` (TEST62).
 - `INKEY$` after `PUSHKEY &H10009` (HOME) gives one character of code 2, and
-  after `PUSHKEY &H10000` (up) code `&H1E`. `PUSHKEY &H10FFF` goes and `&H11001`
-  is `Out of range` (TEST62).
-- A `PUSHKEY` of keys without Enter is dropped at the prompt too, as with Enter: a line
-  typed after `PUSHKEY "?7:"` runs as it is. (TEST63)
+  after `PUSHKEY &H10000` (up) code `&H1E` (TEST62).
+- Keys pass through two buffers of 128, each losing its oldest when full. Typed
+  and pushed keys wait in the first, and each frame takes up to 32 to the
+  second, which `INKEY$` and the line being typed read.
+  - Five `PUSHKEY`s of 63 in a row, with 315 keys, leave 128 to read: keys 32 to
+    95, 124 to 155 and 187 to 218. Keys 219 on come in the frames after, with
+    the first buffer's rest.
+  - At the prompt, five `PUSHKEY`s of 60 lose keys the same way (TEST60).
+- Typed keys wait in the buffer until something reads them:
+  `WAIT 180:?INKEY$();INKEY$();INKEY$()` shows what was typed during the wait.
+- `INPUT` and `LINPUT` drop every key waiting when they start, `PUSHKEY`'s
+  included: `PUSHKEY "7":INPUT A$` waits with an empty line.
+- The prompt drops waiting keys as it starts, after a typed line as after a
+  program: `PUSHKEY "?1"+CHR$(13)+"?2"+CHR$(13)` typed at the prompt runs
+  neither (TEST62). From a subprogram, typing into a prompt already there, they
+  arrive.
+- `PUSHKEY` of keys without Enter is dropped at the prompt too, as with Enter: a
+  line typed after `PUSHKEY "?7:"` runs as it is. (TEST63)
 
 ### `INPUT`, `LINPUT` and the line being typed
 
-- `INPUT`'s question mark is followed by a space; with a comma after the
-  guide there is neither. Extra values typed are left out. After `?Redo from
-  start`, the line is typed again on the next line, without the prompt.
-- `INPUT` and `LINPUT` take any string expression as the guide, a label
-  among them (`LINPUT@G;A$` shows `@G`). A string variable is a guide
-  only with `;`.
-- `INPUT A,B` given `1,` takes A=1, B=0 at once. Given `1,2,3` it leaves the 3 out, not
-  looking at it. `INPUT VAR("A$")` and `N$="A$":INPUT VAR(N$)` both take a string. (TEST63)
+- `INPUT`'s question mark is followed by a space; with a comma after the guide
+  there is neither.
+- `INPUT` leaves out extra values typed. After `?Redo from start`, the line is
+  typed again on the next line, without the prompt.
+- `INPUT` and `LINPUT` take any string expression as the guide, a label among
+  them (`LINPUT@G;A$` shows `@G`). A string variable is a guide only with `;`.
+- `INPUT A,B` given `1,` takes A=1, B=0 at once. Given `1,2,3` it leaves the 3
+  out, not looking at it. (TEST63)
+- `INPUT VAR("A$")` and `N$="A$":INPUT VAR(N$)` both take a string. (TEST63)
 - `INPUT` selects nothing: Shift with Left or Right moves the cursor, and
-  Backspace and Delete take one character (TEST56). `LINPUT` runs with the
-  same setting in SmileBASIC 4. Direct mode's line does select, cut,
-  copy and paste.
-- Tab on a line types one space, and a selection stays after Enter. Copy on
-  a line ends the selection and keeps the text, so what is typed next goes
-  in at the cursor (TEST60). `INPUT A$`, ABCD, Shift+Left twice, X gives
-  `ABXCD`: on `INPUT`'s line Shift only moves.
-- A line holds 256 characters whatever the console's size; a character typed
-  on a full one is dropped (TEST60).
+  Backspace and Delete take one character (TEST56). `LINPUT` runs with the same
+  setting in SmileBASIC 4. Direct mode's line does select, cut, copy and
+  paste.
+- `INPUT A$`, ABCD, Shift+Left twice, X gives `ABXCD`: on `INPUT`'s line Shift
+  only moves (TEST60).
+- Tab on a line types one space (TEST60).
+- A selection stays after Enter (TEST60).
+- Copy on a line ends the selection and keeps the text, so what is typed next
+  goes in at the cursor (TEST60).
+- A line holds 256 characters whatever the console's size; a character typed on
+  a full one is dropped (TEST60).
 - A line typed in direct mode or for `INPUT` or `LINPUT` holds 256 characters,
   whatever they are and whatever the console's size. A further character is
-  dropped, also over a selection, which then stays, and pasting that would not
-  fit (counting a selection as still there) pastes nothing. (Not yet seen on hardware.)
-- Enter goes on from the row under the cursor, wherever on the line that is.
-  A line that exactly fills its row leaves an empty row before what comes
-  next, as the cursor is on the next row already. With the cursor on the first
-  row of a longer line, what comes next prints over the second (TEST60).
-- Typing doesn't stop at the end of a row (TEST60 part A, on a real Switch with a
-  USB keyboard: `ACLS:XSCREEN 320,180,1,2:TSCREEN 4,8,26,12:LOCATE 0,9`, then about
-  60 plain letters). The line wraps at the console's width and goes on over as many
-  rows as it takes, the console scrolling as it goes, and the last row stays empty.
-- A line keeps rows free under its cursor according to the hint bar: at
-  1280x720 with 8x8 characters, typing from row 85 leaves the cursor on row
-  86; at 640x360 from row 40, on row 42 (TEST60).
-- As Enter ends a line, the console scrolls so that the cursor stays above its
+  dropped, also over a selection, which then stays. Pasting that would not fit
+  (counting a selection as still there) pastes nothing. (Not yet seen on
+  hardware.)
+- Enter goes on from the row under the cursor, wherever on the line that is. A
+  line that exactly fills its row leaves an empty row before what comes next, as
+  the cursor is on the next row already. With the cursor on the first row of a
+  longer line, what comes next prints over the second (TEST60).
+- Typing doesn't stop at the end of a row. The line wraps at the console's width
+  and goes on over as many rows as it takes, the console scrolling as it goes,
+  and the last row stays empty (TEST60 part A, on a real Switch with a USB
+  keyboard: `ACLS:XSCREEN 320,180,1,2:TSCREEN 4,8,26,12:LOCATE 0,9`, then about
+  60 plain letters).
+- A line keeps rows free under its cursor according to the hint bar: at 1280x720
+  with 8x8 characters, typing from row 85 leaves the cursor on row 86; at
+  640x360 from row 40, on row 42 (TEST60).
+- Enter ending a line scrolls the console so that the cursor stays above its
   last row; `INPUT`'s and `LINPUT`'s guides, errors and `OK` do the same. What a
-  program prints can still reach the last row. On a screen whose rows are 16
-  display pixels high or less (of the 720), the hint bar at the bottom covers
-  more of them: 2 rows stay free at 360 rows of pixels, 3 at 720 with 8x8
-  characters. The same scrolling while `INSPECT` prints has been seen (`TEST19`:
-  the last row stays free, on the usual screen); the rest is from the code. (Not yet seen on hardware.)
+  program prints can still reach the last row. (Not yet seen on hardware.)
+- The hint bar at the bottom covers more rows on a screen whose rows are 16
+  display pixels high or less (of the 720): 2 rows stay free at 360 rows of
+  pixels, 3 at 720 with 8x8 characters. (Not yet seen on hardware.)
+- `INSPECT` scrolls the same way as it prints, which has been seen (`TEST19`:
+  the last row stays free, on the usual screen). The rest of this scrolling
+  comes from the code.
 - Enter on an empty line of direct mode prints `OK` (TEST60).
-- Typing over a selection in overwrite mode writes the character and moves
-  on first, then deletes the selection: one made rightwards takes the
-  character with it, and one made leftwards keeps it. (Not yet seen on hardware.)
-- Copying a selection in direct mode drops the selection; cutting too. (Not yet seen on hardware.)
+- Typing over a selection in overwrite mode writes the character and moves on
+  first, then deletes the selection: one made rightwards takes the character
+  with it, and one made leftwards keeps it. (Not yet seen on hardware.)
+- Copying a selection in direct mode drops the selection; cutting too. (Not yet
+  seen on hardware.)
 
 ### The line's cursor
 
-- `INPUT`'s cursor is a bar 2 pixels wide and 8 tall at the left of the
-  cursor's cell, opaque white whatever `COLOR` is (`COLOR &H80FFFF00`
-  over a character changes only the bar's two columns, and the rest of
-  the cell is left as it was). It alternates with nothing (TEST50).
-- Characters typed at `INPUT` and then deleted leave their cells empty:
-  whatever the console showed there before does not come back (TEST50).
-- The text drawing's per-cell inverting flag (colour times 1 minus the
-  glyph's alpha) is not what draws `INPUT`'s cursor (TEST50).
-- The line's cursor blinks by a count kept with the frame count `MAINCNT`
-  reads: 20 frames on, 20 off. TEST56's two shots, off at frame 72 and on at
-  299 of the line, fit that with the count 1 to 3 frames behind `MAINCNT`,
-  and 15/15 only at 3 ahead, which is weak support; the code says 20.
-- Insert toggles overwriting on `INPUT`'s line, and the cursor is then a
-  block over the whole cell: 24 wide at scale 3 (TEST56).
-- The cursor's scale is the text's, `TSCALE` and `LMATRIX` included. It is
-  drawn right after its own screen's cells, under a sprite in front, and it
-  replaces what its layer holds, alpha too. As a layer's alpha is what shows
-  through, on a composed layer it adds its white to the frame rather than
-  covering it: `&H203080` under `LAYER 2,1,&HFFC0C0C0` shows `&HE0F0FF`
+- `INPUT`'s cursor is a bar 2 pixels wide and 8 tall at the left of the cursor's
+  cell, opaque white whatever `COLOR` is. `COLOR &H80FFFF00` over a character
+  changes only the bar's two columns, and the rest of the cell is left as it
+  was. It alternates with nothing (TEST50).
+- Characters typed at `INPUT` and then deleted leave their cells empty: whatever
+  the console showed there before does not come back (TEST50).
+- The per-cell inverting flag (color times 1 minus the glyph's alpha) is not
+  what draws `INPUT`'s cursor (TEST50).
+- The cursor blinks by a count kept with the frame count `MAINCNT` reads: 20
+  frames on, 20 off. TEST56's two shots, off at frame 72 and on at 299 of the
+  line, fit that with the count 1 to 3 frames behind `MAINCNT`, and 15/15 only
+  at 3 ahead, which is weak support; the code says 20.
+- Insert toggles overwriting on `INPUT`'s line, and the cursor is then a block
+  over the whole cell: 24 wide at scale 3 (TEST56).
+- The cursor's scale is the text's, `TSCALE` and `LMATRIX` included.
+- The cursor is drawn right after its own screen's cells, under a sprite in
+  front, and it replaces what its layer holds, alpha too. As a layer's alpha is
+  what shows through, on a composed layer it adds its white to the frame rather
+  than covering it: `&H203080` under `LAYER 2,1,&HFFC0C0C0` shows `&HE0F0FF`
   (TEST56).
 
 ### Controllers, vibration and the IR camera
 
-- `CONTROLLER(0)` read 2, `CONTROLLER(1)` 1 and `CONTROLLER(2)` 0; `CONTROLLER 2 OUT A,B,C`
-  gives 0 for all three: no colours on a controller not connected. (TEST63)
-- `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not
-  available`; `TCPIANO` without Toy-Con set up is `Illegal control
-  style`. `IRSTATE` starts at 0.
-- Vibration patterns have lengths of their own, from 3 frames (57) to
-  115 (23); 34 to 43, 47 and 48 go on past two seconds, 40 past five.
-  The emulator keeps the measured table.
-- `VIBRATE()` reads back what was asked for, also where nothing
-  vibrates: after `VIBRATE 1,40` it is 2621480 (40 on the right times
-  65536, plus 40 on the left) and `VIBRATE(1,0)` 40; with frequencies
-  it is -1, still a second later. `VIBRATE` alone clears it.
+- `CONTROLLER(0)` read 2, `CONTROLLER(1)` 1 and `CONTROLLER(2)` 0.
+  `CONTROLLER 2 OUT A,B,C` gives 0 for all three: no colors on a controller not
+  connected. (TEST63)
+- `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not available`.
+- `TCPIANO` without Toy-Con set up is `Illegal control style`.
+- `IRSTATE` starts at 0.
 - `IRREAD` in mode 1 is `Illegal IR Camera mode`. (Not yet seen on hardware.)
-- `IRREAD` on a camera never started is `IR Camera is not available (IRREAD)`. (TEST62)
+- `IRREAD` on a camera never started is `IR Camera is not available (IRREAD)`.
+  (TEST62)
+- Vibration patterns have lengths of their own, from 3 frames (57) to 115 (23);
+  34 to 43, 47 and 48 go on past two seconds, 40 past five. The emulator keeps
+  the measured table.
+- `VIBRATE()` reads back what was asked for, also where nothing vibrates. After
+  `VIBRATE 1,40` it is 2621480 (40 on the right times 65536, plus 40 on the
+  left) and `VIBRATE(1,0)` 40; with frequencies it is -1, still a second later.
+  `VIBRATE` alone clears it.
 
 ## Screens and text
 
 ### `ACLS`, `XSCREEN` and `TSCREEN`
 
-- `ACLS` also resets `SPPAGE`, `SPLAYER`, `GSAMPLE`, `TOFS`, `COLOR`,
-  `ATTR` and `TCOLOR`, which the manual's equivalent program leaves out.
-- `XSCREEN` clears the console, puts its cursor at 0,0, and resizes
-  `#GSPRITE` to the new screen. `#GSPRITE` goes to the layer `SPLAYER`
-  gives new sprites, whatever layer it was on.
-- `XSCREEN` stops the text screens' `TANIM` animations (`TCHK` gives 0)
-  and keeps their `THOME`, `TROT`, `TSCALE`, `TOFS` and `TCOLOR`.
-- `TSCREEN` clears the screen. Without a character size it uses the
-  font type. It also stops the screen's animations and undoes `THOME`,
-  `TROT`, `TSCALE`, `TCOLOR` and `TBLEND`; `TOFS` goes back to 0,0 but
-  keeps its depth. `TLAYER`, `TPAGE` and `TVAR` stay (TEST47), and so does `TFUNC`
-  (TEST48). An array
-  from `TARRAY` takes the new size and goes on following the screen.
-- `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663
-  for 400x240.
+- `ACLS` also resets `SPPAGE`, `SPLAYER`, `GSAMPLE`, `TOFS`, `COLOR`, `ATTR` and
+  `TCOLOR`, which the manual's equivalent program leaves out.
+- `XSCREEN` clears the console, puts its cursor at 0,0, and resizes `#GSPRITE`
+  to the new screen.
+- `XSCREEN` moves `#GSPRITE` to the layer `SPLAYER` gives new sprites, whatever
+  layer it was on.
+- `XSCREEN` stops the text screens' `TANIM` animations (`TCHK` gives 0) and
+  keeps their `THOME`, `TROT`, `TSCALE`, `TOFS` and `TCOLOR`.
+- `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663 for
+  400x240.
+- `TSCREEN` clears the screen. Without a character size it uses the font type.
+- `TSCREEN` also stops the screen's animations and undoes `THOME`, `TROT`,
+  `TSCALE`, `TCOLOR` and `TBLEND`. `TOFS` goes back to 0,0 but keeps its depth.
+  `TLAYER`, `TPAGE` and `TVAR` stay (TEST47), and so does `TFUNC` (TEST48).
+- `TARRAY`'s array takes the new size after `TSCREEN` and goes on following the
+  screen.
 
 ### Cells
 
 - `CHR$(10)` starts a new line; tab stops are every 4 columns.
-- `TPUT` off the screen is `Out of range`; `CHKCHR` off the screen gives
-  0.
-- `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on
-  the 50-column console).
-- `SCROLL 0,0,2147483647` and `SCROLL 0,2147483647,0` clear the screen,
-  as any shift of a whole screen or more does (TEST51).
-- `TFILL` clips its rectangle to the screen before the string starts, and
-  the string runs on across rows at the clipped width: on a 6x3 screen
+- `#TUSRCHR` is 59392. (TEST62)
+- `TPUT` off the screen is `Out of range`.
+- `CHKCHR` off the screen gives 0.
+- `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on the
+  50-column console).
+- `LOCATE 3E10,0` is `Overflow (LOCATE:1)`. (TEST62)
+- `SCROLL 0,0,2147483647` and `SCROLL 0,2147483647,0` clear the screen, as any
+  shift of a whole screen or more does (TEST51).
+- `TFILL` clips its rectangle to the screen before the string starts, and the
+  string runs on across rows at the clipped width. On a 6x3 screen
   `TFILL 0,MIN,MIN,MAX,MAX,"ABC"` gives `ABCABC` on every row (TEST51), and
   `TFILL 0,-1,-1,4,1,"ABCDEFG"` gives `ABCDE` then `FGABC` and an empty third
   row (TEST52).
-- `TCOPY` takes rectangles of any size, down to the largest coordinates,
-  and copies only what is on the screens (TEST51). `TSCREEN` of 65536
-  cells a side is `Out of range` (TEST51).
-- Bit 23 of a value for `TLOAD` or `TUPDATE` (attribute bit 7) does nothing
-  on text screens 0 to 3: a plain glyph shows, under `TCOLOR` and `TBLEND`
-  too, a space and an empty cell show nothing, and `TCOPY` carries it the
-  same (TEST56). `TLOAD`, `TUPDATE` and `TCOPY` move cells raw: all 16
-  attribute bits come back from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, the
-  others with no effect either (TEST56).
+- `TCOPY` takes rectangles of any size, down to the largest coordinates, and
+  copies only what is on the screens (TEST51).
+- `TSCREEN` of 65536 cells a side is `Out of range` (TEST51).
+- `TLOAD`, `TUPDATE` and `TCOPY` move cells raw: all 16 attribute bits come back
+  from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, and the bits other than bit 7
+  have no effect either (TEST56).
+- Bit 23 of a value for `TLOAD` or `TUPDATE` (attribute bit 7) does nothing on
+  text screens 0 to 3: a plain glyph shows, under `TCOLOR` and `TBLEND` too, a
+  space and an empty cell show nothing, and `TCOPY` carries it the same
+  (TEST56).
+- Attribute bit 7 on the console should invert a cell, as only the console has a
+  program with that per-cell flag. (Not yet seen on hardware.)
+  - The cell's color is multiplied by 1 minus the glyph's alpha, and then, as
+    for any text, by `TCOLOR`, and the color by the resulting alpha, so the
+    light is left with the square of it.
+  - A space is a block, and so is an empty cell.
+  - Direct mode's selection sets the bit, and Enter does not draw the line
+    again, so it should stay.
 - A cell `TSCREEN` or `CLS` clears has code 0 and the screen's current `COLOR`
-  and `ATTR`, white and 0 to start with, not an all-zero cell. So a program can
-  write only the character codes through `TARRAY`, the even elements, and they
-  show after `TUPDATE`: SmileBOY draws its background that way. What `SCROLL`
-  or the console's scrolling uncovers, and a cell off the screen for `TSAVE`,
-  is all zero: a code written there through `TARRAY` alone has colour 0 and
-  doesn't show. (Not yet seen on hardware.)
-- Only the console has a program with the per-cell flag of attribute bit 7,
-  so that on it the bit should invert a cell: its colour is multiplied by 1
-  minus the glyph's alpha, and then, as for any text, by `TCOLOR` and the
-  colour by the resulting alpha, so the light is left with the square of it.
-  A space is a block, and so is an empty cell. Direct mode's selection sets
-  the bit, and Enter does not draw the line again, so it should stay. (Not yet seen on hardware.)
-- `TLOAD`'s width and height have to be 1 or more, and `GLOAD`'s 0 or more, as for
-  `TSAVE` and `GSAVE`, seen below. (Not yet seen on hardware.)
-- `TSAVE`'s width and height have to be 1 or more: 10x0 and 10x-1 are `Out of range
-  (TSAVE:5)`, and 5000x1 goes, reaching off the screen. `GSAVE`'s -1 is `Out of range
-  (GSAVE:4)`. (TEST62)
+  and `ATTR`, white and 0 to start with, not an all-zero cell. A program can
+  therefore write only the character codes through `TARRAY`, the even elements,
+  and they show after `TUPDATE`: SmileBOY draws its background that way. (Not
+  yet seen on hardware.)
+- A cell that `SCROLL` or the console's scrolling uncovers is all zero, as is a
+  cell off the screen for `TSAVE`: a code written there through `TARRAY` alone
+  has color 0 and doesn't show. (Not yet seen on hardware.)
+- `TLOAD`'s width and height have to be 1 or more, and `GLOAD`'s 0 or more, as
+  for `TSAVE` and `GSAVE`. (Not yet seen on hardware.)
+- `TSAVE`'s width and height have to be 1 or more: 10x0 and 10x-1 are
+  `Out of range (TSAVE:5)`, and 5000x1 goes, reaching off the screen. `GSAVE`'s
+  -1 is `Out of range (GSAVE:4)`. (TEST62)
 
 ### `TROT`, `TOFS` and `TCOORD`
 
 - `TROT` keeps the angle in single precision: `TROT 0,0.1` reads back
   0.100000001490116 (TEST56).
 - `TOFS` takes X and Y left out (`TOFS 0,,,10`).
-- `TCOORD` mode 0 drops the fractions of what it is given, 3.9,2.9 with `TOFS 0,100,50`
-  giving 103,52. Mode 2 gives the home point for an axis scaled to 0. (TEST62)
+- `TCOORD` mode 0 drops the fractions of what it is given, 3.9,2.9 with
+  `TOFS 0,100,50` giving 103,52. Mode 2 gives the home point for an axis scaled
+  to 0. (TEST62)
 
 ## Sprites
 
 ### Sprite state and links
 
-- Using a sprite before `SPSET` is `Sprite not set`, except for its
-  variables: `SPVAR` works on a sprite that was never set. `SPSET`,
-  `SPCLR`, `ACLS` and `RUN` clear them.
-- With both a flip and a quarter turn, the image is flipped first, then
-  turned. Text characters (`ATTR`) work the same way.
-- A linked child's offset turns and scales with its parent whatever the
-  link flags; the rotation and scale flags only decide whether the
-  child's own image turns and scales too.
-- When a parent is cleared, children without link bit 0 stay where they
-  showed, Z included.
-- `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set
-  already.
+- Using a sprite before `SPSET` is `Sprite not set`, except for its variables:
+  `SPVAR` works on a sprite that was never set. `SPSET`, `SPCLR`, `ACLS` and
+  `RUN` clear them.
+- A flip and a quarter turn together flip the image first, then turn it. Text
+  characters (`ATTR`) work the same way.
+- A linked child's offset turns and scales with its parent whatever the link
+  flags. The rotation and scale flags only decide whether the child's own image
+  turns and scales too.
+- When a parent is cleared, children without link bit 0 stay where they showed,
+  Z included.
+- `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set already.
 
 ### Collision
 
-- Hidden sprites do not collide, including children hidden through
-  their parent (link bit 0). Sprites without `SPCOL` never collide, and
-  rectangles that only touch do not either. `SPCOL` without a rectangle
-  starts it at minus the home point.
+- Hidden sprites do not collide, including children hidden through their parent
+  (link bit 0).
+- Sprites without `SPCOL` never collide, and rectangles that only touch do not
+  either.
+- `SPCOL` without a rectangle starts it at minus the home point.
 - `SPHITSP` with a reversed range searches it from the lower number.
-- `SPHITSP` of a sprite that is not set is -1, and `SPHITSP(id,other)`
-  with `other` not set is 0; neither is an error. `SPFUNC` takes a
-  sprite that is not set.
+- `SPHITSP` of a sprite that is not set is -1, and `SPHITSP(id,other)` with
+  `other` not set is 0; neither is an error.
+- `SPFUNC` takes a sprite that is not set.
 
 ### `SPFUNC` and `CALL SPRITE`
 
-- `CALL SPRITE` goes through the sprites in number order as it runs: a
-  callback that clears a later sprite skips it, and one that sets a later
-  sprite's `SPFUNC` gets it called. Afterwards `CALLIDX()` is 4096 (5
-  after `CALL TEXT`).
-- A callback `SPFUNC` names is a DEF or label of the slot `SPFUNC` ran
-  in, or a `COMMON DEF`; `CALL SPRITE` finds it from any slot.
+- `CALL SPRITE` goes through the sprites in number order as it runs: a callback
+  that clears a later sprite skips it, and one that sets a later sprite's
+  `SPFUNC` gets it called. Afterwards `CALLIDX()` is 4096 (5 after `CALL TEXT`).
+- A callback `SPFUNC` names is a DEF or label of the slot `SPFUNC` ran in, or a
+  `COMMON DEF`; `CALL SPRITE` finds it from any slot.
 
 ### `SPCHR`
 
 - `SPCHR` reads its arguments by how many there are (TEST45), not as the
-  manual's `SPCHR id,[U],[V],[W],[H],[attr]`. Empty U and V always keep
-  the sprite's own.
+  manual's `SPCHR id,[U],[V],[W],[H],[attr]`. Empty U and V always keep the
+  sprite's own.
   - `SPCHR id,U,V` sets W and H to 16 and the attributes to 0.
-  - `SPCHR id,U,V,attr`: the fourth argument is the attributes (W and H
-    become 16), so `SPCHR 1,,,40` is Out of range on argument 4.
-  - W and H are the size as shown (TEST45, TEST46). While the sprite is
-    turned 90 or 270 degrees (attribute bit 0), an empty W takes the
-    image's H and an empty H its W.
-  - `SPCHR id,U,V,W,H` sets the attributes to 0 and stores W and H as
-    given.
-  - `SPCHR id,U,V,W,H,attr`: when the resulting attributes turn the
-    sprite 90 or 270 degrees, the image is stored as H by W, so
-    `SPCHR 1,8,8,40,50,5` reads back W 50, H 40. Empty slots keep the
-    sprite's own values, so `SPCHR id,,,,,#A_REVH` only turns a sprite
-    around (a published game relies on it).
+  - `SPCHR id,U,V,attr`: the fourth argument is the attributes (W and H become
+    16), so `SPCHR 1,,,40` is Out of range on argument 4.
+  - W and H are the size as shown (TEST45, TEST46). While the sprite is turned
+    90 or 270 degrees (attribute bit 0), an empty W takes the image's H and an
+    empty H its W.
+  - `SPCHR id,U,V,W,H` sets the attributes to 0 and stores W and H as given.
+  - `SPCHR id,U,V,W,H,attr`: when the resulting attributes turn the sprite 90 or
+    270 degrees, the image is stored as H by W, so `SPCHR 1,8,8,40,50,5` reads
+    back W 50, H 40. Empty slots keep the sprite's own values, so
+    `SPCHR id,,,,,#A_REVH` only turns a sprite around (a published game relies
+    on it).
 - `SPCHR`'s attribute goes up to 31: 32 is `Out of range (SPCHR:6)` (TEST60).
 
 ## Graphics and layers
