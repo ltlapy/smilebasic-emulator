@@ -22,6 +22,8 @@ takes twice as long and runs up to 16% faster.
 SDL3 is built from source. On Linux, install the X11, Wayland and audio
 development headers listed in SDL's `docs/README-linux.md` first.
 
+For an aarch64 handheld, see [docs/building-handheld.md](docs/building-handheld.md).
+
 File > Settings > Screen > Renderer: Auto uses GPU rendering if the start-up test
 passes; CPU is exact but slower.
 

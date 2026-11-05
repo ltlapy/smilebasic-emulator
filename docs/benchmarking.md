@@ -230,5 +230,6 @@ Tried and left out, measured:
 
 The rest of the options, with what each would give up, are for whoever picks up
 the handheld port. To measure on a device: cross-build `smilebasic-check` for its
-target, copy the program over as a project, and run the same `--bench --fixed` lines
-under `perf stat` where it exists, or `--bench` for times where not.
+target ([building-handheld.md](building-handheld.md)), copy the program over as a
+project, and run the same `--bench --fixed` lines under `perf stat` where it exists, or
+`--bench` for times where not.
