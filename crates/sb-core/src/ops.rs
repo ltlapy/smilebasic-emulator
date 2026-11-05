@@ -198,6 +198,23 @@ pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
     }
 }
 
+/// What [`unary`] gives on a number when it cannot fail. `None` leaves it to
+/// [`unary`].
+#[inline(always)]
+pub fn unary_number(op: UnaryOp, value: &Value) -> Option<Num> {
+    match (op, value) {
+        (UnaryOp::Neg, Value::Int(n)) => Some(match n.checked_neg() {
+            Some(m) => Num::Int(m),
+            None => Num::Real(-f64::from(*n)),
+        }),
+        (UnaryOp::Neg, Value::Real(x)) => Some(Num::Real(-x)),
+        (UnaryOp::Not, Value::Int(n)) => Some(Num::Int(!n)),
+        (UnaryOp::LogicalNot, Value::Int(n)) => Some(Num::Int(i32::from(*n == 0))),
+        (UnaryOp::LogicalNot, Value::Real(x)) => Some(Num::Int(i32::from(*x == 0.0))),
+        _ => None,
+    }
+}
+
 pub fn unary(op: UnaryOp, value: &Value) -> Result<Value> {
     match op {
         UnaryOp::Neg => match *value {
@@ -333,6 +350,29 @@ mod tests {
                             "{op:?} {a:?} {b:?}: {quick:?} {full:?}"
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unary_number_agrees_with_unary() {
+        let values = [
+            Value::Int(i32::MIN),
+            Value::Int(-1),
+            Value::Int(0),
+            Value::Int(7),
+            Value::Real(0.0),
+            Value::Real(-0.0),
+            Value::Real(2.5),
+            Value::Real(1e300),
+            Value::Real(f64::NAN),
+        ];
+        for op in [UnaryOp::Neg, UnaryOp::Not, UnaryOp::LogicalNot] {
+            for v in &values {
+                if let Some(quick) = unary_number(op, v) {
+                    let (quick, full) = (Value::from(quick), unary(op, v).unwrap());
+                    assert_eq!(format!("{quick:?}"), format!("{full:?}"), "{op:?} {v:?}");
                 }
             }
         }

@@ -1121,6 +1121,10 @@ impl Vm {
                 && self.trace.is_none()
                 && self.changes.is_empty()
                 && self.stop_at.is_none()
+                && program
+                    .fast
+                    .get(self.pc)
+                    .is_some_and(|f| f.op != FastOp::Slow)
             {
                 self.run_fast(&program, stop);
             }
@@ -1247,48 +1251,60 @@ impl Vm {
                         Value::Real(x) => *slot = Value::Real(x),
                         _ => std::mem::swap(slot, value),
                     }
-                    stack.pop();
+                    drop_top(stack);
                 }
                 FastOp::Move { from, to } => {
                     copy_var(vars, from, to);
                 }
                 FastOp::Swap => {
                     let n = stack.len();
-                    stack.swap(n - 1, n - 2);
+                    swap_values(stack, n - 1, n - 2);
                 }
                 FastOp::Reverse(n) => {
-                    let from = stack.len() - n as usize;
-                    stack[from..].reverse();
+                    let (mut low, mut high) = (stack.len() - n as usize, stack.len());
+                    while low + 1 < high {
+                        high -= 1;
+                        swap_values(stack, low, high);
+                        low += 1;
+                    }
                 }
                 FastOp::Jump(a) => next = a as usize,
                 FastOp::JumpIfFalse(a) => {
                     let Some(yes) = stack.last().and_then(truth) else {
                         break;
                     };
-                    stack.pop();
+                    drop_top(stack);
                     if !yes {
                         next = a as usize;
                     }
+                }
+                FastOp::Unary(op) => {
+                    let value = top(stack);
+                    let Some(n) = ops::unary_number(op, value) else {
+                        break;
+                    };
+                    put(value, n);
                 }
                 FastOp::Binary(op) => {
                     let Some(n) = on_two(stack, |l, r| ops::binary_numbers(op, l, r)) else {
                         break;
                     };
-                    stack.pop();
+                    drop_top(stack);
                     put(top(stack), n);
                 }
                 FastOp::Swapped(op) => {
                     let Some(n) = on_two(stack, |l, r| ops::binary_numbers(op, r, l)) else {
                         break;
                     };
-                    stack.pop();
+                    drop_top(stack);
                     put(top(stack), n);
                 }
                 FastOp::SwappedStore(op, to) => {
                     let Some(n) = on_two(stack, |l, r| ops::binary_numbers(op, r, l)) else {
                         break;
                     };
-                    stack.truncate(stack.len() - 2);
+                    drop_top(stack);
+                    drop_top(stack);
                     put(at_var(vars, to), n);
                 }
                 FastOp::Vars { op, a, b } => {
@@ -1322,14 +1338,14 @@ impl Vm {
                     let Some(n) = ops::binary_numbers(op, get(vars, a), top(stack)) else {
                         break;
                     };
-                    stack.pop();
+                    drop_top(stack);
                     put(at_var(vars, to), n);
                 }
                 FastOp::Index1 => {
                     let Some(n) = on_two(stack, element1) else {
                         break;
                     };
-                    stack.pop();
+                    drop_top(stack);
                     put(top(stack), n);
                 }
                 FastOp::Index2 => {
@@ -1337,7 +1353,8 @@ impl Vm {
                     let Some(v) = element2(&stack[n - 3], &stack[n - 2], &stack[n - 1]) else {
                         break;
                     };
-                    stack.truncate(n - 2);
+                    drop_top(stack);
+                    drop_top(stack);
                     put(top(stack), v);
                 }
                 FastOp::Index1Vars { base, i } => {
@@ -1357,7 +1374,9 @@ impl Vm {
                     if !set_element1(&stack[n - 2], &stack[n - 1], &stack[n - 3]) {
                         break;
                     }
-                    stack.truncate(n - 3);
+                    drop_top(stack);
+                    drop_top(stack);
+                    drop_top(stack);
                 }
                 FastOp::StoreIndex2 => {
                     let n = stack.len();
@@ -1365,13 +1384,16 @@ impl Vm {
                     if !set_element2(base, i, j, &stack[n - 4]) {
                         break;
                     }
-                    stack.truncate(n - 4);
+                    drop_top(stack);
+                    drop_top(stack);
+                    drop_top(stack);
+                    drop_top(stack);
                 }
                 FastOp::StoreIndex1Vars { base, i } => {
                     if !set_element1(get(vars, base), get(vars, i), top(stack)) {
                         break;
                     }
-                    stack.pop();
+                    drop_top(stack);
                 }
                 FastOp::ForCheck {
                     var,
@@ -2792,6 +2814,34 @@ fn put(place: &mut Value, n: Num) {
     match n {
         Num::Int(n) => *place = Value::Int(n),
         Num::Real(x) => *place = Value::Real(x),
+    }
+}
+
+/// Takes the top value off the stack, without moving a number to do it.
+#[inline(always)]
+fn drop_top(stack: &mut Vec<Value>) {
+    let len = stack.len();
+    if let Some(Value::Int(_) | Value::Real(_)) = stack.last() {
+        // SAFETY: the stack has this element, and a number needs no dropping.
+        unsafe { stack.set_len(len - 1) };
+    } else {
+        stack.pop();
+    }
+}
+
+/// Swaps two values of the stack, writing numbers in parts.
+#[inline(always)]
+fn swap_values(stack: &mut [Value], a: usize, b: usize) {
+    let numbers = |v: &Value| match *v {
+        Value::Int(n) => Some(Num::Int(n)),
+        Value::Real(x) => Some(Num::Real(x)),
+        _ => None,
+    };
+    if let (Some(x), Some(y)) = (numbers(&stack[a]), numbers(&stack[b])) {
+        put(&mut stack[a], y);
+        put(&mut stack[b], x);
+    } else {
+        stack.swap(a, b);
     }
 }
 

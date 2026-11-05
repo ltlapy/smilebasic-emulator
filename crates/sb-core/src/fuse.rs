@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::BinaryOp;
+use crate::ast::{BinaryOp, UnaryOp};
 use crate::bytecode::{Addr, Compiled, Literal, Op, Slot};
 
 /// A number's place, for [`FastOp`]s: a variable of the running DEF or of the
@@ -68,6 +68,7 @@ pub enum FastOp {
     Reverse(u32),
     Jump(Addr),
     JumpIfFalse(Addr),
+    Unary(UnaryOp),
     Binary(BinaryOp),
     /// `Swap, Binary`
     Swapped(BinaryOp),
@@ -211,6 +212,7 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         Op::Reverse(n) => add(F::Reverse(n), 1),
         Op::Jump(a) => add(F::Jump(a), 1),
         Op::JumpIfFalse(a) => add(F::JumpIfFalse(a), 1),
+        Op::Unary(op) => add(F::Unary(op), 1),
         Op::Binary(op) => add(F::Binary(op), 1),
         Op::Index(1) => add(F::Index1, 1),
         Op::Index(2) => add(F::Index2, 1),
