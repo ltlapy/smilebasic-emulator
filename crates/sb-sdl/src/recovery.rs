@@ -3,7 +3,7 @@
 //! has to end for a failure, what was not saved goes to files first.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::SLOTS;
@@ -24,11 +24,48 @@ const NOTICE_FILE: &str = "recovery.txt";
 pub const RETRY: Duration = Duration::from_secs(1);
 /// With no renderer for this long, the user is told.
 pub const TELL_AFTER: Duration = Duration::from_secs(5);
-/// A main loop that did not come round for this long on the wall clock, which a
-/// suspended computer's monotonic clock does not show on every system. A GL context
-/// may have lost its textures then without a word, and giving them again costs a
-/// tenth of a second, so a false alarm does no harm.
-pub const SLEPT: Duration = Duration::from_secs(3);
+/// How far the wall clock has to get ahead of the monotonic one to count as a suspend.
+const SLEPT: Duration = Duration::from_secs(1);
+
+/// Whether the computer was suspended, for a GL context may have lost its textures then
+/// without a word. The wall clock goes on through a suspend and `Instant` does not, on
+/// Linux and macOS, so it is the difference between them that tells, and a main loop
+/// merely held up (a window dragged about holds it for seconds) moves both alike.
+///
+/// On Windows `Instant` goes on through a suspend as well, so this never fires there:
+/// Direct3D reports what it lost itself, and a GL context there keeps its textures.
+/// The wall clock being set forward looks the same, which costs a tenth of a second.
+pub struct SuspendWatch {
+    wall: SystemTime,
+    monotonic: Instant,
+}
+
+impl SuspendWatch {
+    pub fn new() -> SuspendWatch {
+        SuspendWatch {
+            wall: SystemTime::now(),
+            monotonic: Instant::now(),
+        }
+    }
+
+    /// Whether the computer was suspended since the last time this was asked.
+    pub fn woke(&mut self) -> bool {
+        self.woke_at(SystemTime::now(), Instant::now())
+    }
+
+    fn woke_at(&mut self, wall: SystemTime, monotonic: Instant) -> bool {
+        let wall_gap = wall.duration_since(self.wall);
+        let monotonic_gap = monotonic.duration_since(self.monotonic);
+        (self.wall, self.monotonic) = (wall, monotonic);
+        wall_gap.is_ok_and(|gap| gap.saturating_sub(monotonic_gap) >= SLEPT)
+    }
+
+    /// Stands for a suspend, for the bench: as if the wall clock had gone on by `time`
+    /// while the monotonic one stood.
+    pub fn pretend(&mut self, time: Duration) {
+        self.wall -= time;
+    }
+}
 
 /// A renderer's texture creator, with the lifetime the textures then have, so that
 /// the renderer can be replaced while the variables holding textures stay.
@@ -193,6 +230,45 @@ fn write_notice(data: &Path, lines: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A watch and the clocks' readings, moved by hand.
+    fn watch() -> (SuspendWatch, SystemTime, Instant) {
+        let (wall, monotonic) = (SystemTime::now(), Instant::now());
+        (SuspendWatch { wall, monotonic }, wall, monotonic)
+    }
+
+    #[test]
+    fn a_held_up_loop_is_not_a_suspend() {
+        let (mut watch, wall, monotonic) = watch();
+        let held = Duration::from_secs(30);
+        assert!(!watch.woke_at(wall + held, monotonic + held));
+    }
+
+    #[test]
+    fn a_suspend_moves_the_wall_clock_alone() {
+        let (mut watch, wall, monotonic) = watch();
+        let (slept, ran) = (Duration::from_secs(60), Duration::from_millis(16));
+        assert!(watch.woke_at(wall + slept + ran, monotonic + ran));
+        // Told once.
+        let wall = wall + slept + ran + ran;
+        assert!(!watch.woke_at(wall, monotonic + ran + ran));
+    }
+
+    #[test]
+    fn a_short_wobble_or_the_wall_clock_going_back_is_not_a_suspend() {
+        let (mut watch, wall, monotonic) = watch();
+        assert!(!watch.woke_at(wall + Duration::from_millis(200), monotonic));
+        let mut watch = SuspendWatch { wall, monotonic };
+        assert!(!watch.woke_at(wall - Duration::from_secs(60), monotonic));
+    }
+
+    #[test]
+    fn a_pretended_suspend_counts_once() {
+        let (mut watch, wall, monotonic) = watch();
+        watch.pretend(Duration::from_secs(4));
+        assert!(watch.woke_at(wall, monotonic));
+        assert!(!watch.woke_at(wall, monotonic));
+    }
     use sb_runtime::Runtime;
     use sb_runtime::font::Font;
 

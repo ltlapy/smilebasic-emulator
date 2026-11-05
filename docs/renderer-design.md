@@ -1514,8 +1514,12 @@ No project in the bench set leaves a frame on the CPU; see above for what could.
   try it. A GL context lost without SDL saying so, as some drivers do on resuming
   from suspend, cannot be asked about: `glGetGraphicsResetStatus` needs a robust context,
   which risks a context refused, and NVIDIA reports a purge only with an attribute SDL
-  cannot set. So a main loop that did not come round for 3 s on the wall clock counts as
-  `RENDER_DEVICE_RESET`, and all is given again. Only by the code: no real suspend tried.
+  cannot set. So a wall clock a second or more ahead of the monotonic one, which stands
+  still through a suspend on Linux and macOS, counts as `RENDER_DEVICE_RESET`, and all is
+  given again. A main loop merely held up moves both clocks and resends nothing. On
+  Windows the monotonic clock goes on too, so it never fires there, where Direct3D reports
+  its own losses and a GL context keeps its textures. Only by the code: no real suspend
+  tried; `at=N:sleep:MS` in the bench stands for one.
 - Long runs: 12000 frames each on opengl, opengles2 and llvmpipe, 10 sizes of `XSCREEN`
   from 128x128 to 1280x720 in modes 0 to 2, page changes, `EXEC`, a subprogram started
   and stopped, resets, resizes, full screen and the setting off and on every 400 frames.

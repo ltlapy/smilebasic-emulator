@@ -36,7 +36,7 @@ use std::ffi::CStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use crate::pad_repeat::{Dir, PadRepeat};
 
@@ -55,7 +55,7 @@ use menu::{Action, Click, Context, MenuBar};
 use popup::Popup;
 use program_dialog::ProgramView;
 use projects::{Memory, Outcome, ProjectManager, Transfer};
-use recovery::{OwnedCreator, Recovery, RendererWatch};
+use recovery::{OwnedCreator, Recovery, RendererWatch, SuspendWatch};
 use sb_profiles::Profile;
 use sb_runtime::confirm::Confirm;
 use sb_runtime::editor::{Mode, Place, is_movement};
@@ -473,7 +473,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut bench_pad = 0;
     // Renderers to refuse, for the bench.
     let mut refusals = 0;
-    let mut last_wall = SystemTime::now();
+    let mut suspend = SuspendWatch::new();
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
         ($stage:ident) => {
@@ -545,20 +545,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             texture_creator = creator.get();
             main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
             clock = pacing::Clock::new(Instant::now());
-            last_wall = SystemTime::now();
+            suspend = SuspendWatch::new();
             toasts.push("The renderer failed and was restarted.".to_string());
         }
         // After a suspend a GL context may have lost its textures without a word.
-        let wall = SystemTime::now();
-        if wall
-            .duration_since(last_wall)
-            .is_ok_and(|gap| gap >= recovery::SLEPT)
-        {
-            eprintln!("the clock jumped, as after a suspend: giving the renderer all again");
+        if suspend.woke() {
+            if bench.is_some() {
+                eprintln!("woke from a suspend: giving the renderer all again");
+            }
             let reset = Event::RenderDeviceReset { timestamp: 0 };
             let _ = sdl.event().and_then(|e| e.push_event(reset));
         }
-        last_wall = wall;
         if let Some(b) = &mut bench {
             b.sound(audio.stats());
         }
@@ -661,8 +658,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     })
                 }
                 _ if what.starts_with("sleep:") => {
-                    let ms = what[6..].parse().unwrap_or(0);
-                    std::thread::sleep(Duration::from_millis(ms));
+                    let time = Duration::from_millis(what[6..].parse().unwrap_or(0));
+                    std::thread::sleep(time);
+                    suspend.pretend(time);
                     None
                 }
                 _ => {
