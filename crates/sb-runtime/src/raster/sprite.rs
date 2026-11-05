@@ -16,6 +16,26 @@ pub fn draw(
     clip: Option<&Clip>,
     projection: Option<(&[f64; 16], u32)>,
 ) {
+    draw_in(s, grp, fb, clip, projection, &mut Room::default());
+}
+
+/// What drawing an upright sprite works out, its room kept from one sprite to
+/// the next rather than allocated for each.
+#[derive(Default)]
+pub struct Room {
+    grid: compose::Grid,
+    cols: Vec<usize>,
+}
+
+/// [`draw`], with `room` to work in.
+pub fn draw_in(
+    s: &SpriteItem,
+    grp: &Graphics,
+    fb: &mut Framebuffer,
+    clip: Option<&Clip>,
+    projection: Option<(&[f64; 16], u32)>,
+    room: &mut Room,
+) {
     if s.shows_nothing() {
         return;
     }
@@ -86,7 +106,7 @@ pub fn draw(
         ),
     };
     if place.is_upright() {
-        return draw_upright(&source, &tint, fb, &place, (bw, bh), tie, grp);
+        return draw_upright(&source, &tint, fb, &place, (bw, bh), tie, grp, room);
     }
     struct Turned<'a, 'b> {
         fb: &'a mut Framebuffer,
@@ -313,6 +333,7 @@ const LARGE: usize = 4096;
 /// [`draw`] for a sprite neither turned nor sheared on the frame,
 /// the usual case: which page column and row each frame column and row
 /// shows is worked out once, so each pixel is a lookup and a blend.
+#[allow(clippy::too_many_arguments)]
 fn draw_upright(
     source: &Source,
     tint: &Tint,
@@ -321,10 +342,13 @@ fn draw_upright(
     (bw, bh): (i32, i32),
     (tx, ty): (f64, f64),
     grp: &Graphics,
+    room: &mut Room,
 ) {
-    let Some(grid) = compose::grid(fb, place, bw, bh) else {
+    let Room { grid, cols } = room;
+    if !compose::grid_in(grid, fb, place, bw, bh) {
         return;
-    };
+    }
+    let grid = &*grid;
     let stride = GRP_SIZE as usize;
     // A tie just before the page's first texel reads that one.
     let at = |v: i32, step: usize| match source.wrap(v) {
@@ -335,15 +359,15 @@ fn draw_upright(
     // A quarter turn makes frame columns go down the page, and rows
     // across it.
     let turned = (source.attr & attr::ROTATION) % 2 == 1;
-    let cols: Vec<usize> = (grid.xs.iter())
-        .map(|&x| {
-            let (px, py) = source.page_xy(texel(x + tx), 0);
-            match turned {
-                false => at(px, 1),
-                true => at(py, stride),
-            }
-        })
-        .collect();
+    cols.clear();
+    cols.extend(grid.xs.iter().map(|&x| {
+        let (px, py) = source.page_xy(texel(x + tx), 0);
+        match turned {
+            false => at(px, 1),
+            true => at(py, stride),
+        }
+    }));
+    let cols = &*cols;
     let rows = grid.ys.iter().map(|&y| {
         let (px, py) = source.page_xy(0, texel(y + ty));
         match turned {
@@ -357,7 +381,7 @@ fn draw_upright(
     // Small sprites, the many, are not worth the setting up.
     let large = cols.len() * grid.ys.len() >= LARGE;
     let run = match (turned, source.white, source.page_no) {
-        (false, false, Some(page)) if large => steady(&cols).map(|run| (run, page)),
+        (false, false, Some(page)) if large => steady(cols).map(|run| (run, page)),
         _ => None,
     };
     struct Rows<'a, R> {
@@ -500,8 +524,8 @@ fn draw_upright(
         place.add,
         Rows {
             fb,
-            grid: &grid,
-            cols: &cols,
+            grid,
+            cols,
             rows,
             source,
             run,

@@ -64,6 +64,8 @@ pub struct CpuRasterizer {
     scratch: Framebuffer,
     /// The only part of `scratch` that may not be clear.
     scratch_used: Option<Area>,
+    /// Room for what drawing a sprite works out.
+    room: sprite::Room,
     /// The text screens' characters.
     glyphs: [text::KeptGlyphs; SCREENS],
     /// A layer with LMATRIX's 4x4 form, drawn flat before it is put
@@ -77,6 +79,7 @@ impl CpuRasterizer {
             fb: Framebuffer::new(width, height),
             scratch: Framebuffer::new(width, height),
             scratch_used: Some(Area::all(width, height)),
+            room: Default::default(),
             glyphs: Default::default(),
             flat: Framebuffer::new(width, height),
         }
@@ -142,9 +145,10 @@ impl CpuRasterizer {
             scratch,
             flat,
             glyphs,
+            room,
             ..
         } = self;
-        items_and_filter(scene, input, pass, scratch, flat, glyphs);
+        items_and_filter(scene, input, pass, scratch, flat, glyphs, room);
         area
     }
 
@@ -152,9 +156,13 @@ impl CpuRasterizer {
     fn draw_pass(&mut self, scene: &Scene, input: &RasterInput, pass: &LayerPass) {
         if pass.compose == Compose::Direct {
             let CpuRasterizer {
-                fb, flat, glyphs, ..
+                fb,
+                flat,
+                glyphs,
+                room,
+                ..
             } = self;
-            items_and_filter(scene, input, pass, fb, flat, glyphs);
+            items_and_filter(scene, input, pass, fb, flat, glyphs, room);
             return;
         }
         let area = self.layer_alone(scene, input, pass);
@@ -223,6 +231,7 @@ fn items_and_filter(
     target: &mut Framebuffer,
     flat: &mut Framebuffer,
     glyphs: &mut [text::KeptGlyphs; SCREENS],
+    room: &mut sprite::Room,
 ) {
     let &RasterInput { grp, font, cells } = input;
     let sample = scene.sample;
@@ -231,7 +240,7 @@ fn items_and_filter(
         None => {
             for item in scene.items(pass) {
                 match item {
-                    Item::Sprite(s) => sprite::draw(s, grp, target, clip, None),
+                    Item::Sprite(s) => sprite::draw_in(s, grp, target, clip, None, room),
                     Item::Text(t) => {
                         let (at, kept) = (t.screen as usize, &mut glyphs[t.screen as usize]);
                         text::draw_keeping(t, cells[at], font, grp, target, clip, kept);
@@ -250,7 +259,7 @@ fn items_and_filter(
                             compose::project(target, flat, origin, &p.matrix, sample, clip);
                             flat_drawn = false;
                         }
-                        sprite::draw(s, grp, target, clip, Some((&p.matrix, sample)));
+                        sprite::draw_in(s, grp, target, clip, Some((&p.matrix, sample)), room);
                     }
                     Item::Text(t) => {
                         if !flat_drawn {

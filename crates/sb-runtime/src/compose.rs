@@ -673,6 +673,7 @@ fn span(
 /// frame: the image x under each frame column from `x0` and the image y
 /// under each row from `y0`, as [`draw_image`] works them out, for the
 /// columns and rows that fall on the image.
+#[derive(Default)]
 pub struct Grid {
     pub x0: u32,
     pub y0: u32,
@@ -797,47 +798,60 @@ pub fn page_signs(turn: i32, revh: bool, revv: bool) -> (f64, f64) {
 /// The [`Grid`] of an upright placement, or `None` where it shows
 /// nothing.
 pub fn grid(fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> Option<Grid> {
+    let mut grid = Grid::default();
+    grid_in(&mut grid, fb, place, w, h).then_some(grid)
+}
+
+/// [`grid`] in one that already has room, which allocates nothing: this is
+/// for each sprite of a frame. False if the image shows nowhere.
+pub fn grid_in(grid: &mut Grid, fb: &Framebuffer, place: &Placement, w: i32, h: i32) -> bool {
     debug_assert!(place.is_upright());
-    let inv = place.sampling()?;
-    let (x0, y0, x1, y1) = span(fb, place, w, h, (0, 0, w, h))?;
+    let Some(inv) = place.sampling() else {
+        return false;
+    };
+    let Some((x0, y0, x1, y1)) = span(fb, place, w, h, (0, 0, w, h)) else {
+        return false;
+    };
     let (w, h) = (f64::from(w), f64::from(h));
     // With b and c zero, x depends on the column alone and y on the row
     // alone, to the bit; both only grow or only shrink along the frame,
     // so the ones on the image are a run.
     let at = |px: u32, py: u32| inv.apply(f64::from(px) + 0.5, f64::from(py) + 0.5);
-    let (gx0, xs) = on_image(x0..x1, |px| at(px, y0).0, w)?;
-    let (gy0, ys) = on_image(y0..y1, |py| at(x0, py).1, h)?;
-    Some(Grid {
-        x0: gx0,
-        y0: gy0,
-        xs,
-        ys,
-    })
+    let Some(gx0) = on_image(x0..x1, |px| at(px, y0).0, w, &mut grid.xs) else {
+        return false;
+    };
+    let Some(gy0) = on_image(y0..y1, |py| at(x0, py).1, h, &mut grid.ys) else {
+        return false;
+    };
+    (grid.x0, grid.y0) = (gx0, gy0);
+    true
 }
 
 /// The first frame column or row in `range` on the image, of `len`, where `f`
-/// says what image x or y each shows, and those of the run from there.
+/// says what image x or y each shows, with those of the run from there in `run`.
 #[inline]
 fn on_image(
     range: std::ops::Range<u32>,
     f: impl Fn(u32) -> f64,
     len: f64,
-) -> Option<(u32, Vec<f64>)> {
+    run: &mut Vec<f64>,
+) -> Option<u32> {
     let on = |v: f64| v >= 0.0 && v < len;
-    let (mut first, mut run) = (None, Vec::new());
+    let mut first = None;
+    run.clear();
     for p in range.clone() {
         let v = f(p);
         if on(v) {
             if first.is_none() {
                 first = Some(p);
-                run.reserve_exact((range.end - p) as usize);
+                run.reserve((range.end - p) as usize);
             }
             run.push(v);
         } else if first.is_some() {
             break;
         }
     }
-    Some((first?, run))
+    first
 }
 
 /// The smallest and largest x and y that `m` takes the corners of the
