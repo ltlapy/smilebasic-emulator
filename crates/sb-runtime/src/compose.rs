@@ -954,6 +954,10 @@ pub fn project(
     let corners = [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)]
         .map(|(x, y)| ((f64::from(x) + ox) / sample, (f64::from(y) + oy) / sample));
     let (x0, y0, x1, y1) = window(&h, corners, (w, hh), clip);
+    // The layer lies wholly left of the clip, or the clip right of the frame.
+    if x1 <= x0 {
+        return;
+    }
     let (sw, sh) = (i64::from(src.width()), i64::from(src.height()));
     let width = w as usize;
     let (from, pixels) = (src.pixels(), dst.pixels_mut());
@@ -968,15 +972,11 @@ pub fn project(
         let (first, end) = depth_span(
             z[0] * gx + z[1] * gy + z[2] * q,
             z[0] * dx + z[1] * dy + z[2] * dq,
-            // Above x1 when the layer lies wholly left of the clip: the pixels
-            // from x0 to x1 are then none unless Z / W ends them first.
-            x1.wrapping_sub(x0),
+            x1 - x0,
         );
-        let (start, stop) = (x0.wrapping_add(first), x0.wrapping_add(end));
-        if start >= stop {
+        if first >= end {
             continue;
         }
-        let (first, end) = (start - x0, stop - x0);
         let line = py as usize * width;
         let along = Along {
             layer: (gx, gy, q),
@@ -2565,6 +2565,36 @@ mod tests {
         );
         let row: Vec<bool> = image.pixels()[..8].iter().map(|&p| p != 0).collect();
         assert_eq!(row, want);
+    }
+
+    #[test]
+    fn projection_stays_out_of_a_clip_it_does_not_reach() {
+        // Maps the layer to the frame pixel for pixel, with a Z row that stays
+        // in range for a long way past the frame's right side.
+        let mut m = [0.0; 16];
+        (m[0], m[5], m[12], m[13], m[15]) = (2.0 / 40.0, -2.0 / 8.0, -1.0, 1.0, 1.0);
+        m[2] = 1e-3;
+        let mut wide = Framebuffer::new(80, 8);
+        wide.pixels_mut().fill(0xFF11_2233);
+        let mut narrow = Framebuffer::new(5, 8);
+        narrow.pixels_mut().fill(0xFF11_2233);
+        let drawn = |src: &Framebuffer, x0, x1| {
+            let mut dst = Framebuffer::new(40, 8);
+            dst.clear(0);
+            let clip = Clip {
+                x0,
+                y0: 0,
+                x1,
+                y1: 7,
+            };
+            project(&mut dst, src, (0, 0), &m, 1, Some(&clip));
+            dst.pixels().iter().filter(|&&p| p != 0).count()
+        };
+        // A clip past the frame's right side: nothing goes on to the next row.
+        assert_eq!(drawn(&wide, 50, 60), 0);
+        // A layer wholly left of the clip.
+        assert_eq!(drawn(&narrow, 20, 30), 0);
+        assert_eq!(drawn(&wide, 20, 30), 8 * 11);
     }
 
     #[test]
