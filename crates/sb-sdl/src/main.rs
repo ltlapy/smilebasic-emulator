@@ -888,6 +888,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             {
                 main_presents.retry(&canvas);
             }
+            if let Event::Window {
+                win_event: WindowEvent::PixelSizeChanged(..) | WindowEvent::Resized(..),
+                ..
+            } = event
+                && !from_editor
+            {
+                main_presents.resized();
+            }
             if let (true, Event::Window { win_event, .. }) = (from_editor, &event) {
                 match win_event {
                     WindowEvent::FocusGained => editor_focused = true,

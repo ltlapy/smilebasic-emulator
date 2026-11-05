@@ -23,6 +23,10 @@ use crate::bench::Bench;
 /// A present that takes this long was held back by the compositor rather
 /// than by vsync, which waits a frame at most.
 const SLOW_PRESENT: Duration = Duration::from_millis(40);
+/// Presents after the window's size changed that may be slow without counting
+/// as held back: the driver is making buffers of the new size, and a compositor
+/// repaints what the drag moved. A second's worth, to outlast a drag's pauses.
+const RESIZE_GRACE: u32 = 60;
 /// How far a frame's start may move to follow the display's vsync, as
 /// against the clock: 0.3% of a frame, inside what the sound's rate
 /// control makes up for (0.5%).
@@ -117,6 +121,14 @@ pub struct Presents {
     wanted: bool,
     /// Vsync is on.
     vsync: bool,
+    /// Presents left that a resize excuses.
+    excused: u32,
+}
+
+/// Whether a present that took `took` shows that the compositor holds the window's
+/// presents back; `excused` is whether a resize explains it.
+fn held_back(took: Duration, excused: bool) -> bool {
+    !excused && took > SLOW_PRESENT
 }
 
 impl Presents {
@@ -125,6 +137,7 @@ impl Presents {
         let mut presents = Presents {
             wanted,
             vsync: false,
+            excused: 0,
         };
         if wanted {
             presents.set_vsync(canvas, true);
@@ -145,6 +158,11 @@ impl Presents {
     /// Whether presents wait for vsync.
     pub fn vsync(&self) -> bool {
         self.vsync
+    }
+
+    /// The window's size has changed.
+    pub fn resized(&mut self) {
+        self.excused = RESIZE_GRACE;
     }
 
     /// Tries vsync again, as when the window is shown again after it was
@@ -173,7 +191,9 @@ impl Presents {
         if let Some(b) = bench {
             b.present(self.vsync);
         }
-        if self.vsync && start.elapsed() > SLOW_PRESENT {
+        let excused = self.excused > 0;
+        self.excused = self.excused.saturating_sub(1);
+        if self.vsync && held_back(start.elapsed(), excused) {
             // Held back while the system says the window is shown, as
             // X11 never says it is covered: go by the clock instead,
             // until the window is shown again or gets the focus.
@@ -257,6 +277,14 @@ mod tests {
         // A compositor holding each present for 50 ms.
         let rate = rate(run(600, Duration::from_millis(52), None, false));
         assert!((rate - 60.0).abs() < 0.5, "{rate}");
+    }
+
+    #[test]
+    fn a_slow_present_while_resizing_is_not_held_back() {
+        let slow = SLOW_PRESENT + Duration::from_millis(1);
+        assert!(held_back(slow, false));
+        assert!(!held_back(slow, true));
+        assert!(!held_back(SLOW_PRESENT, false));
     }
 
     #[test]
