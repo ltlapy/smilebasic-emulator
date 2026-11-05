@@ -471,6 +471,13 @@ rows as it takes, the console scrolling as it goes, and the last row stays empty
 Read from SmileBASIC 4 (version 4.4.8) and SmileBASIC 4, and not
 yet seen on hardware:
 
+- A cell `TSCREEN` or `CLS` clears has code 0 and the screen's current `COLOR`
+  and `ATTR`, white and 0 to start with, not an all-zero cell. So a program can
+  write only the character codes through `TARRAY`, the even elements, and they
+  show after `TUPDATE`: SmileBOY draws its background that way. What `SCROLL`
+  or the console's scrolling uncovers, and a cell off the screen for `TSAVE`,
+  is all zero: a code written there through `TARRAY` alone has colour 0 and
+  doesn't show.
 - Only the console has a program with the per-cell flag of attribute bit 7,
   so that on it the bit should invert a cell: its colour is multiplied by 1
   minus the glyph's alpha, and then, as for any text, by `TCOLOR` and the

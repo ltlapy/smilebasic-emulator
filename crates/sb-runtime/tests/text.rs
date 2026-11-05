@@ -240,6 +240,21 @@ fn tarray_follows_tscreen_and_acls_resets_gsample() {
     assert_eq!(row(&rt, 4, 0, 20).trim_end_matches('.'), "65300010");
 }
 
+/// A cell TSCREEN or CLS cleared has COLOR and ATTR in it; SCROLL's are empty.
+#[test]
+fn cleared_cells_keep_color_and_attr() {
+    let rt = run("T=TARRAY(1):?HEX$(T[0,1]);\" \";T[0,0];\n\
+         TSCREEN 1,8,8,16,16:?\" \";HEX$(T[0,1]);\" \";T[15,31];\n\
+         COLOR 1,#C_RED:ATTR 1,1:CLS 1:?\" \";HEX$(T[3,1]);\" \";HEX$(T[3,0]);\n\
+         COLOR 1,#C_LIME:ATTR 1,0:TSCREEN 1,8,8,16,16:?\" \";HEX$(T[3,1]);T[3,0];\n\
+         SCROLL 1,0,1:?\" \";T[15,1];T[14,1]==T[3,1]")
+    .unwrap();
+    assert_eq!(
+        row(&rt, 4, 0, 50).trim_end_matches('.'),
+        "FFFFFFFF 0 FFFFFFFF -1 FFFF0000 10000 FF00FF000 01"
+    );
+}
+
 #[test]
 fn tscreen_undoes_the_screens_look() {
     let rt = run("DIM A[]=[-10,-1],B[]=[-10,45]\n\

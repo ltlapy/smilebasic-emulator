@@ -26,6 +26,19 @@ fn run(source: &str) -> Machine {
     m
 }
 
+/// A program writes only the character codes through TARRAY, on a new screen
+/// or a cleared one: the colours are there already, so the characters show.
+#[test]
+fn codes_alone_written_through_tarray_show() {
+    for clear in ["", "CLS 1:"] {
+        let mut m = run(&format!(
+            "GTARGET 4:GFILL 1024,0,1031,7,#C_RED:GTARGET 0\n\
+             TSCREEN 1,8,8,16,16:{clear}T=TARRAY(1):T[0,0]=&HE800:TUPDATE 1"
+        ));
+        assert_eq!(m.render().get(2, 2), Some(RED), "after {clear:?}");
+    }
+}
+
 /// A pixel of "A" that the font draws fully opaque.
 fn lit_pixel_of_a() -> (u32, u32) {
     let font = Font::fallback();

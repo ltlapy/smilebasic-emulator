@@ -94,6 +94,13 @@ const EMPTY: Cell = Cell {
     attr: 0,
 };
 
+/// A cell of a new screen, before any COLOR or ATTR.
+const BLANK: Cell = Cell {
+    code: 0,
+    color: WHITE,
+    attr: 0,
+};
+
 impl Cell {
     /// TARRAY's two elements: the attribute over the character code, and
     /// the color.
@@ -189,7 +196,7 @@ impl TextScreen {
             char_size: 8,
             width,
             height,
-            cells: vec![EMPTY; (width * height) as usize],
+            cells: vec![BLANK; (width * height) as usize],
             cells_changed: true,
             cells_seen: Vec::new(),
             cursor: (0, 0),
@@ -249,8 +256,9 @@ impl TextScreen {
     pub fn set_font(&mut self, font_type: u32, char_size: u32, width: u32, height: u32) {
         (self.font_type, self.char_size) = (font_type, char_size);
         (self.width, self.height) = (width, height);
-        self.cells = vec![EMPTY; (width * height) as usize];
-        self.may_invert = false;
+        let blank = self.blank();
+        self.cells = vec![blank; (width * height) as usize];
+        self.may_invert = self.inverts && blank.attr & attr::INVERT != 0;
         self.cells_changed = true;
         self.cursor = (0, 0);
         // TARRAY's array takes the new size and goes on following the
@@ -258,7 +266,8 @@ impl TextScreen {
         if let Some(array) = &self.array {
             let mut array = array.borrow_mut();
             array.dims = vec![height as usize, width as usize * 2];
-            array.data = ArrayData::Int(vec![0; (width * height * 2) as usize]);
+            let ints = blank.to_ints();
+            array.data = ArrayData::Int(ints.repeat((width * height) as usize));
         }
     }
 
@@ -389,10 +398,21 @@ impl TextScreen {
         true
     }
 
+    /// What TSCREEN and CLS leave in a cell: nothing to show, with COLOR
+    /// and ATTR as they are, which a cell written through TARRAY keeps.
+    fn blank(&self) -> Cell {
+        Cell {
+            code: 0,
+            color: self.color,
+            attr: self.attr,
+        }
+    }
+
     /// Clears the screen and homes the cursor.
     pub fn cls(&mut self) {
+        let blank = self.blank();
         for i in 0..self.cells.len() {
-            self.set(i, EMPTY);
+            self.set(i, blank);
         }
         self.cursor = (0, 0);
     }
@@ -731,6 +751,8 @@ mod tests {
     #[test]
     fn scrolling_counts_as_a_change_only_if_cells_differ() {
         let mut s = TextScreen::new(80, 40);
+        // What scrolling uncovers has no COLOR in it, unlike a new screen.
+        s.scroll(80, 40);
         s.take_changed();
         s.scroll(1, 1);
         assert!(!s.take_changed());
