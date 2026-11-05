@@ -58,6 +58,8 @@ const USAGE: &str = "usage:
                        with --fixed, as the work then follows the clock
         --slower N     with --window, the clock and limits divided by N,
                        to stand for a machine N times slower than this
+      With SB_BENCH_SOUND in the environment, it also prints a checksum
+      of the sound mixed, to the bit, for comparing builds.
   smilebasic-check --play FRAMES PROJECT PROGRAM SCRIPT DIR
       run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
       (a file, or - for none) asks for, and save the screens it asks for
@@ -376,6 +378,8 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
         .set_project(name)
         .map_err(|e| format!("{name}: {e}"))?;
     let mut checksum = 0xCBF2_9CE4_8422_2325u64;
+    let sound = std::env::var_os("SB_BENCH_SOUND").is_some();
+    let mut sound_sum = checksum;
     let started = Instant::now();
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     println!("loaded and compiled in {:?}", started.elapsed());
@@ -416,6 +420,10 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
             let t = Instant::now();
             m.frame();
             let ran = t.elapsed();
+            if sound {
+                let samples: Vec<u32> = (m.take_samples().iter()).map(|s| s.to_bits()).collect();
+                sound_sum = add_to_checksum(sound_sum, &samples);
+            }
             frame_log.push(FrameLog {
                 run: ran,
                 draw: Duration::ZERO,
@@ -505,6 +513,9 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
         );
     };
     println!("{} frames", run.len());
+    if sound {
+        println!("sound checksum {sound_sum:016x}");
+    }
     if fixed {
         // What the program did: runs that differ here cannot be compared.
         let rows = console_rows(&m).join("\n").into_bytes();
