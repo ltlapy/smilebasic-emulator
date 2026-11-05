@@ -19,18 +19,25 @@ pub enum Outcome {
     Close,
 }
 
-/// The rows of the README's shortcut table: the keys and what they do.
+/// The rows of the README's shortcut tables, one under each sub-heading of
+/// "Shortcuts": the keys and what they do.
 fn table() -> Vec<(String, String)> {
     let mut rows = Vec::new();
-    let mut lines = README.lines().skip_while(|l| l.trim() != "### Shortcuts");
-    // The heading, the table's head and the line under it.
-    for line in lines.by_ref().skip(3) {
+    let section = README
+        .lines()
+        .skip_while(|l| l.trim() != "### Shortcuts")
+        .skip(1)
+        .take_while(|l| !l.starts_with("### ") && !l.starts_with("## "));
+    for line in section {
         let Some(row) = line.strip_prefix('|') else {
-            break;
+            continue;
         };
         let mut cells = row.split('|').map(|c| c.trim().replace('`', ""));
         if let (Some(keys), Some(what)) = (cells.next(), cells.next()) {
-            rows.push((keys, what));
+            // Each table's head and the line under it.
+            if keys != "Key" && keys != "---" {
+                rows.push((keys, what));
+            }
         }
     }
     rows
