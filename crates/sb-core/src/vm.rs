@@ -36,6 +36,9 @@ const CALL_COST: usize = 12;
 const VALUE_COST: usize = 4;
 /// What each of a DEF's arguments, OUTs and variables takes of it.
 const VARIABLE_COST: usize = 4;
+/// How many lists of variables are kept for later calls: more than the depth
+/// of nearly all calls.
+const SPARE_LOCALS: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -225,6 +228,8 @@ pub struct Vm {
     /// Which globals exist, for direct mode's declarations.
     declared: Vec<bool>,
     frames: Vec<Frame>,
+    /// The empty lists of variables of DEF calls that ended.
+    spare_locals: Vec<Vec<Value>>,
     /// Slot and address to return to, and how many READ places
     /// RESTORE "PUSH" had kept then.
     gosubs: Vec<(usize, usize, usize)>,
@@ -453,6 +458,7 @@ impl Vm {
             globals,
             declared,
             frames: Vec::new(),
+            spare_locals: Vec::new(),
             gosubs: Vec::new(),
             data_pos: 0,
             data_from: None,
@@ -1072,6 +1078,15 @@ impl Vm {
         self.stack
             .push(Value::Array(Rc::new(Array::new(elem, dims).into())));
         Ok(())
+    }
+
+    /// [`Vm::run_again`] for arguments left on the stack from `at`.
+    #[cold]
+    fn failed_with_args(&mut self, e: Error, at: usize) -> Error {
+        if e.kind != ErrorKind::MemoryCheck {
+            self.stack.truncate(at);
+        }
+        e
     }
 
     /// [`Vm::run_again`] for CALL, with the name it took too.
@@ -2043,11 +2058,10 @@ impl Vm {
             Op::Return => next = self.return_op(host)?,
             Op::ReturnValue => {
                 let value = self.pop();
-                next = self.leave_def(vec![value], host)?;
+                next = self.leave_def_with(value, host)?;
             }
             Op::CallDef { def, argc, want } => {
-                let args = self.pop_n((*argc).into());
-                self.enter_def(*def, args, *want, self.slot)?;
+                self.enter_def_on_stack(*def, (*argc).into(), *want, self.slot)?;
                 return Ok(None);
             }
             Op::CallCommon { name, argc, want } => {
@@ -2061,21 +2075,47 @@ impl Vm {
                 return Ok(None);
             }
             Op::CallBuiltin { id, argc, want } => {
-                let args = self.pop_n((*argc).into());
-                if let Err(e) = self.call_builtin(program, *id, &args, *want) {
-                    return Err(self.run_again(e, args));
+                let b = builtins::get(*id);
+                let argc = usize::from(*argc);
+                if let (Kind::Function(f), Want::Value, true) = (b.kind, *want, b.accepts(argc)) {
+                    // Most calls: no need to take the arguments off the stack
+                    // for the call, or to make a list of one result.
+                    let at = self.stack.len() - argc;
+                    let result = f(&self.stack[at..]);
+                    let result = result.map_err(|e| builtin_error(e, b.name, &self.stack[at..]));
+                    match result {
+                        Ok(v) => {
+                            self.stack.truncate(at);
+                            self.stack.push(v);
+                        }
+                        Err(e) => return Err(self.failed_with_args(e, at)),
+                    }
+                } else {
+                    let args = self.pop_n(argc);
+                    if let Err(e) = self.call_builtin(program, *id, &args, *want) {
+                        return Err(self.run_again(e, args));
+                    }
                 }
             }
             Op::CallHost { id, argc, want } => {
-                let args = self.pop_n((*argc).into());
-                match self.call_host(host, *id, &args, *want) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        self.stack.extend(args);
-                        return Ok(Some(RETRY));
-                    }
-                    Err(e) => return Err(self.run_again(e, args)),
+                let at = self.stack.len() - usize::from(*argc);
+                host.set_data_pos(self.data_pos);
+                let results = host.call(*id, &self.stack[at..], *want);
+                if let Some(pos) = host.data_pos() {
+                    self.data_pos = pos;
                 }
+                let results = match results {
+                    Ok(results) => results,
+                    Err(e) => {
+                        let e = e.in_args(&self.stack[at..]);
+                        return Err(self.failed_with_args(e, at));
+                    }
+                };
+                if host.retry() {
+                    return Ok(Some(RETRY));
+                }
+                self.stack.truncate(at);
+                self.push_results(results, *want)?;
             }
             Op::CallDyn { argc, want } => {
                 let args = self.pop_n((*argc).into());
@@ -2519,6 +2559,20 @@ impl Vm {
 
     /// Calls DEF `def` of the running slot, returning to slot `caller`.
     fn enter_def(&mut self, def: u32, args: Vec<Value>, want: Want, caller: usize) -> Result<()> {
+        let argc = args.len();
+        self.stack.extend(args);
+        self.enter_def_on_stack(def, argc, want, caller)
+    }
+
+    /// [`Vm::enter_def`] with the arguments on top of the stack, which it takes.
+    fn enter_def_on_stack(
+        &mut self,
+        def: u32,
+        argc: usize,
+        want: Want,
+        caller: usize,
+    ) -> Result<()> {
+        let at = self.stack.len() - argc;
         let info = &self.program.defs[def as usize];
         let call_ok = match want {
             // A DEF with one OUT may be called as a function, giving it.
@@ -2529,7 +2583,7 @@ impl Vm {
                 false => info.outs.is_none_or(|m| m == n),
             },
         };
-        let args_ok = info.params.is_none_or(|p| usize::from(p) == args.len());
+        let args_ok = info.params.is_none_or(|p| usize::from(p) == argc);
         // A DEF given the wrong number of arguments is the same error as a
         // builtin.
         // Several OUTs for one value is the wrong number of them.
@@ -2540,41 +2594,43 @@ impl Vm {
                 (true, false) => ErrorKind::WrongNumberOfArguments,
                 (false, false) => ErrorKind::IllegalFunctionCall,
             };
-            return Err(Error::with_detail(kind, info.name.clone()));
+            let e = Error::with_detail(kind, info.name.clone());
+            self.stack.truncate(at);
+            return Err(e);
         }
-        let values = info.locals.len() + args.len() * usize::from(info.params.is_none());
+        let values = info.locals.len() + argc * usize::from(info.params.is_none());
         let cost =
             CALL_COST + values * VARIABLE_COST + if info.is_function { VALUE_COST } else { 0 };
         if !self.stack_has_room(cost) {
             if self.stack_has_room(cost - VALUES_ROOM.min(cost)) {
                 self.pc = info.entry as usize;
             }
+            self.stack.truncate(at);
             return Err(ErrorKind::StackOverflow.into());
         }
         let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
         let default_int = self.program.default_int;
-        let mut locals: Vec<Value> = info
-            .locals
-            .iter()
-            .map(|v| initial_value(v, default_int))
-            .collect();
+        let mut locals = self.spare_locals.pop().unwrap_or_default();
+        locals.reserve(info.locals.len());
+        // Arguments of a `*` DEF are kept apart from its variables.
+        let variadic_args = match info.params {
+            Some(_) => {
+                locals.extend(self.stack.drain(at..));
+                Vec::new()
+            }
+            None => self.stack.split_off(at),
+        };
         // OUT variables hold nothing until set: a DEF that never sets
         // one gives the omitted value, as SmileBASIC Debugger's EMPTY()
         // relies on.
         let first_out = usize::from(info.params.unwrap_or(0));
-        let out_count = usize::from(info.outs.unwrap_or(0));
-        for v in locals.iter_mut().skip(first_out).take(out_count) {
-            *v = Value::Default;
+        let out_end = first_out + usize::from(info.outs.unwrap_or(0));
+        for i in locals.len()..info.locals.len() {
+            locals.push(match i < out_end {
+                true => Value::Default,
+                false => initial_value(&info.locals[i], default_int),
+            });
         }
-        let variadic_args = match info.params {
-            Some(_) => {
-                for (i, a) in args.into_iter().enumerate() {
-                    locals[i] = a;
-                }
-                Vec::new()
-            }
-            None => args,
-        };
         let outs = match info.outs {
             None => vec![Value::Default; want.count()],
             Some(_) => Vec::new(),
@@ -2647,6 +2703,29 @@ impl Vm {
         self.gosubs.truncate(frame.gosub_base);
         self.stack.truncate(frame.stack_base);
         self.push_results(results, frame.want)?;
+        self.leave_frame(frame, host)
+    }
+
+    /// [`Vm::leave_def`] with one value, as a function returns: no list of it.
+    fn leave_def_with(&mut self, result: Value, host: &mut dyn Host) -> Result<usize> {
+        let frame = self.frames.pop().ok_or(ErrorKind::IllegalStatement)?;
+        self.gosubs.truncate(frame.gosub_base);
+        self.stack.truncate(frame.stack_base);
+        if frame.want.count() != 1 {
+            return Err(ErrorKind::IllegalFunctionCall.into());
+        }
+        self.stack.push(result);
+        self.leave_frame(frame, host)
+    }
+
+    /// Goes back to the caller of a frame, keeping its list of variables for
+    /// the next call.
+    #[inline]
+    fn leave_frame(&mut self, mut frame: Frame, host: &mut dyn Host) -> Result<usize> {
+        if self.spare_locals.len() < SPARE_LOCALS {
+            frame.locals.clear();
+            self.spare_locals.push(std::mem::take(&mut frame.locals));
+        }
         self.switch_to(frame.caller, host);
         Ok(frame.return_pc)
     }

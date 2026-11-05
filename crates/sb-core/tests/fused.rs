@@ -137,6 +137,109 @@ fn programs_run_the_same_fused_or_not() {
     }
 }
 
+/// Calls keep their arguments on the stack while they run. Whatever comes of a
+/// call, the stack and the error must be as if they had been taken off first.
+#[test]
+fn calls_leave_the_stack_as_it_should_be() {
+    for (source, expected) in [
+        ("A=1+ABS(-2)*MAX(3,4):?A", "9\n"),
+        (
+            "DEF F(A,B$)\nVAR C$=B$*A\nRETURN C$\nEND\n?F(2,\"X\")+F(1,\"Y\")",
+            "XXY\n",
+        ),
+        ("DEF F(A)\nRETURN A+1\nEND\n?1+F(F(1))*2:?F(2)", "7\n3\n"),
+        ("DEF G *\n?DEFARGC()\n?DEFARG(1)\nEND\nG 1,2,3", "3\n2\n"),
+        (
+            "DEF H * OUT *\nFOR I=0 TO DEFOUTC()-1:DEFOUT I,I+DEFARG(0):NEXT\nEND\nH 5 OUT A,B:?A:?B",
+            "5\n6\n",
+        ),
+        ("DEF K OUT A,B\nA=1\nEND\nK OUT P,Q:?P:?TYPEOF(Q)", "1\n0\n"),
+        (
+            "DEF M A,B$ OUT C\nC=A+LEN(B$)\nEND\nM 1,\"AB\" OUT D:?D",
+            "3\n",
+        ),
+        (
+            "DEF R(N)\nVAR L$=\"S\":L$=L$*N\nRETURN LEN(L$)\nEND\n?R(2)+R(3)",
+            "5\n",
+        ),
+    ] {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(compiled(source, true));
+        assert_eq!(
+            vm.run(&mut host, 1_000_000).unwrap(),
+            Status::Ended,
+            "{source}"
+        );
+        assert_eq!(host.output, expected, "{source}");
+    }
+}
+
+#[test]
+fn failed_calls_name_what_they_always_named() {
+    use sb_core::error::ErrorKind as E;
+    for (source, kind, line) in [
+        ("A=1\n?ABS()", E::WrongNumberOfArguments, 2),
+        ("A=1\n?ABS(\"X\")", E::TypeMismatch, 2),
+        ("A=1\nB=SQR(-1)", E::OutOfRange, 2),
+        (
+            "DEF F(A)\nRETURN A\nEND\nC=1\nB=F(1,2)",
+            E::WrongNumberOfArguments,
+            5,
+        ),
+        ("DEF F A\nEND\nC=1\nB=F(1)", E::IllegalFunctionCall, 4),
+        (
+            "DEF F(A)\nRETURN A\nEND\nC=1\nF 1 OUT P,Q",
+            E::IllegalFunctionCall,
+            5,
+        ),
+        (
+            "DEF F OUT A,B\nEND\nC=1\nB=F()",
+            E::WrongNumberOfOutArguments,
+            4,
+        ),
+        (
+            "DEF F(A)\nRETURN F(A+1)\nEND\nC=1\nB=F(1)",
+            E::StackOverflow,
+            2,
+        ),
+    ] {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(compiled(source, true));
+        let e = vm.run(&mut host, 100_000_000).unwrap_err();
+        assert_eq!((e.kind, e.line), (kind, line), "{source}");
+    }
+}
+
+/// A call that asks for more memory than the last count allowed runs again after
+/// counting, and finds its arguments still there.
+#[test]
+fn a_call_runs_again_after_counting_memory() {
+    let source = "FOR I=0 TO 40:A%=ARRAY%(4000000):A%[0]=I:NEXT:?LEN(A%):?A%[0]";
+    let mut host = TextHost::default();
+    let mut vm = Vm::new(compiled(source, true));
+    loop {
+        match vm.run(&mut host, 1_000_000).unwrap() {
+            Status::Ended => break,
+            _ => continue,
+        }
+    }
+    assert_eq!(host.output, "4000000\n40\n");
+}
+
+/// Variables the fused code reads are the same ones the rest of the program and
+/// the debugger see, constants being kept out of their view.
+#[test]
+fn constants_are_not_variables() {
+    let mut host = TextHost::default();
+    let mut vm = Vm::new(compiled("A=5:B=A+7:C#=B*2.5", true));
+    vm.run(&mut host, 1_000_000).unwrap();
+    let mut names: Vec<String> = vm.globals().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, ["A", "B", "C#"]);
+    assert!(matches!(vm.global("C#"), Some(sb_core::value::Value::Real(x)) if *x == 30.0));
+    assert!(!vm.program().constants.is_empty());
+}
+
 #[test]
 fn most_loops_are_fused() {
     let program = compiled("FOR I=1 TO 9:A=A+I*2:NEXT", true);
