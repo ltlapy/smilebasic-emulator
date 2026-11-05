@@ -11,7 +11,7 @@
 | `sb-profiles` | `sb-core`, `sb-runtime` | SDL, OS APIs |
 | `sb-import` | `sb-runtime` | SDL |
 | `sb-check` | `sb-runtime`, `sb-profiles` | SDL |
-| `sb-sdl` | everything | — |
+| `sb-sdl` | everything | nothing |
 
 SDL and platform code live in `sb-sdl` only. Everything else must build and test
 headless on Windows, macOS and Linux.
@@ -30,18 +30,19 @@ headless on Windows, macOS and Linux.
 ### Style
 
 - `cargo fmt` and `cargo clippy --all-targets -- -D warnings` pass.
-- Code, comments and identifiers are in English.
+- Code, comments, identifiers and docs are in American English.
 - Comments explain why. Skip comments that repeat the code.
-- `unsafe` needs a `// SAFETY:` comment. Outside `sb-sdl`, avoid it unless a
-  benchmark shows the need.
+- `unsafe` needs a `// SAFETY:` comment. Outside `sb-sdl` and test code, avoid it
+  unless a benchmark shows the need, and put the result in that comment.
 - Add a dependency only when writing it ourselves is clearly worse. Say why in the
   commit body.
 
 ### Tests
 
 - Each language feature and command gets unit tests in its crate.
-- Programs that exercise whole features go in `tests/` as `.sb` files with their
-  expected output (text, or a framebuffer hash for graphics).
+- Programs that exercise whole features go in `crates/*/tests`, as source text in
+  Rust tests that run headless. `sb-core` checks their `PRINT` output; `sb-runtime`
+  runs them on a `Machine` and checks the console and program state.
 - `cargo test --workspace` passes before every commit.
 
 ### Assets and text
@@ -56,6 +57,11 @@ headless on Windows, macOS and Linux.
   don't copy whole pages.
 - No paths from a developer's own machine in code, docs or configs.
 
+### License
+
+Unless you state otherwise, contributions are dual-licensed `MIT OR Apache-2.0`,
+as the project is, with no additional terms or conditions.
+
 ## Commits
 
 ```
@@ -64,8 +70,10 @@ headless on Windows, macOS and Linux.
 <body: why the change was made, and anything a reviewer can't see in the diff>
 ```
 
-- Scope is one of `core`, `runtime`, `profiles`, `import`, `sdl`, `tests`, `build`,
-  `docs`.
+- Scope is one of `core`, `runtime`, `profiles`, `import`, `check`, `sdl`, `tests`,
+  `tools`, `build`, `docs`. A crate's scope covers its modules: `raster` and
+  `sprites` are `runtime`, `gpu` and `sb-sdl` are `sdl`. Older commits use these
+  narrower names.
   Use a comma for two (`core, runtime:`). If you need more, split the commit.
 - Summary: lowercase start, no trailing period, 72 characters at most.
 - One logical change per commit. Each commit builds and passes tests.
