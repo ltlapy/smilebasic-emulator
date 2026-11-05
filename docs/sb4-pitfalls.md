@@ -395,9 +395,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   on (TEST60). The program goes on inside that job, past its animation step and
   with `MAINCNT` still to rise.
 - `ACLS:XSCREEN 400,240,2`, then a `SPANIM` and `VSYNC 1:SPOFS` in a loop, in a
-  program that has not waited yet: the first two rows show nothing and the third
-  the first step, as the second `VSYNC 1` only sees that job end (TEST62 on a
-  Switch 2, as TEST56 did on Ryujinx).
+  program that has not waited yet, shows nothing on the first two rows and the
+  first step on the third. The second `VSYNC 1` only sees that job end (TEST62
+  on a Switch 2, as TEST56 did on Ryujinx).
 - `ACLS` holds the program for the frame job as `XSCREEN` does, and `MAINCNT`
   has yet to rise when the program goes on (TEST63):
   - `T=MAINCNT():ACLS:?MAINCNT()-T` and the same with `XSCREEN 400,240,2` print
@@ -685,9 +685,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, and the bits other than bit 7
   have no effect either (TEST56).
 - Bit 23 of a value for `TLOAD` or `TUPDATE` (attribute bit 7) does nothing on
-  text screens 0 to 3: a plain glyph shows, under `TCOLOR` and `TBLEND` too, a
-  space and an empty cell show nothing, and `TCOPY` carries it the same
-  (TEST56).
+  text screens 0 to 3 (TEST56). A plain glyph shows, under `TCOLOR` and `TBLEND`
+  too, a space and an empty cell show nothing, and `TCOPY` carries it the same.
 - Attribute bit 7 on the console should invert a cell, as only the console has a
   program with that per-cell flag. (Not yet seen on hardware.)
   - The cell's color is multiplied by 1 minus the glyph's alpha, and then, as
@@ -850,15 +849,15 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 - `GPUTCHR` with mode 0 clears the page under the character's transparent
   pixels.
-- `GPUTCHR` without a font type uses the console's: after `TSCREEN 24` it draws
+- `GPUTCHR` without a font type uses the console's. After `TSCREEN 24` it draws
   24-pixel characters from GRP5, glyph i (font.map's number, as for 8 and 16) at
   column i%64 and row i/64 of 24-pixel cells, which is how `#GUIDE/DEFFONT24` is
   laid out.
 - `GPUTCHR` given a font type other than 8 or 16 is `Illegal font type`.
 - `PRINT` on a console of such a font type shows only user-defined characters.
 - `GPUTCHRP` takes each character from one empty column before what is drawn of
-  it (none if the glyph starts at its first column) to its last drawn column,
-  and moves on that many pixels plus the spacing (1 when left out). A blank
+  it (none if the glyph starts at its first column) to its last drawn column. It
+  then moves on that many pixels plus the spacing (1 when left out). A blank
   character is a quarter of the font size wide.
 - `GPUTCHRP` in the 16-pixel font uses the width font.map holds in bits 7-15 of
   each code's second u16.
@@ -933,11 +932,11 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   (TEST53).
 - `LMATRIX layer,M` with 16 reals takes the layer's coordinates as (x, y, 0, 1)
   through M to clip space, X right and Y up: the identity puts the layer's
-  square from (0,0) to (1,1) over the screen's top right quarter. M is
-  column-major: M[12] moves along X. With M[3] set, W grows along X and the
-  picture narrows that way as OpenGL's perspective divide would. Raster
-  deformation applies to the screen after LMATRIX has placed the layer (TTEST27,
-  pixel for pixel).
+  square from (0,0) to (1,1) over the screen's top right quarter.
+  - M is column-major: M[12] moves along X. With M[3] set, W grows along X and
+    the picture narrows that way as OpenGL's perspective divide would.
+  - Raster deformation applies to the screen after LMATRIX has placed the layer
+    (TTEST27, pixel for pixel).
   - Sprites on such a layer show whole, also the parts at negative coordinates
     or past the screen's size, as FINITI's floors running to the horizon show.
   - Text screens show whole too: a console moved to (-200,-120) or to (500,300)
@@ -992,14 +991,14 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     exactly between four, which it averages (halves rounded down).
   - A size below 2 does nothing.
 - `LFILTER`'s blur halves the layer in frame pixels, whatever `XSCREEN`'s
-  sample. 2x2 blocks are averaged (halves rounded down, so a dot becomes a 2x2
-  block at 64 and a line 127), blurred along the rows and then the columns, each
-  stored in 8 bits, and scaled back without smoothing. Amounts 1 to 4 look the
-  same; amount 0 leaves the layer sharp.
+  sample. It averages 2x2 blocks (halves rounded down, so a dot becomes a 2x2
+  block at 64 and a line 127). It then blurs along the rows and then the
+  columns, each stored in 8 bits, and scales back without smoothing. Amounts 1
+  to 4 look the same; amount 0 leaves the layer sharp.
 - `LFILTER`'s blur weights are `exp(-d*d/2/v)` for v = amount/10 at d = 1, 3,
   5... 31 (the middle counts as 1, and the next tap as 3, though they are
-  neighbors), normalized over all sixteen with those past the middle counting
-  twice.
+  neighbors). They are normalized over all sixteen, with those past the middle
+  counting twice.
   - They are taken outward until they add up to more than 99%, which picks 3, 5,
     7 or 9 taps, and there are never more than 9.
   - Above amount 128 or so the kernel is therefore cut off without normalizing
@@ -1024,11 +1023,11 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - Scaled and turned sprites and text are drawn without smoothing, at the centers
   of the frame's pixels; at `XSCREEN`'s sample 2, of the fine pixels. A pixel
   whose center is exactly on the image's edge is drawn if that is the left or
-  the bottom edge on the screen, however the image is turned (`SPOFS 0,0.5,0.5`
+  the bottom edge on the screen, however the image is turned. `SPOFS 0,0.5,0.5`
   draws from the first column, and from the second row to one row past the
-  image's height).
+  image's height.
 - A sprite or text cell whose pixel centers fall exactly between texels can show
-  a pixel off its image: an image side and a scale that are powers of two read
+  a pixel off its image. An image side and a scale that are powers of two read
   the page's higher texel, and anything else mostly the lower, at any flip or
   turn (TEST63, 3831 sprites and 192 cells on a Switch 2;
   [renderer-verification.md](renderer-verification.md) has the numbers).
@@ -1038,7 +1037,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   - Before the page's first texel, U or V of 0, it reads the first texel; after
     the last, U+W of 2048, nothing.
 - A sample point exactly between two texels goes by the rule above. What is not
-  a power of two shows the GPU's single-precision arithmetic besides: about 1
+  a power of two shows the GPU's single-precision arithmetic besides. About 1
   line in 20 goes the other way, by the place on the screen, by a triangle of
   the two a quad is drawn as, or from some line along the image on (TEST63).
 - At equal Z text screens are behind sprites, and among either the higher number
@@ -1072,7 +1071,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   sounds, and `BGMCHK` is 0 a frame later, or two if a `VSYNC` that did not wait
   ran in between.
 - `BGMPLAY` without a volume plays at 64, and `BGMVOL` (like `BGMPLAY`'s volume)
-  is a linear gain of v/127 over that range: on a square that records at 3063 by
+  is a linear gain of v/127 over that range. On a square that records at 3063 by
   default, `BGMVOL 127` gives 6079, 95 gives 4547, 63 3015 and 31 1484.
 - A track's MML variables read -1 while it is not playing: before any song,
   after `BGMSTOP` and after the song ends.
@@ -1101,7 +1100,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   full-scale 8-bit waveform an eighth of full scale on each side (a ±96 square
   3063, a sine of amplitude 100 2257).
 - `Qn` holds a note for (n+1)/33 of its length, cut to whole ticks (48 to a
-  quarter note) and at least one: at T120 a `C4` is let go after 10 ms with
+  quarter note) and at least one. At T120 a `C4` is let go after 10 ms with
   `Q0`, 135 with `Q8`, 250 with `Q16`, 375 with `Q24`, and `Q32` holds it all.
 - A waveform with attack 127 is at full level from its first sample.
 - An instrument's note starts at the level of its first 5 ms step rather than
@@ -1125,7 +1124,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `@MA`'s swing is read in tenths of a dB, truncated, and stops at the sound
   engine's limits: no more than +6 dB, and silence from -90.4 dB down. A wide
   one such as `@MA127,110,12,0` (±655 dB as asked) therefore chops the note into
-  bursts at twice its level with silence between, and is no louder than that: a
+  bursts at twice its level with silence between, and is no louder than that. A
   song using three of these plays at a normal level on SmileBASIC 4.
 - Envelopes move a millisecond at a time in tenths of a dB:
   - The attack multiplies the level, starting from -90.4 dB, until it is within
@@ -1149,14 +1148,14 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 ### Instruments, `WAVSET` and `WAVSETA`
 
 - `@216` to `@222` (PSG) and `@223` (noise) are instruments of the sound archive
-  like `@0`: each PSG tone records at an RMS of about 4031 (peak 4090) at V127,
+  like `@0`. Each PSG tone records at an RMS of about 4031 (peak 4090) at V127,
   whatever its width, and the noise at 2839, never going below zero.
 - An instrument region's own volume is a linear gain (`@0`'s is 88), unlike `V`
   and `@V`.
 - `WAVSET`'s waveform does not play as one cycle of the note. 32 samples of one
   cycle with reference pitch 69 play `O4A` at 55 Hz and `O5A` 3600 cents below
-  A5: three octaves down, so a pass of the samples lasts eight cycles of the
-  note.
+  A5. That is three octaves down, so a pass of the samples lasts eight cycles of
+  the note.
 - Songs written for SmileBASIC 4 repeat their cycles to fill eight (a 16-sample
   pattern of two cycles times 4, one of a single cycle times 8, both at
   reference pitch 69).
@@ -1176,7 +1175,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     other half loud noise, the same each time (peak about 4600 at 127, a DC of
     about -1500).
 - `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its n samples
-  at 28160 Hz over the next power of two at or above n: at reference pitch 69,
+  at 28160 Hz over the next power of two at or above n. At reference pitch 69,
   `O4A` with one cycle of 64 samples is in tune, 16 samples sound 2400 cents up,
   512 3600 cents down, 2048 6000 down.
 - `WAVSETA`'s 16-bit form (10 arguments or more) takes the loop's end + 1 values
@@ -1241,16 +1240,17 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   | 16-bit, 28160 samples at 28160 Hz | 999 ms |
 
 - `WAVSETA`'s flag, when not 0, repeats the note until stopped, each pass a new
-  note over the last one's fall: 28160 samples of a ±30000 square at 28160 Hz,
-  at `BEEP`'s default, peak at 4234 and at 7905 in the last 5 ms of each second.
-  This is heard as a momentary noise once a second (per 1/10 s of the peak,
-  `4444444448444444444944444444494`). `BEEPSTOP` after 180 frames leaves the
-  last sample at 3004 ms, the step's fall (TEST59).
+  note over the last one's fall. 28160 samples of a ±30000 square at 28160 Hz,
+  at `BEEP`'s default, peak at 4234 and at 7905 in the last 5 ms of each second,
+  heard as a momentary noise once a second. The peak per 1/10 s is
+  `4444444448444444444944444444494`. `BEEPSTOP` after 180 frames leaves the last
+  sample at 3004 ms, the step's fall (TEST59).
 - With that flag, the notes before do not stop. They fall by the envelope's
-  release however long that takes, so with a slow one they pile up: 2816 samples
-  of a ±10000 square at 28160 Hz with release 32, a pass of about 100 ms, one
-  note peaking at 1411, peak at 9456 at an RMS of 4333, and per 1/10 s of the
-  peak `235567789877654` with `BEEPSTOP` of the handle at 1 s (TEST61).
+  release however long that takes, so with a slow one they pile up (TEST61).
+  Take 2816 samples of a ±10000 square at 28160 Hz with release 32, a pass of
+  about 100 ms. One note peaks at 1411, and the sound peaks at 9456 at an RMS of
+  4333. The peak per 1/10 s is `235567789877654` with `BEEPSTOP` of the handle
+  at 1 s.
 - `BEEPSTOP` without a fade lets all the handle's notes go and frees the handle.
   The sound goes on past it by the release, the 1.5 s recording of the case
   above still sounding at its end. At release 127 that is one step, as when the
@@ -1288,8 +1288,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `WAVSET` of a number replaces only that number.
   Nothing a program can run puts them back: not `SNDSTOP`, `ACLS` or `CLEAR`.
 - `BEEP`'s result is a number 0 to 15 that goes on rising with each `BEEP`, also
-  after the last has ended and for a silent one, and through program runs:
-  running TEST59's parts in the order 20, 16, 17, 18, 19 on a started SmileBASIC
+  after the last has ended and for a silent one, and through program runs.
+  Running TEST59's parts in the order 20, 16, 17, 18, 19 on a started SmileBASIC
   4 gave 0, 1, 2, 3, 4, 5, 6, 7, 8 (TEST59). It goes round at 16 and nothing
   starts it again: not `ACLS`, not `RUN`. Each
   interpreter counts for itself.
@@ -1641,9 +1641,11 @@ TTEST36.
   up to a multiple of 64 bytes, at least 128, plus 64 (TEST57). Arrays of up to
   64 bytes of elements take nothing.
 
-  | Array | 17 ints | 33 ints | 49 ints | 1000 ints | 9 reals | 17 reals | 100 reals | `DIM A[100000]` |
-  |---|---|---|---|---|---|---|---|---|
-  | Bytes | 192 | 256 | 320 | 4096 | 192 | 256 | 896 | 800064 |
+  | Array | 17 ints | 33 ints | 49 ints | 1000 ints | 9 reals | 17 reals | 100 reals |
+  |---|---|---|---|---|---|---|---|
+  | Bytes | 192 | 256 | 320 | 4096 | 192 | 256 | 896 |
+
+  `DIM A[100000]` takes 800064.
 
 - `GARRAY` and `TARRAY` take nothing.
 - Memory let go of (emptying a string or array, a DEF's locals after it returns)
