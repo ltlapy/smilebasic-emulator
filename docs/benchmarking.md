@@ -105,7 +105,7 @@ program ends, `settle=N` skips frames first and `novsync` turns vsync off.
 
 `luma=PATH` logs each frame's brightness as it goes to the window and reports the frames
 darker than both neighbours, a flicker, which the comparison cannot see. `log=PATH` keeps
-each frame's stages, window size and textures made. `at=FRAME:lost`, `fail`, `refuse:N`,
+each frame's stages, window size, textures made and the rest of its trip round the loop. `at=FRAME:lost`, `fail`, `refuse:N`,
 `panic`, `unsaved` and `sleep:MS` try the renderer's failures.
 
 `SDL_VIDEO_DRIVER=offscreen` shows no window

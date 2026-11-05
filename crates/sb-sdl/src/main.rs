@@ -2229,6 +2229,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             });
         }
         machine.set_changes(&debug_panel.change_watches());
+        lap!(Events);
         if !paused {
             machine.time_limit = Some(RUN_TIME);
             frame_guard.run(machine, &mut toasts, Machine::frame);
@@ -2266,6 +2267,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             clock.caught_up();
             skipped += 1;
         }
+        lap!(Run);
         // A step that waits for input needs the keys on the screen, and
         // the editor takes them back at the stop, unless the user has
         // gone to another window meanwhile.
@@ -2887,6 +2889,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // dropped; otherwise they go by the clock.
         let locked = presented && vsync && main_presents.vsync() && at_60_hz;
         pacing::delay(clock.end(Instant::now(), locked));
+        lap!(Wait);
         watch.frame_shown();
     }
     // The editor's window, shown when quitting, opens there next time.

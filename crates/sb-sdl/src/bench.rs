@@ -22,9 +22,10 @@
 //! - `luma=PATH`: reads each frame timed as it goes to the window, writes
 //!   its frame number and mean brightness (0 to 255) to PATH, and reports
 //!   the frames darker than both of their neighbours, as a flicker is;
-//! - `log=PATH`: writes each frame timed to PATH: its number, the window's size
-//!   in pixels, the stages in microseconds, the bytes uploaded and the textures
-//!   made;
+//! - `log=PATH`: writes each frame timed to PATH, at the end of the run: its number,
+//!   the window's size in pixels, the drawing's stages in microseconds, the bytes
+//!   uploaded, the textures made, and in microseconds what the rest of the trip round
+//!   the loop took: events, running the program, waiting for the next frame;
 //! - `menu`, `help`, `about`, `colors`, `toast`: shows the menu bar (as
 //!   F8 does), the help beside the editor, the About dialog, the editor
 //!   colors window, or a notice, once the rest is set up;
@@ -99,10 +100,23 @@ pub enum Stage {
     /// uploaded.
     Overlays,
     Present,
+    /// Outside the drawing: from the top of the loop through the system's events.
+    Events,
+    /// The program's frames, and their sound.
+    Run,
+    /// The wait for the next frame.
+    Wait,
 }
 
-const STAGES: usize = 5;
-const NAMES: [&str; STAGES] = ["screen", "editor", "gather", "overlays", "present"];
+const STAGES: usize = 8;
+/// Of the stages, those that draw.
+const DRAWING: usize = Stage::Events as usize;
+const NAMES: [&str; STAGES] = [
+    "screen", "editor", "gather", "overlays", "present", "events", "run", "wait",
+];
+/// A trip round the loop this long is listed as a stall: sound starts to run out at
+/// about a tenth of a second.
+const STALL: Duration = Duration::from_millis(100);
 /// Frames from the start before the program is stopped, and before the
 /// timing begins after the last step of setting up.
 const SETTLE: u32 = 60;
@@ -250,11 +264,14 @@ impl Bench {
             let uploaded = UPLOADED.load(Ordering::Relaxed);
             self.timed.push((self.current, uploaded));
             if self.log.is_some() {
-                let stages = self.current.map(|t| t.as_micros().to_string()).join(" ");
+                let stages = self.current.map(|t| t.as_micros().to_string());
+                let (drawing, rest) = stages.split_at(DRAWING);
+                let (drawing, rest) = (drawing.join(" "), rest.join(" "));
                 let made = MADE.load(Ordering::Relaxed);
                 let (frame, (w, h)) = (self.frame, self.size);
-                self.lines
-                    .push(format!("{frame} {w} {h} {stages} {uploaded} {made}"));
+                self.lines.push(format!(
+                    "{frame} {w} {h} {drawing} {uploaded} {made} {rest}"
+                ));
             }
         }
         self.frame += 1;
@@ -423,7 +440,9 @@ impl Bench {
         println!("{} frames timed, renderer {renderer}", self.timed.len());
         self.report_luma();
         if let Some(path) = &self.log {
-            let head = format!("frame w h {} uploaded made\n", NAMES.join(" "));
+            let (drawing, rest) = NAMES.split_at(DRAWING);
+            let (drawing, rest) = (drawing.join(" "), rest.join(" "));
+            let head = format!("frame w h {drawing} uploaded made {rest}\n");
             let text = head + &self.lines.join("\n") + "\n";
             if let Err(e) = std::fs::write(path, text) {
                 eprintln!("SB_UI_BENCH: {e}");
@@ -459,6 +478,16 @@ impl Bench {
             drawn.iter().map(|t| t[Stage::Present as usize]).collect(),
         );
         let drawing = |t: &[Duration; STAGES]| t[..Stage::Present as usize].iter().sum();
+        let whole = |t: &[Duration; STAGES]| t.iter().sum::<Duration>();
+        line("whole", self.timed.iter().map(|(t, _)| whole(t)).collect());
+        let stalls: Vec<Duration> = (self.timed.iter().map(|(t, _)| whole(t)))
+            .filter(|&t| t >= STALL)
+            .collect();
+        println!(
+            "stalls    {} trips of {STALL:?} or more, {:.2?} in all",
+            stalls.len(),
+            stalls.iter().sum::<Duration>()
+        );
         line(
             "drawing",
             self.timed.iter().map(|(t, _)| drawing(t)).collect(),
