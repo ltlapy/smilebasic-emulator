@@ -4099,8 +4099,8 @@ impl<'a> SmartFrame<'a> {
 
 /// Where the screen goes in a window `out_w` pixels wide whose display
 /// is `out_h` high: centered in the display, at XSCREEN's aspect ratio,
-/// and scaled to fit, in every composite mode. The sharp choice in the
-/// Options menu, `screen_filter`'s own Nearest, keeps to whole factors,
+/// and scaled to fit, in every composite mode. The sharp choice in View >
+/// Screen filter, `screen_filter`'s own Nearest, keeps to whole factors,
 /// which SmileBASIC 4 does not do.
 fn screen_rect(mode: &ScreenMode, screen_filter: Option<Filter>, out_w: u32, out_h: f32) -> FRect {
     let height = mode.height as f32;
