@@ -164,6 +164,53 @@ fn raster(fb: &mut Framebuffer, rows: &[[f64; 4]], vertical: bool, repeat: bool)
 }
 
 /// Raster deformation of `fb`, written into `out`, which is as large.
+/// A line of a raster filter's source points, in fixed point: a point `step`
+/// on from the last. Rounding it down gives what the exact sum does, unless
+/// it is within `near` of a whole number.
+#[derive(Clone, Copy)]
+struct Stepper {
+    at: i64,
+    step: i64,
+    near: i64,
+}
+
+impl Stepper {
+    /// Fractional bits.
+    const SHIFT: u32 = 32;
+    const FRACTION: i64 = (1 << Self::SHIFT) - 1;
+
+    /// For `n` points from `first`; None if they are too far out to step.
+    #[inline]
+    fn new(first: f64, step: f64, n: usize) -> Option<Stepper> {
+        /// Above this too few bits are left for the fraction, or the exact
+        /// sum's rounding is not small enough to bound simply.
+        const LIMIT: f64 = (1u64 << 24) as f64;
+        let one = (1u64 << Self::SHIFT) as f64;
+        let last = first + step * n as f64;
+        // Also false for NaN.
+        let fits = first.abs() < LIMIT && last.abs() < LIMIT;
+        if !fits {
+            return None;
+        }
+        // Half a unit off in the step for each point, and the exact sums'
+        // own rounding, far less than a unit at this size.
+        Some(Stepper {
+            at: (first * one) as i64,
+            step: (step * one) as i64,
+            near: n as i64 + 16,
+        })
+    }
+
+    /// The point rounded down, if it is sure, and on to the next.
+    #[inline(always)]
+    fn next(&mut self) -> Option<i64> {
+        let at = self.at;
+        self.at = at + self.step;
+        let sure = ((at + self.near) & Self::FRACTION) >= 2 * self.near;
+        sure.then_some(at >> Self::SHIFT)
+    }
+}
+
 fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: bool, repeat: bool) {
     let source = fb.pixels();
     let (w, h) = (fb.width() as usize, fb.height() as usize);
@@ -205,6 +252,7 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
             sy: f64,
             off: f64,
             inside: bool,
+            steps: Option<Stepper>,
         }
         let columns: Vec<Column> = (0..w)
             .map(|x| {
@@ -215,15 +263,23 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
                     sy,
                     off,
                     inside: inside(down_at(0, sy, off), down_at(h - 1, sy, off), h),
+                    steps: Stepper::new(down_at(0, sy, off), sy, h),
                 }
             })
             .collect();
+        let mut columns = columns;
         for (y, row) in out.chunks_exact_mut(w).enumerate() {
-            for (dst, c) in row.iter_mut().zip(&columns) {
-                *dst = match c.from {
-                    Some(a) if c.inside => source[down_at(y, c.sy, c.off) as usize * w + a],
-                    Some(a) => wrap(down_at(y, c.sy, c.off), h).map_or(0, |b| source[b * w + a]),
-                    None => 0,
+            for (dst, c) in row.iter_mut().zip(&mut columns) {
+                let Some(a) = c.from else {
+                    *dst = 0;
+                    continue;
+                };
+                let stepped = c.steps.as_mut().and_then(Stepper::next);
+                *dst = match stepped {
+                    Some(b) if (b as u64) < h as u64 => source[b as usize * w + a],
+                    Some(_) if !repeat => 0,
+                    _ if c.inside => source[down_at(y, c.sy, c.off) as usize * w + a],
+                    _ => wrap(down_at(y, c.sy, c.off), h).map_or(0, |b| source[b * w + a]),
                 };
             }
         }
@@ -248,14 +304,13 @@ fn raster_into(fb: &Framebuffer, out: &mut [u32], rows: &[[f64; 4]], vertical: b
             continue;
         }
         let off = ox * fw;
-        if inside(across_at(0, sx, off), across_at(w - 1, sx, off), w) {
-            for (x, dst) in row.iter_mut().enumerate() {
-                *dst = from[across_at(x, sx, off) as usize];
-            }
-            continue;
-        }
+        let mut steps = Stepper::new(across_at(0, sx, off), sx, w);
         for (x, dst) in row.iter_mut().enumerate() {
-            *dst = across(x, e).map_or(0, |a| from[a]);
+            *dst = match steps.as_mut().and_then(Stepper::next) {
+                Some(a) if (a as u64) < w as u64 => from[a as usize],
+                Some(_) if !repeat => 0,
+                _ => across(x, e).map_or(0, |a| from[a]),
+            };
         }
     }
 }
@@ -824,6 +879,79 @@ fn shift_color(p: u32, [dh, ds, dv]: [f32; 3]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`raster_into`] with every point worked out by its sum.
+    fn raster_by_the_sum(
+        fb: &Framebuffer,
+        rows: &[[f64; 4]],
+        vertical: bool,
+        repeat: bool,
+    ) -> Vec<u32> {
+        let (w, h) = (fb.width() as usize, fb.height() as usize);
+        let (fw, fh) = (w as f64, h as f64);
+        let wrap = |v: f64, n: usize| -> Option<usize> {
+            if v.is_nan() || v.abs() >= 1e15 {
+                return None;
+            }
+            let t = v.floor() as i64;
+            match usize::try_from(t).ok().filter(|&t| t < n) {
+                Some(t) => Some(t),
+                None if repeat => Some(t.rem_euclid(n as i64) as usize),
+                None => None,
+            }
+        };
+        let lines = if vertical { w } else { h };
+        let entry = |i: usize| rows[(2 * i + 1) * rows.len() / (2 * lines)];
+        let mut out = vec![0; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let [ox, sx, oy, sy] = entry(if vertical { x } else { y });
+                let across = wrap(sx * (x as f64 + 0.5) + ox * fw, w);
+                let down = wrap(fh - (sy * (fh - (y as f64 + 0.5)) + oy * fh), h);
+                if let (Some(a), Some(b)) = (across, down) {
+                    out[y * w + x] = fb.pixels()[b * w + a];
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn stepping_a_raster_filter_reads_the_same_points() {
+        let (w, h) = (97, 61);
+        let mut fb = Framebuffer::new(w, h);
+        for (i, p) in fb.pixels_mut().iter_mut().enumerate() {
+            *p = i as u32 + 1;
+        }
+        let mut seed = 0x8BAD_F00Du32;
+        let mut next = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % n
+        };
+        let mut out = vec![0; (w * h) as usize];
+        for round in 0..1500 {
+            let n = 1 + next(120) as usize;
+            let mut value = |scale: bool| {
+                let exact = [0.0, 0.5, 1.0, 2.0, -1.0, 0.25, 1.0 / 3.0];
+                let v = match next(4) {
+                    0 => exact[next(7) as usize],
+                    1 => (f64::from(next(2000)) - 1000.0) / 97.0,
+                    2 => f64::from(next(4)) * 1e9,
+                    _ => f64::from(next(2000)) / 1000.0 - 1.0,
+                };
+                if scale { v * 2.0 } else { v * 0.5 }
+            };
+            let rows: Vec<[f64; 4]> = (0..n)
+                .map(|_| [value(false), value(true), value(false), value(true)])
+                .collect();
+            let (vertical, repeat) = (round % 2 == 0, round % 3 == 0);
+            raster_into(&fb, &mut out, &rows, vertical, repeat);
+            let want = raster_by_the_sum(&fb, &rows, vertical, repeat);
+            assert_eq!(out, want, "{rows:?} {vertical} {repeat}");
+        }
+    }
 
     fn frame(pixels: &[u32], w: u32) -> Framebuffer {
         let mut fb = Framebuffer::new(w, pixels.len() as u32 / w);
