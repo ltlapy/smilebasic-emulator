@@ -322,8 +322,9 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
 
 ## Dialogs and errors
 
-- `DIALOG` is drawn as the emulator's own window, in English. Besides the
-  controller's A and B, it answers clicks and Enter.
+- `DIALOG` is drawn as the emulator's own window, in English, and leaves the
+  screen visible around it where SmileBASIC 4's covers the whole screen. Besides
+  the controller's A and B, it answers clicks and Enter.
 - Error messages add detail in parentheses, such as which argument was out of
   range.
 - File > Settings > General > "Japanese explanation under errors" prints the
