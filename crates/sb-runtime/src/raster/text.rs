@@ -6,7 +6,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use crate::compose::{Mixed, Paint, Placement, draw_image_part, draw_texels, page_signs};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
-use crate::graphics::{Clip, Graphics};
+use crate::graphics::{Clip, Graphics, PAGES};
 use crate::scene::TextItem;
 use crate::sprites::sample;
 use crate::text::{Cell, FONT_PAGE, USER_CHARS, USER_GRID, attr, glyph_pixel};
@@ -46,6 +46,66 @@ struct Glyphs {
     made: HashMap<u64, usize, BuildHasherDefault<KeyHasher>>,
     /// The last one looked up: cells in a row are often alike.
     last: Option<(u64, usize)>,
+}
+
+/// What a screen's characters look like besides each cell's code, color and
+/// inversion: as long as this stands, those worked out stay right.
+#[derive(Clone, Copy, PartialEq)]
+struct GlyphsAre {
+    font_type: u32,
+    margin: i32,
+    tint: u32,
+    add: bool,
+    inverts: bool,
+    /// TPAGE, and how the page is read.
+    page: i32,
+    page_origin: (i32, i32),
+    page_sample: i32,
+    /// A count no other [`Graphics`] has, so that this also tells another
+    /// program's pages, and with them another font, from these.
+    page_changes: u64,
+    font_changes: u64,
+}
+
+/// Words of glyph data above which a screen's are made afresh, between frames:
+/// 4 MiB, 16000 of the 8-pixel characters, so that a full screen of them in
+/// a color for each row stays, as a scrolling one is.
+const MOST_KEPT: usize = 1 << 20;
+
+/// A screen's characters, kept from frame to frame: only what the program has
+/// not shown yet costs anything to make.
+#[derive(Default)]
+pub struct KeptGlyphs {
+    are: Option<GlyphsAre>,
+    glyphs: Glyphs,
+}
+
+impl KeptGlyphs {
+    /// The characters for `item` with `margin`, emptied of those made under
+    /// anything else.
+    fn ready(&mut self, item: &TextItem, grp: &Graphics, margin: i32) -> &mut Glyphs {
+        let page = usize::try_from(item.page).ok().filter(|&p| p < PAGES);
+        let are = GlyphsAre {
+            font_type: item.font_type,
+            margin,
+            tint: item.tint,
+            add: item.add,
+            inverts: item.inverts,
+            page: item.page,
+            page_origin: item.page_origin,
+            page_sample: page.map_or(0, |p| grp.sample[p]),
+            page_changes: page.map_or(0, |p| grp.changes(p)),
+            font_changes: grp.changes(FONT_PAGE),
+        };
+        if self.are != Some(are) || self.glyphs.data.len() > MOST_KEPT {
+            self.are = Some(are);
+            self.glyphs.data.clear();
+            self.glyphs.paints.clear();
+            self.glyphs.made.clear();
+            self.glyphs.last = None;
+        }
+        &mut self.glyphs
+    }
 }
 
 impl Glyphs {
@@ -88,6 +148,20 @@ pub fn draw(
     fb: &mut Framebuffer,
     clip: Option<&Clip>,
 ) {
+    let mut kept = KeptGlyphs::default();
+    draw_keeping(item, cells, font, grp, fb, clip, &mut kept);
+}
+
+/// [`draw`], with this screen's characters from the last frame in `kept`.
+pub fn draw_keeping(
+    item: &TextItem,
+    cells: &[Cell],
+    font: &Font,
+    grp: &Graphics,
+    fb: &mut Framebuffer,
+    clip: Option<&Clip>,
+    kept: &mut KeptGlyphs,
+) {
     if item.empty {
         return;
     }
@@ -99,9 +173,9 @@ pub fn draw(
     let cs = item.char_size;
     let (w, h) = ((item.width * cs) as i32, (item.height * cs) as i32);
     if place.is_upright() {
-        item.draw_upright(cells, fb, font, grp, &place);
+        item.draw_upright(cells, fb, font, grp, &place, kept);
     } else {
-        item.draw_turned(cells, fb, font, grp, &place);
+        item.draw_turned(cells, fb, font, grp, &place, kept);
     }
     if let Some(bar) = &item.cursor {
         let part = bar.part;
@@ -158,6 +232,7 @@ impl TextItem {
         font: &Font,
         grp: &Graphics,
         place: &Placement,
+        kept: &mut KeptGlyphs,
     ) {
         let (cs, ft) = (self.char_size, self.font_type);
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
@@ -185,7 +260,7 @@ impl TextItem {
         let margin = i32::from(place.is_right_angle());
         let stride = ft as i32 + 2 * margin;
         let glyph_len = (stride * stride) as usize;
-        let mut glyphs = Glyphs::default();
+        let glyphs = kept.ready(self, grp, margin);
         // Per cell, where its character is in `glyphs`, each character in
         // each color being looked up once however many cells show it, times 16,
         // and its turn and flips.
@@ -349,6 +424,7 @@ impl TextItem {
         font: &Font,
         grp: &Graphics,
         place: &Placement,
+        kept: &mut KeptGlyphs,
     ) {
         let (cs, ft) = (self.char_size, self.font_type);
         let (w, h) = ((self.width * cs) as i32, (self.height * cs) as i32);
@@ -407,7 +483,7 @@ impl TextItem {
             (p, q)
         };
         let glyph_len = (stride * stride) as usize;
-        let mut glyphs = Glyphs::default();
+        let glyphs = kept.ready(self, grp, margin);
         let may_invert = self.may_invert;
         // Per cell of the row, if it shows anything: its picks and where
         // its character is in `glyphs`.
@@ -446,7 +522,7 @@ impl TextItem {
                 continue;
             }
             let line = &mut pixels[fy * width + grid.x0 as usize..][..cols.len()];
-            let Glyphs { data, paints, .. } = &glyphs;
+            let Glyphs { data, paints, .. } = &*glyphs;
             for &(cx, start, end) in &spans {
                 let Some(((p, q), at)) = shown[cx as usize] else {
                     continue;
@@ -651,6 +727,158 @@ impl Turned<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compose::Affine;
+    use crate::graphics::Blend;
+    use crate::text::TextScreen;
+
+    /// Draws the screen with what was kept and afresh, which must agree.
+    fn agree(
+        s: &TextScreen,
+        item: &TextItem,
+        font: &Font,
+        grp: &Graphics,
+        kept: &mut KeptGlyphs,
+    ) -> Vec<u32> {
+        let frame = || {
+            let mut fb = Framebuffer::new(64, 32);
+            fb.clear(0xFF10_2030);
+            fb
+        };
+        let (mut with_kept, mut fresh) = (frame(), frame());
+        draw_keeping(item, s.cells(), font, grp, &mut with_kept, None, kept);
+        draw(item, s.cells(), font, grp, &mut fresh, None);
+        assert_eq!(with_kept.pixels(), fresh.pixels());
+        fresh.pixels().to_vec()
+    }
+
+    fn fill(grp: &mut Graphics, page: usize, x: i32, y: i32, color: u32) {
+        grp.target = page;
+        grp.fill(x, y, x + 15, y + 15, color, Blend::Normal);
+    }
+
+    #[test]
+    fn kept_glyphs_go_when_what_they_show_changes() {
+        let mut font = Font::blank();
+        let (gx, gy) = font.origin(0x41, FontSize::Small).unwrap();
+        let mut grp = Graphics::default();
+        fill(&mut grp, FONT_PAGE, gx as i32, gy as i32, 0xFFFF_FFFF);
+        font.page_mut()[0] = 0;
+        let mut s = TextScreen::new(64, 32);
+        s.print(&[0x41, 0x41]);
+        s.print(&[*USER_CHARS.start()]);
+        fill(&mut grp, 1, 0, 0, 0xFF00_FF00);
+        let mut item = s.item(0, &Affine::IDENTITY, None);
+        (item.page, item.page_origin) = (1, (0, 0));
+        let mut kept = KeptGlyphs::default();
+        let first = agree(&s, &item, &font, &grp, &mut kept);
+        // Nothing changed: kept, as the same data shows.
+        let held = kept.glyphs.data.len();
+        assert!(held > 0);
+        assert_eq!(agree(&s, &item, &font, &grp, &mut kept), first);
+        assert_eq!(kept.glyphs.data.len(), held);
+        let mut last = first;
+        let mut changed = |what: &str, item: &TextItem, grp: &Graphics, kept: &mut KeptGlyphs| {
+            let now = agree(&s, item, &font, grp, kept);
+            assert_ne!(now, last, "{what}");
+            last = now;
+        };
+        // The font page.
+        fill(&mut grp, FONT_PAGE, gx as i32, gy as i32, 0xFFFF_0000);
+        changed("font page", &item, &grp, &mut kept);
+        // The page of user-defined characters.
+        fill(&mut grp, 1, 0, 0, 0xFF00_00FF);
+        changed("user page", &item, &grp, &mut kept);
+        // TPAGE: another page, and another place.
+        fill(&mut grp, 2, 0, 0, 0xFFFF_FF00);
+        item.page = 2;
+        changed("TPAGE", &item, &grp, &mut kept);
+        fill(&mut grp, 2, 16, 0, 0xFF80_8080);
+        item.page_origin = (16, 0);
+        changed("TPAGE's origin", &item, &grp, &mut kept);
+        // TCOLOR, TBLEND.
+        item.tint = 0xFF80_FFFF;
+        changed("TCOLOR", &item, &grp, &mut kept);
+        item.add = true;
+        changed("TBLEND", &item, &grp, &mut kept);
+        item.add = false;
+        changed("TBLEND back", &item, &grp, &mut kept);
+        // Another size of character.
+        item.font_type = 16;
+        changed("font type", &item, &grp, &mut kept);
+        item.font_type = 8;
+        changed("font type back", &item, &grp, &mut kept);
+        // Another program's pages, which count their changes apart.
+        let mut other = Graphics::default();
+        fill(&mut other, FONT_PAGE, gx as i32, gy as i32, 0xFF00_FFFF);
+        changed("another program", &item, &other, &mut kept);
+    }
+
+    #[test]
+    fn kept_glyphs_follow_gsample() {
+        let font = Font::blank();
+        let mut grp = Graphics::default();
+        // What reads across the page's edge wraps only under GSAMPLE 1.
+        fill(&mut grp, 1, 0, 0, 0xFF00_FF00);
+        let mut s = TextScreen::new(64, 32);
+        s.print(&[*USER_CHARS.start()]);
+        let mut item = s.item(0, &Affine::IDENTITY, None);
+        (item.page, item.page_origin) = (1, (2044, 0));
+        let mut kept = KeptGlyphs::default();
+        let before = agree(&s, &item, &font, &grp, &mut kept);
+        grp.sample[1] = 1;
+        let after = agree(&s, &item, &font, &grp, &mut kept);
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn kept_glyphs_tell_colors_and_codes_apart() {
+        let mut font = Font::blank();
+        let (gx, gy) = font.origin(0x41, FontSize::Small).unwrap();
+        let (hx, hy) = font.origin(0x42, FontSize::Small).unwrap();
+        let mut grp = Graphics::default();
+        fill(&mut grp, FONT_PAGE, gx as i32, gy as i32, 0xFFFF_FFFF);
+        grp.target = FONT_PAGE;
+        grp.fill(
+            hx as i32,
+            hy as i32,
+            hx as i32 + 3,
+            hy as i32 + 3,
+            0x80FF_FFFF,
+            Blend::Normal,
+        );
+        font.page_mut()[0] = 0;
+        let mut s = TextScreen::new(64, 32);
+        s.print(&[0x41]);
+        let mut kept = KeptGlyphs::default();
+        let item = s.item(0, &Affine::IDENTITY, None);
+        agree(&s, &item, &font, &grp, &mut kept);
+        s.set_color(0xFF00_FF00);
+        s.print(&[0x41, 0x42]);
+        agree(&s, &item, &font, &grp, &mut kept);
+        s.set_color(0x80FF_0000);
+        s.print(&[0x42, 0x41]);
+        let item = s.item(0, &Affine::IDENTITY, None);
+        agree(&s, &item, &font, &grp, &mut kept);
+    }
+
+    #[test]
+    fn so_many_glyphs_start_over_only_between_frames() {
+        let font = Font::fallback();
+        let grp = Graphics::default();
+        let mut s = TextScreen::new(320, 240);
+        let mut kept = KeptGlyphs::default();
+        let codes: Vec<u16> = (0x21..0x7E).collect();
+        for color in 0..40u32 {
+            s.set_color(0xFF00_0000 | (color * 0x0101));
+            for _ in 0..12 {
+                s.print(&codes);
+            }
+            let item = s.item(0, &Affine::IDENTITY, None);
+            agree(&s, &item, &font, &grp, &mut kept);
+        }
+        // A screen's worth over the limit at most.
+        assert!(kept.glyphs.data.len() < MOST_KEPT + 64 * 40 * 30);
+    }
 
     /// The exact sum, one rounding: `(c*n)*(a*n) + d*(1 - a*n)` with n the
     /// glyph's 1 - alpha, tints unrounded.
