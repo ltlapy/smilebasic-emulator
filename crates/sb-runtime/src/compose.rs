@@ -949,36 +949,59 @@ pub fn project(
         let ny = 1.0 - (f64::from(py) + 0.5) / fh * 2.0;
         let nx0 = (f64::from(x0) + 0.5) / fw * 2.0 - 1.0;
         let at = |r: usize, nx: f64| inv[r][0] * nx + inv[r][1] * ny + inv[r][2];
-        let (mut gx, mut gy, mut q) = (at(0, nx0), at(1, nx0), at(2, nx0));
+        let (gx, gy, q) = (at(0, nx0), at(1, nx0), at(2, nx0));
         let (dx, dy, dq) = (inv[0][0] * step, inv[1][0] * step, inv[2][0] * step);
         let (first, end) = depth_span(
             z[0] * gx + z[1] * gy + z[2] * q,
             z[0] * dx + z[1] * dy + z[2] * dq,
-            x1 - x0,
+            // Above x1 when the layer lies wholly left of the clip: the pixels
+            // from x0 to x1 are then none unless Z / W ends them first.
+            x1.wrapping_sub(x0),
         );
-        let skipped = f64::from(first);
-        (gx, gy, q) = (gx + dx * skipped, gy + dy * skipped, q + dq * skipped);
-        for px in x0 + first..x0 + end {
-            let (lx, ly) = (gx / q, gy / q);
-            (gx, gy, q) = (gx + dx, gy + dy, q + dq);
-            // In front only; a NaN is not.
-            if (h[2][0] * lx + h[2][1] * ly + h[2][2]).partial_cmp(&0.0) != Some(Ordering::Greater)
-            {
-                continue;
-            }
-            let (Some(sx), Some(sy)) = (
-                floor_in(lx * sample - ox, sw),
-                floor_in(ly * sample - oy, sh),
-            ) else {
-                continue;
-            };
-            let s = from[sy * sw as usize + sx];
-            if s == 0 {
-                continue;
-            }
-            let d = &mut pixels[py as usize * width + px as usize];
-            *d = over_premultiplied(*d, s);
+        let (start, stop) = (x0.wrapping_add(first), x0.wrapping_add(end));
+        if start >= stop {
+            continue;
         }
+        let (first, end) = (start - x0, stop - x0);
+        let line = py as usize * width;
+        let along = Along {
+            layer: (gx, gy, q),
+            step: (dx, dy, dq),
+            to_read: Affine {
+                a: sample,
+                b: 0.0,
+                c: 0.0,
+                d: sample,
+                tx: -ox,
+                ty: -oy,
+            },
+            front: Some(h[2]),
+        };
+        along.each(
+            (first, end),
+            (sw, sh),
+            |gx, gy, q| {
+                let (lx, ly) = (gx / q, gy / q);
+                // In front only; a NaN is not.
+                if (h[2][0] * lx + h[2][1] * ly + h[2][2]).partial_cmp(&0.0)
+                    != Some(Ordering::Greater)
+                {
+                    return None;
+                }
+                Some((
+                    floor_in(lx * sample - ox, sw)?,
+                    floor_in(ly * sample - oy, sh)?,
+                ))
+            },
+            |t, sx, sy| {
+                let s = from[sy * sw as usize + sx];
+                if s != 0
+                    && let Some(d) = pixels.get_mut(line + (x0 + t) as usize)
+                {
+                    *d = over_premultiplied(*d, s);
+                }
+            },
+        );
     }
 }
 
@@ -1230,26 +1253,277 @@ pub fn project_image<P: Paint>(
         }
         let from = ((lo - 1.0).max(0.0) as u32).max(shown.0);
         let to = ((hi + 1.0).min(n) as u32).min(x1 - x0).min(shown.1);
+        let along = Along {
+            layer: (gx, gy, q),
+            step: (dx, dy, dq),
+            to_read: back,
+            front: None,
+        };
+        let size = (i64::from(w), i64::from(h));
+        along.each(
+            (from, to),
+            size,
+            |gx, gy, q| {
+                let (lx, ly) = (gx / q, gy / q);
+                // A NaN is not in front either.
+                if q.partial_cmp(&0.0) != Some(Ordering::Greater) {
+                    return None;
+                }
+                let (ix, iy) = back.apply(lx, ly);
+                Some((floor_in(ix, size.0)?, floor_in(iy, size.1)?))
+            },
+            |t, ix, iy| {
+                if let Some(paint) = pixel(ix as i32, iy as i32) {
+                    let d = &mut line[(x0 + t) as usize];
+                    *d = paint.put(*d);
+                }
+            },
+        );
+    }
+}
+
+/// A row of the frame through a homography: the layer's point at pixel `t`
+/// is `(gx + t * dx, gy + t * dy) / (q + t * dq)`, and what it reads is that
+/// point through `to_read`. Two divisions a pixel are what a small CPU feels
+/// most, so what is read is stepped in fixed point between exact points
+/// [`PERSPECTIVE_BLOCK`] pixels apart. A pixel where that may fall on the other
+/// side of a whole number is worked out exactly, with one division, and only
+/// if even that is too close to tell, with the sums added up pixel by pixel as
+/// `plain` expects them; so the same texels are read.
+struct Along {
+    layer: (f64, f64, f64),
+    step: (f64, f64, f64),
+    to_read: Affine,
+    /// The row that a point is tested against for lying in front, if that
+    /// is not settled by `q` being above 0.
+    front: Option<[f64; 3]>,
+}
+
+/// How many pixels are stepped between exact points, as a power of 2.
+const PERSPECTIVE_SHIFT: u32 = 4;
+const PERSPECTIVE_BLOCK: u32 = 1 << PERSPECTIVE_SHIFT;
+/// Shorter runs go the plain way: they would save less than setting up costs.
+const PERSPECTIVE_SHORTEST: u32 = 6;
+/// One texel, in the fixed point of [`Along`].
+const ALONG_ONE: f64 = (1u64 << 32) as f64;
+
+/// How close to a whole number [`Along`]'s fixed point may be for a run.
+struct AlongRun {
+    /// How close a pixel with an exact point of its own may be.
+    tight: f64,
+    /// What stepping along a curve adds to that, times the fourth power of
+    /// the smallest `q` of the block.
+    wander: f64,
+    /// How much each step changes in a block, in fixed point, as x and y, times
+    /// the cube of a `q` of the block.
+    bend: (f64, f64),
+}
+
+/// Whether a fixed point number is within `near` of a whole number.
+#[inline(always)]
+fn near_whole(f: i64, near: i64) -> bool {
+    /// The fraction of a fixed point number.
+    const FRACTION: i64 = (1 << 32) - 1;
+    (f.wrapping_add(near) & FRACTION) < 2 * near
+}
+
+impl Along {
+    /// Calls `put` with `(t, x, y)` for each pixel `t` from `from` up to but
+    /// not including `to` that reads something: `x` from 0 up to `size.0` and
+    /// `y` from 0 up to `size.1`, as `plain` works them out from the sums
+    /// `layer + t * step` added up pixel by pixel.
+    #[inline(always)]
+    fn each(
+        &self,
+        (from, to): (u32, u32),
+        size: (i64, i64),
+        plain: impl Fn(f64, f64, f64) -> Option<(usize, usize)>,
+        mut put: impl FnMut(u32, usize, usize),
+    ) {
+        /// What stepping can be off by over a block, by itself, in fixed
+        /// point, with a lot to spare.
+        const STEPPING: i64 = 1 << 11;
+        /// What a point's own truncations can be off by.
+        const TRUNCATION: i64 = 4;
+        /// This close to a whole number all the time, or closer, a pixel
+        /// is not worth stepping to.
+        const TOO_CLOSE: f64 = (1u64 << 30) as f64;
+        let (gx, gy, q) = self.layer;
+        let (dx, dy, dq) = self.step;
         let ft = f64::from(from);
-        let (mut gx, mut gy, mut qt) = (gx + dx * ft, gy + dy * ft, q + dq * ft);
-        for t in from..to {
-            let (lx, ly) = (gx / qt, gy / qt);
-            let front = qt > 0.0;
-            (gx, gy, qt) = (gx + dx, gy + dy, qt + dq);
-            // A NaN is not in front either.
-            if !front {
-                continue;
+        // Those sums, added up only as far as a pixel that needs them does.
+        let mut sums = (gx + dx * ft, gy + dy * ft, q + dq * ft);
+        let mut done = from;
+        let mut added_up = |t: u32, put: &mut dyn FnMut(u32, usize, usize)| {
+            while done < t {
+                sums = (sums.0 + dx, sums.1 + dy, sums.2 + dq);
+                done += 1;
             }
-            let (ix, iy) = back.apply(lx, ly);
-            let (Some(ix), Some(iy)) = (floor_in(ix, i64::from(w)), floor_in(iy, i64::from(h)))
-            else {
-                continue;
+            if let Some((x, y)) = plain(sums.0, sums.1, sums.2) {
+                put(t, x, y);
+            }
+        };
+        let run = (to.saturating_sub(from) >= PERSPECTIVE_SHORTEST)
+            .then(|| self.run(from, to))
+            .flatten();
+        let Some(run) = run else {
+            for t in from..to {
+                added_up(t, &mut put);
+            }
+            return;
+        };
+        let tight = run.tight as i64 + TRUNCATION;
+        let (w, h) = (size.0 as u64, size.1 as u64);
+        let mut t = from;
+        let mut start = self.point(t);
+        while t < to {
+            let n = (to - t).min(PERSPECTIVE_BLOCK);
+            let end = self.point(t + PERSPECTIVE_BLOCK);
+            let inv = f64::max(start.0, end.0);
+            let cube = inv * inv * inv;
+            let most = run.tight + run.wander * (cube * inv);
+            // Every pixel of the block gets a point of its own otherwise.
+            let near = if most < TOO_CLOSE {
+                most as i64 + STEPPING
+            } else {
+                1 << 32
             };
-            if let Some(paint) = pixel(ix as i32, iy as i32) {
-                let d = &mut line[(x0 + t) as usize];
-                *d = paint.put(*d);
+            // Stepped with the change of the step it has at the block's side
+            // that bends most, so that it leaves the true curve far less than a
+            // straight line would, and hardly a pixel needs a closer look.
+            let (mut fx, mut fy) = (start.1, start.2);
+            let (bend_x, bend_y) = ((run.bend.0 * cube) as i64, (run.bend.1 * cube) as i64);
+            let across = i64::from(PERSPECTIVE_BLOCK - 1);
+            let mut kx = (end.1.wrapping_sub(fx) >> PERSPECTIVE_SHIFT)
+                .wrapping_sub(bend_x.wrapping_mul(across) >> 1);
+            let mut ky = (end.2.wrapping_sub(fy) >> PERSPECTIVE_SHIFT)
+                .wrapping_sub(bend_y.wrapping_mul(across) >> 1);
+            for p in t..t + n {
+                let (cx, cy) = (fx, fy);
+                // Only a block far too bent to go by, whose every pixel is
+                // looked at closely, can run out of bits.
+                fx = fx.wrapping_add(kx);
+                fy = fy.wrapping_add(ky);
+                kx = kx.wrapping_add(bend_x);
+                ky = ky.wrapping_add(bend_y);
+                let (mut x, mut y) = (cx >> 32, cy >> 32);
+                if near_whole(cx, near) | near_whole(cy, near) {
+                    let (_, ex, ey) = self.point(p);
+                    if near_whole(ex, tight) || near_whole(ey, tight) {
+                        added_up(p, &mut put);
+                        continue;
+                    }
+                    (x, y) = (ex >> 32, ey >> 32);
+                }
+                // Negative ones are out of range too.
+                if (x as u64) < w && (y as u64) < h {
+                    put(p, x as usize, y as usize);
+                }
+            }
+            t += n;
+            start = end;
+        }
+    }
+
+    /// `1 / q` at pixel `t`, and what it reads in fixed point.
+    #[inline(always)]
+    fn point(&self, t: u32) -> (f64, i64, i64) {
+        let t = f64::from(t);
+        let (gx, gy, q) = self.layer;
+        let (dx, dy, dq) = self.step;
+        let inv = 1.0 / (q + dq * t);
+        let (ix, iy) = (self.to_read).apply((gx + dx * t) * inv, (gy + dy * t) * inv);
+        (inv, (ix * ALONG_ONE) as i64, (iy * ALONG_ONE) as i64)
+    }
+
+    /// How close to a whole number the pixels from `from` up to `to` must be
+    /// to be looked at more closely; None if they cannot be stepped: a pixel,
+    /// or what lies a block on from the last, is not surely in front, or too
+    /// far out for the fixed point.
+    #[inline(never)]
+    fn run(&self, from: u32, to: u32) -> Option<AlongRun> {
+        /// Above this what is read has too few fraction bits left.
+        const LIMIT: f64 = (1u64 << 24) as f64;
+        /// This much would look at every pixel more closely.
+        const TOO_CLOSE: f64 = (1u64 << 30) as f64;
+        let (gx, gy, q) = self.layer;
+        let (dx, dy, dq) = self.step;
+        let m = &self.to_read;
+        let (ft, tt) = (f64::from(from), f64::from(to + PERSPECTIVE_BLOCK));
+        let far = |a: f64, k: f64| (a + k * ft, a + k * tt);
+        let ((x0, x1), (y0, y1), (q0, q1)) = (far(gx, dx), far(gy, dy), far(q, dq));
+        // The added up sums are off from the ideal ones by a rounding for
+        // each addition, of no more than the largest they reach, and a point
+        // here by a few more.
+        let adds = (tt - ft + 8.0) * f64::EPSILON;
+        let eq = adds * f64::max(q0.abs(), q1.abs());
+        let least = f64::min(q0, q1);
+        // Also false for NaN. Each of the layer point's coordinates, what
+        // is read and what is in front go one way from one end of the run to
+        // the other, there being no pole between, so that their ends bound all
+        // that is between.
+        let in_front = q0 > 2.0 * eq && q1 > 2.0 * eq;
+        if !in_front {
+            return None;
+        }
+        let inv = 1.0 / least;
+        let lx = f64::max(x0.abs(), x1.abs()) * inv;
+        let ly = f64::max(y0.abs(), y1.abs()) * inv;
+        // How far the layer point can be off.
+        let of_x = 2.0 * inv * adds * (f64::max(x0.abs(), x1.abs()) + lx * q1.abs().max(q0.abs()))
+            + 4.0 * f64::EPSILON * lx;
+        let of_y = 2.0 * inv * adds * (f64::max(y0.abs(), y1.abs()) + ly * q1.abs().max(q0.abs()))
+            + 4.0 * f64::EPSILON * ly;
+        // What that does through a row of a matrix, with its own roundings.
+        let through = |r: [f64; 3]| {
+            let (p, q) = (r[0].abs(), r[1].abs());
+            p * of_x + q * of_y + 8.0 * f64::EPSILON * (p * lx + q * ly + r[2].abs())
+        };
+        let at = |r: [f64; 3], x: f64, y: f64, q: f64| (r[0] * x + r[1] * y) / q + r[2];
+        if let Some(r) = self.front {
+            // Also false for NaN.
+            let least = through(r);
+            let in_front = at(r, x0, y0, q0) > least && at(r, x1, y1, q1) > least;
+            if !in_front {
+                return None;
             }
         }
+        let (rx, ry) = ([m.a, m.b, m.tx], [m.c, m.d, m.ty]);
+        let (i0, i1) = (
+            (at(rx, x0, y0, q0), at(ry, x0, y0, q0)),
+            (at(rx, x1, y1, q1), at(ry, x1, y1, q1)),
+        );
+        let tight = f64::max(through(rx), through(ry)) * ALONG_ONE;
+        // Also false for NaN.
+        if !(i0.0.abs() < LIMIT
+            && i0.1.abs() < LIMIT
+            && i1.0.abs() < LIMIT
+            && i1.1.abs() < LIMIT
+            && tight < TOO_CLOSE)
+        {
+            return None;
+        }
+        // What is read is (c + k * t) / q. Its second derivative is
+        // 2 * dq * (c * dq - k * q) / q^3 and its third 3 * dq / q of that the
+        // other way, with a bracket that is the same all along the row. Stepped
+        // with the second at some point of a block of n, it leaves the true
+        // curve by at most n^2 / 8 of what the second changes by over the block.
+        let n = f64::from(PERSPECTIVE_BLOCK);
+        let bracket = |r: [f64; 3]| {
+            let k = r[0] * dx + r[1] * dy + r[2] * dq;
+            let c = r[0] * gx + r[1] * gy + r[2] * q;
+            let (kq, cd) = (k * q, c * dq);
+            (
+                cd - kq,
+                (cd - kq).abs() + 8.0 * f64::EPSILON * (kq.abs() + cd.abs()),
+            )
+        };
+        let ((bx, wx), (by, wy)) = (bracket(rx), bracket(ry));
+        Some(AlongRun {
+            tight,
+            wander: f64::max(wx, wy) * 0.75 * n * n * n * dq * dq * ALONG_ONE,
+            bend: (2.0 * dq * bx * ALONG_ONE, 2.0 * dq * by * ALONG_ONE),
+        })
     }
 }
 
@@ -1946,6 +2220,118 @@ mod tests {
         m[15] = -1.0;
         m[7] = 0.0;
         assert_eq!(source_bounds(&m, 1, (8, 8), None), None);
+    }
+
+    /// What [`Along::each`] gives for a row and what going over it with the
+    /// sums added up, pixel by pixel, gives.
+    fn along_both(along: &Along, (from, to): (u32, u32), size: (i64, i64)) {
+        let plain = |gx: f64, gy: f64, q: f64| {
+            let (lx, ly) = (gx / q, gy / q);
+            let front = match along.front {
+                Some(r) => {
+                    (r[0] * lx + r[1] * ly + r[2]).partial_cmp(&0.0) == Some(Ordering::Greater)
+                }
+                None => q.partial_cmp(&0.0) == Some(Ordering::Greater),
+            };
+            if !front {
+                return None;
+            }
+            let (x, y) = along.to_read.apply(lx, ly);
+            Some((floor_in(x, size.0)?, floor_in(y, size.1)?))
+        };
+        let mut got = Vec::new();
+        along.each((from, to), size, plain, |t, x, y| got.push((t, x, y)));
+        let (gx, gy, q) = along.layer;
+        let (dx, dy, dq) = along.step;
+        let ft = f64::from(from);
+        let (mut gx, mut gy, mut q) = (gx + dx * ft, gy + dy * ft, q + dq * ft);
+        let mut want = Vec::new();
+        for t in from..to {
+            if let Some((x, y)) = plain(gx, gy, q) {
+                want.push((t, x, y));
+            }
+            (gx, gy, q) = (gx + dx, gy + dy, q + dq);
+        }
+        assert_eq!(got, want, "{:?} {:?}", along.layer, along.step);
+    }
+
+    #[test]
+    fn stepping_through_a_matrix_reads_the_same_texels() {
+        let mut next = numbers(0x1234_5679);
+        let mut unit = move || f64::from(next() % 2_000_001) / 1e6 - 1.0;
+        let fw = 1280.0;
+        for i in 0..4000 {
+            // A layer turned and zoomed, tilted a little or a lot, even so
+            // far that a row runs past the horizon.
+            let (angle, zoom) = (unit() * 3.2, 0.2 + (unit() + 1.0) * 2.0);
+            let (c, sn) = (angle.cos() * zoom, angle.sin() * zoom);
+            let tilt = match i % 4 {
+                0 => 0.0,
+                1 => 0.0003,
+                2 => 0.003,
+                _ => 0.03,
+            };
+            let mut m = [0.0; 16];
+            (m[0], m[4], m[1], m[5]) = (c / 640.0, -sn / 640.0, -sn / 360.0, -c / 360.0);
+            (m[12], m[13]) = (unit() * 2.0, unit() * 2.0);
+            (m[3], m[7], m[15]) = (tilt * unit(), tilt * unit(), 1.0);
+            let h = homography(&m);
+            let Some(inv) = invert3(&h) else {
+                continue;
+            };
+            let ny = unit();
+            let nx0 = 0.5 / fw * 2.0 - 1.0;
+            let at = |r: usize| inv[r][0] * nx0 + inv[r][1] * ny + inv[r][2];
+            let step = 2.0 / fw;
+            let tx = (unit() * 300.0).round();
+            let sample = if i % 3 == 0 { 2.0 } else { 1.0 };
+            let along = Along {
+                layer: (at(0), at(1), at(2)),
+                step: (inv[0][0] * step, inv[1][0] * step, inv[2][0] * step),
+                to_read: Affine {
+                    a: sample,
+                    b: 0.0,
+                    c: 0.0,
+                    d: sample,
+                    tx,
+                    ty: 0.0,
+                },
+                front: (i % 2 == 0).then_some(h[2]),
+            };
+            let from = ((unit() + 1.0) * 100.0) as u32;
+            along_both(&along, (from, 1280), (2000, 2000));
+            along_both(&along, (from, from + 5), (2000, 2000));
+            along_both(&along, (from, from + 40), (64, 64));
+        }
+        // Points exactly on whole numbers and exactly between, at all sizes
+        // of step, where added up sums and worked out ones may fall either way.
+        for k in [1.0, 0.5, 0.25, 0.1, 1.0 / 3.0, 3.0, 1e-3, 1e-9] {
+            for dq in [0.0, 1e-4, 1e-12, -1e-4] {
+                let along = Along {
+                    layer: (0.0, 0.5, 1.0),
+                    step: (k * 1.0, k * 0.5, dq),
+                    to_read: Affine::IDENTITY,
+                    front: None,
+                };
+                along_both(&along, (0, 1280), (2000, 2000));
+                along_both(&along, (3, 400), (40, 40));
+            }
+        }
+        // Past where anything can be stepped, and nothing at all.
+        for (layer, step) in [
+            ((1e300, 1e300, 1e-300), (1e300, 1.0, 0.0)),
+            ((1.0, 1.0, 0.0), (1.0, 1.0, 0.0)),
+            ((f64::NAN, 0.0, 1.0), (0.0, 0.0, 0.0)),
+            ((0.0, 0.0, -1.0), (0.1, 0.1, 1e-2)),
+        ] {
+            let along = Along {
+                layer,
+                step,
+                to_read: Affine::IDENTITY,
+                front: None,
+            };
+            along_both(&along, (0, 300), (64, 64));
+        }
     }
 
     #[test]
