@@ -779,546 +779,587 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 ### Drawing on pages
 
 - `GCLIP` is shared by all pages.
-- `GCIRCLE` with equal start and end angles draws nothing; the sector
-  flag draws only the outline.
+- `GCIRCLE` with equal start and end angles draws nothing; the sector flag draws
+  only the outline.
 - Drawing rules read back with `GPGET` (TEST47, all 23 parts matched):
-  - `GCIRCLE`'s pixels are the midpoint circle's: in each row of the
-    first octant, the largest x with x² - x + y² < r². Radii of 1000 and
-    70000 far off the page still draw what reaches it.
-  - An arc runs between the circle pixels nearest its two angles, at
-    `round(r*cos a), round(r*sin a)`, both included: 30 to 120 degrees
-    takes the pixel (7,4) at 29.7 degrees. Angles past 360 or negative
-    are taken modulo 360. An arc of more than half a turn whose two end
-    pixels are one, such as 0 to 359 or 10 to 9, is the whole circle
-    (TEST48). A sector's two sides are `GLINE`s from the center to those
-    pixels.
-  - `GLINE` takes the same pixels whichever end comes first, in all
-    four directions and with X and Y swapped. Walked along the longer
-    axis from the end with the smaller coordinate on it, `major` steps
-    long and `minor` across, the offset across at step t is
-    `(2*t*minor + k) / (2*major)` rounded down. When that end is on the
-    page, `k = (major + 2*minor) mod (2*major)`: the line rounded (halves
-    up) one step further on, `round((t+1)*minor/major)`, less
-    `round(minor/major)` so that it starts at its end. `GLINE 0,0,7,3`
-    steps across at X 1, 3 and 5 (`01122333`), `GLINE 0,0,6,1` at 2, and
-    `GLINE 0,0,4,2` at 2 and 4. When that end is outside `GCLIP`, the page
-    if none is set, `k = major`: the line itself rounded, halves up, counted
-    from its real end (TEST56, ten lines, either way round). `GLINE -1,5,30,10` steps at X 3, 9, 15, 21 and 27, `GLINE
-    -1000,0,1040,51` gives rows 25 for X 0-19 and 26 from 20, while
-    `GLINE 0,25,40,26` steps at X 19 (TEST47, TEST48).
-  - `GTRI` draws each pixel once (with `#G_ALPHA`, also where edges
-    meet), a row at a time from the leftmost to the rightmost pixel an
-    edge reaches in the row, whatever order the corners come in. Each edge
-    goes down from its top end with a sum that starts at `-wide` if it is
-    wider than tall, or `tall` if not; each row adds `2*wide`, and the edge
-    takes a step across for each `2*tall`, at most one past its bottom end.
-    A row has the columns from where the last row ended to the one before
-    where this one ends. Level edges have none of their own. Corners off
-    the page are not clamped. `GTRI 0,0,1,2,10,1` fills rows 0-4, 1-10 and
-    1-6. A triangle whose corners lie on one line is that line, drawn once
-    (TEST47, TEST48, TEST56).
-  - `GBOX` draws the top and bottom rows, then the sides from the top
-    row to the row above the bottom: with `#G_ALPHA` the two top corners
-    are blended twice and the bottom ones once, whichever corners are
-    given first (TEST48). A box one pixel wide
-    or high draws each pixel once, except the top of a one-pixel-wide
-    box. `GBOX 0,Y,5,Y` on row -2147483648 draws nothing on the page
-    (TEST51).
-  - `#G_ALPHA2` (mode 3): alpha `a = sa + da - floor(sa*da/255)`; each
-    channel `(s*floor(sa*255/a) + d*floor(da*(255-sa)/a)) / 255`
-    rounded down. Over an opaque pixel that is mode 2's result.
-  - `GPAINT` fills 4-connected areas; `GCOPY`'s color code multiplies
-    and rounds down, and an overlapping copy within a page reads the
-    source first; `GPUTCHRP` drawing scales its spacing with the
-    characters.
-- `GARRAY(page)` is a 2048x2048 Int array indexed `[y,x]`, the same one
-  each time. A write to it is seen at once by `GPGET`, also where
-  `GPSET` drew next to it.
+  - `GCIRCLE`'s pixels are the midpoint circle's: in each row of the first
+    octant, the largest x with x² - x + y² < r². Radii of 1000 and 70000 far off
+    the page still draw what reaches it.
+  - `GCIRCLE`'s arc runs between the circle pixels nearest its two angles, at
+    `round(r*cos a), round(r*sin a)`, both included: 30 to 120 degrees takes the
+    pixel (7,4) at 29.7 degrees. Angles past 360 or negative are taken modulo
+    360. An arc of more than half a turn whose two end pixels are one, such as 0
+    to 359 or 10 to 9, is the whole circle (TEST48). A sector's two sides are
+    `GLINE`s from the center to those pixels.
+  - `GLINE` takes the same pixels whichever end comes first, in all four
+    directions and with X and Y swapped. Walked along the longer axis from the
+    end with the smaller coordinate on it, `major` steps long and `minor`
+    across, the offset across at step t is `(2*t*minor + k) / (2*major)` rounded
+    down.
+    - When that end is on the page, `k = (major + 2*minor) mod (2*major)`: the
+      line rounded (halves up) one step further on, `round((t+1)*minor/major)`,
+      less `round(minor/major)` so that it starts at its end. `GLINE 0,0,7,3`
+      steps across at X 1, 3 and 5 (`01122333`), `GLINE 0,0,6,1` at 2, and
+      `GLINE 0,0,4,2` at 2 and 4.
+    - When that end is outside `GCLIP`, the page if none is set, `k = major`:
+      the line itself rounded, halves up, counted from its real end (TEST56, ten
+      lines, either way round). `GLINE -1,5,30,10` steps at X 3, 9, 15, 21 and
+      27, `GLINE -1000,0,1040,51` gives rows 25 for X 0-19 and 26 from 20, while
+      `GLINE 0,25,40,26` steps at X 19 (TEST47, TEST48).
+  - `GTRI` draws each pixel once (with `#G_ALPHA`, also where edges meet), a row
+    at a time from the leftmost to the rightmost pixel an edge reaches in the
+    row, whatever order the corners come in (TEST47, TEST48, TEST56).
+    - Each edge goes down from its top end with a sum that starts at `-wide` if
+      it is wider than tall, or `tall` if not. Each row adds `2*wide`, and the
+      edge takes a step across for each `2*tall`, at most one past its bottom
+      end.
+    - A row has the columns from where the last row ended to the one before
+      where this one ends. Level edges have none of their own.
+    - Corners off the page are not clamped. `GTRI 0,0,1,2,10,1` fills rows 0-4,
+      1-10 and 1-6.
+    - A triangle whose corners lie on one line is that line, drawn once.
+  - `GBOX` draws the top and bottom rows, then the sides from the top row to the
+    row above the bottom: with `#G_ALPHA` the two top corners are blended twice
+    and the bottom ones once, whichever corners are given first (TEST48). A box
+    one pixel wide or high draws each pixel once, except the top of a
+    one-pixel-wide box. `GBOX 0,Y,5,Y` on row -2147483648 draws nothing on the
+    page (TEST51).
+  - `#G_ALPHA2` (mode 3): alpha `a = sa + da - floor(sa*da/255)`; each channel
+    `(s*floor(sa*255/a) + d*floor(da*(255-sa)/a)) / 255` rounded down. Over an
+    opaque pixel that is mode 2's result.
+  - `GPAINT` fills 4-connected areas.
+  - `GCOPY`'s color code multiplies and rounds down, and an overlapping copy
+    within a page reads the source first.
+  - `GPUTCHRP` drawing scales its spacing with the characters.
+- `GARRAY(page)` is a 2048x2048 Int array indexed `[y,x]`, the same one each
+  time. A write to it is seen at once by `GPGET`, also where `GPSET` drew next
+  to it.
 - `GUPDATE` with a coordinate of 2048 is `Out of range`.
-- `TSAVE`, `GSAVE` and `GLOAD` accept rectangles reaching off the
-  screen or page; what lies outside reads as empty. `GSAVE` and `GLOAD`
-  take rectangles of any size memory allows: 8192x1, 1x4097 and
-  2048x2049 work, `GSAVE` giving 0 for what lies off the page and
-  `GLOAD` dropping it, and a width or height of 0 is no error (`GSAVE`
-  then gives no elements, `GLOAD` draws nothing) (TEST47, TEST48). `GLOAD` palette indexes past the palette are no error and
-  leave the page's pixel as it is, with mode 0 too (TEST47).
-- `GSAVE` into a real array gives the colours unsigned: opaque red is
-  4294901760, where an integer array has -65536.
+- `TSAVE`, `GSAVE` and `GLOAD` accept rectangles reaching off the screen or
+  page; what lies outside reads as empty.
+- `GSAVE` and `GLOAD` take rectangles of any size memory allows: 8192x1, 1x4097
+  and 2048x2049 work, `GSAVE` giving 0 for what lies off the page and `GLOAD`
+  dropping it. A width or height of 0 is no error: `GSAVE` then gives no
+  elements, and `GLOAD` draws nothing (TEST47, TEST48).
+- `GLOAD` palette indexes past the palette are no error and leave the page's
+  pixel as it is, with mode 0 too (TEST47).
+- `GSAVE` into a real array gives the colors unsigned: opaque red is 4294901760,
+  where an integer array has -65536.
 
 ### `GPUTCHR` and `GPUTCHRP`
 
-- `GPUTCHR` with mode 0 clears the page under the character's
-  transparent pixels.
-- `GPUTCHR` without a font type uses the console's: after `TSCREEN 24`
-  it draws 24-pixel characters from GRP5, glyph i (font.map's number,
-  as for 8 and 16) at column i%64 and row i/64 of 24-pixel cells, which
-  is how `#GUIDE/DEFFONT24` is laid out. A font type other than 8 or 16
-  given to it is `Illegal font type`. `PRINT` on such a console shows
-  only user-defined characters.
-- `GPUTCHRP` takes each character from one empty column before what is
-  drawn of it (none if the glyph starts at its first column) to its last
-  drawn column, and moves on that many pixels plus the spacing (1 when
-  left out). A blank character is a quarter of the font size wide. In
-  the 16-pixel font this is the width font.map holds in bits 7-15 of
-  each code's second u16. The function form's width scales the spacing
-  with the characters: `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
+- `GPUTCHR` with mode 0 clears the page under the character's transparent
+  pixels.
+- `GPUTCHR` without a font type uses the console's: after `TSCREEN 24` it draws
+  24-pixel characters from GRP5, glyph i (font.map's number, as for 8 and 16) at
+  column i%64 and row i/64 of 24-pixel cells, which is how `#GUIDE/DEFFONT24` is
+  laid out.
+- `GPUTCHR` given a font type other than 8 or 16 is `Illegal font type`.
+- `PRINT` on a console of such a font type shows only user-defined characters.
+- `GPUTCHRP` takes each character from one empty column before what is drawn of
+  it (none if the glyph starts at its first column) to its last drawn column,
+  and moves on that many pixels plus the spacing (1 when left out). A blank
+  character is a quarter of the font size wide.
+- `GPUTCHRP` in the 16-pixel font uses the width font.map holds in bits 7-15 of
+  each code's second u16.
+- `GPUTCHRP`'s function form's width scales the spacing with the characters:
+  `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
 
 ### Colors and blending
 
-- Blending rounds to the nearest, not down: a sprite at &H80 alpha over
-  60 gives (255x128 + 60x127)/255 = 157.9, shown as 158. With that, the
-  emulator matched lossless screenshots of mode 0 and mode 1 layers
-  pixel for pixel.
-- How colours are worked out, from SmileBASIC 4, and confirmed by TEST49 (about 4,500 patches read from
-  lossless screenshots, every one within 1):
-  - Each 8-bit value reaches the GPU as k/255, and SmileBASIC 4 work in
-    floating point with no 8-bit rounding inside a draw. A draw is
-    rounded once, to the nearest, when it is stored: an element into
-    its layer (or the screen, for mode 0), a composed layer into the
-    screen, and the screen to the display.
-  - What is drawn holds premultiplied colour, and its alpha is how much
-    of what is behind still shows through. A layer of its own starts
-    clear: black, letting everything through.
-  - An element with image pixel `t` and colour `c` (SPCOLOR; for text,
-    the cell's colour times TCOLOR, multiplied in unrounded) has alpha
-    `a = t.a*c.a` and light `t*c*a`. A normal element gives
-    `light + d*(1-a)` and leaves `1-a` of what showed through; an
-    additive one (`#A_ADD`, `TBLEND` 1) gives `d + light`, held to 1,
-    and changes no alpha. `&H808080` tinted `&H7F7F7F` is 63.75, so
-    `&H40`, and `&H80FFFFFF` over 60 is 157.9, so 158.
-  - A composed layer (LAYER modes 1-4) with premultiplied colour `p`,
-    what shows through it `T`, and the layer colour `L` gives the light
-    `P = p*L*L.a` and the coverage `A = L.a*(1-T)`. Mode 1 gives
-    `P + d*(1-A)`, mode 2 `d + P`, mode 3 `d*(P + 1-A)` and mode 4
-    `d + P*(1-d)`, each held to 1. Modes 3 and 4 leave the screen
-    opaque, which shows only on a subprogram's screen.
-  - `FADE` is done as the screen goes to the display:
-    `d + (c-d)*fade.a`, rounded once. Beside a subprogram, the side
-    without the focus is darkened in the same step, times 224/255
-    (`&HE0`): 255 to 224, 248 to 218, 96 to 84.
-  - All the divisions are by powers of 255, which is odd, so no exact
-    result lies halfway between two values.
-  - TEST49's screenshots come from an emulator running SmileBASIC 4 on a
-    PC's GPU, and that GPU stores results its own way: about one patch in
-    six has a channel 1 off the rules above, mostly where the exact
-    value is a little above a half (`&H80010101` added to 60 is 60.502,
-    shown as 60). A screen result cut to 12 bits of fraction,
-    with halves rounded down (`floor(x*4096)`, then
-    `(q*255 + 2047) >> 12`), gives every FADE sample exactly and nearly
-    every additive one. That is the PC's GPU, not SmileBASIC 4; the
-    Switch's may round differently.
-- An additive sprite inside a composed layer adds light without
-  covering anything, so it also brightens what is under the layer.
+- Blending rounds to the nearest, not down: a sprite at &H80 alpha over 60 gives
+  (255x128 + 60x127)/255 = 157.9, shown as 158. With that, the emulator matched
+  lossless screenshots of mode 0 and mode 1 layers pixel for pixel.
+- Colors are worked out as follows, confirmed by TEST49 (about 4,500 patches
+  read from lossless screenshots, every one within 1):
+  - Each 8-bit value reaches the GPU as k/255, and the work is in floating
+    point with no 8-bit rounding inside a draw. A draw is rounded once, to the
+    nearest, when it is stored: an element into its layer (or the screen, for
+    mode 0), a composed layer into the screen, and the screen to the display.
+  - What is drawn holds premultiplied color, and its alpha is how much of what
+    is behind still shows through. A layer of its own starts clear: black,
+    letting everything through.
+  - An element with image pixel `t` and color `c` (SPCOLOR; for text, the cell's
+    color times TCOLOR, multiplied in unrounded) has alpha `a = t.a*c.a` and
+    light `t*c*a`.
+    - A normal element gives `light + d*(1-a)` and leaves `1-a` of what showed
+      through.
+    - An additive one (`#A_ADD`, `TBLEND` 1) gives `d + light`, held to 1, and
+      changes no alpha.
+    - `&H808080` tinted `&H7F7F7F` is 63.75, so `&H40`, and `&H80FFFFFF` over 60
+      is 157.9, so 158.
+  - A composed layer (LAYER modes 1-4) with premultiplied color `p`, what shows
+    through it `T`, and the layer color `L` gives the light `P = p*L*L.a` and
+    the coverage `A = L.a*(1-T)`. Mode 1 gives `P + d*(1-A)`, mode 2 `d + P`,
+    mode 3 `d*(P + 1-A)` and mode 4 `d + P*(1-d)`, each held to 1. Modes 3 and 4
+    leave the screen opaque, which shows only on a subprogram's screen.
+  - All the divisions are by powers of 255, which is odd, so no exact result
+    lies halfway between two values.
+  - TEST49's screenshots come from an emulator running SmileBASIC 4 on a PC's
+    GPU, and that GPU stores results its own way.
+    - About one patch in six has a channel 1 off the rules above, mostly where
+      the exact value is a little above a half (`&H80010101` added to 60 is
+      60.502, shown as 60).
+    - A screen result cut to 12 bits of fraction, with halves rounded down
+      (`floor(x*4096)`, then `(q*255 + 2047) >> 12`), gives every FADE sample
+      exactly and nearly every additive one.
+    - That is the PC's GPU, not SmileBASIC 4; the Switch's may round
+      differently.
+- An additive sprite inside a composed layer adds light without covering
+  anything, so it also brightens what is under the layer.
 
 ### `FADE`
 
-- `FADE color,time` mixes the two colors channel by channel in single
-  precision and rounds down: `&HFF` to 0 over three frames passes `&HA9`
-  and `&H54`, not `&HAA` and `&H55`. A clear end (alpha 0) takes the
-  other end's color, so only the alpha moves; fading to `&H00FFFFFF`
-  from black ends at `&H00000000`. `ACLS` clears the fade.
+- `FADE` is done as the screen goes to the display: `d + (c-d)*fade.a`, rounded
+  once. Beside a subprogram, the side without the focus is darkened in the same
+  step, times 224/255 (`&HE0`): 255 to 224, 248 to 218, 96 to 84 (TEST49).
+- `FADE color,time` mixes the two colors channel by channel in single precision
+  and rounds down: `&HFF` to 0 over three frames passes `&HA9` and `&H54`, not
+  `&HAA` and `&H55`.
+- `FADE` to or from a clear end (alpha 0) takes the other end's color, so only
+  the alpha moves; fading to `&H00FFFFFF` from black ends at `&H00000000`.
+- `ACLS` clears the fade.
 
 ### `LAYER`, `LCLIP` and `LMATRIX`
 
-- `LAYER` mode 0 draws the layer's elements straight onto the screen and
-  ignores the layer's color; only modes 1 to 4 multiply by it.
+- `LAYER` mode 0 draws the layer's elements straight onto the screen and ignores
+  the layer's color; only modes 1 to 4 multiply by it.
 - `LCLIP`'s corners are inclusive.
-- `LCLIP` at `XSCREEN`'s sample 2 takes whole fine pixels: frame pixels
-  `2*x0` to `2*x1+1`.
+- `LCLIP` at `XSCREEN`'s sample 2 takes whole fine pixels: frame pixels `2*x0`
+  to `2*x1+1`.
 - `LMATRIX layer,hx,hy` moves the layer by minus the home point.
 - The 2D `LMATRIX` form scales first and then turns clockwise, with x and y
   outside, as a sprite does; it applies after each element's own placement
   (TEST53).
-- `LMATRIX layer,M` with 16 reals takes the layer's coordinates as
-  (x, y, 0, 1) through M to clip space, X right and Y up: the identity
-  puts the layer's square from (0,0) to (1,1) over the screen's top
-  right quarter. M is column-major: M[12] moves along X. With M[3]
-  set, W grows along X and the picture narrows that way as OpenGL's
-  perspective divide would. Raster deformation applies to the screen
-  after LMATRIX has placed the layer (TTEST27, pixel for pixel).
-  Sprites on such a layer show whole, also the parts at negative
-  coordinates or past the screen's size, as FINITI's floors running to
-  the horizon show. So do text screens: a console moved to (-200,-120)
-  or to (500,300) of a 400x240 screen shows where the matrix puts it
-  (TTEST36, pixel for pixel). A sprite's Z plays no part: every point goes
-  in with z 0, so Z comes from M[2], M[6] and M[14]. What has Z/W outside
-  -1 to 1 does not show, nor what has W at 0 or below. Sampling is nearest
-  at any magnification, and perspective correct. `LCLIP` on such a layer
-  is in frame pixels after the matrix (TEST53).
-- `LMATRIX layer,array` wants a real array of 16 elements or more and looks at the first
-  16: 15 are `Type mismatch (LMATRIX:2)`, 17 go, and a value of 1E39 is `Out of range
-  (LMATRIX:2)`. (TEST62)
+- `LMATRIX layer,M` with 16 reals takes the layer's coordinates as (x, y, 0, 1)
+  through M to clip space, X right and Y up: the identity puts the layer's
+  square from (0,0) to (1,1) over the screen's top right quarter. M is
+  column-major: M[12] moves along X. With M[3] set, W grows along X and the
+  picture narrows that way as OpenGL's perspective divide would. Raster
+  deformation applies to the screen after LMATRIX has placed the layer (TTEST27,
+  pixel for pixel).
+  - Sprites on such a layer show whole, also the parts at negative coordinates
+    or past the screen's size, as FINITI's floors running to the horizon show.
+  - Text screens show whole too: a console moved to (-200,-120) or to (500,300)
+    of a 400x240 screen shows where the matrix puts it (TTEST36, pixel for
+    pixel).
+  - A sprite's Z plays no part: every point goes in with z 0, so Z comes from
+    M[2], M[6] and M[14]. What has Z/W outside -1 to 1 does not show, nor what
+    has W at 0 or below (TEST53).
+  - Sampling is nearest at any magnification, and perspective correct (TEST53).
+  - `LCLIP` on such a layer is in frame pixels after the matrix (TEST53).
+- `LMATRIX layer,array` wants a real array of 16 elements or more and looks at
+  the first 16: 15 are `Type mismatch (LMATRIX:2)`, 17 go, and a value of 1E39
+  is `Out of range (LMATRIX:2)`. (TEST62)
 
 ### `LFILTER`
 
 - `ACLS` clears every layer's `LFILTER` (TEST47).
-- `LFILTER` copies a raster array when it is called: writing to the array
-  later changes nothing on the screen until the next `LFILTER` (TEST60).
-- `LFILTER layer,0,n` is `Out of range`. Raster deformation (types 3
-  and 4) needs the repeat flag: `LFILTER 1,3,A,#TRUE` with a real
-  `A[240,4]` or `A[240,2]` works, while without the flag it is `Out of
-  range` for the type whatever the array; `A[4,100]` or an Int array with
-  the flag is `Type mismatch`.
-- Raster deformation works as OpenGL would: each row (type 3) or column
-  (type 4) takes an entry of X offset, X scale, Y offset and Y scale in
-  screen axes for either type, and a pixel shows the source at its
-  center times the scale plus the offset in screen widths or heights,
-  measured from the left and from the bottom. A positive X offset moves
-  the picture left; a Y scale of 0.5 stretches the bottom half over the
-  screen. Without repeat, what falls off shows black, BACKCOLOR included
-  on a layer that is not composed. Checked pixel for pixel with
-  screenshots (TTEST26). The scale comes before the offset, and a positive
-  Y offset moves the point up from the bottom. An array of two values to
-  an entry holds the offset and scale along the deformation: X for type 3,
-  Y for type 4. With n entries, row or column i of `size` takes entry
-  `floor((i+.5)*n/size)`, the one its center falls in (TEST54).
-- On a layer that `LAYER` does not compose (mode 0), `LFILTER` filters
-  the whole screen drawn so far: the layers behind and `BACKCOLOR` too.
-  On a composed layer it filters only that layer.
-  That holds for a layer with nothing in it, too.
+- `LFILTER` copies a raster array when it is called: writing to the array later
+  changes nothing on the screen until the next `LFILTER` (TEST60).
+- `LFILTER layer,0,n` is `Out of range`.
+- `LFILTER`'s raster deformation (types 3 and 4) needs the repeat flag:
+  `LFILTER 1,3,A,#TRUE` with a real `A[240,4]` or `A[240,2]` works, while
+  without the flag it is `Out of range` for the type whatever the array.
+  `A[4,100]` or an Int array with the flag is `Type mismatch`.
+- `LFILTER`'s raster deformation works as OpenGL would. Checked pixel for pixel
+  with screenshots (TTEST26):
+  - Each row (type 3) or column (type 4) takes an entry of X offset, X scale, Y
+    offset and Y scale in screen axes for either type.
+  - A pixel shows the source at its center times the scale plus the offset in
+    screen widths or heights, measured from the left and from the bottom.
+  - A positive X offset moves the picture left; a Y scale of 0.5 stretches the
+    bottom half over the screen.
+  - Without repeat, what falls off shows black, BACKCOLOR included on a layer
+    that is not composed.
+- `LFILTER`'s raster entries (TEST54):
+  - The scale comes before the offset, and a positive Y offset moves the point
+    up from the bottom.
+  - An array of two values to an entry holds the offset and scale along the
+    deformation: X for type 3, Y for type 4.
+  - With n entries, row or column i of `size` takes entry
+    `floor((i+.5)*n/size)`, the one its center falls in.
+- `LFILTER` on a layer that `LAYER` does not compose (mode 0) filters the whole
+  screen drawn so far: the layers behind and `BACKCOLOR` too. That holds for a
+  layer with nothing in it, too. On a composed layer it filters only that layer.
 - `LFILTER`'s mosaic draws the whole frame into a few pixels with bilinear
-  sampling, and those back over the frame without smoothing. Blocks are n
-  frame pixels whatever `XSCREEN`'s sample (TEST54), and their number is
-  reckoned in screen pixels: `ceil(width/n)*sample` across. So where n does
-  not divide the size, blocks are a little smaller than n, ending at both
-  edges of the frame. Sampling puts a block of odd n on its middle pixel,
-  and a block of even n exactly between four, which it averages (halves
-  rounded down). A size below 2 does nothing.
+  sampling, and those back over the frame without smoothing.
+  - Blocks are n frame pixels whatever `XSCREEN`'s sample (TEST54), and their
+    number is reckoned in screen pixels: `ceil(width/n)*sample` across. Where n
+    does not divide the size, blocks are a little smaller than n, ending at both
+    edges of the frame.
+  - Sampling puts a block of odd n on its middle pixel, and a block of even n
+    exactly between four, which it averages (halves rounded down).
+  - A size below 2 does nothing.
 - `LFILTER`'s blur halves the layer in frame pixels, whatever `XSCREEN`'s
-  sample: 2x2 blocks are averaged (halves rounded down, so a dot becomes a
-  2x2 block at 64 and a line 127), blurred along the rows and then the
-  columns, each stored in 8 bits, and scaled back without smoothing.
-  Amounts 1 to 4 look the same; amount 0 leaves the layer sharp.
-- The blur's weights are `exp(-d*d/2/v)` for v = amount/10 at d = 1, 3, 5...
-  31 (the middle counts as 1, and the next tap as 3, though they are
-  neighbours), normalised over all sixteen with those past the middle
-  counting twice. They are taken outward until they add up to more than
-  99%, which picks 3, 5, 7 or 9 taps, and no shader has more than 9. So
-  above amount 128 or so the kernel is cut off without normalising again:
-  the edges stay narrow while a plateau falls, and a wide white block
-  reaches 251, 224 and 173 at amounts 128, 256 and 384 (TEST54). What shows
-  through falls with the light, so a clear layer darkens what is behind it.
-- `LFILTER`'s colour conversion works on the layer's premultiplied pixels
-  as they are: hue in degrees, saturation and value on 0 to 255, and a grey
-  has no saturation to raise. So half-covered white starts from a value of
-  128, not 255, and a value of 30 on it gives 158 (TEST54). On a layer in
-  mode 1, a clear pixel stays clear. On one in mode 2, 3 or 4, a raised
-  value lights every clear pixel too, so the whole screen takes on the
-  value times the layer's colour: `LAYER 5,4,&HFF404080` with
-  `LFILTER 5,5,200,-50,30` hazes everything by (7,7,15), also where layer
-  5 has nothing (TEST53). The filter comes before the layer's colour.
+  sample. 2x2 blocks are averaged (halves rounded down, so a dot becomes a 2x2
+  block at 64 and a line 127), blurred along the rows and then the columns, each
+  stored in 8 bits, and scaled back without smoothing. Amounts 1 to 4 look the
+  same; amount 0 leaves the layer sharp.
+- `LFILTER`'s blur weights are `exp(-d*d/2/v)` for v = amount/10 at d = 1, 3,
+  5... 31 (the middle counts as 1, and the next tap as 3, though they are
+  neighbors), normalized over all sixteen with those past the middle counting
+  twice.
+  - They are taken outward until they add up to more than 99%, which picks 3, 5,
+    7 or 9 taps, and there are never more than 9.
+  - Above amount 128 or so the kernel is therefore cut off without normalizing
+    again: the edges stay narrow while a plateau falls, and a wide white block
+    reaches 251, 224 and 173 at amounts 128, 256 and 384 (TEST54).
+  - What shows through falls with the light, so a clear layer darkens what is
+    behind it.
+- `LFILTER`'s color conversion works on the layer's premultiplied pixels as they
+  are: hue in degrees, saturation and value on 0 to 255, and a gray has no
+  saturation to raise.
+  - Half-covered white starts from a value of 128, not 255, and a value of 30 on
+    it gives 158 (TEST54).
+  - On a layer in mode 1, a clear pixel stays clear.
+  - On one in mode 2, 3 or 4, a raised value lights every clear pixel too, so
+    the whole screen takes on the value times the layer's color:
+    `LAYER 5,4,&HFF404080` with `LFILTER 5,5,200,-50,30` hazes everything by
+    (7,7,15), also where layer 5 has nothing (TEST53).
+  - The filter comes before the layer's color.
 
 ### Sampling and draw order
 
-- Scaled and turned sprites and text are drawn without smoothing, at the
-  centres of the frame's pixels; at `XSCREEN`'s sample 2, of the fine
-  pixels. A pixel whose centre is exactly on the image's edge is drawn if
-  that is the left or the bottom edge on the screen, however the image is
-  turned (`SPOFS 0,0.5,0.5` draws from the first column, and from the
-  second row to one row past the image's height).
-- A sprite or text cell whose pixel centers fall exactly between texels can show a pixel
-  off its image: an image side and a scale that are powers of two read the page's higher
-  texel, and anything else mostly the lower, at any flip or turn (TEST63, 3831 sprites and
-  192 cells on a Switch 2; renderer-design.md has the numbers). So on a half-pixel position
-  16x16 shows the page's next row at its bottom edge, and 15x15 the column before it at
-  its left. On a cell, what lies beside it on the font page or `TPAGE`. Before the page's
-  first texel, U or V of 0, it reads the first texel; after the last, U+W of 2048, nothing.
-- A pixel's sample point exactly between two texels goes by the rule above. What is not a
-  power of two shows the GPU's single-precision arithmetic besides: about 1 line in 20 goes
-  the other way, by the place on the screen, by a triangle of the two a quad is drawn as,
-  or from some line along the image on (TEST63).
-- At equal Z text screens are behind sprites, and among either the higher
-  number is behind, `#GSPRITE` among the sprites as 4095 (TEST50).
+- Scaled and turned sprites and text are drawn without smoothing, at the centers
+  of the frame's pixels; at `XSCREEN`'s sample 2, of the fine pixels. A pixel
+  whose center is exactly on the image's edge is drawn if that is the left or
+  the bottom edge on the screen, however the image is turned (`SPOFS 0,0.5,0.5`
+  draws from the first column, and from the second row to one row past the
+  image's height).
+- A sprite or text cell whose pixel centers fall exactly between texels can show
+  a pixel off its image: an image side and a scale that are powers of two read
+  the page's higher texel, and anything else mostly the lower, at any flip or
+  turn (TEST63, 3831 sprites and 192 cells on a Switch 2;
+  [renderer-verification.md](renderer-verification.md) has the numbers).
+  - On a half-pixel position 16x16 shows the page's next row at its bottom edge,
+    and 15x15 the column before it at its left.
+  - A cell shows what lies beside it on the font page or `TPAGE`.
+  - Before the page's first texel, U or V of 0, it reads the first texel; after
+    the last, U+W of 2048, nothing.
+- A sample point exactly between two texels goes by the rule above. What is not
+  a power of two shows the GPU's single-precision arithmetic besides: about 1
+  line in 20 goes the other way, by the place on the screen, by a triangle of
+  the two a quad is drawn as, or from some line along the image on (TEST63).
+- At equal Z text screens are behind sprites, and among either the higher number
+  is behind, `#GSPRITE` among the sprites as 4095 (TEST50).
 
 ### `XSCREEN` display modes
 
-- `XSCREEN`'s composite modes all fill as much of the display as fits, at
-  the aspect ratio, with black bars and no `BACKCOLOR` in them: 1000x600 in
-  mode 2 fills 1200x720 with uneven pixels, not 1000x600 at whole factors.
-  Mode 0 is bilinear and mode 2 nearest. Mode 1 mixes the two nearest
-  texels by `clamp(2*fract(s-.5)-.5, 0, 1)` along each axis at any scale
-  (s in texels), so a checkerboard at 3x reads 0, 42, 212, 255, 212, 42
-  (TEST55). That equals bilinear from a copy at twice the size, which is why
-  mode 0 at sample 2 looks the same as mode 1 at sample 1.
+- `XSCREEN`'s composite modes all fill as much of the display as fits, at the
+  aspect ratio, with black bars and no `BACKCOLOR` in them: 1000x600 in mode 2
+  fills 1200x720 with uneven pixels, not 1000x600 at whole factors.
+- Mode 0 is bilinear and mode 2 nearest.
+- Mode 1 mixes the two nearest texels by `clamp(2*fract(s-.5)-.5, 0, 1)` along
+  each axis at any scale (s in texels), so a checkerboard at 3x reads 0, 42,
+  212, 255, 212, 42 (TEST55). That equals bilinear from a copy at twice the
+  size, which is why mode 0 at sample 2 looks the same as mode 1 at sample 1.
 
 ## Sound
 
 ### `BGMPLAY`, `BGMSTOP` and `BGMVOL`
 
-- `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45), and
-  `BEEP` sounds 0 to 156 (4.4.5 added 156). A user
-  song number with nothing set is no error; it plays nothing, and
-  `BGMCHK` says 0.
-- `BGMPLAY` of a user's song number that holds nothing leaves what is playing as it is. (TEST63)
-- `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their
-  first argument left out with a comma after it (`BGMSTOP ,1`,
-  `BGMPLAY ,0,64`).
-- After `BGMSTOP` with a fade, `BGMCHK` stays 1 until a frame after the
-  fade has ended: 61 frames for `BGMSTOP 0,1`, even when it comes a
-  frame after `BGMPLAY`. Stopped that way in the frame `BGMPLAY` ran in,
-  a song never sounds, and `BGMCHK` is 0 a frame later, or two if a
-  `VSYNC` that did not wait ran in between.
-- `BGMPLAY` without a volume plays at 64, and `BGMVOL` (like
-  `BGMPLAY`'s volume) is a linear gain of v/127 over that range: on a
-  square that records at 3063 by default, `BGMVOL 127` gives 6079, 95
-  gives 4547, 63 3015 and 31 1484.
-- A track's MML variables read -1 while it is not playing: before any
-  song, after `BGMSTOP` and after the song ends. `BGMVAR` setting one on
-  a track that is not playing does nothing. The program reads the
-  variables as they were when the frame started, so a value set by the
-  song, by `BGMVAR` or by stopping shows a frame later. A song started
-  while no other plays takes about two frames more to begin: its first
-  `$0=` showed four frames after `BGMPLAY`. `RECSTART` right before
-  such a `BGMPLAY` waits with it: the song sounds within 50 samples of
-  the recording's start.
+- `BGMPLAY` plays songs 0 to 73 (the 4.3 manual says 0 to 45).
+- `BGMPLAY` of a user song number with nothing set is no error; it plays
+  nothing, and `BGMCHK` says 0.
+- `BGMPLAY` of a user's song number that holds nothing leaves what is playing as
+  it is. (TEST63)
+- `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their first
+  argument left out with a comma after it (`BGMSTOP ,1`, `BGMPLAY ,0,64`).
+- `BGMSTOP` with a fade keeps `BGMCHK` at 1 until a frame after the fade has
+  ended: 61 frames for `BGMSTOP 0,1`, even when it comes a frame after
+  `BGMPLAY`. Stopped that way in the frame `BGMPLAY` ran in, a song never
+  sounds, and `BGMCHK` is 0 a frame later, or two if a `VSYNC` that did not wait
+  ran in between.
+- `BGMPLAY` without a volume plays at 64, and `BGMVOL` (like `BGMPLAY`'s volume)
+  is a linear gain of v/127 over that range: on a square that records at 3063 by
+  default, `BGMVOL 127` gives 6079, 95 gives 4547, 63 3015 and 31 1484.
+- A track's MML variables read -1 while it is not playing: before any song,
+  after `BGMSTOP` and after the song ends.
+- `BGMVAR` setting a variable on a track that is not playing does nothing.
+- The program reads the MML variables as they were when the frame started, so a
+  value set by the song, by `BGMVAR` or by stopping shows a frame later.
+- A song started while no other plays takes about two frames more to begin: its
+  first `$0=` showed four frames after `BGMPLAY`.
+- `RECSTART` right before such a `BGMPLAY` waits with it: the song sounds within
+  50 samples of the recording's start.
 
 ### MML
 
-- MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a
-  length (`N60`), macro names with `_` and macros used inside a macro's
-  definition (`{X=CDE}{Y={X}F}`).
-- `CHKMML` gives -1 for 16 million characters of notes, and for macros
-  nested six and seven levels deep that would come to 10^7 and 10^8
-  characters. `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even
-  the stop key does nothing (TEST51).
-- MML's volume (`V`) and velocity (`@V`) both start at 127 and both
-  scale the level by their square: `V64` and `V127@V64` record alike.
-  `P64` is the middle, even on both sides; the pan's position is
-  (P-64)/63, so `P0` and `P1` are both hard left. Recorded with `RECSTART`, an
-  A held at V127 has an RMS of 850 on `@0`, and a full-scale 8-bit
-  waveform an eighth of full scale on each side (a ±96 square 3063, a
-  sine of amplitude 100 2257).
-- `Qn` holds a note for (n+1)/33 of its length, cut to whole ticks (48
-  to a quarter note) and at least one: at T120 a `C4` is let go after
-  10 ms with `Q0`, 135 with `Q8`, 250 with `Q16`, 375 with `Q24`, and
-  `Q32` holds it all. A waveform with attack 127 is at full level from
-  its first sample. An instrument's note also starts at the level of
-  its first 5 ms step rather than rising from silence: `@0`'s C4 passes
-  64 by its 11th sample.
-- `@MP`, `@MA` and `@ML` (depth d, range r, speed s, delay t) swing a
-  sine of d/128 times r units at s/2.56 Hz, starting upward: a unit is
-  a semitone of pitch, 6 dB of volume, or the pan from the middle to one
-  side. `@MP7,1,7,0` moves about ±6 cents every 360 ms, `@MP32,1,20,0`
-  ±25 cents every 130 ms; `@MA24,2,7,0` swings the level 0.77 to 1.31
-  of its middle, and `@ML24,2,7,0` moves the sound right first, each
-  side between about 0.77 and 1.2 of the middle's level, which fits
-  gains of sqrt((1-p)/2) and sqrt((1+p)/2) for a pan p of -1 to 1.
-  The delay counts 40 ms a unit whatever the tempo, and the wave starts
-  from its middle once it has passed: `@MP7,1,7,48` did not move within
-  1.5 s at T120. The sine runs 5 ms behind the note, or behind the end
-  of the delay: `@MP64,1,20,0` is at 0 5 ms in, and `@MP64,1,20,8`
-  begins at 325 ms at T60 as at T120. `@MON` turns all
-  three back on as last set.
+- MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a length
+  (`N60`), macro names with `_` and macros used inside a macro's definition
+  (`{X=CDE}{Y={X}F}`).
+- `CHKMML` gives -1 for 16 million characters of notes, and for macros nested
+  six and seven levels deep that would come to 10^7 and 10^8 characters.
+- `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even the stop key
+  does nothing (TEST51).
+- `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
+  level by their square: `V64` and `V127@V64` record alike.
+- `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
+  `P0` and `P1` are both hard left.
+- Recorded with `RECSTART`, an A held at V127 has an RMS of 850 on `@0`, and a
+  full-scale 8-bit waveform an eighth of full scale on each side (a ±96 square
+  3063, a sine of amplitude 100 2257).
+- `Qn` holds a note for (n+1)/33 of its length, cut to whole ticks (48 to a
+  quarter note) and at least one: at T120 a `C4` is let go after 10 ms with
+  `Q0`, 135 with `Q8`, 250 with `Q16`, 375 with `Q24`, and `Q32` holds it all.
+- A waveform with attack 127 is at full level from its first sample.
+- An instrument's note starts at the level of its first 5 ms step rather than
+  rising from silence: `@0`'s C4 passes 64 by its 11th sample.
+- `@MP`, `@MA` and `@ML` (depth d, range r, speed s, delay t) swing a sine of
+  d/128 times r units at s/2.56 Hz, starting upward. A unit is a semitone of
+  pitch, 6 dB of volume, or the pan from the middle to one side.
+  - `@MP7,1,7,0` moves about ±6 cents every 360 ms, `@MP32,1,20,0` ±25 cents
+    every 130 ms.
+  - `@MA24,2,7,0` swings the level 0.77 to 1.31 of its middle.
+  - `@ML24,2,7,0` moves the sound right first, each side between about 0.77 and
+    1.2 of the middle's level, which fits gains of sqrt((1-p)/2) and
+    sqrt((1+p)/2) for a pan p of -1 to 1.
+  - The delay counts 40 ms a unit whatever the tempo, and the wave starts from
+    its middle once it has passed: `@MP7,1,7,48` did not move within 1.5 s at
+    T120.
+  - The sine runs 5 ms behind the note, or behind the end of the delay:
+    `@MP64,1,20,0` is at 0 5 ms in, and `@MP64,1,20,8` begins at 325 ms at T60
+    as at T120.
+  - `@MON` turns all three back on as last set.
 - `@MA`'s swing is read in tenths of a dB, truncated, and stops at the sound
   engine's limits: no more than +6 dB, and silence from -90.4 dB down. A wide
-  one such as `@MA127,110,12,0` (±655 dB as asked) therefore chops the note
-  into bursts at twice its level with silence between, and is no louder
-  than that: a song using three of these plays at a normal level on SB4.
-- Envelopes move a millisecond at a time in tenths of a dB: the attack
-  multiplies the level, starting from -90.4 dB, until it is within
-  0.003 dB of full; the hold lasts (h+1)^2/4 ms; decay and release take
-  off 65535 tenths a millisecond at 127, 24 at 126, (2v+1)/640 for v up
-  to 49 and 12/(126-v) above; the sustain level is 400 log10(s/127)
-  tenths, no lower than -723 (-722 for 1); a note ends below -90.4 dB.
-  `@E` sets only attack, decay, sustain and release and keeps an
-  instrument's hold; `WAVSET` and `WAVSETA` have no hold.
-- A portamento (`_`) glides during the note it follows, in a straight
-  line in semitones over that note's gate, and the next note goes on
-  from there without starting again: `T120O4C2_G2` slides from C to G
-  over the first second and holds G for the second, and on a piano
-  (`@0`) the G does not strike again.
-- A slur (`&`) to another note goes on at that note at once without
-  striking again: on `@0`, `C4&G4` keeps decaying from the C through
-  the G, where `C4G4` strikes the G anew.
+  one such as `@MA127,110,12,0` (±655 dB as asked) therefore chops the note into
+  bursts at twice its level with silence between, and is no louder than that: a
+  song using three of these plays at a normal level on SmileBASIC 4.
+- Envelopes move a millisecond at a time in tenths of a dB:
+  - The attack multiplies the level, starting from -90.4 dB, until it is within
+    0.003 dB of full.
+  - The hold lasts (h+1)^2/4 ms.
+  - Decay and release take off 65535 tenths a millisecond at 127, 24 at 126,
+    (2v+1)/640 for v up to 49 and 12/(126-v) above.
+  - The sustain level is 400 log10(s/127) tenths, no lower than -723 (-722 for
+    1).
+  - A note ends below -90.4 dB.
+- `@E` sets only attack, decay, sustain and release and keeps an instrument's
+  hold; `WAVSET` and `WAVSETA` have no hold.
+- `_` (portamento) glides during the note it follows, in a straight line in
+  semitones over that note's gate, and the next note goes on from there without
+  starting again: `T120O4C2_G2` slides from C to G over the first second and
+  holds G for the second, and on a piano (`@0`) the G does not strike again.
+- `&` (slur) to another note goes on at that note at once without striking
+  again: on `@0`, `C4&G4` keeps decaying from the C through the G, where `C4G4`
+  strikes the G anew.
 
 ### Instruments, `WAVSET` and `WAVSETA`
 
-- The PSG (`@216` to `@222`) and noise (`@223`) are instruments of the
-  sound archive like `@0`: each PSG tone records at an RMS of about 4031
-  (peak 4090) at V127, whatever its width, and the noise at 2839, never
-  going below zero. An instrument region's own volume is a linear gain
-  (`@0`'s is 88), unlike `V` and `@V`.
-- `WAVSET`'s waveform does not play as one cycle of the note. 32
-  samples of one cycle with reference pitch 69 play `O4A` at 55 Hz and
-  `O5A` 3600 cents below A5: three octaves down, so a pass of the
-  samples lasts eight cycles of the note. Songs written for SmileBASIC 4
-  repeat their cycles to fill eight (a 16-sample pattern of two cycles
-  times 4, one of a single cycle times 8, both at reference pitch 69).
-  Any of the lengths the manual gives, 16 to 512 samples, plays a pass
-  at 55 Hz at its reference pitch; any other length (17, 24 or 1024
-  samples) is `Illegal function call`.
-- `WAVSET` also takes groups in square brackets, which the manual leaves
-  out: `WAVSET 224,127,0,0,127,"[FF00][80][4080C0]",69` is no error
-  (TEST56). A string starting with `[` has groups of an even
-  number of digits, at most 1024 in all, and no group over 512 over their
-  number in samples. Each is stretched to that many samples, but each is
-  written from the start, so the last group alone stays and the rest of the
-  512 samples is whatever the buffer held. `RECSAVE` shows it (TEST60):
-  `[C040]` sounds like the same 16 digits without brackets, and in
-  `[C040][F010]` the `F010` fills half of the pass with the other half loud
-  noise, the same each time (peak about 4600 at 127, a DC of about -1500).
-- `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its
-  n samples at 28160 Hz over the next power of two at or above n: at
-  reference pitch 69, `O4A` with one cycle of 64 samples is in tune, 16
-  samples sound 2400 cents up, 512 3600 cents down, 2048 6000 down.
-- `WAVSETA`'s 16-bit form (10 arguments or more) takes the loop's end + 1
-  values from the offset on, with the loop counted from the offset, and
-  drops what comes after; values are cut to 16 bits. A value v sounds
-  like the 8-bit form's v/256 + 128.
-- `WAVSET` or `WAVSETA` while a note of that instrument sounds writes
-  the new samples over the start of the instrument's memory, and the
-  note goes on reading it with the length, loop and rate it started
-  with, keeping its envelope: a square swapped for a square of two
-  cycles doubles the pitch at the same level, but a `WAVSET` square (512
-  samples once stretched) swapped for a 32-sample sine plays the sine's
-  one cycle and then the rest of the square on each pass, near the
-  square's level (2981 to 3023 against 3063) with twice the crossings.
-- `WAVSETA` with an empty array is `Illegal function call`. Arguments after
-  the array can be left off the end, but one left out in between is `Type
-  mismatch` with its number, in both forms and ahead of the check for an empty
-  array: `WAVSETA 224,0,0,0,0,A%,,0,15` is `(WAVSETA:7)`, and `...,A%,69,,15`
-  and `...,A%,69,,,28160` are `(WAVSETA:8)` (TEST51, TEST52). A trailing comma
-  counts: `...,A%,69,0,15,28160,` is `(WAVSETA:11)` (TEST57).
-- `WAVSETA` looks at its arguments in order: reference note 0 to 127 (`:7`),
-  start and end 0 to the last element (`:8`, `:9`), rate 1 to 96000 (`:10`),
-  offset 0 to the last element (`:11`), and a flag of any integer, true if not 0
-  (`:12`). Then a start past the end is `Illegal function
-  call`, no number: `...,A%,69,10,5` and `...,A%,69,10,5,28160` (TEST57). A start
-  equal to the end is no error and defines nothing, in both forms, so neither
-  does an array of one element: `...,A%,69,5,5` (TEST57). Then in the 16-bit
-  form an end the offset leaves no room for is `Out of range`: `...,A%,69,0,15,
-  28160,4` on 16 elements is `(WAVSETA:11)` (TEST57). On an empty array the
-  range comes first in the 16-bit form: `DIM A%[0]:WAVSETA 224,0,0,0,0,A%,69,0,0,
-  28160` is `Out of range (WAVSETA:8)` (TEST58).
+- `@216` to `@222` (PSG) and `@223` (noise) are instruments of the sound archive
+  like `@0`: each PSG tone records at an RMS of about 4031 (peak 4090) at V127,
+  whatever its width, and the noise at 2839, never going below zero.
+- An instrument region's own volume is a linear gain (`@0`'s is 88), unlike `V`
+  and `@V`.
+- `WAVSET`'s waveform does not play as one cycle of the note. 32 samples of one
+  cycle with reference pitch 69 play `O4A` at 55 Hz and `O5A` 3600 cents below
+  A5: three octaves down, so a pass of the samples lasts eight cycles of the
+  note.
+- Songs written for SmileBASIC 4 repeat their cycles to fill eight (a 16-sample
+  pattern of two cycles times 4, one of a single cycle times 8, both at
+  reference pitch 69).
+- `WAVSET` plays a pass at 55 Hz at its reference pitch for any of the lengths
+  the manual gives, 16 to 512 samples. Any other length (17, 24 or 1024 samples)
+  is `Illegal function call`.
+- `WAVSET` also takes groups in square brackets, which the manual leaves out:
+  `WAVSET 224,127,0,0,127,"[FF00][80][4080C0]",69` is no error (TEST56).
+  - A string starting with `[` has groups of an even number of
+    digits, at most 1024 in all, and no group over 512 over their number in
+    samples.
+  - Each group is stretched to that many samples, but each is
+    written from the start, so the last group alone stays and the rest of the
+    512 samples is whatever the buffer held.
+  - `RECSAVE` shows it (TEST60): `[C040]` sounds like the same 16 digits without
+    brackets, and in `[C040][F010]` the `F010` fills half of the pass with the
+    other half loud noise, the same each time (peak about 4600 at 127, a DC of
+    about -1500).
+- `WAVSETA`'s 8-bit form (fewer than 10 arguments) plays a pass of its n samples
+  at 28160 Hz over the next power of two at or above n: at reference pitch 69,
+  `O4A` with one cycle of 64 samples is in tune, 16 samples sound 2400 cents up,
+  512 3600 cents down, 2048 6000 down.
+- `WAVSETA`'s 16-bit form (10 arguments or more) takes the loop's end + 1 values
+  from the offset on, with the loop counted from the offset, and drops what
+  comes after; values are cut to 16 bits. A value v sounds like the 8-bit form's
+  v/256 + 128.
+- `WAVSET` or `WAVSETA` while a note of that instrument sounds writes the new
+  samples over the start of the instrument's memory. The note goes on reading it
+  with the length, loop and rate it started with, keeping its envelope:
+  - A square swapped for a square of two cycles doubles the pitch at the same
+    level.
+  - A `WAVSET` square (512 samples once stretched) swapped for a 32-sample sine
+    plays the sine's one cycle and then the rest of the square on each pass,
+    near the square's level (2981 to 3023 against 3063) with twice the
+    crossings.
+- `WAVSETA` with an empty array is `Illegal function call`.
+- `WAVSETA`'s arguments after the array can be left off the end, but one left
+  out in between is `Type mismatch` with its number, in both forms and ahead of
+  the check for an empty array: `WAVSETA 224,0,0,0,0,A%,,0,15` is `(WAVSETA:7)`,
+  and `...,A%,69,,15` and `...,A%,69,,,28160` are `(WAVSETA:8)` (TEST51,
+  TEST52). A trailing comma counts: `...,A%,69,0,15,28160,` is `(WAVSETA:11)`
+  (TEST57).
+- `WAVSETA` looks at its arguments in this order:
+  1. Reference note 0 to 127 (`:7`), start and end 0 to
+  the last element (`:8`, `:9`), rate 1 to 96000 (`:10`), offset 0 to the last
+  element (`:11`), and a flag of any integer, true if not 0 (`:12`).
+  2. A start past the end is `Illegal function call`, no number:
+  `...,A%,69,10,5` and `...,A%,69,10,5,28160` (TEST57). A start equal to the end
+  is no error and defines nothing, in both forms, so neither does an array of
+  one element: `...,A%,69,5,5` (TEST57).
+  3. In the 16-bit form, an end the offset leaves no room for is `Out of range`:
+  `...,A%,69,0,15,28160,4` on 16 elements is `(WAVSETA:11)` (TEST57).
+- `WAVSETA` on an empty array checks the range first in the 16-bit form:
+  `DIM A%[0]:WAVSETA 224,0,0,0,0,A%,69,0,0,28160` is `Out of range (WAVSETA:8)`
+  (TEST58).
 
 ### `BEEP`
 
-- `BEEP` of a waveform set by `WAVSETA` can be silent: `DIM W%[32]`, `WAVSETA
-  224,127,127,127,127,W%,69` and `BEEP(224)` gives a handle and no error, and
-  nothing is heard (TEST58). `WAVSET` and `WAVSETA` also write the sound `BEEP`
-  plays, a note at the reference pitch as long as a pass of the waveform, cut to
-  ticks of 1/192 of a second: 32 and 128 samples at 28160 Hz come to no note and
-  record as silence. `WAVSET` always has a note of a second; `WAVSETA`'s 8-bit
-  form 147 samples or more, once rounded up to a power of two, so 256; its 16-bit
-  form as long as (end + 1) / rate (TEST59). A start equal to the end returns
-  before any of this, so the old waveform and its `BEEP` stay: a `WAVSET` wave
-  plays identically after it (TEST59).
-- The sound of such a `BEEP` ends on the sound engine's steps of 5 ms, each 0.96
-  of those ticks, the first included, and takes one more step to fall. The last
-  sample that is not silent is at 999 ms for `WAVSET` (192 ticks), 9 ms for an
-  8-bit 256 samples (1 tick), 144 ms for 4096 samples (27 ticks) and 999 ms for
-  16-bit 28160 samples at 28160 Hz, each with its level steady up to there
-  (TEST59).
-- With `WAVSETA`'s flag not 0, the note repeats until stopped, each pass a new
-  note over the last one's fall: 28160 samples of a ±30000 square at 28160 Hz, at
-  `BEEP`'s default, peak at 4234 and at 7905 in the last 5 ms of each second, heard
-  as a momentary noise once a second (per 1/10 s of the peak,
-  `4444444448444444444944444444494`). `BEEPSTOP` after 180 frames leaves the last
-  sample at 3004 ms, the step's fall (TEST59).
-- The notes before do not stop: they fall by the envelope's release however long
-  that takes, so with a slow one they pile up. 2816 samples of a ±10000 square at
-  28160 Hz with release 32, a pass of about 100 ms, one note peaking at 1411, peak
-  at 9456 at an RMS of 4333, and per 1/10 s of the peak `235567789877654` with
-  `BEEPSTOP` of the handle at 1 s (TEST61).
-- `BEEPSTOP` without a fade lets all the handle's notes go and frees the handle:
-  the sound goes on past it by the release, the 1.5 s recording above still sounding
-  at its end, and at release 127 that is one step, as when the 16th `BEEP` after a
-  statement's takes over its place: a 1 s square ends at 404 ms for a `BEEP` at
-  400 ms (TEST61). The note is the same with or without the
-  flag, and `BEEPSTOP` with a fade takes the volume to 0 first, so nothing is heard
-  after it. The sound engine has 96 voices for everything, BGM too; a new note takes
-  one from the lowest priority there is, the oldest among equals, or does not sound
+- `BEEP` sounds 0 to 156 (4.4.5 added 156).
+- `BEEP` of a waveform set by `WAVSETA` can be silent: `DIM W%[32]`,
+  `WAVSETA 224,127,127,127,127,W%,69` and `BEEP(224)` gives a handle and no
+  error, and nothing is heard (TEST58).
+- `WAVSET` and `WAVSETA` also write the sound `BEEP` plays, a note at the
+  reference pitch as long as a pass of the waveform, cut to ticks of 1/192 of a
+  second (TEST59):
+  - 32 and 128 samples at 28160 Hz come to no note and record as silence.
+  - `WAVSET` always has a note of a second.
+  - `WAVSETA`'s 8-bit form needs 147 samples or more, once rounded up to a power
+    of two, so 256.
+  - `WAVSETA`'s 16-bit form has a note as long as (end + 1) / rate.
+  - A start equal to the end returns before any of this, so the old waveform and
+    its `BEEP` stay: a `WAVSET` wave plays identically after it.
+- `BEEP` of such a waveform ends on the sound engine's steps of 5 ms, each 0.96
+  of those ticks, the first included, and takes one more step to fall. The level
+  is steady up to the last sample that is not silent (TEST59):
+
+  | Waveform | Last sample that is not silent |
+  |---|---|
+  | `WAVSET` (192 ticks) | 999 ms |
+  | 8-bit, 256 samples (1 tick) | 9 ms |
+  | 4096 samples (27 ticks) | 144 ms |
+  | 16-bit, 28160 samples at 28160 Hz | 999 ms |
+
+- `WAVSETA`'s flag, when not 0, repeats the note until stopped, each pass a new
+  note over the last one's fall: 28160 samples of a ±30000 square at 28160 Hz,
+  at `BEEP`'s default, peak at 4234 and at 7905 in the last 5 ms of each second.
+  This is heard as a momentary noise once a second (per 1/10 s of the peak,
+  `4444444448444444444944444444494`). `BEEPSTOP` after 180 frames leaves the
+  last sample at 3004 ms, the step's fall (TEST59).
+- With that flag, the notes before do not stop. They fall by the envelope's
+  release however long that takes, so with a slow one they pile up: 2816 samples
+  of a ±10000 square at 28160 Hz with release 32, a pass of about 100 ms, one
+  note peaking at 1411, peak at 9456 at an RMS of 4333, and per 1/10 s of the
+  peak `235567789877654` with `BEEPSTOP` of the handle at 1 s (TEST61).
+- `BEEPSTOP` without a fade lets all the handle's notes go and frees the handle.
+  The sound goes on past it by the release, the 1.5 s recording of the case
+  above still sounding at its end. At release 127 that is one step, as when the
+  16th `BEEP` after a `BEEP` statement takes over its place: a 1 s square ends
+  at 404 ms for a `BEEP` at 400 ms (TEST61).
+- `BEEPSTOP` with a fade takes the volume to 0 first, so nothing is heard after
+  it. The note is the same with or
+  without the flag.
+- The sound engine has 96 voices for everything, BGM too. A new note takes one
+  from the lowest priority there is, the oldest among equals, or does not sound
   if all are higher.
 - `BEEP`'s volume is a linear gain of v/127 the same way
-  as `BGMVOL`'s, with 64 for its default as `BGMPLAY` has. It comes out level with
-  `BGMPLAY`'s default: at envelope 127,127,127,127, a `WAVSET` square of
-  `"FFFF0000"*8` peaks at 4623, an 8-bit `WAVSETA` square of ±100 at 3613 and a
-  16-bit one of ±30000 at 4234 (TEST59), as `@224` at `V127` of a ±96 square peaks
-  at 3468 under `BGMPLAY`, for an RMS of 3063 (TEST40): these are all 4624 for full
-  scale, and an RMS of 4084. A square peaks about 13% over its RMS for how
-  the console resamples it, where a sine does not: amplitude 100 peaks at 3217 at
-  an RMS of 2257 (TEST40). `BEEP` of the same shapes records the same: the ±96 square
-  an RMS of 3050 and a peak of 3468, the sine 2257 and 3217. A square's level at
-  volume 127 and 32 is 6053 and 1525, in `BEEP`'s argument and by `BEEPVOL` alike
-  (TEST61).
+  as `BGMVOL`'s, with 64 for its default as `BGMPLAY` has. It comes out level
+  with `BGMPLAY`'s default:
+  - At envelope 127,127,127,127, a `WAVSET` square of `"FFFF0000"*8` peaks at
+    4623, an 8-bit `WAVSETA` square of ±100 at 3613 and a 16-bit one of ±30000
+    at 4234 (TEST59).
+  - `@224` at `V127` of a ±96 square peaks at 3468 under `BGMPLAY`, for an RMS
+    of 3063 (TEST40).
+  - These are all 4624 for full scale, and an RMS of 4084.
+  - A square peaks about 13% over its RMS for how the console resamples it,
+    where a sine does not: amplitude 100 peaks at 3217 at an RMS of 2257
+    (TEST40).
+  - `BEEP` of the same shapes records the same: the ±96 square an RMS of 3050
+    and a peak of 3468, the sine 2257 and 3217.
+  - A square's level at volume 127 and 32 is 6053 and 1525, in `BEEP`'s argument
+    and by `BEEPVOL` alike (TEST61).
 - `BEEP` 224 to 255 with nothing set plays a sine of about 440 Hz for a second,
-  peak 4117, last sample at 999 ms (`BEEP 250`, TEST59). The sound archive's `@224`
-  is that sine, 16384 samples at 28160 Hz; `@225` to `@255` are 140 samples of
-  silence there, but all of `@224` to `@255` start on `@224`'s waves: in MML too,
-  `T120@250V127O4A2` and the same on `@240`, never set, peak at 4089 at an RMS of
-  2881 and sound from 0 to 999 ms (TEST61). `BEEP`'s sound
-  for each is `T400V127P64@nT60O3A4` until set, and `WAVSET` of a number replaces
-  only that number. Nothing a program can run puts them back: not `SNDSTOP`, `ACLS`
-  or `CLEAR`.
+  peak 4117, last sample at 999 ms (`BEEP 250`, TEST59).
+- `@224` in the sound archive is that sine, 16384 samples at 28160 Hz. `@225` to
+  `@255` are 140 samples of silence there, but all of `@224` to `@255` start on
+  `@224`'s waves. In MML too, `T120@250V127O4A2` and the same on `@240`, never
+  set, peak at 4089 at an RMS of 2881 and sound from 0 to 999 ms (TEST61).
+- `BEEP`'s sound for each of 224 to 255 is `T400V127P64@nT60O3A4` until set, and
+  `WAVSET` of a number replaces only that number.
+  Nothing a program can run puts them back: not `SNDSTOP`, `ACLS` or `CLEAR`.
 - `BEEP`'s result is a number 0 to 15 that goes on rising with each `BEEP`, also
-  after the last has ended and for a silent one, and through program runs: running
-  TEST59's parts in the order 20, 16, 17, 18, 19 on a started SmileBASIC 4 gave 0,
-  1, 2, 3, 4, 5, 6, 7, 8 (TEST59). It goes round at 16 and nothing starts it again:
-  not `ACLS`, not `RUN`; by SmileBASIC 4 each interpreter counts for itself.
-  The number is a place to play in: `BEEP` used as a function holds its place until
-  the sound ends or `BEEPSTOP` names it, and the next `BEEP` passes it by; `BEEP` as
-  a command does not, and the 16th after it ends it. With all 16 held, the result is
-  -1, nothing plays and there is no error. A number stopped is the next given, and
-  the one after it next. `BEEPSTOP`, `BEEPVOL`, `BEEPPIT` and `BEEPPAN` act on what
-  plays in that place now, do nothing if that has ended, and cut a sound that has
-  since taken the number (TEST61). By the code they take 0 to 15 only, so -1 is
+  after the last has ended and for a silent one, and through program runs:
+  running TEST59's parts in the order 20, 16, 17, 18, 19 on a started SmileBASIC
+  4 gave 0, 1, 2, 3, 4, 5, 6, 7, 8 (TEST59). It goes round at 16 and nothing
+  starts it again: not `ACLS`, not `RUN`. Each
+  interpreter counts for itself.
+- `BEEP`'s result is a place to play in (TEST61):
+  - `BEEP` used as a function holds its place until the sound ends or `BEEPSTOP`
+    names it, and the next `BEEP` passes it by.
+  - `BEEP` as a command does not hold it, and the 16th after it ends it.
+  - With all 16 held, the result is -1, nothing plays and there is no error.
+  - A number stopped is the next given, and the one after it next.
+- `BEEPSTOP`, `BEEPVOL`, `BEEPPIT` and `BEEPPAN` act on what plays in that place
+  at that moment, do nothing if that has ended, and cut a sound that has since
+  taken the number (TEST61). By the code they take 0 to 15 only, so -1 is
   `Out of range`.
-- `BEEP` of a preset effect at its default volume comes out at 100/127 of its own
-  note in MML for `BEEP 0` and 70/127 for `BEEP 256`, which is the effects' own
-  volume: `BEEP 0` peaks at 703 where `T130@256V127@V101O4C24` peaks at 893, `BEEP
-  256` at 1542 where `T130@0V127O4C4` peaks at 2798, and `BEEP 95` at 1455 (RMS over
-  the first 100 ms 312, 429 and 303). The volume is linear, as for waveforms: `BEEP
-  0` at 127 and 32 peaks at 1395 and 351 (TEST61).
+- `BEEP` of a preset effect at its default volume comes out at 100/127 of its
+  own note in MML for `BEEP 0` and 70/127 for `BEEP 256`, which is the effects'
+  own volume (TEST61): `BEEP 0` peaks at 703 where `T130@256V127@V101O4C24`
+  peaks at 893, `BEEP 256` at 1542 where `T130@0V127O4C4` peaks at 2798, and
+  `BEEP 95` at 1455 (RMS over the first 100 ms 312, 429 and 303).
+- `BEEP`'s volume on a preset effect is linear, as for waveforms: `BEEP 0` at
+  127 and 32 peaks at 1395 and 351 (TEST61).
 
 ### `TALK` and sung notes
 
-- `TALK` reads は as "wa", falling in pitch, when 、 comes right after
-  it, as for a particle; before 。 or anywhere else it is "ha".
+- `TALK` reads は as "wa", falling in pitch, when 、 comes right after it, as for
+  a particle; before 。 or anywhere else it is "ha".
 - A new `TALK` cuts off what is being said. (Not yet seen on hardware.)
-- A sung note (`*A,C2`) is the voice alone: the channel's instrument
-  stays silent under it, and plays again on the next plain note. Each
-  channel sings with a voice of its own, so two channels' sung notes
-  overlap, and `TALK` and sung notes sound together without cutting each
-  other off.
-- A sung note's letters must make syllables, or the MML is `Illegal
-  MML`, with the caret at the first letter that cannot go on:
-  `*KONNICHIWA,C1` fails at its second N. ん is `Q` (`*KOQNICHIWA,C1`),
-  as in `TALK "$..."`.
+- A sung note (`*A,C2`) is the voice alone: the channel's instrument stays
+  silent under it, and plays again on the next plain note.
+- Each channel sings with a voice of its own, so two channels' sung notes
+  overlap, and `TALK` and sung notes sound together without cutting each other
+  off.
+- A sung note's letters must make syllables, or the MML is `Illegal MML`, with
+  the caret at the first letter that cannot go on: `*KONNICHIWA,C1` fails at its
+  second N. ん is `Q` (`*KOQNICHIWA,C1`), as in `TALK "$..."`.
 
 ### Effector, recording and balance
 
-- With the effector on, `EFCWET`'s four values (BEEP, BGM, TALK and
-  PCM) each send that part of the sound to the reverb: wet/127 of it
-  goes there and the rest straight out, in a straight line. With it
-  off, they change nothing.
-- `RECSTART` records the sound before the effector, or the effector
-  did nothing: a short note recorded alike, to the unit, with `EFCEN`
-  off, with `#EFCCAVE` at `EFCWET 0,127,0,0`, with a hall set by
-  `EFCSET #EFCREFHALL,...` and with `EFCEN` off again.
-- While `RECSTART` without a time records round its buffer, `RECDATA`
-  positions go round it too (-1 is the last sample, `RECLEN()` the
-  first); with a time, -1 is `Out of range`.
+- `EFCWET`'s four values (BEEP, BGM, TALK and PCM), with the effector on, each
+  send that part of the sound to the reverb: wet/127 of it goes there and the
+  rest straight out, in a straight line. With it off, they change nothing.
+- `RECSTART` records the sound before the effector, or the effector did nothing:
+  a short note recorded alike, to the unit, with `EFCEN` off, with `#EFCCAVE` at
+  `EFCWET 0,127,0,0`, with a hall set by `EFCSET #EFCREFHALL,...` and with
+  `EFCEN` off again.
+- `RECDATA` positions go round the buffer too while `RECSTART` without a time
+  records round it (-1 is the last sample, `RECLEN()` the first). With a time,
+  -1 is `Out of range`.
 - `SNDMSBAL` starts at 63, though the manual calls 64 even.
-  `SNDMSBAL()` and `PCMPOS()` work as functions.
+- `SNDMSBAL()` and `PCMPOS()` work as functions.
 
 ## Signal processing
 
-- `FFT` does not scale; `IFFT` divides by the length, and its result of
-  1,2,3,4 prints exact zeros. A length that is not a power of two is
-  `Illegal function call`, for `FFTWFN` too.
-- `FFTWFN` gives the periodic windows, dividing by the length:
-  Hamming of 8 is .080 .215 .540 .865 1 .865 .540 .215.
-- `BIQUAD` keeps each channel's last two inputs and outputs in the
-  coefficients' elements 5 to 8 (left or mono) and 9 to 12 (right), as
-  in[-1], in[-2], out[-1], out[-2].
-- `BQPARAM` takes the gain for types 5 to 7 only: leaving it out there,
-  or giving it for types 0 to 4, is `Wrong number of arguments`. A
-  sampling rate of 0 is `Illegal function call`.
-- `BQPARAM` looks at the number of its arguments before their values: type 5 with no
-  gain is `Wrong number of arguments (BQPARAM:2)`. A Q of 0 is `Illegal function call
-  (BQPARAM:5)`. (TEST62)
-- `BIQUAD` with arrays of 4 and 8: `Illegal function call (BIQUAD:2)`. With `ZS[2,8]` and
-  `ZT[8]`: `Illegal function call (BIQUAD)`, no argument named. (TEST63)
+- `FFT` does not scale. `IFFT` divides by the length, and its result of 1,2,3,4
+  prints exact zeros.
+- `FFT` of a length that is not a power of two is `Illegal function call`, for
+  `FFTWFN` too.
+- `FFTWFN` gives the periodic windows, dividing by the length: Hamming of 8 is
+  .080 .215 .540 .865 1 .865 .540 .215.
+- `BIQUAD` keeps each channel's last two inputs and outputs in the coefficients'
+  elements 5 to 8 (left or mono) and 9 to 12 (right), as in[-1], in[-2],
+  out[-1], out[-2].
+- `BIQUAD` with arrays of 4 and 8 is `Illegal function call (BIQUAD:2)`. With
+  `ZS[2,8]` and `ZT[8]` it is `Illegal function call (BIQUAD)`, no argument
+  named. (TEST63)
+- `BQPARAM` takes the gain for types 5 to 7 only: leaving it out there, or
+  giving it for types 0 to 4, is `Wrong number of arguments`.
+- `BQPARAM` with a sampling rate of 0 is `Illegal function call`.
+- `BQPARAM` looks at the number of its arguments before their values: type 5
+  with no gain is `Wrong number of arguments (BQPARAM:2)`. A Q of 0 is
+  `Illegal function call (BQPARAM:5)`. (TEST62)
 
 ## Direct mode
 
