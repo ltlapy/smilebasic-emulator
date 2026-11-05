@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Cross-build smilebasic and smilebasic-check for aarch64 Linux handhelds.
 
-Needs python3, rustup, cmake, make and pkg-config, and no root. Everything else is
-fetched once, with its checksum pinned, into local/aarch64 (or SB_AARCH64_HOME):
+By default this uses the tools on your PATH and the -devel headers in /usr/include. It
+downloads nothing: when something is missing, it prints the commands to install it and
+stops.
 
-  zig             the C compiler and linker, which carries stubs of every glibc
-  cargo-zigbuild  points cargo, cc and cmake at zig
-  sysroot         Debian 10 arm64 packages: the headers and sonames SDL's KMSDRM,
-                  ALSA, PulseAudio and udev backends need; none of it gets linked
-  runroot         Debian 10's libc, to run the result under qemu-aarch64 (--run, --test)
+--rootless builds without installing anything as root. It fetches zig, cargo-zigbuild,
+Debian 10's arm64 headers and Debian 10's libc, checksums pinned below, into local/aarch64
+(or SB_AARCH64_HOME). It still needs python3, rustup, cmake, make and pkg-config.
 
 See docs/building-handheld.md.
 """
@@ -32,6 +31,10 @@ GLIBC = "2.17"
 OUTPUT = REPO / "target" / RUST_TARGET / "dist"
 BINARIES = ("smilebasic", "smilebasic-check")
 
+# Versions that built both binaries and matched the x86-64 checksum. Others get a warning.
+ZIG_TESTED = ("0.15.2", "0.16.0")
+
+# --rootless fetches these.
 ZIG_VERSION = "0.15.2"
 ZIG_SHA256 = "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239"
 ZIG_URL = f"https://ziglang.org/download/{ZIG_VERSION}/zig-x86_64-linux-{ZIG_VERSION}.tar.xz"
@@ -55,6 +58,27 @@ RUNROOT_DEBS = [
     ("g/glibc/libc6_2.28-10+deb10u1_arm64.deb", "09f5e92b1527cdc06b757499bb4d97ddf1b064fc3d163f978e5de18b131cd330"),
     ("g/gcc-8/libgcc1_8.3.0-6_arm64.deb", "2851ac25d12958586c035de5ec4f2fc17272dec48f776dd0dd24c62f62674fd9"),
 ]
+
+# What SDL needs from each library it opens at start-up: headers, and the soname to open.
+# (name, soname, headers, Cflags subfolder, Fedora package, apt package)
+HOST_LIBRARIES = [
+    ("libdrm", "libdrm.so.2", ("libdrm", "xf86drm.h", "xf86drmMode.h"), "/libdrm", "libdrm-devel", "libdrm-dev"),
+    ("gbm", "libgbm.so.1", ("gbm.h",), "", "mesa-libgbm-devel", "libgbm-dev"),
+    ("alsa", "libasound.so.2", ("alsa",), "", "alsa-lib-devel", "libasound2-dev"),
+    ("libpulse", "libpulse.so.0", ("pulse",), "", "pulseaudio-libs-devel", "libpulse-dev"),
+    ("libudev", "libudev.so.1", ("libudev.h",), "", "systemd-devel", "libudev-dev"),
+]
+HOST_INCLUDE = Path("/usr/include")
+# Program on PATH, Fedora package, apt package.
+HOST_PROGRAMS = [
+    ("cmake", "cmake", "cmake"),
+    ("make", "make", "make"),
+    ("pkg-config", "pkgconf-pkg-config", "pkg-config"),
+    ("readelf", "binutils", "binutils"),
+    ("file", "file", "file"),
+]
+# Fedora's, then Debian's and Ubuntu's: an aarch64 libc for qemu-aarch64 to load.
+HOST_RUNROOTS = ("/usr/aarch64-redhat-linux/sys-root/fc*", "/usr/aarch64-linux-gnu")
 
 # Read by cmake through the cmake crate. The compiler comes from the wrappers
 # cargo-zigbuild puts in the environment; the sysroot holds headers and sonames only,
@@ -180,10 +204,87 @@ def ensure_zigbuild(base: Path, env: dict[str, str]) -> None:
     )
 
 
-def build_env() -> dict[str, str]:
+def stop_with_install_commands(missing: list[str], dnf: list[str], apt: list[str], other: list[str]) -> None:
+    lines = ["Missing: " + ", ".join(missing), "", "Install it, then run this again:"]
+    if dnf:
+        lines += ["  Fedora:         sudo dnf install " + " ".join(dnf)]
+    if apt:
+        lines += ["  Debian, Ubuntu: sudo apt install " + " ".join(apt)]
+    lines += ["  " + line for line in other]
+    lines += ["", "To build without installing anything as root, add --rootless."]
+    sys.exit("\n".join(lines))
+
+
+def rust_target_installed() -> bool:
+    reply = subprocess.run(["rustup", "target", "list", "--installed"], capture_output=True, text=True, check=True)
+    return RUST_TARGET in reply.stdout.split()
+
+
+def check_host() -> None:
+    """Stops before building if anything is missing, and installs nothing."""
+    missing, dnf, apt, other = [], [], [], []
+    for program, fedora, debian in HOST_PROGRAMS:
+        if not shutil.which(program):
+            missing.append(program)
+            dnf.append(fedora)
+            apt.append(debian)
+    for name, _, headers, _, fedora, debian in HOST_LIBRARIES:
+        if not all((HOST_INCLUDE / header).exists() for header in headers):
+            missing.append(f"{name} headers")
+            dnf.append(fedora)
+            apt.append(debian)
+    if not shutil.which("zig"):
+        missing.append("zig")
+        dnf.append("zig")
+        other.append("Ubuntu 26.04 or later: sudo apt install zig")
+        other.append("Debian, older Ubuntu: unpack a release from https://ziglang.org/download/ and add it to PATH")
+    if not shutil.which("cargo-zigbuild"):
+        missing.append("cargo-zigbuild")
+        other.append("cargo install --locked cargo-zigbuild")
+    if not shutil.which("rustup"):
+        missing.append("rustup")
+        other.append("rustup: see https://rustup.rs")
+    elif not rust_target_installed():
+        missing.append(f"the Rust target {RUST_TARGET}")
+        other.append(f"rustup target add {RUST_TARGET}")
+    if missing:
+        stop_with_install_commands(missing, dnf, apt, other)
+    zig = subprocess.run(["zig", "version"], capture_output=True, text=True, check=True).stdout.strip()
+    if zig not in ZIG_TESTED:
+        print(f"warning: zig {zig} is untested; {' and '.join(ZIG_TESTED)} are known to work", file=sys.stderr)
+
+
+def host_sysroot() -> Path:
+    """Links the host's headers into a folder of their own, beside placeholder libraries.
+
+    The host's /usr/include also holds an x86-64 libc, so it cannot go on the include path.
+    SDL reads a soname off the library's file name and opens the library at start-up, so the
+    placeholders only have to exist, and they are empty so that linking one fails.
+    """
+    root = OUTPUT.parent / "host-sysroot"
+    shutil.rmtree(root, ignore_errors=True)
+    include = root / "usr" / "include"
+    libdir = root / "usr" / "lib" / "aarch64-linux-gnu"
+    pkgconfig = libdir / "pkgconfig"
+    include.mkdir(parents=True)
+    pkgconfig.mkdir(parents=True)
+    for name, soname, headers, subfolder, _, _ in HOST_LIBRARIES:
+        for header in headers:
+            (include / header).symlink_to(HOST_INCLUDE / header)
+        (libdir / soname).touch()
+        short = soname.split(".so")[0]
+        (libdir / f"{short}.so").symlink_to(soname)
+        # 99 satisfies SDL's only version test, libpulse>=0.9.15.
+        (pkgconfig / f"{name}.pc").write_text(
+            f"Name: {name}\nDescription: {name}\nVersion: 99\n"
+            f"Cflags: -I/usr/include{subfolder}\nLibs: -L/usr/lib/aarch64-linux-gnu -l{short.removeprefix('lib')}\n"
+        )
+    return root
+
+
+def rootless_env() -> tuple[dict[str, str], Path, Path]:
+    """Fetches what it lacks into its own folder. Returns the environment, sysroot and folder."""
     base = home()
-    if " " in str(base):
-        sys.exit(f"{base}: C flags cannot carry a path with spaces; set SB_AARCH64_HOME")
     base.mkdir(parents=True, exist_ok=True)
     zig = ensure_zig(base)
     env = dict(os.environ)
@@ -193,9 +294,19 @@ def build_env() -> dict[str, str]:
     env["ZIG_GLOBAL_CACHE_DIR"] = str(base / "cache" / "zig")
     ensure_zigbuild(base, env)
     subprocess.run(["rustup", "target", "add", RUST_TARGET], env=env, check=True)
+    return env, ensure_root(base, "sysroot", SYSROOT_DEBS), base
 
-    sysroot = ensure_root(base, "sysroot", SYSROOT_DEBS)
-    toolchain = base / "toolchain.cmake"
+
+def build_env(rootless: bool) -> dict[str, str]:
+    if rootless:
+        env, sysroot, folder = rootless_env()
+    else:
+        check_host()
+        env, sysroot = dict(os.environ), host_sysroot()
+        folder = sysroot
+    if " " in str(sysroot):
+        sys.exit(f"{sysroot}: C flags cannot carry a path with spaces; use a checkout or SB_AARCH64_HOME without any")
+    toolchain = folder / "toolchain.cmake"
     toolchain.write_text(TOOLCHAIN.format(sysroot=sysroot))
     env["CMAKE_TOOLCHAIN_FILE_aarch64_unknown_linux_gnu"] = str(toolchain)
     env["PKG_CONFIG_SYSROOT_DIR"] = str(sysroot)
@@ -206,12 +317,12 @@ def build_env() -> dict[str, str]:
     return env
 
 
-def build(glibc: str) -> None:
+def build(glibc: str, rootless: bool) -> None:
     subprocess.run(
         ["cargo", "zigbuild", "--profile", "dist", "--target", f"{RUST_TARGET}.{glibc}"]
         + ["-p", "sb-sdl", "-p", "sb-check"],
         cwd=REPO,
-        env=build_env(),
+        env=build_env(rootless),
         check=True,
     )
 
@@ -236,21 +347,51 @@ def report() -> None:
         print(f"  {what.decode()}: {state} smilebasic")
 
 
-def qemu_env(env: dict[str, str]) -> dict[str, str]:
-    """Debian 10's libc, and the device's core: an instruction it lacks stops the run."""
-    root = ensure_root(home(), "runroot", RUNROOT_DEBS)
+def host_runroot() -> Path:
+    for pattern in HOST_RUNROOTS:
+        for found in sorted(Path("/").glob(pattern.lstrip("/"))):
+            if (found / "lib" / "ld-linux-aarch64.so.1").exists():
+                return found
+            if (found / "usr" / "lib" / "ld-linux-aarch64.so.1").exists():
+                # Fedora's sysroot lacks the /lib and /lib64 links a real system has.
+                root = OUTPUT.parent / "host-runroot"
+                shutil.rmtree(root, ignore_errors=True)
+                root.mkdir(parents=True)
+                (root / "usr").symlink_to(found / "usr")
+                (root / "lib").symlink_to(found / "usr" / "lib")
+                (root / "lib64").symlink_to(found / "usr" / "lib64")
+                return root
+    stop_with_install_commands(
+        ["an aarch64 libc for qemu-aarch64"],
+        ["sysroot-aarch64-fc$(rpm -E %fedora)-glibc"],
+        ["libc6-arm64-cross"],
+        [],
+    )
+
+
+def qemu_env(env: dict[str, str], rootless: bool) -> dict[str, str]:
+    """The libc to load, and the device's core: an instruction it lacks stops the run."""
+    if not shutil.which("qemu-aarch64"):
+        stop_with_install_commands(["qemu-aarch64"], ["qemu-user"], ["qemu-user"], [])
+    if rootless:
+        root = ensure_root(home(), "runroot", RUNROOT_DEBS)
+    elif prefix := env.get("QEMU_LD_PREFIX"):
+        root = Path(prefix)
+    else:
+        root = host_runroot()
     return env | {"QEMU_LD_PREFIX": str(root), "QEMU_CPU": "cortex-a35"}
 
 
-def run(command: list[str]) -> int:
+def run(command: list[str], rootless: bool) -> int:
     """Runs a built binary under qemu-aarch64. Shows no window."""
     binary = OUTPUT / command[0]
-    return subprocess.run(["qemu-aarch64", str(binary), *command[1:]], env=qemu_env(dict(os.environ))).returncode
+    env = qemu_env(dict(os.environ), rootless)
+    return subprocess.run(["qemu-aarch64", str(binary), *command[1:]], env=env).returncode
 
 
-def test(extra: list[str]) -> int:
+def test(extra: list[str], rootless: bool) -> int:
     """Runs the tests that need no SDL under qemu-aarch64."""
-    env = qemu_env(build_env())
+    env = qemu_env(build_env(rootless), rootless)
     env["CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER"] = "qemu-aarch64"
     crates = ["-p", "sb-core", "-p", "sb-runtime", "-p", "sb-profiles", "-p", "sb-check"]
     command = ["cargo-zigbuild", "test", "--release", "--target", f"{RUST_TARGET}.{GLIBC}"]
@@ -259,6 +400,12 @@ def test(extra: list[str]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--rootless",
+        action="store_true",
+        help="build without installing anything as root: fetch zig, cargo-zigbuild and Debian 10's "
+        "headers and libc into local/aarch64 or SB_AARCH64_HOME; put this before --run or --test",
+    )
     parser.add_argument(
         "--glibc",
         default=GLIBC,
@@ -278,10 +425,10 @@ def main() -> int:
     )
     args = parser.parse_args()
     if args.run:
-        return run(args.run)
+        return run(args.run, args.rootless)
     if args.test is not None:
-        return test(args.test)
-    build(args.glibc)
+        return test(args.test, args.rootless)
+    build(args.glibc, args.rootless)
     report()
     return 0
 
