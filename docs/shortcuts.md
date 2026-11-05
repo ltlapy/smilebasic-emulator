@@ -72,3 +72,30 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 | F4 | Switch between direct mode and the editor |
 | F9, F10, F11 | Start `TOOL1` to `TOOL3` |
 | F12 | Projects |
+
+## Buttons
+
+Gamepads work as controllers 1 to 4. The keyboard also presses controller
+1's buttons, unless *Use the keyboard as a controller* is turned off in the Run
+menu:
+
+| Key | Button |
+|---|---|
+| Cursor keys | Up, down, left, right |
+| Z, X, A, S | A, B, Y, X |
+| Q, W | L, R |
+| 1, 2 | ZL, ZR |
+
+A key a program reads itself, with `KEYBOARD` or `INKEY$`, presses no button
+until a second after the program stops reading it. So typing programs get
+their letters, and a game keeps these keys outside its name entry.
+
+Without a gamepad, the first time a program reads the buttons, a picture of
+these keys shows for a few seconds. The mouse's left button touches the screen.
+
+In direct mode, a gamepad's − (Select) opens the projects. There A runs the
+project's MAIN.PRG or the selected file (or views a file that is not a
+program), X moves between the projects and the files, L and R move a page, Y
+expands the info and B goes back. The left stick works as the D-pad there, and
+holding up or down repeats, faster the longer it is held. The menu opens with
+the mouse or keys only.

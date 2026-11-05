@@ -5,6 +5,20 @@ the emulator's data directory. It can also write the instruments and preset
 songs for use in other programs. It is a separate program, and the emulator
 only reads what it has imported.
 
+## Without importing
+
+Without any setup, text uses bundled fonts under the SIL Open Font License
+1.1: [GalmuriMono7](https://github.com/quiple/galmuri) at 8 pixels, and
+[M PLUS 1p](https://mplusfonts.github.io/) Bold, the face SmileBASIC 4's own
+font is drawn from, at 16 pixels. SmileBASIC's own characters (number tiles,
+buttons, box drawing and other symbols at U+E100-E17F and U+E200-E2FF) are
+redrawn for this emulator in `crates/sb-runtime/fonts/symbols.txt`.
+
+Music plays with [GeneralUser GS](https://www.schristiancollins.com/generaluser)
+by S. Christian Collins, bundled in `crates/sb-sdl/sounds`, until SmileBASIC's
+own instruments are imported. File > Settings > Sound picks between them and
+another SoundFont (`.sf2`).
+
 ## Importing
 
 Extract the RomFS and ExeFS of the game, and of its update if you have one.
