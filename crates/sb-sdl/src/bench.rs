@@ -44,8 +44,8 @@
 //!   the F9 tool as a subprogram and `substop` to end it, `lost` as if the
 //!   device were gone, `fail` as if drawing failed, `refuse:N` to have the next N
 //!   tries at a renderer refused, `panic`, `unsaved` to give PRG0 unsaved edits,
-//!   `sleep:MS` to stop the loop for that long and count it as a suspend, `key:NAME` to press the key
-//!   SDL calls NAME, such as `Escape`, `usb:USAGE` to have KEYBOARD read that
+//!   `sleep:MS` to stop the loop for that long and count it as a suspend, `key:NAME`
+//!   to press the key SDL calls NAME, such as `Escape`, `usb:USAGE` to have KEYBOARD read that
 //!   key as down for a frame, which `key` does not, and `pad:NAME` and `padup:NAME`
 //!   to press and let go the first controller's button SDL calls NAME, such as
 //!   `b` for the right face button (SDL goes by Xbox labels), as both the event

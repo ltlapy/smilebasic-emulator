@@ -111,6 +111,29 @@ each frame's stages, window size, textures made and the rest of its trip round t
 `SDL_VIDEO_DRIVER=offscreen` shows no window
 and, through EGL, still reaches the GPU, but leaves real presents out of the numbers.
 
+A real swapchain needs a compositor, but not a screen: `mutter --headless --no-x11 --wayland
+--wayland-display=NAME --virtual-monitor 3840x2160` under `dbus-run-session`, with its own
+`XDG_RUNTIME_DIR` and `SDL_VIDEO_DRIVER=wayland`, gives the emulator a real window, with
+libdecor's decorations, on the real GPU, seen by nobody. Its `org.gnome.Mutter.RemoteDesktop`
+takes keys and pointer moves, so Alt+F8, the arrow keys and pointer moves make an interactive
+resize. `at=N:resize:W:H` only sets the size, which leaves out most of what a drag costs.
+
+What a drag costs there, on an RTX 3060 Ti with `opengl`, per size change at 2000 and 3200 wide:
+
+| Where | 2000 wide | 3200 wide | What it is |
+|---|---|---|---|
+| `events` | 9.5 ms | 19.5 ms | libdecor's GTK plugin draws the decorations again for each configure, with a shadow buffer the size of the window, inside SDL's event pump |
+| `screen` | 4 ms | 8 ms | the driver, in the first GL call after the size changed: a bare `glFlush` there takes all of the growth and leaves 0.2 ms |
+| `present` | 5.6 ms | 10 ms | the driver and compositor |
+
+No texture of ours is made per size. Mutter sends up to 60 configures a second and all that are
+queued are dispatched in one pump, so once the cost of one nears 16.6 ms, as it does with big
+windows or a busy CPU, the backlog feeds itself and single pumps take seconds, with the program
+and its sound on the same thread. Turning vsync off during the drag or skipping drawings after a
+long pump made no difference under a fixed load; only a cheaper configure did (libdecor's cairo
+plugin, by `LIBDECOR_PLUGIN_DIR`, at 55 frames a second against 49, but it looks different).
+SDL has a way out when built against a libdecor with the resizing state (0.3).
+
 ## The CPU path on weak machines
 
 Where the GPU path is not available, as on old PCs or a handheld with a small Arm
