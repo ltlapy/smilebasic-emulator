@@ -1955,7 +1955,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     keycode: Some(Keycode::C),
                     keymod,
                     ..
-                } if machine.rt.settings.ctrl_c_stops && ctrl(keymod) && !on_editor => {
+                } if machine.rt.settings.ctrl_c_stops
+                    && ctrl(keymod)
+                    && !shift(keymod)
+                    && !on_editor =>
+                {
                     machine.stop()
                 }
                 // Ctrl+Shift+V pastes everywhere, also as keys to programs.

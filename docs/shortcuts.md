@@ -8,6 +8,7 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 |---|---|
 | Up, Down | Command history |
 | Ctrl+F1 to Ctrl+F5 | Type the `KEY` strings |
+| Ctrl+Shift+C | Copy; never stops the program |
 | Ctrl+Shift+V | Paste, also as keys to programs |
 
 ## Suggestions
