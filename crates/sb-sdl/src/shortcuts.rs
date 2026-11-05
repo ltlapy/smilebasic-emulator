@@ -199,10 +199,7 @@ mod tests {
     #[test]
     fn reads_the_groups_and_their_tables() {
         let entries = entries();
-        assert_eq!(
-            entries[0],
-            Entry::Heading("Typing and direct mode".to_string())
-        );
+        assert_eq!(entries[0], Entry::Heading("Direct mode".to_string()));
         assert!(matches!(&entries[1], Entry::Keys(keys, _) if keys == "Up, Down"));
         let keys = entries.iter().filter_map(|e| match e {
             Entry::Keys(keys, what) => Some((keys, what)),
