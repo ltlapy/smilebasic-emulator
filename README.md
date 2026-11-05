@@ -139,7 +139,7 @@ Gamepads work as controllers 1 to 4. The keyboard also presses controller
 | Key | Button |
 |---|---|
 | Cursor keys | Up, down, left, right |
-| Z, X, A, S | A, B, X, Y |
+| Z, X, A, S | A, B, Y, X |
 | Q, W | L, R |
 | 1, 2 | ZL, ZR |
 
