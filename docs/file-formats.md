@@ -73,9 +73,10 @@ DAT files and GRP images hold one array:
 | 0x0C | 16 | four u32 sizes; unused ones may hold anything |
 | 0x1C | | the elements |
 
-- Some uncompressed DAT files, with `PCBN0001`, have a size at 0x08 that leaves
-  out these 28 bytes. The emulator reads the array by its own sizes, up to the
-  signature, as SmileBASIC 4 appears to (not tried on hardware).
+- Some uncompressed DAT files, with `PCBN0001`, have a size at 0x08 that
+  leaves out these 28 bytes. The emulator reads the array by its own sizes,
+  up to the signature, as SmileBASIC 4 appears to (not tried on
+  hardware).
 - Integers are i32 and reals f64. Pixels are integers in `&HAARRGGBB`.
 - Each string is its length in UTF-8 bytes, then its UTF-8 text. A
   length under 128 takes one byte; a longer one takes two, big-endian

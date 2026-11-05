@@ -21,6 +21,9 @@ libasound2-dev libpulse-dev libudev-dev` with apt, then run the last two lines a
 
 Zig 0.15.2 and 0.16.0 work. The tool warns about other versions.
 
+To build without installing anything as root, see
+[Build without root](#build-without-root).
+
 Why not Fedora's `gcc-aarch64-linux-gnu`? It links against the glibc 2.43 in its sysroot, and
 an older handheld system refuses those binaries. Zig carries stubs of every glibc, so you
 can target 2.17, aarch64's first, from any PC.

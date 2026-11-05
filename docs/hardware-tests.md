@@ -1,6 +1,6 @@
 # Hardware tests
 
-Behaviour the manual leaves open is checked by running small programs on
+Behavior the manual leaves open is checked by running small programs on
 SmileBASIC 4 and comparing what they show with the emulator. Confirmed
 results go into [sb4-pitfalls.md](sb4-pitfalls.md).
 
@@ -8,6 +8,13 @@ Under an emulator such as Ryujinx, the files a program saves can be read
 from the save data on the host. Check programs use that: each part saves
 the console's text, and `smilebasic-check` runs the same parts on the
 emulator and compares the two screens row by row.
+
+A real console can run these programs too. Where the docs say so, a result
+from a real Switch outranks Ryujinx's.
+
+The TEST and TTEST numbers in the docs name check programs kept outside the
+repository. TTEST, which stops at TTEST39, is the older series; the later
+programs are TEST40 and up.
 
 ## Writing a check program
 
@@ -63,20 +70,30 @@ END
    smilebasic-check PROJECT_FOLDER TEST12 1-26
    ```
 
-   `PROJECT_FOLDER` is the project's folder in the save data, `TEST12` the
-   program's name as SmileBASIC 4 loads it, and the last argument lists the
-   parts (`1-26`, `2,5,7`). Each part runs on a fresh copy of the folder.
-   The projects beside it are copied once, `###` as the workspace, for
-   parts that read them. The part's number is typed after three seconds,
-   as a person would: a `VSYNC` right after `INPUT` counts from the
-   `VSYNC` before it, so how long the answer takes changes how long it
-   waits.
-   With `--screen DIR`, the emulator's screen is also saved as a PNG for
-   each part two seconds in, and Enter is then pressed: a part that
-   draws a picture should wait for a key or button before it ends, since
-   SmileBASIC 4 shows a status bar once a program has ended. Compare the
-   PNG with a lossless screenshot of SmileBASIC 4 at the same size (for
-   1:1, `XSCREEN 1280,720` and a 1280x720 screenshot).
-   For each `RES` file it prints `same` or the rows that differ; where
-   SmileBASIC 4 has not saved one yet, it prints the emulator's screen, to
-   compare by eye.
+The arguments:
+
+- `PROJECT_FOLDER`: the project's folder in the save data.
+- `TEST12`: the program's name as SmileBASIC 4 loads it.
+- `1-26`: the parts to run, as a range or a list (`1-26`, `2,5,7`).
+
+For each `RES` file, `smilebasic-check` prints `same` or the rows that differ.
+Where SmileBASIC 4 has not saved one yet, it prints the emulator's screen, to
+compare by eye.
+
+Each part runs on a fresh copy of the folder. The projects beside it are copied
+once, `###` as the workspace, for parts that read them.
+
+The part's number is typed after three seconds, as a person would. A `VSYNC`
+right after `INPUT` counts from the `VSYNC` before it, so how long the answer
+takes changes how long it waits.
+
+## Comparing pictures
+
+With `--screen DIR`, `smilebasic-check` also saves the emulator's screen as a
+PNG for each part two seconds in, and then presses Enter.
+
+A part that draws a picture should wait for a key or button before it ends,
+since SmileBASIC 4 shows a status bar once a program has ended.
+
+Compare the PNG with a lossless screenshot of SmileBASIC 4 at the same size (for
+1:1, `XSCREEN 1280,720` and a 1280x720 screenshot).
