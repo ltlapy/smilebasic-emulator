@@ -475,6 +475,8 @@ The CPU draws a whole frame only in these cases, and the path counts each one by
 name:
 
 - an image off a page that does not repeat;
+- a vertex that is NaN, infinite or at least 2^24 from 0, from a matrix far out
+  of range;
 - a raster filter that takes over 20000 quads (`MOST_RASTER_QUADS`);
 - inverted cells of a font type over 16;
 - a full atlas of fallback glyphs;

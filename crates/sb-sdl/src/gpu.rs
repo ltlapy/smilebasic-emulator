@@ -99,6 +99,17 @@ use sdl3::video::Window;
 use crate::gpu_golden;
 use crate::gpu_project::{Corner, Plane};
 
+/// Whether all these vertices' places and texture coordinates are numbers a driver
+/// can take. A false comparison catches NaN too. It looks at all of them, with no
+/// branch for each, as a frame nearly always passes.
+#[inline]
+fn in_reach(verts: &[SDL_Vertex]) -> bool {
+    let near = |v: f32| v.abs() < MOST_REACH;
+    verts.iter().fold(true, |all, v| {
+        all & near(v.position.x) & near(v.position.y) & near(v.tex_coord.x) & near(v.tex_coord.y)
+    })
+}
+
 /// Why a frame was left to the CPU.
 #[derive(Clone, Copy, Debug)]
 enum Reason {
@@ -111,15 +122,18 @@ enum Reason {
     Atlas,
     /// The renderer refused a texture or a blend.
     Refused,
+    /// A vertex is NaN, infinite or too far out to hand to a driver.
+    OutOfReach,
 }
 
-const REASONS: usize = 5;
+const REASONS: usize = 6;
 const REASON_NAMES: [&str; REASONS] = [
     "raster filter",
     "inverted cells",
     "image off the page",
     "atlas full",
     "renderer refused",
+    "vertex out of reach",
 ];
 
 /// How many vertices are handed to the driver at a time. SDL holds them all
@@ -128,6 +142,10 @@ const REASON_NAMES: [&str; REASONS] = [
 /// vertices in one draw held 700 MiB more than the same frame in draws of
 /// 60000 or fewer.
 const MOST_VERTICES: usize = 30000;
+
+/// How far from 0 a vertex's place or texture coordinate may go. Past this an f32
+/// no longer holds every whole number. The CPU draws such a frame.
+const MOST_REACH: f32 = (1 << 24) as f32;
 
 /// How far off a pixel may be and still be only rounding, in the start-up scene. An
 /// element goes through at most three draws there, on a layer, onto the frame and under
@@ -375,6 +393,8 @@ pub struct Gpu {
     self_test_took: Duration,
     /// SDL has refused something since the frame began.
     failed: bool,
+    /// A vertex out of reach came up since the frame began.
+    out_of_reach: bool,
     refused_in_a_row: u32,
     compared: Compared,
     stats: Stats,
@@ -689,6 +709,7 @@ impl Gpu {
             dump,
             self_test_took: Duration::ZERO,
             failed: false,
+            out_of_reach: false,
             refused_in_a_row: 0,
             compared: Compared::default(),
             stats: Stats::default(),
@@ -865,6 +886,15 @@ impl Gpu {
     /// Hands the triangles gathered to SDL.
     fn flush(&mut self) {
         if self.verts.is_empty() {
+            return;
+        }
+        // Every vertex passes here on its way to the driver. The CPU then draws
+        // the whole frame, so the two paths cannot disagree about it.
+        // UNVERIFIED: that the CPU's picture, nothing for a matrix holding NaN,
+        // is what SmileBASIC 4 shows.
+        if !in_reach(&self.verts) {
+            self.out_of_reach = true;
+            self.verts.clear();
             return;
         }
         let Batch {
@@ -2203,6 +2233,7 @@ impl Gpu {
 impl SceneBackend for Gpu {
     fn draw(&mut self, scene: &Scene, input: &RasterInput, frame: (u32, u32)) -> bool {
         self.failed = false;
+        self.out_of_reach = false;
         if let Some(reason) = self.refuses(scene, frame) {
             self.leave(reason);
             return false;
@@ -2220,6 +2251,10 @@ impl SceneBackend for Gpu {
             Err(Reason::Refused)
         } else {
             Ok(())
+        });
+        let result = result.and(match self.out_of_reach {
+            true => Err(Reason::OutOfReach),
+            false => Ok(()),
         });
         if let Err(reason) = result {
             self.leave(reason);
@@ -2703,6 +2738,39 @@ mod tests {
     }
 
     /// All of a kernel's weight is read, each tap at its place.
+    #[test]
+    fn a_vertex_out_of_reach_is_found_wherever_it_is() {
+        let good = SDL_Vertex {
+            position: SDL_FPoint { x: 10.0, y: -10.0 },
+            color: WHITE,
+            tex_coord: SDL_FPoint { x: 0.5, y: 0.25 },
+        };
+        assert!(in_reach(&[]));
+        assert!(in_reach(&[good; 7]));
+        for bad in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            MOST_REACH,
+            -1e30,
+        ] {
+            for field in 0..4 {
+                let mut odd = good;
+                match field {
+                    0 => odd.position.x = bad,
+                    1 => odd.position.y = bad,
+                    2 => odd.tex_coord.x = bad,
+                    _ => odd.tex_coord.y = bad,
+                }
+                for at in 0..7 {
+                    let mut verts = [good; 7];
+                    verts[at] = odd;
+                    assert!(!in_reach(&verts), "{bad} in field {field} at {at}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_blur_reads_every_tap_once() {
         for amount in [1, 2, 8, 16, 32, 64, 128, 384, 1000] {

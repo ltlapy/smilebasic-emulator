@@ -28,6 +28,8 @@ pub struct Golden {
     /// The part of the pixels that may be more than 2 off, in any channel: an
     /// element's edges and samples between texels, a blur's rounding.
     pub share: f64,
+    /// A vertex is out of reach, so the path must leave the frame to the CPU.
+    pub to_cpu: bool,
 }
 
 /// How much of the frame the start-up scene may have more than 2 off, among the golden
@@ -83,6 +85,7 @@ pub const SELF_TEST: Golden = Golden {
     sub: None,
     typed: None,
     share: SELF_TEST_SHARE,
+    to_cpu: false,
 };
 
 /// A 4x4 matrix with true perspective, for a 400x240 screen.
@@ -104,12 +107,57 @@ const fn scene(name: &'static str, source: &'static str, share: f64) -> Golden {
         sub: None,
         typed: None,
         share,
+        to_cpu: false,
+    }
+}
+
+/// A scene with a vertex no driver should get.
+const fn out_of_reach(name: &'static str, source: &'static str) -> Golden {
+    Golden {
+        name,
+        source,
+        sub: None,
+        typed: None,
+        share: 0.0,
+        to_cpu: true,
     }
 }
 
 /// Every rule the path has to keep, one scene a rule or two.
 pub const SCENES: &[Golden] = &[
     SELF_TEST,
+    // All four corners NaN: the path drops the quad, and stays on.
+    scene(
+        "all corners NaN",
+        page!(
+            "VAR N#=1E308*10:N#=N#-N#\n\
+             SPSET 0,0,0,32,32:SPOFS 0,N#,8\n\
+             SPSET 1,0,0,32,32:SPOFS 1,48,8\n"
+        ),
+        0.0,
+    ),
+    out_of_reach(
+        "corner at infinity",
+        page!("SPSET 0,0,0,32,32:SPOFS 0,8,8:SPSCALE 0,3E38,1\n"),
+    ),
+    out_of_reach(
+        "some corners NaN",
+        page!("SPSET 0,0,0,32,32:LMATRIX 0,0,0,100,100,1E308,1E308,45\n"),
+    ),
+    out_of_reach(
+        "texture at infinity",
+        page!("PRINT \"TEXT\":LMATRIX 0,0,0,0,0,1E300,1E-300\n"),
+    ),
+    // W comes to exactly 0 inside the sprite, and a corner lands there.
+    out_of_reach(
+        "corner on the horizon",
+        page!(
+            "DIM M#[16]\n\
+             M#[0]=2/400:M#[12]=-1:M#[5]=-2/240:M#[13]=1:M#[10]=1:M#[15]=1:M#[7]=3E38\n\
+             LMATRIX 0,M#\n\
+             SPSET 0,0,0,32,32:SPOFS 0,0,-1\n"
+        ),
+    ),
     scene(
         "sprites",
         page!(
@@ -275,6 +323,7 @@ pub const SCENES: &[Golden] = &[
         sub: None,
         typed: Some("SPSET 0"),
         share: 0.0,
+        to_cpu: false,
     },
     Golden {
         name: "selected",
@@ -282,6 +331,7 @@ pub const SCENES: &[Golden] = &[
         sub: None,
         typed: Some("PRINT 1234\u{F8F4}"),
         share: 0.0,
+        to_cpu: false,
     },
     Golden {
         name: "sub screen",
@@ -301,6 +351,7 @@ pub const SCENES: &[Golden] = &[
         ),
         typed: None,
         share: 0.001,
+        to_cpu: false,
     },
     Golden {
         name: "sub dimmed",
@@ -316,6 +367,7 @@ pub const SCENES: &[Golden] = &[
         ),
         typed: None,
         share: 0.001,
+        to_cpu: false,
     },
 ];
 
@@ -419,8 +471,10 @@ pub fn run(renderer: *mut SDL_Renderer, scene: &Golden, storage: Option<PathBuf>
             trouble = Some("the sub screen stayed on the CPU".to_string());
         }
     }
-    if !m.rt.frame_on_backend() {
-        trouble = Some("the frame stayed on the CPU".to_string());
+    match (scene.to_cpu, m.rt.frame_on_backend()) {
+        (false, false) => trouble = Some("the frame stayed on the CPU".to_string()),
+        (true, true) => trouble = Some("the frame went to the driver".to_string()),
+        _ => {}
     }
     if scene.sub.is_some() && !m.sub_shows() {
         trouble = Some("no sub screen".to_string());

@@ -45,6 +45,10 @@ runs on an open system and has to do it itself.
     creating it, because SDL 3.4.18 aborts on `GL_OUT_OF_MEMORY` there.
   - A refused texture or blend leaves that frame to the CPU. After three
     refused frames in a row (`MOST_REFUSED`), the emulator stays on the CPU.
+  - Before each `SDL_RenderGeometry`, the path checks every vertex's place and
+    texture coordinates. If one is NaN, infinite or at least 2^24 from 0
+    (`MOST_REACH`), the driver does not get the batch and the CPU draws that
+    frame.
   - The path hands the driver at most 30000 vertices at a time
     (`MOST_VERTICES`). A raster filter that needs over 20000 quads
     (`MOST_RASTER_QUADS`) goes to the CPU, and a 4x4 layer's grid has at
@@ -92,10 +96,8 @@ when it is built or shipped.
   new parser, under the rules above. Importing QR codes adds image and QR
   decoding to what a stranger's file can reach.
 - **GPU rendering.** Coordinates, sizes and buffer contents reach a C
-  driver, and embedded drivers cope badly with odd input. Some checks exist:
-  `Gpu::quad` drops a quad wholly off the frame, and the raster code drops
-  NaN. No single check validates every coordinate in Rust first, and no limit
-  covers a frame's total vertices. Both remain open.
+  driver, and embedded drivers cope badly with odd input. No limit covers a
+  frame's total vertices.
 - **Downloads from a server.** This would be the largest exposure of all.
   A project that arrives from the internet must not run without the user
   choosing to run it. Transfers need HTTPS and must keep to the same file
