@@ -288,6 +288,13 @@ impl Reader {
     /// The next sample, or `None` at the end of a waveform that does not
     /// loop.
     pub fn next(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
+        self.next_of(wave, &data[wave.data.clone()])
+    }
+
+    /// [`Reader::next`] with the waveform's own bytes found already: this is
+    /// for each sample of each voice.
+    #[inline]
+    pub fn next_of(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
         if self.pos >= wave.len {
             let start = wave.loop_start?;
             self.pos = start;
@@ -295,7 +302,6 @@ impl Reader {
                 self.history = loop_history;
             }
         }
-        let data = &data[wave.data.clone()];
         let pos = self.pos as usize;
         self.pos += 1;
         let sample = match &wave.encoding {

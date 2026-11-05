@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use super::RATE;
-use super::bank::{Adshr, Bank, Reader, Region};
+use super::bank::{Adshr, Bank, Reader, Region, WaveInfo};
 use super::synth::{CHANNELS, Synth};
 use super::wave::Envelope as MmlEnvelope;
 
@@ -351,6 +351,7 @@ struct Voice {
 }
 
 impl Voice {
+    #[cfg(test)]
     fn next_sample(&mut self, bank: &Bank) -> f32 {
         let out = self.s0 + (self.s1 - self.s0) * self.frac as f32;
         self.frac += self.step;
@@ -404,7 +405,104 @@ impl Voice {
         self.step = self.base_step * f64::from(2f32.powf(cents / 1200.0));
     }
 
+    /// A step of the envelope lasts [`TICK`] samples, which go as a run: this
+    /// is the most work there is for a voice, and in a run nothing but the
+    /// waveform can change.
     fn render(&mut self, bank: &Bank, ch: &Channel, left: &mut [f32], right: &mut [f32]) {
+        let wave = &bank.waves[usize::from(self.region.wave)];
+        let data = &bank.data[wave.data.clone()];
+        let mut at = 0;
+        while at < left.len() {
+            if self.in_tick == 0 {
+                if self.envelope.stage == Stage::Done && self.gains == [0.0; 2] {
+                    self.done = true;
+                }
+                self.tick(ch);
+            }
+            if self.done {
+                return;
+            }
+            let run = (TICK - self.in_tick).min(left.len() - at);
+            let ends_step = self.in_tick + run == TICK;
+            self.in_tick = (self.in_tick + run) % TICK;
+            let (ls, rs) = (&mut left[at..at + run], &mut right[at..at + run]);
+            at += run;
+            // Land exactly on the target, which may be silence: for the last
+            // sample of a step, which goes on its own.
+            let (plain, last) = if ends_step { (run - 1, 1) } else { (run, 0) };
+            let (mut g0, mut g1) = (self.gains[0], self.gains[1]);
+            let [d0, d1] = self.deltas;
+            let (mut s0, mut s1, mut frac) = (self.s0, self.s1, self.frac);
+            let step = self.step;
+            let (lp, ll) = ls.split_at_mut(plain);
+            let (rp, rl) = rs.split_at_mut(plain);
+            let mut went = true;
+            for (l, r) in lp.iter_mut().zip(rp.iter_mut()) {
+                let s = s0 + (s1 - s0) * frac as f32;
+                frac += step;
+                if frac >= 1.0 {
+                    (s0, s1, frac) = self.read(wave, data, s0, s1, frac);
+                    went = !self.done;
+                }
+                g0 += d0;
+                g1 += d1;
+                *l += s * g0;
+                *r += s * g1;
+                if !went {
+                    break;
+                }
+            }
+            if went && last == 1 {
+                let s = s0 + (s1 - s0) * frac as f32;
+                frac += step;
+                if frac >= 1.0 {
+                    (s0, s1, frac) = self.read(wave, data, s0, s1, frac);
+                }
+                g0 += d0;
+                g1 += d1;
+                let snap = |g: f32| if g.abs() < 1e-6 { 0.0 } else { g };
+                (g0, g1) = (snap(g0), snap(g1));
+                ll[0] += s * g0;
+                rl[0] += s * g1;
+            }
+            (self.s0, self.s1, self.frac, self.gains) = (s0, s1, frac, [g0, g1]);
+            if self.done {
+                return;
+            }
+        }
+    }
+
+    /// What goes on when the position passes a sample of the waveform.
+    #[inline]
+    fn read(
+        &mut self,
+        wave: &WaveInfo,
+        data: &[u8],
+        mut s0: f32,
+        mut s1: f32,
+        mut frac: f64,
+    ) -> (f32, f32, f64) {
+        while frac >= 1.0 {
+            frac -= 1.0;
+            if self.wave_ended {
+                self.done = true;
+            }
+            s0 = s1;
+            s1 = match self.reader.next_of(wave, data) {
+                Some(s) => f32::from(s) / 32768.0,
+                None => {
+                    self.wave_ended = true;
+                    0.0
+                }
+            };
+        }
+        (s0, s1, frac)
+    }
+
+    /// [`Voice::render`] a sample at a time, as it was first written, to
+    /// compare with.
+    #[cfg(test)]
+    fn render_by_sample(&mut self, bank: &Bank, ch: &Channel, left: &mut [f32], right: &mut [f32]) {
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             if self.in_tick == 0 {
                 if self.envelope.stage == Stage::Done && self.gains == [0.0; 2] {
@@ -615,7 +713,7 @@ pub fn times(adshr: Adshr) -> Times {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sound::bank::{Encoding, WaveInfo};
+    use crate::sound::bank::Encoding;
 
     #[test]
     fn decibels_as_the_engine_reads_them() {
@@ -727,6 +825,106 @@ mod tests {
         let (mut l, mut r) = (vec![0.0; samples], vec![0.0; samples]);
         s.render(&mut l, &mut r);
         l.iter().chain(&r).fold(0f32, |m, x| m.max(x.abs()))
+    }
+
+    /// A bank of `i` waves: ADPCM, looping and not, and PCM.
+    fn mixed_bank(adshr: Adshr) -> Bank {
+        let mut b = bank(adshr, false);
+        let mut data = b.data.clone();
+        let start = data.len();
+        for i in 0..640u32 {
+            data.push((i.wrapping_mul(2_654_435_761) >> 13) as u8);
+        }
+        let coefs = [
+            2048, -1024, 1024, 512, -512, 256, 300, -200, 0, 0, 1800, -800, 100, 50, 4, 8,
+        ];
+        let adpcm = |loop_start| WaveInfo {
+            rate: RATE,
+            len: 1000,
+            loop_start,
+            encoding: Encoding::Adpcm {
+                coefs,
+                loop_history: [10, -10],
+            },
+            data: start..start + 640,
+        };
+        b.waves.push(adpcm(Some(100)));
+        b.waves.push(adpcm(None));
+        b.waves.push(WaveInfo {
+            rate: RATE / 2,
+            len: 8,
+            loop_start: None,
+            encoding: Encoding::Pcm16,
+            data: 0..16,
+        });
+        let region = b.regions[0];
+        for wave in 1..4 {
+            b.regions.push(Region { wave, ..region });
+        }
+        b.instruments = (0..4).map(|i| i..i + 1).collect();
+        b.data = data;
+        b
+    }
+
+    #[test]
+    fn runs_of_samples_give_what_each_sample_gave() {
+        let mut seed = 0xACE1_2345u32;
+        let mut next = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % n
+        };
+        for round in 0..300 {
+            let adshr = Adshr {
+                attack: next(128) as u8,
+                decay: next(128) as u8,
+                sustain: next(128) as u8,
+                hold: next(20) as u8,
+                release: next(128) as u8,
+            };
+            let mut a = Sampler::new(Arc::new(mixed_bank(adshr)));
+            for c in 0..3 {
+                a.program(c, next(4) as i32);
+                a.pan(c, next(128) as i32);
+                a.modulation(c, next(128) as i32);
+                a.note_on(c, 20 + next(100) as i32, 1 + next(127) as i32);
+            }
+            let (mut l, mut r) = (vec![0.0; 800], vec![0.0; 800]);
+            let (mut lw, mut rw) = (vec![0.0; 800], vec![0.0; 800]);
+            for frame in 0..30 {
+                let bank = a.bank.clone();
+                let channels = a.channels;
+                let mut plain = a.voices.clone();
+                // Any lengths of block, as well as a frame's.
+                let n = if frame % 3 == 0 {
+                    1 + next(800) as usize
+                } else {
+                    800
+                };
+                l[..n].fill(0.0);
+                r[..n].fill(0.0);
+                lw[..n].fill(0.0);
+                rw[..n].fill(0.0);
+                for (v, w) in a.voices.iter_mut().zip(plain.iter_mut()) {
+                    v.render(&bank, &channels[v.channel], &mut l[..n], &mut r[..n]);
+                    w.render_by_sample(&bank, &channels[w.channel], &mut lw[..n], &mut rw[..n]);
+                    assert_eq!(v.done, w.done, "round {round}");
+                    if !v.done {
+                        assert_eq!((v.s0, v.s1, v.frac), (w.s0, w.s1, w.frac));
+                        assert_eq!((v.gains, v.in_tick), (w.gains, w.in_tick));
+                    }
+                }
+                let bits = |v: &[f32]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&l[..n]), bits(&lw[..n]), "round {round}");
+                assert_eq!(bits(&r[..n]), bits(&rw[..n]), "round {round}");
+                a.voices.retain(|v| !v.done);
+                if frame == 10 {
+                    a.note_off(0, 0);
+                    a.bend(1, next(800) as i32 - 400);
+                }
+            }
+        }
     }
 
     #[test]
