@@ -1363,155 +1363,164 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ## Direct mode
 
-- `INSPECT` (or `??`) prints `INT: 1`, `REAL: 1.50000000` (always 8
-  decimals) or `STRING: (2)"AB"` (a 50-character string still whole).
-  An array prints `INT[2,2]:`, then ` [0,1]: 0` for each element
-  (strings as `(2)"HI"`), then an empty line. A string shows at most 256
-  characters; a longer one is cut there, without its closing quote. A long listing stops every 28 lines with
-  `=== Press ENTER ===` on the last row, which stays free while it
-  prints.
-- `INSPECT` cuts a string of exactly 256 characters too: no closing quote from 256 up,
-  255 has it. (TEST62)
+- `INSPECT` (or `??`) prints `INT: 1`, `REAL: 1.50000000` (always 8 decimals) or
+  `STRING: (2)"AB"` (a 50-character string still whole).
+- `INSPECT` of an array prints `INT[2,2]:`, then ` [0,1]: 0` for each element
+  (strings as `(2)"HI"`), then an empty line.
+- `INSPECT` shows at most 256 characters of a string; a longer one is cut there,
+  without its closing quote.
+- `INSPECT` cuts a string of exactly 256 characters too: no closing quote from
+  256 up, 255 has it. (TEST62)
+- `INSPECT` stops a long listing every 28 lines with `=== Press ENTER ===` on
+  the last row, which stays free while it prints.
 - `? ?1` prints an empty line, then 1.
-- Variables stay until `CLEAR`, however they came about: by `DIM`,
-  `VAR`, assigning or only reading them (an unknown variable reads as the
-  real 0). Declaring one of them again is `Duplicate variable`.
+- Variables stay until `CLEAR`, however they came about: by `DIM`, `VAR`,
+  assigning or only reading them (an unknown variable reads as the real 0).
+  Declaring one of them again is `Duplicate variable`.
 - A line's declarations are checked as it runs, not when it compiles:
-  `DIM H[2]:DIM H[2]` declares `H` and then fails on the second `DIM`.
-  In a program the same line does not compile.
-- A declaration that fails still declares. After `DIM D[0,3]` fails,
-  `D` is the omitted value (`TYPEOF` 0, and `?D` is `Type mismatch`);
-  after `VAR G=SQR(-1)` fails, `G` is 0. A line that does not compile
-  declares nothing.
+  `DIM H[2]:DIM H[2]` declares `H` and then fails on the second `DIM`. In a
+  program the same line does not compile.
+- A declaration that fails still declares. After `DIM D[0,3]` fails, `D` is the
+  omitted value (`TYPEOF` 0, and `?D` is `Type mismatch`); after `VAR G=SQR(-1)`
+  fails, `G` is 0. A line that does not compile declares nothing.
 - `CLEAR` in a program is a `Syntax error` when it runs.
-- `FILES` prints a long list a screen at a time, in direct mode and in
-  programs alike: the list fills every row of the console but the last,
-  which says `=== Press ENTER ===`, so the page follows the console's
-  size (29 rows of the list on the usual 30). Any key or button goes on, and a held key goes on as it
+- `FILES` prints a long list a screen at a time, in direct mode and in programs
+  alike. The list fills every row of the console but the last, which says
+  `=== Press ENTER ===`, so the page follows the console's size (29 rows of the
+  list on the usual 30). Any key or button goes on, and a held key goes on as it
   repeats.
 
 ## Stopping
 
 - `ON BREAK GOTO ""` takes the handler away.
-- The + button acts when it is let go. A short press jumps to the label
-  of `ON BREAK GOTO`, once; without one, the program stops with `User
-  break on 0:55`. Held for a second, the button stops the program at
-  once, without the jump.
-- The jump leaves GOSUBs behind: a `RETURN` after it is `RETURN without
-  GOSUB`. `ON BREAK GOTO` inside a DEF may name a label outside it.
-- Breaking off a line typed in direct mode says `User break on 0:1`. A
-  forced stop (holding + for a second) says `User break on` too.
-- Out of a waiting `INPUT` or `LINPUT`, the press counts twice: it
-  jumps, and once the first statement there has run (a whole FOR loop's
-  first statement only), it is acted on again: it jumps to a label that
-  statement set with `ON BREAK GOTO`, or stops with `User break on` that
-  statement's line. Printing goes on after the prompt.
-- `STOP` says `Break on 0:60`, then its message, if it has one, on the
-  next line. In direct mode it is `Can't use from direct mode`.
-- Against the manual, `CONT` goes on after a program has been edited,
-  even with lines added, and after the + button stopped it at `INPUT`:
-  it goes on with the next statement, and `User break on` follows the
-  prompt on the same line. After an error it is `Can't continue`. In a
-  program it is a `Syntax error` when it runs.
-- `BACKTRACE` lists, innermost first, the line it stopped on and the
-  line of each DEF call and `GOSUB` it is in, as `0:    92` (the line
-  right-aligned in 6 places). It works after an error too, and prints
-  nothing when no program has stopped. After it, `CONT` and `TRACE`
-  cannot go on.
-- `TRACE` runs one statement and says `Break on 0:2` with that
-  statement's line, in DEFs and GOSUBs too. Some places are no
-  statement of their own: a `FOR` runs on into the first statement of
-  its body, and a DEF's `END` runs on through the return into the
-  caller's next statement. `NEXT` takes two TRACEs that both say the
-  FOR's line (the step, then the test). After a GOSUB's `RETURN` it
-  names the GOSUB's line. After an error it is `Can't trace`.
-- `Can't continue`, `Can't trace` and `Can't use from direct mode` name
-  no line.
+- The + button acts when it is let go. A short press jumps to the label of
+  `ON BREAK GOTO`, once; without one, the program stops with
+  `User break on 0:55`. Held for a second, the button stops the program at once,
+  without the jump.
+- `ON BREAK GOTO`'s jump leaves GOSUBs behind: a `RETURN` after it is
+  `RETURN without GOSUB`.
+- `ON BREAK GOTO` inside a DEF may name a label outside it.
+- Breaking off a line typed in direct mode says `User break on 0:1`. A forced
+  stop (holding + for a second) says `User break on` too.
+- A press of + out of a waiting `INPUT` or `LINPUT` counts twice. It jumps, and
+  acts again once the first statement there has run (a whole FOR loop's first
+  statement only). The second time it jumps to a label that statement set with
+  `ON BREAK GOTO`, or stops with `User break on` that statement's line. Printing
+  goes on after the prompt.
+- `STOP` says `Break on 0:60`, then its message, if it has one, on the next
+  line. In direct mode it is `Can't use from direct mode`.
+- `STOP` with a message prints 255 characters of it (TEST62).
+- `CONT` goes on, against the manual, after a program has been edited, even with
+  lines added.
+- `CONT` goes on, against the manual, after the + button stopped it at `INPUT`:
+  it goes on with the next statement, and `User break on` follows the prompt on
+  the same line.
+- `CONT` after an error is `Can't continue`. In a program it is a `Syntax error`
+  when it runs.
+- `BACKTRACE` lists, innermost first, the line it stopped on and the line of
+  each DEF call and `GOSUB` it is in, as `0:    92` (the line right-aligned in 6
+  places). It works after an error too, and prints nothing when no program has
+  stopped. After it, `CONT` and `TRACE` cannot go on.
+- `TRACE` runs one statement and says `Break on 0:2` with that statement's line,
+  in DEFs and GOSUBs too. After an error it is `Can't trace`.
+  - Some places are no statement of their own: a `FOR` runs on into the first
+    statement of its body, and a DEF's `END` runs on through the return into the
+    caller's next statement.
+  - `NEXT` takes two TRACEs that both say the FOR's line (the step, then the
+    test).
+  - After a GOSUB's `RETURN` it names the GOSUB's line.
+- `Can't continue`, `Can't trace` and `Can't use from direct mode` name no line.
 - `Break on` follows whatever was printed: after `?"X";` it reads
   `XBreak on 0:16`.
+- `ENVSTAT()` on the main interpreter is 3 (running), also typed in direct mode
+  while a program is stopped or after an error; its OUT forms then report no
+  error.
 
 ## Program slots and files
 
 ### `CHKCALL` and `CHKLABEL`
 
-- `CHKCALL` is 0 for `PRINT`, `GOTO`, `INC`, `DEC`, `STOP`, `CONT`,
-  `RUN`, `NEW`, `CLEAR`, `LIST`, `TRACE`, `BACKTRACE`, `EXEC`, `DEFOUT`
-  and `END`, and 1 for `VSYNC`, `WAIT`, `INSPECT`, `CALLIDX`, `DEFARGC`,
-  `PROJECT`, `FILES`, `ACLS`, `LOAD` and `SAVE`. It ignores case.
-  `CHKLABEL` needs the `@`: `CHKLABEL("P1")` is 0. `CHKLABEL("1:@X")` on
-  a slot `EXEC` has not run is 0. With a slot, it looks at that slot's
-  top level, also from a DEF in the same slot: FINITI finds its own
+- `CHKCALL` is 0 for `PRINT`, `GOTO`, `INC`, `DEC`, `STOP`, `CONT`, `RUN`,
+  `NEW`, `CLEAR`, `LIST`, `TRACE`, `BACKTRACE`, `EXEC`, `DEFOUT` and `END`, and
+  1 for `VSYNC`, `WAIT`, `INSPECT`, `CALLIDX`, `DEFARGC`, `PROJECT`, `FILES`,
+  `ACLS`, `LOAD` and `SAVE`. It ignores case.
+- `CHKCALL("PRINT")` and `CHKCALL("GOTO")` are 0, statements not being commands,
+  and `CHKCALL("3:SIN")` is 1 and `CHKCALL("3:NOSUCH")` 0. (TEST63)
+- `CHKCALL("1:ACLS")` is 1 for the system's commands and functions, whatever is
+  in slot 1.
+- `CALL "WAIT",n`, `CALL "VSYNC",n` and `CALL("FREEMEM")` work.
+- `CHKLABEL` needs the `@`: `CHKLABEL("P1")` is 0.
+- `CHKLABEL("1:@X")` on a slot `EXEC` has not run is 0. With a slot, it looks at
+  that slot's top level, also from a DEF in the same slot: FINITI finds its own
   models so.
-- `CHKCALL("1:ACLS")` is 1 for the system's commands and functions,
-  whatever is in slot 1. `CALL "WAIT",n`, `CALL "VSYNC",n` and
-  `CALL("FREEMEM")` work.
-- `CHKCALL("PRINT")` and `CHKCALL("GOTO")` are 0, statements not being commands, and
-  `CHKCALL("3:SIN")` 1 and `CHKCALL("3:NOSUCH")` 0. For a slot that has not been run,
-  `CHKLABEL("3:@A")` is 0, `VAR("3:A")` `Undefined variable` and `RESTORE "3:@A"`
-  `Undefined label`. (TEST63)
+- A slot that has not been run gives 0 for `CHKLABEL("3:@A")`,
+  `Undefined variable` for `VAR("3:A")` and `Undefined label` for
+  `RESTORE "3:@A"`. (TEST63)
 
 ### Slots, `EXEC` and the `PRG` commands
 
-- Against the manual: a program can `LOAD` over its own slot, and goes
-  on; and loading over a slot that `EXEC` ran keeps that slot's
-  `COMMON DEF`s callable.
-- `EXEC` of a slot with code still to run, such as `EXEC 0` in a DEF of
-  slot 1 that slot 0 called, is `Can't use the specified slot`. The slot
-  running may be `EXEC`'d, and starts again (`EXEC 0` in slot 0). Slots
-  that `EXEC` ran are gone after the next `RUN`.
+- `LOAD` can, against the manual, go over the program's own slot, and the
+  program goes on.
+- `LOAD` over a slot that `EXEC` ran keeps that slot's `COMMON DEF`s callable,
+  against the manual.
+- `EXEC` of a slot with code still to run, such as `EXEC 0` in a DEF of slot 1
+  that slot 0 called, is `Can't use the specified slot`.
+- `EXEC` of the slot running starts it again (`EXEC 0` in slot 0).
+- Slots that `EXEC` ran are gone after the next `RUN`.
 - `PRGEDIT slot,n` past the last line goes to the last line, and
-  `PRGEDIT slot,-1` past it, where `PRGGET$` is empty. `PRGSEEK 1` from
-  the last line goes past it and gives 0. `PRGDEL` at the end of a slot
-  deletes back towards its start. `PRGSET` on an empty line in the
-  middle replaces it. (SmileBASIC Debugger's model of these commands
-  agrees with all of this.)
-- `PRGNAME$()` and `PRGSIZE()` at the prompt mean slot 0, whichever slot `PRGEDIT` is on. (TEST63)
-- Changes made with `PRGSET`, `PRGINS` and `PRGDEL` do not count as
-  unsaved: `LOAD` over the slot from a program, `NEW` and `PROJECT` do
-  not ask about them (DAW_MUSIC, and by hand).
-- `#_FILENAME` is the program's name (`TEST32`), and empty in direct
-  mode; `#_SLOT` is the program's slot, and in direct mode the slot run
-  last.
+  `PRGEDIT slot,-1` past it, where `PRGGET$` is empty.
+- `PRGSEEK 1` from the last line goes past it and gives 0.
+- `PRGDEL` at the end of a slot deletes back towards its start.
+- `PRGSET` on an empty line in the middle replaces it. (SmileBASIC Debugger's
+  model of these commands agrees with all of this.)
+- `PRGNAME$()` and `PRGSIZE()` at the prompt mean slot 0, whichever slot
+  `PRGEDIT` is on. (TEST63)
+- `PRGSET`, `PRGINS` and `PRGDEL` changes do not count as unsaved: `LOAD` over
+  the slot from a program, `NEW` and `PROJECT` do not ask about them (DAW_MUSIC,
+  and by hand).
+- `#_FILENAME` is the program's name (`TEST32`), and empty in direct mode.
+- `#_SLOT` is the program's slot, and in direct mode the slot run last.
 
 ### Files
 
-- `EXEC` of a file that is not there shows a dialog (File not found) and
-  then stops with `Load failed`. In direct mode, `EXEC` is
+- `EXEC` of a file that is not there shows a dialog (File not found) and then
+  stops with `Load failed`. In direct mode, `EXEC` is
   `Can't use from direct mode`, shown without a line.
-- File names may start with `@`, as the backups' do: `LOADV
-  "DAT:@BACKUP.DAT"` reads one, and `SAVE "@X"` saves (after the usual
-  question).
+- File names may start with `@`, as the backups' do: `LOADV "DAT:@BACKUP.DAT"`
+  reads one, and `SAVE "@X"` saves (after the usual question).
+- File names may end in a dot: `SAVEV "TXT:Q51.",S$` saves, and
+  `CHKFILE("TXT:Q51.")` is 1 while `CHKFILE("TXT:Q51")` is 0 (TEST51).
 - `LOAD` takes the file's whole name: `LOAD "TEST10"` does not find
   `TEST10.PRG`.
-- Against the manual, programs `LOAD` and `LOADV` other projects' files
-  too (`LOAD "GAME/SUB",1`), not only `EXEC`; naming the program's own
-  project works as well. `LOADV` and `LOADG` in a program ask nothing.
-- `FILES("//")` ends each project's name with `/`, lists the workspace as
-  `/`, and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`). A `/`
-  may follow a project's name in a listing (`FILES("TXT:NAME/")`), and
+- `LOAD` and `LOADV` in a program, against the manual, take other projects'
+  files too (`LOAD "GAME/SUB",1`), not only `EXEC`. Naming the program's own
+  project works as well.
+- `LOADV` and `LOADG` in a program ask nothing.
+- `FILES("//")` ends each project's name with `/`, lists the workspace as `/`,
+  and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`).
+- `FILES` takes a `/` after a project's name (`FILES("TXT:NAME/")`), and
   `FILES("TXT:/")` lists the workspace.
-- `METALOAD "NAME"` loads another project's metadata (a project that is
-  not there is `Undefined project name`); `METALOAD` alone loads the
-  current one's again. Before any `METALOAD`, the title is the project's
-  name. `METAEDIT(item)` works as a function.
-- A file name may end in a dot: `SAVEV "TXT:Q51.",S$` saves, and
-  `CHKFILE("TXT:Q51.")` is 1 while `CHKFILE("TXT:Q51")` is 0 (TEST51).
+- `METALOAD "NAME"` loads another project's metadata (a project that is not
+  there is `Undefined project name`); `METALOAD` alone loads the current one's
+  again. Before any `METALOAD`, the title is the project's name.
+- `METAEDIT(item)` works as a function.
 
 ## Subprograms
 
-Checked with TTEST36.
-
+Except under "A subprogram's screen", bullets that name no test come from
+TTEST36.
 
 ### Starting and ending
 
-- `ENVTYPE OUT T,P` gives P -1 in a subprogram. `XSUBSCREEN OUT` before
-  any `XSUBSCREEN` gives the whole display, 0,0,1280,720.
-- `SNDMSBAL()` starts at 63 there too, and `PROJECT()` is the project
-  `SUBRUN` loaded the file from.
+- `ENVTYPE OUT T,P` gives P -1 in a subprogram.
+- `XSUBSCREEN OUT` before any `XSUBSCREEN` gives the whole display,
+  0,0,1280,720.
+- `SNDMSBAL()` starts at 63 in a subprogram too.
+- `PROJECT()` in a subprogram is the project `SUBRUN` loaded the file from.
 - `ENVINPUT$(1)` is the direct-mode line typed last, the `SUBRUN` itself.
-- An error, a `STOP` or `SUBSTOP` ends the subprogram, hides its screen
-  and gives the focus back. The main console prints why, between lines
-  of its own, without OK unless a line of its own ran:
+- An error, a `STOP` or `SUBSTOP` ends the subprogram, hides its screen and
+  gives the focus back. The main console prints why, between lines of its own,
+  without OK unless a line of its own ran:
 
   ```
   === From subinterpreter ===
@@ -1519,259 +1528,287 @@ Checked with TTEST36.
   ===========================
   ```
 
-  For an error the middle line is its message (`Divide by zero in
-  0:8`), for `STOP` `Break on 0:7`.
-- `SUBRUN "/A/../B"` prints `OK`, then the same block with `Illegal
-  format` as its middle line (TEST51), and `SUBRUN "DAT:Z51A"` does too (TEST57).
+  For an error the middle line is its message (`Divide by zero in 0:8`), for
+  `STOP` `Break on 0:7`.
+- `SUBRUN "/A/../B"` prints `OK`, then the same block with `Illegal format` as
+  its middle line (TEST51), and `SUBRUN "DAT:Z51A"` does too (TEST57).
 - `SUBRUN` takes a name in lower case and one starting with `TXT:`:
   `SUBRUN "test51s"` and `SUBRUN "TXT:TEST51S"` give no error and no block.
-- `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again,
-  while it goes on running. A clear `BACKCOLOR` shows the main screen
-  through.
-- `END` in a subprogram hides its screen and prints nothing; the line
-  being typed in direct mode stays as it was, and the main interpreter
-  has the focus again (TTEST37, TTEST38).
-- The tools on F9 to F11 start also while a program runs. `SUBRUN`, or
-  a tool key, while a subprogram runs stops it first with `User break`,
-  printed on the main console as above, also when the new file cannot
-  be loaded.
+- `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again, while it
+  goes on running. A clear `BACKCOLOR` shows the main screen through.
+- `END` in a subprogram hides its screen and prints nothing; the line being
+  typed in direct mode stays as it was, and the main interpreter has the focus
+  again (TTEST37, TTEST38).
+- The tools on F9 to F11 start also while a program runs.
+- `SUBRUN`, or a tool key, while a subprogram runs stops it first with
+  `User break`, printed on the main console as above, also when the new file
+  cannot be loaded.
 
 ### Focus
 
-- A subprogram starts with the focus. While a subprogram runs, the side
-  without the focus is drawn darker, each color channel to 7/8 (255
-  shows as 224, 96 as 84): the main screen while the subprogram has the
-  focus, and the subprogram's screen once it gives it up. The editor is
-  darkened the same way while a tool started from it has the focus.
-- After `ENVFOCUS 0`, the subprogram's `PUSHKEY` types into the main
+- A subprogram starts with the focus.
+- While a subprogram runs, the side without the focus is drawn darker, each
+  color channel to 7/8 (255 shows as 224, 96 as 84). That side is the main
+  screen while the subprogram has the focus, and the subprogram's screen once it
+  gives it up. The editor is darkened the same way while a tool started from it
+  has the focus.
+- `PUSHKEY` in the subprogram, after `ENVFOCUS 0`, types into the main
   interpreter's direct mode, which runs the line.
-- `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives
-  the old answer until then: `ENVFOCUS 0` took one to three frames (it
-  varied from run to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the
-  focus is moving is lost (TTEST37, TTEST38). TTEST37's ten frames
-  after `ENVFOCUS 0` were no frames at all: its `VSYNC 10` came behind
-  and went straight on.
-- The interpreter that gets the focus is framed for a moment by a
-  yellow (255,255,0) border: three display pixels on the edge of its
-  screen, one outside and two inside, with a black band two pixels wide
-  inside that. The subprogram's frame is its XSUBSCREEN rectangle, the
-  main interpreter's the whole display, every time the focus moves,
-  `SUBRUN`'s start and a subprogram's end included. Both show whole for about 0.23
-  seconds and then fade out evenly over about 0.25 seconds, drawn over
-  what is under them. A frame for the other side, coming before that,
-  takes its place at once (a screen recording at 24 frames a second).
+- `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
+  answer until then: `ENVFOCUS 0` took one to three frames (it varied from run
+  to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the focus is moving is lost
+  (TTEST37, TTEST38). TTEST37's ten frames after `ENVFOCUS 0` were no frames at
+  all: its `VSYNC 10` came behind and went straight on.
+- The interpreter that gets the focus is framed for a moment by a yellow
+  (255,255,0) border:
+  - The border is three display pixels on the edge of its screen, one outside
+    and two inside, with a black band two pixels wide inside that.
+  - The subprogram's frame is its XSUBSCREEN rectangle, the main interpreter's
+    the whole display, every time the focus moves, `SUBRUN`'s start and a
+    subprogram's end included.
+  - Both show whole for about 0.23 seconds and then fade out evenly over about
+    0.25 seconds, drawn over what is under them.
+  - A frame for the other side, coming before that, takes its place at once (a
+    screen recording at 24 frames a second).
 
 ### A subprogram's screen
 
-- A subprogram's screen over the main one: its `BACKCOLOR` sets its
-  colour whole and its alpha as how much of the main screen shows
-  through, so `&H80FF4000` over black shows `&HFF4000`, and over a
-  dimmed `&H77` green `&H40 + &H77*128/255`. Alpha `&HFE` lets nearly
-  all of the main screen through, `&H01` almost none, and alpha 0 leaves
-  the screen clear. With alpha `&HFF` the subprogram's screen replaces
-  the main one where it is, and layers in modes 3 or 4 on it hide the main
-  screen whatever the alpha (TEST56). What the subprogram draws goes over
-  its `BACKCOLOR` as on any screen.
+- `BACKCOLOR` on a subprogram's screen over the main one sets its color whole,
+  and its alpha as how much of the main screen shows through. `&H80FF4000` over
+  black shows `&HFF4000`, and over a dimmed `&H77` green `&H40 + &H77*128/255`.
+  - Alpha `&HFE` lets nearly all of the main screen through, `&H01` almost none,
+    and alpha 0 leaves the screen clear.
+  - With alpha `&HFF` the subprogram's screen replaces the main one where it is,
+    and layers in modes 3 or 4 on it hide the main screen whatever the alpha
+    (TEST56).
+  - What the subprogram draws goes over its `BACKCOLOR` as on any screen.
 - A subprogram's screen is stretched smoothly whatever `XSCREEN`'s mode, and
-  keeps its aspect ratio in `XSUBSCREEN`'s rectangle: 480x272 in mode 1 on
-  the whole display is 2.647 times, starting at X 4 (TEST56). A screen wider
-  than its rectangle gets bars above and below: 400x240 in a rectangle of
-  600x600 at 60 starts at Y 180. Mode 2 is smoothed the same in a subprogram
-  (TEST60). The bars take `BACKCOLOR`'s colour plus the display times 1 minus
-  its alpha, unless the alpha is 0: seen over a main screen that was not cleared,
-  for 400x240 with `&HC0305070` and 1280x720 with `&H40305070` (TEST62). A
-  layer in mode 3 makes the whole subprogram's screen opaque, far from what is on it (TEST62).
+  keeps its aspect ratio in `XSUBSCREEN`'s rectangle: 480x272 in mode 1 on the
+  whole display is 2.647 times, starting at X 4 (TEST56).
+- A screen wider than its rectangle gets bars above and below: 400x240 in a
+  rectangle of 600x600 at 60 starts at Y 180.
+- Mode 2 is smoothed the same in a subprogram (TEST60).
+- The bars take `BACKCOLOR`'s color plus the display times 1 minus its alpha,
+  unless the alpha is 0: seen over a main screen that was not cleared, for
+  400x240 with `&HC0305070` and 1280x720 with `&H40305070` (TEST62).
+- A layer in mode 3 makes the whole subprogram's screen opaque, far from what is
+  on it (TEST62).
 
 ### `ENVSTAT` and `ENVLOCATE`
 
-- `ENVSTAT()` on the main interpreter is 3 (running), also typed in
-  direct mode while a program is stopped or after an error; its OUT
-  forms then report no error.
-- After a clean start of SmileBASIC, before any program, `ENVSTAT`'s OUT form gives status
-  1 with line 386, of a system program that went before. A program that ends without an
-  error sets the status to 0 and leaves the line: 386 after it, and after a program's
-  error on line 3, 3 through the clean runs that follow. (TEST63)
-- `ENVSTAT OUT S,N,A,SL,C,L` after the main program's `Divide by zero`
-  gives N 7, A -1, SL 0, C the statement's character from the start of
-  the program counting from 0, and L its line. After a `STOP`, N is 0
-  and A, SL and C are -1, but L keeps the line of the error before.
-- A subprogram's `ENVSTAT 0` turns a stopped program's status 1 or 2 to
-  0, and `CONT` can no longer go on with it.
-- From TTEST39: after `LOCATE 0,999`'s `Out of range`, `ENVSTAT OUT`
-  gives N 10 and A 1, the failing argument counted from 0; C is the
-  statement's start. A `GOTO` with nothing after it runs the lines
-  before it and stops with `Type mismatch` (N 8) at its statement. An
-  error typed in direct mode after that gives status 1, N 0, A, SL and
-  C -1, and L the program error's line. While the editor shows, status
-  4 comes with N, A, SL, C and L all 0, and `ENVLOCATE` gives 0,0.
-- A compile error sets `ENVSTAT OUT S,N,A,SL,C,L` as an error when running does but for
-  the status, which stays 0: S 0, N 3, A -1, C the character of the token it names from
-  the start of the program, L its line (TEST62).
-- `ENVLOCATE OUT X,Y`, which the manual leaves out, gives the right
-  edge and top of the main console's cursor cell on the display: with
-  the 400x240 screen 1200 pixels wide in its middle, the cursor at
-  column C of row R is at 40+24*(C+1), 24*R (TTEST37).
+- `ENVSTAT`'s OUT form after a clean start of SmileBASIC, before any program,
+  gives status 1 with line 386, of a system program that went before. A program
+  that ends without an error sets the status to 0 and leaves the line: 386 after
+  it, and after a program's error on line 3, 3 through the clean runs that
+  follow. (TEST63)
+- `ENVSTAT OUT S,N,A,SL,C,L` after the main program's `Divide by zero` gives N
+  7, A -1, SL 0, C the statement's character from the start of the program
+  counting from 0, and L its line. After a `STOP`, N is 0 and A, SL and C are
+  -1, but L keeps the line of the error before.
+- `ENVSTAT 0` in a subprogram turns a stopped program's status 1 or 2 to 0, and
+  `CONT` can no longer go on with it.
+- `ENVSTAT OUT` as TTEST39 saw it:
+  - After `LOCATE 0,999`'s `Out of range`, it gives N 10 and A 1, the failing
+    argument counted from 0; C is the statement's start.
+  - A `GOTO` with nothing after it runs the lines before it and stops with
+    `Type mismatch` (N 8) at its statement.
+  - An error typed in direct mode after that gives status 1, N 0, A, SL and C
+    -1, and L the program error's line.
+  - While the editor shows, status 4 comes with N, A, SL, C and L all 0, and
+    `ENVLOCATE` gives 0,0.
+- `ENVSTAT OUT S,N,A,SL,C,L` after a compile error is set as for an error when
+  running, but for the status, which stays 0: S 0, N 3, A -1, C the character of
+  the token it names from the start of the program, L its line (TEST62).
+- `ENVLOCATE OUT X,Y`, which the manual leaves out, gives the right edge and top
+  of the main console's cursor cell on the display. With the 400x240 screen 1200
+  pixels wide in its middle, the cursor at column C of row R is at 40+24*(C+1),
+  24*R (TTEST37).
 
 ## Memory
 
 ### `FREEMEM`
 
-- `FREEMEM` is 134216720 at start, and the program and its numeric
-  variables take none of it. A string of N characters takes 2N rounded up to
-  128 bytes, plus 64: 25 and 64 characters take 192, 65 and 128 take 320, 129
-  takes 448, 256 takes 576, 257 takes 704, 1000 takes 2112 (TEST57). An array
-  takes its elements (Int 4, Real and string 8) rounded up to 64 bytes, at
-  least 128, plus 64: 17 ints 192, 33 ints 256, 49 ints 320, 1000 ints 4096, 9
-  reals 192, 17 reals 256, 100 reals 896 (TEST57), `DIM A[100000]` 800064.
-  Strings of up to 24 characters and arrays of up to 64 bytes of elements take
-  nothing. `GARRAY` and `TARRAY` take nothing. Memory let go of (emptying a
-  string or array, a DEF's locals after it returns) does not come back at once.
-  Both of its results are the same.
-- Dropped strings and arrays are freed on demand. A dropped string of 100,000
-  characters stays counted in `FREEMEM` after `PRINT`, a loop, two `VSYNC`s
-  and `WAIT 60`. Making 16 million characters 20 times over, with or without
-  `VSYNC`, takes `FREEMEM` through 100662224, 67107728, 33553232 and back to
-  100662224, and never fails: what was dropped goes when the next request
-  would not fit (TEST52).
+- `FREEMEM` is 134216720 at start, and the program and its numeric variables
+  take none of it. `FREEMEM OUT A,B` gives the same in both.
+- `FREEMEM` counts a string of N characters as 2N rounded up to a multiple of
+  128 bytes, plus 64 (TEST57). Strings of up to 24 characters take nothing.
+
+  | Characters | 25, 64 | 65, 128 | 129 | 256 | 257 | 1000 |
+  |---|---|---|---|---|---|---|
+  | Bytes | 192 | 320 | 448 | 576 | 704 | 2112 |
+
+- `FREEMEM` counts an array as its elements (Int 4, Real and string 8) rounded
+  up to a multiple of 64 bytes, at least 128, plus 64 (TEST57). Arrays of up to
+  64 bytes of elements take nothing.
+
+  | Array | 17 ints | 33 ints | 49 ints | 1000 ints | 9 reals | 17 reals | 100 reals | `DIM A[100000]` |
+  |---|---|---|---|---|---|---|---|---|
+  | Bytes | 192 | 256 | 320 | 4096 | 192 | 256 | 896 | 800064 |
+
+- `GARRAY` and `TARRAY` take nothing.
+- Memory let go of (emptying a string or array, a DEF's locals after it returns)
+  does not come back at once.
+- Dropped strings and arrays are freed on demand (TEST52). A dropped string of
+  100,000 characters stays counted in `FREEMEM` after `PRINT`, a loop, two
+  `VSYNC`s and `WAIT 60`. Making 16 million characters 20 times over, with or
+  without `VSYNC`, takes `FREEMEM` through 100662224, 67107728, 33553232 and
+  back to 100662224, and never fails: what was dropped goes when the next
+  request would not fit.
 
 ### `Out of memory`
 
 - Length is limited by memory only: 63,000,000 characters, 33,000,000 ints and
   16,000,000 reals all work (TEST57).
-- `Out of memory` comes from what fits in `FREEMEM`'s 134216720 bytes
-  (TEST51). `"A"*N` and `S$+S$` make 33,554,432 characters but not
-  67,108,864. `ARRAY#` makes 8,388,608 reals but not 16,777,216. Of five
-  `DIM X%[8000000]`, the fifth fails with 6.2 million bytes free. `RESIZE`
-  and `COPY` grow to 16.7 million integers but not 33.5 million.
-- The message names the command for functions and commands
+- `Out of memory` comes from what fits in `FREEMEM`'s 134216720 bytes (TEST51).
+  - `"A"*N` and `S$+S$` make 33,554,432 characters but not 67,108,864.
+  - `ARRAY#` makes 8,388,608 reals but not 16,777,216.
+  - Of five `DIM X%[8000000]`, the fifth fails with 6.2 million bytes free.
+  - `RESIZE` and `COPY` grow to 16.7 million integers but not 33.5 million.
+- `Out of memory`'s message names the command for functions and commands
   (`Out of memory in 0:68(ARRAY#)`, also `(RESIZE)`, `(INSERT)` and `(COPY)`)
   but not for `*`, `+` or `DIM` (`Out of memory in 0:54`). Its number is 11.
 
 ### Blocks that move
 
-- Growing an array needs the new block beside the old: `INSERT` of
-  16,777,216 integers into 15,728,641 fails though the 130 MB it comes to
-  would fit alone, and `RESIZE` from 8 to 16 million, 100 MB together, works
-  (TEST51). `PUSH` is no different: with `DIM A%[15999999]` and `DIM F[8000000]`,
-  6216592 free, the first `PUSH` works with `FREEMEM` unchanged, its block being
-  as large as it was, and the second is `Out of memory (PUSH)` (TEST57). The block moves each time its size changes, and `UNSHIFT`,
+- `INSERT` and `RESIZE` growing an array need the new block beside the old:
+  `INSERT` of 16,777,216 integers into 15,728,641 fails though the 130 MB it
+  comes to would fit alone, and `RESIZE` from 8 to 16 million, 100 MB together,
+  works (TEST51).
+- `PUSH` is no different: with `DIM A%[15999999]` and `DIM F[8000000]`, 6216592
+  free, the first `PUSH` works with `FREEMEM` unchanged, its block being as
+  large as it was, and the second is `Out of memory (PUSH)` (TEST57). The block
+  moves each time its size changes, and `UNSHIFT`,
   string arrays and strings (each 64 characters) do the same.
-- A block that moved leaves a hole, so near the end `FREEMEM` overstates what can
-  be had (TEST58). With 1296 bytes free beyond a block's size: `UNSHIFT` on
-  `DIM A%[100000]` (400064 bytes, 401360 free) gets to length 100016 with 401296
-  free and then is `Out of memory (UNSHIFT)`; `PUSH` on `DIM A$[100000]` (800064,
-  801360 free) gets to 100008 with 801296 free; `PUSH` on a string of 512000
-  characters (1024064, 1025360 free) gets to 512064 with 1025232 free, each then
-  `Out of memory (PUSH)`.
-- A shrinking block moves too, and `POP` with no room for the new one leaves the
-  length as it is, with no error. With `DIM A%[1000001]` and 1000016 free, a
-  `PUSH` and a `POP` stay in the block, the next `POP` leaves the length at 1000001
-  and `FREEMEM` at 1000016, and a `PUSH` after it gives 1000002. Twenty `POP`s in a
-  row still leave 1000001 (TEST58). So a block stays only while its size is the
-  same, not for 64 bytes more. Then `POP` still gives the last element, the same
-  one each time; `SHIFT` still gives the first, with the rest moved down and the
-  last there twice; a string's `POP` and `SHIFT` and an array of reals or strings
-  go the same way; and `ENVSTAT` shows nothing (TEST59). The size makes no
-  difference: `DIM A%[1601]` with 5008 free, too little for its next block down of
-  6464, keeps its length and gives 901 each time with `FREEMEM` at 5008 (TEST59).
-  `REMOVE` moves the rest down and then is `Out of memory (REMOVE)`: `REMOVE D%,1`
-  on 1000001 ints leaves the length, `D%[0]`=11, `D%[1]`=13, `D%[999999]`=901, and
-  the last, `D%[1000000]`, read past the block, was 0 the one time it was seen.
-  `RESIZE` to smaller is `Out of memory (RESIZE)` having changed nothing (TEST59).
-- A string constant takes no block of its own until it is stored. With 100048
-  free, `X$=POP("ABC"+"X"*100027+"XYZ")` gives `Z` and leaves 100048, no error, where
-  `SHIFT` of it, which needs a copy, is `Out of memory (SHIFT)`. Stored in `S$` the
-  same constant takes 200256 bytes (TEST59).
+- `FREEMEM` overstates what can be had near the end, as a block that moved
+  leaves a hole (TEST58). With 1296 bytes free beyond a block's size:
+  - `UNSHIFT` on `DIM A%[100000]` (400064 bytes, 401360 free) gets to length
+    100016 with 401296 free and then is `Out of memory (UNSHIFT)`.
+  - `PUSH` on `DIM A$[100000]` (800064, 801360 free) gets to 100008 with 801296
+    free, and then is `Out of memory (PUSH)`.
+  - `PUSH` on a string of 512000 characters (1024064, 1025360 free) gets to
+    512064 with 1025232 free, and then is `Out of memory (PUSH)`.
+- `POP` moves a shrinking block too, and with no room for the new one leaves the
+  length as it is, with no error (TEST58). With `DIM A%[1000001]` and 1000016
+  free, a `PUSH` and a `POP` stay in the block, the next `POP` leaves the length
+  at 1000001 and `FREEMEM` at 1000016, and a `PUSH` after it gives 1000002.
+  Twenty `POP`s in a row still leave 1000001. So a block stays only while its
+  size is the same, not for 64 bytes more.
+- With no room for the smaller block (TEST59):
+  - `POP` still gives the last element, the same one each time.
+  - `SHIFT` still gives the first, with the rest moved down and the last there
+    twice.
+  - A string's `POP` and `SHIFT` and an array of reals or strings go the same
+    way, and `ENVSTAT` shows nothing.
+  - The size makes no difference: `DIM A%[1601]` with 5008 free, too little for
+    its next block down of 6464, keeps its length and gives 901 each time with
+    `FREEMEM` at 5008.
+  - `REMOVE` moves the rest down and then is `Out of memory (REMOVE)`:
+    `REMOVE D%,1` on 1000001 ints leaves the length, `D%[0]`=11, `D%[1]`=13,
+    `D%[999999]`=901, and the last, `D%[1000000]`, read past the block, was 0
+    the one time it was seen.
+  - `RESIZE` to smaller is `Out of memory (RESIZE)` having changed nothing.
+- A string constant takes no block of its own until it is stored (TEST59). With
+  100048 free, `X$=POP("ABC"+"X"*100027+"XYZ")` gives `Z` and leaves 100048, no
+  error, where `SHIFT` of it, which needs a copy, is `Out of memory (SHIFT)`.
+  Stored in `S$` the same constant takes 200256 bytes.
 - `A%=LOADV("DAT:Q")` makes the new array beside the old: 10 MB of file with
-  4216464 free is `Out of memory (LOADV)`. `LOADV "DAT:Q",A%` fills the array,
-  gives no error and leaves `FREEMEM` as it was (TEST57). If the file is longer,
-  the array grows the way `RESIZE` does, and `A$=LOADV("TXT:Q")` makes its string
-  the same way. Seen in TEST58: `S$=LOADV("TXT:Q")` of
-  1,000,000 characters (2000064 bytes) over a string as long is `Out of memory
-  (LOADV)` with 1000016 free and works with 3000016 free. `LOADV "DAT:Q",A%` of a
-  file of 9 million integers into `DIM A%[8000000]` is `Out of memory (LOADV)` with
-  34000016 free and works with 38000016 free, leaving 34000016.
+  4216464 free is `Out of memory (LOADV)` (TEST57).
+- `LOADV "DAT:Q",A%` fills the array, gives no error and leaves `FREEMEM` as it
+  was (TEST57). If the file is longer, the array grows the way `RESIZE` does,
+  and `A$=LOADV("TXT:Q")` makes its string the same way.
+- `LOADV` as TEST58 saw it:
+  - `S$=LOADV("TXT:Q")` of 1,000,000 characters (2000064 bytes) over a string as
+    long is `Out of memory (LOADV)` with 1000016 free and works with 3000016
+    free.
+  - `LOADV "DAT:Q",A%` of a file of 9 million integers into `DIM A%[8000000]` is
+    `Out of memory (LOADV)` with 34000016 free and works with 38000016 free,
+    leaving 34000016.
 
 ### Strings worked out as the program compiles
 
-- Constant strings are worked out as the program compiles, so what is too
-  long stops it before any of it runs (TEST52, TEST57). `?LEN("A"*(1<<N))`
-  works up to N=14 in direct mode, then is `Out of code memory`; in a program it
-  works up to N=20, then is `Out of memory`, in slots 0 and 1, with nearly all
-  memory free. Through a variable the same size works. Each statement has 4 MiB to compile in, from which every string worked out on
-  the way takes 24 bytes and its characters, rounded up to 8 bytes, and stays
-  until the statement ends: `"A"*1000000+"B"*1000000` is too long there, as are
-  `?"A"*1500000,"B"*1500000` and `A=LEN("A"*2097140)`, each `Out of memory` at its
-  line (TEST58): each constant and the rest of the statement take from the same
-  4 MiB. `A=LEN("A"*2097068)` compiles and prints, and
-  2097069 and 2097116 are `Out of memory` as it compiles (TEST59), which is 168
-  bytes for such a statement, none of them for the variable it stores to. A string
-  then goes into the code, which is 32768 16-bit words in direct mode and
-  4194304 in a slot, taking a word a character plus its length: of three lines of
-  `A=LEN("A"*2000000)`, the third is `Out of code memory` (TEST58).
+- Constant strings are worked out as the program compiles, so what is too long
+  stops it before any of it runs (TEST52, TEST57).
+- `?LEN("A"*(1<<N))` works up to N=14 in direct mode, then is
+  `Out of code memory`. In a program it works up to N=20, then is
+  `Out of memory`, in slots 0 and 1, with nearly all memory free. Through a
+  variable the same size works.
+- Each statement has 4 MiB to compile in. Every string
+  worked out on the way takes 24 bytes and its characters, rounded up to 8
+  bytes, from those 4 MiB and stays until the statement ends.
+  - `"A"*1000000+"B"*1000000` is too long, as are `?"A"*1500000,"B"*1500000` and
+    `A=LEN("A"*2097140)`, each `Out of memory` at its line (TEST58): each
+    constant and the rest of the statement take from the same 4 MiB.
+  - `A=LEN("A"*2097068)` compiles and prints, and 2097069 and 2097116 are
+    `Out of memory` as it compiles (TEST59). That leaves 168 bytes for such a
+    statement, none of them for the variable it stores to.
+- A string then goes into the code, which is 32768 16-bit words in direct mode
+  and 4194304 in a slot, taking a word a character plus its length. Of three
+  lines of `A=LEN("A"*2000000)`, the third is `Out of code memory` (TEST58).
 
 ## System settings
 
 ### `SYSPARAM`
 
-- `SYSPARAM` takes names in lower case too. `LANG` is `ja` on a Switch
-  set to Japanese. `SYSBEEP` starts at 1, `KEYREPEAT` at 20 and 3, and
-  `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`, `#TOOL/GAHAKU.PRG` and
-  nothing.
-- Items that can only be read can also be read with `OUT`
+- `SYSPARAM` takes names in lower case too.
+- `SYSPARAM`'s `LANG` is `ja` on a Switch set to Japanese. `SYSBEEP` starts at
+  1, `KEYREPEAT` at 20 and 3, and `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`,
+  `#TOOL/GAHAKU.PRG` and nothing.
+- `SYSPARAM` items that can only be read can also be read with `OUT`
   (`SYSPARAM "LANG" OUT L$`).
-- An unknown name is `Illegal system argument name`. Setting an item
-  that can only be read, or reading `KEYREPEAT` as a value, is `Wrong
-  number of OUT arguments`.
-- A program run after one that set `MOUSECURSOR` to 1 reads 0 again;
-  `END` leaves it set, so direct mode still reads 1.
+- `SYSPARAM` of an unknown name is `Illegal system argument name`. Setting an
+  item that can only be read, or reading `KEYREPEAT` as a value, is
+  `Wrong number of OUT arguments`.
+- `MOUSECURSOR` reads 0 again in a program run after one that set it to 1. `END`
+  leaves it set, so direct mode still reads 1.
 
 ### `HELPGET` and `HELPINFO`
 
 - `HELPGET` and `HELPINFO` read the help of the console's language.
-  Pages count from 0; colored runs come as position, length and an
-  opaque color (`&HFFF39800`), in an array one run wide when no line
-  has more. Names may be in lower case. `HELPINFO OUT` names the word at
-  the editor's cursor at that moment. `HELPINFO("NAME")` works as a
-  function.
+- `HELPGET` counts pages from 0. Colored runs come as position, length and an
+  opaque color (`&HFFF39800`), in an array one run wide when no line has more.
+- `HELPGET` and `HELPINFO` take names in lower case too.
+- `HELPINFO OUT` names the word at the editor's cursor at that moment.
+- `HELPINFO("NAME")` works as a function.
 - `HELPGET` of a name the help does not have gives four empty arrays of strings
-  (`TYPEOF` 5, `LEN` 0). `HELPINFO("NOSUCHNAME")` is no error either: it gives an array,
-  so that `?` of it is `Type mismatch (PRINT:1)`. (TEST63)
+  (`TYPEOF` 5, `LEN` 0). (TEST63)
 - `HELPGET "NOSUCHNAME",0 OUT ...` gives no error. (TEST62)
+- `HELPINFO("NOSUCHNAME")` is no error either: it gives an array, so that `?` of
+  it is `Type mismatch (PRINT:1)`. (TEST63)
 
 ### Other system commands
 
-- `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty
-  string is `Can't use empty string`, a user-defined character `Can't
-  use user-defined character`.
-- `KEY` 1 to 5 start as `FILES`, `LOAD"`, `SAVE"`, `LIST ERR` and `RUN`
-  (the settings can change them). `KEY` ignores a string over 256
-  characters; `PUSHKEY` from 64 is `String is too long`.
-- `XSUBSCREEN` and the undocumented `UISTATE` are there for the main
-  program too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
-- `UISTATE(2)` read 648 at that point, and 0, 1, 3, 4, 5 read 0. (TEST63)
+- `FONTINFO "A",16` is 16,1040 and `FONTINFO &H3042,8` 392,32. An empty string
+  is `Can't use empty string`, a user-defined character
+  `Can't use user-defined character`.
+- `KEY` 1 to 5 start as `FILES`, `LOAD"`, `SAVE"`, `LIST ERR` and `RUN` (the
+  settings can change them).
+- `KEY` ignores a string over 256 characters; `PUSHKEY` from 64 is
+  `String is too long`.
+- `XSUBSCREEN` and the undocumented `UISTATE` are there for the main program
+  too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
+- `UISTATE(2)` read 648 after a clean start of SmileBASIC, and 0, 1, 3, 4, 5
+  read 0. (TEST63)
 - `UISTATE(5)` is 0, and `UISTATE(6)` `Out of range (UISTATE:1)`. (TEST62)
-- `PERFEND()` gives microseconds; `PERFBEGIN` and `PERFEND` show no
-  gauge on their own. Without a `PERFBEGIN`, `PERFEND` counts from when
-  SmileBASIC started.
+- `PERFEND()` gives microseconds; `PERFBEGIN` and `PERFEND` show no gauge on
+  their own. Without a `PERFBEGIN`, `PERFEND` counts from when SmileBASIC
+  started.
 
 ## Editor
 
-- After an error, F4 puts the cursor at the start of the statement that
-  failed, syntax errors included.
-- The editor shows 21, 28 or 43 lines of code, in the 8- and the
-  16-pixel font alike.
-- It colors TO, STEP, CONST and ENUM as reserved words, though the
+- F4 after an error puts the cursor at the start of the statement that failed,
+  syntax errors included.
+- The editor shows 21, 28 or 43 lines of code, in the 8- and the 16-pixel font
+  alike.
+- The editor colors TO, STEP, CONST and ENUM as reserved words, though the
   language specification does not reserve them, and OPTION as a command.
 - Ctrl+Enter makes an empty line below the cursor's and moves to it.
-- Ctrl+K puts a quote at column 0 of each line, also before lines that
-  are comments already. Only Ctrl+Shift+K looks for one.
+- Ctrl+K puts a quote at column 0 of each line, also before lines that are
+  comments already. Only Ctrl+Shift+K looks for one.
 - Finding ignores the case of letters.
-- Ctrl+/ splits the display side by side, then one above the other,
-  then joins it again. Both sides show the slot being edited at first.
-- Ctrl+S asks for a name on the on-screen keyboard, titled "Slot 0:
-  Write file", with the name the slot was saved as filled in. Ctrl+L
-  opens a list of the project's files, with a way up to the projects.
-- While typing in the editor, a list of SmileBASIC's words starting with
-  what is typed shows from the first letter. The program's own names are
-  not in it.
+- Ctrl+/ splits the display side by side, then one above the other, then joins
+  it again. Both sides show the slot being edited at first.
+- Ctrl+S asks for a name on the on-screen keyboard, titled "Slot 0: Write file",
+  with the name the slot was saved as filled in.
+- Ctrl+L opens a list of the project's files, with a way up to the projects.
+- A list of SmileBASIC's words starting with what is typed shows from the first
+  letter while typing in the editor. The program's own names are not in it.
