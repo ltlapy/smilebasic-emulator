@@ -1,26 +1,22 @@
 # SmileBASIC emulator
 
-An emulator for SmileBASIC 4 programs, written in Rust with SDL3. Still in
-development.
+An emulator for SmileBASIC 4 programs, written in Rust with SDL3.
+
+Still in development.
 
 ## Features
 
-- [x] SmileBASIC 4's language, console, graphics, sprites, layers and sound;
-  [differences.md](docs/differences.md) lists what differs on purpose
-- [x] SmileBASIC 4's own font, sprites and sounds, imported from your own copy
-- [x] Program editor, project manager and subprograms
-- [x] Debugger with breakpoints, stepping and watches
-- [x] GPU rendering, with the CPU as a fallback
-- [ ] Windows and macOS: both are targets, but it has only been run on Linux on
-  x86-64
-- [ ] SmileBASIC 3 and Petit Computer profiles
+- [x] SmileBASIC 4 compatible ([differences](docs/differences.md))
+- [x] Rich debugging tools
+- [x] GPU rendering
+- [ ] SmileBASIC 3 and Petit Computer
 
 ## Building
 
 ```sh
 cargo build --release
 
-# Optimized build, in target/dist: up to 16% faster, takes twice as long to build
+# Optimized build (up to 16% faster, x2 build time)
 cargo build --profile dist
 ```
 
