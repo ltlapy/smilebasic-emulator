@@ -75,27 +75,28 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 
 ## Buttons
 
-Gamepads work as controllers 1 to 4. The keyboard also presses controller
-1's buttons, unless *Use the keyboard as a controller* is turned off in the Run
-menu:
+The keyboard presses controller 1's buttons, unless you turn off Run > *Use the
+keyboard as a controller*. A key the program reads with `KEYBOARD` or `INKEY$`
+presses no button until a second after the program stops reading it. The mouse's
+left button touches the screen.
 
 | Key | Button |
 |---|---|
-| Cursor keys | Up, down, left, right |
+| Cursor keys | D-pad |
 | Z, X, A, S | A, B, Y, X |
 | Q, W | L, R |
 | 1, 2 | ZL, ZR |
 
-A key a program reads itself, with `KEYBOARD` or `INKEY$`, presses no button
-until a second after the program stops reading it. So typing programs get
-their letters, and a game keeps these keys outside its name entry.
+## Gamepad in the projects
 
-Without a gamepad, the first time a program reads the buttons, a picture of
-these keys shows for a few seconds. The mouse's left button touches the screen.
+The menu needs the mouse or keys.
 
-In direct mode, a gamepad's − (Select) opens the projects. There A runs the
-project's MAIN.PRG or the selected file (or views a file that is not a
-program), X moves between the projects and the files, L and R move a page, Y
-expands the info and B goes back. The left stick works as the D-pad there, and
-holding up or down repeats, faster the longer it is held. The menu opens with
-the mouse or keys only.
+| Key | Action |
+|---|---|
+| − (Select) | Open the projects, in direct mode |
+| A | Run MAIN.PRG or the selected file |
+| X | Switch between projects and files |
+| L, R | Move a page |
+| Y | Expand the info |
+| B | Go back |
+| Left stick | D-pad |
