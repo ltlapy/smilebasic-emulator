@@ -337,7 +337,7 @@ scene.
   rounding, so a tinted, filtered layer can be 1 off.
 - `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame uses
   SDL's pixel art filter.
-- Drawn by the GPU (File > Settings > Screen), a frame differs from the CPU's, which
+- With GPU rendering (File > Settings > Screen > Renderer), a frame differs from the CPU's, which
   is what `smilebasic-check` always uses, in these ways. Most pixels that differ are 1
   off, the GPU's rounding, which is SmileBASIC 4's own kind: on the frames compared with
   it the GPU comes closer. Rounding adds up over layers, to 2 where they stack. A blur

@@ -533,12 +533,12 @@ impl Gpu {
                 return (None, "CPU (SB_GPU)".to_string());
             }
             (Ok(spec), _) => spec,
-            (Err(_), Renderer::Cpu) => return (None, "CPU (the setting)".to_string()),
+            (Err(_), Renderer::Cpu) => return (None, "CPU (setting)".to_string()),
             (Err(_), Renderer::Auto) => "1".to_string(),
         };
         match Gpu::try_start(canvas, &spec) {
             Ok(gpu) => {
-                let on = format!("GPU, {}", gpu.driver_name(canvas));
+                let on = format!("GPU ({})", gpu.driver_name(canvas));
                 (Some(gpu), on)
             }
             Err(why) => {
@@ -560,7 +560,7 @@ impl Gpu {
     fn try_start(canvas: &Canvas<Window>, spec: &str) -> Result<Gpu, String> {
         // Drawing triangles there would only be the CPU again, less exactly.
         if canvas.renderer_name == "software" {
-            return Err("the software renderer".to_string());
+            return Err("software renderer".to_string());
         }
         let alone = std::env::var_os("SB_GPU_ALONE").is_some();
         let renderer = match alone {
@@ -569,7 +569,7 @@ impl Gpu {
             false => canvas.raw(),
         };
         if renderer.is_null() {
-            return Err("no GPU renderer".to_string());
+            return Err("no renderer for GPU rendering".to_string());
         }
         let check_every = match spec.split_once(':') {
             Some(("check", n)) => Some(n.parse().unwrap_or(1).max(1)),
@@ -591,7 +591,7 @@ impl Gpu {
                     // SAFETY: it was made above, for this alone.
                     unsafe { SDL_DestroyRenderer(renderer) };
                 }
-                return Err(format!("the self-test failed, {why}"));
+                return Err(format!("start-up test failed, {why}"));
             }
         };
         let gpu = Gpu::on(renderer, on_gl, alone, spec == "sync", check_every, dump);

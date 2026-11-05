@@ -362,10 +362,9 @@ const PAGES: &[Page] = &[
     Page {
         title: "Screen",
         rows: &[Row {
-            label: "Drawn by",
-            about: "Auto: the GPU, where a test at start-up finds it draws as the CPU \
-                    does, and otherwise the CPU. CPU: always the CPU, exact but slower. \
-                    Help > About says which is in use.",
+            label: "Renderer",
+            about: "Auto uses GPU rendering if the start-up test passes. CPU is exact \
+                    but slower. Help > About shows which is in use.",
             control: Control::Choice(
                 &["Auto", "CPU"],
                 |s| match s.renderer {

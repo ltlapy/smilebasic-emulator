@@ -26,7 +26,7 @@ impl Language {
     }
 }
 
-/// Who draws the screens: the GPU where a test at start-up passes, or the CPU always.
+/// What draws the screens: GPU rendering if a test at start-up passes, or CPU always.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Renderer {
     Auto,

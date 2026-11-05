@@ -22,8 +22,8 @@ takes twice as long and runs up to 16% faster.
 SDL3 is built from source. On Linux, install the X11, Wayland and audio
 development headers listed in SDL's `docs/README-linux.md` first.
 
-File > Settings > Screen picks who draws the screens: the CPU, or the GPU where a
-test at start-up finds it draws the same.
+File > Settings > Screen > Renderer: Auto uses GPU rendering if the start-up test
+passes; CPU is exact but slower.
 
 ## Resources
 

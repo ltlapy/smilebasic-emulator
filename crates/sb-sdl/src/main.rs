@@ -379,7 +379,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut bench = bench::Bench::from_env();
     if std::env::var_os("SB_GPU_GOLDEN").is_some() {
         if canvas.renderer_name == "software" {
-            println!("no GPU to try: the software renderer");
+            println!("nothing to try: software renderer");
             return Ok(());
         }
         let passed = gpu_golden::report(canvas.raw());
@@ -1519,7 +1519,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
                             "Bundled fonts: SIL Open Font License 1.1.".to_string(),
                             "GeneralUser GS: its own license.".to_string(),
                             String::new(),
-                            format!("Screens drawn by: {drawn_by}"),
+                            format!("Renderer: {drawn_by}"),
                         ];
                         let about = Dialog::notice("About", lines, (display_w, display_h));
                         dialog = Some((about, Asking::Notice));
@@ -2126,7 +2126,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         let refused = gpu.iter().chain(&sub_gpu).any(gpu::Gpu::given_up);
         if refused {
             eprintln!("SB_GPU: the renderer refused frames; staying on the CPU");
-            drawn_by = "CPU (the renderer refused frames)".to_string();
+            drawn_by = "CPU (frames refused by the driver)".to_string();
         }
         if gpu_off || refused {
             (gpu, sub_gpu, gpu_off) = (None, None, false);
@@ -2199,7 +2199,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
             // one is drawn again next time round, once there is no GPU path.
             if on_gpu && smart.on_cpu() {
                 eprintln!("SB_GPU: the doubled frame was refused; staying on the CPU");
-                drawn_by = "CPU (the doubled frame was refused)".to_string();
+                drawn_by = "CPU (doubled frame refused by the driver)".to_string();
                 gpu_off = true;
             }
         } else {
