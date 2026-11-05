@@ -5,6 +5,15 @@ small differences between builds matter on the low-end machines it aims
 at. Timing alone cannot show them: moving code around changes times by a
 few percent with no change in the work done.
 
+## Which build
+
+`cargo build --release` is the everyday build. `cargo build --profile dist` is what
+ships, with whole-program optimization, in `target/dist`. Its numbers are the ones a
+user gets, so give them too when reporting a result; compare `release` with `release`
+while working, as a `dist` build takes twice as long. Against `release`, on one x86-64
+desktop: cycles TPRINT -16%, the BASIC scenes -8 to -10%, LCOMP -6.5%, ELE2020 -5.5%;
+the check binary 6.02 to 5.07 MB.
+
 ## Comparing two builds
 
 Count instructions on a run that does the same work each time:
