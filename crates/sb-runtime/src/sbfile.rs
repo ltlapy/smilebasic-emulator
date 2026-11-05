@@ -172,6 +172,13 @@ pub fn parse(bytes: &[u8]) -> Result<File, FileError> {
     let stored = bytes
         .get(HEADER_SIZE..HEADER_SIZE.saturating_add(size))
         .ok_or(FileError::TooShort)?;
+    // Arrays are read by their own sizes. Some files' size leaves out the
+    // array's header, so it goes on to the signature.
+    let whole_array = !compressed && kind == Kind::Data && stored.starts_with(b"PCBN000");
+    let stored = match bytes.get(HEADER_SIZE..bytes.len().saturating_sub(FOOTER_SIZE)) {
+        Some(all) if whole_array && all.len() > stored.len() => all,
+        _ => stored,
+    };
     let body = if compressed {
         miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(stored, MAX_BODY)
             .map_err(|_| FileError::Decompress)?
@@ -485,6 +492,20 @@ pub fn meta_body(meta: &ProjectMeta) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The array is read by its own sizes, whatever the file's size says.
+    #[test]
+    fn a_size_without_the_arrays_header_still_reads() {
+        let body = data_body(&Data {
+            dims: vec![2],
+            values: DataValues::Int(vec![7, 8]),
+        });
+        let mut bytes = container(Kind::Data, usage::DAT, DATE, &body, false);
+        let short = (body.len() - DATA_HEADER) as u32;
+        bytes[8..12].copy_from_slice(&short.to_le_bytes());
+        let (data, _) = read_data(&bytes).unwrap();
+        assert_eq!(data.values, DataValues::Int(vec![7, 8]));
+    }
 
     #[test]
     fn sixteen_bit_pixels() {
