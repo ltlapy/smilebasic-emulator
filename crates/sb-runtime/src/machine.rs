@@ -13,6 +13,8 @@ use sb_core::vm::{Breakpoint, Call, DebugNote, Status, Step, Vm};
 use sb_core::watch::Watch;
 
 use crate::complete::Options;
+use crate::confirm::Confirm;
+use crate::dialog::{DialogAnswer, ProgramDialog};
 use crate::editor::{Editor, Marks};
 use crate::framebuffer::Framebuffer;
 use crate::prg::SlotEdit;
@@ -2349,13 +2351,18 @@ impl Machine {
         };
         let live = self.rt.input.live;
         let idle = idle(&live);
-        if !sub.rt.focus {
+        if sub.rt.focus {
+            sub.rt.keys.extend(self.rt.keys.drain(..));
+            sub.rt.typed.extend(self.rt.typed.drain(..));
+            sub.rt.pasted.extend(self.rt.pasted.drain(..));
+        }
+        // A dialog answers to the controls wherever the focus is, and the
+        // other side sees nothing pressed meanwhile.
+        let sub_asks = sub.rt.program_dialog().is_some();
+        if !sub_asks && (!sub.rt.focus || self.rt.program_dialog().is_some()) {
             sub.rt.input.live = idle;
             return;
         }
-        sub.rt.keys.extend(self.rt.keys.drain(..));
-        sub.rt.typed.extend(self.rt.typed.drain(..));
-        sub.rt.pasted.extend(self.rt.pasted.drain(..));
         self.rt.input.live = idle;
         // The pointer, in the sub-screen's pixels.
         let mut mouse = live.mouse;
@@ -2505,6 +2512,53 @@ impl Machine {
                 self.rt.pasted.extend(sub.rt.pasted.drain(..));
             }
         }
+    }
+
+    /// The interpreter whose DIALOG the frontend shows and answers. The
+    /// two wait on one window, the subprogram's first.
+    // UNVERIFIED: which goes first when both ask.
+    fn dialog_side(&mut self) -> &mut Runtime {
+        match &mut self.sub {
+            Some(sub) if sub.rt.program_dialog().is_some() => &mut sub.rt,
+            _ => &mut self.rt,
+        }
+    }
+
+    /// The dialog a program waits on, from either interpreter, whichever
+    /// has the focus.
+    pub fn program_dialog(&self) -> Option<&ProgramDialog> {
+        let sub = self.sub.as_ref();
+        (sub.and_then(|s| s.rt.program_dialog())).or_else(|| self.rt.program_dialog())
+    }
+
+    /// Closes the dialog [`Machine::program_dialog`] gives with an answer.
+    pub fn answer_dialog(&mut self, answer: DialogAnswer) {
+        self.dialog_side().answer_dialog(answer);
+    }
+
+    /// The question a command waits on, from either interpreter, the
+    /// subprogram's first as with dialogs.
+    pub fn confirmation(&self) -> Option<&Confirm> {
+        let sub = self.sub.as_ref();
+        (sub.and_then(|s| s.rt.confirmation())).or_else(|| self.rt.confirmation())
+    }
+
+    /// Answers the question [`Machine::confirmation`] gives: `true` goes
+    /// ahead.
+    pub fn answer(&mut self, yes: bool) {
+        match &mut self.sub {
+            Some(sub) if sub.rt.confirmation().is_some() => sub.rt.answer(yes),
+            _ => self.rt.answer(yes),
+        }
+    }
+
+    /// The notices of both interpreters since the last call.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        let mut notices = self.rt.take_notices();
+        if let Some(sub) = &mut self.sub {
+            notices.append(&mut sub.rt.take_notices());
+        }
+        notices
     }
 
     /// Whether a subprogram is running.

@@ -57,6 +57,7 @@ use program_dialog::ProgramView;
 use projects::{Memory, Outcome, ProjectManager, Transfer};
 use recovery::{OwnedCreator, Recovery, RendererWatch};
 use sb_profiles::Profile;
+use sb_runtime::confirm::Confirm;
 use sb_runtime::editor::{Mode, Place, is_movement};
 use sb_runtime::font::Font;
 use sb_runtime::help::{Help, Lookup};
@@ -77,7 +78,7 @@ use sdl3::clipboard::ClipboardUtil;
 use sdl3::event::Event;
 use sdl3::event::WindowEvent;
 use sdl3::gamepad::{Axis, Button};
-use sdl3::keyboard::{Keycode, Mod};
+use sdl3::keyboard::{Keycode, Mod, Scancode};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
@@ -467,6 +468,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // Why the renderer has to be replaced, from where it was found out.
     let mut renderer_failed: Option<String> = None;
     let mut watch = RendererWatch::default();
+    // A USB key that reads as down for a frame, for the bench.
+    let mut bench_usb: Option<u8> = None;
     // Renderers to refuse, for the bench.
     let mut refusals = 0;
     let mut last_wall = SystemTime::now();
@@ -617,6 +620,23 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 _ if what.starts_with("refuse:") => {
                     refusals = what[7..].parse().unwrap_or(0);
                     None
+                }
+                _ if what.starts_with("usb:") => {
+                    bench_usb = what[4..].parse().ok();
+                    None
+                }
+                _ if what.starts_with("key:") => {
+                    Keycode::from_name(&what[4..]).map(|key| Event::KeyDown {
+                        timestamp: 0,
+                        window_id: canvas.window().id(),
+                        keycode: Some(key),
+                        // Any will do, but SDL's event must have one.
+                        scancode: Some(Scancode::A),
+                        keymod: Mod::NOMOD,
+                        repeat: false,
+                        which: 0,
+                        raw: 0,
+                    })
                 }
                 _ if what.starts_with("sleep:") => {
                     let ms = what[6..].parse().unwrap_or(0);
@@ -933,8 +953,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             source.set(usize::from(from_editor));
             // The event is on the editor, wherever it shows, unless a
             // subprogram beside it has the keys...
-            let on_editor =
-                machine.is_editing() && (!apart || from_editor) && !machine.sub_has_focus();
+            let on_editor = machine.is_editing()
+                && (!apart || from_editor)
+                && !machine.sub_has_focus()
+                && (from_editor || program_dialog.is_none());
             // ...or on the window it shows in when open, or on the window
             // with the menu bar and the emulator's windows.
             let editor_window = !apart || from_editor;
@@ -965,7 +987,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // After an error of the program that Projects ran, only A or
             // Enter, freshly pressed, does anything on the keyboard and
             // the pad; the window and its menu bar work as ever.
-            if machine.home_waiting() && !modal_shown!() {
+            if machine.home_waiting() && !modal_shown!() && program_dialog.is_none() {
                 match &event {
                     Event::KeyDown {
                         keycode: Some(Keycode::Return | Keycode::KpEnter),
@@ -1069,8 +1091,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 };
                 match (answer, asking.clone()) {
                     (Some(Answer::Accept), Asking::Quit) => break 'running,
-                    (Some(answer), Asking::Command) => {
-                        machine.rt.answer(answer == Answer::Accept);
+                    (Some(answer), Asking::Command(_)) => {
+                        machine.answer(answer == Answer::Accept);
                         dialog = None;
                     }
                     (Some(Answer::Accept), Asking::Overwrite(name)) => {
@@ -1114,7 +1136,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     _ => (false, None),
                 };
                 if let Some(answer) = answer {
-                    machine.rt.answer_dialog(answer);
+                    machine.answer_dialog(answer);
                 }
                 if taken {
                     continue;
@@ -2087,6 +2109,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         .edit()
                         .key_select(special_key(key).expect("checked"));
                 }
+                // What a program's dialog does not take is lost, or it
+                // would reach the prompt or the program beside it.
+                Event::KeyDown { .. } if program_dialog.is_some() && !from_editor => {}
                 Event::KeyDown {
                     keycode: Some(key), ..
                 } => {
@@ -2145,7 +2170,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let paused = menu.shown && machine.is_running();
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
-        machine.rt.input.live = if modal || paused || machine.editor_has_keys() {
+        let editor_keys = machine.editor_has_keys() && machine.program_dialog().is_none();
+        machine.rt.input.live = if modal || paused || editor_keys {
             State::default()
         } else {
             controls.state(
@@ -2155,6 +2181,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 machine.rt.settings.keyboard_buttons,
             )
         };
+        if let Some(usage) = bench_usb.take() {
+            machine.rt.input.live.set_key(usage, true);
+        }
         if let Ok(path) = font_choice.try_recv() {
             let settings = &mut machine.rt.settings;
             settings.smilebasic_instruments = false;
@@ -2271,18 +2300,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             key_hint.buttons_read(keys, controls.gamepads());
         }
         key_hint.tick();
-        for notice in machine.rt.take_notices() {
+        for notice in machine.take_notices() {
             toasts.push(notice);
         }
-        match (&dialog, machine.rt.confirmation()) {
-            (None, Some(confirm)) => {
+        match (&dialog, machine.confirmation()) {
+            (Some((_, Asking::Command(shown))), Some(confirm)) if shown == confirm => {}
+            (None | Some((_, Asking::Command(_))), Some(confirm)) => {
                 let open = Dialog::ask(confirm, (display_w, display_h));
-                dialog = Some((open, Asking::Command));
+                dialog = Some((open, Asking::Command(confirm.clone())));
             }
-            (Some((_, Asking::Command)), None) => dialog = None,
+            (Some((_, Asking::Command(_))), None) => dialog = None,
             _ => {}
         }
-        match (&program_dialog, machine.rt.program_dialog()) {
+        match (&program_dialog, machine.program_dialog()) {
             (Some(open), Some(shown)) if open.shows(shown) => {}
             (_, Some(shown)) => {
                 program_dialog = Some(ProgramView::new(shown, (display_w, display_h)));
@@ -3251,8 +3281,8 @@ fn side_outcome(
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Asking {
     Quit,
-    /// A command of the running program or direct mode.
-    Command,
+    /// A command of a running program or direct mode, with what it asks.
+    Command(Confirm),
     /// Ctrl+S over another file of this name.
     Overwrite(String),
     /// Ctrl+L over unsaved changes, with the file to load.

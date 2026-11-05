@@ -747,7 +747,7 @@ impl Player {
                 Action::Console => {
                     println!("frame {frame}: the console:");
                     print_rows(&console_rows(m));
-                    for notice in m.rt.take_notices() {
+                    for notice in m.take_notices() {
                         println!("notice: {notice}");
                     }
                 }

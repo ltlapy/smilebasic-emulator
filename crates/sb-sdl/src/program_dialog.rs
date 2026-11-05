@@ -144,8 +144,9 @@ impl ProgramView {
             .map(|i| self.choose(i))
     }
 
-    /// Left, Right and Tab move between the buttons, Enter chooses, and
-    /// Backspace deletes from a name. Returns `None` for keys it leaves
+    /// Left, Right and Tab move between the buttons, Enter chooses, Esc
+    /// chooses the left of two as B does, and Backspace deletes from a
+    /// name. Returns `None` for keys it leaves
     /// alone, and `Some(None)` for keys it took without an answer.
     pub fn key(&mut self, key: Keycode) -> Option<Option<DialogAnswer>> {
         let n = self.labels().len();
@@ -155,6 +156,7 @@ impl ProgramView {
                 Some(None)
             }
             Keycode::Return | Keycode::KpEnter if n > 0 => Some(Some(self.choose(self.focus))),
+            Keycode::Escape if n == 2 => Some(Some(self.choose(0))),
             Keycode::Backspace if matches!(self.dialog.kind, DialogKind::Name { .. }) => {
                 self.name.pop();
                 Some(None)
@@ -260,6 +262,19 @@ mod tests {
             lines: vec!["Hello".to_string()],
             kind,
         }
+    }
+
+    #[test]
+    fn esc_is_the_left_of_two_buttons_and_cancels_a_name() {
+        let key = |kind| ProgramView::new(&dialog(kind), (1280, 720)).key(Keycode::Escape);
+        let two = key(DialogKind::Choice(vec!["No", "Yes"]));
+        assert_eq!(two, Some(Some(DialogAnswer::Choice(0))));
+        assert_eq!(key(DialogKind::Choice(vec!["OK"])), None);
+        let name = DialogKind::Name {
+            initial: "A".to_string(),
+            max: 8,
+        };
+        assert_eq!(key(name), Some(Some(DialogAnswer::Name(None))));
     }
 
     #[test]

@@ -43,7 +43,9 @@
 //!   the F9 tool as a subprogram and `substop` to end it, `lost` as if the
 //!   device were gone, `fail` as if drawing failed, `refuse:N` to have the next N
 //!   tries at a renderer refused, `panic`, `unsaved` to give PRG0 unsaved edits,
-//!   and `sleep:MS` to stop the loop, as a suspend does.
+//!   `sleep:MS` to stop the loop, as a suspend does, `key:NAME` to press the key
+//!   SDL calls NAME, such as `Escape`, and `usb:USAGE` to have KEYBOARD read that
+//!   key as down for a frame, which `key` does not.
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed and what the sound device's buffer went through, so

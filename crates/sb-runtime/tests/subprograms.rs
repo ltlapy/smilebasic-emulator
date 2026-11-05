@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use sb_runtime::Runtime;
 use sb_runtime::confirm::FileConfirm;
+use sb_runtime::dialog::DialogAnswer;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
@@ -654,4 +655,187 @@ fn subrun_takes_lower_case_and_a_file_type() {
         frames(&mut m, 1);
         m.rt.text[4].cls();
     }
+}
+
+/// The sub interpreter's console, as [`rows`] gives the main one's.
+fn sub_rows(m: &Machine) -> Vec<String> {
+    let console = &m.sub_runtime().expect("running").0.text[4];
+    let (w, h) = console.size();
+    (0..h)
+        .map(|y| {
+            let codes: Vec<u16> = (0..w)
+                .map(|x| console.cell(x, y).code)
+                .take_while(|&c| c != 0)
+                .collect();
+            String::from_utf16(&codes).unwrap()
+        })
+        .filter(|r| !r.is_empty())
+        .collect()
+}
+
+const THEN_WAIT: &str = "WHILE 1:VSYNC:WEND\n";
+
+#[test]
+fn a_subprograms_dialog_reaches_the_frontend_and_its_answer_the_subprogram() {
+    let dir = TempDir::new("sub-dialog");
+    let source = format!("DIALOG \"ASKED\",1,\"CAP\"\n?RESULT()\n{THEN_WAIT}");
+    let mut m = machine(&dir, &source);
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    let shown = m.program_dialog().expect("the subprogram's dialog");
+    assert_eq!(shown.caption, "CAP");
+    assert!(m.rt.program_dialog().is_none(), "not the main one's");
+    m.answer_dialog(DialogAnswer::Choice(0));
+    frames(&mut m, 2);
+    assert!(m.program_dialog().is_none());
+    assert_eq!(sub_rows(&m), ["-1"]);
+}
+
+#[test]
+fn the_controls_answer_a_subprograms_dialog_without_the_focus() {
+    let dir = TempDir::new("sub-dialog-pad");
+    let source = format!("ENVFOCUS 0\nVSYNC 5\nDIALOG \"ASKED\",1\n?RESULT()\n{THEN_WAIT}");
+    let mut m = machine(&dir, &source);
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 10);
+    assert!(!m.sub_has_focus() && m.program_dialog().is_some());
+    let a = 1 << sb_runtime::input::A;
+    for buttons in [a, a, 0] {
+        m.rt.input.live.pads[0].buttons = buttons;
+        m.frame();
+        assert_eq!(m.rt.input.live.pads[0].buttons, 0, "not for the main one");
+    }
+    frames(&mut m, 1);
+    assert!(m.program_dialog().is_none());
+    assert_eq!(sub_rows(&m), ["1"]);
+}
+
+#[test]
+fn the_controls_answer_the_main_dialog_while_a_subprogram_has_the_focus() {
+    let dir = TempDir::new("main-dialog-pad");
+    let mut m = machine(&dir, THEN_WAIT);
+    enter(&mut m, "subrun \"sub\"");
+    assert!(m.sub_has_focus());
+    m.set_slot(0, format!("DIALOG \"ASKED\",1\n?RESULT()\n{THEN_WAIT}"));
+    m.run_slot(0);
+    frames(&mut m, 2);
+    assert!(m.program_dialog().is_some() && m.rt.program_dialog().is_some());
+    let a = 1 << sb_runtime::input::A;
+    for buttons in [a, a, 0] {
+        m.rt.input.live.pads[0].buttons = buttons;
+        m.frame();
+        let sub = m.sub_runtime().expect("running").0;
+        assert_eq!(sub.input.live.pads[0].buttons, 0, "not for the subprogram");
+    }
+    frames(&mut m, 1);
+    assert!(m.program_dialog().is_none());
+    assert!(rows(&m).iter().any(|r| r == "1"), "{:?}", rows(&m));
+    assert!(m.sub_has_focus(), "the focus stays where it was");
+    // Past the dialog, the subprogram has the controls again.
+    m.rt.input.live.pads[0].buttons = a;
+    m.frame();
+    assert_eq!(m.rt.input.live.pads[0].buttons, 0);
+    let sub = m.sub_runtime().expect("running").0;
+    assert_eq!(sub.input.live.pads[0].buttons, a);
+}
+
+#[test]
+fn a_subprograms_question_reaches_the_frontend_and_its_answer_the_subprogram() {
+    let dir = TempDir::new("sub-confirm");
+    let source = format!("SAVEV \"TXT:Q\",\"HELLO\"\n?RESULT()\n{THEN_WAIT}");
+    let mut m = machine(&dir, &source);
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    assert!(m.confirmation().is_some() && m.rt.confirmation().is_none());
+    m.answer(false);
+    frames(&mut m, 2);
+    assert!(m.confirmation().is_none());
+    assert_eq!(sub_rows(&m), ["-1"]);
+
+    m.stop_sub();
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    assert!(m.confirmation().is_some());
+    m.answer(true);
+    frames(&mut m, 2);
+    assert_eq!(sub_rows(&m).last().map(String::as_str), Some("1"));
+}
+
+#[test]
+fn with_both_interpreters_asking_each_gets_its_own_answer() {
+    let dir = TempDir::new("both-ask");
+    let source = format!("DIALOG \"SUB\",1\n?RESULT()\n{THEN_WAIT}");
+    let mut m = machine(&dir, &source);
+    enter(&mut m, "subrun \"sub\"");
+    m.set_slot(0, format!("DIALOG \"MAIN\",1\n?RESULT()\n{THEN_WAIT}"));
+    m.run_slot(0);
+    frames(&mut m, 2);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    m.answer_dialog(DialogAnswer::Choice(0));
+    frames(&mut m, 2);
+    assert_eq!(sub_rows(&m), ["-1"]);
+    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
+    m.answer_dialog(DialogAnswer::Choice(1));
+    frames(&mut m, 2);
+    assert!(m.program_dialog().is_none());
+    assert!(rows(&m).iter().any(|r| r == "1"));
+    assert_eq!(sub_rows(&m), ["-1"]);
+}
+
+#[test]
+fn stopping_a_subprogram_takes_its_dialog_and_question_with_it() {
+    let dir = TempDir::new("sub-dialog-stop");
+    let mut m = machine(&dir, "DIALOG \"ASKED\",1\n");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    assert!(m.program_dialog().is_some());
+    m.stop_sub();
+    assert!(m.program_dialog().is_none());
+}
+
+#[test]
+fn a_subprograms_dialog_is_answered_with_the_editor_open() {
+    let dir = TempDir::new("sub-dialog-editor");
+    let source = format!(
+        "XSUBSCREEN 0,0,100,100\nENVFOCUS 0\nVSYNC 5\nDIALOG \"ASKED\",1\n?RESULT()\n{THEN_WAIT}"
+    );
+    let mut m = machine(&dir, &source);
+    m.set_slot(0, "PRINT".to_string());
+    m.toggle_editor();
+    enter_sub_from_editor(&mut m);
+    frames(&mut m, 10);
+    assert!(m.is_editing() && !m.sub_has_focus());
+    assert!(m.program_dialog().is_some());
+    assert!(m.sub_screen().is_some(), "it still shows over the editor");
+    m.answer_dialog(DialogAnswer::Choice(1));
+    frames(&mut m, 2);
+    assert!(m.program_dialog().is_none());
+    assert_eq!(sub_rows(&m), ["1"]);
+    assert_eq!(m.editor().text(), "PRINT");
+}
+
+#[test]
+fn input_in_a_subprogram_takes_the_keys_with_the_focus() {
+    let dir = TempDir::new("sub-input");
+    let mut m = machine(&dir, &format!("INPUT A$\n?\"GOT \";A$\n{THEN_WAIT}"));
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    m.type_text("hi");
+    m.rt.key_press(keys::ENTER);
+    frames(&mut m, 3);
+    let got = sub_rows(&m);
+    assert!(got.iter().any(|r| r == "GOT HI"), "{got:?}");
+}
+
+#[test]
+fn a_subprograms_notices_reach_the_frontend() {
+    let dir = TempDir::new("sub-notice");
+    let mut m = machine(&dir, &format!("SAVEV \"TXT:Q\",\"HELLO\"\n{THEN_WAIT}"));
+    m.rt.settings.file_confirm = FileConfirm::Notify;
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 2);
+    let notices = m.take_notices();
+    assert!(notices.iter().any(|n| n.contains("TXT:Q")), "{notices:?}");
+    assert!(m.take_notices().is_empty());
 }
