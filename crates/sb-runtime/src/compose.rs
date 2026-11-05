@@ -1756,13 +1756,7 @@ fn compose_pixels(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opa
     }
     match mode {
         // The usual case, a plain layer, as one blend a pixel.
-        Compose::Direct | Compose::Normal => {
-            for (d, &l) in dst.iter_mut().zip(layer) {
-                if l != 0 {
-                    *d = over_premultiplied(*d, l);
-                }
-            }
-        }
+        Compose::Direct | Compose::Normal => over_pixels(dst, layer),
         Compose::Add => {
             // Each channel added and held to 255 is a byte's saturating
             // add, which the compiler does many pixels at a time; adding
@@ -1785,6 +1779,16 @@ fn compose_pixels(dst: &mut [u32], layer: &[u32], mode: Compose, color: u32, opa
         }
         Compose::Screen => {
             compose_each::<true>(dst, layer, plain(|p, d, _| d + div255(p * (255 - d))))
+        }
+    }
+}
+
+/// A plain layer's pixels over the frame's.
+#[inline(never)]
+fn over_pixels(dst: &mut [u32], layer: &[u32]) {
+    for (d, &l) in dst.iter_mut().zip(layer) {
+        if l != 0 {
+            *d = over_premultiplied(*d, l);
         }
     }
 }
