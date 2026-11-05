@@ -40,7 +40,10 @@ Still open:
   UNVERIFIED in `raster/text.rs`). For
   larger font types, the font page's corner it reads is marked UNVERIFIED there
   too.
-- The line cursor's width on cells other than 8 pixels, expected of SmileBASIC 4 (marked UNVERIFIED in `text.rs`).
+- The line cursor's width on cells other than 8 pixels (marked UNVERIFIED in
+  `text.rs`).
+- How much of `#GSPRITE`'s settings XSCREEN resets (marked UNVERIFIED in
+  `runtime.rs`, `set_mode`).
 - Ties at angles other than multiples of 90 degrees (R5).
 - The look of direct mode's selected text, from SmileBASIC 4, and LINPUT's
   selection.
@@ -55,13 +58,13 @@ Still open:
 
 | Rule | Where | Status |
 |---|---|---|
-| One rounding per draw: products and blends are exact (each 8-bit value is k/255) and rounded to nearest once when stored: element to layer (or frame), layer to frame, frame to display | `compose::Paint` | C: SmileBASIC 4; TEST49 (every sample within 1, the rest the host GPU's rounding); see pitfalls "How colors are worked out" |
+| One rounding per draw: products and blends are exact (each 8-bit value is k/255) and rounded to nearest once when stored: element to layer (or frame), layer to frame, frame to display | `compose::Paint` | C: TEST49 (every sample within 1, the rest the host GPU's rounding); see pitfalls, "Colors and blending" |
 | Normal blend of an element: `light + d*(1-a)`, one rounding | `compose::Over1`, `Over3`, `Over5` | C: TEST49; TTEST16 |
 | Frames and composed layers hold premultiplied color, alpha as coverage (SmileBASIC 4 keeps transmittance, 255 less it); a layer starts clear; an additive element in a composed layer adds light without coverage | `compose.rs` header | C: pitfalls "An additive sprite inside a composed layer..." |
 | Additive element: `d + light`, the light `t*c*a` exact and rounded once, with saturation, destination alpha kept | `compose::Lit` | C (R1): TEST49 |
 | Sprite color (SPCOLOR) multiplies each channel, alpha included, unrounded, inside the one rounding of the draw | `graphics::Tint`, `compose::Over3` | C (R2): TEST49. A child's link color `floor(a*b/255)`, alpha too, applied parent first (`multiply`): C, TEST56, no misses |
 | Text color (cell color, then TCOLOR) the same, unrounded | `compose::Mixed`, `Over5` | C (R2): TEST49. |
-| An inverted cell, attribute bit 7: see below | `inverted_texel`, `attr::INVERT`, `TextScreen::inverts` | U on the console: notes. C elsewhere: TEST56. Not the INPUT cursor (TEST50) |
+| An inverted cell, attribute bit 7: see below | `inverted_texel`, `attr::INVERT`, `TextScreen::inverts` | U on the console. C elsewhere: TEST56. Not the INPUT cursor (TEST50) |
 | TLOAD, TUPDATE and TCOPY keep all 16 attribute bits; TSAVE, TARRAY and CHKCHR read them | `Cell` | C: TEST56 parts 1 and 4 |
 | Tint is applied to the page pixel before blending | `raster::sprite::draw` | C (R2): TEST49 |
 | Relative color animation `"C+"`: product / 256, rounded down | `anim.rs` | C: pitfalls |
@@ -95,7 +98,7 @@ keeps it, and modes 3 and 4 make it opaque.
 | GRP-1 is white everywhere; GSAMPLE 1 repeats the page, 0 is transparent off it | `sprites::sample`, `Source` | C: manual (SPPAGE, GSAMPLE) |
 | A linked child's offset turns and scales with the parent; the flags decide the child's own image | `Sprites::pose` | C: pitfalls |
 | Children without link bit 0 stay where they showed, Z included, when the parent is cleared | `Sprites::clear` | C: pitfalls ("Z included") |
-| Animated XY, Z, UV and I keep whole numbers in 16 bits and divide, `(from*left + to*gone)/frames`, dropping the fraction. Colors mix in single precision, rounded down. V is in double precision | `anim::mix` | C: pitfalls; TEST47 (R7), TEST56, TEST60 (UV, I), TEST62 (V reads 0.0333333333 in ten decimals) |
+| Animated XY, Z, UV and I keep whole numbers in 16 bits and divide, `(from*left + to*gone)/frames`, dropping the fraction. Colors mix in single precision by the frames left, rounded down. V is in double precision | `anim::mix` | C: pitfalls; TEST47 (R7), TEST56, TEST60 (UV, I), TEST62 (V reads 0.0333333333 in ten decimals) |
 | Rotation and scale kept in single precision, slid as `from*left + to*(1-left)` in single precision and not rounded | `sprites::single`, `anim::mix` | C: pitfalls; TEST48 |
 | SPANIM, TANIM and FADE take their first step at the frame job's first update after the command; no flag for a program that is behind | `Runtime::animate` | C: pitfalls; TEST60 on a Switch 2 |
 | SPDEF's default table when none was imported (grid of 16x16) | `grid_defs` | Stand-in, not a rule. The real table is imported |
@@ -375,7 +378,7 @@ drawn by the GPU path and by the CPU at once, so no frames are kept. They cover:
 - direct mode's hint, list, cursor and selection, and sub screens.
 
 Each has a limit on the pixels more than 2 off, and at most 0.1% may have an
-alpha off by more than rounding. `SB_GPU_GOLDEN=1` prints a row for each and
+alpha more than 2 off. `SB_GPU_GOLDEN=1` prints a row for each and
 exits, 1 if one is over. `cargo test -p sb-sdl --test gpu_golden -- --ignored`
 does it with no window. It is ignored as CI has no GPU.
 
@@ -497,13 +500,10 @@ SmileBASIC 4 has no command that reads the composed screen. Everything composed
 tests in [hardware-tests.md](hardware-tests.md) do this: Ryujinx screenshots at
 1:1 under `XSCREEN 1280,720`, compared with `smilebasic-check --screen`.
 
-**Sources, strongest first:**
+**Sources:**
 
-- A real Switch 2: TEST60, TEST62 and TEST63. A real Switch outranks what
-  follows.
-- SmileBASIC 4. R1-R4 and R21 are
-  confirmed from the rules, which give the rules exactly, and
-  the rest of the blur and mosaic set-up.
+- A real Switch 2: TEST60, TEST62 and TEST63. A real Switch outranks emulator
+  screenshots.
 - Screenshots of SmileBASIC 4 on an emulator on a PC's GPU: TEST49, TEST50,
   TEST53, TEST54, TEST55 and TEST56. That GPU stores results its own way.
 

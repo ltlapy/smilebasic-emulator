@@ -1,7 +1,7 @@
 # Renderer decisions
 
 Why the GPU path draws through SDL_Renderer, with one shader on SDL's `gpu`
-driver, and what ruled out the other options.
+driver, and the drawbacks of the other options.
 
 - [renderer.md](renderer.md) describes the renderer as built.
 - [renderer-verification.md](renderer-verification.md) has the rules and test
@@ -26,15 +26,11 @@ SmileBASIC 4 blends with fixed function, so SDL's blend modes give its sums, ±1
 where the GPU rounds, as on SmileBASIC 4 itself. `SDL_RenderGeometry` and
 `SDL_RenderGeometryRaw` draw textured triangles with per-vertex color, which
 covers tint. `SDL_SetRenderTextureAddressMode` gives clamp or wrap, which covers
-GSAMPLE. `SDL_RenderGeometry` and `SDL_RenderGeometryRaw` draw textured
-triangles with per-vertex color, which covers tint.
-`SDL_SetRenderTextureAddressMode` gives clamp or wrap, which covers GSAMPLE.
+GSAMPLE.
 Compose mode 4 (`ONE_MINUS_DST_COLOR`, `ONE`, `ADD`) and "add without alpha"
 come from `SDL_ComposeCustomBlendMode`. Custom blend support varies by driver:
 per SDL's header, opengl supports only `ADD` with all factors, opengles2 `ADD`,
-`SUBTRACT` and `REV_SUBTRACT`, and software none. Custom blend support varies by
-driver: per SDL's header, opengl supports only `ADD` with all factors, opengles2
-`ADD`, `SUBTRACT` and `REV_SUBTRACT`, and software none.
+`SUBTRACT` and `REV_SUBTRACT`, and software none.
 
 It has two limits:
 
@@ -45,36 +41,41 @@ It has two limits:
 - It has no shader support. Mosaic and blur can be built from draws on half-size
   targets, and raster from strips. Color conversion cannot.
 
-**(b) adds the fragment stage, on few machines.** It works only on the `gpu`
+**(b) adds the fragment stage, on fewer machines.** It works only on the `gpu`
 render driver (`SDL_GPU_RENDERER`), which runs on Vulkan, Direct3D 12 and Metal.
 Machines with only OpenGL, OpenGL ES or D3D11, and the web, do not get it. Other
 limits, from `SDL_render.h` in `sdl3-src` 3.4.18:
 
 - Shaders must be supplied compiled, in a format the device accepts: SPIR-V for
   Vulkan, DXIL (or DXBC) for D3D12, MSL or metallib for Metal. That is three
-  blobs per shader, built offline, so the emulator commits what it uses. The
-  renderer must be created with
-  `SDL_PROP_RENDERER_CREATE_GPU_SHADERS_SPIRV_BOOLEAN` or its DXIL or MSL form,
-  and the shader with `SDL_CreateGPUShader` on the renderer's device
-  (`SDL_GetGPURendererDevice`). The renderer must be created with
+  blobs per shader, built offline (glslang, dxc, spirv-cross or
+  SDL_shadercross), then committed or generated at build time; the emulator
+  commits what it uses. The renderer must be created with
   `SDL_PROP_RENDERER_CREATE_GPU_SHADERS_SPIRV_BOOLEAN` or its DXIL or MSL form,
   and the shader with `SDL_CreateGPUShader` on the renderer's device
   (`SDL_GetGPURendererDevice`). SDL's Vulkan backend binds combined image
   samplers: naga cannot make that (its GLSL front end refuses `sampler2D`, and
   its output keeps the two apart).
 - Only the fragment stage is custom. Vertices are still 2D `SDL_Vertex`, and
-  blending is still SDL's blend mode.
+  blending is still SDL's blend mode. Only a sum that must be bit-exact would
+  need the destination read in the shader. A filter draws its target through the
+  shader into another, and they swap. A projected quad works if the shader does
+  the inverse homography per pixel, drawn over the quad's screen bounds: the
+  same inverse mapping `compose::project_image` does on the CPU.
 - The sdl3 crate (0.20) has no safe wrapper for it, so it takes raw
   `sdl3::sys::render` calls.
 
-That is why only one filter has a shader, and every other driver gets that layer
-from the CPU.
+Only the color filter has a shader, since HSV is more than blending can do and
+the other filters needed none. Every driver but `gpu` gets that layer from the
+CPU.
 
-## What ruled out (c) and (d)
+## (c) and (d)
+
+The recorded reason for the choice is that the UI stays on SDL_Renderer.
 
 **(c) The SDL3 GPU API** gives full pipelines, integer texture formats and
-compute passes, with no new crates, and could blend exactly in integers. Two
-things ruled it out:
+compute passes, with no new crates. It could blend exactly in integers, and
+compute passes could do the blur and color filters. Its drawbacks:
 
 - Reach: the same Vulkan, D3D12 and Metal as (b), so no GL-only machines, GLES
   handhelds without suitable Vulkan, or the web.
@@ -86,7 +87,7 @@ things ruled it out:
 It also has the same three-format shader problem as (b).
 
 **(d) wgpu** has the widest coverage and one shader language, WGSL, which naga
-translates at run time. Two things ruled it out:
+translates at run time. Its drawbacks:
 
 - Cost: it would be the largest dependency in the workspace, and CONTRIBUTING.md
   asks for a reason for each new one. The numbers are below.
@@ -187,6 +188,7 @@ and ELE2020. [benchmarking.md](benchmarking.md) covers how to measure the path.
 | ELE2020 | 13.2 | 2.1 | 143 | 11 | 313, 368 | 5.4%, 0, 0.003% | 255 |
 
 Elements' edges and samples between texels are the 255s. A plain sub screen and
-the inverted cells of direct mode cost about 1 ms either way. In a real window
-TMULTI measured 2.47 ms for the screen, and SPROT and TMULTI look as on the CPU;
-the other scenes have not been measured in a window.
+the inverted cells of direct mode cost about 1 ms either way. Measured by hand
+in a real window, unlike the headless numbers around it, TMULTI took 2.47 ms for
+the screen, and SPROT and TMULTI look as on the CPU there. The other scenes have
+not been measured in a window.

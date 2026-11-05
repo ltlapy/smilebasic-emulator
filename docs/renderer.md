@@ -278,7 +278,7 @@ How the code maps onto it:
 The largest scene, 4096 sprites and five screens of 14400 empty cells, builds in
 0.15 to 0.18 ms and holds 429 KiB, of which 88 bytes a sprite. It allocates
 nothing once grown, as a test checks. On a run of SPROT, `Scene::build` is below
-0.2% of the samples.
+0.2% of the samples. Measured on one x86-64 desktop, release build.
 
 The rasterizer traits are in `raster/mod.rs`, with dispatch at most once a
 frame. `Runtime` holds a `CpuRasterizer` directly, and takes a backend as an
@@ -304,8 +304,8 @@ the glyph tables. `compose.rs` and `filter.rs` hold pixel arithmetic that only
 ## Change tracking
 
 The redraw gate comes first and is cheap: `changed`, `take_changed`,
-`drawn_with`. It decides whether a scene is built at all. It returns the last
-frame (`self.fb`) when all of these hold:
+`drawn_with`. It decides whether a scene is built at all. It keeps the last
+frame (`self.raster.frame()`) when all of these hold:
 
 - `self.changed` is false;
 - no text screen reports changed cells (`TextScreen::take_changed`);
@@ -316,7 +316,10 @@ frame (`self.fb`) when all of these hold:
 - `Host::call`, which classifies each command with `Runtime::sight`.
   `Sight::Unseen` commands (`Command::unseen`, mostly reads, sound and input)
   leave it alone. For sprite commands (`Sight::Sprite`), it compares
-  `Sprite::appearance()` before and after. Every other command sets it.
+  `Sprite::appearance()` before and after. `Runtime::sight` also leaves it alone
+  for text-cell commands while no line is typed (the cells report their own
+  changes), for one-argument `SPPAGE`/`SPLAYER`, and for a `DIALOG` still
+  waiting. Every other command sets it.
 - `Runtime::animate` when a fade, sprite or text animation moved something;
 - `key_press`, `touch`, and printing while a line is typed.
 
@@ -448,8 +451,13 @@ does, so comparison runs need no display.
 
 ## GPU path
 
+Numbers in this section were measured on one x86-64 desktop with an RTX 3060 Ti,
+on opengl through EGL with no window, unless a driver is named; GPU ms means as
+in [renderer-decisions.md](renderer-decisions.md), "The path against the CPU".
+
 `gpu.rs` in `crates/sb-sdl` is a `SceneBackend`, which the runtime offers each
-scene. It takes the place of the CPU rasterizer on any SDL_Renderer driver:
+scene. It takes the place of the CPU rasterizer on any SDL_Renderer driver but
+`software`:
 
 - It draws sprites and text screens under any matrix, 4x4 too, with tint, both
   blends, compose modes 0-4, LCLIP and XSCREEN's sample, through
@@ -472,7 +480,8 @@ name:
 - a full atlas of fallback glyphs;
 - a texture or blend refused.
 
-No project in the bench set leaves a frame on the CPU.
+No scene in the timing table of [renderer-decisions.md](renderer-decisions.md)
+and no project in the bench set leaves a frame on the CPU.
 
 ### Blending
 
@@ -612,8 +621,8 @@ drivers, so indices would not help either.
 The Renderer setting (File > Settings > Screen) is Auto or CPU. The default is
 Auto: the GPU where the self-test passes, the CPU otherwise. `settings.txt`
 keeps only a choice that differs from the default, so the default can change for
-those who made none. `SB_GPU` overrides it. `SB_GPU` overrides it. About and the
-bench report say who draws and, if the CPU, why.
+those who made none. `SB_GPU` overrides it. About and the bench report say who
+draws and, if the CPU, why.
 
 These environment variables set or measure the path (`gpu.rs` has the details):
 
@@ -662,7 +671,7 @@ the `gpu` driver on lavapipe and on opengles2 on llvmpipe. SDL's vulkan driver
 costs far more on the CPU (TMULTI 29 ms), so prefer another. Only the `gpu`
 driver takes shaders.
 
-**By reading SDL 3.4.18, not run:**
+**By reading SDL 3.4.18:**
 
 - Every driver takes all the path's blend modes, as their factors are plain and
   the operation is the same for color and alpha.
@@ -679,8 +688,8 @@ driver takes shaders.
 **Reach.**
 
 - Windows, macOS, Linux use SDL_Renderer on their usual drivers, untested on the
-  first two. The color filter's shader would reach D3D12, Metal and Vulkan once
-  SmileBASIC 4 are made.
+  first two. The color filter's shader runs on the `gpu` driver over Vulkan, and
+  would reach D3D12 and Metal once their forms are made.
 - `cargo build --release --target x86_64-pc-windows-gnu -p sb-sdl` builds with
   MinGW, D3D9, D3D11, D3D12, GL, GLES2 and Vulkan in it; it has not been run.
   macOS needs its SDK.
@@ -698,8 +707,8 @@ aims to run on old and low-end machines with few resources.
 
 ## Failure handling
 
-All of this was tried with no window, through `SB_UI_BENCH` and a GL shim that
-lies.
+The cases below, apart from Suspend, were tried with no window, through
+`SB_UI_BENCH` and a GL shim that lies.
 
 **At start-up or while drawing:**
 
@@ -760,8 +769,9 @@ where Direct3D reports its own losses and a GL context keeps its textures.
 This comes from reading the code; nobody has tried a real suspend.
 `at=N:sleep:MS` in the bench stands in for one.
 
-**Restarts.** Each restart of the path adds 4 to 10 MiB of RSS, which on these
-drivers does not come back; a restart is rare.
+**Restarts.** Each restart of the path adds 4 to 10 MiB of RSS, which on opengl,
+opengles2 and llvmpipe does not come back (the long runs in
+[renderer-verification.md](renderer-verification.md)); a restart is rare.
 
 ## Exactness policy
 
@@ -787,9 +797,9 @@ reference ([renderer-verification.md](renderer-verification.md)).
   twice-tinted text sum (over 255⁵) needs 64 bits or two words. The path as
   built does not do this: it uses fixed-function blending, so its blends fall
   under the next list.
-- **Compose modes, FADE, mosaic, blur** (already integer and 8.8 fixed point),
-  and the color filter if it is moved to an integer or table-based formulation
-  first. These too need a path that blends in integers.
+- **Compose modes, FADE, mosaic, blur** (already integer: 8.8 bilinear weights,
+  16.16 blur taps), and the color filter if it is moved to an integer or
+  table-based formulation first. These too need a path that blends in integers.
 - **Upright sprites and text at integer scales and integer offsets.** The sample
   point `(px + 0.5 - tx) / s` is exact in f32 for screen sizes up to 1280x720.
   This covers most games. Upright sprites and text at whole scales and places,
@@ -805,13 +815,13 @@ reference ([renderer-verification.md](renderer-verification.md)).
   in f32 as written; it needs its own bias. What is not a power of two on
   SmileBASIC 4 keeps some noise of its GPU's in any case
   ([renderer-verification.md](renderer-verification.md)).
-- **Raster filter coordinates and the color filter's HSV**: these are f64 on the
-  CPU.
+- **Raster filter coordinates**: these are f64 on the CPU. The color filter's
+  HSV is f32 on both, as SmileBASIC 4's.
 - **Fixed-function blending**, as SmileBASIC 4 uses: ±1 per channel where a
   value lies very near a half, between vendors and against the CPU.
 - **Blur, accepted.** Done with no shader it rounds at each draw: LBLUR, three
   layers one over another, is up to 6 off and TEST54's parts up to 3. Nobody
-  compares a blur by the pixel, so this stays and needs no more work.
+  compares a blur by the pixel, so this stays, and should not be worked on.
 - **Projected images, inside.** Without W a texel can be off inside a cell of
   the grid, by up to a quarter of a pixel as chosen; edges are not.
 
@@ -820,10 +830,11 @@ reference ([renderer-verification.md](renderer-verification.md)).
 - **Scene reuse.** Compare the built scene with the last one, by a hash of
   `passes`, the items, `fade`, the page change counts and a change count for
   each screen's cells, which are not in the scene. If equal, reuse the frame.
-  This catches commands that set the same values, such as `SPOFS` to the same
-  place every frame, which always set `changed`. Inputs read by reference at
-  render time must enter the comparison: GRP pages and cells by change counts.
-  Measure it on a program that sets the same `SPOFS` every frame.
+  This catches commands that set the same values, such as `LAYER` or `TOFS` with
+  the same values every frame, which always set `changed` (sprite commands
+  already compare `appearance()`). Inputs read by reference at render time must
+  enter the comparison: GRP pages and cells by change counts. Measure it on a
+  program that sets the same `LAYER` every frame.
 - **Per-pass caching.** A GPU backend could keep a texture for a composed layer
   whose items, inputs and pages did not change.
 - **Debugger GRP view.** It could send tiles instead of whole pages. The `Dirty`
@@ -844,6 +855,7 @@ reference ([renderer-verification.md](renderer-verification.md)).
 - **CI.** Run the golden suite there;
   [renderer-verification.md](renderer-verification.md) lists the candidates.
 - **Rules still open.** [renderer-verification.md](renderer-verification.md)
-  lists them, with the three UNVERIFIED marks left in the rendering files.
-- **WASM.** A WASM build with the CPU backend first. SDL_Renderer reaches WebGL
-  through opengles2 for a GPU path after that.
+  lists them, with the UNVERIFIED marks left in the rendering files.
+- **WASM.** A WASM build with the CPU backend first. The old WebGL2/WebGPU step
+  depended on (d), which was not chosen; SDL_Renderer's opengles2 reaches WebGL,
+  untried.
