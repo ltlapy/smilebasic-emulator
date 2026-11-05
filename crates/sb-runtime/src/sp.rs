@@ -111,7 +111,7 @@ impl Runtime {
     /// (checked on hardware).
     fn sprite(&mut self, v: &Value) -> Result<&mut Sprite> {
         let id = sprite_id(v)?;
-        let s = &mut self.sprites.list[id];
+        let s = self.sprites.sprite_mut(id);
         if s.used {
             Ok(s)
         } else {
@@ -134,7 +134,7 @@ impl Runtime {
 
     /// A free sprite number, searching from `start` towards `end`.
     fn free_sprite(&self, start: usize, end: usize) -> Option<usize> {
-        let free = |&i: &usize| !self.sprites.list[i].used;
+        let free = |&i: &usize| !self.sprites.list()[i].used;
         if start <= end {
             (start..=end).find(free)
         } else {
@@ -201,9 +201,10 @@ impl Runtime {
 
     fn start_anim(&mut self, id: &Value, anim: Anim) -> Result<Vec<Value>> {
         self.sprite(id)?;
-        let s = &mut self.sprites.list[sprite_id(id)?];
+        let id = sprite_id(id)?;
+        let (s, defs) = self.sprites.sprite_and_defs(id);
         let target = anim.mode.target.index();
-        let track = Track::new(anim, &WithDefs::new(s, &self.sprites.defs));
+        let track = Track::new(anim, &WithDefs::new(s, defs));
         s.anims[target] = Some(Box::new(track));
         Ok(vec![])
     }
@@ -374,7 +375,7 @@ impl Runtime {
                 let absolute = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0) != 0;
                 self.sprite(&args[0])?;
                 let id = sprite_id(&args[0])?;
-                let s = &self.sprites.list[id];
+                let s = &self.sprites.list()[id];
                 let (pos, z) = if absolute {
                     let pose = self.sprites.pose(id);
                     (pose.pos, pose.z)
@@ -510,19 +511,20 @@ impl Runtime {
                     }
                     _ => return Err(ErrorKind::TypeMismatch.into()),
                 };
-                self.sprites.list[sprite_id(&args[0])?]
+                self.sprites
+                    .sprite_mut(sprite_id(&args[0])?)
                     .vars
                     .insert(key, value);
                 Ok(vec![])
             }
             (Command::Spvar, Want::Value, 2) => {
                 let key = var_key(&args[1])?;
-                let s = &self.sprites.list[sprite_id(&args[0])?];
+                let s = &self.sprites.list()[sprite_id(&args[0])?];
                 Ok(vec![s.vars.get(&key).cloned().unwrap_or(Value::Int(0))])
             }
             (Command::Spvar, Want::Outs(0), 1 | 2) => {
                 let key = args.get(1).map(var_key).transpose()?;
-                let s = &mut self.sprites.list[sprite_id(&args[0])?];
+                let s = self.sprites.sprite_mut(sprite_id(&args[0])?);
                 match key {
                     Some(key) => {
                         s.vars.remove(&key);
@@ -532,7 +534,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Spanim, Want::Outs(0), 0) => {
-                for s in &mut self.sprites.list {
+                for s in self.sprites.list_mut() {
                     s.anims = Default::default();
                 }
                 Ok(vec![])
@@ -574,7 +576,7 @@ impl Runtime {
                 match args.first() {
                     Some(id) => self.sprite(id)?.anim_stopped = stopped,
                     None => {
-                        for s in &mut self.sprites.list {
+                        for s in self.sprites.list_mut() {
                             s.anim_stopped = stopped;
                         }
                     }
@@ -695,7 +697,7 @@ impl Runtime {
                     ));
                 }
                 self.sprites.linked = true;
-                let s = &mut self.sprites.list[child];
+                let s = self.sprites.sprite_mut(child);
                 (s.parent, s.link_flags) = (Some(parent), flags);
                 Ok(vec![])
             }
@@ -703,7 +705,7 @@ impl Runtime {
                 let kind = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0);
                 self.sprite(&args[0])?;
                 let id = sprite_id(&args[0])?;
-                let s = &self.sprites.list[id];
+                let s = &self.sprites.list()[id];
                 let found = match kind {
                     0 => s.parent,
                     1 => self.sprites.children(id).next(),
@@ -726,12 +728,12 @@ impl Runtime {
                     None => None,
                 };
                 // A sprite that is not set takes it too.
-                self.sprites.list[sprite_id(&args[0])?].func = func;
+                self.sprites.sprite_mut(sprite_id(&args[0])?).func = func;
                 Ok(vec![])
             }
             (Command::Spused, Want::Value, 1) => {
                 let id = sprite_id(&args[0])?;
-                Ok(vec![Value::Int(i32::from(self.sprites.list[id].used))])
+                Ok(vec![Value::Int(i32::from(self.sprites.list()[id].used))])
             }
             _ => Err(no_form()),
         }

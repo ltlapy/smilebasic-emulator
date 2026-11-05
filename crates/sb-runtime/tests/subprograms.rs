@@ -127,11 +127,11 @@ fn the_debugger_sees_the_subprograms_own_sprites() {
     let (rt, place) = m.sub_runtime().expect("running");
     // 400x240 at its aspect ratio in that rectangle.
     assert_eq!(place, Some([10, 30, 300, 180]));
-    assert!(rt.sprites.list[3].used);
+    assert!(rt.sprites.list()[3].used);
     let corners = rt.sprite_corners(3).expect("set");
     assert_eq!(corners[0], (50.0, 60.0));
     // The main interpreter's sprites are its own.
-    assert!(!m.rt.sprites.list[3].used);
+    assert!(!m.rt.sprites.list()[3].used);
     m.stop_sub();
     frames(&mut m, 1);
     assert!(m.sub_runtime().is_none());

@@ -345,7 +345,7 @@ mod tests {
     }
 
     fn sprite() -> Sprite {
-        let mut s = crate::sprites::Sprites::default().list[0].clone();
+        let mut s = crate::sprites::Sprites::default().list()[0].clone();
         s.used = true;
         s
     }

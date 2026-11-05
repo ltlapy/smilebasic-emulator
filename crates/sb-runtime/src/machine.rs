@@ -2218,7 +2218,7 @@ impl Machine {
         sub.end_sub(None);
         sub.ended = None;
         // Its variables, SPFUNC and TFUNC go; the rest stays.
-        for sprite in &mut sub.rt.sprites.list {
+        for sprite in sub.rt.sprites.list_mut() {
             sprite.func = None;
         }
         for screen in &mut sub.rt.text {

@@ -1314,7 +1314,7 @@ impl Runtime {
     /// its top left; `None` for a sprite not in use, or one on an LMATRIX
     /// layer with a corner behind the view.
     pub fn sprite_corners(&self, id: usize) -> Option<[(f64, f64); 4]> {
-        let s = self.sprites.list.get(id).filter(|s| s.used)?;
+        let s = self.sprites.list().get(id).filter(|s| s.used)?;
         let pose = self.sprites.pose(id);
         let layer = (self.layers.get(usize::try_from(pose.layer).ok()?)?).fine(self.mode.sample);
         let (w, h) = (f64::from(s.w), f64::from(s.h));
@@ -2441,7 +2441,7 @@ impl Host for Runtime {
         let sight = self.sight(command, args, want);
         let before = match sight {
             Sight::Unseen => None,
-            Sight::Sprite(i) => Some((i, self.sprites.list[i].appearance())),
+            Sight::Sprite(i) => Some((i, self.sprites.list()[i].appearance())),
             Sight::Seen => {
                 self.changed = true;
                 None
@@ -2456,7 +2456,7 @@ impl Host for Runtime {
             result => result,
         };
         if let Some((i, before)) = before {
-            self.changed |= self.sprites.list[i].appearance() != before;
+            self.changed |= self.sprites.list()[i].appearance() != before;
         }
         result
     }
@@ -2557,7 +2557,7 @@ impl Host for Runtime {
     fn next_callback(&mut self, kind: Callbacks, after: i32) -> Option<(i32, Vec<u16>)> {
         let from = (after + 1).max(0) as usize;
         match kind {
-            Callbacks::Sprite => (self.sprites.list.iter().enumerate().skip(from))
+            Callbacks::Sprite => (self.sprites.list().iter().enumerate().skip(from))
                 .filter(|(_, s)| s.used)
                 .find_map(|(i, s)| Some((i as i32, s.func.clone()?))),
             Callbacks::Text => (self.text.iter().enumerate().skip(from))

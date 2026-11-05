@@ -50,7 +50,7 @@ struct World {
 impl World {
     fn new() -> World {
         let mut sprites = Sprites::default();
-        for s in &mut sprites.list {
+        for s in sprites.list_mut() {
             s.used = false;
         }
         let mut text: Vec<_> = (0..SCREENS).map(|_| TextScreen::new(1280, 720)).collect();
@@ -131,7 +131,7 @@ fn items_go_by_layer_then_z_then_text_first_then_higher_ids() {
     ] {
         w.sprite(id, layer, z);
         // Told apart by the image's place.
-        w.sprites.list[id].u = id as i32;
+        w.sprites.sprite_mut(id).u = id as i32;
     }
     w.screen(0, 0, 0);
     w.screen(1, 0, 0);
@@ -147,7 +147,7 @@ fn z_at_the_ends_of_its_range_sorts_right() {
     let mut w = World::new();
     for (id, z) in [(0, i32::MAX), (1, i32::MIN), (2, -1), (3, 0)] {
         w.sprite(id, 0, z);
-        w.sprites.list[id].u = id as i32;
+        w.sprites.sprite_mut(id).u = id as i32;
     }
     assert_eq!(listed(&w.scene()), vec![vec![0, 3, 2, 1]]);
 }
@@ -158,9 +158,9 @@ fn links_are_followed() {
     let mut w = World::new();
     w.sprite(0, 2, 10);
     w.sprite(1, 0, 5);
-    w.sprites.list[1].parent = Some(0);
-    w.sprites.list[1].link_flags = sb_runtime::sprites::link::LAYER;
-    w.sprites.list[1].u = 1;
+    w.sprites.sprite_mut(1).parent = Some(0);
+    w.sprites.sprite_mut(1).link_flags = sb_runtime::sprites::link::LAYER;
+    w.sprites.sprite_mut(1).u = 1;
     let scene = w.scene();
     // Z 15 goes behind the parent's 10, on the parent's layer.
     assert_eq!(listed(&scene), vec![vec![1, 0]]);
@@ -173,7 +173,7 @@ fn sprites_that_show_nothing_keep_their_place() {
     let mut w = World::new();
     w.layers[1].compose = Compose::Multiply;
     w.sprite(0, 1, 0);
-    w.sprites.list[0].page = 0; // Blank.
+    w.sprites.sprite_mut(0).page = 0; // Blank.
     let scene = w.scene();
     assert_eq!(scene.passes.len(), 1);
     assert_eq!(scene.passes[0].compose, Compose::Multiply);
@@ -184,7 +184,7 @@ fn sprites_that_show_nothing_keep_their_place() {
     w.layers[0].projection = Some(std::array::from_fn(|i| f64::from(i32::from(i % 5 == 0))));
     w.screen(0, 0, 10);
     w.sprite(0, 0, 5);
-    w.sprites.list[0].color = 0x00FF_FFFF; // Clear.
+    w.sprites.sprite_mut(0).color = 0x00FF_FFFF; // Clear.
     w.screen(1, 0, 0);
     let scene = w.scene();
     assert_eq!(listed(&scene), vec![vec![-1, 0, -2]]);
@@ -212,7 +212,7 @@ fn clip_and_items_are_in_frame_pixels() {
     w.mode.sample = 2;
     w.layers[0].clip = Some(Clip::new(1, 2, 3, 4));
     w.sprite(0, 0, 0);
-    w.sprites.list[0].pos = (10.0, 20.0);
+    w.sprites.sprite_mut(0).pos = (10.0, 20.0);
     let scene = w.scene();
     assert_eq!(scene.passes[0].clip, Some(Clip::new(2, 4, 7, 9)));
     let Some(Item::Sprite(s)) = scene.items(&scene.passes[0]).next() else {
@@ -287,7 +287,7 @@ fn busy() -> World {
     let mut w = World::new();
     for id in 0..SPRITES {
         w.sprite(id, (id % LAYERS) as i32, (id % 97) as i32);
-        let s = &mut w.sprites.list[id];
+        let s = &mut w.sprites.sprite_mut(id);
         s.pos = (id as f64 * 0.25, id as f64 * 0.5);
         s.rot = (id % 360) as f64;
         s.scale = (1.5, 0.5);

@@ -314,7 +314,8 @@ impl Sprite {
 }
 
 pub struct Sprites {
-    pub list: Vec<Sprite>,
+    /// Private, for [`Sprites::boxes`] to hear of what changes.
+    list: Vec<Sprite>,
     /// Whether SPLINK has been used, as most programs never do and looking
     /// for a sprite's children goes through them all.
     pub linked: bool,
@@ -334,6 +335,16 @@ pub struct Sprites {
     /// A bit for each sprite that may have SPCOL's settings, as most have
     /// none and a search would otherwise go through them all.
     may_collide: [u64; SPRITES / 64],
+    /// What a search needs of each sprite, side by side: going through whole
+    /// sprites reads memory a small machine has no room to keep near. Empty
+    /// until the first search. A sprite that cannot be hit has a mask of 0; one
+    /// with a parent is in `has_parent`, as its parent moves it too.
+    boxes: Vec<Body>,
+    has_parent: [u64; SPRITES / 64],
+    /// A bit for each sprite whose box may no longer hold, and whether
+    /// any is set: the next search brings those up to date.
+    stale: [u64; SPRITES / 64],
+    any_stale: bool,
     /// A bit for each sprite that may be in use. Walking the list reads memory
     /// a small machine has no room to keep near, for nothing when most sprites
     /// are free.
@@ -352,6 +363,77 @@ impl Sprites {
         &self.default_defs
     }
 
+    /// All the sprites, to read.
+    pub fn list(&self) -> &[Sprite] {
+        &self.list
+    }
+
+    /// A sprite, to change.
+    #[inline]
+    pub fn sprite_mut(&mut self, id: usize) -> &mut Sprite {
+        self.mark_stale(id);
+        &mut self.list[id]
+    }
+
+    /// A sprite to change, with SPDEF's definitions to read.
+    pub fn sprite_and_defs(&mut self, id: usize) -> (&mut Sprite, &[SpriteDef]) {
+        self.mark_stale(id);
+        (&mut self.list[id], &self.defs)
+    }
+
+    /// All the sprites, to change.
+    pub fn list_mut(&mut self) -> &mut [Sprite] {
+        self.all_stale();
+        &mut self.list
+    }
+
+    #[inline]
+    fn mark_stale(&mut self, id: usize) {
+        self.stale[id / 64] |= 1 << (id % 64);
+        self.any_stale = true;
+    }
+
+    fn all_stale(&mut self) {
+        self.stale = [!0; SPRITES / 64];
+        self.any_stale = true;
+    }
+
+    /// Brings [`Sprites::boxes`] up to date.
+    fn refresh_boxes(&mut self) {
+        if self.boxes.is_empty() {
+            const NO_BOX: Body = Body {
+                rect: [0.0; 4],
+                pos: (0.0, 0.0),
+                vel: (0.0, 0.0),
+                mask: 0,
+            };
+            self.boxes = vec![NO_BOX; SPRITES];
+            self.all_stale();
+        }
+        if !std::mem::take(&mut self.any_stale) {
+            return;
+        }
+        for w in 0..SPRITES / 64 {
+            let mut bits = std::mem::take(&mut self.stale[w]);
+            while bits != 0 {
+                let id = w * 64 + bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                let s = &self.list[id];
+                let bit = 1 << (id % 64);
+                if s.parent.is_some() {
+                    self.has_parent[w] |= bit;
+                } else {
+                    self.has_parent[w] &= !bit;
+                }
+                self.boxes[id].mask = 0;
+                if let Some(c) = s.col.as_ref().filter(|_| s.used && s.shown) {
+                    let vel = s.col_vel.unwrap_or(s.anim_move);
+                    self.boxes[id] = Body::sprite(c, s.pos, s.scale, vel);
+                }
+            }
+        }
+    }
+
     pub fn new(defs: Vec<SpriteDef>) -> Sprites {
         let mut s = Sprites {
             list: vec![Sprite::unused(); SPRITES],
@@ -365,6 +447,10 @@ impl Sprites {
             hit_rc: None,
             hit_info: HitInfo::default(),
             may_collide: [0; SPRITES / 64],
+            boxes: Vec::new(),
+            has_parent: [0; SPRITES / 64],
+            stale: [0; SPRITES / 64],
+            any_stale: false,
             in_use: [0; SPRITES / 64],
         };
         s.reset_gsprite((400, 240));
@@ -376,6 +462,7 @@ impl Sprites {
     pub fn reset_gsprite(&mut self, (w, h): (u32, u32)) {
         let layer = self.new_layer;
         self.no_collision(GSPRITE);
+        self.mark_stale(GSPRITE);
         let g = &mut self.list[GSPRITE];
         *g = Sprite::unused();
         (g.used, g.shown, g.page, g.layer) = (true, true, 0, layer);
@@ -413,6 +500,7 @@ impl Sprites {
     /// SPSET: a fresh sprite with the current SPPAGE and SPLAYER.
     pub fn create(&mut self, id: usize, shown: bool) -> &mut Sprite {
         self.no_collision(id);
+        self.mark_stale(id);
         let s = &mut self.list[id];
         *s = Sprite::unused();
         (s.used, s.shown) = (true, shown);
@@ -432,6 +520,7 @@ impl Sprites {
             }
         }
         self.no_collision(id);
+        self.mark_stale(id);
         self.list[id] = Sprite::unused();
         self.in_use[id / 64] &= !(1 << (id % 64));
     }
@@ -450,6 +539,7 @@ impl Sprites {
 
     /// SPCOL's settings of a sprite.
     pub fn set_collision(&mut self, id: usize, col: Collision) {
+        self.mark_stale(id);
         self.list[id].col = Some(col);
         self.may_collide[id / 64] |= 1 << (id % 64);
     }
@@ -461,6 +551,7 @@ impl Sprites {
     /// Takes a sprite off its parent, keeping where it shows.
     fn unlink(&mut self, id: usize) {
         let pose = self.pose(id);
+        self.mark_stale(id);
         let s = &mut self.list[id];
         if s.parent.take().is_some() {
             (s.pos, s.z) = (pose.pos, pose.z);
@@ -470,6 +561,7 @@ impl Sprites {
 
     /// SPCLR without arguments: every sprite but `#GSPRITE`.
     pub fn clear_all(&mut self) {
+        self.all_stale();
         for s in &mut self.list[..GSPRITE] {
             *s = Sprite::unused();
         }
@@ -548,6 +640,10 @@ impl Sprites {
             }
         }
         for id in self.maybe_used() {
+            let s = &self.list[id];
+            if s.anim_move != (0.0, 0.0) || s.anims.iter().any(Option::is_some) {
+                self.mark_stale(id);
+            }
             let s = &mut self.list[id];
             if !s.used || s.anim_stopped {
                 s.anim_move = (0.0, 0.0);
@@ -604,6 +700,7 @@ impl Sprites {
 
     /// The next sprite `search` hits, noting the details for SPHITINFO.
     pub fn next_hit(&mut self, search: &mut Search) -> Option<usize> {
+        self.refresh_boxes();
         while search.rest.start < search.rest.end {
             let from = search.rest.start;
             let bits = self.may_collide[from / 64] >> (from % 64);
@@ -620,27 +717,26 @@ impl Sprites {
             if Some(id) == search.skip {
                 continue;
             }
-            // What body() gives, without a pose for a sprite with no parent.
-            let s = &self.list[id];
-            let Some(c) = s
-                .col
-                .as_ref()
-                .filter(|c| s.used && c.mask & search.source.mask != 0)
-            else {
+            // Only with a parent does a sprite need its pose worked out.
+            if self.has_parent[id / 64] >> (id % 64) & 1 != 0 {
+                let s = &self.list[id];
+                let hit_by = s
+                    .col
+                    .is_some_and(|c| s.used && c.mask & search.source.mask != 0);
+                if let Some(body) = self.body(id).filter(|_| hit_by)
+                    && let Some(t) = crate::collision::sweep(&search.source, &body)
+                {
+                    self.hit_info = HitInfo::new(t, &search.source, &body);
+                    return Some(id);
+                }
                 continue;
-            };
-            let body = if s.parent.is_some() {
-                self.body(id)
-            } else if s.shown {
-                let vel = s.col_vel.unwrap_or(s.anim_move);
-                Some(Body::sprite(c, s.pos, s.scale, vel))
-            } else {
-                None
-            };
-            if let Some(body) = body
-                && let Some(t) = crate::collision::sweep(&search.source, &body)
-            {
-                self.hit_info = HitInfo::new(t, &search.source, &body);
+            }
+            let body = &self.boxes[id];
+            if body.mask & search.source.mask == 0 {
+                continue;
+            }
+            if let Some(t) = crate::collision::sweep(&search.source, body) {
+                self.hit_info = HitInfo::new(t, &search.source, body);
                 return Some(id);
             }
         }
@@ -979,20 +1075,106 @@ mod tests {
     fn search_gives_the_same_body_as_a_sprites_pose() {
         let mut s = Sprites::default();
         colliding(&mut s, 5);
-        s.list[5].pos = (2.5, 3.0);
-        s.list[5].scale = (2.0, 2.0);
-        s.list[5].col_vel = Some((1.0, 0.0));
+        s.sprite_mut(5).pos = (2.5, 3.0);
+        s.sprite_mut(5).scale = (2.0, 2.0);
+        s.sprite_mut(5).col_vel = Some((1.0, 0.0));
         let source = Body::rect(0.0, 0.0, 4.0, 4.0, (-1.0, 0.0), u32::MAX);
         let mut search = Search::new(source, 0, 10, None);
         assert_eq!(s.next_hit(&mut search), Some(5));
         let body = s.body(5).unwrap();
         assert_eq!(s.hit_info, HitInfo::new(0.0, &source, &body));
 
-        s.list[5].shown = false;
+        s.sprite_mut(5).shown = false;
         assert_eq!(hits(&mut s, 0, 10, None), [0usize; 0]);
-        s.list[5].shown = true;
+        s.sprite_mut(5).shown = true;
         let col = s.list[5].col.unwrap();
-        s.list[5].col = Some(Collision { mask: 0, ..col });
+        s.sprite_mut(5).col = Some(Collision { mask: 0, ..col });
         assert_eq!(hits(&mut s, 0, 10, None), [0usize; 0]);
+    }
+
+    /// The search as it goes through whole sprites, for comparing.
+    fn searched_by_hand(s: &Sprites, source: &Body) -> Vec<usize> {
+        (0..SPRITES)
+            .filter(|&id| {
+                let sprite = &s.list[id];
+                sprite.col.is_some_and(|c| c.mask & source.mask != 0)
+                    && s.body(id)
+                        .is_some_and(|body| crate::collision::sweep(source, &body).is_some())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_search_sees_what_changed_since_the_last() {
+        let mut s = Sprites::default();
+        let mut seed = 0x1357_9BDFu32;
+        let mut next = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % n
+        };
+        for id in 0..100 {
+            colliding(&mut s, id);
+        }
+        let source = Body::rect(0.0, 0.0, 200.0, 200.0, (0.0, 0.0), 1);
+        for round in 0..3000 {
+            let id = next(100) as usize;
+            let (x, y) = (next(400) as f64, next(400) as f64);
+            match next(11) {
+                0 => s.sprite_mut(id).pos = (x, y),
+                1 => s.sprite_mut(id).scale = (0.5 + x / 100.0, 0.5 + y / 100.0),
+                2 => s.sprite_mut(id).shown = false,
+                3 => s.sprite_mut(id).shown = true,
+                4 => s.clear(id),
+                5 => {
+                    colliding(&mut s, id);
+                    s.sprite_mut(id).pos = (x, y);
+                }
+                6 => s.sprite_mut(id).col_vel = Some((x - 200.0, y - 200.0)),
+                7 if s.list[id].col.is_some() => {
+                    let mask = next(4);
+                    let col = s.list[id].col.unwrap();
+                    s.set_collision(id, Collision { mask, ..col });
+                }
+                8 if id > 0 && s.list[id].used => {
+                    // A parent moves a sprite with no change to the sprite.
+                    s.linked = true;
+                    let parent = next(id as u32) as usize;
+                    if s.list[parent].used {
+                        s.sprite_mut(id).parent = Some(parent);
+                    }
+                }
+                9 => {
+                    s.list_mut()[id].pos = (x, y);
+                }
+                10 if round % 500 == 0 => s.clear_all(),
+                _ => {}
+            }
+            if round % 3 == 0 {
+                let want = searched_by_hand(&s, &source);
+                let mut search = Search::new(source, 0, SPRITES - 1, None);
+                let got: Vec<usize> = std::iter::from_fn(|| s.next_hit(&mut search)).collect();
+                assert_eq!(got, want, "round {round}");
+            }
+        }
+    }
+
+    #[test]
+    fn changes_during_a_search_count_for_the_rest_of_it() {
+        let mut s = Sprites::default();
+        for id in 0..10 {
+            colliding(&mut s, id);
+        }
+        let source = Body::rect(0.0, 0.0, 100.0, 100.0, (0.0, 0.0), u32::MAX);
+        let mut search = Search::new(source, 0, 9, None);
+        assert_eq!(s.next_hit(&mut search), Some(0));
+        s.sprite_mut(1).pos = (500.0, 500.0);
+        s.clear(2);
+        assert_eq!(s.next_hit(&mut search), Some(3));
+        // What is behind where the search has got to stays behind it.
+        s.sprite_mut(0).pos = (1.0, 1.0);
+        s.sprite_mut(4).shown = false;
+        assert_eq!(s.next_hit(&mut search), Some(5));
     }
 }

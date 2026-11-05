@@ -92,7 +92,7 @@ pub struct List {
 /// The sprites in use on `rt`'s screen, with rows for `count` of them
 /// from the `first`, and the outline of `chosen`.
 pub fn list(rt: &Runtime, first: usize, count: usize, chosen: Option<usize>) -> List {
-    let all = &rt.sprites.list;
+    let all = &rt.sprites.list();
     let used = (0..all.len()).filter(|&i| all[i].used);
     let mut list = List {
         first,
@@ -113,7 +113,7 @@ pub fn list(rt: &Runtime, first: usize, count: usize, chosen: Option<usize>) -> 
 }
 
 fn row(rt: &Runtime, id: usize) -> Row {
-    let s: &Sprite = &rt.sprites.list[id];
+    let s: &Sprite = &rt.sprites.list()[id];
     let mut vars: Vec<(String, Value)> = (s.vars.iter())
         .filter(|(_, v)| !is_empty(v))
         .map(|(k, v)| {

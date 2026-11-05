@@ -531,14 +531,14 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
         let area: f64 = order
             .iter()
             .map(|(i, p)| {
-                let s = &m.rt.sprites.list[*i];
+                let s = &m.rt.sprites.list()[*i];
                 f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs()
             })
             .sum();
         println!("{} sprites shown, {area} pixels", order.len());
         // The large ones, which take the time.
         for (i, p) in &order {
-            let s = &m.rt.sprites.list[*i];
+            let s = &m.rt.sprites.list()[*i];
             let a = f64::from(s.w * s.h) * (p.scale.0 * p.scale.1).abs();
             if a > 20000.0 {
                 println!(

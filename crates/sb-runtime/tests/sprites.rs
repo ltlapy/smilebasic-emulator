@@ -42,7 +42,7 @@ fn set_move_and_read_back() {
          SPOFS 5 OUT X,Y,Z:SPHOME 5 OUT HX,HY:SPSCALE 5 OUT SX,SY\n\
          ?X;\",\";Y;\",\";Z;\" \";HX;HY;\" \";SPROT(5);\" \";SX;SY;\" \";HEX$(SPCOLOR(5));\" \";SPCHR(5);SPUSED(5);SPUSED(6)");
     assert_eq!(out, "100,50,-3 88 45 21.5 FFFF0000 1010");
-    let s = &m.rt.sprites.list[5];
+    let s = &m.rt.sprites.list()[5];
     assert_eq!((s.u, s.v, s.w, s.h), (160, 0, 16, 16), "the grid stand-in");
 }
 
@@ -57,7 +57,7 @@ fn image_forms_show_hide_and_clear() {
          SPCLR 2,99:?SPUSED(1);SPUSED(100);\n\
          SPCLR:?SPUSED(4095)");
     assert_eq!(out, "3248248401 324816161 1000 111");
-    assert!(!m.rt.sprites.list[0].used);
+    assert!(!m.rt.sprites.list()[0].used);
 }
 
 #[test]
@@ -532,4 +532,17 @@ fn half_pixel_sprites_cover_by_left_and_bottom_edges() {
     assert_eq!(down[0], None);
     assert_eq!(down[1..=16], shown(&(1..=16).collect::<Vec<_>>()));
     assert_eq!(down[17], None);
+}
+
+#[test]
+fn a_search_finds_a_sprite_where_its_animation_and_parent_took_it() {
+    let (_, out) = run("SPSET 0,0:SPCOL 0:?SPHITRC(0,0,8,8);\" \";\n\
+         SPANIM 0,\"XY\",-1,100,100,1\n\
+         VSYNC 1:VSYNC 3\n\
+         ?SPHITRC(0,0,8,8);SPHITRC(101,101,8,8);\" \";\n\
+         SPSET 1,0:SPCOL 1:SPOFS 1,5,5:SPSET 2,0:SPOFS 2,300,0:SPLINK 1,2\n\
+         ?SPHITRC(306,6,4,4);\" \";\n\
+         SPOFS 2,0,200\n\
+         ?SPHITRC(306,6,4,4);SPHITRC(6,206,4,4)");
+    assert_eq!(out, "0 -10 1 -11");
 }

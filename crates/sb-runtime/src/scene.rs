@@ -271,7 +271,7 @@ impl Scene {
         let layer_of = |layer: i32| usize::try_from(layer).ok().filter(|&l| l < LAYERS);
 
         for id in input.sprites.maybe_used() {
-            let s = &input.sprites.list[id];
+            let s = &input.sprites.list()[id];
             if !s.used {
                 continue;
             }
