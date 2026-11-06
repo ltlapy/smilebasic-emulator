@@ -17,6 +17,8 @@ const NAME_CHARS: usize = 32;
 const DEFAULT_CAPTION: &str = "DIALOG";
 /// DIALOG's button bit for the touch screen.
 const TOUCH_BIT: u32 = 1 << 17;
+/// #B_RANY, #B_LANY and #B_ANY.
+const ANY_BITS: u32 = 0b111 << 14;
 const FRAMES_PER_SECOND: i32 = 60;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,8 +236,8 @@ impl Runtime {
                 self.result = 0;
                 Ok(vec![])
             }
-            (DialogKind::Buttons(mask), DialogAnswer::Buttons(bits)) => {
-                Ok(vec![Value::Int((bits & mask) as i32)])
+            (DialogKind::Buttons(_), DialogAnswer::Buttons(bits)) => {
+                Ok(vec![Value::Int(bits as i32)])
             }
             (DialogKind::Buttons(_), _) => Ok(vec![Value::Int(0)]),
             (DialogKind::Name { .. }, DialogAnswer::Name(Some(name))) => {
@@ -256,7 +258,6 @@ impl crate::input::Input {
     /// when let go after being pressed with the dialog open (checked on
     /// hardware for A); a wait for buttons ends on
     /// any of them going down.
-    // UNVERIFIED: the wait for buttons.
     pub(crate) fn dialog_answer(&self, kind: &DialogKind, since: u32) -> Option<DialogAnswer> {
         let (pressed, released) = (self.pressed(), self.released() & since);
         match kind {
@@ -266,9 +267,12 @@ impl crate::input::Input {
             DialogKind::Choice(labels) if labels.len() == 2 && released & 1 << B != 0 => {
                 Some(DialogAnswer::Choice(0))
             }
+            // The answer keeps #B_RANY, #B_LANY and #B_ANY with the
+            // buttons waited for. UNVERIFIED: that it leaves out others
+            // pressed with them.
             DialogKind::Buttons(mask) => {
                 let bits = pressed | if self.touched() { TOUCH_BIT } else { 0 };
-                (bits & mask != 0).then_some(DialogAnswer::Buttons(bits & mask))
+                (bits & mask != 0).then_some(DialogAnswer::Buttons(bits & (mask | ANY_BITS)))
             }
             _ => None,
         }

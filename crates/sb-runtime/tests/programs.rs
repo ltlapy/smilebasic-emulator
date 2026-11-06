@@ -221,11 +221,12 @@ fn dialogs_wait_for_an_answer() {
     settle(&mut m);
     assert_eq!(tail(&m, 2), ["CLOSED", "OK"]);
 
-    // Waiting for buttons: B is pressed, but only A and B count.
+    // Waiting for buttons: B is pressed, but only A and B count. The
+    // answer has #B_RANY and #B_ANY too (TEST64).
     until_dialog(&mut m, "?DIALOG(\"Press\",&B1010)");
     m.rt.input.live.pads[0].buttons = 1 << 1;
     settle(&mut m);
-    assert_eq!(tail(&m, 2), ["2", "OK"]);
+    assert_eq!(tail(&m, 2), ["81922", "OK"]);
     m.rt.input.live.pads[0].buttons = 0;
 
     let d = until_dialog(&mut m, "N$=DIALOG(\"NAME0\",\"SAVE\",14):?N$,RESULT()");

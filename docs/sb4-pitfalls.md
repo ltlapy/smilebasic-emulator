@@ -470,6 +470,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `DIALOG` with buttons closes when A is let go, not when it goes down. Once it
   has closed, `KEYBOARD` shows no Enter press: `KEYBOARD(40,2)` and
   `KEYBOARD(40,0)` stay 0 over the next 6 frames, whether Enter or A closed it.
+- `DIALOG(text,8)`, which waits for A, closes when A goes down and returns
+  81928: A's bit with `#B_RANY` and `#B_ANY` (TEST64).
 - `DIALOG` covers the whole screen, so nothing else shows while it's open, and a
   screenshot of it shows only the dialog.
 - `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16. It
