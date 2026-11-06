@@ -136,11 +136,23 @@ pub enum FastOp {
         i: Var,
         to: Var,
     },
+    /// `base, inner, i, Index(1), Index(1)`: `base[inner[i]]`.
+    Index1Nested {
+        base: Var,
+        inner: Var,
+        i: Var,
+    },
     StoreIndex1,
     StoreIndex2,
     /// `base, i, StoreIndex(1)`
     StoreIndex1Vars {
         base: Var,
+        i: Var,
+    },
+    /// `base, inner, i, Index(1), StoreIndex(1)`
+    StoreIndex1Nested {
+        base: Var,
+        inner: Var,
         i: Var,
     },
     /// `var, to, step, ForTest, JumpIfFalse(exit)`
@@ -311,7 +323,18 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         Some(Op::StoreIndex(1)) => add(F::StoreIndex1Vars { base: a, i: b }, 3),
         _ => {}
     }
-    if let Some(step) = c.source(code.get(2))
+    let third = c.source(code.get(2));
+    if let Some(i) = third {
+        let (base, inner) = (a, b);
+        match code.get(3..5) {
+            Some([Op::Index(1), Op::Index(1)]) => add(F::Index1Nested { base, inner, i }, 5),
+            Some([Op::Index(1), Op::StoreIndex(1)]) => {
+                add(F::StoreIndex1Nested { base, inner, i }, 5)
+            }
+            _ => {}
+        }
+    }
+    if let Some(step) = third
         && let Some([Op::ForTest, Op::JumpIfFalse(exit)]) = code.get(3..5)
     {
         let (var, to, exit) = (a, b, *exit);

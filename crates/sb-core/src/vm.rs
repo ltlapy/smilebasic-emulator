@@ -1446,6 +1446,24 @@ impl Vm {
                     };
                     put(at_var(vars, to), n);
                 }
+                FastOp::Index1Nested { base, inner, i } => {
+                    let Some(k) = element1(get(vars, inner), get(vars, i)) else {
+                        break;
+                    };
+                    let Some(n) = element1(get(vars, base), &Value::from(k)) else {
+                        break;
+                    };
+                    push_num(stack, n);
+                }
+                FastOp::StoreIndex1Nested { base, inner, i } => {
+                    let Some(k) = element1(get(vars, inner), get(vars, i)) else {
+                        break;
+                    };
+                    if !set_element1(get(vars, base), &Value::from(k), top(stack)) {
+                        break;
+                    }
+                    drop_top(stack);
+                }
                 FastOp::StoreIndex1 => {
                     let n = stack.len();
                     if !set_element1(&stack[n - 2], &stack[n - 1], &stack[n - 3]) {

@@ -147,6 +147,16 @@ const PROGRAMS: &[&str] = &[
     CASE_STRINGS,
     "S$=\"B\"\n?1:CASE S$\nWHEN 1:?2\nENDCASE",
     "A=1\n?1:CASE A\nWHEN \"A\":?2\nENDCASE",
+    // Arrays indexed by arrays.
+    NESTED_INT,
+    NESTED_REAL,
+    "DIM R%[4],K%[4]\n?1:K%[0]=4:I=0:?R%[K%[I]]",
+    "DIM R%[4],K%[4]\n?1:K%[0]=-1:I=0:R%[K%[I]]=1",
+    "DIM R%[4],K%[4]\n?1:I=4:?R%[K%[I]]",
+    "DIM R%[4],K%[4]\n?1:I=4:R%[K%[I]]=1",
+    "DIM R$[2],K%[2]:R$[0]=\"S\":I=0:?R$[K%[I]]:R$[K%[I]]=\"T\":?R$[0]",
+    "DIM R%[2],K$[2]\n?1:I=0:?R%[K$[I]]",
+    "DIM R%[2],K%[2]\n?1:X$=\"A\":I=0:R%[K%[I]]=X$",
 ];
 
 const ON_GOTO: &str = "\
@@ -166,10 +176,13 @@ const ON_REAL: &str = "X#=1.75:ON X# GOTO @A,@B\n@A:?\"A\"\n@B:?\"B\"";
 const ON_IN_DEF: &str = "DEF F N\nON N GOTO @A\n?\"N\":RETURN\n@A:?\"A\"\nEND\nF 0:F 1";
 const CASE_NUMBERS: &str = "FOR A=0 TO 4\nCASE A\nWHEN 0:WHEN 1:?\"A\"\nWHEN 2:?\"B\"\nWHEN 3.0:?\"C\"\nOTHERWISE:?\"X\"\nENDCASE\nNEXT";
 const CASE_STRINGS: &str = "S$=\"B\"\nCASE S$\nWHEN \"A\":?1\nWHEN \"B\":?2\nENDCASE\nCASE S$+\"C\"\nWHEN \"BC\":?3\nENDCASE";
+const NESTED_INT: &str =
+    "DIM R%[4],K%[4]:K%[1]=3:R%[3]=9:I=1:?R%[K%[I]]:R%[K%[I]]=5:?R%[3]:V=R%[K%[I]]+1:?V";
+const NESTED_REAL: &str = "DIM R#[4],K#[4]:K#[1]=2.5:R#[2]=1.5:I=1:?R#[K#[I]]:R#[K#[I]]=7:?R#[2]";
 
-/// What ON and CASE print, fused.
+/// What ON, CASE and indexes by arrays print, fused.
 #[test]
-fn on_and_case_print_what_they_should() {
+fn on_case_and_nested_indexes_print_what_they_should() {
     for (source, expected) in [
         (ON_GOTO, "NONE-2\nNONE-1\nA\nB\nC\nNONE3\n"),
         (ON_GOSUB, "N-1\nA\nN0\nB\nN1\nN2\nN3\n"),
@@ -178,6 +191,8 @@ fn on_and_case_print_what_they_should() {
         (ON_IN_DEF, "A\nN\n"),
         (CASE_NUMBERS, "A\nA\nB\nC\nX\n"),
         (CASE_STRINGS, "2\n3\n"),
+        (NESTED_INT, "9\n5\n6\n"),
+        (NESTED_REAL, "1.5\n7\n"),
     ] {
         let mut host = TextHost::default();
         let mut vm = Vm::new(compiled(source, true));
@@ -212,11 +227,12 @@ fn gosubs_overflow_as_without_fusing() {
 /// None of these leaves anything to `step` but DIM, the end of the program
 /// and the FOR test that only stands in a larger entry.
 #[test]
-fn on_and_case_are_fused() {
+fn on_case_and_nested_indexes_are_fused() {
     for source in [
         "FOR I=0 TO 3:ON I GOTO @A,@B\nA=1\n@A:B=1\n@B:NEXT",
         "FOR I=0 TO 9:ON I GOSUB @S:NEXT:END\n@S:RETURN",
         "FOR A=0 TO 4\nCASE A\nWHEN 1:B=1\nWHEN 2:B=2\nENDCASE\nNEXT",
+        "DIM R%[4],K%[4]:FOR I=0 TO 3:R%[K%[I]]=R%[K%[I]]+1:NEXT",
     ] {
         let program = compiled(source, true);
         let slow: Vec<_> = program
@@ -368,7 +384,7 @@ FOR I=1 TO 6
  WHEN 2:E=1
  WHEN 4:E=2
  ENDCASE
- K%[I]=I+1:R%[I]=R%[I]+1
+ K%[I]=I+1:R%[K%[I]]=R%[K%[I]]+1
 NEXT
 ?A
 END

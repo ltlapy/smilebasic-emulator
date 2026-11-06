@@ -45,8 +45,8 @@ This list holds as of `8a7d9e7`, the commit that last revised it.
   sprites changed since the last search.
 - **The interpreter** takes about 20 instructions an operation on numbers, in
   `crates/sb-core/src/fuse.rs`'s larger steps, with up to 18 of each step on
-  choosing the step. These steps cover jumps by ON, GOSUB and RETURN, and
-  WHEN tests.
+  choosing the step. These steps cover jumps by ON, GOSUB and RETURN, WHEN
+  tests and an array indexed by an element of another (`R%[K%[I]]`).
   Strings, DEF calls, built-in calls and anything that may fail go one
   instruction at a time, as everything does whenever a debugger, TRACE or a
   breakpoint is active: about 8 times slower, at about 140 million
