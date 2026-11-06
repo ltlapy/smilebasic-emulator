@@ -231,10 +231,10 @@ fn controllers_type_keys_for_inkey() {
 }
 
 #[test]
-fn a_controllers_key_repeats_after_25_frames_then_every_3() {
-    let down = vec![pressed(1 << 5); 32];
-    // At the press, then on frames 25, 28 and 31 after it.
-    let counts: Vec<usize> = [1, 25, 26, 28, 29, 31, 32]
+fn a_controllers_key_repeats_after_20_frames_then_every_3() {
+    let down = vec![pressed(1 << 5); 27];
+    // At the press, then on frames 20, 23 and 26 after it.
+    let counts: Vec<usize> = [1, 20, 21, 23, 24, 26, 27]
         .iter()
         .map(|&n| typed(&down[..n], "INKEY$()").split_whitespace().count())
         .collect();

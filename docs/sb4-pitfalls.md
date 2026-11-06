@@ -500,7 +500,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     over these, and a line being typed acts on them.
   - `INKEY$(1)` drops whatever controllers typed.
   - The first assignment that holds gives the frame's one key. It comes at the
-    press, 25 frames later and then every 3, not by `BREPEAT`.
+    press, 20 frames later and then every 3, for the pad and the stick alike
+    (TEST64).
   - A second input going down meanwhile types nothing until all are let go.
 
 ### `PUSHKEY` and the key buffers

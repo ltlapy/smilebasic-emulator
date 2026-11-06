@@ -39,7 +39,7 @@ const REPEAT_OTHERS: (u32, u32) = (15, 4);
 /// How far a stick goes before it counts as a direction for [`PAD_KEYS`].
 const PAD_KEY_STICK: f64 = 0.3;
 /// A held button's key repeats after this many frames, then every so many.
-const PAD_KEY_REPEAT: (u32, u32) = (25, 3);
+const PAD_KEY_REPEAT: (u32, u32) = (20, 3);
 /// #B_L1 and #B_R1, either of which is Ctrl for [`PAD_KEYS`].
 const PAD_KEY_CTRL: u32 = 0b11 << 8;
 /// The keyboard's Ctrl among [`State::modifiers`].
