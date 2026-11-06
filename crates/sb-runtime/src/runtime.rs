@@ -1805,15 +1805,14 @@ impl Runtime {
     /// Starts a frame: the input it sees, and MAINCNT.
     pub fn begin_frame(&mut self) {
         self.input.latch();
-        // The press that answers a DIALOG is the dialog's: it would reach
-        // INKEY$ or the prompt after it as Enter.
-        // UNVERIFIED: that SmileBASIC 4's dialogs keep it too.
+        // What the controllers type while a DIALOG is open goes nowhere,
+        // but a key held on after it closes repeats into the queue.
         if self.dialog.is_some() {
-            self.input.spend_pad_key();
+            self.input.drop_pad_key();
         }
         // UNVERIFIED: that a controller's key can be read on the frame the
         // button goes down, and not on the next.
-        if let Some(code) = self.input.pad_key() {
+        else if let Some(code) = self.input.pad_key() {
             self.changed = true;
             push_key(&mut self.typed, code | codes::FROM_PAD);
         }

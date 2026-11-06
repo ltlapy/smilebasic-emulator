@@ -380,12 +380,22 @@ impl Input {
     }
 
     /// Keyboard keys held now count as held before too, so that the key
-    /// that closed a dialog is no press for KEYBOARD afterwards.
-    // UNVERIFIED: that controller buttons keep their presses.
-    pub(crate) fn hide_key_presses(&mut self) {
+    /// that closed a dialog is no press for KEYBOARD afterwards, and
+    /// controller buttons are as they were, so that the button that closed
+    /// it is neither a press nor a release for BUTTON.
+    pub(crate) fn hide_presses(&mut self) {
         for (before, now) in self.before.keys.iter_mut().zip(self.now.keys) {
             *before |= now;
         }
+        for (before, now) in self.before.pads.iter_mut().zip(&self.now.pads) {
+            before.buttons = now.buttons;
+        }
+    }
+
+    /// Lets a frame's key from the controllers go without typing it: its
+    /// repeats come on as the button stays down.
+    pub(crate) fn drop_pad_key(&mut self) {
+        self.pad_key();
     }
 
     /// Whether the program has read buttons or sticks since the last call,

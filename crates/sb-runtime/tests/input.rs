@@ -382,13 +382,15 @@ fn a_button_held_past_the_end_of_a_program_types_nothing() {
     assert_eq!(rt.text[4].cell(0, 0).code, u16::from(b'0'));
 }
 
-/// The A that answers a DIALOG doesn't reach INKEY$ after it as Enter, nor as
-/// it repeats while still held.
+/// TEST64: the A that answers a DIALOG doesn't reach INKEY$ after it as
+/// Enter, but its repeats do while it stays down, and BUTTON sees it held
+/// with no press.
 #[test]
-fn the_press_that_answers_a_dialog_types_nothing() {
+fn the_press_that_answers_a_dialog_types_only_its_repeats() {
     let a = pressed(1 << 3);
     let mut rt = Runtime::new(400, 240, Font::blank());
-    let source = "R=DIALOG(\"Q\",-1):N=0:REPEAT:VSYNC:INC N:UNTIL N==40:K$=INKEY$():?LEN(K$)";
+    let source = "R=DIALOG(\"Q\",-1):P=BUTTON(0,-1,2):H=BUTTON(0):N=0:REPEAT:VSYNC:INC N:UNTIL N==22\n\
+                  K=0:WHILE INKEY$()==CHR$(13):INC K:WEND:?R;\" \";P;\" \";H;\" \";K";
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
     let mut frames = 0;
     loop {
@@ -400,5 +402,35 @@ fn the_press_that_answers_a_dialog_types_nothing() {
             break;
         }
     }
+    let row: String = (0..20)
+        .map(|x| char::from_u32(u32::from(rt.text[4].cell(x, 0).code)).unwrap_or(' '))
+        .collect();
+    // The first repeat, 20 frames after the press, and not the next.
+    assert_eq!(row.trim_end_matches(['\0', ' ']), "81928 0 81928 1");
+}
+
+/// TEST64: the release of the A that closes an OK dialog is no release for
+/// BUTTON after it.
+#[test]
+fn the_release_that_closes_a_dialog_is_hidden() {
+    let a = pressed(1 << 3);
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let source = "DIALOG \"Q\":?BUTTON(0,-1,3)";
+    let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
+    let mut frames = 0;
+    loop {
+        rt.input.live = if (3..6).contains(&frames) {
+            a
+        } else {
+            State::default()
+        };
+        rt.begin_frame();
+        frames += 1;
+        assert!(frames < 200, "the dialog was not answered");
+        if vm.run(&mut rt, 100_000).unwrap() == Status::Ended {
+            break;
+        }
+    }
+    assert!(frames > 6, "closed before A was let go");
     assert_eq!(rt.text[4].cell(0, 0).code, u16::from(b'0'));
 }

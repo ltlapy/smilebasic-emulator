@@ -472,6 +472,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `KEYBOARD(40,0)` stay 0 over the next 6 frames, whether Enter or A closed it.
 - `DIALOG(text,8)`, which waits for A, closes when A goes down and returns
   81928: A's bit with `#B_RANY` and `#B_ANY` (TEST64).
+- The A that closes a `DIALOG` is gone for the program after it (TEST64):
+  - With OK or Yes and No, `BUTTON` shows no release of it.
+  - With a wait for A, `BUTTON(0)` shows it held, `BUTTON(0,-1,2)` no press,
+    and the release comes when it is let go. `INKEY$` gets no `CHR$(13)` for
+    the press, but A held on repeats into it: 20 frames after the press and
+    then every 3.
 - `DIALOG` covers the whole screen, so nothing else shows while it's open, and a
   screenshot of it shows only the dialog.
 - `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16. It
