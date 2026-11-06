@@ -1596,7 +1596,8 @@ TTEST36.
   interpreter's direct mode, which runs the line.
 - `DIALOG` in a subprogram answers to the controller with the focus on either
   side, and the main program keeps running meanwhile (TEST64). With the focus
-  on the main program, its `BUTTON(0)` sees the A that answers.
+  on the main program, its `BUTTON(0)` sees the A that answers, and its
+  `INKEY$` gets no key from it.
 - With a `DIALOG` open on each side, one press of A closes both in the same
   frame, wherever the focus is (TEST64).
 - `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
