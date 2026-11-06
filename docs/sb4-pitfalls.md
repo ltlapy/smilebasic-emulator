@@ -1601,11 +1601,12 @@ TTEST36.
 
 ### `ENVSTAT` and `ENVLOCATE`
 
-- `ENVSTAT`'s OUT form after a clean start of SmileBASIC, before any program,
-  gives status 1 with line 386, of a system program that went before. A program
-  that ends without an error sets the status to 0 and leaves the line: 386 after
-  it, and after a program's error on line 3, 3 through the clean runs that
-  follow. (TEST63)
+- `ENVSTAT OUT S,N,A,SL,C,L` after SmileBASIC starts afresh, before any
+  program, gives S 0, N 0, A 0, C -1 and L 0 (TEST64). TEST63, started another
+  way, saw status 1 with line 386, of a system program that went before.
+- A program that ends without an error sets the status and N to 0 and C to -1,
+  and keeps A and L from the error before: A 0 and L 0 after a fresh start, and
+  A -1 and L 3 after a `Stack overflow` on line 3 (TEST63, TEST64).
 - `ENVSTAT OUT S,N,A,SL,C,L` after the main program's `Divide by zero` gives N
   7, A -1, SL 0, C the statement's character from the start of the program
   counting from 0, and L its line. After a `STOP`, N is 0 and A, SL and C are

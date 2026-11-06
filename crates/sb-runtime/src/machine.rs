@@ -808,8 +808,9 @@ impl Machine {
     pub fn run_slot(&mut self, slot: usize) {
         // Running a program ends PRGEDIT's editing.
         self.rt.prg_edit = None;
-        // The last error's line stays.
-        self.rt.env_error = [0, -1, -1, -1, self.rt.env_error[4]];
+        // The last error's argument and line stay.
+        let [_, argument, _, _, line] = self.rt.env_error;
+        self.rt.env_error = [0, argument, -1, -1, line];
         self.direct_failed = false;
         self.vars.clear();
         self.rt.clear_vars();

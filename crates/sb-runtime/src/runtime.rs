@@ -1115,7 +1115,8 @@ impl Runtime {
             focus_wish: None,
             focus_busy: false,
             env_status: 0,
-            env_error: [0, -1, -1, -1, 0],
+            // UNVERIFIED: the error slot, -1.
+            env_error: [0, 0, -1, -1, 0],
             forget_stop: false,
             dimmed: false,
             changed: true,

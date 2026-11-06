@@ -288,9 +288,6 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   emulator does not have them: they start only from the `#TOOL` project that the
   importer copies from SmileBASIC 4 into the projects folder. A missing tool, or
   a key with no tool, shows a notice.
-- `ENVSTAT`'s OUT form at the start, before any program, gives status 0 and line
-  0. On SmileBASIC 4 it is status 1 and the line of a system program that ran
-  before, which the emulator does not run.
 - `UISTATE` always reads 0. `UISTATE(2)` read 648 on a Switch 2, meaning
   unknown.
 - `CONTROLLER(0)` is 1, handheld. A Switch 2 read 2.

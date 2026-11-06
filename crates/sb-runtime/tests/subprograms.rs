@@ -306,6 +306,30 @@ fn envstat_tells_of_a_compile_error() {
     );
 }
 
+/// TEST64: at the start the error's argument is 0, and clean runs keep the
+/// argument and line of the error before.
+#[test]
+fn envstat_keeps_the_argument_through_clean_runs() {
+    let dir = TempDir::new("errclean");
+    let tell = "ENVSTAT OUT S,N,A,SL,C,L\n\
+         ENVFOCUS 0\n\
+         PUSHKEY \"?\"+STR$(S)+\",\"+STR$(N)+\",\"+STR$(A)+\",\"+STR$(C)+\",\"+STR$(L)+CHR$(13)\n\
+         LOOP:VSYNC:ENDLOOP\n";
+    let told = |setup: &[&str], expected: &str| {
+        let mut m = machine(&dir, tell);
+        for program in setup {
+            m.set_slot(2, program.to_string());
+            enter(&mut m, "run 2");
+        }
+        enter(&mut m, "subrun \"sub\"");
+        frames(&mut m, 5);
+        assert!(rows(&m).iter().any(|r| r == expected), "{:?}", rows(&m));
+    };
+    told(&[], "0   0   0   -1  0");
+    told(&["?\"A\"\n"], "0   0   0   -1  0");
+    told(&["\n\nX=0:?1/X\n", "?\"A\"\n"], "0   0   -1  -1  3");
+}
+
 #[test]
 fn envstat_tells_of_a_bare_goto() {
     let dir = TempDir::new("errsyntax");
