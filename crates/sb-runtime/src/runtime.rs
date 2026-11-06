@@ -872,6 +872,9 @@ pub struct Runtime {
     /// The DIALOG the program waits on, and the frontend's answer.
     pub(crate) dialog: Option<crate::dialog::Waiting>,
     pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
+    /// The other interpreter's DIALOG is open: what the controllers type
+    /// goes to it.
+    pub(crate) dialog_beside: bool,
     /// Lines of a FILES listing still to show, after a key is pressed.
     pub(crate) listing_left: Option<VecDeque<Vec<u16>>>,
     /// Lines of an INSPECT still to show, after a key is pressed.
@@ -1127,6 +1130,7 @@ impl Runtime {
             clipboard: Box::new(crate::env::MemoryClipboard::default()),
             meta: Default::default(),
             dialog: None,
+            dialog_beside: false,
             dialog_answer: None,
             settings: Settings::default(),
             storage: Storage::none(),
@@ -1807,7 +1811,7 @@ impl Runtime {
         self.input.latch();
         // What the controllers type while a DIALOG is open goes nowhere,
         // but a key held on after it closes repeats into the queue.
-        if self.dialog.is_some() {
+        if self.dialog.is_some() || self.dialog_beside {
             self.input.drop_pad_key();
         }
         // UNVERIFIED: that a controller's key can be read on the frame the

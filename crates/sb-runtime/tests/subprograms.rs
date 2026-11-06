@@ -744,6 +744,7 @@ fn the_controls_answer_a_subprograms_dialog_without_the_focus() {
     enter(&mut m, "subrun \"sub\"");
     frames(&mut m, 10);
     assert!(!m.sub_has_focus() && m.program_dialog().is_some());
+    let before = rows(&m);
     let a = 1 << sb_runtime::input::A;
     for buttons in [a, a, 0] {
         m.rt.input.live.pads[0].buttons = buttons;
@@ -754,6 +755,8 @@ fn the_controls_answer_a_subprograms_dialog_without_the_focus() {
     frames(&mut m, 1);
     assert!(m.program_dialog().is_none());
     assert_eq!(sub_rows(&m), ["1"]);
+    // But it types no Enter there (TEST64: no key for INKEY$).
+    assert_eq!(rows(&m), before);
 }
 
 /// TEST64: with a dialog on each side, one press answers both, in the same

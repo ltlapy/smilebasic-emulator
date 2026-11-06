@@ -2347,6 +2347,7 @@ impl Machine {
     /// Hands the frame's controls and keys to the interpreter with the
     /// focus; the other sees nothing pressed.
     fn give_input(&mut self) {
+        self.rt.dialog_beside = false;
         let Some(sub) = &mut self.sub else {
             return;
         };
@@ -2362,6 +2363,8 @@ impl Machine {
         // sees it too.
         let main_asks = self.rt.program_dialog().is_some();
         let sub_asks = sub.rt.program_dialog().is_some();
+        self.rt.dialog_beside = sub_asks;
+        sub.rt.dialog_beside = main_asks;
         if !(main_asks || !sub.rt.focus) {
             self.rt.input.live = idle;
         }
