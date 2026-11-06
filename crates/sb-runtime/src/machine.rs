@@ -134,6 +134,9 @@ pub struct Machine {
     /// Where the last program error happened, for LIST ERR and F4: the
     /// slot, line and column of the statement.
     last_error: Option<(usize, u32, u32)>,
+    /// The last error that stopped a program, until
+    /// [`Machine::take_program_error`] takes it.
+    program_error: Option<Error>,
     /// The program that STOP, the + button or an error stopped, kept for
     /// CONT; `rt.stopped` says which.
     halted: Option<Vm>,
@@ -364,6 +367,7 @@ impl Machine {
             focus_flash: None,
             ended: None,
             home: Home::Off,
+            program_error: None,
         }
     }
 
@@ -1287,6 +1291,13 @@ impl Machine {
         self.stop_reason.as_ref().filter(|_| paused)
     }
 
+    /// The slot and line the stopped program stopped on, as its Break
+    /// message gives them.
+    pub fn stopped_on(&self) -> Option<(usize, u32)> {
+        self.halted.as_ref()?;
+        self.rt.backtrace.first().copied()
+    }
+
     /// Where the stopped program goes on: its slot and the line about to
     /// run.
     pub fn paused_at(&self) -> Option<(usize, u32)> {
@@ -1951,6 +1962,9 @@ impl Machine {
             }
             Err(e) => {
                 let e = e.in_slot(slot.map(|s| s as u32));
+                if slot.is_some() {
+                    self.program_error = Some(e.clone());
+                }
                 if self.rt.env_type == 1 {
                     return self.end_sub(Some(e.to_string()));
                 }
@@ -1989,6 +2003,11 @@ impl Machine {
 
     /// The program or line ended, by itself or with an error.
     fn finish(&mut self, error: Option<Error>) {
+        if let Some(e) = &error
+            && self.running_slot.is_some()
+        {
+            self.program_error = Some(e.clone());
+        }
         if self.rt.env_type == 1 {
             return self.end_sub(error.map(|e| e.to_string()));
         }
@@ -2570,6 +2589,17 @@ impl Machine {
             notices.append(&mut sub.rt.take_notices());
         }
         notices
+    }
+
+    /// The last error that stopped a program since this was last asked,
+    /// then the subprogram's, with true for the subprogram's: an error in
+    /// running, or in compiling a slot that RUN, EXEC or SUBRUN started.
+    /// Errors in direct-mode lines do not count.
+    pub fn take_program_error(&mut self) -> Option<(Error, bool)> {
+        if let Some(e) = self.program_error.take() {
+            return Some((e, false));
+        }
+        Some((self.sub.as_mut()?.program_error.take()?, true))
     }
 
     /// Whether a subprogram is running.

@@ -87,6 +87,36 @@ The part's number is typed after three seconds, as a person would. A `VSYNC`
 right after `INPUT` counts from the `VSYNC` before it, so how long the answer
 takes changes how long it waits.
 
+## Exit status
+
+A comparison run exits 0 when it finishes, with rows that differ or not, and
+with parts that stopped on an error or not: the output says which. It exits 1
+when the tool itself fails, for example on a missing folder.
+
+`--play` and `--bench` also tell how the program ended:
+
+| Status | Meaning |
+|--------|---------|
+| 0 | The program ended, or still ran at the frame limit. |
+| 1 | The tool failed: wrong arguments, a missing file or folder. |
+| 2 | A program stopped on an error, a syntax error included. |
+| 3 | No error, but `STOP` left the program stopped at the end. |
+
+Errors in a slot that `EXEC` runs, and in a subprogram that a script's
+`SUBRUN` line starts, count. Errors in lines typed in direct mode do not.
+Status 2 holds even when the script goes on to run the program again, and
+each error also goes to stderr as one line:
+
+```
+error 31 at 0:3: Subscript out of range
+subprogram error 7 at 0:2: Divide by zero
+```
+
+That line gives the error's number (`ERRNUM`), slot, line and message, and
+the detail in brackets when the emulator has one. `STOP` prints
+`stop at 0:2` with the line `STOP` is on. A `CONT` that the script types
+afterwards clears it.
+
 ## Comparing pictures
 
 With `--screen DIR`, `smilebasic-check` also saves the emulator's screen as a

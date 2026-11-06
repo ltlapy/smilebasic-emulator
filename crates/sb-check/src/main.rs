@@ -15,7 +15,7 @@ use sb_profiles::Profile;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
 use sb_runtime::input::State;
-use sb_runtime::machine::{Machine, SubScreen};
+use sb_runtime::machine::{Machine, StopReason, SubScreen};
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::ScreenMode;
 use sb_runtime::sound::synth::Instruments;
@@ -81,12 +81,22 @@ const USAGE: &str = "usage:
         F usb ID N        the keyboard key with USB usage ID (such as
                           0x28 for Enter) held for N frames, for KEYBOARD
         F touch X Y N     the screen touched at X,Y for N frames; the
-                          pointer stays there afterwards; the
                           pointer stays there afterwards
         F shot NAME       the screen saved as DIR/NAME.png
         F console         the console's text printed
         F end             the run stops
-      Lines starting with # are comments.";
+      Lines starting with # are comments.
+
+exit status:
+  0  done; with --play and --bench, the program ended or still ran at the
+     frame limit. Comparing RES files exits 0 whether rows differ or not
+  1  the tool failed: wrong arguments, a missing file or folder
+  2  --play, --bench: a program stopped on an error, also in an EXEC slot
+     or a subprogram, each printed to stderr as
+     `error 31 at 0:3: Subscript out of range (DETAIL)`, with
+     `subprogram ` before it for the subprogram's
+  3  --play, --bench: no error, but STOP left the program stopped at the
+     end, printed to stderr as `stop at 0:2`";
 
 /// Result files start with this, after the TXT type letter.
 const RESULT_PREFIX: &str = "TRES";
@@ -101,14 +111,65 @@ const SCREEN_AFTER: u32 = 120;
 
 type AnyError = Box<dyn std::error::Error>;
 
-fn main() {
-    if let Err(e) = run(std::env::args().skip(1).collect()) {
-        eprintln!("{e}");
-        std::process::exit(1);
+/// The exit status when a program stopped on an error, and when STOP
+/// left it stopped. 1 is for the tool's own failures.
+const EXIT_ERROR: u8 = 2;
+const EXIT_STOP: u8 = 3;
+
+fn main() -> std::process::ExitCode {
+    match run(std::env::args().skip(1).collect()) {
+        Ok(status) => status.into(),
+        Err(e) => {
+            eprintln!("{e}");
+            1.into()
+        }
     }
 }
 
-fn run(mut args: Vec<String>) -> Result<(), AnyError> {
+/// How the programs that --play and --bench run end, for the exit
+/// status.
+#[derive(Default)]
+struct Outcome {
+    /// Whether one stopped on an error.
+    error: bool,
+}
+
+impl Outcome {
+    /// Prints the errors that stopped programs since last asked to stderr.
+    fn look(&mut self, m: &mut Machine) {
+        while let Some((e, sub)) = m.take_program_error() {
+            let from = if sub { "subprogram " } else { "" };
+            let detail = e
+                .detail
+                .as_ref()
+                .map_or(String::new(), |d| format!(" ({d})"));
+            eprintln!(
+                "{from}error {} at {}:{}: {}{detail}",
+                e.kind.code(),
+                e.slot.unwrap_or(0),
+                e.line,
+                e.kind.message()
+            );
+            self.error = true;
+        }
+    }
+
+    /// The exit status once the run is over: 2 if a program stopped on an
+    /// error at any point, else 3 if STOP has left one stopped, else 0.
+    fn status(&mut self, m: &mut Machine) -> u8 {
+        self.look(m);
+        if self.error {
+            return EXIT_ERROR;
+        }
+        if let (Some(StopReason::Stop), Some((slot, line))) = (m.stop_reason(), m.stopped_on()) {
+            eprintln!("stop at {slot}:{line}");
+            return EXIT_STOP;
+        }
+        0
+    }
+}
+
+fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
     if args.first().is_some_and(|a| a == "--bench") {
         let fixed = args.get(1).is_some_and(|a| a == "--fixed");
         if fixed {
@@ -200,7 +261,9 @@ fn run(mut args: Vec<String>) -> Result<(), AnyError> {
         })
     });
     let _ = std::fs::remove_dir_all(&scratch);
-    outcome
+    // The parts' errors show on the console, which the results compare,
+    // so they leave the status as it was.
+    outcome.map(|()| 0)
 }
 
 /// Parts such as `1-26` or `2,5,7`.
@@ -297,7 +360,7 @@ fn check_part(
 /// Runs a program as the window would, timing each frame's two halves.
 /// `--bench --fixed`: on a fresh copy of the project and those beside it,
 /// so that nothing a run saves changes the next.
-fn bench_fixed(options: &BenchOptions, project: &Path, program: &str) -> Result<(), AnyError> {
+fn bench_fixed(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, AnyError> {
     let name = project
         .file_name()
         .and_then(|n| n.to_str())
@@ -356,7 +419,7 @@ fn add_to_checksum(sum: u64, pixels: &[u32]) -> u64 {
     })
 }
 
-fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), AnyError> {
+fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, AnyError> {
     use std::time::{Duration, Instant};
     let &BenchOptions {
         frames,
@@ -383,6 +446,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
     let started = Instant::now();
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     println!("loaded and compiled in {:?}", started.elapsed());
+    let mut outcome = Outcome::default();
     let shots = png.and_then(Path::parent).unwrap_or(Path::new("."));
     let mut player = Player::new(options.steps.clone());
     let mut frame_log = Vec::new();
@@ -420,6 +484,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
             let t = Instant::now();
             m.frame();
             let ran = t.elapsed();
+            outcome.look(&mut m);
             if sound {
                 let samples: Vec<u32> = (m.take_samples().iter()).map(|s| s.to_bits()).collect();
                 sound_sum = add_to_checksum(sound_sum, &samples);
@@ -427,7 +492,9 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
             frame_log.push(FrameLog {
                 run: ran,
                 draw: Duration::ZERO,
-                instructions: m.executed() - before,
+                // None in the frame the program ends in, its count gone
+                // with it.
+                instructions: m.executed().saturating_sub(before),
                 vsyncs: m.vsyncs() - vsyncs,
                 redrawn: false,
                 end: started.elapsed(),
@@ -570,7 +637,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<(), An
     if let Some(file) = png {
         save_screen(&mut m, file)?;
     }
-    Ok(())
+    Ok(outcome.status(&mut m))
 }
 
 /// What a --play script does at a frame.
@@ -788,7 +855,7 @@ fn play(
     program: &str,
     script: &str,
     dir: &Path,
-) -> Result<(), AnyError> {
+) -> Result<u8, AnyError> {
     let steps = read_script((script != "-").then_some(script))?;
     std::fs::create_dir_all(dir)?;
     let name = project
@@ -805,6 +872,7 @@ fn play(
         .map_err(|e| format!("{name}: {e}"))?;
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     let mut player = Player::new(steps);
+    let mut outcome = Outcome::default();
     let mut frame = 0;
     // Direct mode goes on while the script has more to type, as for
     // SUBRUN, and while a subprogram runs.
@@ -813,6 +881,7 @@ fn play(
             break;
         }
         m.frame();
+        outcome.look(&mut m);
         frame += 1;
     }
     if m.is_running() {
@@ -824,7 +893,7 @@ fn play(
     let file = dir.join("end.png");
     save_screen(&mut m, &file)?;
     println!("screen saved to {}", file.display());
-    Ok(())
+    Ok(outcome.status(&mut m))
 }
 
 /// KEYBOARD's bit for a modifier key's USB usage: Windows key, Shift,
