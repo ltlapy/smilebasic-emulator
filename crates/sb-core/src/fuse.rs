@@ -68,6 +68,17 @@ pub enum FastOp {
     Reverse(u32),
     Jump(Addr),
     JumpIfFalse(Addr),
+    JumpIfTrue(Addr),
+    /// ON GOTO and ON GOSUB, with the table of `count` `Jump`s after it.
+    On {
+        from: Selector,
+        count: u32,
+        gosub: bool,
+    },
+    /// GOSUB in the running slot.
+    Gosub(Addr),
+    /// RETURN from a GOSUB of the running slot.
+    Return,
     Unary(UnaryOp),
     Binary(BinaryOp),
     /// `Swap, Binary`
@@ -89,6 +100,13 @@ pub enum FastOp {
     },
     /// `a, b, Binary, JumpIfFalse`
     VarsJump {
+        op: BinaryOp,
+        a: Var,
+        b: Var,
+        target: Addr,
+    },
+    /// `a, b, Binary, JumpIfTrue`: a WHEN's test.
+    VarsJumpTrue {
         op: BinaryOp,
         a: Var,
         b: Var,
@@ -143,6 +161,17 @@ pub enum FastOp {
         to_slot: Var,
         exit: Addr,
     },
+}
+
+/// Where [`FastOp::On`] finds the number that picks its label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Selector {
+    /// On the stack: `On`.
+    Stack,
+    /// `v, On`
+    Var(Var),
+    /// `base, i, Index(1), On`
+    Index(Var, Var),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -212,6 +241,17 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         Op::Reverse(n) => add(F::Reverse(n), 1),
         Op::Jump(a) => add(F::Jump(a), 1),
         Op::JumpIfFalse(a) => add(F::JumpIfFalse(a), 1),
+        Op::JumpIfTrue(a) => add(F::JumpIfTrue(a), 1),
+        Op::On { count, gosub } => add(
+            F::On {
+                from: Selector::Stack,
+                count,
+                gosub,
+            },
+            1,
+        ),
+        Op::Gosub(a) => add(F::Gosub(a), 1),
+        Op::Return => add(F::Return, 1),
         Op::Unary(op) => add(F::Unary(op), 1),
         Op::Binary(op) => add(F::Binary(op), 1),
         Op::Index(1) => add(F::Index1, 1),
@@ -226,6 +266,10 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
     add(F::Push(a), 1);
     if let Some(to) = store(code.get(1)) {
         add(F::Move { from: a, to }, 2);
+    }
+    if let Some(&Op::On { count, gosub }) = code.get(1) {
+        let from = Selector::Var(a);
+        add(F::On { from, count, gosub }, 2);
     }
     if let Some([Op::Swap, Op::Binary(op)]) = code.get(1..3) {
         let op = *op;
@@ -249,11 +293,19 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
                 let target = *target;
                 add(F::VarsJump { op, a, b, target }, 4);
             }
+            if let Some(Op::JumpIfTrue(target)) = code.get(3) {
+                let target = *target;
+                add(F::VarsJumpTrue { op, a, b, target }, 4);
+            }
         }
         Some(Op::Index(1)) => {
             add(F::Index1Vars { base: a, i: b }, 3);
             if let Some(to) = store(code.get(3)) {
                 add(F::Index1Store { base: a, i: b, to }, 4);
+            }
+            if let Some(&Op::On { count, gosub }) = code.get(3) {
+                let from = Selector::Index(a, b);
+                add(F::On { from, count, gosub }, 4);
             }
         }
         Some(Op::StoreIndex(1)) => add(F::StoreIndex1Vars { base: a, i: b }, 3),

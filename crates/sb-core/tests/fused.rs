@@ -1,7 +1,8 @@
 //! Fused instructions must not be seen: a program runs the same with them as
 //! one instruction at a time, up to its errors and where each time slice ends.
 
-use sb_core::bytecode::Compiled;
+use sb_core::bytecode::{Compiled, Op};
+use sb_core::fuse::FastOp;
 use sb_core::host::TextHost;
 use sb_core::vm::{Status, Step, Vm};
 use sb_core::watch::Watch;
@@ -124,7 +125,112 @@ const PROGRAMS: &[&str] = &[
     "X=-1:?-X:?!X:?NOT X:Y=-X+1:?Y",
     "ON 1 GOTO @A,@B\n@A:?1\n@B:?2\nFOR I=0 TO 2:ON I GOSUB @C,@D:NEXT:END\n@C:?3:RETURN\n@D:?4:RETURN",
     "A=1:GOTO @L\nA=2\n@L:?A:B=A+1:?B",
+    // ON GOTO and ON GOSUB: in range, out of range, from a variable, an
+    // expression and an array, in a DEF, and each way the selector fails.
+    ON_GOTO,
+    ON_GOSUB,
+    "FOR I=-1 TO 3:ON I+1 GOSUB @A,@B:NEXT:END\n@A:?\"A\":RETURN\n@B:?\"B\":RETURN",
+    ON_ARRAY,
+    ON_REAL,
+    "DEF F N\nVAR I\nFOR I=0 TO N:ON I GOSUB @A,@B:NEXT\nEND\nF 3:END\n@A:?\"A\":RETURN\n@B:?\"B\":RETURN",
+    ON_IN_DEF,
+    "X$=\"A\"\n?1:ON X$ GOTO @A\n@A:?2",
+    "X=1E300\n?1:ON X GOTO @A\n@A:?2",
+    "DIM K%[2]\n?1:I=2:ON K%[I] GOTO @A\n@A:?2",
+    "DIM K$[2]\n?1:I=0:ON K$[I] GOTO @A\n@A:?2",
+    "?1:RETURN",
+    "GOSUB @S:?\"OK\":END\n@S:RESTORE \"PUSH\":RETURN",
+    "DEF F\nGOSUB @S\n?\"F\"\nEND\nF:?\"OUT\":END\n@S:?\"S\":RETURN",
+    // CASE on numbers and strings, WHENs sharing a body, OTHERWISE.
+    CASE_NUMBERS,
+    "FOR A#=0 TO 2 STEP 0.5\nCASE A#\nWHEN 1:?\"ONE\"\nWHEN 1.5:?\"HALF\"\nENDCASE\nNEXT",
+    CASE_STRINGS,
+    "S$=\"B\"\n?1:CASE S$\nWHEN 1:?2\nENDCASE",
+    "A=1\n?1:CASE A\nWHEN \"A\":?2\nENDCASE",
 ];
+
+const ON_GOTO: &str = "\
+FOR I=-2 TO 3
+ ON I GOTO @A,@B,@C
+ ?\"NONE\";I:GOTO @E
+ @A:?\"A\":GOTO @E
+ @B:?\"B\":GOTO @E
+ @C:?\"C\"
+ @E
+NEXT
+";
+const ON_GOSUB: &str =
+    "FOR I=-1 TO 3:ON I GOSUB @A,@B:?\"N\";I:NEXT:END\n@A:?\"A\":RETURN\n@B:?\"B\":RETURN";
+const ON_ARRAY: &str = "DIM K%[3]:K%[1]=1:K%[2]=7:FOR I=0 TO 2:ON K%[I] GOTO @A,@B\n?\"N\":GOTO @E\n@A:?\"A\":GOTO @E\n@B:?\"B\"\n@E:NEXT";
+const ON_REAL: &str = "X#=1.75:ON X# GOTO @A,@B\n@A:?\"A\"\n@B:?\"B\"";
+const ON_IN_DEF: &str = "DEF F N\nON N GOTO @A\n?\"N\":RETURN\n@A:?\"A\"\nEND\nF 0:F 1";
+const CASE_NUMBERS: &str = "FOR A=0 TO 4\nCASE A\nWHEN 0:WHEN 1:?\"A\"\nWHEN 2:?\"B\"\nWHEN 3.0:?\"C\"\nOTHERWISE:?\"X\"\nENDCASE\nNEXT";
+const CASE_STRINGS: &str = "S$=\"B\"\nCASE S$\nWHEN \"A\":?1\nWHEN \"B\":?2\nENDCASE\nCASE S$+\"C\"\nWHEN \"BC\":?3\nENDCASE";
+
+/// What ON and CASE print, fused.
+#[test]
+fn on_and_case_print_what_they_should() {
+    for (source, expected) in [
+        (ON_GOTO, "NONE-2\nNONE-1\nA\nB\nC\nNONE3\n"),
+        (ON_GOSUB, "N-1\nA\nN0\nB\nN1\nN2\nN3\n"),
+        (ON_ARRAY, "A\nB\nN\n"),
+        (ON_REAL, "B\n"),
+        (ON_IN_DEF, "A\nN\n"),
+        (CASE_NUMBERS, "A\nA\nB\nC\nX\n"),
+        (CASE_STRINGS, "2\n3\n"),
+    ] {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(compiled(source, true));
+        assert_eq!(
+            vm.run(&mut host, 1_000_000).unwrap(),
+            Status::Ended,
+            "{source}"
+        );
+        assert_eq!(host.output, expected, "{source}");
+    }
+}
+
+/// GOSUBs fill the stack as without fusing, which takes longer slices than
+/// [`programs_run_the_same_fused_or_not`] uses.
+#[test]
+fn gosubs_overflow_as_without_fusing() {
+    for program in [
+        "?1:GOSUB @S\n@S:GOSUB @S",
+        "?1:I=0:ON I GOSUB @S\n@S:ON I GOSUB @S",
+    ] {
+        for budget in [5, 7, 1_000_000] {
+            let fused = run(program, budget, true);
+            assert!(
+                fused.0.last().unwrap().contains("StackOverflow"),
+                "{fused:?}"
+            );
+            assert_eq!(fused, run(program, budget, false), "{program} in {budget}");
+        }
+    }
+}
+
+/// None of these leaves anything to `step` but DIM, the end of the program
+/// and the FOR test that only stands in a larger entry.
+#[test]
+fn on_and_case_are_fused() {
+    for source in [
+        "FOR I=0 TO 3:ON I GOTO @A,@B\nA=1\n@A:B=1\n@B:NEXT",
+        "FOR I=0 TO 9:ON I GOSUB @S:NEXT:END\n@S:RETURN",
+        "FOR A=0 TO 4\nCASE A\nWHEN 1:B=1\nWHEN 2:B=2\nENDCASE\nNEXT",
+    ] {
+        let program = compiled(source, true);
+        let slow: Vec<_> = program
+            .fast
+            .iter()
+            .zip(&program.code)
+            .filter(|(f, op)| {
+                f.op == FastOp::Slow && !matches!(op, Op::End | Op::ForTest | Op::NewArray { .. })
+            })
+            .map(|(_, op)| op)
+            .collect();
+        assert!(slow.is_empty(), "{source}: {slow:?}");
+    }
+}
 
 #[test]
 fn programs_run_the_same_fused_or_not() {
@@ -252,13 +358,23 @@ fn most_loops_are_fused() {
 const BUDGETS: [u32; 5] = [1, 4, 9, 23, 41];
 
 const LOOP: &str = "\
-A=0
+A=0:DIM R%[8],K%[8]
 FOR I=1 TO 6
  A=A+I*2
  B=A-1:C=B+1
  IF A>9 THEN D=1
+ ON I MOD 3 GOSUB @S,@T
+ CASE I
+ WHEN 2:E=1
+ WHEN 4:E=2
+ ENDCASE
+ K%[I]=I+1:R%[I]=R%[I]+1
 NEXT
 ?A
+END
+@S:F=F+1:RETURN
+@T
+RETURN
 ";
 
 /// Each line a run stops at, given that it first ran `budget` instructions

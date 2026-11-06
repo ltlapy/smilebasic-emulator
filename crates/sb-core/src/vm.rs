@@ -11,7 +11,7 @@ use crate::ast::BinaryOp;
 use crate::builtins::{self, Form, Kind};
 use crate::bytecode::*;
 use crate::error::{Error, ErrorKind, Result};
-use crate::fuse::{FOR_TEST_LEN, FastOp, Var};
+use crate::fuse::{FOR_TEST_LEN, FastOp, Selector, Var};
 use crate::host::{Exec, Host};
 use crate::lexer::Suffix;
 use crate::memory;
@@ -1220,11 +1220,19 @@ impl Vm {
             stack,
             globals,
             frames,
+            gosubs,
+            data_kept,
+            slot,
             pc: at,
             executed,
             ..
         } = self;
-        let locals: &mut [Value] = frames.last_mut().map_or(&mut [], |f| &mut f.locals);
+        let slot = *slot;
+        // GOSUB and RETURN look at the running DEF too, which stays.
+        let (locals, calls, gosub_base): (&mut [Value], _, _) = match frames.last_mut() {
+            Some(f) => (&mut f.locals, f.stack_to, f.gosub_base),
+            None => (&mut [], 0, 0),
+        };
         let vars: &mut Vars = &mut [globals, locals];
         let mut pc = *at;
         let mut left = stop.saturating_sub(*executed);
@@ -1278,6 +1286,67 @@ impl Vm {
                         next = a as usize;
                     }
                 }
+                FastOp::JumpIfTrue(a) => {
+                    let Some(yes) = stack.last().and_then(truth) else {
+                        break;
+                    };
+                    drop_top(stack);
+                    if yes {
+                        next = a as usize;
+                    }
+                }
+                FastOp::On { from, count, gosub } => {
+                    let selector = match from {
+                        Selector::Stack => stack.last().and_then(index_number),
+                        Selector::Var(v) => index_number(get(vars, v)),
+                        Selector::Index(base, i) => {
+                            element1(get(vars, base), get(vars, i)).and_then(num_index)
+                        }
+                    };
+                    let Some(selector) = selector else {
+                        break;
+                    };
+                    // The table follows the entry.
+                    let after = next + count as usize;
+                    // An out-of-range selector continues after ON.
+                    if (0..count as i32).contains(&selector) {
+                        let Some(&Op::Jump(target)) = program.code.get(next + selector as usize)
+                        else {
+                            unreachable!("ON is followed by its jump table");
+                        };
+                        if gosub {
+                            if !gosub_fits(calls, gosubs.len(), data_kept.len()) {
+                                break;
+                            }
+                            gosubs.push((slot, after, data_kept.len()));
+                        }
+                        next = target as usize;
+                    } else {
+                        next = after;
+                    }
+                    if from == Selector::Stack {
+                        drop_top(stack);
+                    }
+                }
+                FastOp::Gosub(target) => {
+                    if !gosub_fits(calls, gosubs.len(), data_kept.len()) {
+                        break;
+                    }
+                    gosubs.push((slot, pc + 1, data_kept.len()));
+                    next = target as usize;
+                }
+                FastOp::Return => {
+                    // Back into another slot, out of a DEF, or with RESTORE
+                    // "PUSH" places left: all for `step`.
+                    let Some(&(to_slot, back, kept)) = gosubs.last() else {
+                        break;
+                    };
+                    if gosubs.len() <= gosub_base || to_slot != slot || data_kept.len() > kept {
+                        break;
+                    }
+                    gosubs.pop();
+                    next = back;
+                }
                 FastOp::Unary(op) => {
                     let value = top(stack);
                     let Some(n) = ops::unary_number(op, value) else {
@@ -1324,6 +1393,14 @@ impl Vm {
                         break;
                     };
                     if !num_truth(n) {
+                        next = target as usize;
+                    }
+                }
+                FastOp::VarsJumpTrue { op, a, b, target } => {
+                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                        break;
+                    };
+                    if num_truth(n) {
                         next = target as usize;
                     }
                 }
@@ -1899,8 +1976,7 @@ impl Vm {
     /// share is free.
     fn stack_has_room(&self, cost: usize) -> bool {
         let calls = self.frames.last().map_or(0, |f| f.stack_to);
-        calls + self.gosubs.len() * GOSUB_COST + self.data_kept.len() * RESTORE_COST + cost
-            <= STACK_SIZE
+        room_for(calls, self.gosubs.len(), self.data_kept.len(), cost)
     }
 
     fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
@@ -2756,6 +2832,18 @@ impl Vm {
 /// The variables [`Vm::run_fast`] reads and writes, by [`Var::table`].
 type Vars<'a> = [&'a mut [Value]; 2];
 
+/// [`Vm::stack_has_room`], from the stack the DEF calls take and the GOSUBs
+/// and RESTORE "PUSH" places held.
+#[inline(always)]
+fn room_for(calls: usize, gosubs: usize, kept: usize, cost: usize) -> bool {
+    calls + gosubs * GOSUB_COST + kept * RESTORE_COST + cost <= STACK_SIZE
+}
+
+#[inline(always)]
+fn gosub_fits(calls: usize, gosubs: usize, kept: usize) -> bool {
+    room_for(calls, gosubs, kept, GOSUB_COST)
+}
+
 #[inline(always)]
 fn get<'a>(vars: &'a Vars, var: Var) -> &'a Value {
     &vars[var.table()][var.index()]
@@ -2905,6 +2993,15 @@ fn index_number(value: &Value) -> Option<i32> {
         Value::Int(n) => Some(n),
         Value::Real(x) if x > -2147483649.0 && x < 2147483648.0 => Some(x as i32),
         _ => None,
+    }
+}
+
+/// [`index_number`] on a number.
+#[inline(always)]
+fn num_index(n: Num) -> Option<i32> {
+    match n {
+        Num::Int(n) => Some(n),
+        Num::Real(x) => index_number(&Value::Real(x)),
     }
 }
 
