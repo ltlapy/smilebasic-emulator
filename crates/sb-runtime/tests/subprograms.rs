@@ -748,11 +748,42 @@ fn the_controls_answer_a_subprograms_dialog_without_the_focus() {
     for buttons in [a, a, 0] {
         m.rt.input.live.pads[0].buttons = buttons;
         m.frame();
-        assert_eq!(m.rt.input.live.pads[0].buttons, 0, "not for the main one");
+        // TEST64: the main interpreter, with the focus, sees it too.
+        assert_eq!(m.rt.input.live.pads[0].buttons, buttons);
     }
     frames(&mut m, 1);
     assert!(m.program_dialog().is_none());
     assert_eq!(sub_rows(&m), ["1"]);
+}
+
+/// TEST64: with a dialog on each side, one press answers both, in the same
+/// frame.
+#[test]
+fn one_press_answers_the_dialogs_of_both_sides() {
+    let dir = TempDir::new("both-dialogs");
+    let ask = "DIALOG \"ASKED\",1\n?RESULT();\" \";MAINCNT()\n";
+    let mut m = machine(&dir, &format!("{ask}{THEN_WAIT}"));
+    enter(&mut m, "subrun \"sub\"");
+    m.set_slot(0, format!("{ask}{THEN_WAIT}"));
+    m.run_slot(0);
+    frames(&mut m, 3);
+    assert!(m.rt.program_dialog().is_some());
+    assert!(
+        m.sub_runtime()
+            .expect("running")
+            .0
+            .program_dialog()
+            .is_some()
+    );
+    let a = 1 << sb_runtime::input::A;
+    for buttons in [a, a, 0] {
+        m.rt.input.live.pads[0].buttons = buttons;
+        m.frame();
+    }
+    frames(&mut m, 1);
+    let main = rows(&m).into_iter().find(|r| r.starts_with("1 "));
+    let sub = sub_rows(&m).into_iter().find(|r| r.starts_with("1 "));
+    assert!(main.is_some() && main == sub, "{main:?} {sub:?}");
 }
 
 #[test]

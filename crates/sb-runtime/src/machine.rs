@@ -2357,14 +2357,18 @@ impl Machine {
             sub.rt.typed.extend(self.rt.typed.drain(..));
             sub.rt.pasted.extend(self.rt.pasted.drain(..));
         }
-        // A dialog answers to the controls wherever the focus is, and the
-        // other side sees nothing pressed meanwhile.
+        // A dialog answers to the controls wherever the focus is. One press
+        // answers the dialogs of both sides, and the side with the focus
+        // sees it too.
+        let main_asks = self.rt.program_dialog().is_some();
         let sub_asks = sub.rt.program_dialog().is_some();
-        if !sub_asks && (!sub.rt.focus || self.rt.program_dialog().is_some()) {
+        if !(main_asks || !sub.rt.focus) {
+            self.rt.input.live = idle;
+        }
+        if !(sub_asks || sub.rt.focus && !main_asks) {
             sub.rt.input.live = idle;
             return;
         }
-        self.rt.input.live = idle;
         // The pointer, in the sub-screen's pixels.
         let mut mouse = live.mouse;
         let (fw, fh) = (sub.rt.mode.width as i32, sub.rt.mode.height as i32);

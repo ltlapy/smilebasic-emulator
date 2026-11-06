@@ -1575,6 +1575,11 @@ TTEST36.
   has the focus.
 - `PUSHKEY` in the subprogram, after `ENVFOCUS 0`, types into the main
   interpreter's direct mode, which runs the line.
+- `DIALOG` in a subprogram answers to the controller with the focus on either
+  side, and the main program keeps running meanwhile (TEST64). With the focus
+  on the main program, its `BUTTON(0)` sees the A that answers.
+- With a `DIALOG` open on each side, one press of A closes both in the same
+  frame, wherever the focus is (TEST64).
 - `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
   answer until then: `ENVFOCUS 0` took one to three frames (it varied from run
   to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the focus is moving is lost
