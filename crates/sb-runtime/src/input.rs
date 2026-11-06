@@ -98,6 +98,9 @@ struct PadKeyRepeat {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pad {
     pub connected: bool,
+    /// A gamepad is there, not only the keyboard: the first controller
+    /// is connected either way.
+    pub gamepad: bool,
     /// One bit per button id below [`BUTTONS`].
     pub buttons: u32,
     /// The left and right sticks, each -1 to 1, Y down.
@@ -549,17 +552,21 @@ impl Runtime {
             }
             (Command::Controller, Want::Value | Want::Outs(1 | 3 | 5), 1) => {
                 let pad = pad_id(&args[0])?;
-                // The keyboard's controller and the default one count as
-                // handheld, others as Pro Controllers.
+                // The default controller is a Pro Controller without colors.
+                // Gamepads count as Pro Controllers, and the keyboard alone
+                // as handheld.
                 let kind = match pad {
-                    0 | 1 => 1,
+                    0 => 2,
+                    1 if !input.now.pads[0].gamepad => 1,
                     n if input.now.pads[n - 1].connected => 2,
                     _ => 0,
                 };
-                // 0 when not connected. UNVERIFIED: the colors of one that is.
-                let colors = match kind {
-                    0 => [0, 0, 0, 0],
-                    _ => [0xFF82_8282_u32, 0xFF0F_0F0F, 0xFF00_0000, 0xFF00_0000],
+                // UNVERIFIED: the colors of handheld, and the last two of a
+                // Pro Controller.
+                let colors = match (pad, kind) {
+                    (0, _) | (_, 0) => [0, 0, 0, 0],
+                    (_, 1) => [0xFF82_8282_u32, 0xFF0F_0F0F, 0xFF00_0000, 0xFF00_0000],
+                    _ => [0xFF23_2323_u32, 0xFFA0_A0A0, 0xFF00_0000, 0xFF00_0000],
                 };
                 let mut out = vec![Value::Int(kind)];
                 out.extend(colors.map(|c| Value::Int(c as i32)));

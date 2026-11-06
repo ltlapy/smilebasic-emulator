@@ -631,6 +631,10 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `CONTROLLER(0)` read 2, `CONTROLLER(1)` 1 and `CONTROLLER(2)` 0.
   `CONTROLLER 2 OUT A,B,C` gives 0 for all three: no colors on a controller not
   connected. (TEST63)
+- With a Pro Controller and the Joy-Cons off the console, `CONTROLLER(0)` and
+  `CONTROLLER(1)` read 2. `CONTROLLER 0 OUT` gives 2 with colors 0 and 0, and
+  `CONTROLLER 1 OUT` 2 with `&HFF232323` and `&HFFA0A0A0`, the Pro Controller's
+  own. (TEST64)
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not available`.
 - `TCPIANO` without Toy-Con set up is `Illegal control style`.
 - `IRSTATE` starts at 0.

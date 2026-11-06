@@ -2619,6 +2619,7 @@ fn idle(live: &crate::input::State) -> crate::input::State {
     let mut state = crate::input::State::default();
     for (pad, now) in state.pads.iter_mut().zip(&live.pads) {
         pad.connected = now.connected;
+        pad.gamepad = now.gamepad;
     }
     state
 }

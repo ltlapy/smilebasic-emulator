@@ -206,6 +206,7 @@ impl Controls {
         for (i, pad) in self.pads.iter().enumerate() {
             let p = &mut state.pads[i];
             p.connected = true;
+            p.gamepad = true;
             for (button, id) in PAD_BUTTONS {
                 if pad.button(button) {
                     p.buttons |= 1 << id;

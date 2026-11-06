@@ -101,10 +101,15 @@ fn controllers() {
             "?CONTROLLER(0);CONTROLLER(1);CONTROLLER(2);CONTROLLER(3)"
         )
         .unwrap(),
-        "1102"
+        "2102"
     );
     // TEST63: no colors on one not connected.
     assert_eq!(run(&[], "CONTROLLER 2 OUT A,B,C:?A;B;C").unwrap(), "000");
+    // TEST64, a Pro Controller alone: the default controller has no colors.
+    let mut s = State::default();
+    s.pads[0].gamepad = true;
+    let colors = "FOR I=0 TO 1:CONTROLLER I OUT A,B,C:?A;\" \";HEX$(B);\" \";HEX$(C);\" \";:NEXT";
+    assert_eq!(run(&[s], colors).unwrap(), "2 0 0 2 FF232323 FFA0A0A0 ");
     assert_eq!(
         run(
             &[],

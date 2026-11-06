@@ -290,7 +290,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   a key with no tool, shows a notice.
 - `UISTATE` always reads 0. `UISTATE(2)` read 648 on a Switch 2, meaning
   unknown.
-- `CONTROLLER(0)` is 1, handheld. A Switch 2 read 2.
+- `CONTROLLER` counts a gamepad as a Pro Controller with the colors of a black
+  one, and the keyboard alone as handheld (1).
 
 ## Direct mode, debugger and project manager
 
