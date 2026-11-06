@@ -30,7 +30,8 @@ perf stat -e instructions:u -- smilebasic-check --bench --fixed 400 PROJECT PROG
 - Compare the `checksum` lines first. Different checksums mean the two runs
   did different work, so their counts say nothing. The checksum covers the
   console and every 60th screen. With `SB_BENCH_SOUND` set, a fixed run also
-  prints a checksum of the sound mixed, to the bit.
+  prints a checksum of the sound mixed, to the bit. `--wav FILE` saves that
+  sound to listen to (see [hardware-tests.md](hardware-tests.md#recording-sound)).
 - Run it with `FRAMES` 0 to see what start-up costs, and subtract that from
   both counts, so that loading the font and sounds does not dilute the change.
 - Take times as well: instruction counts do not see cache misses or slow

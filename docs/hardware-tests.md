@@ -127,3 +127,32 @@ since SmileBASIC 4 shows a status bar once a program has ended.
 
 Compare the PNG with a lossless screenshot of SmileBASIC 4 at the same size (for
 1:1, `XSCREEN 1280,720` and a 1280x720 screenshot).
+
+## Recording sound
+
+`--play` and `--bench` take `--wav FILE` after the mode, to save the sound the
+run mixed as a WAV file:
+
+```
+smilebasic-check --play --wav song.wav 600 PROJECT_FOLDER SONG - shots
+```
+
+The file holds 16-bit PCM stereo at 48000 Hz, the mixer's own rate, with no
+resampling. Each frame adds 800 samples, what the audio device would get in
+real time, so 600 frames give 10 seconds. Listen to it or plot the waveform to
+check an MML loop's seam.
+
+The same program, script and frame count give a byte-identical file. A program
+that reads `RND`, `MILLISEC`, `DATE$` or `TIME$` can change from run to run;
+`--bench --fixed` pins those. When a program stops on an error, the file ends
+at that frame and still plays.
+
+The preset songs and effects come from the sound archive that the emulator
+imports from SmileBASIC 4. Without the archive, these play silence:
+
+- `BGMPLAY` 0 to 73 and `BEEP`'s sounds
+- MML instruments `@0` to `@215`, which includes the default `@0`
+
+These play either way: the pulse waves `@216` to `@222`, the noise `@223`,
+waveforms that `WAVSET` or `WAVSETA` set for `@224` to `@255`, `TALK` and
+`PCMSTREAM`.

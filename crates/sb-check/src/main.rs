@@ -24,6 +24,9 @@ use sb_runtime::storage::Storage;
 use sb_runtime::text::CONSOLE;
 use sb_runtime::{Runtime, image, resources, sbfile};
 
+mod wav;
+use wav::Wav;
+
 const USAGE: &str = "usage:
   smilebasic-check [--screen DIR] PROJECT PROGRAM [PARTS]
       run PROGRAM (its name in SmileBASIC 4, such as TEST12) from the
@@ -58,9 +61,10 @@ const USAGE: &str = "usage:
                        with --fixed, as the work then follows the clock
         --slower N     with --window, the clock and limits divided by N,
                        to stand for a machine N times slower than this
+        --wav FILE     write the sound to FILE, as for --play
       With SB_BENCH_SOUND in the environment, it also prints a checksum
       of the sound mixed, to the bit, for comparing builds.
-  smilebasic-check --play FRAMES PROJECT PROGRAM SCRIPT DIR
+  smilebasic-check --play [--wav FILE] FRAMES PROJECT PROGRAM SCRIPT DIR
       run PROGRAM for at most FRAMES frames, giving it the input SCRIPT
       (a file, or - for none) asks for, and save the screens it asks for
       into DIR, the last one as end.png. Direct mode goes on after the
@@ -86,6 +90,13 @@ const USAGE: &str = "usage:
         F console         the console's text printed
         F end             the run stops
       Lines starting with # are comments.
+      With --wav, the sound mixed goes into FILE as a WAV file: 16-bit
+      PCM stereo at 48000 Hz, 800 samples a frame, so N frames give N/60
+      seconds. The same program, script and frames give the same bytes,
+      unless the program reads the time or RND; --bench --fixed fixes
+      those. Without an imported sound archive, BGMPLAY 0-73, BEEP's
+      sounds and MML instruments @0-@215 are silent; @216-@223 (pulse
+      waves, noise), WAVSET waveforms, TALK and PCMSTREAM play.
 
 exit status:
   0  done; with --play and --bench, the program ended or still ran at the
@@ -175,20 +186,10 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
         if fixed {
             args.remove(1);
         }
-        let mut take = |name: &str| -> Result<Option<String>, AnyError> {
-            match args.iter().position(|a| a == name) {
-                Some(at) if at + 1 < args.len() => {
-                    let value = args.remove(at + 1);
-                    args.remove(at);
-                    Ok(Some(value))
-                }
-                Some(_) => Err(USAGE.into()),
-                None => Ok(None),
-            }
-        };
-        let script = take("--script")?;
-        let log = take("--log")?.map(PathBuf::from);
-        let take_slower = take("--slower")?;
+        let script = take_option(&mut args, "--script")?;
+        let log = take_option(&mut args, "--log")?.map(PathBuf::from);
+        let wav = take_option(&mut args, "--wav")?.map(PathBuf::from);
+        let take_slower = take_option(&mut args, "--slower")?;
         let window = match args.iter().position(|a| a == "--window") {
             Some(at) => {
                 args.remove(at);
@@ -210,6 +211,7 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
                     png: png.first().map(Path::new),
                     steps: read_script(script.as_deref())?,
                     log,
+                    wav,
                     fixed,
                     window: window.then_some(speed),
                 };
@@ -222,6 +224,7 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
         };
     }
     if args.first().is_some_and(|a| a == "--play") {
+        let wav = take_option(&mut args, "--wav")?.map(PathBuf::from);
         return match args.as_slice() {
             [_, frames, project, program, script, dir] => play(
                 frames.parse().map_err(|_| USAGE)?,
@@ -229,6 +232,7 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
                 program,
                 script,
                 Path::new(dir),
+                wav.as_deref(),
             ),
             _ => Err(USAGE.into()),
         };
@@ -264,6 +268,19 @@ fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
     // The parts' errors show on the console, which the results compare,
     // so they leave the status as it was.
     outcome.map(|()| 0)
+}
+
+/// Takes an option and the value after it out of `args`.
+fn take_option(args: &mut Vec<String>, name: &str) -> Result<Option<String>, AnyError> {
+    match args.iter().position(|a| a == name) {
+        Some(at) if at + 1 < args.len() => {
+            let value = args.remove(at + 1);
+            args.remove(at);
+            Ok(Some(value))
+        }
+        Some(_) => Err(USAGE.into()),
+        None => Ok(None),
+    }
 }
 
 /// Parts such as `1-26` or `2,5,7`.
@@ -382,6 +399,8 @@ struct BenchOptions<'a> {
     steps: Vec<(u32, Action)>,
     /// Where to write each frame's times.
     log: Option<PathBuf>,
+    /// Where to write the sound.
+    wav: Option<PathBuf>,
     fixed: bool,
     /// Whether frames run as the window runs them, on a machine this
     /// many times slower.
@@ -446,6 +465,7 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     let started = Instant::now();
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     println!("loaded and compiled in {:?}", started.elapsed());
+    let mut wav = start_wav(&mut m, options.wav.as_deref())?;
     let mut outcome = Outcome::default();
     let shots = png.and_then(Path::parent).unwrap_or(Path::new("."));
     let mut player = Player::new(options.steps.clone());
@@ -485,9 +505,13 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
             m.frame();
             let ran = t.elapsed();
             outcome.look(&mut m);
-            if sound {
-                let samples: Vec<u32> = (m.take_samples().iter()).map(|s| s.to_bits()).collect();
-                sound_sum = add_to_checksum(sound_sum, &samples);
+            if sound || wav.is_some() {
+                let samples = m.take_samples();
+                if sound {
+                    let bits: Vec<u32> = samples.iter().map(|s| s.to_bits()).collect();
+                    sound_sum = add_to_checksum(sound_sum, &bits);
+                }
+                write_wav(&mut wav, &samples)?;
             }
             frame_log.push(FrameLog {
                 run: ran,
@@ -634,6 +658,9 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
         println!("mode {:?}", m.rt.screen_mode());
     }
     print_rows(&console_rows(&m));
+    if let Some(wav) = wav {
+        wav.finish()?;
+    }
     if let Some(file) = png {
         save_screen(&mut m, file)?;
     }
@@ -855,6 +882,7 @@ fn play(
     program: &str,
     script: &str,
     dir: &Path,
+    wav: Option<&Path>,
 ) -> Result<u8, AnyError> {
     let steps = read_script((script != "-").then_some(script))?;
     std::fs::create_dir_all(dir)?;
@@ -871,6 +899,7 @@ fn play(
         .set_project(name)
         .map_err(|e| format!("{name}: {e}"))?;
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
+    let mut wav = start_wav(&mut m, wav)?;
     let mut player = Player::new(steps);
     let mut outcome = Outcome::default();
     let mut frame = 0;
@@ -882,7 +911,13 @@ fn play(
         }
         m.frame();
         outcome.look(&mut m);
+        if wav.is_some() {
+            write_wav(&mut wav, &m.take_samples())?;
+        }
         frame += 1;
+    }
+    if let Some(wav) = wav {
+        wav.finish()?;
     }
     if m.is_running() {
         println!("still running at frame {frame}");
@@ -894,6 +929,25 @@ fn play(
     save_screen(&mut m, &file)?;
     println!("screen saved to {}", file.display());
     Ok(outcome.status(&mut m))
+}
+
+/// Opens `--wav`'s file, if asked for, leaving out what was mixed before
+/// the first frame so that the file holds the run's frames alone.
+fn start_wav(m: &mut Machine, file: Option<&Path>) -> Result<Option<Wav>, AnyError> {
+    let Some(file) = file else {
+        return Ok(None);
+    };
+    m.take_samples();
+    let wav = Wav::create(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(Some(wav))
+}
+
+/// Adds a frame's samples to `--wav`'s file.
+fn write_wav(wav: &mut Option<Wav>, samples: &[f32]) -> Result<(), AnyError> {
+    if let Some(w) = wav {
+        w.write(samples)?;
+    }
+    Ok(())
 }
 
 /// KEYBOARD's bit for a modifier key's USB usage: Windows key, Shift,
