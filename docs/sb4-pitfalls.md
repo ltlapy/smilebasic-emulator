@@ -185,10 +185,14 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   | A function with one argument and four `VAR`s | 14392 |
   | `GOSUB` | 259069 |
 
-  `RESTORE "PUSH"` went past 172672 but not 172736, at 1.5 slots each
-  (inferred). `Stack overflow` comes on the call when the call does not fit.
-  When it fits, it comes on the first statement of the body that puts a value
-  there: line 2 of `DEF R(N)`, `LOCATE 0,0:?N`.
+  `RESTORE "PUSH"` takes 1.5 slots. A loop of `RESTORE "PUSH":IF I>=172600
+  THEN LOCATE 0,0:?I` printed 172712 and stopped with `Stack overflow` in the
+  next pass. After 100000 of them, `@L:N=N+1:LOCATE 0,0:?N:GOSUB @L` printed
+  109069 (TEST64). `Stack overflow` comes on the call when the call does not
+  fit. When it fits, it comes on the first statement after it that puts a
+  value there: line 2 of `DEF R(N)`, `LOCATE 0,0:?N`. In both loops above it
+  came on the `LOCATE`, past `IF I>=172600` and `N=N+1`, and `ENVSTAT` gives
+  the `LOCATE`'s character (TEST64).
 
 ## Values and variables
 
@@ -607,7 +611,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `INSPECT` scrolls as Enter does while it prints, keeping the cursor above the
   last row, which has been seen (`TEST19`, on the usual screen). The rest of
   this scrolling comes from the code.
-- Enter on an empty line of direct mode prints `OK` (TEST60).
+- Enter on an empty line of direct mode prints `OK` (TEST60), and leaves the
+  empty line above it.
+- At the prompt the controller types as `INKEY$` reads it (TEST64, by hand). A
+  is Enter, Y deletes as Backspace does, and the +Control Pad moves as the
+  arrow keys do. On an empty line Y and B do nothing. A USB keyboard plugged
+  in or out, or the software keyboard shown, changes none of this.
 - Typing over a selection in overwrite mode writes the character and moves on
   first, then deletes the selection: one made rightwards takes the character
   with it, and one made leftwards keeps it. (Not yet seen on hardware.)
@@ -706,8 +715,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `TLOAD`, `TUPDATE` and `TCOPY` move cells raw: all 16 attribute bits come back
   from `TSAVE`, `TARRAY` and `CHKCHR`'s `OUT`, and on text screens 0 to 3 the
   bits other than bit 7 have no effect either (TEST56).
-- Attribute bit 7 on the console should invert a cell, as only the console has a
-  program with that per-cell flag. (Not yet seen on hardware.)
+- Attribute bit 7 on the console inverts a cell, as only the console has
+  that per-cell flag. TEST64's picture agrees with all of
+  this list but the selection, for white, orange and both at alpha `&H80`.
   - The cell's color is multiplied by 1 minus the glyph's alpha, and then, as
     for any text, by `TCOLOR`, and the color by the resulting alpha, so the
     light is left with the square of it.
@@ -717,11 +727,13 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A cell `TSCREEN` or `CLS` clears has code 0 and the screen's current `COLOR`
   and `ATTR`, white and 0 to start with, not an all-zero cell. A program can
   therefore write only the character codes through `TARRAY`, the even elements,
-  and they show after `TUPDATE`: SmileBOY draws its background that way. (Not
-  yet seen on hardware.)
+  and they show after `TUPDATE`: SmileBOY draws its background that way. A new
+  `TSCREEN` cell reads `&HFFFFFFFF` and 0, after `COLOR 1,#C_RED:CLS 1`
+  `&HFFFF0000`, and after `ATTR 1,8:CLS 1` attribute `&H80000`. `TSCREEN` keeps
+  a `COLOR` and `ATTR` set before it. (TEST64)
 - A cell that `SCROLL` or the console's scrolling uncovers is all zero, as is a
   cell off the screen for `TSAVE`: a code written there through `TARRAY` alone
-  has color 0 and doesn't show. (Not yet seen on hardware.)
+  has color 0 and doesn't show. (TEST64 for `SCROLL`, with a picture.)
 - `TLOAD`'s width and height have to be 1 or more, and `GLOAD`'s 0 or more, as
   TEST62 saw for `TSAVE` and `GSAVE`. (Not yet seen on hardware.)
 - `TSAVE`'s width and height have to be 1 or more: 10x0 and 10x-1 are
@@ -943,6 +955,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `LAYER` mode 0 draws the layer's elements straight onto the screen and ignores
   the layer's color; only modes 1 to 4 multiply by it.
 - `LCLIP`'s corners are inclusive.
+- `LCLIP OUT` gives a clip past the frame as it was set: 1350 0 1500 719 on a
+  1280x720 screen. A layer whose `LMATRIX` puts its text at X 1270, clipped
+  there, shows nothing on the screen's left edge (TEST64).
 - `LCLIP` at `XSCREEN`'s sample 2 takes whole fine pixels: frame pixels `2*x0`
   to `2*x1+1`.
 - `LMATRIX layer,hx,hy` moves the layer by minus the home point.
@@ -1496,6 +1511,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   agrees with these four bullets.
 - `PRGNAME$()` and `PRGSIZE()` at the prompt mean slot 0, whichever slot
   `PRGEDIT` is on. (TEST63)
+- After SmileBASIC starts afresh, slot 0 has an empty `PRGNAME$()` and a
+  `PRGSIZE()` of 0 (TEST64).
 - `PRGSET`, `PRGINS` and `PRGDEL` changes do not count as unsaved: `LOAD` over
   the slot from a program, `NEW` and `PROJECT` do not ask about them (DAW_MUSIC,
   and by hand).
@@ -1504,6 +1521,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ### Files
 
+- `LOADV` reads a DAT file whose header's size leaves out the `PCBN` array's
+  header: SmileBOY's `POCKET.GB` loads as an array of 32768 (TEST64).
 - `EXEC` of a file that is not there shows a dialog (File not found) and then
   stops with `Load failed`. In direct mode, `EXEC` is
   `Can't use from direct mode`, shown without a line.
