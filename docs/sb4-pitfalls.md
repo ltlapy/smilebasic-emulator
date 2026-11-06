@@ -412,6 +412,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 - `MAINCNT` and `MILLISEC` need their brackets: without them they are plain
   variables, always 0 to begin with.
+- A subprogram's `MAINCNT` is the main interpreter's, not counted from
+  `SUBRUN`: two dialogs closed by one press read the same `MAINCNT` on both
+  sides (TEST64).
 - `MAINCNT` follows real time while the program is busy: 180 in 3 seconds of a
   loop with no `VSYNC`. When the frame job is held up, it falls behind real time
   with it: 600 sprites of 64x64 scaled by 21 on a Switch 2 gave 49 in 4077 ms,

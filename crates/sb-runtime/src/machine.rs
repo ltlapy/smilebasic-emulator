@@ -2384,6 +2384,9 @@ impl Machine {
             return;
         };
         sub.time_limit = (self.time_limit).map(|l| l.saturating_sub(used).max(l / SUB_SHARE));
+        // Both interpreters read the same MAINCNT; the sub's frame raises
+        // it to the main one's.
+        sub.rt.system.frames = self.rt.system.frames.wrapping_sub(1);
         sub.run_frame(Some(&mut self.rt));
         // The main interpreter's wish first, as it ran first.
         let to_sub = match (self.rt.focus_wish.take(), sub.rt.focus_wish.take()) {

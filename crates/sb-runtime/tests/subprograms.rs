@@ -306,6 +306,27 @@ fn envstat_tells_of_a_compile_error() {
     );
 }
 
+/// TEST64: the subprogram's MAINCNT is the main interpreter's.
+#[test]
+fn a_subprogram_reads_the_main_frame_count() {
+    let dir = TempDir::new("maincnt");
+    let mut m = machine(
+        &dir,
+        "ENVFOCUS 0\n\
+         PUSHKEY \"?\"+STR$(MAINCNT())+\"-MAINCNT()\"+CHR$(13)\n\
+         LOOP:VSYNC:ENDLOOP\n",
+    );
+    frames(&mut m, 30);
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 5);
+    // The line runs a frame or two after the sub read the count.
+    let rows = rows(&m);
+    assert!(
+        rows.iter().any(|r| matches!(r.trim(), "-1" | "-2" | "-3")),
+        "{rows:?}"
+    );
+}
+
 /// TEST64: at the start the error's argument is 0, and clean runs keep the
 /// argument and line of the error before.
 #[test]
