@@ -1212,10 +1212,36 @@ impl Vm {
     }
 
     /// Runs [`Compiled::fast`] until the budget is spent or something needs
-    /// [`Vm::step`]: anything other than plain work on numbers, every failure
-    /// included. An entry that cannot do its work leaves everything as it was,
-    /// so that `step` goes on from the same place.
+    /// [`Vm::step`]: anything other than plain work on numbers and DEF calls
+    /// within the slot, every failure included. An entry that cannot do its
+    /// work leaves everything as it was, so that `step` goes on from the same
+    /// place.
     fn run_fast(&mut self, program: &Compiled, stop: u64) {
+        loop {
+            // A call or return changes the variables `run_fused` holds, so it
+            // hands them back for that.
+            let done = match self.run_fused(program, stop) {
+                Fused::Slow => return,
+                Fused::Call { def, argc, want } => {
+                    // The Nops of a FOR may lead the call in its entry.
+                    let nops = usize::from(program.fast[self.pc].len) - 1;
+                    self.pc += nops;
+                    self.executed += nops as u64;
+                    self.fast_call(program, def, argc, want)
+                }
+                Fused::Return => self.fast_return(program),
+                Fused::ReturnValue => self.fast_return_value(),
+            };
+            if !done {
+                return;
+            }
+            self.executed += 1;
+        }
+    }
+
+    /// [`Vm::run_fast`] up to a DEF call or return.
+    #[inline(always)]
+    fn run_fused(&mut self, program: &Compiled, stop: u64) -> Fused {
         let Vm {
             stack,
             globals,
@@ -1236,6 +1262,7 @@ impl Vm {
         let vars: &mut Vars = &mut [globals, locals];
         let mut pc = *at;
         let mut left = stop.saturating_sub(*executed);
+        let mut exit = Fused::Slow;
         while let Some(fast) = program.fast.get(pc) {
             let len = u64::from(fast.len);
             if len > left {
@@ -1336,16 +1363,28 @@ impl Vm {
                     next = target as usize;
                 }
                 FastOp::Return => {
-                    // Back into another slot, out of a DEF, or with RESTORE
-                    // "PUSH" places left: all for `step`.
+                    if gosubs.len() <= gosub_base {
+                        exit = Fused::Return;
+                        break;
+                    }
+                    // Back into another slot, or with RESTORE "PUSH" places
+                    // left: for `step`.
                     let Some(&(to_slot, back, kept)) = gosubs.last() else {
                         break;
                     };
-                    if gosubs.len() <= gosub_base || to_slot != slot || data_kept.len() > kept {
+                    if to_slot != slot || data_kept.len() > kept {
                         break;
                     }
                     gosubs.pop();
                     next = back;
+                }
+                FastOp::CallDef { def, argc, want } => {
+                    exit = Fused::Call { def, argc, want };
+                    break;
+                }
+                FastOp::ReturnValue => {
+                    exit = Fused::ReturnValue;
+                    break;
                 }
                 FastOp::Unary(op) => {
                     let value = top(stack);
@@ -1534,6 +1573,7 @@ impl Vm {
         }
         *at = pc;
         *executed = stop - left;
+        exit
     }
 
     /// Ends the program with an error at instruction `pc`.
@@ -2714,9 +2754,7 @@ impl Vm {
             self.stack.truncate(at);
             return Err(e);
         }
-        let values = info.locals.len() + argc * usize::from(info.params.is_none());
-        let cost =
-            CALL_COST + values * VARIABLE_COST + if info.is_function { VALUE_COST } else { 0 };
+        let cost = call_cost(info, argc);
         if !self.stack_has_room(cost) {
             if self.stack_has_room(cost - VALUES_ROOM.min(cost)) {
                 self.pc = info.entry as usize;
@@ -2724,6 +2762,47 @@ impl Vm {
             self.stack.truncate(at);
             return Err(ErrorKind::StackOverflow.into());
         }
+        let program = Rc::clone(&self.program);
+        self.push_frame(&program.defs[def as usize], def, argc, want, caller, cost);
+        Ok(())
+    }
+
+    /// [`Vm::enter_def_on_stack`] for [`Vm::run_fast`], from a DEF of the
+    /// running slot. False where that would fail or the DEF is declared with
+    /// `*`, and nothing done.
+    fn fast_call(&mut self, program: &Compiled, def: u32, argc: u8, want: Want) -> bool {
+        let info = &program.defs[def as usize];
+        let (Some(params), Some(outs)) = (info.params, info.outs) else {
+            return false;
+        };
+        // The checks of `enter_def_on_stack` on fixed numbers of each.
+        let fits = match want {
+            Want::Value => (info.is_function || outs > 0) && outs <= 1,
+            Want::Outs(n) if info.is_function => n == 1,
+            Want::Outs(n) => outs == n,
+        };
+        let argc = usize::from(argc);
+        let cost = call_cost(info, argc);
+        if usize::from(params) != argc || !fits || !self.stack_has_room(cost) {
+            return false;
+        }
+        self.push_frame(info, def, argc, want, self.slot, cost);
+        true
+    }
+
+    /// Starts a call of DEF `def` of the running slot, `info`, which has room,
+    /// taking its arguments off the stack.
+    #[inline(always)]
+    fn push_frame(
+        &mut self,
+        info: &DefInfo,
+        def: u32,
+        argc: usize,
+        want: Want,
+        caller: usize,
+        cost: usize,
+    ) {
+        let at = self.stack.len() - argc;
         let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
         let default_int = self.program.default_int;
         let mut locals = self.spare_locals.pop().unwrap_or_default();
@@ -2731,7 +2810,10 @@ impl Vm {
         // Arguments of a `*` DEF are kept apart from its variables.
         let variadic_args = match info.params {
             Some(_) => {
-                locals.extend(self.stack.drain(at..));
+                move_values(&mut self.stack[at..], &mut locals);
+                // SAFETY: what is left from `at` on is numbers, which need no
+                // dropping.
+                unsafe { self.stack.set_len(at) };
                 Vec::new()
             }
             None => self.stack.split_off(at),
@@ -2765,7 +2847,6 @@ impl Vm {
             stack_to,
         });
         self.pc = info.entry as usize;
-        Ok(())
     }
 
     /// RETURN: from GOSUB if one is pending in this scope, else from the DEF.
@@ -2837,13 +2918,146 @@ impl Vm {
     /// Goes back to the caller of a frame, keeping its list of variables for
     /// the next call.
     #[inline]
-    fn leave_frame(&mut self, mut frame: Frame, host: &mut dyn Host) -> Result<usize> {
-        if self.spare_locals.len() < SPARE_LOCALS {
-            frame.locals.clear();
-            self.spare_locals.push(std::mem::take(&mut frame.locals));
+    fn leave_frame(&mut self, frame: Frame, host: &mut dyn Host) -> Result<usize> {
+        let (caller, back) = (frame.caller, frame.return_pc);
+        self.keep_locals(frame);
+        self.switch_to(caller, host);
+        Ok(back)
+    }
+
+    /// [`Vm::return_op`] out of a DEF, for [`Vm::run_fast`]: back into the
+    /// running slot, with no GOSUB of the DEF pending. False otherwise, and
+    /// nothing done.
+    fn fast_return(&mut self, program: &Compiled) -> bool {
+        let Some(frame) = self.frames.last() else {
+            return false;
+        };
+        if frame.caller != self.slot || self.gosubs.len() > frame.gosub_base {
+            return false;
         }
-        self.switch_to(frame.caller, host);
-        Ok(frame.return_pc)
+        let info = &program.defs[frame.def as usize];
+        // The OUT variables, or the one value of a function.
+        let (start, count) = match (info.is_function, info.outs) {
+            (true, _) => (0, 0),
+            (false, Some(n)) => (usize::from(info.params.unwrap_or(0)), usize::from(n)),
+            (false, None) => return false,
+        };
+        let given = match (info.is_function, frame.want) {
+            (true, _) => 1,
+            (false, Want::Value) => count.min(1),
+            (false, Want::Outs(_)) => count,
+        };
+        if given != frame.want.count() {
+            return false;
+        }
+        let mut frame = self.frames.pop().expect("checked above");
+        self.stack.truncate(frame.stack_base);
+        if info.is_function {
+            // A bare RETURN in a function gives no value.
+            self.stack.push(Value::Default);
+        } else {
+            move_values(&mut frame.locals[start..start + given], &mut self.stack);
+        }
+        self.pc = frame.return_pc;
+        self.keep_locals(frame);
+        true
+    }
+
+    /// [`Vm::leave_def_with`] for [`Vm::run_fast`]: from a function called in
+    /// the running slot. False otherwise, and nothing done.
+    fn fast_return_value(&mut self) -> bool {
+        let Some(frame) = self.frames.last() else {
+            return false;
+        };
+        if frame.caller != self.slot || frame.want.count() != 1 {
+            return false;
+        }
+        let frame = self.frames.pop().expect("checked above");
+        self.gosubs.truncate(frame.gosub_base);
+        let len = self.stack.len();
+        if len - 1 == frame.stack_base {
+            // The value stays where it is.
+        } else {
+            self.stack.swap(len - 1, frame.stack_base);
+            self.stack.truncate(frame.stack_base + 1);
+        }
+        self.pc = frame.return_pc;
+        self.keep_locals(frame);
+        true
+    }
+
+    /// Drops a frame left, keeping its list of variables for the next call.
+    #[inline(always)]
+    fn keep_locals(&mut self, frame: Frame) {
+        let Frame {
+            mut locals,
+            args,
+            outs,
+            ..
+        } = frame;
+        drop_values(args);
+        drop_values(outs);
+        if self.spare_locals.len() < SPARE_LOCALS {
+            clear_values(&mut locals);
+            self.spare_locals.push(locals);
+        }
+    }
+}
+
+/// How fused entries end, for [`Vm::run_fast`].
+enum Fused {
+    /// At an entry for `step`, or with the budget spent.
+    Slow,
+    Call {
+        def: u32,
+        argc: u8,
+        want: Want,
+    },
+    Return,
+    ReturnValue,
+}
+
+/// How much of [`STACK_SIZE`] a call of `info` takes.
+#[inline(always)]
+fn call_cost(info: &DefInfo, argc: usize) -> usize {
+    let values = info.locals.len() + argc * usize::from(info.params.is_none());
+    CALL_COST + values * VARIABLE_COST + if info.is_function { VALUE_COST } else { 0 }
+}
+
+/// Drops a list of values, without a call when it was never given room, as
+/// with the `args` and `outs` of most frames.
+#[inline(always)]
+fn drop_values(values: Vec<Value>) {
+    if values.capacity() == 0 {
+        std::mem::forget(values);
+    }
+}
+
+/// Empties a list of values, without a call when they are all numbers.
+#[inline(always)]
+fn clear_values(values: &mut Vec<Value>) {
+    if values
+        .iter()
+        .all(|v| matches!(v, Value::Int(_) | Value::Real(_)))
+    {
+        // SAFETY: numbers need no dropping.
+        unsafe { values.set_len(0) };
+    } else {
+        values.clear();
+    }
+}
+
+/// Moves values on to the end of `to`, numbers in parts, leaving numbers in
+/// their places.
+#[inline(always)]
+fn move_values(from: &mut [Value], to: &mut Vec<Value>) {
+    to.reserve(from.len());
+    for value in from {
+        match *value {
+            Value::Int(n) => push_num(to, Num::Int(n)),
+            Value::Real(x) => push_num(to, Num::Real(x)),
+            _ => to.push(std::mem::replace(value, Value::Int(0))),
+        }
     }
 }
 

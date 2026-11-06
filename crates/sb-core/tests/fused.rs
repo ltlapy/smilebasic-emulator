@@ -157,7 +157,73 @@ const PROGRAMS: &[&str] = &[
     "DIM R$[2],K%[2]:R$[0]=\"S\":I=0:?R$[K%[I]]:R$[K%[I]]=\"T\":?R$[0]",
     "DIM R%[2],K$[2]\n?1:I=0:?R%[K$[I]]",
     "DIM R%[2],K%[2]\n?1:X$=\"A\":I=0:R%[K%[I]]=X$",
+    // DEF calls: OUT, recursion, strings and arrays, each way they fail.
+    DEF_OUT,
+    DEF_RECURSIVE,
+    DEF_STRINGS_AND_ARRAYS,
+    "DEF F(A)\nRETURN A+1\nEND\nF 1 OUT X:?X:DEF G A OUT B\nB=A*3\nEND\n?G(2)+1",
+    "DEF F(A)\nIF A THEN RETURN\nRETURN 5\nEND\n?F(0):?TYPEOF(F(1))",
+    "DEF F A OUT B,C\nB=A\nEND\nF 1 OUT X,Y:?X:?TYPEOF(Y)",
+    "DEF F(A,B)\nRETURN A*10+B\nEND\nDEF G(X)\n?X\nRETURN X\nEND\n?F(G(1),G(2))",
+    "DEF F()\nGOSUB @S\nRETURN 1\n@S\nRETURN 2\nEND\n?F():GOSUB @T:END\n@T:?F():RETURN",
+    "DEF F\nGOSUB @S\n?\"F\"\nRETURN\n@S:?\"S\":RETURN\nEND\nF:F:?\"OUT\"",
+    "DEF F(A)\nVAR B=0\nRETURN A/B\nEND\n?1:C=F(1)",
+    "DEF G A\n?A:A=A+\"X\"\nEND\n?1:G 1",
+    "DEF F(A)\nRETURN A\nEND\n?1:B=F(1,2)",
+    "DEF F(A)\nRETURN A\nEND\n?1:B=F()",
+    "DEF F OUT A,B\nA=1\nEND\n?1:F OUT X",
+    "DEF F OUT A,B\nA=1\nEND\n?1:X=F()",
+    "DEF F A\nEND\n?1:X=F(1)",
+    "DEF F(A)\nRETURN A\nEND\n?1:F 1 OUT X,Y",
+    "DEF F\nEND\n?1:F 1",
+    "DEF F\nRETURN\nEND\nF:?1:RETURN",
+    "DEF F()\nRETURN 2\nEND\nFOR I=0 TO 9 STEP F():?I:NEXT",
+    "DEF F()\nRETURN 4\nEND\nFOR I=0 TO F():?I:NEXT",
 ];
+
+const DEF_OUT: &str = "\
+DEF TWO A,B OUT X,Y
+ X=A+B:Y=A*B
+END
+DEF ONE A OUT X
+ X=A-1
+END
+FOR I=0 TO 3
+ TWO I,2 OUT P,Q:ONE P OUT R
+ ?P;Q;R;ONE(Q)
+NEXT
+";
+const DEF_RECURSIVE: &str = "\
+DEF FIB N OUT R
+ VAR A,B
+ IF N<2 THEN R=N:RETURN
+ FIB N-1 OUT A:FIB N-2 OUT B:R=A+B
+END
+DEF FACT(N)
+ IF N<=1 THEN RETURN 1
+ RETURN N*FACT(N-1)
+END
+FIB 12 OUT X:?X:?FACT(10)
+";
+const DEF_STRINGS_AND_ARRAYS: &str = "\
+DEF CAT(A$,B$)
+ VAR C$=A$+B$
+ RETURN C$
+END
+DEF SUM(K)
+ VAR I,S
+ FOR I=0 TO LEN(K)-1:S=S+K[I]:NEXT
+ RETURN S
+END
+DEF BUMP K,N OUT T$
+ K[0]=K[0]+N:T$=STR$(K[0])
+END
+DIM K[3]:K[1]=2:K[2]=3
+FOR I=0 TO 2
+ BUMP K,I OUT T$
+ ?CAT(T$,\"!\");SUM(K)
+NEXT
+";
 
 const ON_GOTO: &str = "\
 FOR I=-2 TO 3
@@ -202,6 +268,63 @@ fn on_case_and_nested_indexes_print_what_they_should() {
             "{source}"
         );
         assert_eq!(host.output, expected, "{source}");
+    }
+}
+
+/// What DEF calls print, fused.
+#[test]
+fn def_calls_print_what_they_should() {
+    for (source, expected) in [
+        (DEF_OUT, "201-1\n3221\n4433\n5645\n"),
+        (DEF_RECURSIVE, "144\n3628800\n"),
+        (DEF_STRINGS_AND_ARRAYS, "0!5\n1!6\n3!8\n"),
+    ] {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(compiled(source, true));
+        assert_eq!(
+            vm.run(&mut host, 1_000_000).unwrap(),
+            Status::Ended,
+            "{source}"
+        );
+        assert_eq!(host.output, expected, "{source}");
+    }
+}
+
+/// DEF calls fill the stack as without fusing.
+#[test]
+fn def_calls_overflow_as_without_fusing() {
+    for program in [
+        "DEF F(N)\nRETURN F(N+1)\nEND\n?1:A=F(0)",
+        "DEF F N\nF N+1\nEND\n?1:F 0",
+        "DEF F N OUT R\nVAR A$=\"S\"\nF N+1 OUT R\nEND\n?1:F 0 OUT X",
+        "DEF F(N)\nGOSUB @S\nRETURN 0\n@S\nA=F(N+1)\nRETURN\nEND\n?1:A=F(0)",
+    ] {
+        for budget in [5, 7, 1_000_000] {
+            let fused = run(program, budget, true);
+            assert!(
+                fused.0.last().unwrap().contains("StackOverflow"),
+                "{fused:?}"
+            );
+            assert_eq!(fused, run(program, budget, false), "{program} in {budget}");
+        }
+    }
+}
+
+/// DEF calls and returns within the slot are fused.
+#[test]
+fn def_calls_are_fused() {
+    let program = compiled(
+        "DEF F(A)\nRETURN A+1\nEND\nDEF G A OUT B\nB=A\nEND\nFOR I=0 TO 3:G F(I) OUT C:NEXT",
+        true,
+    );
+    let calls = program
+        .fast
+        .iter()
+        .filter(|f| matches!(f.op, FastOp::CallDef { .. }))
+        .count();
+    assert_eq!(calls, 2);
+    for op in [FastOp::ReturnValue, FastOp::Return] {
+        assert!(program.fast.iter().any(|f| f.op == op), "{op:?}");
     }
 }
 
@@ -385,12 +508,19 @@ FOR I=1 TO 6
  WHEN 4:E=2
  ENDCASE
  K%[I]=I+1:R%[K%[I]]=R%[K%[I]]+1
+ G=G+SQ(I):PQ I OUT H
 NEXT
 ?A
 END
 @S:F=F+1:RETURN
 @T
 RETURN
+DEF SQ(N)
+ RETURN N*N
+END
+DEF PQ N OUT M
+ M=SQ(N)+1
+END
 ";
 
 /// Each line a run stops at, given that it first ran `budget` instructions
