@@ -132,7 +132,9 @@ impl Array {
 
     pub fn set(&mut self, offset: usize, value: Value) -> Result<()> {
         match &mut self.data {
-            ArrayData::Int(v) => v[offset] = value.to_int()?,
+            // UNVERIFIED: FILL, array literals and the builtins that store
+            // through here check a real as `M%[0]=X` does.
+            ArrayData::Int(v) => v[offset] = value.to_stored_int()?,
             ArrayData::Real(v) => v[offset] = value.to_real()?,
             ArrayData::Str(v) => v[offset] = value.into_str()?,
         }
@@ -150,6 +152,29 @@ pub fn real_to_int(x: f64) -> Result<i32> {
     Err(ErrorKind::Overflow.into())
 }
 
+/// A real stored into an int array, truncated toward zero. The real itself
+/// must be in the 32-bit range, so 2147483647.5 does not fit. `None` for one
+/// that does not, or a NaN.
+#[inline(always)]
+pub fn stored_int(x: f64) -> Option<i32> {
+    (-2147483648.0..=2147483647.0)
+        .contains(&x)
+        .then_some(x as i32)
+}
+
+/// A real as an operand of AND, OR, XOR, NOT, the shifts and the rotates:
+/// truncated toward zero, and outside the 32-bit range taken as 2147483647
+/// or -2147483648. Only a NaN overflows.
+#[cold]
+pub fn real_to_bits(x: f64) -> Result<i32> {
+    // UNVERIFIED: a NaN raises Overflow and an infinity saturates.
+    match x.is_nan() {
+        true => Err(ErrorKind::Overflow.into()),
+        // `as` saturates.
+        false => Ok(x as i32),
+    }
+}
+
 impl Value {
     pub fn str(s: &str) -> Value {
         Value::Str(str_from(s))
@@ -163,6 +188,26 @@ impl Value {
         match *self {
             Value::Int(n) => Ok(n),
             Value::Real(x) => real_to_int(x).map_err(|e| e.of_value(self)),
+            _ => Err(Error::new(ErrorKind::TypeMismatch).of_value(self)),
+        }
+    }
+
+    /// [`Value::to_int`] for a store into an int array; see [`stored_int`].
+    pub fn to_stored_int(&self) -> Result<i32> {
+        match *self {
+            Value::Int(n) => Ok(n),
+            Value::Real(x) => {
+                stored_int(x).ok_or_else(|| Error::new(ErrorKind::Overflow).of_value(self))
+            }
+            _ => Err(Error::new(ErrorKind::TypeMismatch).of_value(self)),
+        }
+    }
+
+    /// [`Value::to_int`] for a bit operator's operand; see [`real_to_bits`].
+    pub fn to_bits(&self) -> Result<i32> {
+        match *self {
+            Value::Int(n) => Ok(n),
+            Value::Real(x) => real_to_bits(x).map_err(|e| e.of_value(self)),
             _ => Err(Error::new(ErrorKind::TypeMismatch).of_value(self)),
         }
     }

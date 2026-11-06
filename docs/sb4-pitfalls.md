@@ -203,6 +203,14 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   `%g`, so a million is `1e+06`.
 - `"A"*-1` is `Overflow`, not `Out of range`.
 - `-2147483648 DIV -1` wraps to -2147483648.
+- Unary minus of the int -2147483648 wraps to -2147483648 and stays an int
+  (`TYPEOF` 1). Binary `+`, `-` and `*` give a real past 32 bits instead:
+  `0-A` is 2147483648 (TEST65).
+- `AND`, `OR`, `XOR`, `NOT`, the shifts and the rotates truncate a real toward
+  zero, and take a real outside the 32-bit range as 2147483647 or -2147483648,
+  with no error. `2147483648 AND -1` is 2147483647, `-2147483649 OR 0` is
+  -2147483648, `4294967296 AND 1` is 1, `2147483648<<1` is -2, `2147483648>>+1`
+  is -1073741825 and `NOT 2147483648` is -2147483648 (TEST65).
 - Shift counts are taken modulo 32: `1<<33` is 2, `1<<-1` is -2147483648.
 - `MOD` takes the sign of the dividend.
 - `ROUND` rounds halves away from zero.
@@ -292,6 +300,10 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - An array holds nothing (`TYPEOF` 0) until its `DIM` runs, as when a DEF reads
   it before.
 - `DIM A[,]` compiles, and is `Type mismatch` when it runs.
+- An int array takes a real by truncating it toward zero (-3.9 gives -3, -0.5
+  gives 0), but checks the real against -2147483648 to 2147483647 first. So
+  `M%[0]=2147483647.5`, `2147483647.9` and `-2147483648.5` are `Overflow`, as
+  is anything farther out (TEST65). A `%` variable keeps any real.
 - `SORT` keeps equal keys in their order. `RSORT` gives `SORT`'s order turned
   round, so equal keys come out reversed.
 - `SORT` orders strings by character code: `""`, `"A"`, `"AA"`, `"B"`, `"a"`,

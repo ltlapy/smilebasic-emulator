@@ -33,6 +33,12 @@ fn int_op(lhs: &Value, rhs: &Value, f: impl Fn(i32, i32) -> Result<i32>) -> Resu
     Ok(Value::Int(f(lhs.to_int()?, rhs.to_int()?)?))
 }
 
+/// A bit operator: a real outside the 32-bit range saturates instead of
+/// overflowing.
+fn bit_op(lhs: &Value, rhs: &Value, f: impl Fn(i32, i32) -> i32) -> Result<Value> {
+    Ok(Value::Int(f(lhs.to_bits()?, rhs.to_bits()?)))
+}
+
 /// The shift count is taken modulo 32, as the AArch64 shift instructions on
 /// the Switch do.
 fn shift_count(n: i32) -> u32 {
@@ -176,16 +182,16 @@ pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
             0 => Err(ErrorKind::DivideByZero.into()),
             _ => Ok(a.wrapping_rem(b)),
         }),
-        B::Shl => int_op(lhs, rhs, |a, b| Ok(a.wrapping_shl(shift_count(b)))),
-        B::Shr => int_op(lhs, rhs, |a, b| Ok(a.wrapping_shr(shift_count(b)))),
-        B::UShr => int_op(lhs, rhs, |a, b| {
-            Ok((a as u32).wrapping_shr(shift_count(b)) as i32)
+        B::Shl => bit_op(lhs, rhs, |a, b| a.wrapping_shl(shift_count(b))),
+        B::Shr => bit_op(lhs, rhs, |a, b| a.wrapping_shr(shift_count(b))),
+        B::UShr => bit_op(lhs, rhs, |a, b| {
+            (a as u32).wrapping_shr(shift_count(b)) as i32
         }),
-        B::RotL => int_op(lhs, rhs, |a, b| Ok(a.rotate_left(shift_count(b)))),
-        B::RotR => int_op(lhs, rhs, |a, b| Ok(a.rotate_right(shift_count(b)))),
-        B::And => int_op(lhs, rhs, |a, b| Ok(a & b)),
-        B::Or => int_op(lhs, rhs, |a, b| Ok(a | b)),
-        B::Xor => int_op(lhs, rhs, |a, b| Ok(a ^ b)),
+        B::RotL => bit_op(lhs, rhs, |a, b| a.rotate_left(shift_count(b))),
+        B::RotR => bit_op(lhs, rhs, |a, b| a.rotate_right(shift_count(b))),
+        B::And => bit_op(lhs, rhs, |a, b| a & b),
+        B::Or => bit_op(lhs, rhs, |a, b| a | b),
+        B::Xor => bit_op(lhs, rhs, |a, b| a ^ b),
         B::Eq => compare_with(lhs, rhs, Ordering::is_eq),
         B::NotEq => Ok(bool_value(!compare(lhs, rhs)?.is_some_and(Ordering::is_eq))),
         B::Less => compare_with(lhs, rhs, Ordering::is_lt),
@@ -203,10 +209,8 @@ pub fn binary(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value> {
 #[inline(always)]
 pub fn unary_number(op: UnaryOp, value: &Value) -> Option<Num> {
     match (op, value) {
-        (UnaryOp::Neg, Value::Int(n)) => Some(match n.checked_neg() {
-            Some(m) => Num::Int(m),
-            None => Num::Real(-f64::from(*n)),
-        }),
+        // -(-2147483648) wraps, unlike binary `-`.
+        (UnaryOp::Neg, Value::Int(n)) => Some(Num::Int(n.wrapping_neg())),
         (UnaryOp::Neg, Value::Real(x)) => Some(Num::Real(-x)),
         (UnaryOp::Not, Value::Int(n)) => Some(Num::Int(!n)),
         (UnaryOp::LogicalNot, Value::Int(n)) => Some(Num::Int(i32::from(*n == 0))),
@@ -218,13 +222,11 @@ pub fn unary_number(op: UnaryOp, value: &Value) -> Option<Num> {
 pub fn unary(op: UnaryOp, value: &Value) -> Result<Value> {
     match op {
         UnaryOp::Neg => match *value {
-            Value::Int(n) => Ok(n
-                .checked_neg()
-                .map_or(Value::Real(-f64::from(n)), Value::Int)),
+            Value::Int(n) => Ok(Value::Int(n.wrapping_neg())),
             Value::Real(x) => Ok(Value::Real(-x)),
             _ => Err(ErrorKind::TypeMismatch.into()),
         },
-        UnaryOp::Not => Ok(Value::Int(!value.to_int()?)),
+        UnaryOp::Not => Ok(Value::Int(!value.to_bits()?)),
         UnaryOp::LogicalNot => Ok(bool_value(!value.is_true()?)),
     }
 }
@@ -422,8 +424,8 @@ mod tests {
         assert_eq!(as_real(eval(B::Mul, int(65536), int(65536))), 4294967296.0);
         assert_eq!(as_real(eval(B::Add, int(1), real(0.5))), 1.5);
         assert_eq!(
-            as_real(unary(UnaryOp::Neg, &int(i32::MIN)).unwrap()),
-            2147483648.0
+            as_int(unary(UnaryOp::Neg, &int(i32::MIN)).unwrap()),
+            i32::MIN
         );
     }
 

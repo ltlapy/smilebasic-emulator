@@ -3075,7 +3075,7 @@ fn set_element(array: &mut Array, at: usize, value: &Value) -> bool {
         (ArrayData::Int(v), Value::Int(n)) => v.get_mut(at).map(|e| *e = *n).is_some(),
         (ArrayData::Real(v), Value::Real(x)) => v.get_mut(at).map(|e| *e = *x).is_some(),
         (ArrayData::Real(v), Value::Int(n)) => v.get_mut(at).map(|e| *e = f64::from(*n)).is_some(),
-        (ArrayData::Int(v), Value::Real(_)) => match index_number(value) {
+        (ArrayData::Int(v), Value::Real(x)) => match crate::value::stored_int(*x) {
             Some(n) => v.get_mut(at).map(|e| *e = n).is_some(),
             None => false,
         },

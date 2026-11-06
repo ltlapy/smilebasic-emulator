@@ -538,3 +538,113 @@ fn errors_name_their_statement() {
         assert!(fused.1 > 0, "{source}: {fused:?}");
     }
 }
+
+/// What `source` prints and the code of the error it stops on, or 0.
+fn outcome(source: &str, fused: bool) -> (String, i32) {
+    let mut host = TextHost::default();
+    let mut vm = Vm::new(compiled(source, fused));
+    let code = match vm.run(&mut host, 1_000_000) {
+        Ok(status) => {
+            assert_eq!(status, Status::Ended, "{source}");
+            0
+        }
+        Err(e) => e.kind.code(),
+    };
+    (host.output, code)
+}
+
+/// Runs `statement` after `setup`, on its own and in a FOR loop, fused and
+/// in `step`, and checks what it leaves in Y or the error it stops on.
+fn check_all(setup: &str, statement: &str, printed: &str, code: i32) {
+    for source in [
+        format!("{setup}\n{statement}\n?Y"),
+        format!("{setup}\nFOR I=0 TO 1\n{statement}\nNEXT\n?Y"),
+    ] {
+        for fused in [true, false] {
+            let (out, c) = outcome(&source, fused);
+            assert_eq!(c, code, "{source} fused {fused}");
+            if code == 0 {
+                assert_eq!(out, format!("{printed}\n"), "{source} fused {fused}");
+            }
+        }
+        for budget in [1, 2, 3, 5, 7] {
+            assert_eq!(
+                run(&source, budget, true),
+                run(&source, budget, false),
+                "{source}"
+            );
+        }
+    }
+}
+
+/// Unary minus of -2147483648 wraps and stays an int (TEST65).
+#[test]
+fn negating_the_minimum_wraps() {
+    check_all("A=&H80000000", "Y=-A", "-2147483648", 0);
+    check_all("A=&H80000000", "Y=TYPEOF(-A)", "1", 0);
+    check_all("A=&H7FFFFFFF", "Y=-A", "-2147483647", 0);
+    // Binary minus still gives a real.
+    check_all("A=&H80000000:Z=0", "Y=Z-A", "2147483648", 0);
+    // Worked out when it compiles, the same way.
+    assert_eq!(outcome("?-&H80000000", true), ("-2147483648\n".into(), 0));
+}
+
+/// An int array takes a real only in -2147483648..2147483647, before the
+/// fraction is dropped (TEST65).
+#[test]
+fn int_array_stores_check_the_real() {
+    for (value, printed, code) in [
+        ("-3.9", "-3", 0),
+        ("3.9", "3", 0),
+        ("-0.5", "0", 0),
+        ("2147483647.0", "2147483647", 0),
+        ("2147483647.5", "", 9),
+        ("2147483647.9", "", 9),
+        ("-2147483648.5", "", 9),
+        ("2147483648", "", 9),
+        ("-2147483649", "", 9),
+        ("4294967295", "", 9),
+    ] {
+        let setup = format!("DIM M%[2],N%[2,2]:J=1:X={value}");
+        check_all(&setup, "M%[0]=X:Y=M%[0]", printed, code);
+        check_all(&setup, "M%[J]=X:Y=M%[J]", printed, code);
+        check_all(&setup, "N%[J,J]=X:Y=N%[J,J]", printed, code);
+        // A % variable keeps the real.
+        check_all(&setup, "Y%=X:Y=Y%==X", "1", 0);
+    }
+}
+
+/// Bit operators saturate a real outside the 32-bit range, with no error
+/// (TEST65). In range it is truncated toward zero.
+#[test]
+fn bit_operators_saturate_reals() {
+    for (value, op, rhs, printed) in [
+        ("-1.5", "AND", "-1", "-1"),
+        ("3.9", "OR", "0", "3"),
+        ("-3.9", "XOR", "0", "-3"),
+        ("-2.5", ">>", "1", "-1"),
+        ("-2.5", ">>>", "28", "15"),
+        ("-2.5", "<<", "1", "-4"),
+        ("2147483647.5", "AND", "-1", "2147483647"),
+        ("-2147483648.5", "AND", "-1", "-2147483648"),
+        ("2147483648", "AND", "-1", "2147483647"),
+        ("-2147483649", "OR", "0", "-2147483648"),
+        ("4294967295", "XOR", "0", "2147483647"),
+        ("2147483648", "<<", "1", "-2"),
+        ("2147483648", ">>", "1", "1073741823"),
+        ("2147483648", ">>>", "1", "1073741823"),
+        ("4294967295", ">>>", "0", "2147483647"),
+        ("4294967296", "AND", "1", "1"),
+        ("2147483648", ">>>", "0", "2147483647"),
+        ("2147483648", "<<+", "1", "-2"),
+        ("2147483648", ">>+", "1", "-1073741825"),
+    ] {
+        let setup = format!("X={value}:Z={rhs}");
+        check_all(&setup, &format!("Y=X {op} {rhs}"), printed, 0);
+        check_all(&setup, &format!("Y=X {op} Z"), printed, 0);
+    }
+    check_all("X=-2.5", "Y=NOT X", "1", 0);
+    check_all("X=2147483648", "Y=NOT X", "-2147483648", 0);
+    check_all("X=3.9:A=1", "Y=A<<X", "8", 0);
+    check_all("X=2147483648", "Y=TYPEOF(X AND -1)", "1", 0);
+}
