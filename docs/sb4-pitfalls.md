@@ -92,6 +92,9 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 
 ### When errors appear
 
+- An error message goes on from the cursor, on the line the program left it:
+  after `?"V";` an `Overflow` shows as `VOverflow in 1:3` (TEST65). A line
+  typed in direct mode does the same (TEST63).
 - `Wrong number of arguments` comes when a command or function gets a number of
   arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
   finds this as it runs, not as the program compiles, so the lines before it

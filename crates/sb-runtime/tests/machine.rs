@@ -124,9 +124,8 @@ fn direct_mode_declarations() {
     }
     // Checked as the line runs: the first DIM of the two declares.
     enter(&mut m, "?\"x\";:dim h[2]:dim h[2]");
-    let r = rows(&m);
-    assert_eq!(r[r.len() - 3], "X");
-    assert!(last(&m).starts_with("Duplicate variable"));
+    // The error goes on from the X.
+    assert!(last(&m).starts_with("XDuplicate variable"));
     enter(&mut m, "?len(h)");
     assert_eq!(last(&m), "2");
     // A DIM that fails leaves its array omitted, and a VAR zero.
@@ -205,6 +204,19 @@ fn errors_return_to_direct_mode() {
     assert_eq!(r[10], "RUN");
     assert!(r[11].starts_with("Syntax error"), "{r:?}");
     assert_eq!(r[12], "OK");
+}
+
+/// An error message goes on from where the program left the cursor (TEST65).
+#[test]
+fn errors_follow_the_cursor() {
+    let mut m = machine();
+    m.set_slot(0, "?\"V\";\nZ=0:X=1/Z".to_string());
+    enter(&mut m, "run");
+    let r = rows(&m);
+    let at = r.iter().position(|l| l.starts_with('V'));
+    let at = at.unwrap_or_else(|| panic!("{r:?}"));
+    assert_eq!(r[at], "VDivide by zero in 0:2", "{r:?}");
+    assert_eq!(r[at + 1], "OK", "{r:?}");
 }
 
 #[test]

@@ -2093,7 +2093,11 @@ impl Machine {
     /// the Japanese line under it that explains it.
     fn report(&mut self, error: &Error) {
         let text: Vec<u16> = error.to_string().encode_utf16().collect();
-        self.print_line(&text);
+        // It follows whatever the line printed, as Break does.
+        // UNVERIFIED: it wraps at the right edge as PRINT does.
+        let console = &mut self.rt.text[CONSOLE];
+        console.print(&text);
+        console.newline();
         if self.rt.settings.localized_errors
             && let Some(line) = crate::error_lines::japanese(error.kind.code())
         {
