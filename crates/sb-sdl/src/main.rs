@@ -1588,6 +1588,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             toasts.push(e);
                         }
                     }
+                    settings_window::Outcome::ProgramFont => machine.rt.apply_program_font(),
                     settings_window::Outcome::ChooseExtraFont => {
                         let send = chosen_extra_font.clone();
                         choose_extra_font(canvas.window(), send, &mut toasts);

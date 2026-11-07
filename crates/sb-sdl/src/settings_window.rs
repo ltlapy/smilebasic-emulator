@@ -3,6 +3,7 @@
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
+use sb_runtime::extra_glyphs::FontSource;
 use sb_runtime::font::{Font, FontSize};
 use sb_runtime::settings::{Language, Renderer, Settings, TOOLS};
 use sb_runtime::speed::Speed;
@@ -100,7 +101,41 @@ const SOUND_FONT_FILE: usize = 2;
 const INSTRUMENTS: &str = "Instruments for MML and BGM";
 /// The extra font row's option that asks for a font file.
 const EXTRA_FONT_FILE: usize = 1;
-const EXTRA_FONT: &str = "Font for characters SmileBASIC lacks";
+const EXTRA_FONT: &str = "Font file";
+const PROGRAM_FONT: [&str; 2] = ["Programs' 8-pixel font", "Programs' 16-pixel font"];
+/// The font sources, in the options' order.
+const SOURCES: [FontSource; 3] = [
+    FontSource::SmileBasic,
+    FontSource::File,
+    FontSource::Bundled,
+];
+const SOURCE_NAMES: &[&str] = &["SmileBASIC", "File", "Bundled"];
+
+fn source_index(source: FontSource) -> usize {
+    SOURCES.iter().position(|&s| s == source).unwrap_or(0)
+}
+
+/// A row choosing the 8- (0) or 16-pixel (1) font page's source.
+const fn program_font(n: usize) -> Row {
+    Row {
+        label: PROGRAM_FONT[n],
+        about: "Puts the file's or the bundled fonts' glyphs on the font page (GRP5) \
+                for the characters SmileBASIC's font has, so programs draw with them \
+                and read them from GRP5. Set now and by ACLS. Not SmileBASIC 4's. \
+                Default: SmileBASIC.",
+        control: Control::Choice(
+            SOURCE_NAMES,
+            [
+                |s: &Settings| source_index(s.program_font[0]),
+                |s: &Settings| source_index(s.program_font[1]),
+            ][n],
+            [
+                |s: &mut Settings, i: usize| s.program_font[0] = SOURCES[i],
+                |s: &mut Settings, i: usize| s.program_font[1] = SOURCES[i],
+            ][n],
+        ),
+    }
+}
 
 const PAGES: &[Page] = &[
     Page {
@@ -267,24 +302,6 @@ const PAGES: &[Page] = &[
     Page {
         title: "Editor",
         rows: &[
-            Row {
-                label: EXTRA_FONT,
-                about: "The editor draws Hangul, emoji and other characters missing from \
-                        SmileBASIC's font with bundled fonts, or first with a BDF, TTF or \
-                        OTF file you choose. Programs still see the box. Default: Bundled.",
-                control: Control::Choice(
-                    &["Bundled", "File..."],
-                    |s| match s.editor_extra_font {
-                        None => 0,
-                        Some(_) => EXTRA_FONT_FILE,
-                    },
-                    |s, i| {
-                        if i == 0 {
-                            s.editor_extra_font = None;
-                        }
-                    },
-                ),
-            },
             check(
                 "Narrow half-width characters",
                 "The editor draws ASCII and half-width kana half as wide as other \
@@ -402,6 +419,43 @@ const PAGES: &[Page] = &[
         ],
     },
     Page {
+        title: "Fonts",
+        rows: &[
+            Row {
+                label: EXTRA_FONT,
+                about: "A BDF, TTF or OTF file to draw characters from, such as Hangul and \
+                        emoji, which SmileBASIC's font lacks. The rows below set where it \
+                        comes in the order. Default: none.",
+                control: Control::Choice(
+                    &["None", "File..."],
+                    |s| match s.editor_extra_font {
+                        None => 0,
+                        Some(_) => EXTRA_FONT_FILE,
+                    },
+                    |s, i| {
+                        if i == 0 {
+                            s.editor_extra_font = None;
+                        }
+                    },
+                ),
+            },
+            Row {
+                label: "Editor's first font",
+                about: "Where the editor looks for a character first, in the code, line \
+                        numbers, status line, suggestions and hints. A character it lacks \
+                        comes from the others in the order SmileBASIC, file, bundled, then \
+                        the box. Default: SmileBASIC.",
+                control: Control::Choice(
+                    SOURCE_NAMES,
+                    |s| source_index(s.editor_font_first),
+                    |s, i| s.editor_font_first = SOURCES[i],
+                ),
+            },
+            program_font(0),
+            program_font(1),
+        ],
+    },
+    Page {
         title: "Screen",
         rows: &[Row {
             label: "Renderer",
@@ -436,6 +490,8 @@ pub enum Outcome {
     ExtraFont,
     /// Ask for a font file for the editor's extra characters.
     ChooseExtraFont,
+    /// A program font changed; the frontend writes it on the font page.
+    ProgramFont,
     /// Ask for the program tool `n` (0 to 2) starts.
     ChooseTool(usize),
 }
@@ -597,6 +653,9 @@ impl SettingsWindow {
                     return Outcome::ExtraFont;
                 }
                 put(s, to);
+                if PROGRAM_FONT.contains(&row.label) {
+                    return Outcome::ProgramFont;
+                }
             }
         }
         Outcome::Stay
@@ -820,8 +879,8 @@ mod tests {
             ..Settings::default()
         };
         let mut w = SettingsWindow::new((1280, 720));
-        let editor = PAGES.iter().position(|p| p.title == "Editor").unwrap();
-        w.click(centre(w.page_row(editor)), &mut s);
+        let fonts = PAGES.iter().position(|p| p.title == "Fonts").unwrap();
+        w.click(centre(w.page_row(fonts)), &mut s);
         assert_eq!(
             w.click(centre(w.option_rect(0, EXTRA_FONT_FILE)), &mut s),
             Outcome::ChooseExtraFont
@@ -835,6 +894,14 @@ mod tests {
             Outcome::ExtraFont
         );
         assert_eq!(s.editor_extra_font, None);
+        // The order is a setting; the program fonts tell the frontend.
+        w.click(centre(w.option_rect(1, 2)), &mut s);
+        assert_eq!(s.editor_font_first, FontSource::Bundled);
+        assert_eq!(
+            w.click(centre(w.option_rect(3, 1)), &mut s),
+            Outcome::ProgramFont
+        );
+        assert_eq!(s.program_font, [FontSource::SmileBasic, FontSource::File]);
     }
 
     #[test]

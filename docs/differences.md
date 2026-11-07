@@ -251,6 +251,20 @@ music keep time. A frame it does draw shows the scene the program finished:
   the main interpreter has the focus, is rounded to 8 bits before it goes over
   the main screen. SmileBASIC 4 does both in one step, so a channel can be 1 off
   where the subprogram's screen is not opaque.
+- Programs' font: File > Settings > Fonts > "Programs' 8-pixel font" and
+  "Programs' 16-pixel font" can put the font file's or the bundled fonts'
+  glyphs on the font page (GRP5) in place of SmileBASIC's. Both are
+  "SmileBASIC" by default, which leaves the page as SmileBASIC 4 has it. With
+  another choice, every character that has a place of its own on the page and
+  a glyph in the chosen source gets that glyph, fitted to the 8- or 16-pixel
+  cell; the rest keep SmileBASIC's. Characters the page has no place for, such
+  as Hangul, still show the box. The glyphs go on the page when you change the
+  setting or the font file, at start-up, and with each `ACLS` that puts the
+  font page back (not with its keep-font flag set). Only those cells change
+  when you change the setting; the rest of GRP5 keeps what the program drew.
+  A program that reads the font page sees the replaced pixels: `GSAVE` from
+  GRP5, `GSPOIT` and `GPGET` on it, `GARRAY` of it, and sprites or text using
+  it. `FONTINFO` and `CHKCHR` answer as before.
 - Filters: a filter's result goes to 8 bits before the layer's color is
   multiplied in. SmileBASIC 4 applies both in one draw, with one
   rounding, so a tinted, filtered layer can be 1 off.
@@ -418,10 +432,14 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   of the editor. SmileBASIC 4 has one for all of them.
 - Characters missing from SmileBASIC's font, such as Hangul and emoji, show in
   the editor from another font instead of as a box (see
-  [importing.md](importing.md#characters-the-font-lacks)). This covers the
-  editor's code area only. The console, direct mode, `CHKCHR`, the font page
-  on GRP5 and `GPUTCHR` still show SmileBASIC's font and its box, so programs
-  see what they see on hardware. A character above U+FFFF, such as most emoji,
+  [importing.md](importing.md#characters-the-font-lacks)). File > Settings >
+  Fonts > "Editor's first font" can also put the font file or the bundled
+  fonts ahead of SmileBASIC's font. This covers the editor's code, line
+  numbers, ruler, status line, suggestions and hints. The console, direct mode,
+  `CHKCHR`, the font page on GRP5 and `GPUTCHR` still show SmileBASIC's font
+  and its box, unless the programs' font setting under
+  [Rendering and GPU](#rendering-and-gpu) changes the page. A character above
+  U+FFFF, such as most emoji,
   takes two UTF-16 units and so two columns, as `LEN` counts it: its glyph
   fills the first cell and the second stays empty.
 - File > Settings > Editor > "Narrow half-width characters" (off by default)
