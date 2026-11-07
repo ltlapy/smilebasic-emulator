@@ -11,7 +11,8 @@
 //! and `PERFEND` measure the same time.
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65 and TEST67,
-//! timed on both consoles running SmileBASIC 4.4.9 (docs/benchmarking.md).
+//! timed on both consoles running SmileBASIC 4.4.9, and from TEST68 on a
+//! Switch 2 (docs/benchmarking.md).
 //! Drawing sprites, layers and text screens happens in the frame job, which
 //! TPERF and TEST67 show costs a program nothing, so only the commands are
 //! charged.
@@ -94,6 +95,11 @@ pub(crate) struct Costs {
     /// Each array element read or written, and each index past its first.
     element: u64,
     extra_index: u64,
+    /// A character of a string read or written by index, on top of the
+    /// element. UNVERIFIED: TEST68's string loops always pass the
+    /// character read to `ASC` and the one written comes from `CHR$`, so
+    /// the cost may be in `ASC` instead.
+    str_element: u64,
     lookup: u64,
     join: u64,
     /// `MAINCNT` and `MILLISEC`.
@@ -148,17 +154,24 @@ pub(crate) struct Costs {
     circle: u64,
     circle_px: u64,
     load_px: u64,
+    /// `LOADG` of an image, and each pixel it decodes.
+    loadg: u64,
+    loadg_px: u64,
     char_px: u64,
     /// `GPAINT`, and each pixel it fills.
     paint: u64,
     paint_px: u64,
     /// `LFILTER` and `LMATRIX`.
     layer: u64,
+    /// Each character of source `EXEC` compiles, the file's reading
+    /// included.
+    compile_char: u64,
 }
 
-// From TPERF and TEST65 on a Switch 2 and a Switch 1, and from TEST67,
-// which times single commands at several sizes. The Switch 2 ran TEST67
-// docked and TPERF handheld; the Switch 1 ran both handheld.
+// From TPERF and TEST65 on a Switch 2 and a Switch 1, from TEST67,
+// which times single commands at several sizes, and from TEST68's
+// Hangul library on a Switch 2. The Switch 2 ran TEST67 and TEST68
+// docked and TPERF handheld; the Switch 1 ran TPERF and TEST67 handheld.
 const SWITCH2: Costs = Costs {
     instruction: 9_700,
     statement: 6_500,
@@ -168,6 +181,9 @@ const SWITCH2: Costs = Costs {
     builtin_arg: 11_500,
     element: 17_400,
     extra_index: 43_000,
+    // TEST68's HGCNV$ and HGREV$ loops over 1000 characters, which this
+    // brings from 16-44% fast to between 6% slow and 9% fast.
+    str_element: 64_000,
     lookup: 146_400,
     join: 183_700,
     clock: 5_000,
@@ -209,10 +225,19 @@ const SWITCH2: Costs = Costs {
     circle: 227_000,
     circle_px: 2_100,
     load_px: 780,
+    // TEST68's LOADG of 512x312, 1024x624 and 2048x1248 images (2.8, 10.4
+    // and 38.7 ms), which a line through them fits within 0.23 ms.
+    // UNVERIFIED: that the size of the compressed file adds nothing.
+    loadg: 584_000_000,
+    loadg_px: 14_930,
     char_px: 4_150,
     paint: 42_900_000,
     paint_px: 7_531,
     layer: 8_000_000,
+    // TEST68's EXEC of HGLIB.PRG, 9798 characters in 343 lines, 3.5 ms
+    // with its set-up code, which costs 1.6 ms here. UNVERIFIED: one file
+    // cannot split this between a base, each line and each character.
+    compile_char: 194_500,
 };
 
 const SWITCH1: Costs = Costs {
@@ -224,6 +249,8 @@ const SWITCH1: Costs = Costs {
     builtin_arg: 55_000,
     element: 54_300,
     extra_index: 138_000,
+    // UNVERIFIED: the Switch 2's, by the elements' ratio.
+    str_element: 200_000,
     lookup: 318_800,
     join: 402_400,
     clock: 5_000,
@@ -263,10 +290,15 @@ const SWITCH1: Costs = Costs {
     circle: 500_000,
     circle_px: 5_000,
     load_px: 1_860,
+    // UNVERIFIED: the Switch 2's, by GLOAD's ratio between the two.
+    loadg: 1_393_000_000,
+    loadg_px: 35_600,
     char_px: 15_760,
     paint: 106_900_000,
     paint_px: 16_110,
     layer: 5_000_000,
+    // UNVERIFIED: the Switch 2's, by TEST65's busy loop's ratio.
+    compile_char: 525_000,
 };
 
 /// The console's time a program has used, kept by the runtime.
@@ -317,6 +349,7 @@ impl Meter {
             + n(work.builtin_args, b.builtin_args) * c.builtin_arg
             + n(work.elements, b.elements) * c.element
             + n(work.extra_indices, b.extra_indices) * c.extra_index
+            + n(work.str_elements, b.str_elements) * c.str_element
             + n(work.lookups, b.lookups) * c.lookup
             + n(work.joins, b.joins) * c.join;
         cost.saturating_sub(n(work.for_tests, b.for_tests) * c.for_credit)
@@ -373,14 +406,49 @@ impl Meter {
         self.host += cost;
     }
 
-    pub(crate) fn charge_print(&mut self, chars: usize) {
-        self.host += chars as u64 * self.costs.print_char;
+    /// Charges printing `chars` characters, and the cells of the lines
+    /// that scrolled the screen up.
+    pub(crate) fn charge_print(&mut self, chars: usize, scrolled_cells: u64) {
+        self.host += chars as u64 * self.costs.print_char + scrolled_cells * self.costs.scroll_cell;
+    }
+
+    /// Charges compiling `chars` characters of source.
+    pub(crate) fn charge_compile(&mut self, chars: usize) {
+        self.host += chars as u64 * self.costs.compile_char;
+    }
+
+    /// Charges a `LOADG` that decoded an image of `pixels`. UNVERIFIED:
+    /// one that loads nothing costs what an untimed command does.
+    pub(crate) fn charge_loadg(&mut self, pixels: u64) {
+        self.host += self.costs.loadg + pixels * self.costs.loadg_px;
     }
 
     /// Charges the pixels a `GPAINT` filled.
     pub(crate) fn charge_paint(&mut self, pixels: u64) {
         self.host += pixels * self.costs.paint_px;
     }
+}
+
+/// The cells that scroll when `text` is printed from `cursor` on a screen
+/// of `size`: the whole screen for each line past the last, at
+/// `SCROLL`'s cost a cell. UNVERIFIED: that scrolling is what TEST68's
+/// PRINT of 1000 user-defined characters spent its time on. It scrolled
+/// a 25x15 console 25 times and took twice what the characters alone
+/// cost.
+pub(crate) fn scrolled_cells(cursor: (u32, u32), (w, h): (u32, u32), text: &[u16]) -> u64 {
+    let (mut x, mut lines) = (cursor.0, 0u64);
+    for &c in text {
+        if matches!(c, 10 | 13) {
+            (x, lines) = (0, lines + 1);
+            continue;
+        }
+        if x >= w {
+            (x, lines) = (0, lines + 1);
+        }
+        x += 1;
+    }
+    let scrolls = (u64::from(cursor.1) + lines).saturating_sub(u64::from(h.saturating_sub(1)));
+    scrolls * u64::from(w) * u64::from(h)
 }
 
 /// An argument as a whole number, 0 when it is not one.

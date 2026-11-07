@@ -57,3 +57,15 @@ fn reporting_changes_nothing_else() {
     assert_eq!(counted.executed, plain.executed);
     assert_eq!(plain.statements, 0);
 }
+
+/// Characters of a string read or written by index are counted apart
+/// from the other elements.
+#[test]
+fn string_characters_by_index_count_apart() {
+    let source = "S$=\"ABC\":DIM A$[1]:A$[0]=\"DE\"\nS$[1]=\"X\":?ASC(S$[0]);A$[0];S$[1]\n";
+    let (work, out) = run(source, true);
+    assert_eq!(out, "65DEX\n");
+    // A$[0] twice, and S$ three times.
+    assert_eq!(work.elements, 5);
+    assert_eq!(work.str_elements, 3);
+}

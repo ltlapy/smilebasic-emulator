@@ -55,6 +55,8 @@ pub struct Work {
     /// Array elements read or written, and their indices past the first.
     pub elements: u64,
     pub extra_indices: u64,
+    /// Of those elements, characters of a string read or written by index.
+    pub str_elements: u64,
     /// Variables, labels and DEFs found by a name in a string at run time.
     pub lookups: u64,
     /// Strings joined.
@@ -286,6 +288,7 @@ pub struct Vm {
     builtin_args: u64,
     elements: u64,
     extra_indices: u64,
+    str_elements: u64,
     lookups: u64,
     joins: u64,
     for_tests: u64,
@@ -515,6 +518,7 @@ impl Vm {
             builtin_args: 0,
             elements: 0,
             extra_indices: 0,
+            str_elements: 0,
             lookups: 0,
             joins: 0,
             for_tests: 0,
@@ -992,6 +996,7 @@ impl Vm {
             builtin_args: self.builtin_args,
             elements: self.elements,
             extra_indices: self.extra_indices,
+            str_elements: self.str_elements,
             lookups: self.lookups,
             joins: self.joins,
             for_tests: self.for_tests,
@@ -2194,6 +2199,7 @@ impl Vm {
                 self.extra_indices += u64::from(n.saturating_sub(1));
                 let idx = self.indices(*n)?;
                 let base = self.pop();
+                self.str_elements += u64::from(matches!(base, Value::Str(_)));
                 self.stack.push(index(&base, &idx)?);
             }
             Op::StoreIndex(n) => {
@@ -2201,6 +2207,7 @@ impl Vm {
                 self.extra_indices += u64::from(n.saturating_sub(1));
                 let idx = self.indices(*n)?;
                 let base = self.pop();
+                self.str_elements += u64::from(matches!(base, Value::Str(_)));
                 let value = self.pop();
                 store_index(&base, &idx, value)?;
             }

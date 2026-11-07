@@ -324,6 +324,9 @@ impl Runtime {
                 let outcome = self.load_image(&spec)?;
                 match self.finish("LOADG", outcome) {
                     Some(image) => {
+                        if let Some(meter) = &mut self.meter {
+                            meter.charge_loadg((image.width * image.height) as u64);
+                        }
                         self.grp.put_image(page, at, &image);
                         Ok(sizes(image.width, image.height))
                     }

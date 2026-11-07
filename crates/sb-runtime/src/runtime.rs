@@ -2623,8 +2623,12 @@ impl Host for Runtime {
     }
 
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {
-        if let Some(meter) = &mut self.meter {
-            meter.charge_print(text.len());
+        if self.meter.is_some() {
+            let s = self.screen(screen)?;
+            let scrolled = crate::speed::scrolled_cells(s.cursor(), s.size(), text);
+            if let Some(meter) = &mut self.meter {
+                meter.charge_print(text.len(), scrolled);
+            }
         }
         // The cells tell when they change; the cursor shows while a line
         // is typed.
@@ -2639,6 +2643,13 @@ impl Host for Runtime {
     }
 
     fn print_newline(&mut self, screen: Option<i32>) -> Result<()> {
+        if self.meter.is_some() {
+            let s = self.screen(screen)?;
+            let scrolled = crate::speed::scrolled_cells(s.cursor(), s.size(), &[10]);
+            if let Some(meter) = &mut self.meter {
+                meter.charge_print(0, scrolled);
+            }
+        }
         self.screen(screen)?.newline();
         Ok(())
     }
@@ -2683,6 +2694,9 @@ impl Host for Runtime {
             }
         }
         self.slot_edits.push((slot, crate::prg::SlotEdit::Compiled));
+        if let Some(meter) = &mut self.meter {
+            meter.charge_compile(self.slots[slot].chars().count());
+        }
         Ok(Exec::Run(self.slots[slot].clone()))
     }
 

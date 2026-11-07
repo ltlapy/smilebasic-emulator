@@ -2,9 +2,11 @@
 //! console, with frames missed when a program needs more.
 
 use sb_runtime::Runtime;
+use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 use sb_runtime::speed::Speed;
+use sb_runtime::storage::Storage;
 
 /// A busy loop's passes in three frames, from the start of one.
 const BUSY: &str = "VSYNC:T=MAINCNT():WHILE MAINCNT()-T<3:INC N:WEND:?N\n";
@@ -15,10 +17,18 @@ const TIMED: &str = "PERFBEGIN 0:FOR I=1 TO 10000:NEXT:?PERFEND(0)\n";
 /// Runs `source` at `speed` until it ends, and gives the last line it
 /// printed.
 fn run(speed: Speed, source: &str) -> String {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    run_on(speed, Runtime::new(400, 240, Font::blank()), &[(0, source)])
+}
+
+/// Runs slot 0 of `slots` on `rt` at `speed`, with the other slots
+/// filled, and gives the last line printed.
+fn run_on(speed: Speed, rt: Runtime, slots: &[(usize, &str)]) -> String {
+    let mut m = Machine::new(rt);
     m.boot();
     m.rt.settings.speed = speed;
-    m.set_slot(0, source.to_string());
+    for &(slot, source) in slots {
+        m.set_slot(slot, source.to_string());
+    }
     m.run_slot(0);
     for _ in 0..600 {
         m.frame();
@@ -26,7 +36,7 @@ fn run(speed: Speed, source: &str) -> String {
             break;
         }
     }
-    assert!(!m.is_running(), "{source} still runs");
+    assert!(!m.is_running(), "{slots:?} still runs");
     let console = &m.rt.text[4];
     let (w, h) = console.size();
     (0..h)
@@ -148,4 +158,74 @@ fn a_long_search_for_a_free_sprite_costs_more() {
     let short = passes(Speed::Switch1, &search(0));
     let long = passes(Speed::Switch1, &search(3000));
     assert!(short < 5.0 && long > 10.0, "{short} us and {long} us");
+}
+
+/// Two numbers a program printed on one line.
+fn pair(line: &str) -> (f64, f64) {
+    let mut words = line.split_whitespace().map(|w| w.parse().unwrap());
+    let pair = (words.next(), words.next());
+    pair.0.zip(pair.1).unwrap_or_else(|| panic!("{line:?}"))
+}
+
+/// EXEC costs the characters it compiles: about 1.9 ms on a Switch 2
+/// for 10000.
+#[test]
+fn exec_costs_the_source_it_compiles() {
+    let exec = |chars: usize| {
+        let rt = Runtime::new(400, 240, Font::blank());
+        let slot1 = format!("'{}\n?PERFEND(0)\n", "X".repeat(chars));
+        let line = run_on(
+            Speed::Switch2,
+            rt,
+            &[(0, "PERFBEGIN 0:EXEC 1\n"), (1, &slot1)],
+        );
+        line.trim()
+            .parse::<f64>()
+            .unwrap_or_else(|_| panic!("{line:?}"))
+    };
+    let more = exec(10_000) - exec(0);
+    assert!((1_800.0..2_100.0).contains(&more), "{more} us");
+}
+
+/// LOADG costs a base and each pixel of the image: TEST68's 1024x624
+/// image took 10.4 ms on a Switch 2. One that loads nothing costs little.
+#[test]
+fn loadg_costs_the_pixels_it_decodes() {
+    let dir = std::env::temp_dir().join(format!("sb-speed-loadg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let load = |w: u32, h: u32| {
+        let mut rt = Runtime::new(400, 240, Font::blank());
+        rt.storage = Storage::new(dir.clone());
+        rt.settings.file_confirm = FileConfirm::Silent;
+        let source = match w {
+            0 => "PERFBEGIN 0:LOADG \"NONE\",1:?PERFEND(0)\n".to_string(),
+            _ => format!(
+                "SAVEG \"PIC\",0,0,0,{w},{h}\n\
+                 PERFBEGIN 0:LOADG \"PIC\",1:?PERFEND(0)\n"
+            ),
+        };
+        let line = run_on(Speed::Switch2, rt, &[(0, &source)]);
+        line.trim()
+            .parse::<f64>()
+            .unwrap_or_else(|_| panic!("{line:?}"))
+    };
+    let (none, small, large) = (load(0, 0), load(8, 8), load(1024, 624));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(none < 10.0, "{none} us");
+    assert!((500.0..700.0).contains(&small), "{small} us");
+    assert!((9_500.0..11_000.0).contains(&large), "{large} us");
+}
+
+/// PRINT costs the lines it scrolls the screen by: 20 lines of a 50x30
+/// console on top of 1000 characters.
+#[test]
+fn printing_that_scrolls_costs_more() {
+    let source = "A$=\"X\"*1000:LOCATE 0,0:PERFBEGIN 0:PRINT A$;:T=PERFEND(0)\n\
+                  LOCATE 0,29:PERFBEGIN 0:PRINT A$;:U=PERFEND(0):?T;\" \";U\n";
+    let (still, scrolled) = pair(&run(Speed::Switch2, source));
+    assert!((15.0..30.0).contains(&still), "{still} us");
+    assert!(
+        (60.0..90.0).contains(&(scrolled - still)),
+        "{still} us, {scrolled} us"
+    );
 }
