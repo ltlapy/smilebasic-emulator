@@ -9,7 +9,7 @@ use crate::framebuffer::Framebuffer;
 use crate::graphics::{Clip, Graphics, PAGES};
 use crate::scene::TextItem;
 use crate::sprites::sample;
-use crate::text::{Cell, FONT_PAGE, USER_CHARS, USER_GRID, attr, glyph_pixel};
+use crate::text::{Cell, FONT_PAGE, USER_CHARS, UserPage, attr, glyph_pixel};
 
 /// A cell that shows nothing, where a cell's place in [`Glyphs`] is kept.
 const NO_GLYPH: u32 = u32::MAX;
@@ -194,12 +194,12 @@ impl TextItem {
     fn glyph_pixel(&self, font: &Font, grp: &Graphics, code: u16, x: i32, y: i32) -> u32 {
         let ft = self.font_type;
         if USER_CHARS.contains(&code) {
-            let i = i32::from(code - USER_CHARS.start());
-            let (ox, oy) = self.page_origin;
-            let size = ft as i32;
-            let gx = ox + i % USER_GRID * size + x;
-            let gy = oy + i / USER_GRID * size + y;
-            return sample(grp, self.page, gx, gy);
+            let user = UserPage {
+                page: self.page,
+                origin: self.page_origin,
+            };
+            let (cx, cy) = user.cell(code, ft as i32);
+            return sample(grp, self.page, cx + x, cy + y);
         }
         let on_image = |v: i32| (0..ft as i32).contains(&v);
         if !on_image(x) || !on_image(y) {

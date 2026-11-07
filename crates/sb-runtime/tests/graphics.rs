@@ -252,3 +252,72 @@ fn gputchr_at_extreme_coordinates_ends() {
         assert_eq!(run(source).1, "1", "{source}");
     }
 }
+
+/// A pattern of colors on GRP3: cell 0 of the 16-pixel grid at 0,0 and
+/// cell 2210 at 544,544 (column 34, row 34), different from each other.
+const USER_CELLS: &str = "GTARGET 3:GCLS\n\
+     FOR Y=0 TO 15:FOR X=0 TO 15\n\
+     IF (X*3+Y*5) MOD 7<3 THEN GPSET X,Y,RGB(255,X*16,Y*16)\n\
+     IF (X*5+Y*3) MOD 4==1 THEN GPSET 544+X,544+Y,RGB(X*16,255,Y*16)\n\
+     NEXT:NEXT:GTARGET 1:GCLS\n";
+
+/// Whether GRP1's `size` square at 0,0 holds GRP3's at `from`, which has
+/// something drawn.
+fn drew_cell(m: &Machine, from: (i32, i32), size: i32) -> bool {
+    let at = |page, x, y| m.rt.grp.pixel(page, x, y);
+    let square = |f: &dyn Fn(i32, i32) -> bool| (0..size).all(|y| (0..size).all(|x| f(x, y)));
+    !square(&|x, y| at(3, from.0 + x, from.1 + y) == 0)
+        && square(&|x, y| at(1, x, y) == at(3, from.0 + x, from.1 + y))
+}
+
+#[test]
+fn gputchr_draws_user_characters_from_the_consoles_tpage() {
+    // Cell n of the console's TPAGE, in cells of the font type.
+    let (m, _) = run(&format!(
+        "{USER_CELLS}TPAGE 4,3,0,0:GPUTCHR 0,0,CHR$(&HE800),16,-1,0:?1"
+    ));
+    assert!(drew_cell(&m, (0, 0), 16));
+    let (m, _) = run(&format!(
+        "{USER_CELLS}TPAGE 4,3,0,0:GPUTCHR 0,0,CHR$(&HE800+2210),16,-1,0:?1"
+    ));
+    assert!(drew_cell(&m, (544, 544), 16));
+    // At 8, the 8-pixel cell at the console's origin. Another screen's
+    // TPAGE does not matter.
+    let (m, _) = run(&format!(
+        "{USER_CELLS}TPAGE 4,3,0,0:TPAGE 0,3,544,544:GPUTCHR 0,0,CHR$(&HE800),8,-1,0:?1"
+    ));
+    assert!(drew_cell(&m, (0, 0), 8));
+    assert_eq!(m.rt.grp.pixel(1, 8, 0), 0, "only the 8-pixel cell");
+    // The console's TPAGE at the start, GRP4 from 1024,0, is empty there:
+    // nothing is drawn, as for a blank glyph.
+    let (m, out) = run(&format!(
+        "{USER_CELLS}GPUTCHR 0,0,CHR$(&HE800),16,-1,0:TPAGE 4 OUT P,X,Y:?P;X;Y"
+    ));
+    assert_eq!(out, "410240");
+    assert_eq!(m.rt.grp.pixel(4, 1024, 0), 0);
+    assert!((0..16).all(|y| (0..16).all(|x| m.rt.grp.pixel(1, x, y) == 0)));
+}
+
+#[test]
+fn gputchr_multiplies_user_characters_by_the_color() {
+    // UNVERIFIED: as it multiplies the font's glyphs.
+    let (m, _) = run("GTARGET 3:GCLS:GFILL 0,0,15,15,&HFF80FF40:GTARGET 1:GCLS\n\
+         TPAGE 4,3,0,0:GPUTCHR 0,0,CHR$(&HE800),16,&HFFFF0000,0:?1");
+    assert_eq!(m.rt.grp.pixel(1, 5, 5), 0xFF80_0000);
+}
+
+#[test]
+fn gputchrp_takes_user_characters_whole() {
+    // A user-defined character is its whole cell wide, and the
+    // ideographic space 14 pixels at 16.
+    let (_, out) = run(&format!(
+        "{USER_CELLS}TPAGE 4,3,0,0:U$=CHR$(&HE800):H$=CHR$(&HE800+2210)\n\
+         ?GPUTCHRP(U$);\" \";GPUTCHRP(U$,8);\" \";GPUTCHRP(H$+H$,16,2,3);\" \";GPUTCHRP(CHR$(&H3000))"
+    ));
+    // 70 is 2*(16+16+3).
+    assert_eq!(out, "16 8 70 14");
+    let (m, _) = run(&format!(
+        "{USER_CELLS}TPAGE 4,3,0,0:GPUTCHRP 0,0,CHR$(&HE800+2210),16,-1,0:?1"
+    ));
+    assert!(drew_cell(&m, (544, 544), 16));
+}

@@ -67,6 +67,30 @@ const LONG_PRINT: usize = 256;
 /// User-defined characters sit in a grid this many characters wide.
 pub(crate) const USER_GRID: i32 = 64;
 
+/// A TPAGE setting: the page user-defined characters come from, and the
+/// top-left corner of character `U+E800`'s cell on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UserPage {
+    pub page: i32,
+    pub origin: (i32, i32),
+}
+
+impl UserPage {
+    /// Every text screen's TPAGE at the start.
+    pub const DEFAULT: UserPage = UserPage {
+        page: SPRITE_PAGE as i32,
+        origin: (1024, 0),
+    };
+
+    /// The top-left corner of `code`'s cell, for cells `size` pixels on a
+    /// side. `code` must be one of [`USER_CHARS`].
+    pub fn cell(self, code: u16, size: i32) -> (i32, i32) {
+        let i = i32::from(code - USER_CHARS.start());
+        let (ox, oy) = self.origin;
+        (ox + i % USER_GRID * size, oy + i / USER_GRID * size)
+    }
+}
+
 /// ATTR bits of a character.
 pub mod attr {
     pub const ROTATION: u16 = 0b11;
@@ -230,6 +254,14 @@ impl TextScreen {
     /// TSCREEN's font type and character size.
     pub fn font(&self) -> (u32, u32) {
         (self.font_type, self.char_size)
+    }
+
+    /// TPAGE as one value.
+    pub fn user_page(&self) -> UserPage {
+        UserPage {
+            page: self.page,
+            origin: self.page_origin,
+        }
     }
 
     /// TSCREEN also takes the screen's look back to the start: its

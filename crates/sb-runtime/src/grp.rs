@@ -258,9 +258,9 @@ impl Runtime {
                     _ => ((1, 1), args.get(4..).unwrap_or(&[])),
                 };
                 let (color, blend) = self.color_and_blend(rest)?;
-                let font = &self.font;
+                let (font, user) = (&self.font, self.text[CONSOLE].user_page());
                 self.grp
-                    .put_chars(font, (v[0], v[1]), &text, px, scale, color, blend);
+                    .put_chars(font, user, (v[0], v[1]), &text, px, scale, color, blend);
                 Ok(vec![])
             }
             // GPUTCHRP X,Y,text[,font[,color[,method]]] or
@@ -285,9 +285,10 @@ impl Runtime {
                     Some(v) => blend_arg(v)?,
                 };
                 let spacing = spacing_arg(rest.get(2))?;
-                let font = &self.font;
+                let (font, user) = (&self.font, self.text[CONSOLE].user_page());
                 self.grp.put_chars_proportional(
                     font,
+                    user,
                     (v[0], v[1]),
                     &text,
                     size,

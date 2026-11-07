@@ -10,7 +10,7 @@ use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
 
 use crate::compose::{Lit, Over1, Over3, Paint};
 use crate::font::{Font, FontSize};
-use crate::text::{FONT_PAGE, glyph_origin_px, glyph_pixel, glyph_pixel_px};
+use crate::text::{FONT_PAGE, USER_CHARS, UserPage, glyph_origin_px, glyph_pixel, glyph_pixel_px};
 
 pub const PAGES: usize = 6;
 /// `#GRPWIDTH` and `#GRPHEIGHT`.
@@ -916,11 +916,13 @@ impl Graphics {
 
     /// GPUTCHR: draws text with the 8 or 16-pixel font, scaled. The whole
     /// cell is drawn, so with `#G_NORMAL` the glyph's transparent pixels
-    /// clear the page, as on hardware.
+    /// clear the page, as on hardware. User-defined characters come from
+    /// `user`, the console's TPAGE, in cells of the font type.
     #[allow(clippy::too_many_arguments)]
     pub fn put_chars(
         &mut self,
         font: &Font,
+        user: UserPage,
         (x, y): (i32, i32),
         text: &[u16],
         px: u32,
@@ -939,14 +941,62 @@ impl Graphics {
                 break;
             }
             if left + cell > i64::from(self.clip.x0) {
-                let origin = glyph_origin_px(font, code, px);
-                self.put_glyph((left, top), 0..n, n, (sx, sy), color, blend, |g, gx, gy| {
-                    match origin {
-                        Some((ox, oy)) => g.pixel(FONT_PAGE, (ox + gx) as i32, (oy + gy) as i32),
-                        None => glyph_pixel_px(font, g, code, px, gx, gy),
-                    }
-                });
+                let at = (left, top);
+                self.put_char(font, user, code, px, at, 0..n, (sx, sy), color, blend);
             }
+        }
+    }
+
+    /// Draws `columns` of one character's `px`-pixel glyph, as
+    /// [`Graphics::put_glyph`] does. Where its pixels come from is worked
+    /// out once for the character, not for each pixel.
+    #[allow(clippy::too_many_arguments)]
+    fn put_char(
+        &mut self,
+        font: &Font,
+        user: UserPage,
+        code: u16,
+        px: u32,
+        at: (i64, i64),
+        columns: Range<i32>,
+        scale: (i32, i32),
+        color: u32,
+        blend: Blend,
+    ) {
+        let n = px as i32;
+        if USER_CHARS.contains(&code) {
+            // UNVERIFIED: GRP-1 and GSAMPLE 1 act as they do for text
+            // screens, and the page's colors are multiplied by the color
+            // as the font's are.
+            let (cx, cy) = user.cell(code, n);
+            let on = |gx: u32, gy: u32| (cx + gx as i32, cy + gy as i32);
+            match usize::try_from(user.page) {
+                Err(_) => {
+                    self.put_glyph(at, columns, n, scale, color, blend, |_, _, _| 0xFFFF_FFFF)
+                }
+                Ok(p) if p >= PAGES => {
+                    self.put_glyph(at, columns, n, scale, color, blend, |_, _, _| 0)
+                }
+                Ok(p) if self.sample[p] == 1 => {
+                    self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+                        let (x, y) = on(gx, gy);
+                        g.pixel(p, x.rem_euclid(GRP_SIZE), y.rem_euclid(GRP_SIZE))
+                    })
+                }
+                Ok(p) => self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+                    let (x, y) = on(gx, gy);
+                    g.pixel(p, x, y)
+                }),
+            }
+            return;
+        }
+        match glyph_origin_px(font, code, px) {
+            Some((ox, oy)) => self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+                g.pixel(FONT_PAGE, (ox + gx) as i32, (oy + gy) as i32)
+            }),
+            None => self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+                glyph_pixel_px(font, g, code, px, gx, gy)
+            }),
         }
     }
 
@@ -1013,9 +1063,14 @@ impl Graphics {
 
     /// GPUTCHRP's view of a character: the first column it takes and how
     /// many, or `None` for a blank one. It takes what is drawn and one
-    /// empty column before that, where the glyph has one.
+    /// empty column before that, where the glyph has one. A user-defined
+    /// character takes its whole cell.
     fn ink(&self, font: &Font, code: u16, size: FontSize) -> Option<(i32, i32)> {
         let n = size as u32;
+        if USER_CHARS.contains(&code) {
+            // UNVERIFIED: whatever the cell holds, even nothing.
+            return Some((0, n as i32));
+        }
         let inked =
             |gx: u32| (0..n).any(|gy| glyph_pixel(font, self, code, size, gx, gy) >> 24 != 0);
         let left = (0..n).find(|&gx| inked(gx))?.saturating_sub(1);
@@ -1035,7 +1090,7 @@ impl Graphics {
     ) -> i32 {
         let mut inks = Inks::for_text(text);
         let widths: i64 = (text.iter())
-            .map(|&c| i64::from(advance(inks.of(self, font, c, size), size)))
+            .map(|&c| i64::from(advance(c, inks.of(self, font, c, size), size)))
             .sum();
         let gaps = i64::from(spacing) * (text.len() as i64 - 1).max(0);
         // Too wide for an integer wraps round.
@@ -1043,10 +1098,12 @@ impl Graphics {
     }
 
     /// GPUTCHRP: characters as wide as each is, `spacing` pixels apart.
+    /// User-defined characters come from `user`, as for GPUTCHR.
     #[allow(clippy::too_many_arguments)]
     pub fn put_chars_proportional(
         &mut self,
         font: &Font,
+        user: UserPage,
         (x, y): (i32, i32),
         text: &[u16],
         size: FontSize,
@@ -1072,14 +1129,17 @@ impl Graphics {
                 && left + i64::from(width) * i64::from(sx) > i64::from(self.clip.x0)
             {
                 let columns = first..first + width;
-                self.put_glyph(
-                    (left, top),
+                let at = (left, top);
+                self.put_char(
+                    font,
+                    user,
+                    code,
+                    n as u32,
+                    at,
                     columns,
-                    n,
                     (sx, sy),
                     color,
                     blend,
-                    |g, gx, gy| glyph_pixel(font, g, code, size, gx, gy),
                 );
                 // Drawing on the font's own page can change the glyphs.
                 if self.target == FONT_PAGE {
@@ -1088,7 +1148,7 @@ impl Graphics {
                 }
             }
             // Drawing scales the spacing as the width does.
-            left += i64::from(advance(ink, size) + spacing) * i64::from(sx);
+            left += i64::from(advance(code, ink, size) + spacing) * i64::from(sx);
         }
     }
 
@@ -1531,10 +1591,16 @@ fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i
     Some((l.narrow(), r.narrow()))
 }
 
-/// How far GPUTCHRP moves on after a character with this [`Graphics::ink`],
-/// before the spacing; a blank one is a quarter of the font size.
-fn advance(ink: Option<(i32, i32)>, size: FontSize) -> i32 {
-    ink.map_or(size as i32 / 4, |(_, w)| w)
+/// How far GPUTCHRP moves on after `code` with this [`Graphics::ink`],
+/// before the spacing. A blank one is a quarter of the font size, but the
+/// ideographic space is 14 pixels at 16.
+fn advance(code: u16, ink: Option<(i32, i32)>, size: FontSize) -> i32 {
+    match ink {
+        Some((_, w)) => w,
+        // UNVERIFIED: 7 at 8, half of what it is at 16.
+        None if code == 0x3000 => size as i32 * 7 / 8,
+        None => size as i32 / 4,
+    }
 }
 
 /// Finding a character's ink can look at every pixel of its glyph. Long
@@ -1708,11 +1774,21 @@ mod tests {
                 g.paint(105, 105, 0xFF77_7777, None);
             });
             check("GPUTCHR", &|g| {
-                g.put_chars(&font, (300, 200), &text, 8, (3, 2), RED, n)
+                g.put_chars(
+                    &font,
+                    UserPage::DEFAULT,
+                    (300, 200),
+                    &text,
+                    8,
+                    (3, 2),
+                    RED,
+                    n,
+                )
             });
             check("GPUTCHRP", &|g| {
                 g.put_chars_proportional(
                     &font,
+                    UserPage::DEFAULT,
                     (120, 330),
                     &text,
                     FontSize::Large,
@@ -2655,6 +2731,7 @@ mod tests {
     fn put_chars_unclipped(
         g: &mut Graphics,
         font: &Font,
+        user: UserPage,
         (x, y): (i32, i32),
         text: &[u16],
         px: u32,
@@ -2667,7 +2744,7 @@ mod tests {
             let left = x.saturating_add((i as i32).saturating_mul(n * sx));
             for gy in 0..n {
                 for gx in 0..n {
-                    let glyph = glyph_pixel_px(font, g, code, px, gx as u32, gy as u32);
+                    let glyph = char_pixel(font, g, user, code, px, gx, gy);
                     let p = multiply(glyph, color);
                     for py in 0..sy {
                         for px in 0..sx {
@@ -2685,6 +2762,7 @@ mod tests {
     fn put_chars_proportional_unclipped(
         g: &mut Graphics,
         font: &Font,
+        user: UserPage,
         (x, y): (i32, i32),
         text: &[u16],
         size: FontSize,
@@ -2698,7 +2776,7 @@ mod tests {
             if let Some((ink, width)) = g.ink(font, code, size) {
                 for gy in 0..size as i32 {
                     for gx in ink..ink + width {
-                        let glyph = glyph_pixel(font, g, code, size, gx as u32, gy as u32);
+                        let glyph = char_pixel(font, g, user, code, size as u32, gx, gy);
                         let p = multiply(glyph, color);
                         for py in 0..sy {
                             for px in 0..sx {
@@ -2710,7 +2788,26 @@ mod tests {
                 }
             }
             let ink = g.ink(font, code, size);
-            left = left.saturating_add((advance(ink, size) + spacing) * sx);
+            left = left.saturating_add((advance(code, ink, size) + spacing) * sx);
+        }
+    }
+
+    /// A pixel of a character's glyph, one at a time: user-defined ones
+    /// from the TPAGE page as text screens read it.
+    fn char_pixel(
+        font: &Font,
+        g: &Graphics,
+        user: UserPage,
+        code: u16,
+        px: u32,
+        x: i32,
+        y: i32,
+    ) -> u32 {
+        if USER_CHARS.contains(&code) {
+            let (cx, cy) = user.cell(code, px as i32);
+            crate::sprites::sample(g, user.page, cx + x, cy + y)
+        } else {
+            glyph_pixel_px(font, g, code, px, x as u32, y as u32)
         }
     }
 
@@ -2736,7 +2833,9 @@ mod tests {
 
     /// Text with blanks and characters the font lacks.
     fn chars_text(next: &mut impl FnMut(u64) -> u64) -> Vec<u16> {
-        const CODES: [u16; 8] = [65, 73, 32, 46, 0x30, 0xE100, 0x3042, 0xFFFF];
+        const CODES: [u16; 11] = [
+            65, 73, 32, 46, 0x30, 0xE100, 0x3042, 0xFFFF, 0x3000, 0xE800, 0xF7FF,
+        ];
         (0..1 + next(5))
             .map(|_| CODES[next(CODES.len() as u64) as usize])
             .collect()
@@ -2777,8 +2876,12 @@ mod tests {
         const SCALES: [i32; 8] = [1, 1, 2, 3, 5, 8, 17, 40];
         // Each draw goes over the last, as copying the pages takes longer
         // than any of them.
+        // User-defined characters come from a page of their own, as
+        // drawing them on the page they come from is no different from
+        // drawing glyphs on the font page.
         for g in [&mut slow, &mut fast] {
             g.set_page(0, base.clone());
+            g.set_page(3, base.iter().map(|p| p.rotate_left(7)).collect());
         }
         for case in 0..1500 {
             let clip = chars_clip(&mut next);
@@ -2793,17 +2896,37 @@ mod tests {
             let size = [FontSize::Small, FontSize::Large][next(2) as usize];
             let spacing = next(65) as i32;
             let target = [0, FONT_PAGE][usize::from(next(64) == 0)];
+            let origin = (next(GRP_SIZE as u64) as i32, next(GRP_SIZE as u64) as i32);
+            let user = match next(4) {
+                0 => UserPage::DEFAULT,
+                1 => UserPage { page: -1, origin },
+                _ => UserPage { page: 3, origin },
+            };
+            let wrap = next(2) as i32;
             for g in [&mut slow, &mut fast] {
                 g.target = target;
                 g.clip = clip;
+                g.sample[3] = wrap;
             }
-            let what = format!("#{case} {clip:?} {x},{y} {sx}x{sy} {px} {text:?} {blend:?}");
-            put_chars_unclipped(&mut slow, &font, (x, y), &text, px, (sx, sy), color, blend);
-            fast.put_chars(&font, (x, y), &text, px, (sx, sy), color, blend);
+            let what =
+                format!("#{case} {clip:?} {x},{y} {sx}x{sy} {px} {text:?} {blend:?} {user:?}");
+            put_chars_unclipped(
+                &mut slow,
+                &font,
+                user,
+                (x, y),
+                &text,
+                px,
+                (sx, sy),
+                color,
+                blend,
+            );
+            fast.put_chars(&font, user, (x, y), &text, px, (sx, sy), color, blend);
             assert!(slow.page(target) == fast.page(target), "GPUTCHR {what}");
             put_chars_proportional_unclipped(
                 &mut slow,
                 &font,
+                user,
                 (x, y),
                 &text,
                 size,
@@ -2814,6 +2937,7 @@ mod tests {
             );
             fast.put_chars_proportional(
                 &font,
+                user,
                 (x, y),
                 &text,
                 size,
@@ -2846,7 +2970,7 @@ mod tests {
         for target in [0, FONT_PAGE] {
             for x in [-3000, -50, 5] {
                 let text: Vec<u16> = (0..Inks::SHORT + 300)
-                    .map(|_| [65, 73, 32, 0xE100, 0x3042][next(5) as usize])
+                    .map(|_| [65, 73, 32, 0xE100, 0x3042, 0x3000, 0xE801][next(7) as usize])
                     .collect();
                 for g in [&mut slow, &mut fast] {
                     g.target = target;
@@ -2855,9 +2979,15 @@ mod tests {
                 }
                 let (size, scale) = (FontSize::Large, (2, 2));
                 let y = 10;
+                // Read from the page drawn on, which they change as they go.
+                let user = UserPage {
+                    page: 0,
+                    origin: (100, 0),
+                };
                 put_chars_proportional_unclipped(
                     &mut slow,
                     &font,
+                    user,
                     (x, y),
                     &text,
                     size,
@@ -2868,6 +2998,7 @@ mod tests {
                 );
                 fast.put_chars_proportional(
                     &font,
+                    user,
                     (x, y),
                     &text,
                     size,
@@ -2880,7 +3011,7 @@ mod tests {
                 let width = |g: &Graphics, text: &[u16]| {
                     let mut widths = 0i64;
                     for &c in text {
-                        widths += i64::from(advance(g.ink(&font, c, size), size));
+                        widths += i64::from(advance(c, g.ink(&font, c, size), size));
                     }
                     (widths + text.len() as i64 - 1) * 2
                 };
@@ -2913,6 +3044,7 @@ mod tests {
             g.set_page(0, base.clone());
             g.put_chars(
                 &font,
+                UserPage::DEFAULT,
                 (x, y),
                 &[CODE, CODE],
                 16,
@@ -2946,6 +3078,7 @@ mod tests {
         let big = (32767, 32767);
         g.put_chars(
             &font,
+            UserPage::DEFAULT,
             (0, 0),
             &vec![65; 100_000],
             16,
@@ -2953,12 +3086,40 @@ mod tests {
             RED,
             Blend::Normal,
         );
-        g.put_chars(&font, (i32::MAX, 0), &text, 16, big, RED, Blend::Normal);
-        g.put_chars(&font, (i32::MIN, 0), &text, 16, (1, 1), RED, Blend::Normal);
-        g.put_chars(&font, (0, i32::MIN), &text, 16, big, RED, Blend::Normal);
+        g.put_chars(
+            &font,
+            UserPage::DEFAULT,
+            (i32::MAX, 0),
+            &text,
+            16,
+            big,
+            RED,
+            Blend::Normal,
+        );
+        g.put_chars(
+            &font,
+            UserPage::DEFAULT,
+            (i32::MIN, 0),
+            &text,
+            16,
+            (1, 1),
+            RED,
+            Blend::Normal,
+        );
+        g.put_chars(
+            &font,
+            UserPage::DEFAULT,
+            (0, i32::MIN),
+            &text,
+            16,
+            big,
+            RED,
+            Blend::Normal,
+        );
         let (small, large) = (FontSize::Small, FontSize::Large);
         g.put_chars_proportional(
             &font,
+            UserPage::DEFAULT,
             (0, 0),
             &[65; 2000],
             large,
@@ -2969,6 +3130,7 @@ mod tests {
         );
         g.put_chars_proportional(
             &font,
+            UserPage::DEFAULT,
             (i32::MAX, i32::MAX),
             &text,
             small,
@@ -2979,6 +3141,7 @@ mod tests {
         );
         g.put_chars_proportional(
             &font,
+            UserPage::DEFAULT,
             (i32::MIN, 0),
             &blanks,
             large,
