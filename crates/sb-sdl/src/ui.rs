@@ -308,9 +308,20 @@ fn draw_glyphs(
     };
     let smooth = font_choice == UiFont::Smooth && even;
     let halves = font.half_glyphs();
-    let put = |fb: &mut Framebuffer, px: u32, py: u32| {
-        if let Some(dst) = fb.get(px, py) {
-            fb.set(px, py, (dst & 0xFF00_0000) | (color & 0x00FF_FFFF));
+    // The 16-pixel glyphs keep their gray edges, as SmileBASIC 4 draws
+    // its own 16-pixel font: cut to one bit, their strokes come out
+    // uneven. The 8-pixel ones are dot drawings and stay sharp.
+    let gray = size == FontSize::Large;
+    let put = |fb: &mut Framebuffer, px: u32, py: u32, a: u32| {
+        let a = match gray {
+            true => a,
+            false if a >= 0x80 => 0xFF,
+            false => 0,
+        };
+        if a != 0
+            && let Some(dst) = fb.get(px, py)
+        {
+            fb.set(px, py, (dst & 0xFF00_0000) | blend(dst, color, a));
         }
     };
     let mut left = x;
@@ -329,15 +340,7 @@ fn draw_glyphs(
                 for py in 0..cell {
                     for px in 0..w {
                         let a = u32::from(glyph[((py / scale) * side + px / scale) as usize]);
-                        if a != 0
-                            && let Some(dst) = fb.get(left + px, y + py)
-                        {
-                            fb.set(
-                                left + px,
-                                y + py,
-                                (dst & 0xFF00_0000) | blend(dst, color, a),
-                            );
-                        }
+                        put(fb, left + px, y + py, a);
                     }
                 }
                 true
@@ -351,18 +354,16 @@ fn draw_glyphs(
                 let side = size as u32 / 2;
                 for py in 0..cell {
                     for px in 0..w {
-                        if glyph[((py / scale) * side + px / scale) as usize] >= 0x80 {
-                            put(fb, left + px, y + py);
-                        }
+                        let a = u32::from(glyph[((py / scale) * side + px / scale) as usize]);
+                        put(fb, left + px, y + py, a);
                     }
                 }
             }
             None => {
                 for py in 0..cell {
                     for px in 0..cell {
-                        if font.pixel(c, size, px / scale, py / scale) >> 24 >= 0x80 {
-                            put(fb, left + px, y + py);
-                        }
+                        let a = font.pixel(c, size, px / scale, py / scale) >> 24;
+                        put(fb, left + px, y + py, a);
                     }
                 }
             }
@@ -564,5 +565,24 @@ mod tests {
         assert!(inked(0, CHAR / 2), "|");
         assert!(inked(CHAR / 2, CHAR / 2 + CHAR), "가 right after it");
         assert!(!inked(CHAR / 2 + CHAR, 64));
+    }
+
+    #[test]
+    fn sixteen_pixel_glyphs_keep_their_gray_edges() {
+        let font = Font::fallback();
+        let shades = |scale: u32| {
+            let mut fb = Framebuffer::new(64, 32);
+            draw_text_scaled(&mut fb, &font, 0, 0, "漢あ", 0xFFFF_FFFF, scale);
+            let mut seen: Vec<u32> = fb.pixels().iter().map(|p| p & 0xFF).collect();
+            seen.sort_unstable();
+            seen.dedup();
+            seen
+        };
+        // Black, white and grays between at an even scale...
+        let even = shades(2);
+        assert!(even.len() > 2, "{even:?}");
+        assert_eq!((even[0], even[even.len() - 1]), (0, 0xFF));
+        // ...and only black and white from the 8-pixel font.
+        assert_eq!(shades(3), [0, 0xFF]);
     }
 }
