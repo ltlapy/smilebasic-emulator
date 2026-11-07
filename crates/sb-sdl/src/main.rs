@@ -189,6 +189,21 @@ impl FrameGuard {
     }
 }
 
+/// What Help > About says.
+fn about_lines(drawn_by: &str) -> Vec<String> {
+    let version = env!("CARGO_PKG_VERSION");
+    vec![
+        format!("SmileBASIC emulator {version}"),
+        "An emulator for SmileBASIC 4 programs.".to_string(),
+        String::new(),
+        "MIT OR Apache-2.0.".to_string(),
+        "Bundled fonts: SIL Open Font License 1.1.".to_string(),
+        "GeneralUser GS: its own license.".to_string(),
+        String::new(),
+        format!("Renderer: {drawn_by}"),
+    ]
+}
+
 /// Whether there is nobody to show a message box to.
 fn headless() -> bool {
     std::env::var("SDL_VIDEO_DRIVER").is_ok_and(|driver| driver == "offscreen")
@@ -688,11 +703,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 side = open_help(machine, help.as_deref(), &mut toasts, size);
             }
             if b.opens("about") {
-                let lines = vec!["A notice".to_string()];
+                let lines = about_lines(&drawn_by);
                 dialog = Some((Dialog::notice("About", lines, size), Asking::Notice));
             }
             if b.opens("colors") {
                 color_window = Some(ColorWindow::new(size));
+            }
+            if b.opens("file-menu") {
+                menu.open_menu(0);
+            }
+            if b.opens("settings") {
+                let mut window = SettingsWindow::new(size);
+                window.show_page("Editor");
+                settings_window = Some(window);
             }
             if b.opens("toast") {
                 toasts.push("A notice".to_string());
@@ -1758,17 +1781,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         shortcuts_window = Some(ShortcutsWindow::new((display_w, display_h)));
                     }
                     Click::Chosen(Action::About) => {
-                        let version = env!("CARGO_PKG_VERSION");
-                        let lines = vec![
-                            format!("SmileBASIC emulator {version}"),
-                            "An emulator for SmileBASIC 4 programs.".to_string(),
-                            String::new(),
-                            "MIT OR Apache-2.0.".to_string(),
-                            "Bundled fonts: SIL Open Font License 1.1.".to_string(),
-                            "GeneralUser GS: its own license.".to_string(),
-                            String::new(),
-                            format!("Renderer: {drawn_by}"),
-                        ];
+                        let lines = about_lines(&drawn_by);
                         let about = Dialog::notice("About", lines, (display_w, display_h));
                         dialog = Some((about, Asking::Notice));
                     }

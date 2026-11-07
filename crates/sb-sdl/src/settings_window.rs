@@ -10,7 +10,7 @@ use sdl3::keyboard::Keycode;
 use crate::shortcuts::wrap;
 use crate::ui::{
     BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, button, draw_text, fill, outline,
-    window,
+    text_width, window,
 };
 
 const WIDTH: u32 = 1100;
@@ -273,6 +273,15 @@ const PAGES: &[Page] = &[
                     },
                 ),
             },
+            check(
+                "Narrow half-width characters",
+                "The editor draws ASCII and half-width kana half as wide as other \
+                 characters. Each character still takes one column, so lines look \
+                 shorter than in SmileBASIC 4 and mixed Japanese or Hangul text no \
+                 longer lines up. Off by default.",
+                |s| s.editor_half_width,
+                |s| s.editor_half_width ^= true,
+            ),
             Row {
                 label: "Tab width",
                 about: "Tab in the editor pads with spaces to the next multiple of this \
@@ -441,6 +450,11 @@ impl SettingsWindow {
         }
     }
 
+    /// Shows the page titled `title`, for the bench.
+    pub fn show_page(&mut self, title: &str) {
+        self.page = PAGES.iter().position(|p| p.title == title).unwrap_or(0);
+    }
+
     fn frame(&self) -> Rect {
         let (w, h) = (WIDTH.min(self.size.0), HEIGHT.min(self.size.1));
         Rect {
@@ -516,12 +530,12 @@ impl SettingsWindow {
         let x = r.x
             + 4 * CHAR
             + (options[..i].iter())
-                .map(|o| (o.chars().count() as u32 + 6) * CHAR)
+                .map(|o| text_width(o) + 6 * CHAR)
                 .sum::<u32>();
         Rect {
             x,
             y: r.y + LINE,
-            w: (options[i].chars().count() as u32 + 4) * CHAR,
+            w: text_width(options[i]) + 4 * CHAR,
             h: LINE,
         }
     }
@@ -713,12 +727,9 @@ impl SettingsWindow {
         // What the chosen setting does.
         let rows = self.rows_rect();
         let about = self.rows()[self.chosen].about;
-        let width = (f.w - 4 * PAD) / CHAR;
+        let width = f.w - 4 * PAD;
         let top = rows.y + rows.h + PAD;
-        for (i, line) in (wrap(about, width as usize).iter())
-            .take(ABOUT_LINES)
-            .enumerate()
-        {
+        for (i, line) in (wrap(about, width).iter()).take(ABOUT_LINES).enumerate() {
             let y = top + i as u32 * LINE + 4;
             draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
         }
@@ -864,13 +875,17 @@ mod tests {
             // What the chosen setting does, above the hint.
             let about_bottom = rows.y + rows.h + PAD + ABOUT_LINES as u32 * LINE;
             assert!(about_bottom <= f.y + f.h - LINE - PAD, "{}", p.title);
-            let about_width = ((f.w - 4 * PAD) / CHAR) as usize;
-            let label_width = ((rows.w - 2 * PAD) / CHAR) as usize;
+            let about_width = f.w - 4 * PAD;
+            let label_width = rows.w - 2 * PAD;
             for (i, row) in p.rows.iter().enumerate() {
                 let lines = wrap(row.about, about_width);
                 assert!(lines.len() <= ABOUT_LINES, "{}: {lines:?}", row.label);
                 // After "[x] " or four spaces.
-                assert!(row.label.len() + 4 <= label_width, "{}", row.label);
+                assert!(
+                    text_width(row.label) + 4 * CHAR <= label_width,
+                    "{}",
+                    row.label
+                );
                 let last = match row.control {
                     Control::Choice(options, ..) => Some(options.len() - 1),
                     Control::Tool(_) => Some(TOOL_BUTTONS.len() - 1),

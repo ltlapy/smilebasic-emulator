@@ -6,7 +6,9 @@ use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
 use sdl3::keyboard::Keycode;
 
-use crate::ui::{BORDER, CHAR, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, fill, outline};
+use crate::ui::{
+    BORDER, HIGHLIGHT, LINE, PAD, Rect, TEXT, char_width, draw_text, fill, outline, text_width,
+};
 
 /// The inside of a field.
 const FACE: u32 = 0xFF0B_0C10;
@@ -17,8 +19,8 @@ pub struct TextField {
     /// The most UTF-16 units it holds, as SmileBASIC counts characters.
     max: usize,
     multiline: bool,
-    /// Characters to a line, and lines shown: the field's size.
-    cols: usize,
+    /// Pixels to a line, and lines shown: the field's size.
+    width: u32,
     rows: usize,
     /// The first line shown.
     scroll: usize,
@@ -42,7 +44,7 @@ impl TextField {
             cursor: 0,
             max,
             multiline,
-            cols: (r.w.saturating_sub(2 * PAD) / CHAR).max(1) as usize,
+            width: r.w.saturating_sub(2 * PAD),
             rows: (r.h / LINE).max(1) as usize,
             scroll: 0,
         };
@@ -122,15 +124,19 @@ impl TextField {
     /// one, and so does running out of room.
     fn lines(&self) -> Vec<(usize, usize)> {
         let mut lines = Vec::new();
-        let mut start = 0;
+        let (mut start, mut width) = (0, 0);
         for (i, &c) in self.chars.iter().enumerate() {
             if c == '\n' {
                 lines.push((start, i));
-                start = i + 1;
-            } else if i - start == self.cols {
-                lines.push((start, i));
-                start = i;
+                (start, width) = (i + 1, 0);
+                continue;
             }
+            let w = char_width(c);
+            if width + w > self.width && i > start {
+                lines.push((start, i));
+                (start, width) = (i, 0);
+            }
+            width += w;
         }
         lines.push((start, self.chars.len()));
         lines
@@ -169,7 +175,8 @@ impl TextField {
             let text: String = self.chars[start..end].iter().collect();
             draw_text(fb, font, r.x + PAD, y + 4, &text, TEXT);
             if focused && blink && row == cursor_line {
-                let x = r.x + PAD + (self.cursor - start) as u32 * CHAR;
+                let before: String = self.chars[start..self.cursor].iter().collect();
+                let x = r.x + PAD + text_width(&before);
                 fill(
                     fb,
                     Rect {
@@ -188,13 +195,14 @@ impl TextField {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::CHAR;
 
     fn field(text: &str, multiline: bool) -> TextField {
-        // Four characters to a line, two lines shown.
+        // Four ASCII characters to a line, two lines shown.
         let r = Rect {
             x: 0,
             y: 0,
-            w: 4 * CHAR + 2 * PAD,
+            w: 2 * CHAR + 2 * PAD,
             h: 2 * LINE,
         };
         TextField::new(text, 10, multiline, r)
@@ -217,6 +225,13 @@ mod tests {
         assert_eq!(f.key(Keycode::Tab), Keyed::Passed);
         f.insert("123456789");
         assert_eq!(f.units(), 10, "cut at the limit");
+    }
+
+    #[test]
+    fn lines_wrap_by_width() {
+        // Full-width characters take two ASCII ones' room.
+        let f = field("가가가ab가", true);
+        assert_eq!(f.lines(), [(0, 2), (2, 5), (5, 6)]);
     }
 
     #[test]

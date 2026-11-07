@@ -44,6 +44,26 @@ the setting and says why. In `settings.txt` the setting is
 Running programs never see these glyphs: see
 [differences.md](differences.md#editor).
 
+## Half-width characters
+
+The emulator's own menus, windows and dialogs draw ASCII and half-width kana
+half a cell wide. The editor does too when File > Settings > Editor > "Narrow
+half-width characters" is on (`editor_half_width=true` in `settings.txt`). The
+console, direct mode, the help's text and the debugger's panel keep one
+square cell per character.
+
+SmileBASIC 4's ASCII fills its square cell, so it cannot be cut in half. The
+half-width glyphs come from:
+
+- 8 pixels: GalmuriMono7, drawn for 4x8 cells;
+- 16 pixels: the font's own glyph squeezed to half its width, which keeps
+  its look. Characters the font lacks, such as half-width kana, take
+  GalmuriMono7 doubled.
+
+The half-width characters are U+0020-U+007E, U+FF61-U+FF9F, U+FFE8, U+FFED,
+U+FFEE and U+20A9. Latin-1 and the rest stay full-width, as in SmileBASIC 4.
+The editor's font file from the section above is not used for them.
+
 ## Importing
 
 Extract the RomFS and ExeFS of the game, and of its update if you have one.

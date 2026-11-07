@@ -11,6 +11,7 @@
 //! - `settle=N`: frames drawn before the timing begins (60 by default), to
 //!   get past what a program sets up;
 //! - `run=PROJECT/PROGRAM`: runs a program of a project from the start;
+//! - `load=PROJECT/PROGRAM`: loads a program of a project into PRG0;
 //! - `end`: stops timing when the program ends, however many frames it was;
 //! - `novsync`: presents without waiting for vsync;
 //! - `stop`: stops it, as the Break key does, a second in;
@@ -26,9 +27,11 @@
 //!   the window's size in pixels, the drawing's stages in microseconds, the bytes
 //!   uploaded, the textures made, and in microseconds what the rest of the trip round
 //!   the loop took: events, running the program, waiting for the next frame;
-//! - `menu`, `help`, `about`, `colors`, `toast`: shows the menu bar (as
-//!   F8 does), the help beside the editor, the About dialog, the editor
-//!   colors window, or a notice, once the rest is set up;
+//! - `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast`:
+//!   shows the menu bar (as F8 does), the bar with its File menu open, the
+//!   help beside the editor, the About dialog, the editor colors window,
+//!   the settings window at its Editor page, or a notice, once the rest is
+//!   set up;
 //! - `cpu-smart`: scales XSCREEN's mode 1 on the CPU, the fallback for a
 //!   renderer that cannot make the texture the GPU route needs;
 //! - `slow=MS`: from when the timing begins, makes each present of the
@@ -139,6 +142,7 @@ pub struct Bench {
     frames: u32,
     settle: u32,
     run: Option<(String, String)>,
+    load: Option<(String, String)>,
     stop: bool,
     typed: Option<String>,
     until_end: bool,
@@ -204,6 +208,10 @@ impl Bench {
                 Some(("slow", ms)) => {
                     bench.slow = Duration::from_millis(ms.parse().unwrap_or(50));
                 }
+                Some(("load", path)) => {
+                    let (project, program) = path.split_once('/').unwrap_or((path, "MAIN.PRG"));
+                    bench.load = Some((project.to_string(), program.to_string()));
+                }
                 Some(("run", path)) => {
                     let (project, program) = path.split_once('/').unwrap_or((path, "MAIN.PRG"));
                     bench.run = Some((project.to_string(), program.to_string()));
@@ -217,7 +225,7 @@ impl Bench {
                     "panel" => bench.panel = true,
                     "occluded" => bench.occluded = true,
                     "cpu-smart" => bench.cpu_smart = true,
-                    "menu" | "help" | "about" | "colors" | "toast" => {
+                    "menu" | "file-menu" | "help" | "about" | "colors" | "settings" | "toast" => {
                         bench.extras.push(part.to_string())
                     }
                     "" => {}
@@ -236,6 +244,13 @@ impl Bench {
         match self.frame {
             0 => {
                 machine.rt.settings.editor_window = self.apart;
+                if let Some((project, program)) = &self.load {
+                    let loaded = machine.rt.storage.set_project(project).is_ok()
+                        && machine.load_slot(0, program).is_ok();
+                    if !loaded {
+                        eprintln!("SB_UI_BENCH: could not load {project}/{program}");
+                    }
+                }
                 if let Some((project, program)) = &self.run {
                     let started = machine.rt.storage.set_project(project).is_ok()
                         && machine.run_file(program).is_ok();

@@ -8,7 +8,8 @@ use sb_runtime::font::Font;
 use sdl3::keyboard::Keycode;
 
 use crate::ui::{
-    BACKGROUND, BORDER, CHAR, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, fill, text_width,
+    BACKGROUND, BORDER, CHAR, HIGHLIGHT, LINE, PAD, Rect, TEXT, char_width, draw_text, fill,
+    text_width,
 };
 
 /// The narrowest the window gets, so that short messages still look like
@@ -35,7 +36,7 @@ impl ProgramView {
             _ => String::new(),
         };
         // Room for the window's padding and a margin around it.
-        let room = (size.0.saturating_sub(8 * PAD) / CHAR).max(1) as usize;
+        let room = size.0.saturating_sub(8 * PAD).max(CHAR);
         let mut view = ProgramView {
             dialog: dialog.clone(),
             lines: dialog.lines.iter().flat_map(|l| wrap(l, room)).collect(),
@@ -230,15 +231,26 @@ impl ProgramView {
     }
 }
 
-/// Splits a line into pieces of at most `max` characters, after a space
-/// where there is one, as Japanese text has none.
-fn wrap(line: &str, max: usize) -> Vec<String> {
+/// Splits a line into pieces at most `max` pixels wide as [`draw_text`]
+/// draws them, after a space where there is one, as Japanese text has
+/// none.
+fn wrap(line: &str, max: u32) -> Vec<String> {
     let mut pieces = Vec::new();
     let mut rest: Vec<char> = line.chars().collect();
-    while rest.len() > max {
-        let cut = match rest[..=max].iter().rposition(|&c| c == ' ') {
+    loop {
+        // How many characters fit, at least one.
+        let mut used = 0;
+        let fit = rest.iter().take_while(|&&c| {
+            used += char_width(c);
+            used <= max
+        });
+        let fits = fit.count().max(1);
+        if rest.len() <= fits {
+            break;
+        }
+        let cut = match rest[..=fits].iter().rposition(|&c| c == ' ') {
             Some(space) if space > 0 => space,
-            _ => max,
+            _ => fits,
         };
         pieces.push(rest[..cut].iter().collect());
         let skip = usize::from(rest.get(cut) == Some(&' '));
@@ -279,9 +291,12 @@ mod tests {
 
     #[test]
     fn long_lines_wrap() {
-        assert_eq!(wrap("AB CD EF", 5), ["AB CD", "EF"]);
-        assert_eq!(wrap("ABCDEFG", 3), ["ABC", "DEF", "G"]);
-        assert_eq!(wrap("", 3), [""]);
+        // ASCII is half as wide as other characters.
+        let half = CHAR / 2;
+        assert_eq!(wrap("AB CD EF", 5 * half), ["AB CD", "EF"]);
+        assert_eq!(wrap("ABCDEFG", 3 * half), ["ABC", "DEF", "G"]);
+        assert_eq!(wrap("", 3 * half), [""]);
+        assert_eq!(wrap("あいAう", 3 * CHAR), ["あいA", "う"]);
         let mut d = dialog(DialogKind::Choice(vec!["OK"]));
         d.lines = vec!["W ".repeat(200)];
         let v = ProgramView::new(&d, (1280, 720));

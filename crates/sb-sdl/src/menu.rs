@@ -536,6 +536,12 @@ impl MenuBar {
                     .is_some_and(|(_, y)| y >= 0 && y < ROW_HEIGHT as i32)
     }
 
+    /// Opens menu `index` of the bar, for the bench.
+    pub fn open_menu(&mut self, index: usize) {
+        self.open = Some(index.min(MENUS.len() - 1));
+        self.sub = None;
+    }
+
     /// The submenu items, with the open menu and parent item.
     fn submenu(&self) -> Option<(usize, usize, &'static [Item])> {
         let (menu, parent) = (self.open?, self.sub?);

@@ -4,7 +4,9 @@ use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
 use sdl3::keyboard::Keycode;
 
-use crate::ui::{BORDER, CHAR, DISABLED, LINE, PAD, Rect, TEXT, draw_text, outline, window};
+use crate::ui::{
+    BORDER, CHAR, DISABLED, LINE, PAD, Rect, TEXT, draw_text, outline, text_width, window,
+};
 
 const SHORTCUTS: &str = include_str!("../../../docs/shortcuts.md");
 const WIDTH: u32 = 1160;
@@ -48,12 +50,13 @@ fn entries() -> Vec<Entry> {
     entries
 }
 
-/// `text` broken at spaces into lines of at most `width` characters.
-pub fn wrap(text: &str, width: usize) -> Vec<String> {
+/// `text` broken at spaces into lines at most `width` pixels wide as
+/// [`draw_text`] draws them.
+pub fn wrap(text: &str, width: u32) -> Vec<String> {
     let mut lines = vec![String::new()];
     for word in text.split(' ') {
         let line = lines.last_mut().expect("never empty");
-        if !line.is_empty() && line.len() + 1 + word.len() > width {
+        if !line.is_empty() && text_width(line) + text_width(" ") + text_width(word) > width {
             lines.push(word.to_string());
         } else {
             if !line.is_empty() {
@@ -86,8 +89,8 @@ impl ShortcutsWindow {
             lines: Vec::new(),
             scroll: 0,
         };
-        let keys_width = (KEYS_WIDTH / CHAR) as usize;
-        let width = ((window.list().w - KEYS_WIDTH - 3 * PAD) / CHAR) as usize;
+        let keys_width = KEYS_WIDTH;
+        let width = window.list().w - KEYS_WIDTH - 3 * PAD;
         for entry in entries() {
             match entry {
                 Entry::Heading(heading) => {
@@ -214,16 +217,16 @@ mod tests {
     #[test]
     fn long_keys_stay_in_their_column() {
         let w = ShortcutsWindow::new((1280, 720));
-        let most = (KEYS_WIDTH / CHAR) as usize;
         assert!(w.lines.iter().all(|line| match line {
-            Line::Keys(keys, _) => keys.len() <= most,
+            Line::Keys(keys, _) => text_width(keys) <= KEYS_WIDTH,
             _ => true,
         }));
     }
 
     #[test]
     fn wraps_and_scrolls() {
-        assert_eq!(wrap("a bb ccc dd", 6), ["a bb", "ccc dd"]);
+        // Six ASCII characters to a line.
+        assert_eq!(wrap("a bb ccc dd", 3 * CHAR), ["a bb", "ccc dd"]);
         let mut w = ShortcutsWindow::new((1280, 720));
         assert!(w.lines.len() > entries().len(), "long rows wrap");
         w.key(Keycode::End);

@@ -152,6 +152,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `frames=N` | Times N frames (600 by default) |
 | `settle=N` | Draws N frames before the timing begins (60 by default), to get past what a program sets up |
 | `run=PROJECT/PROGRAM` | Runs a program of a project from the start. `PROGRAM` defaults to `MAIN.PRG` |
+| `load=PROJECT/PROGRAM` | Loads a program of a project into PRG0 without running it |
 | `end` | Stops timing when the program ends, however many frames it was |
 | `novsync` | Presents without waiting for vsync |
 | `stop` | Stops the program, as the Break key does, a second in |
@@ -159,7 +160,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `editor` | Opens the editor |
 | `apart` | Has the editor in its own window |
 | `panel` | Shows the debugger's panel |
-| `menu`, `help`, `about`, `colors`, `toast` | Once the rest is set up, shows the menu bar (as F8 does), the help beside the editor, the About dialog, the editor colors window, or a notice |
+| `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast` | Once the rest is set up, shows the menu bar (as F8 does), the bar with its File menu open, the help beside the editor, the About dialog, the editor colors window, the settings window at its Editor page, or a notice |
 | `cpu-smart` | Scales `XSCREEN`'s mode 1 on the CPU, the fallback for a renderer that cannot make the texture the GPU route needs |
 | `slow=MS` | From when the timing begins, makes each present of the main window that waits for vsync take MS milliseconds more, as a compositor that throttles a covered window does (SDL's Wayland backend waits up to 50 ms) |
 | `occluded` | From when the timing begins, has the main window count as covered, as the system reports it when it can |

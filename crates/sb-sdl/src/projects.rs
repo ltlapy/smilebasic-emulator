@@ -29,8 +29,8 @@ use crate::preview::{self, Content, Picture};
 use crate::text_field::{Keyed, TextField};
 use crate::ui::{
     BACKGROUND, BORDER, CHAR, DISABLED, GO, GO_HOVERED, HIGHLIGHT, LINE, Mark, PAD, Rect, TEXT,
-    button, draw_text, fill, image, mark, mark_button, mark_button_width, outline, text_width,
-    window,
+    button, char_width, draw_text, fill, image, mark, mark_button, mark_button_width, outline,
+    text_width, window,
 };
 
 const WIDTH: u32 = 1200;
@@ -549,11 +549,17 @@ fn usable(name: &str) -> bool {
 
 /// `text` cut to `width` pixels, with `~` where it was cut.
 fn fit(text: &str, width: u32) -> String {
-    let max = (width / CHAR) as usize;
-    if text.chars().count() <= max {
+    if text_width(text) <= width {
         return text.to_string();
     }
-    let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    let room = width.saturating_sub(text_width("~"));
+    let mut used = 0;
+    let mut cut: String = (text.chars())
+        .take_while(|&c| {
+            used += char_width(c);
+            used <= room
+        })
+        .collect();
     cut.push('~');
     cut
 }

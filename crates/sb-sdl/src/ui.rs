@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::{Font, FontSize};
+use sb_runtime::half_width::is_half_width;
 
 /// Glyphs are the console's 8x8 font drawn at twice the size, or its
 /// 16x16 one (see [`set_font`]).
@@ -160,8 +161,24 @@ pub fn clear(fb: &mut Framebuffer, color: u32) {
     }
 }
 
+/// How wide [`draw_text`] draws `text`: half-width characters take half
+/// a [`CHAR`].
 pub fn text_width(text: &str) -> u32 {
-    text.chars().count() as u32 * CHAR
+    text.encode_utf16().map(unit_width).sum()
+}
+
+/// How wide [`draw_text`] draws one UTF-16 unit.
+fn unit_width(unit: u16) -> u32 {
+    if is_half_width(unit) { CHAR / 2 } else { CHAR }
+}
+
+/// How wide [`draw_text`] draws `c`.
+pub fn char_width(c: char) -> u32 {
+    c.encode_utf16(&mut [0; 2])
+        .iter()
+        .copied()
+        .map(unit_width)
+        .sum()
 }
 
 pub fn fill(fb: &mut Framebuffer, r: Rect, color: u32) {
@@ -207,9 +224,11 @@ pub fn outline(fb: &mut Framebuffer, r: Rect, color: u32) {
     }
 }
 
-/// Draws text in `color`, keeping the background's alpha.
+/// Draws text in `color`, keeping the background's alpha. Half-width
+/// characters are drawn half as wide as the rest, as the emulator's own
+/// windows are not SmileBASIC's.
 pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
-    draw_text_scaled(fb, font, x, y, text, color, GLYPH_SCALE);
+    draw_glyphs(fb, font, (x, y), text, color, GLYPH_SCALE, true);
 }
 
 /// UI text draws the 16-pixel font where it is drawn at an even scale.
@@ -221,7 +240,9 @@ pub fn set_font(size: FontSize) {
 }
 
 /// Draws text with the 8x8 glyphs `scale` times their size, or with the
-/// 16x16 ones half that, if chosen and `scale` is even.
+/// 16x16 ones half that, if chosen and `scale` is even. Every character
+/// takes a whole cell, as on SmileBASIC's screens: the help and the
+/// debugger show SmileBASIC's text laid out for that.
 pub fn draw_text_scaled(
     fb: &mut Framebuffer,
     font: &Font,
@@ -231,15 +252,33 @@ pub fn draw_text_scaled(
     color: u32,
     scale: u32,
 ) {
+    draw_glyphs(fb, font, (x, y), text, color, scale, false);
+}
+
+/// Draws text a glyph at a time, half-width characters at half width if
+/// `half`.
+fn draw_glyphs(
+    fb: &mut Framebuffer,
+    font: &Font,
+    (x, y): (u32, u32),
+    text: &str,
+    color: u32,
+    scale: u32,
+    half: bool,
+) {
     let cell = 8 * scale;
     let large = LARGE_FONT.load(Ordering::Relaxed);
+    let width = |c: u16| match half && is_half_width(c) {
+        true => cell / 2,
+        false => cell,
+    };
     let area = Rect {
         x,
         y,
-        w: (text.encode_utf16().count() as u32).saturating_mul(cell),
+        w: text.encode_utf16().map(width).sum(),
         h: cell,
     };
-    if dry(fb, area, ("text", x, y, text, color, scale, large)) {
+    if dry(fb, area, ("text", x, y, text, color, scale, large, half)) {
         return;
     }
     let (size, scale) = if large && scale.is_multiple_of(2) {
@@ -247,22 +286,37 @@ pub fn draw_text_scaled(
     } else {
         (FontSize::Small, scale)
     };
-    for (i, c) in text.encode_utf16().enumerate() {
-        let left = x + i as u32 * cell;
-        for py in 0..cell {
-            for px in 0..cell {
-                let glyph = font.pixel(c, size, px / scale, py / scale);
-                if glyph >> 24 >= 0x80
-                    && let Some(dst) = fb.get(left + px, y + py)
-                {
-                    fb.set(
-                        left + px,
-                        y + py,
-                        (dst & 0xFF00_0000) | (color & 0x00FF_FFFF),
-                    );
+    let halves = font.half_glyphs();
+    let put = |fb: &mut Framebuffer, px: u32, py: u32| {
+        if let Some(dst) = fb.get(px, py) {
+            fb.set(px, py, (dst & 0xFF00_0000) | (color & 0x00FF_FFFF));
+        }
+    };
+    let mut left = x;
+    for c in text.encode_utf16() {
+        let w = width(c);
+        match halves.get(c, size).filter(|_| w < cell) {
+            Some(glyph) => {
+                let side = size as u32 / 2;
+                for py in 0..cell {
+                    for px in 0..w {
+                        if glyph[((py / scale) * side + px / scale) as usize] >= 0x80 {
+                            put(fb, left + px, y + py);
+                        }
+                    }
+                }
+            }
+            None => {
+                for py in 0..cell {
+                    for px in 0..cell {
+                        if font.pixel(c, size, px / scale, py / scale) >> 24 >= 0x80 {
+                            put(fb, left + px, y + py);
+                        }
+                    }
                 }
             }
         }
+        left += w;
     }
 }
 
@@ -440,4 +494,24 @@ fn blend(dst: u32, src: u32, a: u32) -> u32 {
         ((s * a + d * (255 - a)) / 255) << shift
     };
     mix(16) | mix(8) | mix(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn half_width_characters_take_half_a_cell() {
+        assert_eq!(text_width("AB"), CHAR);
+        assert_eq!(text_width("A가ｱ漢"), 3 * CHAR);
+        assert_eq!(char_width('😀'), 2 * CHAR, "two UTF-16 units");
+        let font = Font::fallback();
+        let mut fb = Framebuffer::new(64, 16);
+        draw_text(&mut fb, &font, 0, 0, "|가", 0xFFFF_FFFF);
+        let inked =
+            |x0: u32, x1: u32| (x0..x1).any(|x| (0..16).any(|y| fb.get(x, y) != Some(0xFF00_0000)));
+        assert!(inked(0, CHAR / 2), "|");
+        assert!(inked(CHAR / 2, CHAR / 2 + CHAR), "가 right after it");
+        assert!(!inked(CHAR / 2 + CHAR, 64));
+    }
 }

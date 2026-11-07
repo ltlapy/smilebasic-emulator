@@ -418,6 +418,14 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   see what they see on hardware. A character above U+FFFF, such as most emoji,
   takes two UTF-16 units and so two columns, as `LEN` counts it: its glyph
   fills the first cell and the second stays empty.
+- File > Settings > Editor > "Narrow half-width characters" (off by default)
+  draws ASCII and half-width kana half a cell wide in the code area and the
+  ruler. SmileBASIC 4 draws every character in a square cell. Each character
+  still takes one column: the cursor's column, `HELPINFO`, error positions, the
+  ruler's numbers and line wrapping count as before. Lines look shorter than on
+  the console, and Japanese or Hangul mixed with ASCII no longer lines up from
+  one line to the next. See
+  [importing.md](importing.md#half-width-characters) for the glyphs.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands count
   lines of the source, which wrapping does not change.
 
