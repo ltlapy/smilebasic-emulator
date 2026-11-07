@@ -997,6 +997,20 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             {
                 main_presents.resized();
             }
+            // Back from another program, which may have changed the files.
+            if let Event::Window {
+                win_event: WindowEvent::FocusGained,
+                ..
+            } = event
+            {
+                let storage = &machine.rt.storage;
+                if let Some(open) = &mut manager {
+                    open.reread(storage, true);
+                }
+                if let Some(FileDialog::Load(picker)) = &mut file_dialog {
+                    picker.reread(storage, true);
+                }
+            }
             if let (true, Event::Window { win_event, .. }) = (from_editor, &event) {
                 match win_event {
                     WindowEvent::FocusGained => editor_focused = true,
@@ -1340,6 +1354,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     continue;
                 }
             }
+            // After a key, a click or a button, the lists show what other
+            // programs changed meanwhile, for the next one to act on.
+            let input = matches!(
+                event,
+                Event::KeyDown { .. }
+                    | Event::MouseButtonDown { .. }
+                    | Event::GamepadButtonDown { .. }
+            );
             if let Some(open) = &mut manager {
                 let unsaved = machine.unsaved_slots();
                 let storage = &mut machine.rt.storage;
@@ -1463,6 +1485,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         );
                     }
                 }
+                if let (true, Some(open)) = (input, &mut manager) {
+                    open.reread(&machine.rt.storage, false);
+                }
                 continue;
             }
             if let Some(open) = &mut file_dialog {
@@ -1549,6 +1574,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             load_edited(machine, &spec, &mut toasts);
                         }
                     }
+                }
+                if let (true, Some(FileDialog::Load(picker))) = (input, &mut file_dialog) {
+                    picker.reread(&machine.rt.storage, false);
                 }
                 continue;
             }

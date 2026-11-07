@@ -8,6 +8,7 @@ use sb_runtime::confirm::project_label;
 use sb_runtime::font::Font;
 use sb_runtime::storage::{FileKind, Storage};
 use sdl3::keyboard::Keycode;
+use std::time::SystemTime;
 
 use crate::ui::{
     BORDER, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, fill, outline, text_width,
@@ -177,6 +178,8 @@ pub struct FilePicker {
     error: Option<String>,
     /// The name box: what narrows the list, or the name to copy to.
     field: String,
+    /// When the listed folder last changed, as the list was read.
+    read_at: Option<SystemTime>,
 }
 
 impl FilePicker {
@@ -230,6 +233,7 @@ impl FilePicker {
             scroll: 0,
             error: None,
             field,
+            read_at: None,
         };
         picker.open(Some(project.to_string()), storage);
         // The first file rather than the way up.
@@ -250,6 +254,7 @@ impl FilePicker {
 
     fn open(&mut self, project: Option<String>, storage: &Storage) {
         self.error = None;
+        self.read_at = storage.changed_at(project.as_deref());
         self.all = match &project {
             Some(project) => match storage.list(Some(self.kind()), Some(project)) {
                 Ok(files) => (files.into_iter())
@@ -276,6 +281,21 @@ impl FilePicker {
         };
         self.project = project;
         self.narrow();
+    }
+
+    /// Reads the list again for files that other programs added, removed
+    /// or renamed, keeping the chosen row. Unless `always`, only when the
+    /// folder's time says something changed in it.
+    pub fn reread(&mut self, storage: &Storage, always: bool) {
+        if !always && storage.changed_at(self.project.as_deref()) == self.read_at {
+            return;
+        }
+        let (chosen, scroll) = (self.chosen, self.scroll);
+        let name = self.entries.get(chosen).map(|e| e.name.clone());
+        self.open(self.project.clone(), storage);
+        let found = name.and_then(|name| self.entries.iter().position(|e| e.name == name));
+        self.scroll = scroll;
+        self.choose(found.unwrap_or(chosen));
     }
 
     /// Shows the rows that hold what is typed, when it narrows the list.
@@ -594,6 +614,46 @@ mod tests {
         p.key(Keycode::Return, &storage);
         assert_eq!(p.project, None, "the way up");
         assert_eq!(p.key(Keycode::Escape, &storage), Outcome::Close);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rereads_what_other_programs_changed() {
+        let dir = std::env::temp_dir().join(format!("sb-reread-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage = Storage::new(dir.clone());
+        for name in ["B", "D"] {
+            storage.write(FileKind::Txt, name, b"", None).unwrap();
+        }
+        let workspace = dir.join("@WORKSPACE");
+        let mut p = FilePicker::new((1280, 720), 0, &storage);
+        p.choose(2);
+        let names = |p: &FilePicker| -> Vec<String> {
+            (p.entries.iter().skip(1)).map(|e| e.name.clone()).collect()
+        };
+        std::fs::write(workspace.join("TA"), "").unwrap();
+        std::fs::write(workspace.join("TC"), "?1").unwrap();
+        // The folder's time as the list was read: nothing to read again.
+        p.read_at = storage.changed_at(Some(""));
+        p.reread(&storage, false);
+        assert_eq!(names(&p), ["B", "D"]);
+        // Read before the change: the new files show, D stays chosen.
+        p.read_at = Some(std::time::SystemTime::UNIX_EPOCH);
+        p.reread(&storage, false);
+        assert_eq!(names(&p), ["A", "B", "C", "D"]);
+        assert_eq!(p.entries[p.chosen].name, "D");
+        assert_eq!(p.entries[3].info.as_ref().map(|i| i.0), Some(2));
+        // A chosen file gone leaves its row chosen.
+        std::fs::remove_file(workspace.join("TD")).unwrap();
+        p.reread(&storage, true);
+        assert_eq!(names(&p), ["A", "B", "C"]);
+        assert_eq!(p.entries[p.chosen].name, "C");
+        // The projects, too.
+        p.key(Keycode::Backspace, &storage);
+        storage.create_project("NEW").unwrap();
+        p.reread(&storage, true);
+        let projects: Vec<&str> = p.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(projects, ["", "NEW"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

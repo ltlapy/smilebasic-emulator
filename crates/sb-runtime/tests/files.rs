@@ -996,3 +996,81 @@ fn loading_a_slot_keeps_its_definitions() {
     enter(&mut m, "run");
     assert_eq!(tail(&m, 3), ["7", "7", "OK"]);
 }
+
+/// Files and projects that another program adds, replaces or removes
+/// between commands: each command reads the folder as it is now.
+#[test]
+fn changes_made_outside_show_at_the_next_command() {
+    let dir = TempDir::new("outside");
+    let mut m = machine(&dir);
+    let workspace = dir.0.join("@WORKSPACE");
+    enter(&mut m, "save \"a\"");
+
+    std::fs::write(workspace.join("TNEW"), "?\"NEW\"").unwrap();
+    std::fs::write(workspace.join("BVALUES"), "").unwrap();
+    // No type has the letter X: it stays out, as at the start.
+    std::fs::write(workspace.join("XSTRAY"), "").unwrap();
+    enter(&mut m, "files \"txt:\"");
+    assert_eq!(tail(&m, 3), ["TXT:A", "TXT:NEW", "OK"]);
+    enter(&mut m, "?chkfile(\"new\");len(files())");
+    assert_eq!(tail(&m, 2), ["13", "OK"]);
+    enter(&mut m, "load \"new\",1");
+    assert_eq!(m.slot(1), "?\"NEW\"");
+
+    // Replaced, and renamed over: LOAD and LOADV read the new contents.
+    std::fs::write(workspace.join("TNEW"), "?\"NEWER\"").unwrap();
+    enter(&mut m, "load \"new\",1");
+    assert_eq!(m.slot(1), "?\"NEWER\"");
+    std::fs::write(workspace.join("TOTHER"), "?\"OTHER\"").unwrap();
+    std::fs::rename(workspace.join("TOTHER"), workspace.join("TNEW")).unwrap();
+    enter(&mut m, "?loadv(\"txt:new\")");
+    assert_eq!(tail(&m, 2), ["?\"OTHER\"", "OK"]);
+
+    // Removed: gone from the list, and missing to the commands.
+    std::fs::remove_file(workspace.join("TNEW")).unwrap();
+    enter(&mut m, "files \"txt:\"");
+    assert_eq!(tail(&m, 2), ["TXT:A", "OK"]);
+    enter(&mut m, "load \"new\"");
+    assert_eq!(tail(&m, 2), ["LOAD failed: TXT:NEW not found", "OK"]);
+    enter(&mut m, "?chkfile(\"new\")");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+    enter(&mut m, "rename \"new\",\"x\"");
+    assert!(
+        tail(&m, 2)[0].starts_with("RENAME failed"),
+        "{:?}",
+        tail(&m, 2)
+    );
+    enter(&mut m, "delete \"new\"");
+    assert!(
+        tail(&m, 2)[0].starts_with("DELETE failed"),
+        "{:?}",
+        tail(&m, 2)
+    );
+
+    // SAVE asks about replacing a file only while one is there.
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    std::fs::write(workspace.join("TB"), "").unwrap();
+    let replaced = "The file there now will be replaced.".to_string();
+    assert!(ask(&mut m, "save \"b\"").lines.contains(&replaced));
+    m.rt.answer(false);
+    settle(&mut m);
+    std::fs::remove_file(workspace.join("TB")).unwrap();
+    assert!(!ask(&mut m, "save \"b\"").lines.contains(&replaced));
+    m.rt.answer(false);
+    settle(&mut m);
+    m.rt.settings.file_confirm = FileConfirm::Silent;
+
+    // Project folders, listed and switched to.
+    std::fs::create_dir(dir.0.join("GAME")).unwrap();
+    std::fs::write(dir.0.join("GAME").join("TMAIN"), "?1").unwrap();
+    enter(&mut m, "files \"//\"");
+    assert_eq!(tail(&m, 3), ["/", "GAME/", "OK"]);
+    enter(&mut m, "project \"game\":files");
+    assert_eq!(tail(&m, 2), ["TXT:MAIN", "OK"]);
+    enter(&mut m, "project \"\"");
+    std::fs::remove_dir_all(dir.0.join("GAME")).unwrap();
+    enter(&mut m, "files \"//\"");
+    assert_eq!(tail(&m, 2), ["/", "OK"]);
+    enter(&mut m, "project \"game\"");
+    assert!(tail(&m, 3).concat().contains("Undefined project name"));
+}

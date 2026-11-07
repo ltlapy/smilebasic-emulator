@@ -404,6 +404,14 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
 - Symbolic links among the projects or inside one are not followed, read,
   written through or copied. The emulator treats a linked project as no project
   and a linked file as missing. The projects folder itself may be a link.
+- Other programs may add, replace, rename or remove files and project folders
+  while the emulator runs. Each file command (`FILES`, `LOAD`, `CHKFILE`,
+  `PROJECT` and the rest) reads the folder as it is at that moment. The
+  projects window and the Ctrl+L list read their folders again when an emulator
+  window gets the focus back, and after a key, click or button press when the
+  folder's modification time has changed. Writing over a file in place leaves
+  that time alone, so the list keeps showing the old size and date until the
+  window gets the focus back. Loading the file still reads its new contents.
 - Files over 256 MiB are not read or saved, whichever command asks, and show
   nothing when chosen in the projects window. SmileBASIC 4's own limit is its
   memory.

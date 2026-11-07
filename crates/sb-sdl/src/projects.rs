@@ -21,6 +21,7 @@ use sb_runtime::transfer;
 use sdl3::gamepad::Button as Pad;
 use sdl3::keyboard::Keycode;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::dialog::{Answer, Dialog};
 use crate::file_dialogs::{self, FilePicker};
@@ -540,6 +541,12 @@ pub struct ProjectManager {
     mode: Mode,
     mouse: Option<(i32, i32)>,
     drag: Option<Drag>,
+    /// When the storage folder and the selected project's folder last
+    /// changed, as the lists were read.
+    read_at: (Option<SystemTime>, Option<SystemTime>),
+    /// The lists wait to be read again until the window goes back to
+    /// browsing.
+    stale: bool,
 }
 
 /// Whether a folder's name can be used as a project name as it is.
@@ -625,6 +632,8 @@ impl ProjectManager {
             mode: Mode::Browse,
             mouse: None,
             drag: None,
+            read_at: (None, None),
+            stale: false,
         };
         manager.refresh(storage, None);
         let current = manager.current.clone();
@@ -661,6 +670,7 @@ impl ProjectManager {
     /// Reads the projects again, selecting `select` if given.
     fn refresh(&mut self, storage: &Storage, select: Option<&str>) {
         self.current = storage.project().to_string();
+        self.read_at.0 = storage.changed_at(None);
         self.projects = vec![String::new()];
         match storage.projects() {
             Ok(names) => self.projects.extend(names),
@@ -674,6 +684,53 @@ impl ProjectManager {
             Some(name) => self.select_name(name, storage),
             None => self.select(self.selected, storage),
         }
+    }
+
+    /// Reads the lists again for projects and files that other programs
+    /// added, removed or renamed, keeping what is selected. Unless
+    /// `always`, only when the folders' times say something changed in
+    /// them. A question, a menu or a name box waits: it acts on what was
+    /// selected when it opened.
+    pub fn reread(&mut self, storage: &Storage, always: bool) {
+        self.stale |= always;
+        if let Mode::Copy(picker, _) = &mut self.mode {
+            picker.reread(storage, always);
+        }
+        if !matches!(self.mode, Mode::Browse | Mode::Copy(..)) || self.drag.is_some() {
+            return;
+        }
+        let now = (
+            storage.changed_at(None),
+            storage.changed_at(Some(self.selected_name())),
+        );
+        if !self.stale && now == self.read_at {
+            return;
+        }
+        self.stale = false;
+        let (selected, project) = (self.selected, self.selected_name().to_string());
+        let file =
+            (self.file_selected.and_then(|i| self.files.get(i))).map(|f| (f.kind, f.name.clone()));
+        let (kept, focus, file_scroll) = (self.file_selected, self.focus, self.file_scroll);
+        let clicked = self.clicked;
+        self.refresh(storage, Some(&project));
+        // A project gone leaves the one that took its place selected.
+        if self.selected_name() != project {
+            self.select(selected, storage);
+            self.sync(storage);
+            return;
+        }
+        self.clicked = clicked;
+        let found = file.and_then(|(kind, name)| {
+            (self.files.iter()).position(|f| f.kind == kind && f.name == name)
+        });
+        if let Some(i) = found.or(kept) {
+            self.file_scroll = file_scroll;
+            self.select_file(i);
+            if !self.files.is_empty() {
+                self.focus = focus;
+            }
+        }
+        self.sync(storage);
     }
 
     fn select_name(&mut self, name: &str, storage: &Storage) {
@@ -694,6 +751,7 @@ impl ProjectManager {
         // The files may have changed: read the info again.
         self.info_key = None;
         let project = self.selected_name().to_string();
+        self.read_at.1 = storage.changed_at(Some(&project));
         self.files = match storage.list(None, Some(&project)) {
             Ok(files) => files
                 .into_iter()
@@ -3352,6 +3410,63 @@ mod tests {
         assert_eq!(back.focus, Focus::Files);
         assert_eq!(back.file_selected, m.file_selected);
         assert_eq!(back.memory(), left);
+    }
+
+    #[test]
+    fn rereads_what_other_programs_changed() {
+        let tmp = TempDir::new("reread");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.create_project("ZOO").unwrap();
+        s.set_project("GAME").unwrap();
+        s.write(FileKind::Txt, "B", b"", None).unwrap();
+        s.set_project("").unwrap();
+        let game = tmp.0.join("GAME");
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert_eq!(
+            (m.selected_name(), m.selected_program()),
+            ("GAME", Some("B"))
+        );
+        let names = |m: &ProjectManager| -> Vec<String> {
+            m.files.iter().map(|f| f.name.clone()).collect()
+        };
+
+        std::fs::write(game.join("TA"), "?1").unwrap();
+        std::fs::create_dir(tmp.0.join("ADDED")).unwrap();
+        // The folders' times as the lists were read: nothing to read again.
+        m.read_at = (s.changed_at(None), s.changed_at(Some("GAME")));
+        m.reread(&s, false);
+        assert_eq!((m.projects.len(), names(&m)), (3, vec!["B".to_string()]));
+        // Read before the change: both lists again, B still selected.
+        m.read_at.1 = Some(SystemTime::UNIX_EPOCH);
+        m.reread(&s, false);
+        assert_eq!(m.projects, ["", "ADDED", "GAME", "ZOO"]);
+        assert_eq!(names(&m), ["A", "B"]);
+        assert_eq!(
+            (m.selected_name(), m.selected_program()),
+            ("GAME", Some("B"))
+        );
+        assert_eq!(m.focus, Focus::Files);
+
+        // A question waits, and the lists come once it is answered.
+        std::fs::remove_file(game.join("TB")).unwrap();
+        m.press(Button::DeleteFile, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Ask(..)));
+        m.reread(&s, true);
+        assert_eq!(names(&m), ["A", "B"]);
+        m.key(Keycode::Escape, &mut s, &[]);
+        m.reread(&s, false);
+        assert_eq!(names(&m), ["A"]);
+        assert_eq!(m.selected_program(), Some("A"), "the row left");
+
+        // The selected project gone: the one after it in its place.
+        std::fs::remove_dir_all(&game).unwrap();
+        m.reread(&s, true);
+        assert_eq!(m.projects, ["", "ADDED", "ZOO"]);
+        assert_eq!((m.selected_name(), m.focus), ("ZOO", Focus::Projects));
+        assert!(m.files.is_empty());
     }
 
     /// A GRP file of `w` x `h` pixels, as SAVEG writes it (a PNG).

@@ -12,6 +12,7 @@
 use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 const WORKSPACE_DIR: &str = "@WORKSPACE";
 /// SmileBASIC 4's limit on file and project name length.
@@ -747,6 +748,18 @@ impl Storage {
         Ok(files)
     }
 
+    /// When the storage folder (`None`) or a project's folder last had a
+    /// file or folder added, removed or renamed in it; `None` while it is
+    /// not there. The file lists compare it to see changes that other
+    /// programs made. A file written over in place leaves it as it was.
+    pub fn changed_at(&self, project: Option<&str>) -> Option<SystemTime> {
+        let dir = match project {
+            None => self.root.clone()?,
+            Some(project) => self.dir(project).ok()?,
+        };
+        std::fs::metadata(dir).ok()?.modified().ok()
+    }
+
     /// Project names, without the workspace.
     pub fn projects(&self) -> Result<Vec<String>> {
         let root = self.root.as_ref().ok_or(StorageError::Unavailable)?;
@@ -928,6 +941,19 @@ mod tests {
         s.create_project("#sys").unwrap();
         s.set_project("#sys").unwrap();
         assert_eq!(s.project(), "#SYS");
+    }
+
+    #[test]
+    fn folder_times_for_the_lists() {
+        let tmp = TempDir::new("times");
+        let s = Storage::new(tmp.0.clone());
+        assert_eq!(s.changed_at(None), None, "no folder yet");
+        s.create_project("GAME").unwrap();
+        let time = |dir: &Path| std::fs::metadata(dir).unwrap().modified().ok();
+        assert_eq!(s.changed_at(None), time(&tmp.0));
+        assert_eq!(s.changed_at(Some("GAME")), time(&tmp.0.join("GAME")));
+        assert_eq!(s.changed_at(Some("NONE")), None);
+        assert_eq!(Storage::none().changed_at(None), None);
     }
 
     #[test]
