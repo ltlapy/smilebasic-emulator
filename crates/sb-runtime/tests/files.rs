@@ -214,7 +214,8 @@ fn projects_rename_delete() {
     let mut m = machine(&dir);
     // PROJECT only switches; projects are made in the project manager.
     enter(&mut m, "project \"mygame\"");
-    assert!(tail(&m, 2)[0].starts_with("Undefined project name"));
+    // The message names the command and goes on to a second row.
+    assert!(tail(&m, 3).concat().contains("Undefined project name"));
     enter(&mut m, "project \"/\"");
     assert!(tail(&m, 2)[0].starts_with("Illegal project name"));
     m.rt.storage.create_project("MYGAME").unwrap();
@@ -583,6 +584,50 @@ fn values_save_and_load() {
     );
 }
 
+/// What TEST67 saw of LOADV, CHKFILE, LOAD and SAVE in a program.
+#[test]
+fn loadv_chkfile_and_program_types() {
+    let dir = TempDir::new("test67");
+    let mut m = machine(&dir);
+    let err = |m: &mut Machine| {
+        let (e, _) = m.take_program_error().expect("an error");
+        (e.to_string(), e.kind.code(), e.arg)
+    };
+    // A real file into an int array: NaN as 0, the rest truncated.
+    m.set_slot(
+        0,
+        "A=1E308:B=10:F=A*B:N=F-F:DIM R#[3]:R#[0]=N:R#[1]=1.9:R#[2]=-1.9\n\
+         SAVEV \"DAT:NAN\",R#:DIM M%[1]:LOADV \"DAT:NAN\",M%:?LEN(M%);M%[0];M%[1];M%[2]"
+            .to_string(),
+    );
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["301-1", "OK"]);
+    // The command form takes no TXT file, into a string either.
+    m.set_slot(0, "S$=\"\"\nLOADV \"TXT:NONE\",S$".to_string());
+    enter(&mut m, "run");
+    assert_eq!(
+        err(&mut m),
+        (
+            "Wrong number of arguments in 0:2(LOADV) (TXT in the command form)".to_string(),
+            52,
+            None
+        )
+    );
+    // CHKFILE of a missing file leaves RESULT 0.
+    m.set_slot(
+        0,
+        "SAVEV \"TXT:Y\",\"1\":A=RESULT():B=CHKFILE(\"TXT:NONE\"):?A;B;RESULT()".to_string(),
+    );
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["100", "OK"]);
+    for (source, command) in [("LOAD \"GRP0:X\"", "LOAD"), ("SAVE \"GRP0:X\"", "SAVE")] {
+        m.set_slot(0, format!("A=1\n{source}"));
+        enter(&mut m, "run");
+        let message = format!("Illegal format in 0:2({command}:1)");
+        assert_eq!(err(&mut m), (message, 71, Some(0)), "{source}");
+    }
+}
+
 #[test]
 fn graphic_pages_save_and_load() {
     let dir = TempDir::new("images");
@@ -855,7 +900,8 @@ fn metadata_saves_with_the_project() {
     assert_eq!(tail(&m, 2), ["My game", "OK"]);
     m.set_slot(0, "METALOAD \"NONE\"".to_string());
     enter(&mut m, "run");
-    assert!(tail(&m, 2)[0].starts_with("Undefined project name"));
+    // The message names the command and goes on to a second row.
+    assert!(tail(&m, 3).concat().contains("Undefined project name"));
 }
 
 #[test]
@@ -931,7 +977,7 @@ fn other_projects_and_backups() {
     assert_eq!(tail(&m, 2)[0], "1");
     enter(
         &mut m,
-        "delete \"@backup.prg\":?result();chkfile(\"@backup.prg\")",
+        "delete \"@backup.prg\":r=result():?r;chkfile(\"@backup.prg\")",
     );
     assert_eq!(tail(&m, 2)[0], "10");
 }

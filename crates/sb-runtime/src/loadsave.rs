@@ -126,9 +126,13 @@ fn fill(target: &ArrayRef, source: Array) -> Result<()> {
         (ArrayData::Str(_), _) | (_, ArrayData::Str(_)) => {
             return Err(ErrorKind::TypeMismatch.into());
         }
+        // Truncated as INT() does, so 2147483647.5 fits, with a NaN as 0.
         (ArrayData::Int(_), ArrayData::Real(v)) => ArrayData::Int(
             v.into_iter()
-                .map(sb_core::value::real_to_int)
+                .map(|x| match x.is_nan() {
+                    true => Ok(0),
+                    false => sb_core::value::real_to_int(x),
+                })
                 .collect::<Result<_>>()?,
         ),
         (ArrayData::Real(_), ArrayData::Int(v)) => {
@@ -230,18 +234,20 @@ impl Runtime {
             }
             (Command::Loadv, Want::Outs(0), [spec, target]) => {
                 let spec = str_arg(spec)?;
-                let Value::Array(target) = target else {
-                    return Err(ErrorKind::TypeMismatch.into());
-                };
-                // Only DAT and GRP files load into an array (checked on
-                // hardware for TXT).
+                // The command form is for DAT and GRP files only, whatever
+                // it is given to load into: a TXT file into a string is the
+                // same error as into an array.
                 if let Some(kind @ (FileKind::Txt | FileKind::Jpg)) = read_kind(&spec) {
-                    let detail = format!("{} into an array", kind.name());
+                    let detail = format!("{} in the command form", kind.name());
                     return Err(Error::with_detail(
                         ErrorKind::WrongNumberOfArguments,
                         detail,
                     ));
                 }
+                // UNVERIFIED: a DAT or GRP file into a string.
+                let Value::Array(target) = target else {
+                    return Err(ErrorKind::TypeMismatch.into());
+                };
                 if self.ask_load(&spec, FileKind::Txt) {
                     return Ok(vec![]);
                 }

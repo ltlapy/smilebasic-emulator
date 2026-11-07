@@ -121,18 +121,22 @@ fn lines_as_on_hardware() {
 fn errors() {
     let mut m = machine();
     run(&mut m, &["?PRGGET$()"]);
-    assert!(tail(&m, 2)[0].starts_with("Use PRGEDIT before any PRG function"));
+    assert!(
+        tail(&m, 3)
+            .concat()
+            .contains("Use PRGEDIT before any PRG function")
+    );
     run(&mut m, &["PRGEDIT 0"]);
-    assert!(tail(&m, 2)[0].starts_with("Can't edit running program"));
+    assert!(tail(&m, 3).concat().contains("Can't edit running program"));
     run(&mut m, &["PRGEDIT 1,0"]);
-    assert!(tail(&m, 2)[0].starts_with("Out of range"));
+    assert!(tail(&m, 3).concat().contains("Out of range"));
     // Lines after the last go to the last.
     run(&mut m, &["PRGEDIT 1,5:?PRGEDIT()"]);
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     // Running a program ends the editing.
     enter(&mut m, "prgedit 1");
     run(&mut m, &["?PRGEDIT()"]);
-    assert!(tail(&m, 2)[0].starts_with("Use PRGEDIT"));
+    assert!(tail(&m, 3).concat().contains("Use PRGEDIT"));
 }
 
 #[test]
@@ -242,9 +246,9 @@ fn dialogs_wait_for_an_answer() {
     assert_eq!(tail(&m, 2), ["GAME 1", "OK"]);
 
     run(&mut m, &["?DIALOG(\"A B\",\"X\")"]);
-    assert!(tail(&m, 2)[0].starts_with("Illegal file name"));
+    assert!(tail(&m, 3).concat().contains("Illegal file name"));
     run(&mut m, &["?DIALOG(\"A\",0)"]);
-    assert!(tail(&m, 2)[0].starts_with("Out of range"));
+    assert!(tail(&m, 3).concat().contains("Out of range"));
 }
 
 /// TEST56: TROT reads back the single precision angle it keeps.
@@ -352,14 +356,18 @@ fn exec_runs_other_slots() {
     run(&mut m, &["?1:HIDDEN"]);
     assert_eq!(tail(&m, 3)[..2], ["1", "Syntax error in 0:1 (HIDDEN)"]);
     run(&mut m, &["?ADD(1,2)"]);
-    assert!(tail(&m, 2)[0].starts_with("Syntax error in 0:1"));
+    assert!(tail(&m, 3).concat().contains("Syntax error in 0:1"));
     // The running slot starts again; one a DEF returns to cannot be
     // EXEC'd, nor can EXEC be used in direct mode (checked on hardware).
     run(&mut m, &["?\"R\";:LOCATE OUT X,Y:IF X<3 THEN EXEC 0"]);
     assert_eq!(tail(&m, 2), ["RRR", "OK"]);
     m.set_slot(3, "COMMON DEF BACK\nEXEC 0\nEND".to_string());
     run(&mut m, &["EXEC 3:BACK"]);
-    assert!(tail(&m, 2)[0].starts_with("Can't use the specified slot in 3:2"));
+    assert!(
+        tail(&m, 3)
+            .concat()
+            .contains("Can't use the specified slot in 3:2")
+    );
     enter(&mut m, "exec 1");
     assert_eq!(tail(&m, 2), ["Can't use from direct mode", "OK"]);
 
@@ -422,7 +430,7 @@ fn commands_read_data_in_slots_exec_ran() {
     run(&mut m, &["EXEC 1:BGMSETD 128,\"1:@M\":?\"OK\""]);
     assert_eq!(tail(&m, 2), ["OK", "OK"]);
     run(&mut m, &["BGMSETD 128,\"2:@M\""]);
-    assert!(tail(&m, 2)[0].starts_with("Undefined label"));
+    assert!(tail(&m, 3).concat().contains("Undefined label"));
 }
 
 #[test]

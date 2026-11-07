@@ -98,7 +98,13 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - An error in some builtins names the command right after the place, with no
   space between: `Overflow in 1:3(FILL:2)`, `(PUSH)`, `(COPY)`, `(HEX$:1)`,
   `(CHR$:1)` and `(MID$:2)`. The number counts arguments from 1. `LEFT$` with
-  2147483648 as its second argument shows `(LEFT$)` with no number. Operators
+  2147483648 as its second argument shows `(LEFT$)` with no number. Every
+  builtin seen so far names itself, whatever the error: `MID$(S$,-1,1)` is
+  `Out of range in 1:2(MID$:2)`, `FILL M%,0,5` on three elements `(FILL:3)`,
+  `LOAD "GRP0:X"` `Illegal format (LOAD:1)` and `LOADV "TXT:A",S$` `Wrong
+  number of arguments (LOADV)` (TEST67). A value that fails as it goes into
+  the array gets no number: `UNSHIFT M%,2147483648` is `Overflow (UNSHIFT)`,
+  as `PUSH` and `COPY` are (TEST66, TEST67). Operators
   and plain stores name nothing: DIV, MOD, the bit operators, unary minus and
   `M%[0]=V` give `Overflow in 1:2`, and DIV or MOD by 0 `Divide by zero in 1:2`
   (TEST65, TEST66).
@@ -1586,10 +1592,26 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `LOAD` and `LOADV` in a program, against the manual, take other projects'
   files too (`LOAD "GAME/SUB",1`), not only `EXEC`. Naming the program's own
   project works as well.
-- `LOADV` and `LOADG` in a program ask nothing.
+- `LOADV` and `LOADG` in a program ask nothing. `S$=LOADV("TXT:NONE")` of a
+  missing file still opens a dialog that holds the program for 50 to 70 frames
+  (likely File not found, as for `EXEC`), and gives `""` with `RESULT` 0
+  (TEST67).
+- `LOADV "DAT:F",M%` of a real file into an int array converts as `INT()`
+  does, with NaN as 0: NaN, 1.9 and -1.9 load as 0, 1 and -1, and 2147483647.5
+  as 2147483647 (TEST67).
+- The command form `LOADV "TXT:F",S$` is `Wrong number of arguments (LOADV)`,
+  error 52, whether the file is there or not, as `LOADV "TXT:F",A$[]` is
+  (TEST67).
+- `RESULT` is 0 after `IF CHKFILE("TXT:NONE") THEN LOADV ...` of a missing
+  file, where the program before left it 1 (TEST67).
+- `LOAD "GRP0:X"` and `SAVE "GRP0:X"` are `Illegal format (LOAD:1)` and
+  `(SAVE:1)`, error 71, with no dialog (TEST67).
 - The question before `SAVE`, `SAVEV` or `SAVEG` starts on OK, so Enter or A
-  saves. Replacing a file asks twice (checked by sending files with a Flipper,
-  2026-11-03).
+  saves. Replacing a file asks twice, whether to save and then whether to
+  overwrite (checked by sending files with a Flipper, 2026-11-03, and in
+  TEST67). Three `SAVEV`s of one TXT file kept the copy each replaced in
+  `@BACKUP.TXT`, and No on the question gave `RESULT` -1 and left the file
+  alone (TEST67).
 - `FILES("//")` ends each project's name with `/`, lists the workspace as `/`,
   and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`).
 - `FILES` takes a `/` after a project's name (`FILES("TXT:NAME/")`), and
@@ -1718,7 +1740,9 @@ TTEST36.
     `ENVLOCATE` gives 0,0.
 - A is the argument that the error message names, counted from 0: 1 after
   `Overflow in 1:3(FILL:2)`, 0 after `(HEX$:1)`, and -1 after `(PUSH)`,
-  `(COPY)`, `(LEFT$)` or an operator's error (TEST66).
+  `(COPY)`, `(LEFT$)` or an operator's error (TEST66). TEST67 gave 1 after
+  `(MID$:2)`, 2 after `(FILL:3)`, 0 after `(LOAD:1)` and -1 after
+  `(UNSHIFT)`.
 - `ENVSTAT OUT S,N,A,SL,C,L` after a compile error is set as for an error when
   running, but for the status, which stays 0: S 0, N 3, A -1, C the character of
   the token it names from the start of the program, L its line (TEST62).

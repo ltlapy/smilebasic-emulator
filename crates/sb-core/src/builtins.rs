@@ -204,7 +204,7 @@ fn opt(args: &[Value], i: usize) -> Option<&Value> {
 }
 
 fn index_arg(v: &Value) -> Result<usize> {
-    usize::try_from(v.to_int()?).map_err(|_| ErrorKind::OutOfRange.into())
+    usize::try_from(v.to_int()?).map_err(|_| Error::new(ErrorKind::OutOfRange).of_value(v))
 }
 
 fn real_fn(args: &[Value], f: fn(f64) -> f64) -> Result<Value> {
@@ -216,7 +216,7 @@ fn real_fn(args: &[Value], f: fn(f64) -> f64) -> Result<Value> {
 fn checked_real(args: &[Value], f: fn(f64) -> Option<f64>) -> Result<Value> {
     f(args[0].to_real()?)
         .map(Value::Real)
-        .ok_or(ErrorKind::OutOfRange.into())
+        .ok_or_else(|| Error::new(ErrorKind::OutOfRange).of_value(&args[0]))
 }
 
 fn sign(x: f64) -> i32 {
@@ -249,14 +249,14 @@ fn exp(args: &[Value]) -> Result<Value> {
 fn log(args: &[Value]) -> Result<Value> {
     let x = args[0].to_real()?;
     if x <= 0.0 {
-        return Err(ErrorKind::OutOfRange.into());
+        return Err(Error::new(ErrorKind::OutOfRange).of_arg(0));
     }
     match opt(args, 1) {
         None => Ok(Value::Real(x.ln())),
         Some(base) => {
             let base = base.to_real()?;
             if base <= 0.0 || base == 1.0 {
-                return Err(ErrorKind::OutOfRange.into());
+                return Err(Error::new(ErrorKind::OutOfRange).of_arg(1));
             }
             Ok(Value::Real(x.log(base)))
         }
@@ -315,7 +315,7 @@ fn str(args: &[Value]) -> Result<Value> {
     }
     let digits = opt(args, 1).map_or(Ok(0), index_arg)?;
     if digits > 63 {
-        return Err(ErrorKind::OutOfRange.into());
+        return Err(Error::new(ErrorKind::OutOfRange).of_arg(1));
     }
     let text = match &args[0] {
         Value::Real(x) => crate::value::format_g(*x).encode_utf16().collect(),
@@ -362,13 +362,14 @@ pub fn parse_number(text: &[u16]) -> Option<Value> {
 }
 
 fn chr(args: &[Value]) -> Result<Value> {
-    let code = u16::try_from(args[0].to_int()?).map_err(|_| ErrorKind::OutOfRange)?;
+    let code = u16::try_from(args[0].to_int()?)
+        .map_err(|_| Error::new(ErrorKind::OutOfRange).of_arg(0))?;
     Ok(string(vec![code]))
 }
 
 fn asc(args: &[Value]) -> Result<Value> {
     let s = text(&args[0])?;
-    let first = s.first().ok_or(ErrorKind::OutOfRange)?;
+    let first = (s.first()).ok_or_else(|| Error::new(ErrorKind::OutOfRange).of_arg(0))?;
     Ok(Value::Int(i32::from(*first)))
 }
 
@@ -1109,7 +1110,7 @@ fn fill(args: &[Value]) -> Result<()> {
     let start = opt(args, 2).map_or(Ok(0), index_arg)?;
     let count = opt(args, 3).map_or(Ok(usize::MAX), index_arg)?;
     if start > a.len() {
-        return Err(ErrorKind::OutOfRange.into());
+        return Err(Error::new(ErrorKind::OutOfRange).of_arg(2));
     }
     let end = start.saturating_add(count).min(a.len());
     for i in start..end {

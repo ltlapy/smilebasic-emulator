@@ -5,7 +5,8 @@ use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 
 /// Runs a program in PRG0 until it ends, and returns the console's last
-/// non-empty row before OK.
+/// non-empty row before OK, or the error that stopped it, which can take
+/// more than a row.
 fn run(source: &str) -> (Machine, String) {
     let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
     m.boot();
@@ -18,6 +19,9 @@ fn run(source: &str) -> (Machine, String) {
         }
     }
     assert!(!m.is_running(), "program did not end");
+    if let Some((e, _)) = m.take_program_error() {
+        return (m, e.to_string());
+    }
     let console = &m.rt.text[4];
     let (w, h) = console.size();
     let rows: Vec<String> = (0..h)

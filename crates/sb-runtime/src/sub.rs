@@ -204,7 +204,9 @@ impl Host for Linked<'_> {
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
         let command = COMMANDS[id as usize].1;
         match self.sub.linked_command(self.main, command, args, want) {
-            Some(result) => result,
+            Some(result) => {
+                result.map_err(|e| crate::runtime::command_error(e, COMMANDS[id as usize].0, args))
+            }
             None => self.sub.call(id, args, want),
         }
     }

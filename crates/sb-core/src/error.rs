@@ -286,15 +286,19 @@ impl Error {
     }
 
     /// Names `command` in the message as SmileBASIC 4 does, `(FILL:2)`
-    /// with the argument from 1 when it is known, `(PUSH)` when not. An
-    /// error that already says more keeps its own detail.
+    /// with the argument from 1 when it is known, `(PUSH)` when not. A
+    /// detail of our own stays after it, as `(LOADV) (TXT into an array)`;
+    /// one in SmileBASIC 4's brackets already is kept as it is.
     pub fn of_command(mut self, command: &str) -> Self {
-        if self.detail.is_none() {
-            self.detail = Some(match self.arg {
-                Some(arg) => format!("({command}:{})", u32::from(arg) + 1),
-                None => format!("({command})"),
-            });
-        }
+        let named = match self.arg {
+            Some(arg) => format!("({command}:{})", u32::from(arg) + 1),
+            None => format!("({command})"),
+        };
+        self.detail = match self.detail.take() {
+            None => Some(named),
+            Some(own) if own.starts_with('(') => Some(own),
+            Some(own) => Some(format!("{named} ({own})")),
+        };
         self
     }
 

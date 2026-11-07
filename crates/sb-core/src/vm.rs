@@ -2762,7 +2762,7 @@ impl Vm {
                 true => ErrorKind::WrongNumberOfOutArguments,
                 false => ErrorKind::WrongNumberOfArguments,
             };
-            return Err(Error::with_detail(kind, b.name));
+            return Err(Error::new(kind).of_command(b.name));
         }
         let results = match (b.kind, want) {
             (Kind::Function(f), Want::Value) => {
@@ -2778,7 +2778,7 @@ impl Vm {
                 };
                 f(args, n.into(), &mut data).map_err(|e| builtin_error(e, b.name, args))?
             }
-            _ => return Err(Error::with_detail(ErrorKind::IllegalFunctionCall, b.name)),
+            _ => return Err(Error::new(ErrorKind::IllegalFunctionCall).of_command(b.name)),
         };
         self.push_results(results, want)
     }
@@ -3451,18 +3451,14 @@ fn index(base: &Value, idx: &[i32]) -> Result<Value> {
     }
 }
 
-/// An error from builtin `name`. Out of memory says which it was, as on
-/// hardware, and so do the builtins SmileBASIC 4 is seen to name.
+/// An error from builtin `name`, which names it, with the argument that
+/// was wrong when that is one of `args`. Out of memory says which it was.
 #[cold]
 fn builtin_error(e: Error, name: &str, args: &[Value]) -> Error {
     match e.kind {
         ErrorKind::OutOfMemory if e.detail.is_none() => Error::with_detail(e.kind, name),
         ErrorKind::MemoryCheck => e.in_args(args),
         _ => match name {
-            // UNVERIFIED: which other builtins SmileBASIC 4 names, and that
-            // these name every error, not only Overflow; the others keep
-            // the message as it was.
-            "FILL" | "PUSH" | "COPY" | "HEX$" | "CHR$" | "MID$" => e.in_args(args).of_command(name),
             // LEFT$ names no argument, even its second, and ENVSTAT gives
             // none.
             "LEFT$" => {
@@ -3470,7 +3466,7 @@ fn builtin_error(e: Error, name: &str, args: &[Value]) -> Error {
                 e.arg = None;
                 e.of_command(name)
             }
-            _ => e.in_args(args),
+            _ => e.in_args(args).of_command(name),
         },
     }
 }

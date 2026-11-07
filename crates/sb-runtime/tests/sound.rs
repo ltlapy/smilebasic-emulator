@@ -243,7 +243,11 @@ fn wavseta_refuses_an_empty_array() {
     ] {
         let e = run_on(&mut runtime(), source).unwrap_err();
         assert_eq!(e.kind, ErrorKind::IllegalFunctionCall, "{source}");
-        assert_eq!(e.detail.as_deref(), Some("empty array"), "{source}");
+        assert_eq!(
+            e.detail.as_deref(),
+            Some("(WAVSETA) (empty array)"),
+            "{source}"
+        );
     }
     for source in [
         "DIM A[0]:WAVSETA 224,0,0,0,0,A,69,0,0,28160",

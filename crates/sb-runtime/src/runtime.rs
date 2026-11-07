@@ -1047,6 +1047,21 @@ pub(crate) fn no_form() -> Error {
     ErrorKind::WrongNumberOfArguments.into()
 }
 
+/// An error from command `name`, which names it after the place, with the
+/// argument that was wrong when that is one of `args`: `(LOCATE:2)`.
+#[cold]
+pub(crate) fn command_error(e: Error, name: &str, args: &[Value]) -> Error {
+    match e.kind {
+        // Not the program's to see, or shown with no place.
+        ErrorKind::MemoryCheck
+        | ErrorKind::CantUseFromDirectMode
+        | ErrorKind::CantContinue
+        | ErrorKind::CantTrace => e,
+        ErrorKind::OutOfMemory if e.detail.is_some() => e,
+        _ => e.in_args(args).of_command(name),
+    }
+}
+
 fn is_no_form(e: &Error) -> bool {
     e.kind == ErrorKind::WrongNumberOfArguments && e.detail.is_none()
 }
@@ -2604,7 +2619,7 @@ impl Host for Runtime {
         if let Some((i, before)) = before {
             self.changed |= self.sprites.list()[i].appearance() != before;
         }
-        result
+        result.map_err(|e| command_error(e, COMMANDS[id as usize].0, args))
     }
 
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {

@@ -120,17 +120,23 @@ impl Runtime {
             (Command::Chkfile, Want::Value, 1) => {
                 let found = parse_read_name(&str_arg(&args[0])?, FileKind::Txt)
                     .is_ok_and(|file| self.storage.exists_ref(&file));
+                // CHKFILE of a missing file leaves RESULT 0. UNVERIFIED:
+                // that it is CHKFILE that sets it, and to 1 for a file
+                // that is there.
+                self.result = i32::from(found);
                 Ok(vec![Value::Int(i32::from(found))])
             }
             (Command::Load, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
+                program_type(&spec)?;
                 self.load_asking("LOAD", &spec, slot);
                 Ok(vec![])
             }
             (Command::Save, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
+                program_type(&spec)?;
                 if let Ok((kind, name)) = parse_file_name(&spec, FileKind::Txt) {
                     let file = format!("{}:{name}", kind.name());
                     let mut details = self.details(&file, None);
@@ -539,6 +545,19 @@ impl Runtime {
             .into_iter()
             .map(|(k, name)| format!("{}:{name}", k.name()))
             .collect())
+    }
+}
+
+/// LOAD and SAVE take only text files: another type before the colon,
+/// such as `GRP0:`, is Illegal format before anything is asked.
+/// UNVERIFIED: the types this emulator knows (`DAT:`, `GRP:`, `JPG:`) and
+/// `PRG:`; only `GRP0:` is seen.
+fn program_type(spec: &str) -> Result<()> {
+    match spec.split_once(':') {
+        Some((kind, _)) if FileKind::from_name(kind) != Some(FileKind::Txt) => {
+            Err(Error::new(ErrorKind::IllegalFormat).of_arg(0))
+        }
+        _ => Ok(()),
     }
 }
 

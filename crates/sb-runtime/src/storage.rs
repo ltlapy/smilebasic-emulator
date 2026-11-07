@@ -69,7 +69,7 @@ impl FileKind {
         KINDS.into_iter().find(|k| k.prefix() == prefix)
     }
 
-    fn from_name(name: &str) -> Option<FileKind> {
+    pub(crate) fn from_name(name: &str) -> Option<FileKind> {
         KINDS
             .into_iter()
             .find(|k| k.name().eq_ignore_ascii_case(name))

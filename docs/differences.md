@@ -352,7 +352,8 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
   screen visible around it where SmileBASIC 4's covers the whole screen. Besides
   the controller's A and B, it answers clicks and Enter.
 - Error messages add detail in parentheses, such as which argument was out of
-  range.
+  range. It comes after SmileBASIC 4's own naming of the command, as in
+  `Wrong number of arguments in 1:28(LOADV) (TXT in the command form)`.
 - File > Settings > General > "Japanese explanation under errors" prints the
   Japanese line SmileBASIC 4's Japanese edition shows under each error message,
   in the English edition too.
@@ -370,10 +371,14 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
 - File commands ask, notify or stay silent as set in
   File > Settings > Files > "Before file commands such as SAVE and LOAD".
   SmileBASIC 4 always asks. A file command that fails in a program shows a
-  notice, rather than a dialog to close, unless file access is silent.
+  notice, rather than a dialog to close, unless file access is silent. The
+  program goes on in the same frame: on SmileBASIC 4, `S$=LOADV("TXT:NONE")`
+  of a missing file returns after 50 to 70 frames of its dialog, with `RESULT`
+  0 as here.
 - A file command's question starts on the button that goes ahead, as
   SmileBASIC 4's save question starts on OK. Replacing a file asks once, with
-  a line saying so, where SmileBASIC 4 asks twice. A question that would lose
+  a line saying so, where SmileBASIC 4 asks twice, whether to save and then
+  whether to overwrite. A question that would lose
   unsaved edits starts on Cancel.
 - `SAVE` and `SAVEV "TXT:..."` write plain UTF-8 text, and `SAVEG` and
   `SAVEV "GRP:..."` write PNG images, so the files open on a computer.
