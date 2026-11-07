@@ -6,11 +6,15 @@
 //! - `$OUT_DIR/fallback_symbols.bin`, from `fonts/symbols.txt`: one 66-byte
 //!   record per character: u16 code, then 64 palette indices in rows (see
 //!   `SYMBOL_PALETTE` in `src/font.rs`).
-//! - `$OUT_DIR/extra_hangul16.bin` and `extra_emoji{8,16}.bin`, the
+//! - `$OUT_DIR/extra_galmuri16.bin` and `extra_emoji{8,16}.bin`, the
 //!   editor's extra glyphs (see `src/extra_glyphs.rs`), from
-//!   `fonts/galmuri/Galmuri14-Hangul.bdf` and
-//!   `fonts/notoemoji/SBEmulatorEmoji.ttf`: tables compressed with
-//!   deflate, laid out as `extra_glyphs::Table` reads them.
+//!   `fonts/galmuri/Galmuri14.bdf` and
+//!   `fonts/notoemoji/SBEmulatorEmoji.ttf`, and `extra_half16.bin`,
+//!   Galmuri14's half-width glyphs in the left half of 16x16 cells (see
+//!   `src/half_width.rs`): tables compressed with deflate, laid out as
+//!   `extra_glyphs::Table` reads them.
+//! - `$OUT_DIR/dot_font.bin`, `fonts/neodgm/SBEmulatorDot.ttf` compressed
+//!   with deflate (see `src/half_width.rs`).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -23,8 +27,9 @@ mod cell_glyph;
 const BDF: &str = "fonts/galmuri/GalmuriMono7.bdf";
 const OVERRIDES: &str = "fonts/galmuri/overrides.txt";
 const SYMBOLS: &str = "fonts/symbols.txt";
-const HANGUL: &str = "fonts/galmuri/Galmuri14-Hangul.bdf";
+const GALMURI14: &str = "fonts/galmuri/Galmuri14.bdf";
 const EMOJI: &str = "fonts/notoemoji/SBEmulatorEmoji.ttf";
+const DOT: &str = "fonts/neodgm/SBEmulatorDot.ttf";
 /// Pixel characters of `symbols.txt`, in palette order.
 const SYMBOL_CHARS: &str = ".#kgb";
 /// Cell row of the baseline's lowest pixel row (y = 0); y = -1 is row 7.
@@ -153,8 +158,9 @@ fn main() {
     println!("cargo::rerun-if-changed={BDF}");
     println!("cargo::rerun-if-changed={OVERRIDES}");
     println!("cargo::rerun-if-changed={SYMBOLS}");
-    println!("cargo::rerun-if-changed={HANGUL}");
+    println!("cargo::rerun-if-changed={GALMURI14}");
     println!("cargo::rerun-if-changed={EMOJI}");
+    println!("cargo::rerun-if-changed={DOT}");
     println!("cargo::rerun-if-changed=src/cell_glyph.rs");
     let read = |path| std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let out_dir = std::env::var("OUT_DIR").unwrap();
@@ -192,6 +198,11 @@ fn main() {
         .expect("write the symbols");
 
     extra_glyphs(&read, Path::new(&out_dir));
+
+    // NeoDunggeunmo, read whole on first use: a fifth of its size packed.
+    let dot = std::fs::read(DOT).unwrap_or_else(|e| panic!("{DOT}: {e}"));
+    let packed = miniz_oxide::deflate::compress_to_vec(&dot, 10);
+    std::fs::write(Path::new(&out_dir).join("dot_font.bin"), packed).expect("write the dot font");
 }
 
 /// Writes a table of cells: u32 count, u8 cell size, u8 bits per pixel
@@ -218,14 +229,33 @@ fn write_table(path: &Path, cell: u32, bits: u8, glyphs: &BTreeMap<u32, Vec<u8>>
 }
 
 fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path) {
-    let bdf = cell_glyph::parse_bdf(&read(HANGUL));
+    let bdf = cell_glyph::parse_bdf(&read(GALMURI14));
     let layout = cell_glyph::BdfLayout::new(&bdf);
-    let hangul = bdf
-        .glyphs
-        .iter()
+    // Controls and combining marks (no advance) have no use in a cell.
+    let drawn = || {
+        bdf.glyphs
+            .iter()
+            .filter(|g| g.code >= 0x20 && !(0x7F..0xA0).contains(&g.code) && g.advance > 0)
+    };
+    let cells = drawn()
         .map(|g| (g.code, cell_glyph::bdf_cell(g, &layout, 16)))
         .collect();
-    write_table(&out_dir.join("extra_hangul16.bin"), 16, 1, &hangul);
+    write_table(&out_dir.join("extra_galmuri16.bin"), 16, 1, &cells);
+    let halves = drawn()
+        .filter(|g| g.code <= 0xFFFF)
+        .filter_map(|g| {
+            let half = cell_glyph::bdf_half(g, &layout, 16)?;
+            let cell = (0..256).map(|i| {
+                if i % 16 < 8 {
+                    half[i / 16 * 8 + i % 16]
+                } else {
+                    0
+                }
+            });
+            Some((g.code, cell.collect()))
+        })
+        .collect();
+    write_table(&out_dir.join("extra_half16.bin"), 16, 1, &halves);
 
     let bytes = std::fs::read(EMOJI).unwrap_or_else(|e| panic!("{EMOJI}: {e}"));
     let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("emoji font");
@@ -239,7 +269,12 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path) {
     for cell in [8, 16] {
         let glyphs = codes
             .iter()
-            .filter_map(|&c| Some((c as u32, cell_glyph::outline_cell(&font, c, cell, 1.0)?)))
+            .filter_map(|&c| {
+                Some((
+                    c as u32,
+                    cell_glyph::outline_cell(&font, c, cell, 1.0, cell_glyph::Ink::Gray)?,
+                ))
+            })
             .collect();
         let name = format!("extra_emoji{cell}.bin");
         write_table(&out_dir.join(name), cell, 8, &glyphs);

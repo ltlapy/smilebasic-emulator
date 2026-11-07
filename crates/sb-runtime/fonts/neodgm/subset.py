@@ -1,8 +1,8 @@
-"""Makes the bundled half-width font: NeoDunggeunmo's ASCII and the few
-other half-width characters it has, without hinting or layout tables, and
-renamed as the SIL OFL asks of modified versions.
+"""Makes the bundled 16-pixel dot font: NeoDunggeunmo with every
+character it draws but the control characters, without hinting or layout
+tables, and renamed as the SIL OFL asks of modified versions.
 
-    python3 subset.py neodgm.ttf SBEmulatorHalf.ttf
+    python3 subset.py neodgm.ttf SBEmulatorDot.ttf
 
 The input is neodgm.ttf from the NeoDunggeunmo release. Needs fontTools.
 """
@@ -12,10 +12,12 @@ import sys
 from fontTools import subset
 from fontTools.ttLib import TTFont
 
-FAMILY = "SB Emulator Half"
-# ASCII, half-width katakana and forms, and the won sign: the characters
-# the emulator draws half a cell wide.
-WANTED = [*range(0x20, 0x7F), *range(0xFF61, 0xFFA0), 0xFFE8, 0xFFED, 0xFFEE, 0x20A9]
+FAMILY = "SB Emulator Dot"
+
+
+def wanted(code):
+    """Everything but C0 and C1 controls, which have no use in a cell."""
+    return code >= 0x20 and not 0x7F <= code < 0xA0
 
 
 def rename(font):
@@ -39,7 +41,7 @@ def main(src, dst):
     options.name_IDs = ["*"]
     options.drop_tables += ["DSIG", "vhea", "vmtx", "GSUB", "GPOS", "GDEF", "gasp", "STAT"]
     subsetter = subset.Subsetter(options)
-    subsetter.populate(unicodes=[c for c in WANTED if c in font.getBestCmap()])
+    subsetter.populate(unicodes=[c for c in font.getBestCmap() if wanted(c)])
     subsetter.subset(font)
     rename(font)
     font.save(dst)

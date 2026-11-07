@@ -132,22 +132,40 @@ impl BdfLayout {
 /// Subsamples per pixel side when scaling a bitmap.
 const SUBSAMPLES: i32 = 4;
 
-/// A BDF glyph in a `cell`-pixel cell: scaled by whole steps while it
-/// fits, or down to fit, and centered. Narrow glyphs are drawn twice as
-/// wide, as SmileBASIC's font draws Latin as wide as kana.
+/// A BDF glyph in a `cell`-pixel cell, at the size it was drawn and
+/// centered. A glyph larger than the cell is made smaller to fit; none is
+/// made larger, as that blurs or blocks out pixels drawn for one size.
 pub fn bdf_cell(g: &BdfGlyph, layout: &BdfLayout, cell: u32) -> Vec<u8> {
-    let cell_f = cell as f32;
+    fit(g, layout, (cell, cell))
+}
+
+/// Places `g` in a `w` by `h` box: centered on its advance, with the
+/// font's rows centered in the box and the glyph moved in where it would
+/// stick out; smaller only when the font's rows or the glyph do not fit.
+fn fit(g: &BdfGlyph, layout: &BdfLayout, (w, h): (u32, u32)) -> Vec<u8> {
     let height = layout.top - layout.bottom;
-    let scale = match cell as i32 / height {
-        0 => cell_f / height as f32,
-        k => k as f32,
-    };
     let width = g.advance.max(g.bbx[0] + g.bbx[2].max(0)).max(1);
-    let stretch = if width * 2 <= layout.full { 2.0 } else { 1.0 };
-    let sx = (scale * stretch).min(cell_f / width as f32);
-    let x0 = ((cell_f - width as f32 * sx) / 2.0).round();
-    let y0 = ((cell_f - height as f32 * scale) / 2.0).round();
-    sample(g, layout.top, (cell, cell), (x0, y0), (sx, scale))
+    let (w_i, h_i) = (w as i32, h as i32);
+    if width > w_i || g.bbx[1] > h_i {
+        // Too large for the box: scaled down to fit.
+        let tall = height.max(g.bbx[1]);
+        let scale = (w as f32 / width as f32).min(h as f32 / tall as f32);
+        let x0 = ((w as f32 - width as f32 * scale) / 2.0).round();
+        let y0 = ((h as f32 - height as f32 * scale) / 2.0).round();
+        return sample(g, layout.top, (w, h), (x0, y0), (scale, scale));
+    }
+    let x0 = (w_i - width) / 2;
+    let mut y0 = (h_i - height).div_euclid(2);
+    // Rows of the glyph's ink, from the top of the box.
+    let [_, gh, _, yoff] = g.bbx;
+    let first = y0 + layout.top - (yoff + gh);
+    let last = first + gh - 1;
+    if first < 0 {
+        y0 -= first;
+    } else if last >= h_i {
+        y0 -= last - h_i + 1;
+    }
+    sample(g, layout.top, (w, h), (x0 as f32, y0 as f32), (1.0, 1.0))
 }
 
 /// Draws `g` into a `w` by `h` cell, with the top of its `top` rows at
@@ -188,29 +206,69 @@ pub const SMILEBASIC_EM: f32 = 15.0 / 16.0;
 /// fonts put it.
 const EM_BASELINE: f32 = 0.88;
 
-/// A glyph of an outline font in a `cell`-pixel cell, `None` if the font
-/// lacks it. Its em takes `em_share` of the cell; narrow glyphs are
-/// widened up to twice as wide, and glyphs that stick out are moved in or
-/// made smaller. The origin falls on whole pixels, which keeps pixel fonts
-/// drawn as outlines sharp at their own size.
-pub fn outline_cell(font: &impl Font, c: char, cell: u32, em_share: f32) -> Option<Vec<u8>> {
-    let id = font.glyph_id(c);
-    if id.0 == 0 {
-        return None;
+/// How coverage becomes the alpha bytes of a glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ink {
+    /// Coverage as it is, as SmileBASIC 4's 16-pixel font page keeps it.
+    Gray,
+    /// On where at least half the pixel is covered: SmileBASIC 4's
+    /// 8-pixel font has no gray, and an outline drawn that small blurs.
+    Solid,
+}
+
+impl Ink {
+    /// Solid at 8 pixels and below, gray above.
+    pub fn for_cell(cell: u32) -> Ink {
+        if cell <= 8 { Ink::Solid } else { Ink::Gray }
     }
+
+    fn alpha(self, coverage: f32) -> u8 {
+        match self {
+            Ink::Gray => (coverage.min(1.0) * 255.0).round() as u8,
+            Ink::Solid if coverage >= 0.5 => 255,
+            Ink::Solid => 0,
+        }
+    }
+}
+
+/// The glyph a font draws for `c` in a square cell: for ASCII, its
+/// full-width form (U+FF01 to U+FF5E) when it has one, as SmileBASIC
+/// draws ASCII as wide as kana and those forms are designed for that.
+/// `None` if the font has neither.
+fn cell_glyph_id(font: &impl Font, c: char) -> Option<ab_glyph::GlyphId> {
+    let full = match c {
+        '!'..='~' => char::from_u32(c as u32 + 0xFEE0).map(|f| font.glyph_id(f)),
+        _ => None,
+    };
+    match full {
+        Some(id) if id.0 != 0 => Some(id),
+        _ => Some(font.glyph_id(c)).filter(|id| id.0 != 0),
+    }
+}
+
+/// A glyph of an outline font in a `cell`-pixel cell, `None` if the font
+/// lacks it. ASCII takes the full-width form when the font has one. Its em
+/// takes `em_share` of the cell; a narrower glyph is centered at its own
+/// width, never widened, and glyphs that stick out are moved in or made
+/// smaller. The origin falls on whole pixels, which keeps pixel fonts
+/// drawn as outlines sharp at their own size.
+pub fn outline_cell(
+    font: &impl Font,
+    c: char,
+    cell: u32,
+    em_share: f32,
+    ink: Ink,
+) -> Option<Vec<u8>> {
+    let id = cell_glyph_id(font, c)?;
     let cell_f = cell as f32;
     let em_units = font.units_per_em().unwrap_or(1000.0);
     let em = cell_f * em_share;
     let advance = font.h_advance_unscaled(id) * em / em_units;
-    let stretch = match advance {
-        a if a > 0.0 && a < em * 0.6 => (em * 0.8 / a).min(2.0),
-        _ => 1.0,
-    };
     // ab_glyph scales by ascent minus descent; one em should be `em`.
     let mut sy = em * font.height_unscaled() / em_units;
-    let mut sx = sy * stretch;
+    let mut sx = sy;
     let mut origin = point(
-        ((cell_f - advance * stretch) / 2.0).round(),
+        ((cell_f - advance) / 2.0).round(),
         ((cell_f - em) / 2.0 + em * EM_BASELINE).round(),
     );
     let glyph = |sx, sy, origin| id.with_scale_and_position(PxScale { x: sx, y: sy }, origin);
@@ -246,7 +304,7 @@ pub fn outline_cell(font: &impl Font, c: char, cell: u32, em_share: f32) -> Opti
     outline.draw(|x, y, coverage| {
         let (x, y) = (min.x as i32 + x as i32, min.y as i32 + y as i32);
         if (0..cell as i32).contains(&x) && (0..cell as i32).contains(&y) {
-            out[(y as u32 * cell + x as u32) as usize] = (coverage.min(1.0) * 255.0).round() as u8;
+            out[(y as u32 * cell + x as u32) as usize] = ink.alpha(coverage);
         }
     });
     Some(out)
@@ -293,20 +351,13 @@ pub fn outline_half(font: &impl Font, c: char, cell: u32) -> Option<Vec<u8>> {
 
 /// A half-width BDF glyph, `cell / 2` pixels wide and `cell` high, `None`
 /// for a glyph wider than half the font's full-width characters. It is
-/// scaled as [`bdf_cell`] scales, without widening.
+/// placed as [`bdf_cell`] places glyphs.
 pub fn bdf_half(g: &BdfGlyph, layout: &BdfLayout, cell: u32) -> Option<Vec<u8>> {
     let width = g.advance.max(g.bbx[0] + g.bbx[2].max(0)).max(1);
-    if width * 2 > layout.full {
+    // Fonts whose full-width advance is odd, such as Galmuri14's 15,
+    // round their half-width one up.
+    if width > (layout.full + 1) / 2 {
         return None;
     }
-    let (w, h) = (cell / 2, cell);
-    let height = layout.top - layout.bottom;
-    let scale = match h as i32 / height {
-        0 => h as f32 / height as f32,
-        k => k as f32,
-    };
-    let sx = scale.min(w as f32 / width as f32);
-    let x0 = ((w as f32 - width as f32 * sx) / 2.0).round();
-    let y0 = ((h as f32 - height as f32 * scale) / 2.0).round();
-    Some(sample(g, layout.top, (w, h), (x0, y0), (sx, scale)))
+    Some(fit(g, layout, (cell / 2, cell)))
 }

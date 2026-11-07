@@ -5,8 +5,8 @@
 //!
 //! SmileBASIC 4's glyphs fill a square cell, so they cannot be cut in
 //! half. The glyphs come from fonts drawn for half-width cells: the 8-pixel
-//! ones from GalmuriMono7 (4x8), the 16-pixel ones from NeoDunggeunmo's
-//! ASCII (8x16), then GalmuriMono7 doubled, for half-width kana. A font file
+//! ones from GalmuriMono7 (4x8), the 16-pixel ones from NeoDunggeunmo
+//! (8x16), then Galmuri14, for what it lacks. A font file
 //! chosen in the settings comes before them or after them, as the editor's
 //! font order says, for the glyphs it draws half-width. Squeezing
 //! SmileBASIC's own glyph to half its width is the last resort.
@@ -16,15 +16,23 @@ use std::sync::OnceLock;
 use ab_glyph::FontRef;
 
 use crate::cell_glyph;
-use crate::extra_glyphs::{ExtraGlyphs, FontSource};
+use crate::extra_glyphs::{self, ExtraGlyphs, FontSource};
 use crate::font::{self, Font, FontSize};
 
-/// The bundled 16-pixel half-width font (see `fonts/neodgm`).
-static HALF_FONT: &[u8] = include_bytes!("../fonts/neodgm/SBEmulatorHalf.ttf");
+/// NeoDunggeunmo, the bundled 16-pixel dot font (see `fonts/neodgm`),
+/// whose half-width glyphs are drawn for 8x16 cells.
+/// Compressed by `build.rs`, and unpacked on first use.
+static HALF_FONT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dot_font.bin"));
 
 fn half_font() -> &'static FontRef<'static> {
+    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
     static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
-    FONT.get_or_init(|| FontRef::try_from_slice(HALF_FONT).expect("bundled font"))
+    FONT.get_or_init(|| {
+        let bytes = BYTES.get_or_init(|| {
+            miniz_oxide::inflate::decompress_to_vec(HALF_FONT).expect("bundled font")
+        });
+        FontRef::try_from_slice(bytes).expect("bundled font")
+    })
 }
 
 /// Whether a character is half-width: ASCII, and the half-width forms
@@ -113,13 +121,7 @@ impl HalfGlyphs {
             let bundled = || {
                 char::from_u32(u32::from(code))
                     .and_then(|c| cell_glyph::outline_half(half_font(), c, 16))
-                    .or_else(|| {
-                        galmuri(code).map(|_| {
-                            (0..LARGE)
-                                .map(|i| galmuri_small[i / 16 * 4 + i % 8 / 2])
-                                .collect()
-                        })
-                    })
+                    .or_else(|| extra_glyphs::galmuri_half16(u32::from(code)))
             };
             let found = match file_first {
                 true => file_large().or_else(bundled),
@@ -179,6 +181,14 @@ mod tests {
         glyph.iter().filter(|&&a| a >= 0x80).count()
     }
 
+    /// An 8x16 glyph with each 2x2 block made its top left pixel: the
+    /// glyph itself if it was drawn at 4x8 and doubled.
+    fn doubled(glyph: &[u8]) -> Vec<u8> {
+        (0..LARGE)
+            .map(|i| glyph[i / 16 * 16 + i % 8 / 2 * 2])
+            .collect()
+    }
+
     #[test]
     fn half_width_characters() {
         for c in [' ', 'A', '~', 'ｱ', '｡', 'ﾟ', '￨', '￮', '₩'] {
@@ -220,8 +230,11 @@ mod tests {
         assert!(ink(a) > 10 && ink(a) < 8 * 16, "A has {} pixels", ink(a));
         // NeoDunggeunmo is a pixel font: every pixel is on or off.
         assert!(a.iter().all(|&p| p == 0 || p == 255));
-        // Half-width kana, which it lacks, come from GalmuriMono7.
-        assert!(ink(half.get('ｱ' as u16, FontSize::Large).unwrap()) > 0);
+        // Half-width kana, which it lacks, come from Galmuri14, drawn
+        // for 16 pixels: no pixel is doubled.
+        let kana = half.get('ｱ' as u16, FontSize::Large).unwrap();
+        assert!(ink(kana) > 0);
+        assert_ne!(kana, &doubled(kana)[..]);
     }
 
     /// A BDF font with A as a filled 4x8 box and Ａ, full-width, 8x8.
@@ -236,7 +249,8 @@ mod tests {
         for first in [FontSource::SmileBasic, FontSource::File] {
             let half = HalfGlyphs::with_file(&font, Some(&file), first);
             assert_eq!(ink(half.get(0x41, FontSize::Small).unwrap()), SMALL);
-            assert_eq!(ink(half.get(0x41, FontSize::Large).unwrap()), LARGE);
+            // At 16 pixels the 4x8 glyph keeps its size, centered.
+            assert_eq!(ink(half.get(0x41, FontSize::Large).unwrap()), SMALL);
             // B is not in the file.
             let b = half.get(0x42, FontSize::Large).unwrap();
             assert_eq!(

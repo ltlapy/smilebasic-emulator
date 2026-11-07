@@ -17,6 +17,11 @@ from fontTools.ttLib import TTFont
 FAMILY = "SB Emulator 1p"
 
 
+def wanted(code):
+    """Everything but C0 and C1 controls, which have no use in a cell."""
+    return code >= 0x20 and not 0x7F <= code < 0xA0
+
+
 def rename(font):
     names = font["name"]
     for record in list(names.names):
@@ -38,7 +43,7 @@ def main(src, dst):
     options.name_IDs = ["*"]
     options.drop_tables += ["DSIG", "vhea", "vmtx", "GSUB", "GPOS", "GDEF", "gasp"]
     subsetter = subset.Subsetter(options)
-    subsetter.populate(unicodes=font.getBestCmap().keys())
+    subsetter.populate(unicodes=[c for c in font.getBestCmap() if wanted(c)])
     subsetter.subset(font)
     rename(font)
     font.save(dst)

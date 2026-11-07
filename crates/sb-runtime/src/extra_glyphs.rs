@@ -1,5 +1,5 @@
-//! Glyphs the editor draws for characters SmileBASIC's font lacks, such as
-//! Hangul and emoji, which SmileBASIC 4 shows as a box.
+//! Glyphs the editor draws for characters SmileBASIC's font lacks, which
+//! SmileBASIC 4 shows as a box.
 //!
 //! There are three sources of glyphs ([`FontSource`]):
 //!
@@ -7,13 +7,17 @@
 //! - the font file chosen in the settings (`editor_extra_font`): BDF,
 //!   TrueType or OpenType;
 //! - the bundled glyphs. At 8 pixels: GalmuriMono7, Noto Emoji, then
-//!   M PLUS 1p Bold. At 16 pixels: Galmuri14's Hangul, M PLUS 1p Bold,
-//!   Noto Emoji, then GalmuriMono7 doubled.
+//!   M PLUS 1p Bold. At 16 pixels: M PLUS 1p Bold, the face SmileBASIC 4's
+//!   own 16-pixel font is drawn from, then Galmuri14 and Noto Emoji.
 //!
 //! The editor looks a character up in them in the order the settings give
 //! ([`Fonts`]), by default in the order above. When none has it, it draws
-//! the font's box. Every glyph fills one cell, as SmileBASIC draws every
-//! character.
+//! the font's box. Every glyph takes one cell, as SmileBASIC draws every
+//! character, but keeps the size its font draws it at: ASCII takes the
+//! font's full-width forms, which are drawn for a square cell, and other
+//! narrow glyphs are centered rather than widened. Bitmap glyphs are never
+//! made larger: a font drawn for 8 pixels stays 8 pixels in a 16-pixel
+//! cell.
 //!
 //! Programs see these glyphs only where the settings put them on the font
 //! page (see [`crate::program_font`]); by default they never do.
@@ -26,7 +30,7 @@ use std::sync::OnceLock;
 
 use ab_glyph::FontVec;
 
-use crate::cell_glyph::{self, BdfGlyph, BdfLayout};
+use crate::cell_glyph::{self, BdfGlyph, BdfLayout, Ink};
 use crate::font::{self, Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::text::TextScreen;
@@ -115,13 +119,27 @@ macro_rules! table {
     };
 }
 
-table!(hangul16, "extra_hangul16.bin");
+table!(galmuri16, "extra_galmuri16.bin");
+table!(half16, "extra_half16.bin");
 table!(emoji8, "extra_emoji8.bin");
 table!(emoji16, "extra_emoji16.bin");
 
-/// Appends GalmuriMono7's 8x8 cell for `code`, drawn `scale` times as
-/// large, if it has one.
-fn galmuri(code: u32, scale: usize, out: &mut Vec<u8>) -> bool {
+/// Galmuri14's half-width glyph for `code`, 8x16, if it has one.
+pub(crate) fn galmuri_half16(code: u32) -> Option<Vec<u8>> {
+    let mut cell = Vec::with_capacity(256);
+    half16().copy(code, &mut cell).then(|| {
+        let left = cell.chunks_exact(16).flat_map(|row| &row[..8]);
+        left.copied().collect()
+    })
+}
+
+/// Appends Galmuri14's 16x16 cell for `code`, if it has one.
+pub(crate) fn galmuri16_cell(code: u32, out: &mut Vec<u8>) -> bool {
+    galmuri16().copy(code, out)
+}
+
+/// Appends GalmuriMono7's 8x8 cell for `code`, if it has one.
+fn galmuri(code: u32, out: &mut Vec<u8>) -> bool {
     // SmileBASIC's ASCII is as wide as kana, so it takes the full-width
     // forms, as the stand-in font does.
     let code = match code {
@@ -142,9 +160,8 @@ fn galmuri(code: u32, scale: usize, out: &mut Vec<u8>) -> bool {
             std::cmp::Ordering::Greater => hi = mid,
             std::cmp::Ordering::Equal => {
                 let rows = &records[mid * 10 + 2..mid * 10 + 10];
-                let side = 8 * scale;
-                out.extend((0..side * side).map(|p| {
-                    let (x, y) = (p % side / scale, p / side / scale);
+                out.extend((0..64).map(|p| {
+                    let (x, y) = (p % 8, p / 8);
                     if rows[y] & (0x80 >> x) != 0 { 255 } else { 0 }
                 }));
                 return true;
@@ -156,7 +173,8 @@ fn galmuri(code: u32, scale: usize, out: &mut Vec<u8>) -> bool {
 
 /// The bundled M PLUS 1p Bold's glyph for `c` in a `cell`-pixel cell.
 fn outlines(c: Option<char>, cell: u32) -> Option<Vec<u8>> {
-    c.and_then(|c| cell_glyph::outline_cell(font::outlines(), c, cell, cell_glyph::SMILEBASIC_EM))
+    let em = cell_glyph::SMILEBASIC_EM;
+    c.and_then(|c| cell_glyph::outline_cell(font::outlines(), c, cell, em, Ink::for_cell(cell)))
 }
 
 /// A font file read for the editor.
@@ -327,11 +345,17 @@ impl ExtraGlyphs {
         }
         let from_file = match (&self.external, part) {
             (_, Part::Bundled) => None,
-            (Some(External::Bitmap { glyphs, layout }), _) => glyphs
-                .get(&code)
-                .map(|g| cell_glyph::bdf_cell(g, layout, cell)),
+            (Some(External::Bitmap { glyphs, layout }), _) => {
+                // ASCII takes the full-width form, as for outlines.
+                let full = (0x21..=0x7E)
+                    .contains(&code)
+                    .then(|| glyphs.get(&(code + 0xFEE0)));
+                full.flatten()
+                    .or_else(|| glyphs.get(&code))
+                    .map(|g| cell_glyph::bdf_cell(g, layout, cell))
+            }
             (Some(External::Outline(f)), _) => {
-                ch.and_then(|c| cell_glyph::outline_cell(f, c, cell, 1.0))
+                ch.and_then(|c| cell_glyph::outline_cell(f, c, cell, 1.0, Ink::for_cell(cell)))
             }
             (None, _) => None,
         };
@@ -342,16 +366,16 @@ impl ExtraGlyphs {
             return false;
         }
         match size {
-            // M+ is blurry at 8 pixels, but better than the box for the
-            // Greek and Cyrillic GalmuriMono7 lacks.
+            // M+ is rough at 8 pixels, but better than the box for what
+            // GalmuriMono7 lacks.
             FontSize::Small => {
-                galmuri(code, 1, out) || emoji8().copy(code, out) || take(out, outlines(ch, 8))
+                galmuri(code, out) || emoji8().copy(code, out) || take(out, outlines(ch, 8))
             }
+            // GalmuriMono7 is drawn for 8 pixels, so it has no place here.
             FontSize::Large => {
-                hangul16().copy(code, out)
-                    || take(out, outlines(ch, 16))
+                take(out, outlines(ch, 16))
+                    || galmuri16().copy(code, out)
                     || emoji16().copy(code, out)
-                    || galmuri(code, 2, out)
             }
         }
     }
@@ -517,10 +541,10 @@ mod tests {
     }
 
     #[test]
-    fn bundled_glyphs_cover_hangul_and_emoji() {
+    fn bundled_glyphs_cover_many_scripts() {
         let g = ExtraGlyphs::bundled();
         for size in [FontSize::Small, FontSize::Large] {
-            for c in ['한', '글', '😀', 'Ω', '★'] {
+            for c in ['한', '글', '😀', 'Ω', 'Ж', 'ア', '漢', '★'] {
                 let glyph = g.find(c as u32, size);
                 assert!(glyph.is_some(), "{c} at {size:?}");
                 assert!(ink(&g, glyph.unwrap()) > 0, "{c} at {size:?} is blank");
@@ -536,25 +560,53 @@ mod tests {
     #[test]
     fn found_once() {
         let g = ExtraGlyphs::bundled();
-        let first = g.find('가' as u32, FontSize::Large);
-        let len = g.cache.borrow().pixels.len();
-        assert_eq!(g.find('가' as u32, FontSize::Large), first);
-        assert_eq!(g.cache.borrow().pixels.len(), len);
+        for (c, size) in [
+            ('가', FontSize::Large),
+            ('A', FontSize::Large),
+            ('Ω', FontSize::Small),
+        ] {
+            let first = g.find(c as u32, size);
+            assert!(first.is_some());
+            let len = g.cache.borrow().pixels.len();
+            assert_eq!(g.find(c as u32, size), first);
+            assert_eq!(g.cache.borrow().pixels.len(), len);
+        }
     }
 
-    /// A one-glyph BDF font: U+AC00 as a filled 4x4 square.
-    const BDF: &str = "STARTFONT 2.1\nFONT_ASCENT 4\nFONT_DESCENT 0\nCHARS 1\n\
-        STARTCHAR a\nENCODING 44032\nDWIDTH 4 0\nBBX 4 4 0 0\nBITMAP\nF0\nF0\nF0\nF0\nENDCHAR\nENDFONT\n";
+    /// The pixels of a glyph found in `g`.
+    fn pixels(g: &ExtraGlyphs, glyph: Glyph) -> Vec<u8> {
+        let n = usize::from(glyph.cell) * usize::from(glyph.cell);
+        g.cache.borrow().pixels[glyph.at as usize..glyph.at as usize + n].to_vec()
+    }
+
+    /// The first and last columns with ink, of a `side`-pixel glyph.
+    fn columns(px: &[u8], side: usize) -> (usize, usize) {
+        let inked: Vec<usize> = (0..side)
+            .filter(|&x| (0..side).any(|y| px[y * side + x] > 0))
+            .collect();
+        (inked[0], *inked.last().unwrap())
+    }
+
+    /// A BDF font: U+AC00 as a filled 4x4 square, and A as a 2x4 bar
+    /// with Ａ, its full-width form, as a 4x4 square.
+    const BDF: &str = "STARTFONT 2.1\nFONT_ASCENT 4\nFONT_DESCENT 0\nCHARS 3\n\
+        STARTCHAR a\nENCODING 44032\nDWIDTH 4 0\nBBX 4 4 0 0\nBITMAP\nF0\nF0\nF0\nF0\nENDCHAR\n\
+        STARTCHAR A\nENCODING 65\nDWIDTH 2 0\nBBX 2 4 0 0\nBITMAP\nC0\nC0\nC0\nC0\nENDCHAR\n\
+        STARTCHAR AA\nENCODING 65313\nDWIDTH 4 0\nBBX 4 4 0 0\nBITMAP\nF0\nF0\nF0\nF0\nENDCHAR\nENDFONT\n";
 
     #[test]
     fn the_chosen_file_comes_first() {
         let g = ExtraGlyphs::from_bytes(BDF.as_bytes().to_vec()).unwrap();
         assert!(g.has_file());
-        // Scaled by whole steps to fill the cell: 4 rows become 8 and 16.
+        // Drawn at its own size, centered: never made larger.
         let small = g.find(0xAC00, FontSize::Small).unwrap();
-        assert_eq!(ink(&g, small), 64);
+        assert_eq!(ink(&g, small), 16);
         let large = g.find(0xAC00, FontSize::Large).unwrap();
-        assert_eq!(ink(&g, large), 256);
+        assert_eq!(ink(&g, large), 16);
+        assert_eq!(columns(&pixels(&g, large), 16), (6, 9));
+        // ASCII takes the full-width form.
+        let a = g.find('A' as u32, FontSize::Large).unwrap();
+        assert_eq!(pixels(&g, a), pixels(&g, large));
         // What the file lacks still comes from the bundled glyphs.
         assert!(g.find('😀' as u32, FontSize::Small).is_some());
     }
@@ -585,17 +637,36 @@ mod tests {
     }
 
     #[test]
-    fn latin_fills_the_cell() {
-        // Narrow outline glyphs are widened toward the cell's width.
+    fn ascii_takes_full_width_forms() {
+        // The bundled glyphs, and the same face read as a chosen file.
+        let file = ExtraGlyphs::from_bytes(font::OUTLINES.to_vec()).unwrap();
+        for (g, part) in [(ExtraGlyphs::bundled(), Part::Bundled), (file, Part::File)] {
+            for size in [FontSize::Small, FontSize::Large] {
+                for c in ['A', 'i', 'l', '!', '~'] {
+                    let full = char::from_u32(c as u32 + 0xFEE0).unwrap();
+                    let ascii = g.find_in(c as u32, size, part).unwrap();
+                    let full = g.find_in(full as u32, size, part).unwrap();
+                    assert_eq!(pixels(&g, ascii), pixels(&g, full), "{c} at {size:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_glyphs_are_not_stretched() {
+        // ı (dotless i) has no full-width form: it keeps M+'s width of
+        // about a third of the em, in the middle of the cell.
+        let file = ExtraGlyphs::from_bytes(font::OUTLINES.to_vec()).unwrap();
+        for (g, part) in [(ExtraGlyphs::bundled(), Part::Bundled), (file, Part::File)] {
+            let glyph = g.find_in('ı' as u32, FontSize::Large, part).unwrap();
+            let (first, last) = columns(&pixels(&g, glyph), 16);
+            assert!(last - first < 4, "ı spans columns {first} to {last}");
+            assert!((5..=10).contains(&first) && (5..=10).contains(&last));
+        }
+        // The 8-pixel M+ glyphs are solid: no gray left to blur them.
         let g = ExtraGlyphs::bundled();
-        let glyph = g.find('ŵ' as u32, FontSize::Large).unwrap();
-        let cache = g.cache.borrow();
-        let px = &cache.pixels[glyph.at as usize..glyph.at as usize + 256];
-        let cols: Vec<usize> = (0..16)
-            .filter(|&x| (0..16).any(|y| px[y * 16 + x] > 0))
-            .collect();
-        let width = cols.last().unwrap() - cols.first().unwrap() + 1;
-        assert!(width >= 10, "ŵ is {width} pixels wide");
+        let omega = g.find('Ω' as u32, FontSize::Small).unwrap();
+        assert!(pixels(&g, omega).iter().all(|&a| a == 0 || a == 255));
     }
 
     #[test]

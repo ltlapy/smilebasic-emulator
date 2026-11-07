@@ -20,6 +20,11 @@ FAMILY = "SB Emulator Emoji"
 WEIGHT = 600
 
 
+def wanted(code):
+    """Everything but C0 and C1 controls, which have no use in a cell."""
+    return code >= 0x20 and not 0x7F <= code < 0xA0
+
+
 def rename(font):
     names = font["name"]
     for record in list(names.names):
@@ -41,8 +46,7 @@ def main(src, dst):
     options.name_IDs = ["*"]
     options.drop_tables += ["DSIG", "vhea", "vmtx", "GSUB", "GPOS", "GDEF", "gasp", "STAT"]
     subsetter = subset.Subsetter(options)
-    # ASCII (digits, # and *) is left to the other fonts.
-    subsetter.populate(unicodes=[c for c in font.getBestCmap() if c > 0x7F])
+    subsetter.populate(unicodes=[c for c in font.getBestCmap() if wanted(c)])
     subsetter.subset(font)
     rename(font)
     font.save(dst)

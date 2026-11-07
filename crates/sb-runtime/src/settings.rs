@@ -595,7 +595,7 @@ mod tests {
             keyboard_buttons: false,
             smilebasic_instruments: false,
             sound_font: Some("/fonts/a b.sf2".to_string()),
-            editor_extra_font: Some("/fonts/hangul 16.bdf".to_string()),
+            editor_extra_font: Some("/fonts/unicode 16.bdf".to_string()),
             editor_half_width: true,
             editor_font_first: FontSource::Bundled,
             program_font: [FontSource::File, FontSource::Bundled],

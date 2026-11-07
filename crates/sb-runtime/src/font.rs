@@ -5,7 +5,7 @@
 //! [`crate::resources`]); nothing from them is part of this repository.
 //! Without them, [`Font::fallback`] draws the 8-pixel font with
 //! GalmuriMono7 and the 16-pixel one with M PLUS 1p Bold, the face
-//! SmileBASIC 4's own 16-pixel font is drawn from.
+//! SmileBASIC 4's own 16-pixel font is drawn from, then Galmuri14.
 //!
 //! Glyph `n` of the 8-pixel font is at `((n % 64) * 8, (n / 64) * 8)` on the
 //! page, and of the 16-pixel font at `((n % 64) * 16, 1024 + (n / 64) * 16)`.
@@ -53,7 +53,8 @@ enum Source {
         /// `PAGE_SIZE` x `PAGE_SIZE` pixels, `0xAARRGGBB`.
         page: Vec<u32>,
     },
-    /// 8x8 cells, drawn doubled for the 16-pixel font.
+    /// 8x8 cells; the 16-pixel font is drawn from M PLUS 1p Bold and
+    /// Galmuri14, and what they lack is the 8x8 cell centered.
     Cells {
         /// For each code, an index into `cells`, `SYMBOL | i` for
         /// `symbols[i]`, or `NO_CELL`.
@@ -105,16 +106,20 @@ pub(crate) fn outlines() -> &'static FontRef<'static> {
     FONT.get_or_init(|| FontRef::try_from_slice(OUTLINES).expect("bundled font"))
 }
 
-/// The 16-pixel glyph of `c` from the outline font, `None` if it has none.
-/// Drawing is slow next to looking pixels up, so glyphs are kept once
-/// drawn.
-fn outline_glyph(c: char) -> Option<Bitmap> {
+/// The 16-pixel glyph of `c` from the outline font, or else from
+/// Galmuri14; `None` if neither has it. Drawing is slow next to looking
+/// pixels up, so glyphs are kept once drawn.
+fn large_glyph(c: char) -> Option<Bitmap> {
     static DRAWN: OnceLock<Mutex<HashMap<char, Option<Bitmap>>>> = OnceLock::new();
     let drawn = DRAWN.get_or_init(Default::default);
     if let Some(&bitmap) = drawn.lock().expect("glyph cache").get(&c) {
         return bitmap;
     }
-    let bitmap = draw_outline(c);
+    let bitmap = draw_outline(c).or_else(|| {
+        let mut cell = Vec::with_capacity(LARGE * LARGE);
+        crate::extra_glyphs::galmuri16_cell(c as u32, &mut cell)
+            .then(|| cell.try_into().expect("16x16 cell"))
+    });
     drawn.lock().expect("glyph cache").insert(c, bitmap);
     bitmap
 }
@@ -402,10 +407,10 @@ impl Font {
                     NO_CELL => *missing,
                     i => i,
                 };
-                // SmileBASIC's own symbols keep their drawings, doubled.
+                // SmileBASIC's own symbols keep their 8x8 drawings.
                 if size == FontSize::Large
                     && i & SYMBOL == 0
-                    && let Some(bitmap) = char::from_u32(u32::from(code)).and_then(outline_glyph)
+                    && let Some(bitmap) = char::from_u32(u32::from(code)).and_then(large_glyph)
                 {
                     let alpha = u32::from(bitmap[(y * 16 + x) as usize]);
                     return if alpha == 0 {
@@ -414,9 +419,14 @@ impl Font {
                         alpha << 24 | 0x00FF_FFFF
                     };
                 }
+                // An 8x8 drawing in a 16-pixel cell stays 8x8, centered:
+                // doubled, its pixels would look like blocks.
                 let (x, y) = match size {
                     FontSize::Small => (x, y),
-                    FontSize::Large => (x / 2, y / 2),
+                    FontSize::Large if (4..12).contains(&x) && (4..12).contains(&y) => {
+                        (x - 4, y - 4)
+                    }
+                    FontSize::Large => return 0,
                 };
                 if i & SYMBOL != 0 {
                     let pixels = &symbols[usize::from(i & !SYMBOL)];
@@ -560,13 +570,37 @@ mod tests {
             .map(|i| font.pixel('A' as u16, FontSize::Large, i % 16, i / 16) >> 24)
             .collect();
         assert!(alphas.contains(&255) && alphas.iter().any(|&a| a > 0 && a < 255));
-        // ...except for SmileBASIC's symbols and characters the outlines
-        // lack, which are the 8-pixel drawings doubled.
-        for code in [0xE100, '가' as u16] {
+        // ...what the outlines lack from Galmuri14, drawn for 16 pixels...
+        let galmuri = |code: u16| {
+            let mut cell = Vec::new();
+            assert!(crate::extra_glyphs::galmuri16_cell(
+                u32::from(code),
+                &mut cell
+            ));
+            cell.iter()
+                .map(|&a| {
+                    if a == 0 {
+                        0
+                    } else {
+                        u32::from(a) << 24 | 0xFF_FFFF
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let large = |code: u16| -> Vec<u32> {
+            (0..256)
+                .map(|i| font.pixel(code, FontSize::Large, i % 16, i / 16))
+                .collect()
+        };
+        assert_eq!(large('가' as u16), galmuri('가' as u16));
+        // ...and SmileBASIC's symbols as their 8-pixel drawings, centered,
+        // not doubled.
+        for (x, y) in [(0, 0), (3, 1), (7, 7)] {
             assert_eq!(
-                font.pixel(code, FontSize::Large, 6, 3),
-                font.pixel(code, FontSize::Small, 3, 1)
+                font.pixel(0xE100, FontSize::Large, x + 4, y + 4),
+                font.pixel(0xE100, FontSize::Small, x, y)
             );
         }
+        assert_eq!(font.pixel(0xE10A, FontSize::Large, 0, 0), 0);
     }
 }

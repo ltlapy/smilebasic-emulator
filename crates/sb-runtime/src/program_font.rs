@@ -4,7 +4,7 @@
 //!
 //! Only characters with a place of their own on the font page change, and
 //! only those the chosen source has; the rest keep SmileBASIC's glyphs.
-//! Characters the page has no place for, such as Hangul, keep the box.
+//! Characters the page has no place for keep the box.
 //! The glyphs are made once, when the setting or the font file changes,
 //! and written over the page then and wherever the page is put back:
 //! at start-up and by ACLS.
@@ -121,7 +121,7 @@ mod tests {
         let large = FontPatch::build(&font, &extra, [FontSource::SmileBasic, FontSource::Bundled]);
         assert!(!large.is_empty());
         assert!(large.cells().all(|(_, _, size)| size == FontSize::Large));
-        // Hangul has no place on the page, so it is never written.
+        // 가 has no place on the page, so it is never written.
         let (gx, gy) = font.origin('A' as u16, FontSize::Large).unwrap();
         assert!(large.cells().any(|(x, y, _)| (x, y) == (gx, gy)));
         assert_eq!(font.own_glyph('가' as u16), None);

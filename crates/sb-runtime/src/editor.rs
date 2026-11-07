@@ -2568,7 +2568,7 @@ mod tests {
     #[test]
     fn extra_glyphs_fill_one_cell_each() {
         // The font lacks everything from U+AC00 on, as SmileBASIC 4's lacks
-        // Hangul and surrogates, and draws nothing for the rest.
+        // that block and surrogates, and draws nothing for the rest.
         let font = Font::blank_from(0xAC00);
         let mut e = editor("A가😀\u{10FFFD}B");
         let mut fb = Framebuffer::new(400, 240);
