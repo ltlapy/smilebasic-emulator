@@ -1663,12 +1663,11 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   loads nothing and leaves the page as it was, with no error. `LOAD` into a
   slot and then `EXEC` the slot runs another project's program (TEST68, a main
   program while a subprogram ran).
-- A subprogram's `EXEC` refuses a project name too,
-  and `EXEC` takes SmileBASIC 4's own `#` projects. `SAVE`, `SAVEV` and `SAVEG`
-  refuse a project name with error 74 in a main program, but not in direct mode
-  or a subprogram. `RENAME` and `DELETE` refuse one everywhere. Version 4.4.8's
-  code has no such check in `LOADG` for GRP files, so 4.4.9 may have added the
-  one TEST68 met. (Not yet seen on hardware.)
+- Expected but not yet seen on hardware: a subprogram's `EXEC` refuses a
+  project name too, and `EXEC` takes SmileBASIC 4's own `#` projects. `SAVE`,
+  `SAVEV` and `SAVEG` refuse a project name with error 74 in a main program,
+  but not in direct mode or a subprogram. `RENAME` and `DELETE` refuse one
+  everywhere. The `LOADG` refusal may be new in version 4.4.9.
 - `LOADG` leaves the page's pixels outside the loaded image as they were: a
   1024x624 image loaded at 0,0 leaves 1027,5 and 5,627 alone (TEST68).
 - `LOADV` and `LOADG` in a program ask nothing. `S$=LOADV("TXT:NONE")` of a
