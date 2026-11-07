@@ -25,6 +25,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   - [`RGB`, `RGBF` and `HSV`](#rgb-rgbf-and-hsv)
   - [Random numbers](#random-numbers)
   - [`FORMAT$`](#format)
+  - [Strings](#strings)
   - [Arrays](#arrays)
   - [`SPVAR`, `TVAR` and `INC`](#spvar-tvar-and-inc)
 - [Order of evaluation](#order-of-evaluation)
@@ -323,6 +324,20 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - `%X` and `%B` go the same way as `%D`: `%.4X` of 255 is `00FF`, `%.4B` of 5 is
   `0101`, `%+.0D` and `%.0X` of 0 are empty, and `%6.3X` of 10 is `   00A`
   (TEST63).
+
+### Strings
+
+- Assigning a string shares it instead of copying it. After `B$=A$`,
+  `B$[0]="X"` and `PUSH B$,"M"` change `A$` too, and `B$[1]="YY"` puts two
+  characters in place of one under both names. `O$=Z$[0]` shares the array
+  element the same way (TEST68).
+- A DEF's string parameter is the caller's string: `S$[0]="Y"` in the DEF
+  changes the caller's variable. A DEF that returns its parameter returns the
+  same string, so after `Q$=SAME$(P$)`, `Q$[0]="X"` changes `P$` (TEST68).
+- `COPY(A$)` and concatenation make a new string: after `E$=COPY(D$)` or
+  `I$=I$+"Q"`, changing one leaves the other alone, and a DEF given `R$+""`
+  changes a copy. A literal stays as written: `L$="UVW":L$[0]="X"` in a loop
+  gives `UVW` again on the next pass (TEST68).
 
 ### Arrays
 
@@ -654,6 +669,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   arrive.
 - `PUSHKEY` of keys without Enter is dropped at the prompt too, as with Enter: a
   line typed after `PUSHKEY "?7:"` runs as it is. (TEST63)
+- `INKEY$` gives back what `PUSHKEY` pushed of Hangul syllables, the jamo
+  U+3131, U+E800 and surrogate pairs unchanged, one UTF-16 unit a call: the
+  pair U+D83D U+DE00 takes two calls (TEST68).
 
 ### `INPUT`, `LINPUT` and the line being typed
 
@@ -792,6 +810,11 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on the
   50-column console).
 - `LOCATE 3E10,0` is `Overflow (LOCATE:1)`. (TEST62)
+- `LOCATE 0` with one argument is `Wrong number of arguments (LOCATE)`, error
+  52 (TEST68).
+- Text screens draw the codes from U+E800 up from their own `TPAGE` at font
+  types 8, 16 and 32. At font type 32 a text screen shows only user-defined
+  characters (TEST68, by its picture).
 - `SCROLL 0,0,2147483647` and `SCROLL 0,2147483647,0` clear the screen, as any
   shift of a whole screen or more does (TEST51).
 - `TFILL` clips its rectangle to the screen before the string starts, and the
@@ -1631,9 +1654,23 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `CHKFILE("TXT:Q51.")` is 1 while `CHKFILE("TXT:Q51")` is 0 (TEST51).
 - `LOAD` takes the file's whole name: `LOAD "TEST10"` does not find
   `TEST10.PRG`.
-- `LOAD` and `LOADV` in a program, against the manual, take other projects'
-  files too (`LOAD "GAME/SUB",1`), not only `EXEC`. Naming the program's own
-  project works as well.
+- `LOAD` and `LOADV` in a program take other projects' files
+  (`LOAD "GAME/SUB",1`), and a program may name its own project in them.
+- A program's `EXEC` of a file named with a project is
+  `Can't access other project in this mode`, error 74, even for the program's
+  own project: `EXEC "TEST05/HGLIB.PRG",1` in a program of project TEST05.
+  `LOADG "GRP:TEST05/HG16_NEODGM",3` in the same program gives `RESULT` 0,
+  loads nothing and leaves the page as it was, with no error. `LOAD` into a
+  slot and then `EXEC` the slot runs another project's program (TEST68, a main
+  program while a subprogram ran).
+- A subprogram's `EXEC` refuses a project name too,
+  and `EXEC` takes SmileBASIC 4's own `#` projects. `SAVE`, `SAVEV` and `SAVEG`
+  refuse a project name with error 74 in a main program, but not in direct mode
+  or a subprogram. `RENAME` and `DELETE` refuse one everywhere. Version 4.4.8's
+  code has no such check in `LOADG` for GRP files, so 4.4.9 may have added the
+  one TEST68 met. (Not yet seen on hardware.)
+- `LOADG` leaves the page's pixels outside the loaded image as they were: a
+  1024x624 image loaded at 0,0 leaves 1027,5 and 5,627 alone (TEST68).
 - `LOADV` and `LOADG` in a program ask nothing. `S$=LOADV("TXT:NONE")` of a
   missing file still opens a dialog that holds the program for 50 to 70 frames
   (likely File not found, as for `EXEC`), and gives `""` with `RESULT` 0
