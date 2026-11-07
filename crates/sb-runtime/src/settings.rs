@@ -83,6 +83,9 @@ pub struct Settings {
     /// that SmileBASIC's font lacks, before its bundled ones; `None` for
     /// the bundled ones alone.
     pub editor_extra_font: Option<String>,
+    /// The editor draws half-width characters half a cell wide; each
+    /// still takes one column. Not SmileBASIC 4's.
+    pub editor_half_width: bool,
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
@@ -167,6 +170,7 @@ impl Default for Settings {
             editor_tab_step: 1,
             editor_colors: Palette::default(),
             editor_extra_font: None,
+            editor_half_width: false,
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
@@ -307,6 +311,7 @@ impl Settings {
                 "editor_wrap" => &mut s.editor_wrap,
                 "editor_number_tiles" => &mut s.editor_number_tiles,
                 "editor_map" => &mut s.editor_map,
+                "editor_half_width" => &mut s.editor_half_width,
                 "editor_window" => &mut s.editor_window,
                 "editor_window_keep_place" => &mut s.editor_window_keep_place,
                 "tidy_on_end" => &mut s.tidy_on_end,
@@ -447,6 +452,7 @@ impl Settings {
              editor_tab_step={}\n\
              {}\
              editor_extra_font={}\n\
+             editor_half_width={}\n\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
@@ -488,6 +494,7 @@ impl Settings {
             self.editor_tab_step,
             self.editor_colors.lines(EDITOR_COLOR),
             self.editor_extra_font.as_deref().unwrap_or(""),
+            self.editor_half_width,
             self.file_hint_shown,
             self.keyboard_buttons,
             self.smilebasic_instruments,
@@ -544,6 +551,7 @@ mod tests {
             smilebasic_instruments: false,
             sound_font: Some("/fonts/a b.sf2".to_string()),
             editor_extra_font: Some("/fonts/hangul 16.bdf".to_string()),
+            editor_half_width: true,
             editor_tab_step: 2,
             language: Language::Japanese,
             localized_errors: true,

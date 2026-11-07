@@ -20,6 +20,7 @@ pub mod font;
 pub mod framebuffer;
 pub mod graphics;
 mod grp;
+pub mod half_width;
 pub mod help;
 pub mod hint;
 pub mod image;

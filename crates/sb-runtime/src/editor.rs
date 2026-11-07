@@ -14,6 +14,7 @@ use crate::complete::{self, Completion, Item, Library, Options};
 use crate::extra_glyphs::{ExtraGlyphs, Glyph};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
+use crate::half_width::is_half_width;
 use crate::hint;
 use crate::palette::{Palette, Part};
 use crate::runtime::{SLOTS, keys};
@@ -144,6 +145,9 @@ pub struct Look<'a> {
     pub colors: &'a Palette,
     /// Glyphs for the characters `font` lacks.
     pub extra: &'a ExtraGlyphs,
+    /// Half-width characters are drawn half a cell wide. Each character
+    /// still takes one column.
+    pub half_width: bool,
 }
 
 /// Where the editor's character cells are on its frame: `cell` pixels
@@ -172,16 +176,105 @@ impl Grid {
         }
     }
 
-    /// Draws an 8x8 one-bit glyph over a cell, scaled to fill it.
+    /// Fills `w` pixels of a row from pixel `x`.
+    fn fill_px(self, fb: &mut Framebuffer, row: usize, x: usize, w: usize, color: u32) {
+        let (cell, top) = (self.cell, self.top);
+        for py in top + row * cell..top + (row + 1) * cell {
+            for px in x..x + w {
+                fb.set(px as u32, py as u32, color);
+            }
+        }
+    }
+
+    /// Draws an 8x8 one-bit glyph over a cell from pixel `x` of row `y`,
+    /// scaled to fill it.
     fn glyph(self, fb: &mut Framebuffer, x: usize, y: usize, glyph: &[u8; 8], color: u32) {
         let scale = self.cell / 8;
         for py in 0..self.cell {
             for px in 0..self.cell {
                 if glyph[py / scale] & (0x80 >> (px / scale)) != 0 {
-                    let (fx, fy) = (x * self.cell + px, self.top + y * self.cell + py);
+                    let (fx, fy) = (x + px, self.top + y * self.cell + py);
                     fb.set(fx as u32, fy as u32, color);
                 }
             }
+        }
+    }
+}
+
+/// How wide the editor draws `line[col]` with half-width characters at
+/// half a cell: columns past the end are as wide as a space.
+#[inline]
+fn half_cell_width(line: &[u16], col: usize, cell: usize) -> usize {
+    match line.get(col) {
+        Some(&c) if !is_half_width(c) => cell,
+        _ => cell / 2,
+    }
+}
+
+/// Pixels from the left of a row that starts at column `start` of `line`
+/// to column `col`, with half-width characters at half a cell.
+fn half_x(line: &[u16], start: usize, col: usize, cell: usize) -> usize {
+    (start..col).map(|c| half_cell_width(line, c, cell)).sum()
+}
+
+/// The column of `line` drawn under pixel `x` of a row that starts at
+/// column `start`, with half-width characters at half a cell.
+fn half_col_at(line: &[u16], start: usize, x: i32, cell: usize) -> usize {
+    let mut left = 0;
+    let mut col = start;
+    loop {
+        let w = half_cell_width(line, col, cell) as i32;
+        if x < left + w {
+            return col;
+        }
+        left += w;
+        col += 1;
+    }
+}
+
+/// What the editor draws over its screen when half-width characters are
+/// half a cell wide: those characters are not on the screen's grid.
+#[derive(Clone, Copy, Debug)]
+enum Over {
+    /// A half-width glyph.
+    Half(u16),
+    /// The font's glyph.
+    Font(u16),
+    Extra(Glyph),
+}
+
+/// Draws the font's glyph for `code` in `color` with its top left at
+/// `(x, y)`, as a text screen colors it.
+fn draw_font_glyph(
+    fb: &mut Framebuffer,
+    font: &Font,
+    code: u16,
+    size: FontSize,
+    at: (u32, u32),
+    color: u32,
+) {
+    font.each_pixel(code, size, |px, py, p| {
+        let a = p >> 24;
+        let mul = |shift: u32| ((p >> shift & 0xFF) * (color >> shift & 0xFF) / 255) << shift;
+        let tinted = mul(16) | mul(8) | mul(0);
+        if let Some(under) = fb.get(at.0 + px, at.1 + py) {
+            fb.set(at.0 + px, at.1 + py, blend(under, tinted, a + (a >> 7)));
+        }
+    });
+}
+
+/// Draws a half-width glyph, `cell / 2` by `cell` alpha bytes, in
+/// `color` with its top left at `(x, y)`.
+fn draw_half_glyph(fb: &mut Framebuffer, alpha: &[u8], cell: u32, at: (u32, u32), color: u32) {
+    let w = cell / 2;
+    for (i, &a) in alpha.iter().enumerate() {
+        if a == 0 {
+            continue;
+        }
+        let (px, py) = (at.0 + i as u32 % w, at.1 + i as u32 / w);
+        if let Some(under) = fb.get(px, py) {
+            let a = u32::from(a);
+            fb.set(px, py, blend(under, color, a + (a >> 7)));
         }
     }
 }
@@ -386,6 +479,11 @@ pub struct Editor {
     /// Characters drawn from [`ExtraGlyphs`] over the screen, by column
     /// and row, kept to save allocating each frame.
     extra_cells: Vec<(usize, usize, Glyph, u32)>,
+    /// With half-width characters at half a cell: what is drawn over the
+    /// screen, by pixel x and row, kept to save allocating each frame.
+    over: Vec<(usize, usize, Over, u32)>,
+    /// The last frame drew half-width characters at half a cell.
+    half: bool,
     /// How edits since they were last taken moved the lines, by slot.
     shifts: Vec<(usize, LineShift)>,
     /// Breakpoints and the stopped line, which the machine sets.
@@ -526,6 +624,8 @@ impl Editor {
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
             extra_cells: Vec::new(),
+            over: Vec::new(),
+            half: false,
             shifts: Vec::new(),
             marks: Marks::default(),
             center: false,
@@ -1468,15 +1568,25 @@ impl Editor {
         let col = (col - self.gutter() as i32).max(0) as usize;
         // Wrapped lines start every row at column 0, where `left` is 0.
         let left = self.view.left;
+        // The column under `x` on a row that starts at `start` of `line`.
+        let col_in = |line: usize, start: usize| match self.half {
+            false => start + col,
+            true => {
+                let text = self.lines.get(line).map_or(&[][..], Vec::as_slice);
+                let x = (x - (self.gutter() * self.grid.cell) as i32).max(0);
+                half_col_at(text, start, x, self.grid.cell)
+            }
+        };
         Some(if row < 0 {
-            (first.0.saturating_sub(1), left + col)
+            let line = first.0.saturating_sub(1);
+            (line, col_in(line, left))
         } else if let Some(&(line, start)) = self.layout.get(row as usize) {
-            (line, start + col)
+            (line, col_in(line, start))
         } else if self.layout.len() < self.size().1 {
             // Below the program's end.
             (last.0, usize::MAX)
         } else {
-            (last.0 + 1, left + col)
+            (last.0 + 1, col_in(last.0 + 1, left))
         })
     }
 
@@ -1753,6 +1863,10 @@ impl Editor {
         let selection = self.selection();
         self.layout.clear();
         self.extra_cells.clear();
+        self.over.clear();
+        let half = look.half_width;
+        self.half = half;
+        let cell = grid.cell;
         let (status_text, ruler_text) = self.prompt();
         let note = self.note.clone().or_else(|| self.mode_note());
         fb.clear(colors[Part::Background]);
@@ -1819,6 +1933,49 @@ impl Editor {
                 }
                 let start = if wrap { chunk * cols } else { v.left };
                 self.layout.push((line, start));
+                if half {
+                    // Columns start where the characters before them end.
+                    let mut px = gutter * cell;
+                    for x in 0..cols {
+                        let col = start + x;
+                        let w = half_cell_width(text, col, cell);
+                        if hits.iter().any(|&h| h <= col && col < h + self.find.len()) {
+                            grid.fill_px(fb, row, px, w, colors[Part::Search]);
+                        }
+                        let at = (line, col);
+                        if selection.is_some_and(|(a, b)| a <= at && at < b) && col <= text.len() {
+                            grid.fill_px(fb, row, px, w, colors[Part::Selection]);
+                        }
+                        let Some(&c) = text.get(col) else {
+                            if col == text.len() {
+                                marks.push((px, row));
+                            }
+                            break;
+                        };
+                        let color = colors[Part::from(roles[col])];
+                        let over = if is_half_width(c) {
+                            Some(Over::Half(c))
+                        } else if font.has_glyph(c) {
+                            Some(Over::Font(c))
+                        } else {
+                            match extra_glyph(text, col, look) {
+                                Extra::Draw(glyph) => Some(Over::Extra(glyph)),
+                                Extra::Blank => None,
+                                Extra::None => Some(Over::Font(c)),
+                            }
+                        };
+                        if let Some(over) = over {
+                            self.over.push((px, row, over, color));
+                        }
+                        px += w;
+                    }
+                    if current && v.col >= start && v.col - start < cols {
+                        let x = gutter * cell + half_x(text, start, v.col, cell);
+                        cursor = Some((x, row));
+                    }
+                    row += 1;
+                    continue;
+                }
                 for x in 0..cols {
                     let at = (line, start + x);
                     let col = start + x;
@@ -1846,14 +2003,14 @@ impl Editor {
                         }
                         None => {
                             if start + x == text.len() {
-                                marks.push((gutter + x, row));
+                                marks.push(((gutter + x) * cell, row));
                             }
                             break;
                         }
                     }
                 }
                 if current && v.col >= start && v.col - start < cols {
-                    cursor = Some((gutter + v.col - start, row));
+                    cursor = Some(((gutter + v.col - start) * cell, row));
                 }
                 row += 1;
             }
@@ -1873,8 +2030,44 @@ impl Editor {
         grid.fill(fb, ruler, 0, width, BAR);
         let first = if wrap { 0 } else { v.left };
         let cursor_col = if wrap { v.col % cols } else { v.col };
+        if half && ruler_text.is_none() {
+            // The columns sit over the cursor's row, as wide as its
+            // characters.
+            let line = &self.lines[v.line];
+            let row_start = if wrap { v.col - cursor_col } else { v.left };
+            let left = gutter * cell;
+            let cursor_x = left + half_x(line, row_start, v.col, cell);
+            let mut px = left;
+            for x in 0..cols {
+                let col = first + x;
+                let w = half_cell_width(line, row_start + x, cell);
+                let digit = Over::Half(u16::from(b'0' + (col % 10) as u8));
+                // A digit in the middle of its column.
+                let digit_x = px + (w - cell / 2) / 2;
+                let color = if col.is_multiple_of(10) { TEXT } else { DIM };
+                if tiles {
+                    // A tile is a cell wide, so it may cover the next
+                    // column; the cursor's comes first.
+                    let clear = px + cell <= cursor_x || px >= cursor_x + cell;
+                    if col == cursor_col {
+                        self.over
+                            .push((px, ruler, Over::Font(ruler_tile(col)), TEXT));
+                    } else if col.is_multiple_of(2) && clear {
+                        self.over
+                            .push((px, ruler, Over::Font(ruler_tile(col)), BAR));
+                        ruler_digits.push((px, color));
+                    }
+                } else if col == cursor_col {
+                    grid.fill_px(fb, ruler, px, w, TEXT);
+                    self.over.push((digit_x, ruler, digit, BLACK));
+                } else if col.is_multiple_of(2) {
+                    self.over.push((digit_x, ruler, digit, color));
+                }
+                px += w;
+            }
+        }
         for x in 0..cols {
-            if ruler_text.is_some() {
+            if ruler_text.is_some() || half {
                 break;
             }
             let col = first + x;
@@ -1886,7 +2079,7 @@ impl Editor {
                 } else if col.is_multiple_of(2) {
                     let color = if col.is_multiple_of(10) { TEXT } else { DIM };
                     screen.put_at(at, ruler as u32, ruler_tile(col), BAR);
-                    ruler_digits.push((gutter + x, color));
+                    ruler_digits.push(((gutter + x) * cell, color));
                 }
             } else if col == cursor_col {
                 grid.fill(fb, ruler, gutter + x, 1, TEXT);
@@ -1925,15 +2118,27 @@ impl Editor {
         }
 
         screen.draw(fb, font);
-        let cell = grid.cell;
         for &(x, y, glyph, color) in &self.extra_cells {
             let at = ((x * cell) as u32, (grid.top + y * cell) as u32);
             look.extra.draw(fb, glyph, at, color);
         }
+        let halves = font.half_glyphs();
+        for &(x, y, over, color) in &self.over {
+            let at = (x as u32, (grid.top + y * cell) as u32);
+            match over {
+                Over::Half(c) => {
+                    if let Some(alpha) = halves.get(c, look.font) {
+                        draw_half_glyph(fb, alpha, cell as u32, at, color);
+                    }
+                }
+                Over::Font(c) => draw_font_glyph(fb, font, c, look.font, at, color),
+                Over::Extra(glyph) => look.extra.draw(fb, glyph, at, color),
+            }
+        }
         for (x, color) in ruler_digits {
             let y0 = grid.top + ruler * cell;
             for py in y0..y0 + cell {
-                for px in x * cell..(x + 1) * cell {
+                for px in x..x + cell {
                     let (px, py) = (px as u32, py as u32);
                     if fb.get(px, py).is_some_and(|c| c != BAR) {
                         fb.set(px, py, color);
@@ -1977,17 +2182,25 @@ impl Editor {
                 hint.draw(fb, font, left, (top, top + cell as i64), cell as u32);
             }
             if let Some(list) = &self.completion {
-                let x = x.saturating_sub(v.col - list.start.min(v.col)) as i64;
-                let at = (x * cell as i64, top + cell as i64);
+                let start = list.start.min(v.col);
+                let back = match half {
+                    true => half_x(&self.lines[v.line], start, v.col, cell),
+                    false => (v.col - start) * cell,
+                };
+                let at = (x.saturating_sub(back) as i64, top + cell as i64);
                 list.draw(fb, font, at, top, cell as u32, colors);
             }
         }
         if let (Some((x, y)), true) = (cursor, blink) {
             // A bar for inserting, a block for overwriting.
-            let w = if self.overwrite { cell } else { cell / 4 };
+            let w = match (self.overwrite, half) {
+                (false, _) => cell / 4,
+                (true, false) => cell,
+                (true, true) => half_cell_width(&self.lines[v.line], v.col, cell),
+            };
             for py in 0..cell {
                 for px in 0..w {
-                    let (fx, fy) = (x * cell + px, grid.top + y * cell + py);
+                    let (fx, fy) = (x + px, grid.top + y * cell + py);
                     fb.set(fx as u32, fy as u32, colors[Part::Character]);
                 }
             }
@@ -2186,6 +2399,7 @@ mod tests {
             font: FontSize::Small,
             colors: &SMILEBASIC,
             extra: extra(),
+            half_width: false,
         }
     }
 
@@ -2787,6 +3001,110 @@ mod tests {
         e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
         e.mouse_down(330, 8 + 4, false);
         assert_eq!(e.cursor(), (48, 7), "the top line shown, at its end");
+    }
+
+    fn half(e: &mut Editor, fb: &mut Framebuffer) {
+        let look = Look {
+            half_width: true,
+            ..look(true)
+        };
+        e.draw(fb, &Font::blank(), "GAME", look, true);
+    }
+
+    #[test]
+    fn half_width_clicks_land_on_the_character_drawn() {
+        // At 8 pixels, after the 4 columns of number tiles: A from 32,
+        // 가 from 36, B from 44, 漢 from 48, C from 56, the end at 60.
+        let mut e = editor("A가B漢C\nXYZ");
+        let mut fb = Framebuffer::new(400, 240);
+        half(&mut e, &mut fb);
+        for (x, col) in [
+            (32, 0),
+            (35, 0),
+            (36, 1),
+            (43, 1),
+            (44, 2),
+            (50, 3),
+            (56, 4),
+            (60, 5),
+            (90, 5),
+        ] {
+            e.mouse_down(x, 8 + 4, false);
+            assert_eq!(e.pos(), (0, col), "pixel {x}");
+        }
+        // Dragging selects by the same columns: from B to C, B and 漢.
+        e.mouse_down(45, 12, false);
+        e.mouse_drag(57, 12);
+        assert_eq!(e.copy().as_deref(), Some("B漢"));
+        half(&mut e, &mut fb);
+        let selection = SMILEBASIC[Part::Selection];
+        assert_eq!(fb.get(44, 8 + 7), Some(selection));
+        assert_eq!(fb.get(55, 8 + 7), Some(selection));
+        assert_ne!(fb.get(43, 8 + 7), Some(selection));
+        assert_ne!(fb.get(56, 8 + 7), Some(selection));
+        // The second line is all ASCII: column 2 starts 8 pixels in.
+        e.mouse_down(32 + 8, 16 + 4, false);
+        assert_eq!(e.pos(), (1, 2));
+        // Off, every character takes a whole cell again.
+        e.draw(&mut fb, &Font::blank(), "GAME", look(true), true);
+        e.mouse_down(36, 8 + 4, false);
+        assert_eq!(e.pos(), (0, 0));
+        e.mouse_down(48, 8 + 4, false);
+        assert_eq!(e.pos(), (0, 2));
+    }
+
+    #[test]
+    fn half_width_keeps_columns_and_moves_the_cursor_bar() {
+        let mut e = editor("A가B漢C");
+        let mut fb = Framebuffer::new(400, 240);
+        for _ in 0..3 {
+            e.key(keys::RIGHT);
+        }
+        // One column per character, as the status and HELPINFO count.
+        assert_eq!(e.pos(), (0, 3));
+        half(&mut e, &mut fb);
+        let bar = SMILEBASIC[Part::Character];
+        // The bar sits at the left of 漢, at 48, which the blank font
+        // draws as nothing, not at column 3's cell.
+        assert!((8..16).all(|y| fb.get(48, y) == Some(bar)));
+        assert!((8..16).all(|y| fb.get(50, y) != Some(bar)));
+        assert_eq!(e.pos(), (0, 3));
+        // Typing goes in at that column.
+        typing(&mut e, "x");
+        assert_eq!(e.text(), "A가Bx漢C");
+        // Wrapping still breaks lines by character count.
+        let long = "가".repeat(30) + &"a".repeat(30);
+        let mut e = editor(&long);
+        let wrapped = Look {
+            wrap: true,
+            half_width: true,
+            ..look(true)
+        };
+        e.draw(&mut fb, &Font::blank(), "GAME", wrapped, true);
+        let cols = e.size().0;
+        let starts: Vec<usize> = e.layout.iter().map(|&(_, start)| start).collect();
+        assert_eq!(starts, [0, cols]);
+    }
+
+    #[test]
+    fn half_width_draws_ascii_in_half_cells() {
+        // A page font whose glyphs are all full squares.
+        let mut font = Font::blank();
+        font.page_mut().fill(0xFFFF_FFFF);
+        let mut e = editor("AB가");
+        let mut fb = Framebuffer::new(400, 240);
+        let look = Look {
+            half_width: true,
+            font: FontSize::Large,
+            ..look(true)
+        };
+        e.draw(&mut fb, &font, "GAME", look, false);
+        let row = e.grid.top as u32 + 3;
+        let back = fb.get(390, row);
+        let inked: Vec<bool> = (64..112).map(|x| fb.get(x, row) != back).collect();
+        // A and B squeezed to 8 pixels each, 가 16, then nothing.
+        assert!(inked[..32].iter().all(|&i| i), "{inked:?}");
+        assert!(!inked[32], "the line ends after 32 pixels: {inked:?}");
     }
 
     #[test]

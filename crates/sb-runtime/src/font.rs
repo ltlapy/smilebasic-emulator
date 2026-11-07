@@ -20,6 +20,7 @@ use std::sync::{Mutex, OnceLock};
 use ab_glyph::{Font as _, FontRef, PxScale, point};
 
 use crate::graphics::Graphics;
+use crate::half_width::HalfGlyphs;
 use crate::sbfile::{self, DataValues, FileError};
 
 /// Width and height of the font page in pixels.
@@ -37,11 +38,12 @@ pub enum FontSize {
 #[derive(Clone)]
 pub struct Font(Source, Pages);
 
-/// The font page on GRP5 of pages otherwise blank, for text drawn with
-/// the font alone, as the editor's: made the first time it is wanted and
-/// kept, as copying the page for every frame took longer than drawing.
+/// What is made from the font the first time it is wanted and kept: the
+/// font page on GRP5 of pages otherwise blank, for text drawn with the
+/// font alone, as the editor's (copying the page for every frame took
+/// longer than drawing), and the half-width glyphs.
 #[derive(Clone, Default)]
-struct Pages(OnceCell<Rc<Graphics>>);
+struct Pages(OnceCell<Rc<Graphics>>, OnceCell<Rc<HalfGlyphs>>);
 
 #[derive(Clone)]
 enum Source {
@@ -274,6 +276,12 @@ impl Font {
         })
     }
 
+    /// Half-width glyphs that go with this font, for text that is not the
+    /// programs'.
+    pub fn half_glyphs(&self) -> &HalfGlyphs {
+        self.1.1.get_or_init(|| Rc::new(HalfGlyphs::new(self)))
+    }
+
     /// The font page as SmileBASIC 4 keeps it in GRP5.
     pub fn page_image(&self) -> Vec<u32> {
         match &self.0 {
@@ -406,6 +414,35 @@ impl Font {
                 }
                 let set = cells[usize::from(i)][y as usize] & (0x80 >> x) != 0;
                 if set { 0xFFFF_FFFF } else { 0 }
+            }
+        }
+    }
+
+    /// Calls `f` with each pixel of a code's glyph that is not fully
+    /// transparent, as `(x, y, 0xAARRGGBB)`. Faster than asking
+    /// [`Font::pixel`] for each.
+    pub fn each_pixel(&self, code: u16, size: FontSize, mut f: impl FnMut(u32, u32, u32)) {
+        let n = size as u32;
+        match (&self.0, self.origin(code, size)) {
+            (Source::Page { page, .. }, Some((gx, gy))) => {
+                for y in 0..n {
+                    let row = ((gy + y) * PAGE_SIZE + gx) as usize;
+                    for (x, &p) in page[row..row + n as usize].iter().enumerate() {
+                        if p >> 24 != 0 {
+                            f(x as u32, y, p);
+                        }
+                    }
+                }
+            }
+            _ => {
+                for y in 0..n {
+                    for x in 0..n {
+                        let p = self.pixel(code, size, x, y);
+                        if p >> 24 != 0 {
+                            f(x, y, p);
+                        }
+                    }
+                }
             }
         }
     }

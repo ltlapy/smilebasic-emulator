@@ -1937,6 +1937,7 @@ impl Runtime {
         let s = &self.settings;
         (self.editor_fb.width(), self.editor_fb.height()).hash(&mut state);
         (s.editor_wrap, s.editor_number_tiles, s.editor_map).hash(&mut state);
+        s.editor_half_width.hash(&mut state);
         (s.editor_font, &s.editor_colors, self.dimmed).hash(&mut state);
         (active, split, panel, blink).hash(&mut state);
         if split.is_some() {
@@ -1985,6 +1986,7 @@ impl Runtime {
             font: s.editor_font,
             colors: &s.editor_colors,
             extra: &self.extra_glyphs,
+            half_width: s.editor_half_width,
         };
         let name = |editor: &Editor| {
             let slot = editor.slot();
