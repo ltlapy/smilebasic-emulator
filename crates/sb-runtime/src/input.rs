@@ -40,8 +40,9 @@ const REPEAT_OTHERS: (u32, u32) = (15, 4);
 const PAD_KEY_STICK: f64 = 0.3;
 /// A held button's key repeats after this many frames, then every so many.
 const PAD_KEY_REPEAT: (u32, u32) = (20, 3);
-/// A keyboard key held while a program runs types again this many frames
-/// after the press, then every so many.
+/// A keyboard key held for a program, the prompt or the editor types again
+/// this many frames after the press, then every so many.
+// UNVERIFIED: that the prompt and the editor repeat as INKEY$ does.
 const KEY_REPEAT: (u32, u32) = (19, 3);
 /// Shift, Ctrl, Alt and the Windows keys' USB usage IDs.
 const MODIFIER_KEYS: std::ops::RangeInclusive<u8> = 0xE0..=0xE7;
@@ -49,6 +50,11 @@ const MODIFIER_KEYS: std::ops::RangeInclusive<u8> = 0xE0..=0xE7;
 const PAD_KEY_CTRL: u32 = 0b11 << 8;
 /// The keyboard's Ctrl among [`State::modifiers`].
 const MODIFIER_CTRL: u32 = 1 << 2;
+
+/// Whether the key with this USB usage ID is down among `keys`, one bit each.
+fn key_held(keys: &[u64; 4], usage: u8) -> bool {
+    keys[usize::from(usage / 64)] >> (usage % 64) & 1 != 0
+}
 
 /// What a row of [`PAD_KEYS`] looks at.
 #[derive(Clone, Copy)]
@@ -108,6 +114,8 @@ struct KeyRepeat {
     codes: Vec<u16>,
     /// Frames since it went down.
     frames: u32,
+    /// Whether it types into the editor, as known from its first frame.
+    editor: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -177,7 +185,7 @@ impl State {
     }
 
     pub(crate) fn key(&self, usage: u8) -> bool {
-        self.keys[usize::from(usage / 64)] >> (usage % 64) & 1 != 0
+        key_held(&self.keys, usage)
     }
 
     /// A controller's buttons; controller 0 has those of all of them.
@@ -249,8 +257,12 @@ pub struct Input {
     pub function_keys: [Vec<u16>; 5],
     /// The key the controllers are holding down.
     pad_key_repeat: PadKeyRepeat,
-    /// The keyboard key whose typing repeats for the running program.
+    /// The keyboard key whose typing repeats.
     key_repeat: KeyRepeat,
+    /// Keyboard keys held while the editor has the keys, by USB usage ID
+    /// as [`State::keys`]. [`Input::live`] has none of them then, as
+    /// programs see nothing, but a key held in the editor repeats too.
+    pub editor_keys: [u64; 4],
     /// BUTTON or STICK has been called; see [`Input::take_buttons_read`].
     buttons_read: bool,
     /// What the program has read of the keyboard; see
@@ -304,6 +316,7 @@ impl Default for Input {
             function_keys: Default::default(),
             pad_key_repeat: PadKeyRepeat::default(),
             key_repeat: KeyRepeat::default(),
+            editor_keys: [0; 4],
             buttons_read: false,
             keys_read: KeysRead::default(),
             polled: false,
@@ -360,10 +373,10 @@ impl Input {
         self.key_repeat = KeyRepeat::default();
     }
 
-    /// A keyboard key went down for the running program: what
-    /// [`Runtime::type_held`] types for it next repeats while it stays
-    /// down, counted in the program's frames rather than by the computer's
-    /// own key repeat, and the key held before stops repeating.
+    /// A keyboard key went down: what [`Runtime::type_held`] types for it
+    /// next, for a program, the prompt or the editor, repeats while it
+    /// stays down, counted in the machine's frames rather than by the
+    /// computer's own key repeat, and the key held before stops repeating.
     pub fn key_down(&mut self, usage: u8) {
         // UNVERIFIED: that a modifier going down leaves the held key
         // repeating, and that any other key stops it.
@@ -373,6 +386,11 @@ impl Input {
                 ..KeyRepeat::default()
             };
         }
+    }
+
+    /// The held keyboard key types nothing more.
+    pub(crate) fn stop_key_repeat(&mut self) {
+        self.key_repeat = KeyRepeat::default();
     }
 
     /// What the held keyboard key types again this frame, once a frame:
@@ -580,17 +598,25 @@ impl Runtime {
     }
 
     /// Types again what the held keyboard key typed, once a frame before
-    /// the frame's keys go to the program. `beside` is the other
-    /// interpreter's input, which has the keys while it has the focus.
-    pub(crate) fn repeat_held_key(&mut self, beside: Option<&State>) {
-        let usage = self.input.key_repeat.usage;
+    /// the frame's keys go to the program, the prompt or the editor.
+    /// `beside` is the other interpreter's input, which has the keys while
+    /// it has the focus; `editor`: the editor has the keys.
+    pub(crate) fn repeat_held_key(&mut self, beside: Option<&State>, editor: bool) {
+        let r = &mut self.input.key_repeat;
+        let usage = r.usage;
         if usage == 0 {
             return;
         }
+        // The key types only where it went down: the editor taking the
+        // keys or giving them up stops it.
+        let same_place = *r.editor.get_or_insert(editor) == editor;
+        let down = if editor {
+            key_held(&self.input.editor_keys, usage)
+        } else {
+            self.input.live.key(usage) || beside.is_some_and(|s| s.key(usage))
+        };
         // A DIALOG takes no repeats, and the key stops repeating.
-        let held = (self.input.live.key(usage) || beside.is_some_and(|s| s.key(usage)))
-            && self.dialog.is_none()
-            && !self.dialog_beside;
+        let held = down && same_place && self.dialog.is_none() && !self.dialog_beside;
         // Empty, and so not allocated, but on the frames that repeat.
         let codes = self.input.repeated_key(held).to_vec();
         for code in codes {

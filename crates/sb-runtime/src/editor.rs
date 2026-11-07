@@ -21,6 +21,37 @@ use crate::runtime::{SLOTS, keys};
 use crate::syntax::{definition, highlight, is_ident_char};
 use crate::text::TextScreen;
 
+/// The cursor keys that Shift turns into selecting, as [`select_key`]
+/// gives their codes.
+const MOVEMENTS: [u16; 8] = [
+    keys::LEFT,
+    keys::RIGHT,
+    keys::UP,
+    keys::DOWN,
+    keys::HOME,
+    keys::END,
+    keys::PAGE_UP,
+    keys::PAGE_DOWN,
+];
+/// The code of Shift and the first of [`MOVEMENTS`], in the Private Use
+/// Area beside the codes of [`crate::line::commands`].
+const SELECT: u16 = 0xF8E0;
+/// The code of Shift+Tab, which takes the indent away.
+pub const UNINDENT: u16 = SELECT + MOVEMENTS.len() as u16;
+
+/// The code [`Editor::key`] takes for Shift and a cursor key, so that the
+/// frontend can type it with the other keys, which repeat in frames.
+pub fn select_key(movement: u16) -> Option<u16> {
+    let i = MOVEMENTS.iter().position(|&m| m == movement)?;
+    Some(SELECT + i as u16)
+}
+
+/// The cursor key that a [`select_key`] code moves with.
+fn selected_movement(code: u16) -> Option<u16> {
+    let i = code.checked_sub(SELECT)?;
+    MOVEMENTS.get(usize::from(i)).copied()
+}
+
 /// Six digits on three number tiles (U+E100-E16E) and a thin cap.
 const TILE_GUTTER: usize = 4;
 /// Rows below the code: the ruler and the status line.
@@ -1345,8 +1376,21 @@ impl Editor {
         }
     }
 
-    /// Edits with a typed character or one of the [`keys`] codes.
+    /// Edits with a typed character, one of the [`keys`] codes, a
+    /// [`select_key`] code or [`UNINDENT`].
     pub fn key(&mut self, code: u16) {
+        if let Some(movement) = selected_movement(code) {
+            self.key_select(movement);
+            return;
+        }
+        if code == UNINDENT {
+            match self.mode {
+                Mode::Edit => self.unindent(),
+                // The prompts take it as Tab.
+                _ => self.key(keys::TAB),
+            }
+            return;
+        }
         // Any key brings the cursor back into view.
         self.scrolled = false;
         if self.mode != Mode::Edit {
@@ -2763,6 +2807,28 @@ mod tests {
         e.key(keys::RIGHT);
         e.key(keys::BACKSPACE);
         assert_eq!(e.text(), "");
+    }
+
+    /// The codes the frontend types for Shift and a cursor key, and for
+    /// Shift+Tab, do what the calls do.
+    #[test]
+    fn shifted_keys_come_as_codes() {
+        let mut e = editor("ABC\nDEF\nGHI");
+        e.key(keys::RIGHT);
+        for movement in [keys::DOWN, keys::RIGHT] {
+            e.key(select_key(movement).expect("a movement"));
+        }
+        assert_eq!(e.copy().as_deref(), Some("BC\nDE"));
+        assert_eq!(select_key(keys::TAB), None);
+        let mut e = editor("  A");
+        e.tab_step = 2;
+        e.key(UNINDENT);
+        assert_eq!(e.text(), "A");
+        // Finding takes it as Tab, which goes on to replacing.
+        e.start_find(false);
+        e.key(UNINDENT);
+        assert_eq!(e.mode(), Mode::Replace);
+        assert_eq!(e.text(), "A");
     }
 
     #[test]

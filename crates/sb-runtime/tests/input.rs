@@ -561,3 +561,149 @@ fn a_program_that_ends_leaves_no_repeat() {
     // Direct mode's line has nothing typed into it.
     assert!(screen(&m) == ended);
 }
+
+const BACKSPACE_KEY: u8 = 42;
+const ENTER_KEY: u8 = 40;
+
+/// Frames, counted from the first, on which the editor's text changed;
+/// `at` sets up the keyboard before each frame.
+fn editor_changes(
+    m: &mut sb_runtime::machine::Machine,
+    frames: usize,
+    mut at: impl FnMut(usize, &mut Runtime),
+) -> Vec<usize> {
+    let mut text = m.editor().text();
+    let mut changed = Vec::new();
+    for i in 0..frames {
+        at(i, &mut m.rt);
+        m.frame();
+        let now = m.editor().text();
+        if now != text {
+            changed.push(i);
+            text = now;
+        }
+    }
+    changed
+}
+
+fn editing() -> sb_runtime::machine::Machine {
+    use sb_runtime::machine::Machine;
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    m.toggle_editor();
+    m.frame();
+    m
+}
+
+/// The console's rows that have text.
+fn console_rows(m: &sb_runtime::machine::Machine) -> Vec<String> {
+    let console = &m.rt.text[4];
+    let (w, h) = console.size();
+    (0..h)
+        .map(|y| {
+            let codes: Vec<u16> = (0..w)
+                .map(|x| console.cell(x, y).code)
+                .take_while(|&c| c != 0)
+                .collect();
+            String::from_utf16(&codes).unwrap()
+        })
+        .filter(|r| !r.is_empty())
+        .collect()
+}
+
+/// A key held in the editor types as it does for a program: at the press,
+/// 19 frames later and then every 3, in the machine's frames, though
+/// programs see nothing held while the editor has the keys.
+#[test]
+fn a_key_held_in_the_editor_repeats_as_for_programs() {
+    let mut m = editing();
+    let changed = editor_changes(&mut m, 30, |i, rt| {
+        if i == 0 {
+            rt.input.key_down(A_KEY);
+            rt.type_held(u16::from(b'A'));
+        }
+        rt.input.editor_keys = if i < 26 {
+            holding(&[A_KEY]).keys
+        } else {
+            [0; 4]
+        };
+    });
+    assert_eq!(changed, [0, 19, 22, 25]);
+    assert_eq!(m.editor().text(), "AAAA");
+    // Let go, it types no more.
+    let changed = editor_changes(&mut m, 30, |_, _| {});
+    assert!(changed.is_empty());
+}
+
+/// Backspace and the other keys that edit repeat the same way.
+#[test]
+fn an_editing_key_held_in_the_editor_repeats_as_for_programs() {
+    use sb_runtime::runtime::keys;
+    let mut m = editing();
+    m.edit().paste("ABCDEFGH");
+    let changed = editor_changes(&mut m, 23, |i, rt| {
+        if i == 0 {
+            rt.input.key_down(BACKSPACE_KEY);
+            rt.type_held(keys::BACKSPACE);
+        }
+        rt.input.editor_keys = holding(&[BACKSPACE_KEY]).keys;
+    });
+    assert_eq!(changed, [0, 19, 22]);
+    assert_eq!(m.editor().text(), "ABCDE");
+}
+
+/// A key held in the editor stops repeating once the editor no longer has
+/// the keys, rather than typing into the prompt.
+#[test]
+fn a_key_held_in_the_editor_stops_when_it_closes() {
+    let mut m = editing();
+    m.rt.input.key_down(A_KEY);
+    m.rt.type_held(u16::from(b'A'));
+    m.rt.input.editor_keys = holding(&[A_KEY]).keys;
+    m.frame();
+    assert_eq!(m.editor().text(), "A");
+    m.toggle_editor();
+    m.rt.input.editor_keys = [0; 4];
+    m.rt.input.live = holding(&[A_KEY]);
+    for _ in 0..30 {
+        m.frame();
+    }
+    let rows = console_rows(&m);
+    assert!(!rows.iter().any(|r| r.contains('A')), "{rows:?}");
+}
+
+/// The prompt repeats a held key in frames too, and the Enter that runs a
+/// program does not repeat into it.
+#[test]
+fn a_key_held_at_the_prompt_repeats_but_not_into_the_program_it_runs() {
+    use sb_runtime::machine::Machine;
+    use sb_runtime::runtime::keys;
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    let source = "WHILE 1\nVSYNC\nK$=INKEY$()\nIF K$!=\"\" THEN ?ASC(K$)\nWEND\n";
+    m.set_slot(0, source.to_string());
+    m.frame();
+    m.rt.input.key_down(A_KEY);
+    m.rt.type_held(u16::from(b'A'));
+    m.rt.input.live = holding(&[A_KEY]);
+    for _ in 0..23 {
+        m.frame();
+    }
+    m.rt.input.live = State::default();
+    m.frame();
+    // At the press, and again 19 and 22 frames later.
+    assert_eq!(console_rows(&m).last().map(String::as_str), Some("AAA"));
+    for _ in 0..3 {
+        m.rt.key_press(keys::BACKSPACE);
+    }
+    m.type_text("RUN");
+    m.rt.input.key_down(ENTER_KEY);
+    m.rt.type_held(keys::ENTER);
+    m.rt.input.live = holding(&[ENTER_KEY]);
+    for _ in 0..40 {
+        m.frame();
+    }
+    assert!(m.is_running());
+    let rows = console_rows(&m);
+    assert!(!rows.iter().any(|r| r == "13"), "Enter repeated: {rows:?}");
+}
