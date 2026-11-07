@@ -199,7 +199,9 @@ pub struct Error {
     /// Column of the statement (or for syntax errors, the token) where it
     /// happened, in characters; 0 if unknown.
     pub col: u32,
-    /// Extra context for developers, e.g. which name was undefined.
+    /// Extra context for developers, e.g. which name was undefined. One in
+    /// brackets is SmileBASIC 4's own, the command and argument as in
+    /// `Overflow in 1:3(FILL:2)`, and shows right after the place.
     pub detail: Option<String>,
     /// The program slot it happened in; `None` in direct mode.
     pub slot: Option<u32>,
@@ -283,6 +285,19 @@ impl Error {
         self
     }
 
+    /// Names `command` in the message as SmileBASIC 4 does, `(FILL:2)`
+    /// with the argument from 1 when it is known, `(PUSH)` when not. An
+    /// error that already says more keeps its own detail.
+    pub fn of_command(mut self, command: &str) -> Self {
+        if self.detail.is_none() {
+            self.detail = Some(match self.arg {
+                Some(arg) => format!("({command}:{})", u32::from(arg) + 1),
+                None => format!("({command})"),
+            });
+        }
+        self
+    }
+
     pub fn at(mut self, line: u32) -> Self {
         if self.line == 0 {
             self.line = line;
@@ -326,8 +341,10 @@ impl fmt::Display for Error {
             }
             write!(f, "{}", self.line)?;
         }
-        if let Some(detail) = &self.detail {
-            write!(f, " ({detail})")?;
+        match &self.detail {
+            Some(detail) if detail.starts_with('(') => write!(f, "{detail}")?,
+            Some(detail) => write!(f, " ({detail})")?,
+            None => {}
         }
         Ok(())
     }

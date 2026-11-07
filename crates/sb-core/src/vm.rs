@@ -3359,12 +3359,26 @@ fn index(base: &Value, idx: &[i32]) -> Result<Value> {
 }
 
 /// An error from builtin `name`. Out of memory says which it was, as on
-/// hardware.
+/// hardware, and so do the builtins SmileBASIC 4 is seen to name.
 #[cold]
 fn builtin_error(e: Error, name: &str, args: &[Value]) -> Error {
     match e.kind {
         ErrorKind::OutOfMemory if e.detail.is_none() => Error::with_detail(e.kind, name),
-        _ => e.in_args(args),
+        ErrorKind::MemoryCheck => e.in_args(args),
+        _ => match name {
+            // UNVERIFIED: which other builtins SmileBASIC 4 names, and that
+            // these name every error, not only Overflow; the others keep
+            // the message as it was.
+            "FILL" | "PUSH" | "COPY" | "HEX$" | "CHR$" | "MID$" => e.in_args(args).of_command(name),
+            // LEFT$ names no argument, even its second, and ENVSTAT gives
+            // none.
+            "LEFT$" => {
+                let mut e = e.in_args(args);
+                e.arg = None;
+                e.of_command(name)
+            }
+            _ => e.in_args(args),
+        },
     }
 }
 

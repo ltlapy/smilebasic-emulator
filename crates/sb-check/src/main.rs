@@ -153,7 +153,11 @@ impl Outcome {
             let detail = e
                 .detail
                 .as_ref()
-                .map_or(String::new(), |d| format!(" ({d})"));
+                .map_or(String::new(), |d| match d.starts_with('(') {
+                    // SmileBASIC 4's own, such as (FILL:2).
+                    true => format!(" {d}"),
+                    false => format!(" ({d})"),
+                });
             eprintln!(
                 "{from}error {} at {}:{}: {}{detail}",
                 e.kind.code(),

@@ -778,3 +778,153 @@ fn bit_operators_saturate_reals() {
     check_all("X=3.9:A=1", "Y=A<<X", "8", 0);
     check_all("X=2147483648", "Y=TYPEOF(X AND -1)", "1", 0);
 }
+
+/// Infinity and NaN made at run time, as TEST66 made them.
+const INF_NAN: &str = "A=1E308:B=10:F=A*B:N=F-F:Z=-1:O=0:P=1:S=7";
+
+/// A NaN operand of a bit operator is 0, with no error, and an infinity
+/// saturates (TEST66).
+#[test]
+fn bit_operators_take_nan_as_zero() {
+    for (statement, printed) in [
+        ("Y=F AND Z", "2147483647"),
+        ("Y=-F OR O", "-2147483648"),
+        ("Y=NOT F", "-2147483648"),
+        ("Y=F>>P", "1073741823"),
+        ("Y=F<<+P", "-2"),
+        ("Y=P<<F", "-2147483648"),
+        ("Y=N AND Z", "0"),
+        ("Y=Z AND N", "0"),
+        ("Y=N OR O", "0"),
+        ("Y=N XOR O", "0"),
+        ("Y=NOT N", "-1"),
+        ("Y=N<<P", "0"),
+        ("Y=N>>>O", "0"),
+        ("Y=N>>+P", "0"),
+        ("Y=P<<N", "1"),
+        ("Y=N AND -1", "0"),
+        ("Y=N<<1", "0"),
+        ("Y=TYPEOF(N AND Z)", "1"),
+    ] {
+        check_all(INF_NAN, statement, printed, 0);
+    }
+    // The right operand saturates too.
+    check_all("P=1:X=2147483648", "Y=P<<X", "-2147483648", 0);
+    check_all("Z=-1:X=2147483648", "Y=Z AND X", "2147483647", 0);
+}
+
+/// A NaN stored into an int array is 0 (TEST66).
+#[test]
+fn int_array_stores_take_nan_as_zero() {
+    let setup = format!("{INF_NAN}:DIM M%[2],K%[2,2]:J=1");
+    check_all(&setup, "M%[0]=N:Y=M%[0]", "0", 0);
+    check_all(&setup, "M%[J]=N:Y=M%[J]", "0", 0);
+    check_all(&setup, "K%[J,J]=N:Y=K%[J,J]", "0", 0);
+    check_all(&setup, "M%[0]=F:Y=M%[0]", "", 9);
+}
+
+/// DIV and MOD check a real operand as an int array store does: outside
+/// -2147483648..2147483647 before truncation is Overflow, and a NaN is 0
+/// (TEST66).
+#[test]
+fn div_and_mod_check_the_real() {
+    for (setup, statement, printed, code) in [
+        ("X=2147483647.5:D=1", "Y=X DIV D", "", 9),
+        ("X=2147483647.5:D=1", "Y=X DIV 1", "", 9),
+        ("X=-2147483648.5:D=10", "Y=X MOD D", "", 9),
+        ("X=-2147483648.5:D=10", "Y=X MOD 10", "", 9),
+        ("X=2147483648:D=2", "Y=X DIV D", "", 9),
+        ("X=4294967296:D=7", "Y=X MOD D", "", 9),
+        ("X=-2147483649:D=1", "Y=X DIV D", "", 9),
+        ("X=7:D=2147483648", "Y=X DIV D", "", 9),
+        ("X=7:D=-2147483649", "Y=X MOD D", "", 9),
+        ("X=7.9:D=2.1", "Y=X DIV D", "3", 0),
+        ("X=-7.9:D=2", "Y=X MOD D", "-1", 0),
+        ("X=2147483647.0:D=2", "Y=X DIV D", "1073741823", 0),
+        ("X=-2147483648.0:D=10", "Y=X MOD D", "-8", 0),
+    ] {
+        check_all(setup, statement, printed, code);
+    }
+    check_all(INF_NAN, "Y=F DIV P", "", 9);
+    check_all(INF_NAN, "Y=N MOD S", "0", 0);
+    check_all(INF_NAN, "Y=TYPEOF(N MOD S)", "1", 0);
+}
+
+/// PUSH and UNSHIFT check a real as an int array store does (TEST66).
+#[test]
+fn push_checks_the_real() {
+    for (value, printed, code) in [
+        ("-3.9", "-3", 0),
+        ("2147483647.0", "2147483647", 0),
+        ("2147483647.5", "", 9),
+        ("-2147483648.5", "", 9),
+        ("2147483648", "", 9),
+    ] {
+        let setup = format!("DIM M%[0]:X={value}");
+        check_all(&setup, "PUSH M%,X:Y=M%[LAST(M%)]", printed, code);
+        check_all(&setup, "UNSHIFT M%,X:Y=M%[0]", printed, code);
+    }
+    check_all(&format!("{INF_NAN}:DIM M%[0]"), "PUSH M%,N:Y=M%[0]", "0", 0);
+}
+
+/// The error a program stops on, fused or not, which must be the same.
+fn error_of(source: &str) -> sb_core::error::Error {
+    let [fused, plain] = [true, false].map(|fused| {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(compiled(source, fused));
+        vm.run(&mut host, 1_000_000).unwrap_err()
+    });
+    assert_eq!(fused, plain, "{source}");
+    fused
+}
+
+/// The builtins SmileBASIC 4 is seen to name in an error, as it names them,
+/// and the argument ENVSTAT gives (TEST66). Operators name nothing.
+#[test]
+fn builtin_errors_name_the_command() {
+    for (source, message, arg) in [
+        (
+            "DIM M%[3]:X=2147483647.5\nFILL M%,X",
+            "Overflow in 2(FILL:2)",
+            Some(1),
+        ),
+        (
+            "DIM M%[0]:X=2147483647.5\nPUSH M%,X",
+            "Overflow in 2(PUSH)",
+            None,
+        ),
+        (
+            "DIM M%[0]:X=2147483648\nPUSH M%,X",
+            "Overflow in 2(PUSH)",
+            None,
+        ),
+        (
+            "DIM M%[2],R[2]:R[0]=2147483647.5\nCOPY M%,R",
+            "Overflow in 2(COPY)",
+            None,
+        ),
+        ("X=2147483648\nS$=HEX$(X)", "Overflow in 2(HEX$:1)", Some(0)),
+        (
+            "X=-2147483649\nS$=HEX$(X)",
+            "Overflow in 2(HEX$:1)",
+            Some(0),
+        ),
+        ("X=4294967361\nS$=CHR$(X)", "Overflow in 2(CHR$:1)", Some(0)),
+        (
+            "X=2147483648\nS$=MID$(\"ABC\",X,1)",
+            "Overflow in 2(MID$:2)",
+            Some(1),
+        ),
+        (
+            "X=2147483648\nS$=LEFT$(\"ABC\",X)",
+            "Overflow in 2(LEFT$)",
+            None,
+        ),
+        ("X=2147483647.5:D=1\nY=X DIV D", "Overflow in 2", None),
+        ("X=0:D=1\nY=D MOD X", "Divide by zero in 2", None),
+        ("DIM M%[1]:X=2147483648\nM%[0]=X", "Overflow in 2", None),
+    ] {
+        let e = error_of(source);
+        assert_eq!((e.to_string().as_str(), e.arg), (message, arg), "{source}");
+    }
+}

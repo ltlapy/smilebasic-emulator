@@ -29,8 +29,12 @@ fn arith(
     Ok(Value::Real(real(lhs.to_real()?, rhs.to_real()?)))
 }
 
+/// DIV and MOD: a real operand is checked as a store into an int array
+/// checks it, so 2147483647.5 overflows and a NaN is 0.
+// UNVERIFIED: a NaN in DIV, and a NaN divisor (0, so Divide by zero), as
+// in MOD.
 fn int_op(lhs: &Value, rhs: &Value, f: impl Fn(i32, i32) -> Result<i32>) -> Result<Value> {
-    Ok(Value::Int(f(lhs.to_int()?, rhs.to_int()?)?))
+    Ok(Value::Int(f(lhs.to_stored_int()?, rhs.to_stored_int()?)?))
 }
 
 /// A bit operator: a real outside the 32-bit range saturates instead of

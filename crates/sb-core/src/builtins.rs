@@ -980,7 +980,7 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
             };
             match &mut a.data {
                 ArrayData::Int(v) => {
-                    let n = value.to_int()?;
+                    let n = value.to_stored_int()?;
                     room_for_one(v.len(), 4, ElemType::Int)?;
                     v.insert(at, n);
                 }
@@ -1113,7 +1113,7 @@ fn fill(args: &[Value]) -> Result<()> {
     }
     let end = start.saturating_add(count).min(a.len());
     for i in start..end {
-        a.set(i, args[1].clone())?;
+        a.set(i, args[1].clone()).map_err(|e| e.of_arg(1))?;
     }
     Ok(())
 }
