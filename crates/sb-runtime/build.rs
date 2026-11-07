@@ -6,17 +6,19 @@
 //! - `$OUT_DIR/fallback_symbols.bin`, from `fonts/symbols.txt`: one 66-byte
 //!   record per character: u16 code, then 64 palette indices in rows (see
 //!   `SYMBOL_PALETTE` in `src/font.rs`).
-//! - `$OUT_DIR/extra_galmuri16.bin` and `extra_emoji{8,16}.bin`, the
+//! - `$OUT_DIR/extra_galmuri16.bin`, `extra_misaki8.bin`,
+//!   `extra_fusion8.bin`, `extra_sc16.bin` and `extra_emoji{8,16}.bin`, the
 //!   editor's extra glyphs (see `src/extra_glyphs.rs`), from
-//!   `fonts/galmuri/Galmuri14.bdf` and
-//!   `fonts/notoemoji/SBEmulatorEmoji.ttf`, and `extra_half16.bin`,
+//!   `fonts/galmuri/Galmuri14.bdf`, `fonts/misaki`, `fonts/fusionpixel`,
+//!   `fonts/notosanssc` and `fonts/notoemoji/SBEmulatorEmoji.ttf`, and
+//!   `extra_half16.bin`,
 //!   Galmuri14's half-width glyphs in the left half of 16x16 cells (see
 //!   `src/half_width.rs`): tables compressed with deflate, laid out as
 //!   `extra_glyphs::Table` reads them.
 //! - `$OUT_DIR/dot_font.bin`, `fonts/neodgm/SBEmulatorDot.ttf` compressed
 //!   with deflate (see `src/half_width.rs`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 // The runtime uses parts of it the build does not.
@@ -29,6 +31,10 @@ const OVERRIDES: &str = "fonts/galmuri/overrides.txt";
 const SYMBOLS: &str = "fonts/symbols.txt";
 const GALMURI14: &str = "fonts/galmuri/Galmuri14.bdf";
 const EMOJI: &str = "fonts/notoemoji/SBEmulatorEmoji.ttf";
+const MISAKI: &str = "fonts/misaki/misaki_gothic_2nd.bdf";
+const FUSION: &str = "fonts/fusionpixel/fusion-pixel-8px-monospaced-zh_hans.bdf";
+const NOTO_SC: &str = "fonts/notosanssc/SBEmulatorSC-Bold.otf";
+const MPLUS: &str = "fonts/mplus/SBEmulator1p-Bold.ttf";
 const DOT: &str = "fonts/neodgm/SBEmulatorDot.ttf";
 /// Pixel characters of `symbols.txt`, in palette order.
 const SYMBOL_CHARS: &str = ".#kgb";
@@ -160,6 +166,10 @@ fn main() {
     println!("cargo::rerun-if-changed={SYMBOLS}");
     println!("cargo::rerun-if-changed={GALMURI14}");
     println!("cargo::rerun-if-changed={EMOJI}");
+    println!("cargo::rerun-if-changed={MISAKI}");
+    println!("cargo::rerun-if-changed={FUSION}");
+    println!("cargo::rerun-if-changed={NOTO_SC}");
+    println!("cargo::rerun-if-changed={MPLUS}");
     println!("cargo::rerun-if-changed={DOT}");
     println!("cargo::rerun-if-changed=src/cell_glyph.rs");
     let read = |path| std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -180,6 +190,7 @@ fn main() {
         cells.insert(code, to_cell(&pixels));
     }
 
+    let galmuri7: BTreeSet<u32> = cells.keys().copied().collect();
     let mut out = Vec::with_capacity(cells.len() * 10);
     for (code, cell) in cells {
         out.extend_from_slice(&(code as u16).to_le_bytes());
@@ -197,7 +208,7 @@ fn main() {
     std::fs::write(Path::new(&out_dir).join("fallback_symbols.bin"), out)
         .expect("write the symbols");
 
-    extra_glyphs(&read, Path::new(&out_dir));
+    extra_glyphs(&read, Path::new(&out_dir), &galmuri7);
 
     // NeoDunggeunmo, read whole on first use: a fifth of its size packed.
     let dot = std::fs::read(DOT).unwrap_or_else(|e| panic!("{DOT}: {e}"));
@@ -228,7 +239,8 @@ fn write_table(path: &Path, cell: u32, bits: u8, glyphs: &BTreeMap<u32, Vec<u8>>
     std::fs::write(path, packed).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 }
 
-fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path) {
+/// Writes the editor's tables. `galmuri7` is what GalmuriMono7 draws.
+fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7: &BTreeSet<u32>) {
     let bdf = cell_glyph::parse_bdf(&read(GALMURI14));
     let layout = cell_glyph::BdfLayout::new(&bdf);
     // Controls and combining marks (no advance) have no use in a cell.
@@ -257,26 +269,82 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path) {
         .collect();
     write_table(&out_dir.join("extra_half16.bin"), 16, 1, &halves);
 
+    let galmuri14: BTreeSet<u32> = cells.keys().copied().collect();
+
     let bytes = std::fs::read(EMOJI).unwrap_or_else(|e| panic!("{EMOJI}: {e}"));
     let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("emoji font");
-    let codes: Vec<char> = {
-        use ab_glyph::Font as _;
-        let mut codes: Vec<char> = font.codepoint_ids().map(|(_, c)| c).collect();
-        codes.sort_unstable();
-        codes.dedup();
-        codes
-    };
+    let emoji = font_codes(&font);
     for cell in [8, 16] {
-        let glyphs = codes
-            .iter()
-            .filter_map(|&c| {
-                Some((
-                    c as u32,
-                    cell_glyph::outline_cell(&font, c, cell, 1.0, cell_glyph::Ink::Gray)?,
-                ))
-            })
-            .collect();
+        let glyphs = outline_cells(&font, cell, 1.0, |_| true, |a| a);
         let name = format!("extra_emoji{cell}.bin");
         write_table(&out_dir.join(name), cell, 8, &glyphs);
     }
+
+    let bytes = std::fs::read(MPLUS).unwrap_or_else(|e| panic!("{MPLUS}: {e}"));
+    let mplus = font_codes(&ab_glyph::FontRef::try_from_slice(&bytes).expect("M PLUS 1p"));
+
+    // The fonts that come after others in extra_glyphs.rs keep only the
+    // glyphs those lack: the rest would never be drawn.
+    let misaki = bdf_cells(&read(MISAKI), 8, |c| !galmuri7.contains(&c));
+    let earlier = |c: &u32| galmuri7.contains(c) || misaki.contains_key(c);
+    let fusion = bdf_cells(&read(FUSION), 8, |c| {
+        !earlier(&c) && !emoji.contains(&c) && !mplus.contains(&c)
+    });
+    write_table(&out_dir.join("extra_misaki8.bin"), 8, 1, &misaki);
+    write_table(&out_dir.join("extra_fusion8.bin"), 8, 1, &fusion);
+
+    // Drawn as the 16-pixel M PLUS 1p Bold glyphs are, in the 16 steps of
+    // gray of SmileBASIC 4's font page, which also packs smaller.
+    let bytes = std::fs::read(NOTO_SC).unwrap_or_else(|e| panic!("{NOTO_SC}: {e}"));
+    let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("Noto Sans SC");
+    let lacking = |c: u32| !mplus.contains(&c) && !galmuri14.contains(&c) && !emoji.contains(&c);
+    let steps = |a: u8| ((u16::from(a) * 15 + 127) / 255) as u8 * 17;
+    let glyphs = outline_cells(&font, 16, cell_glyph::SMILEBASIC_EM, lacking, steps);
+    write_table(&out_dir.join("extra_sc16.bin"), 16, 8, &glyphs);
+}
+
+/// The characters a font has a glyph for.
+fn font_codes(font: &ab_glyph::FontRef) -> BTreeSet<u32> {
+    use ab_glyph::Font as _;
+    font.codepoint_ids()
+        .filter(|&(id, _)| id.0 != 0)
+        .map(|(_, c)| c as u32)
+        .collect()
+}
+
+/// The glyphs of a BDF font with a use in a cell that `keep` wants, in
+/// `cell`-pixel cells.
+fn bdf_cells(text: &str, cell: u32, keep: impl Fn(u32) -> bool) -> BTreeMap<u32, Vec<u8>> {
+    let bdf = cell_glyph::parse_bdf(text);
+    let layout = cell_glyph::BdfLayout::new(&bdf);
+    bdf.glyphs
+        .iter()
+        .filter(|g| g.code >= 0x20 && !(0x7F..0xA0).contains(&g.code) && g.advance > 0)
+        .filter(|g| keep(g.code))
+        .map(|g| (g.code, cell_glyph::bdf_cell(g, &layout, cell)))
+        .collect()
+}
+
+/// The characters of an outline font that `keep` wants, drawn with gray
+/// edges in `cell`-pixel cells with an em of `em_share` of the cell, each
+/// alpha byte passed through `alpha`.
+fn outline_cells(
+    font: &ab_glyph::FontRef,
+    cell: u32,
+    em_share: f32,
+    keep: impl Fn(u32) -> bool,
+    alpha: impl Fn(u8) -> u8,
+) -> BTreeMap<u32, Vec<u8>> {
+    use ab_glyph::Font as _;
+    let mut codes: Vec<char> = font.codepoint_ids().map(|(_, c)| c).collect();
+    codes.sort_unstable();
+    codes.dedup();
+    codes
+        .into_iter()
+        .filter(|&c| c >= ' ' && !('\u{7F}'..'\u{A0}').contains(&c) && keep(c as u32))
+        .filter_map(|c| {
+            let glyph = cell_glyph::outline_cell(font, c, cell, em_share, cell_glyph::Ink::Gray)?;
+            Some((c as u32, glyph.into_iter().map(&alpha).collect()))
+        })
+        .collect()
 }

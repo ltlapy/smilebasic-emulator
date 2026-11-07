@@ -31,10 +31,24 @@ instead. It has three sources:
 1. SmileBASIC's font, imported or the bundled stand-in;
 2. the file set in File > Settings > Fonts > "Font file": a BDF, TTF or OTF
    font, read at startup and when chosen;
-3. bundled fonts, all under the SIL Open Font License 1.1:
-   - 8 pixels: GalmuriMono7, then [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji),
-     then M PLUS 1p Bold;
-   - 16 pixels: M PLUS 1p Bold, then Galmuri14, then Noto Emoji.
+3. bundled fonts:
+   - 8 pixels: GalmuriMono7, [Misaki Gothic 2nd](https://littlelimit.net/misaki.htm),
+     [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji),
+     M PLUS 1p Bold, then [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font)
+     8px monospaced (zh_hans);
+   - 16 pixels: M PLUS 1p Bold, Galmuri14, Noto Emoji, then
+     [Noto Sans SC](https://github.com/notofonts/noto-cjk) Bold, cut down to
+     the GB2312 characters.
+
+   Misaki Gothic 2nd is free to use, copy and change under its author's
+   license; the others are under the SIL Open Font License 1.1. Each font's
+   folder in `crates/sb-runtime/fonts` holds its license.
+
+   Fusion Pixel and Noto Sans SC draw the CJK characters they share with
+   Japanese in their Simplified Chinese forms, so they come last: they only
+   fill in characters the fonts before them lack, and kana, Hangul and
+   Japanese kanji keep the glyphs of GalmuriMono7, M PLUS 1p Bold and
+   Galmuri14.
 
 The editor looks in them in this order. "Editor's first font" on the same page
 moves one source to the front; the other two keep their order. With the file

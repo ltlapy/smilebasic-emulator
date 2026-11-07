@@ -6,9 +6,10 @@
 //! - SmileBASIC's font, imported or the bundled stand-in ([`Font`]);
 //! - the font file chosen in the settings (`editor_extra_font`): BDF,
 //!   TrueType or OpenType;
-//! - the bundled glyphs. At 8 pixels: GalmuriMono7, Noto Emoji, then
-//!   M PLUS 1p Bold. At 16 pixels: M PLUS 1p Bold, the face SmileBASIC 4's
-//!   own 16-pixel font is drawn from, then Galmuri14 and Noto Emoji.
+//! - the bundled glyphs. At 8 pixels: GalmuriMono7, Misaki Gothic 2nd,
+//!   Noto Emoji, M PLUS 1p Bold, then Fusion Pixel 8px. At 16 pixels:
+//!   M PLUS 1p Bold, the face closest to SmileBASIC 4's own 16-pixel
+//!   font, then Galmuri14, Noto Emoji and Noto Sans SC Bold (GB2312).
 //!
 //! The editor looks a character up in them in the order the settings give
 //! ([`Fonts`]), by default in the order above. When none has it, it draws
@@ -123,6 +124,9 @@ table!(galmuri16, "extra_galmuri16.bin");
 table!(half16, "extra_half16.bin");
 table!(emoji8, "extra_emoji8.bin");
 table!(emoji16, "extra_emoji16.bin");
+table!(misaki8, "extra_misaki8.bin");
+table!(fusion8, "extra_fusion8.bin");
+table!(sc16, "extra_sc16.bin");
 
 /// Galmuri14's half-width glyph for `code`, 8x16, if it has one.
 pub(crate) fn galmuri_half16(code: u32) -> Option<Vec<u8>> {
@@ -367,15 +371,24 @@ impl ExtraGlyphs {
         }
         match size {
             // M+ is rough at 8 pixels, but better than the box for what
-            // GalmuriMono7 lacks.
+            // the others lack. Fusion Pixel draws shared CJK characters in
+            // their Simplified Chinese forms, so it comes last and fills
+            // only what no other font has.
             FontSize::Small => {
-                galmuri(code, out) || emoji8().copy(code, out) || take(out, outlines(ch, 8))
+                galmuri(code, out)
+                    || misaki8().copy(code, out)
+                    || emoji8().copy(code, out)
+                    || take(out, outlines(ch, 8))
+                    || fusion8().copy(code, out)
             }
-            // GalmuriMono7 is drawn for 8 pixels, so it has no place here.
+            // The 8-pixel fonts have no place here. Noto Sans SC comes
+            // last for the same reason as Fusion Pixel: M PLUS 1p keeps
+            // the Japanese forms of the characters both have.
             FontSize::Large => {
                 take(out, outlines(ch, 16))
                     || galmuri16().copy(code, out)
                     || emoji16().copy(code, out)
+                    || sc16().copy(code, out)
             }
         }
     }
@@ -554,6 +567,38 @@ mod tests {
             assert_eq!(g.find(0xD83D, size), None);
             // Nothing has this one.
             assert_eq!(g.find(0x10FFFD, size), None);
+        }
+    }
+
+    #[test]
+    fn later_fonts_only_fill_gaps() {
+        let g = ExtraGlyphs::bundled();
+        let bundled = |c: char, size| {
+            let mut out = Vec::new();
+            assert!(g.render(c as u32, size, Part::Bundled, &mut out), "{c}");
+            out
+        };
+        let from = |table: &Table, c: char| {
+            let mut out = Vec::new();
+            table.copy(c as u32, &mut out).then_some(out)
+        };
+        // Japanese forms stay: 骨 and 直 differ in Simplified Chinese.
+        for c in ['骨', '直', 'あ', '한'] {
+            let mut galmuri_cell = Vec::new();
+            assert!(galmuri(c as u32, &mut galmuri_cell));
+            assert_eq!(bundled(c, FontSize::Small), galmuri_cell, "{c}");
+            // M PLUS 1p has no Hangul, which Galmuri14 draws.
+            let large = outlines(Some(c), 16).or_else(|| from(galmuri16(), c));
+            assert_eq!(Some(bundled(c, FontSize::Large)), large, "{c}");
+        }
+        // Greek and Cyrillic at 8 pixels come from Misaki Gothic 2nd.
+        for c in ['Ω', 'ж'] {
+            assert_eq!(Some(bundled(c, FontSize::Small)), from(misaki8(), c), "{c}");
+        }
+        // Simplified Chinese no other font has.
+        for c in ['汉', '们', '这'] {
+            assert_eq!(Some(bundled(c, FontSize::Small)), from(fusion8(), c), "{c}");
+            assert_eq!(Some(bundled(c, FontSize::Large)), from(sc16(), c), "{c}");
         }
     }
 

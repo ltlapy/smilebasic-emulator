@@ -69,8 +69,11 @@ Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
 contribution you intentionally submit for inclusion is dual-licensed the same
 way, with no additional terms or conditions.
 
-The bundled fonts in `crates/sb-runtime/fonts/galmuri`,
-`crates/sb-runtime/fonts/mplus`, `crates/sb-runtime/fonts/neodgm` and
-`crates/sb-runtime/fonts/notoemoji` are under the SIL Open Font License 1.1.
+The bundled fonts in `crates/sb-runtime/fonts/fusionpixel`,
+`crates/sb-runtime/fonts/galmuri`, `crates/sb-runtime/fonts/mplus`,
+`crates/sb-runtime/fonts/neodgm`, `crates/sb-runtime/fonts/notoemoji` and
+`crates/sb-runtime/fonts/notosanssc` are under the SIL Open Font License 1.1.
+Misaki Gothic 2nd in `crates/sb-runtime/fonts/misaki` is under its author's
+license, in `LICENSE.txt` there.
 GeneralUser GS in `crates/sb-sdl/sounds` is under its own license, in
 `GeneralUser-GS-LICENSE.txt` there.
