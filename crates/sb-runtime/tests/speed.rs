@@ -101,3 +101,32 @@ fn perfend_gives_the_consoles_time() {
     assert!((500.0..3000.0).contains(&us), "{us} us");
     assert!(passes(Speed::Switch2, TIMED) < us);
 }
+
+/// Host commands count toward the frame as the VM's work does: 100 GCLS
+/// charged 50 ms on a Switch 1 take 3 frames of MAINCNT, not none.
+#[test]
+fn host_commands_use_up_frames() {
+    let source = "VSYNC:T=MAINCNT():PERFBEGIN 0\n\
+                  FOR I=1 TO 100:GCLS:NEXT\n\
+                  ?MAINCNT()-T;\" \";PERFEND(0)\n";
+    let line = run(Speed::Switch1, source);
+    let (frames, us) = line.split_once(' ').unwrap();
+    let (frames, us): (u64, u64) = (frames.parse().unwrap(), us.trim().parse().unwrap());
+    assert_eq!(frames, us / 16_667, "{line}");
+    assert!(frames >= 2, "{line}");
+}
+
+/// GPAINT costs the pixels it fills, not the whole GCLIP rectangle.
+#[test]
+fn a_small_fill_costs_less_than_a_large_one() {
+    let fill = |size: u32| {
+        format!(
+            "GCLS:GBOX 0,0,{e},{e},#C_RED:PERFBEGIN 0\n\
+             GPAINT 1,1,#C_WHITE,#C_RED:?PERFEND(0)\n",
+            e = size + 1
+        )
+    };
+    let small = passes(Speed::Switch1, &fill(16));
+    let large = passes(Speed::Switch1, &fill(256));
+    assert!(small * 50.0 < large, "{small} us and {large} us");
+}

@@ -197,6 +197,10 @@ impl Host for Linked<'_> {
         self.sub.work(work);
     }
 
+    fn out_of_time(&self) -> bool {
+        self.sub.out_of_time()
+    }
+
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
         let command = COMMANDS[id as usize].1;
         match self.sub.linked_command(self.main, command, args, want) {

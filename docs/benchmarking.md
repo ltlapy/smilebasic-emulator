@@ -105,11 +105,14 @@ console's time and gives each frame a sixtieth of a second of it:
   costs a set amount. A FOR's test gets a credit, as `NEXT` takes many of our
   instructions but one step of SmileBASIC 4's.
 - Each host command costs by its kind: drawing by the pixels inside `GCLIP`,
-  `TFILL` and `SCROLL` by the cells, `PRINT` by the characters, sprite
+  `GPAINT` by the pixels it fills, `TFILL` and `SCROLL` by the cells, `PRINT` by the characters, sprite
   commands by a set amount each. Sprites, layers and text screens cost nothing
   to show, as TPERF finds on both consoles.
 - A program that needs more than the frame goes on in the next one, and its
-  `VSYNC` finds its frame gone by, as on the console. `MAINCNT`, `VSYNC` and
+  `VSYNC` finds its frame gone by, as on the console. The VM stops at the
+  host command or `PRINT` that uses up the frame, so 100 `GCLS` on a Switch 1
+  (50 ms) take 3 frames of `MAINCNT`. A command that costs more than a frame
+  holds up the frames after it. `MAINCNT`, `VSYNC` and
   the frames lost come out as there.
 - `PERFBEGIN` and `PERFEND` measure the console's time, which is the same on
   every run, also with `--fixed`. TPERF's `WORK` then compares with a

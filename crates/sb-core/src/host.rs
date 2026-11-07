@@ -35,6 +35,14 @@ pub trait Host {
     /// when [`crate::vm::Vm::report_work`] asks for it.
     fn work(&mut self, _work: Work) {}
 
+    /// Whether the time the host gives the VM has run out, asked after
+    /// each [`Host::call`] and PRINT when [`crate::vm::Vm::report_work`]
+    /// is on. The VM then stops with [`crate::vm::Status::Running`], as
+    /// when its budget is spent.
+    fn out_of_time(&self) -> bool {
+        false
+    }
+
     /// PRINT output. `screen` is `None` for the console, or TPRINT's screen.
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()>;
     /// PRINT's `,` separator.

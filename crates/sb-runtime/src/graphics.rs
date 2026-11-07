@@ -803,11 +803,12 @@ impl Graphics {
     }
 
     /// GPAINT: fills the area around a point that has the point's color,
-    /// or, with `border`, everything up to that color.
-    pub fn paint(&mut self, x: i32, y: i32, color: u32, border: Option<u32>) {
+    /// or, with `border`, everything up to that color. Gives the number of
+    /// pixels filled.
+    pub fn paint(&mut self, x: i32, y: i32, color: u32, border: Option<u32>) -> u64 {
         let c = self.clip;
         if !c.contains(x, y) {
-            return;
+            return 0;
         }
         let page = self.target;
         let start = self.read(page, x, y);
@@ -816,11 +817,12 @@ impl Graphics {
             None => p == start,
         };
         if !fills(start) || (border.is_none() && start == color) {
-            return;
+            return 0;
         }
         let w = (c.x1 - c.x0 + 1) as usize;
         let mut seen = vec![false; w * (c.y1 - c.y0 + 1) as usize];
         let mut stack = vec![(x, y)];
+        let mut filled = 0;
         while let Some((x, y)) = stack.pop() {
             if !c.contains(x, y) {
                 continue;
@@ -830,9 +832,11 @@ impl Graphics {
                 continue;
             }
             seen[i] = true;
+            filled += 1;
             self.plot(x, y, color, Blend::Normal);
             stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]);
         }
+        filled
     }
 
     /// GCOPY: copies a rectangle of `src` to `(dx, dy)` on the target,
@@ -1700,7 +1704,9 @@ mod tests {
             check("GTRI wide", &|g| {
                 g.triangle([(-500, 200), (1500, 210), (-400, 220)], 0xFF12_3456, n)
             });
-            check("GPAINT", &|g| g.paint(105, 105, 0xFF77_7777, None));
+            check("GPAINT", &|g| {
+                g.paint(105, 105, 0xFF77_7777, None);
+            });
             check("GPUTCHR", &|g| {
                 g.put_chars(&font, (300, 200), &text, 8, (3, 2), RED, n)
             });

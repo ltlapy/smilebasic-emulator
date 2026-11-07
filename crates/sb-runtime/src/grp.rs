@@ -223,7 +223,10 @@ impl Runtime {
                     None => self.grp.color,
                 };
                 let border = args.get(3).map(color_arg).transpose()?;
-                self.grp.paint(v[0], v[1], color, border);
+                let filled = self.grp.paint(v[0], v[1], color, border);
+                if let Some(meter) = &mut self.meter {
+                    meter.charge_paint(filled);
+                }
                 Ok(vec![])
             }
             (Command::Gcopy, Want::Outs(0), 7..=9) => {

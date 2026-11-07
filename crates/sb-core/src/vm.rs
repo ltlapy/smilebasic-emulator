@@ -59,7 +59,8 @@ pub struct Work {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
-    /// The instruction budget ran out; call [`Vm::run`] again.
+    /// The instruction budget ran out, or the host's time
+    /// ([`crate::host::Host::out_of_time`]); call [`Vm::run`] again.
     Running,
     /// VSYNC or WAIT: let `frames` frames pass, then call [`Vm::run`] again.
     /// For VSYNC the frames count from the previous VSYNC.
@@ -2349,6 +2350,10 @@ impl Vm {
                 }
                 self.stack.truncate(at);
                 self.push_results(results, *want)?;
+                if self.report_work && host.out_of_time() {
+                    self.pc = next;
+                    return Ok(Some(Status::Running));
+                }
             }
             Op::CallDyn { argc, want } => {
                 self.lookups += 1;
@@ -2553,6 +2558,10 @@ impl Vm {
                 let value = self.pop();
                 let screen = self.screen_arg(*screen)?;
                 host.print(screen, &text_of(&value)?)?;
+                if self.report_work && host.out_of_time() {
+                    self.pc = next;
+                    return Ok(Some(Status::Running));
+                }
             }
             Op::PrintTab { screen } => {
                 let screen = self.screen_arg(*screen)?;

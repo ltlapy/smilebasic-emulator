@@ -2571,6 +2571,10 @@ impl Host for Runtime {
         }
     }
 
+    fn out_of_time(&self) -> bool {
+        self.meter.as_ref().is_some_and(Meter::spent)
+    }
+
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
         let command = COMMANDS[id as usize].1;
         if self.meter.is_some() {

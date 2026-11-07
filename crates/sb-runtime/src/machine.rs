@@ -1690,7 +1690,12 @@ impl Machine {
             };
             in_time && rt.meter.as_ref().is_none_or(|m| m.has_time(&vm.work()))
         };
+        // Work that ran past the frames before still takes up this one.
+        let behind = (self.rt.meter.as_ref()).is_some_and(|m| !m.has_time(&vm.work()));
         loop {
+            if behind {
+                break;
+            }
             let left = match (&self.rt.meter, deadline) {
                 (Some(meter), _) => meter.slice(&vm.work()),
                 (None, Some(_)) => SLICE,

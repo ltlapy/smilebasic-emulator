@@ -292,6 +292,11 @@ impl Meter {
         (left / self.costs.instruction).clamp(1, SLICE) as u32
     }
 
+    /// Whether the frame's time is used up as of the last host call.
+    pub(crate) fn spent(&self) -> bool {
+        self.now() >= self.frame_end
+    }
+
     pub(crate) fn heard(&mut self, work: Work) {
         self.work = work;
     }
@@ -302,6 +307,11 @@ impl Meter {
 
     pub(crate) fn charge_print(&mut self, chars: usize) {
         self.host += chars as u64 * self.costs.print_char;
+    }
+
+    /// Charges the pixels a `GPAINT` filled.
+    pub(crate) fn charge_paint(&mut self, pixels: u64) {
+        self.host += pixels * self.costs.fill_px;
     }
 }
 
@@ -430,9 +440,10 @@ impl Runtime {
                 };
                 px(chars * size * size * scale, c.char_px)
             }
-            // UNVERIFIED: that a fill takes as long as filling GCLIP's
-            // rectangle.
-            Gpaint => px(page, c.fill_px),
+            // The pixels it fills are charged as it fills them
+            // (Meter::charge_paint). UNVERIFIED: that a fill takes as long
+            // as a GFILL of as many pixels.
+            Gpaint => c.grp,
             Gcls => c.gcls,
             Lfilter | Lmatrix => c.layer,
             Gpset | Gpget | Gtarget | Gcolor | Gclip => c.grp,
