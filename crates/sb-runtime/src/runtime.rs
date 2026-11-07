@@ -2236,6 +2236,7 @@ impl Runtime {
                             title: "Erase programs".to_string(),
                             lines,
                             accept: "Erase",
+                            accept_first: false,
                         }
                     });
                     if !matches!(ask, Ask::Go) {

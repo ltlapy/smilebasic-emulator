@@ -29,7 +29,7 @@ pub struct Dialog {
     /// Display size the dialog is centered in.
     size: (u32, u32),
     /// Index of the chosen button; Cancel at first, so Enter does not
-    /// throw work away.
+    /// throw work away, except on questions that say otherwise.
     focus: usize,
     /// What has been typed, for a question with a field to type in.
     field: Option<String>,
@@ -88,9 +88,12 @@ impl Dialog {
         }
     }
 
-    /// Asks a command's question.
+    /// Asks a command's question, starting on the button it says.
     pub fn ask(confirm: &Confirm, size: (u32, u32)) -> Dialog {
-        Dialog::new(&confirm.title, confirm.lines.clone(), confirm.accept, size)
+        Dialog {
+            focus: usize::from(!confirm.accept_first),
+            ..Dialog::new(&confirm.title, confirm.lines.clone(), confirm.accept, size)
+        }
     }
 
     /// Asks before quitting with unsaved slots.
@@ -260,6 +263,29 @@ mod tests {
         assert_eq!(d.pad(Button::DPadLeft), None);
         assert_eq!(d.pad(Button::East), Some(Answer::Accept));
         assert_eq!(d.pad(Button::South), Some(Answer::Cancel));
+    }
+
+    fn save_question(accept_first: bool) -> Confirm {
+        Confirm {
+            title: "Save file".to_string(),
+            lines: vec!["Save this file.".to_string()],
+            accept: "Save",
+            accept_first,
+        }
+    }
+
+    #[test]
+    fn a_saves_on_a_file_question() {
+        let mut d = Dialog::ask(&save_question(true), (1280, 720));
+        assert_eq!(d.pad(Button::East), Some(Answer::Accept));
+        assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
+        assert_eq!(d.pad(Button::South), Some(Answer::Cancel));
+        assert_eq!(d.key(Keycode::Escape), Some(Answer::Cancel));
+        // An offscreen mouse leaves the choice alone.
+        d.mouse_move((-1, -1));
+        assert_eq!(d.pad(Button::East), Some(Answer::Accept));
+        let mut d = Dialog::ask(&save_question(false), (1280, 720));
+        assert_eq!(d.pad(Button::East), Some(Answer::Cancel));
     }
 
     #[test]

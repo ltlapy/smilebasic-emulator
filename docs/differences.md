@@ -371,6 +371,10 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
   File > Settings > Files > "Before file commands such as SAVE and LOAD".
   SmileBASIC 4 always asks. A file command that fails in a program shows a
   notice, rather than a dialog to close, unless file access is silent.
+- A file command's question starts on the button that goes ahead, as
+  SmileBASIC 4's save question starts on OK. Replacing a file asks once, with
+  a line saying so, where SmileBASIC 4 asks twice. A question that would lose
+  unsaved edits starts on Cancel.
 - `SAVE` and `SAVEV "TXT:..."` write plain UTF-8 text, and `SAVEG` and
   `SAVEV "GRP:..."` write PNG images, so the files open on a computer.
 - `DAT` files hold SmileBASIC 4's array without its container. The emulator

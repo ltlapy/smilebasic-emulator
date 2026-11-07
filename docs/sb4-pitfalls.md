@@ -1587,6 +1587,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   files too (`LOAD "GAME/SUB",1`), not only `EXEC`. Naming the program's own
   project works as well.
 - `LOADV` and `LOADG` in a program ask nothing.
+- The question before `SAVE`, `SAVEV` or `SAVEG` starts on OK, so Enter or A
+  saves. Replacing a file asks twice (checked by sending files with a Flipper,
+  2026-11-03).
 - `FILES("//")` ends each project's name with `/`, lists the workspace as `/`,
   and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`).
 - `FILES` takes a `/` after a project's name (`FILES("TXT:NAME/")`), and

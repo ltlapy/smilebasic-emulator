@@ -107,6 +107,7 @@ impl Runtime {
                         title: "Switch project".to_string(),
                         lines,
                         accept: "Switch",
+                        accept_first: false,
                     });
                     if self.held(ask) {
                         return Ok(vec![]);
