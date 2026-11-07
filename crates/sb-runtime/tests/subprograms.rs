@@ -178,20 +178,24 @@ fn subprogram_commands_are_for_direct_mode_and_a_missing_file_fails() {
 #[test]
 fn a_busy_subprogram_keeps_to_the_frames_time() {
     let dir = TempDir::new("busy");
-    let mut m = machine(&dir, "WHILE 1:WEND\n");
+    // About 1.6 million instructions: 80 slices, or two frames for a
+    // subprogram with no time limit of its own.
+    let mut m = machine(&dir, "FOR I=1 TO 100000:NEXT\n");
+    // With no time left in the frame, each side runs one slice a frame
+    // whatever the computer's speed, so the count of frames tells.
+    m.time_limit = Some(std::time::Duration::ZERO);
     enter(&mut m, "subrun \"sub\"");
     m.set_slot(0, "WHILE 1:WEND\n".to_string());
     m.run_slot(0);
-    let limit = std::time::Duration::from_millis(2);
-    m.time_limit = Some(limit);
-    let start = std::time::Instant::now();
-    frames(&mut m, 5);
-    // The sides share the limit, give or take the instructions between
-    // looks at the clock; a subprogram with no limit of its own took
-    // three times as long.
-    let per_frame = start.elapsed() / 5;
-    assert!(per_frame < limit * 2, "{per_frame:?}");
+    frames(&mut m, 10);
     assert!(m.sub_running() && m.is_running());
+    for _ in 0..200 {
+        if !m.sub_running() {
+            break;
+        }
+        m.frame();
+    }
+    assert!(!m.sub_running() && m.is_running());
 }
 
 #[test]
