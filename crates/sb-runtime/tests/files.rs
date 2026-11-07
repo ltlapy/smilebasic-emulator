@@ -983,24 +983,27 @@ fn other_projects_and_backups() {
 }
 
 /// A program may not EXEC a file named with a project, its own included:
-/// EXEC stops with error 74 (TEST68). A program's LOADG of a `GRP:` name
-/// with a project gives RESULT 0 and leaves the page alone (TEST68), while
-/// the name without `GRP:` loads, as both do in direct mode. LOAD into a
-/// slot and then EXEC of the slot runs another project's program.
+/// EXEC stops with error 74 (TEST68). LOADG takes a name with a project,
+/// the program's own or another, with or without `GRP:`, in a program and
+/// in direct mode. LOAD into a slot and then EXEC of the slot runs another
+/// project's program.
 #[test]
-fn exec_and_loadg_refuse_project_names() {
+fn exec_refuses_project_names_and_loadg_takes_them() {
     use sb_runtime::storage::FileKind;
     let dir = TempDir::new("project-names");
     let mut m = machine(&dir);
-    let s = &mut m.rt.storage;
-    s.create_project("GAME").unwrap();
-    s.set_project("GAME").unwrap();
-    s.write(FileKind::Txt, "SUB", b"?\"SUB\"", None).unwrap();
-    m.set_slot(
-        0,
-        "GFILL 0,0,3,3,&HFF112233:SAVEG \"PIC\",0,0,0,4,4".to_string(),
-    );
-    enter(&mut m, "run");
+    let save = |m: &mut Machine, project: &str, color: &str| {
+        m.rt.storage.create_project(project).unwrap();
+        m.rt.storage.set_project(project).unwrap();
+        let program = format!("GFILL 0,0,3,3,&H{color}:SAVEG \"PIC\",0,0,0,4,4");
+        m.set_slot(0, program);
+        enter(m, "run");
+    };
+    save(&mut m, "ART", "FF445566");
+    save(&mut m, "GAME", "FF112233");
+    (m.rt.storage)
+        .write(FileKind::Txt, "SUB", b"?\"SUB\"", None)
+        .unwrap();
 
     m.set_slot(0, "EXEC \"GAME/SUB\",1\n?\"PAST\"".to_string());
     enter(&mut m, "run");
@@ -1009,24 +1012,26 @@ fn exec_and_loadg_refuse_project_names() {
         ["Can't access other project in this mode in 0:1", "OK"]
     );
 
-    let program = "GCLS &HFF00FF00:LOADG \"GRP:GAME/PIC\",0 OUT W,H\n\
-                   ?RESULT();W;H;HEX$(GPGET(0,0))";
-    m.set_slot(0, program.to_string());
-    enter(&mut m, "run");
-    assert_eq!(tail(&m, 2), ["000FF00FF00", "OK"]);
-
-    // The same name loads without GRP: or without the project, and in
-    // direct mode.
-    for name in ["GAME/PIC", "GRP:PIC"] {
-        let program = format!("GCLS:LOADG \"{name}\",0:?RESULT();HEX$(GPGET(0,0))");
+    let names = [
+        ("GAME/PIC", "FF112233"),
+        ("GRP:GAME/PIC", "FF112233"),
+        ("GRP:PIC", "FF112233"),
+        ("ART/PIC", "FF445566"),
+        ("GRP:ART/PIC", "FF445566"),
+    ];
+    for (name, color) in names {
+        let program =
+            format!("GCLS &HFF00FF00:LOADG \"{name}\",0 OUT W,H\n?RESULT();W;H;HEX$(GPGET(0,0))");
         m.set_slot(0, program);
         enter(&mut m, "run");
-        assert_eq!(tail(&m, 2), ["1FF112233", "OK"], "{name}");
-    }
-    for name in ["game/pic", "grp:game/pic"] {
+        let want = [format!("144{color}"), "OK".to_string()];
+        assert_eq!(tail(&m, 2), want, "{name}");
+
+        let name = name.to_ascii_lowercase();
         let line = format!("gcls:loadg \"{name}\",0:?result();hex$(gpget(0,0))");
         enter(&mut m, &line);
-        assert_eq!(tail(&m, 2), ["1FF112233", "OK"], "{name}");
+        let want = [format!("1{color}"), "OK".to_string()];
+        assert_eq!(tail(&m, 2), want, "{name}");
     }
 
     // LOAD names it, then EXEC runs the slot.
@@ -1035,11 +1040,11 @@ fn exec_and_loadg_refuse_project_names() {
     assert_eq!(tail(&m, 2), ["SUB", "OK"]);
 }
 
-/// LOADG of another project's file asks at the prompt as LOAD does, and
-/// not in a program, where the name without `GRP:` loads and the one with
-/// it gives RESULT 0.
+/// LOADG of a file named with a project asks at the prompt as LOAD does,
+/// and loads without asking in a program, for the program's own project
+/// and another, with or without `GRP:`.
 #[test]
-fn loadg_of_another_project_asks_only_at_the_prompt() {
+fn loadg_of_a_project_name_asks_only_at_the_prompt() {
     use sb_runtime::storage::FileKind;
     let dir = TempDir::new("loadg-ask");
     let mut m = machine(&dir);
@@ -1047,15 +1052,17 @@ fn loadg_of_another_project_asks_only_at_the_prompt() {
     s.create_project("GAME").unwrap();
     s.set_project("GAME").unwrap();
     s.write(FileKind::Txt, "SUB", b"", None).unwrap();
-    enter(&mut m, "saveg \"pic\",0,0,0,4,4:project \"\"");
+    enter(&mut m, "saveg \"pic\",0,0,0,4,4");
 
     m.rt.settings.file_confirm = FileConfirm::Ask;
     let program = "LOADG \"GAME/PIC\",0:?RESULT()\nLOADG \"GRP:GAME/PIC\",0:?RESULT()";
     m.set_slot(0, program.to_string());
-    enter(&mut m, "run");
-    assert_eq!(tail(&m, 3), ["1", "0", "OK"]);
-    let failed = "LOADG failed: \"GRP:GAME/PIC\" names a project";
-    assert_eq!(m.rt.take_notices(), [failed]);
+    for project in ["game", ""] {
+        enter(&mut m, &format!("project \"{project}\""));
+        enter(&mut m, "run");
+        assert_eq!(tail(&m, 3), ["1", "1", "OK"], "{project:?}");
+        assert!(m.rt.take_notices().is_empty(), "{project:?}");
+    }
 
     for line in [
         "loadg \"game/pic\",0:?result()",
@@ -1081,7 +1088,15 @@ fn loadg_of_another_project_asks_only_at_the_prompt() {
     m.rt.answer(true);
     settle(&mut m);
 
+    enter(&mut m, "project \"game\"");
+    let c = ask(&mut m, "loadg \"grp:game/pic\",0:?result()");
+    assert_eq!(c.title, "Load file");
+    m.rt.answer(true);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+
     m.rt.settings.file_confirm = FileConfirm::Notify;
+    enter(&mut m, "project \"\"");
     enter(&mut m, "loadg \"game/pic\",0");
     assert_eq!(m.rt.take_notices(), ["Loading GRP:GAME/PIC"]);
 }

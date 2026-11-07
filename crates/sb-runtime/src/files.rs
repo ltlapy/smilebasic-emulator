@@ -361,8 +361,8 @@ impl Runtime {
     }
 
     /// A file named for reading, in this project or another: programs
-    /// LOAD and LOADV other projects' files too, while EXEC and LOADG
-    /// check [`names_project`] first.
+    /// LOAD, LOADV and LOADG other projects' files too, while EXEC checks
+    /// [`names_project`] first.
     pub(crate) fn read_name(&self, spec: &str, default: FileKind) -> storage::Result<FileRef> {
         let mut file = parse_read_name(spec, default)?;
         if file.project.as_deref() == Some(self.storage.project()) {
@@ -548,8 +548,8 @@ impl Runtime {
     }
 }
 
-/// Whether a file name names a project, the way EXEC and LOADG refuse in
-/// programs (see their callers). The program's own project counts.
+/// Whether a file name names a project, the way EXEC refuses in programs
+/// (see its caller). The program's own project counts.
 /// UNVERIFIED: that SmileBASIC 4's own `#` projects and the workspace's
 /// `/NAME` do not.
 pub(crate) fn names_project(spec: &str) -> bool {

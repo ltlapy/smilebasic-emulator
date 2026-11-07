@@ -924,28 +924,35 @@ fn a_subprograms_notices_reach_the_frontend() {
 }
 
 /// A subprogram treats project names as a main program does: LOADG loads
-/// a name with a project but without `GRP:`, gives RESULT 0 for one with
-/// `GRP:`, and EXEC refuses one.
+/// a name with a project, its own or another, with or without `GRP:`, and
+/// EXEC refuses one.
 #[test]
-fn a_subprograms_exec_and_grp_loadg_refuse_a_project_name() {
+fn a_subprograms_loadg_takes_a_project_name_and_its_exec_refuses_one() {
     let dir = TempDir::new("sub-project-names");
-    let source =
-        format!("LOADG \"GAME/PIC\",0:?RESULT()\nLOADG \"GRP:GAME/PIC\",0:?RESULT()\n{THEN_WAIT}");
+    let source = format!(
+        "CLS\nLOADG \"GAME/PIC\",0:?RESULT()\nLOADG \"GRP:GAME/PIC\",0:?RESULT()\n{THEN_WAIT}"
+    );
     let mut m = machine(&dir, &source);
     let storage = m.rt.storage.clone();
     storage.create_project("GAME").unwrap();
     storage
         .write_file_in("GAME", "TIN.PRG", THEN_WAIT.as_bytes())
         .unwrap();
+    storage
+        .write_file_in("GAME", "TOWN.PRG", source.as_bytes())
+        .unwrap();
     enter(
         &mut m,
         "project \"game\":saveg \"pic\",0,0,0,4,4:project \"\"",
     );
-    enter(&mut m, "subrun \"sub\"");
-    frames(&mut m, 3);
-    assert_eq!(sub_rows(&m), ["1", "0"]);
-    m.stop_sub();
-    frames(&mut m, 1);
+    // From the workspace, then from the subprogram's own project.
+    for file in ["sub", "game/own.prg"] {
+        enter(&mut m, &format!("subrun \"{file}\""));
+        frames(&mut m, 3);
+        assert_eq!(sub_rows(&m), ["1", "1"], "{file}");
+        m.stop_sub();
+        frames(&mut m, 1);
+    }
 
     m.set_slot(1, "EXEC \"GAME/IN.PRG\",2\n".to_string());
     enter(&mut m, "save \"sub\",1");

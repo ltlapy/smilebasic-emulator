@@ -400,17 +400,6 @@ impl Runtime {
     /// Illegal file format error, not a failure (checked on hardware for a
     /// string array).
     fn load_image(&self, spec: &str) -> Result<storage::Result<Image>> {
-        // A program's LOADG of a `GRP:` name with a project fails without an
-        // error, while the same name without `GRP:` loads. UNVERIFIED: that
-        // the prefix is what refuses it, rather than naming the program's own
-        // project, the page, or a subprogram running beside it; that `DAT:`
-        // loads; that subprograms refuse it too; and that direct mode loads.
-        if !self.direct
-            && read_kind(spec) == Some(FileKind::Grp)
-            && crate::files::names_project(spec)
-        {
-            return Ok(Err(StorageError::OtherProject(spec.to_string())));
-        }
         let file = match self.read_name(spec, FileKind::Grp) {
             Ok(file) => file,
             Err(e) => return Ok(Err(e)),
