@@ -19,6 +19,7 @@ use sb_runtime::machine::{Machine, StopReason, SubScreen};
 use sb_runtime::runtime::keys;
 use sb_runtime::screen::ScreenMode;
 use sb_runtime::sound::synth::Instruments;
+use sb_runtime::speed::Speed;
 use sb_runtime::sprites::Sprites;
 use sb_runtime::storage::Storage;
 use sb_runtime::text::CONSOLE;
@@ -98,6 +99,13 @@ const USAGE: &str = "usage:
       sounds and MML instruments @0-@215 are silent; @216-@223 (pulse
       waves, noise), WAVSET waveforms, TALK and PCMSTREAM play.
 
+  --speed SPEED, before or after any of the above: run programs at
+      SPEED, one of unlimited (the default: as fast as this computer
+      can), switch2 or switch1. A console's speed gives a program about
+      the work a frame it gets on that console: one too slow there
+      misses frames and VSYNCs here too, and PERFEND gives the
+      console's time, the same on every run.
+
 exit status:
   0  done; with --play and --bench, the program ended or still ran at the
      frame limit. Comparing RES files exits 0 whether rows differ or not
@@ -121,6 +129,11 @@ const FRAME_LIMIT: u32 = 5 * 60 * 60;
 const SCREEN_AFTER: u32 = 120;
 
 type AnyError = Box<dyn std::error::Error>;
+
+thread_local! {
+    /// What --speed chose, for every machine the run makes.
+    static SPEED: std::cell::Cell<Speed> = const { std::cell::Cell::new(Speed::Unlimited) };
+}
 
 /// The exit status when a program stopped on an error, and when STOP
 /// left it stopped. 1 is for the tool's own failures.
@@ -185,6 +198,10 @@ impl Outcome {
 }
 
 fn run(mut args: Vec<String>) -> Result<u8, AnyError> {
+    if let Some(name) = take_option(&mut args, "--speed")? {
+        let speed = Speed::from_name(&name).ok_or(USAGE)?;
+        SPEED.with(|s| s.set(speed));
+    }
     if args.first().is_some_and(|a| a == "--bench") {
         let fixed = args.get(1).is_some_and(|a| a == "--fixed");
         if fixed {
@@ -1004,6 +1021,7 @@ fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
     });
     rt.storage = Storage::new(storage);
     rt.settings.file_confirm = FileConfirm::Silent;
+    rt.settings.speed = SPEED.with(std::cell::Cell::get);
     let mut m = Machine::new(rt);
     m.boot();
     Ok(m)
