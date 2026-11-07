@@ -923,12 +923,14 @@ fn a_subprograms_notices_reach_the_frontend() {
     assert!(m.take_notices().is_empty());
 }
 
-/// A subprogram's LOADG takes a name with a project, unlike a main
-/// program's, but its EXEC refuses one as a main program's does.
+/// A subprogram treats project names as a main program does: LOADG loads
+/// a name with a project but without `GRP:`, gives RESULT 0 for one with
+/// `GRP:`, and EXEC refuses one.
 #[test]
-fn a_subprograms_exec_refuses_a_project_name_and_its_loadg_does_not() {
+fn a_subprograms_exec_and_grp_loadg_refuse_a_project_name() {
     let dir = TempDir::new("sub-project-names");
-    let source = format!("LOADG \"GRP:GAME/PIC\",0:?RESULT()\n{THEN_WAIT}");
+    let source =
+        format!("LOADG \"GAME/PIC\",0:?RESULT()\nLOADG \"GRP:GAME/PIC\",0:?RESULT()\n{THEN_WAIT}");
     let mut m = machine(&dir, &source);
     let storage = m.rt.storage.clone();
     storage.create_project("GAME").unwrap();
@@ -941,7 +943,7 @@ fn a_subprograms_exec_refuses_a_project_name_and_its_loadg_does_not() {
     );
     enter(&mut m, "subrun \"sub\"");
     frames(&mut m, 3);
-    assert_eq!(sub_rows(&m), ["1"]);
+    assert_eq!(sub_rows(&m), ["1", "0"]);
     m.stop_sub();
     frames(&mut m, 1);
 

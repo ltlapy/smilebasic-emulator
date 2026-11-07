@@ -982,9 +982,11 @@ fn other_projects_and_backups() {
     assert_eq!(tail(&m, 2)[0], "10");
 }
 
-/// A program may not EXEC or LOADG a file named with a project, its own
-/// included (TEST68): EXEC stops with error 74, LOADG gives RESULT 0 and
-/// leaves the page alone. Direct mode's LOADG and a program's LOAD may.
+/// A program may not EXEC a file named with a project, its own included:
+/// EXEC stops with error 74 (TEST68). A program's LOADG of a `GRP:` name
+/// with a project gives RESULT 0 and leaves the page alone (TEST68), while
+/// the name without `GRP:` loads, as both do in direct mode. LOAD into a
+/// slot and then EXEC of the slot runs another project's program.
 #[test]
 fn exec_and_loadg_refuse_project_names() {
     use sb_runtime::storage::FileKind;
@@ -1013,23 +1015,75 @@ fn exec_and_loadg_refuse_project_names() {
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["000FF00FF00", "OK"]);
 
-    // The same name works without the project, and in direct mode.
-    m.set_slot(
-        0,
-        "GCLS:LOADG \"GRP:PIC\",0:?RESULT();HEX$(GPGET(0,0))".to_string(),
-    );
-    enter(&mut m, "run");
-    assert_eq!(tail(&m, 2), ["1FF112233", "OK"]);
-    enter(
-        &mut m,
-        "gcls:loadg \"grp:game/pic\",0:?result();hex$(gpget(0,0))",
-    );
-    assert_eq!(tail(&m, 2), ["1FF112233", "OK"]);
+    // The same name loads without GRP: or without the project, and in
+    // direct mode.
+    for name in ["GAME/PIC", "GRP:PIC"] {
+        let program = format!("GCLS:LOADG \"{name}\",0:?RESULT();HEX$(GPGET(0,0))");
+        m.set_slot(0, program);
+        enter(&mut m, "run");
+        assert_eq!(tail(&m, 2), ["1FF112233", "OK"], "{name}");
+    }
+    for name in ["game/pic", "grp:game/pic"] {
+        let line = format!("gcls:loadg \"{name}\",0:?result();hex$(gpget(0,0))");
+        enter(&mut m, &line);
+        assert_eq!(tail(&m, 2), ["1FF112233", "OK"], "{name}");
+    }
 
     // LOAD names it, then EXEC runs the slot.
     m.set_slot(0, "LOAD \"GAME/SUB\",1:EXEC 1".to_string());
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["SUB", "OK"]);
+}
+
+/// LOADG of another project's file asks at the prompt as LOAD does, and
+/// not in a program, where the name without `GRP:` loads and the one with
+/// it gives RESULT 0.
+#[test]
+fn loadg_of_another_project_asks_only_at_the_prompt() {
+    use sb_runtime::storage::FileKind;
+    let dir = TempDir::new("loadg-ask");
+    let mut m = machine(&dir);
+    let s = &mut m.rt.storage;
+    s.create_project("GAME").unwrap();
+    s.set_project("GAME").unwrap();
+    s.write(FileKind::Txt, "SUB", b"", None).unwrap();
+    enter(&mut m, "saveg \"pic\",0,0,0,4,4:project \"\"");
+
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    let program = "LOADG \"GAME/PIC\",0:?RESULT()\nLOADG \"GRP:GAME/PIC\",0:?RESULT()";
+    m.set_slot(0, program.to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 3), ["1", "0", "OK"]);
+    let failed = "LOADG failed: \"GRP:GAME/PIC\" names a project";
+    assert_eq!(m.rt.take_notices(), [failed]);
+
+    for line in [
+        "loadg \"game/pic\",0:?result()",
+        "loadg \"grp:game/pic\",0:?result()",
+    ] {
+        let c = ask(&mut m, line);
+        assert_eq!(c.title, "Load file");
+        assert_eq!(
+            c.lines[..4],
+            [
+                "Load this file.",
+                "",
+                "  Project:  [WORKSPACE]",
+                "  File:     GRP:GAME/PIC",
+            ]
+        );
+        m.rt.answer(true);
+        settle(&mut m);
+    }
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    let c = ask(&mut m, "load \"game/sub\",1");
+    assert_eq!(c.title, "Slot 1: Load file");
+    m.rt.answer(true);
+    settle(&mut m);
+
+    m.rt.settings.file_confirm = FileConfirm::Notify;
+    enter(&mut m, "loadg \"game/pic\",0");
+    assert_eq!(m.rt.take_notices(), ["Loading GRP:GAME/PIC"]);
 }
 
 /// Checked on hardware, although the manual says that loading frees them.
