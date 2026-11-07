@@ -59,7 +59,7 @@ use projects::{Memory, Outcome, ProjectManager, Transfer};
 use recovery::{OwnedCreator, Recovery, RendererWatch, SuspendWatch};
 use sb_profiles::Profile;
 use sb_runtime::confirm::Confirm;
-use sb_runtime::editor::{Mode, Place, is_movement};
+use sb_runtime::editor::{self, Mode, Place};
 use sb_runtime::font::Font;
 use sb_runtime::help::{Help, Lookup};
 use sb_runtime::machine::{Machine, StopReason};
@@ -336,7 +336,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     machine.rt.clipboard = Box::new(SystemClipboard::new(video.clipboard()));
     let keyboard = sdl.keyboard();
     let mut controls = Controls::new(&sdl)?;
-    let mut program_keys = controls::ProgramKeys::default();
+    let mut typing = controls::Typing::default();
     let audio = Audio::open(&sdl);
     // Runs the frames while a call to SDL holds the loop up.
     let standby = standby::Standby::start(audio.sink());
@@ -1057,15 +1057,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // with the menu bar and the emulator's windows.
             let editor_window = !apart || from_editor;
             let ui_window = from_editor == ui_editor;
-            // Keys that reach the machine go to a running program, which
-            // types as SmileBASIC 4 does, rather than to the editor or
-            // the prompt.
-            let program_typing = !on_editor && (machine.is_running() || machine.sub_has_focus());
             if let Event::KeyDown {
                 scancode, repeat, ..
             } = event
             {
-                program_keys.any_key_down(scancode, repeat);
+                typing.any_key_down(&mut machine.rt, scancode, repeat);
             }
             if matches!(event, Event::KeyDown { .. }) {
                 eat_text = dialog.is_some()
@@ -2020,7 +2016,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // Editing the line typed in direct mode or for INPUT.
                 Event::KeyDown {
                     keycode: Some(key),
-                    scancode,
                     keymod,
                     repeat,
                     ..
@@ -2028,11 +2023,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     && machine.rt.wants_line()
                     && let Some(code) = line_command(key, shift(keymod), ctrl(keymod)) =>
                 {
-                    if program_typing {
-                        program_keys.key_down(&mut machine.rt, scancode, keymod, repeat, Some(code))
-                    } else {
-                        machine.rt.key_press(code)
-                    }
+                    typing.key_down(&mut machine.rt, keymod, repeat, Some(code))
                 }
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::C | Keycode::X)),
@@ -2222,49 +2213,38 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         editor.start_find(false);
                     }
                 }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Tab),
-                    keymod,
-                    ..
-                } if on_editor && shift(keymod) && machine.edit().mode() == Mode::Edit => {
-                    machine.edit().unindent()
-                }
-                // Shift and the cursor keys select in the editor.
+                // Shift+Tab takes the indent away, and Shift and the cursor
+                // keys select in the editor. They go with the typed keys,
+                // which repeat in frames.
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
+                    repeat,
                     ..
-                } if on_editor && shift(keymod) && special_key(key).is_some_and(is_movement) => {
-                    machine
-                        .edit()
-                        .key_select(special_key(key).expect("checked"));
+                } if on_editor
+                    && shift(keymod)
+                    && let Some(code) = match key {
+                        Keycode::Tab => Some(editor::UNINDENT),
+                        key => special_key(key).and_then(editor::select_key),
+                    } =>
+                {
+                    typing.key_down(&mut machine.rt, keymod, repeat, Some(code))
                 }
                 // What a program's dialog does not take is lost, or it
                 // would reach the prompt or the program beside it.
                 Event::KeyDown { .. } if program_dialog.is_some() && !from_editor => {}
+                // Typing for a program, the prompt or the editor.
                 Event::KeyDown {
                     keycode: Some(key),
-                    scancode,
                     keymod,
                     repeat,
                     ..
-                } if program_typing => {
-                    let code = special_key(key);
-                    program_keys.key_down(&mut machine.rt, scancode, keymod, repeat, code);
-                }
-                Event::KeyDown {
-                    keycode: Some(key), ..
-                } => {
-                    if let Some(code) = special_key(key) {
-                        machine.rt.key_press(code);
-                    }
-                }
+                } => typing.key_down(&mut machine.rt, keymod, repeat, special_key(key)),
                 Event::TextInput { .. } if eat_text => eat_text = false,
-                Event::TextInput { text, .. } if program_typing => {
+                Event::TextInput { text, .. } => {
                     let upper_case = machine.rt.settings.upper_case_letters;
-                    program_keys.text(&mut machine.rt, &text, upper_case);
+                    typing.text(&mut machine.rt, &text, upper_case);
                 }
-                Event::TextInput { text, .. } => machine.type_text(&text),
                 _ => {}
             }
         }
@@ -2326,6 +2306,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         );
         held.pads[0].buttons |= bench_pad;
         let screen = modal || paused || editor_keys || waiting || beside;
+        // Programs see nothing pressed while the editor has the keys, but
+        // a key held there repeats.
+        let editor_held = editor_keys && !(modal || paused || waiting || beside);
+        machine.rt.input.editor_keys = if editor_held { held.keys } else { [0; 4] };
         machine.rt.input.live = controls.carried.program_sees(held, screen);
         if let Some(usage) = bench_usb.take() {
             machine.rt.input.live.set_key(usage, true);
