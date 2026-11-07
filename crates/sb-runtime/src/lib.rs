@@ -3,6 +3,7 @@
 //! audio buffers.
 
 pub mod anim;
+mod cell_glyph;
 pub mod collision;
 pub mod complete;
 pub mod compose;
@@ -12,6 +13,7 @@ pub mod dialog;
 pub mod editor;
 pub mod env;
 pub mod error_lines;
+pub mod extra_glyphs;
 mod files;
 pub mod filter;
 pub mod font;

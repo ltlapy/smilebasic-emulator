@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::complete::{self, Completion, Item, Library, Options};
+use crate::extra_glyphs::{ExtraGlyphs, Glyph};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::hint;
@@ -141,6 +142,8 @@ pub struct Look<'a> {
     pub bottom: u32,
     pub font: FontSize,
     pub colors: &'a Palette,
+    /// Glyphs for the characters `font` lacks.
+    pub extra: &'a ExtraGlyphs,
 }
 
 /// Where the editor's character cells are on its frame: `cell` pixels
@@ -380,6 +383,9 @@ pub struct Editor {
     /// Where each slot was left, restored when it is opened again.
     saved: [View; SLOTS],
     screen: TextScreen,
+    /// Characters drawn from [`ExtraGlyphs`] over the screen, by column
+    /// and row, kept to save allocating each frame.
+    extra_cells: Vec<(usize, usize, Glyph, u32)>,
     /// How edits since they were last taken moved the lines, by slot.
     shifts: Vec<(usize, LineShift)>,
     /// Breakpoints and the stopped line, which the machine sets.
@@ -426,6 +432,37 @@ impl LineShift {
                 }
             }
         }
+    }
+}
+
+/// How the editor shows a character its font lacks.
+enum Extra {
+    Draw(Glyph),
+    /// The second half of a surrogate pair drawn on the first's cell.
+    Blank,
+    /// The font's box.
+    None,
+}
+
+/// What [`ExtraGlyphs`] has for `line[i]`. A character beyond U+FFFF
+/// takes two UTF-16 units, and so two cells, as SmileBASIC counts it: its
+/// glyph goes on the first and the second stays empty.
+fn extra_glyph(line: &[u16], i: usize, look: Look) -> Extra {
+    let unit = |i: usize| line.get(i).copied().map(u32::from);
+    let high = |u: u32| (0xD800..0xDC00).contains(&u);
+    let low = |u: u32| (0xDC00..0xE000).contains(&u);
+    let pair = |hi: u32, lo: u32| 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+    let c = u32::from(line[i]);
+    let found = |code| look.extra.find(code, look.font);
+    match (unit(i + 1), i.checked_sub(1).and_then(unit)) {
+        (Some(next), _) if high(c) && low(next) => {
+            found(pair(c, next)).map_or(Extra::None, Extra::Draw)
+        }
+        (_, Some(prev)) if low(c) && high(prev) => match found(pair(prev, c)) {
+            Some(_) => Extra::Blank,
+            None => Extra::None,
+        },
+        _ => found(c).map_or(Extra::None, Extra::Draw),
     }
 }
 
@@ -488,6 +525,7 @@ impl Editor {
             map_drag: false,
             saved: [View::default(); SLOTS],
             screen: TextScreen::new(screen_w, screen_h),
+            extra_cells: Vec::new(),
             shifts: Vec::new(),
             marks: Marks::default(),
             center: false,
@@ -1714,6 +1752,7 @@ impl Editor {
         let v = self.view;
         let selection = self.selection();
         self.layout.clear();
+        self.extra_cells.clear();
         let (status_text, ruler_text) = self.prompt();
         let note = self.note.clone().or_else(|| self.mode_note());
         fb.clear(colors[Part::Background]);
@@ -1792,7 +1831,18 @@ impl Editor {
                     match text.get(start + x) {
                         Some(&c) => {
                             let color = colors[Part::from(roles[start + x])];
-                            screen.put_at((gutter + x) as u32, row as u32, c, color);
+                            let shown = match font.has_glyph(c) {
+                                true => c,
+                                false => match extra_glyph(text, start + x, look) {
+                                    Extra::Draw(glyph) => {
+                                        self.extra_cells.push((gutter + x, row, glyph, color));
+                                        0
+                                    }
+                                    Extra::Blank => 0,
+                                    Extra::None => c,
+                                },
+                            };
+                            screen.put_at((gutter + x) as u32, row as u32, shown, color);
                         }
                         None => {
                             if start + x == text.len() {
@@ -1876,6 +1926,10 @@ impl Editor {
 
         screen.draw(fb, font);
         let cell = grid.cell;
+        for &(x, y, glyph, color) in &self.extra_cells {
+            let at = ((x * cell) as u32, (grid.top + y * cell) as u32);
+            look.extra.draw(fb, glyph, at, color);
+        }
         for (x, color) in ruler_digits {
             let y0 = grid.top + ruler * cell;
             for py in y0..y0 + cell {
@@ -2114,6 +2168,14 @@ mod tests {
         assert_eq!(broken((2, 3), 2).map(1), Some(1));
     }
 
+    /// The bundled extra glyphs, one set per test thread.
+    fn extra() -> &'static ExtraGlyphs {
+        thread_local! {
+            static EXTRA: &'static ExtraGlyphs = Box::leak(Box::new(ExtraGlyphs::bundled()));
+        }
+        EXTRA.with(|e| *e)
+    }
+
     fn look(tiles: bool) -> Look<'static> {
         Look {
             wrap: false,
@@ -2123,6 +2185,7 @@ mod tests {
             bottom: 0,
             font: FontSize::Small,
             colors: &SMILEBASIC,
+            extra: extra(),
         }
     }
 
@@ -2271,6 +2334,68 @@ mod tests {
             .collect::<String>()
             .trim_end()
             .to_string()
+    }
+
+    #[test]
+    fn extra_glyphs_fill_one_cell_each() {
+        // The font lacks everything from U+AC00 on, as SmileBASIC 4's lacks
+        // Hangul and surrogates, and draws nothing for the rest.
+        let font = Font::blank_from(0xAC00);
+        let mut e = editor("A가😀\u{10FFFD}B");
+        let mut fb = Framebuffer::new(400, 240);
+        e.draw(&mut fb, &font, "", look(true), false);
+        // Characters the font has stay on the screen; those drawn from the
+        // extra glyphs leave their cell empty there; a character nothing
+        // has keeps its two units, which the font draws as boxes.
+        let codes: Vec<u16> = (4..11).map(|x| e.screen.cell(x, 0).code).collect();
+        assert_eq!(codes, [0x41, 0, 0, 0, 0xDBFF, 0xDFFD, 0x42]);
+        // One cell per UTF-16 unit, as the cursor counts: 가 in column 1,
+        // 😀 in column 2 with column 3 empty.
+        let top = e.grid.top as u32;
+        let back = fb.get(4 * 8, top);
+        let inked = |col: u32| {
+            let x0 = (4 + col) * 8;
+            (0..8).any(|y| (x0..x0 + 8).any(|x| fb.get(x, top + y) != back))
+        };
+        assert!(!inked(0), "the blank font draws A as nothing");
+        assert!(inked(1), "가");
+        assert!(inked(2), "😀");
+        assert!(!inked(3), "😀's second unit");
+    }
+
+    #[test]
+    fn the_font_comes_before_a_chosen_file() {
+        // A file with A and 가 as full squares.
+        let square = |code: u32| {
+            format!(
+                "STARTCHAR x\nENCODING {code}\nDWIDTH 8 0\nBBX 8 8 0 0\nBITMAP\n{}ENDCHAR\n",
+                "FF\n".repeat(8)
+            )
+        };
+        let bdf = format!(
+            "STARTFONT 2.1\nFONT_ASCENT 8\nFONT_DESCENT 0\n{}{}ENDFONT\n",
+            square(0x41),
+            square(0xAC00)
+        );
+        let file = ExtraGlyphs::from_bytes(bdf.into_bytes()).unwrap();
+        let font = Font::blank_from(0xAC00);
+        let mut e = editor("A가");
+        let mut fb = Framebuffer::new(400, 240);
+        e.draw(
+            &mut fb,
+            &font,
+            "",
+            Look {
+                extra: &file,
+                ..look(true)
+            },
+            false,
+        );
+        // A comes from the font, which draws it blank; 가 from the file.
+        assert_eq!(e.screen.cell(4, 0).code, 0x41);
+        let top = e.grid.top as u32;
+        let back = fb.get(4 * 8, top);
+        assert!((0..8).all(|i| fb.get(5 * 8 + i, top + i) != back));
     }
 
     #[test]

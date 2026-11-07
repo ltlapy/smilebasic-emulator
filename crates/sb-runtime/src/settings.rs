@@ -79,6 +79,10 @@ pub struct Settings {
     /// reports.
     pub editor_tab_step: u32,
     pub editor_colors: Palette,
+    /// A BDF, TrueType or OpenType file the editor draws characters from
+    /// that SmileBASIC's font lacks, before its bundled ones; `None` for
+    /// the bundled ones alone.
+    pub editor_extra_font: Option<String>,
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
@@ -162,6 +166,7 @@ impl Default for Settings {
             // Characters are shown full-width, so one is already wide.
             editor_tab_step: 1,
             editor_colors: Palette::default(),
+            editor_extra_font: None,
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
@@ -365,6 +370,10 @@ impl Settings {
                     s.sound_font = (!value.is_empty()).then(|| value.to_string());
                     continue;
                 }
+                "editor_extra_font" => {
+                    s.editor_extra_font = (!value.is_empty()).then(|| value.to_string());
+                    continue;
+                }
                 "editor_font" => {
                     if let Some(f) = choice(&FONT_SIZE, value) {
                         s.editor_font = f;
@@ -437,6 +446,7 @@ impl Settings {
              editor_size={}\n\
              editor_tab_step={}\n\
              {}\
+             editor_extra_font={}\n\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
@@ -477,6 +487,7 @@ impl Settings {
             choice_name(&EDITOR_SIZE, &self.editor_size),
             self.editor_tab_step,
             self.editor_colors.lines(EDITOR_COLOR),
+            self.editor_extra_font.as_deref().unwrap_or(""),
             self.file_hint_shown,
             self.keyboard_buttons,
             self.smilebasic_instruments,
@@ -532,6 +543,7 @@ mod tests {
             keyboard_buttons: false,
             smilebasic_instruments: false,
             sound_font: Some("/fonts/a b.sf2".to_string()),
+            editor_extra_font: Some("/fonts/hangul 16.bdf".to_string()),
             editor_tab_step: 2,
             language: Language::Japanese,
             localized_errors: true,

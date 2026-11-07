@@ -15,6 +15,7 @@ use crate::compose::{self, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
 use crate::editor::{Editor, Look, blend, frame_size, menu_height};
+use crate::extra_glyphs::ExtraGlyphs;
 use crate::font::Font;
 use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
@@ -772,6 +773,8 @@ type NamesKey = (usize, Vec<u32>);
 pub struct Runtime {
     pub text: Vec<TextScreen>,
     pub(crate) font: Font,
+    /// What the editor draws for characters `font` lacks.
+    extra_glyphs: ExtraGlyphs,
     /// Graphic pages GRP0-GRP5.
     pub grp: Graphics,
     pub sprites: Sprites,
@@ -1084,6 +1087,7 @@ impl Runtime {
         Runtime {
             text: startup_screens(&mode),
             font,
+            extra_glyphs: ExtraGlyphs::bundled(),
             grp: Graphics::default(),
             sprites: Sprites::default(),
             input: Input::default(),
@@ -1895,6 +1899,30 @@ impl Runtime {
         &self.editor_fb
     }
 
+    /// Reads the settings' `editor_extra_font` for the editor's
+    /// characters beyond SmileBASIC's font. A file that cannot be read
+    /// leaves the bundled glyphs in use and the setting cleared, and the
+    /// error is returned to be shown.
+    pub fn load_extra_font(&mut self) -> std::result::Result<(), String> {
+        let loaded = match &self.settings.editor_extra_font {
+            None => Ok(ExtraGlyphs::bundled()),
+            Some(path) => ExtraGlyphs::load(std::path::Path::new(path))
+                .map_err(|e| format!("Using the bundled editor font: {path}: {e}")),
+        };
+        self.editor_key = None;
+        match loaded {
+            Ok(glyphs) => {
+                self.extra_glyphs = glyphs;
+                Ok(())
+            }
+            Err(e) => {
+                self.extra_glyphs = ExtraGlyphs::bundled();
+                self.settings.editor_extra_font = None;
+                Err(e)
+            }
+        }
+    }
+
     /// A fingerprint of what [`Runtime::draw_editors`] draws from.
     fn editor_key(
         &self,
@@ -1956,6 +1984,7 @@ impl Runtime {
             bottom: reserve,
             font: s.editor_font,
             colors: &s.editor_colors,
+            extra: &self.extra_glyphs,
         };
         let name = |editor: &Editor| {
             let slot = editor.slot();

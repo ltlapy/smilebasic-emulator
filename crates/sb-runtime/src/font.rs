@@ -85,7 +85,7 @@ const FIRST_ON_PAGE: &[std::ops::RangeInclusive<u16>] = &[
 ];
 
 /// The 16-pixel fallback font's outlines (see `fonts/mplus`).
-static OUTLINES: &[u8] = include_bytes!("../fonts/mplus/SBEmulator1p-Bold.ttf");
+pub(crate) static OUTLINES: &[u8] = include_bytes!("../fonts/mplus/SBEmulator1p-Bold.ttf");
 /// Top of the outline font's em box above the baseline, in font units of
 /// 1000: M+'s typographic ascender, 860 over a descender of -140.
 const EM_TOP: f32 = 860.0;
@@ -98,7 +98,7 @@ const LARGE: usize = FontSize::Large as usize;
 /// the 16 steps of SmileBASIC 4's font page.
 type Bitmap = [u8; LARGE * LARGE];
 
-fn outlines() -> &'static FontRef<'static> {
+pub(crate) fn outlines() -> &'static FontRef<'static> {
     static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
     FONT.get_or_init(|| FontRef::try_from_slice(OUTLINES).expect("bundled font"))
 }
@@ -149,7 +149,7 @@ const SYMBOL: u16 = 0x8000;
 const SYMBOL_PALETTE: [u32; 5] = [0, 0xFFFF_FFFF, 0xFF00_0000, 0xFFBF_BFBF, 0xFF00_BFFF];
 /// Built by `build.rs` from `fonts/galmuri`: records of a u16 code and
 /// 8 row bytes.
-static FALLBACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_font.bin"));
+pub(crate) static FALLBACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_font.bin"));
 /// Built by `build.rs` from `fonts/symbols.txt`: records of a u16 code and
 /// 64 palette indices.
 static SYMBOLS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback_symbols.bin"));
@@ -317,6 +317,22 @@ impl Font {
         self.glyph_index(code).map(|n| slot_origin(n, size))
     }
 
+    /// Whether the font draws `code` as itself rather than as the glyph
+    /// for missing characters. One table lookup, as the editor asks it of
+    /// every character it shows.
+    pub fn has_glyph(&self, code: u16) -> bool {
+        match &self.0 {
+            Source::Page { glyphs, .. } => glyphs[usize::from(code)] != MISSING_GLYPH,
+            Source::Cells { index, .. } => {
+                let drawn = match code {
+                    0x21..=0x7E => code + 0xFEE0,
+                    _ => code,
+                };
+                index[usize::from(drawn)] != NO_CELL
+            }
+        }
+    }
+
     /// Whether this is SmileBASIC 4's own font, not the bundled one.
     pub fn is_smilebasic(&self) -> bool {
         matches!(self.0, Source::Page { .. })
@@ -404,6 +420,17 @@ impl Font {
             },
             Pages::default(),
         )
+    }
+
+    /// [`Font::blank`] without glyphs for codes from `first` up, as
+    /// SmileBASIC 4's font lacks Hangul and surrogates.
+    #[cfg(test)]
+    pub(crate) fn blank_from(first: u16) -> Font {
+        let mut font = Font::blank();
+        if let Source::Page { glyphs, .. } = &mut font.0 {
+            glyphs[usize::from(first)..].fill(MISSING_GLYPH);
+        }
+        font
     }
 
     #[cfg(test)]

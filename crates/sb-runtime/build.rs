@@ -6,13 +6,25 @@
 //! - `$OUT_DIR/fallback_symbols.bin`, from `fonts/symbols.txt`: one 66-byte
 //!   record per character: u16 code, then 64 palette indices in rows (see
 //!   `SYMBOL_PALETTE` in `src/font.rs`).
+//! - `$OUT_DIR/extra_hangul16.bin` and `extra_emoji{8,16}.bin`, the
+//!   editor's extra glyphs (see `src/extra_glyphs.rs`), from
+//!   `fonts/galmuri/Galmuri14-Hangul.bdf` and
+//!   `fonts/notoemoji/SBEmulatorEmoji.ttf`: tables compressed with
+//!   deflate, laid out as `extra_glyphs::Table` reads them.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
+// The runtime uses parts of it the build does not.
+#[allow(dead_code)]
+#[path = "src/cell_glyph.rs"]
+mod cell_glyph;
+
 const BDF: &str = "fonts/galmuri/GalmuriMono7.bdf";
 const OVERRIDES: &str = "fonts/galmuri/overrides.txt";
 const SYMBOLS: &str = "fonts/symbols.txt";
+const HANGUL: &str = "fonts/galmuri/Galmuri14-Hangul.bdf";
+const EMOJI: &str = "fonts/notoemoji/SBEmulatorEmoji.ttf";
 /// Pixel characters of `symbols.txt`, in palette order.
 const SYMBOL_CHARS: &str = ".#kgb";
 /// Cell row of the baseline's lowest pixel row (y = 0); y = -1 is row 7.
@@ -141,6 +153,9 @@ fn main() {
     println!("cargo::rerun-if-changed={BDF}");
     println!("cargo::rerun-if-changed={OVERRIDES}");
     println!("cargo::rerun-if-changed={SYMBOLS}");
+    println!("cargo::rerun-if-changed={HANGUL}");
+    println!("cargo::rerun-if-changed={EMOJI}");
+    println!("cargo::rerun-if-changed=src/cell_glyph.rs");
     let read = |path| std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
@@ -175,4 +190,58 @@ fn main() {
     }
     std::fs::write(Path::new(&out_dir).join("fallback_symbols.bin"), out)
         .expect("write the symbols");
+
+    extra_glyphs(&read, Path::new(&out_dir));
+}
+
+/// Writes a table of cells: u32 count, u8 cell size, u8 bits per pixel
+/// (1 or 8), the codes as u32 in order, then the cells, deflated.
+fn write_table(path: &Path, cell: u32, bits: u8, glyphs: &BTreeMap<u32, Vec<u8>>) {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(glyphs.len() as u32).to_le_bytes());
+    out.extend_from_slice(&[cell as u8, bits]);
+    for &code in glyphs.keys() {
+        out.extend_from_slice(&code.to_le_bytes());
+    }
+    for alpha in glyphs.values() {
+        match bits {
+            1 => {
+                for byte in alpha.chunks(8) {
+                    out.push(byte.iter().fold(0, |b, &a| b << 1 | u8::from(a >= 128)));
+                }
+            }
+            _ => out.extend_from_slice(alpha),
+        }
+    }
+    let packed = miniz_oxide::deflate::compress_to_vec(&out, 10);
+    std::fs::write(path, packed).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+}
+
+fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path) {
+    let bdf = cell_glyph::parse_bdf(&read(HANGUL));
+    let layout = cell_glyph::BdfLayout::new(&bdf);
+    let hangul = bdf
+        .glyphs
+        .iter()
+        .map(|g| (g.code, cell_glyph::bdf_cell(g, &layout, 16)))
+        .collect();
+    write_table(&out_dir.join("extra_hangul16.bin"), 16, 1, &hangul);
+
+    let bytes = std::fs::read(EMOJI).unwrap_or_else(|e| panic!("{EMOJI}: {e}"));
+    let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("emoji font");
+    let codes: Vec<char> = {
+        use ab_glyph::Font as _;
+        let mut codes: Vec<char> = font.codepoint_ids().map(|(_, c)| c).collect();
+        codes.sort_unstable();
+        codes.dedup();
+        codes
+    };
+    for cell in [8, 16] {
+        let glyphs = codes
+            .iter()
+            .filter_map(|&c| Some((c as u32, cell_glyph::outline_cell(&font, c, cell, 1.0)?)))
+            .collect();
+        let name = format!("extra_emoji{cell}.bin");
+        write_table(&out_dir.join(name), cell, 8, &glyphs);
+    }
 }
