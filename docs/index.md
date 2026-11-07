@@ -18,6 +18,7 @@ Rendering and performance:
 - [renderer.md](renderer.md): how the emulator draws a frame
 - [renderer-verification.md](renderer-verification.md): rendering rules and how they were checked
 - [renderer-decisions.md](renderer-decisions.md): choices made for the GPU renderer
+- [frame-thread.md](frame-thread.md): how frames and sound go on while the main thread is held up
 - [benchmarking.md](benchmarking.md): how to measure performance
 - [benchmark-results.md](benchmark-results.md): performance results
 

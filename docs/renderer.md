@@ -435,6 +435,9 @@ The rest of the window:
   copies for fitted views. `Runtime::sprite_corners` gives the debugger where a
   sprite lands, using the same matrices as the renderer.
 - **Present** is `pacing.rs` (vsync handling, frame skipping).
+- **A held-up main thread.** While SDL holds the main thread up, as when the
+  window is dragged on GNOME, a standby thread runs the program's frames and
+  their sound: [frame-thread.md](frame-thread.md).
 - **Window screenshots.** The app has no PrintScreen command. The only window
   capture is `SB_UI_BENCH`'s `shot=PATH` (`bench.rs`), which reads the canvas
   with `SDL_RenderReadPixels` into PAM files.
