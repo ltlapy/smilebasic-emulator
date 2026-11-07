@@ -53,6 +53,14 @@ the program's work overlap the drawing. It needs much more than this:
   editor, menus, dialogs, the debugger's panel, file confirmations, the pointer
   and the status line. Each would become a message or a copy.
 
+On this project's x86-64 desktop the overlap has little to win. With 4000
+sprites turning and a `GFILL` a frame, `SB_UI_BENCH` gives 1.38 ms of `run` and
+1.16 ms of `screen` a frame on the CPU path, and 1.28 ms and 0.22 ms on the GPU
+path, well inside a frame either way. Overlap saves at most the smaller of the
+two. A Cortex-A35 runs both several times slower, and there the CPU path's sum
+could pass 16.7 ms where each part alone would not; that is the case for the
+larger change.
+
 A held-up main thread is rare and has no input to give anyway, since the events
 are what is stuck. Lending the machine for those calls alone covers it with
 everything else unchanged.

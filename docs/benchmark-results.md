@@ -170,6 +170,26 @@ against 49, but it looks different. SDL can throttle configures during an
 interactive resize when built against a libdecor with the resizing state
 (0.3).
 
+### Frames during a drag, `5e076c2` against the standby thread
+
+This set ran on the same machine and setup, dragging a 2500x1400 window for
+900 timed trips with a program that plays a looped MML tune and moves sprites.
+`frames` counts program frames a second, `MAINCNT` agreed in each run. The
+silence is the sound device's, with the dummy driver; about 130 ms of it comes
+from start-up, as a run with no drag shows.
+
+| Load | Build | Frames a second | Silent | Longest trip |
+|---|---|---|---|---|
+| None | `5e076c2` | 59.97 | 157 ms | 52 ms |
+| None | standby | 59.96 | 174 ms | 590 ms |
+| 8 busy cores | `5e076c2` | 55.6, 43.2 | 3.6 s, 12.3 s | 0.48 s, 1.72 s |
+| 8 busy cores | standby | 59.94, 59.95 | 0.42 s, 0.31 s | 1.16 s, 0.77 s |
+
+The longest trip round the loop varies from run to run with Mutter, and the
+standby thread does not shorten it: it keeps the program and its sound going
+through it. `at=200:sleep:5000` with no window gives 40.2 frames a second and
+4.9 s of silence before, and 60.0 with none after.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
