@@ -1681,19 +1681,21 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
 - `LOAD` into a slot and then `EXEC` of the slot runs another project's
   program: `LOAD "OTHER/NAME",1:EXEC 1` in a program works and shows no dialog
   (TEST68, and checked on hardware, version 4.4.9, 2026-11-08).
-- `LOADG` of a name with a project and no type, such as `LOADG "HGLIB/NAME",0`,
-  loads the other project's image. A program loads it without a dialog; at the
-  prompt SmileBASIC 4 shows its load dialog first (checked on hardware, version
-  4.4.9, 2026-11-08).
-- `LOADG "GRP:TEST05/HG16_NEODGM",3` in a main program of project TEST05, while
-  a subprogram ran, gave `RESULT` 0, loaded nothing and left the page as it
-  was, with no error (TEST68). What refuses it is not known: the `GRP:` prefix,
-  the program's own project, the page, or the running subprogram.
+- `LOADG` of a name with a project loads the image, for the program's own
+  project or another, with or without `GRP:`: `LOADG "HGLIB/NAME",0` and
+  `LOADG "GRP:HGLIB/NAME",0` both load. A program loads it without a dialog; at
+  the prompt SmileBASIC 4 shows its load dialog first (checked on hardware,
+  version 4.4.9, 2026-11-08).
+- One `LOADG` in TEST68 is unexplained:
+  `LOADG "GRP:TEST05/HG16_NEODGM",3,0,0 OUT W,H` in a main program of project
+  TEST05, while a `SUBRUN` subprogram ran, gave `RESULT` 0, loaded nothing and
+  left the page as it was, with no error. The file was there:
+  `LOADG "GRP:HG16_NEODGM",3,0,0 OUT W,H` in the same test loaded it.
 - Expected but not yet seen on hardware: a subprogram's `EXEC` refuses a
   project name too, and `EXEC` takes SmileBASIC 4's own `#` projects. `SAVE`,
   `SAVEV` and `SAVEG` refuse a project name with error 74 in a main program,
   but not in direct mode or a subprogram. `RENAME` and `DELETE` refuse one
-  everywhere. The `LOADG` refusal with `GRP:` may be new in version 4.4.9.
+  everywhere.
 - `LOADG` leaves the page's pixels outside the loaded image as they were: a
   1024x624 image loaded at 0,0 leaves 1027,5 and 5,627 alone (TEST68).
 - `LOADV` and `LOADG` in a program ask nothing. `S$=LOADV("TXT:NONE")` of a
