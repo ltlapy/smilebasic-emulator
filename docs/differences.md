@@ -123,18 +123,22 @@ apart from the macro hang below.
   takes everything else from `BUTTON` therefore needs a gamepad.
 - `INKEY$` gets nothing from buttons the keyboard presses; the keys themselves
   do the typing.
-- Caps Lock: a running program gets letters by SmileBASIC 4's own Caps Lock,
-  which is on at start and which the Caps Lock key toggles. The computer's
-  Caps Lock light disagrees with it if the computer's Caps Lock was on when the
-  emulator started, or was pressed while another window had the keys. The
-  editor and the prompt still swap the case of what the computer types, so
-  there the computer's Caps Lock counts. With File > Settings > General > "Type
-  capitals without Shift" off, letters keep the computer's case everywhere.
-- Key repeat: a key held for a running program repeats in the program's frames,
-  as on SmileBASIC 4. The editor and the prompt use the computer's key repeat.
-  Text outside ASCII, such as what an input method types, goes as the computer
-  sends it, with the computer's repeat, since the key it came from is not
-  known.
+- Caps Lock: programs, the prompt and the editor get letters by SmileBASIC 4's
+  own Caps Lock, which is on at start and which the Caps Lock key toggles in
+  any of the emulator's windows. The computer's Caps Lock light disagrees with
+  it if the computer's Caps Lock was on when the emulator started, or was
+  pressed while another program's window had the keys. With File > Settings >
+  General > "Type capitals without Shift" off, letters keep the computer's
+  case everywhere.
+- Key repeat: a key held for a program, the prompt or the editor repeats in the
+  emulator's frames, as a key held for `INKEY$` does on SmileBASIC 4: 19 frames
+  after the press, then every 3. That covers letters, digits and symbols,
+  Enter, Backspace, Delete, Tab, Esc, Insert, the cursor keys, Home, End, Page
+  Up and Page Down, and Shift with the cursor keys and with Tab. The editor's
+  shortcuts with Ctrl or Alt, such as Ctrl+Z, and the function keys repeat at
+  the computer's rate. Text outside ASCII, such as what an input method types,
+  goes as the computer sends it, with the computer's repeat, since the key it
+  came from is not known.
 - Han/Eng: on SmileBASIC 4 it types nothing and letters stay ASCII. On a
   computer it may switch the computer's input method, and what that types then
   reaches the program.
