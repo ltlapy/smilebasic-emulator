@@ -5,6 +5,7 @@ use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::font::{Font, FontSize};
 use sb_runtime::settings::{Language, Renderer, Settings, TOOLS};
+use sb_runtime::speed::Speed;
 use sdl3::keyboard::Keycode;
 
 use crate::shortcuts::wrap;
@@ -137,6 +138,17 @@ const PAGES: &[Page] = &[
                 |s| s.helpinfo_cursor,
                 |s| s.helpinfo_cursor ^= true,
             ),
+            Row {
+                label: "Speed",
+                about: "Unlimited runs programs as fast as this computer can (default). \
+                        Switch 2 and Switch 1 give them a frame's work as on that \
+                        console: a program too slow there misses frames here too.",
+                control: Control::Choice(
+                    &["Unlimited", "Switch 2", "Switch 1"],
+                    |s| Speed::ALL.iter().position(|&v| v == s.speed).unwrap_or(0),
+                    |s, i| s.speed = Speed::ALL[i],
+                ),
+            },
             Row {
                 label: "Language reported to programs",
                 about: "The value SYSPARAM(\"LANG\") returns: \"en-US\" as in the \
