@@ -306,8 +306,8 @@ const PAGES: &[Page] = &[
                 "Narrow half-width characters",
                 "The editor draws ASCII and half-width kana half as wide as other \
                  characters. Each character still takes one column, so lines look \
-                 shorter than in SmileBASIC 4 and mixed Japanese or Hangul text no \
-                 longer lines up. Off by default.",
+                 shorter than in SmileBASIC 4 and text that mixes half-width and \
+                 full-width characters no longer lines up. Off by default.",
                 |s| s.editor_half_width,
                 |s| s.editor_half_width ^= true,
             ),
@@ -423,9 +423,9 @@ const PAGES: &[Page] = &[
         rows: &[
             Row {
                 label: EXTRA_FONT,
-                about: "A BDF, TTF or OTF file to draw characters from, such as Hangul and \
-                        emoji, which SmileBASIC's font lacks. The rows below set where it \
-                        comes in the order. Default: none.",
+                about: "A BDF, TTF or OTF file to draw the Unicode characters SmileBASIC's \
+                        font lacks. The rows below set where it comes in the order. \
+                        Default: none.",
                 control: Control::Choice(
                     &["None", "File..."],
                     |s| match s.editor_extra_font {
