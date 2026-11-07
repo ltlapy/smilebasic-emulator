@@ -117,8 +117,11 @@ the last resort. The menus and windows use the bundled glyphs.
 File > Settings > Fonts > "Menus and windows" picks the font of the menu bar,
 the settings window and the emulator's other windows:
 
-- 8-pixel, doubled (the default): SmileBASIC's 8-pixel font at twice its size;
-- 16-pixel: SmileBASIC's 16-pixel font, with the half-width glyphs above;
+- 8-pixel, doubled: the editor's bundled 8-pixel fonts above at twice their
+  size, GalmuriMono7 first, with its half-width glyphs. SmileBASIC's own
+  symbols and what none of them has come from SmileBASIC's 8-pixel font;
+- 16-pixel (the default): SmileBASIC's 16-pixel font, with the half-width
+  glyphs above;
 - Smooth: outlines with soft edges, drawn for a 16-pixel cell. Half-width
   characters come from [M PLUS Code Latin](https://github.com/coz-m/MPLUS_FONTS)
   50 Bold, a monospaced Latin face half an em wide, then M PLUS 1p Bold's

@@ -10,8 +10,8 @@ use sb_runtime::half_width::is_half_width;
 use sb_runtime::settings::UiFont;
 use sb_runtime::ui_glyphs::UiGlyphs;
 
-/// Glyphs are the console's 8x8 font drawn at twice the size, its 16x16
-/// one, or smooth outlines that size (see [`set_font`]).
+/// Glyphs are the bundled 8x8 fonts drawn at twice the size, the console's
+/// 16x16 font, or smooth outlines that size (see [`set_font`]).
 const GLYPH_SCALE: u32 = 2;
 pub const CHAR: u32 = 8 * GLYPH_SCALE;
 pub const PAD: u32 = 8;
@@ -235,7 +235,7 @@ pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, 
 
 /// The font of UI text, as [`UiFont`] as u8: the 16-pixel and smooth
 /// fonts are drawn where text is drawn at an even scale.
-static UI_FONT: AtomicU8 = AtomicU8::new(UiFont::Doubled as u8);
+static UI_FONT: AtomicU8 = AtomicU8::new(UiFont::Large as u8);
 
 /// Picks the font of the UI, as the ui_font setting says.
 pub fn set_font(font: UiFont) {
@@ -244,19 +244,20 @@ pub fn set_font(font: UiFont) {
 
 fn ui_font() -> UiFont {
     match UI_FONT.load(Ordering::Relaxed) {
-        x if x == UiFont::Large as u8 => UiFont::Large,
+        x if x == UiFont::Doubled as u8 => UiFont::Doubled,
         x if x == UiFont::Smooth as u8 => UiFont::Smooth,
-        _ => UiFont::Doubled,
+        _ => UiFont::Large,
     }
 }
 
 thread_local! {
-    /// The smooth glyphs, made as text wants them.
+    /// The smooth and 8-pixel glyphs, made as text wants them.
     static SMOOTH: UiGlyphs = UiGlyphs::default();
 }
 
-/// Draws text with the 8x8 glyphs `scale` times their size, or with the
-/// 16x16 or smooth ones half that, if chosen and `scale` is even. Every
+/// Draws text with the 8x8 glyphs `scale` times their size (the bundled
+/// ones if chosen, else the console's), or with the 16x16 or smooth ones
+/// half that, if chosen and `scale` is even. Every
 /// character takes a whole cell, as on SmileBASIC's screens: the help and the
 /// debugger show SmileBASIC's text laid out for that.
 pub fn draw_text_scaled(
@@ -307,6 +308,7 @@ fn draw_glyphs(
         _ => (FontSize::Small, scale),
     };
     let smooth = font_choice == UiFont::Smooth && even;
+    let dot = font_choice == UiFont::Doubled;
     let halves = font.half_glyphs();
     let put = |fb: &mut Framebuffer, px: u32, py: u32| {
         if let Some(dst) = fb.get(px, py) {
@@ -316,9 +318,13 @@ fn draw_glyphs(
     let mut left = x;
     for c in text.encode_utf16() {
         let w = width(c);
-        let drawn = smooth
+        let drawn = (smooth || (dot && w == cell))
             && SMOOTH.with(|glyphs| {
-                let Some(glyph) = glyphs.get(c, w < cell) else {
+                let glyph = match smooth {
+                    true => glyphs.get(c, w < cell),
+                    false => glyphs.dot(c),
+                };
+                let Some(glyph) = glyph else {
                     return false;
                 };
                 let side = if w < cell {

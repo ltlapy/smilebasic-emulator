@@ -28,20 +28,21 @@ impl Language {
     }
 }
 
-/// What draws the screens: GPU rendering if a test at start-up passes, or CPU always.
 /// The font of the emulator's menus and windows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum UiFont {
-    /// SmileBASIC's 8-pixel font at twice its size.
-    #[default]
+    /// The bundled 8-pixel fonts at twice their size, with SmileBASIC's
+    /// font for its own symbols (see [`crate::ui_glyphs`]).
     Doubled,
     /// SmileBASIC's 16-pixel font.
+    #[default]
     Large,
     /// Outlines drawn at 16 pixels with gray edges (see
     /// [`crate::ui_glyphs`]).
     Smooth,
 }
 
+/// What draws the screens: GPU rendering if a test at start-up passes, or CPU always.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Renderer {
     Auto,
@@ -206,7 +207,7 @@ impl Default for Settings {
             sound_font: None,
             language: Language::English,
             localized_errors: false,
-            ui_font: UiFont::Doubled,
+            ui_font: UiFont::Large,
             keep_mouse_cursor: false,
             helpinfo_cursor: false,
             help_text_size: 2,

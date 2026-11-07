@@ -408,9 +408,10 @@ const PAGES: &[Page] = &[
             Row {
                 label: "Menus and windows",
                 about: "The font of the menu bar, this window and the emulator's other \
-                        windows (not the SmileBASIC screen): SmileBASIC's 8-pixel font at \
-                        twice its size (default), its 16-pixel font, or smooth outlines \
-                        with soft edges (M PLUS 1p Bold and M PLUS Code Latin 50 Bold).",
+                        windows (not the SmileBASIC screen): the bundled 8-pixel fonts at \
+                        twice their size (GalmuriMono7 first), SmileBASIC's 16-pixel font \
+                        (default), or smooth outlines with soft edges (M PLUS 1p Bold and \
+                        M PLUS Code Latin 50 Bold).",
                 control: Control::Choice(
                     &["8-pixel, doubled", "16-pixel", "Smooth"],
                     |s| match s.ui_font {
