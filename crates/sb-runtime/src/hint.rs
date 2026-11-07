@@ -4,7 +4,7 @@
 //! form it fits.
 
 use crate::complete::{BACK, BORDER, DIM, Item, Library, SYNTAX, TEXT, draw_syntax, fill};
-use crate::font::Font;
+use crate::extra_glyphs::Fonts;
 use crate::framebuffer::Framebuffer;
 use crate::syntax::{Role, highlight, is_ident_char, is_ident_start};
 use crate::text::TextScreen;
@@ -204,7 +204,7 @@ pub struct Band {
 /// while the cursor's row is down there.
 pub fn draw_band(
     fb: &mut Framebuffer,
-    font: &Font,
+    fonts: Fonts,
     band: Band,
     (hint, syntax): (Option<&Hint>, Option<&str>),
     cell: u32,
@@ -217,7 +217,7 @@ pub fn draw_band(
         y = band.top;
     }
     if let Some(hint) = hint {
-        hint.draw(fb, font, band.left + 1, (y + hint_h, y + 1), cell);
+        hint.draw(fb, fonts, band.left + 1, (y + hint_h, y + 1), cell);
     }
     if let Some(syntax) = syntax {
         let cols = (syntax.encode_utf16().count() as i64 + 2).min(i64::from(fb.width()) / c);
@@ -225,7 +225,7 @@ pub fn draw_band(
             .min(i64::from(fb.width()) - cols * c - 1)
             .max(1);
         let at = (x, y + hint_h + 1);
-        draw_syntax(fb, font, at, cols, cell, syntax);
+        draw_syntax(fb, fonts, at, cols, cell, syntax);
     }
 }
 
@@ -252,7 +252,7 @@ impl Hint {
     pub fn draw(
         &self,
         fb: &mut Framebuffer,
-        font: &Font,
+        fonts: Fonts,
         x: i64,
         (bottom, below): (i64, i64),
         cell: u32,
@@ -290,7 +290,7 @@ impl Hint {
                 screen.put_at(i as u32 + 1, row as u32, ch, color);
             }
         }
-        screen.draw(fb, font);
+        fonts.draw_screen(&mut screen, fb);
     }
 }
 

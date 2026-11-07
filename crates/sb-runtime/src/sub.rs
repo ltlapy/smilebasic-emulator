@@ -48,6 +48,7 @@ impl Runtime {
         rt.storage = self.storage.clone();
         rt.library = Rc::clone(&self.library);
         rt.help = self.help.clone();
+        rt.share_fonts(self);
         rt.env_type = 1;
         rt
     }

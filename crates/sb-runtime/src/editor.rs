@@ -11,10 +11,10 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::complete::{self, Completion, Item, Library, Options};
-use crate::extra_glyphs::{ExtraGlyphs, Glyph};
+use crate::extra_glyphs::{ExtraGlyphs, FontSource, Fonts, Glyph, Shown};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
-use crate::half_width::is_half_width;
+use crate::half_width::{HalfGlyphs, is_half_width};
 use crate::hint;
 use crate::palette::{Palette, Part};
 use crate::runtime::{SLOTS, keys};
@@ -145,9 +145,25 @@ pub struct Look<'a> {
     pub colors: &'a Palette,
     /// Glyphs for the characters `font` lacks.
     pub extra: &'a ExtraGlyphs,
+    /// The source characters are looked for in first.
+    pub first: FontSource,
     /// Half-width characters are drawn half a cell wide. Each character
     /// still takes one column.
     pub half_width: bool,
+    /// The half-width glyphs, if not the font's own.
+    pub halves: Option<&'a HalfGlyphs>,
+}
+
+impl<'a> Look<'a> {
+    /// The sources the editor draws characters with.
+    fn fonts(&self, font: &'a Font) -> Fonts<'a> {
+        Fonts {
+            font,
+            extra: Some(self.extra),
+            first: self.first,
+            size: self.font,
+        }
+    }
 }
 
 /// Where the editor's character cells are on its frame: `cell` pixels
@@ -530,37 +546,6 @@ impl LineShift {
                 }
             }
         }
-    }
-}
-
-/// How the editor shows a character its font lacks.
-enum Extra {
-    Draw(Glyph),
-    /// The second half of a surrogate pair drawn on the first's cell.
-    Blank,
-    /// The font's box.
-    None,
-}
-
-/// What [`ExtraGlyphs`] has for `line[i]`. A character beyond U+FFFF
-/// takes two UTF-16 units, and so two cells, as SmileBASIC counts it: its
-/// glyph goes on the first and the second stays empty.
-fn extra_glyph(line: &[u16], i: usize, look: Look) -> Extra {
-    let unit = |i: usize| line.get(i).copied().map(u32::from);
-    let high = |u: u32| (0xD800..0xDC00).contains(&u);
-    let low = |u: u32| (0xDC00..0xE000).contains(&u);
-    let pair = |hi: u32, lo: u32| 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
-    let c = u32::from(line[i]);
-    let found = |code| look.extra.find(code, look.font);
-    match (unit(i + 1), i.checked_sub(1).and_then(unit)) {
-        (Some(next), _) if high(c) && low(next) => {
-            found(pair(c, next)).map_or(Extra::None, Extra::Draw)
-        }
-        (_, Some(prev)) if low(c) && high(prev) => match found(pair(prev, c)) {
-            Some(_) => Extra::Blank,
-            None => Extra::None,
-        },
-        _ => found(c).map_or(Extra::None, Extra::Draw),
     }
 }
 
@@ -1866,6 +1851,7 @@ impl Editor {
         self.over.clear();
         let half = look.half_width;
         self.half = half;
+        let fonts = look.fonts(font);
         let cell = grid.cell;
         let (status_text, ruler_text) = self.prompt();
         let note = self.note.clone().or_else(|| self.mode_note());
@@ -1928,7 +1914,8 @@ impl Editor {
                             grid.fill(fb, row, 0, gutter - 1, color);
                         }
                         let digits = if breakpoint { TEXT } else { color };
-                        put_str(screen, 0, row, &number, digits);
+                        let extras = &mut self.extra_cells;
+                        put_str(screen, extras, &fonts, (0, row), &number, digits);
                     }
                 }
                 let start = if wrap { chunk * cols } else { v.left };
@@ -1955,13 +1942,11 @@ impl Editor {
                         let color = colors[Part::from(roles[col])];
                         let over = if is_half_width(c) {
                             Some(Over::Half(c))
-                        } else if font.has_glyph(c) {
-                            Some(Over::Font(c))
                         } else {
-                            match extra_glyph(text, col, look) {
-                                Extra::Draw(glyph) => Some(Over::Extra(glyph)),
-                                Extra::Blank => None,
-                                Extra::None => Some(Over::Font(c)),
+                            match fonts.choose(text, col) {
+                                Shown::Font => Some(Over::Font(c)),
+                                Shown::Extra(glyph) => Some(Over::Extra(glyph)),
+                                Shown::Blank => None,
                             }
                         };
                         if let Some(over) = over {
@@ -1988,16 +1973,13 @@ impl Editor {
                     match text.get(start + x) {
                         Some(&c) => {
                             let color = colors[Part::from(roles[start + x])];
-                            let shown = match font.has_glyph(c) {
-                                true => c,
-                                false => match extra_glyph(text, start + x, look) {
-                                    Extra::Draw(glyph) => {
-                                        self.extra_cells.push((gutter + x, row, glyph, color));
-                                        0
-                                    }
-                                    Extra::Blank => 0,
-                                    Extra::None => c,
-                                },
+                            let shown = match fonts.choose(text, start + x) {
+                                Shown::Font => c,
+                                Shown::Extra(glyph) => {
+                                    self.extra_cells.push((gutter + x, row, glyph, color));
+                                    0
+                                }
+                                Shown::Blank => 0,
                             };
                             screen.put_at((gutter + x) as u32, row as u32, shown, color);
                         }
@@ -2048,11 +2030,11 @@ impl Editor {
                 if tiles {
                     // A tile is a cell wide, so it may cover the next
                     // column; the cursor's comes first.
-                    let clear = px + cell <= cursor_x || px >= cursor_x + cell;
+                    let clear = |x: usize, w: usize| x + w <= cursor_x || x >= cursor_x + cell;
                     if col == cursor_col {
                         self.over
                             .push((px, ruler, Over::Font(ruler_tile(col)), TEXT));
-                    } else if col.is_multiple_of(2) && clear {
+                    } else if col.is_multiple_of(2) && clear(px, cell) {
                         self.over
                             .push((px, ruler, Over::Font(ruler_tile(col)), BAR));
                         ruler_digits.push((px, color));
@@ -2102,19 +2084,23 @@ impl Editor {
             }
         }
         let mut prompt_cursor = None;
+        let extras = &mut self.extra_cells;
         match &status_text {
             Some((text, field)) => {
-                put_str(screen, 0, status, text, TEXT);
+                put_str(screen, extras, &fonts, (0, status), text, TEXT);
                 prompt_cursor = Some(*field);
             }
-            None => put_str(screen, 0, status, &format!("PRG{} {name}", self.slot), TEXT),
+            None => {
+                let text = format!("PRG{} {name}", self.slot);
+                put_str(screen, extras, &fonts, (0, status), &text, TEXT);
+            }
         }
         if let Some(text) = &ruler_text {
-            put_str(screen, 0, ruler, text, TEXT);
+            put_str(screen, extras, &fonts, (0, ruler), text, TEXT);
         }
         if let Some(note) = &note {
             let x = width.saturating_sub(note.encode_utf16().count());
-            put_str(screen, x, status, note, DIM);
+            put_str(screen, extras, &fonts, (x, status), note, DIM);
         }
 
         screen.draw(fb, font);
@@ -2122,7 +2108,7 @@ impl Editor {
             let at = ((x * cell) as u32, (grid.top + y * cell) as u32);
             look.extra.draw(fb, glyph, at, color);
         }
-        let halves = font.half_glyphs();
+        let halves = look.halves.unwrap_or_else(|| font.half_glyphs());
         for &(x, y, over, color) in &self.over {
             let at = (x as u32, (grid.top + y * cell) as u32);
             match over {
@@ -2177,9 +2163,9 @@ impl Editor {
                     cursor: top,
                 };
                 let syntax = self.completion.as_ref().and_then(Completion::syntax);
-                hint::draw_band(fb, font, band, (hint.as_ref(), syntax), cell as u32);
+                hint::draw_band(fb, fonts, band, (hint.as_ref(), syntax), cell as u32);
             } else if let Some(hint) = &hint {
-                hint.draw(fb, font, left, (top, top + cell as i64), cell as u32);
+                hint.draw(fb, fonts, left, (top, top + cell as i64), cell as u32);
             }
             if let Some(list) = &self.completion {
                 let start = list.start.min(v.col);
@@ -2188,7 +2174,7 @@ impl Editor {
                     false => (v.col - start) * cell,
                 };
                 let at = (x.saturating_sub(back) as i64, top + cell as i64);
-                list.draw(fb, font, at, top, cell as u32, colors);
+                list.draw(fb, fonts, at, top, cell as u32, colors);
             }
         }
         if let (Some((x, y)), true) = (cursor, blink) {
@@ -2311,9 +2297,30 @@ fn rows_of(line: &[u16], cols: usize) -> usize {
     line.len() / cols + 1
 }
 
-fn put_str(screen: &mut TextScreen, x: usize, y: usize, text: &str, color: u32) {
-    for (i, c) in text.encode_utf16().enumerate() {
-        screen.put_at((x + i) as u32, y as u32, c, color);
+/// Puts `text` on the editor's screen from column `x` of row `y`, with
+/// the characters `fonts` draws from other sources than the font left
+/// empty there and added to `extras`.
+fn put_str(
+    screen: &mut TextScreen,
+    extras: &mut Vec<(usize, usize, Glyph, u32)>,
+    fonts: &Fonts,
+    (x, y): (usize, usize),
+    text: &str,
+    color: u32,
+) {
+    let mut units = text.encode_utf16().peekable();
+    let (mut prev, mut col) = (None, x);
+    while let Some(c) = units.next() {
+        let shown = match fonts.choose_unit(c, prev, units.peek().copied()) {
+            Shown::Font => c,
+            Shown::Extra(glyph) => {
+                extras.push((col, y, glyph, color));
+                0
+            }
+            Shown::Blank => 0,
+        };
+        screen.put_at(col as u32, y as u32, shown, color);
+        (prev, col) = (Some(c), col + 1);
     }
 }
 
@@ -2399,7 +2406,9 @@ mod tests {
             font: FontSize::Small,
             colors: &SMILEBASIC,
             extra: extra(),
+            first: FontSource::SmileBasic,
             half_width: false,
+            halves: None,
         }
     }
 
@@ -2610,6 +2619,65 @@ mod tests {
         let top = e.grid.top as u32;
         let back = fb.get(4 * 8, top);
         assert!((0..8).all(|i| fb.get(5 * 8 + i, top + i) != back));
+    }
+
+    #[test]
+    fn the_first_source_is_the_settings_choice() {
+        // A file with A, P and 가 as full squares.
+        let square = |code: char| {
+            format!(
+                "STARTCHAR x\nENCODING {}\nDWIDTH 8 0\nBBX 8 8 0 0\nBITMAP\n{}ENDCHAR\n",
+                code as u32,
+                "FF\n".repeat(8)
+            )
+        };
+        let bdf = format!(
+            "STARTFONT 2.1\nFONT_ASCENT 8\nFONT_DESCENT 0\n{}{}{}ENDFONT\n",
+            square('A'),
+            square('P'),
+            square('가')
+        );
+        let file = ExtraGlyphs::from_bytes(bdf.into_bytes()).unwrap();
+        let font = Font::blank_from(0xAC00);
+        let draw = |first| {
+            let mut e = editor("A가B");
+            let mut fb = Framebuffer::new(400, 240);
+            let look = Look {
+                extra: &file,
+                first,
+                ..look(true)
+            };
+            e.draw(&mut fb, &font, "", look, false);
+            let top = e.grid.top as u32;
+            let square = |x: u32, y: u32| {
+                let back = fb.get(390, y);
+                (0..8).all(|i| fb.get(x + i, y + i) != back)
+            };
+            // A, 가 and B in the code; P of "PRG0" in the status line.
+            let codes = [4, 5, 6].map(|x| e.screen.cell(x, 0).code);
+            let squares = [square(4 * 8, top), square(5 * 8, top)];
+            (
+                codes,
+                squares,
+                e.screen.cell(0, 28).code,
+                square(0, top + 28 * 8),
+            )
+        };
+        // SmileBASIC's font first: A and B from it, 가 from the file.
+        let (codes, squares, p, p_square) = draw(FontSource::SmileBasic);
+        assert_eq!(codes, [0x41, 0, 0x42]);
+        assert_eq!(squares, [false, true]);
+        assert_eq!((p, p_square), (0x50, false));
+        // The file first: A, 가 and the status line's P from it.
+        let (codes, squares, p, p_square) = draw(FontSource::File);
+        assert_eq!(codes, [0, 0, 0x42]);
+        assert_eq!(squares, [true, true]);
+        assert_eq!((p, p_square), (0, true));
+        // The bundled fonts first: A, B and 가 from them, not squares.
+        let (codes, squares, p, p_square) = draw(FontSource::Bundled);
+        assert_eq!(codes, [0, 0, 0]);
+        assert_eq!(squares, [false, false]);
+        assert_eq!((p, p_square), (0, false));
     }
 
     #[test]
@@ -3099,12 +3167,17 @@ mod tests {
             ..look(true)
         };
         e.draw(&mut fb, &font, "GAME", look, false);
-        let row = e.grid.top as u32 + 3;
-        let back = fb.get(390, row);
-        let inked: Vec<bool> = (64..112).map(|x| fb.get(x, row) != back).collect();
-        // A and B squeezed to 8 pixels each, 가 16, then nothing.
-        assert!(inked[..32].iter().all(|&i| i), "{inked:?}");
-        assert!(!inked[32], "the line ends after 32 pixels: {inked:?}");
+        let top = e.grid.top as u32;
+        let back = fb.get(390, top + 3);
+        let inked: Vec<bool> = (64..112)
+            .map(|x| (top..top + 16).any(|y| fb.get(x, y) != back))
+            .collect();
+        // A and B in 8 pixels each, from the half-width font rather than
+        // the square font, 가 in 16, then nothing.
+        assert!(inked[..8].iter().any(|&i| i) && !inked[..8].iter().all(|&i| i));
+        assert!(inked[8..16].iter().any(|&i| i), "{inked:?}");
+        assert!(inked[16..32].iter().all(|&i| i), "{inked:?}");
+        assert_eq!(fb.get(96, top + 3), back, "the line ends after 32 pixels");
     }
 
     #[test]

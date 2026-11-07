@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use sb_core::constants::{self, ConstValue};
 use sb_core::lexer::Keyword;
 
-use crate::font::Font;
+use crate::extra_glyphs::Fonts;
 use crate::framebuffer::Framebuffer;
 use crate::help::{Help, Style};
 use crate::palette::{Palette, Part};
@@ -597,7 +597,7 @@ impl Completion {
     pub fn draw(
         &self,
         fb: &mut Framebuffer,
-        font: &Font,
+        fonts: Fonts,
         (x, y): (i64, i64),
         above: i64,
         cell: u32,
@@ -658,10 +658,10 @@ impl Completion {
             }
         }
         if let Some(syntax) = syntax {
-            draw_syntax(fb, font, (x, y + h + 2), width_cells, cell, syntax);
+            draw_syntax(fb, fonts, (x, y + h + 2), width_cells, cell, syntax);
         }
-        screen.draw(fb, font);
-        symbols.draw(fb, font);
+        fonts.draw_screen(&mut screen, fb);
+        fonts.draw_screen(&mut symbols, fb);
     }
 }
 
@@ -669,7 +669,7 @@ impl Completion {
 /// at a pixel.
 pub fn draw_syntax(
     fb: &mut Framebuffer,
-    font: &Font,
+    fonts: Fonts,
     (x, y): (i64, i64),
     cols: i64,
     cell: u32,
@@ -684,7 +684,7 @@ pub fn draw_syntax(
     for (i, ch) in syntax.encode_utf16().enumerate() {
         line.put_at(i as u32 + 1, 0, ch, SYNTAX);
     }
-    line.draw(fb, font);
+    fonts.draw_screen(&mut line, fb);
 }
 
 pub(crate) fn fill(fb: &mut Framebuffer, x0: i64, y0: i64, w: i64, h: i64, color: u32) {

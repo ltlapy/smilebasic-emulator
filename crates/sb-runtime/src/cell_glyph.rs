@@ -147,22 +147,34 @@ pub fn bdf_cell(g: &BdfGlyph, layout: &BdfLayout, cell: u32) -> Vec<u8> {
     let sx = (scale * stretch).min(cell_f / width as f32);
     let x0 = ((cell_f - width as f32 * sx) / 2.0).round();
     let y0 = ((cell_f - height as f32 * scale) / 2.0).round();
-    let mut out = vec![0; (cell * cell) as usize];
-    for dy in 0..cell as i32 {
-        for dx in 0..cell as i32 {
+    sample(g, layout.top, (cell, cell), (x0, y0), (sx, scale))
+}
+
+/// Draws `g` into a `w` by `h` cell, with the top of its `top` rows at
+/// `y0` and its origin at `x0`, `sx` and `sy` pixels per font pixel.
+fn sample(
+    g: &BdfGlyph,
+    top: i32,
+    (w, h): (u32, u32),
+    (x0, y0): (f32, f32),
+    (sx, sy): (f32, f32),
+) -> Vec<u8> {
+    let mut out = vec![0; (w * h) as usize];
+    for dy in 0..h as i32 {
+        for dx in 0..w as i32 {
             let mut hits = 0;
-            for sy in 0..SUBSAMPLES {
-                for sxi in 0..SUBSAMPLES {
-                    let px = dx as f32 + (sxi as f32 + 0.5) / SUBSAMPLES as f32;
-                    let py = dy as f32 + (sy as f32 + 0.5) / SUBSAMPLES as f32;
+            for ky in 0..SUBSAMPLES {
+                for kx in 0..SUBSAMPLES {
+                    let px = dx as f32 + (kx as f32 + 0.5) / SUBSAMPLES as f32;
+                    let py = dy as f32 + (ky as f32 + 0.5) / SUBSAMPLES as f32;
                     let u = ((px - x0) / sx).floor() as i32;
-                    let v = ((py - y0) / scale).floor() as i32;
-                    if g.ink(u, layout.top - 1 - v) {
+                    let v = ((py - y0) / sy).floor() as i32;
+                    if g.ink(u, top - 1 - v) {
                         hits += 1;
                     }
                 }
             }
-            out[(dy as u32 * cell + dx as u32) as usize] =
+            out[(dy as u32 * w + dx as u32) as usize] =
                 (hits * 255 / (SUBSAMPLES * SUBSAMPLES)) as u8;
         }
     }
@@ -238,4 +250,63 @@ pub fn outline_cell(font: &impl Font, c: char, cell: u32, em_share: f32) -> Opti
         }
     });
     Some(out)
+}
+
+/// A half-width glyph of an outline font, `cell / 2` pixels wide and
+/// `cell` high, `None` if the font lacks it or draws it wider than about
+/// half its em. The font's height (ascent minus descent) fills the cell
+/// and its baseline stays where the font puts it, so a pixel font made
+/// for that height stays sharp.
+pub fn outline_half(font: &impl Font, c: char, cell: u32) -> Option<Vec<u8>> {
+    let id = font.glyph_id(c);
+    if id.0 == 0 {
+        return None;
+    }
+    let (w, h) = (cell / 2, cell);
+    let units = font.height_unscaled();
+    if units <= 0.0 {
+        return None;
+    }
+    let px = h as f32 / units;
+    let em = font.units_per_em().unwrap_or(units) * px;
+    let advance = font.h_advance_unscaled(id) * px;
+    if advance > em * 0.6 {
+        return None;
+    }
+    let origin = point(
+        ((w as f32 - advance) / 2.0).round(),
+        (font.ascent_unscaled() * px).round(),
+    );
+    let mut out = vec![0; (w * h) as usize];
+    let Some(outline) = font.outline_glyph(id.with_scale_and_position(h as f32, origin)) else {
+        return Some(out);
+    };
+    let min = outline.px_bounds().min;
+    outline.draw(|x, y, coverage| {
+        let (x, y) = (min.x as i32 + x as i32, min.y as i32 + y as i32);
+        if (0..w as i32).contains(&x) && (0..h as i32).contains(&y) {
+            out[(y as u32 * w + x as u32) as usize] = (coverage.min(1.0) * 255.0).round() as u8;
+        }
+    });
+    Some(out)
+}
+
+/// A half-width BDF glyph, `cell / 2` pixels wide and `cell` high, `None`
+/// for a glyph wider than half the font's full-width characters. It is
+/// scaled as [`bdf_cell`] scales, without widening.
+pub fn bdf_half(g: &BdfGlyph, layout: &BdfLayout, cell: u32) -> Option<Vec<u8>> {
+    let width = g.advance.max(g.bbx[0] + g.bbx[2].max(0)).max(1);
+    if width * 2 > layout.full {
+        return None;
+    }
+    let (w, h) = (cell / 2, cell);
+    let height = layout.top - layout.bottom;
+    let scale = match h as i32 / height {
+        0 => h as f32 / height as f32,
+        k => k as f32,
+    };
+    let sx = scale.min(w as f32 / width as f32);
+    let x0 = ((w as f32 - width as f32 * sx) / 2.0).round();
+    let y0 = ((h as f32 - height as f32 * scale) / 2.0).round();
+    Some(sample(g, layout.top, (w, h), (x0, y0), (sx, scale)))
 }

@@ -341,6 +341,16 @@ impl Font {
         }
     }
 
+    /// The glyph number of a code with a place of its own on the font
+    /// page; `None` for codes drawn as the box, or with no place there.
+    pub fn own_glyph(&self, code: u16) -> Option<u32> {
+        let n = match &self.0 {
+            Source::Page { glyphs, .. } => glyphs[usize::from(code)],
+            Source::Cells { slots, .. } => slots[usize::from(code)],
+        };
+        (n != MISSING_GLYPH && n != NO_CELL).then_some(u32::from(n))
+    }
+
     /// Whether this is SmileBASIC 4's own font, not the bundled one.
     pub fn is_smilebasic(&self) -> bool {
         matches!(self.0, Source::Page { .. })

@@ -15,14 +15,16 @@ use crate::compose::{self, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
 use crate::editor::{Editor, Look, blend, frame_size, menu_height};
-use crate::extra_glyphs::ExtraGlyphs;
-use crate::font::Font;
+use crate::extra_glyphs::{ExtraGlyphs, FontSource, Fonts};
+use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
 use crate::graphics::Graphics;
+use crate::half_width::HalfGlyphs;
 use crate::hint;
 use crate::input::Input;
 use crate::line::{self, LineEdit, codes};
 use crate::palette::Part;
+use crate::program_font::FontPatch;
 use crate::raster::{CpuRasterizer, RasterInput, Rasterizer, SceneBackend};
 use crate::scene::{Scene, SceneInput};
 use crate::screen::{Fade, ScreenMode, darken};
@@ -774,8 +776,15 @@ type NamesKey = (usize, Vec<u32>);
 pub struct Runtime {
     pub text: Vec<TextScreen>,
     pub(crate) font: Font,
-    /// What the editor draws for characters `font` lacks.
-    extra_glyphs: ExtraGlyphs,
+    /// The editor's other font sources: the chosen file and the bundled
+    /// glyphs. The sub interpreter shares them.
+    extra_glyphs: Rc<ExtraGlyphs>,
+    /// The editor's half-width glyphs with the chosen file's, made for
+    /// the font order they were made with; `None` while no file is read,
+    /// when the font's own serve.
+    editor_halves: Option<(FontSource, Rc<HalfGlyphs>)>,
+    /// What the settings' program font puts over the font page.
+    font_patch: FontPatch,
     /// Graphic pages GRP0-GRP5.
     pub grp: Graphics,
     pub sprites: Sprites,
@@ -1091,7 +1100,9 @@ impl Runtime {
         Runtime {
             text: startup_screens(&mode),
             font,
-            extra_glyphs: ExtraGlyphs::bundled(),
+            extra_glyphs: Rc::new(ExtraGlyphs::bundled()),
+            editor_halves: None,
+            font_patch: FontPatch::default(),
             grp: Graphics::default(),
             sprites: Sprites::default(),
             input: Input::default(),
@@ -1260,7 +1271,7 @@ impl Runtime {
         }
         if !keep_font {
             self.grp.clear_page(FONT_PAGE);
-            let page = self.font.page_image();
+            let page = self.font_page();
             if page.iter().any(|&p| p != 0) {
                 self.grp.set_page(FONT_PAGE, page);
             }
@@ -1311,11 +1322,48 @@ impl Runtime {
 
     /// Copies the font into GRP5, where programs can change it.
     fn with_font_page(mut self) -> Runtime {
-        let page = self.font.page_image();
+        let page = self.font_page();
         if page.iter().any(|&p| p != 0) {
             self.grp.set_page(crate::text::FONT_PAGE, page);
         }
         self
+    }
+
+    /// The sub interpreter's fonts: the main one's font file, and its
+    /// program font on the font page.
+    pub(crate) fn share_fonts(&mut self, main: &Runtime) {
+        self.extra_glyphs = Rc::clone(&main.extra_glyphs);
+        self.apply_program_font();
+    }
+
+    /// The font page as start-up and ACLS put it on GRP5: SmileBASIC's,
+    /// with the program font's glyphs over it.
+    fn font_page(&self) -> Vec<u32> {
+        let mut page = self.font.page_image();
+        if !self.font_patch.is_empty() {
+            self.font_patch.apply(&mut page);
+        }
+        page
+    }
+
+    /// Makes the program font's glyphs for the settings and writes them
+    /// over GRP5, putting back SmileBASIC's where the last ones were.
+    /// Only those cells change; the rest of the page keeps what the
+    /// program drew there. Start-up and ACLS write them again.
+    pub fn apply_program_font(&mut self) {
+        let patch = FontPatch::build(&self.font, &self.extra_glyphs, self.settings.program_font);
+        if patch.is_empty() && self.font_patch.is_empty() {
+            return;
+        }
+        let original = self.font.page_image();
+        let mut page = match self.grp.page(FONT_PAGE) {
+            [] => vec![0; original.len()],
+            pixels => pixels.to_vec(),
+        };
+        self.font_patch.restore(&mut page, &original);
+        patch.apply(&mut page);
+        self.font_patch = patch;
+        self.grp.set_page(FONT_PAGE, page);
     }
 
     /// The screen's size in pixels, before XSCREEN's sampling.
@@ -1763,6 +1811,8 @@ impl Runtime {
                 }
                 false => self.raster.frame_mut(),
             };
+            // Direct mode shows the console's font, as programs see it.
+            let plain = Fonts::plain(&self.font, FontSize::Small);
             let console = &self.text[CONSOLE];
             let (w, _) = console.size();
             let (_, size) = console.font();
@@ -1790,10 +1840,10 @@ impl Runtime {
                     };
                     let syntax = line.completion.as_ref().and_then(Completion::syntax);
                     shows |= hint.is_some() || syntax.is_some();
-                    hint::draw_band(fb, &self.font, band, (hint.as_ref(), syntax), scale as u32);
+                    hint::draw_band(fb, plain, band, (hint.as_ref(), syntax), scale as u32);
                 } else if let Some(hint) = &hint {
                     shows = true;
-                    hint.draw(fb, &self.font, left, (top, top + scale), scale as u32);
+                    hint.draw(fb, plain, left, (top, top + scale), scale as u32);
                 }
             }
             if let Some(list) = &line.completion
@@ -1802,14 +1852,7 @@ impl Runtime {
                 shows = true;
                 let (left, top) = at(cell);
                 let colors = &self.settings.editor_colors;
-                list.draw(
-                    fb,
-                    &self.font,
-                    (left, top + scale),
-                    top,
-                    scale as u32,
-                    colors,
-                );
+                list.draw(fb, plain, (left, top + scale), top, scale as u32, colors);
             }
         }
         shows
@@ -1909,6 +1952,13 @@ impl Runtime {
     /// leaves the bundled glyphs in use and the setting cleared, and the
     /// error is returned to be shown.
     pub fn load_extra_font(&mut self) -> std::result::Result<(), String> {
+        let result = self.read_extra_font();
+        self.editor_halves = None;
+        self.apply_program_font();
+        result
+    }
+
+    fn read_extra_font(&mut self) -> std::result::Result<(), String> {
         let loaded = match &self.settings.editor_extra_font {
             None => Ok(ExtraGlyphs::bundled()),
             Some(path) => ExtraGlyphs::load(std::path::Path::new(path))
@@ -1917,11 +1967,11 @@ impl Runtime {
         self.editor_key = None;
         match loaded {
             Ok(glyphs) => {
-                self.extra_glyphs = glyphs;
+                self.extra_glyphs = Rc::new(glyphs);
                 Ok(())
             }
             Err(e) => {
-                self.extra_glyphs = ExtraGlyphs::bundled();
+                self.extra_glyphs = Rc::new(ExtraGlyphs::bundled());
                 self.settings.editor_extra_font = None;
                 Err(e)
             }
@@ -1942,7 +1992,7 @@ impl Runtime {
         let s = &self.settings;
         (self.editor_fb.width(), self.editor_fb.height()).hash(&mut state);
         (s.editor_wrap, s.editor_number_tiles, s.editor_map).hash(&mut state);
-        s.editor_half_width.hash(&mut state);
+        (s.editor_half_width, s.editor_font_first).hash(&mut state);
         (s.editor_font, &s.editor_colors, self.dimmed).hash(&mut state);
         (active, split, panel, blink).hash(&mut state);
         if split.is_some() {
@@ -1979,6 +2029,14 @@ impl Runtime {
         blink: bool,
     ) {
         let s = &self.settings;
+        let first = s.editor_font_first;
+        if s.editor_half_width
+            && self.extra_glyphs.has_file()
+            && self.editor_halves.as_ref().is_none_or(|(f, _)| *f != first)
+        {
+            let halves = HalfGlyphs::with_file(&self.font, Some(&self.extra_glyphs), first);
+            self.editor_halves = Some((first, Rc::new(halves)));
+        }
         let (w, h) = (self.editor_fb.width(), self.editor_fb.height());
         let reserve = if panel { h * PANEL_SHARE / 20 } else { 0 };
         self.panel_at = panel.then_some(h - reserve);
@@ -1991,7 +2049,11 @@ impl Runtime {
             font: s.editor_font,
             colors: &s.editor_colors,
             extra: &self.extra_glyphs,
+            first,
             half_width: s.editor_half_width,
+            halves: (self.editor_halves.as_ref())
+                .filter(|_| self.extra_glyphs.has_file())
+                .map(|(_, h)| &**h),
         };
         let name = |editor: &Editor| {
             let slot = editor.slot();

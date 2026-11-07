@@ -4,6 +4,7 @@
 
 use crate::confirm::FileConfirm;
 use crate::editor::EditorSize;
+use crate::extra_glyphs::FontSource;
 use crate::font::FontSize;
 use crate::palette::Palette;
 use crate::screen::Filter;
@@ -87,6 +88,13 @@ pub struct Settings {
     /// The editor draws half-width characters half a cell wide; each
     /// still takes one column. Not SmileBASIC 4's.
     pub editor_half_width: bool,
+    /// The font source the editor looks characters up in first; the
+    /// others follow in the order of [`FontSource`].
+    pub editor_font_first: FontSource,
+    /// The font source whose glyphs replace SmileBASIC's on the font page,
+    /// for the 8- and the 16-pixel font. Not SmileBASIC 4's unless it is
+    /// SmileBASIC's font.
+    pub program_font: [FontSource; 2],
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
@@ -175,6 +183,8 @@ impl Default for Settings {
             editor_colors: Palette::default(),
             editor_extra_font: None,
             editor_half_width: false,
+            editor_font_first: FontSource::SmileBasic,
+            program_font: [FontSource::SmileBasic; 2],
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
@@ -225,6 +235,12 @@ const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
 ];
 
 const FONT_SIZE: [(FontSize, &str); 2] = [(FontSize::Small, "8"), (FontSize::Large, "16")];
+
+const FONT_SOURCE: [(FontSource, &str); 3] = [
+    (FontSource::SmileBasic, "smilebasic"),
+    (FontSource::File, "file"),
+    (FontSource::Bundled, "bundled"),
+];
 
 const EDITOR_SIZE: [(EditorSize, &str); 4] = [
     (EditorSize::Large, "large"),
@@ -384,6 +400,16 @@ impl Settings {
                     s.editor_extra_font = (!value.is_empty()).then(|| value.to_string());
                     continue;
                 }
+                "editor_font_first" | "program_font8" | "program_font16" => {
+                    if let Some(f) = choice(&FONT_SOURCE, value) {
+                        *match key {
+                            "editor_font_first" => &mut s.editor_font_first,
+                            "program_font8" => &mut s.program_font[0],
+                            _ => &mut s.program_font[1],
+                        } = f;
+                    }
+                    continue;
+                }
                 "editor_font" => {
                     if let Some(f) = choice(&FONT_SIZE, value) {
                         s.editor_font = f;
@@ -464,6 +490,9 @@ impl Settings {
              {}\
              editor_extra_font={}\n\
              editor_half_width={}\n\
+             editor_font_first={}\n\
+             program_font8={}\n\
+             program_font16={}\n\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
@@ -507,6 +536,9 @@ impl Settings {
             self.editor_colors.lines(EDITOR_COLOR),
             self.editor_extra_font.as_deref().unwrap_or(""),
             self.editor_half_width,
+            choice_name(&FONT_SOURCE, &self.editor_font_first),
+            choice_name(&FONT_SOURCE, &self.program_font[0]),
+            choice_name(&FONT_SOURCE, &self.program_font[1]),
             self.file_hint_shown,
             self.keyboard_buttons,
             self.smilebasic_instruments,
@@ -565,6 +597,8 @@ mod tests {
             sound_font: Some("/fonts/a b.sf2".to_string()),
             editor_extra_font: Some("/fonts/hangul 16.bdf".to_string()),
             editor_half_width: true,
+            editor_font_first: FontSource::Bundled,
+            program_font: [FontSource::File, FontSource::Bundled],
             editor_tab_step: 2,
             language: Language::Japanese,
             localized_errors: true,

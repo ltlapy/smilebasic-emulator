@@ -30,6 +30,7 @@ mod loadsave;
 pub mod machine;
 pub mod palette;
 mod prg;
+mod program_font;
 pub mod raster;
 pub mod resources;
 pub mod runtime;

@@ -69,7 +69,8 @@ Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
 contribution you intentionally submit for inclusion is dual-licensed the same
 way, with no additional terms or conditions.
 
-The bundled fonts in `crates/sb-runtime/fonts/galmuri` and
-`crates/sb-runtime/fonts/mplus` are under the SIL Open Font License 1.1.
+The bundled fonts in `crates/sb-runtime/fonts/galmuri`,
+`crates/sb-runtime/fonts/mplus`, `crates/sb-runtime/fonts/neodgm` and
+`crates/sb-runtime/fonts/notoemoji` are under the SIL Open Font License 1.1.
 GeneralUser GS in `crates/sb-sdl/sounds` is under its own license, in
 `GeneralUser-GS-LICENSE.txt` there.
