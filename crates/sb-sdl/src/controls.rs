@@ -4,7 +4,7 @@
 use sb_runtime::input::{KeysRead, Mouse, PADS, State};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
-use sdl3::keyboard::{KeyboardState, Mod, Scancode};
+use sdl3::keyboard::{KeyboardState, Scancode};
 use sdl3::mouse::MouseState;
 use sdl3::{GamepadSubsystem, Sdl};
 
@@ -88,6 +88,20 @@ impl KeyButtons {
             .filter(|&(&left, (key, _))| left == 0 && down(key))
             .fold(0, |bits, (_, (_, id))| bits | 1 << id)
     }
+}
+
+/// KEYBOARD's modifier bits, Windows key, Shift, Ctrl and Alt, from the keys
+/// held rather than from SDL's modifier state. SDL takes that from what the
+/// layout makes of a key, so a Korean layout that turns Right Alt into
+/// Han/Eng would leave Alt out, while KEYBOARD sees the key itself.
+fn modifiers(down: impl Fn(Scancode) -> bool) -> u32 {
+    use Scancode::{LAlt, LCtrl, LGui, LShift, RAlt, RCtrl, RGui, RShift};
+    [[LGui, RGui], [LShift, RShift], [LCtrl, RCtrl], [LAlt, RAlt]]
+        .iter()
+        .enumerate()
+        .fold(0, |bits, (i, keys)| {
+            bits | u32::from(keys.iter().any(|&k| down(k))) << i
+        })
 }
 
 /// How far a stick has to be tilted to count as held through a screen: where
@@ -198,7 +212,6 @@ impl Controls {
     pub fn state(
         &self,
         keyboard: &KeyboardState,
-        keymod: Mod,
         mouse: MouseState,
         keys_press_buttons: bool,
     ) -> State {
@@ -235,11 +248,7 @@ impl Controls {
             state.pads[0].buttons |= keys;
             state.key_pressed_buttons = keys & !pads;
         }
-        let held = |m: Mod| u32::from(keymod.intersects(m));
-        state.modifiers = held(Mod::LGUIMOD | Mod::RGUIMOD)
-            | held(Mod::LSHIFTMOD | Mod::RSHIFTMOD) << 1
-            | held(Mod::LCTRLMOD | Mod::RCTRLMOD) << 2
-            | held(Mod::LALTMOD | Mod::RALTMOD) << 3;
+        state.modifiers = modifiers(|key| keyboard.is_scancode_pressed(key));
         state.mouse = Mouse {
             buttons: [
                 mouse.left(),
@@ -398,5 +407,21 @@ mod tests {
         }
         keys.update(nothing);
         assert_eq!(keys.buttons(held(Scancode::A)), A_KEY_BUTTON);
+    }
+
+    /// TEST68: Han/Eng reads as usage 144 and Hanja as 145, which SDL's
+    /// scancodes are. Keyboards that send Right Alt and Right Ctrl for them
+    /// read as those, with their modifier bits.
+    #[test]
+    fn korean_keys_read_as_smilebasic_4_reads_them() {
+        assert_eq!(Scancode::Lang1 as i32, 144);
+        assert_eq!(Scancode::Lang2 as i32, 145);
+        assert_eq!(Scancode::RAlt as i32, 230);
+        assert_eq!(Scancode::RCtrl as i32, 228);
+        assert_eq!(modifiers(|k| k == Scancode::RAlt), 8);
+        assert_eq!(modifiers(|k| k == Scancode::RCtrl), 4);
+        assert_eq!(modifiers(|k| k == Scancode::LShift), 2);
+        assert_eq!(modifiers(|k| k == Scancode::RGui), 1);
+        assert_eq!(modifiers(|_| false), 0);
     }
 }

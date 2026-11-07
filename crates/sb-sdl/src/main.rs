@@ -2290,7 +2290,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let beside = side_direct && side_focus && side.is_some();
         let mut held = controls.state(
             &events.keyboard_state(),
-            keyboard.mod_state(),
             events.mouse_state(),
             machine.rt.settings.keyboard_buttons,
         );
