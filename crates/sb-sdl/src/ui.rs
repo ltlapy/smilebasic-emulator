@@ -250,8 +250,8 @@ fn ui_font() -> UiFont {
 }
 
 thread_local! {
-    /// The smooth glyphs, made as text wants them.
-    static SMOOTH: UiGlyphs = UiGlyphs::default();
+    /// The bundled glyphs, made as text wants them.
+    static GLYPHS: UiGlyphs = UiGlyphs::default();
 }
 
 /// Draws text in cells `8 * scale` pixels high: the 16x16 or smooth glyphs
@@ -310,9 +310,11 @@ fn draw_glyphs(
     let halves = font.half_glyphs();
     // The 16-pixel glyphs keep their gray edges, as SmileBASIC 4 draws
     // its own 16-pixel font: cut to one bit, their strokes come out
-    // uneven. The 8-pixel ones are dot drawings and stay sharp.
-    let gray = size == FontSize::Large;
-    let put = |fb: &mut Framebuffer, px: u32, py: u32, a: u32| {
+    // uneven. SmileBASIC's 8-pixel ones are dot drawings and stay sharp.
+    // The bundled glyphs keep their gray at both sizes, as the editor
+    // draws them: the 8-pixel emoji are mostly gray.
+    let font_gray = size == FontSize::Large;
+    let put = |fb: &mut Framebuffer, px: u32, py: u32, a: u32, gray: bool| {
         let a = match gray {
             true => a,
             false if a >= 0x80 => 0xFF,
@@ -324,52 +326,77 @@ fn draw_glyphs(
             fb.set(px, py, (dst & 0xFF00_0000) | blend(dst, color, a));
         }
     };
+    // An imported font shows what it lacks as a box: those characters
+    // take the editor's bundled glyphs of the size drawn, as in the
+    // editor. The stand-in font draws as before.
+    let fill_gaps = font.is_smilebasic() && !smooth;
+    let draw = |fb: &mut Framebuffer, glyph: &[u8], side: u32, (left, w): (u32, u32), gray| {
+        for py in 0..cell {
+            for px in 0..w {
+                let a = u32::from(glyph[((py / scale) * side + px / scale) as usize]);
+                put(fb, left + px, y + py, a, gray);
+            }
+        }
+    };
     let mut left = x;
-    for c in text.encode_utf16() {
+    let mut units = text.encode_utf16().peekable();
+    // The second unit of a pair drawn on the first one's cell.
+    let mut blank = false;
+    while let Some(c) = units.next() {
         let w = width(c);
-        let drawn = smooth
-            && SMOOTH.with(|glyphs| {
-                let Some(glyph) = glyphs.get(c, w < cell) else {
-                    return false;
-                };
-                let side = if w < cell {
-                    size as u32 / 2
-                } else {
-                    size as u32
-                };
-                for py in 0..cell {
-                    for px in 0..w {
-                        let a = u32::from(glyph[((py / scale) * side + px / scale) as usize]);
-                        put(fb, left + px, y + py, a);
-                    }
-                }
-                true
-            });
-        if drawn {
+        if std::mem::take(&mut blank) {
+            left += w;
+            continue;
+        }
+        // A character beyond U+FFFF takes two cells, as SmileBASIC counts
+        // it: its glyph goes on the first and the second stays empty.
+        let pair = match units.peek() {
+            Some(&low) if is_high(c) && is_low(low) => {
+                Some(0x10000 + ((u32::from(c) - 0xD800) << 10) + (u32::from(low) - 0xDC00))
+            }
+            _ => None,
+        };
+        let bundled = (smooth && w == cell) || (fill_gaps && w == cell && !font.has_glyph(c));
+        let glyph = match (smooth && w < cell, bundled) {
+            (true, _) => GLYPHS.with(|glyphs| glyphs.get(c, true)),
+            (false, true) => {
+                let code = pair.unwrap_or(u32::from(c));
+                GLYPHS.with(|glyphs| glyphs.bundled(code, size))
+            }
+            (false, false) => None,
+        };
+        if let Some(glyph) = glyph {
+            let side = if w < cell {
+                size as u32 / 2
+            } else {
+                size as u32
+            };
+            draw(fb, &glyph, side, (left, w), true);
+            blank = pair.is_some();
             left += w;
             continue;
         }
         match halves.get(c, size).filter(|_| w < cell) {
-            Some(glyph) => {
-                let side = size as u32 / 2;
-                for py in 0..cell {
-                    for px in 0..w {
-                        let a = u32::from(glyph[((py / scale) * side + px / scale) as usize]);
-                        put(fb, left + px, y + py, a);
-                    }
-                }
-            }
+            Some(glyph) => draw(fb, glyph, size as u32 / 2, (left, w), font_gray),
             None => {
                 for py in 0..cell {
                     for px in 0..cell {
                         let a = font.pixel(c, size, px / scale, py / scale) >> 24;
-                        put(fb, left + px, y + py, a);
+                        put(fb, left + px, y + py, a, font_gray);
                     }
                 }
             }
         }
         left += w;
     }
+}
+
+fn is_high(unit: u16) -> bool {
+    (0xD800..0xDC00).contains(&unit)
+}
+
+fn is_low(unit: u16) -> bool {
+    (0xDC00..0xE000).contains(&unit)
 }
 
 /// Where a side panel (the help, the index) goes on a display of `w` x
@@ -565,6 +592,27 @@ mod tests {
         assert!(inked(0, CHAR / 2), "|");
         assert!(inked(CHAR / 2, CHAR / 2 + CHAR), "가 right after it");
         assert!(!inked(CHAR / 2 + CHAR, 64));
+    }
+
+    #[test]
+    fn bundled_glyphs_fill_what_an_imported_font_lacks() {
+        // A page font that has every glyph blank below U+AC00 and none
+        // from there, as SmileBASIC 4's font lacks Hangul and surrogates.
+        let font = Font::blank_from(0xAC00);
+        for scale in [2, 3, 4] {
+            let cell = 8 * scale;
+            let mut fb = Framebuffer::new(5 * cell, cell);
+            draw_text_scaled(&mut fb, &font, 0, 0, "A가😀", 0xFFFF_FFFF, scale);
+            let inked = |cells: u32| {
+                (cells * cell..(cells + 1) * cell)
+                    .any(|x| (0..cell).any(|y| fb.get(x, y) != Some(0xFF00_0000)))
+            };
+            assert!(!inked(0), "A is the font's own, blank, at {scale}");
+            assert!(inked(1), "가 at {scale}");
+            // The emoji on its first cell, the second empty.
+            assert!(inked(2), "😀 at {scale}");
+            assert!(!inked(3), "😀's second cell at {scale}");
+        }
     }
 
     #[test]

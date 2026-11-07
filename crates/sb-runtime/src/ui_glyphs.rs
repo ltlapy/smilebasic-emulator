@@ -1,14 +1,20 @@
-//! Smooth glyphs for the emulator's own menus and windows, when the
-//! settings ask for them (`ui_font=smooth`): outlines drawn for a
-//! 16-pixel cell with gray edges. Programs never see them.
+//! Glyphs from the bundled fonts for the emulator's own menus and
+//! windows. Programs never see them.
 //!
-//! Full-width characters take the editor's bundled 16-pixel glyphs:
-//! M PLUS 1p Bold, then Galmuri14 and Noto Emoji. Half-width ones take
-//! M PLUS Code Latin 50 Bold, drawn half an em wide, then M PLUS 1p Bold's
-//! own half-width forms. Both are drawn with the em and baseline of the
-//! bundled 16-pixel font, so they line up. A character none of them has,
-//! and SmileBASIC's own symbols, get `None`, for the caller to draw from
-//! SmileBASIC's font.
+//! The smooth font (`ui_font=smooth`) is outlines drawn for a 16-pixel
+//! cell with gray edges. Full-width characters take the editor's bundled
+//! 16-pixel glyphs: M PLUS 1p Bold, then Galmuri14, Noto Emoji and Noto
+//! Sans SC Bold. Half-width ones take M PLUS Code Latin 50 Bold, drawn
+//! half an em wide, then M PLUS 1p Bold's own half-width forms. Both are
+//! drawn with the em and baseline of the bundled 16-pixel font, so they
+//! line up.
+//!
+//! With SmileBASIC's own font (`ui_font=16`, imported), the characters it
+//! lacks take the editor's bundled glyphs of the size drawn
+//! ([`UiGlyphs::bundled`]), as in the editor.
+//!
+//! A character none of them has, and SmileBASIC's own symbols, get `None`,
+//! for the caller to draw from SmileBASIC's font.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -36,32 +42,54 @@ fn code_latin() -> &'static FontRef<'static> {
 /// A glyph's alpha bytes, shared with the cache.
 type Alpha = Rc<[u8]>;
 
-/// Smooth glyphs, each made once when first wanted.
+/// What a glyph was looked up as.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Kind {
+    /// A smooth half-width glyph.
+    Half,
+    /// The editor's bundled glyph at this size.
+    Full(FontSize),
+}
+
+/// Glyphs from the bundled fonts, each made once when first wanted.
 #[derive(Default)]
 pub struct UiGlyphs {
-    /// What each code was found as, full- or half-width.
-    found: RefCell<HashMap<(u16, bool), Option<Alpha>>>,
+    /// What each code was found as.
+    found: RefCell<HashMap<(u32, Kind), Option<Alpha>>>,
     bundled: ExtraGlyphs,
 }
 
 impl UiGlyphs {
-    /// The glyph for `code`, one alpha byte per pixel in rows of
+    /// The smooth glyph for `code`, one alpha byte per pixel in rows of
     /// [`CELL`] / 2 pixels if `half`, else [`CELL`] pixels, [`CELL`] rows.
     pub fn get(&self, code: u16, half: bool) -> Option<Alpha> {
-        if let Some(found) = self.found.borrow().get(&(code, half)) {
+        match half {
+            true => self.find(u32::from(code), Kind::Half),
+            false => self.bundled(u32::from(code), FontSize::Large),
+        }
+    }
+
+    /// The editor's bundled glyph for the character `code` (beyond U+FFFF
+    /// too), `size` x `size` alpha bytes, row by row.
+    pub fn bundled(&self, code: u32, size: FontSize) -> Option<Alpha> {
+        self.find(code, Kind::Full(size))
+    }
+
+    fn find(&self, code: u32, kind: Kind) -> Option<Alpha> {
+        if let Some(found) = self.found.borrow().get(&(code, kind)) {
             return found.clone();
         }
-        let made = match half {
-            true => half_glyph(code),
-            false => {
+        let made = match kind {
+            Kind::Half => u16::try_from(code).ok().and_then(half_glyph),
+            Kind::Full(size) => {
                 let mut out = Vec::new();
                 self.bundled
-                    .render(u32::from(code), FontSize::Large, Part::Bundled, &mut out)
+                    .render(code, size, Part::Bundled, &mut out)
                     .then_some(out)
             }
         };
         let made: Option<Alpha> = made.map(Rc::from);
-        self.found.borrow_mut().insert((code, half), made.clone());
+        self.found.borrow_mut().insert((code, kind), made.clone());
         made
     }
 }
@@ -99,6 +127,23 @@ mod tests {
         // SmileBASIC's own symbols come from its font.
         assert!(g.get(0xE100, false).is_none());
         assert!(g.get(0xE100, true).is_none());
+    }
+
+    #[test]
+    fn bundled_glyphs_at_both_sizes() {
+        let g = UiGlyphs::default();
+        for (size, side) in [(FontSize::Small, 8), (FontSize::Large, 16)] {
+            for c in ['한', '汉', 'Ж', 'Ω', '★', '😀'] {
+                let glyph = g.bundled(c as u32, size).unwrap();
+                assert_eq!(glyph.len(), side * side, "{c} at {size:?}");
+                assert!(ink(&glyph) > 4, "{c} at {size:?}");
+            }
+            assert!(g.bundled(0xE100, size).is_none());
+        }
+        // The smooth full-width glyph is the 16-pixel one, kept once.
+        let smooth = g.get('한' as u16, false).unwrap();
+        let bundled = g.bundled('한' as u32, FontSize::Large).unwrap();
+        assert!(Rc::ptr_eq(&smooth, &bundled));
     }
 
     #[test]

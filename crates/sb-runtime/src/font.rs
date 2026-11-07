@@ -478,8 +478,7 @@ impl Font {
 
     /// [`Font::blank`] without glyphs for codes from `first` up, as
     /// SmileBASIC 4's font lacks Hangul and surrogates.
-    #[cfg(test)]
-    pub(crate) fn blank_from(first: u16) -> Font {
+    pub fn blank_from(first: u16) -> Font {
         let mut font = Font::blank();
         if let Source::Page { glyphs, .. } = &mut font.0 {
             glyphs[usize::from(first)..].fill(MISSING_GLYPH);
