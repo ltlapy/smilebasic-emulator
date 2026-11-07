@@ -310,7 +310,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   set in File > Settings > General.
 - `SYSPARAM("TABSTEP")` is the editor's tab width, set in
   File > Settings > Editor.
-- `SYSPARAM("TVMODE")` is always 1.
+- `SYSPARAM("TVMODE")` is always 1, as on a docked Switch. A Switch in
+  handheld mode gives 0.
 - `SYSBEEP` keeps its value, as the emulator has no system sounds.
 - `TOOL1` to `TOOL3`, which F9 to F11 start, name SmileBASIC 4's own tools. The
   emulator does not have them: they start only from the `#TOOL` project that the
@@ -330,6 +331,9 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   `ACLS` and `SNDSTOP` after a program ENDs or is stopped with the Pause/Break
   key or F5. STOP, errors and the debugger's stops leave the screens and sound
   as they were, to be looked at.
+- Ctrl+C on a keyboard stops a running program only when File > Settings says
+  so; it is off to start with, and programs read Ctrl+C as a key. On
+  SmileBASIC 4, Ctrl+C on a USB keyboard stops the program.
 - Run on a project in the project manager returns to the manager when the
   program ends or is stopped. After an error the screen stays, with the
   emulator's own line `=== Press A Button or Enter to return.===` below it,

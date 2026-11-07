@@ -580,6 +580,16 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     press, 20 frames later and then every 3, for the pad and the stick alike
     (TEST64).
   - A second input going down meanwhile types nothing until all are let go.
+    Going back to the first one goes on with its repeats, every 3 frames.
+  - TEST67 on a Switch 1 and a Switch 2 saw the left stick right give
+    `CHR$(3)` at the push, 20 frames later and then every 3, with `BUTTON` 0.
+    L or R with the pad's right gave `CHR$(3)` too. L, R, and L and R held
+    together type nothing, for 323 frames at least. With the stick turned
+    round meanwhile, only `CHR$(2)` came, as Ctrl with the stick up or left
+    gives.
+- Ctrl+C on a USB keyboard stops the running program (TEST67: the step that
+  asked for it ended there on both consoles, and the test went on with its
+  next part).
 
 ### `PUSHKEY` and the key buffers
 
@@ -1684,7 +1694,9 @@ TTEST36.
 - `DIALOG` in a subprogram answers to the controller with the focus on either
   side, and the main program keeps running meanwhile (TEST64). With the focus
   on the main program, its `BUTTON(0)` sees the A that answers, and its
-  `INKEY$` gets no key from it.
+  `INKEY$` gets no key from it. With the focus on the subprogram, the main
+  program sees no A while the dialog is open: `BUTTON` 0 all through on a
+  Switch 1 (TEST67).
 - With a `DIALOG` open on each side, one press of A closes both in the same
   frame, wherever the focus is (TEST64).
 - `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
@@ -1890,6 +1902,8 @@ TTEST36.
 ### `SYSPARAM`
 
 - `SYSPARAM` takes names in lower case too.
+- `SYSPARAM("TVMODE")` is 1 on a docked Switch 2 and 0 on a Switch 1 in
+  handheld mode (TEST67).
 - `SYSPARAM`'s `LANG` is `ja` on a Switch set to Japanese. `SYSBEEP` starts at
   1, `KEYREPEAT` at 20 and 3, and `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`,
   `#TOOL/GAHAKU.PRG` and nothing.
