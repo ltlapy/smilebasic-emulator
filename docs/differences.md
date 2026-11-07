@@ -257,8 +257,9 @@ music keep time. A frame it does draw shows the scene the program finished:
   "SmileBASIC" by default, which leaves the page as SmileBASIC 4 has it. With
   another choice, every character that has a place of its own on the page and
   a glyph in the chosen source gets that glyph, fitted to the 8- or 16-pixel
-  cell; the rest keep SmileBASIC's. Characters the page has no place for, such
-  as Hangul, still show the box. The glyphs go on the page when you change the
+  cell as [importing.md](importing.md#characters-the-font-lacks) describes;
+  the rest keep SmileBASIC's. Characters the page has no place for still show
+  the box. The glyphs go on the page when you change the
   setting or the font file, at start-up, and with each `ACLS` that puts the
   font page back (not with its keep-font flag set). Only those cells change
   when you change the setting; the rest of GRP5 keeps what the program drew.
@@ -430,7 +431,7 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   SmileBASIC 4's on-screen one.
 - Insert's overwrite setting is kept apart for the typed line and for each side
   of the editor. SmileBASIC 4 has one for all of them.
-- Characters missing from SmileBASIC's font, such as Hangul and emoji, show in
+- Characters missing from SmileBASIC's font show in
   the editor from another font instead of as a box (see
   [importing.md](importing.md#characters-the-font-lacks)). File > Settings >
   Fonts > "Editor's first font" can also put the font file or the bundled
@@ -449,8 +450,8 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   them, as tiles on every other column would run together. Each character
   still takes one column: the cursor's column, `HELPINFO`, error positions, the
   ruler's numbers and line wrapping count as before. Lines look shorter than on
-  the console, and Japanese or Hangul mixed with ASCII no longer lines up from
-  one line to the next. See
+  the console, and text that mixes half-width and full-width characters no
+  longer lines up from one line to the next. See
   [importing.md](importing.md#half-width-characters) for the glyphs.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands count
   lines of the source, which wrapping does not change.

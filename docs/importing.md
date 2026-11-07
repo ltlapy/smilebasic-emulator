@@ -21,8 +21,9 @@ another SoundFont (`.sf2`).
 
 ## Characters the font lacks
 
-SmileBASIC 4's font has no Hangul or emoji and shows them as a box. The
-editor draws such characters from another font instead. It has three sources:
+SmileBASIC 4's font covers ASCII, Japanese and some symbols, and shows other
+Unicode characters as a box. The editor draws those from another font
+instead. It has three sources:
 
 1. SmileBASIC's font, imported or the bundled stand-in;
 2. the file set in File > Settings > Fonts > "Font file": a BDF, TTF or OTF
@@ -30,18 +31,30 @@ editor draws such characters from another font instead. It has three sources:
 3. bundled fonts, all under the SIL Open Font License 1.1:
    - 8 pixels: GalmuriMono7, then [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji),
      then M PLUS 1p Bold;
-   - 16 pixels: Galmuri14's Hangul, M PLUS 1p Bold, Noto Emoji, then
-     GalmuriMono7 doubled.
+   - 16 pixels: M PLUS 1p Bold, then Galmuri14, then Noto Emoji.
 
 The editor looks in them in this order. "Editor's first font" on the same page
 moves one source to the front; the other two keep their order. With the file
 first, the order is file, SmileBASIC, bundled; with the bundled fonts first, it
 is bundled, SmileBASIC, file. A character none of them has keeps the box. The
 order covers the code, line numbers, ruler, status line, suggestions and hints.
-SmileBASIC's own symbols (U+E000-U+F8FF) always come from SmileBASIC's font. Each glyph is fitted to one cell:
-bitmap fonts are scaled by whole steps, or down when larger than the cell,
-and narrow glyphs are drawn twice as wide, as SmileBASIC draws Latin. An
-outline font's em fills the cell. Emoji are monochrome.
+SmileBASIC's own symbols (U+E000-U+F8FF) always come from SmileBASIC's font.
+
+Each glyph takes one cell. SmileBASIC draws ASCII as wide as kana, so for
+ASCII (U+0021-U+007E) the editor takes the font's full-width form
+(U+FF01-U+FF5E) when the font has one: those forms are drawn for a square
+cell. A glyph with no full-width form keeps its own width, centered in the
+cell. No glyph is stretched or made larger:
+
+- A bitmap glyph keeps the size it was drawn at. An 8-pixel font in a
+  16-pixel cell stays 8 pixels, centered; a glyph larger than the cell is
+  made smaller to fit.
+- An outline font is drawn at the cell's size: its em fills the cell, or 15
+  of 16 pixels for M PLUS 1p Bold, as SmileBASIC 4 draws that face. At 8
+  pixels a pixel is on or off; at 16 pixels the edges keep their gray, as on
+  SmileBASIC 4's 16-pixel font page.
+
+Emoji are monochrome.
 
 If the file cannot be read, the editor goes back to the bundled fonts, clears
 the setting and says why. In `settings.txt` the settings are
@@ -54,8 +67,8 @@ By default programs see SmileBASIC's font alone. "Programs' 8-pixel font" and
 "Programs' 16-pixel font" on the same page can put the file's or the bundled
 fonts' glyphs on the font page (GRP5) instead, for the characters SmileBASIC's
 font has a place for. Programs then draw them with `PRINT`, `GPUTCHR` and
-everything else that reads the page. Hangul and other characters with no place
-on the page keep the box. In `settings.txt` these are `program_font8` and
+everything else that reads the page. Characters with no place on the page
+keep the box. In `settings.txt` these are `program_font8` and
 `program_font16`, each `smilebasic`, `file` or `bundled`. See
 [differences.md](differences.md#rendering-and-gpu) for what a program can
 notice.
@@ -72,9 +85,9 @@ SmileBASIC 4's ASCII fills its square cell, so it cannot be cut in half. The
 half-width glyphs come from:
 
 - 8 pixels: GalmuriMono7, drawn for 4x8 cells;
-- 16 pixels: NeoDunggeunmo's ASCII and won sign, drawn for 8x16 cells
-  (`crates/sb-runtime/fonts/neodgm`), then GalmuriMono7 doubled, for
-  half-width kana.
+- 16 pixels: NeoDunggeunmo, drawn for 8x16 cells
+  (`crates/sb-runtime/fonts/neodgm`), then Galmuri14 for what it lacks,
+  such as half-width kana.
 
 In the editor, the font file comes before these when it draws a character
 half-width (a BDF glyph at most half as wide as the font's full-width ones,
