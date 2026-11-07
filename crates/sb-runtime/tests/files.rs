@@ -954,11 +954,11 @@ fn other_projects_and_backups() {
     assert_eq!(m.slot(2), "?\"W\"");
     enter(&mut m, "project \"\"");
 
-    // Programs read them too, with LOAD, LOADV and EXEC (checked on
-    // hardware).
+    // Programs read them too with LOAD and LOADV (checked on hardware),
+    // though not with EXEC.
     m.set_slot(
         0,
-        "LOAD \"GAME/SUB\",1:?RESULT();LOADV(\"TXT:GAME/NOTE\")\nEXEC \"GAME/SUB\",3".to_string(),
+        "LOAD \"GAME/SUB\",1:?RESULT();LOADV(\"TXT:GAME/NOTE\")\nEXEC 1".to_string(),
     );
     enter(&mut m, "run");
     assert_eq!(tail(&m, 3), ["1HI", "SUB", "OK"]);
@@ -980,6 +980,56 @@ fn other_projects_and_backups() {
         "delete \"@backup.prg\":r=result():?r;chkfile(\"@backup.prg\")",
     );
     assert_eq!(tail(&m, 2)[0], "10");
+}
+
+/// A program may not EXEC or LOADG a file named with a project, its own
+/// included (TEST68): EXEC stops with error 74, LOADG gives RESULT 0 and
+/// leaves the page alone. Direct mode's LOADG and a program's LOAD may.
+#[test]
+fn exec_and_loadg_refuse_project_names() {
+    use sb_runtime::storage::FileKind;
+    let dir = TempDir::new("project-names");
+    let mut m = machine(&dir);
+    let s = &mut m.rt.storage;
+    s.create_project("GAME").unwrap();
+    s.set_project("GAME").unwrap();
+    s.write(FileKind::Txt, "SUB", b"?\"SUB\"", None).unwrap();
+    m.set_slot(
+        0,
+        "GFILL 0,0,3,3,&HFF112233:SAVEG \"PIC\",0,0,0,4,4".to_string(),
+    );
+    enter(&mut m, "run");
+
+    m.set_slot(0, "EXEC \"GAME/SUB\",1\n?\"PAST\"".to_string());
+    enter(&mut m, "run");
+    assert_eq!(
+        tail(&m, 2),
+        ["Can't access other project in this mode in 0:1", "OK"]
+    );
+
+    let program = "GCLS &HFF00FF00:LOADG \"GRP:GAME/PIC\",0 OUT W,H\n\
+                   ?RESULT();W;H;HEX$(GPGET(0,0))";
+    m.set_slot(0, program.to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["000FF00FF00", "OK"]);
+
+    // The same name works without the project, and in direct mode.
+    m.set_slot(
+        0,
+        "GCLS:LOADG \"GRP:PIC\",0:?RESULT();HEX$(GPGET(0,0))".to_string(),
+    );
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["1FF112233", "OK"]);
+    enter(
+        &mut m,
+        "gcls:loadg \"grp:game/pic\",0:?result();hex$(gpget(0,0))",
+    );
+    assert_eq!(tail(&m, 2), ["1FF112233", "OK"]);
+
+    // LOAD names it, then EXEC runs the slot.
+    m.set_slot(0, "LOAD \"GAME/SUB\",1:EXEC 1".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["SUB", "OK"]);
 }
 
 /// Checked on hardware, although the manual says that loading frees them.

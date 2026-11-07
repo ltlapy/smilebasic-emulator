@@ -2663,10 +2663,16 @@ impl Host for Runtime {
         }
         let slot = slot_arg(Some(&Value::Int(slot)))?;
         if let Some(file) = file {
+            let file = String::from_utf16_lossy(file);
+            // A program may not EXEC a file named with a project, not even
+            // its own. UNVERIFIED: in a subprogram too.
+            if crate::files::names_project(&file) {
+                return Err(ErrorKind::CantAccessOtherProject.into());
+            }
             // A file that cannot be loaded is Load failed, after the
             // notice that stands for SmileBASIC 4's dialog (checked on
             // hardware). UNVERIFIED: what cancelling does.
-            match self.load_asking("EXEC", &String::from_utf16_lossy(file), slot) {
+            match self.load_asking("EXEC", &file, slot) {
                 None => {
                     self.retry = false;
                     return Ok(Exec::Wait);

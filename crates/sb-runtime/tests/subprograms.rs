@@ -922,3 +922,38 @@ fn a_subprograms_notices_reach_the_frontend() {
     assert!(notices.iter().any(|n| n.contains("TXT:Q")), "{notices:?}");
     assert!(m.take_notices().is_empty());
 }
+
+/// A subprogram's LOADG takes a name with a project, unlike a main
+/// program's, but its EXEC refuses one as a main program's does.
+#[test]
+fn a_subprograms_exec_refuses_a_project_name_and_its_loadg_does_not() {
+    let dir = TempDir::new("sub-project-names");
+    let source = format!("LOADG \"GRP:GAME/PIC\",0:?RESULT()\n{THEN_WAIT}");
+    let mut m = machine(&dir, &source);
+    let storage = m.rt.storage.clone();
+    storage.create_project("GAME").unwrap();
+    storage
+        .write_file_in("GAME", "TIN.PRG", THEN_WAIT.as_bytes())
+        .unwrap();
+    enter(
+        &mut m,
+        "project \"game\":saveg \"pic\",0,0,0,4,4:project \"\"",
+    );
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    assert_eq!(sub_rows(&m), ["1"]);
+    m.stop_sub();
+    frames(&mut m, 1);
+
+    m.set_slot(1, "EXEC \"GAME/IN.PRG\",2\n".to_string());
+    enter(&mut m, "save \"sub\",1");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    let rule = "=".repeat(27);
+    let block = [
+        "=== From subinterpreter ===",
+        "Can't access other project in this mode in 0:1",
+        rule.as_str(),
+    ];
+    assert_eq!(last_rows(&m, 3), block);
+}

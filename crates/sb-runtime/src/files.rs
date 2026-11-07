@@ -361,8 +361,8 @@ impl Runtime {
     }
 
     /// A file named for reading, in this project or another: programs
-    /// LOAD and LOADV other projects' files too (checked on hardware,
-    /// against the manual's word that only EXEC does).
+    /// LOAD and LOADV other projects' files too, while EXEC and LOADG
+    /// check [`names_project`] first.
     pub(crate) fn read_name(&self, spec: &str, default: FileKind) -> storage::Result<FileRef> {
         let mut file = parse_read_name(spec, default)?;
         if file.project.as_deref() == Some(self.storage.project()) {
@@ -548,6 +548,17 @@ impl Runtime {
     }
 }
 
+/// Whether a file name names a project, the way EXEC and LOADG refuse in
+/// programs (see their callers). The program's own project counts.
+/// UNVERIFIED: that SmileBASIC 4's own `#` projects and the workspace's
+/// `/NAME` do not.
+pub(crate) fn names_project(spec: &str) -> bool {
+    parse_read_name(spec, FileKind::Txt).is_ok_and(|file| {
+        file.project
+            .is_some_and(|p| !p.is_empty() && !p.starts_with('#'))
+    })
+}
+
 /// LOAD and SAVE take only text files: another type before the colon,
 /// such as `GRP0:`, is Illegal format before anything is asked.
 /// UNVERIFIED: the types this emulator knows (`DAT:`, `GRP:`, `JPG:`) and
@@ -568,5 +579,15 @@ mod tests {
     #[test]
     fn half_width_converts_letters_and_digits_only() {
         assert_eq!(half_width("ＰＲＩＮＴ　\"ａ１！\""), "PRINT　\"a1！\"");
+    }
+
+    #[test]
+    fn names_project_sees_a_project_before_the_name() {
+        for named in ["GAME/MAIN.PRG", "TXT:GAME/MAIN.PRG", "GRP:test05/HG16"] {
+            assert!(names_project(named), "{named}");
+        }
+        for plain in ["MAIN.PRG", "GRP:HG16", "/MAIN.PRG", "#TOOL/T.PRG", "A/B/C"] {
+            assert!(!names_project(plain), "{plain}");
+        }
     }
 }

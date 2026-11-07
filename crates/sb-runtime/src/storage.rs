@@ -85,6 +85,8 @@ pub enum StorageError {
     BadKind(String),
     NotFound(String),
     Exists(String),
+    /// A name with a project where the command may not take one.
+    OtherProject(String),
     Io(io::Error),
 }
 
@@ -96,6 +98,7 @@ impl fmt::Display for StorageError {
             StorageError::BadKind(k) => write!(f, "unknown file type {k:?}"),
             StorageError::NotFound(n) => write!(f, "{n} not found"),
             StorageError::Exists(n) => write!(f, "{n} already exists"),
+            StorageError::OtherProject(n) => write!(f, "{n:?} names a project"),
             StorageError::Io(e) => write!(f, "{e}"),
         }
     }

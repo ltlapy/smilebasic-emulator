@@ -397,6 +397,12 @@ impl Runtime {
     /// Illegal file format error, not a failure (checked on hardware for a
     /// string array).
     fn load_image(&self, spec: &str) -> Result<storage::Result<Image>> {
+        // A main program's LOADG of a name with a project fails without an
+        // error, even for its own project. UNVERIFIED: whether SmileBASIC 4
+        // shows a dialog, and that subprograms and direct mode load.
+        if self.env_type == 0 && !self.direct && crate::files::names_project(spec) {
+            return Ok(Err(StorageError::OtherProject(spec.to_string())));
+        }
         let file = match self.read_name(spec, FileKind::Grp) {
             Ok(file) => file,
             Err(e) => return Ok(Err(e)),
