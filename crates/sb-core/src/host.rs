@@ -8,6 +8,7 @@ use std::rc::Rc;
 use crate::bytecode::{Callbacks, Compiled, Want};
 use crate::error::{Error, ErrorKind, Result};
 use crate::value::Value;
+use crate::vm::Work;
 
 /// What EXEC goes on with, from [`Host::exec_source`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +30,10 @@ pub trait Host {
     /// Runs a host command or function. Omitted arguments are
     /// [`Value::Default`]. Must return exactly `want.count()` values.
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>>;
+
+    /// The work the VM has done so far, given before each [`Host::call`]
+    /// when [`crate::vm::Vm::report_work`] asks for it.
+    fn work(&mut self, _work: Work) {}
 
     /// PRINT output. `screen` is `None` for the console, or TPRINT's screen.
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()>;

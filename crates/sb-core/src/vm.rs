@@ -40,6 +40,23 @@ const VARIABLE_COST: usize = 4;
 /// of nearly all calls.
 const SPARE_LOCALS: usize = 32;
 
+/// Counts of the work a [`Vm`] has done, from [`Vm::work`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Work {
+    pub executed: u64,
+    pub statements: u64,
+    pub def_calls: u64,
+    pub builtin_calls: u64,
+    /// Array elements read or written.
+    pub elements: u64,
+    /// Variables, labels and DEFs found by a name in a string at run time.
+    pub lookups: u64,
+    /// Strings joined.
+    pub joins: u64,
+    /// Tests of whether a FOR goes round again: each pass and the end.
+    pub for_tests: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     /// The instruction budget ran out; call [`Vm::run`] again.
@@ -254,6 +271,17 @@ pub struct Vm {
     call_idx: i32,
     /// Instructions run so far.
     executed: u64,
+    /// What [`Vm::work`] counts. Only a run that reports it counts
+    /// statements, as that takes the fused steps away.
+    statements: u64,
+    def_calls: u64,
+    builtin_calls: u64,
+    elements: u64,
+    lookups: u64,
+    joins: u64,
+    for_tests: u64,
+    /// Whether the host hears of [`Vm::work`] before each of its calls.
+    report_work: bool,
     /// ON BREAK GOTO's slot and address, until the + button jumps there.
     on_break: Option<(usize, usize)>,
     /// After a jump out of INPUT, the press is acted on again once a
@@ -472,6 +500,14 @@ impl Vm {
             callbacks: Vec::new(),
             call_idx: 0,
             executed: 0,
+            statements: 0,
+            def_calls: 0,
+            builtin_calls: 0,
+            elements: 0,
+            lookups: 0,
+            joins: 0,
+            for_tests: 0,
+            report_work: false,
             on_break: None,
             break_pending: None,
             stop_message: None,
@@ -929,6 +965,26 @@ impl Vm {
         self.executed
     }
 
+    /// Whether [`Host::work`] hears of the work done before each host
+    /// call, for hosts that time it as a console would take.
+    pub fn report_work(&mut self, on: bool) {
+        self.report_work = on;
+    }
+
+    /// The work done so far, for hosts that stand for a console's speed.
+    pub fn work(&self) -> Work {
+        Work {
+            executed: self.executed,
+            statements: self.statements,
+            def_calls: self.def_calls,
+            builtin_calls: self.builtin_calls,
+            elements: self.elements,
+            lookups: self.lookups,
+            joins: self.joins,
+            for_tests: self.for_tests,
+        }
+    }
+
     /// The + button: jumps to ON BREAK GOTO's label, which is then
     /// forgotten. False when no label is set, and the program should stop.
     pub fn take_break(&mut self, host: &mut dyn Host) -> bool {
@@ -990,7 +1046,12 @@ impl Vm {
         if memory::count_due() {
             self.count_for_slice(host)?;
         }
-        self.run_code(host, budget)
+        // Fused steps leave out what the counts of [`Vm::work`] need, so
+        // a run that reports them goes one instruction at a time.
+        match self.report_work {
+            true => self.run_code::<false>(host, budget),
+            false => self.run_code::<true>(host, budget),
+        }
     }
 
     #[cold]
@@ -1044,6 +1105,7 @@ impl Vm {
             .expect("compiler keeps the stack balanced");
         match (&*lhs, &rhs) {
             (Value::Str(l), Value::Str(r)) => {
+                self.joins += 1;
                 let added = r.borrow().clone();
                 let mut l = l.borrow_mut();
                 memory::take(memory::string_bytes(l.len() + added.len()))?;
@@ -1108,7 +1170,7 @@ impl Vm {
         e
     }
 
-    fn run_code(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
+    fn run_code<const FUSED: bool>(&mut self, host: &mut dyn Host, budget: u32) -> Result<Status> {
         let mut passed = self.passed.take();
         if self.ended {
             return Ok(Status::Ended);
@@ -1117,7 +1179,8 @@ impl Vm {
         let mut program = Rc::clone(&self.program);
         while self.executed < stop {
             // None of what runs in larger steps changes these.
-            if self.break_pending.is_none()
+            if FUSED
+                && self.break_pending.is_none()
                 && self.trace.is_none()
                 && self.changes.is_empty()
                 && self.stop_at.is_none()
@@ -1181,6 +1244,9 @@ impl Vm {
             }
             let pc = self.pc;
             self.executed += 1;
+            if !FUSED && program.starts.get(pc) == Some(&true) {
+                self.statements += 1;
+            }
             let outcome = self.step(&program, host);
             // Calls into other slots change the running program.
             if !Rc::ptr_eq(&program, &self.program) {
@@ -2095,11 +2161,13 @@ impl Vm {
                 self.store(*slot, v);
             }
             Op::Index(n) => {
+                self.elements += 1;
                 let idx = self.indices(*n)?;
                 let base = self.pop();
                 self.stack.push(index(&base, &idx)?);
             }
             Op::StoreIndex(n) => {
+                self.elements += 1;
                 let idx = self.indices(*n)?;
                 let base = self.pop();
                 let value = self.pop();
@@ -2140,6 +2208,7 @@ impl Vm {
                     .stack
                     .last_mut()
                     .expect("compiler keeps the stack balanced");
+                self.joins += u64::from(matches!(lhs, Value::Str(_)));
                 match ops::binary(*op, lhs, &rhs) {
                     Ok(v) => *lhs = v,
                     Err(e) => return Err(self.run_again_with(e, rhs)),
@@ -2181,18 +2250,22 @@ impl Vm {
                 return Err(Error::with_detail(ErrorKind::UndefinedLabel, name));
             }
             Op::GotoDyn => {
+                self.lookups += 1;
                 let label = self.pop();
                 let (slot, target) = self.find_label(&label)?;
                 self.switch_to(slot, host);
                 next = target;
             }
             Op::GosubDyn => {
+                self.lookups += 1;
                 let label = self.pop();
                 let (slot, target) = self.find_label(&label)?;
                 self.gosub(slot, target, host)?;
                 return Ok(None);
             }
             Op::On { count, gosub } => {
+                // Its table costs about what a builtin's call does.
+                self.builtin_calls += 1;
                 let selector = self.pop().to_int()?;
                 let after = self.pc + 1 + *count as usize;
                 next = after;
@@ -2231,6 +2304,7 @@ impl Vm {
                 return Ok(None);
             }
             Op::CallBuiltin { id, argc, want } => {
+                self.builtin_calls += 1;
                 let b = builtins::get(*id);
                 let argc = usize::from(*argc);
                 if let (Kind::Function(f), Want::Value, true) = (b.kind, *want, b.accepts(argc)) {
@@ -2255,6 +2329,9 @@ impl Vm {
             }
             Op::CallHost { id, argc, want } => {
                 let at = self.stack.len() - usize::from(*argc);
+                if self.report_work {
+                    host.work(self.work());
+                }
                 host.set_data_pos(self.data_pos);
                 let results = host.call(*id, &self.stack[at..], *want);
                 if let Some(pos) = host.data_pos() {
@@ -2274,6 +2351,7 @@ impl Vm {
                 self.push_results(results, *want)?;
             }
             Op::CallDyn { argc, want } => {
+                self.lookups += 1;
                 let args = self.pop_n((*argc).into());
                 let name_value = self.pop();
                 let (slot, name) = slot_and_name(&name_value)?;
@@ -2335,6 +2413,7 @@ impl Vm {
                 }
             }
             Op::LoadDyn => {
+                self.lookups += 1;
                 let target = self.pop();
                 let v = match self.other_global(&target)? {
                     Some(v) => v.clone(),
@@ -2346,6 +2425,7 @@ impl Vm {
                 self.stack.push(v);
             }
             Op::StoreDyn => {
+                self.lookups += 1;
                 let target = self.pop();
                 let v = self.pop();
                 match self.other_global(&target)? {
@@ -2465,7 +2545,10 @@ impl Vm {
                     _ => return Err(ErrorKind::OutOfRange.into()),
                 }
             }
-            Op::ForTest => self.for_test()?,
+            Op::ForTest => {
+                self.for_tests += 1;
+                self.for_test()?;
+            }
             Op::Print { screen } => {
                 let value = self.pop();
                 let screen = self.screen_arg(*screen)?;
@@ -2802,6 +2885,7 @@ impl Vm {
         caller: usize,
         cost: usize,
     ) {
+        self.def_calls += 1;
         let at = self.stack.len() - argc;
         let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
         let default_int = self.program.default_int;
