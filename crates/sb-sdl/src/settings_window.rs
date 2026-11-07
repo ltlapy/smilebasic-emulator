@@ -97,6 +97,9 @@ fn tool_label(file: &str) -> &str {
 /// The instruments row's option that asks for a SoundFont file.
 const SOUND_FONT_FILE: usize = 2;
 const INSTRUMENTS: &str = "Instruments for MML and BGM";
+/// The extra font row's option that asks for a font file.
+const EXTRA_FONT_FILE: usize = 1;
+const EXTRA_FONT: &str = "Font for characters SmileBASIC lacks";
 
 const PAGES: &[Page] = &[
     Page {
@@ -253,6 +256,24 @@ const PAGES: &[Page] = &[
         title: "Editor",
         rows: &[
             Row {
+                label: EXTRA_FONT,
+                about: "The editor draws Hangul, emoji and other characters missing from \
+                        SmileBASIC's font with bundled fonts, or first with a BDF, TTF or \
+                        OTF file you choose. Programs still see the box. Default: Bundled.",
+                control: Control::Choice(
+                    &["Bundled", "File..."],
+                    |s| match s.editor_extra_font {
+                        None => 0,
+                        Some(_) => EXTRA_FONT_FILE,
+                    },
+                    |s, i| {
+                        if i == 0 {
+                            s.editor_extra_font = None;
+                        }
+                    },
+                ),
+            },
+            Row {
                 label: "Tab width",
                 about: "Tab in the editor pads with spaces to the next multiple of this \
                         many columns. SYSPARAM(\"TABSTEP\") returns it. Default 1, as \
@@ -390,6 +411,10 @@ pub enum Outcome {
     Instruments,
     /// Ask for a SoundFont file to play with.
     ChooseSoundFont,
+    /// The editor's extra font changed; the frontend loads it.
+    ExtraFont,
+    /// Ask for a font file for the editor's extra characters.
+    ChooseExtraFont,
     /// Ask for the program tool `n` (0 to 2) starts.
     ChooseTool(usize),
 }
@@ -537,6 +562,13 @@ impl SettingsWindow {
                     }
                     put(s, to);
                     return Outcome::Instruments;
+                }
+                if row.label == EXTRA_FONT {
+                    if to == EXTRA_FONT_FILE {
+                        return Outcome::ChooseExtraFont;
+                    }
+                    put(s, to);
+                    return Outcome::ExtraFont;
                 }
                 put(s, to);
             }
@@ -756,6 +788,30 @@ mod tests {
             Outcome::ChooseSoundFont
         );
         assert!(s.smilebasic_instruments, "unchanged until a file is chosen");
+    }
+
+    #[test]
+    fn the_extra_font_tells_the_frontend() {
+        let mut s = Settings {
+            editor_extra_font: Some("a.bdf".into()),
+            ..Settings::default()
+        };
+        let mut w = SettingsWindow::new((1280, 720));
+        let editor = PAGES.iter().position(|p| p.title == "Editor").unwrap();
+        w.click(centre(w.page_row(editor)), &mut s);
+        assert_eq!(
+            w.click(centre(w.option_rect(0, EXTRA_FONT_FILE)), &mut s),
+            Outcome::ChooseExtraFont
+        );
+        assert!(
+            s.editor_extra_font.is_some(),
+            "unchanged until a file is chosen"
+        );
+        assert_eq!(
+            w.click(centre(w.option_rect(0, 0)), &mut s),
+            Outcome::ExtraFont
+        );
+        assert_eq!(s.editor_extra_font, None);
     }
 
     #[test]

@@ -410,6 +410,14 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   SmileBASIC 4's on-screen one.
 - Insert's overwrite setting is kept apart for the typed line and for each side
   of the editor. SmileBASIC 4 has one for all of them.
+- Characters missing from SmileBASIC's font, such as Hangul and emoji, show in
+  the editor from another font instead of as a box (see
+  [importing.md](importing.md#characters-the-font-lacks)). This covers the
+  editor's code area only. The console, direct mode, `CHKCHR`, the font page
+  on GRP5 and `GPUTCHR` still show SmileBASIC's font and its box, so programs
+  see what they see on hardware. A character above U+FFFF, such as most emoji,
+  takes two UTF-16 units and so two columns, as `LEN` counts it: its glyph
+  fills the first cell and the second stays empty.
 - `PRGEDIT` leaves the editor's line wrapping as it is: the PRG commands count
   lines of the source, which wrapping does not change.
 

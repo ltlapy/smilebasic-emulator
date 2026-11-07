@@ -323,6 +323,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let audio = Audio::open(&sdl);
     // The file dialog answers from its own thread.
     let (chosen_font, font_choice) = std::sync::mpsc::channel::<PathBuf>();
+    // ...as does the one for the editor's extra font.
+    let (chosen_extra_font, extra_font_choice) = std::sync::mpsc::channel::<PathBuf>();
     // ...as do the editor colors window's, with whether to save there.
     let (chosen_colors, colors_choice) = std::sync::mpsc::channel::<(PathBuf, bool)>();
     // ...and the project manager's, for importing and exporting.
@@ -401,6 +403,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut frame_guard = FrameGuard::default();
     let mut key_hint = KeyHint::default();
     use_instruments(machine, bank.as_ref(), &mut toasts);
+    if let Err(e) = machine.rt.load_extra_font() {
+        toasts.push(e);
+    }
     if let Some(mut lines) = recovery.take_notice() {
         lines.splice(
             0..0,
@@ -1555,6 +1560,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     settings_window::Outcome::ChooseSoundFont => {
                         choose_sound_font(canvas.window(), chosen_font.clone(), &mut toasts);
                     }
+                    settings_window::Outcome::ExtraFont => {
+                        if let Err(e) = machine.rt.load_extra_font() {
+                            toasts.push(e);
+                        }
+                    }
+                    settings_window::Outcome::ChooseExtraFont => {
+                        let send = chosen_extra_font.clone();
+                        choose_extra_font(canvas.window(), send, &mut toasts);
+                    }
                     // The picker goes over the settings, which stay open.
                     settings_window::Outcome::ChooseTool(n) => {
                         let storage = &machine.rt.storage;
@@ -2216,6 +2230,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             settings.smilebasic_instruments = false;
             settings.sound_font = Some(path.to_string_lossy().into_owned());
             use_instruments(machine, bank.as_ref(), &mut toasts);
+        }
+        if let Ok(path) = extra_font_choice.try_recv() {
+            machine.rt.settings.editor_extra_font = Some(path.to_string_lossy().into_owned());
+            if let Err(e) = machine.rt.load_extra_font() {
+                toasts.push(e);
+            }
         }
         if let Ok((path, transfer)) = folder_choice.try_recv()
             && let Some(open) = &mut manager
@@ -3328,6 +3348,29 @@ fn choose_sound_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, to
     let filters = [sdl3::dialog::DialogFileFilter {
         name: "SoundFont",
         pattern: "sf2",
+    }];
+    let shown = sdl3::dialog::show_open_file_dialog(
+        &filters,
+        None::<&Path>,
+        false,
+        window,
+        Box::new(move |chosen, _| {
+            if let Some(path) = chosen.ok().and_then(|p| p.into_iter().next()) {
+                let _ = send.send(path);
+            }
+        }),
+    );
+    if let Err(e) = shown {
+        toasts.push(format!("Could not open a file dialog: {e}"));
+    }
+}
+
+/// Asks for a font file for the editor's extra characters; the choice
+/// comes through `send`.
+fn choose_extra_font(window: &Window, send: std::sync::mpsc::Sender<PathBuf>, toasts: &mut Toasts) {
+    let filters = [sdl3::dialog::DialogFileFilter {
+        name: "Fonts",
+        pattern: "bdf;ttf;otf",
     }];
     let shown = sdl3::dialog::show_open_file_dialog(
         &filters,

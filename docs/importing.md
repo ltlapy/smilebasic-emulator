@@ -19,6 +19,31 @@ by S. Christian Collins, bundled in `crates/sb-sdl/sounds`, until SmileBASIC's
 own instruments are imported. File > Settings > Sound picks between them and
 another SoundFont (`.sf2`).
 
+## Characters the font lacks
+
+SmileBASIC 4's font has no Hangul or emoji and shows them as a box. The
+editor draws such characters from another font instead:
+
+1. the file set in File > Settings > Editor > "Font for characters SmileBASIC
+   lacks": a BDF, TTF or OTF font, read at startup and when chosen;
+2. bundled fonts, all under the SIL Open Font License 1.1:
+   - 8 pixels: GalmuriMono7, then [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji),
+     then M PLUS 1p Bold;
+   - 16 pixels: Galmuri14's Hangul, M PLUS 1p Bold, Noto Emoji, then
+     GalmuriMono7 doubled.
+
+A character none of them has keeps the box. Each glyph is fitted to one cell:
+bitmap fonts are scaled by whole steps, or down when larger than the cell,
+and narrow glyphs are drawn twice as wide, as SmileBASIC draws Latin. An
+outline font's em fills the cell. Emoji are monochrome.
+
+If the file cannot be read, the editor goes back to the bundled fonts, clears
+the setting and says why. In `settings.txt` the setting is
+`editor_extra_font=PATH`; leave it empty for the bundled fonts.
+
+Running programs never see these glyphs: see
+[differences.md](differences.md#editor).
+
 ## Importing
 
 Extract the RomFS and ExeFS of the game, and of its update if you have one.
