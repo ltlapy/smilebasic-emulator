@@ -41,6 +41,7 @@ pub mod smart_scale;
 mod snd;
 pub mod sound;
 mod sp;
+pub mod speed;
 pub mod sprites;
 pub mod storage;
 mod sub;

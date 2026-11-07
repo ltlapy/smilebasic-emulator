@@ -7,6 +7,7 @@ use crate::editor::EditorSize;
 use crate::font::FontSize;
 use crate::palette::Palette;
 use crate::screen::Filter;
+use crate::speed::Speed;
 
 /// The Switch's language, as SYSPARAM("LANG") reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,6 +139,9 @@ pub struct Settings {
     pub debug_open_editor: bool,
     /// The debugger's panel draws its glyphs this many times their size.
     pub debug_text_size: u32,
+    /// How fast programs run: as fast as they can, or about as fast as on
+    /// a Switch 2 or a Switch 1.
+    pub speed: Speed,
     /// F1 to F5's contents, which KEY reads, as SmileBASIC 4's settings
     /// set them.
     pub function_keys: [String; 5],
@@ -195,6 +199,7 @@ impl Default for Settings {
             complete_above: false,
             debug_open_editor: true,
             debug_text_size: 2,
+            speed: Speed::Unlimited,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
         }
@@ -405,6 +410,12 @@ impl Settings {
                     }
                     continue;
                 }
+                "speed" => {
+                    if let Some(speed) = Speed::from_name(value) {
+                        s.speed = speed;
+                    }
+                    continue;
+                }
                 "screen_filter" => {
                     if let Some(&(f, _)) = SCREEN_FILTER.iter().find(|(_, n)| *n == value) {
                         s.screen_filter = f;
@@ -477,6 +488,7 @@ impl Settings {
              complete_above={}\n\
              debug_open_editor={}\n\
              debug_text_size={}\n\
+             speed={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -516,6 +528,7 @@ impl Settings {
             self.complete_above,
             self.debug_open_editor,
             self.debug_text_size,
+            self.speed.name(),
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),
@@ -559,6 +572,7 @@ mod tests {
             keep_mouse_cursor: true,
             helpinfo_cursor: true,
             complete_all_slots: true,
+            speed: Speed::Switch1,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             ..Settings::default()

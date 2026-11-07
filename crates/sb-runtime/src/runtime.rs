@@ -28,6 +28,7 @@ use crate::scene::{Scene, SceneInput};
 use crate::screen::{Fade, ScreenMode, darken};
 pub use crate::settings::Settings;
 use crate::sound::Sound;
+use crate::speed::Meter;
 use crate::sprites::{self, Sprites};
 use crate::storage::Storage;
 use crate::syntax::is_ident_char;
@@ -885,6 +886,9 @@ pub struct Runtime {
     /// The project metadata that METAEDIT edits.
     pub(crate) meta: crate::env::Meta,
     pub settings: Settings,
+    /// The console's time the program has used, with a console's speed
+    /// chosen.
+    pub meter: Option<Meter>,
     pub storage: Storage,
     /// What RESULT() returns: 1 if the last file command succeeded, 0 if
     /// it failed, -1 if the user cancelled it.
@@ -1137,6 +1141,7 @@ impl Runtime {
             dialog_beside: false,
             dialog_answer: None,
             settings: Settings::default(),
+            meter: None,
             storage: Storage::none(),
             result: 1,
             confirm: None,
@@ -2493,8 +2498,20 @@ impl Host for Runtime {
             .map(|i| i as u32)
     }
 
+    fn work(&mut self, work: sb_core::vm::Work) {
+        if let Some(meter) = &mut self.meter {
+            meter.heard(work);
+        }
+    }
+
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
         let command = COMMANDS[id as usize].1;
+        if self.meter.is_some() {
+            let cost = self.command_cost(command, args, want == Want::Value);
+            if let Some(meter) = &mut self.meter {
+                meter.charge(cost);
+            }
+        }
         let sight = self.sight(command, args, want);
         let before = match sight {
             Sight::Unseen => None,
@@ -2519,6 +2536,9 @@ impl Host for Runtime {
     }
 
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {
+        if let Some(meter) = &mut self.meter {
+            meter.charge_print(text.len());
+        }
         // The cells tell when they change; the cursor shows while a line
         // is typed.
         self.changed |= self.line.is_some();

@@ -1672,18 +1672,29 @@ impl Machine {
             return;
         }
         self.at_sync = false;
+        // A console's speed: the frame has the console's time, and the
+        // window's time limit too.
+        self.rt.set_speed(self.rt.settings.speed);
+        vm.report_work(self.rt.meter.is_some());
+        if let Some(meter) = &mut self.rt.meter {
+            meter.begin_frame(self.frame, vm.work());
+        }
         // A VSYNC that is behind goes on within the frame's budget.
         let start = vm.executed();
         let mut began = self.time_limit.map(|_| Instant::now());
         let deadline = began.zip(self.time_limit).map(|(now, limit)| now + limit);
-        let has_time = |vm: &Vm| match deadline {
-            Some(deadline) => Instant::now() < deadline,
-            None => vm.executed() - start < u64::from(FRAME_BUDGET),
+        let has_time = |vm: &Vm, rt: &Runtime| {
+            let in_time = match deadline {
+                Some(deadline) => Instant::now() < deadline,
+                None => rt.meter.is_some() || vm.executed() - start < u64::from(FRAME_BUDGET),
+            };
+            in_time && rt.meter.as_ref().is_none_or(|m| m.has_time(&vm.work()))
         };
         loop {
-            let left = match deadline {
-                Some(_) => SLICE,
-                None => FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32),
+            let left = match (&self.rt.meter, deadline) {
+                (Some(meter), _) => meter.slice(&vm.work()),
+                (None, Some(_)) => SLICE,
+                (None, None) => FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32),
             };
             let status = match main.as_deref_mut() {
                 Some(main) => {
@@ -1706,7 +1717,7 @@ impl Machine {
                         follow(lines, kept, moved, &self.rt.slots, edits);
                         give_breakpoints(&self.breakpoints, &self.moved, vm);
                     }
-                    if has_time(vm) {
+                    if has_time(vm, &self.rt) {
                         continue;
                     }
                 }
@@ -1728,7 +1739,7 @@ impl Machine {
                     self.rt.in_frame_job = false;
                     self.wait = frames;
                     self.vsync_at = Some(self.frame + u64::from(frames));
-                    if frames == 0 && has_time(vm) {
+                    if frames == 0 && has_time(vm, &self.rt) {
                         continue;
                     }
                     self.at_sync = true;
@@ -1766,13 +1777,13 @@ impl Machine {
                         // headless run. In a window, a trip that cannot
                         // end in the frame's time would only leave the
                         // screens half made when the frame is drawn.
-                        // if has_time(vm) {
+                        // if has_time(vm, &self.rt) {
                         //     continue;
                         // }
                         let fits = now.is_none_or(|(_, now)| {
                             deadline.is_some_and(|end| now + self.loop_time < end)
                         });
-                        if fits && has_time(vm) {
+                        if fits && has_time(vm, &self.rt) {
                             continue;
                         }
                     }
@@ -1786,6 +1797,9 @@ impl Machine {
                 Err(e) => self.finish(Some(e)),
             }
             break;
+        }
+        if let (Some(meter), Some(vm)) = (&mut self.rt.meter, &self.vm) {
+            meter.end_frame(&vm.work());
         }
         if let Some(began) = began.filter(|_| !self.at_sync) {
             self.loop_so_far += began.elapsed();

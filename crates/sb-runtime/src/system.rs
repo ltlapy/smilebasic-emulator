@@ -10,6 +10,7 @@ use sb_core::value::{Value, new_str};
 
 use crate::font::FontSize;
 use crate::runtime::{Command, Runtime, checking, no_form};
+use crate::speed::Meter;
 use crate::text::USER_CHARS;
 
 /// RND's series 0 to 7.
@@ -92,6 +93,8 @@ pub struct System {
     pub mouse_cursor: bool,
     /// When PERFBEGIN started each of its eight measurements.
     perf: [Option<Instant>; 8],
+    /// The same on the console's clock, with a console's speed chosen.
+    perf_clock: [u64; 8],
     /// What PERFEND has timed of each since RUN, for the debugger's
     /// panel.
     perf_stats: [PerfStats; 8],
@@ -147,6 +150,7 @@ impl Default for System {
             sysbeep: true,
             mouse_cursor: false,
             perf: [None; 8],
+            perf_clock: [0; 8],
             perf_stats: [PerfStats::default(); 8],
         }
     }
@@ -311,15 +315,22 @@ impl Runtime {
                     stats.color = Some(color as u32);
                 }
                 sys.perf[n] = Some(Instant::now());
+                sys.perf_clock[n] = self.meter.as_ref().map_or(0, Meter::now);
                 Ok(vec![])
             }
             (Command::Perfend, Want::Outs(0) | Want::Value, 1) => {
                 let n = perf_id(&args[0])?;
                 // Without PERFBEGIN, the time since SmileBASIC started.
                 let since = sys.perf[n].unwrap_or(sys.started);
-                let micros = match sys.fixed {
-                    true => 0,
-                    false => since.elapsed().as_micros() as u64,
+                // A console's speed times on the console's clock, which
+                // runs the same each time.
+                let micros = match (&self.meter, sys.fixed) {
+                    (Some(meter), _) => {
+                        let begun = sys.perf[n].map_or(0, |_| sys.perf_clock[n]);
+                        (meter.now().saturating_sub(begun) / 1_000_000) as u64
+                    }
+                    (None, true) => 0,
+                    (None, false) => since.elapsed().as_micros() as u64,
                 };
                 sys.perf_stats[n].add(micros);
                 Ok(match want {

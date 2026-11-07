@@ -192,6 +192,10 @@ impl Host for Linked<'_> {
         self.sub.lookup(name)
     }
 
+    fn work(&mut self, work: sb_core::vm::Work) {
+        self.sub.work(work);
+    }
+
     fn call(&mut self, id: u32, args: &[Value], want: Want) -> Result<Vec<Value>> {
         let command = COMMANDS[id as usize].1;
         match self.sub.linked_command(self.main, command, args, want) {
