@@ -336,6 +336,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     machine.rt.clipboard = Box::new(SystemClipboard::new(video.clipboard()));
     let keyboard = sdl.keyboard();
     let mut controls = Controls::new(&sdl)?;
+    let mut program_keys = controls::ProgramKeys::default();
     let audio = Audio::open(&sdl);
     // Runs the frames while a call to SDL holds the loop up.
     let standby = standby::Standby::start(audio.sink());
@@ -1056,6 +1057,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // with the menu bar and the emulator's windows.
             let editor_window = !apart || from_editor;
             let ui_window = from_editor == ui_editor;
+            // Keys that reach the machine go to a running program, which
+            // types as SmileBASIC 4 does, rather than to the editor or
+            // the prompt.
+            let program_typing = !on_editor && (machine.is_running() || machine.sub_has_focus());
+            if let Event::KeyDown {
+                scancode, repeat, ..
+            } = event
+            {
+                program_keys.any_key_down(scancode, repeat);
+            }
             if matches!(event, Event::KeyDown { .. }) {
                 eat_text = dialog.is_some()
                     || program_dialog.is_some()
@@ -2009,13 +2020,19 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // Editing the line typed in direct mode or for INPUT.
                 Event::KeyDown {
                     keycode: Some(key),
+                    scancode,
                     keymod,
+                    repeat,
                     ..
                 } if !on_editor
                     && machine.rt.wants_line()
                     && let Some(code) = line_command(key, shift(keymod), ctrl(keymod)) =>
                 {
-                    machine.rt.key_press(code)
+                    if program_typing {
+                        program_keys.key_down(&mut machine.rt, scancode, keymod, repeat, Some(code))
+                    } else {
+                        machine.rt.key_press(code)
+                    }
                 }
                 Event::KeyDown {
                     keycode: Some(key @ (Keycode::C | Keycode::X)),
@@ -2226,6 +2243,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // would reach the prompt or the program beside it.
                 Event::KeyDown { .. } if program_dialog.is_some() && !from_editor => {}
                 Event::KeyDown {
+                    keycode: Some(key),
+                    scancode,
+                    keymod,
+                    repeat,
+                    ..
+                } if program_typing => {
+                    let code = special_key(key);
+                    program_keys.key_down(&mut machine.rt, scancode, keymod, repeat, code);
+                }
+                Event::KeyDown {
                     keycode: Some(key), ..
                 } => {
                     if let Some(code) = special_key(key) {
@@ -2233,6 +2260,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                 }
                 Event::TextInput { .. } if eat_text => eat_text = false,
+                Event::TextInput { text, .. } if program_typing => {
+                    let upper_case = machine.rt.settings.upper_case_letters;
+                    program_keys.text(&mut machine.rt, &text, upper_case);
+                }
                 Event::TextInput { text, .. } => machine.type_text(&text),
                 _ => {}
             }

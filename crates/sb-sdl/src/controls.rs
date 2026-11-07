@@ -4,7 +4,7 @@
 use sb_runtime::input::{KeysRead, Mouse, PADS, State};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
-use sdl3::keyboard::{KeyboardState, Scancode};
+use sdl3::keyboard::{KeyboardState, Mod, Scancode};
 use sdl3::mouse::MouseState;
 use sdl3::{GamepadSubsystem, Sdl};
 
@@ -102,6 +102,128 @@ fn modifiers(down: impl Fn(Scancode) -> bool) -> u32 {
         .fold(0, |bits, (i, keys)| {
             bits | u32::from(keys.iter().any(|&k| down(k))) << i
         })
+}
+
+/// What last went down for a running program, for the text that follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Last {
+    /// Nothing, or a key that typed its code itself: text after it is an
+    /// input method's, or comes with no key.
+    None,
+    /// A key whose text comes next, and whether Shift was held.
+    Typing { shift: bool },
+    /// The computer's key repeat.
+    Repeat,
+}
+
+/// How the keyboard types for a running program, as on SmileBASIC 4: with
+/// its own Caps Lock, and with repeats counted in the program's frames
+/// rather than by the computer's key repeat. The editor and the prompt type
+/// as before: letters with their case swapped, and the computer's repeat.
+#[derive(Debug)]
+pub struct ProgramKeys {
+    /// SmileBASIC 4's Caps Lock, which is on at start. The Caps Lock key
+    /// toggles it wherever it is pressed, so it keeps step with the
+    /// computer's own unless that was on when the emulator started or was
+    /// toggled in another window.
+    caps_lock: bool,
+    last: Last,
+}
+
+impl Default for ProgramKeys {
+    fn default() -> Self {
+        ProgramKeys {
+            caps_lock: true,
+            last: Last::None,
+        }
+    }
+}
+
+impl ProgramKeys {
+    /// Goes for every key that goes down on the emulator's windows, before
+    /// anything else takes it.
+    pub fn any_key_down(&mut self, scancode: Option<Scancode>, repeat: bool) {
+        self.last = Last::None;
+        if scancode == Some(Scancode::CapsLock) && !repeat {
+            self.caps_lock ^= true;
+        }
+    }
+
+    /// A key going down for the running program; `code` is what it types
+    /// itself, such as Enter or an arrow, if it types no text. The
+    /// computer's repeats type nothing: the runtime repeats the press.
+    pub fn key_down(
+        &mut self,
+        rt: &mut sb_runtime::Runtime,
+        scancode: Option<Scancode>,
+        keymod: Mod,
+        repeat: bool,
+        code: Option<u16>,
+    ) {
+        if repeat {
+            self.last = Last::Repeat;
+            return;
+        }
+        let usage = scancode.and_then(|s| u8::try_from(s as i32).ok());
+        rt.input.key_down(usage.unwrap_or(0));
+        match code {
+            Some(code) => rt.type_held(code),
+            None => {
+                self.last = Last::Typing {
+                    shift: keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
+                }
+            }
+        }
+    }
+
+    /// Text the computer typed while a program runs. `upper_case`: letters
+    /// type as SmileBASIC 4's do (the setting for capitals without Shift);
+    /// otherwise they keep the case the computer gave them.
+    ///
+    /// Text outside ASCII, from an input method or a layout of another
+    /// script, types once as the computer gives it, its repeats included,
+    /// as which key it came from is not known.
+    pub fn text(&mut self, rt: &mut sb_runtime::Runtime, text: &str, upper_case: bool) {
+        for c in text.chars() {
+            if !c.is_ascii() {
+                // SmileBASIC strings hold only the Basic Multilingual Plane.
+                if let Ok(code) = u16::try_from(u32::from(c)) {
+                    rt.key_press(code);
+                }
+                continue;
+            }
+            match self.last {
+                Last::Repeat => {}
+                Last::Typing { shift } if upper_case => {
+                    rt.type_held(self.letter_case(c, shift) as u16)
+                }
+                Last::Typing { .. } => rt.type_held(c as u16),
+                Last::None if upper_case => rt.key_press(swap_case(c) as u16),
+                Last::None => rt.key_press(c as u16),
+            }
+        }
+    }
+
+    /// A letter as SmileBASIC 4 types it: upper case with Caps Lock on,
+    /// Shift turning it round, whatever case the computer typed it in.
+    // UNVERIFIED: that Caps Lock leaves digits and symbols alone, as on
+    // computers.
+    fn letter_case(&self, c: char, shift: bool) -> char {
+        if self.caps_lock != shift {
+            c.to_ascii_uppercase()
+        } else {
+            c.to_ascii_lowercase()
+        }
+    }
+}
+
+/// Swaps the case of ASCII letters, as the editor and the prompt type them.
+fn swap_case(c: char) -> char {
+    if c.is_ascii_lowercase() {
+        c.to_ascii_uppercase()
+    } else {
+        c.to_ascii_lowercase()
+    }
 }
 
 /// How far a stick has to be tilted to count as held through a screen: where
@@ -407,6 +529,115 @@ mod tests {
         }
         keys.update(nothing);
         assert_eq!(keys.buttons(held(Scancode::A)), A_KEY_BUTTON);
+    }
+
+    /// Everything INKEY$ has in the next frame, as hex codes.
+    fn inkey(rt: &mut sb_runtime::Runtime) -> String {
+        use sb_core::vm::{Status, Vm};
+        rt.begin_frame();
+        let source = "REPEAT:K$=INKEY$():IF K$!=\"\" THEN ?HEX$(ASC(K$));\" \";\nUNTIL K$==\"\"";
+        let mut vm = Vm::new(sb_core::compile(source, rt).unwrap());
+        while vm.run(rt, 100_000).unwrap() != Status::Ended {}
+        let console = &rt.text[4];
+        let codes: Vec<u16> = (0..console.size().0)
+            .map(|x| console.cell(x, 0).code)
+            .take_while(|&c| c != 0)
+            .collect();
+        String::from_utf16(&codes).unwrap().trim_end().to_string()
+    }
+
+    /// Presses `key` for a running program with `keymod` held, and types
+    /// `text` for it, as the frontend does.
+    fn press(
+        keys: &mut ProgramKeys,
+        key: Scancode,
+        keymod: Mod,
+        text: &str,
+        upper: bool,
+    ) -> String {
+        let mut rt = sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank());
+        keys.any_key_down(Some(key), false);
+        keys.key_down(&mut rt, Some(key), keymod, false, None);
+        keys.text(&mut rt, text, upper);
+        inkey(&mut rt)
+    }
+
+    /// TEST68: A types "A" and Shift+A "a", as SmileBASIC 4's Caps Lock
+    /// starts on. Caps Lock turns both round, whatever case the computer's
+    /// own Caps Lock typed them in.
+    #[test]
+    fn letters_follow_smilebasic_4s_own_caps_lock() {
+        let mut keys = ProgramKeys::default();
+        let shift = Mod::LSHIFTMOD;
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "41");
+        assert_eq!(press(&mut keys, Scancode::A, shift, "A", true), "61");
+        // G, K and S, as TEST68 typed them.
+        let gks: Vec<String> = [(Scancode::G, "g"), (Scancode::K, "k"), (Scancode::S, "s")]
+            .map(|(key, text)| press(&mut keys, key, Mod::NOMOD, text, true))
+            .into();
+        assert_eq!(gks, ["47", "4B", "53"]);
+        keys.any_key_down(Some(Scancode::CapsLock), false);
+        // The computer's Caps Lock went on with it, and typed "A".
+        assert_eq!(press(&mut keys, Scancode::A, Mod::CAPSMOD, "A", true), "61");
+        assert_eq!(press(&mut keys, Scancode::A, shift, "a", true), "41");
+        // A repeat of Caps Lock toggles nothing.
+        keys.any_key_down(Some(Scancode::CapsLock), true);
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "61");
+    }
+
+    #[test]
+    fn caps_lock_leaves_digits_and_symbols_alone() {
+        let mut keys = ProgramKeys::default();
+        assert_eq!(press(&mut keys, Scancode::_1, Mod::NOMOD, "1", true), "31");
+        assert_eq!(
+            press(&mut keys, Scancode::_1, Mod::LSHIFTMOD, "!", true),
+            "21"
+        );
+        assert_eq!(
+            press(&mut keys, Scancode::Slash, Mod::NOMOD, "/", true),
+            "2F"
+        );
+    }
+
+    /// With "Type capitals without Shift" off, letters keep the computer's
+    /// case.
+    #[test]
+    fn the_setting_off_types_as_the_computer_does() {
+        let mut keys = ProgramKeys::default();
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", false), "61");
+        assert_eq!(
+            press(&mut keys, Scancode::A, Mod::LSHIFTMOD, "A", false),
+            "41"
+        );
+    }
+
+    /// The runtime repeats a held key in the program's frames, so the
+    /// computer's repeats type nothing, but text outside ASCII, which an
+    /// input method may send, still goes.
+    #[test]
+    fn the_computers_repeats_type_nothing() {
+        let mut keys = ProgramKeys::default();
+        let mut rt = sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank());
+        let key = Some(Scancode::A);
+        keys.any_key_down(key, true);
+        keys.key_down(&mut rt, key, Mod::NOMOD, true, None);
+        keys.text(&mut rt, "a", true);
+        keys.text(&mut rt, "\u{AC00}", true);
+        let enter = Some(Scancode::Return);
+        keys.any_key_down(enter, true);
+        keys.key_down(&mut rt, enter, Mod::NOMOD, true, Some(13));
+        assert_eq!(inkey(&mut rt), "AC00");
+    }
+
+    #[test]
+    fn keys_that_type_no_text_type_their_code() {
+        let mut keys = ProgramKeys::default();
+        let mut rt = sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank());
+        let enter = Some(Scancode::Return);
+        keys.any_key_down(enter, false);
+        let code = sb_runtime::runtime::keys::ENTER;
+        keys.key_down(&mut rt, enter, Mod::NOMOD, false, Some(code));
+        assert_eq!(inkey(&mut rt), "D");
     }
 
     /// TEST68: Han/Eng reads as usage 144 and Hanja as 145, which SDL's
