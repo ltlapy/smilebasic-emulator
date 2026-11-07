@@ -133,7 +133,7 @@ impl Runtime {
     }
 
     /// A free sprite number, searching from `start` towards `end`.
-    fn free_sprite(&self, start: usize, end: usize) -> Option<usize> {
+    pub(crate) fn free_sprite(&self, start: usize, end: usize) -> Option<usize> {
         let free = |&i: &usize| !self.sprites.list()[i].used;
         if start <= end {
             (start..=end).find(free)

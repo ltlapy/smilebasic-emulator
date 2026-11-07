@@ -493,6 +493,27 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   | `V=FL(A)`, with two `VAR` locals | 270.1 |
   | `V=FR(3)`, recursive, four calls | 877.2 |
 
+- Single commands, in ns each with the loop around them taken away (TEST67,
+  4.4.9; the Switch ran handheld, the Switch 2 docked, `GCLIP` at the whole
+  page):
+
+  | Command | Switch | Switch 2 |
+  |---|---|---|
+  | `V=RND(R)` | 138 | 57 |
+  | `V=RGB(R,G,B)` | 404 | 132 |
+  | `ON X GOTO`, 2 or 30 labels | 89 | 54 |
+  | `SPSET ID,DEF` on a sprite in use | 616 | 213 |
+  | `SPSET ID,DEF:SPCLR ID` on a free sprite | 1239 | 422 |
+  | `SPOFS ID,X,Y` | 453 | 155 |
+  | `GFILL` 8x8 / 128x128 | 639 / 18974 | 238 / 7851 |
+  | `GCLS`, the whole 2048x2048 page | 4171396 | 1916861 |
+  | `GPAINT` inside a 128x128 / 512x512 box | 370816 / 4329906 | 166276 / 2017006 |
+
+  `ON` costs the same with 2 labels or 30 and with the first label or the
+  last. Blending (`#G_ALPHA`) makes a 128x128 `GFILL` 15 to 19 times slower. A
+  program busy for 60 frames loses no measurable time to 4000 sprites on show,
+  rotated and scaled 4 times or hidden.
+
 ## Animation
 
 - `SPANIM`, `TANIM` and `FADE color,time` take their first step at the first

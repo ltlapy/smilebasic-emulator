@@ -50,8 +50,11 @@ pub struct Work {
     pub statements: u64,
     pub def_calls: u64,
     pub builtin_calls: u64,
-    /// Array elements read or written.
+    /// The arguments given to builtin calls.
+    pub builtin_args: u64,
+    /// Array elements read or written, and their indices past the first.
     pub elements: u64,
+    pub extra_indices: u64,
     /// Variables, labels and DEFs found by a name in a string at run time.
     pub lookups: u64,
     /// Strings joined.
@@ -280,7 +283,9 @@ pub struct Vm {
     statements: u64,
     def_calls: u64,
     builtin_calls: u64,
+    builtin_args: u64,
     elements: u64,
+    extra_indices: u64,
     lookups: u64,
     joins: u64,
     for_tests: u64,
@@ -507,7 +512,9 @@ impl Vm {
             statements: 0,
             def_calls: 0,
             builtin_calls: 0,
+            builtin_args: 0,
             elements: 0,
+            extra_indices: 0,
             lookups: 0,
             joins: 0,
             for_tests: 0,
@@ -982,7 +989,9 @@ impl Vm {
             statements: self.statements,
             def_calls: self.def_calls,
             builtin_calls: self.builtin_calls,
+            builtin_args: self.builtin_args,
             elements: self.elements,
+            extra_indices: self.extra_indices,
             lookups: self.lookups,
             joins: self.joins,
             for_tests: self.for_tests,
@@ -2182,12 +2191,14 @@ impl Vm {
             }
             Op::Index(n) => {
                 self.elements += 1;
+                self.extra_indices += u64::from(n.saturating_sub(1));
                 let idx = self.indices(*n)?;
                 let base = self.pop();
                 self.stack.push(index(&base, &idx)?);
             }
             Op::StoreIndex(n) => {
                 self.elements += 1;
+                self.extra_indices += u64::from(n.saturating_sub(1));
                 let idx = self.indices(*n)?;
                 let base = self.pop();
                 let value = self.pop();
@@ -2284,7 +2295,8 @@ impl Vm {
                 return Ok(None);
             }
             Op::On { count, gosub } => {
-                // Its table costs about what a builtin's call does.
+                // Its table costs about what a builtin's call with no
+                // arguments does.
                 self.builtin_calls += 1;
                 let selector = self.pop().to_int()?;
                 let after = self.pc + 1 + *count as usize;
@@ -2325,6 +2337,7 @@ impl Vm {
             }
             Op::CallBuiltin { id, argc, want } => {
                 self.builtin_calls += 1;
+                self.builtin_args += u64::from(*argc);
                 let b = builtins::get(*id);
                 let argc = usize::from(*argc);
                 if let (Kind::Function(f), Want::Value, true) = (b.kind, *want, b.accepts(argc)) {

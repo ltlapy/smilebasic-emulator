@@ -103,7 +103,8 @@ fn perfend_gives_the_consoles_time() {
 }
 
 /// Host commands count toward the frame as the VM's work does: 100 GCLS
-/// charged 50 ms on a Switch 1 take 3 frames of MAINCNT, not none.
+/// of a whole page, 0.4 s on a Switch 1, take 24 frames of MAINCNT, not
+/// none.
 #[test]
 fn host_commands_use_up_frames() {
     let source = "VSYNC:T=MAINCNT():PERFBEGIN 0\n\
@@ -128,5 +129,23 @@ fn a_small_fill_costs_less_than_a_large_one() {
     };
     let small = passes(Speed::Switch1, &fill(16));
     let large = passes(Speed::Switch1, &fill(256));
-    assert!(small * 50.0 < large, "{small} us and {large} us");
+    // A fill of the whole page would cost 68 ms.
+    assert!(
+        small * 5.0 < large && large < 5_000.0,
+        "{small} us and {large} us"
+    );
+}
+
+/// SPSET's search for a free sprite costs each sprite it passes.
+#[test]
+fn a_long_search_for_a_free_sprite_costs_more() {
+    let search = |used: u32| {
+        format!(
+            "FOR I=0 TO {used}:SPSET I,0:NEXT:PERFBEGIN 0\n\
+             S=SPSET(0,4095,0):?PERFEND(0)\n"
+        )
+    };
+    let short = passes(Speed::Switch1, &search(0));
+    let long = passes(Speed::Switch1, &search(3000));
+    assert!(short < 5.0 && long > 10.0, "{short} us and {long} us");
 }

@@ -100,18 +100,27 @@ console. The default, Unlimited, runs as before.
 At a console's speed, the emulator charges what a program does in the
 console's time and gives each frame a sixtieth of a second of it:
 
-- Each VM instruction and statement, DEF call, builtin call, array element,
-  string join and look-up by name (`VAR()`, `CALL`, `GOTO` with a string)
-  costs a set amount. A FOR's test gets a credit, as `NEXT` takes many of our
-  instructions but one step of SmileBASIC 4's.
-- Each host command costs by its kind: drawing by the pixels inside `GCLIP`,
-  `GPAINT` by the pixels it fills, `TFILL` and `SCROLL` by the cells, `PRINT` by the characters, sprite
-  commands by a set amount each. Sprites, layers and text screens cost nothing
-  to show, as TPERF finds on both consoles.
+- Each VM instruction and statement, DEF call, builtin call and argument,
+  array element and index past the first, string join and look-up by name
+  (`VAR()`, `CALL`, `GOTO` with a string) costs a set amount. `ON`'s jump
+  costs a builtin call with no arguments. A FOR's test gets a credit, as
+  `NEXT` takes many of our instructions but one step of SmileBASIC 4's.
+- Each host command costs by its kind, plus a set amount for each real number
+  it is given. Drawing costs by the rows and pixels inside `GCLIP`, `GTRI` by
+  its rows and pixels, `GPAINT` by the pixels it fills, `TFILL` and `SCROLL`
+  by the cells, `PRINT` by the characters. `SPSET` costs by its arguments,
+  more for a sprite not in use, and its function form pays for each sprite
+  its search passes. Other sprite commands cost a set amount each. Sprites,
+  layers and text screens cost nothing to show, as TPERF and TEST67 find on
+  both consoles.
+- `GFILL`, `GCLS`, `GCOPY` and blended drawing cost more per pixel with
+  `GCLIP` set smaller than the page. TPERF sets one and TEST67 does not, and
+  this is the one difference between them that fits their times; it may be
+  something else.
 - A program that needs more than the frame goes on in the next one, and its
   `VSYNC` finds its frame gone by, as on the console. The VM stops at the
-  host command or `PRINT` that uses up the frame, so 100 `GCLS` on a Switch 1
-  (50 ms) take 3 frames of `MAINCNT`. A command that costs more than a frame
+  host command or `PRINT` that uses up the frame, so 100 `GCLS` of a whole
+  page on a Switch 1 (0.4 s) take 24 frames of `MAINCNT`. A command that costs more than a frame
   holds up the frames after it. `MAINCNT`, `VSYNC` and
   the frames lost come out as there.
 - `PERFBEGIN` and `PERFEND` measure the console's time, which is the same on
@@ -125,54 +134,61 @@ Counting this work takes the VM off its fused fast path, which a console's
 speed leaves plenty of time for. Unlimited counts nothing and runs exactly as
 before.
 
-The costs come from TPERF's scenes and TEST65's loops on 4.4.9 (in
-`crates/sb-runtime/src/speed.rs`). TPERF's `WORK` in ms, run with
+The costs come from TPERF's scenes and the loops of TEST65 and TEST67 on
+4.4.9 (in `crates/sb-runtime/src/speed.rs`). TEST67 times single commands at
+several sizes, which splits their cost into a base and a cost per row and
+pixel. TPERF's `WORK` in ms, run with
 `smilebasic-check --speed` and `--play`:
 
 | Scene | Switch 1 | ours | Switch 2 | ours |
 |---|---|---|---|---|
-| VINT | 13.38 | 13.17 | 5.15 | 5.06 |
-| VREAL | 8.42 | 8.41 | 3.29 | 3.29 |
+| VINT | 13.38 | 12.64 | 5.15 | 4.81 |
+| VREAL | 8.42 | 8.33 | 3.29 | 3.26 |
 | VSTR | 5.42 | 5.42 | 2.28 | 2.28 |
-| VARRAY | 20.96 | 18.92 | 7.43 | 6.74 |
-| VDEF | 7.83 | 7.83 | 2.61 | 2.61 |
+| VARRAY | 20.96 | 20.92 | 7.43 | 7.33 |
+| VDEF | 7.83 | 7.83 | 2.61 | 2.60 |
 | VVAR | 7.24 | 7.24 | 2.98 | 2.97 |
-| SPMOVE | 7.32 | 7.21 | 2.28 | 2.31 |
-| SPROT | 3.77 | 4.05 | 1.28 | 1.27 |
-| SPCHURN | 8.50 | 8.46 | 3.72 | 3.66 |
-| SPHIT | 6.05 | 6.07 | 2.60 | 2.59 |
-| SPANIM | 0.21 | 0.19 | 0.09 | 0.09 |
-| TPRINT | 2.35 | 2.32 | 1.15 | 1.15 |
-| TPUT | 11.04 | 11.04 | 3.82 | 3.81 |
+| SPMOVE | 7.32 | 7.11 | 2.28 | 2.37 |
+| SPROT | 3.77 | 3.87 | 1.28 | 1.22 |
+| SPCHURN | 8.50 | 8.50 | 3.72 | 3.72 |
+| SPHIT | 6.05 | 6.05 | 2.60 | 2.60 |
+| SPANIM | 0.21 | 0.21 | 0.09 | 0.09 |
+| TPRINT | 2.35 | 2.28 | 1.15 | 1.13 |
+| TPUT | 11.04 | 10.70 | 3.82 | 3.69 |
 | TSCROLL | 7.09 | 7.14 | 3.62 | 3.63 |
-| TMULTI | 0.31 | 0.31 | 0.18 | 0.18 |
-| GFILL | 15.33 | 15.13 | 2.78 | 2.72 |
-| GALPHA | 27.93 | 27.80 | 11.03 | 10.99 |
-| GLINE | 7.60 | 7.55 | 3.13 | 3.15 |
-| GCIRCLE | 3.22 | 3.22 | 1.28 | 1.28 |
-| GTRI | 8.76 | 8.65 | 2.83 | 2.80 |
-| GPUTCHR | 5.71 | 5.65 | 1.62 | 1.60 |
-| GCOPY | 11.11 | 11.01 | 3.33 | 3.31 |
+| TMULTI | 0.31 | 0.28 | 0.18 | 0.15 |
+| GFILL | 15.33 | 15.19 | 2.78 | 2.78 |
+| GALPHA | 27.93 | 27.83 | 11.03 | 10.70 |
+| GLINE | 7.60 | 7.38 | 3.13 | 3.08 |
+| GCIRCLE | 3.22 | 3.16 | 1.28 | 1.26 |
+| GTRI | 8.76 | 8.04 | 2.83 | 2.25 |
+| GPUTCHR | 5.71 | 5.71 | 1.62 | 1.62 |
+| GCOPY | 11.11 | 11.51 | 3.33 | 3.16 |
 | GLOAD | 1.08 | 1.08 | 0.45 | 0.45 |
-| GUPLOAD | 0.03 | 0.01 | 0.01 | 0.01 |
-| GARRAY | 11.69 | 10.63 | 4.13 | 3.91 |
-| LCOMP | 0.45 | 0.43 | 0.17 | 0.13 |
-| LBLUR | 0.22 | 0.20 | 0.09 | 0.08 |
-| LMOSAIC | 0.20 | 0.20 | 0.09 | 0.08 |
-| LCOLOR | 0.26 | 0.27 | 0.11 | 0.11 |
-| LMATRIX | 0.28 | 0.28 | 0.12 | 0.11 |
-| LRASTER | 1.21 | 1.07 | 0.49 | 0.40 |
-| GAME | 7.70 | 7.57 | 3.02 | 2.87 |
-| MAXSP (score) | 2866 | 3197 | 4000 | 4000 |
-| MAXTRI (score) | 4410 | 4410 | 13471 | 13007 |
+| GUPLOAD | 0.03 | 0.01 | 0.01 | 0.00 |
+| GARRAY | 11.69 | 11.70 | 4.13 | 4.19 |
+| LCOMP | 0.45 | 0.33 | 0.17 | 0.12 |
+| LBLUR | 0.22 | 0.16 | 0.09 | 0.07 |
+| LMOSAIC | 0.20 | 0.16 | 0.09 | 0.07 |
+| LCOLOR | 0.26 | 0.21 | 0.11 | 0.10 |
+| LMATRIX | 0.28 | 0.23 | 0.12 | 0.10 |
+| LRASTER | 1.21 | 1.15 | 0.49 | 0.42 |
+| GAME | 7.70 | 7.91 | 3.02 | 2.62 |
+| MAXSP (score) | 2866 | 3087 | 4000 | 4000 |
+| MAXTRI (score) | 4410 | 4410 | 13471 | 15484 |
 
-`LOST` matches too: GALPHA lost 202 frames on a Switch 1 and 200 here, VARRAY
-77 and 40. Most scenes come within 10%. A loop of one kind of statement can be
-further off: TEST65's loops go from 9% fast (`CASE` on a Switch 1, `GOTO` on a
-Switch 2) to 27% slow (`ON GOTO` on a Switch 1). Where TPERF times only
-one size of a command, the split between a base cost and a cost per pixel is a
-guess, as are the costs of commands TPERF leaves out; `speed.rs` marks them
-UNVERIFIED.
+`LOST` matches too: GALPHA lost 202 frames on a Switch 1 and 201 here, VARRAY
+77 and 76. Most scenes come within 10%. The layer scenes take under half a
+millisecond and run 10 to 32% fast. On a Switch 2, GTRI and GAME run 21% and
+13% fast and MAXTRI scores 15% high: TPERF ran handheld there and TEST67, which
+the triangle costs follow, docked.
+
+TEST67's rows land within 10% on both consoles, the loop's own `INC` and
+`EMPTY` passes and `RGB` on a Switch 1 at the edge. TEST65's loops go from 13%
+fast (`CASE` on a Switch 1) and 23% fast (`GOTO` on a Switch 2) to 16% slow
+(`R%[K%[A]]` on a Switch 1); its RV32 core runs 7% fast on a Switch 1 and 3% on
+a Switch 2. The costs of commands no test times are guesses, and `speed.rs`
+marks them UNVERIFIED.
 
 ## Per-frame costs and overload
 

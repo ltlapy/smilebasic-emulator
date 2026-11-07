@@ -24,6 +24,8 @@ const PROGRAM: &str = "DIM A%[4]\n\
     FOR I=0 TO 3\n A%[I]=F(I)+LEN(\"AB\")\nNEXT\n\
     S$=\"A\"+\"B\":INC S$,\"C\"\n\
     V=VAR(\"I\")\n\
+    DIM M[2,3]:M[1,2]=MAX(1,2)\n\
+    ON 0 GOTO @L\n@L\n\
     ?A%[3];S$;V\n";
 
 #[test]
@@ -31,10 +33,13 @@ fn a_reported_run_counts_its_work() {
     let (work, out) = run(PROGRAM, true);
     assert_eq!(out, "6ABC4\n");
     assert_eq!(work.def_calls, 4);
-    // LEN four times.
-    assert_eq!(work.builtin_calls, 4);
-    // A%[I] written four times and read once.
-    assert_eq!(work.elements, 5);
+    // LEN four times, MAX once, and ON's jump as a call with no
+    // arguments.
+    assert_eq!(work.builtin_calls, 6);
+    assert_eq!(work.builtin_args, 6);
+    // A%[I] written four times and read once, and M[1,2] written.
+    assert_eq!(work.elements, 6);
+    assert_eq!(work.extra_indices, 1);
     // FOR tests I five times: 0 to 3 and the end.
     assert_eq!(work.for_tests, 5);
     assert_eq!(work.joins, 2);
