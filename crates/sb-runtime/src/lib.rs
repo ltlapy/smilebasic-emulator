@@ -51,6 +51,7 @@ mod system;
 pub mod text;
 pub mod transfer;
 mod txt;
+pub mod ui_glyphs;
 
 pub use files::program_text;
 pub use framebuffer::Framebuffer;

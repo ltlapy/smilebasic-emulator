@@ -9,10 +9,13 @@ only reads what it has imported.
 
 Without any setup, text uses bundled fonts under the SIL Open Font License
 1.1: [GalmuriMono7](https://github.com/quiple/galmuri) at 8 pixels, and
-[M PLUS 1p](https://mplusfonts.github.io/) Bold, the face SmileBASIC 4's own
-font is drawn from, at 16 pixels. SmileBASIC's own characters (number tiles,
-buttons, box drawing and other symbols at U+E100-E17F and U+E200-E2FF) are
-redrawn for this emulator in `crates/sb-runtime/fonts/symbols.txt`.
+[M PLUS 1p](https://mplusfonts.github.io/) Bold at 16 pixels. SmileBASIC 4's
+16-pixel kana and kanji come closest to that face; its ASCII is SmileBASIC's
+own drawing (slashed zero, broken bar), which no M+ font matches. SmileBASIC's
+own characters (number tiles, buttons, box drawing and other symbols at
+U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
+`crates/sb-runtime/fonts/symbols.txt` at 8 pixels, and drawn at twice that
+size in the 16-pixel font.
 
 Music plays with [GeneralUser GS](https://www.schristiancollins.com/generaluser)
 by S. Christian Collins, bundled in `crates/sb-sdl/sounds`, until SmileBASIC's
@@ -94,6 +97,24 @@ half-width (a BDF glyph at most half as wide as the font's full-width ones,
 or an outline glyph at most 0.6 em wide), unless "Editor's first font" puts
 the bundled fonts first. SmileBASIC's own glyph squeezed to half its width is
 the last resort. The menus and windows use the bundled glyphs.
+
+## Font of the menus and windows
+
+File > Settings > Fonts > "Menus and windows" picks the font of the menu bar,
+the settings window and the emulator's other windows:
+
+- 8-pixel, doubled (the default): SmileBASIC's 8-pixel font at twice its size;
+- 16-pixel: SmileBASIC's 16-pixel font, with the half-width glyphs above;
+- Smooth: outlines with soft edges, drawn for a 16-pixel cell. Half-width
+  characters come from [M PLUS Code Latin](https://github.com/coz-m/MPLUS_FONTS)
+  50 Bold, a monospaced Latin face half an em wide, then M PLUS 1p Bold's
+  half-width forms. Other characters come from the editor's bundled 16-pixel
+  fonts. SmileBASIC's own symbols and what none of them has come from
+  SmileBASIC's font.
+
+In `settings.txt` this is `ui_font=8`, `16` or `smooth`. Text the emulator
+draws at an odd scale, such as the debugger's small panel text, keeps the
+8-pixel font.
 
 The half-width characters are U+0020-U+007E, U+FF61-U+FF9F, U+FFE8, U+FFED,
 U+FFEE and U+20A9. Latin-1 and the rest stay full-width, as in SmileBASIC 4.

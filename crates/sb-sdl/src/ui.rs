@@ -2,14 +2,16 @@
 
 use std::cell::RefCell;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use sb_runtime::Framebuffer;
 use sb_runtime::font::{Font, FontSize};
 use sb_runtime::half_width::is_half_width;
+use sb_runtime::settings::UiFont;
+use sb_runtime::ui_glyphs::UiGlyphs;
 
-/// Glyphs are the console's 8x8 font drawn at twice the size, or its
-/// 16x16 one (see [`set_font`]).
+/// Glyphs are the console's 8x8 font drawn at twice the size, its 16x16
+/// one, or smooth outlines that size (see [`set_font`]).
 const GLYPH_SCALE: u32 = 2;
 pub const CHAR: u32 = 8 * GLYPH_SCALE;
 pub const PAD: u32 = 8;
@@ -231,17 +233,31 @@ pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, 
     draw_glyphs(fb, font, (x, y), text, color, GLYPH_SCALE, true);
 }
 
-/// UI text draws the 16-pixel font where it is drawn at an even scale.
-static LARGE_FONT: AtomicBool = AtomicBool::new(false);
+/// The font of UI text, as [`UiFont`] as u8: the 16-pixel and smooth
+/// fonts are drawn where text is drawn at an even scale.
+static UI_FONT: AtomicU8 = AtomicU8::new(UiFont::Doubled as u8);
 
 /// Picks the font of the UI, as the ui_font setting says.
-pub fn set_font(size: FontSize) {
-    LARGE_FONT.store(size == FontSize::Large, Ordering::Relaxed);
+pub fn set_font(font: UiFont) {
+    UI_FONT.store(font as u8, Ordering::Relaxed);
+}
+
+fn ui_font() -> UiFont {
+    match UI_FONT.load(Ordering::Relaxed) {
+        x if x == UiFont::Large as u8 => UiFont::Large,
+        x if x == UiFont::Smooth as u8 => UiFont::Smooth,
+        _ => UiFont::Doubled,
+    }
+}
+
+thread_local! {
+    /// The smooth glyphs, made as text wants them.
+    static SMOOTH: UiGlyphs = UiGlyphs::default();
 }
 
 /// Draws text with the 8x8 glyphs `scale` times their size, or with the
-/// 16x16 ones half that, if chosen and `scale` is even. Every character
-/// takes a whole cell, as on SmileBASIC's screens: the help and the
+/// 16x16 or smooth ones half that, if chosen and `scale` is even. Every
+/// character takes a whole cell, as on SmileBASIC's screens: the help and the
 /// debugger show SmileBASIC's text laid out for that.
 pub fn draw_text_scaled(
     fb: &mut Framebuffer,
@@ -267,7 +283,7 @@ fn draw_glyphs(
     half: bool,
 ) {
     let cell = 8 * scale;
-    let large = LARGE_FONT.load(Ordering::Relaxed);
+    let font_choice = ui_font();
     let width = |c: u16| match half && is_half_width(c) {
         true => cell / 2,
         false => cell,
@@ -278,14 +294,19 @@ fn draw_glyphs(
         w: text.encode_utf16().map(width).sum(),
         h: cell,
     };
-    if dry(fb, area, ("text", x, y, text, color, scale, large, half)) {
+    if dry(
+        fb,
+        area,
+        ("text", x, y, text, color, scale, font_choice, half),
+    ) {
         return;
     }
-    let (size, scale) = if large && scale.is_multiple_of(2) {
-        (FontSize::Large, scale / 2)
-    } else {
-        (FontSize::Small, scale)
+    let even = scale.is_multiple_of(2);
+    let (size, scale) = match font_choice {
+        UiFont::Large | UiFont::Smooth if even => (FontSize::Large, scale / 2),
+        _ => (FontSize::Small, scale),
     };
+    let smooth = font_choice == UiFont::Smooth && even;
     let halves = font.half_glyphs();
     let put = |fb: &mut Framebuffer, px: u32, py: u32| {
         if let Some(dst) = fb.get(px, py) {
@@ -295,6 +316,36 @@ fn draw_glyphs(
     let mut left = x;
     for c in text.encode_utf16() {
         let w = width(c);
+        let drawn = smooth
+            && SMOOTH.with(|glyphs| {
+                let Some(glyph) = glyphs.get(c, w < cell) else {
+                    return false;
+                };
+                let side = if w < cell {
+                    size as u32 / 2
+                } else {
+                    size as u32
+                };
+                for py in 0..cell {
+                    for px in 0..w {
+                        let a = u32::from(glyph[((py / scale) * side + px / scale) as usize]);
+                        if a != 0
+                            && let Some(dst) = fb.get(left + px, y + py)
+                        {
+                            fb.set(
+                                left + px,
+                                y + py,
+                                (dst & 0xFF00_0000) | blend(dst, color, a),
+                            );
+                        }
+                    }
+                }
+                true
+            });
+        if drawn {
+            left += w;
+            continue;
+        }
         match halves.get(c, size).filter(|_| w < cell) {
             Some(glyph) => {
                 let side = size as u32 / 2;

@@ -349,6 +349,50 @@ pub fn outline_half(font: &impl Font, c: char, cell: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// A half-width glyph of an outline font, `cell / 2` pixels wide and
+/// `cell` high, with gray edges, `None` if the font lacks it or draws it
+/// wider than about half its em. The em and the baseline are those
+/// [`outline_cell`] gives `em_share`, so the glyph lines up with
+/// full-width ones drawn there. A glyph wider than the half cell is made
+/// smaller, the same both ways.
+pub fn outline_narrow(font: &impl Font, c: char, cell: u32, em_share: f32) -> Option<Vec<u8>> {
+    let id = font.glyph_id(c);
+    if id.0 == 0 {
+        return None;
+    }
+    let em_units = font.units_per_em().unwrap_or(1000.0);
+    let cell_f = cell as f32;
+    let em = cell_f * em_share;
+    let advance = font.h_advance_unscaled(id) * em / em_units;
+    if advance > em * 0.6 {
+        return None;
+    }
+    let (w, h) = (cell / 2, cell);
+    let mut scale = em * font.height_unscaled() / em_units;
+    let base = ((cell_f - em) / 2.0 + em * EM_BASELINE).round();
+    let mut origin = point((w as f32 - advance) / 2.0, base);
+    let glyph = |scale: f32, origin| id.with_scale_and_position(scale, origin);
+    let mut out = vec![0; (w * h) as usize];
+    let Some(mut outline) = font.outline_glyph(glyph(scale, origin)) else {
+        return Some(out);
+    };
+    let ink = outline.px_bounds().width();
+    if ink > w as f32 {
+        let shrink = w as f32 / ink;
+        scale *= shrink;
+        origin = point((w as f32 - advance * shrink) / 2.0, base);
+        outline = font.outline_glyph(glyph(scale, origin))?;
+    }
+    let min = outline.px_bounds().min;
+    outline.draw(|x, y, coverage| {
+        let (x, y) = (min.x as i32 + x as i32, min.y as i32 + y as i32);
+        if (0..w as i32).contains(&x) && (0..h as i32).contains(&y) {
+            out[(y as u32 * w + x as u32) as usize] = Ink::Gray.alpha(coverage);
+        }
+    });
+    Some(out)
+}
+
 /// A half-width BDF glyph, `cell / 2` pixels wide and `cell` high, `None`
 /// for a glyph wider than half the font's full-width characters. It is
 /// placed as [`bdf_cell`] places glyphs.

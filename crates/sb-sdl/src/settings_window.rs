@@ -4,8 +4,8 @@
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
 use sb_runtime::extra_glyphs::FontSource;
-use sb_runtime::font::{Font, FontSize};
-use sb_runtime::settings::{Language, Renderer, Settings, TOOLS};
+use sb_runtime::font::Font;
+use sb_runtime::settings::{Language, Renderer, Settings, TOOLS, UiFont};
 use sb_runtime::speed::Speed;
 use sdl3::keyboard::Keycode;
 
@@ -196,22 +196,6 @@ const PAGES: &[Page] = &[
                         s.language = match i {
                             0 => Language::English,
                             _ => Language::Japanese,
-                        }
-                    },
-                ),
-            },
-            Row {
-                label: "Font of the emulator's menus and windows",
-                about: "The font of the menu bar, this window and the emulator's other \
-                        windows (not the SmileBASIC screen): the 8-pixel font drawn \
-                        twice its size, or the 16-pixel font (default).",
-                control: Control::Choice(
-                    &["8-pixel font, doubled", "16-pixel font"],
-                    |s| usize::from(s.ui_font == FontSize::Large),
-                    |s, i| {
-                        s.ui_font = match i {
-                            0 => FontSize::Small,
-                            _ => FontSize::Large,
                         }
                     },
                 ),
@@ -421,6 +405,28 @@ const PAGES: &[Page] = &[
     Page {
         title: "Fonts",
         rows: &[
+            Row {
+                label: "Menus and windows",
+                about: "The font of the menu bar, this window and the emulator's other \
+                        windows (not the SmileBASIC screen): SmileBASIC's 8-pixel font at \
+                        twice its size (default), its 16-pixel font, or smooth outlines \
+                        with soft edges (M PLUS 1p Bold and M PLUS Code Latin 50 Bold).",
+                control: Control::Choice(
+                    &["8-pixel, doubled", "16-pixel", "Smooth"],
+                    |s| match s.ui_font {
+                        UiFont::Doubled => 0,
+                        UiFont::Large => 1,
+                        UiFont::Smooth => 2,
+                    },
+                    |s, i| {
+                        s.ui_font = match i {
+                            0 => UiFont::Doubled,
+                            1 => UiFont::Large,
+                            _ => UiFont::Smooth,
+                        }
+                    },
+                ),
+            },
             Row {
                 label: EXTRA_FONT,
                 about: "A BDF, TTF or OTF file to draw the Unicode characters SmileBASIC's \
@@ -834,11 +840,7 @@ mod tests {
         // General: Space flips Upper-case letters.
         w.key(Keycode::Space, &mut s);
         assert!(!s.upper_case_letters);
-        // Up goes round to the last row, the UI font; Left on the
-        // language goes round.
-        w.key(Keycode::Up, &mut s);
-        w.key(Keycode::Left, &mut s);
-        assert_eq!(s.ui_font, FontSize::Small);
+        // Up goes round to the last row, the language; Left goes round.
         w.key(Keycode::Up, &mut s);
         w.key(Keycode::Left, &mut s);
         assert_eq!(s.language, Language::Japanese);
@@ -881,8 +883,11 @@ mod tests {
         let mut w = SettingsWindow::new((1280, 720));
         let fonts = PAGES.iter().position(|p| p.title == "Fonts").unwrap();
         w.click(centre(w.page_row(fonts)), &mut s);
+        // The first row is the menus' font.
+        w.click(centre(w.option_rect(0, 2)), &mut s);
+        assert_eq!(s.ui_font, UiFont::Smooth);
         assert_eq!(
-            w.click(centre(w.option_rect(0, EXTRA_FONT_FILE)), &mut s),
+            w.click(centre(w.option_rect(1, EXTRA_FONT_FILE)), &mut s),
             Outcome::ChooseExtraFont
         );
         assert!(
@@ -890,15 +895,15 @@ mod tests {
             "unchanged until a file is chosen"
         );
         assert_eq!(
-            w.click(centre(w.option_rect(0, 0)), &mut s),
+            w.click(centre(w.option_rect(1, 0)), &mut s),
             Outcome::ExtraFont
         );
         assert_eq!(s.editor_extra_font, None);
         // The order is a setting; the program fonts tell the frontend.
-        w.click(centre(w.option_rect(1, 2)), &mut s);
+        w.click(centre(w.option_rect(2, 2)), &mut s);
         assert_eq!(s.editor_font_first, FontSource::Bundled);
         assert_eq!(
-            w.click(centre(w.option_rect(3, 1)), &mut s),
+            w.click(centre(w.option_rect(4, 1)), &mut s),
             Outcome::ProgramFont
         );
         assert_eq!(s.program_font, [FontSource::SmileBasic, FontSource::File]);

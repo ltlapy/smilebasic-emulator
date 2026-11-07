@@ -29,6 +29,19 @@ impl Language {
 }
 
 /// What draws the screens: GPU rendering if a test at start-up passes, or CPU always.
+/// The font of the emulator's menus and windows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum UiFont {
+    /// SmileBASIC's 8-pixel font at twice its size.
+    #[default]
+    Doubled,
+    /// SmileBASIC's 16-pixel font.
+    Large,
+    /// Outlines drawn at 16 pixels with gray edges (see
+    /// [`crate::ui_glyphs`]).
+    Smooth,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Renderer {
     Auto,
@@ -113,9 +126,8 @@ pub struct Settings {
     /// Error messages are followed by a line explaining them in Japanese,
     /// as SmileBASIC 4's Japanese edition prints.
     pub localized_errors: bool,
-    /// The emulator's menus and windows draw the 8-pixel font doubled or
-    /// the 16-pixel one.
-    pub ui_font: FontSize,
+    /// The font of the emulator's menus and windows.
+    pub ui_font: UiFont,
     /// The mouse cursor stays shown when a program hides it with
     /// SYSPARAM "MOUSECURSOR", and stays where it is when a program moves
     /// it with MOUSE X,Y. (The key keeps its old name.)
@@ -194,7 +206,7 @@ impl Default for Settings {
             sound_font: None,
             language: Language::English,
             localized_errors: false,
-            ui_font: FontSize::Large,
+            ui_font: UiFont::Doubled,
             keep_mouse_cursor: false,
             helpinfo_cursor: false,
             help_text_size: 2,
@@ -235,6 +247,12 @@ const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
 ];
 
 const FONT_SIZE: [(FontSize, &str); 2] = [(FontSize::Small, "8"), (FontSize::Large, "16")];
+
+const UI_FONT: [(UiFont, &str); 3] = [
+    (UiFont::Doubled, "8"),
+    (UiFont::Large, "16"),
+    (UiFont::Smooth, "smooth"),
+];
 
 const FONT_SOURCE: [(FontSource, &str); 3] = [
     (FontSource::SmileBasic, "smilebasic"),
@@ -417,7 +435,7 @@ impl Settings {
                     continue;
                 }
                 "ui_font" => {
-                    if let Some(f) = choice(&FONT_SIZE, value) {
+                    if let Some(f) = choice(&UI_FONT, value) {
                         s.ui_font = f;
                     }
                     continue;
@@ -545,7 +563,7 @@ impl Settings {
             self.sound_font.as_deref().unwrap_or(""),
             choice_name(&LANGUAGE, &self.language),
             self.localized_errors,
-            choice_name(&FONT_SIZE, &self.ui_font),
+            choice_name(&UI_FONT, &self.ui_font),
             self.keep_mouse_cursor,
             self.helpinfo_cursor,
             self.help_text_size,
@@ -602,7 +620,7 @@ mod tests {
             editor_tab_step: 2,
             language: Language::Japanese,
             localized_errors: true,
-            ui_font: FontSize::Small,
+            ui_font: UiFont::Smooth,
             keep_mouse_cursor: true,
             helpinfo_cursor: true,
             complete_all_slots: true,
