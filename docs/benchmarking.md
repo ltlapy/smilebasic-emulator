@@ -247,7 +247,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `occluded` | From when the timing begins, has the main window count as covered, as the system reports it when it can |
 | `shot=PATH` | Saves the last frame timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
 | `luma=PATH` | Writes each timed frame's number and mean brightness (0 to 255), read as it goes to the window, to PATH, and reports the frames darker than both neighbors. That is a flicker, which `check` cannot see |
-| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds |
+| `log=PATH` | Writes one line per timed frame to PATH at the end of the run: `frame w h screen editor gather overlays present uploaded made events run wait`. `w` and `h` are the window's size in pixels, `uploaded` is bytes and `made` is textures made. The stages are in microseconds. Two columns follow `wait`: `kept`, the frames the standby thread ran during the trip, and `worker`, its microseconds running them |
 | `at=FRAME:WHAT` | Does WHAT to the frontend at that frame, counted from the start of the run. Give it any number of times |
 
 `at=FRAME:WHAT` takes:
@@ -266,7 +266,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `refuse:N` | Has the next N tries at a renderer refused |
 | `panic` | Panics |
 | `unsaved` | Gives PRG0 unsaved edits |
-| `sleep:MS` | Stops the loop for that long and counts it as a suspend |
+| `sleep:MS` | Holds the main thread up for that long, as a call into the system can, and counts it as a suspend. The standby thread runs the program's frames meanwhile |
 | `key:NAME` | Presses the key SDL calls NAME, such as `Escape` |
 | `usb:USAGE` | Has `KEYBOARD` read that key as down for a frame, which `key` does not |
 | `pad:NAME`, `padup:NAME` | Presses or lets go the first controller's button SDL calls NAME, as both the event and what is held. `b` is the right face button, as SDL goes by Xbox labels |
@@ -297,6 +297,8 @@ Below the stages come:
 | `stalls` | Trips of 100 ms or more, where sound starts to run out |
 | `drawing` | The stages before `present` |
 | `frames` | Program frames run per second of the time timed |
+| `maincnt` | How far `MAINCNT` went per second of the time timed |
+| `kept` | Frames the standby thread ran while the main thread was held up ([frame-thread.md](frame-thread.md)), in how many trips, and the time it took |
 | `sound` | What the sound device's buffer went through |
 | `uploaded` | Bytes given to textures a frame |
 

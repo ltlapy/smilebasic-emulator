@@ -1858,6 +1858,11 @@ impl Runtime {
         shows
     }
 
+    /// MAINCNT, as a program reads it between frames.
+    pub fn main_count(&self) -> u32 {
+        self.system.frames
+    }
+
     /// Starts a frame: the input it sees, and MAINCNT.
     pub fn begin_frame(&mut self) {
         self.input.latch();

@@ -26,7 +26,9 @@
 //! - `log=PATH`: writes each frame timed to PATH, at the end of the run: its number,
 //!   the window's size in pixels, the drawing's stages in microseconds, the bytes
 //!   uploaded, the textures made, and in microseconds what the rest of the trip round
-//!   the loop took: events, running the program, waiting for the next frame;
+//!   the loop took: events, running the program, waiting for the next frame; then the
+//!   frames the standby thread ran while the loop was held up, and its microseconds
+//!   running them;
 //! - `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast`:
 //!   shows the menu bar (as F8 does), the bar with its File menu open, the
 //!   help beside the editor, the About dialog, the editor colors window,
@@ -55,7 +57,8 @@
 //!   and what is held.
 //!
 //! Besides the stages, it reports the program frames run per second of
-//! the time timed and what the sound device's buffer went through, so
+//! the time timed, those of them the standby thread ran, how far MAINCNT
+//! went, and what the sound device's buffer went through, so
 //! that the frames keep time whatever happens to the drawing. For the
 //! sound, `SDL_AUDIO_DRIVER=dummy` with `SDL_AUDIO_DEVICE_SAMPLE_FRAMES`
 //! at 960 takes samples at very nearly the real rate without a device.
@@ -68,6 +71,8 @@ use sb_runtime::sound::RATE;
 use sb_runtime::sound::output::Stats;
 use sdl3::render::Canvas;
 use sdl3::video::Window;
+
+use crate::standby::Kept;
 
 /// Bytes given to textures since the frame began.
 static UPLOADED: AtomicU64 = AtomicU64::new(0);
@@ -173,6 +178,13 @@ pub struct Bench {
     /// Each timed frame's stages, and the bytes it uploaded.
     timed: Vec<([Duration; STAGES], u64)>,
     current: [Duration; STAGES],
+    /// What the standby thread ran this trip, and in the trips timed.
+    kept_now: Kept,
+    kept: Kept,
+    /// Trips timed in which the standby thread ran frames.
+    kept_trips: u32,
+    /// MAINCNT when the timing began, and now.
+    maincnt: (u32, u32),
     last: Option<Instant>,
     /// When the timing began.
     began: Option<Instant>,
@@ -278,26 +290,32 @@ impl Bench {
         if self.frame >= set_up + self.settle && self.last.is_some() {
             let uploaded = UPLOADED.load(Ordering::Relaxed);
             self.timed.push((self.current, uploaded));
+            self.kept.add(self.kept_now);
+            self.kept_trips += u32::from(self.kept_now.frames > 0);
             if self.log.is_some() {
                 let stages = self.current.map(|t| t.as_micros().to_string());
                 let (drawing, rest) = stages.split_at(DRAWING);
                 let (drawing, rest) = (drawing.join(" "), rest.join(" "));
                 let made = MADE.load(Ordering::Relaxed);
                 let (frame, (w, h)) = (self.frame, self.size);
+                let (kept, busy) = (self.kept_now.frames, self.kept_now.busy.as_micros());
                 self.lines.push(format!(
-                    "{frame} {w} {h} {drawing} {uploaded} {made} {rest}"
+                    "{frame} {w} {h} {drawing} {uploaded} {made} {rest} {kept} {busy}"
                 ));
             }
         }
         self.frame += 1;
         self.current = [Duration::ZERO; STAGES];
+        self.kept_now = Kept::default();
         UPLOADED.store(0, Ordering::Relaxed);
         MADE.store(0, Ordering::Relaxed);
         self.last = (self.frame > set_up + self.settle).then(Instant::now);
         if self.last.is_some() && self.began.is_none() {
             self.began = self.last;
             self.ran = 0;
+            self.maincnt.0 = machine.rt.main_count();
         }
+        self.maincnt.1 = machine.rt.main_count();
         let ended = self.until_end && self.frame > set_up + 10 && !machine.is_running();
         ended || self.timed.len() >= self.frames as usize
     }
@@ -305,6 +323,12 @@ impl Bench {
     /// Counts a program frame run.
     pub fn ran_frame(&mut self) {
         self.ran += 1;
+    }
+
+    /// Counts the frames the standby thread ran while the loop was held up.
+    pub fn kept(&mut self, kept: Kept) {
+        self.ran += kept.frames;
+        self.kept_now.add(kept);
     }
 
     /// Notes the sound device's buffer's stats, if there is a device.
@@ -457,7 +481,7 @@ impl Bench {
         if let Some(path) = &self.log {
             let (drawing, rest) = NAMES.split_at(DRAWING);
             let (drawing, rest) = (drawing.join(" "), rest.join(" "));
-            let head = format!("frame w h {drawing} uploaded made {rest}\n");
+            let head = format!("frame w h {drawing} uploaded made {rest} kept worker\n");
             let text = head + &self.lines.join("\n") + "\n";
             if let Err(e) = std::fs::write(path, text) {
                 eprintln!("SB_UI_BENCH: {e}");
@@ -514,7 +538,16 @@ impl Bench {
                 self.ran as f64 / secs,
                 self.ran
             );
+            let counted = self.maincnt.1.wrapping_sub(self.maincnt.0);
+            println!(
+                "maincnt   {:.2} a second, {counted} in all",
+                counted as f64 / secs
+            );
         }
+        println!(
+            "kept      {} frames run while the loop was held up, in {} trips, {:.2?} running them",
+            self.kept.frames, self.kept_trips, self.kept.busy
+        );
         if let Some((from, to)) = self.sound {
             println!(
                 "sound     ran out {}, skipped {}, {:.1} ms silent",

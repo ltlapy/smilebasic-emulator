@@ -174,6 +174,13 @@ music keep time. A frame it does draw shows the scene the program finished:
 - When even that cannot keep up, the program's loop slows down rather than the
   drawing showing half a scene.
 
+When the system holds the window up, as GNOME does while you drag or resize it,
+another thread runs the program and its sound, and the window shows nothing new
+until it comes back ([frame-thread.md](frame-thread.md)). The program sees the
+input as it was when the window stopped. Meanwhile `CLIPBOARD` reads the text
+it last read or set, and a text it sets reaches the system's clipboard when the
+window comes back.
+
 ## Memory and stack
 
 - The stack: `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of

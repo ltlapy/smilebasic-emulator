@@ -26,6 +26,7 @@ mod projects;
 mod recovery;
 mod settings_window;
 mod shortcuts;
+mod standby;
 mod text_field;
 mod toast;
 mod ui;
@@ -332,10 +333,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
 
     video.text_input().start(&window);
     let clipboard = video.clipboard();
-    machine.rt.clipboard = Box::new(SystemClipboard(video.clipboard()));
+    machine.rt.clipboard = Box::new(SystemClipboard::new(video.clipboard()));
     let keyboard = sdl.keyboard();
     let mut controls = Controls::new(&sdl)?;
     let audio = Audio::open(&sdl);
+    // Runs the frames while a call to SDL holds the loop up.
+    let standby = standby::Standby::start(audio.sink());
     // The file dialog answers from its own thread.
     let (chosen_font, font_choice) = std::sync::mpsc::channel::<PathBuf>();
     // ...as does the one for the editor's extra font.
@@ -494,6 +497,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // Renderers to refuse, for the bench.
     let mut refusals = 0;
     let mut suspend = SuspendWatch::new();
+    // The events of a trip round the loop, as they were drained.
+    let mut polled: Vec<Event> = Vec::new();
+    // Lends the machine for a call that may hold the loop up, unless the
+    // program is paused.
+    macro_rules! lend {
+        () => {
+            standby::Lend {
+                frames: !(menu.shown && machine.is_running()),
+                machine: &mut *machine,
+                guard: &mut frame_guard,
+                toasts: &mut toasts,
+                clock: &mut clock,
+            }
+        };
+    }
     // A stage of the frame's drawing ends, for the bench.
     macro_rules! lap {
         ($stage:ident) => {
@@ -579,6 +597,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if let Some(b) = &mut bench {
             b.sound(audio.stats());
         }
+        // Frames the standby thread ran this trip.
+        let mut kept = standby::Kept::default();
         if let Some(b) = &mut bench
             && b.step(machine)
         {
@@ -679,7 +699,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 }
                 _ if what.starts_with("sleep:") => {
                     let time = Duration::from_millis(what[6..].parse().unwrap_or(0));
-                    std::thread::sleep(time);
+                    let ((), held) = standby.hold(lend!(), || std::thread::sleep(time));
+                    kept.add(held);
                     suspend.pretend(time);
                     None
                 }
@@ -854,9 +875,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 },
             );
         }
-        let polled = events.poll_iter();
+        // Pumping the events is what can hold the loop up for seconds.
+        let ((), held) = standby.hold(lend!(), || {
+            while let Some(event) = events.poll_event() {
+                polled.push(event);
+            }
+        });
+        kept.add(held);
+        if kept.frames > 0 {
+            machine.rt.clipboard.settle();
+            if let Some(b) = &mut bench {
+                b.kept(kept);
+            }
+        }
         for (repeated, event) in
-            (repeats.into_iter().map(|e| (true, e))).chain(polled.map(|e| (false, e)))
+            (repeats.into_iter().map(|e| (true, e))).chain(polled.drain(..).map(|e| (false, e)))
         {
             // A repeat that changes the screen ends the rest of them.
             let now = match (&dialog, &manager) {
@@ -3210,17 +3243,54 @@ fn use_instruments(machine: &mut Machine, bank: Option<&Arc<Bank>>, toasts: &mut
         .set_instruments(font.map(Instruments::Font));
 }
 
-/// The computer's clipboard, for CLIPBOARD.
-struct SystemClipboard(ClipboardUtil);
+/// The computer's clipboard, for CLIPBOARD. SDL's clipboard belongs to the
+/// main thread, so on the standby thread CLIPBOARD reads the text last read
+/// or set, and a text set there waits for [`Clipboard::settle`].
+///
+/// [`Clipboard::settle`]: sb_runtime::env::Clipboard::settle
+struct SystemClipboard {
+    sdl: ClipboardUtil,
+    main: std::thread::ThreadId,
+    last: String,
+    unsent: bool,
+}
+
+impl SystemClipboard {
+    fn new(sdl: ClipboardUtil) -> SystemClipboard {
+        SystemClipboard {
+            sdl,
+            main: std::thread::current().id(),
+            last: String::new(),
+            unsent: false,
+        }
+    }
+
+    fn on_main(&self) -> bool {
+        std::thread::current().id() == self.main
+    }
+}
 
 impl sb_runtime::env::Clipboard for SystemClipboard {
     // An empty or unreadable clipboard reads as an empty string.
     fn text(&mut self) -> String {
-        self.0.clipboard_text().unwrap_or_default()
+        if self.on_main() {
+            self.settle();
+            self.last = self.sdl.clipboard_text().unwrap_or_default();
+        }
+        self.last.clone()
     }
 
     fn set_text(&mut self, text: &str) {
-        let _ = self.0.set_clipboard_text(text);
+        self.last = text.to_string();
+        self.unsent = true;
+        self.settle();
+    }
+
+    fn settle(&mut self) {
+        if self.unsent && self.on_main() {
+            self.unsent = false;
+            let _ = self.sdl.set_clipboard_text(&self.last);
+        }
     }
 }
 

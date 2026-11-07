@@ -39,6 +39,7 @@ const LOCKED_RATES: std::ops::RangeInclusive<f32> = 59.7..=60.3;
 const MOST_BEHIND: Duration = Duration::from_nanos(8 * 1_000_000_000 / 60);
 
 /// The emulated frames' clock.
+#[derive(Clone, Copy)]
 pub struct Clock {
     /// When the frame being run began, or is to begin.
     next: Instant,
@@ -53,6 +54,11 @@ impl Clock {
     /// is to run it at once to catch up.
     pub fn behind(&self, now: Instant) -> bool {
         now >= self.next + FRAME
+    }
+
+    /// When [`Clock::behind`] next becomes true.
+    pub fn due(&self) -> Instant {
+        self.next + FRAME
     }
 
     /// Counts a frame run to catch up.

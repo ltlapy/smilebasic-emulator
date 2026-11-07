@@ -40,6 +40,9 @@ pub const SB4_META: &str = "META";
 pub trait Clipboard {
     fn text(&mut self) -> String;
     fn set_text(&mut self, text: &str);
+    /// Called by the frontend from the thread the clipboard belongs to, to
+    /// pass on what was set from another.
+    fn settle(&mut self) {}
 }
 
 /// A clipboard of the emulator's own, for headless runs and tests.

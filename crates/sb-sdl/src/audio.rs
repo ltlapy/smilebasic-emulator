@@ -80,10 +80,38 @@ impl Audio {
         }
     }
 
+    /// Where another thread can queue samples, as [`Audio::play`] does.
+    pub fn sink(&self) -> Sink {
+        Sink {
+            output: self._stream.as_ref().map(|_| self.output.clone()),
+        }
+    }
+
     /// What the device's buffer went through, if there is a device.
     pub fn stats(&self) -> Option<Stats> {
         self._stream.as_ref()?;
         self.output.lock().ok().map(|o| o.stats)
+    }
+}
+
+/// The device's output for another thread; without a device, sound is dropped.
+pub struct Sink {
+    output: Option<Arc<Mutex<Output>>>,
+}
+
+impl Sink {
+    #[cfg(test)]
+    pub fn to(output: Option<Arc<Mutex<Output>>>) -> Sink {
+        Sink { output }
+    }
+
+    /// Queues a frame's samples, left and right in turn.
+    pub fn play(&self, samples: &[f32]) {
+        if let (Some(output), false) = (&self.output, samples.is_empty())
+            && let Ok(mut o) = output.lock()
+        {
+            o.push(samples);
+        }
     }
 }
 
