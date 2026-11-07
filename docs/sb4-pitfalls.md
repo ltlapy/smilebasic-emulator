@@ -1184,6 +1184,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   (TEST51).
 - `BGMPLAY` of nine such levels hangs SmileBASIC 4 so that even the stop key
   does nothing (TEST51).
+- `CHKMML` follows the octave through `<` (up) and `>` (down) and stops just
+  after the one that leaves -1 to 9, the range `O` takes: `O9C<C` gives 4,
+  `O9<<<<<<<<<<C` 3 and `O-1C>C` 5. `O10C` stops at the number, 1 (TEST67).
+- `@E` takes values 0 to 127, and `CHKMML` stops just after one past that:
+  `@E128,0,0,0C` gives 5 and `@E0,0,0,128C` 11. `@148` to `@216` pass, and so
+  do lower case letters and a second dot (TEST67).
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so

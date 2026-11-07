@@ -227,6 +227,9 @@ struct Parser {
     channel: usize,
     /// A `:` has been seen; before it, K is the song's key.
     in_channel: bool,
+    /// Each channel's octave as far as the text tells, for `<` and `>`
+    /// past -1 to 9; `None` after `O` of a variable.
+    octaves: [Option<i32>; CHANNELS],
 }
 
 /// Values a literal may take, checked as it is read.
@@ -306,6 +309,44 @@ impl Parser {
     fn num(&mut self, range: Range) -> Result<Num, Error> {
         let at = self.at;
         self.opt_num(range)?.ok_or(at)
+    }
+
+    /// `O`'s octave, which `<` and `>` count from.
+    fn set_octave(&mut self) -> Result<Num, Error> {
+        let n = self.num(-1..=9)?;
+        self.octaves[self.channel] = match n {
+            Num::Lit(n) => Some(n),
+            Num::Var(_) => None,
+        };
+        Ok(n)
+    }
+
+    /// `<` (up) or `>` (down), which fail past the octaves `O` takes,
+    /// where the text stands after them.
+    fn shift_octave(&mut self, up: bool) -> Result<(), Error> {
+        let by = if up != self.song.reversed { 1 } else { -1 };
+        let octave = &mut self.octaves[self.channel];
+        *octave = octave.map(|o| o + by);
+        match *octave {
+            Some(o) if !(-1..=9).contains(&o) => Err(self.at),
+            _ => Ok(()),
+        }
+    }
+
+    /// `@E`'s four values, 0 to 127, each refused where the text stands
+    /// after it.
+    fn envelope(&mut self) -> Result<[Num; 4], Error> {
+        let mut v = [Num::Lit(0); 4];
+        for (i, n) in v.iter_mut().enumerate() {
+            if i > 0 && !self.eat(',') {
+                return Err(self.at);
+            }
+            *n = self.num(0..=i32::MAX)?;
+            if matches!(*n, Num::Lit(128..)) {
+                return Err(self.at);
+            }
+        }
+        Ok(v)
     }
 
     fn four(&mut self) -> Result<[Num; 4], Error> {
@@ -393,9 +434,15 @@ impl Parser {
             self.at += 1;
             match c {
                 '|' => break,
-                '<' => parts.push(ChordPart::Up),
-                '>' => parts.push(ChordPart::Down),
-                'O' => parts.push(ChordPart::Octave(self.num(-1..=9)?)),
+                '<' => {
+                    self.shift_octave(true)?;
+                    parts.push(ChordPart::Up);
+                }
+                '>' => {
+                    self.shift_octave(false)?;
+                    parts.push(ChordPart::Down);
+                }
+                'O' => parts.push(ChordPart::Octave(self.set_octave()?)),
                 c => match note_name(c) {
                     Some(s) => {
                         let s = self.accidentals(s);
@@ -435,7 +482,7 @@ impl Parser {
         Ok(match c {
             'V' => Cmd::Velocity(self.num(0..=127)?),
             'D' => Cmd::Detune(self.num(-128..=127)?),
-            'E' => Cmd::Envelope(self.four()?),
+            'E' => Cmd::Envelope(self.envelope()?),
             'M' => {
                 let which = self.peek().ok_or(at)?;
                 self.at += 1;
@@ -488,9 +535,15 @@ impl Parser {
             }
             '|' => self.chord()?,
             'L' => Cmd::Length(self.len()?),
-            'O' => Cmd::Octave(self.num(-1..=9)?),
-            '<' => Cmd::Up,
-            '>' => Cmd::Down,
+            'O' => Cmd::Octave(self.set_octave()?),
+            '<' => {
+                self.shift_octave(true)?;
+                Cmd::Up
+            }
+            '>' => {
+                self.shift_octave(false)?;
+                Cmd::Down
+            }
             '!' => {
                 self.song.reversed = true;
                 return Ok(());
@@ -617,6 +670,7 @@ fn parse_plain(plain: Vec<char>, text: &str) -> Result<Song, Error> {
         },
         channel: 0,
         in_channel: false,
+        octaves: [Some(4); CHANNELS],
     };
     while p.at < p.text.len() {
         p.command()?;
@@ -795,6 +849,28 @@ mod tests {
         // Going on being refused: too deep, and not defined.
         assert!(check(&macro_bomb("CCCCCCCCCC", 17)).is_err());
         assert!(check("{X}").is_err());
+    }
+
+    /// Where CHKMML stops on octaves and envelopes out of range (TEST67).
+    #[test]
+    fn octaves_and_envelopes_stop_where_sb4_does() {
+        for (mml, at) in [
+            ("@E127,127,127,127C", None),
+            ("@E128,0,0,0C", Some(5)),
+            ("@E0,0,0,128C", Some(11)),
+            ("O9C<C", Some(4)),
+            ("O9C<<<C", Some(4)),
+            ("O-1C>C", Some(5)),
+            ("O9<<<<<<<<<<C", Some(3)),
+            ("O10C", Some(1)),
+            ("O9C>C<C", None),
+            ("O-1C<C", None),
+            // Each channel keeps its own octave.
+            (":0O9C:1<C", None),
+            ("O9|C<E|", Some(5)),
+        ] {
+            assert_eq!(check(mml).err(), at, "{mml}");
+        }
     }
 
     #[test]
