@@ -434,3 +434,130 @@ fn the_release_that_closes_a_dialog_is_hidden() {
     assert!(frames > 6, "closed before A was let go");
     assert_eq!(rt.text[4].cell(0, 0).code, u16::from(b'0'));
 }
+
+/// Runs a program that prints each key INKEY$ gives with the frame it came
+/// in, counted from the first, through `frames` frames; `at` sets up the
+/// keyboard before each frame.
+fn keys_by_frame(frames: usize, mut at: impl FnMut(usize, &mut Runtime)) -> String {
+    use sb_runtime::machine::Machine;
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    let source = "CLS:F=-1\nWHILE 1\nVSYNC\nK$=INKEY$()\nIF K$!=\"\" && F<0 THEN F=MAINCNT()\n\
+                  IF K$!=\"\" THEN ?MAINCNT()-F;K$;\" \";\nWEND\n";
+    m.set_slot(0, source.to_string());
+    m.run_slot(0);
+    m.frame();
+    for i in 0..frames {
+        at(i, &mut m.rt);
+        m.frame();
+    }
+    assert!(m.is_running());
+    let console = &m.rt.text[4];
+    let codes: Vec<u16> = (0..console.size().0)
+        .map(|x| console.cell(x, 0).code)
+        .take_while(|&c| c != 0)
+        .collect();
+    String::from_utf16(&codes).unwrap().trim_end().to_string()
+}
+
+const A_KEY: u8 = 4;
+const B_KEY: u8 = 5;
+const LEFT_SHIFT: u8 = 225;
+
+fn holding(keys: &[u8]) -> State {
+    let mut s = State::default();
+    for &k in keys {
+        s.set_key(k, true);
+    }
+    s
+}
+
+/// TEST68: a key held for a program types at the press, 19 frames later and
+/// then every 3, in the program's frames.
+#[test]
+fn a_held_key_types_again_after_19_frames_then_every_3() {
+    let typed = keys_by_frame(40, |i, rt| {
+        if i == 5 {
+            rt.input.key_down(A_KEY);
+            rt.type_held(u16::from(b'A'));
+        }
+        rt.input.live = if (5..30).contains(&i) {
+            holding(&[A_KEY])
+        } else {
+            State::default()
+        };
+    });
+    assert_eq!(typed, "0A 19A 22A");
+}
+
+#[test]
+fn shift_leaves_a_held_key_repeating_and_another_key_stops_it() {
+    let typed = keys_by_frame(40, |i, rt| {
+        match i {
+            0 => {
+                rt.input.key_down(A_KEY);
+                rt.type_held(u16::from(b'A'));
+            }
+            2 => rt.input.key_down(LEFT_SHIFT),
+            // B types nothing itself here, as a key whose text has not come.
+            23 => rt.input.key_down(B_KEY),
+            _ => {}
+        }
+        rt.input.live = match i {
+            0..2 => holding(&[A_KEY]),
+            _ => holding(&[A_KEY, LEFT_SHIFT, B_KEY]),
+        };
+    });
+    // Repeats at 19 and 22, and none after B went down.
+    assert_eq!(typed, "0A 19A 22A");
+}
+
+/// Let go before 19 frames, a key types once, and pressing it again starts
+/// its count over.
+#[test]
+fn a_key_let_go_types_once() {
+    let typed = keys_by_frame(40, |i, rt| {
+        if i == 0 || i == 10 {
+            rt.input.key_down(A_KEY);
+            rt.type_held(u16::from(b'A'));
+        }
+        rt.input.live = if (0..8).contains(&i) || (10..30).contains(&i) {
+            holding(&[A_KEY])
+        } else {
+            State::default()
+        };
+    });
+    assert_eq!(typed, "0A 10A 29A");
+}
+
+/// What a key typed before a program ends does not repeat after it.
+#[test]
+fn a_program_that_ends_leaves_no_repeat() {
+    use sb_runtime::machine::Machine;
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    m.set_slot(0, "WHILE INKEY$()==\"\":VSYNC:WEND\n".to_string());
+    m.run_slot(0);
+    m.frame();
+    m.rt.input.key_down(A_KEY);
+    m.rt.type_held(u16::from(b'A'));
+    m.rt.input.live = holding(&[A_KEY]);
+    for _ in 0..5 {
+        m.frame();
+    }
+    assert!(!m.is_running());
+    let screen = |m: &Machine| {
+        let console = &m.rt.text[4];
+        let (w, h) = console.size();
+        let cells = (0..h).flat_map(|y| (0..w).map(move |x| (x, y)));
+        cells
+            .map(|(x, y)| console.cell(x, y).code)
+            .collect::<Vec<_>>()
+    };
+    let ended = screen(&m);
+    for _ in 0..40 {
+        m.frame();
+    }
+    // Direct mode's line has nothing typed into it.
+    assert!(screen(&m) == ended);
+}

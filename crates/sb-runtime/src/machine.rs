@@ -1615,6 +1615,8 @@ impl Machine {
             *age += 1;
         }
         self.move_focus();
+        let beside = self.sub.as_ref().map(|sub| sub.rt.input.live);
+        self.rt.repeat_held_key(beside.as_ref());
         self.give_input();
         self.rt.env_status = self.env_status();
         // With a subprogram running, a busy main program leaves it a
