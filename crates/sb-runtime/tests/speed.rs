@@ -167,6 +167,20 @@ fn pair(line: &str) -> (f64, f64) {
     pair.0.zip(pair.1).unwrap_or_else(|| panic!("{line:?}"))
 }
 
+/// MILLISEC keeps the console's clock, as PERFEND does, not the
+/// computer's.
+#[test]
+fn millisec_follows_the_consoles_clock() {
+    let source = "VSYNC:M=MILLISEC():PERFBEGIN 0\n\
+                  FOR I=1 TO 100:GCLS:NEXT\n\
+                  ?MILLISEC()-M;\" \";PERFEND(0)\n";
+    let (ms, us) = pair(&run(Speed::Switch1, source));
+    assert!(
+        us > 100_000.0 && (ms - us / 1000.0).abs() <= 1.0,
+        "{ms} ms, {us} us"
+    );
+}
+
 /// EXEC costs the characters it compiles: about 1.9 ms on a Switch 2
 /// for 10000.
 #[test]

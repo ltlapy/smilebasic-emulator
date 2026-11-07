@@ -126,9 +126,9 @@ console's time and gives each frame a sixtieth of a second of it:
   page on a Switch 1 (0.4 s) take 24 frames of `MAINCNT`. A command that costs more than a frame
   holds up the frames after it. `MAINCNT`, `VSYNC` and
   the frames lost come out as there.
-- `PERFBEGIN` and `PERFEND` measure the console's time, which is the same on
-  every run, also with `--fixed`. TPERF's `WORK` then compares with a
-  console's directly, and its two score scenes run.
+- `PERFBEGIN`, `PERFEND` and `MILLISEC` measure the console's time, which is
+  the same on every run, also with `--fixed`. TPERF's `WORK` then compares
+  with a console's directly, and its two score scenes run.
 
 The window keeps its own time limit as well, so on a computer slower than the
 console the program gets less.

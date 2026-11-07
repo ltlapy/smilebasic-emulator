@@ -7,8 +7,8 @@
 //! character printed. A frame gives the program one sixtieth of a second
 //! of that time. A program that needs more goes on into the next frame and
 //! misses the frame's `VSYNC` as it would on the console, so `MAINCNT`,
-//! `VSYNC` and the frames a program skips come out as there. `PERFBEGIN`
-//! and `PERFEND` measure the same time.
+//! `VSYNC` and the frames a program skips come out as there. `PERFBEGIN`,
+//! `PERFEND` and `MILLISEC` measure the same time.
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65 and TEST67,
 //! timed on both consoles running SmileBASIC 4.4.9, and from TEST68 on a

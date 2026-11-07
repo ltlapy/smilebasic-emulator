@@ -298,7 +298,12 @@ impl Runtime {
                 });
                 Ok(vec![])
             }
-            (Command::Millisec, Want::Value, 0) => Ok(vec![Value::Int(sys.millis())]),
+            // A console's speed keeps the console's clock, which PERFEND
+            // and MAINCNT follow too.
+            (Command::Millisec, Want::Value, 0) => Ok(vec![Value::Int(match &self.meter {
+                Some(meter) => (meter.now() / 1_000_000_000) as i32,
+                None => sys.millis(),
+            })]),
             // Past XSCREEN or ACLS, the frame job has yet to raise it.
             (Command::Maincnt, Want::Value, 0) => Ok(vec![Value::Int(
                 sys.frames.wrapping_sub(self.in_frame_job.into()) as i32,
