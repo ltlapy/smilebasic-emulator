@@ -37,6 +37,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - [Input](#input)
   - [Buttons](#buttons)
   - [Keyboards and controllers typing](#keyboards-and-controllers-typing)
+  - [USB keyboards](#usb-keyboards)
   - [`PUSHKEY` and the key buffers](#pushkey-and-the-key-buffers)
   - [`INPUT`, `LINPUT` and the line being typed](#input-linput-and-the-line-being-typed)
   - [The line's cursor](#the-lines-cursor)
@@ -626,6 +627,23 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - Ctrl+C on a USB keyboard stops the running program (TEST67: the step that
   asked for it ended there on both consoles, and the test went on with its
   next part).
+
+### USB keyboards
+
+TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
+
+- `KEYBOARD` reads the Han/Eng key as usage 144 (LANG1) and Hanja as 145
+  (LANG2). That keyboard also sent Right Alt (230) after Han/Eng and Right Ctrl
+  (228) after Hanja. Some Korean keyboards send only Right Alt and Right Ctrl
+  for these keys. Right Alt sets bit 8 of `KEYBOARD 4 OUT R,M`'s modifiers and
+  Right Ctrl bit 4.
+- SmileBASIC 4 keeps a Caps Lock of its own, on at start: `INKEY$` gives "A" for
+  the A key and "a" for Shift+A. G, K and S give "G", "K" and "S".
+- Han/Eng doesn't switch what `INKEY$` gives: G, K and S typed after it still
+  give "G", "K" and "S", and the key itself types nothing.
+- A held key repeats into `INKEY$` 19 frames after the press, then every 3
+  frames: Shift+A held gave "a" on the frame it went down and again 19, 22,
+  25... frames later. A controller's keys repeat after 20 frames instead.
 
 ### `PUSHKEY` and the key buffers
 
