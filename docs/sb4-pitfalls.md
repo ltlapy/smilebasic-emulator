@@ -95,6 +95,13 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - An error message goes on from the cursor, on the line the program left it:
   after `?"V";` an `Overflow` shows as `VOverflow in 1:3` (TEST65). A line
   typed in direct mode does the same (TEST63).
+- An error in some builtins names the command right after the place, with no
+  space between: `Overflow in 1:3(FILL:2)`, `(PUSH)`, `(COPY)`, `(HEX$:1)`,
+  `(CHR$:1)` and `(MID$:2)`. The number counts arguments from 1. `LEFT$` with
+  2147483648 as its second argument shows `(LEFT$)` with no number. Operators
+  and plain stores name nothing: DIV, MOD, the bit operators, unary minus and
+  `M%[0]=V` give `Overflow in 1:2`, and DIV or MOD by 0 `Divide by zero in 1:2`
+  (TEST65, TEST66).
 - `Wrong number of arguments` comes when a command or function gets a number of
   arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
   finds this as it runs, not as the program compiles, so the lines before it
@@ -214,6 +221,16 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   with no error. `2147483648 AND -1` is 2147483647, `-2147483649 OR 0` is
   -2147483648, `4294967296 AND 1` is 1, `2147483648<<1` is -2, `2147483648>>+1`
   is -1073741825 and `NOT 2147483648` is -2147483648 (TEST65).
+- The bit operators take a NaN as 0, with no error: `NAN AND -1`, `NAN OR 0`,
+  `NAN<<1` and `NAN>>>0` are 0, `NOT NAN` is -1 and `1<<NAN` is 1. An infinity
+  saturates: `INF AND -1` is 2147483647, `-INF OR 0` and `NOT INF` are
+  -2147483648, `INF>>1` is 1073741823. A right operand saturates too:
+  `1<<2147483648` is -2147483648 and `-1 AND 2147483648` is 2147483647 (TEST66,
+  the NaN and infinity made at run time).
+- `DIV` and `MOD` check a real operand as a store into an int array does, before
+  dropping the fraction. `2147483647.5 DIV 1`, `-2147483648.5 MOD 10`,
+  `2147483648 DIV 2`, `7 DIV 2147483648` and `INF DIV 1` are `Overflow`, and
+  `NAN MOD 7` is 0 (TEST66).
 - Shift counts are taken modulo 32: `1<<33` is 2, `1<<-1` is -2147483648.
 - `MOD` takes the sign of the dividend.
 - `ROUND` rounds halves away from zero.
@@ -307,6 +324,9 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   gives 0), but checks the real against -2147483648 to 2147483647 first. So
   `M%[0]=2147483647.5`, `2147483647.9` and `-2147483648.5` are `Overflow`, as
   is anything farther out (TEST65). A `%` variable keeps any real.
+- A NaN stored into an int array is 0. `FILL`, `PUSH`, `COPY` from a real array
+  and array literals (`DIM M%[]=[X]`, `DIM M%[2]=[X]`) check a real the same
+  way, and truncate one in range: `PUSH M%,2147483647.5` is `Overflow` (TEST66).
 - `SORT` keeps equal keys in their order. `RSORT` gives `SORT`'s order turned
   round, so equal keys come out reversed.
 - `SORT` orders strings by character code: `""`, `"A"`, `"AA"`, `"B"`, `"a"`,
@@ -445,6 +465,22 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   |---|---|---|---|
   | `WHILE MAINCNT()-T<60:INC N:WEND` | 2395924 | 5962406 | 2837664 |
   | `FOR J=1 TO 100:X=X+J*2:Y=Y XOR J:NEXT` | 21371 | 52145 | 29141 |
+
+- A DEF call costs about five `GOSUB`s. On a Switch 2, in ns each with the loop
+  around it taken away (TEST66):
+
+  | Statement | ns |
+  |---|---|
+  | `GOSUB @S`, to a lone `RETURN` | 28.7 |
+  | `V=A+B` | 42.2 |
+  | `CM A`, a DEF as a command, which returns nothing | 120.6 |
+  | `V=F0()` | 152.7 |
+  | `V=F1(A)` | 184.5 |
+  | `V=CF(A)`, a `COMMON DEF` | 184.9 |
+  | `FO A OUT V` | 189.1 |
+  | `V=F3(A,B,X)` | 229.5 |
+  | `V=FL(A)`, with two `VAR` locals | 270.1 |
+  | `V=FR(3)`, recursive, four calls | 877.2 |
 
 ## Animation
 
@@ -1677,6 +1713,9 @@ TTEST36.
     -1, and L the program error's line.
   - While the editor shows, status 4 comes with N, A, SL, C and L all 0, and
     `ENVLOCATE` gives 0,0.
+- A is the argument that the error message names, counted from 0: 1 after
+  `Overflow in 1:3(FILL:2)`, 0 after `(HEX$:1)`, and -1 after `(PUSH)`,
+  `(COPY)`, `(LEFT$)` or an operator's error (TEST66).
 - `ENVSTAT OUT S,N,A,SL,C,L` after a compile error is set as for an error when
   running, but for the status, which stays 0: S 0, N 3, A -1, C the character of
   the token it names from the start of the program, L its line (TEST62).
