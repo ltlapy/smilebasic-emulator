@@ -54,7 +54,7 @@ enum Source {
         page: Vec<u32>,
     },
     /// 8x8 cells; the 16-pixel font is drawn from M PLUS 1p Bold and
-    /// Galmuri14, and what they lack is the 8x8 cell centered.
+    /// Galmuri14, and what they lack is the 8x8 cell at twice its size.
     Cells {
         /// For each code, an index into `cells`, `SYMBOL | i` for
         /// `symbols[i]`, or `NO_CELL`.
@@ -419,14 +419,11 @@ impl Font {
                         alpha << 24 | 0x00FF_FFFF
                     };
                 }
-                // An 8x8 drawing in a 16-pixel cell stays 8x8, centered:
-                // doubled, its pixels would look like blocks.
+                // An 8x8 drawing, such as SmileBASIC's own symbols, fills
+                // a 16-pixel cell at twice its size, both ways.
                 let (x, y) = match size {
                     FontSize::Small => (x, y),
-                    FontSize::Large if (4..12).contains(&x) && (4..12).contains(&y) => {
-                        (x - 4, y - 4)
-                    }
-                    FontSize::Large => return 0,
+                    FontSize::Large => (x / 2, y / 2),
                 };
                 if i & SYMBOL != 0 {
                     let pixels = &symbols[usize::from(i & !SYMBOL)];
@@ -593,14 +590,16 @@ mod tests {
                 .collect()
         };
         assert_eq!(large('가' as u16), galmuri('가' as u16));
-        // ...and SmileBASIC's symbols as their 8-pixel drawings, centered,
-        // not doubled.
+        // ...and SmileBASIC's symbols as their 8-pixel drawings at twice
+        // their size.
         for (x, y) in [(0, 0), (3, 1), (7, 7)] {
-            assert_eq!(
-                font.pixel(0xE100, FontSize::Large, x + 4, y + 4),
-                font.pixel(0xE100, FontSize::Small, x, y)
-            );
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                assert_eq!(
+                    font.pixel(0xE100, FontSize::Large, 2 * x + dx, 2 * y + dy),
+                    font.pixel(0xE100, FontSize::Small, x, y)
+                );
+            }
         }
-        assert_eq!(font.pixel(0xE10A, FontSize::Large, 0, 0), 0);
+        assert_eq!(font.pixel(0xE10A, FontSize::Large, 0, 0), 0xFFFF_FFFF);
     }
 }
