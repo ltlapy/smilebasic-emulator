@@ -2028,16 +2028,22 @@ impl Editor {
                 let digit_x = px + (w - cell / 2) / 2;
                 let color = if col.is_multiple_of(10) { TEXT } else { DIM };
                 if tiles {
-                    // A tile is a cell wide, so it may cover the next
-                    // column; the cursor's comes first.
+                    // A tile is a cell wide, so it covers the next column
+                    // of half-width characters: tiles every other column
+                    // would run together ("10121416"). Every tenth column
+                    // takes a tile, and columns 4, 6 and 8 after it a
+                    // digit, leaving a gap after the tile; the cursor's
+                    // tile comes first.
                     let clear = |x: usize, w: usize| x + w <= cursor_x || x >= cursor_x + cell;
                     if col == cursor_col {
                         self.over
                             .push((px, ruler, Over::Font(ruler_tile(col)), TEXT));
-                    } else if col.is_multiple_of(2) && clear(px, cell) {
+                    } else if col.is_multiple_of(10) && clear(px, cell) {
                         self.over
                             .push((px, ruler, Over::Font(ruler_tile(col)), BAR));
                         ruler_digits.push((px, color));
+                    } else if matches!(col % 10, 4 | 6 | 8) && clear(digit_x, cell / 2) {
+                        self.over.push((digit_x, ruler, digit, DIM));
                     }
                 } else if col == cursor_col {
                     grid.fill_px(fb, ruler, px, w, TEXT);
@@ -3152,6 +3158,44 @@ mod tests {
         let cols = e.size().0;
         let starts: Vec<usize> = e.layout.iter().map(|&(_, start)| start).collect();
         assert_eq!(starts, [0, cols]);
+    }
+
+    #[test]
+    fn half_width_ruler_labels_stay_apart() {
+        let mut e = editor(&"A".repeat(80));
+        let mut fb = Framebuffer::new(400, 240);
+        let look = Look {
+            half_width: true,
+            ..look(true)
+        };
+        e.draw(&mut fb, &Font::blank(), "GAME", look, false);
+        let ruler = e.size().1;
+        let cell = e.grid.cell;
+        let mut labels: Vec<(usize, usize, Over)> = (e.over.iter())
+            .filter(|&&(_, row, _, _)| row == ruler)
+            .map(|&(x, _, over, _)| match over {
+                Over::Font(_) => (x, x + cell, over),
+                _ => (x, x + cell / 2, over),
+            })
+            .collect();
+        labels.sort_by_key(|&(x, ..)| x);
+        // Tiles on the cursor's column and every tenth, digits on 4, 6 and 8.
+        let tiles: Vec<u16> = (labels.iter())
+            .filter_map(|&(.., over)| match over {
+                Over::Font(c) => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tiles[..4], [0, 10, 20, 30].map(ruler_tile));
+        for &(.., over) in &labels {
+            if let Over::Half(c) = over {
+                assert!(b"468".contains(&(c as u8)), "{}", c as u8 as char);
+            }
+        }
+        // None touches the next.
+        for pair in labels.windows(2) {
+            assert!(pair[0].1 < pair[1].0, "{:?}", (pair[0].0, pair[1].0));
+        }
     }
 
     #[test]
