@@ -210,6 +210,11 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   came on the `LOCATE`, past `IF I>=172600` and `N=N+1`, and `ENVSTAT` gives
   the `LOCATE`'s character (TEST64).
 
+  `RESTORE "PUSH"` itself goes on past that: 172713 of them pass, and 180000
+  stop on the loop. After the 172713, `A=F(1)` of a one-line `DEF F(P)` stops
+  on its own line, while `?N`, `X=1+2` and a bare `PRINT` run and the program
+  goes on (TEST67).
+
 ## Values and variables
 
 ### Numbers

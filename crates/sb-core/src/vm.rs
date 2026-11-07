@@ -24,8 +24,11 @@ use crate::watch::Watch;
 /// room is left aside, as two values take it.
 const STACK_SIZE: usize = 518_136;
 /// What is left aside for those values. A call that reaches into it fails on what
-/// follows it, a call that goes past it on the call itself.
+/// follows it, a call that goes past it on the call itself. RESTORE "PUSH" may
+/// fill it, and then the next command given arguments fails.
 const VALUES_ROOM: usize = 8;
+/// All of the stack, the values' room too.
+const STACK_FULL: usize = STACK_SIZE + VALUES_ROOM;
 /// What a GOSUB takes of it.
 const GOSUB_COST: usize = 2;
 /// What a place RESTORE "PUSH" keeps takes of it.
@@ -2063,7 +2066,7 @@ impl Vm {
         let s = String::from_utf16_lossy(&s.borrow()).to_ascii_uppercase();
         match s.as_str() {
             "PUSH" => {
-                if !self.stack_has_room(RESTORE_COST) {
+                if !self.stack_has_full_room(RESTORE_COST) {
                     return Err(ErrorKind::StackOverflow.into());
                 }
                 self.data_kept.push((self.data_pos, self.data_from.clone()));
@@ -2101,7 +2104,23 @@ impl Vm {
     /// share is free.
     fn stack_has_room(&self, cost: usize) -> bool {
         let calls = self.frames.last().map_or(0, |f| f.stack_to);
-        room_for(calls, self.gosubs.len(), self.data_kept.len(), cost)
+        room_for(calls, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_SIZE
+    }
+
+    /// [`Vm::stack_has_room`] for RESTORE "PUSH", which may take the
+    /// values' room too.
+    fn stack_has_full_room(&self, cost: usize) -> bool {
+        let calls = self.frames.last().map_or(0, |f| f.stack_to);
+        room_for(calls, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_FULL
+    }
+
+    /// A command given arguments when RESTORE "PUSH" has taken the
+    /// values' room: Stack overflow on it. UNVERIFIED: that a command
+    /// without arguments, and a builtin function, go on.
+    #[inline(always)]
+    fn values_room_taken(&self, argc: usize) -> bool {
+        // Only RESTORE "PUSH" goes past the room GOSUBs and calls leave.
+        !self.data_kept.is_empty() && argc > 0 && !self.stack_has_room(0)
     }
 
     fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
@@ -2330,6 +2349,9 @@ impl Vm {
             }
             Op::CallHost { id, argc, want } => {
                 let at = self.stack.len() - usize::from(*argc);
+                if self.values_room_taken(usize::from(*argc)) {
+                    return Err(self.failed_with_args(ErrorKind::StackOverflow.into(), at));
+                }
                 if self.report_work {
                     host.work(self.work());
                 }
@@ -2792,6 +2814,9 @@ impl Vm {
         args: &[Value],
         want: Want,
     ) -> Result<bool> {
+        if self.values_room_taken(args.len()) {
+            return Err(ErrorKind::StackOverflow.into());
+        }
         host.set_data_pos(self.data_pos);
         let results = host.call(id, args, want);
         if let Some(pos) = host.data_pos() {
@@ -3157,16 +3182,16 @@ fn move_values(from: &mut [Value], to: &mut Vec<Value>) {
 /// The variables [`Vm::run_fast`] reads and writes, by [`Var::table`].
 type Vars<'a> = [&'a mut [Value]; 2];
 
-/// [`Vm::stack_has_room`], from the stack the DEF calls take and the GOSUBs
-/// and RESTORE "PUSH" places held.
+/// The stack in use with `cost` more, from the stack the DEF calls take and
+/// the GOSUBs and RESTORE "PUSH" places held.
 #[inline(always)]
-fn room_for(calls: usize, gosubs: usize, kept: usize, cost: usize) -> bool {
-    calls + gosubs * GOSUB_COST + kept * RESTORE_COST + cost <= STACK_SIZE
+fn room_for(calls: usize, gosubs: usize, kept: usize, cost: usize) -> usize {
+    calls + gosubs * GOSUB_COST + kept * RESTORE_COST + cost
 }
 
 #[inline(always)]
 fn gosub_fits(calls: usize, gosubs: usize, kept: usize) -> bool {
-    room_for(calls, gosubs, kept, GOSUB_COST)
+    room_for(calls, gosubs, kept, GOSUB_COST) <= STACK_SIZE
 }
 
 #[inline(always)]

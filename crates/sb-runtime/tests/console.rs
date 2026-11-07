@@ -276,3 +276,41 @@ fn input_clears_the_cells_it_typed_over_and_deleted() {
     let codes: Vec<u16> = (0..6).map(|x| s.cell(x, 0).code).collect();
     assert_eq!(codes, [0, 0, 64, 64, 64, 64]);
 }
+
+/// TEST64 and TEST67: RESTORE "PUSH" may fill the stack further than a
+/// command given arguments or a DEF call can then go, while PRINT and
+/// plain expressions still run.
+#[test]
+fn a_full_stack_stops_the_next_command() {
+    const STK: &str = "K=172713:N=5:B=1:C=2\nFOR I=1 TO K:RESTORE \"PUSH\":NEXT\n";
+    const DEF: &str = "\n?\"PAST\"\nEND\nDEF F(P)\nRETURN P\nEND";
+    for (statement, line) in [
+        ("?N", None),
+        ("X=B+C", None),
+        ("PRINT", None),
+        ("A=F(B)", Some(3)),
+        ("LOCATE 0,0", Some(3)),
+    ] {
+        let source = format!("{STK}{statement}{DEF}");
+        match (run(&source), line) {
+            (Ok(rt), None) => {
+                assert!((0..3).any(|y| row(&rt, 4, y) == "PAST"), "{statement}");
+            }
+            (Err(e), Some(line)) => {
+                assert_eq!(
+                    (e.kind, e.line),
+                    (ErrorKind::StackOverflow, line),
+                    "{statement}"
+                );
+            }
+            (r, _) => panic!("{statement}: {:?}", r.err()),
+        }
+    }
+    let e = run("FOR I=1 TO 180000:RESTORE \"PUSH\":NEXT\n?\"PAST\"").err();
+    assert_eq!(
+        e.map(|e| (e.kind, e.line)),
+        Some((ErrorKind::StackOverflow, 1))
+    );
+    // 172712 leave room for LOCATE.
+    assert!(run("FOR I=1 TO 172712:RESTORE \"PUSH\":NEXT\nLOCATE 0,0").is_ok());
+}
