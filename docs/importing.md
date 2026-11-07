@@ -117,9 +117,6 @@ the last resort. The menus and windows use the bundled glyphs.
 File > Settings > Fonts > "Menus and windows" picks the font of the menu bar,
 the settings window and the emulator's other windows:
 
-- 8-pixel, doubled: the editor's bundled 8-pixel fonts above at twice their
-  size, GalmuriMono7 first, with its half-width glyphs. SmileBASIC's own
-  symbols and what none of them has come from SmileBASIC's 8-pixel font;
 - 16-pixel (the default): SmileBASIC's 16-pixel font, with the half-width
   glyphs above;
 - Smooth: outlines with soft edges, drawn for a 16-pixel cell. Half-width
@@ -129,9 +126,10 @@ the settings window and the emulator's other windows:
   fonts. SmileBASIC's own symbols and what none of them has come from
   SmileBASIC's font.
 
-In `settings.txt` this is `ui_font=8`, `16` or `smooth`. Text the emulator
-draws at an odd scale, such as the debugger's small panel text, keeps the
-8-pixel font.
+In `settings.txt` this is `ui_font=16` or `smooth`. Earlier versions also
+had `ui_font=8`, the 8-pixel fonts doubled; it now loads as `16`. Text the
+emulator draws at an odd scale, such as the debugger's small panel text,
+keeps the 8-pixel font.
 
 The half-width characters are U+0020-U+007E, U+FF61-U+FF9F, U+FFE8, U+FFED,
 U+FFEE and U+20A9. Latin-1 and the rest stay full-width, as in SmileBASIC 4.

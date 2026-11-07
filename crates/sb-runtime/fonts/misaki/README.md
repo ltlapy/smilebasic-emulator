@@ -1,8 +1,7 @@
 # Misaki Gothic 2nd
 
 The editor's 8-pixel glyphs for characters SmileBASIC's font and
-GalmuriMono7 lack, such as Greek and Cyrillic, and the same glyphs in the
-menus and windows when they draw the 8-pixel fonts doubled.
+GalmuriMono7 lack, such as Greek and Cyrillic.
 
 - Source: [Misaki font](https://littlelimit.net/misaki.htm) by Num Kadoma,
   BDF edition of 2021-05-05 (`misaki_bdf_2021-05-05.zip`), file

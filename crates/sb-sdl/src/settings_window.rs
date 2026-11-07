@@ -408,21 +408,18 @@ const PAGES: &[Page] = &[
             Row {
                 label: "Menus and windows",
                 about: "The font of the menu bar, this window and the emulator's other \
-                        windows (not the SmileBASIC screen): the bundled 8-pixel fonts at \
-                        twice their size (GalmuriMono7 first), SmileBASIC's 16-pixel font \
+                        windows (not the SmileBASIC screen): SmileBASIC's 16-pixel font \
                         (default), or smooth outlines with soft edges (M PLUS 1p Bold and \
                         M PLUS Code Latin 50 Bold).",
                 control: Control::Choice(
-                    &["8-pixel, doubled", "16-pixel", "Smooth"],
+                    &["16-pixel", "Smooth"],
                     |s| match s.ui_font {
-                        UiFont::Doubled => 0,
-                        UiFont::Large => 1,
-                        UiFont::Smooth => 2,
+                        UiFont::Large => 0,
+                        UiFont::Smooth => 1,
                     },
                     |s, i| {
                         s.ui_font = match i {
-                            0 => UiFont::Doubled,
-                            1 => UiFont::Large,
+                            0 => UiFont::Large,
                             _ => UiFont::Smooth,
                         }
                     },
@@ -885,7 +882,7 @@ mod tests {
         let fonts = PAGES.iter().position(|p| p.title == "Fonts").unwrap();
         w.click(centre(w.page_row(fonts)), &mut s);
         // The first row is the menus' font.
-        w.click(centre(w.option_rect(0, 2)), &mut s);
+        w.click(centre(w.option_rect(0, 1)), &mut s);
         assert_eq!(s.ui_font, UiFont::Smooth);
         assert_eq!(
             w.click(centre(w.option_rect(1, EXTRA_FONT_FILE)), &mut s),

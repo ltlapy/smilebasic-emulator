@@ -2,8 +2,6 @@
 
 The editor's last 8-pixel source: glyphs for characters no other bundled
 font has, mostly the Simplified Chinese characters of GB2312 and beyond.
-The menus and windows use the same glyphs when they draw the 8-pixel fonts
-doubled.
 
 - Source: [Fusion Pixel Font](https://github.com/TakWolf/fusion-pixel-font)
   by TakWolf, release 2026.10.25,

@@ -10,8 +10,8 @@ use sb_runtime::half_width::is_half_width;
 use sb_runtime::settings::UiFont;
 use sb_runtime::ui_glyphs::UiGlyphs;
 
-/// Glyphs are the bundled 8x8 fonts drawn at twice the size, the console's
-/// 16x16 font, or smooth outlines that size (see [`set_font`]).
+/// Glyphs are the console's 16x16 font or smooth outlines that size (see
+/// [`set_font`]); text drawn at an odd scale takes its 8x8 one.
 const GLYPH_SCALE: u32 = 2;
 pub const CHAR: u32 = 8 * GLYPH_SCALE;
 pub const PAD: u32 = 8;
@@ -244,20 +244,19 @@ pub fn set_font(font: UiFont) {
 
 fn ui_font() -> UiFont {
     match UI_FONT.load(Ordering::Relaxed) {
-        x if x == UiFont::Doubled as u8 => UiFont::Doubled,
         x if x == UiFont::Smooth as u8 => UiFont::Smooth,
         _ => UiFont::Large,
     }
 }
 
 thread_local! {
-    /// The smooth and 8-pixel glyphs, made as text wants them.
+    /// The smooth glyphs, made as text wants them.
     static SMOOTH: UiGlyphs = UiGlyphs::default();
 }
 
-/// Draws text with the 8x8 glyphs `scale` times their size (the bundled
-/// ones if chosen, else the console's), or with the 16x16 or smooth ones
-/// half that, if chosen and `scale` is even. Every
+/// Draws text in cells `8 * scale` pixels high: the 16x16 or smooth glyphs
+/// `scale / 2` times their size if `scale` is even, else the 8x8 ones
+/// `scale` times. Every
 /// character takes a whole cell, as on SmileBASIC's screens: the help and the
 /// debugger show SmileBASIC's text laid out for that.
 pub fn draw_text_scaled(
@@ -303,12 +302,11 @@ fn draw_glyphs(
         return;
     }
     let even = scale.is_multiple_of(2);
-    let (size, scale) = match font_choice {
-        UiFont::Large | UiFont::Smooth if even => (FontSize::Large, scale / 2),
-        _ => (FontSize::Small, scale),
+    let (size, scale) = match even {
+        true => (FontSize::Large, scale / 2),
+        false => (FontSize::Small, scale),
     };
     let smooth = font_choice == UiFont::Smooth && even;
-    let dot = font_choice == UiFont::Doubled;
     let halves = font.half_glyphs();
     let put = |fb: &mut Framebuffer, px: u32, py: u32| {
         if let Some(dst) = fb.get(px, py) {
@@ -318,13 +316,9 @@ fn draw_glyphs(
     let mut left = x;
     for c in text.encode_utf16() {
         let w = width(c);
-        let drawn = (smooth || (dot && w == cell))
+        let drawn = smooth
             && SMOOTH.with(|glyphs| {
-                let glyph = match smooth {
-                    true => glyphs.get(c, w < cell),
-                    false => glyphs.dot(c),
-                };
-                let Some(glyph) = glyph else {
+                let Some(glyph) = glyphs.get(c, w < cell) else {
                     return false;
                 };
                 let side = if w < cell {

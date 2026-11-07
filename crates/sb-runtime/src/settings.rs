@@ -31,9 +31,6 @@ impl Language {
 /// The font of the emulator's menus and windows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum UiFont {
-    /// The bundled 8-pixel fonts at twice their size, with SmileBASIC's
-    /// font for its own symbols (see [`crate::ui_glyphs`]).
-    Doubled,
     /// SmileBASIC's 16-pixel font.
     #[default]
     Large,
@@ -249,11 +246,9 @@ const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
 
 const FONT_SIZE: [(FontSize, &str); 2] = [(FontSize::Small, "8"), (FontSize::Large, "16")];
 
-const UI_FONT: [(UiFont, &str); 3] = [
-    (UiFont::Doubled, "8"),
-    (UiFont::Large, "16"),
-    (UiFont::Smooth, "smooth"),
-];
+/// `ui_font=8`, the 8-pixel fonts doubled, is gone: it loads as the
+/// default.
+const UI_FONT: [(UiFont, &str); 2] = [(UiFont::Large, "16"), (UiFont::Smooth, "smooth")];
 
 const FONT_SOURCE: [(FontSource, &str); 3] = [
     (FontSource::SmileBasic, "smilebasic"),
@@ -651,6 +646,15 @@ mod tests {
         }
         let s = Settings::from_text("renderer=quantum\n");
         assert_eq!(s.renderer, Renderer::DEFAULT);
+    }
+
+    #[test]
+    fn the_doubled_menu_font_loads_as_the_default() {
+        let s = Settings::from_text("ui_font=8\n");
+        assert_eq!(s.ui_font, UiFont::Large);
+        assert!(s.to_text().contains("ui_font=16\n"));
+        let s = Settings::from_text("ui_font=smooth\n");
+        assert_eq!(s.ui_font, UiFont::Smooth);
     }
 
     #[test]
