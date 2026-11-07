@@ -158,6 +158,12 @@ more on any recent computer. Programs time themselves with `VSYNC`, `WAIT` and
 the tests) instead run a fixed million instructions a frame, so that they come
 out the same each time.
 
+File > Settings > General > Speed, and `smilebasic-check --speed`, choose
+Switch 2 or Switch 1 instead: a program then gets about as much work done in a
+frame as on that console, and misses frames when it needs more. See
+[benchmarking.md](benchmarking.md#running-at-a-consoles-speed) for how close
+it comes.
+
 When drawing a frame takes longer than a frame, the window skips drawing up to
 three frames while the program and its sound go on, so that games and their
 music keep time. A frame it does draw shows the scene the program finished:

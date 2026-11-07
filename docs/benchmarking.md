@@ -90,6 +90,87 @@ What the numbers mean depends on where TPERF runs:
 The scores go by the clock, so they move between runs of one build. The search
 stops within a sixteenth of the score.
 
+## Running at a console's speed
+
+File > Settings > General > Speed, the `speed` line of the settings file and
+`smilebasic-check --speed switch1` (or `switch2`) run programs at about a
+console's speed, for checking that a program written on a PC keeps up on the
+console. The default, Unlimited, runs as before.
+
+At a console's speed, the emulator charges what a program does in the
+console's time and gives each frame a sixtieth of a second of it:
+
+- Each VM instruction and statement, DEF call, builtin call, array element,
+  string join and look-up by name (`VAR()`, `CALL`, `GOTO` with a string)
+  costs a set amount. A FOR's test gets a credit, as `NEXT` takes many of our
+  instructions but one step of SmileBASIC 4's.
+- Each host command costs by its kind: drawing by the pixels inside `GCLIP`,
+  `TFILL` and `SCROLL` by the cells, `PRINT` by the characters, sprite
+  commands by a set amount each. Sprites, layers and text screens cost nothing
+  to show, as TPERF finds on both consoles.
+- A program that needs more than the frame goes on in the next one, and its
+  `VSYNC` finds its frame gone by, as on the console. `MAINCNT`, `VSYNC` and
+  the frames lost come out as there.
+- `PERFBEGIN` and `PERFEND` measure the console's time, which is the same on
+  every run, also with `--fixed`. TPERF's `WORK` then compares with a
+  console's directly, and its two score scenes run.
+
+The window keeps its own time limit as well, so on a computer slower than the
+console the program gets less.
+
+Counting this work takes the VM off its fused fast path, which a console's
+speed leaves plenty of time for. Unlimited counts nothing and runs exactly as
+before.
+
+The costs come from TPERF's scenes and TEST65's loops on 4.4.9 (in
+`crates/sb-runtime/src/speed.rs`). TPERF's `WORK` in ms, run with
+`smilebasic-check --speed` and `--play`:
+
+| Scene | Switch 1 | ours | Switch 2 | ours |
+|---|---|---|---|---|
+| VINT | 13.38 | 13.17 | 5.15 | 5.06 |
+| VREAL | 8.42 | 8.41 | 3.29 | 3.29 |
+| VSTR | 5.42 | 5.42 | 2.28 | 2.28 |
+| VARRAY | 20.96 | 18.92 | 7.43 | 6.74 |
+| VDEF | 7.83 | 7.83 | 2.61 | 2.61 |
+| VVAR | 7.24 | 7.24 | 2.98 | 2.97 |
+| SPMOVE | 7.32 | 7.21 | 2.28 | 2.31 |
+| SPROT | 3.77 | 4.05 | 1.28 | 1.27 |
+| SPCHURN | 8.50 | 8.46 | 3.72 | 3.66 |
+| SPHIT | 6.05 | 6.07 | 2.60 | 2.59 |
+| SPANIM | 0.21 | 0.19 | 0.09 | 0.09 |
+| TPRINT | 2.35 | 2.32 | 1.15 | 1.15 |
+| TPUT | 11.04 | 11.04 | 3.82 | 3.81 |
+| TSCROLL | 7.09 | 7.14 | 3.62 | 3.63 |
+| TMULTI | 0.31 | 0.31 | 0.18 | 0.18 |
+| GFILL | 15.33 | 15.13 | 2.78 | 2.72 |
+| GALPHA | 27.93 | 27.80 | 11.03 | 10.99 |
+| GLINE | 7.60 | 7.55 | 3.13 | 3.15 |
+| GCIRCLE | 3.22 | 3.22 | 1.28 | 1.28 |
+| GTRI | 8.76 | 8.65 | 2.83 | 2.80 |
+| GPUTCHR | 5.71 | 5.65 | 1.62 | 1.60 |
+| GCOPY | 11.11 | 11.01 | 3.33 | 3.31 |
+| GLOAD | 1.08 | 1.08 | 0.45 | 0.45 |
+| GUPLOAD | 0.03 | 0.01 | 0.01 | 0.01 |
+| GARRAY | 11.69 | 10.63 | 4.13 | 3.91 |
+| LCOMP | 0.45 | 0.43 | 0.17 | 0.13 |
+| LBLUR | 0.22 | 0.20 | 0.09 | 0.08 |
+| LMOSAIC | 0.20 | 0.20 | 0.09 | 0.08 |
+| LCOLOR | 0.26 | 0.27 | 0.11 | 0.11 |
+| LMATRIX | 0.28 | 0.28 | 0.12 | 0.11 |
+| LRASTER | 1.21 | 1.07 | 0.49 | 0.40 |
+| GAME | 7.70 | 7.57 | 3.02 | 2.87 |
+| MAXSP (score) | 2866 | 3197 | 4000 | 4000 |
+| MAXTRI (score) | 4410 | 4410 | 13471 | 13007 |
+
+`LOST` matches too: GALPHA lost 202 frames on a Switch 1 and 200 here, VARRAY
+77 and 40. Most scenes come within 10%. A loop of one kind of statement can be
+further off: TEST65's loops go from 9% fast (`CASE` on a Switch 1, `GOTO` on a
+Switch 2) to 27% slow (`ON GOTO` on a Switch 1). Where TPERF times only
+one size of a command, the split between a base cost and a cost per pixel is a
+guess, as are the costs of commands TPERF leaves out; `speed.rs` marks them
+UNVERIFIED.
+
 ## Per-frame costs and overload
 
 A mean hides what a player sees as stutter. `--log FILE` writes one CSV row a
