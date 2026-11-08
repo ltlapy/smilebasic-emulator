@@ -186,23 +186,33 @@ fn channels(a: &Array) -> Result<(usize, usize)> {
 /// BIQUAD out, in, coefficients: filters each channel, carrying the last
 /// two inputs and outputs over from the previous call in the
 /// coefficients' elements 5 to 8 (mono or left) and 9 to 12 (right).
-// Each four is in[t-1], in[t-2], out[t-1], out[t-2]. UNVERIFIED: that
-// output and input must have the same shape.
+// Each four is in[t-1], in[t-2], out[t-1], out[t-2]. Output and input
+// must have as many channels. An output shorter than the input is an
+// error naming the input; in a longer one only the input's length is
+// filtered, and the rest is left alone.
 pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let output = number_array(&args[0])?;
     let input = number_array(&args[1])?;
     let params = coefficient_array(&args[2])?;
     let mut fp = reals(&params.borrow())?;
-    let (samples, ch, len) = {
+    let (samples, ch, len, out_len) = {
         let input = input.borrow();
-        let shape = channels(&input)?;
-        if channels(&output.borrow())? != shape {
+        let (ch, len) = channels(&input)?;
+        let (out_ch, out_len) = channels(&output.borrow())?;
+        if out_ch != ch {
             return Err(Error::with_detail(
                 ErrorKind::IllegalFunctionCall,
-                "output and input differ in size",
+                "output and input differ in channels",
             ));
         }
-        (reals(&input)?, shape.0, shape.1)
+        if out_len < len {
+            return Err(Error::with_detail(
+                ErrorKind::IllegalFunctionCall,
+                "output shorter than input",
+            )
+            .of_value(&args[1]));
+        }
+        (reals(&input)?, ch, len, out_len)
     };
     let mut result = vec![0.0; samples.len()];
     for c in 0..ch {
@@ -216,7 +226,16 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
         }
         fp[h..h + 4].copy_from_slice(&[x1, x2, y1, y2]);
     }
-    store(&output, &result)?;
+    if out_len == len {
+        store(&output, &result)?;
+    } else {
+        let mut output = output.borrow_mut();
+        for c in 0..ch {
+            for t in 0..len {
+                output.set(c * out_len + t, Value::Real(result[c * len + t]))?;
+            }
+        }
+    }
     store(&params, &fp)?;
     Ok(vec![])
 }

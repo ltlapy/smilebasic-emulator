@@ -1206,6 +1206,23 @@ fn signal_processing() {
         ),
         "10\n"
     );
+    // BIQUAD's shapes: other channels, a shorter output, a longer one.
+    let biquad_error = |source: &str| {
+        let e = run(source).unwrap_err();
+        (e.kind, e.detail.unwrap_or_default(), e.arg)
+    };
+    let (kind, detail, arg) = biquad_error("DIM O[100],I[2,100],F[13]:F[0]=1:BIQUAD O,I,F");
+    assert_eq!((kind, arg), (ErrorKind::IllegalFunctionCall, None));
+    assert!(detail.starts_with("(BIQUAD) "), "{detail}");
+    let (kind, detail, arg) = biquad_error("DIM O[50],I[100],F[13]:F[0]=1:BIQUAD O,I,F");
+    assert_eq!((kind, arg), (ErrorKind::IllegalFunctionCall, Some(1)));
+    assert!(detail.starts_with("(BIQUAD:2) "), "{detail}");
+    assert_eq!(
+        output(
+            "DIM O[2,6],I[2,4],F[13]:F[0]=2:O[0,5]=7:O[1,4]=8:I[0,0]=1:I[1,3]=3\nBIQUAD O,I,F:?LEN(O);O[0,0];O[0,5];O[1,3];O[1,4]"
+        ),
+        "122768\n"
+    );
 }
 
 #[test]
