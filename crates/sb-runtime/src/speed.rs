@@ -10,15 +10,18 @@
 //! `VSYNC` and the frames a program skips come out as there. `PERFBEGIN`,
 //! `PERFEND` and `MILLISEC` measure the same time.
 //!
-//! The costs come from TPERF's scenes and the loops of TEST65, TEST67 and
-//! TEST69, timed on both consoles running SmileBASIC 4.4.9, and from TEST68
-//! on a Switch 2 (docs/benchmarking.md).
+//! The costs come from TPERF's scenes and the loops of TEST65, TEST67,
+//! TEST69 and TEST70, timed on both consoles running SmileBASIC 4.4.9, and
+//! from TEST68 on a Switch 2 (docs/benchmarking.md). TEST70 finds a
+//! Switch 2 as fast in the hand as docked.
 //!
-//! Drawing at many places and changing many sprites in turn cost more
-//! than drawing at one place and changing one sprite (TEST69, most on a
-//! Switch 1), so the meter remembers the rows `GFILL` and `GCOPY` drew
-//! last and the sprite last changed, and charges a move away from them.
-//! UNVERIFIED: that this is the console's memory cache at work.
+//! A `GFILL` or `GCOPY` whose left edge is not on a 16-pixel boundary
+//! costs more on each row, the more the wider it is, and half that on an
+//! 8-pixel one (TEST69 and TEST70, most on a Switch 1). Where it draws
+//! costs nothing else. Changing sprites in turn costs more once there are
+//! more of them than 64, so the meter remembers the last 64 sprites
+//! changed. UNVERIFIED: that both are the console's memory at work, and
+//! where between 64 and 1000 sprites the second starts.
 //! Drawing sprites, layers and text screens happens in the frame job, which
 //! TPERF and TEST67 show costs a program nothing, so only the commands are
 //! charged.
@@ -181,17 +184,19 @@ pub(crate) struct Costs {
     /// `GPAINT`, and each pixel it fills.
     paint: u64,
     paint_px: u64,
-    /// Each row `GFILL` or `GCOPY` draws when it starts on another row
-    /// than the last of them did, by `GFILL`, blended `GFILL` and
-    /// `GCOPY`, and a sprite command for another sprite than the last
-    /// one. UNVERIFIED: the costs lie between TEST69's, which draws at
-    /// ten places in turn and changes 1000 sprites in order, and TPERF's,
-    /// which draws at random places, and TEST67's, which changes 1000
-    /// sprites at a time and finds next to nothing on top.
-    place_fill_row: u64,
-    place_alpha_row: u64,
-    place_copy_row: u64,
-    other_sprite: u64,
+    /// Each row of a `GFILL` whose left edge is not on a 16-pixel
+    /// boundary, 8, 32 and 128 pixels wide, with straight lines between
+    /// and past them, half that on an 8-pixel boundary; and the share of
+    /// it a blended `GFILL` and a `GCOPY` pay, in percent, `GCOPY` by
+    /// where it draws. UNVERIFIED: the widths `GCOPY` and blending were
+    /// not timed at, other than 32.
+    place: [u64; 3],
+    place_alpha_pct: u64,
+    place_copy_pct: u64,
+    /// A sprite command for a sprite not among the last 64 changed.
+    /// TEST70 finds SPOFS of 1, 10 and 64 sprites in turn costs the
+    /// same, TEST69 SPOFS over 1000 sprites in order more.
+    far_sprite: u64,
     /// `LFILTER` and `LMATRIX`.
     layer: u64,
     /// `EXEC`: the call, the file's reading included, and each character
@@ -280,12 +285,14 @@ const SWITCH2: Costs = Costs {
     // 16x16, all within 7%.
     paint: 33_500_000,
     paint_px: 7_531,
-    // TEST69 finds 2.5 ns a row for GFILL and 2.2 ns for GCOPY, TPERF
-    // (handheld) 10 and 7 ns, and no cost for blending.
-    place_fill_row: 4_000,
-    place_alpha_row: 0,
-    place_copy_row: 4_000,
-    other_sprite: 20_000,
+    // TEST70's GFILL 8, 32 and 128 pixels wide at x 16 and at x 17 and
+    // on, TEST69's and TEST70's GCOPY 32, and TEST69's blended GFILL 32,
+    // which costs no more.
+    place: [1_700, 1_200, 28_900],
+    place_alpha_pct: 0,
+    place_copy_pct: 200,
+    // TEST69's SPOFS over 1000 sprites needs none.
+    far_sprite: 0,
     layer: 8_000_000,
     // TEST69's EXEC of a 3-line file (0.24 and 0.52 ms) and of two of
     // 15343 characters, one of code (3.7 ms) and one of DATA strings
@@ -321,7 +328,8 @@ const SWITCH1: Costs = Costs {
     query: 131_200,
     rnd: 48_200,
     setter: 392_900,
-    spofs: 321_500,
+    // TEST67's and TEST69's SPOFS of one sprite.
+    spofs: 306_000,
     spscale: 280_200,
     spset: 383_500,
     spset_arg: 57_000,
@@ -363,13 +371,13 @@ const SWITCH1: Costs = Costs {
     char_px: 15_760,
     paint: 93_500_000,
     paint_px: 16_110,
-    // TEST69 finds 114 ns a row for GFILL, 21 ns blended and 75 ns for
-    // GCOPY, TPERF 143, 149 and 105 ns; and 99 ns a sprite for SPOFS
-    // over 1000 sprites, where TPERF needs about 450.
-    place_fill_row: 128_000,
-    place_alpha_row: 82_000,
-    place_copy_row: 90_000,
-    other_sprite: 150_000,
+    // As for the Switch 2: 130 ns a row of 32 pixels, 23 ns blended
+    // and 94 ns for GCOPY.
+    place: [6_400, 130_000, 188_500],
+    place_alpha_pct: 18,
+    place_copy_pct: 72,
+    // TEST69's SPOFS over 1000 sprites in order, and SPSET and SPCLR.
+    far_sprite: 150_000,
     layer: 5_000_000,
     // As for the Switch 2, from TEST69's files (1.0 and 1.8 ms, 10.3 ms
     // and 5.5 ms) and its EXEC of HGLIB.PRG.
@@ -396,10 +404,9 @@ pub struct Meter {
     /// time had got to when the last frame ended.
     frame_end: u64,
     busy_until: u64,
-    /// The page and first row the last `GFILL` or `GCOPY` drew on, and
-    /// the sprite the last sprite command was for.
-    last_rows: Cell<(usize, i64)>,
-    last_sprite: Cell<i64>,
+    /// The last sprites changed, each in the place its number's low six
+    /// bits give.
+    sprites_seen: [Cell<i16>; 64],
 }
 
 impl Meter {
@@ -415,8 +422,7 @@ impl Meter {
             start: 0,
             frame_end: FRAME_PS,
             busy_until: 0,
-            last_rows: Cell::new((usize::MAX, 0)),
-            last_sprite: Cell::new(-1),
+            sprites_seen: std::array::from_fn(|_| Cell::new(-1)),
         })
     }
 
@@ -515,16 +521,31 @@ impl Meter {
         self.host += c.loadg + pixels * c.loadg_px + bytes * c.loadg_byte;
     }
 
-    /// Whether a `GFILL` or `GCOPY` that starts at row `y` of `page`
-    /// starts on another row than the last one, which it now is.
-    fn moved_rows(&self, page: usize, y: i64) -> bool {
-        self.last_rows.replace((page, y)) != (page, y)
+    /// Whether a sprite command for sprite `id` is for one not among the
+    /// last 64 changed, which it now is.
+    fn far_sprite(&self, id: i64) -> bool {
+        let Ok(id) = i16::try_from(id) else {
+            return false;
+        };
+        id >= 0 && self.sprites_seen[id as usize & 63].replace(id) != id
     }
 
-    /// Whether a sprite command for sprite `id` is for another one than
-    /// the last, which it now is.
-    fn moved_sprite(&self, id: i64) -> bool {
-        self.last_sprite.replace(id) != id
+    /// What `rows` rows of a `GFILL` or `GCOPY` `w` pixels wide cost on
+    /// top for starting at column `x`, at `pct` percent of a `GFILL`'s.
+    fn placed(&self, x: i64, w: u64, rows: u64, pct: u64) -> u64 {
+        let halves = match x.rem_euclid(16) {
+            0 => return 0,
+            8 => 1,
+            _ => 2,
+        };
+        let [p8, p32, p128] = self.costs.place.map(|p| p as i64);
+        let w = w as i64;
+        let row = match w {
+            ..=8 => p8 * w / 8,
+            9..=32 => p8 + (p32 - p8) * (w - 8) / 24,
+            _ => p32 + (p128 - p32) * (w - 32) / 96,
+        };
+        row.max(0) as u64 * rows * halves / 2 * pct / 100
     }
 
     /// Charges the pixels a `GPAINT` filled.
@@ -628,10 +649,6 @@ impl Runtime {
             clip.y1.into(),
         );
         let page = clip_w * clip_h;
-        let page_rows = |y: i64, rows: u64, rate: u64| match meter.moved_rows(self.grp.target, y) {
-            true => rows * rate,
-            false => 0,
-        };
         // Commands for one sprite, given as the first argument.
         let sprite = match command {
             Spofs | Sprot | Spscale | Spcolor | Sphome | Spchr | Spvar | Sphide | Spshow
@@ -641,8 +658,8 @@ impl Runtime {
             Spclr => args.len() == 1,
             _ => false,
         };
-        let other = match sprite && meter.moved_sprite(int(args, 0)) {
-            true => c.other_sprite,
+        let other = match sprite && meter.far_sprite(int(args, 0)) {
+            true => c.far_sprite,
             false => 0,
         };
         let px = |n: u64, rate: u64| c.grp + n * rate;
@@ -708,14 +725,13 @@ impl Runtime {
                     c.setter + u64::from(w * h) * c.scroll_cell
                 }
                 Gfill => {
-                    let (rate, place) = match blends(args, 5) {
-                        true => (c.alpha_px, c.place_alpha_row),
-                        false => (c.fill_px, c.place_fill_row),
+                    let (rate, pct) = match blends(args, 5) {
+                        true => (c.alpha_px, c.place_alpha_pct),
+                        false => (c.fill_px, 100),
                     };
                     let (w, h) = size(int(args, 0), int(args, 1), int(args, 2), int(args, 3));
-                    let y = int(args, 1).min(int(args, 3)).max(clip.y0.into());
-                    let moved = if h > 0 { page_rows(y, h, place) } else { 0 };
-                    rect((w, h), rate) + moved
+                    let x = int(args, 0).min(int(args, 2)).max(clip.x0.into());
+                    rect((w, h), rate) + meter.placed(x, w, h, pct)
                 }
                 Gcls => rect((clip_w, clip_h), c.fill_px),
                 Gbox => {
@@ -757,8 +773,8 @@ impl Runtime {
                         c.copy_px
                     };
                     let (w, h) = (w.min(clip_w), h.min(clip_h));
-                    let moved = page_rows(int(args, at + 5), h, c.place_copy_row);
-                    c.copy + h * c.row + w * h * rate + moved
+                    let x = int(args, at + 4).max(clip.x0.into());
+                    c.copy + h * c.row + w * h * rate + meter.placed(x, w, h, c.place_copy_pct)
                 }
                 Gload | Gsave => {
                     let n = match args.len() {

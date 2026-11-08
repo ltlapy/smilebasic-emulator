@@ -171,18 +171,37 @@ fn spclr_of_a_range_costs_each_sprite() {
     assert!(one < 5.0, "{one} us");
 }
 
-/// Drawing on other rows than the last GFILL did costs each row on top:
-/// TEST69's 32x32 GFILL at ten places took 2.6 times one place on a
-/// Switch 1.
+/// A GFILL whose left edge is off a 16-pixel boundary costs more on each
+/// row, and half as much more on an 8-pixel one, as TEST70 finds on a
+/// Switch 1. Its row costs nothing.
 #[test]
-fn drawing_at_other_rows_costs_more() {
-    let source = "PERFBEGIN 0:FOR I=0 TO 99:GFILL 0,0,31,31,-1:NEXT:T=PERFEND(0)\n\
-                  PERFBEGIN 0:FOR I=0 TO 99:GFILL 0,I*2,31,I*2+31,-1:NEXT:?T;\" \";PERFEND(0)\n";
-    let (same, places) = pair(&run(Speed::Switch1, source));
+fn drawing_off_a_16_pixel_boundary_costs_more() {
+    let fill = |x: u32, y: &str| {
+        format!("PERFBEGIN 0:FOR I=0 TO 99:GFILL {x},{y},{x}+31,{y}+31,-1:NEXT:?PERFEND(0)\n")
+    };
+    let at = |x, y| passes(Speed::Switch1, &fill(x, y));
+    let (aligned, half, off) = (at(16, "I"), at(24, "I"), at(17, "I"));
     assert!(
-        places > same * 2.0 && places < same * 4.0,
-        "{same} us, {places} us"
+        off > aligned * 2.0 && (half - (aligned + off) / 2.0).abs() < 2.0,
+        "{aligned} us, {half} us, {off} us"
     );
+    assert_eq!(at(16, "0"), aligned);
+}
+
+/// Changing 64 sprites in turn costs what changing one does; changing
+/// 1024 in turn costs more on a Switch 1 (TEST69, TEST70).
+#[test]
+fn changing_many_sprites_in_turn_costs_more() {
+    let spofs = |mask: u32| {
+        format!(
+            "FOR I=0 TO 1023:SPSET I,0:NEXT:PERFBEGIN 0\n\
+             FOR I=0 TO 9999:SPOFS I AND {mask},I,0:NEXT:?PERFEND(0)\n"
+        )
+    };
+    let n = |mask| passes(Speed::Switch1, &spofs(mask));
+    let (one, few, many) = (n(0), n(63), n(1023));
+    assert!((few - one).abs() < 20.0, "{one} us, {few} us");
+    assert!(many > one + 1_000.0, "{one} us, {many} us");
 }
 
 /// Two numbers a program printed on one line.
