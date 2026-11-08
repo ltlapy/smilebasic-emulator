@@ -193,14 +193,12 @@ struct Frame {
     stack_to: usize,
 }
 
-/// A program slot's program with its variables and READ's place. The
-/// VM keeps the running slot's in its own fields, and the others here.
+/// A program slot's program with its variables. The VM keeps the running
+/// slot's in its own fields, and the others here.
 struct Unit {
     program: Rc<Compiled>,
     globals: Vec<Value>,
     declared: Vec<bool>,
-    data_pos: usize,
-    data_from: Option<Rc<Compiled>>,
 }
 
 impl Unit {
@@ -213,8 +211,6 @@ impl Unit {
             declared: vec![false; program.globals.len()],
             program: Rc::new(program),
             globals,
-            data_pos: 0,
-            data_from: None,
         }
     }
 }
@@ -256,6 +252,9 @@ struct ExecReturn {
     gosubs: usize,
     stack: usize,
     callbacks: usize,
+    /// READ's place when EXEC started the slot.
+    data_pos: usize,
+    data_from: Rc<Compiled>,
 }
 
 pub struct Vm {
@@ -276,11 +275,15 @@ pub struct Vm {
     /// Slot and address to return to, and how many READ places
     /// RESTORE "PUSH" had kept then.
     gosubs: Vec<(usize, usize, usize)>,
+    /// READ's place: one for the interpreter, kept when a call goes on
+    /// in another slot, so that a READ in another slot's COMMON DEF reads
+    /// the DATA of the program that called it.
     data_pos: usize,
-    /// Another slot's program, when RESTORE "n:@LABEL" sent READ there.
-    data_from: Option<Rc<Compiled>>,
+    /// The program whose DATA READ reads: the one RUN started, or the one
+    /// RESTORE last named.
+    data_from: Rc<Compiled>,
     /// READ places kept by RESTORE "PUSH".
-    data_kept: Vec<(usize, Option<Rc<Compiled>>)>,
+    data_kept: Vec<(usize, Rc<Compiled>)>,
     /// Whether a GOSUB or RESTORE "PUSH" has reached into the values' room.
     /// Until one has, commands need not look at the room; after, it stays
     /// set until ON BREAK empties the stack, and they look each time.
@@ -513,10 +516,12 @@ impl Vm {
             })
             .chain(program.constants.iter().map(constant_value))
             .collect();
+        let program = Rc::new(program);
         Vm {
             memory: memory::Estimate::default(),
             memory_checked: None,
-            program: Rc::new(program),
+            data_from: Rc::clone(&program),
+            program,
             pc: 0,
             stack: Vec::new(),
             globals,
@@ -525,7 +530,6 @@ impl Vm {
             spare_locals: Vec::new(),
             gosubs: Vec::new(),
             data_pos: 0,
-            data_from: None,
             data_kept: Vec::new(),
             values_room_reached: false,
             slot: 0,
@@ -1911,8 +1915,6 @@ impl Vm {
             program: Rc::clone(&self.program),
             globals: std::mem::take(&mut self.globals),
             declared: std::mem::take(&mut self.declared),
-            data_pos: self.data_pos,
-            data_from: self.data_from.take(),
         }
     }
 
@@ -1927,8 +1929,6 @@ impl Vm {
         self.program = unit.program;
         self.globals = unit.globals;
         self.declared = unit.declared;
-        self.data_pos = unit.data_pos;
-        self.data_from = unit.data_from;
         self.slot = slot;
         self.update_stops();
         host.entered_slot(slot, &self.program);
@@ -1971,6 +1971,7 @@ impl Vm {
         self.gosubs.truncate(back.gosubs);
         self.stack.truncate(back.stack);
         self.callbacks.truncate(back.callbacks);
+        (self.data_pos, self.data_from) = (back.data_pos, back.data_from);
         self.switch_to(back.slot, host);
         self.pc = back.pc;
         None
@@ -2044,6 +2045,8 @@ impl Vm {
                 gosubs: self.gosubs.len(),
                 stack: self.stack.len(),
                 callbacks: self.callbacks.len(),
+                data_pos: self.data_pos,
+                data_from: Rc::clone(&self.data_from),
             });
             let old = self.take_unit();
             self.park(self.slot, old);
@@ -2052,6 +2055,9 @@ impl Vm {
             }
         }
         self.put_unit(unit, slot, host);
+        // The program EXEC starts reads its own DATA, and the one that
+        // ran EXEC reads where it was once it goes on. UNVERIFIED.
+        (self.data_pos, self.data_from) = (0, Rc::clone(&self.program));
         self.pc = 0;
         // Back to the host, which may give the new code its breakpoints
         // before it runs.
@@ -2110,14 +2116,15 @@ impl Vm {
                 if !self.stack_has_full_room(RESTORE_COST) {
                     return Err(ErrorKind::StackOverflow.into());
                 }
-                self.data_kept.push((self.data_pos, self.data_from.clone()));
+                self.data_kept
+                    .push((self.data_pos, Rc::clone(&self.data_from)));
                 self.note_values_room();
             }
             "POP" => {
                 (self.data_pos, self.data_from) =
                     self.data_kept.pop().ok_or(ErrorKind::StackUnderflow)?;
             }
-            "BEGIN" => (self.data_pos, self.data_from) = (0, None),
+            "BEGIN" => (self.data_pos, self.data_from) = (0, Rc::clone(&self.program)),
             _ => {
                 let Some((slot, "BEGIN")) = s.split_once(':') else {
                     return Ok(false);
@@ -2125,18 +2132,15 @@ impl Vm {
                 let slot: usize = slot.trim().parse().map_err(|_| {
                     Error::with_detail(ErrorKind::IllegalFunctionCall, format!("slot {slot:?}"))
                 })?;
-                // UNVERIFIED: another slot's READ place is its own, used
-                // once the program goes on there.
-                match self.units.get_mut(slot) {
-                    _ if slot == self.slot => self.data_pos = 0,
-                    Some(Some(unit)) => unit.data_pos = 0,
-                    _ => {
-                        return Err(Error::with_detail(
-                            ErrorKind::OutOfRange,
-                            format!("slot {slot}"),
-                        ));
-                    }
-                }
+                // It moves the one READ place to the start of that slot's
+                // DATA. UNVERIFIED.
+                let Some(program) = self.program_in(slot) else {
+                    return Err(Error::with_detail(
+                        ErrorKind::OutOfRange,
+                        format!("slot {slot}"),
+                    ));
+                };
+                (self.data_pos, self.data_from) = (0, Rc::clone(program));
             }
         }
         Ok(true)
@@ -2431,9 +2435,7 @@ impl Vm {
                 }
                 host.set_data_pos(self.data_pos);
                 let results = host.call(*id, &self.stack[at..], *want);
-                if let Some(pos) = host.data_pos() {
-                    self.data_pos = pos;
-                }
+                self.data_moved(host);
                 let results = match results {
                     Ok(results) => results,
                     Err(e) => {
@@ -2732,7 +2734,9 @@ impl Vm {
                     }
                 }
             }
-            Op::Restore(pos) => (self.data_pos, self.data_from) = (*pos as usize, None),
+            Op::Restore(pos) => {
+                (self.data_pos, self.data_from) = (*pos as usize, Rc::clone(&self.program));
+            }
             Op::RestoreDyn => {
                 let target = self.pop();
                 if !self.restore_special(&target)? {
@@ -2748,17 +2752,15 @@ impl Vm {
                         || Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}"));
                     let from = match from {
                         Some(None) => return Err(undefined()),
-                        Some(Some(p)) => Some(p),
-                        None => None,
+                        Some(Some(p)) => p,
+                        None => Rc::clone(&self.program),
                     };
-                    let source = from.as_deref().unwrap_or(program);
-                    let pos = *source.data_labels.get(&name).ok_or_else(undefined)?;
+                    let pos = *from.data_labels.get(&name).ok_or_else(undefined)?;
                     (self.data_pos, self.data_from) = (pos as usize, from);
                 }
             }
             Op::Read => {
-                let source = self.data_from.as_deref().unwrap_or(program);
-                let item = source.data.get(self.data_pos).ok_or(ErrorKind::OutOfData)?;
+                let item = (self.data_from.data.get(self.data_pos)).ok_or(ErrorKind::OutOfData)?;
                 self.data_pos += 1;
                 self.stack.push(match item {
                     Literal::Int(n) => Value::Int(*n),
@@ -2878,12 +2880,28 @@ impl Vm {
                 let mut data = builtins::Data {
                     program,
                     pos: &mut self.data_pos,
+                    moved: false,
                 };
-                f(args, n.into(), &mut data).map_err(|e| builtin_error(e, b.name, args))?
+                let results = f(args, n.into(), &mut data);
+                if data.moved {
+                    self.data_from = Rc::clone(&self.program);
+                }
+                results.map_err(|e| builtin_error(e, b.name, args))?
             }
             _ => return Err(Error::new(ErrorKind::IllegalFunctionCall).of_command(b.name)),
         };
         self.push_results(results, want)
+    }
+
+    /// Takes READ's place after a host call. A command that read DATA
+    /// from a `"@label"` moved it, into this slot's program.
+    #[inline(always)]
+    fn data_moved(&mut self, host: &dyn Host) {
+        if let Some(pos) = host.data_pos()
+            && pos != self.data_pos
+        {
+            (self.data_pos, self.data_from) = (pos, Rc::clone(&self.program));
+        }
     }
 
     /// Returns false, leaving the stack alone, if the host asked for the
@@ -2900,9 +2918,7 @@ impl Vm {
         }
         host.set_data_pos(self.data_pos);
         let results = host.call(id, args, want);
-        if let Some(pos) = host.data_pos() {
-            self.data_pos = pos;
-        }
+        self.data_moved(host);
         let results = results.map_err(|e| e.in_args(args))?;
         if host.retry() {
             return Ok(false);

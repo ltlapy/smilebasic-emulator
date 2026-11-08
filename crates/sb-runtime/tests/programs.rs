@@ -319,6 +319,27 @@ fn other_slots_data_and_variables() {
 }
 
 #[test]
+fn one_read_place_across_slots() {
+    // A READ in another slot's COMMON DEF reads where the running
+    // program's READ is, and RESTORE "n:..." moves that one place.
+    let mut m = machine();
+    let slot1 = "END\n@BEGIN\nDATA 11,12,13\n@OTHER\nDATA 21,22,23\n\
+                 COMMON DEF R1()\nVAR X\nREAD X\nRETURN X\nEND";
+    m.set_slot(1, slot1.to_string());
+    run(&mut m, &["EXEC 1", "?R1()"]);
+    assert_eq!(tail(&m, 2), ["Out of DATA in 1:8", "OK"]);
+    run(
+        &mut m,
+        &[
+            "EXEC 1",
+            "RESTORE \"1:@OTHER\":READ A:B=R1():?A;B",
+            "RESTORE \"1:BEGIN\":B=R1():READ A:?B;A",
+        ],
+    );
+    assert_eq!(tail(&m, 3), ["2122", "1112", "OK"]);
+}
+
+#[test]
 fn exec_runs_other_slots() {
     let mut m = machine();
     m.set_slot(

@@ -22,6 +22,8 @@ pub enum Kind {
 pub struct Data<'a> {
     pub(crate) program: &'a Compiled,
     pub(crate) pos: &'a mut usize,
+    /// Whether a RESTORE has moved READ's place into `program`.
+    pub(crate) moved: bool,
 }
 
 impl Data<'_> {
@@ -34,6 +36,7 @@ impl Data<'_> {
             .get(&name)
             .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))?;
         *self.pos = *pos as usize;
+        self.moved = true;
         Ok(())
     }
 
