@@ -262,6 +262,8 @@ struct Parser {
     /// Each channel's `L` in ticks as the text sets it, for the dots after
     /// a note without a length; `None` after `L` with a variable.
     lengths: [Option<u32>; CHANNELS],
+    /// Each channel's `[` not yet closed.
+    repeats: [u32; CHANNELS],
 }
 
 /// Values a literal may take, checked as it is read.
@@ -640,8 +642,20 @@ impl Parser {
             'Q' => Cmd::Gate(self.num(0..=32)?),
             'K' if self.in_channel => Cmd::Key(self.num(-115..=115)?),
             'K' => Cmd::SongKey(self.num(-115..=115)?),
-            '[' => Cmd::RepeatStart,
-            ']' => Cmd::RepeatEnd(self.opt_num(0..=255)?.unwrap_or(Num::Lit(0))),
+            '[' => {
+                self.repeats[self.channel] += 1;
+                Cmd::RepeatStart
+            }
+            // A `]` with no `[` fails just after it, before its count:
+            // `C]0` gives 2.
+            ']' => {
+                let open = &mut self.repeats[self.channel];
+                if *open == 0 {
+                    return Err(self.end());
+                }
+                *open -= 1;
+                Cmd::RepeatEnd(self.opt_num(0..=255)?.unwrap_or(Num::Lit(0)))
+            }
             '$' => {
                 let n = match self.int() {
                     Some(n @ 0..=7) => n as u8,
@@ -760,27 +774,15 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
         in_channel: false,
         octaves: [4; CHANNELS],
         lengths: [Some(WHOLE / 4); CHANNELS],
+        repeats: [0; CHANNELS],
     };
     while p.at < p.text.len() {
         p.command()?;
         p.skip_space();
     }
     // Repeats must close within their channel.
-    for channel in &p.song.channels {
-        let mut depth = 0i32;
-        for cmd in channel {
-            match cmd {
-                Cmd::RepeatStart => depth += 1,
-                Cmd::RepeatEnd(_) => depth -= 1,
-                _ => {}
-            }
-            if depth < 0 {
-                return Err(p.end_of(p.text.len()));
-            }
-        }
-        if depth != 0 {
-            return Err(p.end_of(p.text.len()));
-        }
+    if p.repeats.iter().any(|&open| open > 0) {
+        return Err(p.end_of(p.text.len()));
     }
     Ok(p.song)
 }
@@ -1080,6 +1082,12 @@ mod tests {
         assert_eq!(parse("{NOPE}"), Err(0));
         assert_eq!(parse(":16C"), Err(0));
         assert!(parse("[[O4CEG]3<C2.]").is_ok());
+        // A `]` with no `[` fails just after it (TEST71).
+        assert_eq!(check("C]0"), Err(2));
+        assert_eq!(check("C]-"), Err(2));
+        assert_eq!(check("C]0D5"), Err(2));
+        assert_eq!(check("[C]0"), Ok(()));
+        assert_eq!(check(":1[C:0]"), Err(7));
     }
 
     #[test]
