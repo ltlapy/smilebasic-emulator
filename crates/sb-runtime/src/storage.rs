@@ -171,6 +171,25 @@ fn check_writable(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Writes a file of a project. When it replaces one, the old contents
+/// move to `backup` first, if given.
+fn write_with_backup(path: &Path, bytes: &[u8], backup: Option<&Path>) -> Result<()> {
+    // It could not be read back.
+    if bytes.len() as u64 > MAX_FILE {
+        return Err(too_large(path, bytes.len() as u64).into());
+    }
+    check_writable(path)?;
+    std::fs::create_dir_all(path.parent().expect("file in a project folder"))?;
+    // A link at the backup's name is replaced, not followed.
+    if let Some(backup) = backup
+        && is_real_file(path)
+    {
+        std::fs::rename(path, backup)?;
+    }
+    std::fs::write(path, bytes)?;
+    Ok(())
+}
+
 /// Writes a regular file, refusing a link in its place, which would carry
 /// the write to wherever it leads, even to a file not there yet.
 pub fn write_regular(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -525,22 +544,24 @@ impl Storage {
         bytes: &[u8],
         backup: Option<&str>,
     ) -> Result<()> {
-        let path = self.path(kind, name)?;
-        // It could not be read back.
-        if bytes.len() as u64 > MAX_FILE {
-            return Err(too_large(&path, bytes.len() as u64).into());
-        }
-        check_writable(&path)?;
-        std::fs::create_dir_all(path.parent().expect("file in a project folder"))?;
-        // A link at the backup's name is replaced, not followed.
-        if let Some(backup) = backup
-            && is_real_file(&path)
-            && name != backup
-        {
-            std::fs::rename(&path, self.path(kind, backup)?)?;
-        }
-        std::fs::write(path, bytes)?;
-        Ok(())
+        let backup = match backup {
+            Some(backup) if name != backup => Some(self.path(kind, backup)?),
+            _ => None,
+        };
+        write_with_backup(&self.path(kind, name)?, bytes, backup.as_deref())
+    }
+
+    /// [`Storage::write`] of a file named with a project, which need not
+    /// be the current one but must exist.
+    pub fn write_ref(&self, file: &FileRef, bytes: &[u8], backup: Option<&str>) -> Result<()> {
+        let backup = match backup {
+            Some(backup) if file.name != backup => Some(self.ref_path(&FileRef {
+                name: backup.to_string(),
+                ..file.clone()
+            })?),
+            _ => None,
+        };
+        write_with_backup(&self.ref_path(file)?, bytes, backup.as_deref())
     }
 
     /// A file of the current project's own, outside the typed files (whose

@@ -133,10 +133,12 @@ impl Runtime {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
                 program_type(&spec)?;
-                if let Ok((kind, name)) = parse_file_name(&spec, FileKind::Txt) {
-                    let file = format!("{}:{name}", kind.name());
+                self.refuse_project_in_main(&spec)?;
+                if let Ok(file) = self.write_name(&spec, FileKind::Txt) {
+                    let exists = self.storage.exists_ref(&file);
+                    let file = file.label();
                     let mut details = self.details(&file, None);
-                    if self.storage.exists(kind, &name) {
+                    if exists {
                         details.push(String::new());
                         details.push("The file there now will be replaced.".to_string());
                     }
@@ -159,8 +161,8 @@ impl Runtime {
             }
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
-                self.refuse_project(&spec).map_err(|e| e.of_arg(0))?;
-                if let Some(file) = self.existing_read(&spec) {
+                refuse_project(&spec).map_err(|e| e.of_arg(0))?;
+                if let Some(file) = self.existing(&spec) {
                     let action = FileAction {
                         title: "Delete file".to_string(),
                         summary: "Delete this file.".to_string(),
@@ -174,21 +176,18 @@ impl Runtime {
                         return Ok(vec![]);
                     }
                 }
-                // Backups (`@BACKUP.PRG`) can be deleted, but only in the
-                // current project.
-                let outcome =
-                    self.read_name(&spec, FileKind::Txt)
-                        .and_then(|file| match file.project {
-                            None => self.storage.delete(file.kind, &file.name),
-                            Some(_) => Err(StorageError::BadName(spec.clone())),
-                        });
+                // Backups (`@BACKUP.PRG`) can be deleted too.
+                let outcome = parse_file_name(&spec, FileKind::Txt)
+                    .and_then(|(kind, name)| self.storage.delete(kind, &name));
                 self.finish("DELETE", outcome);
                 Ok(vec![])
             }
             (Command::Rename, Want::Outs(0), 2) => {
-                let (from, to) = (str_arg(&args[0])?, str_arg(&args[1])?);
-                // UNVERIFIED: that a new name with a project gets no error.
-                self.refuse_project(&from).map_err(|e| e.of_arg(0))?;
+                // The first name is checked before the second is read.
+                let from = str_arg(&args[0])?;
+                refuse_project(&from).map_err(|e| e.of_arg(0))?;
+                let to = str_arg(&args[1])?;
+                refuse_project(&to).map_err(|e| e.of_arg(1))?;
                 if let Some(file) = self.existing(&from) {
                     let action = FileAction {
                         title: "Rename file".to_string(),
@@ -370,29 +369,25 @@ impl Runtime {
         Ok(file)
     }
 
-    /// A main program's SAVEV, RENAME and DELETE may not name a project,
-    /// not even its own or the workspace's `/NAME`: Can't access other
-    /// project in this mode. UNVERIFIED: that a subprogram's may.
-    pub(crate) fn refuse_project(&self, spec: &str) -> Result<()> {
-        let named = || parse_read_name(spec, FileKind::Txt).is_ok_and(|f| f.project.is_some());
-        if !self.direct && self.env_type == 0 && named() {
+    /// A main program's SAVE, SAVEV and SAVEG may not name a project, not
+    /// even its own or the workspace's `/NAME`: Can't access other project
+    /// in this mode. A subprogram and the prompt write to any project.
+    pub(crate) fn refuse_project_in_main(&self, spec: &str) -> Result<()> {
+        if !self.direct && self.env_type == 0 && has_project(spec) {
             return Err(ErrorKind::CantAccessOtherProject.into());
         }
         Ok(())
     }
 
-    /// A file named for writing, in the current project, which may be
-    /// named: `PROJECT/NAME`, or `/NAME` in the workspace. UNVERIFIED: that
-    /// another project's name is refused in direct mode.
-    pub(crate) fn write_name(
-        &self,
-        spec: &str,
-        default: FileKind,
-    ) -> storage::Result<(FileKind, String)> {
-        let file = parse_read_name(spec, default)?;
-        match file.project {
-            Some(p) if p != self.storage.project() => Err(StorageError::BadName(spec.to_string())),
-            _ => Ok((file.kind, file.name)),
+    /// A file named for writing, in the current project or, named with
+    /// its project, in another one, which must exist. SmileBASIC 4's own
+    /// `#` projects take no files: writing one fails, where SmileBASIC 4
+    /// gives an error of its own (see docs/sb4-pitfalls.md).
+    pub(crate) fn write_name(&self, spec: &str, default: FileKind) -> storage::Result<FileRef> {
+        let file = self.read_name(spec, default)?;
+        match &file.project {
+            Some(p) if p.starts_with('#') => Err(StorageError::BadName(spec.to_string())),
+            _ => Ok(file),
         }
     }
 
@@ -517,21 +512,17 @@ impl Runtime {
     }
 
     fn save(&mut self, spec: &str, slot: usize) -> storage::Result<()> {
-        let (kind, name) = parse_file_name(spec, FileKind::Txt)?;
-        if kind != FileKind::Txt {
-            return Err(StorageError::BadKind(kind.name().to_string()));
+        let file = self.write_name(spec, FileKind::Txt)?;
+        if file.kind != FileKind::Txt {
+            return Err(StorageError::BadKind(file.kind.name().to_string()));
         }
         let text = match self.settings.half_width_on_save {
             true => half_width(&self.slots[slot]),
             false => self.slots[slot].clone(),
         };
-        self.storage.write(
-            kind,
-            &name,
-            &sb_core::wtf8::encode(&text),
-            Some(storage::BACKUP_NAME),
-        )?;
-        self.slot_names[slot] = name;
+        let bytes = sb_core::wtf8::encode(&text);
+        (self.storage).write_ref(&file, &bytes, Some(storage::BACKUP_NAME))?;
+        self.slot_names[slot] = file.name;
         self.slot_modified[slot] = false;
         Ok(())
     }
@@ -570,6 +561,21 @@ impl Runtime {
             .into_iter()
             .map(|(k, name)| format!("{}:{name}", k.name()))
             .collect())
+    }
+}
+
+/// Whether a file name has a project part: another project's, the
+/// current one's own, or the workspace's `/NAME`.
+fn has_project(spec: &str) -> bool {
+    parse_read_name(spec, FileKind::Txt).is_ok_and(|f| f.project.is_some())
+}
+
+/// RENAME and DELETE take no name with a project part, in a program, a
+/// subprogram or at the prompt: Can't access other project in this mode.
+fn refuse_project(spec: &str) -> Result<()> {
+    match has_project(spec) {
+        true => Err(ErrorKind::CantAccessOtherProject.into()),
+        false => Ok(()),
     }
 }
 

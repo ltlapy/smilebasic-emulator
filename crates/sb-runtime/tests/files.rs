@@ -1097,19 +1097,30 @@ fn programs_write_no_file_named_with_a_project() {
             (format!("SAVEV \"TXT:{own}X\",\"1\""), "SAVEV"),
             ("SAVEV \"TXT:GAME/X\",\"1\"".to_string(), "SAVEV"),
             ("SAVEV \"DAT:/X\",A%".to_string(), "SAVEV"),
+            (format!("SAVE \"TXT:{own}X\",1"), "SAVE"),
+            ("SAVE \"GAME/X\",1".to_string(), "SAVE"),
+            (format!("SAVEG \"{own}X\",0"), "SAVEG"),
+            ("SAVEG \"JPG:GAME/X\",0".to_string(), "SAVEG"),
             (format!("RENAME \"TXT:{own}A\",\"B\""), "RENAME:1"),
+            (format!("RENAME \"TXT:A\",\"{own}B\""), "RENAME:2"),
+            // The first name is checked first.
+            (format!("RENAME \"TXT:{own}A\",\"/B\""), "RENAME:1"),
             (format!("DELETE \"TXT:{own}A\""), "DELETE:1"),
         ] {
             m.set_slot(0, format!("DIM A%[1]\n{source}"));
             enter(&mut m, "run");
             let message = format!("Can't access other project in this mode in 0:2({command})");
-            let arg = command.contains(':').then_some(0);
+            let arg = command.ends_with(":1").then_some(0);
+            let arg = arg.or(command.ends_with(":2").then_some(1));
             assert_eq!(program_error(&mut m), (message, 74, arg), "{source}");
         }
     }
     assert!(workspace.join("TA").is_file());
-    assert!(!workspace.join("TB").exists() && !workspace.join("TX").exists());
-    assert!(!dir.0.join("GAME").join("TX").exists());
+    for project in [&workspace, &dir.0.join("GAME")] {
+        for file in ["TB", "TX", "GX", "JX"] {
+            assert!(!project.join(file).exists(), "{file}");
+        }
+    }
 
     m.set_slot(0, "EXEC \"/A\",1\n?\"PAST\"".to_string());
     enter(&mut m, "run");
@@ -1132,11 +1143,89 @@ fn programs_write_no_file_named_with_a_project() {
     enter(&mut m, "savev \"txt:game/x\",\"1\":?result()");
     assert_eq!(tail(&m, 2), ["1", "OK"]);
     assert!(dir.0.join("GAME").join("TX").is_file());
-    // Not yet seen on hardware: another project's name, the workspace's
-    // here, at the prompt.
+    // Another project's name, the workspace's here, at the prompt.
     enter(&mut m, "savev \"txt:/y\",\"1\":?result()");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    assert!(workspace.join("TY").is_file());
+}
+
+/// SAVE, SAVEV and SAVEG at the prompt and in a subprogram write to any
+/// project named, which must exist, and keep a backup there.
+#[test]
+fn the_prompt_and_subprograms_save_in_any_project() {
+    let dir = TempDir::new("save-projects");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("GAME").unwrap();
+    let (workspace, game) = (dir.0.join("@WORKSPACE"), dir.0.join("GAME"));
+    m.set_slot(1, "?1".to_string());
+    enter(
+        &mut m,
+        "save \"game/p\",1:a=result():save \"txt:game/p\",1:savev \"txt:game/v\",\"1\"\
+         :b=result():saveg \"game/g\",0,0,0,4,4:?a;b;result()",
+    );
+    assert_eq!(tail(&m, 2), ["111", "OK"]);
+    for file in ["TP", "T@BACKUP.PRG", "TV", "GG"] {
+        assert!(game.join(file).is_file(), "{file}");
+    }
+    enter(&mut m, "save \"none/p\",1:?result()");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
-    assert!(!workspace.join("TY").exists());
+    assert!(!dir.0.join("NONE").exists());
+
+    // The subprogram runs in project GAME and saves in the workspace.
+    enter(&mut m, "project \"game\"");
+    m.set_slot(
+        1,
+        "SAVE \"/P\",1:SAVEV \"TXT:/V\",\"1\":SAVEG \"JPG:/G\",0,0,0,4,4\nEND".to_string(),
+    );
+    enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+    for _ in 0..10 {
+        m.frame();
+    }
+    assert!(m.take_program_error().is_none());
+    for file in ["TP", "TV", "JG"] {
+        assert!(workspace.join(file).is_file(), "{file}");
+    }
+}
+
+/// Runs a direct-mode line on a clear console, and gives what it printed
+/// after itself, put together again from the rows it wraps on.
+fn direct_error(m: &mut Machine, line: &str) -> String {
+    enter(m, "cls");
+    enter(m, line);
+    let rows = rows(m);
+    // CLS's OK, the line, what it printed, and OK.
+    let text = rows[1..rows.len() - 1].concat();
+    assert_eq!(rows.last().map(String::as_str), Some("OK"));
+    let echo = line.to_ascii_uppercase();
+    let printed = text.strip_prefix(&echo);
+    printed.unwrap_or_else(|| panic!("{text:?}")).to_string()
+}
+
+/// RENAME and DELETE refuse a name with a project at the prompt and in a
+/// subprogram too.
+#[test]
+fn rename_and_delete_refuse_projects_everywhere() {
+    let dir = TempDir::new("rename-projects");
+    let mut m = machine(&dir);
+    enter(&mut m, "savev \"txt:a\",\"1\"");
+    for (line, command) in [
+        ("rename \"txt:/a\",\"b\"", "RENAME:1"),
+        ("rename \"a\",\"/b\"", "RENAME:2"),
+        ("delete \"/a\"", "DELETE:1"),
+    ] {
+        let message = format!("Can't access other project in this mode in 1({command})");
+        assert_eq!(direct_error(&mut m, line), message, "{line}");
+    }
+    m.set_slot(1, "DELETE \"TXT:/A\"".to_string());
+    enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+    for _ in 0..10 {
+        m.frame();
+    }
+    let (e, sub) = m.take_program_error().expect("an error");
+    assert!(sub);
+    let message = "Can't access other project in this mode in 0:1(DELETE:1)";
+    assert_eq!((e.to_string().as_str(), e.kind.code()), (message, 74));
+    assert!(dir.0.join("@WORKSPACE").join("TA").is_file());
 }
 
 /// TEST69: LOADV of a DAT file into a string, and RESULT 0 after CHKFILE

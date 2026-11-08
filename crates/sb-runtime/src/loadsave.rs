@@ -18,7 +18,7 @@ use crate::graphics::{GRP_SIZE, PAGES};
 use crate::image::{self, Image};
 use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
 use crate::sbfile::{self, Data, DataValues};
-use crate::storage::{self, FileKind, StorageError, parse_file_name};
+use crate::storage::{self, FileKind, FileRef, StorageError};
 
 /// JPEG quality when SAVEG is not given one.
 const JPEG_QUALITY: i32 = 60;
@@ -269,25 +269,25 @@ impl Runtime {
             }
             (Command::Savev, Want::Outs(0), [spec, value]) => {
                 let spec = str_arg(spec)?;
-                self.refuse_project(&spec)?;
+                self.refuse_project_in_main(&spec)?;
                 // The type cannot be left out.
                 let file = match spec.contains(':') {
                     true => self.write_name(&spec, FileKind::Txt),
                     false => Err(StorageError::BadKind(String::new())),
                 };
-                let bytes = match (&file, value) {
-                    (Ok((FileKind::Txt, _)), Value::Str(s)) => {
+                let bytes = match (file.as_ref().map(|f| f.kind), value) {
+                    (Ok(FileKind::Txt), Value::Str(s)) => {
                         String::from_utf16_lossy(&s.borrow()).into_bytes()
                     }
                     // The bare PCBN array, without SmileBASIC 4's container.
-                    (Ok((FileKind::Dat, _)), Value::Array(a)) => {
+                    (Ok(FileKind::Dat), Value::Array(a)) => {
                         sbfile::data_body(&array_data(&a.borrow()))
                     }
-                    (Ok((FileKind::Grp, _)), Value::Array(a)) => {
+                    (Ok(FileKind::Grp), Value::Array(a)) => {
                         image::encode_png(&array_image(&a.borrow())?)
                             .map_err(|e| Error::with_detail(ErrorKind::IllegalFileFormat, e))?
                     }
-                    (Ok((FileKind::Txt | FileKind::Dat | FileKind::Grp, _)), _) => {
+                    (Ok(FileKind::Txt | FileKind::Dat | FileKind::Grp), _) => {
                         return Err(ErrorKind::TypeMismatch.into());
                     }
                     _ => Vec::new(),
@@ -296,9 +296,9 @@ impl Runtime {
                 if self.ask_save(&self.write_name(&spec, FileKind::Txt)) {
                     return Ok(vec![]);
                 }
-                let outcome = file.and_then(|(kind, name)| match kind {
-                    FileKind::Jpg => Err(StorageError::BadKind(kind.name().to_string())),
-                    _ => (self.storage).write(kind, &name, &bytes, Some(kind.backup_name())),
+                let outcome = file.and_then(|file| match file.kind {
+                    FileKind::Jpg => Err(StorageError::BadKind(file.kind.name().to_string())),
+                    kind => (self.storage).write_ref(&file, &bytes, Some(kind.backup_name())),
                 });
                 self.finish("SAVEV", outcome);
                 Ok(vec![])
@@ -342,8 +342,9 @@ impl Runtime {
             (Command::Saveg, Want::Outs(0), [spec, page, rest @ ..]) => {
                 let spec = str_arg(spec)?;
                 let page = page_arg(page)?;
-                let file = parse_file_name(&spec, FileKind::Grp);
-                let jpeg = matches!(file, Ok((FileKind::Jpg, _)));
+                self.refuse_project_in_main(&spec)?;
+                let file = self.write_name(&spec, FileKind::Grp);
+                let jpeg = matches!(&file, Ok(f) if f.kind == FileKind::Jpg);
                 let (rect, quality) = match (rest, jpeg) {
                     ([], _) => ((0, 0, GRP_SIZE, GRP_SIZE), None),
                     ([q], true) => ((0, 0, GRP_SIZE, GRP_SIZE), Some(q)),
@@ -364,16 +365,15 @@ impl Runtime {
                     height: rect.3 as usize,
                     pixels: self.grp.save_rect(page, rect),
                 };
-                let outcome = file.and_then(|(kind, name)| {
-                    let bytes = match kind {
+                let outcome = file.and_then(|file| {
+                    let bytes = match file.kind {
                         FileKind::Grp => image::encode_png(&image).map_err(bad_file)?,
                         FileKind::Jpg => {
                             image::encode_jpeg(&image, quality as u8).map_err(bad_file)?
                         }
-                        _ => return Err(StorageError::BadKind(kind.name().to_string())),
+                        kind => return Err(StorageError::BadKind(kind.name().to_string())),
                     };
-                    self.storage
-                        .write(kind, &name, &bytes, Some(kind.backup_name()))
+                    (self.storage).write_ref(&file, &bytes, Some(file.kind.backup_name()))
                 });
                 self.finish("SAVEG", outcome);
                 Ok(vec![])
@@ -453,13 +453,14 @@ impl Runtime {
     }
 
     /// Asks before writing a file, as SAVE does.
-    fn ask_save(&mut self, file: &storage::Result<(FileKind, String)>) -> bool {
-        let Ok((kind, name)) = file else {
+    fn ask_save(&mut self, file: &storage::Result<FileRef>) -> bool {
+        let Ok(file) = file else {
             return false;
         };
-        let (kind, file) = (*kind, format!("{}:{name}", kind.name()));
+        let exists = self.storage.exists_ref(file);
+        let file = file.label();
         let mut details = self.details(&file, None);
-        if self.storage.exists(kind, name) {
+        if exists {
             details.push(String::new());
             details.push("The file there now will be replaced.".to_string());
         }
