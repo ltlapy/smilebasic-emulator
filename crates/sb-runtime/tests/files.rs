@@ -223,7 +223,24 @@ fn projects_rename_delete() {
     assert_eq!(tail(&m, 2), ["MYGAME", "OK"]);
     enter(&mut m, "save \"a\":rename \"a\",\"b\":files \"txt:\"");
     assert_eq!(tail(&m, 2), ["TXT:B", "OK"]);
-    enter(&mut m, "delete \"b\":f$=files():?len(f$)");
+    // Another type for the second name is File type mismatch, before the
+    // file is looked for; no type takes the first's.
+    m.set_slot(0, "A=1\nRENAME \"TXT:B\",\"DAT:C\"".to_string());
+    enter(&mut m, "run");
+    let (e, _) = m.take_program_error().expect("an error");
+    let message = "File type mismatch in 0:2(RENAME) (TXT file to DAT)";
+    assert_eq!(
+        (e.to_string().as_str(), e.kind.code(), e.arg),
+        (message, 77, None)
+    );
+    enter(&mut m, "rename \"txt:none\",\"dat:c\"");
+    assert_eq!(
+        tail(&m, 2)[0],
+        "File type mismatch (RENAME) (TXT file to DAT)"
+    );
+    enter(&mut m, "rename \"txt:b\",\"c\":files \"txt:\"");
+    assert_eq!(tail(&m, 2), ["TXT:C", "OK"]);
+    enter(&mut m, "delete \"c\":f$=files():?len(f$)");
     assert_eq!(tail(&m, 2), ["0", "OK"]);
     // Projects end in `/`, after the workspace's own `/`.
     enter(&mut m, "files \"//\"");

@@ -188,6 +188,7 @@ impl Runtime {
                 refuse_project(&from).map_err(|e| e.of_arg(0))?;
                 let to = str_arg(&args[1])?;
                 refuse_project(&to).map_err(|e| e.of_arg(1))?;
+                same_type(&from, &to)?;
                 if let Some(file) = self.existing(&from) {
                     let action = FileAction {
                         title: "Rename file".to_string(),
@@ -576,6 +577,22 @@ fn refuse_project(spec: &str) -> Result<()> {
     match has_project(spec) {
         true => Err(ErrorKind::CantAccessOtherProject.into()),
         false => Ok(()),
+    }
+}
+
+/// RENAME keeps a file's type: a second name of another type is File
+/// type mismatch, before anything is asked. A second name without a
+/// type takes the first's.
+fn same_type(from: &str, to: &str) -> Result<()> {
+    let Ok((kind, _)) = parse_file_name(from, FileKind::Txt) else {
+        return Ok(());
+    };
+    match parse_file_name(to, kind) {
+        Ok((to_kind, _)) if to_kind != kind => {
+            let detail = format!("{} file to {}", kind.name(), to_kind.name());
+            Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
+        }
+        _ => Ok(()),
     }
 }
 
