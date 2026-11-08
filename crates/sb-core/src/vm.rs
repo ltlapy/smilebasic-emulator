@@ -70,6 +70,64 @@ pub struct Work {
     pub element_tests: u64,
     /// Calls of `CHR$`, counted only for a host that hears of the work.
     pub chr_calls: u64,
+    /// The calls of each builtin of [`COSTLY`], counted only for a host
+    /// that hears of the work, as the rest of these.
+    pub costly_calls: [u64; COSTLY.len()],
+    /// The characters of the strings joins made.
+    pub join_chars: u64,
+    /// Comparisons and other operators but `+` with a string on the left.
+    pub str_compares: u64,
+}
+
+/// Builtins that cost SmileBASIC 4 more than a call, timed alone by
+/// TEST71 on both consoles. [`Work::costly_calls`] counts their calls in
+/// this order.
+pub const COSTLY: [&str; 6] = ["STR$", "FORMAT$", "VAL", "INSTR", "HEX$", "MID$"];
+
+/// Builtins that cost SmileBASIC 4 no more than reading a variable, so
+/// that it seems to run them without a call (TEST69 to TEST71, both
+/// consoles). MIN and MAX of two count among them too. TEST71 times SIN,
+/// SQR and LEN as cheap as these, but TPERF's VREAL and VSTR keep their
+/// time only with them charged as calls. UNVERIFIED: that MAX of two
+/// costs what MIN of two does.
+const FREE: [&str; 4] = ["ASC", "INT", "FLOOR", "ABS"];
+
+/// How the work of a builtin's call is counted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Charge {
+    Call,
+    Free,
+    FreeWithTwo,
+    Chr,
+    Costly(u8),
+}
+
+/// How a call of each builtin is counted, by its number. Made once, so
+/// that a run that reports its work compares no names.
+fn charges() -> &'static [Charge] {
+    static TABLE: std::sync::OnceLock<Vec<Charge>> = std::sync::OnceLock::new();
+    fn set(table: &mut Vec<Charge>, name: &str, charge: Charge) {
+        if let Some(id) = builtins::lookup(name, Form::Function) {
+            let i = usize::from(id);
+            if table.len() <= i {
+                table.resize(i + 1, Charge::Call);
+            }
+            table[i] = charge;
+        }
+    }
+    TABLE.get_or_init(|| {
+        let mut t = Vec::new();
+        for name in FREE {
+            set(&mut t, name, Charge::Free);
+        }
+        set(&mut t, "MIN", Charge::FreeWithTwo);
+        set(&mut t, "MAX", Charge::FreeWithTwo);
+        set(&mut t, "CHR$", Charge::Chr);
+        for (i, name) in COSTLY.iter().enumerate() {
+            set(&mut t, name, Charge::Costly(i as u8));
+        }
+        t
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,8 +377,13 @@ pub struct Vm {
     for_tests: u64,
     element_tests: u64,
     chr_calls: u64,
-    /// Whether the host hears of [`Vm::work`] before each of its calls.
+    costly_calls: [u64; COSTLY.len()],
+    join_chars: u64,
+    str_compares: u64,
+    /// Whether the host hears of [`Vm::work`] before each of its calls,
+    /// and then [`charges`].
     report_work: bool,
+    charges: &'static [Charge],
     /// ON BREAK GOTO's slot and address, until the + button jumps there.
     on_break: Option<(usize, usize)>,
     /// After a jump out of INPUT, the press is acted on again once a
@@ -554,6 +617,10 @@ impl Vm {
             for_tests: 0,
             element_tests: 0,
             chr_calls: 0,
+            costly_calls: [0; COSTLY.len()],
+            join_chars: 0,
+            str_compares: 0,
+            charges: &[],
             report_work: false,
             on_break: None,
             break_pending: None,
@@ -1016,6 +1083,9 @@ impl Vm {
     /// call, for hosts that time it as a console would take.
     pub fn report_work(&mut self, on: bool) {
         self.report_work = on;
+        if on && self.charges.is_empty() {
+            self.charges = charges();
+        }
     }
 
     /// The work done so far, for hosts that stand for a console's speed.
@@ -1035,6 +1105,9 @@ impl Vm {
             for_tests: self.for_tests,
             element_tests: self.element_tests,
             chr_calls: self.chr_calls,
+            costly_calls: self.costly_calls,
+            join_chars: self.join_chars,
+            str_compares: self.str_compares,
         }
     }
 
@@ -1161,6 +1234,7 @@ impl Vm {
                 self.joins += 1;
                 let added = r.borrow().clone();
                 let mut l = l.borrow_mut();
+                self.join_chars += (l.len() + added.len()) as u64;
                 memory::take(memory::string_bytes(l.len() + added.len()))?;
                 l.extend_from_slice(&added);
             }
@@ -2286,7 +2360,17 @@ impl Vm {
                     .stack
                     .last_mut()
                     .expect("compiler keeps the stack balanced");
-                self.joins += u64::from(matches!(lhs, Value::Str(_)));
+                if let Value::Str(l) = &*lhs {
+                    match op {
+                        BinaryOp::Add => {
+                            self.joins += 1;
+                            if let Value::Str(r) = &rhs {
+                                self.join_chars += (l.borrow().len() + r.borrow().len()) as u64;
+                            }
+                        }
+                        _ => self.str_compares += 1,
+                    }
+                }
                 match ops::binary(*op, lhs, &rhs) {
                     Ok(v) => *lhs = v,
                     Err(e) => return Err(self.run_again_with(e, rhs)),
@@ -2391,16 +2475,30 @@ impl Vm {
             }
             Op::CallBuiltin { id, argc, want } => {
                 let b = builtins::get(*id);
-                // ASC costs SmileBASIC 4 no more than reading a variable
-                // (TEST69, TEST70), and CHR$ more than a call (TEST68,
-                // TEST69). UNVERIFIED: that other builtins cost what the
+                // CHR$ costs more than a call (TEST68, TEST69).
+                // UNVERIFIED: that the builtins not timed cost what the
                 // meter charges a call.
-                let asc = self.report_work && b.name == "ASC";
-                if !asc {
+                let charge = match self.report_work {
+                    true => self.charges.get(usize::from(*id)).copied(),
+                    false => None,
+                };
+                let call = match charge {
+                    None | Some(Charge::Call) => true,
+                    Some(Charge::Free) => false,
+                    Some(Charge::FreeWithTwo) => *argc != 2,
+                    Some(Charge::Chr) => {
+                        self.chr_calls += 1;
+                        true
+                    }
+                    Some(Charge::Costly(i)) => {
+                        self.costly_calls[usize::from(i)] += 1;
+                        true
+                    }
+                };
+                if call {
                     self.builtin_calls += 1;
                     self.builtin_args += u64::from(*argc);
                 }
-                self.chr_calls += u64::from(self.report_work && b.name == "CHR$");
                 let argc = usize::from(*argc);
                 if let (Kind::Function(f), Want::Value, true) = (b.kind, *want, b.accepts(argc)) {
                     // Most calls: no need to take the arguments off the stack

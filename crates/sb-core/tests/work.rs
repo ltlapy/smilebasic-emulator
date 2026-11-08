@@ -33,10 +33,10 @@ fn a_reported_run_counts_its_work() {
     let (work, out) = run(PROGRAM, true);
     assert_eq!(out, "6ABC4\n");
     assert_eq!(work.def_calls, 4);
-    // LEN four times, MAX once, and ON's jump as a call with no
-    // arguments.
-    assert_eq!(work.builtin_calls, 6);
-    assert_eq!(work.builtin_args, 6);
+    // LEN four times and ON's jump as a call with no arguments. MAX of
+    // two counts as no call.
+    assert_eq!(work.builtin_calls, 5);
+    assert_eq!(work.builtin_args, 4);
     // A%[I] written four times and read once, and M[1,2] written.
     assert_eq!(work.elements, 6);
     assert_eq!(work.extra_indices, 1);
@@ -103,4 +103,30 @@ fn fill_counts_its_elements() {
     assert_eq!(out, "2\n");
     assert_eq!(work.filled, 100 + 10 + 20);
     assert_eq!(run(source, false).0.filled, 0);
+}
+
+/// The builtins that cost more than a call are counted apart, and those
+/// that cost none, INT and MIN of two among them, are not calls.
+#[test]
+fn builtins_count_by_what_they_cost() {
+    let source = "X=2.5:A$=STR$(X)+STR$(1):B=VAL(\"3\"):C=INT(X)+MIN(X,1)+MAX(X,1,2)\n?A$;B;C\n";
+    let (work, out) = run(source, true);
+    assert_eq!(out, "2.5135.5\n");
+    let i = |name| sb_core::vm::COSTLY.iter().position(|&n| n == name).unwrap();
+    assert_eq!(work.costly_calls[i("STR$")], 2);
+    assert_eq!(work.costly_calls[i("VAL")], 1);
+    // STR$ twice, VAL and MAX of three.
+    assert_eq!(work.builtin_calls, 4);
+}
+
+/// A join counts the characters of what it makes, and comparing strings
+/// is no join.
+#[test]
+fn joins_count_their_characters() {
+    let source = "S$=\"AB\":T$=S$+\"CDE\"\nIF S$==T$ THEN S$=\"\"\n?T$;S$\n";
+    let (work, out) = run(source, true);
+    assert_eq!(out, "ABCDEAB\n");
+    assert_eq!(work.joins, 1);
+    assert_eq!(work.join_chars, 5);
+    assert_eq!(work.str_compares, 1);
 }
