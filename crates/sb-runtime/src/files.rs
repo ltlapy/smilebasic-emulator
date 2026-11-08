@@ -120,10 +120,9 @@ impl Runtime {
             (Command::Chkfile, Want::Value, 1) => {
                 let found = parse_read_name(&str_arg(&args[0])?, FileKind::Txt)
                     .is_ok_and(|file| self.storage.exists_ref(&file));
-                // CHKFILE of a missing file leaves RESULT 0. UNVERIFIED:
-                // that it is CHKFILE that sets it, and to 1 for a file
-                // that is there.
-                self.result = i32::from(found);
+                // UNVERIFIED: that CHKFILE sets RESULT to 0 rather than
+                // leaving it as it was.
+                self.result = 0;
                 Ok(vec![Value::Int(i32::from(found))])
             }
             (Command::Load, Want::Outs(0), 1 | 2) => {

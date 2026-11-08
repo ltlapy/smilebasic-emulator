@@ -1138,6 +1138,29 @@ fn programs_write_no_file_named_with_a_project() {
     assert!(!workspace.join("TY").exists());
 }
 
+/// TEST69: LOADV of a DAT file into a string, and CHKFILE leaving RESULT
+/// 0 for a file that is there.
+#[test]
+fn loadv_into_a_string_and_chkfile_result() {
+    let dir = TempDir::new("test69-loadv");
+    let mut m = machine(&dir);
+    enter(&mut m, "dim a%[3]:savev \"dat:d\",a%");
+    m.set_slot(0, "S$=\"\"\nLOADV \"DAT:D\",S$".to_string());
+    enter(&mut m, "run");
+    let message = "Type mismatch in 0:2(LOADV:2)".to_string();
+    assert_eq!(program_error(&mut m), (message, 8, Some(1)));
+    m.set_slot(0, "S$=LOADV(\"DAT:D\"):?LEN(S$);RESULT()".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["31", "OK"]);
+
+    m.set_slot(
+        0,
+        "SAVEV \"TXT:Y\",\"1\":A=RESULT():B=CHKFILE(\"TXT:Y\"):?A;B;RESULT()".to_string(),
+    );
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["110", "OK"]);
+}
+
 /// LOADG of a file named with a project asks at the prompt as LOAD does,
 /// and loads without asking in a program, for the program's own project
 /// and another, with or without `GRP:`.

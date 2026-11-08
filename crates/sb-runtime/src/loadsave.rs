@@ -236,9 +236,9 @@ impl Runtime {
                         detail,
                     ));
                 }
-                // UNVERIFIED: a DAT or GRP file into a string.
+                // UNVERIFIED: a GRP file into a string.
                 let Value::Array(target) = target else {
-                    return Err(ErrorKind::TypeMismatch.into());
+                    return Err(Error::new(ErrorKind::TypeMismatch).of_arg(1));
                 };
                 if self.ask_load(&spec, FileKind::Txt) {
                     return Ok(vec![]);
