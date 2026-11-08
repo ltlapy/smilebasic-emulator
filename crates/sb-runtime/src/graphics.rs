@@ -2,7 +2,6 @@
 //! once something is drawn on it; until then every pixel is 0.
 
 use std::cell::{Cell, RefCell};
-use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -932,7 +931,7 @@ impl Graphics {
     ) {
         let n = px as i32;
         let (top, cell) = (i64::from(y), i64::from(n) * i64::from(sx));
-        if !self.reaches_rows(top, n, sy) {
+        if !self.reaches_rows(top, n, sy) || nothing_drawn(color, blend) {
             return;
         }
         for (i, &code) in text.iter().enumerate() {
@@ -941,15 +940,14 @@ impl Graphics {
                 break;
             }
             if left + cell > i64::from(self.clip.x0) {
-                let at = (left, top);
-                self.put_char(font, user, code, px, at, 0..n, (sx, sy), color, blend);
+                self.put_char(font, user, code, px, (left, top), (sx, sy), color, blend);
             }
         }
     }
 
-    /// Draws `columns` of one character's `px`-pixel glyph, as
-    /// [`Graphics::put_glyph`] does. Where its pixels come from is worked
-    /// out once for the character, not for each pixel.
+    /// Draws one character's `px`-pixel cell, as [`Graphics::put_glyph`]
+    /// does. Where its pixels come from is worked out once for the
+    /// character, not for each pixel.
     #[allow(clippy::too_many_arguments)]
     fn put_char(
         &mut self,
@@ -958,7 +956,6 @@ impl Graphics {
         code: u16,
         px: u32,
         at: (i64, i64),
-        columns: Range<i32>,
         scale: (i32, i32),
         color: u32,
         blend: Blend,
@@ -974,16 +971,14 @@ impl Graphics {
                 // After TPAGE -1 nothing is drawn. UNVERIFIED: that mode 0
                 // does not clear the cell either.
                 Err(_) => {}
-                Ok(p) if p >= PAGES => {
-                    self.put_glyph(at, columns, n, scale, color, blend, |_, _, _| 0)
-                }
+                Ok(p) if p >= PAGES => self.put_glyph(at, n, scale, color, blend, |_, _, _| 0),
                 Ok(p) if self.sample[p] == 1 => {
-                    self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+                    self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
                         let (x, y) = on(gx, gy);
                         g.pixel(p, x.rem_euclid(GRP_SIZE), y.rem_euclid(GRP_SIZE))
                     })
                 }
-                Ok(p) => self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+                Ok(p) => self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
                     let (x, y) = on(gx, gy);
                     g.pixel(p, x, y)
                 }),
@@ -991,10 +986,10 @@ impl Graphics {
             return;
         }
         match glyph_origin_px(font, code, px) {
-            Some((ox, oy)) => self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+            Some((ox, oy)) => self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
                 g.pixel(FONT_PAGE, (ox + gx) as i32, (oy + gy) as i32)
             }),
-            None => self.put_glyph(at, columns, n, scale, color, blend, |g, gx, gy| {
+            None => self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
                 glyph_pixel_px(font, g, code, px, gx, gy)
             }),
         }
@@ -1007,16 +1002,15 @@ impl Graphics {
             && top + i64::from(rows) * i64::from(scale) > i64::from(self.clip.y0)
     }
 
-    /// Draws `columns` of a glyph, scaled, with the first at `left` and
-    /// the top of the glyph's `rows` at `top`. A scale can make a glyph
-    /// far larger than a page, so this goes only through what lands in
-    /// the clipping rectangle, in the order the whole glyph would be.
+    /// Draws an `n` by `n` glyph, scaled, with its top left at `(left,
+    /// top)`. A scale can make a glyph far larger than a page, so this
+    /// goes only through what lands in the clipping rectangle, in the
+    /// order the whole glyph would be.
     #[allow(clippy::too_many_arguments)]
     fn put_glyph(
         &mut self,
         (left, top): (i64, i64),
-        columns: Range<i32>,
-        rows: i32,
+        n: i32,
         (sx, sy): (i32, i32),
         color: u32,
         blend: Blend,
@@ -1033,25 +1027,30 @@ impl Graphics {
         let inner = |start: i64, scale: i64, low: i32, high: i32| {
             (i64::from(low) - start).max(0)..(i64::from(high) - start + 1).min(scale)
         };
-        let across = steps(left, sx, columns.end - columns.start, clip.x0, clip.x1);
+        let across = steps(left, sx, n, clip.x0, clip.x1);
         let near = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
         self.mark_inside(
             near(left),
             near(top),
-            near(left + i64::from(columns.end - columns.start) * sx - 1),
-            near(top + i64::from(rows) * sy - 1),
+            near(left + i64::from(n) * sx - 1),
+            near(top + i64::from(n) * sy - 1),
         );
-        for gy in steps(top, sy, rows, clip.y0, clip.y1) {
+        // Only modes 0 and 3 change the page with a clear pixel; glyphs
+        // are mostly clear, so the others pass them by.
+        let skip_clear = !matches!(blend, Blend::Normal | Blend::Alpha2);
+        for gy in steps(top, sy, n, clip.y0, clip.y1) {
             let y0 = top + gy * sy;
-            for col in across.clone() {
-                let gx = i64::from(columns.start) + col;
+            for gx in across.clone() {
                 // Glyphs are mostly clear or white.
                 let p = match glyph(self, gx as u32, gy as u32) {
                     0 => 0,
                     0xFFFF_FFFF => color,
                     p => multiply(p, color),
                 };
-                let x0 = left + col * sx;
+                if skip_clear && p >> 24 == 0 {
+                    continue;
+                }
+                let x0 = left + gx * sx;
                 for py in inner(y0, sy, clip.y0, clip.y1) {
                     for px in inner(x0, sx, clip.x0, clip.x1) {
                         self.plot_marked((x0 + px) as i32, (y0 + py) as i32, p, blend);
@@ -1096,36 +1095,27 @@ impl Graphics {
     ) {
         let n = size as i32;
         let top = i64::from(y);
-        if !self.reaches_rows(top, n, sy) {
+        if !self.reaches_rows(top, n, sy) || nothing_drawn(color, blend) {
             return;
         }
-        let mut left = i64::from(x);
+        let (sx64, cell) = (i64::from(sx), i64::from(n) * i64::from(sx));
+        let mut pen = i64::from(x);
         for &code in text {
-            // The spacing is never negative, so nothing later comes back.
-            if left > i64::from(self.clip.x1) {
+            // A cell starts less than its size left of the pen, and the
+            // pen only moves right, so nothing later comes back.
+            if pen - cell > i64::from(self.clip.x1) {
                 break;
             }
             let Span { first, width } = span(font, code, size);
-            // UNVERIFIED: a blank character's columns are drawn as any
-            // other's, so mode 0 clears under them.
-            let drawn = width.min(n - first);
-            if drawn > 0 && left + i64::from(drawn) * i64::from(sx) > i64::from(self.clip.x0) {
+            // The whole cell is drawn, with column `first` on the pen, so
+            // mode 0 clears the cell's blank columns too.
+            let left = pen - i64::from(first) * sx64;
+            if left + cell > i64::from(self.clip.x0) {
                 let at = (left, top);
-                let columns = first..first + drawn;
-                self.put_char(
-                    font,
-                    user,
-                    code,
-                    n as u32,
-                    at,
-                    columns,
-                    (sx, sy),
-                    color,
-                    blend,
-                );
+                self.put_char(font, user, code, n as u32, at, (sx, sy), color, blend);
             }
             // Drawing scales the spacing as the width does.
-            left += i64::from(width + spacing) * i64::from(sx);
+            pen += i64::from(width + spacing) * sx64;
         }
     }
 
@@ -1566,6 +1556,12 @@ fn edge_span_in<T: Wide>(a: (i32, i32), b: (i32, i32), y: i32) -> Option<(i64, i
         (x0 + from, x0 + last)
     };
     Some((l.narrow(), r.narrow()))
+}
+
+/// Whether GPUTCHR and GPUTCHRP draw nothing at all: mode 1 skips
+/// transparent pixels, and with a transparent color every pixel is.
+fn nothing_drawn(color: u32, blend: Blend) -> bool {
+    blend == Blend::Normal2 && color >> 24 == 0
 }
 
 /// GPUTCHRP's [`Span`] of a character. A user-defined one takes its
@@ -2717,7 +2713,7 @@ mod tests {
             let Span { first, width } = span(font, code, size);
             if !draws_nothing(user, code) {
                 for gy in 0..n {
-                    for gx in first..(first + width).min(n) {
+                    for gx in 0..n {
                         let glyph = char_pixel(font, g, user, code, n as u32, gx, gy);
                         let p = multiply(glyph, color);
                         for py in 0..sy {
@@ -3026,6 +3022,129 @@ mod tests {
         );
         assert!(g.page(0) == base.as_slice());
         assert_eq!(g.proportional_width(&font, &[code], large, 1, 1), 16);
+    }
+
+    /// What `draw` leaves on row `y` of a page filled with red, from x 0
+    /// to 39.
+    fn row_after(g: &mut Graphics, y: i32, draw: impl FnOnce(&mut Graphics)) -> Vec<u32> {
+        g.target = 0;
+        g.cls(RED);
+        draw(g);
+        (0..40).map(|x| g.pixel(0, x, y)).collect()
+    }
+
+    /// GPUTCHRP draws the whole cell with column `first` on the pen: in
+    /// mode 0 the next character's cell clears the end of the one before.
+    #[test]
+    fn proportional_cells_start_left_of_the_pen() {
+        const WHITE: u32 = 0xFFFF_FFFF;
+        // A: columns 0-12 at 16 and 0-5 at 8; I: 3-9 at 16 and 1-4 at 8.
+        let mut metrics = vec![0; 0x1_0000];
+        metrics[0x41] = 13 << 11 | 6 << 3;
+        metrics[0x49] = 7 << 11 | 3 << 7 | 4 << 3 | 1;
+        let font = Font::blank_with_metrics(metrics);
+        let (mut g, _) = chars_pages(&font);
+        // Ink in A's last column at 16, and in I's first ones at 16 and 8.
+        let (ax, ay) = font.origin(0x41, FontSize::Large).unwrap();
+        let (ix, iy) = font.origin(0x49, FontSize::Large).unwrap();
+        let (jx, jy) = font.origin(0x49, FontSize::Small).unwrap();
+        g.target = FONT_PAGE;
+        g.pset(ax as i32 + 12, ay as i32, WHITE, Blend::Normal);
+        g.pset(ix as i32 + 3, iy as i32, WHITE, Blend::Normal);
+        g.pset(jx as i32 + 1, jy as i32, WHITE, Blend::Normal);
+        let font = &font;
+        let draw = |text: &'static [u16], size, x, blend| {
+            move |g: &mut Graphics| {
+                let user = UserPage::DEFAULT;
+                g.put_chars_proportional(font, user, (x, 0), text, size, (1, 1), WHITE, blend, 1)
+            }
+        };
+        let (small, large) = (FontSize::Small, FontSize::Large);
+        let at = |row: &[u32], x: usize| row[x] == WHITE;
+        // Alone, A keeps its last column; I's first ink lands on the pen,
+        // and its cell from 3 columns left of it is cleared.
+        let a = row_after(&mut g, 0, draw(&[0x41], large, 0, Blend::Normal));
+        assert!(at(&a, 12) && a[16] == RED);
+        let i = row_after(&mut g, 0, draw(&[0x49], large, 20, Blend::Normal));
+        assert!(at(&i, 20));
+        assert_eq!((i[16], i[17], i[32], i[33]), (RED, 0, 0, RED));
+        // After A, I's pen is at 13 + 1 and its cell clears A's column 12.
+        let ai = row_after(&mut g, 0, draw(&[0x41, 0x49], large, 0, Blend::Normal));
+        assert!(at(&ai, 14) && ai[12] == 0 && ai[27] == RED);
+        // Mode 1 passes the clear pixels by.
+        let ai = row_after(&mut g, 0, draw(&[0x41, 0x49], large, 0, Blend::Normal2));
+        assert!(at(&ai, 12) && at(&ai, 14) && ai[13] == RED);
+        // At 8 pixels: pen at 6 + 1, I's cell from 6 to 13.
+        let ai = row_after(&mut g, 0, draw(&[0x41, 0x49], small, 0, Blend::Normal));
+        assert!(at(&ai, 7) && ai[6] == 0 && ai[13] == 0 && ai[14] == RED);
+    }
+
+    /// Fonts without font.map's metrics draw GPUTCHRP's cells the same
+    /// way, from a span measured on their own glyphs.
+    #[test]
+    fn proportional_cells_of_the_bundled_font() {
+        let font = Font::fallback();
+        let (mut g, _) = chars_pages(&font);
+        for size in [FontSize::Small, FontSize::Large] {
+            // A narrow character with blank columns before its ink.
+            let code = (0x21..0x7F)
+                .find(|&c| span(&font, c, size).first > 1)
+                .expect("a character with blank columns first");
+            let Span { first, width } = span(&font, code, size);
+            let n = size as i32;
+            let row = row_after(&mut g, 0, |g| {
+                let user = UserPage::DEFAULT;
+                g.put_chars_proportional(
+                    &font,
+                    user,
+                    (20, 0),
+                    &[code],
+                    size,
+                    (1, 1),
+                    0xFF00_FF00,
+                    Blend::Normal,
+                    1,
+                )
+            });
+            let (left, right) = ((20 - first) as usize, (20 - first + n) as usize);
+            let what = format!("{code:#x} {size:?}");
+            assert_eq!((row[left - 1], row[right]), (RED, RED), "{what}");
+            assert!(row[left..right].iter().all(|&p| p != RED), "{what}");
+            assert_eq!(g.proportional_width(&font, &[code], size, 1, 1), width);
+        }
+    }
+
+    /// In mode 1, a color with alpha 0 draws nothing at all.
+    #[test]
+    fn transparent_color_in_mode_1_draws_nothing() {
+        let font = Font::fallback();
+        let (mut g, base) = chars_pages(&font);
+        g.set_page(0, base.clone());
+        let text = [0x41, 0x49, 0x20];
+        for color in [0x00FF_FFFF, 0] {
+            g.put_chars(
+                &font,
+                UserPage::DEFAULT,
+                (5, 5),
+                &text,
+                16,
+                (1, 1),
+                color,
+                Blend::Normal2,
+            );
+            g.put_chars_proportional(
+                &font,
+                UserPage::DEFAULT,
+                (5, 30),
+                &text,
+                FontSize::Large,
+                (1, 1),
+                color,
+                Blend::Normal2,
+                1,
+            );
+        }
+        assert!(g.page(0) == base.as_slice());
     }
 
     /// Scales too large to draw pixel by pixel, against what each pixel

@@ -1061,8 +1061,8 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
 
 ### `GPUTCHR` and `GPUTCHRP`
 
-- `GPUTCHR` with mode 0 clears the page under the character's transparent
-  pixels.
+- `GPUTCHR` draws each character's whole cell, so with mode 0 it clears the page
+  under the character's transparent pixels.
 - `GPUTCHR` without a font type uses the console's. After `TSCREEN 24` it draws
   24-pixel characters from GRP5, glyph i (font.map's number, as for 8 and 16) at
   column i%64 and row i/64 of 24-pixel cells, which is how `#GUIDE/DEFFONT24` is
@@ -1084,12 +1084,21 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
   U+30B8 16/8, U+E200 14/7, U+E25B 1/1, U+E2A0 16/8, U+3000 14/7, and A 13/6.
 - The same entry holds the first column of what `GPUTCHRP` counts as the
   character: bits 12-14 at 8 pixels and bits 19-22 at 16 (I: 1 and 3).
-  (Not yet seen on hardware.)
+  `GPUTCHRP` draws the character's whole cell with that column on the pen, so
+  the columns before it land left of the pen. (Not yet seen on hardware.)
+- So with mode 0 `GPUTCHRP` clears the whole cell, its columns left of the pen
+  and right of the width too. Where a character's first column is more than the
+  spacing, its cell clears the last columns of the character before: in "AI" at
+  16, I's cell starts 3 columns left of its pen and clears A's columns 11 and
+  12. (Not yet seen on hardware.)
+- With mode 1 and a color whose alpha is 0, `GPUTCHR` and `GPUTCHRP` draw
+  nothing. (Not yet seen on hardware.)
 - Characters not in the font draw the missing glyph, and `GPUTCHRP` gives them
   16 (U+25A2, U+AC00; TEST69). U+25A0 is in the font, 14 wide.
 - A user-defined character takes 16 at 16 and 8 at 8, also when its cell is
   empty, which draws nothing. After `TPAGE 4,-1`, `GPUTCHR` of a user-defined
-  character draws nothing, and `GPUTCHRP` still gives it 16 (TEST69).
+  character leaves a cleared page clear, and `GPUTCHRP` still gives it 16
+  (TEST69). What mode 0 does to a drawn page there is not known.
 - `GPUTCHRP`'s function form's width scales the spacing with the characters:
   `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
 

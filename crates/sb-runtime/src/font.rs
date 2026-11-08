@@ -50,10 +50,10 @@ struct Pages(
     OnceCell<Rc<[Cell<u16>]>>,
 );
 
-/// GPUTCHRP's view of a character: it draws columns `first..` of the
-/// glyph, as many as `width` and the cell allow, and then moves on
-/// `width` pixels before the spacing. Fixed for each code:
-/// it does not follow what a program draws on GRP5.
+/// GPUTCHRP's view of a character: it draws the whole cell with column
+/// `first` on the pen, and then moves on `width` pixels before the
+/// spacing. Fixed for each code: it does not follow what a program
+/// draws on GRP5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Span {
     pub first: i32,
