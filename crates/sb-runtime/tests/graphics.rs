@@ -221,6 +221,16 @@ fn proportional_widths() {
 }
 
 #[test]
+fn proportional_widths_stay_when_grp5_is_drawn_over() {
+    let (_, out) = run(
+        "FONTINFO \"A\",16 OUT X,Y:GTARGET 5:GFILL X,Y,X+15,Y+15,-1\n\
+         FONTINFO \"A\",8 OUT X,Y:GFILL X,Y,X+7,Y+7,-1:GTARGET 0\n\
+         ?GPUTCHRP(\"A\",16);\" \";GPUTCHRP(\"A\",8)",
+    );
+    assert_eq!(out, "4 2");
+}
+
+#[test]
 fn boxes_and_copies_at_extreme_coordinates_end() {
     for source in [
         "GBOX 0,-2147483648,5,-2147483648:?1",
@@ -296,6 +306,16 @@ fn gputchr_draws_user_characters_from_the_consoles_tpage() {
     assert_eq!(out, "410240");
     assert_eq!(m.rt.grp.pixel(4, 1024, 0), 0);
     assert!((0..16).all(|y| (0..16).all(|x| m.rt.grp.pixel(1, x, y) == 0)));
+}
+
+#[test]
+fn user_characters_under_tpage_minus_one_draw_nothing() {
+    let (m, out) = run(&format!(
+        "{USER_CELLS}TPAGE 4,-1,0,0:GPUTCHR 0,0,CHR$(&HE800),16,-1,0\n\
+         GPUTCHRP 20,0,CHR$(&HE800),16,-1,0:?GPUTCHRP(CHR$(&HE800),16)"
+    ));
+    assert_eq!(out, "16");
+    assert!((0..16).all(|y| (0..40).all(|x| m.rt.grp.pixel(1, x, y) == 0)));
 }
 
 #[test]
