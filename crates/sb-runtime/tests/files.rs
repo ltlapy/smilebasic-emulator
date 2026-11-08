@@ -1301,6 +1301,16 @@ fn loadg_types_of_file() {
     assert_eq!(e.kind.code(), 74);
 }
 
+/// ENVSAVE in a main program gives no error.
+#[test]
+fn envsave_runs_in_a_main_program() {
+    let dir = TempDir::new("envsave");
+    let mut m = machine(&dir);
+    m.set_slot(0, "ENVSAVE 1,0,3:?\"PAST\"".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["PAST", "OK"]);
+}
+
 /// TEST69: LOADV of a DAT file into a string, and RESULT 0 after CHKFILE
 /// of a file that is there.
 #[test]
