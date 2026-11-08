@@ -13,7 +13,7 @@ use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Array, ArrayData, Value, new_str};
 
-use crate::confirm::{FileAction, project_label};
+use crate::confirm::{Ask, FileAction, project_label};
 use crate::files::str_arg;
 use crate::image::{self, Image};
 use crate::input::in_range;
@@ -355,12 +355,17 @@ impl Runtime {
                     notice: format!("Saving the metadata of {}", self.project_label()),
                     in_programs: true,
                 };
-                let ask = self.confirm_file(action, &[]);
-                if self.held(ask) {
-                    return Ok(vec![]);
+                // METASAVE sets no RESULT(), whether it saves, fails or is
+                // cancelled.
+                // UNVERIFIED: how SmileBASIC 4 reports a failed write; it
+                // is explained here as other file commands explain theirs.
+                match self.confirm_file(action, &[]) {
+                    Ask::Go => {}
+                    Ask::Wait | Ask::Refused => return Ok(vec![]),
                 }
-                let outcome = self.write_meta();
-                self.finish("METASAVE", outcome);
+                if let Err(e) = self.write_meta() {
+                    self.report_failure("METASAVE", &e);
+                }
                 Ok(vec![])
             }
             _ => Err(no_form()),

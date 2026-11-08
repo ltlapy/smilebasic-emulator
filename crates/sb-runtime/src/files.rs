@@ -448,20 +448,26 @@ impl Runtime {
             }
             Err(e) => {
                 self.result = 0;
-                if self.direct {
-                    // SmileBASIC 4 shows its own dialogs instead (see docs/differences.md).
-                    let console = &mut self.text[CONSOLE];
-                    if console.cursor().0 != 0 {
-                        console.newline();
-                    }
-                    let message = format!("{what} failed: {e}");
-                    console.print(&message.encode_utf16().collect::<Vec<_>>());
-                    console.newline();
-                } else if self.settings.file_confirm != FileConfirm::Silent {
-                    self.notices.push(format!("{what} failed: {e}"));
-                }
+                self.report_failure(what, &e);
                 None
             }
+        }
+    }
+
+    /// Explains a failure as [`Runtime::finish`] does, leaving RESULT()
+    /// as it is.
+    pub(crate) fn report_failure(&mut self, what: &str, e: &StorageError) {
+        if self.direct {
+            // SmileBASIC 4 shows its own dialogs instead (see docs/differences.md).
+            let console = &mut self.text[CONSOLE];
+            if console.cursor().0 != 0 {
+                console.newline();
+            }
+            let message = format!("{what} failed: {e}");
+            console.print(&message.encode_utf16().collect::<Vec<_>>());
+            console.newline();
+        } else if self.settings.file_confirm != FileConfirm::Silent {
+            self.notices.push(format!("{what} failed: {e}"));
         }
     }
 

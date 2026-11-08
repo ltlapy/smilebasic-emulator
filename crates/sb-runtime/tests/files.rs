@@ -912,6 +912,10 @@ fn metadata_saves_with_the_project() {
     assert_eq!(words(&tail(&m, 2)), ["My game 13 2 FF00FF00", "OK"]);
     let text = std::fs::read_to_string(dir.0.join("@WORKSPACE").join("@META.TXT")).unwrap();
     assert_eq!(text, "My game\nLine 1\nLine 2");
+    // METASAVE leaves RESULT() as it was.
+    m.set_slot(0, "LOAD \"NOPE\",1:METASAVE:?RESULT()".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
     // A longer title is cut; another project starts with its name.
     m.set_slot(
         0,
