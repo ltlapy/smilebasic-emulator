@@ -219,10 +219,18 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   came on the `LOCATE`, past `IF I>=172600` and `N=N+1`, and `ENVSTAT` gives
   the `LOCATE`'s character (TEST64).
 
-  `RESTORE "PUSH"` itself goes on past that: 172713 of them pass, and 180000
-  stop on the loop. After the 172713, `A=F(1)` of a one-line `DEF F(P)` stops
-  on its own line, while `?N`, `X=1+2` and a bare `PRINT` run and the program
-  goes on (TEST67).
+  A `GOSUB` without room is not reported on its target's first statement
+  either. After 100000 pushes, a `GOSUB @S` to lines 4 to 7, `@S`, `D=D+1`,
+  `LOCATE 0,1:?D;` and `GOSUB @S`, printed 109068 and stopped on line 6:
+  `D=D+1` ran and the `LOCATE` stopped, as `ENVSTAT`'s character shows
+  (TEST69).
+
+  `RESTORE "PUSH"` itself goes on past that: 172713 of them pass, and 180000,
+  400000 or 1000000 stop on the loop's line (TEST67, TEST69). After the
+  172713, `VSYNC`, `CLS`, `X=ABS(B)`, `?N`, `X=1+2` and a bare `PRINT` run and
+  the program goes on, while `LOCATE 0,0` stops. `A=F(1)` of a one-line
+  `DEF F(P)` runs after 172000 or 172500 pushes and stops on its own line
+  after 172712 or 172713 (TEST67, TEST69).
 
 ## Values and variables
 
