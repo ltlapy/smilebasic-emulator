@@ -956,6 +956,10 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
 - When a parent is cleared, children without link bit 0 stay where they showed,
   Z included.
 - `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set already.
+- `SPHIDE id,flag` shows the sprite on a flag of 0 and hides it on any other
+  value. `SPPAGE` and `TPAGE` keep -1 as a page of its own, not a graphic page,
+  and give -1 back. (Not yet seen on hardware.) What sprites and text screens
+  show from page -1 is still to be checked.
 
 ### Collision
 

@@ -550,3 +550,15 @@ fn a_search_finds_a_sprite_where_its_animation_and_parent_took_it() {
          ?SPHITRC(306,6,4,4);SPHITRC(6,206,4,4)");
     assert_eq!(out, "0 -10 1 -11");
 }
+
+/// SPHIDE's flag shows on 0 and hides on any other value; page -1 reads
+/// back as -1 for sprites and text screens.
+#[test]
+fn sphide_flags_and_page_minus_one() {
+    let (_, out) = run("SPSET 1,0\n\
+         SPHIDE 1,0:A=SPSHOW(1):SPHIDE 1,2:B=SPSHOW(1):SPHIDE 1,0:C=SPSHOW(1)\n\
+         SPHIDE 1,-1:D=SPSHOW(1):SPSHOW 1:SPHIDE 1:E=SPSHOW(1)\n\
+         SPPAGE 1,-1:SPPAGE -1:TPAGE 2,-1,0,0:TPAGE 2 OUT P,X,Y\n\
+         ?A;B;C;D;E;\" \";SPPAGE(1);SPPAGE();P");
+    assert_eq!(out, "10100 -1-1-1");
+}
