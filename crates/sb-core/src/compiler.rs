@@ -184,7 +184,12 @@ impl Compiler<'_> {
                 StmtKind::Def(def) => {
                     let name = call_name(&def.name);
                     let index = self.out.defs.len() as u32;
-                    if self.out.def_names.insert(name.clone(), index).is_some() {
+                    // A DEF may not take the name of a system function,
+                    // such as LAST. UNVERIFIED: that a command's name is
+                    // refused too.
+                    if crate::vm::is_system_call(&name, self.host)
+                        || self.out.def_names.insert(name.clone(), index).is_some()
+                    {
                         return Err(
                             err(ErrorKind::DuplicateFunction, name).at_pos(stmt.line, stmt.col)
                         );
@@ -508,15 +513,15 @@ impl Compiler<'_> {
                 None => &self.out.labels,
             };
             // ON BREAK GOTO in a DEF may name a label outside it, all of
-            // which are known by then (checked on hardware).
-            // UNVERIFIED: that a label of the DEF's own comes first.
+            // which are known by then. One outside comes before a label of
+            // the DEF's own.
             let outside = matches!(self.out.code[at], Op::OnBreak(_))
                 .then(|| self.out.labels.get(&label))
                 .flatten();
             // A label that is not there is an error only when the jump
             // runs: SmileBASIC Debugger's generated code jumps to labels
             // it writes only when needed.
-            let target = match labels.get(&label).or(outside) {
+            let target = match outside.or_else(|| labels.get(&label)) {
                 Some(&target) => target,
                 None => {
                     (self.line, self.col) = (self.out.lines[at], self.out.cols[at]);

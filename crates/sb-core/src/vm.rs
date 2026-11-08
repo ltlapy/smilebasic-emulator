@@ -159,6 +159,16 @@ const NOT_CALLS: &[&str] = &[
     "BACKTRACE",
 ];
 
+/// Whether `name` is one of the system's commands or functions, as
+/// CHKCALL counts them.
+pub(crate) fn is_system_call(name: &str, host: &dyn Host) -> bool {
+    !NOT_CALLS.contains(&name)
+        && (builtins::lookup(name, Form::Function).is_some()
+            || builtins::lookup(name, Form::Command).is_some()
+            || host.lookup(name).is_some()
+            || VM_CALLS.contains(&name))
+}
+
 /// The characters of STOP's message that are shown.
 const STOP_MESSAGE: usize = 255;
 
@@ -1873,11 +1883,7 @@ impl Vm {
         if NOT_CALLS.contains(&name.as_str()) {
             return Ok(false);
         }
-        Ok(self.find_common(&name).is_some()
-            || builtins::lookup(&name, Form::Function).is_some()
-            || builtins::lookup(&name, Form::Command).is_some()
-            || host.lookup(&name).is_some()
-            || VM_CALLS.contains(&name.as_str()))
+        Ok(self.find_common(&name).is_some() || is_system_call(&name, host))
     }
 
     /// The program of a slot that runs or that EXEC has run.

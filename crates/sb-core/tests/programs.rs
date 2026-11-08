@@ -109,6 +109,16 @@ fn on_break_in_a_def_names_outer_labels() {
         output("W:?\"OK\"\nEND\nDEF W\nON BREAK GOTO @B\nEND\n@B:?\"B\""),
         "OK\n"
     );
+    // With an @L in the DEF and one outside, the one outside wins.
+    let host = TextHost::default();
+    let source = "F\nEND\nDEF F\nON BREAK GOTO @L\n@L\nEND\n@L";
+    let program = sb_core::compile(source, &host).unwrap();
+    let target = program.code.iter().find_map(|op| match op {
+        sb_core::bytecode::Op::OnBreak(addr) => Some(*addr),
+        _ => None,
+    });
+    assert_eq!(target, Some(program.labels["L"]));
+    assert_ne!(target, Some(program.defs[0].labels["L"]));
 }
 
 /// RESTORE's special strings from SmileBASIC 4.4, as TEST12 showed them.
@@ -550,6 +560,15 @@ fn compile_errors() {
     assert_eq!(error("LEN 1").0, ErrorKind::IllegalFunctionCall);
     assert_eq!(error("@A\n@A").0, ErrorKind::DuplicateLabel);
     assert_eq!(error("BREAK").0, ErrorKind::IllegalStatement);
+    // A DEF with a system function's name, at the DEF, before anything runs.
+    assert_eq!(
+        error("?1\nDEF LAST(T)\nRETURN T\nEND"),
+        (ErrorKind::DuplicateFunction, 2)
+    );
+    assert_eq!(
+        error("?1\nDEF FREEMEM()\nEND").0,
+        ErrorKind::DuplicateFunction
+    );
 }
 
 #[test]
