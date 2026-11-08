@@ -56,6 +56,19 @@ fn array_value(array: Array) -> Value {
     Value::Array(Rc::new(RefCell::new(array)))
 }
 
+/// LOADV's type of file, before the file is looked for, in both forms:
+/// `JPG:`, `PNG:` and a name without its type are File type mismatch.
+fn loadv_type(spec: &str) -> Result<()> {
+    let detail = match spec.split_once(':') {
+        None => "no type".to_string(),
+        Some((kind, _)) if ["JPG", "PNG"].iter().any(|k| kind.eq_ignore_ascii_case(k)) => {
+            format!("{} file", kind.to_ascii_uppercase())
+        }
+        Some(_) => return Ok(()),
+    };
+    Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
+}
+
 /// What LOADV gives when a file cannot be read: an empty string for TXT,
 /// otherwise the omitted value (TYPEOF 0), although the manual says an
 /// empty array (checked on hardware).
@@ -208,6 +221,7 @@ impl Runtime {
         match (command, want, args) {
             (Command::Loadv, Want::Value, [spec]) => {
                 let spec = str_arg(spec)?;
+                loadv_type(&spec)?;
                 if self.ask_load(&spec, FileKind::Txt) {
                     return Ok(vec![Value::Int(0)]);
                 }
@@ -226,10 +240,11 @@ impl Runtime {
             }
             (Command::Loadv, Want::Outs(0), [spec, target]) => {
                 let spec = str_arg(spec)?;
+                loadv_type(&spec)?;
                 // The command form is for DAT and GRP files only, whatever
                 // it is given to load into: a TXT file into a string is the
                 // same error as into an array.
-                if let Some(kind @ (FileKind::Txt | FileKind::Jpg)) = read_kind(&spec) {
+                if let Some(kind @ FileKind::Txt) = read_kind(&spec) {
                     let detail = format!("{} in the command form", kind.name());
                     return Err(Error::with_detail(
                         ErrorKind::WrongNumberOfArguments,

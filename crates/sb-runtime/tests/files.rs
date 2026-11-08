@@ -630,6 +630,20 @@ fn loadv_chkfile_and_program_types() {
             None
         )
     );
+    // JPG:, PNG: and no type are File type mismatch in both forms, before
+    // the file is looked for.
+    for (source, detail) in [
+        ("S$=LOADV(\"JPG:NONE\")", "JPG file"),
+        ("S$=LOADV(\"NONE\")", "no type"),
+        ("LOADV \"JPG:NONE\",A%", "JPG file"),
+        ("LOADV \"png:NONE\",A%", "PNG file"),
+        ("LOADV \"NONE\",A%", "no type"),
+    ] {
+        m.set_slot(0, format!("DIM A%[1]\n{source}"));
+        enter(&mut m, "run");
+        let message = format!("File type mismatch in 0:2(LOADV) ({detail})");
+        assert_eq!(err(&mut m), (message, 77, None), "{source}");
+    }
     // RESULT is 0 after CHKFILE of a missing file in a program that runs
     // after one that left it 1: RUN set it to 0.
     m.set_slot(0, "SAVEV \"TXT:Y\",\"1\":?RESULT()".to_string());
