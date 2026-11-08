@@ -120,9 +120,6 @@ impl Runtime {
             (Command::Chkfile, Want::Value, 1) => {
                 let found = parse_read_name(&str_arg(&args[0])?, FileKind::Txt)
                     .is_ok_and(|file| self.storage.exists_ref(&file));
-                // UNVERIFIED: that CHKFILE sets RESULT to 0 rather than
-                // leaving it as it was.
-                self.result = 0;
                 Ok(vec![Value::Int(i32::from(found))])
             }
             (Command::Load, Want::Outs(0), 1 | 2) => {

@@ -613,13 +613,14 @@ fn loadv_chkfile_and_program_types() {
             None
         )
     );
-    // CHKFILE of a missing file leaves RESULT 0.
-    m.set_slot(
-        0,
-        "SAVEV \"TXT:Y\",\"1\":A=RESULT():B=CHKFILE(\"TXT:NONE\"):?A;B;RESULT()".to_string(),
-    );
+    // RESULT is 0 after CHKFILE of a missing file in a program that runs
+    // after one that left it 1: RUN set it to 0.
+    m.set_slot(0, "SAVEV \"TXT:Y\",\"1\":?RESULT()".to_string());
     enter(&mut m, "run");
-    assert_eq!(tail(&m, 2), ["100", "OK"]);
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    m.set_slot(0, "B=CHKFILE(\"TXT:NONE\"):?B;RESULT()".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["00", "OK"]);
     for (source, command) in [("LOAD \"GRP0:X\"", "LOAD"), ("SAVE \"GRP0:X\"", "SAVE")] {
         m.set_slot(0, format!("A=1\n{source}"));
         enter(&mut m, "run");
@@ -1138,8 +1139,8 @@ fn programs_write_no_file_named_with_a_project() {
     assert!(!workspace.join("TY").exists());
 }
 
-/// TEST69: LOADV of a DAT file into a string, and CHKFILE leaving RESULT
-/// 0 for a file that is there.
+/// TEST69: LOADV of a DAT file into a string, and RESULT 0 after CHKFILE
+/// of a file that is there.
 #[test]
 fn loadv_into_a_string_and_chkfile_result() {
     let dir = TempDir::new("test69-loadv");
@@ -1153,12 +1154,37 @@ fn loadv_into_a_string_and_chkfile_result() {
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["31", "OK"]);
 
-    m.set_slot(
-        0,
-        "SAVEV \"TXT:Y\",\"1\":A=RESULT():B=CHKFILE(\"TXT:Y\"):?A;B;RESULT()".to_string(),
-    );
+    enter(&mut m, "savev \"txt:y\",\"1\"");
+    m.set_slot(0, "B=CHKFILE(\"TXT:Y\"):?B;RESULT()".to_string());
     enter(&mut m, "run");
-    assert_eq!(tail(&m, 2), ["110", "OK"]);
+    assert_eq!(tail(&m, 2), ["10", "OK"]);
+}
+
+/// RUN sets RESULT to 0 once the program compiles, and CHKFILE leaves it
+/// as it was, whether the file is there or not.
+#[test]
+fn run_sets_result_and_chkfile_leaves_it() {
+    let dir = TempDir::new("run-result");
+    let mut m = machine(&dir);
+    enter(&mut m, "savev \"txt:y\",\"1\":?result()");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    m.set_slot(0, "?RESULT()".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+
+    let program = "SAVEV \"TXT:Y\",\"1\":A=RESULT()\n\
+                   B=CHKFILE(\"TXT:Y\"):C=CHKFILE(\"TXT:NONE\"):?A;B;C;RESULT()";
+    m.set_slot(0, program.to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["1101", "OK"]);
+    enter(&mut m, "?chkfile(\"txt:none\");result()");
+    assert_eq!(tail(&m, 2), ["01", "OK"]);
+
+    // A program that does not compile leaves RESULT as it was.
+    m.set_slot(0, "?RESULT(\n".to_string());
+    enter(&mut m, "run");
+    enter(&mut m, "?result()");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
 }
 
 /// LOADG of a file named with a project asks at the prompt as LOAD does,

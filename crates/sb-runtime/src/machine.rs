@@ -1971,6 +1971,11 @@ impl Machine {
                 if slot.is_some() {
                     self.follow_edits();
                     self.moved.fill(false);
+                    // RUN sets RESULT to 0 once the program compiles; one
+                    // with a syntax error leaves it.
+                    if self.rt.env_type == 0 {
+                        self.rt.result = 0;
+                    }
                 }
                 let vm = Vm::with_globals(program, &self.vars);
                 let mut vm = match slot {
