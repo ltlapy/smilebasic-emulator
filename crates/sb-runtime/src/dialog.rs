@@ -259,7 +259,7 @@ impl crate::input::Input {
     /// hardware for A); a wait for buttons ends on
     /// any of them going down.
     pub(crate) fn dialog_answer(&self, kind: &DialogKind, since: u32) -> Option<DialogAnswer> {
-        let (pressed, released) = (self.pressed(), self.released() & since);
+        let released = self.released() & since;
         match kind {
             DialogKind::Choice(labels) if released & 1 << A != 0 => {
                 Some(DialogAnswer::Choice(labels.len() - 1))
@@ -267,11 +267,11 @@ impl crate::input::Input {
             DialogKind::Choice(labels) if labels.len() == 2 && released & 1 << B != 0 => {
                 Some(DialogAnswer::Choice(0))
             }
-            // The answer keeps #B_RANY, #B_LANY and #B_ANY with the
-            // buttons waited for. UNVERIFIED: that it leaves out others
-            // pressed with them.
+            // The answer keeps the buttons waited for with #B_RANY, #B_LANY
+            // and #B_ANY as they go on, and leaves out other buttons held.
             DialogKind::Buttons(mask) => {
-                let bits = pressed | if self.touched() { TOUCH_BIT } else { 0 };
+                let touch = if self.touched() { TOUCH_BIT } else { 0 };
+                let bits = self.pressed_as_held() | touch;
                 (bits & mask != 0).then_some(DialogAnswer::Buttons(bits & (mask | ANY_BITS)))
             }
             _ => None,

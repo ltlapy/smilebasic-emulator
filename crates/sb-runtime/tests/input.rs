@@ -435,6 +435,30 @@ fn the_press_that_answers_a_dialog_types_only_its_repeats() {
     assert_eq!(row.trim_end_matches(['\0', ' ']), "81928 0 81928 1");
 }
 
+/// A wait for buttons answers with #B_RANY and #B_ANY as they go on: A
+/// with L held gives A and #B_RANY, as L had #B_ANY on already, and
+/// leaves L out.
+#[test]
+fn a_wait_for_buttons_answers_with_the_any_bits_going_on() {
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    let source = "?DIALOG(\"Q\",8)";
+    let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
+    let mut frames = 0;
+    loop {
+        rt.input.live = pressed(if frames > 2 { 1 << 8 | 1 << 3 } else { 1 << 8 });
+        rt.begin_frame();
+        frames += 1;
+        assert!(frames < 200, "the dialog was not answered");
+        if vm.run(&mut rt, 100_000).unwrap() == Status::Ended {
+            break;
+        }
+    }
+    let row: String = (0..8)
+        .map(|x| char::from_u32(u32::from(rt.text[4].cell(x, 0).code)).unwrap_or(' '))
+        .collect();
+    assert_eq!(row.trim_end_matches(['\0', ' ']), "16392");
+}
+
 /// TEST64: the release of the A that closes an OK dialog is no release for
 /// BUTTON after it.
 #[test]

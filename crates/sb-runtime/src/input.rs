@@ -620,6 +620,16 @@ impl Input {
         self.buttons(0, 3)
     }
 
+    /// Like [`Input::pressed`], but #B_RANY, #B_LANY and #B_ANY are there
+    /// only when they go on this frame: one already on for a held button
+    /// is left out. A wait for buttons in DIALOG answers this way (A with
+    /// L held gives A and #B_RANY, A alone A, #B_RANY and #B_ANY).
+    /// UNVERIFIED: whether BUTTON's own conditions do the same.
+    pub(crate) fn pressed_as_held(&self) -> u32 {
+        let (now, before) = (self.now.buttons(0), self.before.buttons(0));
+        with_any(now) & !with_any(before)
+    }
+
     /// Whether the touch screen was touched this frame.
     pub(crate) fn touched(&self) -> bool {
         self.touch.1 == 1
@@ -648,9 +658,14 @@ impl Input {
             2 => now & !before,
             _ => !now & before,
         };
-        let any = |mask: u32| u32::from(bits & mask != 0);
-        bits | any(RANY) << 14 | any(LANY) << 15 | any(ANY) << 16
+        with_any(bits)
     }
+}
+
+/// `bits` with #B_RANY, #B_LANY and #B_ANY for them.
+fn with_any(bits: u32) -> u32 {
+    let any = |mask: u32| u32::from(bits & mask != 0);
+    bits | any(RANY) << 14 | any(LANY) << 15 | any(ANY) << 16
 }
 
 fn int(v: &Value) -> Result<i32> {
