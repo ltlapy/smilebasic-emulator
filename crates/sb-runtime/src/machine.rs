@@ -2000,6 +2000,12 @@ impl Machine {
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
                 match e.slot {
                     Some(slot) => self.rt.env_error = self.error_place(slot as usize, &e),
+                    // A Syntax error typed in direct mode leaves ENVSTAT's
+                    // status as it was, as a program's compile error does.
+                    // Errors found as the line compiles, such as a division
+                    // by zero, stand for run-time ones and set it.
+                    // UNVERIFIED: seen only with an empty line typed after it.
+                    None if e.kind == ErrorKind::SyntaxError => {}
                     None => self.direct_error(),
                 }
                 self.report(&e);
