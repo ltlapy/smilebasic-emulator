@@ -110,6 +110,13 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   and plain stores name nothing: DIV, MOD, the bit operators, unary minus and
   `M%[0]=V` give `Overflow in 1:2`, and DIV or MOD by 0 `Divide by zero in 1:2`
   (TEST65, TEST66).
+- More names TEST69 saw: `ASC("")` is `Can't use empty string (ASC:1)`, error
+  67; `TPUT 4,2,1,67,128` is `Out of range (TPUT:5)` and `ATTR 128`
+  `Out of range (ATTR:1)`; `SPOFS` of a sprite not set is `Sprite not set
+  (SPOFS)`, with no number. A `DEF` function or command given the wrong number
+  of arguments is `Wrong number of arguments in 3:2`, with nothing after the
+  place.
+- `CHR$(-1)` is no error: it gives `CHR$(&HFFFF)` (TEST69).
 - `Wrong number of arguments` comes when a command or function gets a number of
   arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
   finds this as it runs, not as the program compiles, so the lines before it
@@ -816,6 +823,7 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
 - `TSCREEN` also stops the screen's animations and undoes `THOME`, `TROT`,
   `TSCALE`, `TCOLOR` and `TBLEND`. `TOFS` goes back to 0,0 but keeps its depth.
   `TLAYER`, `TPAGE` and `TVAR` stay (TEST47), and so does `TFUNC` (TEST48).
+  The console's `TSCALE` goes back to 1,1 too (TEST69).
 - `TARRAY`'s array takes the new size after `TSCREEN` and goes on following the
   screen.
 
@@ -824,6 +832,8 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
 - `CHR$(10)` starts a new line; tab stops are every 4 columns.
 - `#TUSRCHR` is 59392. (TEST62)
 - `TPUT` off the screen is `Out of range`.
+- `TPUT` of a string puts only its first character: `TPUT 4,0,1,"XYZ"` leaves
+  the cells after the X empty (TEST69).
 - `CHKCHR` off the screen gives 0.
 - `LOCATE` takes the column just past the right edge (`LOCATE 50,0` on the
   50-column console).
@@ -858,6 +868,10 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
   - A space is a block, and so is an empty cell.
   - Direct mode's selection sets the bit, and Enter does not draw the line
     again, so it should stay.
+  - A console cell given bit 23 through `TLOAD` shows inverted; `CHKCHR`
+    gives its attribute as 128 and `TSAVE` keeps the bit (TEST69).
+- U+25A0 is in SmileBASIC 4's font: `FONTINFO` places it at 512,1072 for 16
+  pixels and 256,24 for 8 (TEST69).
 - A cell `TSCREEN` or `CLS` clears has code 0 and the screen's current `COLOR`
   and `ATTR`, white and 0 to start with, not an all-zero cell. A program can
   therefore write only the character codes through `TARRAY`, the even elements,
@@ -1267,6 +1281,13 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
 - `@E` takes values 0 to 127, and `CHKMML` stops just after one past that:
   `@E128,0,0,0C` gives 5 and `@E0,0,0,128C` 11. `@148` to `@216` pass, and so
   do lower case letters and a second dot (TEST67).
+- `@MP`, `@MA` and `@ML` take 0 to 127 in each of their four places, and
+  `CHKMML` stops just after a 128: `@MP128,1,1,1C` gives 6, `@MP1,128,1,1C` 8,
+  `@MP1,1,1,128C` 12, and `@MA` and `@ML` the same (TEST69).
+- `O` takes no MML variable: `CHKMML("$0=9O$0<C")` gives 5, the `$` after the
+  `O`. The octave check counts `<` and `>` after `!` the other way round
+  (`O9!>C` gives 4, `O9!<C` -1) and inside a chord (`O9|C<E|` 5, `O9|<CE|`
+  4), but not through a repeat: `O8[<C]3` gives -1 (TEST69).
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
@@ -1787,6 +1808,14 @@ TTEST36.
   typed in direct mode stays as it was, and the main interpreter has the focus
   again (TTEST37, TTEST38).
 - The tools on F9 to F11 start also while a program runs.
+- A tool runs in the subprogram interpreter (TEST69, a tool started from the
+  editor):
+  - `PROJECT()` is the project of the tool's file, not the current project, and
+    `SAVEV` saves into that project.
+  - `PRGNAME$()` and slot 0 give the tool's file name without its project.
+  - Slots 1 to 3 keep what an earlier tool left in them. The slots of the
+    program being edited are not visible to it.
+  - `SYSPARAM("TOOLn")` gives the tool as `PROJECT/FILE`.
 - `SUBRUN`, or a tool key, while a subprogram runs stops it first with
   `User break`, printed on the main console as above, also when the new file
   cannot be loaded.
@@ -1799,6 +1828,8 @@ TTEST36.
   screen while the subprogram has the focus, and the subprogram's screen once it
   gives it up. The editor is darkened the same way while a tool started from it
   has the focus.
+- While a tool started from the editor is open, Ctrl+Tab does nothing: it does
+  not move the keys between the editor and the tool (TEST69).
 - `PUSHKEY` in the subprogram, after `ENVFOCUS 0`, types into the main
   interpreter's direct mode, which runs the line.
 - `DIALOG` in a subprogram answers to the controller with the focus on either
@@ -1856,6 +1887,9 @@ TTEST36.
 - A program that ends without an error sets the status and N to 0 and C to -1,
   and keeps A and L from the error before: A 0 and L 0 after a fresh start, and
   A -1 and L 3 after a `Stack overflow` on line 3 (TEST63, TEST64).
+- A new `SUBRUN` does not reset them either. TEST69K, started with `SUBRUN`
+  after TEST69, read `ENVSTAT OUT` of the main program after its first clean
+  run as S 0, N 0, A -1, C -1 and L 70, the A and L of TEST69's last error.
 - `ENVSTAT OUT S,N,A,SL,C,L` after the main program's `Divide by zero` gives N
   7, A -1, SL 0, C the statement's character from the start of the program
   counting from 0, and L its line. After a `STOP`, N is 0 and A, SL and C are
