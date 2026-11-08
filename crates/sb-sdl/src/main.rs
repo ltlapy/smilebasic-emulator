@@ -337,6 +337,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let keyboard = sdl.keyboard();
     let mut controls = Controls::new(&sdl)?;
     let mut typing = controls::Typing::default();
+    typing.upper_case = machine.rt.settings.upper_case_letters;
     let audio = Audio::open(&sdl);
     // Runs the frames while a call to SDL holds the loop up.
     let standby = standby::Standby::start(audio.sink());
@@ -2242,8 +2243,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 } => typing.key_down(&mut machine.rt, keymod, repeat, special_key(key)),
                 Event::TextInput { .. } if eat_text => eat_text = false,
                 Event::TextInput { text, .. } => {
-                    let upper_case = machine.rt.settings.upper_case_letters;
-                    typing.text(&mut machine.rt, &text, upper_case);
+                    typing.text(&mut machine.rt, &text);
                 }
                 _ => {}
             }
@@ -2306,11 +2306,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         );
         held.pads[0].buttons |= bench_pad;
         typing.hold(&held);
+        typing.upper_case = machine.rt.settings.upper_case_letters;
         let screen = modal || paused || editor_keys || waiting || beside;
         // Programs see nothing pressed while the editor has the keys, but
         // a key held there repeats.
         let editor_held = editor_keys && !(modal || paused || waiting || beside);
-        machine.rt.input.editor_keys = if editor_held { held.keys } else { [0; 4] };
+        machine.rt.input.editor_held = if editor_held {
+            held
+        } else {
+            Default::default()
+        };
         machine.rt.input.live = controls.carried.program_sees(held, screen);
         if let Some(usage) = bench_usb.take() {
             machine.rt.input.live.set_key(usage, true);

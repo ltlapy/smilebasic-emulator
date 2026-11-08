@@ -1,7 +1,7 @@
 //! What programs read from controllers, the mouse and the keyboard: SDL's
 //! gamepads and keys turned into the runtime's input state each frame.
 
-use sb_runtime::input::{KeysRead, Mouse, PADS, State};
+use sb_runtime::input::{KeyText, KeysRead, Mouse, PADS, State, alt_key_code};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
 use sdl3::keyboard::{KeyboardState, Mod, Scancode};
@@ -114,40 +114,102 @@ enum Last {
     Typing { shift: bool },
     /// The computer's key repeat, or a key that types no text.
     Repeat,
+    /// A key that typed what Alt gives with it, or nothing: none of the
+    /// computer's text for it goes, in any script.
+    Alt,
+}
+
+/// The character a key gives on the computer's layout with these
+/// modifiers, if it gives one.
+type Layout = fn(Scancode, Mod) -> Option<char>;
+
+/// The computer's layout, as SDL has it.
+fn computer_layout(key: Scancode, keymod: Mod) -> Option<char> {
+    use sdl3::sys::keycode::{SDL_Keymod, SDLK_SCANCODE_MASK};
+    use sdl3::sys::scancode::SDL_Scancode;
+    // SAFETY: SDL_GetKeyFromScancode only reads SDL's keymap, which events
+    // change on this same thread, and before SDL is set up it uses its
+    // default one.
+    let code = unsafe {
+        sdl3::sys::keyboard::SDL_GetKeyFromScancode(
+            SDL_Scancode(key as i32),
+            SDL_Keymod(keymod.bits()),
+            false,
+        )
+    };
+    // Key codes with the mask bit are keys without a character.
+    (code.0 & SDLK_SCANCODE_MASK.0 == 0)
+        .then(|| char::from_u32(code.0))
+        .flatten()
+        .filter(|c| !c.is_control())
+}
+
+/// Whether the key with this scancode is down among `keys`, by USB usage ID.
+fn among(keys: &[u64; 4], key: Scancode) -> bool {
+    u8::try_from(key as i32)
+        .is_ok_and(|usage| keys[usize::from(usage / 64)] >> (usage % 64) & 1 != 0)
+}
+
+/// A character the runtime types itself as a key repeats: ASCII. What lies
+/// outside it comes with the computer's own repeats.
+fn ascii(c: Option<char>) -> u16 {
+    c.filter(|c| c.is_ascii()).map_or(0, |c| c as u16)
 }
 
 /// How the keyboard types for programs, the prompt and the editor, as on
-/// SmileBASIC 4: with its own Caps Lock, and with repeats counted in the
-/// machine's frames rather than by the computer's key repeat.
+/// SmileBASIC 4: with its own Caps Lock, with repeats counted in the
+/// machine's frames rather than by the computer's key repeat, and with its
+/// own characters for Alt.
 #[derive(Debug)]
 pub struct Typing {
-    /// SmileBASIC 4's Caps Lock, which is on at start. The Caps Lock key
-    /// toggles it wherever it is pressed, so it keeps step with the
-    /// computer's own unless that was on when the emulator started or was
-    /// toggled in another program's window.
-    // UNVERIFIED: that the prompt and the editor share it with INKEY$.
+    /// SmileBASIC 4's Caps Lock, which is on at start, the same for
+    /// programs, the prompt and the editor. The Caps Lock key toggles it
+    /// wherever it is pressed, so it keeps step with the computer's own
+    /// unless that was on when the emulator started or was toggled in
+    /// another program's window.
     caps_lock: bool,
     last: Last,
     /// Keys type no text, as [`State::keys_type_nothing`] says of the
     /// last frame's controls.
-    // UNVERIFIED: that the prompt and the editor go by it as programs do.
     blocked: bool,
+    /// The keyboard keys held on the last frame, by USB usage ID.
+    held: [u64; 4],
+    /// Letters type as SmileBASIC 4's do (the setting for capitals without
+    /// Shift); otherwise they keep the case the computer gave them.
+    pub upper_case: bool,
+    /// The key that last went down.
+    pressed: Option<Scancode>,
+    /// What it types by the modifiers held, when the computer's text for it
+    /// is still to come.
+    text: Option<KeyText>,
+    layout: Layout,
 }
 
 impl Default for Typing {
     fn default() -> Self {
-        Typing {
-            caps_lock: true,
-            last: Last::None,
-            blocked: false,
-        }
+        Typing::with_layout(computer_layout)
     }
 }
 
 impl Typing {
+    /// Typing by the characters `layout` gives.
+    pub fn with_layout(layout: Layout) -> Self {
+        Typing {
+            caps_lock: true,
+            last: Last::None,
+            blocked: false,
+            held: [0; 4],
+            upper_case: true,
+            pressed: None,
+            text: None,
+            layout,
+        }
+    }
+
     /// Takes the controls held this frame, for the keys pressed next.
     pub fn hold(&mut self, held: &State) {
         self.blocked = held.keys_type_nothing();
+        self.held = held.keys;
     }
 
     /// Goes for every key that goes down on the emulator's windows, before
@@ -160,6 +222,8 @@ impl Typing {
         repeat: bool,
     ) {
         self.last = Last::None;
+        self.pressed = scancode;
+        self.text = None;
         if repeat {
             return;
         }
@@ -168,6 +232,60 @@ impl Typing {
         }
         let usage = scancode.and_then(|s| u8::try_from(s as i32).ok());
         rt.input.key_down(usage.unwrap_or(0));
+    }
+
+    /// What `key` types by the modifiers held: Shift and SmileBASIC 4's
+    /// Caps Lock, or Alt, which types SmileBASIC 4's own characters, or
+    /// with Right Alt, on a layout where it is AltGr, the layout's.
+    fn key_text(&self, key: Scancode, keymod: Mod) -> KeyText {
+        let usage = u8::try_from(key as i32).unwrap_or(0);
+        let alt = alt_key_code(usage).unwrap_or(0);
+        let mut text = KeyText {
+            alt,
+            right_alt: alt,
+            ..KeyText::default()
+        };
+        let layout = self.layout;
+        let plain = layout(key, Mod::NOMOD);
+        if let Some(c) = plain.filter(char::is_ascii_alphabetic)
+            && self.upper_case
+        {
+            let (upper, lower) = (c.to_ascii_uppercase(), c.to_ascii_lowercase());
+            let (plain, shift) = if self.caps_lock {
+                (upper, lower)
+            } else {
+                (lower, upper)
+            };
+            (text.plain, text.shift) = (plain as u16, shift as u16);
+        } else {
+            let caps = keymod & Mod::CAPSMOD;
+            text.plain = ascii(layout(key, caps));
+            text.shift = ascii(layout(key, caps | Mod::LSHIFTMOD));
+        }
+        if let Some(c) = self.alt_gr(key) {
+            text.right_alt = ascii(Some(c));
+        }
+        text
+    }
+
+    /// The character Right Alt gives with `key` on a layout where it is
+    /// AltGr, if it gives one.
+    fn alt_gr(&self, key: Scancode) -> Option<char> {
+        let plain = (self.layout)(key, Mod::NOMOD);
+        [Mod::MODEMOD, Mod::RALTMOD]
+            .into_iter()
+            .filter_map(|m| (self.layout)(key, m))
+            .find(|&c| Some(c) != plain)
+    }
+
+    /// Whether Alt held now makes `key` type SmileBASIC 4's own character,
+    /// or nothing: Left Alt does, and Right Alt unless it is AltGr for the
+    /// key on the computer's layout.
+    fn alt_table(&self, key: Option<Scancode>, keymod: Mod) -> bool {
+        let left = keymod.contains(Mod::LALTMOD) || among(&self.held, Scancode::LAlt);
+        let right =
+            keymod.intersects(Mod::RALTMOD | Mod::MODEMOD) || among(&self.held, Scancode::RAlt);
+        left || right && key.is_none_or(|key| self.alt_gr(key).is_none())
     }
 
     /// A key going down that types, after [`Typing::any_key_down`]; `code`
@@ -181,31 +299,50 @@ impl Typing {
         repeat: bool,
         code: Option<u16>,
     ) {
+        let alt = code.is_none() && self.alt_table(self.pressed, keymod);
+        if repeat {
+            self.last = if alt { Last::Alt } else { Last::Repeat };
+            return;
+        }
+        if let Some(code) = code {
+            rt.type_held(code);
+            return;
+        }
+        let text = self.pressed.map(|key| self.key_text(key, keymod));
+        if let Some(text) = text {
+            rt.input.key_text(text);
+        }
         // Ctrl as SDL has it too, for a key that goes down in the frame
         // Ctrl does.
         let blocked = self.blocked || keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
-        if repeat || blocked && code.is_none() {
-            self.last = Last::Repeat;
-            return;
-        }
-        match code {
-            Some(code) => rt.type_held(code),
-            None => {
-                self.last = Last::Typing {
-                    shift: keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
-                }
+        if alt {
+            self.last = Last::Alt;
+            if let Some(code) = text.map(|t| t.alt).filter(|&c| c != 0)
+                && !blocked
+            {
+                rt.type_held(code);
             }
+        } else if blocked {
+            self.last = Last::Repeat;
+        } else {
+            self.last = Last::Typing {
+                shift: keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
+            };
+            // A key the layout gives no character for, such as one on the
+            // keypad, repeats what the computer types for it.
+            self.text = text.filter(|t| t.plain == 0 && t.shift == 0);
         }
     }
 
-    /// Text the computer typed. `upper_case`: letters type as SmileBASIC
-    /// 4's do (the setting for capitals without Shift); otherwise they keep
-    /// the case the computer gave them.
+    /// Text the computer typed.
     ///
     /// Text outside ASCII, from an input method or a layout of another
     /// script, types once as the computer gives it, its repeats included,
     /// as which key it came from is not known.
-    pub fn text(&mut self, rt: &mut sb_runtime::Runtime, text: &str, upper_case: bool) {
+    pub fn text(&mut self, rt: &mut sb_runtime::Runtime, text: &str) {
+        if self.last == Last::Alt {
+            return;
+        }
         for c in text.chars() {
             if !c.is_ascii() {
                 // SmileBASIC strings hold only the Basic Multilingual Plane.
@@ -214,14 +351,23 @@ impl Typing {
                 }
                 continue;
             }
-            match self.last {
-                Last::Repeat => {}
-                Last::Typing { shift } if upper_case => {
-                    rt.type_held(self.letter_case(c, shift) as u16)
+            let typed = match self.last {
+                Last::Repeat | Last::Alt => continue,
+                Last::Typing { shift } if self.upper_case => self.letter_case(c, shift),
+                Last::Typing { .. } => c,
+                Last::None if self.upper_case => {
+                    rt.key_press(swap_case(c) as u16);
+                    continue;
                 }
-                Last::Typing { .. } => rt.type_held(c as u16),
-                Last::None if upper_case => rt.key_press(swap_case(c) as u16),
-                Last::None => rt.key_press(c as u16),
+                Last::None => {
+                    rt.key_press(c as u16);
+                    continue;
+                }
+            };
+            rt.type_held(typed as u16);
+            if let Some(mut text) = self.text.take() {
+                (text.plain, text.shift) = (typed as u16, typed as u16);
+                rt.input.key_text(text);
             }
         }
     }
@@ -570,6 +716,40 @@ mod tests {
         sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank())
     }
 
+    /// Part of a US layout, the same on every computer the tests run on.
+    fn us_layout(key: Scancode, keymod: Mod) -> Option<char> {
+        let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+        let caps = keymod.contains(Mod::CAPSMOD);
+        let usage = key as i32;
+        let n = |first: i32| (usage - first) as u8;
+        Some(match usage {
+            4..=29 if shift != caps => (b'A' + n(4)) as char,
+            4..=29 => (b'a' + n(4)) as char,
+            30..=38 if shift => b"!@#$%^&*("[usize::from(n(30))] as char,
+            30..=38 => (b'1' + n(30)) as char,
+            39 if shift => ')',
+            39 => '0',
+            44 => ' ',
+            56 if shift => '?',
+            56 => '/',
+            _ => return None,
+        })
+    }
+
+    /// A layout where Right Alt is AltGr: with Q it gives "@", as German
+    /// layouts do, and with E "€".
+    fn alt_gr_layout(key: Scancode, keymod: Mod) -> Option<char> {
+        match key {
+            Scancode::Q if keymod.contains(Mod::MODEMOD) => Some('@'),
+            Scancode::E if keymod.contains(Mod::MODEMOD) => Some('€'),
+            _ => us_layout(key, keymod),
+        }
+    }
+
+    fn typing() -> Typing {
+        Typing::with_layout(us_layout)
+    }
+
     /// Presses `key` with `keymod` held and types `text` for it, as the
     /// frontend does.
     fn type_key(
@@ -582,7 +762,8 @@ mod tests {
     ) {
         keys.any_key_down(rt, Some(key), false);
         keys.key_down(rt, keymod, false, None);
-        keys.text(rt, text, upper);
+        keys.upper_case = upper;
+        keys.text(rt, text);
     }
 
     /// What INKEY$ gets from [`type_key`].
@@ -601,7 +782,7 @@ mod tests {
     /// own Caps Lock typed them in.
     #[test]
     fn letters_follow_smilebasic_4s_own_caps_lock() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         let shift = Mod::LSHIFTMOD;
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "41");
         assert_eq!(press(&mut keys, Scancode::A, shift, "A", true), "61");
@@ -622,7 +803,7 @@ mod tests {
     /// TEST69K: 1, Shift+1 and / type the same with Caps Lock on or off.
     #[test]
     fn caps_lock_leaves_digits_and_symbols_alone() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         for _ in 0..2 {
             assert_eq!(press(&mut keys, Scancode::_1, Mod::NOMOD, "1", true), "31");
             assert_eq!(
@@ -641,7 +822,7 @@ mod tests {
     /// case.
     #[test]
     fn the_setting_off_types_as_the_computer_does() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", false), "61");
         assert_eq!(
             press(&mut keys, Scancode::A, Mod::LSHIFTMOD, "A", false),
@@ -654,12 +835,12 @@ mod tests {
     /// send, still goes.
     #[test]
     fn the_computers_repeats_type_nothing() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         let mut rt = runtime();
         keys.any_key_down(&mut rt, Some(Scancode::A), true);
         keys.key_down(&mut rt, Mod::NOMOD, true, None);
-        keys.text(&mut rt, "a", true);
-        keys.text(&mut rt, "\u{AC00}", true);
+        keys.text(&mut rt, "a");
+        keys.text(&mut rt, "\u{AC00}");
         keys.any_key_down(&mut rt, Some(Scancode::Return), true);
         keys.key_down(&mut rt, Mod::NOMOD, true, Some(13));
         assert_eq!(inkey(&mut rt), "AC00");
@@ -667,7 +848,7 @@ mod tests {
 
     #[test]
     fn keys_that_type_no_text_type_their_code() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         let mut rt = runtime();
         keys.any_key_down(&mut rt, Some(Scancode::Return), false);
         let code = sb_runtime::runtime::keys::ENTER;
@@ -680,7 +861,7 @@ mod tests {
     /// that type a code of their own still do.
     #[test]
     fn keys_type_nothing_with_l_or_r_or_ctrl_held() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         keys.hold(&holding(0b11 << 8));
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
         let mut rt = runtime();
@@ -737,7 +918,7 @@ mod tests {
     /// programs, which the Caps Lock key toggles wherever it is pressed.
     #[test]
     fn the_editor_and_the_prompt_type_by_smilebasic_4s_caps_lock() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         let shift = Mod::LSHIFTMOD;
         let mut m = machine(true);
         type_key(&mut keys, &mut m.rt, Scancode::A, Mod::NOMOD, "a", true);
@@ -761,7 +942,7 @@ mod tests {
     /// keep the computer's case, as programs do.
     #[test]
     fn the_editor_with_the_setting_off_types_as_the_computer_does() {
-        let mut keys = Typing::default();
+        let mut keys = typing();
         for editing in [true, false] {
             let mut m = machine(editing);
             type_key(&mut keys, &mut m.rt, Scancode::A, Mod::NOMOD, "a", false);
@@ -796,5 +977,126 @@ mod tests {
         assert_eq!(modifiers(|k| k == Scancode::LShift), 2);
         assert_eq!(modifiers(|k| k == Scancode::RGui), 1);
         assert_eq!(modifiers(|_| false), 0);
+        // TEST69K: Caps Lock sets no bit.
+        assert_eq!(modifiers(|k| k == Scancode::CapsLock), 0);
+    }
+
+    /// The prompt's line after `key` went down with `keymod` and typed
+    /// `text`, and then `frames` frames with the keys `held` gives for
+    /// each held.
+    fn prompt_after(
+        keys: &mut Typing,
+        (key, keymod, text): (Scancode, Mod, &str),
+        frames: usize,
+        held: impl Fn(usize) -> Vec<Scancode>,
+    ) -> String {
+        let mut m = machine(false);
+        type_key(keys, &mut m.rt, key, keymod, text, true);
+        for i in 0..frames {
+            let mut state = State::default();
+            for k in held(i) {
+                state.set_key(k as i32 as u8, true);
+            }
+            m.rt.input.live = state;
+            m.frame();
+        }
+        last_row(&m).unwrap_or_default()
+    }
+
+    /// A held key's repeats type what the modifiers held give then: 1 with
+    /// Shift gone down types "!" 19 frames later, and A "a".
+    #[test]
+    fn repeats_type_what_shift_gives_now() {
+        let mut keys = typing();
+        let with_shift = |key| {
+            move |i| match i {
+                0..5 => vec![key],
+                _ => vec![key, Scancode::LShift],
+            }
+        };
+        let one = (Scancode::_1, Mod::NOMOD, "1");
+        assert_eq!(
+            prompt_after(&mut keys, one, 30, with_shift(Scancode::_1)),
+            "1!!"
+        );
+        let a = (Scancode::A, Mod::NOMOD, "a");
+        assert_eq!(
+            prompt_after(&mut keys, a, 30, with_shift(Scancode::A)),
+            "Aaa"
+        );
+    }
+
+    /// A key pressed with Ctrl types nothing, but held on once Ctrl is let
+    /// go it repeats.
+    #[test]
+    fn a_key_pressed_with_ctrl_repeats_once_ctrl_is_let_go() {
+        let mut keys = typing();
+        let a = (Scancode::A, Mod::LCTRLMOD, "a");
+        assert_eq!(prompt_after(&mut keys, a, 23, |_| vec![Scancode::A]), "AA");
+    }
+
+    /// A keypad key, which the layout gives no character for, repeats what
+    /// the computer typed for it.
+    #[test]
+    fn a_keypad_key_repeats_what_it_typed() {
+        let mut keys = typing();
+        let one = (Scancode::Kp1, Mod::NOMOD, "1");
+        assert_eq!(
+            prompt_after(&mut keys, one, 21, |_| vec![Scancode::Kp1]),
+            "11"
+        );
+    }
+
+    /// Alt with a key types SmileBASIC 4's own character, whatever text the
+    /// computer gave, with either Alt and Shift or not, or nothing for keys
+    /// without one.
+    #[test]
+    fn alt_types_smilebasic_4s_own_characters() {
+        let mut keys = typing();
+        let left = Mod::LALTMOD;
+        assert_eq!(press(&mut keys, Scancode::A, left, "\u{E5}", true), "E2EC");
+        assert_eq!(
+            press(&mut keys, Scancode::A, Mod::RALTMOD, "a", true),
+            "E2EC"
+        );
+        let shift_alt = left | Mod::LSHIFTMOD;
+        assert_eq!(press(&mut keys, Scancode::A, shift_alt, "A", true), "E2EC");
+        assert_eq!(press(&mut keys, Scancode::V, left, "v", true), "2606");
+        assert_eq!(press(&mut keys, Scancode::_3, left, "3", true), "");
+        // With Ctrl too, nothing.
+        let ctrl_alt = left | Mod::LCTRLMOD;
+        assert_eq!(press(&mut keys, Scancode::A, ctrl_alt, "a", true), "");
+        // Right Alt as the key held, on a layout that makes it Han/Eng.
+        let mut held = State::default();
+        held.set_key(Scancode::RAlt as i32 as u8, true);
+        keys.hold(&held);
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "E2EC");
+        // Held on, it repeats.
+        keys.hold(&State::default());
+        let alt_a = (Scancode::A, left, "a");
+        let alt_held = |_| vec![Scancode::A, Scancode::LAlt];
+        let repeated = prompt_after(&mut keys, alt_a, 21, alt_held);
+        assert_eq!(repeated, "\u{E2EC}\u{E2EC}");
+    }
+
+    /// On a layout where Right Alt is AltGr, it types the layout's
+    /// character with keys that have one, and SmileBASIC 4's with the rest.
+    /// Left Alt always types SmileBASIC 4's.
+    #[test]
+    fn right_alt_types_the_layouts_alt_gr_characters() {
+        let mut keys = Typing::with_layout(alt_gr_layout);
+        let alt_gr = Mod::MODEMOD;
+        assert_eq!(press(&mut keys, Scancode::Q, alt_gr, "@", true), "40");
+        assert_eq!(
+            press(&mut keys, Scancode::E, alt_gr, "\u{20AC}", true),
+            "20AC"
+        );
+        assert_eq!(press(&mut keys, Scancode::A, alt_gr, "a", true), "E2EC");
+        let left = Mod::LALTMOD;
+        assert_eq!(press(&mut keys, Scancode::Q, left, "q", true), "E2F0");
+        // "@" repeats as the key is held.
+        let q = (Scancode::Q, Mod::RALTMOD | alt_gr, "@");
+        let held = |_| vec![Scancode::Q, Scancode::RAlt];
+        assert_eq!(prompt_after(&mut keys, q, 21, held), "@@");
     }
 }

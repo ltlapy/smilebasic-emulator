@@ -5,7 +5,7 @@ use sb_core::host::Host;
 use sb_core::vm::{Status, Vm};
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
-use sb_runtime::input::State;
+use sb_runtime::input::{KeyText, State, alt_key_code};
 
 /// Runs `source` after one frame each of `frames`, returning what it
 /// printed on the console's first row.
@@ -168,6 +168,21 @@ fn keyboard() {
         )
         .unwrap(),
         "11012"
+    );
+}
+
+/// KEYBOARD 57 is the Caps Lock key itself, down while it is held, not
+/// the lock.
+#[test]
+fn keyboard_reads_the_caps_lock_key_itself() {
+    let mut caps = State::default();
+    caps.set_key(57, true);
+    let up = State::default();
+    let read = "?KEYBOARD(57);KEYBOARD(57,2);KEYBOARD(57,1)";
+    assert_eq!(run(&[up, caps], read).unwrap(), "110");
+    assert_eq!(
+        run(&[caps, up], "?KEYBOARD(57);KEYBOARD(57,3)").unwrap(),
+        "01"
     );
 }
 
@@ -515,14 +530,44 @@ fn another_key_stops_a_held_keys_repeat() {
     assert_eq!(typed, "0A 19A 22A");
 }
 
+const ONE_KEY: u8 = 30;
+const LEFT_CTRL: u8 = 224;
+const RIGHT_CTRL: u8 = 228;
+const LEFT_ALT: u8 = 226;
+const RIGHT_ALT: u8 = 230;
+
+/// What a key types by the modifiers, as the frontend gives it: `plain`
+/// and `shift`, and with Alt SmileBASIC 4's own character.
+fn key_text(usage: u8, plain: u8, shift: u8) -> KeyText {
+    let alt = alt_key_code(usage).unwrap_or(0);
+    KeyText {
+        plain: plain.into(),
+        shift: shift.into(),
+        alt,
+        right_alt: alt,
+    }
+}
+
+/// Presses `usage` as the frontend does: it types `typed`, and its repeats
+/// type what `text` gives by the modifiers held then.
+fn press_key(rt: &mut Runtime, usage: u8, text: KeyText, typed: u16) {
+    rt.input.key_down(usage);
+    rt.input.key_text(text);
+    rt.type_held(typed);
+}
+
+/// The A key with SmileBASIC 4's Caps Lock on.
+fn a_text() -> KeyText {
+    key_text(A_KEY, b'A', b'a')
+}
+
 /// TEST69K: Shift going down while a letter is held holds its repeat for 19
 /// frames, and then it repeats in the other case.
 #[test]
 fn shift_turns_a_held_letters_repeats_round() {
     let typed = keys_by_frame(52, |i, rt| {
         if i == 0 {
-            rt.input.key_down(A_KEY);
-            rt.type_held(u16::from(b'A'));
+            press_key(rt, A_KEY, a_text(), u16::from(b'A'));
         }
         // A modifier going down leaves the repeat going.
         if i == 26 {
@@ -542,8 +587,7 @@ fn shift_turns_a_held_letters_repeats_round() {
 fn shift_let_go_turns_a_held_letter_back() {
     let typed = keys_by_frame(40, |i, rt| {
         if i == 0 {
-            rt.input.key_down(A_KEY);
-            rt.type_held(u16::from(b'a'));
+            press_key(rt, A_KEY, a_text(), u16::from(b'a'));
         }
         rt.input.live = match i {
             0..10 => holding(&[A_KEY, RIGHT_SHIFT]),
@@ -553,20 +597,148 @@ fn shift_let_go_turns_a_held_letter_back() {
     assert_eq!(typed, "0a 29A 32A 35A 38A");
 }
 
-/// Only letters change: a held 1 repeats on as it was with Shift going down.
+/// Every key's repeats follow Shift, not only letters': 1 held, then Shift,
+/// types "!" after 19 frames.
 #[test]
-fn shift_leaves_other_keys_repeating() {
-    let typed = keys_by_frame(30, |i, rt| {
+fn shift_turns_a_held_digit_into_its_symbol() {
+    let typed = keys_by_frame(36, |i, rt| {
         if i == 0 {
-            rt.input.key_down(B_KEY);
-            rt.type_held(u16::from(b'1'));
+            press_key(rt, ONE_KEY, key_text(ONE_KEY, b'1', b'!'), u16::from(b'1'));
         }
         rt.input.live = match i {
-            0..10 => holding(&[B_KEY]),
-            _ => holding(&[B_KEY, LEFT_SHIFT]),
+            0..10 => holding(&[ONE_KEY]),
+            _ => holding(&[ONE_KEY, LEFT_SHIFT]),
         };
     });
+    assert_eq!(typed, "01 29! 32! 35!");
+}
+
+/// Ctrl going down holds the repeat back and types nothing while it is
+/// held; going up, it starts the count again, and the key types 19 frames
+/// later.
+#[test]
+fn ctrl_down_and_up_start_the_count_again() {
+    let typed = keys_by_frame(60, |i, rt| {
+        if i == 0 {
+            press_key(rt, A_KEY, a_text(), u16::from(b'A'));
+        }
+        rt.input.live = match i {
+            0..21 => holding(&[A_KEY]),
+            21..50 => holding(&[A_KEY, LEFT_CTRL]),
+            _ => holding(&[A_KEY]),
+        };
+    });
+    // Repeats at 19, none with Ctrl, then 50+19.
+    assert_eq!(typed, "0A 19A");
+    let typed = keys_by_frame(60, |i, rt| {
+        if i == 0 {
+            press_key(rt, A_KEY, a_text(), u16::from(b'A'));
+        }
+        rt.input.live = match i {
+            0..21 => holding(&[A_KEY]),
+            21..30 => holding(&[A_KEY, RIGHT_CTRL]),
+            _ => holding(&[A_KEY]),
+        };
+    });
+    assert_eq!(typed, "0A 19A 49A 52A 55A 58A");
+}
+
+/// A key pressed with Ctrl held types nothing, but held on once Ctrl is let
+/// go it types 19 frames later.
+#[test]
+fn a_key_pressed_with_ctrl_types_once_ctrl_goes_up() {
+    let typed = keys_by_frame(40, |i, rt| {
+        if i == 0 {
+            // The frontend types nothing for it, but says what it gives.
+            rt.input.key_down(A_KEY);
+            rt.input.key_text(a_text());
+            rt.key_press(u16::from(b'X'));
+        }
+        rt.input.live = match i {
+            0..10 => holding(&[A_KEY, LEFT_CTRL]),
+            _ => holding(&[A_KEY]),
+        };
+    });
+    assert_eq!(typed, "0X 29A 32A 35A 38A");
+}
+
+/// Another key let go while the held one repeats starts its count again.
+#[test]
+fn another_key_let_go_starts_the_count_again() {
+    let typed = keys_by_frame(50, |i, rt| {
+        if i == 0 {
+            press_key(rt, A_KEY, a_text(), u16::from(b'A'));
+        }
+        rt.input.live = match i {
+            0..24 => holding(&[A_KEY, B_KEY]),
+            _ => holding(&[A_KEY]),
+        };
+    });
+    assert_eq!(typed, "0A 19A 22A 43A 46A 49A");
+}
+
+/// Alt going down while a key repeats: after 19 frames it repeats what Alt
+/// gives with it, SmileBASIC 4's own character, either Alt alike.
+#[test]
+fn alt_turns_a_held_keys_repeats_into_its_own_character() {
+    for alt in [LEFT_ALT, RIGHT_ALT] {
+        let typed = keys_by_frame(35, |i, rt| {
+            if i == 0 {
+                press_key(rt, A_KEY, a_text(), u16::from(b'A'));
+            }
+            rt.input.live = match i {
+                0..10 => holding(&[A_KEY]),
+                _ => holding(&[A_KEY, alt, LEFT_SHIFT]),
+            };
+        });
+        assert_eq!(typed, "0A 29\u{E2EC} 32\u{E2EC}");
+    }
+    // 3 has none, and types nothing with Alt.
+    let three = 32;
+    let typed = keys_by_frame(35, |i, rt| {
+        if i == 0 {
+            press_key(rt, three, key_text(three, b'3', b'#'), u16::from(b'3'));
+        }
+        rt.input.live = match i {
+            0..10 => holding(&[three]),
+            _ => holding(&[three, LEFT_ALT]),
+        };
+    });
+    assert_eq!(typed, "03");
+}
+
+/// Keys such as Enter repeat as they typed at the press, with Ctrl held too.
+#[test]
+fn keys_that_type_a_code_repeat_it_with_ctrl() {
+    let typed = keys_by_frame(30, |i, rt| {
+        if i == 0 {
+            rt.input.key_down(ONE_KEY);
+            rt.type_held(u16::from(b'1'));
+        }
+        rt.input.live = holding(&[ONE_KEY, LEFT_CTRL]);
+    });
+    // The Ctrl held from the start is no change.
     assert_eq!(typed, "01 191 221 251 281");
+}
+
+/// The table of what Alt types with each key.
+#[test]
+fn alt_types_smilebasic_4s_own_characters() {
+    assert_eq!(alt_key_code(A_KEY), Some(0xE2EC));
+    assert_eq!(alt_key_code(25), Some(0x2606), "V");
+    assert_eq!(alt_key_code(ONE_KEY), Some(0xE2EB));
+    assert_eq!(alt_key_code(31), Some(0xE2EA), "2");
+    for digit in 32..=38 {
+        assert_eq!(alt_key_code(digit), None, "3 to 9");
+    }
+    assert_eq!(alt_key_code(39), Some(0xE29C), "0");
+    // The keypad's + to 9, 0 and the point.
+    assert_eq!(alt_key_code(0x57), Some(0xE28F));
+    assert_eq!(alt_key_code(0x61), Some(0xE299));
+    assert_eq!(alt_key_code(0x62), Some(0xE295));
+    assert_eq!(alt_key_code(0x63), Some(0xE296));
+    assert_eq!(alt_key_code(40), None, "Enter");
+    assert_eq!(alt_key_code(0), None);
 }
 
 /// TEST69K: keys pressed with Ctrl type nothing, nor with the controller's
@@ -589,13 +761,30 @@ fn ctrl_or_l_or_r_keep_keys_from_typing() {
     };
     assert!(ctrl.keys_type_nothing());
     // Either Ctrl key, as it is held.
-    assert!(holding(&[224]).keys_type_nothing());
-    assert!(holding(&[228]).keys_type_nothing());
+    assert!(holding(&[LEFT_CTRL]).keys_type_nothing());
+    assert!(holding(&[RIGHT_CTRL]).keys_type_nothing());
     let shift = State {
         modifiers: 1 << 1,
         ..State::default()
     };
     assert!(!shift.keys_type_nothing());
+}
+
+/// L or R held while a key repeats keeps the repeats from typing, without
+/// a keyboard key going down or up to start the count again.
+#[test]
+fn l_held_keeps_a_held_key_from_repeating() {
+    let typed = keys_by_frame(40, |i, rt| {
+        if i == 0 {
+            press_key(rt, A_KEY, a_text(), u16::from(b'A'));
+        }
+        let mut state = holding(&[A_KEY]);
+        if (21..30).contains(&i) {
+            state.pads[0].buttons = 1 << 8;
+        }
+        rt.input.live = state;
+    });
+    assert_eq!(typed, "0A 19A 31A 34A 37A");
 }
 
 /// Let go before 19 frames, a key types once, and pressing it again starts
@@ -708,10 +897,10 @@ fn a_key_held_in_the_editor_repeats_as_for_programs() {
             rt.input.key_down(A_KEY);
             rt.type_held(u16::from(b'A'));
         }
-        rt.input.editor_keys = if i < 26 {
-            holding(&[A_KEY]).keys
+        rt.input.editor_held = if i < 26 {
+            holding(&[A_KEY])
         } else {
-            [0; 4]
+            State::default()
         };
     });
     assert_eq!(changed, [0, 19, 22, 25]);
@@ -719,6 +908,28 @@ fn a_key_held_in_the_editor_repeats_as_for_programs() {
     // Let go, it types no more.
     let changed = editor_changes(&mut m, 30, |_, _| {});
     assert!(changed.is_empty());
+}
+
+/// The editor's repeats follow the modifiers as a program's do.
+#[test]
+fn a_key_held_in_the_editor_follows_shift_and_l() {
+    let mut m = editing();
+    let changed = editor_changes(&mut m, 45, |i, rt| {
+        if i == 0 {
+            press_key(rt, ONE_KEY, key_text(ONE_KEY, b'1', b'!'), u16::from(b'1'));
+        }
+        let mut held = match i {
+            0..10 => holding(&[ONE_KEY]),
+            _ => holding(&[ONE_KEY, LEFT_SHIFT]),
+        };
+        // L blocks 32, 35 and 38.
+        if (30..40).contains(&i) {
+            held.pads[0].buttons = 1 << 8;
+        }
+        rt.input.editor_held = held;
+    });
+    assert_eq!(changed, [0, 29, 41, 44]);
+    assert_eq!(m.editor().text(), "1!!!");
 }
 
 /// Backspace and the other keys that edit repeat the same way.
@@ -732,7 +943,7 @@ fn an_editing_key_held_in_the_editor_repeats_as_for_programs() {
             rt.input.key_down(BACKSPACE_KEY);
             rt.type_held(keys::BACKSPACE);
         }
-        rt.input.editor_keys = holding(&[BACKSPACE_KEY]).keys;
+        rt.input.editor_held = holding(&[BACKSPACE_KEY]);
     });
     assert_eq!(changed, [0, 19, 22]);
     assert_eq!(m.editor().text(), "ABCDE");
@@ -745,11 +956,11 @@ fn a_key_held_in_the_editor_stops_when_it_closes() {
     let mut m = editing();
     m.rt.input.key_down(A_KEY);
     m.rt.type_held(u16::from(b'A'));
-    m.rt.input.editor_keys = holding(&[A_KEY]).keys;
+    m.rt.input.editor_held = holding(&[A_KEY]);
     m.frame();
     assert_eq!(m.editor().text(), "A");
     m.toggle_editor();
-    m.rt.input.editor_keys = [0; 4];
+    m.rt.input.editor_held = State::default();
     m.rt.input.live = holding(&[A_KEY]);
     for _ in 0..30 {
         m.frame();
