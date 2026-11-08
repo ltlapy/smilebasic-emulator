@@ -23,7 +23,8 @@ cargo build --profile dist
 SDL3 is built from source. On Linux, install the X11, Wayland and audio
 development headers listed in SDL's `docs/README-linux.md` first.
 
-For an aarch64 handheld, see [building-handheld.md](docs/building-handheld.md).
+For Windows, see [building-windows.md](docs/building-windows.md). For an aarch64
+handheld, see [building-handheld.md](docs/building-handheld.md).
 
 ## Resources
 

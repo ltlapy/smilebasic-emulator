@@ -5,6 +5,7 @@ Using the emulator:
 - [shortcuts.md](shortcuts.md): keyboard shortcuts
 - [differences.md](differences.md): where the emulator differs from SmileBASIC 4 on purpose
 - [importing.md](importing.md): importing resources, and exporting instruments and songs
+- [building-windows.md](building-windows.md): building for Windows
 - [building-handheld.md](building-handheld.md): building for an aarch64 handheld
 
 SmileBASIC 4 itself:
