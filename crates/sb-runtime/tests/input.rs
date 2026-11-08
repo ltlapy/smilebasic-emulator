@@ -896,9 +896,9 @@ fn a_key_let_go_types_once() {
     assert_eq!(typed, "0A 10A 29A");
 }
 
-/// What a key typed before a program ends does not repeat after it.
+/// A key held when a program ends goes on repeating in DIRECT mode.
 #[test]
-fn a_program_that_ends_leaves_no_repeat() {
+fn a_key_held_when_a_program_ends_repeats_in_direct_mode() {
     use sb_runtime::machine::Machine;
     let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
     m.boot();
@@ -920,12 +920,13 @@ fn a_program_that_ends_leaves_no_repeat() {
             .map(|(x, y)| console.cell(x, y).code)
             .collect::<Vec<_>>()
     };
-    let ended = screen(&m);
+    let a_cells = |m: &Machine| screen(m).iter().filter(|&&c| c == u16::from(b'A')).count();
+    let ended = a_cells(&m);
     for _ in 0..40 {
         m.frame();
     }
-    // Direct mode's line has nothing typed into it.
-    assert!(screen(&m) == ended);
+    // The A key types into DIRECT mode's line.
+    assert!(a_cells(&m) > ended);
 }
 
 const BACKSPACE_KEY: u8 = 42;

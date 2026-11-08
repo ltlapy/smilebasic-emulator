@@ -487,7 +487,9 @@ impl Input {
     }
 
     /// Forgets what was pressed and for how long, so that buttons held
-    /// when a program ends give no presses or repeats to the next one.
+    /// when a program ends give no presses or repeats to the next one. A
+    /// keyboard key held goes on repeating: from a program into DIRECT
+    /// mode, and across RUN.
     pub fn forget(&mut self) {
         self.now = self.live;
         self.before = self.live;
@@ -496,7 +498,6 @@ impl Input {
         // What is held goes on counting as held, and types nothing more
         // until let go.
         self.spend_pad_key();
-        self.key_repeat = KeyRepeat::default();
     }
 
     /// A keyboard key went down: what [`Runtime::type_held`] types for it
