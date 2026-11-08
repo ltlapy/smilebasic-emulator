@@ -633,16 +633,15 @@ impl Track {
                     let Some(t) = ticks(*len, length, lookup) else {
                         continue;
                     };
+                    // The chord's own octave changes end with it.
+                    let mut octave = self.channels[c].octave;
                     let mut keys = Vec::new();
                     for part in parts {
                         match *part {
-                            ChordPart::Note(s) => {
-                                let octave = self.channels[c].octave;
-                                keys.push(self.midi_key(c, octave, s));
-                            }
-                            ChordPart::Octave(n) => self.channels[c].octave = self.var(n),
-                            ChordPart::Up => self.channels[c].octave += up,
-                            ChordPart::Down => self.channels[c].octave -= up,
+                            ChordPart::Note(s) => keys.push(self.midi_key(c, octave, s)),
+                            ChordPart::Octave(n) => octave = self.var(n),
+                            ChordPart::Up => octave += up,
+                            ChordPart::Down => octave -= up,
                         }
                     }
                     self.sound(c, keys, t, *link);

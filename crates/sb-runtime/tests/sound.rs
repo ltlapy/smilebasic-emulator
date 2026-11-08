@@ -868,6 +868,19 @@ fn silent_jingles_still_end() {
     assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "01");
 }
 
+/// An octave set inside a chord ends with the chord, and a bare length
+/// after a tied chord goes on with it. Without the first, the `<` after
+/// the chord would leave octave 9.
+#[test]
+fn a_chords_octave_ends_with_the_chord() {
+    let mut rt = runtime();
+    run_on(&mut rt, "BGMPLAY \"T240O8|A<CE|96&96<C1\"").unwrap();
+    frames(&mut rt, 20);
+    let tracks = rt.sound.inspect_tracks();
+    let ch = &tracks[0].channels[0];
+    assert_eq!((ch.octave, ch.keys.as_slice()), (Some(9), [120].as_slice()));
+}
+
 #[test]
 fn the_debugger_sees_what_tracks_and_beeps_play() {
     use sb_runtime::sound::inspect::{BeepKind, State};

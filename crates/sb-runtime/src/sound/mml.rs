@@ -486,7 +486,10 @@ impl Parser {
         }
     }
 
+    /// `|...|`. An octave set inside a chord lasts to its end only: the
+    /// note after `|A<CE|` is in the octave before the chord.
     fn chord(&mut self) -> Result<Cmd, Error> {
+        let octave = self.octaves[self.channel];
         let mut parts = Vec::new();
         loop {
             self.skip_space();
@@ -518,6 +521,7 @@ impl Parser {
         if !parts.iter().any(|p| matches!(p, ChordPart::Note(_))) {
             return Err(self.end());
         }
+        self.octaves[self.channel] = octave;
         let len = self.len()?;
         let link = self.link();
         Ok(Cmd::Chord { parts, len, link })
@@ -965,6 +969,10 @@ mod tests {
             ("O8[<C]3", None),
             ("O9!>C", Some(4)),
             ("O9|<CE|", Some(4)),
+            // A chord's octave ends with it.
+            ("O8|<C|<C", None),
+            ("O8|<C|<<C", Some(8)),
+            ("O1|>>C|>C", None),
             ("$0=9O$0<C", Some(5)),
             ("$0=1O$0>>C", Some(5)),
             ("@MP127,1,1,1C", None),

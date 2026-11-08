@@ -1412,6 +1412,10 @@ Expected but not yet seen on hardware:
   `O`. The octave check counts `<` and `>` after `!` the other way round
   (`O9!>C` gives 4, `O9!<C` -1) and inside a chord (`O9|C<E|` 5, `O9|<CE|`
   4), but not through a repeat: `O8[<C]3` gives -1 (TEST69).
+- An octave set inside a chord lasts to the chord's end: the note after
+  `|A<CE|` is in the octave before the chord, so `O8|<C|<C` passes. Songs in
+  shared projects write dozens of such chords in a row, which would pass octave
+  9 if the octave carried on. (Not yet seen on hardware.)
 - A space after `O` changes nothing: `CHKMML("$0=9O $0<C")` gives 5 too, just
   after the `O`. `>` reaches octave -1 from 0: `O0>C` and `O-1C` give -1 and
   `O0>>C` 4. `O9<C` gives 3 and `O9>C` -1 (TEST70).
