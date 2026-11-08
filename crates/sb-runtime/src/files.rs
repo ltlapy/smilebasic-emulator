@@ -133,7 +133,7 @@ impl Runtime {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
                 program_type(&spec)?;
-                self.refuse_project_in_main(&spec)?;
+                self.refuse_save_project(&spec)?;
                 if let Ok(file) = self.write_name(&spec, FileKind::Txt) {
                     let exists = self.storage.exists_ref(&file);
                     let file = file.label();
@@ -370,20 +370,26 @@ impl Runtime {
         Ok(file)
     }
 
-    /// A main program's SAVE, SAVEV and SAVEG may not name a project, not
-    /// even its own or the workspace's `/NAME`: Can't access other project
-    /// in this mode. A subprogram and the prompt write to any project.
-    pub(crate) fn refuse_project_in_main(&self, spec: &str) -> Result<()> {
-        if !self.direct && self.env_type == 0 && has_project(spec) {
-            return Err(ErrorKind::CantAccessOtherProject.into());
+    /// SAVE, SAVEV and SAVEG into one of SmileBASIC 4's own `#` projects:
+    /// Can't SAVE to system project, in every mode. Then a main program
+    /// may not name a project, not even its own or the workspace's
+    /// `/NAME`: Can't access other project in this mode. A subprogram and
+    /// DIRECT mode write to any other project.
+    pub(crate) fn refuse_save_project(&self, spec: &str) -> Result<()> {
+        let project = parse_read_name(spec, FileKind::Txt).map(|f| f.project);
+        match project {
+            Ok(Some(p)) if p.starts_with('#') => Err(ErrorKind::CantSaveToSystemProject.into()),
+            Ok(Some(_)) if !self.direct && self.env_type == 0 => {
+                Err(ErrorKind::CantAccessOtherProject.into())
+            }
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     /// A file named for writing, in the current project or, named with
     /// its project, in another one, which must exist. SmileBASIC 4's own
-    /// `#` projects take no files: writing one fails, where SmileBASIC 4
-    /// gives an error of its own (see docs/sb4-pitfalls.md).
+    /// `#` projects take no files: the commands refuse them first (see
+    /// [`Runtime::refuse_save_project`]), and writing one otherwise fails.
     pub(crate) fn write_name(&self, spec: &str, default: FileKind) -> storage::Result<FileRef> {
         let file = self.read_name(spec, default)?;
         match &file.project {

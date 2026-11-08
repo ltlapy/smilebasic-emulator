@@ -1232,6 +1232,41 @@ fn direct_error(m: &mut Machine, line: &str) -> String {
     printed.unwrap_or_else(|| panic!("{text:?}")).to_string()
 }
 
+/// SAVE, SAVEV and SAVEG into a `#` project are error 75 in a main
+/// program (before its 74), in a subprogram and in DIRECT mode.
+#[test]
+fn saves_into_a_system_project_are_refused_everywhere() {
+    let dir = TempDir::new("system-project");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("#SYS").unwrap();
+    let commands = [
+        ("SAVE \"#SYS/X\",1", "SAVE"),
+        ("SAVEV \"TXT:#SYS/X\",\"1\"", "SAVEV"),
+        ("SAVEG \"GRP:#SYS/X\",0", "SAVEG"),
+    ];
+    for (source, command) in commands {
+        m.set_slot(0, format!("A=1\n{source}"));
+        enter(&mut m, "run");
+        let message = format!("Can't SAVE to system project in 0:2({command})");
+        assert_eq!(program_error(&mut m), (message, 75, None), "{source}");
+
+        let message = format!("Can't SAVE to system project ({command})");
+        assert_eq!(direct_error(&mut m, &source.to_ascii_lowercase()), message);
+
+        m.set_slot(1, format!("A=1\n{source}"));
+        enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+        for _ in 0..10 {
+            m.frame();
+        }
+        let (e, sub) = m.take_program_error().expect("an error");
+        let message = format!("Can't SAVE to system project in 0:2({command})");
+        assert!(sub);
+        assert_eq!((e.to_string(), e.kind.code()), (message, 75), "{source}");
+    }
+    let files = std::fs::read_dir(dir.0.join("#SYS")).map_or(0, Iterator::count);
+    assert_eq!(files, 0);
+}
+
 /// RENAME and DELETE refuse a name with a project at the prompt and in a
 /// subprogram too.
 #[test]

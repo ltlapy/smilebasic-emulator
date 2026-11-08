@@ -284,7 +284,7 @@ impl Runtime {
             }
             (Command::Savev, Want::Outs(0), [spec, value]) => {
                 let spec = str_arg(spec)?;
-                self.refuse_project_in_main(&spec)?;
+                self.refuse_save_project(&spec)?;
                 // The type cannot be left out.
                 let file = match spec.contains(':') {
                     true => self.write_name(&spec, FileKind::Txt),
@@ -350,7 +350,7 @@ impl Runtime {
             (Command::Saveg, Want::Outs(0), [spec, page, rest @ ..]) => {
                 let spec = str_arg(spec)?;
                 let page = page_arg(page)?;
-                self.refuse_project_in_main(&spec)?;
+                self.refuse_save_project(&spec)?;
                 let file = self.write_name(&spec, FileKind::Grp);
                 let jpeg = matches!(&file, Ok(f) if f.kind == FileKind::Jpg);
                 let (rect, quality) = match (rest, jpeg) {
