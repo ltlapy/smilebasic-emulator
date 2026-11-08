@@ -10,9 +10,13 @@
 //! `VSYNC` and the frames a program skips come out as there. `PERFBEGIN`,
 //! `PERFEND` and `MILLISEC` measure the same time.
 //!
-//! The costs come from TPERF's scenes and the loops of TEST65 and TEST67,
-//! timed on both consoles running SmileBASIC 4.4.9, and from TEST68 on a
-//! Switch 2 (docs/benchmarking.md).
+//! The costs come from TPERF's scenes and the loops of TEST65, TEST67 and
+//! TEST69, timed on both consoles running SmileBASIC 4.4.9, and from TEST68
+//! on a Switch 2 (docs/benchmarking.md).
+//!
+//! UNVERIFIED: drawing at many places and changing many sprites in turn
+//! cost more on a Switch 1 than at one place (TEST69), which is not
+//! charged.
 //! Drawing sprites, layers and text screens happens in the frame job, which
 //! TPERF and TEST67 show costs a program nothing, so only the commands are
 //! charged.
@@ -95,9 +99,9 @@ pub(crate) struct Costs {
     element: u64,
     extra_index: u64,
     /// A character of a string read or written by index, on top of the
-    /// element. UNVERIFIED: TEST68's string loops always pass the
-    /// character read to `ASC` and the one written comes from `CHR$`, so
-    /// the cost may be in `ASC` instead.
+    /// element. UNVERIFIED: TEST69 times `S$[I]` and `ASC` alone at half
+    /// what the meter charges them, but TEST68's string loops need this
+    /// cost, so it stands for something else those loops do.
     str_element: u64,
     /// Each element `FILL` writes.
     fill_element: u64,
@@ -174,10 +178,10 @@ pub(crate) struct Costs {
     compile_text_char: u64,
 }
 
-// From TPERF and TEST65 on a Switch 2 and a Switch 1, from TEST67,
-// which times single commands at several sizes, and from TEST68's
-// Hangul library on a Switch 2. The Switch 2 ran TEST67 and TEST68
-// docked and TPERF handheld; the Switch 1 ran TPERF and TEST67 handheld.
+// From TPERF and TEST65 on a Switch 2 and a Switch 1, from TEST67 and
+// TEST69, which time single commands at several sizes, and from TEST68's
+// Hangul library on a Switch 2. The Switch 2 ran TEST67 to TEST69
+// docked and TPERF handheld; the Switch 1 ran the others handheld.
 const SWITCH2: Costs = Costs {
     instruction: 9_700,
     statement: 6_500,
