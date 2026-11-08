@@ -136,13 +136,19 @@ enum Stop {
 }
 
 /// MML with comments taken out and macros put in, and where each of its
-/// characters stands in the text as given. A macro's characters stand
-/// where the macro was defined.
-// UNVERIFIED: an error inside a macro is placed in the macro's definition.
+/// characters stands in the text as given. A macro's characters all stand
+/// just past where it was used: `{X=@MP128,1,1,1}C{X}` fails at 20.
+// UNVERIFIED: a macro used inside another stands past the outer use.
 struct Plain {
     text: Vec<char>,
+    /// Indexes into the text as given, or, marked [`USED`], the index just
+    /// past a macro's use.
     at: Vec<u32>,
 }
+
+/// Marks a place in [`Plain::at`] as just past a macro's use: an error
+/// there stands at that index itself, not one after it.
+const USED: u32 = 1 << 31;
 
 /// Takes out `/comments/`, and puts macros in where they are used. With
 /// `seen`, a macro goes in only where it is first used, which is enough to
@@ -167,15 +173,19 @@ fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Plain, Sto
     } else {
         MACRO_CHARS
     };
-    expand_into(&plain, &mut macros, &mut out, 0, &mut left, &mut seen)?;
+    expand_into(&plain, &mut macros, &mut out, 0, None, &mut left, &mut seen)?;
     Ok(out)
 }
 
+/// Puts `text` in `out`. `used` is where the outermost macro being put in
+/// was used: [`USED`] and the index just past its `}`.
+#[allow(clippy::too_many_arguments)]
 fn expand_into(
     text: &[(char, u32)],
     macros: &mut HashMap<String, Vec<(char, u32)>>,
     out: &mut Plain,
     depth: usize,
+    used: Option<u32>,
     left: &mut usize,
     seen: &mut Option<HashSet<String>>,
 ) -> Result<(), Stop> {
@@ -184,11 +194,11 @@ fn expand_into(
         let (c, source) = text[i];
         if c != '{' {
             out.text.push(c);
-            out.at.push(source);
+            out.at.push(used.unwrap_or(source));
             i += 1;
             continue;
         }
-        let at = source as usize;
+        let at = used.map_or(source, |u| u & !USED) as usize;
         // A definition may use other macros: `{Y={X}F}`.
         let mut open = 0;
         let close = (i..text.len())
@@ -226,8 +236,9 @@ fn expand_into(
                 // The 1 is for empty macros, which cost time all the same.
                 *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
                 let body = body.clone();
+                let used = used.or(Some(USED | (text[close].1 + 1)));
                 if seen.as_mut().is_none_or(|seen| seen.insert(name)) {
-                    expand_into(&body, macros, out, depth + 1, left, seen)?;
+                    expand_into(&body, macros, out, depth + 1, used, left, seen)?;
                 }
             }
         }
@@ -260,7 +271,7 @@ impl Parser {
     /// An error at the character at `p`, where it was written.
     fn start(&self, p: usize) -> Error {
         match self.source.get(p) {
-            Some(&i) => i as usize,
+            Some(&i) => (i & !USED) as usize,
             None => self.end_of(p),
         }
     }
@@ -269,8 +280,9 @@ impl Parser {
     /// SmileBASIC 4 gives the end of what it stopped on.
     fn end_of(&self, p: usize) -> Error {
         match p.checked_sub(1).and_then(|i| self.source.get(i)) {
+            Some(&i) if i & USED != 0 => (i & !USED) as usize,
             Some(&i) => i as usize + 1,
-            None => self.source.first().map_or(0, |&i| i as usize),
+            None => self.source.first().map_or(0, |&i| (i & !USED) as usize),
         }
     }
 
@@ -1023,18 +1035,22 @@ mod tests {
         }
     }
 
-    /// Positions count comments, and an error inside a macro stands where
-    /// the macro was defined.
+    /// Positions count comments, and an error inside a macro stands just
+    /// past where the macro was used (TEST71).
     #[test]
     fn errors_stand_in_the_text_as_given() {
         assert_eq!(check("{X=5}O{X}C"), Ok(()));
         assert_eq!(check("/skip/C5"), Err(7));
         assert_eq!(check("/A/@MP128,1,1,1C"), Err(9));
-        assert_eq!(check("{X=@MP128,1,1,1}C{X}"), Err(9));
+        assert_eq!(check("{X=@MP128,1,1,1}C{X}"), Err(20));
+        assert_eq!(check("{X=C}/A/@MP128,1,1,1C"), Err(14));
         assert_eq!(check("@MP129/,/,1,1,1C"), Err(6));
-        assert_eq!(check("{X=C5}CDE{X}"), Err(4));
-        assert_eq!(check("{X=@MP129,1,1,1}C{X}"), Err(9));
-        assert_eq!(check("{X=C}{Y=D{X}Q}{Y}"), Err(13));
+        assert_eq!(check("{X=C5}CDE{X}"), Err(12));
+        assert_eq!(check("{X=C5}CDE{X}D"), Err(12));
+        assert_eq!(check("{X=@MP129,1,1,1}C{X}"), Err(20));
+        // A macro used in another stands past the outer use.
+        assert_eq!(check("{X=C}{Y=D{X}Q}{Y}"), Err(17));
+        assert_eq!(check("{X=C5}{Y=D{X}}{Y}E"), Err(17));
         assert_eq!(check("{X=C}{X}Z"), Err(8));
         assert_eq!(check("CD{NOPE}"), Err(2));
         assert_eq!(check("[CD/x/"), Err(3));
