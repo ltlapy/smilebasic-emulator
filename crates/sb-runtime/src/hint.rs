@@ -32,6 +32,7 @@ struct Frame {
     name: Option<String>,
     /// Where the name ends, for a statement.
     name_end: usize,
+    /// Commas and the other separators read so far.
     commas: usize,
     out: bool,
     call: bool,
@@ -82,6 +83,9 @@ pub fn find(line: &[u16], col: usize, library: &Library, names: &[Item]) -> Opti
                     frame.out = true;
                     frame.commas = 0;
                 }
+                // These separate arguments as a comma does: FOR's end
+                // value and step, the labels after ON or IF's GOTO.
+                "TO" | "STEP" | "GOTO" | "GOSUB" if frame.name.is_some() => frame.commas += 1,
                 _ if statement && frame.name.is_none() => {
                     frame.name = Some(word.clone());
                     frame.name_end = i;
@@ -102,7 +106,8 @@ pub fn find(line: &[u16], col: usize, library: &Library, names: &[Item]) -> Opti
             0x29 | 0x5D if stack.len() > 1 => {
                 stack.pop();
             }
-            0x2C => stack.last_mut().expect("never empty").commas += 1,
+            // PRINT and INPUT separate arguments with `;` too.
+            0x2C | 0x3B => stack.last_mut().expect("never empty").commas += 1,
             0x3A => stack = vec![Frame::default()],
             _ => {}
         }
@@ -142,51 +147,244 @@ pub fn find(line: &[u16], col: usize, library: &Library, names: &[Item]) -> Opti
 }
 
 /// Character ranges of a form.
-type Spans = Vec<(usize, usize)>;
+pub type Spans = Vec<(usize, usize)>;
 
-/// The argument names of a form after the command's name: those before
-/// OUT and those after, as character ranges of the form.
-fn arguments(form: &str, name: &str) -> (Spans, Spans) {
-    let chars: Vec<char> = form.chars().collect();
-    let upper: String = form.to_ascii_uppercase();
-    let after_name = upper
-        .find(name)
-        .map_or(0, |at| form[..at + name.len()].chars().count());
-    let (mut ins, mut outs) = (Vec::new(), Vec::new());
-    let mut out = false;
-    let mut quoted = false;
-    let mut i = after_name;
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '"' {
-            quoted = !quoted;
-        }
-        if quoted || !(c.is_alphanumeric() || c == '_') {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < chars.len() && (chars[i].is_alphanumeric() || "_$%#".contains(chars[i])) {
-            i += 1;
-        }
-        let word: String = chars[start..i].iter().collect();
-        if word == "OUT" {
-            out = true;
-        } else if out {
-            outs.push((start, i));
-        } else {
-            ins.push((start, i));
-        }
-    }
-    (ins, outs)
+/// The arguments of a form after the command's name, as character ranges
+/// of the form.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Arguments {
+    /// Those before OUT.
+    pub ins: Spans,
+    /// Those after OUT.
+    pub outs: Spans,
+    /// Whether the last of `ins` repeats, as `...` writes it.
+    pub ins_repeat: bool,
+    /// Whether the last of `outs` repeats.
+    pub outs_repeat: bool,
+    /// Whether the help writes the form as a function call.
+    pub call: bool,
 }
 
-/// Whether the help writes this form as a function call.
-fn is_call(form: &str, name: &str) -> bool {
-    let upper = form.to_ascii_uppercase();
-    upper
-        .find(name)
-        .is_some_and(|at| upper[at + name.len()..].trim_start().starts_with('('))
+/// Words of a form that separate its arguments as a comma does.
+const SEPARATORS: &[&str] = &["TO", "STEP", "GOTO", "GOSUB", "THEN", "ELSE", "ENDIF"];
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn is_suffix(c: char) -> bool {
+    matches!(c, '$' | '#' | '%')
+}
+
+/// Where the command's name ends in a form: after the name as a whole
+/// word, or else after the form's first word, as for `ARRAY%(` among
+/// ARRAY#'s forms and `VAR` among DIM's.
+fn name_end(chars: &[char], name: &str) -> usize {
+    let name: Vec<char> = name.chars().collect();
+    let n = name.len();
+    if n > 0 && n <= chars.len() {
+        for at in 0..=chars.len() - n {
+            let fits =
+                (chars[at..at + n].iter().zip(&name)).all(|(a, b)| a.eq_ignore_ascii_case(b));
+            let before = at == 0 || !is_word_char(chars[at - 1]);
+            let after = (chars.get(at + n)).is_none_or(|&c| !is_word_char(c) && !is_suffix(c));
+            if fits && before && after {
+                return at + n;
+            }
+        }
+    }
+    let start = chars.iter().take_while(|c| c.is_whitespace()).count();
+    let mut i = start
+        + chars[start..]
+            .iter()
+            .take_while(|&&c| is_word_char(c))
+            .count();
+    if i == start {
+        // No command's form, as REM's `'`.
+        return chars.len();
+    }
+    if chars.get(i).copied().is_some_and(is_suffix) {
+        i += 1;
+    }
+    i
+}
+
+/// Whether a character of a form is no part of an argument: a space, or
+/// one of the icons of SmileBASIC 4's font that the help puts after some
+/// forms (in Unicode's private use area).
+fn is_blank(c: char) -> bool {
+    c.is_whitespace() || ('\u{E000}'..='\u{F8FF}').contains(&c)
+}
+
+/// Whether the `[` at `at` is part of an argument rather than around an
+/// optional one: an array's size (`Name[[Size]]`) or an array literal
+/// (`=[Value1,Value2]`).
+fn is_literal_bracket(chars: &[char], at: usize) -> bool {
+    let Some(&before) = at.checked_sub(1).and_then(|b| chars.get(b)) else {
+        return false;
+    };
+    before == '='
+        || (is_word_char(before)
+            && chars.get(at + 1) == Some(&'[')
+            && chars.get(at + 2).is_some_and(|c| c.is_alphabetic()))
+}
+
+/// The `]` that closes the `[` at `at`.
+fn closing_bracket(chars: &[char], at: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, &c) in chars.iter().enumerate().skip(at) {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// One argument being read: the text between two separators, without the
+/// brackets of optional groups and the `...` around it.
+#[derive(Default)]
+struct Piece {
+    start: Option<usize>,
+    end: usize,
+    /// The last `[` before the argument's text.
+    lead: Option<usize>,
+    /// Brackets opened within the text and not yet closed.
+    inner: usize,
+    /// A `]` within the text closed a group opened before it, as in
+    /// `[Slot:]Line`; if more text follows, the group belongs to it.
+    closed_lead: bool,
+    dots: bool,
+}
+
+impl Piece {
+    fn text(&mut self, from: usize, to: usize) {
+        if self.closed_lead {
+            self.start = self.lead.take().or(self.start);
+            self.closed_lead = false;
+        }
+        self.start.get_or_insert(from);
+        self.end = to;
+    }
+
+    fn open(&mut self, at: usize) {
+        if self.start.is_none() {
+            self.lead = Some(at);
+        } else {
+            self.inner += 1;
+        }
+    }
+
+    fn close(&mut self, at: usize) {
+        if self.inner > 0 {
+            self.inner -= 1;
+            self.end = at + 1;
+        } else if self.start.is_some() {
+            self.closed_lead = true;
+        }
+    }
+}
+
+impl Arguments {
+    /// Ends the argument being read, adding it to the list it is in.
+    fn finish(&mut self, piece: &mut Piece, chars: &[char], out: bool) {
+        let (list, repeat) = match out {
+            true => (&mut self.outs, &mut self.outs_repeat),
+            false => (&mut self.ins, &mut self.ins_repeat),
+        };
+        if let Some(start) = piece.start {
+            // PRINT's `[;Or,Expression]` says either separator goes.
+            if !matches!(chars[start..piece.end], ['O' | 'o', 'r']) {
+                list.push((start, piece.end));
+            }
+        }
+        *repeat |= piece.dots;
+        *piece = Piece::default();
+    }
+}
+
+/// The arguments of a form after the command's name. Commas and `;`
+/// separate them, and so do OUT and the words of [`SEPARATORS`]. The
+/// brackets of optional arguments and `...` are not part of an argument;
+/// a quoted argument includes everything between its quotes.
+pub fn arguments(form: &str, name: &str) -> Arguments {
+    let chars: Vec<char> = form.chars().collect();
+    let len = chars.len();
+    let mut args = Arguments::default();
+    let mut i = name_end(&chars, name);
+    let blank = chars[i..].iter().take_while(|c| c.is_whitespace()).count();
+    if chars.get(i + blank) == Some(&'(') {
+        args.call = true;
+        i += blank + 1;
+    }
+    let mut piece = Piece::default();
+    let mut out = false;
+    // Parentheses opened within the arguments.
+    let mut depth = 0usize;
+    while i < len {
+        let c = chars[i];
+        match c {
+            '"' => {
+                // A quote the help never closes is no string.
+                let close = chars[i + 1..].iter().position(|&c| c == '"');
+                let to = close.map_or(i + 1, |at| i + at + 2);
+                piece.text(i, to);
+                i = to;
+                continue;
+            }
+            '[' if is_literal_bracket(&chars, i) => match closing_bracket(&chars, i) {
+                Some(close) => {
+                    piece.text(i, close + 1);
+                    i = close + 1;
+                    continue;
+                }
+                None => piece.open(i),
+            },
+            '[' => piece.open(i),
+            ']' => piece.close(i),
+            '(' => {
+                depth += 1;
+                piece.text(i, i + 1);
+            }
+            ')' if depth == 0 && args.call => break,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                piece.text(i, i + 1);
+            }
+            ',' | ';' if depth == 0 => args.finish(&mut piece, &chars, out),
+            '.' | '…' if depth == 0 => piece.dots = true,
+            c if is_blank(c) => {}
+            c if is_word_char(c) => {
+                let start = i;
+                while i < len && is_word_char(chars[i]) {
+                    i += 1;
+                }
+                if i < len && is_suffix(chars[i]) {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                if depth == 0 && word == "OUT" {
+                    args.finish(&mut piece, &chars, out);
+                    out = true;
+                } else if depth == 0 && SEPARATORS.contains(&word.as_str()) {
+                    args.finish(&mut piece, &chars, out);
+                } else {
+                    piece.text(start, i);
+                }
+                continue;
+            }
+            _ => piece.text(i, i + 1),
+        }
+        i += 1;
+    }
+    args.finish(&mut piece, &chars, out);
+    args
 }
 
 /// Where the hints go when they show at the bottom: pixel columns from
@@ -233,13 +431,15 @@ impl Hint {
     /// The marked argument in a form, as a character range, or `None` if
     /// the form does not fit what is typed.
     pub fn mark(&self, form: &str) -> Option<(usize, usize)> {
-        if is_call(form, &self.name) != self.call {
+        let args = arguments(form, &self.name);
+        if args.call != self.call {
             return None;
         }
-        let (ins, outs) = arguments(form, &self.name);
-        let list = if self.out { outs } else { ins };
+        let (list, repeats) = match self.out {
+            true => (&args.outs, args.outs_repeat),
+            false => (&args.ins, args.ins_repeat),
+        };
         // `...` repeats the last argument.
-        let repeats = form.contains("...");
         list.get(self.arg)
             .or_else(|| list.last().filter(|_| repeats))
             .copied()
@@ -359,5 +559,103 @@ mod tests {
         let line = u("PRINT 1;2;3,");
         let h = find(&line, line.len(), &lib, &[]).unwrap();
         assert!(h.mark(&h.forms[0]).is_some(), "... repeats");
+    }
+
+    /// The argument marked in `form`, of the help's topic `name`, with
+    /// `typed` up to the cursor.
+    fn marked(name: &str, form: &str, typed: &str) -> Option<String> {
+        let library = Library::with_forms(&[(name, &[form])]);
+        let line = u(typed);
+        let (a, b) = find(&line, line.len(), &library, &[])?.mark(form)?;
+        Some(form.chars().skip(a).take(b - a).collect())
+    }
+
+    #[test]
+    fn marks_the_argument_of_each_kind_of_form() {
+        let load = "LOAD \"[FileType:]FileName\"[,Slot]";
+        let beep = "BEEP [SoundEffectNumber[,[Pitch][,[Volume][,[Panpot]]]]]";
+        let call = "CALL CommandName[,Parameter...][ OUT Variable1[,Variable2...]]";
+        let toy = "XCTRLSTYLE MaxNumberOfConnections,100,Toy-ConTypeLeft1,Toy-ConTypeRight1";
+        #[rustfmt::skip]
+        let cases: &[(&str, &str, &str, Option<&str>)] = &[
+            // A quoted argument with brackets inside, and an optional one.
+            ("LOAD", load, "LOAD", None),
+            ("LOAD", load, "LOAD ", Some("\"[FileType:]FileName\"")),
+            ("LOAD", load, "LOAD \"AB", Some("\"[FileType:]FileName\"")),
+            ("LOAD", load, "LOAD \"A,B", Some("\"[FileType:]FileName\"")),
+            ("LOAD", load, "LOAD \"AB\"", Some("\"[FileType:]FileName\"")),
+            ("LOAD", load, "LOAD \"AB\",", Some("Slot")),
+            ("LOAD", load, "LOAD \"AB\",1,", None),
+            ("RENAME", "RENAME \"[FileType1:]FileName1\",\"[FileType2:]FileName2\"",
+                "RENAME \"A\",", Some("\"[FileType2:]FileName2\"")),
+            // Nested optional groups, and a leading one.
+            ("BEEP", beep, "BEEP ", Some("SoundEffectNumber")),
+            ("BEEP", beep, "BEEP 1,,", Some("Volume")),
+            ("BEEP", beep, "BEEP 1,,,", Some("Panpot")),
+            ("ATTR", "ATTR [ScreenID,]HorizontalFlip,VerticalFlip,Rotation",
+                "ATTR 0,", Some("HorizontalFlip")),
+            ("COPY", "COPY Destination,Source[[,SourceOffset],Count]",
+                "COPY A,B,", Some("SourceOffset")),
+            ("LIST", "LIST [ProgramSlot:]LineNumber", "LIST ", Some("[ProgramSlot:]LineNumber")),
+            // Functions, and the forms a call does not fit.
+            ("RGB", "RGB(A,R,G,B)", "C=RGB(", Some("A")),
+            ("RGB", "RGB(A,R,G,B)", "C=RGB(1,2,", Some("G")),
+            ("RGB", "RGB ColorCode OUT A,R,G,B", "C=RGB(", None),
+            ("RND", "RND([SeedID,]MaximumValue)", "X=RND(0,", Some("MaximumValue")),
+            ("ATTR", "ATTR( [ScreenID])", "A=ATTR(", Some("ScreenID")),
+            ("FORMAT$", "FORMAT$(FormatString,Value,...)", "S$=FORMAT$(F$,1,2,", Some("Value")),
+            ("BIQUAD", "BIQUAD Output(OUT),Input(IN),Coefficients(FP)",
+                "BIQUAD A,", Some("Input(IN)")),
+            // OUT forms.
+            ("RGB", "RGB ColorCode OUT A,R,G,B", "RGB C OUT ", Some("A")),
+            ("RGB", "RGB ColorCode OUT A,R,G,B", "RGB C OUT A,", Some("R")),
+            ("RGB", "RGB ColorCode OUT A,R,G,B", "RGB C,", None),
+            ("CALL", call, "CALL \"F\",1,2,", Some("Parameter")),
+            ("CALL", call, "CALL \"F\" OUT A,", Some("Variable2")),
+            ("TCSUBM", "TCSUBM ControllerID, OUT RecognitionFlag[,Accelerator]",
+                "TCSUBM 0 OUT ", Some("RecognitionFlag")),
+            ("DTREAD", "DTREAD OUT Y,M,D[,W]", "DTREAD OUT Y,M,D,", Some("W")),
+            // Arguments the help writes with more than a name.
+            ("CONST", "CONST #Name=Value[,#Name=Value]", "CONST #A=1,", Some("#Name=Value")),
+            ("ENUM", "ENUM #Name[=Value][,#Name[=Value]]", "ENUM ", Some("#Name[=Value]")),
+            ("XCTRLSTYLE", toy, "XCTRLSTYLE 1,100,", Some("Toy-ConTypeLeft1")),
+            ("ON", "ON Expression GOTO @Label0,@Label1…", "ON X GOTO @A,@B,", Some("@Label1")),
+            // Separators other than commas.
+            ("PRINT", "PRINT [Expression[;Or,Expression...]]", "PRINT 1;", Some("Expression")),
+            ("INPUT", "INPUT [\"GuideString\";]Variable[,Variable2...]",
+                "INPUT \"Q\";", Some("Variable")),
+            ("FOR", "FOR LoopVariable=InitialValue TO EndValue STEP Increment",
+                "FOR I=0 TO ", Some("EndValue")),
+            ("FOR", "FOR LoopVariable=InitialValue TO EndValue STEP Increment",
+                "FOR I=0 TO 9 STEP ", Some("Increment")),
+            ("FOR", "FOR LoopVariable=InitialValue TO EndValue",
+                "FOR I=0 TO 9 STEP ", None),
+            // An array's size is part of the argument, and has no hint.
+            ("DIM", "DIM Name[[Size[,Size...]]]", "DIM ", Some("Name[[Size[,Size...]]]")),
+            ("DIM", "DIM Name[[Size[,Size...]]]", "DIM A[", None),
+            // A form named otherwise than the topic, and one with an icon.
+            ("DIM", "VAR Variable[=Expression][,Variable[=Expression]...]",
+                "DIM A,", Some("Variable[=Expression]")),
+            ("ARRAY#", "ARRAY%(Size[,Size...])", "A=ARRAY#(", Some("Size")),
+            ("PCMSTREAM", "PCMSTREAM Array[,Rate] \u{E2CB}", "PCMSTREAM A,", Some("Rate")),
+            // A quote the help leaves open.
+            ("FILES", "FILES \"[FileType:]ProjectName,StringArray",
+                "FILES \"A\",", Some("StringArray")),
+        ];
+        for &(name, form, typed, want) in cases {
+            let got = marked(name, form, typed);
+            assert_eq!(got.as_deref(), want, "{form} with {typed:?}");
+        }
+    }
+
+    #[test]
+    fn splits_a_form_into_arguments() {
+        let form = "SPOFS SpriteNumber[,Flag] OUT X,Y[,Z...]";
+        let args = arguments(form, "SPOFS");
+        assert_eq!(args.ins, [(6, 18), (20, 24)]);
+        assert_eq!(args.outs, [(30, 31), (32, 33), (35, 36)]);
+        assert!(!args.ins_repeat && args.outs_repeat && !args.call);
+        assert_eq!(arguments("'", "REM"), Arguments::default());
+        assert!(arguments("DATE$()", "DATE$").call);
     }
 }
