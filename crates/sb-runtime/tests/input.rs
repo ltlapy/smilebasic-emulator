@@ -569,14 +569,17 @@ fn shift_leaves_other_keys_repeating() {
     assert_eq!(typed, "01 191 221 251 281");
 }
 
-/// TEST69K: keys pressed while the controller's L and R are held, or with
-/// Ctrl, type nothing. L and R pressed by keys do not count.
+/// TEST69K: keys pressed with Ctrl type nothing, nor with the controller's
+/// L or R, either of which counts as Ctrl. L and R pressed by keys do not
+/// count.
 #[test]
-fn ctrl_or_l_and_r_keep_keys_from_typing() {
+fn ctrl_or_l_or_r_keep_keys_from_typing() {
     const L_AND_R: u32 = 0b11 << 8;
     assert!(pressed(L_AND_R).keys_type_nothing());
-    assert!(!pressed(1 << 8).keys_type_nothing());
+    assert!(pressed(1 << 8).keys_type_nothing(), "L");
+    assert!(pressed(1 << 9).keys_type_nothing(), "R");
     assert!(!pressed(1 << 3).keys_type_nothing());
+    assert!(!pressed(1 << 10 | 1 << 11).keys_type_nothing(), "ZL, ZR");
     let mut by_keys = pressed(L_AND_R);
     by_keys.key_pressed_buttons = L_AND_R;
     assert!(!by_keys.keys_type_nothing());
@@ -585,6 +588,9 @@ fn ctrl_or_l_and_r_keep_keys_from_typing() {
         ..State::default()
     };
     assert!(ctrl.keys_type_nothing());
+    // Either Ctrl key, as it is held.
+    assert!(holding(&[224]).keys_type_nothing());
+    assert!(holding(&[228]).keys_type_nothing());
     let shift = State {
         modifiers: 1 << 1,
         ..State::default()

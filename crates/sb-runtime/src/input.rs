@@ -46,12 +46,14 @@ const PAD_KEY_REPEAT: (u32, u32) = (20, 3);
 const KEY_REPEAT: (u32, u32) = (19, 3);
 /// Shift, Ctrl, Alt and the Windows keys' USB usage IDs.
 const MODIFIER_KEYS: std::ops::RangeInclusive<u8> = 0xE0..=0xE7;
-/// #B_L1 and #B_R1, either of which is Ctrl for [`PAD_KEYS`].
+/// #B_L1 and #B_R1, either of which is Ctrl for [`PAD_KEYS`] and for typing.
 const PAD_KEY_CTRL: u32 = 0b11 << 8;
 /// The keyboard's Ctrl among [`State::modifiers`].
 const MODIFIER_CTRL: u32 = 1 << 2;
 /// Left and Right Shift's USB usage IDs.
 const SHIFT_KEYS: [u8; 2] = [0xE1, 0xE5];
+/// Left and Right Ctrl's.
+const CTRL_KEYS: [u8; 2] = [0xE0, 0xE4];
 
 /// Whether the key with this USB usage ID is down among `keys`, one bit each.
 fn key_held(keys: &[u64; 4], usage: u8) -> bool {
@@ -197,14 +199,14 @@ impl State {
         key_held(&self.keys, usage)
     }
 
-    /// Whether keyboard keys type no text now: Ctrl+A types nothing, and
-    /// neither does a key pressed while the controller's L and R are both
-    /// held. Buttons the keys press do not count.
-    // UNVERIFIED: that Left Ctrl acts as Right Ctrl does, and that L or R
-    // alone lets keys type, though the controllers take either as Ctrl.
+    /// Whether keyboard keys type no text now: with either Ctrl held, or
+    /// the controller's L or R, which count as Ctrl. Keys such as Enter
+    /// still type. Buttons the keys press do not count.
     pub fn keys_type_nothing(&self) -> bool {
         let buttons = self.buttons(0) & !self.key_pressed_buttons;
-        buttons & PAD_KEY_CTRL == PAD_KEY_CTRL || self.modifiers & MODIFIER_CTRL != 0
+        buttons & PAD_KEY_CTRL != 0
+            || self.modifiers & MODIFIER_CTRL != 0
+            || CTRL_KEYS.iter().any(|&k| self.key(k))
     }
 
     /// A controller's buttons; controller 0 has those of all of them.

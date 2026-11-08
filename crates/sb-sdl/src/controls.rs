@@ -676,10 +676,10 @@ mod tests {
     }
 
     /// TEST69K: letters typed while the controller's L and R are held type
-    /// nothing, nor do they with Right Ctrl, but keys that type a code of
-    /// their own still do.
+    /// nothing, nor do they with L or R alone or with Right Ctrl, but keys
+    /// that type a code of their own still do.
     #[test]
-    fn keys_type_nothing_with_l_and_r_or_ctrl_held() {
+    fn keys_type_nothing_with_l_or_r_or_ctrl_held() {
         let mut keys = Typing::default();
         keys.hold(&holding(0b11 << 8));
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
@@ -688,8 +688,13 @@ mod tests {
         let code = sb_runtime::runtime::keys::ENTER;
         keys.key_down(&mut rt, Mod::NOMOD, false, Some(code));
         assert_eq!(inkey(&mut rt), "D");
-        // L alone lets them type.
+        // L alone or R alone, which count as Ctrl.
         keys.hold(&holding(1 << 8));
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
+        keys.hold(&holding(1 << 9));
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
+        // ZL and ZR do not.
+        keys.hold(&holding(0b11 << 10));
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "41");
         // Right Ctrl, whether SDL has it as Ctrl or, on a Korean layout,
         // as Hanja.
