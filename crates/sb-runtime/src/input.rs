@@ -565,8 +565,9 @@ impl Input {
 
     /// The key the controllers type this frame, if any, after
     /// [`Input::latch`]: when a button or the stick goes down, and then as
-    /// it repeats. Another input going down meanwhile types nothing until
-    /// all are let go.
+    /// it repeats. Another input going down meanwhile types nothing while
+    /// both are held; once it is released, the first goes on repeating
+    /// where it was.
     pub(crate) fn pad_key(&mut self) -> Option<u32> {
         let code = self.now.pad_key();
         let r = &mut self.pad_key_repeat;
@@ -865,8 +866,7 @@ impl Runtime {
                     n if input.now.pads[n - 1].connected => 2,
                     _ => 0,
                 };
-                // UNVERIFIED: the colors of handheld, and the last two of a
-                // Pro Controller.
+                // UNVERIFIED: the colors of handheld.
                 let colors = match (pad, kind) {
                     (0, _) | (_, 0) => [0, 0, 0, 0],
                     (_, 1) => [0xFF82_8282_u32, 0xFF0F_0F0F, 0xFF00_0000, 0xFF00_0000],

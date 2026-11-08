@@ -889,9 +889,9 @@ impl Gpu {
             return;
         }
         // Every vertex passes here on its way to the driver. The CPU then draws
-        // the whole frame, so the two paths cannot disagree about it.
-        // UNVERIFIED: that the CPU's picture, nothing for a matrix holding NaN,
-        // is what SmileBASIC 4 shows.
+        // the whole frame, so the two paths cannot disagree about it. The
+        // CPU's picture shows nothing for a matrix holding NaN, as SmileBASIC 4
+        // does.
         if !in_reach(&self.verts) {
             self.out_of_reach = true;
             self.verts.clear();
