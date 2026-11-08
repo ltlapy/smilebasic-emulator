@@ -232,8 +232,9 @@ pub enum Op {
     /// Does nothing: marks where a statement starts.
     Nop,
     /// Stops with this error when it runs: a statement SmileBASIC 4 only
-    /// refuses once it gets there.
-    Fail(crate::error::ErrorKind),
+    /// refuses once it gets there. The string, if any, is the command the
+    /// message names.
+    Fail(crate::error::ErrorKind, Option<u32>),
     /// `[file or slot, slot?] -> []`: EXEC.
     Exec(u8),
 }

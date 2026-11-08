@@ -1156,15 +1156,19 @@ impl Compiler<'_> {
                 self.emit(Op::Stop { has_message });
                 return Ok(());
             }
-            // UNVERIFIED: the errors for other forms.
+            // One OUT variable takes what FREEMEM() gives, two take that
+            // and the largest free block. UNVERIFIED: the errors for
+            // arguments and for more OUT variables.
             "FREEMEM" => {
                 if !args.is_empty() {
                     return Err(err(ErrorKind::WrongNumberOfArguments, full));
                 }
-                if outs.len() != 2 {
+                let (1 | 2) = outs.len() else {
                     return Err(err(ErrorKind::WrongNumberOfOutArguments, full));
-                }
-                self.emit(Op::FreeMem { both: true });
+                };
+                self.emit(Op::FreeMem {
+                    both: outs.len() == 2,
+                });
                 return self.store_outs(outs);
             }
             "DEFOUT" => {
@@ -1694,12 +1698,13 @@ impl Compiler<'_> {
             // They exist, so these fail as they run, not as unknown names.
             ("FREEMEM", _) => {
                 self.args(args)?;
-                self.emit(Op::Fail(ErrorKind::WrongNumberOfArguments));
+                let name = self.string_const(full.encode_utf16().collect());
+                self.emit(Op::Fail(ErrorKind::WrongNumberOfArguments, Some(name)));
                 return Ok(());
             }
             ("VSYNC" | "WAIT", _) => {
                 self.args(args)?;
-                self.emit(Op::Fail(ErrorKind::WrongNumberOfOutArguments));
+                self.emit(Op::Fail(ErrorKind::WrongNumberOfOutArguments, None));
                 return Ok(());
             }
             ("CHKCALL", [Some(name)]) | ("CHKVAR", [Some(name)]) => {

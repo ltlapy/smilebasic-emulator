@@ -446,6 +446,10 @@ fn vsync_and_freemem_as_functions() {
         assert_eq!(error(source).0, kind, "{source}");
     }
     assert_eq!(output("IF 0 THEN ?VSYNC()\n?1"), "1\n");
+    let e = run("?FREEMEM(1)").unwrap_err();
+    assert_eq!(e.detail.as_deref(), Some("(FREEMEM)"));
+    // One OUT variable is FREEMEM()'s value.
+    assert_eq!(output("FREEMEM OUT A:?A==FREEMEM()"), "1\n");
 }
 
 /// TEST63 on a Switch 2: GOSUBs, calls and RESTORE "PUSH" share one stack, a call

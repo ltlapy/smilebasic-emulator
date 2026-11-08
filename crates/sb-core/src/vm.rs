@@ -2764,7 +2764,11 @@ impl Vm {
             }
             Op::End => return Ok(self.end(host)),
             Op::Nop => {}
-            Op::Fail(kind) => return Err((*kind).into()),
+            Op::Fail(kind, None) => return Err((*kind).into()),
+            Op::Fail(kind, Some(name)) => {
+                let name = String::from_utf16_lossy(&program.strings[*name as usize]);
+                return Err(Error::new(*kind).of_command(&name));
+            }
             Op::Exec(argc) => {
                 let args = self.pop_n((*argc).into());
                 return self.exec(args, host);
