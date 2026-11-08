@@ -462,14 +462,15 @@ impl Parser {
         self.song.channels[self.channel].push(cmd);
     }
 
-    /// The note before, if a tie follows it.
-    fn tied_pitch(&self) -> Option<Pitch> {
-        match self.song.channels[self.channel].last() {
-            Some(Cmd::Note {
-                pitch,
-                link: Link::Tie,
-                ..
-            }) => Some(*pitch),
+    /// The note or chord before, if a tie follows it.
+    fn tied(&self) -> Option<Cmd> {
+        match self.song.channels[self.channel].last()? {
+            cmd @ (Cmd::Note {
+                link: Link::Tie, ..
+            }
+            | Cmd::Chord {
+                link: Link::Tie, ..
+            }) => Some(cmd.clone()),
             _ => None,
         }
     }
@@ -658,15 +659,19 @@ impl Parser {
                 Cmd::Sing(letters.into())
             }
             '&' => return self.link_last(Link::Tie, at),
-            // `C4&2`: a length after a tie goes on with the same note.
+            // `C4&2`: a length after a tie goes on with the same note, and
+            // `|CEG|4&2` with the same chord.
+            // UNVERIFIED: the bare length holds the whole chord.
             c if c.is_ascii_digit() => {
-                let Some(pitch) = self.tied_pitch() else {
+                let Some(mut cmd) = self.tied() else {
                     return Err(self.start(at));
                 };
                 self.at = at;
-                let len = self.len()?;
-                let link = self.link();
-                Cmd::Note { pitch, len, link }
+                if let Cmd::Note { len, link, .. } | Cmd::Chord { len, link, .. } = &mut cmd {
+                    *len = self.len()?;
+                    *link = self.link();
+                }
+                cmd
             }
             '_' => return self.link_last(Link::Porta, at),
             c => match note_name(c) {
@@ -831,6 +836,25 @@ mod tests {
             }
         ));
         assert!(matches!(&c[2], Cmd::Chord { parts, .. } if parts.len() == 4));
+        // A bare length after a tied chord goes on with the chord.
+        let song = parse("|CEG|4&2&8.C").unwrap();
+        let chord = |div, dots, link| Cmd::Chord {
+            parts: vec![ChordPart::Note(0), ChordPart::Note(4), ChordPart::Note(7)],
+            len: Len {
+                div: Some(Num::Lit(div)),
+                dots,
+            },
+            link,
+        };
+        assert_eq!(
+            song.channels[0][..3],
+            [
+                chord(4, 0, Link::Tie),
+                chord(2, 0, Link::Tie),
+                chord(8, 1, Link::None)
+            ]
+        );
+        assert_eq!(parse("|CEG|4 2").err(), Some(7));
         assert!(matches!(
             c[3],
             Cmd::Note {

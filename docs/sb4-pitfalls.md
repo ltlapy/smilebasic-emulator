@@ -1385,7 +1385,8 @@ Expected but not yet seen on hardware:
 
 ### MML
 
-- MML takes a bare length after a tie (`C4&2`), `@MON`, `N` without a length
+- MML takes a bare length after a tie (`C4&2`, and after a chord, `|CEG|4&2`,
+  which songs in shared projects use), `@MON`, `N` without a length
   (`N60`), macro names with `_` and macros used inside a macro's definition
   (`{X=CDE}{Y={X}F}`).
 - `CHKMML` gives -1 for 16 million characters of notes, and for macros nested
