@@ -8,7 +8,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::{Value, new_str};
 
 use crate::line::codes;
-use crate::runtime::{Command, Runtime, checking, no_form, opt_int};
+use crate::runtime::{Command, Runtime, checking, keys, no_form, opt_int};
 
 /// Controllers 1 to 4; controller 0 combines them.
 pub const PADS: usize = 4;
@@ -304,8 +304,9 @@ impl State {
     }
 
     /// Whether keyboard keys type no text now: with either Ctrl held, or
-    /// the controller's L or R, which count as Ctrl. Keys such as Enter
-    /// still type. Buttons the keys press do not count.
+    /// the controller's L or R, which count as Ctrl. Enter and Backspace
+    /// type nothing then either, while the arrow keys still type (see
+    /// [`types_when_blocked`]). Buttons the keys press do not count.
     pub fn keys_type_nothing(&self) -> bool {
         let buttons = self.buttons(0) & !self.key_pressed_buttons;
         buttons & PAD_KEY_CTRL != 0
@@ -513,6 +514,17 @@ impl Input {
         }
     }
 
+    /// A code of its own, such as Enter, that the key that just went down
+    /// types again as it repeats: what [`Runtime::type_held`] typed, or
+    /// what it would have typed but for Ctrl, L or R held.
+    pub fn key_code(&mut self, code: u16) {
+        let r = &mut self.key_repeat;
+        // Only what came with the press, not what a later frame brings.
+        if r.usage != 0 && r.frames == 0 {
+            r.codes.push(code);
+        }
+    }
+
     /// What the key that just went down types by the modifiers held, for
     /// its repeats, in place of what it typed at the press.
     pub fn key_text(&mut self, text: KeyText) {
@@ -700,6 +712,14 @@ fn opt_in_range(
     }
 }
 
+/// Whether a key that types `code` of its own, such as an arrow key,
+/// still types it while [`State::keys_type_nothing`]: Enter and Backspace
+/// do not. UNVERIFIED: that the other keys of their own (Tab, Delete,
+/// Home and the rest) still type.
+pub fn types_when_blocked(code: u16) -> bool {
+    !matches!(code, keys::ENTER | keys::BACKSPACE)
+}
+
 fn pad_id(v: &Value) -> Result<usize> {
     in_range("controller", v, 0..=PADS as i32).map(|n| n as usize)
 }
@@ -736,11 +756,7 @@ impl Runtime {
     /// [`Input::key_down`], which types it again while it is held.
     pub fn type_held(&mut self, code: u16) {
         self.key_press(code);
-        let r = &mut self.input.key_repeat;
-        // Only what came with the press, not what a later frame brings.
-        if r.usage != 0 && r.frames == 0 {
-            r.codes.push(code);
-        }
+        self.input.key_code(code);
     }
 
     /// Types again what the held keyboard key typed, once a frame before
@@ -786,7 +802,9 @@ impl Runtime {
             // Allocated only on the frames that repeat.
             None => {
                 for code in r.codes.clone() {
-                    self.key_press(code);
+                    if !blocked || types_when_blocked(code) {
+                        self.key_press(code);
+                    }
                 }
             }
         }

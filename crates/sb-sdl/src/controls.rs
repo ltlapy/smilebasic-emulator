@@ -1,7 +1,7 @@
 //! What programs read from controllers, the mouse and the keyboard: SDL's
 //! gamepads and keys turned into the runtime's input state each frame.
 
-use sb_runtime::input::{KeyText, KeysRead, Mouse, PADS, State, alt_key_code};
+use sb_runtime::input::{KeyText, KeysRead, Mouse, PADS, State, alt_key_code, types_when_blocked};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
 use sdl3::keyboard::{KeyboardState, Mod, Scancode};
@@ -304,17 +304,22 @@ impl Typing {
             self.last = if alt { Last::Alt } else { Last::Repeat };
             return;
         }
+        // Ctrl as SDL has it too, for a key that goes down in the frame
+        // Ctrl does.
+        let blocked = self.blocked || keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         if let Some(code) = code {
-            rt.type_held(code);
+            // Held on once Ctrl, L or R is released, it repeats as a
+            // letter does. UNVERIFIED: that it does.
+            match !blocked || types_when_blocked(code) {
+                true => rt.type_held(code),
+                false => rt.input.key_code(code),
+            }
             return;
         }
         let text = self.pressed.map(|key| self.key_text(key, keymod));
         if let Some(text) = text {
             rt.input.key_text(text);
         }
-        // Ctrl as SDL has it too, for a key that goes down in the frame
-        // Ctrl does.
-        let blocked = self.blocked || keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         if alt {
             self.last = Last::Alt;
             if let Some(code) = text.map(|t| t.alt).filter(|&c| c != 0)
@@ -856,19 +861,44 @@ mod tests {
         assert_eq!(inkey(&mut rt), "D");
     }
 
-    /// TEST69K: letters typed while the controller's L and R are held type
-    /// nothing, nor do they with L or R alone or with Right Ctrl, but keys
-    /// that type a code of their own still do.
+    /// What a key that types `code` of its own types.
+    fn press_code(keys: &mut Typing, key: Scancode, keymod: Mod, code: u16) -> String {
+        let mut rt = runtime();
+        keys.any_key_down(&mut rt, Some(key), false);
+        keys.key_down(&mut rt, keymod, false, Some(code));
+        inkey(&mut rt)
+    }
+
+    /// Letters typed while the controller's L and R are held type nothing,
+    /// nor do they with L or R alone or with Right Ctrl. Of the keys that
+    /// type a code of their own, Enter and Backspace type nothing then
+    /// either, while the arrow keys still type.
     #[test]
     fn keys_type_nothing_with_l_or_r_or_ctrl_held() {
+        use sb_runtime::runtime::keys::{BACKSPACE, ENTER, LEFT};
         let mut keys = typing();
         keys.hold(&holding(0b11 << 8));
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
-        let mut rt = runtime();
-        keys.any_key_down(&mut rt, Some(Scancode::Return), false);
-        let code = sb_runtime::runtime::keys::ENTER;
-        keys.key_down(&mut rt, Mod::NOMOD, false, Some(code));
-        assert_eq!(inkey(&mut rt), "D");
+        // L, R, and Left Ctrl.
+        let held = [
+            (holding(1 << 8), Mod::NOMOD),
+            (holding(1 << 9), Mod::NOMOD),
+            (State::default(), Mod::LCTRLMOD),
+        ];
+        for (held, keymod) in held {
+            keys.hold(&held);
+            assert_eq!(press_code(&mut keys, Scancode::Return, keymod, ENTER), "");
+            assert_eq!(
+                press_code(&mut keys, Scancode::Backspace, keymod, BACKSPACE),
+                ""
+            );
+            assert_eq!(press_code(&mut keys, Scancode::Left, keymod, LEFT), "1D");
+        }
+        keys.hold(&State::default());
+        assert_eq!(
+            press_code(&mut keys, Scancode::Return, Mod::NOMOD, ENTER),
+            "D"
+        );
         // L alone or R alone, which count as Ctrl.
         keys.hold(&holding(1 << 8));
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");

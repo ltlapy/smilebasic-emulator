@@ -510,6 +510,34 @@ fn keys_by_frame(frames: usize, mut at: impl FnMut(usize, &mut Runtime)) -> Stri
     String::from_utf16(&codes).unwrap().trim_end().to_string()
 }
 
+/// Like [`keys_by_frame`], with each key as its code in hexadecimal.
+fn codes_by_frame(frames: usize, at: impl FnMut(usize, &mut Runtime)) -> String {
+    use sb_runtime::machine::Machine;
+    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    m.boot();
+    let source = "CLS:F=-1\nWHILE 1\nVSYNC\nK$=INKEY$()\nIF K$!=\"\" && F<0 THEN F=MAINCNT()\n\
+                  IF K$!=\"\" THEN ?MAINCNT()-F;HEX$(ASC(K$));\" \";\nWEND\n";
+    m.set_slot(0, source.to_string());
+    m.run_slot(0);
+    m.frame();
+    let mut at = at;
+    for i in 0..frames {
+        at(i, &mut m.rt);
+        m.frame();
+    }
+    assert!(m.is_running());
+    let console = &m.rt.text[4];
+    let codes: Vec<u16> = (0..console.size().0 * 2)
+        .map(|i| {
+            console
+                .cell(i % console.size().0, i / console.size().0)
+                .code
+        })
+        .take_while(|&c| c != 0)
+        .collect();
+    String::from_utf16(&codes).unwrap().trim_end().to_string()
+}
+
 const A_KEY: u8 = 4;
 const B_KEY: u8 = 5;
 const LEFT_SHIFT: u8 = 225;
@@ -756,6 +784,34 @@ fn keys_that_type_a_code_repeat_it_with_ctrl() {
     assert_eq!(typed, "01 191 221 251 281");
 }
 
+/// Enter and Backspace repeat no more while Ctrl is held, and go on once
+/// it is released; the arrow keys repeat all along.
+#[test]
+fn enter_and_backspace_type_nothing_with_ctrl() {
+    use sb_runtime::runtime::keys::{BACKSPACE, ENTER, LEFT};
+    for (key, code, typed) in [
+        (ENTER_KEY, ENTER, "0D 19D 69D 72D"),
+        (BACKSPACE_KEY, BACKSPACE, "08 198 698 728"),
+        (
+            LEFT_ARROW_KEY,
+            LEFT,
+            "01D 191D 401D 431D 461D 491D 691D 721D",
+        ),
+    ] {
+        let codes = codes_by_frame(75, |i, rt| {
+            if i == 0 {
+                rt.input.key_down(key);
+                rt.type_held(code);
+            }
+            rt.input.live = match i {
+                21..50 => holding(&[key, LEFT_CTRL]),
+                _ => holding(&[key]),
+            };
+        });
+        assert_eq!(codes, typed, "{code:X}");
+    }
+}
+
 /// The table of what Alt types with each key.
 #[test]
 fn alt_types_smilebasic_4s_own_characters() {
@@ -873,6 +929,7 @@ fn a_program_that_ends_leaves_no_repeat() {
 }
 
 const BACKSPACE_KEY: u8 = 42;
+const LEFT_ARROW_KEY: u8 = 80;
 const ENTER_KEY: u8 = 40;
 
 /// Frames, counted from the first, on which the editor's text changed;
