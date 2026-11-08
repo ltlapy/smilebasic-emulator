@@ -22,8 +22,8 @@ use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, TRACKS, frames};
 
 /// The preset songs that end rather than loop, and their lengths in
 /// frames, worked out by playing SmileBASIC 4's own sequences through the
-/// emulator's player; every other preset loops until stopped.
-// UNVERIFIED: whether BGMCHK also waits for the last notes to die away.
+/// emulator's player; every other preset loops until stopped. BGMCHK says
+/// 0 a frame or two after the last notes have died away.
 const JINGLES: [(i32, u32); 3] = [(4, 167), (5, 111), (6, 342)];
 
 fn int(v: &Value) -> Result<i32> {
@@ -711,7 +711,6 @@ impl Runtime {
                 Ok(vec![Value::Int(self.sound.balance)])
             }
             // A new TALK cuts off what is being said.
-            // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
             (Command::Talk, Want::Outs(0), 1) => {
                 self.sound.talk.say(&text(&args[0])?);
                 Ok(vec![])

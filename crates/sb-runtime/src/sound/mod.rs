@@ -373,9 +373,11 @@ impl Sound {
     /// Holds a song just started on an idle sound system back for the
     /// frames it takes to wake up: on hardware a song's first variable
     /// showed four frames after the first BGMPLAY of a run, but within
-    /// two for later ones.
-    // UNVERIFIED: whether the wait comes from the system being idle or
-    // from the first BGMPLAY of a run, and that the sound waits with it.
+    /// two for later ones. Any BGMPLAY to an idle system waits, the first
+    /// of a run or not, and its sound waits with it; the program does not.
+    /// On hardware the sound began about 1276 samples after the call, 1.6
+    /// frames, where here it waits two whole frames: the variables' timing
+    /// above, which rhythm games follow, matches with two.
     pub(crate) fn wake(&mut self, n: usize) {
         self.track(n).hold = WAKE_FRAMES;
     }

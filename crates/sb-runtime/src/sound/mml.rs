@@ -384,9 +384,8 @@ impl Parser {
     }
 
     /// `<` (up) or `>` (down), which fail past the octaves `O` takes,
-    /// where the text stands after them.
-    // UNVERIFIED: `>` from octave 0 reaches -1 (`O0>C` passes) as `O-1`
-    // does, and a second `>` fails.
+    /// where the text stands after them. `>` from octave 0 reaches -1
+    /// (`O0>C` passes) as `O-1` does, and a second `>` fails.
     fn shift_octave(&mut self, up: bool) -> Result<(), Error> {
         let by = if up != self.song.reversed { 1 } else { -1 };
         let octave = &mut self.octaves[self.channel];
