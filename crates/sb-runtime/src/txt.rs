@@ -82,13 +82,20 @@ fn rect_on(args: &[Value], screen: &TextScreen) -> Result<CellRect> {
     }
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
     if v[2] >= 1 && v[3] >= 1 && i64::from(v[2]) * i64::from(v[3]) <= MOST_CELLS {
-        Ok((v[0], v[1], v[2], v[3]))
-    } else {
-        Err(Error::with_detail(
-            ErrorKind::OutOfRange,
-            format!("{},{},{},{}", v[0], v[1], v[2], v[3]),
-        ))
+        return Ok((v[0], v[1], v[2], v[3]));
     }
+    let e = Error::with_detail(
+        ErrorKind::OutOfRange,
+        format!("{},{},{},{}", v[0], v[1], v[2], v[3]),
+    );
+    // A width or height under 1 is named by its argument (TLOAD:4 and
+    // TLOAD:5); too many cells in all names none. UNVERIFIED: TSAVE is
+    // taken to number them the same way.
+    Err(match (v[2] < 1, v[3] < 1) {
+        (true, _) => e.of_value(&args[2]),
+        (_, true) => e.of_value(&args[3]),
+        _ => e,
+    })
 }
 
 /// Display coordinates to the screen's own pixels, which TOFS, THOME,

@@ -92,6 +92,31 @@ fn bad_arguments_are_errors() {
     }
 }
 
+/// Out of range errors name the argument that was wrong.
+#[test]
+fn ranges_are_numbered_by_argument() {
+    for (source, arg) in [
+        ("ATTR 4,128", "ATTR:2"),
+        ("ATTR -1,0,3", "ATTR:1"),
+        ("ATTR 0,2,0", "ATTR:2"),
+        ("ATTR 0,0,4", "ATTR:3"),
+        ("ATTR 4,2,0,0", "ATTR:2"),
+        ("ATTR 4,0,5,0", "ATTR:3"),
+        ("ATTR 4,0,0,4", "ATTR:4"),
+        ("DIM A[4]:TLOAD 4,0,0,0,1,A", "TLOAD:4"),
+        ("DIM A[4]:TLOAD 4,0,0,1,0,A", "TLOAD:5"),
+        ("DIM A[4]:GLOAD 0,0,-1,1,A,0", "GLOAD:3"),
+    ] {
+        let (_, out) = run(source);
+        assert!(out.starts_with("Out of range"), "{source}: {out}");
+        assert!(out.contains(&format!("({arg})")), "{source}: {out}");
+    }
+    let (_, out) = run("ATTR 0,1,3:ATTR 4 OUT H,V,R:?H;V;R;ATTR(4)");
+    assert_eq!(out, "01311");
+    let (_, out) = run("DIM A[4]:TLOAD 4,0,0,1,1,A:GLOAD 0,0,0,1,A,0:GLOAD 0,0,1,0,A,0:?1");
+    assert_eq!(out, "1");
+}
+
 #[test]
 fn putchr_draws_glyphs() {
     let (m, _) = run("GPUTCHR 10,10,\"A\",8,2,2,#C_RED:?1");

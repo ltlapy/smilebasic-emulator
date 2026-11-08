@@ -104,13 +104,17 @@ fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
     let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
     let (x, y, w, h) = (v[0], v[1], v[2], v[3]);
     if w >= 0 && h >= 0 && i64::from(w) * i64::from(h) <= MOST_PIXELS {
-        Ok((x, y, w, h))
-    } else {
-        Err(Error::with_detail(
-            ErrorKind::OutOfRange,
-            format!("{x},{y},{w},{h}"),
-        ))
+        return Ok((x, y, w, h));
     }
+    let e = Error::with_detail(ErrorKind::OutOfRange, format!("{x},{y},{w},{h}"));
+    // A negative width or height is named by its argument (GLOAD:3 for
+    // the width); too many pixels in all names none. UNVERIFIED: GSAVE is
+    // taken to number them the same way, and a negative height too.
+    Err(match (w < 0, h < 0) {
+        (true, _) => e.of_value(&args[2]),
+        (_, true) => e.of_value(&args[3]),
+        _ => e,
+    })
 }
 
 impl Runtime {
