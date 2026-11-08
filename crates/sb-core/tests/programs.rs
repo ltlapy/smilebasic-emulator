@@ -471,12 +471,13 @@ fn nesting_goes_as_deep_as_on_real_sb4() {
         (host.output.lines().last().map(str::to_string), e.line)
     };
     for (source, depth, line) in [
-        // TEST63's loop has a LOCATE, which stops at 259069 (see sb-runtime's
-        // tests). Without a command given arguments the GOSUBs fill the
-        // values' room too and the last stops on itself. UNVERIFIED.
-        ("@L\nN=N+1:?N\nGOSUB @L", 259_073, 3),
-        ("@L\nN=N+1:?N\nON 0 GOSUB @L", 259_073, 3),
-        ("@L\nN=N+1:?N\nGOSUB \"@L\"", 259_073, 3),
+        // A loop with a LOCATE stops at 259069 (see sb-runtime's tests).
+        // PRINT goes on into the values' room while a value fits there, so
+        // printing 259072 stops. Without PRINT the GOSUBs fill the room
+        // and the 259073rd stops on itself.
+        ("@L\nN=N+1:?N\nGOSUB @L", 259_071, 2),
+        ("@L\nN=N+1:?N\nON 0 GOSUB @L", 259_071, 2),
+        ("@L\nN=N+1:?N\nGOSUB \"@L\"", 259_071, 2),
         ("VAR N\nDEF R()\nN=N+1:?N\nRETURN R()\nEND\n?R()", 32_383, 3),
         ("DEF R(N)\n?N\nRETURN R(N+1)\nEND\n?R(1)", 25_906, 2),
         (
@@ -497,6 +498,7 @@ fn nesting_goes_as_deep_as_on_real_sb4() {
     ] {
         assert_eq!(deepest(source), (Some(depth.to_string()), line), "{source}");
     }
+    assert_eq!(error("@L\nN=N+1\nGOSUB @L"), (ErrorKind::StackOverflow, 3));
     assert_eq!(
         output("FOR I=1 TO 172000:RESTORE \"PUSH\":NEXT:?I"),
         "172001\n"

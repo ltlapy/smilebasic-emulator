@@ -2157,8 +2157,9 @@ impl Vm {
     }
 
     /// A command given arguments when GOSUBs or RESTORE "PUSH" have taken
-    /// the values' room: Stack overflow on it. UNVERIFIED: that a command
-    /// without arguments, and a builtin function, go on.
+    /// the values' room: Stack overflow on it. PRINT goes on while the
+    /// room has space for a value. UNVERIFIED: that a command without
+    /// arguments, and a builtin function, go on.
     #[inline(always)]
     fn values_room_taken(&self, argc: usize) -> bool {
         argc > 0 && self.values_room_reached && !self.stack_has_room(0)
@@ -2171,9 +2172,9 @@ impl Vm {
     }
 
     /// GOSUB to `target` of `slot`. One that reaches into the values' room
-    /// goes, and the first command given arguments after it stops.
-    /// UNVERIFIED: that GOSUBs go on until the values' room is full, as
-    /// RESTORE "PUSH" does, and that the one past it stops on itself.
+    /// goes, and the first command given arguments after it stops. GOSUBs
+    /// go on until the values' room is full, as RESTORE "PUSH" does, and
+    /// the one past it stops on itself.
     fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
         if !self.stack_has_full_room(GOSUB_COST) {
             return Err(ErrorKind::StackOverflow.into());
@@ -2650,6 +2651,9 @@ impl Vm {
                 self.for_test()?;
             }
             Op::Print { screen } => {
+                if self.values_room_reached && !self.stack_has_full_room(VALUE_COST) {
+                    return Err(ErrorKind::StackOverflow.into());
+                }
                 let value = self.pop();
                 let screen = self.screen_arg(*screen)?;
                 host.print(screen, &text_of(&value)?)?;
