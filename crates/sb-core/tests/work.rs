@@ -70,6 +70,30 @@ fn string_characters_by_index_count_apart() {
     assert_eq!(work.str_elements, 3);
 }
 
+/// An IF or ELSEIF of an array element is counted apart; one of a
+/// comparison or a variable is not.
+#[test]
+fn ifs_of_array_elements_count_apart() {
+    let source = "DIM A%[2]:A%[1]=1:V=0\n\
+        FOR I=0 TO 1\n IF A%[I] THEN V=V+1\n IF V THEN V=V+1\n IF A%[I]>0 THEN V=V+1\nNEXT\n\
+        IF V>9 THEN\n ?0\nELSEIF A%[0] THEN\n ?1\nELSE\n ?V\nENDIF\n";
+    let (work, out) = run(source, true);
+    assert_eq!(out, "3\n");
+    assert_eq!(work.element_tests, 3);
+}
+
+/// ASC is not counted as a builtin call, and CHR$ is counted on its own
+/// too, when the work is reported.
+#[test]
+fn asc_and_chr_count_apart() {
+    let source = "C=65:S$=CHR$(C)+CHR$(C+1):?ASC(S$);LEN(S$)\n";
+    let (work, out) = run(source, true);
+    assert_eq!(out, "652\n");
+    assert_eq!(work.builtin_calls, 3);
+    assert_eq!(work.chr_calls, 2);
+    assert_eq!(run(source, false).0.chr_calls, 0);
+}
+
 /// FILL counts the elements it writes, from its start to its count or
 /// the array's end.
 #[test]

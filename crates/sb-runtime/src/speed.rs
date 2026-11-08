@@ -103,14 +103,23 @@ pub(crate) struct Costs {
     element: u64,
     extra_index: u64,
     /// A character of a string read or written by index, on top of the
-    /// element. UNVERIFIED: TEST69 times `S$[I]` and `ASC` alone at half
-    /// what the meter charges them, but TEST68's string loops need this
-    /// cost, so it stands for something else those loops do.
+    /// element.
     str_element: u64,
+    /// An `IF` or `ELSEIF` whose condition is an array element: TEST70's
+    /// `IF MB%[ASC(S$[I%])] THEN BREAK` costs that much more than
+    /// `C%=MB%[ASC(S$[I%])]`, where TEST65's `IF V>K THEN` costs what
+    /// `V=A+B` does and TEST69's HGIMEUPDATE, which tests variables,
+    /// `!` and `KEYBOARD()`, needs nothing on top.
+    element_test: u64,
     /// Each element `FILL` writes.
     fill_element: u64,
     lookup: u64,
     join: u64,
+    /// `CHR$`, on top of the call, for TEST68's and TEST69's HGCNV$ and
+    /// HGREV$, which make 488 characters with it in 1000. UNVERIFIED:
+    /// that it is making a string that costs, and that a join costs less
+    /// by half as much, which keeps TPERF's VSTR where it was.
+    chr: u64,
     /// `MAINCNT` and `MILLISEC`.
     clock: u64,
     /// Host functions, such as `BUTTON` and `SPCHK`, and `RND`.
@@ -206,13 +215,17 @@ const SWITCH2: Costs = Costs {
     builtin_arg: 11_500,
     element: 17_400,
     extra_index: 43_000,
-    // TEST68's HGCNV$ and HGREV$ loops over 1000 characters, which this
-    // brings from 16-44% fast to between 6% slow and 9% fast.
-    str_element: 64_000,
+    // TEST69's and TEST70's rows of S$[I] and ASC, with ASC charged as
+    // no call, and TEST70's IF..THEN rows and HGCNV$'s search loop,
+    // within 10% but T$=S$[I] and C%=MS%[ASC(S$[I%])], 14% apart.
+    str_element: 43_000,
+    element_test: 73_000,
     // TEST69's FILL of 1000 and 100000 elements.
     fill_element: 914,
     lookup: 146_400,
-    join: 183_700,
+    // HGCNV$ and HGREV$ within 7%, and VSTR as before.
+    join: 121_000,
+    chr: 125_000,
     clock: 5_000,
     query: 51_700,
     rnd: 21_000,
@@ -297,11 +310,13 @@ const SWITCH1: Costs = Costs {
     builtin_arg: 55_000,
     element: 54_300,
     extra_index: 138_000,
-    // UNVERIFIED: the Switch 2's, by the elements' ratio.
-    str_element: 200_000,
+    // As for the Switch 2.
+    str_element: 38_000,
+    element_test: 215_000,
     fill_element: 1_990,
     lookup: 318_800,
-    join: 402_400,
+    join: 212_000,
+    chr: 380_000,
     clock: 5_000,
     query: 131_200,
     rnd: 48_200,
@@ -420,7 +435,9 @@ impl Meter {
             + n(work.str_elements, b.str_elements) * c.str_element
             + n(work.filled, b.filled) * c.fill_element
             + n(work.lookups, b.lookups) * c.lookup
-            + n(work.joins, b.joins) * c.join;
+            + n(work.joins, b.joins) * c.join
+            + n(work.element_tests, b.element_tests) * c.element_test
+            + n(work.chr_calls, b.chr_calls) * c.chr;
         cost.saturating_sub(n(work.for_tests, b.for_tests) * c.for_credit)
     }
 

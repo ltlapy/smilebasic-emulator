@@ -65,6 +65,11 @@ pub struct Work {
     pub joins: u64,
     /// Tests of whether a FOR goes round again: each pass and the end.
     pub for_tests: u64,
+    /// `IF` and `ELSEIF` conditions that are an array element
+    /// ([`crate::bytecode::Op::TestIfFalse`]).
+    pub element_tests: u64,
+    /// Calls of `CHR$`, counted only for a host that hears of the work.
+    pub chr_calls: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,6 +304,8 @@ pub struct Vm {
     lookups: u64,
     joins: u64,
     for_tests: u64,
+    element_tests: u64,
+    chr_calls: u64,
     /// Whether the host hears of [`Vm::work`] before each of its calls.
     report_work: bool,
     /// ON BREAK GOTO's slot and address, until the + button jumps there.
@@ -531,6 +538,8 @@ impl Vm {
             lookups: 0,
             joins: 0,
             for_tests: 0,
+            element_tests: 0,
+            chr_calls: 0,
             report_work: false,
             on_break: None,
             break_pending: None,
@@ -1010,6 +1019,8 @@ impl Vm {
             lookups: self.lookups,
             joins: self.joins,
             for_tests: self.for_tests,
+            element_tests: self.element_tests,
+            chr_calls: self.chr_calls,
         }
     }
 
@@ -2291,6 +2302,12 @@ impl Vm {
                     next = *a as usize;
                 }
             }
+            Op::TestIfFalse(a) => {
+                self.element_tests += 1;
+                if !self.pop().is_true()? {
+                    next = *a as usize;
+                }
+            }
             Op::JumpIfTrue(a) => {
                 if self.pop().is_true()? {
                     next = *a as usize;
@@ -2363,9 +2380,17 @@ impl Vm {
                 return Ok(None);
             }
             Op::CallBuiltin { id, argc, want } => {
-                self.builtin_calls += 1;
-                self.builtin_args += u64::from(*argc);
                 let b = builtins::get(*id);
+                // ASC costs SmileBASIC 4 no more than reading a variable
+                // (TEST69, TEST70), and CHR$ more than a call (TEST68,
+                // TEST69). UNVERIFIED: that other builtins cost what the
+                // meter charges a call.
+                let asc = self.report_work && b.name == "ASC";
+                if !asc {
+                    self.builtin_calls += 1;
+                    self.builtin_args += u64::from(*argc);
+                }
+                self.chr_calls += u64::from(self.report_work && b.name == "CHR$");
                 let argc = usize::from(*argc);
                 if let (Kind::Function(f), Want::Value, true) = (b.kind, *want, b.accepts(argc)) {
                     // Most calls: no need to take the arguments off the stack

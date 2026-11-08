@@ -140,6 +140,14 @@ fn elem_type(suffix: Option<Suffix>, default_int: bool) -> ElemType {
     }
 }
 
+/// Whether an `IF` condition is an array element, which costs
+/// SmileBASIC 4 more than a comparison (TEST65, TEST70) or a variable,
+/// `!` or a function's value (TEST69's HGIMEUPDATE). UNVERIFIED: what
+/// a string's character costs.
+fn tests_element(cond: &Expr) -> bool {
+    matches!(cond, Expr::Index { .. })
+}
+
 /// Upper-case name as calls look it up, `MID$` style.
 fn call_name(var: &Var) -> String {
     full_name(&var.name, var.suffix)
@@ -428,6 +436,7 @@ impl Compiler<'_> {
         match &mut self.out.code[at] {
             Op::Jump(a)
             | Op::JumpIfFalse(a)
+            | Op::TestIfFalse(a)
             | Op::JumpIfTrue(a)
             | Op::Gosub(a)
             | Op::OnBreak(a)
@@ -711,7 +720,10 @@ impl Compiler<'_> {
                 let mut ends = Vec::new();
                 for (cond, body) in branches {
                     self.expr(cond)?;
-                    let skip = self.emit(Op::JumpIfFalse(0));
+                    let skip = match tests_element(cond) {
+                        true => self.emit(Op::TestIfFalse(0)),
+                        false => self.emit(Op::JumpIfFalse(0)),
+                    };
                     self.block(body)?;
                     ends.push(self.emit(Op::Jump(0)));
                     let next = self.here();

@@ -260,7 +260,7 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         }
         Op::Reverse(n) => add(F::Reverse(n), 1),
         Op::Jump(a) => add(F::Jump(a), 1),
-        Op::JumpIfFalse(a) => add(F::JumpIfFalse(a), 1),
+        Op::JumpIfFalse(a) | Op::TestIfFalse(a) => add(F::JumpIfFalse(a), 1),
         Op::JumpIfTrue(a) => add(F::JumpIfTrue(a), 1),
         Op::On { count, gosub } => add(
             F::On {
@@ -311,7 +311,7 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
             if let Some(to) = store(code.get(3)) {
                 add(F::VarsStore { op, a, b, to }, 4);
             }
-            if let Some(Op::JumpIfFalse(target)) = code.get(3) {
+            if let Some(Op::JumpIfFalse(target) | Op::TestIfFalse(target)) = code.get(3) {
                 let target = *target;
                 add(F::VarsJump { op, a, b, target }, 4);
             }

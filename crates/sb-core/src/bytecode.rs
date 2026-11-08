@@ -108,6 +108,10 @@ pub enum Op {
     Jump(Addr),
     /// `[cond] -> []`
     JumpIfFalse(Addr),
+    /// `[cond] -> []`: `JumpIfFalse` for an `IF` or `ELSEIF` whose
+    /// condition is an array element, counted apart for the console's
+    /// speed ([`crate::vm::Work::element_tests`]).
+    TestIfFalse(Addr),
     JumpIfTrue(Addr),
     Gosub(Addr),
     /// ON BREAK GOTO: the + button jumps here instead of stopping.
