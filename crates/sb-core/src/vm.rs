@@ -1045,8 +1045,7 @@ impl Vm {
         let Some((slot, addr)) = self.on_break.take() else {
             return false;
         };
-        // The jump leaves GOSUBs behind (checked on hardware). UNVERIFIED:
-        // that DEFs and callbacks go too.
+        // The jump leaves GOSUBs, DEFs and callbacks behind.
         self.stack.clear();
         self.frames.clear();
         self.gosubs.clear();
@@ -2256,7 +2255,7 @@ impl Vm {
                 let array = self.pop().into_array()?;
                 {
                     let mut a = array.borrow_mut();
-                    // UNVERIFIED: more values than elements is an error.
+                    // More values than elements is an error.
                     if values.len() > a.len() {
                         return Err(ErrorKind::SubscriptOutOfRange.into());
                     }

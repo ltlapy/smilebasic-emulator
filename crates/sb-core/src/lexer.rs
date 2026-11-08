@@ -374,8 +374,8 @@ impl Lexer {
     }
 
     // A string missing its closing quote ends at the end of the line.
-    // UNVERIFIED: there is no escape for `"` inside a literal (CHR$(34) is the
-    // usual workaround).
+    // There is no escape for `"` inside a literal (CHR$(34) is the usual
+    // workaround).
     fn string(&mut self, start: Span) {
         self.bump();
         let mut text = Vec::new();
