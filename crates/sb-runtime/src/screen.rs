@@ -519,16 +519,19 @@ impl Runtime {
                     _ => (screen_id(&args[0])?, &args[1..]),
                 };
                 let attr = match rest {
-                    [a] => a.to_int()?,
+                    // UNVERIFIED: `ATTR 4,128` names its second argument,
+                    // as `ATTR 128` names its first.
+                    [a] => checking(a, || match a.to_int()? {
+                        n @ 0..16 => Ok(n),
+                        n => Err(out_of_range("attribute", n)),
+                    })?,
+                    // Always 0 to 15.
                     [h, v, r] => {
                         let bit = |v: &Value| v.to_int().map(|n| i32::from(n != 0));
                         bit(h)? << 2 | bit(v)? << 3 | (r.to_int()? & 3)
                     }
                     _ => unreachable!("one or three"),
                 };
-                if !(0..16).contains(&attr) {
-                    return Err(out_of_range("attribute", attr));
-                }
                 self.text[id].attr = attr as u16;
                 Ok(vec![])
             }

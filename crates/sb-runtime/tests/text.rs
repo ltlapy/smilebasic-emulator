@@ -192,6 +192,32 @@ fn bad_arguments() {
     assert_eq!(kind("?CHKCHR(0,0,0,2)"), Some(ErrorKind::OutOfRange));
 }
 
+/// TEST69: an attribute out of range names its argument, and TLOAD's bit
+/// 23 comes back from CHKCHR and TSAVE.
+#[test]
+fn attributes_out_of_range_are_named() {
+    let named = |src| {
+        let e = run(src).err().expect("an error");
+        (e.kind, e.arg, e.detail.unwrap_or_default())
+    };
+    let (kind, arg, detail) = named("TPUT 4,2,1,67,128");
+    assert_eq!((kind, arg), (ErrorKind::OutOfRange, Some(4)));
+    assert!(detail.starts_with("(TPUT:5)"), "{detail}");
+    let (kind, arg, detail) = named("ATTR 128");
+    assert_eq!((kind, arg), (ErrorKind::OutOfRange, Some(0)));
+    assert!(detail.starts_with("(ATTR:1)"), "{detail}");
+    let rt = run(concat!(
+        "DIM C%[2]:LOCATE 0,1:?\"ABC\";\n",
+        "TSAVE 4,1,1,1,1,C%:C%[0]=C%[0] OR &H800000:TLOAD 4,1,1,1,1,C%\n",
+        "CHKCHR 1,1 OUT C,A:TSAVE 4,1,1,1,1,C%\n",
+        "LOCATE 0,2:?HEX$(C);\"/\";A;\" \";HEX$(C%[0],8)\n",
+        "TPUT 4,0,3,\"XYZ\"",
+    ))
+    .unwrap();
+    assert_eq!(row(&rt, 4, 2, 15), "42/128 00800042");
+    assert_eq!(row(&rt, 4, 3, 4), "X...");
+}
+
 #[test]
 fn tanim_moves_text_screens() {
     let out = play(concat!(

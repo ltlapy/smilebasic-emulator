@@ -33,14 +33,15 @@ fn codes(v: &Value) -> Result<Vec<u16>> {
     })
 }
 
-/// An ATTR value, or the screen's own when omitted.
+/// An ATTR value, or the screen's own when omitted. One out of range is
+/// named after its argument, `(TPUT:5)`.
 fn attr_arg(v: Option<&Value>, screen: &TextScreen) -> Result<u16> {
     match v {
         None | Some(Value::Default) => Ok(screen.attr),
-        Some(v) => match int(v)? {
+        Some(v) => checking(v, || match int(v)? {
             n @ 0..16 => Ok(n as u16),
             n => Err(out_of_range("attribute", n)),
-        },
+        }),
     }
 }
 
