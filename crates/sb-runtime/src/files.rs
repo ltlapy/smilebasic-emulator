@@ -590,8 +590,8 @@ pub(crate) fn names_project(spec: &str) -> bool {
 
 /// LOAD and SAVE take only text files, before anything is asked: another
 /// type of file (`DAT:`) is File type mismatch, whether there is such a
-/// file or not, and a type that is none (`GRP0:`) Illegal format.
-/// UNVERIFIED: the same in direct mode.
+/// file or not, and a type that is none (`GRP0:`) Illegal format, at
+/// the prompt too.
 fn program_type(spec: &str) -> Result<()> {
     let Some((kind, _)) = spec.split_once(':') else {
         return Ok(());

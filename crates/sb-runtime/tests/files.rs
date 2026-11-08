@@ -1228,6 +1228,79 @@ fn rename_and_delete_refuse_projects_everywhere() {
     assert!(dir.0.join("@WORKSPACE").join("TA").is_file());
 }
 
+/// LOADG's types of file, the same in every mode: `PNG:` is error 74,
+/// a type that is none Illegal format, `TXT:` File type mismatch, and a
+/// JPG file loads.
+#[test]
+fn loadg_types_of_file() {
+    let dir = TempDir::new("loadg-types");
+    let mut m = machine(&dir);
+    enter(
+        &mut m,
+        "gcls &hff112233:saveg \"jpg:p\",0,0,0,4,4:savev \"txt:t\",\"1\"",
+    );
+    for (line, message) in [
+        (
+            "loadg \"png:p\",0",
+            "Can't access other project in this mode(LOADG)",
+        ),
+        ("loadg \"xyz:p\",0", "Illegal format(LOADG:1)"),
+        ("loadg \"txt:t\",0", "File type mismatch(LOADG) (TXT file)"),
+        ("load \"dat:x\",1", "File type mismatch(LOAD) (DAT file)"),
+    ] {
+        let message = message.replacen('(', " in 1(", 1);
+        assert_eq!(direct_error(&mut m, line), message, "{line}");
+    }
+    enter(
+        &mut m,
+        "gcls:loadg \"jpg:p\",0 out w,h:?result();w;h;gpget(0,0)!=0",
+    );
+    assert_eq!(tail(&m, 2), ["1441", "OK"]);
+
+    for (source, message, code, arg) in [
+        (
+            "LOADG \"XYZ:P\",0",
+            "Illegal format in 0:2(LOADG:1)",
+            71,
+            Some(0),
+        ),
+        (
+            "LOADG \"TXT:T\",0",
+            "File type mismatch in 0:2(LOADG) (TXT file)",
+            77,
+            None,
+        ),
+        // Before the file is looked for.
+        (
+            "S$=\"\"\nLOADV \"GRP:NONE\",S$",
+            "Type mismatch in 0:2(LOADV:2)",
+            8,
+            Some(1),
+        ),
+    ] {
+        let source = match source.contains('\n') {
+            true => source.to_string(),
+            false => format!("A=1\n{source}"),
+        };
+        m.set_slot(0, source.clone());
+        enter(&mut m, "run");
+        assert_eq!(
+            program_error(&mut m),
+            (message.to_string(), code, arg),
+            "{source}"
+        );
+    }
+
+    m.set_slot(1, "LOADG \"PNG:P\",0".to_string());
+    enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+    for _ in 0..10 {
+        m.frame();
+    }
+    let (e, sub) = m.take_program_error().expect("an error");
+    assert!(sub);
+    assert_eq!(e.kind.code(), 74);
+}
+
 /// TEST69: LOADV of a DAT file into a string, and RESULT 0 after CHKFILE
 /// of a file that is there.
 #[test]

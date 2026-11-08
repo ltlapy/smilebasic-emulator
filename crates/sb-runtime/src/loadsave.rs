@@ -236,7 +236,7 @@ impl Runtime {
                         detail,
                     ));
                 }
-                // UNVERIFIED: a GRP file into a string.
+                // Before the file is looked for, for GRP files as for DAT.
                 let Value::Array(target) = target else {
                     return Err(Error::new(ErrorKind::TypeMismatch).of_arg(1));
                 };
@@ -307,14 +307,7 @@ impl Runtime {
                 if matches!(rest.len(), 0 | 2) =>
             {
                 let spec = str_arg(spec)?;
-                // UNVERIFIED: that `PNG:` fails as an unknown type in direct
-                // mode and in subprograms.
-                let png = spec
-                    .split_once(':')
-                    .is_some_and(|(kind, _)| kind.eq_ignore_ascii_case("PNG"));
-                if png && !self.direct && self.env_type == 0 {
-                    return Err(ErrorKind::CantAccessOtherProject.into());
-                }
+                self.loadg_type(&spec)?;
                 let page = page_arg(page)?;
                 let at = match rest {
                     [x, y] => (opt_int(x)?.unwrap_or(0), opt_int(y)?.unwrap_or(0)),
@@ -402,6 +395,30 @@ impl Runtime {
         }
     }
 
+    /// LOADG's type of file, before anything else, in a program, a
+    /// subprogram or at the prompt: `PNG:` is Can't access other project
+    /// in this mode, unless SmileBASIC 4's own `#` projects are involved
+    /// (and then fails, as we cannot load those), `TXT:` File type
+    /// mismatch, and a type that is none (`XYZ:`) Illegal format. JPG and
+    /// DAT files load, and so do files named with any project.
+    fn loadg_type(&self, spec: &str) -> Result<()> {
+        let Some((kind, rest)) = spec.split_once(':') else {
+            return Ok(());
+        };
+        if kind.eq_ignore_ascii_case("PNG") {
+            let system = rest.starts_with('#') || self.storage.project().starts_with('#');
+            return match system {
+                true => Ok(()),
+                false => Err(ErrorKind::CantAccessOtherProject.into()),
+            };
+        }
+        match FileKind::from_name(kind) {
+            Some(FileKind::Txt) => Err(Error::with_detail(ErrorKind::FileTypeMismatch, "TXT file")),
+            Some(_) => Ok(()),
+            None => Err(Error::new(ErrorKind::IllegalFormat).of_arg(0)),
+        }
+    }
+
     /// LOADG's image, and the size of its file. A DAT file that is not a
     /// 2D integer array is an Illegal file format error, not a failure
     /// (checked on hardware for a string array).
@@ -415,9 +432,6 @@ impl Runtime {
             Ok(bytes) => bytes,
             Err(e) => return Ok(Err(e)),
         };
-        if kind == FileKind::Txt {
-            return Ok(Err(StorageError::BadKind(kind.name().to_string())));
-        }
         if kind == FileKind::Dat
             && let Ok((data, _)) = &sbfile::read_data(&bytes)
             && !(data.dims.len() == 2 && matches!(data.values, DataValues::Int(_)))
