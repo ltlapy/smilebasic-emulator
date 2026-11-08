@@ -118,7 +118,9 @@ pub(crate) struct Costs {
     spset_new: u64,
     spset_search: u64,
     spset_scan: u64,
+    /// `SPCLR`, and each sprite of the range it is given, in use or not.
     spclr: u64,
+    spclr_each: u64,
     sphitsp: u64,
     spanim: u64,
     print_char: u64,
@@ -193,6 +195,8 @@ const SWITCH2: Costs = Costs {
     spset_search: 60_500,
     spset_scan: 2_140,
     spclr: 116_700,
+    // TEST69's SPCLR 0,4095 of free sprites, 0.22 ms.
+    spclr_each: 53_900,
     sphitsp: 612_300,
     spanim: 540_000,
     print_char: 22_000,
@@ -255,6 +259,8 @@ const SWITCH1: Costs = Costs {
     spset_search: 248_000,
     spset_scan: 4_320,
     spclr: 300_600,
+    // TEST69's SPCLR 0,4095 of free sprites, 1.50 ms.
+    spclr_each: 365_800,
     sphitsp: 1_373_700,
     spanim: 840_000,
     print_char: 40_300,
@@ -512,7 +518,19 @@ impl Runtime {
                 }
                 cost
             }
-            Spclr => c.spclr,
+            Spclr => {
+                // UNVERIFIED: that SPCLR with no arguments pays for every
+                // sprite, as a range of all of them does.
+                let n = match args.len() {
+                    0 => SPRITES as u64,
+                    2 => {
+                        let at = |i| int(args, i).clamp(0, SPRITES as i64 - 1);
+                        at(0).abs_diff(at(1)) + 1
+                    }
+                    _ => 0,
+                };
+                c.spclr + n * c.spclr_each
+            }
             Sphitsp | Sphitrc | Sphitinfo => c.sphitsp,
             Spanim | Tanim => c.spanim,
             Tput => c.tput,

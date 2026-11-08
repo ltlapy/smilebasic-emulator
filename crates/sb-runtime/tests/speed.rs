@@ -160,6 +160,17 @@ fn a_long_search_for_a_free_sprite_costs_more() {
     assert!(short < 5.0 && long > 10.0, "{short} us and {long} us");
 }
 
+/// SPCLR of a range pays for each sprite in it, in use or not: 4096 free
+/// ones took 1.50 ms on a Switch 1 (TEST69).
+#[test]
+fn spclr_of_a_range_costs_each_sprite() {
+    let source = "PERFBEGIN 0:SPCLR 0,4095:T=PERFEND(0)\n\
+                  PERFBEGIN 0:SPCLR 5:?T;\" \";PERFEND(0)\n";
+    let (range, one) = pair(&run(Speed::Switch1, source));
+    assert!((1_400.0..1_600.0).contains(&range), "{range} us");
+    assert!(one < 5.0, "{one} us");
+}
+
 /// Two numbers a program printed on one line.
 fn pair(line: &str) -> (f64, f64) {
     let mut words = line.split_whitespace().map(|w| w.parse().unwrap());
