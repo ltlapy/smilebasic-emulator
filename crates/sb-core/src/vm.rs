@@ -23,9 +23,9 @@ use crate::watch::Watch;
 /// slots. The values of expressions share it too, which is not counted: their
 /// room is left aside, as two values take it.
 const STACK_SIZE: usize = 518_136;
-/// What is left aside for those values. A call that reaches into it fails on what
-/// follows it, a call that goes past it on the call itself. RESTORE "PUSH" may
-/// fill it, and then the next command given arguments fails.
+/// What is left aside for those values. A DEF call that reaches into it fails on
+/// what follows it, a call that goes past it on the call itself. GOSUB and
+/// RESTORE "PUSH" may fill it, and then the next command given arguments fails.
 const VALUES_ROOM: usize = 8;
 /// All of the stack, the values' room too.
 const STACK_FULL: usize = STACK_SIZE + VALUES_ROOM;
@@ -264,6 +264,10 @@ pub struct Vm {
     data_from: Option<Rc<Compiled>>,
     /// READ places kept by RESTORE "PUSH".
     data_kept: Vec<(usize, Option<Rc<Compiled>>)>,
+    /// Whether a GOSUB or RESTORE "PUSH" has reached into the values' room.
+    /// Until one has, commands need not look at the room; after, it stays
+    /// set until ON BREAK empties the stack, and they look each time.
+    values_room_reached: bool,
     /// The program slot running, and whether errors name it (not in
     /// direct mode).
     slot: usize,
@@ -503,6 +507,7 @@ impl Vm {
             data_pos: 0,
             data_from: None,
             data_kept: Vec::new(),
+            values_room_reached: false,
             slot: 0,
             in_slot: false,
             units: Vec::new(),
@@ -1030,6 +1035,7 @@ impl Vm {
         self.frames.clear();
         self.gosubs.clear();
         self.data_kept.clear();
+        self.values_room_reached = false;
         self.callbacks.clear();
         self.reading_input = false;
         self.switch_to(slot, host);
@@ -2084,6 +2090,7 @@ impl Vm {
                     return Err(ErrorKind::StackOverflow.into());
                 }
                 self.data_kept.push((self.data_pos, self.data_from.clone()));
+                self.note_values_room();
             }
             "POP" => {
                 (self.data_pos, self.data_from) =
@@ -2121,34 +2128,41 @@ impl Vm {
         room_for(calls, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_SIZE
     }
 
-    /// [`Vm::stack_has_room`] for RESTORE "PUSH", which may take the
-    /// values' room too.
+    /// [`Vm::stack_has_room`] for GOSUB and RESTORE "PUSH", which may take
+    /// the values' room too.
     fn stack_has_full_room(&self, cost: usize) -> bool {
         let calls = self.frames.last().map_or(0, |f| f.stack_to);
         room_for(calls, self.gosubs.len(), self.data_kept.len(), cost) <= STACK_FULL
     }
 
-    /// A command given arguments when RESTORE "PUSH" has taken the
-    /// values' room: Stack overflow on it. UNVERIFIED: that a command
+    /// A command given arguments when GOSUBs or RESTORE "PUSH" have taken
+    /// the values' room: Stack overflow on it. UNVERIFIED: that a command
     /// without arguments, and a builtin function, go on.
     #[inline(always)]
     fn values_room_taken(&self, argc: usize) -> bool {
-        // Only RESTORE "PUSH" goes past the room GOSUBs and calls leave.
-        !self.data_kept.is_empty() && argc > 0 && !self.stack_has_room(0)
+        argc > 0 && self.values_room_reached && !self.stack_has_room(0)
     }
 
+    /// Keeps [`Vm::values_room_reached`] after a GOSUB or RESTORE "PUSH";
+    /// DEF calls never go past the room.
+    fn note_values_room(&mut self) {
+        self.values_room_reached |= !self.stack_has_room(0);
+    }
+
+    /// GOSUB to `target` of `slot`. One that reaches into the values' room
+    /// goes, and the first command given arguments after it stops.
+    /// UNVERIFIED: that GOSUBs go on until the values' room is full, as
+    /// RESTORE "PUSH" does, and that the one past it stops on itself.
     fn gosub(&mut self, slot: usize, target: usize, host: &mut dyn Host) -> Result<()> {
-        let room = self.stack_has_room(GOSUB_COST);
-        if room {
-            self.gosubs
-                .push((self.slot, self.pc + 1, self.data_kept.len()));
+        if !self.stack_has_full_room(GOSUB_COST) {
+            return Err(ErrorKind::StackOverflow.into());
         }
+        self.gosubs
+            .push((self.slot, self.pc + 1, self.data_kept.len()));
+        self.note_values_room();
         self.switch_to(slot, host);
         self.pc = target;
-        match room {
-            true => Ok(()),
-            false => Err(ErrorKind::StackOverflow.into()),
-        }
+        Ok(())
     }
 
     /// Runs one instruction. `Some` stops the current slice.
@@ -2314,11 +2328,12 @@ impl Vm {
                         unreachable!("ON is followed by its jump table");
                     };
                     if *gosub {
-                        if !self.stack_has_room(GOSUB_COST) {
-                            self.pc = target as usize;
+                        // As in `gosub`.
+                        if !self.stack_has_full_room(GOSUB_COST) {
                             return Err(ErrorKind::StackOverflow.into());
                         }
                         self.gosubs.push((self.slot, after, self.data_kept.len()));
+                        self.note_values_room();
                     }
                     next = target as usize;
                 }
@@ -3209,6 +3224,8 @@ fn room_for(calls: usize, gosubs: usize, kept: usize, cost: usize) -> usize {
     calls + gosubs * GOSUB_COST + kept * RESTORE_COST + cost
 }
 
+/// Whether a GOSUB of [`Vm::run_fused`] fits without the values' room, which
+/// it leaves to [`Vm::gosub`].
 #[inline(always)]
 fn gosub_fits(calls: usize, gosubs: usize, kept: usize) -> bool {
     room_for(calls, gosubs, kept, GOSUB_COST) <= STACK_SIZE

@@ -314,3 +314,97 @@ fn a_full_stack_stops_the_next_command() {
     // 172712 leave room for LOCATE.
     assert!(run("FOR I=1 TO 172712:RESTORE \"PUSH\":NEXT\nLOCATE 0,0").is_ok());
 }
+
+/// TEST69: after 172713 RESTORE "PUSH", commands without arguments and
+/// builtin functions run; a DEF call fails once the pushes leave no room
+/// for it, and pushes alone stop on their own line.
+#[test]
+fn a_full_stack_lets_commands_without_arguments_run() {
+    const DEF: &str = "\n?\"PAST\"\nEND\nDEF F(P)\nRETURN P\nEND";
+    let pushes = |k: u32| format!("K={k}:B=-3:C=2\nFOR I=1 TO K:RESTORE \"PUSH\":NEXT\n");
+    for (k, statement, line) in [
+        (172_713, "VSYNC", None),
+        (172_713, "CLS", None),
+        (172_713, "X=ABS(B)", None),
+        (172_713, "LOCATE 0,1", Some(3)),
+        (172_000, "A=F(C)", None),
+        (172_500, "A=F(C)", None),
+        (172_712, "A=F(C)", Some(3)),
+    ] {
+        let source = format!("{}{statement}{DEF}", pushes(k));
+        match (run(&source), line) {
+            (Ok(rt), None) => {
+                assert!((0..3).any(|y| row(&rt, 4, y) == "PAST"), "{k} {statement}");
+            }
+            (Err(e), Some(line)) => {
+                assert_eq!(
+                    (e.kind, e.line),
+                    (ErrorKind::StackOverflow, line),
+                    "{k} {statement}"
+                );
+            }
+            (r, _) => panic!("{k} {statement}: {:?}", r.err()),
+        }
+    }
+    for k in [400_000, 1_000_000] {
+        let e = run(&format!("{}?\"PAST\"", pushes(k))).err();
+        assert_eq!(
+            e.map(|e| (e.kind, e.line)),
+            Some((ErrorKind::StackOverflow, 2)),
+            "{k}"
+        );
+    }
+}
+
+/// TEST63, TEST64 and TEST69: a GOSUB that does not fit goes, and the stack
+/// overflow comes on the first command given arguments after it: past
+/// `D=D+1`, on the `LOCATE`.
+#[test]
+fn a_gosub_without_room_stops_the_next_command() {
+    let deepest = |source: &str| {
+        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
+        let e = loop {
+            match vm.run(&mut rt, 1_000_000) {
+                Ok(Status::Ended) => panic!("{source} ended"),
+                Ok(_) => {}
+                Err(e) => break e,
+            }
+        };
+        (e.kind, e.line, e.col, row(&rt, 4, 1))
+    };
+    const PUSHES: &str = "FOR I=1 TO 100000:RESTORE \"PUSH\":NEXT\n";
+    for (source, line, printed) in [
+        (
+            format!("{PUSHES}GOSUB @S\nEND\n@S\nD=D+1\nLOCATE 0,1:?D;\nGOSUB @S"),
+            6,
+            "109068",
+        ),
+        (
+            format!("{PUSHES}GOSUB @S\nEND\n@S\nD=D+1\nLOCATE 0,1:?D;\nON 0 GOSUB @S"),
+            6,
+            "109068",
+        ),
+        ("@L\nN=N+1:LOCATE 0,1:?N\nGOSUB @L".to_string(), 2, "259069"),
+        (
+            format!("{PUSHES}@L\nN=N+1:LOCATE 0,1:?N\nGOSUB @L"),
+            3,
+            "109069",
+        ),
+    ] {
+        let (kind, at, col, shown) = deepest(&source);
+        assert_eq!(
+            (kind, at, shown.as_str()),
+            (ErrorKind::StackOverflow, line, printed),
+            "{source}"
+        );
+        // The LOCATE's own place, counted from 1.
+        let locate = 1 + source
+            .lines()
+            .nth(line as usize - 1)
+            .unwrap()
+            .find("LOCATE")
+            .unwrap();
+        assert_eq!(col as usize, locate, "{source}");
+    }
+}
