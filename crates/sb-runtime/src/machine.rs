@@ -374,7 +374,6 @@ impl Machine {
     /// Prints the start-up message and waits for a direct-mode line.
     pub fn boot(&mut self) {
         // KEY starts from the settings; programs change only this run's.
-        // UNVERIFIED: whether KEY in a program changes the settings too.
         let keys = &self.rt.settings.function_keys;
         self.rt.input.function_keys = keys.clone().map(|k| k.encode_utf16().collect());
         let version = env!("CARGO_PKG_VERSION");
@@ -1067,7 +1066,7 @@ impl Machine {
             let note: Vec<u16> = note.encode_utf16().collect();
             self.print_line(&note);
         }
-        // UNVERIFIED: a line typed in direct mode cannot go on.
+        // A line typed in direct mode cannot go on.
         if program {
             vm.pass_here();
             vm.leave_input();
@@ -2165,8 +2164,8 @@ impl Machine {
             None => error.without_place(),
         };
         let text: Vec<u16> = text.encode_utf16().collect();
-        // It follows whatever the line printed, as Break does.
-        // UNVERIFIED: it wraps at the right edge as PRINT does.
+        // It follows whatever the line printed, as Break does, and wraps at
+        // the right edge as PRINT does.
         let console = &mut self.rt.text[CONSOLE];
         console.print(&text);
         console.newline();
@@ -2412,7 +2411,11 @@ impl Machine {
     /// character of the statement from the start of the program, counting
     /// from 0, and line.
     // UNVERIFIED: which errors SmileBASIC 4 gives an argument for besides
-    // a command's range checks; here those that check one value do.
+    // a command's range checks; here those that check one value do. It
+    // also numbers some checks of a length or a size (LEFT$'s count,
+    // BIQUAD's output, TLOAD's and GLOAD's sizes, ENVSAVE's type), and
+    // gives none for SQR's range, COPY past the source's end or FREEMEM's
+    // arguments.
     fn error_place(&self, slot: usize, e: &Error) -> [i32; 5] {
         let before: usize = (self.rt.slots[slot].split_inclusive('\n'))
             .take(e.line.saturating_sub(1) as usize)
@@ -2431,8 +2434,8 @@ impl Machine {
             status::RUNNING
         } else {
             match self.rt.stopped {
-                // UNVERIFIED: a stopped program's status 1 stays after a
-                // direct-mode error.
+                // A stopped program's status 1 stays after a direct-mode
+                // error.
                 Stopped::No if self.direct_failed => status::ERROR,
                 Stopped::No => status::DIRECT,
                 Stopped::Paused => status::PAUSED,

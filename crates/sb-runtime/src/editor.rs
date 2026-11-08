@@ -1071,7 +1071,6 @@ impl Editor {
     }
 
     /// Indents the chosen lines by TABSTEP's spaces (Tab over lines).
-    // UNVERIFIED: SmileBASIC 4 indents by TABSTEP's spaces.
     pub fn indent(&mut self) {
         let spaces = vec![u16::from(b' '); self.tab_step.max(1)];
         self.change_lines(|_| Some((0, 0, spaces.clone())));
@@ -1568,7 +1567,7 @@ impl Editor {
             keys::PAGE_DOWN => self.go_line(line + rows),
             keys::HOME => self.view.col = 0,
             keys::END => self.view.col = self.line().len(),
-            // UNVERIFIED: Tab pads with spaces to the next TABSTEP column.
+            // Tab pads with spaces to the next TABSTEP column.
             keys::TAB => {
                 self.begin(Merge::Type);
                 let tab = self.tab_step.max(1);

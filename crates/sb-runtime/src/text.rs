@@ -701,7 +701,7 @@ impl TextScreen {
                         cell + cs as i32,
                         ((cy + 1) * cs) as i32,
                     ),
-                    // UNVERIFIED: for the bar on other than 8-pixel cells, expected of SmileBASIC 4.
+                    // A quarter of the cell wide, on cells of any size.
                     width: if line.overwrite { cs } else { cs >> 2 },
                     color: if line.composed { 0x00FF_FFFF } else { WHITE },
                 }

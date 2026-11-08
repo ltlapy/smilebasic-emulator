@@ -569,7 +569,6 @@ impl Completion {
     /// A key while the list is open. Until Up or Down picks an entry,
     /// Enter goes on to the text, so that a list showing after one letter
     /// does not take the Enter that ends a line; Tab takes the first.
-    // UNVERIFIED: that SmileBASIC 4's Enter also needs an entry picked.
     pub fn key(&mut self, code: u16, enter: bool) -> Outcome {
         let n = self.items.len();
         let chosen = match (code, self.chosen) {

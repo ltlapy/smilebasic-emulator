@@ -78,7 +78,7 @@ pub fn rows_kept_free(height: u32, aspect: f64, cell: u32) -> i64 {
 /// its bottom, as all that direct mode, INPUT and LINPUT print does.
 pub fn keep_rows_free(console: &mut TextScreen, free: i64) {
     let (x, y) = console.cursor();
-    // UNVERIFIED: that a console too small for that keeps its first row.
+    // A console too small for that keeps its first row.
     let last = (i64::from(console.size().1) - 1 - free).max(0);
     let rows = i64::from(y) - last;
     if rows > 0 {
@@ -289,7 +289,6 @@ impl LineEdit {
         if self.overwrite {
             // As in SmileBASIC 4, the selection goes after the character is
             // written and the cursor moved on, so it can take the character.
-            // UNVERIFIED: read, not yet seen.
             match self.text.get_mut(self.cursor) {
                 Some(old) => *old = c,
                 None if len < LINE_MAX => self.text.push(c),

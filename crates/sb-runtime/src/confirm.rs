@@ -172,9 +172,11 @@ impl Runtime {
                     lines.push(String::new());
                     lines.extend(HINT.map(String::from));
                 }
-                // UNVERIFIED: that SmileBASIC 4 starts on the button that
-                // goes ahead for file commands other than saving, and which
-                // button it starts on when unsaved edits would be lost.
+                // SmileBASIC 4 starts on the button that goes ahead for
+                // DELETE and RENAME.
+                // UNVERIFIED: that it does for the other file commands but
+                // saving, and which button it starts on when unsaved edits
+                // would be lost.
                 Confirm {
                     title: action.title,
                     lines,
