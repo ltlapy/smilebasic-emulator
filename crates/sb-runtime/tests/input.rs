@@ -970,14 +970,19 @@ fn a_key_held_in_the_editor_stops_when_it_closes() {
 }
 
 /// The prompt repeats a held key in frames too, and the Enter that runs a
-/// program does not repeat into it.
+/// program goes on repeating into it, 19 frames after the press and then
+/// every 3.
 #[test]
-fn a_key_held_at_the_prompt_repeats_but_not_into_the_program_it_runs() {
+fn a_key_held_at_the_prompt_repeats_into_the_program_it_runs() {
     use sb_runtime::machine::Machine;
     use sb_runtime::runtime::keys;
     let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
     m.boot();
-    let source = "WHILE 1\nVSYNC\nK$=INKEY$()\nIF K$!=\"\" THEN ?ASC(K$)\nWEND\n";
+    // As TEST70K logs them: the frame from the program's start where
+    // INKEY$ gives Enter.
+    let source = "T=MAINCNT()\nWHILE 1\nK$=INKEY$()\n\
+                  IF K$==CHR$(13) THEN ?\"K\";MAINCNT()-T ELSEIF K$!=\"\" THEN ?K$;\n\
+                  VSYNC\nWEND\n";
     m.set_slot(0, source.to_string());
     m.frame();
     m.rt.input.key_down(A_KEY);
@@ -997,10 +1002,14 @@ fn a_key_held_at_the_prompt_repeats_but_not_into_the_program_it_runs() {
     m.rt.input.key_down(ENTER_KEY);
     m.rt.type_held(keys::ENTER);
     m.rt.input.live = holding(&[ENTER_KEY]);
-    for _ in 0..40 {
+    for _ in 0..30 {
         m.frame();
     }
     assert!(m.is_running());
+    // The prompt takes the line in the frame of the press, RUN runs in the
+    // next, and the program starts in the one after: 19 frames after the
+    // press is the program's frame 17.
     let rows = console_rows(&m);
-    assert!(!rows.iter().any(|r| r == "13"), "Enter repeated: {rows:?}");
+    let at: Vec<&str> = rows.iter().filter_map(|r| r.strip_prefix('K')).collect();
+    assert_eq!(at, ["17", "20", "23", "26"], "{rows:?}");
 }

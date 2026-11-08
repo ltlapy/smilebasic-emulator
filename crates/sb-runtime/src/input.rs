@@ -522,11 +522,6 @@ impl Input {
         }
     }
 
-    /// The held keyboard key types nothing more.
-    pub(crate) fn stop_key_repeat(&mut self) {
-        self.key_repeat = KeyRepeat::default();
-    }
-
     /// Whether the held keyboard key types again this frame, once a frame:
     /// never once it is let go. `held`: it is still down; `keys`: the
     /// keyboard keys held now.

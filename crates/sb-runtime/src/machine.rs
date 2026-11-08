@@ -1954,10 +1954,6 @@ impl Machine {
         self.rt.help_cursor = (line.to_vec(), col);
         if slot.is_some() {
             self.forget_halted();
-            // The Enter that typed RUN, or the key that ran the program
-            // from the editor, does not repeat into it.
-            // UNVERIFIED: SmileBASIC 4 may repeat it.
-            self.rt.input.stop_key_repeat();
         }
         self.rt.direct = slot.is_none();
         self.running_slot = slot;
