@@ -361,15 +361,23 @@ pub fn parse_number(text: &[u16]) -> Option<Value> {
     }
 }
 
+/// CHR$: `CHR$(-1)` is U+FFFF.
 fn chr(args: &[Value]) -> Result<Value> {
-    let code = u16::try_from(args[0].to_int()?)
-        .map_err(|_| Error::new(ErrorKind::OutOfRange).of_arg(0))?;
+    let n = args[0].to_int()?;
+    let code = match u16::try_from(n) {
+        Ok(code) => code,
+        Err(_) if n == -1 => 0xFFFF,
+        // UNVERIFIED: the other values outside 0 to 65535 are Out of range;
+        // SmileBASIC 4 may wrap them as it does -1.
+        Err(_) => return Err(Error::new(ErrorKind::OutOfRange).of_arg(0)),
+    };
     Ok(string(vec![code]))
 }
 
+/// ASC: an empty string is "Can't use empty string".
 fn asc(args: &[Value]) -> Result<Value> {
     let s = text(&args[0])?;
-    let first = (s.first()).ok_or_else(|| Error::new(ErrorKind::OutOfRange).of_arg(0))?;
+    let first = (s.first()).ok_or_else(|| Error::new(ErrorKind::CantUseEmptyString).of_arg(0))?;
     Ok(Value::Int(i32::from(*first)))
 }
 
@@ -1236,6 +1244,23 @@ mod tests {
         assert_eq!(as_int(call("VAL", &[s("&H_")]).unwrap()), 0);
         assert_eq!(as_int(call("ASC", &[s("XYZ")]).unwrap()), 88);
         assert_eq!(as_string(call("CHR$", &[Value::Int(65)]).unwrap()), "A");
+        let code = |v: Value| {
+            call("CHR$", &[v])
+                .unwrap()
+                .into_str()
+                .unwrap()
+                .borrow()
+                .clone()
+        };
+        assert_eq!(code(Value::Int(-1)), [0xFFFF]);
+        assert_eq!(code(Value::Int(65535)), [0xFFFF]);
+        let err = call("CHR$", &[Value::Int(-2)]).unwrap_err();
+        assert_eq!((err.kind, err.arg), (ErrorKind::OutOfRange, Some(0)));
+        let err = call("ASC", &[s("")]).unwrap_err();
+        assert_eq!(
+            (err.kind, err.arg),
+            (ErrorKind::CantUseEmptyString, Some(0))
+        );
     }
 
     #[test]
