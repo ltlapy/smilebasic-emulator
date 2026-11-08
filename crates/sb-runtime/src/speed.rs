@@ -237,7 +237,9 @@ const SWITCH2: Costs = Costs {
     loadg_px: 15_150,
     loadg_byte: 10_720,
     char_px: 4_150,
-    paint: 42_900_000,
+    // TEST67's GPAINT of 128x128 and 512x512 and TEST69's of 4x4 and
+    // 16x16, all within 7%.
+    paint: 33_500_000,
     paint_px: 7_531,
     layer: 8_000_000,
     // TEST69's EXEC of a 3-line file (0.24 and 0.52 ms) and of two of
@@ -309,7 +311,7 @@ const SWITCH1: Costs = Costs {
     loadg_px: 24_600,
     loadg_byte: 21_000,
     char_px: 15_760,
-    paint: 106_900_000,
+    paint: 93_500_000,
     paint_px: 16_110,
     layer: 5_000_000,
     // As for the Switch 2, from TEST69's files (1.0 and 1.8 ms, 10.3 ms
