@@ -23,7 +23,6 @@
 use sb_core::value::Value;
 use sb_core::vm::Work;
 
-use crate::graphics::Clip;
 use crate::runtime::{Command, Runtime};
 use crate::sprites::SPRITES;
 
@@ -107,14 +106,11 @@ pub(crate) struct Costs {
     /// Host functions, such as `BUTTON` and `SPCHK`, and `RND`.
     query: u64,
     rnd: u64,
-    /// Each real number a host command is given, on top. UNVERIFIED: what
-    /// makes TPERF's sprite scenes, which pass reals, slower than TEST67's
-    /// sprite commands, which pass whole numbers.
-    real_arg: u64,
     /// Host commands not timed, and those that set one thing, as
-    /// `SPROT`, `SPSCALE`, `SPCOLOR` and `LOCATE` do.
+    /// `SPROT`, `SPCOLOR` and `LOCATE` do.
     setter: u64,
     spofs: u64,
+    spscale: u64,
     /// `SPSET`: the call and each argument, a sprite not in use on top,
     /// and the search of the function form with each sprite it passes.
     spset: u64,
@@ -135,14 +131,12 @@ pub(crate) struct Costs {
     grp: u64,
     copy: u64,
     row: u64,
-    /// Pixels of `GFILL` and `GCLS`, of `GCOPY` and of blended drawing,
-    /// with `GCLIP` at the whole page and with a smaller rectangle.
+    /// Pixels of `GFILL` and `GCLS`, of `GCOPY` and of blended drawing.
+    /// TEST69 finds the same rates with `GCLIP` set smaller than the
+    /// page.
     fill_px: u64,
-    fill_clip_px: u64,
     copy_px: u64,
-    copy_clip_px: u64,
     alpha_px: u64,
-    alpha_clip_px: u64,
     copy_alpha_px: u64,
     /// `GTRI`: the call, each row and each pixel.
     tri: u64,
@@ -189,9 +183,10 @@ const SWITCH2: Costs = Costs {
     clock: 5_000,
     query: 51_700,
     rnd: 21_000,
-    real_arg: 40_000,
     setter: 108_800,
     spofs: 102_100,
+    // TEST69's SPSCALE, which costs less than the other setters.
+    spscale: 94_200,
     spset: 111_100,
     spset_arg: 28_400,
     spset_new: 65_900,
@@ -209,13 +204,8 @@ const SWITCH2: Costs = Costs {
     copy: 200_000,
     row: 1_000,
     fill_px: 458,
-    // UNVERIFIED: that the smaller GCLIP is what makes TPERF's drawing
-    // slower than TEST67's, here and for the Switch 1.
-    fill_clip_px: 810,
     copy_px: 1_195,
-    copy_clip_px: 1_260,
     alpha_px: 8_900,
-    alpha_clip_px: 8_910,
     copy_alpha_px: 9_290,
     tri: 180_000,
     tri_row: 14_000,
@@ -256,9 +246,9 @@ const SWITCH1: Costs = Costs {
     clock: 5_000,
     query: 131_200,
     rnd: 48_200,
-    real_arg: 210_000,
     setter: 392_900,
     spofs: 321_500,
+    spscale: 280_200,
     spset: 383_500,
     spset_arg: 57_000,
     spset_new: 261_000,
@@ -276,11 +266,8 @@ const SWITCH1: Costs = Costs {
     copy: 340_000,
     row: 24_000,
     fill_px: 955,
-    fill_clip_px: 5_815,
     copy_px: 2_100,
-    copy_clip_px: 4_480,
     alpha_px: 17_500,
-    alpha_clip_px: 22_560,
     copy_alpha_px: 22_400,
     tri: 0,
     tri_row: 96_000,
@@ -491,139 +478,138 @@ impl Runtime {
             clip.y1.into(),
         );
         let page = clip_w * clip_h;
-        // TEST67 and TPERF disagree on drawing by the pixel, and TEST67
-        // leaves GCLIP at the whole page where TPERF sets a smaller one.
-        let clipped = clip != Clip::PAGE;
-        let (fill_px, copy_px, alpha_px) = match clipped {
-            false => (c.fill_px, c.copy_px, c.alpha_px),
-            true => (c.fill_clip_px, c.copy_clip_px, c.alpha_clip_px),
-        };
         let px = |n: u64, rate: u64| c.grp + n * rate;
         let rect = |(w, h): (u64, u64), rate: u64| c.grp + h * c.row + w * h * rate;
-        let reals = args.iter().filter(|v| matches!(v, Value::Real(_))).count() as u64;
-        reals * c.real_arg
-            + match command {
-                Maincnt | Millisec => c.clock,
-                Rnd | Rndf if value => c.rnd,
-                Spofs => c.spofs,
-                Spset => {
-                    let mut cost = c.spset + args.len() as u64 * c.spset_arg;
-                    if value {
-                        let (lo, hi) = match args.len() {
-                            3 | 4 | 7 | 8 => (int(args, 0), int(args, 1)),
-                            _ => (0, SPRITES as i64 - 1),
-                        };
-                        let (lo, hi) = (
-                            lo.clamp(0, SPRITES as i64 - 1),
-                            hi.clamp(0, SPRITES as i64 - 1),
-                        );
-                        let passed = match self.free_sprite(lo as usize, hi as usize) {
-                            Some(id) => id.abs_diff(lo as usize) as u64,
-                            None => lo.abs_diff(hi) + 1,
-                        };
-                        cost += c.spset_search + c.spset_new + passed * c.spset_scan;
-                    } else {
-                        let id = usize::try_from(int(args, 0)).ok();
-                        let used = id
-                            .and_then(|i| self.sprites.list().get(i))
-                            .is_some_and(|s| s.used);
-                        if !used {
-                            cost += c.spset_new;
-                        }
-                    }
-                    cost
-                }
-                Spclr => c.spclr,
-                Sphitsp | Sphitrc | Sphitinfo => c.sphitsp,
-                Spanim | Tanim => c.spanim,
-                Tput => c.tput,
-                Tfill => {
-                    let cells = (int(args, 3) - int(args, 1)).abs() + 1;
-                    let rows = (int(args, 4) - int(args, 2)).abs() + 1;
-                    c.tfill + (cells * rows) as u64 * c.tfill_cell
-                }
-                Scroll => {
-                    let screen = usize::try_from(int(args, 0)).ok();
-                    let (w, h) =
-                        (screen.and_then(|s| self.text.get(s))).map_or((50, 30), |t| t.size());
-                    c.setter + u64::from(w * h) * c.scroll_cell
-                }
-                Gfill => {
-                    let rate = if blends(args, 5) { alpha_px } else { fill_px };
-                    rect(
-                        size(int(args, 0), int(args, 1), int(args, 2), int(args, 3)),
-                        rate,
-                    )
-                }
-                Gcls => rect((clip_w, clip_h), fill_px),
-                Gbox => {
-                    let w = (int(args, 2) - int(args, 0)).unsigned_abs() + 1;
-                    let h = (int(args, 3) - int(args, 1)).unsigned_abs() + 1;
-                    c.line + 2 * (w + h) * c.line_px
-                }
-                Gline => {
-                    let dx = (int(args, 2) - int(args, 0)).unsigned_abs();
-                    let dy = (int(args, 3) - int(args, 1)).unsigned_abs();
-                    c.line + (dx.max(dy) + 1) * c.line_px
-                }
-                Gcircle => {
-                    let r = int(args, 2).unsigned_abs();
-                    // A sector is filled.
-                    match args.len() >= 6 && int(args, 5) == 1 {
-                        true => px((r * r * 355 / 113).min(page), fill_px),
-                        false => c.circle + (r * 710 / 113 + 1) * c.circle_px,
+        match command {
+            Maincnt | Millisec => c.clock,
+            Rnd | Rndf if value => c.rnd,
+            Spofs => c.spofs,
+            Spscale => c.spscale,
+            Spset => {
+                let mut cost = c.spset + args.len() as u64 * c.spset_arg;
+                if value {
+                    let (lo, hi) = match args.len() {
+                        3 | 4 | 7 | 8 => (int(args, 0), int(args, 1)),
+                        _ => (0, SPRITES as i64 - 1),
+                    };
+                    let (lo, hi) = (
+                        lo.clamp(0, SPRITES as i64 - 1),
+                        hi.clamp(0, SPRITES as i64 - 1),
+                    );
+                    let passed = match self.free_sprite(lo as usize, hi as usize) {
+                        Some(id) => id.abs_diff(lo as usize) as u64,
+                        None => lo.abs_diff(hi) + 1,
+                    };
+                    cost += c.spset_search + c.spset_new + passed * c.spset_scan;
+                } else {
+                    let id = usize::try_from(int(args, 0)).ok();
+                    let used = id
+                        .and_then(|i| self.sprites.list().get(i))
+                        .is_some_and(|s| s.used);
+                    if !used {
+                        cost += c.spset_new;
                     }
                 }
-                Gtri => {
-                    let [x0, y0, x1, y1, x2, y2] = std::array::from_fn(|i| int(args, i));
-                    let n = ((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)).unsigned_abs() / 2;
-                    let (_, rows) = size(0, y0.min(y1).min(y2), 0, y0.max(y1).max(y2));
-                    let rate = if blends(args, 7) { alpha_px } else { c.tri_px };
-                    c.tri + rows * c.tri_row + n.min(page) * rate
-                }
-                Gcopy => {
-                    let at = usize::from(args.len() > 7);
-                    let w = (int(args, at + 2) - int(args, at)).unsigned_abs() + 1;
-                    let h = (int(args, at + 3) - int(args, at + 1)).unsigned_abs() + 1;
-                    let rate = if blends(args, args.len().saturating_sub(1)) {
-                        c.copy_alpha_px
-                    } else {
-                        copy_px
-                    };
-                    let (w, h) = (w.min(clip_w), h.min(clip_h));
-                    c.copy + h * c.row + w * h * rate
-                }
-                Gload | Gsave => {
-                    let n = match args.len() {
-                        5..=8 => {
-                            let at = usize::from(command == Gsave && args.len() == 6);
-                            (int(args, at + 2) * int(args, at + 3)).unsigned_abs()
-                        }
-                        _ => page,
-                    };
-                    px(n, c.load_px)
-                }
-                Gputchr | Gputchrp => {
-                    let chars = match args.get(2) {
-                        Some(Value::Str(s)) => s.borrow().len() as u64,
-                        _ => 1,
-                    };
-                    let size = if int(args, 3) == 8 { 8 } else { 16 };
-                    let scale = match args.len() >= 7 {
-                        true => (int(args, 4).max(1) * int(args, 5).max(1)) as u64,
-                        false => 1,
-                    };
-                    px(chars * size * size * scale, c.char_px)
-                }
-                // The pixels it fills are charged as it fills them
-                // (Meter::charge_paint).
-                Gpaint => c.paint,
-                Lfilter | Lmatrix => c.layer,
-                Gpset | Gpget | Gtarget | Gcolor | Gclip => c.grp,
-                // UNVERIFIED: commands and functions not timed.
-                _ if value => c.query,
-                _ => c.setter,
+                cost
             }
+            Spclr => c.spclr,
+            Sphitsp | Sphitrc | Sphitinfo => c.sphitsp,
+            Spanim | Tanim => c.spanim,
+            Tput => c.tput,
+            Tfill => {
+                let cells = (int(args, 3) - int(args, 1)).abs() + 1;
+                let rows = (int(args, 4) - int(args, 2)).abs() + 1;
+                c.tfill + (cells * rows) as u64 * c.tfill_cell
+            }
+            Scroll => {
+                let screen = usize::try_from(int(args, 0)).ok();
+                let (w, h) = (screen.and_then(|s| self.text.get(s))).map_or((50, 30), |t| t.size());
+                c.setter + u64::from(w * h) * c.scroll_cell
+            }
+            Gfill => {
+                let rate = if blends(args, 5) {
+                    c.alpha_px
+                } else {
+                    c.fill_px
+                };
+                rect(
+                    size(int(args, 0), int(args, 1), int(args, 2), int(args, 3)),
+                    rate,
+                )
+            }
+            Gcls => rect((clip_w, clip_h), c.fill_px),
+            Gbox => {
+                let w = (int(args, 2) - int(args, 0)).unsigned_abs() + 1;
+                let h = (int(args, 3) - int(args, 1)).unsigned_abs() + 1;
+                c.line + 2 * (w + h) * c.line_px
+            }
+            Gline => {
+                let dx = (int(args, 2) - int(args, 0)).unsigned_abs();
+                let dy = (int(args, 3) - int(args, 1)).unsigned_abs();
+                c.line + (dx.max(dy) + 1) * c.line_px
+            }
+            Gcircle => {
+                let r = int(args, 2).unsigned_abs();
+                // A sector is filled.
+                match args.len() >= 6 && int(args, 5) == 1 {
+                    true => px((r * r * 355 / 113).min(page), c.fill_px),
+                    false => c.circle + (r * 710 / 113 + 1) * c.circle_px,
+                }
+            }
+            Gtri => {
+                let [x0, y0, x1, y1, x2, y2] = std::array::from_fn(|i| int(args, i));
+                let n = ((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)).unsigned_abs() / 2;
+                let (_, rows) = size(0, y0.min(y1).min(y2), 0, y0.max(y1).max(y2));
+                let rate = if blends(args, 7) {
+                    c.alpha_px
+                } else {
+                    c.tri_px
+                };
+                c.tri + rows * c.tri_row + n.min(page) * rate
+            }
+            Gcopy => {
+                let at = usize::from(args.len() > 7);
+                let w = (int(args, at + 2) - int(args, at)).unsigned_abs() + 1;
+                let h = (int(args, at + 3) - int(args, at + 1)).unsigned_abs() + 1;
+                let rate = if blends(args, args.len().saturating_sub(1)) {
+                    c.copy_alpha_px
+                } else {
+                    c.copy_px
+                };
+                let (w, h) = (w.min(clip_w), h.min(clip_h));
+                c.copy + h * c.row + w * h * rate
+            }
+            Gload | Gsave => {
+                let n = match args.len() {
+                    5..=8 => {
+                        let at = usize::from(command == Gsave && args.len() == 6);
+                        (int(args, at + 2) * int(args, at + 3)).unsigned_abs()
+                    }
+                    _ => page,
+                };
+                px(n, c.load_px)
+            }
+            Gputchr | Gputchrp => {
+                let chars = match args.get(2) {
+                    Some(Value::Str(s)) => s.borrow().len() as u64,
+                    _ => 1,
+                };
+                let size = if int(args, 3) == 8 { 8 } else { 16 };
+                let scale = match args.len() >= 7 {
+                    true => (int(args, 4).max(1) * int(args, 5).max(1)) as u64,
+                    false => 1,
+                };
+                px(chars * size * size * scale, c.char_px)
+            }
+            // The pixels it fills are charged as it fills them
+            // (Meter::charge_paint).
+            Gpaint => c.paint,
+            Lfilter | Lmatrix => c.layer,
+            Gpset | Gpget | Gtarget | Gcolor | Gclip => c.grp,
+            // UNVERIFIED: commands and functions not timed.
+            _ if value => c.query,
+            _ => c.setter,
+        }
     }
 
     /// Makes the meter stand for `speed`, a new one if it changed.
