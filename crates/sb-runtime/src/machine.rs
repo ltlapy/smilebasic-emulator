@@ -1553,9 +1553,11 @@ impl Machine {
             self.edit().paste(text);
             return;
         }
-        // Text that does not fit the line is left out whole. Text with line
-        // ends goes in as keys, as Enter does between them.
-        // UNVERIFIED: expected of SmileBASIC 4, not yet seen.
+        // A line that does not fit is left out whole, as SmileBASIC 4 does.
+        // Text with line ends is typed a line at a time, with Enter between
+        // them, so that many lines can be pasted at once. SmileBASIC 4's
+        // paste puts the line ends into the one line, where they show as
+        // line breaks, and Enter runs it all; the PASTE key does that here.
         let one_line = !text.contains(['\r', '\n']);
         let room = text.chars().filter(|&c| c >= ' ' || c == '\t').count();
         if one_line && !self.rt.line_has_room(room) {

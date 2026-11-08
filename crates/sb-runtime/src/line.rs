@@ -57,6 +57,9 @@ pub mod codes {
 /// the console's size.
 pub const LINE_MAX: usize = 256;
 
+/// A line end, as CLIPBOARD's text can put one into the line.
+const LINE_END: u16 = 0x0A;
+
 /// How many of the console's rows a line keeps free under its cursor: the
 /// one below it and those the hint bar at the bottom of the display covers
 /// whole. `height` and `aspect` are XSCREEN's, `cell` the console's
@@ -106,7 +109,8 @@ pub struct LineEdit {
     /// Where the line starts on the console, counted in cells from its
     /// top left. Scrolling moves it up, above the console if need be.
     origin: i64,
-    /// Characters drawn last time, cleared if the line got shorter.
+    /// Cells from the origin drawn last time, cleared if the line got
+    /// shorter.
     shown: usize,
     /// The rows kept free under the cursor: see [`rows_kept_free`].
     free: i64,
@@ -141,8 +145,26 @@ impl LineEdit {
     /// `w` is the console's width.
     pub fn cell_of(&self, i: usize, w: u32) -> Option<(i64, i64)> {
         let w = i64::from(w);
-        let p = self.origin + i as i64;
-        (w > 0 && p >= 0).then(|| (p % w, p / w))
+        if w == 0 {
+            return None;
+        }
+        let p = self.place(i, w);
+        (p >= 0).then(|| (p % w, p / w))
+    }
+
+    /// Where character `i` of the line goes, or the cursor before it, in
+    /// cells from the console's top left on a console `w` wide. A line end
+    /// pasted into the line shows as a line break: what follows it starts
+    /// the next row.
+    fn place(&self, i: usize, w: i64) -> i64 {
+        let before = &self.text[..i.min(self.text.len())];
+        if !before.contains(&LINE_END) {
+            return self.origin + i as i64;
+        }
+        before.iter().fold(self.origin, |p, &c| match c {
+            LINE_END => (p.div_euclid(w) + 1) * w,
+            _ => p + 1,
+        })
     }
 
     pub fn selection(&self) -> Option<(usize, usize)> {
@@ -292,8 +314,8 @@ impl LineEdit {
         if w == 0 || h == 0 {
             return;
         }
-        let end = (self.origin + self.text.len().saturating_sub(1) as i64) / w;
-        let at = (self.origin + self.cursor as i64) / w;
+        let end = self.place(self.text.len().saturating_sub(1), w) / w;
+        let at = self.place(self.cursor, w) / w;
         let rows = (end - (h - 1)).max(at - (h - 1 - self.free).max(0));
         if rows > 0 {
             console.scroll(0, rows as i32);
@@ -301,37 +323,44 @@ impl LineEdit {
         }
         let (color, plain) = (console.color(), console.attr);
         let selection = self.selection();
-        for i in 0..self.text.len().max(self.shown) {
-            let p = self.origin + i as i64;
-            if p < 0 {
+        let empty = Cell {
+            code: 0,
+            color: 0,
+            attr: 0,
+        };
+        let mut set = |p: i64, cell: Cell| {
+            if p >= 0 {
+                console.set_cell((p % w) as i32, (p / w) as i32, cell);
+            }
+        };
+        let mut p = self.origin;
+        for (i, &code) in self.text.iter().enumerate() {
+            if code == LINE_END {
+                // The rest of the row stays empty.
+                let next = (p.div_euclid(w) + 1) * w;
+                (p..next).for_each(|p| set(p, empty));
+                p = next;
                 continue;
             }
-            let cell = match self.text.get(i) {
-                Some(&code) => {
-                    let selected = selection.is_some_and(|(a, b)| a <= i && i < b);
-                    let attr = if selected {
-                        plain | attr::INVERT
-                    } else {
-                        plain
-                    };
-                    Cell { code, color, attr }
-                }
-                None => Cell {
-                    code: 0,
-                    color: 0,
-                    attr: 0,
-                },
+            let selected = selection.is_some_and(|(a, b)| a <= i && i < b);
+            let attr = if selected {
+                plain | attr::INVERT
+            } else {
+                plain
             };
-            console.set_cell((p % w) as i32, (p / w) as i32, cell);
+            set(p, Cell { code, color, attr });
+            p += 1;
         }
-        self.shown = self.text.len();
+        let drawn = (p - self.origin) as usize;
+        (drawn..self.shown).for_each(|i| set(self.origin + i as i64, empty));
+        self.shown = drawn;
         self.place_cursor(console);
     }
 
     /// Puts the console's cursor at the line's.
     fn place_cursor(&self, console: &mut TextScreen) {
         let w = i64::from(console.size().0);
-        let p = (self.origin + self.cursor as i64).max(0);
+        let p = self.place(self.cursor, w).max(0);
         let _ = console.locate(Some((p % w) as i32), Some((p / w) as i32));
     }
 
@@ -531,6 +560,34 @@ mod tests {
         assert_eq!(line.cursor, 2);
         line.key(codes::INSERT);
         assert!(!line.overwrite);
+    }
+
+    #[test]
+    fn a_pasted_line_end_shows_as_a_line_break() {
+        let mut c = TextScreen::new(40, 48);
+        let _ = c.locate(Some(1), Some(0));
+        let mut line = LineEdit::new(&c, 1);
+        let text: Vec<u16> = "?1\n?2".encode_utf16().collect();
+        line.replace_before(0, &text);
+        line.draw(&mut c);
+        assert_eq!(
+            [row(&c, 0), row(&c, 1), row(&c, 2)],
+            [".?1..", "?2...", "....."]
+        );
+        assert_eq!(c.cursor(), (2, 1));
+        assert_eq!(line.cell_of(3, 5), Some((0, 1)));
+        // Taking the line end out joins the rows again.
+        line.key(codes::HOME);
+        for _ in 0..3 {
+            line.key(codes::RIGHT);
+        }
+        line.key(codes::BACKSPACE);
+        line.draw(&mut c);
+        assert_eq!([row(&c, 0), row(&c, 1)], [".?1?2", "....."]);
+        assert_eq!(
+            line.finish(&mut c),
+            "?1?2".encode_utf16().collect::<Vec<_>>()
+        );
     }
 
     #[test]
