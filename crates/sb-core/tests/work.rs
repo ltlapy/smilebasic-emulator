@@ -69,3 +69,14 @@ fn string_characters_by_index_count_apart() {
     assert_eq!(work.elements, 5);
     assert_eq!(work.str_elements, 3);
 }
+
+/// FILL counts the elements it writes, from its start to its count or
+/// the array's end.
+#[test]
+fn fill_counts_its_elements() {
+    let source = "DIM A%[100]:FILL A%,1:FILL A%,2,90:FILL A%,3,10,20:?A%[95]\n";
+    let (work, out) = run(source, true);
+    assert_eq!(out, "2\n");
+    assert_eq!(work.filled, 100 + 10 + 20);
+    assert_eq!(run(source, false).0.filled, 0);
+}

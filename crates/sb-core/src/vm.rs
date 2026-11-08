@@ -57,6 +57,8 @@ pub struct Work {
     pub extra_indices: u64,
     /// Of those elements, characters of a string read or written by index.
     pub str_elements: u64,
+    /// Elements `FILL` wrote.
+    pub filled: u64,
     /// Variables, labels and DEFs found by a name in a string at run time.
     pub lookups: u64,
     /// Strings joined.
@@ -293,6 +295,7 @@ pub struct Vm {
     elements: u64,
     extra_indices: u64,
     str_elements: u64,
+    filled: u64,
     lookups: u64,
     joins: u64,
     for_tests: u64,
@@ -524,6 +527,7 @@ impl Vm {
             elements: 0,
             extra_indices: 0,
             str_elements: 0,
+            filled: 0,
             lookups: 0,
             joins: 0,
             for_tests: 0,
@@ -1002,6 +1006,7 @@ impl Vm {
             elements: self.elements,
             extra_indices: self.extra_indices,
             str_elements: self.str_elements,
+            filled: self.filled,
             lookups: self.lookups,
             joins: self.joins,
             for_tests: self.for_tests,
@@ -2377,6 +2382,9 @@ impl Vm {
                     }
                 } else {
                     let args = self.pop_n(argc);
+                    if self.report_work && b.name == "FILL" {
+                        self.filled += fill_count(&args);
+                    }
                     if let Err(e) = self.call_builtin(program, *id, &args, *want) {
                         return Err(self.run_again(e, args));
                     }
@@ -3559,4 +3567,16 @@ fn store_index(base: &Value, idx: &[i32], value: Value) -> Result<()> {
         }
         _ => Err(ErrorKind::TypeMismatch.into()),
     }
+}
+
+/// The elements `FILL array, value[, start[, count]]` writes.
+fn fill_count(args: &[Value]) -> u64 {
+    let Some(Value::Array(a)) = args.first() else {
+        return 0;
+    };
+    let arg = |i: usize| args.get(i).and_then(|v| v.to_int().ok());
+    let start = arg(2).map_or(0, |n| n.max(0) as usize);
+    let count = arg(3).map_or(usize::MAX, |n| n.max(0) as usize);
+    let end = start.saturating_add(count).min(a.borrow().len());
+    end.saturating_sub(start) as u64
 }

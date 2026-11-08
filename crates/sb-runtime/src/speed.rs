@@ -99,6 +99,8 @@ pub(crate) struct Costs {
     /// character read to `ASC` and the one written comes from `CHR$`, so
     /// the cost may be in `ASC` instead.
     str_element: u64,
+    /// Each element `FILL` writes.
+    fill_element: u64,
     lookup: u64,
     join: u64,
     /// `MAINCNT` and `MILLISEC`.
@@ -180,6 +182,8 @@ const SWITCH2: Costs = Costs {
     // TEST68's HGCNV$ and HGREV$ loops over 1000 characters, which this
     // brings from 16-44% fast to between 6% slow and 9% fast.
     str_element: 64_000,
+    // TEST69's FILL of 1000 and 100000 elements.
+    fill_element: 914,
     lookup: 146_400,
     join: 183_700,
     clock: 5_000,
@@ -245,6 +249,7 @@ const SWITCH1: Costs = Costs {
     extra_index: 138_000,
     // UNVERIFIED: the Switch 2's, by the elements' ratio.
     str_element: 200_000,
+    fill_element: 1_990,
     lookup: 318_800,
     join: 402_400,
     clock: 5_000,
@@ -343,6 +348,7 @@ impl Meter {
             + n(work.elements, b.elements) * c.element
             + n(work.extra_indices, b.extra_indices) * c.extra_index
             + n(work.str_elements, b.str_elements) * c.str_element
+            + n(work.filled, b.filled) * c.fill_element
             + n(work.lookups, b.lookups) * c.lookup
             + n(work.joins, b.joins) * c.join;
         cost.saturating_sub(n(work.for_tests, b.for_tests) * c.for_credit)
