@@ -192,13 +192,14 @@ fn millisec_follows_the_consoles_clock() {
     );
 }
 
-/// EXEC costs the characters it compiles: about 1.9 ms on a Switch 2
-/// for 10000.
+/// EXEC costs a base and the characters it compiles, code more than
+/// comments and strings: on a Switch 2 about 0.4 ms, and 2.3 ms and
+/// 0.9 ms for 10000 characters.
 #[test]
 fn exec_costs_the_source_it_compiles() {
-    let exec = |chars: usize| {
+    let exec = |source: &str| {
         let rt = Runtime::new(400, 240, Font::blank());
-        let slot1 = format!("'{}\n?PERFEND(0)\n", "X".repeat(chars));
+        let slot1 = format!("{source}?PERFEND(0)\n");
         let line = run_on(
             Speed::Switch2,
             rt,
@@ -208,8 +209,12 @@ fn exec_costs_the_source_it_compiles() {
             .parse::<f64>()
             .unwrap_or_else(|_| panic!("{line:?}"))
     };
-    let more = exec(10_000) - exec(0);
-    assert!((1_800.0..2_100.0).contains(&more), "{more} us");
+    let base = exec("");
+    let code = exec(&"A=1\n".repeat(2_500)) - base;
+    let comment = exec(&format!("'{}\n", "X".repeat(9_998))) - base;
+    assert!((350.0..450.0).contains(&base), "{base} us");
+    assert!((2_200.0..2_500.0).contains(&code), "{code} us");
+    assert!((800.0..1_000.0).contains(&comment), "{comment} us");
 }
 
 /// LOADG costs a base and each pixel of the image: TEST68's 1024x624

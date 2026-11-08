@@ -2695,7 +2695,7 @@ impl Host for Runtime {
         }
         self.slot_edits.push((slot, crate::prg::SlotEdit::Compiled));
         if let Some(meter) = &mut self.meter {
-            meter.charge_compile(self.slots[slot].chars().count());
+            meter.charge_compile(&self.slots[slot]);
         }
         Ok(Exec::Run(self.slots[slot].clone()))
     }

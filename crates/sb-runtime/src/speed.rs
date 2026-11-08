@@ -161,9 +161,12 @@ pub(crate) struct Costs {
     paint_px: u64,
     /// `LFILTER` and `LMATRIX`.
     layer: u64,
-    /// Each character of source `EXEC` compiles, the file's reading
-    /// included.
+    /// `EXEC`: the call, the file's reading included, and each character
+    /// it compiles, those of code apart from those of strings and
+    /// comments.
+    exec: u64,
     compile_char: u64,
+    compile_text_char: u64,
 }
 
 // From TPERF and TEST65 on a Switch 2 and a Switch 1, from TEST67,
@@ -232,10 +235,18 @@ const SWITCH2: Costs = Costs {
     paint: 42_900_000,
     paint_px: 7_531,
     layer: 8_000_000,
-    // TEST68's EXEC of HGLIB.PRG, 9798 characters in 343 lines, 3.5 ms
-    // with its set-up code, which costs 1.6 ms here. UNVERIFIED: one file
-    // cannot split this between a base, each line and each character.
-    compile_char: 194_500,
+    // TEST69's EXEC of a 3-line file (0.24 and 0.52 ms) and of two of
+    // 15343 characters, one of code (3.7 ms) and one of DATA strings
+    // (1.8 ms), and TEST68's and TEST69's of HGLIB.PRG with its set-up
+    // code: the costs that fit all five with the least relative error.
+    // HGLIB's rows and the second and third EXEC of each file come
+    // within 9%, but the 3-line file's, which differ by half on the
+    // console. UNVERIFIED: what else in a file costs, as HGLIB lies 16%
+    // above the line through the other three. The first EXEC of a file,
+    // 2.3 ms for the 3-line one, is not charged apart.
+    exec: 379_000_000,
+    compile_char: 231_800,
+    compile_text_char: 90_600,
 };
 
 const SWITCH1: Costs = Costs {
@@ -295,8 +306,11 @@ const SWITCH1: Costs = Costs {
     paint: 106_900_000,
     paint_px: 16_110,
     layer: 5_000_000,
-    // UNVERIFIED: the Switch 2's, by TEST65's busy loop's ratio.
-    compile_char: 525_000,
+    // As for the Switch 2, from TEST69's files (1.0 and 1.8 ms, 10.3 ms
+    // and 5.5 ms) and its EXEC of HGLIB.PRG.
+    exec: 1_401_000_000,
+    compile_char: 564_700,
+    compile_text_char: 220_400,
 };
 
 /// The console's time a program has used, kept by the runtime.
@@ -411,9 +425,11 @@ impl Meter {
         self.host += chars as u64 * self.costs.print_char + scrolled_cells * self.costs.scroll_cell;
     }
 
-    /// Charges compiling `chars` characters of source.
-    pub(crate) fn charge_compile(&mut self, chars: usize) {
-        self.host += chars as u64 * self.costs.compile_char;
+    /// Charges an `EXEC` that compiles `source`.
+    pub(crate) fn charge_compile(&mut self, source: &str) {
+        let (code, text) = source_chars(source);
+        let c = self.costs;
+        self.host += c.exec + code * c.compile_char + text * c.compile_text_char;
     }
 
     /// Charges a `LOADG` that decoded an image of `pixels`. UNVERIFIED:
@@ -426,6 +442,42 @@ impl Meter {
     pub(crate) fn charge_paint(&mut self, pixels: u64) {
         self.host += pixels * self.costs.paint_px;
     }
+}
+
+/// The characters of `source` that are code, and those in strings and
+/// comments, which cost less to compile.
+fn source_chars(source: &str) -> (u64, u64) {
+    let (mut code, mut text) = (0u64, 0u64);
+    for line in source.split('\n') {
+        let mut quoted = false;
+        let mut prev = ' ';
+        for (i, c) in line.char_indices() {
+            if quoted {
+                text += 1;
+                quoted = c != '"';
+            } else if c == '"' {
+                text += 1;
+                quoted = true;
+            } else if c == '\'' || is_rem(line, i, prev) {
+                text += line[i..].chars().count() as u64;
+                break;
+            } else {
+                code += 1;
+            }
+            prev = c;
+        }
+        code += 1;
+    }
+    (code.saturating_sub(1), text)
+}
+
+/// Whether `REM` starts a comment at byte `i` of `line`, after `prev`.
+fn is_rem(line: &str, i: usize, prev: char) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    line.get(i..i + 3)
+        .is_some_and(|w| w.eq_ignore_ascii_case("REM"))
+        && !word(prev)
+        && !line[i + 3..].starts_with(word)
 }
 
 /// The cells that scroll when `text` is printed from `cursor` on a screen
