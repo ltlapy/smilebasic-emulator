@@ -227,9 +227,9 @@ struct Parser {
     channel: usize,
     /// A `:` has been seen; before it, K is the song's key.
     in_channel: bool,
-    /// Each channel's octave as far as the text tells, for `<` and `>`
-    /// past -1 to 9; `None` after `O` of a variable.
-    octaves: [Option<i32>; CHANNELS],
+    /// Each channel's octave as the text sets it, for `<` and `>` past -1
+    /// to 9.
+    octaves: [i32; CHANNELS],
 }
 
 /// Values a literal may take, checked as it is read.
@@ -311,13 +311,17 @@ impl Parser {
         self.opt_num(range)?.ok_or(at)
     }
 
-    /// `O`'s octave, which `<` and `>` count from.
+    /// `O`'s octave, which `<` and `>` count from. It takes a number only,
+    /// so a variable is refused at its `$`.
     fn set_octave(&mut self) -> Result<Num, Error> {
+        self.skip_space();
+        if self.peek() == Some('$') {
+            return Err(self.at);
+        }
         let n = self.num(-1..=9)?;
-        self.octaves[self.channel] = match n {
-            Num::Lit(n) => Some(n),
-            Num::Var(_) => None,
-        };
+        if let Num::Lit(n) = n {
+            self.octaves[self.channel] = n;
+        }
         Ok(n)
     }
 
@@ -326,16 +330,17 @@ impl Parser {
     fn shift_octave(&mut self, up: bool) -> Result<(), Error> {
         let by = if up != self.song.reversed { 1 } else { -1 };
         let octave = &mut self.octaves[self.channel];
-        *octave = octave.map(|o| o + by);
-        match *octave {
-            Some(o) if !(-1..=9).contains(&o) => Err(self.at),
-            _ => Ok(()),
+        *octave += by;
+        if (-1..=9).contains(octave) {
+            Ok(())
+        } else {
+            Err(self.at)
         }
     }
 
-    /// `@E`'s four values, 0 to 127, each refused where the text stands
-    /// after it.
-    fn envelope(&mut self) -> Result<[Num; 4], Error> {
+    /// The four values of `@E`, `@MP`, `@MA` and `@ML`, 0 to 127, each
+    /// refused where the text stands after it.
+    fn four(&mut self) -> Result<[Num; 4], Error> {
         let mut v = [Num::Lit(0); 4];
         for (i, n) in v.iter_mut().enumerate() {
             if i > 0 && !self.eat(',') {
@@ -345,17 +350,6 @@ impl Parser {
             if matches!(*n, Num::Lit(128..)) {
                 return Err(self.at);
             }
-        }
-        Ok(v)
-    }
-
-    fn four(&mut self) -> Result<[Num; 4], Error> {
-        let mut v = [Num::Lit(0); 4];
-        for (i, n) in v.iter_mut().enumerate() {
-            if i > 0 && !self.eat(',') {
-                return Err(self.at);
-            }
-            *n = self.num(0..=128)?;
         }
         Ok(v)
     }
@@ -482,7 +476,7 @@ impl Parser {
         Ok(match c {
             'V' => Cmd::Velocity(self.num(0..=127)?),
             'D' => Cmd::Detune(self.num(-128..=127)?),
-            'E' => Cmd::Envelope(self.envelope()?),
+            'E' => Cmd::Envelope(self.four()?),
             'M' => {
                 let which = self.peek().ok_or(at)?;
                 self.at += 1;
@@ -670,7 +664,7 @@ fn parse_plain(plain: Vec<char>, text: &str) -> Result<Song, Error> {
         },
         channel: 0,
         in_channel: false,
-        octaves: [Some(4); CHANNELS],
+        octaves: [4; CHANNELS],
     };
     while p.at < p.text.len() {
         p.command()?;
@@ -851,7 +845,8 @@ mod tests {
         assert!(check("{X}").is_err());
     }
 
-    /// Where CHKMML stops on octaves and envelopes out of range (TEST67).
+    /// Where CHKMML stops on octaves and four-value commands out of range
+    /// (TEST67, TEST69).
     #[test]
     fn octaves_and_envelopes_stop_where_sb4_does() {
         for (mml, at) in [
@@ -868,6 +863,21 @@ mod tests {
             // Each channel keeps its own octave.
             (":0O9C:1<C", None),
             ("O9|C<E|", Some(5)),
+            // TEST69.
+            ("O8[<C]3", None),
+            ("O9!>C", Some(4)),
+            ("O9|<CE|", Some(4)),
+            ("$0=9O$0<C", Some(5)),
+            ("$0=1O$0>>C", Some(5)),
+            ("@MP127,1,1,1C", None),
+            ("@MP128,1,1,1C", Some(6)),
+            ("@MP1,128,1,1C", Some(8)),
+            ("@MP1,1,128,1C", Some(10)),
+            ("@MP1,1,1,128C", Some(12)),
+            ("@MA128,1,1,1C", Some(6)),
+            ("@ML128,1,1,1C", Some(6)),
+            ("@MA1,1,1,128C", Some(12)),
+            ("@ML1,1,1,128C", Some(12)),
         ] {
             assert_eq!(check(mml).err(), at, "{mml}");
         }
