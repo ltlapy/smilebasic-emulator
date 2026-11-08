@@ -139,6 +139,8 @@ apart from the macro hang below.
   the computer's rate. Text outside ASCII, such as what an input method types,
   goes as the computer sends it, with the computer's repeat, since the key it
   came from is not known.
+- Right Alt with a key types what the computer's layout gives, if anything.
+  SmileBASIC 4 types characters of its own instead: Right Alt+A gave U+E2EC.
 - Han/Eng: on SmileBASIC 4 it types nothing and letters stay ASCII. On a
   computer it may switch the computer's input method, and what that types then
   reaches the program.

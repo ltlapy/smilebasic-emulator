@@ -631,6 +631,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     together type nothing, for 323 frames at least. With the stick turned
     round meanwhile, only `CHR$(2)` came, as Ctrl with the stick up or left
     gives.
+  - TEST69K: with L and R held the whole time, the stick pushed down, then
+    left, then right typed `CHR$(3)`, `CHR$(2)` and `CHR$(3)`, each repeating
+    20 frames after its push.
 - Ctrl+C on a USB keyboard stops the running program (TEST67: the step that
   asked for it ended there on both consoles, and the test went on with its
   next part).
@@ -651,6 +654,30 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
 - A held key repeats into `INKEY$` 19 frames after the press, then every 3
   frames: Shift+A held gave "a" on the frame it went down and again 19, 22,
   25... frames later. A controller's keys repeat after 20 frames instead.
+
+TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
+
+- The first repeat came 19 or 20 frames after the press, for letters,
+  Backspace, Left and Enter alike, then one every 3 frames. Backspace gives
+  `CHR$(8)`, Left `CHR$(&H1D)` and Enter `CHR$(13)`. A repeat can come on the
+  frame the key goes up.
+- A held letter's repeats follow Shift. With A held and repeating "A", Shift
+  going down held the repeat back for 19 frames, and then "a" came every 3
+  frames until A went up.
+- Another key going down takes over the repeat. With A held, B typed "B" once,
+  and A, still held after B went up, did not repeat again. Left pressed while
+  Backspace repeated did the same.
+- After Caps Lock, A types "a", while 1, Shift+1 and / still give "1", "!" and
+  "/". Caps Lock sets no bit in `KEYBOARD 4 OUT R,M`'s modifiers.
+- Right Ctrl+A types nothing. Keys pressed while L and R are held on the
+  controller type nothing either, though `KEYBOARD` sees them.
+- Right Alt+A typed U+E2EC, a character of SmileBASIC 4's own.
+- A keyboard key held when `DIALOG(text,8)` opens does not close it.
+- SmileBASIC 4's software keyboard has a Caps key and no Shift. Its letters
+  start upper case. Caps makes them lower case, turns `[` and `]` into `{` and
+  `}`, and swaps some keys for others (Simple SAVE/LOAD, Copy/Cut,
+  Insert/Delete Line, Undo/Redo). Its keys reach `INKEY$`, but `KEYBOARD` sees
+  none of them. It takes touch, so it works only in handheld mode.
 
 ### `PUSHKEY` and the key buffers
 
