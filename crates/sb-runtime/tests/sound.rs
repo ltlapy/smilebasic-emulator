@@ -837,6 +837,32 @@ fn a_recording_waits_for_a_song_waking_the_sound_system() {
     assert_eq!(first, "1");
 }
 
+/// RECSTART keeps what older recordings left in the buffer, and a
+/// recording round the buffer reads it before 0 and past its end.
+#[test]
+fn recordings_keep_what_older_ones_left() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "WAVSET 224,127,0,127,100,\"E020\"*16,69:BGMPLAY \"T120@224V127O4[A1]\":RECSTART",
+    )
+    .unwrap();
+    // Over five seconds: the whole buffer.
+    frames(&mut rt, 310);
+    run_on(&mut rt, "SNDSTOP:RECSTART").unwrap();
+    frames(&mut rt, 10);
+    let mut sum = |from: &str| {
+        let program = format!(
+            "DIM A[1]:RECSAVE A,1000,{from}:VAR I,S:FOR I=0 TO 999:S=S+ABS(A[I]):NEXT:?S>100000"
+        );
+        run_on(&mut rt, &program).unwrap()
+    };
+    assert_eq!(sum("-1000"), "1");
+    assert_eq!(sum("RECPOS()+1000"), "1");
+    // What this recording took: silence.
+    assert_eq!(sum("4000"), "0");
+}
+
 #[test]
 fn recording_what_plays() {
     let mut rt = runtime();

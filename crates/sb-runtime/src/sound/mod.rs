@@ -115,7 +115,11 @@ pub(crate) fn frames(seconds: f64) -> u32 {
 /// RECSTART's recording of what plays, as 16-bit samples.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Recorder {
-    pub(crate) samples: Vec<[i16; 2]>,
+    /// The buffer, which RECSTART leaves as it was: what a recording has
+    /// not reached yet holds older recordings. It only grows.
+    buffer: Vec<[i16; 2]>,
+    /// The samples this recording takes, from the buffer's start.
+    len: usize,
     pub(crate) pos: usize,
     pub(crate) recording: bool,
     /// Without a time, recording goes round the buffer until RECSTOP.
@@ -125,15 +129,33 @@ pub(crate) struct Recorder {
 }
 
 impl Recorder {
+    /// RECSTART: `len` samples, round and round with `ring`.
+    pub(crate) fn start(&mut self, len: usize, ring: bool) {
+        if self.buffer.len() < len {
+            self.buffer.resize(len, [0, 0]);
+        }
+        self.len = len;
+        self.pos = 0;
+        self.recording = true;
+        self.ring = ring;
+        self.begun = false;
+    }
+
+    /// The samples RECSTART asked for, the older ones in what this
+    /// recording has not reached.
+    pub(crate) fn samples(&self) -> &[[i16; 2]] {
+        &self.buffer[..self.len]
+    }
+
     fn record(&mut self, left: f32, right: f32) {
-        if !self.recording || self.samples.is_empty() {
+        if !self.recording || self.len == 0 {
             return;
         }
         self.begun = true;
         let s = |x: f32| (x * 32767.0).round() as i16;
-        self.samples[self.pos] = [s(left), s(right)];
+        self.buffer[self.pos] = [s(left), s(right)];
         self.pos += 1;
-        if self.pos == self.samples.len() {
+        if self.pos == self.len {
             if self.ring {
                 self.pos = 0;
             } else {

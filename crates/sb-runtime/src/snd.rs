@@ -18,7 +18,7 @@ use crate::sound::pcm::{FULL, Source};
 use crate::sound::reverb::Settings;
 use crate::sound::seq::Kind;
 use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, Wave, beep_ticks, eight_bit};
-use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, Recorder, TRACKS, frames};
+use crate::sound::{PRESET_BEEPS, PRESET_SONGS, RATE, TRACKS, frames};
 
 /// The preset songs that end rather than loop, and their lengths in
 /// frames, worked out by playing SmileBASIC 4's own sequences through the
@@ -735,13 +735,7 @@ impl Runtime {
                         ((s * f64::from(RATE)).round() as usize, false)
                     }
                 };
-                self.sound.recorder = Recorder {
-                    samples: vec![[0, 0]; len],
-                    pos: 0,
-                    recording: true,
-                    ring,
-                    begun: false,
-                };
+                self.sound.recorder.start(len, ring);
                 Ok(vec![])
             }
             (Command::Recstop, Want::Outs(0), 0) => {
@@ -752,44 +746,46 @@ impl Runtime {
                 Ok(vec![Value::Int(i32::from(self.sound.recorder.recording))])
             }
             (Command::Reclen, Want::Value, 0) => {
-                Ok(vec![Value::Int(self.sound.recorder.samples.len() as i32)])
+                Ok(vec![Value::Int(self.sound.recorder.samples().len() as i32)])
             }
             (Command::Recpos, Want::Value, 0) => {
                 Ok(vec![Value::Int(self.sound.recorder.pos as i32)])
             }
             (Command::Recdata, Want::Outs(2), 1) => {
                 let rec = &self.sound.recorder;
-                let len = rec.samples.len() as i32;
+                let samples = rec.samples();
+                let len = samples.len() as i32;
                 // Recording round the buffer, positions go round it too:
                 // NK8_SOUNDVISUAL reads RECPOS()-I-1 from the start.
                 let at = match rec.ring && len > 0 {
                     true => args[0].to_int()?.rem_euclid(len),
                     false => in_range("position", &args[0], 0..=len - 1)?,
                 };
-                let [l, r] = rec.samples[at as usize];
+                let [l, r] = samples[at as usize];
                 Ok(vec![Value::Int(i32::from(l)), Value::Int(i32::from(r))])
             }
             (Command::Recsave, Want::Outs(0), 1..=3) => {
                 let rec = &self.sound.recorder;
-                let len = rec.samples.len() as i32;
+                let samples = rec.samples();
+                let len = samples.len() as i32;
                 let n = opt_in_range("count", args.get(1), 0..=len, rec.pos as i32)? as usize;
-                // Recording round the buffer, positions go round it too.
-                // UNVERIFIED: which samples a position past either end
-                // takes (it is no error).
+                // Recording round the buffer, positions go round it too,
+                // with no error: before 0 or past what this recording
+                // reached, they read the older recordings there.
                 let taken: Vec<[i16; 2]> = if rec.ring && len > 0 {
                     let from = match args.get(2) {
                         Some(v) => v.to_int()?.rem_euclid(len) as usize,
                         None => 0,
                     };
-                    (0..n)
-                        .map(|i| rec.samples[(from + i) % len as usize])
-                        .collect()
+                    (0..n).map(|i| samples[(from + i) % len as usize]).collect()
                 } else {
+                    // UNVERIFIED: that a recording with a time refuses
+                    // positions past its end.
                     let from = opt_in_range("position", args.get(2), 0..=len, 0)? as usize;
-                    if from + n > rec.samples.len() {
+                    if from + n > samples.len() {
                         return Err(Error::with_detail(ErrorKind::OutOfRange, "count"));
                     }
-                    rec.samples[from..from + n].to_vec()
+                    samples[from..from + n].to_vec()
                 };
                 let a = args[0].clone().into_array()?;
                 let mut a = a.borrow_mut();
