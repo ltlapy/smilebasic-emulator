@@ -1352,10 +1352,24 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
 - `@MP`, `@MA` and `@ML` take 0 to 127 in each of their four places, and
   `CHKMML` stops just after a 128: `@MP128,1,1,1C` gives 6, `@MP1,128,1,1C` 8,
   `@MP1,1,1,128C` 12, and `@MA` and `@ML` the same (TEST69).
+- `-1` is one number to these four, refused after its digit: `@MP-1,1,1,1C`
+  gives 5. `@MP129,1,1,1C` and `@MP200,1,1,1C` give 6, as 128 does. (Not yet
+  seen on hardware.)
 - `O` takes no MML variable: `CHKMML("$0=9O$0<C")` gives 5, the `$` after the
   `O`. The octave check counts `<` and `>` after `!` the other way round
   (`O9!>C` gives 4, `O9!<C` -1) and inside a chord (`O9|C<E|` 5, `O9|<CE|`
   4), but not through a repeat: `O8[<C]3` gives -1 (TEST69).
+- A space after `O` changes nothing: `CHKMML("$0=9O $0<C")` gives 5 too, just
+  after the `O`. `>` reaches octave -1 from 0: `O0>C` and `O-1C` give -1 and
+  `O0>>C` 4. (Not yet seen on hardware.)
+- A dot adds half of what the one before it added, and fails on an odd number
+  of ticks, with the place after the last dot: `C4...` and `C1......` pass,
+  `C96..` and `C192.` give 5. A note without a length counts from `L`'s:
+  `L192C.` gives 6. (Not yet seen on hardware.)
+- Places count the text as written, comments included:
+  `CHKMML("/A/@MP128,1,1,1C")` gives 9. Macros are read where they are used,
+  so `{X=5}O{X}C` passes, and an error inside a macro is placed in its
+  definition: `{X=@MP128,1,1,1}C{X}` gives 9. (Not yet seen on hardware.)
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so

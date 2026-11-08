@@ -91,8 +91,8 @@ apart from the macro hang below.
   MML without macros has no such limit. SmileBASIC 4 has no such limit in
   practice and hangs for good on nine nested levels, which is not worth copying.
 - `CHKMML` does not apply the macro limit. It reads each macro's body once and
-  gives -1 as SmileBASIC 4 does, but for an error in such MML the place it gives
-  counts from that shorter text.
+  gives -1 as SmileBASIC 4 does. An error inside a macro is placed in its
+  definition either way.
 - A preset sequence (from the importer's `sequences.bin`) that runs more than
   20,000 commands and sounding notes in one frame is stopped. SmileBASIC 4's own
   sequences peak at 195.

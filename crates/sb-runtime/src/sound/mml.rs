@@ -125,7 +125,8 @@ impl Song {
     }
 }
 
-/// Where the MML could not be read, as a character index.
+/// Where the MML could not be read, as a character index in the text as
+/// given, comments and macro definitions counted.
 pub type Error = usize;
 
 /// Why macros could not be put in, with where.
@@ -134,21 +135,33 @@ enum Stop {
     OverLimit(Error),
 }
 
+/// MML with comments taken out and macros put in, and where each of its
+/// characters stands in the text as given. A macro's characters stand
+/// where the macro was defined.
+// UNVERIFIED: an error inside a macro is placed in the macro's definition.
+struct Plain {
+    text: Vec<char>,
+    at: Vec<u32>,
+}
+
 /// Takes out `/comments/`, and puts macros in where they are used. With
 /// `seen`, a macro goes in only where it is first used, which is enough to
 /// read every body and cannot multiply.
-fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Vec<char>, Stop> {
+fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Plain, Stop> {
     let mut plain = Vec::with_capacity(text.len());
     let mut comment = false;
-    for &c in text {
+    for (i, &c) in text.iter().enumerate() {
         if c == '/' {
             comment = !comment;
         } else if !comment {
-            plain.push(c.to_ascii_uppercase());
+            plain.push((c.to_ascii_uppercase(), i as u32));
         }
     }
-    let mut macros: HashMap<String, Vec<char>> = HashMap::new();
-    let mut out = Vec::with_capacity(plain.len());
+    let mut macros: HashMap<String, Vec<(char, u32)>> = HashMap::new();
+    let mut out = Plain {
+        text: Vec::with_capacity(plain.len()),
+        at: Vec::with_capacity(plain.len()),
+    };
     let mut left = if seen.is_some() {
         usize::MAX
     } else {
@@ -159,26 +172,28 @@ fn expand(text: &[char], mut seen: Option<HashSet<String>>) -> Result<Vec<char>,
 }
 
 fn expand_into(
-    text: &[char],
-    macros: &mut HashMap<String, Vec<char>>,
-    out: &mut Vec<char>,
+    text: &[(char, u32)],
+    macros: &mut HashMap<String, Vec<(char, u32)>>,
+    out: &mut Plain,
     depth: usize,
     left: &mut usize,
     seen: &mut Option<HashSet<String>>,
 ) -> Result<(), Stop> {
     let mut i = 0;
     while i < text.len() {
-        if text[i] != '{' {
-            out.push(text[i]);
+        let (c, source) = text[i];
+        if c != '{' {
+            out.text.push(c);
+            out.at.push(source);
             i += 1;
             continue;
         }
-        let at = out.len();
+        let at = source as usize;
         // A definition may use other macros: `{Y={X}F}`.
         let mut open = 0;
         let close = (i..text.len())
             .find(|&j| {
-                match text[j] {
+                match text[j].0 {
                     '{' => open += 1,
                     '}' => open -= 1,
                     _ => {}
@@ -187,14 +202,15 @@ fn expand_into(
             })
             .ok_or(Stop::Bad(at))?;
         let inside = &text[i + 1..close];
-        let (name, body) = match inside.iter().position(|&c| c == '=') {
+        let (name, body) = match inside.iter().position(|&(c, _)| c == '=') {
             Some(eq) => (&inside[..eq], Some(&inside[eq + 1..])),
             None => (inside, None),
         };
-        if name.is_empty() || !name.iter().all(|&c| c.is_ascii_alphanumeric() || c == '_') {
+        let is_name = |&(c, _): &(char, u32)| c.is_ascii_alphanumeric() || c == '_';
+        if name.is_empty() || !name.iter().all(is_name) {
             return Err(Stop::Bad(at));
         }
-        let name: String = name.iter().collect();
+        let name: String = name.iter().map(|&(c, _)| c).collect();
         match body {
             Some(body) => {
                 // Counted too: a macro that only defines others puts out
@@ -222,6 +238,8 @@ fn expand_into(
 
 struct Parser {
     text: Vec<char>,
+    /// [`Plain::at`]: where each character of `text` was written.
+    source: Vec<u32>,
     at: usize,
     song: Song,
     channel: usize,
@@ -230,12 +248,37 @@ struct Parser {
     /// Each channel's octave as the text sets it, for `<` and `>` past -1
     /// to 9.
     octaves: [i32; CHANNELS],
+    /// Each channel's `L` in ticks as the text sets it, for the dots after
+    /// a note without a length; `None` after `L` with a variable.
+    lengths: [Option<u32>; CHANNELS],
 }
 
 /// Values a literal may take, checked as it is read.
 type Range = std::ops::RangeInclusive<i32>;
 
 impl Parser {
+    /// An error at the character at `p`, where it was written.
+    fn start(&self, p: usize) -> Error {
+        match self.source.get(p) {
+            Some(&i) => i as usize,
+            None => self.end_of(p),
+        }
+    }
+
+    /// An error just after what comes before `p`, where that was written:
+    /// SmileBASIC 4 gives the end of what it stopped on.
+    fn end_of(&self, p: usize) -> Error {
+        match p.checked_sub(1).and_then(|i| self.source.get(i)) {
+            Some(&i) => i as usize + 1,
+            None => self.source.first().map_or(0, |&i| i as usize),
+        }
+    }
+
+    /// An error just after what has been read.
+    fn end(&self) -> Error {
+        self.end_of(self.at)
+    }
+
     fn peek(&self) -> Option<char> {
         self.text.get(self.at).copied()
     }
@@ -296,27 +339,28 @@ impl Parser {
             self.at += 1;
             return match self.int() {
                 Some(n @ 0..=7) => Ok(Some(Num::Var(n as u8))),
-                _ => Err(start),
+                _ => Err(self.start(start)),
             };
         }
         match self.int() {
             None => Ok(None),
             Some(n) if range.contains(&n) => Ok(Some(Num::Lit(n))),
-            Some(_) => Err(start),
+            Some(_) => Err(self.start(start)),
         }
     }
 
     fn num(&mut self, range: Range) -> Result<Num, Error> {
         let at = self.at;
-        self.opt_num(range)?.ok_or(at)
+        self.opt_num(range)?.ok_or_else(|| self.start(at))
     }
 
     /// `O`'s octave, which `<` and `>` count from. It takes a number only,
-    /// so a variable is refused at its `$`.
+    /// so a variable is refused just after the `O`, before any space.
     fn set_octave(&mut self) -> Result<Num, Error> {
+        let after_o = self.at;
         self.skip_space();
         if self.peek() == Some('$') {
-            return Err(self.at);
+            return Err(self.end_of(after_o));
         }
         let n = self.num(-1..=9)?;
         if let Num::Lit(n) = n {
@@ -327,6 +371,8 @@ impl Parser {
 
     /// `<` (up) or `>` (down), which fail past the octaves `O` takes,
     /// where the text stands after them.
+    // UNVERIFIED: `>` from octave 0 reaches -1 (`O0>C` passes) as `O-1`
+    // does, and a second `>` fails.
     fn shift_octave(&mut self, up: bool) -> Result<(), Error> {
         let by = if up != self.song.reversed { 1 } else { -1 };
         let octave = &mut self.octaves[self.channel];
@@ -334,39 +380,61 @@ impl Parser {
         if (-1..=9).contains(octave) {
             Ok(())
         } else {
-            Err(self.at)
+            Err(self.end())
         }
     }
 
     /// The four values of `@E`, `@MP`, `@MA` and `@ML`, 0 to 127, each
-    /// refused where the text stands after it.
+    /// refused where the text stands after it. A negative one too: `-1` is
+    /// read as one number, and refused after its 1.
     fn four(&mut self) -> Result<[Num; 4], Error> {
         let mut v = [Num::Lit(0); 4];
         for (i, n) in v.iter_mut().enumerate() {
             if i > 0 && !self.eat(',') {
-                return Err(self.at);
+                return Err(self.end());
             }
-            *n = self.num(0..=i32::MAX)?;
-            if matches!(*n, Num::Lit(128..)) {
-                return Err(self.at);
+            *n = self.num(i32::MIN..=i32::MAX)?;
+            if matches!(*n, Num::Lit(n) if !(0..=127).contains(&n)) {
+                return Err(self.end());
             }
         }
         Ok(v)
     }
 
+    /// A length and its dots. Each dot adds half of what the one before
+    /// added, so it is refused, after the last dot, on an odd number of
+    /// ticks: `C4...` passes and `C192.` does not.
     fn len(&mut self) -> Result<Len, Error> {
         let at = self.at;
         let div = self.opt_num(1..=WHOLE as i32)?;
-        if let Some(Num::Lit(n)) = div
-            && !WHOLE.is_multiple_of(n as u32)
-        {
-            return Err(at);
-        }
+        let mut ticks = match div {
+            Some(Num::Lit(n)) if !WHOLE.is_multiple_of(n as u32) => return Err(self.start(at)),
+            Some(Num::Lit(n)) => Some(WHOLE / n as u32),
+            Some(Num::Var(_)) => None,
+            None => self.lengths[self.channel],
+        };
         let mut dots = 0;
+        let mut odd = false;
         while self.eat('.') {
             dots += 1;
+            if let Some(t) = ticks {
+                odd |= t % 2 == 1;
+                ticks = Some(t / 2);
+            }
+        }
+        if odd {
+            return Err(self.end());
         }
         Ok(Len { div, dots })
+    }
+
+    /// What `len` gives in ticks, if the text says without variables.
+    fn len_ticks(&self, len: Len) -> Option<u32> {
+        match len.div {
+            Some(Num::Var(_)) => None,
+            Some(Num::Lit(_)) => ticks(len, 0, |_| 0),
+            None => ticks(len, self.lengths[self.channel]?, |_| 0),
+        }
     }
 
     fn link(&mut self) -> Link {
@@ -413,7 +481,7 @@ impl Parser {
                 *l = link;
                 Ok(())
             }
-            _ => Err(at),
+            _ => Err(self.start(at)),
         }
     }
 
@@ -423,7 +491,7 @@ impl Parser {
             self.skip_space();
             let at = self.at;
             let Some(c) = self.peek() else {
-                return Err(at);
+                return Err(self.start(at));
             };
             self.at += 1;
             match c {
@@ -442,12 +510,12 @@ impl Parser {
                         let s = self.accidentals(s);
                         parts.push(ChordPart::Note(s));
                     }
-                    None => return Err(at),
+                    None => return Err(self.start(at)),
                 },
             }
         }
         if !parts.iter().any(|p| matches!(p, ChordPart::Note(_))) {
-            return Err(self.at);
+            return Err(self.end());
         }
         let len = self.len()?;
         let link = self.link();
@@ -471,24 +539,24 @@ impl Parser {
                 return Ok(off);
             }
         }
-        let c = self.peek().ok_or(at)?;
+        let c = self.peek().ok_or_else(|| self.start(at))?;
         self.at += 1;
         Ok(match c {
             'V' => Cmd::Velocity(self.num(0..=127)?),
             'D' => Cmd::Detune(self.num(-128..=127)?),
             'E' => Cmd::Envelope(self.four()?),
             'M' => {
-                let which = self.peek().ok_or(at)?;
+                let which = self.peek().ok_or_else(|| self.start(at))?;
                 self.at += 1;
                 let v = self.four()?;
                 match which {
                     'P' => Cmd::Vibrato(v),
                     'A' => Cmd::Tremolo(v),
                     'L' => Cmd::PanWave(v),
-                    _ => return Err(at),
+                    _ => return Err(self.start(at)),
                 }
             }
-            _ => return Err(at),
+            _ => return Err(self.start(at)),
         })
     }
 
@@ -503,7 +571,7 @@ impl Parser {
             ':' => {
                 match self.int() {
                     Some(n @ 0..=15) => self.channel = n as usize,
-                    _ => return Err(at),
+                    _ => return Err(self.start(at)),
                 }
                 self.in_channel = true;
                 return Ok(());
@@ -528,7 +596,11 @@ impl Parser {
                 }
             }
             '|' => self.chord()?,
-            'L' => Cmd::Length(self.len()?),
+            'L' => {
+                let len = self.len()?;
+                self.lengths[self.channel] = self.len_ticks(len);
+                Cmd::Length(len)
+            }
             'O' => Cmd::Octave(self.set_octave()?),
             '<' => {
                 self.shift_octave(true)?;
@@ -556,14 +628,14 @@ impl Parser {
             '$' => {
                 let n = match self.int() {
                     Some(n @ 0..=7) => n as u8,
-                    _ => return Err(at),
+                    _ => return Err(self.start(at)),
                 };
                 if !self.eat('=') {
-                    return Err(self.at);
+                    return Err(self.end());
                 }
                 match self.int() {
                     Some(v @ -32768..=32767) => Cmd::SetVar(n, v),
-                    _ => return Err(self.at),
+                    _ => return Err(self.end()),
                 }
             }
             // Singing: the next note sings the phonemes.
@@ -574,11 +646,11 @@ impl Parser {
                 }
                 let letters = &self.text[start..self.at];
                 if let Some(bad) = super::talk::bad_letter(letters) {
-                    return Err(start + bad);
+                    return Err(self.start(start + bad));
                 }
                 let letters: String = letters.iter().collect();
                 if !self.eat(',') {
-                    return Err(self.at);
+                    return Err(self.end());
                 }
                 if letters.is_empty() {
                     return Ok(());
@@ -589,7 +661,7 @@ impl Parser {
             // `C4&2`: a length after a tie goes on with the same note.
             c if c.is_ascii_digit() => {
                 let Some(pitch) = self.tied_pitch() else {
-                    return Err(at);
+                    return Err(self.start(at));
                 };
                 self.at = at;
                 let len = self.len()?;
@@ -608,7 +680,7 @@ impl Parser {
                         link,
                     }
                 }
-                None => return Err(at),
+                None => return Err(self.start(at)),
             },
         };
         self.push(cmd);
@@ -653,9 +725,10 @@ pub fn check(text: &str) -> Result<(), Error> {
     }
 }
 
-fn parse_plain(plain: Vec<char>, text: &str) -> Result<Song, Error> {
+fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
     let mut p = Parser {
-        text: plain,
+        text: plain.text,
+        source: plain.at,
         at: 0,
         song: Song {
             channels: vec![Vec::new(); CHANNELS],
@@ -665,6 +738,7 @@ fn parse_plain(plain: Vec<char>, text: &str) -> Result<Song, Error> {
         channel: 0,
         in_channel: false,
         octaves: [4; CHANNELS],
+        lengths: [Some(WHOLE / 4); CHANNELS],
     };
     while p.at < p.text.len() {
         p.command()?;
@@ -680,11 +754,11 @@ fn parse_plain(plain: Vec<char>, text: &str) -> Result<Song, Error> {
                 _ => {}
             }
             if depth < 0 {
-                return Err(p.text.len());
+                return Err(p.end_of(p.text.len()));
             }
         }
         if depth != 0 {
-            return Err(p.text.len());
+            return Err(p.end_of(p.text.len()));
         }
     }
     Ok(p.song)
@@ -881,6 +955,57 @@ mod tests {
         ] {
             assert_eq!(check(mml).err(), at, "{mml}");
         }
+    }
+
+    /// Negative four-value numbers, `O` before a space, octaves down to -1,
+    /// lower case and dots.
+    #[test]
+    fn numbers_octaves_and_dots_stop_at_the_end_of_what_failed() {
+        for (mml, at) in [
+            ("@MP129,1,1,1C", Some(6)),
+            ("@MP200,1,1,1C", Some(6)),
+            ("@MP-1,1,1,1C", Some(5)),
+            ("@E0,-1,0,0C", Some(6)),
+            ("$0=9O $0<C", Some(5)),
+            ("$0=9O  $0<C", Some(5)),
+            ("O0>C", None),
+            ("O-1C", None),
+            ("O0>>C", Some(4)),
+            ("o4c", None),
+            ("C4..", None),
+            ("C4...D", None),
+            ("C1......", None),
+            ("C1.......", Some(9)),
+            ("C96.", None),
+            ("C96..", Some(5)),
+            ("C192.", Some(5)),
+            ("N60,192.", Some(8)),
+            ("|CE|192.", Some(8)),
+            // Without a length the dots count from L's.
+            ("L192C.", Some(6)),
+            ("L192:1C.", None),
+            ("L96.C.", Some(6)),
+            ("$0=4L$0C.", None),
+        ] {
+            assert_eq!(check(mml).err(), at, "{mml}");
+        }
+    }
+
+    /// Positions count comments, and an error inside a macro stands where
+    /// the macro was defined.
+    #[test]
+    fn errors_stand_in_the_text_as_given() {
+        assert_eq!(check("{X=5}O{X}C"), Ok(()));
+        assert_eq!(check("/skip/C5"), Err(7));
+        assert_eq!(check("/A/@MP128,1,1,1C"), Err(9));
+        assert_eq!(check("{X=@MP128,1,1,1}C{X}"), Err(9));
+        assert_eq!(check("@MP129/,/,1,1,1C"), Err(6));
+        assert_eq!(check("{X=C5}CDE{X}"), Err(4));
+        assert_eq!(check("{X=@MP129,1,1,1}C{X}"), Err(9));
+        assert_eq!(check("{X=C}{Y=D{X}Q}{Y}"), Err(13));
+        assert_eq!(check("{X=C}{X}Z"), Err(8));
+        assert_eq!(check("CD{NOPE}"), Err(2));
+        assert_eq!(check("[CD/x/"), Err(3));
     }
 
     #[test]
