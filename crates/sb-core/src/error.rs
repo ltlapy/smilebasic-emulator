@@ -30,6 +30,8 @@ pub enum ErrorKind {
     /// A file named with its project where programs may not name one,
     /// as in EXEC.
     CantAccessOtherProject,
+    /// LOAD or SAVE of a type of file other than a program's, as `DAT:`.
+    FileTypeMismatch,
     IllegalAnimationData,
     SpriteNotSet,
     StringTooLong,
@@ -129,6 +131,7 @@ impl ErrorKind {
             ErrorKind::IllegalFormat => 71,
             ErrorKind::CantAccessOtherProject => 74,
             ErrorKind::UndefinedProjectName => 76,
+            ErrorKind::FileTypeMismatch => 77,
             ErrorKind::IllegalProjectName => 78,
             ErrorKind::IllegalMml => 81,
             ErrorKind::IllegalControlStyle => 107,
@@ -167,6 +170,7 @@ impl ErrorKind {
             ErrorKind::IllegalProjectName => "Illegal project name",
             ErrorKind::UndefinedProjectName => "Undefined project name",
             ErrorKind::CantAccessOtherProject => "Can't access other project in this mode",
+            ErrorKind::FileTypeMismatch => "File type mismatch",
             ErrorKind::IllegalAnimationData => "Illegal animation data",
             ErrorKind::SpriteNotSet => "Sprite not set",
             ErrorKind::StringTooLong => "String is too long",

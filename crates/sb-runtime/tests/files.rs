@@ -1040,6 +1040,37 @@ fn exec_refuses_project_names_and_loadg_takes_them() {
     assert_eq!(tail(&m, 2), ["SUB", "OK"]);
 }
 
+/// What a program's error says, its number and its argument.
+fn program_error(m: &mut Machine) -> (String, i32, Option<u8>) {
+    let (e, _) = m.take_program_error().expect("an error");
+    (e.to_string(), e.kind.code(), e.arg)
+}
+
+/// TEST69: LOAD and SAVE of another type of file.
+#[test]
+fn load_and_save_refuse_other_types_of_file() {
+    let dir = TempDir::new("file-types");
+    let mut m = machine(&dir);
+    enter(&mut m, "dim a%[3]:savev \"dat:d\",a%");
+    // Whether or not there is such a file.
+    for (source, command, detail) in [
+        ("LOAD \"DAT:D\",1", "LOAD", "DAT"),
+        ("LOAD \"GRP:NONE\",1", "LOAD", "GRP"),
+        ("LOAD \"JPG:NONE\",1", "LOAD", "JPG"),
+        ("SAVE \"DAT:X\",1", "SAVE", "DAT"),
+    ] {
+        m.set_slot(0, format!("A=1\n{source}"));
+        enter(&mut m, "run");
+        let message = format!("File type mismatch in 0:2({command}) ({detail} file)");
+        assert_eq!(program_error(&mut m), (message, 77, None), "{source}");
+    }
+    assert!(!dir.0.join("@WORKSPACE").join("BX").exists());
+    m.set_slot(0, "A=1\nLOAD \"PRG:X\",1".to_string());
+    enter(&mut m, "run");
+    let message = "Illegal format in 0:2(LOAD:1)".to_string();
+    assert_eq!(program_error(&mut m), (message, 71, Some(0)));
+}
+
 /// LOADG of a file named with a project asks at the prompt as LOAD does,
 /// and loads without asking in a program, for the program's own project
 /// and another, with or without `GRP:`.

@@ -559,16 +559,21 @@ pub(crate) fn names_project(spec: &str) -> bool {
     })
 }
 
-/// LOAD and SAVE take only text files: another type before the colon,
-/// such as `GRP0:`, is Illegal format before anything is asked.
-/// UNVERIFIED: the types this emulator knows (`DAT:`, `GRP:`, `JPG:`) and
-/// `PRG:`; only `GRP0:` is seen.
+/// LOAD and SAVE take only text files, before anything is asked: another
+/// type of file (`DAT:`) is File type mismatch, whether there is such a
+/// file or not, and a type that is none (`GRP0:`) Illegal format.
+/// UNVERIFIED: the same in direct mode.
 fn program_type(spec: &str) -> Result<()> {
-    match spec.split_once(':') {
-        Some((kind, _)) if FileKind::from_name(kind) != Some(FileKind::Txt) => {
-            Err(Error::new(ErrorKind::IllegalFormat).of_arg(0))
+    let Some((kind, _)) = spec.split_once(':') else {
+        return Ok(());
+    };
+    match FileKind::from_name(kind) {
+        Some(FileKind::Txt) => Ok(()),
+        Some(kind) => {
+            let detail = format!("{} file", kind.name());
+            Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
         }
-        _ => Ok(()),
+        None => Err(Error::new(ErrorKind::IllegalFormat).of_arg(0)),
     }
 }
 
