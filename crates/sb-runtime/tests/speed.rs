@@ -247,8 +247,8 @@ fn loadg_costs_the_pixels_it_decodes() {
     assert!((9_500.0..11_000.0).contains(&large), "{large} us");
 }
 
-/// PRINT costs the lines it scrolls the screen by: 20 lines of a 50x30
-/// console on top of 1000 characters.
+/// PRINT costs the lines it scrolls the screen by: 19 lines of a 50x30
+/// console took 56 us on a Switch 2 (TEST69) on top of 1000 characters.
 #[test]
 fn printing_that_scrolls_costs_more() {
     let source = "A$=\"X\"*1000:LOCATE 0,0:PERFBEGIN 0:PRINT A$;:T=PERFEND(0)\n\
@@ -256,7 +256,7 @@ fn printing_that_scrolls_costs_more() {
     let (still, scrolled) = pair(&run(Speed::Switch2, source));
     assert!((15.0..30.0).contains(&still), "{still} us");
     assert!(
-        (60.0..90.0).contains(&(scrolled - still)),
+        (45.0..70.0).contains(&(scrolled - still)),
         "{still} us, {scrolled} us"
     );
 }

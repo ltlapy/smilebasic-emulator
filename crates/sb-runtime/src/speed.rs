@@ -126,6 +126,9 @@ pub(crate) struct Costs {
     sphitsp: u64,
     spanim: u64,
     print_char: u64,
+    /// Each time `PRINT` scrolls the screen, and each cell it moves.
+    print_scroll: u64,
+    print_scroll_cell: u64,
     tput: u64,
     tfill: u64,
     tfill_cell: u64,
@@ -209,6 +212,10 @@ const SWITCH2: Costs = Costs {
     sphitsp: 612_300,
     spanim: 540_000,
     print_char: 22_000,
+    // TEST69's PRINT that scrolls a 50x30 console 19 times, 56 us, and
+    // TEST68's and TEST69's that scroll a 25x15 one 25 times.
+    print_scroll: 329_000,
+    print_scroll_cell: 1_737,
     tput: 128_000,
     tfill: 156_000,
     tfill_cell: 18_480,
@@ -287,6 +294,9 @@ const SWITCH1: Costs = Costs {
     sphitsp: 1_373_700,
     spanim: 840_000,
     print_char: 40_300,
+    // TEST69's two PRINTs that scroll, as for the Switch 2.
+    print_scroll: 752_000,
+    print_scroll_cell: 4_076,
     tput: 440_000,
     tfill: 374_000,
     tfill_cell: 32_700,
@@ -427,10 +437,12 @@ impl Meter {
         self.host += cost;
     }
 
-    /// Charges printing `chars` characters, and the cells of the lines
-    /// that scrolled the screen up.
-    pub(crate) fn charge_print(&mut self, chars: usize, scrolled_cells: u64) {
-        self.host += chars as u64 * self.costs.print_char + scrolled_cells * self.costs.scroll_cell;
+    /// Charges printing `chars` characters, and the times the screen
+    /// scrolled up with the cells that moved, as [`scrolling`] gives them.
+    pub(crate) fn charge_print(&mut self, chars: usize, (scrolls, cells): (u64, u64)) {
+        let c = self.costs;
+        self.host += chars as u64 * c.print_char + scrolls * c.print_scroll;
+        self.host += cells * c.print_scroll_cell;
     }
 
     /// Charges an `EXEC` that compiles `source`.
@@ -490,13 +502,10 @@ fn is_rem(line: &str, i: usize, prev: char) -> bool {
         && !line[i + 3..].starts_with(word)
 }
 
-/// The cells that scroll when `text` is printed from `cursor` on a screen
-/// of `size`: the whole screen for each line past the last, at
-/// `SCROLL`'s cost a cell. UNVERIFIED: that scrolling is what TEST68's
-/// PRINT of 1000 user-defined characters spent its time on. It scrolled
-/// a 25x15 console 25 times and took twice what the characters alone
-/// cost.
-pub(crate) fn scrolled_cells(cursor: (u32, u32), (w, h): (u32, u32), text: &[u16]) -> u64 {
+/// The times the screen scrolls when `text` is printed from `cursor` on
+/// a screen of `size`, once for each line past the last, and the cells
+/// that move, the whole screen each time.
+pub(crate) fn scrolling(cursor: (u32, u32), (w, h): (u32, u32), text: &[u16]) -> (u64, u64) {
     let (mut x, mut lines) = (cursor.0, 0u64);
     for &c in text {
         if matches!(c, 10 | 13) {
@@ -509,7 +518,7 @@ pub(crate) fn scrolled_cells(cursor: (u32, u32), (w, h): (u32, u32), text: &[u16
         x += 1;
     }
     let scrolls = (u64::from(cursor.1) + lines).saturating_sub(u64::from(h.saturating_sub(1)));
-    scrolls * u64::from(w) * u64::from(h)
+    (scrolls, scrolls * u64::from(w) * u64::from(h))
 }
 
 /// An argument as a whole number, 0 when it is not one.

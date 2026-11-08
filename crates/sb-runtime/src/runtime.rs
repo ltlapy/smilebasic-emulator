@@ -2625,7 +2625,7 @@ impl Host for Runtime {
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {
         if self.meter.is_some() {
             let s = self.screen(screen)?;
-            let scrolled = crate::speed::scrolled_cells(s.cursor(), s.size(), text);
+            let scrolled = crate::speed::scrolling(s.cursor(), s.size(), text);
             if let Some(meter) = &mut self.meter {
                 meter.charge_print(text.len(), scrolled);
             }
@@ -2645,7 +2645,7 @@ impl Host for Runtime {
     fn print_newline(&mut self, screen: Option<i32>) -> Result<()> {
         if self.meter.is_some() {
             let s = self.screen(screen)?;
-            let scrolled = crate::speed::scrolled_cells(s.cursor(), s.size(), &[10]);
+            let scrolled = crate::speed::scrolling(s.cursor(), s.size(), &[10]);
             if let Some(meter) = &mut self.meter {
                 meter.charge_print(0, scrolled);
             }
