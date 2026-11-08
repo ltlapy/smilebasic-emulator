@@ -938,6 +938,23 @@ fn builtin_errors_name_the_command() {
         ),
         ("X=0\nY=LOG(X)", "Out of range in 2(LOG:1)", Some(0)),
         ("X=2\nY=ASIN(X)", "Out of range in 2(ASIN:1)", Some(0)),
+        // SQR names nothing.
+        ("X=-1\nY=SQR(X)", "Out of range in 2", None),
+        (
+            "S$=\"ABC\":X=-1\nS$=LEFT$(S$,X)",
+            "Out of range in 2(LEFT$:2)",
+            Some(1),
+        ),
+        (
+            "S$=\"ABC\":X=-1\nS$=RIGHT$(S$,X)",
+            "Out of range in 2(RIGHT$:2)",
+            Some(1),
+        ),
+        (
+            "DIM A[3],B[3]:X=5\nCOPY A,0,B,2,X",
+            "Subscript out of range in 2(COPY) (count)",
+            None,
+        ),
         ("X=2147483647.5:D=1\nY=X DIV D", "Overflow in 2", None),
         ("X=0:D=1\nY=D MOD X", "Divide by zero in 2", None),
         ("DIM M%[1]:X=2147483648\nM%[0]=X", "Overflow in 2", None),

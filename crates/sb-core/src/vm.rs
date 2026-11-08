@@ -3563,13 +3563,15 @@ fn builtin_error(e: Error, name: &str, args: &[Value]) -> Error {
         ErrorKind::OutOfMemory if e.detail.is_none() => Error::with_detail(e.kind, name),
         ErrorKind::MemoryCheck => e.in_args(args),
         _ => match name {
-            // LEFT$ names no argument, even its second, and ENVSTAT gives
-            // none.
-            "LEFT$" => {
+            // LEFT$'s Overflow names no argument, even its second, and
+            // ENVSTAT gives none. A negative count is (LEFT$:2).
+            "LEFT$" if e.kind == ErrorKind::Overflow => {
                 let mut e = e.in_args(args);
                 e.arg = None;
                 e.of_command(name)
             }
+            // SQR of a negative names neither SQR nor its argument.
+            "SQR" if e.kind == ErrorKind::OutOfRange => Error::new(e.kind),
             _ => e.in_args(args).of_command(name),
         },
     }

@@ -27,13 +27,23 @@ fn count(v: &Value) -> Result<usize> {
 
 /// `offset` and `count` within `len`: the count defaults to the rest.
 fn span(len: usize, offset: Option<&Value>, n: Option<&Value>) -> Result<(usize, usize)> {
+    span_or(len, offset, n, ErrorKind::OutOfRange)
+}
+
+/// [`span`] with `past_end` the error for a count that goes past the end.
+fn span_or(
+    len: usize,
+    offset: Option<&Value>,
+    n: Option<&Value>,
+    past_end: ErrorKind,
+) -> Result<(usize, usize)> {
     let offset = offset.map_or(Ok(0), count)?;
     if offset > len {
         return Err(out_of_range("offset"));
     }
     let n = n.map_or(Ok(len - offset), count)?;
     if offset + n > len {
-        return Err(out_of_range("count"));
+        return Err(Error::with_detail(past_end, "count"));
     }
     Ok((offset, n))
 }
@@ -154,7 +164,11 @@ pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<
             Ok(vec![])
         }
         (Value::Array(dest), Value::Array(source)) => {
-            let (offset, n) = span(source.borrow().len(), offset, n)?;
+            // Past the source array's end is Subscript out of range.
+            // UNVERIFIED: the error for an offset past it, and for a
+            // string's end.
+            let len = source.borrow().len();
+            let (offset, n) = span_or(len, offset, n, ErrorKind::SubscriptOutOfRange)?;
             {
                 let dest = dest.borrow();
                 if dest.dims.len() == 1 && dest.len() < dest_offset + n {
