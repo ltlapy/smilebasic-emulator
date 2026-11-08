@@ -1613,3 +1613,24 @@ fn changes_made_outside_show_at_the_next_command() {
     enter(&mut m, "project \"game\"");
     assert!(tail(&m, 3).concat().contains("Undefined project name"));
 }
+
+/// A save to a project that is not there asks first, as SmileBASIC 4
+/// does, and then fails with RESULT 0.
+#[test]
+fn saves_to_a_missing_project_ask_and_then_fail() {
+    let dir = TempDir::new("missing-project");
+    let mut m = machine(&dir);
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    for (line, command) in [
+        ("savev \"txt:none/x\",\"1\":?result()", "SAVEV"),
+        ("save \"none/x\":?result()", "SAVE"),
+        ("saveg \"none/x\",0:?result()", "SAVEG"),
+    ] {
+        ask(&mut m, line);
+        m.rt.answer(true);
+        settle(&mut m);
+        let failed = format!("{command} failed: NONE not found");
+        assert_eq!(tail(&m, 3), [failed.as_str(), "0", "OK"], "{line}");
+    }
+    assert!(!dir.0.join("NONE").exists());
+}
