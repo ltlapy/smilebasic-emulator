@@ -1661,7 +1661,7 @@ impl Machine {
             }
         }
         let mut vsynced = false;
-        let Some(vm) = &mut self.vm else {
+        let Some(mut vm) = self.vm.as_mut() else {
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));
             }
@@ -1683,13 +1683,16 @@ impl Machine {
             meter.begin_frame(self.frame, vm.work());
         }
         // A VSYNC that is behind goes on within the frame's budget.
-        let start = vm.executed();
+        let mut start = vm.executed();
         let mut began = self.time_limit.map(|_| Instant::now());
         let deadline = began.zip(self.time_limit).map(|(now, limit)| now + limit);
-        let has_time = |vm: &Vm, rt: &Runtime| {
+        let has_time = |vm: &Vm, rt: &Runtime, start: u64| {
             let in_time = match deadline {
                 Some(deadline) => Instant::now() < deadline,
-                None => rt.meter.is_some() || vm.executed() - start < u64::from(FRAME_BUDGET),
+                None => {
+                    rt.meter.is_some()
+                        || vm.executed().wrapping_sub(start) < u64::from(FRAME_BUDGET)
+                }
             };
             in_time && rt.meter.as_ref().is_none_or(|m| m.has_time(&vm.work()))
         };
@@ -1702,7 +1705,9 @@ impl Machine {
             let left = match (&self.rt.meter, deadline) {
                 (Some(meter), _) => meter.slice(&vm.work()),
                 (None, Some(_)) => SLICE,
-                (None, None) => FRAME_BUDGET.saturating_sub((vm.executed() - start) as u32),
+                (None, None) => {
+                    FRAME_BUDGET.saturating_sub(vm.executed().wrapping_sub(start) as u32)
+                }
             };
             let status = match main.as_deref_mut() {
                 Some(main) => {
@@ -1725,7 +1730,7 @@ impl Machine {
                         follow(lines, kept, moved, &self.rt.slots, edits);
                         give_breakpoints(&self.breakpoints, &self.moved, vm);
                     }
-                    if has_time(vm, &self.rt) {
+                    if has_time(vm, &self.rt, start) {
                         continue;
                     }
                 }
@@ -1747,7 +1752,7 @@ impl Machine {
                     self.rt.in_frame_job = false;
                     self.wait = frames;
                     self.vsync_at = Some(self.frame + u64::from(frames));
-                    if frames == 0 && has_time(vm, &self.rt) {
+                    if frames == 0 && has_time(vm, &self.rt, start) {
                         continue;
                     }
                     self.at_sync = true;
@@ -1785,24 +1790,44 @@ impl Machine {
                         // headless run. In a window, a trip that cannot
                         // end in the frame's time would only leave the
                         // screens half made when the frame is drawn.
-                        // if has_time(vm, &self.rt) {
+                        // if has_time(vm, &self.rt, start) {
                         //     continue;
                         // }
                         let fits = now.is_none_or(|(_, now)| {
                             deadline.is_some_and(|end| now + self.loop_time < end)
                         });
-                        if fits && has_time(vm, &self.rt) {
+                        if fits && has_time(vm, &self.rt, start) {
                             continue;
                         }
                     }
                     self.at_sync = true;
                 }
-                Ok(Status::Ended) => self.finish(None),
+                Ok(Status::Ended) | Err(_) => {
+                    let (work, ran) = (vm.work(), vm.executed().wrapping_sub(start));
+                    let error = status.err();
+                    // A direct-mode line's RUN starts the program in the
+                    // frame the line ran in, with what is left of its time.
+                    // UNVERIFIED: seen only through a key held across RUN.
+                    if self.finish(error)
+                        && let Some(next) = self.vm.as_mut()
+                    {
+                        vm = next;
+                        vm.report_work(self.rt.meter.is_some());
+                        if let Some(meter) = &mut self.rt.meter {
+                            meter.end_frame(&work);
+                            meter.begin_frame(self.frame, vm.work());
+                        }
+                        // Counted on from where the line left the budget.
+                        start = vm.executed().wrapping_sub(ran);
+                        if has_time(vm, &self.rt, start) {
+                            continue;
+                        }
+                    }
+                }
                 Ok(Status::Break { line }) => self.stop_on(Some(line), Halt::User),
                 Ok(Status::Stop { line }) => self.stop_on(Some(line), Halt::Stop),
                 Ok(Status::Traced { line }) => self.stop_on(Some(line), Halt::Trace),
                 Ok(Status::Debug { line }) => self.stop_on(Some(line), Halt::Debug),
-                Err(e) => self.finish(Some(e)),
             }
             break;
         }
@@ -2033,15 +2058,17 @@ impl Machine {
         self.direct_failed = true;
     }
 
-    /// The program or line ended, by itself or with an error.
-    fn finish(&mut self, error: Option<Error>) {
+    /// The program or line ended, by itself or with an error. True when
+    /// the line ran RUN and the program it started is to run on.
+    fn finish(&mut self, error: Option<Error>) -> bool {
         if let Some(e) = &error
             && self.running_slot.is_some()
         {
             self.program_error = Some(e.clone());
         }
         if self.rt.env_type == 1 {
-            return self.end_sub(error.map(|e| e.to_string()));
+            self.end_sub(error.map(|e| e.to_string()));
+            return false;
         }
         self.stepping = None;
         let vm = self.vm.take().expect("finish follows a run");
@@ -2093,7 +2120,10 @@ impl Machine {
             }
         }
         match (run, cont) {
-            (Some(slot), _) => self.run_slot(slot),
+            (Some(slot), _) => {
+                self.run_slot(slot);
+                return !program && self.vm.is_some();
+            }
             (None, Some(how)) => self.resume(how),
             (None, None) if home => self.home_end(error.is_some()),
             // The prompt starts by dropping what is waiting, a line's PUSHKEY too.
@@ -2102,6 +2132,7 @@ impl Machine {
                 self.ready();
             }
         }
+        false
     }
 
     /// The program that Projects ran ended: the manager is to open, after

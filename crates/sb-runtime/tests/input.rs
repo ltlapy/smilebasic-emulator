@@ -1006,10 +1006,10 @@ fn a_key_held_at_the_prompt_repeats_into_the_program_it_runs() {
         m.frame();
     }
     assert!(m.is_running());
-    // The prompt takes the line in the frame of the press, RUN runs in the
-    // next, and the program starts in the one after: 19 frames after the
-    // press is the program's frame 17.
+    // The prompt takes the line in the frame of the press, and RUN runs in
+    // the next and starts the program in it: 19 frames after the press is
+    // the program's frame 18, as on SmileBASIC 4.
     let rows = console_rows(&m);
     let at: Vec<&str> = rows.iter().filter_map(|r| r.strip_prefix('K')).collect();
-    assert_eq!(at, ["17", "20", "23", "26"], "{rows:?}");
+    assert_eq!(at, ["18", "21", "24", "27"], "{rows:?}");
 }

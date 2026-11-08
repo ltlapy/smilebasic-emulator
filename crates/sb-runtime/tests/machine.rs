@@ -3,6 +3,7 @@
 use sb_runtime::Runtime;
 use sb_runtime::font::Font;
 use sb_runtime::machine::{Machine, StopReason};
+use sb_runtime::speed::Speed;
 
 #[test]
 fn recovering_from_a_panic_keeps_the_editors_text() {
@@ -441,6 +442,22 @@ fn vsync_after_falling_behind() {
     assert_eq!(frames(""), "9");
     assert_eq!(frames(":WAIT 1"), "10");
     assert_eq!(frames(":WAIT 0"), "10");
+}
+
+/// RUN typed in direct mode starts the program in the frame the line ran
+/// in, at a console's speed too.
+#[test]
+fn run_starts_the_program_in_the_lines_frame() {
+    for speed in [Speed::Unlimited, Speed::Switch1] {
+        let mut m = machine();
+        m.rt.settings.speed = speed;
+        m.set_slot(0, "?\"P\";MAINCNT()\n".to_string());
+        enter(&mut m, "?\"D\";MAINCNT():RUN");
+        let rows = rows(&m);
+        let count = |tag: &str| rows.iter().rev().find_map(|r| r.strip_prefix(tag));
+        assert_eq!(count("P"), count("d"), "{speed:?}: {rows:?}");
+        assert!(count("P").is_some(), "{speed:?}: {rows:?}");
+    }
 }
 
 /// Under a time limit, a frame run to catch up can leave a program at its
