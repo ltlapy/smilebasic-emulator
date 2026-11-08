@@ -500,40 +500,55 @@ impl Parser {
         }
     }
 
-    /// `|...|`. An octave set inside a chord lasts to its end only: the
-    /// note after `|A<CE|` is in the octave before the chord.
+    /// `|...|`, two to six notes. A chord that cannot be read fails just
+    /// after its first `|`, before any octave in it is checked: one note is
+    /// no chord, so `O8|<C|<C` gives 3. An octave set inside a chord lasts
+    /// to its end only: the note after `|A<CE|` is in the octave before the
+    /// chord.
+    // UNVERIFIED: that more than six notes, an octave change after the
+    // last note, anything else between the bars, or no closing bar fail
+    // there too.
     fn chord(&mut self) -> Result<Cmd, Error> {
+        const NOTES: std::ops::RangeInclusive<usize> = 2..=6;
         let octave = self.octaves[self.channel];
+        let bar = self.end();
         let mut parts = Vec::new();
+        let mut notes = 0;
+        // Where a `<` or `>` first left the octaves, if one did.
+        let mut past = None;
         loop {
             self.skip_space();
-            let at = self.at;
             let Some(c) = self.peek() else {
-                return Err(self.start(at));
+                return Err(bar);
             };
             self.at += 1;
             match c {
                 '|' => break,
-                '<' => {
-                    self.shift_octave(true)?;
-                    parts.push(ChordPart::Up);
-                }
-                '>' => {
-                    self.shift_octave(false)?;
-                    parts.push(ChordPart::Down);
+                '<' | '>' => {
+                    if let Err(e) = self.shift_octave(c == '<') {
+                        past.get_or_insert(e);
+                    }
+                    parts.push(match c {
+                        '<' => ChordPart::Up,
+                        _ => ChordPart::Down,
+                    });
                 }
                 'O' => parts.push(ChordPart::Octave(self.set_octave()?)),
                 c => match note_name(c) {
                     Some(s) => {
                         let s = self.accidentals(s);
                         parts.push(ChordPart::Note(s));
+                        notes += 1;
                     }
-                    None => return Err(self.start(at)),
+                    None => return Err(bar),
                 },
             }
         }
-        if !parts.iter().any(|p| matches!(p, ChordPart::Note(_))) {
-            return Err(self.end());
+        if !NOTES.contains(&notes) || !matches!(parts.last(), Some(ChordPart::Note(_))) {
+            return Err(bar);
+        }
+        if let Some(e) = past {
+            return Err(e);
         }
         self.octaves[self.channel] = octave;
         let len = self.len()?;
@@ -872,6 +887,24 @@ mod tests {
             ]
         );
         assert_eq!(parse("|CEG|4 2").err(), Some(7));
+        // Two to six notes; what a chord cannot hold fails after its first
+        // bar.
+        for (mml, at) in [
+            ("|CE|", None),
+            ("|C+E-G#|", None),
+            ("|O3CO5E|", None),
+            ("|CDEFGA|", None),
+            ("|CDEFGAB|", Some(1)),
+            ("C|E|G", Some(2)),
+            ("||", Some(1)),
+            ("|CE<|", Some(1)),
+            ("|CR|", Some(1)),
+            ("|C4E|", Some(1)),
+            ("|CE", Some(1)),
+            ("O9|<CE", Some(3)),
+        ] {
+            assert_eq!(parse(mml).err(), at, "{mml}");
+        }
         assert!(matches!(
             c[3],
             Cmd::Note {
@@ -982,10 +1015,14 @@ mod tests {
             ("O8[<C]3", None),
             ("O9!>C", Some(4)),
             ("O9|<CE|", Some(4)),
+            // One note is no chord: it fails after the first bar, before
+            // its octave is checked.
+            ("O8|<C|<C", Some(3)),
+            ("O9|<C|", Some(3)),
             // A chord's octave ends with it.
-            ("O8|<C|<C", None),
-            ("O8|<C|<<C", Some(8)),
-            ("O1|>>C|>C", None),
+            ("O8|<CE|<C", None),
+            ("O8|<CE|<C<C", Some(10)),
+            ("O1|>>CE|>C", None),
             ("$0=9O$0<C", Some(5)),
             ("$0=1O$0>>C", Some(5)),
             ("@MP127,1,1,1C", None),
@@ -1037,7 +1074,7 @@ mod tests {
     }
 
     /// Positions count comments, and an error inside a macro stands just
-    /// past where the macro was used (TEST71).
+    /// past where the macro was used.
     #[test]
     fn errors_stand_in_the_text_as_given() {
         assert_eq!(check("{X=5}O{X}C"), Ok(()));
@@ -1081,7 +1118,7 @@ mod tests {
         assert_eq!(parse("{NOPE}"), Err(0));
         assert_eq!(parse(":16C"), Err(0));
         assert!(parse("[[O4CEG]3<C2.]").is_ok());
-        // A `]` with no `[` fails just after it (TEST71).
+        // A `]` with no `[` fails just after it.
         assert_eq!(check("C]0"), Err(2));
         assert_eq!(check("C]-"), Err(2));
         assert_eq!(check("C]0D5"), Err(2));
@@ -1099,7 +1136,7 @@ mod tests {
     }
 
     /// A sung note takes three letters at most, any letters, and then a
-    /// comma (TEST44, TEST71).
+    /// comma.
     #[test]
     fn sung_notes_take_three_letters() {
         assert_eq!(parse("T60@0O4*KONNICHIWA,C1").err(), Some(11));
