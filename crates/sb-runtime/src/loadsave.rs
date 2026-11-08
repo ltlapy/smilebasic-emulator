@@ -329,9 +329,9 @@ impl Runtime {
                 }
                 let outcome = self.load_image(&spec)?;
                 match self.finish("LOADG", outcome) {
-                    Some(image) => {
+                    Some((image, stored)) => {
                         if let Some(meter) = &mut self.meter {
-                            meter.charge_loadg((image.width * image.height) as u64);
+                            meter.charge_loadg((image.width * image.height) as u64, stored);
                         }
                         self.grp.put_image(page, at, &image);
                         Ok(sizes(image.width, image.height))
@@ -402,10 +402,10 @@ impl Runtime {
         }
     }
 
-    /// LOADG's image. A DAT file that is not a 2D integer array is an
-    /// Illegal file format error, not a failure (checked on hardware for a
-    /// string array).
-    fn load_image(&self, spec: &str) -> Result<storage::Result<Image>> {
+    /// LOADG's image, and the size of its file. A DAT file that is not a
+    /// 2D integer array is an Illegal file format error, not a failure
+    /// (checked on hardware for a string array).
+    fn load_image(&self, spec: &str) -> Result<storage::Result<(Image, u64)>> {
         let file = match self.read_name(spec, FileKind::Grp) {
             Ok(file) => file,
             Err(e) => return Ok(Err(e)),
@@ -425,7 +425,8 @@ impl Runtime {
             let detail = "not a 2D integer array";
             return Err(Error::with_detail(ErrorKind::IllegalFileFormat, detail));
         }
-        Ok(image::decode(&bytes).map_err(bad_file))
+        let stored = bytes.len() as u64;
+        Ok(image::decode(&bytes).map(|i| (i, stored)).map_err(bad_file))
     }
 
     /// Asks before reading a file that exists, as LOAD does; whether the

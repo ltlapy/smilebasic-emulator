@@ -217,8 +217,9 @@ fn exec_costs_the_source_it_compiles() {
     assert!((800.0..1_000.0).contains(&comment), "{comment} us");
 }
 
-/// LOADG costs a base and each pixel of the image: TEST68's 1024x624
-/// image took 10.4 ms on a Switch 2. One that loads nothing costs little.
+/// LOADG costs a base, each pixel of the image and each byte of its
+/// file: TEST68's 1024x624 font took 10.4 ms on a Switch 2. One that
+/// loads nothing costs little.
 #[test]
 fn loadg_costs_the_pixels_it_decodes() {
     let dir = std::env::temp_dir().join(format!("sb-speed-loadg-{}", std::process::id()));
@@ -242,7 +243,7 @@ fn loadg_costs_the_pixels_it_decodes() {
     let (none, small, large) = (load(0, 0), load(8, 8), load(1024, 624));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(none < 10.0, "{none} us");
-    assert!((500.0..700.0).contains(&small), "{small} us");
+    assert!((300.0..450.0).contains(&small), "{small} us");
     assert!((9_500.0..11_000.0).contains(&large), "{large} us");
 }
 

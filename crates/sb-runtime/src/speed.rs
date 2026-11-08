@@ -152,9 +152,11 @@ pub(crate) struct Costs {
     circle: u64,
     circle_px: u64,
     load_px: u64,
-    /// `LOADG` of an image, and each pixel it decodes.
+    /// `LOADG` of an image, each pixel it decodes and each byte of its
+    /// file, which a busy image has more of.
     loadg: u64,
     loadg_px: u64,
+    loadg_byte: u64,
     char_px: u64,
     /// `GPAINT`, and each pixel it fills.
     paint: u64,
@@ -226,11 +228,14 @@ const SWITCH2: Costs = Costs {
     circle: 227_000,
     circle_px: 2_100,
     load_px: 780,
-    // TEST68's LOADG of 512x312, 1024x624 and 2048x1248 images (2.8, 10.4
-    // and 38.7 ms), which a line through them fits within 0.23 ms.
-    // UNVERIFIED: that the size of the compressed file adds nothing.
-    loadg: 584_000_000,
-    loadg_px: 14_930,
+    // TEST68's and TEST69's LOADG and HGLOAD of fonts from 512x312 to
+    // 2048x1376 and TEST69's of a 512x512 image of noise (13.9 ms, twice
+    // an empty one): all within 10%. UNVERIFIED: TEST69's empty image,
+    // which SmileBASIC 4 saved itself, took 6.9 ms, half again what the
+    // size of the file the emulator saves for it gives.
+    loadg: 319_000_000,
+    loadg_px: 15_150,
+    loadg_byte: 10_720,
     char_px: 4_150,
     paint: 42_900_000,
     paint_px: 7_531,
@@ -299,9 +304,10 @@ const SWITCH1: Costs = Costs {
     circle: 500_000,
     circle_px: 5_000,
     load_px: 1_860,
-    // UNVERIFIED: the Switch 2's, by GLOAD's ratio between the two.
-    loadg: 1_393_000_000,
-    loadg_px: 35_600,
+    // As for the Switch 2, from TEST69's rows.
+    loadg: 1_142_000_000,
+    loadg_px: 24_600,
+    loadg_byte: 21_000,
     char_px: 15_760,
     paint: 106_900_000,
     paint_px: 16_110,
@@ -432,10 +438,12 @@ impl Meter {
         self.host += c.exec + code * c.compile_char + text * c.compile_text_char;
     }
 
-    /// Charges a `LOADG` that decoded an image of `pixels`. UNVERIFIED:
-    /// one that loads nothing costs what an untimed command does.
-    pub(crate) fn charge_loadg(&mut self, pixels: u64) {
-        self.host += self.costs.loadg + pixels * self.costs.loadg_px;
+    /// Charges a `LOADG` that decoded an image of `pixels` from a file of
+    /// `bytes`. UNVERIFIED: one that loads nothing costs what an untimed
+    /// command does.
+    pub(crate) fn charge_loadg(&mut self, pixels: u64, bytes: u64) {
+        let c = self.costs;
+        self.host += c.loadg + pixels * c.loadg_px + bytes * c.loadg_byte;
     }
 
     /// Charges the pixels a `GPAINT` filled.
