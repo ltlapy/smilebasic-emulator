@@ -1677,7 +1677,22 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
 - A program's `EXEC` of a file named with a project is
   `Can't access other project in this mode`, error 74, even for the program's
   own project: `EXEC "TEST05/HGLIB.PRG",1` in a program of project TEST05
-  (TEST68, a main program while a subprogram ran).
+  (TEST68, a main program while a subprogram ran). It is the same with no
+  subprogram running, and for the workspace's `/NAME`: `EXEC "/NAME",1` is
+  error 74, where `LOAD "/NAME",1` of a missing file gives no error and
+  `RESULT` 0 (TEST69, 4.4.9 on a Switch and a Switch 2).
+- A main program's `SAVEV`, `RENAME` and `DELETE` of a file named with a
+  project are `Can't access other project in this mode`, error 74, for the
+  program's own project and for the workspace's `/NAME` too, and change no
+  file: `SAVEV "TXT:/NAME",S$` is `(SAVEV)`, `RENAME "TXT:/NAME","NEW"`
+  `(RENAME:1)` and `DELETE "TXT:/NAME"` `(DELETE:1)`. Typed at the prompt,
+  `SAVEV "TXT:OWN/NAME",S$`, and `SAVEV "TXT:/NAME",S$` in the workspace, ask
+  as usual and save in the current project, with `RESULT` 1 (TEST69).
+- `LOADG "PNG:NAME",0` in a main program is error 74, `(LOADG)`.
+  `LOADG "DAT:NAME",0` with no such DAT file gives no error and `RESULT` 0
+  (TEST69).
+- `CHKFILE`, `LOADV` and `FILES` take project names in a program:
+  `CHKFILE("TXT:HGLIB/HGLIB.PRG")` is 1 (TEST69).
 - `LOAD` into a slot and then `EXEC` of the slot runs another project's
   program: `LOAD "OTHER/NAME",1:EXEC 1` in a program works and shows no dialog
   (TEST68, and checked on hardware, version 4.4.9, 2026-11-08).
@@ -1692,10 +1707,11 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
   left the page as it was, with no error. The file was there:
   `LOADG "GRP:HG16_NEODGM",3,0,0 OUT W,H` in the same test loaded it.
 - Expected but not yet seen on hardware: a subprogram's `EXEC` refuses a
-  project name too, and `EXEC` takes SmileBASIC 4's own `#` projects. `SAVE`,
-  `SAVEV` and `SAVEG` refuse a project name with error 74 in a main program,
-  but not in direct mode or a subprogram. `RENAME` and `DELETE` refuse one
-  everywhere.
+  project name too, and `EXEC` takes SmileBASIC 4's own `#` projects. `SAVE`
+  and `SAVEG` refuse a project name with error 74 in a main program, but not
+  in direct mode, and none of `SAVE`, `SAVEV` and `SAVEG` refuses one in a
+  subprogram. `RENAME` and `DELETE` refuse one in direct mode and in a
+  subprogram too.
 - `LOADG` leaves the page's pixels outside the loaded image as they were: a
   1024x624 image loaded at 0,0 leaves 1027,5 and 5,627 alone (TEST68).
 - `LOADV` and `LOADG` in a program ask nothing. `S$=LOADV("TXT:NONE")` of a
@@ -1708,10 +1724,19 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
 - The command form `LOADV "TXT:F",S$` is `Wrong number of arguments (LOADV)`,
   error 52, whether the file is there or not, as `LOADV "TXT:F",A$[]` is
   (TEST67).
+- `LOADV "DAT:F",S$` into a string is `Type mismatch (LOADV:2)`, error 8. As a
+  function, `S$=LOADV("DAT:F")` of a DAT file of 3 values gives a string of 3
+  characters and `RESULT` 1 (TEST69).
 - `RESULT` is 0 after `IF CHKFILE("TXT:NONE") THEN LOADV ...` of a missing
   file, where the program before left it 1 (TEST67).
+- `CHKFILE` of a file that is there does not set `RESULT` to 1: it stays 0
+  (TEST69, from a `RESULT` of 0 each time).
 - `LOAD "GRP0:X"` and `SAVE "GRP0:X"` are `Illegal format (LOAD:1)` and
-  `(SAVE:1)`, error 71, with no dialog (TEST67).
+  `(SAVE:1)`, error 71, with no dialog (TEST67), and so is `LOAD "PRG:X",1`.
+  Another type of file is `File type mismatch`, error 77, without an
+  argument's number: `LOAD "DAT:X",1`, `LOAD "GRP:X",1` and
+  `LOAD "JPG:X",1` are `(LOAD)` and `SAVE "DAT:X",1` `(SAVE)`, also when
+  there is no such file (TEST69).
 - The question before `SAVE`, `SAVEV` or `SAVEG` starts on OK, so Enter or A
   saves. Replacing a file asks twice, whether to save and then whether to
   overwrite (checked by sending files with a Flipper, 2026-11-03, and in
