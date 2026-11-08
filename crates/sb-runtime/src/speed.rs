@@ -282,7 +282,10 @@ const SWITCH2: Costs = Costs {
     // size of the file the emulator saves for it gives.
     loadg: 319_000_000,
     loadg_px: 15_150,
-    loadg_byte: 10_720,
+    // TEST69's and TEST70's images of noise load as fast as each other on
+    // the console, but the emulator saves them 901070 and 725652 bytes
+    // long: the cost a byte between them leaves them 5% slow and 9% fast.
+    loadg_byte: 11_500,
     char_px: 4_150,
     // TEST67's GPAINT of 128x128 and 512x512 and TEST69's of 4x4 and
     // 16x16, all within 7%.
@@ -371,7 +374,8 @@ const SWITCH1: Costs = Costs {
     // As for the Switch 2, from TEST69's rows.
     loadg: 1_142_000_000,
     loadg_px: 24_600,
-    loadg_byte: 21_000,
+    // As for the Switch 2.
+    loadg_byte: 22_600,
     char_px: 15_760,
     paint: 93_500_000,
     paint_px: 16_110,
