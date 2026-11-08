@@ -696,6 +696,32 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
   Insert/Delete Line, Undo/Redo). Its keys reach `INKEY$`, but `KEYBOARD` sees
   none of them. It takes touch, so it works only in handheld mode.
 
+Expected but not yet seen on hardware:
+
+- Any keyboard key going down or up holds the repeat back as Shift does, and
+  the next repeat comes 19 frames later: Shift, Ctrl, Alt and the Windows keys
+  going down or up, and another key let go while the repeating one stays down.
+  Every other key going down, Caps Lock among them, takes over the repeat.
+- Each repeat types what the modifiers held at that moment give with the key,
+  for every key, not only letters: with 1 held, Shift going down gives "!" 19
+  frames later. A key pressed with Ctrl held types nothing, but held on after
+  Ctrl goes up it types 19 frames later.
+- L alone or R alone on the controller keeps keys from typing, as L and R
+  together do, since either counts as Ctrl. ZL and ZR do not. Left Ctrl acts as
+  Right Ctrl.
+- Alt with a key types from a fixed table, the same for either Alt and with
+  Shift or without: A U+E2EC (seen with Right Alt), V U+2606, 1 U+E2EB, 2
+  U+E2EA, 0 U+E29C, and characters of SmileBASIC 4's own for the other letters,
+  `-`, `=`, `[`, `;`, `'` and the keypad's keys. 3 to 9 and keys outside the
+  table type nothing with Alt. On a keyboard layout where Right Alt is AltGr,
+  Right Alt types the layout's character for the keys that have one.
+- Programs, the prompt and the editor take keys from the same queue, with the
+  same repeat and the same Caps Lock. `RUN` leaves Caps Lock as it is.
+- `KEYBOARD` 57 reads the Caps Lock key itself, not whether the lock is on.
+  The modifier bits of `KEYBOARD 4 OUT R,M` are the Windows key (1), Shift
+  (2), Ctrl (4) and Alt (8), with no bit for a lock, and condition 1 always
+  gives 0.
+
 ### `PUSHKEY` and the key buffers
 
 - `PUSHKEY` takes a number too (`PUSHKEY 65622`, `#SOFTKEY_HIDDEN`). Codes from

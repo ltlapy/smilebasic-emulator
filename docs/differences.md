@@ -132,15 +132,24 @@ apart from the macro hang below.
   case everywhere.
 - Key repeat: a key held for a program, the prompt or the editor repeats in the
   emulator's frames, as a key held for `INKEY$` does on SmileBASIC 4: 19 frames
-  after the press, then every 3. That covers letters, digits and symbols,
-  Enter, Backspace, Delete, Tab, Esc, Insert, the cursor keys, Home, End, Page
-  Up and Page Down, and Shift with the cursor keys and with Tab. The editor's
-  shortcuts with Ctrl or Alt, such as Ctrl+Z, and the function keys repeat at
-  the computer's rate. Text outside ASCII, such as what an input method types,
-  goes as the computer sends it, with the computer's repeat, since the key it
-  came from is not known.
-- Right Alt with a key types what the computer's layout gives, if anything.
-  SmileBASIC 4 types characters of its own instead: Right Alt+A gave U+E2EC.
+  after the press, then every 3. Any other key going down or up, Shift and
+  Ctrl among them, starts the count again, and each repeat types what the
+  modifiers held then give with the key. That covers letters, digits and
+  symbols, Enter, Backspace, Delete, Tab, Esc, Insert, the cursor keys, Home,
+  End, Page Up and Page Down, and Shift with the cursor keys and with Tab.
+  Enter and the other keys that type no character repeat what they typed at
+  the press. The editor's shortcuts with Ctrl, such as Ctrl+Z, and the
+  function keys repeat at the computer's rate. Text outside ASCII, such as
+  what an input method types, goes as the computer sends it, with the
+  computer's repeat, since the key it came from is not known.
+- Alt with a key types SmileBASIC 4's own characters, as on SmileBASIC 4
+  (Alt+A gives U+E2EC), whatever the computer's layout gives. Right Alt on a
+  layout where it is AltGr is the exception: it types the layout's character
+  for the keys that have one, such as "@" for AltGr+Q on a German layout, and
+  SmileBASIC 4's for the rest. SmileBASIC 4 is expected to do the same by the
+  keyboard layout set on the console; the emulator goes by the computer's.
+  An AltGr character outside ASCII, such as "€", repeats at the computer's
+  rate.
 - Han/Eng: on SmileBASIC 4 it types nothing and letters stay ASCII. On a
   computer it may switch the computer's input method, and what that types then
   reaches the program.
