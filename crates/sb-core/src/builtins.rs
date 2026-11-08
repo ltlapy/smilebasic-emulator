@@ -362,15 +362,10 @@ pub fn parse_number(text: &[u16]) -> Option<Value> {
 }
 
 /// CHR$: `CHR$(-1)` is U+FFFF.
+/// CHR$: no range check, the code is the int's low 16 bits, so -1 is
+/// U+FFFF, 65601 is "A" and 65536 a one-character string holding U+0000.
 fn chr(args: &[Value]) -> Result<Value> {
-    let n = args[0].to_int()?;
-    let code = match u16::try_from(n) {
-        Ok(code) => code,
-        Err(_) if n == -1 => 0xFFFF,
-        // UNVERIFIED: the other values outside 0 to 65535 are Out of range;
-        // SmileBASIC 4 may wrap them as it does -1.
-        Err(_) => return Err(Error::new(ErrorKind::OutOfRange).of_arg(0)),
-    };
+    let code = args[0].to_int()? as u16;
     Ok(string(vec![code]))
 }
 
@@ -1254,8 +1249,15 @@ mod tests {
         };
         assert_eq!(code(Value::Int(-1)), [0xFFFF]);
         assert_eq!(code(Value::Int(65535)), [0xFFFF]);
-        let err = call("CHR$", &[Value::Int(-2)]).unwrap_err();
-        assert_eq!((err.kind, err.arg), (ErrorKind::OutOfRange, Some(0)));
+        assert_eq!(code(Value::Int(-2)), [0xFFFE]);
+        assert_eq!(code(Value::Int(65536)), [0]);
+        assert_eq!(code(Value::Int(-65536)), [0]);
+        assert_eq!(code(Value::Int(65601)), [u16::from(b'A')]);
+        assert_eq!(code(Value::Int(i32::MAX)), [0xFFFF]);
+        assert_eq!(code(Value::Real(65.9)), [u16::from(b'A')]);
+        let args = [Value::Real(3e9)];
+        let err = call("CHR$", &args).unwrap_err().in_args(&args);
+        assert_eq!((err.kind, err.arg), (ErrorKind::Overflow, Some(0)));
         let err = call("ASC", &[s("")]).unwrap_err();
         assert_eq!(
             (err.kind, err.arg),

@@ -117,6 +117,10 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   of arguments is `Wrong number of arguments in 3:2`, with nothing after the
   place.
 - `CHR$(-1)` is no error: it gives `CHR$(&HFFFF)` (TEST69).
+- `CHR$` takes any int and keeps its low 16 bits: `CHR$(65601)` is `"A"`,
+  `CHR$(-2)` U+FFFE, and `CHR$(65536)` and `CHR$(-65536)` a one-character
+  string holding U+0000. A real outside the int range is `Overflow (CHR$:1)`.
+  (Not yet seen on hardware.)
 - `Wrong number of arguments` comes when a command or function gets a number of
   arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
   finds this as it runs, not as the program compiles, so the lines before it
