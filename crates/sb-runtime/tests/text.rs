@@ -209,11 +209,7 @@ fn attributes_out_of_range_are_named() {
     for (src, arg) in [
         ("ATTR 4,128", 1),
         ("ATTR 2,0,0", 0),
-        ("ATTR 0,-1,0", 1),
-        ("ATTR 0,0,4", 2),
         ("ATTR 4,2,0,0", 1),
-        ("ATTR 4,0,2,0", 2),
-        ("ATTR 4,0,0,4", 3),
         ("TFILL 0,0,0,1,1,65,16", 6),
         // Before the corners, which are not ints here.
         ("TFILL 0,\"\",0,1,1,65,128", 6),

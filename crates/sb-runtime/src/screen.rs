@@ -529,12 +529,13 @@ impl Runtime {
                 };
                 let attr = match rest {
                     [a] => ranged(a, "attribute", 15)?,
-                    // UNVERIFIED: the vertical flip takes 0 or 1 and the
-                    // turn 0 to 3, as the horizontal flip takes 0 or 1.
+                    // UNVERIFIED: the vertical flip and the turn take any
+                    // value (nonzero flips, the turn's low two bits), as
+                    // before; only the horizontal flip's 0 or 1 is known.
                     [h, v, r] => {
                         let h = ranged(h, "horizontal flip", 1)?;
-                        let v = ranged(v, "vertical flip", 1)?;
-                        h << 2 | v << 3 | ranged(r, "rotation", 3)?
+                        let v = i32::from(v.to_int()? != 0);
+                        h << 2 | v << 3 | (r.to_int()? & 3)
                     }
                     _ => unreachable!("one or three"),
                 };
