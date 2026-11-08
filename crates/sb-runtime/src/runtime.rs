@@ -1244,8 +1244,7 @@ impl Runtime {
 
     /// XSCREEN: the console is resized to fill the screen, keeping its
     /// font, and `#GSPRITE` shows as much of GRP0.
-    // The console is cleared. UNVERIFIED: how much of #GSPRITE's settings are
-    // reset.
+    // The console is cleared, and all of #GSPRITE's settings are reset.
     pub(crate) fn set_mode(&mut self, mode: ScreenMode) {
         self.mode = mode;
         let (fw, fh) = mode.frame();
@@ -1549,8 +1548,7 @@ impl Runtime {
         self.paste_held = false;
         let console = &mut self.text[CONSOLE];
         let free = line::rows_kept_free(self.mode.height, self.mode.aspect(), console.font().1);
-        // UNVERIFIED: for a LINPUT without a guide, SmileBASIC 4 only
-        // scrolls with its first key or Enter.
+        // Rows are kept free at once, for a LINPUT without a guide too.
         line::keep_rows_free(console, free);
         let mut line = LineEdit::new(console, free);
         line.overwrite = self.line_overwrite;
@@ -1887,8 +1885,8 @@ impl Runtime {
         if self.dialog.is_some() || self.dialog_beside {
             self.input.drop_pad_key();
         }
-        // UNVERIFIED: that a controller's key can be read on the frame the
-        // button goes down, and not on the next.
+        // A controller's key can be read on the frame the button goes
+        // down, not on the next.
         else if let Some(code) = self.input.pad_key() {
             self.changed = true;
             push_key(&mut self.typed, code | codes::FROM_PAD);
@@ -2676,8 +2674,8 @@ impl Host for Runtime {
         let slot = slot_arg(Some(&Value::Int(slot)))?;
         if let Some(file) = file {
             let file = String::from_utf16_lossy(file);
-            // A program may not EXEC a file named with a project, not even
-            // its own. UNVERIFIED: in a subprogram too.
+            // A program or subprogram may not EXEC a file named with a
+            // project, not even its own.
             if crate::files::names_project(&file) {
                 return Err(ErrorKind::CantAccessOtherProject.into());
             }

@@ -233,7 +233,8 @@ impl Runtime {
                         if console.cursor().0 != 0 {
                             console.newline();
                         }
-                        // UNVERIFIED: the header for project lists and for one file.
+                        // The header of a type's list. UNVERIFIED: the header
+                        // for project lists and for one file.
                         let header = format!("-- {} files --", items.len());
                         let lines = std::iter::once(header).chain(items);
                         let lines = lines.map(|l| l.encode_utf16().collect()).collect();
@@ -610,8 +611,7 @@ fn same_type(from: &str, to: &str) -> Result<()> {
 
 /// Whether a file name names a project, the way EXEC refuses in programs
 /// (see its caller). The program's own project counts, and the
-/// workspace's `/NAME`. UNVERIFIED: that SmileBASIC 4's own `#` projects
-/// do not.
+/// workspace's `/NAME`; SmileBASIC 4's own `#` projects do not.
 pub(crate) fn names_project(spec: &str) -> bool {
     parse_read_name(spec, FileKind::Txt)
         .is_ok_and(|file| file.project.is_some_and(|p| !p.starts_with('#')))

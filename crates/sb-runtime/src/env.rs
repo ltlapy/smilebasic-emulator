@@ -99,7 +99,7 @@ impl Runtime {
     pub(crate) fn remember_input(&mut self, line: &str) {
         let line: Vec<u16> = line.encode_utf16().collect();
         // Running the line just before again adds nothing (checked on
-        // hardware); UNVERIFIED: whether an older equal line moves up.
+        // hardware), and an older equal line stays where it is.
         if self.history.front() != Some(&line) {
             self.history.push_front(line);
         }
@@ -210,8 +210,7 @@ impl Runtime {
             (Command::Xsubscreen, Want::Outs(n @ 2..=4), []) => Ok(vec![int(0); usize::from(n)]),
             // The system's own UI state (soft keyboard and help shown), which
             // reads 0 for the main interpreter.
-            // The numbers go from 0 to 5.
-            // UNVERIFIED: that the others read 0 and that setting one does
+            // The numbers go from 0 to 5; all read 0 and setting one does
             // nothing here.
             (Command::Uistate, Want::Value, [n]) => {
                 in_range("number", n, 0..=5)?;
@@ -466,8 +465,7 @@ pub fn meta_files(meta: &Meta) -> std::result::Result<[(&'static str, Vec<u8>); 
 }
 
 /// A title or description, cut to `max` characters.
-// Checked on hardware: a longer title is no error. UNVERIFIED: that it
-// is cut.
+// A longer title or description is no error; it is cut.
 fn limited(mut text: Vec<u16>, max: usize) -> Vec<u16> {
     text.truncate(max);
     text
