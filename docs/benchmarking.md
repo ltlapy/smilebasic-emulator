@@ -119,10 +119,14 @@ console's time and gives each frame a sixtieth of a second of it:
   screens cost nothing to show, as TPERF and TEST67 find on both consoles.
 - Real arguments and a `GCLIP` smaller than the page cost nothing extra, as
   TEST69 finds on both consoles.
-- Drawing at many places, or changing many sprites in turn, costs more on a
-  Switch 1 than doing the same at one place: TEST69's `GFILL` of 32x32 at
-  ten places takes 2.6 times one place, `GCOPY` 1.7 times. The model leaves
-  this out, so TPERF's drawing and sprite scenes run fast on a Switch 1.
+- Drawing at many places, or changing many sprites in turn, costs more
+  than doing the same at one place, most on a Switch 1: TEST69's `GFILL` of
+  32x32 at ten places takes 2.6 times one place there, `GCOPY` 1.7 times.
+  A `GFILL` or `GCOPY` that starts on another row than the last one did
+  pays for each row it draws on top, and a sprite command for another
+  sprite than the last one pays a set amount. The amounts lie between what
+  TEST69 and TPERF find; that the console's memory cache is the cause is a
+  guess.
 - A program that needs more than the frame goes on in the next one, and its
   `VSYNC` finds its frame gone by, as on the console. The VM stops at the
   host command or `PRINT` that uses up the frame, so 100 `GCLS` of a whole
@@ -154,45 +158,44 @@ cost per row and pixel. TPERF's `WORK` in ms, run with
 | VARRAY | 20.96 | 20.92 | 7.43 | 7.33 |
 | VDEF | 7.83 | 7.83 | 2.61 | 2.60 |
 | VVAR | 7.24 | 7.24 | 2.98 | 2.97 |
-| SPMOVE | 7.32 | 6.06 | 2.28 | 2.17 |
-| SPROT | 3.77 | 3.23 | 1.28 | 1.11 |
-| SPCHURN | 8.50 | 8.50 | 3.72 | 3.72 |
-| SPHIT | 6.05 | 6.05 | 2.60 | 2.60 |
-| SPANIM | 0.21 | 0.17 | 0.09 | 0.09 |
+| SPMOVE | 7.32 | 6.43 | 2.28 | 2.22 |
+| SPROT | 3.77 | 3.41 | 1.28 | 1.13 |
+| SPCHURN | 8.50 | 8.62 | 3.72 | 3.73 |
+| SPHIT | 6.05 | 6.10 | 2.60 | 2.60 |
+| SPANIM | 0.21 | 0.18 | 0.09 | 0.09 |
 | TPRINT | 2.35 | 2.28 | 1.15 | 1.13 |
 | TPUT | 11.04 | 10.70 | 3.82 | 3.69 |
 | TSCROLL | 7.09 | 7.14 | 3.62 | 3.63 |
 | TMULTI | 0.31 | 0.28 | 0.18 | 0.15 |
-| GFILL | 15.33 | 6.19 | 2.78 | 2.12 |
-| GALPHA | 27.93 | 22.21 | 11.03 | 10.69 |
+| GFILL | 15.33 | 13.85 | 2.78 | 2.36 |
+| GALPHA | 27.93 | 25.16 | 11.03 | 10.69 |
 | GLINE | 7.60 | 7.38 | 3.13 | 3.08 |
 | GCIRCLE | 3.22 | 3.16 | 1.28 | 1.26 |
 | GTRI | 8.76 | 8.04 | 2.83 | 2.25 |
 | GPUTCHR | 5.71 | 5.71 | 1.62 | 1.62 |
-| GCOPY | 11.11 | 6.58 | 3.33 | 3.02 |
+| GCOPY | 11.11 | 10.45 | 3.33 | 3.20 |
 | GLOAD | 1.08 | 1.08 | 0.45 | 0.45 |
 | GUPLOAD | 0.03 | 0.01 | 0.01 | 0.00 |
 | GARRAY | 11.69 | 11.70 | 4.13 | 4.19 |
-| LCOMP | 0.45 | 0.33 | 0.17 | 0.12 |
-| LBLUR | 0.22 | 0.16 | 0.09 | 0.07 |
-| LMOSAIC | 0.20 | 0.16 | 0.09 | 0.07 |
-| LCOLOR | 0.26 | 0.21 | 0.11 | 0.10 |
-| LMATRIX | 0.28 | 0.23 | 0.12 | 0.10 |
-| LRASTER | 1.21 | 1.15 | 0.49 | 0.42 |
-| GAME | 7.70 | 6.76 | 3.02 | 2.45 |
-| MAXSP (score) | 2866 | 3764 | 4000 | 4000 |
+| LCOMP | 0.45 | 0.37 | 0.17 | 0.12 |
+| LBLUR | 0.22 | 0.17 | 0.09 | 0.08 |
+| LMOSAIC | 0.20 | 0.17 | 0.09 | 0.08 |
+| LCOLOR | 0.26 | 0.23 | 0.11 | 0.10 |
+| LMATRIX | 0.28 | 0.25 | 0.12 | 0.11 |
+| LRASTER | 1.21 | 1.16 | 0.49 | 0.42 |
+| GAME | 7.70 | 6.79 | 3.02 | 2.46 |
+| MAXSP (score) | 2866 | 3646 | 4000 | 4000 |
 | MAXTRI (score) | 4410 | 4410 | 13471 | 15484 |
 
-`LOST` matches for VARRAY: 77 frames on a Switch 1 and 76 here. Most scenes
-come within 10%. TPERF draws its rectangles and copies at random places and
-moves thousands of sprites, which the model does not charge apart (see
-above): on a Switch 1 GFILL runs 2.5 times as fast as there, GCOPY 1.7 times,
-GALPHA and the sprite scenes 15 to 26% fast, and MAXSP scores 31% high; on a
-Switch 2 GFILL runs 31% fast. Until TEST69 a guessed rate for a smaller
-`GCLIP` and a guessed cost for real arguments made up the difference. The
-layer scenes take under half a millisecond and run 10 to 32% fast. On a
-Switch 2, GTRI and GAME run 21% and 19% fast and MAXTRI scores 15% high:
-TPERF ran handheld there and TEST67, which the triangle costs follow,
+`LOST` matches for VARRAY: 77 frames on a Switch 1 and 76 here; GALPHA lost
+202 there and 152 here. Most scenes come within 10%. On a Switch 1 GFILL,
+GALPHA, SPROT and SPANIM run 10 to 12% fast, SPMOVE and GAME 13 to 14%, and
+MAXSP scores 27% high. Until TEST69 a guessed rate for a smaller `GCLIP`
+and a guessed cost for real arguments made up the difference, where TEST69
+finds neither costs anything. The layer scenes take under half a
+millisecond and run 6 to 26% fast. On a Switch 2, GFILL, SPROT and MAXSP
+run 13 to 18% fast, GTRI and GAME 21% and 19%, and MAXTRI scores 15% high:
+TPERF ran handheld there and TEST67 and TEST69, which the costs follow,
 docked.
 
 TEST67's rows land within 10% on both consoles, the loop's own `INC` and
@@ -223,10 +226,7 @@ scrolling, `EXEC` of short, code-heavy and string-heavy files, `LOADG` of an
 empty and a busy image, and `GPAINT` of small boxes. Its rows land within
 10% on both consoles, with these exceptions:
 
-- Drawing at ten places on a Switch 1 (see above), and on a Switch 1
-  `SPOFS` over 1000 sprites, `SPCLR` of 1000 sprites one at a time and
-  HGIME's key handling, which run 15 to 27% fast, likely for the same
-  reason.
+- On a Switch 1, HGIME's key handling, which runs 17 to 27% fast.
 - `ASC` and indexing a string, `S$[I]`, take half the time the model
   charges. TEST68's string loops need the cost the model has, and only
   the cost of each character read gives it to them, so it stays where it

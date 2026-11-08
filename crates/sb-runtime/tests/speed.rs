@@ -171,6 +171,20 @@ fn spclr_of_a_range_costs_each_sprite() {
     assert!(one < 5.0, "{one} us");
 }
 
+/// Drawing on other rows than the last GFILL did costs each row on top:
+/// TEST69's 32x32 GFILL at ten places took 2.6 times one place on a
+/// Switch 1.
+#[test]
+fn drawing_at_other_rows_costs_more() {
+    let source = "PERFBEGIN 0:FOR I=0 TO 99:GFILL 0,0,31,31,-1:NEXT:T=PERFEND(0)\n\
+                  PERFBEGIN 0:FOR I=0 TO 99:GFILL 0,I*2,31,I*2+31,-1:NEXT:?T;\" \";PERFEND(0)\n";
+    let (same, places) = pair(&run(Speed::Switch1, source));
+    assert!(
+        places > same * 2.0 && places < same * 4.0,
+        "{same} us, {places} us"
+    );
+}
+
 /// Two numbers a program printed on one line.
 fn pair(line: &str) -> (f64, f64) {
     let mut words = line.split_whitespace().map(|w| w.parse().unwrap());
