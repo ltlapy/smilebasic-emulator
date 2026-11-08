@@ -97,6 +97,10 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - An error message goes on from the cursor, on the line the program left it:
   after `?"V";` an `Overflow` shows as `VOverflow in 1:3` (TEST65). A line
   typed in direct mode does the same (TEST63).
+- An error in a line typed in direct mode names no place, and a space comes
+  before the command it names: `Out of range (LOCATE:2)`,
+  `Can't access other project in this mode (RENAME:1)` and `Syntax error`
+  (TEST70).
 - An error in some builtins names the command right after the place, with no
   space between: `Overflow in 1:3(FILL:2)`, `(PUSH)`, `(COPY)`, `(HEX$:1)`,
   `(CHR$:1)` and `(MID$:2)`. The number counts arguments from 1. `LEFT$` with
@@ -118,9 +122,9 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   place.
 - `CHR$(-1)` is no error: it gives `CHR$(&HFFFF)` (TEST69).
 - `CHR$` takes any int and keeps its low 16 bits: `CHR$(65601)` is `"A"`,
-  `CHR$(-2)` U+FFFE, and `CHR$(65536)` and `CHR$(-65536)` a one-character
-  string holding U+0000. A real outside the int range is `Overflow (CHR$:1)`.
-  (Not yet seen on hardware.)
+  `CHR$(-2)` U+FFFE, `CHR$(&H7FFFFFFF)` U+FFFF, and `CHR$(65536)` and
+  `CHR$(-65536)` a one-character string holding U+0000 (TEST70). A real
+  outside the int range is `Overflow (CHR$:1)`. (Not yet seen on hardware.)
 - `ATTR` names an attribute out of range by its own argument: `ATTR 4,128` is
   `Out of range (ATTR:2)`. In the form with flips and a turn, a horizontal
   flip other than 0 or 1 is `(ATTR:1)`, or `(ATTR:2)` after a screen ID.
@@ -696,25 +700,39 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
   Insert/Delete Line, Undo/Redo). Its keys reach `INKEY$`, but `KEYBOARD` sees
   none of them. It takes touch, so it works only in handheld mode.
 
+TEST70K on a docked Switch 2 (4.4.9) with a USB keyboard:
+
+- The first repeat came 19 frames after the press, then one every 3 frames.
+- Shift going down or up, and Ctrl going up, start the count again: the next
+  repeat comes 19 frames later.
+- Each repeat types what the modifiers held at that moment give with the key,
+  digits as well as letters: with 1 held, Shift going down gave "!" 19 frames
+  later, and with Shift+A held, Shift going up gave "a".
+- A held key types nothing while Left Ctrl is held, and types again 19 frames
+  after Ctrl goes up. Left Ctrl acts as Right Ctrl.
+- L alone or R alone on the controller keeps keys from typing, the press
+  included, as L and R together do, though `BUTTON` sees L or R.
+- Left Alt+3 types nothing. Left Alt+A and Right Alt+A both type U+E2EC.
+- A key held at the prompt goes on repeating into the program that `RUN`
+  starts. The Enter that typed `RUN 3`, held on, gave the program `CHR$(13)` in
+  its frame 18, counted with `MAINCNT` from its first statement, and then every
+  3 frames until it went up. `KEYBOARD` saw Enter held from the program's
+  frame 0.
+
 Expected but not yet seen on hardware:
 
 - Any keyboard key going down or up holds the repeat back as Shift does, and
-  the next repeat comes 19 frames later: Shift, Ctrl, Alt and the Windows keys
-  going down or up, and another key let go while the repeating one stays down.
-  Every other key going down, Caps Lock among them, takes over the repeat.
-- Each repeat types what the modifiers held at that moment give with the key,
-  for every key, not only letters: with 1 held, Shift going down gives "!" 19
-  frames later. A key pressed with Ctrl held types nothing, but held on after
-  Ctrl goes up it types 19 frames later.
-- L alone or R alone on the controller keeps keys from typing, as L and R
-  together do, since either counts as Ctrl. ZL and ZR do not. Left Ctrl acts as
-  Right Ctrl.
+  the next repeat comes 19 frames later: Ctrl, Alt and the Windows keys going
+  down, Alt and the Windows keys going up, and another key let go while the
+  repeating one stays down. Every other key going down, Caps Lock among them,
+  takes over the repeat.
+- ZL and ZR do not keep keys from typing.
 - Alt with a key types from a fixed table, the same for either Alt and with
-  Shift or without: A U+E2EC (seen with Right Alt), V U+2606, 1 U+E2EB, 2
-  U+E2EA, 0 U+E29C, and characters of SmileBASIC 4's own for the other letters,
-  `-`, `=`, `[`, `;`, `'` and the keypad's keys. 3 to 9 and keys outside the
-  table type nothing with Alt. On a keyboard layout where Right Alt is AltGr,
-  Right Alt types the layout's character for the keys that have one.
+  Shift or without: A U+E2EC, V U+2606, 1 U+E2EB, 2 U+E2EA, 0 U+E29C, and
+  characters of SmileBASIC 4's own for the other letters, `-`, `=`, `[`, `;`,
+  `'` and the keypad's keys. 4 to 9 and keys outside the table type nothing
+  with Alt. On a keyboard layout where Right Alt is AltGr, Right Alt types the
+  layout's character for the keys that have one.
 - Programs, the prompt and the editor take keys from the same queue, with the
   same repeat and the same Caps Lock. `RUN` leaves Caps Lock as it is.
 - `KEYBOARD` 57 reads the Caps Lock key itself, not whether the lock is on.
@@ -1124,20 +1142,22 @@ Expected but not yet seen on hardware:
 - The same entry holds the first column of what `GPUTCHRP` counts as the
   character: bits 12-14 at 8 pixels and bits 19-22 at 16 (I: 1 and 3).
   `GPUTCHRP` draws the character's whole cell with that column on the pen, so
-  the columns before it land left of the pen. (Not yet seen on hardware.)
+  the columns before it land left of the pen (TEST70).
 - So with mode 0 `GPUTCHRP` clears the whole cell, its columns left of the pen
   and right of the width too. Where a character's first column is more than the
   spacing, its cell clears the last columns of the character before: in "AI" at
   16, I's cell starts 3 columns left of its pen and clears A's columns 11 and
-  12. (Not yet seen on hardware.)
-- With mode 1 and a color whose alpha is 0, `GPUTCHR` and `GPUTCHRP` draw
-  nothing. (Not yet seen on hardware.)
+  12. "Ii" at 16 and "AI" at 8 also clear the columns this gives, each one
+  (TEST70).
+- With mode 1 and a color whose alpha is 0, `GPUTCHRP` draws nothing
+  (TEST70). `GPUTCHR` is expected to do the same. (Not yet seen on hardware.)
 - Characters not in the font draw the missing glyph, and `GPUTCHRP` gives them
   16 (U+25A2, U+AC00; TEST69). U+25A0 is in the font, 14 wide.
 - A user-defined character takes 16 at 16 and 8 at 8, also when its cell is
   empty, which draws nothing. After `TPAGE 4,-1`, `GPUTCHR` of a user-defined
   character leaves a cleared page clear, and `GPUTCHRP` still gives it 16
-  (TEST69). What mode 0 does to a drawn page there is not known.
+  (TEST69). Over a filled page it changes nothing either, in mode 0 or mode 1
+  (TEST70).
 - `GPUTCHRP`'s function form's width scales the spacing with the characters:
   `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
 
@@ -1377,29 +1397,31 @@ Expected but not yet seen on hardware:
   after the one that leaves -1 to 9, the range `O` takes: `O9C<C` gives 4,
   `O9<<<<<<<<<<C` 3 and `O-1C>C` 5. `O10C` stops at the number, 1 (TEST67).
 - `@E` takes values 0 to 127, and `CHKMML` stops just after one past that:
-  `@E128,0,0,0C` gives 5 and `@E0,0,0,128C` 11. `@148` to `@216` pass, and so
-  do lower case letters and a second dot (TEST67).
+  `@E128,0,0,0C` gives 5 and `@E0,0,0,128C` 11. Lower case letters and a
+  second dot pass (TEST67, and `o4c` and `C4..` in TEST70).
+- `CHKMML` checks no instrument number up to 256: `@148` to `@216` pass
+  (TEST67), and so do `@224`, `@255` and `@256` (TEST70). Whether `@224` to
+  `@256` make a sound is not known.
 - `@MP`, `@MA` and `@ML` take 0 to 127 in each of their four places, and
   `CHKMML` stops just after a 128: `@MP128,1,1,1C` gives 6, `@MP1,128,1,1C` 8,
   `@MP1,1,1,128C` 12, and `@MA` and `@ML` the same (TEST69).
 - `-1` is one number to these four, refused after its digit: `@MP-1,1,1,1C`
-  gives 5. `@MP129,1,1,1C` and `@MP200,1,1,1C` give 6, as 128 does. (Not yet
-  seen on hardware.)
+  gives 5. `@MP129,1,1,1C` and `@MP200,1,1,1C` give 6, as 128 does (TEST70).
 - `O` takes no MML variable: `CHKMML("$0=9O$0<C")` gives 5, the `$` after the
   `O`. The octave check counts `<` and `>` after `!` the other way round
   (`O9!>C` gives 4, `O9!<C` -1) and inside a chord (`O9|C<E|` 5, `O9|<CE|`
   4), but not through a repeat: `O8[<C]3` gives -1 (TEST69).
 - A space after `O` changes nothing: `CHKMML("$0=9O $0<C")` gives 5 too, just
   after the `O`. `>` reaches octave -1 from 0: `O0>C` and `O-1C` give -1 and
-  `O0>>C` 4. (Not yet seen on hardware.)
+  `O0>>C` 4. `O9<C` gives 3 and `O9>C` -1 (TEST70).
 - A dot adds half of what the one before it added, and fails on an odd number
   of ticks, with the place after the last dot: `C4...` and `C1......` pass,
   `C96..` and `C192.` give 5. A note without a length counts from `L`'s:
   `L192C.` gives 6. (Not yet seen on hardware.)
+- Macros are read where they are used, so `{X=5}O{X}C` passes (TEST70).
 - Places count the text as written, comments included:
-  `CHKMML("/A/@MP128,1,1,1C")` gives 9. Macros are read where they are used,
-  so `{X=5}O{X}C` passes, and an error inside a macro is placed in its
-  definition: `{X=@MP128,1,1,1}C{X}` gives 9. (Not yet seen on hardware.)
+  `CHKMML("/A/@MP128,1,1,1C")` gives 9. An error inside a macro is placed in
+  its definition: `{X=@MP128,1,1,1}C{X}` gives 9. (Not yet seen on hardware.)
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
@@ -1834,11 +1856,16 @@ Expected but not yet seen on hardware:
   `LOADG "GRP:HGLIB/NAME",0` both load. A program loads it without a dialog; at
   the prompt SmileBASIC 4 shows its load dialog first (checked on hardware,
   version 4.4.9, 2026-11-08).
-- One `LOADG` in TEST68 is unexplained:
-  `LOADG "GRP:TEST05/HG16_NEODGM",3,0,0 OUT W,H` in a main program of project
-  TEST05, while a `SUBRUN` subprogram ran, gave `RESULT` 0, loaded nothing and
-  left the page as it was, with no error. The file was there:
-  `LOADG "GRP:HG16_NEODGM",3,0,0 OUT W,H` in the same test loaded it.
+- In TEST68, `LOADG "GRP:TEST05/HG16_NEODGM",3,0,0 OUT W,H` in a main
+  program, while a `SUBRUN` subprogram ran, gave `RESULT` 0, loaded nothing
+  and left the page as it was, with no error, where
+  `LOADG "GRP:HG16_NEODGM",3,0,0 OUT W,H` in the same test loaded the file.
+  The command was not the cause: with TEST05 the current project, that line
+  loads on both consoles, and so do its forms without `OUT`, with page 0,
+  without the project and without `GRP:`, with the subprogram running and
+  without it, all in the same time (TEST70). The `RESULT` 0 came from
+  TEST68's set-up, most likely another current project at the time, with
+  TEST05 not yet holding the file.
 - Expected but not yet seen on hardware: a subprogram's `EXEC` refuses a
   project name too, and `EXEC` takes SmileBASIC 4's own `#` projects.
 - Expected but not yet seen on hardware: `SAVE` and `SAVEG` refuse a project
@@ -1848,21 +1875,28 @@ Expected but not yet seen on hardware:
   too, after the usual questions; a project that is not there fails with
   `RESULT` 0. A file in a `#` system project is `Can't SAVE to system
   project`, error 75.
-- Expected but not yet seen on hardware: `RENAME` and `DELETE` refuse a
-  project name with error 74 in every mode, at the prompt and in a
-  subprogram too. `RENAME` checks its first name first, `(RENAME:1)`, and
-  then its second, `(RENAME:2)`.
-- Expected but not yet seen on hardware: `LOADG "PNG:NAME",0` is error 74,
-  `(LOADG)`, at the prompt and in a subprogram too, unless SmileBASIC 4's own
-  `#` projects are involved. A type that is none, as `XYZ:`, is
-  `Illegal format (LOADG:1)`, error 71, and `TXT:` is
-  `File type mismatch (LOADG)`, error 77. A `JPG:` file loads.
+- `RENAME` and `DELETE` refuse a project name at the prompt too, with error
+  74 and no dialog, and leave the files alone:
+  `RENAME "TXT:TEST05/T70R","T70S"` is
+  `Can't access other project in this mode (RENAME:1)` and
+  `DELETE "TXT:/T70R"` `(DELETE:1)` (TEST70). Expected but not yet seen on
+  hardware: they refuse one in a subprogram too, and `RENAME` checks its
+  second name after its first, `(RENAME:2)`.
+- `LOADG "PNG:T70R",0` at the prompt is
+  `Can't access other project in this mode (LOADG)`, error 74, with no dialog
+  (TEST70). Expected but not yet seen on hardware: it is the same in a
+  subprogram, unless SmileBASIC 4's own `#` projects are involved. A type
+  that is none, as `XYZ:`, is `Illegal format (LOADG:1)`, error 71, and
+  `TXT:` is `File type mismatch (LOADG)`, error 77. A `JPG:` file loads.
 - `LOADG` leaves the page's pixels outside the loaded image as they were: a
   1024x624 image loaded at 0,0 leaves 1027,5 and 5,627 alone (TEST68).
 - `LOADV` and `LOADG` in a program ask nothing. `S$=LOADV("TXT:NONE")` of a
   missing file still opens a dialog that holds the program for 50 to 70 frames
   (likely File not found, as for `EXEC`), and gives `""` with `RESULT` 0
-  (TEST67).
+  (TEST67). `LOADG` of a missing `DAT:` file opens a dialog too, which
+  closes by itself, and gives `RESULT` 0 (TEST70). TEST70 did this in a main
+  program and in a subprogram; whether the dialog opened for both, and how
+  long it held the program, was not measured.
 - `LOADV "DAT:F",M%` of a real file into an int array converts as `INT()`
   does, with NaN as 0: NaN, 1.9 and -1.9 load as 0, 1 and -1, and 2147483647.5
   as 2147483647 (TEST67).
@@ -1876,12 +1910,17 @@ Expected but not yet seen on hardware:
   file is looked for.
 - `RESULT` is 0 after `IF CHKFILE("TXT:NONE") THEN LOADV ...` of a missing
   file, where the program before left it 1 (TEST67).
-- `CHKFILE` of a file that is there does not set `RESULT` to 1: it stays 0
-  (TEST69, from a `RESULT` of 0 each time).
-- Expected but not yet seen on hardware: `RUN` sets `RESULT` to 0 once the
-  program compiles, and a program with a syntax error leaves it. `CHKFILE`
-  leaves `RESULT` as it was, whether the file is there or not. The two
-  results above follow from these.
+- `CHKFILE` leaves `RESULT` as it was, whether the file is there or not:
+  after a `LOADV` that gave 1, `CHKFILE` of a missing file gives 0 and of a
+  file that is there 1, and `RESULT` stays 1 through both (TEST70). From a
+  `RESULT` of 0 it stays 0 (TEST69).
+- `RESULT` went from 1, where a main program left it, to 0 in the program
+  that `RUN` started next, after some direct-mode lines (TEST70). Expected
+  but not yet seen on hardware: `RUN` sets it to 0 once the program
+  compiles, and a program with a syntax error leaves it.
+- The main and the sub interpreter each have a `RESULT` of their own. A
+  subprogram's `LOADV` that gave 1 left the main program's `RESULT` 0, and the
+  main program's `LOADV` left the subprogram's 0 (TEST70, both consoles).
 - `LOAD "GRP0:X"` and `SAVE "GRP0:X"` are `Illegal format (LOAD:1)` and
   `(SAVE:1)`, error 71, with no dialog (TEST67), and so is `LOAD "PRG:X",1`.
   Another type of file is `File type mismatch`, error 77, without an
@@ -2033,8 +2072,10 @@ TTEST36.
     argument counted from 0; C is the statement's start.
   - A `GOTO` with nothing after it runs the lines before it and stops with
     `Type mismatch` (N 8) at its statement.
-  - An error typed in direct mode after that gives status 1, N 0, A, SL and C
-    -1, and L the program error's line.
+  - TTEST39 saw status 1, N 0, A, SL and C -1 after an error typed in direct
+    mode. Those are the fields a `STOP` leaves, so the program had most
+    likely stopped there: TEST69 and TEST70 show that a direct-mode error
+    keeps the fields as they were.
   - While the editor shows, status 4 comes with N, A, SL, C and L all 0, and
     `ENVLOCATE` gives 0,0.
 - A is the argument that the error message names, counted from 0: 1 after
@@ -2042,6 +2083,16 @@ TTEST36.
   `(COPY)`, `(LEFT$)` or an operator's error (TEST66). TEST67 gave 1 after
   `(MID$:2)`, 2 after `(FILL:3)`, 0 after `(LOAD:1)` and -1 after
   `(UNSHIFT)`.
+- An error in a line typed in direct mode sets the status to 2 and leaves N,
+  A, C and L as they were: from a fresh start's S 0, N 0, A 0, C -1, L 0 it
+  gives S 2 and the rest the same, for `RENAME`, `DELETE` and `LOADG` errors
+  at the prompt and for `EXEC`'s `Can't use from direct mode` (TEST69,
+  TEST70). After a program's `Out of range` with N 10, A 1, C 5 and L 1, the
+  status stays 2 and the rest the same through `EXEC`, `Out of range`,
+  `Syntax error` and clean lines typed after it. A clean line typed after a
+  direct-mode error leaves the status 2, and the next clean program sets it
+  to 0 (TEST70, on a Switch and a Switch 2). What a direct-mode error does
+  after a `STOP` is not known yet.
 - `ENVSTAT OUT S,N,A,SL,C,L` after a compile error is set as for an error when
   running, but for the status, which stays 0: S 0, N 3, A -1, C the character of
   the token it names from the start of the program, L its line (TEST62).
@@ -2179,7 +2230,9 @@ TTEST36.
 
 - `SYSPARAM` takes names in lower case too.
 - `SYSPARAM("TVMODE")` is 1 on a docked Switch 2 and 0 on a Switch 1 in
-  handheld mode (TEST67).
+  handheld mode (TEST67). It follows the dock while a program runs: on a
+  Switch 2 taken out of the dock mid-program it went from 1 to 0 (TEST70).
+  Going back into the dock was not tried.
 - `SYSPARAM`'s `LANG` is `ja` on a Switch set to Japanese. `SYSBEEP` starts at
   1, `KEYREPEAT` at 20 and 3, and `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`,
   `#TOOL/GAHAKU.PRG` and nothing.

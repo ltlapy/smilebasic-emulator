@@ -341,7 +341,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - `SYSPARAM("TABSTEP")` is the editor's tab width, set in
   File > Settings > Editor.
 - `SYSPARAM("TVMODE")` is always 1, as on a docked Switch. A Switch in
-  handheld mode gives 0.
+  handheld mode gives 0, and SmileBASIC 4's value follows the dock while a
+  program runs.
 - `SYSBEEP` keeps its value, as the emulator has no system sounds.
 - `TOOL1` to `TOOL3`, which F9 to F11 start, name SmileBASIC 4's own tools. The
   emulator does not have them: they start only from the `#TOOL` project that the
@@ -408,7 +409,7 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
   notice, rather than a dialog to close, unless file access is silent. The
   program goes on in the same frame: on SmileBASIC 4, `S$=LOADV("TXT:NONE")`
   of a missing file returns after 50 to 70 frames of its dialog, with `RESULT`
-  0 as here.
+  0 as here, and `LOADG` of a missing file opens a dialog too.
 - A file command's question starts on the button that goes ahead, as
   SmileBASIC 4's save question starts on OK. Replacing a file asks once, with
   a line saying so, where SmileBASIC 4 asks twice, whether to save and then
