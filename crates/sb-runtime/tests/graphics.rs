@@ -345,10 +345,49 @@ fn user_characters_under_tpage_minus_one_draw_nothing() {
 
 #[test]
 fn gputchr_multiplies_user_characters_by_the_color() {
-    // UNVERIFIED: as it multiplies the font's glyphs.
+    // As it multiplies the font's glyphs.
     let (m, _) = run("GTARGET 3:GCLS:GFILL 0,0,15,15,&HFF80FF40:GTARGET 1:GCLS\n\
          TPAGE 4,3,0,0:GPUTCHR 0,0,CHR$(&HE800),16,&HFFFF0000,0:?1");
     assert_eq!(m.rt.grp.pixel(1, 5, 5), 0xFF80_0000);
+}
+
+/// Under GSAMPLE 0, the part of a user-defined character past the page's
+/// edge draws nothing, even with #G_NORMAL; under GSAMPLE 1 it wraps.
+#[test]
+fn user_characters_past_the_pages_edge() {
+    let source = |sample| {
+        format!(
+            "GTARGET 3:GCLS:GFILL 2040,0,2047,15,&HFF8040C0:GFILL 0,0,7,15,&HFF00FF00\n\
+             TPAGE 4,3,2040,0:GSAMPLE 3,{sample}:GTARGET 1:GFILL 0,0,31,31,&HFF112233\n\
+             GPUTCHR 0,0,CHR$(&HE800),16,-1,0:?1"
+        )
+    };
+    let (m, _) = run(&source(0));
+    assert_eq!(m.rt.grp.pixel(1, 3, 3), 0xFF80_40C0);
+    assert_eq!(m.rt.grp.pixel(1, 12, 3), 0xFF11_2233);
+    let (m, _) = run(&source(1));
+    assert_eq!(m.rt.grp.pixel(1, 12, 3), 0xFF00_FF00);
+}
+
+/// #G_NORMAL2 with a color of alpha 1: the glyph's own clear pixels are
+/// left, the others are written, with the alpha the color gives them.
+#[test]
+fn gputchr_mode_1_writes_pixels_the_color_makes_clear() {
+    let (m, _) = run(
+        "GTARGET 3:GCLS:GFILL 0,0,7,15,&H80FFFFFF:GFILL 8,0,15,15,&HFFFFFFFF\n\
+         TPAGE 4,3,0,0:GTARGET 1:GFILL 0,0,31,31,&HFF112233\n\
+         GPUTCHR 0,0,CHR$(&HE800),16,&H01FFFFFF,1:GTARGET 3:GCLS 0\n\
+         GTARGET 1:GPUTCHR 0,16,CHR$(&HE800),16,&H01FFFFFF,1:?1",
+    );
+    // Glyph alpha 128 comes out as 0, and is written.
+    assert_eq!(m.rt.grp.pixel(1, 3, 3) >> 24, 0);
+    assert_eq!(m.rt.grp.pixel(1, 12, 3), 0x01FF_FFFF);
+    // A clear glyph is not written.
+    assert_eq!(m.rt.grp.pixel(1, 3, 20), 0xFF11_2233);
+    // A color of alpha 0 draws nothing at all.
+    let (m, _) = run("GTARGET 3:GCLS:GFILL 0,0,15,15,&HFFFFFFFF:TPAGE 4,3,0,0\n\
+         GTARGET 1:GFILL 0,0,31,31,&HFF112233:GPUTCHR 0,0,CHR$(&HE800),16,&H00FFFFFF,1:?1");
+    assert_eq!(m.rt.grp.pixel(1, 3, 3), 0xFF11_2233);
 }
 
 #[test]

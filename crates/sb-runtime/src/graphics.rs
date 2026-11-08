@@ -962,35 +962,37 @@ impl Graphics {
     ) {
         let n = px as i32;
         if USER_CHARS.contains(&code) {
-            // UNVERIFIED: GSAMPLE 1 acts as it does for text screens, and
-            // the page's colors are multiplied by the color as the font's
-            // are.
+            // GSAMPLE 1 wraps round the page as it does for text screens,
+            // GSAMPLE 0 draws nothing past the page's edge, and the page's
+            // colors are multiplied by the color as the font's are.
             let (cx, cy) = user.cell(code, n);
             let on = |gx: u32, gy: u32| (cx + gx as i32, cy + gy as i32);
             match usize::try_from(user.page) {
                 // After TPAGE -1 nothing is drawn. UNVERIFIED: that mode 0
                 // does not clear the cell either.
                 Err(_) => {}
-                Ok(p) if p >= PAGES => self.put_glyph(at, n, scale, color, blend, |_, _, _| 0),
+                Ok(p) if p >= PAGES => {
+                    self.put_glyph(at, n, scale, color, blend, |_, _, _| Some(0))
+                }
                 Ok(p) if self.sample[p] == 1 => {
                     self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
                         let (x, y) = on(gx, gy);
-                        g.pixel(p, x.rem_euclid(GRP_SIZE), y.rem_euclid(GRP_SIZE))
+                        Some(g.pixel(p, x.rem_euclid(GRP_SIZE), y.rem_euclid(GRP_SIZE)))
                     })
                 }
                 Ok(p) => self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
                     let (x, y) = on(gx, gy);
-                    g.pixel(p, x, y)
+                    Clip::PAGE.contains(x, y).then(|| g.pixel(p, x, y))
                 }),
             }
             return;
         }
         match glyph_origin_px(font, code, px) {
             Some((ox, oy)) => self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
-                g.pixel(FONT_PAGE, (ox + gx) as i32, (oy + gy) as i32)
+                Some(g.pixel(FONT_PAGE, (ox + gx) as i32, (oy + gy) as i32))
             }),
             None => self.put_glyph(at, n, scale, color, blend, |g, gx, gy| {
-                glyph_pixel_px(font, g, code, px, gx, gy)
+                Some(glyph_pixel_px(font, g, code, px, gx, gy))
             }),
         }
     }
@@ -1005,7 +1007,8 @@ impl Graphics {
     /// Draws an `n` by `n` glyph, scaled, with its top left at `(left,
     /// top)`. A scale can make a glyph far larger than a page, so this
     /// goes only through what lands in the clipping rectangle, in the
-    /// order the whole glyph would be.
+    /// order the whole glyph would be. A glyph pixel of `None` draws
+    /// nothing in any mode.
     #[allow(clippy::too_many_arguments)]
     fn put_glyph(
         &mut self,
@@ -1014,7 +1017,7 @@ impl Graphics {
         (sx, sy): (i32, i32),
         color: u32,
         blend: Blend,
-        glyph: impl Fn(&Graphics, u32, u32) -> u32,
+        glyph: impl Fn(&Graphics, u32, u32) -> Option<u32>,
     ) {
         let clip = self.clip;
         let (sx, sy) = (i64::from(sx), i64::from(sy));
@@ -1036,20 +1039,30 @@ impl Graphics {
             near(top + i64::from(n) * sy - 1),
         );
         // Only modes 0 and 3 change the page with a clear pixel; glyphs
-        // are mostly clear, so the others pass them by.
+        // are mostly clear, so the others pass them by. Mode 1 looks at
+        // the glyph pixel's own alpha, not at the alpha the color makes
+        // of it: with a color of alpha 1 the glyph's soft edges are
+        // written with alpha 0.
         let skip_clear = !matches!(blend, Blend::Normal | Blend::Alpha2);
+        let blend = match blend {
+            Blend::Normal2 => Blend::Normal,
+            blend => blend,
+        };
         for gy in steps(top, sy, n, clip.y0, clip.y1) {
             let y0 = top + gy * sy;
             for gx in across.clone() {
-                // Glyphs are mostly clear or white.
-                let p = match glyph(self, gx as u32, gy as u32) {
-                    0 => 0,
-                    0xFFFF_FFFF => color,
-                    p => multiply(p, color),
+                let Some(g) = glyph(self, gx as u32, gy as u32) else {
+                    continue;
                 };
-                if skip_clear && p >> 24 == 0 {
+                if skip_clear && g >> 24 == 0 {
                     continue;
                 }
+                // Glyphs are mostly clear or white.
+                let p = match g {
+                    0 => 0,
+                    0xFFFF_FFFF => color,
+                    g => multiply(g, color),
+                };
                 let x0 = left + gx * sx;
                 for py in inner(y0, sy, clip.y0, clip.y1) {
                     for px in inner(x0, sx, clip.x0, clip.x1) {
@@ -2680,8 +2693,10 @@ mod tests {
             }
             for gy in 0..n {
                 for gx in 0..n {
-                    let glyph = char_pixel(font, g, user, code, px, gx, gy);
-                    let p = multiply(glyph, color);
+                    let Some((p, blend)) = char_plot(font, g, user, code, px, gx, gy, color, blend)
+                    else {
+                        continue;
+                    };
                     for py in 0..sy {
                         for px in 0..sx {
                             let at = left.wrapping_add(gx * sx + px);
@@ -2714,8 +2729,11 @@ mod tests {
             if !draws_nothing(user, code) {
                 for gy in 0..n {
                     for gx in 0..n {
-                        let glyph = char_pixel(font, g, user, code, n as u32, gx, gy);
-                        let p = multiply(glyph, color);
+                        let Some((p, blend)) =
+                            char_plot(font, g, user, code, n as u32, gx, gy, color, blend)
+                        else {
+                            continue;
+                        };
                         for py in 0..sy {
                             for px in 0..sx {
                                 let at = left.saturating_add((gx - first) * sx + px);
@@ -2735,7 +2753,8 @@ mod tests {
     }
 
     /// A pixel of a character's glyph, one at a time: user-defined ones
-    /// from the TPAGE page as text screens read it.
+    /// from the TPAGE page as text screens read it, but none past the
+    /// page's edge under GSAMPLE 0.
     fn char_pixel(
         font: &Font,
         g: &Graphics,
@@ -2744,12 +2763,40 @@ mod tests {
         px: u32,
         x: i32,
         y: i32,
-    ) -> u32 {
+    ) -> Option<u32> {
         if USER_CHARS.contains(&code) {
             let (cx, cy) = user.cell(code, px as i32);
-            crate::sprites::sample(g, user.page, cx + x, cy + y)
+            let (x, y) = (cx + x, cy + y);
+            let page = usize::try_from(user.page).ok().filter(|&p| p < PAGES);
+            if page.is_some_and(|p| g.sample[p] == 0) && !Clip::PAGE.contains(x, y) {
+                return None;
+            }
+            Some(crate::sprites::sample(g, user.page, x, y))
         } else {
-            glyph_pixel_px(font, g, code, px, x as u32, y as u32)
+            Some(glyph_pixel_px(font, g, code, px, x as u32, y as u32))
+        }
+    }
+
+    /// What a glyph pixel plots, and how: mode 1 skips only the glyph's
+    /// own clear pixels, and writes the rest whatever alpha the color
+    /// gives them.
+    #[allow(clippy::too_many_arguments)]
+    fn char_plot(
+        font: &Font,
+        g: &Graphics,
+        user: UserPage,
+        code: u16,
+        px: u32,
+        x: i32,
+        y: i32,
+        color: u32,
+        blend: Blend,
+    ) -> Option<(u32, Blend)> {
+        let glyph = char_pixel(font, g, user, code, px, x, y)?;
+        match blend {
+            Blend::Normal2 if glyph >> 24 == 0 => None,
+            Blend::Normal2 => Some((multiply(glyph, color), Blend::Normal)),
+            blend => Some((multiply(glyph, color), blend)),
         }
     }
 
@@ -2834,7 +2881,7 @@ mod tests {
             let y = chars_pos(&mut next, clip.y0, clip.y1, n * sy);
             let text = chars_text(&mut next);
             let blend = CHARS_BLENDS[next(3) as usize];
-            let color = [0xFFFF_FFFF, 0x80FF_8040][next(2) as usize];
+            let color = [0xFFFF_FFFF, 0x80FF_8040, 0x01FF_FFFF][next(3) as usize];
             let size = [FontSize::Small, FontSize::Large][next(2) as usize];
             let spacing = next(65) as i32;
             let target = [0, FONT_PAGE][usize::from(next(64) == 0)];
