@@ -13,6 +13,7 @@ matters. A real Switch outranks Ryujinx where the text says so.
 TEST62 and TEST63 ran on 4.4.9 on a Switch 2. What TEST62 shows had been read in
 SmileBASIC 4 first, and so had most of what TEST63 shows. "By SmileBASIC 4" means expected of SmileBASIC 4. "(Not yet seen on hardware.)" marks what
 was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
+TEST71 ran on 4.4.9 on a Switch 1 and a Switch 2.
 
 ## Contents
 
@@ -105,7 +106,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   space between: `Overflow in 1:3(FILL:2)`, `(PUSH)`, `(COPY)`, `(HEX$:1)`,
   `(CHR$:1)` and `(MID$:2)`. The number counts arguments from 1. `LEFT$` with
   2147483648 as its second argument shows `(LEFT$)` with no number, and with
-  -1 `Out of range (LEFT$:2)`. Every builtin seen so far but `SQR` (see
+  -1 `Out of range (LEFT$:2)` (TEST71). Every builtin seen so far but `SQR` (see
   [Numbers](#numbers)) names itself, whatever the error: `MID$(S$,-1,1)` is
   `Out of range in 1:2(MID$:2)`, `FILL M%,0,5` on three elements `(FILL:3)`,
   `LOAD "GRP0:X"` `Illegal format (LOAD:1)` and `LOADV "TXT:A",S$` `Wrong
@@ -113,7 +114,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   the array gets no number: `UNSHIFT M%,2147483648` is `Overflow (UNSHIFT)`,
   as `PUSH` and `COPY` are (TEST66, TEST67). `COPY` of an array past the
   source's end is `Subscript out of range (COPY)`, error 31, with no number
-  either. Operators
+  either (TEST71). Operators
   and plain stores name nothing: DIV, MOD, the bit operators, unary minus and
   `M%[0]=V` give `Overflow in 1:2`, and DIV or MOD by 0 `Divide by zero in 1:2`
   (TEST65, TEST66).
@@ -128,14 +129,15 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   `CHR$(-2)` U+FFFE, `CHR$(&H7FFFFFFF)` U+FFFF, and `CHR$(65536)` and
   `CHR$(-65536)` a one-character string holding U+0000 (TEST70). A real
   outside the int range is `Overflow (CHR$:1)`: `CHR$(2147483648)` and
-  `CHR$(-1E10)`.
+  `CHR$(-1E10)` (TEST71).
 - `ATTR` names an attribute out of range by its own argument: `ATTR 4,128` is
   `Out of range (ATTR:2)`. In the form with flips and a turn, the flips take 0
   or 1 and the turn 0 to 3. A horizontal flip of 2 is `(ATTR:1)`, a vertical
   flip of 2 `(ATTR:2)` and a turn of 4 `(ATTR:3)`; after a screen ID they are
   `(ATTR:2)`, `(ATTR:3)` and `(ATTR:4)`. `TFILL`'s attribute past 15 is
-  `(TFILL:7)`, found before the corners are read.
-- An error message longer than the console's width wraps as `PRINT` does.
+  `(TFILL:7)`, found before the corners are read (TEST71).
+- An error message longer than the console's width wraps as `PRINT` does
+  (TEST71).
 - `Wrong number of arguments` comes when a command or function gets a number of
   arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
   finds this as it runs, not as the program compiles, so the lines before it
@@ -181,7 +183,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - `_` in a group of digits must lead to a digit: `?&HFF_` and `?&H_` are
   `Syntax error`, and so is `?1_000`, as a decimal number takes none (TEST60).
 - A string with no closing quote ends with its line (TEST62).
-- A string has no escape for a quote: `?"A""B"` is a `Syntax error`.
+- A string has no escape for a quote: `?"A""B"` is a `Syntax error` (TEST71).
 - `NEXT` (also `NEXT I`), `WEND` and `ENDLOOP` inside an `IF` or another block
   of a loop go on with the loop's next turn: `IF A THEN NEXT`.
 - `NEXT J` on `FOR I` is not checked: `J` stays as it is (TEST62).
@@ -217,7 +219,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   value: `TYPEOF` 0 (TEST62).
 - A `DEF` with the name of a system function is `Duplicate function` when the
   program compiles, at the `DEF`, as two `DEF`s of one name are:
-  `DEF LAST(T)` on line 41 of slot 3 is `Duplicate function in 3:41`.
+  `DEF LAST(T)` on line 41 of slot 3 is `Duplicate function in 3:41` (TEST71).
 - `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of expressions share a
   stack of about 259072 slots, by the depths they reach (TEST63, 4.4.9 on a
   Switch 2). A `GOSUB` takes 1. A command `DEF` called takes 6, a function 8,
@@ -251,7 +253,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   `PRINT` with a value needs room for it too. `@L:N=N+1:?N:GOSUB @L` stops
   with `Stack overflow` on the `?N` with N at 259072, and so do the same loop
   with `ON 0 GOSUB @L` and with `GOSUB "@L"`. Without the `?N`, the 259073rd
-  `GOSUB` stops on itself.
+  `GOSUB` stops on itself (TEST71).
 
   `RESTORE "PUSH"` itself goes on past that: 172713 of them pass, and 180000,
   400000 or 1000000 stop on the loop's line (TEST67, TEST69). After the
@@ -301,7 +303,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
 - `LOG(0)` and `ASIN(2)` are `Out of range (LOG:1)` and `(ASIN:1)` (TEST62).
 - `ACOS(2)` is `Out of range (ACOS:1)`, as for `LOG` and `ASIN`. `SQR(-1)` is
   `Out of range` with no command name and no argument's number
-  (`Out of range in 3:1`), and `ENVSTAT` gives its argument as -1.
+  (`Out of range in 3:1`), and `ENVSTAT` gives its argument as -1 (TEST71).
 
 ### `RGB`, `RGBF` and `HSV`
 
@@ -392,7 +394,7 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   it before.
 - `DIM A[,]` compiles, and is `Type mismatch` when it runs.
 - `DIM A[3]=[1,2,3,4]`, with more values than elements, is
-  `Subscript out of range`.
+  `Subscript out of range` (TEST71).
 - An int array takes a real by truncating it toward zero (-3.9 gives -3, -0.5
   gives 0), but checks the real against -2147483648 to 2147483647 first. So
   `M%[0]=2147483647.5`, `2147483647.9` and `-2147483648.5` are `Overflow`, as
@@ -485,7 +487,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   `COMMON DEF` reads on from the running program's place: a program in slot 3
   with no DATA, after `EXEC 1`, calling a `COMMON DEF` of slot 1 that `READ`s
   stops with `Out of DATA` on that DEF's line in slot 1, though slot 1 has
-  DATA.
+  DATA (TEST71).
 - `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack underflow`.
 - `RESTORE "PUSH"` can keep a thousand places, and many more: see the stack
   under `DEF`, `OUT` and `RETURN`. A subroutine that keeps a place must take it
@@ -501,7 +503,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   one `VSYNC 200` takes 140. After a slow `ACLS`, `VSYNC:VSYNC` takes one frame.
 - `VSYNC` of 0 or less does not wait, and counts on from the moment it runs:
   `VSYNC 0` and `VSYNC -1` go straight on, and a `VSYNC 2` after a `VSYNC 0`
-  waits 2 frames.
+  waits 2 frames (TEST71S).
 - `WAIT`, `WAIT 0` included, starts `VSYNC`'s count anew; waiting in `INPUT`
   does not.
 - `RUN` leaves `VSYNC`'s count where it was, so the first `VSYNC` of a program,
@@ -632,9 +634,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   81928: A's bit with `#B_RANY` and `#B_ANY` (TEST64). Answered with A while
   L is held, it returns 16392: A and `#B_RANY`, without L and without
   `#B_ANY`, which L had already turned on. The any bits it gives are those
-  that go on with the press.
+  that go on with the press (TEST71).
 - An A held before a `DIALOG` opens never answers it: an OK dialog with a
-  time of 600 frames ran out with `RESULT` 0, A still held.
+  time of 600 frames ran out with `RESULT` 0, A still held (TEST71).
 - The A that closes a `DIALOG` is gone for the program after it (TEST64):
   - With OK or Yes and No, `BUTTON` shows no release of it.
   - With a wait for A, `BUTTON(0)` shows it held, `BUTTON(0,-1,2)` no press,
@@ -648,9 +650,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `BREPEAT` repeats a held button at its start frame and then every interval
   plus one frames: 20,3 fires at 0, 20, 24, 28...
 - `BREPEAT`'s negative values are `Out of range`: a start of -1 is
-  `(BREPEAT:2)` and an interval of -1 `(BREPEAT:3)`.
+  `(BREPEAT:2)` and an interval of -1 `(BREPEAT:3)` (TEST71).
 - `BREPEAT` takes a start of 0 as 1: `BREPEAT 5,0,3:BREPEAT 5 OUT S,I` gives 1
-  and 3 (TEST62), and after `BREPEAT 0,0,0` it gives 1 and 0.
+  and 3 (TEST62), and after `BREPEAT 0,0,0` it gives 1 and 0 (TEST71).
 - `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14 to 16).
 - `BUTTON()` without arguments is `Wrong number of arguments`.
 - `#B_X`, `#B_B`, `#B_Y`, `#B_A` are 0, 1, 2, 3. (TEST62)
@@ -673,10 +675,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   - `INKEY$(1)` drops whatever controllers typed.
   - The first assignment that holds gives the frame's one key. It comes at the
     press, 20 frames later and then every 3, for the pad and the stick alike
-    (TEST64). The press types on the frame the button goes down.
+    (TEST64). The press types on the frame the button goes down (TEST71K, on a
+    Switch 2).
   - A second input going down meanwhile types nothing while both are held.
     With Right on the +Control Pad repeating, Down added stopped it, and when
-    Down was released, Right went on 2 frames later and then every 3.
+    Down was released, Right went on 2 frames later and then every 3
+    (TEST71K, on a Switch 2).
   - TEST67 on a Switch 1 and a Switch 2 saw the left stick right give
     `CHR$(3)` at the push, 20 frames later and then every 3, with `BUTTON` 0.
     L or R with the pad's right gave `CHR$(3)` too. L, R, and L and R held
@@ -750,7 +754,7 @@ TEST70K on a docked Switch 2 (4.4.9) with a USB keyboard:
   3 frames until it went up. `KEYBOARD` saw Enter held from the program's
   frame 0.
 
-Later, on a docked Switch 2 (4.4.9) with a USB keyboard:
+TEST71K on a docked Switch 2 (4.4.9) with a USB keyboard:
 
 - Programs, DIRECT mode and the editor share one Caps Lock. Caps Lock pressed
   in a program changes the case `INKEY$` gives. Turned on in DIRECT mode, it
@@ -813,7 +817,7 @@ Expected but not yet seen on hardware:
 - `PUSHKEY` holds the program for a frame, without touching `VSYNC`'s count: ten
   of them take ten frames (TEST60). `INKEY$` reads the key right after it, and
   after a `VSYNC 1`, `VSYNC 2`, `WAIT 1` or `WAIT 2` in between, with a USB
-  keyboard plugged in or not.
+  keyboard plugged in or not (TEST71, TEST71K).
 - `PUSHKEY` of a string of 64 characters is `String is too long (PUSHKEY:1)`; 63
   goes (TEST60).
 - `PUSHKEY &H10FFF` goes and `&H11001` is `Out of range` (TEST62).
@@ -871,7 +875,7 @@ Expected but not yet seen on hardware:
 - Pasted text with line ends goes into DIRECT mode's one line, where each line
   end shows as a line break, and Enter runs it all: `"?11"+CHR$(10)+"?22"`
   pasted from `CLIPBOARD` with the Paste key shows `?11` and `?22` on two
-  rows, and Enter prints 11 and 22.
+  rows, and Enter prints 11 and 22 (TEST71).
 - Enter goes on from the row under the cursor, wherever on the line that is. A
   line that exactly fills its row leaves an empty row before what comes next, as
   the cursor is on the next row already. With the cursor on the first row of a
@@ -886,11 +890,11 @@ Expected but not yet seen on hardware:
   640x360 from row 40, on row 42 (TEST60).
 - Enter ending a line scrolls the console so that the cursor stays above its
   last row; `INPUT`'s and `LINPUT`'s guides, errors and `OK` do the same. What a
-  program prints can still reach the last row.
+  program prints can still reach the last row (TEST71).
 - The hint bar at the bottom covers more rows on a screen whose rows are 16
   display pixels high or less (of the 720): 2 rows stay free at 360 rows of
   pixels, 3 at 720 with 8x8 characters. A `LINPUT` keeps them free from its
-  start, with a guide or without.
+  start, with a guide or without (TEST71).
 - `INSPECT` scrolls as Enter does while it prints, keeping the cursor above the
   last row, which has been seen (`TEST19`, on the usual screen). The rest of
   this scrolling comes from the code.
@@ -902,7 +906,7 @@ Expected but not yet seen on hardware:
   in or out, or the software keyboard shown, changes none of this.
 - Typing over a selection in overwrite mode writes the character and moves on
   first, then deletes the selection: one made rightwards takes the character
-  with it, and one made leftwards keeps it.
+  with it, and one made leftwards keeps it (TEST71).
 - Copying a selection in direct mode drops the selection; cutting too. (Not yet
   seen on hardware.)
 
@@ -923,7 +927,7 @@ Expected but not yet seen on hardware:
 - Insert toggles overwriting on `INPUT`'s line, and the cursor is then a block
   over the whole cell: 24 wide at scale 3 (TEST56).
 - DIRECT mode's cursor bar is a quarter of the cell wide and the cell's
-  height, on 16- and 24-pixel cells too.
+  height, on 16- and 24-pixel cells too (TEST71P).
 - The cursor's scale is the text's, `TSCALE` and `LMATRIX` included (TEST56).
 - The cursor is drawn right after its own screen's cells, under a sprite in
   front, and it replaces what its layer holds, alpha too. As a layer's alpha is
@@ -940,13 +944,13 @@ Expected but not yet seen on hardware:
   `CONTROLLER(1)` read 2. `CONTROLLER 0 OUT` gives 2 with colors 0 and 0, and
   `CONTROLLER 1 OUT` 2 with `&HFF232323` and `&HFFA0A0A0`, the Pro Controller's
   own. (TEST64) The last two colors of `CONTROLLER n OUT T,C1,C2,C3,C4` are
-  `&HFF000000` on a Pro-style controller (type 2).
+  `&HFF000000` on a Pro-style controller (type 2) (TEST71).
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not available`.
 - `TCPIANO` without Toy-Con set up is `Illegal control style`.
 - `IRSTATE` starts at 0.
-- `IRREAD` in mode 1 is `Illegal IR Camera mode`.
+- `IRREAD` in mode 1 is `Illegal IR Camera mode` (TEST71).
 - `IRREAD`'s array has 48 rows of 8 after clustering mode, as after moment
-  mode.
+  mode (TEST71).
 - `IRREAD` on a camera never started is `IR Camera is not available (IRREAD)`.
   (TEST62)
 - Vibration patterns have lengths of their own, from 3 frames (57) to 115 (23);
@@ -957,7 +961,7 @@ Expected but not yet seen on hardware:
   left) and `VIBRATE(1,0)` 40; with frequencies it is -1, still a second later.
   `VIBRATE` alone clears it.
 - `VIBRATE`'s form with frequencies vibrates with a low frequency of 0, a low
-  amplitude of 0 or a high frequency of 0.
+  amplitude of 0 or a high frequency of 0 (TEST71, felt by hand).
 
 ## Screens and text
 
@@ -970,7 +974,7 @@ Expected but not yet seen on hardware:
 - `XSCREEN` moves `#GSPRITE` to the layer `SPLAYER` gives new sprites, whatever
   layer it was on.
 - `XSCREEN` and `ACLS` put back the rest of `#GSPRITE` too: its offset, scale,
-  rotation, color, page, home point, UV and `SPHIDE`.
+  rotation, color, page, home point, UV and `SPHIDE` (TEST71).
 - `XSCREEN` stops the text screens' `TANIM` animations (`TCHK` gives 0) and
   keeps their `THOME`, `TROT`, `TSCALE`, `TOFS` and `TCOLOR`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663 for
@@ -1042,7 +1046,7 @@ Expected but not yet seen on hardware:
   TEST62 saw for `TSAVE` and `GSAVE`. Each names its argument: a width of 0
   is `Out of range (TLOAD:4)` and a height of 0 `(TLOAD:5)`, while 1x1 loads;
   `GLOAD` takes a width or height of 0, and a width of -1 is
-  `Out of range (GLOAD:3)`.
+  `Out of range (GLOAD:3)` (TEST71).
 - `TSAVE`'s width and height have to be 1 or more: 10x0 and 10x-1 are
   `Out of range (TSAVE:5)`, and 5000x1 goes, reaching off the screen. `GSAVE`'s
   -1 is `Out of range (GSAVE:4)`. (TEST62)
@@ -1072,13 +1076,15 @@ Expected but not yet seen on hardware:
   Z included.
 - `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set already.
 - `SPHIDE id,flag` shows the sprite on a flag of 0 and hides it on any other
-  value, 2 and -1 among them. `SPHIDE id` with no flag hides it.
+  value, 2 and -1 among them. `SPHIDE id` with no flag hides it
+  (TEST71).
 - Page -1 is a page of its own, not a graphic page, and `SPPAGE id,-1` reads
   back -1. Sprites on page -1 show solid white whatever their UV, and
   `SPCOLOR` tints them, its alpha included. User-defined characters on a text
-  screen after `TPAGE 0,-1` show solid white too.
+  screen after `TPAGE 0,-1` show solid white too (TEST71P, by its
+  picture).
 - A sprite whose `SPSCALE` or `SPROT` is NaN shows nothing, and so does a layer
-  whose `LMATRIX` holds a NaN.
+  whose `LMATRIX` holds a NaN (TEST71P).
 
 ### Collision
 
@@ -1227,7 +1233,7 @@ Expected but not yet seen on hardware:
 - With mode 1 and a color whose alpha is 0, `GPUTCHRP` (TEST70) and `GPUTCHR`
   draw nothing. With a color of alpha 1, mode 1 skips only the glyph's own
   clear pixels and writes the rest with the alpha the color gives them, so
-  the glyph's soft edges are written with alpha 0.
+  the glyph's soft edges are written with alpha 0 (TEST71).
 - Characters not in the font draw the missing glyph, and `GPUTCHRP` gives them
   16 (U+25A2, U+AC00; TEST69). U+25A0 is in the font, 14 wide.
 - A user-defined character takes 16 at 16 and 8 at 8, also when its cell is
@@ -1239,7 +1245,7 @@ Expected but not yet seen on hardware:
   page's colors by the color, under `GSAMPLE` 0 and 1. Where its cell reaches
   past the page's edge, `GSAMPLE` 1 wraps round to the other side, and
   `GSAMPLE` 0 draws nothing there, leaving the target's pixels as they were,
-  in mode 0 too.
+  in mode 0 too (TEST71).
 - `GPUTCHRP`'s function form's width scales the spacing with the characters:
   `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
 
@@ -1445,9 +1451,10 @@ Expected but not yet seen on hardware:
   nothing, and `BGMCHK` says 0.
 - `BGMPLAY` of a user's song number that holds nothing stops what the track
   plays: after `BGMPLAY 0,200` with song 200 unset, `BGMCHK(0)` reads 0 five
-  frames later.
+  frames later (TEST71).
 - `BGMCHK` of the short songs 4, 5 and 6 stays 1 for 168 or 169, 113 and 344
-  frames, a frame or two past the end of their sound (166, 112 and 342).
+  frames, a frame or two past the end of their sound (166, 112 and 342;
+  TEST71, 168 on a Switch 1 and 169 on a Switch 2).
 - `BGMPLAY`, `BGMSTOP`, `BGMPAUSE`, `BGMCONT` and `BEEPSTOP` take their first
   argument left out with a comma after it (`BGMSTOP ,1`, `BGMPLAY ,0,64`).
 - `BGMSTOP` with a fade keeps `BGMCHK` at 1 until a frame after the fade has
@@ -1466,7 +1473,7 @@ Expected but not yet seen on hardware:
 - A song started while no other plays takes about two frames more to begin: its
   first `$0=` showed four frames after `BGMPLAY`. Its sound starts 1276
   samples (about 1.6 frames) after `BGMPLAY`, the first `BGMPLAY` of a run or
-  a later one alike, and the program goes on meanwhile.
+  a later one alike, and the program goes on meanwhile (TEST71).
 - `RECSTART` right before such a `BGMPLAY` waits with it: the song sounds within
   50 samples of the recording's start.
 
@@ -1500,7 +1507,7 @@ Expected but not yet seen on hardware:
   (`O9!>C` gives 4, `O9!<C` -1) and inside a chord (`O9|C<E|` 5, `O9|<CE|`
   4), but not through a repeat: `O8[<C]3` gives -1 (TEST69).
 - A chord of one note fails: `CHKMML("O8|<C|<C")` gives 3, just after the
-  first bar, before the `<` inside is checked.
+  first bar, before the `<` inside is checked (TEST71).
 - An octave set inside a chord lasts to the chord's end: the note after
   `|A<CE|` is in the octave before the chord, so `O8|<CE|<C` passes. Songs in
   shared projects write dozens of such chords in a row, which would pass octave
@@ -1511,14 +1518,14 @@ Expected but not yet seen on hardware:
 - A dot adds half of what the one before it added, and fails on an odd number
   of ticks, with the place after the last dot: `C4...` and `C1......` pass,
   `C96..` and `C192.` give 5, while `C96.` and `C48..` pass. A note without a
-  length counts from `L`'s: `L192C.` gives 6 and `L96C.` passes.
+  length counts from `L`'s: `L192C.` gives 6 and `L96C.` passes (TEST71).
 - Macros are read where they are used, so `{X=5}O{X}C` passes (TEST70).
 - Places count the text as written, comments included:
   `CHKMML("/A/@MP128,1,1,1C")` gives 9 and `{X=C}/A/@MP128,1,1,1C` 14. An
   error inside a macro is placed just past the macro's use:
-  `{X=@MP128,1,1,1}C{X}` gives 20.
+  `{X=@MP128,1,1,1}C{X}` gives 20 (TEST71).
 - `CHKMML("C]0")` and `CHKMML("C]-")` give 2, just after the `]`, which has no
-  `[` before it.
+  `[` before it (TEST71).
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
@@ -1742,17 +1749,17 @@ Expected but not yet seen on hardware:
 
 - `TALK` reads は as "wa", falling in pitch, when 、 comes right after it, as for
   a particle; before 。 or anywhere else it is "ha".
-- A new `TALK` cuts off what is being said.
-- `TALK` takes `$ca`, `$xa`, `$rya` and `$cha` with no error.
+- A new `TALK` cuts off what is being said (TEST71).
+- `TALK` takes `$ca`, `$xa`, `$rya` and `$cha` with no error (TEST71).
 - A sung note (`*A,C2`) is the voice alone: the channel's instrument stays
   silent under it, and plays again on the next plain note.
 - Each channel sings with a voice of its own, so two channels' sung notes
   overlap, and `TALK` and sung notes sound together without cutting each other
   off.
 - `CHKMML` does not check a sung note's letters: `*CA,C`, `*XA,C` and
-  `*KXA,C` give -1. `*KONNICHIWA,C1` is `Illegal MML` at its second N, the
-  fourth letter, which fits a sung note of three letters at most before its
-  comma.
+  `*KXA,C` give -1 (TEST71). `*KONNICHIWA,C1` is `Illegal MML` at its second
+  N, the fourth letter (TEST44), which fits a sung note of three letters at
+  most before its comma.
 
 ### Effector, recording and balance
 
@@ -1769,7 +1776,7 @@ Expected but not yet seen on hardware:
 - `RECSTART` leaves the older recordings in the buffer. Recording round it,
   `RECSAVE` from -1000, from past what this recording has reached, or of 1000
   samples from 500 before its end gives those older samples where this
-  recording has none.
+  recording has none (TEST71).
 - `SNDMSBAL` starts at 63, though the manual calls 64 even.
 - `SNDMSBAL()` and `PCMPOS()` work as functions.
 
@@ -1787,7 +1794,7 @@ Expected but not yet seen on hardware:
 - `BIQUAD` with arrays of 4 and 8 is `Illegal function call (BIQUAD:2)`. With
   `ZS[2,8]` and `ZT[8]` it is `Illegal function call (BIQUAD)`, no argument
   named. (TEST63) An output longer than the input is no error, and keeps
-  its length.
+  its length (TEST71).
 - `BQPARAM` takes the gain for types 5 to 7 only: leaving it out there, or
   giving it for types 0 to 4, is `Wrong number of arguments`.
 - `BQPARAM` with a sampling rate of 0 is `Illegal function call`.
@@ -1819,9 +1826,9 @@ Expected but not yet seen on hardware:
   fails, `G` is 0. A line that does not compile declares nothing.
 - `CLEAR` in a program is a `Syntax error` when it runs. `PROJECT` in a program
   is `Can't use in program`, error 44, when it runs: after `?"A"` it prints A,
-  then `Can't use in program in 3:1(PROJECT)`.
+  then `Can't use in program in 3:1(PROJECT)` (TEST71).
 - `ENVINPUT$` lists a line typed again as a new line and leaves the older copy
-  where it was. The line typed just before, typed again, is not added.
+  where it was. The line typed just before, typed again, is not added (TEST71).
 - `FILES` prints a long list a screen at a time, in direct mode and in programs
   alike. The list fills every row of the console but the last, which says
   `=== Press ENTER ===`, so the page follows the console's size (29 rows of the
@@ -1829,7 +1836,7 @@ Expected but not yet seen on hardware:
   repeats.
 - `FILES` of one type starts with a line giving the count: `FILES "DAT:"`
   shows `-- 1 files --` above a project's one DAT file, and `-- 0 files --`
-  when there are none.
+  when there are none (TEST71).
 
 ## Stopping
 
@@ -1840,9 +1847,10 @@ Expected but not yet seen on hardware:
   without the jump.
 - `ON BREAK GOTO`'s jump leaves GOSUBs behind: a `RETURN` after it is
   `RETURN without GOSUB`. It leaves DEF calls behind too: after + in a DEF
-  called from a DEF, a loop of `GOSUB`s from the label reaches the full depth.
+  called from a DEF, a loop of `GOSUB`s from the label reaches the full depth
+  (TEST71).
 - `ON BREAK GOTO` inside a DEF may name a label outside it. When the DEF has a
-  label of the same name too, the jump goes to the one outside.
+  label of the same name too, the jump goes to the one outside (TEST71).
 - Breaking off a line typed in direct mode says `User break on 0:1`. A forced
   stop (holding + for a second) says `User break on` too.
 - A press of + out of a waiting `INPUT` or `LINPUT` counts twice. It jumps, and
@@ -1860,7 +1868,7 @@ Expected but not yet seen on hardware:
   prompt on the same line.
 - `CONT` after an error is `Can't continue`. In a program it is a `Syntax error`
   when it runs. A `Syntax error` typed in DIRECT mode after a `STOP` does
-  not count: `CONT` still goes on.
+  not count: `CONT` still goes on (TEST71).
 - `BACKTRACE` lists, innermost first, the line it stopped on and the line of
   each DEF call and `GOSUB` it is in, as `0:    92` (the line right-aligned in 6
   places). It works after an error too, and prints nothing when no program has
@@ -1924,7 +1932,8 @@ Expected but not yet seen on hardware:
   `PRGSIZE()` of 0 (TEST64).
 - `PRGSET`, `PRGINS` and `PRGDEL` changes do not count as unsaved: `LOAD` over
   the slot from a program, `NEW` and `PROJECT` do not ask about them (DAW_MUSIC,
-  and by hand), and neither does `EXEC` into a slot holding `PRGINS` edits.
+  and by hand), and neither does `EXEC` into a slot holding `PRGINS` edits
+  (TEST71).
 - `#_FILENAME` is the program's name (`TEST32`), and empty in direct mode.
 - `#_SLOT` is the program's slot, and in direct mode the slot run last.
 
@@ -1983,20 +1992,23 @@ Expected but not yet seen on hardware:
 - A subprogram's `EXEC` of a file named with a project is error 74 too,
   printed with no command name: `Can't access other project in this mode in
   0:167`. `EXEC` of a file in SmileBASIC 4's own `#` projects is allowed, in a
-  program and in a subprogram: one that is not there is `Load failed`.
+  program and in a subprogram: one that is not there is `Load failed`
+  (TEST71; the subprogram on a Switch 1).
 - `SAVE` and `SAVEG` refuse a project name in a main program as `SAVEV` does,
   error 74 without an argument's number, for the program's own project,
-  another one and the workspace's `/NAME`.
+  another one and the workspace's `/NAME` (TEST71).
 - Typed in DIRECT mode and in a subprogram, `SAVE`, `SAVEV` and `SAVEG` write
   to the project named, after the usual questions: the current project named
   as `OWN/NAME` and the workspace's `/NAME` both take the file, with
   `RESULT` 1. A project that is not there asks, then shows that the save
   failed, and gives `RESULT` 0. Expected but not yet seen on hardware:
-  another project that is there takes the file too.
+  another project that is there takes the file too. (TEST71; the subprogram
+  on a Switch 1, the failure dialog on a Switch 2.)
 - A file in a `#` system project is `Can't SAVE to system project`, error 75,
   for `SAVE`, `SAVEV` and `SAVEG`: `(SAVEV)` in DIRECT mode and
   `in 0:203(SAVEV)` in a subprogram. Expected but not yet seen on hardware: a
-  main program gets error 75 too, ahead of its error 74.
+  main program gets error 75 too, ahead of its error 74. (TEST71, on a
+  Switch 1.)
 - `RENAME` and `DELETE` refuse a project name at the prompt too, with error
   74 and no dialog, and leave the files alone:
   `RENAME "TXT:TEST05/T70R","T70S"` is
@@ -2004,18 +2016,18 @@ Expected but not yet seen on hardware:
   `DELETE "TXT:/T70R"` `(DELETE:1)` (TEST70). They refuse one in a subprogram
   too (`in 0:41(RENAME:1)`, `in 0:59(DELETE:1)`). `RENAME` checks its second
   name after its first: `(RENAME:2)` when only the second has a project,
-  `(RENAME:1)` when both do.
+  `(RENAME:1)` when both do (TEST71; the subprogram on a Switch 1).
 - `RENAME`'s second name without a type takes the first's:
   `RENAME "TXT:A","B"` gives `TXT:B`. Two different types, as
   `RENAME "TXT:A","DAT:B"`, are `File type mismatch (RENAME)`, error 77, with
   no number and no question. A file renamed to its own name gives `RESULT` 1
-  and asks nothing.
+  and asks nothing (TEST71).
 - `LOADG "PNG:T70R",0` at the prompt is
   `Can't access other project in this mode (LOADG)`, error 74, with no dialog
   (TEST70), and so it is in a subprogram: `in 0:95(LOADG)`. A type that is
   none, as `XYZ:`, is `Illegal format (LOADG:1)`, error 71, and `TXT:` is
   `File type mismatch (LOADG)`, error 77, in DIRECT mode and in a subprogram.
-  A `JPG:` file loads.
+  A `JPG:` file loads. (TEST71; the subprogram on a Switch 1.)
 - `LOADG` leaves the page's pixels outside the loaded image as they were: a
   1024x624 image loaded at 0,0 leaves 1027,5 and 5,627 alone (TEST68).
 - `LOADV` and `LOADG` in a program ask nothing. A missing file still opens the
@@ -2023,7 +2035,8 @@ Expected but not yet seen on hardware:
   main program and in a subprogram alike. The command then gives `RESULT` 0,
   and `S$=LOADV("TXT:NONE")` gives `""` (TEST67, where a quick press let the
   program go on after 50 to 70 frames). `LOADG` of a missing `DAT:` or `JPG:`
-  file does the same. Typed in DIRECT mode, `LOADV` asks before it loads.
+  file does the same. Typed in DIRECT mode, `LOADV` asks before it loads
+  (TEST71, by hand).
 - `LOADV "DAT:F",M%` of a real file into an int array converts as `INT()`
   does, with NaN as 0: NaN, 1.9 and -1.9 load as 0, 1 and -1, and 2147483647.5
   as 2147483647 (TEST67).
@@ -2033,10 +2046,10 @@ Expected but not yet seen on hardware:
 - `LOADV "DAT:F",S$` into a string is `Type mismatch (LOADV:2)`, error 8. As a
   function, `S$=LOADV("DAT:F")` of a DAT file of 3 values gives a string of 3
   characters and `RESULT` 1 (TEST69). `LOADV "GRP:X",S$` is the same
-  `Type mismatch (LOADV:2)`.
+  `Type mismatch (LOADV:2)` (TEST71).
 - `LOADV` of a `JPG:` name, as a function and as a command, of a `PNG:` name
   as a command, and of a name without a type in either form, is
-  `File type mismatch (LOADV)`, error 77, with no number.
+  `File type mismatch (LOADV)`, error 77, with no number (TEST71).
 - `RESULT` is 0 after `IF CHKFILE("TXT:NONE") THEN LOADV ...` of a missing
   file, where the program before left it 1 (TEST67).
 - `CHKFILE` leaves `RESULT` as it was, whether the file is there or not:
@@ -2046,7 +2059,7 @@ Expected but not yet seen on hardware:
 - `RESULT` went from 1, where a main program left it, to 0 in the program
   that `RUN` started next, after some direct-mode lines (TEST70). A program
   that ends with `RESULT` 1 leaves it 1 for DIRECT mode, and lines typed there
-  that run no file command leave it too. Expected but not yet seen on
+  that run no file command leave it too (TEST71). Expected but not yet seen on
   hardware: `RUN` sets it to 0 once the program compiles, and a program with a
   syntax error leaves it.
 - The main and the sub interpreter each have a `RESULT` of their own. A
@@ -2059,7 +2072,7 @@ Expected but not yet seen on hardware:
   `LOAD "JPG:X",1` are `(LOAD)` and `SAVE "DAT:X",1` `(SAVE)`, also when
   there is no such file (TEST69).
 - `LOAD "DAT:X"` typed in DIRECT mode is `File type mismatch (LOAD)` too, with
-  no dialog.
+  no dialog (TEST71).
 - The question before `SAVE`, `SAVEV` or `SAVEG` starts on OK, so Enter or A
   saves. Replacing a file asks twice, whether to save and then whether to
   overwrite (checked by sending files with a Flipper, 2026-11-03, and in
@@ -2074,9 +2087,9 @@ Expected but not yet seen on hardware:
   there is `Undefined project name`); `METALOAD` alone loads the current one's
   again. Before any `METALOAD`, the title is the project's name.
 - `METAEDIT(item)` works as a function. `METAEDIT` cuts a title to 24
-  characters and a description to 240, with no error.
+  characters and a description to 240, with no error (TEST71).
 - `METASAVE` asks first, and does not set `RESULT`: after one that saved,
-  `RESULT` was still 0.
+  `RESULT` was still 0 (TEST71).
 
 ## Subprograms
 
@@ -2093,10 +2106,10 @@ TTEST36.
 - `ENVINPUT$(1)` is the direct-mode line typed last, the `SUBRUN` itself.
 - `ENVSAVE`'s kind 0 is `Illegal function call (ENVSAVE:1)` and 5
   `Out of range (ENVSAVE:1)`, in a main program too. Kinds 3 and 4 are no
-  error.
+  error (TEST71).
 - A busy subprogram takes none of the main program's time: `A=A+1` and a
   32-pixel `GFILL` in the main program cost the same while the subprogram runs
-  a loop with no `VSYNC`.
+  a loop with no `VSYNC` (TEST71S).
 - An error, a `STOP` or `SUBSTOP` ends the subprogram, hides its screen and
   gives the focus back. The main console prints why, between lines of its own,
   without OK unless a line of its own ran:
@@ -2223,7 +2236,7 @@ TTEST36.
   `(COPY)`, `(LEFT$)` or an operator's error (TEST66). TEST67 gave 1 after
   `(MID$:2)`, 2 after `(FILL:3)`, 0 after `(LOAD:1)` and -1 after
   `(UNSHIFT)`. It is 1 after `(LEFT$:2)`, 1 after `(BIQUAD:2)` and -1 after
-  `SQR(-1)`'s unnamed `Out of range`.
+  `SQR(-1)`'s unnamed `Out of range` (TEST71).
 - A run-time error in a line typed in direct mode sets the status to 2 and
   leaves N, A, C and L as they were: from a fresh start's S 0, N 0, A 0,
   C -1, L 0 it gives S 2 and the rest the same, for `RENAME`, `DELETE` and
@@ -2236,7 +2249,7 @@ TTEST36.
 - A `Syntax error` typed in DIRECT mode leaves the status as it was, as a
   program's compile error does: from 0 it stayed 0, with an empty line typed
   after it. After a `STOP` it stays 1, with N 0 and A, SL and C -1, and
-  `CONT` then goes on and leaves 0.
+  `CONT` then goes on and leaves 0 (TEST71).
 - `ENVSTAT OUT S,N,A,SL,C,L` after a compile error is set as for an error when
   running, but for the status, which stays 0: S 0, N 3, A -1, C the character of
   the token it names from the start of the program, L its line (TEST62).
@@ -2251,7 +2264,7 @@ TTEST36.
 
 - `FREEMEM` is 134216720 at start, and the program and its numeric variables
   take none of it. `FREEMEM OUT A,B` gives the same in both, and
-  `FREEMEM OUT A` gives it too.
+  `FREEMEM OUT A` gives it too (TEST71).
 - `FREEMEM` counts a string of N characters as 2N rounded up to a multiple of
   128 bytes, plus 64 (TEST57). Strings of up to 24 characters take nothing.
 
@@ -2377,7 +2390,7 @@ TTEST36.
 - `SYSPARAM("TVMODE")` is 1 on a docked Switch 2 and 0 on a Switch 1 in
   handheld mode (TEST67). It follows the dock both ways while a program runs:
   on a Switch 2 taken out of the dock mid-program it went from 1 to 0
-  (TEST70), and back to 1 when put back.
+  (TEST70), and back to 1 when put back (TEST71).
 - `SYSPARAM`'s `LANG` is `ja` on a Switch set to Japanese. `SYSBEEP` starts at
   1, `KEYREPEAT` at 20 and 3, and `TOOL1` to `TOOL3` at `#TOOL/SBSMILE.PRG`,
   `#TOOL/GAHAKU.PRG` and nothing.
@@ -2412,7 +2425,7 @@ TTEST36.
   settings can change them).
 - `KEY` in a program changes the key for DIRECT mode for the rest of the
   session. After SmileBASIC 4 starts again, the key is as the settings have
-  it.
+  it (TEST71; the restart on a Switch 2).
 - `KEY` ignores a string over 256 characters; `PUSHKEY` from 64 is
   `String is too long`.
 - `XSUBSCREEN` and the undocumented `UISTATE` are there for the main program
@@ -2421,7 +2434,7 @@ TTEST36.
   0, 1, 3, 4, 5 read 0. (TEST63)
 - `UISTATE(5)` is 0, and `UISTATE(6)` `Out of range (UISTATE:1)`. (TEST62)
 - In a program, `UISTATE(0)` to `UISTATE(5)` all read 0, and setting item 5
-  changes nothing.
+  changes nothing (TEST71).
 - `PERFEND()` gives microseconds; `PERFBEGIN` and `PERFEND` show no gauge on
   their own. Without a `PERFBEGIN`, `PERFEND` counts from when SmileBASIC
   started.
@@ -2445,6 +2458,7 @@ TTEST36.
 - Ctrl+L opens a list of the project's files, with a way up to the projects.
 - A list of SmileBASIC's words starting with what is typed shows from the first
   letter while typing in the editor. The program's own names are not in it.
-  Enter while the list shows, with nothing picked, starts a new line.
+  Enter while the list shows, with nothing picked, starts a new line
+  (TEST71K, on a Switch 2).
 - Tab puts `SYSPARAM("TABSTEP")` spaces, and a new line keeps the indent of the
-  line before.
+  line before (TEST71K, on a Switch 2).
