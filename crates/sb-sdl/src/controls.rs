@@ -112,7 +112,7 @@ enum Last {
     None,
     /// A key whose text comes next, and whether Shift was held.
     Typing { shift: bool },
-    /// The computer's key repeat.
+    /// The computer's key repeat, or a key that types no text.
     Repeat,
 }
 
@@ -128,6 +128,10 @@ pub struct Typing {
     // UNVERIFIED: that the prompt and the editor share it with INKEY$.
     caps_lock: bool,
     last: Last,
+    /// Keys type no text, as [`State::keys_type_nothing`] says of the
+    /// last frame's controls.
+    // UNVERIFIED: that the prompt and the editor go by it as programs do.
+    blocked: bool,
 }
 
 impl Default for Typing {
@@ -135,11 +139,17 @@ impl Default for Typing {
         Typing {
             caps_lock: true,
             last: Last::None,
+            blocked: false,
         }
     }
 }
 
 impl Typing {
+    /// Takes the controls held this frame, for the keys pressed next.
+    pub fn hold(&mut self, held: &State) {
+        self.blocked = held.keys_type_nothing();
+    }
+
     /// Goes for every key that goes down on the emulator's windows, before
     /// anything else takes it. A key that does not type, such as a
     /// shortcut, stops the key held before from repeating.
@@ -171,7 +181,10 @@ impl Typing {
         repeat: bool,
         code: Option<u16>,
     ) {
-        if repeat {
+        // Ctrl as SDL has it too, for a key that goes down in the frame
+        // Ctrl does.
+        let blocked = self.blocked || keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
+        if repeat || blocked && code.is_none() {
             self.last = Last::Repeat;
             return;
         }
@@ -658,6 +671,35 @@ mod tests {
         let code = sb_runtime::runtime::keys::ENTER;
         keys.key_down(&mut rt, Mod::NOMOD, false, Some(code));
         assert_eq!(inkey(&mut rt), "D");
+    }
+
+    /// TEST69K: letters typed while the controller's L and R are held type
+    /// nothing, nor do they with Right Ctrl, but keys that type a code of
+    /// their own still do.
+    #[test]
+    fn keys_type_nothing_with_l_and_r_or_ctrl_held() {
+        let mut keys = Typing::default();
+        keys.hold(&holding(0b11 << 8));
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
+        let mut rt = runtime();
+        keys.any_key_down(&mut rt, Some(Scancode::Return), false);
+        let code = sb_runtime::runtime::keys::ENTER;
+        keys.key_down(&mut rt, Mod::NOMOD, false, Some(code));
+        assert_eq!(inkey(&mut rt), "D");
+        // L alone lets them type.
+        keys.hold(&holding(1 << 8));
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "41");
+        // Right Ctrl, whether SDL has it as Ctrl or, on a Korean layout,
+        // as Hanja.
+        let ctrl = State {
+            modifiers: 1 << 2,
+            ..State::default()
+        };
+        keys.hold(&ctrl);
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
+        keys.hold(&State::default());
+        assert_eq!(press(&mut keys, Scancode::A, Mod::RCTRLMOD, "a", true), "");
+        assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "41");
     }
 
     /// A machine at the prompt, or in the editor with `editing`.

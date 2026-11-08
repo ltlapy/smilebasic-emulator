@@ -197,6 +197,16 @@ impl State {
         key_held(&self.keys, usage)
     }
 
+    /// Whether keyboard keys type no text now: Ctrl+A types nothing, and
+    /// neither does a key pressed while the controller's L and R are both
+    /// held. Buttons the keys press do not count.
+    // UNVERIFIED: that Left Ctrl acts as Right Ctrl does, and that L or R
+    // alone lets keys type, though the controllers take either as Ctrl.
+    pub fn keys_type_nothing(&self) -> bool {
+        let buttons = self.buttons(0) & !self.key_pressed_buttons;
+        buttons & PAD_KEY_CTRL == PAD_KEY_CTRL || self.modifiers & MODIFIER_CTRL != 0
+    }
+
     /// A controller's buttons; controller 0 has those of all of them.
     fn buttons(&self, pad: usize) -> u32 {
         match pad {

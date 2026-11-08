@@ -2305,6 +2305,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.rt.settings.keyboard_buttons,
         );
         held.pads[0].buttons |= bench_pad;
+        typing.hold(&held);
         let screen = modal || paused || editor_keys || waiting || beside;
         // Programs see nothing pressed while the editor has the keys, but
         // a key held there repeats.
