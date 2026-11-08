@@ -173,8 +173,8 @@ pub struct Machine {
     /// code there is the old one, as CONT goes on with it (checked on
     /// hardware), so it keeps the breakpoints it had.
     moved: Vec<bool>,
-    /// A line typed in direct mode failed since the last program: for
-    /// ENVSTAT, the main interpreter is then suspended.
+    /// A line typed in direct mode failed since the last program: ENVSTAT
+    /// then gives the status of an error.
     direct_failed: bool,
     /// The editor shows apart from the screens, in a window of its own,
     /// so that programs and direct mode go on while it is open.
@@ -2025,10 +2025,9 @@ impl Machine {
         }
     }
 
-    /// A line typed in direct mode failed: ENVSTAT keeps only the last
-    /// error's line.
+    /// A line typed in direct mode failed: ENVSTAT's status says so, and
+    /// its error, argument, place and line stay as they were.
     fn direct_error(&mut self) {
-        self.rt.env_error = [0, -1, -1, -1, self.rt.env_error[4]];
         self.direct_failed = true;
     }
 
@@ -2053,7 +2052,9 @@ impl Machine {
         if let Some(e) = &error {
             if let Some(slot) = e.slot {
                 self.last_error = Some((slot as usize, e.line, e.col));
-                self.rt.env_error = self.error_place(slot as usize, e);
+                if program {
+                    self.rt.env_error = self.error_place(slot as usize, e);
+                }
             }
             if !program {
                 self.direct_error();
@@ -2390,7 +2391,9 @@ impl Machine {
             status::RUNNING
         } else {
             match self.rt.stopped {
-                _ if self.direct_failed => status::PAUSED,
+                // UNVERIFIED: a stopped program's status 1 stays after a
+                // direct-mode error.
+                Stopped::No if self.direct_failed => status::ERROR,
                 Stopped::No => status::DIRECT,
                 Stopped::Paused => status::PAUSED,
                 Stopped::Error => status::ERROR,

@@ -644,22 +644,36 @@ const TELL_STATUS: &str = "ENVSTAT OUT S,N,A,SL,C,L\n\
      PUSHKEY STR$(S)+\",\"+STR$(N)+\",\"+STR$(A)+\",\"+STR$(SL)+\",\"+STR$(C)+\",\"+STR$(L)+\" \"+STR$(X)+\",\"+STR$(Y)\n\
      LOOP:VSYNC:ENDLOOP\n";
 
+/// TEST70: an error typed in direct mode sets the status to 2 and leaves
+/// the error, its argument, place and line as they were, and clean lines
+/// after it change nothing.
 #[test]
-fn an_error_in_direct_mode_leaves_the_main_interpreter_suspended() {
-    let dir = TempDir::new("direrr");
-    let mut m = machine(&dir, TELL_STATUS);
-    m.set_slot(0, "?\"A\"\nGOTO\n".to_string());
-    enter(&mut m, "run");
-    enter(&mut m, "?1/0");
-    enter(&mut m, "subrun \"sub\"");
-    frames(&mut m, 12);
-    m.rt.key_press(keys::ENTER);
-    frames(&mut m, 2);
-    assert!(
-        rows(&m).iter().any(|r| r.starts_with("1,0,-1,-1,-1,2 ")),
-        "{:?}",
-        rows(&m)
-    );
+fn an_error_in_direct_mode_sets_the_status_and_keeps_the_rest() {
+    let told = |program: Option<&str>, lines: &[&str]| {
+        let dir = TempDir::new("direrr");
+        let mut m = machine(&dir, TELL_STATUS);
+        if let Some(program) = program {
+            m.set_slot(0, program.to_string());
+            enter(&mut m, "run");
+        }
+        for line in lines {
+            enter(&mut m, line);
+        }
+        enter(&mut m, "subrun \"sub\"");
+        frames(&mut m, 12);
+        let rows = rows(&m);
+        let told = rows.iter().rev().find(|r| r.contains(','));
+        told.and_then(|r| r.split(' ').next())
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert_eq!(told(None, &[]), "0,0,0,-1,-1,0");
+    assert_eq!(told(None, &["?1/0", "?\"CLEAN\""]), "2,0,0,-1,-1,0");
+    // Out of range in 0:2, its second argument, at character 5.
+    let program = Some("?\"A\"\nLOCATE 0,999\n");
+    assert_eq!(told(program, &[]), "2,10,1,0,5,2");
+    let lines = ["?\"C\"", "exec 1", "b=-5:locate 0,b", "?(", "?\"C\""];
+    assert_eq!(told(program, &lines), "2,10,1,0,5,2");
 }
 
 #[test]
