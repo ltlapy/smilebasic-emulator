@@ -59,6 +59,10 @@ Without the imported archive:
 - Sustain of 0: a note whose envelope decays to a sustain of 0 ends at -72.3 dB.
   SmileBASIC 4 holds it until it is let go. Drums that ignore being let go would
   otherwise sound, unheard, forever.
+- A song started while nothing plays sounds two frames after `BGMPLAY`. On
+  SmileBASIC 4 it sounds 1276 samples after, about half a frame sooner. With
+  two frames, the song's MML variables change on the same frames as on
+  SmileBASIC 4, which rhythm games follow.
 - `WAVSET` with `[..]` groups leaves silent the part of the 512 samples that the
   last group does not fill. SmileBASIC 4 leaves whatever its stack held.
 - `SNDMSBAL` balances a subprogram's sound against the main program's in a
@@ -91,8 +95,8 @@ apart from the macro hang below.
   MML without macros has no such limit. SmileBASIC 4 has no such limit in
   practice and hangs for good on nine nested levels, which is not worth copying.
 - `CHKMML` does not apply the macro limit. It reads each macro's body once and
-  gives -1 as SmileBASIC 4 does. An error inside a macro is placed in its
-  definition either way.
+  gives -1 as SmileBASIC 4 does. An error inside a macro is placed just past
+  the macro's use either way, as on SmileBASIC 4.
 - A preset sequence (from the importer's `sequences.bin`) that runs more than
   20,000 commands and sounding notes in one frame is stopped. SmileBASIC 4's own
   sequences peak at 195.
@@ -106,7 +110,7 @@ apart from the macro hang below.
   frequencies last asked for, until `VIBRATE` stops them.
 - The IR Motion Camera starts and stops (`IRSTART`, `IRSTOP`, `IRSTATE`) but
   never sees anything: `IRREAD` gives no clusters, or 48 dark blocks in moment
-  mode, and `IRSPRITE` shows no image.
+  mode, in an array of 48 rows either way, and `IRSPRITE` shows no image.
 - Toy-Con set up with `XCTRLSTYLE` are never recognized: `TCPIANO` and the other
   `TC` commands answer 0 for everything.
 
@@ -173,8 +177,12 @@ apart from the macro hang below.
 
 - Pasting into a line goes through the key buffers without losing keys, however
   long the text, 32 characters a frame.
-- Pasting at the prompt runs the text line by line, though SmileBASIC 4's prompt
-  drops keys waiting for it, as `PUSHKEY` shows.
+- Pasting text of several lines in DIRECT mode types it one line at a time,
+  with Enter after each, so that each line runs in turn, though DIRECT mode
+  on SmileBASIC 4 drops keys waiting for it, as `PUSHKEY` shows. SmileBASIC
+  4's paste puts the line ends into the one line, where they show as line
+  breaks, and Enter runs it all. The Paste key (L or R with B on a
+  controller) pastes `CLIPBOARD` that way in the emulator too.
 - Tab on the keyboard takes the word from completion's list when one shows. With
   no list it is a space, as in SmileBASIC 4.
 
@@ -215,9 +223,10 @@ window comes back.
 
 - The stack: `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of
   expressions share one stack on SmileBASIC 4. The emulator counts the first
-  three as SmileBASIC 4 does and values of expressions not at all, so a deep
-  call ending in a long expression can go a few levels further. For
-  `RESTORE "PUSH"`, 1.5 slots each is inferred.
+  three as SmileBASIC 4 does and values of expressions not at all, but for the
+  room `PRINT` needs for a value, so a deep call ending in a long expression
+  can go a few levels further. For `RESTORE "PUSH"`, 1.5 slots each is
+  inferred.
 - `FREEMEM` counts what strings and arrays take as SmileBASIC 4 does, but memory
   a program lets go of is free again at once. SmileBASIC 4 frees it only when a
   request would not fit: emptying a string or an array, or leaving a DEF, does
@@ -394,8 +403,10 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
   in the English edition too.
 - `ENVSTAT` gives the wrong argument's number, from 0, for errors that come from
   checking one argument, such as `LOCATE 0,999`'s `Out of range` (1, as
-  SmileBASIC 4 gives). Errors found by checking several arguments together give
-  -1, which SmileBASIC 4 may number.
+  SmileBASIC 4 gives). It also numbers the checks of a length or a size that
+  SmileBASIC 4 is seen to number: `LEFT$`'s count, `BIQUAD`'s output,
+  `TLOAD`'s and `GLOAD`'s sizes and `ENVSAVE`'s kind. Other errors found by
+  checking several arguments together give -1, which SmileBASIC 4 may number.
 - `Internal Error`: if the emulator itself fails while a program runs, it stops
   the program and prints `Internal Error` with the reason, keeping the slots and
   the editor's text. The stopped program cannot go on with `CONT`. SmileBASIC 4
@@ -407,9 +418,10 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
   File > Settings > Files > "Before file commands such as SAVE and LOAD".
   SmileBASIC 4 always asks. A file command that fails in a program shows a
   notice, rather than a dialog to close, unless file access is silent. The
-  program goes on in the same frame: on SmileBASIC 4, `S$=LOADV("TXT:NONE")`
-  of a missing file returns after 50 to 70 frames of its dialog, with `RESULT`
-  0 as here, and `LOADG` of a missing file opens a dialog too.
+  program goes on in the same frame, with `RESULT` 0. On SmileBASIC 4,
+  `LOADV` or `LOADG` of a missing file opens a File not found dialog that
+  holds the program until it is answered, in main programs and subprograms
+  alike.
 - A file command's question starts on the button that goes ahead, as
   SmileBASIC 4's save question starts on OK. Replacing a file asks once, with
   a line saying so, where SmileBASIC 4 asks twice, whether to save and then
@@ -424,11 +436,8 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
 - `METASAVE` keeps a project's title and description in `@META.TXT` and its icon
   in `@ICON.PNG`, in the project's folder. `METALOAD` reads SmileBASIC 4's own
   `META` file when those are missing.
-- `SAVE`, `SAVEV` and `SAVEG` of a file in a `#` system project fail with
-  `RESULT` 0 at the prompt and in a subprogram, and are error 74 in a main
-  program, where SmileBASIC 4 gives `Can't SAVE to system project`, error 75,
-  in every mode. `LOADG "PNG:..."` of a `#` project's file fails with
-  `RESULT` 0, as the emulator reads no `PNG:` files.
+- `LOADG "PNG:..."` of a `#` project's file fails with `RESULT` 0, as the
+  emulator reads no `PNG:` files.
 
 ### Files from elsewhere
 
