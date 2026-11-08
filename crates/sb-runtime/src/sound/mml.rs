@@ -669,19 +669,18 @@ impl Parser {
                     _ => return Err(self.end()),
                 }
             }
-            // Singing: the next note sings the phonemes.
+            // Singing: the next note sings the phonemes. It takes three
+            // letters at most, which are not checked (`*XA,C` passes), and
+            // then a comma: `*KONNICHIWA,C1` fails after `KON`.
             '*' => {
                 let start = self.at;
-                while self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
+                while self.at - start < 3 && self.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
                     self.at += 1;
                 }
-                let letters = &self.text[start..self.at];
-                if let Some(bad) = super::talk::bad_letter(letters) {
-                    return Err(self.start(start + bad));
-                }
-                let letters: String = letters.iter().collect();
+                let letters: String = self.text[start..self.at].iter().collect();
+                let after = self.end();
                 if !self.eat(',') {
-                    return Err(self.end());
+                    return Err(after);
                 }
                 if letters.is_empty() {
                     return Ok(());
@@ -1099,28 +1098,20 @@ mod tests {
         assert!(parse("*WA C4").is_err());
     }
 
-    /// A sung note's letters must make syllables: ん is Q, and the error
-    /// is at the first letter that cannot go on.
+    /// A sung note takes three letters at most, any letters, and then a
+    /// comma (TEST44, TEST71).
     #[test]
-    fn sung_notes_take_only_syllables() {
+    fn sung_notes_take_three_letters() {
         assert_eq!(parse("T60@0O4*KONNICHIWA,C1").err(), Some(11));
-        assert!(parse("T60@0O4*KOQNICHIWA,C1").is_ok());
+        assert_eq!(parse("T60@0O4*KOQNICHIWA,C1").err(), Some(11));
+        assert!(parse("T60@0O4*KO,C*Q,C*NI,C*CHI,C*WA,C1").is_ok());
         for ok in [
-            "*KYA,C", "*SHI,C", "*CHI,C", "*TSU,C", "*CLTO,C", "*FA,C", "*JI,C", "*N,C", "*K,C",
-            "*DYU,C", "*RYO,C", "*Q,C", "*AIUEO,C",
+            "*RYA,C", "*CA,C", "*CHA,C", "*XA,C", "*KXA,C", "*CLA,C", "*L,C", "*KK,C", "*VA,C",
+            "*,C",
         ] {
             assert!(parse(ok).is_ok(), "{ok}");
         }
-        for (bad, at) in [
-            ("*L,C", 1),
-            ("*KK,C", 2),
-            ("*XA,C", 1),
-            ("*C,C", 2),
-            ("*CA,C", 2),
-            ("*SHYA,C", 3),
-            ("*WYA,C", 2),
-            ("*VA,C", 1),
-        ] {
+        for (bad, at) in [("*SHYA,C", 4), ("*AIUEO,C", 4), ("*WA C4", 3)] {
             assert_eq!(parse(bad).err(), Some(at), "{bad}");
         }
     }

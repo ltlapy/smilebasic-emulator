@@ -268,46 +268,6 @@ fn consonant(letters: &str) -> Option<&'static str> {
     })
 }
 
-/// Where a sung note's phoneme letters stop making syllables, as an index
-/// into `letters`, or None when they all do. The help's letters are the
-/// vowels, `q` (ん), `cl` (っ) and consonants (`b d f g h j k m n p r s t
-/// w y z`, `by ch dy gy hy ky my ny py sh ts`); a consonant goes before a
-/// vowel or ends the letters (`*K,C16`). The first letter that cannot go
-/// on is the wrong one: in `KONNICHIWA`, the second N.
-// UNVERIFIED: `ry`, which the help leaves out though りゃ needs it; and
-// that a `c` with no `h` or `l` after it is wrong at the next letter.
-pub(crate) fn bad_letter(letters: &[char]) -> Option<usize> {
-    let at = |i: usize| letters.get(i).map(char::to_ascii_lowercase);
-    let vowel = |c: Option<char>| c.is_some_and(|c| "aiueo".contains(c));
-    let mut i = 0;
-    while let Some(c) = at(i) {
-        let next = at(i + 1);
-        // Where the consonant's letters end.
-        let end = match (c, next) {
-            _ if vowel(Some(c)) || c == 'q' => {
-                i += 1;
-                continue;
-            }
-            ('c', Some('l')) => {
-                i += 2;
-                continue;
-            }
-            ('c', Some('h')) | ('s', Some('h')) | ('t', Some('s')) => i + 2,
-            ('b' | 'd' | 'g' | 'h' | 'k' | 'm' | 'n' | 'p' | 'r', Some('y')) => i + 2,
-            ('c', _) => return Some(i + 1),
-            ('b' | 'd' | 'f' | 'g' | 'h' | 'j' | 'k' | 'm' | 'n' | 'p' | 'r' | 's' | 't', _)
-            | ('w' | 'y' | 'z', _) => i + 1,
-            _ => return Some(i),
-        };
-        match at(end) {
-            None => return None,
-            v if vowel(v) => i = end + 1,
-            _ => return Some(end),
-        }
-    }
-    None
-}
-
 /// SmileBASIC's phoneme letters, `<S…>` and the like as morae.
 fn morae(text: &str) -> Vec<Mora> {
     let chars: Vec<char> = text.to_ascii_lowercase().chars().collect();
@@ -378,8 +338,8 @@ fn morae(text: &str) -> Vec<Mora> {
             "sh" | "ch" | "ts" => (rest.clone(), 2),
             _ => (c.to_string(), 1),
         };
-        // UNVERIFIED: that TALK skips letters that are no phoneme, where a
-        // sung note's are Illegal MML (see `bad_letter`).
+        // TALK and sung notes skip letters that are no phoneme (`$xa`,
+        // `*XA,C`): neither is an error.
         let Some(cons) = consonant(&letters) else {
             i += 1;
             continue;

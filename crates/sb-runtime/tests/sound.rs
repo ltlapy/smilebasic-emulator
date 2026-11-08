@@ -773,7 +773,10 @@ fn talk_and_sung_notes_sound_together() {
             .kind,
         ErrorKind::IllegalMml
     );
-    run_on(&mut rt, "BGMPLAY \"T60@0O4*KOQNICHIWA,C1\"").unwrap();
+    // Three letters at most to a note; letters that are no phoneme pass.
+    run_on(&mut rt, "BGMPLAY \"T60@0O4*KO,C*Q,C*NI,C*CHI,C*WA,C1\"").unwrap();
+    run_on(&mut rt, "BGMPLAY \"T60@0O4*XA,C*KXA,C\"").unwrap();
+    frames(&mut rt, 10);
 }
 
 #[test]
