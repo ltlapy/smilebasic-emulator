@@ -1034,12 +1034,24 @@ TEST68 on a Switch 2 (4.4.9) with a Korean-layout USB keyboard:
   laid out.
 - `GPUTCHR` given a font type other than 8 or 16 is `Illegal font type`.
 - `PRINT` on a console of such a font type shows only user-defined characters.
-- `GPUTCHRP` takes each character from one empty column before what is drawn of
-  it (none if the glyph starts at its first column) to its last drawn column. It
-  then moves on that many pixels plus the spacing (1 when left out). A blank
-  character is a quarter of the font size wide.
+- The 16-pixel font page has partial alpha at glyph edges (48 pixels of A, and
+  of あ); the 8-pixel page has none. `GPUTCHR` draws the same values (TEST69).
+- `GPUTCHRP` moves on after each character by its width plus the spacing (1 when
+  left out). The widths come from a fixed table, not from GRP5: filling A's
+  cells on GRP5 and clearing I's changes none of them (TEST69).
+- For most glyphs the width runs from one empty column before what is drawn of
+  the glyph (none if the glyph starts at its first column) to its last drawn
+  column. The space is a quarter of the font size wide.
 - In the 16-pixel font, `GPUTCHRP`'s width is the one font.map holds in bits
-  7-15 of each code's second u16.
+  7-15 of each code's second u16. Widths at 16 and 8 (TEST69): U+0000 14/7,
+  U+00B2 7/4, U+2026 13/6, U+203B 14/7, U+21D2 14/7, U+30B8 16/8, U+E200 14/7,
+  U+E25B 1/1, U+E2A0 16/8, U+3000 14/7, and A 13/6. At 8 the high byte of the
+  same u16 gives eight of these; it misses U+00B2 and U+E25B.
+- Characters not in the font draw the missing glyph, and `GPUTCHRP` gives them
+  16 (U+25A2, U+AC00; TEST69). U+25A0 is in the font, 14 wide.
+- A user-defined character takes 16 at 16 and 8 at 8, also when its cell is
+  empty, which draws nothing. After `TPAGE 4,-1`, `GPUTCHR` of a user-defined
+  character draws nothing, and `GPUTCHRP` still gives it 16 (TEST69).
 - `GPUTCHRP`'s function form's width scales the spacing with the characters:
   `GPUTCHRP("AB",16,2,3)` is 2*(13+11+3).
 
