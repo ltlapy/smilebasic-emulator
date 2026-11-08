@@ -257,7 +257,8 @@ const SWITCH2: Costs = Costs {
     tfill: 156_000,
     tfill_cell: 18_480,
     scroll_cell: 2_500,
-    grp: 150_000,
+    // TEST67's GFILL of 8, 32 and 128 pixels.
+    grp: 125_000,
     copy: 200_000,
     row: 1_000,
     fill_px: 458,
@@ -349,9 +350,10 @@ const SWITCH1: Costs = Costs {
     tfill: 374_000,
     tfill_cell: 32_700,
     scroll_cell: 4_900,
-    grp: 250_000,
+    // As for the Switch 2.
+    grp: 193_000,
     copy: 340_000,
-    row: 24_000,
+    row: 23_000,
     fill_px: 955,
     copy_px: 2_100,
     alpha_px: 17_500,
