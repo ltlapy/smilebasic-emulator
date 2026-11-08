@@ -30,6 +30,8 @@ pub enum ErrorKind {
     /// A file named with its project where programs may not name one,
     /// as in EXEC.
     CantAccessOtherProject,
+    /// SAVE, SAVEV or SAVEG into one of SmileBASIC 4's own `#` projects.
+    CantSaveToSystemProject,
     /// LOAD or SAVE of a type of file other than a program's, as `DAT:`.
     FileTypeMismatch,
     IllegalAnimationData,
@@ -56,6 +58,8 @@ pub enum ErrorKind {
     /// A command for programs only, such as EXEC, in direct mode. SmileBASIC
     /// 4 shows it without a place.
     CantUseFromDirectMode,
+    /// A command for direct mode only, such as PROJECT, run in a program.
+    CantUseInProgram,
     /// SYSPARAM of a name it does not know.
     IllegalSystemArgumentName,
     /// SYSPARAM asked for another number of values than its item has, or
@@ -118,6 +122,7 @@ impl ErrorKind {
             ErrorKind::IllegalAnimationData => 41,
             ErrorKind::StringTooLong => 42,
             ErrorKind::CantUseFromDirectMode => 43,
+            ErrorKind::CantUseInProgram => 44,
             ErrorKind::LoadFailed => 45,
             ErrorKind::UndefinedConstant => 50,
             ErrorKind::WrongNumberOfArguments => 52,
@@ -130,6 +135,7 @@ impl ErrorKind {
             ErrorKind::CantUseUserDefinedCharacter => 68,
             ErrorKind::IllegalFormat => 71,
             ErrorKind::CantAccessOtherProject => 74,
+            ErrorKind::CantSaveToSystemProject => 75,
             ErrorKind::UndefinedProjectName => 76,
             ErrorKind::FileTypeMismatch => 77,
             ErrorKind::IllegalProjectName => 78,
@@ -170,6 +176,7 @@ impl ErrorKind {
             ErrorKind::IllegalProjectName => "Illegal project name",
             ErrorKind::UndefinedProjectName => "Undefined project name",
             ErrorKind::CantAccessOtherProject => "Can't access other project in this mode",
+            ErrorKind::CantSaveToSystemProject => "Can't SAVE to system project",
             ErrorKind::FileTypeMismatch => "File type mismatch",
             ErrorKind::IllegalAnimationData => "Illegal animation data",
             ErrorKind::SpriteNotSet => "Sprite not set",
@@ -182,6 +189,7 @@ impl ErrorKind {
             ErrorKind::UsePrgedit => "Use PRGEDIT before any PRG function",
             ErrorKind::LoadFailed => "Load failed",
             ErrorKind::CantUseFromDirectMode => "Can't use from direct mode",
+            ErrorKind::CantUseInProgram => "Can't use in program",
             ErrorKind::IllegalSystemArgumentName => "Illegal system argument name",
             ErrorKind::IllegalFormat => "Illegal format",
             ErrorKind::StackUnderflow => "Stack underflow",
