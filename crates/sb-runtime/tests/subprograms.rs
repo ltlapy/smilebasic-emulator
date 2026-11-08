@@ -91,6 +91,7 @@ fn a_subprogram_runs_beside_direct_mode_and_reaches_the_main_one() {
          ENVLOAD 0,1,2\n\
          GPSET 0,0,#C_RED\n\
          ENVSAVE 1,0,3\n\
+         ENVSAVE 3,0,0:ENVSAVE 4,9,9\n\
          ENVFOCUS 0\n\
          PUSHKEY \"?ENVTYPE(),\"+STR$(S)+\",\"+STR$(LEN(PRGNAME$(2)))+CHR$(13)\n\
          WHILE 1:VSYNC:WEND\n",

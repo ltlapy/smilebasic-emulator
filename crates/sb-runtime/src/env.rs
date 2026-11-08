@@ -260,8 +260,12 @@ impl Runtime {
                 Ok(vec![Value::Str(new_str(text))])
             }
             // Only subprograms copy; on the main interpreter they do
-            // nothing (checked on hardware for ENVLOAD).
+            // nothing (checked on hardware for ENVLOAD), though ENVSAVE
+            // checks its kind.
             (Command::Envload | Command::Envsave, Want::Outs(0), [a, b, c]) => {
+                if command == Command::Envsave {
+                    envsave_kind(a)?;
+                }
                 for v in [a, b, c] {
                     v.to_int()?;
                 }
@@ -391,6 +395,18 @@ impl Runtime {
             self.storage.write_project_file(name, &bytes)?;
         }
         Ok(())
+    }
+}
+
+/// ENVSAVE's kind of thing to copy: 1 a graphic page and 2 a sprite
+/// definition, while 3 and 4 copy nothing. 0, a program slot, which only
+/// ENVLOAD copies, is Illegal function call, and the others Out of
+/// range. UNVERIFIED: that a negative kind is Out of range too.
+pub(crate) fn envsave_kind(kind: &Value) -> Result<i32> {
+    match kind.to_int().map_err(|e| e.of_arg(0))? {
+        n @ 1..=4 => Ok(n),
+        0 => Err(Error::with_detail(ErrorKind::IllegalFunctionCall, "program slot").of_arg(0)),
+        n => Err(Error::with_detail(ErrorKind::OutOfRange, format!("kind {n}")).of_arg(0)),
     }
 }
 

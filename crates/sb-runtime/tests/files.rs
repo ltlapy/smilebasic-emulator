@@ -1370,14 +1370,31 @@ fn loadg_types_of_file() {
     assert_eq!(e.kind.code(), 74);
 }
 
-/// ENVSAVE in a main program gives no error.
+/// ENVSAVE in a main program copies nothing and gives no error, for a
+/// kind it takes.
 #[test]
 fn envsave_runs_in_a_main_program() {
     let dir = TempDir::new("envsave");
     let mut m = machine(&dir);
-    m.set_slot(0, "ENVSAVE 1,0,3:?\"PAST\"".to_string());
+    m.set_slot(
+        0,
+        "ENVSAVE 1,0,3:ENVSAVE 3,0,0:ENVSAVE 4,0,0:?\"PAST\"".to_string(),
+    );
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["PAST", "OK"]);
+    // Its kind is checked: 0 is Illegal function call, 5 Out of range.
+    for (kind, message, code) in [
+        (
+            0,
+            "Illegal function call in 0:2(ENVSAVE:1) (program slot)",
+            4,
+        ),
+        (5, "Out of range in 0:2(ENVSAVE:1) (kind 5)", 10),
+    ] {
+        m.set_slot(0, format!("A=1\nENVSAVE {kind},0,0"));
+        enter(&mut m, "run");
+        assert_eq!(program_error(&mut m), (message.to_string(), code, Some(0)));
+    }
 }
 
 /// PROJECT in a program stops it with error 44 when it runs, while

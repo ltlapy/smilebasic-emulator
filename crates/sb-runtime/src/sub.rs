@@ -140,7 +140,8 @@ impl Runtime {
 }
 
 /// ENVLOAD (`load`) or ENVSAVE of a program slot (kind 0, ENVLOAD only),
-/// a graphic page (1) or a sprite definition (2).
+/// a graphic page (1) or a sprite definition (2). ENVSAVE of kind 3 or 4
+/// copies nothing.
 fn copy_across(
     main: &mut Runtime,
     sub: &mut Runtime,
@@ -149,6 +150,9 @@ fn copy_across(
     from: &Value,
     to: &Value,
 ) -> Result<()> {
+    if !load && matches!(crate::env::envsave_kind(kind)?, 3 | 4) {
+        return Ok(());
+    }
     let (kind, from, to) = (kind.to_int()?, from.to_int()?, to.to_int()?);
     let (source, dest) = if load { (main, sub) } else { (sub, main) };
     let index = |n: i32, count: usize| {
@@ -176,7 +180,7 @@ fn copy_across(
             let (from, to) = (index(from, DEFS)?, index(to, DEFS)?);
             dest.sprites.defs[to] = source.sprites.defs[from];
         }
-        n => return Err(Error::with_detail(ErrorKind::OutOfRange, format!("{n}"))),
+        n => return Err(Error::with_detail(ErrorKind::OutOfRange, format!("{n}")).of_arg(0)),
     }
     Ok(())
 }
