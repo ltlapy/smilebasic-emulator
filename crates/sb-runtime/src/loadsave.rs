@@ -340,6 +340,7 @@ impl Runtime {
                     Some((image, stored)) => {
                         if let Some(meter) = &mut self.meter {
                             meter.charge_loadg((image.width * image.height) as u64, stored);
+                            meter.charge_read(&spec, stored, false);
                         }
                         self.grp.put_image(page, at, &image);
                         Ok(sizes(image.width, image.height))

@@ -172,20 +172,23 @@ fn spclr_of_a_range_costs_each_sprite() {
 }
 
 /// A GFILL whose left edge is off a 16-pixel boundary costs more on each
-/// row, and half as much more on an 8-pixel one, as TEST70 finds on a
-/// Switch 1. Its row costs nothing.
+/// row, less on a 4-pixel one, as TEST70 and TEST71 find on a Switch 1.
+/// Its row costs nothing, but one of the last 64 places costs less than
+/// a new one.
 #[test]
 fn drawing_off_a_16_pixel_boundary_costs_more() {
     let fill = |x: u32, y: &str| {
         format!("PERFBEGIN 0:FOR I=0 TO 99:GFILL {x},{y},{x}+31,{y}+31,-1:NEXT:?PERFEND(0)\n")
     };
     let at = |x, y| passes(Speed::Switch1, &fill(x, y));
-    let (aligned, half, off) = (at(16, "I"), at(24, "I"), at(17, "I"));
+    let (aligned, on4, off) = (at(16, "I"), at(20, "I"), at(17, "I"));
     assert!(
-        off > aligned * 2.0 && (half - (aligned + off) / 2.0).abs() < 2.0,
-        "{aligned} us, {half} us, {off} us"
+        off > aligned * 2.0 && aligned < on4 && on4 < off,
+        "{aligned} us, {on4} us, {off} us"
     );
     assert_eq!(at(16, "0"), aligned);
+    let same = at(17, "0");
+    assert!(aligned < same && same < off, "{same} us, {off} us");
 }
 
 /// Changing 64 sprites in turn costs what changing one does; changing
@@ -250,6 +253,24 @@ fn exec_costs_the_source_it_compiles() {
     assert!((800.0..1_000.0).contains(&comment), "{comment} us");
 }
 
+/// The first LOADG of a file costs more than the next ones, as the
+/// console reads a file faster once it has read it (TEST69 to TEST71).
+#[test]
+fn a_file_read_the_first_time_costs_more() {
+    let dir = std::env::temp_dir().join(format!("sb-speed-first-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut rt = Runtime::new(400, 240, Font::blank());
+    rt.storage = Storage::new(dir.clone());
+    rt.settings.file_confirm = FileConfirm::Silent;
+    let source = "SAVEG \"PIC\",0,0,0,64,64\n\
+        PERFBEGIN 0:LOADG \"PIC\",1:A=PERFEND(0)\n\
+        PERFBEGIN 0:LOADG \"PIC\",1:?A;\" \";PERFEND(0)\n";
+    let line = run_on(Speed::Switch1, rt, &[(0, source)]);
+    let _ = std::fs::remove_dir_all(&dir);
+    let (first, next) = pair(&line);
+    assert!(first > next + 500.0, "{first} us, {next} us");
+}
+
 /// LOADG costs a base, each pixel of the image and each byte of its
 /// file: TEST68's 1024x624 font took 10.4 ms on a Switch 2. One that
 /// loads nothing costs little.
@@ -264,7 +285,7 @@ fn loadg_costs_the_pixels_it_decodes() {
         let source = match w {
             0 => "PERFBEGIN 0:LOADG \"NONE\",1:?PERFEND(0)\n".to_string(),
             _ => format!(
-                "SAVEG \"PIC\",0,0,0,{w},{h}\n\
+                "SAVEG \"PIC\",0,0,0,{w},{h}:LOADG \"PIC\",1\n\
                  PERFBEGIN 0:LOADG \"PIC\",1:?PERFEND(0)\n"
             ),
         };

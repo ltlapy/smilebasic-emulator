@@ -2691,6 +2691,9 @@ impl Host for Runtime {
                 Some(false) => return Err(ErrorKind::LoadFailed.into()),
                 Some(true) => {}
             }
+            if let Some(meter) = &mut self.meter {
+                meter.charge_read(&file, self.slots[slot].len() as u64, true);
+            }
         }
         self.slot_edits.push((slot, crate::prg::SlotEdit::Compiled));
         if let Some(meter) = &mut self.meter {
