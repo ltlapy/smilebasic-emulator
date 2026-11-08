@@ -1077,11 +1077,14 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
 - For most glyphs the width runs from one empty column before what is drawn of
   the glyph (none if the glyph starts at its first column) to its last drawn
   column. The space is a quarter of the font size wide.
-- In the 16-pixel font, `GPUTCHRP`'s width is the one font.map holds in bits
-  7-15 of each code's second u16. Widths at 16 and 8 (TEST69): U+0000 14/7,
-  U+00B2 7/4, U+2026 13/6, U+203B 14/7, U+21D2 14/7, U+30B8 16/8, U+E200 14/7,
-  U+E25B 1/1, U+E2A0 16/8, U+3000 14/7, and A 13/6. At 8 the high byte of the
-  same u16 gives eight of these; it misses U+00B2 and U+E25B.
+- font.map holds each code's `GPUTCHRP` width for both sizes in its u32 entry:
+  bits 15-18 at 8 pixels and bits 23-27 at 16. The 8-pixel widths are not the
+  16-pixel ones halved. Widths at 16 and 8 (TEST69), all as these bits give
+  them: U+0000 14/7, U+00B2 7/4, U+2026 13/6, U+203B 14/7, U+21D2 14/7,
+  U+30B8 16/8, U+E200 14/7, U+E25B 1/1, U+E2A0 16/8, U+3000 14/7, and A 13/6.
+- The same entry holds the first column of what `GPUTCHRP` counts as the
+  character: bits 12-14 at 8 pixels and bits 19-22 at 16 (I: 1 and 3).
+  (Not yet seen on hardware.)
 - Characters not in the font draw the missing glyph, and `GPUTCHRP` gives them
   16 (U+25A2, U+AC00; TEST69). U+25A0 is in the font, 14 wide.
 - A user-defined character takes 16 at 16 and 8 at 8, also when its cell is

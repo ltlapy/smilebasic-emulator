@@ -52,8 +52,8 @@ struct Pages(
 
 /// GPUTCHRP's view of a character: it draws columns `first..` of the
 /// glyph, as many as `width` and the cell allow, and then moves on
-/// `width` pixels before the spacing. Fixed for each code: it does not
-/// follow what a program draws on GRP5.
+/// `width` pixels before the spacing. Fixed for each code:
+/// it does not follow what a program draws on GRP5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Span {
     pub first: i32,
@@ -61,21 +61,17 @@ pub struct Span {
 }
 
 impl Span {
-    /// From a 4.x font.map entry's second u16: at 16 pixels bits 7-15 are
-    /// the width and bits 3-6 the first column.
+    /// From a 4.x font.map entry's bits 12 to 27 (see [`parse_map`]):
+    /// at 8 pixels bits 0-2 are the first column and 3-6 the width, at
+    /// 16 pixels bits 7-10 the first column and 11-15 the width.
     fn from_metrics(m: u16, size: FontSize) -> Span {
-        // UNVERIFIED: the first column. Hardware gave only widths; this
-        // is the column before the ink for nearly every glyph.
-        let (first, width) = (i32::from(m >> 3 & 0xF), i32::from(m >> 7));
-        match size {
-            FontSize::Large => Span { first, width },
-            // UNVERIFIED: the 16-pixel columns halved, rounding both ends
-            // down. It fits the ten codes TEST69 measured at 8, where the
-            // high byte alone misses two of them.
-            FontSize::Small => Span {
-                first: first / 2,
-                width: (first + width) / 2 - first / 2,
-            },
+        let (first, width) = match size {
+            FontSize::Small => (m & 0x7, m >> 3 & 0xF),
+            FontSize::Large => (m >> 7 & 0xF, m >> 11),
+        };
+        Span {
+            first: i32::from(first),
+            width: i32::from(width),
         }
     }
 
@@ -240,25 +236,32 @@ impl From<FileError> for FontError {
 
 /// Reads `font.map`: each code's glyph number, and from 4.x maps its
 /// GPUTCHRP metrics. Version 1.x stores one u16 glyph number per code;
-/// 4.x stores two u16s per code, the low 12 bits of the first being the
-/// glyph number and the second the metrics.
+/// 4.x stores a u32 per code, bits 0-11 being the glyph number and bits
+/// 12-27 the metrics, kept here as a u16.
 pub fn parse_map(bytes: &[u8]) -> Result<(Vec<u16>, Option<Vec<u16>>), FontError> {
-    let u16_at = |e: &[u8], i: usize| u16::from_le_bytes([e[i], e[i + 1]]);
     match bytes.len() {
         n if n == CODES * 2 => Ok((
             bytes
                 .chunks_exact(2)
-                .map(|e| u16_at(e, 0) & 0x0FFF)
+                .map(|e| u16::from_le_bytes([e[0], e[1]]) & 0x0FFF)
                 .collect(),
             None,
         )),
-        n if n == CODES * 4 => Ok((
-            bytes
-                .chunks_exact(4)
-                .map(|e| u16_at(e, 0) & 0x0FFF)
-                .collect(),
-            Some(bytes.chunks_exact(4).map(|e| u16_at(e, 2)).collect()),
-        )),
+        n if n == CODES * 4 => {
+            let entry = |e: &[u8]| u32::from_le_bytes([e[0], e[1], e[2], e[3]]);
+            Ok((
+                bytes
+                    .chunks_exact(4)
+                    .map(|e| entry(e) as u16 & 0x0FFF)
+                    .collect(),
+                Some(
+                    bytes
+                        .chunks_exact(4)
+                        .map(|e| (entry(e) >> 12) as u16)
+                        .collect(),
+                ),
+            ))
+        }
         n => Err(FontError::MapSize(n)),
     }
 }
@@ -619,6 +622,12 @@ impl Font {
 mod tests {
     use super::*;
 
+    /// A 4.x font.map entry: the glyph number, then the first column and
+    /// width at 8 pixels and at 16.
+    fn entry(glyph: u32, small: (u32, u32), large: (u32, u32)) -> u32 {
+        glyph | small.0 << 12 | small.1 << 15 | large.0 << 19 | large.1 << 23
+    }
+
     #[test]
     fn map_layouts() {
         let mut v1 = vec![0u8; CODES * 2];
@@ -627,34 +636,43 @@ mod tests {
         assert!(parse_map(&v1).unwrap().1.is_none());
 
         let mut v4 = vec![0u8; CODES * 4];
-        // Glyph 305 with flag bits set, as stored for full-width kana.
-        v4[0x3042 * 4..0x3042 * 4 + 4].copy_from_slice(&[0x31, 0x81, 0x03, 0x07]);
+        // Glyph 305, 7 of 8 pixels and 14 of 16 wide, as full-width kana.
+        let kana = entry(305, (0, 7), (0, 14));
+        v4[0x3042 * 4..0x3042 * 4 + 4].copy_from_slice(&kana.to_le_bytes());
         let (glyphs, metrics) = parse_map(&v4).unwrap();
         assert_eq!(glyphs[0x3042], 305);
-        assert_eq!(metrics.unwrap()[0x3042], 0x0703);
+        assert_eq!(metrics.unwrap()[0x3042], (kana >> 12) as u16);
 
         assert!(matches!(parse_map(&[0; 3]), Err(FontError::MapSize(3))));
     }
 
     #[test]
     fn spans_from_metrics() {
-        let metrics = |first: u16, width: u16| width << 7 | first << 3 | 3;
-        let span = |first, width| Span { first, width };
-        let mut table = vec![metrics(0, 16); CODES];
-        table[0x41] = metrics(0, 13);
-        table[0x49] = metrics(3, 7);
-        table[0xE25B] = metrics(15, 1);
-        let font = Font::blank_with_metrics(table);
-        let (small, large) = (FontSize::Small, FontSize::Large);
-        assert_eq!(font.span(0x41, large), span(0, 13));
-        assert_eq!(font.span(0x41, small), span(0, 6));
-        // At 8, the 16-pixel columns 3 to 9 become 1 to 4.
-        assert_eq!(font.span(0x49, large), span(3, 7));
-        assert_eq!(font.span(0x49, small), span(1, 4));
-        assert_eq!(font.span(0xE25B, large), span(15, 1));
-        assert_eq!(font.span(0xE25B, small), span(7, 1));
-        assert_eq!(font.span(0x42, large), span(0, 16));
-        assert_eq!(font.span(0x42, small), span(0, 8));
+        // Widths GPUTCHRP gave on hardware; the 8-pixel ones are not the
+        // 16-pixel ones halved (U+00B2, U+E25B).
+        let codes = [
+            (0x41, (0, 6), (0, 13)),
+            (0x49, (1, 4), (3, 7)),
+            (0xB2, (1, 4), (3, 7)),
+            (0x2026, (0, 6), (0, 13)),
+            (0x3000, (0, 7), (0, 14)),
+            (0x30B8, (0, 8), (0, 16)),
+            (0xE25B, (7, 1), (15, 1)),
+        ];
+        let mut v4 = vec![0u8; CODES * 4];
+        for &(code, small, large) in &codes {
+            let e = entry(0x123, small, large);
+            v4[code * 4..code * 4 + 4].copy_from_slice(&e.to_le_bytes());
+        }
+        let font = Font::blank_with_metrics(parse_map(&v4).unwrap().1.unwrap());
+        let span = |(first, width): (u32, u32)| Span {
+            first: first as i32,
+            width: width as i32,
+        };
+        for &(code, small, large) in &codes {
+            assert_eq!(font.span(code as u16, FontSize::Small), span(small));
+            assert_eq!(font.span(code as u16, FontSize::Large), span(large));
+        }
     }
 
     #[test]

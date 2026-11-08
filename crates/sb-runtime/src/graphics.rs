@@ -2971,7 +2971,7 @@ mod tests {
     fn proportional_widths_ignore_the_font_page() {
         for font in [
             Font::fallback(),
-            Font::blank_with_metrics(vec![13 << 7; 0x1_0000]),
+            Font::blank_with_metrics(vec![13 << 11 | 6 << 3; 0x1_0000]),
         ] {
             let (mut g, _) = chars_pages(&font);
             let text = [0x41, 0x49, 0x20, 0x3042];
