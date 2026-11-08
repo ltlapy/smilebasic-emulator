@@ -1576,21 +1576,22 @@ impl Runtime {
         std::mem::take(&mut self.requests)
     }
 
-    pub(crate) fn direct_only(&self) -> Result<()> {
-        if self.direct {
-            Ok(())
-        } else {
-            // Checked on hardware: CLEAR in a program is a Syntax error
-            // when it runs, as are NEW and RUN. UNVERIFIED: that PROJECT is too.
-            Err(Error::with_detail(
+    /// A command for DIRECT mode only, run in a program, gives `kind`
+    /// when it runs: a Syntax error for CLEAR, NEW and RUN, Can't use in
+    /// program for PROJECT.
+    pub(crate) fn direct_only(&self, kind: ErrorKind) -> Result<()> {
+        match (self.direct, kind) {
+            (true, _) => Ok(()),
+            (false, ErrorKind::SyntaxError) => Err(Error::with_detail(
                 ErrorKind::SyntaxError,
                 "only in direct mode",
-            ))
+            )),
+            (false, kind) => Err(kind.into()),
         }
     }
 
     pub(crate) fn request(&mut self, request: Request) -> Result<Vec<Value>> {
-        self.direct_only()?;
+        self.direct_only(ErrorKind::SyntaxError)?;
         self.requests.push(request);
         Ok(vec![])
     }
@@ -2232,7 +2233,7 @@ impl Runtime {
             }
             (Command::Clear, Want::Outs(0)) if args.is_empty() => self.request(Request::Clear),
             (Command::New, Want::Outs(0)) if args.len() <= 1 => {
-                self.direct_only()?;
+                self.direct_only(ErrorKind::SyntaxError)?;
                 let slots = match args.first() {
                     None => 0..SLOTS,
                     slot => slot_arg(slot).map(|s| s..s + 1)?,
@@ -2271,7 +2272,7 @@ impl Runtime {
             // CONT: direct mode only, with the same Syntax error as CLEAR in a
             // program.
             (Command::Cont, Want::Outs(0)) if args.is_empty() => {
-                self.direct_only()?;
+                self.direct_only(ErrorKind::SyntaxError)?;
                 match self.stopped {
                     Stopped::Paused => self.request(Request::Cont),
                     _ => Err(ErrorKind::CantContinue.into()),
@@ -2280,7 +2281,7 @@ impl Runtime {
             // Unlike SmileBASIC 4, the program can go on afterwards. To
             // stop it as SmileBASIC 4 does, bring back the lines below.
             (Command::Backtrace, Want::Outs(0)) if args.is_empty() => {
-                self.direct_only()?;
+                self.direct_only(ErrorKind::SyntaxError)?;
                 for (slot, line) in self.backtrace.clone() {
                     let text: Vec<u16> = format!("{slot}:{line:6}").encode_utf16().collect();
                     self.text[CONSOLE].print(&text);
@@ -2292,7 +2293,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Trace, Want::Outs(0)) if args.is_empty() => {
-                self.direct_only()?;
+                self.direct_only(ErrorKind::SyntaxError)?;
                 match self.stopped {
                     Stopped::Paused => self.request(Request::Trace),
                     _ => Err(ErrorKind::CantTrace.into()),

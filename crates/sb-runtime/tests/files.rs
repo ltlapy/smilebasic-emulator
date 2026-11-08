@@ -247,7 +247,7 @@ fn failures_set_result_and_explain() {
     enter(&mut m, "run");
     let r = tail(&m, 3);
     assert_eq!(r[0], "0");
-    assert!(r[1].starts_with("Syntax error in 0:2"), "{r:?}");
+    assert!(r[1].starts_with("Can't use in program in 0:2"), "{r:?}");
     enter(&mut m, "new");
     assert_eq!(m.slot(0), "");
     // Unless file access is silent, a program's failures show as notices.
@@ -1308,6 +1308,21 @@ fn envsave_runs_in_a_main_program() {
     m.set_slot(0, "ENVSAVE 1,0,3:?\"PAST\"".to_string());
     enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["PAST", "OK"]);
+}
+
+/// PROJECT in a program stops it with error 44 when it runs, while
+/// CLEAR stays a Syntax error.
+#[test]
+fn project_in_a_program_cannot_be_used() {
+    let dir = TempDir::new("project-in-program");
+    let mut m = machine(&dir);
+    m.set_slot(0, "?\"A\"\nPROJECT \"\"".to_string());
+    enter(&mut m, "run");
+    let message = "Can't use in program in 0:2(PROJECT)".to_string();
+    assert_eq!(program_error(&mut m), (message, 44, None));
+    m.set_slot(0, "?\"A\"\nCLEAR".to_string());
+    enter(&mut m, "run");
+    assert_eq!(program_error(&mut m).1, 3);
 }
 
 /// TEST69: LOADV of a DAT file into a string, and RESULT 0 after CHKFILE

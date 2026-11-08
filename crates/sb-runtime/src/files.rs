@@ -88,7 +88,7 @@ impl Runtime {
             (Command::Result, Want::Value, 0) => Ok(vec![Value::Int(self.result)]),
             (Command::Project, Want::Value, 0) => Ok(vec![Value::str(self.storage.project())]),
             (Command::Project, Want::Outs(0), 1) => {
-                self.direct_only()?;
+                self.direct_only(ErrorKind::CantUseInProgram)?;
                 let name = match str_arg(&args[0])?.as_str() {
                     "" => String::new(),
                     name => storage::check_project_name(name).map_err(|_| {
