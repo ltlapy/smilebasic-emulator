@@ -140,9 +140,10 @@ pub(crate) struct Costs {
     spset_new: u64,
     spset_search: u64,
     spset_scan: u64,
-    /// `SPCLR`, and each sprite of the range it is given, in use or not.
+    /// `SPCLR` of one sprite, and of a range of 1, 100, 1000 and 4096
+    /// sprites, in use or not, with straight lines between.
     spclr: u64,
-    spclr_each: u64,
+    spclr_range: [u64; 4],
     sphitsp: u64,
     spanim: u64,
     print_char: u64,
@@ -244,8 +245,9 @@ const SWITCH2: Costs = Costs {
     spset_search: 60_500,
     spset_scan: 2_140,
     spclr: 116_700,
-    // TEST69's SPCLR 0,4095 of free sprites, 0.22 ms.
-    spclr_each: 53_900,
+    // TEST70's SPCLR of 1, 100, 1000 and 4096 free sprites. TEST69's
+    // SPCLR of 1000 sprites in use comes within 8%.
+    spclr_range: [123_300, 4_253_000, 52_388_000, 222_217_000],
     sphitsp: 612_300,
     spanim: 540_000,
     print_char: 22_000,
@@ -338,8 +340,8 @@ const SWITCH1: Costs = Costs {
     spset_search: 248_000,
     spset_scan: 4_320,
     spclr: 300_600,
-    // TEST69's SPCLR 0,4095 of free sprites, 1.50 ms.
-    spclr_each: 365_800,
+    // As for the Switch 2.
+    spclr_range: [358_000, 16_603_000, 191_728_000, 1_499_745_000],
     sphitsp: 1_373_700,
     spanim: 840_000,
     print_char: 40_300,
@@ -700,17 +702,24 @@ impl Runtime {
                     cost
                 }
                 Spclr => {
-                    // UNVERIFIED: that SPCLR with no arguments pays for every
-                    // sprite, as a range of all of them does.
+                    // UNVERIFIED: that SPCLR with no arguments costs what a
+                    // range of every sprite does.
                     let n = match args.len() {
                         0 => SPRITES as u64,
                         2 => {
                             let at = |i| int(args, i).clamp(0, SPRITES as i64 - 1);
                             at(0).abs_diff(at(1)) + 1
                         }
-                        _ => 0,
+                        _ => return other + c.spclr,
                     };
-                    c.spclr + n * c.spclr_each
+                    let [a, b, d, e] = c.spclr_range;
+                    let line =
+                        |n0: u64, c0: u64, n1: u64, c1: u64| c0 + (c1 - c0) * (n - n0) / (n1 - n0);
+                    match n {
+                        ..=100 => line(1, a, 100, b),
+                        101..=1000 => line(100, b, 1000, d),
+                        _ => line(1000, d, SPRITES as u64, e),
+                    }
                 }
                 Sphitsp | Sphitrc | Sphitinfo => c.sphitsp,
                 Spanim | Tanim => c.spanim,
