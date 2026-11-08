@@ -414,6 +414,11 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
 - `METASAVE` keeps a project's title and description in `@META.TXT` and its icon
   in `@ICON.PNG`, in the project's folder. `METALOAD` reads SmileBASIC 4's own
   `META` file when those are missing.
+- `SAVE`, `SAVEV` and `SAVEG` of a file in a `#` system project fail with
+  `RESULT` 0 at the prompt and in a subprogram, and are error 74 in a main
+  program, where SmileBASIC 4 gives `Can't SAVE to system project`, error 75,
+  in every mode. `LOADG "PNG:..."` of a `#` project's file fails with
+  `RESULT` 0, as the emulator reads no `PNG:` files.
 
 ### Files from elsewhere
 

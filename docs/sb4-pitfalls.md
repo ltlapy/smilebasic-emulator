@@ -1814,11 +1814,23 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
   left the page as it was, with no error. The file was there:
   `LOADG "GRP:HG16_NEODGM",3,0,0 OUT W,H` in the same test loaded it.
 - Expected but not yet seen on hardware: a subprogram's `EXEC` refuses a
-  project name too, and `EXEC` takes SmileBASIC 4's own `#` projects. `SAVE`
-  and `SAVEG` refuse a project name with error 74 in a main program, but not
-  in direct mode, and none of `SAVE`, `SAVEV` and `SAVEG` refuses one in a
-  subprogram. `RENAME` and `DELETE` refuse one in direct mode and in a
-  subprogram too.
+  project name too, and `EXEC` takes SmileBASIC 4's own `#` projects.
+- Expected but not yet seen on hardware: `SAVE` and `SAVEG` refuse a project
+  name in a main program as `SAVEV` does, error 74 without an argument's
+  number. At the prompt and in a subprogram, `SAVE`, `SAVEV` and `SAVEG`
+  write to any project named, another project or the workspace's `/NAME`
+  too, after the usual questions; a project that is not there fails with
+  `RESULT` 0. A file in a `#` system project is `Can't SAVE to system
+  project`, error 75.
+- Expected but not yet seen on hardware: `RENAME` and `DELETE` refuse a
+  project name with error 74 in every mode, at the prompt and in a
+  subprogram too. `RENAME` checks its first name first, `(RENAME:1)`, and
+  then its second, `(RENAME:2)`.
+- Expected but not yet seen on hardware: `LOADG "PNG:NAME",0` is error 74,
+  `(LOADG)`, at the prompt and in a subprogram too, unless SmileBASIC 4's own
+  `#` projects are involved. A type that is none, as `XYZ:`, is
+  `Illegal format (LOADG:1)`, error 71, and `TXT:` is
+  `File type mismatch (LOADG)`, error 77. A `JPG:` file loads.
 - `LOADG` leaves the page's pixels outside the loaded image as they were: a
   1024x624 image loaded at 0,0 leaves 1027,5 and 5,627 alone (TEST68).
 - `LOADV` and `LOADG` in a program ask nothing. `S$=LOADV("TXT:NONE")` of a
@@ -1833,17 +1845,25 @@ TEST69K on a Switch 2 (4.4.9) with a 103-key Korean-layout USB keyboard:
   (TEST67).
 - `LOADV "DAT:F",S$` into a string is `Type mismatch (LOADV:2)`, error 8. As a
   function, `S$=LOADV("DAT:F")` of a DAT file of 3 values gives a string of 3
-  characters and `RESULT` 1 (TEST69).
+  characters and `RESULT` 1 (TEST69). Expected but not yet seen on hardware:
+  `LOADV "GRP:F",S$` is the same `Type mismatch (LOADV:2)`, given before the
+  file is looked for.
 - `RESULT` is 0 after `IF CHKFILE("TXT:NONE") THEN LOADV ...` of a missing
   file, where the program before left it 1 (TEST67).
 - `CHKFILE` of a file that is there does not set `RESULT` to 1: it stays 0
   (TEST69, from a `RESULT` of 0 each time).
+- Expected but not yet seen on hardware: `RUN` sets `RESULT` to 0 once the
+  program compiles, and a program with a syntax error leaves it. `CHKFILE`
+  leaves `RESULT` as it was, whether the file is there or not. The two
+  results above follow from these.
 - `LOAD "GRP0:X"` and `SAVE "GRP0:X"` are `Illegal format (LOAD:1)` and
   `(SAVE:1)`, error 71, with no dialog (TEST67), and so is `LOAD "PRG:X",1`.
   Another type of file is `File type mismatch`, error 77, without an
   argument's number: `LOAD "DAT:X",1`, `LOAD "GRP:X",1` and
   `LOAD "JPG:X",1` are `(LOAD)` and `SAVE "DAT:X",1` `(SAVE)`, also when
   there is no such file (TEST69).
+- Expected but not yet seen on hardware: `LOAD "DAT:X"` typed at the prompt
+  is `File type mismatch (LOAD)` too.
 - The question before `SAVE`, `SAVEV` or `SAVEG` starts on OK, so Enter or A
   saves. Replacing a file asks twice, whether to save and then whether to
   overwrite (checked by sending files with a Flipper, 2026-11-03, and in
