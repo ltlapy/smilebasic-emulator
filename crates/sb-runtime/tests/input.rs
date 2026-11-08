@@ -463,6 +463,7 @@ fn keys_by_frame(frames: usize, mut at: impl FnMut(usize, &mut Runtime)) -> Stri
 const A_KEY: u8 = 4;
 const B_KEY: u8 = 5;
 const LEFT_SHIFT: u8 = 225;
+const RIGHT_SHIFT: u8 = 229;
 
 fn holding(keys: &[u8]) -> State {
     let mut s = State::default();
@@ -490,26 +491,82 @@ fn a_held_key_types_again_after_19_frames_then_every_3() {
     assert_eq!(typed, "0A 19A 22A");
 }
 
+/// TEST69K: another key going down takes over the repeat, and the first,
+/// still held, does not repeat again.
 #[test]
-fn shift_leaves_a_held_key_repeating_and_another_key_stops_it() {
+fn another_key_stops_a_held_keys_repeat() {
     let typed = keys_by_frame(40, |i, rt| {
         match i {
             0 => {
                 rt.input.key_down(A_KEY);
                 rt.type_held(u16::from(b'A'));
             }
-            2 => rt.input.key_down(LEFT_SHIFT),
             // B types nothing itself here, as a key whose text has not come.
             23 => rt.input.key_down(B_KEY),
             _ => {}
         }
         rt.input.live = match i {
-            0..2 => holding(&[A_KEY]),
-            _ => holding(&[A_KEY, LEFT_SHIFT, B_KEY]),
+            0..23 => holding(&[A_KEY]),
+            23..26 => holding(&[A_KEY, B_KEY]),
+            _ => holding(&[A_KEY]),
         };
     });
     // Repeats at 19 and 22, and none after B went down.
     assert_eq!(typed, "0A 19A 22A");
+}
+
+/// TEST69K: Shift going down while a letter is held holds its repeat for 19
+/// frames, and then it repeats in the other case.
+#[test]
+fn shift_turns_a_held_letters_repeats_round() {
+    let typed = keys_by_frame(52, |i, rt| {
+        if i == 0 {
+            rt.input.key_down(A_KEY);
+            rt.type_held(u16::from(b'A'));
+        }
+        // A modifier going down leaves the repeat going.
+        if i == 26 {
+            rt.input.key_down(LEFT_SHIFT);
+        }
+        rt.input.live = match i {
+            0..26 => holding(&[A_KEY]),
+            _ => holding(&[A_KEY, LEFT_SHIFT]),
+        };
+    });
+    assert_eq!(typed, "0A 19A 22A 25A 45a 48a 51a");
+}
+
+/// Shift going up does the same the other way, here before the first
+/// repeat, and the other Shift counts as well.
+#[test]
+fn shift_let_go_turns_a_held_letter_back() {
+    let typed = keys_by_frame(40, |i, rt| {
+        if i == 0 {
+            rt.input.key_down(A_KEY);
+            rt.type_held(u16::from(b'a'));
+        }
+        rt.input.live = match i {
+            0..10 => holding(&[A_KEY, RIGHT_SHIFT]),
+            _ => holding(&[A_KEY]),
+        };
+    });
+    assert_eq!(typed, "0a 29A 32A 35A 38A");
+}
+
+/// Only letters change: a held 1 repeats on as it was with Shift going down.
+#[test]
+fn shift_leaves_other_keys_repeating() {
+    let typed = keys_by_frame(30, |i, rt| {
+        if i == 0 {
+            rt.input.key_down(B_KEY);
+            rt.type_held(u16::from(b'1'));
+        }
+        rt.input.live = match i {
+            0..10 => holding(&[B_KEY]),
+            _ => holding(&[B_KEY, LEFT_SHIFT]),
+        };
+    });
+    assert_eq!(typed, "01 191 221 251 281");
 }
 
 /// Let go before 19 frames, a key types once, and pressing it again starts

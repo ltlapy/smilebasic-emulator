@@ -50,10 +50,17 @@ const MODIFIER_KEYS: std::ops::RangeInclusive<u8> = 0xE0..=0xE7;
 const PAD_KEY_CTRL: u32 = 0b11 << 8;
 /// The keyboard's Ctrl among [`State::modifiers`].
 const MODIFIER_CTRL: u32 = 1 << 2;
+/// Left and Right Shift's USB usage IDs.
+const SHIFT_KEYS: [u8; 2] = [0xE1, 0xE5];
 
 /// Whether the key with this USB usage ID is down among `keys`, one bit each.
 fn key_held(keys: &[u64; 4], usage: u8) -> bool {
     keys[usize::from(usage / 64)] >> (usage % 64) & 1 != 0
+}
+
+/// Whether either Shift is down among `keys`.
+fn shift_held(keys: &[u64; 4]) -> bool {
+    SHIFT_KEYS.iter().any(|&k| key_held(keys, k))
 }
 
 /// What a row of [`PAD_KEYS`] looks at.
@@ -112,10 +119,12 @@ struct KeyRepeat {
     /// Its USB usage ID; 0 for none.
     usage: u8,
     codes: Vec<u16>,
-    /// Frames since it went down.
+    /// Frames since it went down, or since Shift last went down or up.
     frames: u32,
     /// Whether it types into the editor, as known from its first frame.
     editor: Option<bool>,
+    /// Whether Shift was down on the last frame.
+    shift: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -378,8 +387,8 @@ impl Input {
     /// stays down, counted in the machine's frames rather than by the
     /// computer's own key repeat, and the key held before stops repeating.
     pub fn key_down(&mut self, usage: u8) {
-        // UNVERIFIED: that a modifier going down leaves the held key
-        // repeating, and that any other key stops it.
+        // UNVERIFIED: that Ctrl, Alt and the Windows keys going down leave
+        // the held key repeating, as Shift does.
         if !MODIFIER_KEYS.contains(&usage) {
             self.key_repeat = KeyRepeat {
                 usage,
@@ -394,14 +403,26 @@ impl Input {
     }
 
     /// What the held keyboard key types again this frame, once a frame:
-    /// none once it is let go. `held`: the key is still down.
-    fn repeated_key(&mut self, held: bool) -> &[u16] {
+    /// none once it is let go. `held`: the key is still down; `shift`:
+    /// Shift is down.
+    fn repeated_key(&mut self, held: bool, shift: bool) -> &[u16] {
         let r = &mut self.key_repeat;
         if !held {
             *r = KeyRepeat::default();
             return &[];
         }
         r.frames += 1;
+        // Shift going down while a letter is held starts the count again,
+        // and the letter repeats in the other case.
+        // UNVERIFIED: that Shift going up does the same, and that keys
+        // other than letters go on repeating as they were.
+        let letter = |c: &u16| u8::try_from(*c).is_ok_and(|c| c.is_ascii_alphabetic());
+        if r.shift.replace(shift).is_some_and(|was| was != shift) && r.codes.iter().any(letter) {
+            r.frames = 1;
+            for c in r.codes.iter_mut().filter(|c| letter(c)) {
+                *c ^= 0x20;
+            }
+        }
         let (start, interval) = KEY_REPEAT;
         if r.frames > start && (r.frames - 1 - start).is_multiple_of(interval) {
             &r.codes
@@ -615,10 +636,15 @@ impl Runtime {
         } else {
             self.input.live.key(usage) || beside.is_some_and(|s| s.key(usage))
         };
+        let shift = if editor {
+            shift_held(&self.input.editor_keys)
+        } else {
+            shift_held(&self.input.live.keys) || beside.is_some_and(|s| shift_held(&s.keys))
+        };
         // A DIALOG takes no repeats, and the key stops repeating.
         let held = down && same_place && self.dialog.is_none() && !self.dialog_beside;
         // Empty, and so not allocated, but on the frames that repeat.
-        let codes = self.input.repeated_key(held).to_vec();
+        let codes = self.input.repeated_key(held, shift).to_vec();
         for code in codes {
             self.key_press(code);
         }
