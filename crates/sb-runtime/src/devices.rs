@@ -32,10 +32,10 @@ const PATTERN_FRAMES: [u32; 62] = [
 
 /// XCTRLSTYLE's operation style for Toy-Con.
 const TOYCON_STYLE: i32 = 100;
-/// IRREAD's array: rows of eight values, up to 16 clusters or 48 blocks.
+/// IRREAD's array: 48 rows of eight values, for up to 16 clusters or 48
+/// blocks.
 const IR_WIDTH: usize = 8;
-const IR_CLUSTERS: usize = 16;
-const IR_BLOCKS: usize = 48;
+const IR_ROWS: usize = 48;
 
 fn zeros(elem: ElemType, dims: Vec<usize>) -> Value {
     Value::Array(Rc::new(RefCell::new(Array::new(elem, dims))))
@@ -109,17 +109,18 @@ impl Runtime {
                 Ok(ints(&[self.input.ir_state[pad]]))
             }
             // A camera never started is no camera, and mode 1 cannot be read.
-            // UNVERIFIED: the array's height for the modes that work.
+            // Clustering and moment modes both give a 48-row array.
+            // UNVERIFIED: the same after IRSTOP.
             (Command::Irread, Want::Outs(4), 1) => {
                 let pad = pad(&args[0])?;
-                let (count, rows) = match self.input.ir_state[pad] {
+                let count = match self.input.ir_state[pad] {
                     0 => return Err(ErrorKind::IrCameraNotAvailable.into()),
                     3 => return Err(ErrorKind::IllegalIrCameraMode.into()),
-                    4 => (IR_BLOCKS, IR_BLOCKS),
-                    _ => (0, IR_CLUSTERS),
+                    4 => IR_ROWS,
+                    _ => 0,
                 };
                 let mut out = ints(&[0, 0, count as i32]);
-                out.push(zeros(ElemType::Int, vec![rows, IR_WIDTH]));
+                out.push(zeros(ElemType::Int, vec![IR_ROWS, IR_WIDTH]));
                 Ok(out)
             }
             (Command::Irsprite, Want::Outs(0), 2) => {
@@ -129,8 +130,9 @@ impl Runtime {
             }
             // Nothing vibrates, but VIBRATE() reports what was asked for:
             // the pattern until it would have ended, or 65535 for
-            // frequencies until stopped, on each side.
-            // UNVERIFIED: a frequency form with any 0 stops.
+            // frequencies until stopped, on each side. A 0 frequency or one
+            // 0 amplitude in the frequency form does not stop it.
+            // UNVERIFIED: that both amplitudes 0 stop it.
             (Command::Vibrate, Want::Outs(0), 0) => {
                 self.input.vibration = Default::default();
                 Ok(vec![])
@@ -152,15 +154,17 @@ impl Runtime {
                         (n, frames.filter(|&f| f > 0))
                     }
                     [low_freq, low, high_freq, high] => {
-                        let mut all = low_freq.to_real()? != 0.0 && high_freq.to_real()? != 0.0;
+                        low_freq.to_real()?;
+                        high_freq.to_real()?;
+                        let mut any = false;
                         for amp in [low, high] {
                             let a = amp.to_real()?;
                             if !(-128.0..=127.0).contains(&a) {
                                 return Err(Error::with_detail(ErrorKind::OutOfRange, "amplitude"));
                             }
-                            all &= a != 0.0;
+                            any |= a != 0.0;
                         }
-                        (if all { 65535 } else { 0 }, None)
+                        (if any { 65535 } else { 0 }, None)
                     }
                     _ => return Err(no_form()),
                 };

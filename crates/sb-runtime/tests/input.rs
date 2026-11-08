@@ -333,6 +333,12 @@ fn hardware_the_emulator_lacks() {
     assert_eq!(ok("VIBRATE 2,1,7:?VIBRATE(2);VIBRATE(2,0)"), "4587520");
     assert_eq!(err("VIBRATE 0,40"), ErrorKind::OutOfRange);
     assert_eq!(err("VIBRATE 1,63"), ErrorKind::OutOfRange);
+    // A 0 frequency or one 0 amplitude still vibrates.
+    for zero in ["0,100,320,100", "160,0,320,100", "160,100,0,100"] {
+        let source = format!("VIBRATE 1,{zero}:?VIBRATE(1)");
+        assert_eq!(run(&[], &source).unwrap(), "-1", "{zero}");
+    }
+    assert_eq!(ok("VIBRATE 1,160,0,320,0:?VIBRATE(1)"), "0");
     // The IR camera runs once allowed, and sees nothing.
     assert_eq!(err("IRSTART 1,0"), ErrorKind::IrCameraNotAvailable);
     assert_eq!(
@@ -344,6 +350,11 @@ fn hardware_the_emulator_lacks() {
     assert_eq!(
         ok("XCTRLSTYLE 1,1,0,1:IRSTART 2,2:IRREAD 2 OUT S,N,C,D:?C;DIM(D,0)"),
         "4848"
+    );
+    // Clustering mode's array is as tall as moment mode's.
+    assert_eq!(
+        ok("XCTRLSTYLE 1,1,0,1:IRSTART 1,0:IRREAD 1 OUT S,N,C,D:?C;DIM(D,0)"),
+        "048"
     );
     // Toy-Con are set up but never recognized.
     assert_eq!(err("TCPIANO 1 OUT F"), ErrorKind::IllegalControlStyle);
