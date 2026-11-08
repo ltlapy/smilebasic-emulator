@@ -121,6 +121,11 @@ was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
   `CHR$(-2)` U+FFFE, and `CHR$(65536)` and `CHR$(-65536)` a one-character
   string holding U+0000. A real outside the int range is `Overflow (CHR$:1)`.
   (Not yet seen on hardware.)
+- `ATTR` names an attribute out of range by its own argument: `ATTR 4,128` is
+  `Out of range (ATTR:2)`. In the form with flips and a turn, a horizontal
+  flip other than 0 or 1 is `(ATTR:1)`, or `(ATTR:2)` after a screen ID, and
+  the vertical flip and the turn come next. `TFILL`'s attribute past 15 is
+  `(TFILL:7)`, found before the corners are read. (Not yet seen on hardware.)
 - `Wrong number of arguments` comes when a command or function gets a number of
   arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
   finds this as it runs, not as the program compiles, so the lines before it

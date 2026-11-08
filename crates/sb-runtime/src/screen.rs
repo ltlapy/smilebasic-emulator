@@ -518,17 +518,23 @@ impl Runtime {
                     1 | 3 => (CONSOLE, args),
                     _ => (screen_id(&args[0])?, &args[1..]),
                 };
+                // A value out of range is named by its own argument:
+                // `ATTR 4,128` is (ATTR:2), the flips and turn of
+                // `ATTR 4,0,0,4` (ATTR:2) to (ATTR:4).
+                let ranged = |v: &Value, what: &'static str, max: i32| {
+                    checking(v, || match v.to_int()? {
+                        n if (0..=max).contains(&n) => Ok(n),
+                        n => Err(out_of_range(what, n)),
+                    })
+                };
                 let attr = match rest {
-                    // UNVERIFIED: `ATTR 4,128` names its second argument,
-                    // as `ATTR 128` names its first.
-                    [a] => checking(a, || match a.to_int()? {
-                        n @ 0..16 => Ok(n),
-                        n => Err(out_of_range("attribute", n)),
-                    })?,
-                    // Always 0 to 15.
+                    [a] => ranged(a, "attribute", 15)?,
+                    // UNVERIFIED: the vertical flip takes 0 or 1 and the
+                    // turn 0 to 3, as the horizontal flip takes 0 or 1.
                     [h, v, r] => {
-                        let bit = |v: &Value| v.to_int().map(|n| i32::from(n != 0));
-                        bit(h)? << 2 | bit(v)? << 3 | (r.to_int()? & 3)
+                        let h = ranged(h, "horizontal flip", 1)?;
+                        let v = ranged(v, "vertical flip", 1)?;
+                        h << 2 | v << 3 | ranged(r, "rotation", 3)?
                     }
                     _ => unreachable!("one or three"),
                 };

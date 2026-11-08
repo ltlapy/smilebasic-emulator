@@ -141,9 +141,10 @@ impl Runtime {
             // repeat from its top left, row by row at its clipped width.
             (Command::Tfill, Want::Outs(0), 6 | 7) => {
                 let t = &mut self.text[screen_id(&args[0])?];
+                // The attribute is checked before the corners.
+                let attr = attr_arg(args.get(6), t)?;
                 let [x, y, w, h] = corners(&args[1..5])?;
                 let codes = codes(&args[5])?;
-                let attr = attr_arg(args.get(6), t)?;
                 let color = t.color();
                 if !codes.is_empty() {
                     let (xs, ys) = offsets_on(x, y, w, h, t);

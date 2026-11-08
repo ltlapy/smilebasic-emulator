@@ -206,6 +206,26 @@ fn attributes_out_of_range_are_named() {
     let (kind, arg, detail) = named("ATTR 128");
     assert_eq!((kind, arg), (ErrorKind::OutOfRange, Some(0)));
     assert!(detail.starts_with("(ATTR:1)"), "{detail}");
+    for (src, arg) in [
+        ("ATTR 4,128", 1),
+        ("ATTR 2,0,0", 0),
+        ("ATTR 0,-1,0", 1),
+        ("ATTR 0,0,4", 2),
+        ("ATTR 4,2,0,0", 1),
+        ("ATTR 4,0,2,0", 2),
+        ("ATTR 4,0,0,4", 3),
+        ("TFILL 0,0,0,1,1,65,16", 6),
+        // Before the corners, which are not ints here.
+        ("TFILL 0,\"\",0,1,1,65,128", 6),
+    ] {
+        let (kind, got, detail) = named(src);
+        assert_eq!((kind, got), (ErrorKind::OutOfRange, Some(arg)), "{src}");
+        let name = src.split(' ').next().unwrap();
+        let want = format!("({name}:{})", arg + 1);
+        assert!(detail.starts_with(&want), "{src}: {detail}");
+    }
+    let rt = run("ATTR 1,0,1,3:A=ATTR(1):ATTR 1,1,0,2:LOCATE 0,1:?A,ATTR(1)").unwrap();
+    assert_eq!(row(&rt, 4, 1, 6), "11  6.");
     let rt = run(concat!(
         "DIM C%[2]:LOCATE 0,1:?\"ABC\";\n",
         "TSAVE 4,1,1,1,1,C%:C%[0]=C%[0] OR &H800000:TLOAD 4,1,1,1,1,C%\n",
