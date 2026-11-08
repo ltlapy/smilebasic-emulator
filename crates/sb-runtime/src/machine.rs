@@ -2122,9 +2122,14 @@ impl Machine {
     }
 
     /// Prints an error's message, and with localized error messages on,
-    /// the Japanese line under it that explains it.
+    /// the Japanese line under it that explains it. The error of a line
+    /// typed in direct mode, which has no slot, names no place.
     fn report(&mut self, error: &Error) {
-        let text: Vec<u16> = error.to_string().encode_utf16().collect();
+        let text = match error.slot {
+            Some(_) => error.to_string(),
+            None => error.without_place(),
+        };
+        let text: Vec<u16> = text.encode_utf16().collect();
         // It follows whatever the line printed, as Break does.
         // UNVERIFIED: it wraps at the right edge as PRINT does.
         let console = &mut self.rt.text[CONSOLE];

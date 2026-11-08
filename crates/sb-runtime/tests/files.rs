@@ -1213,7 +1213,7 @@ fn rename_and_delete_refuse_projects_everywhere() {
         ("rename \"a\",\"/b\"", "RENAME:2"),
         ("delete \"/a\"", "DELETE:1"),
     ] {
-        let message = format!("Can't access other project in this mode in 1({command})");
+        let message = format!("Can't access other project in this mode ({command})");
         assert_eq!(direct_error(&mut m, line), message, "{line}");
     }
     m.set_slot(1, "DELETE \"TXT:/A\"".to_string());
@@ -1242,13 +1242,12 @@ fn loadg_types_of_file() {
     for (line, message) in [
         (
             "loadg \"png:p\",0",
-            "Can't access other project in this mode(LOADG)",
+            "Can't access other project in this mode (LOADG)",
         ),
-        ("loadg \"xyz:p\",0", "Illegal format(LOADG:1)"),
-        ("loadg \"txt:t\",0", "File type mismatch(LOADG) (TXT file)"),
-        ("load \"dat:x\",1", "File type mismatch(LOAD) (DAT file)"),
+        ("loadg \"xyz:p\",0", "Illegal format (LOADG:1)"),
+        ("loadg \"txt:t\",0", "File type mismatch (LOADG) (TXT file)"),
+        ("load \"dat:x\",1", "File type mismatch (LOAD) (DAT file)"),
     ] {
-        let message = message.replacen('(', " in 1(", 1);
         assert_eq!(direct_error(&mut m, line), message, "{line}");
     }
     enter(

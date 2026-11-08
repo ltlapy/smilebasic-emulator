@@ -339,23 +339,39 @@ impl From<ErrorKind> for Error {
     }
 }
 
-impl fmt::Display for Error {
+impl Error {
+    /// The message as SmileBASIC 4 prints it for a line typed in direct
+    /// mode: with no place, and a space before the command it names, as
+    /// `Out of range (LOCATE:2)`.
+    pub fn without_place(&self) -> String {
+        Placed(self, false).to_string()
+    }
+}
+
+/// An error's message, with its place or without.
+struct Placed<'a>(&'a Error, bool);
+
+impl fmt::Display for Placed<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.kind.message())?;
+        let Placed(e, place) = *self;
+        write!(f, "{}", e.kind.message())?;
         // These say no place on hardware.
         let placeless = matches!(
-            self.kind,
+            e.kind,
             ErrorKind::CantUseFromDirectMode | ErrorKind::CantContinue | ErrorKind::CantTrace
         );
-        if !placeless {
+        let place = place && !placeless;
+        if place {
             write!(f, " in ")?;
-            if let Some(slot) = self.slot {
+            if let Some(slot) = e.slot {
                 write!(f, "{slot}:")?;
             }
-            write!(f, "{}", self.line)?;
+            write!(f, "{}", e.line)?;
         }
-        match &self.detail {
-            Some(detail) if detail.starts_with('(') => write!(f, "{detail}")?,
+        match &e.detail {
+            // SmileBASIC 4's own brackets follow a place with no space.
+            Some(detail) if place && detail.starts_with('(') => write!(f, "{detail}")?,
+            Some(detail) if detail.starts_with('(') => write!(f, " {detail}")?,
             Some(detail) => write!(f, " ({detail})")?,
             None => {}
         }
@@ -363,6 +379,32 @@ impl fmt::Display for Error {
     }
 }
 
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Placed(self, true).fmt(f)
+    }
+}
+
 impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A line typed in direct mode names no place (TEST70).
+    #[test]
+    fn without_place() {
+        let e = Error::new(ErrorKind::OutOfRange)
+            .of_arg(1)
+            .of_command("LOCATE")
+            .at(1);
+        assert_eq!(e.to_string(), "Out of range in 1(LOCATE:2)");
+        assert_eq!(e.without_place(), "Out of range (LOCATE:2)");
+        let e = Error::with_detail(ErrorKind::SyntaxError, "expected expression").at(1);
+        assert_eq!(e.without_place(), "Syntax error (expected expression)");
+        let e = Error::new(ErrorKind::SyntaxError);
+        assert_eq!(e.without_place(), "Syntax error");
+    }
+}

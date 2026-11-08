@@ -195,14 +195,15 @@ fn errors_return_to_direct_mode() {
     m.set_slot(0, "RUN".to_string());
     enter(&mut m, "run");
     let r = rows(&m);
-    assert!(r[5].starts_with("Divide by zero"), "{r:?}");
+    // A direct-mode line names no place (TEST70), a program's line does.
+    assert_eq!(r[5], "Divide by zero", "{r:?}");
     assert_eq!(r[6], "OK");
     assert_eq!(
-        r[8], "Syntax error in 1 (expected expression, found Eof)",
+        r[8], "Syntax error (expected expression, found Eof)",
         "{r:?}"
     );
     assert_eq!(r[10], "RUN");
-    assert!(r[11].starts_with("Syntax error"), "{r:?}");
+    assert!(r[11].starts_with("Syntax error in 0:1"), "{r:?}");
     assert_eq!(r[12], "OK");
 }
 
