@@ -295,6 +295,15 @@ impl Sound {
         }
     }
 
+    /// BGMPLAY of a user song with nothing set: the track stops, and
+    /// BGMCHK says 1 for two more frames.
+    pub(crate) fn stop_for_nothing(&mut self, n: usize) {
+        if let Some(t) = self.tracks[n].as_mut().filter(|t| t.playing) {
+            t.stop();
+            t.linger = 3;
+        }
+    }
+
     pub(crate) fn pause(&mut self, n: usize, fade: u32) {
         if let Some(t) = self.tracks[n].as_mut().filter(|t| t.playing && !t.paused) {
             t.fade.to(0.0, fade);

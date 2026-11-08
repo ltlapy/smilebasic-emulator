@@ -312,11 +312,16 @@ impl Runtime {
                         return Ok(vec![]);
                     }
                     // A song number with nothing set plays nothing, so
-                    // BGMCHK says 0 (checked on hardware).
-                    // UNVERIFIED: whether it stops what the track played.
+                    // BGMCHK says 0, and it stops what the track played:
+                    // BGMCHK still said 1 two frames on, and 0 five on.
+                    // UNVERIFIED: that the sound stops at once, and that
+                    // BGMCHK says 0 from the third frame.
                     128..=255 => match self.sound.songs.get(&music) {
                         Some(song) => Some(Rc::clone(song)),
-                        None => return Ok(vec![]),
+                        None => {
+                            self.sound.stop_for_nothing(track);
+                            return Ok(vec![]);
+                        }
                     },
                     n => return Err(out_of_range("song", n)),
                 };

@@ -85,6 +85,26 @@ fn tracks_repeat_stop_and_pause() {
     assert_eq!(run_on(&mut rt, "?BGMCHK(3)").unwrap(), "0");
 }
 
+/// A user song with nothing set stops what the track plays, though
+/// BGMCHK still says 1 two frames on.
+#[test]
+fn an_unset_song_stops_the_track() {
+    let mut rt = runtime();
+    run_on(&mut rt, "BGMPLAY 0,200").unwrap();
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");
+    run_on(&mut rt, "BGMPLAY 0,0").unwrap();
+    frames(&mut rt, 30);
+    run_on(&mut rt, "BGMPLAY 0,200").unwrap();
+    frames(&mut rt, 2);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "1");
+    frames(&mut rt, 3);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0)").unwrap(), "0");
+    // Another track goes on.
+    run_on(&mut rt, "BGMPLAY 1,0:BGMPLAY 0,200").unwrap();
+    frames(&mut rt, 5);
+    assert_eq!(run_on(&mut rt, "?BGMCHK(0);BGMCHK(1)").unwrap(), "01");
+}
+
 #[test]
 fn variables_and_data() {
     let mut m = Machine::new(runtime());
