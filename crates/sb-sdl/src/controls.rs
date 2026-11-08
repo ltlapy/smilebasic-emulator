@@ -228,8 +228,6 @@ impl Typing {
 
     /// A letter as SmileBASIC 4 types it: upper case with Caps Lock on,
     /// Shift turning it round, whatever case the computer typed it in.
-    // UNVERIFIED: that Caps Lock leaves digits and symbols alone, as on
-    // computers.
     fn letter_case(&self, c: char, shift: bool) -> char {
         if self.caps_lock != shift {
             c.to_ascii_uppercase()
@@ -621,18 +619,22 @@ mod tests {
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "61");
     }
 
+    /// TEST69K: 1, Shift+1 and / type the same with Caps Lock on or off.
     #[test]
     fn caps_lock_leaves_digits_and_symbols_alone() {
         let mut keys = Typing::default();
-        assert_eq!(press(&mut keys, Scancode::_1, Mod::NOMOD, "1", true), "31");
-        assert_eq!(
-            press(&mut keys, Scancode::_1, Mod::LSHIFTMOD, "!", true),
-            "21"
-        );
-        assert_eq!(
-            press(&mut keys, Scancode::Slash, Mod::NOMOD, "/", true),
-            "2F"
-        );
+        for _ in 0..2 {
+            assert_eq!(press(&mut keys, Scancode::_1, Mod::NOMOD, "1", true), "31");
+            assert_eq!(
+                press(&mut keys, Scancode::_1, Mod::LSHIFTMOD, "!", true),
+                "21"
+            );
+            assert_eq!(
+                press(&mut keys, Scancode::Slash, Mod::NOMOD, "/", true),
+                "2F"
+            );
+            caps_lock(&mut keys, false);
+        }
     }
 
     /// With "Type capitals without Shift" off, letters keep the computer's
