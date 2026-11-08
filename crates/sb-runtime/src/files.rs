@@ -163,6 +163,7 @@ impl Runtime {
             }
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
+                self.refuse_project(&spec).map_err(|e| e.of_arg(0))?;
                 if let Some(file) = self.existing_read(&spec) {
                     let action = FileAction {
                         title: "Delete file".to_string(),
@@ -190,6 +191,8 @@ impl Runtime {
             }
             (Command::Rename, Want::Outs(0), 2) => {
                 let (from, to) = (str_arg(&args[0])?, str_arg(&args[1])?);
+                // UNVERIFIED: that a new name with a project gets no error.
+                self.refuse_project(&from).map_err(|e| e.of_arg(0))?;
                 if let Some(file) = self.existing(&from) {
                     let action = FileAction {
                         title: "Rename file".to_string(),
@@ -371,6 +374,32 @@ impl Runtime {
         Ok(file)
     }
 
+    /// A main program's SAVEV, RENAME and DELETE may not name a project,
+    /// not even its own or the workspace's `/NAME`: Can't access other
+    /// project in this mode. UNVERIFIED: that a subprogram's may.
+    pub(crate) fn refuse_project(&self, spec: &str) -> Result<()> {
+        let named = || parse_read_name(spec, FileKind::Txt).is_ok_and(|f| f.project.is_some());
+        if !self.direct && self.env_type == 0 && named() {
+            return Err(ErrorKind::CantAccessOtherProject.into());
+        }
+        Ok(())
+    }
+
+    /// A file named for writing, in the current project, which may be
+    /// named: `PROJECT/NAME`, or `/NAME` in the workspace. UNVERIFIED: that
+    /// another project's name is refused in direct mode.
+    pub(crate) fn write_name(
+        &self,
+        spec: &str,
+        default: FileKind,
+    ) -> storage::Result<(FileKind, String)> {
+        let file = parse_read_name(spec, default)?;
+        match file.project {
+            Some(p) if p != self.storage.project() => Err(StorageError::BadName(spec.to_string())),
+            _ => Ok((file.kind, file.name)),
+        }
+    }
+
     /// A file named for reading, as [`FileRef::label`], if it exists.
     pub(crate) fn existing_read(&self, spec: &str) -> Option<String> {
         let file = self.read_name(spec, FileKind::Txt).ok()?;
@@ -549,14 +578,12 @@ impl Runtime {
 }
 
 /// Whether a file name names a project, the way EXEC refuses in programs
-/// (see its caller). The program's own project counts.
-/// UNVERIFIED: that SmileBASIC 4's own `#` projects and the workspace's
-/// `/NAME` do not.
+/// (see its caller). The program's own project counts, and the
+/// workspace's `/NAME`. UNVERIFIED: that SmileBASIC 4's own `#` projects
+/// do not.
 pub(crate) fn names_project(spec: &str) -> bool {
-    parse_read_name(spec, FileKind::Txt).is_ok_and(|file| {
-        file.project
-            .is_some_and(|p| !p.is_empty() && !p.starts_with('#'))
-    })
+    parse_read_name(spec, FileKind::Txt)
+        .is_ok_and(|file| file.project.is_some_and(|p| !p.starts_with('#')))
 }
 
 /// LOAD and SAVE take only text files, before anything is asked: another
@@ -588,10 +615,15 @@ mod tests {
 
     #[test]
     fn names_project_sees_a_project_before_the_name() {
-        for named in ["GAME/MAIN.PRG", "TXT:GAME/MAIN.PRG", "GRP:test05/HG16"] {
+        for named in [
+            "GAME/MAIN.PRG",
+            "TXT:GAME/MAIN.PRG",
+            "GRP:test05/HG16",
+            "/MAIN.PRG",
+        ] {
             assert!(names_project(named), "{named}");
         }
-        for plain in ["MAIN.PRG", "GRP:HG16", "/MAIN.PRG", "#TOOL/T.PRG", "A/B/C"] {
+        for plain in ["MAIN.PRG", "GRP:HG16", "#TOOL/T.PRG", "A/B/C"] {
             assert!(!names_project(plain), "{plain}");
         }
     }

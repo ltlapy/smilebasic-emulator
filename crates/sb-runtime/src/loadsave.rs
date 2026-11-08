@@ -37,14 +37,6 @@ fn page_arg(v: &Value) -> Result<usize> {
     })
 }
 
-/// A file name whose type cannot be left out.
-fn typed_name(spec: &str) -> storage::Result<(FileKind, String)> {
-    if !spec.contains(':') {
-        return Err(StorageError::BadKind(String::new()));
-    }
-    parse_file_name(spec, FileKind::Txt)
-}
-
 /// The kind of a file named for reading, whose type cannot be left out.
 fn read_kind(spec: &str) -> Option<FileKind> {
     spec.contains(':')
@@ -277,7 +269,12 @@ impl Runtime {
             }
             (Command::Savev, Want::Outs(0), [spec, value]) => {
                 let spec = str_arg(spec)?;
-                let file = typed_name(&spec);
+                self.refuse_project(&spec)?;
+                // The type cannot be left out.
+                let file = match spec.contains(':') {
+                    true => self.write_name(&spec, FileKind::Txt),
+                    false => Err(StorageError::BadKind(String::new())),
+                };
                 let bytes = match (&file, value) {
                     (Ok((FileKind::Txt, _)), Value::Str(s)) => {
                         String::from_utf16_lossy(&s.borrow()).into_bytes()
@@ -295,7 +292,8 @@ impl Runtime {
                     }
                     _ => Vec::new(),
                 };
-                if self.ask_save(&spec, FileKind::Txt) {
+                // A name without its type asks too, and then fails.
+                if self.ask_save(&self.write_name(&spec, FileKind::Txt)) {
                     return Ok(vec![]);
                 }
                 let outcome = file.and_then(|(kind, name)| match kind {
@@ -309,6 +307,14 @@ impl Runtime {
                 if matches!(rest.len(), 0 | 2) =>
             {
                 let spec = str_arg(spec)?;
+                // UNVERIFIED: that `PNG:` fails as an unknown type in direct
+                // mode and in subprograms.
+                let png = spec
+                    .split_once(':')
+                    .is_some_and(|(kind, _)| kind.eq_ignore_ascii_case("PNG"));
+                if png && !self.direct && self.env_type == 0 {
+                    return Err(ErrorKind::CantAccessOtherProject.into());
+                }
                 let page = page_arg(page)?;
                 let at = match rest {
                     [x, y] => (opt_int(x)?.unwrap_or(0), opt_int(y)?.unwrap_or(0)),
@@ -350,7 +356,7 @@ impl Runtime {
                     Some(q @ 1..=100) => q,
                     Some(q) => return Err(out_of_range("compression", q)),
                 };
-                if self.ask_save(&spec, FileKind::Grp) {
+                if self.ask_save(&file) {
                     return Ok(vec![]);
                 }
                 let image = Image {
@@ -446,13 +452,13 @@ impl Runtime {
     }
 
     /// Asks before writing a file, as SAVE does.
-    fn ask_save(&mut self, spec: &str, default: FileKind) -> bool {
-        let Ok((kind, name)) = parse_file_name(spec, default) else {
+    fn ask_save(&mut self, file: &storage::Result<(FileKind, String)>) -> bool {
+        let Ok((kind, name)) = file else {
             return false;
         };
-        let file = format!("{}:{name}", kind.name());
+        let (kind, file) = (*kind, format!("{}:{name}", kind.name()));
         let mut details = self.details(&file, None);
-        if self.storage.exists(kind, &name) {
+        if self.storage.exists(kind, name) {
             details.push(String::new());
             details.push("The file there now will be replaced.".to_string());
         }

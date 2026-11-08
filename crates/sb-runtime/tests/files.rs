@@ -1046,7 +1046,7 @@ fn program_error(m: &mut Machine) -> (String, i32, Option<u8>) {
     (e.to_string(), e.kind.code(), e.arg)
 }
 
-/// TEST69: LOAD and SAVE of another type of file.
+/// TEST69: LOAD and SAVE of another type of file, and LOADG `PNG:`.
 #[test]
 fn load_and_save_refuse_other_types_of_file() {
     let dir = TempDir::new("file-types");
@@ -1069,6 +1069,73 @@ fn load_and_save_refuse_other_types_of_file() {
     enter(&mut m, "run");
     let message = "Illegal format in 0:2(LOAD:1)".to_string();
     assert_eq!(program_error(&mut m), (message, 71, Some(0)));
+
+    m.set_slot(0, "A=1\nLOADG \"PNG:X\",0".to_string());
+    enter(&mut m, "run");
+    let message = "Can't access other project in this mode in 0:2(LOADG)".to_string();
+    assert_eq!(program_error(&mut m), (message, 74, None));
+    m.set_slot(0, "LOADG \"DAT:NONE\",0:?RESULT()".to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+}
+
+/// TEST69: a main program's SAVEV, RENAME and DELETE refuse a project
+/// name, their own project's and the workspace's `/NAME` too, while
+/// SAVEV at the prompt saves in the current project named so. EXEC
+/// refuses `/NAME` as it refuses a project's name.
+#[test]
+fn programs_write_no_file_named_with_a_project() {
+    let dir = TempDir::new("write-projects");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("GAME").unwrap();
+    enter(&mut m, "savev \"txt:a\",\"1\"");
+    let workspace = dir.0.join("@WORKSPACE");
+    for (project, own) in [("", "/"), ("GAME", "GAME/")] {
+        enter(&mut m, &format!("project \"{project}\""));
+        for (source, command) in [
+            (format!("SAVEV \"TXT:{own}X\",\"1\""), "SAVEV"),
+            ("SAVEV \"TXT:GAME/X\",\"1\"".to_string(), "SAVEV"),
+            ("SAVEV \"DAT:/X\",A%".to_string(), "SAVEV"),
+            (format!("RENAME \"TXT:{own}A\",\"B\""), "RENAME:1"),
+            (format!("DELETE \"TXT:{own}A\""), "DELETE:1"),
+        ] {
+            m.set_slot(0, format!("DIM A%[1]\n{source}"));
+            enter(&mut m, "run");
+            let message = format!("Can't access other project in this mode in 0:2({command})");
+            let arg = command.contains(':').then_some(0);
+            assert_eq!(program_error(&mut m), (message, 74, arg), "{source}");
+        }
+    }
+    assert!(workspace.join("TA").is_file());
+    assert!(!workspace.join("TB").exists() && !workspace.join("TX").exists());
+    assert!(!dir.0.join("GAME").join("TX").exists());
+
+    m.set_slot(0, "EXEC \"/A\",1\n?\"PAST\"".to_string());
+    enter(&mut m, "run");
+    assert_eq!(
+        tail(&m, 2),
+        ["Can't access other project in this mode in 0:1", "OK"]
+    );
+
+    // At the prompt, SAVEV asks as set and saves.
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    enter(&mut m, "project \"\"");
+    let c = ask(&mut m, "savev \"txt:/x\",\"1\":?result()");
+    assert_eq!(c.lines[3], "  File:     TXT:X");
+    m.rt.answer(true);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    assert!(workspace.join("TX").is_file());
+    m.rt.settings.file_confirm = FileConfirm::Silent;
+    enter(&mut m, "project \"game\"");
+    enter(&mut m, "savev \"txt:game/x\",\"1\":?result()");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    assert!(dir.0.join("GAME").join("TX").is_file());
+    // Not yet seen on hardware: another project's name, the workspace's
+    // here, at the prompt.
+    enter(&mut m, "savev \"txt:/y\",\"1\":?result()");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+    assert!(!workspace.join("TY").exists());
 }
 
 /// LOADG of a file named with a project asks at the prompt as LOAD does,
