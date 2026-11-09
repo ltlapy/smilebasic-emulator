@@ -6,7 +6,7 @@ use sb_runtime::Runtime;
 use sb_runtime::font::Font;
 
 fn run(source: &str) -> Result<String, sb_core::error::Error> {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     rt.begin_frame();
     rt.begin_frame();
     let mut vm = Vm::new(sb_core::compile(source, &rt)?);

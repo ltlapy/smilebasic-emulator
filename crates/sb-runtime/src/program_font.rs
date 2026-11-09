@@ -144,7 +144,7 @@ mod tests {
     fn written_on_change_and_by_acls() {
         use crate::runtime::Runtime;
         use crate::text::FONT_PAGE;
-        let mut rt = Runtime::new(400, 240, Font::fallback());
+        let mut rt = Runtime::for_tests(Font::fallback());
         let original = rt.font.page_image();
         // The defaults leave the page as SmileBASIC's.
         rt.apply_program_font();

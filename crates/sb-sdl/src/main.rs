@@ -4447,7 +4447,7 @@ mod tests {
     }
 
     fn running_machine() -> Machine {
-        let rt = Runtime::new(400, 240, Font::blank());
+        let rt = Runtime::for_tests(Font::blank());
         let mut m = Machine::new(rt);
         m.boot();
         m.set_slot(0, "WHILE 1:VSYNC:WEND\n".to_string());

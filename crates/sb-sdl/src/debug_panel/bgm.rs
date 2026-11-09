@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn lines_and_copies_of_what_plays() {
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         run(
             &mut rt,
             "BGMSET 140,\"T150$1=3@16O3CDE:2V60[G]\":BGMPLAY 2,140",
@@ -782,7 +782,7 @@ mod tests {
     #[test]
     fn the_tab_draws_a_line_for_each_track_channel_and_beep() {
         use super::super::{PerfStats, Probe, Tab, View};
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         run(
             &mut rt,
             "BGMPLAY 1,128:BGMSET 130,\"CDE:3G\":BGMPLAY 4,130:BEEP 300",
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn a_new_note_lights_its_channel_up() {
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         run(&mut rt, "BGMPLAY \"T60V127@V127C4R1\"");
         let mut meters = Meters::default();
         // While the sound system wakes up, nothing sounds.

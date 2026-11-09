@@ -15,7 +15,7 @@ const WHITE: u32 = 0xFFFF_FFFF;
 /// Runs `source` with the bundled font for a few frames and returns the
 /// machine, so the frame can be rendered.
 fn run(source: &str) -> Machine {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+    let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
     m.boot();
     m.set_slot(0, source.to_string());
     m.run_slot(0);
@@ -163,7 +163,7 @@ fn layers_clip_move_and_compose() {
 
 #[test]
 fn settings_read_back() {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(
         0,
@@ -192,7 +192,7 @@ fn settings_read_back() {
 /// The console's first line after `source` runs, as text, joining the
 /// rows it wraps onto.
 fn first_row(source: &str) -> String {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(0, source.to_string());
     m.run_slot(0);
@@ -312,7 +312,7 @@ fn acls_goes_back_to_the_start() {
 #[test]
 fn fade_steps_as_on_hardware() {
     let steps = |setup: &str, to: &str, n: u32| {
-        let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+        let mut m = Machine::new(Runtime::for_tests(Font::blank()));
         m.boot();
         let src = format!(
             "{setup}:WAIT 1:FADE {to},{n}:R$=HEX$(FADE(),8)\nFOR I=1 TO {n}:VSYNC:R$=R$+\" \"+HEX$(FADE(),8):NEXT:?R$"
@@ -359,7 +359,7 @@ fn fade_covers_everything_and_moves_in_steps() {
     let p = m.render().get(10, 10).unwrap();
     assert_eq!(p, 0xFF80_0000);
     // Over 4 frames from clear to opaque white; the program waits 2.
-    let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+    let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
     m.boot();
     m.set_slot(
         0,
@@ -443,7 +443,7 @@ fn raster_array_is_copied_at_lfilter() {
 #[test]
 fn raster_filter_forms() {
     let err = |source: &str| {
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         let mut vm = sb_core::vm::Vm::new(sb_core::compile(source, &rt).unwrap());
         vm.run(&mut rt, 100_000).err().map(|e| e.kind)
     };
@@ -530,7 +530,7 @@ impl SceneBackend for Backend {
 /// A program still running with a red BACKCOLOR: in direct mode, the emulator's
 /// own hints go over the frame on the CPU, so it is not offered to a backend.
 fn running_red() -> Machine {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+    let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
     m.boot();
     m.set_slot(0, "BACKCOLOR &HFFFF0000:WHILE 1:VSYNC:WEND".to_string());
     m.run_slot(0);

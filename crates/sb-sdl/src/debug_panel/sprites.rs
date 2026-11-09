@@ -506,7 +506,7 @@ mod tests {
     use sb_runtime::machine::Machine;
 
     fn run(source: &str) -> Machine {
-        let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+        let mut m = Machine::new(Runtime::for_tests(Font::blank()));
         m.boot();
         m.set_slot(0, source.to_string());
         m.run_slot(0);

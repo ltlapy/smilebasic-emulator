@@ -10,7 +10,7 @@ use sb_runtime::input::{KeyText, State, alt_key_code};
 /// Runs `source` after one frame each of `frames`, returning what it
 /// printed on the console's first row.
 fn run(frames: &[State], source: &str) -> Result<String, sb_core::error::Error> {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     for state in frames {
         rt.input.live = *state;
         rt.input.latch();
@@ -196,7 +196,7 @@ fn function_keys_and_pushkey() {
         run(&[], "PUSHKEY \"AB\":A$=INKEY$():?A$;INKEY$()").unwrap(),
         "AB"
     );
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let id = rt.lookup("PUSHKEY").unwrap();
     let long = sb_core::value::Value::Str(sb_core::value::new_str(vec![65; 65]));
     let err = rt
@@ -208,7 +208,7 @@ fn function_keys_and_pushkey() {
 /// Goes through `frames` as frames do, then reads what INKEY$ has for it:
 /// `?` each key's code.
 fn typed(frames: &[State], read: &str) -> String {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     for state in frames {
         rt.input.live = *state;
         rt.begin_frame();
@@ -292,7 +292,7 @@ fn buttons_keys_press_type_nothing_more() {
 #[test]
 fn function_keys_start_as_smilebasic_4s() {
     // TEST15 on hardware; a string longer than 256 is ignored.
-    let mut m = sb_runtime::machine::Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = sb_runtime::machine::Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(
         0,
@@ -380,7 +380,7 @@ fn hardware_the_emulator_lacks() {
 fn vibration_patterns_end() {
     // Pattern 57 lasts 3 frames (TTEST24); the input frame comes with the
     // machine's.
-    let mut m = sb_runtime::machine::Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = sb_runtime::machine::Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(0, "VSYNC:VIBRATE 1,57:VSYNC:VSYNC:A=VIBRATE(1,0):VSYNC:B=VIBRATE(1,0):VIBRATE 1,40:VSYNC 200:CLS:?A;B;VIBRATE(1,0)".into());
     m.run_slot(0);
@@ -397,7 +397,7 @@ fn vibration_patterns_end() {
 #[test]
 fn a_button_held_past_the_end_of_a_program_types_nothing() {
     let a = pressed(1 << 3);
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     rt.input.live = a;
     rt.input.forget();
     for _ in 0..40 {
@@ -414,7 +414,7 @@ fn a_button_held_past_the_end_of_a_program_types_nothing() {
 #[test]
 fn the_press_that_answers_a_dialog_types_only_its_repeats() {
     let a = pressed(1 << 3);
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let source = "R=DIALOG(\"Q\",-1):P=BUTTON(0,-1,2):H=BUTTON(0):N=0:REPEAT:VSYNC:INC N:UNTIL N==22\n\
                   K=0:WHILE INKEY$()==CHR$(13):INC K:WEND:?R;\" \";P;\" \";H;\" \";K";
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
@@ -440,7 +440,7 @@ fn the_press_that_answers_a_dialog_types_only_its_repeats() {
 /// leaves L out.
 #[test]
 fn a_wait_for_buttons_answers_with_the_any_bits_going_on() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let source = "?DIALOG(\"Q\",8)";
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
     let mut frames = 0;
@@ -464,7 +464,7 @@ fn a_wait_for_buttons_answers_with_the_any_bits_going_on() {
 #[test]
 fn the_release_that_closes_a_dialog_is_hidden() {
     let a = pressed(1 << 3);
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let source = "DIALOG \"Q\":?BUTTON(0,-1,3)";
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
     let mut frames = 0;
@@ -490,7 +490,7 @@ fn the_release_that_closes_a_dialog_is_hidden() {
 /// keyboard before each frame.
 fn keys_by_frame(frames: usize, mut at: impl FnMut(usize, &mut Runtime)) -> String {
     use sb_runtime::machine::Machine;
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     let source = "CLS:F=-1\nWHILE 1\nVSYNC\nK$=INKEY$()\nIF K$!=\"\" && F<0 THEN F=MAINCNT()\n\
                   IF K$!=\"\" THEN ?MAINCNT()-F;K$;\" \";\nWEND\n";
@@ -513,7 +513,7 @@ fn keys_by_frame(frames: usize, mut at: impl FnMut(usize, &mut Runtime)) -> Stri
 /// Like [`keys_by_frame`], with each key as its code in hexadecimal.
 fn codes_by_frame(frames: usize, at: impl FnMut(usize, &mut Runtime)) -> String {
     use sb_runtime::machine::Machine;
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     let source = "CLS:F=-1\nWHILE 1\nVSYNC\nK$=INKEY$()\nIF K$!=\"\" && F<0 THEN F=MAINCNT()\n\
                   IF K$!=\"\" THEN ?MAINCNT()-F;HEX$(ASC(K$));\" \";\nWEND\n";
@@ -900,7 +900,7 @@ fn a_key_let_go_types_once() {
 #[test]
 fn a_key_held_when_a_program_ends_repeats_in_direct_mode() {
     use sb_runtime::machine::Machine;
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(0, "WHILE INKEY$()==\"\":VSYNC:WEND\n".to_string());
     m.run_slot(0);
@@ -956,7 +956,7 @@ fn editor_changes(
 
 fn editing() -> sb_runtime::machine::Machine {
     use sb_runtime::machine::Machine;
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.toggle_editor();
     m.frame();
@@ -1069,7 +1069,7 @@ fn a_key_held_in_the_editor_stops_when_it_closes() {
 fn a_key_held_at_the_prompt_repeats_into_the_program_it_runs() {
     use sb_runtime::machine::Machine;
     use sb_runtime::runtime::keys;
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     // As TEST70K logs them: the frame from the program's start where
     // INKEY$ gives Enter.

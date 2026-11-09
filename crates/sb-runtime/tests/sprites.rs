@@ -8,7 +8,7 @@ use sb_runtime::machine::Machine;
 /// non-empty row before OK, or the error that stopped it, which can take
 /// more than a row.
 fn run(source: &str) -> (Machine, String) {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(0, source.to_string());
     m.run_slot(0);
@@ -177,7 +177,7 @@ fn errors() {
 
 #[test]
 fn sprites_are_drawn_by_z_around_text() {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(
         0,
@@ -333,7 +333,7 @@ fn clearing_a_parent_clears_or_frees_its_children() {
 
 #[test]
 fn hidden_parents_hide_children_that_follow_them() {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(
         0,

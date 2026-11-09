@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn tcopy_matches_copying_every_cell() {
         let mut next = rng();
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         for _ in 0..20_000 {
             screens(&mut rt, &mut next);
             let v: Vec<i32> = (0..6).map(|_| next(30) as i32 - 12).collect();
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn tfill_matches_filling_every_cell() {
         let mut next = rng();
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         for _ in 0..20_000 {
             screens(&mut rt, &mut next);
             let id = next(2) as usize;
@@ -519,7 +519,7 @@ mod tests {
     fn rectangles_larger_than_any_screen_finish() {
         const FAR: i32 = 1_000_000_000;
         let mut next = rng();
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         screens(&mut rt, &mut next);
         let (w, h) = rt.text[0].size();
         let before = cells(&rt, 0);

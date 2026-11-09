@@ -2775,7 +2775,7 @@ mod tests {
 
     /// A machine that has run `code` as Projects' Run does, to its end.
     fn home_run(code: &str) -> Machine {
-        let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+        let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
         m.boot();
         m.set_slot(0, code.to_string());
         m.home = Home::Running;
@@ -2901,7 +2901,7 @@ mod tests {
 
     #[test]
     fn the_editor_is_drawn_again_only_when_it_changes() {
-        let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+        let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
         m.boot();
         m.set_slot(0, "?1\r\n?2\r\nFOR I=0 TO 9\r\n?I\r\nNEXT".to_string());
         m.set_slot(1, "?\"ONE\"".to_string());

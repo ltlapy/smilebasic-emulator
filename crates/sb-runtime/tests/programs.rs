@@ -6,7 +6,7 @@ use sb_runtime::machine::Machine;
 use sb_runtime::runtime::keys;
 
 fn machine() -> Machine {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m
 }

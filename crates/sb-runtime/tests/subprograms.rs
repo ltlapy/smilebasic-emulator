@@ -28,7 +28,7 @@ impl Drop for TempDir {
 
 /// A machine whose workspace holds the program `SUB` with `source`.
 fn machine(dir: &TempDir, source: &str) -> Machine {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     rt.storage = Storage::new(dir.0.clone());
     rt.settings.file_confirm = FileConfirm::Silent;
     let mut m = Machine::new(rt);

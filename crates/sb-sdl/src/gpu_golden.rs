@@ -421,7 +421,7 @@ pub fn run(renderer: *mut SDL_Renderer, scene: &Golden, storage: Option<PathBuf>
         };
     };
     let mut sub_gpu = scene.sub.and_then(|_| Gpu::comparing(renderer));
-    let mut rt = Runtime::new(400, 240, Font::fallback());
+    let mut rt = Runtime::for_tests(Font::fallback());
     if let Some(storage) = storage {
         rt.storage = Storage::new(storage);
     }

@@ -559,7 +559,7 @@ mod tests {
     fn helpget_refuses_a_page_that_asks_for_too_many_runs() {
         let (index, data) = (index_of("PRINT", &[0]), page_of(5000, 5000));
         let help = Help::from_bytes(&index, data).unwrap();
-        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        let mut rt = Runtime::for_tests(crate::font::Font::blank());
         rt.help = Some(Rc::new(help));
         let args = [Value::str("PRINT"), Value::Int(0)];
         let got = rt.help_command(Command::Helpget, &args, Want::Outs(4));
@@ -575,7 +575,7 @@ mod tests {
     #[test]
     fn a_name_the_help_does_not_have() {
         let (index, data) = (index_of("PRINT", &[0]), page_of(10, 2));
-        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        let mut rt = Runtime::for_tests(crate::font::Font::blank());
         rt.help = Some(Rc::new(Help::from_bytes(&index, data).unwrap()));
         let args = [Value::str("NOSUCHNAME"), Value::Int(0)];
         let got = rt.help_command(Command::Helpget, &args, Want::Outs(4));
@@ -733,7 +733,7 @@ mod tests {
 
     #[test]
     fn only_allowed_programs_see_the_topic_at_the_cursor() {
-        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        let mut rt = Runtime::for_tests(crate::font::Font::blank());
         rt.help = Some(Rc::new(help()));
         rt.help_cursor = (utf16("IF A"), 4);
         let topic = |out: Vec<Value>| {
@@ -747,7 +747,7 @@ mod tests {
 
     #[test]
     fn programs_read_the_help() {
-        let mut rt = Runtime::new(400, 240, crate::font::Font::blank());
+        let mut rt = Runtime::for_tests(crate::font::Font::blank());
         rt.help = Some(Rc::new(help()));
         let source = "HELPGET \"if\",0 OUT L$,T,A,E$\n\
             ?L$[0];T[0];A[0,0,0];A[0,0,1];HEX$(A[0,0,2]);E$\n\

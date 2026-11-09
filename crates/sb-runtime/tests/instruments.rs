@@ -39,7 +39,7 @@ fn play_with(
     source: &str,
     frames: usize,
 ) -> Vec<f32> {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     rt.sound.set_instruments(Some(instruments.clone()));
     rt.sound.set_sequences(sequences.cloned());
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());

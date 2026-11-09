@@ -794,7 +794,7 @@ mod tests {
             seed % n
         };
         for round in 0..300 {
-            let mut rt = Runtime::new(400, 240, Font::blank());
+            let mut rt = Runtime::for_tests(Font::blank());
             let start = starts[round % starts.len()];
             rt.slots[3] = start.to_string();
             let mut model = Model {

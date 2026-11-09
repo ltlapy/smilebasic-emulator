@@ -23,7 +23,7 @@ fn run_on(rt: &mut Runtime, source: &str) -> Result<String, sb_core::error::Erro
 }
 
 fn runtime() -> Runtime {
-    Runtime::new(400, 240, Font::blank())
+    Runtime::for_tests(Font::blank())
 }
 
 fn frames(rt: &mut Runtime, n: usize) {

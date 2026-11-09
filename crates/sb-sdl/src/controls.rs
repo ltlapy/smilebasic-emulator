@@ -579,7 +579,7 @@ mod tests {
     /// and whether a screen has the controls, and gives what INKEY$ has then.
     fn typed_after(frames: &[(u32, bool)]) -> usize {
         use sb_core::vm::{Status, Vm};
-        let mut rt = sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank());
+        let mut rt = sb_runtime::Runtime::for_tests(sb_runtime::font::Font::blank());
         let mut carried = Carried::default();
         for &(buttons, screen) in frames {
             rt.input.live = carried.program_sees(holding(buttons), screen);
@@ -650,7 +650,7 @@ mod tests {
 
     fn read(source: &str) -> KeysRead {
         use sb_core::vm::{Status, Vm};
-        let mut rt = sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank());
+        let mut rt = sb_runtime::Runtime::for_tests(sb_runtime::font::Font::blank());
         let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
         while !matches!(vm.run(&mut rt, 100_000).unwrap(), Status::Ended) {
             rt.begin_frame();
@@ -718,7 +718,7 @@ mod tests {
     }
 
     fn runtime() -> sb_runtime::Runtime {
-        sb_runtime::Runtime::new(400, 240, sb_runtime::font::Font::blank())
+        sb_runtime::Runtime::for_tests(sb_runtime::font::Font::blank())
     }
 
     /// Part of a US layout, the same on every computer the tests run on.

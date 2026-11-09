@@ -7,7 +7,7 @@ use sb_runtime::font::Font;
 use sb_runtime::runtime::keys;
 
 fn run(source: &str) -> Result<Runtime, sb_core::error::Error> {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let mut vm = Vm::new(sb_core::compile(source, &rt)?);
     while vm.run(&mut rt, 100_000)? != Status::Ended {}
     Ok(rt)
@@ -70,7 +70,7 @@ fn press(rt: &mut Runtime, key: u16) {
 
 #[test]
 fn inkey_reads_queued_keys() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     type_keys(&mut rt, "AB");
     press(&mut rt, keys::UP);
     let src = "A$=INKEY$()+INKEY$():B$=INKEY$(1):C$=INKEY$()\n?A$;ASC(B$);LEN(C$)";
@@ -84,7 +84,7 @@ fn inkey_reads_queued_keys() {
 /// line, PUSHKEY's included.
 #[test]
 fn input_drops_keys_queued_before_it() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     type_keys(&mut rt, "ZSX");
     let src = "PUSHKEY \"7\":INPUT A$\n?\"[\";A$;\"]\"";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
@@ -100,7 +100,7 @@ fn input_drops_keys_queued_before_it() {
 /// Keys typed while INPUT waits are typed into its line.
 #[test]
 fn input_takes_keys_typed_while_it_waits() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let src = "INPUT A$\n?\"[\";A$;\"]\"";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
@@ -112,7 +112,7 @@ fn input_takes_keys_typed_while_it_waits() {
 
 #[test]
 fn input_waits_for_enter_and_edits() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let src = "INPUT \"N\";A\n?A*2";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     let waiting = Status::Retry;
@@ -135,7 +135,7 @@ fn next_frame(rt: &mut Runtime) -> sb_runtime::framebuffer::Framebuffer {
 
 #[test]
 fn input_cursor_is_a_white_bar_that_blinks() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let src = "BACKCOLOR &HFF102030:COLOR &H80FFFF00:INPUT \"N\";A";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
@@ -168,7 +168,7 @@ fn input_cursor_is_a_white_bar_that_blinks() {
 
 #[test]
 fn input_cursor_starts_again_on_each_key_that_does_something() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let mut vm = Vm::new(sb_core::compile("INPUT A$", &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     let flips_after = |rt: &mut Runtime, from: u32| -> usize {
@@ -206,7 +206,7 @@ fn input_cursor_starts_again_on_each_key_that_does_something() {
 
 #[test]
 fn input_cursor_is_a_block_after_insert() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let src = "BACKCOLOR &HFF102030:INPUT A$:INPUT B$";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
@@ -226,7 +226,7 @@ fn input_cursor_is_a_block_after_insert() {
 
 #[test]
 fn input_cursor_scales_with_the_cell() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let src = "BACKCOLOR &HFF102030:TSCREEN 4,16,16:INPUT A$";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
@@ -240,7 +240,7 @@ fn input_cursor_scales_with_the_cell() {
 /// behind, so a layer color dims it and leaves the frame showing.
 #[test]
 fn input_cursor_adds_its_light_on_a_composed_layer() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let src = "BACKCOLOR &HFF102030:LAYER 0,1,&HFF808080:INPUT A$";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
@@ -251,7 +251,7 @@ fn input_cursor_adds_its_light_on_a_composed_layer() {
 
 #[test]
 fn input_cursor_redraws_only_when_it_changes() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let mut vm = Vm::new(sb_core::compile("INPUT A", &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
     next_frame(&mut rt);
@@ -264,7 +264,7 @@ fn input_cursor_redraws_only_when_it_changes() {
 
 #[test]
 fn input_clears_the_cells_it_typed_over_and_deleted() {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let src = "?\"@@@@@@\";:LOCATE 0,0:INPUT \"\",A$";
     let mut vm = Vm::new(sb_core::compile(src, &rt).unwrap());
     assert_eq!(vm.run(&mut rt, 10_000).unwrap(), Status::Retry);
@@ -362,7 +362,7 @@ fn a_full_stack_lets_commands_without_arguments_run() {
 #[test]
 fn a_gosub_without_room_stops_the_next_command() {
     let deepest = |source: &str| {
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
         let e = loop {
             match vm.run(&mut rt, 1_000_000) {

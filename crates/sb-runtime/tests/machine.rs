@@ -45,7 +45,7 @@ fn recovering_from_a_panic_keeps_the_editors_text() {
 }
 
 fn machine() -> Machine {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m
 }
@@ -1840,7 +1840,7 @@ fn screens_are_drawn_again_only_when_changed() {
 
 /// What a fixed run prints, a few frames in.
 fn fixed_run(source: &str) -> Vec<String> {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     rt.fix_time_and_chance();
     let mut m = Machine::new(rt);
     m.boot();

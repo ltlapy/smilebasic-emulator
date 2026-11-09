@@ -226,6 +226,62 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    /// The settings tests run with. Each value is written out, so a
+    /// change to a default changes nothing a test sees. A program that
+    /// ends leaves its screens and sound, as on SmileBASIC 4, for tests
+    /// to read.
+    pub fn for_tests() -> Self {
+        Settings {
+            upper_case_letters: true,
+            ctrl_c_stops: false,
+            half_width_on_save: true,
+            editor_wrap: false,
+            editor_number_tiles: true,
+            editor_map: true,
+            editor_window: false,
+            editor_window_keep_place: false,
+            tidy_on_end: false,
+            editor_window_place: None,
+            editor_font: FontSize::Large,
+            editor_size: EditorSize::Medium,
+            editor_tab_step: 1,
+            editor_colors: Palette::default(),
+            editor_extra_font: None,
+            editor_half_width: false,
+            editor_font_first: FontSource::SmileBasic,
+            program_font: [FontSource::SmileBasic; 2],
+            file_confirm: FileConfirm::Ask,
+            file_hint_shown: false,
+            screen_filter: Some(Filter::Nearest),
+            renderer: Renderer::Auto,
+            keyboard_buttons: true,
+            smilebasic_instruments: true,
+            sound_font: None,
+            language: Language::English,
+            localized_errors: false,
+            ui_font: UiFont::Large,
+            keep_mouse_cursor: false,
+            helpinfo_cursor: false,
+            help_text_size: 2,
+            complete_direct: true,
+            complete_editor: true,
+            complete_after: 1,
+            complete_commands: true,
+            complete_names: false,
+            complete_all_slots: false,
+            complete_enter: true,
+            complete_hints: true,
+            complete_above: false,
+            debug_open_editor: true,
+            debug_text_size: 2,
+            speed: Speed::Unlimited,
+            function_keys: FUNCTION_KEYS.map(String::from),
+            tools: TOOLS.map(String::from),
+        }
+    }
+}
+
 /// Settings lines for F1 to F5 start with this and the key's number.
 const FUNCTION_KEY: &str = "key";
 /// Settings lines for F9 to F11's programs start with this and 1 to 3.
@@ -588,6 +644,11 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn defaults_are_the_test_settings() {
+        assert_eq!(Settings::default(), Settings::for_tests());
+    }
 
     #[test]
     fn round_trips() {

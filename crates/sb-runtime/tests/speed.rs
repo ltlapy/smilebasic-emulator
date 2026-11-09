@@ -17,7 +17,7 @@ const TIMED: &str = "PERFBEGIN 0:FOR I=1 TO 10000:NEXT:?PERFEND(0)\n";
 /// Runs `source` at `speed` until it ends, and gives the last line it
 /// printed.
 fn run(speed: Speed, source: &str) -> String {
-    run_on(speed, Runtime::new(400, 240, Font::blank()), &[(0, source)])
+    run_on(speed, Runtime::for_tests(Font::blank()), &[(0, source)])
 }
 
 /// Runs slot 0 of `slots` on `rt` at `speed`, with the other slots
@@ -234,7 +234,7 @@ fn millisec_follows_the_consoles_clock() {
 #[test]
 fn exec_costs_the_source_it_compiles() {
     let exec = |source: &str| {
-        let rt = Runtime::new(400, 240, Font::blank());
+        let rt = Runtime::for_tests(Font::blank());
         let slot1 = format!("{source}?PERFEND(0)\n");
         let line = run_on(
             Speed::Switch2,
@@ -259,7 +259,7 @@ fn exec_costs_the_source_it_compiles() {
 fn a_file_read_the_first_time_costs_more() {
     let dir = std::env::temp_dir().join(format!("sb-speed-first-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     rt.storage = Storage::new(dir.clone());
     rt.settings.file_confirm = FileConfirm::Silent;
     let source = "SAVEG \"PIC\",0,0,0,64,64\n\
@@ -279,7 +279,7 @@ fn loadg_costs_the_pixels_it_decodes() {
     let dir = std::env::temp_dir().join(format!("sb-speed-loadg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let load = |w: u32, h: u32| {
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         rt.storage = Storage::new(dir.clone());
         rt.settings.file_confirm = FileConfirm::Silent;
         let source = match w {

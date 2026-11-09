@@ -1110,6 +1110,13 @@ pub(crate) fn with_screen(args: &[Value], rest: usize) -> Result<(usize, &[Value
 }
 
 impl Runtime {
+    /// A 400x240 runtime with [`Settings::for_tests`].
+    pub fn for_tests(font: Font) -> Runtime {
+        let mut rt = Runtime::new(400, 240, font);
+        rt.settings = Settings::for_tests();
+        rt
+    }
+
     pub fn new(width: u32, height: u32, font: Font) -> Runtime {
         let mode = ScreenMode::new(width, height);
         Runtime {

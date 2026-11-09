@@ -7,7 +7,7 @@ use sb_runtime::font::Font;
 use sb_runtime::machine::Machine;
 
 fn run(source: &str) -> Result<Runtime, sb_core::error::Error> {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     let mut vm = Vm::new(sb_core::compile(source, &rt)?);
     while vm.run(&mut rt, 100_000)? != Status::Ended {}
     Ok(rt)
@@ -16,7 +16,7 @@ fn run(source: &str) -> Result<Runtime, sb_core::error::Error> {
 /// Runs a program frame by frame until it ends, and returns the console
 /// rows it printed.
 fn play(source: &str) -> Vec<String> {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(0, source.to_string());
     m.run_slot(0);
@@ -375,7 +375,7 @@ fn scaled_text_settles_ties_as_sprites_do() {
     // TEST63: a user character's texels at TSCALE 1.5 and 0.5, on an 8-pixel
     // cell: the page's lower texel at 1.5, the higher at 0.5.
     let texels = |scale: &str, along: (u32, u32), step: (u32, u32), n: u32| -> Vec<u32> {
-        let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+        let mut m = Machine::new(Runtime::for_tests(Font::blank()));
         m.boot();
         m.set_slot(
             0,
@@ -422,7 +422,7 @@ fn scaled_text_settles_ties_as_sprites_do() {
 #[test]
 fn a_tie_can_read_the_page_past_a_cell() {
     let run = |source: &str| {
-        let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+        let mut m = Machine::new(Runtime::for_tests(Font::blank()));
         m.boot();
         m.set_slot(0, source.to_string());
         m.run_slot(0);

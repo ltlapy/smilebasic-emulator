@@ -291,7 +291,7 @@ mod tests {
     }
 
     fn machine_with_changes(root: &Path, slots: &[(usize, &str)]) -> Machine {
-        let mut rt = Runtime::new(400, 240, Font::blank());
+        let mut rt = Runtime::for_tests(Font::blank());
         rt.storage = Storage::new(root.join("projects"));
         let mut m = Machine::new(rt);
         m.boot();

@@ -1350,7 +1350,7 @@ mod tests {
     #[test]
     fn sprites_tab_chooses_and_outlines_a_sprite() {
         use sb_runtime::machine::Machine;
-        let mut m = Machine::new(sb_runtime::Runtime::new(400, 240, Font::blank()));
+        let mut m = Machine::new(sb_runtime::Runtime::for_tests(Font::blank()));
         m.boot();
         m.set_slot(0, "SPSET 2,0:SPOFS 2,100,100:SPSET 9,0".to_string());
         m.run_slot(0);
@@ -1405,7 +1405,7 @@ mod tests {
     #[test]
     fn sub_sprites_keep_their_own_choice_and_screen() {
         use sb_runtime::machine::Machine;
-        let mut m = Machine::new(sb_runtime::Runtime::new(400, 240, Font::blank()));
+        let mut m = Machine::new(sb_runtime::Runtime::for_tests(Font::blank()));
         m.boot();
         m.set_slot(0, "SPSET 2,0:SPOFS 2,100,100:SPSET 9,0".to_string());
         m.run_slot(0);

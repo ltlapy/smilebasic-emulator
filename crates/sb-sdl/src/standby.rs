@@ -232,7 +232,7 @@ mod tests {
     use sb_runtime::sound::output::Output;
 
     fn machine(source: &str) -> Machine {
-        let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+        let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
         m.boot();
         m.set_slot(0, source.to_string());
         m.run_slot(0);

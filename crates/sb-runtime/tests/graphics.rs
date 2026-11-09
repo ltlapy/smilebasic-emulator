@@ -8,7 +8,7 @@ use sb_runtime::machine::Machine;
 /// non-empty row before OK, or the error that stopped it, which can take
 /// more than a row.
 fn run(source: &str) -> (Machine, String) {
-    let mut m = Machine::new(Runtime::new(400, 240, Font::blank()));
+    let mut m = Machine::new(Runtime::for_tests(Font::blank()));
     m.boot();
     m.set_slot(0, source.to_string());
     m.run_slot(0);
@@ -127,7 +127,7 @@ fn putchr_draws_glyphs() {
     assert_eq!(m.rt.grp.pixel(0, 0, 0), 0);
     let (m, _) = run("GFILL 0,0,15,15,#C_RED:GPUTCHR 0,0,\"A\",16,#C_WHITE,1:?1");
     assert_eq!(m.rt.grp.pixel(0, 0, 0), 0xFFFF_0000);
-    let mut m = Machine::new(Runtime::new(400, 240, Font::fallback()));
+    let mut m = Machine::new(Runtime::for_tests(Font::fallback()));
     m.boot();
     m.set_slot(0, "GPUTCHR 0,0,\"A\",8,2,2,#C_RED".to_string());
     m.run_slot(0);

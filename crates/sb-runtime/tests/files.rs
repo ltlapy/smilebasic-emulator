@@ -26,7 +26,7 @@ impl Drop for TempDir {
 }
 
 fn machine(dir: &TempDir) -> Machine {
-    let mut rt = Runtime::new(400, 240, Font::blank());
+    let mut rt = Runtime::for_tests(Font::blank());
     rt.storage = Storage::new(dir.0.clone());
     // Tests of file questions turn them back on.
     rt.settings.file_confirm = FileConfirm::Silent;
