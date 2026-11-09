@@ -9,7 +9,10 @@ pub mod complete;
 pub mod compose;
 pub mod confirm;
 mod devices;
+// build.rs uses it; the crate only tests it.
 pub mod dialog;
+#[cfg(test)]
+mod dot_bold;
 pub mod editor;
 pub mod env;
 pub mod error_lines;

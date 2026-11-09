@@ -12,4 +12,5 @@ drawn for 8x16 and 16x16 cells, so they stay sharp there.
   keeps every other character.
 - The build script (`build.rs`) compresses the file, and the emulator
   unpacks it on first use.
-- The font has no half-width katakana. They come from Galmuri14.
+- The font has no half-width katakana. They come from Unifont JP
+  (`fonts/unifont`).

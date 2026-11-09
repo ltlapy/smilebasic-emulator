@@ -9,7 +9,8 @@
 //! - the bundled glyphs. At 8 pixels: GalmuriMono7, Misaki Gothic 2nd,
 //!   Noto Emoji, M PLUS 1p Bold, then Fusion Pixel 8px. At 16 pixels:
 //!   M PLUS 1p Bold, the face closest to SmileBASIC 4's own 16-pixel
-//!   font, then Galmuri14, Noto Emoji and Noto Sans SC Bold (GB2312).
+//!   font, then the dot glyphs (Izumi Gothic 16, then Unifont JP, both
+//!   made bold), Noto Emoji and Noto Sans SC Bold (GB2312).
 //!
 //! The editor looks a character up in them in the order the settings give
 //! ([`Fonts`]), by default in the order above. When none has it, it draws
@@ -75,16 +76,20 @@ struct Table {
 
 impl Table {
     fn read(packed: &[u8]) -> Table {
-        let data = miniz_oxide::inflate::decompress_to_vec(packed).expect("bundled glyph table");
+        let mut data =
+            miniz_oxide::inflate::decompress_to_vec(packed).expect("bundled glyph table");
         let count = u32::from_le_bytes(data[0..4].try_into().expect("count")) as usize;
         let (cell, bits) = (u32::from(data[4]), data[5]);
         let codes = data[6..6 + count * 4]
             .chunks_exact(4)
             .map(|c| u32::from_le_bytes(c.try_into().expect("code")))
             .collect();
+        // The cells stay in the buffer they were unpacked into rather than
+        // being copied out: the dot glyphs' table is 2 MB.
+        data.drain(..6 + count * 4);
         Table {
             codes,
-            cells: data[6 + count * 4..].to_vec(),
+            cells: data,
             cell,
             bits,
         }
@@ -120,7 +125,7 @@ macro_rules! table {
     };
 }
 
-table!(galmuri16, "extra_galmuri16.bin");
+table!(dot16, "extra_dot16.bin");
 table!(half16, "extra_half16.bin");
 table!(emoji8, "extra_emoji8.bin");
 table!(emoji16, "extra_emoji16.bin");
@@ -128,8 +133,9 @@ table!(misaki8, "extra_misaki8.bin");
 table!(fusion8, "extra_fusion8.bin");
 table!(sc16, "extra_sc16.bin");
 
-/// Galmuri14's half-width glyph for `code`, 8x16, if it has one.
-pub(crate) fn galmuri_half16(code: u32) -> Option<Vec<u8>> {
+/// Unifont JP's half-width glyph for `code`, 8x16, if it has one among
+/// the half-width forms (U+FF00-U+FFEF).
+pub(crate) fn dot_half16(code: u32) -> Option<Vec<u8>> {
     let mut cell = Vec::with_capacity(256);
     half16().copy(code, &mut cell).then(|| {
         let left = cell.chunks_exact(16).flat_map(|row| &row[..8]);
@@ -137,9 +143,10 @@ pub(crate) fn galmuri_half16(code: u32) -> Option<Vec<u8>> {
     })
 }
 
-/// Appends Galmuri14's 16x16 cell for `code`, if it has one.
-pub(crate) fn galmuri16_cell(code: u32, out: &mut Vec<u8>) -> bool {
-    galmuri16().copy(code, out)
+/// Appends the 16x16 dot glyph for `code` (Izumi Gothic 16 or Unifont
+/// JP, made bold), if there is one.
+pub(crate) fn dot16_cell(code: u32, out: &mut Vec<u8>) -> bool {
+    dot16().copy(code, out)
 }
 
 /// Appends GalmuriMono7's 8x8 cell for `code`, if it has one.
@@ -386,7 +393,7 @@ impl ExtraGlyphs {
             // the Japanese forms of the characters both have.
             FontSize::Large => {
                 take(out, outlines(ch, 16))
-                    || galmuri16().copy(code, out)
+                    || dot16().copy(code, out)
                     || emoji16().copy(code, out)
                     || sc16().copy(code, out)
             }
@@ -587,18 +594,24 @@ mod tests {
             let mut galmuri_cell = Vec::new();
             assert!(galmuri(c as u32, &mut galmuri_cell));
             assert_eq!(bundled(c, FontSize::Small), galmuri_cell, "{c}");
-            // M PLUS 1p has no Hangul, which Galmuri14 draws.
-            let large = outlines(Some(c), 16).or_else(|| from(galmuri16(), c));
+            // M PLUS 1p has no Hangul, which Unifont JP draws.
+            let large = outlines(Some(c), 16).or_else(|| from(dot16(), c));
             assert_eq!(Some(bundled(c, FontSize::Large)), large, "{c}");
+        }
+        // Kanji M PLUS 1p lacks come from Izumi Gothic 16, made bold.
+        for c in ['𠀋', '㐂', '鷗'] {
+            assert_eq!(outlines(Some(c), 16), None, "{c}");
+            assert_eq!(Some(bundled(c, FontSize::Large)), from(dot16(), c), "{c}");
         }
         // Greek and Cyrillic at 8 pixels come from Misaki Gothic 2nd.
         for c in ['Ω', 'ж'] {
             assert_eq!(Some(bundled(c, FontSize::Small)), from(misaki8(), c), "{c}");
         }
-        // Simplified Chinese no other font has.
+        // Simplified Chinese no other font has, at 8 pixels. At 16,
+        // Unifont JP draws it.
         for c in ['汉', '们', '这'] {
             assert_eq!(Some(bundled(c, FontSize::Small)), from(fusion8(), c), "{c}");
-            assert_eq!(Some(bundled(c, FontSize::Large)), from(sc16(), c), "{c}");
+            assert_eq!(Some(bundled(c, FontSize::Large)), from(dot16(), c), "{c}");
         }
     }
 

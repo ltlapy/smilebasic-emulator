@@ -1,8 +1,9 @@
 # SB Emulator SC Bold
 
 The editor's last 16-pixel source: glyphs for GB2312 characters that
-M PLUS 1p Bold, Galmuri14 and Noto Emoji lack, mostly Simplified Chinese.
-The smooth font of the menus and windows uses the same glyphs.
+M PLUS 1p Bold, the dot fonts (Izumi Gothic 16, Unifont JP) and Noto Emoji
+lack. The smooth font of the menus and windows uses the same glyphs.
+Unifont JP draws every GB2312 character, so for now it adds none.
 
 - Source: [Noto Sans CJK](https://github.com/notofonts/noto-cjk) tag
   Sans2.004, `Sans/SubsetOTF/SC/NotoSansSC-Bold.otf`.

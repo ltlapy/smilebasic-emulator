@@ -1,0 +1,40 @@
+Izumi Bitmap Font Series: Izumi Gothic 16
+Designed by Yu Izumi (Yu=Izumi), 2001-2007.
+
+The author declares the font equivalent to public domain: anyone may use,
+change and redistribute it, commercially or not, with no duty to credit
+the font or to contact the author. The author asks, without requiring it,
+to hear about changes and ports. The texts below are the author's own,
+unchanged; the English summary above is this project's.
+
+
+== From the archive's English document, izmg16-2004.eng.txt ==
+
+Copyright
+
+ This font is Public Domain. Shere and enjoy.
+
+ In Japanese low, and sentence are thinking of Font's Preservation on
+industrial possession. I think so, too.
+ Yes, All Izumi Fonts are "Public Domain" on completing. But, if part of one
+isn't completing, I want changeless.
+ "I want changeless", it's not meaning disable. But I can't take the
+responsibility of changes.
+
+
+== From the archive's Japanese document, izmg16-2004.jpn.txt ==
+
+・ライセンス
+　書体には著作権は認められていませんが、パブリックドメインとします。商用・非商用問わず自由に利用できます。
+　ただし、このフォント全体として未完成のため、その改変・転載等をなされる場合は連絡されることを希望します。(あくまで『希望』ですので守る必要はありません)
+
+
+== From the author's download page (dl-jp.html), "ライセンス" ==
+
+　出水ビットマップフォントシリーズに関するあらゆる権利は、特定の個人／団体の形で保持することを主張しません。現状では書体に著作権は認められていませんが(プログラムの権利と主張する向きもあるが、現状ではかなり疑問が残る)、たとえ未来に書体の著作権が認められた場合でもその著作権がすべてのユーザに共有され、自由に流通・改変されることを希望します。つまりパブリックドメインに準ずることを宣言します。なお、著作権以外でも昭和十年(1935年)に制定された不正競争防止法等の権利がありますが、権利の行使は可能な限り控えさせていただきます。
+
+　また、このフォントが商用利用・非営利利用を問わず自己責任の下に利用されることを希望します。その際、商品の明細等に出水書体を使用した旨の記載の義務は存在しませんし(ただし、改変部分などに権利等を主張する場合は、その及ぶ範囲を明示しておかないとならないでしょう)、私自身への連絡の義務はありません。ただし、私自身は使用書体の記載は、公共性の観点から考えて望ましいと考えていますし、私への利用の報告は今後の開発に役立てるのに重要だと考えています。
+
+　なお、フォントの改変(特に未完成のものは改変を希望しない)や移植については連絡されることを希望します。今後の更新に反映したいと考えていますので。
+
+　希望事項は、義務ではなくあくまで「希望」です。この項目および非記載の全ての事柄は公共の福祉に反しない限り守る義務は全く存在しませんし、その限りにおいて私は諸権利の行使は一切しません(個人的な意見・希望は言うかもしれませんが、それも義務ではありません)。

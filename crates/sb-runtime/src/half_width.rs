@@ -6,7 +6,7 @@
 //! SmileBASIC 4's glyphs fill a square cell, so they cannot be cut in
 //! half. The glyphs come from fonts drawn for half-width cells: the 8-pixel
 //! ones from GalmuriMono7 (4x8), the 16-pixel ones from NeoDunggeunmo
-//! (8x16), then Galmuri14, for what it lacks. A font file
+//! (8x16), then Unifont JP, for what it lacks. A font file
 //! chosen in the settings comes before them or after them, as the editor's
 //! font order says, for the glyphs it draws half-width. Squeezing
 //! SmileBASIC's own glyph to half its width is the last resort.
@@ -121,7 +121,7 @@ impl HalfGlyphs {
             let bundled = || {
                 char::from_u32(u32::from(code))
                     .and_then(|c| cell_glyph::outline_half(half_font(), c, 16))
-                    .or_else(|| extra_glyphs::galmuri_half16(u32::from(code)))
+                    .or_else(|| extra_glyphs::dot_half16(u32::from(code)))
             };
             let found = match file_first {
                 true => file_large().or_else(bundled),
@@ -230,7 +230,7 @@ mod tests {
         assert!(ink(a) > 10 && ink(a) < 8 * 16, "A has {} pixels", ink(a));
         // NeoDunggeunmo is a pixel font: every pixel is on or off.
         assert!(a.iter().all(|&p| p == 0 || p == 255));
-        // Half-width kana, which it lacks, come from Galmuri14, drawn
+        // Half-width kana, which it lacks, come from Unifont JP, drawn
         // for 16 pixels: no pixel is doubled.
         let kana = half.get('ｱ' as u16, FontSize::Large).unwrap();
         assert!(ink(kana) > 0);

@@ -3,8 +3,8 @@
 //!
 //! The smooth font (`ui_font=smooth`) is outlines drawn for a 16-pixel
 //! cell with gray edges. Full-width characters take the editor's bundled
-//! 16-pixel glyphs: M PLUS 1p Bold, then Galmuri14, Noto Emoji and Noto
-//! Sans SC Bold. Half-width ones take M PLUS Code Latin 50 Bold, drawn
+//! 16-pixel glyphs: M PLUS 1p Bold, then the dot glyphs (Izumi Gothic 16,
+//! Unifont JP), Noto Emoji and Noto Sans SC Bold. Half-width ones take M PLUS Code Latin 50 Bold, drawn
 //! half an em wide, then M PLUS 1p Bold's own half-width forms. Both are
 //! drawn with the em and baseline of the bundled 16-pixel font, so they
 //! line up.

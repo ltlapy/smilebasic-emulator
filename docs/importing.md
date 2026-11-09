@@ -36,19 +36,30 @@ instead. It has three sources:
      [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji),
      M PLUS 1p Bold, then [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font)
      8px monospaced (zh_hans);
-   - 16 pixels: M PLUS 1p Bold, Galmuri14, Noto Emoji, then
+   - 16 pixels: M PLUS 1p Bold,
+     [Izumi Gothic 16](http://izumilib.web.fc2.com/izumi-bf/dl-eng.html)
+     (JIS X 0213), [Unifont JP](https://unifoundry.com/unifont/) (the whole
+     Basic Multilingual Plane), Noto Emoji, then
      [Noto Sans SC](https://github.com/notofonts/noto-cjk) Bold, cut down to
      the GB2312 characters.
 
+   Izumi Gothic 16 and Unifont JP are dot fonts drawn in one-pixel
+   strokes. The build makes them bold: each stroke grows one pixel to the
+   side, but one-pixel gaps between strokes stay open, and so does the
+   side column of the cell where the glyph leaves it empty, so neighbors
+   do not touch.
+
    Misaki Gothic 2nd is free to use, copy and change under its author's
-   license; the others are under the SIL Open Font License 1.1. Each font's
-   folder in `crates/sb-runtime/fonts` holds its license.
+   license, and Izumi Gothic 16 is equivalent to public domain by its
+   author's declaration; the others are under the SIL Open Font License
+   1.1. Each font's folder in `crates/sb-runtime/fonts` holds its license.
 
    Fusion Pixel and Noto Sans SC draw the CJK characters they share with
    Japanese in their Simplified Chinese forms, so they come last: they only
-   fill in characters the fonts before them lack, and kana, Hangul and
-   Japanese kanji keep the glyphs of GalmuriMono7, M PLUS 1p Bold and
-   Galmuri14.
+   fill in characters the fonts before them lack, and kana and Japanese
+   kanji keep the glyphs of GalmuriMono7, M PLUS 1p Bold and Izumi
+   Gothic 16. Unifont JP draws every GB2312 character, so at 16 pixels
+   Noto Sans SC adds none for now.
 
 The editor looks in them in this order. "Editor's first font" on the same page
 moves one source to the front; the other two keep their order. With the file
@@ -103,7 +114,7 @@ half-width glyphs come from:
 
 - 8 pixels: GalmuriMono7, drawn for 4x8 cells;
 - 16 pixels: NeoDunggeunmo, drawn for 8x16 cells
-  (`crates/sb-runtime/fonts/neodgm`), then Galmuri14 for what it lacks,
+  (`crates/sb-runtime/fonts/neodgm`), then Unifont JP for what it lacks,
   such as half-width kana.
 
 In the editor, the font file comes before these when it draws a character
@@ -120,7 +131,8 @@ the settings window and the emulator's other windows:
 - 16-pixel (the default): SmileBASIC's 16-pixel font with its gray edges,
   as SmileBASIC 4 draws it, and the half-width glyphs above. With an
   imported font, Unicode characters it lacks come from the editor's bundled
-  16-pixel fonts (M PLUS 1p Bold, Galmuri14, Noto Emoji, Noto Sans SC Bold)
+  16-pixel fonts (M PLUS 1p Bold, Izumi Gothic 16, Unifont JP, Noto Emoji,
+  Noto Sans SC Bold)
   instead of the box. A character beyond U+FFFF takes two cells, with its
   glyph on the first, as in the editor;
 - Smooth: outlines with soft edges, drawn for a 16-pixel cell. Half-width

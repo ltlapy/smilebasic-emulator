@@ -6,15 +6,16 @@
 //! - `$OUT_DIR/fallback_symbols.bin`, from `fonts/symbols.txt`: one 66-byte
 //!   record per character: u16 code, then 64 palette indices in rows (see
 //!   `SYMBOL_PALETTE` in `src/font.rs`).
-//! - `$OUT_DIR/extra_galmuri16.bin`, `extra_misaki8.bin`,
-//!   `extra_fusion8.bin`, `extra_sc16.bin` and `extra_emoji{8,16}.bin`, the
-//!   editor's extra glyphs (see `src/extra_glyphs.rs`), from
-//!   `fonts/galmuri/Galmuri14.bdf`, `fonts/misaki`, `fonts/fusionpixel`,
+//! - `$OUT_DIR/extra_dot16.bin`, `extra_misaki8.bin`, `extra_fusion8.bin`,
+//!   `extra_sc16.bin` and `extra_emoji{8,16}.bin`, the editor's extra
+//!   glyphs (see `src/extra_glyphs.rs`), from `fonts/izumi`,
+//!   `fonts/unifont`, `fonts/misaki`, `fonts/fusionpixel`,
 //!   `fonts/notosanssc` and `fonts/notoemoji/SBEmulatorEmoji.ttf`, and
-//!   `extra_half16.bin`,
-//!   Galmuri14's half-width glyphs in the left half of 16x16 cells (see
-//!   `src/half_width.rs`): tables compressed with deflate, laid out as
-//!   `extra_glyphs::Table` reads them.
+//!   `extra_half16.bin`, Unifont JP's half-width forms in the left half of
+//!   16x16 cells (see `src/half_width.rs`): tables compressed with
+//!   deflate, laid out as `extra_glyphs::Table` reads them. The 16-pixel
+//!   dot glyphs are made bold here (see `src/dot_bold.rs` and
+//!   `BOLD_EDGE`).
 //! - `$OUT_DIR/dot_font.bin`, `fonts/neodgm/SBEmulatorDot.ttf` compressed
 //!   with deflate (see `src/half_width.rs`).
 //! - `SB_VERSION`, the package version followed by the commit the build
@@ -27,11 +28,20 @@ use std::path::Path;
 #[allow(dead_code)]
 #[path = "src/cell_glyph.rs"]
 mod cell_glyph;
+// The edge choices BOLD_EDGE does not pick.
+#[allow(dead_code)]
+#[path = "src/dot_bold.rs"]
+mod dot_bold;
 
 const BDF: &str = "fonts/galmuri/GalmuriMono7.bdf";
 const OVERRIDES: &str = "fonts/galmuri/overrides.txt";
 const SYMBOLS: &str = "fonts/symbols.txt";
-const GALMURI14: &str = "fonts/galmuri/Galmuri14.bdf";
+const IZUMI: &str = "fonts/izumi/izumi16.hex";
+const UNIFONT: &str = "fonts/unifont/unifont_jp-18.0.01.hex.gz";
+/// How the bold of the 16-pixel dot glyphs treats the cell's side
+/// columns: `Plain`, `KeepEdge`, `KeepEdgeInward` or
+/// `KeepEdgeInwardShifted` (see `dot_bold::EdgeRule`).
+const BOLD_EDGE: dot_bold::EdgeRule = dot_bold::EdgeRule::KeepEdgeInwardShifted;
 const EMOJI: &str = "fonts/notoemoji/SBEmulatorEmoji.ttf";
 const MISAKI: &str = "fonts/misaki/misaki_gothic_2nd.bdf";
 const FUSION: &str = "fonts/fusionpixel/fusion-pixel-8px-monospaced-zh_hans.bdf";
@@ -200,7 +210,8 @@ fn main() {
     println!("cargo::rerun-if-changed={BDF}");
     println!("cargo::rerun-if-changed={OVERRIDES}");
     println!("cargo::rerun-if-changed={SYMBOLS}");
-    println!("cargo::rerun-if-changed={GALMURI14}");
+    println!("cargo::rerun-if-changed={IZUMI}");
+    println!("cargo::rerun-if-changed={UNIFONT}");
     println!("cargo::rerun-if-changed={EMOJI}");
     println!("cargo::rerun-if-changed={MISAKI}");
     println!("cargo::rerun-if-changed={FUSION}");
@@ -208,6 +219,7 @@ fn main() {
     println!("cargo::rerun-if-changed={MPLUS}");
     println!("cargo::rerun-if-changed={DOT}");
     println!("cargo::rerun-if-changed=src/cell_glyph.rs");
+    println!("cargo::rerun-if-changed=src/dot_bold.rs");
     let read = |path| std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
@@ -275,37 +287,125 @@ fn write_table(path: &Path, cell: u32, bits: u8, glyphs: &BTreeMap<u32, Vec<u8>>
     std::fs::write(path, packed).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 }
 
+/// Writes a table of 1-bit 16x16 cells, laid out as [`write_table`]'s.
+fn write_cells(path: &Path, glyphs: &BTreeMap<u32, dot_bold::Cell16>) {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(glyphs.len() as u32).to_le_bytes());
+    out.extend_from_slice(&[16, 1]);
+    for &code in glyphs.keys() {
+        out.extend_from_slice(&code.to_le_bytes());
+    }
+    for rows in glyphs.values() {
+        for row in rows {
+            // Column 0 goes to the top bit.
+            out.extend_from_slice(&row.reverse_bits().to_be_bytes());
+        }
+    }
+    let packed = miniz_oxide::deflate::compress_to_vec(&out, 10);
+    std::fs::write(path, packed).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+}
+
+/// The data of a gzip file with one member.
+fn gunzip(path: &str, bytes: &[u8]) -> Vec<u8> {
+    let bad = || -> ! { panic!("{path}: not a gzip file") };
+    if bytes.len() < 18 || bytes[..3] != [0x1F, 0x8B, 8] {
+        bad();
+    }
+    let flags = bytes[3];
+    let mut at = 10;
+    if flags & 4 != 0 {
+        at += 2 + usize::from(u16::from_le_bytes([bytes[10], bytes[11]]));
+    }
+    // The file name and the comment end with a zero byte.
+    for flag in [8, 16] {
+        if flags & flag != 0 {
+            let len = bytes[at..].iter().position(|&b| b == 0);
+            at += len.unwrap_or_else(|| bad()) + 1;
+        }
+    }
+    if flags & 2 != 0 {
+        at += 2;
+    }
+    let data = miniz_oxide::inflate::decompress_to_vec(&bytes[at..])
+        .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+    let size = u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap());
+    assert_eq!(size, data.len() as u32, "{path}: size");
+    data
+}
+
+/// The glyphs of a GNU Unifont .hex file (a code in hex, a colon, then
+/// 16 rows of 8 or 16 pixels in hex): each code, whether it is
+/// half-width, and its rows with column `x` in bit `x`, half-width ones in
+/// columns 0 to 7. Glyphs of other widths are left out.
+fn parse_hex(path: &str, text: &str) -> Vec<(u32, bool, dot_bold::Cell16)> {
+    let mut glyphs = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let bad = || -> ! { panic!("{path}:{}: not a .hex line", n + 1) };
+        let (code, pixels) = line.split_once(':').unwrap_or_else(|| bad());
+        let code = u32::from_str_radix(code, 16).unwrap_or_else(|_| bad());
+        let digits = match pixels.len() {
+            32 => 2,
+            64 => 4,
+            _ => continue,
+        };
+        let mut rows = [0; 16];
+        for (y, row) in rows.iter_mut().enumerate() {
+            let hex = &pixels[y * digits..(y + 1) * digits];
+            let bits = u16::from_str_radix(hex, 16).unwrap_or_else(|_| bad());
+            *row = match digits {
+                2 => bits.reverse_bits() >> 8,
+                _ => bits.reverse_bits(),
+            };
+        }
+        glyphs.push((code, digits == 2, rows));
+    }
+    glyphs
+}
+
+/// Whether a character has a use in a cell: controls do not.
+fn drawn(code: u32) -> bool {
+    code >= 0x20 && !(0x7F..0xA0).contains(&code)
+}
+
+/// 16x16 cells by code.
+type Cells = BTreeMap<u32, dot_bold::Cell16>;
+
+/// The 16-pixel dot glyphs, made bold: Izumi Gothic 16, then Unifont JP
+/// for what it lacks, half-width glyphs centered as `bdf_cell` places
+/// them. Then Unifont JP's half-width forms (U+FF00-U+FFEF) as drawn, in
+/// columns 0 to 7: the half-width kana and the few symbols NeoDunggeunmo
+/// lacks are all among them.
+fn dot_cells(read: &dyn Fn(&'static str) -> String) -> (Cells, Cells) {
+    use dot_bold::{Face, embolden};
+    let mut cells = BTreeMap::new();
+    let mut halves = BTreeMap::new();
+    let bytes = std::fs::read(UNIFONT).unwrap_or_else(|e| panic!("{UNIFONT}: {e}"));
+    let text = String::from_utf8(gunzip(UNIFONT, &bytes)).expect("Unifont JP is ASCII");
+    for (code, half, rows) in parse_hex(UNIFONT, &text) {
+        if !drawn(code) {
+            continue;
+        }
+        if half && (0xFF00..=0xFFEF).contains(&code) {
+            halves.insert(code, rows);
+        }
+        let rows = if half { rows.map(|r| r << 4) } else { rows };
+        cells.insert(code, embolden(&rows, Face::Unifont, BOLD_EDGE));
+    }
+    for (code, half, rows) in parse_hex(IZUMI, &read(IZUMI)) {
+        assert!(!half, "{IZUMI}: U+{code:04X} is half-width");
+        if drawn(code) {
+            cells.insert(code, embolden(&rows, Face::Izumi, BOLD_EDGE));
+        }
+    }
+    (cells, halves)
+}
+
 /// Writes the editor's tables. `galmuri7` is what GalmuriMono7 draws.
 fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7: &BTreeSet<u32>) {
-    let bdf = cell_glyph::parse_bdf(&read(GALMURI14));
-    let layout = cell_glyph::BdfLayout::new(&bdf);
-    // Controls and combining marks (no advance) have no use in a cell.
-    let drawn = || {
-        bdf.glyphs
-            .iter()
-            .filter(|g| g.code >= 0x20 && !(0x7F..0xA0).contains(&g.code) && g.advance > 0)
-    };
-    let cells = drawn()
-        .map(|g| (g.code, cell_glyph::bdf_cell(g, &layout, 16)))
-        .collect();
-    write_table(&out_dir.join("extra_galmuri16.bin"), 16, 1, &cells);
-    let halves = drawn()
-        .filter(|g| g.code <= 0xFFFF)
-        .filter_map(|g| {
-            let half = cell_glyph::bdf_half(g, &layout, 16)?;
-            let cell = (0..256).map(|i| {
-                if i % 16 < 8 {
-                    half[i / 16 * 8 + i % 16]
-                } else {
-                    0
-                }
-            });
-            Some((g.code, cell.collect()))
-        })
-        .collect();
-    write_table(&out_dir.join("extra_half16.bin"), 16, 1, &halves);
-
-    let galmuri14: BTreeSet<u32> = cells.keys().copied().collect();
+    let (cells, halves) = dot_cells(read);
+    write_cells(&out_dir.join("extra_dot16.bin"), &cells);
+    write_cells(&out_dir.join("extra_half16.bin"), &halves);
+    let dot16: BTreeSet<u32> = cells.keys().copied().collect();
 
     let bytes = std::fs::read(EMOJI).unwrap_or_else(|e| panic!("{EMOJI}: {e}"));
     let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("emoji font");
@@ -333,7 +433,7 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7:
     // gray of SmileBASIC 4's font page, which also packs smaller.
     let bytes = std::fs::read(NOTO_SC).unwrap_or_else(|e| panic!("{NOTO_SC}: {e}"));
     let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("Noto Sans SC");
-    let lacking = |c: u32| !mplus.contains(&c) && !galmuri14.contains(&c) && !emoji.contains(&c);
+    let lacking = |c: u32| !mplus.contains(&c) && !dot16.contains(&c) && !emoji.contains(&c);
     let steps = |a: u8| ((u16::from(a) * 15 + 127) / 255) as u8 * 17;
     let glyphs = outline_cells(&font, 16, cell_glyph::SMILEBASIC_EM, lacking, steps);
     write_table(&out_dir.join("extra_sc16.bin"), 16, 8, &glyphs);
