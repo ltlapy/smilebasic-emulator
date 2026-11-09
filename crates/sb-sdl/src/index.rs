@@ -68,6 +68,15 @@ impl IndexPanel {
         side_rect(self.size, self.left, 0)
     }
 
+    /// Goes on a display of another size, as when the editor's window is
+    /// resized, keeping the chosen entry in view.
+    pub fn set_size(&mut self, size: (u32, u32)) {
+        if size != self.size {
+            self.size = size;
+            self.keep_in_view();
+        }
+    }
+
     fn body_top(&self) -> u32 {
         // The filter's row is under the title bar.
         self.frame().y + 2 * LINE + 2 * PAD

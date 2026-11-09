@@ -116,6 +116,15 @@ impl HelpViewer {
         self.scroll = self.scroll.min(self.max_scroll());
     }
 
+    /// Goes on a display of another size, as when the editor's window is
+    /// resized, keeping the page.
+    pub fn set_size(&mut self, size: (u32, u32)) {
+        if size != self.size {
+            self.size = size;
+            self.wrap_pages();
+        }
+    }
+
     /// Draws the text at another size, keeping the page.
     pub fn set_scale(&mut self, scale: u32) {
         if scale != self.scale {

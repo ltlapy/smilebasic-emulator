@@ -547,6 +547,22 @@ SmileBASIC 4 the editor replaces the screen and no program runs while it shows.
   it stops.
 - Position: with File > Settings > Editor > "Remember the editor window's
   position and size", the window opens where it was last.
+- Size: making the window larger shows more lines and columns at the same
+  character size, where SmileBASIC 4 shows the same lines at any size. The
+  editor draws each of its pixels as a whole number of window pixels, so dot
+  fonts stay sharp. F2 and Ctrl+B pick the whole-number zoom nearest to each
+  character size on a 720-pixel-high display. With the 16-pixel font at 100%
+  scaling, Medium, Small and Tiny all draw it at its own size.
+- The menu bar, the debugger's panel, the help and the index follow the
+  desktop's scaling setting, rounded to a whole number: 150% draws them at
+  twice their size. They follow a change at once, as when you move the window
+  to another display. On X11 the setting comes from `Xft.dpi`, and the
+  `SDL_VIDEO_X11_SCALING_FACTOR` environment variable overrides it. You cannot
+  make the window smaller than 800x450 at that scale.
+- The emulator's other windows, such as Settings, Projects, the file dialogs
+  and questions, keep the layout they have on the main window. On the editor's
+  window they show at the desktop's scale when they fit, and shrink to fit
+  when they don't.
 - A subprogram's screen shows over the screens rather than the editor's window,
   but what it types with `PUSHKEY` still goes into the editor while that window
   has the keys.

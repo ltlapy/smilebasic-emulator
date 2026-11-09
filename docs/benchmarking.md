@@ -454,6 +454,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `panel` | Shows the debugger's panel |
 | `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast` | Once the rest is set up, shows the menu bar (as F8 does), the bar with its File menu open, the help beside the editor, the About dialog, the editor colors window, the settings window at its Editor page, or a notice |
 | `cpu-smart` | Scales `XSCREEN`'s mode 1 on the CPU, the fallback for a renderer that cannot make the texture the GPU route needs |
+| `scale=N` | Lays the editor's own window out at UI scale N instead of the desktop's |
 | `slow=MS` | From when the timing begins, makes each present of the main window that waits for vsync take MS milliseconds more, as a compositor that throttles a covered window does (SDL's Wayland backend waits up to 50 ms) |
 | `occluded` | From when the timing begins, has the main window count as covered, as the system reports it when it can |
 | `shot=PATH` | Saves the last frame timed of each window shown, as `PATH-main.pam` and `PATH-editor.pam`, to compare drawings |
@@ -468,6 +469,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `targets` | Acts as if the renderer reset its targets, and spoils what the GPU path holds |
 | `device` | Acts as if the renderer reset its device |
 | `resize:W:H` | Sets the window's size |
+| `editor-resize:W:H` | Sets the editor's own window's size |
 | `fullscreen`, `windowed` | Changes the window's mode |
 | `auto`, `cpu` | Changes the renderer setting |
 | `tool` | Starts the F9 tool as a subprogram |
@@ -481,6 +483,8 @@ the project that `run=` names from the data directory, so use a scratch one
 | `key:NAME` | Presses the key SDL calls NAME, such as `Escape` |
 | `usb:USAGE` | Has `KEYBOARD` read that key as down for a frame, which `key` does not |
 | `pad:NAME`, `padup:NAME` | Presses or lets go the first controller's button SDL calls NAME, as both the event and what is held. `b` is the right face button, as SDL goes by Xbox labels |
+| `editor-focus` | Gives the editor's own window the keys |
+| `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast` | Shows that part of the UI then, as the parts of the same names do once the rest is set up |
 
 `lost`, `fail`, `refuse:N`, `panic`, `unsaved` and `sleep:MS` try the
 renderer's failures.

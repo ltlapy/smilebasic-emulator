@@ -36,6 +36,8 @@
 //!   set up;
 //! - `cpu-smart`: scales XSCREEN's mode 1 on the CPU, the fallback for a
 //!   renderer that cannot make the texture the GPU route needs;
+//! - `scale=N`: lays the editor's own window out at the UI scale N instead
+//!   of the desktop's;
 //! - `slow=MS`: from when the timing begins, makes each present of the
 //!   main window that waits for vsync take MS milliseconds more, as a
 //!   compositor that throttles a covered window does (SDL's Wayland
@@ -44,7 +46,8 @@
 //!   the system reports it when it can;
 //! - `at=FRAME:WHAT`, any number of them: does something to the frontend at
 //!   that frame: `targets` or `device` as if the renderer reset them (the
-//!   first also spoils what the GPU path holds), `resize:W:H`, `fullscreen`,
+//!   first also spoils what the GPU path holds), `resize:W:H` (`editor-resize:W:H`
+//!   for the editor's own window), `fullscreen`,
 //!   `windowed`, `auto` and `cpu` for the renderer setting, `tool` to start
 //!   the F9 tool as a subprogram and `substop` to end it, `lost` as if the
 //!   device were gone, `fail` as if drawing failed, `refuse:N` to have the next N
@@ -54,7 +57,8 @@
 //!   key as down for a frame, which `key` does not, and `pad:NAME` and `padup:NAME`
 //!   to press and let go the first controller's button SDL calls NAME, such as
 //!   `b` for the right face button (SDL goes by Xbox labels), as both the event
-//!   and what is held.
+//!   and what is held, `editor-focus` to give the editor's own window the keys,
+//!   and the UI parts above, such as `settings`, to show that part then.
 //!
 //! Besides the stages, it reports the program frames run per second of
 //! the time timed, those of them the standby thread ran, how far MAINCNT
@@ -169,6 +173,8 @@ pub struct Bench {
     occluded: bool,
     /// Whether XSCREEN's mode 1 is scaled on the CPU.
     pub cpu_smart: bool,
+    /// The editor's window's UI scale, instead of the desktop's.
+    pub ui_scale: Option<u32>,
     /// Parts of the UI the frontend shows, as [`Bench::opens`] tells.
     extras: Vec<String>,
     /// What happens to the frontend at which frame.
@@ -210,6 +216,7 @@ impl Bench {
                 Some(("shot", path)) => bench.shot = Some(path.to_string()),
                 Some(("luma", path)) => bench.luma = Some(path.to_string()),
                 Some(("log", path)) => bench.log = Some(path.to_string()),
+                Some(("scale", n)) => bench.ui_scale = n.parse().ok(),
                 Some(("type", text)) => bench.typed = Some(text.to_string()),
                 Some(("at", what)) => {
                     if let Some((frame, what)) = what.split_once(':') {
@@ -426,6 +433,7 @@ impl Bench {
     pub fn opens(&self, part: &str) -> bool {
         let set_up = if self.stop { SETTLE } else { 0 } + 1;
         self.frame == set_up + 1 && self.extras.iter().any(|e| e == part)
+            || self.due().contains(&part)
     }
 
     /// Ends a stage of the frame's drawing, which began where the last

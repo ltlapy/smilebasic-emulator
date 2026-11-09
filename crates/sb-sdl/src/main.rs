@@ -6,6 +6,7 @@ mod colors;
 mod controls;
 mod debug_panel;
 mod dialog;
+mod editor_layout;
 mod file_dialogs;
 mod file_view;
 mod gpu;
@@ -46,6 +47,7 @@ use colors::ColorWindow;
 use controls::Controls;
 use debug_panel::{DebugPanel, Hit, Tab, Typed, View, value_text};
 use dialog::{Answer, Dialog};
+use editor_layout::Layout;
 use file_dialogs::{FilePicker, SaveDialog};
 use grp_view::PageTexture;
 use help::HelpViewer;
@@ -394,6 +396,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut panel_layers: [Layer; 2] = Default::default();
     let mut bar_layers: [Layer; 2] = Default::default();
     let mut overlay_layers: [Layer; 2] = Default::default();
+    // The emulator's windows on the editor's window, at the display's size.
+    let mut windows_layer = Layer::default();
     let mut editor_texture: Option<(Texture, TextureKind)> = None;
     let mut editor_grp = PageTexture::default();
     let mut editor_space = (1, 1);
@@ -545,6 +549,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             (grp_texture, editor_grp) = (PageTexture::default(), PageTexture::default());
             let layers = panel_layers.iter_mut().chain(&mut bar_layers);
             layers.chain(&mut overlay_layers).for_each(Layer::forget);
+            windows_layer.forget();
             (texture_holds, editor_holds) = (None, None);
             machine.rt.touch();
             machine.touch_sub();
@@ -637,6 +642,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     machine.rt.slot_modified[0] = true;
                     None
                 }
+                "editor-focus" => editor_gfx.get().map(|gfx| Event::Window {
+                    timestamp: 0,
+                    window_id: gfx.id,
+                    win_event: WindowEvent::FocusGained,
+                }),
                 "fullscreen" | "windowed" => {
                     let _ = canvas.window_mut().set_fullscreen(what == "fullscreen");
                     None
@@ -707,10 +717,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     None
                 }
                 _ => {
-                    let size = what.strip_prefix("resize:").and_then(|s| s.split_once(':'));
+                    let (editor, size) = match what.strip_prefix("editor-") {
+                        Some(what) => (true, what),
+                        None => (false, what),
+                    };
+                    let size = size.strip_prefix("resize:").and_then(|s| s.split_once(':'));
                     if let Some((w, h)) = size {
                         let (w, h) = (w.parse().unwrap_or(640), h.parse().unwrap_or(360));
-                        let _ = canvas.window_mut().set_size(w, h);
+                        match editor_gfx.get() {
+                            Some(gfx) if editor => {
+                                let _ = gfx.canvas.borrow_mut().window_mut().set_size(w, h);
+                            }
+                            _ if editor => {}
+                            _ => {
+                                let _ = canvas.window_mut().set_size(w, h);
+                            }
+                        }
                     }
                     None
                 }
@@ -819,33 +841,49 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             shown,
             space: pointer_space,
         };
-        let editor_map = match editor_gfx.get().filter(|_| apart) {
+        let ui_scale = bench.as_ref().and_then(|b| b.ui_scale);
+        // The editor's window has the UI in pixels of its own, and the
+        // emulator's windows laid out on the display as on the main window.
+        let (editor_map, windows_map, editor_ui) = match editor_gfx.get().filter(|_| apart) {
             Some(gfx) => {
+                let settings = &machine.rt.settings;
+                let layout = drawing!(gfx.layout(settings, (display_w, display_h), ui_scale));
                 let editor_canvas = gfx.canvas.borrow();
                 let (out_w, out_h) = drawing!(editor_canvas.output_size());
                 let (win_w, _) = editor_canvas.window().size();
-                let display = display_rect(display_w, display_h, out_w, out_h);
-                let mode = machine.editor_mode();
-                Mapping {
+                let map = Mapping {
                     px: out_w as f32 / win_w.max(1) as f32,
-                    display,
-                    display_w,
-                    shown: screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h),
+                    display: from_corner(layout.ui_pixels()),
+                    display_w: layout.ui_size.0,
+                    shown: from_corner(layout.frame_pixels()),
                     space: editor_space,
-                }
+                };
+                let display = (display_w, display_h);
+                let windows = Mapping {
+                    display: windows_rect(display, (out_w, out_h), layout.ui),
+                    display_w,
+                    ..map
+                };
+                (map, windows, layout.ui_size)
             }
-            None => main_map,
+            None => (main_map, main_map, (display_w, display_h)),
         };
         // The window the event being handled came from: the main one, or
-        // the editor's.
-        let maps = [main_map, editor_map];
+        // the editor's, and whether the emulator's windows are open on the
+        // editor's.
+        let maps = [main_map, editor_map, windows_map];
         let source = Cell::new(0);
+        let windows_on_editor = Cell::new(false);
+        let map = || match (source.get(), windows_on_editor.get()) {
+            (1, true) => maps[2],
+            (i, _) => maps[i],
+        };
         // Mouse positions come in window coordinates; the display is in
         // pixels...
-        let to_display = |x: f32, y: f32| maps[source.get()].to_display(x, y);
+        let to_display = |x: f32, y: f32| map().to_display(x, y);
         // ...and so are the screen's or the editor's, which fill their
         // rectangle.
-        let to_screen = |x: f32, y: f32| maps[source.get()].to_screen(x, y);
+        let to_screen = |x: f32, y: f32| map().to_screen(x, y);
         let shift = |keymod: Mod| keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
         let ctrl = |keymod: Mod| keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
         let mut quit = false;
@@ -957,6 +995,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 (texture_holds, editor_holds) = (None, None);
                 let layers = panel_layers.iter_mut().chain(&mut bar_layers);
                 layers.chain(&mut overlay_layers).for_each(Layer::forget);
+                windows_layer.forget();
                 // A target comes back empty, and the frames are drawn again.
                 machine.touch_sub();
             }
@@ -1048,6 +1087,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             };
             let from_editor = apart && from_editor;
             source.set(usize::from(from_editor));
+            windows_on_editor.set(ui_editor && modal_shown!());
             // The event is on the editor, wherever it shows, unless a
             // subprogram beside it has the keys...
             let on_editor = machine.is_editing()
@@ -1790,7 +1830,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                         editor_menu(machine)
                     };
-                    debug_menu = Some(Popup::new(at, items, (display_w, display_h)));
+                    debug_menu = Some(Popup::new(at, items, editor_ui));
                 }
                 Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
@@ -2580,21 +2620,24 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         texture_holds = Some(revision);
         lap!(Screen);
         // The editor in its own window, where the debugger's panel goes
-        // too: where its frame and display are there.
-        let mut editor_place = (rect, frame, display);
+        // too: where its frame and the UI are there, and the UI's size.
+        let mut editor_place = (rect, frame, display, (display_w, display_h));
+        // ...and where the emulator's windows go on it.
+        let mut windows_place = display;
         if let (true, Some(gfx)) = (apart, editor_gfx.get()) {
+            let settings = &machine.rt.settings;
+            let layout = drawing!(gfx.layout(settings, (display_w, display_h), ui_scale));
+            machine.set_editor_area(Some(layout.area));
             let editor_canvas = gfx.canvas.borrow();
-            let (out_w, out_h) = drawing!(editor_canvas.output_size());
-            let display = display_rect(display_w, display_h, out_w, out_h);
-            let mode = machine.editor_mode();
-            let filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
-            let rect = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
+            let pixels = drawing!(editor_canvas.output_size());
+            windows_place = windows_rect((display_w, display_h), pixels, layout.ui);
             machine.render_editor();
             let revision = Some(machine.editor_revision());
             let fb = machine.editor_frame();
             let frame = (fb.width(), fb.height());
             editor_space = frame;
-            let kind = (frame, editor_filter(rect, frame, filter));
+            // Each of its pixels is a whole number of the window's.
+            let kind = (frame, Filter::Nearest);
             if editor_texture.as_ref().is_none_or(|(_, k)| *k != kind) {
                 let made = drawing!(frame_texture(&editor_canvas, gfx.creator.get(), kind));
                 editor_texture = Some((made, kind));
@@ -2607,20 +2650,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 drawing!(tex.update(None, as_bytes(fb.pixels()), (frame.0 * 4) as usize));
                 editor_holds = revision;
             }
-            editor_place = (rect, frame, display);
+            let (rect, ui) = (layout.frame_pixels(), layout.ui_pixels());
+            editor_place = (from_corner(rect), frame, from_corner(ui), layout.ui_size);
         }
         lap!(Editor);
         // The debugger's panel fills the room the editor leaves below.
         let mut debug = None;
         if let Some(at) = machine.panel_at() {
-            let (rect, frame, display) = editor_place;
-            let top = (rect.y + at as f32 * rect.h / frame.1 as f32) * display_h as f32 / display.h;
-            let top = (top.round() as u32).min(display_h);
+            let (rect, frame, display, (ui_w, ui_h)) = editor_place;
+            let y = rect.y + at as f32 * rect.h / frame.1 as f32 - display.y;
+            let top = ((y * ui_h as f32 / display.h).round() as u32).min(ui_h);
             let place = ui::Rect {
                 x: 0,
                 y: top,
-                w: display_w,
-                h: display_h - top,
+                w: ui_w,
+                h: ui_h - top,
             };
             // A stop, though at the same place, shows the panel anew.
             let fresh = machine.paused_at() != shown_stop || !panel_was_shown;
@@ -2819,6 +2863,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 None => None,
             }
         });
+        // Each window's UI in its own pixels. On the editor's window, the
+        // emulator's windows go on a layer of their own, laid out on the
+        // display as on the main window.
+        let ui_sizes = [(display_w, display_h), editor_place.3];
+        let windows_apart = apart && ui == 1 && modal_shown!();
+        if let Some(open) = &mut side {
+            open.set_size(ui_sizes[side_on]);
+        }
         // The menu bar shows over everything in the window with the keys,
         // and the editor's window always shows it.
         let mut bar_shown = [false; 2];
@@ -2853,10 +2905,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let Some(creator) = creator else {
                 continue;
             };
+            let size = ui_sizes[i];
             if bar_shown[i] {
                 let bar = if i == ui { &menu } else { &closed_bar };
                 drawing!(
-                    bar_layers[i].update(creator, (display_w, MenuBar::HEIGHT), |fb| {
+                    bar_layers[i].update(creator, (size.0, MenuBar::HEIGHT), |fb| {
                         bar.draw_bar(fb, font)
                     })
                 );
@@ -2869,40 +2922,45 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             let bar = ui::Rect {
                 x: 0,
                 y: 0,
-                w: display_w,
+                w: size.0,
                 h: MenuBar::HEIGHT,
             };
             let inside = Cell::new(false);
-            let parts = |fb: &mut Framebuffer, debug_panel: &mut DebugPanel| {
-                if dim {
+            // The UI in the window's pixels, and the emulator's windows,
+            // which go on a layer of their own on the editor's window.
+            let windows_on_layer = i == 1 && windows_apart;
+            let parts = |fb: &mut Framebuffer, debug_panel: &mut DebugPanel, windows: bool| {
+                let under = !windows || !windows_on_layer;
+                let over = windows || !windows_on_layer;
+                if dim && under {
                     ui::clear(fb, 0x8000_0000);
                     if let (Some(panel), false) = (panel, inside.get()) {
                         ui::fill(fb, panel, 0);
                     }
                 }
-                if let (true, Some((place, view, size))) = (inside.get(), &debug) {
+                if let (true, Some((place, view, size))) = (under && inside.get(), &debug) {
                     debug_panel.draw_on_display(fb, font, *place, *size, view, scale);
                 }
-                if panel.is_some() {
+                if panel.is_some() && under {
                     debug_panel.draw_tip(fb, font);
                 }
                 if let (0, Some((outline, frame, place, clip))) = (i, &outline) {
                     debug_panel::sprites::draw_outline(fb, outline, *frame, *place, *clip, 2);
                 }
                 match &side {
-                    _ if i != side_on => {}
+                    _ if i != side_on || !under => {}
                     Some(Side::Help(help)) => help.draw(fb, font, side_focus),
                     Some(Side::Index(index, _)) => index.draw(fb, font, side_focus),
                     None => {}
                 }
                 // Windows over the editor go over its panels too.
-                if let (true, Some(open)) = (i == ui, &manager) {
+                if let (true, Some(open)) = (i == ui && over, &manager) {
                     open.draw(fb, font, cursor_on);
                 }
                 if let (0, Some(open)) = (i, &program_dialog) {
                     open.draw(fb, font, cursor_on);
                 }
-                if i == ui {
+                if i == ui && over {
                     if let Some(open) = &color_window {
                         open.draw(fb, font, &settings.editor_colors);
                     }
@@ -2918,30 +2976,34 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         None => {}
                     }
                 }
-                if let (true, Some(open)) = (i == ed, &debug_menu) {
+                if let (true, Some(open)) = (i == ed && under, &debug_menu) {
                     open.draw(fb, font);
                 }
                 if i == 0 && key_hint.visible() {
                     key_hint.draw(fb, font);
                 }
-                if i == ui {
+                if i == ui && under {
                     toasts.draw(fb, font);
+                }
+                if i == ui {
                     match &dialog {
-                        Some((open, _)) => open.draw(fb, font),
-                        None if bar_shown[i] => menu.draw_lists(fb, font, settings, context),
-                        None => {}
+                        Some((open, _)) if over => open.draw(fb, font),
+                        None if bar_shown[i] && under => {
+                            menu.draw_lists(fb, font, settings, context)
+                        }
+                        _ => {}
                     }
                 }
                 // The bar covers what is under it.
-                if dim && bar_shown[i] {
+                if dim && under && bar_shown[i] {
                     ui::fill(fb, bar, 0);
                 }
             };
-            let size = (display_w, display_h);
             if let (Some(place), Some((_, view, screens))) = (panel, &debug) {
                 // What is partly see-through over the panel shows what is
                 // under the panel, as it always did, if drawn with it.
-                let probe = overlay_layers[i].dry_run(size, |fb| parts(fb, &mut debug_panel));
+                let probe =
+                    overlay_layers[i].dry_run(size, |fb| parts(fb, &mut debug_panel, false));
                 inside.set(probe.translucent.is_some_and(|t| t.overlaps(place)));
                 panel_inside[i] = inside.get();
                 if !inside.get() {
@@ -2950,7 +3012,15 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }));
                 }
             }
-            drawing!(overlay_layers[i].update(creator, size, |fb| parts(fb, &mut debug_panel)));
+            let under = |fb: &mut Framebuffer| parts(fb, &mut debug_panel, false);
+            drawing!(overlay_layers[i].update(creator, size, under));
+            if windows_on_layer {
+                let over = |fb: &mut Framebuffer| parts(fb, &mut debug_panel, true);
+                drawing!(windows_layer.update(creator, (display_w, display_h), over));
+            }
+        }
+        if !windows_apart {
+            windows_layer.release();
         }
         if let (0, Some((place, ..)), false) = (ed, &debug, panel_inside[0]) {
             drawing!(panel_layers[0].copy(&mut canvas, (place.x, place.y), display, display_w));
@@ -2974,19 +3044,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if let Some((tex, _)) = &editor_texture {
                 drawing!(editor_canvas.copy(tex, None, editor_place.0));
             }
-            let display = editor_place.2;
+            let (display, ui_w) = (editor_place.2, editor_place.3.0);
             let canvas = &mut *editor_canvas;
             if let Some((place, ..)) = &debug {
                 let (grp, panel_grp) = (&machine.rt.grp, &debug_panel.grp);
                 let creator = gfx.creator.get();
-                drawing!(editor_grp.draw(canvas, creator, grp, panel_grp, display, display_w));
+                drawing!(editor_grp.draw(canvas, creator, grp, panel_grp, display, ui_w));
                 if !panel_inside[1] {
-                    drawing!(panel_layers[1].copy(canvas, (place.x, place.y), display, display_w));
+                    drawing!(panel_layers[1].copy(canvas, (place.x, place.y), display, ui_w));
                 }
             }
-            drawing!(overlay_layers[1].copy(canvas, (0, 0), display, display_w));
+            drawing!(overlay_layers[1].copy(canvas, (0, 0), display, ui_w));
             if bar_shown[1] {
-                drawing!(bar_layers[1].copy(canvas, (0, 0), display, display_w));
+                drawing!(bar_layers[1].copy(canvas, (0, 0), display, ui_w));
+            }
+            if windows_apart {
+                drawing!(windows_layer.copy(canvas, (0, 0), windows_place, display_w));
             }
             lap!(Overlays);
             if let Some(b) = &bench {
@@ -3032,6 +3105,8 @@ struct EditorWindow {
     canvas: RefCell<Canvas<Window>>,
     creator: OwnedCreator,
     id: u32,
+    /// The smallest size it was last allowed, for its UI scale.
+    least: Cell<(u32, u32)>,
 }
 
 impl EditorWindow {
@@ -3078,7 +3153,29 @@ impl EditorWindow {
             canvas: RefCell::new(canvas),
             creator,
             id,
+            least: Cell::new((0, 0)),
         })
+    }
+
+    /// How the window is laid out at its size and the desktop's scale,
+    /// or at `scale` if given, for the profile's `display`. It keeps its
+    /// smallest size to what the UI needs at that scale.
+    fn layout(
+        &self,
+        settings: &Settings,
+        display: (u32, u32),
+        scale: Option<u32>,
+    ) -> Result<Layout, AnyError> {
+        let mut canvas = self.canvas.borrow_mut();
+        let pixels = canvas.output_size()?;
+        let window = canvas.window_mut();
+        let scale = scale.unwrap_or_else(|| editor_layout::ui_scale(window.display_scale()));
+        let least = editor_layout::min_window(scale, window.pixel_density());
+        if self.least.replace(least) != least {
+            let _ = window.set_minimum_size(least.0, least.1);
+        }
+        let look = (settings.editor_font, settings.editor_size);
+        Ok(Layout::new(pixels, scale, look, display, MenuBar::HEIGHT))
     }
 }
 
@@ -3410,6 +3507,13 @@ impl Side {
         match self {
             Side::Help(help) => help.wheel(rows),
             Side::Index(index, _) => index.wheel(rows),
+        }
+    }
+
+    fn set_size(&mut self, size: (u32, u32)) {
+        match self {
+            Side::Help(help) => help.set_size(size),
+            Side::Index(index, _) => index.set_size(size),
         }
     }
 
@@ -4149,6 +4253,25 @@ fn display_rect(width: u32, height: u32, out_w: u32, out_h: u32) -> FRect {
     FRect::new((out_w as f32 - w) / 2.0, 0.0, w, h)
 }
 
+/// Where the display goes on the editor's own window for the emulator's
+/// windows over it: centered, at the UI's scale `ui` or the largest whole
+/// number below it that fits, or else scaled down to fit.
+fn windows_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32), ui: u32) -> FRect {
+    let fits = (out_w / w.max(1)).min(out_h / h.max(1)).min(ui);
+    let scale = match fits {
+        0 => (out_w as f32 / w as f32).min(out_h as f32 / h as f32),
+        n => n as f32,
+    };
+    let (sw, sh) = (w as f32 * scale, h as f32 * scale);
+    let at = |out: u32, size: f32| ((out as f32 - size) / 2.0).floor();
+    FRect::new(at(out_w, sw), at(out_h, sh), sw, sh)
+}
+
+/// A rectangle of `w` x `h` pixels from a window's top left corner.
+fn from_corner((w, h): (u32, u32)) -> FRect {
+    FRect::new(0.0, 0.0, w as f32, h as f32)
+}
+
 /// The size of a texture's frames and how they are scaled.
 type TextureKind = ((u32, u32), Filter);
 
@@ -4428,6 +4551,19 @@ mod tests {
         assert_eq!(box_of(sharp), (140.0, 60.0, 1000.0, 600.0));
         let sharp = screen_rect(&mode(400, 240, None), Some(Filter::Bilinear), 1000, 720.0);
         assert_eq!(box_of(sharp), (0.0, 60.0, 1000.0, 600.0));
+    }
+
+    #[test]
+    fn windows_over_the_editor_keep_whole_pixels_where_they_fit() {
+        let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
+        let place = |out, ui| box_of(windows_rect((1280, 720), out, ui));
+        assert_eq!(place((1500, 850), 1), (110.0, 65.0, 1280.0, 720.0));
+        // No larger than the UI's scale, however large the window.
+        assert_eq!(place((3000, 2000), 1), (860.0, 640.0, 1280.0, 720.0));
+        assert_eq!(place((3000, 2000), 2), (220.0, 280.0, 2560.0, 1440.0));
+        assert_eq!(place((2000, 1440), 3), (360.0, 360.0, 1280.0, 720.0));
+        // Smaller than the display, they are scaled down to fit.
+        assert_eq!(place((640, 720), 2), (0.0, 180.0, 640.0, 360.0));
     }
 
     use super::*;
