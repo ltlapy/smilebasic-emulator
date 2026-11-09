@@ -11,7 +11,9 @@ Without any setup, text uses bundled fonts under the SIL Open Font License
 1.1: [GalmuriMono7](https://github.com/quiple/galmuri) at 8 pixels, and
 [M PLUS 1p](https://mplusfonts.github.io/) Bold at 16 pixels. SmileBASIC 4's
 16-pixel kana and kanji come closest to that face; its ASCII is SmileBASIC's
-own drawing (slashed zero, broken bar), which no M+ font matches. SmileBASIC's
+own drawing (slashed zero, broken bar), which no M+ font matches. The
+16-pixel font follows "Bundled 16-pixel glyphs" (see below), so with the
+pixel set it is drawn from the dot fonts instead. SmileBASIC's
 own characters (number tiles, buttons, box drawing and other symbols at
 U+E100-E17F and U+E200-E2FF) are redrawn for this emulator in
 `crates/sb-runtime/fonts/symbols.txt` at 8 pixels, and drawn at twice that
@@ -33,15 +35,22 @@ instead. It has three sources:
    font, read at startup and when chosen;
 3. bundled fonts:
    - 8 pixels: GalmuriMono7, [Misaki Gothic 2nd](https://littlelimit.net/misaki.htm),
-     [Noto Emoji](https://fonts.google.com/noto/specimen/Noto+Emoji),
      M PLUS 1p Bold, then [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font)
      8px monospaced (zh_hans);
-   - 16 pixels: M PLUS 1p Bold,
-     [Izumi Gothic 16](http://izumilib.web.fc2.com/izumi-bf/dl-eng.html)
-     (JIS X 0213), [Unifont JP](https://unifoundry.com/unifont/) (the whole
-     Basic Multilingual Plane), Noto Emoji, then
-     [Noto Sans SC](https://github.com/notofonts/noto-cjk) Bold, cut down to
-     the GB2312 characters.
+   - 16 pixels, one of two sets, picked by File > Settings > Fonts >
+     "Bundled 16-pixel glyphs":
+     - Antialiased (the default): M PLUS 1p Bold, then
+       [Noto Sans SC](https://github.com/notofonts/noto-cjk) Bold, cut down
+       to the GB2312 characters;
+     - Pixel: [Izumi Gothic 16](http://izumilib.web.fc2.com/izumi-bf/dl-eng.html)
+       (JIS X 0213), then [Unifont JP](https://unifoundry.com/unifont/) (the
+       whole Basic Multilingual Plane, and the JIS X 0213 kanji above it).
+
+     Each set ends with the other set's fonts, for the characters it lacks,
+     so both draw the same characters: the antialiased set takes Hangul,
+     most symbols and the rarer kanji from the dot fonts, and the pixel set
+     takes the few characters above U+FFFF that only M PLUS 1p Bold has,
+     such as double-struck letters.
 
    Izumi Gothic 16 and Unifont JP are dot fonts drawn in one-pixel
    strokes. The build makes them bold: each stroke grows one pixel to the
@@ -55,11 +64,11 @@ instead. It has three sources:
    1.1. Each font's folder in `crates/sb-runtime/fonts` holds its license.
 
    Fusion Pixel and Noto Sans SC draw the CJK characters they share with
-   Japanese in their Simplified Chinese forms, so they come last: they only
-   fill in characters the fonts before them lack, and kana and Japanese
-   kanji keep the glyphs of GalmuriMono7, M PLUS 1p Bold and Izumi
-   Gothic 16. Unifont JP draws every GB2312 character, so at 16 pixels
-   Noto Sans SC adds none for now.
+   Japanese in their Simplified Chinese forms, so they come after the
+   Japanese fonts: they only fill in characters the fonts before them lack,
+   and kana and Japanese kanji keep the glyphs of GalmuriMono7, M PLUS 1p
+   Bold and Izumi Gothic 16. Unifont JP draws every GB2312 character, so in
+   the pixel set Noto Sans SC adds none.
 
 The editor looks in them in this order. "Editor's first font" on the same page
 moves one source to the front; the other two keep their order. With the file
@@ -82,12 +91,18 @@ cell. No glyph is stretched or made larger:
   pixels a pixel is on or off; at 16 pixels the edges keep their gray, as on
   SmileBASIC 4's 16-pixel font page.
 
-Emoji are monochrome.
+No bundled font is an emoji font. At 16 pixels the emoji-range characters of
+the Basic Multilingual Plane (such as ☀, ★ and ✅) come from M PLUS 1p Bold
+or Unifont JP, in one color; those above U+FFFF keep the box, as do most
+emoji at 8 pixels. A font file can supply them.
 
 If the file cannot be read, the editor goes back to the bundled fonts, clears
 the setting and says why. In `settings.txt` the settings are
-`editor_extra_font=PATH` (empty for none) and
-`editor_font_first=smilebasic`, `file` or `bundled`.
+`editor_extra_font=PATH` (empty for none),
+`editor_font_first=smilebasic`, `file` or `bundled`, and
+`bundled_glyphs16=antialiased` or `pixel`. The set takes effect when chosen,
+everywhere the bundled 16-pixel glyphs are drawn: the editor, the menus and
+windows, the stand-in font and the programs' font.
 
 ### Programs' font
 
@@ -131,9 +146,8 @@ the settings window and the emulator's other windows:
 - 16-pixel (the default): SmileBASIC's 16-pixel font with its gray edges,
   as SmileBASIC 4 draws it, and the half-width glyphs above. With an
   imported font, Unicode characters it lacks come from the editor's bundled
-  16-pixel fonts (M PLUS 1p Bold, Izumi Gothic 16, Unifont JP, Noto Emoji,
-  Noto Sans SC Bold)
-  instead of the box. A character beyond U+FFFF takes two cells, with its
+  16-pixel glyphs, in the set "Bundled 16-pixel glyphs" picks, instead of
+  the box. A character beyond U+FFFF takes two cells, with its
   glyph on the first, as in the editor;
 - Smooth: outlines with soft edges, drawn for a 16-pixel cell. Half-width
   characters come from [M PLUS Code Latin](https://github.com/coz-m/MPLUS_FONTS)

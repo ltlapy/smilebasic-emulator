@@ -77,8 +77,8 @@ way, with no additional terms or conditions.
 
 The bundled fonts in `crates/sb-runtime/fonts/fusionpixel`,
 `crates/sb-runtime/fonts/galmuri`, `crates/sb-runtime/fonts/mplus`,
-`crates/sb-runtime/fonts/neodgm`, `crates/sb-runtime/fonts/notoemoji`,
-`crates/sb-runtime/fonts/notosanssc` and `crates/sb-runtime/fonts/unifont`
+`crates/sb-runtime/fonts/neodgm`, `crates/sb-runtime/fonts/notosanssc` and
+`crates/sb-runtime/fonts/unifont`
 are under the SIL Open Font License 1.1.
 Misaki Gothic 2nd in `crates/sb-runtime/fonts/misaki` is under its author's
 license, and Izumi Gothic 16 in `crates/sb-runtime/fonts/izumi` is
