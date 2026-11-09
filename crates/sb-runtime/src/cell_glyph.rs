@@ -398,8 +398,8 @@ pub fn outline_narrow(font: &impl Font, c: char, cell: u32, em_share: f32) -> Op
 /// placed as [`bdf_cell`] places glyphs.
 pub fn bdf_half(g: &BdfGlyph, layout: &BdfLayout, cell: u32) -> Option<Vec<u8>> {
     let width = g.advance.max(g.bbx[0] + g.bbx[2].max(0)).max(1);
-    // Fonts whose full-width advance is odd, such as Galmuri14's 15,
-    // round their half-width one up.
+    // Fonts whose full-width advance is odd, such as 15, round their
+    // half-width one up.
     if width > (layout.full + 1) / 2 {
         return None;
     }
