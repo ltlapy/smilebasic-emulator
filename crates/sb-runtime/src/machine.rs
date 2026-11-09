@@ -15,7 +15,7 @@ use sb_core::watch::Watch;
 use crate::complete::Options;
 use crate::confirm::Confirm;
 use crate::dialog::{DialogAnswer, ProgramDialog};
-use crate::editor::{Editor, Marks};
+use crate::editor::{Area, Editor, Marks};
 use crate::framebuffer::Framebuffer;
 use crate::prg::SlotEdit;
 use crate::raster::SceneBackend;
@@ -179,6 +179,9 @@ pub struct Machine {
     /// The editor shows apart from the screens, in a window of its own,
     /// so that programs and direct mode go on while it is open.
     detached: bool,
+    /// The frame the editor fills apart from the screens, as its window's
+    /// size gives it.
+    editor_area: Option<Area>,
     /// With the editor apart, whether it takes the keys.
     editor_focus: bool,
     /// The program stopped for the debugger, which says where, so direct
@@ -362,6 +365,7 @@ impl Machine {
             panel_pinned: false,
             time_limit: None,
             detached: false,
+            editor_area: None,
             editor_focus: false,
             quiet_stop: false,
             slot_changes: vec![0; SLOTS],
@@ -455,6 +459,13 @@ impl Machine {
 
     pub fn is_detached(&self) -> bool {
         self.detached
+    }
+
+    /// The frame the editor draws while it shows apart: as many rows and
+    /// columns as `area` holds, instead of SmileBASIC 4's rows at the
+    /// screen's shape. `None` goes back to those.
+    pub fn set_editor_area(&mut self, area: Option<Area>) {
+        self.editor_area = area;
     }
 
     /// With the editor apart, whether keys go to it rather than to the
@@ -1951,6 +1962,7 @@ impl Machine {
             self.active,
             self.split.then_some(self.split_rows),
             panel,
+            self.editor_area.filter(|_| self.detached),
         )
     }
 

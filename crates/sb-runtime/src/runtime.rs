@@ -14,7 +14,7 @@ use crate::complete::{self, Completion, Library, Options};
 use crate::compose::{self, LAYERS, Layer};
 use crate::confirm::{Ask, Confirm, unsaved_lines};
 use crate::editor::split_lines;
-use crate::editor::{Editor, Look, blend, frame_size, menu_height};
+use crate::editor::{Area, Editor, Look, blend, frame_size, menu_height};
 use crate::extra_glyphs::{ExtraGlyphs, FontSource, Fonts};
 use crate::font::{Font, FontSize};
 use crate::framebuffer::Framebuffer;
@@ -1926,18 +1926,25 @@ impl Runtime {
     /// Composes a frame showing the editor instead of the screens.
     /// `split` is `None` for one side, else whether the sides are one
     /// above the other. `panel` leaves room below for the debugger's.
+    /// The frame is `area`'s if given, and otherwise the size SmileBASIC
+    /// 4's rows take at the screen's shape.
     pub(crate) fn render_editors(
         &mut self,
         editors: &mut [Editor; 2],
         active: usize,
         split: Option<bool>,
         panel: bool,
+        area: Option<Area>,
     ) -> &Framebuffer {
         self.frame = self.frame.wrapping_add(1);
         let blink = (self.frame / CURSOR_BLINK).is_multiple_of(2);
         let s = &self.settings;
         let mode = self.startup_mode;
-        let (w, h) = frame_size((mode.width, mode.height), s.editor_font, s.editor_size);
+        let (w, h) = match area {
+            Some(area) => (area.size.0.max(1), area.size.1.max(1)),
+            None => frame_size((mode.width, mode.height), s.editor_font, s.editor_size),
+        };
+        let panel = (panel, area.map(|area| area.top));
         if (self.editor_fb.width(), self.editor_fb.height()) != (w, h) {
             self.editor_fb = Framebuffer::new(w, h);
             self.editor_key = None;
@@ -2010,7 +2017,7 @@ impl Runtime {
         editors: &[Editor; 2],
         active: usize,
         split: Option<bool>,
-        panel: bool,
+        panel: (bool, Option<u32>),
         blink: bool,
     ) -> u64 {
         use std::hash::{Hash, Hasher};
@@ -2051,7 +2058,7 @@ impl Runtime {
         editors: &mut [Editor; 2],
         active: usize,
         split: Option<bool>,
-        panel: bool,
+        (panel, top): (bool, Option<u32>),
         blink: bool,
     ) {
         let s = &self.settings;
@@ -2070,7 +2077,7 @@ impl Runtime {
             wrap: s.editor_wrap,
             tiles: s.editor_number_tiles,
             map: s.editor_map,
-            top: None,
+            top,
             bottom: reserve,
             font: s.editor_font,
             colors: &s.editor_colors,
@@ -2104,7 +2111,8 @@ impl Runtime {
         // Two sides with a divider between them; only the upper one
         // leaves room for the menu bar.
         let length = if rows { h - reserve } else { w };
-        let half = (length - SPLIT_DIVIDER) / 2;
+        let half = length.saturating_sub(SPLIT_DIVIDER) / 2;
+        let menu = top.unwrap_or_else(|| menu_height(h));
         let second = length - half;
         self.split_at = Some(second);
         let side_size = if rows { (w, half) } else { (half, h) };
@@ -2115,9 +2123,9 @@ impl Runtime {
             let name = name(editor);
             let blink = blink && side == active;
             let top = match (rows, side) {
-                (true, 0) => Some(menu_height(h)),
+                (true, 0) => Some(menu),
                 (true, _) => Some(0),
-                (false, _) => None,
+                (false, _) => Some(menu),
             };
             // One above the other, the room is left below both.
             let bottom = if rows { 0 } else { reserve };
@@ -2155,17 +2163,13 @@ impl Runtime {
             // Below the menu bar, which only the upper side leaves room for.
             let at = if active == 0 { 0 } else { second };
             let (x0, y0) = if rows { (0, at) } else { (at, 0) };
-            let top = if rows && active == 1 {
-                y0
-            } else {
-                menu_height(h)
-            };
+            let top = if rows && active == 1 { y0 } else { menu };
             let (x1, y1) = (x0 + side_size.0, y0 + side_size.1);
             let thick = (s.editor_font as u32 / 4).max(1);
             for y in top..y1 {
                 for x in x0..x1 {
                     let edge =
-                        x < x0 + thick || x >= x1 - thick || y < top + thick || y >= y1 - thick;
+                        x < x0 + thick || x + thick >= x1 || y < top + thick || y + thick >= y1;
                     if let (true, Some(c)) = (edge, self.editor_fb.get(x, y)) {
                         self.editor_fb.set(x, y, blend(c, SPLIT_FLASH, alpha));
                     }

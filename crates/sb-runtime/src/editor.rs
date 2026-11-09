@@ -158,6 +158,16 @@ pub fn frame_size((width, height): (u32, u32), font: FontSize, size: EditorSize)
     )
 }
 
+/// A frame of a size the frontend chooses, which the editor fills with
+/// as many rows and columns as fit, as in a window of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Area {
+    /// The frame's size in pixels.
+    pub size: (u32, u32),
+    /// The pixels at the top that the menu bar covers.
+    pub top: u32,
+}
+
 /// How the editor is drawn, from the settings.
 #[derive(Clone, Copy, Debug)]
 pub struct Look<'a> {
@@ -671,7 +681,7 @@ impl Editor {
     fn fit(&mut self, width: u32, height: u32, font: FontSize, top: Option<u32>) {
         let cell = font as u32;
         let top = top.unwrap_or_else(|| menu_height(height));
-        let size = (width / cell, (height - top) / cell);
+        let size = (width / cell, height.saturating_sub(top) / cell);
         if self.grid.cell != cell as usize || self.screen.size() != size {
             self.screen.set_font(cell, cell, size.0, size.1);
         }

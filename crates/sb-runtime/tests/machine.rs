@@ -1569,6 +1569,54 @@ fn detached_machine() -> Machine {
 }
 
 #[test]
+fn detached_editor_fills_the_area_it_is_given() {
+    use sb_runtime::editor::Area;
+    use sb_runtime::runtime::keys;
+    let mut m = detached_machine();
+    let text: String = (1..=200).map(|i| format!("A={i}\n")).collect();
+    m.set_slot(0, text);
+    m.edit_slot(0);
+    // Page Down goes down from line 1 by the rows shown.
+    let page = |m: &mut Machine, area: Area| {
+        m.set_editor_area(Some(area));
+        m.edit().file_top();
+        let fb = m.render_editor();
+        assert_eq!((fb.width(), fb.height()), area.size);
+        m.edit().key(keys::PAGE_DOWN);
+        m.editor().cursor().0
+    };
+    let small = page(
+        &mut m,
+        Area {
+            size: (400, 300),
+            top: 12,
+        },
+    );
+    let tall = page(
+        &mut m,
+        Area {
+            size: (400, 600),
+            top: 12,
+        },
+    );
+    // 16-pixel rows, less the menu bar and the ruler and status line.
+    assert_eq!(
+        (small, tall),
+        (1 + (300 - 12) / 16 - 2, 1 + (600 - 12) / 16 - 2)
+    );
+    // A frame too small for any row draws nothing, split or not.
+    m.toggle_split();
+    for size in [(1, 1), (3, 40), (40, 3)] {
+        m.set_editor_area(Some(Area { size, top: 30 }));
+        m.render_editor();
+    }
+    // In place of the screens, it has SmileBASIC 4's rows again.
+    m.set_detached(false);
+    let fb = m.render_editor();
+    assert_ne!((fb.width(), fb.height()), (40, 3));
+}
+
+#[test]
 fn detached_editor_opens_while_a_program_runs() {
     let mut m = detached_machine();
     m.set_slot(0, "@L\nVSYNC\nGOTO @L".to_string());
