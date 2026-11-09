@@ -347,14 +347,17 @@ impl DebugPanel {
         self.chosen.map_or(last, |c| c.min(last))
     }
 
-    /// Goes back to the innermost call and its variables, as after a new
-    /// stop. The tabs that have nothing to do with the call stay, so that
+    /// Goes back to the innermost call, as after a new stop, and shows its
+    /// locals if the locals were shown. The tabs that have nothing to do
+    /// with the call stay, with their scroll, so that a slot's globals or
     /// a sprite can be followed step by step.
     pub fn reset(&mut self) {
         self.chosen = None;
         if !matches!(
             self.tab,
-            Some(Tab::Perf | Tab::Sprites | Tab::SubSprites | Tab::Grp | Tab::Bgm)
+            Some(
+                Tab::Globals(_) | Tab::Perf | Tab::Sprites | Tab::SubSprites | Tab::Grp | Tab::Bgm
+            )
         ) {
             self.tab = None;
             self.scroll = 0;
@@ -928,6 +931,12 @@ impl DebugPanel {
         let value_chars = (type_x.saturating_sub(value_x) / m.char)
             .saturating_sub(1)
             .max(4) as usize;
+        // A kept tab gone since shows the first, maybe with fewer rows.
+        if matches!(tab, Some(Tab::Locals | Tab::Globals(_))) {
+            self.scroll = self
+                .scroll
+                .min(view.variables.len().saturating_sub(self.rows));
+        }
         let shown = view.variables.iter().enumerate().skip(self.scroll);
         for (i, (name, value)) in shown.take(self.rows) {
             let row = Rect {
@@ -1397,9 +1406,13 @@ mod tests {
         // A new stop keeps the tab.
         p.reset();
         assert_eq!(p.tab, Some(Tab::Sprites));
-        p.tab = Some(Tab::Locals);
+        // And a slot's globals with their scroll, but not the locals.
+        (p.tab, p.scroll) = (Some(Tab::Globals(1)), 3);
         p.reset();
-        assert_eq!(p.tab, None);
+        assert_eq!((p.tab, p.scroll), (Some(Tab::Globals(1)), 3));
+        (p.tab, p.scroll) = (Some(Tab::Locals), 3);
+        p.reset();
+        assert_eq!((p.tab, p.scroll), (None, 0));
     }
 
     #[test]
