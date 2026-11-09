@@ -402,7 +402,6 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7:
     let (cells, halves) = dot_cells(read);
     write_cells(&out_dir.join("extra_dot16.bin"), &cells);
     write_cells(&out_dir.join("extra_half16.bin"), &halves);
-    let dot16: BTreeSet<u32> = cells.keys().copied().collect();
 
     let bytes = std::fs::read(MPLUS).unwrap_or_else(|e| panic!("{MPLUS}: {e}"));
     let mplus = font_codes(&ab_glyph::FontRef::try_from_slice(&bytes).expect("M PLUS 1p"));
@@ -416,10 +415,12 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7:
     write_table(&out_dir.join("extra_fusion8.bin"), 8, 1, &fusion);
 
     // Drawn as the 16-pixel M PLUS 1p Bold glyphs are, in the 16 steps of
-    // gray of SmileBASIC 4's font page, which also packs smaller.
+    // gray of SmileBASIC 4's font page, which also packs smaller. The
+    // antialiased set takes Noto Sans SC right after M PLUS 1p Bold; the
+    // pixel set has every GB2312 character before it.
     let bytes = std::fs::read(NOTO_SC).unwrap_or_else(|e| panic!("{NOTO_SC}: {e}"));
     let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("Noto Sans SC");
-    let lacking = |c: u32| !mplus.contains(&c) && !dot16.contains(&c);
+    let lacking = |c: u32| !mplus.contains(&c);
     let steps = |a: u8| ((u16::from(a) * 15 + 127) / 255) as u8 * 17;
     let glyphs = outline_cells(&font, 16, cell_glyph::SMILEBASIC_EM, lacking, steps);
     write_table(&out_dir.join("extra_sc16.bin"), 16, 8, &glyphs);

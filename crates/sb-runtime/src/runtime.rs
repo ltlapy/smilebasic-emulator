@@ -778,7 +778,7 @@ pub struct Runtime {
     pub(crate) font: Font,
     /// The editor's other font sources: the chosen file and the bundled
     /// glyphs. The sub interpreter shares them.
-    extra_glyphs: Rc<ExtraGlyphs>,
+    pub(crate) extra_glyphs: Rc<ExtraGlyphs>,
     /// The editor's half-width glyphs with the chosen file's, made for
     /// the font order they were made with; `None` while no file is read,
     /// when the font's own serve.
@@ -1998,7 +1998,7 @@ impl Runtime {
                 .map_err(|e| format!("Using the bundled editor font: {path}: {e}")),
         };
         self.editor_key = None;
-        match loaded {
+        let result = match loaded {
             Ok(glyphs) => {
                 self.extra_glyphs = Rc::new(glyphs);
                 Ok(())
@@ -2008,7 +2008,41 @@ impl Runtime {
                 self.settings.editor_extra_font = None;
                 Err(e)
             }
+        };
+        self.extra_glyphs
+            .set_bundled(self.settings.bundled_glyphs16);
+        result
+    }
+
+    /// Draws the bundled 16-pixel glyphs from the set the settings'
+    /// `bundled_glyphs16` picks: in the editor, in the fallback font and
+    /// on its font page (GRP5), where only the pixels that differ change,
+    /// and in the program font. Nothing changes if the set is the same.
+    pub fn apply_bundled_glyphs(&mut self) {
+        let set = self.settings.bundled_glyphs16;
+        let font = self.font.with_bundled_set(set);
+        if self.extra_glyphs.bundled_set() == set && font.is_none() {
+            return;
         }
+        self.extra_glyphs.set_bundled(set);
+        self.editor_key = None;
+        self.editor_halves = None;
+        if let Some(font) = font {
+            let before = self.font.page_image();
+            self.font = font;
+            let after = self.font.page_image();
+            let mut page = match self.grp.page(FONT_PAGE) {
+                [] => vec![0; after.len()],
+                pixels => pixels.to_vec(),
+            };
+            for ((p, old), new) in page.iter_mut().zip(&before).zip(&after) {
+                if old != new {
+                    *p = *new;
+                }
+            }
+            self.grp.set_page(FONT_PAGE, page);
+        }
+        self.apply_program_font();
     }
 
     /// A fingerprint of what [`Runtime::draw_editors`] draws from.
@@ -2025,7 +2059,7 @@ impl Runtime {
         let s = &self.settings;
         (self.editor_fb.width(), self.editor_fb.height()).hash(&mut state);
         (s.editor_wrap, s.editor_number_tiles, s.editor_map).hash(&mut state);
-        (s.editor_half_width, s.editor_font_first).hash(&mut state);
+        (s.editor_half_width, s.editor_font_first, s.bundled_glyphs16).hash(&mut state);
         (s.editor_font, &s.editor_colors, self.dimmed).hash(&mut state);
         (active, split, panel, blink).hash(&mut state);
         if split.is_some() {

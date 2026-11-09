@@ -1,7 +1,8 @@
 # SB Emulator 1p
 
 Fallback 16-pixel console font, used when no SmileBASIC 4 font has been
-imported. The 8-pixel font stays GalmuriMono7.
+imported, and the first font of the default (antialiased) set of bundled
+16-pixel glyphs. The 8-pixel font stays GalmuriMono7.
 
 - Source: [M PLUS 1p](https://github.com/google/fonts/tree/main/ofl/mplus1p)
   Bold, `MPLUS1p-Bold.ttf`, by the [M+ FONTS project](https://mplusfonts.github.io/).

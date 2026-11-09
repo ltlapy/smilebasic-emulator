@@ -4,9 +4,10 @@
 //! Both files come from the user's own copy of SmileBASIC 4 (see
 //! [`crate::resources`]); nothing from them is part of this repository.
 //! Without them, [`Font::fallback`] draws the 8-pixel font with
-//! GalmuriMono7 and the 16-pixel one with M PLUS 1p Bold, the face
-//! SmileBASIC 4's own 16-pixel font is drawn from, then the bundled dot
-//! glyphs (Izumi Gothic 16, then Unifont JP).
+//! GalmuriMono7 and the 16-pixel one with the set of bundled 16-pixel
+//! glyphs the settings pick ([`BundledSet`]): by default M PLUS 1p Bold,
+//! the face SmileBASIC 4's own 16-pixel font is drawn from, then Noto Sans
+//! SC Bold and the dot glyphs (Izumi Gothic 16, then Unifont JP).
 //!
 //! Glyph `n` of the 8-pixel font is at `((n % 64) * 8, (n / 64) * 8)` on the
 //! page, and of the 16-pixel font at `((n % 64) * 16, 1024 + (n / 64) * 16)`.
@@ -20,6 +21,7 @@ use std::sync::{Mutex, OnceLock};
 
 use ab_glyph::{Font as _, FontRef, PxScale, point};
 
+use crate::extra_glyphs::{self, BundledSet};
 use crate::graphics::Graphics;
 use crate::half_width::HalfGlyphs;
 use crate::sbfile::{self, DataValues, FileError};
@@ -100,10 +102,10 @@ enum Source {
         /// `PAGE_SIZE` x `PAGE_SIZE` pixels, `0xAARRGGBB`.
         page: Vec<u32>,
     },
-    /// 8x8 cells; the 16-pixel font is drawn from M PLUS 1p Bold and
-    /// the dot glyphs, and what they lack is the 8x8 cell at twice its
-    /// size.
+    /// 8x8 cells; the 16-pixel font is drawn from `set`'s bundled
+    /// glyphs, and what they lack is the 8x8 cell at twice its size.
     Cells {
+        set: BundledSet,
         /// For each code, an index into `cells`, `SYMBOL | i` for
         /// `symbols[i]`, or `NO_CELL`.
         index: Vec<u16>,
@@ -154,21 +156,21 @@ pub(crate) fn outlines() -> &'static FontRef<'static> {
     FONT.get_or_init(|| FontRef::try_from_slice(OUTLINES).expect("bundled font"))
 }
 
-/// The 16-pixel glyph of `c` from the outline font, or else from the
-/// dot glyphs; `None` if neither has it. Drawing is slow next to looking
-/// pixels up, so glyphs are kept once drawn.
-fn large_glyph(c: char) -> Option<Bitmap> {
-    static DRAWN: OnceLock<Mutex<HashMap<char, Option<Bitmap>>>> = OnceLock::new();
+/// The 16-pixel glyph of `c` from `set`'s bundled glyphs, the outline
+/// font's drawn here; `None` if none has it. Drawing is slow next to
+/// looking pixels up, so glyphs are kept once drawn.
+fn large_glyph(c: char, set: BundledSet) -> Option<Bitmap> {
+    type Drawn = HashMap<(char, BundledSet), Option<Bitmap>>;
+    static DRAWN: OnceLock<Mutex<Drawn>> = OnceLock::new();
     let drawn = DRAWN.get_or_init(Default::default);
-    if let Some(&bitmap) = drawn.lock().expect("glyph cache").get(&c) {
+    if let Some(&bitmap) = drawn.lock().expect("glyph cache").get(&(c, set)) {
         return bitmap;
     }
-    let bitmap = draw_outline(c).or_else(|| {
-        let mut cell = Vec::with_capacity(LARGE * LARGE);
-        crate::extra_glyphs::dot16_cell(c as u32, &mut cell)
-            .then(|| cell.try_into().expect("16x16 cell"))
-    });
-    drawn.lock().expect("glyph cache").insert(c, bitmap);
+    let mut cell = Vec::with_capacity(LARGE * LARGE);
+    let outline = |out: &mut Vec<u8>| draw_outline(c).map(|b| out.extend_from_slice(&b)).is_some();
+    let bitmap = extra_glyphs::bundled16(set, c as u32, &mut cell, outline)
+        .then(|| cell.try_into().expect("16x16 cell"));
+    drawn.lock().expect("glyph cache").insert((c, set), bitmap);
     bitmap
 }
 
@@ -298,8 +300,14 @@ impl Font {
     }
 
     /// The bundled GalmuriMono7 plus this emulator's drawings of
-    /// SmileBASIC's own characters, for when no font has been imported.
+    /// SmileBASIC's own characters, for when no font has been imported,
+    /// with the default set of bundled 16-pixel glyphs.
     pub fn fallback() -> Font {
+        Font::fallback_with(BundledSet::default())
+    }
+
+    /// [`Font::fallback`] with `set`'s 16-pixel glyphs.
+    pub fn fallback_with(set: BundledSet) -> Font {
         let mut index = vec![NO_CELL; CODES];
         let mut cells = Vec::with_capacity(FALLBACK.len() / 10);
         for record in FALLBACK.chunks_exact(10) {
@@ -332,6 +340,7 @@ impl Font {
         }
         Font(
             Source::Cells {
+                set,
                 index,
                 cells,
                 symbols,
@@ -340,6 +349,15 @@ impl Font {
             },
             Pages::default(),
         )
+    }
+
+    /// The fallback font drawn with `set`'s 16-pixel glyphs, if this is
+    /// a fallback font drawn with another set.
+    pub fn with_bundled_set(&self, set: BundledSet) -> Option<Font> {
+        match &self.0 {
+            Source::Cells { set: now, .. } if *now != set => Some(Font::fallback_with(set)),
+            _ => None,
+        }
     }
 
     /// Pages with only GRP5, the font page.
@@ -361,10 +379,13 @@ impl Font {
     pub fn page_image(&self) -> Vec<u32> {
         match &self.0 {
             Source::Page { page, .. } => page.clone(),
-            // Every fallback font is the same, so its page is drawn once.
-            Source::Cells { .. } => {
-                static PAGE: OnceLock<Vec<u32>> = OnceLock::new();
-                PAGE.get_or_init(|| self.draw_page()).clone()
+            // Fallback fonts with the same set are the same, so its page
+            // is drawn once.
+            Source::Cells { set, .. } => {
+                static PAGES: [OnceLock<Vec<u32>>; 2] = [OnceLock::new(), OnceLock::new()];
+                PAGES[*set as usize]
+                    .get_or_init(|| self.draw_page())
+                    .clone()
             }
         }
     }
@@ -461,6 +482,7 @@ impl Font {
                 page[((gy + y) * PAGE_SIZE + gx + x) as usize]
             }
             Source::Cells {
+                set,
                 index,
                 cells,
                 symbols,
@@ -480,7 +502,8 @@ impl Font {
                 // SmileBASIC's own symbols keep their 8x8 drawings.
                 if size == FontSize::Large
                     && i & SYMBOL == 0
-                    && let Some(bitmap) = char::from_u32(u32::from(code)).and_then(large_glyph)
+                    && let Some(bitmap) =
+                        char::from_u32(u32::from(code)).and_then(|c| large_glyph(c, *set))
                 {
                     let alpha = u32::from(bitmap[(y * 16 + x) as usize]);
                     return if alpha == 0 {
@@ -792,5 +815,60 @@ mod tests {
             }
         }
         assert_eq!(font.pixel(0xE10A, FontSize::Large, 0, 0), 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn the_fallback_follows_the_bundled_set() {
+        let table = |find: fn(u32, &mut Vec<u8>) -> bool, c: char| -> Vec<u32> {
+            let mut cell = Vec::new();
+            assert!(find(c as u32, &mut cell), "{c}");
+            let white = |a: &u8| {
+                if *a == 0 {
+                    0
+                } else {
+                    u32::from(*a) << 24 | 0xFF_FFFF
+                }
+            };
+            cell.iter().map(white).collect()
+        };
+        let glyph = |font: &Font, c: char, size: FontSize| -> Vec<u32> {
+            let n = size as u32;
+            (0..n * n)
+                .map(|i| font.pixel(c as u16, size, i % n, i / n))
+                .collect()
+        };
+        let outline = Font::fallback();
+        let dot = Font::fallback_with(BundledSet::Pixel);
+        // Antialiased: M PLUS 1p Bold, Noto Sans SC Bold, then the dot glyphs.
+        assert_eq!(
+            glyph(&outline, '汉', FontSize::Large),
+            table(extra_glyphs::sc16_cell, '汉')
+        );
+        assert_eq!(
+            glyph(&outline, '한', FontSize::Large),
+            table(extra_glyphs::dot16_cell, '한')
+        );
+        // Pixel: the dot glyphs for all they have, ASCII in its full-width
+        // form.
+        for c in ['A', '漢', '汉', '한'] {
+            assert_eq!(
+                glyph(&dot, c, FontSize::Large),
+                table(extra_glyphs::dot16_cell, c),
+                "{c}"
+            );
+        }
+        // The 8-pixel font and SmileBASIC's symbols stay.
+        for c in ['A', '漢', '\u{E100}'] {
+            assert_eq!(
+                glyph(&dot, c, FontSize::Small),
+                glyph(&outline, c, FontSize::Small)
+            );
+        }
+        let symbol = |font: &Font| glyph(font, '\u{E100}', FontSize::Large);
+        assert_eq!(symbol(&dot), symbol(&outline));
+        // Only a fallback font with another set changes.
+        assert!(outline.with_bundled_set(BundledSet::Antialiased).is_none());
+        assert!(outline.with_bundled_set(BundledSet::Pixel).is_some());
+        assert!(Font::blank().with_bundled_set(BundledSet::Pixel).is_none());
     }
 }

@@ -405,6 +405,16 @@ impl Machine {
         self.rt.prg_lines.forget();
     }
 
+    /// [`Runtime::apply_bundled_glyphs`] for the main interpreter and the
+    /// sub interpreter, if it has started.
+    pub fn apply_bundled_glyphs(&mut self) {
+        self.rt.apply_bundled_glyphs();
+        if let Some(sub) = &mut self.sub {
+            sub.rt.settings.bundled_glyphs16 = self.rt.settings.bundled_glyphs16;
+            sub.rt.apply_bundled_glyphs();
+        }
+    }
+
     /// Whether a program or direct-mode line is executing.
     /// Instructions the running program has executed.
     pub fn executed(&self) -> u64 {

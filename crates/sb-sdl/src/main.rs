@@ -266,6 +266,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     if let Ok(text) = std::fs::read_to_string(&settings_path) {
         rt.settings = Settings::from_text(&text);
     }
+    rt.apply_bundled_glyphs();
     // Completion and argument hints take the forms of the help's pages.
     rt.library = std::rc::Rc::new(sb_runtime::complete::Library::new(help.as_deref()));
     rt.help = help.clone();
@@ -1698,6 +1699,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                     }
                     settings_window::Outcome::ProgramFont => machine.rt.apply_program_font(),
+                    settings_window::Outcome::BundledGlyphs => machine.apply_bundled_glyphs(),
                     settings_window::Outcome::ChooseExtraFont => {
                         let send = chosen_extra_font.clone();
                         choose_extra_font(canvas.window(), send, &mut toasts);
@@ -2879,6 +2881,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let closed_bar = menu.closed();
         let font = machine.rt.font();
         ui::set_font(machine.rt.settings.ui_font);
+        ui::set_bundled_glyphs(machine.rt.settings.bundled_glyphs16);
         let cursor_on = (blink / 25).is_multiple_of(2);
         let context = menu_context(machine);
         let settings = &machine.rt.settings;

@@ -185,4 +185,48 @@ mod tests {
         rt.acls(false, false, false, false);
         assert_eq!(rt.grp.page(FONT_PAGE), &original[..]);
     }
+
+    #[test]
+    fn the_bundled_set_redraws_the_fallback_font() {
+        use crate::extra_glyphs::BundledSet;
+        use crate::runtime::Runtime;
+        use crate::text::FONT_PAGE;
+        let mut rt = Runtime::for_tests(Font::fallback());
+        let outline = rt.font.page_image();
+        // A program draws on the 8-pixel half, which no set changes.
+        let (sx, sy) = rt.font.origin('A' as u16, FontSize::Small).unwrap();
+        let mut page = rt.grp.page(FONT_PAGE).to_vec();
+        page[(sy * PAGE_SIZE + sx) as usize] = 0xFFFF_0000;
+        rt.grp.set_page(FONT_PAGE, page);
+        // The same set changes nothing.
+        rt.apply_bundled_glyphs();
+        assert_eq!(rt.font.page_image(), outline);
+        rt.settings.bundled_glyphs16 = BundledSet::Pixel;
+        rt.apply_bundled_glyphs();
+        assert_eq!(rt.extra_glyphs.bundled_set(), BundledSet::Pixel);
+        let dot = rt.font.page_image();
+        assert_ne!(dot, outline);
+        assert_eq!(dot, Font::fallback_with(BundledSet::Pixel).page_image());
+        // The 16-pixel glyphs change on GRP5; the program's pixel stays.
+        let (ax, ay) = rt.font.origin('あ' as u16, FontSize::Large).unwrap();
+        let cell = |page: &[u32]| -> Vec<u32> {
+            (0..256)
+                .map(|i| page[((ay + i / 16) * PAGE_SIZE + ax + i % 16) as usize])
+                .collect()
+        };
+        assert_eq!(cell(rt.grp.page(FONT_PAGE)), cell(&dot));
+        assert_ne!(cell(&dot), cell(&outline));
+        assert_eq!(
+            rt.grp.page(FONT_PAGE)[(sy * PAGE_SIZE + sx) as usize],
+            0xFFFF_0000
+        );
+        // The bundled program font takes the set too.
+        rt.settings.program_font = [FontSource::SmileBasic, FontSource::Bundled];
+        rt.apply_program_font();
+        let patched = cell(rt.grp.page(FONT_PAGE));
+        rt.settings.bundled_glyphs16 = BundledSet::Antialiased;
+        rt.apply_bundled_glyphs();
+        assert_ne!(cell(rt.grp.page(FONT_PAGE)), patched);
+        assert_eq!(rt.font.page_image(), outline);
+    }
 }

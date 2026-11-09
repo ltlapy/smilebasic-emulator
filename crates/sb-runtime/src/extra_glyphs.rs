@@ -7,10 +7,14 @@
 //! - the font file chosen in the settings (`editor_extra_font`): BDF,
 //!   TrueType or OpenType;
 //! - the bundled glyphs. At 8 pixels: GalmuriMono7, Misaki Gothic 2nd,
-//!   M PLUS 1p Bold, then Fusion Pixel 8px. At 16 pixels: M PLUS 1p Bold,
-//!   the face closest to SmileBASIC 4's own 16-pixel font, then the dot
-//!   glyphs (Izumi Gothic 16, then Unifont JP, both made bold) and Noto
-//!   Sans SC Bold (GB2312).
+//!   M PLUS 1p Bold, then Fusion Pixel 8px. At 16 pixels, one of two sets
+//!   ([`BundledSet`], the setting `bundled_glyphs16`), each followed by the
+//!   other's fonts for what it lacks:
+//!   - antialiased, the default: M PLUS 1p Bold, the face closest to
+//!     SmileBASIC 4's own 16-pixel font, then Noto Sans SC Bold (GB2312),
+//!     then the dot glyphs;
+//!   - pixel: Izumi Gothic 16, then Unifont JP, both made bold, then the
+//!     antialiased set's fonts.
 //!
 //! The editor looks a character up in them in the order the settings give
 //! ([`Fonts`]), by default in the order above. When none has it, it draws
@@ -24,7 +28,7 @@
 //! Programs see these glyphs only where the settings put them on the font
 //! page (see [`crate::program_font`]); by default they never do.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
@@ -47,6 +51,18 @@ pub enum FontSource {
     File,
     /// The fonts bundled with the emulator.
     Bundled,
+}
+
+/// Which set of bundled 16-pixel glyphs comes first. The other set's
+/// fonts follow it, for the characters it lacks, so both sets draw the
+/// same characters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BundledSet {
+    /// Outlines with gray edges: M PLUS 1p Bold, then Noto Sans SC Bold.
+    #[default]
+    Antialiased,
+    /// Dot fonts made bold: Izumi Gothic 16, then Unifont JP.
+    Pixel,
 }
 
 /// Which of [`ExtraGlyphs`]' sources to look in.
@@ -142,9 +158,39 @@ pub(crate) fn dot_half16(code: u32) -> Option<Vec<u8>> {
 }
 
 /// Appends the 16x16 dot glyph for `code` (Izumi Gothic 16 or Unifont
-/// JP, made bold), if there is one.
+/// JP, made bold), if there is one. ASCII takes the full-width forms, as
+/// SmileBASIC draws it as wide as kana.
 pub(crate) fn dot16_cell(code: u32, out: &mut Vec<u8>) -> bool {
+    let code = match code {
+        0x21..=0x7E => code + 0xFEE0,
+        _ => code,
+    };
     dot16().copy(code, out)
+}
+
+/// Appends Noto Sans SC Bold's 16x16 glyph for `code`, in 16 steps of
+/// gray, if it has one that M PLUS 1p Bold lacks.
+pub(crate) fn sc16_cell(code: u32, out: &mut Vec<u8>) -> bool {
+    sc16().copy(code, out)
+}
+
+/// Appends the bundled 16-pixel glyph for `code` from `set`, or else
+/// from the other set's fonts. `outline` appends M PLUS 1p Bold's glyph,
+/// which each caller draws in its own way. A table is unpacked only when
+/// a character gets as far as it.
+pub(crate) fn bundled16(
+    set: BundledSet,
+    code: u32,
+    out: &mut Vec<u8>,
+    outline: impl FnOnce(&mut Vec<u8>) -> bool,
+) -> bool {
+    match set {
+        // Noto Sans SC draws the CJK characters it shares with Japanese in
+        // their Simplified Chinese forms, so it comes after M PLUS 1p,
+        // whose Japanese forms win.
+        BundledSet::Antialiased => outline(out) || sc16_cell(code, out) || dot16_cell(code, out),
+        BundledSet::Pixel => dot16_cell(code, out) || outline(out) || sc16_cell(code, out),
+    }
 }
 
 /// Appends GalmuriMono7's 8x8 cell for `code`, if it has one.
@@ -232,9 +278,10 @@ pub struct Glyph {
 
 #[derive(Default)]
 struct Cache {
-    /// What each code, cell size and [`Part`] was found as, so that each
-    /// is looked for once.
-    found: HashMap<(u32, u8, u8), Option<Glyph>>,
+    /// What each code, cell size, [`Part`] and [`BundledSet`] was found
+    /// as, so that each is looked for once. Glyphs stay when the set
+    /// changes, as callers may still hold them.
+    found: HashMap<(u32, u8, u8, BundledSet), Option<Glyph>>,
     /// The glyphs found, one alpha byte per pixel.
     pixels: Vec<u8>,
 }
@@ -243,6 +290,7 @@ struct Cache {
 #[derive(Default)]
 pub struct ExtraGlyphs {
     external: Option<External>,
+    set: Cell<BundledSet>,
     cache: RefCell<Cache>,
 }
 
@@ -287,8 +335,18 @@ impl ExtraGlyphs {
         };
         Ok(ExtraGlyphs {
             external: Some(external),
+            set: Cell::default(),
             cache: RefCell::default(),
         })
+    }
+
+    /// Picks the set of bundled 16-pixel glyphs.
+    pub fn set_bundled(&self, set: BundledSet) {
+        self.set.set(set);
+    }
+
+    pub fn bundled_set(&self) -> BundledSet {
+        self.set.get()
     }
 
     /// Whether a font file was read.
@@ -309,7 +367,7 @@ impl ExtraGlyphs {
             return None;
         }
         let cell = size as u8;
-        let key = (code, cell, part as u8);
+        let key = (code, cell, part as u8, self.set.get());
         let mut cache = self.cache.borrow_mut();
         if let Some(&found) = cache.found.get(&key) {
             return found;
@@ -385,11 +443,9 @@ impl ExtraGlyphs {
                     || take(out, outlines(ch, 8))
                     || fusion8().copy(code, out)
             }
-            // The 8-pixel fonts have no place here. Noto Sans SC comes
-            // last for the same reason as Fusion Pixel: M PLUS 1p keeps
-            // the Japanese forms of the characters both have.
+            // The 8-pixel fonts have no place here.
             FontSize::Large => {
-                take(out, outlines(ch, 16)) || dot16().copy(code, out) || sc16().copy(code, out)
+                bundled16(self.set.get(), code, out, |out| take(out, outlines(ch, 16)))
             }
         }
     }
@@ -554,63 +610,127 @@ mod tests {
         cache.pixels[at..at + n].iter().filter(|&&a| a > 0).count()
     }
 
+    /// The bundled glyphs with `set` at 16 pixels.
+    fn with_set(set: BundledSet) -> ExtraGlyphs {
+        let g = ExtraGlyphs::bundled();
+        g.set_bundled(set);
+        g
+    }
+
+    const SETS: [BundledSet; 2] = [BundledSet::Antialiased, BundledSet::Pixel];
+
     #[test]
     fn bundled_glyphs_cover_many_scripts() {
-        let g = ExtraGlyphs::bundled();
-        for size in [FontSize::Small, FontSize::Large] {
-            for c in ['한', '글', 'Ω', 'Ж', 'ア', '漢', '★', '☀', '♪'] {
-                let glyph = g.find(c as u32, size);
-                assert!(glyph.is_some(), "{c} at {size:?}");
-                assert!(ink(&g, glyph.unwrap()) > 0, "{c} at {size:?} is blank");
+        for set in SETS {
+            let g = with_set(set);
+            for size in [FontSize::Small, FontSize::Large] {
+                for c in ['한', '글', 'Ω', 'Ж', 'ア', '漢', '汉', '★', '☀', '♪'] {
+                    let glyph = g.find(c as u32, size);
+                    assert!(glyph.is_some(), "{c} at {size:?} in {set:?}");
+                    assert!(ink(&g, glyph.unwrap()) > 0, "{c} at {size:?} is blank");
+                }
+                // Private use and lone surrogates keep the box.
+                assert_eq!(g.find(0xE100, size), None);
+                assert_eq!(g.find(0xD83D, size), None);
+                // Nothing has this one.
+                assert_eq!(g.find(0x10FFFD, size), None);
             }
-            // Private use and lone surrogates keep the box.
-            assert_eq!(g.find(0xE100, size), None);
-            assert_eq!(g.find(0xD83D, size), None);
-            // Nothing has this one.
-            assert_eq!(g.find(0x10FFFD, size), None);
+            // Emoji in the Basic Multilingual Plane come from Unifont JP at
+            // 16 pixels; the bundled fonts draw none above it.
+            assert!(g.find('✅' as u32, FontSize::Large).is_some(), "{set:?}");
+            assert_eq!(g.find('😀' as u32, FontSize::Large), None, "{set:?}");
         }
-        // Emoji in the Basic Multilingual Plane come from Unifont JP at 16
-        // pixels; the bundled fonts draw none above it.
-        assert!(g.find('✅' as u32, FontSize::Large).is_some());
-        assert_eq!(g.find('😀' as u32, FontSize::Large), None);
+    }
+
+    fn bundled(g: &ExtraGlyphs, c: char, size: FontSize) -> Vec<u8> {
+        let mut out = Vec::new();
+        assert!(g.render(c as u32, size, Part::Bundled, &mut out), "{c}");
+        out
+    }
+
+    fn from(table: &Table, c: char) -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        table.copy(c as u32, &mut out).then_some(out)
     }
 
     #[test]
     fn later_fonts_only_fill_gaps() {
         let g = ExtraGlyphs::bundled();
-        let bundled = |c: char, size| {
-            let mut out = Vec::new();
-            assert!(g.render(c as u32, size, Part::Bundled, &mut out), "{c}");
-            out
-        };
-        let from = |table: &Table, c: char| {
-            let mut out = Vec::new();
-            table.copy(c as u32, &mut out).then_some(out)
-        };
+        assert_eq!(g.bundled_set(), BundledSet::Antialiased);
+        let bundled = |c, size| bundled(&g, c, size);
         // Japanese forms stay: 骨 and 直 differ in Simplified Chinese.
         for c in ['骨', '直', 'あ', '한'] {
             let mut galmuri_cell = Vec::new();
             assert!(galmuri(c as u32, &mut galmuri_cell));
             assert_eq!(bundled(c, FontSize::Small), galmuri_cell, "{c}");
-            // M PLUS 1p has no Hangul, which Unifont JP draws.
+            // M PLUS 1p and Noto Sans SC have no Hangul, which Unifont JP
+            // draws.
             let large = outlines(Some(c), 16).or_else(|| from(dot16(), c));
             assert_eq!(Some(bundled(c, FontSize::Large)), large, "{c}");
         }
-        // Kanji M PLUS 1p lacks come from Izumi Gothic 16, made bold.
+        // Kanji M PLUS 1p lacks, outside GB2312, come from Izumi Gothic 16,
+        // made bold.
         for c in ['𠀋', '㐂', '鷗'] {
             assert_eq!(outlines(Some(c), 16), None, "{c}");
+            assert_eq!(from(sc16(), c), None, "{c}");
             assert_eq!(Some(bundled(c, FontSize::Large)), from(dot16(), c), "{c}");
         }
         // Greek and Cyrillic at 8 pixels come from Misaki Gothic 2nd.
         for c in ['Ω', 'ж'] {
             assert_eq!(Some(bundled(c, FontSize::Small)), from(misaki8(), c), "{c}");
         }
-        // Simplified Chinese no other font has, at 8 pixels. At 16,
-        // Unifont JP draws it.
+        // Simplified Chinese no other font has: Fusion Pixel at 8 pixels,
+        // Noto Sans SC Bold at 16.
         for c in ['汉', '们', '这'] {
             assert_eq!(Some(bundled(c, FontSize::Small)), from(fusion8(), c), "{c}");
-            assert_eq!(Some(bundled(c, FontSize::Large)), from(dot16(), c), "{c}");
+            assert_eq!(Some(bundled(c, FontSize::Large)), from(sc16(), c), "{c}");
         }
+    }
+
+    #[test]
+    fn the_pixel_set_comes_first() {
+        let g = with_set(BundledSet::Pixel);
+        let large = |c| bundled(&g, c, FontSize::Large);
+        for c in ['骨', 'あ', '한', '汉', 'Ж', '★', '鷗'] {
+            assert_eq!(Some(large(c)), from(dot16(), c), "{c}");
+        }
+        // ASCII takes the full-width form.
+        assert_eq!(Some(large('A')), from(dot16(), 'Ａ'));
+        // What the dot fonts lack comes from M PLUS 1p Bold.
+        assert_eq!(from(dot16(), '𝔸'), None);
+        assert_eq!(Some(large('𝔸')), outlines(Some('𝔸'), 16));
+        // The 8-pixel glyphs do not change.
+        let outline = ExtraGlyphs::bundled();
+        for c in ['A', '漢', '汉', '한'] {
+            let small = |g| bundled(g, c, FontSize::Small);
+            assert_eq!(small(&g), small(&outline), "{c}");
+        }
+    }
+
+    #[test]
+    fn both_sets_draw_the_same_characters() {
+        // One from each source's own part, and ones none has.
+        let chars = ['A', 'あ', '𝔸', '汉', '한', '𠀋', '✅', '😀', '\u{10FFFD}'];
+        let [outline, dot] = SETS.map(with_set);
+        for c in chars {
+            let has = |g: &ExtraGlyphs| g.find(c as u32, FontSize::Large).is_some();
+            assert_eq!(has(&outline), has(&dot), "{c}");
+        }
+    }
+
+    #[test]
+    fn the_set_changes_glyphs_already_found() {
+        let g = ExtraGlyphs::bundled();
+        let outline = g.find('漢' as u32, FontSize::Large).unwrap();
+        let outline_px = pixels(&g, outline);
+        g.set_bundled(BundledSet::Pixel);
+        let dot = g.find('漢' as u32, FontSize::Large).unwrap();
+        assert_eq!(Some(pixels(&g, dot)), from(dot16(), '漢'));
+        assert_ne!(pixels(&g, dot), outline_px);
+        // The glyph found before still draws as it did.
+        assert_eq!(pixels(&g, outline), outline_px);
+        g.set_bundled(BundledSet::Antialiased);
+        assert_eq!(g.find('漢' as u32, FontSize::Large), Some(outline));
     }
 
     #[test]

@@ -1,8 +1,9 @@
 # SB Emulator SC Bold
 
-The editor's last 16-pixel source: glyphs for GB2312 characters that
-M PLUS 1p Bold and the dot fonts (Izumi Gothic 16, Unifont JP) lack. The smooth font of the menus and windows uses the same glyphs.
-Unifont JP draws every GB2312 character, so for now it adds none.
+The second font of the antialiased set of 16-pixel glyphs: glyphs for the
+GB2312 characters M PLUS 1p Bold lacks, for the editor, the menus and
+windows, and the fallback font. In the pixel set it comes last, and adds
+nothing, as Unifont JP draws every GB2312 character.
 
 - Source: [Noto Sans CJK](https://github.com/notofonts/noto-cjk) tag
   Sans2.004, `Sans/SubsetOTF/SC/NotoSansSC-Bold.otf`.
@@ -15,5 +16,5 @@ Unifont JP draws every GB2312 character, so for now it adds none.
   forms, so it comes after M PLUS 1p Bold, whose Japanese forms win.
 - The build script (`build.rs`) draws each glyph into a 16x16 cell, as
   the M PLUS 1p Bold glyphs are drawn (an em of 15 pixels), in 16 steps of
-  gray. Only the cells of characters the fonts before it lack go into the
-  program: the editor never draws the others.
+  gray. Only the cells of characters M PLUS 1p Bold lacks go into the
+  program: the others are never drawn.

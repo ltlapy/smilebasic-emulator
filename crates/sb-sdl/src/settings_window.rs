@@ -3,7 +3,7 @@
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::FileConfirm;
-use sb_runtime::extra_glyphs::FontSource;
+use sb_runtime::extra_glyphs::{BundledSet, FontSource};
 use sb_runtime::font::Font;
 use sb_runtime::settings::{Language, Renderer, Settings, TOOLS, UiFont};
 use sb_runtime::speed::Speed;
@@ -103,6 +103,7 @@ const INSTRUMENTS: &str = "Instruments for MML and BGM";
 const EXTRA_FONT_FILE: usize = 1;
 const EXTRA_FONT: &str = "Font file";
 const PROGRAM_FONT: [&str; 2] = ["Programs' 8-pixel font", "Programs' 16-pixel font"];
+const BUNDLED_GLYPHS: &str = "Bundled 16-pixel glyphs";
 /// The font sources, in the options' order.
 const SOURCES: [FontSource; 3] = [
     FontSource::SmileBasic,
@@ -426,6 +427,26 @@ const PAGES: &[Page] = &[
                 ),
             },
             Row {
+                label: BUNDLED_GLYPHS,
+                about: "Glyphs for Unicode characters at 16 pixels, in the editor, the menus \
+                        and windows, and the stand-in font. Antialiased (default): outlines \
+                        with gray edges. Pixel: dot fonts made bold. What one set lacks comes \
+                        from the other.",
+                control: Control::Choice(
+                    &["Antialiased", "Pixel"],
+                    |s| match s.bundled_glyphs16 {
+                        BundledSet::Antialiased => 0,
+                        BundledSet::Pixel => 1,
+                    },
+                    |s, i| {
+                        s.bundled_glyphs16 = match i {
+                            0 => BundledSet::Antialiased,
+                            _ => BundledSet::Pixel,
+                        }
+                    },
+                ),
+            },
+            Row {
                 label: EXTRA_FONT,
                 about: "A BDF, TTF or OTF file to draw the Unicode characters SmileBASIC's \
                         font lacks. The rows below set where it comes in the order. \
@@ -496,6 +517,9 @@ pub enum Outcome {
     ChooseExtraFont,
     /// A program font changed; the frontend writes it on the font page.
     ProgramFont,
+    /// The set of bundled 16-pixel glyphs changed; the frontend draws
+    /// with it.
+    BundledGlyphs,
     /// Ask for the program tool `n` (0 to 2) starts.
     ChooseTool(usize),
 }
@@ -659,6 +683,9 @@ impl SettingsWindow {
                 put(s, to);
                 if PROGRAM_FONT.contains(&row.label) {
                     return Outcome::ProgramFont;
+                }
+                if row.label == BUNDLED_GLYPHS {
+                    return Outcome::BundledGlyphs;
                 }
             }
         }
@@ -884,8 +911,14 @@ mod tests {
         // The first row is the menus' font.
         w.click(centre(w.option_rect(0, 1)), &mut s);
         assert_eq!(s.ui_font, UiFont::Smooth);
+        // The bundled 16-pixel glyphs tell the frontend.
         assert_eq!(
-            w.click(centre(w.option_rect(1, EXTRA_FONT_FILE)), &mut s),
+            w.click(centre(w.option_rect(1, 1)), &mut s),
+            Outcome::BundledGlyphs
+        );
+        assert_eq!(s.bundled_glyphs16, BundledSet::Pixel);
+        assert_eq!(
+            w.click(centre(w.option_rect(2, EXTRA_FONT_FILE)), &mut s),
             Outcome::ChooseExtraFont
         );
         assert!(
@@ -893,15 +926,15 @@ mod tests {
             "unchanged until a file is chosen"
         );
         assert_eq!(
-            w.click(centre(w.option_rect(1, 0)), &mut s),
+            w.click(centre(w.option_rect(2, 0)), &mut s),
             Outcome::ExtraFont
         );
         assert_eq!(s.editor_extra_font, None);
         // The order is a setting; the program fonts tell the frontend.
-        w.click(centre(w.option_rect(2, 2)), &mut s);
+        w.click(centre(w.option_rect(3, 2)), &mut s);
         assert_eq!(s.editor_font_first, FontSource::Bundled);
         assert_eq!(
-            w.click(centre(w.option_rect(4, 1)), &mut s),
+            w.click(centre(w.option_rect(5, 1)), &mut s),
             Outcome::ProgramFont
         );
         assert_eq!(s.program_font, [FontSource::SmileBasic, FontSource::File]);

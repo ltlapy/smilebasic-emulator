@@ -1,10 +1,11 @@
 # Izumi Gothic 16
 
 The first of the bundled 16-pixel dot fonts: full-width glyphs for the
-editor, the menus and windows, and the fallback font, for characters
-M PLUS 1p Bold lacks. It covers JIS X 0213:2004, so it adds the kanji of
-JIS levels 3 and 4 and many symbols. Unifont JP (`fonts/unifont`) comes
-after it.
+editor, the menus and windows, and the fallback font. It comes first in
+the pixel set of 16-pixel glyphs, and in the antialiased set after M PLUS 1p
+Bold and Noto Sans SC Bold, for the characters they lack. It covers JIS
+X 0213:2004, so it adds the kanji of JIS levels 3 and 4 and many symbols.
+Unifont JP (`fonts/unifont`) comes after it.
 
 - Source: [Izumi Bitmap Font Series](http://izumilib.web.fc2.com/izumi-bf/dl-eng.html)
   by Yu Izumi, Izumi Gothic 16 final beta (beta 6, 2007-03-01),

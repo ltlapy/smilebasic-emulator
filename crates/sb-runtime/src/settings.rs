@@ -4,7 +4,7 @@
 
 use crate::confirm::FileConfirm;
 use crate::editor::EditorSize;
-use crate::extra_glyphs::FontSource;
+use crate::extra_glyphs::{BundledSet, FontSource};
 use crate::font::FontSize;
 use crate::palette::Palette;
 use crate::screen::Filter;
@@ -106,6 +106,9 @@ pub struct Settings {
     /// for the 8- and the 16-pixel font. Not SmileBASIC 4's unless it is
     /// SmileBASIC's font.
     pub program_font: [FontSource; 2],
+    /// Which bundled 16-pixel glyphs come first, wherever they are drawn:
+    /// the editor, the fallback font, the menus and windows.
+    pub bundled_glyphs16: BundledSet,
     pub file_confirm: FileConfirm,
     /// A file question has already said how to turn such questions off.
     pub file_hint_shown: bool,
@@ -195,6 +198,7 @@ impl Default for Settings {
             editor_half_width: false,
             editor_font_first: FontSource::SmileBasic,
             program_font: [FontSource::SmileBasic; 2],
+            bundled_glyphs16: BundledSet::Antialiased,
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
@@ -251,6 +255,7 @@ impl Settings {
             editor_half_width: false,
             editor_font_first: FontSource::SmileBasic,
             program_font: [FontSource::SmileBasic; 2],
+            bundled_glyphs16: BundledSet::Antialiased,
             file_confirm: FileConfirm::Ask,
             file_hint_shown: false,
             screen_filter: Some(Filter::Nearest),
@@ -310,6 +315,11 @@ const FONT_SOURCE: [(FontSource, &str); 3] = [
     (FontSource::SmileBasic, "smilebasic"),
     (FontSource::File, "file"),
     (FontSource::Bundled, "bundled"),
+];
+
+const BUNDLED_SET: [(BundledSet, &str); 2] = [
+    (BundledSet::Antialiased, "antialiased"),
+    (BundledSet::Pixel, "pixel"),
 ];
 
 const EDITOR_SIZE: [(EditorSize, &str); 4] = [
@@ -480,6 +490,12 @@ impl Settings {
                     }
                     continue;
                 }
+                "bundled_glyphs16" => {
+                    if let Some(set) = choice(&BUNDLED_SET, value) {
+                        s.bundled_glyphs16 = set;
+                    }
+                    continue;
+                }
                 "editor_font" => {
                     if let Some(f) = choice(&FONT_SIZE, value) {
                         s.editor_font = f;
@@ -563,6 +579,7 @@ impl Settings {
              editor_font_first={}\n\
              program_font8={}\n\
              program_font16={}\n\
+             bundled_glyphs16={}\n\
              file_confirm={mode}\n\
              file_hint_shown={}\n\
              screen_filter={filter}\n\
@@ -609,6 +626,7 @@ impl Settings {
             choice_name(&FONT_SOURCE, &self.editor_font_first),
             choice_name(&FONT_SOURCE, &self.program_font[0]),
             choice_name(&FONT_SOURCE, &self.program_font[1]),
+            choice_name(&BUNDLED_SET, &self.bundled_glyphs16),
             self.file_hint_shown,
             self.keyboard_buttons,
             self.smilebasic_instruments,
@@ -674,6 +692,7 @@ mod tests {
             editor_half_width: true,
             editor_font_first: FontSource::Bundled,
             program_font: [FontSource::File, FontSource::Bundled],
+            bundled_glyphs16: BundledSet::Pixel,
             editor_tab_step: 2,
             language: Language::Japanese,
             localized_errors: true,

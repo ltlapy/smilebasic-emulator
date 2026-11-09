@@ -5,6 +5,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use sb_runtime::Framebuffer;
+use sb_runtime::extra_glyphs::BundledSet;
 use sb_runtime::font::{Font, FontSize};
 use sb_runtime::half_width::is_half_width;
 use sb_runtime::settings::UiFont;
@@ -254,6 +255,12 @@ thread_local! {
     static GLYPHS: UiGlyphs = UiGlyphs::default();
 }
 
+/// Picks the set of bundled 16-pixel glyphs of UI text, as the
+/// bundled_glyphs16 setting says.
+pub fn set_bundled_glyphs(set: BundledSet) {
+    GLYPHS.with(|glyphs| glyphs.set_bundled(set));
+}
+
 /// Draws text in cells `8 * scale` pixels high: the 16x16 or smooth glyphs
 /// `scale / 2` times their size if `scale` is even, else the 8x8 ones
 /// `scale` times. Every
@@ -284,6 +291,8 @@ fn draw_glyphs(
 ) {
     let cell = 8 * scale;
     let font_choice = ui_font();
+    // The fallback font follows the set too.
+    let set = GLYPHS.with(UiGlyphs::bundled_set);
     let width = |c: u16| match half && is_half_width(c) {
         true => cell / 2,
         false => cell,
@@ -297,7 +306,7 @@ fn draw_glyphs(
     if dry(
         fb,
         area,
-        ("text", x, y, text, color, scale, font_choice, half),
+        ("text", x, y, text, color, scale, font_choice, half, set),
     ) {
         return;
     }

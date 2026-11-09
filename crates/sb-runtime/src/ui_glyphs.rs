@@ -3,9 +3,9 @@
 //!
 //! The smooth font (`ui_font=smooth`) is outlines drawn for a 16-pixel
 //! cell with gray edges. Full-width characters take the editor's bundled
-//! 16-pixel glyphs: M PLUS 1p Bold, then the dot glyphs (Izumi Gothic 16,
-//! Unifont JP) and Noto Sans SC Bold. Half-width ones take M PLUS Code
-//! Latin 50 Bold, drawn half an em wide, then M PLUS 1p Bold's own half-width forms. Both are
+//! 16-pixel glyphs, from the set the settings pick
+//! ([`UiGlyphs::set_bundled`]). Half-width ones take M PLUS Code Latin 50
+//! Bold, drawn half an em wide, then M PLUS 1p Bold's own half-width forms. Both are
 //! drawn with the em and baseline of the bundled 16-pixel font, so they
 //! line up.
 //!
@@ -16,7 +16,7 @@
 //! A character none of them has, and SmileBASIC's own symbols, get `None`,
 //! for the caller to draw from SmileBASIC's font.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 use ab_glyph::FontRef;
 
 use crate::cell_glyph;
-use crate::extra_glyphs::{ExtraGlyphs, Part};
+use crate::extra_glyphs::{BundledSet, ExtraGlyphs, Part};
 use crate::font::{self, FontSize};
 
 /// The side of a full-width glyph's cell; half-width ones are half as wide.
@@ -47,8 +47,8 @@ type Alpha = Rc<[u8]>;
 enum Kind {
     /// A smooth half-width glyph.
     Half,
-    /// The editor's bundled glyph at this size.
-    Full(FontSize),
+    /// The editor's bundled glyph at this size, from this set.
+    Full(FontSize, BundledSet),
 }
 
 /// Glyphs from the bundled fonts, each made once when first wanted.
@@ -57,9 +57,21 @@ pub struct UiGlyphs {
     /// What each code was found as.
     found: RefCell<HashMap<(u32, Kind), Option<Alpha>>>,
     bundled: ExtraGlyphs,
+    set: Cell<BundledSet>,
 }
 
 impl UiGlyphs {
+    /// Picks the set of bundled 16-pixel glyphs. The glyphs of the other
+    /// set stay kept, for when it comes back.
+    pub fn set_bundled(&self, set: BundledSet) {
+        self.set.set(set);
+        self.bundled.set_bundled(set);
+    }
+
+    pub fn bundled_set(&self) -> BundledSet {
+        self.set.get()
+    }
+
     /// The smooth glyph for `code`, one alpha byte per pixel in rows of
     /// [`CELL`] / 2 pixels if `half`, else [`CELL`] pixels, [`CELL`] rows.
     pub fn get(&self, code: u16, half: bool) -> Option<Alpha> {
@@ -72,7 +84,7 @@ impl UiGlyphs {
     /// The editor's bundled glyph for the character `code` (beyond U+FFFF
     /// too), `size` x `size` alpha bytes, row by row.
     pub fn bundled(&self, code: u32, size: FontSize) -> Option<Alpha> {
-        self.find(code, Kind::Full(size))
+        self.find(code, Kind::Full(size, self.set.get()))
     }
 
     fn find(&self, code: u32, kind: Kind) -> Option<Alpha> {
@@ -81,7 +93,7 @@ impl UiGlyphs {
         }
         let made = match kind {
             Kind::Half => u16::try_from(code).ok().and_then(half_glyph),
-            Kind::Full(size) => {
+            Kind::Full(size, _) => {
                 let mut out = Vec::new();
                 self.bundled
                     .render(code, size, Part::Bundled, &mut out)
@@ -144,6 +156,24 @@ mod tests {
         let smooth = g.get('한' as u16, false).unwrap();
         let bundled = g.bundled('한' as u32, FontSize::Large).unwrap();
         assert!(Rc::ptr_eq(&smooth, &bundled));
+    }
+
+    #[test]
+    fn the_bundled_set_picks_the_full_width_glyphs() {
+        let g = UiGlyphs::default();
+        let outline = g.get('漢' as u16, false).unwrap();
+        let small = g.bundled('漢' as u32, FontSize::Small).unwrap();
+        g.set_bundled(BundledSet::Pixel);
+        assert_eq!(g.bundled_set(), BundledSet::Pixel);
+        let dot = g.get('漢' as u16, false).unwrap();
+        let mut cell = Vec::new();
+        assert!(crate::extra_glyphs::dot16_cell('漢' as u32, &mut cell));
+        assert_eq!(*dot, *cell);
+        assert_ne!(*dot, *outline);
+        // The 8-pixel glyphs stay.
+        assert_eq!(g.bundled('漢' as u32, FontSize::Small).unwrap(), small);
+        g.set_bundled(BundledSet::Antialiased);
+        assert!(Rc::ptr_eq(&g.get('漢' as u16, false).unwrap(), &outline));
     }
 
     #[test]
