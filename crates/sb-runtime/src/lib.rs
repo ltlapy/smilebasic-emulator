@@ -57,3 +57,8 @@ pub use files::program_text;
 pub use framebuffer::Framebuffer;
 pub use runtime::Runtime;
 pub use system::PerfStats;
+
+/// The emulator's version, followed by the commit it was built from when
+/// the build knows it, as in `0.1.0+4e42491`. `SB_COMMIT` at build time
+/// sets the commit, or leaves it out when empty.
+pub const VERSION: &str = env!("SB_VERSION");

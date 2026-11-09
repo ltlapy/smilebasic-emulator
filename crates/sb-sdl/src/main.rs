@@ -192,7 +192,7 @@ impl FrameGuard {
 
 /// What Help > About says.
 fn about_lines(drawn_by: &str) -> Vec<String> {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = sb_runtime::VERSION;
     vec![
         format!("SmileBASIC emulator {version}"),
         "An emulator for SmileBASIC 4 programs.".to_string(),

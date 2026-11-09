@@ -23,6 +23,11 @@ cargo build --profile dist
 SDL3 is built from source. On Linux, install the X11, Wayland and audio
 development headers listed in SDL's `docs/README-linux.md` first.
 
+The version shown at start-up and in Help > About ends with the commit the
+build came from, as in `0.1.0+4e42491`. Set `SB_COMMIT` to name a commit
+yourself, for example when building outside a git checkout, or set it empty
+to leave the commit out.
+
 For Windows, see [building-windows.md](docs/building-windows.md). For an aarch64
 handheld, see [building-handheld.md](docs/building-handheld.md).
 

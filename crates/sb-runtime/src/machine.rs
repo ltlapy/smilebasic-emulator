@@ -376,7 +376,7 @@ impl Machine {
         // KEY starts from the settings; programs change only this run's.
         let keys = &self.rt.settings.function_keys;
         self.rt.input.function_keys = keys.clone().map(|k| k.encode_utf16().collect());
-        let version = env!("CARGO_PKG_VERSION");
+        let version = crate::VERSION;
         for line in [
             format!("SmileBASIC emulator ver {version}"),
             "(SmileBASIC 4.4.9 compatible)".to_string(),

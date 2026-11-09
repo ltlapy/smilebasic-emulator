@@ -17,6 +17,8 @@
 //!   `extra_glyphs::Table` reads them.
 //! - `$OUT_DIR/dot_font.bin`, `fonts/neodgm/SBEmulatorDot.ttf` compressed
 //!   with deflate (see `src/half_width.rs`).
+//! - `SB_VERSION`, the package version followed by the commit the build
+//!   comes from (see `commit_id`), for `sb_runtime::VERSION`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -160,7 +162,41 @@ fn to_cell(pixels: &[u8; 64]) -> Cell {
     std::array::from_fn(|y| (0..8).fold(0, |row, x| row | (pixels[y * 8 + x] << (7 - x))))
 }
 
+/// The commit to name after the version: `SB_COMMIT` when it is set (empty
+/// for none), otherwise the short hash of git's `HEAD`, or none outside a
+/// git checkout.
+fn commit_id() -> Option<String> {
+    println!("cargo::rerun-if-env-changed=SB_COMMIT");
+    if let Ok(commit) = std::env::var("SB_COMMIT") {
+        return Some(commit.trim().to_string()).filter(|c| !c.is_empty());
+    }
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git").args(args).output().ok()?;
+        let text = String::from_utf8(out.stdout).ok()?;
+        out.status.success().then(|| text.trim().to_string())
+    };
+    // A new commit or checkout changes HEAD, the branch's ref or packed-refs.
+    // Cargo reruns the script on every build for a file that does not exist.
+    let watch = |path: &str| {
+        let file = git(&["rev-parse", "--path-format=absolute", "--git-path", path])?;
+        Path::new(&file)
+            .exists()
+            .then(|| println!("cargo::rerun-if-changed={file}"))
+    };
+    watch("HEAD");
+    watch("packed-refs");
+    if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        watch(&branch);
+    }
+    git(&["rev-parse", "--short=7", "HEAD"]).filter(|c| !c.is_empty())
+}
+
 fn main() {
+    let version = std::env::var("CARGO_PKG_VERSION").unwrap();
+    match commit_id() {
+        Some(commit) => println!("cargo::rustc-env=SB_VERSION={version}+{commit}"),
+        None => println!("cargo::rustc-env=SB_VERSION={version}"),
+    }
     println!("cargo::rerun-if-changed={BDF}");
     println!("cargo::rerun-if-changed={OVERRIDES}");
     println!("cargo::rerun-if-changed={SYMBOLS}");
