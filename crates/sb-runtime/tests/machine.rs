@@ -1188,6 +1188,29 @@ fn watches_stop_where_their_value_changed() {
 }
 
 #[test]
+fn steps_from_the_editor_leave_the_console_to_the_program() {
+    use sb_core::vm::Step;
+    use sb_runtime::machine::Resume;
+    let mut m = debug_machine();
+    m.set_slot(0, "STOP\nPRINT \"A\";\nPRINT \"B\";\nEND".to_string());
+    enter(&mut m, "RUN");
+    assert_eq!(&rows(&m)[rows(&m).len() - 2..], ["Break on 0:1", "OK"]);
+    m.toggle_editor();
+    debug(&mut m, Resume::Step(Step::Over));
+    assert_eq!(m.paused_at(), Some((0, 3)));
+    debug(&mut m, Resume::Step(Step::Over));
+    assert_eq!(m.paused_at(), Some((0, 4)));
+    // No Break line or OK between what the program printed.
+    assert_eq!(rows(&m).last().unwrap(), "AB");
+    // Back in direct mode, OK shows on a line of its own.
+    m.toggle_editor();
+    m.frame();
+    assert_eq!(&rows(&m)[rows(&m).len() - 2..], ["AB", "OK"]);
+    enter(&mut m, "CONT");
+    assert_eq!(&rows(&m)[rows(&m).len() - 4..], ["AB", "OK", "cont", "OK"]);
+}
+
+#[test]
 fn the_panel_shows_before_a_program_runs() {
     let mut m = debug_machine();
     enter(&mut m, "Q=5");

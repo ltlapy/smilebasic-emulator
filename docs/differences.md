@@ -372,6 +372,10 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   key or F5. STOP, errors and the debugger's stops leave the screens and sound
   as they were, to be looked at. `smilebasic-check` always leaves them, as
   SmileBASIC 4 does.
+- A stop that the debugger shows in the editor prints neither `Break on` nor
+  `OK`, so the console keeps only what the program printed. This covers steps,
+  breakpoints, `TRACE`, Run to cursor, watched changes, and any stop while the
+  panel is pinned. `OK` shows once the keys go back to direct mode.
 - Ctrl+C on a keyboard stops a running program only when File > Settings says
   so; it is off to start with, and programs read Ctrl+C as a key. On
   SmileBASIC 4, Ctrl+C on a USB keyboard stops the program.

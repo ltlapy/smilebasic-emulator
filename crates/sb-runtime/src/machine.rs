@@ -181,6 +181,9 @@ pub struct Machine {
     detached: bool,
     /// With the editor apart, whether it takes the keys.
     editor_focus: bool,
+    /// The program stopped for the debugger, which says where, so direct
+    /// mode printed nothing; it shows OK once keys go to it.
+    quiet_stop: bool,
     /// The slots' change counts the editor's sides last took.
     slot_changes: Vec<u32>,
     /// The sub interpreter, once SUBRUN has started a program on it. It
@@ -360,6 +363,7 @@ impl Machine {
             time_limit: None,
             detached: false,
             editor_focus: false,
+            quiet_stop: false,
             slot_changes: vec![0; SLOTS],
             sub: None,
             sub_shown: true,
@@ -1021,16 +1025,27 @@ impl Machine {
         // hardware, as is the program's form, which a forced stop shares).
         let slot = vm.slot().unwrap_or(0);
         let line = line.unwrap_or(vm.line());
-        // The format is SmileBASIC 4's own, from SmileBASIC 4.
+        // A stop the debugger shows in the editor leaves the console to
+        // the program: no Break line, note or OK, as the panel says where
+        // and why.
+        let opens =
+            self.stepping.is_some() || how == Halt::Debug && self.rt.settings.debug_open_editor;
+        let debugging = matches!(how, Halt::Trace | Halt::Debug)
+            || self.stepping.is_some()
+            || self.panel_pinned;
+        let quiet = program && debugging && (self.editing || opens);
+        // The format is SmileBASIC 4's own.
         let what = match how {
             Halt::User => "User break",
             Halt::Stop | Halt::Trace | Halt::Debug => "Break",
         };
-        let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
-        // It follows whatever the line printed, as after INPUT's prompt.
-        let console = &mut self.rt.text[CONSOLE];
-        console.print(&text);
-        console.newline();
+        if !quiet {
+            let text: Vec<u16> = format!("{what} on {slot}:{line}").encode_utf16().collect();
+            // It follows whatever the line printed, as after INPUT's prompt.
+            let console = &mut self.rt.text[CONSOLE];
+            console.print(&text);
+            console.newline();
+        }
         let mut vm = vm;
         if let Some(message) = vm.take_stop_message() {
             self.print_line(&message);
@@ -1062,7 +1077,7 @@ impl Machine {
             _ => None,
         };
         self.stop_reason = program.then_some(reason);
-        if let Some(note) = note {
+        if let Some(note) = note.filter(|_| !quiet) {
             let note: Vec<u16> = note.encode_utf16().collect();
             self.print_line(&note);
         }
@@ -1072,7 +1087,12 @@ impl Machine {
             vm.leave_input();
             self.halt(vm, Stopped::Paused, line);
         }
-        self.ready();
+        if quiet {
+            self.rt.direct = true;
+            self.quiet_stop = true;
+        } else {
+            self.ready();
+        }
         if home {
             self.home = Home::Done;
         }
@@ -1129,6 +1149,7 @@ impl Machine {
         let Some(mut vm) = self.halted.take() else {
             return self.ready();
         };
+        self.quiet_stop = false;
         self.forget_halted();
         vm.set_globals(&self.vars);
         self.arm(&mut vm);
@@ -1663,6 +1684,9 @@ impl Machine {
         }
         let mut vsynced = false;
         let Some(mut vm) = self.vm.as_mut() else {
+            if self.quiet_stop && !self.editor_has_keys() {
+                self.ready();
+            }
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));
             }
@@ -2150,6 +2174,7 @@ impl Machine {
 
     /// Shows OK and waits for the next direct-mode line.
     fn ready(&mut self) {
+        self.quiet_stop = false;
         self.rt.direct = true;
         self.print_line(&"OK".encode_utf16().collect::<Vec<_>>());
         self.rt.direct_input_start();
