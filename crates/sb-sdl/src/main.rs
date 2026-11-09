@@ -200,7 +200,7 @@ fn about_lines(drawn_by: &str) -> Vec<String> {
         "An emulator for SmileBASIC 4 programs.".to_string(),
         String::new(),
         "MIT OR Apache-2.0.".to_string(),
-        "Bundled fonts: SIL Open Font License 1.1.".to_string(),
+        "Bundled fonts: SIL Open Font License 1.1, or their authors' terms.".to_string(),
         "GeneralUser GS: its own license.".to_string(),
         String::new(),
         format!("Renderer: {drawn_by}"),
