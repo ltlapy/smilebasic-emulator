@@ -2623,7 +2623,7 @@ mod tests {
         // The font lacks everything from U+AC00 on, as SmileBASIC 4's lacks
         // that block and surrogates, and draws nothing for the rest.
         let font = Font::blank_from(0xAC00);
-        let mut e = editor("A가😀\u{10FFFD}B");
+        let mut e = editor("A가𠮷\u{10FFFD}B");
         let mut fb = Framebuffer::new(400, 240);
         e.draw(&mut fb, &font, "", look(true), false);
         // Characters the font has stay on the screen; those drawn from the
@@ -2632,7 +2632,7 @@ mod tests {
         let codes: Vec<u16> = (4..11).map(|x| e.screen.cell(x, 0).code).collect();
         assert_eq!(codes, [0x41, 0, 0, 0, 0xDBFF, 0xDFFD, 0x42]);
         // One cell per UTF-16 unit, as the cursor counts: 가 in column 1,
-        // 😀 in column 2 with column 3 empty.
+        // 𠮷 in column 2 with column 3 empty.
         let top = e.grid.top as u32;
         let back = fb.get(4 * 8, top);
         let inked = |col: u32| {
@@ -2641,8 +2641,8 @@ mod tests {
         };
         assert!(!inked(0), "the blank font draws A as nothing");
         assert!(inked(1), "가");
-        assert!(inked(2), "😀");
-        assert!(!inked(3), "😀's second unit");
+        assert!(inked(2), "𠮷");
+        assert!(!inked(3), "𠮷's second unit");
     }
 
     #[test]

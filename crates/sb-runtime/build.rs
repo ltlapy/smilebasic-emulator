@@ -6,11 +6,10 @@
 //! - `$OUT_DIR/fallback_symbols.bin`, from `fonts/symbols.txt`: one 66-byte
 //!   record per character: u16 code, then 64 palette indices in rows (see
 //!   `SYMBOL_PALETTE` in `src/font.rs`).
-//! - `$OUT_DIR/extra_dot16.bin`, `extra_misaki8.bin`, `extra_fusion8.bin`,
-//!   `extra_sc16.bin` and `extra_emoji{8,16}.bin`, the editor's extra
-//!   glyphs (see `src/extra_glyphs.rs`), from `fonts/izumi`,
-//!   `fonts/unifont`, `fonts/misaki`, `fonts/fusionpixel`,
-//!   `fonts/notosanssc` and `fonts/notoemoji/SBEmulatorEmoji.ttf`, and
+//! - `$OUT_DIR/extra_dot16.bin`, `extra_misaki8.bin`, `extra_fusion8.bin`
+//!   and `extra_sc16.bin`, the editor's extra glyphs (see
+//!   `src/extra_glyphs.rs`), from `fonts/izumi`, `fonts/unifont`,
+//!   `fonts/misaki`, `fonts/fusionpixel` and `fonts/notosanssc`, and
 //!   `extra_half16.bin`, Unifont JP's half-width forms in the left half of
 //!   16x16 cells (see `src/half_width.rs`): tables compressed with
 //!   deflate, laid out as `extra_glyphs::Table` reads them. The 16-pixel
@@ -42,7 +41,6 @@ const UNIFONT: &str = "fonts/unifont/unifont_jp-18.0.01.hex.gz";
 /// columns: `Plain`, `KeepEdge`, `KeepEdgeInward` or
 /// `KeepEdgeInwardShifted` (see `dot_bold::EdgeRule`).
 const BOLD_EDGE: dot_bold::EdgeRule = dot_bold::EdgeRule::KeepEdgeInwardShifted;
-const EMOJI: &str = "fonts/notoemoji/SBEmulatorEmoji.ttf";
 const MISAKI: &str = "fonts/misaki/misaki_gothic_2nd.bdf";
 const FUSION: &str = "fonts/fusionpixel/fusion-pixel-8px-monospaced-zh_hans.bdf";
 const NOTO_SC: &str = "fonts/notosanssc/SBEmulatorSC-Bold.otf";
@@ -212,7 +210,6 @@ fn main() {
     println!("cargo::rerun-if-changed={SYMBOLS}");
     println!("cargo::rerun-if-changed={IZUMI}");
     println!("cargo::rerun-if-changed={UNIFONT}");
-    println!("cargo::rerun-if-changed={EMOJI}");
     println!("cargo::rerun-if-changed={MISAKI}");
     println!("cargo::rerun-if-changed={FUSION}");
     println!("cargo::rerun-if-changed={NOTO_SC}");
@@ -407,15 +404,6 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7:
     write_cells(&out_dir.join("extra_half16.bin"), &halves);
     let dot16: BTreeSet<u32> = cells.keys().copied().collect();
 
-    let bytes = std::fs::read(EMOJI).unwrap_or_else(|e| panic!("{EMOJI}: {e}"));
-    let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("emoji font");
-    let emoji = font_codes(&font);
-    for cell in [8, 16] {
-        let glyphs = outline_cells(&font, cell, 1.0, |_| true, |a| a);
-        let name = format!("extra_emoji{cell}.bin");
-        write_table(&out_dir.join(name), cell, 8, &glyphs);
-    }
-
     let bytes = std::fs::read(MPLUS).unwrap_or_else(|e| panic!("{MPLUS}: {e}"));
     let mplus = font_codes(&ab_glyph::FontRef::try_from_slice(&bytes).expect("M PLUS 1p"));
 
@@ -423,9 +411,7 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7:
     // glyphs those lack: the rest would never be drawn.
     let misaki = bdf_cells(&read(MISAKI), 8, |c| !galmuri7.contains(&c));
     let earlier = |c: &u32| galmuri7.contains(c) || misaki.contains_key(c);
-    let fusion = bdf_cells(&read(FUSION), 8, |c| {
-        !earlier(&c) && !emoji.contains(&c) && !mplus.contains(&c)
-    });
+    let fusion = bdf_cells(&read(FUSION), 8, |c| !earlier(&c) && !mplus.contains(&c));
     write_table(&out_dir.join("extra_misaki8.bin"), 8, 1, &misaki);
     write_table(&out_dir.join("extra_fusion8.bin"), 8, 1, &fusion);
 
@@ -433,7 +419,7 @@ fn extra_glyphs(read: &dyn Fn(&'static str) -> String, out_dir: &Path, galmuri7:
     // gray of SmileBASIC 4's font page, which also packs smaller.
     let bytes = std::fs::read(NOTO_SC).unwrap_or_else(|e| panic!("{NOTO_SC}: {e}"));
     let font = ab_glyph::FontRef::try_from_slice(&bytes).expect("Noto Sans SC");
-    let lacking = |c: u32| !mplus.contains(&c) && !dot16.contains(&c) && !emoji.contains(&c);
+    let lacking = |c: u32| !mplus.contains(&c) && !dot16.contains(&c);
     let steps = |a: u8| ((u16::from(a) * 15 + 127) / 255) as u8 * 17;
     let glyphs = outline_cells(&font, 16, cell_glyph::SMILEBASIC_EM, lacking, steps);
     write_table(&out_dir.join("extra_sc16.bin"), 16, 8, &glyphs);

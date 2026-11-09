@@ -7,10 +7,10 @@
 //! - the font file chosen in the settings (`editor_extra_font`): BDF,
 //!   TrueType or OpenType;
 //! - the bundled glyphs. At 8 pixels: GalmuriMono7, Misaki Gothic 2nd,
-//!   Noto Emoji, M PLUS 1p Bold, then Fusion Pixel 8px. At 16 pixels:
-//!   M PLUS 1p Bold, the face closest to SmileBASIC 4's own 16-pixel
-//!   font, then the dot glyphs (Izumi Gothic 16, then Unifont JP, both
-//!   made bold), Noto Emoji and Noto Sans SC Bold (GB2312).
+//!   M PLUS 1p Bold, then Fusion Pixel 8px. At 16 pixels: M PLUS 1p Bold,
+//!   the face closest to SmileBASIC 4's own 16-pixel font, then the dot
+//!   glyphs (Izumi Gothic 16, then Unifont JP, both made bold) and Noto
+//!   Sans SC Bold (GB2312).
 //!
 //! The editor looks a character up in them in the order the settings give
 //! ([`Fonts`]), by default in the order above. When none has it, it draws
@@ -127,8 +127,6 @@ macro_rules! table {
 
 table!(dot16, "extra_dot16.bin");
 table!(half16, "extra_half16.bin");
-table!(emoji8, "extra_emoji8.bin");
-table!(emoji16, "extra_emoji16.bin");
 table!(misaki8, "extra_misaki8.bin");
 table!(fusion8, "extra_fusion8.bin");
 table!(sc16, "extra_sc16.bin");
@@ -384,7 +382,6 @@ impl ExtraGlyphs {
             FontSize::Small => {
                 galmuri(code, out)
                     || misaki8().copy(code, out)
-                    || emoji8().copy(code, out)
                     || take(out, outlines(ch, 8))
                     || fusion8().copy(code, out)
             }
@@ -392,10 +389,7 @@ impl ExtraGlyphs {
             // last for the same reason as Fusion Pixel: M PLUS 1p keeps
             // the Japanese forms of the characters both have.
             FontSize::Large => {
-                take(out, outlines(ch, 16))
-                    || dot16().copy(code, out)
-                    || emoji16().copy(code, out)
-                    || sc16().copy(code, out)
+                take(out, outlines(ch, 16)) || dot16().copy(code, out) || sc16().copy(code, out)
             }
         }
     }
@@ -564,7 +558,7 @@ mod tests {
     fn bundled_glyphs_cover_many_scripts() {
         let g = ExtraGlyphs::bundled();
         for size in [FontSize::Small, FontSize::Large] {
-            for c in ['한', '글', '😀', 'Ω', 'Ж', 'ア', '漢', '★'] {
+            for c in ['한', '글', 'Ω', 'Ж', 'ア', '漢', '★', '☀', '♪'] {
                 let glyph = g.find(c as u32, size);
                 assert!(glyph.is_some(), "{c} at {size:?}");
                 assert!(ink(&g, glyph.unwrap()) > 0, "{c} at {size:?} is blank");
@@ -575,6 +569,10 @@ mod tests {
             // Nothing has this one.
             assert_eq!(g.find(0x10FFFD, size), None);
         }
+        // Emoji in the Basic Multilingual Plane come from Unifont JP at 16
+        // pixels; the bundled fonts draw none above it.
+        assert!(g.find('✅' as u32, FontSize::Large).is_some());
+        assert_eq!(g.find('😀' as u32, FontSize::Large), None);
     }
 
     #[test]
@@ -666,7 +664,7 @@ mod tests {
         let a = g.find('A' as u32, FontSize::Large).unwrap();
         assert_eq!(pixels(&g, a), pixels(&g, large));
         // What the file lacks still comes from the bundled glyphs.
-        assert!(g.find('😀' as u32, FontSize::Small).is_some());
+        assert!(g.find('Ж' as u32, FontSize::Small).is_some());
     }
 
     #[test]

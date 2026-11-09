@@ -312,7 +312,7 @@ fn draw_glyphs(
     // its own 16-pixel font: cut to one bit, their strokes come out
     // uneven. SmileBASIC's 8-pixel ones are dot drawings and stay sharp.
     // The bundled glyphs keep their gray at both sizes, as the editor
-    // draws them: the 8-pixel emoji are mostly gray.
+    // draws them.
     let font_gray = size == FontSize::Large;
     let put = |fb: &mut Framebuffer, px: u32, py: u32, a: u32, gray: bool| {
         let a = match gray {
@@ -602,16 +602,16 @@ mod tests {
         for scale in [2, 3, 4] {
             let cell = 8 * scale;
             let mut fb = Framebuffer::new(5 * cell, cell);
-            draw_text_scaled(&mut fb, &font, 0, 0, "A가😀", 0xFFFF_FFFF, scale);
+            draw_text_scaled(&mut fb, &font, 0, 0, "A가𠮷", 0xFFFF_FFFF, scale);
             let inked = |cells: u32| {
                 (cells * cell..(cells + 1) * cell)
                     .any(|x| (0..cell).any(|y| fb.get(x, y) != Some(0xFF00_0000)))
             };
             assert!(!inked(0), "A is the font's own, blank, at {scale}");
             assert!(inked(1), "가 at {scale}");
-            // The emoji on its first cell, the second empty.
-            assert!(inked(2), "😀 at {scale}");
-            assert!(!inked(3), "😀's second cell at {scale}");
+            // The character beyond U+FFFF on its first cell, the second empty.
+            assert!(inked(2), "𠮷 at {scale}");
+            assert!(!inked(3), "𠮷's second cell at {scale}");
         }
     }
 

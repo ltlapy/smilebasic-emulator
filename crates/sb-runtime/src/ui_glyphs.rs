@@ -4,8 +4,8 @@
 //! The smooth font (`ui_font=smooth`) is outlines drawn for a 16-pixel
 //! cell with gray edges. Full-width characters take the editor's bundled
 //! 16-pixel glyphs: M PLUS 1p Bold, then the dot glyphs (Izumi Gothic 16,
-//! Unifont JP), Noto Emoji and Noto Sans SC Bold. Half-width ones take M PLUS Code Latin 50 Bold, drawn
-//! half an em wide, then M PLUS 1p Bold's own half-width forms. Both are
+//! Unifont JP) and Noto Sans SC Bold. Half-width ones take M PLUS Code
+//! Latin 50 Bold, drawn half an em wide, then M PLUS 1p Bold's own half-width forms. Both are
 //! drawn with the em and baseline of the bundled 16-pixel font, so they
 //! line up.
 //!
@@ -133,7 +133,7 @@ mod tests {
     fn bundled_glyphs_at_both_sizes() {
         let g = UiGlyphs::default();
         for (size, side) in [(FontSize::Small, 8), (FontSize::Large, 16)] {
-            for c in ['한', '汉', 'Ж', 'Ω', '★', '😀'] {
+            for c in ['한', '汉', 'Ж', 'Ω', '★', '☀', '𠮷'] {
                 let glyph = g.bundled(c as u32, size).unwrap();
                 assert_eq!(glyph.len(), side * side, "{c} at {size:?}");
                 assert!(ink(&glyph) > 4, "{c} at {size:?}");
