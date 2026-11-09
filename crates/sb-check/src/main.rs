@@ -1021,6 +1021,8 @@ fn machine(storage: PathBuf) -> Result<Machine, AnyError> {
     });
     rt.storage = Storage::new(storage);
     rt.settings.file_confirm = FileConfirm::Silent;
+    // Screens and sound stay after a program ends, as on SmileBASIC 4.
+    rt.settings.tidy_on_end = false;
     rt.settings.speed = SPEED.with(std::cell::Cell::get);
     let mut m = Machine::new(rt);
     m.boot();
