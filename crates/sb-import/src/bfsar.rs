@@ -411,7 +411,8 @@ fn war_waves<'a>(d: Bytes<'a>, at: usize) -> Result<Vec<(WaveInfo, &'a [u8])>> {
         .collect()
 }
 
-/// One FWAV. Only its first channel is kept: SmileBASIC 4's are mono.
+/// One FWAV. Only its first channel is kept, though a few of SmileBASIC 4's
+/// waves are stereo.
 fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<(WaveInfo, &'a [u8])> {
     let info = d.block(at, b"FWAV", 0x7000)?;
     let data = d.block(at, b"FWAV", 0x7001)?;
