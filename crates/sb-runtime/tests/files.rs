@@ -1736,3 +1736,21 @@ fn run_to_dialog_now(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
     }
     panic!("no dialog: {:?}", rows(m));
 }
+
+#[test]
+fn files_of_projects_and_of_a_files_name() {
+    let dir = TempDir::new("files-forms");
+    let mut m = machine(&dir);
+    m.set_slot(0, "?1".to_string());
+    enter(&mut m, "save \"a\"");
+    m.rt.storage.create_project("-DASH").unwrap();
+    m.rt.storage.create_project("GAME").unwrap();
+    // No header, and the workspace's `/` after a `-` name.
+    enter(&mut m, "cls:files \"//\"");
+    assert_eq!(rows(&m), ["-DASH/", "/", "GAME/", "OK"]);
+    // A file's name is taken for a project's, which is not there.
+    enter(&mut m, "cls:files \"txt:a\"");
+    assert_eq!(rows(&m), ["OK"]);
+    enter(&mut m, "cls:files \"txt:\"");
+    assert_eq!(rows(&m), ["-- 1 files --", "TXT:A", "OK"]);
+}

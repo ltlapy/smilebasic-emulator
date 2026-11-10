@@ -238,14 +238,25 @@ impl Runtime {
                 match array {
                     Some(array) => fill_array(array, items)?,
                     None => {
+                        // A file's name (`FILES "TXT:NAME"`) is taken for a
+                        // project's, and a project that is not there prints
+                        // nothing, not even the header.
+                        // UNVERIFIED: the same for a name that is no file's.
+                        if items.is_empty() && self.no_such_project(&spec) {
+                            return Ok(vec![]);
+                        }
                         let console = &mut self.text[CONSOLE];
                         if console.cursor().0 != 0 {
                             console.newline();
                         }
-                        // The header of a type's list. UNVERIFIED: the header
-                        // for project lists and for one file.
-                        let header = format!("-- {} files --", items.len());
-                        let lines = std::iter::once(header).chain(items);
+                        // A list of files starts with their count; a list of
+                        // projects does without.
+                        // UNVERIFIED: that the list of projects has no header.
+                        let header = match spec.as_str() {
+                            "//" => None,
+                            _ => Some(format!("-- {} files --", items.len())),
+                        };
+                        let lines = header.into_iter().chain(items);
                         let lines = lines.map(|l| l.encode_utf16().collect()).collect();
                         let page = self.text[CONSOLE].size().1.saturating_sub(1);
                         return Ok(self.show_listing_page(lines, page));
@@ -571,6 +582,11 @@ impl Runtime {
         self.storage.rename(kind, &from, &to)
     }
 
+    /// Whether FILES names a project that is not there.
+    fn no_such_project(&self, spec: &str) -> bool {
+        matches!(parse_listing(spec), Ok((_, Some(p))) if !self.storage.project_exists(&p))
+    }
+
     /// FILES' entries: projects for `"//"`, else files of a project, each
     /// with its `TYPE:` prefix, also when one type was asked for (checked
     /// on hardware: `FILES "DAT:"` lists `DAT:T5A`).
@@ -587,6 +603,8 @@ impl Runtime {
                 }
             }
             names.push("/".to_string());
+            // In ASCII order, so that the workspace's `/` comes after `#`
+            // and `-` names.
             names.sort();
             return Ok(names);
         }
