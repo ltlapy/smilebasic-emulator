@@ -304,9 +304,10 @@ impl State {
     }
 
     /// Whether keyboard keys type no text now: with either Ctrl held, or
-    /// the controller's L or R, which count as Ctrl. Enter and Backspace
-    /// type nothing then either, while the arrow keys still type (see
-    /// [`types_when_blocked`]). Buttons the keys press do not count.
+    /// the controller's L or R, which count as Ctrl. Enter, Backspace, Tab,
+    /// Delete and Esc type nothing then either, while the arrow keys, Home
+    /// and End still type (see [`types_when_blocked`]). Buttons the keys
+    /// press do not count.
     pub fn keys_type_nothing(&self) -> bool {
         let buttons = self.buttons(0) & !self.key_pressed_buttons;
         buttons & PAD_KEY_CTRL != 0
@@ -711,11 +712,14 @@ fn opt_in_range(
 }
 
 /// Whether a key that types `code` of its own, such as an arrow key,
-/// still types it while [`State::keys_type_nothing`]: Enter and Backspace
-/// do not. UNVERIFIED: that the other keys of their own (Tab, Delete,
-/// Home and the rest) still type.
+/// still types it while [`State::keys_type_nothing`]: Enter, Backspace,
+/// Tab, Delete and Esc do not, while Home and End do. UNVERIFIED: that
+/// Insert, Page Up and Page Down still type.
 pub fn types_when_blocked(code: u16) -> bool {
-    !matches!(code, keys::ENTER | keys::BACKSPACE)
+    !matches!(
+        code,
+        keys::ENTER | keys::BACKSPACE | keys::TAB | keys::DELETE | keys::ESCAPE
+    )
 }
 
 fn pad_id(v: &Value) -> Result<usize> {

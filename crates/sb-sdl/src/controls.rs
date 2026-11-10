@@ -871,11 +871,11 @@ mod tests {
 
     /// Letters typed while the controller's L and R are held type nothing,
     /// nor do they with L or R alone or with Right Ctrl. Of the keys that
-    /// type a code of their own, Enter and Backspace type nothing then
-    /// either, while the arrow keys still type.
+    /// type a code of their own, Enter, Backspace, Tab, Delete and Esc type
+    /// nothing then either, while the arrow keys, Home and End still type.
     #[test]
     fn keys_type_nothing_with_l_or_r_or_ctrl_held() {
-        use sb_runtime::runtime::keys::{BACKSPACE, ENTER, LEFT};
+        use sb_runtime::runtime::keys::{BACKSPACE, DELETE, END, ENTER, ESCAPE, HOME, LEFT, TAB};
         let mut keys = typing();
         keys.hold(&holding(0b11 << 8));
         assert_eq!(press(&mut keys, Scancode::A, Mod::NOMOD, "a", true), "");
@@ -893,6 +893,16 @@ mod tests {
                 ""
             );
             assert_eq!(press_code(&mut keys, Scancode::Left, keymod, LEFT), "1D");
+            let silent = [
+                (Scancode::Tab, TAB),
+                (Scancode::Delete, DELETE),
+                (Scancode::Escape, ESCAPE),
+            ];
+            for (key, code) in silent {
+                assert_eq!(press_code(&mut keys, key, keymod, code), "");
+            }
+            assert_eq!(press_code(&mut keys, Scancode::Home, keymod, HOME), "2");
+            assert_eq!(press_code(&mut keys, Scancode::End, keymod, END), "3");
         }
         keys.hold(&State::default());
         assert_eq!(
