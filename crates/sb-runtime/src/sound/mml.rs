@@ -92,10 +92,14 @@ pub enum Cmd {
     EnvelopeOff,
     Vibrato([Num; 4]),
     VibratoOff,
+    /// @MPON: vibrato on again with the last @MP settings.
+    VibratoOn,
     Tremolo([Num; 4]),
     TremoloOff,
+    TremoloOn,
     PanWave([Num; 4]),
     PanWaveOff,
+    PanWaveOn,
     ModulationOff,
     ModulationOn,
     RepeatStart,
@@ -563,6 +567,9 @@ impl Parser {
             ("MPOF", Cmd::VibratoOff),
             ("MAOF", Cmd::TremoloOff),
             ("MLOF", Cmd::PanWaveOff),
+            ("MPON", Cmd::VibratoOn),
+            ("MAON", Cmd::TremoloOn),
+            ("MLON", Cmd::PanWaveOn),
             ("MOF", Cmd::ModulationOff),
             ("MON", Cmd::ModulationOn),
             ("ER", Cmd::EnvelopeOff),
@@ -951,6 +958,22 @@ mod tests {
         ));
         assert_eq!(c[5], Cmd::VibratoOff);
         assert_eq!(c[6], Cmd::EnvelopeOff);
+    }
+
+    #[test]
+    fn lfo_on_words() {
+        let song = parse("@MP64,1,16,18@MPON{A=C}@MAONC@mlon@MPOFF").unwrap();
+        let c = &song.channels[0];
+        assert_eq!(c[1], Cmd::VibratoOn);
+        assert_eq!(c[2], Cmd::TremoloOn);
+        assert_eq!(c[4], Cmd::PanWaveOn);
+        assert_eq!(c[5], Cmd::VibratoOff);
+        // @MPOFF is @MPOF and the note F.
+        assert!(matches!(c[6], Cmd::Note { .. }));
+        // Other letters after @MPO, @MAO, @MLO or @MO are not words.
+        for bad in ["@MPOXC", "@MPO C", "@MAOC", "@MLOX", "@MOX", "@MO"] {
+            assert!(check(bad).is_err(), "{bad}");
+        }
     }
 
     /// `first`, then macros each using the last ten times.
