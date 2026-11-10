@@ -27,8 +27,8 @@ What has been checked is in [sb4-pitfalls.md](sb4-pitfalls.md).
 SmileBASIC 4 keeps its instruments, sound effects and preset songs in its sound
 archive, which the emulator cannot ship. The importer takes them from your own
 copy, and the emulator plays them on a sampler and a sequence player of its own.
-Envelopes, volume curves and the LFOs follow SmileBASIC 4's sound engine and
-recordings made on it; how BEEP pans an effect is a guess.
+Envelopes, volume curves, the LFOs and `BEEP`'s pan follow SmileBASIC 4's
+sound engine and recordings made on it.
 
 Without the imported archive:
 
@@ -66,8 +66,16 @@ Without the imported archive:
   SmileBASIC 4, which rhythm games follow.
 - `WAVSET` with `[..]` groups leaves silent the part of the 512 samples that the
   last group does not fill. SmileBASIC 4 leaves whatever its stack held.
-- `SNDMSBAL` balances a subprogram's sound against the main program's in a
-  straight line, the full sound of both at 64.
+- A few preset effects play at a slightly different pitch and end a frame or
+  two sooner: `BEEP 280` at 490 Hz where SmileBASIC 4 gives 503, `BEEP 300` at
+  977 against 987 to 993, and `BEEP 383` at 2063 against 1950; `BEEP 330` ends
+  early too. The difference seems to come from how the console resamples
+  them, and copying that would cost time on every sample.
+- Stereo waveforms: the importer keeps only the first channel of each
+  waveform in the sound archive, so the 14 stereo ones out of 1,501, such as
+  `BEEP 152`'s, play that one channel on both sides. On SmileBASIC 4,
+  `BEEP 152` at pan 64 records 468 left and 404 right, and at pan 0 keeps 283
+  on the right.
 - SoundFont instruments: MML's tremolo (`@MA`) and pan modulation (`@ML`) are
   ignored, vibrato (`@MP`) takes only its depth on the modulation wheel, and
   envelopes (`@E`) do nothing. SmileBASIC 4's own instruments and the PSG and
@@ -393,8 +401,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   does, and Run > "Stop subprogram" does `SUBSTOP`, so a subprogram cannot keep
   the keys from DIRECT mode.
 
-For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
-`FADE` under [Rendering and GPU](#rendering-and-gpu).
+For a subprogram's screen, see `FADE` under
+[Rendering and GPU](#rendering-and-gpu).
 
 ## Dialogs and errors
 
@@ -411,7 +419,8 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
   checking one argument, such as `LOCATE 0,999`'s `Out of range` (1, as
   SmileBASIC 4 gives). It also numbers the checks of a length or a size that
   SmileBASIC 4 is seen to number: `LEFT$`'s count, `BIQUAD`'s output,
-  `TLOAD`'s and `GLOAD`'s sizes and `ENVSAVE`'s kind. Other errors found by
+  `TLOAD`'s, `TSAVE`'s, `GLOAD`'s and `GSAVE`'s sizes, `ENVSAVE`'s kind and
+  the offset and count of `COPY`'s function form. Other errors found by
   checking several arguments together give -1, which SmileBASIC 4 may number.
 - `Internal Error`: if the emulator itself fails while a program runs, it stops
   the program and prints `Internal Error` with the reason, keeping the slots and
@@ -422,12 +431,13 @@ For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
 
 - File commands ask, notify or stay silent as set in
   File > Settings > Files > "Before file commands such as SAVE and LOAD".
-  SmileBASIC 4 always asks. A file command that fails in a program shows a
-  notice, rather than a dialog to close, unless file access is silent. The
-  program goes on in the same frame, with `RESULT` 0. On SmileBASIC 4,
-  `LOADV` or `LOADG` of a missing file opens a File not found dialog that
-  holds the program until it is answered, in main programs and subprograms
-  alike.
+  SmileBASIC 4 always asks. A file command that fails in a program opens a
+  dialog only when file access is set to ask: the dialog names the command
+  and the reason, and the command waits until it is closed, then gives
+  `RESULT` 0, as on SmileBASIC 4, or stops with `Load failed` for `EXEC`. Set
+  to notify, the failure shows as a notice, and silent shows nothing; either
+  way the command returns in the same frame. On SmileBASIC 4, `LOADV` or
+  `LOADG` of a missing file always opens its File not found dialog.
 - A file command's question starts on the button that goes ahead, as
   SmileBASIC 4's save question starts on OK. Replacing a file asks once, with
   a line saying so, where SmileBASIC 4 asks twice, whether to save and then
