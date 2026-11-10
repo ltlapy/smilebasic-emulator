@@ -647,8 +647,8 @@ const TELL_STATUS: &str = "ENVSTAT OUT S,N,A,SL,C,L\n\
 
 /// TEST70: an error typed in direct mode sets the status to 2 and leaves
 /// the error, its argument, place and line as they were, and clean lines
-/// after it change nothing. A Syntax error typed in direct mode
-/// leaves the status as it was.
+/// after it change nothing. An error found as a line typed in DIRECT mode
+/// compiles leaves the status as it was.
 #[test]
 fn an_error_in_direct_mode_sets_the_status_and_keeps_the_rest() {
     let told = |program: Option<&str>, lines: &[&str]| {
@@ -670,9 +670,14 @@ fn an_error_in_direct_mode_sets_the_status_and_keeps_the_rest() {
             .to_string()
     };
     assert_eq!(told(None, &[]), "0,0,0,-1,-1,0");
-    assert_eq!(told(None, &["?1/0", "?\"CLEAN\""]), "2,0,0,-1,-1,0");
+    assert_eq!(told(None, &["z=0:?1/z", "?\"CLEAN\""]), "2,0,0,-1,-1,0");
     assert_eq!(told(None, &["?("]), "0,0,0,-1,-1,0");
-    assert_eq!(told(None, &["?1/0", "?("]), "2,0,0,-1,-1,0");
+    assert_eq!(told(None, &["z=0:?1/z", "?("]), "2,0,0,-1,-1,0");
+    // TEST72: a division by zero of constants is found as the line
+    // compiles, and leaves the status as a Syntax error does.
+    let clean = Some("?1\n");
+    let lines = ["?(", "?1/0", "", "?(", "?1"];
+    assert_eq!(told(clean, &lines), "0,0,0,-1,-1,0");
     // Out of range in 0:2, its second argument, at character 5.
     let program = Some("?\"A\"\nLOCATE 0,999\n");
     assert_eq!(told(program, &[]), "2,10,1,0,5,2");

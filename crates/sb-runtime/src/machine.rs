@@ -2070,15 +2070,12 @@ impl Machine {
                 self.running_slot = None;
                 self.rt.running_slot = None;
                 self.last_error = slot.map(|slot| (slot, e.line, e.col)).or(self.last_error);
-                match e.slot {
-                    Some(slot) => self.rt.env_error = self.error_place(slot as usize, &e),
-                    // A Syntax error typed in direct mode leaves ENVSTAT's
-                    // status as it was, as a program's compile error does.
-                    // Errors found as the line compiles, such as a division
-                    // by zero, stand for run-time ones and set it.
-                    // UNVERIFIED: seen only with an empty line typed after it.
-                    None if e.kind == ErrorKind::SyntaxError => {}
-                    None => self.direct_error(),
+                // An error found as a line typed in DIRECT mode compiles,
+                // a Syntax error or a division by zero of constants, leaves
+                // ENVSTAT's status as it was, as a program's compile error
+                // does.
+                if let Some(slot) = e.slot {
+                    self.rt.env_error = self.error_place(slot as usize, &e);
                 }
                 self.report(&e);
                 if slot.is_some() && self.home == Home::Running {
