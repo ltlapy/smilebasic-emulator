@@ -693,13 +693,13 @@ impl Track {
                 Cmd::PanWaveOff => self.apply_lfo(c, LfoTarget::Pan, false),
                 // @MPON, @MAON and @MLON send the last settings of one LFO again.
                 // UNVERIFIED: SB4 seems to forget the settings at each `:`, so
-                // `:0@MP1,2,3,4:1C:0@MPON` would send the default settings
+                // `:0@MP1,2,3,4:0C@MPON` would send the default settings
                 // there. Here the channel keeps them.
                 Cmd::VibratoOn => self.apply_lfo(c, LfoTarget::Pitch, true),
                 Cmd::TremoloOn => self.apply_lfo(c, LfoTarget::Volume, true),
                 Cmd::PanWaveOn => self.apply_lfo(c, LfoTarget::Pan, true),
-                // @MON sends the last settings of all three again.
-                // UNVERIFIED: that @MOF turns all three off.
+                // @MON sends the last settings of all three again, and @MOF
+                // turns all three off.
                 Cmd::ModulationOn | Cmd::ModulationOff => {
                     let on = matches!(cmds[pc], Cmd::ModulationOn);
                     for target in [LfoTarget::Pitch, LfoTarget::Volume, LfoTarget::Pan] {

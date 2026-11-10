@@ -268,6 +268,8 @@ struct Parser {
     lengths: [Option<u32>; CHANNELS],
     /// Each channel's `[` not yet closed.
     repeats: [u32; CHANNELS],
+    /// A bit for each channel a `:` has chosen.
+    chosen: u16,
 }
 
 /// Values a literal may take, checked as it is read.
@@ -315,12 +317,6 @@ impl Parser {
         while self.peek().is_some_and(char::is_whitespace) {
             self.at += 1;
         }
-    }
-
-    fn starts(&self, word: &str) -> bool {
-        word.chars()
-            .enumerate()
-            .all(|(i, c)| self.text.get(self.at + i) == Some(&c))
     }
 
     fn int(&mut self) -> Option<i32> {
@@ -507,10 +503,11 @@ impl Parser {
     /// after its first `|`, before any octave in it is checked: one note is
     /// no chord, so `O8|<C|<C` gives 3. An octave set inside a chord lasts
     /// to its end only: the note after `|A<CE|` is in the octave before the
-    /// chord.
+    /// chord. Something else between the bars fails at the end of what
+    /// comes before it: `|CR|` gives 2.
     // UNVERIFIED: that more than six notes, an octave change after the
-    // last note, anything else between the bars, or no closing bar fail
-    // there too.
+    // last note, or no closing bar fail just after the first bar too, and
+    // that anything other than R fails where R does.
     fn chord(&mut self) -> Result<Cmd, Error> {
         const NOTES: std::ops::RangeInclusive<usize> = 2..=6;
         let octave = self.octaves[self.channel];
@@ -519,7 +516,12 @@ impl Parser {
         let mut notes = 0;
         // Where a `<` or `>` first left the octaves, if one did.
         let mut past = None;
+        // The end of the last part read.
+        let mut last = bar;
         loop {
+            if self.at > 0 && self.text[self.at - 1] != '|' {
+                last = self.end();
+            }
             self.skip_space();
             let Some(c) = self.peek() else {
                 return Err(bar);
@@ -543,7 +545,7 @@ impl Parser {
                         parts.push(ChordPart::Note(s));
                         notes += 1;
                     }
-                    None => return Err(bar),
+                    None => return Err(last),
                 },
             }
         }
@@ -559,44 +561,46 @@ impl Parser {
         Ok(Cmd::Chord { parts, len, link })
     }
 
+    /// An `@` command. Its word runs on through `@` and letters, and stops
+    /// once it is three to five characters long and only one word of
+    /// [`AT_WORDS`] starts with it, or at six: `@MPONC` is `@MPON` and C,
+    /// and `@MPOXC` is all one word. A word that is not a command fails
+    /// at its end: `@MPOXC` gives 6, `@MPO C` 4.
     fn at_command(&mut self, at: usize) -> Result<Cmd, Error> {
         if self.peek().is_some_and(|c| c.is_ascii_digit() || c == '$') {
             return Ok(Cmd::Program(self.num(0..=432)?));
         }
-        for (word, off) in [
-            ("MPOF", Cmd::VibratoOff),
-            ("MAOF", Cmd::TremoloOff),
-            ("MLOF", Cmd::PanWaveOff),
-            ("MPON", Cmd::VibratoOn),
-            ("MAON", Cmd::TremoloOn),
-            ("MLON", Cmd::PanWaveOn),
-            ("MOF", Cmd::ModulationOff),
-            ("MON", Cmd::ModulationOn),
-            ("ER", Cmd::EnvelopeOff),
-        ] {
-            if self.starts(word) {
-                self.at += word.len();
-                return Ok(off);
+        let mut end = self.at;
+        while self
+            .text
+            .get(end)
+            .is_some_and(|&c| c == '@' || c.is_ascii_uppercase())
+        {
+            let n = end - at;
+            if n > 5 || (n >= 3 && unique_at_word(&self.text[at..end])) {
+                break;
             }
+            end += 1;
         }
-        let c = self.peek().ok_or_else(|| self.start(at))?;
-        self.at += 1;
-        Ok(match c {
-            'V' => Cmd::Velocity(self.num(0..=127)?),
-            'D' => Cmd::Detune(self.num(-128..=127)?),
-            'E' => Cmd::Envelope(self.four()?),
-            'M' => {
-                let which = self.peek().ok_or_else(|| self.start(at))?;
-                self.at += 1;
-                let v = self.four()?;
-                match which {
-                    'P' => Cmd::Vibrato(v),
-                    'A' => Cmd::Tremolo(v),
-                    'L' => Cmd::PanWave(v),
-                    _ => return Err(self.start(at)),
-                }
-            }
-            _ => return Err(self.start(at)),
+        let word: String = self.text[at + 1..end].iter().collect();
+        self.at = end;
+        Ok(match word.as_str() {
+            "V" => Cmd::Velocity(self.num(0..=127)?),
+            "D" => Cmd::Detune(self.num(-128..=127)?),
+            "E" => Cmd::Envelope(self.four()?),
+            "ER" => Cmd::EnvelopeOff,
+            "MP" => Cmd::Vibrato(self.four()?),
+            "MA" => Cmd::Tremolo(self.four()?),
+            "ML" => Cmd::PanWave(self.four()?),
+            "MPOF" => Cmd::VibratoOff,
+            "MAOF" => Cmd::TremoloOff,
+            "MLOF" => Cmd::PanWaveOff,
+            "MPON" => Cmd::VibratoOn,
+            "MAON" => Cmd::TremoloOn,
+            "MLON" => Cmd::PanWaveOn,
+            "MOF" => Cmd::ModulationOff,
+            "MON" => Cmd::ModulationOn,
+            _ => return Err(self.end()),
         })
     }
 
@@ -608,9 +612,23 @@ impl Parser {
         };
         self.at += 1;
         let cmd = match c {
+            // A channel's MML stands in one piece: going back to a channel
+            // an earlier `:` left fails after the `:`, as `:0C:1D:0E` does
+            // at 7. `:0C:0D` goes on in channel 0.
+            // UNVERIFIED: that a channel above the one left refuses the
+            // same way (`:1C:2D:1E`), and that MML before the first `:` does
+            // not count as channel 0's, so `C:1D:0E` passes.
             ':' => {
+                let colon = self.end();
                 match self.int() {
-                    Some(n @ 0..=15) => self.channel = n as usize,
+                    Some(n @ 0..=15) => {
+                        let n = n as usize;
+                        if self.chosen & 1 << n != 0 && n != self.channel {
+                            return Err(colon);
+                        }
+                        self.chosen |= 1 << n;
+                        self.channel = n;
+                    }
                     _ => return Err(self.start(at)),
                 }
                 self.in_channel = true;
@@ -756,6 +774,19 @@ fn note_name(c: char) -> Option<i32> {
     })
 }
 
+/// The `@` words that end an `@` command early, in the order SmileBASIC 4
+/// lists them.
+const AT_WORDS: [&str; 12] = [
+    "@MPOF", "@MAOF", "@MLOF", "@MPON", "@MAON", "@MLON", "@MOF", "@MON", "@MP", "@MA", "@ML",
+    "@ER",
+];
+
+/// Whether exactly one of [`AT_WORDS`] starts with `head`.
+fn unique_at_word(head: &[char]) -> bool {
+    let starts = |w: &&&str| w.len() >= head.len() && w.chars().zip(head).all(|(a, &b)| a == b);
+    AT_WORDS.iter().filter(starts).count() == 1
+}
+
 /// Reads MML, or gives where it could not be read.
 pub fn parse(text: &str) -> Result<Song, Error> {
     let chars: Vec<char> = text.chars().collect();
@@ -795,6 +826,7 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
         octaves: [4; CHANNELS],
         lengths: [Some(WHOLE / 4); CHANNELS],
         repeats: [0; CHANNELS],
+        chosen: 0,
     };
     while p.at < p.text.len() {
         p.command()?;
@@ -894,7 +926,8 @@ mod tests {
         );
         assert_eq!(parse("|CEG|4 2").err(), Some(7));
         // Two to six notes; what a chord cannot hold fails after its first
-        // bar.
+        // bar, and something else between the bars after the part before
+        // it.
         for (mml, at) in [
             ("|CE|", None),
             ("|C+E-G#|", None),
@@ -904,8 +937,11 @@ mod tests {
             ("C|E|G", Some(2)),
             ("||", Some(1)),
             ("|CE<|", Some(1)),
-            ("|CR|", Some(1)),
-            ("|C4E|", Some(1)),
+            ("|CR|", Some(2)),
+            ("|C R|", Some(2)),
+            ("|R|", Some(1)),
+            ("|C+R|", Some(3)),
+            ("|C4E|", Some(2)),
             ("|CE", Some(1)),
             ("O9|<CE", Some(3)),
         ] {
@@ -970,10 +1006,22 @@ mod tests {
         assert_eq!(c[5], Cmd::VibratoOff);
         // @MPOFF is @MPOF and the note F.
         assert!(matches!(c[6], Cmd::Note { .. }));
-        // Other letters after @MPO, @MAO, @MLO or @MO are not words.
-        for bad in ["@MPOXC", "@MPO C", "@MAOC", "@MLOX", "@MOX", "@MO"] {
-            assert!(check(bad).is_err(), "{bad}");
+        // Other letters after @MPO, @MAO, @MLO or @MO are not words, and
+        // fail at the end of the word.
+        for (bad, at) in [
+            ("@MPOXC", 6),
+            ("@MPO C", 4),
+            ("@MOX", 4),
+            ("@MAOC", 5),
+            ("@MLOC", 5),
+            ("@MLOX", 5),
+            ("@MO", 3),
+            ("@MPOXYZW", 6),
+            ("@X", 2),
+        ] {
+            assert_eq!(check(bad), Err(at), "{bad}");
         }
+        assert!(parse("@MOFC@MONF@ERC@V100@D-5@E1,2,3,4").is_ok());
     }
 
     /// `first`, then macros each using the last ten times.
@@ -1146,6 +1194,16 @@ mod tests {
         assert_eq!(check("C]0D5"), Err(2));
         assert_eq!(check("[C]0"), Ok(()));
         assert_eq!(check(":1[C:0]"), Err(7));
+    }
+
+    #[test]
+    fn channels_stand_in_one_piece() {
+        assert_eq!(check(":0C:1D:0E"), Err(7));
+        assert_eq!(check(":0@218T120O4L1@MP64,1,16,0:1R1:0@MPONC"), Err(31));
+        assert_eq!(check(":1C:2D:1E"), Err(7));
+        assert_eq!(check(":0C:0D:1E"), Ok(()));
+        assert_eq!(check(":1C:0D"), Ok(()));
+        assert_eq!(check("C:1D:0E"), Ok(()));
     }
 
     #[test]
