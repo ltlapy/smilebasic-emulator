@@ -84,6 +84,15 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
+        self.after_failure(|rt| rt.file_command_now(command, args, want))
+    }
+
+    fn file_command_now(
+        &mut self,
+        command: Command,
+        args: &[Value],
+        want: Want,
+    ) -> Result<Vec<Value>> {
         match (command, want, args.len()) {
             (Command::Result, Want::Value, 0) => Ok(vec![Value::Int(self.result)]),
             (Command::Project, Want::Value, 0) => Ok(vec![Value::str(self.storage.project())]),
@@ -337,6 +346,12 @@ impl Runtime {
     /// only over unsaved changes). `None` while the question waits;
     /// otherwise whether it loaded, which RESULT() tells too.
     pub(crate) fn load_asking(&mut self, what: &str, spec: &str, slot: usize) -> Option<bool> {
+        // EXEC waits on the dialog of its failure here.
+        match self.watch_failure() {
+            crate::dialog::Failure::None => {}
+            crate::dialog::Failure::Waiting(_) => return None,
+            crate::dialog::Failure::Closed(_) => return Some(false),
+        }
         // A file that is not there fails without asking first.
         if let Some(file) = self.existing_read(spec) {
             let action = FileAction {
@@ -357,7 +372,8 @@ impl Runtime {
             }
         }
         let outcome = self.load(spec, slot);
-        Some(self.finish(what, outcome).is_some())
+        let loaded = self.finish(what, outcome).is_some();
+        (!self.failure_open()).then_some(loaded)
     }
 
     /// A file named for reading, in this project or another: programs
@@ -439,8 +455,9 @@ impl Runtime {
     }
 
     /// Sets RESULT() from an outcome; in direct mode, also explains a
-    /// failure on the console, and in a program shows it as a notice
-    /// unless file access is silent (SmileBASIC 4 shows a dialog there).
+    /// failure on the console. In a program a failure opens a dialog that
+    /// the command waits on, as on SmileBASIC 4, when file access asks;
+    /// otherwise it is a notice, or nothing when file access is silent.
     pub(crate) fn finish<T>(&mut self, what: &str, outcome: storage::Result<T>) -> Option<T> {
         match outcome {
             Ok(value) => {
@@ -449,7 +466,11 @@ impl Runtime {
             }
             Err(e) => {
                 self.result = 0;
-                self.report_failure(what, &e);
+                if !self.direct && self.settings.file_confirm == FileConfirm::Ask {
+                    self.open_failure(what, e.to_string());
+                } else {
+                    self.report_failure(what, &e);
+                }
                 None
             }
         }

@@ -57,6 +57,19 @@ pub(crate) struct Waiting {
     frames_left: Option<u32>,
     /// Buttons pressed since it opened, which choose when let go.
     pressed: u32,
+    /// For the dialog that says a file command failed: what the command
+    /// returns once it is closed.
+    failure: Option<Vec<Value>>,
+}
+
+/// How the dialog that says a file command failed stands.
+pub(crate) enum Failure {
+    /// There is none.
+    None,
+    /// It waits for an answer; the command runs again next frame.
+    Waiting(Vec<Value>),
+    /// It was just closed.
+    Closed(Vec<Value>),
 }
 
 /// Labels of SELECTION types 0 to 5.
@@ -199,6 +212,7 @@ impl Runtime {
                     dialog,
                     frames_left: frames,
                     pressed: 0,
+                    failure: None,
                 });
                 None
             }
@@ -249,6 +263,86 @@ impl Runtime {
                 Ok(vec![Value::str("")])
             }
         }
+    }
+}
+
+impl Runtime {
+    /// A running program's file command failed: SmileBASIC 4 says so in a
+    /// dialog with one button, and the command waits until it is closed,
+    /// however long that takes. Then RESULT() is 0 and the program goes on.
+    // UNVERIFIED: the dialog for failures other than a missing file.
+    pub(crate) fn open_failure(&mut self, what: &str, message: String) {
+        let mut chars = message.chars();
+        let first = chars.next().map(|c| c.to_ascii_uppercase());
+        let message = first.into_iter().chain(chars).collect();
+        self.dialog = Some(Waiting {
+            dialog: ProgramDialog {
+                caption: format!("{what} failed"),
+                lines: vec![message],
+                kind: DialogKind::Choice(vec!["OK"]),
+            },
+            frames_left: None,
+            pressed: 0,
+            failure: Some(Vec::new()),
+        });
+    }
+
+    /// Whether [`Runtime::open_failure`]'s dialog is open.
+    pub(crate) fn failure_open(&self) -> bool {
+        self.dialog.as_ref().is_some_and(|w| w.failure.is_some())
+    }
+
+    /// Watches the dialog [`Runtime::open_failure`] opened, as DIALOG
+    /// watches its own: A or the frontend's answer closes it.
+    pub(crate) fn watch_failure(&mut self) -> Failure {
+        let Some(waiting) = self.dialog.as_mut() else {
+            return Failure::None;
+        };
+        let Some(outs) = &waiting.failure else {
+            return Failure::None;
+        };
+        waiting.pressed |= self.input.pressed();
+        let answered = self.dialog_answer.take().is_some()
+            || (self.input)
+                .dialog_answer(&waiting.dialog.kind, waiting.pressed)
+                .is_some();
+        if !answered {
+            self.retry = true;
+            return Failure::Waiting(outs.clone());
+        }
+        let outs = self.dialog.take().and_then(|w| w.failure);
+        self.input.hide_presses();
+        self.result = 0;
+        Failure::Closed(outs.unwrap_or_default())
+    }
+
+    /// Runs a file command, which waits while the dialog of its failure
+    /// is open and then returns what it returned when it failed, without
+    /// running again (it may have asked a question first).
+    pub(crate) fn after_failure(
+        &mut self,
+        run: impl FnOnce(&mut Runtime) -> Result<Vec<Value>>,
+    ) -> Result<Vec<Value>> {
+        if self.dialog.is_some() {
+            match self.watch_failure() {
+                Failure::Waiting(outs) | Failure::Closed(outs) => return Ok(outs),
+                Failure::None => {}
+            }
+        }
+        let outs = run(self);
+        if let Some(waiting) = self.dialog.as_mut()
+            && let Some(saved) = &mut waiting.failure
+        {
+            match &outs {
+                Ok(outs) => {
+                    saved.clone_from(outs);
+                    self.retry = true;
+                }
+                // The program stops with the error instead.
+                Err(_) => self.dialog = None,
+            }
+        }
+        outs
     }
 }
 

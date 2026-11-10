@@ -1634,3 +1634,103 @@ fn saves_to_a_missing_project_ask_and_then_fail() {
     }
     assert!(!dir.0.join("NONE").exists());
 }
+
+/// Runs the program in slot 0 until it waits on a dialog.
+fn run_to_dialog(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
+    m.type_text("run");
+    m.rt.key_press(keys::ENTER);
+    for _ in 0..10 {
+        m.frame();
+        if let Some(d) = m.program_dialog() {
+            return d.clone();
+        }
+    }
+    panic!("no dialog: {:?}", rows(m));
+}
+
+#[test]
+fn a_programs_file_failure_waits_on_a_dialog() {
+    use sb_runtime::dialog::DialogAnswer;
+    let dir = TempDir::new("failure-dialog");
+    let mut m = machine(&dir);
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    std::fs::create_dir_all(dir.0.join("@WORKSPACE")).unwrap();
+    m.set_slot(0, "LOADG \"DAT:NONE\",1\n?\"PAST\";RESULT()".to_string());
+    let d = run_to_dialog(&mut m);
+    assert_eq!(d.caption, "LOADG failed");
+    assert_eq!(d.lines, ["DAT:NONE not found"]);
+    // It waits for an answer, however long.
+    for _ in 0..300 {
+        m.frame();
+    }
+    assert!(m.is_running() && m.program_dialog().is_some());
+    m.answer_dialog(DialogAnswer::Choice(0));
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["PAST0", "OK"]);
+
+    // The A button closes it too.
+    m.set_slot(
+        0,
+        "DIM A%[1]:LOADV \"DAT:NONE\",A%\n?\"PAST\";RESULT()".to_string(),
+    );
+    run_to_dialog(&mut m);
+    let a = 1 << sb_runtime::input::A;
+    for buttons in [a, a, 0] {
+        m.rt.input.live.pads[0].buttons = buttons;
+        m.frame();
+    }
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["PAST0", "OK"]);
+
+    // A function returns its value once the dialog closes.
+    m.set_slot(
+        0,
+        "A$=LOADV(\"TXT:NONE\")\n?\"PAST\";LEN(A$)\n?RESULT()".to_string(),
+    );
+    run_to_dialog(&mut m);
+    m.answer_dialog(DialogAnswer::Choice(0));
+    settle(&mut m);
+    assert_eq!(tail(&m, 3), ["PAST0", "0", "OK"]);
+
+    // EXEC of a missing file is Load failed once it closes.
+    m.set_slot(0, "EXEC \"NONE\",1\n?\"PAST\"".to_string());
+    let d = run_to_dialog(&mut m);
+    assert_eq!(d.caption, "EXEC failed");
+    m.answer_dialog(DialogAnswer::Choice(0));
+    settle(&mut m);
+    assert!(tail(&m, 2)[0].starts_with("Load failed"), "{:?}", rows(&m));
+
+    // A question before the command is not asked again.
+    std::fs::remove_dir_all(dir.0.join("@WORKSPACE")).unwrap();
+    std::fs::write(dir.0.join("@WORKSPACE"), b"").unwrap();
+    m.set_slot(0, "SAVEV \"TXT:X\",\"A\"\n?\"PAST\";RESULT()".to_string());
+    let c = ask(&mut m, "run");
+    assert_eq!(c.title, "Save file");
+    m.rt.answer(true);
+    let d = run_to_dialog_now(&mut m);
+    assert_eq!(d.caption, "SAVEV failed");
+    m.answer_dialog(DialogAnswer::Choice(0));
+    settle(&mut m);
+    assert!(m.rt.confirmation().is_none());
+    assert_eq!(tail(&m, 2), ["PAST0", "OK"]);
+
+    // When file access notifies, a failure is a notice and nothing waits.
+    m.rt.settings.file_confirm = FileConfirm::Notify;
+    std::fs::remove_file(dir.0.join("@WORKSPACE")).unwrap();
+    m.set_slot(0, "LOADG \"DAT:NONE\",1:?RESULT()".to_string());
+    m.rt.take_notices();
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+    assert_eq!(m.rt.take_notices(), ["LOADG failed: DAT:NONE not found"]);
+}
+
+/// Runs frames of a running program until it waits on a dialog.
+fn run_to_dialog_now(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
+    for _ in 0..10 {
+        m.frame();
+        if let Some(d) = m.program_dialog() {
+            return d.clone();
+        }
+    }
+    panic!("no dialog: {:?}", rows(m));
+}

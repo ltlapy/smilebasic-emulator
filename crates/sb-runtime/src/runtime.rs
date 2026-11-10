@@ -2725,8 +2725,8 @@ impl Host for Runtime {
                 return Err(ErrorKind::CantAccessOtherProject.into());
             }
             // A file that cannot be loaded is Load failed, after the
-            // notice that stands for SmileBASIC 4's dialog (checked on
-            // hardware). UNVERIFIED: what cancelling does.
+            // dialog that says so (checked on hardware), or the notice
+            // that stands for it. UNVERIFIED: what cancelling does.
             match self.load_asking("EXEC", &file, slot) {
                 None => {
                     self.retry = false;

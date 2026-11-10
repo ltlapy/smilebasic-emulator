@@ -218,6 +218,15 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
+        self.after_failure(|rt| rt.loadsave_command_now(command, args, want))
+    }
+
+    fn loadsave_command_now(
+        &mut self,
+        command: Command,
+        args: &[Value],
+        want: Want,
+    ) -> Result<Vec<Value>> {
         match (command, want, args) {
             (Command::Loadv, Want::Value, [spec]) => {
                 let spec = str_arg(spec)?;
