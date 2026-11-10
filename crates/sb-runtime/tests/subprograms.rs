@@ -869,24 +869,32 @@ fn a_subprograms_question_reaches_the_frontend_and_its_answer_the_subprogram() {
 }
 
 #[test]
-fn with_both_interpreters_asking_each_gets_its_own_answer() {
+fn two_dialogs_at_once_show_the_main_one_and_close_together() {
     let dir = TempDir::new("both-ask");
-    let source = format!("DIALOG \"SUB\",1\n?RESULT()\n{THEN_WAIT}");
+    let source = format!("DIALOG \"SUB\",0,\"SUB\"\n?RESULT()\n{THEN_WAIT}");
     let mut m = machine(&dir, &source);
     enter(&mut m, "subrun \"sub\"");
-    m.set_slot(0, format!("DIALOG \"MAIN\",1\n?RESULT()\n{THEN_WAIT}"));
+    m.set_slot(
+        0,
+        format!("DIALOG \"MAIN\",0,\"MAIN\"\n?RESULT()\n{THEN_WAIT}"),
+    );
     m.run_slot(0);
     frames(&mut m, 2);
-    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    let sub_asks = |m: &Machine| {
+        m.sub_runtime()
+            .expect("running")
+            .0
+            .program_dialog()
+            .is_some()
+    };
+    assert!(sub_asks(&m));
+    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
+    // One answer closes both, each with RESULT() 1.
     m.answer_dialog(DialogAnswer::Choice(0));
     frames(&mut m, 2);
-    assert_eq!(sub_rows(&m), ["-1"]);
-    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
-    m.answer_dialog(DialogAnswer::Choice(1));
-    frames(&mut m, 2);
-    assert!(m.program_dialog().is_none());
+    assert!(m.program_dialog().is_none() && !sub_asks(&m));
     assert!(rows(&m).iter().any(|r| r == "1"));
-    assert_eq!(sub_rows(&m), ["-1"]);
+    assert_eq!(sub_rows(&m), ["1"]);
 }
 
 #[test]

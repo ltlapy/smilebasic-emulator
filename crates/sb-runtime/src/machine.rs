@@ -2669,26 +2669,21 @@ impl Machine {
         }
     }
 
-    /// The interpreter whose DIALOG the frontend shows and answers. The
-    /// two wait on one window, the subprogram's first.
-    // UNVERIFIED: which goes first when both ask.
-    fn dialog_side(&mut self) -> &mut Runtime {
-        match &mut self.sub {
-            Some(sub) if sub.rt.program_dialog().is_some() => &mut sub.rt,
-            _ => &mut self.rt,
-        }
-    }
-
-    /// The dialog a program waits on, from either interpreter, whichever
-    /// has the focus.
+    /// The dialog a program waits on, from either interpreter. The two
+    /// wait on one window: when both ask, it shows the main program's.
+    // UNVERIFIED: whether the main program's shows because it asked last.
     pub fn program_dialog(&self) -> Option<&ProgramDialog> {
         let sub = self.sub.as_ref();
-        (sub.and_then(|s| s.rt.program_dialog())).or_else(|| self.rt.program_dialog())
+        (self.rt.program_dialog()).or_else(|| sub.and_then(|s| s.rt.program_dialog()))
     }
 
-    /// Closes the dialog [`Machine::program_dialog`] gives with an answer.
+    /// Closes the dialog [`Machine::program_dialog`] gives with an answer,
+    /// and the other interpreter's too, as one press closes both.
     pub fn answer_dialog(&mut self, answer: DialogAnswer) {
-        self.dialog_side().answer_dialog(answer);
+        if let Some(sub) = &mut self.sub {
+            sub.rt.answer_dialog(answer.clone());
+        }
+        self.rt.answer_dialog(answer);
     }
 
     /// The question a command waits on, from either interpreter, the
