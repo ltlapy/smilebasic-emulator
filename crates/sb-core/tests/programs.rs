@@ -955,7 +955,22 @@ fn copy_errors() {
         error("DIM D[2,2]:DIM S[5]:COPY D,S").0,
         ErrorKind::SubscriptOutOfRange
     );
-    assert_eq!(error("DIM S[2]:A=COPY(S,1,5)").0, ErrorKind::OutOfRange);
+    // TEST72: past the source's end is Subscript out of range. The
+    // function form names the offset or count, the command form neither.
+    let wrong = |source: &str, arg: Option<u8>| {
+        let e = run(source).unwrap_err();
+        let want = (ErrorKind::SubscriptOutOfRange, arg);
+        assert_eq!((e.kind, e.arg), want, "{source}");
+    };
+    wrong("DIM S[2]:A=COPY(S,1,5)", Some(2));
+    wrong("DIM B[5]:A=COPY(B,2,5)", Some(2));
+    wrong("DIM B[5]:A=COPY(B,6)", Some(1));
+    wrong("A$=COPY(\"ABCDE\",2,5)", Some(2));
+    wrong("A$=COPY(\"ABCDE\",6)", Some(1));
+    wrong("DIM A[5],B[5]:COPY A,0,B,6,1", None);
+    wrong("A$=\"12345\":COPY A$,0,\"ABCDE\",2,5", None);
+    assert_eq!(output("DIM A[5],B[5]:COPY A,0,B,5,0:?LEN(A)"), "5\n");
+    assert_eq!(output("DIM B[5]:A=COPY(B,5):?LEN(A)"), "0\n");
     assert_eq!(
         error("DIM D[3]:COPY D,\"@N\"\n@N:DATA 1").0,
         ErrorKind::OutOfData
