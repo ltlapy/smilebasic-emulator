@@ -938,6 +938,8 @@ fn metadata_saves_with_the_project() {
     enter(&mut m, "run");
     // The message names the command and goes on to a second row.
     assert!(tail(&m, 3).concat().contains("Undefined project name"));
+    let (_, code, arg) = program_error(&mut m);
+    assert_eq!((code, arg), (76, Some(0)), "METALOAD:1");
 }
 
 #[test]

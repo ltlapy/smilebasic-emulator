@@ -297,7 +297,8 @@ impl Runtime {
                 };
                 if !self.storage.project_exists(&name) {
                     let detail = format!("no project {name}");
-                    return Err(Error::with_detail(ErrorKind::UndefinedProjectName, detail));
+                    let error = Error::with_detail(ErrorKind::UndefinedProjectName, detail);
+                    return Err(error.of_arg(0));
                 }
                 self.meta = self.read_meta(name);
                 Ok(vec![])
