@@ -1555,6 +1555,9 @@ Expected but not yet seen on hardware:
     `@MP64,1,20,0` is at 0 5 ms in, and `@MP64,1,20,8` begins at 325 ms at T60
     as at T120.
   - `@MON` turns all three back on as last set.
+  - `@MPON`, `@MAON` and `@MLON`, which the manual leaves out, turn one back on
+    as last set, as `@MPOF`, `@MAOF` and `@MLOF` turn one off. After `@MPO` only
+    `F` or `N` may follow.
 - `@MA`'s swing is read in tenths of a dB, truncated, and stops at the sound
   engine's limits: no more than +6 dB, and silence from -90.4 dB down. A wide
   one such as `@MA127,110,12,0` (±655 dB as asked) therefore chops the note into
