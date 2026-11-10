@@ -949,6 +949,22 @@ fn copying() {
     );
 }
 
+/// TEST72: a Syntax error in an assignment's value is placed at its `=`;
+/// other statements place it at their start.
+#[test]
+fn syntax_errors_in_a_value_are_placed_at_the_equals_sign() {
+    let place = |source: &str| {
+        let e = run(source).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::SyntaxError, "{source}");
+        (e.line, e.col)
+    };
+    assert_eq!(place("?\"FIRST\"\nA=(\n"), (2, 2));
+    assert_eq!(place("A=1:B[0]=1+\n"), (1, 9));
+    assert_eq!(place("A=(:B=1\n"), (1, 2));
+    assert_eq!(place("?1+\n"), (1, 1));
+    assert_eq!(place("LOCATE 1,(\n"), (1, 1));
+}
+
 #[test]
 fn copy_errors() {
     assert_eq!(

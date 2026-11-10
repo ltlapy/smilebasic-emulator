@@ -491,11 +491,15 @@ impl Parser {
 
     fn assignment(&mut self) -> PResult<StmtKind> {
         let target = self.lvalue()?;
+        let assign = self.span();
         self.expect(&TokenKind::Assign, "'='")?;
-        Ok(StmtKind::Assign {
-            target,
-            value: self.expr()?,
-        })
+        // An error in the value is placed at the `=`, not at the
+        // statement's start (TEST72).
+        let value = self.expr().map_err(|e| ParseError {
+            stmt: e.stmt.or(Some(assign)),
+            ..e
+        })?;
+        Ok(StmtKind::Assign { target, value })
     }
 
     fn command(&mut self, name: Var) -> PResult<StmtKind> {
