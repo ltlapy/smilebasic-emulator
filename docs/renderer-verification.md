@@ -45,8 +45,7 @@ Still open:
 - How much of `#GSPRITE`'s settings XSCREEN resets (marked UNVERIFIED in
   `runtime.rs`, `set_mode`).
 - Ties at angles other than multiples of 90 degrees (R5).
-- The look of direct mode's selected text, from SmileBASIC 4, and LINPUT's
-  selection.
+- The look of DIRECT mode's selected text, and LINPUT's selection.
 - GSAVE and GLOAD: negative sizes, and the error past memory.
 - TSAVE and TLOAD sizes (R31).
 - Errors for a bad 16-element array. These are not rendering, and were left
@@ -126,7 +125,7 @@ Ties at a multiple of 90 degrees, for a sample point exactly between texels:
 | The cursor's blink: 20 frames on, 20 off, counted in frames played. It is on from the start of a line and from each key that moves or edits, the first period a frame short | `LINE_CURSOR_BLINK`, `LineEdit::key` | C: the count steps with `MAINCNT`'s; TEST56 part 1 fits 2 of 2 shots at offsets -3..-1 |
 | The cursor's width is the cell's shifted right by two, or the whole cell after Insert; its height the cell's. It follows TSCALE and LMATRIX, and draws right after its screen's cells, under what is in front | `LineCursor`, `raster::text::draw` | C: TEST56 part 1, 24 wide at scale 3, cut by a sprite in front. U on cells other than 8 pixels |
 | On a composed layer the cursor has no coverage, so it adds | `LineCursor::composed` | C: TEST56 part 1, `E0F0FF` |
-| Only direct mode's line selects (`LineEdit::selects`), drawn inverted in the console's color, staying after Enter | `LineEdit::draw`, `finish` | C that INPUT does not: TEST56. U: the look, from SmileBASIC 4; LINPUT |
+| Only DIRECT mode's line selects (`LineEdit::selects`), drawn inverted in the console's color, staying after Enter | `LineEdit::draw`, `finish` | C that INPUT does not: TEST56. U: the look, and LINPUT's |
 | Text animations: as for sprites | `impl Animated for TextScreen` | C: pitfalls; TEST47 (R7) |
 | TBLEND 1 is additive, as for sprites | `screen.rs` | C: manual (TBLEND); arithmetic as R1 |
 
@@ -375,7 +374,7 @@ drawn by the GPU path and by the CPU at once, so no frames are kept. They cover:
 - each blend and compose mode, tint, flips and turns, whole and other scales;
 - XSCREEN sample 2, LCLIP, 4x4 layers with text, each filter, FADE, repeating
   pages;
-- direct mode's hint, list, cursor and selection, and sub screens.
+- DIRECT mode's hint, list, cursor and selection, and sub screens.
 
 Each has a limit on the pixels more than 2 off, and at most 0.1% may have an
 alpha more than 2 off. `SB_GPU_GOLDEN=1` prints a row for each and
@@ -470,7 +469,7 @@ differing:
 - modes 0, 1, 2 in a window of 1280x720, resized and in full screen;
 - menu, About, the colors window, a notice, help, debugger's panel, editor
   inline and apart;
-- a stopped program, direct mode's hint, an error, an ended program with its
+- a stopped program, DIRECT mode's hint, an error, an ended program with its
   targets spoiled by hand, device reset, the setting turned on and off.
 
 ## Scene split results

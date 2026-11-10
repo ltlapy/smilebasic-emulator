@@ -2,7 +2,7 @@
 
 The emulator shows this list too, in Help > Keyboard shortcuts.
 
-## Direct mode
+## DIRECT mode
 
 | Key | Action |
 |---|---|
@@ -26,7 +26,7 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 | Key | Action |
 |---|---|
 | Ctrl+1 to Ctrl+6 | Open PRG0 to PRG5 |
-| Ctrl+0 | Back to direct mode |
+| Ctrl+0 | Back to DIRECT mode |
 | Ctrl+S | Save the slot |
 | Ctrl+L | Load a file into the slot |
 | Ctrl+Enter | New line below |
@@ -69,7 +69,7 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 |---|---|
 | F1 | Help for the command at the cursor |
 | F2 | Help's text size, in the help |
-| F4 | Switch between direct mode and the editor |
+| F4 | Switch between DIRECT mode and the editor |
 | F9, F10, F11 | Start `TOOL1` to `TOOL3` |
 | F12 | Projects |
 
@@ -93,7 +93,7 @@ The menu needs the mouse or keys.
 
 | Key | Action |
 |---|---|
-| − (Select) | Open the projects, in direct mode |
+| − (Select) | Open the projects, in DIRECT mode |
 | A | Run MAIN.PRG or the selected file |
 | X | Switch between projects and files |
 | L, R | Move a page |

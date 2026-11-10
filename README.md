@@ -46,7 +46,7 @@ See [importing.md](docs/importing.md).
 ## Running
 
 ```sh
-smilebasic           # start in direct mode
+smilebasic           # start in DIRECT mode
 smilebasic PROGRAM   # load PROGRAM into PRG0 and run it
 ```
 

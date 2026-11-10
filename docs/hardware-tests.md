@@ -103,7 +103,7 @@ when the tool itself fails, for example on a missing folder.
 | 3 | No error, but `STOP` left the program stopped at the end. |
 
 Errors in a slot that `EXEC` runs, and in a subprogram that a script's
-`SUBRUN` line starts, count. Errors in lines typed in direct mode do not.
+`SUBRUN` line starts, count. Errors in lines typed in DIRECT mode do not.
 Status 2 holds even when the script goes on to run the program again, and
 each error also goes to stderr as one line:
 

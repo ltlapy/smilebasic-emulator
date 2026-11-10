@@ -14,7 +14,7 @@ What has been checked is in [sb4-pitfalls.md](sb4-pitfalls.md).
 - [Rendering and GPU](#rendering-and-gpu)
 - [Screen scaling](#screen-scaling)
 - [System values](#system-values)
-- [Direct mode, debugger and project manager](#direct-mode-debugger-and-project-manager)
+- [DIRECT mode, debugger and project manager](#direct-mode-debugger-and-project-manager)
 - [Subprograms](#subprograms)
 - [Dialogs and errors](#dialogs-and-errors)
 - [Files](#files)
@@ -51,13 +51,14 @@ Without the imported archive:
   its 4623). A sine peaks about the same on both. `RECSAVE` of a program that
   looks at peaks shows this.
 - `BEEPSTOP` without a fade, and a `BEEP` that takes over a handle, cut a preset
-  effect at once, while a waveform's notes fall by their release. All of them are let go the same way, so an effect's tail goes on in
+  effect at once, while a waveform's notes fall by their release. All of them
+  are released the same way, so an effect's tail goes on in
   SmileBASIC 4.
 - Note count: past about 48 notes piled up by repeating sounds, or 48 falling
   once their handles have gone, the oldest make way. A note too quiet to reach a
   16-bit sample ends at that point. SmileBASIC 4 has 96 voices shared with BGM.
 - Sustain of 0: a note whose envelope decays to a sustain of 0 ends at -72.3 dB.
-  SmileBASIC 4 holds it until it is let go. Drums that ignore being let go would
+  SmileBASIC 4 holds it until it is released. Drums that ignore the release would
   otherwise sound, unheard, forever.
 - A song started while nothing plays sounds two frames after `BGMPLAY`. On
   SmileBASIC 4 it sounds 1276 samples after, about half a frame sooner. With
@@ -127,14 +128,14 @@ apart from the macro hang below.
   takes everything else from `BUTTON` therefore needs a gamepad.
 - `INKEY$` gets nothing from buttons the keyboard presses; the keys themselves
   do the typing.
-- Caps Lock: programs, the prompt and the editor get letters by SmileBASIC 4's
+- Caps Lock: programs, DIRECT mode and the editor get letters by SmileBASIC 4's
   own Caps Lock, which is on at start and which the Caps Lock key toggles in
   any of the emulator's windows. The computer's Caps Lock light disagrees with
   it if the computer's Caps Lock was on when the emulator started, or was
   pressed while another program's window had the keys. With File > Settings >
   General > "Type capitals without Shift" off, letters keep the computer's
   case everywhere.
-- Key repeat: a key held for a program, the prompt or the editor repeats in the
+- Key repeat: a key held for a program, DIRECT mode or the editor repeats in the
   emulator's frames, as a key held for `INKEY$` does on SmileBASIC 4: 19 frames
   after the press, then every 3. Any other key going down or up, Shift and
   Ctrl among them, starts the count again, and each repeat types what the
@@ -158,13 +159,13 @@ apart from the macro hang below.
   computer it may switch the computer's input method, and what that types then
   reaches the program.
 - Controllers as keys: controllers type keys only as SmileBASIC 4's assignment
-  does in every mode. The emulator leaves out the assignments for direct mode
+  does in every mode. The emulator leaves out the assignments for DIRECT mode
   and the editor alone (X for the editor or to run) and the key settings of
   SmileBASIC 4's options.
 - A held button or stick, when one of the emulator's own screens closes, reads
-  as let go until it is. The A that chose Run in the project manager is one such
-  press. It types nothing and `BUTTON` does not show it, in the program or at
-  the prompt.
+  as released until it is. The A that chose Run in the project manager is one such
+  press. It types nothing and `BUTTON` does not show it, in the program or in
+  DIRECT mode.
 - Mouse buttons: the left button is the touch screen (touch 0 only).
 - Mouse cursor: a program that hides the mouse cursor
   (`SYSPARAM "MOUSECURSOR",0`, as programs start) hides the computer's cursor
@@ -228,7 +229,7 @@ window comes back.
   can go a few levels further. For `RESTORE "PUSH"`, 1.5 slots each is
   inferred.
 - `FREEMEM` counts what strings and arrays take as SmileBASIC 4 does, but memory
-  a program lets go of is free again at once. SmileBASIC 4 frees it only when a
+  a program frees is free again at once. SmileBASIC 4 frees it only when a
   request would not fit: emptying a string or an array, or leaving a DEF, does
   not raise `FREEMEM` on SmileBASIC 4, even after `VSYNC` or `WAIT`. A program
   would have to watch `FREEMEM` to see the difference.
@@ -362,11 +363,11 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - `CONTROLLER` counts a gamepad as a Pro Controller with the colors of a black
   one, and the keyboard alone as handheld (1).
 
-## Direct mode, debugger and project manager
+## DIRECT mode, debugger and project manager
 
 - `BACKTRACE`: after it, `CONT` and `TRACE` still go on with the stopped
   program. On SmileBASIC 4 they cannot. Programs cannot tell, since all three
-  work in direct mode only.
+  work in DIRECT mode only.
 - Run > "Clear screen and sound when a program ends", off to start with, does
   `ACLS` and `SNDSTOP` after a program ENDs or is stopped with the Pause/Break
   key or F5. STOP, errors and the debugger's stops leave the screens and sound
@@ -375,7 +376,7 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - A stop that the debugger shows in the editor prints neither `Break on` nor
   `OK`, so the console keeps only what the program printed. This covers steps,
   breakpoints, `TRACE`, Run to cursor, watched changes, and any stop while the
-  panel is pinned. `OK` shows once the keys go back to direct mode.
+  panel is pinned. `OK` shows once the keys go back to DIRECT mode.
 - Ctrl+C on a keyboard stops a running program only when File > Settings says
   so; it is off to start with, and programs read Ctrl+C as a key. On
   SmileBASIC 4, Ctrl+C on a USB keyboard stops the program.
@@ -387,10 +388,10 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 ## Subprograms
 
 - Starting: subprograms have no Smile button to start them from, only `SUBRUN`
-  in direct mode and the tools on F9 to F11.
+  in DIRECT mode and the tools on F9 to F11.
 - Focus: Run > "Switch keys to/from subprogram" moves the focus as `ENVFOCUS`
   does, and Run > "Stop subprogram" does `SUBSTOP`, so a subprogram cannot keep
-  the keys from direct mode.
+  the keys from DIRECT mode.
 
 For subprograms' sound and screen, see `SNDMSBAL` under [Sound](#sound) and
 `FADE` under [Rendering and GPU](#rendering-and-gpu).
@@ -494,7 +495,7 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
 - Additions: the emulator adds an index of the program's labels and DEFs to jump
   to (Ctrl+J), an overview of the program behind the code's right side, and
   scrolling with the mouse wheel.
-- Completion: the list of words to complete also shows in direct mode, and can
+- Completion: the list of words to complete also shows in DIRECT mode, and can
   offer the program's own names (off at first, as in SmileBASIC 4). Each entry
   is tagged with what it is, and the first form the help gives for it shows at
   the bottom of the screen. After GOTO, GOSUB and RESTORE it lists the program's
@@ -514,7 +515,7 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   [importing.md](importing.md#characters-the-font-lacks)). File > Settings >
   Fonts > "Editor's first font" can also put the font file or the bundled
   fonts ahead of SmileBASIC's font. This covers the editor's code, line
-  numbers, ruler, status line, suggestions and hints. The console, direct mode,
+  numbers, ruler, status line, suggestions and hints. The console, DIRECT mode,
   `CHKCHR`, the font page on GRP5 and `GPUTCHR` still show SmileBASIC's font
   and its box, unless the programs' font setting under
   [Rendering and GPU](#rendering-and-gpu) changes the page. A character above
@@ -537,7 +538,7 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
 ### Editor in a separate window
 
 With View > "Editor in a separate window", the editor opens in a second window
-beside the screen, and programs and direct mode go on while it is open. In
+beside the screen, and programs and DIRECT mode go on while it is open. In
 SmileBASIC 4 the editor replaces the screen and no program runs while it shows.
 
 - Edits reach the slot at once, so RUN, SAVE and the PRG commands see them, and

@@ -69,7 +69,7 @@ TEST71 ran on 4.4.9 on a Switch 1 and a Switch 2.
   - [`TALK` and sung notes](#talk-and-sung-notes)
   - [Effector, recording and balance](#effector-recording-and-balance)
 - [Signal processing](#signal-processing)
-- [Direct mode](#direct-mode)
+- [DIRECT mode](#direct-mode)
 - [Stopping](#stopping)
 - [Program slots and files](#program-slots-and-files)
   - [`CHKCALL` and `CHKLABEL`](#chkcall-and-chklabel)
@@ -97,8 +97,8 @@ TEST71 ran on 4.4.9 on a Switch 1 and a Switch 2.
 
 - An error message goes on from the cursor, on the line the program left it:
   after `?"V";` an `Overflow` shows as `VOverflow in 1:3` (TEST65). A line
-  typed in direct mode does the same (TEST63).
-- An error in a line typed in direct mode names no place, and a space comes
+  typed in DIRECT mode does the same (TEST63).
+- An error in a line typed in DIRECT mode names no place, and a space comes
   before the command it names: `Out of range (LOCATE:2)`,
   `Can't access other project in this mode (RENAME:1)` and `Syntax error`
   (TEST70).
@@ -594,7 +594,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - The first step comes about a millisecond before `MAINCNT` rises on a Switch 2
   (TEST60).
 - `FADE()` still gives the start right after `FADE`.
-- Animations also play in direct mode, and go on while the editor is open.
+- Animations also play in DIRECT mode, and go on while the editor is open.
 - A sliding animation of rotation, scale or color mixes its two ends in single
   precision as `from*left + to*(1-left)`, `left` being the share of frames still
   to go. Text screens (`TANIM`) do the same as sprites in all of these (TEST47,
@@ -627,7 +627,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 
 ### Buttons
 
-- `DIALOG` with buttons closes when A is let go, not when it goes down. Once it
+- `DIALOG` with buttons closes when A is released, not when it goes down. Once it
   has closed, `KEYBOARD` shows no Enter press: `KEYBOARD(40,2)` and
   `KEYBOARD(40,0)` stay 0 over the next 6 frames, whether Enter or A closed it.
 - `DIALOG(text,8)`, which waits for A, closes when A goes down and returns
@@ -640,7 +640,7 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - The A that closes a `DIALOG` is gone for the program after it (TEST64):
   - With OK or Yes and No, `BUTTON` shows no release of it.
   - With a wait for A, `BUTTON(0)` shows it held, `BUTTON(0,-1,2)` no press,
-    and the release comes when it is let go. `INKEY$` gets no `CHR$(13)` for
+    and the release shows when A comes up. `INKEY$` gets no `CHR$(13)` for
     the press, but A held on repeats into it: 20 frames after the press and
     then every 3.
 - `DIALOG` covers the whole screen, so nothing else shows while it's open, and a
@@ -748,7 +748,7 @@ TEST70K on a docked Switch 2 (4.4.9) with a USB keyboard:
 - L alone or R alone on the controller keeps keys from typing, the press
   included, as L and R together do, though `BUTTON` sees L or R.
 - Left Alt+3 types nothing. Left Alt+A and Right Alt+A both type U+E2EC.
-- A key held at the prompt goes on repeating into the program that `RUN`
+- A key held in DIRECT mode goes on repeating into the program that `RUN`
   starts. The Enter that typed `RUN 3`, held on, gave the program `CHR$(13)` in
   its frame 18, counted with `MAINCNT` from its first statement, and then every
   3 frames until it went up. `KEYBOARD` saw Enter held from the program's
@@ -829,16 +829,16 @@ Expected but not yet seen on hardware:
   - Five `PUSHKEY`s of 63 in a row, with 315 keys, leave 128 to read: keys 32 to
     95, 124 to 155 and 187 to 218. Keys 219 on come in the frames after, with
     the first buffer's rest (TEST60).
-  - At the prompt, five `PUSHKEY`s of 60 lose keys the same way (TEST60).
+  - In DIRECT mode, five `PUSHKEY`s of 60 lose keys the same way (TEST60).
 - Typed keys wait in the buffer until something reads them:
   `WAIT 180:?INKEY$();INKEY$();INKEY$()` shows what was typed during the wait.
 - `INPUT` and `LINPUT` drop every key waiting when they start, `PUSHKEY`'s
   included: `PUSHKEY "7":INPUT A$` waits with an empty line.
-- The prompt drops waiting keys as it starts, after a typed line as after a
-  program: `PUSHKEY "?1"+CHR$(13)+"?2"+CHR$(13)` typed at the prompt runs
-  neither (TEST62). From a subprogram, typing into a prompt already there, they
-  arrive.
-- `PUSHKEY` of keys without Enter is dropped at the prompt too, as with Enter: a
+- DIRECT mode drops waiting keys as it starts, after a typed line as after a
+  program: `PUSHKEY "?1"+CHR$(13)+"?2"+CHR$(13)` typed in DIRECT mode runs
+  neither (TEST62). From a subprogram, typing into a DIRECT mode line already
+  there, they arrive.
+- `PUSHKEY` of keys without Enter is dropped in DIRECT mode too, as with Enter: a
   line typed after `PUSHKEY "?7:"` runs as it is. (TEST63)
 - `INKEY$` gives back what `PUSHKEY` pushed of Hangul syllables, the jamo
   U+3131, U+E800 and surrogate pairs unchanged, one UTF-16 unit a call: the
@@ -849,7 +849,7 @@ Expected but not yet seen on hardware:
 - `INPUT`'s question mark is followed by a space; with a comma after the guide
   there is neither.
 - `INPUT` leaves out extra values typed. After `?Redo from start`, the line is
-  typed again on the next line, without the prompt.
+  typed again on the next line, without the guide.
 - `INPUT` and `LINPUT` take any string expression as the guide, a label among
   them (`LINPUT@G;A$` shows `@G`). A string variable is a guide only with `;`.
 - `INPUT A,B` given `1,` takes A=1, B=0 at once. Given `1,2,3` it leaves the 3
@@ -857,7 +857,7 @@ Expected but not yet seen on hardware:
 - `INPUT VAR("A$")` and `N$="A$":INPUT VAR(N$)` both take a string. (TEST63)
 - `INPUT` selects nothing: Shift with Left or Right moves the cursor, and
   Backspace and Delete take one character (TEST56). `LINPUT` runs with the same
-  setting in SmileBASIC 4. Direct mode's line does select, cut, copy and
+  setting in SmileBASIC 4. DIRECT mode's line does select, cut, copy and
   paste.
 - `INPUT A$`, ABCD, Shift+Left twice, X gives `ABXCD`: on `INPUT`'s line Shift
   only moves.
@@ -867,7 +867,7 @@ Expected but not yet seen on hardware:
   goes in at the cursor (TEST60).
 - A line holds 256 characters whatever the console's size; a character typed on
   a full one is dropped (TEST60).
-- A line typed in direct mode or for `INPUT` or `LINPUT` holds 256 characters,
+- A line typed in DIRECT mode or for `INPUT` or `LINPUT` holds 256 characters,
   whatever they are and whatever the console's size, and a paste that would
   not fit pastes nothing. Expected but not yet seen on hardware: a further
   character is dropped over a selection too, which then stays, and a paste
@@ -898,16 +898,16 @@ Expected but not yet seen on hardware:
 - `INSPECT` scrolls as Enter does while it prints, keeping the cursor above the
   last row, which has been seen (`TEST19`, on the usual screen). The rest of
   this scrolling comes from the code.
-- Enter on an empty line of direct mode prints `OK` (TEST60), and leaves the
+- Enter on an empty line of DIRECT mode prints `OK` (TEST60), and leaves the
   empty line above it.
-- At the prompt the controller types as `INKEY$` reads it (TEST64, by hand). A
+- In DIRECT mode the controller types as `INKEY$` reads it (TEST64, by hand). A
   is Enter, Y deletes as Backspace does, and the +Control Pad moves as the
   arrow keys do. On an empty line Y and B do nothing. A USB keyboard plugged
   in or out, or the software keyboard shown, changes none of this.
 - Typing over a selection in overwrite mode writes the character and moves on
   first, then deletes the selection: one made rightwards takes the character
   with it, and one made leftwards keeps it (TEST71).
-- Copying a selection in direct mode drops the selection; cutting too. (Not yet
+- Copying a selection in DIRECT mode drops the selection; cutting too. (Not yet
   seen on hardware.)
 
 ### The line's cursor
@@ -1026,7 +1026,7 @@ Expected but not yet seen on hardware:
     for any text, by `TCOLOR`, and the color by the resulting alpha, so the
     light is left with the square of it.
   - A space is a block, and so is an empty cell.
-  - Direct mode's selection sets the bit, and Enter does not draw the line
+  - DIRECT mode's selection sets the bit, and Enter does not draw the line
     again, so it should stay.
   - A console cell given bit 23 through `TLOAD` shows inverted; `CHKCHR`
     gives its attribute as 128 and `TSAVE` keeps the bit (TEST69).
@@ -1534,7 +1534,7 @@ Expected but not yet seen on hardware:
   full-scale 8-bit waveform an eighth of full scale on each side (a ±96 square
   3063, a sine of amplitude 100 2257).
 - `Qn` holds a note for (n+1)/33 of its length, cut to whole ticks (48 to a
-  quarter note) and at least one. At T120 a `C4` is let go after 10 ms with
+  quarter note) and at least one. At T120 a `C4` is released after 10 ms with
   `Q0`, 135 with `Q8`, 250 with `Q16`, 375 with `Q24`, and `Q32` holds it all.
 - A waveform with attack 127 is at full level from its first sample.
 - An instrument's note starts at the level of its first 5 ms step rather than
@@ -1802,7 +1802,7 @@ Expected but not yet seen on hardware:
   with no gain is `Wrong number of arguments (BQPARAM:2)`. A Q of 0 is
   `Illegal function call (BQPARAM:5)`. (TEST62)
 
-## Direct mode
+## DIRECT mode
 
 - `INSPECT` (or `??`) prints `INT: 1`, `REAL: 1.50000000` (always 8 decimals) or
   `STRING: (2)"AB"` (a 50-character string still whole).
@@ -1829,7 +1829,7 @@ Expected but not yet seen on hardware:
   then `Can't use in program in 3:1(PROJECT)` (TEST71).
 - `ENVINPUT$` lists a line typed again as a new line and leaves the older copy
   where it was. The line typed just before, typed again, is not added (TEST71).
-- `FILES` prints a long list a screen at a time, in direct mode and in programs
+- `FILES` prints a long list a screen at a time, in DIRECT mode and in programs
   alike. The list fills every row of the console but the last, which says
   `=== Press ENTER ===`, so the page follows the console's size (29 rows of the
   list on the usual 30). Any key or button goes on, and a held key goes on as it
@@ -1841,7 +1841,7 @@ Expected but not yet seen on hardware:
 ## Stopping
 
 - `ON BREAK GOTO ""` takes the handler away.
-- The + button acts when it is let go. A short press jumps to the label of
+- The + button acts when it is released. A short press jumps to the label of
   `ON BREAK GOTO`, once; without one, the program stops with
   `User break on 0:55`. Held for a second, the button stops the program at once,
   without the jump.
@@ -1851,21 +1851,21 @@ Expected but not yet seen on hardware:
   (TEST71).
 - `ON BREAK GOTO` inside a DEF may name a label outside it. When the DEF has a
   label of the same name too, the jump goes to the one outside (TEST71).
-- Breaking off a line typed in direct mode says `User break on 0:1`. A forced
+- Breaking off a line typed in DIRECT mode says `User break on 0:1`. A forced
   stop (holding + for a second) says `User break on` too.
 - A press of + out of a waiting `INPUT` or `LINPUT` counts twice. It jumps, and
   acts again once the first statement there has run (a whole FOR loop's first
   statement only). The second time it jumps to a label that statement set with
   `ON BREAK GOTO`, or stops with `User break on` that statement's line. Printing
-  goes on after the prompt.
+  goes on after the guide.
 - `STOP` says `Break on 0:60`, then its message, if it has one, on the next
-  line. In direct mode it is `Can't use from direct mode`.
+  line. In DIRECT mode it is `Can't use from direct mode`.
 - `STOP` with a message prints 255 characters of it (TEST62).
 - `CONT` goes on, against the manual, after a program has been edited, even with
   lines added.
 - `CONT` goes on, against the manual, after the + button stopped a program at
   `INPUT`: it goes on with the next statement, and `User break on` follows the
-  prompt on the same line.
+  guide on the same line.
 - `CONT` after an error is `Can't continue`. In a program it is a `Syntax error`
   when it runs. A `Syntax error` typed in DIRECT mode after a `STOP` does
   not count: `CONT` still goes on (TEST71).
@@ -1884,7 +1884,7 @@ Expected but not yet seen on hardware:
 - `Can't continue`, `Can't trace` and `Can't use from direct mode` name no line.
 - `Break on` follows whatever was printed: after `?"X";` it reads
   `XBreak on 0:16`.
-- `ENVSTAT()` on the main interpreter is 3 (running), also typed in direct mode
+- `ENVSTAT()` on the main interpreter is 3 (running), also typed in DIRECT mode
   while a program is stopped or after an error; its OUT forms then report no
   error.
 
@@ -1926,7 +1926,7 @@ Expected but not yet seen on hardware:
 - `PRGSET` on an empty line in the middle replaces it.
 - SmileBASIC Debugger's model of `PRGEDIT`, `PRGSEEK`, `PRGDEL` and `PRGSET`
   agrees with these four bullets.
-- `PRGNAME$()` and `PRGSIZE()` at the prompt mean slot 0, whichever slot
+- `PRGNAME$()` and `PRGSIZE()` in DIRECT mode mean slot 0, whichever slot
   `PRGEDIT` is on. (TEST63)
 - After SmileBASIC starts afresh, slot 0 has an empty `PRGNAME$()` and a
   `PRGSIZE()` of 0 (TEST64).
@@ -1934,15 +1934,15 @@ Expected but not yet seen on hardware:
   the slot from a program, `NEW` and `PROJECT` do not ask about them (DAW_MUSIC,
   and by hand), and neither does `EXEC` into a slot holding `PRGINS` edits
   (TEST71).
-- `#_FILENAME` is the program's name (`TEST32`), and empty in direct mode.
-- `#_SLOT` is the program's slot, and in direct mode the slot run last.
+- `#_FILENAME` is the program's name (`TEST32`), and empty in DIRECT mode.
+- `#_SLOT` is the program's slot, and in DIRECT mode the slot run last.
 
 ### Files
 
 - `LOADV` reads a DAT file whose header's size leaves out the `PCBN` array's
   header: SmileBOY's `POCKET.GB` loads as an array of 32768 (TEST64).
 - `EXEC` of a file that is not there shows a dialog (File not found) and then
-  stops with `Load failed`. In direct mode, `EXEC` is
+  stops with `Load failed`. In DIRECT mode, `EXEC` is
   `Can't use from direct mode`, shown without a line.
 - File names may start with `@`, as the backups' do: `LOADV "DAT:@BACKUP.DAT"`
   reads one, and `SAVE "@X"` saves (after the usual question).
@@ -1963,7 +1963,7 @@ Expected but not yet seen on hardware:
   project are `Can't access other project in this mode`, error 74, for the
   program's own project and for the workspace's `/NAME` too, and change no
   file: `SAVEV "TXT:/NAME",S$` is `(SAVEV)`, `RENAME "TXT:/NAME","NEW"`
-  `(RENAME:1)` and `DELETE "TXT:/NAME"` `(DELETE:1)`. Typed at the prompt,
+  `(RENAME:1)` and `DELETE "TXT:/NAME"` `(DELETE:1)`. Typed in DIRECT mode,
   `SAVEV "TXT:OWN/NAME",S$`, and `SAVEV "TXT:/NAME",S$` in the workspace, ask
   as usual and save in the current project, with `RESULT` 1 (TEST69).
 - `LOADG "PNG:NAME",0` in a main program is error 74, `(LOADG)`.
@@ -1976,8 +1976,8 @@ Expected but not yet seen on hardware:
   (TEST68, and checked on hardware, version 4.4.9, 2026-11-08).
 - `LOADG` of a name with a project loads the image, for the program's own
   project or another, with or without `GRP:`: `LOADG "HGLIB/NAME",0` and
-  `LOADG "GRP:HGLIB/NAME",0` both load. A program loads it without a dialog; at
-  the prompt SmileBASIC 4 shows its load dialog first (checked on hardware,
+  `LOADG "GRP:HGLIB/NAME",0` both load. A program loads it without a dialog; in
+  DIRECT mode SmileBASIC 4 shows its load dialog first (checked on hardware,
   version 4.4.9, 2026-11-08).
 - In TEST68, `LOADG "GRP:TEST05/HG16_NEODGM",3,0,0 OUT W,H` in a main
   program, while a `SUBRUN` subprogram ran, gave `RESULT` 0, loaded nothing
@@ -2009,7 +2009,7 @@ Expected but not yet seen on hardware:
   `in 0:203(SAVEV)` in a subprogram. Expected but not yet seen on hardware: a
   main program gets error 75 too, ahead of its error 74. (TEST71, on a
   Switch 1.)
-- `RENAME` and `DELETE` refuse a project name at the prompt too, with error
+- `RENAME` and `DELETE` refuse a project name in DIRECT mode too, with error
   74 and no dialog, and leave the files alone:
   `RENAME "TXT:TEST05/T70R","T70S"` is
   `Can't access other project in this mode (RENAME:1)` and
@@ -2022,7 +2022,7 @@ Expected but not yet seen on hardware:
   `RENAME "TXT:A","DAT:B"`, are `File type mismatch (RENAME)`, error 77, with
   no number and no question. A file renamed to its own name gives `RESULT` 1
   and asks nothing (TEST71).
-- `LOADG "PNG:T70R",0` at the prompt is
+- `LOADG "PNG:T70R",0` in DIRECT mode is
   `Can't access other project in this mode (LOADG)`, error 74, with no dialog
   (TEST70), and so it is in a subprogram: `in 0:95(LOADG)`. A type that is
   none, as `XYZ:`, is `Illegal format (LOADG:1)`, error 71, and `TXT:` is
@@ -2129,7 +2129,7 @@ TTEST36.
 - `SUBHIDE` hides the subprogram's screen and `SUBSHOW` shows it again, while it
   goes on running. A clear `BACKCOLOR` shows the main screen through.
 - `END` in a subprogram hides its screen and prints nothing; the line being
-  typed in direct mode stays as it was, and the main interpreter has the focus
+  typed in DIRECT mode stays as it was, and the main interpreter has the focus
   again (TTEST37, TTEST38).
 - The tools on F9 to F11 start also while a program runs.
 - A tool runs in the subprogram interpreter (TEST69, a tool started from the
@@ -2155,7 +2155,7 @@ TTEST36.
 - While a tool started from the editor is open, Ctrl+Tab does nothing: it does
   not move the keys between the editor and the tool (TEST69).
 - `PUSHKEY` in the subprogram, after `ENVFOCUS 0`, types into the main
-  interpreter's direct mode, which runs the line.
+  interpreter's DIRECT mode, which runs the line.
 - `DIALOG` in a subprogram answers to the controller with the focus on either
   side, and the main program keeps running meanwhile (TEST64). With the focus
   on the main program, its `BUTTON(0)` sees the A that answers, and its
@@ -2237,10 +2237,10 @@ TTEST36.
   `(MID$:2)`, 2 after `(FILL:3)`, 0 after `(LOAD:1)` and -1 after
   `(UNSHIFT)`. It is 1 after `(LEFT$:2)`, 1 after `(BIQUAD:2)` and -1 after
   `SQR(-1)`'s unnamed `Out of range` (TEST71).
-- A run-time error in a line typed in direct mode sets the status to 2 and
+- A run-time error in a line typed in DIRECT mode sets the status to 2 and
   leaves N, A, C and L as they were: from a fresh start's S 0, N 0, A 0,
   C -1, L 0 it gives S 2 and the rest the same, for `RENAME`, `DELETE` and
-  `LOADG` errors at the prompt and for `EXEC`'s `Can't use from direct mode`
+  `LOADG` errors in DIRECT mode and for `EXEC`'s `Can't use from direct mode`
   (TEST69, TEST70). After a program's `Out of range` with N 10, A 1, C 5 and
   L 1, the status stays 2 and the rest the same through `EXEC`,
   `Out of range`, `Syntax error` and clean lines typed after it. A clean
@@ -2283,7 +2283,7 @@ TTEST36.
   `DIM A[100000]` takes 800064.
 
 - `GARRAY` and `TARRAY` take nothing.
-- Memory let go of (emptying a string or array, a DEF's locals after it returns)
+- Memory freed (emptying a string or array, a DEF's locals after it returns)
   does not come back at once.
 - Dropped strings and arrays are freed on demand (TEST52). A dropped string of
   100,000 characters stays counted in `FREEMEM` after `PRINT`, a loop, two
@@ -2365,7 +2365,7 @@ TTEST36.
 
 - Constant strings are worked out as the program compiles, so what is too long
   stops it before any of it runs (TEST52, TEST57).
-- `?LEN("A"*(1<<N))` works up to N=14 in direct mode, then is
+- `?LEN("A"*(1<<N))` works up to N=14 in DIRECT mode, then is
   `Out of code memory`. In a program it works up to N=20, then is
   `Out of memory`, in slots 0 and 1, with nearly all memory free. Through a
   variable the same size works.
@@ -2378,7 +2378,7 @@ TTEST36.
   - `A=LEN("A"*2097068)` compiles and prints, and 2097069 and 2097116 are
     `Out of memory` as it compiles (TEST59). That leaves 168 bytes for such a
     statement, none of them for the variable it stores to.
-- A string then goes into the code, which is 32768 16-bit words in direct mode
+- A string then goes into the code, which is 32768 16-bit words in DIRECT mode
   and 4194304 in a slot, taking a word a character plus its length. Of three
   lines of `A=LEN("A"*2000000)`, the third is `Out of code memory` (TEST58).
 
@@ -2400,7 +2400,7 @@ TTEST36.
   item that can only be read, or reading `KEYREPEAT` as a value, is
   `Wrong number of OUT arguments`.
 - `MOUSECURSOR` reads 0 again in a program run after one that set it to 1. `END`
-  leaves it set, so direct mode still reads 1.
+  leaves it set, so DIRECT mode still reads 1.
 
 ### `HELPGET` and `HELPINFO`
 
@@ -2430,7 +2430,7 @@ TTEST36.
   `String is too long`.
 - `XSUBSCREEN` and the undocumented `UISTATE` are there for the main program
   too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
-- `UISTATE(2)` read 648 in direct mode after TEST63's earlier parts had run, and
+- `UISTATE(2)` read 648 in DIRECT mode after TEST63's earlier parts had run, and
   0, 1, 3, 4, 5 read 0. (TEST63)
 - `UISTATE(5)` is 0, and `UISTATE(6)` `Out of range (UISTATE:1)`. (TEST62)
 - In a program, `UISTATE(0)` to `UISTATE(5)` all read 0, and setting item 5

@@ -482,7 +482,7 @@ the project that `run=` names from the data directory, so use a scratch one
 | `sleep:MS` | Holds the main thread up for that long, as a call into the system can, and counts it as a suspend. The standby thread runs the program's frames meanwhile |
 | `key:NAME` | Presses the key SDL calls NAME, such as `Escape` |
 | `usb:USAGE` | Has `KEYBOARD` read that key as down for a frame, which `key` does not |
-| `pad:NAME`, `padup:NAME` | Presses or lets go the first controller's button SDL calls NAME, as both the event and what is held. `b` is the right face button, as SDL goes by Xbox labels |
+| `pad:NAME`, `padup:NAME` | Presses or releases the first controller's button SDL calls NAME, as both the event and what is held. `b` is the right face button, as SDL goes by Xbox labels |
 | `editor-focus` | Gives the editor's own window the keys |
 | `menu`, `file-menu`, `help`, `about`, `colors`, `settings`, `toast` | Shows that part of the UI then, as the parts of the same names do once the rest is set up |
 

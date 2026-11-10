@@ -121,7 +121,7 @@ notice.
 The emulator's own menus, windows and dialogs draw ASCII and half-width kana
 half a cell wide. The editor does too when File > Settings > Editor > "Narrow
 half-width characters" is on (`editor_half_width=true` in `settings.txt`). The
-console, direct mode, the help's text and the debugger's panel keep one
+console, DIRECT mode, the help's text and the debugger's panel keep one
 square cell per character.
 
 SmileBASIC 4's ASCII fills its square cell, so it cannot be cut in half. The

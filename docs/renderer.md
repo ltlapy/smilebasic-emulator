@@ -58,7 +58,7 @@ from sprites.
 
 `Machine::render` (`machine.rs`) gives the editor's frame while the editor is
 shown, and otherwise `Machine::render_screens_now`. That forces a redraw
-(`Runtime::touch`) in direct mode, under the debugger and beside a subprogram,
+(`Runtime::touch`) in DIRECT mode, under the debugger and beside a subprogram,
 then calls `Runtime::render`. The window goes through
 `Machine::render_screens_with`, which offers the scene to the GPU path.
 
@@ -99,7 +99,7 @@ then calls `Runtime::render`. The window goes through
 6. **FADE.** `screen::cover` mixes the fade color over every pixel. It also
    darkens the frame to 224/255 in the same rounding while the other side has
    the focus beside a subprogram (`dimmed`).
-7. **Emulator UI on the frame.** `Runtime::draw_overlay`: in direct mode, the
+7. **Emulator UI on the frame.** `Runtime::draw_overlay`: in DIRECT mode, the
    command hint and the completion list (`hint::draw_band`, `Completion::draw`)
    are drawn after the fade, so they are not darkened. These are not SmileBASIC
    4 rendering ([What stays on the CPU](#what-stays-on-the-cpu)).
@@ -467,7 +467,7 @@ scene. It takes the place of the CPU rasterizer on any SDL_Renderer driver but
   `SDL_RenderGeometry`, with no shader on any driver.
 - It draws mosaic and blur the same way, and raster as strips.
 - It also draws FADE and the darkening beside a subprogram, sub screens, the
-  line cursor, inverted cells and direct mode's hint and list.
+  line cursor, inverted cells and DIRECT mode's hint and list.
 - The color filter has a shader on the `gpu` driver. On other drivers its layer
   comes from the CPU.
 
@@ -732,14 +732,14 @@ The cases below, apart from Suspend, were tried with no window, through
   and refuses it as above. SDL 3.4.18 frees its texture data twice in
   `GLES2_CreateTexture` on GL_OUT_OF_MEMORY and aborts, where the driver looks
   at errors. The frontend's own textures can still meet that.
-- **A target made in part, for a frame or half of one.** The path lets go of all
+- **A target made in part, for a frame or half of one.** The path frees all
   of it. Drawn on as it was, the next frame would have gone to the window.
 
 **Renderer events:**
 
 - **`RENDER_TARGETS_RESET`.** The frames are drawn again, a subprogram's too.
 - **`RENDER_DEVICE_RESET`.** Every texture is made again, and the path started
-  again with its self-test. Direct3D 11, 12 and Vulkan let go of them all, and
+  again with its self-test. Direct3D 11, 12 and Vulkan free them all, and
   the window's own would have ended the emulator at its next upload.
 - **`RENDER_DEVICE_LOST`, or a refusal of the frontend's own drawing.**
   Everything on the renderers goes. The frontend makes a new renderer for the

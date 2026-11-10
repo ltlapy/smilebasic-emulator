@@ -188,7 +188,7 @@ and ELE2020. [benchmarking.md](benchmarking.md) covers how to measure the path.
 | ELE2020 | 13.2 | 2.1 | 143 | 11 | 313, 368 | 5.4%, 0, 0.003% | 255 |
 
 Elements' edges and samples between texels are the 255s. A plain sub screen and
-the inverted cells of direct mode cost about 1 ms either way. Measured by hand
+the inverted cells of DIRECT mode cost about 1 ms either way. Measured by hand
 in a real window, unlike the headless numbers around it, TMULTI took 2.47 ms for
 the screen, and SPROT and TMULTI look as on the CPU there. The other scenes have
 not been measured in a window.
