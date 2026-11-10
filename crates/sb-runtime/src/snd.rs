@@ -701,7 +701,8 @@ impl Runtime {
                 self.sound.effector.wet = wet;
                 Ok(vec![])
             }
-            // UNVERIFIED: the curve is in machine.rs; here SNDMSBAL is only kept.
+            // The balance is only kept here: `sound::balance_gains` mixes by
+            // it. The time is not used.
             (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
                 self.sound.balance = in_range("balance", &args[0], 0..=127)?;
                 opt_in_range("time", args.get(1), 0..=32767, 0)?;

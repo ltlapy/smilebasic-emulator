@@ -126,6 +126,10 @@ pub(crate) struct Recorder {
     pub(crate) ring: bool,
     /// Whether it has taken a sample yet.
     pub(crate) begun: bool,
+    /// Where the last frame's samples went in the buffer and how many it
+    /// took, for [`Sound::hear_sub`].
+    frame_start: usize,
+    taken: usize,
 }
 
 impl Recorder {
@@ -155,6 +159,7 @@ impl Recorder {
         let s = |x: f32| (x * 32767.0).round() as i16;
         self.buffer[self.pos] = [s(left), s(right)];
         self.pos += 1;
+        self.taken += 1;
         if self.pos == self.len {
             if self.ring {
                 self.pos = 0;
@@ -163,6 +168,15 @@ impl Recorder {
             }
         }
     }
+}
+
+/// The main and the sub interpreter's gains for SNDMSBAL's balance: 64
+/// keeps both as they are, 0 gives the subprogram's sound twice as loud
+/// and the main program's none, and 127 the other way round.
+// UNVERIFIED: the subprogram's side, which a test measured less well.
+pub(crate) fn balance_gains(balance: i32) -> (f32, f32) {
+    let b = balance.clamp(0, 127) as f32;
+    (b / 64.0, (127.0 - b) / 64.0)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -437,6 +451,8 @@ impl Sound {
         // sound system to wake, and so begins with it.
         let waking = self.tracks.iter().flatten().any(|t| t.hold > 0);
         let record = self.recorder.begun || !waking;
+        self.recorder.frame_start = self.recorder.pos;
+        self.recorder.taken = 0;
         for t in self.tracks.iter_mut().flatten() {
             // UNVERIFIED: that BGMWET takes the place of EFCWET's BGM for
             // its track once set.
@@ -509,8 +525,58 @@ impl Sound {
         silence_nans(&mut self.out[start..]);
     }
 
+    /// What the sub interpreter mixed this frame, which RECSTART in the
+    /// main program hears with the main program's own sound, as the
+    /// subprogram's SNDMSBAL balances them.
+    // UNVERIFIED: that RECSTART in the subprogram hears only its own.
+    pub(crate) fn hear_sub(&mut self, sub: &Sound) {
+        let rec = &mut self.recorder;
+        if rec.taken == 0 {
+            return;
+        }
+        let (own, theirs) = balance_gains(sub.balance);
+        let theirs = theirs * sub.master.value as f32;
+        let [left, right] = &sub.mix;
+        let mixed = |s: i16, t: Option<&f32>| {
+            let x = f32::from(s) / 32767.0 * own + t.copied().unwrap_or(0.0) * theirs;
+            (x.clamp(-1.0, 1.0) * 32767.0).round() as i16
+        };
+        for i in 0..rec.taken {
+            let p = (rec.frame_start + i) % rec.len;
+            let [l, r] = rec.buffer[p];
+            rec.buffer[p] = [mixed(l, left.get(i)), mixed(r, right.get(i))];
+        }
+    }
+
     /// The samples mixed since the last call, left and right in turn.
     pub fn take_samples(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The main program's recording hears the subprogram's sound too, both
+    /// as SNDMSBAL balances them.
+    #[test]
+    fn recording_hears_the_subprogram_as_sndmsbal_balances_it() {
+        let heard = |balance: i32| {
+            let (mut main, mut sub) = (Sound::default(), Sound::default());
+            sub.balance = balance;
+            main.recorder.start(FRAME_SAMPLES, false);
+            main.render_frame();
+            sub.render_frame();
+            sub.mix = [vec![0.25; FRAME_SAMPLES], vec![-0.25; FRAME_SAMPLES]];
+            main.hear_sub(&sub);
+            main.recorder.samples()[FRAME_SAMPLES - 1]
+        };
+        assert_eq!(heard(0), [16256, -16256]);
+        assert_eq!(heard(127), [0, 0]);
+        let [l, r] = heard(64);
+        assert!((l - 8063).abs() <= 1 && (r + 8063).abs() <= 1, "{l} {r}");
+        assert_eq!(balance_gains(64), (1.0, 63.0 / 64.0));
+        assert_eq!(balance_gains(127).0, 127.0 / 64.0);
     }
 }

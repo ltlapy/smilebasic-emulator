@@ -1692,6 +1692,9 @@ impl Machine {
         self.follow_edits();
         self.rt.begin_frame();
         self.rt.sound.render_frame();
+        if let Some(main) = main.as_deref_mut() {
+            main.sound.hear_sub(&self.rt.sound);
+        }
         // Animations play in direct mode too, and go on while the editor
         // hides the screen (checked on hardware).
         self.rt.animate();
@@ -2755,13 +2758,7 @@ impl Machine {
             return out;
         };
         let theirs = sub.rt.sound.take_samples();
-        // 0 is the subprogram's sound only, 64 both in full and 127 the
-        // main interpreter's only. UNVERIFIED: the curve between.
-        let balance = sub.rt.sound.balance as f32;
-        let (main_gain, sub_gain) = (
-            (balance / 64.0).min(1.0),
-            ((127.0 - balance) / 63.0).min(1.0),
-        );
+        let (main_gain, sub_gain) = crate::sound::balance_gains(sub.rt.sound.balance);
         if out.len() < theirs.len() {
             out.resize(theirs.len(), 0.0);
         }
