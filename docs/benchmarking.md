@@ -137,8 +137,9 @@ console's time and gives each frame a sixtieth of a second of it:
   costs by its size, along straight lines through TEST70's and TEST71's
   times for 1, 100, 500, 1000, 2000 and 4096 sprites, and `SPCLR` with no
   arguments costs what a range of all 4096 does, as TEST71 finds. `GCLIP`
-  costs more with arguments than without. `LOCATE` with two arguments,
-  `SPSHOW`, `SPVAR`, `SPCHR`, `STICK`, `SPOFS` with `OUT`, `GPSET`,
+  costs more with arguments than without. `LOCATE` with a screen, its
+  third argument, costs what TEST72 times for it. `LOCATE` with two
+  arguments, `SPSHOW`, `SPVAR`, `SPCHR`, `STICK`, `SPOFS` with `OUT`, `GPSET`,
   `GPGET`, `CHKCHR` and `BGMCHK` each cost what TEST71 times for them
   alone. Other sprite commands cost a set amount each. Sprites, layers and
   text screens cost nothing to show, as TPERF and TEST67 find on both
@@ -151,12 +152,13 @@ console's time and gives each frame a sixtieth of a second of it:
 - A `GFILL` whose left edge is not on a 16-pixel boundary costs more for
   each row. The model keeps that cost for fills 8, 16, 32, 64 and 128
   pixels wide, with straight lines between, in proportion below 8 and the
-  same past 128, in two tables: one for a left edge on a 4-pixel boundary
-  and one for an edge off it. TEST71 times fills at x 16, 17, 20 and 24.
-  On a Switch 1 a 32x32 `GFILL` takes 2.1 microseconds at x 16, 4.1 at
-  x 20 or x 24 and 7.5 at x 17. Fills 64 and 128 wide cost the same at
-  every place off a 16-pixel boundary, and fills 8 and 16 wide cost little
-  or nothing more anywhere. A Switch 2 shows much less of it. `GCOPY` pays
+  same past 128, in one table for each column of the left edge within its
+  16 pixels. TEST71 times fills at x 16, 17, 20 and 24, and TEST72 at x 18,
+  22 and 26. On a Switch 1 a 32x32 `GFILL` takes 2.1 microseconds at x 16,
+  4.1 at x 20, 24 or 26, 5.2 at x 18, 8.3 at x 22 and 7.5 at x 17. Odd
+  columns cost as x 17 does, and column 14 is a guess. Fills 64 and 128
+  wide cost the same at every place off a 16-pixel boundary, and fills 8
+  and 16 wide cost little or nothing more anywhere. A Switch 2 shows much less of it. `GCOPY` pays
   60% of the table by where it draws, whatever its source, and a blended
   `GFILL` 18% on a Switch 1 and nothing on a Switch 2.
 - A misaligned `GFILL`, or a blended one, at a place that is not among the
