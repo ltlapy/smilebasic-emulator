@@ -64,6 +64,14 @@ pub(crate) trait Synth {
         self.note_off(channel, from);
         self.note_on(channel, to, 100);
     }
+    /// BEEP's pan for a preset effect, 0 to 127: it moves every voice by
+    /// as much as a channel's pan would from 64, so a mono effect at 127
+    /// plays right only, and each side of a stereo effect moves on its
+    /// own. Gives whether the synthesizer can; BEEP balances what it gives
+    /// when not.
+    fn pan_offset(&mut self, _pan: i32) -> bool {
+        false
+    }
     /// Every note on the channel stops at once.
     fn channel_off(&mut self, channel: usize);
     /// Every note stops at once and the channels go back to how they

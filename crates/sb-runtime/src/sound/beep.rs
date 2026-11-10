@@ -143,6 +143,8 @@ enum Sounding {
         synth: Box<dyn Synth>,
         until_tick: f64,
         tail: u32,
+        /// The synthesizer pans the voices itself.
+        own_pan: bool,
     },
 }
 
@@ -223,7 +225,8 @@ impl Beeps {
                 s.volume(h, volume);
                 s.pan(h, pan);
             }),
-            Sounding::Preset | Sounding::Sequence { .. } => {}
+            Sounding::Sequence { synth, own_pan, .. } => *own_pan = synth.pan_offset(pan),
+            Sounding::Preset => {}
         }
     }
 
@@ -258,6 +261,7 @@ impl Beeps {
                         synth,
                         until_tick: 0.0,
                         tail: RELEASE_FRAMES,
+                        own_pan: false,
                     }
                 }
                 None => Sounding::Preset,
@@ -466,6 +470,7 @@ impl Beeps {
                     synth,
                     until_tick,
                     tail,
+                    own_pan,
                 } => {
                     player.begin_block();
                     let mut done = 0;
@@ -480,7 +485,10 @@ impl Beeps {
                         done += chunk;
                     }
                     let volume = b.volume as f32 / WAVE_VOLUME * player.volume();
-                    let (pl, pr) = balance(b.pan);
+                    let (pl, pr) = match own_pan {
+                        true => (1.0, 1.0),
+                        false => balance(b.pan),
+                    };
                     for i in 0..n {
                         let gain = volume * b.fade.value as f32;
                         left[i] += wl[i] * gain * pl;
@@ -525,8 +533,8 @@ impl Beeps {
 }
 
 /// Left and right gains that move a stereo sound towards one side: 64
-/// keeps both, 0 and 127 silence the other side.
-// UNVERIFIED: how BEEPPAN pans SmileBASIC 4's stereo effects.
+/// keeps both, 0 and 127 silence the other side. Only for SoundFonts,
+/// whose synthesizer cannot pan an effect's voices.
 fn balance(pan: i32) -> (f32, f32) {
     let p = pan.clamp(0, 127) as f32;
     (((127.0 - p) / 63.5).min(1.0), (p / 63.5).min(1.0))

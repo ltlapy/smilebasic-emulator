@@ -305,6 +305,9 @@ struct Channel {
     bend: i32,
     /// MML's @E, over the instruments' own.
     envelope: Option<MmlEnvelope>,
+    /// BEEP's pan as a position, added to every voice's: see
+    /// [`Synth::pan_offset`].
+    pan_offset: f32,
 }
 
 impl Default for Channel {
@@ -317,6 +320,7 @@ impl Default for Channel {
             lfos: [Lfo::default(); 3],
             bend: 0,
             envelope: None,
+            pan_offset: 0.0,
         }
     }
 }
@@ -392,7 +396,8 @@ impl Voice {
                 / 127.0
                 * self.velocity
         };
-        let [l, r] = pan_gains(pan_position(ch.pan + i32::from(self.region.pan) - 64) + pan);
+        let at = pan_position(ch.pan + i32::from(self.region.pan) - 64) + pan + ch.pan_offset;
+        let [l, r] = pan_gains(at);
         let target = [gain * l, gain * r];
         if !self.begun {
             // The note starts at its first step's level, as waveforms do:
@@ -666,7 +671,17 @@ impl Synth for Sampler {
 
     fn reset(&mut self) {
         self.voices.clear();
-        self.channels = [Channel::default(); CHANNELS];
+        let pan_offset = self.channels[0].pan_offset;
+        self.channels = [Channel {
+            pan_offset,
+            ..Channel::default()
+        }; CHANNELS];
+    }
+
+    fn pan_offset(&mut self, pan: i32) -> bool {
+        let at = pan_position(pan);
+        self.channels.iter_mut().for_each(|c| c.pan_offset = at);
+        true
     }
 
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
@@ -809,6 +824,37 @@ mod tests {
         assert!((preset(64) / plain - 1.0).abs() < 0.01);
         assert!((preset(127) / plain - 127.0 / 64.0).abs() < 0.02);
         assert!((preset(32) / plain - 0.5).abs() < 0.01);
+    }
+
+    /// A mono effect panned to one side by BEEP plays there at equal
+    /// power, 1.41 times as loud as in the middle, and BEEPPAN moves it.
+    #[test]
+    fn beep_pans_a_preset_at_equal_power() {
+        use crate::sound::beep::{BeepSound, Beeps};
+        use crate::sound::synth::Instruments;
+        let instruments = Instruments::Bank(Arc::new(bank(ORGAN, false)));
+        let sides = |pan, moved: Option<i32>| {
+            let mut beeps = Beeps::new(Some(&instruments));
+            let h = beeps.play(0, BeepSound::Sequence(effect()), 0, 64, pan, false);
+            if let Some(to) = moved {
+                beeps.set_pan(h.unwrap(), to);
+            }
+            let (mut l, mut r) = (vec![0.0; 800], vec![0.0; 800]);
+            for _ in 0..6 {
+                l.fill(0.0);
+                r.fill(0.0);
+                beeps.render(&mut l, &mut r);
+            }
+            let peak = |v: &[f32]| v.iter().fold(0f32, |m, x| m.max(x.abs()));
+            (peak(&l), peak(&r))
+        };
+        let (cl, cr) = sides(64, None);
+        assert!(cl > 0.01 && (cl - cr).abs() < 1e-4);
+        for (l, r) in [sides(0, None), sides(64, Some(0))] {
+            assert!((l / cl - 2f32.sqrt()).abs() < 0.01 && r < 1e-4, "{l} {r}");
+        }
+        let (l, r) = sides(127, None);
+        assert!(l < 1e-4 && (r / cr - 2f32.sqrt()).abs() < 0.01);
     }
 
     #[test]
