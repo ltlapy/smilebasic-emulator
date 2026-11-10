@@ -13,7 +13,7 @@ matters. A real Switch outranks Ryujinx where the text says so.
 TEST62 and TEST63 ran on 4.4.9 on a Switch 2. What TEST62 shows had been read in
 SmileBASIC 4 first, and so had most of what TEST63 shows. "By SmileBASIC 4" means expected of SmileBASIC 4. "(Not yet seen on hardware.)" marks what
 was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
-TEST71 ran on 4.4.9 on a Switch 1 and a Switch 2.
+TEST71 and TEST72 ran on 4.4.9 on a Switch 1 and a Switch 2.
 
 ## Contents
 
@@ -112,9 +112,7 @@ TEST71 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `LOAD "GRP0:X"` `Illegal format (LOAD:1)` and `LOADV "TXT:A",S$` `Wrong
   number of arguments (LOADV)` (TEST67). A value that fails as it goes into
   the array gets no number: `UNSHIFT M%,2147483648` is `Overflow (UNSHIFT)`,
-  as `PUSH` and `COPY` are (TEST66, TEST67). `COPY` of an array past the
-  source's end is `Subscript out of range (COPY)`, error 31, with no number
-  either (TEST71). Operators
+  as `PUSH` and `COPY` are (TEST66, TEST67). Operators
   and plain stores name nothing: DIV, MOD, the bit operators, unary minus and
   `M%[0]=V` give `Overflow in 1:2`, and DIV or MOD by 0 `Divide by zero in 1:2`
   (TEST65, TEST66).
@@ -124,6 +122,13 @@ TEST71 ran on 4.4.9 on a Switch 1 and a Switch 2.
   (SPOFS)`, with no number. A `DEF` function or command given the wrong number
   of arguments is `Wrong number of arguments in 3:2`, with nothing after the
   place.
+- `COPY` past the source's end is `Subscript out of range`, error 31, in every
+  form (TEST71, TEST72). The function form names the argument that goes past:
+  on five elements, `COPY(B,6)` is `(COPY:2)` and `COPY(B,2,5)` `(COPY:3)`, and
+  `COPY("ABCDE",6)` and `COPY("ABCDE",2,5)` the same. The command form names
+  none: `COPY A,0,B,6,1` and `COPY A$,0,"ABCDE",2,5` are `(COPY)`. An offset
+  equal to the length with a count of 0 is no error: `COPY A,0,B,5,0`
+  (TEST72).
 - `CHR$(-1)` is no error: it gives `CHR$(&HFFFF)` (TEST69).
 - `CHR$` takes any int and keeps its low 16 bits: `CHR$(65601)` is `"A"`,
   `CHR$(-2)` U+FFFE, `CHR$(&H7FFFFFFF)` U+FFFF, and `CHR$(65536)` and
@@ -220,6 +225,9 @@ TEST71 ran on 4.4.9 on a Switch 1 and a Switch 2.
 - A `DEF` with the name of a system function is `Duplicate function` when the
   program compiles, at the `DEF`, as two `DEF`s of one name are:
   `DEF LAST(T)` on line 41 of slot 3 is `Duplicate function in 3:41` (TEST71).
+  `DEF BEEP`, `DEF BGMPLAY N`, `DEF SIN(X)` and `COMMON DEF LAST(A)` are
+  `Duplicate function` too, error 19, also with a `BEEP` used above the `DEF`.
+  `DEF PRINT` is a `Syntax error` (TEST72).
 - `GOSUB`s, `DEF` calls, `RESTORE "PUSH"` and the values of expressions share a
   stack of about 259072 slots, by the depths they reach (TEST63, 4.4.9 on a
   Switch 2). A `GOSUB` takes 1. A command `DEF` called takes 6, a function 8,
@@ -488,6 +496,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   with no DATA, after `EXEC 1`, calling a `COMMON DEF` of slot 1 that `READ`s
   stops with `Out of DATA` on that DEF's line in slot 1, though slot 1 has
   DATA (TEST71).
+- A `READ` at the top level of a slot that `EXEC` runs reads that slot's
+  DATA. Slot 3 read 31 from its own, `EXEC 1` read 11, slot 1's first value,
+  and slot 3's next `READ` gave 32 (TEST72).
+- `RESTORE "1:@BEGIN"` in slot 3 moves the one `READ` place into slot 1's
+  DATA: slot 3 read 11, a `COMMON DEF` of slot 1 read on with 12, slot 3 with
+  13, and after `RESTORE "1:@OTHER"` the `COMMON DEF` read 21 (TEST72).
 - `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack underflow`.
 - `RESTORE "PUSH"` can keep a thousand places, and many more: see the stack
   under `DEF`, `OUT` and `RETURN`. A subroutine that keeps a place must take it
@@ -654,6 +668,11 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `BREPEAT` takes a start of 0 as 1: `BREPEAT 5,0,3:BREPEAT 5 OUT S,I` gives 1
   and 3 (TEST62), and after `BREPEAT 0,0,0` it gives 1 and 0 (TEST71).
 - `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14 to 16).
+- `BUTTON`'s press and release conditions (2 and 3) give `#B_RANY`, `#B_LANY`
+  and `#B_ANY` only on the frame that bit itself goes on or off. L held gives
+  L and `#B_ANY` on its press. Pressing A while L is held gives `&H4008`, A
+  and `#B_RANY`, and releasing A gives the same: `#B_ANY` stays on for L
+  throughout. Releasing L then gives L and `#B_ANY` (TEST72).
 - `BUTTON()` without arguments is `Wrong number of arguments`.
 - `#B_X`, `#B_B`, `#B_Y`, `#B_A` are 0, 1, 2, 3. (TEST62)
 
@@ -788,6 +807,15 @@ TEST71K on a docked Switch 2 (4.4.9) with a USB keyboard:
   `KEYBOARD 4 OUT R,M`'s modifiers. `KEYBOARD`'s condition 1 gave 0 all
   through.
 - A key held as a program ends goes on repeating in DIRECT mode.
+
+TEST72K on a docked Switch 2 (4.4.9) with a USB keyboard:
+
+- Alone, Tab types `CHR$(9)`, Delete `CHR$(&H10)`, Home `CHR$(2)`, End
+  `CHR$(3)` and Esc `CHR$(&H1B)`.
+- With Left Ctrl, L or R held, Tab, Delete and Esc type nothing, as Enter and
+  Backspace do. Home and End still type, as the Left arrow does.
+- Left Shift (usage 225) and Right Shift (229) each give modifiers 2 in
+  `KEYBOARD 4 OUT R,M`.
 
 Expected but not yet seen on hardware:
 
@@ -961,7 +989,10 @@ Expected but not yet seen on hardware:
   left) and `VIBRATE(1,0)` 40; with frequencies it is -1, still a second later.
   `VIBRATE` alone clears it.
 - `VIBRATE`'s form with frequencies vibrates with a low frequency of 0, a low
-  amplitude of 0 or a high frequency of 0 (TEST71, felt by hand).
+  amplitude of 0 or a high frequency of 0 (TEST71, felt by hand). With both
+  amplitudes 0 it does not: `VIBRATE 1,160,0,320,0` stopped a vibration
+  `VIBRATE 1,160,100,320,100` had started, and after `VIBRATE 1,0` it started
+  none (TEST72, felt by hand).
 
 ## Screens and text
 
@@ -1049,7 +1080,9 @@ Expected but not yet seen on hardware:
   `Out of range (GLOAD:3)` (TEST71).
 - `TSAVE`'s width and height have to be 1 or more: 10x0 and 10x-1 are
   `Out of range (TSAVE:5)`, and 5000x1 goes, reaching off the screen. `GSAVE`'s
-  -1 is `Out of range (GSAVE:4)`. (TEST62)
+  -1 is `Out of range (GSAVE:4)`. (TEST62) A width of 0 is `(TSAVE:4)`. For
+  `GSAVE`, a width of -1 is `(GSAVE:4)` and a height of -1 `(GSAVE:5)`, while a
+  width of 0 is no error (TEST72).
 
 ### `TROT`, `TOFS` and `TCOORD`
 
@@ -1495,8 +1528,9 @@ Expected but not yet seen on hardware:
   `@E128,0,0,0C` gives 5 and `@E0,0,0,128C` 11. Lower case letters and a
   second dot pass (TEST67, and `o4c` and `C4..` in TEST70).
 - `CHKMML` checks no instrument number up to 256: `@148` to `@216` pass
-  (TEST67), and so do `@224`, `@255` and `@256` (TEST70). Whether `@224` to
-  `@256` make a sound is not known.
+  (TEST67), and so do `@224`, `@255` and `@256` (TEST70). With nothing set,
+  `@224` to `@255` all play `@224`'s sine: `@n O4L2A` records at an RMS of 2886
+  on 224, 225, 232, 240, 248 and 255. `@256` sounds too, at 698 (TEST72).
 - `@MP`, `@MA` and `@ML` take 0 to 127 in each of their four places, and
   `CHKMML` stops just after a 128: `@MP128,1,1,1C` gives 6, `@MP1,128,1,1C` 8,
   `@MP1,1,1,128C` 12, and `@MA` and `@ML` the same (TEST69).
@@ -1508,10 +1542,14 @@ Expected but not yet seen on hardware:
   4), but not through a repeat: `O8[<C]3` gives -1 (TEST69).
 - A chord of one note fails: `CHKMML("O8|<C|<C")` gives 3, just after the
   first bar, before the `<` inside is checked (TEST71).
+- A chord takes two to six notes: `|CDEFGA|` passes and `|CDEFGAB|` gives 1,
+  just after the first bar. An octave change after the last note fails there
+  too: `|CE<|` gives 1. Something other than a note between the bars fails at
+  the end of the part before it: `|CR|` gives 2 (TEST72).
 - An octave set inside a chord lasts to the chord's end: the note after
-  `|A<CE|` is in the octave before the chord, so `O8|<CE|<C` passes. Songs in
-  shared projects write dozens of such chords in a row, which would pass octave
-  9 if the octave carried on. (Not yet seen on hardware.)
+  `|A<CE|` is in the octave before the chord, so `O8|<CE|<C` passes (TEST72).
+  Songs in shared projects write dozens of such chords in a row, which would
+  pass octave 9 if the octave carried on.
 - A space after `O` changes nothing: `CHKMML("$0=9O $0<C")` gives 5 too, just
   after the `O`. `>` reaches octave -1 from 0: `O0>C` and `O-1C` give -1 and
   `O0>>C` 4. `O9<C` gives 3 and `O9>C` -1 (TEST70).
@@ -1525,7 +1563,12 @@ Expected but not yet seen on hardware:
   error inside a macro is placed just past the macro's use:
   `{X=@MP128,1,1,1}C{X}` gives 20 (TEST71).
 - `CHKMML("C]0")` and `CHKMML("C]-")` give 2, just after the `]`, which has no
-  `[` before it (TEST71).
+  `[` before it (TEST71). So do `C]1` and `C]`, while `[C]0`, `[C]1` and `[C]`
+  pass (TEST72).
+- A channel's MML stands in one piece: going back to a channel an earlier `:`
+  left is refused. `CHKMML(":0@218T120O4L1@MP64,1,16,0:1R1:0@MPONC")` gives
+  31, just after the third `:` (TEST72). Whether a channel above the one left
+  is refused the same way is not known.
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
@@ -1554,10 +1597,20 @@ Expected but not yet seen on hardware:
   - The sine runs 5 ms behind the note, or behind the end of the delay:
     `@MP64,1,20,0` is at 0 5 ms in, and `@MP64,1,20,8` begins at 325 ms at T60
     as at T120.
+  - `@MOF` stops all three: a note after `@MP100,100,40,0@MOF`, and the same
+    with `@MA` or `@ML`, records as one with none (TEST72).
   - `@MON` turns all three back on as last set.
   - `@MPON`, `@MAON` and `@MLON`, which the manual leaves out, turn one back on
-    as last set, as `@MPOF`, `@MAOF` and `@MLOF` turn one off. After `@MPO` only
-    `F` or `N` may follow.
+    as last set, as `@MPOF`, `@MAOF` and `@MLOF` turn one off. In
+    `@MP64,1,16,0A@MPOFA@MPONA` the first and third notes swing and the second
+    does not, as with `@MOF` and `@MON`, and `@MPON` with no `@MP` before it
+    swings nothing (TEST72, by recording and by ear).
+  - After `@MPO` only `F` or `N` may follow: `@MPONC`, `@MAONC`, `@MLOFC`,
+    `@MONC`, `@MOFC` and lower case `@mpon` pass, and `@MPOFFC` is `@MPOF`
+    and the note F. With another letter the `@` word runs on through the
+    letters, and `CHKMML` fails at its end: `@MPOXC` gives 6, `@MOX` 4,
+    `@MAOC` and `@MLOC` 5, and `@MPO C` 4, where the space ends the word
+    (TEST72).
 - `@MA`'s swing is read in tenths of a dB, truncated, and stops at the sound
   engine's limits: no more than +6 dB, and silence from -90.4 dB down. A wide
   one such as `@MA127,110,12,0` (±655 dB as asked) therefore chops the note into
@@ -1587,6 +1640,8 @@ Expected but not yet seen on hardware:
 - `@216` to `@222` (PSG) and `@223` (noise) are instruments of the sound archive
   like `@0`. Each PSG tone records at an RMS of about 4031 (peak 4090) at V127,
   whatever its width, and the noise at 2839, never going below zero.
+- `@216` to `@222` are pulses high for 1/8 to 7/8 of each cycle: 131, 254, 377,
+  499, 623, 745 and 867 thousandths of an `O4A` recorded (TEST72).
 - An instrument region's own volume is a linear gain (`@0`'s is 88), unlike `V`
   and `@V`.
 - `WAVSET`'s waveform does not play as one cycle of the note. 32 samples of one
@@ -1747,6 +1802,12 @@ Expected but not yet seen on hardware:
   `BEEP 95` at 1455 (RMS over the first 100 ms 312, 429 and 303).
 - `BEEP`'s volume on a preset effect is linear, as for waveforms: `BEEP 0` at
   127 and 32 peaks at 1395 and 351 (TEST61).
+- `BEEP`'s pan moves a preset effect at equal power. `BEEP 0` records at an RMS
+  of about 150 on each side at pan 64, and at 0 or 127 about 210 on its side,
+  1.41 times as much, and 0 on the other. `BEEPPAN` gives the same numbers as
+  `BEEP`'s argument. A stereo effect moves each side on its own and keeps part
+  of the other side at full pan: `BEEP 40` at pan 0 records 224 left and 147
+  right, and `BEEP 152` 756 and 283 (TEST72).
 
 ### `TALK` and sung notes
 
@@ -1761,8 +1822,9 @@ Expected but not yet seen on hardware:
   off.
 - `CHKMML` does not check a sung note's letters: `*CA,C`, `*XA,C` and
   `*KXA,C` give -1 (TEST71). `*KONNICHIWA,C1` is `Illegal MML` at its second
-  N, the fourth letter (TEST44), which fits a sung note of three letters at
-  most before its comma.
+  N, the fourth letter (TEST44). A sung note takes three letters at most
+  before its comma: `*KOQNICHIWA,C1` and `*SHYA,C` give 4, and `*KON,C`
+  passes (TEST72).
 
 ### Effector, recording and balance
 
@@ -1781,6 +1843,13 @@ Expected but not yet seen on hardware:
   samples from 500 before its end gives those older samples where this
   recording has none (TEST71).
 - `SNDMSBAL` starts at 63, though the manual calls 64 even.
+- `SNDMSBAL`'s balance b scales the main program's sound by b/64, from none at
+  0 to twice as loud at 127, and the subprogram's the other way. A main
+  program's `RECSTART` hears both, mixed so. With the balance set in the
+  subprogram, `BEEP 256,0,64,64` in the main program recorded at an RMS of 0,
+  199, 318 and 631 for balances 0, 40, 64 and 127, and the same `BEEP` in the
+  subprogram at 600, 419, 313 and 125 to 134 (TEST72). The subprogram's side
+  fits (127-b)/64 but for 127, where that gives none.
 - `SNDMSBAL()` and `PCMPOS()` work as functions.
 
 ## Signal processing
@@ -1836,10 +1905,13 @@ Expected but not yet seen on hardware:
   alike. The list fills every row of the console but the last, which says
   `=== Press ENTER ===`, so the page follows the console's size (29 rows of the
   list on the usual 30). Any key or button goes on, and a held key goes on as it
-  repeats.
+  repeats. Once a key has gone on, the `=== Press ENTER ===` line does not stay
+  among the names (TEST72).
 - `FILES` of one type starts with a line giving the count: `FILES "DAT:"`
   shows `-- 1 files --` above a project's one DAT file, and `-- 0 files --`
   when there are none (TEST71).
+- `FILES` of one file's name, as `FILES "TXT:NAME"`, prints nothing, not even
+  the count (TEST72).
 
 ## Stopping
 
@@ -2009,9 +2081,10 @@ Expected but not yet seen on hardware:
   on a Switch 1, the failure dialog on a Switch 2.)
 - A file in a `#` system project is `Can't SAVE to system project`, error 75,
   for `SAVE`, `SAVEV` and `SAVEG`: `(SAVEV)` in DIRECT mode and
-  `in 0:203(SAVEV)` in a subprogram. Expected but not yet seen on hardware: a
-  main program gets error 75 too, ahead of its error 74. (TEST71, on a
-  Switch 1.)
+  `in 0:203(SAVEV)` in a subprogram (TEST71, on a Switch 1). A main program
+  gets error 75 too, ahead of its error 74: `SAVEV "TXT:#T72/T72W","X"` is
+  `Can't SAVE to system project in 3:1(SAVEV)`, and `SAVE` and `SAVEG` the
+  same (TEST72).
 - `RENAME` and `DELETE` refuse a project name in DIRECT mode too, with error
   74 and no dialog, and leave the files alone:
   `RENAME "TXT:TEST05/T70R","T70S"` is
@@ -2038,7 +2111,10 @@ Expected but not yet seen on hardware:
   main program and in a subprogram alike. The command then gives `RESULT` 0,
   and `S$=LOADV("TXT:NONE")` gives `""` (TEST67, where a quick press let the
   program go on after 50 to 70 frames). `LOADG` of a missing `DAT:` or `JPG:`
-  file does the same. Typed in DIRECT mode, `LOADV` asks before it loads
+  file does the same. Left alone, the dialog stays: `LOADG "DAT:NONE",1` in a
+  main program came back with `RESULT` 0 after 4584 frames on one console and
+  2022 on the other, once the person answered it, over 30 seconds after it
+  opened (TEST72). Typed in DIRECT mode, `LOADV` asks before it loads
   (TEST71, by hand).
 - `LOADV "DAT:F",M%` of a real file into an int array converts as `INT()`
   does, with NaN as 0: NaN, 1.9 and -1.9 load as 0, 1 and -1, and 2147483647.5
@@ -2050,9 +2126,9 @@ Expected but not yet seen on hardware:
   function, `S$=LOADV("DAT:F")` of a DAT file of 3 values gives a string of 3
   characters and `RESULT` 1 (TEST69). `LOADV "GRP:X",S$` is the same
   `Type mismatch (LOADV:2)` (TEST71).
-- `LOADV` of a `JPG:` name, as a function and as a command, of a `PNG:` name
-  as a command, and of a name without a type in either form, is
-  `File type mismatch (LOADV)`, error 77, with no number (TEST71).
+- `LOADV` of a `JPG:` or `PNG:` name, as a function and as a command, and of
+  a name without a type in either form, is `File type mismatch (LOADV)`, error
+  77, with no number (TEST71; the `PNG:` function form in TEST72).
 - `RESULT` is 0 after `IF CHKFILE("TXT:NONE") THEN LOADV ...` of a missing
   file, where the program before left it 1 (TEST67).
 - `CHKFILE` leaves `RESULT` as it was, whether the file is there or not:
@@ -2062,9 +2138,9 @@ Expected but not yet seen on hardware:
 - `RESULT` went from 1, where a main program left it, to 0 in the program
   that `RUN` started next, after some direct-mode lines (TEST70). A program
   that ends with `RESULT` 1 leaves it 1 for DIRECT mode, and lines typed there
-  that run no file command leave it too (TEST71). Expected but not yet seen on
-  hardware: `RUN` sets it to 0 once the program compiles, and a program with a
-  syntax error leaves it.
+  that run no file command leave it too (TEST71). `RUN` sets it to 0 once the
+  program compiles: from 1, a program's first line read 0. A program with a
+  `Syntax error` leaves it, 1 staying 1 (TEST72).
 - The main and the sub interpreter each have a `RESULT` of their own. A
   subprogram's `LOADV` that gave 1 left the main program's `RESULT` 0, and the
   main program's `LOADV` left the subprogram's 0 (TEST70, both consoles).
@@ -2083,12 +2159,17 @@ Expected but not yet seen on hardware:
   `@BACKUP.TXT`, and No on the question gave `RESULT` -1 and left the file
   alone (TEST67).
 - `FILES("//")` ends each project's name with `/`, lists the workspace as `/`,
-  and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`).
+  and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`). The names sort
+  in ASCII order, so the workspace's `/` comes after names that start with `#`
+  or `-` (TEST72).
 - `FILES` takes a `/` after a project's name (`FILES("TXT:NAME/")`), and
   `FILES("TXT:/")` lists the workspace.
-- `METALOAD "NAME"` loads another project's metadata (a project that is not
-  there is `Undefined project name`); `METALOAD` alone loads the current one's
-  again. Before any `METALOAD`, the title is the project's name.
+- `METALOAD "NAME"` loads another project's metadata; `METALOAD` alone loads
+  the current one's again. Before any `METALOAD`, the title is the project's
+  name.
+- `METALOAD` of a project that is not there is
+  `Undefined project name (METALOAD:1)`, error 76, and `ENVSTAT` gives its
+  argument as 0 (TEST72).
 - `METAEDIT(item)` works as a function. `METAEDIT` cuts a title to 24
   characters and a description to 240, with no error (TEST71).
 - `METASAVE` asks first, and does not set `RESULT`: after one that saved,
@@ -2109,7 +2190,7 @@ TTEST36.
 - `ENVINPUT$(1)` is the direct-mode line typed last, the `SUBRUN` itself.
 - `ENVSAVE`'s kind 0 is `Illegal function call (ENVSAVE:1)` and 5
   `Out of range (ENVSAVE:1)`, in a main program too. Kinds 3 and 4 are no
-  error (TEST71).
+  error (TEST71). -1 is `Out of range (ENVSAVE:1)` as well (TEST72).
 - A busy subprogram takes none of the main program's time: `A=A+1` and a
   32-pixel `GFILL` in the main program cost the same while the subprogram runs
   a loop with no `VSYNC` (TEST71S).
@@ -2166,7 +2247,8 @@ TTEST36.
   program sees no A while the dialog is open: `BUTTON` 0 all through on a
   Switch 1 (TEST67).
 - With a `DIALOG` open on each side, one press of A closes both in the same
-  frame, wherever the focus is (TEST64).
+  frame, wherever the focus is (TEST64). Only the main program's dialog shows,
+  though the subprogram's opened first, and both give `RESULT` 1 (TEST72).
 - `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
   answer until then: `ENVFOCUS 0` took one to three frames (it varied from run
   to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the focus is moving is lost
@@ -2239,9 +2321,10 @@ TTEST36.
   `(COPY)`, `(LEFT$)` or an operator's error (TEST66). TEST67 gave 1 after
   `(MID$:2)`, 2 after `(FILL:3)`, 0 after `(LOAD:1)` and -1 after
   `(UNSHIFT)`. It is 1 after `(LEFT$:2)`, 1 after `(BIQUAD:2)` and -1 after
-  `SQR(-1)`'s unnamed `Out of range` (TEST71).
-- A run-time error in a line typed in DIRECT mode sets the status to 2 and
-  leaves N, A, C and L as they were: from a fresh start's S 0, N 0, A 0,
+  `SQR(-1)`'s unnamed `Out of range` (TEST71), and 1 after `(COPY:2)` and 2
+  after `(COPY:3)` (TEST72).
+- An error found while a line typed in DIRECT mode runs sets the status to 2
+  and leaves N, A, C and L as they were: from a fresh start's S 0, N 0, A 0,
   C -1, L 0 it gives S 2 and the rest the same, for `RENAME`, `DELETE` and
   `LOADG` errors in DIRECT mode and for `EXEC`'s `Can't use from direct mode`
   (TEST69, TEST70). After a program's `Out of range` with N 10, A 1, C 5 and
@@ -2253,9 +2336,15 @@ TTEST36.
   program's compile error does: from 0 it stayed 0, with an empty line typed
   after it. After a `STOP` it stays 1, with N 0 and A, SL and C -1, and
   `CONT` then goes on and leaves 0 (TEST71).
+- `?1/0` typed in DIRECT mode is a compile error too, as operations on
+  constants are worked out as the line compiles: it prints `Divide by zero`
+  and leaves the status. From 0 the status stayed 0 through `?1/0`, an empty
+  Enter, another `Syntax error` and `?1` (TEST72).
 - `ENVSTAT OUT S,N,A,SL,C,L` after a compile error is set as for an error when
   running, but for the status, which stays 0: S 0, N 3, A -1, C the character of
-  the token it names from the start of the program, L its line (TEST62).
+  the token it names from the start of the program, L its line (TEST62). A
+  `Syntax error` in an assignment's value is placed at its `=`: for `A=(` on
+  line 2, C is the `=`'s character, one past the `A` (TEST72).
 - `ENVLOCATE OUT X,Y`, which the manual leaves out, gives the right edge and top
   of the main console's cursor cell on the display. With the 400x240 screen 1200
   pixels wide in its middle, the cursor at column C of row R is at 40+24*(C+1),
