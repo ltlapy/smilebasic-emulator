@@ -191,6 +191,19 @@ fn drawing_off_a_16_pixel_boundary_costs_more() {
     assert!(aligned < same && same < off, "{same} us, {off} us");
 }
 
+/// Of the columns 2 pixels off a 4-pixel boundary, a 32-pixel GFILL at
+/// x 22 costs the most on a Switch 1 and one at x 26 the least, as TEST72
+/// finds: 8.3, 5.2 and 4.1 microseconds at x 22, 18 and 26.
+#[test]
+fn the_column_of_a_fills_edge_sets_its_cost() {
+    let fill =
+        |x: u32| format!("PERFBEGIN 0:FOR I=0 TO 99:GFILL {x},0,{x}+31,31,-1:NEXT:?PERFEND(0)\n");
+    let at = |x| passes(Speed::Switch1, &fill(x));
+    let (x18, x22, x26) = (at(18), at(22), at(26));
+    assert!(x26 < x18 && x18 < x22, "{x18} us, {x22} us, {x26} us");
+    assert!((780.0..880.0).contains(&x22), "{x22} us");
+}
+
 /// Changing 64 sprites in turn costs what changing one does; changing
 /// 1024 in turn costs more on a Switch 1 (TEST69, TEST70).
 #[test]

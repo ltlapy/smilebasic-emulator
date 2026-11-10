@@ -11,19 +11,19 @@
 //! `PERFEND` and `MILLISEC` measure the same time.
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65, TEST67,
-//! TEST69, TEST70 and TEST71, timed on both consoles running SmileBASIC
-//! 4.4.9, and from TEST68 on a Switch 2 (docs/benchmarking.md). TEST70
-//! finds a Switch 2 as fast in the hand as docked.
+//! TEST69, TEST70, TEST71 and TEST72, timed on both consoles running
+//! SmileBASIC 4.4.9, and from TEST68 on a Switch 2 (docs/benchmarking.md).
+//! TEST70 finds a Switch 2 as fast in the hand as docked.
 //!
 //! A `GFILL` or `GCOPY` whose left edge is not on a 16-pixel boundary
-//! costs more on each row, by its width, and less on a 4-pixel one
-//! (TEST69 to TEST71, most on a Switch 1). A misaligned or blended
-//! `GFILL` at a place not among the last 64 such places costs more
-//! again. Changing sprites in turn costs more once there are more of them
-//! than 64, so the meter remembers the last 64 sprites changed. The first
-//! read of each file costs more than the next ones. UNVERIFIED: that
-//! these are the console's memory and storage at work, and where between
-//! 64 and 1000 sprites the sprites' cost starts.
+//! costs more on each row, by its width and the edge's column, and less
+//! on a 4-pixel one (TEST69 to TEST72, most on a Switch 1). A misaligned
+//! or blended `GFILL` at a place not among the last 64 such places costs
+//! more again. Changing sprites in turn costs more once there are more of
+//! them than 64, so the meter remembers the last 64 sprites changed. The
+//! first read of each file costs more than the next ones. UNVERIFIED:
+//! that these are the console's memory and storage at work, and where
+//! between 64 and 1000 sprites the sprites' cost starts.
 //! Drawing sprites, layers and text screens happens in the frame job, which
 //! TPERF and TEST67 show costs a program nothing, so only the commands are
 //! charged.
@@ -141,8 +141,10 @@ pub(crate) struct Costs {
     /// `SPROT`, `SPCOLOR` and `LOCATE` do.
     setter: u64,
     /// Commands TEST71 timed alone: `LOCATE`, `SPSHOW`, `SPVAR`, `SPCHR`,
-    /// `STICK` and `SPOFS` with `OUT`, and `GPSET` and `GPGET`.
+    /// `STICK` and `SPOFS` with `OUT`, and `GPSET` and `GPGET`. Then
+    /// `LOCATE` with a screen, which TEST72 times.
     locate: u64,
+    locate_screen: u64,
     spshow: u64,
     spvar: u64,
     spchr: u64,
@@ -218,14 +220,13 @@ pub(crate) struct Costs {
     paint_px: u64,
     /// Each row of a `GFILL` whose left edge is not on a 16-pixel
     /// boundary, 8, 16, 32, 64 and 128 pixels wide, with straight lines
-    /// between, in proportion below 8 and the same past 128: first for
-    /// an edge off a 4-pixel boundary, then for one on it. Then the share
-    /// of it a blended `GFILL` and a `GCOPY` pay, in percent, `GCOPY` by
-    /// where it draws. UNVERIFIED: the widths `GCOPY` and blending were
-    /// not timed at, other than 32, and an edge 2 pixels off a 4-pixel
-    /// boundary, which TEST69's and TEST70's mixes of places only
-    /// suggest costs what an odd one does.
-    place: [[u64; 5]; 2],
+    /// between, in proportion below 8 and the same past 128, by the
+    /// edge's column in its 16 ([`by_column`]). Then the share of it a
+    /// blended `GFILL` and a `GCOPY` pay, in percent, `GCOPY` by where
+    /// it draws. UNVERIFIED: the widths `GCOPY` and blending were not
+    /// timed at, other than 32, and the columns TEST71 and TEST72 did not
+    /// time.
+    place: [[u64; 5]; 16],
     place_alpha_pct: u64,
     place_copy_pct: u64,
     /// On top, at a place not among the last 64 a misaligned or blended
@@ -295,6 +296,7 @@ const SWITCH2: Costs = Costs {
     rnd: 21_000,
     setter: 108_800,
     locate: 23_600,
+    locate_screen: 35_700,
     spshow: 57_700,
     spvar: 44_300,
     spchr: 87_300,
@@ -323,9 +325,11 @@ const SWITCH2: Costs = Costs {
     ],
     sphitsp: 612_300,
     spanim: 540_000,
-    // TEST71's PRINT of one character.
+    // TEST71's PRINT of one character, and TEST69's PRINT of 1000
+    // characters and TPERF's TPRINT, which TEST72's LOCATE with a screen
+    // leaves 3% fast with 22 ns a character.
     print: 67_000,
-    print_char: 22_000,
+    print_char: 22_500,
     // TEST69's PRINT that scrolls a 50x30 console 19 times, 56 us, and
     // TEST68's and TEST69's that scroll a 25x15 one 25 times.
     print_scroll: 329_000,
@@ -378,10 +382,12 @@ const SWITCH2: Costs = Costs {
     // TEST71's GFILL 8 to 128 pixels wide at x 16, 17, 20 and 24, and its
     // GCOPY 32 and 128 at x 17. TEST69's blended GFILL 32 costs no more.
     // TEST70's 128 wide at 10 places in turn costs 30% more.
-    place: [
+    // TEST72's GFILL 32 at x 18, 22 and 26 cost what one at x 17 does.
+    place: by_column(
         [0, 3_850, 1_200, 740, 23_000],
         [0, 3_850, 1_550, 890, 14_000],
-    ],
+        &[],
+    ),
     place_alpha_pct: 0,
     place_copy_pct: 60,
     // TEST71's GFILL and blended GFILL at random places.
@@ -434,6 +440,7 @@ const SWITCH1: Costs = Costs {
     rnd: 48_200,
     setter: 392_900,
     locate: 48_500,
+    locate_screen: 126_900,
     spshow: 160_200,
     spvar: 86_200,
     spchr: 194_000,
@@ -462,7 +469,7 @@ const SWITCH1: Costs = Costs {
     sphitsp: 1_373_700,
     spanim: 840_000,
     print: 158_000,
-    print_char: 40_300,
+    print_char: 41_300,
     // TEST69's two PRINTs that scroll, as for the Switch 2.
     print_scroll: 752_000,
     print_scroll_cell: 4_076,
@@ -498,14 +505,18 @@ const SWITCH1: Costs = Costs {
     char16_px: 24_360,
     paint: 93_500_000,
     paint_px: 16_110,
-    // As for the Switch 2: 150 ns a row of 32 pixels off a 4-pixel
-    // boundary, 61 ns on one. TEST69's blended GFILL pays 18% of it, and
-    // its GCOPY at 10 places and TPERF's at random ones 60%, where
-    // TEST71's at x 17 pays 138%.
-    place: [
-        [6_800, 0, 150_000, 235_000, 182_000],
+    // As for the Switch 2: 168 ns a row of 32 pixels at an odd column,
+    // as at x 17, 61 ns on a 4-pixel boundary, and TEST72's at x 18, 22
+    // and 26 97, 193 and 62 ns. UNVERIFIED: that the other odd columns
+    // cost what x 17 does, and column 14 the 150 ns the model took for
+    // every column off a 4-pixel boundary before TEST72. TEST69's
+    // blended GFILL pays 18% of it, and its GCOPY at 10 places and
+    // TPERF's at random ones 60%, where TEST71's at x 17 pays 138%.
+    place: by_column(
+        [6_800, 0, 168_000, 235_000, 182_000],
         [1_500, 0, 61_500, 235_000, 182_000],
-    ],
+        &[(2, 97_500), (6, 193_000), (10, 62_500), (14, 150_000)],
+    ),
     place_alpha_pct: 18,
     place_copy_pct: 60,
     cold_row: 38_500,
@@ -522,6 +533,24 @@ const SWITCH1: Costs = Costs {
     first_file: 800_000_000,
     first_byte: 30_500,
 };
+
+/// The row costs of [`Costs::place`] for each column of a left edge in its
+/// 16: `off` for one off a 4-pixel boundary, `on` for one on it, and the
+/// cost at 32 pixels wide for the columns `w32` names.
+const fn by_column(off: [u64; 5], on: [u64; 5], w32: &[(usize, u64)]) -> [[u64; 5]; 16] {
+    let mut table = [[0; 5]; 16];
+    let mut x = 1;
+    while x < 16 {
+        table[x] = if x % 4 == 0 { on } else { off };
+        x += 1;
+    }
+    let mut i = 0;
+    while i < w32.len() {
+        table[w32[i].0][2] = w32[i].1;
+        i += 1;
+    }
+    table
+}
 
 /// The console's time a program has used, kept by the runtime.
 #[derive(Debug)]
@@ -729,18 +758,15 @@ impl Meter {
     /// not, as TPERF's GCOPY at random places suggests.
     fn placed(&self, (x, y): (i64, i64), w: u64, rows: u64, pct: u64, fill: Option<bool>) -> u64 {
         let c = self.costs;
-        let off = match x.rem_euclid(16) {
-            0 => None,
-            v => Some(usize::from(v % 4 == 0)),
-        };
+        let column = x.rem_euclid(16) as usize;
         let blended = fill == Some(true);
-        if off.is_none() && !blended {
+        if column == 0 && !blended {
             return 0;
         }
         let cold = fill.is_some() && !self.place_seen(x, y, w, rows);
         let mut cost = 0;
-        if let Some(k) = off {
-            let t = c.place[k];
+        if column > 0 {
+            let t = c.place[column];
             let row = match w {
                 ..=8 => t[0] * w / 8,
                 9..=16 => lerp(t[0], t[1], w - 8, 8),
@@ -887,9 +913,8 @@ impl Runtime {
                 Spofs if args.len() == 1 => c.spofs_out,
                 Spofs => c.spofs,
                 Spscale => c.spscale,
-                // UNVERIFIED: that LOCATE with a screen or a depth, as
-                // TPERF's TPRINT has it, costs what a setter does.
                 Locate if args.len() == 2 => c.locate,
+                Locate if args.len() == 3 => c.locate_screen,
                 Spshow => c.spshow,
                 Spvar => c.spvar,
                 Spchr => c.spchr,
