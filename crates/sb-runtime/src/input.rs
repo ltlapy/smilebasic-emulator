@@ -634,28 +634,26 @@ impl Input {
         self.buttons(0, 3)
     }
 
-    /// Like [`Input::pressed`], but #B_RANY, #B_LANY and #B_ANY are there
-    /// only when they go on this frame: one already on for a held button
-    /// is left out. A wait for buttons in DIALOG answers this way (A with
-    /// L held gives A and #B_RANY, A alone A, #B_RANY and #B_ANY).
-    /// UNVERIFIED: whether BUTTON's own conditions do the same.
-    pub(crate) fn pressed_as_held(&self) -> u32 {
-        let (now, before) = (self.now.buttons(0), self.before.buttons(0));
-        with_any(now) & !with_any(before)
-    }
-
     /// Whether the touch screen was touched this frame.
     pub(crate) fn touched(&self) -> bool {
         self.touch.1 == 1
     }
 
     /// The bits of controller `pad`'s buttons that meet BUTTON's
-    /// condition `function`, with #B_RANY, #B_LANY and #B_ANY.
+    /// condition `function`, with #B_RANY, #B_LANY and #B_ANY. A press or
+    /// a release has those only when they go on or off themselves: with L
+    /// held, pressing or releasing A gives A and #B_RANY, as #B_ANY stays
+    /// on for L. A wait for buttons in DIALOG answers the same way.
     fn buttons(&self, pad: usize, function: i32) -> u32 {
         let (now, before) = (self.now.buttons(pad), self.before.buttons(pad));
         let bits = match function {
             0 => now,
-            1 => {
+            2 => return with_any(now) & !with_any(before),
+            3 => return with_any(before) & !with_any(now),
+            // UNVERIFIED: that a repeat has #B_RANY, #B_LANY and #B_ANY for
+            // any button that goes down or repeats, even when another held
+            // button keeps them on.
+            _ => {
                 let mut bits = now & !before;
                 for (id, &held) in self.held[pad].iter().enumerate() {
                     let (start, interval) = self.repeat[id];
@@ -669,8 +667,6 @@ impl Input {
                 }
                 bits
             }
-            2 => now & !before,
-            _ => !now & before,
         };
         with_any(bits)
     }
@@ -1057,6 +1053,21 @@ mod tests {
         assert_eq!(input.buttons(1, 2), 0);
         press(&mut input, 0);
         assert_eq!(input.buttons(1, 3), 1 << 3 | 1 << 14 | 1 << 16);
+    }
+
+    #[test]
+    fn a_held_button_keeps_any_from_a_press_and_a_release() {
+        let (l, a) = (1 << 8, 1 << 3);
+        let mut input = Input::default();
+        press(&mut input, l);
+        assert_eq!(input.buttons(1, 2), l | 1 << 16);
+        press(&mut input, l | a);
+        assert_eq!(input.buttons(1, 0), l | a | 1 << 14 | 1 << 16);
+        assert_eq!(input.buttons(1, 2), a | 1 << 14);
+        press(&mut input, l);
+        assert_eq!(input.buttons(1, 3), a | 1 << 14);
+        press(&mut input, 0);
+        assert_eq!(input.buttons(1, 3), l | 1 << 16);
     }
 
     #[test]

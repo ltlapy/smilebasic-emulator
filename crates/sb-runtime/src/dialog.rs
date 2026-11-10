@@ -271,7 +271,7 @@ impl crate::input::Input {
             // and #B_ANY as they go on, and leaves out other buttons held.
             DialogKind::Buttons(mask) => {
                 let touch = if self.touched() { TOUCH_BIT } else { 0 };
-                let bits = self.pressed_as_held() | touch;
+                let bits = self.pressed() | touch;
                 (bits & mask != 0).then_some(DialogAnswer::Buttons(bits & (mask | ANY_BITS)))
             }
             _ => None,
