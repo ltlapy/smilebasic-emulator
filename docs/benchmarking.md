@@ -132,6 +132,9 @@ console's time and gives each frame a sixtieth of a second of it:
   characters and each time it scrolls the screen, `LOADG` by the pixels of
   the image and the bytes of its file, and `EXEC` a base and the
   characters it compiles, code at a higher rate than strings and comments.
+  `EXEC` of the program already in a slot, as after `LOAD`, pays 28% of
+  what those characters cost from a file (TEST73). `GPUTCHRP` as a
+  function, which only measures, costs its call.
   `SPSET` costs by its arguments, more for a sprite not in use, and its
   function form pays for each sprite its search passes. `SPCLR` of a range
   costs by its size, along straight lines through TEST70's and TEST71's
@@ -144,6 +147,18 @@ console's time and gives each frame a sixtieth of a second of it:
   alone. Other sprite commands cost a set amount each. Sprites, layers and
   text screens cost nothing to show, as TPERF and TEST67 find on both
   consoles.
+- `GPUTCHR` and `GPUTCHRP` of user-defined characters, which come from
+  the `TPAGE` page, cost by drawing mode: each row of the font's cell and
+  each pixel. On a Switch 1 one character of 16 pixels takes 4.1
+  microseconds in mode 1, 12.2 in mode 2 and 16.0 in mode 3 (TEST73).
+  Modes 1 and 3 cost by the ink drawn, which the model does not count. In
+  modes 2 to 4, SmileBASIC 4's own characters cost the same; in modes 0
+  and 1 they cost as before, by TPERF and TEST71.
+- `GCOPY` with a color code costs a rate of its own a pixel, by drawing
+  mode. On a Switch 1 an 11x11 copy in mode 1 takes 3.5 microseconds with
+  a color and 1.6 without, and a 16x16 one with a color 6.0 in mode 1 and
+  15.2 in mode 3 (TEST73). Modes 0 and 4 are guesses: mode 0 as mode 1,
+  mode 4 as mode 2.
 - Real arguments and a `GCLIP` smaller than the page cost nothing extra, as
   TEST69 finds on both consoles. A `GCLS` on a Switch 2 costs 1.5
   microseconds before its rows and pixels, which shows under a small
@@ -204,7 +219,7 @@ speed leaves plenty of time for. Unlimited counts nothing and runs exactly as
 before.
 
 The costs come from TPERF's scenes and the loops of TEST65, TEST67, TEST68,
-TEST69, TEST70 and TEST71 on 4.4.9 (in `crates/sb-runtime/src/speed.rs`).
+TEST69 to TEST73 on 4.4.9 (in `crates/sb-runtime/src/speed.rs`).
 TEST67 times single commands at several sizes, which splits their cost into
 a base and a cost per row and pixel. TPERF's `WORK` in ms, run with
 `smilebasic-check --speed` and `--play`:
@@ -383,6 +398,32 @@ groups:
   on a Switch 2.
 
 The other rows more than 10% off are within 18%.
+
+TEST73 ran on both consoles. It times a Hangul library that draws text on
+a graphic page: `GPUTCHR` of user-defined characters and `GCOPY` with a
+color, one call at a time in modes 1 to 3, screens of 8 lines through the
+library in modes 0 to 4 with fonts of 16 and 8 pixels, `HGLOAD`, `EXEC`
+of the library after `LOAD`, and 254 calls of `GPUTCHRP` as a function.
+Of its 194 timed rows, the refit to it leaves 132 more than 5% off on a
+Switch 1 and 107 on a Switch 2, from 184 and 187 before. Most rows more
+than 10% off fall into these groups:
+
+- The library's screens in fit mode, its labels, shadows and outlines
+  run up to 31% fast, and its line wrapping 16 to 33% fast. The drawing
+  calls in them match one at a time, so the library's own BASIC costs
+  more on the console than the model charges. Only Galmuri11's and
+  NeoDunggeunmo's lines in fit mode and mode 0, drawn a character at a
+  time by `GPUTCHR`, run 6 to 13% slow on a Switch 2.
+- Modes 1 and 3 cost by the ink drawn. In mode 3, lines of Galmuri11 and
+  NeoDunggeunmo run 8 to 22% slow, where single Hangul syllables run 5 to
+  14% fast. In mode 1, lines of Galmuri11 run 7 to 18% slow and lines of
+  NotoSans, with more ink, 4 to 15% fast.
+- Outlined lines of the 8-pixel font in cell mode run 9 to 17% slow.
+- `GPUTCHRP`'s 254 calls run 23% slow on a Switch 1 and 15% on a Switch
+  2, as their loop's `CHR$` costs more in the model than on the console.
+- An 11x11 `GCOPY` without a color runs 29% fast on a Switch 1 and 39% on
+  a Switch 2.
+- `HGLOAD` runs up to 15% fast.
 
 ## Per-frame costs and overload
 
