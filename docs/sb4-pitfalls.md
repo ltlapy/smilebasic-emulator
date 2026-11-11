@@ -195,6 +195,10 @@ TEST71 and TEST72 ran on 4.4.9 on a Switch 1 and a Switch 2.
 - `VAR A` without a value only declares: in `FOR I=0 TO 1:VAR A:?A:A=5:NEXT` it
   reads 0, then 5 (TEST62).
 - `IF 1 THEN ?1 ENDIF:?2` prints both (TEST62).
+- `WHEN`s with nothing between them share the statements after the last one:
+  in `WHEN 1:WHEN 2:?"X"`, a 1 prints X too. SmileBASIC 4's own programs list
+  several values this way. A `WHEN` meant to do nothing needs a statement of
+  its own, or its value kept out of the `CASE`.
 
 ### `DEF`, `OUT` and `RETURN`
 
