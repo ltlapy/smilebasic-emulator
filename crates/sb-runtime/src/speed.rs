@@ -11,7 +11,7 @@
 //! `PERFEND` and `MILLISEC` measure the same time.
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65, TEST67,
-//! TEST69, TEST70, TEST71 and TEST72, timed on both consoles running
+//! TEST69 to TEST73, timed on both consoles running
 //! SmileBASIC 4.4.9, and from TEST68 on a Switch 2 (docs/benchmarking.md).
 //! TEST70 finds a Switch 2 as fast in the hand as docked.
 //!
@@ -37,6 +37,7 @@ use sb_core::vm::{COSTLY, Work};
 
 use crate::runtime::{Command, Runtime};
 use crate::sprites::SPRITES;
+use crate::text::USER_CHARS;
 
 /// How fast programs run: as fast as the computer allows, or about as fast
 /// as on a console.
@@ -215,6 +216,15 @@ pub(crate) struct Costs {
     /// (TPERF's 8 characters of 8 pixels, TEST71's one of 16).
     char_px: u64,
     char16_px: u64,
+    /// A user-defined character of `GPUTCHR` or `GPUTCHRP`, which comes
+    /// from the `TPAGE` page, for each row of its font's cell, and each
+    /// of its pixels, by drawing mode 0 to 4 (TEST73). The modes that
+    /// blend charge SmileBASIC 4's own characters so too.
+    user_row: [u64; 5],
+    user_char_px: [u64; 5],
+    /// A pixel of a `GCOPY` with a color code, by drawing mode, in place
+    /// of the rates above (TEST73).
+    copy_color_px: [u64; 5],
     /// `GPAINT`, and each pixel it fills.
     paint: u64,
     paint_px: u64,
@@ -250,6 +260,11 @@ pub(crate) struct Costs {
     exec: u64,
     compile_char: u64,
     compile_text_char: u64,
+    /// The share of those characters' cost, in percent, that an `EXEC` of
+    /// the program already in a slot pays. TEST73's `EXEC 1` after
+    /// `LOAD` of HGLIB.PRG costs no more than TEST69's `EXEC` of a copy
+    /// a third its size. UNVERIFIED: whether `LOAD` pays the rest.
+    exec_slot_pct: u64,
     /// On top: the first `EXEC` of a file since the program started, and
     /// the first read by `EXEC` or `LOADG` of each file since the
     /// emulator started, and each of its bytes. TEST69 to TEST71: the
@@ -375,6 +390,18 @@ const SWITCH2: Costs = Costs {
     loadg_byte: 11_500,
     char_px: 4_150,
     char16_px: 8_540,
+    // TEST73's GPUTCHR of 1 and 20 user-defined characters of 16 pixels
+    // and of 1 at twice the size, in modes 1 to 3, and its screens of 8
+    // lines of 16 and of 8 pixels in modes 0 to 4, with spaces. Modes 1
+    // and 3 cost by the ink drawn, which the meter does not count: in
+    // mode 1 NotoSans' lines cost 25% more than Galmuri11's, and in mode
+    // 3 Galmuri11's lines cost 15% less than its single Hangul
+    // syllables give.
+    user_row: [45_000, 28_000, 51_800, 13_200, 25_100],
+    user_char_px: [6_830, 1_620, 15_540, 21_330, 16_850],
+    // TEST73's GCOPY with a color of 11x11, 12x16 and 16x16 pixels in
+    // modes 1 to 3. UNVERIFIED: mode 0 as mode 1, mode 4 as mode 2.
+    copy_color_px: [6_600, 6_600, 15_860, 20_010, 15_860],
     // TEST67's GPAINT of 128x128 and 512x512 and TEST69's of 4x4 and
     // 16x16, all within 7%.
     paint: 33_500_000,
@@ -408,6 +435,7 @@ const SWITCH2: Costs = Costs {
     exec: 379_000_000,
     compile_char: 231_800,
     compile_text_char: 90_600,
+    exec_slot_pct: 28,
     // TEST69's to TEST71's first EXEC and LOADG of each file, TEST70's
     // and TEST71's of 725652 bytes of noise as the emulator saves it.
     first_exec: 1_200_000_000,
@@ -503,6 +531,10 @@ const SWITCH1: Costs = Costs {
     loadg_byte: 22_600,
     char_px: 15_760,
     char16_px: 24_360,
+    // As for the Switch 2.
+    user_row: [140_700, 133_800, 198_800, 36_600, 35_900],
+    user_char_px: [19_600, 3_340, 33_060, 54_360, 45_710],
+    copy_color_px: [19_000, 19_000, 35_740, 51_800, 35_740],
     paint: 93_500_000,
     paint_px: 16_110,
     // As for the Switch 2: 168 ns a row of 32 pixels at an odd column,
@@ -529,6 +561,7 @@ const SWITCH1: Costs = Costs {
     exec: 1_401_000_000,
     compile_char: 564_700,
     compile_text_char: 220_400,
+    exec_slot_pct: 28,
     first_exec: 2_150_000_000,
     first_file: 800_000_000,
     first_byte: 30_500,
@@ -697,11 +730,14 @@ impl Meter {
         self.host += cells * c.print_scroll_cell;
     }
 
-    /// Charges an `EXEC` that compiles `source`.
-    pub(crate) fn charge_compile(&mut self, source: &str) {
+    /// Charges an `EXEC` that compiles `source`, read from a file or
+    /// already in its slot (`from_file`).
+    pub(crate) fn charge_compile(&mut self, source: &str, from_file: bool) {
         let (code, text) = source_chars(source);
         let c = self.costs;
-        self.host += c.exec + code * c.compile_char + text * c.compile_text_char;
+        let chars = code * c.compile_char + text * c.compile_text_char;
+        let pct = if from_file { 100 } else { c.exec_slot_pct };
+        self.host += c.exec + chars * pct / 100;
     }
 
     /// Charges reading `bytes` from file `name`, as `EXEC` (`exec`) or
@@ -1025,8 +1061,11 @@ impl Runtime {
                     let at = usize::from(args.len() > 7);
                     let w = (int(args, at + 2) - int(args, at)).unsigned_abs() + 1;
                     let h = (int(args, at + 3) - int(args, at + 1)).unsigned_abs() + 1;
-                    let rate = match int(args, args.len().saturating_sub(1)) {
+                    let mode = int(args, args.len().saturating_sub(1));
+                    let rate = match mode {
                         _ if args.len() < 7 => c.copy_px,
+                        // With a color code.
+                        _ if args.len() == 9 => c.copy_color_px[mode.clamp(0, 4) as usize],
                         1 => c.copy_key_px,
                         2 | 3 => c.copy_alpha_px,
                         _ => c.copy_px,
@@ -1047,10 +1086,17 @@ impl Runtime {
                     };
                     px(n, c.load_px)
                 }
+                // The function form only measures: it costs its call.
+                Gputchrp if value => 0,
                 Gputchr | Gputchrp => {
-                    let chars = match args.get(2) {
-                        Some(Value::Str(s)) => s.borrow().len() as u64,
-                        _ => 1,
+                    // SmileBASIC 4's own characters, and user-defined ones.
+                    let (chars, user) = match args.get(2) {
+                        Some(Value::Str(s)) => {
+                            let s = s.borrow();
+                            let user = s.iter().filter(|c| USER_CHARS.contains(c)).count();
+                            (s.len() as u64, user as u64)
+                        }
+                        _ => (1, u64::from(USER_CHARS.contains(&(int(args, 2) as u16)))),
                     };
                     let (size, rate) = match int(args, 3) == 8 {
                         true => (8, c.char_px),
@@ -1060,7 +1106,20 @@ impl Runtime {
                         true => (int(args, 4).max(1) * int(args, 5).max(1)) as u64,
                         false => 1,
                     };
-                    px(chars * size * size * scale, rate)
+                    // The drawing mode: GPUTCHRP's is 1 when left out.
+                    let at = if args.len() >= 7 { 7 } else { 5 };
+                    let mode = match args.get(at) {
+                        None | Some(Value::Default) if command == Gputchrp => 1,
+                        _ => int(args, at).clamp(0, 4) as usize,
+                    };
+                    // In the modes that blend, SmileBASIC 4's own
+                    // characters cost what user-defined ones do.
+                    // UNVERIFIED: but for the spaces in TEST73's lines.
+                    let user = if mode >= 2 { chars } else { user };
+                    let px_each = size * size * scale;
+                    c.grp
+                        + (chars - user) * px_each * rate
+                        + user * (size * c.user_row[mode] + px_each * c.user_char_px[mode])
                 }
                 // The pixels it fills are charged as it fills them
                 // (Meter::charge_paint).

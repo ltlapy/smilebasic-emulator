@@ -2742,7 +2742,7 @@ impl Host for Runtime {
         }
         self.slot_edits.push((slot, crate::prg::SlotEdit::Compiled));
         if let Some(meter) = &mut self.meter {
-            meter.charge_compile(&self.slots[slot]);
+            meter.charge_compile(&self.slots[slot], file.is_some());
         }
         Ok(Exec::Run(self.slots[slot].clone()))
     }

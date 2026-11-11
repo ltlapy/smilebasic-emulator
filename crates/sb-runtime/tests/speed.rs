@@ -241,19 +241,20 @@ fn millisec_follows_the_consoles_clock() {
     );
 }
 
-/// EXEC costs a base and the characters it compiles, code more than
-/// comments and strings: on a Switch 2 about 0.4 ms, and 2.3 ms and
-/// 0.9 ms for 10000 characters.
+/// EXEC of a file costs a base and the characters it compiles, code more
+/// than comments and strings: on a Switch 2 about 0.4 ms, and 2.3 ms and
+/// 0.9 ms for 10000 characters (TEST69, a file EXEC has read before).
 #[test]
 fn exec_costs_the_source_it_compiles() {
+    let dir = std::env::temp_dir().join(format!("sb-speed-exec-{}", std::process::id()));
     let exec = |source: &str| {
-        let rt = Runtime::for_tests(Font::blank());
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut rt = Runtime::for_tests(Font::blank());
+        rt.storage = Storage::new(dir.clone());
+        rt.settings.file_confirm = FileConfirm::Silent;
         let slot1 = format!("{source}?PERFEND(0)\n");
-        let line = run_on(
-            Speed::Switch2,
-            rt,
-            &[(0, "PERFBEGIN 0:EXEC 1\n"), (1, &slot1)],
-        );
+        let slot0 = "SAVE \"P\",1:PERFBEGIN 0:EXEC \"P\",1:PERFBEGIN 0:EXEC \"P\",1\n";
+        let line = run_on(Speed::Switch2, rt, &[(0, slot0), (1, &slot1)]);
         line.trim()
             .parse::<f64>()
             .unwrap_or_else(|_| panic!("{line:?}"))
@@ -261,9 +262,69 @@ fn exec_costs_the_source_it_compiles() {
     let base = exec("");
     let code = exec(&"A=1\n".repeat(2_500)) - base;
     let comment = exec(&format!("'{}\n", "X".repeat(9_998))) - base;
+    let _ = std::fs::remove_dir_all(&dir);
     assert!((350.0..450.0).contains(&base), "{base} us");
     assert!((2_200.0..2_500.0).contains(&code), "{code} us");
     assert!((800.0..1_000.0).contains(&comment), "{comment} us");
+}
+
+/// EXEC of the program already in a slot pays the base and 28% of what
+/// its characters cost from a file: TEST73's EXEC 1 of HGLIB.PRG after
+/// LOAD took 4.4 ms on a Switch 2 with its set-up.
+#[test]
+fn exec_of_a_slot_costs_less_than_of_a_file() {
+    let rt = Runtime::for_tests(Font::blank());
+    let slot1 = format!("{}?PERFEND(0)\n", "A=1\n".repeat(2_500));
+    let line = run_on(
+        Speed::Switch2,
+        rt,
+        &[(0, "PERFBEGIN 0:EXEC 1\n"), (1, &slot1)],
+    );
+    let us: f64 = line.trim().parse().unwrap_or_else(|_| panic!("{line:?}"));
+    assert!((950.0..1_150.0).contains(&us), "{us} us");
+}
+
+/// GPUTCHR of user-defined characters costs by drawing mode: one of 16
+/// pixels took 4.1, 12.2 and 16.0 us in modes 1, 2 and 3 on a Switch 1
+/// (TEST73). SmileBASIC 4's own characters in mode 1 cost as before.
+#[test]
+fn gputchr_of_user_characters_costs_by_mode() {
+    let put = |text: &str, mode: u32| {
+        format!(
+            "PERFBEGIN 0:FOR I=1 TO 100:GPUTCHR 16,16,{text},16,1,1,-1,{mode}:NEXT\n\
+             ?PERFEND(0)/100\n"
+        )
+    };
+    let at = |text, mode| passes(Speed::Switch1, &put(text, mode));
+    let user = "CHR$(&HE800)";
+    let (m1, m2, m3) = (at(user, 1), at(user, 2), at(user, 3));
+    assert!((3.5..4.6).contains(&m1), "{m1} us");
+    assert!((11.0..13.5).contains(&m2), "{m2} us");
+    assert!((14.5..17.5).contains(&m3), "{m3} us");
+    // TEST71's GPUTCHR of "A", 16 pixels, in mode 0.
+    let own = at("\"A\"", 0);
+    assert!((6.0..7.2).contains(&own), "{own} us");
+}
+
+/// GCOPY with a color code costs more a pixel than without, and more in
+/// the blending modes: 16x16 took 5.97 us in mode 1 and 15.2 us in mode
+/// 3 on a Switch 1 (TEST73). GPUTCHRP's width costs its call.
+#[test]
+fn gcopy_with_a_color_costs_by_mode() {
+    let copy = |tail: &str| {
+        format!(
+            "PERFBEGIN 0:FOR I=1 TO 100:GCOPY 0,0,0,15,15,16,16{tail}:NEXT\n\
+             ?PERFEND(0)/100\n"
+        )
+    };
+    let at = |tail| passes(Speed::Switch1, &copy(tail));
+    let (plain, m1, m3) = (at(",1"), at(",-1,1"), at(",-1,3"));
+    assert!(plain < 2.0, "{plain} us");
+    assert!((5.4..6.6).contains(&m1), "{m1} us");
+    assert!((13.7..16.7).contains(&m3), "{m3} us");
+    let width = "PERFBEGIN 0:FOR I=1 TO 127:W=GPUTCHRP(CHR$(I),8):NEXT:?PERFEND(0)\n";
+    let us = passes(Speed::Switch1, width);
+    assert!(us < 150.0, "{us} us");
 }
 
 /// The first LOADG of a file costs more than the next ones, as the
