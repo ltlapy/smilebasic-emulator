@@ -455,6 +455,39 @@ For a subprogram's screen, see `FADE` under
 - `LOADG "PNG:..."` of a `#` project's file fails with `RESULT` 0, as the
   emulator reads no `PNG:` files.
 
+### A program's own folder
+
+`smilebasic PROGRAM` makes the folder that holds `PROGRAM` the current project,
+so the program can `LOAD`, `EXEC`, `LOADV`, `LOADG` and save the files beside
+it. SmileBASIC 4 has no such thing. The project takes the folder's name in upper
+case, with `_` for each character a project name cannot have and for a leading
+`#`: `hangul lib` becomes `HANGUL_LIB`. `PROJECT` switches to the other projects
+and back by that name. A project of that name in `projects/` stays out of reach
+until you restart. The projects window lists the folder but will not rename,
+delete or duplicate it.
+
+- A file there can have SmileBASIC 4's name or a plain one: `THGLIB.PRG`,
+  `HGLIB.PRG.txt` and `HGLIB.PRG` all give `TXT:HGLIB.PRG`. DAT, GRP and JPG
+  files take SmileBASIC 4's names only. Case does not matter, and `FILES`
+  leaves out names that break SmileBASIC 4's rules.
+- A name starting with T, B, G or J reads as SmileBASIC 4's when the folder
+  uses SmileBASIC 4's names, or when the file holds that type: SmileBASIC 4's
+  container, or the DAT array, PNG or JPEG the emulator writes. Otherwise
+  `TEST.PRG` is the text file `TEST.PRG`. A folder uses SmileBASIC 4's names
+  when it holds a `META` file, a backup such as `T@BACKUP.PRG`, or a text file
+  in SmileBASIC 4's container.
+- When two files give one name, SmileBASIC 4's form wins, then the name ending
+  in `.txt`. `FILES` lists the winner alone.
+- Saving keeps an existing file's name on disk: Ctrl+S on `HGLIB.PRG` rewrites
+  `HGLIB.PRG.txt`. A new text file takes the folder's form, SmileBASIC 4's or a
+  plain name, with `.txt` when at least half of the plain text files there end
+  in it. Backups follow the same rule (`@BACKUP.PRG.txt`).
+- The first `SAVE`, `SAVEV`, `SAVEG`, `DELETE`, `RENAME`, `METASAVE` or Ctrl+S
+  that changes a file the folder held at start-up asks, whatever File >
+  Settings > Files says, in programs too. The question says that the original
+  file changes. After that one change, the setting decides.
+- `smilebasic-check` still takes project folders as before.
+
 ### Files from elsewhere
 
 Projects get copied in by hand and imported, so the emulator treats the files in

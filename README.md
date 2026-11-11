@@ -50,7 +50,10 @@ smilebasic           # start in DIRECT mode
 smilebasic PROGRAM   # load PROGRAM into PRG0 and run it
 ```
 
-`PROGRAM` is a SmileBASIC 4 `TXT` file or plain UTF-8 text.
+`PROGRAM` is a SmileBASIC 4 `TXT` file or plain UTF-8 text. Its folder becomes
+the current project, so it can load and save the files beside it, plain names
+such as `HGLIB.PRG.txt` included
+([details](docs/differences.md#a-programs-own-folder)).
 
 Projects are folders in `projects/` in the data directory, `@WORKSPACE`
 included. Programs are saved as plain UTF-8 text, with full-width letters and
