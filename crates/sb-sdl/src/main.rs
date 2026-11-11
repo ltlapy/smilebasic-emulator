@@ -101,7 +101,11 @@ use toast::Toasts;
 const USAGE: &str = "usage:
   smilebasic                    start in direct mode
   smilebasic PROGRAM            load a SmileBASIC 4 program (TXT file or plain
-                                text) into PRG0 and run it
+                                text) into PRG0 and run it; the folder that
+                                holds it is the current project, so the
+                                program loads and saves the files beside it
+                                (HGLIB.PRG.txt, HGLIB.PRG or THGLIB.PRG are
+                                all TXT:HGLIB.PRG)
 
 SmileBASIC 4's own font and sprites come from smilebasic-import; without
 them, a bundled font and blank sprites are used";
@@ -238,6 +242,25 @@ fn load_source(path: &Path) -> Result<String, AnyError> {
     }
 }
 
+/// Makes the folder of the program given on the command line the current
+/// project, and gives the name of the TXT file that the program is there,
+/// if it maps to one.
+fn open_program_folder(storage: &mut Storage, program: &Path) -> Option<String> {
+    let dir = match program.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    if let Err(e) = storage.open_folder(dir) {
+        eprintln!("{}: {e}", dir.display());
+        return None;
+    }
+    let entry = program.file_name()?.to_str()?;
+    match storage.folder_file(entry) {
+        Some((sb_runtime::storage::FileKind::Txt, name)) => Some(name),
+        _ => None,
+    }
+}
+
 fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let source = program.map(load_source).transpose()?;
     let font = resources::load_font(&resource_dir()?).unwrap_or_else(|e| {
@@ -262,6 +285,7 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         ..ScreenMode::new(screen.width, screen.height)
     });
     rt.storage = Storage::new(data_dir()?.join("projects"));
+    let program_name = program.and_then(|p| open_program_folder(&mut rt.storage, p));
     let settings_path = data_dir()?.join(SETTINGS_FILE);
     if let Ok(text) = std::fs::read_to_string(&settings_path) {
         rt.settings = Settings::from_text(&text);
@@ -274,7 +298,12 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     let mut machine = Machine::new(rt);
     machine.boot();
     if let Some(source) = source {
-        machine.set_slot(0, source);
+        // Loaded as LOAD would, it is named for Ctrl+S to save it again;
+        // a program that maps to no name there runs all the same.
+        let loaded = program_name.is_some_and(|name| machine.load_slot(0, &name).is_ok());
+        if !loaded {
+            machine.set_slot(0, source);
+        }
         machine.run_slot(0);
     }
     let mut recovery = Recovery::new(data_dir()?);
@@ -1593,11 +1622,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     file_dialogs::Outcome::Save(name) => {
                         file_dialog = None;
                         let own = machine.rt.slot_names[slot] == name;
-                        if !own && machine.rt.txt_exists(&name) {
-                            let lines = vec![
+                        // A file of the folder the program was run from
+                        // asks the first time, even when it is the slot's.
+                        let originals = machine.rt.original_txt(&name);
+                        if (!own && machine.rt.txt_exists(&name)) || !originals.is_empty() {
+                            let mut lines = vec![
                                 format!("Save slot {slot} as {name}."),
                                 "The file there now will be replaced.".to_string(),
                             ];
+                            if !originals.is_empty() {
+                                lines.push(String::new());
+                                lines.extend(sb_runtime::confirm::original_lines(&originals));
+                            }
                             let open = Dialog::new("Save file", lines, "Save", size);
                             dialog = Some((open, Asking::Overwrite(name)));
                         } else {

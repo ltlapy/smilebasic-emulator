@@ -107,7 +107,7 @@ pub fn read(storage: &Storage, project: &str, kind: FileKind, name: &str) -> Con
     if size.is_some_and(|size| size > MAX_FILE) {
         return Content::Failed(String::new());
     }
-    let bytes = match storage.read_file_in(project, &format!("{}{name}", kind.prefix())) {
+    let bytes = match storage.read_in(project, kind, name) {
         Ok(bytes) => bytes,
         Err(e) => return Content::Failed(format!("Could not read it: {e}")),
     };
