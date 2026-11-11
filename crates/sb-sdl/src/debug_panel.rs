@@ -666,6 +666,11 @@ impl DebugPanel {
         self.tips.clear();
         self.grp.set_place(None);
         fill(fb, f, BORDER);
+        // A frame without room for a line of tabs, as a window made very
+        // small or minimized gives, shows only the border.
+        if f.h < 2 + m.line + m.pad || f.w < m.line + m.pad {
+            return;
+        }
         let inner = Rect {
             x: f.x,
             y: f.y + 2,
@@ -981,7 +986,7 @@ impl DebugPanel {
         let status = Rect {
             x: cx - m.pad / 2,
             y: bottom,
-            w: inner.x + inner.w - cx,
+            w: (inner.x + inner.w).saturating_sub(cx),
             h: m.line,
         };
         let room = (status.w.saturating_sub(m.pad) / m.char) as usize;
@@ -1260,6 +1265,28 @@ mod tests {
             sprites: None,
             grp: Probe::default(),
             bgm: None,
+        }
+    }
+
+    #[test]
+    fn a_frame_too_small_for_the_panel_draws_without_a_panic() {
+        let tabs = vec![Tab::Globals(0), Tab::Grp, Tab::Sprites, Tab::Bgm];
+        for tab in [None, Some(Tab::Grp), Some(Tab::Sprites), Some(Tab::Bgm)] {
+            for scale in [1, 2] {
+                for w in [0, 1, 7, 30, 120, 300, 640] {
+                    for h in [0, 1, 2, 5, 13, 18, 30, 60, 100] {
+                        let mut p = DebugPanel {
+                            tab,
+                            ..DebugPanel::default()
+                        };
+                        let mut fb = Framebuffer::new(w.max(1), h.max(1));
+                        let f = Rect { x: 0, y: 0, w, h };
+                        for size in [None, Some((400, 240))] {
+                            p.draw(&mut fb, &Font::blank(), f, size, &view(tabs.clone()), scale);
+                        }
+                    }
+                }
+            }
         }
     }
 
