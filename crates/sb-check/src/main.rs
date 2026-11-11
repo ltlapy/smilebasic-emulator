@@ -87,6 +87,12 @@ const USAGE: &str = "usage:
                           0x28 for Enter) held for N frames, for KEYBOARD
         F touch X Y N     the screen touched at X,Y for N frames; the
                           pointer stays there afterwards
+        F plus N          the + button (F5) held for N frames. Released
+                          before 60, it acts then: the program jumps to
+                          its ON BREAK GOTO label or stops with User
+                          break, and DIRECT mode runs PRG0. Held 60
+                          frames, it stops the program at F+60, past
+                          ON BREAK, and its release does nothing
         F shot NAME       the screen saved as DIR/NAME.png
         F console         the console's text printed
         F end             the run stops
@@ -694,6 +700,8 @@ enum Action {
     Key(u16),
     Type(String),
     Hold(Hold, u32),
+    /// The + button held for some frames.
+    Plus(u32),
     Shot(String),
     Console,
     End,
@@ -776,6 +784,7 @@ fn parse_script(text: &str) -> Result<Vec<(u32, Action)>, AnyError> {
                 Hold::Touch(x.parse()?, y.parse()?),
                 frames.parse().map_err(|_| bad())?,
             ),
+            ("plus", [frames]) => Action::Plus(frames.parse().map_err(|_| bad())?),
             ("shot", [name]) => Action::Shot((*name).to_owned()),
             ("console", []) => Action::Console,
             ("end", []) => Action::End,
@@ -830,20 +839,29 @@ fn read_script(file: Option<&str>) -> Result<Vec<(u32, Action)>, AnyError> {
 /// Gives a program what a script asks for.
 struct Player {
     steps: std::iter::Peekable<std::vec::IntoIter<(u32, Action)>>,
-    /// Input held, and the frame it lets go at.
+    /// Input held, and the frame it is released at.
     held: Vec<(Hold, u32)>,
+    /// While the + button is held: the frame it stops the program at, and
+    /// the one it is released at.
+    plus: Option<(u32, u32)>,
 }
+
+/// Frames the + button is held before it stops a program past ON BREAK
+/// GOTO: the windowed frontend's `FORCED_STOP` of one second, at 60
+/// frames a second.
+const FORCED_STOP_FRAMES: u32 = 60;
 
 impl Player {
     fn new(steps: Vec<(u32, Action)>) -> Player {
         Player {
             steps: steps.into_iter().peekable(),
             held: Vec::new(),
+            plus: None,
         }
     }
 
     fn has_more(&mut self) -> bool {
-        self.steps.peek().is_some()
+        self.steps.peek().is_some() || self.plus.is_some()
     }
 
     /// Does what is due before `frame` runs, and sets the input it reads;
@@ -854,6 +872,8 @@ impl Player {
                 Action::Key(code) => m.rt.key_press(code),
                 Action::Type(text) => m.type_text(&text),
                 Action::Hold(hold, n) => self.held.push((hold, frame + n)),
+                // A new press starts the second again, as in the frontend.
+                Action::Plus(n) => self.plus = Some((frame + FORCED_STOP_FRAMES, frame + n)),
                 Action::Shot(shot) => {
                     let file = dir.join(format!("{shot}.png"));
                     save_screen(m, &file)?;
@@ -867,6 +887,19 @@ impl Player {
                     }
                 }
                 Action::End => return Ok(true),
+            }
+        }
+        // As the frontend does, but without its own windows, which keep a
+        // press from starting while shown: here every press counts, also
+        // during INPUT, a DIALOG or a subprogram, which the machine's
+        // sysreq and stop deal with.
+        if let Some((stop_at, release_at)) = self.plus {
+            if frame >= stop_at {
+                self.plus = None;
+                m.stop();
+            } else if frame >= release_at {
+                self.plus = None;
+                m.sysreq();
             }
         }
         self.held.retain(|&(_, until)| until > frame);
@@ -1301,7 +1334,7 @@ mod tests {
     #[test]
     fn scripts() {
         let steps = parse_script(
-            "# menu\n30 button A+down 6\n10 key enter\n20 type LOAD \"X\"\n40 usb 0x28 2\n50 end\n",
+            "# menu\n30 button A+down 6\n10 key enter\n20 type LOAD \"X\"\n40 usb 0x28 2\n50 end\n45 plus 8\n",
         )
         .unwrap();
         assert_eq!(
@@ -1311,11 +1344,13 @@ mod tests {
                 (20, Action::Type("LOAD \"X\"".into())),
                 (30, Action::Hold(Hold::Buttons(1 << 3 | 1 << 5), 6)),
                 (40, Action::Hold(Hold::Usb(0x28), 2)),
+                (45, Action::Plus(8)),
                 (50, Action::End),
             ]
         );
         assert!(parse_script("5 button C 1").is_err());
         assert!(parse_script("x key A").is_err());
+        assert!(parse_script("5 plus").is_err());
     }
 
     #[test]
