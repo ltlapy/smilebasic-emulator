@@ -1754,3 +1754,85 @@ fn files_of_projects_and_of_a_files_name() {
     enter(&mut m, "cls:files \"txt:\"");
     assert_eq!(rows(&m), ["-- 1 files --", "TXT:A", "OK"]);
 }
+
+/// The folder of a program run from the command line, as the current
+/// project, with plain names.
+fn user_folder(dir: &TempDir) -> std::path::PathBuf {
+    let folder = dir.0.join("hgtest");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("HGLIB.PRG.txt"), "'LIB").unwrap();
+    std::fs::write(folder.join("HGTEST.PRG.txt"), "'TEST").unwrap();
+    folder
+}
+
+#[test]
+fn a_folder_opened_as_the_project_loads_and_saves_beside_the_program() {
+    let dir = TempDir::new("folder");
+    let folder = user_folder(&dir);
+    let mut m = machine(&dir);
+    assert_eq!(m.rt.storage.open_folder(&folder).unwrap(), "HGTEST");
+    let program = "LOAD \"HGLIB.PRG\",1\nSAVEV \"TXT:OUT\",\"SAVED\"\n?RESULT()\n?PROJECT()";
+    m.set_slot(0, program.to_string());
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 3), ["1", "HGTEST", "OK"]);
+    assert_eq!(m.slot(1), "'LIB");
+    assert_eq!(std::fs::read(folder.join("OUT.txt")).unwrap(), b"SAVED");
+    enter(&mut m, "cls:files");
+    assert_eq!(
+        rows(&m),
+        [
+            "-- 3 files --",
+            "TXT:HGLIB.PRG",
+            "TXT:HGTEST.PRG",
+            "TXT:OUT",
+            "OK"
+        ]
+    );
+    // Away to the workspace and back by the folder's name.
+    enter(&mut m, "project \"\":?chkfile(\"hglib.prg\")");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+    enter(&mut m, "project \"hgtest\":?chkfile(\"hglib.prg\")");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+}
+
+#[test]
+fn changing_a_file_that_was_in_the_folder_asks_once_whatever_the_setting() {
+    let dir = TempDir::new("folder-ask");
+    let folder = user_folder(&dir);
+    let mut m = machine(&dir);
+    m.rt.storage.open_folder(&folder).unwrap();
+    m.set_slot(0, "SAVEV \"TXT:HGLIB.PRG\",\"'NEW\"\n?RESULT()".to_string());
+    let c = ask(&mut m, "run");
+    assert_eq!(
+        c.lines[c.lines.len() - 2..],
+        [
+            "This changes the original file HGLIB.PRG.txt",
+            "in the folder the program was run from."
+        ]
+    );
+    assert!(!c.accept_first);
+    m.rt.answer(true);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    assert_eq!(
+        std::fs::read(folder.join("HGLIB.PRG.txt")).unwrap(),
+        b"'NEW"
+    );
+    let backup = std::fs::read(folder.join("@BACKUP.TXT.txt")).unwrap();
+    assert_eq!(backup, b"'LIB");
+    // Once is enough; the setting says the rest.
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+
+    // In DIRECT mode with notices too, and for DELETE.
+    m.rt.settings.file_confirm = FileConfirm::Notify;
+    let c = ask(&mut m, "delete \"hgtest.prg\":?result()");
+    assert_eq!(c.title, "Delete file");
+    m.rt.answer(false);
+    settle(&mut m);
+    assert_eq!(tail(&m, 2), ["-1", "OK"]);
+    assert!(folder.join("HGTEST.PRG.txt").is_file());
+    // Ctrl+S asks by this too.
+    assert_eq!(m.rt.original_txt("HGTEST.PRG"), ["HGTEST.PRG.txt"]);
+    assert!(m.rt.original_txt("NEW.PRG").is_empty());
+}

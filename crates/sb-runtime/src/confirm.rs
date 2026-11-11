@@ -52,6 +52,11 @@ pub(crate) struct FileAction {
     /// Whether it also asks in a running program. On SmileBASIC 4, LOAD
     /// there asks only when it would replace unsaved edits.
     pub in_programs: bool,
+    /// Files of the folder a program was run from that it would replace,
+    /// delete or rename, by their names on disk, of those there from the
+    /// start and not yet changed (see [`crate::storage::Storage::original`]).
+    /// Any makes it ask, whatever the setting.
+    pub originals: Vec<String>,
 }
 
 const HINT: [&str; 2] = ["To stop these questions, go to", "File > Settings > Files."];
@@ -64,6 +69,15 @@ pub fn unsaved_lines(slots: &[usize]) -> Vec<String> {
         _ => format!("Slots {} have unsaved changes,", names.join(", ")),
     };
     vec![first, "which will be lost.".to_string()]
+}
+
+/// Says that `files`, there before the emulator started, will change.
+pub fn original_lines(files: &[String]) -> Vec<String> {
+    let first = match files {
+        [file] => format!("This changes the original file {file}"),
+        _ => format!("This changes the original files {}", files.join(", ")),
+    };
+    vec![first, "in the folder the program was run from.".to_string()]
 }
 
 /// Before switching from project `old` to `new` with `unsaved` slots.
@@ -145,10 +159,12 @@ impl Runtime {
     }
 
     /// Confirms a file command as the settings say. Replacing slots in
-    /// `replaces` that have unsaved edits always asks.
+    /// `replaces` that have unsaved edits always asks, as does changing
+    /// one of the [`FileAction::originals`].
     pub(crate) fn confirm_file(&mut self, action: FileAction, replaces: &[usize]) -> Ask {
         let unsaved = self.unsaved_among(replaces.iter().copied());
-        let mode = if !unsaved.is_empty() {
+        let originals = !action.originals.is_empty();
+        let mode = if !unsaved.is_empty() || originals {
             FileConfirm::Ask
         } else if self.direct || action.in_programs {
             self.settings.file_confirm
@@ -164,10 +180,14 @@ impl Runtime {
             FileConfirm::Ask => self.ask(|rt| {
                 let mut lines = vec![action.summary, String::new()];
                 lines.extend(action.details);
+                if originals {
+                    lines.push(String::new());
+                    lines.extend(original_lines(&action.originals));
+                }
                 if !unsaved.is_empty() {
                     lines.push(String::new());
                     lines.extend(unsaved_lines(&unsaved));
-                } else if !rt.settings.file_hint_shown {
+                } else if !originals && !rt.settings.file_hint_shown {
                     rt.settings.file_hint_shown = true;
                     lines.push(String::new());
                     lines.extend(HINT.map(String::from));
@@ -181,7 +201,7 @@ impl Runtime {
                     title: action.title,
                     lines,
                     accept: action.accept,
-                    accept_first: unsaved.is_empty(),
+                    accept_first: unsaved.is_empty() && !originals,
                 }
             }),
         }
@@ -202,5 +222,13 @@ mod tests {
             unsaved_lines(&[1, 3])[0],
             "Slots 1, 3 have unsaved changes,"
         );
+    }
+
+    #[test]
+    fn original_lines_name_the_files() {
+        let one = original_lines(&["HGLIB.PRG.txt".to_string()]);
+        assert_eq!(one[0], "This changes the original file HGLIB.PRG.txt");
+        let two = original_lines(&["A".to_string(), "B".to_string()]);
+        assert_eq!(two[0], "This changes the original files A, B");
     }
 }

@@ -486,6 +486,7 @@ impl Runtime {
             accept: "Load",
             notice: format!("Loading {file}"),
             in_programs: false,
+            originals: Vec::new(),
         };
         let ask = self.confirm_file(action, &[]);
         self.held(ask)
@@ -497,6 +498,7 @@ impl Runtime {
             return false;
         };
         let exists = self.storage.exists_ref(file);
+        let originals = self.originals_of(file, Some(file.kind.backup_name()));
         let file = file.label();
         let mut details = self.details(&file, None);
         if exists {
@@ -510,6 +512,7 @@ impl Runtime {
             accept: "Save",
             notice: format!("Saving {file}"),
             in_programs: true,
+            originals,
         };
         let ask = self.confirm_file(action, &[]);
         self.held(ask)

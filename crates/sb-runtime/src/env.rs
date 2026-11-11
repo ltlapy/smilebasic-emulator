@@ -358,6 +358,10 @@ impl Runtime {
                     accept: "Save",
                     notice: format!("Saving the metadata of {}", self.project_label()),
                     in_programs: true,
+                    originals: [META_TEXT, META_ICON]
+                        .iter()
+                        .filter_map(|name| self.storage.original_own(name))
+                        .collect(),
                 };
                 // METASAVE sets no RESULT(), whether it saves, fails or is
                 // cancelled.

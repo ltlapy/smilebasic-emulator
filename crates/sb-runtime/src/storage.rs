@@ -8,10 +8,18 @@
 //! Projects get copied in from elsewhere, so nothing here follows a symbolic
 //! link found among the projects or in one: such a link could lead a read or
 //! a write out of the storage folder. The storage folder itself may be one.
+//!
+//! One more project can come from a folder of the user's own, outside the
+//! storage folder: the one that holds a program run from the command line
+//! (see [`Storage::open_folder`]). Its files may have plain names too
+//! (`HGLIB.PRG.txt`), and it takes no links either.
 
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::SystemTime;
 
 const WORKSPACE_DIR: &str = "@WORKSPACE";
@@ -372,6 +380,9 @@ pub fn parse_listing(spec: &str) -> Result<(Option<FileKind>, Option<String>)> {
 pub struct Storage {
     root: Option<PathBuf>,
     project: String,
+    /// The user's folder taken for a project, shared by the copies that
+    /// subprograms get, so that they see the same files as written.
+    folder: Option<Rc<Folder>>,
 }
 
 impl Storage {
@@ -380,6 +391,7 @@ impl Storage {
         Storage {
             root: Some(root),
             project: String::new(),
+            folder: None,
         }
     }
 
@@ -388,7 +400,67 @@ impl Storage {
         Storage {
             root: None,
             project: String::new(),
+            folder: None,
         }
+    }
+
+    /// Takes `dir`, a folder outside the storage folder, for a project and
+    /// switches to it; returns the project's name (see
+    /// [`folder_project_name`]). A project of that name in the storage
+    /// folder is out of reach meanwhile. Other projects and the workspace
+    /// stay where they are.
+    pub fn open_folder(&mut self, dir: &Path) -> io::Result<String> {
+        let folder = Folder::open(dir)?;
+        let name = folder.name.clone();
+        self.folder = Some(Rc::new(folder));
+        self.project = name.clone();
+        Ok(name)
+    }
+
+    /// The folder [`Storage::open_folder`] opened.
+    pub fn folder(&self) -> Option<&Path> {
+        self.folder.as_deref().map(|f| f.dir.as_path())
+    }
+
+    /// `project`'s folder, if it is the user's folder.
+    fn folder_of(&self, project: &str) -> Option<&Folder> {
+        self.folder.as_deref().filter(|f| f.name == project)
+    }
+
+    /// Forgets that a file of the user's folder was there from the start,
+    /// once it is written, deleted or renamed.
+    fn touched(&self, path: &Path) {
+        if let Some(folder) = &self.folder
+            && path.parent() == Some(folder.dir.as_path())
+            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+        {
+            folder.untouched.borrow_mut().remove(name);
+        }
+    }
+
+    /// The name on disk of a file of the user's folder that was there
+    /// when it was opened and that nothing has written, deleted or renamed
+    /// since; `None` for any other file. Changing such a file asks first.
+    pub fn original(&self, file: &FileRef) -> Option<String> {
+        let folder = self.folder_of(file.project.as_deref().unwrap_or(&self.project))?;
+        let entry = folder.find(file.kind, &file.name).ok().flatten()?;
+        folder.untouched.borrow().contains(&entry).then_some(entry)
+    }
+
+    /// [`Storage::original`] for a file of the current project's own, such
+    /// as its metadata.
+    pub fn original_own(&self, name: &str) -> Option<String> {
+        let folder = self.folder_of(&self.project)?;
+        let there = is_real_file(&folder.dir.join(name));
+        (there && folder.untouched.borrow().contains(name)).then(|| name.to_string())
+    }
+
+    /// The type and name that a file of the user's folder goes by, given
+    /// its name on disk, if it maps to one.
+    pub fn folder_file(&self, entry: &str) -> Option<(FileKind, String)> {
+        let files = self.folder.as_deref()?.files().ok()?;
+        let found = files.into_iter().find(|(_, _, e)| e == entry);
+        found.map(|(kind, name, _)| (kind, name))
     }
 
     /// The current project; empty for the workspace.
@@ -433,6 +505,12 @@ impl Storage {
     /// The folder of an existing project, named as it is on disk, which
     /// may break the naming rules if it was copied there by hand.
     fn existing_project(&self, name: &str) -> Result<PathBuf> {
+        // The user's own folder is not the emulator's to rename, delete
+        // or copy whole.
+        if self.folder_of(name).is_some() {
+            let what = format!("{name} is the folder of the program run from the command line");
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, what).into());
+        }
         let plain = !name.is_empty()
             && name != WORKSPACE_DIR
             && name != "."
@@ -482,6 +560,9 @@ impl Storage {
     /// storage folder posing as a project, the workspace included, leads
     /// nowhere; [`Storage::projects`] does not list one either.
     fn dir(&self, project: &str) -> Result<PathBuf> {
+        if let Some(folder) = self.folder_of(project) {
+            return Ok(folder.dir.clone());
+        }
         let root = self.root.as_ref().ok_or(StorageError::Unavailable)?;
         let dir = root.join(if project.is_empty() {
             WORKSPACE_DIR
@@ -494,10 +575,20 @@ impl Storage {
         Ok(dir)
     }
 
+    /// The path of a typed file of a project: its type letter and name,
+    /// or in the user's folder, the name it has there or, for a new file,
+    /// the one it takes (see [`Folder::file_name`]).
+    fn typed_path(&self, project: &str, kind: FileKind, name: &str) -> Result<PathBuf> {
+        let dir = self.dir(project)?;
+        let file = match self.folder_of(project) {
+            Some(folder) => folder.file_name(kind, name)?,
+            None => format!("{}{name}", kind.prefix()),
+        };
+        Ok(dir.join(file))
+    }
+
     fn path(&self, kind: FileKind, name: &str) -> Result<PathBuf> {
-        Ok(self
-            .dir(&self.project)?
-            .join(format!("{}{name}", kind.prefix())))
+        self.typed_path(&self.project, kind, name)
     }
 
     /// The path of a file named for reading, in its project.
@@ -506,9 +597,16 @@ impl Storage {
         if !self.project_exists(project) {
             return Err(StorageError::NotFound(project.to_string()));
         }
-        Ok(self
-            .dir(project)?
-            .join(format!("{}{}", file.kind.prefix(), file.name)))
+        self.typed_path(project, file.kind, &file.name)
+    }
+
+    /// Reads a typed file of any project, by the name the lists show.
+    pub fn read_in(&self, project: &str, kind: FileKind, name: &str) -> Result<Vec<u8>> {
+        let path = self.typed_path(project, kind, name)?;
+        read_regular(&path).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => StorageError::NotFound(format!("{}:{name}", kind.name())),
+            _ => e.into(),
+        })
     }
 
     pub fn exists_ref(&self, file: &FileRef) -> bool {
@@ -548,7 +646,18 @@ impl Storage {
             Some(backup) if name != backup => Some(self.path(kind, backup)?),
             _ => None,
         };
-        write_with_backup(&self.path(kind, name)?, bytes, backup.as_deref())
+        let path = self.path(kind, name)?;
+        self.write_marked(&path, bytes, backup.as_deref())
+    }
+
+    /// [`write_with_backup`], noting the files it changes.
+    fn write_marked(&self, path: &Path, bytes: &[u8], backup: Option<&Path>) -> Result<()> {
+        let written = write_with_backup(path, bytes, backup);
+        self.touched(path);
+        if let Some(backup) = backup {
+            self.touched(backup);
+        }
+        written
     }
 
     /// [`Storage::write`] of a file named with a project, which need not
@@ -561,7 +670,8 @@ impl Storage {
             })?),
             _ => None,
         };
-        write_with_backup(&self.ref_path(file)?, bytes, backup.as_deref())
+        let path = self.ref_path(file)?;
+        self.write_marked(&path, bytes, backup.as_deref())
     }
 
     /// A file of the current project's own, outside the typed files (whose
@@ -603,6 +713,7 @@ impl Storage {
         let written = file.write_all(bytes);
         // Windows cannot rename a file that is open.
         drop(file);
+        self.touched(&target);
         if let Err(e) = written.and_then(|()| std::fs::rename(&temporary, target)) {
             let _ = std::fs::remove_file(&temporary);
             return Err(e.into());
@@ -611,17 +722,12 @@ impl Storage {
     }
 
     pub fn delete(&self, kind: FileKind, name: &str) -> Result<()> {
-        if !self.exists(kind, name) {
-            return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));
-        }
-        std::fs::remove_file(self.path(kind, name)?)?;
-        Ok(())
+        self.delete_in(&self.project, kind, name)
     }
 
     /// Whether a file is in a project, which need not be the current one.
     pub fn exists_in(&self, project: &str, kind: FileKind, name: &str) -> bool {
-        self.dir(project)
-            .is_ok_and(|d| is_real_file(&d.join(format!("{}{name}", kind.prefix()))))
+        (self.typed_path(project, kind, name)).is_ok_and(|p| is_real_file(&p))
     }
 
     /// Deletes a file of a project, which need not be the current one.
@@ -629,7 +735,9 @@ impl Storage {
         if !self.exists_in(project, kind, name) {
             return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));
         }
-        std::fs::remove_file(self.dir(project)?.join(format!("{}{name}", kind.prefix())))?;
+        let path = self.typed_path(project, kind, name)?;
+        std::fs::remove_file(&path)?;
+        self.touched(&path);
         Ok(())
     }
 
@@ -646,18 +754,16 @@ impl Storage {
         if !self.project_exists(to_project) {
             return Err(StorageError::NotFound(to_project.to_string()));
         }
-        let file = |project: &str, name: &str| -> Result<PathBuf> {
-            Ok(self.dir(project)?.join(format!("{}{name}", kind.prefix())))
-        };
-        let from = file(from_project, name)?;
+        let from = self.typed_path(from_project, kind, name)?;
         if !is_real_file(&from) {
             return Err(StorageError::NotFound(format!("{}:{name}", kind.name())));
         }
-        let to = file(to_project, &to_name)?;
+        let to = self.typed_path(to_project, kind, &to_name)?;
         if from != to {
             check_writable(&to)?;
             std::fs::create_dir_all(to.parent().expect("file in a project folder"))?;
-            std::fs::copy(from, to)?;
+            std::fs::copy(from, &to)?;
+            self.touched(&to);
         }
         Ok(to_name)
     }
@@ -666,7 +772,10 @@ impl Storage {
         if !self.exists(kind, from) {
             return Err(StorageError::NotFound(format!("{}:{from}", kind.name())));
         }
-        std::fs::rename(self.path(kind, from)?, self.path(kind, to)?)?;
+        let (from, to) = (self.path(kind, from)?, self.path(kind, to)?);
+        std::fs::rename(&from, &to)?;
+        self.touched(&from);
+        self.touched(&to);
         Ok(())
     }
 
@@ -682,9 +791,11 @@ impl Storage {
         if !to.eq_ignore_ascii_case(from) && self.exists_in(project, kind, &to) {
             return Err(StorageError::Exists(format!("{}:{to}", kind.name())));
         }
-        let dir = self.dir(project)?;
-        let file = |name: &str| dir.join(format!("{}{name}", kind.prefix()));
-        std::fs::rename(file(from), file(&to))?;
+        let old = self.typed_path(project, kind, from)?;
+        let new = self.typed_path(project, kind, &to)?;
+        std::fs::rename(&old, &new)?;
+        self.touched(&old);
+        self.touched(&new);
         Ok(to)
     }
 
@@ -722,10 +833,7 @@ impl Storage {
     /// A file's size, and when it last changed in local time as
     /// `YYYY/MM/DD hh:mm:ss`, as SmileBASIC 4's file list shows them.
     pub fn file_info(&self, project: &str, kind: FileKind, name: &str) -> Option<(u64, String)> {
-        let path = self
-            .dir(project)
-            .ok()?
-            .join(format!("{}{name}", kind.prefix()));
+        let path = self.typed_path(project, kind, name).ok()?;
         let meta = std::fs::symlink_metadata(path)
             .ok()
             .filter(|m| m.is_file())?;
@@ -740,7 +848,13 @@ impl Storage {
         kind: Option<FileKind>,
         project: Option<&str>,
     ) -> Result<Vec<(FileKind, String)>> {
-        let dir = self.dir(project.unwrap_or(&self.project))?;
+        let project = project.unwrap_or(&self.project);
+        if let Some(folder) = self.folder_of(project) {
+            let files = folder.files()?.into_iter();
+            let files = files.filter(|(k, _, _)| kind.is_none_or(|want| want == *k));
+            return Ok(files.map(|(k, name, _)| (k, name)).collect());
+        }
+        let dir = self.dir(project)?;
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -781,26 +895,234 @@ impl Storage {
         std::fs::metadata(dir).ok()?.modified().ok()
     }
 
-    /// Project names, without the workspace.
+    /// Project names, without the workspace. The user's folder is one of
+    /// them, in place of a project of its name in the storage folder.
     pub fn projects(&self) -> Result<Vec<String>> {
         let root = self.root.as_ref().ok_or(StorageError::Unavailable)?;
+        let mut projects: Vec<String> = self.folder.iter().map(|f| f.name.clone()).collect();
         let entries = match std::fs::read_dir(root) {
             Ok(entries) => entries,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(projects),
             Err(e) => return Err(e.into()),
         };
-        let mut projects = Vec::new();
         for entry in entries {
             let entry = entry?;
             if entry.file_type()?.is_dir()
                 && let Some(name) = entry.file_name().to_str()
                 && name != WORKSPACE_DIR
+                && self.folder_of(name).is_none()
             {
                 projects.push(name.to_string());
             }
         }
         projects.sort();
         Ok(projects)
+    }
+}
+
+/// The project name that a folder of the user's goes by: its own name in
+/// upper case when that is a legal project name, or else the name that
+/// the Projects window offers for a folder copied in by hand (each
+/// character that is not allowed becomes `_`). A `#` at the start, which
+/// marks SmileBASIC 4's own projects, becomes `_` too.
+pub fn folder_project_name(folder: &str) -> String {
+    let name = match folder.strip_prefix('#') {
+        Some(rest) => format!("_{rest}"),
+        None => folder.to_string(),
+    };
+    check_project_name(&name).unwrap_or_else(|_| suggest_project_name(&name))
+}
+
+/// The forms of a name in the user's folder, in the order they win when
+/// two files map to the same type and name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Form {
+    /// SmileBASIC 4's: the type letter, then the name (`THGLIB.PRG`).
+    Sb4,
+    /// A text file's name and `.txt` (`HGLIB.PRG.txt`).
+    Txt,
+    /// A text file's name alone (`HGLIB.PRG`).
+    Bare,
+}
+
+/// A folder of the user's, outside the storage folder, used as a project
+/// (see [`Storage::open_folder`]). Its files keep the names they have on
+/// disk, which can be SmileBASIC 4's or plain ones. Names compare without
+/// regard to case, and each file maps to one type and name at most:
+///
+/// - SmileBASIC 4's form, when the folder uses it (see [`Folder::open`])
+///   or the file's contents are of its type (SmileBASIC 4's container, or
+///   the DAT, PNG or JPEG that the emulator writes);
+/// - otherwise a text file: the name before `.txt`, or the whole name.
+///
+/// Names that break the rules map to nothing and stay out of the lists,
+/// as do the project's metadata files. Of two files that map to one name,
+/// the one in SmileBASIC 4's form wins, then the one ending in `.txt`.
+#[derive(Debug)]
+struct Folder {
+    dir: PathBuf,
+    name: String,
+    /// Whether new files take SmileBASIC 4's names; otherwise plain names,
+    /// for text files only.
+    sb4: bool,
+    /// Whether new plain text files end in `.txt`.
+    txt: bool,
+    /// The files there when the folder was opened, by their names on
+    /// disk, that nothing has written, deleted or renamed since.
+    untouched: RefCell<BTreeSet<String>>,
+}
+
+/// The names of the regular files in `dir`, links left out, sorted.
+fn folder_entries(dir: &Path) -> io::Result<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file()
+            && let Ok(name) = entry.file_name().into_string()
+        {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// A name ending in `.txt`, in any case, without it.
+fn txt_stem(entry: &str) -> Option<&str> {
+    let cut = entry.len().checked_sub(4)?;
+    let suffix = entry.get(cut..)?;
+    suffix.eq_ignore_ascii_case(".txt").then(|| &entry[..cut])
+}
+
+/// A name in SmileBASIC 4's form split into its type and checked name.
+fn sb4_name(entry: &str) -> Option<(FileKind, String)> {
+    let mut chars = entry.chars();
+    let kind = FileKind::from_prefix(chars.next()?.to_ascii_uppercase())?;
+    Some((kind, check_name(chars.as_str()).ok()?))
+}
+
+/// Whether a file starts as SmileBASIC 4's container does, or for DAT,
+/// GRP and JPG files, as the emulator writes them.
+fn starts_as(path: &Path, kind: FileKind) -> bool {
+    let mut start = Vec::with_capacity(8);
+    let read = std::fs::File::open(path).and_then(|f| f.take(8).read_to_end(&mut start));
+    read.is_ok()
+        && (start.starts_with(&[4, 0])
+            || match kind {
+                FileKind::Txt => false,
+                FileKind::Dat => start.starts_with(crate::sbfile::DATA_MAGIC),
+                FileKind::Grp => start.starts_with(b"\x89PNG"),
+                FileKind::Jpg => start.starts_with(&[0xFF, 0xD8]),
+            })
+}
+
+impl Folder {
+    /// Opens `dir` and settles how its new files are named, from the
+    /// files there. It uses SmileBASIC 4's names when it holds a `META`
+    /// file, a backup such as `T@BACKUP.PRG`, or a text file in
+    /// SmileBASIC 4's container: these come from SmileBASIC 4 or the
+    /// emulator's projects. Otherwise new text files get plain names,
+    /// ending in `.txt` when at least half of the plain text files there
+    /// do, and DAT, GRP and JPG files take SmileBASIC 4's names.
+    fn open(dir: &Path) -> io::Result<Folder> {
+        // The folder itself may be a link, as the storage folder may.
+        let dir = std::fs::canonicalize(dir)?;
+        if !dir.is_dir() {
+            let what = format!("{} is not a folder", file_label(&dir));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, what));
+        }
+        let entries = folder_entries(&dir)?;
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let sb4 = entries.iter().any(|entry| {
+            entry.eq_ignore_ascii_case(crate::env::SB4_META)
+                || matches!(sb4_name(entry), Some((FileKind::Txt, name))
+                    if name.starts_with('@') || starts_as(&dir.join(entry), FileKind::Txt))
+        });
+        let mut folder = Folder {
+            name: folder_project_name(name),
+            dir,
+            sb4,
+            txt: true,
+            untouched: RefCell::new(entries.iter().cloned().collect()),
+        };
+        if !sb4 {
+            let forms: Vec<Form> = (entries.iter())
+                .filter_map(|entry| folder.reading(entry).map(|(_, _, form)| form))
+                .collect();
+            let count = |form| forms.iter().filter(|&&f| f == form).count();
+            folder.txt = count(Form::Txt) >= count(Form::Bare);
+        }
+        Ok(folder)
+    }
+
+    /// The type and name that the file `entry` maps to, if any, with the
+    /// form of its name.
+    fn reading(&self, entry: &str) -> Option<(FileKind, String, Form)> {
+        if crate::env::is_meta_file(&entry.to_ascii_uppercase()) {
+            return None;
+        }
+        if let Some((kind, name)) = sb4_name(entry)
+            && (self.sb4 || starts_as(&self.dir.join(entry), kind))
+        {
+            return Some((kind, name, Form::Sb4));
+        }
+        match txt_stem(entry) {
+            Some(stem) => check_name(stem).ok().map(|n| (FileKind::Txt, n, Form::Txt)),
+            None => check_name(entry)
+                .ok()
+                .map(|n| (FileKind::Txt, n, Form::Bare)),
+        }
+    }
+
+    /// The files there by type and name, sorted, with their names on disk.
+    fn files(&self) -> io::Result<Vec<(FileKind, String, String)>> {
+        let entries = match folder_entries(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e),
+        };
+        let mut found: Vec<_> = (entries.into_iter())
+            .filter_map(|entry| {
+                let (kind, name, form) = self.reading(&entry)?;
+                Some((kind, name, form, entry))
+            })
+            .collect();
+        found.sort();
+        found.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        Ok(found.into_iter().map(|(k, n, _, e)| (k, n, e)).collect())
+    }
+
+    /// The name on disk of the file of this type and name, if there is one.
+    fn find(&self, kind: FileKind, name: &str) -> io::Result<Option<String>> {
+        let files = self.files()?.into_iter();
+        Ok((files.filter(|(k, n, _)| *k == kind && n == name))
+            .map(|(_, _, e)| e)
+            .next())
+    }
+
+    /// The name on disk of a file, or, for a new file, the name it takes.
+    fn file_name(&self, kind: FileKind, name: &str) -> io::Result<String> {
+        Ok(self
+            .find(kind, name)?
+            .unwrap_or_else(|| self.new_name(kind, name)))
+    }
+
+    /// The name a new file takes, in the folder's way. A plain name that
+    /// would map back to another name (`README.TXT` saved as is would be
+    /// `README`), or to the metadata, takes the other plain form.
+    fn new_name(&self, kind: FileKind, name: &str) -> String {
+        let sb4 = format!("{}{name}", kind.prefix());
+        if self.sb4 || kind != FileKind::Txt {
+            return sb4;
+        }
+        let (txt, bare) = (format!("{name}.txt"), name.to_string());
+        let forms = match self.txt {
+            true => [txt, bare],
+            false => [bare, txt],
+        };
+        let maps_back =
+            |entry: &String| (self.reading(entry)).is_some_and(|(k, n, _)| k == kind && n == name);
+        forms.into_iter().find(maps_back).unwrap_or(sb4)
     }
 }
 
@@ -1124,6 +1446,247 @@ mod tests {
         assert!(!s.exists(FileKind::Txt, "A"));
     }
 
+    /// A folder of the user's holding `files` (name, contents), opened
+    /// as the current project beside an empty storage folder.
+    fn user_folder(tmp: &TempDir, folder: &str, files: &[(&str, &[u8])]) -> (Storage, PathBuf) {
+        let dir = tmp.0.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, bytes) in files {
+            std::fs::write(dir.join(name), bytes).unwrap();
+        }
+        let mut s = Storage::new(tmp.0.join("projects"));
+        s.open_folder(&dir).unwrap();
+        (s, dir)
+    }
+
+    fn on_disk(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = (std::fs::read_dir(dir).unwrap())
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn txt(name: &str) -> (FileKind, String) {
+        (FileKind::Txt, name.to_string())
+    }
+
+    #[test]
+    fn folder_names_for_projects() {
+        assert_eq!(folder_project_name("hgtest"), "HGTEST");
+        assert_eq!(folder_project_name("hangul lib"), "HANGUL_LIB");
+        assert_eq!(folder_project_name("#sys"), "_SYS");
+        assert_eq!(folder_project_name("@WORKSPACE"), "_WORKSPACE");
+        assert_eq!(folder_project_name("ハングル"), "____");
+        assert_eq!(folder_project_name(""), "PROJECT");
+    }
+
+    #[test]
+    fn a_plain_folder_maps_both_forms_and_leaves_out_the_rest() {
+        let tmp = TempDir::new("folder-plain");
+        let (s, _) = user_folder(
+            &tmp,
+            "hgtest",
+            &[
+                ("HGLIB.PRG.txt", b"lib"),
+                ("hgtest.prg.txt", b"test"),
+                ("TEST.PRG", b"plain"),
+                ("BSCORES", b"PCBN0004 and the rest"),
+                ("GPIC", b"\x89PNG..."),
+                ("GAME.PRG", b"not a GRP"),
+                ("bad name.txt", b""),
+                ("@META.TXT", b"Title\n"),
+                (".hidden", b""),
+            ],
+        );
+        assert_eq!(s.project(), "HGTEST");
+        assert_eq!(
+            s.list(None, None).unwrap(),
+            [
+                txt("GAME.PRG"),
+                txt("HGLIB.PRG"),
+                txt("HGTEST.PRG"),
+                txt("TEST.PRG"),
+                (FileKind::Dat, "SCORES".to_string()),
+                (FileKind::Grp, "PIC".to_string()),
+            ]
+        );
+        assert_eq!(s.read(FileKind::Txt, "HGTEST.PRG").unwrap(), b"test");
+        assert_eq!(s.read(FileKind::Txt, "TEST.PRG").unwrap(), b"plain");
+        assert!(!s.exists(FileKind::Txt, "EST.PRG"), "a plain name it is");
+        assert!(s.exists(FileKind::Dat, "SCORES"));
+        assert!(!s.exists(FileKind::Txt, "BSCORES"));
+        // Named with the project, as another project's files are.
+        let file = parse_read_name("HGTEST/HGLIB.PRG", FileKind::Txt).unwrap();
+        assert_eq!(s.read_ref(&file).unwrap(), b"lib");
+        assert_eq!(s.folder_file("hgtest.prg.txt"), Some(txt("HGTEST.PRG")));
+        assert_eq!(s.folder_file("@META.TXT"), None);
+        assert_eq!(s.read_project_file("@META.TXT").unwrap(), b"Title\n");
+    }
+
+    #[test]
+    fn of_two_files_for_one_name_the_sb4_form_wins_then_txt() {
+        let tmp = TempDir::new("folder-conflict");
+        let (s, _) = user_folder(
+            &tmp,
+            "GAME",
+            &[
+                ("META", b""),
+                ("THGLIB.PRG", b"sb4"),
+                ("HGLIB.PRG.txt", b"txt"),
+                ("MAIN.PRG.txt", b"txt"),
+                ("MAIN.PRG", b"bare"),
+            ],
+        );
+        assert_eq!(s.read(FileKind::Txt, "HGLIB.PRG").unwrap(), b"sb4");
+        assert_eq!(s.read(FileKind::Txt, "MAIN.PRG").unwrap(), b"txt");
+        assert_eq!(
+            s.list(None, None).unwrap(),
+            [txt("HGLIB.PRG"), txt("MAIN.PRG")]
+        );
+    }
+
+    #[test]
+    fn a_folder_with_sb4_names_reads_them_so() {
+        let tmp = TempDir::new("folder-sb4");
+        let (s, dir) = user_folder(
+            &tmp,
+            "GAME",
+            &[
+                ("TMAIN.PRG", b"main"),
+                ("T@BACKUP.PRG", b"old"),
+                ("BDATA", b"no header"),
+            ],
+        );
+        assert_eq!(
+            s.list(None, None).unwrap(),
+            [
+                txt("@BACKUP.PRG"),
+                txt("MAIN.PRG"),
+                (FileKind::Dat, "DATA".to_string())
+            ]
+        );
+        s.write(FileKind::Txt, "NEW", b"1", None).unwrap();
+        s.write(FileKind::Dat, "D", b"1", None).unwrap();
+        assert!(dir.join("TNEW").is_file() && dir.join("BD").is_file());
+    }
+
+    #[test]
+    fn new_files_follow_the_folders_names_and_old_ones_keep_theirs() {
+        let tmp = TempDir::new("folder-new");
+        let (s, dir) = user_folder(
+            &tmp,
+            "LIB",
+            &[
+                ("hglib.prg.txt", b"1"),
+                ("HGTEST.PRG.txt", b""),
+                ("MAIN.PRG", b""),
+            ],
+        );
+        s.write(FileKind::Txt, "HGLIB.PRG", b"2", Some(BACKUP_NAME))
+            .unwrap();
+        s.write(FileKind::Txt, "NEW.PRG", b"", Some(BACKUP_NAME))
+            .unwrap();
+        s.write(FileKind::Txt, "README.TXT", b"", None).unwrap();
+        s.write(FileKind::Txt, "META", b"", None).unwrap();
+        s.write(FileKind::Dat, "SCORES", b"PCBN0004", None).unwrap();
+        assert_eq!(
+            on_disk(&dir),
+            [
+                "@BACKUP.PRG.txt",
+                "BSCORES",
+                "HGTEST.PRG.txt",
+                "MAIN.PRG",
+                "META.txt",
+                "NEW.PRG.txt",
+                "README.TXT.txt",
+                "hglib.prg.txt",
+            ]
+        );
+        assert_eq!(s.read(FileKind::Txt, "HGLIB.PRG").unwrap(), b"2");
+        assert_eq!(s.read(FileKind::Txt, BACKUP_NAME).unwrap(), b"1");
+        assert_eq!(s.read(FileKind::Txt, "README.TXT").unwrap(), b"");
+        assert!(s.exists(FileKind::Dat, "SCORES"));
+
+        s.rename(FileKind::Txt, "MAIN.PRG", "START.PRG").unwrap();
+        assert!(dir.join("START.PRG.txt").is_file() && !dir.join("MAIN.PRG").exists());
+        s.delete(FileKind::Txt, "HGTEST.PRG").unwrap();
+        assert!(!dir.join("HGTEST.PRG.txt").exists());
+
+        // Without `.txt` on most of them, new ones go without.
+        let tmp = TempDir::new("folder-bare");
+        let plain: [(&str, &[u8]); 3] = [("MAIN.PRG", b""), ("OTHER.PRG", b""), ("A.txt", b"")];
+        let (s, dir) = user_folder(&tmp, "BARE", &plain);
+        s.write(FileKind::Txt, "NEW.PRG", b"", None).unwrap();
+        s.write(FileKind::Txt, "README.TXT", b"", None).unwrap();
+        assert_eq!(
+            on_disk(&dir),
+            [
+                "A.txt",
+                "MAIN.PRG",
+                "NEW.PRG",
+                "OTHER.PRG",
+                "README.TXT.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn files_there_from_the_start_are_originals_until_changed() {
+        let tmp = TempDir::new("folder-originals");
+        let (s, _) = user_folder(&tmp, "LIB", &[("HGLIB.PRG.txt", b"1"), ("MAIN.PRG", b"")]);
+        let file = |name: &str| parse_read_name(name, FileKind::Txt).unwrap();
+        assert_eq!(
+            s.original(&file("HGLIB.PRG")).as_deref(),
+            Some("HGLIB.PRG.txt")
+        );
+        assert_eq!(s.original(&file("NEW.PRG")), None);
+        s.write(FileKind::Txt, "HGLIB.PRG", b"2", None).unwrap();
+        assert_eq!(s.original(&file("HGLIB.PRG")), None, "asked once");
+        // A copy for a subprogram sees the same.
+        let copy = s.clone();
+        copy.delete(FileKind::Txt, "MAIN.PRG").unwrap();
+        s.write(FileKind::Txt, "MAIN.PRG", b"new", None).unwrap();
+        assert_eq!(s.original(&file("MAIN.PRG")), None);
+        // Files elsewhere are no originals.
+        let mut s = s;
+        s.set_project("").unwrap();
+        s.write(FileKind::Txt, "HGLIB.PRG", b"", None).unwrap();
+        assert_eq!(s.original(&file("HGLIB.PRG")), None);
+        assert_eq!(s.original(&file("LIB/MAIN.PRG")), None);
+    }
+
+    #[test]
+    fn the_folder_stands_among_the_projects_but_stays_the_users() {
+        let tmp = TempDir::new("folder-projects");
+        let (mut s, dir) = user_folder(&tmp, "lib", &[("MAIN.PRG", b"?1")]);
+        s.create_project("OTHER").unwrap();
+        std::fs::create_dir_all(tmp.0.join("projects/LIB")).unwrap();
+        assert_eq!(s.projects().unwrap(), ["LIB", "OTHER"]);
+        assert!(s.create_project("LIB").is_err());
+        s.set_project("OTHER").unwrap();
+        s.write(FileKind::Txt, "A", b"", None).unwrap();
+        assert!(tmp.0.join("projects/OTHER/TA").is_file());
+        s.set_project("LIB").unwrap();
+        assert_eq!(s.read(FileKind::Txt, "MAIN.PRG").unwrap(), b"?1");
+        for refused in [
+            s.delete_project("LIB").err(),
+            s.rename_project("LIB", "X").err(),
+            s.duplicate_project("LIB").err(),
+        ] {
+            assert!(refused.is_some());
+        }
+        assert!(dir.join("MAIN.PRG").is_file());
+        assert_eq!(s.project(), "LIB");
+        assert_eq!(
+            s.copy_file(FileKind::Txt, ("LIB", "MAIN.PRG"), ("OTHER", "M"))
+                .unwrap(),
+            "M"
+        );
+        assert_eq!(s.read_in("OTHER", FileKind::Txt, "M").unwrap(), b"?1");
+        assert!(s.file_info("LIB", FileKind::Txt, "MAIN.PRG").is_some());
+    }
+
     /// Planted links, each leading to a file outside the storage folder.
     #[cfg(unix)]
     mod links {
@@ -1288,6 +1851,29 @@ mod tests {
             assert!(s.exists_in("GAME2", FileKind::Txt, "MAIN.PRG"));
             let leak = tmp.0.join("root/GAME2/TLEAK");
             assert!(std::fs::symlink_metadata(leak).is_err());
+        }
+
+        #[test]
+        fn the_users_folder_takes_no_links_either() {
+            let (tmp, _, outside) = arena("link-folder");
+            let dir = tmp.0.join("mine");
+            std::fs::create_dir_all(&dir).unwrap();
+            symlink(&outside, dir.join("LEAK.PRG.txt")).unwrap();
+            symlink(&outside, dir.join("TLEAK")).unwrap();
+            let mut s = Storage::new(tmp.0.join("root"));
+            s.open_folder(&dir).unwrap();
+            assert!(s.list(None, None).unwrap().is_empty());
+            assert!(s.read(FileKind::Txt, "LEAK.PRG").is_err());
+            assert!(s.write(FileKind::Txt, "LEAK.PRG", b"new", None).is_err());
+            assert!(s.write(FileKind::Txt, "LEAK", b"new", None).is_ok());
+            assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+            assert!(is_link(&dir.join("TLEAK")));
+            // The folder itself may be a link, as the storage folder may.
+            let linked = tmp.0.join("linked");
+            symlink(&dir, &linked).unwrap();
+            let mut s = Storage::new(tmp.0.join("root"));
+            assert_eq!(s.open_folder(&linked).unwrap(), "MINE");
+            assert_eq!(s.read(FileKind::Txt, "LEAK").unwrap(), b"new");
         }
 
         #[test]

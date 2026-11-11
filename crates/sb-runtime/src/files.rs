@@ -145,6 +145,7 @@ impl Runtime {
                 self.refuse_save_project(&spec)?;
                 if let Ok(file) = self.write_name(&spec, FileKind::Txt) {
                     let exists = self.storage.exists_ref(&file);
+                    let originals = self.originals_of(&file, Some(storage::BACKUP_NAME));
                     let file = file.label();
                     let mut details = self.details(&file, None);
                     if exists {
@@ -158,6 +159,7 @@ impl Runtime {
                         accept: "Save",
                         notice: format!("Saving slot {slot} as {file}"),
                         in_programs: true,
+                        originals,
                     };
                     let ask = self.confirm_file(action, &[]);
                     if self.held(ask) {
@@ -179,6 +181,7 @@ impl Runtime {
                         accept: "Delete",
                         notice: format!("Deleting {file}"),
                         in_programs: true,
+                        originals: self.originals_named(&[&spec]),
                     };
                     let ask = self.confirm_file(action, &[]);
                     if self.held(ask) {
@@ -206,6 +209,7 @@ impl Runtime {
                         accept: "Rename",
                         notice: format!("Renaming {file} to {to}"),
                         in_programs: true,
+                        originals: self.originals_named(&[&from, &to]),
                     };
                     let ask = self.confirm_file(action, &[]);
                     if self.held(ask) {
@@ -372,6 +376,7 @@ impl Runtime {
                 accept: "Load",
                 notice: format!("Loading {file} into slot {slot}"),
                 in_programs: false,
+                originals: Vec::new(),
             };
             match self.confirm_file(action, &[slot]) {
                 Ask::Go => {}
@@ -438,6 +443,52 @@ impl Runtime {
         self.storage
             .exists(kind, &name)
             .then(|| format!("{}:{name}", kind.name()))
+    }
+
+    /// Of the files there from the start in the folder a program was run
+    /// from, those that writing `file` changes: the file, and when it is
+    /// there, the backup it moves to.
+    pub(crate) fn originals_of(&self, file: &FileRef, backup: Option<&str>) -> Vec<String> {
+        let mut found: Vec<String> = self.storage.original(file).into_iter().collect();
+        if let Some(backup) = backup
+            && backup != file.name
+            && self.storage.exists_ref(file)
+        {
+            let backup = FileRef {
+                name: backup.to_string(),
+                ..file.clone()
+            };
+            found.extend(self.storage.original(&backup));
+        }
+        found
+    }
+
+    /// [`Runtime::originals_of`] for DELETE's and RENAME's names, in the
+    /// current project. A name without a type takes the type before it.
+    fn originals_named(&self, specs: &[&str]) -> Vec<String> {
+        let (mut kind, mut found) = (FileKind::Txt, Vec::new());
+        for spec in specs {
+            let Ok((named, name)) = parse_file_name(spec, kind) else {
+                continue;
+            };
+            kind = named;
+            let file = FileRef {
+                kind,
+                project: None,
+                name,
+            };
+            found.extend(self.storage.original(&file));
+        }
+        found
+    }
+
+    /// [`Runtime::originals_of`] for saving a slot as `spec`, for Ctrl+S
+    /// to ask first.
+    pub fn original_txt(&self, spec: &str) -> Vec<String> {
+        match self.write_name(spec, FileKind::Txt) {
+            Ok(file) => self.originals_of(&file, Some(storage::BACKUP_NAME)),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// The project and file lines of a file question.
