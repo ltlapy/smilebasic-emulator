@@ -362,8 +362,9 @@ pub struct Input {
     pub live: State,
     now: State,
     before: State,
-    /// Frames each button of controllers 0 to 4 has been held.
-    held: [[u32; BUTTONS]; PADS + 1],
+    /// Frames each button of controllers 0 to 4 has been held, and
+    /// #B_RANY, #B_LANY and #B_ANY have been on.
+    held: [[u32; BUTTON_IDS]; PADS + 1],
     /// BREPEAT's start and interval for each button id.
     repeat: [(u32, u32); BUTTON_IDS],
     /// Frames the left button has been held, anywhere and on the screen.
@@ -429,7 +430,7 @@ impl Default for Input {
             live: State::default(),
             now: State::default(),
             before: State::default(),
-            held: [[0; BUTTONS]; PADS + 1],
+            held: [[0; BUTTON_IDS]; PADS + 1],
             repeat: std::array::from_fn(|id| match id {
                 0..=7 => REPEAT_PADS,
                 _ => REPEAT_OTHERS,
@@ -458,7 +459,7 @@ impl Input {
         self.before = self.now;
         self.now = self.live;
         for (pad, held) in self.held.iter_mut().enumerate() {
-            let buttons = self.now.buttons(pad);
+            let buttons = with_any(self.now.buttons(pad));
             for (id, frames) in held.iter_mut().enumerate() {
                 *frames = if buttons >> id & 1 != 0 {
                     *frames + 1
@@ -494,7 +495,7 @@ impl Input {
     pub fn forget(&mut self) {
         self.now = self.live;
         self.before = self.live;
-        self.held = [[0; BUTTONS]; PADS + 1];
+        self.held = [[0; BUTTON_IDS]; PADS + 1];
         self.touch = (0, 0);
         // What is held goes on counting as held, and types nothing more
         // until let go.
@@ -644,18 +645,19 @@ impl Input {
     /// condition `function`, with #B_RANY, #B_LANY and #B_ANY. A press or
     /// a release has those only when they go on or off themselves: with L
     /// held, pressing or releasing A gives A and #B_RANY, as #B_ANY stays
-    /// on for L. A wait for buttons in DIALOG answers the same way.
+    /// on for L. A wait for buttons in DIALOG answers the same way. A
+    /// repeat has them as they go on and then on their own clocks, by
+    /// their own BREPEAT, counted from the frame each went on: with L
+    /// held, A going down or repeating gives A and #B_RANY, and #B_ANY
+    /// goes on repeating as it did for L.
     fn buttons(&self, pad: usize, function: i32) -> u32 {
         let (now, before) = (self.now.buttons(pad), self.before.buttons(pad));
-        let bits = match function {
-            0 => now,
-            2 => return with_any(now) & !with_any(before),
-            3 => return with_any(before) & !with_any(now),
-            // UNVERIFIED: that a repeat has #B_RANY, #B_LANY and #B_ANY for
-            // any button that goes down or repeats, even when another held
-            // button keeps them on.
+        match function {
+            0 => with_any(now),
+            2 => with_any(now) & !with_any(before),
+            3 => with_any(before) & !with_any(now),
             _ => {
-                let mut bits = now & !before;
+                let mut bits = with_any(now) & !with_any(before);
                 for (id, &held) in self.held[pad].iter().enumerate() {
                     let (start, interval) = self.repeat[id];
                     // The first repeat comes `start` frames after the press,
@@ -668,8 +670,7 @@ impl Input {
                 }
                 bits
             }
-        };
-        with_any(bits)
+        }
     }
 }
 
@@ -1094,5 +1095,60 @@ mod tests {
             })
             .collect();
         assert_eq!(fired, [0, 20, 24, 28]);
+    }
+
+    /// The frames of a hold, counted from 0, on which BUTTON's repeat
+    /// condition gives something, and what it gives.
+    fn repeat_rows(input: &mut Input, frames: u32, held: impl Fn(u32) -> u32) -> Vec<(u32, u32)> {
+        (0..frames)
+            .filter_map(|f| {
+                press(input, held(f));
+                let bits = input.buttons(1, 1);
+                (bits != 0).then_some((f, bits))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn any_bits_repeat_on_their_own_clocks() {
+        // L held from frame 0, A from frame 67, with the default BREPEATs.
+        let (l, a) = (1 << 8, 1 << 3);
+        let mut input = Input::default();
+        let rows = repeat_rows(&mut input, 136, |f| if f < 67 { l } else { l | a });
+        #[rustfmt::skip]
+        let expected = [
+            (0, 0x10100), (15, 0x10100), (20, 0x10100), (25, 0x10100), (30, 0x10100),
+            (35, 0x10100), (40, 0x10100), (45, 0x10100), (50, 0x10100), (55, 0x10100),
+            (60, 0x10100), (65, 0x10100), (67, 0x04008), (70, 0x10100), (75, 0x10100),
+            (80, 0x10100), (82, 0x04000), (85, 0x10100), (87, 0x04008), (90, 0x10100),
+            (91, 0x00008), (92, 0x04000), (95, 0x10108), (97, 0x04000), (99, 0x00008),
+            (100, 0x10100), (102, 0x04000), (103, 0x00008), (105, 0x10100), (107, 0x04008),
+            (110, 0x10100), (111, 0x00008), (112, 0x04000), (115, 0x10108), (117, 0x04000),
+            (119, 0x00008), (120, 0x10100), (122, 0x04000), (123, 0x00008), (125, 0x10100),
+            (127, 0x04008), (130, 0x10100), (131, 0x00008), (132, 0x04000), (135, 0x10108),
+        ];
+        assert_eq!(rows, expected);
+
+        // A alone, with #B_RANY at 40,10 and #B_ANY at 25,6.
+        let mut input = Input::default();
+        input.repeat[14] = (40, 10);
+        input.repeat[16] = (25, 6);
+        let rows = repeat_rows(&mut input, 64, |_| a);
+        #[rustfmt::skip]
+        let expected = [
+            (0, 0x14008), (20, 0x00008), (24, 0x00008), (25, 0x10000), (28, 0x00008),
+            (32, 0x10008), (36, 0x00008), (39, 0x10000), (40, 0x04008), (44, 0x00008),
+            (46, 0x10000), (48, 0x00008), (51, 0x04000), (52, 0x00008), (53, 0x10000),
+            (56, 0x00008), (60, 0x10008), (62, 0x04000),
+        ];
+        assert_eq!(rows, expected);
+
+        // Up held 17 frames, with #B_RANY and #B_ANY at 30,6: only #B_LANY
+        // repeats, at 15.
+        let mut input = Input::default();
+        input.repeat[14] = (30, 6);
+        input.repeat[16] = (30, 6);
+        let rows = repeat_rows(&mut input, 17, |_| 1 << 4);
+        assert_eq!(rows, [(0, 0x18010), (15, 0x08000)]);
     }
 }
