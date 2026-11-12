@@ -748,6 +748,110 @@ fn run_and_cont_only_start_a_direct_line() {
     assert_eq!(last(&m), ["Q", "OK"]);
 }
 
+/// The other commands of DIRECT mode are a Syntax error after a `:` or
+/// THEN too, and nothing on the line runs.
+#[test]
+fn direct_commands_only_start_a_line() {
+    let mut m = machine();
+    let last = |m: &Machine| rows(m)[rows(m).len() - 2].clone();
+    for line in [
+        "?1:CLEAR",
+        "?2:TRACE",
+        "?3:NEW",
+        "?4:BACKTRACE",
+        "IF 1 THEN RUN",
+        ":RUN",
+    ] {
+        enter(&mut m, line);
+        assert!(
+            last(&m).starts_with("Syntax error"),
+            "{line}: {:?}",
+            rows(&m)
+        );
+    }
+    for n in ["1", "2", "3", "4"] {
+        assert!(!rows(&m).iter().any(|r| r == n), "{n}: {:?}", rows(&m));
+    }
+}
+
+/// RUN reads one number literal and nothing after it; CONT and CLEAR
+/// read nothing.
+#[test]
+fn direct_commands_ignore_the_rest_of_the_line() {
+    let mut m = machine();
+    for slot in 0..4 {
+        m.set_slot(slot, format!("?\"SLOT{slot}\""));
+    }
+    let last = |m: &Machine| rows(m)[rows(m).len() - 2].clone();
+    for (line, out) in [
+        ("RUN 1:?\"NO\"", "SLOT1"),
+        ("RUN 1+2", "SLOT1"),
+        ("run &h2", "SLOT2"),
+        ("RUN &B11", "SLOT3"),
+        ("RUN", "SLOT0"),
+        ("RUN 6", "Out of range (RUN: slot 6)"),
+        (
+            "RUN:?\"NO\"",
+            "Illegal function call (RUN: a slot number literal)",
+        ),
+        (
+            "RUN A",
+            "Illegal function call (RUN: a slot number literal)",
+        ),
+        (
+            "RUN 1.5",
+            "Illegal function call (RUN: a slot number literal)",
+        ),
+        (
+            "RUN -1",
+            "Illegal function call (RUN: a slot number literal)",
+        ),
+    ] {
+        enter(&mut m, line);
+        assert_eq!(last(&m), out, "{line}");
+    }
+    assert!(!rows(&m).iter().any(|r| r == "NO"), "{:?}", rows(&m));
+
+    m.set_slot(0, "?\"P\"\nSTOP\n?\"Q\"".to_string());
+    enter(&mut m, "RUN");
+    enter(&mut m, "CONT:?\"NO\"");
+    assert_eq!(last(&m), "Q");
+    enter(&mut m, "RUN");
+    enter(&mut m, "CONT 7");
+    assert_eq!(last(&m), "Q");
+    enter(&mut m, "X=5");
+    enter(&mut m, "CLEAR 5:X=1");
+    enter(&mut m, "?X");
+    assert_eq!(last(&m), "0");
+}
+
+/// LIST reads literals: a line, or a slot, a `:` and an optional line.
+#[test]
+fn list_reads_literals() {
+    let mut m = machine();
+    m.set_slot(1, "?1\n?2\n?3".to_string());
+    let last = |m: &Machine| rows(m)[rows(m).len() - 2].clone();
+    for (line, out) in [
+        ("LIST 1.5", "Type mismatch (LIST: not an integer)"),
+        ("LIST 1:2.5", "Type mismatch (LIST: not an integer)"),
+        ("LIST 1000000", "Out of range (LIST: line 1000000)"),
+        ("LIST 6:", "Out of range (LIST: slot 6)"),
+        ("LIST 10+1", "Syntax error (LIST: a line, a slot or ERR)"),
+    ] {
+        enter(&mut m, line);
+        assert!(!m.is_editing(), "{line}");
+        assert_eq!(last(&m), out, "{line}");
+    }
+    enter(&mut m, "LIST 1:");
+    assert_eq!((m.editor().slot(), m.editor().cursor().0), (1, 1));
+    m.toggle_editor();
+    enter(&mut m, "LIST 1:&H3");
+    assert_eq!((m.editor().slot(), m.editor().cursor().0), (1, 3));
+    m.toggle_editor();
+    enter(&mut m, "LIST &B10");
+    assert_eq!((m.editor().slot(), m.editor().cursor().0), (1, 2));
+}
+
 #[test]
 fn stop_and_cont() {
     let mut m = machine();

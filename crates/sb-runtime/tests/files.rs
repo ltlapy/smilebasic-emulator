@@ -1216,7 +1216,8 @@ fn the_prompt_and_subprograms_save_in_any_project() {
         1,
         "SAVE \"/P\",1:SAVEV \"TXT:/V\",\"1\":SAVEG \"JPG:/G\",0,0,0,4,4\nEND".to_string(),
     );
-    enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+    enter(&mut m, "save \"sub\",1");
+    enter(&mut m, "subrun \"sub\"");
     for _ in 0..10 {
         m.frame();
     }
@@ -1262,7 +1263,8 @@ fn saves_into_a_system_project_are_refused_everywhere() {
         assert_eq!(direct_error(&mut m, &source.to_ascii_lowercase()), message);
 
         m.set_slot(1, format!("A=1\n{source}"));
-        enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+        enter(&mut m, "save \"sub\",1");
+        enter(&mut m, "subrun \"sub\"");
         for _ in 0..10 {
             m.frame();
         }
@@ -1291,7 +1293,8 @@ fn rename_and_delete_refuse_projects_everywhere() {
         assert_eq!(direct_error(&mut m, line), message, "{line}");
     }
     m.set_slot(1, "DELETE \"TXT:/A\"".to_string());
-    enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+    enter(&mut m, "save \"sub\",1");
+    enter(&mut m, "subrun \"sub\"");
     for _ in 0..10 {
         m.frame();
     }
@@ -1365,7 +1368,8 @@ fn loadg_types_of_file() {
     }
 
     m.set_slot(1, "LOADG \"PNG:P\",0".to_string());
-    enter(&mut m, "save \"sub\",1:subrun \"sub\"");
+    enter(&mut m, "save \"sub\",1");
+    enter(&mut m, "subrun \"sub\"");
     for _ in 0..10 {
         m.frame();
     }

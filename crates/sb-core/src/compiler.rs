@@ -106,8 +106,8 @@ struct Compiler<'h> {
     /// The statement the DEF being compiled is.
     def_at: usize,
     direct: bool,
-    /// Where the first statement starts: in DIRECT mode, RUN and CONT
-    /// work only there.
+    /// Where the first statement starts: in DIRECT mode, the commands
+    /// of DIRECT mode work only there, at the start of the line.
     first: Option<(u32, u32)>,
     /// The program slot compiled for, `#_SLOT`.
     slot: i32,
@@ -1097,14 +1097,12 @@ impl Compiler<'_> {
         outs: &[Option<LValue>],
     ) -> Result<()> {
         let full = call_name(name);
-        // A DIRECT mode line runs RUN and CONT only as its first word:
-        // after a `:` they are a Syntax error, and nothing on the line
-        // runs.
-        // UNVERIFIED: the same after THEN or ELSE, and for the other
-        // commands of DIRECT mode only.
+        // A DIRECT mode line runs its commands only as its first word.
+        // Anywhere else, after a `:`, THEN or ELSE, they are a Syntax
+        // error, and nothing on the line runs.
         if self.direct
-            && matches!(full.as_str(), "RUN" | "CONT")
-            && self.first != Some((self.line, self.col))
+            && DIRECT_COMMANDS.contains(&full.as_str())
+            && (self.col != 1 || self.first != Some((self.line, self.col)))
         {
             return Err(err(ErrorKind::SyntaxError, "only at the start of the line"));
         }
@@ -1880,6 +1878,21 @@ fn chain(expr: &Expr, with_index: bool) -> (Vec<&Expr>, &Expr) {
     }
     (links, first)
 }
+
+/// The commands of DIRECT mode that compile as commands; LIST is read
+/// before the line compiles.
+const DIRECT_COMMANDS: &[&str] = &[
+    "RUN",
+    "CONT",
+    "NEW",
+    "CLEAR",
+    "TRACE",
+    "BACKTRACE",
+    "SUBRUN",
+    "SUBSTOP",
+    "SUBSHOW",
+    "SUBHIDE",
+];
 
 /// What one statement's constant strings can take as it compiles, and
 /// what each takes beside its characters.

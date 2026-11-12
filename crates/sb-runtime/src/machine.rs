@@ -282,40 +282,184 @@ enum List {
     Error,
 }
 
-/// Reads LIST, LIST line, LIST slot:line and LIST ERR. Returns `None` for
-/// lines that are not a LIST; LIST is handled here because its `:` is not
-/// the statement separator.
-// UNVERIFIED: only number literals are accepted, not expressions.
-fn parse_list(line: &str) -> Option<Result<List, Error>> {
-    let line = line.trim();
-    let head = line.get(..4)?;
-    let rest = &line[4..];
-    if !head.eq_ignore_ascii_case("LIST")
-        || rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-    {
-        return None;
-    }
-    let rest = rest.trim();
-    let number = |s: &str| s.trim().parse::<usize>().ok();
-    let list = if rest.is_empty() {
-        Some(List::At(None, None))
-    } else if rest.eq_ignore_ascii_case("ERR") {
-        Some(List::Error)
-    } else if let Some((slot, line)) = rest.split_once(':') {
-        number(slot)
-            .zip(number(line))
-            .map(|(s, l)| List::At(Some(s), Some(l)))
-    } else {
-        number(rest).map(|l| List::At(None, Some(l)))
+/// What a line typed in DIRECT mode is.
+#[derive(Debug, PartialEq, Eq)]
+enum Direct {
+    /// A line that compiles and runs as a program does.
+    Line,
+    /// A command of DIRECT mode, as the line that runs it: the command
+    /// and the arguments it read, without the rest of the line.
+    Command(String),
+    List(List),
+}
+
+/// A token as the commands of DIRECT mode read their arguments.
+#[derive(Debug, PartialEq, Eq)]
+enum Token<'a> {
+    End,
+    Word(&'a str),
+    /// An integer literal, decimal, `&H` or `&B`.
+    Int(u32),
+    /// A real literal, or a decimal one too large for an integer.
+    Real,
+    /// `&H` or `&B` without digits, or with too many.
+    BadNumber,
+    /// A string literal's text.
+    Str(&'a str),
+    Colon,
+    Other,
+}
+
+/// Reads the token at the start of `s` and gives the text after it.
+fn token(s: &str) -> (Token<'_>, &str) {
+    let s = s.trim_start_matches([' ', '\t']);
+    let bytes = s.as_bytes();
+    let Some(&first) = bytes.first() else {
+        return (Token::End, s);
     };
-    Some(match list {
-        Some(List::At(Some(slot), _)) if slot >= SLOTS => Err(Error::with_detail(
-            ErrorKind::OutOfRange,
-            format!("slot {slot}"),
-        )),
-        Some(list) => Ok(list),
-        None => Err(Error::with_detail(ErrorKind::SyntaxError, "LIST")),
-    })
+    let run = |from: usize, ok: fn(u8) -> bool| {
+        from + bytes[from..].iter().take_while(|&&b| ok(b)).count()
+    };
+    match first {
+        b'\'' => (Token::End, ""),
+        b':' => (Token::Colon, &s[1..]),
+        b'"' => {
+            let body = &s[1..];
+            match body.find('"') {
+                Some(end) => (Token::Str(&body[..end]), &body[end + 1..]),
+                None => (Token::Str(body), ""),
+            }
+        }
+        b'&' if bytes.len() > 1 && matches!(bytes[1] | 0x20, b'h' | b'b') => {
+            let (radix, most) = match bytes[1] | 0x20 {
+                b'h' => (16, 8),
+                _ => (2, 32),
+            };
+            let end = run(2, |b| b.is_ascii_alphanumeric() || b == b'_');
+            let digits: String = s[2..end].chars().filter(|&c| c != '_').collect();
+            let value = (!digits.is_empty() && digits.len() <= most)
+                .then(|| u32::from_str_radix(&digits, radix).ok())
+                .flatten();
+            (value.map_or(Token::BadNumber, Token::Int), &s[end..])
+        }
+        b'0'..=b'9' | b'.' if bytes[0] != b'.' || bytes.get(1).is_some_and(u8::is_ascii_digit) => {
+            let mut end = run(0, |b| b.is_ascii_digit());
+            let mut real = false;
+            if bytes.get(end) == Some(&b'.') {
+                real = true;
+                end = run(end + 1, |b| b.is_ascii_digit());
+            }
+            if matches!(bytes.get(end), Some(b'e' | b'E')) {
+                let sign = usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+                if bytes.get(end + 1 + sign).is_some_and(u8::is_ascii_digit) {
+                    real = true;
+                    end = run(end + 1 + sign, |b| b.is_ascii_digit());
+                }
+            }
+            if bytes.get(end) == Some(&b'#') {
+                real = true;
+                end += 1;
+            }
+            let int = match real {
+                false => s[..end]
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|&n| n <= i32::MAX as u32),
+                true => None,
+            };
+            (int.map_or(Token::Real, Token::Int), &s[end..])
+        }
+        b'A'..=b'Z' | b'a'..=b'z' | b'_' => {
+            let mut end = run(0, |b| b.is_ascii_alphanumeric() || b == b'_');
+            if matches!(bytes.get(end), Some(b'$' | b'#' | b'%')) {
+                end += 1;
+            }
+            (Token::Word(&s[..end]), &s[end..])
+        }
+        _ => {
+            let len = s.chars().next().map_or(1, char::len_utf8);
+            (Token::Other, &s[len..])
+        }
+    }
+}
+
+/// Sorts out a line typed in DIRECT mode. RUN, CONT, NEW, CLEAR, LIST,
+/// TRACE, BACKTRACE, SUBRUN, SUBSTOP, SUBSHOW and SUBHIDE are commands
+/// only as the line's first word. Each reads its own arguments, which are
+/// literals, not expressions, and the rest of the line is not read: `RUN
+/// 1+2` runs slot 1, `CONT:?1` only goes on. Anywhere else on a line these
+/// names do not compile.
+fn parse_direct(line: &str) -> Result<Direct, Error> {
+    let (Token::Word(word), rest) = token(line) else {
+        return Ok(Direct::Line);
+    };
+    let word = word.to_ascii_uppercase();
+    let error = |kind, detail: &str| Err(Error::with_detail(kind, format!("{word}: {detail}")));
+    let command = match word.as_str() {
+        "CONT" | "CLEAR" | "TRACE" | "BACKTRACE" | "SUBSTOP" | "SUBSHOW" | "SUBHIDE" => {
+            word.clone()
+        }
+        // UNVERIFIED for NEW: that it reads its slot as RUN does.
+        "RUN" | "NEW" => match token(rest).0 {
+            Token::End => word.clone(),
+            Token::Int(n) if (n as usize) < SLOTS => format!("{word} {n}"),
+            Token::Int(n) => return error(ErrorKind::OutOfRange, &format!("slot {n}")),
+            _ => return error(ErrorKind::IllegalFunctionCall, "a slot number literal"),
+        },
+        // UNVERIFIED: that anything but a string literal is an Illegal
+        // function call.
+        "SUBRUN" => match token(rest).0 {
+            Token::Str(file) if file.encode_utf16().count() > 65 => {
+                return error(ErrorKind::StringTooLong, "file name");
+            }
+            Token::Str(file) => format!("{word} \"{file}\""),
+            _ => return error(ErrorKind::IllegalFunctionCall, "a file name literal"),
+        },
+        "LIST" => return parse_list(rest).map(Direct::List),
+        _ => return Ok(Direct::Line),
+    };
+    Ok(Direct::Command(command))
+}
+
+/// Reads LIST's arguments: none, ERR, a line, or a slot, `:` and an
+/// optional line, each a number literal.
+fn parse_list(rest: &str) -> Result<List, Error> {
+    let error = |kind, detail: &str| Error::with_detail(kind, format!("LIST: {detail}"));
+    // A line or a slot.
+    let number = |token: Token| match token {
+        Token::Int(n) => Ok(n as usize),
+        Token::Real => Err(error(ErrorKind::TypeMismatch, "not an integer")),
+        _ => Err(error(ErrorKind::IllegalFunctionCall, "a number literal")),
+    };
+    let (first, rest) = token(rest);
+    let first = match first {
+        Token::End => return Ok(List::At(None, None)),
+        Token::Word(word) if word.eq_ignore_ascii_case("ERR") => return Ok(List::Error),
+        Token::Int(_) | Token::Real | Token::BadNumber => number(first)?,
+        _ => return Err(error(ErrorKind::SyntaxError, "a line, a slot or ERR")),
+    };
+    let line_range = |line: usize| match line {
+        0..1_000_000 => Ok(line),
+        _ => Err(error(ErrorKind::OutOfRange, &format!("line {line}"))),
+    };
+    match token(rest) {
+        (Token::End, _) => Ok(List::At(None, Some(line_range(first)?))),
+        (Token::Colon, rest) => {
+            let line = match token(rest).0 {
+                Token::End => 0,
+                token @ (Token::Int(_) | Token::Real | Token::BadNumber) => {
+                    line_range(number(token)?)?
+                }
+                // UNVERIFIED: the error for a word after the `:`.
+                _ => return Err(error(ErrorKind::SyntaxError, "a line number")),
+            };
+            match first {
+                slot if slot < SLOTS => Ok(List::At(Some(slot), Some(line))),
+                slot => Err(error(ErrorKind::OutOfRange, &format!("slot {slot}"))),
+            }
+        }
+        _ => Err(error(ErrorKind::SyntaxError, "a line, a slot or ERR")),
+    }
 }
 
 /// ASCII to full-width forms, as SmileBASIC writes its own messages.
@@ -2007,8 +2151,8 @@ impl Machine {
             return;
         }
         self.rt.remember_input(line);
-        match parse_list(line) {
-            Some(Ok(list)) => {
+        match parse_direct(line) {
+            Ok(Direct::List(list)) => {
                 match list {
                     List::At(slot, line) => {
                         let at = line.map(|line| (line, 0));
@@ -2018,11 +2162,14 @@ impl Machine {
                 }
                 self.rt.direct_input_start();
             }
-            Some(Err(e)) => {
+            // UNVERIFIED: that an argument error of a DIRECT mode command
+            // leaves ENVSTAT's status as it was.
+            Err(e) => {
                 self.report(&e.at(1));
                 self.ready();
             }
-            None => self.start(line, None),
+            Ok(Direct::Command(command)) => self.start(&command, None),
+            Ok(Direct::Line) => self.start(line, None),
         }
     }
 
