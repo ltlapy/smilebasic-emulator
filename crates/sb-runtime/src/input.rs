@@ -323,12 +323,14 @@ impl State {
         }
     }
 
-    /// The default controller's stick: the one tilted furthest.
-    // UNVERIFIED: that it is the one tilted furthest.
+    /// The default controller's stick: each axis on its own, the value
+    /// furthest from 0 among the controllers, the earlier controller's on
+    /// a tie. X and Y can come from different controllers.
     fn stick(&self, stick: usize) -> (f64, f64) {
-        (self.pads.iter().map(|p| p.sticks[stick]))
-            .max_by(|a, b| (a.0.hypot(a.1)).total_cmp(&b.0.hypot(b.1)))
-            .unwrap_or_default()
+        let further = |cur: f64, new: f64| if cur.abs() < new.abs() { new } else { cur };
+        (self.pads.iter().map(|p| p.sticks[stick])).fold((0.0, 0.0), |(x, y), (nx, ny)| {
+            (further(x, nx), further(y, ny))
+        })
     }
 
     /// The first of [`PAD_KEYS`] that holds: the key the controllers ask
@@ -1046,6 +1048,17 @@ mod tests {
     fn press(input: &mut Input, buttons: u32) {
         input.live.pads[0].buttons = buttons;
         input.latch();
+    }
+
+    #[test]
+    fn controller_0s_sticks_take_each_axis_furthest_from_0() {
+        let mut input = Input::default();
+        input.live.pads[0].sticks = [(0.5, 0.1), (-0.25, 0.0)];
+        input.live.pads[1].sticks = [(-0.2, -0.9), (0.25, 0.75)];
+        input.latch();
+        assert_eq!(input.now.stick(0), (0.5, -0.9));
+        // On a tie, the earlier controller's.
+        assert_eq!(input.now.stick(1), (-0.25, 0.75));
     }
 
     #[test]
