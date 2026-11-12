@@ -2395,6 +2395,7 @@ impl Machine {
         for screen in &mut sub.rt.text {
             screen.func = None;
         }
+        sub.rt.sound.sub_started();
         sub.run_slot(0);
         sub.rt.focus = true;
         self.rt.focus = false;

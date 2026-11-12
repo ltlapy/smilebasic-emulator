@@ -183,6 +183,70 @@ pub(crate) fn balance_gains(balance: i32) -> (f32, f32) {
     (b / 59.0, (127.0 - b) / 64.0)
 }
 
+/// SNDMSBAL's balance, which moves to a new one in steps of a frame
+/// when it is given a time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Balance {
+    /// Where it is, 0 to 127. A subprogram starts halfway, at 63.5, which
+    /// SNDMSBAL reads as 63; the manual calls 64 even.
+    at: f32,
+    /// The main and the sub interpreter's gains there.
+    gains: (f32, f32),
+    /// Where it goes, and the frames left to get there.
+    target: f32,
+    target_gains: (f32, f32),
+    left: u32,
+}
+
+impl Balance {
+    /// Halfway, where the subprogram's sound and the main program's are
+    /// each about as loud as either alone. The fit of [`balance_gains`]
+    /// puts the main program's a little higher at 63 and 64 than here.
+    // UNVERIFIED: the main program's gain here. It recorded about as loud
+    // as 63 / 64 gives it.
+    pub(crate) const START: Balance = Balance {
+        at: 63.5,
+        gains: (63.0 / 64.0, 1.0),
+        target: 63.5,
+        target_gains: (63.0 / 64.0, 1.0),
+        left: 0,
+    };
+
+    /// SNDMSBAL: moves to `balance` over `frames` frames, at once for 0.
+    pub(crate) fn to(&mut self, balance: i32, frames: u32) {
+        self.target = balance as f32;
+        self.target_gains = balance_gains(balance);
+        self.left = frames;
+        if frames == 0 {
+            self.at = self.target;
+            self.gains = self.target_gains;
+        }
+    }
+
+    /// One frame's step of the move: the same share of what is left each
+    /// frame, which moves in a straight line.
+    fn step_frame(&mut self) {
+        if self.left == 0 {
+            return;
+        }
+        let k = 1.0 / self.left as f32;
+        self.left -= 1;
+        if self.left == 0 {
+            self.at = self.target;
+            self.gains = self.target_gains;
+        } else {
+            self.at += (self.target - self.at) * k;
+            self.gains.0 += (self.target_gains.0 - self.gains.0) * k;
+            self.gains.1 += (self.target_gains.1 - self.gains.1) * k;
+        }
+    }
+
+    /// What SNDMSBAL reads: where it is now, rounded down.
+    pub(crate) fn read(&self) -> i32 {
+        self.at as i32
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Effector {
     pub(crate) on: bool,
@@ -223,11 +287,8 @@ pub struct Sound {
     pub(crate) recorder: Rc<RefCell<Recorder>>,
     /// This is the sub interpreter's sound, which never records.
     pub(crate) sub: bool,
-    /// SNDMSBAL, which only subprograms set. It starts at 63, though the
-    /// manual calls 64 even (checked on hardware).
-    pub(crate) balance: i32,
-    /// SNDMSBAL has set the balance.
-    pub(crate) balanced: bool,
+    /// SNDMSBAL, which only subprograms set.
+    pub(crate) balance: Balance,
     /// SNDMVOL, as a gain.
     pub(crate) master: Ramp,
     /// Mixed samples, left and right in turn, not yet taken.
@@ -255,8 +316,7 @@ impl Default for Sound {
             aux: Default::default(),
             part: Default::default(),
             pcm_part: Default::default(),
-            balance: 63,
-            balanced: false,
+            balance: Balance::START,
             recorder: Rc::default(),
             sub: false,
             master: Ramp::at(1.0),
@@ -430,15 +490,14 @@ impl Sound {
     }
 
     /// The main and the sub interpreter's gains for this subprogram's
-    /// balance. Until SNDMSBAL sets one, the main program's sound is not
-    /// raised as [`balance_gains`] would raise it at 63.
-    // UNVERIFIED: the gains before SNDMSBAL. The main program's sound
-    // recorded then about as loud as 63 / 64 gives it here.
+    /// balance.
     pub(crate) fn balance_gains(&self) -> (f32, f32) {
-        match self.balanced {
-            true => balance_gains(self.balance),
-            false => (63.0 / 64.0, 1.0),
-        }
+        self.balance.gains
+    }
+
+    /// A subprogram starts: its balance goes back to halfway.
+    pub fn sub_started(&mut self) {
+        self.balance = Balance::START;
     }
 
     /// EFCSET: the effector's reverb, or none.
@@ -450,6 +509,7 @@ impl Sound {
 
     /// Mixes one frame of samples.
     pub fn render_frame(&mut self) {
+        self.balance.step_frame();
         let n = FRAME_SAMPLES;
         let [left, right] = &mut self.mix;
         left.clear();
@@ -626,8 +686,7 @@ mod tests {
     fn recording_hears_the_subprogram_as_sndmsbal_balances_it() {
         let heard = |balance: i32| {
             let (mut main, mut sub) = (Sound::default(), Sound::default());
-            sub.balance = balance;
-            sub.balanced = true;
+            sub.balance.to(balance, 0);
             main.recorder.borrow_mut().start(FRAME_SAMPLES, false);
             main.render_frame();
             sub.render_frame();

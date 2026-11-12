@@ -1133,3 +1133,44 @@ fn a_subprograms_loadg_takes_a_project_name_and_its_exec_refuses_one() {
     ];
     assert_eq!(last_rows(&m, 3), block);
 }
+
+/// A subprogram's RECSTART and RECSTOP do nothing, whatever they are
+/// given, and leave the main program's recording going.
+#[test]
+fn a_subprograms_recstart_and_recstop_do_nothing() {
+    let dir = TempDir::new("sub-rec");
+    let mut m = machine(
+        &dir,
+        "RECSTART 100:RECSTART 1,2:RECSTOP:RECSTOP 5\n?\"DONE\"\nWHILE 1:VSYNC:WEND\n",
+    );
+    enter(&mut m, "recstart");
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 3);
+    assert_eq!(sub_rows(&m), ["DONE"]);
+    m.stop_sub();
+    enter(&mut m, "?recchk()");
+    assert_eq!(last_rows(&m, 2)[0], "1");
+}
+
+/// SNDMSBAL's balance moves over its time in seconds, a step each frame,
+/// and each subprogram starts again halfway, which reads as 63.
+#[test]
+fn sndmsbal_moves_over_its_time_and_starts_halfway() {
+    let dir = TempDir::new("sub-bal");
+    let mut m = machine(
+        &dir,
+        "CLS:?SNDMSBAL()\nSNDMSBAL 127,1:VSYNC\nVSYNC 30:?SNDMSBAL()\nVSYNC 40:?SNDMSBAL()\n\
+         SNDMSBAL 0:?SNDMSBAL()\nWHILE 1:VSYNC:WEND\n",
+    );
+    for _ in 0..2 {
+        enter(&mut m, "subrun \"sub\"");
+        frames(&mut m, 80);
+        let rows = sub_rows(&m);
+        assert_eq!(rows[0], "63");
+        let half: i32 = rows[1].parse().unwrap();
+        assert!((95..=97).contains(&half), "{rows:?}");
+        assert_eq!(rows[2..], ["127", "0"]);
+        m.stop_sub();
+        frames(&mut m, 1);
+    }
+}

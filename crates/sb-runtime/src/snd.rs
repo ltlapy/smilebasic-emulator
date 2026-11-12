@@ -704,16 +704,15 @@ impl Runtime {
                 self.sound.effector.wet = wet;
                 Ok(vec![])
             }
-            // The balance is only kept here: `sound::balance_gains` mixes by
-            // it. The time is not used.
+            // The balance moves over the time in seconds, a step each frame.
             (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
-                self.sound.balance = in_range("balance", &args[0], 0..=127)?;
-                self.sound.balanced = true;
-                opt_in_range("time", args.get(1), 0..=32767, 0)?;
+                let balance = in_range("balance", &args[0], 0..=127)?;
+                let fade = frames(f64::from(opt_in_range("time", args.get(1), 0..=32767, 0)?));
+                self.sound.balance.to(balance, fade);
                 Ok(vec![])
             }
             (Command::Sndmsbal, Want::Outs(1) | Want::Value, 0) => {
-                Ok(vec![Value::Int(self.sound.balance)])
+                Ok(vec![Value::Int(self.sound.balance.read())])
             }
             // A new TALK cuts off what is being said.
             (Command::Talk, Want::Outs(0), 1) => {
@@ -725,6 +724,12 @@ impl Runtime {
             }
             (Command::Talkstop, Want::Outs(0), 0) => {
                 self.sound.talk.stop();
+                Ok(vec![])
+            }
+            // The subprogram's RECSTART and RECSTOP do nothing, whatever
+            // they are given: its RECSAVE gets what the main program
+            // recorded last, and the main program's recording goes on.
+            (Command::Recstart | Command::Recstop, Want::Outs(0), _) if self.sound.sub => {
                 Ok(vec![])
             }
             (Command::Recstart, Want::Outs(0), 0..=1) => {
@@ -739,20 +744,11 @@ impl Runtime {
                         ((s * f64::from(RATE)).round() as usize, false)
                     }
                 };
-                // The subprogram's RECSTART records nothing: its RECSAVE
-                // gets what the main program recorded last.
-                // UNVERIFIED: that it checks its time as the main
-                // program's does, and that its RECSTOP leaves the main
-                // program's recording going.
-                if !self.sound.sub {
-                    self.sound.recorder.borrow_mut().start(len, ring);
-                }
+                self.sound.recorder.borrow_mut().start(len, ring);
                 Ok(vec![])
             }
             (Command::Recstop, Want::Outs(0), 0) => {
-                if !self.sound.sub {
-                    self.sound.recorder.borrow_mut().recording = false;
-                }
+                self.sound.recorder.borrow_mut().recording = false;
                 Ok(vec![])
             }
             (Command::Recchk, Want::Outs(1) | Want::Value, 0) => Ok(vec![Value::Int(i32::from(
