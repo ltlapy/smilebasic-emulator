@@ -308,7 +308,6 @@ impl Track {
             }
             // Each loop's first key slides from the value the animation
             // started on, not from where the last key ended.
-            // UNVERIFIED for targets other than "I".
             self.from = self.base;
         }
         true
