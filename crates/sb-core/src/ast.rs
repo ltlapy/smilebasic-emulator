@@ -1,6 +1,6 @@
 //! Syntax tree produced by the parser.
 
-use crate::lexer::Suffix;
+use crate::lexer::{Span, Suffix};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
@@ -219,7 +219,8 @@ pub enum Expr {
     Str(Vec<u16>),
     /// A label in an expression is the string `"@NAME"`.
     Label(String),
-    Constant(String),
+    /// A `#` constant and where it is, for an Undefined constant error.
+    Constant(String, Span),
     Var(Var),
     Index {
         base: Box<Expr>,

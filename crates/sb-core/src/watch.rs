@@ -105,7 +105,7 @@ fn operand(expr: &Expr, var: &dyn Fn(&str) -> Option<Value>) -> Result<Value> {
         Expr::Real(x) => Value::Real(*x),
         Expr::Str(s) => Value::Str(new_str(s.clone())),
         Expr::Label(name) => Value::str(&format!("@{name}")),
-        Expr::Constant(name) => match constants::lookup(name) {
+        Expr::Constant(name, _) => match constants::lookup(name) {
             Some(ConstValue::Int(n)) => Value::Int(n),
             Some(ConstValue::Real(x)) => Value::Real(x),
             None => {

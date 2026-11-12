@@ -1112,7 +1112,7 @@ impl Parser {
             TokenKind::Real(x) => Expr::Real(x),
             TokenKind::Str(s) => Expr::Str(s),
             TokenKind::Label(name) => Expr::Label(name),
-            TokenKind::Constant(name) => Expr::Constant(name),
+            TokenKind::Constant(name) => Expr::Constant(name, self.span()),
             TokenKind::Ident { name, suffix } => {
                 self.advance();
                 let var = Var { name, suffix };

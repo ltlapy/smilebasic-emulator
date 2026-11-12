@@ -981,6 +981,19 @@ fn folded_errors_in_a_value_are_placed_at_the_equals_sign() {
     assert_eq!(place("Z=0:A=1/Z\n"), (1, 5));
 }
 
+/// Undefined constant is placed at the `#`, not at the `=`.
+#[test]
+fn undefined_constants_are_placed_at_the_constant() {
+    let place = |source: &str| {
+        let e = run(source).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::UndefinedConstant, "{source}");
+        (e.line, e.col)
+    };
+    assert_eq!(place("A=#NONE\n"), (1, 3));
+    assert_eq!(place("B=2:A=#NONE\n"), (1, 7));
+    assert_eq!(place("?1\nA=1+#NONE\n"), (2, 5));
+}
+
 #[test]
 fn copy_errors() {
     assert_eq!(

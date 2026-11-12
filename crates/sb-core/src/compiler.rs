@@ -9,7 +9,7 @@ use crate::bytecode::*;
 use crate::constants::{self, ConstValue};
 use crate::error::{Error, ErrorKind, Result};
 use crate::host::Host;
-use crate::lexer::Suffix;
+use crate::lexer::{Span, Suffix};
 use crate::ops;
 use crate::value::{ElemType, Value, new_str};
 
@@ -309,7 +309,10 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    fn constant(&self, name: &str) -> Result<Literal> {
+    /// The value of constant `#name`, which stands at `at`. Undefined
+    /// constant is placed there, not at the statement or its `=`.
+    // UNVERIFIED: for constants outside an assignment's value.
+    fn constant(&self, name: &str, at: Span) -> Result<Literal> {
         if let Some(v) = self.constants.get(name) {
             return Ok(v.clone());
         }
@@ -327,7 +330,9 @@ impl Compiler<'_> {
         match constants::lookup(name) {
             Some(ConstValue::Int(n)) => Ok(Literal::Int(n)),
             Some(ConstValue::Real(x)) => Ok(Literal::Real(x)),
-            None => Err(err(ErrorKind::UndefinedConstant, format!("#{name}"))),
+            None => {
+                Err(err(ErrorKind::UndefinedConstant, format!("#{name}")).at_pos(at.line, at.col))
+            }
         }
     }
 
@@ -375,9 +380,9 @@ impl Compiler<'_> {
                 Value::Str(new_str(s.clone()))
             }
             Expr::Label(name) => Value::Str(new_str(format!("@{name}").encode_utf16().collect())),
-            Expr::Constant(name) => {
+            Expr::Constant(name, at) => {
                 self.take_constant_node();
-                literal_value(&self.constant(name)?)
+                literal_value(&self.constant(name, *at)?)
             }
             Expr::Call { name, args } if builtins::is_constant_function(&call_name(name)) => {
                 let b = builtins::get(
@@ -1420,7 +1425,7 @@ impl Compiler<'_> {
                 let id = self.string_const(format!("@{name}").encode_utf16().collect());
                 self.emit(Op::Str(id));
             }
-            Expr::Constant(name) => match self.constant(name)? {
+            Expr::Constant(name, at) => match self.constant(name, *at)? {
                 Literal::Int(n) => _ = self.emit(Op::Int(n)),
                 Literal::Real(x) => _ = self.emit(Op::Real(x)),
                 Literal::Str(s) => {
@@ -1954,7 +1959,7 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
             Expr::Index { .. } | Expr::Unary { .. } | Expr::Binary { .. } => {
                 unreachable!("chain(_, true) follows operators and indexing")
             }
-            Expr::Int(_) | Expr::Real(_) | Expr::Str(_) | Expr::Label(_) | Expr::Constant(_) => {}
+            Expr::Int(_) | Expr::Real(_) | Expr::Str(_) | Expr::Label(_) | Expr::Constant(..) => {}
         }
         for link in links.iter().rev() {
             match link {
