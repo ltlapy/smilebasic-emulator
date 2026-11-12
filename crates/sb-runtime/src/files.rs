@@ -93,6 +93,7 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
+        refuse_reserved(command, args)?;
         match (command, want, args.len()) {
             (Command::Result, Want::Value, 0) => Ok(vec![Value::Int(self.result)]),
             (Command::Project, Want::Value, 0) => Ok(vec![Value::str(self.storage.project())]),
@@ -703,6 +704,37 @@ fn same_type(from: &str, to: &str) -> Result<()> {
 pub(crate) fn names_project(spec: &str) -> bool {
     parse_read_name(spec, FileKind::Txt)
         .is_ok_and(|file| file.project.is_some_and(|p| !p.starts_with('#')))
+}
+
+/// A name that SmileBASIC 4 refuses ([`storage::is_reserved_name`]), as a
+/// file's or as a project's in the path, is Illegal format, on every
+/// system and before anything is asked: `CHKFILE("TXT:CON")`,
+/// `SAVE "NUL/A"`, `FILES "TXT:LPT1"`.
+/// UNVERIFIED: which error comes first when another argument is wrong too.
+pub(crate) fn refuse_reserved(command: Command, args: &[Value]) -> Result<()> {
+    let names = match command {
+        Command::Rename => 2,
+        Command::Chkfile
+        | Command::Delete
+        | Command::Files
+        | Command::Load
+        | Command::Save
+        | Command::Loadg
+        | Command::Loadv
+        | Command::Saveg
+        | Command::Savev => 1,
+        _ => 0,
+    };
+    for (i, arg) in args.iter().take(names).enumerate() {
+        if let Value::Str(s) = arg {
+            let spec = String::from_utf16_lossy(&s.borrow());
+            if storage::names_reserved(&spec) {
+                let detail = format!("{spec:?}");
+                return Err(Error::with_detail(ErrorKind::IllegalFormat, detail).of_arg(i));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// LOAD and SAVE take only text files, before anything is asked: another

@@ -206,10 +206,14 @@ pub fn write_regular(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Checks a file name and returns it in upper case: up to 32 letters,
-/// digits, `_`, `-` and `.`, not starting with `.`. It may start with `@`,
-/// as the backups' names do (`@BACKUP.PRG`); programs can read and save
-/// such names (checked on hardware).
+/// digits, `_`, `-` and `.`, not starting with `.`, and not one of the
+/// [`is_reserved_name`] names. It may start with `@`, as the backups'
+/// names do (`@BACKUP.PRG`); programs can read and save such names
+/// (checked on hardware).
 fn check_name(name: &str) -> Result<String> {
+    if is_reserved_name(name) {
+        return Err(StorageError::BadName(name.to_string()));
+    }
     if let Some(rest) = name.strip_prefix('@') {
         return check_plain_name(rest)
             .ok()
@@ -233,13 +237,29 @@ fn check_plain_name(name: &str) -> Result<String> {
     Ok(name.to_ascii_uppercase())
 }
 
+/// Whether SmileBASIC 4 refuses `name` as a file's or a project's name,
+/// on every system: `CON`, `PRN`, `NUL`, `AUX`, `COM1` to `COM4` and
+/// `LPT1` to `LPT4`, the whole name and nothing more. `COM5` and `CON.A`
+/// are fine, and so is `#CON`.
+/// UNVERIFIED: that lower case (`con`) is refused too.
+pub fn is_reserved_name(name: &str) -> bool {
+    match name.to_ascii_uppercase().as_bytes() {
+        b"CON" | b"PRN" | b"NUL" | b"AUX" => true,
+        [b'C', b'O', b'M', digit] | [b'L', b'P', b'T', digit] => (b'1'..=b'4').contains(digit),
+        _ => false,
+    }
+}
+
+/// Whether a name or a project in `spec` (`[TYPE:][PROJECT/]NAME`, or
+/// FILES' `[TYPE:][PROJECT][/]`) is one that [`is_reserved_name`] refuses.
+pub fn names_reserved(spec: &str) -> bool {
+    let rest = spec.split_once(':').map_or(spec, |(_, rest)| rest);
+    rest.split('/').any(is_reserved_name)
+}
+
 /// Whether Windows takes a name for a device, whatever follows its first
 /// dot, rather than for a folder. Files escape this by their type letter;
-/// only a project's folder can be named so.
-///
-/// UNVERIFIED: whether SmileBASIC 4 takes these names, and names ending in
-/// a dot. It runs on no Windows disk, so a project called `CON` may well
-/// exist; only Windows, which cannot hold them, refuses them.
+/// a project's folder of such a name gets [`ESCAPE`] in front on Windows.
 fn is_windows_device(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     match stem.as_bytes() {
@@ -249,17 +269,35 @@ fn is_windows_device(name: &str) -> bool {
     }
 }
 
-/// `name` made into one that Windows can hold as a folder, for
-/// [`suggest_project_name`].
+/// `name` made into one that Windows takes, for [`suggest_project_name`]:
+/// no dot at the end.
 fn windows_folder_name(name: String) -> String {
     let trimmed = name.trim_end_matches('.');
     match trimmed {
         "" | "#" => format!("{trimmed}PROJECT"),
-        _ if is_windows_device(trimmed) => {
-            let kept = trimmed.chars().take(MAX_NAME - 1);
-            format!("_{}", kept.collect::<String>())
-        }
         _ => trimmed.to_string(),
+    }
+}
+
+/// Put in front of a project's folder name that Windows takes for a device
+/// (`COM5`, `CON.A`). `@` is in no project's name, so the folder cannot be
+/// another project's.
+const ESCAPE: char = '@';
+
+/// The folder name of a project (checked, not the workspace).
+fn folder_name(project: &str) -> std::borrow::Cow<'_, str> {
+    match cfg!(windows) && is_windows_device(project) {
+        true => format!("{ESCAPE}{project}").into(),
+        false => project.into(),
+    }
+}
+
+/// The project that a folder in the storage folder holds, by its name on
+/// disk: [`folder_name`] the other way round.
+fn folder_project(folder: &str) -> &str {
+    match folder.strip_prefix(ESCAPE) {
+        Some(project) if cfg!(windows) && is_windows_device(project) => project,
+        _ => folder,
     }
 }
 
@@ -313,7 +351,7 @@ pub fn check_project_name(name: &str) -> Result<String> {
     // `@` stays out of project names, so `@WORKSPACE` never clashes.
     check_plain_name(rest)
         .ok()
-        .filter(|_| name.len() <= MAX_NAME && !(cfg!(windows) && is_windows_device(name)))
+        .filter(|_| name.len() <= MAX_NAME && !is_reserved_name(name))
         .ok_or(())
         .map(|n| format!("{}{n}", &name[..name.len() - rest.len()]))
         .map_err(|_| StorageError::BadName(name.to_string()))
@@ -337,6 +375,7 @@ pub fn suggest_project_name(name: &str) -> String {
     let fixed: String = fixed.trim_start_matches('.').chars().take(room).collect();
     let suggested = match fixed.as_str() {
         "" => format!("{hash}PROJECT"),
+        _ if hash.is_empty() && is_reserved_name(&fixed) => format!("_{fixed}"),
         _ => format!("{hash}{fixed}"),
     };
     match cfg!(windows) {
@@ -564,11 +603,10 @@ impl Storage {
             return Ok(folder.dir.clone());
         }
         let root = self.root.as_ref().ok_or(StorageError::Unavailable)?;
-        let dir = root.join(if project.is_empty() {
-            WORKSPACE_DIR
-        } else {
-            project
-        });
+        let dir = match project {
+            "" => root.join(WORKSPACE_DIR),
+            project => root.join(folder_name(project).as_ref()),
+        };
         if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink()) {
             return Err(link_refused(&dir).into());
         }
@@ -817,7 +855,7 @@ impl Storage {
                 let kept: String = base.chars().take(MAX_NAME - n.len()).collect();
                 format!("{kept}{n}")
             })
-            // `COM` and 2 are a device on Windows.
+            // `COM` and 2 make a name SmileBASIC 4 refuses.
             .filter(|to| check_project_name(to).is_ok())
             .find(|to| self.dir(to).is_ok_and(|d| !d.exists()))
             .ok_or_else(|| StorageError::Exists(base.clone()))?;
@@ -910,9 +948,9 @@ impl Storage {
             if entry.file_type()?.is_dir()
                 && let Some(name) = entry.file_name().to_str()
                 && name != WORKSPACE_DIR
-                && self.folder_of(name).is_none()
+                && self.folder_of(folder_project(name)).is_none()
             {
-                projects.push(name.to_string());
+                projects.push(folder_project(name).to_string());
             }
         }
         projects.sort();
@@ -1115,6 +1153,10 @@ impl Folder {
         if self.sb4 || kind != FileKind::Txt {
             return sb4;
         }
+        // Windows takes `COM5.txt` for a device.
+        if cfg!(windows) && is_windows_device(name) {
+            return sb4;
+        }
         let (txt, bare) = (format!("{name}.txt"), name.to_string());
         let forms = match self.txt {
             true => [txt, bare],
@@ -1215,26 +1257,56 @@ mod tests {
     }
 
     #[test]
-    fn names_windows_cannot_hold() {
-        for device in [
-            "CON", "con", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9", "NUL.TXT", "CON.A.B",
+    fn names_sb4_refuses_and_names_windows_cannot_hold() {
+        let refused = [
+            "CON", "con", "PRN", "AUX", "NUL", "COM1", "COM4", "LPT1", "LPT4",
+        ];
+        for name in refused {
+            assert!(is_reserved_name(name), "{name}");
+            assert!(check_project_name(name).is_err(), "{name}");
+            assert!(check_name(name).is_err(), "{name}");
+        }
+        for spec in [
+            "TXT:CON",
+            "NUL/A",
+            "TXT:A/LPT2",
+            "DAT:COM3",
+            "CON/",
+            "TXT:AUX",
         ] {
-            assert!(is_windows_device(device), "{device}");
-            assert_eq!(check_project_name(device).is_err(), cfg!(windows));
+            assert!(names_reserved(spec), "{spec}");
         }
-        for fine in ["CONSOLE", "COM", "COM10", "#CON", "ACON", "LPTX", "NULL"] {
+        // Windows takes these for devices too, so their folders get a mark
+        // there; SmileBASIC 4 takes them.
+        for name in ["COM5", "COM9", "COM0", "LPT5", "LPT9", "NUL.TXT", "CON.A.B"] {
+            assert!(!is_reserved_name(name), "{name}");
+            assert!(is_windows_device(name), "{name}");
+            assert!(check_project_name(name).is_ok(), "{name}");
+            assert!(check_name(name).is_ok(), "{name}");
+            let folder = folder_name(name);
+            assert_eq!(folder.starts_with(ESCAPE), cfg!(windows), "{name}");
+            assert_eq!(folder_project(&folder), name);
+        }
+        for fine in [
+            "CONSOLE", "COM", "COM10", "#CON", "@CON", "ACON", "LPTX", "NULL",
+        ] {
             assert!(!is_windows_device(fine), "{fine}");
-            assert!(check_project_name(fine).is_ok(), "{fine}");
+            assert!(!is_reserved_name(fine), "{fine}");
+            assert_eq!(folder_name(fine), fine);
         }
-        // A file's type letter keeps its name from being a device.
-        assert!(check_name("CON").is_ok());
+        assert!(check_project_name("#CON").is_ok());
+        assert!(check_name("@CON").is_ok());
+        assert!(!names_reserved("TXT:CON.A"));
+        assert!(!names_reserved("//"));
+        assert_eq!(folder_project("@CON"), "@CON");
+        assert_eq!(folder_project("@WORKSPACE"), "@WORKSPACE");
         for dotted in ["A.", "A..", "@A."] {
             assert_eq!(check_name(dotted).is_err(), cfg!(windows), "{dotted}");
         }
         assert_eq!(check_project_name("A.").is_err(), cfg!(windows));
-        assert_eq!(windows_folder_name("CON".to_string()), "_CON");
-        assert_eq!(windows_folder_name("NUL.TXT".to_string()), "_NUL.TXT");
-        assert_eq!(windows_folder_name("#CON".to_string()), "#CON");
+        assert_eq!(suggest_project_name("con"), "_CON");
+        assert_eq!(suggest_project_name("#CON"), "#CON");
+        assert_eq!(suggest_project_name("COM5"), "COM5");
         assert_eq!(windows_folder_name("GAME.".to_string()), "GAME");
         assert_eq!(windows_folder_name("#.".to_string()), "#PROJECT");
         assert_eq!(windows_folder_name("GAME".to_string()), "GAME");

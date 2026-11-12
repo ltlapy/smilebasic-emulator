@@ -227,6 +227,7 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
+        crate::files::refuse_reserved(command, args)?;
         match (command, want, args) {
             (Command::Loadv, Want::Value, [spec]) => {
                 let spec = str_arg(spec)?;

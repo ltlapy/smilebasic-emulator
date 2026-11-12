@@ -1864,3 +1864,59 @@ fn changing_a_file_that_was_in_the_folder_asks_once_whatever_the_setting() {
     assert_eq!(m.rt.original_txt("HGTEST.PRG"), ["HGTEST.PRG.txt"]);
     assert!(m.rt.original_txt("NEW.PRG").is_empty());
 }
+
+/// CON, PRN, NUL, AUX, COM1 to COM4 and LPT1 to LPT4 are no file's or
+/// project's name, on every system: Illegal format. COM5 and the like are
+/// names like any other.
+#[test]
+fn reserved_names_are_illegal_format() {
+    let dir = TempDir::new("reserved-names");
+    let mut m = machine(&dir);
+    for (line, message) in [
+        (
+            "?chkfile(\"txt:con\")",
+            "Illegal format (CHKFILE:1) (\"TXT:CON\")",
+        ),
+        (
+            "?chkfile(\"nul/a\")",
+            "Illegal format (CHKFILE:1) (\"NUL/A\")",
+        ),
+        (
+            "savev \"txt:com4\",\"x\"",
+            "Illegal format (SAVEV:1) (\"TXT:COM4\")",
+        ),
+        ("save \"lpt1/a\"", "Illegal format (SAVE:1) (\"LPT1/A\")"),
+        (
+            "rename \"a\",\"aux\"",
+            "Illegal format (RENAME:2) (\"AUX\")",
+        ),
+        (
+            "files \"txt:prn\"",
+            "Illegal format (FILES:1) (\"TXT:PRN\")",
+        ),
+    ] {
+        assert_eq!(direct_error(&mut m, line), message, "{line}");
+    }
+    enter(
+        &mut m,
+        "cls:savev \"txt:com5\",\"x\":?result():?loadv(\"txt:com5\")",
+    );
+    assert_eq!(rows(&m), ["1", "X", "OK"]);
+    enter(
+        &mut m,
+        "cls:savev \"txt:con.a\",\"y\":?chkfile(\"txt:con.a\")",
+    );
+    assert_eq!(rows(&m), ["1", "OK"]);
+    m.rt.storage.create_project("LPT9").unwrap();
+    enter(
+        &mut m,
+        "cls:savev \"txt:lpt9/b\",\"z\":?loadv(\"txt:lpt9/b\")",
+    );
+    assert_eq!(rows(&m), ["Z", "OK"]);
+    assert!(
+        m.rt.storage
+            .projects()
+            .unwrap()
+            .contains(&"LPT9".to_string())
+    );
+}
