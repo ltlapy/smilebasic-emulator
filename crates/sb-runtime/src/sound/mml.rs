@@ -268,7 +268,7 @@ struct Parser {
     lengths: [Option<u32>; CHANNELS],
     /// Each channel's `[` not yet closed.
     repeats: [u32; CHANNELS],
-    /// A bit for each channel a `:` has chosen.
+    /// A bit for each channel used so far; channel 0 from the start.
     chosen: u16,
 }
 
@@ -613,23 +613,31 @@ impl Parser {
         self.at += 1;
         let cmd = match c {
             // A channel's MML stands in one piece: going back to a channel
-            // an earlier `:` left fails after the `:`, as `:0C:1D:0E` does
-            // at 7. `:0C:0D` goes on in channel 0.
-            // UNVERIFIED: that a channel above the one left refuses the
-            // same way (`:1C:2D:1E`), and that MML before the first `:` does
-            // not count as channel 0's, so `C:1D:0E` passes.
+            // used earlier fails at the channel's number, as `:0C:1D:0E`
+            // does at 7 and `:1C:2D:1E` at 7. Channel 0 counts as used from
+            // the start, so `:1C:0D` fails at 4 and `C:1D:0E` at 5.
+            // `:0C:0D` goes on in channel 0, and `:2C:1D` passes. Leaving a
+            // channel with a `[` still open fails there too: `[:1C]2` at 2,
+            // `[C:1D]` at 3. A number past 15 fails at its start: `:16C`
+            // at 1.
+            // UNVERIFIED: that `:` naming the channel it is in passes inside
+            // an open `[` (`[:0C]`).
             ':' => {
-                let colon = self.end();
+                self.skip_space();
+                let number = self.start(self.at);
                 match self.int() {
                     Some(n @ 0..=15) => {
                         let n = n as usize;
-                        if self.chosen & 1 << n != 0 && n != self.channel {
-                            return Err(colon);
+                        if n != self.channel
+                            && (self.chosen & 1 << n != 0 || self.repeats[self.channel] > 0)
+                        {
+                            return Err(number);
                         }
                         self.chosen |= 1 << n;
                         self.channel = n;
                     }
-                    _ => return Err(self.start(at)),
+                    Some(_) => return Err(number),
+                    None => return Err(self.start(at)),
                 }
                 self.in_channel = true;
                 return Ok(());
@@ -826,7 +834,7 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
         octaves: [4; CHANNELS],
         lengths: [Some(WHOLE / 4); CHANNELS],
         repeats: [0; CHANNELS],
-        chosen: 0,
+        chosen: 1,
     };
     while p.at < p.text.len() {
         p.command()?;
@@ -1186,14 +1194,14 @@ mod tests {
         assert_eq!(parse("V128"), Err(1));
         assert_eq!(parse("[CD"), Err(3));
         assert_eq!(parse("{NOPE}"), Err(0));
-        assert_eq!(parse(":16C"), Err(0));
+        assert_eq!(parse(":16C"), Err(1));
         assert!(parse("[[O4CEG]3<C2.]").is_ok());
         // A `]` with no `[` fails just after it.
         assert_eq!(check("C]0"), Err(2));
         assert_eq!(check("C]-"), Err(2));
         assert_eq!(check("C]0D5"), Err(2));
         assert_eq!(check("[C]0"), Ok(()));
-        assert_eq!(check(":1[C:0]"), Err(7));
+        assert_eq!(check(":1[C:1D"), Err(7));
     }
 
     #[test]
@@ -1202,8 +1210,18 @@ mod tests {
         assert_eq!(check(":0@218T120O4L1@MP64,1,16,0:1R1:0@MPONC"), Err(31));
         assert_eq!(check(":1C:2D:1E"), Err(7));
         assert_eq!(check(":0C:0D:1E"), Ok(()));
-        assert_eq!(check(":1C:0D"), Ok(()));
-        assert_eq!(check("C:1D:0E"), Ok(()));
+        // Channel 0 is used from the start.
+        assert_eq!(check("C:1D:0E"), Err(5));
+        assert_eq!(check(":1C:0D"), Err(4));
+        assert_eq!(check(":0C:1D:0E"), Err(7));
+        for passes in [":2C:1D", ":1C:1D", ":0C:0D", "C:0D", ":1[C]2:2D"] {
+            assert_eq!(check(passes), Ok(()), "{passes}");
+        }
+        // Leaving a channel with an open `[`.
+        assert_eq!(check("[:1C]2"), Err(2));
+        assert_eq!(check("[C:1D]2"), Err(3));
+        assert_eq!(check(":0[C:1D]2"), Err(5));
+        assert_eq!(check("[C:1D]"), Err(3));
     }
 
     #[test]
