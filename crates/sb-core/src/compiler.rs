@@ -1757,6 +1757,29 @@ impl Compiler<'_> {
                 .collect::<Option<Vec<_>>>();
             if let Some(constants) = constants {
                 builtins::check_constant_args(&full, &constants)?;
+                // SmileBASIC 4 works out a number from constants as it
+                // compiles: TEST74's A=RGB(1,2,3) costs less than
+                // A=FLOOR(R#). A call that fails still fails as it runs.
+                let b = builtins::get(id);
+                let folded = match b.kind {
+                    Kind::Function(f) if builtins::is_constant_function(&full) => {
+                        b.accepts(constants.len()).then(|| f(&constants).ok())
+                    }
+                    _ => None,
+                };
+                let op = match folded.flatten() {
+                    Some(Value::Int(n)) => Some(Op::Int(n)),
+                    Some(Value::Real(x)) => Some(Op::Real(x)),
+                    _ => None,
+                };
+                if let Some(op) = op {
+                    self.out.code.truncate(start);
+                    self.out.lines.truncate(start);
+                    self.out.cols.truncate(start);
+                    self.out.starts.truncate(start);
+                    self.emit(op);
+                    return Ok(());
+                }
             }
             // The VM checks the argument count when the call runs, as
             // SmileBASIC 4 does (checked on hardware).
