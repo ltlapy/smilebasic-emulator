@@ -965,6 +965,22 @@ fn syntax_errors_in_a_value_are_placed_at_the_equals_sign() {
     assert_eq!(place("LOCATE 1,(\n"), (1, 1));
 }
 
+/// A division by zero of constants is placed at the `=` too; a
+/// PRINT's at the statement's start, and one found as it runs at the
+/// statement's start.
+#[test]
+fn folded_errors_in_a_value_are_placed_at_the_equals_sign() {
+    let place = |source: &str| {
+        let e = run(source).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::DivideByZero, "{source}");
+        (e.line, e.col)
+    };
+    assert_eq!(place("A=1/0\n"), (1, 2));
+    assert_eq!(place("B=2:A=1/0\n"), (1, 6));
+    assert_eq!(place("?7/0\n"), (1, 1));
+    assert_eq!(place("Z=0:A=1/Z\n"), (1, 5));
+}
+
 #[test]
 fn copy_errors() {
     assert_eq!(

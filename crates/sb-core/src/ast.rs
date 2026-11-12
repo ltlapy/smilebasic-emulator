@@ -97,6 +97,8 @@ pub enum StmtKind {
     Assign {
         target: LValue,
         value: Expr,
+        /// The column of the `=`, where an error in the value is placed.
+        eq_col: u32,
     },
     Var(Vec<VarDecl>),
     Const(Vec<(String, Expr)>),

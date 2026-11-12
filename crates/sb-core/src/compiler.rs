@@ -641,8 +641,16 @@ impl Compiler<'_> {
                     return Err(err(ErrorKind::DuplicateLabel, format!("@{name}")));
                 }
             }
-            StmtKind::Assign { target, value } => {
-                self.expr(value)?;
+            StmtKind::Assign {
+                target,
+                value,
+                eq_col,
+            } => {
+                // An error found as the value compiles, as a division by
+                // zero of constants, is placed at the `=`, as one found as
+                // it parses is.
+                // UNVERIFIED: for errors other than Divide by zero.
+                self.expr(value).map_err(|e| e.at_pos(self.line, *eq_col))?;
                 self.store(target)?;
             }
             StmtKind::Var(decls) => {
@@ -1917,7 +1925,7 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
     }
     for stmt in stmts {
         match &stmt.kind {
-            StmtKind::Assign { target, value } => {
+            StmtKind::Assign { target, value, .. } => {
                 lvalue(target, used);
                 expr(value, used);
             }

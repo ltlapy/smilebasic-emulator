@@ -499,7 +499,11 @@ impl Parser {
             stmt: e.stmt.or(Some(assign)),
             ..e
         })?;
-        Ok(StmtKind::Assign { target, value })
+        Ok(StmtKind::Assign {
+            target,
+            value,
+            eq_col: assign.col,
+        })
     }
 
     fn command(&mut self, name: Var) -> PResult<StmtKind> {
