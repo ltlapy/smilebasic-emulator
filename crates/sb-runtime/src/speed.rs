@@ -11,7 +11,7 @@
 //! `PERFEND` and `MILLISEC` measure the same time.
 //!
 //! The costs come from TPERF's scenes and the loops of TEST65, TEST67,
-//! TEST69 to TEST73, timed on both consoles running
+//! TEST69 to TEST74, timed on both consoles running
 //! SmileBASIC 4.4.9, and from TEST68 on a Switch 2 (docs/benchmarking.md).
 //! TEST70 finds a Switch 2 as fast in the hand as docked.
 //!
@@ -33,7 +33,7 @@
 use std::cell::Cell;
 
 use sb_core::value::Value;
-use sb_core::vm::{COSTLY, Work};
+use sb_core::vm::{CHEAP, COSTLY, Work};
 
 use crate::runtime::{Command, Runtime};
 use crate::sprites::SPRITES;
@@ -99,6 +99,11 @@ pub(crate) struct Costs {
     /// Taken off each test of a FOR: a NEXT is many of our instructions
     /// but one step of SmileBASIC 4's.
     for_credit: u64,
+    /// On top of that, each test of a FOR inside a DEF: TPERF's VINT and
+    /// VREAL, and TEST70's and TEST71's loops in DEFs, cost more than
+    /// their pieces timed at the top level (TEST71, TEST74) give.
+    /// UNVERIFIED: what in a DEF's loop costs.
+    def_for: u64,
     def_call: u64,
     /// Each builtin call and each argument it is given. ON's jump counts
     /// as a call with none.
@@ -128,6 +133,11 @@ pub(crate) struct Costs {
     chr: u64,
     /// Each builtin of [`COSTLY`] on top of its call, in that order.
     costly: [u64; COSTLY.len()],
+    /// Each builtin of [`CHEAP`], which costs no call, and on top for
+    /// `SIN`, `COS` and `TAN` of a number past a quarter of pi either way
+    /// (TEST71, TEST72, TEST74).
+    cheap: [u64; CHEAP.len()],
+    trig_reduce: u64,
     /// Each character of the string a join makes.
     join_char: u64,
     /// A comparison of strings, or another operator but `+` with a
@@ -146,12 +156,26 @@ pub(crate) struct Costs {
     /// `LOCATE` with a screen, which TEST72 times.
     locate: u64,
     locate_screen: u64,
+    /// `COLOR` of a text color alone, and `TOFS`, which TEST74 times.
+    color: u64,
+    tofs: u64,
+    /// `SPROT`, `SPCOLOR`, `SPHOME` and `SPLINK` right after the same
+    /// command for the same sprite, as TEST74 times them ten in a row.
+    /// Otherwise each costs `setter`, as TEST70's sprite loop and TPERF's
+    /// sprite scenes need, where other commands come between.
+    /// UNVERIFIED: what makes the command cheaper there.
+    sprot: u64,
+    spcolor: u64,
+    sphome: u64,
+    splink: u64,
     spshow: u64,
     spvar: u64,
     spchr: u64,
     stick: u64,
     spofs_out: u64,
     pixel: u64,
+    /// `GPGET`, where TEST74 finds it cheaper than `GPSET` on a Switch 1.
+    pixel_get: u64,
     /// `CHKCHR` and `BGMCHK`, which TEST71 times at less than `BUTTON`.
     peek: u64,
     spofs: u64,
@@ -168,7 +192,10 @@ pub(crate) struct Costs {
     spclr: u64,
     spclr_range: [u64; 6],
     sphitsp: u64,
+    /// `SPANIM`, and of a sprite among the last 64 changed (TEST74's
+    /// three on a sprite just set, against TPERF's over 3000 sprites).
     spanim: u64,
+    spanim_near: u64,
     /// Each thing `PRINT` prints, and each character of it.
     print: u64,
     print_char: u64,
@@ -207,6 +234,8 @@ pub(crate) struct Costs {
     circle: u64,
     circle_px: u64,
     load_px: u64,
+    /// A pixel of `GLOAD` of an image of palette indices (TEST74).
+    load_index_px: u64,
     /// `LOADG` of an image, each pixel it decodes and each byte of its
     /// file, which a busy image has more of.
     loadg: u64,
@@ -282,6 +311,7 @@ const SWITCH2: Costs = Costs {
     instruction: 9_700,
     statement: 6_500,
     for_credit: 78_900,
+    def_for: 12_000,
     def_call: 153_100,
     builtin: 26_400,
     builtin_arg: 11_500,
@@ -301,6 +331,10 @@ const SWITCH2: Costs = Costs {
     chr: 125_000,
     // TEST71's STR$, FORMAT$, VAL, INSTR, HEX$ and MID$, each alone.
     costly: [210_900, 136_700, 89_300, 83_400, 45_900, 67_200],
+    // TEST71's, TEST72's and TEST74's SIN, COS and SQR alone, and TEST72's
+    // SIN of 1000000.5. UNVERIFIED: TAN as SIN.
+    cheap: [5_300, 6_800, 5_300, 16_000],
+    trig_reduce: 39_600,
     join_char: 447,
     // What a join cost before TEST71: TEST69's HGIMEUPDATE, which tests
     // K$!="", within 7%. UNVERIFIED: TEST71's IF S$[I]==K$ costs no
@@ -312,12 +346,19 @@ const SWITCH2: Costs = Costs {
     setter: 108_800,
     locate: 23_600,
     locate_screen: 35_700,
+    color: 20_700,
+    tofs: 54_400,
+    sprot: 71_200,
+    spcolor: 70_000,
+    sphome: 87_200,
+    splink: 90_400,
     spshow: 57_700,
     spvar: 44_300,
     spchr: 87_300,
     stick: 67_100,
     spofs_out: 66_300,
     pixel: 51_000,
+    pixel_get: 51_000,
     peek: 40_500,
     spofs: 102_100,
     // TEST69's SPSCALE, which costs less than the other setters.
@@ -340,6 +381,7 @@ const SWITCH2: Costs = Costs {
     ],
     sphitsp: 612_300,
     spanim: 540_000,
+    spanim_near: 168_700,
     // TEST71's PRINT of one character, and TEST69's PRINT of 1000
     // characters and TPERF's TPRINT, which TEST72's LOCATE with a screen
     // leaves 3% fast with 22 ns a character.
@@ -377,6 +419,7 @@ const SWITCH2: Costs = Costs {
     circle: 227_000,
     circle_px: 2_100,
     load_px: 780,
+    load_index_px: 1_233,
     // TEST68's and TEST69's LOADG and HGLOAD of fonts from 512x312 to
     // 2048x1376 and TEST69's of a 512x512 image of noise (13.9 ms, twice
     // an empty one): all within 10%. UNVERIFIED: TEST69's empty image,
@@ -447,6 +490,7 @@ const SWITCH1: Costs = Costs {
     instruction: 28_000,
     statement: 6_000,
     for_credit: 245_600,
+    def_for: 42_000,
     def_call: 534_900,
     builtin: 28_300,
     builtin_arg: 55_000,
@@ -461,6 +505,8 @@ const SWITCH1: Costs = Costs {
     join: 124_000,
     chr: 380_000,
     costly: [526_500, 291_700, 204_900, 197_600, 69_400, 123_300],
+    cheap: [14_000, 39_000, 14_000, 0],
+    trig_reduce: 94_800,
     join_char: 910,
     str_compare: 212_000,
     clock: 5_000,
@@ -469,12 +515,20 @@ const SWITCH1: Costs = Costs {
     setter: 392_900,
     locate: 48_500,
     locate_screen: 126_900,
+    color: 32_900,
+    tofs: 136_800,
+    sprot: 141_500,
+    spcolor: 195_500,
+    sphome: 239_200,
+    splink: 212_300,
     spshow: 160_200,
     spvar: 86_200,
     spchr: 194_000,
     stick: 179_300,
     spofs_out: 168_000,
-    pixel: 165_000,
+    // TEST71's and TEST74's GPSET and GPGET.
+    pixel: 180_000,
+    pixel_get: 135_000,
     peek: 90_000,
     // TEST67's and TEST69's SPOFS of one sprite.
     spofs: 306_000,
@@ -496,6 +550,7 @@ const SWITCH1: Costs = Costs {
     ],
     sphitsp: 1_373_700,
     spanim: 840_000,
+    spanim_near: 615_000,
     print: 158_000,
     print_char: 41_300,
     // TEST69's two PRINTs that scroll, as for the Switch 2.
@@ -524,6 +579,7 @@ const SWITCH1: Costs = Costs {
     circle: 500_000,
     circle_px: 5_000,
     load_px: 1_860,
+    load_index_px: 2_810,
     // As for the Switch 2, from TEST69's rows.
     loadg: 1_142_000_000,
     loadg_px: 24_600,
@@ -538,19 +594,26 @@ const SWITCH1: Costs = Costs {
     paint: 93_500_000,
     paint_px: 16_110,
     // As for the Switch 2: 168 ns a row of 32 pixels at an odd column,
-    // as at x 17, 61 ns on a 4-pixel boundary, and TEST72's at x 18, 22
-    // and 26 97, 193 and 62 ns. UNVERIFIED: that the other odd columns
-    // cost what x 17 does, and column 14 the 150 ns the model took for
-    // every column off a 4-pixel boundary before TEST72. TEST69's
-    // blended GFILL pays 18% of it, and its GCOPY at 10 places and
-    // TPERF's at random ones 60%, where TEST71's at x 17 pays 138%.
+    // as at x 17, 61 ns on a 4-pixel boundary, TEST72's at x 18, 22 and
+    // 26 97, 193 and 62 ns, and TEST74's at x 3 and 19 109 ns and at x
+    // 14, 30 and 46 48 ns. UNVERIFIED: that the other odd columns cost
+    // what x 17 does. TEST74's at x 35, column 3 too, costs 146 ns.
+    // TEST69's blended GFILL pays 18% of it, and its GCOPY at 10 places,
+    // TEST70's at 64 and TPERF's at random ones 65%, where TEST71's at
+    // x 17 pays 138%.
     place: by_column(
         [6_800, 0, 168_000, 235_000, 182_000],
         [1_500, 0, 61_500, 235_000, 182_000],
-        &[(2, 97_500), (6, 193_000), (10, 62_500), (14, 150_000)],
+        &[
+            (2, 97_500),
+            (3, 109_000),
+            (6, 193_000),
+            (10, 62_500),
+            (14, 48_300),
+        ],
     ),
     place_alpha_pct: 18,
-    place_copy_pct: 60,
+    place_copy_pct: 65,
     cold_row: 38_500,
     cold_alpha_px: 3_290,
     // TEST69's SPOFS over 1000 sprites in order, and SPSET and SPCLR.
@@ -614,6 +677,8 @@ pub struct Meter {
     /// has run an `EXEC` of a file.
     files_read: std::collections::HashSet<String>,
     exec_run: bool,
+    /// The last host command and its first argument.
+    last: Cell<Option<(Command, i64)>>,
 }
 
 impl Meter {
@@ -634,6 +699,7 @@ impl Meter {
             next_place: Cell::new(0),
             files_read: std::collections::HashSet::new(),
             exec_run: false,
+            last: Cell::new(None),
         })
     }
 
@@ -656,12 +722,18 @@ impl Meter {
             + n(work.element_tests, b.element_tests) * c.element_test
             + n(work.chr_calls, b.chr_calls) * c.chr
             + n(work.join_chars, b.join_chars) * c.join_char
-            + n(work.str_compares, b.str_compares) * c.str_compare;
+            + n(work.str_compares, b.str_compares) * c.str_compare
+            + n(work.def_for_tests, b.def_for_tests) * c.def_for
+            + n(work.trig_reductions, b.trig_reductions) * c.trig_reduce;
         let costly: u64 = (work.costly_calls.iter().zip(&b.costly_calls))
             .zip(&c.costly)
             .map(|((&now, &then), &each)| n(now, then) * each)
             .sum();
-        (cost + costly).saturating_sub(n(work.for_tests, b.for_tests) * c.for_credit)
+        let cheap: u64 = (work.cheap_calls.iter().zip(&b.cheap_calls))
+            .zip(&c.cheap)
+            .map(|((&now, &then), &each)| n(now, then) * each)
+            .sum();
+        (cost + costly + cheap).saturating_sub(n(work.for_tests, b.for_tests) * c.for_credit)
     }
 
     /// The console's clock in picoseconds, for a program that has done
@@ -936,7 +1008,10 @@ impl Runtime {
             Spclr => args.len() == 1,
             _ => false,
         };
-        let other = match sprite && meter.far_sprite(int(args, 0)) {
+        let far = sprite && meter.far_sprite(int(args, 0));
+        let key = Some((command, int(args, 0)));
+        let again = meter.last.replace(key) == key;
+        let other = match far {
             true => c.far_sprite,
             false => 0,
         };
@@ -952,6 +1027,14 @@ impl Runtime {
                 Locate if args.len() == 2 => c.locate,
                 Locate if args.len() == 3 => c.locate_screen,
                 Spshow => c.spshow,
+                Sprot if again => c.sprot,
+                Spcolor if again => c.spcolor,
+                Sphome if again => c.sphome,
+                Splink if again => c.splink,
+                // COLOR with a background color costs what it did.
+                // UNVERIFIED: TEST74 times only a text color.
+                Color if args.len() == 1 => c.color,
+                Tofs => c.tofs,
                 Spvar => c.spvar,
                 Spchr => c.spchr,
                 Stick => c.stick,
@@ -1001,6 +1084,7 @@ impl Runtime {
                     c0 + (c1 - c0) * (n - n0) / (n1 - n0)
                 }
                 Sphitsp | Sphitrc | Sphitinfo => c.sphitsp,
+                Spanim if !far => c.spanim_near,
                 Spanim | Tanim => c.spanim,
                 Tput => c.tput,
                 Tfill => {
@@ -1076,6 +1160,11 @@ impl Runtime {
                     let placed = meter.placed((x, y), w, h, c.place_copy_pct, None);
                     c.copy + h * c.row + w * h * rate + placed
                 }
+                // An image of palette indices, to a rectangle.
+                Gload if matches!(args.get(5), Some(Value::Array(_))) => px(
+                    (int(args, 2) * int(args, 3)).unsigned_abs(),
+                    c.load_index_px,
+                ),
                 Gload | Gsave => {
                     let n = match args.len() {
                         5..=8 => {
@@ -1126,7 +1215,8 @@ impl Runtime {
                 Gpaint => c.paint,
                 Lfilter | Lmatrix => c.layer,
                 Gclip => c.clip[usize::from(!args.is_empty())],
-                Gpset | Gpget => c.pixel,
+                Gpset => c.pixel,
+                Gpget => c.pixel_get,
                 Gtarget | Gcolor => c.grp,
                 // UNVERIFIED: commands and functions not timed.
                 _ if value => c.query,

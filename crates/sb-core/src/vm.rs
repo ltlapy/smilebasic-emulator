@@ -65,14 +65,22 @@ pub struct Work {
     pub joins: u64,
     /// Tests of whether a FOR goes round again: each pass and the end.
     pub for_tests: u64,
+    /// Of those, the tests run inside a DEF.
+    pub def_for_tests: u64,
     /// `IF` and `ELSEIF` conditions that are an array element
     /// ([`crate::bytecode::Op::TestIfFalse`]).
     pub element_tests: u64,
-    /// Calls of `CHR$`, counted only for a host that hears of the work.
+    /// Calls of `CHR$` of a code other than the last call's, counted
+    /// only for a host that hears of the work.
     pub chr_calls: u64,
     /// The calls of each builtin of [`COSTLY`], counted only for a host
     /// that hears of the work, as the rest of these.
     pub costly_calls: [u64; COSTLY.len()],
+    /// The calls of each builtin of [`CHEAP`], counted as the rest of
+    /// these, and those of `SIN`, `COS` and `TAN` of a number past a
+    /// quarter of pi either way.
+    pub cheap_calls: [u64; CHEAP.len()],
+    pub trig_reductions: u64,
     /// The characters of the strings joins made.
     pub join_chars: u64,
     /// Comparisons and other operators but `+` with a string on the left.
@@ -84,13 +92,19 @@ pub struct Work {
 /// this order.
 pub const COSTLY: [&str; 6] = ["STR$", "FORMAT$", "VAL", "INSTR", "HEX$", "MID$"];
 
+/// Builtins that cost SmileBASIC 4 about what reading a variable does,
+/// or a little more, each timed alone by TEST71, TEST72 and TEST74 on
+/// both consoles. [`Work::cheap_calls`] counts their calls in this order.
+/// The first three cost more for a number past a quarter of pi either way
+/// (TEST72's `SIN` of 1000000.5). UNVERIFIED: `TAN` as `SIN`, and where
+/// between 0.5 and 1000000.5 that cost starts.
+pub const CHEAP: [&str; 4] = ["SIN", "COS", "TAN", "SQR"];
+
 /// Builtins that cost SmileBASIC 4 no more than reading a variable, so
 /// that it seems to run them without a call (TEST69 to TEST71, both
-/// consoles). MIN and MAX of two count among them too. TEST71 times SIN,
-/// SQR and LEN as cheap as these, but TPERF's VREAL and VSTR keep their
-/// time only with them charged as calls. UNVERIFIED: that MAX of two
-/// costs what MIN of two does.
-const FREE: [&str; 4] = ["ASC", "INT", "FLOOR", "ABS"];
+/// consoles), and LEN (TEST71, TEST74). MIN and MAX of two count among
+/// them too. UNVERIFIED: that MAX of two costs what MIN of two does.
+const FREE: [&str; 5] = ["ASC", "INT", "FLOOR", "ABS", "LEN"];
 
 /// How the work of a builtin's call is counted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,6 +114,7 @@ enum Charge {
     FreeWithTwo,
     Chr,
     Costly(u8),
+    Cheap(u8),
 }
 
 /// How a call of each builtin is counted, by its number. Made once, so
@@ -125,6 +140,9 @@ fn charges() -> &'static [Charge] {
         set(&mut t, "CHR$", Charge::Chr);
         for (i, name) in COSTLY.iter().enumerate() {
             set(&mut t, name, Charge::Costly(i as u8));
+        }
+        for (i, name) in CHEAP.iter().enumerate() {
+            set(&mut t, name, Charge::Cheap(i as u8));
         }
         t
     })
@@ -375,9 +393,15 @@ pub struct Vm {
     lookups: u64,
     joins: u64,
     for_tests: u64,
+    def_for_tests: u64,
     element_tests: u64,
     chr_calls: u64,
+    /// The code of the last `CHR$` counted, as a run that reports its
+    /// work sees it.
+    last_chr: Option<i32>,
     costly_calls: [u64; COSTLY.len()],
+    cheap_calls: [u64; CHEAP.len()],
+    trig_reductions: u64,
     join_chars: u64,
     str_compares: u64,
     /// Whether the host hears of [`Vm::work`] before each of its calls,
@@ -615,9 +639,13 @@ impl Vm {
             lookups: 0,
             joins: 0,
             for_tests: 0,
+            def_for_tests: 0,
             element_tests: 0,
             chr_calls: 0,
+            last_chr: None,
             costly_calls: [0; COSTLY.len()],
+            cheap_calls: [0; CHEAP.len()],
+            trig_reductions: 0,
             join_chars: 0,
             str_compares: 0,
             charges: &[],
@@ -1103,9 +1131,12 @@ impl Vm {
             lookups: self.lookups,
             joins: self.joins,
             for_tests: self.for_tests,
+            def_for_tests: self.def_for_tests,
             element_tests: self.element_tests,
             chr_calls: self.chr_calls,
             costly_calls: self.costly_calls,
+            cheap_calls: self.cheap_calls,
+            trig_reductions: self.trig_reductions,
             join_chars: self.join_chars,
             str_compares: self.str_compares,
         }
@@ -2486,13 +2517,32 @@ impl Vm {
                     None | Some(Charge::Call) => true,
                     Some(Charge::Free) => false,
                     Some(Charge::FreeWithTwo) => *argc != 2,
+                    // A CHR$ of the code the last one made costs only its
+                    // call (TEST71 to TEST74 time U$=CHR$(C) so).
+                    // UNVERIFIED: that SmileBASIC 4 keeps the last string
+                    // CHR$ made, as HGCNV$ and TPERF's VSTR, which make a
+                    // new code each time, need CHR$'s cost.
                     Some(Charge::Chr) => {
-                        self.chr_calls += 1;
+                        let code = self.stack.last().and_then(|v| v.to_int().ok());
+                        if code.is_none() || std::mem::replace(&mut self.last_chr, code) != code {
+                            self.chr_calls += 1;
+                        }
                         true
                     }
                     Some(Charge::Costly(i)) => {
                         self.costly_calls[usize::from(i)] += 1;
                         true
+                    }
+                    Some(Charge::Cheap(i)) => {
+                        self.cheap_calls[usize::from(i)] += 1;
+                        let far = |v: &Value| {
+                            v.to_real()
+                                .is_ok_and(|x| x.abs() > std::f64::consts::FRAC_PI_4)
+                        };
+                        if i < 3 && self.stack.last().is_some_and(far) {
+                            self.trig_reductions += 1;
+                        }
+                        false
                     }
                 };
                 if call {
@@ -2748,6 +2798,8 @@ impl Vm {
             }
             Op::ForTest => {
                 self.for_tests += 1;
+                // A NEXT in a DEF costs SmileBASIC 4 more (TPERF, TEST70, TEST71).
+                self.def_for_tests += u64::from(!self.frames.is_empty());
                 self.for_test()?;
             }
             Op::Print { screen } => {

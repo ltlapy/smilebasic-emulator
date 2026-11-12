@@ -33,15 +33,16 @@ fn a_reported_run_counts_its_work() {
     let (work, out) = run(PROGRAM, true);
     assert_eq!(out, "6ABC4\n");
     assert_eq!(work.def_calls, 4);
-    // LEN four times and ON's jump as a call with no arguments. MAX of
-    // two counts as no call.
-    assert_eq!(work.builtin_calls, 5);
-    assert_eq!(work.builtin_args, 4);
+    // ON's jump as a call with no arguments. LEN and MAX of two count as
+    // no call.
+    assert_eq!(work.builtin_calls, 1);
+    assert_eq!(work.builtin_args, 0);
     // A%[I] written four times and read once, and M[1,2] written.
     assert_eq!(work.elements, 6);
     assert_eq!(work.extra_indices, 1);
-    // FOR tests I five times: 0 to 3 and the end.
+    // FOR tests I five times: 0 to 3 and the end, none in a DEF.
     assert_eq!(work.for_tests, 5);
+    assert_eq!(work.def_for_tests, 0);
     assert_eq!(work.joins, 2);
     assert_eq!(work.lookups, 1);
     assert!(work.statements > 10);
@@ -82,16 +83,34 @@ fn ifs_of_array_elements_count_apart() {
     assert_eq!(work.element_tests, 3);
 }
 
-/// ASC is not counted as a builtin call, and CHR$ is counted on its own
-/// too, when the work is reported.
+/// ASC and LEN are not counted as builtin calls, and CHR$ is counted on
+/// its own too, when the work is reported, but not when it makes the code
+/// the last one made.
 #[test]
 fn asc_and_chr_count_apart() {
-    let source = "C=65:S$=CHR$(C)+CHR$(C+1):?ASC(S$);LEN(S$)\n";
+    let source = "C=65:S$=CHR$(C)+CHR$(C+1)+CHR$(C+1):?ASC(S$);LEN(S$)\n";
     let (work, out) = run(source, true);
-    assert_eq!(out, "652\n");
+    assert_eq!(out, "653\n");
     assert_eq!(work.builtin_calls, 3);
     assert_eq!(work.chr_calls, 2);
     assert_eq!(run(source, false).0.chr_calls, 0);
+}
+
+/// SIN, COS, TAN and SQR are counted apart and as no call, and SIN, COS
+/// and TAN of a number past a quarter of pi apart again. A FOR's tests in
+/// a DEF are counted apart.
+#[test]
+fn cheap_builtins_and_fors_in_defs_count_apart() {
+    let source = "DEF F\n FOR I=1 TO 2:NEXT\nEND\n\
+        A=SIN(0.5)+SIN(-2)+COS(1)+TAN(0)+SQR(4):F\n?A>0\n";
+    let (work, out) = run(source, true);
+    assert_eq!(out, "1\n");
+    assert_eq!(work.builtin_calls, 0);
+    let i = |name| sb_core::vm::CHEAP.iter().position(|&n| n == name).unwrap();
+    assert_eq!(work.cheap_calls[i("SIN")], 2);
+    assert_eq!(work.cheap_calls[i("SQR")], 1);
+    assert_eq!(work.trig_reductions, 2);
+    assert_eq!((work.for_tests, work.def_for_tests), (3, 3));
 }
 
 /// FILL counts the elements it writes, from its start to its count or

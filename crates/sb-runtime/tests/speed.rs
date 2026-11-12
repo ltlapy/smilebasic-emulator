@@ -388,3 +388,108 @@ fn printing_that_scrolls_costs_more() {
         "{still} us, {scrolled} us"
     );
 }
+
+/// A FOR's test costs more inside a DEF than at the top level, as TPERF's
+/// VINT and VREAL, loops in DEFs, take longer than their pieces timed
+/// alone at the top level (TEST71, TEST74).
+#[test]
+fn a_for_in_a_def_costs_more() {
+    let top = "PERFBEGIN 0:FOR I=1 TO 10000:NEXT:?PERFEND(0)\n";
+    let def = "DEF L:VAR I:FOR I=1 TO 10000:NEXT:END\nPERFBEGIN 0:L:?PERFEND(0)\n";
+    for (speed, more) in [(Speed::Switch1, 420.0), (Speed::Switch2, 120.0)] {
+        let (top, def) = (passes(speed, top), passes(speed, def));
+        let extra = def - top;
+        assert!(
+            (more * 0.8..more * 1.4).contains(&extra),
+            "{speed:?}: {top} us, {def} us"
+        );
+    }
+}
+
+/// CHR$ of the code the last CHR$ made costs only its call, and of a new
+/// code more: TEST71 to TEST74 time U$=CHR$(C) at 165 to 185 ns on a
+/// Switch 1, where TPERF's VSTR and HGLIB's conversions, which make a
+/// new code each time, need more.
+#[test]
+fn chr_of_a_new_code_costs_more() {
+    let chr = |mask: u32| {
+        format!("PERFBEGIN 0:FOR I=1 TO 1000:U$=CHR$(65+(I AND {mask})):NEXT:?PERFEND(0)\n")
+    };
+    let (same, new) = (
+        passes(Speed::Switch1, &chr(0)),
+        passes(Speed::Switch1, &chr(1)),
+    );
+    assert!(new > same + 300.0, "{same} us, {new} us");
+}
+
+/// LEN costs what reading a variable does, as ABS does, and SIN of a
+/// number past a quarter of pi more than of a small one: TEST72's SIN of
+/// 1000000.5 took 198 ns on a Switch 1, of 0.5 106 ns.
+#[test]
+fn cheap_builtins_cost_no_call() {
+    let time = |body: &str| {
+        passes(
+            Speed::Switch1,
+            &format!(
+                "S$=\"ABC\":X=-3:R#=0.5:B#=1000000.5\n\
+                 PERFBEGIN 0:FOR I=1 TO 10000:{body}:NEXT:?PERFEND(0)\n"
+            ),
+        )
+    };
+    assert_eq!(time("A=LEN(S$)"), time("A=ABS(X)"));
+    let (small, large) = (time("S#=SIN(R#)"), time("S#=SIN(B#)"));
+    assert!(
+        (800.0..1100.0).contains(&(large - small)),
+        "{small} us, {large} us"
+    );
+}
+
+/// RGB of constants is a number when the program is compiled: TEST74's
+/// A=RGB(1,2,3) costs less than A=FLOOR(R#).
+#[test]
+fn rgb_of_constants_costs_a_number() {
+    let time = |body: &str| {
+        passes(
+            Speed::Switch1,
+            &format!("R=1:PERFBEGIN 0:FOR I=1 TO 1000:{body}:NEXT:?PERFEND(0)\n"),
+        )
+    };
+    assert_eq!(time("A=RGB(1,2,3)"), time("A=1"));
+    assert!(time("A=RGB(R,2,3)") > time("A=1") + 100.0);
+}
+
+/// GLOAD of palette indices costs more a pixel than of colors: TEST74's
+/// 400x216 took 0.24 ms on a Switch 1.
+#[test]
+fn gload_of_palette_indices_costs_more() {
+    let load = |pal: &str| {
+        format!(
+            "DIM IMG%[400*216],PAL%[256]:PERFBEGIN 0\n\
+             GLOAD 0,24,400,216,IMG%,{pal}0:?PERFEND(0)\n"
+        )
+    };
+    let (colors, indices) = (
+        passes(Speed::Switch1, &load("")),
+        passes(Speed::Switch1, &load("PAL%,")),
+    );
+    assert!((220.0..260.0).contains(&indices), "{indices} us");
+    assert!(colors < indices * 0.75, "{colors} us, {indices} us");
+}
+
+/// SPROT right after SPROT of the same sprite costs less, as TEST74's ten
+/// in a row take 285 ns each on a Switch 1, where TEST70's sprite loop
+/// needs more between other commands.
+#[test]
+fn sprot_in_a_row_costs_less() {
+    let rot = |other: u32| {
+        format!(
+            "SPSET 0,0:SPSET 1,0:PERFBEGIN 0\n\
+             FOR I=1 TO 1000:SPROT 0,I:SPROT {other},I:NEXT:?PERFEND(0)\n"
+        )
+    };
+    let (row, turn) = (
+        passes(Speed::Switch1, &rot(0)),
+        passes(Speed::Switch1, &rot(1)),
+    );
+    assert!(row + 400.0 < turn, "{row} us, {turn} us");
+}

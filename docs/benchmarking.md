@@ -110,16 +110,35 @@ console's time and gives each frame a sixtieth of a second of it:
   written by index (`S$[I]`) costs more than an array element. `ON`'s jump
   costs a builtin call with no arguments, and `FILL` each element it
   writes. A FOR's test gets a credit, as `NEXT` takes many of our
-  instructions but one step of SmileBASIC 4's.
-- Builtins cost by their class. `ASC`, `INT`, `FLOOR`, `ABS` and `MIN` of
-  two arguments cost no more than reading a variable, so they count as no
-  call (TEST69 to TEST71). The model takes `MAX` of two to cost what `MIN`
-  of two does. `STR$`, `FORMAT$`, `VAL`, `INSTR`, `HEX$` and `MID$` cost a
-  call and an amount of their own on top, each what TEST71 times for it
-  alone. `CHR$` costs more than a call too. Every other builtin costs a
-  call and its arguments. TEST71 times `SIN`, `SQR` and `LEN` as cheap as
-  `INT`, but TPERF's VREAL and VSTR keep their times only with them
-  charged as calls, so they stay calls.
+  instructions but one step of SmileBASIC 4's. A FOR's test inside a DEF
+  costs a set amount back on top (42 ns on a Switch 1, 12 ns on a Switch
+  2): TPERF's VINT and VREAL, loops in DEFs, take longer than their pieces
+  timed alone at the top level (TEST71, TEST74), and TEST70's and
+  TEST71's loops in DEFs run 8 to 15% fast without it. Why a DEF's loop
+  costs more is not known.
+- Builtins cost by their class. `ASC`, `INT`, `FLOOR`, `ABS`, `LEN` and
+  `MIN` of two arguments cost no more than reading a variable, so they
+  count as no call (TEST69 to TEST71, TEST74). The model takes `MAX` of two
+  to cost what `MIN` of two does. `SIN`, `COS`, `TAN` and `SQR` count as no
+  call either, but each costs a little of its own, and `SIN`, `COS` and
+  `TAN` of a number past a quarter of pi either way cost 95 ns more on a
+  Switch 1 and 40 ns on a Switch 2, as TEST72's `SIN` of 1000000.5 does
+  against `SIN` of 0.5. TPERF's VREAL takes `SIN` of numbers from 1 to 15.
+  Where between 0.5 and 1000000.5 that cost starts is a guess, and so is
+  `TAN`. `STR$`, `FORMAT$`, `VAL`, `INSTR`, `HEX$` and `MID$` cost a call
+  and an amount of their own on top, each what TEST71 times for it alone.
+  `CHR$` of a code other than the last `CHR$`'s costs more than a call
+  too; of the same code it costs its call, as TEST71 to TEST74 time
+  `U$=CHR$(C)`. TPERF's VSTR and HGLIB's conversions make a new code each
+  time and need the cost. That SmileBASIC 4 keeps the string `CHR$` made
+  last is a guess. Every other builtin costs a call and its arguments.
+- `RGB`, `RGBF`, `HSV`, `HSVF`, `DEG` and `RAD` of constants are numbers
+  when the program is compiled, as SmileBASIC 4 works them out then:
+  TEST74's `A=RGB(1,2,3)` costs less than `A=FLOOR(R#)`. One that fails
+  is still called, and fails, as it runs. `CHR$` of a constant stays a
+  call: SmileBASIC 4 seems to work it out too, as `U$=CHR$(65)` costs what
+  assigning a string literal does, but a literal costs the model less
+  than the console (TEST71).
 - An `IF` or `ELSEIF` whose condition is an array element, as in
   `IF MAP%[ASC(S$[I])] THEN`, costs more than one of a comparison or a
   variable. TEST69 and TEST70 time each of these alone; TEST68's and
@@ -144,9 +163,19 @@ console's time and gives each frame a sixtieth of a second of it:
   third argument, costs what TEST72 times for it. `LOCATE` with two
   arguments, `SPSHOW`, `SPVAR`, `SPCHR`, `STICK`, `SPOFS` with `OUT`, `GPSET`,
   `GPGET`, `CHKCHR` and `BGMCHK` each cost what TEST71 times for them
-  alone. Other sprite commands cost a set amount each. Sprites, layers and
-  text screens cost nothing to show, as TPERF and TEST67 find on both
-  consoles.
+  alone, `GPSET` and `GPGET` also what TEST74 does. `COLOR` of a text
+  color alone and `TOFS` cost what TEST74 times for them; `COLOR` with a
+  background color costs a set amount as before. `GLOAD` of an image of
+  palette indices costs more a pixel than one of colors (TEST74's 400x216,
+  0.24 ms on a Switch 1). `SPROT`, `SPCOLOR`, `SPHOME` and `SPLINK` cost
+  what TEST74 times when the command before was the same command for the
+  same sprite, as there, ten in a row; otherwise they cost a set amount as
+  before, which TEST70's sprite loop and TPERF's sprite scenes need. What
+  makes them cheaper in a row is not known. `SPANIM` of a sprite among
+  the last 64 changed costs what TEST74's three on a sprite just set
+  cost, less than TPERF's over 3000 sprites. Other sprite commands cost a
+  set amount each. Sprites, layers and text screens cost nothing to show,
+  as TPERF and TEST67 find on both consoles.
 - `GPUTCHR` and `GPUTCHRP` of user-defined characters, which come from
   the `TPAGE` page, cost by drawing mode: each row of the font's cell and
   each pixel. On a Switch 1 one character of 16 pixels takes 4.1
@@ -168,14 +197,18 @@ console's time and gives each frame a sixtieth of a second of it:
   each row. The model keeps that cost for fills 8, 16, 32, 64 and 128
   pixels wide, with straight lines between, in proportion below 8 and the
   same past 128, in one table for each column of the left edge within its
-  16 pixels. TEST71 times fills at x 16, 17, 20 and 24, and TEST72 at x 18,
-  22 and 26. On a Switch 1 a 32x32 `GFILL` takes 2.1 microseconds at x 16,
-  4.1 at x 20, 24 or 26, 5.2 at x 18, 8.3 at x 22 and 7.5 at x 17. Odd
-  columns cost as x 17 does, and column 14 is a guess. Fills 64 and 128
-  wide cost the same at every place off a 16-pixel boundary, and fills 8
-  and 16 wide cost little or nothing more anywhere. A Switch 2 shows much less of it. `GCOPY` pays
-  60% of the table by where it draws, whatever its source, and a blended
-  `GFILL` 18% on a Switch 1 and nothing on a Switch 2.
+  16 pixels. TEST71 times fills at x 16, 17, 20 and 24, TEST72 at x 18,
+  22 and 26, and TEST74 at x 3, 14, 19, 30, 35 and 46. On a Switch 1 a
+  32x32 `GFILL` takes 2.1 microseconds at x 16, 3.6 at x 14, 30 or 46, 4.1
+  at x 20, 24 or 26, 5.2 at x 18, 5.4 to 5.6 at x 3 or 19, 8.3 at x 22 and
+  7.5 at x 17. The model gives column 3 what x 3 and 19 take; x 35, column
+  3 too, takes 6.8 and runs 17% fast. The odd columns not timed cost as x
+  17 does. Fills 64 and 128 wide cost the same at every place off a
+  16-pixel boundary, and fills 8 and 16 wide cost little or nothing more
+  anywhere. A Switch 2 shows much less of it. `GCOPY` pays 65% of the
+  table by where it draws on a Switch 1 and 60% on a Switch 2, whatever
+  its source, and a blended `GFILL` 18% on a Switch 1 and nothing on a
+  Switch 2.
 - A misaligned `GFILL`, or a blended one, at a place that is not among the
   last 64 places such fills drew at costs more again: each row on top for
   a misaligned one, each pixel for a blended one. A place is the fill's
@@ -219,58 +252,59 @@ speed leaves plenty of time for. Unlimited counts nothing and runs exactly as
 before.
 
 The costs come from TPERF's scenes and the loops of TEST65, TEST67, TEST68,
-TEST69 to TEST73 on 4.4.9 (in `crates/sb-runtime/src/speed.rs`).
+TEST69 to TEST74 on 4.4.9 (in `crates/sb-runtime/src/speed.rs`).
 TEST67 times single commands at several sizes, which splits their cost into
 a base and a cost per row and pixel. TPERF's `WORK` in ms, run with
 `smilebasic-check --speed` and `--play`:
 
 | Scene | Switch 1 | ours | Switch 2 | ours |
 |---|---|---|---|---|
-| VINT | 13.38 | 12.64 | 5.15 | 4.81 |
-| VREAL | 8.42 | 8.33 | 3.29 | 3.26 |
-| VSTR | 5.42 | 5.38 | 2.28 | 2.30 |
-| VARRAY | 20.96 | 20.92 | 7.43 | 7.33 |
-| VDEF | 7.83 | 7.83 | 2.61 | 2.60 |
-| VVAR | 7.24 | 7.24 | 2.98 | 2.97 |
-| SPMOVE | 7.32 | 6.39 | 2.28 | 2.17 |
-| SPROT | 3.77 | 3.39 | 1.28 | 1.11 |
-| SPCHURN | 8.50 | 8.61 | 3.72 | 3.72 |
-| SPHIT | 6.05 | 6.09 | 2.60 | 2.60 |
-| SPANIM | 0.21 | 0.18 | 0.09 | 0.09 |
-| TPRINT | 2.35 | 2.32 | 1.15 | 1.14 |
-| TPUT | 11.04 | 10.70 | 3.82 | 3.69 |
+| VINT | 13.38 | 13.40 | 5.15 | 5.03 |
+| VREAL | 8.42 | 8.18 | 3.29 | 3.23 |
+| VSTR | 5.42 | 5.26 | 2.28 | 2.22 |
+| VARRAY | 20.96 | 21.34 | 7.43 | 7.45 |
+| VDEF | 7.83 | 8.00 | 2.61 | 2.65 |
+| VVAR | 7.24 | 7.45 | 2.98 | 3.03 |
+| SPMOVE | 7.32 | 6.50 | 2.28 | 2.20 |
+| SPROT | 3.77 | 3.44 | 1.28 | 1.12 |
+| SPCHURN | 8.50 | 8.64 | 3.72 | 3.73 |
+| SPHIT | 6.05 | 6.11 | 2.60 | 2.60 |
+| SPANIM | 0.21 | 0.19 | 0.09 | 0.09 |
+| TPRINT | 2.35 | 2.30 | 1.15 | 1.15 |
+| TPUT | 11.04 | 10.95 | 3.82 | 3.76 |
 | TSCROLL | 7.09 | 7.14 | 3.62 | 3.63 |
 | TMULTI | 0.31 | 0.28 | 0.18 | 0.15 |
-| GFILL | 15.33 | 15.27 | 2.78 | 2.72 |
-| GALPHA | 27.93 | 26.52 | 11.03 | 10.77 |
-| GLINE | 7.60 | 7.38 | 3.13 | 3.08 |
-| GCIRCLE | 3.22 | 3.16 | 1.28 | 1.26 |
-| GTRI | 8.76 | 8.04 | 2.83 | 2.25 |
-| GPUTCHR | 5.71 | 5.68 | 1.62 | 1.61 |
-| GCOPY | 11.11 | 11.02 | 3.33 | 3.35 |
+| GFILL | 15.33 | 14.94 | 2.78 | 2.74 |
+| GALPHA | 27.93 | 26.53 | 11.03 | 10.79 |
+| GLINE | 7.60 | 7.50 | 3.13 | 3.12 |
+| GCIRCLE | 3.22 | 3.22 | 1.28 | 1.28 |
+| GTRI | 8.76 | 8.11 | 2.83 | 2.27 |
+| GPUTCHR | 5.71 | 5.70 | 1.62 | 1.62 |
+| GCOPY | 11.11 | 11.33 | 3.33 | 3.36 |
 | GLOAD | 1.08 | 1.08 | 0.45 | 0.45 |
 | GUPLOAD | 0.03 | 0.01 | 0.01 | 0.00 |
-| GARRAY | 11.69 | 11.70 | 4.13 | 4.19 |
-| LCOMP | 0.45 | 0.36 | 0.17 | 0.12 |
-| LBLUR | 0.22 | 0.17 | 0.09 | 0.07 |
-| LMOSAIC | 0.20 | 0.17 | 0.09 | 0.07 |
+| GARRAY | 11.69 | 12.12 | 4.13 | 4.31 |
+| LCOMP | 0.45 | 0.37 | 0.17 | 0.12 |
+| LBLUR | 0.22 | 0.17 | 0.09 | 0.08 |
+| LMOSAIC | 0.20 | 0.17 | 0.09 | 0.08 |
 | LCOLOR | 0.26 | 0.23 | 0.11 | 0.10 |
-| LMATRIX | 0.28 | 0.24 | 0.12 | 0.10 |
-| LRASTER | 1.21 | 1.15 | 0.49 | 0.42 |
-| GAME | 7.70 | 6.78 | 3.02 | 2.45 |
-| MAXSP (score) | 2866 | 3646 | 4000 | 4000 |
-| MAXTRI (score) | 4410 | 4410 | 13471 | 15484 |
+| LMATRIX | 0.28 | 0.25 | 0.12 | 0.11 |
+| LRASTER | 1.21 | 1.20 | 0.49 | 0.44 |
+| GAME | 7.70 | 6.89 | 3.02 | 2.48 |
+| MAXSP (score) | 2866 | 3528 | 4000 | 4000 |
+| MAXTRI (score) | 4410 | 4410 | 13471 | 14865 |
 
-`LOST` matches for VARRAY: 77 frames on a Switch 1 and 76 here; GALPHA lost
-202 there and 177 here. Most scenes come within 10%. On a Switch 1 SPMOVE
-runs 15% fast, GAME 13%, SPROT and SPANIM 11 to 12%, and MAXSP scores 27%
+`LOST` comes near for VARRAY: 77 frames on a Switch 1 and 84 here; GALPHA
+lost 202 there and 177 here. Most scenes come within 10%. On a Switch 1
+SPMOVE runs 11% fast, GAME and SPANIM 10%, SPROT 9%, and MAXSP scores 23%
 high. GFILL and GALPHA ran 20 and 22% fast before TEST71 and now come
 within 6%: TPERF's fills land at random places, and TEST71 finds fills at
 random places dearer than fills at one place or at 10 to 64 places in
-turn. The layer scenes take under half a millisecond and run 6 to 31%
-fast. On a Switch 2 GTRI runs 26% fast, GAME 23%, SPROT 15%, and MAXTRI
-scores 15% high, where GFILL, 30% fast before TEST71, now comes within
-2%. TEST71's `GTRI` scene runs as fast on a Switch 2 at places rounded to
+turn. The layer scenes take under half a millisecond and run 1 to 30%
+fast. On a Switch 2 GTRI runs 20% fast, GAME 18%, SPROT 12%, and MAXTRI
+scores 10% high, where GFILL, 30% fast before TEST71, now comes within
+2%. VINT ran 6 to 7% fast before TEST74 and now comes within 3%, as a
+FOR's test in a DEF costs more. TEST71's `GTRI` scene runs as fast on a Switch 2 at places rounded to
 16 pixels as at random ones, within 3%, so where `GTRI` draws does not
 explain its gap. TPERF ran
 handheld there and TEST67 to TEST70 docked, but TEST70 finds a Switch 2 as
@@ -424,6 +458,47 @@ than 10% off fall into these groups:
 - An 11x11 `GCOPY` without a color runs 29% fast on a Switch 1 and 39% on
   a Switch 2.
 - `HGLOAD` runs up to 15% fast.
+
+TEST74 ran on both consoles (a Switch 1 handheld, a Switch 2 docked). It
+times `CHR$` of ASCII and user-defined codes, `GFILL` 32 wide at x 3, 14,
+19, 30, 35 and 46, `GCOPY` 48 wide in modes 0 and 1 at x 16 and 17,
+`GTRI` with and without a flat edge, `GLOAD` of palette indices, `GLINE`,
+`GCLS`, sprites set with three `SPANIM`s, and about 20 commands and
+builtins one at a time that the model charged as an untimed command or a
+plain call. Of its 43 timed rows, the refit to it leaves 17 more than 5%
+off on a Switch 1 and 12 on a Switch 2, from 34 and 24 before. `CHR$`,
+`LEN`, `SQR`, `SIN` and `COS`, which earlier refits left off for TPERF's
+VREAL and VSTR and HGLIB's conversions, now fit alone and in those loops,
+with a FOR's test in a DEF costing more and `CHR$` of the last code
+costing its call. TEST71's `SIN`, `SQR`, `U$=CHR$(C)` and TEST72's `SIN`
+and `COS` rows come within 6% too. Most rows still more than 10% off fall
+into these groups:
+
+- `GCOPY` that leaves out transparent pixels, from the sprite page,
+  runs 2.3 times as fast at x 16 on a Switch 1: there it costs twice what
+  copying every pixel does, where TPERF's `GCOPY` scene, from a page of
+  lines that is mostly transparent, needs the rate it has. The cost may
+  follow the pixels drawn, which the model does not count. `GCOPY` 48
+  wide at x 17 in mode 0 runs 22% fast on a Switch 1.
+- `GTRI` with a sloped left edge, as with no flat edge or a flat top, runs
+  10 to 20% fast on a Switch 1 and 22 to 23% fast on a Switch 2; with a
+  vertical left edge it matches. TEST70's smaller triangle with a sloped
+  left edge runs 15% slow on a Switch 1, so a cost for each sloped row
+  would not fit both.
+- `GLINE` runs 5 to 9% slow on a Switch 1 and 7 to 23% slow on a Switch 2
+  for its mostly flat lines. Fitting them would make TPERF's GLINE scene,
+  lines in every direction, run up to 15% fast; steep lines were not
+  timed alone.
+- `GFILL` 32 wide at x 35 runs 17% fast on a Switch 1, where x 3 and 19,
+  the same column, match.
+- `VAL` of a variable runs 26% slow on a Switch 1 and 13% on a Switch 2,
+  and `MID$` with constants 19% on a Switch 1: TEST71 timed them with a
+  string literal and variables, and fits.
+- `A=RGB(1,2,3)` runs 8% slow on a Switch 1, and `LEN` 6 to 16% slow in
+  TEST71 and TEST74: the model's assignment of a number costs more than
+  the console's.
+- `ATAN` of 3 and 4 runs 14% slow on a Switch 1, where TEST71's of 4 and 3
+  matches.
 
 ## Per-frame costs and overload
 
