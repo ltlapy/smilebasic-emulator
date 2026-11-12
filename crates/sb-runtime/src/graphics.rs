@@ -65,11 +65,12 @@ impl Blend {
                 pack(da, mix(sr, dr), mix(sg, dg), mix(sb, db))
             }
             // The weights of the two colours are worked out on 0-255 and
-            // rounded down before they are used.
+            // rounded down before they are used. A clear pixel over a clear
+            // pixel leaves it as it was, color included.
             Blend::Alpha2 => {
                 let a = sa + da - sa * da / 255;
                 if a == 0 {
-                    return 0;
+                    return dst;
                 }
                 let (sw, dw) = (sa * 255 / a, da * (255 - sa) / a);
                 let mix = |s: u32, d: u32| (s * sw + d * dw) / 255;
@@ -1038,12 +1039,12 @@ impl Graphics {
             near(left + i64::from(n) * sx - 1),
             near(top + i64::from(n) * sy - 1),
         );
-        // Only modes 0 and 3 change the page with a clear pixel; glyphs
-        // are mostly clear, so the others pass them by. Mode 1 looks at
+        // Only mode 0 changes the page with a clear pixel; glyphs are
+        // mostly clear, so the others pass them by. Mode 1 looks at
         // the glyph pixel's own alpha, not at the alpha the color makes
         // of it: with a color of alpha 1 the glyph's soft edges are
         // written with alpha 0.
-        let skip_clear = !matches!(blend, Blend::Normal | Blend::Alpha2);
+        let skip_clear = blend != Blend::Normal;
         let blend = match blend {
             Blend::Normal2 => Blend::Normal,
             blend => blend,
@@ -2649,6 +2650,9 @@ mod tests {
         assert_eq!(Blend::Alpha.apply(blue, half_red), 0xFF80_007F);
         // Over a transparent pixel, mode 3 keeps the color as it is.
         assert_eq!(Blend::Alpha2.apply(0, half_red), half_red);
+        // A clear pixel over a clear one changes nothing, not even its color.
+        assert_eq!(Blend::Alpha2.apply(0x00FF_4020, 0), 0x00FF_4020);
+        assert_eq!(Blend::Alpha2.apply(0x00FF_4020, 0x00C0_0000), 0x00FF_4020);
         assert_eq!(Blend::Add.apply(0xFF80_0000, half_red), 0xFFFF_0000);
         assert_eq!(Blend::from_int(5), None);
         // Read back on hardware: half-transparent red drawn with modes 2,
