@@ -1695,7 +1695,7 @@ impl Machine {
         self.rt.begin_frame();
         self.rt.sound.render_frame();
         if let Some(main) = main.as_deref_mut() {
-            main.sound.hear_sub(&self.rt.sound);
+            main.sound.hear_sub(&mut self.rt.sound);
         }
         // Animations play in direct mode too, and go on while the editor
         // hides the screen (checked on hardware).
@@ -2774,7 +2774,7 @@ impl Machine {
             return out;
         };
         let theirs = sub.rt.sound.take_samples();
-        let (main_gain, sub_gain) = crate::sound::balance_gains(sub.rt.sound.balance);
+        let (main_gain, sub_gain) = sub.rt.sound.balance_gains();
         if out.len() < theirs.len() {
             out.resize(theirs.len(), 0.0);
         }

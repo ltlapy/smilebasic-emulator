@@ -868,7 +868,8 @@ fn recording_what_plays() {
     let mut rt = runtime();
     run_on(
         &mut rt,
-        "DIM W[480]:FOR I=0 TO 479:W[I]=16000:NEXT:PCMSTREAM W:RECSTART 0.1",
+        "DIM W%[28160]:FILL W%,30000:\
+         WAVSETA 225,127,127,127,127,W%,69,0,28159,28160:H=BEEP(225):RECSTART 0.1",
     )
     .unwrap();
     // 0.1 seconds is 4800 samples, 6 frames: half are in after 3.
@@ -879,7 +880,7 @@ fn recording_what_plays() {
             "RECCHK OUT C:RECDATA 5 OUT L,R:?C;RECLEN();RECPOS();L;R"
         )
         .unwrap(),
-        "1480024001600016000"
+        "14800240037503750"
     );
     assert_eq!(
         run_on(
@@ -887,7 +888,7 @@ fn recording_what_plays() {
             "DIM A[1]:RECSAVE A,10,2:DIM B[1,1]:RECSAVE B:?LEN(A);A[0];DIM(B,1);B[1,0]"
         )
         .unwrap(),
-        "1016000240016000"
+        "10375024003750"
     );
     frames(&mut rt, 3);
     assert_eq!(run_on(&mut rt, "?RECCHK();RECPOS()").unwrap(), "04800");
@@ -903,6 +904,38 @@ fn recording_what_plays() {
         "OK"
     );
     assert!(run_on(&mut rt, "RECSTART 1:RECDATA -1 OUT L,R").is_err());
+}
+
+/// RECSTART does not hear PCMSTREAM, which still plays.
+#[test]
+fn recording_leaves_out_the_pcm_stream() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "DIM W[480]:FOR I=0 TO 479:W[I]=16000:NEXT:PCMSTREAM W:RECSTART 0.1",
+    )
+    .unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 3);
+    assert!(peak(&mut rt) > 0.4);
+    assert_eq!(
+        run_on(&mut rt, "RECDATA 5 OUT L,R:?RECPOS();L;R").unwrap(),
+        "240000"
+    );
+}
+
+/// PCMSTREAM sets both sides back to full volume.
+#[test]
+fn a_pcm_stream_starts_at_full_volume() {
+    let mut rt = runtime();
+    assert_eq!(
+        run_on(
+            &mut rt,
+            "DIM W[480]:PCMVOL 0,4096:PCMVOL 1,4096:PCMSTREAM W:PCMVOL OUT L,R:?L;R"
+        )
+        .unwrap(),
+        "3276732767"
+    );
 }
 
 #[test]

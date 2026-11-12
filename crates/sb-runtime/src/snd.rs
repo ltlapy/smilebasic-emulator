@@ -14,7 +14,7 @@ use sb_core::value::{Array, Value};
 use crate::runtime::{Command, Runtime, checking, illegal, no_form};
 use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
-use crate::sound::pcm::{FULL, Source};
+use crate::sound::pcm::{FULL, Level, Source};
 use crate::sound::reverb::Settings;
 use crate::sound::seq::Kind;
 use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, Wave, beep_ticks, eight_bit};
@@ -623,6 +623,9 @@ impl Runtime {
                 pcm.rate = f64::from(rate);
                 pcm.pos = 0.0;
                 pcm.playing = true;
+                // A stream starts at full volume on both sides, whatever
+                // PCMVOL set before it.
+                pcm.volume = [Level::at(FULL); 2];
                 Ok(vec![])
             }
             (Command::Pcmstop, Want::Outs(0), 0) => {
@@ -705,6 +708,7 @@ impl Runtime {
             // it. The time is not used.
             (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
                 self.sound.balance = in_range("balance", &args[0], 0..=127)?;
+                self.sound.balanced = true;
                 opt_in_range("time", args.get(1), 0..=32767, 0)?;
                 Ok(vec![])
             }
@@ -735,24 +739,33 @@ impl Runtime {
                         ((s * f64::from(RATE)).round() as usize, false)
                     }
                 };
-                self.sound.recorder.start(len, ring);
+                // The subprogram's RECSTART records nothing: its RECSAVE
+                // gets what the main program recorded last.
+                // UNVERIFIED: that it checks its time as the main
+                // program's does, and that its RECSTOP leaves the main
+                // program's recording going.
+                if !self.sound.sub {
+                    self.sound.recorder.borrow_mut().start(len, ring);
+                }
                 Ok(vec![])
             }
             (Command::Recstop, Want::Outs(0), 0) => {
-                self.sound.recorder.recording = false;
+                if !self.sound.sub {
+                    self.sound.recorder.borrow_mut().recording = false;
+                }
                 Ok(vec![])
             }
-            (Command::Recchk, Want::Outs(1) | Want::Value, 0) => {
-                Ok(vec![Value::Int(i32::from(self.sound.recorder.recording))])
-            }
-            (Command::Reclen, Want::Value, 0) => {
-                Ok(vec![Value::Int(self.sound.recorder.samples().len() as i32)])
-            }
+            (Command::Recchk, Want::Outs(1) | Want::Value, 0) => Ok(vec![Value::Int(i32::from(
+                self.sound.recorder.borrow().recording,
+            ))]),
+            (Command::Reclen, Want::Value, 0) => Ok(vec![Value::Int(
+                self.sound.recorder.borrow().samples().len() as i32,
+            )]),
             (Command::Recpos, Want::Value, 0) => {
-                Ok(vec![Value::Int(self.sound.recorder.pos as i32)])
+                Ok(vec![Value::Int(self.sound.recorder.borrow().pos as i32)])
             }
             (Command::Recdata, Want::Outs(2), 1) => {
-                let rec = &self.sound.recorder;
+                let rec = self.sound.recorder.borrow();
                 let samples = rec.samples();
                 let len = samples.len() as i32;
                 // Recording round the buffer, positions go round it too:
@@ -765,7 +778,7 @@ impl Runtime {
                 Ok(vec![Value::Int(i32::from(l)), Value::Int(i32::from(r))])
             }
             (Command::Recsave, Want::Outs(0), 1..=3) => {
-                let rec = &self.sound.recorder;
+                let rec = self.sound.recorder.borrow();
                 let samples = rec.samples();
                 let len = samples.len() as i32;
                 let n = opt_in_range("count", args.get(1), 0..=len, rec.pos as i32)? as usize;

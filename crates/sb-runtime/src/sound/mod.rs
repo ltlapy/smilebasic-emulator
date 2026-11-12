@@ -170,13 +170,17 @@ impl Recorder {
     }
 }
 
-/// The main and the sub interpreter's gains for SNDMSBAL's balance: 64
-/// keeps both as they are, 0 gives the subprogram's sound twice as loud
-/// and the main program's none, and 127 the other way round.
-// UNVERIFIED: the subprogram's side, which a test measured less well.
+/// The main and the sub interpreter's gains for a balance SNDMSBAL set.
+/// The main program's goes up in a straight line from none at 0, and is a
+/// little over 1 at 64: 40, 64 and 127 record at 0.68, 1.085 and 2.15
+/// times the main program's sound alone. The subprogram's goes down from
+/// about twice as loud at 0 to none at 127.
+// UNVERIFIED: the subprogram's side between 0 and 127, which a test
+// measured less well, as the main program's sound was mixed in.
 pub(crate) fn balance_gains(balance: i32) -> (f32, f32) {
     let b = balance.clamp(0, 127) as f32;
-    (b / 64.0, (127.0 - b) / 64.0)
+    // (b / 64.0, (127.0 - b) / 64.0)
+    (b / 59.0, (127.0 - b) / 64.0)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -213,10 +217,17 @@ pub struct Sound {
     aux: [Vec<f32>; 2],
     /// One kind of sound at a time, to send part of it.
     part: [Vec<f32>; 2],
-    pub(crate) recorder: Recorder,
+    /// PCMSTREAM's samples this frame, kept out of a recording.
+    pcm_part: [Vec<f32>; 2],
+    /// RECSTART's recording: the sub interpreter shares the main one's.
+    pub(crate) recorder: Rc<RefCell<Recorder>>,
+    /// This is the sub interpreter's sound, which never records.
+    pub(crate) sub: bool,
     /// SNDMSBAL, which only subprograms set. It starts at 63, though the
     /// manual calls 64 even (checked on hardware).
     pub(crate) balance: i32,
+    /// SNDMSBAL has set the balance.
+    pub(crate) balanced: bool,
     /// SNDMVOL, as a gain.
     pub(crate) master: Ramp,
     /// Mixed samples, left and right in turn, not yet taken.
@@ -243,8 +254,11 @@ impl Default for Sound {
             reverb: None,
             aux: Default::default(),
             part: Default::default(),
+            pcm_part: Default::default(),
             balance: 63,
-            recorder: Recorder::default(),
+            balanced: false,
+            recorder: Rc::default(),
+            sub: false,
             master: Ramp::at(1.0),
             out: Vec::new(),
             scratch: Default::default(),
@@ -415,6 +429,18 @@ impl Sound {
         self.talk.stop();
     }
 
+    /// The main and the sub interpreter's gains for this subprogram's
+    /// balance. Until SNDMSBAL sets one, the main program's sound is not
+    /// raised as [`balance_gains`] would raise it at 63.
+    // UNVERIFIED: the gains before SNDMSBAL. The main program's sound
+    // recorded then about as loud as 63 / 64 gives it here.
+    pub(crate) fn balance_gains(&self) -> (f32, f32) {
+        match self.balanced {
+            true => balance_gains(self.balance),
+            false => (63.0 / 64.0, 1.0),
+        }
+    }
+
     /// EFCSET: the effector's reverb, or none.
     pub(crate) fn set_reverb(&mut self, settings: Option<reverb::Settings>) {
         if self.reverb.as_ref().map(|r| r.settings()) != settings {
@@ -448,11 +474,34 @@ impl Sound {
             aux_r.resize(n, 0.0);
         }
         // A recording not yet begun waits with a song that waits for the
-        // sound system to wake, and so begins with it.
-        let waking = self.tracks.iter().flatten().any(|t| t.hold > 0);
-        let record = self.recorder.begun || !waking;
-        self.recorder.frame_start = self.recorder.pos;
-        self.recorder.taken = 0;
+        // sound system to wake, and so begins with it. The sub
+        // interpreter's sound reaches the main one's recording through
+        // `hear_sub`.
+        let record = !self.sub && {
+            let waking = self.tracks.iter().flatten().any(|t| t.hold > 0);
+            let mut rec = self.recorder.borrow_mut();
+            rec.frame_start = rec.pos;
+            rec.taken = 0;
+            rec.recording && (rec.begun || !waking)
+        };
+        // RECSTART does not hear PCMSTREAM, which goes in after the
+        // recording, still sending to the effector.
+        let pcm_apart = record && self.pcm.playing;
+        if pcm_apart {
+            let [l, r] = &mut self.pcm_part;
+            l.clear();
+            l.resize(n, 0.0);
+            r.clear();
+            r.resize(n, 0.0);
+            self.pcm.render(l, r);
+            let s = sends[PCM_SEND];
+            if s != 0.0 {
+                for i in 0..n {
+                    aux_l[i] += l[i] * s;
+                    aux_r[i] += r[i] * s;
+                }
+            }
+        }
         for t in self.tracks.iter_mut().flatten() {
             // UNVERIFIED: that BGMWET takes the place of EFCWET's BGM for
             // its track once set.
@@ -482,7 +531,9 @@ impl Sound {
             }
         };
         mix(sends[BEEP_SEND], &mut |l, r| self.beeps.render(l, r));
-        mix(sends[PCM_SEND], &mut |l, r| self.pcm.render(l, r));
+        if !pcm_apart {
+            mix(sends[PCM_SEND], &mut |l, r| self.pcm.render(l, r));
+        }
         mix(sends[TALK_SEND], &mut |l, r| self.talk.render(l, r));
         // What the effector adds: RECSTART records the sound before it.
         if let Some(r) = self.reverb.as_mut().filter(|_| effect) {
@@ -508,11 +559,17 @@ impl Sound {
         self.out.reserve(2 * n);
         let start = self.out.len();
         let [aux_l, aux_r] = &self.aux;
+        let [pcm_l, pcm_r] = &self.pcm_part;
+        let mut rec = self.recorder.borrow_mut();
         for i in 0..n {
             let gain = self.master.value as f32;
-            let (l, r) = (left[i] * gain, right[i] * gain);
+            let (mut l, mut r) = (left[i] * gain, right[i] * gain);
             if record {
-                self.recorder.record(l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0));
+                rec.record(l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0));
+            }
+            if pcm_apart {
+                l += pcm_l[i] * gain;
+                r += pcm_r[i] * gain;
             }
             let (l, r) = match (aux_l.get(i), aux_r.get(i)) {
                 (Some(al), Some(ar)) => (l + al * gain, r + ar * gain),
@@ -527,14 +584,19 @@ impl Sound {
 
     /// What the sub interpreter mixed this frame, which RECSTART in the
     /// main program hears with the main program's own sound, as the
-    /// subprogram's SNDMSBAL balances them.
-    // UNVERIFIED: that RECSTART in the subprogram hears only its own.
-    pub(crate) fn hear_sub(&mut self, sub: &Sound) {
-        let rec = &mut self.recorder;
+    /// subprogram's SNDMSBAL balances them. The sub interpreter shares the
+    /// main one's recorder: its RECSAVE reads what the main program
+    /// recorded last.
+    pub(crate) fn hear_sub(&mut self, sub: &mut Sound) {
+        if !Rc::ptr_eq(&sub.recorder, &self.recorder) {
+            sub.recorder = Rc::clone(&self.recorder);
+            sub.sub = true;
+        }
+        let rec = &mut *self.recorder.borrow_mut();
         if rec.taken == 0 {
             return;
         }
-        let (own, theirs) = balance_gains(sub.balance);
+        let (own, theirs) = sub.balance_gains();
         let theirs = theirs * sub.master.value as f32;
         let [left, right] = &sub.mix;
         let mixed = |s: i16, t: Option<&f32>| {
@@ -565,18 +627,35 @@ mod tests {
         let heard = |balance: i32| {
             let (mut main, mut sub) = (Sound::default(), Sound::default());
             sub.balance = balance;
-            main.recorder.start(FRAME_SAMPLES, false);
+            sub.balanced = true;
+            main.recorder.borrow_mut().start(FRAME_SAMPLES, false);
             main.render_frame();
             sub.render_frame();
             sub.mix = [vec![0.25; FRAME_SAMPLES], vec![-0.25; FRAME_SAMPLES]];
-            main.hear_sub(&sub);
-            main.recorder.samples()[FRAME_SAMPLES - 1]
+            main.hear_sub(&mut sub);
+            main.recorder.borrow().samples()[FRAME_SAMPLES - 1]
         };
         assert_eq!(heard(0), [16256, -16256]);
         assert_eq!(heard(127), [0, 0]);
         let [l, r] = heard(64);
         assert!((l - 8063).abs() <= 1 && (r + 8063).abs() <= 1, "{l} {r}");
-        assert_eq!(balance_gains(64), (1.0, 63.0 / 64.0));
-        assert_eq!(balance_gains(127).0, 127.0 / 64.0);
+        assert_eq!(balance_gains(64), (64.0 / 59.0, 63.0 / 64.0));
+        assert_eq!(balance_gains(127).0, 127.0 / 59.0);
+    }
+
+    /// The sub interpreter shares the main one's recorder and records
+    /// nothing into it itself.
+    #[test]
+    fn the_subprogram_records_nothing_of_its_own() {
+        let (mut main, mut sub) = (Sound::default(), Sound::default());
+        main.recorder.borrow_mut().start(3 * FRAME_SAMPLES, false);
+        main.render_frame();
+        sub.render_frame();
+        main.hear_sub(&mut sub);
+        assert!(sub.sub && Rc::ptr_eq(&sub.recorder, &main.recorder));
+        sub.render_frame();
+        assert_eq!(main.recorder.borrow().pos, FRAME_SAMPLES);
+        main.render_frame();
+        assert_eq!(main.recorder.borrow().pos, 2 * FRAME_SAMPLES);
     }
 }

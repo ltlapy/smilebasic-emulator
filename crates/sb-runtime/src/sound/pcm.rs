@@ -25,7 +25,7 @@ pub struct Level {
 }
 
 impl Level {
-    fn at(value: f64) -> Level {
+    pub fn at(value: f64) -> Level {
         Level {
             value,
             target: value,
@@ -71,7 +71,10 @@ impl Default for Pcm {
             rate: f64::from(RATE),
             pos: 0.0,
             playing: false,
-            // UNVERIFIED: the volume PCMSTREAM starts at.
+            // PCMSTREAM sets both sides to full volume.
+            // UNVERIFIED: what PCMVOL reads and does before any stream.
+            // One console read 0 0 then; whether PCMVOL without a stream
+            // is ignored is not known.
             volume: [Level::at(FULL); 2],
         }
     }
