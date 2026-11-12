@@ -619,9 +619,8 @@ impl Parser {
             // `:0C:0D` goes on in channel 0, and `:2C:1D` passes. Leaving a
             // channel with a `[` still open fails there too: `[:1C]2` at 2,
             // `[C:1D]` at 3. A number past 15 fails at its start: `:16C`
-            // at 1.
-            // UNVERIFIED: that `:` naming the channel it is in passes inside
-            // an open `[` (`[:0C]`).
+            // at 1. A `:` naming the channel it is in is no switch, so it
+            // passes inside an open `[` too (`[:0C]`).
             ':' => {
                 self.skip_space();
                 let number = self.start(self.at);
