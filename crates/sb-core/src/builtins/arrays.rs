@@ -40,8 +40,9 @@ fn span(len: usize, offset: Option<&Value>, n: Option<&Value>) -> Result<(usize,
 
 /// COPY's source `offset` and `count` within `len`. Past the end is
 /// Subscript out of range; the function form names the argument, the
-/// command form does not. An offset at the end with no count is past it
-/// too, while one with a count of 0 copies nothing.
+/// command form does not. An offset at the end of a source that is not
+/// empty, with no count, is past it too, while one with a count of 0
+/// copies nothing. Offset 0 of an empty source copies nothing.
 fn copy_span(
     len: usize,
     offset: Option<&Value>,
@@ -56,9 +57,7 @@ fn copy_span(
         }
     };
     let at = offset.map_or(Ok(0), count)?;
-    // UNVERIFIED: that an empty source with an offset of 0 and no count
-    // fails the same way.
-    if at > len || (at == len && offset.is_some() && n.is_none()) {
+    if at > len || (at == len && len != 0 && offset.is_some() && n.is_none()) {
         return Err(past_end("offset", offset));
     }
     let size = n.map_or(Ok(len - at), count)?;

@@ -1008,6 +1008,10 @@ fn copy_errors() {
     wrong("A$=COPY(\"ABCDE\",5)", Some(1));
     assert_eq!(output("DIM B[5]:A=COPY(B,5,0):?LEN(A)"), "0\n");
     assert_eq!(output("A$=COPY(\"ABCDE\",5,0):?\"[\";A$;\"]\""), "[]\n");
+    // Offset 0 of an empty source is no error.
+    assert_eq!(output("DIM B[0]:A=COPY(B,0):?LEN(A)"), "0\n");
+    assert_eq!(output("A$=COPY(\"\",0):?\"[\";A$;\"]\""), "[]\n");
+    wrong("DIM B[0]:A=COPY(B,1)", Some(1));
     // A string destination past its end is filled with spaces.
     assert_eq!(
         output("A$=\"12345\":COPY A$,7,\"AB\",0,2:?\"[\";A$;\"]\""),
