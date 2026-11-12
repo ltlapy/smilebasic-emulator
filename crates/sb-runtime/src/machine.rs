@@ -1707,13 +1707,16 @@ impl Machine {
             }
         }
         let mut vsynced = false;
-        let Some(mut vm) = self.vm.as_mut() else {
+        if self.vm.is_none() {
             if self.quiet_stop && !self.editor_has_keys() {
                 self.ready();
             }
+            // A typed line runs in the frame its Enter is taken in.
             if let Ok(Some(line)) = self.rt.input_poll() {
                 self.direct(&String::from_utf16_lossy(&line));
             }
+        }
+        let Some(mut vm) = self.vm.as_mut() else {
             return;
         };
         self.wait = self.wait.saturating_sub(1);
@@ -1854,9 +1857,8 @@ impl Machine {
                 Ok(Status::Ended) | Err(_) => {
                     let (work, ran) = (vm.work(), vm.executed().wrapping_sub(start));
                     let error = status.err();
-                    // A direct-mode line's RUN starts the program in the
-                    // frame the line ran in, with what is left of its time.
-                    // UNVERIFIED: seen only through a key held across RUN.
+                    // A direct-mode line's CONT goes on in the frame the
+                    // line ran in, with what is left of its time.
                     if self.finish(error)
                         && let Some(next) = self.vm.as_mut()
                     {
@@ -2106,7 +2108,7 @@ impl Machine {
     }
 
     /// The program or line ended, by itself or with an error. True when
-    /// the line ran RUN and the program it started is to run on.
+    /// the line ran CONT and the program it goes on with is to run on.
     fn finish(&mut self, error: Option<Error>) -> bool {
         if let Some(e) = &error
             && self.running_slot.is_some()
@@ -2167,11 +2169,17 @@ impl Machine {
             }
         }
         match (run, cont) {
-            (Some(slot), _) => {
-                self.run_slot(slot);
-                return !program && self.vm.is_some();
+            // The program RUN starts runs from the next frame.
+            (Some(slot), _) => self.run_slot(slot),
+            (None, Some(how)) => {
+                let on = how == Resume::Cont && !program;
+                self.resume(how);
+                if on && self.vm.is_some() {
+                    // VSYNC counts from this frame, the one it goes on in.
+                    self.vsync_at = Some(self.frame);
+                    return true;
+                }
             }
-            (None, Some(how)) => self.resume(how),
             (None, None) if home => self.home_end(error.is_some()),
             // The prompt starts by dropping what is waiting, a line's PUSHKEY too.
             (None, None) => {

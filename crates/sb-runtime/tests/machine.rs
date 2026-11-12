@@ -444,19 +444,32 @@ fn vsync_after_falling_behind() {
     assert_eq!(frames(":WAIT 0"), "10");
 }
 
-/// RUN typed in direct mode starts the program in the frame the line ran
-/// in, at a console's speed too.
+/// A line typed in DIRECT mode runs in the frame its Enter is
+/// taken in, and so does CONT's program; RUN's program starts in the
+/// frame after the line's, at a console's speed too.
 #[test]
-fn run_starts_the_program_in_the_lines_frame() {
-    for speed in [Speed::Unlimited, Speed::Switch1] {
+fn typed_lines_run_and_cont_start_frames() {
+    // The frames from the Enter until the console shows `tag`.
+    let frames = |m: &mut Machine, line: &str, tag: &str| {
+        m.type_text(line);
+        m.frame();
+        m.rt.key_press(sb_runtime::runtime::keys::ENTER);
+        for n in 1..10 {
+            m.frame();
+            if rows(m).iter().any(|r| r.starts_with(tag)) {
+                return n;
+            }
+        }
+        panic!("{line:?}: no {tag:?} in {:?}", rows(m));
+    };
+    for speed in [Speed::Unlimited, Speed::Switch1, Speed::Switch2] {
         let mut m = machine();
         m.rt.settings.speed = speed;
-        m.set_slot(0, "?\"P\";MAINCNT()\n".to_string());
-        enter(&mut m, "?\"D\";MAINCNT():RUN");
-        let rows = rows(&m);
-        let count = |tag: &str| rows.iter().rev().find_map(|r| r.strip_prefix(tag));
-        assert_eq!(count("P"), count("d"), "{speed:?}: {rows:?}");
-        assert!(count("P").is_some(), "{speed:?}: {rows:?}");
+        m.set_slot(0, "?\"P\":STOP\n?\"Q\"\n".to_string());
+        // Typed letters come out in lower case.
+        assert_eq!(frames(&mut m, "?\"D\"", "d"), 1, "{speed:?}");
+        assert_eq!(frames(&mut m, "RUN", "P"), 2, "{speed:?}");
+        assert_eq!(frames(&mut m, "CONT", "Q"), 1, "{speed:?}");
     }
 }
 
