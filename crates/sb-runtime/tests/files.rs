@@ -168,7 +168,8 @@ fn save_load_and_list() {
     assert_eq!(std::fs::read_to_string(saved).unwrap(), "?\"HI\"");
     assert!(dir.0.join("@WORKSPACE").join("T@BACKUP.PRG").is_file());
 
-    enter(&mut m, "load \"game.prg\",2:run 2");
+    enter(&mut m, "load \"game.prg\",2");
+    enter(&mut m, "run 2");
     assert_eq!(tail(&m, 2), ["HI", "OK"]);
     // The editor's status line names the file each slot came from.
     assert_eq!(m.rt.slot_names[1..3], ["GAME.PRG", "GAME.PRG"]);
@@ -925,7 +926,8 @@ fn metadata_saves_with_the_project() {
     assert_eq!(tail(&m, 2), ["24", "OK"]);
     m.rt.storage.create_project("GAME").unwrap();
     m.set_slot(0, "METAEDIT 0 OUT T$:?T$".to_string());
-    enter(&mut m, "project \"game\":run");
+    enter(&mut m, "project \"game\"");
+    enter(&mut m, "run");
     assert_eq!(tail(&m, 2), ["GAME", "OK"]);
     // METALOAD reads another project's, here the workspace's.
     m.set_slot(0, "METALOAD \"\":METAEDIT 0 OUT T$:?T$".to_string());

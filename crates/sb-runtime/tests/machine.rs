@@ -151,7 +151,8 @@ fn direct_mode_declarations() {
 fn slots_run_and_new() {
     let mut m = machine();
     m.set_slot(1, "X=X+1:?\"RAN\";X".to_string());
-    enter(&mut m, "x=41:run 1");
+    enter(&mut m, "x=41");
+    enter(&mut m, "run 1");
     enter(&mut m, "?x");
     let r = rows(&m);
     // RUN starts with fresh variables and leaves its own for direct mode.
@@ -727,6 +728,24 @@ fn keys_left_by_a_program_are_dropped() {
     assert!(!m.is_running());
     enter(&mut m, "?2");
     assert_eq!(rows(&m)[rows(&m).len() - 2], "2");
+}
+
+/// After a `:`, RUN and CONT are a Syntax error, and nothing on
+/// the line runs.
+#[test]
+fn run_and_cont_only_start_a_direct_line() {
+    let mut m = machine();
+    m.set_slot(0, "?\"P\"\nSTOP\n?\"Q\"".to_string());
+    let last = |m: &Machine| rows(m)[rows(m).len() - 2..].to_vec();
+    enter(&mut m, "?\"BEFORE\":RUN");
+    assert!(last(&m)[0].starts_with("Syntax error"), "{:?}", rows(&m));
+    enter(&mut m, "RUN");
+    assert_eq!(last(&m), ["Break on 0:2", "OK"]);
+    enter(&mut m, "?\"BEFORE\":CONT");
+    assert!(last(&m)[0].starts_with("Syntax error"), "{:?}", rows(&m));
+    assert!(!rows(&m).iter().any(|r| r == "before"), "{:?}", rows(&m));
+    enter(&mut m, "  CONT");
+    assert_eq!(last(&m), ["Q", "OK"]);
 }
 
 #[test]

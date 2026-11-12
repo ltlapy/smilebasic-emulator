@@ -25,6 +25,7 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> R
     let mut c = Compiler {
         host,
         direct,
+        first: program.stmts.first().map(|s| (s.line, s.col)),
         slot,
         out: Compiled::default(),
         global_slots: HashMap::new(),
@@ -105,6 +106,9 @@ struct Compiler<'h> {
     /// The statement the DEF being compiled is.
     def_at: usize,
     direct: bool,
+    /// Where the first statement starts: in DIRECT mode, RUN and CONT
+    /// work only there.
+    first: Option<(u32, u32)>,
     /// The program slot compiled for, `#_SLOT`.
     slot: i32,
     strict: bool,
@@ -1093,6 +1097,17 @@ impl Compiler<'_> {
         outs: &[Option<LValue>],
     ) -> Result<()> {
         let full = call_name(name);
+        // A DIRECT mode line runs RUN and CONT only as its first word:
+        // after a `:` they are a Syntax error, and nothing on the line
+        // runs.
+        // UNVERIFIED: the same after THEN or ELSE, and for the other
+        // commands of DIRECT mode only.
+        if self.direct
+            && matches!(full.as_str(), "RUN" | "CONT")
+            && self.first != Some((self.line, self.col))
+        {
+            return Err(err(ErrorKind::SyntaxError, "only at the start of the line"));
+        }
         let no_outs = |c: &Self| -> Result<()> {
             if outs.is_empty() {
                 Ok(())
