@@ -924,10 +924,15 @@ fn recording_leaves_out_the_pcm_stream() {
     );
 }
 
-/// PCMSTREAM sets both sides back to full volume.
+/// PCMVOL reads 0 0 before the first stream and keeps what it is given
+/// without one; PCMSTREAM sets both sides back to full volume.
 #[test]
 fn a_pcm_stream_starts_at_full_volume() {
     let mut rt = runtime();
+    assert_eq!(
+        run_on(&mut rt, "PCMVOL OUT L,R:PCMVOL 0,4096:PCMVOL OUT A:?L;R;A").unwrap(),
+        "004096"
+    );
     assert_eq!(
         run_on(
             &mut rt,

@@ -71,11 +71,11 @@ impl Default for Pcm {
             rate: f64::from(RATE),
             pos: 0.0,
             playing: false,
-            // PCMSTREAM sets both sides to full volume.
-            // UNVERIFIED: what PCMVOL reads and does before any stream.
-            // One console read 0 0 then; whether PCMVOL without a stream
-            // is ignored is not known.
-            volume: [Level::at(FULL); 2],
+            // PCMVOL reads 0 0 until the first PCMSTREAM sets both sides
+            // to full volume; RUN leaves it as it is. PCMVOL without a
+            // stream is kept and read back.
+            // UNVERIFIED: the 0 0 at start-up.
+            volume: [Level::at(0.0); 2],
         }
     }
 }
