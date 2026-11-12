@@ -2729,13 +2729,14 @@ impl Host for Runtime {
             }
             // A file that cannot be loaded is Load failed, after the
             // dialog that says so (checked on hardware), or the notice
-            // that stands for it. UNVERIFIED: what cancelling does.
+            // that stands for it. Back on the question over the slot's
+            // unsaved edits sets RESULT to -1 and is Load failed too.
+            // UNVERIFIED: the Load failed after Back.
             match self.load_asking("EXEC", &file, slot) {
                 None => {
                     self.retry = false;
                     return Ok(Exec::Wait);
                 }
-                Some(false) if self.result == -1 => return Ok(Exec::Skip),
                 Some(false) => return Err(ErrorKind::LoadFailed.into()),
                 Some(true) => {}
             }

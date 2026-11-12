@@ -1119,6 +1119,28 @@ fn load_and_save_refuse_other_types_of_file() {
     assert_eq!(tail(&m, 2), ["0", "OK"]);
 }
 
+/// EXEC into a slot with unsaved edits asks first; Back sets RESULT to
+/// -1 and stops the program with Load failed.
+#[test]
+fn exec_over_unsaved_edits_asks_and_back_fails() {
+    let dir = TempDir::new("exec-edits");
+    let mut m = machine(&dir);
+    m.set_slot(1, "?1".to_string());
+    enter(&mut m, "save \"a\",1");
+    touch(&mut m, 1);
+    m.set_slot(0, "EXEC \"A\",1\n?\"PAST\"".to_string());
+    ask(&mut m, "run");
+    m.rt.answer(false);
+    settle(&mut m);
+    assert!(
+        tail(&m, 2)[0].starts_with("Load failed in 0:1"),
+        "{:?}",
+        tail(&m, 3)
+    );
+    enter(&mut m, "?result()");
+    assert_eq!(tail(&m, 2), ["-1", "OK"]);
+}
+
 /// TEST69: a main program's SAVEV, RENAME and DELETE refuse a project
 /// name, their own project's and the workspace's `/NAME` too, while
 /// SAVEV at the prompt saves in the current project named so. EXEC

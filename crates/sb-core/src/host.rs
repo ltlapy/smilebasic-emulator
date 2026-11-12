@@ -18,8 +18,6 @@ pub enum Exec {
     /// Waiting for the user, such as a confirmation: ask again on the
     /// next frame.
     Wait,
-    /// Loading was cancelled; EXEC does nothing.
-    Skip,
 }
 
 pub trait Host {

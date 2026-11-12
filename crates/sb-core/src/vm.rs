@@ -2123,10 +2123,6 @@ impl Vm {
                 self.stack.extend(args);
                 return Ok(Some(RETRY));
             }
-            Exec::Skip => {
-                self.pc += 1;
-                return Ok(None);
-            }
         };
         let slot = slot as usize;
         let program =
