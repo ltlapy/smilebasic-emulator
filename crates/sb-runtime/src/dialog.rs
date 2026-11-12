@@ -63,8 +63,8 @@ pub(crate) struct Waiting {
     /// Opened since [`link_dialogs`] last looked.
     fresh: bool,
     /// While the other interpreter's later dialog shows in place of this
-    /// one: this one's own, for when that one goes without an answer.
-    own: Option<Box<(ProgramDialog, Option<u32>)>>,
+    /// one: this call's own form, which the answer is given in.
+    own: Option<DialogKind>,
     /// Waits for the answer [`link_dialogs`] passes on, without watching
     /// the controls or a timeout itself.
     passive: bool,
@@ -245,23 +245,21 @@ impl Runtime {
         // which the program would see in the frame the dialog returns in.
         self.input.hide_presses();
         // The answer is read by the dialog shown, which may be the other
-        // interpreter's, and given in the form this call asked for.
-        // UNVERIFIED: a call behind a dialog with other buttons gets the
-        // RESULT() those buttons give, and one behind a dialog of another
-        // form (a choice behind a wait for buttons) what a timeout gives.
+        // interpreter's, and given in the form this call asked for: a choice
+        // takes RESULT() 1 for any buttons pressed, and a wait for buttons
+        // -1 for the left of two.
         let shown_buttons = match &waiting.dialog.kind {
             DialogKind::Choice(labels) => labels.len(),
             _ => 0,
         };
-        let kind = waiting.own.map_or(waiting.dialog.kind, |own| own.0.kind);
+        let kind = waiting.own.unwrap_or(waiting.dialog.kind);
         match (kind, answer) {
-            (DialogKind::Choice(labels), DialogAnswer::Choice(i)) => {
-                let buttons = if shown_buttons > 0 {
-                    shown_buttons
-                } else {
-                    labels.len()
-                };
-                self.result = choice_result(buttons, i);
+            (DialogKind::Choice(_), DialogAnswer::Choice(i)) => {
+                self.result = choice_result(shown_buttons, i);
+                Ok(vec![])
+            }
+            (DialogKind::Choice(_), DialogAnswer::Buttons(bits)) => {
+                self.result = i32::from(bits != 0);
                 Ok(vec![])
             }
             (DialogKind::Choice(_), _) => {
@@ -270,6 +268,10 @@ impl Runtime {
             }
             (DialogKind::Buttons(_), DialogAnswer::Buttons(bits)) => {
                 Ok(vec![Value::Int(bits as i32)])
+            }
+            // UNVERIFIED: what the right (or only) button gives.
+            (DialogKind::Buttons(_), DialogAnswer::Choice(i)) => {
+                Ok(vec![Value::Int(choice_result(shown_buttons, i).min(0))])
             }
             (DialogKind::Buttons(_), _) => Ok(vec![Value::Int(0)]),
             (DialogKind::Name { .. }, DialogAnswer::Name(Some(name))) => {
@@ -388,17 +390,17 @@ impl Runtime {
 /// one answer closes both, in the same frame. Called after each
 /// interpreter's frame, the main one's first.
 ///
-/// The later call's dialog takes the place of the earlier one, with its
-/// own buttons and timeout. A main program behind the subprogram's dialog
-/// watches that dialog itself, as it runs first in a frame; a subprogram
-/// behind the main program's takes the answer passed on here, after the
-/// main program's frame and before its own.
-// UNVERIFIED: that the earlier call shows its own dialog again when the
-// later one goes without an answer (its program stopped).
+/// The later call's dialog takes the place of the earlier one for good,
+/// with its own buttons and timeout. A main program behind the
+/// subprogram's dialog watches that dialog itself, as it runs first in a
+/// frame; a subprogram behind the main program's takes the answer passed
+/// on here, after the main program's frame and before its own.
+///
+/// Neither program stops while both wait, but for the dialog's stop
+/// answer, which stops both (see [`crate::machine::Machine::stop`]).
 pub(crate) fn link_dialogs(main: &mut Runtime, sub: Option<&mut Runtime>) {
     let Some(sub) = sub else {
         main.dialog_closed = None;
-        show_own(main);
         return;
     };
     link(main, sub, true);
@@ -415,9 +417,9 @@ fn link(from: &mut Runtime, to: &mut Runtime, to_is_sub: bool) {
     if let Some(new) = from.dialog.as_mut().filter(|w| w.fresh) {
         new.fresh = false;
         if let Some(old) = to.dialog.as_mut() {
-            let own =
-                (old.own.take()).unwrap_or_else(|| Box::new((old.dialog.clone(), old.frames_left)));
-            old.own = Some(own);
+            if old.own.is_none() {
+                old.own = Some(old.dialog.kind.clone());
+            }
             old.dialog.clone_from(&new.dialog);
             old.frames_left = new.frames_left;
             old.pressed = new.pressed;
@@ -425,18 +427,12 @@ fn link(from: &mut Runtime, to: &mut Runtime, to_is_sub: bool) {
             old.passive = to_is_sub;
         }
     }
-    if from.dialog.is_none() && to.dialog_answer.is_none() {
-        show_own(to);
-    }
-}
-
-/// The dialog shown in place of this one went without an answer: this
-/// one shows again.
-fn show_own(rt: &mut Runtime) {
-    if let Some(waiting) = rt.dialog.as_mut()
-        && let Some(own) = waiting.own.take()
+    // Should the later call go without an answer all the same, the
+    // earlier one waits on in its place, watching the controls itself.
+    if from.dialog.is_none()
+        && to.dialog_answer.is_none()
+        && let Some(waiting) = to.dialog.as_mut()
     {
-        (waiting.dialog, waiting.frames_left) = *own;
         waiting.passive = false;
     }
 }

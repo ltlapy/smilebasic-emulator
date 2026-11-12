@@ -1080,6 +1080,9 @@ impl Machine {
     /// The + button (F5): stops a running program, or jumps to its ON
     /// BREAK GOTO label, or runs PRG0 from direct mode or the editor.
     pub fn sysreq(&mut self) {
+        if self.vm.is_some() && self.both_in_dialog() {
+            self.break_sub();
+        }
         if let Some(vm) = &mut self.vm {
             if vm.take_break(&mut self.rt) {
                 // Whatever the program waited for is left behind.
@@ -1100,7 +1103,14 @@ impl Machine {
 
     /// Stops the running program or direct-mode line, as the Break key
     /// does, and returns to direct mode.
+    ///
+    /// While both interpreters wait on the one dialog, a stop is the
+    /// dialog's stop answer, which both callers get: the subprogram stops
+    /// too. [`Machine::sysreq`] and [`Machine::stop_sub`] do the same.
     pub fn stop(&mut self) {
+        if self.both_in_dialog() {
+            self.substop();
+        }
         self.stop_on(None, Halt::User);
     }
 
@@ -2846,6 +2856,29 @@ impl Machine {
         self.rt.answer_dialog(answer);
     }
 
+    /// Whether the main program and the subprogram both wait on the one
+    /// dialog.
+    fn both_in_dialog(&self) -> bool {
+        self.rt.dialog.is_some() && self.sub.as_ref().is_some_and(|s| s.rt.dialog.is_some())
+    }
+
+    /// The + button for the subprogram: it jumps to its ON BREAK GOTO
+    /// label, or stops.
+    fn break_sub(&mut self) {
+        let Some(sub) = &mut self.sub else {
+            return;
+        };
+        if let Some(vm) = &mut sub.vm
+            && vm.take_break(&mut sub.rt)
+        {
+            sub.wait = 0;
+            sub.rt.cancel_input();
+            sub.rt.cancel_confirm();
+            return;
+        }
+        self.substop();
+    }
+
     /// Makes the two interpreters' dialogs one, after either's frame.
     fn link_dialogs(&mut self) {
         let sub = self.sub.as_mut().map(|sub| &mut sub.rt);
@@ -2904,9 +2937,14 @@ impl Machine {
         Some((&sub.rt, place))
     }
 
-    /// SUBSTOP, for the frontend's menu.
+    /// SUBSTOP, for the frontend's menu. While both programs wait on the
+    /// one dialog, the main program stops too (see [`Machine::stop`]).
     pub fn stop_sub(&mut self) {
+        let both = self.both_in_dialog();
         self.substop();
+        if both {
+            self.stop_on(None, Halt::User);
+        }
         self.link_dialogs();
         if self.vm.is_none() && self.rt.direct {
             self.rt.direct_input_start();

@@ -1013,23 +1013,103 @@ fn the_later_dialogs_timeout_closes_both() {
     assert_eq!(main, sub);
 }
 
+/// Whether the subprogram still runs.
+fn sub_runs(m: &Machine) -> bool {
+    m.sub_runtime().is_some()
+}
+
+/// A stop while both wait is the one dialog's stop answer: both programs
+/// stop, whichever side the stop comes from, and the earlier dialog does
+/// not show again.
 #[test]
-fn the_earlier_dialog_shows_again_when_the_later_ones_program_stops() {
+fn a_stop_while_both_wait_stops_both_programs() {
+    for (tag, how) in [("stop-sub", 0), ("stop-main", 1), ("stop-plus", 2)] {
+        let (_dir, mut m) = two_dialogs(tag, ("DIALOG \"MAIN\",0", 1), ("DIALOG \"SUB\",0", 40));
+        frames(&mut m, 44);
+        assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+        match how {
+            0 => m.stop_sub(),
+            1 => m.stop(),
+            _ => m.sysreq(),
+        }
+        frames(&mut m, 2);
+        assert!(m.program_dialog().is_none(), "{tag}");
+        assert!(!m.is_running() && !sub_runs(&m), "{tag}");
+        let rows = rows(&m);
+        assert!(
+            rows.iter().any(|r| r.starts_with("User break on 0:")),
+            "{tag}: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|r| r == "=== From subinterpreter ==="),
+            "{tag}: {rows:?}"
+        );
+    }
+}
+
+/// The + button takes each program to its own ON BREAK GOTO label.
+#[test]
+fn the_stop_answer_takes_both_programs_to_their_on_break_labels() {
+    let ask = |dialog: &str, wait: u32, name: &str| {
+        format!(
+            "ON BREAK GOTO @B\nWAIT {wait}\n{dialog}\n?\"NO\"\nEND\n@B\n?\"{name} BROKE\"\n{THEN_WAIT}"
+        )
+    };
+    let dir = TempDir::new("stop-on-break");
+    let mut m = machine(&dir, &ask("DIALOG \"SUB\",0", 40, "SUB"));
+    enter(&mut m, "subrun \"sub\"");
+    m.set_slot(0, ask("DIALOG \"MAIN\",0", 1, "MAIN"));
+    m.run_slot(0);
+    frames(&mut m, 44);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    m.sysreq();
+    frames(&mut m, 2);
+    assert!(m.program_dialog().is_none());
+    assert!(rows(&m).iter().any(|r| r == "MAIN BROKE"), "{:?}", rows(&m));
+    assert!(
+        sub_rows(&m).iter().any(|r| r == "SUB BROKE"),
+        "{:?}",
+        sub_rows(&m)
+    );
+}
+
+/// Each call gives the one answer in its own form: a choice behind a wait
+/// for buttons gets RESULT() 1 for the buttons pressed.
+#[test]
+fn a_choice_behind_a_wait_for_buttons_takes_result_1() {
     let (_dir, mut m) = two_dialogs(
-        "stop-later",
-        ("DIALOG \"MAIN\",0", 1),
-        ("DIALOG \"SUB\",0", 40),
+        "choice-behind-buttons",
+        ("DIALOG \"MAIN\",1", 1),
+        ("B=DIALOG(\"SUB\",1)", 40),
     );
     frames(&mut m, 44);
     assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
-    m.stop_sub();
-    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
-    press_a(&mut m);
-    assert!(m.program_dialog().is_none());
+    m.answer_dialog(DialogAnswer::Buttons(1));
+    frames(&mut m, 2);
+    let (main, _) = answered(&m);
     assert!(
-        rows(&m).iter().any(|r| r.starts_with("1 ")),
-        "{:?}",
-        rows(&m)
+        main.as_deref().is_some_and(|r| r.starts_with("1 ")),
+        "{main:?}"
+    );
+}
+
+/// A wait for buttons behind a choice of two gets -1 for the left one.
+#[test]
+fn a_wait_for_buttons_behind_a_choice_takes_minus_1_for_the_left_button() {
+    let (_dir, mut m) = two_dialogs(
+        "buttons-behind-choice",
+        ("B=DIALOG(\"MAIN\",1):?B", 1),
+        ("DIALOG \"SUB\",1", 40),
+    );
+    frames(&mut m, 44);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    m.answer_dialog(DialogAnswer::Choice(0));
+    frames(&mut m, 2);
+    assert!(rows(&m).iter().any(|r| r == "-1"), "{:?}", rows(&m));
+    let (_, sub) = answered(&m);
+    assert!(
+        sub.as_deref().is_some_and(|r| r.starts_with("-1 ")),
+        "{sub:?}"
     );
 }
 
