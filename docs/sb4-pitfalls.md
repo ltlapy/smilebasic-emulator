@@ -130,6 +130,8 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   equal to the length with a count of 0 is no error: `COPY A,0,B,5,0`
   (TEST72). With the count left out, the function form fails there:
   `COPY(B,5)` on five elements and `COPY("ABCDE",5)` are `(COPY:2)` (TEST74).
+  An empty source is the exception: `COPY(B,0)` of an empty array and
+  `COPY("",0)` give an empty result, with no error.
 - `COPY` past the destination's end is no error, and grows it. After
   `DIM A[5],B[5]:COPY A,7,B,0,1`, `A` has 8 elements, and
   `A$="12345":COPY A$,7,"AB",0,2` gives `12345  AB`, spaces filling the gap
@@ -640,7 +642,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A looping animation's first key starts again from the value the animation
   started on, not from the last key's. `"I"` with keys `-4,1,-4,2,-4,3` and
   loop 0, read every 2 frames, gives `0 0 1 1 2 2 3 0 1 1 2 2`: the value from
-  before the animation comes back on each loop (TEST74, seen for `"I"` only).
+  before the animation comes back on each loop (TEST74, seen for `"I"`). The
+  other targets loop the same way.
 - `SPANIM` takes a copy of its array: changing the array afterwards leaves the
   animation as it was (TEST74).
 - An animation key that lasts 0 frames is `Illegal animation data`.
@@ -1012,6 +1015,9 @@ Expected but not yet seen on hardware:
   `CONTROLLER 1 OUT` 2 with `&HFF232323` and `&HFFA0A0A0`, the Pro Controller's
   own. (TEST64) The last two colors of `CONTROLLER n OUT T,C1,C2,C3,C4` are
   `&HFF000000` on a Pro-style controller (type 2) (TEST71).
+- `STICK 0` takes X and Y each on its own: the value furthest from 0 among the
+  controllers, the earlier controller's on a tie. X and Y can come from
+  different controllers.
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not available`.
 - `TCPIANO` without Toy-Con set up is `Illegal control style`.
 - `IRSTATE` starts at 0.
@@ -1020,6 +1026,7 @@ Expected but not yet seen on hardware:
   mode (TEST71).
 - `IRREAD` on a camera never started is `IR Camera is not available (IRREAD)`.
   (TEST62)
+- `IRREAD` after `IRSTOP` gives no entries, with no error.
 - Vibration patterns have lengths of their own, from 3 frames (57) to 115 (23);
   34 to 43, 47 and 48 go on past two seconds, 40 past five. The emulator keeps
   the measured table.
@@ -1616,8 +1623,9 @@ Expected but not yet seen on hardware:
   `C:0D` give -1 (TEST74).
 - Leaving a channel while one of its `[` is open is refused at the next
   channel's number: `[:1C]2` gives 2, `[C:1D]2` 3 and `:0[C:1D]2` 5, while
-  `:1[C]2:2D` passes. A channel past 15 fails at its number: `:16C` gives 1
-  (TEST74).
+  `:1[C]2:2D` passes (TEST74). A `:` naming the channel it is in changes no
+  channel, so `[:0C]` passes. A channel past 15 fails at its number: `:16C`
+  gives 1 (TEST74).
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
@@ -1897,8 +1905,14 @@ Expected but not yet seen on hardware:
   what the main program recorded last. A `BEEP` that the subprogram played and
   saved came out to the unit as the main program's recording of it, at every
   balance, and a main program's `BEEP` saved by the subprogram gave that
-  earlier recording again (TEST74).
-- `SNDMSBAL` starts at 63, though the manual calls 64 even.
+  earlier recording again (TEST74). The subprogram's `RECSTART` and `RECSTOP`
+  ignore their arguments, so `RECSTART 100` there is no error, and its
+  `RECSTOP` leaves the main program's recording going.
+- `SNDMSBAL` starts at 63, though the manual calls 64 even. Each `SUBRUN` puts
+  the balance back halfway between 0 and 127, which reads 63.
+- `SNDMSBAL`'s time is in seconds. The balance moves to the new value in a
+  straight line, a step each frame, and `SNDMSBAL()` reads where it has got
+  to, rounded down.
 - `SNDMSBAL`'s balance b scales the main program's sound by about b/59, in a
   straight line from none at 0 to 2.15 times at 127, 1.085 at 64. The
   subprogram's goes the other way. A main program's `RECSTART` hears both,
@@ -1963,10 +1977,20 @@ Expected but not yet seen on hardware:
 - `CLEAR` in a program is a `Syntax error` when it runs. `PROJECT` in a program
   is `Can't use in program`, error 44, when it runs: after `?"A"` it prints A,
   then `Can't use in program in 3:1(PROJECT)` (TEST71).
-- DIRECT mode takes `RUN` and `CONT` only as a line's first statement. After a
-  `:`, as in `?"BEFORE RUN":RUN 3` or `?"BEFORE CONT":CONT`, the line is a
-  `Syntax error`: nothing on it runs, `ENVSTAT` stays as it was, and a stopped
-  program can still go on with `CONT` alone (TEST74).
+- DIRECT mode takes `RUN`, `CONT`, `NEW`, `CLEAR`, `LIST`, `TRACE`,
+  `BACKTRACE`, `SUBRUN`, `SUBSTOP`, `SUBSHOW` and `SUBHIDE` only as a line's
+  first word. Each reads its own literal arguments and ignores the rest of the
+  line: `RUN 1+2` runs slot 1, `CONT:?1` only goes on, and `CLEAR 5` clears.
+  Anywhere else on the line, after a `:`, `THEN` or `ELSE`, they make the line
+  a `Syntax error`. After a `:`, as in `?"BEFORE RUN":RUN 3` or
+  `?"BEFORE CONT":CONT`, nothing on the line runs, `ENVSTAT` stays as it was,
+  and a stopped program can still go on with `CONT` alone (TEST74).
+- `RUN` in DIRECT mode takes one number literal, decimal, `&H` or `&B`. A slot
+  of 6 or more is `Out of range`, and a variable, a `:`, `1.5` or `-1` is
+  `Illegal function call`.
+- `LIST` in DIRECT mode takes number literals too. `LIST 1:` opens slot 1 in
+  the editor, a real is `Type mismatch`, and a line of 1000000 or more is
+  `Out of range`.
 - `ENVINPUT$` lists a line typed again as a new line and leaves the older copy
   where it was. The line typed just before, typed again, is not added (TEST71).
 - `FILES` prints a long list a screen at a time, in DIRECT mode and in programs
@@ -2090,6 +2114,12 @@ Expected but not yet seen on hardware:
   `Can't use from direct mode`, shown without a line.
 - File names may start with `@`, as the backups' do: `LOADV "DAT:@BACKUP.DAT"`
   reads one, and `SAVE "@X"` saves (after the usual question).
+- `CON`, `PRN`, `NUL`, `AUX`, `COM1` to `COM4` and `LPT1` to `LPT4` cannot
+  name a file, or a project in a path. `CHKFILE("TXT:CON")`, `SAVE "NUL/A"`
+  and `FILES "TXT:LPT1"` are `Illegal format`, naming the argument as in
+  `(CHKFILE:1)`, before any question. Only the whole name counts: `COM5` to
+  `COM9`, `LPT5` to `LPT9`, `CON.A`, `#CON` and `@CON` are names like any
+  other.
 - File names may end in a dot: `SAVEV "TXT:Q51.",S$` saves, and
   `CHKFILE("TXT:Q51.")` is 1 while `CHKFILE("TXT:Q51")` is 0 (TEST51).
 - `LOAD` takes the file's whole name: `LOAD "TEST10"` does not find
@@ -2234,6 +2264,9 @@ Expected but not yet seen on hardware:
 - An Enter held for about 2 seconds on a USB keyboard to answer `SAVEV`'s
   questions does not reach the program: `KEYBOARD(40)` was 0 when `SAVEV`
   returned, and `INKEY$` stayed empty for the next 4 seconds (TEST74).
+- `FILES "//"` on the console starts with the count, as `-- 12 projects --`,
+  the way a list of files does. `FILES("//")` and `FILES "//",A$` put no such
+  line in the array.
 - `FILES("//")` ends each project's name with `/`, lists the workspace as `/`,
   and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`). The names sort
   in ASCII order, so the workspace's `/` comes after names that start with `#`
@@ -2328,6 +2361,13 @@ TTEST36.
   program's, when it asked 2 seconds later (TEST74). One press of A answers
   both, wherever the focus is: both calls return in the same frame with
   `RESULT` 1 (TEST64, TEST72, TEST74).
+- While both programs wait on the one dialog, the + button stops both, each as
+  it stops one program alone, so an `ON BREAK GOTO` jumps. The earlier
+  caller's own text never shows again.
+- Each caller gets the one answer in its own form. A `DIALOG` with OK or a
+  choice, behind a `DIALOG()` that waits for buttons, gets `RESULT` 1 for any
+  button and 0 on a timeout. A `DIALOG()` that waits for buttons, behind a
+  choice of two, returns -1 for the left one.
 - `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
   answer until then: `ENVFOCUS 0` took one to three frames (it varied from run
   to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the focus is moving is lost
@@ -2426,7 +2466,9 @@ TTEST36.
   line 2, C is the `=`'s character, one past the `A` (TEST72). So is a
   `Divide by zero` of constants there, with status 0: C is 1 for `A=1/0` and
   5 for `B=2:A=1/0`. `?7/0` gives the statement's start, 0, and so does a
-  division found as the program runs: 4 for `Z=0:A=1/Z` (TEST74).
+  division found as the program runs: 4 for `Z=0:A=1/Z` (TEST74). An
+  `Undefined constant` in an assignment's value is placed at the constant
+  itself: C is 2 for `A=#NONE` and 6 for `B=2:A=#NONE`.
 - `ENVLOCATE OUT X,Y`, which the manual leaves out, gives the right edge and top
   of the main console's cursor cell on the display. With the 400x240 screen 1200
   pixels wide in its middle, the cursor at column C of row R is at 40+24*(C+1),

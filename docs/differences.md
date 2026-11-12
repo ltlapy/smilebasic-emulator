@@ -97,8 +97,16 @@ Without the imported archive:
 - `PCMPOS()` gives the sample the stream has reached. SmileBASIC 4's moves in
   blocks: 27 frames into a looping stream of 4800 samples at 48000 Hz it reads
   3313 or 673, where the emulator gives 2400.
-- `PCMVOL OUT` reads 32767 on both sides before any stream. SmileBASIC 4,
-  started afresh, reads 0 and 0.
+- `SNDMSBAL` in the main program sets a balance of the main program's own,
+  which `SNDMSBAL()` there reads back and which mixes nothing. On SmileBASIC 4
+  the main program's `SNDMSBAL` does nothing, and `SNDMSBAL()` there reads the
+  subprogram's balance. (Not yet seen on hardware.)
+- `SNDMSBAL`'s gains follow a fit to recordings: b/59 for the main program's
+  sound and (127-b)/64 for the subprogram's. The halfway balance each
+  subprogram starts with keeps the levels recorded before any `SNDMSBAL`,
+  63/64 and 1. So after `SNDMSBAL 63` the main program's sound is about 8%
+  louder than at the start, with the subprogram's the same. On SmileBASIC 4
+  the two differ by under 1%. (Not yet seen on hardware.)
 - `TALK` speaks with a voice of the emulator's own, a Klatt formant synthesizer
   (klattsch-core) reading the kana or phoneme letters, so it says the same words
   in another voice.
@@ -530,9 +538,11 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   goes through its rows can run out of memory. What SmileBASIC 4 does with such
   a file is not known. `[0,3]` and `[3,0]` load on both.
 - Image files of no pixels are refused rather than loaded empty.
-- Names Windows cannot keep are refused on Windows alone: `CON`, `PRN`, `AUX`,
-  `NUL`, `COM0` to `COM9` and `LPT0` to `LPT9` for projects, also with an
-  extension, and any name ending in a dot.
+- On Windows, a project whose name Windows keeps for a device, such as `COM5`,
+  `LPT0` or `CON.A`, is stored in a folder named `@COM5`. Programs and the
+  projects window still see `COM5`. A new text file of such a name beside a
+  program run from the command line takes SmileBASIC 4's name, `TCOM5`.
+  Names ending in a dot are refused on Windows, which cannot keep them.
 
 ## Editor
 
