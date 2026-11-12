@@ -109,8 +109,8 @@ impl Runtime {
                 Ok(ints(&[self.input.ir_state[pad]]))
             }
             // A camera never started is no camera, and mode 1 cannot be read.
-            // Clustering and moment modes both give a 48-row array.
-            // UNVERIFIED: the same after IRSTOP.
+            // Clustering and moment modes both give a 48-row array, and a
+            // camera stopped by IRSTOP no entries, without an error.
             (Command::Irread, Want::Outs(4), 1) => {
                 let pad = pad(&args[0])?;
                 let count = match self.input.ir_state[pad] {
