@@ -253,14 +253,12 @@ impl Runtime {
                         if console.cursor().0 != 0 {
                             console.newline();
                         }
-                        // A list of files starts with their count; a list of
-                        // projects does without.
-                        // UNVERIFIED: that the list of projects has no header.
+                        // A list starts with its count.
                         let header = match spec.as_str() {
-                            "//" => None,
-                            _ => Some(format!("-- {} files --", items.len())),
+                            "//" => format!("-- {} projects --", items.len()),
+                            _ => format!("-- {} files --", items.len()),
                         };
-                        let lines = header.into_iter().chain(items);
+                        let lines = std::iter::once(header).chain(items);
                         let lines = lines.map(|l| l.encode_utf16().collect()).collect();
                         let page = self.text[CONSOLE].size().1.saturating_sub(1);
                         return Ok(self.show_listing_page(lines, page));

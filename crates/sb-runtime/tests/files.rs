@@ -1773,9 +1773,9 @@ fn files_of_projects_and_of_a_files_name() {
     enter(&mut m, "save \"a\"");
     m.rt.storage.create_project("-DASH").unwrap();
     m.rt.storage.create_project("GAME").unwrap();
-    // No header, and the workspace's `/` after a `-` name.
+    // The count first, and the workspace's `/` after a `-` name.
     enter(&mut m, "cls:files \"//\"");
-    assert_eq!(rows(&m), ["-DASH/", "/", "GAME/", "OK"]);
+    assert_eq!(rows(&m), ["-- 3 projects --", "-DASH/", "/", "GAME/", "OK"]);
     // A file's name is taken for a project's, which is not there.
     enter(&mut m, "cls:files \"txt:a\"");
     assert_eq!(rows(&m), ["OK"]);
