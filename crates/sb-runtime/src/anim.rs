@@ -306,14 +306,17 @@ impl Track {
             if self.anim.loops != 0 && self.loops_done >= self.anim.loops {
                 return false;
             }
+            // Each loop's first key slides from the value the animation
+            // started on, not from where the last key ended.
+            // UNVERIFIED for targets other than "I".
+            self.from = self.base;
         }
         true
     }
 
     /// Plays one frame; false once the animation has ended.
     // A key of time T shows its value (or the slide's steps) on T frames,
-    // starting on the frame after SPANIM; looping slides from where the last
-    // key ended.
+    // starting on the frame after SPANIM.
     pub fn step(&mut self, on: &mut impl Animated) -> bool {
         let target = self.anim.mode.target;
         let time = self.anim.keys[self.key].time;
@@ -415,7 +418,7 @@ mod tests {
         s.pos = (100.0, 50.0);
         let mut t = Track::new(anim, &WithDefs::new(&mut s, &[]));
         // The second key snaps back for a frame, and the next loop slides
-        // from there.
+        // from the start again.
         assert_eq!(
             play(&mut t, &mut s, 6),
             [
@@ -427,6 +430,24 @@ mod tests {
                 (100.0, 50.0, false),
             ]
         );
+    }
+
+    /// TEST74: on every loop, the first key slides again from the value
+    /// the animation started on.
+    #[test]
+    fn loops_slide_from_the_start_value() {
+        let anim = Anim::new(mode(Target::I), &[-4.0, 1.0, -4.0, 2.0, -4.0, 3.0], 0).unwrap();
+        let defs = vec![SpriteDef::default(); DEFS];
+        let mut s = sprite();
+        let mut t = Track::new(anim, &WithDefs::new(&mut s, &defs));
+        let seen: Vec<i32> = (0..24)
+            .map(|_| {
+                t.step(&mut WithDefs::new(&mut s, &defs));
+                WithDefs::new(&mut s, &defs).value(Target::I)[0] as i32
+            })
+            .collect();
+        let samples: Vec<i32> = seen.iter().skip(1).step_by(2).copied().collect();
+        assert_eq!(samples, [0, 1, 1, 2, 2, 3, 0, 1, 1, 2, 2, 3]);
     }
 
     #[test]
