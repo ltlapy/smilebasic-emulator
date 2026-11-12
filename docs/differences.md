@@ -86,6 +86,19 @@ Without the imported archive:
   `EFCSET`'s nine values change it alike, but it does not sound like the
   console's. `RECSTART` records as on SmileBASIC 4, where the effector does not
   reach the recording either.
+- A song's dry sound drops a few percent on SmileBASIC 4 while the effector is
+  on: an `@216` note records at 358 to 369 there, against 379 to 390 with
+  `EFCEN 0`, whatever `EFCWET` and `BGMWET` say. The emulator keeps the dry
+  level.
+- `BEEP 256` falls 5 to 10% faster than on SmileBASIC 4: from 150 to 250, 250
+  to 400 and 400 to 600 ms it records 136, 95 and 51, where SmileBASIC 4 gives
+  144, 101 and 56. The emulator's envelopes share one table, so other sounds
+  may fall faster too.
+- `PCMPOS()` gives the sample the stream has reached. SmileBASIC 4's moves in
+  blocks: 27 frames into a looping stream of 4800 samples at 48000 Hz it reads
+  3313 or 673, where the emulator gives 2400.
+- `PCMVOL OUT` reads 32767 on both sides before any stream. SmileBASIC 4,
+  started afresh, reads 0 and 0.
 - `TALK` speaks with a voice of the emulator's own, a Klatt formant synthesizer
   (klattsch-core) reading the kana or phoneme letters, so it says the same words
   in another voice.
@@ -388,6 +401,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - Ctrl+C on a keyboard stops a running program only when File > Settings says
   so; it is off to start with, and programs read Ctrl+C as a key. On
   SmileBASIC 4, Ctrl+C on a USB keyboard stops the program.
+- `RUN` reaches the program's first line two frames after the Enter, as on a
+  Switch 2, at every speed setting. A Switch 1 takes four for a short program.
 - Run on a project in the project manager returns to the manager when the
   program ends or is stopped. After an error the screen stays, with the
   emulator's own line `=== Press A Button or Enter to return.===` below it,
@@ -436,8 +451,9 @@ For a subprogram's screen, see `FADE` under
   and the reason, and the command waits until it is closed, then gives
   `RESULT` 0, as on SmileBASIC 4, or stops with `Load failed` for `EXEC`. Set
   to notify, the failure shows as a notice, and silent shows nothing; either
-  way the command returns in the same frame. On SmileBASIC 4, `LOADV` or
-  `LOADG` of a missing file always opens its File not found dialog.
+  way the command returns in the same frame. On SmileBASIC 4, `LOAD`,
+  `LOADV`, `LOADG`, `DELETE` and `RENAME` of a missing file always open a
+  dialog.
 - A file command's question starts on the button that goes ahead, as
   SmileBASIC 4's save question starts on OK. Replacing a file asks once, with
   a line saying so, where SmileBASIC 4 asks twice, whether to save and then

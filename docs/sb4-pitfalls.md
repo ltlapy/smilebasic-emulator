@@ -13,7 +13,7 @@ matters. A real Switch outranks Ryujinx where the text says so.
 TEST62 and TEST63 ran on 4.4.9 on a Switch 2. What TEST62 shows had been read in
 SmileBASIC 4 first, and so had most of what TEST63 shows. "By SmileBASIC 4" means expected of SmileBASIC 4. "(Not yet seen on hardware.)" marks what
 was expected of SmileBASIC 4 (version 4.4.8) and SmileBASIC 4 and has not run.
-TEST71 and TEST72 ran on 4.4.9 on a Switch 1 and a Switch 2.
+TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 
 ## Contents
 
@@ -128,7 +128,12 @@ TEST71 and TEST72 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `COPY("ABCDE",6)` and `COPY("ABCDE",2,5)` the same. The command form names
   none: `COPY A,0,B,6,1` and `COPY A$,0,"ABCDE",2,5` are `(COPY)`. An offset
   equal to the length with a count of 0 is no error: `COPY A,0,B,5,0`
-  (TEST72).
+  (TEST72). With the count left out, the function form fails there:
+  `COPY(B,5)` on five elements and `COPY("ABCDE",5)` are `(COPY:2)` (TEST74).
+- `COPY` past the destination's end is no error, and grows it. After
+  `DIM A[5],B[5]:COPY A,7,B,0,1`, `A` has 8 elements, and
+  `A$="12345":COPY A$,7,"AB",0,2` gives `12345  AB`, spaces filling the gap
+  (TEST74).
 - `CHR$(-1)` is no error: it gives `CHR$(&HFFFF)` (TEST69).
 - `CHR$` takes any int and keeps its low 16 bits: `CHR$(65601)` is `"A"`,
   `CHR$(-2)` U+FFFE, `CHR$(&H7FFFFFFF)` U+FFFF, and `CHR$(65536)` and
@@ -529,6 +534,10 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   a program's first line prints 0 (TEST62, on a Switch 2). A subprogram's first
   `VSYNC` finds the same, and a program waiting by a lone `VSYNC 60` at its
   start does not wait.
+- Counted with `MAINCNT` from just before a subprogram's `PUSHKEY CHR$(13)`, a
+  line typed in DIRECT mode runs 1 frame later, and `CONT` goes on 1 frame
+  later (once 0, on a Switch 1). `RUN 3` reaches the program's first line 2
+  frames later on a Switch 2 and 4 on a Switch 1, each of three times (TEST74).
 - `XSCREEN` holds the program until the frame job has taken the new mode,
   without touching `VSYNC`'s count, so a `VSYNC 1` right after it goes straight
   on (TEST60). The program goes on inside that job, past its animation step and
@@ -551,8 +560,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `MAINCNT` and `MILLISEC` need their brackets: without them they are plain
   variables, always 0 to begin with.
 - A subprogram's `MAINCNT` is the main interpreter's, not counted from
-  `SUBRUN`: two dialogs closed by one press read the same `MAINCNT` on both
-  sides (TEST64).
+  `SUBRUN`: two `DIALOG` calls answered by one press read the same `MAINCNT`
+  on both sides (TEST64).
 - `MAINCNT` follows real time while the program is busy: 180 in 3 seconds of a
   loop with no `VSYNC`. When the frame job is held up, it falls behind real time
   with it: 600 sprites of 64x64 scaled by 21 on a Switch 2 gave 49 in 4077 ms,
@@ -628,6 +637,12 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - A relative color animation (`"C+"`) multiplies the start color by the key per
   channel and divides by 256, rounding down: `&H80808080` with `&H10101010`
   gives `&H08080808`, and `&HFF` with `&HFF` gives `&HFE`.
+- A looping animation's first key starts again from the value the animation
+  started on, not from the last key's. `"I"` with keys `-4,1,-4,2,-4,3` and
+  loop 0, read every 2 frames, gives `0 0 1 1 2 2 3 0 1 1 2 2`: the value from
+  before the animation comes back on each loop (TEST74, seen for `"I"` only).
+- `SPANIM` takes a copy of its array: changing the array afterwards leaves the
+  animation as it was (TEST74).
 - An animation key that lasts 0 frames is `Illegal animation data`.
 - `SPANIM` keys for XY, Z, UV and I outside -32768 to 32767 are
   `Out of range (SPANIM)`, and `TANIM` and `ANIMDEF` go through the same code. R
@@ -672,11 +687,24 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
 - `BREPEAT` takes a start of 0 as 1: `BREPEAT 5,0,3:BREPEAT 5 OUT S,I` gives 1
   and 3 (TEST62), and after `BREPEAT 0,0,0` it gives 1 and 0 (TEST71).
 - `BUTTON(0)`'s bits include `#B_RANY`, `#B_LANY` and `#B_ANY` (bits 14 to 16).
+  L and R turn on `#B_ANY` only: L held reads `&H10100` and R `&H10200`
+  (TEST74K).
 - `BUTTON`'s press and release conditions (2 and 3) give `#B_RANY`, `#B_LANY`
   and `#B_ANY` only on the frame that bit itself goes on or off. L held gives
   L and `#B_ANY` on its press. Pressing A while L is held gives `&H4008`, A
   and `#B_RANY`, and releasing A gives the same: `#B_ANY` stays on for L
   throughout. Releasing L then gives L and `#B_ANY` (TEST72).
+- `BUTTON`'s repeat condition (1) repeats `#B_RANY`, `#B_LANY` and `#B_ANY`
+  each by its own `BREPEAT`, counted from the frame that bit went on. Another
+  button going down while one is held does not give them again (TEST74):
+  - With L held, L and `#B_ANY` came at the press, 15 frames later and then
+    every 5. A pressed meanwhile gave `&H4008`, A and `#B_RANY`. From then on
+    A repeated on its own clock, `#B_RANY` on its own, and `#B_ANY` on L's.
+  - With A alone, `BREPEAT 14,40,10` and `BREPEAT 16,25,6`, A repeated at 20
+    and then every 4, `#B_ANY` at 25 and then every 7, and `#B_RANY` at 40 and
+    then every 11.
+  - Up held gives `#B_LANY` 15 frames after the press, though Up itself has
+    not repeated yet.
 - `BUTTON()` without arguments is `Wrong number of arguments`.
 - `#B_X`, `#B_B`, `#B_Y`, `#B_A` are 0, 1, 2, 3. (TEST62)
 
@@ -821,6 +849,11 @@ TEST72K on a docked Switch 2 (4.4.9) with a USB keyboard:
 - Left Shift (usage 225) and Right Shift (229) each give modifiers 2 in
   `KEYBOARD 4 OUT R,M`.
 
+TEST74K on a docked Switch 2 (4.4.9) with a USB keyboard:
+
+- Insert types `CHR$(&H1A)`, Page Up `CHR$(&H11)` and Page Down `CHR$(&H12)`.
+  They type with Left Ctrl, L or R held too, as Home and End do.
+
 Expected but not yet seen on hardware:
 
 - A key going up while another repeats holds the repeat back as Shift does,
@@ -887,6 +920,8 @@ Expected but not yet seen on hardware:
 - `INPUT A,B` given `1,` takes A=1, B=0 at once. Given `1,2,3` it leaves the 3
   out, not looking at it. (TEST63)
 - `INPUT VAR("A$")` and `N$="A$":INPUT VAR(N$)` both take a string. (TEST63)
+- With no USB keyboard plugged in, `INPUT` does not open the software keyboard
+  by itself (TEST74).
 - `INPUT` selects nothing: Shift with Left or Right moves the cursor, and
   Backspace and Delete take one character (TEST56). `LINPUT` runs with the same
   setting in SmileBASIC 4. DIRECT mode's line does select, cut, copy and
@@ -996,7 +1031,8 @@ Expected but not yet seen on hardware:
   amplitude of 0 or a high frequency of 0 (TEST71, felt by hand). With both
   amplitudes 0 it does not: `VIBRATE 1,160,0,320,0` stopped a vibration
   `VIBRATE 1,160,100,320,100` had started, and after `VIBRATE 1,0` it started
-  none (TEST72, felt by hand).
+  none (TEST72, felt by hand). `VIBRATE 1,0` stops such a vibration at once
+  too, 20 or 60 frames after it started (TEST74, felt by hand).
 
 ## Screens and text
 
@@ -1214,7 +1250,9 @@ Expected but not yet seen on hardware:
     page (TEST51).
   - `#G_ALPHA2` (mode 3): alpha `a = sa + da - floor(sa*da/255)`; each channel
     `(s*floor(sa*255/a) + d*floor(da*(255-sa)/a)) / 255` rounded down. Over an
-    opaque pixel that is mode 2's result.
+    opaque pixel that is mode 2's result. Where both alphas are 0, the page
+    pixel stays as it was, color included: `GPUTCHR` and `GCOPY`, with a color
+    or without, leave `&H00FF4020` under the source's clear pixels (TEST74).
   - `GPAINT` fills 4-connected areas.
   - `GCOPY`'s color code multiplies and rounds down, and an overlapping copy
     within a page reads the source first.
@@ -1569,10 +1607,17 @@ Expected but not yet seen on hardware:
 - `CHKMML("C]0")` and `CHKMML("C]-")` give 2, just after the `]`, which has no
   `[` before it (TEST71). So do `C]1` and `C]`, while `[C]0`, `[C]1` and `[C]`
   pass (TEST72).
-- A channel's MML stands in one piece: going back to a channel an earlier `:`
-  left is refused. `CHKMML(":0@218T120O4L1@MP64,1,16,0:1R1:0@MPONC")` gives
-  31, just after the third `:` (TEST72). Whether a channel above the one left
-  is refused the same way is not known.
+- A channel's MML stands in one piece: going back to a channel used earlier is
+  refused at the channel's number.
+  `CHKMML(":0@218T120O4L1@MP64,1,16,0:1R1:0@MPONC")` gives 31, just after the
+  third `:` (TEST72). Channel 0 counts as used from the start: `C:1D:0E` gives
+  5, `:1C:0D` 4 and `:1C:2D:1E` 7. A new channel, lower or higher, passes, and
+  so does a `:` naming the channel in use: `:2C:1D`, `:1C:1D`, `:0C:0D` and
+  `C:0D` give -1 (TEST74).
+- Leaving a channel while one of its `[` is open is refused at the next
+  channel's number: `[:1C]2` gives 2, `[C:1D]2` 3 and `:0[C:1D]2` 5, while
+  `:1[C]2:2D` passes. A channel past 15 fails at its number: `:16C` gives 1
+  (TEST74).
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
@@ -1846,15 +1891,30 @@ Expected but not yet seen on hardware:
   `RECSAVE` from -1000, from past what this recording has reached, or of 1000
   samples from 500 before its end gives those older samples where this
   recording has none (TEST71).
+- `RECSTART` does not record `PCMSTREAM`: streams played at full volume
+  recorded 0, while the person heard them (TEST74).
+- A subprogram's `RECSTART` records nothing of its own, and its `RECSAVE` gives
+  what the main program recorded last. A `BEEP` that the subprogram played and
+  saved came out to the unit as the main program's recording of it, at every
+  balance, and a main program's `BEEP` saved by the subprogram gave that
+  earlier recording again (TEST74).
 - `SNDMSBAL` starts at 63, though the manual calls 64 even.
-- `SNDMSBAL`'s balance b scales the main program's sound by b/64, from none at
-  0 to twice as loud at 127, and the subprogram's the other way. A main
-  program's `RECSTART` hears both, mixed so. With the balance set in the
-  subprogram, `BEEP 256,0,64,64` in the main program recorded at an RMS of 0,
-  199, 318 and 631 for balances 0, 40, 64 and 127, and the same `BEEP` in the
-  subprogram at 600, 419, 313 and 125 to 134 (TEST72). The subprogram's side
-  fits (127-b)/64 but for 127, where that gives none.
+- `SNDMSBAL`'s balance b scales the main program's sound by about b/59, in a
+  straight line from none at 0 to 2.15 times at 127, 1.085 at 64. The
+  subprogram's goes the other way. A main program's `RECSTART` hears both,
+  mixed so. With the balance set in the subprogram, `BEEP 256,0,64,64` in the
+  main program recorded at an RMS of 0, 199, 318 and 631 for balances 0, 40,
+  64 and 127, and the same `BEEP` in the subprogram at 600, 419, 313 and 125 to
+  134 (TEST72; 317 to 318 and 632 at 64 and 127 in TEST74). The subprogram's
+  side fits (127-b)/64 but for 127, where that gives none.
 - `SNDMSBAL()` and `PCMPOS()` work as functions.
+- `PCMVOL` set before `PCMSTREAM` does not hold: after
+  `PCMVOL 0,4096:PCMVOL 1,4096`, `PCMVOL OUT` read 32767 and 32767 27 frames
+  into the stream. Before any stream it read 0 and 0, and `PCMPOS()` 0
+  (TEST74, on a Switch 2 started afresh).
+- `PCMPOS` seems to move in blocks: 27 frames into a looping stream of 4800
+  samples at 48000 Hz it read 3313 or 673, either one on either console, and
+  for 800 samples at 8000 Hz 353 (TEST74).
 
 ## Signal processing
 
@@ -1903,6 +1963,10 @@ Expected but not yet seen on hardware:
 - `CLEAR` in a program is a `Syntax error` when it runs. `PROJECT` in a program
   is `Can't use in program`, error 44, when it runs: after `?"A"` it prints A,
   then `Can't use in program in 3:1(PROJECT)` (TEST71).
+- DIRECT mode takes `RUN` and `CONT` only as a line's first statement. After a
+  `:`, as in `?"BEFORE RUN":RUN 3` or `?"BEFORE CONT":CONT`, the line is a
+  `Syntax error`: nothing on it runs, `ENVSTAT` stays as it was, and a stopped
+  program can still go on with `CONT` alone (TEST74).
 - `ENVINPUT$` lists a line typed again as a new line and leaves the older copy
   where it was. The line typed just before, typed again, is not added (TEST71).
 - `FILES` prints a long list a screen at a time, in DIRECT mode and in programs
@@ -1915,7 +1979,8 @@ Expected but not yet seen on hardware:
   shows `-- 1 files --` above a project's one DAT file, and `-- 0 files --`
   when there are none (TEST71).
 - `FILES` of one file's name, as `FILES "TXT:NAME"`, prints nothing, not even
-  the count (TEST72).
+  the count (TEST72). So does `FILES` of a missing file or of a name with no
+  type (TEST74).
 
 ## Stopping
 
@@ -2120,6 +2185,10 @@ Expected but not yet seen on hardware:
   2022 on the other, once the person answered it, over 30 seconds after it
   opened (TEST72). Typed in DIRECT mode, `LOADV` asks before it loads
   (TEST71, by hand).
+- `DELETE`, `RENAME`, `LOAD` and `LOADV` of a missing file in a program each
+  open a dialog that holds the program until it is answered, and then give
+  `RESULT` 0. `RENAME` onto a file that is there asks, and after OK replaces
+  it: `RESULT` 1, the old name gone and the new one there (TEST74).
 - `LOADV "DAT:F",M%` of a real file into an int array converts as `INT()`
   does, with NaN as 0: NaN, 1.9 and -1.9 load as 0, 1 and -1, and 2147483647.5
   as 2147483647 (TEST67).
@@ -2162,6 +2231,9 @@ Expected but not yet seen on hardware:
   TEST67). Three `SAVEV`s of one TXT file kept the copy each replaced in
   `@BACKUP.TXT`, and No on the question gave `RESULT` -1 and left the file
   alone (TEST67).
+- An Enter held for about 2 seconds on a USB keyboard to answer `SAVEV`'s
+  questions does not reach the program: `KEYBOARD(40)` was 0 when `SAVEV`
+  returned, and `INKEY$` stayed empty for the next 4 seconds (TEST74).
 - `FILES("//")` ends each project's name with `/`, lists the workspace as `/`,
   and lists each `#` project twice (`#EXAMPLE/`, `#EXAMPLE/`). The names sort
   in ASCII order, so the workspace's `/` comes after names that start with `#`
@@ -2250,9 +2322,12 @@ TTEST36.
   `INKEY$` gets no key from it. With the focus on the subprogram, the main
   program sees no A while the dialog is open: `BUTTON` 0 all through on a
   Switch 1 (TEST67).
-- With a `DIALOG` open on each side, one press of A closes both in the same
-  frame, wherever the focus is (TEST64). Only the main program's dialog shows,
-  though the subprogram's opened first, and both give `RESULT` 1 (TEST72).
+- The main and the sub interpreter share one dialog. With a `DIALOG` open on
+  each side, the later call's text shows: the main program's when the
+  subprogram asked first (TEST72), and the subprogram's, in place of the main
+  program's, when it asked 2 seconds later (TEST74). One press of A answers
+  both, wherever the focus is: both calls return in the same frame with
+  `RESULT` 1 (TEST64, TEST72, TEST74).
 - `ENVFOCUS` moves the focus a few frames later, and `ENVFOCUS()` gives the old
   answer until then: `ENVFOCUS 0` took one to three frames (it varied from run
   to run), `ENVFOCUS 1` one. An `ENVFOCUS` while the focus is moving is lost
@@ -2348,7 +2423,10 @@ TTEST36.
   running, but for the status, which stays 0: S 0, N 3, A -1, C the character of
   the token it names from the start of the program, L its line (TEST62). A
   `Syntax error` in an assignment's value is placed at its `=`: for `A=(` on
-  line 2, C is the `=`'s character, one past the `A` (TEST72).
+  line 2, C is the `=`'s character, one past the `A` (TEST72). So is a
+  `Divide by zero` of constants there, with status 0: C is 1 for `A=1/0` and
+  5 for `B=2:A=1/0`. `?7/0` gives the statement's start, 0, and so does a
+  division found as the program runs: 4 for `Z=0:A=1/Z` (TEST74).
 - `ENVLOCATE OUT X,Y`, which the manual leaves out, gives the right edge and top
   of the main console's cursor cell on the display. With the 400x240 screen 1200
   pixels wide in its middle, the cursor at column C of row R is at 40+24*(C+1),
