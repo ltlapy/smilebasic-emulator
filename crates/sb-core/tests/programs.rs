@@ -986,7 +986,21 @@ fn copy_errors() {
     wrong("DIM A[5],B[5]:COPY A,0,B,6,1", None);
     wrong("A$=\"12345\":COPY A$,0,\"ABCDE\",2,5", None);
     assert_eq!(output("DIM A[5],B[5]:COPY A,0,B,5,0:?LEN(A)"), "5\n");
-    assert_eq!(output("DIM B[5]:A=COPY(B,5):?LEN(A)"), "0\n");
+    // An offset at the end with no count is past it too; with a
+    // count of 0 it copies nothing.
+    wrong("DIM B[5]:A=COPY(B,5)", Some(1));
+    wrong("A$=COPY(\"ABCDE\",5)", Some(1));
+    assert_eq!(output("DIM B[5]:A=COPY(B,5,0):?LEN(A)"), "0\n");
+    assert_eq!(output("A$=COPY(\"ABCDE\",5,0):?\"[\";A$;\"]\""), "[]\n");
+    // A string destination past its end is filled with spaces.
+    assert_eq!(
+        output("A$=\"12345\":COPY A$,7,\"AB\",0,2:?\"[\";A$;\"]\""),
+        "[12345  AB]\n"
+    );
+    assert_eq!(
+        output("A$=\"12345\":COPY A$,5,\"AB\",0,2:?\"[\";A$;\"]\""),
+        "[12345AB]\n"
+    );
     assert_eq!(
         error("DIM D[3]:COPY D,\"@N\"\n@N:DATA 1").0,
         ErrorKind::OutOfData

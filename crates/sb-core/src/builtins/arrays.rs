@@ -40,7 +40,8 @@ fn span(len: usize, offset: Option<&Value>, n: Option<&Value>) -> Result<(usize,
 
 /// COPY's source `offset` and `count` within `len`. Past the end is
 /// Subscript out of range; the function form names the argument, the
-/// command form does not.
+/// command form does not. An offset at the end with no count is past it
+/// too, while one with a count of 0 copies nothing.
 fn copy_span(
     len: usize,
     offset: Option<&Value>,
@@ -55,7 +56,9 @@ fn copy_span(
         }
     };
     let at = offset.map_or(Ok(0), count)?;
-    if at > len {
+    // UNVERIFIED: that an empty source with an offset of 0 and no count
+    // fails the same way.
+    if at > len || (at == len && offset.is_some() && n.is_none()) {
         return Err(past_end("offset", offset));
     }
     let size = n.map_or(Ok(len - at), count)?;
@@ -150,13 +153,13 @@ pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<
                 source[offset..offset + n].to_vec()
             };
             let mut dest = dest.borrow_mut();
-            if dest_offset > dest.len() {
-                return Err(out_of_range("offset"));
-            }
-            let end = (dest_offset + piece.len()).min(dest.len());
+            // Past the destination's end, spaces fill the gap.
+            let len = dest.len().max(dest_offset);
+            let end = (dest_offset + piece.len()).min(len);
             memory::take(memory::string_bytes(
-                dest.len() - (end - dest_offset) + piece.len(),
+                len - (end - dest_offset) + piece.len(),
             ))?;
+            dest.resize(len, u16::from(b' '));
             dest.splice(dest_offset..end, piece);
             Ok(vec![])
         }
