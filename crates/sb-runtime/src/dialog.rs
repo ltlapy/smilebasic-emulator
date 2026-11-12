@@ -60,6 +60,28 @@ pub(crate) struct Waiting {
     /// For the dialog that says a file command failed: what the command
     /// returns once it is closed.
     failure: Option<Vec<Value>>,
+    /// Opened since [`link_dialogs`] last looked.
+    fresh: bool,
+    /// While the other interpreter's later dialog shows in place of this
+    /// one: this one's own, for when that one goes without an answer.
+    own: Option<Box<(ProgramDialog, Option<u32>)>>,
+    /// Waits for the answer [`link_dialogs`] passes on, without watching
+    /// the controls or a timeout itself.
+    passive: bool,
+}
+
+impl Waiting {
+    fn new(dialog: ProgramDialog, frames_left: Option<u32>, failure: Option<Vec<Value>>) -> Self {
+        Waiting {
+            dialog,
+            frames_left,
+            pressed: 0,
+            failure,
+            fresh: true,
+            own: None,
+            passive: false,
+        }
+    }
 }
 
 /// How the dialog that says a file command failed stands.
@@ -206,44 +228,40 @@ impl Runtime {
             }
             _ => return Err(illegal()),
         };
-        let answer = match self.dialog.as_mut() {
+        let answer = match self.dialog {
             None => {
-                self.dialog = Some(Waiting {
-                    dialog,
-                    frames_left: frames,
-                    pressed: 0,
-                    failure: None,
-                });
+                self.dialog = Some(Waiting::new(dialog, frames, None));
                 None
             }
-            Some(waiting) => self.dialog_answer.take().or_else(|| {
-                waiting.pressed |= self.input.pressed();
-                let answer = self
-                    .input
-                    .dialog_answer(&waiting.dialog.kind, waiting.pressed);
-                match &mut waiting.frames_left {
-                    _ if answer.is_some() => answer,
-                    // Timing out answers 0, for a choice as for buttons.
-                    Some(0) => Some(DialogAnswer::Buttons(0)),
-                    Some(n) => {
-                        *n -= 1;
-                        None
-                    }
-                    None => None,
-                }
-            }),
+            Some(_) => self.poll_dialog(),
         };
         let Some(answer) = answer else {
             self.retry = true;
             return Ok(vec![Value::Int(0)]);
         };
-        let kind = self.dialog.take().expect("a dialog was open").dialog.kind;
+        let waiting = self.dialog.take().expect("a dialog was open");
+        self.dialog_closed = Some(answer.clone());
         // The frontend answers on Enter going down, and A on being let go,
         // which the program would see in the frame the dialog returns in.
         self.input.hide_presses();
+        // The answer is read by the dialog shown, which may be the other
+        // interpreter's, and given in the form this call asked for.
+        // UNVERIFIED: a call behind a dialog with other buttons gets the
+        // RESULT() those buttons give, and one behind a dialog of another
+        // form (a choice behind a wait for buttons) what a timeout gives.
+        let shown_buttons = match &waiting.dialog.kind {
+            DialogKind::Choice(labels) => labels.len(),
+            _ => 0,
+        };
+        let kind = waiting.own.map_or(waiting.dialog.kind, |own| own.0.kind);
         match (kind, answer) {
             (DialogKind::Choice(labels), DialogAnswer::Choice(i)) => {
-                self.result = choice_result(labels.len(), i);
+                let buttons = if shown_buttons > 0 {
+                    shown_buttons
+                } else {
+                    labels.len()
+                };
+                self.result = choice_result(buttons, i);
                 Ok(vec![])
             }
             (DialogKind::Choice(_), _) => {
@@ -275,16 +293,12 @@ impl Runtime {
         let mut chars = message.chars();
         let first = chars.next().map(|c| c.to_ascii_uppercase());
         let message = first.into_iter().chain(chars).collect();
-        self.dialog = Some(Waiting {
-            dialog: ProgramDialog {
-                caption: format!("{what} failed"),
-                lines: vec![message],
-                kind: DialogKind::Choice(vec!["OK"]),
-            },
-            frames_left: None,
-            pressed: 0,
-            failure: Some(Vec::new()),
-        });
+        let dialog = ProgramDialog {
+            caption: format!("{what} failed"),
+            lines: vec![message],
+            kind: DialogKind::Choice(vec!["OK"]),
+        };
+        self.dialog = Some(Waiting::new(dialog, None, Some(Vec::new())));
     }
 
     /// Whether [`Runtime::open_failure`]'s dialog is open.
@@ -298,18 +312,15 @@ impl Runtime {
         let Some(waiting) = self.dialog.as_mut() else {
             return Failure::None;
         };
-        let Some(outs) = &waiting.failure else {
+        if waiting.failure.is_none() {
             return Failure::None;
-        };
-        waiting.pressed |= self.input.pressed();
-        let answered = self.dialog_answer.take().is_some()
-            || (self.input)
-                .dialog_answer(&waiting.dialog.kind, waiting.pressed)
-                .is_some();
-        if !answered {
-            self.retry = true;
-            return Failure::Waiting(outs.clone());
         }
+        let Some(answer) = self.poll_dialog() else {
+            self.retry = true;
+            let outs = self.dialog.as_ref().and_then(|w| w.failure.clone());
+            return Failure::Waiting(outs.unwrap_or_default());
+        };
+        self.dialog_closed = Some(answer);
         let outs = self.dialog.take().and_then(|w| w.failure);
         self.input.hide_presses();
         self.result = 0;
@@ -343,6 +354,90 @@ impl Runtime {
             }
         }
         outs
+    }
+}
+
+impl Runtime {
+    /// The answer the open dialog gets this frame: the frontend's, or
+    /// from the controls, the touch screen or the timeout.
+    fn poll_dialog(&mut self) -> Option<DialogAnswer> {
+        let waiting = self.dialog.as_mut()?;
+        if let Some(answer) = self.dialog_answer.take() {
+            return Some(answer);
+        }
+        if waiting.passive {
+            return None;
+        }
+        waiting.pressed |= self.input.pressed();
+        let answer = (self.input).dialog_answer(&waiting.dialog.kind, waiting.pressed);
+        match &mut waiting.frames_left {
+            _ if answer.is_some() => answer,
+            // Timing out answers 0, for a choice as for buttons.
+            Some(0) => Some(DialogAnswer::Buttons(0)),
+            Some(n) => {
+                *n -= 1;
+                None
+            }
+            None => None,
+        }
+    }
+}
+
+/// Makes the dialogs of the main and the sub interpreter one dialog, as
+/// SmileBASIC 4 has one for both: the text of the later call shows, and
+/// one answer closes both, in the same frame. Called after each
+/// interpreter's frame, the main one's first.
+///
+/// The later call's dialog takes the place of the earlier one, with its
+/// own buttons and timeout. A main program behind the subprogram's dialog
+/// watches that dialog itself, as it runs first in a frame; a subprogram
+/// behind the main program's takes the answer passed on here, after the
+/// main program's frame and before its own.
+// UNVERIFIED: that the earlier call shows its own dialog again when the
+// later one goes without an answer (its program stopped).
+pub(crate) fn link_dialogs(main: &mut Runtime, sub: Option<&mut Runtime>) {
+    let Some(sub) = sub else {
+        main.dialog_closed = None;
+        show_own(main);
+        return;
+    };
+    link(main, sub, true);
+    link(sub, main, false);
+}
+
+/// Hands `from`'s dialog to `to`, which is behind it.
+fn link(from: &mut Runtime, to: &mut Runtime, to_is_sub: bool) {
+    if let Some(answer) = from.dialog_closed.take()
+        && to.dialog.as_ref().is_some_and(|w| w.own.is_some())
+    {
+        to.dialog_answer.get_or_insert(answer);
+    }
+    if let Some(new) = from.dialog.as_mut().filter(|w| w.fresh) {
+        new.fresh = false;
+        if let Some(old) = to.dialog.as_mut() {
+            let own =
+                (old.own.take()).unwrap_or_else(|| Box::new((old.dialog.clone(), old.frames_left)));
+            old.own = Some(own);
+            old.dialog.clone_from(&new.dialog);
+            old.frames_left = new.frames_left;
+            old.pressed = new.pressed;
+            old.fresh = false;
+            old.passive = to_is_sub;
+        }
+    }
+    if from.dialog.is_none() && to.dialog_answer.is_none() {
+        show_own(to);
+    }
+}
+
+/// The dialog shown in place of this one went without an answer: this
+/// one shows again.
+fn show_own(rt: &mut Runtime) {
+    if let Some(waiting) = rt.dialog.as_mut()
+        && let Some(own) = waiting.own.take()
+    {
+        (waiting.dialog, waiting.frames_left) = *own;
+        waiting.passive = false;
     }
 }
 

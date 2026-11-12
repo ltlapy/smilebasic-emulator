@@ -885,6 +885,8 @@ pub struct Runtime {
     /// The DIALOG the program waits on, and the frontend's answer.
     pub(crate) dialog: Option<crate::dialog::Waiting>,
     pub(crate) dialog_answer: Option<crate::dialog::DialogAnswer>,
+    /// The answer that closed the last DIALOG, for the other interpreter's.
+    pub(crate) dialog_closed: Option<crate::dialog::DialogAnswer>,
     /// The other interpreter's DIALOG is open: what the controllers type
     /// goes to it.
     pub(crate) dialog_beside: bool,
@@ -1173,6 +1175,7 @@ impl Runtime {
             dialog: None,
             dialog_beside: false,
             dialog_answer: None,
+            dialog_closed: None,
             settings: Settings::default(),
             meter: None,
             storage: Storage::none(),

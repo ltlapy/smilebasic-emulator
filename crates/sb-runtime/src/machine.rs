@@ -1672,6 +1672,7 @@ impl Machine {
         }
         let start = Instant::now();
         self.run_frame(None);
+        self.link_dialogs();
         self.time_limit = limit;
         if self.sub_running() {
             // A subprogram's HELPINFO OUT looks at the editor's cursor as
@@ -1682,6 +1683,7 @@ impl Machine {
             }
         }
         self.run_sub(start.elapsed());
+        self.link_dialogs();
     }
 
     /// One frame of this interpreter; `main` is the main interpreter's
@@ -2681,8 +2683,7 @@ impl Machine {
     }
 
     /// The dialog a program waits on, from either interpreter. The two
-    /// wait on one window: when both ask, it shows the main program's.
-    // UNVERIFIED: whether the main program's shows because it asked last.
+    /// wait on one dialog: when both ask, it shows the later call's.
     pub fn program_dialog(&self) -> Option<&ProgramDialog> {
         let sub = self.sub.as_ref();
         (self.rt.program_dialog()).or_else(|| sub.and_then(|s| s.rt.program_dialog()))
@@ -2695,6 +2696,12 @@ impl Machine {
             sub.rt.answer_dialog(answer.clone());
         }
         self.rt.answer_dialog(answer);
+    }
+
+    /// Makes the two interpreters' dialogs one, after either's frame.
+    fn link_dialogs(&mut self) {
+        let sub = self.sub.as_mut().map(|sub| &mut sub.rt);
+        crate::dialog::link_dialogs(&mut self.rt, sub);
     }
 
     /// The question a command waits on, from either interpreter, the
@@ -2752,6 +2759,7 @@ impl Machine {
     /// SUBSTOP, for the frontend's menu.
     pub fn stop_sub(&mut self) {
         self.substop();
+        self.link_dialogs();
         if self.vm.is_none() && self.rt.direct {
             self.rt.direct_input_start();
         }

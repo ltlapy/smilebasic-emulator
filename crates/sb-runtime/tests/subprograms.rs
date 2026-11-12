@@ -897,6 +897,142 @@ fn two_dialogs_at_once_show_the_main_one_and_close_together() {
     assert_eq!(sub_rows(&m), ["1"]);
 }
 
+/// The main program's DIALOG and the subprogram's, each some frames after
+/// it starts, each printing RESULT() and MAINCNT.
+fn two_dialogs(tag: &str, main: (&str, u32), sub: (&str, u32)) -> (TempDir, Machine) {
+    let ask = |(dialog, wait): (&str, u32)| {
+        format!("WAIT {wait}\n{dialog}\n?RESULT();\" \";MAINCNT()\n{THEN_WAIT}")
+    };
+    let dir = TempDir::new(tag);
+    let mut m = machine(&dir, &ask(sub));
+    enter(&mut m, "subrun \"sub\"");
+    m.set_slot(0, ask(main));
+    m.run_slot(0);
+    (dir, m)
+}
+
+fn press_a(m: &mut Machine) {
+    let a = 1 << sb_runtime::input::A;
+    for buttons in [a, a, 0] {
+        m.rt.input.live.pads[0].buttons = buttons;
+        m.frame();
+    }
+    frames(m, 1);
+}
+
+/// The RESULT() and MAINCNT rows of both sides.
+fn answered(m: &Machine) -> (Option<String>, Option<String>) {
+    let row = |rows: Vec<String>| {
+        let numbers = |r: &String| r.split(' ').all(|n| n.parse::<i32>().is_ok());
+        rows.into_iter().find(|r| r.contains(' ') && numbers(r))
+    };
+    (row(rows(m)), row(sub_rows(m)))
+}
+
+/// TEST74: the main program asks first and the subprogram later; the one
+/// dialog shows the later text, and one press closes both in one frame.
+#[test]
+fn a_later_dialog_shows_its_text_and_one_press_closes_both() {
+    let (_dir, mut m) = two_dialogs(
+        "later-sub",
+        ("DIALOG \"MAIN\",0,\"MAIN\"", 1),
+        ("DIALOG \"SUB\",0,\"SUB\"", 40),
+    );
+    frames(&mut m, 4);
+    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
+    frames(&mut m, 40);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    press_a(&mut m);
+    assert!(m.program_dialog().is_none());
+    let (main, sub) = answered(&m);
+    assert!(
+        main.as_deref().is_some_and(|r| r.starts_with("1 ")),
+        "{main:?}"
+    );
+    assert_eq!(main, sub);
+}
+
+/// TEST72's order, answered with the controls: both close in one frame.
+#[test]
+fn a_later_main_dialog_closes_with_the_subprograms_in_one_frame() {
+    let (_dir, mut m) = two_dialogs(
+        "later-main",
+        ("DIALOG \"MAIN\",0,\"MAIN\"", 10),
+        ("DIALOG \"SUB\",0,\"SUB\"", 1),
+    );
+    frames(&mut m, 14);
+    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
+    press_a(&mut m);
+    let (main, sub) = answered(&m);
+    assert!(
+        main.as_deref().is_some_and(|r| r.starts_with("1 ")),
+        "{main:?}"
+    );
+    assert_eq!(main, sub);
+}
+
+/// The earlier call takes the answer to the buttons shown: OK gives 1,
+/// though its own left button would give -1.
+#[test]
+fn the_earlier_dialog_takes_the_answer_to_the_buttons_shown() {
+    let (_dir, mut m) = two_dialogs(
+        "other-buttons",
+        ("DIALOG \"MAIN\",1", 1),
+        ("DIALOG \"SUB\",0", 40),
+    );
+    frames(&mut m, 44);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    m.answer_dialog(DialogAnswer::Choice(0));
+    frames(&mut m, 2);
+    let (main, sub) = answered(&m);
+    assert!(
+        main.as_deref().is_some_and(|r| r.starts_with("1 ")),
+        "{main:?}"
+    );
+    assert_eq!(main, sub);
+}
+
+/// The timeout of the later call closes both, in one frame.
+#[test]
+fn the_later_dialogs_timeout_closes_both() {
+    let (_dir, mut m) = two_dialogs(
+        "timeout",
+        ("DIALOG \"MAIN\",0,,-30", 10),
+        ("DIALOG \"SUB\",0,,-300", 1),
+    );
+    frames(&mut m, 30);
+    assert!(m.sub_runtime().unwrap().0.program_dialog().is_some());
+    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
+    frames(&mut m, 20);
+    assert!(m.program_dialog().is_none());
+    let (main, sub) = answered(&m);
+    assert!(
+        main.as_deref().is_some_and(|r| r.starts_with("0 ")),
+        "{main:?}"
+    );
+    assert_eq!(main, sub);
+}
+
+#[test]
+fn the_earlier_dialog_shows_again_when_the_later_ones_program_stops() {
+    let (_dir, mut m) = two_dialogs(
+        "stop-later",
+        ("DIALOG \"MAIN\",0", 1),
+        ("DIALOG \"SUB\",0", 40),
+    );
+    frames(&mut m, 44);
+    assert_eq!(m.program_dialog().unwrap().lines, ["SUB"]);
+    m.stop_sub();
+    assert_eq!(m.program_dialog().unwrap().lines, ["MAIN"]);
+    press_a(&mut m);
+    assert!(m.program_dialog().is_none());
+    assert!(
+        rows(&m).iter().any(|r| r.starts_with("1 ")),
+        "{:?}",
+        rows(&m)
+    );
+}
+
 #[test]
 fn stopping_a_subprogram_takes_its_dialog_and_question_with_it() {
     let dir = TempDir::new("sub-dialog-stop");
