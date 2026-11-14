@@ -167,6 +167,15 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   or `?1/0` stops the program before it runs, even on a line that is never
   reached.
 - An unknown `#constant` is `Undefined constant`.
+- `CONST` or `ENUM` of a built-in constant's name is `Duplicate constant`,
+  error 49, as the program compiles: `CONST #ON=#C_YELLOW,#OFF=#C_WHITE` on
+  line 38 of slot 0 stops with `Duplicate constant in 0:38` (checked on
+  hardware, version 4.4.9). `#_LINE`, `#_SLOT` and
+  `#_FILENAME` count as built in, and so does a constant defined before it in
+  the slot's program, inside a `DEF` or not, in any case of letters. Each slot
+  keeps its own. `CONST` works out its value before it checks the name, so
+  `CONST #ON=#NONE` is `Undefined constant`; `ENUM` checks the name first. The
+  error is placed at the name. (Not yet seen on hardware.)
 
 ### Statements, literals and names
 
