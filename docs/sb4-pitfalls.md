@@ -2211,6 +2211,12 @@ Expected but not yet seen on hardware:
   `SAVEV "X",S$`. The name's errors 71 and 73 come first, and 75 and 74 for
   its project after. `EXEC` of a type other than TXT is error 77 before the
   name's other checks: `EXEC "DAT:",1` is 77, not 71. (Not yet seen on hardware.)
+- `SAVEG` checks its page, rectangle and quality before the file's name, so
+  `SAVEG "A*",0,0,0,0,1` is `Out of range (SAVEG:5)`, not error 71. It takes
+  the quality, 1 to 100, for a GRP file too and ignores it there:
+  `SAVEG "GRP:X",0,50` saves. A rectangle past the page's right edge is
+  `(SAVEG:4)` and past its bottom `(SAVEG:5)`, one argument before the size.
+  Two or three numbers after the page are `Wrong number of arguments`. (Not yet seen on hardware.)
 - `DELETE` of a file in a `#` system project is
   `Can't SAVE to system project (DELETE:1)`, error 75, ahead of the 74 for a
   name with a project: `DELETE "TXT:#SYS/A"`, and `DELETE "A"` while a `#`

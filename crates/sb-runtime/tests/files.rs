@@ -1267,6 +1267,49 @@ fn load_and_save_refuse_other_types_of_file() {
     assert_eq!(tail(&m, 2), ["0", "OK"]);
 }
 
+/// SAVEG checks its page, rectangle and quality before the file's name,
+/// and takes a quality for a GRP file too, where it changes nothing.
+#[test]
+fn saveg_checks_its_numbers_first_and_takes_a_quality_for_any_file() {
+    let dir = TempDir::new("saveg-order");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("#SYS").unwrap();
+    // The argument's number as SmileBASIC 4 shows it, and the detail.
+    for (source, n, detail) in [
+        ("\"A*\",6", 2, "graphic page 6"),
+        ("\"TXT:\",0,0", 3, "compression 0"),
+        ("\"GRP:X\",0,101", 3, "compression 101"),
+        ("\"A*\",0,0,0,0,1", 5, "width 0"),
+        ("\"TXT:X\",0,0,0,4,4,0", 7, "compression 0"),
+        ("\"#SYS/X\",0,1,0,2048,1", 4, "past the page"),
+        ("\"#SYS/X\",0,0,1,1,2048", 5, "past the page"),
+    ] {
+        m.set_slot(0, format!("A=1\nSAVEG {source}"));
+        enter(&mut m, "run");
+        let message = format!("Out of range in 0:2(SAVEG:{n}) ({detail})");
+        let arg = Some(n - 1);
+        assert_eq!(program_error(&mut m), (message, 10, arg), "{source}");
+    }
+    // Two or three numbers after the page are no form of SAVEG.
+    for source in ["SAVEG \"X\",0,0,0", "SAVEG \"X\",0,0,0,4"] {
+        m.set_slot(0, format!("A=1\n{source}"));
+        enter(&mut m, "run");
+        let (_, code, _) = program_error(&mut m);
+        assert_eq!(code, 52, "{source}");
+    }
+    let program = [
+        "GCLS &HFF102030",
+        "SAVEG \"GRP:Q\",0,50:?RESULT()",
+        "SAVEG \"R\",0,0,0,4,3,1:?RESULT()",
+        "LOADG \"R\",1 OUT W,H:GTARGET 1:?W,H,HEX$(GPGET(3,2))",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(words(&tail(&m, 4)), ["1", "1", "4 3 FF102030", "OK"]);
+    let png = std::fs::read(dir.0.join("@WORKSPACE").join("GQ")).unwrap();
+    assert!(png.starts_with(b"\x89PNG"));
+}
+
 /// SAVEG, SAVEV and EXEC of a type of file they cannot take: File type
 /// mismatch with no argument's number, after the name's checks and
 /// before the project's, and before anything is asked.

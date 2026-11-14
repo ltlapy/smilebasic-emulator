@@ -16,7 +16,7 @@ use crate::confirm::FileAction;
 use crate::files::{check_file_name, program_text, str_arg};
 use crate::graphics::{GRP_SIZE, PAGES};
 use crate::image::{self, Image};
-use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
+use crate::runtime::{Command, Runtime, checking, no_form, opt_int};
 use crate::sbfile::{self, Data, DataValues};
 use crate::storage::{self, FileKind, FileRef, NamedKind, StorageError};
 
@@ -205,24 +205,45 @@ fn array_image(array: &Array) -> Result<Image> {
     })
 }
 
-/// SAVEG's rectangle: `x, y, width, height` on a 2048-pixel page.
+/// SAVEG's rectangle: `x, y, width, height` on a 2048-pixel page, each
+/// checked in turn.
 fn rect_arg(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
-    let [x, y, w, h] = [0, 1, 2, 3].map(|i| args[i].to_int());
-    let (x, y, w, h) = (x?, y?, w?, h?);
-    for (what, n, range) in [
-        ("X", x, 0..GRP_SIZE),
-        ("Y", y, 0..GRP_SIZE),
-        ("width", w, 1..GRP_SIZE + 1),
-        ("height", h, 1..GRP_SIZE + 1),
-    ] {
-        if !range.contains(&n) {
-            return Err(out_of_range(what, n));
-        }
+    let int = |i: usize, what: &str, range: std::ops::Range<i32>| {
+        checking(&args[i], || {
+            let n = args[i].to_int()?;
+            match range.contains(&n) {
+                true => Ok(n),
+                false => Err(out_of_range(what, n)),
+            }
+        })
+    };
+    let x = int(0, "X", 0..GRP_SIZE)?;
+    let y = int(1, "Y", 0..GRP_SIZE)?;
+    let w = int(2, "width", 1..GRP_SIZE + 1)?;
+    let h = int(3, "height", 1..GRP_SIZE + 1)?;
+    // SmileBASIC 4 names the argument before the size that is too large:
+    // a rectangle too wide is (SAVEG:4), one too tall (SAVEG:5).
+    let past = || Error::with_detail(ErrorKind::OutOfRange, "past the page");
+    if x + w > GRP_SIZE {
+        return Err(past().of_value(&args[1]));
     }
-    if x + w > GRP_SIZE || y + h > GRP_SIZE {
-        return Err(Error::with_detail(ErrorKind::OutOfRange, "past the page"));
+    if y + h > GRP_SIZE {
+        return Err(past().of_value(&args[2]));
     }
     Ok((x, y, w, h))
+}
+
+/// SAVEG's quality, 1 to 100: taken for any type of file, and used only
+/// for JPG files. A GRP file keeps every pixel.
+fn quality_arg(v: Option<&Value>) -> Result<i32> {
+    let Some(v) = v else {
+        return Ok(JPEG_QUALITY);
+    };
+    checking(v, || match opt_int(v)? {
+        None => Ok(JPEG_QUALITY),
+        Some(q @ 1..=100) => Ok(q),
+        Some(q) => Err(out_of_range("compression", q)),
+    })
 }
 
 impl Runtime {
@@ -371,26 +392,22 @@ impl Runtime {
                     None => Ok(sizes(0, 0)),
                 }
             }
-            (Command::Saveg, Want::Outs(0), [spec, page, rest @ ..]) => {
+            (Command::Saveg, Want::Outs(0), [spec, page, rest @ ..])
+                if matches!(rest.len(), 0 | 1 | 4 | 5) =>
+            {
+                // The page, the rectangle and the quality come before the
+                // name, as SmileBASIC 4 checks them.
                 let spec = str_arg(spec)?;
                 let page = page_arg(page)?;
+                let (rect, quality) = match rest {
+                    [] | [_] => ((0, 0, GRP_SIZE, GRP_SIZE), rest.first()),
+                    _ => (rect_arg(&rest[..4])?, rest.get(4)),
+                };
+                let quality = quality_arg(quality)?;
                 check_file_name(&spec, 0)?;
                 saveg_type(&spec)?;
                 self.refuse_save_project(&spec)?;
                 let file = self.write_name(&spec, FileKind::Grp);
-                let jpeg = matches!(&file, Ok(f) if f.kind == FileKind::Jpg);
-                let (rect, quality) = match (rest, jpeg) {
-                    ([], _) => ((0, 0, GRP_SIZE, GRP_SIZE), None),
-                    ([q], true) => ((0, 0, GRP_SIZE, GRP_SIZE), Some(q)),
-                    ([_, _, _, _], _) => (rect_arg(rest)?, None),
-                    ([_, _, _, _, q], true) => (rect_arg(rest)?, Some(q)),
-                    _ => return Err(illegal()),
-                };
-                let quality = match quality.map(opt_int).transpose()?.flatten() {
-                    None => JPEG_QUALITY,
-                    Some(q @ 1..=100) => q,
-                    Some(q) => return Err(out_of_range("compression", q)),
-                };
                 if self.ask_save(&file) {
                     return Ok(vec![]);
                 }
