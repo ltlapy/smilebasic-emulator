@@ -181,6 +181,9 @@ pub enum StmtKind {
     Read(Vec<LValue>),
     Restore(Target),
     Swap(LValue, LValue),
+    /// The statement that did not parse, where [`crate::parser::parse_partial`]
+    /// stopped. Nothing after it is parsed.
+    Unparsed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

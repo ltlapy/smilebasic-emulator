@@ -1700,6 +1700,47 @@ fn direct_mode_refuses_const_and_enum() {
     assert_eq!(output("CONST #A=1:?#A"), "1\n");
 }
 
+/// SmileBASIC 4 compiles a statement at a time, so a compile error in the
+/// statements before one that does not parse comes first, inside blocks
+/// too.
+#[test]
+fn compile_errors_before_a_syntax_error_come_first() {
+    let at = |src: &str| {
+        let e = run(src).expect_err(src);
+        (e.kind, e.line, e.col)
+    };
+    let undefined = ErrorKind::UndefinedConstant;
+    assert_eq!(at("?#ZZ:?("), (undefined, 1, 2));
+    assert_eq!(at("?1\nCONST #A=1/0\n?("), (ErrorKind::DivideByZero, 2, 1));
+    assert_eq!(at("IF #ZZ THEN ?("), (undefined, 1, 4));
+    assert_eq!(at("FOR I=0 TO 1:?#ZZ:?(:NEXT").0, undefined);
+    assert_eq!(at("WHILE 1\n?#ZZ\nIF 1 THEN\n?(\nENDIF\nWEND").0, undefined);
+    assert_eq!(at("REPEAT:?#ZZ:?(:UNTIL 1").0, undefined);
+    assert_eq!(at("LOOP:?#ZZ:?(").0, undefined);
+    assert_eq!(at("CASE 1:WHEN 1:?#ZZ:?(:ENDCASE").0, undefined);
+    assert_eq!(at("IF 0 THEN\n?1\nELSE\n?#ZZ\n?(").0, undefined);
+    assert_eq!(at("DEF F\n?#ZZ\n?(\nEND").0, undefined);
+    assert_eq!(at("@L\n@L\n?(").0, ErrorKind::DuplicateLabel);
+    // With nothing wrong before it, the syntax error, placed as before.
+    assert_eq!(at("?1:?("), (ErrorKind::SyntaxError, 1, 4));
+    assert_eq!(at("?1\nA=("), (ErrorKind::SyntaxError, 2, 2));
+    assert_eq!(at("FOR I=0 TO 1\n?1\n?(\nNEXT").1, 3);
+    assert_eq!(at("GOTO @L:?(:@L").0, ErrorKind::SyntaxError);
+    assert_eq!(at("DEF F\n?1\n?(\nEND\nF").0, ErrorKind::SyntaxError);
+    assert_eq!(at("FOR I=0 TO 1\n?1").0, ErrorKind::SyntaxError);
+    // Cut anywhere, a program compiles or gives an error, without a panic.
+    let src = "DEF F(A)\nIF A THEN\n?A:RETURN A*2\nELSEIF A<0 THEN @L ELSE\nCASE A\nWHEN 1:GOTO \"@L\"\nENDCASE\nENDIF\nEND\n@L:VAR B[]=[1,2]:FOR I=0 TO 9 STEP 2:BREAK:NEXT\nREPEAT:WHILE 1:LOOP:READ X:DATA 1:ENDLOOP:WEND:UNTIL 1:RESTORE @L";
+    let host = TextHost::default();
+    for end in (0..=src.len()).filter(|&i| src.is_char_boundary(i)) {
+        let _ = sb_core::compile(&src[..end], &host);
+        let _ = sb_core::compile_direct(&src[..end], &host, 0);
+    }
+    // Ours reads the whole program into tokens first.
+    // UNVERIFIED: SmileBASIC 4 reads tokens as it compiles, and may give
+    // Undefined constant here.
+    assert_eq!(at("?#ZZ:?&H100000000").0, ErrorKind::Overflow);
+}
+
 /// PUSH and UNSHIFT need a block's new size beside the old whenever it has
 /// to grow, for arrays and strings; within a block they need nothing
 /// (TEST57).

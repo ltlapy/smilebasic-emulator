@@ -55,19 +55,27 @@ fn compile_as(
     direct: bool,
     slot: i32,
 ) -> error::Result<bytecode::Compiled> {
-    let program = parser::parse(source).map_err(|e| {
-        let kind = match e.kind {
-            ParseErrorKind::Lex(lexer::LexErrorKind::Overflow) => ErrorKind::Overflow,
-            _ => ErrorKind::SyntaxError,
-        };
-        // The editor shows the statement, as SmileBASIC 4 does (checked on
-        // hardware), unless the error is on a later line of it.
-        let at = e.stmt.filter(|s| s.line == e.span.line).unwrap_or(e.span);
-        let error = match e.detail() {
-            Some(detail) => Error::with_detail(kind, detail),
-            None => Error::new(kind),
-        };
-        error.at_pos(at.line, at.col)
-    })?;
-    compiler::compile(&program, host, direct, slot)
+    // The statements before one that does not parse compile first, and
+    // give their errors before its own.
+    let (program, unparsed) = parser::parse_partial(source);
+    let unparsed = unparsed.map(parse_error);
+    match unparsed {
+        Some(e) if program.stmts.is_empty() => Err(e),
+        _ => compiler::compile(&program, host, direct, slot, unparsed),
+    }
+}
+
+fn parse_error(e: parser::ParseError) -> Error {
+    let kind = match e.kind {
+        ParseErrorKind::Lex(lexer::LexErrorKind::Overflow) => ErrorKind::Overflow,
+        _ => ErrorKind::SyntaxError,
+    };
+    // The editor shows the statement, as SmileBASIC 4 does (checked on
+    // hardware), unless the error is on a later line of it.
+    let at = e.stmt.filter(|s| s.line == e.span.line).unwrap_or(e.span);
+    let error = match e.detail() {
+        Some(detail) => Error::with_detail(kind, detail),
+        None => Error::new(kind),
+    };
+    error.at_pos(at.line, at.col)
 }

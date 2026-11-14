@@ -88,16 +88,36 @@ impl From<LexError> for ParseError {
 }
 
 pub fn parse(source: &str) -> Result<Program, ParseError> {
-    let tokens = lexer::tokenize(source)?;
-    Parser {
+    match parse_partial(source) {
+        (program, None) => Ok(program),
+        (_, Some(e)) => Err(e),
+    }
+}
+
+/// Parses up to the first statement that does not parse, which becomes
+/// [`StmtKind::Unparsed`] in the blocks around it, and gives its error.
+/// SmileBASIC 4 compiles a statement at a time, so a compile error in the
+/// statements before it comes first.
+pub fn parse_partial(source: &str) -> (Program, Option<ParseError>) {
+    let tokens = match lexer::tokenize(source) {
+        Ok(tokens) => tokens,
+        Err(e) => return (Program { stmts: Vec::new() }, Some(e.into())),
+    };
+    let mut parser = Parser {
         tokens,
         pos: 0,
         in_def: false,
         in_command_def: false,
         loops: Vec::new(),
         depth: 0,
-    }
-    .program()
+        failed: None,
+    };
+    // statement() keeps every error, so a block gives none of its own.
+    let stmts = parser.block(&[]).unwrap_or_else(|e| {
+        parser.failed.get_or_insert(e);
+        Vec::new()
+    });
+    (Program { stmts }, parser.failed)
 }
 
 /// Parses one expression and nothing after it, for a debugger's watch.
@@ -110,6 +130,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
         in_command_def: false,
         loops: Vec::new(),
         depth: 0,
+        failed: None,
     };
     let expr = parser.expr()?;
     while matches!(parser.peek(), TokenKind::Newline) {
@@ -132,6 +153,10 @@ struct Parser {
     depth: u32,
     /// The closing keywords of the loops being parsed, innermost last.
     loops: Vec<Keyword>,
+    /// The error of the statement that did not parse. The parse then
+    /// stands at the end of the input, and the blocks around it close
+    /// without their closing keywords.
+    failed: Option<ParseError>,
 }
 
 /// Operator and its precedence level, 0 binding loosest.
@@ -278,15 +303,10 @@ impl Parser {
 
     // ---- statement lists ----
 
-    fn program(mut self) -> PResult<Program> {
-        // With no terminators, block() only stops at end of input; stray
-        // closing keywords are reported by statement().
-        let stmts = self.block(&[])?;
-        Ok(Program { stmts })
-    }
-
     /// Parses statements across lines until one of `until` (not consumed) or
     /// end of input. Reaching the end is left for the caller to report.
+    /// With no terminators it only stops at the end; statement() reports
+    /// stray closing keywords.
     fn block(&mut self, until: &[Keyword]) -> PResult<Vec<Stmt>> {
         let mut stmts = Vec::new();
         loop {
@@ -308,8 +328,17 @@ impl Parser {
     /// Like [`Parser::block`] but the closing keyword must be present and is consumed.
     fn block_until(&mut self, end: Keyword, expected: &'static str) -> PResult<Vec<Stmt>> {
         let body = self.block(&[end])?;
-        self.expect_keyword(end, expected)?;
+        self.close(end, expected)?;
         Ok(body)
+    }
+
+    /// The keyword that closes a block, which a block cut short by a
+    /// statement that did not parse goes without.
+    fn close(&mut self, end: Keyword, expected: &'static str) -> PResult<()> {
+        match self.failed {
+            Some(_) => Ok(()),
+            None => self.expect_keyword(end, expected),
+        }
     }
 
     /// A loop's body, during which its closing keyword inside another
@@ -337,14 +366,23 @@ impl Parser {
 
     // ---- statements ----
 
+    /// A statement, or [`StmtKind::Unparsed`] with the parse stopped if it
+    /// does not parse.
     fn statement(&mut self, top_level: bool) -> PResult<Stmt> {
         let start = self.span();
-        let kind = self
-            .nested(|p| p.statement_kind(top_level))
-            .map_err(|e| ParseError {
-                stmt: e.stmt.or(Some(start)),
-                ..e
-            })?;
+        let kind = match self.nested(|p| p.statement_kind(top_level)) {
+            Ok(kind) => kind,
+            Err(e) => {
+                // A block around the statement that failed can fail too on
+                // the way out; the statement's error is the one to give.
+                self.failed.get_or_insert(ParseError {
+                    stmt: e.stmt.or(Some(start)),
+                    ..e
+                });
+                self.pos = self.tokens.len() - 1;
+                StmtKind::Unparsed
+            }
+        };
         let Span { line, col } = start;
         Ok(Stmt { kind, line, col })
     }
@@ -398,10 +436,12 @@ impl Parser {
             }
             K::Repeat => {
                 let body = self.block_until(K::Until, "UNTIL")?;
-                StmtKind::Repeat {
-                    body,
-                    cond: self.expr()?,
-                }
+                let cond = match self.failed {
+                    // Never compiled: the body stops first.
+                    Some(_) => Expr::Int(0),
+                    None => self.expr()?,
+                };
+                StmtKind::Repeat { body, cond }
             }
             K::Loop => StmtKind::Loop {
                 body: self.loop_body(K::Endloop, "ENDLOOP")?,
@@ -788,6 +828,7 @@ impl Parser {
                     break;
                 }
                 TokenKind::Keyword(Keyword::Endif) => break,
+                _ if self.failed.is_some() => break,
                 _ => return self.expected("ENDIF"),
             }
         }
@@ -845,6 +886,14 @@ impl Parser {
         let subject = self.expr()?;
         let mut arms: Vec<WhenArm> = Vec::new();
         let leading = self.block(&[K::When, K::Otherwise, K::Endcase])?;
+        if self.failed.is_some() && !leading.is_empty() {
+            // Kept, to give its error as it compiles.
+            return Ok(StmtKind::Case {
+                subject,
+                arms,
+                otherwise: Some(leading),
+            });
+        }
         if !leading.is_empty() {
             return self.expected("WHEN");
         }
@@ -870,6 +919,7 @@ impl Parser {
                     break;
                 }
                 TokenKind::Keyword(K::Endcase) => break,
+                _ if self.failed.is_some() => break,
                 _ => return self.expected("ENDCASE"),
             }
         }
@@ -1026,7 +1076,7 @@ impl Parser {
         self.in_def = false;
         self.in_command_def = false;
         let body = body?;
-        self.expect_keyword(Keyword::End, "END")?;
+        self.close(Keyword::End, "END")?;
         Ok(Def {
             name,
             common,
@@ -1696,6 +1746,21 @@ mod tests {
                 let _ = parse(&s);
             }
         }
+    }
+
+    /// The statement that does not parse ends the program, and the blocks
+    /// around it close there.
+    #[test]
+    fn partial_parse_stops_at_the_statement() {
+        let (program, e) = parse_partial("?1:FOR I=0 TO 1:?2:?(:?3:NEXT:?4");
+        assert_eq!(e.unwrap().stmt, Some(Span { line: 1, col: 20 }));
+        let kinds: Vec<StmtKind> = program.stmts.into_iter().map(|s| s.kind).collect();
+        let [StmtKind::Print { .. }, StmtKind::For { body, .. }] = &kinds[..] else {
+            panic!("{kinds:?}");
+        };
+        let body: Vec<&StmtKind> = body.iter().map(|s| &s.kind).collect();
+        assert!(matches!(body[..], [_, StmtKind::Unparsed]), "{body:?}");
+        assert_eq!(parse_partial("?1:?2").1, None);
     }
 
     #[test]

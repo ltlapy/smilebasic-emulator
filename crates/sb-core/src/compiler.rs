@@ -21,10 +21,19 @@ fn key(var: &Var) -> Key {
 
 /// Compiles `program`; `direct` for a line typed in direct mode, where
 /// global declarations are checked as they run rather than here.
-pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> Result<Compiled> {
+/// `unparsed` is the error of its [`StmtKind::Unparsed`], given when
+/// compiling reaches it.
+pub fn compile(
+    program: &Program,
+    host: &dyn Host,
+    direct: bool,
+    slot: i32,
+    unparsed: Option<Error>,
+) -> Result<Compiled> {
     let mut c = Compiler {
         host,
         direct,
+        unparsed,
         first: program.stmts.first().map(|s| (s.line, s.col)),
         slot,
         out: Compiled::default(),
@@ -64,6 +73,9 @@ pub fn compile(program: &Program, host: &dyn Host, direct: bool, slot: i32) -> R
             c.def_at = i;
             c.def(def)?;
         }
+    }
+    if let Some(e) = c.unparsed {
+        return Err(e);
     }
     crate::fuse::fuse(&mut c.out);
     Ok(c.out)
@@ -106,6 +118,8 @@ struct Compiler<'h> {
     /// The statement the DEF being compiled is.
     def_at: usize,
     direct: bool,
+    /// The error the program's [`StmtKind::Unparsed`] gives.
+    unparsed: Option<Error>,
     /// Where the first statement starts: in DIRECT mode, the commands
     /// of DIRECT mode work only there, at the start of the line.
     first: Option<(u32, u32)>,
@@ -970,6 +984,10 @@ impl Compiler<'_> {
                 self.emit(Op::RestoreDyn);
             }
             StmtKind::Restore(Target::Missing) => unreachable!("RESTORE's target is optional"),
+            StmtKind::Unparsed => {
+                let e = self.unparsed.take();
+                return Err(e.unwrap_or_else(|| ErrorKind::SyntaxError.into()));
+            }
             StmtKind::Swap(a, b) => {
                 // Each place is worked out once, the second first (checked
                 // on hardware).
