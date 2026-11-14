@@ -656,7 +656,7 @@ fn loadv_chkfile_and_program_types() {
     for (source, command) in [("LOAD \"GRP0:X\"", "LOAD"), ("SAVE \"GRP0:X\"", "SAVE")] {
         m.set_slot(0, format!("A=1\n{source}"));
         enter(&mut m, "run");
-        let message = format!("Illegal format in 0:2({command}:1)");
+        let message = format!("Illegal format in 0:2({command}:1) (\"GRP0:X\")");
         assert_eq!(err(&mut m), (message, 71, Some(0)), "{source}");
     }
 }
@@ -682,6 +682,103 @@ fn file_names_starting_with_a_hash() {
     assert!(dir.0.join("@WORKSPACE").join("T#UPDATE-META").is_file());
     enter(&mut m, "load \"#update-meta\"");
     assert_eq!(m.slot(0), "?\"META\"");
+}
+
+/// Names as SmileBASIC 4's parser takes them: `@` anywhere, `.` after a
+/// first `@`, and a type only before a `:` at index 3. A name it refuses
+/// is Illegal format, and a part of over 32 characters File name is too
+/// long, both numbering the argument.
+#[test]
+fn file_names_follow_sb4s_parser() {
+    let dir = TempDir::new("name-parser");
+    let mut m = machine(&dir);
+    let program = [
+        "SAVEV \"TXT:A@B\",\"AT\":?RESULT();LOADV(\"TXT:A@B\");CHKFILE(\"txt:a@b\")",
+        "SAVEV \"TXT:@.X\",\"DOT\":?RESULT();LOADV(\"TXT:@.X\")",
+        "SAVEV \"TXT:@\",\"LONE\":?RESULT();LOADV(\"TXT:@\")",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 4), ["1AT1", "1DOT", "1LONE", "OK"]);
+    assert!(dir.0.join("@WORKSPACE").join("TA@B").is_file());
+
+    let (max, long) = ("A".repeat(32), "A".repeat(33));
+    m.set_slot(0, format!("SAVEV \"TXT:{max}\",\"X\":?RESULT()"));
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    for (source, message, code) in [
+        ("?CHKFILE(\"TXT:A:B\")", "Illegal format", 71),
+        ("?CHKFILE(\"AB:C\")", "Illegal format", 71),
+        ("?CHKFILE(\"TXT:\")", "Illegal format", 71),
+        ("SAVEV \"TXT:A/B/C\",\"X\"", "Illegal format", 71),
+        ("LOADV \"DAT:A*\",A%", "Illegal format", 71),
+        ("DELETE \"TXT:A:B\"", "Illegal format", 71),
+        (
+            &format!("SAVEV \"TXT:{long}\",\"X\""),
+            "File name is too long",
+            73,
+        ),
+        (
+            &format!("?CHKFILE(\"{long}/A\")"),
+            "File name is too long",
+            73,
+        ),
+    ] {
+        m.set_slot(0, format!("DIM A%[1]\n{source}"));
+        enter(&mut m, "run");
+        let (said, number, arg) = program_error(&mut m);
+        let command = source.trim_start_matches('?');
+        let command = &command[..command.find([' ', '(']).unwrap()];
+        let start = format!("{message} in 0:2({command}:1) (");
+        assert!(said.starts_with(&start), "{source}: {said}");
+        assert_eq!((number, arg), (code, Some(0)), "{source}");
+    }
+    assert!(!dir.0.join("@WORKSPACE").join(format!("T{long}")).exists());
+
+    for (line, message) in [
+        ("?chkfile(\"\")", "Illegal format (CHKFILE:1) (\"\")"),
+        (
+            "load \"grp:a:b\",1",
+            "Illegal format (LOAD:1) (\"GRP:A:B\")",
+        ),
+        (
+            "rename \"a@b\",\"b:c\"",
+            "Illegal format (RENAME:2) (\"B:C\")",
+        ),
+        (
+            "files \"txt:a/b\"",
+            "Illegal format (FILES:1) (\"TXT:A/B\")",
+        ),
+        ("files \"\"", "Illegal format (FILES:1) (\"\")"),
+        ("load \"png:x\"", "File type mismatch (LOAD) (PNG file)"),
+    ] {
+        assert_eq!(direct_error(&mut m, line), message, "{line}");
+    }
+    let line = format!("loadg \"{}/a\",0", "b".repeat(33));
+    let message = format!("File name is too long (LOADG:1) (\"{}/A\")", "B".repeat(33));
+    assert_eq!(direct_error(&mut m, &line), message);
+    // EXEC numbers no argument.
+    m.set_slot(0, "EXEC \"TXT:A:B\",1".to_string());
+    enter(&mut m, "run");
+    let (said, number, arg) = program_error(&mut m);
+    assert_eq!(
+        (said.as_str(), number, arg),
+        ("Illegal format in 0:1 (\"TXT:A:B\")", 71, None)
+    );
+    // The name is fine and the file there: FILES lists it, RENAME and
+    // DELETE take it.
+    enter(&mut m, "cls:dim l$[0]:files \"txt:\",l$:?l$[0]");
+    assert_eq!(tail(&m, 2), ["TXT:@", "OK"]);
+    enter(
+        &mut m,
+        "rename \"txt:a@b\",\"@a.b\":?result();chkfile(\"txt:@a.b\")",
+    );
+    assert_eq!(tail(&m, 2), ["11", "OK"]);
+    enter(
+        &mut m,
+        "delete \"txt:@a.b\":?result();chkfile(\"txt:@a.b\")",
+    );
+    assert_eq!(tail(&m, 2), ["10", "OK"]);
 }
 
 #[test]
@@ -1130,7 +1227,7 @@ fn load_and_save_refuse_other_types_of_file() {
     assert!(!dir.0.join("@WORKSPACE").join("BX").exists());
     m.set_slot(0, "A=1\nLOAD \"PRG:X\",1".to_string());
     enter(&mut m, "run");
-    let message = "Illegal format in 0:2(LOAD:1)".to_string();
+    let message = "Illegal format in 0:2(LOAD:1) (\"PRG:X\")".to_string();
     assert_eq!(program_error(&mut m), (message, 71, Some(0)));
 
     m.set_slot(0, "A=1\nLOADG \"PNG:X\",0".to_string());
@@ -1366,7 +1463,7 @@ fn loadg_types_of_file() {
             "loadg \"png:p\",0",
             "Can't access other project in this mode (LOADG)",
         ),
-        ("loadg \"xyz:p\",0", "Illegal format (LOADG:1)"),
+        ("loadg \"xyz:p\",0", "Illegal format (LOADG:1) (\"XYZ:P\")"),
         ("loadg \"txt:t\",0", "File type mismatch (LOADG) (TXT file)"),
         ("load \"dat:x\",1", "File type mismatch (LOAD) (DAT file)"),
     ] {
@@ -1381,7 +1478,7 @@ fn loadg_types_of_file() {
     for (source, message, code, arg) in [
         (
             "LOADG \"XYZ:P\",0",
-            "Illegal format in 0:2(LOADG:1)",
+            "Illegal format in 0:2(LOADG:1) (\"XYZ:P\")",
             71,
             Some(0),
         ),

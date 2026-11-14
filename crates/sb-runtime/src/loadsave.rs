@@ -13,12 +13,12 @@ use sb_core::memory;
 use sb_core::value::{Array, ArrayData, ArrayRef, Value, new_str};
 
 use crate::confirm::FileAction;
-use crate::files::{program_text, str_arg};
+use crate::files::{check_file_name, program_text, str_arg};
 use crate::graphics::{GRP_SIZE, PAGES};
 use crate::image::{self, Image};
 use crate::runtime::{Command, Runtime, checking, illegal, no_form, opt_int};
 use crate::sbfile::{self, Data, DataValues};
-use crate::storage::{self, FileKind, FileRef, StorageError};
+use crate::storage::{self, FileKind, FileRef, NamedKind, StorageError};
 
 /// JPEG quality when SAVEG is not given one.
 const JPEG_QUALITY: i32 = 60;
@@ -227,10 +227,10 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
-        crate::files::refuse_reserved(command, args)?;
         match (command, want, args) {
             (Command::Loadv, Want::Value, [spec]) => {
                 let spec = str_arg(spec)?;
+                check_file_name(&spec, 0)?;
                 loadv_type(&spec)?;
                 if self.ask_load(&spec, FileKind::Txt) {
                     return Ok(vec![Value::Int(0)]);
@@ -250,6 +250,7 @@ impl Runtime {
             }
             (Command::Loadv, Want::Outs(0), [spec, target]) => {
                 let spec = str_arg(spec)?;
+                check_file_name(&spec, 0)?;
                 loadv_type(&spec)?;
                 // The command form is for DAT and GRP files only, whatever
                 // it is given to load into: a TXT file into a string is the
@@ -294,6 +295,7 @@ impl Runtime {
             }
             (Command::Savev, Want::Outs(0), [spec, value]) => {
                 let spec = str_arg(spec)?;
+                check_file_name(&spec, 0)?;
                 self.refuse_save_project(&spec)?;
                 // The type cannot be left out.
                 let file = match spec.contains(':') {
@@ -332,8 +334,10 @@ impl Runtime {
                 if matches!(rest.len(), 0 | 2) =>
             {
                 let spec = str_arg(spec)?;
-                self.loadg_type(&spec)?;
+                // The page first, then the name, then its type.
                 let page = page_arg(page)?;
+                check_file_name(&spec, 0)?;
+                self.loadg_type(&spec)?;
                 let at = match rest {
                     [x, y] => (opt_int(x)?.unwrap_or(0), opt_int(y)?.unwrap_or(0)),
                     _ => (0, 0),
@@ -361,6 +365,7 @@ impl Runtime {
             (Command::Saveg, Want::Outs(0), [spec, page, rest @ ..]) => {
                 let spec = str_arg(spec)?;
                 let page = page_arg(page)?;
+                check_file_name(&spec, 0)?;
                 self.refuse_save_project(&spec)?;
                 let file = self.write_name(&spec, FileKind::Grp);
                 let jpeg = matches!(&file, Ok(f) if f.kind == FileKind::Jpg);
@@ -421,32 +426,31 @@ impl Runtime {
         }
     }
 
-    /// LOADG's type of file, before anything else, in a program, a
+    /// LOADG's type of file, once the name is checked, in a program, a
     /// subprogram or at the prompt: `PNG:` is Can't access other project
     /// in this mode, unless SmileBASIC 4's own `#` projects are involved
-    /// (and then fails, as we cannot load those), `TXT:` File type
-    /// mismatch, and a type that is none (`XYZ:`) Illegal format. JPG and
-    /// DAT files load, and so do files named with any project.
+    /// (and then fails, as we cannot load those), and `TXT:` File type
+    /// mismatch. A type that is none (`XYZ:`) is Illegal format, as the
+    /// name is. JPG and DAT files load, and so do files named with any
+    /// project.
     fn loadg_type(&self, spec: &str) -> Result<()> {
-        let Some((kind, rest)) = spec.split_once(':') else {
+        let Some(parts) = storage::split_name(spec) else {
             return Ok(());
         };
-        if kind.eq_ignore_ascii_case("PNG") {
-            // `PNG:#NAME` is a file of the current project, not a system
-            // project's.
-            let named = rest
-                .split_once('/')
-                .is_some_and(|(p, _)| p.starts_with('#'));
-            let system = named || self.storage.project().starts_with('#');
-            return match system {
-                true => Ok(()),
-                false => Err(ErrorKind::CantAccessOtherProject.into()),
-            };
-        }
-        match FileKind::from_name(kind) {
-            Some(FileKind::Txt) => Err(Error::with_detail(ErrorKind::FileTypeMismatch, "TXT file")),
-            Some(_) => Ok(()),
-            None => Err(Error::new(ErrorKind::IllegalFormat).of_arg(0)),
+        match parts.kind {
+            Some(NamedKind::Png) => {
+                // `PNG:#NAME` is a file of the current project, not a
+                // system project's.
+                let named = parts.project.is_some_and(|p| p.starts_with('#'));
+                match named || self.storage.project().starts_with('#') {
+                    true => Ok(()),
+                    false => Err(ErrorKind::CantAccessOtherProject.into()),
+                }
+            }
+            Some(NamedKind::File(FileKind::Txt)) => {
+                Err(Error::with_detail(ErrorKind::FileTypeMismatch, "TXT file"))
+            }
+            _ => Ok(()),
         }
     }
 

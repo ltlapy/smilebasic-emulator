@@ -2719,12 +2719,16 @@ impl Host for Runtime {
         if self.direct {
             return Err(ErrorKind::CantUseFromDirectMode.into());
         }
+        // The name is checked before the slot.
+        let file = file.map(String::from_utf16_lossy);
+        if let Some(file) = &file {
+            crate::files::check_exec_name(file)?;
+        }
         let slot = slot_arg(Some(&Value::Int(slot)))?;
-        if let Some(file) = file {
-            let file = String::from_utf16_lossy(file);
+        if let Some(file) = &file {
             // A program or subprogram may not EXEC a file named with a
             // project, not even its own.
-            if crate::files::names_project(&file) {
+            if crate::files::names_project(file) {
                 return Err(ErrorKind::CantAccessOtherProject.into());
             }
             // A file that cannot be loaded is Load failed, after the
@@ -2732,7 +2736,7 @@ impl Host for Runtime {
             // that stands for it. Back on the question over the slot's
             // unsaved edits sets RESULT to -1 and is Load failed too.
             // UNVERIFIED: the Load failed after Back.
-            match self.load_asking("EXEC", &file, slot) {
+            match self.load_asking("EXEC", file, slot) {
                 None => {
                     self.retry = false;
                     return Ok(Exec::Wait);
@@ -2741,7 +2745,7 @@ impl Host for Runtime {
                 Some(true) => {}
             }
             if let Some(meter) = &mut self.meter {
-                meter.charge_read(&file, self.slots[slot].len() as u64, true);
+                meter.charge_read(file, self.slots[slot].len() as u64, true);
             }
         }
         self.slot_edits.push((slot, crate::prg::SlotEdit::Compiled));

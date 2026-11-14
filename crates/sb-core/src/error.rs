@@ -65,8 +65,11 @@ pub enum ErrorKind {
     /// SYSPARAM asked for another number of values than its item has, or
     /// setting one that can only be read.
     WrongNumberOfOutArguments,
-    /// FORMAT$ with a conversion it does not know.
+    /// FORMAT$ with a conversion it does not know, or a file name that
+    /// breaks SmileBASIC 4's rules.
     IllegalFormat,
+    /// A file name, or the project named in it, of over 32 characters.
+    FileNameTooLong,
     /// EXEC of a slot with code that may still run.
     CantUseSpecifiedSlot,
     /// CONT with nothing to go on with.
@@ -134,6 +137,7 @@ impl ErrorKind {
             ErrorKind::CantUseEmptyString => 67,
             ErrorKind::CantUseUserDefinedCharacter => 68,
             ErrorKind::IllegalFormat => 71,
+            ErrorKind::FileNameTooLong => 73,
             ErrorKind::CantAccessOtherProject => 74,
             ErrorKind::CantSaveToSystemProject => 75,
             ErrorKind::UndefinedProjectName => 76,
@@ -192,6 +196,7 @@ impl ErrorKind {
             ErrorKind::CantUseInProgram => "Can't use in program",
             ErrorKind::IllegalSystemArgumentName => "Illegal system argument name",
             ErrorKind::IllegalFormat => "Illegal format",
+            ErrorKind::FileNameTooLong => "File name is too long",
             ErrorKind::StackUnderflow => "Stack underflow",
             ErrorKind::CantUseSpecifiedSlot => "Can't use the specified slot",
             ErrorKind::CantContinue => "Can't continue",

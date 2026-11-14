@@ -268,13 +268,6 @@ pub fn is_reserved_name(name: &str) -> bool {
     }
 }
 
-/// Whether a name or a project in `spec` (`[TYPE:][PROJECT/]NAME`, or
-/// FILES' `[TYPE:][PROJECT][/]`) is one that [`is_reserved_name`] refuses.
-pub fn names_reserved(spec: &str) -> bool {
-    let rest = spec.split_once(':').map_or(spec, |(_, rest)| rest);
-    rest.split('/').any(is_reserved_name)
-}
-
 /// A type named in front of a file's name: one of [`FileKind`], or `PNG`,
 /// which only LOADG takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1548,7 +1541,7 @@ mod tests {
             "CON/",
             "TXT:AUX",
         ] {
-            assert!(names_reserved(spec), "{spec}");
+            assert!(split_name(spec).is_none(), "{spec}");
         }
         // Windows takes these for devices too, so their folders get a mark
         // there; SmileBASIC 4 takes them.
@@ -1570,8 +1563,8 @@ mod tests {
         }
         assert!(check_project_name("#CON").is_ok());
         assert!(check_name("@CON").is_ok());
-        assert!(!names_reserved("TXT:CON.A"));
-        assert!(!names_reserved("//"));
+        assert!(split_name("TXT:CON.A").is_some());
+        assert!(split_name("TXT:@CON").is_some());
         assert_eq!(folder_project("@CON"), "@CON");
         assert_eq!(folder_project("@WORKSPACE"), "@WORKSPACE");
         for dotted in ["A.", "A..", "@A."] {

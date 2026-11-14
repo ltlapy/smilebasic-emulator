@@ -15,7 +15,8 @@ use crate::confirm::{Ask, Confirm, FileAction, FileConfirm, project_label, switc
 use crate::runtime::{Command, Runtime, SLOTS, checking, no_form, slot_arg};
 use crate::sbfile;
 use crate::storage::{
-    self, FileKind, FileRef, StorageError, parse_file_name, parse_listing, parse_read_name,
+    self, FileKind, FileRef, NameError, NamedKind, StorageError, parse_file_name, parse_listing,
+    parse_read_name,
 };
 use crate::text::CONSOLE;
 
@@ -93,7 +94,6 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
-        refuse_reserved(command, args)?;
         match (command, want, args.len()) {
             (Command::Result, Want::Value, 0) => Ok(vec![Value::Int(self.result)]),
             (Command::Project, Want::Value, 0) => Ok(vec![Value::str(self.storage.project())]),
@@ -128,13 +128,16 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Chkfile, Want::Value, 1) => {
-                let found = parse_read_name(&str_arg(&args[0])?, FileKind::Txt)
+                let spec = str_arg(&args[0])?;
+                check_file_name(&spec, 0)?;
+                let found = parse_read_name(&spec, FileKind::Txt)
                     .is_ok_and(|file| self.storage.exists_ref(&file));
                 Ok(vec![Value::Int(i32::from(found))])
             }
             (Command::Load, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
+                check_file_name(&spec, 0)?;
                 program_type(&spec)?;
                 self.load_asking("LOAD", &spec, slot);
                 Ok(vec![])
@@ -142,6 +145,7 @@ impl Runtime {
             (Command::Save, Want::Outs(0), 1 | 2) => {
                 let spec = str_arg(&args[0])?;
                 let slot = slot_arg(args.get(1))?;
+                check_file_name(&spec, 0)?;
                 program_type(&spec)?;
                 self.refuse_save_project(&spec)?;
                 if let Ok(file) = self.write_name(&spec, FileKind::Txt) {
@@ -173,6 +177,7 @@ impl Runtime {
             }
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
+                check_file_name(&spec, 0)?;
                 refuse_project(&spec).map_err(|e| e.of_arg(0))?;
                 if let Some(file) = self.existing(&spec) {
                     let action = FileAction {
@@ -196,12 +201,15 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Rename, Want::Outs(0), 2) => {
-                // The first name is checked before the second is read.
+                // The first name is checked before the second is read, and
+                // the types before the second's project.
                 let from = str_arg(&args[0])?;
+                check_file_name(&from, 0)?;
                 refuse_project(&from).map_err(|e| e.of_arg(0))?;
                 let to = str_arg(&args[1])?;
-                refuse_project(&to).map_err(|e| e.of_arg(1))?;
+                check_file_name(&to, 1)?;
                 same_type(&from, &to)?;
+                refuse_project(&to).map_err(|e| e.of_arg(1))?;
                 if let Some(file) = self.existing(&from) {
                     let action = FileAction {
                         title: "Rename file".to_string(),
@@ -222,7 +230,11 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Files, Want::Value, 0 | 1) => {
-                let spec = args.first().map(str_arg).transpose()?.unwrap_or_default();
+                let spec = args.first().map(str_arg).transpose()?;
+                if let Some(spec) = &spec {
+                    check_listing_name(spec)?;
+                }
+                let spec = spec.unwrap_or_default();
                 let items = self.listing(&spec);
                 let items = self.finish("FILES", items).unwrap_or_default();
                 Ok(vec![Value::Array(Rc::new(RefCell::new(str_array(items))))])
@@ -237,6 +249,9 @@ impl Runtime {
                 };
                 if let Some(left) = self.listing_left.take() {
                     return Ok(self.show_listing(left));
+                }
+                if let [Value::Str(_), ..] = args {
+                    check_listing_name(&spec)?;
                 }
                 let items = self.listing(&spec);
                 let items = self.finish("FILES", items).unwrap_or_default();
@@ -686,15 +701,17 @@ fn refuse_project(spec: &str) -> Result<()> {
 /// type mismatch, before anything is asked. A second name without a
 /// type takes the first's.
 fn same_type(from: &str, to: &str) -> Result<()> {
-    let Ok((kind, _)) = parse_file_name(from, FileKind::Txt) else {
+    let kind_of = |spec| storage::split_name(spec).map(|parts| parts.kind);
+    let (Some(kind), Some(Some(to_kind))) = (kind_of(from), kind_of(to)) else {
         return Ok(());
     };
-    match parse_file_name(to, kind) {
-        Ok((to_kind, _)) if to_kind != kind => {
+    let kind = kind.unwrap_or(NamedKind::File(FileKind::Txt));
+    match to_kind != kind {
+        true => {
             let detail = format!("{} file to {}", kind.name(), to_kind.name());
             Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
         }
-        _ => Ok(()),
+        false => Ok(()),
     }
 }
 
@@ -706,52 +723,67 @@ pub(crate) fn names_project(spec: &str) -> bool {
         .is_ok_and(|file| file.project.is_some_and(|p| !p.starts_with('#')))
 }
 
-/// A name that SmileBASIC 4 refuses ([`storage::is_reserved_name`]), as a
-/// file's or as a project's in the path, is Illegal format, on every
-/// system and before anything is asked: `CHKFILE("TXT:CON")`,
-/// `SAVE "NUL/A"`, `FILES "TXT:LPT1"`.
-/// UNVERIFIED: which error comes first when another argument is wrong too.
-pub(crate) fn refuse_reserved(command: Command, args: &[Value]) -> Result<()> {
-    let names = match command {
-        Command::Rename => 2,
-        Command::Chkfile
-        | Command::Delete
-        | Command::Files
-        | Command::Load
-        | Command::Save
-        | Command::Loadg
-        | Command::Loadv
-        | Command::Saveg
-        | Command::Savev => 1,
-        _ => 0,
+/// The error for a name that SmileBASIC 4's file commands refuse before
+/// they look for the file or ask anything, on every system.
+fn name_error(error: NameError, spec: &str) -> Error {
+    let kind = match error {
+        NameError::Illegal => ErrorKind::IllegalFormat,
+        NameError::TooLong => ErrorKind::FileNameTooLong,
     };
-    for (i, arg) in args.iter().take(names).enumerate() {
-        if let Value::Str(s) = arg {
-            let spec = String::from_utf16_lossy(&s.borrow());
-            if storage::names_reserved(&spec) {
-                let detail = format!("{spec:?}");
-                return Err(Error::with_detail(ErrorKind::IllegalFormat, detail).of_arg(i));
-            }
-        }
+    Error::with_detail(kind, format!("{spec:?}"))
+}
+
+/// A file's name as argument `arg` of CHKFILE, LOAD, SAVE, LOADV, SAVEV,
+/// LOADG, SAVEG, DELETE or RENAME: Illegal format where SmileBASIC 4's
+/// parser fails or no file is named, as `CHKFILE("TXT:A:B")`,
+/// `SAVE "NUL/A"` and `DELETE "TXT:"`, and File name is too long for a
+/// project's or file's name of over 32 characters, both numbering the
+/// argument (`(CHKFILE:1)`).
+pub(crate) fn check_file_name(spec: &str, arg: usize) -> Result<()> {
+    match storage::file_name_error(spec) {
+        Some(error) => Err(name_error(error, spec).of_arg(arg)),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// FILES' `[TYPE:][PROJECT][/]`, refused as [`check_file_name`] refuses
+/// a file's name, also when empty, or when it names a file in a project.
+/// `//` lists the projects.
+fn check_listing_name(spec: &str) -> Result<()> {
+    match storage::listing_name_error(spec) {
+        Some(error) if spec != "//" => Err(name_error(error, spec).of_arg(0)),
+        _ => Ok(()),
+    }
+}
+
+/// EXEC's file, refused as [`check_file_name`] refuses a name but without
+/// the argument's number. A name of another type than a program's is not
+/// refused here; it fails to load.
+pub(crate) fn check_exec_name(spec: &str) -> Result<()> {
+    let error = match storage::split_name(spec) {
+        None => Some(NameError::Illegal),
+        Some(parts) => match parts.kind {
+            None | Some(NamedKind::File(FileKind::Txt)) => storage::file_name_error(spec),
+            Some(_) => None,
+        },
+    };
+    match error {
+        Some(error) => Err(name_error(error, spec)),
+        None => Ok(()),
+    }
 }
 
 /// LOAD and SAVE take only text files, before anything is asked: another
-/// type of file (`DAT:`) is File type mismatch, whether there is such a
-/// file or not, and a type that is none (`GRP0:`) Illegal format, at
-/// the prompt too.
+/// type of file (`DAT:`, `PNG:`) is File type mismatch, whether there is
+/// such a file or not. A type that is none (`GRP0:`) is refused before,
+/// by [`check_file_name`].
 fn program_type(spec: &str) -> Result<()> {
-    let Some((kind, _)) = spec.split_once(':') else {
-        return Ok(());
-    };
-    match FileKind::from_name(kind) {
-        Some(FileKind::Txt) => Ok(()),
+    match storage::split_name(spec).and_then(|parts| parts.kind) {
+        None | Some(NamedKind::File(FileKind::Txt)) => Ok(()),
         Some(kind) => {
             let detail = format!("{} file", kind.name());
             Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
         }
-        None => Err(Error::new(ErrorKind::IllegalFormat).of_arg(0)),
     }
 }
 
