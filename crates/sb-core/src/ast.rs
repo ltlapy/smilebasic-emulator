@@ -91,6 +91,10 @@ pub struct Def {
     pub body: Vec<Stmt>,
 }
 
+/// An ENUM value with where its first operand stands, where a wrong value
+/// is placed.
+pub type EnumValue = (Expr, Span);
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum StmtKind {
     Label(String),
@@ -104,7 +108,7 @@ pub enum StmtKind {
     /// Each name with where it stands, where a `Duplicate constant` is
     /// placed.
     Const(Vec<(String, Span, Expr)>),
-    Enum(Vec<(String, Span, Option<Expr>)>),
+    Enum(Vec<(String, Span, Option<EnumValue>)>),
     Option(String),
     /// A built-in or user-defined command. Omitted arguments (`CMD ,1`) and
     /// OUT variables (`OUT A,,B`) are `None`.

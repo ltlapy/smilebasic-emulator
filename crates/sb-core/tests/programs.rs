@@ -423,6 +423,36 @@ fn duplicate_constants() {
     assert_eq!(at("ENUM #ON=#NONE").0, ErrorKind::DuplicateConstant);
 }
 
+/// ENUM takes a real only as a whole number in the 32-bit range, as
+/// SmileBASIC 4's compiler does.
+#[test]
+fn enum_takes_whole_reals() {
+    assert_eq!(output("ENUM #A=1.0,#B\n?#A;#B"), "12\n");
+    assert_eq!(output("ENUM #A=4/2,#B\n?#B"), "3\n");
+    assert_eq!(
+        output("ENUM #A=-2147483648,#B\n?#A;\" \";#B"),
+        "-2147483648 -2147483647\n"
+    );
+    assert_eq!(output("ENUM #A=2147483647.0,#B\n?#B"), "-2147483648\n");
+    let at = |src: &str| {
+        let e = run(src).unwrap_err();
+        assert_eq!(e.detail, None, "{src}");
+        (e.kind, e.line, e.col)
+    };
+    // At the value's first operand, past a sign or a bracket.
+    assert_eq!(at("ENUM #A=1.5"), (ErrorKind::TypeMismatch, 1, 9));
+    assert_eq!(at("?1\nENUM #B,#A=-0.5"), (ErrorKind::TypeMismatch, 2, 13));
+    assert_eq!(at("ENUM #A=(1)+0.5"), (ErrorKind::TypeMismatch, 1, 10));
+    assert_eq!(at("ENUM #A=3/2").0, ErrorKind::TypeMismatch);
+    assert_eq!(at("ENUM #A=#PI").0, ErrorKind::TypeMismatch);
+    assert_eq!(at("ENUM #A=\"X\""), (ErrorKind::TypeMismatch, 1, 9));
+    assert_eq!(at("ENUM #A=2147483648"), (ErrorKind::OutOfRange, 1, 9));
+    assert_eq!(at("ENUM #A=-3E9"), (ErrorKind::OutOfRange, 1, 10));
+    // The fraction is checked first.
+    assert_eq!(at("ENUM #A=3E9+0.5").0, ErrorKind::TypeMismatch);
+    assert_eq!(at("ENUM #A=2147483647.5").0, ErrorKind::TypeMismatch);
+}
+
 #[test]
 fn option_strict() {
     assert_eq!(

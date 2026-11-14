@@ -183,6 +183,27 @@ impl Parser {
         self.tokens[self.pos].span
     }
 
+    /// Where the first operand of the expression ahead stands, past any
+    /// `(` and unary operators. Operations on constants keep their first
+    /// operand's place in SmileBASIC 4.
+    // UNVERIFIED: that `(` and a unary operator are tokens of their own
+    // there, so a value such as `-1.5` is placed at `1.5`.
+    fn operand_span(&self) -> Span {
+        let mut i = self.pos;
+        while i + 1 < self.tokens.len()
+            && matches!(
+                self.tokens[i].kind,
+                TokenKind::LParen
+                    | TokenKind::Minus
+                    | TokenKind::Bang
+                    | TokenKind::Keyword(Keyword::Not)
+            )
+        {
+            i += 1;
+        }
+        self.tokens[i].span
+    }
+
     fn advance(&mut self) -> TokenKind {
         let kind = self.tokens[self.pos].kind.clone();
         if self.pos + 1 < self.tokens.len() {
@@ -471,7 +492,8 @@ impl Parser {
                         let span = p.span();
                         let name = p.constant_name()?;
                         let value = if p.eat(&TokenKind::Assign) {
-                            Some(p.expr()?)
+                            let at = p.operand_span();
+                            Some((p.expr()?, at))
                         } else {
                             None
                         };
@@ -1368,7 +1390,11 @@ mod tests {
         assert_eq!(
             one("ENUM #A=2,#B"),
             StmtKind::Enum(vec![
-                ("A".into(), Span { line: 1, col: 6 }, Some(Expr::Int(2))),
+                (
+                    "A".into(),
+                    Span { line: 1, col: 6 },
+                    Some((Expr::Int(2), Span { line: 1, col: 9 }))
+                ),
                 ("B".into(), Span { line: 1, col: 11 }, None)
             ])
         );

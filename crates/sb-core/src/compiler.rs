@@ -152,6 +152,20 @@ fn tests_element(cond: &Expr) -> bool {
     matches!(cond, Expr::Index { .. })
 }
 
+/// ENUM's value from a real, which must be a whole number in the 32-bit
+/// range: a fraction (or a NaN) is `Type mismatch`, and a value outside
+/// is `Out of range`.
+fn enum_int(x: f64) -> std::result::Result<i32, ErrorKind> {
+    // A NaN is not its own truncation either; an infinity is.
+    if x != x.trunc() {
+        return Err(ErrorKind::TypeMismatch);
+    }
+    if !(-2147483648.0..=2147483647.0).contains(&x) {
+        return Err(ErrorKind::OutOfRange);
+    }
+    Ok(x as i32)
+}
+
 /// Upper-case name as calls look it up, `MID$` style.
 fn call_name(var: &Var) -> String {
     full_name(&var.name, var.suffix)
@@ -278,14 +292,16 @@ impl Compiler<'_> {
                         self.check_new_constant(name, *span)?;
                         let n = match expr {
                             None => next,
-                            Some(e) => match self.const_eval(e).map_err(at)? {
-                                Literal::Int(n) => n,
-                                // The reference: a real value is truncated.
-                                Literal::Real(x) => crate::value::real_to_int(x).map_err(at)?,
-                                Literal::Str(_) => {
-                                    return Err(at(ErrorKind::TypeMismatch.into()));
-                                }
-                            },
+                            Some((e, place)) => {
+                                let value = match self.const_eval(e).map_err(at)? {
+                                    Literal::Int(n) => Ok(n),
+                                    Literal::Real(x) => enum_int(x),
+                                    Literal::Str(_) => Err(ErrorKind::TypeMismatch),
+                                };
+                                value.map_err(|kind| {
+                                    Error::from(kind).at_pos(place.line, place.col)
+                                })?
+                            }
                         };
                         self.constants.insert(name.clone(), Literal::Int(n));
                         next = n.wrapping_add(1);
