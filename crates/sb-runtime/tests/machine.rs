@@ -1908,6 +1908,24 @@ fn a_prompt_drops_the_keys_of_the_line_before_it() {
     assert!(!r.iter().any(|l| l == "?1"), "{r:?}");
 }
 
+/// SNDSTOP right after VSYNC takes a frame and puts SNDMVOL back at 88, as
+/// RUN does.
+#[test]
+fn sndstop_takes_a_frame_and_run_resets_sndmvol() {
+    let mut m = machine();
+    m.set_slot(
+        0,
+        "SNDMVOL 32:VSYNC:T=MAINCNT():SNDSTOP:?MAINCNT()-T;SNDMVOL():SNDMVOL 40\n".to_string(),
+    );
+    enter(&mut m, "RUN");
+    assert!(rows(&m).iter().any(|l| l == "188"), "{:?}", rows(&m));
+    enter(&mut m, "?SNDMVOL()");
+    assert!(rows(&m).iter().any(|l| l == "40"), "{:?}", rows(&m));
+    m.set_slot(0, "?SNDMVOL()+1000\n".to_string());
+    enter(&mut m, "RUN");
+    assert!(rows(&m).iter().any(|l| l == "1088"), "{:?}", rows(&m));
+}
+
 /// TEST62 on a Switch 2: RUN leaves VSYNC's count where it was, so a first
 /// VSYNC of any size finds its frames gone by.
 #[test]

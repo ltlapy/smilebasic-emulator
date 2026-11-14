@@ -433,8 +433,15 @@ impl Runtime {
                 };
                 Ok(vec![Value::Int(at)])
             }
+            // SNDSTOP holds the program until the next frame.
+            // UNVERIFIED: that it waits for the frame's end wherever in the
+            // frame it runs; right after VSYNC it takes one frame.
             (Command::Sndstop, Want::Outs(0), 0) => {
-                self.sound.stop_all();
+                if !self.frame_wait_over() {
+                    self.sound.stop_all();
+                    self.sound.reset_mixer();
+                    self.hold_for_a_frame();
+                }
                 Ok(vec![])
             }
             (Command::Sndmvol, Want::Outs(0), 1..=2) => {
@@ -443,12 +450,12 @@ impl Runtime {
                     None => 0,
                     Some(v) => frames(f64::from(in_range("time", v, 0..=32767)?)),
                 };
-                self.sound.master.to(f64::from(volume) / 127.0, fade);
+                self.sound.set_master(volume, fade);
                 Ok(vec![])
             }
-            (Command::Sndmvol, Want::Outs(1) | Want::Value, 0) => Ok(vec![Value::Int(
-                (self.sound.master.value * 127.0).round() as i32,
-            )]),
+            (Command::Sndmvol, Want::Outs(1) | Want::Value, 0) => {
+                Ok(vec![Value::Int(self.sound.master_volume())])
+            }
             (Command::Wavset, Want::Outs(0), 6..=7) => {
                 let (n, envelope) = wave_head(args)?;
                 let hex = text(&args[5])?;
@@ -708,11 +715,11 @@ impl Runtime {
             (Command::Sndmsbal, Want::Outs(0), 1..=2) => {
                 let balance = in_range("balance", &args[0], 0..=127)?;
                 let fade = frames(f64::from(opt_in_range("time", args.get(1), 0..=32767, 0)?));
-                self.sound.balance.to(balance, fade);
+                self.sound.set_balance(balance, fade);
                 Ok(vec![])
             }
             (Command::Sndmsbal, Want::Outs(1) | Want::Value, 0) => {
-                Ok(vec![Value::Int(self.sound.balance.read())])
+                Ok(vec![Value::Int(self.sound.balance())])
             }
             // A new TALK cuts off what is being said.
             (Command::Talk, Want::Outs(0), 1) => {

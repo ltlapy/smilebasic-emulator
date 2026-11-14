@@ -990,6 +990,7 @@ impl Machine {
         // as the program set it (checked on hardware).
         self.rt.system.mouse_cursor = false;
         self.rt.reset_perf_stats();
+        self.rt.sound.run_started();
         self.last_run = Some(slot);
         self.sync_slots();
         self.start(&self.rt.slots[slot].clone(), Some(slot));
@@ -1847,6 +1848,13 @@ impl Machine {
         self.rt.in_frame_job = false;
         self.follow_edits();
         self.rt.begin_frame();
+        // The subprogram's SNDMVOL does nothing: the main program's sets
+        // the level of both.
+        // UNVERIFIED: that the main program's SNDMVOL reaches the
+        // subprogram's sound.
+        if let Some(main) = main.as_deref() {
+            self.rt.sound.master = main.sound.master;
+        }
         self.rt.sound.render_frame();
         if let Some(main) = main.as_deref_mut() {
             main.sound.hear_sub(&mut self.rt.sound);

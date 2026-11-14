@@ -752,12 +752,13 @@ fn effector_balance_and_talk_are_accepted() {
     assert_eq!(run_on(&mut rt, "?SNDMSBAL()").unwrap(), "63");
     assert_eq!(
         run_on(&mut rt, "EFCEN #EFCON:EFCSET #EFCCAVE:EFCWET 1,2,3,4:EFCEN OUT E:SNDMSBAL 10:SNDMSBAL OUT B:TALK \"A\":TALKCHK OUT T:TALKSTOP:?E;B;T").unwrap(),
-        "1101"
+        "1631"
     );
     assert_eq!(run_on(&mut rt, "?TALKCHK()").unwrap(), "0");
+    // The main program's SNDMSBAL does nothing; SNDMVOL starts at 88.
     assert_eq!(
         run_on(&mut rt, "?EFCEN();SNDMSBAL();SNDMVOL();PCMPOS()").unwrap(),
-        "1101270"
+        "163880"
     );
     run_on(&mut rt, "TALK \"こんにちは\"").unwrap();
     frames(&mut rt, 60);

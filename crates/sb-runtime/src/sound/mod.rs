@@ -15,7 +15,7 @@ pub mod talk;
 mod track;
 pub mod wave;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -112,6 +112,11 @@ pub(crate) fn frames(seconds: f64) -> u32 {
     (seconds * 60.0).round().clamp(0.0, f64::from(u32::MAX)) as u32
 }
 
+/// SNDMVOL's volume for a gain of 1, which it starts at and goes back to:
+/// 0.7 of 127, which SNDMVOL() reads as 88. The output is linear in the
+/// volume, so 127 plays at 1.43 times the start's level.
+const MASTER_UNITY: f64 = 0.7 * 127.0;
+
 /// RECSTART's recording of what plays, as 16-bit samples.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Recorder {
@@ -170,17 +175,12 @@ impl Recorder {
     }
 }
 
-/// The main and the sub interpreter's gains for a balance SNDMSBAL set.
-/// The main program's goes up in a straight line from none at 0, and is a
-/// little over 1 at 64: 40, 64 and 127 record at 0.68, 1.085 and 2.15
-/// times the main program's sound alone. The subprogram's goes down from
-/// about twice as loud at 0 to none at 127.
-// UNVERIFIED: the subprogram's side between 0 and 127, which a test
-// measured less well, as the main program's sound was mixed in.
+/// The main and the sub interpreter's gains for a balance SNDMSBAL set:
+/// b/127 and (127-b)/127 of the output, twice over, so that halfway, where
+/// each subprogram starts, both play as loud as the main program alone.
 pub(crate) fn balance_gains(balance: i32) -> (f32, f32) {
     let b = balance.clamp(0, 127) as f32;
-    // (b / 64.0, (127.0 - b) / 64.0)
-    (b / 59.0, (127.0 - b) / 64.0)
+    (2.0 * b / 127.0, 2.0 * (127.0 - b) / 127.0)
 }
 
 /// SNDMSBAL's balance, which moves to a new one in steps of a frame
@@ -200,15 +200,12 @@ pub(crate) struct Balance {
 
 impl Balance {
     /// Halfway, where the subprogram's sound and the main program's are
-    /// each about as loud as either alone. The fit of [`balance_gains`]
-    /// puts the main program's a little higher at 63 and 64 than here.
-    // UNVERIFIED: the main program's gain here. It recorded about as loud
-    // as 63 / 64 gives it.
+    /// each as loud as the main program's alone.
     pub(crate) const START: Balance = Balance {
         at: 63.5,
-        gains: (63.0 / 64.0, 1.0),
+        gains: (1.0, 1.0),
         target: 63.5,
-        target_gains: (63.0 / 64.0, 1.0),
+        target_gains: (1.0, 1.0),
         left: 0,
     };
 
@@ -287,9 +284,11 @@ pub struct Sound {
     pub(crate) recorder: Rc<RefCell<Recorder>>,
     /// This is the sub interpreter's sound, which never records.
     pub(crate) sub: bool,
-    /// SNDMSBAL, which only subprograms set.
-    pub(crate) balance: Balance,
-    /// SNDMVOL, as a gain.
+    /// SNDMSBAL, which only subprograms set. The main and the sub
+    /// interpreter share one from the sub's first frame on.
+    balance: Rc<Cell<Balance>>,
+    /// SNDMVOL, as a gain: 1 at its start, which SNDMVOL() reads as 88.
+    /// The sub interpreter's follows the main one's.
     pub(crate) master: Ramp,
     /// Mixed samples, left and right in turn, not yet taken.
     out: Vec<f32>,
@@ -316,7 +315,7 @@ impl Default for Sound {
             aux: Default::default(),
             part: Default::default(),
             pcm_part: Default::default(),
-            balance: Balance::START,
+            balance: Rc::new(Cell::new(Balance::START)),
             recorder: Rc::default(),
             sub: false,
             master: Ramp::at(1.0),
@@ -479,6 +478,43 @@ impl Sound {
         }
     }
 
+    /// SNDMVOL: moves to `volume` over `frames` frames, at once for 0.
+    pub(crate) fn set_master(&mut self, volume: i32, frames: u32) {
+        self.master.to(f64::from(volume) / MASTER_UNITY, frames);
+    }
+
+    /// What SNDMVOL() reads: the volume now, rounded down.
+    pub(crate) fn master_volume(&self) -> i32 {
+        (self.master.value * MASTER_UNITY + 1e-6).floor() as i32
+    }
+
+    /// RUN puts SNDMVOL back at its start.
+    pub(crate) fn run_started(&mut self) {
+        self.master = Ramp::at(1.0);
+    }
+
+    /// SNDSTOP's reset of the mixer: SNDMVOL and the shared SNDMSBAL go
+    /// back to their start.
+    // UNVERIFIED: that a subprogram's SNDSTOP resets the balance too.
+    pub(crate) fn reset_mixer(&mut self) {
+        self.master = Ramp::at(1.0);
+        self.balance.set(Balance::START);
+    }
+
+    /// SNDMSBAL, which does nothing in the main program.
+    pub(crate) fn set_balance(&mut self, balance: i32, frames: u32) {
+        if self.sub {
+            let mut b = self.balance.get();
+            b.to(balance, frames);
+            self.balance.set(b);
+        }
+    }
+
+    /// What SNDMSBAL() reads, the same in either program.
+    pub(crate) fn balance(&self) -> i32 {
+        self.balance.get().read()
+    }
+
     /// SNDSTOP: every sound stops at once.
     pub fn stop_all(&mut self) {
         for t in self.tracks() {
@@ -492,12 +528,12 @@ impl Sound {
     /// The main and the sub interpreter's gains for this subprogram's
     /// balance.
     pub(crate) fn balance_gains(&self) -> (f32, f32) {
-        self.balance.gains
+        self.balance.get().gains
     }
 
-    /// A subprogram starts: its balance goes back to halfway.
+    /// A subprogram starts: the balance goes back to halfway.
     pub fn sub_started(&mut self) {
-        self.balance = Balance::START;
+        self.balance.set(Balance::START);
     }
 
     /// EFCSET: the effector's reverb, or none.
@@ -509,7 +545,12 @@ impl Sound {
 
     /// Mixes one frame of samples.
     pub fn render_frame(&mut self) {
-        self.balance.step_frame();
+        // The sub interpreter moves the shared balance, once a frame.
+        if self.sub {
+            let mut b = self.balance.get();
+            b.step_frame();
+            self.balance.set(b);
+        }
         let n = FRAME_SAMPLES;
         let [left, right] = &mut self.mix;
         left.clear();
@@ -651,6 +692,8 @@ impl Sound {
         if !Rc::ptr_eq(&sub.recorder, &self.recorder) {
             sub.recorder = Rc::clone(&self.recorder);
             sub.sub = true;
+            self.balance.set(sub.balance.get());
+            sub.balance = Rc::clone(&self.balance);
         }
         let rec = &mut *self.recorder.borrow_mut();
         if rec.taken == 0 {
@@ -686,7 +729,8 @@ mod tests {
     fn recording_hears_the_subprogram_as_sndmsbal_balances_it() {
         let heard = |balance: i32| {
             let (mut main, mut sub) = (Sound::default(), Sound::default());
-            sub.balance.to(balance, 0);
+            sub.sub = true;
+            sub.set_balance(balance, 0);
             main.recorder.borrow_mut().start(FRAME_SAMPLES, false);
             main.render_frame();
             sub.render_frame();
@@ -694,12 +738,35 @@ mod tests {
             main.hear_sub(&mut sub);
             main.recorder.borrow().samples()[FRAME_SAMPLES - 1]
         };
-        assert_eq!(heard(0), [16256, -16256]);
+        assert_eq!(heard(0), [16384, -16384]);
         assert_eq!(heard(127), [0, 0]);
         let [l, r] = heard(64);
-        assert!((l - 8063).abs() <= 1 && (r + 8063).abs() <= 1, "{l} {r}");
-        assert_eq!(balance_gains(64), (64.0 / 59.0, 63.0 / 64.0));
-        assert_eq!(balance_gains(127).0, 127.0 / 59.0);
+        assert!((l - 8127).abs() <= 1 && (r + 8127).abs() <= 1, "{l} {r}");
+        assert_eq!(balance_gains(127), (2.0, 0.0));
+        assert_eq!(Balance::START.gains, (1.0, 1.0));
+    }
+
+    /// The main program's SNDMSBAL does nothing, and both programs read
+    /// the subprogram's balance once it has had a frame; SNDSTOP in either
+    /// puts it back halfway, and SNDMVOL back at 88.
+    #[test]
+    fn the_balance_is_shared_and_sndstop_resets_the_mixer() {
+        let (mut main, mut sub) = (Sound::default(), Sound::default());
+        main.set_balance(127, 0);
+        assert_eq!(main.balance(), 63);
+        main.render_frame();
+        sub.render_frame();
+        main.hear_sub(&mut sub);
+        sub.set_balance(127, 0);
+        assert_eq!((main.balance(), sub.balance()), (127, 127));
+        main.set_master(32, 0);
+        assert_eq!(main.master_volume(), 32);
+        main.reset_mixer();
+        assert_eq!((main.balance(), sub.balance()), (63, 63));
+        assert_eq!(main.master_volume(), 88);
+        main.set_master(127, 0);
+        assert_eq!(main.master_volume(), 127);
+        assert!((main.master.value - 127.0 / 88.9).abs() < 1e-9);
     }
 
     /// The sub interpreter shares the main one's recorder and records

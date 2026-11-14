@@ -1232,6 +1232,30 @@ fn a_subprograms_recstart_and_recstop_do_nothing() {
     assert_eq!(last_rows(&m, 2)[0], "1");
 }
 
+/// The subprogram's SNDMSBAL sets the one balance both programs read, and
+/// the main program's does nothing; the subprogram's SNDMVOL does nothing,
+/// and it reads the main program's. The main program's SNDSTOP puts the
+/// balance back halfway.
+#[test]
+fn the_balance_is_the_subprograms_and_sndmvol_the_main_ones() {
+    let dir = TempDir::new("sub-mixer");
+    let mut m = machine(
+        &dir,
+        "CLS:ENVFOCUS 0:SNDMSBAL 100:SNDMVOL 20:WAIT 40:?SNDMSBAL();SNDMVOL()\n\
+         WAIT 40:?SNDMSBAL();SNDMVOL()\nWHILE 1:VSYNC:WEND\n",
+    );
+    enter(&mut m, "subrun \"sub\"");
+    frames(&mut m, 10);
+    enter(&mut m, "sndmsbal 10:sndmvol 64:?sndmsbal();sndmvol()");
+    assert_eq!(last_rows(&m, 2)[0], "10064");
+    frames(&mut m, 30);
+    assert_eq!(sub_rows(&m), ["10064"]);
+    enter(&mut m, "sndstop:?sndmsbal()");
+    frames(&mut m, 40);
+    assert_eq!(sub_rows(&m), ["10064", "6388"]);
+    assert_eq!(last_rows(&m, 2)[0], "63");
+}
+
 /// SNDMSBAL's balance moves over its time in seconds, a step each frame,
 /// and each subprogram starts again halfway, which reads as 63.
 #[test]
