@@ -472,6 +472,15 @@ For a subprogram's screen, see `FADE` under
   `META` file when those are missing.
 - `LOADG "PNG:..."` of a `#` project's file fails with `RESULT` 0, as the
   emulator reads no `PNG:` files.
+- File and project names take ASCII letters only. SmileBASIC 4 asks C's
+  `isalnum` about characters up to U+00FF, so it may take some of U+0080 to
+  U+00FF as letters; the emulator gives `Illegal format` for them.
+- On Windows, which cannot keep a file name that ends in a dot, the commands
+  refuse such a name (`SAVEV "TXT:A.",S$`) with `RESULT` 0. SmileBASIC 4 takes
+  it.
+- A project's name in a path takes no `@`, which the emulator keeps for its
+  `@WORKSPACE` folder. SmileBASIC 4's parser takes `A@/NAME`; the emulator
+  finds no such project, so `CHKFILE("A@/NAME")` is 0.
 
 ### A program's own folder
 
@@ -536,7 +545,6 @@ refuses fails like any other file that cannot be read or written: `RESULT()` is
   `LPT0` or `CON.A`, is stored in a folder named `@COM5`. Programs and the
   projects window still see `COM5`. A new text file of such a name beside a
   program run from the command line takes SmileBASIC 4's name, `TCOM5`.
-  Names ending in a dot are refused on Windows, which cannot keep them.
 
 ## Editor
 

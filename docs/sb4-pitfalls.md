@@ -2168,6 +2168,25 @@ Expected but not yet seen on hardware:
   `Can't use from direct mode`, shown without a line.
 - File names may start with `@`, as the backups' do: `LOADV "DAT:@BACKUP.DAT"`
   reads one, and `SAVE "@X"` saves (after the usual question).
+- `@` may come anywhere in a file name: `A@`, `A@B` and a lone `@` are names.
+  A `.` may come anywhere but first, so `@.X` is a name too. (Not yet seen on hardware.)
+- Only a `:` at the fourth character marks a type, and only after `TXT`,
+  `DAT`, `GRP`, `JPG` or `PNG`. `CHKFILE("TXT:A:B")` and `CHKFILE("AB:C")` are
+  `Illegal format (CHKFILE:1)`, error 71. `LOAD "PNG:X",1` is
+  `File type mismatch (LOAD)`, as `LOAD "DAT:X",1` is. (Not yet seen on hardware.)
+- `CHKFILE`, `LOAD`, `SAVE`, `LOADV`, `SAVEV`, `LOADG`, `SAVEG`, `DELETE`,
+  `RENAME` and `FILES` raise errors for a name they cannot take, before any
+  question, naming the argument as in `(CHKFILE:1)`: `Illegal format`,
+  error 71, for a character a name cannot have (`A*`), a second `/`
+  (`A/B/C`) or no file's name (`TXT:`, `NAME/`, `""`), and
+  `File name is too long`, error 73, for a project's or a file's name of over
+  32 characters. `EXEC` raises the same errors without the number. `FILES`
+  takes a name alone as a project's (`FILES "TXT:NAME"`), so a project and a
+  file together are error 71 there, and so is `FILES ""`. (Not yet seen on hardware.)
+- `DIALOG(name,caption,most)` cuts its first name to `most` characters, then
+  checks it as the file commands do: `DIALOG("A@B","X")` opens, while
+  `DIALOG("P/A","X")` and `DIALOG("A B","X")` are
+  `Illegal file name (DIALOG:1)`, error 37. (Not yet seen on hardware.)
 - File names may start with `#`, as the first character only:
   `SAVEV "TXT:#NAME",S$` saves, and `LOAD "#NAME"` loads. A `#` anywhere
   else, or on its own, is refused. With a `/` after it, the `#` part is a project
