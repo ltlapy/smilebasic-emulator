@@ -206,34 +206,38 @@ pub fn write_regular(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Checks a file name and returns it in upper case: up to 32 letters,
-/// digits, `_`, `-` and `.`, not starting with `.`, and not one of the
-/// [`is_reserved_name`] names. It may start with `@`, as the backups'
-/// names do (`@BACKUP.PRG`); programs can read and save such names
-/// (checked on hardware). It may start with `#` too (`#UPDATE-META`),
-/// which SmileBASIC 4 takes only as the first character of a path, so
-/// not after a project (see [`parse_read_name`]).
+/// digits, `_`, `-`, `@` and `.`, not starting with `.`, and not one of
+/// the [`is_reserved_name`] names. `@` may come anywhere; the backups'
+/// names start with it (`@BACKUP.PRG`), and programs can read and save
+/// such names (checked on hardware). A name may start with `#` too
+/// (`#UPDATE-META`), which SmileBASIC 4 takes only as the first character
+/// of a path, so not after a project (see [`parse_read_name`]). On
+/// Windows it may not end in `.`, which the file system drops.
 fn check_name(name: &str) -> Result<String> {
-    let bad = || StorageError::BadName(name.to_string());
-    if name.len() > MAX_NAME || is_reserved_name(name) {
-        return Err(bad());
+    let ok = (name.bytes().enumerate()).all(|(i, c)| name_byte(c, i) || (c == b'#' && i == 0));
+    if !ok
+        || name.is_empty()
+        || name.len() > MAX_NAME
+        || name == "#"
+        || is_reserved_name(name)
+        || (cfg!(windows) && name.ends_with('.'))
+    {
+        return Err(StorageError::BadName(name.to_string()));
     }
-    let (hash, rest) = match name.strip_prefix('#') {
-        Some(rest) => ("#", rest),
-        None => ("", name),
-    };
-    let (at, rest) = match rest.strip_prefix('@') {
-        Some(rest) => ("@", rest),
-        None => ("", rest),
-    };
-    // Only the name's very first character may not be a `.`.
-    let dot_first = !hash.is_empty() && at.is_empty();
-    check_plain_name(rest, dot_first)
-        .map(|n| format!("{hash}{at}{n}"))
-        .map_err(|_| bad())
+    Ok(name.to_ascii_uppercase())
+}
+
+/// Whether SmileBASIC 4's name parser takes `c` at index `i` of a part of
+/// a path: letters, digits, `-`, `@` and `_` anywhere, and `.` after the
+/// first character. A path's first character may be `#` besides. Where
+/// SmileBASIC 4 asks `isalnum` about characters up to U+00FF, this takes
+/// ASCII only.
+fn name_byte(c: u8, i: usize) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, b'-' | b'@' | b'_') || (c == b'.' && i > 0)
 }
 
 /// Letters, digits, `_`, `-` and `.`, with a `.` first only if
-/// `dot_first`.
+/// `dot_first`: the rules of a project's name, which takes no `@`.
 fn check_plain_name(name: &str, dot_first: bool) -> Result<String> {
     let ok = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
     if name.is_empty()
@@ -253,9 +257,13 @@ fn check_plain_name(name: &str, dot_first: bool) -> Result<String> {
 /// are fine, and so is `#CON`.
 /// UNVERIFIED: that lower case (`con`) is refused too.
 pub fn is_reserved_name(name: &str) -> bool {
-    match name.to_ascii_uppercase().as_bytes() {
-        b"CON" | b"PRN" | b"NUL" | b"AUX" => true,
-        [b'C', b'O', b'M', digit] | [b'L', b'P', b'T', digit] => (b'1'..=b'4').contains(digit),
+    let is = |word: &[u8], part: &[u8]| word.eq_ignore_ascii_case(part);
+    match name.as_bytes() {
+        n @ [_, _, _] => [b"CON", b"PRN", b"NUL", b"AUX"].iter().any(|w| is(*w, n)),
+        [a, b, c, digit] => {
+            let word = [*a, *b, *c];
+            (is(b"COM", &word) || is(b"LPT", &word)) && (b'1'..=b'4').contains(digit)
+        }
         _ => false,
     }
 }
@@ -265,6 +273,137 @@ pub fn is_reserved_name(name: &str) -> bool {
 pub fn names_reserved(spec: &str) -> bool {
     let rest = spec.split_once(':').map_or(spec, |(_, rest)| rest);
     rest.split('/').any(is_reserved_name)
+}
+
+/// A type named in front of a file's name: one of [`FileKind`], or `PNG`,
+/// which only LOADG takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NamedKind {
+    File(FileKind),
+    Png,
+}
+
+impl NamedKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            NamedKind::File(kind) => kind.name(),
+            NamedKind::Png => "PNG",
+        }
+    }
+}
+
+/// A path split as SmileBASIC 4's name parser splits
+/// `[TYPE:][/][PROJECT/]NAME`, its parts not checked further.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NameParts<'a> {
+    pub kind: Option<NamedKind>,
+    /// `Some("")` for the workspace's `/NAME`.
+    pub project: Option<&'a str>,
+    /// Empty for `""`, `TXT:`, `/` and `NAME/`.
+    pub name: &'a str,
+}
+
+/// Splits a path as SmileBASIC 4 does before a file command looks at it,
+/// or `None` where its parser fails, which the commands report as Illegal
+/// format:
+/// - Only a `:` at index 3 marks a type: `TXT`, `DAT`, `GRP`, `JPG` or
+///   `PNG`, in any case. Any other `:` fails (`TXT:A:B`, `AB:C`).
+/// - A leading `/` names the workspace.
+/// - A part has only the characters [`name_byte`] takes, and the first
+///   part may start with `#`. A `/` after a project may end the path
+///   (`NAME/`). A second `/`, or an empty part before a `/`, fails.
+/// - A part may not be one of the [`is_reserved_name`] names, or `#`
+///   alone, except as the workspace's file.
+///
+/// The commands check the parts' lengths themselves.
+pub fn split_name(spec: &str) -> Option<NameParts<'_>> {
+    let (kind, rest) = match spec.find(':') {
+        None => (None, spec),
+        Some(3) => {
+            let kind = match FileKind::from_name(&spec[..3]) {
+                Some(kind) => NamedKind::File(kind),
+                None if spec[..3].eq_ignore_ascii_case("PNG") => NamedKind::Png,
+                None => return None,
+            };
+            (Some(kind), &spec[4..])
+        }
+        Some(_) => return None,
+    };
+    let (workspace, body) = match rest.strip_prefix('/') {
+        Some(body) => (true, body),
+        None => (false, rest),
+    };
+    let first = (body.bytes().enumerate())
+        .take_while(|&(i, c)| name_byte(c, i) || (c == b'#' && i == 0))
+        .count();
+    let (head, tail) = body.split_at(first);
+    // `Some("")` for a `/` that ends the path.
+    let second = match tail.strip_prefix('/') {
+        _ if tail.is_empty() => None,
+        Some(second) if !head.is_empty() => Some(second),
+        _ => return None,
+    };
+    // A lone `#` after the workspace's `/` passes.
+    if (head == "#" && !workspace) || is_reserved_name(head) {
+        return None;
+    }
+    if let Some(second) = second
+        && (!(second.bytes().enumerate()).all(|(i, c)| name_byte(c, i)) || is_reserved_name(second))
+    {
+        return None;
+    }
+    let (project, name) = match (workspace, second) {
+        (true, None) => (Some(""), head),
+        (true, Some(_)) => return None,
+        (false, None) => (None, head),
+        (false, Some(name)) => (Some(head), name),
+    };
+    Some(NameParts {
+        kind,
+        project,
+        name,
+    })
+}
+
+/// Why SmileBASIC 4's file commands refuse a name before they look for
+/// the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameError {
+    /// [`split_name`] fails, or there is no file's name: Illegal format.
+    Illegal,
+    /// The project's name or the file's is over [`MAX_NAME`] characters:
+    /// File name is too long.
+    TooLong,
+}
+
+/// How the commands that name one file, such as CHKFILE, SAVE or EXEC,
+/// refuse `spec`, if they do.
+pub fn file_name_error(spec: &str) -> Option<NameError> {
+    let Some(parts) = split_name(spec) else {
+        return Some(NameError::Illegal);
+    };
+    let project = parts.project.map_or(0, str::len);
+    if parts.name.is_empty() {
+        Some(NameError::Illegal)
+    } else if project > MAX_NAME || parts.name.len() > MAX_NAME {
+        Some(NameError::TooLong)
+    } else {
+        None
+    }
+}
+
+/// How FILES refuses `spec` (`[TYPE:][PROJECT][/]`), if it does: as
+/// [`file_name_error`], but a name alone is a project's, and an empty
+/// string is Illegal format. `//`, the list of projects, is not for this.
+pub fn listing_name_error(spec: &str) -> Option<NameError> {
+    let parts = match split_name(spec) {
+        Some(parts) if !spec.is_empty() => parts,
+        _ => return Some(NameError::Illegal),
+    };
+    match parts.project {
+        Some(_) if !parts.name.is_empty() => Some(NameError::Illegal),
+        project => (project.unwrap_or(parts.name).len() > MAX_NAME).then_some(NameError::TooLong),
+    }
 }
 
 /// Whether Windows takes a name for a device, whatever follows its first
@@ -331,29 +470,38 @@ impl FileRef {
     }
 }
 
+/// [`split_name`], failing as storage does.
+fn split_checked(spec: &str) -> Result<NameParts<'_>> {
+    split_name(spec).ok_or_else(|| StorageError::BadName(spec.to_string()))
+}
+
+/// The type of file named, or `default`. No file has the type `PNG:`.
+fn named_kind(kind: Option<NamedKind>, default: FileKind) -> Result<FileKind> {
+    match kind {
+        None => Ok(default),
+        Some(NamedKind::File(kind)) => Ok(kind),
+        Some(kind @ NamedKind::Png) => Err(StorageError::BadKind(kind.name().to_string())),
+    }
+}
+
 /// Splits `"[TYPE:][PROJECT/]NAME"` for reading; see [`FileRef`].
 pub fn parse_read_name(spec: &str, default: FileKind) -> Result<FileRef> {
-    let (kind, rest) = match spec.split_once(':') {
-        Some((kind, rest)) => (
-            FileKind::from_name(kind).ok_or_else(|| StorageError::BadKind(kind.to_string()))?,
-            rest,
-        ),
-        None => (default, spec),
-    };
-    let (project, name) = match rest.split_once('/') {
-        Some(("", name)) => (Some(String::new()), name),
-        Some((project, name)) => (Some(check_project_name(project)?), name),
-        None => (None, rest),
+    let parts = split_checked(spec)?;
+    let kind = named_kind(parts.kind, default)?;
+    let project = match parts.project {
+        None => None,
+        Some("") => Some(String::new()),
+        Some(project) => Some(check_project_name(project)?),
     };
     // `#` starts only a path's first part: after a project, or the
     // workspace's `/`, no name has one.
-    if project.is_some() && name.starts_with('#') {
-        return Err(StorageError::BadName(name.to_string()));
+    if project.is_some() && parts.name.starts_with('#') {
+        return Err(StorageError::BadName(parts.name.to_string()));
     }
     Ok(FileRef {
         kind,
         project,
-        name: check_name(name)?,
+        name: check_name(parts.name)?,
     })
 }
 
@@ -401,31 +549,28 @@ pub fn suggest_project_name(name: &str) -> String {
 
 /// Splits `"[TYPE:]NAME"` into its type (or `default`) and checked name.
 pub fn parse_file_name(spec: &str, default: FileKind) -> Result<(FileKind, String)> {
-    let (kind, name) = match spec.split_once(':') {
-        Some((kind, name)) => (
-            FileKind::from_name(kind).ok_or_else(|| StorageError::BadKind(kind.to_string()))?,
-            name,
-        ),
-        None => (default, spec),
-    };
-    Ok((kind, check_name(name)?))
+    let parts = split_checked(spec)?;
+    if parts.project.is_some() {
+        return Err(StorageError::BadName(spec.to_string()));
+    }
+    Ok((named_kind(parts.kind, default)?, check_name(parts.name)?))
 }
 
-/// Splits FILES' `"[TYPE:][PROJECT]"` into an optional type and project.
+/// Splits FILES' `"[TYPE:][PROJECT][/]"` into an optional type and
+/// project.
 pub fn parse_listing(spec: &str) -> Result<(Option<FileKind>, Option<String>)> {
-    let (kind, project) = match spec.split_once(':') {
-        Some((kind, project)) => (
-            Some(FileKind::from_name(kind).ok_or_else(|| StorageError::BadKind(kind.to_string()))?),
-            project,
-        ),
-        None => (None, spec),
+    let parts = split_checked(spec)?;
+    let kind = match parts.kind {
+        None => None,
+        kind => Some(named_kind(kind, FileKind::Txt)?),
     };
     // A `/` may follow the project (`TXT:NAME/`); on its own it is the
     // workspace.
-    let project = match project {
-        "" => None,
-        "/" => Some(String::new()),
-        p => Some(check_project_name(p.strip_suffix('/').unwrap_or(p))?),
+    let project = match (parts.project, parts.name) {
+        (None, "") => None,
+        (Some(""), "") => Some(String::new()),
+        (Some(project), "") | (None, project) => Some(check_project_name(project)?),
+        (Some(_), _) => return Err(StorageError::BadName(spec.to_string())),
     };
     Ok((kind, project))
 }
@@ -1258,10 +1403,12 @@ mod tests {
         let file = parse_read_name("/MAIN.PRG", FileKind::Txt).unwrap();
         assert_eq!(file.project.as_deref(), Some(""), "the workspace");
         assert!(parse_read_name("A/B/C", FileKind::Txt).is_err());
-        assert!(parse_read_name("@", FileKind::Txt).is_err());
-        assert!(parse_read_name("A@", FileKind::Txt).is_err());
+        assert_eq!(parse_read_name("@", FileKind::Txt).unwrap().name, "@");
+        assert_eq!(parse_read_name("a@", FileKind::Txt).unwrap().name, "A@");
         assert!(parse_file_name("@X", FileKind::Txt).is_ok());
         assert!(check_project_name("@WORKSPACE").is_err());
+        assert!(check_project_name("A@").is_err());
+        assert!(parse_read_name("A@/X", FileKind::Txt).is_err());
         assert_eq!(parse_listing("").unwrap(), (None, None));
         assert_eq!(parse_listing("TXT:").unwrap(), (Some(FileKind::Txt), None));
         assert_eq!(
@@ -1301,6 +1448,86 @@ mod tests {
         assert!(parse_read_name("GAME/#X", FileKind::Txt).is_err());
         assert!(parse_read_name("/#X", FileKind::Txt).is_err());
         assert!(parse_file_name("DAT:#X", FileKind::Txt).is_ok());
+    }
+
+    #[test]
+    fn names_split_as_sb4_splits_them() {
+        let split = |spec| split_name(spec).map(|p| (p.kind, p.project, p.name));
+        let txt = Some(NamedKind::File(FileKind::Txt));
+        assert_eq!(split("TXT:A@B"), Some((txt, None, "A@B")));
+        assert_eq!(split("txt:P/F"), Some((txt, Some("P"), "F")));
+        assert_eq!(split("png:X"), Some((Some(NamedKind::Png), None, "X")));
+        assert_eq!(split("/X"), Some((None, Some(""), "X")));
+        assert_eq!(split("/"), Some((None, Some(""), "")));
+        assert_eq!(split("P/"), Some((None, Some("P"), "")));
+        assert_eq!(split("TXT:"), Some((txt, None, "")));
+        assert_eq!(split(""), Some((None, None, "")));
+        assert_eq!(split("TXT:A.B:"), None, "a second colon");
+        for fine in [
+            "@", "A@", "#@", "A@B", "@.X", "#.X", "A.", "_-@", "#A/B", "/#X", "/#", "A/@B",
+        ] {
+            assert!(split_name(fine).is_some(), "{fine}");
+        }
+        for bad in [
+            "TXT:A:B", "AB:C", "TXTX:A", "XYZ:A", ":A", "A:", ".X", "A B", "A/B/C", "/A/B", "/A/",
+            "//", "A//", "A/#B", "#", "#/A", "A/.B", "/.A", "CON", "A/con", "é", "Aé", "A*",
+            "A\\B", "A/B*",
+        ] {
+            assert!(split_name(bad).is_none(), "{bad}");
+        }
+        // Valid to the parser, `/#X` is still not taken as a file's name.
+        assert!(parse_read_name("/#X", FileKind::Txt).is_err());
+        assert_eq!(check_name("@.x").unwrap(), "@.X");
+        assert_eq!(check_name("A@B").unwrap(), "A@B");
+        assert!(check_name("A#").is_err());
+        let file = parse_read_name("TXT:A@B", FileKind::Dat).unwrap();
+        assert_eq!((file.kind, file.name.as_str()), (FileKind::Txt, "A@B"));
+        assert!(parse_read_name("TXT:A:B", FileKind::Txt).is_err());
+        assert!(parse_file_name("PNG:A", FileKind::Txt).is_err());
+        assert!(parse_file_name("/A", FileKind::Txt).is_err());
+        assert!(parse_listing("TXT:P/F").is_err());
+        assert_eq!(parse_listing("/").unwrap(), (None, Some(String::new())));
+        assert_eq!(
+            parse_listing("DAT:p/").unwrap(),
+            (Some(FileKind::Dat), Some("P".to_string()))
+        );
+    }
+
+    #[test]
+    fn name_errors_as_sb4_raises_them() {
+        use NameError::{Illegal, TooLong};
+        for (spec, error) in [
+            ("TXT:A", None),
+            ("TXT:A@B", None),
+            ("TXT:@.X", None),
+            ("A/B", None),
+            ("/A", None),
+            ("TXT:A:B", Some(Illegal)),
+            ("AB:C", Some(Illegal)),
+            ("", Some(Illegal)),
+            ("TXT:", Some(Illegal)),
+            ("P/", Some(Illegal)),
+            ("/", Some(Illegal)),
+            ("A/B/C", Some(Illegal)),
+            ("A*", Some(Illegal)),
+            ("TXT:CON", Some(Illegal)),
+        ] {
+            assert_eq!(file_name_error(spec), error, "{spec}");
+        }
+        let (max, long) = ("A".repeat(MAX_NAME), "A".repeat(MAX_NAME + 1));
+        assert_eq!(file_name_error(&format!("TXT:{max}")), None);
+        assert_eq!(file_name_error(&format!("TXT:{long}")), Some(TooLong));
+        assert_eq!(file_name_error(&format!("{max}/{max}")), None);
+        assert_eq!(file_name_error(&format!("{long}/A")), Some(TooLong));
+        assert_eq!(file_name_error(&format!("{long}*")), Some(Illegal));
+        for fine in ["TXT:", "TXT:P", "P/", "/", "TXT:/", "#SYS"] {
+            assert_eq!(listing_name_error(fine), None, "{fine}");
+        }
+        for bad in ["", "P/F", "/F", "TXT:A:B", "A*"] {
+            assert_eq!(listing_name_error(bad), Some(Illegal), "{bad}");
+        }
+        assert_eq!(listing_name_error(&long), Some(TooLong));
+        assert_eq!(listing_name_error(&format!("DAT:{long}/")), Some(TooLong));
     }
 
     #[test]
