@@ -420,6 +420,9 @@ struct Voice {
     channel: usize,
     key: i32,
     region: Region,
+    /// Where a channel of a stereo waveform sits before the pan: -1 for
+    /// the left, 1 for the right; 0 for a mono waveform.
+    side: f32,
     reader: Reader,
     /// The samples either side of the position, and how far between.
     s0: f32,
@@ -486,7 +489,10 @@ impl Voice {
                 / 127.0
                 * self.velocity
         };
-        let at = pan_position(ch.pan + i32::from(self.region.pan) - 64) + pan + ch.pan_offset;
+        let at = pan_position(ch.pan + i32::from(self.region.pan) - 64)
+            + pan
+            + ch.pan_offset
+            + self.side;
         let [l, r] = pan_gains(at);
         let target = [gain * l, gain * r];
         if !self.begun {
@@ -641,6 +647,56 @@ impl Sampler {
             voices: Vec::new(),
         }
     }
+
+    /// Starts a note of `region` on `channel`, its pan moved by `side`.
+    fn start(&mut self, channel: usize, key: i32, velocity: i32, region: Region, side: f32) {
+        let wave = &self.bank.waves[usize::from(region.wave)];
+        let mut reader = Reader::default();
+        let mut sample = || {
+            reader
+                .next(wave, &self.bank.data)
+                .map_or(0.0, |s| f32::from(s) / 32768.0)
+        };
+        let (s0, s1) = (sample(), sample());
+        let semitones = (key - i32::from(region.original_key)) as f64;
+        if self.voices.len() >= MAX_VOICES {
+            let oldest = self
+                .voices
+                .iter()
+                .position(|v| v.envelope.stage == Stage::Release)
+                .unwrap_or(0);
+            self.voices.remove(oldest);
+        }
+        self.voices.push(Voice {
+            channel,
+            key,
+            region,
+            side,
+            reader,
+            s0,
+            s1,
+            frac: 0.0,
+            base_step: f64::from(wave.rate) / f64::from(RATE) * 2f64.powf(semitones / 12.0),
+            step: 0.0,
+            velocity: square(velocity),
+            envelope: Envelope::new(match self.channels[channel].envelope {
+                // @E keeps the instrument's hold.
+                Some(e) => Adshr {
+                    hold: region.envelope.hold,
+                    ..e.into()
+                },
+                None => region.envelope,
+            }),
+            in_tick: 0,
+            begun: false,
+            gains: [0.0; 2],
+            deltas: [0.0; 2],
+            lfos: Lfos::default(),
+            porta: 0.0,
+            wave_ended: false,
+            done: false,
+        });
+    }
 }
 
 impl Synth for Sampler {
@@ -684,51 +740,20 @@ impl Synth for Sampler {
         let Some(&region) = self.bank.region(self.channels[channel].program, key) else {
             return;
         };
-        let wave = &self.bank.waves[usize::from(region.wave)];
-        let mut reader = Reader::default();
-        let mut sample = || {
-            reader
-                .next(wave, &self.bank.data)
-                .map_or(0.0, |s| f32::from(s) / 32768.0)
-        };
-        let (s0, s1) = (sample(), sample());
-        let semitones = (key - i32::from(region.original_key)) as f64;
-        if self.voices.len() >= MAX_VOICES {
-            let oldest = self
-                .voices
-                .iter()
-                .position(|v| v.envelope.stage == Stage::Release)
-                .unwrap_or(0);
-            self.voices.remove(oldest);
+        // A stereo waveform plays as two notes, its left channel on the left
+        // and its right on the right, and the pan moves both: at P0 the
+        // right channel sounds in the middle.
+        match self.bank.waves[usize::from(region.wave)].right {
+            Some(right) => {
+                self.start(channel, key, velocity, region, -1.0);
+                let region = Region {
+                    wave: right,
+                    ..region
+                };
+                self.start(channel, key, velocity, region, 1.0);
+            }
+            None => self.start(channel, key, velocity, region, 0.0),
         }
-        self.voices.push(Voice {
-            channel,
-            key,
-            region,
-            reader,
-            s0,
-            s1,
-            frac: 0.0,
-            base_step: f64::from(wave.rate) / f64::from(RATE) * 2f64.powf(semitones / 12.0),
-            step: 0.0,
-            velocity: square(velocity),
-            envelope: Envelope::new(match self.channels[channel].envelope {
-                // @E keeps the instrument's hold.
-                Some(e) => Adshr {
-                    hold: region.envelope.hold,
-                    ..e.into()
-                },
-                None => region.envelope,
-            }),
-            in_tick: 0,
-            begun: false,
-            gains: [0.0; 2],
-            deltas: [0.0; 2],
-            lfos: Lfos::default(),
-            porta: 0.0,
-            wave_ended: false,
-            done: false,
-        });
     }
 
     fn note_off(&mut self, channel: usize, key: i32) {
@@ -861,6 +886,7 @@ mod tests {
                 ignore_note_off,
             }],
             waves: vec![WaveInfo {
+                right: None,
                 rate: RATE,
                 len: 8,
                 loop_start: Some(0),
@@ -953,6 +979,45 @@ mod tests {
         assert!(l < 1e-4 && (r / cr - 2f32.sqrt()).abs() < 0.01);
     }
 
+    /// A stereo waveform's channels play on their own sides, and the pan
+    /// moves both: hard left, the right channel sounds in the middle.
+    #[test]
+    fn stereo_waves_play_each_channel_on_its_side() {
+        let mut b = bank(ORGAN, false);
+        let right = WaveInfo {
+            right: None,
+            ..b.waves[0].clone()
+        };
+        b.waves[0].right = Some(1);
+        b.waves.push(right);
+        let sides = |pan: i32| {
+            let mut s = Sampler::new(Arc::new(b.clone()));
+            s.pan(0, pan);
+            s.note_on(0, 60, 127);
+            let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
+            s.render(&mut l, &mut r);
+            s.render(&mut l, &mut r);
+            let peak = |v: &[f32]| v.iter().fold(0f32, |m, x| m.max(x.abs()));
+            (peak(&l), peak(&r), s.voices.len())
+        };
+        let (l, r, voices) = sides(64);
+        assert_eq!(voices, 2);
+        assert!(l > 0.01 && (l - r).abs() < 1e-6);
+        // Each channel alone on its side is as loud as a mono note on that
+        // side.
+        let mono = {
+            let mut s = sampler(ORGAN, false);
+            s.pan(0, 0);
+            s.note_on(0, 60, 127);
+            peak(&mut s, 960);
+            peak(&mut s, 960)
+        };
+        assert!((l - mono).abs() < 1e-6);
+        let (l, r, _) = sides(0);
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert!((l - mono * (1.0 + half)).abs() < 1e-4 && (r - mono * half).abs() < 1e-4);
+    }
+
     #[test]
     fn beep_plays_an_instrument_at_70_of_127_of_its_note_by_default() {
         use crate::sound::beep::instrument_volume;
@@ -981,6 +1046,7 @@ mod tests {
             2048, -1024, 1024, 512, -512, 256, 300, -200, 0, 0, 1800, -800, 100, 50, 4, 8,
         ];
         let adpcm = |loop_start| WaveInfo {
+            right: None,
             rate: RATE,
             len: 1000,
             loop_start,
@@ -993,6 +1059,7 @@ mod tests {
         b.waves.push(adpcm(Some(100)));
         b.waves.push(adpcm(None));
         b.waves.push(WaveInfo {
+            right: None,
             rate: RATE / 2,
             len: 8,
             loop_start: None,

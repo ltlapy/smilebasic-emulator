@@ -270,6 +270,7 @@ mod tests {
             instruments: vec![0..1, 1..1, 1..2],
             regions: vec![region, region],
             waves: vec![WaveInfo {
+                right: None,
                 rate: 32000,
                 len: 100,
                 loop_start: Some(50),

@@ -727,6 +727,7 @@ pub(crate) mod tests {
                 ignore_note_off: false,
             }],
             waves: vec![crate::sound::bank::WaveInfo {
+                right: None,
                 rate: 28160,
                 len: 4,
                 loop_start: Some(0),

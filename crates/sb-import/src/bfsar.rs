@@ -239,13 +239,7 @@ pub fn bank(archive: &[u8]) -> Result<Bank> {
 
     let mut bank = Bank::default();
     let archive_waves = war_waves(d, fwar)?;
-    // The bank names waves by archive and index; SmileBASIC 4 has one
-    // archive.
-    for i in 0..d.offset(wave_table)? {
-        let index = d.offset(wave_table + 4 + i * 8 + 4)?;
-        let &(ref info, bytes) = archive_waves
-            .get(index)
-            .ok_or("an instrument's waveform is missing")?;
+    let add = |bank: &mut Bank, info: &WaveInfo, bytes: &[u8]| {
         let start = bank.data.len();
         // Waves that share or overlap their bytes would be copied again
         // each time, many times the file's size from a small table.
@@ -258,6 +252,25 @@ pub fn bank(archive: &[u8]) -> Result<Bank> {
             data: start..bank.data.len(),
             ..info.clone()
         });
+        Ok(())
+    };
+    // The bank names waves by archive and index; SmileBASIC 4 has one
+    // archive. The right channels of stereo waves go after them all.
+    let mut rights = Vec::new();
+    for i in 0..d.offset(wave_table)? {
+        let index = d.offset(wave_table + 4 + i * 8 + 4)?;
+        let (info, bytes, right) = archive_waves
+            .get(index)
+            .ok_or("an instrument's waveform is missing")?;
+        if let Some(right) = right {
+            rights.push((bank.waves.len(), right));
+        }
+        add(&mut bank, info, bytes)?;
+    }
+    for (left, (info, bytes)) in rights {
+        let at = u16::try_from(bank.waves.len()).map_err(|_| "too many waveforms")?;
+        bank.waves[left].right = Some(at);
+        add(&mut bank, info, bytes)?;
     }
 
     for i in 0..d.offset(instrument_table)? {
@@ -402,8 +415,12 @@ fn velocity_region(d: Bytes, at: usize, keys: (u8, u8)) -> Result<Region> {
     })
 }
 
+/// A waveform's left or only channel, with its bytes, and the right
+/// channel of a stereo one.
+type Channels<'a> = (WaveInfo, &'a [u8], Option<(WaveInfo, &'a [u8])>);
+
 /// The waveforms of an FWAR, each with its bytes.
-fn war_waves<'a>(d: Bytes<'a>, at: usize) -> Result<Vec<(WaveInfo, &'a [u8])>> {
+fn war_waves<'a>(d: Bytes<'a>, at: usize) -> Result<Vec<Channels<'a>>> {
     let info = d.block(at, b"FWAR", 0x6800)?;
     let files = d.block(at, b"FWAR", 0x6801)?;
     (0..d.offset(info)?)
@@ -411,9 +428,24 @@ fn war_waves<'a>(d: Bytes<'a>, at: usize) -> Result<Vec<(WaveInfo, &'a [u8])>> {
         .collect()
 }
 
-/// One FWAV. Only its first channel is kept, though a few of SmileBASIC 4's
-/// waves are stereo.
-fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<(WaveInfo, &'a [u8])> {
+/// One FWAV: its first channel, and its second for the few of SmileBASIC
+/// 4's waves that are stereo. More channels are not kept.
+fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<Channels<'a>> {
+    let info = d.block(at, b"FWAV", 0x7000)?;
+    let channels = info + 0x14;
+    let (left, bytes) = match d.offset(channels)? {
+        0 => return Err("a waveform has no channels".into()),
+        _ => channel(d, at, 0)?,
+    };
+    let right = match d.offset(channels)? {
+        1 => None,
+        _ => Some(channel(d, at, 1)?),
+    };
+    Ok((left, bytes, right))
+}
+
+/// Channel `i` of the FWAV at `at`.
+fn channel<'a>(d: Bytes<'a>, at: usize, i: usize) -> Result<(WaveInfo, &'a [u8])> {
     let info = d.block(at, b"FWAV", 0x7000)?;
     let data = d.block(at, b"FWAV", 0x7001)?;
     let (format, looped) = (d.u8(info)?, d.u8(info + 1)? != 0);
@@ -421,10 +453,7 @@ fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<(WaveInfo, &'a [u8])> {
     let loop_start = d.u32(info + 8)?;
     let len = d.u32(info + 12)?;
     let channels = info + 0x14;
-    if d.offset(channels)? == 0 {
-        return Err("a waveform has no channels".into());
-    }
-    let (_, channel) = d.reference(channels + 4, channels)?;
+    let (_, channel) = d.reference(channels + 4 + i * 8, channels)?;
     let channel = channel.ok_or("no channel")?;
     let (_, samples) = d.reference(channel, data)?;
     let samples = samples.ok_or("no samples")?;
@@ -450,6 +479,7 @@ fn wave<'a>(d: Bytes<'a>, at: usize) -> Result<(WaveInfo, &'a [u8])> {
     let size = WaveInfo::bytes_for(&encoding, len).ok_or(DAMAGED)?;
     let bytes = d.slice(samples, size)?;
     let info = WaveInfo {
+        right: None,
         rate,
         len,
         loop_start: (looped && loop_start < len).then_some(loop_start),
@@ -511,6 +541,48 @@ mod tests {
                 (0x7001, b"DATA", (0..16).collect()),
             ],
         )
+    }
+
+    /// `fwav` with two channels: the second's samples follow the first's.
+    fn stereo_fwav() -> Vec<u8> {
+        let mut info = Vec::new();
+        put(&mut info, &[0x0102, 32000, 14, 28, 14]);
+        put(&mut info, &[2]);
+        put(&mut info, &r(0x7100, 20));
+        put(&mut info, &r(0x7100, 84));
+        for (samples, first) in [(0, 1i16), (16, 101)] {
+            put(&mut info, &r(0x1F00, samples));
+            put(&mut info, &r(0x0300, 0x14));
+            put(&mut info, &[0]);
+            info.extend((first..first + 16).flat_map(|c| c.to_le_bytes()));
+            info.extend([0i16, 0, 0, 0, 7, -7].iter().flat_map(|c| c.to_le_bytes()));
+        }
+        file(
+            b"FWAV",
+            &[
+                (0x7000, b"INFO", info),
+                (0x7001, b"DATA", (0..32).collect()),
+            ],
+        )
+    }
+
+    #[test]
+    fn stereo_waves_keep_their_second_channel() {
+        let wav = stereo_fwav();
+        let (left, bytes, right) = wave(Bytes(&wav), 0).unwrap();
+        let (right, right_bytes) = right.unwrap();
+        assert_eq!(bytes, (0..16).collect::<Vec<u8>>());
+        assert_eq!(right_bytes, (16..32).collect::<Vec<u8>>());
+        let coefs = |e: &Encoding| match e {
+            Encoding::Adpcm { coefs, .. } => coefs[0],
+            Encoding::Pcm16 => 0,
+        };
+        assert_eq!((coefs(&left.encoding), coefs(&right.encoding)), (1, 101));
+        assert_eq!(
+            (right.rate, right.len, right.loop_start),
+            (32000, 28, Some(14))
+        );
+        assert!(wave(Bytes(&fwav()), 0).unwrap().2.is_none());
     }
 
     fn fwar() -> Vec<u8> {
@@ -656,6 +728,7 @@ mod tests {
         assert_eq!(
             bank.waves,
             [WaveInfo {
+                right: None,
                 rate: 32000,
                 len: 28,
                 loop_start: Some(14),

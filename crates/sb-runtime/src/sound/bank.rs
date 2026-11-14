@@ -8,7 +8,9 @@
 //! "SBBANK01"
 //! u32 instruments, then per instrument: u32 first region, u32 regions
 //! u32 regions, then per region REGION_BYTES as in Region::write
-//! u32 waves, then per wave WAVE_BYTES as in WaveInfo::write
+//! u32 waves, then per wave WAVE_BYTES as in WaveInfo::write (a bank
+//! from before stereo waves has 0 where the right channel goes, and reads
+//! as all mono)
 //! the waves' data
 //! ```
 //!
@@ -95,9 +97,12 @@ pub enum Encoding {
     },
 }
 
-/// One waveform, mono.
+/// One waveform, mono, or the left channel of a stereo one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WaveInfo {
+    /// For the left channel of a stereo waveform, the wave that holds its
+    /// right channel.
+    pub right: Option<u16>,
     pub rate: u32,
     /// Samples in the waveform.
     pub len: u32,
@@ -137,6 +142,8 @@ impl WaveInfo {
         for c in coefs.iter().chain(&history) {
             out.extend_from_slice(&c.to_le_bytes());
         }
+        let right = self.right.map_or(0, |r| u32::from(r) + 1);
+        out.extend_from_slice(&right.to_le_bytes());
         out.resize(start + WAVE_BYTES, 0);
     }
 
@@ -168,7 +175,12 @@ impl WaveInfo {
             return None;
         }
         let end = start.checked_add(WaveInfo::bytes_for(&encoding, len)?)?;
+        let right = match u(56) {
+            0 => None,
+            r => Some(u16::try_from(r - 1).ok()?),
+        };
         Some(WaveInfo {
+            right,
             rate: u(0),
             len,
             loop_start,
@@ -249,7 +261,11 @@ impl Bank {
             && regions
                 .iter()
                 .all(|r| usize::from(r.wave) < waves.len() && r.keys.0 <= r.keys.1)
-            && waves.iter().all(|w| w.data.end <= data.len());
+            && waves.iter().all(|w| w.data.end <= data.len())
+            && waves
+                .iter()
+                .filter_map(|w| w.right)
+                .all(|r| usize::from(r) < waves.len());
         fits.then_some(Bank {
             instruments,
             regions,
@@ -371,6 +387,7 @@ mod tests {
             ],
             waves: vec![
                 WaveInfo {
+                    right: None,
                     rate: 32000,
                     len: 3,
                     loop_start: Some(1),
@@ -378,6 +395,7 @@ mod tests {
                     data: 0..6,
                 },
                 WaveInfo {
+                    right: None,
                     rate: 44100,
                     len: 15,
                     loop_start: None,
@@ -400,6 +418,12 @@ mod tests {
         let mut bad = b.clone();
         bad.regions[0].wave = 2;
         assert_eq!(Bank::from_bytes(&bad.to_bytes()), None);
+        // A stereo wave names its right channel, which must be there.
+        let mut stereo = b.clone();
+        stereo.waves[0].right = Some(1);
+        assert_eq!(Bank::from_bytes(&stereo.to_bytes()), Some(stereo.clone()));
+        stereo.waves[0].right = Some(2);
+        assert_eq!(Bank::from_bytes(&stereo.to_bytes()), None);
         let bytes = b.to_bytes();
         assert_eq!(Bank::from_bytes(&bytes[..bytes.len() - 1]), None);
     }
@@ -420,6 +444,7 @@ mod tests {
     #[test]
     fn adpcm_with_extreme_coefficients_does_not_overflow() {
         let w = WaveInfo {
+            right: None,
             rate: 32000,
             len: 14,
             loop_start: None,
@@ -448,6 +473,7 @@ mod tests {
             *c = (i as i16 - 8) * 256;
         }
         let w = WaveInfo {
+            right: None,
             rate: 32000,
             len: 14 * 64,
             loop_start: None,
@@ -508,6 +534,7 @@ mod tests {
         let mut coefs = [0; 16];
         coefs[0] = 2048;
         let w = WaveInfo {
+            right: None,
             rate: 32000,
             len: 4,
             loop_start: None,
