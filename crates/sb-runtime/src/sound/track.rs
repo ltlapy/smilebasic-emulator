@@ -691,10 +691,11 @@ impl Track {
                 Cmd::VibratoOff => self.apply_lfo(c, LfoTarget::Pitch, false),
                 Cmd::TremoloOff => self.apply_lfo(c, LfoTarget::Volume, false),
                 Cmd::PanWaveOff => self.apply_lfo(c, LfoTarget::Pan, false),
-                // @MPON, @MAON and @MLON send the last settings of one LFO again.
-                // UNVERIFIED: SB4 seems to forget the settings at each `:`, so
-                // `:0@MP1,2,3,4:0C@MPON` would send the default settings
-                // there. Here the channel keeps them.
+                // @MPON, @MAON and @MLON send the last settings of one LFO
+                // again; a `:` forgets them, so `@MP64,1,20,0@MPOF:0@MPON`
+                // sends the default settings, which do nothing.
+                // UNVERIFIED: an LFO that sounds goes on past the `:`.
+                Cmd::ForgetLfos => self.channels[c].lfo_set = [Lfo::default(); 3],
                 Cmd::VibratoOn => self.apply_lfo(c, LfoTarget::Pitch, true),
                 Cmd::TremoloOn => self.apply_lfo(c, LfoTarget::Volume, true),
                 Cmd::PanWaveOn => self.apply_lfo(c, LfoTarget::Pan, true),
@@ -1047,6 +1048,25 @@ mod tests {
         }
         assert_eq!(t.voices.len(), 1);
         assert_eq!((t.voices[0].2.key, t.voices[0].2.porta), (67, 0.0));
+    }
+
+    /// SmileBASIC 4 plays `@MP64,1,20,0@MPOF:0@MPON` with no vibrato:
+    /// the `:` forgot what @MPON sends again.
+    #[test]
+    fn a_colon_forgets_the_lfo_settings() {
+        let vibrato = |mml: &str| {
+            let waves = Rc::new(RefCell::new(Waves::default()));
+            let mut t = Track::new(None, waves);
+            t.play(Some(Rc::new(parse(mml).unwrap())), 127, 0);
+            let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
+            let mut scratch = Default::default();
+            t.render(&mut l, &mut r, &mut scratch, None);
+            t.voices[0].2.lfo[0]
+        };
+        assert_eq!(vibrato("@219@MP64,1,20,0@MPOF:0@MPONA1").depth, 0);
+        assert_eq!(vibrato("@219@MP64,1,20,0@MPOF@MPONA1").depth, 64);
+        assert_eq!(vibrato("@219@MP64,1,20,0@MOF:0@MONA1").depth, 0);
+        assert_eq!(vibrato(":0@219@MP64,1,20,0@MPOF@MPONA1").depth, 64);
     }
 
     #[test]

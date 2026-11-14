@@ -102,6 +102,9 @@ pub enum Cmd {
     PanWaveOn,
     ModulationOff,
     ModulationOn,
+    /// A `:` after @MP, @MA or @ML: @MPON, @MAON, @MLON and @MON after it
+    /// no longer know the settings before it.
+    ForgetLfos,
     RepeatStart,
     /// Back to the matching RepeatStart; 0 repeats for ever.
     RepeatEnd(Num),
@@ -270,6 +273,8 @@ struct Parser {
     repeats: [u32; CHANNELS],
     /// A bit for each channel used so far; channel 0 from the start.
     chosen: u16,
+    /// @MP, @MA or @ML has come since the last `:`.
+    lfo_given: bool,
 }
 
 /// Values a literal may take, checked as it is read.
@@ -589,9 +594,15 @@ impl Parser {
             "D" => Cmd::Detune(self.num(-128..=127)?),
             "E" => Cmd::Envelope(self.four()?),
             "ER" => Cmd::EnvelopeOff,
-            "MP" => Cmd::Vibrato(self.four()?),
-            "MA" => Cmd::Tremolo(self.four()?),
-            "ML" => Cmd::PanWave(self.four()?),
+            "MP" | "MA" | "ML" => {
+                self.lfo_given = true;
+                let v = self.four()?;
+                match word.as_str() {
+                    "MP" => Cmd::Vibrato(v),
+                    "MA" => Cmd::Tremolo(v),
+                    _ => Cmd::PanWave(v),
+                }
+            }
             "MPOF" => Cmd::VibratoOff,
             "MAOF" => Cmd::TremoloOff,
             "MLOF" => Cmd::PanWaveOff,
@@ -634,6 +645,12 @@ impl Parser {
                         }
                         self.chosen |= 1 << n;
                         self.channel = n;
+                        // Every `:` forgets the @MP, @MA and @ML settings
+                        // that their ON words send again, even one naming
+                        // the channel it is in.
+                        if std::mem::take(&mut self.lfo_given) {
+                            self.song.channels[n].push(Cmd::ForgetLfos);
+                        }
                     }
                     Some(_) => return Err(number),
                     None => return Err(self.start(at)),
@@ -834,6 +851,7 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
         lengths: [Some(WHOLE / 4); CHANNELS],
         repeats: [0; CHANNELS],
         chosen: 1,
+        lfo_given: false,
     };
     while p.at < p.text.len() {
         p.command()?;
@@ -1221,6 +1239,15 @@ mod tests {
         assert_eq!(check("[C:1D]2"), Err(3));
         assert_eq!(check(":0[C:1D]2"), Err(5));
         assert_eq!(check("[C:1D]"), Err(3));
+    }
+
+    #[test]
+    fn a_colon_after_commands_forgets_the_lfo_settings() {
+        let song = parse("@MP1,2,3,4:0@MPON:1C").unwrap();
+        assert_eq!(song.channels[0][1..], [Cmd::ForgetLfos, Cmd::VibratoOn]);
+        // Without @MP, @MA or @ML before it there is nothing to forget.
+        assert!(matches!(song.channels[1][..], [Cmd::Note { .. }]));
+        assert_eq!(parse("C:0C").unwrap().channels[0].len(), 2);
     }
 
     #[test]
