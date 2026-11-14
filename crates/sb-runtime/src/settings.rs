@@ -173,6 +173,9 @@ pub struct Settings {
     /// The programs F9 to F11 start, which SYSPARAM "TOOL1" to "TOOL3"
     /// reads, as SmileBASIC 4's settings set them.
     pub tools: [String; 3],
+    /// The frontend is laid out for a handheld with a gamepad alone:
+    /// fullscreen, a game list instead of DIRECT mode, no menu bar.
+    pub handheld: bool,
 }
 
 /// F1 to F5 as SmileBASIC 4 starts (checked on hardware).
@@ -231,6 +234,7 @@ impl Default for Settings {
             speed: Speed::Unlimited,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
+            handheld: false,
         }
     }
 }
@@ -289,6 +293,7 @@ impl Settings {
             speed: Speed::Unlimited,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
+            handheld: false,
         }
     }
 }
@@ -437,6 +442,7 @@ impl Settings {
                 "debug_open_editor" => &mut s.debug_open_editor,
                 "complete_hints" => &mut s.complete_hints,
                 "complete_above" => &mut s.complete_above,
+                "handheld" => &mut s.handheld,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -613,6 +619,7 @@ impl Settings {
              debug_open_editor={}\n\
              debug_text_size={}\n\
              speed={}\n\
+             handheld={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -658,6 +665,7 @@ impl Settings {
             self.debug_open_editor,
             self.debug_text_size,
             self.speed.name(),
+            self.handheld,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),
@@ -713,6 +721,7 @@ mod tests {
             speed: Speed::Switch1,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
+            handheld: true,
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);
