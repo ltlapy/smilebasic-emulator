@@ -234,7 +234,7 @@ impl ProgramView {
 /// Splits a line into pieces at most `max` pixels wide as [`draw_text`]
 /// draws them, after a space where there is one, as Japanese text has
 /// none.
-fn wrap(line: &str, max: u32) -> Vec<String> {
+pub(crate) fn wrap(line: &str, max: u32) -> Vec<String> {
     let mut pieces = Vec::new();
     let mut rest: Vec<char> = line.chars().collect();
     loop {

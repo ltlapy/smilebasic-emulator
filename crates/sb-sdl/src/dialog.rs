@@ -7,6 +7,7 @@ use sb_runtime::font::Font;
 use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
 
+use crate::program_dialog::wrap;
 use crate::ui::{
     BACKGROUND, BORDER, CHAR, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, text_width,
 };
@@ -23,6 +24,8 @@ const ANSWERS: [Answer; 2] = [Answer::Accept, Answer::Cancel];
 
 pub struct Dialog {
     title: String,
+    /// The lines as given, and as shown: wrapped to fit the display.
+    text: Vec<String>,
     lines: Vec<String>,
     /// Labels of the Accept and Cancel buttons, or of OK alone.
     labels: Vec<String>,
@@ -38,11 +41,19 @@ pub struct Dialog {
 /// Characters of a field shown.
 const FIELD_CHARS: usize = 40;
 
+/// `lines` wrapped to fit a display `width` wide, with room for the
+/// window's padding and a margin around it.
+fn wrapped(lines: &[String], width: u32) -> Vec<String> {
+    let room = width.saturating_sub(8 * PAD).max(CHAR);
+    lines.iter().flat_map(|l| wrap(l, room)).collect()
+}
+
 impl Dialog {
     pub fn new(title: &str, lines: Vec<String>, accept: &str, size: (u32, u32)) -> Dialog {
         Dialog {
             title: title.to_string(),
-            lines,
+            lines: wrapped(&lines, size.0),
+            text: lines,
             labels: vec![accept.to_string(), "Cancel".to_string()],
             size,
             focus: 1,
@@ -80,7 +91,8 @@ impl Dialog {
     pub fn notice(title: &str, lines: Vec<String>, size: (u32, u32)) -> Dialog {
         Dialog {
             title: title.to_string(),
-            lines,
+            lines: wrapped(&lines, size.0),
+            text: lines,
             labels: vec!["OK".to_string()],
             size,
             focus: 0,
@@ -101,6 +113,14 @@ impl Dialog {
         let mut lines = vec!["Quit the emulator.".to_string(), String::new()];
         lines.extend(unsaved_lines(unsaved));
         Dialog::new("Quit", lines, "Quit", size)
+    }
+
+    /// Centers the dialog in a display of another size.
+    pub fn set_size(&mut self, size: (u32, u32)) {
+        if size != self.size {
+            self.size = size;
+            self.lines = wrapped(&self.text, size.0);
+        }
     }
 
     fn button_width(&self) -> u32 {
@@ -298,6 +318,23 @@ mod tests {
         assert_eq!(d.field(), "A> 2");
         assert_eq!(d.key(Keycode::Return), Some(Answer::Accept));
         assert_eq!(d.key(Keycode::Escape), Some(Answer::Cancel));
+    }
+
+    #[test]
+    fn long_lines_wrap_to_fit_a_small_display() {
+        let path = "Saved PRG0 to recovered/2026-11-15/PRG0.txt in the data folder";
+        let lines = vec![
+            "The emulator failed last time.".to_string(),
+            path.to_string(),
+        ];
+        let mut d = Dialog::notice("Recovered programs", lines, (1280, 720));
+        assert_eq!(d.lines.len(), 2, "room enough on the desktop");
+        d.set_size((320, 240));
+        assert!(d.lines.len() > 2);
+        let f = d.frame();
+        assert!(f.x + f.w <= 320, "{f:?}");
+        d.set_size((1280, 720));
+        assert_eq!(d.lines.len(), 2);
     }
 
     #[test]
