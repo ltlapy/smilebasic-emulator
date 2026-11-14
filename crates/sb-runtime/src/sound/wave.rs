@@ -308,6 +308,9 @@ pub struct Voice {
     targets: [f32; 2],
     /// Samples into the envelope's step.
     in_tick: usize,
+    /// The position has gone round the loop: the sample before its start
+    /// is the loop's last.
+    wrapped: bool,
     done: bool,
 }
 
@@ -350,6 +353,7 @@ impl Voice {
             steps: [0.0; 2],
             targets: [0.0; 2],
             in_tick: 0,
+            wrapped: false,
             done: false,
         };
         v.set_pitch(cents);
@@ -419,6 +423,37 @@ impl Voice {
         self.envelope.released()
     }
 
+    /// The waveform at the position, read through the instruments' filter
+    /// ([`sampler::interpolate`]).
+    #[inline]
+    fn sample(&self, samples: &[f32]) -> f32 {
+        let i = self.pos as usize;
+        let frac = self.pos - i as f64;
+        let (start, end) = self.looped;
+        let h = match samples.get(i.wrapping_sub(1)..i + 3) {
+            Some(h) if i + 2 < end => [h[0], h[1], h[2], h[3]],
+            _ => {
+                let at = |j: usize| {
+                    let j = if j >= end && self.loops {
+                        start + (j - end) % (end - start)
+                    } else {
+                        j
+                    };
+                    samples.get(j).copied().filter(|_| j < end).unwrap_or(0.0)
+                };
+                let before = if i == start && self.wrapped {
+                    at(end - 1)
+                } else if i == 0 {
+                    0.0
+                } else {
+                    at(i - 1)
+                };
+                [before, at(i), at(i + 1), at(i + 2)]
+            }
+        };
+        sampler::interpolate(&h, frac)
+    }
+
     /// Adds the voice into the buffers.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         let wave = self.wave.clone();
@@ -456,12 +491,13 @@ impl Voice {
             if self.pos >= end as f64 {
                 if self.loops {
                     self.pos = start as f64 + (self.pos - end as f64) % (end - start) as f64;
+                    self.wrapped = true;
                 } else {
                     self.done = true;
                     return;
                 }
             }
-            let s = samples[(self.pos as usize).min(samples.len() - 1)];
+            let s = self.sample(samples);
             *l += s * self.levels[0];
             *r += s * self.levels[1];
             self.pos += self.step;
@@ -756,6 +792,38 @@ pub(crate) mod tests {
         let w = eight_bit(&bytes, 32, 69, Envelope::ORGAN);
         let v = Voice::new(Rc::new(w), None, 69, 0, false);
         assert!((v.step - 32.0 * 880.0 / 48000.0).abs() < 1e-9);
+    }
+
+    /// A 1 kHz sine at 8000 Hz: the images at 7 and 9 kHz are about 38 and
+    /// 62 dB below the tone, where holding each sample left them at 17 and
+    /// 19.
+    #[test]
+    fn waveforms_are_read_through_a_filter() {
+        let samples: Vec<f32> = (0..8000)
+            .map(|i| (i as f32 * std::f32::consts::TAU / 8.0).sin() * 0.5)
+            .collect();
+        let wave = Wave {
+            samples,
+            rate: Some(8000.0),
+            looped: (0, 8000),
+            ..pulse(219)
+        };
+        let mut v = Voice::new(Rc::new(wave), None, 69, 0, true);
+        let (mut l, mut r) = (vec![0.0; 48000], vec![0.0; 48000]);
+        v.render(&mut l, &mut r);
+        let level = |hz: f32| {
+            let w = std::f32::consts::TAU * hz / 48000.0;
+            let (c, s) = l[4800..]
+                .iter()
+                .enumerate()
+                .fold((0.0, 0.0), |(c, s), (i, x)| {
+                    (c + x * (w * i as f32).cos(), s + x * (w * i as f32).sin())
+                });
+            f32::hypot(c, s)
+        };
+        let db = |hz: f32| 20.0 * (level(hz) / level(1000.0)).log10();
+        assert!((-41.0..-35.0).contains(&db(7000.0)), "{}", db(7000.0));
+        assert!(db(9000.0) < -55.0, "{}", db(9000.0));
     }
 
     #[test]

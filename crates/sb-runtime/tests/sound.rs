@@ -438,17 +438,19 @@ const WAVSET_SQUARE: &str = "WAVSET 224,127,127,127,127,\"FFFF0000\"*8,69";
 
 /// BEEP's volume is a linear gain, by which 64 is as loud as BGMPLAY's
 /// default: an eighth of full scale on each side for a full-scale waveform.
+/// The square holds at 4096; the filter waveforms are read through rings a
+/// little past that at each edge, to 4814.
 #[test]
 fn beep_of_a_waveform_is_as_loud_as_a_song() {
     let beep = |volume: i32| beep_recording(&format!("{WAVSET_SQUARE}:H=BEEP(224,0,{volume})"), 30);
     let (at_64, _) = beep(64);
     let (song, _) = beep_recording(&format!("{WAVSET_SQUARE}:BGMPLAY \"@224O4A1\""), 30);
-    assert_eq!(at_64, 4096);
+    assert_eq!(at_64, 4814);
     assert_eq!(at_64, song);
     let (at_127, _) = beep(127);
-    assert!((at_127 - 4096 * 127 / 64).abs() <= 1, "{at_127}");
+    assert!((at_127 - 4814 * 127 / 64).abs() <= 1, "{at_127}");
     let (at_32, _) = beep(32);
-    assert!((at_32 - 2048).abs() <= 1, "{at_32}");
+    assert!((at_32 - 2407).abs() <= 1, "{at_32}");
     let (default, _) = beep_recording(&format!("{WAVSET_SQUARE}:H=BEEP(224)"), 30);
     assert_eq!(default, at_64);
 }
@@ -519,8 +521,8 @@ fn a_repeating_beeps_notes_pile_up_and_fall_after_beepstop() {
     let flagged =
         format!("{SLOW_SQUARE}:WAVSETA 225,127,127,127,32,W%,69,0,2815,28160,0,1:H=BEEP(225)");
     let (peak, end) = stopped_recording(&flagged, 60, "BEEPSTOP H", 30);
-    // One note peaks at 1250.
-    assert!((8000..9500).contains(&peak), "{peak}");
+    // One note peaks at about 1400.
+    assert!((8500..10500).contains(&peak), "{peak}");
     assert_eq!(end, 1499);
     // With a fade the notes fade too, and nothing is left at its end.
     let (_, end) = stopped_recording(&flagged, 60, "BEEPSTOP H,0.25", 30);
@@ -890,7 +892,9 @@ fn recording_what_plays() {
             "DIM A[1]:RECSAVE A,10,2:DIM B[1,1]:RECSAVE B:?LEN(A);A[0];DIM(B,1);B[1,0]"
         )
         .unwrap(),
-        "10375024003750"
+        // The note's first sample is a little below the rest: the filter
+        // reads the silence before it.
+        "10375024003647"
     );
     frames(&mut rt, 3);
     assert_eq!(run_on(&mut rt, "?RECCHK();RECPOS()").unwrap(), "04800");

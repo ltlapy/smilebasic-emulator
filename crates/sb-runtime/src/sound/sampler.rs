@@ -25,6 +25,96 @@ const SUSTAIN_FLOOR: f32 = -723.0;
 /// waveform, as the PSG's do (TEST41).
 pub(crate) const OUTPUT_GAIN: f32 = 0.1774;
 
+/// Steps of [`TAPS`] between two samples of a waveform. Fewer leave a
+/// noise of their own: a 1 kHz sine at 8000 Hz gets a component at 15 kHz
+/// 64 dB down with 256, 84 dB down with 1024.
+const PHASES: usize = 1024;
+
+/// The curve that notes of instruments and waveforms are read through, one
+/// side of it: its value and slope at 0, 0.5, 1, 1.5 and 2 samples from
+/// the position, a cubic between each two. It keeps what lies well below
+/// half the waveform's rate and takes most of the images above it away,
+/// from four samples. PCMSTREAM is not filtered.
+// UNVERIFIED: a curve fitted to recordings of SB4's images and harmonics,
+// not SB4's own; SB4 may use another for notes played well above their
+// rate.
+const KNOTS: [(f64, f64); 5] = [
+    (1.0, 0.0),
+    (0.6412, -1.1478),
+    (0.029, -0.6635),
+    (-0.0914, 0.1061),
+    (0.0, 0.1756),
+];
+
+const fn kernel(d: f64) -> f64 {
+    let a = if d < 0.0 { -d } else { d };
+    if a >= 2.0 {
+        return 0.0;
+    }
+    let x = a * 2.0;
+    let i = x as usize;
+    let t = x - i as f64;
+    let ((v0, m0), (v1, m1)) = (KNOTS[i], KNOTS[i + 1]);
+    let (t2, t3) = (t * t, t * t * t);
+    (2.0 * t3 - 3.0 * t2 + 1.0) * v0
+        + (t3 - 2.0 * t2 + t) * 0.5 * m0
+        + (3.0 * t2 - 2.0 * t3) * v1
+        + (t3 - t2) * 0.5 * m1
+}
+
+/// The weights of the samples before, at and the two after the position,
+/// for each step of [`PHASES`] and the next sample: in 32768ths, so that
+/// they are the same on every machine, and adding up to 1 so that no step
+/// is louder than another.
+const fn taps() -> [[f32; 4]; PHASES + 1] {
+    const ONE: f64 = 32768.0;
+    let mut out = [[0.0; 4]; PHASES + 1];
+    let mut p = 0;
+    while p <= PHASES {
+        let frac = p as f64 / PHASES as f64;
+        let w = [
+            kernel(frac + 1.0),
+            kernel(frac),
+            kernel(frac - 1.0),
+            kernel(frac - 2.0),
+        ];
+        let sum = w[0] + w[1] + w[2] + w[3];
+        let mut q = [0i32; 4];
+        let mut total = 0;
+        let mut k = 0;
+        while k < 4 {
+            let x = w[k] / sum * ONE;
+            q[k] = if x < 0.0 {
+                (x - 0.5) as i32
+            } else {
+                (x + 0.5) as i32
+            };
+            total += q[k];
+            k += 1;
+        }
+        // What rounding left over goes to the nearer sample.
+        q[if 2 * p < PHASES { 1 } else { 2 }] += ONE as i32 - total;
+        let mut k = 0;
+        while k < 4 {
+            out[p][k] = q[k] as f32 / ONE as f32;
+            k += 1;
+        }
+        p += 1;
+    }
+    out
+}
+
+static TAPS: [[f32; 4]; PHASES + 1] = taps();
+
+/// The waveform at `frac` of the way from `h[1]` to `h[2]`, `h` being four
+/// samples in a row.
+#[inline(always)]
+pub(crate) fn interpolate(h: &[f32; 4], frac: f64) -> f32 {
+    // The nearest step; past the last, the next sample's weights.
+    let w = &TAPS[((frac * PHASES as f64 + 0.5) as usize).min(PHASES)];
+    h[0] * w[0] + h[1] * w[1] + h[2] * w[2] + h[3] * w[3]
+}
+
 /// The attack for attack values 109 to 127: how much of the level is
 /// left after 5 ms, in 256ths. Below 109 it is 255 - attack.
 // These are the Nintendo DS sound engine's values; SmileBASIC 4's own
@@ -443,6 +533,12 @@ impl Voice {
             let (rp, rl) = rs.split_at_mut(plain);
             let mut went = true;
             for (l, r) in lp.iter_mut().zip(rp.iter_mut()) {
+                // SmileBASIC 4 reads instruments through the waveforms'
+                // filter too, over the sample before and the two after:
+                // let s = interpolate(&[before, s0, s1, after], frac);
+                // Here they stay linear: the filter made songs of many notes
+                // take a quarter longer to mix, and the instruments' samples
+                // are 32 kHz and more, where the two sound nearly alike.
                 let s = s0 + (s1 - s0) * frac as f32;
                 frac += step;
                 if frac >= 1.0 {
