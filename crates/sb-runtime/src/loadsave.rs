@@ -432,7 +432,12 @@ impl Runtime {
             return Ok(());
         };
         if kind.eq_ignore_ascii_case("PNG") {
-            let system = rest.starts_with('#') || self.storage.project().starts_with('#');
+            // `PNG:#NAME` is a file of the current project, not a system
+            // project's.
+            let named = rest
+                .split_once('/')
+                .is_some_and(|(p, _)| p.starts_with('#'));
+            let system = named || self.storage.project().starts_with('#');
             return match system {
                 true => Ok(()),
                 false => Err(ErrorKind::CantAccessOtherProject.into()),

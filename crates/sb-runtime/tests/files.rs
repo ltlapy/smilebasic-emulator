@@ -661,6 +661,29 @@ fn loadv_chkfile_and_program_types() {
     }
 }
 
+/// A file name may start with `#`; it is the project's only when a `/`
+/// follows.
+#[test]
+fn file_names_starting_with_a_hash() {
+    use sb_runtime::storage::FileKind;
+    let dir = TempDir::new("hash-names");
+    let mut m = machine(&dir);
+    let program = [
+        "SAVEV \"TXT:#NEWFILE\",\"HI\":?RESULT();CHKFILE(\"TXT:#NEWFILE\")",
+        "?LOADV(\"TXT:#NEWFILE\")",
+        "DELETE \"TXT:#NEWFILE\":?RESULT();CHKFILE(\"TXT:#NEWFILE\")",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    assert_eq!(tail(&m, 4), ["11", "HI", "10", "OK"]);
+    m.rt.storage
+        .write(FileKind::Txt, "#UPDATE-META", b"?\"META\"", None)
+        .unwrap();
+    assert!(dir.0.join("@WORKSPACE").join("T#UPDATE-META").is_file());
+    enter(&mut m, "load \"#update-meta\"");
+    assert_eq!(m.slot(0), "?\"META\"");
+}
+
 #[test]
 fn graphic_pages_save_and_load() {
     let dir = TempDir::new("images");

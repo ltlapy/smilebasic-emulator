@@ -2168,6 +2168,11 @@ Expected but not yet seen on hardware:
   `Can't use from direct mode`, shown without a line.
 - File names may start with `@`, as the backups' do: `LOADV "DAT:@BACKUP.DAT"`
   reads one, and `SAVE "@X"` saves (after the usual question).
+- File names may start with `#`, as the first character only:
+  `SAVEV "TXT:#NAME",S$` saves, and `LOAD "#NAME"` loads. A `#` anywhere
+  else, or on its own, is refused. With a `/` after it, the `#` part is a project
+  instead (`#EXAMPLE/FILE`). A `#` file name works on hardware; the rest is
+  not yet seen there.
 - `CON`, `PRN`, `NUL`, `AUX`, `COM1` to `COM4` and `LPT1` to `LPT4` cannot
   name a file, or a project in a path. `CHKFILE("TXT:CON")`, `SAVE "NUL/A"`
   and `FILES "TXT:LPT1"` are `Illegal format`, naming the argument as in

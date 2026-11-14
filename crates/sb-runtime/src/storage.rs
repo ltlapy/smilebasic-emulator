@@ -209,26 +209,36 @@ pub fn write_regular(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// digits, `_`, `-` and `.`, not starting with `.`, and not one of the
 /// [`is_reserved_name`] names. It may start with `@`, as the backups'
 /// names do (`@BACKUP.PRG`); programs can read and save such names
-/// (checked on hardware).
+/// (checked on hardware). It may start with `#` too (`#UPDATE-META`),
+/// which SmileBASIC 4 takes only as the first character of a path, so
+/// not after a project (see [`parse_read_name`]).
 fn check_name(name: &str) -> Result<String> {
-    if is_reserved_name(name) {
-        return Err(StorageError::BadName(name.to_string()));
+    let bad = || StorageError::BadName(name.to_string());
+    if name.len() > MAX_NAME || is_reserved_name(name) {
+        return Err(bad());
     }
-    if let Some(rest) = name.strip_prefix('@') {
-        return check_plain_name(rest)
-            .ok()
-            .filter(|_| name.len() <= MAX_NAME)
-            .map(|n| format!("@{n}"))
-            .ok_or_else(|| StorageError::BadName(name.to_string()));
-    }
-    check_plain_name(name)
+    let (hash, rest) = match name.strip_prefix('#') {
+        Some(rest) => ("#", rest),
+        None => ("", name),
+    };
+    let (at, rest) = match rest.strip_prefix('@') {
+        Some(rest) => ("@", rest),
+        None => ("", rest),
+    };
+    // Only the name's very first character may not be a `.`.
+    let dot_first = !hash.is_empty() && at.is_empty();
+    check_plain_name(rest, dot_first)
+        .map(|n| format!("{hash}{at}{n}"))
+        .map_err(|_| bad())
 }
 
-fn check_plain_name(name: &str) -> Result<String> {
+/// Letters, digits, `_`, `-` and `.`, with a `.` first only if
+/// `dot_first`.
+fn check_plain_name(name: &str, dot_first: bool) -> Result<String> {
     let ok = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
     if name.is_empty()
         || name.len() > MAX_NAME
-        || name.starts_with('.')
+        || (!dot_first && name.starts_with('.'))
         || !name.chars().all(ok)
         || (cfg!(windows) && name.ends_with('.'))
     {
@@ -335,6 +345,11 @@ pub fn parse_read_name(spec: &str, default: FileKind) -> Result<FileRef> {
         Some((project, name)) => (Some(check_project_name(project)?), name),
         None => (None, rest),
     };
+    // `#` starts only a path's first part: after a project, or the
+    // workspace's `/`, no name has one.
+    if project.is_some() && name.starts_with('#') {
+        return Err(StorageError::BadName(name.to_string()));
+    }
     Ok(FileRef {
         kind,
         project,
@@ -349,7 +364,7 @@ pub fn parse_read_name(spec: &str, default: FileKind) -> Result<FileRef> {
 pub fn check_project_name(name: &str) -> Result<String> {
     let rest = name.strip_prefix('#').unwrap_or(name);
     // `@` stays out of project names, so `@WORKSPACE` never clashes.
-    check_plain_name(rest)
+    check_plain_name(rest, false)
         .ok()
         .filter(|_| name.len() <= MAX_NAME && !is_reserved_name(name))
         .ok_or(())
@@ -1220,7 +1235,6 @@ mod tests {
         assert!(parse_file_name("", FileKind::Txt).is_err());
         assert!(parse_file_name("XYZ:A", FileKind::Txt).is_err());
         assert!(parse_file_name(".A", FileKind::Txt).is_err());
-        assert!(parse_file_name("#A", FileKind::Txt).is_err());
         assert_eq!(check_project_name("#sys").unwrap(), "#SYS");
         assert!(check_project_name("#").is_err());
         assert!(check_project_name("A#").is_err());
@@ -1254,6 +1268,39 @@ mod tests {
             parse_listing("mygame").unwrap(),
             (None, Some("MYGAME".to_string()))
         );
+    }
+
+    #[test]
+    fn file_names_may_start_with_a_hash() {
+        for fine in [
+            "#UPDATE-META",
+            "#update-meta",
+            "#CON",
+            "A-B",
+            "@X",
+            "_",
+            "#@X",
+            "#.X",
+        ] {
+            assert_eq!(
+                check_name(fine).unwrap(),
+                fine.to_ascii_uppercase(),
+                "{fine}"
+            );
+        }
+        for bad in ["A#B", "B#", "##", "#", ".X", "CON", "#A#"] {
+            assert!(check_name(bad).is_err(), "{bad}");
+        }
+        assert!(check_name(&format!("#{}", "A".repeat(31))).is_ok());
+        assert!(check_name(&format!("#{}", "A".repeat(32))).is_err());
+        let file = parse_read_name("TXT:#UPDATE-META", FileKind::Txt).unwrap();
+        assert_eq!((file.project, file.name.as_str()), (None, "#UPDATE-META"));
+        // With a `/`, the `#` part is the project, and the name has none.
+        let file = parse_read_name("#EXAMPLE/FILE", FileKind::Txt).unwrap();
+        assert_eq!(file.project.as_deref(), Some("#EXAMPLE"));
+        assert!(parse_read_name("GAME/#X", FileKind::Txt).is_err());
+        assert!(parse_read_name("/#X", FileKind::Txt).is_err());
+        assert!(parse_file_name("DAT:#X", FileKind::Txt).is_ok());
     }
 
     #[test]
