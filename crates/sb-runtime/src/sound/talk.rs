@@ -24,8 +24,12 @@ const PHONEMES: [&str; 26] = [
     "F", "B", "P", "M", "Y", "DX", "W", "_",
 ];
 
-/// Milliseconds at the standard speed, `<S128>`.
-const MORA: f64 = 130.0;
+/// Milliseconds at the standard speed, `<S128>`: あいうえお takes 460.
+const MORA: f64 = 90.0;
+/// The shortest vowel after a consonant: a mora with a consonant takes
+/// longer than one without (わたしは、 takes about 510 ms).
+// UNVERIFIED: how SmileBASIC 4 shares a mora between its sounds.
+const SHORTEST_VOWEL: f64 = 70.0;
 const CLOSURE: f64 = 45.0;
 const BURST: f64 = 15.0;
 const FRICATIVE: f64 = 70.0;
@@ -42,22 +46,47 @@ const SHORT_PAUSE: f64 = 200.0;
 const LONG_PAUSE: f64 = 600.0;
 /// `#`: 0.1 seconds without sound.
 const BREAK: f64 = 100.0;
+/// What TALKCHK still counts after the last sound: 20 vowels keep it
+/// set for about 121 frames.
+// UNVERIFIED: whether this is silence or the voice's own delay.
+const TAIL: f64 = 170.0;
 /// Glides between targets.
 const TRANSITION: f64 = 25.0;
 const QUICK: f64 = 8.0;
 
-/// The voice's pitch at `<P128>`.
-// UNVERIFIED: SmileBASIC's voice is higher or lower than this.
-const BASE_PITCH: f32 = 150.0;
+/// The voice's pitch at `<P128>`. SmileBASIC 4 speaks at one pitch: no
+/// fall through a phrase or before 、 and 。.
+const BASE_PITCH: f32 = 100.0;
+/// How far `<P…>` moves the pitch: it goes as (128 / P) to this power.
+/// `<P256>` is about 78 Hz.
+// UNVERIFIED: fitted to `<P256>` alone; the voice also drifts lower
+// through a phrase there.
+const PITCH_POWER: f32 = 0.35;
+/// The rate the voice's pitch periods are counted in: a period is a
+/// whole number of these samples, so A4 sings at 16000 / 36 = 444.4 Hz.
+const PERIOD_RATE: f32 = 16000.0;
 /// The synthesizer's gain at `<V128>`.
-const BASE_GAIN: f32 = 3.0;
-/// Pitch at a phrase's start and end, as a part of the base: speech falls
-/// as it goes.
-const PITCH_START: f32 = 1.06;
-const PITCH_END: f32 = 0.88;
+const BASE_GAIN: f32 = 0.53;
+/// The synthesizer's gain for a sung note.
+const SINGING_GAIN: f32 = 1.88;
+// The intonation this voice had before: SmileBASIC 4 speaks flat.
+// /// Pitch at a phrase's start and end, as a part of the base: speech falls
+// /// as it goes.
+// const PITCH_START: f32 = 1.06;
+// const PITCH_END: f32 = 0.88;
 /// Where a falling syllable's pitch ends, as a part of where it starts.
-// UNVERIFIED: how far は falls before 、.
+/// Nothing falls now: SmileBASIC 4 speaks flat.
 const FALL: f32 = 0.8;
+
+/// `hz` moved to the nearest pitch whose period is a whole number of
+/// [`PERIOD_RATE`] samples.
+// UNVERIFIED: rounded to the nearest period, or cut down to it.
+pub(crate) fn whole_period(hz: f32) -> f32 {
+    if hz <= 0.0 {
+        return hz;
+    }
+    PERIOD_RATE / (PERIOD_RATE / hz).round().max(1.0)
+}
 
 /// One beat of speech.
 #[derive(Clone, Debug, PartialEq)]
@@ -73,7 +102,8 @@ enum Mora {
     /// っ: a held silence before the next consonant.
     Hold,
     Pause(f64),
-    /// The syllable before falls in pitch, as は before 、 does.
+    /// After は before 、. It made the syllable fall in pitch, which
+    /// SmileBASIC 4 does not do.
     Fall,
     /// `<S…>`, `<P…>` and `<V…>`.
     Control(char, i32),
@@ -219,9 +249,9 @@ fn kana_letters(text: &str) -> String {
                     out.push(v);
                 }
             }
-            // Checked on hardware: は before 、 is read "wa", falling in
-            // pitch, as a particle; before 。 and other punctuation, or
-            // anywhere else, it is "ha".
+            // は before 、 is read "wa", as a particle; before 。 and other
+            // punctuation, or anywhere else, it is "ha". The ↓ after it
+            // once made it fall in pitch; SmileBASIC 4 keeps its pitch.
             'は' if chars.get(i + 1) == Some(&'、') => {
                 out.push_str("wa↓");
                 last_vowel = Some('a');
@@ -570,17 +600,11 @@ impl Talk {
                 c => c,
             })
             .collect();
-        // Phoneme letters follow a `$`, which control strings may come
-        // before.
-        let mut tags = 0;
-        while text[tags..].starts_with('<') {
-            match text[tags..].find('>') {
-                Some(end) => tags += end + 1,
-                None => break,
-            }
-        }
-        let letters = match text[tags..].strip_prefix('$') {
-            Some(letters) => format!("{}{letters}", &text[..tags]),
+        // Phoneme letters follow a `$` that starts the text, as in
+        // `$<S128>koqnichiwa`. A `$` after a control string is no mark:
+        // `<V16>$a` is read as kana, and says nothing.
+        let letters = match text.strip_prefix('$') {
+            Some(letters) => letters.to_string(),
             None => kana_letters(&text),
         };
         let morae = morae(&letters);
@@ -592,22 +616,27 @@ impl Talk {
             pitch: BASE_PITCH,
             gain: BASE_GAIN,
         };
-        let spoken = morae
-            .iter()
-            .filter(|m| !matches!(m, Mora::Control(..) | Mora::Pause(_) | Mora::Fall))
-            .count()
-            .max(1);
-        let mut beat = 0;
+        // The intonation this voice had before: SmileBASIC 4 speaks flat.
+        // let spoken = morae
+        //     .iter()
+        //     .filter(|m| !matches!(m, Mora::Control(..) | Mora::Pause(_) | Mora::Fall))
+        //     .count()
+        //     .max(1);
+        // let mut beat = 0;
         for (i, m) in morae.iter().enumerate() {
-            let fall = beat as f32 / spoken as f32;
-            let f0 = plan.pitch * (PITCH_START + (PITCH_END - PITCH_START) * fall);
+            // let fall = beat as f32 / spoken as f32;
+            // let f0 = plan.pitch * (PITCH_START + (PITCH_END - PITCH_START) * fall);
+            let f0 = plan.pitch;
             match *m {
                 Mora::Fall => {}
                 Mora::Control(kind, n) => match kind {
                     // 0 fast to 1024 slow, 128 standard.
                     'S' => plan.speed = f64::from(n.clamp(16, 1024)) / 128.0,
                     // 0 high to 1024 low, 128 standard.
-                    'P' => plan.pitch = BASE_PITCH * 128.0 / n.clamp(16, 1024) as f32,
+                    'P' => {
+                        let p = n.clamp(16, 1024) as f32;
+                        plan.pitch = whole_period(BASE_PITCH * (128.0 / p).powf(PITCH_POWER));
+                    }
                     'V' => plan.gain = BASE_GAIN * n.clamp(0, 128) as f32 / 128.0,
                     _ => {}
                 },
@@ -616,14 +645,14 @@ impl Talk {
                 }
                 Mora::Hold => {
                     plan.silence(MORA);
-                    beat += 1;
+                    // beat += 1;
                 }
                 Mora::Nasal => {
                     let mut n = plan.phoneme("N");
                     n.f0 = Some(f0);
                     plan.target(n, TRANSITION);
                     plan.at += plan.ms(MORA * 0.85);
-                    beat += 1;
+                    // beat += 1;
                 }
                 Mora::Syllable {
                     consonant,
@@ -656,13 +685,20 @@ impl Talk {
                     };
                     let devoiced = silent
                         || (matches!(vowel, 'i' | 'u') && voiceless(consonant) && next_voiceless);
-                    let falls = morae.get(i + 1) == Some(&Mora::Fall);
-                    plan.vowel(vowel, (MORA - taken).max(50.0), devoiced, f0, falls);
-                    beat += 1;
+                    // は before 、 no longer falls: SmileBASIC 4 keeps its pitch.
+                    // let falls = morae.get(i + 1) == Some(&Mora::Fall);
+                    let falls = false;
+                    let shortest = if consonant.is_some() || glide {
+                        SHORTEST_VOWEL
+                    } else {
+                        50.0
+                    };
+                    plan.vowel(vowel, (MORA - taken).max(shortest), devoiced, f0, falls);
+                    // beat += 1;
                 }
             }
         }
-        plan.silence(60.0);
+        plan.silence(TAIL);
         let total = plan.at as u64;
         let events = plan.events;
         self.synth.reset(Params {
@@ -744,6 +780,7 @@ impl Singer {
         if morae.is_empty() {
             return false;
         }
+        let hz = whole_period(hz);
         let share = ms / morae.len() as f64;
         let mut plan = Planner {
             table: table(),
@@ -751,7 +788,7 @@ impl Singer {
             at: 0.0,
             speed: (share / MORA).min(1.0),
             pitch: hz,
-            gain: BASE_GAIN,
+            gain: SINGING_GAIN,
         };
         for m in &morae {
             let end = plan.at + samples(share);
@@ -788,7 +825,7 @@ impl Singer {
         }
         self.synth.reset(Params {
             f0: hz,
-            gain: BASE_GAIN,
+            gain: SINGING_GAIN,
             ..Params::DEFAULT
         });
         self.synth
@@ -807,7 +844,7 @@ impl Singer {
 
     /// Moves the note by `cents`, for a portamento.
     pub(crate) fn bend(&mut self, cents: f32) {
-        let f0 = self.hz * (cents / 1200.0).exp2();
+        let f0 = whole_period(self.hz * (cents / 1200.0).exp2());
         let update = ParamUpdate {
             f0: Some(f0),
             ..ParamUpdate::default()
@@ -958,7 +995,7 @@ mod tests {
         assert_eq!(kana_letters("キャット"), "kyaclto");
         assert_eq!(kana_letters("しゃしん、ラーメン。"), "shashiq,raameq.");
         assert_eq!(kana_letters("ファイル"), "fairu");
-        // は is "wa" before 、, falling, and "ha" otherwise.
+        // は is "wa" before 、 and "ha" otherwise.
         assert_eq!(kana_letters("わたしは、ハナは。"), "watashiwa↓,hanaha.");
     }
 
@@ -997,8 +1034,33 @@ mod tests {
         let mut c = Talk::default();
         c.say("＜S256＞あ");
         let mut d = Talk::default();
-        d.say("<S256>$a");
+        d.say("$<S256>a");
         assert_eq!(c.left, d.left);
+    }
+
+    /// Only a `$` at the very start marks phoneme letters; after a
+    /// control string it is kana text with nothing to say.
+    #[test]
+    fn letters_need_the_dollar_first() {
+        let mut quiet = Talk::default();
+        quiet.say("");
+        for text in ["<V16>$a", "<V16>$aaaaaaaaaaaaaaaaaaaa"] {
+            let mut t = Talk::default();
+            t.say(text);
+            assert_eq!(t.left, quiet.left, "{text}");
+        }
+        let mut a = Talk::default();
+        a.say("$a");
+        assert!(a.left > quiet.left);
+    }
+
+    /// Pitches have whole periods at 16 kHz: A4 is 444.4 Hz, and the
+    /// standard voice 100 Hz.
+    #[test]
+    fn pitches_have_whole_periods() {
+        assert!((whole_period(440.0) - 16000.0 / 36.0).abs() < 1e-3);
+        assert_eq!(whole_period(BASE_PITCH), 100.0);
+        assert_eq!(whole_period(0.0), 0.0);
     }
 
     #[test]
