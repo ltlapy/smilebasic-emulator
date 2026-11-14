@@ -9,12 +9,12 @@ use std::rc::Rc;
 
 use sb_core::bytecode::{Literal, Want};
 use sb_core::error::{Error, ErrorKind, Result};
-use sb_core::value::{Array, Value};
+use sb_core::value::{Array, ArrayRef, ElemType, Value};
 
 use crate::runtime::{Command, Runtime, checking, illegal, no_form};
 use crate::sound::beep::{BeepSound, HANDLES};
 use crate::sound::mml::{self, Song};
-use crate::sound::pcm::{FULL, Level, Source};
+use crate::sound::pcm::{FULL, Source};
 use crate::sound::reverb::Settings;
 use crate::sound::seq::Kind;
 use crate::sound::wave::{BEEP_TICKS_A_SECOND, Envelope, Wave, beep_ticks, eight_bit};
@@ -91,6 +91,26 @@ fn opt_in_range(
         None | Some(Value::Default) => Ok(default),
         Some(v) => in_range(what, v, range),
     }
+}
+
+/// PCMSTREAM's array in argument `i`: integers or reals, at least one of
+/// them, in at most `dims` dimensions.
+fn pcm_array(args: &[Value], i: usize, dims: usize) -> Result<ArrayRef> {
+    let mismatch = || Error::new(ErrorKind::TypeMismatch).of_arg(i);
+    let Value::Array(a) = &args[i] else {
+        return Err(mismatch());
+    };
+    let array = a.borrow();
+    if array.elem_type() == ElemType::Str {
+        return Err(mismatch());
+    }
+    if array.is_empty() {
+        return Err(illegal().of_arg(i));
+    }
+    if array.dims.len() > dims {
+        return Err(mismatch());
+    }
+    Ok(a.clone())
 }
 
 /// BGMPLAY's volume when it is left out: half of BGMVOL's 127, which
@@ -610,30 +630,37 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Pcmstream, Want::Outs(0), 1..=3) => {
-                let arrays: Vec<_> = args
-                    .iter()
-                    .take_while(|a| matches!(a, Value::Array(_)))
-                    .map(|a| a.clone().into_array())
-                    .collect::<Result<_>>()?;
-                let source = match &arrays[..] {
-                    [a] => match a.borrow().dims.len() {
-                        1 => Source::Mono(a.clone()),
-                        // UNVERIFIED: a 2D array has a row for each side.
-                        2 if a.borrow().dims[0] == 2 => Source::Rows(a.clone()),
-                        _ => return Err(illegal()),
-                    },
-                    [l, r] => Source::Pair(l.clone(), r.clone()),
-                    _ => return Err(ErrorKind::TypeMismatch.into()),
+                let is_array = |v: &Value| matches!(v, Value::Array(_));
+                let frequency =
+                    |v: Option<&Value>| opt_in_range("frequency", v, 1..=192_000, 48_000);
+                let (source, rate) = match args {
+                    // A rate alone is the new rate of the stream there is.
+                    [rate] if !is_array(rate) => {
+                        self.sound.pcm.rate = f64::from(frequency(Some(rate))?);
+                        return Ok(vec![]);
+                    }
+                    [_] | [_, _] if !args.get(1).is_some_and(is_array) => {
+                        let a = pcm_array(args, 0, 2)?;
+                        let rate = frequency(args.get(1))?;
+                        // A 2D array has a row for each side.
+                        let rows = a.borrow().dims.len() == 2;
+                        let source = if rows {
+                            Source::Rows(a)
+                        } else {
+                            Source::Mono(a)
+                        };
+                        (source, rate)
+                    }
+                    _ => {
+                        let l = pcm_array(args, 0, 1)?;
+                        let r = pcm_array(args, 1, 1)?;
+                        if l.borrow().len() != r.borrow().len() {
+                            return Err(illegal().of_arg(1));
+                        }
+                        (Source::Pair(l, r), frequency(args.get(2))?)
+                    }
                 };
-                let rate = opt_in_range("frequency", args.get(arrays.len()), 1..=192_000, 48_000)?;
-                let pcm = &mut self.sound.pcm;
-                pcm.source = Some(source);
-                pcm.rate = f64::from(rate);
-                pcm.pos = 0.0;
-                pcm.playing = true;
-                // A stream starts at full volume on both sides, whatever
-                // PCMVOL set before it.
-                pcm.volume = [Level::at(FULL); 2];
+                self.sound.pcm.start(source, f64::from(rate));
                 Ok(vec![])
             }
             (Command::Pcmstop, Want::Outs(0), 0) => {
@@ -641,8 +668,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Pcmcont, Want::Outs(0), 0) => {
-                let pcm = &mut self.sound.pcm;
-                pcm.playing = pcm.source.is_some();
+                self.sound.pcm.resume();
                 Ok(vec![])
             }
             (Command::Pcmpos, Want::Outs(0), 1) => {

@@ -1969,6 +1969,20 @@ Expected but not yet seen on hardware:
 - `PCMPOS` seems to move in blocks: 27 frames into a looping stream of 4800
   samples at 48000 Hz it read 3313 or 673, either one on either console, and
   for 800 samples at 8000 Hz 353 (TEST74).
+- `PCMSTREAM` plays the low 16 bits of an integer as a
+  signed sample: 65535 plays as -1, so a program may store samples as 0 to
+  65535. It cuts a real to a whole number and holds it within -32768 to 32767.
+  (Not yet seen on hardware.)
+- A 2D array plays its first row on the left and its second on the right.
+  Further rows do not play. An array of strings or of three dimensions is a
+  `Type mismatch`, and an empty one an `Illegal function call`. Two arrays have
+  one dimension each and the same length, or the second is an
+  `Illegal function call`. (Not yet seen on hardware.)
+- `PCMSTREAM` with a number alone, such as `PCMSTREAM 22050`, sets the rate of
+  the stream there is and leaves its arrays, position and volume. (Not yet seen on hardware.)
+- A stream keeps the length its arrays had at `PCMSTREAM`. After `RESIZE` makes
+  one shorter, the stream reads the memory past the array's end. (Not yet seen
+  on hardware.)
 
 ## Signal processing
 

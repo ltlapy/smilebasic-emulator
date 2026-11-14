@@ -738,15 +738,113 @@ fn pcm_streams_from_arrays() {
         run_on(&mut rt, "PCMCONT:PCMVOL 0,-100:PCMVOL OUT L,R:?L;R").unwrap(),
         "-10032767"
     );
-    assert_eq!(
-        run_on(&mut rt, "DIM S[3,4]:PCMSTREAM S").unwrap_err().kind,
-        ErrorKind::IllegalFunctionCall
-    );
     run_on(
         &mut rt,
         "DIM S[2,4]:PCMSTREAM S,24000:DIM A[9],B[9]:PCMSTREAM A,B",
     )
     .unwrap();
+}
+
+/// PCMSTREAM takes integers or reals in one or two dimensions, or two 1D
+/// arrays as long as each other, and none that is empty.
+#[test]
+fn pcm_stream_checks_its_arrays() {
+    let mut rt = runtime();
+    for (bad, kind, arg) in [
+        ("DIM S$[4]:PCMSTREAM S$", ErrorKind::TypeMismatch, 0),
+        ("DIM S[2,2,2]:PCMSTREAM S", ErrorKind::TypeMismatch, 0),
+        ("DIM S[0]:PCMSTREAM S", ErrorKind::IllegalFunctionCall, 0),
+        (
+            "DIM S[2,4]:RESIZE S,0,4:PCMSTREAM S,8000",
+            ErrorKind::IllegalFunctionCall,
+            0,
+        ),
+        (
+            "DIM A[4],B[5]:PCMSTREAM A,B",
+            ErrorKind::IllegalFunctionCall,
+            1,
+        ),
+        ("DIM A[4],B[2,2]:PCMSTREAM A,B", ErrorKind::TypeMismatch, 1),
+        ("DIM A[2,2],B[4]:PCMSTREAM A,B", ErrorKind::TypeMismatch, 0),
+        ("DIM A[4]:PCMSTREAM A,8000,8000", ErrorKind::TypeMismatch, 1),
+        ("DIM A[4]:PCMSTREAM A,0", ErrorKind::OutOfRange, 1),
+        ("PCMSTREAM 192001", ErrorKind::OutOfRange, 0),
+    ] {
+        let e = run_on(&mut rt, bad).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, Some(arg)), "{bad}");
+    }
+    // Rows past the second are not played.
+    run_on(&mut rt, "DIM S[3,4]:PCMSTREAM S").unwrap();
+}
+
+/// An integer plays as its low 16 bits, so a program may store samples as
+/// 0 to 65535, and a real as a whole number held within 16 bits.
+#[test]
+fn pcm_samples_are_16_bits() {
+    let mut rt = runtime();
+    for (array, sample, level) in [
+        ("W%", "65535-16000", -16000.0),
+        ("W%", "&H10000+16000", 16000.0),
+        ("W%", "-16000", -16000.0),
+        ("W#", "1E308", 32767.0),
+        ("W#", "-40000", -32768.0),
+        ("W#", "0.9", 0.0),
+        ("W#", "-16000.9", -16000.0),
+    ] {
+        let fill = format!("DIM {array}[480]:FILL {array},{sample}:PCMSTREAM {array}");
+        run_on(&mut rt, &fill).unwrap();
+        rt.sound.take_samples();
+        frames(&mut rt, 1);
+        let samples = rt.sound.take_samples();
+        // A full sample plays at 0.35 of full scale.
+        let want = (level / 32767.0 * 0.35) as f32;
+        assert!(
+            samples.iter().all(|s| (s - want).abs() < 1e-4),
+            "{fill}: {} for {want}",
+            samples[0]
+        );
+        run_on(&mut rt, "PCMSTOP").unwrap();
+    }
+}
+
+/// A stream keeps the length its arrays had at PCMSTREAM. Made shorter
+/// since, they play silence where they have nothing, also once PCMCONT
+/// goes on with a stream whose array was emptied.
+#[test]
+fn a_pcm_stream_outlives_its_array() {
+    let mut rt = runtime();
+    run_on(
+        &mut rt,
+        "DIM S%[2,480]:FILL S%,16000:PCMSTREAM S%:PCMSTOP:RESIZE S%,0,480:PCMCONT",
+    )
+    .unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 2);
+    assert_eq!(peak(&mut rt), 0.0);
+    assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "160");
+    // The left row is still there, the right one is not.
+    run_on(
+        &mut rt,
+        "DIM T%[2,480]:FILL T%,16000:PCMSTREAM T%:RESIZE T%,1,480",
+    )
+    .unwrap();
+    rt.sound.take_samples();
+    frames(&mut rt, 1);
+    let samples = rt.sound.take_samples();
+    assert!(samples.chunks(2).all(|s| s[0] > 0.16 && s[1] == 0.0));
+    // A rate alone changes the rate and nothing else.
+    run_on(&mut rt, "PCMPOS 0:PCMSTREAM 24000").unwrap();
+    frames(&mut rt, 1);
+    assert_eq!(run_on(&mut rt, "?PCMPOS()").unwrap(), "400");
+    // An array grown since goes round at its old length.
+    assert_eq!(
+        run_on(
+            &mut rt,
+            "DIM M%[100]:PCMSTREAM M%:RESIZE M%,48000:PCMPOS 150:?PCMPOS()"
+        )
+        .unwrap(),
+        "50"
+    );
 }
 
 #[test]
@@ -1125,8 +1223,9 @@ fn a_wide_tremolo_stops_at_the_sound_engines_limits() {
     }
 }
 
-/// PCMSTREAM plays what it is given, however large: this keeps it from
-/// the output and from the effector's tail, which would ring on with it.
+/// PCMSTREAM holds a real within 16 bits, however large it is, so that it
+/// stays out of the output and of the effector's tail, which would ring on
+/// with it.
 #[test]
 fn samples_out_of_all_range_stay_out_of_the_mix() {
     let mut rt = runtime();

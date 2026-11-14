@@ -1,7 +1,7 @@
 //! PCMSTREAM: arrays of samples played as ring buffers, which the program
 //! may write ahead of where they play.
 
-use sb_core::value::ArrayRef;
+use sb_core::value::{Array, ArrayData, ArrayRef};
 
 use super::RATE;
 
@@ -62,7 +62,10 @@ impl Level {
 }
 
 pub struct Pcm {
-    pub source: Option<Source>,
+    source: Option<Source>,
+    /// Samples in each side's ring. PCMSTREAM takes it from the arrays and
+    /// it stays, whatever RESIZE, PUSH and the like do to them afterwards.
+    len: usize,
     /// Samples a second of the source.
     pub rate: f64,
     /// The next sample to play, with the fraction between samples.
@@ -75,6 +78,7 @@ impl Default for Pcm {
     fn default() -> Self {
         Pcm {
             source: None,
+            len: 0,
             rate: f64::from(RATE),
             pos: 0.0,
             playing: false,
@@ -87,70 +91,77 @@ impl Default for Pcm {
     }
 }
 
-fn read(a: &ArrayRef, row: usize, i: usize) -> (f64, usize) {
-    let a = a.borrow();
-    let (rows, len) = match a.dims[..] {
-        [_, len] => (2, len),
-        _ => (1, a.len()),
-    };
-    if len == 0 {
-        return (0.0, 0);
+/// The sample at `at` as PCMSTREAM plays it: the low 16 bits of an integer,
+/// so that 65535 plays as -1, and a real cut to a whole number and held
+/// within 16 bits. There is silence past the end of an array, which the
+/// program may have made shorter since the stream started.
+#[inline]
+fn sample(a: &Array, at: usize) -> f64 {
+    match &a.data {
+        ArrayData::Int(v) => v.get(at).map_or(0.0, |&n| f64::from(n as i16)),
+        ArrayData::Real(v) => v.get(at).map_or(0.0, |&x| f64::from(x as i16)),
+        ArrayData::Str(_) => 0.0,
     }
-    let at = row.min(rows - 1) * len + i % len;
-    (a.get(at).to_real().unwrap_or(0.0), len)
 }
 
 impl Pcm {
-    /// Samples in each side's ring.
-    fn len(&self) -> usize {
-        match &self.source {
-            None => 0,
-            Some(Source::Mono(a) | Source::Pair(a, _)) => a.borrow().len(),
-            Some(Source::Rows(a)) => a.borrow().dims.get(1).copied().unwrap_or(0),
-        }
+    /// PCMSTREAM: plays `source` from its start at `rate` samples a
+    /// second, at full volume on both sides whatever PCMVOL set before.
+    pub fn start(&mut self, source: Source, rate: f64) {
+        self.len = match &source {
+            Source::Mono(a) | Source::Pair(a, _) => a.borrow().len(),
+            Source::Rows(a) => a.borrow().dims.get(1).copied().unwrap_or(0),
+        };
+        self.source = Some(source);
+        self.rate = rate;
+        self.pos = 0.0;
+        self.playing = true;
+        self.volume = [Level::at(FULL); 2];
+    }
+
+    /// PCMCONT: goes on with the stream PCMSTOP stopped, if there is one.
+    pub fn resume(&mut self) {
+        self.playing = self.source.is_some();
     }
 
     /// The next playing position as an index in the arrays.
     pub fn index(&self) -> usize {
-        match self.len() {
+        match self.len {
             0 => 0,
             len => self.pos as usize % len,
         }
     }
 
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
-        if !self.playing {
+        if !self.playing || self.len == 0 {
             return;
         }
         let Some(source) = &self.source else {
             return;
         };
+        // The right side's array, when it is not the left's, and where its
+        // samples start. A 2D array's second row starts where the array
+        // says now, as its first does.
+        let (a, b, base) = match source {
+            Source::Mono(a) => (a.borrow(), None, 0),
+            Source::Rows(a) => {
+                let a = a.borrow();
+                let base = a.dims.get(1).copied().unwrap_or(0);
+                (a, None, base)
+            }
+            Source::Pair(a, b) => (a.borrow(), Some(b.borrow()), 0),
+        };
+        let b = b.as_ref().unwrap_or(&a);
         let step = self.rate / f64::from(RATE);
+        let len = self.len as f64;
+        let [vl, vr] = &mut self.volume;
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             let i = self.pos as usize;
-            let (a, b, len) = match source {
-                Source::Mono(a) => {
-                    let (s, len) = read(a, 0, i);
-                    (s, s, len)
-                }
-                Source::Rows(a) => {
-                    let (s, len) = read(a, 0, i);
-                    (s, read(a, 1, i).0, len)
-                }
-                Source::Pair(a, b) => {
-                    let (s, len) = read(a, 0, i);
-                    (s, read(b, 0, i).0, len)
-                }
-            };
-            if len == 0 {
-                return;
-            }
-            let [vl, vr] = &mut self.volume;
-            *l += (a * vl.value * SCALE) as f32;
-            *r += (b * vr.value * SCALE) as f32;
+            *l += (sample(&a, i) * vl.value * SCALE) as f32;
+            *r += (sample(b, base + i) * vr.value * SCALE) as f32;
             vl.step();
             vr.step();
-            self.pos = (self.pos + step) % len as f64;
+            self.pos = (self.pos + step) % len;
         }
     }
 }

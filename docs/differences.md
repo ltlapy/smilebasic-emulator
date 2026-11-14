@@ -98,6 +98,9 @@ Without the imported archive:
 - `PCMPOS()` gives the sample the stream has reached. SmileBASIC 4's moves in
   blocks: 27 frames into a looping stream of 4800 samples at 48000 Hz it reads
   3313 or 673, where the emulator gives 2400.
+- A `PCMSTREAM` whose array `RESIZE` has made shorter plays silence for the
+  samples that are gone, and so does the right side of a 2D array with one
+  row. SmileBASIC 4 reads the memory past the array there.
 - `TALK` speaks with a voice of the emulator's own, a Klatt formant synthesizer
   (klattsch-core) reading the kana or phoneme letters, so it says the same words
   in another voice.
