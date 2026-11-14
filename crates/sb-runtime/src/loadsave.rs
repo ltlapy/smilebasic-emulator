@@ -56,9 +56,11 @@ fn array_value(array: Array) -> Value {
     Value::Array(Rc::new(RefCell::new(array)))
 }
 
-/// LOADV's type of file, before the file is looked for, in both forms:
-/// `JPG:`, `PNG:` and a name without its type are File type mismatch.
-fn loadv_type(spec: &str) -> Result<()> {
+/// LOADV's and SAVEV's type of file, once the name is checked and before
+/// anything else: `JPG:`, `PNG:` and a name without its type are File
+/// type mismatch, with no argument's number. SAVEV checks it before the
+/// project (see [`Runtime::refuse_save_project`]).
+fn value_type(spec: &str) -> Result<()> {
     let detail = match spec.split_once(':') {
         None => "no type".to_string(),
         Some((kind, _)) if ["JPG", "PNG"].iter().any(|k| kind.eq_ignore_ascii_case(k)) => {
@@ -67,6 +69,18 @@ fn loadv_type(spec: &str) -> Result<()> {
         Some(_) => return Ok(()),
     };
     Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
+}
+
+/// SAVEG's type of file, checked as SAVEV's is: GRP, JPG or none, which
+/// is GRP. `TXT:`, `DAT:` and `PNG:` are File type mismatch.
+fn saveg_type(spec: &str) -> Result<()> {
+    match storage::split_name(spec).and_then(|parts| parts.kind) {
+        None | Some(NamedKind::File(FileKind::Grp | FileKind::Jpg)) => Ok(()),
+        Some(kind) => {
+            let detail = format!("{} file", kind.name());
+            Err(Error::with_detail(ErrorKind::FileTypeMismatch, detail))
+        }
+    }
 }
 
 /// What LOADV gives when a file cannot be read: an empty string for TXT,
@@ -231,7 +245,7 @@ impl Runtime {
             (Command::Loadv, Want::Value, [spec]) => {
                 let spec = str_arg(spec)?;
                 check_file_name(&spec, 0)?;
-                loadv_type(&spec)?;
+                value_type(&spec)?;
                 if self.ask_load(&spec, FileKind::Txt) {
                     return Ok(vec![Value::Int(0)]);
                 }
@@ -251,7 +265,7 @@ impl Runtime {
             (Command::Loadv, Want::Outs(0), [spec, target]) => {
                 let spec = str_arg(spec)?;
                 check_file_name(&spec, 0)?;
-                loadv_type(&spec)?;
+                value_type(&spec)?;
                 // The command form is for DAT and GRP files only, whatever
                 // it is given to load into: a TXT file into a string is the
                 // same error as into an array.
@@ -296,12 +310,9 @@ impl Runtime {
             (Command::Savev, Want::Outs(0), [spec, value]) => {
                 let spec = str_arg(spec)?;
                 check_file_name(&spec, 0)?;
+                value_type(&spec)?;
                 self.refuse_save_project(&spec)?;
-                // The type cannot be left out.
-                let file = match spec.contains(':') {
-                    true => self.write_name(&spec, FileKind::Txt),
-                    false => Err(StorageError::BadKind(String::new())),
-                };
+                let file = self.write_name(&spec, FileKind::Txt);
                 let bytes = match (file.as_ref().map(|f| f.kind), value) {
                     (Ok(FileKind::Txt), Value::Str(s)) => {
                         String::from_utf16_lossy(&s.borrow()).into_bytes()
@@ -319,13 +330,11 @@ impl Runtime {
                     }
                     _ => Vec::new(),
                 };
-                // A name without its type asks too, and then fails.
-                if self.ask_save(&self.write_name(&spec, FileKind::Txt)) {
+                if self.ask_save(&file) {
                     return Ok(vec![]);
                 }
-                let outcome = file.and_then(|file| match file.kind {
-                    FileKind::Jpg => Err(StorageError::BadKind(file.kind.name().to_string())),
-                    kind => (self.storage).write_ref(&file, &bytes, Some(kind.backup_name())),
+                let outcome = file.and_then(|file| {
+                    (self.storage).write_ref(&file, &bytes, Some(file.kind.backup_name()))
                 });
                 self.finish("SAVEV", outcome);
                 Ok(vec![])
@@ -366,6 +375,7 @@ impl Runtime {
                 let spec = str_arg(spec)?;
                 let page = page_arg(page)?;
                 check_file_name(&spec, 0)?;
+                saveg_type(&spec)?;
                 self.refuse_save_project(&spec)?;
                 let file = self.write_name(&spec, FileKind::Grp);
                 let jpeg = matches!(&file, Ok(f) if f.kind == FileKind::Jpg);

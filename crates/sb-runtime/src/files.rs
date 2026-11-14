@@ -757,15 +757,16 @@ fn check_listing_name(spec: &str) -> Result<()> {
 }
 
 /// EXEC's file, refused as [`check_file_name`] refuses a name but without
-/// the argument's number. A name of another type than a program's is not
-/// refused here; it fails to load.
+/// the argument's number. A name SmileBASIC 4's parser takes, but of
+/// another type than a program's, is File type mismatch before the rest
+/// is checked: `EXEC "DAT:",1` is error 77, not 71.
 pub(crate) fn check_exec_name(spec: &str) -> Result<()> {
     let error = match storage::split_name(spec) {
         None => Some(NameError::Illegal),
-        Some(parts) => match parts.kind {
-            None | Some(NamedKind::File(FileKind::Txt)) => storage::file_name_error(spec),
-            Some(_) => None,
-        },
+        Some(_) => {
+            program_type(spec)?;
+            storage::file_name_error(spec)
+        }
     };
     match error {
         Some(error) => Err(name_error(error, spec)),

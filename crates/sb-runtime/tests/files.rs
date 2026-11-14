@@ -1239,6 +1239,40 @@ fn load_and_save_refuse_other_types_of_file() {
     assert_eq!(tail(&m, 2), ["0", "OK"]);
 }
 
+/// SAVEG, SAVEV and EXEC of a type of file they cannot take: File type
+/// mismatch with no argument's number, after the name's checks and
+/// before the project's, and before anything is asked.
+#[test]
+fn saves_and_exec_refuse_other_types_of_file() {
+    let dir = TempDir::new("save-types");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("#SYS").unwrap();
+    for (source, message) in [
+        ("SAVEG \"TXT:X\",0", "(SAVEG) (TXT file)"),
+        ("SAVEG \"DAT:X\",0", "(SAVEG) (DAT file)"),
+        ("SAVEG \"PNG:X\",0", "(SAVEG) (PNG file)"),
+        ("SAVEG \"TXT:#SYS/X\",0", "(SAVEG) (TXT file)"),
+        ("SAVEV \"X\",\"1\"", "(SAVEV) (no type)"),
+        ("SAVEV \"JPG:X\",\"1\"", "(SAVEV) (JPG file)"),
+        ("SAVEV \"#SYS/X\",\"1\"", "(SAVEV) (no type)"),
+        ("EXEC \"DAT:X\",1", " (DAT file)"),
+        ("EXEC \"GRP:\",1", " (GRP file)"),
+        ("EXEC \"PNG:GAME/X\",1", " (PNG file)"),
+    ] {
+        m.set_slot(0, format!("A=1\n{source}"));
+        enter(&mut m, "run");
+        let message = format!("File type mismatch in 0:2{message}");
+        assert_eq!(program_error(&mut m), (message, 77, None), "{source}");
+    }
+    // The name is checked first.
+    m.set_slot(0, "A=1\nSAVEG \"TXT:\",0".to_string());
+    enter(&mut m, "run");
+    let message = "Illegal format in 0:2(SAVEG:1) (\"TXT:\")".to_string();
+    assert_eq!(program_error(&mut m), (message, 71, Some(0)));
+    let files = std::fs::read_dir(dir.0.join("@WORKSPACE")).map_or(0, Iterator::count);
+    assert_eq!(files, 0);
+}
+
 /// EXEC into a slot with unsaved edits asks first; Back sets RESULT to
 /// -1 and stops the program with Load failed.
 #[test]
