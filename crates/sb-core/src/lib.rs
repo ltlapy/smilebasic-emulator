@@ -57,7 +57,7 @@ fn compile_as(
 ) -> error::Result<bytecode::Compiled> {
     // The statements before one that does not parse compile first, and
     // give their errors before its own.
-    let (program, unparsed) = parser::parse_partial(source);
+    let (program, unparsed) = parser::parse_partial(source, direct);
     let unparsed = unparsed.map(parse_error);
     match unparsed {
         Some(e) if program.stmts.is_empty() => Err(e),
@@ -68,6 +68,7 @@ fn compile_as(
 fn parse_error(e: parser::ParseError) -> Error {
     let kind = match e.kind {
         ParseErrorKind::Lex(lexer::LexErrorKind::Overflow) => ErrorKind::Overflow,
+        ParseErrorKind::DirectMode => ErrorKind::CantUseFromDirectMode,
         _ => ErrorKind::SyntaxError,
     };
     // The editor shows the statement, as SmileBASIC 4 does (checked on

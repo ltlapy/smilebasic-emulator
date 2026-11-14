@@ -291,9 +291,6 @@ impl Compiler<'_> {
                         .entry(name.clone())
                         .or_insert(self.out.data.len() as u32);
                 }
-                // DIRECT mode refuses them as the line compiles, in turn
-                // with its other statements.
-                StmtKind::Const(_) | StmtKind::Enum(_) if self.direct => {}
                 // SmileBASIC 4 checks a CONST name after working out its
                 // value, and an ENUM name before.
                 StmtKind::Const(items) => {
@@ -710,9 +707,6 @@ impl Compiler<'_> {
                 for d in decls {
                     self.var_decl(d)?;
                 }
-            }
-            StmtKind::Const(_) | StmtKind::Enum(_) if self.direct => {
-                return Err(ErrorKind::CantUseFromDirectMode.into());
             }
             StmtKind::Const(_) | StmtKind::Enum(_) | StmtKind::Option(_) | StmtKind::Data(_) => {}
             StmtKind::Command { name, args, outs } => self.command(name, args, outs)?,

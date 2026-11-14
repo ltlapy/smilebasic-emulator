@@ -17,6 +17,8 @@ pub enum ParseErrorKind {
     DefInsideBlock,
     /// Nesting deeper than [`MAX_DEPTH`].
     TooDeep,
+    /// A statement for programs only, typed in DIRECT mode.
+    DirectMode,
 }
 
 /// Limit on nested expressions and blocks, so hostile input cannot overflow
@@ -53,6 +55,7 @@ impl fmt::Display for ParseError {
                 write!(f, "Syntax error in {line} (DEF inside a block)")
             }
             ParseErrorKind::TooDeep => write!(f, "Expression too complex in {line}"),
+            ParseErrorKind::DirectMode => write!(f, "Can't use from direct mode"),
         }
     }
 }
@@ -73,6 +76,7 @@ impl ParseError {
             ParseErrorKind::Misplaced(keyword) => Some(format!("unexpected {keyword:?}")),
             ParseErrorKind::DefInsideBlock => Some("DEF inside a block".to_string()),
             ParseErrorKind::TooDeep => Some("expression too complex".to_string()),
+            ParseErrorKind::DirectMode => None,
         }
     }
 }
@@ -88,7 +92,7 @@ impl From<LexError> for ParseError {
 }
 
 pub fn parse(source: &str) -> Result<Program, ParseError> {
-    match parse_partial(source) {
+    match parse_partial(source, false) {
         (program, None) => Ok(program),
         (_, Some(e)) => Err(e),
     }
@@ -97,8 +101,9 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
 /// Parses up to the first statement that does not parse, which becomes
 /// [`StmtKind::Unparsed`] in the blocks around it, and gives its error.
 /// SmileBASIC 4 compiles a statement at a time, so a compile error in the
-/// statements before it comes first.
-pub fn parse_partial(source: &str) -> (Program, Option<ParseError>) {
+/// statements before it comes first. `direct` for a line typed in DIRECT
+/// mode, which refuses some statements as they start.
+pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>) {
     let tokens = match lexer::tokenize(source) {
         Ok(tokens) => tokens,
         Err(e) => return (Program { stmts: Vec::new() }, Some(e.into())),
@@ -111,6 +116,7 @@ pub fn parse_partial(source: &str) -> (Program, Option<ParseError>) {
         loops: Vec::new(),
         depth: 0,
         failed: None,
+        direct,
     };
     // statement() keeps every error, so a block gives none of its own.
     let stmts = parser.block(&[]).unwrap_or_else(|e| {
@@ -131,6 +137,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
         loops: Vec::new(),
         depth: 0,
         failed: None,
+        direct: false,
     };
     let expr = parser.expr()?;
     while matches!(parser.peek(), TokenKind::Newline) {
@@ -157,6 +164,8 @@ struct Parser {
     /// stands at the end of the input, and the blocks around it close
     /// without their closing keywords.
     failed: Option<ParseError>,
+    /// Parsing a line typed in DIRECT mode.
+    direct: bool,
 }
 
 /// Operator and its precedence level, 0 binding loosest.
@@ -268,6 +277,15 @@ impl Parser {
             span: self.span(),
             stmt: None,
         })
+    }
+
+    /// `Can't use from direct mode` for the statement at `span`.
+    fn direct_mode(&self, span: Span) -> ParseError {
+        ParseError {
+            kind: ParseErrorKind::DirectMode,
+            span,
+            stmt: None,
+        }
     }
 
     fn expect(&mut self, kind: &TokenKind, expected: &'static str) -> PResult<()> {
@@ -399,6 +417,16 @@ impl Parser {
             TokenKind::Keyword(k) => k,
             _ => return self.expected("statement"),
         };
+        // SmileBASIC 4 refuses these in DIRECT mode before it reads what
+        // follows them.
+        if self.direct
+            && matches!(
+                keyword,
+                K::Return | K::Break | K::Continue | K::Defout | K::Data | K::Read | K::Restore
+            )
+        {
+            return Err(self.direct_mode(span));
+        }
         // VAR(...) = ... is an assignment, not a declaration.
         if keyword == K::Var && *self.peek_at(1) == TokenKind::LParen {
             return self.assignment();
@@ -512,6 +540,16 @@ impl Parser {
             unreachable!("caller checked for an identifier");
         };
         let next = self.peek_at(1).clone();
+        // CONST and ENUM are keywords to SmileBASIC 4, OPTION and STOP are
+        // names of commands it knows, refused in DIRECT mode before it
+        // reads what follows them.
+        if self.direct && suffix.is_none() {
+            let command = matches!(name.as_str(), "OPTION" | "STOP")
+                && !matches!(next, TokenKind::Assign | TokenKind::LBracket);
+            if command || matches!(name.as_str(), "CONST" | "ENUM") {
+                return Err(self.direct_mode(self.span()));
+            }
+        }
         if matches!(next, TokenKind::Assign | TokenKind::LBracket) {
             return self.assignment();
         }
@@ -1752,7 +1790,7 @@ mod tests {
     /// around it close there.
     #[test]
     fn partial_parse_stops_at_the_statement() {
-        let (program, e) = parse_partial("?1:FOR I=0 TO 1:?2:?(:?3:NEXT:?4");
+        let (program, e) = parse_partial("?1:FOR I=0 TO 1:?2:?(:?3:NEXT:?4", false);
         assert_eq!(e.unwrap().stmt, Some(Span { line: 1, col: 20 }));
         let kinds: Vec<StmtKind> = program.stmts.into_iter().map(|s| s.kind).collect();
         let [StmtKind::Print { .. }, StmtKind::For { body, .. }] = &kinds[..] else {
@@ -1760,7 +1798,7 @@ mod tests {
         };
         let body: Vec<&StmtKind> = body.iter().map(|s| &s.kind).collect();
         assert!(matches!(body[..], [_, StmtKind::Unparsed]), "{body:?}");
-        assert_eq!(parse_partial("?1:?2").1, None);
+        assert_eq!(parse_partial("?1:?2", false).1, None);
     }
 
     #[test]

@@ -1678,10 +1678,12 @@ fn direct_mode_has_little_code_memory() {
     assert_eq!(e.kind, ErrorKind::OutOfCodeMemory);
 }
 
-/// CONST and ENUM are refused in direct mode as the line compiles, so
-/// nothing on it runs.
+/// Statements for programs are refused in direct mode as the line
+/// compiles, so nothing on it runs. SmileBASIC 4's compilers of CONST,
+/// ENUM, RETURN, BREAK, CONTINUE, DEFOUT, DATA, READ, RESTORE, OPTION and
+/// STOP refuse before they read what follows the keyword.
 #[test]
-fn direct_mode_refuses_const_and_enum() {
+fn direct_mode_refuses_statements_for_programs() {
     let compile = |line: &str| sb_core::compile_direct(line, &TextHost::default(), 0).map(|_| ());
     for line in [
         "CONST #A=1:?#A",
@@ -1689,15 +1691,63 @@ fn direct_mode_refuses_const_and_enum() {
         "IF 0 THEN ENUM #A=1.5",
         "CONST #ON=#NONE",
         "ENUM #ON",
+        "CONST A=1",
+        "ENUM",
+        "CONST #A=1:?(",
+        "RETURN",
+        "RETURN 5",
+        "GOSUB @L:END:@L:RETURN",
+        "BREAK",
+        "BREAK 1",
+        "FOR I=0 TO 1:BREAK:NEXT",
+        "CONTINUE",
+        "WHILE 1:CONTINUE:WEND",
+        "DEFOUT 1",
+        "DEFOUT",
+        "DATA 1",
+        "DATA A",
+        "?1:DATA",
+        "READ A",
+        "READ",
+        "READ 1",
+        "RESTORE",
+        "RESTORE @X",
+        "RESTORE \"@X\"",
+        "OPTION STRICT",
+        "OPTION DEFINT",
+        "OPTION FOO",
+        "OPTION",
+        "STOP",
+        "?\"A\":STOP \"MSG\"",
+        "STOP 1,2",
+        "IF 1 THEN STOP ELSE ?(",
     ] {
         let e = compile(line).unwrap_err();
         assert_eq!(e.kind, ErrorKind::CantUseFromDirectMode, "{line}");
         assert_eq!(e.without_place(), "Can't use from direct mode", "{line}");
     }
-    // In turn with the line's other statements.
+    // At the statement, in turn with the line's other statements.
+    let e = compile("?1:READ A").unwrap_err();
+    assert_eq!((e.line, e.col), (1, 4));
     let e = compile("?#B:CONST #B=1").unwrap_err();
     assert_eq!(e.kind, ErrorKind::UndefinedConstant);
+    let e = compile("?#B:RETURN").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::UndefinedConstant);
+    let e = compile("?(:RETURN").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::SyntaxError);
+    // A variable of the name, and NEXT for CONTINUE, are not refused.
+    for line in [
+        "STOP=1:?STOP",
+        "OPTION[0]=1",
+        "FOR I=0 TO 1:IF I THEN NEXT ENDIF:NEXT",
+        "ON BREAK GOTO @L:@L",
+    ] {
+        compile(line).unwrap_or_else(|e| panic!("{line}: {e}"));
+    }
+    // Programs take them.
     assert_eq!(output("CONST #A=1:?#A"), "1\n");
+    assert_eq!(output("RESTORE @D:READ A:?A:END\n@D:DATA 7"), "7\n");
+    sb_core::compile("OPTION STRICT:STOP", &TextHost::default()).unwrap();
 }
 
 /// SmileBASIC 4 compiles a statement at a time, so a compile error in the
