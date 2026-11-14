@@ -101,3 +101,21 @@ The menu needs the mouse or keys.
 | Y | Expand the info |
 | B | Go back |
 | Left stick | D-pad |
+
+## Handheld mode
+
+For a handheld with a gamepad and no keyboard: fullscreen, no menu bar or
+editor, and a list of the projects instead of DIRECT mode. Start it with
+`smilebasic --handheld`, or turn it on and off with Ctrl+Shift+F12, which
+keeps the choice. Programs never see − (Select).
+
+| Key | Action |
+|---|---|
+| Ctrl+Shift+F12 | Turn handheld mode on or off |
+| − (Select) and +, F8 | Pause menu: resume, restart, back to the list, quit |
+| + | As in the other modes; it does nothing in the list |
+| A, Enter | Run the project's MAIN.PRG, or the chosen program |
+| X, Tab | The project's programs |
+| B, Esc, Backspace | Back to the projects |
+| L, R, Page Up, Page Down | Move a page |
+| D-pad, left stick, cursor keys | Move |

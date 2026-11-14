@@ -363,6 +363,9 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   `XSCREEN`. Following `XSCREEN` is one of its choices, Program (XSCREEN). The
   default is Nearest, which scales by whole factors. No `XSCREEN` mode does
   that.
+- In handheld mode the screen fills the display at its aspect ratio, and
+  Nearest scales with the pixel art filter, as whole factors would leave most
+  of a small display empty.
 - `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame scales
   by Nearest at a whole factor, and otherwise with SDL's pixel art filter, or
   Bilinear when the screen's filter is Bilinear.
@@ -409,6 +412,11 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   program ends or is stopped. After an error the screen stays, with the
   emulator's own line `=== Press A Button or Enter to return.===` below it,
   until A (any controller) or Enter is pressed.
+- Handheld mode (`--handheld`, or Ctrl+Shift+F12) has no DIRECT mode or editor.
+  It starts in a list of the projects, runs a project's MAIN.PRG or one of its
+  programs, and returns to the list as Run in the project manager does. − (Select)
+  with + opens the emulator's pause menu, which pauses the program and gives it
+  no input. SmileBASIC 4 has neither.
 
 ## Subprograms
 

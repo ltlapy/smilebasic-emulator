@@ -111,6 +111,15 @@ SDL looks for `libEGL.so.1` and `libGLESv2.so.2`. If your driver uses other name
 blob may, set `SDL_VIDEO_EGL_DRIVER` and `SDL_VIDEO_GL_DRIVER` to its paths.
 [benchmarking.md](benchmarking.md) explains the output.
 
+To play, start it in handheld mode, which needs only the gamepad:
+
+```sh
+SDL_VIDEO_DRIVER=kmsdrm SDL_RENDER_DRIVER=opengles2 ./smilebasic --handheld
+```
+
+It opens a list of the projects, scales its text by whole factors of 640x480, and fits the
+program's screen to the display. [shortcuts.md](shortcuts.md#handheld-mode) lists the buttons.
+
 ## Build without root
 
 `--rootless` builds without installing anything as root. Add it before any other option:
