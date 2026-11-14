@@ -1640,9 +1640,10 @@ impl ProjectManager {
     }
 
     /// Up and Down choose a project, or a file after Tab. Enter switches to
-    /// the project, or loads the file into a slot. Space expands the info
-    /// area, and the menu key opens the list's `⋯` menu. Esc collapses the
-    /// info area or closes; F12 closes.
+    /// the project, or loads the file into a slot. F5 runs the selected
+    /// project's MAIN.PRG from either list, as A does on the project list.
+    /// Space expands the info area, and the menu key opens the list's `⋯`
+    /// menu. Esc collapses the info area or closes; F12 closes.
     pub fn key(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         let outcome = self.key_in(key, storage, unsaved);
         self.sync(storage);
@@ -1768,6 +1769,13 @@ impl ProjectManager {
     }
 
     fn browse_key(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
+        // Ahead of the info area's fields, which would take it.
+        if key == Keycode::F5 {
+            if self.dirty() {
+                return self.ask_discard(Deferred::Key(key));
+            }
+            return self.press(Button::Run, storage, unsaved);
+        }
         if let Some(outcome) = self.edit_key(key, storage) {
             return outcome;
         }
@@ -3902,6 +3910,55 @@ mod tests {
         m.pad(Pad::South, &mut s, &[]);
         assert!(!m.expanded);
         assert_eq!(m.pad(Pad::South, &mut s, &[]), Outcome::Close);
+    }
+
+    #[test]
+    fn f5_runs_the_selected_project() {
+        let tmp = TempDir::new("f5");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Txt, "A.PRG", b"?1", None).unwrap();
+        s.create_project("GAME").unwrap();
+        s.set_project("GAME").unwrap();
+        s.write(FileKind::Txt, MAIN, b"?2", None).unwrap();
+        s.write(FileKind::Txt, "B.PRG", b"?3", None).unwrap();
+        s.set_project("").unwrap();
+        let main = Outcome::Open {
+            switched: Some("GAME".to_string()),
+            open: Open {
+                file: MAIN.to_string(),
+                slot: 0,
+                run: true,
+                home: true,
+            },
+        };
+        // With no MAIN.PRG it does nothing, as Run is disabled.
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        assert_eq!(m.key(Keycode::F5, &mut s, &[]), Outcome::Stay);
+        assert!(matches!(m.mode, Mode::Browse));
+        // On the project list it runs MAIN.PRG, switching first, as A does.
+        m.key(Keycode::Down, &mut s, &[]);
+        assert_eq!(m.selected_name(), "GAME");
+        assert_eq!(m.key(Keycode::F5, &mut s, &[]), main);
+        // On the files too, whichever file is selected.
+        s.set_project("").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Files);
+        assert_eq!(m.selected_file().unwrap().name, "B.PRG");
+        assert_eq!(m.key(Keycode::F5, &mut s, &[]), main);
+        // Over an unsaved title it asks first, then runs.
+        s.set_project("").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        m.key(Keycode::Space, &mut s, &[]);
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert!(m.in_field());
+        m.text("X");
+        m.key(Keycode::F5, &mut s, &[]);
+        assert!(matches!(m.mode, Mode::Ask(_, Pending::Discard(_))));
+        m.pad(Pad::DPadLeft, &mut s, &[]);
+        assert_eq!(m.pad(Pad::East, &mut s, &[]), main);
     }
 
     #[test]

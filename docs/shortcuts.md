@@ -72,6 +72,7 @@ The emulator shows this list too, in Help > Keyboard shortcuts.
 | F4 | Switch between DIRECT mode and the editor |
 | F9, F10, F11 | Start `TOOL1` to `TOOL3` |
 | F12 | Projects |
+| F5, in the projects | Run the selected project's MAIN.PRG |
 
 ## Buttons
 
