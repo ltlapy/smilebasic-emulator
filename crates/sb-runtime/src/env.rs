@@ -32,7 +32,8 @@ pub const DESCRIPTION_CHARS: usize = 240;
 /// start with `@`, so they never clash with SmileBASIC's typed files.
 const META_TEXT: &str = "@META.TXT";
 const META_ICON: &str = "@ICON.PNG";
-/// SmileBASIC 4's own metadata file, read when the emulator's are missing.
+/// SmileBASIC 4's own metadata file, read when the emulator's are missing
+/// and removed by METASAVE.
 pub const SB4_META: &str = "META";
 
 /// Somewhere to keep the text that CLIPBOARD sets and gets: the
@@ -358,7 +359,8 @@ impl Runtime {
                     accept: "Save",
                     notice: format!("Saving the metadata of {}", self.project_label()),
                     in_programs: true,
-                    originals: [META_TEXT, META_ICON]
+                    // SmileBASIC 4's META goes once these are written.
+                    originals: [META_TEXT, META_ICON, SB4_META]
                         .iter()
                         .filter_map(|name| self.storage.original_own(name))
                         .collect(),
@@ -391,14 +393,16 @@ impl Runtime {
     }
 
     /// Into the current project, as the manual says, whichever project's
-    /// METALOAD read.
+    /// METALOAD read. A SmileBASIC 4 `META` there goes once the
+    /// emulator's files are written, so that no stale copy stays behind;
+    /// Export makes it again from these.
     fn write_meta(&mut self) -> storage::Result<()> {
         self.meta();
         let bad = |e: String| std::io::Error::new(std::io::ErrorKind::InvalidData, e);
         for (name, bytes) in meta_files(&self.meta).map_err(bad)? {
             self.storage.write_project_file(name, &bytes)?;
         }
-        Ok(())
+        self.storage.delete_project_file(SB4_META)
     }
 }
 

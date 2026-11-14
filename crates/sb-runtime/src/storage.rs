@@ -912,6 +912,18 @@ impl Storage {
         Ok(())
     }
 
+    /// Deletes a file of the current project's own, such as SmileBASIC
+    /// 4's `META`, if it is there.
+    pub fn delete_project_file(&self, name: &str) -> Result<()> {
+        let path = self.dir(&self.project)?.join(name);
+        if !is_real_file(&path) {
+            return Ok(());
+        }
+        std::fs::remove_file(&path)?;
+        self.touched(&path);
+        Ok(())
+    }
+
     pub fn delete(&self, kind: FileKind, name: &str) -> Result<()> {
         self.delete_in(&self.project, kind, name)
     }

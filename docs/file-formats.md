@@ -121,7 +121,8 @@ For files that can be opened on a computer, the emulator saves:
 - metadata in `@META.TXT` (the title, a line break, then the
   description) and `@ICON.PNG`.
 
-It reads both these and SmileBASIC 4's files.
+It reads both these and SmileBASIC 4's files. `METASAVE` deletes a project's
+`META` once it has written `@META.TXT` and `@ICON.PNG`, and Export makes it again.
 
 ## Exporting and importing
 

@@ -468,8 +468,8 @@ For a subprogram's screen, see `FADE` under
 - Export and Import: the project manager's Export writes a project in SmileBASIC
   4's own files, and Import reads them back into the emulator's.
 - `METASAVE` keeps a project's title and description in `@META.TXT` and its icon
-  in `@ICON.PNG`, in the project's folder. `METALOAD` reads SmileBASIC 4's own
-  `META` file when those are missing.
+  in `@ICON.PNG`, in the project's folder, and then deletes SmileBASIC 4's own
+  `META` file there. `METALOAD` reads `META` when those are missing.
 - `LOADG "PNG:..."` of a `#` project's file fails with `RESULT` 0, as the
   emulator reads no `PNG:` files.
 - File and project names take ASCII letters only. SmileBASIC 4 asks C's

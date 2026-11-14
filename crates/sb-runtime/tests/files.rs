@@ -1089,6 +1089,34 @@ fn metadata_from_smilebasic() {
     m.set_slot(0, program.to_string());
     enter(&mut m, "run");
     assert_eq!(words(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
+
+    // METASAVE writes the emulator's files and then removes META, but
+    // only once it has written them: No leaves everything as it was.
+    let workspace = dir.0.join("@WORKSPACE");
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    ask(&mut m, "metaload:metasave");
+    m.rt.answer(false);
+    settle(&mut m);
+    assert!(workspace.join("META").exists());
+    assert!(!workspace.join("@META.TXT").exists());
+    ask(&mut m, "metaload:metasave");
+    m.rt.answer(true);
+    settle(&mut m);
+    assert!(!workspace.join("META").exists());
+    let text = std::fs::read_to_string(workspace.join("@META.TXT")).unwrap();
+    assert_eq!(text, "てすと05\nHi\n");
+    m.set_slot(0, program.to_string());
+    enter(&mut m, "run");
+    assert_eq!(words(&tail(&m, 2)), ["てすと05 3 FFD2D6CA", "OK"]);
+
+    // A write that fails keeps META.
+    m.rt.settings.file_confirm = FileConfirm::Silent;
+    m.rt.storage.write_project_file("META", &bytes).unwrap();
+    std::fs::remove_file(workspace.join("@ICON.PNG")).unwrap();
+    std::fs::create_dir(workspace.join("@ICON.PNG")).unwrap();
+    enter(&mut m, "metaload:metasave");
+    assert!(workspace.join("@ICON.PNG").is_dir());
+    assert!(workspace.join("META").exists());
 }
 
 #[test]
