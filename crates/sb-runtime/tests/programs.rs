@@ -245,8 +245,30 @@ fn dialogs_wait_for_an_answer() {
     settle(&mut m);
     assert_eq!(tail(&m, 2), ["GAME 1", "OK"]);
 
-    run(&mut m, &["?DIALOG(\"A B\",\"X\")"]);
-    assert!(tail(&m, 3).concat().contains("Illegal file name"));
+    // The initial name follows the file commands' rules, once cut to the
+    // most the dialog takes.
+    for (source, initial, max) in [
+        ("N$=DIALOG(\"A@B\",\"X\")", "A@B", 32),
+        ("N$=DIALOG(\"TXT:@.X\",\"X\")", "TXT:@.X", 32),
+        ("N$=DIALOG(\"AB*\",\"X\",2)", "AB", 2),
+    ] {
+        let d = until_dialog(&mut m, source);
+        let want = DialogKind::Name {
+            initial: initial.to_string(),
+            max,
+        };
+        assert_eq!(d.kind, want, "{source}");
+        m.rt.answer_dialog(DialogAnswer::Name(None));
+        settle(&mut m);
+    }
+    for source in ["?DIALOG(\"A B\",\"X\")", "?DIALOG(\"P/A\",\"X\")"] {
+        run(&mut m, &[source]);
+        let said = tail(&m, 3).concat();
+        assert!(
+            said.contains("Illegal file name in 0:1(DIALOG:1)"),
+            "{said}"
+        );
+    }
     run(&mut m, &["?DIALOG(\"A\",0)"]);
     assert!(tail(&m, 3).concat().contains("Out of range"));
 }

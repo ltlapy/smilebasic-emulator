@@ -9,6 +9,7 @@ use sb_core::value::Value;
 
 use crate::input::{A, B};
 use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::storage;
 
 const TEXT_CHARS: usize = 256;
 const CAPTION_CHARS: usize = 46;
@@ -192,11 +193,6 @@ impl Runtime {
                 (dialog, timeout(rest.get(2))?)
             }
             (Want::Value, [initial, Value::Str(_), rest @ ..]) if rest.len() <= 1 => {
-                let initial = text(initial)?;
-                if !initial.chars().all(name_char) {
-                    let detail = format!("{initial:?}");
-                    return Err(Error::with_detail(ErrorKind::IllegalFileName, detail));
-                }
                 let max = match rest.first().map(opt_int).transpose()?.flatten() {
                     None => NAME_CHARS,
                     Some(n @ 1..=32) => n as usize,
@@ -204,13 +200,19 @@ impl Runtime {
                         return Err(Error::with_detail(ErrorKind::OutOfRange, format!("{n}")));
                     }
                 };
+                // Cut to the most it takes, the initial name is checked as
+                // SmileBASIC 4's file commands check a name, and may have
+                // no project.
+                let initial = shortened(&text(initial)?, max);
+                if !storage::split_name(&initial).is_some_and(|parts| parts.project.is_none()) {
+                    let detail = format!("{initial:?}");
+                    let error = Error::with_detail(ErrorKind::IllegalFileName, detail);
+                    return Err(error.of_arg(0));
+                }
                 let dialog = ProgramDialog {
                     caption: caption(args.get(1), NAME_CAPTION_CHARS)?,
                     lines: Vec::new(),
-                    kind: DialogKind::Name {
-                        initial: shortened(&initial, max),
-                        max,
-                    },
+                    kind: DialogKind::Name { initial, max },
                 };
                 (dialog, None)
             }
