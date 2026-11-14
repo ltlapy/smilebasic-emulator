@@ -176,6 +176,14 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   keeps its own. `CONST` works out its value before it checks the name, so
   `CONST #ON=#NONE` is `Undefined constant`; `ENUM` checks the name first. The
   error is placed at the name. (Not yet seen on hardware.)
+- `ENUM` takes a real only as a whole
+  number: `ENUM #A=1.0` and `ENUM #A=4/2` give ints, and the next name counts
+  on from them. A fraction, as in `1.5` or `#PI`, is `Type mismatch`, error 8.
+  A whole real outside -2147483648 to 2147483647, as `3E9`, is
+  `Out of range`, error 10. The fraction is checked first, so `2147483647.5`
+  is `Type mismatch`. These errors, and `Type mismatch` for a string, are
+  placed at the value's first operand: at `1.5` in `-1.5`, at `1` in
+  `(1)+0.5`. (Not yet seen on hardware.)
 
 ### Statements, literals and names
 
@@ -2037,6 +2045,10 @@ Expected but not yet seen on hardware:
 - A declaration that fails still declares. After `DIM D[0,3]` fails, `D` is the
   omitted value (`TYPEOF` 0, and `?D` is `Type mismatch`); after `VAR G=SQR(-1)`
   fails, `G` is 0. A line that does not compile declares nothing.
+- `CONST` and `ENUM` typed in DIRECT mode are `Can't use from direct mode`,
+  error 43. The error comes as the
+  line compiles, so nothing on the line runs, and the message names no
+  place. (Not yet seen on hardware.)
 - `CLEAR` in a program is a `Syntax error` when it runs. `PROJECT` in a program
   is `Can't use in program`, error 44, when it runs: after `?"A"` it prints A,
   then `Can't use in program in 3:1(PROJECT)` (TEST71).
