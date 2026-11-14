@@ -263,15 +263,19 @@ impl Compiler<'_> {
                         .entry(name.clone())
                         .or_insert(self.out.data.len() as u32);
                 }
+                // SmileBASIC 4 checks a CONST name after working out its
+                // value, and an ENUM name before.
                 StmtKind::Const(items) => {
-                    for (name, expr) in items {
+                    for (name, span, expr) in items {
                         let value = self.const_eval(expr).map_err(at)?;
-                        self.define_constant(name, value).map_err(at)?;
+                        self.check_new_constant(name, *span)?;
+                        self.constants.insert(name.clone(), value);
                     }
                 }
                 StmtKind::Enum(items) => {
                     let mut next = 0i32;
-                    for (name, expr) in items {
+                    for (name, span, expr) in items {
+                        self.check_new_constant(name, *span)?;
                         let n = match expr {
                             None => next,
                             Some(e) => match self.const_eval(e).map_err(at)? {
@@ -283,7 +287,7 @@ impl Compiler<'_> {
                                 }
                             },
                         };
-                        self.define_constant(name, Literal::Int(n)).map_err(at)?;
+                        self.constants.insert(name.clone(), Literal::Int(n));
                         next = n.wrapping_add(1);
                     }
                 }
@@ -302,9 +306,16 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    fn define_constant(&mut self, name: &str, value: Literal) -> Result<()> {
-        if self.constants.insert(name.to_string(), value).is_some() {
-            return Err(err(ErrorKind::DuplicateVariable, format!("#{name}")));
+    /// `Duplicate constant` if CONST or ENUM may not define `#name`, which
+    /// stands at `at`: a built-in constant, or one defined before anywhere
+    /// in this program, in a DEF or not. Other slots have their own.
+    fn check_new_constant(&self, name: &str, at: Span) -> Result<()> {
+        let builtin =
+            matches!(name, "_LINE" | "_SLOT" | "_FILENAME") || constants::lookup(name).is_some();
+        if builtin || self.constants.contains_key(name) {
+            return Err(
+                err(ErrorKind::DuplicateConstant, format!("#{name}")).at_pos(at.line, at.col)
+            );
         }
         Ok(())
     }

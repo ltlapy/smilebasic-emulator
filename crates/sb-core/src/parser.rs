@@ -459,21 +459,23 @@ impl Parser {
                 ("CONST", TokenKind::Constant(_)) => {
                     self.advance();
                     return Ok(StmtKind::Const(self.comma_list(|p| {
+                        let span = p.span();
                         let name = p.constant_name()?;
                         p.expect(&TokenKind::Assign, "'='")?;
-                        Ok((name, p.expr()?))
+                        Ok((name, span, p.expr()?))
                     })?));
                 }
                 ("ENUM", TokenKind::Constant(_)) => {
                     self.advance();
                     return Ok(StmtKind::Enum(self.comma_list(|p| {
+                        let span = p.span();
                         let name = p.constant_name()?;
                         let value = if p.eat(&TokenKind::Assign) {
                             Some(p.expr()?)
                         } else {
                             None
                         };
-                        Ok((name, value))
+                        Ok((name, span, value))
                     })?));
                 }
                 ("OPTION", TokenKind::Ident { name: feature, .. }) => {
@@ -1355,13 +1357,20 @@ mod tests {
         assert_eq!(
             one("CONST #C1=1,#C2=\"A\""),
             StmtKind::Const(vec![
-                ("C1".into(), Expr::Int(1)),
-                ("C2".into(), Expr::Str("A".encode_utf16().collect())),
+                ("C1".into(), Span { line: 1, col: 7 }, Expr::Int(1)),
+                (
+                    "C2".into(),
+                    Span { line: 1, col: 13 },
+                    Expr::Str("A".encode_utf16().collect())
+                ),
             ])
         );
         assert_eq!(
             one("ENUM #A=2,#B"),
-            StmtKind::Enum(vec![("A".into(), Some(Expr::Int(2))), ("B".into(), None)])
+            StmtKind::Enum(vec![
+                ("A".into(), Span { line: 1, col: 6 }, Some(Expr::Int(2))),
+                ("B".into(), Span { line: 1, col: 11 }, None)
+            ])
         );
         assert_eq!(one("OPTION STRICT"), StmtKind::Option("STRICT".into()));
     }

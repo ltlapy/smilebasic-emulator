@@ -101,8 +101,10 @@ pub enum StmtKind {
         eq_col: u32,
     },
     Var(Vec<VarDecl>),
-    Const(Vec<(String, Expr)>),
-    Enum(Vec<(String, Option<Expr>)>),
+    /// Each name with where it stands, where a `Duplicate constant` is
+    /// placed.
+    Const(Vec<(String, Span, Expr)>),
+    Enum(Vec<(String, Span, Option<Expr>)>),
     Option(String),
     /// A built-in or user-defined command. Omitted arguments (`CMD ,1`) and
     /// OUT variables (`OUT A,,B`) are `None`.

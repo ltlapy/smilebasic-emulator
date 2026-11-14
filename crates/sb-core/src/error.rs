@@ -19,6 +19,9 @@ pub enum ErrorKind {
     DuplicateVariable,
     DuplicateLabel,
     DuplicateFunction,
+    /// CONST or ENUM of a name that is a built-in constant or was defined
+    /// before in the program.
+    DuplicateConstant,
     IllegalFunctionCall,
     StackOverflow,
     ReturnWithoutGosub,
@@ -127,6 +130,7 @@ impl ErrorKind {
             ErrorKind::CantUseFromDirectMode => 43,
             ErrorKind::CantUseInProgram => 44,
             ErrorKind::LoadFailed => 45,
+            ErrorKind::DuplicateConstant => 49,
             ErrorKind::UndefinedConstant => 50,
             ErrorKind::WrongNumberOfArguments => 52,
             ErrorKind::WrongNumberOfOutArguments => 53,
@@ -172,6 +176,7 @@ impl ErrorKind {
             ErrorKind::DuplicateVariable => "Duplicate variable",
             ErrorKind::DuplicateLabel => "Duplicate label",
             ErrorKind::DuplicateFunction => "Duplicate function",
+            ErrorKind::DuplicateConstant => "Duplicate constant",
             ErrorKind::IllegalFunctionCall => "Illegal function call",
             ErrorKind::StackOverflow => "Stack overflow",
             ErrorKind::ReturnWithoutGosub => "RETURN without GOSUB",

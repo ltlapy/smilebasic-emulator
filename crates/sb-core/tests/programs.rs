@@ -391,6 +391,39 @@ fn constants_and_data() {
 }
 
 #[test]
+fn duplicate_constants() {
+    let at = |src: &str| {
+        let e = run(src).unwrap_err();
+        (e.kind, e.line, e.col)
+    };
+    // As on SmileBASIC 4.4.9: #ON and #OFF are built in.
+    assert_eq!(
+        at("?1\nCONST #ON=#C_YELLOW,#OFF=#C_WHITE"),
+        (ErrorKind::DuplicateConstant, 2, 7)
+    );
+    assert_eq!(at("CONST #A=1,#OFF=0").2, 12);
+    assert_eq!(at("CONST #_LINE=1").0, ErrorKind::DuplicateConstant);
+    assert_eq!(
+        at("CONST #A=1\nCONST #a=2"),
+        (ErrorKind::DuplicateConstant, 2, 7)
+    );
+    // Inside a DEF or a branch that never runs, as the program compiles.
+    assert_eq!(
+        at("CONST #A=1\nDEF F\nCONST #A=2\nEND"),
+        (ErrorKind::DuplicateConstant, 3, 7)
+    );
+    assert_eq!(
+        at("IF 0 THEN CONST #A=1\nCONST #A=2").0,
+        ErrorKind::DuplicateConstant
+    );
+    assert_eq!(at("ENUM #A,#TRUE"), (ErrorKind::DuplicateConstant, 1, 9));
+    assert_eq!(at("CONST #A=1:ENUM #B,#A").0, ErrorKind::DuplicateConstant);
+    // CONST works out its value first, ENUM checks its name first.
+    assert_eq!(at("CONST #ON=#NONE").0, ErrorKind::UndefinedConstant);
+    assert_eq!(at("ENUM #ON=#NONE").0, ErrorKind::DuplicateConstant);
+}
+
+#[test]
 fn option_strict() {
     assert_eq!(
         error("OPTION STRICT\nVAR A\nA=1\nB=2").0,
