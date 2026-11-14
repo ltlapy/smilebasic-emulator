@@ -12,7 +12,9 @@
 
 use sb_runtime::Framebuffer;
 use sb_runtime::confirm::{project_label, switch_lines};
-use sb_runtime::env::{DESCRIPTION_CHARS, ICON_SIZE, Meta, TITLE_CHARS, meta_files, project_meta};
+use sb_runtime::env::{
+    DESCRIPTION_CHARS, ICON_SIZE, Meta, SB4_META, TITLE_CHARS, meta_files, project_meta,
+};
 use sb_runtime::font::Font;
 use sb_runtime::image;
 use sb_runtime::runtime::SLOTS;
@@ -2015,9 +2017,10 @@ impl ProjectManager {
         Outcome::Stay
     }
 
-    /// Writes the edited metadata as the emulator keeps it (as METASAVE
-    /// does): `@META.TXT` and `@ICON.PNG`, each whole or not at all. A
-    /// SmileBASIC 4 META file stays as it is; these are read before it.
+    /// Writes the edited metadata as the emulator keeps it, as METASAVE
+    /// does: `@META.TXT` and `@ICON.PNG`, each whole or not at all, and
+    /// then deletes SmileBASIC 4's `META`, so that no stale copy stays
+    /// behind. Export makes it again from these.
     fn save_meta(&mut self, storage: &Storage) {
         let Some(edit) = &mut self.edit else {
             return;
@@ -2034,6 +2037,7 @@ impl ProjectManager {
         let written = meta_files(&meta).and_then(|files| {
             (files.into_iter())
                 .try_for_each(|(file, bytes)| storage.write_file_in(&edit.project, file, &bytes))
+                .and_then(|()| storage.delete_file_in(&edit.project, SB4_META))
                 .map_err(|e| e.to_string())
         });
         match written {
@@ -3639,7 +3643,8 @@ mod tests {
         let tmp = TempDir::new("meta-save");
         let mut s = Storage::new(tmp.0.clone());
         s.create_project("GAME").unwrap();
-        // SmileBASIC 4's own META stays as it was.
+        // SmileBASIC 4's own META is read until the emulator's files are
+        // saved, and then goes.
         let sb4 = sb_runtime::transfer::export_meta(
             &Meta {
                 title: "Old".encode_utf16().collect(),
@@ -3688,7 +3693,7 @@ mod tests {
             "Line 1\n\nLine 2"
         );
         assert_eq!(meta.icon[10 * ICON_SIZE], 0xFF00_FF00_u32 as i32);
-        assert_eq!(s.read_file_in("GAME", "META").unwrap(), sb4);
+        assert!(!tmp.0.join("GAME").join("META").exists());
         assert_eq!(m.listed[1].title, "Old Game!");
         // Removing the icon, and dropping that change.
         m.click(centre(m.button(Button::RemoveIcon)), &mut s, &[]);
@@ -3703,6 +3708,23 @@ mod tests {
         m.key(Keycode::Space, &mut s, &[]);
         m.text(&"x".repeat(100));
         assert_eq!(m.edit.as_ref().unwrap().title.text().len(), TITLE_CHARS);
+    }
+
+    #[test]
+    fn a_failed_metadata_save_keeps_meta() {
+        let tmp = TempDir::new("meta-fail");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.write_file_in("GAME", "META", b"old").unwrap();
+        std::fs::create_dir(tmp.0.join("GAME").join("@ICON.PNG")).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        m.key(Keycode::Space, &mut s, &[]);
+        m.text("x");
+        m.click(centre(m.button(Button::Save)), &mut s, &[]);
+        assert!(m.status.as_ref().is_some_and(|(_, error)| *error));
+        assert!(m.dirty());
+        assert_eq!(s.read_file_in("GAME", "META").unwrap(), b"old");
     }
 
     #[test]

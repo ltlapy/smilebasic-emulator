@@ -915,7 +915,12 @@ impl Storage {
     /// Deletes a file of the current project's own, such as SmileBASIC
     /// 4's `META`, if it is there.
     pub fn delete_project_file(&self, name: &str) -> Result<()> {
-        let path = self.dir(&self.project)?.join(name);
+        self.delete_file_in(&self.project, name)
+    }
+
+    /// Like [`Storage::delete_project_file`], in any project.
+    pub fn delete_file_in(&self, project: &str, name: &str) -> Result<()> {
+        let path = self.dir(project)?.join(name);
         if !is_real_file(&path) {
             return Ok(());
         }
