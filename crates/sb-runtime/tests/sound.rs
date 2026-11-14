@@ -726,7 +726,8 @@ fn pcm_streams_from_arrays() {
     .unwrap();
     rt.sound.take_samples();
     frames(&mut rt, 1);
-    assert!(peak(&mut rt) > 0.3);
+    // 16000 of 32767, at 0.35 of full scale for a full sample.
+    assert!(peak(&mut rt) > 0.16);
     assert_eq!(run_on(&mut rt, "PCMPOS OUT P:?P").unwrap(), "800");
     run_on(&mut rt, "PCMSTOP:PCMPOS 10").unwrap();
     frames(&mut rt, 1);
@@ -918,7 +919,7 @@ fn recording_leaves_out_the_pcm_stream() {
     .unwrap();
     rt.sound.take_samples();
     frames(&mut rt, 3);
-    assert!(peak(&mut rt) > 0.4);
+    assert!(peak(&mut rt) > 0.16);
     assert_eq!(
         run_on(&mut rt, "RECDATA 5 OUT L,R:?RECPOS();L;R").unwrap(),
         "240000"

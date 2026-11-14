@@ -8,6 +8,13 @@ use super::RATE;
 /// Full scale for PCM samples and PCMVOL.
 pub const FULL: f64 = 32767.0;
 
+/// PCMSTREAM's level in the mix: a full-scale sample at full PCMVOL plays
+/// at 0.35 of full scale, against the other sounds at their levels.
+const GAIN: f64 = 0.35;
+
+/// A sample times its side's PCMVOL, to the mix's scale.
+const SCALE: f64 = GAIN / (FULL * FULL);
+
 /// Where the samples are: one array (a 2D one has the left channel in its
 /// first row and the right in its second), or one for each side.
 pub enum Source {
@@ -139,8 +146,8 @@ impl Pcm {
                 return;
             }
             let [vl, vr] = &mut self.volume;
-            *l += (a / FULL * vl.value / FULL) as f32;
-            *r += (b / FULL * vr.value / FULL) as f32;
+            *l += (a * vl.value * SCALE) as f32;
+            *r += (b * vr.value * SCALE) as f32;
             vl.step();
             vr.step();
             self.pos = (self.pos + step) % len as f64;
