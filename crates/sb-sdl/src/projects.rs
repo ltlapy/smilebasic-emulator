@@ -1641,8 +1641,8 @@ impl ProjectManager {
 
     /// Up and Down choose a project, or a file after Tab. Enter switches to
     /// the project, or loads the file into a slot. F5 runs the selected
-    /// project's MAIN.PRG from either list, as A does on the project list.
-    /// Space expands the info area, and the menu key opens the list's `⋯`
+    /// project's MAIN.PRG on the project list, as A does, and the selected
+    /// program on the files, as Run selected does. Space expands the info area, and the menu key opens the list's `⋯`
     /// menu. Esc collapses the info area or closes; F12 closes.
     pub fn key(&mut self, key: Keycode, storage: &mut Storage, unsaved: &[usize]) -> Outcome {
         let outcome = self.key_in(key, storage, unsaved);
@@ -1774,7 +1774,12 @@ impl ProjectManager {
             if self.dirty() {
                 return self.ask_discard(Deferred::Key(key));
             }
-            return self.press(Button::Run, storage, unsaved);
+            // Never View, as A would on a DAT or GRP file: F5 only runs.
+            let run = match self.focus {
+                Focus::Projects => Button::Run,
+                Focus::Files => Button::RunFile,
+            };
+            return self.press(run, storage, unsaved);
         }
         if let Some(outcome) = self.edit_key(key, storage) {
             return outcome;
@@ -3939,12 +3944,13 @@ mod tests {
         m.key(Keycode::Down, &mut s, &[]);
         assert_eq!(m.selected_name(), "GAME");
         assert_eq!(m.key(Keycode::F5, &mut s, &[]), main);
-        // On the files too, whichever file is selected.
+        // Back on the project list after the files, it still runs MAIN.PRG.
         s.set_project("").unwrap();
         let mut m = ProjectManager::new(&s, (1280, 720));
         m.key(Keycode::Down, &mut s, &[]);
         m.key(Keycode::Tab, &mut s, &[]);
-        assert_eq!(m.focus, Focus::Files);
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Projects);
         assert_eq!(m.selected_file().unwrap().name, "B.PRG");
         assert_eq!(m.key(Keycode::F5, &mut s, &[]), main);
         // Over an unsaved title it asks first, then runs.
@@ -3959,6 +3965,50 @@ mod tests {
         assert!(matches!(m.mode, Mode::Ask(_, Pending::Discard(_))));
         m.pad(Pad::DPadLeft, &mut s, &[]);
         assert_eq!(m.pad(Pad::East, &mut s, &[]), main);
+    }
+
+    #[test]
+    fn f5_on_the_files_runs_the_selected_program() {
+        let tmp = TempDir::new("f5file");
+        let mut s = Storage::new(tmp.0.clone());
+        s.create_project("GAME").unwrap();
+        s.set_project("GAME").unwrap();
+        s.write(FileKind::Txt, MAIN, b"?2", None).unwrap();
+        s.write(FileKind::Txt, "B.PRG", b"?3", None).unwrap();
+        s.set_project("").unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Down, &mut s, &[]);
+        m.key(Keycode::Tab, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Files);
+        assert_eq!(m.selected_file().unwrap().name, "B.PRG");
+        assert_eq!(
+            m.key(Keycode::F5, &mut s, &[]),
+            Outcome::Open {
+                switched: Some("GAME".to_string()),
+                open: Open {
+                    file: "B.PRG".to_string(),
+                    slot: 0,
+                    run: true,
+                    home: false,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn f5_on_a_file_that_is_not_a_program_does_nothing() {
+        let tmp = TempDir::new("f5dat");
+        let mut s = Storage::new(tmp.0.clone());
+        s.write(FileKind::Dat, "D", b"", None).unwrap();
+        s.write(FileKind::Txt, MAIN, b"?1", None).unwrap();
+        let mut m = ProjectManager::new(&s, (1280, 720));
+        m.key(Keycode::Tab, &mut s, &[]);
+        m.key(Keycode::End, &mut s, &[]);
+        assert_eq!(m.focus, Focus::Files);
+        assert_eq!(m.selected_file().unwrap().kind, FileKind::Dat);
+        // Neither MAIN.PRG nor the viewer A would open.
+        assert_eq!(m.key(Keycode::F5, &mut s, &[]), Outcome::Stay);
+        assert!(matches!(m.mode, Mode::Browse));
     }
 
     #[test]
