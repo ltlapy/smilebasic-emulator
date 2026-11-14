@@ -2278,6 +2278,10 @@ Expected but not yet seen on hardware:
   open a dialog that holds the program until it is answered, and then give
   `RESULT` 0. `RENAME` onto a file that is there asks, and after OK replaces
   it: `RESULT` 1, the old name gone and the new one there (TEST74).
+- A running program can `DELETE` the file it was loaded from: `DELETE` checks
+  no slot and no running program. `RESULT` is 1 when the file is deleted, -1
+  when the question is answered No, and 0 when deleting fails. (Not yet seen on
+  hardware.)
 - `LOADV "DAT:F",M%` of a real file into an int array converts as `INT()`
   does, with NaN as 0: NaN, 1.9 and -1.9 load as 0, 1 and -1, and 2147483647.5
   as 2147483647 (TEST67).
@@ -2342,6 +2346,11 @@ Expected but not yet seen on hardware:
   characters and a description to 240, with no error (TEST71).
 - `METASAVE` asks first, and does not set `RESULT`: after one that saved,
   `RESULT` was still 0 (TEST71).
+- `METAEDIT`, `METASAVE` and `METALOAD` share one buffer. `METASAVE` answered
+  No writes nothing, and `METALOAD` with no argument reads the stored
+  metadata again, so after `METAEDIT` and a cancelled `METASAVE` it drops the
+  edits. (Not yet seen on
+  hardware.)
 
 ## Subprograms
 
