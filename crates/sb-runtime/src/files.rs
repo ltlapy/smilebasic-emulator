@@ -440,8 +440,11 @@ impl Runtime {
     /// Can't SAVE to system project for a file in one of SmileBASIC 4's
     /// own `#` projects: one named in the file, or the current project
     /// when the file names none, as SmileBASIC 4's path builder flags
-    /// both.
+    /// both. The setting to write in them lets the file through.
     pub(crate) fn refuse_system_project(&self, spec: &str) -> Result<()> {
+        if self.settings.write_system_projects {
+            return Ok(());
+        }
         let project = parse_read_name(spec, FileKind::Txt).map(|f| f.project);
         let system = match project {
             Ok(Some(p)) => p.starts_with('#'),
@@ -457,11 +460,14 @@ impl Runtime {
     /// A file named for writing, in the current project or, named with
     /// its project, in another one, which must exist. SmileBASIC 4's own
     /// `#` projects take no files: the commands refuse them first (see
-    /// [`Runtime::refuse_save_project`]), and writing one otherwise fails.
+    /// [`Runtime::refuse_save_project`]), and writing one otherwise fails,
+    /// unless the setting to write in them is on.
     pub(crate) fn write_name(&self, spec: &str, default: FileKind) -> storage::Result<FileRef> {
         let file = self.read_name(spec, default)?;
         match &file.project {
-            Some(p) if p.starts_with('#') => Err(StorageError::BadName(spec.to_string())),
+            Some(p) if p.starts_with('#') && !self.settings.write_system_projects => {
+                Err(StorageError::BadName(spec.to_string()))
+            }
             _ => Ok(file),
         }
     }

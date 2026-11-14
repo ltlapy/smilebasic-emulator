@@ -67,6 +67,10 @@ pub struct Settings {
     pub ctrl_c_stops: bool,
     /// SAVE turns full-width letters and digits into ASCII.
     pub half_width_on_save: bool,
+    /// SAVE, SAVEV, SAVEG, DELETE and RENAME write in SmileBASIC 4's own
+    /// `#` projects instead of raising Can't SAVE to system project. Not
+    /// SmileBASIC 4's.
+    pub write_system_projects: bool,
     /// The editor wraps long lines instead of scrolling sideways.
     pub editor_wrap: bool,
     /// The editor draws line numbers on SmileBASIC 4's number tiles; off,
@@ -182,6 +186,7 @@ impl Default for Settings {
             upper_case_letters: true,
             ctrl_c_stops: false,
             half_width_on_save: true,
+            write_system_projects: false,
             editor_wrap: false,
             editor_number_tiles: true,
             editor_map: true,
@@ -240,6 +245,7 @@ impl Settings {
             upper_case_letters: true,
             ctrl_c_stops: false,
             half_width_on_save: true,
+            write_system_projects: false,
             editor_wrap: false,
             editor_number_tiles: true,
             editor_map: true,
@@ -409,6 +415,7 @@ impl Settings {
                 "ctrl_c_stops" => &mut s.ctrl_c_stops,
                 "localized_errors" => &mut s.localized_errors,
                 "half_width_on_save" => &mut s.half_width_on_save,
+                "write_system_projects" => &mut s.write_system_projects,
                 "editor_wrap" => &mut s.editor_wrap,
                 "editor_number_tiles" => &mut s.editor_number_tiles,
                 "editor_map" => &mut s.editor_map,
@@ -563,6 +570,7 @@ impl Settings {
              upper_case_letters={}\n\
              ctrl_c_stops={}\n\
              half_width_on_save={}\n\
+             write_system_projects={}\n\
              editor_wrap={}\n\
              editor_number_tiles={}\n\
              editor_map={}\n\
@@ -609,6 +617,7 @@ impl Settings {
             self.upper_case_letters,
             self.ctrl_c_stops,
             self.half_width_on_save,
+            self.write_system_projects,
             self.editor_wrap,
             self.editor_number_tiles,
             self.editor_map,
@@ -699,6 +708,7 @@ mod tests {
             ui_font: UiFont::Smooth,
             keep_mouse_cursor: true,
             helpinfo_cursor: true,
+            write_system_projects: true,
             complete_all_slots: true,
             speed: Speed::Switch1,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),

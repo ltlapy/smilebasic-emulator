@@ -1409,6 +1409,38 @@ fn writes_in_the_current_system_project_are_refused() {
     assert_eq!(files, 0);
 }
 
+/// The setting to write in `#` projects lets the five commands through,
+/// in the current project and, at the prompt, in one named.
+#[test]
+fn the_setting_allows_writes_in_system_projects() {
+    let dir = TempDir::new("write-system");
+    let mut m = machine(&dir);
+    m.rt.settings.write_system_projects = true;
+    m.rt.storage.create_project("#SYS").unwrap();
+    m.set_slot(0, "?1".to_string());
+    enter(&mut m, "save \"txt:#sys/p\":?result()");
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+    m.rt.storage.set_project("#SYS").unwrap();
+    let program = [
+        "SAVE \"Q\":?RESULT()",
+        "SAVEV \"TXT:V\",\"1\":?RESULT()",
+        "SAVEG \"G\",0,0,0,4,4:?RESULT()",
+        "RENAME \"V\",\"W\":?RESULT()",
+        "DELETE \"Q\":?RESULT()",
+    ];
+    for line in program {
+        enter(&mut m, &line.to_ascii_lowercase());
+        assert_eq!(tail(&m, 2), ["1", "OK"], "{line}");
+    }
+    let sys = dir.0.join("#SYS");
+    let mut files: Vec<String> = std::fs::read_dir(&sys)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    assert_eq!(files, ["GG", "TP", "TW"]);
+}
+
 /// EXEC into a slot with unsaved edits asks first; Back sets RESULT to
 /// -1 and stops the program with Load failed.
 #[test]
