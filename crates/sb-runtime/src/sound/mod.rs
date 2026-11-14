@@ -244,12 +244,25 @@ impl Balance {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// EFCEN, EFCSET and EFCWET's settings, which the main program and the
+/// subprogram share.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Effector {
     pub(crate) on: bool,
-    pub(crate) preset: i32,
-    /// BEEP, BGM, TALK and PCM's wetness.
+    /// EFCSET's reverb, none for #EFCOFF.
+    pub(crate) settings: Option<reverb::Settings>,
+    /// BEEP, BGM, TALK and PCM's wetness, all 127 to begin with.
     pub(crate) wet: [i32; 4],
+}
+
+impl Default for Effector {
+    fn default() -> Self {
+        Effector {
+            on: false,
+            settings: None,
+            wet: [127; 4],
+        }
+    }
 }
 
 /// EFCWET's sends, in its order.
@@ -257,6 +270,9 @@ const BEEP_SEND: usize = 0;
 const BGM_SEND: usize = 1;
 const TALK_SEND: usize = 2;
 const PCM_SEND: usize = 3;
+/// How loud the output plays BEEP and BGM, and what EFCWET 127 sends of
+/// them.
+const HALF: f32 = 0.5;
 
 pub struct Sound {
     instruments: Option<Instruments>,
@@ -271,11 +287,16 @@ pub struct Sound {
     pub(crate) pcm: Pcm,
     pub(crate) talk: Talk,
     /// EFCEN, EFCSET and EFCWET's settings.
-    pub(crate) effector: Effector,
-    /// EFCSET's reverb, none for #EFCOFF.
+    effector: Rc<Cell<Effector>>,
+    /// The reverb for the effector's settings.
     reverb: Option<reverb::Reverb>,
-    /// What the sounds send to the effector this frame.
+    /// What PCMSTREAM sends to the effector this frame, and then what
+    /// the effector adds to the mix.
     aux: [Vec<f32>; 2],
+    /// What BEEP and BGM send to the effector this frame.
+    aux_late: [Vec<f32>; 2],
+    /// PCMSTREAM and TALK this frame, which the output does not halve.
+    whole: [Vec<f32>; 2],
     /// One kind of sound at a time, to send part of it.
     part: [Vec<f32>; 2],
     /// PCMSTREAM's samples this frame, kept out of a recording.
@@ -310,9 +331,11 @@ impl Default for Sound {
             beeps: Beeps::new(None),
             pcm: Pcm::default(),
             talk: Talk::default(),
-            effector: Effector::default(),
+            effector: Rc::default(),
             reverb: None,
             aux: Default::default(),
+            aux_late: Default::default(),
+            whole: Default::default(),
             part: Default::default(),
             pcm_part: Default::default(),
             balance: Rc::new(Cell::new(Balance::START)),
@@ -383,7 +406,12 @@ impl Sound {
     }
 
     pub(crate) fn play(&mut self, n: usize, song: Option<Rc<Song>>, volume: i32, fade: u32) {
-        self.track(n).play(song, volume, fade);
+        let t = self.track(n);
+        t.play(song, volume, fade);
+        // UNVERIFIED: that BGMPLAY sends the track to the effector as
+        // EFCWET last said, forgetting a BGMWET from before. On SmileBASIC
+        // 4 a BGMWET before BGMPLAY changed nothing that could be heard.
+        t.wet = None;
     }
 
     pub(crate) fn stop(&mut self, n: usize, fade: u32) {
@@ -536,11 +564,40 @@ impl Sound {
         self.balance.set(Balance::START);
     }
 
+    /// EFCWET's sends, which RECSTART sets to 0 and SNDSTOP to 127. New
+    /// ones send every track as EFCWET says, over its BGMWET.
+    pub(crate) fn set_sends(&mut self, wet: [i32; 4]) {
+        let mut e = self.effector.get();
+        if e.wet != wet {
+            e.wet = wet;
+            self.effector.set(e);
+            for t in self.tracks() {
+                t.wet = None;
+            }
+        }
+    }
+
+    /// EFCEN and EFCSET's settings and EFCWET's sends.
+    pub(crate) fn effector(&self) -> Effector {
+        self.effector.get()
+    }
+
+    /// EFCEN.
+    pub(crate) fn set_effector_on(&mut self, on: bool) {
+        let e = self.effector.get();
+        self.effector.set(Effector { on, ..e });
+    }
+
+    /// SNDSTOP: the effector goes off and every send back to 127.
+    pub(crate) fn reset_effector(&mut self) {
+        self.set_effector_on(false);
+        self.set_sends([127; 4]);
+    }
+
     /// EFCSET: the effector's reverb, or none.
     pub(crate) fn set_reverb(&mut self, settings: Option<reverb::Settings>) {
-        if self.reverb.as_ref().map(|r| r.settings()) != settings {
-            self.reverb = settings.map(reverb::Reverb::new);
-        }
+        let e = self.effector.get();
+        self.effector.set(Effector { settings, ..e });
     }
 
     /// Mixes one frame of samples.
@@ -557,23 +614,57 @@ impl Sound {
         left.resize(n, 0.0);
         right.clear();
         right.resize(n, 0.0);
-        // With the effector on, each kind of sound sends part of itself to
-        // it, as EFCWET (or a track's BGMWET) asks.
-        let effect = self.effector.on && self.reverb.is_some();
-        let send = |n: usize| self.effector.wet[n] as f32 / 127.0;
-        let sends = self.effector.wet.map(|_| 0.0);
-        let sends = if effect {
-            [BEEP_SEND, BGM_SEND, TALK_SEND, PCM_SEND].map(send)
-        } else {
-            sends
-        };
-        let [aux_l, aux_r] = &mut self.aux;
-        aux_l.clear();
-        aux_r.clear();
-        if effect {
-            aux_l.resize(n, 0.0);
-            aux_r.resize(n, 0.0);
+        // Each kind of sound sends part of itself to the effector, as
+        // EFCWET (or a track's BGMWET) asks; with the effector off, what is
+        // sent passes it unchanged. BEEP and BGM keep all of their sound
+        // and send a copy, so that EFCWET 127 with the effector off plays
+        // them twice as loud as EFCWET 0, while RECSTART records only what
+        // they keep. What PCMSTREAM and TALK send leaves their own sound,
+        // so they play the same with the effector off; with it on
+        // PCMSTREAM keeps the reverb's own dry share, and what TALK sends
+        // never comes out. The output plays BEEP and BGM at half, the
+        // start's EFCWET 127 as loud as their sound.
+        // UNVERIFIED: that EFCEN 1 with #EFCOFF passes the sends unchanged.
+        let e = self.effector.get();
+        if self.reverb.as_ref().map(reverb::Reverb::settings) != e.settings {
+            self.reverb = e.settings.map(reverb::Reverb::new);
         }
+        let effect = e.on && self.reverb.is_some();
+        let sends = e.wet.map(|w| w as f32 / 127.0);
+        let dry = self.reverb.as_ref().map_or(1.0, reverb::Reverb::dry);
+        let (pcm_send, pcm_keep, talk_keep) = match effect {
+            true => {
+                let s = sends[PCM_SEND];
+                (s, 1.0 - s * (1.0 - dry), 1.0 - sends[TALK_SEND])
+            }
+            false => (0.0, 1.0, 1.0),
+        };
+        for aux in &mut self.aux {
+            aux.clear();
+            if effect {
+                aux.resize(n, 0.0);
+            }
+        }
+        // With the effector off and BEEP and BGM sending alike, as they
+        // start, what they send passes as a gain on them.
+        let passed = (!effect
+            && sends[BEEP_SEND] == sends[BGM_SEND]
+            && self.tracks.iter().flatten().all(|t| t.wet.is_none()))
+        .then(|| HALF * (1.0 + sends[BGM_SEND]));
+        let bus = if passed.is_some() { 0.0 } else { HALF };
+        for aux in &mut self.aux_late {
+            aux.clear();
+            if passed.is_none() {
+                aux.resize(n, 0.0);
+            }
+        }
+        for aux in &mut self.whole {
+            aux.clear();
+            aux.resize(n, 0.0);
+        }
+        let [aux_l, aux_r] = &mut self.aux;
+        let [late_l, late_r] = &mut self.aux_late;
+        let [whole_l, whole_r] = &mut self.whole;
         // A recording not yet begun waits with a song that waits for the
         // sound system to wake, and so begins with it. The sub
         // interpreter's sound reaches the main one's recording through
@@ -595,28 +686,34 @@ impl Sound {
             r.clear();
             r.resize(n, 0.0);
             self.pcm.render(l, r);
-            let s = sends[PCM_SEND];
-            if s != 0.0 {
+            if pcm_send != 0.0 {
                 for i in 0..n {
-                    aux_l[i] += l[i] * s;
-                    aux_r[i] += r[i] * s;
+                    aux_l[i] += l[i] * pcm_send;
+                    aux_r[i] += r[i] * pcm_send;
+                    l[i] *= pcm_keep;
+                    r[i] *= pcm_keep;
                 }
             }
         }
         for t in self.tracks.iter_mut().flatten() {
             // UNVERIFIED: that BGMWET takes the place of EFCWET's BGM for
-            // its track once set.
-            let s = match t.wet {
-                Some(w) if effect => w as f32 / 127.0,
-                _ => sends[BGM_SEND],
-            };
-            let aux = (s > 0.0).then_some((aux_l.as_mut_slice(), aux_r.as_mut_slice(), s));
+            // its track until the next BGMPLAY, a new EFCWET, RECSTART or
+            // SNDSTOP.
+            let s = t.wet.map_or(sends[BGM_SEND], |w| w as f32 / 127.0) * bus;
+            let aux = (s > 0.0).then_some((late_l.as_mut_slice(), late_r.as_mut_slice(), s));
             t.render(left, right, &mut self.scratch, aux);
         }
         let [part_l, part_r] = &mut self.part;
-        let mut mix = |s: f32, render: &mut dyn FnMut(&mut [f32], &mut [f32])| {
-            if s == 0.0 {
-                render(left, right);
+        // A sound that sends part of itself: what it keeps goes to `to`,
+        // what it sends to `bus`.
+        let mut mix = |s: f32,
+                       keep: f32,
+                       to: [&mut Vec<f32>; 2],
+                       bus: [&mut Vec<f32>; 2],
+                       render: &mut dyn FnMut(&mut [f32], &mut [f32])| {
+            let [to_l, to_r] = to;
+            if s == 0.0 && keep == 1.0 {
+                render(to_l, to_r);
                 return;
             }
             part_l.clear();
@@ -624,27 +721,52 @@ impl Sound {
             part_r.clear();
             part_r.resize(n, 0.0);
             render(part_l, part_r);
+            let [bus_l, bus_r] = bus;
             for i in 0..n {
-                left[i] += part_l[i];
-                right[i] += part_r[i];
-                aux_l[i] += part_l[i] * s;
-                aux_r[i] += part_r[i] * s;
+                to_l[i] += part_l[i] * keep;
+                to_r[i] += part_r[i] * keep;
+                bus_l[i] += part_l[i] * s;
+                bus_r[i] += part_r[i] * s;
             }
         };
-        mix(sends[BEEP_SEND], &mut |l, r| self.beeps.render(l, r));
+        mix(
+            sends[BEEP_SEND] * bus,
+            1.0,
+            [&mut *left, &mut *right],
+            [&mut *late_l, &mut *late_r],
+            &mut |l, r| self.beeps.render(l, r),
+        );
         if !pcm_apart {
-            mix(sends[PCM_SEND], &mut |l, r| self.pcm.render(l, r));
+            mix(
+                pcm_send,
+                pcm_keep,
+                [&mut *whole_l, &mut *whole_r],
+                [&mut *aux_l, &mut *aux_r],
+                &mut |l, r| self.pcm.render(l, r),
+            );
         }
-        mix(sends[TALK_SEND], &mut |l, r| self.talk.render(l, r));
-        // What the effector adds: RECSTART records the sound before it.
+        mix(
+            0.0,
+            talk_keep,
+            [&mut *whole_l, &mut *whole_r],
+            [&mut *aux_l, &mut *aux_r],
+            &mut |l, r| self.talk.render(l, r),
+        );
+        // What the effector adds, in place of what was sent to it.
+        // RECSTART records the sound before it.
         if let Some(r) = self.reverb.as_mut().filter(|_| effect) {
             // A tail remembers what goes in: one bad sample would ring on.
-            for aux in [&mut *aux_l, &mut *aux_r] {
+            for aux in [&mut *aux_l, &mut *aux_r, &mut *late_l, &mut *late_r] {
                 silence_nans(aux);
                 aux.iter_mut()
                     .for_each(|s| *s = s.clamp(-MOST_SENT, MOST_SENT));
             }
-            r.process(aux_l, aux_r);
+            r.process(aux_l, aux_r, [late_l, late_r]);
+        }
+        // The mix, as RECSTART and the main program hear it.
+        for i in 0..n {
+            left[i] += whole_l[i];
+            right[i] += whole_r[i];
         }
         for (i, shown) in self.shown.iter_mut().enumerate() {
             *shown = match &self.tracks[i] {
@@ -660,22 +782,35 @@ impl Sound {
         self.out.reserve(2 * n);
         let start = self.out.len();
         let [aux_l, aux_r] = &self.aux;
+        let [late_l, late_r] = &self.aux_late;
+        let [whole_l, whole_r] = &self.whole;
         let [pcm_l, pcm_r] = &self.pcm_part;
+        let sent = match effect {
+            true => [aux_l, aux_r],
+            false => [late_l, late_r],
+        };
+        // BEEP and BGM at half, or with what they pass; the rest as it is.
+        let keep = passed.unwrap_or(HALF);
+        let rest = 1.0 - keep;
         let mut rec = self.recorder.borrow_mut();
         for i in 0..n {
             let gain = self.master.value as f32;
-            let (mut l, mut r) = (left[i] * gain, right[i] * gain);
+            let (l, r) = (left[i] * gain, right[i] * gain);
             if record {
                 rec.record(l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0));
+            }
+            let (mut l, mut r) = (
+                l * keep + whole_l[i] * gain * rest,
+                r * keep + whole_r[i] * gain * rest,
+            );
+            if let (Some(sl), Some(sr)) = (sent[0].get(i), sent[1].get(i)) {
+                l += sl * gain;
+                r += sr * gain;
             }
             if pcm_apart {
                 l += pcm_l[i] * gain;
                 r += pcm_r[i] * gain;
             }
-            let (l, r) = match (aux_l.get(i), aux_r.get(i)) {
-                (Some(al), Some(ar)) => (l + al * gain, r + ar * gain),
-                _ => (l, r),
-            };
             self.out.push(l.clamp(-1.0, 1.0));
             self.out.push(r.clamp(-1.0, 1.0));
             self.master.step_sample();
@@ -694,6 +829,10 @@ impl Sound {
             sub.sub = true;
             self.balance.set(sub.balance.get());
             sub.balance = Rc::clone(&self.balance);
+            // UNVERIFIED: that the two programs share the effector. On
+            // SmileBASIC 4, after the main program's EFCWET 0, the
+            // subprogram's tones played at the main program's level.
+            sub.effector = Rc::clone(&self.effector);
         }
         let rec = &mut *self.recorder.borrow_mut();
         if rec.taken == 0 {

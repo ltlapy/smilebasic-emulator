@@ -48,29 +48,39 @@ impl Settings {
     };
 
     /// EFCSET's presets: #EFCBATH, #EFCCAVE and #EFCSPACE; #EFCOFF is none.
+    /// Each is fitted to SmileBASIC 4's response to a sine sweep sent from
+    /// PCMSTREAM: a small room whose tail falls by 60 dB in about half a
+    /// second, a hall as loud as the sound sent that falls by about 35 dB
+    /// a second, and a long tail after a tenth of a second of silence.
     pub(crate) fn preset(n: i32) -> Option<Settings> {
         let b = Settings::BASE;
         match n {
             1 => Some(Settings {
-                decay: 0.5,
-                hf_decay: 0.6,
+                early_gain: 0.55,
+                late_gain: 0.22,
+                decay: 0.8,
+                hf_decay: 0.68,
                 ..b
             }),
             2 => Some(Settings {
                 early_mode: 3,
                 late_mode: 2,
+                early_gain: 1.48,
+                late_gain: 1.5,
                 decay: 2.0,
-                early_gain: 0.3,
-                hf_decay: 0.1,
+                hf_decay: 0.48,
+                coloration: 0.2,
                 ..b
             }),
             3 => Some(Settings {
                 early_mode: 3,
                 late_mode: 3,
-                predelay: 0.1,
-                decay: 10.0,
-                early_gain: 0.15,
-                coloration: 0.8,
+                predelay: 0.124,
+                early_gain: 0.76,
+                late_gain: 0.975,
+                decay: 17.0,
+                hf_decay: 0.52,
+                coloration: 0.1,
                 ..b
             }),
             _ => None,
@@ -99,21 +109,27 @@ impl Settings {
 
 /// Reflections after the predelay, in ms, with their left and right gains.
 const TAPS: [(f32, f32, f32); 6] = [
-    (0.0, 0.84, 0.60),
-    (4.3, 0.55, 0.78),
-    (8.9, 0.62, 0.45),
-    (13.1, 0.40, 0.52),
-    (19.7, 0.33, 0.29),
-    (27.2, 0.22, 0.26),
+    (0.0, 0.50, 0.30),
+    (4.3, 0.35, 0.55),
+    (8.9, 0.45, 0.35),
+    (15.9, 0.95, 0.95),
+    (19.7, 0.30, 0.45),
+    (27.2, 0.12, 0.10),
 ];
 /// Freeverb's comb and all-pass delays, in ms, and how much the right side's
 /// are longer.
 const COMBS_MS: [f32; 4] = [25.3, 26.9, 29.0, 30.7];
 const ALLPASSES_MS: [f32; 2] = [12.6, 5.1];
 const SPREAD: usize = 23;
-/// The tail's input, so that four combs ringing together stay near the
-/// level of what goes in.
-const COMB_INPUT: f32 = 0.06;
+/// The tail's input, so that four combs ringing together at a tail volume
+/// of 1 come near the level of what goes in.
+const COMB_INPUT: f32 = 0.24;
+/// How much of what BEEP and BGM send reaches the reflections and the
+/// tail, against what PCMSTREAM sends. UNVERIFIED: on SmileBASIC 4 their
+/// reverb starts much quieter against its tail than PCMSTREAM's, and
+/// these shares are a fit to that.
+const OTHER_EARLY: f32 = 0.2;
+const OTHER_LATE: f32 = 0.9;
 /// The longest predelay EFCSET takes, and the reflections after it.
 const MAX_PREDELAY: f32 = 0.3;
 const MAX_TAP: f32 = 0.08;
@@ -202,8 +218,10 @@ impl Allpass {
 #[derive(Clone, Debug)]
 pub(crate) struct Reverb {
     settings: Settings,
-    /// What went in, for the predelay and reflections.
+    /// What went in, for the reflections, and for the predelay of the
+    /// tail.
     history: Vec<f32>,
+    late_history: Vec<f32>,
     at: usize,
     /// The reflections' delays from now, in samples, and gains.
     taps: Vec<(usize, f32, f32)>,
@@ -240,9 +258,13 @@ impl Reverb {
                 })
                 .collect()
         });
+        // A power of two long, to go round it with a mask.
+        let longest = samples(MAX_PREDELAY + MAX_TAP * early_scale(3).unwrap_or(1.0));
+        let history = vec![0.0; (longest + 1).next_power_of_two()];
         Reverb {
             settings,
-            history: vec![0.0; samples(MAX_PREDELAY + MAX_TAP * early_scale(3).unwrap_or(1.0)) + 1],
+            late_history: history.clone(),
+            history,
             at: 0,
             taps,
             predelay,
@@ -255,24 +277,35 @@ impl Reverb {
         self.settings
     }
 
-    /// Turns the bus's samples into what the effect adds to the mix: its
-    /// output less what was sent, since the sound sent stays in the mix
-    /// as it was.
-    pub(crate) fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+    /// The reverb's own share of what PCMSTREAM sends it, which passes by
+    /// it unchanged: the rest of what PCMSTREAM sends leaves the mix.
+    pub(crate) fn dry(&self) -> f32 {
+        self.settings.dry
+    }
+
+    /// Turns the buses' samples into what the effect adds to the mix.
+    /// `left` and `right` carry what PCMSTREAM sends, and come back as
+    /// the effect's output; `late` carries what BEEP and BGM send, which
+    /// reaches the reflections less than the tail.
+    pub(crate) fn process(&mut self, left: &mut [f32], right: &mut [f32], late: [&[f32]; 2]) {
         let s = self.settings;
-        let n = self.history.len();
-        let (early, late) = (s.early_gain, s.late_gain);
-        for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            let input = (*l + *r) * 0.5 * s.input;
-            self.history[self.at] = input;
-            let back = |d: usize| (self.at + n - d % n) % n;
+        let mask = self.history.len() - 1;
+        let (early, tail) = (s.early_gain * s.output, s.late_gain * s.output);
+        let [late_l, late_r] = late;
+        let half = 0.5 * s.input;
+        for (i, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
+            let whole = (*l + *r) * half;
+            let other = (late_l[i] + late_r[i]) * half;
+            self.history[self.at] = whole + other * OTHER_EARLY;
+            self.late_history[self.at] = whole + other * OTHER_LATE;
+            let back = |d: usize| self.at.wrapping_sub(d) & mask;
             let (mut el, mut er) = (0.0, 0.0);
             for &(d, gl, gr) in &self.taps {
                 let x = self.history[back(d)];
                 el += x * gl;
                 er += x * gr;
             }
-            let into = self.history[back(self.predelay)] * COMB_INPUT;
+            let into = self.late_history[back(self.predelay)] * COMB_INPUT;
             let mut sides = [0.0f32; 2];
             for (side, out) in sides.iter_mut().enumerate() {
                 let mut y = 0.0;
@@ -284,11 +317,9 @@ impl Reverb {
                 }
                 *out = y;
             }
-            self.at = (self.at + 1) % n;
-            let wet_l = early * el + late * sides[0];
-            let wet_r = early * er + late * sides[1];
-            *l = *l * (s.dry - 1.0) + wet_l * s.output;
-            *r = *r * (s.dry - 1.0) + wet_r * s.output;
+            self.at = (self.at + 1) & mask;
+            *l = early * el + tail * sides[0];
+            *r = early * er + tail * sides[1];
         }
     }
 }
@@ -297,15 +328,23 @@ impl Reverb {
 mod tests {
     use super::*;
 
+    /// A bus with a click on it and a silent one, `n` samples long.
+    fn click(n: usize) -> ([Vec<f32>; 2], [Vec<f32>; 2]) {
+        let mut l = vec![0.0; n];
+        l[0] = 1.0;
+        ([l.clone(), l], [vec![0.0; n], vec![0.0; n]])
+    }
+
+    fn energy(x: &[f32]) -> f32 {
+        x.iter().map(|s| s * s).sum::<f32>()
+    }
+
     #[test]
     fn a_click_rings_on_and_dies_away() {
         let mut r = Reverb::new(Settings::preset(2).unwrap());
         let n = RATE as usize;
-        let (mut l, mut rt) = (vec![0.0; n], vec![0.0; n]);
-        l[0] = 1.0;
-        rt[0] = 1.0;
-        r.process(&mut l, &mut rt);
-        let energy = |x: &[f32]| x.iter().map(|s| s * s).sum::<f32>();
+        let ([mut l, mut rt], [zl, zr]) = click(n);
+        r.process(&mut l, &mut rt, [&zl, &zr]);
         // Something after the click, well after it too.
         assert!(energy(&l[1..4800]) > 1e-4);
         assert!(energy(&l[24000..]) > 1e-7);
@@ -315,9 +354,26 @@ mod tests {
         for _ in 0..10 {
             l.fill(0.0);
             rt.fill(0.0);
-            r.process(&mut l, &mut rt);
+            r.process(&mut l, &mut rt, [&zl, &zr]);
         }
         assert!(energy(&l) < 1e-9);
+    }
+
+    /// What BEEP and BGM send rings in the tail about as much as what
+    /// PCMSTREAM sends, but reaches the reflections less.
+    #[test]
+    fn beep_and_bgm_reach_the_reflections_less() {
+        let n = RATE as usize;
+        let mut whole = Reverb::new(Settings::preset(2).unwrap());
+        let ([mut l, mut rt], [zl, zr]) = click(n);
+        whole.process(&mut l, &mut rt, [&zl, &zr]);
+        let mut other = Reverb::new(Settings::preset(2).unwrap());
+        let ([cl, cr], [mut ol, mut or]) = click(n);
+        other.process(&mut ol, &mut or, [&cl, &cr]);
+        let early = 48 * 60;
+        assert!(energy(&ol[..early]) < 0.5 * energy(&l[..early]));
+        let tail = energy(&ol[24000..]) / energy(&l[24000..]);
+        assert!((0.5..1.0).contains(&tail), "{tail}");
     }
 
     #[test]
@@ -327,11 +383,13 @@ mod tests {
             let n = RATE as usize * 2;
             let tone: Vec<f32> = (0..n).map(|i| (i as f32 * 0.06).sin() * 0.5).collect();
             let (mut l, mut rt) = (tone.clone(), tone.clone());
-            r.process(&mut l, &mut rt);
-            let out: Vec<f32> = l.iter().zip(&tone).map(|(d, t)| d + t).collect();
+            let silent = vec![0.0; n];
+            r.process(&mut l, &mut rt, [&silent, &silent]);
+            // PCMSTREAM keeps the reverb's dry share of what it sends.
+            let out: Vec<f32> = l.iter().zip(&tone).map(|(w, t)| w + t * r.dry()).collect();
             let rms = |x: &[f32]| (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt();
             let ratio = rms(&out[n / 2..]) / rms(&tone[n / 2..]);
-            assert!((0.05..2.0).contains(&ratio), "{preset} {ratio}");
+            assert!((0.05..4.0).contains(&ratio), "{preset} {ratio}");
         }
     }
 }

@@ -808,7 +808,7 @@ fn the_effector_rings_on_after_a_note_but_is_not_recorded() {
     let tail = |setup: &str| {
         let mut rt = runtime();
         let program = format!(
-            "{setup}:WAVSET 224,127,0,127,127,\"E020\"*16,69:RECSTART 1:BGMPLAY \"T120@224O4A16\""
+            "WAVSET 224,127,0,127,127,\"E020\"*16,69:RECSTART 1:{setup}:BGMPLAY \"T120@224O4A16\""
         );
         run_on(&mut rt, &program).unwrap();
         // A sixteenth lasts 125 ms; listen from 300 ms to 600 ms.
@@ -823,8 +823,71 @@ fn the_effector_rings_on_after_a_note_but_is_not_recorded() {
     let (heard, recorded) = tail("EFCSET #EFCCAVE:EFCWET 0,127,0,0:EFCEN 1");
     assert!(heard > 0.001, "{heard}");
     assert_eq!(recorded, "0");
-    // Sending nothing, nothing rings.
+    // Sending nothing, nothing rings: RECSTART sends nothing until EFCWET.
     assert_eq!(tail("EFCSET #EFCCAVE:EFCWET 127,0,127,127:EFCEN 1").0, 0.0);
+    assert_eq!(tail("EFCSET #EFCCAVE:EFCEN 1").0, 0.0);
+}
+
+/// What the effector hears of each sound. The checks read what plays:
+/// a full-scale square BEEP or BGM note at 64 records at an eighth of full
+/// scale, and plays as loud with EFCWET 127.
+#[test]
+fn the_effector_sends_and_resets() {
+    let heard = |setup: &str, sound: &str| {
+        let mut rt = runtime();
+        run_on(&mut rt, &format!("{WAVSET_SQUARE}:{setup}:{sound}")).unwrap();
+        frames(&mut rt, 10);
+        rt.sound.take_samples();
+        frames(&mut rt, 2);
+        peak(&mut rt)
+    };
+    let beep = "H=BEEP(224)";
+    let song = "BGMPLAY \"@224O4A1\"";
+    let near = |a: f32, b: f32| (a - b).abs() < 0.02 * b;
+    for sound in [beep, song] {
+        // EFCWET starts at 127, and with the effector off what is sent
+        // passes it: a full-scale square at 64 plays at an eighth of full
+        // scale, its waveform filter's ringing aside.
+        let full = heard("", sound);
+        assert!((0.12..0.15).contains(&full), "{sound} {full}");
+        // Sending nothing, half as loud.
+        let quiet = heard("EFCWET 0,0,0,0", sound);
+        assert!(near(quiet, full / 2.0), "{sound} {quiet}");
+        // SNDSTOP sends all of it again, and RECSTART nothing.
+        let reset = heard("EFCWET 0,0,0,0:SNDSTOP", sound);
+        assert!(near(reset, full), "{sound} {reset}");
+        let recording = heard("RECSTART", sound);
+        assert!(near(recording, full / 2.0), "{sound} {recording}");
+        // With the effector on, the sound is not lowered by what it sends.
+        let on = heard("EFCSET #EFCBATH:EFCWET 0,0,0,0:EFCEN 1", sound);
+        assert!(near(on, quiet), "{sound} {on}");
+    }
+    // TALK with all of it sent and the effector on says nothing.
+    let talk = "TALK \"あいうえおあいうえお\"";
+    assert!(heard("", talk) > 0.001);
+    assert!(heard("EFCSET #EFCBATH:EFCEN 1", talk) < 1e-6);
+    let mut rt = runtime();
+    let got = run_on(&mut rt, "EFCEN 1:A=EFCEN():SNDSTOP:?A;EFCEN()").unwrap();
+    assert_eq!(got, "10");
+}
+
+/// BGMPLAY starts a track with EFCWET's send, whatever BGMWET said before.
+#[test]
+fn bgmplay_forgets_bgmwet() {
+    let quiet = |setup: &str| {
+        let mut rt = runtime();
+        run_on(&mut rt, &format!("{WAVSET_SQUARE}:{setup}")).unwrap();
+        frames(&mut rt, 10);
+        rt.sound.take_samples();
+        frames(&mut rt, 2);
+        peak(&mut rt)
+    };
+    let song = "BGMPLAY \"@224O4A1\"";
+    let full = quiet(song);
+    assert_eq!(quiet(&format!("BGMWET 0,0:{song}")), full);
+    // During the song, BGMWET sends that track as it says.
+    let set = quiet(&format!("{song}:BGMWET 0,0"));
+    assert!((set - full / 2.0).abs() < 0.002, "{set}");
 }
 
 #[test]

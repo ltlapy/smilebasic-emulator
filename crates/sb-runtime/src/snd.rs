@@ -440,6 +440,7 @@ impl Runtime {
                 if !self.frame_wait_over() {
                     self.sound.stop_all();
                     self.sound.reset_mixer();
+                    self.sound.reset_effector();
                     self.hold_for_a_frame();
                 }
                 Ok(vec![])
@@ -681,15 +682,15 @@ impl Runtime {
                 .map(|l| Value::Int(l.value.round().clamp(-FULL, FULL) as i32))
                 .collect()),
             (Command::Efcen, Want::Outs(0), 1) => {
-                self.sound.effector.on = in_range("state", &args[0], 0..=1)? == 1;
+                let on = in_range("state", &args[0], 0..=1)? == 1;
+                self.sound.set_effector_on(on);
                 Ok(vec![])
             }
             (Command::Efcen, Want::Outs(1) | Want::Value, 0) => {
-                Ok(vec![Value::Int(i32::from(self.sound.effector.on))])
+                Ok(vec![Value::Int(i32::from(self.sound.effector().on))])
             }
             (Command::Efcset, Want::Outs(0), 1) => {
                 let preset = in_range("preset", &args[0], 0..=3)?;
-                self.sound.effector.preset = preset;
                 self.sound.set_reverb(Settings::preset(preset));
                 Ok(vec![])
             }
@@ -708,7 +709,7 @@ impl Runtime {
                 for (w, a) in wet.iter_mut().zip(args) {
                     *w = in_range("wet", a, 0..=127)?;
                 }
-                self.sound.effector.wet = wet;
+                self.sound.set_sends(wet);
                 Ok(vec![])
             }
             // The balance moves over the time in seconds, a step each frame.
@@ -752,6 +753,8 @@ impl Runtime {
                     }
                 };
                 self.sound.recorder.borrow_mut().start(len, ring);
+                // RECSTART sends nothing to the effector until EFCWET.
+                self.sound.set_sends([0; 4]);
                 Ok(vec![])
             }
             (Command::Recstop, Want::Outs(0), 0) => {
