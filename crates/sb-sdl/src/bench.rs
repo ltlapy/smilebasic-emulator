@@ -53,7 +53,8 @@
 //!   device were gone, `fail` as if drawing failed, `refuse:N` to have the next N
 //!   tries at a renderer refused, `panic`, `unsaved` to give PRG0 unsaved edits,
 //!   `sleep:MS` to stop the loop for that long and count it as a suspend, `key:NAME`
-//!   to press the key SDL calls NAME, such as `Escape`, `usb:USAGE` to have KEYBOARD read that
+//!   to press the key SDL calls NAME, such as `Escape`, with `ctrl+`, `shift+` or
+//!   `alt+` before the name to hold those, `usb:USAGE` to have KEYBOARD read that
 //!   key as down for a frame, which `key` does not, and `pad:NAME` and `padup:NAME`
 //!   to press and let go the first controller's button SDL calls NAME, such as
 //!   `b` for the right face button (SDL goes by Xbox labels), as both the event
@@ -73,6 +74,7 @@ use std::time::{Duration, Instant};
 use sb_runtime::machine::Machine;
 use sb_runtime::sound::RATE;
 use sb_runtime::sound::output::Stats;
+use sdl3::keyboard::Mod;
 use sdl3::render::Canvas;
 use sdl3::video::Window;
 
@@ -82,6 +84,22 @@ use crate::standby::Kept;
 static UPLOADED: AtomicU64 = AtomicU64::new(0);
 /// Textures made since the frame began.
 static MADE: AtomicU64 = AtomicU64::new(0);
+
+/// The modifiers before a key's name in `key:`, as in `ctrl+shift+F12`,
+/// and the name.
+pub fn key_mods(mut name: &str) -> (Mod, &str) {
+    let mut keymod = Mod::NOMOD;
+    loop {
+        let (held, rest) = match name.split_once('+') {
+            Some(("ctrl", rest)) => (Mod::LCTRLMOD, rest),
+            Some(("shift", rest)) => (Mod::LSHIFTMOD, rest),
+            Some(("alt", rest)) => (Mod::LALTMOD, rest),
+            _ => return (keymod, name),
+        };
+        keymod |= held;
+        name = rest;
+    }
+}
 
 /// Whether presents are to wait for vsync: not if `SB_UI_BENCH` says so.
 pub fn wants_vsync() -> bool {
@@ -578,6 +596,15 @@ impl Bench {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_take_modifiers_before_their_names() {
+        assert_eq!(key_mods("Escape"), (Mod::NOMOD, "Escape"));
+        let (keymod, name) = key_mods("ctrl+shift+F12");
+        assert_eq!((keymod, name), (Mod::LCTRLMOD | Mod::LSHIFTMOD, "F12"));
+        // The key itself may be a plus.
+        assert_eq!(key_mods("shift++"), (Mod::LSHIFTMOD, "+"));
+    }
 
     #[test]
     fn a_dip_is_one_frame_darker_than_both_sides() {

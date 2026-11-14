@@ -44,7 +44,7 @@ const LIST_WIDTH: u32 = 460;
 /// folder's name.
 const ROW: u32 = 2 * LINE;
 /// The folder's name under the title.
-const FOLDER: u32 = 0xFFB0_B0B0;
+pub(crate) const FOLDER: u32 = 0xFFB0_B0B0;
 /// The gap between a project's icon and its title.
 const ICON_GAP: u32 = 6;
 /// The current project's row when it is not selected: a faint tint,
@@ -56,7 +56,7 @@ const CURRENT_BAR: u32 = 0xFF8C_B8FF;
 const CURRENT_BAR_WIDTH: u32 = 4;
 /// How far the mouse moves with a file before it is being dragged.
 const DRAG_START: i32 = 6;
-const ERROR: u32 = 0xFFFF_8080;
+pub(crate) const ERROR: u32 = 0xFFFF_8080;
 /// The longest name the name box takes, a little over the limit so that
 /// a name that is too long gets an error rather than being cut short.
 const MAX_TYPED: usize = 40;
@@ -388,14 +388,14 @@ enum Focus {
 
 /// A project's title, description and icon from its metadata, read when
 /// the list is.
-struct Listed {
-    title: String,
-    description: String,
-    icon: Option<Picture>,
+pub(crate) struct Listed {
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) icon: Option<Picture>,
 }
 
 impl Listed {
-    fn read(storage: &Storage, project: &str) -> Listed {
+    pub(crate) fn read(storage: &Storage, project: &str) -> Listed {
         let meta = project_meta(project, |name| storage.read_file_in(project, name).ok());
         let pixels: Box<[u32]> = meta.icon.iter().map(|&p| p as u32).collect();
         let side = ICON_SIZE as u32;
@@ -550,12 +550,12 @@ pub struct ProjectManager {
 }
 
 /// Whether a folder's name can be used as a project name as it is.
-fn usable(name: &str) -> bool {
+pub(crate) fn usable(name: &str) -> bool {
     name.is_empty() || check_project_name(name).is_ok_and(|n| n == name)
 }
 
 /// `text` cut to `width` pixels, with `~` where it was cut.
-fn fit(text: &str, width: u32) -> String {
+pub(crate) fn fit(text: &str, width: u32) -> String {
     if text_width(text) <= width {
         return text.to_string();
     }

@@ -13,6 +13,7 @@ mod gpu;
 mod gpu_golden;
 mod gpu_project;
 mod grp_view;
+mod handheld;
 mod help;
 mod index;
 mod keyhint;
@@ -50,6 +51,7 @@ use dialog::{Answer, Dialog};
 use editor_layout::Layout;
 use file_dialogs::{FilePicker, SaveDialog};
 use grp_view::PageTexture;
+use handheld::{GameList, PauseMenu};
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
@@ -93,7 +95,7 @@ use sdl3::sys::render::{
     SDL_SetRenderDrawBlendMode, SDL_SetTextureBlendMode,
 };
 use sdl3::sys::surface::SDL_ScaleMode;
-use sdl3::video::{Window, WindowBuilder, WindowContext};
+use sdl3::video::{FullscreenType, Window, WindowBuilder, WindowContext};
 use settings_window::SettingsWindow;
 use shortcuts::ShortcutsWindow;
 use toast::Toasts;
@@ -106,6 +108,10 @@ const USAGE: &str = "usage:
                                 program loads and saves the files beside it
                                 (HGLIB.PRG.txt, HGLIB.PRG or THGLIB.PRG are
                                 all TXT:HGLIB.PRG)
+  smilebasic --handheld [PROGRAM]
+                                the same in handheld mode, for this run only:
+                                fullscreen, for a gamepad alone, starting in
+                                a list of the projects
 
 SmileBASIC 4's own font and sprites come from smilebasic-import; without
 them, a bundled font and blank sprites are used";
@@ -134,12 +140,9 @@ type AnyError = Box<dyn std::error::Error>;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let result = match args.first().map(String::as_str) {
-        None => run(None),
-        Some(program) if !program.starts_with('-') && args.len() == 1 => {
-            run(Some(Path::new(program)))
-        }
-        _ => Err(USAGE.into()),
+    let result = match parse_args(&args) {
+        Some((program, handheld)) => run(program.map(Path::new), handheld),
+        None => Err(USAGE.into()),
     };
     if let Err(e) = result {
         eprintln!("{e}");
@@ -149,6 +152,22 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+/// The program to run and whether `--handheld` was given, from the
+/// command line; `None` for anything else, which gets the usage.
+fn parse_args(args: &[String]) -> Option<(Option<&str>, bool)> {
+    let mut program = None;
+    let mut handheld = false;
+    for arg in args {
+        match arg.as_str() {
+            "--handheld" if !handheld => handheld = true,
+            arg if arg.starts_with('-') => return None,
+            arg if program.is_none() => program = Some(arg),
+            _ => return None,
+        }
+    }
+    Some((program, handheld))
 }
 
 /// Panics on frames in a row after which frames stop: the machine cannot be
@@ -261,7 +280,7 @@ fn open_program_folder(storage: &mut Storage, program: &Path) -> Option<String> 
     }
 }
 
-fn run(program: Option<&Path>) -> Result<(), AnyError> {
+fn run(program: Option<&Path>, handheld_flag: bool) -> Result<(), AnyError> {
     let source = program.map(load_source).transpose()?;
     let font = resources::load_font(&resource_dir()?).unwrap_or_else(|e| {
         eprintln!("using the fallback font: {e} (see `smilebasic-import`)");
@@ -295,16 +314,24 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
     rt.library = std::rc::Rc::new(sb_runtime::complete::Library::new(help.as_deref()));
     rt.help = help.clone();
     let saved_settings = rt.settings.clone();
+    // The flag is for this run: the setting stays as it was saved.
+    let handheld = handheld_flag || rt.settings.handheld;
     let mut machine = Machine::new(rt);
     machine.boot();
+    let mut restart = None;
     if let Some(source) = source {
         // Loaded as LOAD would, it is named for Ctrl+S to save it again;
         // a program that maps to no name there runs all the same.
-        let loaded = program_name.is_some_and(|name| machine.load_slot(0, &name).is_ok());
+        let loaded = (program_name.as_ref()).is_some_and(|name| machine.load_slot(0, name).is_ok());
         if !loaded {
             machine.set_slot(0, source);
         }
-        machine.run_slot(0);
+        // In handheld mode it ends in the game list, after an error once
+        // A is pressed, as a program run from there does.
+        match program_name.filter(|_| loaded && handheld) {
+            Some(name) if machine.run_home(&name).is_ok() => restart = Some(name),
+            _ => machine.run_slot(0),
+        }
     }
     let mut recovery = Recovery::new(data_dir()?);
     let start = Start {
@@ -313,6 +340,8 @@ fn run(program: Option<&Path>) -> Result<(), AnyError> {
         help,
         settings_path,
         saved_settings,
+        handheld,
+        restart,
     };
     let ended = catch_unwind(AssertUnwindSafe(|| {
         frontend(&mut machine, &mut recovery, start)
@@ -342,6 +371,11 @@ struct Start {
     help: Option<std::rc::Rc<Help>>,
     settings_path: PathBuf,
     saved_settings: Settings,
+    /// Handheld mode is on, by the setting or `--handheld`.
+    handheld: bool,
+    /// The program of the current project that runs from the command line
+    /// in handheld mode, for the pause menu's Restart.
+    restart: Option<String>,
 }
 
 /// The window and the main loop, on a machine that is already set up.
@@ -352,16 +386,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         help,
         settings_path,
         mut saved_settings,
+        mut handheld,
+        restart,
     } = start;
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
-    let (display_w, display_h) = screen.display;
-    let window = video
-        .window(TITLE, display_w, display_h)
-        .position_centered()
-        .resizable()
-        .high_pixel_density()
-        .build()?;
+    // The UI's size: the profile's display on the desktop, or in
+    // handheld mode the output's at a whole scale.
+    let profile_display = screen.display;
+    let (mut display_w, mut display_h) = profile_display;
+    let mut builder = video.window(TITLE, display_w, display_h);
+    builder.position_centered().resizable().high_pixel_density();
+    if handheld {
+        builder.fullscreen();
+    }
+    let window = builder.build()?;
 
     video.text_input().start(&window);
     let clipboard = video.clipboard();
@@ -383,6 +422,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
     let mut canvas = make_canvas(&window, &[])?;
     drop(window);
+    if handheld {
+        (display_w, display_h) = handheld::ui_size(canvas.output_size()?);
+    }
     // Vsync paces frames on a 60 Hz display; on others, without vsync,
     // or while the window is not shown, the loop goes by the clock.
     let mut main_presents = pacing::Presents::new(&canvas, bench::wants_vsync());
@@ -395,7 +437,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut creator = OwnedCreator::new(&canvas);
     let mut texture_creator = creator.get();
     let mut mode = machine.screen_mode();
-    let mut filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
+    let chosen_filter = handheld::shown_filter(machine.rt.settings.screen_filter, handheld);
+    let mut filter = chosen_filter.unwrap_or(mode.filter);
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
@@ -474,6 +517,17 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut manager: Option<ProjectManager> = None;
     // Where the manager was when Run left it, for the return to it.
     let mut home_memory = Memory::default();
+    // Handheld mode's game list, which takes all input but a dialog's
+    // while it is open, and its pause menu, which takes all input.
+    let mut game_list: Option<GameList> = None;
+    let mut pause_menu: Option<PauseMenu> = None;
+    // Select and Start, for the menu; where the list was left; the
+    // program it ran last, for Restart; and whether entering the mode
+    // made the window fullscreen, for leaving it.
+    let mut hotkeys = handheld::Hotkeys::default();
+    let mut list_memory = handheld::Memory::default();
+    let mut ran_from_list = restart;
+    let mut fullscreen_by_handheld = handheld;
     let mut color_window: Option<ColorWindow> = None;
     let mut settings_window: Option<SettingsWindow> = None;
     let mut shortcuts_window: Option<ShortcutsWindow> = None;
@@ -542,7 +596,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     macro_rules! lend {
         () => {
             standby::Lend {
-                frames: !(menu.shown && machine.is_running()),
+                frames: !((menu.shown || pause_menu.is_some()) && machine.is_running()),
                 machine: &mut *machine,
                 guard: &mut frame_guard,
                 toasts: &mut toasts,
@@ -708,13 +762,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     None
                 }
                 _ if what.starts_with("key:") => {
-                    Keycode::from_name(&what[4..]).map(|key| Event::KeyDown {
+                    let (keymod, name) = bench::key_mods(&what[4..]);
+                    Keycode::from_name(name).map(|key| Event::KeyDown {
                         timestamp: 0,
                         window_id: canvas.window().id(),
                         keycode: Some(key),
                         // Any will do, but SDL's event must have one.
                         scancode: Some(Scancode::A),
-                        keymod: Mod::NOMOD,
+                        keymod,
                         repeat: false,
                         which: 0,
                         raw: 0,
@@ -773,6 +828,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let _ = sdl.event().and_then(|e| e.push_event(event));
             }
         }
+        // In handheld mode the UI follows the output's size.
+        let wanted = match handheld {
+            true => handheld::ui_size(drawing!(canvas.output_size())),
+            false => profile_display,
+        };
+        if wanted != (display_w, display_h) {
+            (display_w, display_h) = wanted;
+            if let Some((open, _)) = &mut dialog {
+                open.set_size(wanted);
+            }
+            if let Some(open) = &mut game_list {
+                open.set_size(wanted);
+            }
+            // Made again at the new size, from the machine's, below.
+            program_dialog = None;
+        }
         if let Some(b) = &bench {
             let size = (display_w, display_h);
             menu.shown |= b.opens("menu");
@@ -802,6 +873,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // some other way, a wait for a button is over.
         if manager.is_some() {
             machine.home_leave();
+        } else if handheld {
+            // The game list opens below, whenever nothing runs.
+            machine.home_done();
         } else if machine.home_done() {
             let size = (display_w, display_h);
             manager = Some(ProjectManager::reopen(
@@ -809,6 +883,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 size,
                 &home_memory,
             ));
+        }
+        // Handheld mode rests in the game list, never in DIRECT mode or
+        // the editor, which a breakpoint may open.
+        if handheld {
+            if machine.is_editing() {
+                machine.toggle_editor();
+            }
+            if game_list.is_none()
+                && pause_menu.is_none()
+                && !machine.is_running()
+                && !machine.home_waiting()
+            {
+                let size = (display_w, display_h);
+                game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
+            }
         }
         // The editor shows in a window of its own while it is open, if
         // chosen.
@@ -853,6 +942,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     || settings_window.is_some()
                     || shortcuts_window.is_some()
                     || color_window.is_some()
+                    || game_list.is_some()
+                    || pause_menu.is_some()
             };
         }
         if !modal_shown!() {
@@ -864,8 +955,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             b.window_size((out_w, out_h));
         }
         let (win_w, _) = canvas.window().size();
-        let display = display_rect(display_w, display_h, out_w, out_h);
-        let shown = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
+        let display = match handheld {
+            true => handheld::display_rect((display_w, display_h), (out_w, out_h)),
+            false => display_rect(display_w, display_h, out_w, out_h),
+        };
+        let chosen_filter = handheld::shown_filter(machine.rt.settings.screen_filter, handheld);
+        let shown = screen_rect(&mode, chosen_filter, out_w, display.h);
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
             display,
@@ -921,11 +1016,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         let mut quit = false;
         // The pad repeats on the screen that has it, once a frame whatever
         // events came; a new screen or mode starts without the old hold.
-        let screen = match (&dialog, &manager) {
-            (Some(_), _) => 1,
-            (None, Some(m)) => 2 + m.mode_id(),
-            (None, None) => 0,
-        };
+        let screen = input_screen(
+            pause_menu.is_some(),
+            dialog.is_some(),
+            manager.as_ref().map(ProjectManager::mode_id),
+            game_list.as_ref().map(GameList::mode_id),
+        );
         let pad_dt = pad_tick.elapsed().min(Duration::from_millis(100));
         pad_tick = Instant::now();
         if screen != pad_screen {
@@ -964,16 +1060,28 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             (repeats.into_iter().map(|e| (true, e))).chain(polled.drain(..).map(|e| (false, e)))
         {
             // A repeat that changes the screen ends the rest of them.
-            let now = match (&dialog, &manager) {
-                (Some(_), _) => 1,
-                (None, Some(m)) => 2 + m.mode_id(),
-                (None, None) => 0,
-            };
+            let now = input_screen(
+                pause_menu.is_some(),
+                dialog.is_some(),
+                manager.as_ref().map(ProjectManager::mode_id),
+                game_list.as_ref().map(GameList::mode_id),
+            );
             if repeated && now != screen {
                 continue;
             }
             if !repeated {
                 controls.event(&event);
+                match event {
+                    Event::GamepadButtonDown {
+                        button: Button::Back,
+                        ..
+                    } => hotkeys.select(true),
+                    Event::GamepadButtonUp {
+                        button: Button::Back,
+                        ..
+                    } => hotkeys.select(false),
+                    _ => {}
+                }
             }
             // The pad's up and down are held, and the left stick is the
             // pad, on the emulator's own screens.
@@ -1144,6 +1252,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     || settings_window.is_some()
                     || shortcuts_window.is_some()
                     || color_window.is_some()
+                    || game_list.is_some()
+                    || pause_menu.is_some()
                     || debug_panel.typing()
                     || (side.is_some() && side_focus);
             }
@@ -1157,6 +1267,109 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     | Event::MouseWheel { .. }
             );
             if pointer && modal_shown!() && !ui_window {
+                continue;
+            }
+            // Ctrl+Shift+F12 turns handheld mode on or off, whatever shows.
+            if let Event::KeyDown {
+                keycode: Some(Keycode::F12),
+                keymod,
+                repeat: false,
+                ..
+            } = event
+                && ctrl(keymod)
+                && shift(keymod)
+            {
+                handheld = !handheld;
+                machine.rt.settings.handheld = handheld;
+                let window = canvas.window_mut();
+                if handheld {
+                    fullscreen_by_handheld = window.fullscreen_state() == FullscreenType::Off;
+                    let _ = window.set_fullscreen(true);
+                    // What needs a keyboard or a mouse closes.
+                    (manager, file_dialog, side, debug_menu) = (None, None, None, None);
+                    (settings_window, shortcuts_window, color_window) = (None, None, None);
+                    menu.shown = false;
+                    menu.leave();
+                } else {
+                    if std::mem::take(&mut fullscreen_by_handheld) {
+                        let _ = window.set_fullscreen(false);
+                    }
+                    (game_list, pause_menu) = (None, None);
+                }
+                plus_down = None;
+                continue;
+            }
+            // Select+Start, or F8, opens and closes handheld mode's pause
+            // menu, over a dialog too. The release of that Start is not the
+            // + button's.
+            if handheld {
+                let toggled = match event {
+                    Event::GamepadButtonDown {
+                        button: Button::Start,
+                        ..
+                    } => hotkeys.start_down(true) == handheld::Start::Menu,
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F8),
+                        repeat: false,
+                        ..
+                    } => true,
+                    _ => false,
+                };
+                if toggled {
+                    pause_menu = match pause_menu {
+                        Some(_) => None,
+                        None => {
+                            let running = machine.is_running();
+                            let program = running || machine.home_waiting();
+                            let restart = ran_from_list.is_some();
+                            Some(PauseMenu::new(running, program, restart))
+                        }
+                    };
+                    plus_down = None;
+                    continue;
+                }
+            }
+            if let Event::GamepadButtonUp {
+                button: Button::Start,
+                ..
+            } = event
+                && !hotkeys.start_up()
+            {
+                continue;
+            }
+            if let Some(open) = &mut pause_menu {
+                let chosen = match event {
+                    Event::Quit { .. } => Some(handheld::Choice::Quit),
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => open.key(key),
+                    Event::GamepadButtonDown { button, .. } => open.pad(button),
+                    _ => None,
+                };
+                match chosen {
+                    Some(handheld::Choice::Resume) => pause_menu = None,
+                    Some(handheld::Choice::Restart) => {
+                        pause_menu = None;
+                        if let Some(file) = &ran_from_list
+                            && let Err(e) = machine.run_home(file)
+                        {
+                            toasts.push(format!("Could not load {file}: {e}"));
+                        }
+                    }
+                    Some(handheld::Choice::List) => {
+                        pause_menu = None;
+                        machine.stop();
+                        machine.home_leave();
+                        machine.home_done();
+                        let size = (display_w, display_h);
+                        game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
+                    }
+                    Some(handheld::Choice::Quit) => {
+                        pause_menu = None;
+                        quit = true;
+                    }
+                    None => {}
+                }
                 continue;
             }
             // After an error of the program that Projects ran, only A or
@@ -1174,12 +1387,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         ..
                     } => {
                         if machine.home_press() {
-                            let size = (display_w, display_h);
-                            manager = Some(ProjectManager::reopen(
-                                &machine.rt.storage,
-                                size,
-                                &home_memory,
-                            ));
+                            let (storage, size) = (&machine.rt.storage, (display_w, display_h));
+                            if handheld {
+                                game_list = Some(GameList::new(storage, size, &list_memory));
+                            } else {
+                                manager = Some(ProjectManager::reopen(storage, size, &home_memory));
+                            }
                         }
                         continue;
                     }
@@ -1277,6 +1490,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     (Some(Answer::Accept), Asking::Discard(name)) => {
                         load_edited(machine, &name, &mut toasts);
                         dialog = None;
+                    }
+                    (Some(Answer::Accept), Asking::Run(project, file)) => {
+                        dialog = None;
+                        if run_from_list(machine, &project, &file, &mut toasts) {
+                            (game_list, ran_from_list) = (None, Some(file));
+                        }
                     }
                     (Some(Answer::Accept), Asking::Condition(slot, line)) => {
                         match machine.set_condition(slot, line, open.field()) {
@@ -1442,6 +1661,41 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     | Event::MouseButtonDown { .. }
                     | Event::GamepadButtonDown { .. }
             );
+            if let Some(open) = &mut game_list {
+                let storage = &machine.rt.storage;
+                let outcome = match event {
+                    Event::Quit { .. } => {
+                        quit = true;
+                        handheld::Outcome::Stay
+                    }
+                    Event::KeyDown {
+                        keycode: Some(key), ..
+                    } => open.key(key, storage),
+                    Event::GamepadButtonDown { button, .. } => open.pad(button, storage),
+                    _ => handheld::Outcome::Stay,
+                };
+                match outcome {
+                    handheld::Outcome::Stay => {}
+                    handheld::Outcome::Notice(text) => toasts.push(text),
+                    handheld::Outcome::Run { project, file } => {
+                        list_memory = open.memory();
+                        let unsaved = machine.unsaved_slots();
+                        if !unsaved.is_empty() {
+                            let label = sb_runtime::confirm::project_label(&project);
+                            let mut lines = vec![format!("Run {file} of {label}."), String::new()];
+                            lines.extend(sb_runtime::confirm::unsaved_lines(&unsaved));
+                            let size = (display_w, display_h);
+                            let ask = Dialog::new("Unsaved programs", lines, "Run", size);
+                            dialog = Some((ask, Asking::Run(project, file)));
+                        } else if run_from_list(machine, &project, &file, &mut toasts) {
+                            (game_list, ran_from_list) = (None, Some(file));
+                        }
+                    }
+                }
+                // Nothing else goes past it, as typing would reach the
+                // prompt under it.
+                continue;
+            }
             if let Some(open) = &mut manager {
                 let unsaved = machine.unsaved_slots();
                 let storage = &mut machine.rt.storage;
@@ -1820,6 +2074,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             match event {
                 Event::Quit { .. } => quit = true,
+                // The desktop's windows and tools are not to be had in
+                // handheld mode.
+                Event::KeyDown {
+                    keycode: Some(key),
+                    keymod,
+                    ..
+                } if handheld && desktop_key(key, keymod) => {}
                 Event::MouseMotion {
                     x, y, mousestate, ..
                 } => {
@@ -1878,7 +2139,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     y,
                     clicks,
                     ..
-                } => match if ui_window {
+                } => match if ui_window && !handheld {
                     menu.click(to_display(x, y), menu_context(machine))
                 } else {
                     Click::Ignored
@@ -2186,7 +2447,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::GamepadButtonDown {
                     button: Button::Back,
                     ..
-                } if !machine.is_running() && !on_editor => {
+                } if !machine.is_running() && !on_editor && !handheld => {
                     let size = (display_w, display_h);
                     manager = Some(ProjectManager::new(&machine.rt.storage, size));
                 }
@@ -2351,7 +2612,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             || color_window.is_some()
             || settings_window.is_some()
             || shortcuts_window.is_some()
-            || file_dialog.is_some();
+            || file_dialog.is_some()
+            || game_list.is_some()
+            || pause_menu.is_some();
         // The help opened in direct mode closes when the editor opens or
         // a program runs; the editor's panels close with the editor.
         if side_direct && (machine.is_editing() || machine.is_running())
@@ -2372,7 +2635,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.stop();
         }
         close_bar_on_start(&mut menu, &mut was_running, machine.is_running());
-        let paused = menu.shown && machine.is_running();
+        let paused = (menu.shown || pause_menu.is_some()) && machine.is_running();
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
         let editor_keys = machine.editor_has_keys() && machine.program_dialog().is_none();
@@ -2565,8 +2828,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             b.skip();
         }
         mode = machine.screen_mode();
-        filter = machine.rt.settings.screen_filter.unwrap_or(mode.filter);
-        let rect = screen_rect(&mode, machine.rt.settings.screen_filter, out_w, display.h);
+        let chosen_filter = handheld::shown_filter(machine.rt.settings.screen_filter, handheld);
+        filter = chosen_filter.unwrap_or(mode.filter);
+        let rect = screen_rect(&mode, chosen_filter, out_w, display.h);
         let editing = machine.is_editing() && !machine.is_detached();
         let renderer = machine.rt.settings.renderer;
         if renderer_applied != Some(renderer) {
@@ -2850,18 +3114,20 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         // The colors window leaves the editor behind it bright, to show
         // its colors.
-        let dims = dialog.is_some() || manager.is_some();
+        let dims = dialog.is_some() || manager.is_some() || pause_menu.is_some();
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens or the editor's window need
         // it.
-        let show_cursor = !machine.is_running()
-            || modal
-            || dims
-            || program_dialog.is_some()
-            || menu.visible()
-            || apart && pointer_in_editor
-            || machine.rt.settings.keep_mouse_cursor
-            || machine.rt.mouse_cursor();
+        // Handheld mode has no mouse.
+        let show_cursor = !handheld
+            && (!machine.is_running()
+                || modal
+                || dims
+                || program_dialog.is_some()
+                || menu.visible()
+                || apart && pointer_in_editor
+                || machine.rt.settings.keep_mouse_cursor
+                || machine.rt.mouse_cursor());
         if show_cursor != cursor_shown {
             cursor_shown = show_cursor;
             mouse.show_cursor(show_cursor);
@@ -2915,7 +3181,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The menu bar shows over everything in the window with the keys,
         // and the editor's window always shows it.
         let mut bar_shown = [false; 2];
-        bar_shown[ui] = dialog.is_none() && !modal && menu.visible();
+        bar_shown[ui] = !handheld && dialog.is_none() && !modal && menu.visible();
         bar_shown[1] |= apart && ui == 0;
         let closed_bar = menu.closed();
         let font = machine.rt.font();
@@ -2999,6 +3265,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 if let (true, Some(open)) = (i == ui && over, &manager) {
                     open.draw(fb, font, cursor_on);
                 }
+                if let (true, Some(open)) = (i == ui && over, &game_list) {
+                    open.draw(fb, font);
+                }
                 if let (0, Some(open)) = (i, &program_dialog) {
                     open.draw(fb, font, cursor_on);
                 }
@@ -3035,6 +3304,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         }
                         _ => {}
                     }
+                }
+                if let (true, Some(open)) = (i == ui && over, &pause_menu) {
+                    open.draw(fb, font);
                 }
                 // The bar covers what is under it.
                 if dim && under && bar_shown[i] {
@@ -3134,6 +3406,60 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
     }
     Ok(())
+}
+
+/// Which of the emulator's screens takes the input, so that a change can
+/// be told: the pause menu, a dialog, the manager in one of its modes, the
+/// game list in one of its, or none.
+fn input_screen(pause: bool, dialog: bool, manager: Option<usize>, list: Option<usize>) -> usize {
+    match (pause, dialog, manager, list) {
+        (true, ..) => 20,
+        (false, true, ..) => 1,
+        (false, false, Some(mode), _) => 2 + mode,
+        (false, false, None, Some(mode)) => 21 + mode,
+        (false, false, None, None) => 0,
+    }
+}
+
+/// The keys of the desktop's windows and tools, which handheld mode leaves
+/// alone: the function keys, but for F5 alone, which is the + button.
+fn desktop_key(key: Keycode, keymod: Mod) -> bool {
+    let held = Mod::LCTRLMOD | Mod::RCTRLMOD | Mod::LSHIFTMOD | Mod::RSHIFTMOD;
+    match key {
+        Keycode::F5 => keymod.intersects(held | Mod::LALTMOD | Mod::RALTMOD),
+        Keycode::F1
+        | Keycode::F2
+        | Keycode::F3
+        | Keycode::F4
+        | Keycode::F6
+        | Keycode::F7
+        | Keycode::F8
+        | Keycode::F9
+        | Keycode::F10
+        | Keycode::F11
+        | Keycode::F12 => true,
+        _ => false,
+    }
+}
+
+/// Runs a program that the game list chose, in its project, to come back
+/// to the list when it ends. False, with a notice, if it could not.
+fn run_from_list(machine: &mut Machine, project: &str, file: &str, toasts: &mut Toasts) -> bool {
+    let storage = &mut machine.rt.storage;
+    if storage.project() != project
+        && let Err(e) = storage.set_project(project)
+    {
+        let label = sb_runtime::confirm::project_label(project);
+        toasts.push(format!("Could not switch to project {label}: {e}"));
+        return false;
+    }
+    match machine.run_home(file) {
+        Ok(()) => true,
+        Err(e) => {
+            toasts.push(format!("Could not load {file}: {e}"));
+            false
+        }
+    }
 }
 
 fn save_settings(path: &Path, settings: &Settings) {
@@ -3619,6 +3945,8 @@ enum Asking {
     Notice,
     /// The condition of a breakpoint, by slot and 1-based line.
     Condition(usize, u32),
+    /// The game list's Run with unsaved slots: the project and the file.
+    Run(String, String),
 }
 
 /// Asks for a SoundFont file; the choice comes through `send`.
@@ -4603,6 +4931,72 @@ mod tests {
         assert_eq!(box_of(sharp), (140.0, 60.0, 1000.0, 600.0));
         let sharp = screen_rect(&mode(400, 240, None), Some(Filter::Bilinear), 1000, 720.0);
         assert_eq!(box_of(sharp), (0.0, 60.0, 1000.0, 600.0));
+    }
+
+    #[test]
+    fn a_handheld_screen_fills_the_output() {
+        let mode = ScreenMode::new(400, 240);
+        let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
+        let sharp = Some(Filter::Nearest);
+        let out = (640, 480);
+        let ui = handheld::ui_size(out);
+        let display = handheld::display_rect(ui, out);
+        let shown = |handheld| {
+            let filter = handheld::shown_filter(sharp, handheld);
+            box_of(screen_rect(&mode, filter, out.0, display.h))
+        };
+        assert_eq!(shown(true), (0.0, 48.0, 640.0, 384.0));
+        // On the desktop the sharp choice keeps to whole factors.
+        assert_eq!(shown(false), (120.0, 120.0, 400.0, 240.0));
+        // A 4:3 mode fills the screen.
+        let square = ScreenMode::new(320, 240);
+        let filter = handheld::shown_filter(sharp, true);
+        let r = screen_rect(&square, filter, out.0, display.h);
+        assert_eq!(box_of(r), (0.0, 0.0, 640.0, 480.0));
+    }
+
+    #[test]
+    fn the_command_line_takes_handheld_and_a_program() {
+        let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert_eq!(parse_args(&args(&[])), Some((None, false)));
+        assert_eq!(parse_args(&args(&["A.TXT"])), Some((Some("A.TXT"), false)));
+        assert_eq!(parse_args(&args(&["--handheld"])), Some((None, true)));
+        for both in [["--handheld", "A.TXT"], ["A.TXT", "--handheld"]] {
+            assert_eq!(parse_args(&args(&both)), Some((Some("A.TXT"), true)));
+        }
+        for bad in [&["-x"][..], &["A", "B"], &["--handheld", "--handheld"]] {
+            assert_eq!(parse_args(&args(bad)), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn handheld_mode_leaves_the_desktops_keys_alone() {
+        assert!(!desktop_key(Keycode::F5, Mod::NOMOD), "the + button");
+        assert!(desktop_key(Keycode::F5, Mod::LSHIFTMOD));
+        assert!(desktop_key(Keycode::F5, Mod::RCTRLMOD));
+        for key in [
+            Keycode::F1,
+            Keycode::F4,
+            Keycode::F8,
+            Keycode::F9,
+            Keycode::F12,
+        ] {
+            assert!(desktop_key(key, Mod::NOMOD), "{key:?}");
+        }
+        for key in [Keycode::Escape, Keycode::Pause, Keycode::Return, Keycode::A] {
+            assert!(!desktop_key(key, Mod::NOMOD), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn the_pause_menu_takes_the_input_before_any_other_screen() {
+        assert_eq!(input_screen(false, false, None, None), 0);
+        assert_eq!(input_screen(false, true, None, Some(0)), 1);
+        assert_eq!(input_screen(true, true, None, Some(0)), 20);
+        assert_eq!(input_screen(false, false, None, Some(1)), 22);
+        assert_eq!(input_screen(false, false, Some(3), None), 5);
+        // Each tells the pad's repeat a new screen started.
+        assert_ne!(input_screen(false, false, None, Some(0)), 2);
     }
 
     #[test]
