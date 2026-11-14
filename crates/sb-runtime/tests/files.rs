@@ -1273,6 +1273,25 @@ fn saves_and_exec_refuse_other_types_of_file() {
     assert_eq!(files, 0);
 }
 
+/// DELETE in a `#` project, named or the current one, is error 75, ahead
+/// of the 74 of a name with a project.
+#[test]
+fn delete_in_a_system_project_is_refused() {
+    let dir = TempDir::new("delete-system");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("#SYS").unwrap();
+    let message = "Can't SAVE to system project (DELETE:1)";
+    assert_eq!(direct_error(&mut m, "delete \"txt:#sys/a\""), message);
+    m.set_slot(0, "A=1\nDELETE \"#SYS/A\"".to_string());
+    enter(&mut m, "run");
+    let message = "Can't SAVE to system project in 0:2(DELETE:1)".to_string();
+    assert_eq!(program_error(&mut m), (message, 75, Some(0)));
+
+    m.rt.storage.set_project("#SYS").unwrap();
+    let message = "Can't SAVE to system project (DELETE:1)";
+    assert_eq!(direct_error(&mut m, "delete \"a\""), message);
+}
+
 /// EXEC into a slot with unsaved edits asks first; Back sets RESULT to
 /// -1 and stops the program with Load failed.
 #[test]

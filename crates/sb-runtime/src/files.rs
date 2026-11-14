@@ -178,6 +178,7 @@ impl Runtime {
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
                 check_file_name(&spec, 0)?;
+                refuse_system_project(&spec, self.storage.project()).map_err(|e| e.of_arg(0))?;
                 refuse_project(&spec).map_err(|e| e.of_arg(0))?;
                 if let Some(file) = self.existing(&spec) {
                     let action = FileAction {
@@ -686,6 +687,17 @@ impl Runtime {
 /// current one's own, or the workspace's `/NAME`.
 fn has_project(spec: &str) -> bool {
     parse_read_name(spec, FileKind::Txt).is_ok_and(|f| f.project.is_some())
+}
+
+/// DELETE in one of SmileBASIC 4's own `#` projects, named or the current
+/// one: Can't SAVE to system project, before the check for a project.
+fn refuse_system_project(spec: &str, current: &str) -> Result<()> {
+    let project = parse_read_name(spec, FileKind::Txt).map(|f| f.project);
+    match project {
+        Ok(Some(p)) if p.starts_with('#') => Err(ErrorKind::CantSaveToSystemProject.into()),
+        Ok(None) if current.starts_with('#') => Err(ErrorKind::CantSaveToSystemProject.into()),
+        _ => Ok(()),
+    }
 }
 
 /// RENAME and DELETE take no name with a project part, in a program, a
