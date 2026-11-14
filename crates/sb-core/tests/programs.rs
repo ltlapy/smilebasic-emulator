@@ -1678,6 +1678,28 @@ fn direct_mode_has_little_code_memory() {
     assert_eq!(e.kind, ErrorKind::OutOfCodeMemory);
 }
 
+/// CONST and ENUM are refused in direct mode as the line compiles, so
+/// nothing on it runs.
+#[test]
+fn direct_mode_refuses_const_and_enum() {
+    let compile = |line: &str| sb_core::compile_direct(line, &TextHost::default(), 0).map(|_| ());
+    for line in [
+        "CONST #A=1:?#A",
+        "?1:ENUM #A,#B",
+        "IF 0 THEN ENUM #A=1.5",
+        "CONST #ON=#NONE",
+        "ENUM #ON",
+    ] {
+        let e = compile(line).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::CantUseFromDirectMode, "{line}");
+        assert_eq!(e.without_place(), "Can't use from direct mode", "{line}");
+    }
+    // In turn with the line's other statements.
+    let e = compile("?#B:CONST #B=1").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::UndefinedConstant);
+    assert_eq!(output("CONST #A=1:?#A"), "1\n");
+}
+
 /// PUSH and UNSHIFT need a block's new size beside the old whenever it has
 /// to grow, for arrays and strings; within a block they need nothing
 /// (TEST57).
