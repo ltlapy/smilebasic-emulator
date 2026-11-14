@@ -178,7 +178,7 @@ impl Runtime {
             (Command::Delete, Want::Outs(0), 1) => {
                 let spec = str_arg(&args[0])?;
                 check_file_name(&spec, 0)?;
-                refuse_system_project(&spec, self.storage.project()).map_err(|e| e.of_arg(0))?;
+                self.refuse_system_project(&spec).map_err(|e| e.of_arg(0))?;
                 refuse_project(&spec).map_err(|e| e.of_arg(0))?;
                 if let Some(file) = self.existing(&spec) {
                     let action = FileAction {
@@ -203,13 +203,16 @@ impl Runtime {
             }
             (Command::Rename, Want::Outs(0), 2) => {
                 // The first name is checked before the second is read, and
-                // the types before the second's project.
+                // the types before the second's project. Each name's `#`
+                // project comes before its other project.
                 let from = str_arg(&args[0])?;
                 check_file_name(&from, 0)?;
+                self.refuse_system_project(&from).map_err(|e| e.of_arg(0))?;
                 refuse_project(&from).map_err(|e| e.of_arg(0))?;
                 let to = str_arg(&args[1])?;
                 check_file_name(&to, 1)?;
                 same_type(&from, &to)?;
+                self.refuse_system_project(&to).map_err(|e| e.of_arg(1))?;
                 refuse_project(&to).map_err(|e| e.of_arg(1))?;
                 if let Some(file) = self.existing(&from) {
                     let action = FileAction {
@@ -418,19 +421,36 @@ impl Runtime {
         Ok(file)
     }
 
-    /// SAVE, SAVEV and SAVEG into one of SmileBASIC 4's own `#` projects:
-    /// Can't SAVE to system project, in every mode. Then a main program
-    /// may not name a project, not even its own or the workspace's
-    /// `/NAME`: Can't access other project in this mode. A subprogram and
-    /// DIRECT mode write to any other project.
+    /// SAVE, SAVEV and SAVEG into one of SmileBASIC 4's own `#` projects
+    /// (see [`Runtime::refuse_system_project`]): Can't SAVE to system
+    /// project, in every mode. Then a main program may not name a
+    /// project, not even its own or the workspace's `/NAME`: Can't access
+    /// other project in this mode. A subprogram and DIRECT mode write to
+    /// any other project.
     pub(crate) fn refuse_save_project(&self, spec: &str) -> Result<()> {
-        let project = parse_read_name(spec, FileKind::Txt).map(|f| f.project);
-        match project {
-            Ok(Some(p)) if p.starts_with('#') => Err(ErrorKind::CantSaveToSystemProject.into()),
-            Ok(Some(_)) if !self.direct && self.env_type == 0 => {
+        self.refuse_system_project(spec)?;
+        match has_project(spec) {
+            true if !self.direct && self.env_type == 0 => {
                 Err(ErrorKind::CantAccessOtherProject.into())
             }
             _ => Ok(()),
+        }
+    }
+
+    /// Can't SAVE to system project for a file in one of SmileBASIC 4's
+    /// own `#` projects: one named in the file, or the current project
+    /// when the file names none, as SmileBASIC 4's path builder flags
+    /// both.
+    pub(crate) fn refuse_system_project(&self, spec: &str) -> Result<()> {
+        let project = parse_read_name(spec, FileKind::Txt).map(|f| f.project);
+        let system = match project {
+            Ok(Some(p)) => p.starts_with('#'),
+            Ok(None) => self.storage.project().starts_with('#'),
+            Err(_) => false,
+        };
+        match system {
+            true => Err(ErrorKind::CantSaveToSystemProject.into()),
+            false => Ok(()),
         }
     }
 
@@ -687,17 +707,6 @@ impl Runtime {
 /// current one's own, or the workspace's `/NAME`.
 fn has_project(spec: &str) -> bool {
     parse_read_name(spec, FileKind::Txt).is_ok_and(|f| f.project.is_some())
-}
-
-/// DELETE in one of SmileBASIC 4's own `#` projects, named or the current
-/// one: Can't SAVE to system project, before the check for a project.
-fn refuse_system_project(spec: &str, current: &str) -> Result<()> {
-    let project = parse_read_name(spec, FileKind::Txt).map(|f| f.project);
-    match project {
-        Ok(Some(p)) if p.starts_with('#') => Err(ErrorKind::CantSaveToSystemProject.into()),
-        Ok(None) if current.starts_with('#') => Err(ErrorKind::CantSaveToSystemProject.into()),
-        _ => Ok(()),
-    }
 }
 
 /// RENAME and DELETE take no name with a project part, in a program, a

@@ -1363,6 +1363,52 @@ fn delete_in_a_system_project_is_refused() {
     assert_eq!(direct_error(&mut m, "delete \"a\""), message);
 }
 
+/// RENAME of a name in a `#` project is error 75 too, for each name in
+/// turn, ahead of its 74.
+#[test]
+fn rename_in_a_system_project_is_refused() {
+    let dir = TempDir::new("rename-system");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("#SYS").unwrap();
+    enter(&mut m, "savev \"txt:a\",\"1\"");
+    for (line, n) in [
+        ("rename \"txt:#sys/a\",\"b\"", 1),
+        ("rename \"a\",\"#sys/b\"", 2),
+    ] {
+        let message = format!("Can't SAVE to system project (RENAME:{n})");
+        assert_eq!(direct_error(&mut m, line), message, "{line}");
+    }
+    assert!(dir.0.join("@WORKSPACE").join("TA").exists());
+}
+
+/// With a `#` project the current one, the five commands that write
+/// refuse a name with no project as error 75, before anything is asked.
+#[test]
+fn writes_in_the_current_system_project_are_refused() {
+    let dir = TempDir::new("current-system");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("#SYS").unwrap();
+    m.rt.storage.set_project("#SYS").unwrap();
+    m.rt.settings.file_confirm = FileConfirm::Ask;
+    for (line, command) in [
+        ("save \"x\"", "SAVE"),
+        ("savev \"txt:x\",\"1\"", "SAVEV"),
+        ("saveg \"x\",0", "SAVEG"),
+        ("rename \"a\",\"b\"", "RENAME:1"),
+        ("delete \"a\"", "DELETE:1"),
+    ] {
+        let message = format!("Can't SAVE to system project ({command})");
+        assert_eq!(direct_error(&mut m, line), message, "{line}");
+        assert!(m.rt.confirmation().is_none(), "{line}");
+    }
+    m.set_slot(0, "A=1\nSAVEV \"TXT:X\",\"1\"".to_string());
+    enter(&mut m, "run");
+    let message = "Can't SAVE to system project in 0:2(SAVEV)".to_string();
+    assert_eq!(program_error(&mut m), (message, 75, None));
+    let files = std::fs::read_dir(dir.0.join("#SYS")).map_or(0, Iterator::count);
+    assert_eq!(files, 0);
+}
+
 /// EXEC into a slot with unsaved edits asks first; Back sets RESULT to
 /// -1 and stops the program with Load failed.
 #[test]

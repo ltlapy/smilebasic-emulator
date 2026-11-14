@@ -2220,7 +2220,11 @@ Expected but not yet seen on hardware:
 - `DELETE` of a file in a `#` system project is
   `Can't SAVE to system project (DELETE:1)`, error 75, ahead of the 74 for a
   name with a project: `DELETE "TXT:#SYS/A"`, and `DELETE "A"` while a `#`
-  project is the current one. (Not yet seen on hardware.)
+  project is the current one. `RENAME` is the same for each name in turn,
+  `(RENAME:1)` or `(RENAME:2)`. While a `#` project is the current one,
+  `SAVE "X"`, `SAVEV "TXT:X",S$` and `SAVEG "X",0` are error 75 as well,
+  without a number. (Not
+  yet seen on hardware.)
 - `DIALOG(name,caption,most)` cuts its first name to `most` characters, then
   checks it as the file commands do: `DIALOG("A@B","X")` opens, while
   `DIALOG("P/A","X")` and `DIALOG("A B","X")` are
