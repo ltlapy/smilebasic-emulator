@@ -2192,6 +2192,17 @@ Expected but not yet seen on hardware:
   32 characters. `EXEC` raises the same errors without the number. `FILES`
   takes a name alone as a project's (`FILES "TXT:NAME"`), so a project and a
   file together are error 71 there, and so is `FILES ""`. (Not yet seen on hardware.)
+- `SAVEG` takes GRP and JPG files, and a name without a type is a GRP file's;
+  `SAVEV` takes TXT, DAT and GRP files and needs the type. Any other type, or
+  none for `SAVEV`, is `File type mismatch`, error 77, with no number
+  (`(SAVEG)`), before any question: `SAVEG "TXT:X",0`, `SAVEG "PNG:X",0` and
+  `SAVEV "X",S$`. The name's errors 71 and 73 come first, and 75 and 74 for
+  its project after. `EXEC` of a type other than TXT is error 77 before the
+  name's other checks: `EXEC "DAT:",1` is 77, not 71. (Not yet seen on hardware.)
+- `DELETE` of a file in a `#` system project is
+  `Can't SAVE to system project (DELETE:1)`, error 75, ahead of the 74 for a
+  name with a project: `DELETE "TXT:#SYS/A"`, and `DELETE "A"` while a `#`
+  project is the current one. (Not yet seen on hardware.)
 - `DIALOG(name,caption,most)` cuts its first name to `most` characters, then
   checks it as the file commands do: `DIALOG("A@B","X")` opens, while
   `DIALOG("P/A","X")` and `DIALOG("A B","X")` are
