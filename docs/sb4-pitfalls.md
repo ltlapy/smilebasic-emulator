@@ -1662,6 +1662,9 @@ Expected but not yet seen on hardware:
     `@MP64,1,16,0A@MPOFA@MPONA` the first and third notes swing and the second
     does not, as with `@MOF` and `@MON`, and `@MPON` with no `@MP` before it
     swings nothing (TEST72, by recording and by ear).
+  - A `:` forgets the settings that `@MPON`, `@MAON`, `@MLON` and `@MON` turn
+    back on, even a `:` naming the channel already in use:
+    `@MP64,1,20,0@MPOF:0@MPON` plays no vibrato.
   - After `@MPO` only `F` or `N` may follow: `@MPONC`, `@MAONC`, `@MLOFC`,
     `@MONC`, `@MOFC` and lower case `@mpon` pass, and `@MPOFFC` is `@MPOF`
     and the note F. With another letter the `@` word runs on through the
@@ -1701,6 +1704,12 @@ Expected but not yet seen on hardware:
   499, 623, 745 and 867 thousandths of an `O4A` recorded (TEST72).
 - An instrument region's own volume is a linear gain (`@0`'s is 88), unlike `V`
   and `@V`.
+- Notes of `WAVSET` and `WAVSETA` waveforms are read through a smoothing filter
+  rather than by holding each sample. A 1 kHz sine at 8000 Hz leaves images
+  40 dB down at 7 kHz and 62 dB down at 9 kHz, and a square of 64 samples keeps
+  its harmonics within half a dB.
+- A few of the sound archive's waveforms are stereo, as `BEEP 152`'s is. Their
+  left channel plays on the left and their right channel on the right.
 - `WAVSET`'s waveform does not play as one cycle of the note. 32 samples of one
   cycle with reference pitch 69 play `O4A` at 55 Hz and `O5A` 3600 cents below
   A5. That is three octaves down, so a pass of the samples lasts eight cycles of
@@ -1862,14 +1871,25 @@ Expected but not yet seen on hardware:
 - `BEEP`'s pan moves a preset effect at equal power. `BEEP 0` records at an RMS
   of about 150 on each side at pan 64, and at 0 or 127 about 210 on its side,
   1.41 times as much, and 0 on the other. `BEEPPAN` gives the same numbers as
-  `BEEP`'s argument. A stereo effect moves each side on its own and keeps part
-  of the other side at full pan: `BEEP 40` at pan 0 records 224 left and 147
+  `BEEP`'s argument. A stereo effect plays its left channel on the left and its
+  right channel on the right, and the pan moves both, so part of the other side
+  stays at full pan: `BEEP 40` at pan 0 records 224 left and 147
   right, and `BEEP 152` 756 and 283 (TEST72).
 
 ### `TALK` and sung notes
 
-- `TALK` reads は as "wa", falling in pitch, when 、 comes right after it, as for
-  a particle; before 。 or anywhere else it is "ha".
+- `TALK` reads は as "wa" when 、 comes right after it, as for a particle;
+  before 。 or anywhere else it is "ha".
+- At the standard `<P128>`, `TALK` speaks at one pitch, 100 Hz. It does not
+  fall through a phrase, at 、 or 。, or on は before 、.
+- `<P…>` lowers the voice as its number rises: `<P256>` is below `<P128>`.
+- A vowel takes 90 ms at the standard speed, so あいうえお lasts 460 ms. 20
+  vowels keep `TALKCHK` set for about 121 frames.
+- A `$` marks phoneme letters only as the first character of the text, before
+  any control string: `"$<S128>koqnichiwa"` speaks. Anywhere else, `$` and
+  Latin letters say nothing, so `"<V16>$a"` is silent.
+- Sung notes and `TALK` pitches have a whole period at 16 kHz, so a sung A4 is
+  444.4 Hz, not 440.
 - A new `TALK` cuts off what is being said (TEST71).
 - `TALK` takes `$ca`, `$xa`, `$rya` and `$cha` with no error (TEST71).
 - A sung note (`*A,C2`) is the voice alone: the channel's instrument stays
@@ -1885,13 +1905,27 @@ Expected but not yet seen on hardware:
 
 ### Effector, recording and balance
 
-- `EFCWET`'s four values (BEEP, BGM, TALK and PCM), with the effector on, each
-  send that part of the sound to the reverb: wet/127 of it goes there and the
-  rest straight out, in a straight line. With it off, they change nothing.
+- `EFCWET`'s four sends (BEEP, BGM, TALK and PCM) all start at 127, even with
+  the effector off. `SNDSTOP` turns the effector off and sets every send back
+  to 127, `RECSTART` sets them all to 0, and `RUN` leaves them alone.
+- A send does not lower the dry sound of `BEEP` and BGM. They keep all of their
+  sound and send a copy of wet/127 of it. With `EFCEN 0` that copy goes
+  straight to the output, so at the start (sends 127, effector off) `BEEP` and
+  BGM play twice as loud as after `EFCWET 0,0,0,0`.
+- What `PCMSTREAM` and `TALK` send leaves their own sound, so with `EFCEN 0`
+  they play at the same level whatever the send. `TALK` never reaches the
+  reverb: with the effector on, the part it sends is lost.
 - `RECSTART` records the sound before the effector, or the effector did nothing:
   a short note recorded alike, to the unit, with `EFCEN` off, with `#EFCCAVE` at
   `EFCWET 0,127,0,0`, with a hall set by `EFCSET #EFCREFHALL,...` and with
-  `EFCEN` off again.
+  `EFCEN` off again. It records only what `BEEP` and BGM keep, not the copy
+  they send.
+- `SNDMVOL` starts at 88, not 127, and the output is linear in it, so
+  `SNDMVOL 127` plays 1.43 times as loud as the start.
+- `SNDSTOP` and `RUN` put `SNDMVOL` back at 88.
+- `SNDSTOP` holds the program until the next frame: right after `VSYNC` it takes
+  one frame.
+- A subprogram's `SNDMVOL` does nothing.
 - `RECDATA` positions go round the buffer too while `RECSTART` without a time
   records round it (-1 is the last sample, `RECLEN()` the first). With a time,
   -1 is `Out of range`.
@@ -1908,20 +1942,26 @@ Expected but not yet seen on hardware:
   earlier recording again (TEST74). The subprogram's `RECSTART` and `RECSTOP`
   ignore their arguments, so `RECSTART 100` there is no error, and its
   `RECSTOP` leaves the main program's recording going.
+- `SNDMSBAL` is one balance that both programs share. The subprogram's
+  `SNDMSBAL` sets it, the main program's does nothing, and `SNDMSBAL()` reads
+  it in either program.
 - `SNDMSBAL` starts at 63, though the manual calls 64 even. Each `SUBRUN` puts
-  the balance back halfway between 0 and 127, which reads 63.
+  the balance back halfway between 0 and 127, which reads 63, and so does the
+  main program's `SNDSTOP`. `RUN` leaves it alone.
 - `SNDMSBAL`'s time is in seconds. The balance moves to the new value in a
   straight line, a step each frame, and `SNDMSBAL()` reads where it has got
   to, rounded down.
-- `SNDMSBAL`'s balance b scales the main program's sound by about b/59, in a
-  straight line from none at 0 to 2.15 times at 127, 1.085 at 64. The
-  subprogram's goes the other way. A main program's `RECSTART` hears both,
+- `SNDMSBAL`'s balance b scales the main program's sound by 2b/127 and the
+  subprogram's by 2(127-b)/127, so halfway each plays as loud as the main
+  program alone. A main program's `RECSTART` hears both,
   mixed so. With the balance set in the subprogram, `BEEP 256,0,64,64` in the
   main program recorded at an RMS of 0, 199, 318 and 631 for balances 0, 40,
   64 and 127, and the same `BEEP` in the subprogram at 600, 419, 313 and 125 to
-  134 (TEST72; 317 to 318 and 632 at 64 and 127 in TEST74). The subprogram's
-  side fits (127-b)/64 but for 127, where that gives none.
+  134 (TEST72; 317 to 318 and 632 at 64 and 127 in TEST74). At 127 the
+  subprogram's side still recorded something, where 2(127-b)/127 gives none.
 - `SNDMSBAL()` and `PCMPOS()` work as functions.
+- At the start's `SNDMVOL`, a full-scale `PCMSTREAM` at full `PCMVOL` plays at
+  0.35 of full scale.
 - `PCMVOL` set before `PCMSTREAM` does not hold: after
   `PCMVOL 0,4096:PCMVOL 1,4096`, `PCMVOL OUT` read 32767 and 32767 27 frames
   into the stream. Before any stream it read 0 and 0, and `PCMPOS()` 0

@@ -71,11 +71,11 @@ Without the imported archive:
   977 against 987 to 993, and `BEEP 383` at 2063 against 1950; `BEEP 330` ends
   early too. The difference seems to come from how the console resamples
   them, and copying that would cost time on every sample.
-- Stereo waveforms: the importer keeps only the first channel of each
-  waveform in the sound archive, so the 14 stereo ones out of 1,501, such as
-  `BEEP 152`'s, play that one channel on both sides. On SmileBASIC 4,
-  `BEEP 152` at pan 64 records 468 left and 404 right, and at pan 0 keeps 283
-  on the right.
+- Instruments from the sound archive play their samples with linear
+  interpolation. SmileBASIC 4 reads them through the smoothing filter that the
+  emulator keeps for `WAVSET` and `WAVSETA` waveforms. The filter made a song
+  of many instrument notes take a quarter longer to mix, and the instruments'
+  samples are 32 kHz and up, where the two sound nearly alike.
 - SoundFont instruments: MML's tremolo (`@MA`) and pan modulation (`@ML`) are
   ignored, vibrato (`@MP`) takes only its depth on the modulation wheel, and
   envelopes (`@E`) do nothing. SmileBASIC 4's own instruments and the PSG and
@@ -83,7 +83,8 @@ Without the imported archive:
 - The effector (`EFCEN`, `EFCSET`, `EFCWET`, `BGMWET`) is a small reverb of the
   emulator's own: early reflections and a Freeverb-like tail. It takes the
   settings SmileBASIC 4 gives the console's reverb, so the presets and
-  `EFCSET`'s nine values change it alike, but it does not sound like the
+  `EFCSET`'s nine values change it alike, and the presets are fitted to how the
+  console's reverb answers a sine sweep. It still does not sound like the
   console's. `RECSTART` records as on SmileBASIC 4, where the effector does not
   reach the recording either.
 - A song's dry sound drops a few percent on SmileBASIC 4 while the effector is
@@ -97,16 +98,6 @@ Without the imported archive:
 - `PCMPOS()` gives the sample the stream has reached. SmileBASIC 4's moves in
   blocks: 27 frames into a looping stream of 4800 samples at 48000 Hz it reads
   3313 or 673, where the emulator gives 2400.
-- `SNDMSBAL` in the main program sets a balance of the main program's own,
-  which `SNDMSBAL()` there reads back and which mixes nothing. On SmileBASIC 4
-  the main program's `SNDMSBAL` does nothing, and `SNDMSBAL()` there reads the
-  subprogram's balance. (Not yet seen on hardware.)
-- `SNDMSBAL`'s gains follow a fit to recordings: b/59 for the main program's
-  sound and (127-b)/64 for the subprogram's. The halfway balance each
-  subprogram starts with keeps the levels recorded before any `SNDMSBAL`,
-  63/64 and 1. So after `SNDMSBAL 63` the main program's sound is about 8%
-  louder than at the start, with the subprogram's the same. On SmileBASIC 4
-  the two differ by under 1%. (Not yet seen on hardware.)
 - `TALK` speaks with a voice of the emulator's own, a Klatt formant synthesizer
   (klattsch-core) reading the kana or phoneme letters, so it says the same words
   in another voice.

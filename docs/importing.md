@@ -193,6 +193,10 @@ It takes these out of the game's files:
 Without the ExeFS, sprite definitions are a plain grid of 16x16 cells. The first
 release's ExeFS has only definitions 0-4095; the others are empty.
 
+A sound archive imported by an older version of the importer kept one channel
+of each waveform, so its stereo waveforms, such as `BEEP 152`'s, play in mono.
+Import again to get both channels.
+
 It also copies SmileBASIC 4's own projects `#SYS`, `#TOOL`, `#EXAMPLE` and
 `#GUIDE` into the projects folder, as plain files like the project manager's
 Import. It never replaces a file already there.
