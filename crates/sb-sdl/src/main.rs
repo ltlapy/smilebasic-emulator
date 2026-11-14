@@ -416,6 +416,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // editor's frame.
     let mut pointer_space = (mode.width, mode.height);
     let mut menu = MenuBar::default();
+    // Whether a program ran when the loop last looked, to see one start.
+    let mut was_running = false;
     // The editor's own window, made the first time the editor opens apart
     // from the screen and hidden while it is closed, with its frame's
     // texture and the pixels its pointer positions are given in.
@@ -2369,6 +2371,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             plus_down = None;
             machine.stop();
         }
+        close_bar_on_start(&mut menu, &mut was_running, machine.is_running());
         let paused = menu.shown && machine.is_running();
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
@@ -4180,6 +4183,16 @@ fn set_value(
     }
 }
 
+/// Hides the menu bar when a program starts, however it was started, so
+/// that a bar left shown by F8 does not start the program paused. F8
+/// while the program runs still pauses it.
+fn close_bar_on_start(menu: &mut MenuBar, was_running: &mut bool, running: bool) {
+    if running && !*was_running {
+        menu.shown = false;
+    }
+    *was_running = running;
+}
+
 /// The bar's right side: the project, the slot being edited (with `*`
 /// for unsaved changes) or direct mode, and a running or paused program.
 fn status_line(machine: &Machine, paused: bool) -> String {
@@ -4630,6 +4643,29 @@ mod tests {
         m.frame();
         assert!(m.is_running());
         m
+    }
+
+    #[test]
+    fn a_program_never_starts_paused() {
+        let mut m = running_machine();
+        let (mut menu, mut was_running) = (MenuBar::default(), true);
+        // F8 while it runs pauses it, frame after frame.
+        menu.shown = true;
+        for _ in 0..2 {
+            close_bar_on_start(&mut menu, &mut was_running, m.is_running());
+            assert!(menu.shown);
+        }
+        // The + button stops it, and the bar stays in DIRECT mode.
+        m.stop();
+        m.frame();
+        assert!(!m.is_running());
+        close_bar_on_start(&mut menu, &mut was_running, m.is_running());
+        assert!(menu.shown);
+        // The next run hides it, wherever it was started from.
+        m.run_slot(0);
+        m.frame();
+        close_bar_on_start(&mut menu, &mut was_running, m.is_running());
+        assert!(!menu.shown);
     }
 
     #[test]
