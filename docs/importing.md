@@ -190,6 +190,10 @@ It takes these out of the game's files:
 - the instruments, preset songs and sound effects, from the sound archive
   `petc4.bfsar`
 
+Each file is written in full under a temporary name, then takes its place.
+A link in the output folder is replaced by the file, and the file it
+pointed to is left as it was.
+
 Without the ExeFS, sprite definitions are a plain grid of 16x16 cells. The first
 release's ExeFS has only definitions 0-4095; the others are empty.
 
@@ -199,7 +203,8 @@ Import again to get both channels.
 
 It also copies SmileBASIC 4's own projects `#SYS`, `#TOOL`, `#EXAMPLE` and
 `#GUIDE` into the projects folder, as plain files like the project manager's
-Import. It never replaces a file already there.
+Import. It never replaces a file already there, and leaves out a file that
+has a link in its place.
 
 | Option | Effect |
 |---|---|

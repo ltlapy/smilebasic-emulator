@@ -4,6 +4,7 @@
 //! does), never replacing a file that is already there.
 
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use sb_runtime::storage::FileKind;
@@ -27,7 +28,8 @@ pub struct Projects {
     pub unchanged: usize,
     /// Files already there but different, so kept; as `#TOOL/TSBLIB.PRG`.
     pub kept: Vec<String>,
-    /// Files that could not be turned into the emulator's, with why.
+    /// Files that could not be turned into the emulator's, or that have a
+    /// link in their place, with why.
     pub skipped: Vec<(String, String)>,
     /// Projects no directory has.
     pub missing: Vec<&'static str>,
@@ -61,6 +63,20 @@ fn files(dir: &Path) -> Result<Vec<(String, PathBuf)>, ImportError> {
     Ok(files)
 }
 
+/// Writes a file that must not exist yet. `create_new` fails if anything,
+/// a link included, took the name since it was checked, so nothing there
+/// is overwritten. A file left half written is removed, or the next
+/// import would keep it as the user's.
+fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(bytes).inspect_err(|_| {
+        drop(fs::remove_file(path));
+    })
+}
+
 /// Copies each of SmileBASIC 4's projects found in `dirs` into
 /// `projects`, as `projects/#TOOL/TSBLIB.PRG` and so on. A file already
 /// there is never replaced, so changes made to it in the emulator stay.
@@ -91,14 +107,25 @@ pub fn import_projects(dirs: &[PathBuf], projects: &Path) -> Result<Projects, Im
                 }
             };
             let dest = target.join(&name);
-            if dest.exists() {
-                match fs::read(&dest) {
-                    Ok(old) if old == converted => done.unchanged += 1,
-                    _ => done.kept.push(label),
+            // Not `exists()`: that follows links, so a dangling one would
+            // read as missing and the write would land where it points.
+            match fs::symlink_metadata(&dest) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    done.skipped
+                        .push((label, "a link is in its place".to_string()));
+                    continue;
                 }
-                continue;
+                Ok(_) => {
+                    match fs::read(&dest) {
+                        Ok(old) if old == converted => done.unchanged += 1,
+                        _ => done.kept.push(label),
+                    }
+                    continue;
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(ImportError::Io(dest, e)),
             }
-            fs::write(&dest, &converted).map_err(|e| ImportError::Io(dest, e))?;
+            write_new(&dest, &converted).map_err(|e| ImportError::Io(dest, e))?;
             written += 1;
         }
         done.copied.push((project, source, written));
@@ -109,25 +136,8 @@ pub fn import_projects(dirs: &[PathBuf], projects: &Path) -> Result<Projects, Im
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::temp_dir::TempDir;
     use sb_runtime::sbfile::{self, Date, Kind, usage};
-
-    /// A fresh folder under the system temp directory, removed on drop.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(tag: &str) -> TempDir {
-            let dir = std::env::temp_dir().join(format!("sb-import-{tag}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-            TempDir(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     fn program(text: &str) -> Vec<u8> {
         let date = Date {
@@ -211,6 +221,41 @@ mod tests {
         assert_eq!(done.unchanged, 1);
         assert_eq!(done.kept, ["#TOOL/TB.PRG"]);
         assert_eq!(done.copied[0].2, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn leaves_links_alone() {
+        use std::os::unix::fs::symlink;
+        let tmp = TempDir::new("projects-links");
+        let romfs = tmp.0.join("romfs");
+        put(&romfs.join("basic/en/#TOOL"), "TA.PRG", &program("A"));
+        put(&romfs.join("basic/en/#TOOL"), "TB.PRG", &program("B"));
+        let out = tmp.0.join("projects");
+        fs::create_dir_all(out.join("#TOOL")).unwrap();
+        // A dangling link, and one to a file outside the folder.
+        let nowhere = tmp.0.join("nowhere.prg");
+        symlink(&nowhere, out.join("#TOOL/TA.PRG")).unwrap();
+        let outside = tmp.0.join("outside.prg");
+        fs::write(&outside, b"mine").unwrap();
+        symlink(&outside, out.join("#TOOL/TB.PRG")).unwrap();
+
+        let done = import_projects(&[romfs], &out).unwrap();
+        assert!(!nowhere.exists());
+        assert_eq!(fs::read(&outside).unwrap(), b"mine");
+        for name in ["TA.PRG", "TB.PRG"] {
+            let meta = fs::symlink_metadata(out.join("#TOOL").join(name)).unwrap();
+            assert!(meta.file_type().is_symlink());
+        }
+        let reason = "a link is in its place".to_string();
+        assert_eq!(
+            done.skipped,
+            [
+                ("#TOOL/TA.PRG".to_string(), reason.clone()),
+                ("#TOOL/TB.PRG".to_string(), reason)
+            ]
+        );
+        assert_eq!(done.copied[0].2, 0);
     }
 
     #[test]

@@ -11,6 +11,8 @@ mod nso;
 mod projects;
 mod sf2;
 mod spdef;
+#[cfg(test)]
+mod temp_dir;
 
 use std::path::PathBuf;
 

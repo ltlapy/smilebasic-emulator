@@ -2,8 +2,10 @@
 //! checking them, and copying them into the emulator's resource directory.
 
 use std::fmt;
-use std::io;
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use sb_runtime::font::{Font, FontError};
 use sb_runtime::help::Help;
@@ -136,9 +138,13 @@ pub fn import(dirs: &[PathBuf], dest: &Path) -> Result<Imported, ImportError> {
     Font::from_files(&files[0], &files[1])?;
 
     std::fs::create_dir_all(dest).map_err(|e| ImportError::Io(dest.to_path_buf(), e))?;
+    clear_temp_files(dest);
     let write = |name: &str, bytes: &[u8]| {
         let path = dest.join(name);
-        std::fs::write(&path, bytes).map_err(|e| ImportError::Io(path, e))
+        if write_resource(&path, bytes)? {
+            println!("replaced the link {} with a file", path.display());
+        }
+        Ok::<_, ImportError>(())
     };
     for (source, bytes) in font.iter().zip(&files) {
         write(source.name, bytes)?;
@@ -208,4 +214,138 @@ pub fn import(dirs: &[PathBuf], dest: &Path) -> Result<Imported, ImportError> {
             .push("petc4.bfsar (the instruments, songs and effects, in the RomFS)"),
     }
     Ok(imported)
+}
+
+/// Every name [`import`] writes in the output folder.
+const OUTPUTS: [&str; 8] = [
+    FONT_MAP,
+    FONT_PAGE,
+    SPRITE_PAGE,
+    SPRITE_DEFS,
+    HELP_INDEX,
+    HELP_DATA,
+    INSTRUMENTS,
+    SEQUENCES,
+];
+
+/// How many times to try the rename, and how long to wait between tries.
+/// On Windows an antivirus or indexer can hold a file it just saw written
+/// for a moment, and the rename fails until it lets go.
+const RENAME_TRIES: u32 = 5;
+const RENAME_WAIT: Duration = Duration::from_millis(80);
+
+/// The temporary file a resource is written to before it takes the
+/// resource's name: `NAME.tmp`, in the same folder so the rename stays on
+/// one file system.
+fn temp_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    path.with_file_name(name)
+}
+
+/// Removes the temporary files an interrupted import left in `dir`. The
+/// folder itself may be a link: it is followed, since that is where the
+/// user put it.
+fn clear_temp_files(dir: &Path) {
+    for name in OUTPUTS {
+        // A file that cannot be removed fails its write, with the reason.
+        let _ = fs::remove_file(temp_path(&dir.join(name)));
+    }
+}
+
+/// Writes a resource to a temporary file and renames it over `path`. A
+/// link at `path` is replaced and what it points to is left alone, and an
+/// interrupted import leaves the old file whole. Returns whether a link
+/// was replaced.
+fn write_resource(path: &Path, bytes: &[u8]) -> Result<bool, ImportError> {
+    let temp = temp_path(path);
+    let was_link = fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    // `create_new` does not follow a link at the temporary name either.
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .and_then(|mut file| {
+            file.write_all(bytes)?;
+            file.sync_all()
+        });
+    if let Err(e) = written {
+        let _ = fs::remove_file(&temp);
+        return Err(ImportError::Io(temp, e));
+    }
+    let mut tries = 1;
+    while let Err(e) = fs::rename(&temp, path) {
+        if tries == RENAME_TRIES {
+            let _ = fs::remove_file(&temp);
+            return Err(ImportError::Io(path.to_path_buf(), e));
+        }
+        tries += 1;
+        std::thread::sleep(RENAME_WAIT);
+    }
+    Ok(was_link)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::temp_dir::TempDir;
+
+    #[test]
+    fn writes_through_a_temporary_file() {
+        let tmp = TempDir::new("output");
+        let dir = tmp.0.join("out");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(FONT_MAP), b"old").unwrap();
+        // Left by an interrupted import.
+        fs::write(temp_path(&dir.join(FONT_PAGE)), b"half").unwrap();
+        clear_temp_files(&dir);
+        assert!(!temp_path(&dir.join(FONT_PAGE)).exists());
+        assert!(!write_resource(&dir.join(FONT_MAP), b"new").unwrap());
+        assert!(!write_resource(&dir.join(FONT_PAGE), b"page").unwrap());
+        assert_eq!(fs::read(dir.join(FONT_MAP)).unwrap(), b"new");
+        assert_eq!(fs::read(dir.join(FONT_PAGE)).unwrap(), b"page");
+        let mut names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, [FONT_PAGE, FONT_MAP]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaces_links_and_leaves_their_files_alone() {
+        use std::os::unix::fs::symlink;
+        let tmp = TempDir::new("output-links");
+        let dir = tmp.0.join("out");
+        fs::create_dir_all(&dir).unwrap();
+        let outside = tmp.0.join("real-font.map");
+        fs::write(&outside, b"real").unwrap();
+        symlink(&outside, dir.join(FONT_MAP)).unwrap();
+        symlink(tmp.0.join("nowhere"), dir.join(FONT_PAGE)).unwrap();
+        assert!(write_resource(&dir.join(FONT_MAP), b"new").unwrap());
+        assert!(write_resource(&dir.join(FONT_PAGE), b"page").unwrap());
+
+        assert_eq!(fs::read(&outside).unwrap(), b"real");
+        assert!(!tmp.0.join("nowhere").exists());
+        for (name, bytes) in [(FONT_MAP, &b"new"[..]), (FONT_PAGE, b"page")] {
+            let path = dir.join(name);
+            assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn follows_a_linked_output_folder() {
+        use std::os::unix::fs::symlink;
+        let tmp = TempDir::new("output-folder-link");
+        let real = tmp.0.join("real");
+        fs::create_dir_all(&real).unwrap();
+        let dir = tmp.0.join("out");
+        symlink(&real, &dir).unwrap();
+        assert!(!write_resource(&dir.join(FONT_MAP), b"new").unwrap());
+        assert_eq!(fs::read(real.join(FONT_MAP)).unwrap(), b"new");
+        assert!(fs::symlink_metadata(&dir).unwrap().file_type().is_symlink());
+    }
 }
