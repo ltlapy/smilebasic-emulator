@@ -640,8 +640,14 @@ impl Runtime {
         Ok(())
     }
 
-    /// Ctrl+S: a slot saved under a name, without asking.
+    /// Ctrl+S: a slot saved under a name, without asking. A `#` project
+    /// takes nothing (see [`Runtime::current_project_read_only`]), as
+    /// SmileBASIC 4's editor refuses to save there before it asks for a
+    /// name.
     pub(crate) fn save_slot_as(&mut self, spec: &str, slot: usize) -> storage::Result<()> {
+        if self.current_project_read_only() {
+            return Err(StorageError::SystemProject);
+        }
         self.save(spec, slot)
     }
 

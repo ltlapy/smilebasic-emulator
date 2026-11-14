@@ -1415,6 +1415,24 @@ fn writes_in_the_current_system_project_are_refused() {
     assert_eq!(files, 0);
 }
 
+/// The editor's save writes nothing in a current `#` project, and does
+/// with the setting to write in them on.
+#[test]
+fn the_editors_save_in_a_system_project_is_refused() {
+    let dir = TempDir::new("editor-system");
+    let mut m = machine(&dir);
+    m.rt.storage.create_project("#SYS").unwrap();
+    m.rt.storage.set_project("#SYS").unwrap();
+    m.set_slot(0, "?1".to_string());
+    let e = m.save_edited("A").unwrap_err();
+    assert_eq!(e.to_string(), "Can't SAVE to system project");
+    let sys = dir.0.join("#SYS");
+    assert_eq!(std::fs::read_dir(&sys).map_or(0, Iterator::count), 0);
+    m.rt.settings.write_system_projects = true;
+    m.save_edited("A").unwrap();
+    assert!(sys.join("TA").exists());
+}
+
 /// The setting to write in `#` projects lets the five commands through,
 /// in the current project and, at the prompt, in one named, and METASAVE
 /// in the current one.

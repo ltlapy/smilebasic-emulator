@@ -93,6 +93,9 @@ pub enum StorageError {
     BadKind(String),
     NotFound(String),
     Exists(String),
+    /// A write in one of SmileBASIC 4's own `#` projects, which take no
+    /// files.
+    SystemProject,
     Io(io::Error),
 }
 
@@ -104,6 +107,7 @@ impl fmt::Display for StorageError {
             StorageError::BadKind(k) => write!(f, "unknown file type {k:?}"),
             StorageError::NotFound(n) => write!(f, "{n} not found"),
             StorageError::Exists(n) => write!(f, "{n} already exists"),
+            StorageError::SystemProject => write!(f, "Can't SAVE to system project"),
             StorageError::Io(e) => write!(f, "{e}"),
         }
     }

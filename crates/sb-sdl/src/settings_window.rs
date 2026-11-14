@@ -256,7 +256,8 @@ const PAGES: &[Page] = &[
                 "Allow writing to system (#) projects",
                 "SAVE, SAVEV, SAVEG, DELETE, RENAME and METASAVE change files in \
                  # projects such as #SYS instead of stopping with error 75, Can't \
-                 SAVE to system project. Off by default, as on hardware.",
+                 SAVE to system project, and Ctrl+S saves there. Off by default, \
+                 as on hardware.",
                 |s| s.write_system_projects,
                 |s| s.write_system_projects ^= true,
             ),

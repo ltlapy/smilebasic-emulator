@@ -69,7 +69,7 @@ pub struct Settings {
     pub half_width_on_save: bool,
     /// SAVE, SAVEV, SAVEG, DELETE, RENAME and METASAVE write in SmileBASIC
     /// 4's own `#` projects instead of raising Can't SAVE to system
-    /// project. Not SmileBASIC 4's.
+    /// project, and Ctrl+S saves there. Not SmileBASIC 4's.
     pub write_system_projects: bool,
     /// The editor wraps long lines instead of scrolling sideways.
     pub editor_wrap: bool,

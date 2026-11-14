@@ -2803,6 +2803,10 @@ TTEST36.
   it again. Both sides show the slot being edited at first.
 - Ctrl+S asks for a name on the on-screen keyboard, titled "Slot 0: Write file",
   with the name the slot was saved as filled in.
+- Ctrl+S while a `#` system project is the current one asks for no name. It
+  shows an error, "Failed to save the file." with the project's name, with OK
+  alone, and saves nothing.
+  (Not yet seen on hardware.)
 - Ctrl+L opens a list of the project's files, with a way up to the projects.
 - A list of SmileBASIC's words starting with what is typed shows from the first
   letter while typing in the editor. The program's own names are not in it.

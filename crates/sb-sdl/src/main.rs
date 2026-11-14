@@ -2148,7 +2148,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Click::Chosen(action @ (Action::SaveSlot | Action::LoadSlot)) => {
                         let size = (display_w, display_h);
                         let save = action == Action::SaveSlot;
-                        file_dialog = Some(open_file_dialog(machine, save, size));
+                        match open_file_dialog(machine, save, size) {
+                            Ok(open) => file_dialog = Some(open),
+                            Err(refused) => dialog = Some((refused, Asking::Notice)),
+                        }
                     }
                     Click::Chosen(Action::Undo) => machine.edit().undo(),
                     Click::Chosen(Action::Redo) => machine.edit().redo(),
@@ -2480,7 +2483,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ..
                 } if ctrl(keymod) && (!machine.is_running() || on_editor && apart) => {
                     let size = (display_w, display_h);
-                    file_dialog = Some(open_file_dialog(machine, key == Keycode::S, size));
+                    match open_file_dialog(machine, key == Keycode::S, size) {
+                        Ok(open) => file_dialog = Some(open),
+                        Err(refused) => dialog = Some((refused, Asking::Notice)),
+                    }
                 }
                 Event::KeyDown {
                     keycode: Some(key),
@@ -4544,15 +4550,28 @@ fn status_line(machine: &Machine, paused: bool) -> String {
 }
 
 /// Ctrl+S's window to save the edited slot, or Ctrl+L's to load into it.
-fn open_file_dialog(machine: &Machine, save: bool, size: (u32, u32)) -> FileDialog {
+/// In a `#` project, which takes no files, Ctrl+S says so instead and
+/// asks for no name, as SmileBASIC 4's editor does.
+fn open_file_dialog(machine: &Machine, save: bool, size: (u32, u32)) -> Result<FileDialog, Dialog> {
     let slot = machine.edited_slot();
     let storage = &machine.rt.storage;
-    if save {
+    if save && machine.rt.current_project_read_only() {
+        let lines = vec![
+            "Failed to save the file.".to_string(),
+            String::new(),
+            format!("  Project:  {}", storage.project()),
+            String::new(),
+            "Files in system (#) projects are read-only.".to_string(),
+            "File > Settings > Files can allow writing to them.".to_string(),
+        ];
+        return Err(Dialog::notice("Save file", lines, size));
+    }
+    Ok(if save {
         let name = &machine.rt.slot_names[slot];
         FileDialog::Save(SaveDialog::new(size, slot, name, storage.project()))
     } else {
         FileDialog::Load(FilePicker::new(size, slot, storage))
-    }
+    })
 }
 
 /// F1: the help for the command at the editor's cursor, or at the cursor
@@ -5037,6 +5056,31 @@ mod tests {
         m.frame();
         assert!(m.is_running());
         m
+    }
+
+    /// Ctrl+S in a `#` project tells that it takes no files and asks for
+    /// no name; Ctrl+L there, and Ctrl+S with the setting on, open as ever.
+    #[test]
+    fn ctrl_s_in_a_system_project_is_refused() {
+        let dir = std::env::temp_dir().join(format!("sb-main-system-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut rt = Runtime::for_tests(Font::blank());
+        rt.storage = Storage::new(dir.clone());
+        rt.storage.create_project("#SYS").unwrap();
+        rt.storage.set_project("#SYS").unwrap();
+        let mut m = Machine::new(rt);
+        let size = (1280, 720);
+        assert!(open_file_dialog(&m, true, size).is_err());
+        assert!(matches!(
+            open_file_dialog(&m, false, size),
+            Ok(FileDialog::Load(_))
+        ));
+        m.rt.settings.write_system_projects = true;
+        assert!(matches!(
+            open_file_dialog(&m, true, size),
+            Ok(FileDialog::Save(_))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
