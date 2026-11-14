@@ -457,6 +457,13 @@ impl Runtime {
         }
     }
 
+    /// Whether the current project is one of SmileBASIC 4's own `#`
+    /// projects while the setting to write in them is off, so that
+    /// METASAVE and the editor's save write nothing there.
+    pub fn current_project_read_only(&self) -> bool {
+        !self.settings.write_system_projects && self.storage.project().starts_with('#')
+    }
+
     /// A file named for writing, in the current project or, named with
     /// its project, in another one, which must exist. SmileBASIC 4's own
     /// `#` projects take no files: the commands refuse them first (see

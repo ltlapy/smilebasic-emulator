@@ -352,6 +352,11 @@ impl Runtime {
                 }])
             }
             (Command::Metasave, Want::Outs(0), []) => {
+                // In a `#` project, before the question and with no
+                // argument's number.
+                if self.current_project_read_only() {
+                    return Err(ErrorKind::CantSaveToSystemProject.into());
+                }
                 let action = FileAction {
                     title: "Save metadata".to_string(),
                     summary: "Save the project's title, description and icon.".to_string(),

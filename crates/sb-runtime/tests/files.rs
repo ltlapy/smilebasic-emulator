@@ -1382,7 +1382,8 @@ fn rename_in_a_system_project_is_refused() {
 }
 
 /// With a `#` project the current one, the five commands that write
-/// refuse a name with no project as error 75, before anything is asked.
+/// refuse a name with no project as error 75, before anything is asked,
+/// and METASAVE too.
 #[test]
 fn writes_in_the_current_system_project_are_refused() {
     let dir = TempDir::new("current-system");
@@ -1396,6 +1397,7 @@ fn writes_in_the_current_system_project_are_refused() {
         ("saveg \"x\",0", "SAVEG"),
         ("rename \"a\",\"b\"", "RENAME:1"),
         ("delete \"a\"", "DELETE:1"),
+        ("metasave", "METASAVE"),
     ] {
         let message = format!("Can't SAVE to system project ({command})");
         assert_eq!(direct_error(&mut m, line), message, "{line}");
@@ -1405,12 +1407,17 @@ fn writes_in_the_current_system_project_are_refused() {
     enter(&mut m, "run");
     let message = "Can't SAVE to system project in 0:2(SAVEV)".to_string();
     assert_eq!(program_error(&mut m), (message, 75, None));
+    m.set_slot(0, "A=1\nMETASAVE".to_string());
+    enter(&mut m, "run");
+    let message = "Can't SAVE to system project in 0:2(METASAVE)".to_string();
+    assert_eq!(program_error(&mut m), (message, 75, None));
     let files = std::fs::read_dir(dir.0.join("#SYS")).map_or(0, Iterator::count);
     assert_eq!(files, 0);
 }
 
 /// The setting to write in `#` projects lets the five commands through,
-/// in the current project and, at the prompt, in one named.
+/// in the current project and, at the prompt, in one named, and METASAVE
+/// in the current one.
 #[test]
 fn the_setting_allows_writes_in_system_projects() {
     let dir = TempDir::new("write-system");
@@ -1432,7 +1439,16 @@ fn the_setting_allows_writes_in_system_projects() {
         enter(&mut m, &line.to_ascii_lowercase());
         assert_eq!(tail(&m, 2), ["1", "OK"], "{line}");
     }
+    m.rt.storage.write_project_file("META", b"old").unwrap();
+    enter(&mut m, "metaedit 0,\"123\":metasave");
+    assert_eq!(tail(&m, 1), ["OK"]);
     let sys = dir.0.join("#SYS");
+    assert!(!sys.join("META").exists());
+    let text = std::fs::read_to_string(sys.join("@META.TXT")).unwrap();
+    assert_eq!(text, "123\n");
+    for name in ["@META.TXT", "@ICON.PNG"] {
+        std::fs::remove_file(sys.join(name)).unwrap();
+    }
     let mut files: Vec<String> = std::fs::read_dir(&sys)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

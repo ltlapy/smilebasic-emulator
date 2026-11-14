@@ -67,9 +67,9 @@ pub struct Settings {
     pub ctrl_c_stops: bool,
     /// SAVE turns full-width letters and digits into ASCII.
     pub half_width_on_save: bool,
-    /// SAVE, SAVEV, SAVEG, DELETE and RENAME write in SmileBASIC 4's own
-    /// `#` projects instead of raising Can't SAVE to system project. Not
-    /// SmileBASIC 4's.
+    /// SAVE, SAVEV, SAVEG, DELETE, RENAME and METASAVE write in SmileBASIC
+    /// 4's own `#` projects instead of raising Can't SAVE to system
+    /// project. Not SmileBASIC 4's.
     pub write_system_projects: bool,
     /// The editor wraps long lines instead of scrolling sideways.
     pub editor_wrap: bool,

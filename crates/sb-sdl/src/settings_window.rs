@@ -254,9 +254,9 @@ const PAGES: &[Page] = &[
             },
             check(
                 "Allow writing to system (#) projects",
-                "SAVE, SAVEV, SAVEG, DELETE and RENAME change files in # projects \
-                 such as #SYS instead of stopping with error 75, Can't SAVE to \
-                 system project. Off by default, as on hardware.",
+                "SAVE, SAVEV, SAVEG, DELETE, RENAME and METASAVE change files in \
+                 # projects such as #SYS instead of stopping with error 75, Can't \
+                 SAVE to system project. Off by default, as on hardware.",
                 |s| s.write_system_projects,
                 |s| s.write_system_projects ^= true,
             ),

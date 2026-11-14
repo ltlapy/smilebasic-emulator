@@ -481,10 +481,11 @@ For a subprogram's screen, see `FADE` under
 - `LOADG "PNG:..."` of a `#` project's file fails with `RESULT` 0, as the
   emulator reads no `PNG:` files.
 - `SAVE`, `SAVEV`, `SAVEG`, `DELETE` and `RENAME` of a file in a `#` project,
-  named or the current one, are error 75, `Can't SAVE to system project`, as
-  on SmileBASIC 4. File > Settings > Files > "Allow writing to system (#)
-  projects" lets them write there instead. Off by default. A main program
-  still gets error 74 for a file named with a project.
+  named or the current one, and `METASAVE` in a current `#` project, are
+  error 75, `Can't SAVE to system project`, as on SmileBASIC 4. File >
+  Settings > Files > "Allow writing to system (#) projects" lets them write
+  there instead. Off by default. A main program still gets error 74 for a
+  file named with a project.
 - File and project names take ASCII letters only. SmileBASIC 4 asks C's
   `isalnum` about characters up to U+00FF, so it may take some of U+0080 to
   U+00FF as letters; the emulator gives `Illegal format` for them.

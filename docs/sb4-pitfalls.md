@@ -2412,6 +2412,9 @@ Expected but not yet seen on hardware:
   metadata again, so after `METAEDIT` and a cancelled `METASAVE` it drops the
   edits. (Not yet seen on
   hardware.)
+- `METASAVE` while a `#` system project is the current one is
+  `Can't SAVE to system project (METASAVE)`, error 75, with no argument's
+  number, before its question. (Not yet seen on hardware.)
 
 ## Subprograms
 
