@@ -401,6 +401,13 @@ fn wavset_checks_the_pitch_first() {
     }
 }
 
+/// RECSAVE of a number names it.
+#[test]
+fn recsave_names_a_number() {
+    let e = run_on(&mut runtime(), "Z=0:RECSAVE Z,Z,Z").unwrap_err();
+    assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, Some(0)));
+}
+
 /// CHKMML reads macros that BGMPLAY would refuse for how much they copy.
 #[test]
 fn chkmml_takes_macros_bgmplay_refuses() {

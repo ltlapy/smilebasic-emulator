@@ -817,6 +817,11 @@ impl Runtime {
                 Ok(vec![Value::Int(i32::from(l)), Value::Int(i32::from(r))])
             }
             (Command::Recsave, Want::Outs(0), 1..=3) => {
+                // SmileBASIC 4 names the first argument when it
+                // is not an array.
+                if !matches!(args[0], Value::Array(_)) {
+                    return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
+                }
                 let rec = self.sound.recorder.borrow();
                 let samples = rec.samples();
                 let len = samples.len() as i32;

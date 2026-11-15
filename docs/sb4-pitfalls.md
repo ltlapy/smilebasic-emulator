@@ -2190,6 +2190,7 @@ Expected but not yet seen on hardware:
   `RECSAVE` from -1000, from past what this recording has reached, or of 1000
   samples from 500 before its end gives those older samples where this
   recording has none (TEST71).
+- `RECSAVE` of a number is `Type mismatch (RECSAVE:1)`: `RECSAVE Z,Z,Z`. (Not yet seen on hardware.)
 - `RECSTART` does not record `PCMSTREAM`: streams played at full volume
   recorded 0, while the person heard them (TEST74).
 - A subprogram's `RECSTART` records nothing of its own, and its `RECSAVE` gives
