@@ -752,6 +752,100 @@ fn flag(b: bool) -> Value {
     Value::Int(i32::from(b))
 }
 
+/// XCTRLSTYLE's controllers, style and the numbers after them, checked in
+/// SmileBASIC 4's order: two arguments, four or
+/// five for styles 0 to 3 and for Toy-Con on one controller, six or seven
+/// for Toy-Con on two.
+fn xctrlstyle_args(args: &[Value]) -> Result<(i32, i32, Vec<i32>)> {
+    let flag = |a: &Value| Ok(opt_int(a)?.unwrap_or(0));
+    let toycon = |i: usize| in_range("Toy-Con type", &args[i], 0..=10);
+    let bad_toycon = |i: usize| Err(Error::new(ErrorKind::IllegalToyConType).of_arg(i));
+    // Types 3, 4 and 7 to 10 take the same type again for the other hand;
+    // 0 and 6 take 0, 1, 2 or 5.
+    let alone = |t: i32| 0x798 & 1 << t != 0;
+    let leads = |t: i32| 0x41 & 1 << t != 0;
+    let follows = |t: i32| (0..=5).contains(&t) && 0x27 & 1 << t != 0;
+    if args.len() >= 6 {
+        let max = checking(&args[0], || match int(&args[0])? {
+            2 => Ok(2),
+            n => Err(out_of_range("controllers", n)),
+        })?;
+        let style = in_range("style", &args[1], 100..=100)?;
+        let t = [toycon(2)?, toycon(3)?, toycon(4)?, toycon(5)?];
+        let mut flags = t.to_vec();
+        if let Some(a) = args.get(6) {
+            flags.push(flag(a)?);
+        }
+        if t == [0; 4] {
+            return bad_toycon(5);
+        }
+        // UNVERIFIED: SmileBASIC 4 seems to refuse 3, 4 and 7 to 10 for
+        // the first controller here; the manual allows them, as here.
+        if alone(t[0]) && t[1] != t[0] {
+            return bad_toycon(3);
+        }
+        if !alone(t[0]) && !leads(t[0]) {
+            return bad_toycon(2);
+        }
+        if leads(t[0]) && !follows(t[1]) {
+            return bad_toycon(3);
+        }
+        if alone(t[2]) && t[3] != t[2] || leads(t[2]) && !follows(t[3]) {
+            return bad_toycon(5);
+        }
+        if !alone(t[2]) && !leads(t[2]) {
+            return bad_toycon(4);
+        }
+        return Ok((max, style, flags));
+    }
+    let max = in_range("controllers", &args[0], 1..=4)?;
+    let style = int(&args[1])?;
+    let wrong_style = || Err(out_of_range("style", style).of_arg(1));
+    let too_many = || Err(out_of_range("controllers", max).of_arg(0));
+    let flags = match (args.len(), style) {
+        (2, 0..=3) => Vec::new(),
+        (_, 0..=3) => {
+            let flags = args[2..].iter().map(flag).collect::<Result<Vec<_>>>()?;
+            // The IR Motion Camera needs style 1 and at most two
+            // controllers.
+            if flags[1] != 0 && style != 1 {
+                return Err(Error::new(ErrorKind::IllegalControlStyleForIrCamera).of_arg(1));
+            }
+            flags
+        }
+        (4 | 5, 100) => {
+            if max != 1 {
+                return too_many();
+            }
+            let t = [toycon(2)?, toycon(3)?];
+            let mut flags = t.to_vec();
+            if let Some(a) = args.get(4) {
+                flags.push(flag(a)?);
+            }
+            if t == [0, 0] {
+                return bad_toycon(3);
+            }
+            if alone(t[0]) && t[1] != t[0] || leads(t[0]) && !follows(t[1]) {
+                return bad_toycon(3);
+            }
+            if !alone(t[0]) && !leads(t[0]) {
+                return bad_toycon(2);
+            }
+            flags
+        }
+        _ => return wrong_style(),
+    };
+    // Styles 0 and 1 take one or two controllers, 2 and 3 two or more.
+    let fits = match style {
+        0 | 1 | 100 => max <= 2,
+        _ => max >= 2,
+    };
+    if !fits {
+        return too_many();
+    }
+    Ok((max, style, flags))
+}
+
 fn text(v: &Value) -> Result<Vec<u16>> {
     checking(v, || Ok(v.clone().into_str()?.borrow().clone()))
 }
@@ -888,17 +982,8 @@ impl Runtime {
                 self.result = 1;
                 Ok(vec![])
             }
-            (Command::Xctrlstyle, Want::Outs(0), 2..=7) => {
-                let style = int(&args[1])?;
-                let most = match style {
-                    0 | 1 | 100 => 1..=2,
-                    2 | 3 => 2..=4,
-                    n => return Err(out_of_range("style", n)),
-                };
-                let max = in_range("controllers", &args[0], most)?;
-                let flags = (args[2..].iter())
-                    .map(|a| Ok(opt_int(a)?.unwrap_or(0)))
-                    .collect::<Result<Vec<_>>>()?;
+            (Command::Xctrlstyle, Want::Outs(0), 2 | 4..=7) => {
+                let (max, style, flags) = xctrlstyle_args(args)?;
                 // The connection screen has nothing to ask: all controllers
                 // there are are connected.
                 input.style = (max, style);
@@ -1032,7 +1117,9 @@ impl Runtime {
             _ => unreachable!("checked above"),
         };
         if s.len() > PUSHKEY_LENGTH {
-            return Err(Error::with_detail(ErrorKind::StringTooLong, "PUSHKEY"));
+            let detail = format!("{} characters", s.len());
+            // Named as (PUSHKEY:1) (TEST60).
+            return Err(Error::with_detail(ErrorKind::StringTooLong, detail).of_value(keys));
         }
         for &c in s.iter() {
             self.push_code(u32::from(c));

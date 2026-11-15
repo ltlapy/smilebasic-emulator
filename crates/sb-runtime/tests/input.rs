@@ -64,6 +64,41 @@ fn bad_ids() {
     assert_eq!(err("XCTRLSTYLE 1,2"), ErrorKind::OutOfRange);
 }
 
+/// XCTRLSTYLE's errors and the argument each names, in SmileBASIC 4's
+/// order; PUSHKEY's too long string (TEST60).
+#[test]
+fn control_style_errors_name_the_argument() {
+    for (source, kind, arg) in [
+        ("XCTRLSTYLE 5,0", ErrorKind::OutOfRange, 0),
+        ("XCTRLSTYLE 3,0", ErrorKind::OutOfRange, 0),
+        ("XCTRLSTYLE 1,4", ErrorKind::OutOfRange, 1),
+        (
+            "XCTRLSTYLE 1,0,0,1",
+            ErrorKind::IllegalControlStyleForIrCamera,
+            1,
+        ),
+        ("XCTRLSTYLE 1,101,0,0,0,0,0", ErrorKind::OutOfRange, 0),
+        ("XCTRLSTYLE 2,101,0,0,0,0,0", ErrorKind::OutOfRange, 1),
+        ("XCTRLSTYLE 2,100,11,0,0,0", ErrorKind::OutOfRange, 2),
+        ("XCTRLSTYLE 2,100,0,0,0,-1", ErrorKind::OutOfRange, 5),
+        ("XCTRLSTYLE 2,100,0,0,0,0", ErrorKind::IllegalToyConType, 5),
+        ("XCTRLSTYLE 2,100,1,0,0,0", ErrorKind::IllegalToyConType, 2),
+        ("XCTRLSTYLE 1,100,0,0", ErrorKind::IllegalToyConType, 3),
+        ("XCTRLSTYLE 1,100,3,4", ErrorKind::IllegalToyConType, 3),
+        ("XCTRLSTYLE 1,100,6,6", ErrorKind::IllegalToyConType, 3),
+        ("XCTRLSTYLE 2,100,0,1", ErrorKind::OutOfRange, 0),
+        ("PUSHKEY \"A\"*64", ErrorKind::StringTooLong, 0),
+    ] {
+        let e = run(&[], source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, Some(arg)), "{source}");
+    }
+    run(
+        &[],
+        "XCTRLSTYLE 1,100,6,5:XCTRLSTYLE 1,100,3,3:XCTRLSTYLE 2,100,6,1,0,2",
+    )
+    .unwrap();
+}
+
 #[test]
 fn repeat_settings() {
     assert_eq!(

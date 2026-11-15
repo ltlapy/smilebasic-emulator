@@ -1125,6 +1125,14 @@ Expected but not yet seen on hardware:
   different controllers.
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not available`.
 - `TCPIANO` without Toy-Con set up is `Illegal control style`.
+- `XCTRLSTYLE` takes two arguments, or
+  four or five, or six or seven for Toy-Con on two controllers, where the first
+  must be 2 (`Out of range (XCTRLSTYLE:1)`) and the style 100
+  (`XCTRLSTYLE:2`). Toy-Con types are 0 to 10, each named after its argument,
+  and a pair that does not go together is `Illegal Toy-Con type`, error 110.
+  The IR flag with a style other than 1 is
+  `Illegal control style for using IR Camera (XCTRLSTYLE:2)`, error 109.
+  (Not yet seen on hardware.)
 - `IRSTATE` starts at 0.
 - `IRREAD` in mode 1 is `Illegal IR Camera mode` (TEST71).
 - `IRREAD`'s array has 48 rows of 8 after clustering mode, as after moment
