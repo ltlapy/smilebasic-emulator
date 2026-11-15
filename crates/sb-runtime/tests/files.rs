@@ -2121,6 +2121,20 @@ fn run_to_dialog_now(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
     panic!("no dialog: {:?}", rows(m));
 }
 
+/// SmileBASIC 4: FILES of a number is Type mismatch naming
+/// it, whatever the OUT count.
+#[test]
+fn files_of_a_number_names_it() {
+    let dir = TempDir::new("files-number");
+    let mut m = machine(&dir);
+    for source in ["FILES Z", "Q=FILES(Z)", "FILES Z OUT Q0"] {
+        m.set_slot(0, format!("Z=0\n{source}"));
+        enter(&mut m, "run");
+        let (said, number, arg) = program_error(&mut m);
+        assert_eq!((number, arg), (8, Some(0)), "{source}: {said}");
+    }
+}
+
 #[test]
 fn files_of_projects_and_of_a_files_name() {
     let dir = TempDir::new("files-forms");

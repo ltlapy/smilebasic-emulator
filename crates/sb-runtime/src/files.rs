@@ -233,6 +233,12 @@ impl Runtime {
                 self.finish("RENAME", outcome);
                 Ok(vec![])
             }
+            // SmileBASIC 4 takes a lone argument that is neither
+            // a string nor an array for Type mismatch naming it, whatever
+            // the OUT count.
+            (Command::Files, _, 1) if !matches!(args[0], Value::Str(_) | Value::Array(_)) => {
+                Err(Error::new(ErrorKind::TypeMismatch).of_arg(0))
+            }
             (Command::Files, Want::Value, 0 | 1) => {
                 let spec = args.first().map(str_arg).transpose()?;
                 if let Some(spec) = &spec {

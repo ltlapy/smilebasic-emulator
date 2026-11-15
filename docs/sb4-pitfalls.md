@@ -2469,6 +2469,10 @@ Expected but not yet seen on hardware:
   32 characters. `EXEC` raises the same errors without the number. `FILES`
   takes a name alone as a project's (`FILES "TXT:NAME"`), so a project and a
   file together are error 71 there, and so is `FILES ""`. (Not yet seen on hardware.)
+- `FILES` with one argument that is neither a string nor an array is
+  `Type mismatch (FILES:1)` whatever the `OUT` count: `FILES Z`, `Q=FILES(Z)`
+  and `FILES Z OUT Q0`.
+  (Not yet seen on hardware.)
 - `SAVEG` takes GRP and JPG files, and a name without a type is a GRP file's;
   `SAVEV` takes TXT, DAT and GRP files and needs the type. Any other type, or
   none for `SAVEV`, is `File type mismatch`, error 77, with no number
