@@ -97,6 +97,14 @@ fn ints(values: &[i32]) -> Vec<Value> {
     values.iter().map(|&n| Value::Int(n)).collect()
 }
 
+/// What [`Runtime::spset_args`] reads: the show flag, then a template's
+/// number and the template, or the image's fields.
+type SpsetArgs = (
+    bool,
+    Option<(usize, SpriteDef)>,
+    Option<(i32, i32, i32, i32, i32)>,
+);
+
 impl Runtime {
     /// A sprite that SPSET has created; others are "Sprite not set"
     /// (checked on hardware).
@@ -137,8 +145,9 @@ impl Runtime {
         }
     }
 
-    /// Creates sprite `id` from a template or from image arguments.
-    fn spset(&mut self, id: usize, image: &[Value]) -> Result<()> {
+    /// SPSET's template or image arguments: the show flag, then the
+    /// template or the image's fields.
+    fn spset_args(&self, image: &[Value]) -> Result<SpsetArgs> {
         let shown;
         let def = match image.len() {
             1 | 2 => {
@@ -155,6 +164,12 @@ impl Runtime {
             Some(_) => None,
             None => Some(Runtime::image_args(&image[..image.len().min(5)])?),
         };
+        Ok((shown, def, fields))
+    }
+
+    /// Creates sprite `id` from a template or from image arguments.
+    fn spset(&mut self, id: usize, image: &[Value]) -> Result<()> {
+        let (shown, def, fields) = self.spset_args(image)?;
         let s = self.sprites.create(id, shown);
         match (def, fields) {
             (Some((n, d)), _) => s.set_def(n as i32, &d),
@@ -330,7 +345,12 @@ impl Runtime {
                         self.spset(id, image)?;
                         Ok(vec![Value::Int(id as i32)])
                     }
-                    None => Ok(vec![Value::Int(-1)]),
+                    // SmileBASIC 4 checks the arguments before
+                    // it looks for a free sprite.
+                    None => {
+                        self.spset_args(image)?;
+                        Ok(vec![Value::Int(-1)])
+                    }
                 }
             }
             (Command::Spclr, Want::Outs(0), 0) => {

@@ -223,6 +223,23 @@ fn errors() {
             "Q=SPSET(5,9,0,0,16,16,-1,1)",
             "Out of range in 0:1(SPSET:7)",
         ),
+        // With no free sprite in the range, too.
+        (
+            "SPSET 0,0:Q=SPSET(0,0,0,0,-1,16,1,0)",
+            "Out of range in 0:1(SPSET:5)",
+        ),
+        (
+            "SPSET 0,0:Q=SPSET(0,0,0,0,16,2049,1,0)",
+            "Out of range in 0:1(SPSET:6)",
+        ),
+        (
+            "SPSET 0,0:Q=SPSET(0,0,0,0,16,16,32,0)",
+            "Out of range in 0:1(SPSET:7)",
+        ),
+        (
+            "SPSET 0,0:Q=SPSET(0,0,8192)",
+            "Out of range in 0:1(SPSET:3)",
+        ),
         ("SPSET 0,0:SPCOL 0,0,0,16", "Wrong number of arguments"),
         (
             "SPSET 0,0:SPCOL 0,0,0,16,16,1,0,0",

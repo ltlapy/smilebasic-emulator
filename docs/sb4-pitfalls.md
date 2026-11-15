@@ -1359,6 +1359,10 @@ Expected but not yet seen on hardware:
 - `SPSET` with an image takes attributes 0 to 31 in every form, as `SPDEF`
   does: `SPSET 0,0,0,16,16,32` is `Out of range (SPSET:6)`, and
   `SPSET(0,0,16,16,32)` `(SPSET:5)`. (Not yet seen on hardware.)
+- `SPSET()` checks its template number, width, height and attributes before it
+  looks for a free sprite, so a wrong one is an error even when no sprite in
+  the range is free: `Q=SPSET(0,0,0,0,-1,16,1,0)` with sprite 0 in use is
+  `Out of range (SPSET:5)`, not -1. (Not yet seen on hardware.)
 - `SPDEF` checks what it is given: U and
   V 0 or more, width and height 0 to 2048, home point -32768 to 32767 and
   attributes 0 to 31, each named after its argument. Copying from another
