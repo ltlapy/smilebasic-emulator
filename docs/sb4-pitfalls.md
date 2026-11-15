@@ -136,6 +136,9 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `DIM A[5],B[5]:COPY A,7,B,0,1`, `A` has 8 elements, and
   `A$="12345":COPY A$,7,"AB",0,2` gives `12345  AB`, spaces filling the gap
   (TEST74).
+- `COPY` with a number first is `Type mismatch (COPY:1)` in both forms:
+  `COPY Z,Z,B,Z,1` and `Q=COPY(Z,Z,1)`. The command form checks the
+  destination before anything else. (Not yet seen on hardware.)
 - `CHR$(-1)` is no error: it gives `CHR$(&HFFFF)` (TEST69).
 - `CHR$` takes any int and keeps its low 16 bits: `CHR$(65601)` is `"A"`,
   `CHR$(-2)` U+FFFE, `CHR$(&H7FFFFFFF)` U+FFFF, and `CHR$(65536)` and

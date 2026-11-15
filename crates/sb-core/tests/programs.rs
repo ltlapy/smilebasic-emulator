@@ -1425,6 +1425,19 @@ fn copy_errors() {
         error("DIM D[3]:COPY D,\"@N\"\n@N:DATA 1").0,
         ErrorKind::OutOfData
     );
+    // A number first is Type mismatch naming it, in both forms.
+    let first = |source: &str| {
+        let e = run(source).unwrap_err();
+        assert_eq!(
+            (e.kind, e.arg),
+            (ErrorKind::TypeMismatch, Some(0)),
+            "{source}"
+        );
+    };
+    first("Z=0:DIM B[2]:Q=COPY(Z,Z,1)");
+    first("Z=0:DIM B[2]:COPY Z,Z,B,Z,1");
+    first("Z=0:S$=\"AB\":COPY Z,Z,S$,1");
+    first("Z=0:S$=\"AB\":COPY Z,Z,S$,Z,1");
 }
 
 #[test]

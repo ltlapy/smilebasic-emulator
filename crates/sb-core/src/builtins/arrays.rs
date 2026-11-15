@@ -112,13 +112,19 @@ pub(super) fn copy_fn(args: &[Value]) -> Result<Value> {
             }
             Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(out))))
         }
-        _ => Err(ErrorKind::TypeMismatch.into()),
+        // SmileBASIC 4 names the first argument.
+        v => Err(mismatch(v)),
     }
 }
 
 /// `COPY dest [,offset], source [[,offset], count]`, where the source is
 /// an array, a string, or a `"@label"` of DATA to read into an array.
 pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<Value>> {
+    // SmileBASIC 4 checks the destination's type before the
+    // rest, and names it.
+    if !is_source(&args[0]) {
+        return Err(mismatch(&args[0]));
+    }
     let at = if is_source(&args[1]) { 1 } else { 2 };
     let dest_offset = match at {
         2 => count(&args[1])?,
