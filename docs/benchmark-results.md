@@ -1,8 +1,9 @@
 # Benchmark results
 
-[benchmarking.md](benchmarking.md) says how to take these numbers. All of them
-date from 2026-11-05. Each set says what it ran on and which commits it
-compares. Compare rows within one table, as frame counts differ between sets.
+[benchmarking.md](benchmarking.md) says how to take these numbers. They date
+from 2026-11-05, except the handheld set, from 2026-11-15. Each set says what
+it ran on and which commits it compares. Compare rows within one table, as
+frame counts differ between sets.
 
 ## The CPU path on weak machines
 
@@ -13,9 +14,11 @@ cost it far more than they cost a desktop. So instruction, cache-miss and
 branch-miss counts say more here than a desktop's times; a wide core hides
 much of a drop in those counts.
 
-As a rule of thumb, not measured: a 1.5 GHz Cortex-A35 at about 0.8
-instructions a cycle has about 20 million instructions for a frame, to draw,
-run the program and make the sound.
+As a rule of thumb: an RK3326's Cortex-A35, which runs at 1.3 GHz under
+load, does 0.6 to 0.8 instructions a cycle on the interpreter (see
+[the handheld set](#handheld-cpu-from-cc49c48)), so a
+frame has room for 13 to 17 million instructions, to run the program and make
+the sound, with the GPU drawing.
 
 ## What costs what
 
@@ -190,6 +193,202 @@ standby thread does not shorten it: it keeps the program and its sound going
 through it. `at=200:sleep:5000` with no window gives 40.2 frames a second and
 4.9 s of silence before, and 60.0 with none after.
 
+### Handheld CPU, from `cc49c48`
+
+This set compares an RK3326 handheld (four Cortex-A35 cores, 1 GB, aarch64
+Linux 4.4, glibc 2.38) with an x86-64 desktop (Ryzen 7 5800X). The device's
+governor was `ondemand`, between 1.008 and 1.296 GHz, and read 1.296 GHz on
+all cores under load. The emulator's own handheld mode ran on the device at
+the same time, taking about 40% of one core. The device's kernel has no
+performance counters, so the device gives times only; instruction counts come
+from qemu-aarch64 with its Cortex-A35 model, one instruction a block, counted
+exactly from the `exec` log.
+
+Each scene of TPERF ran alone (`#ONLY`), with `--bench --fixed 80 --log`, the
+`dist` build cross-built by `tools/build_handheld.py`. A scene's time is the
+median of `run_us` over frames 10 to 69, the best of three runs on the device
+and of three to five on the desktop, pinned to one core. `run_us` is the
+program's part of the frame with its sound, which is silent here. The
+desktop's times swing with its load; its instruction counts do not.
+
+The device ran `44fd91e`, an older `main`. The interpreter changed little up
+to `cc49c48`: up to 5% fewer instructions on loops of DEF calls and GOSUBs,
+by the measurements of those commits. Its checksums at 80 frames match the
+desktop's for every scene.
+
+| Scene | Desktop (ms) | Device (ms) | Device / desktop |
+|---|---|---|---|
+| VINT | 0.47 | 10.59 | 22 |
+| VREAL | 0.64 | 14.12 | 22 |
+| VSTR | 0.63 | 17.08 | 27 |
+| VARRAY | 0.98 | 22.04 | 22 |
+| VDEF | 0.40 | 8.08 | 20 |
+| VVAR | 1.75 | 39.88 | 23 |
+| SPMOVE | 0.42 | 11.56 | 27 |
+| SPROT | 0.29 | 6.93 | 24 |
+| SPCHURN | 1.34 | 30.72 | 23 |
+| SPHIT | 1.76 | 25.93 | 15 |
+| SPANIM | 0.31 | 8.09 | 26 |
+| TPRINT | 0.29 | 3.53 | 12 |
+| TPUT | 0.70 | 17.38 | 25 |
+| TSCROLL | 0.18 | 4.33 | 24 |
+| TMULTI | 0.03 | 0.75 | 26 |
+| GFILL | 0.46 | 12.52 | 27 |
+| GALPHA | 4.03 | 60.00 | 15 |
+| GLINE | 0.81 | 18.29 | 23 |
+| GCIRCLE | 1.65 | 28.41 | 17 |
+| GTRI | 1.34 | 22.39 | 17 |
+| GPUTCHR | 0.49 | 11.96 | 25 |
+| GCOPY | 0.80 | 59.35 | 74 |
+| GLOAD | 0.06 | 2.64 | 45 |
+| GUPLOAD | 0.01 | 0.22 | 37 |
+| GARRAY | 0.50 | 12.87 | 26 |
+| LCOMP | 0.04 | 0.89 | 24 |
+| LBLUR | 0.02 | 0.53 | 25 |
+| LMOSAIC | 0.02 | 0.56 | 28 |
+| LCOLOR | 0.03 | 0.63 | 23 |
+| LMATRIX | 0.03 | 0.66 | 23 |
+| LRASTER | 0.06 | 1.54 | 26 |
+| GAME | 0.44 | 9.29 | 21 |
+
+The device takes 20 to 27 times as long on nearly every scene, about 3.6
+times for the clock and 6 to 7 for instructions a cycle. No scene of the
+interpreter or the sprite and text commands stands out, so there is no single
+slow spot: everything on the CPU pays the same.
+
+Instructions a cycle on the device, from qemu's count of a loop iteration
+and the scene's time: VINT 0.77, VREAL 0.67, VARRAY 0.70, VDEF 0.69, VSTR
+0.57. The desktop runs the same code at 2.4 (VINT) to 3.4 (VVAR).
+
+Where the interpreter's instructions go on aarch64, from qemu's trace of one
+iteration:
+
+- Choosing a fused step takes 21 instructions: the bounds and budget checks,
+  a jump table and one indirect branch. `pc`, the budget left and the step
+  table's address live on the stack, three stores and three loads a step.
+  All steps share the one indirect branch, which a core that predicts it
+  by its last target mostly misses in a loop of different steps.
+- Reading a variable takes about 10: the table (globals and constants, or
+  the DEF's locals), its length for the bounds check, the address, the tag.
+- An operator in a fused step switches on the operator again: a second jump
+  table and indirect branch inside the step.
+- Pushing and popping go through the stack's length and capacity in memory.
+- VINT's loop runs 8 steps and 583 instructions an iteration; an empty FOR
+  2 steps and 181. A DEF call and its return take about 900, a builtin call
+  outside the fused steps about 440, a `VAR("name")` about 3000, as it
+  makes four `String`s and compares the name with each global's.
+
+The scenes far above the others draw on GRP pages. A page is 2048 pixels
+wide, so its rows lie 8 KB apart, and the same column of successive rows
+falls in the same set of a cache whose way size divides 8 KB. Cortex-A35's
+32 KB 4-way L1 has 8 KB ways: GCOPY's 48 rows of 48 pixels at one column
+compete for 4 lines a set, and its 400x240 working area, 1.9 MB of address
+space, does not stay in the 256 KB L2. The desktop's larger and more
+associative caches hide this. That this is the cause is inferred from the
+layout and the ratios, not measured on the device. GLOAD and GUPLOAD write
+whole rows and suffer less.
+
+Changes, x86-64 instructions a frame (program and CPU drawing, frames 3 to
+83) of `cc49c48` against the branch, same checksums; scenes not listed moved
+by under 0.5%:
+
+| Scene | `cc49c48` (M) | Branch (M) | Change |
+|---|---|---|---|
+| VINT | 11.45 | 10.57 | -7.7% |
+| VREAL | 12.65 | 8.95 | -29.2% |
+| VSTR | 11.54 | 10.75 | -6.9% |
+| VARRAY | 21.64 | 20.80 | -3.9% |
+| VDEF | 7.98 | 7.66 | -4.0% |
+| VVAR | 29.69 | 29.28 | -1.4% |
+| GCIRCLE | 37.05 | 18.64 | -49.7% |
+| GCOPY | 21.52 | 21.67 | +0.7% |
+
+The same on aarch64, qemu's exact count over frames 3 to 5 (program and CPU
+drawing), and the device's time each would give at the ratio of the counts.
+The device has not run the branch yet.
+
+| Scene | `cc49c48` (M) | Branch (M) | Change | Device (ms), at that ratio |
+|---|---|---|---|---|
+| VINT | 11.02 | 10.35 | -6.1% | 10.6 to 9.9 |
+| VREAL | 12.89 | 9.18 | -28.8% | 14.1 to 10.1 |
+| VSTR | 14.13 | 13.29 | -6.0% | 17.1 to 16.1 |
+| VARRAY | 20.40 | 20.39 | -0.1% | 22.0 |
+| VDEF | 7.74 | 7.73 | -0.2% | 8.1 |
+| GCIRCLE | 32.31 | 16.86 | -47.8% | 28.4 to 14.8 |
+| GAME | 20.45 | 20.59 | +0.7% | 9.3 to 9.4 |
+
+GAME's +0.7% and GCOPY's +0.7% on x86-64 come from LLVM laying out
+`run_fused`'s registers anew; neither scene's own steps changed.
+
+What changed:
+
+- `59e363e`: a circle that lies on the page no longer sorts its points to
+  drop the repeats, which only occur on the axes and the diagonal. GCIRCLE
+  -50%; on aarch64, 32.3 to 16.9 million instructions a frame.
+- `c4eb331`: `run_code` asked `f.op != FastOp::Slow` before each single step,
+  a call of the derived `PartialEq`. VSTR's loop -1.7% on aarch64.
+- `59ab61d`: pure numeric builtins (`LEN`, `ASC`, `INT`, `FLOOR`, `ABS`,
+  `SQR`, `SIN`, `MIN`, `MAX` and others that only read their arguments) run
+  in a fused step. One that fails is called again by `step`, which fails as
+  before. `A=ABS(I)` 574 to 384 aarch64 instructions, VREAL's loop 1359 to
+  986. ASC no longer copies its string.
+- `a9f9cdc`: an integer FOR's `NEXT` reads each value once and tests on the
+  integers, when TO's and STEP's places are none of the counter's and the
+  FOR's own, which the fuser notes. An empty FOR 181 to 133, VINT's loop 583
+  to 543, a GOSUB loop 346 to 299.
+
+Build options, aarch64 instructions an iteration of seven loops (empty FOR,
+VINT, VREAL, VARRAY, VDEF, a builtin loop, VSTR) and `run_fast`'s size,
+qemu counts only:
+
+| Options | Empty | VINT | VREAL | VARRAY | VDEF | Builtins | VSTR | `run_fast` |
+|---|---|---|---|---|---|---|---|---|
+| `dist` as it is (`opt-level=3`) | 133 | 543 | 947 | 1986 | 1790 | 919 | 3955 | 28.9 KB |
+| `-C target-cpu=cortex-a35` | 135 | 546 | 947 | 1992 | 1794 | 927 | 4034 | 29.5 KB |
+| the same, `-aes,-sha2,-crc` | 135 | 546 | 947 | 1992 | 1794 | 927 | 4034 | 29.5 KB |
+| `-C opt-level=2` | 139 | 555 | 947 | 2000 | 1738 | 913 | 3959 | 25.2 KB |
+| `-C opt-level=s` | 152 | 597 | 1012 | 2170 | 2033 | 1028 | 4404 | 24.8 KB |
+
+`-C target-cpu=cortex-a35` adds no instruction a core of ARMv8.0 lacks
+except the CRC and crypto ones, which nothing here asks for; with
+`-C target-feature=-aes,-sha2,-crc` it only tunes, for the A35's pipeline,
+and runs on any aarch64. What tuning gains is the order of instructions on an
+in-order core, which qemu does not time, so it waits for a run on the device.
+Profile-guided optimization needs `llvm-profdata`, which the toolchain here
+lacks (rustup's `llvm-tools` component has it); the aarch64 standard library
+ships the profiler runtime, so an instrumented build can run under qemu.
+
+Larger changes, not made, by what they would save against what they cost:
+
+- **Padding a GRP page's rows**, to a stride that is not a multiple of the
+  caches' way size (2048 plus 16 pixels, say). It would take GCOPY's 74 times
+  and GLOAD's 45 back toward the others' 22, a gain of up to two thirds of
+  those scenes on the device, by the ratios. Every reader of a page's pixels
+  assumes the 2048 stride: `index`, the raster, GSAVE and GLOAD, and the GPU
+  path's uploads in `sb-sdl`.
+- **A cache for `VAR("name")`**, keyed by the string and the running DEF,
+  emptied when the program changes. A look-up costs about 3000 instructions
+  now, mostly in making `String`s; VVAR would fall from 40 ms toward 5 ms on
+  the device. Few programs use `VAR()` in a loop.
+- **Keeping the fused loop's state in registers**: `pc`, the budget and the
+  stack's pointer and length. Moving the stack out of `self` into a local
+  `Vec` for the loop, and fewer values live across the `match`, might save 6
+  to 10 of the 21 instructions a step takes to be chosen. LLVM decides what
+  it spills in a function of 29 KB, so the gain can only be measured, and
+  can move from build to build.
+- **A register-based form of the fused code**, three-address steps that name
+  their operands and their result, with the operator in the step's own kind
+  instead of a second switch: about half the steps and indirect branches an
+  iteration of VINT, perhaps 30 to 40% of the interpreter's time. It is a
+  second compiler beside `fuse.rs`, with the same one-step fallback to keep
+  errors and time slices as they are.
+- **Values of 8 bytes** (NaN-boxing, or a separate tag array): halves the
+  stack's and the variables' memory traffic. It changes every use of `Value`
+  and needs `unsafe` for the boxing.
+- **A JIT** for the fused forms: the largest gain, perhaps 5 to 10 times on
+  loops, and the largest risk: writable code memory for untrusted programs,
+  per CPU architecture.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
@@ -207,6 +406,15 @@ Each of these was measured and not kept.
   build for on 2026-11-05, when this was measured. The cross-build in
   [building-handheld.md](building-handheld.md), added in `bc19803`, provides
   one.
+- **The fused steps' variables as two fields** instead of an array of two
+  tables indexed by the variable's table bit, for a select in place of a
+  load: VINT's loop 583 to 580 aarch64 instructions, the others within 2%
+  either way, as the tables' pointers still went to the stack (2026-11-15).
+- **`-C target-cpu=cortex-a35` and `opt-level`** were counted under qemu
+  only (see the handheld set): `cortex-a35` adds 0 to 2% instructions,
+  `opt-level=2` moves loops by -3 to +4% and shrinks `run_fast` by 13%,
+  `opt-level=s` adds 6 to 14%. Their times on the device are not known, so
+  `dist` stays as it is.
 - **Comparing scenes to skip a frame:** the emulator draws a frame only after
   a command changed what shows. Of about 1100 frames each in five projects, 0
   to 3 had a scene, pages and cells like the last, so a hash would cost every
