@@ -69,6 +69,7 @@ fn parse_error(e: parser::ParseError) -> Error {
     let kind = match e.kind {
         ParseErrorKind::Lex(lexer::LexErrorKind::Overflow) => ErrorKind::Overflow,
         ParseErrorKind::DirectMode => ErrorKind::CantUseFromDirectMode,
+        ParseErrorKind::Compile(kind) => kind,
         _ => ErrorKind::SyntaxError,
     };
     // The editor shows the statement, as SmileBASIC 4 does (checked on

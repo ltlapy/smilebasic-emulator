@@ -3,6 +3,7 @@
 use std::fmt;
 
 use crate::ast::*;
+use crate::error::ErrorKind;
 use crate::lexer::{self, Keyword, LexError, LexErrorKind, Span, Token, TokenKind};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -12,9 +13,12 @@ pub enum ParseErrorKind {
         expected: &'static str,
         found: TokenKind,
     },
-    /// A keyword that is only valid somewhere else, such as `WEND` without `WHILE`.
+    /// A keyword that is only valid somewhere else, such as `THEN` with no
+    /// `IF`.
     Misplaced(Keyword),
-    DefInsideBlock,
+    /// An error SmileBASIC 4 gives a code of its own as it compiles, such
+    /// as `FOR without NEXT` or `Nested DEF`.
+    Compile(ErrorKind),
     /// Nesting deeper than [`MAX_DEPTH`].
     TooDeep,
     /// A statement for programs only, typed in DIRECT mode.
@@ -51,9 +55,7 @@ impl fmt::Display for ParseError {
             ParseErrorKind::Misplaced(keyword) => {
                 write!(f, "Syntax error in {line} (unexpected {keyword:?})")
             }
-            ParseErrorKind::DefInsideBlock => {
-                write!(f, "Syntax error in {line} (DEF inside a block)")
-            }
+            ParseErrorKind::Compile(kind) => write!(f, "{} in {line}", kind.message()),
             ParseErrorKind::TooDeep => write!(f, "Expression too complex in {line}"),
             ParseErrorKind::DirectMode => write!(f, "Can't use from direct mode"),
         }
@@ -74,7 +76,7 @@ impl ParseError {
                 Some(format!("expected {expected}, found {found:?}"))
             }
             ParseErrorKind::Misplaced(keyword) => Some(format!("unexpected {keyword:?}")),
-            ParseErrorKind::DefInsideBlock => Some("DEF inside a block".to_string()),
+            ParseErrorKind::Compile(_) => None,
             ParseErrorKind::TooDeep => Some("expression too complex".to_string()),
             ParseErrorKind::DirectMode => None,
         }
@@ -114,6 +116,7 @@ pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>
         in_def: false,
         in_command_def: false,
         loops: Vec::new(),
+        open: Vec::new(),
         depth: 0,
         failed: None,
         direct,
@@ -135,6 +138,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
         in_def: false,
         in_command_def: false,
         loops: Vec::new(),
+        open: Vec::new(),
         depth: 0,
         failed: None,
         direct: false,
@@ -160,12 +164,32 @@ struct Parser {
     depth: u32,
     /// The closing keywords of the loops being parsed, innermost last.
     loops: Vec<Keyword>,
+    /// The blocks being parsed, innermost last, but for DEF.
+    open: Vec<Open>,
     /// The error of the statement that did not parse. The parse then
     /// stands at the end of the input, and the blocks around it close
     /// without their closing keywords.
     failed: Option<ParseError>,
     /// Parsing a line typed in DIRECT mode.
     direct: bool,
+}
+
+/// A block being parsed. SmileBASIC 4 names the innermost one when the
+/// program or the DEF around it ends before the block closes, or a DEF
+/// starts inside it, by its error and the line its statement starts on.
+#[derive(Clone, Copy, Debug)]
+struct Open {
+    unclosed: ErrorKind,
+    at: Span,
+}
+
+/// An error with SmileBASIC 4's own code, placed at `at`.
+fn compile_error(kind: ErrorKind, at: Span) -> ParseError {
+    ParseError {
+        kind: ParseErrorKind::Compile(kind),
+        span: at,
+        stmt: Some(at),
+    }
 }
 
 /// Operator and its precedence level, 0 binding loosest.
@@ -339,31 +363,58 @@ impl Parser {
                 _ => {}
             }
             // No separator is needed between statements: `A=1B=2` is two.
-            stmts.push(self.statement(until.is_empty() && !self.in_def)?);
+            stmts.push(self.statement()?);
         }
     }
 
-    /// Like [`Parser::block`] but the closing keyword must be present and is consumed.
-    fn block_until(&mut self, end: Keyword, expected: &'static str) -> PResult<Vec<Stmt>> {
-        let body = self.block(&[end])?;
-        self.close(end, expected)?;
+    /// The body of `block`, up to its closing keyword `end`, which is
+    /// consumed.
+    fn block_until(&mut self, end: Keyword, block: Open) -> PResult<Vec<Stmt>> {
+        self.open.push(block);
+        let body = self.block(&[end]);
+        self.open.pop();
+        let mut body = body?;
+        self.close(end, block, &mut body);
         Ok(body)
     }
 
-    /// The keyword that closes a block, which a block cut short by a
+    /// The keyword that closes `block`, whose `body` the end of the
+    /// program or DEF cuts short without it. A block cut short by a
     /// statement that did not parse goes without.
-    fn close(&mut self, end: Keyword, expected: &'static str) -> PResult<()> {
-        match self.failed {
-            Some(_) => Ok(()),
-            None => self.expect_keyword(end, expected),
+    fn close(&mut self, end: Keyword, block: Open, body: &mut Vec<Stmt>) {
+        if self.failed.is_none() && !self.eat_keyword(end) {
+            self.cut(body, compile_error(block.unclosed, block.at));
         }
+    }
+
+    /// Stops the parse at the end of `body` with error `e`, which comes
+    /// when compiling gets there, after the statements before it.
+    fn cut(&mut self, body: &mut Vec<Stmt>, e: ParseError) {
+        if self.failed.is_some() {
+            return;
+        }
+        let Span { line, col } = self.span();
+        body.push(Stmt {
+            kind: StmtKind::Unparsed,
+            line,
+            col,
+        });
+        self.failed = Some(e);
+        self.pos = self.tokens.len() - 1;
+    }
+
+    /// The error for a DEF starting or ending inside a block: the
+    /// innermost block's.
+    fn inside_block(&self) -> Option<ParseError> {
+        let block = self.open.last()?;
+        Some(compile_error(block.unclosed, block.at))
     }
 
     /// A loop's body, during which its closing keyword inside another
     /// block means CONTINUE.
-    fn loop_body(&mut self, end: Keyword, expected: &'static str) -> PResult<Vec<Stmt>> {
+    fn loop_body(&mut self, end: Keyword, block: Open) -> PResult<Vec<Stmt>> {
         self.loops.push(end);
-        let body = self.block_until(end, expected);
+        let body = self.block_until(end, block);
         self.loops.pop();
         body
     }
@@ -378,7 +429,7 @@ impl Parser {
             if self.at_stmt_end() {
                 return Ok(stmts);
             }
-            stmts.push(self.statement(false)?);
+            stmts.push(self.statement()?);
         }
     }
 
@@ -386,11 +437,13 @@ impl Parser {
 
     /// A statement, or [`StmtKind::Unparsed`] with the parse stopped if it
     /// does not parse.
-    fn statement(&mut self, top_level: bool) -> PResult<Stmt> {
+    fn statement(&mut self) -> PResult<Stmt> {
         let start = self.span();
-        let kind = match self.nested(|p| p.statement_kind(top_level)) {
+        let open = self.open.len();
+        let kind = match self.nested(|p| p.statement_kind()) {
             Ok(kind) => kind,
             Err(e) => {
+                self.open.truncate(open);
                 // A block around the statement that failed can fail too on
                 // the way out; the statement's error is the one to give.
                 self.failed.get_or_insert(ParseError {
@@ -405,7 +458,7 @@ impl Parser {
         Ok(Stmt { kind, line, col })
     }
 
-    fn statement_kind(&mut self, top_level: bool) -> PResult<StmtKind> {
+    fn statement_kind(&mut self) -> PResult<StmtKind> {
         use Keyword as K;
         let span = self.span();
         let keyword = match self.peek().clone() {
@@ -452,18 +505,26 @@ impl Parser {
             }
             K::Input => self.input(false)?,
             K::Linput => self.input(true)?,
-            K::If => self.if_statement()?,
-            K::Case => self.case_statement()?,
-            K::For => self.for_statement()?,
+            K::If => self.if_statement(span)?,
+            K::Case => self.case_statement(span)?,
+            K::For => self.for_statement(span)?,
             K::While => {
                 let cond = self.expr()?;
+                let block = Open {
+                    unclosed: ErrorKind::WhileWithoutWend,
+                    at: span,
+                };
                 StmtKind::While {
                     cond,
-                    body: self.loop_body(K::Wend, "WEND")?,
+                    body: self.loop_body(K::Wend, block)?,
                 }
             }
             K::Repeat => {
-                let body = self.block_until(K::Until, "UNTIL")?;
+                let block = Open {
+                    unclosed: ErrorKind::RepeatWithoutUntil,
+                    at: span,
+                };
+                let body = self.block_until(K::Until, block)?;
                 let cond = match self.failed {
                     // Never compiled: the body stops first.
                     Some(_) => Expr::Int(0),
@@ -471,9 +532,15 @@ impl Parser {
                 };
                 StmtKind::Repeat { body, cond }
             }
-            K::Loop => StmtKind::Loop {
-                body: self.loop_body(K::Endloop, "ENDLOOP")?,
-            },
+            K::Loop => {
+                let block = Open {
+                    unclosed: ErrorKind::LoopWithoutEndloop,
+                    at: span,
+                };
+                StmtKind::Loop {
+                    body: self.loop_body(K::Endloop, block)?,
+                }
+            }
             K::Break => StmtKind::Break,
             K::Continue => StmtKind::Continue,
             // Inside an IF or another block of the loop, its closing
@@ -493,20 +560,29 @@ impl Parser {
             // follows is the next statement, never reached, and must be one.
             K::Return if !self.in_def || self.in_command_def => StmtKind::Return(None),
             K::Return => StmtKind::Return(Some(self.expr()?)),
+            // A DEF's END inside a block that does not stop at it, as
+            // after a one-line THEN.
+            K::End if self.in_def => {
+                return Err(self.inside_block().unwrap_or(ParseError {
+                    kind: ParseErrorKind::Misplaced(keyword),
+                    span,
+                    stmt: None,
+                }));
+            }
             K::End => StmtKind::End,
             K::Def | K::Common => {
-                if !top_level {
-                    return Err(ParseError {
-                        kind: ParseErrorKind::DefInsideBlock,
-                        span,
-                        stmt: None,
-                    });
+                // A block around it first, then a DEF.
+                if let Some(e) = self.inside_block() {
+                    return Err(e);
+                }
+                if self.in_def {
+                    return Err(compile_error(ErrorKind::NestedDef, span));
                 }
                 let common = keyword == K::Common;
                 if common {
                     self.expect_keyword(K::Def, "DEF")?;
                 }
-                StmtKind::Def(Box::new(self.def(common)?))
+                StmtKind::Def(Box::new(self.def(common, span)?))
             }
             K::Call => self.call_statement()?,
             K::Data => StmtKind::Data(self.comma_list(Self::expr)?),
@@ -525,6 +601,25 @@ impl Parser {
                 };
                 self.command(name)?
             }
+            // A closing keyword with no block of its own to close. ELSE
+            // and ELSEIF are a Syntax error on the line of the block they
+            // are in.
+            K::Else | K::Elseif => {
+                let at = self.open.last().map_or(span, |block| block.at);
+                return Err(ParseError {
+                    kind: ParseErrorKind::Misplaced(keyword),
+                    span: at,
+                    stmt: Some(at),
+                });
+            }
+            K::Next => return Err(compile_error(ErrorKind::NextWithoutFor, span)),
+            K::Wend => return Err(compile_error(ErrorKind::WendWithoutWhile, span)),
+            K::Until => return Err(compile_error(ErrorKind::UntilWithoutRepeat, span)),
+            K::Endloop => return Err(compile_error(ErrorKind::EndloopWithoutLoop, span)),
+            K::Endif => return Err(compile_error(ErrorKind::EndifWithoutIf, span)),
+            K::When => return Err(compile_error(ErrorKind::WhenWithoutCase, span)),
+            K::Otherwise => return Err(compile_error(ErrorKind::OtherwiseWithoutCase, span)),
+            K::Endcase => return Err(compile_error(ErrorKind::EndcaseWithoutCase, span)),
             other => {
                 return Err(ParseError {
                     kind: ParseErrorKind::Misplaced(other),
@@ -811,7 +906,14 @@ impl Parser {
         })
     }
 
-    fn if_statement(&mut self) -> PResult<StmtKind> {
+    /// IF, whose statement starts at `at`. Its blocks are named by that
+    /// line whatever branch they are in: ELSEIF and ELSE change only the
+    /// error.
+    fn if_statement(&mut self, at: Span) -> PResult<StmtKind> {
+        let then = Open {
+            unclosed: ErrorKind::ThenWithoutEndif,
+            at,
+        };
         let mut branches = Vec::new();
         let cond = self.expr()?;
         // `IF X GOTO @L` jumps without THEN, and is always one line.
@@ -825,7 +927,7 @@ impl Parser {
                     col,
                 }],
             ));
-            let otherwise = self.one_line_else()?;
+            let otherwise = self.one_line_else(at)?;
             return Ok(StmtKind::If {
                 branches,
                 otherwise,
@@ -833,43 +935,60 @@ impl Parser {
         }
         self.expect_keyword(Keyword::Then, "THEN")?;
         if *self.peek() != TokenKind::Newline {
-            branches.push((cond, self.one_line_branch()?));
+            branches.push((cond, self.one_line_branch(then)?));
             // A one-line IF can chain ELSEIF too.
             while self.eat_keyword(Keyword::Elseif) {
                 let cond = self.expr()?;
                 let mut body = self.then_or_goto()?;
-                body.extend(self.one_line_branch()?);
+                body.extend(self.one_line_branch(then)?);
                 branches.push((cond, body));
             }
-            let otherwise = self.one_line_else()?;
+            let otherwise = self.one_line_else(at)?;
             return Ok(StmtKind::If {
                 branches,
                 otherwise,
             });
         }
 
-        branches.push((
-            cond,
-            self.block(&[Keyword::Elseif, Keyword::Else, Keyword::Endif])?,
-        ));
+        let ends = [Keyword::Elseif, Keyword::Else, Keyword::Endif];
+        self.open.push(then);
+        let body = self.block(&ends);
+        branches.push((cond, body?));
         let mut otherwise = None;
         loop {
-            match self.advance() {
+            match self.peek() {
                 TokenKind::Keyword(Keyword::Elseif) => {
+                    self.advance();
                     let cond = self.expr()?;
                     let mut body = self.then_or_goto()?;
-                    body.extend(self.block(&[Keyword::Elseif, Keyword::Else, Keyword::Endif])?);
+                    body.extend(self.block(&ends)?);
                     branches.push((cond, body));
                 }
                 TokenKind::Keyword(Keyword::Else) => {
-                    otherwise = Some(self.block_until(Keyword::Endif, "ENDIF")?);
+                    self.advance();
+                    self.open.pop();
+                    let block = Open {
+                        unclosed: ErrorKind::ElseWithoutEndif,
+                        at,
+                    };
+                    otherwise = Some(self.block_until(Keyword::Endif, block)?);
+                    return Ok(StmtKind::If {
+                        branches,
+                        otherwise,
+                    });
+                }
+                TokenKind::Keyword(Keyword::Endif) => {
+                    self.advance();
                     break;
                 }
-                TokenKind::Keyword(Keyword::Endif) => break,
-                _ if self.failed.is_some() => break,
-                _ => return self.expected("ENDIF"),
+                _ => {
+                    let body = &mut branches.last_mut().expect("the THEN branch").1;
+                    self.cut(body, compile_error(then.unclosed, at));
+                    break;
+                }
             }
         }
+        self.open.pop();
         Ok(StmtKind::If {
             branches,
             otherwise,
@@ -891,7 +1010,7 @@ impl Parser {
     /// Statements after a one-line THEN or ELSE; a bare label first means
     /// GOTO, and the rest of the line still belongs to the branch
     /// (`THEN @L:ENDIF`, as SmileBASIC Debugger writes it).
-    fn one_line_branch(&mut self) -> PResult<Vec<Stmt>> {
+    fn one_line_branch(&mut self, block: Open) -> PResult<Vec<Stmt>> {
         let mut stmts = Vec::new();
         if let TokenKind::Label(name) = self.peek().clone() {
             let Span { line, col } = self.span();
@@ -902,43 +1021,53 @@ impl Parser {
                 col,
             });
         }
-        stmts.extend(self.line_stmts()?);
+        self.open.push(block);
+        let body = self.line_stmts();
+        self.open.pop();
+        stmts.extend(body?);
         Ok(stmts)
     }
 
-    fn one_line_else(&mut self) -> PResult<Option<Vec<Stmt>>> {
+    /// The ELSE of a one-line IF, which starts at `at`.
+    fn one_line_else(&mut self, at: Span) -> PResult<Option<Vec<Stmt>>> {
+        let block = Open {
+            unclosed: ErrorKind::ElseWithoutEndif,
+            at,
+        };
         let otherwise = if !self.eat_keyword(Keyword::Else) {
             None
         } else if *self.peek() == TokenKind::Newline {
             // `ELSE` followed by a newline opens a block that ENDIF closes.
-            return Ok(Some(self.block_until(Keyword::Endif, "ENDIF")?));
+            return Ok(Some(self.block_until(Keyword::Endif, block)?));
         } else {
-            Some(self.one_line_branch()?)
+            Some(self.one_line_branch(block)?)
         };
         self.eat_keyword(Keyword::Endif);
         Ok(otherwise)
     }
 
-    fn case_statement(&mut self) -> PResult<StmtKind> {
+    /// CASE, whose statement starts at `at`.
+    fn case_statement(&mut self, at: Span) -> PResult<StmtKind> {
         use Keyword as K;
+        let block = Open {
+            unclosed: ErrorKind::CaseWithoutEndcase,
+            at,
+        };
         let subject = self.expr()?;
-        let mut arms: Vec<WhenArm> = Vec::new();
-        let leading = self.block(&[K::When, K::Otherwise, K::Endcase])?;
-        if self.failed.is_some() && !leading.is_empty() {
-            // Kept, to give its error as it compiles.
-            return Ok(StmtKind::Case {
-                subject,
-                arms,
-                otherwise: Some(leading),
-            });
+        // WHEN or OTHERWISE comes next, on this line or a later one.
+        while matches!(self.peek(), TokenKind::Newline | TokenKind::Colon) {
+            self.advance();
         }
-        if !leading.is_empty() {
+        if !matches!(self.peek(), TokenKind::Keyword(K::When | K::Otherwise)) {
             return self.expected("WHEN");
         }
+        let mut arms: Vec<WhenArm> = Vec::new();
         let mut otherwise = None;
+        self.open.push(block);
         loop {
-            match self.advance() {
+            match self.peek() {
                 TokenKind::Keyword(K::When) => {
+                    self.advance();
                     let value = self.expr()?;
                     let body = self.block(&[K::When, K::Otherwise, K::Endcase])?;
                     match arms.last_mut() {
@@ -953,14 +1082,27 @@ impl Parser {
                     }
                 }
                 TokenKind::Keyword(K::Otherwise) => {
-                    otherwise = Some(self.block_until(K::Endcase, "ENDCASE")?);
+                    self.advance();
+                    self.open.pop();
+                    otherwise = Some(self.block_until(K::Endcase, block)?);
+                    return Ok(StmtKind::Case {
+                        subject,
+                        arms,
+                        otherwise,
+                    });
+                }
+                TokenKind::Keyword(K::Endcase) => {
+                    self.advance();
                     break;
                 }
-                TokenKind::Keyword(K::Endcase) => break,
-                _ if self.failed.is_some() => break,
-                _ => return self.expected("ENDCASE"),
+                _ => {
+                    let body = &mut arms.last_mut().expect("a WHEN comes first").body;
+                    self.cut(body, compile_error(block.unclosed, at));
+                    break;
+                }
             }
         }
+        self.open.pop();
         Ok(StmtKind::Case {
             subject,
             arms,
@@ -968,7 +1110,8 @@ impl Parser {
         })
     }
 
-    fn for_statement(&mut self) -> PResult<StmtKind> {
+    /// FOR, whose statement starts at `at`.
+    fn for_statement(&mut self, at: Span) -> PResult<StmtKind> {
         let var = self.lvalue()?;
         self.expect(&TokenKind::Assign, "'='")?;
         let from = self.expr()?;
@@ -980,7 +1123,11 @@ impl Parser {
         } else {
             None
         };
-        let body = self.loop_body(Keyword::Next, "NEXT")?;
+        let block = Open {
+            unclosed: ErrorKind::ForWithoutNext,
+            at,
+        };
+        let body = self.loop_body(Keyword::Next, block)?;
         // NEXT may name a variable, which is not checked. Anything else starts the next statement (`NEXT?I`).
         if matches!(self.peek(), TokenKind::Ident { .. }) {
             self.lvalue()?;
@@ -1092,7 +1239,8 @@ impl Parser {
         Ok(name)
     }
 
-    fn def(&mut self, common: bool) -> PResult<Def> {
+    /// DEF, whose statement starts at `at`.
+    fn def(&mut self, common: bool, at: Span) -> PResult<Def> {
         let name = self.var_name()?;
         let is_function = self.eat(&TokenKind::LParen);
         let (params, outs) = if is_function {
@@ -1113,8 +1261,12 @@ impl Parser {
         let body = self.block(&[]);
         self.in_def = false;
         self.in_command_def = false;
-        let body = body?;
-        self.close(Keyword::End, "END")?;
+        let mut body = body?;
+        let block = Open {
+            unclosed: ErrorKind::DefWithoutEnd,
+            at,
+        };
+        self.close(Keyword::End, block, &mut body);
         Ok(Def {
             name,
             common,
@@ -1607,13 +1759,10 @@ mod tests {
         };
         assert_eq!(branches.len(), 2);
         assert_eq!(otherwise.unwrap().len(), 1);
-        assert!(matches!(
+        assert_eq!(
             err("IF A THEN\nPRINT"),
-            ParseErrorKind::Expected {
-                expected: "ENDIF",
-                ..
-            }
-        ));
+            ParseErrorKind::Compile(ErrorKind::ThenWithoutEndif)
+        );
     }
 
     #[test]
@@ -1657,7 +1806,10 @@ mod tests {
         assert!(
             matches!(one("LOOP\nBREAK\nENDLOOP"), StmtKind::Loop { body } if body[0].kind == StmtKind::Break)
         );
-        assert_eq!(err("WEND"), ParseErrorKind::Misplaced(Keyword::Wend));
+        assert_eq!(
+            err("WEND"),
+            ParseErrorKind::Compile(ErrorKind::WendWithoutWhile)
+        );
     }
 
     #[test]
@@ -1711,9 +1863,14 @@ mod tests {
             (&Params::Variadic, &Params::Variadic)
         );
 
+        // A DEF inside a block is the block's error.
         assert_eq!(
             err("IF A THEN\nDEF F\nEND\nENDIF"),
-            ParseErrorKind::DefInsideBlock
+            ParseErrorKind::Compile(ErrorKind::ThenWithoutEndif)
+        );
+        assert_eq!(
+            err("DEF F\nDEF G\nEND\nEND"),
+            ParseErrorKind::Compile(ErrorKind::NestedDef)
         );
         // END outside DEF ends the program.
         assert_eq!(one("END"), StmtKind::End);

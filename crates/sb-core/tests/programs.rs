@@ -1251,8 +1251,8 @@ fn loop_ends_inside_blocks_continue() {
     );
     // Only the innermost loop's.
     assert_eq!(
-        error("FOR I=0 TO 1\nWHILE 1\nIF 1 THEN NEXT\nWEND\nNEXT").0,
-        ErrorKind::SyntaxError
+        error("FOR I=0 TO 1\nWHILE 1\nIF 1 THEN NEXT\nWEND\nNEXT"),
+        (ErrorKind::NextWithoutFor, 3)
     );
 }
 
@@ -1820,7 +1820,7 @@ fn compile_errors_before_a_syntax_error_come_first() {
     assert_eq!(at("FOR I=0 TO 1\n?1\n?(\nNEXT").1, 3);
     assert_eq!(at("GOTO @L:?(:@L").0, ErrorKind::SyntaxError);
     assert_eq!(at("DEF F\n?1\n?(\nEND\nF").0, ErrorKind::SyntaxError);
-    assert_eq!(at("FOR I=0 TO 1\n?1").0, ErrorKind::SyntaxError);
+    assert_eq!(at("FOR I=0 TO 1\n?1"), (ErrorKind::ForWithoutNext, 1, 1));
     // Cut anywhere, a program compiles or gives an error, without a panic.
     let src = "DEF F(A)\nIF A THEN\n?A:RETURN A*2\nELSEIF A<0 THEN @L ELSE\nCASE A\nWHEN 1:GOTO \"@L\"\nENDCASE\nENDIF\nEND\n@L:VAR B[]=[1,2]:FOR I=0 TO 9 STEP 2:BREAK:NEXT\nREPEAT:WHILE 1:LOOP:READ X:DATA 1:ENDLOOP:WEND:UNTIL 1:RESTORE @L";
     let host = TextHost::default();
@@ -1832,6 +1832,70 @@ fn compile_errors_before_a_syntax_error_come_first() {
     // UNVERIFIED: SmileBASIC 4 reads tokens as it compiles, and may give
     // Undefined constant here.
     assert_eq!(at("?#ZZ:?&H100000000").0, ErrorKind::Overflow);
+}
+
+/// A block that does not close is named by its own error and the line
+/// it starts on, the innermost one first; a closing keyword with no
+/// block to close by its own error, on its line.
+#[test]
+fn block_errors() {
+    use ErrorKind as E;
+    let at = |src: &str| {
+        let e = run(src).expect_err(src);
+        (e.kind, e.line)
+    };
+    assert_eq!(at("?1\nFOR I=0 TO 1\n?2"), (E::ForWithoutNext, 2));
+    assert_eq!(at("?1\nWHILE 0\n?2"), (E::WhileWithoutWend, 2));
+    assert_eq!(at("REPEAT\n?2"), (E::RepeatWithoutUntil, 1));
+    assert_eq!(at("?1\nLOOP"), (E::LoopWithoutEndloop, 2));
+    assert_eq!(at("?1\nCASE 1\nWHEN 1\n?2"), (E::CaseWithoutEndcase, 2));
+    assert_eq!(at("?1\nCASE 1\nOTHERWISE"), (E::CaseWithoutEndcase, 2));
+    assert_eq!(at("?1\nIF 1 THEN\n?2"), (E::ThenWithoutEndif, 2));
+    assert_eq!(at("IF 1 THEN\nELSEIF 0 THEN\n?2"), (E::ThenWithoutEndif, 1));
+    // ELSE names the IF's line too.
+    assert_eq!(at("?1\nIF 1 THEN\nELSE\n?2"), (E::ElseWithoutEndif, 2));
+    assert_eq!(at("IF 1 THEN ?1 ELSE\n?2"), (E::ElseWithoutEndif, 1));
+    assert_eq!(at("?1\nDEF F\n?2"), (E::DefWithoutEnd, 2));
+    assert_eq!(
+        at("FOR I=0 TO 1\nWHILE 1\nIF 1 THEN\n?1"),
+        (E::ThenWithoutEndif, 3)
+    );
+    // A DEF ending or starting inside a block names the block.
+    assert_eq!(at("DEF F\nFOR I=0 TO 1\nEND\n?1"), (E::ForWithoutNext, 2));
+    assert_eq!(at("DEF F\nIF 1 THEN END"), (E::ThenWithoutEndif, 2));
+    assert_eq!(at("WHILE 1\nDEF F\nEND\nWEND"), (E::WhileWithoutWend, 1));
+    assert_eq!(at("IF 1 THEN DEF F"), (E::ThenWithoutEndif, 1));
+    assert_eq!(at("?1\nDEF F\nDEF G\nEND\nEND"), (E::NestedDef, 3));
+    // Closing keywords with nothing to close.
+    assert_eq!(at("?1\nNEXT"), (E::NextWithoutFor, 2));
+    assert_eq!(at("WHILE 1\nNEXT\nWEND"), (E::NextWithoutFor, 2));
+    assert_eq!(at("WEND"), (E::WendWithoutWhile, 1));
+    assert_eq!(at("FOR I=0 TO 1\nWEND\nNEXT"), (E::WendWithoutWhile, 2));
+    assert_eq!(at("UNTIL 1"), (E::UntilWithoutRepeat, 1));
+    // UNTIL closes only the innermost block.
+    assert_eq!(
+        at("REPEAT\nIF 1 THEN\nUNTIL 1\nENDIF"),
+        (E::UntilWithoutRepeat, 3)
+    );
+    assert_eq!(at("ENDLOOP"), (E::EndloopWithoutLoop, 1));
+    assert_eq!(at("?1\nENDIF"), (E::EndifWithoutIf, 2));
+    assert_eq!(at("IF 1 THEN\nFOR I=0 TO 1\nENDIF"), (E::EndifWithoutIf, 3));
+    assert_eq!(at("WHEN 1"), (E::WhenWithoutCase, 1));
+    assert_eq!(at("OTHERWISE"), (E::OtherwiseWithoutCase, 1));
+    assert_eq!(at("ENDCASE"), (E::EndcaseWithoutCase, 1));
+    // A stray ELSE is a Syntax error on the line of the block it is in.
+    assert_eq!(at("ELSE"), (E::SyntaxError, 1));
+    assert_eq!(at("IF 1 THEN\nFOR I=0 TO 1\nELSE"), (E::SyntaxError, 2));
+    assert_eq!(at("IF 1 THEN\nELSE\nELSEIF 1 THEN"), (E::SyntaxError, 1));
+    // CASE takes WHEN or OTHERWISE first, named by its line.
+    assert_eq!(at("CASE 1\nENDCASE"), (E::SyntaxError, 2));
+    assert_eq!(output("CASE 1\n\nWHEN 1:?1\nENDCASE"), "1\n");
+    // The statements before the end compile first.
+    assert_eq!(at("FOR I=0 TO 1\n?#ZZ").0, E::UndefinedConstant);
+    assert_eq!(at("DEF F\n?#ZZ\nFOR I=0 TO 1\nEND").0, E::UndefinedConstant);
+    // None of it runs: it is an error as the program compiles.
+    let host = TextHost::default();
+    assert!(sb_core::compile("?1\nFOR I=0 TO 1", &host).is_err());
 }
 
 /// PUSH and UNSHIFT need a block's new size beside the old whenever it has
