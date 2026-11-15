@@ -1839,6 +1839,12 @@ Expected but not yet seen on hardware:
   `{X={Y=C}}`, is `MML:Illegal macro name` (88). Defining a macro again,
   `{X=C}{X=D}`, is `MML:Macro already defined` (86), and a name of over 256
   characters `MML:Macro name is too long` (89). (Not yet seen on hardware.)
+- `L`, `Q`, `K`, `(` and `)` take no MML variable, as `O` takes none:
+  `L$0` is `MML:Can't use variable` (90), placed just after the letter. `V`,
+  `P` and `T` take one. `(` and `)` check the volume they come to, which starts
+  at 127 in each channel, not their step: `V100(50` and `(` with no `V` before
+  it are `MML:Volume out of range` (94), while `V10(-10` passes. After `V$1`
+  the steps are not checked, but after `V$0` a `)` is out of range. (Not yet seen on hardware.)
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so

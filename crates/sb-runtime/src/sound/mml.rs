@@ -12,6 +12,9 @@ pub const CHANNELS: usize = 16;
 pub const WHOLE: u32 = 192;
 /// How deep macros may use other macros.
 const MACRO_DEPTH: usize = 16;
+/// How SmileBASIC 4's MML parser keeps `V$0`: as this, above any
+/// volume.
+const VARIABLE_VOLUME: i32 = 0x6000_0000;
 /// The longest name a macro may have.
 const MACRO_NAME_CHARS: usize = 256;
 /// Characters macros may copy for one song, counting a macro's whole body
@@ -331,6 +334,9 @@ struct Parser {
     lengths: [Option<u32>; CHANNELS],
     /// Each channel's `[` not yet closed.
     repeats: [u32; CHANNELS],
+    /// Each channel's volume as the text sets it, for the steps of `(` and
+    /// `)`; after `V` with a variable, SmileBASIC 4's encoding of it.
+    volumes: [u32; CHANNELS],
     /// A bit for each channel used so far; channel 0 from the start.
     chosen: u16,
     /// @MP, @MA or @ML has come since the last `:`.
@@ -435,6 +441,39 @@ impl Parser {
             Some(n) => Ok(n),
             None => Err(fail(self.start(at), ErrorKind::IllegalMml)),
         }
+    }
+
+    /// Refuses a variable as the value of the command just read, which
+    /// ends at `after`, at its end, as `O` does.
+    fn no_variable(&mut self, after: usize) -> Result<(), Error> {
+        self.skip_space();
+        match self.peek() {
+            Some('$') => Err(fail(self.end_of(after), ErrorKind::MmlCantUseVariable)),
+            _ => Ok(()),
+        }
+    }
+
+    /// `(` (`up`) or `)`, by a number or 1. SmileBASIC 4 checks the volume
+    /// it comes to, not the step: `V100(50` is out of range. After `V`
+    /// with a variable it checks nothing, as the variable's encoding,
+    /// `$n` as `&H60000000` plus n * `&H1000000`, is no volume.
+    fn step_volume(&mut self, up: bool) -> Result<Num, Error> {
+        let after = self.at;
+        self.no_variable(after)?;
+        let by = match self.opt_num(i32::MIN..=i32::MAX, ErrorKind::IllegalMml)? {
+            Some(Num::Lit(n)) => n,
+            _ => 1,
+        };
+        let volume = &mut self.volumes[self.channel];
+        let v = match up {
+            true => volume.wrapping_add(by as u32),
+            false => volume.wrapping_sub(by as u32),
+        };
+        if (v as i32) < VARIABLE_VOLUME && v > 127 {
+            return Err(fail(self.end_of(after), ErrorKind::MmlVolumeOutOfRange));
+        }
+        *volume = v;
+        Ok(Num::Lit(by))
     }
 
     /// `O`'s octave, which `<` and `>` count from. It takes a number only,
@@ -755,6 +794,7 @@ impl Parser {
             }
             '|' => self.chord()?,
             'L' => {
+                self.no_variable(self.at)?;
                 let len = self.len()?;
                 self.lengths[self.channel] = self.len_ticks(len);
                 Cmd::Length(len)
@@ -774,20 +814,23 @@ impl Parser {
             }
             'T' => Cmd::Tempo(self.num(1..=1023, ErrorKind::MmlTempoOutOfRange)?),
             '@' => self.at_command(at)?,
-            'V' => Cmd::Volume(self.num(0..=127, ErrorKind::MmlVolumeOutOfRange)?),
-            // UNVERIFIED: SmileBASIC 4 checks the volume these reach, with
-            // the same error.
-            '(' | ')' => {
-                let by = self.opt_num(0..=127, ErrorKind::MmlVolumeOutOfRange)?;
-                let by = by.unwrap_or(Num::Lit(1));
-                match c {
-                    '(' => Cmd::Louder(by),
-                    _ => Cmd::Softer(by),
-                }
+            'V' => {
+                let v = self.num(0..=127, ErrorKind::MmlVolumeOutOfRange)?;
+                self.volumes[self.channel] = match v {
+                    Num::Lit(n) => n as u32,
+                    Num::Var(n) => VARIABLE_VOLUME as u32 + (u32::from(n) << 24),
+                };
+                Cmd::Volume(v)
             }
+            '(' => Cmd::Louder(self.step_volume(true)?),
+            ')' => Cmd::Softer(self.step_volume(false)?),
             'P' => Cmd::Pan(self.num(0..=127, ErrorKind::MmlPanpotOutOfRange)?),
-            'Q' => Cmd::Gate(self.num(0..=32, ErrorKind::MmlGateTimeOutOfRange)?),
+            'Q' => {
+                self.no_variable(self.at)?;
+                Cmd::Gate(self.num(0..=32, ErrorKind::MmlGateTimeOutOfRange)?)
+            }
             'K' => {
+                self.no_variable(self.at)?;
                 let key = self.num(-115..=115, ErrorKind::MmlTransposeOutOfRange)?;
                 match self.in_channel {
                     true => Cmd::Key(key),
@@ -950,6 +993,7 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
         octaves: [4; CHANNELS],
         lengths: [Some(WHOLE / 4); CHANNELS],
         repeats: [0; CHANNELS],
+        volumes: [127; CHANNELS],
         chosen: 1,
         lfo_given: false,
     };
@@ -1273,7 +1317,8 @@ mod tests {
             ("L192C.", Some(6)),
             ("L192:1C.", None),
             ("L96.C.", Some(6)),
-            ("$0=4L$0C.", None),
+            // L takes no variable either.
+            ("$0=4L$0C.", Some(5)),
         ] {
             assert_eq!(check(mml).err(), at, "{mml}");
         }
@@ -1334,6 +1379,15 @@ mod tests {
             ("[C]256", MmlRepeatCountOutOfRange),
             (":$0C", MmlCantUseVariable),
             ("$0=9O$0C", MmlCantUseVariable),
+            ("$0=4L$0C", MmlCantUseVariable),
+            ("$0=4Q$0C", MmlCantUseVariable),
+            ("$0=4K$0C", MmlCantUseVariable),
+            ("$0=4V50($0C", MmlCantUseVariable),
+            ("$0=4V50)$0C", MmlCantUseVariable),
+            ("V100(50C", MmlVolumeOutOfRange),
+            ("(C", MmlVolumeOutOfRange),
+            ("V0)C", MmlVolumeOutOfRange),
+            ("V0(-1C", MmlVolumeOutOfRange),
             ("K116C", MmlTransposeOutOfRange),
             ("O10C", MmlOctaveOutOfRange),
             ("O9<C", MmlOctaveOutOfRange),
@@ -1356,6 +1410,18 @@ mod tests {
             assert_eq!(super::check(mml).map_err(|e| e.kind), Err(kind), "{mml}");
         }
         assert_eq!(check(":0C:0D"), Ok(()));
+        // The volume steps count from V, 127 at first, in each channel.
+        for mml in ["V100(27C", "V100)100C", ")127(127C", "V0:1)C", "V10(-10C"] {
+            assert_eq!(check(mml), Ok(()), "{mml}");
+        }
+        // After V with a variable, no step is checked but one that comes
+        // back below SmileBASIC 4's encoding of it, which counts the
+        // variable's number.
+        assert_eq!(check("$0=1V$0(1000C"), Ok(()));
+        assert_eq!(check("V$1)C"), Ok(()));
+        assert_eq!(check("$0=1V$0)C"), Err(8));
+        assert_eq!(check("V100(50C"), Err(5));
+        assert_eq!(check("P$0V$0T$0C"), Ok(()));
         // A macro's name takes 256 characters.
         let long = |n: usize| format!("{{{0}=C}}{{{0}}}", "A".repeat(n));
         assert_eq!(check(&long(256)), Ok(()));

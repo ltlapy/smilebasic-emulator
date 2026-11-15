@@ -663,12 +663,13 @@ impl Track {
                 }
                 Cmd::Louder(n) | Cmd::Softer(n) => {
                     let step = self.var(*n);
+                    // After `V` with a variable, any step passes the parser.
                     let step = if matches!(cmds[pc], Cmd::Softer(_)) {
-                        -step
+                        step.saturating_neg()
                     } else {
                         step
                     };
-                    let v = (self.channels[c].volume + step).clamp(0, 127);
+                    let v = (self.channels[c].volume.saturating_add(step)).clamp(0, 127);
                     self.channels[c].volume = v;
                     self.synth(|s| s.volume(c, v));
                 }
