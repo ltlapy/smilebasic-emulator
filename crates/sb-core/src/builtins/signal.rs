@@ -130,19 +130,20 @@ pub(super) fn ifft(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 
 /// FFTWFN array, type: fills the array with `#WFRECT`, `#WFHAMM`,
 /// `#WFHANN` or `#WFBLKM`, in the periodic forms that divide by the
-/// length, which must be a power of two (both checked on hardware).
+/// length, which must be a power of two (both checked on hardware). The
+/// length is looked at before the type's range.
 pub(super) fn fftwfn(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let array = number_array(&args[0])?;
     let kind = args[1].to_int()?;
-    if !(0..=3).contains(&kind) {
-        return Err(Error::with_detail(ErrorKind::OutOfRange, "window type"));
-    }
     let n = array.borrow().len();
     if !n.is_power_of_two() {
         return Err(Error::with_detail(
             ErrorKind::IllegalFunctionCall,
             "array length",
         ));
+    }
+    if !(0..=3).contains(&kind) {
+        return Err(Error::with_detail(ErrorKind::OutOfRange, "window type").of_value(&args[1]));
     }
     let span = n as f64;
     let values: Vec<f64> = (0..n)
@@ -160,15 +161,16 @@ pub(super) fn fftwfn(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     Ok(vec![])
 }
 
-fn coefficient_array(v: &Value) -> Result<ArrayRef> {
-    let a = number_array(v)?;
+/// The coefficient array `a`, argument `v`, needs room for all of them.
+fn check_coefficients(a: &ArrayRef, v: &Value) -> Result<()> {
     if a.borrow().len() < COEFFICIENTS {
         return Err(Error::with_detail(
             ErrorKind::IllegalFunctionCall,
             "fewer than 13 coefficients",
-        ));
+        )
+        .of_value(v));
     }
-    Ok(a)
+    Ok(())
 }
 
 /// The channels of a sound array: one for a 1D array, two for a 2D one
@@ -190,12 +192,12 @@ fn channels(a: &Array) -> Result<(usize, usize)> {
 // Each four is in[t-1], in[t-2], out[t-1], out[t-2]. Output and input
 // must have as many channels. An output shorter than the input is an
 // error naming the input; in a longer one only the input's length is
-// filtered, and the rest is left alone.
+// filtered, and the rest is left alone. The coefficients' number is looked
+// at after the channels.
 pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let output = number_array(&args[0])?;
     let input = number_array(&args[1])?;
-    let params = coefficient_array(&args[2])?;
-    let mut fp = reals(&params.borrow())?;
+    let params = number_array(&args[2])?;
     let (samples, ch, len, out_len) = {
         let input = input.borrow();
         let (ch, len) = channels(&input)?;
@@ -213,8 +215,10 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
             )
             .of_value(&args[1]));
         }
+        check_coefficients(&params, &args[2])?;
         (reals(&input)?, ch, len, out_len)
     };
+    let mut fp = reals(&params.borrow())?;
     let mut result = vec![0.0; samples.len()];
     for c in 0..ch {
         let h = 5 + 4 * c;
@@ -246,13 +250,18 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 /// a0, with the band-pass at a 0 dB peak and shelves taking Q (all eight
 /// types match hardware to five places). Elements 5 to 12 are left alone.
 // Checked on hardware: the gain is given for types 5 to 7 only, else
-// Wrong number of arguments, checked first; a zero rate or Q is an Illegal
-// function call.
+// Wrong number of arguments naming the type, checked before the values;
+// a zero rate or Q is an Illegal function call naming it (TEST62). The
+// types of all the arguments come before the array's length.
 pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
-    let params = coefficient_array(&args[0])?;
+    let params = number_array(&args[0])?;
+    if let Some(v) = (args[1..].iter()).find(|v| !v.is_number() && !matches!(v, Value::Default)) {
+        return Err(mismatch(v));
+    }
+    check_coefficients(&params, &args[0])?;
     let kind = args[1].to_int()?;
     if !(0..=7).contains(&kind) {
-        return Err(Error::with_detail(ErrorKind::OutOfRange, "filter type"));
+        return Err(Error::with_detail(ErrorKind::OutOfRange, "filter type").of_value(&args[1]));
     }
     let rate = args[2].to_real()?;
     let cutoff = args[3].to_real()?;
@@ -260,19 +269,17 @@ pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let gain = match (opt(args, 5), kind >= 5) {
         (Some(v), true) => v.to_real()?,
         (None, false) => 0.0,
-        _ => return Err(ErrorKind::WrongNumberOfArguments.into()),
+        _ => return Err(Error::new(ErrorKind::WrongNumberOfArguments).of_value(&args[1])),
     };
     if rate == 0.0 {
-        return Err(Error::with_detail(
-            ErrorKind::IllegalFunctionCall,
-            "sampling rate",
-        ));
+        return Err(
+            Error::with_detail(ErrorKind::IllegalFunctionCall, "sampling rate").of_value(&args[2]),
+        );
     }
     if q == 0.0 {
-        return Err(Error::with_detail(
-            ErrorKind::IllegalFunctionCall,
-            "Q or bandwidth",
-        ));
+        return Err(
+            Error::with_detail(ErrorKind::IllegalFunctionCall, "Q or bandwidth").of_value(&args[4]),
+        );
     }
     let w0 = 2.0 * PI * cutoff / rate;
     let (sin, cos) = w0.sin_cos();

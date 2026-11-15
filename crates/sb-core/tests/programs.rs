@@ -38,14 +38,51 @@ fn error(source: &str) -> (ErrorKind, u32) {
 
 #[test]
 fn bqparam_checks_the_gain_count_first() {
-    let kind = |src: &str| run(src).err().map(|e| e.kind);
-    assert_eq!(
-        kind("DIM F[13]:BQPARAM F,5,0,1,1"),
-        Some(ErrorKind::WrongNumberOfArguments)
-    );
+    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
+    let args = ErrorKind::WrongNumberOfArguments;
+    let illegal = ErrorKind::IllegalFunctionCall;
+    // TEST62: (BQPARAM:2) and (BQPARAM:5).
+    assert_eq!(kind("DIM F[13]:BQPARAM F,5,0,1,1"), Some((args, Some(1))));
     assert_eq!(
         kind("DIM F[13]:BQPARAM F,0,44100,1,0"),
-        Some(ErrorKind::IllegalFunctionCall)
+        Some((illegal, Some(4)))
+    );
+    // The rate, the type's range, and the
+    // types of the arguments before the array's length.
+    assert_eq!(
+        kind("DIM F[13]:BQPARAM F,0,0,1,1"),
+        Some((illegal, Some(2)))
+    );
+    let range = ErrorKind::OutOfRange;
+    assert_eq!(
+        kind("DIM F[13]:BQPARAM F,8,8000,1,1"),
+        Some((range, Some(1)))
+    );
+    assert_eq!(
+        kind("DIM F[13]:BQPARAM F,-1,8000,1,1"),
+        Some((range, Some(1)))
+    );
+    assert_eq!(
+        kind("DIM F[12]:BQPARAM F,0,0,1,1"),
+        Some((illegal, Some(0)))
+    );
+    let mismatch = ErrorKind::TypeMismatch;
+    assert_eq!(
+        kind("DIM F[12]:BQPARAM F,0,0,1,\"\""),
+        Some((mismatch, Some(4)))
+    );
+    // FFTWFN looks at the length before the type's range.
+    assert_eq!(kind("DIM F[8]:FFTWFN F,4"), Some((range, Some(1))));
+    assert_eq!(kind("DIM F[8]:FFTWFN F,-1"), Some((range, Some(1))));
+    assert_eq!(kind("DIM F[6]:FFTWFN F,4"), Some((illegal, None)));
+    // BIQUAD the channels before the number of coefficients.
+    assert_eq!(
+        kind("DIM A[2,4],B[4],F[12]:BIQUAD A,B,F"),
+        Some((illegal, None))
+    );
+    assert_eq!(
+        kind("DIM A[4],B[4],F[12]:BIQUAD A,B,F"),
+        Some((illegal, Some(2)))
     );
 }
 
