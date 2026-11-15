@@ -2470,6 +2470,12 @@ fn builtins_check_their_out_count_as_they_run() {
     // The number of arguments first.
     wrong(&format!("{arrays}ABS OUT Q,R"), args);
     wrong(&format!("{arrays}PUSH A OUT Q"), args);
+    // SORT and RESIZE look at there being any arguments, then at the OUT
+    // count.
+    wrong(&format!("{arrays}SORT OUT Q"), args);
+    wrong(&format!("{arrays}RSORT OUT Q"), args);
+    wrong(&format!("{arrays}RESIZE OUT Q"), args);
+    wrong(&format!("{arrays}RESIZE A,1,1,1,1,1 OUT Q"), outs);
     // The OUT count first.
     wrong(&format!("{arrays}MID$ S$ OUT Q,R"), outs);
     wrong(&format!("{arrays}FILL A OUT Q"), outs);

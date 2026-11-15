@@ -3049,7 +3049,7 @@ impl Vm {
         }
         let outs = want.count();
         let outs_taken = b.outs.takes(outs);
-        if !outs_taken && b.outs.first {
+        if !outs_taken && b.outs.first && !(b.outs.none_first && args.is_empty()) {
             return Err(Error::new(ErrorKind::WrongNumberOfOutArguments).of_command(b.name));
         }
         if !b.accepts(args.len()) {

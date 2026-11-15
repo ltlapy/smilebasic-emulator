@@ -86,6 +86,9 @@ pub struct Outs {
     /// with two forms then takes the form from it, so arguments that only
     /// the other form takes are a `Wrong number of arguments`.
     pub first: bool,
+    /// With [`Outs::first`], no arguments at all are looked at before the
+    /// count.
+    pub none_first: bool,
 }
 
 impl Outs {
@@ -97,6 +100,7 @@ impl Outs {
     pub const OWN: Outs = Outs {
         counts: u16::MAX,
         first: false,
+        none_first: false,
     };
 
     pub const fn of(counts: &[u8]) -> Outs {
@@ -109,6 +113,7 @@ impl Outs {
         Outs {
             counts: mask,
             first: false,
+            none_first: false,
         }
     }
 
@@ -116,6 +121,16 @@ impl Outs {
     pub const fn first(self) -> Outs {
         Outs {
             first: true,
+            ..self
+        }
+    }
+
+    /// The same, looked at before the arguments but after there being
+    /// any: SORT OUT Q is a `Wrong number of arguments`.
+    pub const fn first_unless_none(self) -> Outs {
+        Outs {
+            first: true,
+            none_first: true,
             ..self
         }
     }
@@ -209,13 +224,13 @@ table! {
     "FORMAT$" 1..=N Function format;
     "COPY" 1..=3 Function arrays::copy_fn, Outs::FUNCTION.first();
     "COPY" 2..=5 Data arrays::copy, Outs::NONE.first();
-    "SORT" 1..=10 Command arrays::sort_up, Outs::NONE.first();
-    "RSORT" 1..=10 Command arrays::sort_down, Outs::NONE.first();
+    "SORT" 1..=10 Command arrays::sort_up, Outs::NONE.first_unless_none();
+    "RSORT" 1..=10 Command arrays::sort_down, Outs::NONE.first_unless_none();
     "INSERT" 2..=4 Command arrays::insert, Outs::NONE.first();
     "REMOVE" 2..=3 Command arrays::remove, Outs::NONE.first();
     "FIND" 2..=2 Function arrays::find_fn;
     "FIND" 2..=2 Command arrays::find, Outs::OWN;
-    "RESIZE" 2..=5 Command arrays::resize, Outs::NONE.first();
+    "RESIZE" 2..=5 Command arrays::resize, Outs::NONE.first_unless_none();
     "ARYOP" 4..=5 Command arrays::aryop, Outs::NONE.first();
     "RINGCOPY" 3..=5 Command arrays::ringcopy, Outs::of(&[0, 1]).first();
     "CLASSIFY" 1..=1 Function signal::classify;
