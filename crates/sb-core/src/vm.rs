@@ -265,16 +265,31 @@ struct Frame {
     /// Where its variables start in [`Vm::locals`]. They go on to the next
     /// frame's, or to the end.
     base: usize,
-    /// Arguments of a `*` DEF.
-    args: Vec<Value>,
-    /// Results of an `OUT *` DEF.
-    outs: Vec<Value>,
+    /// What a DEF declared with `*` keeps apart from its variables.
+    variadic: Option<Box<Variadic>>,
     want: Want,
     return_pc: usize,
     gosub_base: usize,
     stack_base: usize,
     /// How much of [`STACK_SIZE`] the DEF calls so far take, this one too.
     stack_to: usize,
+}
+
+/// The arguments of a `*` DEF and the results of an `OUT *` one.
+#[derive(Default)]
+struct Variadic {
+    args: Vec<Value>,
+    outs: Vec<Value>,
+}
+
+impl Frame {
+    fn args(&self) -> &[Value] {
+        self.variadic.as_ref().map_or(&[], |v| &v.args)
+    }
+
+    fn outs(&self) -> &[Value] {
+        self.variadic.as_ref().map_or(&[], |v| &v.outs)
+    }
 }
 
 /// A program slot's program with its variables. The VM keeps the running
@@ -1729,7 +1744,7 @@ impl Vm {
                         break;
                     }
                     let frame = frames.pop().expect("checked above");
-                    stack.truncate(frame.stack_base);
+                    cut(stack, frame.stack_base);
                     if info.is_function {
                         // A bare RETURN in a function gives no value.
                         stack.push(Value::Default);
@@ -1737,9 +1752,8 @@ impl Vm {
                         let start = frame.base + start;
                         move_values(&mut locals[start..start + given], stack);
                     }
-                    locals.truncate(frame.base);
+                    cut(locals, frame.base);
                     next = frame.return_pc;
-                    drop_frame(frame);
                     (calls, gosub_base, base) = innermost(frames, locals);
                     vars = [&mut globals[..], &mut locals[base..]];
                 }
@@ -1777,8 +1791,7 @@ impl Vm {
                         home: slot,
                         caller: slot,
                         base,
-                        args: Vec::new(),
-                        outs: Vec::new(),
+                        variadic: None,
                         want,
                         return_pc: next,
                         gosub_base: gosubs.len(),
@@ -1798,15 +1811,14 @@ impl Vm {
                         break;
                     }
                     let frame = frames.pop().expect("checked above");
-                    locals.truncate(frame.base);
+                    cut(locals, frame.base);
                     gosubs.truncate(frame.gosub_base);
                     let len = stack.len();
                     if len - 1 != frame.stack_base {
                         stack.swap(len - 1, frame.stack_base);
-                        stack.truncate(frame.stack_base + 1);
+                        cut(stack, frame.stack_base + 1);
                     }
                     next = frame.return_pc;
-                    drop_frame(frame);
                     (calls, gosub_base, base) = innermost(frames, locals);
                     vars = [&mut globals[..], &mut locals[base..]];
                 }
@@ -2381,7 +2393,7 @@ impl Vm {
         let frames = (self.locals.iter()).chain(
             self.frames
                 .iter()
-                .flat_map(|f| f.args.iter().chain(&f.outs)),
+                .flat_map(|f| f.args().iter().chain(f.outs())),
         );
         let units = self.units.iter().flatten().flat_map(|u| &u.globals);
         for v in self
@@ -3102,7 +3114,7 @@ impl Vm {
                 let f = self.frame()?;
                 let n = match program.defs[f.def as usize].params {
                     Some(n) => usize::from(n),
-                    None => f.args.len(),
+                    None => f.args().len(),
                 };
                 self.stack.push(Value::Int(n as i32));
             }
@@ -3113,7 +3125,9 @@ impl Vm {
                     Some(p) => (0..i32::from(p))
                         .contains(&n)
                         .then(|| self.locals[f.base + n as usize].clone()),
-                    None => usize::try_from(n).ok().and_then(|n| f.args.get(n).cloned()),
+                    None => usize::try_from(n)
+                        .ok()
+                        .and_then(|n| f.args().get(n).cloned()),
                 };
                 self.stack.push(v.ok_or(ErrorKind::OutOfRange)?);
             }
@@ -3132,7 +3146,9 @@ impl Vm {
                         let slot = usize::from(params.unwrap_or(0)) + n;
                         self.locals[frame.base + slot] = value;
                     }
-                    (_, None) if n < frame.outs.len() => frame.outs[n] = value,
+                    (_, None) if n < frame.outs().len() => {
+                        frame.variadic.as_mut().expect("an OUT * DEF has them").outs[n] = value;
+                    }
                     _ => return Err(ErrorKind::OutOfRange.into()),
                 }
             }
@@ -3645,13 +3661,19 @@ impl Vm {
             None => vec![Value::Default; want.count()],
             Some(_) => Vec::new(),
         };
+        let variadic = match (info.params, info.outs) {
+            (Some(_), Some(_)) => None,
+            _ => Some(Box::new(Variadic {
+                args: variadic_args,
+                outs,
+            })),
+        };
         self.frames.push(Frame {
             def,
             home: self.slot,
             caller,
             base,
-            args: variadic_args,
-            outs,
+            variadic,
             want,
             return_pc: self.pc + 1,
             gosub_base: self.gosubs.len(),
@@ -3699,7 +3721,7 @@ impl Vm {
                 let start = frame.base + usize::from(info.params.unwrap_or(0));
                 self.locals[start..start + usize::from(n)].to_vec()
             }
-            (false, None) => frame.outs.clone(),
+            (false, None) => frame.outs().to_vec(),
         };
         if frame.want == Want::Value {
             results.truncate(1);
@@ -3739,19 +3761,9 @@ impl Vm {
     #[inline]
     fn leave_frame(&mut self, frame: Frame, host: &mut dyn Host) -> Result<usize> {
         let (caller, back) = (frame.caller, frame.return_pc);
-        drop_frame(frame);
         self.switch_to(caller, host);
         Ok(back)
     }
-}
-
-/// Drops a frame that has ended, without a call for the lists most frames
-/// leave empty.
-#[inline(always)]
-fn drop_frame(frame: Frame) {
-    let Frame { args, outs, .. } = frame;
-    drop_values(args);
-    drop_values(outs);
 }
 
 /// How fused entries end, for [`Vm::run_fast`].
@@ -3834,27 +3846,37 @@ fn call_cost(info: &DefInfo, argc: usize) -> usize {
     CALL_COST + values * VARIABLE_COST + if info.is_function { VALUE_COST } else { 0 }
 }
 
-/// Drops a list of values, without a call when it was never given room, as
-/// with the `args` and `outs` of most frames.
+/// Cuts `values` to `len`, without a call when what goes is numbers, as when
+/// a DEF call ends.
 #[inline(always)]
-fn drop_values(values: Vec<Value>) {
-    if values.capacity() == 0 {
-        std::mem::forget(values);
+fn cut(values: &mut Vec<Value>, len: usize) {
+    let numbers = (values.get(len..)).is_some_and(|gone| {
+        gone.iter()
+            .all(|v| matches!(v, Value::Int(_) | Value::Real(_)))
+    });
+    if numbers {
+        // SAFETY: what is left from `len` on is numbers, which need no
+        // dropping.
+        unsafe { values.set_len(len) };
+    } else {
+        cut_slowly(values, len);
     }
+}
+
+#[inline(never)]
+fn cut_slowly(values: &mut Vec<Value>, len: usize) {
+    values.truncate(len);
 }
 
 /// Moves values on to the end of `to`, numbers in parts, leaving numbers in
 /// their places.
 #[inline(always)]
 fn move_values(from: &mut [Value], to: &mut Vec<Value>) {
-    to.reserve(from.len());
-    for value in from {
-        match *value {
-            Value::Int(n) => push_num(to, Num::Int(n)),
-            Value::Real(x) => push_num(to, Num::Real(x)),
-            _ => to.push(std::mem::replace(value, Value::Int(0))),
-        }
-    }
+    to.extend(from.iter_mut().map(|value| match *value {
+        Value::Int(n) => Value::Int(n),
+        Value::Real(x) => Value::Real(x),
+        _ => std::mem::replace(value, Value::Int(0)),
+    }));
 }
 
 /// The variables [`Vm::run_fast`] reads and writes, by [`Var::table`].
