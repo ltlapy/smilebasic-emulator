@@ -91,8 +91,10 @@ pub trait Host {
         0
     }
 
-    /// READ's place in the DATA, handed over before each [`Host::call`].
-    fn set_data_pos(&mut self, _pos: usize) {}
+    /// READ's place in the DATA, handed over before each [`Host::call`],
+    /// and the DEF of the running program the call is made in, whose
+    /// DATA labels a `"@label"` finds first.
+    fn set_data_pos(&mut self, _pos: usize, _def: Option<u32>) {}
 
     /// READ's place after a [`Host::call`], which commands that read DATA
     /// from a `"@label"` move; `None` leaves it.

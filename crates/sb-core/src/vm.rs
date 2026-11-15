@@ -2678,7 +2678,7 @@ impl Vm {
                 if self.report_work {
                     host.work(self.work());
                 }
-                host.set_data_pos(self.data_pos);
+                host.set_data_pos(self.data_pos, self.own_frame().map(|f| f.def));
                 let results = host.call(*id, &self.stack[at..], *want);
                 self.data_moved(host);
                 let results = match results {
@@ -3188,7 +3188,7 @@ impl Vm {
         if self.values_room_taken(args.len()) {
             return Err(ErrorKind::StackOverflow.into());
         }
-        host.set_data_pos(self.data_pos);
+        host.set_data_pos(self.data_pos, self.own_frame().map(|f| f.def));
         let results = host.call(id, args, want);
         self.data_moved(host);
         let results = results.map_err(|e| e.in_args(args))?;

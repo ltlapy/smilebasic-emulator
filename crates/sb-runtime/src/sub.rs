@@ -259,8 +259,8 @@ impl Host for Linked<'_> {
         self.sub.callbacks_end(kind)
     }
 
-    fn set_data_pos(&mut self, pos: usize) {
-        self.sub.set_data_pos(pos)
+    fn set_data_pos(&mut self, pos: usize, def: Option<u32>) {
+        self.sub.set_data_pos(pos, def)
     }
 
     fn data_pos(&self) -> Option<usize> {

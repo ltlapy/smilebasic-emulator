@@ -920,6 +920,8 @@ pub struct Runtime {
     pub(crate) slot_programs: [Option<Rc<Compiled>>; SLOTS],
     /// READ's place in the program's DATA, during a command.
     data_pos: Cell<usize>,
+    /// The DEF of [`Runtime::program`] the command is called in.
+    data_def: Option<u32>,
     pub layers: [Layer; LAYERS],
     /// LFILTER of each layer.
     pub filters: [crate::filter::Filter; LAYERS],
@@ -1465,6 +1467,7 @@ impl Runtime {
             program: None,
             slot_programs: Default::default(),
             data_pos: Cell::new(0),
+            data_def: None,
             layers: [Layer::default(); LAYERS],
             filters: Default::default(),
             back_color: 0xFF00_0000,
@@ -1653,7 +1656,9 @@ impl Runtime {
         }
     }
 
-    /// `"n:@LABEL"` reads slot n's DATA, once the run has gone on there.
+    /// `"@LABEL"` reads the DATA after a label of the DEF the command is
+    /// called in, else of the top level, as RESTORE does. `"n:@LABEL"`
+    /// reads slot n's top level, once the run has gone on there.
     pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader<'_>> {
         let text =
             String::from_utf16_lossy(&label.clone().into_str()?.borrow()).to_ascii_uppercase();
@@ -1669,7 +1674,15 @@ impl Runtime {
             }
             None => self.program.clone().unwrap_or_default(),
         };
-        let pos = *program.data_labels.get(name).ok_or_else(undefined)?;
+        let own = match slot {
+            None => (self.data_def)
+                .and_then(|d| program.def_data_labels.get(d as usize))
+                .and_then(|labels| labels.get(name)),
+            Some(_) => None,
+        };
+        let pos = *own
+            .or_else(|| program.data_labels.get(name))
+            .ok_or_else(undefined)?;
         self.data_pos.set(pos as usize);
         Ok(DataReader {
             program,
@@ -3137,8 +3150,9 @@ impl Host for Runtime {
         text.chain(self.grp.arrays()).collect()
     }
 
-    fn set_data_pos(&mut self, pos: usize) {
+    fn set_data_pos(&mut self, pos: usize, def: Option<u32>) {
         self.data_pos.set(pos);
+        self.data_def = def;
     }
 
     fn data_pos(&self) -> Option<usize> {

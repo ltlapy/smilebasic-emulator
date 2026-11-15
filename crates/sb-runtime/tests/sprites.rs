@@ -495,6 +495,28 @@ fn call_sprite_runs_each_callback() {
     assert_eq!(out, "M13 4096");
 }
 
+/// A command reading DATA from `"@L"` looks at the labels of the DEF it is
+/// called in first, then the top level's, as RESTORE does (4.4.8).
+#[test]
+fn label_data_finds_the_labels_of_the_def_running() {
+    let (_, out) = run("F:G\n\
+         END\n\
+         @D:DATA 1,9,9,16,16,0,0,1\n\
+         DEF F\n\
+         SPDEF \"@D\",10:SPDEF 10 OUT U,V:?U;\n\
+         SPSET 0,0:SPANIM 0,\"XY\",\"@A\":READ Q:?Q;\n\
+         @D:DATA 1,5,5,16,16,0,0,1\n\
+         @A:DATA 1,1,5,5:DATA 7\n\
+         END\n\
+         DEF G\n\
+         SPDEF \"@D\",11:SPDEF 11 OUT U,V:?U;\n\
+         SPDEF \"0:@D\",12:SPDEF 12 OUT U,V:?U\n\
+         END");
+    assert_eq!(out, "5799");
+    let (_, out) = run("SPDEF \"@D\"\nDEF F\n@D:DATA 1,5,5,16,16,0,0,1\nEND");
+    assert!(out.starts_with("Undefined label"), "{out}");
+}
+
 #[test]
 fn label_data_moves_reads_place() {
     let (_, out) = run("RESTORE @A:SPSET 0,0:SPANIM 0,\"XY\",\"@B\":READ Q\n\
