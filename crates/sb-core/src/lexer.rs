@@ -153,8 +153,32 @@ pub enum LexErrorKind {
     UnexpectedChar(char),
     /// `&H`, `&B`, `@` or `#` with nothing valid after it.
     MissingDigits,
-    /// A number SmileBASIC 4 does not take, a Syntax error: why.
-    BadNumber(&'static str),
+    /// A number SmileBASIC 4 does not take, a Syntax error.
+    BadNumber(NumberError),
+}
+
+/// Why a number literal is a Syntax error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumberError {
+    /// `&H` of more than 8 digits, `&B` of more than 32.
+    TooManyDigits,
+    /// A decimal literal of more than 99 characters.
+    TooLong,
+    /// An exponent of more than 3 digits.
+    LongExponent,
+    /// A decimal literal too large for a real.
+    TooLarge,
+}
+
+impl NumberError {
+    pub fn why(self) -> &'static str {
+        match self {
+            NumberError::TooManyDigits => "too many digits",
+            NumberError::TooLong => "number too long",
+            NumberError::LongExponent => "exponent too long",
+            NumberError::TooLarge => "number too large",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,7 +192,7 @@ impl fmt::Display for LexError {
         let what = match &self.kind {
             LexErrorKind::UnexpectedChar(c) => format!("Syntax error (unexpected {c:?})"),
             LexErrorKind::MissingDigits => "Syntax error".to_string(),
-            LexErrorKind::BadNumber(why) => format!("Syntax error ({why})"),
+            LexErrorKind::BadNumber(e) => format!("Syntax error ({})", e.why()),
         };
         write!(f, "{what} in {}", self.span.line)
     }
@@ -421,10 +445,24 @@ impl Lexer {
     /// characters, an exponent of up to 3 digits and a finite value; an
     /// int has up to 10 digits.
     fn number(&mut self, start: Span) -> Result<(), LexError> {
-        let mut text = String::new();
+        let from = self.pos;
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+            self.bump();
+        }
+        let int_digits = self.pos - from;
+        // Most numbers are whole and short: no text to build.
+        if int_digits <= 10 && !matches!(self.peek(), Some('.' | 'e' | 'E' | '_' | '#')) {
+            let n = (self.chars[from..self.pos].iter())
+                .fold(0u64, |n, &c| n * 10 + u64::from(c as u8 - b'0'));
+            let kind = match i32::try_from(n) {
+                Ok(n) => TokenKind::Int(n),
+                Err(_) => TokenKind::Real(n as f64),
+            };
+            self.push(kind, start);
+            return Ok(());
+        }
+        let mut text: String = self.chars[from..self.pos].iter().collect();
         let mut is_real = false;
-        self.take_digits(&mut text);
-        let int_digits = text.len();
         if self.peek() == Some('.') {
             is_real = true;
             text.push('.');
@@ -447,12 +485,14 @@ impl Lexer {
                 let from = text.len();
                 self.take_digits(&mut text);
                 if text.len() - from > 3 {
-                    return Err(self.error(LexErrorKind::BadNumber("exponent too long"), start));
+                    return Err(
+                        self.error(LexErrorKind::BadNumber(NumberError::LongExponent), start)
+                    );
                 }
             }
         }
         if text.len() > 99 {
-            return Err(self.error(LexErrorKind::BadNumber("number too long"), start));
+            return Err(self.error(LexErrorKind::BadNumber(NumberError::TooLong), start));
         }
         // `1_000` is a Syntax error: only `&H` and `&B` take `_`.
         if self.peek() == Some('_') {
@@ -474,7 +514,7 @@ impl Lexer {
             None => {
                 let x: f64 = text.parse().expect("lexed digits form a valid float");
                 if x.is_infinite() {
-                    return Err(self.error(LexErrorKind::BadNumber("number too large"), start));
+                    return Err(self.error(LexErrorKind::BadNumber(NumberError::TooLarge), start));
                 }
                 TokenKind::Real(x)
             }
@@ -522,7 +562,7 @@ impl Lexer {
             }
             digits += 1;
             if digits > most {
-                return Err(self.error(LexErrorKind::BadNumber("too many digits"), start));
+                return Err(self.error(LexErrorKind::BadNumber(NumberError::TooManyDigits), start));
             }
             value = value.wrapping_mul(radix) | d;
         }
@@ -616,9 +656,9 @@ mod tests {
         assert_eq!(kinds("0000000001"), [T::Int(1)]);
         assert_eq!(kinds("1E308 1E-999"), [T::Real(1E308), T::Real(0.0)]);
         let bad = |why| LexErrorKind::BadNumber(why);
-        assert_eq!(error("1E309"), bad("number too large"));
-        assert_eq!(error("1E0001"), bad("exponent too long"));
-        assert_eq!(error(&"1".repeat(100)), bad("number too long"));
+        assert_eq!(error("1E309"), bad(NumberError::TooLarge));
+        assert_eq!(error("1E0001"), bad(NumberError::LongExponent));
+        assert_eq!(error(&"1".repeat(100)), bad(NumberError::TooLong));
         assert_eq!(kinds(&format!("0.{}", "0".repeat(97))), [T::Real(0.0)]);
     }
 
@@ -628,7 +668,7 @@ mod tests {
             kinds("&HFF &hff &B101 &HFFFFFFFF"),
             [T::Int(255), T::Int(255), T::Int(5), T::Int(-1)]
         );
-        let long = LexErrorKind::BadNumber("too many digits");
+        let long = LexErrorKind::BadNumber(NumberError::TooManyDigits);
         assert_eq!(error("&H100000000"), long);
         assert_eq!(error("&H000000001"), long);
         assert_eq!(error(&format!("&B1{}", "0".repeat(32))), long);
@@ -899,7 +939,7 @@ mod tests {
                     suffix: None
                 },
                 T::Assign,
-                T::Invalid(LexErrorKind::BadNumber("too many digits")),
+                T::Invalid(LexErrorKind::BadNumber(NumberError::TooManyDigits)),
                 T::Eof
             ]
         );
@@ -907,7 +947,7 @@ mod tests {
         assert_eq!(
             e,
             Some(LexError {
-                kind: LexErrorKind::BadNumber("too many digits"),
+                kind: LexErrorKind::BadNumber(NumberError::TooManyDigits),
                 span: at
             })
         );

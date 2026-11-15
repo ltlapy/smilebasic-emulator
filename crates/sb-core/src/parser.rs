@@ -71,7 +71,7 @@ impl ParseError {
             ParseErrorKind::Lex(LexErrorKind::UnexpectedChar(c)) => {
                 Some(format!("unexpected {c:?}"))
             }
-            ParseErrorKind::Lex(LexErrorKind::BadNumber(why)) => Some(why.to_string()),
+            ParseErrorKind::Lex(LexErrorKind::BadNumber(e)) => Some(e.why().to_string()),
             ParseErrorKind::Lex(_) => None,
             ParseErrorKind::Expected { expected, found } => {
                 Some(format!("expected {expected}, found {found:?}"))
