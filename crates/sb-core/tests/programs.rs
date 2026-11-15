@@ -231,6 +231,31 @@ fn restore_push_and_pop() {
     );
 }
 
+/// RESTORE "POP" takes a place off the stack GOSUB and DEF calls share,
+/// so the latest call must have kept one.
+#[test]
+fn restore_pop_takes_only_a_place_kept_since_the_call() {
+    let push = ErrorKind::UseRestorePush;
+    for source in [
+        "GOSUB @S:END\n@S:RESTORE \"POP\":RETURN",
+        "RESTORE \"PUSH\":GOSUB @S:END\n@S:RESTORE \"POP\":RETURN",
+        "RESTORE \"PUSH\":F:END\nDEF F:RESTORE \"POP\":END",
+        "F\nDEF F\nGOTO @M\n@S:RESTORE \"POP\":RETURN\n@M:RESTORE \"PUSH\":GOSUB @S\nEND",
+    ] {
+        assert_eq!(error(source).0, push, "{source}");
+    }
+    assert_eq!(
+        output(
+            "F\nDEF F\nGOTO @M\n@S:RETURN\n@M:RESTORE \"PUSH\":GOSUB @S:RESTORE \"POP\":?\"OK\"\nEND"
+        ),
+        "OK\n"
+    );
+    assert_eq!(
+        output("RESTORE \"PUSH\":GOSUB @S:RESTORE \"POP\":?\"OK\":END\n@S:RETURN"),
+        "OK\n"
+    );
+}
+
 #[test]
 fn read_modify_write() {
     assert_eq!(

@@ -251,6 +251,15 @@ const STOP_MESSAGE: usize = 255;
 /// Waits a frame and runs the same instruction again.
 const RETRY: Status = Status::Retry;
 
+/// A READ place RESTORE "PUSH" kept, with the numbers of DEF calls and
+/// GOSUBs then.
+struct Kept {
+    pos: usize,
+    from: Rc<Compiled>,
+    calls: usize,
+    gosubs: usize,
+}
+
 struct Frame {
     def: u32,
     /// The slot the DEF is in, and the one to return to.
@@ -359,7 +368,7 @@ pub struct Vm {
     /// RESTORE last named.
     data_from: Rc<Compiled>,
     /// READ places kept by RESTORE "PUSH".
-    data_kept: Vec<(usize, Rc<Compiled>)>,
+    data_kept: Vec<Kept>,
     /// Whether a GOSUB or RESTORE "PUSH" has reached into the values' room.
     /// Until one has, commands need not look at the room; after, it stays
     /// set until ON BREAK empties the stack, and they look each time.
@@ -2233,13 +2242,26 @@ impl Vm {
                 if !self.stack_has_full_room(RESTORE_COST) {
                     return Err(ErrorKind::StackOverflow.into());
                 }
-                self.data_kept
-                    .push((self.data_pos, Rc::clone(&self.data_from)));
+                self.data_kept.push(Kept {
+                    pos: self.data_pos,
+                    from: Rc::clone(&self.data_from),
+                    calls: self.frames.len(),
+                    gosubs: self.gosubs.len(),
+                });
                 self.note_values_room();
             }
             "POP" => {
-                (self.data_pos, self.data_from) =
-                    self.data_kept.pop().ok_or(ErrorKind::StackUnderflow)?;
+                // GOSUBs, DEF calls and kept places share one stack, and
+                // only a kept place on top can come off it.
+                let (calls, gosubs) = match self.data_kept.last() {
+                    Some(k) => (k.calls, k.gosubs),
+                    None => (0, 0),
+                };
+                if self.frames.len() > calls || self.gosubs.len() > gosubs {
+                    return Err(ErrorKind::UseRestorePush.into());
+                }
+                let kept = self.data_kept.pop().ok_or(ErrorKind::StackUnderflow)?;
+                (self.data_pos, self.data_from) = (kept.pos, kept.from);
             }
             "BEGIN" => (self.data_pos, self.data_from) = (0, Rc::clone(&self.program)),
             _ => {
