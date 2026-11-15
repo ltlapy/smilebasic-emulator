@@ -160,6 +160,8 @@ pub enum ErrorKind {
     IllegalToyConType,
     /// SPDEF from an array whose length 7 does not divide.
     IllegalArraySize,
+    /// SPLINK of a sprite to one linked below it.
+    CantLinkToDescendant,
 }
 
 impl ErrorKind {
@@ -226,6 +228,7 @@ impl ErrorKind {
             ErrorKind::IllegalControlStyleForIrCamera => 109,
             ErrorKind::IllegalToyConType => 110,
             ErrorKind::IllegalArraySize => 117,
+            ErrorKind::CantLinkToDescendant => 113,
             ErrorKind::IrCameraNotAvailable => 63,
             ErrorKind::IllegalIrCameraMode => 64,
             ErrorKind::CantUseEmptyString => 67,
@@ -381,6 +384,8 @@ impl ErrorKind {
             }
             ErrorKind::IllegalToyConType => "Illegal Toy-Con type",
             ErrorKind::IllegalArraySize => "Illegal array size",
+            // As SmileBASIC 4 spells it.
+            ErrorKind::CantLinkToDescendant => "Can't link to decendent sprite",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }
