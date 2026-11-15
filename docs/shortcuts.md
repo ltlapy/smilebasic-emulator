@@ -109,13 +109,21 @@ editor, and a list of the projects instead of DIRECT mode. Start it with
 `smilebasic --handheld`, or turn it on and off with Ctrl+Shift+F12, which
 keeps the choice. Programs never see − (Select).
 
+The pause menu pauses the program. It has Resume, Restart, Screen filter,
+Return to Game list and Quit Emulator; over the list it has Close, Screen
+filter and Quit Emulator. A screen filter change shows at once and is kept.
+The filters are described in
+[differences.md](differences.md#screen-scaling).
+
 | Key | Action |
 |---|---|
 | Ctrl+Shift+F12 | Turn handheld mode on or off |
-| − (Select) and +, F8 | Pause menu: resume, restart, back to the list, quit |
+| − (Select) and A, F8 | Open or close the pause menu |
+| − (Select) and + | Quit the emulator |
 | + | As in the other modes; it does nothing in the list |
-| A, Enter | Run the project's MAIN.PRG, or the chosen program |
+| A, Enter | Run the project's MAIN.PRG or the chosen program; choose in the menu |
 | X, Tab | The project's programs |
-| B, Esc, Backspace | Back to the projects |
+| B, Esc, Backspace | Back to the projects; close the menu |
 | L, R, Page Up, Page Down | Move a page |
 | D-pad, left stick, cursor keys | Move |
+| Left, Right | Change the screen filter in the menu |

@@ -364,8 +364,18 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   default is Nearest, which scales by whole factors. No `XSCREEN` mode does
   that.
 - In handheld mode the screen fills the display at its aspect ratio, and
-  Nearest scales with the pixel art filter, as whole factors would leave most
-  of a small display empty.
+  the filter is the pause menu's Screen filter (`handheld_filter` in
+  `settings.txt`), not View > Screen filter. A 640x480 display seldom holds
+  the screen a whole number of times (400x240 is 1.6 times) and can show it
+  smaller than it is (`XSCREEN 1280,720` is half size). SmileBASIC 4's
+  1280x720 output never shows a screen smaller than it is. The choices:
+  - Auto, the default, ignores `XSCREEN`'s composite mode. It scales with
+    the pixel art filter where the screen is drawn larger than its frame
+    (the `XSCREEN` size times its sample count), bilinear where it is drawn
+    smaller, and nearest at a whole factor.
+  - Pixel art and Smooth (bilinear) always use that filter.
+  - Sharp is nearest at the fitted size, so pixels differ in width.
+  - Program follows `XSCREEN`'s composite mode, as SmileBASIC 4 does.
 - `XSCREEN`'s mode 1 applies to the program's screen. The editor's frame scales
   by Nearest at a whole factor, and otherwise with SDL's pixel art filter, or
   Bilinear when the screen's filter is Bilinear.
@@ -415,8 +425,9 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
 - Handheld mode (`--handheld`, or Ctrl+Shift+F12) has no DIRECT mode or editor.
   It starts in a list of the projects, runs a project's MAIN.PRG or one of its
   programs, and returns to the list as Run in the project manager does. − (Select)
-  with + opens the emulator's pause menu, which pauses the program and gives it
-  no input. SmileBASIC 4 has neither.
+  with A opens the emulator's pause menu, which pauses the program and gives it
+  no input; neither that A nor the Enter it would type reaches the program.
+  − (Select) with + quits the emulator. SmileBASIC 4 has none of these.
 
 ## Subprograms
 
