@@ -453,10 +453,10 @@ impl Param {
             Value::Array(a) => {
                 let a = a.borrow();
                 if a.elem_type() == ElemType::Str {
-                    return Err(ErrorKind::TypeMismatch.into());
+                    return Err(mismatch(v));
                 }
                 if a.is_empty() {
-                    return Err(out_of_range("empty array"));
+                    return Err(Error::new(ErrorKind::ArrayTooSmall).of_value(v));
                 }
                 Ok(Param::Array(match &a.data {
                     ArrayData::Real(v) => v.clone(),
@@ -480,21 +480,25 @@ impl Param {
     }
 }
 
+/// ARYOP looks at the operation, the number of arguments it takes, the
+/// result array and then each parameter in turn, naming the one that is
+/// wrong.
 pub(super) fn aryop(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let op = args[0].to_int()?;
     let wants_three = matches!(op, 4..=6);
     if !(0..=6).contains(&op) {
-        return Err(out_of_range("operation"));
+        return Err(out_of_range("operation").of_value(&args[0]));
     }
     if (args.len() == 5) != wants_three {
-        return Err(ErrorKind::IllegalFunctionCall.into());
+        return Err(ErrorKind::WrongNumberOfArguments.into());
     }
-    let params: Vec<Param> = args[2..].iter().map(Param::new).collect::<Result<_>>()?;
     let result = array(&args[1])?;
-    let mut result = result.borrow_mut();
-    if result.elem_type() == ElemType::Str {
-        return Err(ErrorKind::TypeMismatch.into());
+    if result.borrow().elem_type() == ElemType::Str {
+        return Err(mismatch(&args[1]));
     }
+    // A parameter may be the result array itself.
+    let params: Vec<Param> = args[2..].iter().map(Param::new).collect::<Result<_>>()?;
+    let mut result = result.borrow_mut();
     let value = |i: usize| {
         let p = |n: usize| params[n].at(i);
         match op {

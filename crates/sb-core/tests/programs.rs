@@ -1451,9 +1451,36 @@ fn array_operations() {
         output("DIM R[3]:DIM X[]=[0,5,9]:ARYOP #AOPCLP,R,X,2,X:?R[0];R[1];R[2]"),
         "259\n"
     );
+    let wrong = |source: &str, kind: ErrorKind, arg: Option<u8>| {
+        let e = run(source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, arg), "{source}");
+    };
+    let arrays = "DIM R[2],E[0],S$[2]:";
+    let args = ErrorKind::WrongNumberOfArguments;
+    wrong(&format!("{arrays}ARYOP 4,R,1,2"), args, None);
+    wrong(&format!("{arrays}ARYOP 0,R,1,2,3"), args, None);
+    wrong(
+        &format!("{arrays}ARYOP 7,R,1,2"),
+        ErrorKind::OutOfRange,
+        Some(0),
+    );
+    wrong(
+        &format!("{arrays}ARYOP -1,R,1,2"),
+        ErrorKind::OutOfRange,
+        Some(0),
+    );
+    let mismatch = ErrorKind::TypeMismatch;
+    wrong(&format!("{arrays}ARYOP 0,S$,1,2"), mismatch, Some(1));
+    wrong(&format!("{arrays}ARYOP 0,S$,E,2"), mismatch, Some(1));
+    wrong(&format!("{arrays}ARYOP 0,R,S$,2"), mismatch, Some(2));
+    wrong(&format!("{arrays}ARYOP 0,R,1,\"A\""), mismatch, Some(3));
+    let small = ErrorKind::ArrayTooSmall;
+    wrong(&format!("{arrays}ARYOP 0,R,E,2"), small, Some(2));
+    wrong(&format!("{arrays}ARYOP 6,R,1,2,E"), small, Some(4));
+    // A shorter parameter array is read over again.
     assert_eq!(
-        error("DIM R[2]:ARYOP 4,R,1,2").0,
-        ErrorKind::IllegalFunctionCall
+        output("DIM R[3],P[]=[1,2]:ARYOP 0,R,P,0:?R[0];R[1];R[2]"),
+        "121\n"
     );
 }
 
