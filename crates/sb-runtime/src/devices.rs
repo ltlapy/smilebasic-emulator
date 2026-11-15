@@ -82,17 +82,32 @@ impl Runtime {
             // The camera starts and stops, and never sees anything. Without
             // XCTRLSTYLE's IR flag it is not available (checked on
             // hardware).
-            (Command::Irstart, Want::Outs(0), 2..=8) => {
+            // Each mode takes its own
+            // count of settings after the controller and the mode, each
+            // with its range: clustering (0) six, image transfer (1, on
+            // controller 1 only) four, moment (2) three.
+            (Command::Irstart, Want::Outs(0), 2..) => {
                 let pad = pad(&args[0])?;
-                let mode = in_range("recognition type", &args[1], 0..=2)?;
-                if mode == 1 && pad != 0 {
-                    return Err(out_of_range("controller", pad as i32 + 1));
-                }
                 if !self.input.ir_allowed {
                     return Err(ErrorKind::IrCameraNotAvailable.into());
                 }
-                for a in &args[2..] {
-                    crate::runtime::opt_int(a)?;
+                let mode = in_range("recognition type", &args[1], 0..=2)?;
+                let ranges: &[std::ops::RangeInclusive<i32>] = match (args.len(), mode) {
+                    (2, _) => &[],
+                    (5, 2) => &[0..=3, 1..=16, 7..=600],
+                    (6, 1) => &[0..=3, 1..=16, 7..=600, 0..=4],
+                    (8, 0) => &[0..=3, 1..=16, 7..=600, 0..=76800, 0..=76800, 0..=255],
+                    (5 | 6 | 8, _) => return Err(ErrorKind::WrongArgumentsForIrMode.into()),
+                    _ => return Err(no_form()),
+                };
+                if mode == 1 && pad != 0 {
+                    let e = out_of_range("controller", pad as i32 + 1);
+                    return Err(e.of_arg(0));
+                }
+                for (a, range) in args[2..].iter().zip(ranges) {
+                    if !matches!(a, Value::Default) {
+                        in_range("setting", a, range.clone())?;
+                    }
                 }
                 self.input.ir_state[pad] = 2 + mode;
                 Ok(vec![])

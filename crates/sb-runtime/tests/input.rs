@@ -122,6 +122,63 @@ fn dialog_errors_name_the_argument() {
     }
 }
 
+/// IRSTART's settings by mode, as SmileBASIC 4's handler checks them
+/// (4.4.8).
+#[test]
+fn ir_camera_settings_depend_on_the_mode() {
+    let style = "XCTRLSTYLE 1,1,0,1:";
+    for (source, kind, arg) in [
+        (
+            "IRSTART 1,0,0,1,7",
+            ErrorKind::WrongArgumentsForIrMode,
+            None,
+        ),
+        (
+            "IRSTART 1,1,0,1,7",
+            ErrorKind::WrongArgumentsForIrMode,
+            None,
+        ),
+        (
+            "IRSTART 1,2,0,1,7,0",
+            ErrorKind::WrongArgumentsForIrMode,
+            None,
+        ),
+        (
+            "IRSTART 1,2,0,1,7,0,0,0",
+            ErrorKind::WrongArgumentsForIrMode,
+            None,
+        ),
+        ("IRSTART 1,0,0", ErrorKind::WrongNumberOfArguments, None),
+        (
+            "IRSTART 1,0,0,1,7,0,0,0,0",
+            ErrorKind::WrongNumberOfArguments,
+            None,
+        ),
+        ("IRSTART 1,3", ErrorKind::OutOfRange, Some(1)),
+        ("IRSTART 2,1,0,1,7,0", ErrorKind::OutOfRange, Some(0)),
+        ("IRSTART 1,2,4,1,7", ErrorKind::OutOfRange, Some(2)),
+        ("IRSTART 1,2,0,17,7", ErrorKind::OutOfRange, Some(3)),
+        ("IRSTART 1,1,0,1,601,0", ErrorKind::OutOfRange, Some(4)),
+        ("IRSTART 1,1,0,1,7,5", ErrorKind::OutOfRange, Some(5)),
+        (
+            "IRSTART 1,0,0,1,7,76801,0,0",
+            ErrorKind::OutOfRange,
+            Some(5),
+        ),
+        ("IRSTART 1,0,0,1,7,0,0,256", ErrorKind::OutOfRange, Some(7)),
+    ] {
+        let e = run(&[], &format!("{style}{source}")).unwrap_err();
+        assert_eq!((e.kind, e.arg.map(usize::from)), (kind, arg), "{source}");
+    }
+    for source in [
+        "IRSTART 1,2,3,16,600",
+        "IRSTART 1,1,,,,4",
+        "IRSTART 1,0,0,1,7,76800,0,255",
+    ] {
+        run(&[], &format!("{style}{source}")).expect(source);
+    }
+}
+
 #[test]
 fn repeat_settings() {
     assert_eq!(

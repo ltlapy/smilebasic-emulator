@@ -1184,6 +1184,13 @@ Expected but not yet seen on hardware:
   controllers, the earlier controller's on a tie. X and Y can come from
   different controllers.
 - `IRSTART` without `XCTRLSTYLE`'s IR flag is `IR Camera is not available`.
+- `IRSTART` takes, after the controller and the mode, nothing or as many
+  settings as its mode has: three for moment (mode 2), four for image transfer
+  (1), six for clustering (0). Another mode's count is
+  `Wrong number of arguments for this IR Camera mode`, error 108, without a
+  number, and 3, 4, 7 or over 8 arguments in all error 52. The settings are 0 to
+  3, 1 to 16 and 7 to 600, then 0 to 4 for image transfer, and 0 to 76800,
+  0 to 76800 and 0 to 255 for clustering, each named when out of range. (Not yet seen on hardware.)
 - `TCPIANO` without Toy-Con set up is `Illegal control style`.
 - `XCTRLSTYLE` takes two arguments, or
   four or five, or six or seven for Toy-Con on two controllers, where the first
