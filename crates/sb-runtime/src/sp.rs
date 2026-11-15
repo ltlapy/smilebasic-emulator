@@ -61,15 +61,6 @@ fn numbers(array: &ArrayData) -> Result<Vec<f64>> {
     }
 }
 
-/// How many entries a `"@label"` lists: the first DATA value.
-fn data_count(n: f64, max: usize) -> Result<usize> {
-    let n = n as i32;
-    usize::try_from(n)
-        .ok()
-        .filter(|&n| n <= max)
-        .ok_or_else(|| out_of_range("data count", n))
-}
-
 /// A collision mask, every bit when omitted.
 fn mask(v: Option<&Value>) -> Result<u32> {
     Ok(v.map(opt_int)
@@ -182,7 +173,17 @@ impl Runtime {
             }
             [label @ Value::Str(_), rest @ ..] if rest.len() <= 1 => {
                 let mut data = self.label_data(label)?;
-                let keys = data_count(data.number()?, MAX_KEYS)?;
+                let keys = match data.number()? as i32 {
+                    n if n < 1 => {
+                        let e = Error::with_detail(ErrorKind::IllegalAnimationData, "no keys");
+                        return Err(e);
+                    }
+                    n => n as usize,
+                };
+                if keys > MAX_KEYS {
+                    let detail = format!("{keys} keys (32 at most)");
+                    return Err(Error::with_detail(ErrorKind::AnimationTooLong, detail));
+                }
                 Anim::new(mode, &data.numbers(keys * per)?, loops(rest.first())?)
             }
             keys => {

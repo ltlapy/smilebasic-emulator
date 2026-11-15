@@ -217,6 +217,26 @@ fn errors() {
         ("SPSET 0,0:SPANIM 0,\"XY\",1,2", "Illegal function call"),
         ("SPSET 0,0:SPANIM 0,\"Q\",1,2", "Out of range"),
         ("SPSET 0,0:SPANIM 0,\"Z\",\"@NOPE\"", "Undefined label"),
+        (
+            "SPSET 0,0:DIM A[4]:SPANIM 0,A,1,2",
+            "Animation type mismatch in 0:1(SPANIM:2)",
+        ),
+        (
+            "DIM A[2]:TANIM 0,A,1,2",
+            "Animation type mismatch in 0:1(TANIM:2)",
+        ),
+        (
+            "DIM K[66]:SPSET 0,0:SPANIM 0,\"Z\",K",
+            "Animation is too long in 0:1(SPANIM)",
+        ),
+        (
+            "ANIMDEF 0,\"Z\",\"@K\"\n@K\nDATA 33",
+            "Animation is too long in 0:1(ANIMDEF)",
+        ),
+        (
+            "ANIMDEF 0,\"Z\",\"@K\"\n@K\nDATA 0",
+            "Illegal animation data in 0:1(ANIMDEF)",
+        ),
     ] {
         let (_, out) = run(source);
         assert!(out.starts_with(error), "{source}: {out}");

@@ -90,6 +90,7 @@ impl Mode {
                         delete: flags.contains('.'),
                     })
                 }
+                Value::Array(_) => Err(ErrorKind::AnimationTypeMismatch.into()),
                 v => {
                     let n = v.to_int()?;
                     if !(0..32).contains(&n) {
@@ -133,7 +134,7 @@ impl Anim {
         }
         if data.len() / per > MAX_KEYS {
             return Err(Error::with_detail(
-                ErrorKind::OutOfRange,
+                ErrorKind::AnimationTooLong,
                 format!("{} keys (32 at most)", data.len() / per),
             ));
         }
