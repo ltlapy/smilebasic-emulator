@@ -156,6 +156,19 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   run.
 - `?VSYNC()` is `Wrong number of OUT arguments (VSYNC)`, and `FREEMEM 1` and
   `?FREEMEM(1)` are `Wrong number of arguments (FREEMEM)`. (TEST62)
+- Whether a call no form takes is `Wrong number of arguments` or
+  `Wrong number of OUT arguments` depends on which count the command checks
+  first. Most check the `OUT` count
+  first. A number of `OUT` variables no form takes is
+  `Wrong number of OUT arguments` (`ACLS OUT A`, `LOCATE 0 OUT X,Y,Z`). One
+  that a form takes, with arguments that form does not take, is
+  `Wrong number of arguments` (`COLOR 0,0 OUT C`). Some commands check the
+  argument count first, among them `DATE$`, `DELETE`, `DTREAD`, `MOUSE` and
+  `RANDOMIZE`: `RANDOMIZE 0,0,0 OUT A` is `Wrong number of arguments`.
+  `SPROT`, `SPCOLOR`, `SPHOME`, `SPSCALE` and `SPCOL` check that a sprite
+  number is given before the `OUT` count, so `SPROT OUT A,B` is
+  `Wrong number of arguments`. (Not yet seen on hardware.)
+- `RNDF` with two arguments is `Wrong number of OUT arguments`. (Not yet seen on hardware.)
 - A call to a name defined nowhere compiles, and is a `Syntax error` only when
   it is reached: the name may be a `COMMON DEF` of a slot that `EXEC` runs
   later.
