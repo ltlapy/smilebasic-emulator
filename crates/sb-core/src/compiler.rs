@@ -1826,7 +1826,8 @@ impl Compiler<'_> {
             _ => None,
         };
         if let Some(chars) = chars.filter(|&c| c >= 0) {
-            let bytes = (chars as usize)
+            let bytes = usize::try_from(chars)
+                .unwrap_or(usize::MAX)
                 .saturating_mul(2)
                 .saturating_add(7 + CONSTANT_NODE_BYTES)
                 & !7;

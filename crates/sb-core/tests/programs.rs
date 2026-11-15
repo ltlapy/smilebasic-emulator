@@ -1826,6 +1826,8 @@ fn long_constant_strings_stop_the_program_compiling() {
         "?1\nA$=\"A\"*1000000+\"B\"*1000000",
         "?1\nA$=(\"A\"*1500000)*1",
         "?1\n?\"A\"*1500000,\"B\"*1500000",
+        // 2^32+4 characters, past a 32-bit usize.
+        "?1\n?\"ABCD\"*1073741825",
     ] {
         refused(source, ErrorKind::OutOfMemory);
     }
