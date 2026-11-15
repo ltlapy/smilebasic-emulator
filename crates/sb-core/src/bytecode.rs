@@ -310,6 +310,8 @@ pub struct Compiled {
     pub code: Vec<Op>,
     /// The same code in larger steps, by address: see [`crate::fuse`].
     pub fast: Vec<crate::fuse::Fast>,
+    /// The steps of `fast`'s chains.
+    pub micro: Vec<crate::fuse::Micro>,
     /// The numbers `fast` reads, which the VM keeps after the globals.
     pub constants: Vec<Literal>,
     /// Source line of each instruction.

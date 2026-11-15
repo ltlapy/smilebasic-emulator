@@ -197,6 +197,40 @@ const PROGRAMS: &[&str] = &[
     "I=3:FOR I=0 TO I:?I:IF I>5 THEN BREAK\nNEXT",
     "FOR I%=2147483640 TO 2147483647 STEP 3:?I%:NEXT:?I%",
     "FOR I=5 TO 1 STEP -1:?I:NEXT:FOR I=1 TO 0:?\"NO\":NEXT:?I",
+    // Chains: statements of several operators, with each operand kind, the
+    // result read and written in one, and every place a chain ends.
+    "A=3:B=4:C=(A+B)*(A-B):?C:A=A+A:?A:A=A*A-A:?A:B=(B+1)*(B+2)-B:?B",
+    "A%=7:B%=2:FOR I=1 TO 4:A%=(A%+I*3) AND 1023:B%=B% XOR (A%<<1):NEXT:?A%;B%",
+    "X#=1.5:DX#=0.25:T#=2:FOR I=1 TO 3:X#=X#+DX#*T#:Y#=X#*X#-X#/T#:NEXT:?X#;Y#",
+    "DIM A[4]:A[0]=1:A[1]=0:A[A[0]]=A[0]+A[1]:?A[1]:A[A[1]+1]=A[A[0]]*2+1:?A[2]",
+    "DIM A[4]:A=2:A[A]=A:?A[2]",
+    "DIM M#[4,4]:FOR I=0 TO 15:M#[I AND 3,(I>>2) AND 3]=M#[(I+1) AND 3,I AND 3]*0.5+I:NEXT:?M#[1,2]",
+    "DIM M%[8]:FOR I=0 TO 20:M%[I AND 7]=(M%[(I*3) AND 7]+I) AND 255:NEXT:?M%[3];M%[5]",
+    "X=3:Y=4:IF X*X+Y*Y==25 THEN ?\"R\"\nIF X+1<Y-1 THEN ?\"N\" ELSE ?\"E\"",
+    "X=3:IF X>1 && X*2<7 THEN ?1\nIF X<1 || X*2>5 THEN ?2\nIF !(X-3) THEN ?3",
+    "X=2:WHILE X*X<100:X=X*X+1:WEND:?X:REPEAT:X=X-7:UNTIL X*2<0:?X",
+    "X=2:?(X+1)*(X+2);(X*3) MOD 4;-X*2;NOT X+1;!X*3",
+    "X=0.5:Y=SQR(X*4)+SIN(X-0.5)*2:?Y:Z=MAX(X+1,X*3,2)-MIN(X,X/2):?Z",
+    "A%=2147483647:B%=A%+1-1:?B%;TYPEOF(B%):C=-2147483648:D=C-1+1:?D;TYPEOF(D)",
+    "A=65536:B=A*A+1:?B:C=46341*46341-1:?C:D=-(A*A):?D",
+    "A=7:B=0:C=0\n?1:C=(A+1)/B+1:?2",
+    "A=7:B=0\n?1:C=(A+1) MOD B+1:?2",
+    "A=1:B$=\"X\"\n?1:C=(A+1)*2+B$:?2",
+    "A=1:B$=\"X\"\n?1:C=B$+(A*2):?2",
+    "A$=\"X\":B$=\"Y\":C$=A$+B$+A$:?C$:IF A$+B$==\"XY\" THEN ?\"S\"",
+    "DIM A[2]\n?1:I=1:A[I+1]=I*2:?2",
+    "DIM A[2]\n?1:I=1:B=A[I*2-3]+1:?2",
+    "DIM A%[2]\n?1:X=1E300:A%[0]=X*2:?2",
+    "S$=\"ABC\":I=1:C$=S$[I+1]:?C$:S$[I-1]=\"Z\":?S$",
+    "DEF F(A,B)\nRETURN (A+B)*(A-B)\nEND\n?F(3,2)+F(1,1)*2",
+    "DEF G A OUT B\nB=A*A+A\nEND\nG 3 OUT X:?X",
+    "A=1\nGOTO @L\n@M:A=A+1\n@L:B=(A+2)*(A+3):?B:IF A<3 GOTO @M",
+    // Chains of several statements, failing in a later one.
+    "A=1:B$=\"X\"\n?1:C=A*2+1:D=C*C-A:E=(A+1)*B$:?2",
+    "A=1:B=0\n?1:C=A*2+1:D=C*C-A:E=(A+1)/B:?2",
+    "DIM M[4]:A=2\n?1:M[A-1]=A*A:M[A+1]=M[A-1]+A:M[A+9]=1:?2",
+    "DIM M[4]:FOR I=0 TO 3:X=I*2+1:Y=X*X-I:M[I]=X+Y:NEXT:?M[3]",
+    "A=1:B=2:C=(A+B)*(A+B*(A+B*(A+B*(A+B*(A+B*(A+B*(A+B*(A+B)))))))):?C",
 ];
 
 const DEF_OUT: &str = "\
@@ -503,6 +537,30 @@ fn constants_are_not_variables() {
     assert!(!vm.program().constants.is_empty());
 }
 
+/// Statements of several operators run as chains.
+#[test]
+fn chains_take_statements_of_several_operators() {
+    for source in [
+        "A%=(A%+I*3) AND 1023",
+        "DIM M%[8]:M%[I AND 7]=(M%[(I*3) AND 7]+I) AND 255",
+        "IF X*X+Y*Y<R*R THEN ?1",
+        "Q=(X+1)*(X+2)-X*3",
+    ] {
+        let program = compiled(source, true);
+        let chains = (program.fast.iter())
+            .filter(|f| matches!(f.op, FastOp::Chain { .. }))
+            .count();
+        assert!(chains > 0, "{source}: {:?}", program.fast);
+    }
+    let program = compiled(LOOP, true);
+    assert!(
+        program
+            .fast
+            .iter()
+            .any(|f| matches!(f.op, FastOp::Chain { .. }))
+    );
+}
+
 #[test]
 fn most_loops_are_fused() {
     let program = compiled("FOR I=1 TO 9:A=A+I*2:NEXT", true);
@@ -527,6 +585,8 @@ FOR I=1 TO 6
  ENDCASE
  K%[I]=I+1:R%[K%[I]]=R%[K%[I]]+1
  G=G+SQ(I):PQ I OUT H
+ X=(A+I)*(A-I) AND 1023:R%[(I+1) AND 7]=(R%[I AND 7]+X) AND 255
+ IF X*2>A+I THEN Y=Y+X*2
 NEXT
 ?A
 END
@@ -621,8 +681,13 @@ fn conditional_breakpoints_and_watches_stop_as_without_fusing() {
 /// finds the program where it would have been.
 #[test]
 fn on_break_jumps_as_without_fusing() {
-    let source = "ON BREAK GOTO @B\nA=0\nWHILE 1\n A=A+1:C=A*2\nWEND\n@B\n?A\n?\"OUT\"";
-    for budget in [1, 2, 3, 5, 9, 17, 40, 100, 333] {
+    // The second's statements run as chains, the last two as one.
+    let sources = [
+        "ON BREAK GOTO @B\nA=0\nWHILE 1\n A=A+1:C=A*2\nWEND\n@B\n?A\n?\"OUT\"",
+        "ON BREAK GOTO @B\nA=0\nWHILE 1\n A=(A+1)*3 AND 255\n C=(A-1)*(A+1):D=C*2-A\nWEND\n@B\n?A;C;D",
+    ];
+    let budgets = [1, 2, 3, 5, 9, 17, 40, 100, 333];
+    for (source, budget) in sources.iter().flat_map(|&s| budgets.map(|b| (s, b))) {
         let run = |fused: bool| {
             let mut host = TextHost::default();
             let mut vm = Vm::new(compiled(source, fused));
@@ -632,7 +697,7 @@ fn on_break_jumps_as_without_fusing() {
             let status = vm.run(&mut host, 10_000).unwrap();
             (first, taken, line, status, vm.executed(), host.output)
         };
-        assert_eq!(run(true), run(false), "after {budget}");
+        assert_eq!(run(true), run(false), "{source} after {budget}");
     }
 }
 
@@ -680,6 +745,10 @@ fn errors_name_their_statement() {
         "S$=\"A\"\nA=1\nFOR I=0 TO S$\nA=2\nNEXT",
         "S$=\"A\"\nT=1\nFOR I=0 TO T:T=S$\nNEXT",
         "DEF F(A)\nB=1:RETURN A/0\nEND\nC=2:D=F(1)",
+        "A=1:B=0\nD=1:C=(A+1)/(B*2):E=2",
+        "DIM X[2]\nI=5\nD=1:X[I-1]=X[0]*2+1:F=2",
+        "A=1:B$=\"S\"\nD=A*2+1:C=(A+1)*2+B$:E=2",
+        "DEF F(A)\nB=A*2+1:C=B*B\nRETURN (A+B)/(C-C)\nEND\nC=2:D=F(1)",
     ] {
         let fused = at(source);
         assert_eq!(fused, plain(source), "{source}");

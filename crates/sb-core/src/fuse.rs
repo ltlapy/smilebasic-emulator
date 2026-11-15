@@ -11,6 +11,17 @@
 //! one meaning for each instruction, and an error names what it always named.
 //! An entry counts as the instructions it stands for, so that time slices end
 //! where they would.
+//!
+//! Most entries are a few stack instructions in one. A [`FastOp::Chain`]
+//! stands for whole statements instead: the stack code of their expressions
+//! worked out again as three-address [`Micro`] steps, which read variables
+//! and constants where they are and keep what they make in hidden places
+//! after the constants, so that the values never go through the stack. Its
+//! steps write nothing the program can see until a statement's last, and a
+//! [`Micro::Commit`] after each statement but the last says where `code`
+//! goes on from if a later one cannot do its work. Each address takes the
+//! entry or chain that costs least, by rough instruction counts, on to the
+//! next jump.
 
 use std::collections::HashMap;
 
@@ -94,6 +105,7 @@ pub enum FastOp {
         argc: u8,
     },
     Unary(UnaryOp),
+    Truthy,
     Binary(BinaryOp),
     /// `Swap, Binary`
     Swapped(BinaryOp),
@@ -176,6 +188,13 @@ pub enum FastOp {
         step: Var,
         exit: Addr,
     },
+    /// A [`Micro`] chain: `count` of [`Compiled::micro`] from `first`, then on
+    /// to `next` unless one of them jumps.
+    Chain {
+        first: u32,
+        count: u16,
+        next: Addr,
+    },
     /// NEXT with a FOR whose TO and STEP are single values: `var, step_slot,
     /// Binary(Add), Store(var), Nop, step, Store(step_slot), to, Store(to_slot),
     /// var, to_slot, step_slot, ForTest, JumpIfFalse(exit)`.
@@ -191,6 +210,112 @@ pub enum FastOp {
         /// any of those is written reads the same.
         apart: bool,
     },
+}
+
+/// One three-address step of a [`FastOp::Chain`]. A chain stands for one or
+/// more statements of stack code, each ending in one thing that can be seen:
+/// a store, a jump, or a value left on the stack. Its steps read their
+/// operands from variables and constants, and before a statement's last step
+/// they write only the chain's own places, hidden variables after the
+/// constants. So a step that cannot do its work leaves the statement as it
+/// was, and `code` runs it from its start. Each common operator has its own
+/// kind, `a op b` with `a` the left side and the result last.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Micro {
+    Add(Var, Var, Var),
+    Sub(Var, Var, Var),
+    Mul(Var, Var, Var),
+    Div(Var, Var, Var),
+    IntDiv(Var, Var, Var),
+    Mod(Var, Var, Var),
+    And(Var, Var, Var),
+    Or(Var, Var, Var),
+    Xor(Var, Var, Var),
+    Shl(Var, Var, Var),
+    Shr(Var, Var, Var),
+    Eq(Var, Var, Var),
+    NotEq(Var, Var, Var),
+    Less(Var, Var, Var),
+    LessEq(Var, Var, Var),
+    Greater(Var, Var, Var),
+    GreaterEq(Var, Var, Var),
+    /// The other operators.
+    Binary(BinaryOp, Var, Var, Var),
+    Neg(Var, Var),
+    Unary(UnaryOp, Var, Var),
+    /// `base[i]` to `to`.
+    Index1 {
+        base: Var,
+        i: Var,
+        to: Var,
+    },
+    Index2 {
+        base: Var,
+        i: Var,
+        j: Var,
+        to: Var,
+    },
+    /// A builtin [`crate::builtins::is_pure_call`] names, on `argc`
+    /// places in a row from `args`.
+    Builtin {
+        id: u16,
+        argc: u8,
+        args: Var,
+        to: Var,
+    },
+    /// A number copied, or a statement's last step that stores one.
+    Move {
+        from: Var,
+        to: Var,
+    },
+    /// A statement's last step, `base[i]=value`.
+    StoreIndex1 {
+        value: Var,
+        base: Var,
+        i: Var,
+    },
+    StoreIndex2 {
+        value: Var,
+        base: Var,
+        i: Var,
+        j: Var,
+    },
+    /// A statement's last step: a jump to `target` unless `cond` is true.
+    JumpIfFalse {
+        cond: Var,
+        target: Addr,
+    },
+    JumpIfTrue {
+        cond: Var,
+        target: Addr,
+    },
+    /// A statement's last step: a jump to `target` when `a op b` is `when`.
+    JumpEq(Jump),
+    JumpNotEq(Jump),
+    JumpLess(Jump),
+    JumpLessEq(Jump),
+    JumpGreater(Jump),
+    JumpGreaterEq(Jump),
+    /// The statements before are done: a later step that cannot do its
+    /// work leaves the rest to `step` from `to`, with `charged` of the
+    /// chain's instructions run.
+    Commit {
+        to: Addr,
+        charged: u8,
+    },
+    /// `a` as 0 or 1, as [`Op::Truthy`].
+    Truthy(Var, Var),
+    /// The chain's last step: `a` left on the stack.
+    Push(Var),
+}
+
+/// A comparison's jump in a chain.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Jump {
+    pub a: Var,
+    pub b: Var,
+    pub target: Addr,
+    pub when: bool,
 }
 
 /// Where [`FastOp::On`] finds the number that picks its label.
@@ -290,6 +415,7 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
             want: Want::Value,
         } if crate::builtins::is_pure_call(id, argc.into()) => add(F::Builtin { id, argc }, 1),
         Op::Unary(op) => add(F::Unary(op), 1),
+        Op::Truthy => add(F::Truthy, 1),
         Op::Binary(op) => add(F::Binary(op), 1),
         Op::Index(1) => add(F::Index1, 1),
         Op::Index(2) => add(F::Index2, 1),
@@ -418,11 +544,348 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
     }
 }
 
-/// Works out [`Compiled::fast`] and [`Compiled::constants`]. Each address takes
-/// the form that leaves the fewest entries to run on to the next jump.
+/// How many hidden places a chain has for the values it makes.
+const TEMPS: usize = 8;
+
+/// A chain being built: the places of the values a stack machine would
+/// have, and which hidden places hold one still to be used.
+struct Chain {
+    micro: Vec<Micro>,
+    stack: Vec<Var>,
+    /// The first hidden place.
+    temps: usize,
+    used: u16,
+}
+
+impl Chain {
+    fn temp(&self, v: Var) -> Option<usize> {
+        let k = v.index().wrapping_sub(self.temps);
+        (v.table() == 0 && k < TEMPS).then_some(k)
+    }
+
+    fn pop(&mut self) -> Option<Var> {
+        let v = self.stack.pop()?;
+        if let Some(k) = self.temp(v) {
+            self.used &= !(1 << k);
+        }
+        Some(v)
+    }
+
+    /// A free hidden place for a value made now, once its operands are taken.
+    fn alloc(&mut self) -> Option<Var> {
+        let k = (!self.used).trailing_zeros() as usize;
+        if k >= TEMPS {
+            return None;
+        }
+        self.used |= 1 << k;
+        Var::global(self.temps + k)
+    }
+
+    /// `n` free hidden places in a row.
+    fn alloc_run(&mut self, n: usize) -> Option<Var> {
+        let run = (1u16 << n) - 1;
+        let k = (0..=TEMPS - n).find(|k| self.used & (run << k) == 0)?;
+        self.used |= run << k;
+        Var::global(self.temps + k)
+    }
+
+    /// Makes a value into a free hidden place, once its operands are taken.
+    fn make(&mut self, f: impl FnOnce(Var) -> Micro) -> Option<()> {
+        let to = self.alloc()?;
+        self.micro.push(f(to));
+        self.stack.push(to);
+        Some(())
+    }
+
+    /// Where the last step puts its result, if that is `v`.
+    fn made_last(&mut self, v: Var) -> Option<&mut Var> {
+        use Micro as M;
+        let to = match self.micro.last_mut()? {
+            M::Add(_, _, to)
+            | M::Sub(_, _, to)
+            | M::Mul(_, _, to)
+            | M::Div(_, _, to)
+            | M::IntDiv(_, _, to)
+            | M::Mod(_, _, to)
+            | M::And(_, _, to)
+            | M::Or(_, _, to)
+            | M::Xor(_, _, to)
+            | M::Shl(_, _, to)
+            | M::Shr(_, _, to)
+            | M::Eq(_, _, to)
+            | M::NotEq(_, _, to)
+            | M::Less(_, _, to)
+            | M::LessEq(_, _, to)
+            | M::Greater(_, _, to)
+            | M::GreaterEq(_, _, to)
+            | M::Binary(_, _, _, to)
+            | M::Neg(_, to)
+            | M::Unary(_, _, to)
+            | M::Truthy(_, to)
+            | M::Index1 { to, .. }
+            | M::Index2 { to, .. }
+            | M::Builtin { to, .. } => to,
+            _ => return None,
+        };
+        (*to == v).then_some(to)
+    }
+}
+
+fn binary_micro(op: BinaryOp, a: Var, b: Var, to: Var) -> Micro {
+    use BinaryOp as B;
+    use Micro as M;
+    match op {
+        B::Add => M::Add(a, b, to),
+        B::Sub => M::Sub(a, b, to),
+        B::Mul => M::Mul(a, b, to),
+        B::Div => M::Div(a, b, to),
+        B::IntDiv => M::IntDiv(a, b, to),
+        B::Mod => M::Mod(a, b, to),
+        B::And => M::And(a, b, to),
+        B::Or => M::Or(a, b, to),
+        B::Xor => M::Xor(a, b, to),
+        B::Shl => M::Shl(a, b, to),
+        B::Shr => M::Shr(a, b, to),
+        B::Eq => M::Eq(a, b, to),
+        B::NotEq => M::NotEq(a, b, to),
+        B::Less => M::Less(a, b, to),
+        B::LessEq => M::LessEq(a, b, to),
+        B::Greater => M::Greater(a, b, to),
+        B::GreaterEq => M::GreaterEq(a, b, to),
+        op => M::Binary(op, a, b, to),
+    }
+}
+
+/// A chain the code from an address can take: its steps, how many
+/// instructions it stands for, and where it goes on.
+type Candidate = (Vec<Micro>, usize, Addr);
+
+/// The longest chain a chain may be, in instructions: [`Fast::len`].
+const MAX_CHAIN: usize = 200;
+
+/// The chains for the code from `code[0]` at `pc`, each a statement longer
+/// than the one before. `temps` is the first of its hidden places.
+fn chains(code: &[Op], pc: usize, c: &mut Constants, temps: usize) -> Vec<Candidate> {
+    let mut found = Vec::new();
+    chain(code, pc, c, temps, &mut found);
+    found
+}
+
+fn chain(
+    code: &[Op],
+    pc: usize,
+    c: &mut Constants,
+    temps: usize,
+    found: &mut Vec<Candidate>,
+) -> Option<()> {
+    let mut ch = Chain {
+        micro: Vec::new(),
+        stack: Vec::new(),
+        temps,
+        used: 0,
+    };
+    let addr = |at: usize| Addr::try_from(pc + at).ok();
+    // A store or a jump ends it. A Jump right after a store goes with it.
+    let after_store = |at: usize| match code.get(at + 1) {
+        Some(&Op::Jump(target)) => Some((at + 2, target)),
+        _ => Some((at + 1, addr(at + 1)?)),
+    };
+    // After a store, the chain may go on to the next statement.
+    let mut stored = |ch: &mut Chain, at: usize| -> Option<bool> {
+        let (len, next) = after_store(at)?;
+        if len > MAX_CHAIN {
+            return None;
+        }
+        found.push((ch.micro.clone(), len, next));
+        if len == at + 2 {
+            return Some(false);
+        }
+        let charged = u8::try_from(len).ok()?;
+        ch.micro.push(Micro::Commit { to: next, charged });
+        Some(true)
+    };
+    let mut end = code.len();
+    for (at, op) in code.iter().enumerate() {
+        match *op {
+            Op::Nop => {}
+            Op::Int(_) | Op::Real(_) | Op::Load(_) => {
+                let v = c.source(Some(op))?;
+                ch.stack.push(v);
+            }
+            Op::Swap => {
+                let n = ch.stack.len();
+                if n < 2 {
+                    return None;
+                }
+                ch.stack.swap(n - 1, n - 2);
+            }
+            Op::Reverse(n) => {
+                let from = ch.stack.len().checked_sub(n as usize)?;
+                ch.stack[from..].reverse();
+            }
+            Op::Binary(op) => {
+                let b = ch.pop()?;
+                let a = ch.pop()?;
+                ch.make(|to| binary_micro(op, a, b, to))?;
+            }
+            Op::Unary(op) => {
+                let a = ch.pop()?;
+                ch.make(|to| match op {
+                    UnaryOp::Neg => Micro::Neg(a, to),
+                    op => Micro::Unary(op, a, to),
+                })?;
+            }
+            Op::Truthy => {
+                let a = ch.pop()?;
+                ch.make(|to| Micro::Truthy(a, to))?;
+            }
+            Op::Index(1) => {
+                let i = ch.pop()?;
+                let base = ch.pop()?;
+                ch.make(|to| Micro::Index1 { base, i, to })?;
+            }
+            Op::Index(2) => {
+                let j = ch.pop()?;
+                let i = ch.pop()?;
+                let base = ch.pop()?;
+                ch.make(|to| Micro::Index2 { base, i, j, to })?;
+            }
+            Op::CallBuiltin {
+                id,
+                argc,
+                want: Want::Value,
+            } if crate::builtins::is_pure_call(id, argc.into()) => {
+                let n = usize::from(argc);
+                let from = ch.stack.len().checked_sub(n)?;
+                let args = match n {
+                    0 => Var::global(temps)?,
+                    // One place is a slice of one already.
+                    1 => ch.stack[from],
+                    _ => {
+                        let args = ch.alloc_run(n)?;
+                        for (k, &from) in ch.stack[from..].iter().enumerate() {
+                            let to = Var::global(args.index() + k)?;
+                            ch.micro.push(Micro::Move { from, to });
+                        }
+                        args
+                    }
+                };
+                for _ in 0..n {
+                    ch.pop()?;
+                }
+                if n > 1 {
+                    ch.used &= !(((1u16 << n) - 1) << (args.index() - temps));
+                }
+                ch.make(|to| Micro::Builtin { id, argc, args, to })?;
+            }
+            Op::Store(slot) => {
+                let to = Var::of(slot)?;
+                let v = ch.pop()?;
+                if !ch.stack.is_empty() {
+                    return None;
+                }
+                let made = ch.temp(v).is_some();
+                match ch.made_last(v) {
+                    Some(last) if made => *last = to,
+                    _ => ch.micro.push(Micro::Move { from: v, to }),
+                }
+                if !stored(&mut ch, at)? {
+                    return Some(());
+                }
+            }
+            Op::StoreIndex(n @ (1 | 2)) => {
+                let j = if n == 2 { Some(ch.pop()?) } else { None };
+                let i = ch.pop()?;
+                let base = ch.pop()?;
+                let value = ch.pop()?;
+                if !ch.stack.is_empty() {
+                    return None;
+                }
+                ch.micro.push(match j {
+                    Some(j) => Micro::StoreIndex2 { value, base, i, j },
+                    None => Micro::StoreIndex1 { value, base, i },
+                });
+                if !stored(&mut ch, at)? {
+                    return Some(());
+                }
+            }
+            Op::JumpIfFalse(target) | Op::TestIfFalse(target) | Op::JumpIfTrue(target) => {
+                let cond = ch.pop()?;
+                if !ch.stack.is_empty() {
+                    return None;
+                }
+                let when = matches!(op, Op::JumpIfTrue(_));
+                // A comparison made just now jumps on its own.
+                let compared = match ch.micro.last() {
+                    Some(
+                        &(Micro::Eq(a, b, to)
+                        | Micro::NotEq(a, b, to)
+                        | Micro::Less(a, b, to)
+                        | Micro::LessEq(a, b, to)
+                        | Micro::Greater(a, b, to)
+                        | Micro::GreaterEq(a, b, to)),
+                    ) if to == cond => Some(Jump { a, b, target, when }),
+                    _ => None,
+                };
+                let last = match (compared, ch.micro.last()) {
+                    (Some(j), Some(Micro::Eq(..))) => Micro::JumpEq(j),
+                    (Some(j), Some(Micro::NotEq(..))) => Micro::JumpNotEq(j),
+                    (Some(j), Some(Micro::Less(..))) => Micro::JumpLess(j),
+                    (Some(j), Some(Micro::LessEq(..))) => Micro::JumpLessEq(j),
+                    (Some(j), Some(Micro::Greater(..))) => Micro::JumpGreater(j),
+                    (Some(j), Some(Micro::GreaterEq(..))) => Micro::JumpGreaterEq(j),
+                    _ if when => Micro::JumpIfTrue { cond, target },
+                    _ => Micro::JumpIfFalse { cond, target },
+                };
+                if compared.is_some() {
+                    ch.micro.pop();
+                }
+                ch.micro.push(last);
+                if at < MAX_CHAIN {
+                    found.push((ch.micro, at + 1, addr(at + 1)?));
+                }
+                return Some(());
+            }
+            _ => {
+                end = at;
+                break;
+            }
+        }
+    }
+    // A value made for what follows.
+    match ch.stack[..] {
+        [v] if ch.temp(v).is_some() && end <= MAX_CHAIN => {
+            ch.micro.push(Micro::Push(v));
+            found.push((ch.micro, end, addr(end)?));
+        }
+        _ => {}
+    }
+    Some(())
+}
+
+/// What an entry costs, in tens of aarch64 instructions: about 70 with the
+/// 20 that choose it.
+const ENTRY_COST: u32 = 7;
+
+/// A chain costs an entry's choosing and setting out, and about 60 a step,
+/// but 20 for a [`Micro::Commit`].
+fn chain_cost(steps: &[Micro]) -> u32 {
+    let commits = steps
+        .iter()
+        .filter(|m| matches!(m, Micro::Commit { .. }))
+        .count() as u32;
+    3 + 6 * (steps.len() as u32 - commits) + 2 * commits
+}
+
+/// Works out [`Compiled::fast`], [`Compiled::micro`] and
+/// [`Compiled::constants`]. Each address takes the form that costs least to
+/// run on to the next jump.
 pub fn fuse(program: &mut Compiled) {
     let code = &program.code;
     let mut constants = Vec::new();
+    // The chains' hidden places come first, as places of their own.
+    let temps = program.globals.len();
+    constants.extend((0..TEMPS).map(|_| Literal::Int(0)));
     let mut c = Constants {
         first: program.globals.len(),
         found: HashMap::new(),
@@ -434,26 +897,50 @@ pub fn fuse(program: &mut Compiled) {
         len: 1,
     };
     let mut fast = vec![slow; n];
+    let mut micro = Vec::new();
     let mut runs = vec![0u32; n + 1];
     for pc in (0..n).rev() {
         let mut best = slow;
-        let mut fewest = runs[pc + 1] + 1;
+        let mut least = runs[pc + 1] + ENTRY_COST;
         forms(&code[pc..], &mut c, &mut |op, len| {
-            let after = runs[pc + len] + 1;
-            if after < fewest || (after == fewest && len >= usize::from(best.len)) {
-                fewest = after;
+            let after = runs[pc + len] + ENTRY_COST;
+            if after < least || (after == least && len >= usize::from(best.len)) {
+                least = after;
                 best = Fast { op, len: len as u8 };
             }
         });
+        let mut chosen = None;
+        for (steps, len, next) in chains(&code[pc..], pc, &mut c, temps) {
+            let cost = runs[pc + len] + chain_cost(&steps);
+            if let (Ok(short), Ok(count)) = (u8::try_from(len), u16::try_from(steps.len()))
+                && cost < least
+            {
+                least = cost;
+                let first = u32::try_from(micro.len()).unwrap_or(u32::MAX);
+                best = Fast {
+                    op: FastOp::Chain { first, count, next },
+                    len: short,
+                };
+                chosen = Some(steps);
+            }
+        }
+        if let Some(steps) = chosen {
+            micro.extend(steps);
+        }
         // A Nop goes along with what follows it.
-        if best.op == FastOp::Nop && fast.get(pc + 1).is_some_and(|f| f.op != FastOp::Slow) {
+        if best.op == FastOp::Nop
+            && fast
+                .get(pc + 1)
+                .is_some_and(|f| f.op != FastOp::Slow && f.len < u8::MAX)
+        {
             best = fast[pc + 1];
             best.len += 1;
-            fewest = runs[pc + 1];
+            least = runs[pc + 1];
         }
         fast[pc] = best;
-        runs[pc] = fewest;
+        runs[pc] = least;
     }
     program.fast = fast;
+    program.micro = micro;
     program.constants = constants;
 }

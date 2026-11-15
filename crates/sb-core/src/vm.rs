@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::BinaryOp;
+use crate::ast::{BinaryOp, UnaryOp};
 use crate::builtins::{self, Form, Kind};
 use crate::bytecode::*;
 use crate::error::{Error, ErrorKind, Result};
-use crate::fuse::{FOR_TEST_LEN, FastOp, Selector, Var};
+use crate::fuse::{FOR_TEST_LEN, FastOp, Micro, Selector, Var};
 use crate::host::{Exec, Host};
 use crate::lexer::Suffix;
 use crate::memory;
@@ -1681,6 +1681,13 @@ impl Vm {
                     };
                     put(value, n);
                 }
+                FastOp::Truthy => {
+                    let value = top(stack);
+                    let Some(yes) = truth(value) else {
+                        break;
+                    };
+                    put(value, Num::Int(i32::from(yes)));
+                }
                 FastOp::Binary(op) => {
                     let Some(n) = on_two(stack, |l, r| ops::binary_numbers(op, l, r)) else {
                         break;
@@ -1827,6 +1834,164 @@ impl Vm {
                     let Some(more) = more else { break };
                     if !more {
                         next = exit as usize;
+                    }
+                }
+                FastOp::Chain {
+                    first,
+                    count,
+                    next: to,
+                } => {
+                    next = to as usize;
+                    let first = first as usize;
+                    // Where `step` goes on from if a step cannot do its
+                    // work, and the instructions run by then.
+                    let mut done = (pc, 0);
+                    let mut failed = false;
+                    'micro: for &m in &program.micro[first..first + usize::from(count)] {
+                        // A step that cannot do its work leaves the chain to
+                        // `step` from its start: those before it wrote only
+                        // the chain's own places.
+                        macro_rules! fail {
+                            () => {{
+                                failed = true;
+                                break 'micro;
+                            }};
+                        }
+                        macro_rules! binary {
+                            ($op:expr, $a:expr, $b:expr, $to:expr) => {{
+                                let n = ops::binary_numbers($op, get(vars, $a), get(vars, $b));
+                                let Some(n) = n else { fail!() };
+                                put(at_var(vars, $to), n);
+                            }};
+                        }
+                        macro_rules! jump {
+                            ($op:expr, $j:expr) => {{
+                                let n = ops::binary_numbers($op, get(vars, $j.a), get(vars, $j.b));
+                                let Some(n) = n else { fail!() };
+                                if num_truth(n) == $j.when {
+                                    next = $j.target as usize;
+                                }
+                            }};
+                        }
+                        use BinaryOp as B;
+                        use Micro as M;
+                        match m {
+                            M::Add(a, b, to) => binary!(B::Add, a, b, to),
+                            M::Sub(a, b, to) => binary!(B::Sub, a, b, to),
+                            M::Mul(a, b, to) => binary!(B::Mul, a, b, to),
+                            M::Div(a, b, to) => binary!(B::Div, a, b, to),
+                            M::IntDiv(a, b, to) => binary!(B::IntDiv, a, b, to),
+                            M::Mod(a, b, to) => binary!(B::Mod, a, b, to),
+                            M::And(a, b, to) => binary!(B::And, a, b, to),
+                            M::Or(a, b, to) => binary!(B::Or, a, b, to),
+                            M::Xor(a, b, to) => binary!(B::Xor, a, b, to),
+                            M::Shl(a, b, to) => binary!(B::Shl, a, b, to),
+                            M::Shr(a, b, to) => binary!(B::Shr, a, b, to),
+                            M::Eq(a, b, to) => binary!(B::Eq, a, b, to),
+                            M::NotEq(a, b, to) => binary!(B::NotEq, a, b, to),
+                            M::Less(a, b, to) => binary!(B::Less, a, b, to),
+                            M::LessEq(a, b, to) => binary!(B::LessEq, a, b, to),
+                            M::Greater(a, b, to) => binary!(B::Greater, a, b, to),
+                            M::GreaterEq(a, b, to) => binary!(B::GreaterEq, a, b, to),
+                            M::Binary(op, a, b, to) => binary!(op, a, b, to),
+                            M::Neg(a, to) => {
+                                let n = ops::unary_number(UnaryOp::Neg, get(vars, a));
+                                let Some(n) = n else { fail!() };
+                                put(at_var(vars, to), n);
+                            }
+                            M::Unary(op, a, to) => {
+                                let Some(n) = ops::unary_number(op, get(vars, a)) else {
+                                    fail!();
+                                };
+                                put(at_var(vars, to), n);
+                            }
+                            M::Index1 { base, i, to } => {
+                                let Some(n) = element1(get(vars, base), get(vars, i)) else {
+                                    fail!();
+                                };
+                                put(at_var(vars, to), n);
+                            }
+                            M::Index2 { base, i, j, to } => {
+                                let n = element2(get(vars, base), get(vars, i), get(vars, j));
+                                let Some(n) = n else { fail!() };
+                                put(at_var(vars, to), n);
+                            }
+                            M::Builtin { id, argc, args, to } => {
+                                let builtins::Kind::Function(f) = builtins::get(id).kind else {
+                                    unreachable!("only functions are fused");
+                                };
+                                let result = match argc {
+                                    1 => f(std::slice::from_ref(get(vars, args))),
+                                    n => {
+                                        let at = args.index();
+                                        f(&vars[args.table()][at..at + usize::from(n)])
+                                    }
+                                };
+                                let n = match result {
+                                    Ok(Value::Int(n)) => Num::Int(n),
+                                    Ok(Value::Real(x)) => Num::Real(x),
+                                    _ => fail!(),
+                                };
+                                put(at_var(vars, to), n);
+                            }
+                            M::Move { from, to } => {
+                                let Some(n) = number(get(vars, from)) else {
+                                    fail!();
+                                };
+                                put(at_var(vars, to), n);
+                            }
+                            M::StoreIndex1 { value, base, i } => {
+                                if !set_element1(get(vars, base), get(vars, i), get(vars, value)) {
+                                    fail!();
+                                }
+                            }
+                            M::StoreIndex2 { value, base, i, j } => {
+                                let (b, v) = (get(vars, base), get(vars, value));
+                                if !set_element2(b, get(vars, i), get(vars, j), v) {
+                                    fail!();
+                                }
+                            }
+                            M::JumpIfFalse { cond, target } => {
+                                let Some(yes) = truth(get(vars, cond)) else {
+                                    fail!();
+                                };
+                                if !yes {
+                                    next = target as usize;
+                                }
+                            }
+                            M::JumpIfTrue { cond, target } => {
+                                let Some(yes) = truth(get(vars, cond)) else {
+                                    fail!();
+                                };
+                                if yes {
+                                    next = target as usize;
+                                }
+                            }
+                            M::JumpEq(j) => jump!(B::Eq, j),
+                            M::JumpNotEq(j) => jump!(B::NotEq, j),
+                            M::JumpLess(j) => jump!(B::Less, j),
+                            M::JumpLessEq(j) => jump!(B::LessEq, j),
+                            M::JumpGreater(j) => jump!(B::Greater, j),
+                            M::JumpGreaterEq(j) => jump!(B::GreaterEq, j),
+                            M::Commit { to, charged } => done = (to as usize, u64::from(charged)),
+                            M::Truthy(a, to) => {
+                                let Some(yes) = truth(get(vars, a)) else {
+                                    fail!();
+                                };
+                                put(at_var(vars, to), Num::Int(i32::from(yes)));
+                            }
+                            M::Push(a) => {
+                                let Some(n) = number(get(vars, a)) else {
+                                    fail!();
+                                };
+                                push_num(stack, n);
+                            }
+                        }
+                    }
+                    if failed {
+                        pc = done.0;
+                        left -= done.1;
+                        break;
                     }
                 }
                 FastOp::ForNext {
@@ -3668,6 +3833,16 @@ fn on_two<T>(stack: &[Value], f: impl FnOnce(&Value, &Value) -> T) -> T {
         unreachable!("compiler keeps the stack balanced");
     };
     f(under, top)
+}
+
+/// A number's value.
+#[inline(always)]
+fn number(value: &Value) -> Option<Num> {
+    match *value {
+        Value::Int(n) => Some(Num::Int(n)),
+        Value::Real(x) => Some(Num::Real(x)),
+        _ => None,
+    }
 }
 
 /// [`Value::is_true`] on a number.
