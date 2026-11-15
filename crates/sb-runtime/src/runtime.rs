@@ -2591,6 +2591,7 @@ impl Runtime {
     /// Runs `command` as a call: a function called as a command with one
     /// OUT variable, such as `SPSET 242 OUT IX`, runs as the function, and
     /// a call no form takes is the count error SmileBASIC 4 gives for it.
+    #[inline(always)]
     pub(crate) fn run_counted(
         &mut self,
         command: Command,
