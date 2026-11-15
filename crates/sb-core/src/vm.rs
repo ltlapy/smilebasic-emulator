@@ -39,9 +39,6 @@ const CALL_COST: usize = 12;
 const VALUE_COST: usize = 4;
 /// What each of a DEF's arguments, OUTs and variables takes of it.
 const VARIABLE_COST: usize = 4;
-/// How many lists of variables are kept for later calls: more than the depth
-/// of nearly all calls.
-const SPARE_LOCALS: usize = 32;
 
 /// Counts of the work a [`Vm`] has done, from [`Vm::work`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -265,7 +262,9 @@ struct Frame {
     /// The slot the DEF is in, and the one to return to.
     home: usize,
     caller: usize,
-    locals: Vec<Value>,
+    /// Where its variables start in [`Vm::locals`]. They go on to the next
+    /// frame's, or to the end.
+    base: usize,
     /// Arguments of a `*` DEF.
     args: Vec<Value>,
     /// Results of an `OUT *` DEF.
@@ -355,8 +354,9 @@ pub struct Vm {
     /// Which globals exist, for direct mode's declarations.
     declared: Vec<bool>,
     frames: Vec<Frame>,
-    /// The empty lists of variables of DEF calls that ended.
-    spare_locals: Vec<Vec<Value>>,
+    /// The variables of the DEF calls under way, each call's after its
+    /// caller's, so that a call and its return move no lists about.
+    locals: Vec<Value>,
     /// Slot and address to return to, and how many READ places
     /// RESTORE "PUSH" had kept then.
     gosubs: Vec<(usize, usize, usize)>,
@@ -660,7 +660,7 @@ impl Vm {
             globals,
             declared,
             frames: Vec::new(),
-            spare_locals: Vec::new(),
+            locals: Vec::new(),
             gosubs: Vec::new(),
             data_pos: 0,
             data_kept: Vec::new(),
@@ -951,7 +951,7 @@ impl Vm {
             && let Some(def) = (self.program_in(f.home)).and_then(|p| p.defs.get(f.def as usize))
             && let Some(i) = def.locals.iter().position(named)
         {
-            return f.locals.get(i).cloned();
+            return self.locals[f.base..].get(i).cloned();
         }
         let i = self.program.globals.iter().position(named)?;
         self.globals.get(i).cloned()
@@ -1053,7 +1053,7 @@ impl Vm {
             return Vec::new();
         };
         (def.locals.iter())
-            .zip(&f.locals)
+            .zip(self.frame_vars(frame))
             .filter(|(info, _)| !info.name.starts_with('\0'))
             .map(|(info, value)| (info.full_name(), value.clone()))
             .collect()
@@ -1069,8 +1069,23 @@ impl Vm {
         let Some(i) = def.and_then(|d| d.locals.iter().position(|l| l.is_named(name))) else {
             return false;
         };
-        self.frames[frame].locals[i] = value;
+        let base = self.frames[frame].base;
+        self.locals[base + i] = value;
         true
+    }
+
+    /// The variables of DEF call `frame`, by [`Call::frame`].
+    fn frame_vars(&self, frame: usize) -> &[Value] {
+        let end = (self.frames.get(frame + 1)).map_or(self.locals.len(), |f| f.base);
+        &self.locals[self.frames[frame].base..end]
+    }
+
+    /// Ends the DEF calls from `frames` on, with their variables.
+    fn truncate_frames(&mut self, frames: usize) {
+        if let Some(f) = self.frames.get(frames) {
+            self.locals.truncate(f.base);
+        }
+        self.frames.truncate(frames);
     }
 
     /// Gives a global of a slot's program that has run a new value. False
@@ -1212,6 +1227,7 @@ impl Vm {
         // The jump leaves GOSUBs, DEFs and callbacks behind.
         self.stack.clear();
         self.frames.clear();
+        self.locals.clear();
         self.gosubs.clear();
         self.data_kept.clear();
         self.values_room_reached = false;
@@ -1553,6 +1569,7 @@ impl Vm {
             stack,
             globals,
             frames,
+            locals,
             gosubs,
             data_kept,
             slot,
@@ -1562,8 +1579,8 @@ impl Vm {
         } = self;
         let slot = *slot;
         // GOSUB and RETURN look at the running DEF too, which stays.
-        let (locals, calls, gosub_base): (&mut [Value], _, _) = match frames.last_mut() {
-            Some(f) => (&mut f.locals, f.stack_to, f.gosub_base),
+        let (locals, calls, gosub_base): (&mut [Value], _, _) = match frames.last() {
+            Some(f) => (&mut locals[f.base..], f.stack_to, f.gosub_base),
             None => (&mut [], 0, 0),
         };
         let vars: &mut Vars = &mut [globals, locals];
@@ -2163,12 +2180,9 @@ impl Vm {
             .ok_or_else(|| ErrorKind::IllegalStatement.into())
     }
 
-    fn locals(&mut self) -> &mut Vec<Value> {
-        &mut self
-            .frames
-            .last_mut()
-            .expect("compiler emits locals only in DEFs")
-            .locals
+    fn locals(&mut self) -> &mut [Value] {
+        let f = (self.frames.last()).expect("compiler emits locals only in DEFs");
+        &mut self.locals[f.base..]
     }
 
     fn load(&mut self, slot: Slot) -> Value {
@@ -2277,10 +2291,11 @@ impl Vm {
         for array in host.own_arrays() {
             tally.skip(&array);
         }
-        let frames = self
-            .frames
-            .iter()
-            .flat_map(|f| f.locals.iter().chain(&f.args).chain(&f.outs));
+        let frames = (self.locals.iter()).chain(
+            self.frames
+                .iter()
+                .flat_map(|f| f.args.iter().chain(&f.outs)),
+        );
         let units = self.units.iter().flatten().flat_map(|u| &u.globals);
         for v in self
             .globals
@@ -2393,7 +2408,7 @@ impl Vm {
         let Some(back) = self.execs.pop() else {
             return Some(Status::Ended);
         };
-        self.frames.truncate(back.frames);
+        self.truncate_frames(back.frames);
         self.gosubs.truncate(back.gosubs);
         self.stack.truncate(back.stack);
         self.callbacks.truncate(back.callbacks);
@@ -2455,7 +2470,7 @@ impl Vm {
             let gosubs = base.map_or(0, |b| b.gosubs);
             let stack = base.map_or(0, |b| b.stack);
             let callbacks = base.map_or(0, |b| b.callbacks);
-            self.frames.truncate(frames);
+            self.truncate_frames(frames);
             self.gosubs.truncate(gosubs);
             self.stack.truncate(stack);
             self.callbacks.truncate(callbacks);
@@ -3078,7 +3093,7 @@ impl Vm {
                 let v = match program.defs[f.def as usize].params {
                     Some(p) => (0..i32::from(p))
                         .contains(&n)
-                        .then(|| f.locals[n as usize].clone()),
+                        .then(|| self.locals[f.base + n as usize].clone()),
                     None => usize::try_from(n).ok().and_then(|n| f.args.get(n).cloned()),
                 };
                 self.stack.push(v.ok_or(ErrorKind::OutOfRange)?);
@@ -3096,7 +3111,7 @@ impl Vm {
                 match (info.params, info.outs) {
                     (params, Some(outs)) if n < usize::from(outs) => {
                         let slot = usize::from(params.unwrap_or(0)) + n;
-                        frame.locals[slot] = value;
+                        self.locals[frame.base + slot] = value;
                     }
                     (_, None) if n < frame.outs.len() => frame.outs[n] = value,
                     _ => return Err(ErrorKind::OutOfRange.into()),
@@ -3536,12 +3551,13 @@ impl Vm {
         self.def_calls += 1;
         let at = self.stack.len() - argc;
         let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
-        let mut locals = self.spare_locals.pop().unwrap_or_default();
-        locals.reserve(info.locals.len());
+        let base = self.locals.len();
+        let count = info.locals.len();
+        self.locals.reserve(count);
         // Arguments of a `*` DEF are kept apart from its variables.
         let variadic_args = match info.params {
             Some(_) => {
-                move_values(&mut self.stack[at..], &mut locals);
+                move_values(&mut self.stack[at..], &mut self.locals);
                 // SAFETY: what is left from `at` on is numbers, which need no
                 // dropping.
                 unsafe { self.stack.set_len(at) };
@@ -3554,8 +3570,8 @@ impl Vm {
         // relies on.
         let first_out = usize::from(info.params.unwrap_or(0));
         let out_end = first_out + usize::from(info.outs.unwrap_or(0));
-        for i in locals.len()..info.locals.len() {
-            locals.push(match i < out_end {
+        for i in self.locals.len() - base..count {
+            self.locals.push(match i < out_end {
                 true => Value::Default,
                 false => initial_value(&info.locals[i]),
             });
@@ -3568,7 +3584,7 @@ impl Vm {
             def,
             home: self.slot,
             caller,
-            locals,
+            base,
             args: variadic_args,
             outs,
             want,
@@ -3615,8 +3631,8 @@ impl Vm {
             // A bare RETURN in a function gives no value.
             (true, _) => vec![Value::Default],
             (false, Some(n)) => {
-                let start = usize::from(info.params.unwrap_or(0));
-                frame.locals[start..start + usize::from(n)].to_vec()
+                let start = frame.base + usize::from(info.params.unwrap_or(0));
+                self.locals[start..start + usize::from(n)].to_vec()
             }
             (false, None) => frame.outs.clone(),
         };
@@ -3627,7 +3643,7 @@ impl Vm {
     }
 
     fn leave_def(&mut self, results: Vec<Value>, host: &mut dyn Host) -> Result<usize> {
-        let frame = self.frames.pop().ok_or(ErrorKind::IllegalStatement)?;
+        let frame = self.pop_frame().ok_or(ErrorKind::IllegalStatement)?;
         self.gosubs.truncate(frame.gosub_base);
         self.stack.truncate(frame.stack_base);
         self.push_results(results, frame.want)?;
@@ -3636,7 +3652,7 @@ impl Vm {
 
     /// [`Vm::leave_def`] with one value, as a function returns: no list of it.
     fn leave_def_with(&mut self, result: Value, host: &mut dyn Host) -> Result<usize> {
-        let frame = self.frames.pop().ok_or(ErrorKind::IllegalStatement)?;
+        let frame = self.pop_frame().ok_or(ErrorKind::IllegalStatement)?;
         self.gosubs.truncate(frame.gosub_base);
         self.stack.truncate(frame.stack_base);
         if frame.want.count() != 1 {
@@ -3646,12 +3662,19 @@ impl Vm {
         self.leave_frame(frame, host)
     }
 
-    /// Goes back to the caller of a frame, keeping its list of variables for
-    /// the next call.
+    /// Ends the innermost DEF call, with its variables.
+    #[inline(always)]
+    fn pop_frame(&mut self) -> Option<Frame> {
+        let frame = self.frames.pop()?;
+        self.locals.truncate(frame.base);
+        Some(frame)
+    }
+
+    /// Goes back to the caller of a frame that has ended.
     #[inline]
     fn leave_frame(&mut self, frame: Frame, host: &mut dyn Host) -> Result<usize> {
         let (caller, back) = (frame.caller, frame.return_pc);
-        self.keep_locals(frame);
+        drop_frame(frame);
         self.switch_to(caller, host);
         Ok(back)
     }
@@ -3681,16 +3704,18 @@ impl Vm {
         if given != frame.want.count() {
             return false;
         }
-        let mut frame = self.frames.pop().expect("checked above");
+        let frame = self.frames.pop().expect("checked above");
         self.stack.truncate(frame.stack_base);
         if info.is_function {
             // A bare RETURN in a function gives no value.
             self.stack.push(Value::Default);
         } else {
-            move_values(&mut frame.locals[start..start + given], &mut self.stack);
+            let start = frame.base + start;
+            move_values(&mut self.locals[start..start + given], &mut self.stack);
         }
+        self.locals.truncate(frame.base);
         self.pc = frame.return_pc;
-        self.keep_locals(frame);
+        drop_frame(frame);
         true
     }
 
@@ -3703,7 +3728,7 @@ impl Vm {
         if frame.caller != self.slot || frame.want.count() != 1 {
             return false;
         }
-        let frame = self.frames.pop().expect("checked above");
+        let frame = self.pop_frame().expect("checked above");
         self.gosubs.truncate(frame.gosub_base);
         let len = self.stack.len();
         if len - 1 == frame.stack_base {
@@ -3713,26 +3738,18 @@ impl Vm {
             self.stack.truncate(frame.stack_base + 1);
         }
         self.pc = frame.return_pc;
-        self.keep_locals(frame);
+        drop_frame(frame);
         true
     }
+}
 
-    /// Drops a frame left, keeping its list of variables for the next call.
-    #[inline(always)]
-    fn keep_locals(&mut self, frame: Frame) {
-        let Frame {
-            mut locals,
-            args,
-            outs,
-            ..
-        } = frame;
-        drop_values(args);
-        drop_values(outs);
-        if self.spare_locals.len() < SPARE_LOCALS {
-            clear_values(&mut locals);
-            self.spare_locals.push(locals);
-        }
-    }
+/// Drops a frame that has ended, without a call for the lists most frames
+/// leave empty.
+#[inline(always)]
+fn drop_frame(frame: Frame) {
+    let Frame { args, outs, .. } = frame;
+    drop_values(args);
+    drop_values(outs);
 }
 
 /// How fused entries end, for [`Vm::run_fast`].
@@ -3766,20 +3783,6 @@ fn call_cost(info: &DefInfo, argc: usize) -> usize {
 fn drop_values(values: Vec<Value>) {
     if values.capacity() == 0 {
         std::mem::forget(values);
-    }
-}
-
-/// Empties a list of values, without a call when they are all numbers.
-#[inline(always)]
-fn clear_values(values: &mut Vec<Value>) {
-    if values
-        .iter()
-        .all(|v| matches!(v, Value::Int(_) | Value::Real(_)))
-    {
-        // SAFETY: numbers need no dropping.
-        unsafe { values.set_len(0) };
-    } else {
-        values.clear();
     }
 }
 

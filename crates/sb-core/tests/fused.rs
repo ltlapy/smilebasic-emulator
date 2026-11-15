@@ -1141,3 +1141,47 @@ fn host_calls_are_fused() {
         .count();
     assert_eq!(calls, 2, "{:?}", program.fast);
 }
+
+/// A debugger sees each DEF call's own variables, and changes one of them,
+/// with calls under way inside calls.
+#[test]
+fn each_call_keeps_its_own_variables() {
+    let source = "\
+DEF A X
+ VAR Y=X*2
+ B Y+1
+ ?X;Y
+END
+DEF B Z
+ VAR W$=\"S\"
+ STOP
+ ?Z;W$
+END
+FOR I=0 TO 1:A 5+I:NEXT
+";
+    let run = |fused: bool| {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(compiled(source, fused)).in_slot(0);
+        let mut seen = Vec::new();
+        loop {
+            let status = vm.run(&mut host, 1_000_000).unwrap();
+            if let Status::Stop { .. } = status {
+                let frames: Vec<_> = vm.calls().iter().filter_map(|c| c.frame).collect();
+                seen.push(format!("{frames:?}"));
+                for &f in &frames {
+                    seen.push(format!("{:?}", vm.frame_locals(f)));
+                }
+                assert!(vm.set_local(0, "Y", sb_core::value::Value::Int(3)));
+                assert!(!vm.set_local(1, "Y", sb_core::value::Value::Int(3)));
+            }
+            if status == Status::Ended {
+                return (seen, host.output);
+            }
+        }
+    };
+    let fused = run(true);
+    assert_eq!(fused.1, "11S\n53\n13S\n63\n");
+    assert!(fused.0[1].contains("Int(10)"), "{fused:?}");
+    assert!(fused.0[2].contains("Int(11)"), "{fused:?}");
+    assert_eq!(fused, run(false));
+}
