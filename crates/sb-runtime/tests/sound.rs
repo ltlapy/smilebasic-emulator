@@ -408,6 +408,23 @@ fn recsave_names_a_number() {
     assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, Some(0)));
 }
 
+/// RECSAVE into a string array or one of three dimensions names it, after
+/// the count's type.
+#[test]
+fn recsave_names_an_array_it_cannot_fill() {
+    let mut rt = runtime();
+    for source in ["DIM S$[3]:RECSAVE S$", "DIM C[1,1,1]:RECSAVE C,0"] {
+        let e = run_on(&mut rt, source).unwrap_err();
+        assert_eq!(
+            (e.kind, e.arg),
+            (ErrorKind::TypeMismatch, Some(0)),
+            "{source}"
+        );
+    }
+    let e = run_on(&mut rt, "DIM S$[3]:RECSAVE S$,\"\"").unwrap_err();
+    assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, Some(1)));
+}
+
 /// CHKMML reads macros that BGMPLAY would refuse for how much they copy.
 #[test]
 fn chkmml_takes_macros_bgmplay_refuses() {

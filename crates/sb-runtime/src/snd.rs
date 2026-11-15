@@ -847,6 +847,12 @@ impl Runtime {
                 let a = args[0].clone().into_array()?;
                 let mut a = a.borrow_mut();
                 let elem = a.elem_type();
+                // SmileBASIC 4 reads the count and the position first, then
+                // refuses a string array or one of over two dimensions as
+                // the first argument's Type mismatch.
+                if elem == ElemType::Str || a.dims.len() > 2 {
+                    return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
+                }
                 // The array takes the size of what it gets.
                 match a.dims.len() {
                     1 => {
