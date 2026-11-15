@@ -289,7 +289,7 @@ struct Unit {
 impl Unit {
     fn new(program: Compiled) -> Unit {
         let globals = (program.globals.iter())
-            .map(|g| initial_value(g, program.default_int))
+            .map(initial_value)
             .chain(program.constants.iter().map(constant_value))
             .collect();
         Unit {
@@ -498,7 +498,7 @@ fn snapshot(value: &Value) -> Value {
 /// A variable's starting value. The suffix decides only this: variables
 /// keep whatever value they are given (checked on hardware: `A%=1E10`
 /// keeps the real, `A$` takes a number and `A%` a string).
-fn initial_value(var: &VarInfo, default_int: bool) -> Value {
+fn initial_value(var: &VarInfo) -> Value {
     if var.array {
         return Value::Default;
     }
@@ -506,7 +506,7 @@ fn initial_value(var: &VarInfo, default_int: bool) -> Value {
         Some(Suffix::Int) => Value::Int(0),
         Some(Suffix::Real) => Value::Real(0.0),
         Some(Suffix::Str) => Value::Str(new_str(Vec::new())),
-        None if default_int => Value::Int(0),
+        None if var.int => Value::Int(0),
         None => Value::Real(0.0),
     }
 }
@@ -645,7 +645,7 @@ impl Vm {
                 values
                     .get(&g.full_name())
                     .cloned()
-                    .unwrap_or_else(|| initial_value(g, program.default_int))
+                    .unwrap_or_else(|| initial_value(g))
             })
             .chain(program.constants.iter().map(constant_value))
             .collect();
@@ -2429,7 +2429,7 @@ impl Vm {
                 }
                 self.globals[i] = match array {
                     true => Value::Default,
-                    false => initial_value(&self.program.globals[i], self.program.default_int),
+                    false => initial_value(&self.program.globals[i]),
                 };
             }
             Op::Store(slot) => {
@@ -3280,7 +3280,6 @@ impl Vm {
         self.def_calls += 1;
         let at = self.stack.len() - argc;
         let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
-        let default_int = self.program.default_int;
         let mut locals = self.spare_locals.pop().unwrap_or_default();
         locals.reserve(info.locals.len());
         // Arguments of a `*` DEF are kept apart from its variables.
@@ -3302,7 +3301,7 @@ impl Vm {
         for i in locals.len()..info.locals.len() {
             locals.push(match i < out_end {
                 true => Value::Default,
-                false => initial_value(&info.locals[i], default_int),
+                false => initial_value(&info.locals[i]),
             });
         }
         let outs = match info.outs {

@@ -297,6 +297,12 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 - `CONST` and `DATA` take `HSV` as well as `RGB`.
 - `OPTION STRICT` holds from where it stands. A variable used before it without
   `VAR` can be used after it, and a DEF before it is not checked.
+- `OPTION DEFINT` holds from where it stands in the source to the end of the
+  program, in and out of `DEF`s, and may stand in a `DEF`. A variable without
+  a suffix starts as an int only if it is first seen after it:
+  `?TYPEOF(A):OPTION DEFINT:?TYPEOF(A);TYPEOF(B)` prints 2, then 21, and in
+  `DIM X[2]:OPTION DEFINT` X is an array of reals. (4.4.8); not yet seen on
+  hardware.
 - Statements need no colon between them where one cannot go on:
   - A `PRINT` item ends where no `;` or `,` follows it: `?"A" B=1` prints A,
     then sets B.

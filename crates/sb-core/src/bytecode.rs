@@ -253,6 +253,9 @@ pub struct VarInfo {
     /// Declared by a DIM (or VAR) with sizes: until that runs, it holds
     /// nothing (#T_DEFAULT).
     pub array: bool,
+    /// Without a suffix, it starts as integer 0: OPTION DEFINT stands
+    /// before where it is first seen.
+    pub int: bool,
 }
 
 impl VarInfo {
@@ -324,6 +327,7 @@ pub struct Compiled {
     pub data: Vec<Literal>,
     /// DATA position each label refers to for RESTORE.
     pub data_labels: HashMap<String, u32>,
-    /// OPTION DEFINT: variables without a suffix start as integer 0.
+    /// OPTION DEFINT stands somewhere in the program (see
+    /// [`VarInfo::int`]).
     pub default_int: bool,
 }

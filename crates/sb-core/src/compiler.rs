@@ -46,6 +46,8 @@ pub fn compile(
         strict: false,
         constants: HashMap::new(),
         pending: Vec::new(),
+        defint_at: None,
+        first_seen: HashMap::new(),
         def: None,
         loops: Vec::new(),
         patches: Vec::new(),
@@ -91,7 +93,7 @@ pub fn compile(
             c.strict = strict(i);
             c.line = stmt.line;
             c.def_at = i;
-            c.def(def)?;
+            c.def(def, (stmt.line, stmt.col))?;
         }
     }
     if let Some((_, e)) = failed {
@@ -159,6 +161,13 @@ struct Compiler<'h> {
     /// Errors the pre-pass found, each given when compiling reaches its
     /// statement, so that the errors before it come first.
     pending: Vec<(*const Stmt, Error)>,
+    /// Where the first OPTION DEFINT stands. The default type is int from
+    /// there to the end of the program, DEFs included, as SmileBASIC 4
+    /// keeps it in its compile state.
+    defint_at: Option<(u32, u32)>,
+    /// Where each variable of the scope being compiled is first seen,
+    /// worked out only when there is a [`Self::defint_at`].
+    first_seen: HashMap<Key, (u32, u32)>,
     def: Option<DefScope>,
     loops: Vec<Loop>,
     /// Jumps to labels, resolved when their scope is finished.
@@ -284,7 +293,7 @@ impl Compiler<'_> {
             let mut fail = |e: Error| _ = failed.get_or_insert((stmt as *const Stmt, e));
             match &stmt.kind {
                 StmtKind::Option(o) if o == "STRICT" => _ = strict_at.get_or_insert(i),
-                StmtKind::Option(o) if o == "DEFINT" => self.out.default_int = true,
+                StmtKind::Option(o) if o == "DEFINT" => {}
                 StmtKind::Option(o) => {
                     fail(
                         err(ErrorKind::SyntaxError, format!("OPTION {o}"))
@@ -340,6 +349,16 @@ impl Compiler<'_> {
             self.pending.push(failed);
         }
         self.out.data_labels = data_labels;
+        self.out.default_int = self.defint_at.is_some();
+        if self.defint_at.is_some() {
+            let top = program
+                .stmts
+                .iter()
+                .filter(|s| !matches!(s.kind, StmtKind::Def(_)));
+            for stmt in top {
+                first_seen(std::slice::from_ref(stmt), &mut self.first_seen);
+            }
+        }
 
         // Every variable named in top-level code is global, and DEFs see it.
         let mut used = Vec::new();
@@ -400,6 +419,9 @@ impl Compiler<'_> {
                 data_labels
                     .entry(name.clone())
                     .or_insert(self.out.data.len() as u32);
+            }
+            StmtKind::Option(o) if o == "DEFINT" => {
+                _ = self.defint_at.get_or_insert((stmt.line, stmt.col));
             }
             // SmileBASIC 4 checks a CONST name after working out its
             // value, and an ENUM name before.
@@ -702,31 +724,56 @@ impl Compiler<'_> {
 
     // ---- variables ----
 
+    /// Whether variable `k`, made now, starts as an int: it has no suffix
+    /// and OPTION DEFINT stands before where it is first seen, or before
+    /// the statement compiling if it is not seen in the source.
+    fn starts_int(&self, k: &Key) -> bool {
+        let Some(defint) = self.defint_at else {
+            return false;
+        };
+        let seen = self.first_seen.get(k).copied();
+        k.1.is_none() && seen.unwrap_or((self.line, self.col)) > defint
+    }
+
+    fn var_info(&self, slot: Slot) -> &VarInfo {
+        match slot {
+            Slot::Global(n) => &self.out.globals[n as usize],
+            Slot::Local(n) => {
+                let def = self.def.as_ref().expect("a local is in a DEF").index;
+                &self.out.defs[def as usize].locals[n as usize]
+            }
+        }
+    }
+
     fn global_slot(&mut self, k: Key) -> u32 {
         if let Some(&slot) = self.global_slots.get(&k) {
             return slot;
         }
         let slot = self.out.globals.len() as u32;
+        let int = self.starts_int(&k);
         self.out.globals.push(VarInfo {
             name: k.0.clone(),
             suffix: k.1,
             array: false,
+            int,
         });
         self.global_slots.insert(k, slot);
         slot
     }
 
     fn local_slot(&mut self, k: Key) -> u32 {
-        let def = self.def.as_mut().expect("inside a DEF");
-        if let Some(&slot) = def.locals.get(&k) {
+        if let Some(&slot) = self.def.as_ref().expect("inside a DEF").locals.get(&k) {
             return slot;
         }
+        let int = self.starts_int(&k);
+        let def = self.def.as_mut().expect("inside a DEF");
         let info = &mut self.out.defs[def.index as usize];
         let slot = info.locals.len() as u32;
         info.locals.push(VarInfo {
             name: k.0.clone(),
             suffix: k.1,
             array: false,
+            int,
         });
         def.locals.insert(k, slot);
         slot
@@ -1181,7 +1228,7 @@ impl Compiler<'_> {
             let array = d.dims.is_some();
             self.emit(Op::Declare { slot, array });
         }
-        let elem = elem_type(d.var.suffix, self.out.default_int);
+        let elem = elem_type(d.var.suffix, self.var_info(slot).int);
         match (&d.dims, &d.init) {
             // With sizes, they decide the array's shape and the values fill
             // it from the start (as the reference's DIM POS$[10,5]=["X",...]).
@@ -2035,7 +2082,8 @@ impl Compiler<'_> {
 
     // ---- DEF ----
 
-    fn def(&mut self, def: &Def) -> Result<()> {
+    /// Compiles `def`, which stands at `at`.
+    fn def(&mut self, def: &Def, at: (u32, u32)) -> Result<()> {
         let index = self.out.def_names[&call_name(&def.name)];
         self.out.defs[index as usize].entry = self.here();
         self.def = Some(DefScope {
@@ -2052,6 +2100,13 @@ impl Compiler<'_> {
             Params::Fixed(o) => o.as_slice(),
             Params::Variadic => &[],
         };
+        if self.defint_at.is_some() {
+            self.first_seen.clear();
+            for v in params.iter().chain(outs) {
+                self.first_seen.entry(key(v)).or_insert(at);
+            }
+            first_seen(&def.body, &mut self.first_seen);
+        }
         for v in params.iter().chain(outs) {
             let k = key(v);
             if self
@@ -2168,6 +2223,35 @@ fn child_blocks(kind: &StmtKind) -> Vec<&[Stmt]> {
 /// Collects variable names used and VAR-declared in `stmts`, not descending
 /// into DEFs.
 fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
+    for stmt in stmts {
+        stmt_vars(stmt, used, declared);
+        if !matches!(stmt.kind, StmtKind::Def(_)) {
+            for body in child_blocks(&stmt.kind) {
+                collect_vars(body, used, declared);
+            }
+        }
+    }
+}
+
+/// Where each variable in `stmts` is first seen: the statement it is
+/// in, innermost, not descending into DEFs.
+fn first_seen(stmts: &[Stmt], seen: &mut HashMap<Key, (u32, u32)>) {
+    let (mut used, mut declared) = (Vec::new(), Vec::new());
+    for stmt in stmts {
+        stmt_vars(stmt, &mut used, &mut declared);
+        for k in used.drain(..).chain(declared.drain(..)) {
+            seen.entry(k).or_insert((stmt.line, stmt.col));
+        }
+        if !matches!(stmt.kind, StmtKind::Def(_)) {
+            for body in child_blocks(&stmt.kind) {
+                first_seen(body, seen);
+            }
+        }
+    }
+}
+
+/// [`collect_vars`] of `stmt` without the blocks in it.
+fn stmt_vars(stmt: &Stmt, used: &mut Vec<Key>, declared: &mut Vec<Key>) {
     /// In the order they appear, following a chain in a loop.
     fn expr(e: &Expr, used: &mut Vec<Key>) {
         let (links, first) = chain(e, true);
@@ -2202,7 +2286,7 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
             LValue::Dynamic(n) => expr(n, used),
         }
     }
-    for stmt in stmts {
+    {
         match &stmt.kind {
             StmtKind::Assign { target, value, .. } => {
                 lvalue(target, used);
@@ -2273,11 +2357,6 @@ fn collect_vars(stmts: &[Stmt], used: &mut Vec<Key>, declared: &mut Vec<Key>) {
                 lvalue(b, used);
             }
             _ => {}
-        }
-        if !matches!(stmt.kind, StmtKind::Def(_)) {
-            for body in child_blocks(&stmt.kind) {
-                collect_vars(body, used, declared);
-            }
         }
     }
 }

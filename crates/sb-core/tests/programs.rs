@@ -825,6 +825,30 @@ fn option_strict() {
     assert_eq!(output("OPTION DEFINT\n?TYPEOF(A)"), "1\n");
 }
 
+/// OPTION DEFINT makes int the type of the variables first seen after
+/// it in the source, to the end of the program and through DEFs.
+#[test]
+fn option_defint_holds_from_where_it_stands() {
+    let types = |src: &str| output(&format!("{src}\n?TYPEOF(A);TYPEOF(B)"));
+    assert_eq!(types("?A;:OPTION DEFINT:?B"), "00\n21\n");
+    assert_eq!(output("A=1.5:OPTION DEFINT:?A"), "1.5\n");
+    let src = "?TYPEOF(A):OPTION DEFINT:?TYPEOF(A);TYPEOF(B)";
+    assert_eq!(output(src), "2\n21\n");
+    assert_eq!(types("IF 1 THEN ?A;:OPTION DEFINT:?B"), "00\n21\n");
+    assert_eq!(types("?B$:OPTION DEFINT:?B#;A%"), "\n00\n11\n");
+    // DIM's elements too.
+    let src = "DIM X[2]:OPTION DEFINT:DIM Y[2]:X[0]=1.5:Y[0]=1.5:?X[0];Y[0]";
+    assert_eq!(output(src), "1.51\n");
+    // In and out of DEFs, by where they stand in the source.
+    let src = "DEF F\n?TYPEOF(L)\nEND\nOPTION DEFINT\nDEF G X\n?TYPEOF(L);TYPEOF(X)\nEND\nF:G 1.5";
+    assert_eq!(output(src), "2\n12\n");
+    let src = "DEF F\nOPTION DEFINT\nEND\n?TYPEOF(A)";
+    assert_eq!(output(src), "1\n");
+    let src = "DEF F\n?A;\nOPTION DEFINT\n?B\n?TYPEOF(A);TYPEOF(B)\nEND\nF";
+    assert_eq!(output(src), "00\n21\n");
+    assert_eq!(output("?TYPEOF(A)\nDEF F\nOPTION DEFINT\nEND"), "2\n");
+}
+
 #[test]
 fn return_value_in_a_command_def_is_ignored() {
     // Not even compiled: OPTION STRICT does not see the undeclared name.
