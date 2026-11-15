@@ -1573,6 +1573,32 @@ fn resizing() {
     );
 }
 
+/// RESIZE looks at the number of sizes, then at each size in turn.
+#[test]
+fn resizing_checks_each_size() {
+    let wrong = |call: &str, kind: ErrorKind, arg: Option<u8>| {
+        let source = format!("DIM A[4],M[2,3]:{call}");
+        let e = run(&source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, arg), "{call}");
+    };
+    let large = ErrorKind::ArrayTooLarge;
+    let illegal = ErrorKind::IllegalFunctionCall;
+    wrong("RESIZE A,2000000000", large, Some(1));
+    wrong("RESIZE A,-1", large, Some(1));
+    wrong("RESIZE M,-1,3", large, Some(1));
+    // Too large as the second size comes in.
+    wrong("RESIZE M,357913942,3", large, Some(2));
+    // Exactly 2^30 names nothing.
+    wrong("RESIZE A,1073741824", large, None);
+    // A 0 first keeps a negative size from being too large.
+    wrong("RESIZE M,0,-1", illegal, Some(2));
+    wrong("RESIZE M,2,4", illegal, Some(2));
+    wrong("RESIZE M,\"\",4", ErrorKind::TypeMismatch, Some(1));
+    // The number of sizes before their values.
+    wrong("RESIZE M,-1", ErrorKind::WrongNumberOfArguments, None);
+    assert_eq!(output("DIM M[2,3]:RESIZE M,0,3:?LEN(M)"), "0\n");
+}
+
 #[test]
 fn array_operations() {
     assert_eq!(
@@ -1812,7 +1838,6 @@ fn absurd_requests_are_out_of_memory() {
         "A=ARRAY$(2000000000,2000000000,2000000000,2000000000)",
         "DIM A$[268435455]",
         "DIM A%[2147483647,2147483647]",
-        "DIM A[1]:RESIZE A,2000000000",
         "DIM A[1]:INSERT A,0,2000000000",
         "DIM A[1],B[1]:COPY A,2000000000,B",
         "DIM A$[1]:RESIZE A$,200000000",

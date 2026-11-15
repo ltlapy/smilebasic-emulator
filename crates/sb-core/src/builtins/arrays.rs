@@ -409,19 +409,40 @@ fn hand_back<T>(v: &mut Vec<T>) {
     }
 }
 
+/// RESIZE keeps an array below this many elements.
+const RESIZE_MOST: u64 = 1 << 30;
+
 /// `RESIZE array, n1 [, n2...]`: only the first size can change, and the
 /// others are given as they are (checked on hardware).
+// SmileBASIC 4 looks at the number of sizes first, then at each
+// size in turn: its type, the elements so far, past 2^30 Array is too
+// large naming it, and a later size other than the array's an Illegal
+// function call naming it. The elements are multiplied as 64-bit unsigned
+// numbers, so a negative size is too large unless a 0 came before it.
+// Exactly 2^30 is too large too, naming nothing.
 pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let a = array(&args[0])?;
     let mut a = a.borrow_mut();
-    let sizes: Vec<usize> = args[1..].iter().map(count).collect::<Result<_>>()?;
-    if sizes.len() != a.dims.len() {
+    if args.len() != a.dims.len() + 1 {
         return Err(ErrorKind::WrongNumberOfArguments.into());
     }
-    if sizes[1..] != a.dims[1..] {
-        return Err(ErrorKind::IllegalFunctionCall.into());
+    let mut sizes = Vec::with_capacity(a.dims.len());
+    let mut elements: u64 = 1;
+    for (k, v) in args[1..].iter().enumerate() {
+        let n = v.to_int()?;
+        elements = elements.wrapping_mul(i64::from(n) as u64);
+        if elements > RESIZE_MOST {
+            return Err(Error::new(ErrorKind::ArrayTooLarge).of_value(v));
+        }
+        if k > 0 && i64::from(n) != a.dims[k] as i64 {
+            return Err(Error::new(ErrorKind::IllegalFunctionCall).of_value(v));
+        }
+        sizes.push(n.max(0) as usize);
     }
-    let len = sizes.iter().fold(1usize, |all, &n| all.saturating_mul(n));
+    if elements == RESIZE_MOST {
+        return Err(ErrorKind::ArrayTooLarge.into());
+    }
+    let len = elements as usize;
     make_room(&a, len)?;
     if !memory::shrink(
         memory::array_bytes(a.elem_type(), a.len()),
