@@ -112,7 +112,7 @@ Only the device can test KMSDRM and GLES2.
 Find out what it has, over SSH:
 
 ```sh
-getconf LONG_BIT                                # 64: aarch64, 32: armhf; uname -m may say aarch64 for both
+ls /lib/ld-linux-*                              # aarch64.so.1: aarch64; armhf.so.3: armhf. uname -m may say aarch64 for both
 ldd --version | head -1
 ls /usr/lib/lib{EGL,GLESv2,gbm,drm,asound}*
 ```
