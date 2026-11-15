@@ -124,6 +124,19 @@ pub enum FastOp {
         b: Var,
         to: Var,
     },
+    /// `VarsStore` of `+`, `-` and `*`, which programs use most, with the
+    /// operator in the entry's own kind.
+    AddStore(Var, Var, Var),
+    SubStore(Var, Var, Var),
+    MulStore(Var, Var, Var),
+    /// `VarsJump` of a comparison, with the operator in the entry's kind:
+    /// a jump unless `a op b`.
+    UnlessEq(Var, Var, Addr),
+    UnlessNotEq(Var, Var, Addr),
+    UnlessLess(Var, Var, Addr),
+    UnlessLessEq(Var, Var, Addr),
+    UnlessGreater(Var, Var, Addr),
+    UnlessGreaterEq(Var, Var, Addr),
     /// `a, b, Binary, JumpIfFalse`
     VarsJump {
         op: BinaryOp,
@@ -450,11 +463,35 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
             let op = *op;
             add(F::Vars { op, a, b }, 3);
             if let Some(to) = store(code.get(3)) {
-                add(F::VarsStore { op, a, b, to }, 4);
+                add(
+                    match op {
+                        BinaryOp::Add => F::AddStore(a, b, to),
+                        BinaryOp::Sub => F::SubStore(a, b, to),
+                        BinaryOp::Mul => F::MulStore(a, b, to),
+                        op => F::VarsStore { op, a, b, to },
+                    },
+                    4,
+                );
             }
-            if let Some(Op::JumpIfFalse(target) | Op::TestIfFalse(target)) = code.get(3) {
-                let target = *target;
-                add(F::VarsJump { op, a, b, target }, 4);
+            if let Some(Op::JumpIfFalse(t) | Op::TestIfFalse(t)) = code.get(3) {
+                let t = *t;
+                add(
+                    match op {
+                        BinaryOp::Eq => F::UnlessEq(a, b, t),
+                        BinaryOp::NotEq => F::UnlessNotEq(a, b, t),
+                        BinaryOp::Less => F::UnlessLess(a, b, t),
+                        BinaryOp::LessEq => F::UnlessLessEq(a, b, t),
+                        BinaryOp::Greater => F::UnlessGreater(a, b, t),
+                        BinaryOp::GreaterEq => F::UnlessGreaterEq(a, b, t),
+                        op => F::VarsJump {
+                            op,
+                            a,
+                            b,
+                            target: t,
+                        },
+                    },
+                    4,
+                );
             }
             if let Some(Op::JumpIfTrue(target)) = code.get(3) {
                 let target = *target;

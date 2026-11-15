@@ -1541,6 +1541,25 @@ impl Vm {
             }
             let size = usize::from(fast.len);
             let mut next = pc + size;
+            // An operator the entry's kind names, worked out on its own.
+            macro_rules! store {
+                ($op:expr, $a:expr, $b:expr, $to:expr) => {{
+                    let Some(n) = ops::binary_numbers($op, get(vars, $a), get(vars, $b)) else {
+                        break;
+                    };
+                    put(at_var(vars, $to), n);
+                }};
+            }
+            macro_rules! unless {
+                ($op:expr, $a:expr, $b:expr, $target:expr) => {{
+                    let Some(n) = ops::binary_numbers($op, get(vars, $a), get(vars, $b)) else {
+                        break;
+                    };
+                    if !num_truth(n) {
+                        next = $target as usize;
+                    }
+                }};
+            }
             match fast.op {
                 FastOp::Slow => break,
                 FastOp::Nop => {}
@@ -1722,6 +1741,15 @@ impl Vm {
                     };
                     put(at_var(vars, to), n);
                 }
+                FastOp::AddStore(a, b, to) => store!(BinaryOp::Add, a, b, to),
+                FastOp::SubStore(a, b, to) => store!(BinaryOp::Sub, a, b, to),
+                FastOp::MulStore(a, b, to) => store!(BinaryOp::Mul, a, b, to),
+                FastOp::UnlessEq(a, b, t) => unless!(BinaryOp::Eq, a, b, t),
+                FastOp::UnlessNotEq(a, b, t) => unless!(BinaryOp::NotEq, a, b, t),
+                FastOp::UnlessLess(a, b, t) => unless!(BinaryOp::Less, a, b, t),
+                FastOp::UnlessLessEq(a, b, t) => unless!(BinaryOp::LessEq, a, b, t),
+                FastOp::UnlessGreater(a, b, t) => unless!(BinaryOp::Greater, a, b, t),
+                FastOp::UnlessGreaterEq(a, b, t) => unless!(BinaryOp::GreaterEq, a, b, t),
                 FastOp::VarsJump { op, a, b, target } => {
                     let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
                         break;
