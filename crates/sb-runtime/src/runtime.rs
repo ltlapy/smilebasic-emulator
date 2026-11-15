@@ -3016,14 +3016,18 @@ impl Host for Runtime {
                 meter.charge(cost);
             }
         }
-        let sight = self.sight(command, args, want);
-        let before = match sight {
-            Sight::Unseen => None,
-            Sight::Sprite(i) => Some((i, self.sprites.list()[i].appearance())),
-            Sight::Seen => {
-                self.changed = true;
-                None
-            }
+        // Only drawing a frame clears `changed`, so once it is set no call
+        // needs to tell whether it changes what shows.
+        let before = match self.changed {
+            true => None,
+            false => match self.sight(command, args, want) {
+                Sight::Unseen => None,
+                Sight::Sprite(i) => Some((i, self.sprites.list()[i].appearance())),
+                Sight::Seen => {
+                    self.changed = true;
+                    None
+                }
+            },
         };
         let result = self.run_counted(command, args, want);
         if let Some((i, before)) = before {
