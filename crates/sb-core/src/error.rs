@@ -167,6 +167,18 @@ pub enum ErrorKind {
     /// RESTORE "POP" when the latest GOSUB or DEF call came after the
     /// last place RESTORE "PUSH" kept.
     UseRestorePush,
+    /// SPFUNC or TFUNC of a name that is neither a symbol of the program
+    /// nor a label.
+    IllegalLabelString,
+    /// An animation of more than 32 keys.
+    AnimationTooLong,
+    /// An animation target that is neither a number nor a string.
+    AnimationTypeMismatch,
+    /// IRSTART with a count of arguments that its mode does not take.
+    WrongArgumentsForIrMode,
+    /// SPFUNC or TFUNC of a name that is not a DEF, such as a built-in
+    /// command's.
+    FunctionMustBeUserDefined,
 }
 
 impl ErrorKind {
@@ -234,6 +246,11 @@ impl ErrorKind {
             ErrorKind::IllegalToyConType => 110,
             ErrorKind::IllegalArraySize => 117,
             ErrorKind::CantLinkToDescendant => 113,
+            ErrorKind::IllegalLabelString => 35,
+            ErrorKind::AnimationTooLong => 40,
+            ErrorKind::AnimationTypeMismatch => 66,
+            ErrorKind::WrongArgumentsForIrMode => 108,
+            ErrorKind::FunctionMustBeUserDefined => 114,
             ErrorKind::IrCameraNotAvailable => 63,
             ErrorKind::IllegalIrCameraMode => 64,
             ErrorKind::CantUseEmptyString => 67,
@@ -395,6 +412,13 @@ impl ErrorKind {
             ErrorKind::IllegalArraySize => "Illegal array size",
             // As SmileBASIC 4 spells it.
             ErrorKind::CantLinkToDescendant => "Can't link to decendent sprite",
+            ErrorKind::IllegalLabelString => "Illegal label string",
+            ErrorKind::AnimationTooLong => "Animation is too long",
+            ErrorKind::AnimationTypeMismatch => "Animation type mismatch",
+            ErrorKind::WrongArgumentsForIrMode => {
+                "Wrong number of arguments for this IR Camera mode"
+            }
+            ErrorKind::FunctionMustBeUserDefined => "Function must be user defined",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }
