@@ -166,6 +166,19 @@ fn system_settings() {
     ] {
         assert_eq!(run(source).unwrap_err().kind, error, "{source}");
     }
+    // An unknown name is named, whatever the counts.
+    for source in [
+        "S$=\"NOPE\":SYSPARAM S$ OUT Q0,Q1,Q2",
+        "S$=\"NOPE\":Q=SYSPARAM(S$,0)",
+        "SYSPARAM \"NOPE\",0",
+    ] {
+        let e = run(source).unwrap_err();
+        assert_eq!(
+            (e.kind, e.arg),
+            (ErrorKind::IllegalSystemArgumentName, Some(0)),
+            "{source}"
+        );
+    }
 }
 
 #[test]

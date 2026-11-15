@@ -3027,6 +3027,10 @@ TTEST36.
 - `SYSPARAM` of an unknown name is `Illegal system argument name`. Setting an
   item that can only be read, or reading `KEYREPEAT` as a value, is
   `Wrong number of OUT arguments`.
+- `SYSPARAM`'s unknown name is `(SYSPARAM:1)`, and it is checked before the
+  counts: `SYSPARAM "NOPE",0` and `SYSPARAM S$ OUT Q0,Q1,Q2` with an unknown
+  name are error 112. (Not
+  yet seen on hardware.)
 - `MOUSECURSOR` reads 0 again in a program run after one that set it to 1. `END`
   leaves it set, so DIRECT mode still reads 1.
 

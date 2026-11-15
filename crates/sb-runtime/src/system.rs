@@ -404,11 +404,11 @@ impl Runtime {
                         let n = usize::from(name.as_bytes()[4] - b'1');
                         vec![string(self.settings.tools[n].clone())]
                     }
+                    // SmileBASIC 4 names the name, before it
+                    // looks at the OUT count.
                     _ => {
-                        return Err(Error::with_detail(
-                            ErrorKind::IllegalSystemArgumentName,
-                            name,
-                        ));
+                        let e = Error::with_detail(ErrorKind::IllegalSystemArgumentName, name);
+                        return Err(e.of_arg(0));
                     }
                 };
                 // Setting an item that can only be read, or asking for
