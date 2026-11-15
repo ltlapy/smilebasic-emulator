@@ -229,7 +229,8 @@ impl Runtime {
             3 => (flag(args.get(1))?, mask(args.get(2))?),
             5 | 6 => (flag(args.get(5))?, u32::MAX),
             7 => (flag(args.get(5))?, mask(args.get(6))?),
-            _ => return Err(illegal()),
+            // 4 and 8 arguments are no form.
+            _ => return Err(no_form()),
         };
         let id = sprite_id(&args[0])?;
         let s = self.sprite(&args[0])?;

@@ -1392,6 +1392,8 @@ Expected but not yet seen on hardware:
 - Sprites without `SPCOL` never collide, and rectangles that only touch do not
   either.
 - `SPCOL` without a rectangle starts it at minus the home point.
+- `SPCOL` takes 1, 2, 3, 5, 6 or 7 arguments. 4 or 8 are
+  `Wrong number of arguments`, error 52: `SPCOL 0,0,0,16`. (Not yet seen on hardware.)
 - `SPHITSP` with a reversed range searches it from the lower number.
 - `SPHITSP` of a sprite that is not set is -1, and `SPHITSP(id,other)` with
   `other` not set is 0; neither is an error.
