@@ -554,6 +554,31 @@ fn loadv_as_a_function_needs_room_for_the_new_value() {
     );
 }
 
+/// LOADV into GARRAY's or TARRAY's array keeps its size: the elements that
+/// fit come in, the rest stay, and RESIZE still refuses it. An array
+/// LOADV made is the program's.
+#[test]
+fn loadv_keeps_the_size_of_an_array_of_the_system() {
+    let dir = TempDir::new("loadv-system");
+    let mut m = machine(&dir);
+    let program = [
+        "DIM A%[2,3]:A%[0,0]=5:A%[1,2]=9:SAVEV \"DAT:A\",A%",
+        "G=GARRAY(1):G[0,6]=77:LOADV \"DAT:A\",G:?DIM(G,0),G[0,0],G[0,5],G[0,6]",
+        "T=TARRAY(0):DIM B[DIM(T,0)+1,DIM(T,1)]:FILL B,3:SAVEV \"DAT:B\",B",
+        "LOADV \"DAT:B\",T:?DIM(T,0)==DIM(B,0)-1,T[DIM(T,0)-1,DIM(T,1)-1]",
+        "C=LOADV(\"DAT:A\"):RESIZE C,4,3:?LEN(C)",
+        "RESIZE G,1,2048",
+    ];
+    m.set_slot(0, program.join("\n"));
+    enter(&mut m, "run");
+    let out = tail(&m, 5);
+    assert_eq!(words(&out[..3]), ["2048 5 9 77", "1 3", "12"]);
+    assert!(
+        out[3].starts_with("Can't RESIZE this array in 0:6"),
+        "{out:?}"
+    );
+}
+
 #[test]
 fn values_save_and_load() {
     let dir = TempDir::new("values");

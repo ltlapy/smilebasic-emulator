@@ -133,9 +133,34 @@ fn loadv_memory(e: Error) -> Error {
     Error::with_detail(e.kind, "LOADV")
 }
 
+/// Keeps the first `len` elements of what LOADV read.
+fn keep_first(array: &mut Array, len: usize) {
+    match &mut array.data {
+        ArrayData::Int(v) => v.truncate(len),
+        ArrayData::Real(v) => v.truncate(len),
+        ArrayData::Str(v) => v.truncate(len),
+    }
+}
+
+/// Puts `source`'s elements at the start of `target`'s, of the same type.
+fn overwrite(target: &mut ArrayData, source: ArrayData) {
+    fn put<T>(to: &mut [T], from: Vec<T>) {
+        for (d, s) in to.iter_mut().zip(from) {
+            *d = s;
+        }
+    }
+    match (target, source) {
+        (ArrayData::Int(t), ArrayData::Int(s)) => put(t, s),
+        (ArrayData::Real(t), ArrayData::Real(s)) => put(t, s),
+        (ArrayData::Str(t), ArrayData::Str(s)) => put(t, s),
+        _ => {}
+    }
+}
+
 /// Fills `target` with `source`, taking its size: numbers convert between
 /// integer and real, but strings and numbers do not mix, and the number
-/// of dimensions must agree.
+/// of dimensions must agree. An array of the system's keeps its size and
+/// takes what fits, the rest of it left as it was.
 fn fill(target: &ArrayRef, source: Array) -> Result<()> {
     let mut target = target.borrow_mut();
     if target.dims.len() != source.dims.len() {
@@ -161,6 +186,10 @@ fn fill(target: &ArrayRef, source: Array) -> Result<()> {
         }
         (_, data) => data,
     };
+    if target.system {
+        overwrite(&mut target.data, data);
+        return Ok(());
+    }
     *target = Array {
         dims: source.dims,
         data,
@@ -322,7 +351,7 @@ impl Runtime {
                 if self.ask_load(&spec, FileKind::Txt) {
                     return Ok(vec![]);
                 }
-                let outcome =
+                let mut outcome =
                     match self.load_value(&spec) {
                         Ok(Value::Array(a)) => Ok(Rc::try_unwrap(a)
                             .map_or_else(|a| a.borrow().clone(), RefCell::into_inner)),
@@ -330,9 +359,14 @@ impl Runtime {
                         Err(e) => Err(e),
                     };
                 // The array stays where it is unless it has to grow, which
-                // needs a new block beside the old, as RESIZE does.
-                if let Ok(array) = &outcome {
+                // needs a new block beside the old, as RESIZE does. One of
+                // the system's never grows: SmileBASIC 4 reads only the
+                // elements it has room for.
+                if let Ok(array) = &mut outcome {
                     let target = target.borrow();
+                    if target.system {
+                        keep_first(array, target.len());
+                    }
                     let elem = target.elem_type();
                     memory::grow(
                         memory::array_bytes(elem, target.len()),
