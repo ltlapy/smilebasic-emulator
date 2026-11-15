@@ -82,9 +82,9 @@ rules, under "Files from elsewhere".
 Each of these changes what a bug can cost, so it needs its conditions met
 when it is built or shipped.
 
-- **Handheld port.** `tools/build_aarch64.py` builds the emulator for
-  aarch64, and [building-handheld.md](building-handheld.md) checks it under
-  qemu. The docs record no run on a device. These stay open:
+- **Handheld port.** `tools/build_handheld.py` builds the emulator for
+  aarch64 and armhf, and [building-handheld.md](building-handheld.md) checks
+  it under qemu. The docs record no run on a device. These stay open:
   - Handheld firmware often runs ports as root, which would turn a path bug
     into writing anywhere on the system. The emulator does not drop
     privileges. Drop them if the firmware allows it, and treat the path
