@@ -1750,6 +1750,39 @@ fn direct_mode_refuses_statements_for_programs() {
     sb_core::compile("OPTION STRICT:STOP", &TextHost::default()).unwrap();
 }
 
+/// A call to a name defined nowhere is a Syntax error as a DIRECT mode
+/// line compiles, after its arguments, so nothing on the line runs.
+#[test]
+fn direct_mode_refuses_unknown_names() {
+    let compile = |line: &str| sb_core::compile_direct(line, &TextHost::default(), 0).map(|_| ());
+    for line in [
+        "?\"A\":NOSUCH",
+        "NOSUCH 1 OUT A",
+        "?NOSUCH(1)",
+        "A=1+NOSUCH()",
+    ] {
+        let e = compile(line).unwrap_err();
+        assert_eq!(e.kind, ErrorKind::SyntaxError, "{line}");
+        assert_eq!(e.without_place(), "Syntax error (NOSUCH)", "{line}");
+    }
+    let e = compile("?NOSUCH(#ZZ)").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::UndefinedConstant);
+    let e = compile("NOSUCH #ZZ").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::UndefinedConstant);
+    // A DEF on the line is found, and a builtin in its other form is
+    // still an illegal call.
+    compile("F 1:DEF F X:?X:END").unwrap();
+    assert_eq!(
+        compile("ABS 1").unwrap_err().kind,
+        ErrorKind::IllegalFunctionCall
+    );
+    // A program compiles it, and fails when it gets there.
+    assert_eq!(
+        run("?\"A\":NOSUCH").unwrap_err().kind,
+        ErrorKind::SyntaxError
+    );
+}
+
 /// SmileBASIC 4 compiles a statement at a time, so a compile error in the
 /// statements before one that does not parse comes first, inside blocks
 /// too.

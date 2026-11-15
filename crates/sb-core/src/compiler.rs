@@ -1850,6 +1850,11 @@ impl Compiler<'_> {
         if err.kind != ErrorKind::UndefinedFunction {
             return Err(err);
         }
+        // A DIRECT mode line leaves no name for later: SmileBASIC 4 gives
+        // the Syntax error as the call compiles, after its arguments.
+        if self.direct {
+            return Err(Error::with_detail(ErrorKind::SyntaxError, name));
+        }
         let name = self.string_const(name.encode_utf16().collect());
         self.emit(Op::CallCommon { name, argc, want });
         Ok(())
