@@ -1370,7 +1370,8 @@ impl Vm {
                 && program
                     .fast
                     .get(self.pc)
-                    .is_some_and(|f| f.op != FastOp::Slow)
+                    // `!=` would call FastOp's PartialEq on every step.
+                    .is_some_and(|f| !matches!(f.op, FastOp::Slow))
             {
                 self.run_fast(&program, stop);
             }
