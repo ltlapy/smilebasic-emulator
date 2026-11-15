@@ -35,11 +35,13 @@ impl ProgramView {
             DialogKind::Name { initial, .. } => initial.clone(),
             _ => String::new(),
         };
-        // Room for the window's padding and a margin around it.
+        // Room for the window's padding and a margin around it, and for
+        // the lines below the title bar and above the buttons.
         let room = size.0.saturating_sub(8 * PAD).max(CHAR);
+        let body = size.1.saturating_sub(2 * LINE + 6 * PAD) / LINE;
         let mut view = ProgramView {
             dialog: dialog.clone(),
-            lines: dialog.lines.iter().flat_map(|l| wrap(l, room)).collect(),
+            lines: wrap_lines(&dialog.lines, room, body as usize),
             size,
             focus: 0,
             name,
@@ -83,17 +85,29 @@ impl ProgramView {
         (n * self.button_width() + n.saturating_sub(1) * PAD).max(1)
     }
 
-    fn frame(&self) -> Rect {
-        let field = match self.dialog.kind {
-            DialogKind::Name { max, .. } => max as u32 * CHAR + 2 * PAD,
+    /// The width of a name's field: the most it takes, or the window's
+    /// inside on a small display, where a name of full length still fits
+    /// since names are half-width.
+    fn field_width(&self) -> u32 {
+        match self.dialog.kind {
+            DialogKind::Name { max, .. } => {
+                (max as u32 * CHAR + 2 * PAD).min(self.size.0.saturating_sub(4 * PAD))
+            }
             _ => 0,
-        };
+        }
+    }
+
+    fn frame(&self) -> Rect {
+        let field = self.field_width();
         let text = (self.lines.iter())
             .chain([&self.dialog.caption])
             .map(|l| text_width(l))
             .max()
             .unwrap_or(0);
-        let w = (text.max(field).max(self.buttons_width()) + 4 * PAD).max(MIN_WIDTH);
+        // No wider than the display: a long caption is cut.
+        let w = (text.max(field).max(self.buttons_width()) + 4 * PAD)
+            .max(MIN_WIDTH)
+            .min(self.size.0);
         let buttons = if self.labels().is_empty() { 0 } else { LINE };
         // Title bar, body, buttons.
         let h = LINE + self.body_lines() as u32 * LINE + buttons + 6 * PAD;
@@ -190,14 +204,15 @@ impl ProgramView {
         };
         fill(fb, inner, BACKGROUND | 0xFF00_0000);
         fill(fb, Rect { h: LINE, ..inner }, HIGHLIGHT);
-        draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &self.dialog.caption, TEXT);
+        let caption = fitted(&self.dialog.caption, f.w.saturating_sub(4 * PAD));
+        draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &caption, TEXT);
         let line_y = |i: u32| f.y + LINE + 2 * PAD + i * LINE;
         match self.dialog.kind {
-            DialogKind::Name { max, .. } => {
+            DialogKind::Name { .. } => {
                 let field = Rect {
                     x: f.x + 2 * PAD,
                     y: line_y(0),
-                    w: max as u32 * CHAR + 2 * PAD,
+                    w: self.field_width(),
                     h: LINE,
                 };
                 fill(fb, field, BORDER);
@@ -229,6 +244,29 @@ impl ProgramView {
             draw_text(fb, font, x, r.y + 4, label, TEXT);
         }
     }
+}
+
+/// `text` cut to `width` with a `~`, or as it is if it fits, which
+/// takes nothing new.
+pub(crate) fn fitted(text: &str, width: u32) -> std::borrow::Cow<'_, str> {
+    match text_width(text) <= width {
+        true => text.into(),
+        false => crate::projects::fit(text, width).into(),
+    }
+}
+
+/// `lines` wrapped to `width`, and no more than `max` of them (at least
+/// one): the last shown ends in `~` when there is more.
+pub(crate) fn wrap_lines(lines: &[String], width: u32, max: usize) -> Vec<String> {
+    let mut all = lines.iter().flat_map(|l| wrap(l, width));
+    let mut shown: Vec<String> = all.by_ref().take(max.max(1)).collect();
+    if all.next().is_some()
+        && let Some(last) = shown.last_mut()
+    {
+        last.push('~');
+        *last = crate::projects::fit(last, width);
+    }
+    shown
 }
 
 /// Splits a line into pieces at most `max` pixels wide as [`draw_text`]
@@ -302,6 +340,38 @@ mod tests {
         let v = ProgramView::new(&d, (1280, 720));
         assert!(v.lines.len() > 1);
         assert!(v.frame().w <= 1280);
+    }
+
+    /// Handheld mode's UI can be 320x240: a DIALOG of the longest text,
+    /// caption and name still fits it.
+    #[test]
+    fn a_dialog_fits_a_320x240_display() {
+        let size = (320, 240);
+        let mut long = dialog(DialogKind::Choice(vec!["No", "Yes"]));
+        long.caption = "見出し".repeat(15);
+        long.lines = vec!["A long message that goes on. ".repeat(9)];
+        let mut name = dialog(DialogKind::Name {
+            initial: "N".repeat(32),
+            max: 32,
+        });
+        name.caption = "C".repeat(39);
+        for d in [long, name] {
+            let v = ProgramView::new(&d, size);
+            let f = v.frame();
+            assert!(f.x + f.w <= size.0 && f.y + f.h <= size.1, "{f:?}");
+            for i in 0..v.labels().len() {
+                let b = v.button(i);
+                assert!(b.x >= f.x + PAD && b.y + b.h <= f.y + f.h, "{b:?}");
+            }
+            assert!(f.x + 2 * PAD + v.field_width() <= f.x + f.w);
+            // The whole name and its cursor show in the field.
+            if !v.name.is_empty() {
+                let shown = text_width(&format!("{}_", v.name)) + 2 * PAD;
+                assert!(shown <= v.field_width(), "{shown}");
+            }
+            let mut fb = Framebuffer::new(size.0, size.1);
+            v.draw(&mut fb, &Font::blank(), true);
+        }
     }
 
     #[test]

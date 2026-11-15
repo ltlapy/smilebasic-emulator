@@ -7,7 +7,7 @@ use sb_runtime::font::Font;
 use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
 
-use crate::program_dialog::wrap;
+use crate::program_dialog::{fitted, wrap_lines};
 use crate::ui::{
     BACKGROUND, BORDER, CHAR, HIGHLIGHT, PAD, Rect, TEXT, draw_text, fill, text_width,
 };
@@ -41,18 +41,21 @@ pub struct Dialog {
 /// Characters of a field shown.
 const FIELD_CHARS: usize = 40;
 
-/// `lines` wrapped to fit a display `width` wide, with room for the
-/// window's padding and a margin around it.
-fn wrapped(lines: &[String], width: u32) -> Vec<String> {
-    let room = width.saturating_sub(8 * PAD).max(CHAR);
-    lines.iter().flat_map(|l| wrap(l, room)).collect()
+/// `lines` wrapped to fit a display of `size`, with room for the
+/// window's padding and a margin around it, and cut to the lines that fit
+/// with `more` lines besides.
+fn wrapped(lines: &[String], (w, h): (u32, u32), more: u32) -> Vec<String> {
+    let room = w.saturating_sub(8 * PAD).max(CHAR);
+    // Title bar, buttons and padding, as in `frame`.
+    let body = h.saturating_sub(2 * LINE + 6 * PAD) / LINE;
+    wrap_lines(lines, room, body.saturating_sub(more) as usize)
 }
 
 impl Dialog {
     pub fn new(title: &str, lines: Vec<String>, accept: &str, size: (u32, u32)) -> Dialog {
         Dialog {
             title: title.to_string(),
-            lines: wrapped(&lines, size.0),
+            lines: wrapped(&lines, size, 0),
             text: lines,
             labels: vec![accept.to_string(), "Cancel".to_string()],
             size,
@@ -63,11 +66,13 @@ impl Dialog {
 
     /// Asks for a line of text, starting with `text`; Enter accepts it.
     pub fn prompt(title: &str, lines: Vec<String>, text: &str, size: (u32, u32)) -> Dialog {
-        Dialog {
+        let mut d = Dialog {
             focus: 0,
             field: Some(text.to_string()),
             ..Dialog::new(title, lines, "OK", size)
-        }
+        };
+        d.lines = wrapped(&d.text, size, 1);
+        d
     }
 
     /// What has been typed in the field.
@@ -91,7 +96,7 @@ impl Dialog {
     pub fn notice(title: &str, lines: Vec<String>, size: (u32, u32)) -> Dialog {
         Dialog {
             title: title.to_string(),
-            lines: wrapped(&lines, size.0),
+            lines: wrapped(&lines, size, 0),
             text: lines,
             labels: vec!["OK".to_string()],
             size,
@@ -119,7 +124,8 @@ impl Dialog {
     pub fn set_size(&mut self, size: (u32, u32)) {
         if size != self.size {
             self.size = size;
-            self.lines = wrapped(&self.text, size.0);
+            let more = u32::from(self.field.is_some());
+            self.lines = wrapped(&self.text, size, more);
         }
     }
 
@@ -140,7 +146,8 @@ impl Dialog {
             )
             .max()
             .unwrap_or(0);
-        let w = text.max(2 * self.button_width() + PAD) + 4 * PAD;
+        // No wider than the display: a long title is cut, as is a field.
+        let w = (text.max(2 * self.button_width() + PAD) + 4 * PAD).min(self.size.0);
         // Title bar, body, buttons.
         let h = LINE + self.body_lines() * LINE + LINE + 6 * PAD;
         Rect {
@@ -227,7 +234,8 @@ impl Dialog {
         fill(fb, inner, BACKGROUND | 0xFF00_0000);
         let bar = Rect { h: LINE, ..inner };
         fill(fb, bar, HIGHLIGHT);
-        draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &self.title, TEXT);
+        let title = fitted(&self.title, f.w.saturating_sub(4 * PAD));
+        draw_text(fb, font, f.x + 2 * PAD, f.y + 6, &title, TEXT);
         for (i, line) in self.lines.iter().enumerate() {
             let y = f.y + LINE + 2 * PAD + i as u32 * LINE + (LINE - CHAR) / 2;
             draw_text(fb, font, f.x + 2 * PAD, y, line, TEXT);
@@ -335,6 +343,47 @@ mod tests {
         assert!(f.x + f.w <= 320, "{f:?}");
         d.set_size((1280, 720));
         assert_eq!(d.lines.len(), 2);
+    }
+
+    /// Handheld mode's UI can be 320x240: a dialog is cut to fit it,
+    /// however much it has to say.
+    #[test]
+    fn a_dialog_fits_a_320x240_display() {
+        let size = (320, 240);
+        let mut lines = vec!["The emulator failed last time.".to_string(), String::new()];
+        for slot in 0..4 {
+            lines.push(format!(
+                "Saved PRG{slot} to recovered/2026-11-15/PRG{slot}.txt"
+            ));
+        }
+        let quit = Dialog::quit(&[0, 1, 2, 3], size);
+        let long_title = "A title much too long for a display this small";
+        let dialogs = [
+            Dialog::notice("Recovered programs", lines, size),
+            quit,
+            Dialog::notice(long_title, vec!["Short".to_string()], size),
+            Dialog::prompt("Condition", vec!["A".repeat(100)], "B", size),
+        ];
+        for d in dialogs {
+            let f = d.frame();
+            assert!(f.x + f.w <= size.0 && f.y + f.h <= size.1, "{f:?}");
+            for i in 0..d.labels.len() {
+                let b = d.button(i);
+                assert!(b.x >= f.x && b.y + b.h <= f.y + f.h);
+            }
+            let room = f.w - 4 * PAD;
+            assert!(
+                d.lines.iter().all(|l| text_width(l) <= room),
+                "{:?}",
+                d.lines
+            );
+            let mut fb = Framebuffer::new(size.0, size.1);
+            d.draw(&mut fb, &Font::blank());
+        }
+        let mut lines = vec![String::new(); 2];
+        lines.extend((0..20).map(|i| format!("Line {i}")));
+        let d = Dialog::notice("Notice", lines, size);
+        assert!(d.lines.last().unwrap().ends_with('~'), "{:?}", d.lines);
     }
 
     #[test]

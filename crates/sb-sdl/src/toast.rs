@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use sb_runtime::Framebuffer;
 use sb_runtime::font::Font;
 
+use crate::program_dialog::wrap;
 use crate::ui::{BACKGROUND, BORDER, CHAR, PAD, Rect, TEXT, draw_text, fill, outline, text_width};
 
 /// About 2.5 seconds at 60 frames per second.
@@ -83,22 +84,42 @@ impl Toasts {
         lines
     }
 
-    /// Draws the notices centered at the bottom, the newest lowest.
-    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
-        let lines = self.lines();
-        let mut y = fb.height().saturating_sub(PAD);
-        for text in lines.iter().rev() {
-            y = y.saturating_sub(HEIGHT + PAD / 2);
-            let w = text_width(text) + 2 * PAD;
+    /// Where each notice goes on a frame of `size`, centered at the
+    /// bottom, the newest lowest, with its text wrapped to the frame's
+    /// width; the oldest go first when they do not all fit.
+    fn places(&self, (fw, fh): (u32, u32)) -> Vec<(Rect, Vec<String>)> {
+        let room = fw.saturating_sub(4 * PAD).max(CHAR);
+        let mut y = fh.saturating_sub(PAD);
+        let mut places = Vec::new();
+        for text in self.lines().iter().rev() {
+            let lines = wrap(text, room);
+            let h = HEIGHT + (lines.len() as u32 - 1) * CHAR;
+            if y < h + PAD / 2 {
+                break;
+            }
+            y -= h + PAD / 2;
+            let widest = lines.iter().map(|l| text_width(l)).max().unwrap_or(0);
+            let w = widest + 2 * PAD;
             let r = Rect {
-                x: fb.width().saturating_sub(w) / 2,
+                x: fw.saturating_sub(w) / 2,
                 y,
                 w,
-                h: HEIGHT,
+                h,
             };
+            places.push((r, lines));
+        }
+        places
+    }
+
+    /// Draws the notices centered at the bottom, the newest lowest.
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
+        for (r, lines) in self.places((fb.width(), fb.height())) {
             fill(fb, r, BACKGROUND);
             outline(fb, r, BORDER);
-            draw_text(fb, font, r.x + PAD, r.y + PAD, text, TEXT);
+            for (i, line) in lines.iter().enumerate() {
+                let y = r.y + PAD + i as u32 * CHAR;
+                draw_text(fb, font, r.x + PAD, y, line, TEXT);
+            }
         }
     }
 }
@@ -127,5 +148,33 @@ mod tests {
         assert!(t.visible());
         t.tick();
         assert!(!t.visible());
+    }
+
+    /// Handheld mode's UI can be 320x240: a long notice wraps, and none
+    /// goes past the frame's edges.
+    #[test]
+    fn notices_fit_a_320x240_frame() {
+        let size = (320, 240);
+        let mut t = Toasts::default();
+        t.push("Rename the folder bad name to use it as a project".into());
+        let places = t.places(size);
+        assert_eq!(places[0].1.len(), 2, "{:?}", places[0].1);
+        for i in 0..10 {
+            t.push(format!(
+                "Could not load PROGRAM{i}.PRG: the file is not there"
+            ));
+        }
+        let places = t.places(size);
+        assert!(places.len() < t.lines().len(), "not all of them fit");
+        for (r, _) in places {
+            assert!(
+                r.x + r.w <= size.0 && r.y + r.h <= size.1 && r.y >= PAD / 2,
+                "{r:?}"
+            );
+        }
+        let mut fb = Framebuffer::new(size.0, size.1);
+        t.draw(&mut fb, &Font::blank());
+        // On the desktop a notice keeps to one line.
+        assert!(t.places((1280, 720)).iter().all(|(_, l)| l.len() == 1));
     }
 }
