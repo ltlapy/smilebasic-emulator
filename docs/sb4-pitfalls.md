@@ -213,10 +213,11 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `Undefined constant`. One defined in a `DEF` counts on the lines after it,
   top level included. The program compiles before it runs, so a `GOTO` past
   the `CONST` does not matter. (Not yet seen on hardware.)
-- SmileBASIC 4 compiles a program a statement at a time, by SmileBASIC 4
-  (4.4.8). A compile error in a statement comes before a `Syntax error` in a
-  later one: `?#ZZ:?(` is `Undefined constant`, and so is `IF #ZZ THEN ?(`.
-  (Not yet seen on hardware.)
+- SmileBASIC 4 compiles a program a statement at a time, in source order,
+  `DEF` bodies where they stand, by SmileBASIC 4 (4.4.8). The first error
+  in the source is the one reported: `?#ZZ:?(` is `Undefined constant`, and
+  so are `IF #ZZ THEN ?(`, `?#ZZ` on a line before `A=&H100000000`, and
+  `?#ZZ` before `CONST #A=1,#A=2`. (Not yet seen on hardware.)
 - A block that does not close is its
   own error, on the line its statement starts on, as the program compiles:
   `FOR without NEXT` (20), `WHILE without WEND` (24), `REPEAT without UNTIL`

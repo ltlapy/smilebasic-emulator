@@ -78,6 +78,9 @@ pub enum TokenKind {
 
     Newline,
     Eof,
+    /// Where the source stops lexing, just before [`TokenKind::Eof`]: the
+    /// parse stops there with this error (see [`tokenize_partial`]).
+    Invalid(LexErrorKind),
 }
 
 macro_rules! keywords {
@@ -174,7 +177,24 @@ impl fmt::Display for LexError {
 impl std::error::Error for LexError {}
 
 pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
-    Lexer::new(source).run()
+    match tokenize_partial(source) {
+        (tokens, None) => Ok(tokens),
+        (_, Some(e)) => Err(e),
+    }
+}
+
+/// The tokens up to the first error, which stands as
+/// [`TokenKind::Invalid`] before the end, and that error. SmileBASIC 4
+/// reads tokens as it compiles, so the errors before it come first.
+pub fn tokenize_partial(source: &str) -> (Vec<Token>, Option<LexError>) {
+    let mut lexer = Lexer::new(source);
+    let failed = lexer.run().err();
+    if let Some(e) = &failed {
+        lexer.push(TokenKind::Invalid(e.kind.clone()), e.span);
+    }
+    let end = failed.as_ref().map_or(lexer.span(), |e| e.span);
+    lexer.push(TokenKind::Eof, end);
+    (lexer.tokens, failed)
 }
 
 struct Lexer {
@@ -273,7 +293,7 @@ impl Lexer {
         }
     }
 
-    fn run(mut self) -> Result<Vec<Token>, LexError> {
+    fn run(&mut self) -> Result<(), LexError> {
         while let Some(c) = self.peek() {
             let start = self.span();
             match c {
@@ -323,9 +343,7 @@ impl Lexer {
                 _ => self.operator(c, start)?,
             }
         }
-        let end = self.span();
-        self.push(TokenKind::Eof, end);
-        Ok(self.tokens)
+        Ok(())
     }
 
     /// Reads `[A-Z_][A-Z0-9_]*` and returns it upper-cased.
@@ -827,5 +845,32 @@ mod tests {
         let tokens = tokenize("A=1\r\n  B").unwrap();
         let spans: Vec<_> = tokens.iter().map(|t| (t.span.line, t.span.col)).collect();
         assert_eq!(spans, [(1, 1), (1, 2), (1, 3), (1, 4), (2, 3), (2, 4)]);
+    }
+
+    #[test]
+    fn tokens_stop_at_the_first_error() {
+        let (tokens, e) = tokenize_partial("A=1\nB=&H100000000:C=&H");
+        let kinds: Vec<_> = tokens.iter().map(|t| t.kind.clone()).collect();
+        let at = Span { line: 2, col: 3 };
+        assert_eq!(
+            &kinds[4..],
+            [
+                T::Ident {
+                    name: "B".into(),
+                    suffix: None
+                },
+                T::Assign,
+                T::Invalid(LexErrorKind::Overflow),
+                T::Eof
+            ]
+        );
+        assert_eq!(tokens[6].span, at);
+        assert_eq!(
+            e,
+            Some(LexError {
+                kind: LexErrorKind::Overflow,
+                span: at
+            })
+        );
     }
 }

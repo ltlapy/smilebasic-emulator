@@ -45,6 +45,7 @@ pub fn compile(
         def_at: 0,
         strict: false,
         constants: HashMap::new(),
+        pending: Vec::new(),
         def: None,
         loops: Vec::new(),
         patches: Vec::new(),
@@ -55,26 +56,51 @@ pub fn compile(
         constant_bytes: Cell::new(0),
         string_words: Cell::new(0),
     };
-    let strict_at = c.prepare(program)?;
+    let strict_at = c.prepare(program);
     // OPTION STRICT holds from where it stands, DEFs included.
     let strict = |i: usize| strict_at.is_some_and(|at| i >= at);
+    // The first error in top-level code, and the statement it is in.
+    let mut failed = None;
     for (i, stmt) in program.stmts.iter().enumerate() {
         if !matches!(stmt.kind, StmtKind::Def(_)) {
             c.strict = strict(i);
-            c.stmt(stmt)?;
+            if let Err(e) = c.stmt(stmt) {
+                failed = Some((i, e));
+                break;
+            }
         }
     }
-    c.emit(Op::End);
-    c.resolve_patches(None)?;
-    for (i, stmt) in program.stmts.iter().enumerate() {
+    match failed {
+        None => {
+            c.emit(Op::End);
+            c.resolve_patches(None)?;
+        }
+        // Only the DEFs before it still compile, to find an error of
+        // theirs that comes first.
+        Some(_) => {
+            c.patches.clear();
+            c.loops.clear();
+        }
+    }
+    let before = failed.as_ref().map_or(program.stmts.len(), |(i, _)| *i);
+    for (i, stmt) in program.stmts[..before].iter().enumerate() {
         if let StmtKind::Def(def) = &stmt.kind {
+            if let Some(e) = c.take_pending(stmt) {
+                return Err(e);
+            }
             c.strict = strict(i);
             c.line = stmt.line;
             c.def_at = i;
             c.def(def)?;
         }
     }
+    if let Some((_, e)) = failed {
+        return Err(e);
+    }
     if let Some(e) = c.unparsed {
+        return Err(e);
+    }
+    if let Some((_, e)) = c.pending.into_iter().next() {
         return Err(e);
     }
     crate::fuse::fuse(&mut c.out);
@@ -130,6 +156,9 @@ struct Compiler<'h> {
     /// before that place is Undefined constant, as SmileBASIC 4 compiles
     /// in one pass.
     constants: HashMap<String, (Literal, Span)>,
+    /// Errors the pre-pass found, each given when compiling reaches its
+    /// statement, so that the errors before it come first.
+    pending: Vec<(*const Stmt, Error)>,
     def: Option<DefScope>,
     loops: Vec<Loop>,
     /// Jumps to labels, resolved when their scope is finished.
@@ -245,16 +274,22 @@ impl Compiler<'_> {
     // ---- pre-pass ----
 
     /// Returns where OPTION STRICT is among the statements, if anywhere.
-    fn prepare(&mut self, program: &Program) -> Result<Option<usize>> {
+    /// The errors it finds wait in [`Compiler::pending`]: the first of
+    /// OPTION and the DEF lines, and the first of [`Self::walk_source_order`].
+    fn prepare(&mut self, program: &Program) -> Option<usize> {
         let mut strict_at = None;
+        let mut failed = None;
         for (i, stmt) in program.stmts.iter().enumerate() {
             (self.line, self.col) = (stmt.line, stmt.col);
+            let mut fail = |e: Error| _ = failed.get_or_insert((stmt as *const Stmt, e));
             match &stmt.kind {
                 StmtKind::Option(o) if o == "STRICT" => _ = strict_at.get_or_insert(i),
                 StmtKind::Option(o) if o == "DEFINT" => self.out.default_int = true,
                 StmtKind::Option(o) => {
-                    return Err(err(ErrorKind::SyntaxError, format!("OPTION {o}"))
-                        .at_pos(stmt.line, stmt.col));
+                    fail(
+                        err(ErrorKind::SyntaxError, format!("OPTION {o}"))
+                            .at_pos(stmt.line, stmt.col),
+                    );
                 }
                 StmtKind::Def(def) => {
                     let name = call_name(&def.name);
@@ -262,16 +297,20 @@ impl Compiler<'_> {
                     // A DEF may not take the name of a system function,
                     // such as LAST. UNVERIFIED: that a command's name is
                     // refused too.
+                    // The DEFs after an error are still named, for the
+                    // code before it.
                     if crate::vm::is_system_call(&name, self.host)
-                        || self.out.def_names.insert(name.clone(), index).is_some()
+                        || self.out.def_names.contains_key(&name)
                     {
-                        return Err(
-                            err(ErrorKind::DuplicateFunction, name).at_pos(stmt.line, stmt.col)
-                        );
+                        fail(err(ErrorKind::DuplicateFunction, name).at_pos(stmt.line, stmt.col));
+                        continue;
                     }
+                    self.out.def_names.insert(name.clone(), index);
                     for list in [&def.params, &def.outs] {
-                        if let Params::Fixed(list) = list {
-                            too_many(list.len()).map_err(|e| e.at_pos(stmt.line, stmt.col))?;
+                        if let Params::Fixed(list) = list
+                            && let Err(e) = too_many(list.len())
+                        {
+                            fail(e.at_pos(stmt.line, stmt.col));
                         }
                     }
                     self.out.defs.push(DefInfo {
@@ -295,8 +334,11 @@ impl Compiler<'_> {
                 _ => {}
             }
         }
+        self.pending.extend(failed);
         let mut data_labels = HashMap::new();
-        self.walk_source_order(&program.stmts, &mut data_labels)?;
+        if let Err(failed) = self.walk_source_order(&program.stmts, &mut data_labels) {
+            self.pending.push(failed);
+        }
         self.out.data_labels = data_labels;
 
         // Every variable named in top-level code is global, and DEFs see it.
@@ -320,75 +362,81 @@ impl Compiler<'_> {
             self.global_slot(k);
         }
         self.global_declared.extend(declared);
-        Ok(strict_at)
+        strict_at
     }
 
-    /// CONST/ENUM definitions and DATA, in source order across DEFs.
+    /// CONST/ENUM definitions and DATA, in source order across DEFs, up
+    /// to the first statement with an error, which it gives.
     fn walk_source_order(
         &mut self,
         stmts: &[Stmt],
         data_labels: &mut HashMap<String, u32>,
-    ) -> Result<()> {
+    ) -> std::result::Result<(), (*const Stmt, Error)> {
         for stmt in stmts {
-            (self.line, self.col) = (stmt.line, stmt.col);
-            self.constant_bytes.set(0);
-            let at = |e: Error| e.at_pos(stmt.line, stmt.col);
-            // A value that is not worked out as the program compiles is a
-            // Syntax error in DATA, but its own error in CONST and ENUM.
-            let illegal = |mut e: Error| {
-                if e.kind == ErrorKind::SyntaxError {
-                    e.kind = ErrorKind::IllegalConstantExpression;
-                }
-                e
-            };
-            match &stmt.kind {
-                StmtKind::Label(name) => {
-                    data_labels
-                        .entry(name.clone())
-                        .or_insert(self.out.data.len() as u32);
-                }
-                // SmileBASIC 4 checks a CONST name after working out its
-                // value, and an ENUM name before.
-                StmtKind::Const(items) => {
-                    for (name, span, expr) in items {
-                        let value = self.const_eval(expr).map_err(illegal).map_err(at)?;
-                        self.check_new_constant(name, *span)?;
-                        self.constants.insert(name.clone(), (value, *span));
-                    }
-                }
-                StmtKind::Enum(items) => {
-                    let mut next = 0i32;
-                    for (name, span, expr) in items {
-                        self.check_new_constant(name, *span)?;
-                        let n = match expr {
-                            None => next,
-                            Some((e, place)) => {
-                                let value = match self.const_eval(e).map_err(illegal).map_err(at)? {
-                                    Literal::Int(n) => Ok(n),
-                                    Literal::Real(x) => enum_int(x),
-                                    Literal::Str(_) => Err(ErrorKind::TypeMismatch),
-                                };
-                                value.map_err(|kind| {
-                                    Error::from(kind).at_pos(place.line, place.col)
-                                })?
-                            }
-                        };
-                        self.constants
-                            .insert(name.clone(), (Literal::Int(n), *span));
-                        next = n.wrapping_add(1);
-                    }
-                }
-                StmtKind::Data(items) => {
-                    for e in items {
-                        let value = self.const_eval(e).map_err(at)?;
-                        self.out.data.push(value);
-                    }
-                }
-                _ => {}
-            }
+            self.walk_stmt(stmt, data_labels)
+                .map_err(|e| (stmt as *const Stmt, e))?;
             for body in child_blocks(&stmt.kind) {
                 self.walk_source_order(body, data_labels)?;
             }
+        }
+        Ok(())
+    }
+
+    /// [`Self::walk_source_order`] of `stmt` without the blocks in it.
+    fn walk_stmt(&mut self, stmt: &Stmt, data_labels: &mut HashMap<String, u32>) -> Result<()> {
+        (self.line, self.col) = (stmt.line, stmt.col);
+        self.constant_bytes.set(0);
+        let at = |e: Error| e.at_pos(stmt.line, stmt.col);
+        // A value that is not worked out as the program compiles is a
+        // Syntax error in DATA, but its own error in CONST and ENUM.
+        let illegal = |mut e: Error| {
+            if e.kind == ErrorKind::SyntaxError {
+                e.kind = ErrorKind::IllegalConstantExpression;
+            }
+            e
+        };
+        match &stmt.kind {
+            StmtKind::Label(name) => {
+                data_labels
+                    .entry(name.clone())
+                    .or_insert(self.out.data.len() as u32);
+            }
+            // SmileBASIC 4 checks a CONST name after working out its
+            // value, and an ENUM name before.
+            StmtKind::Const(items) => {
+                for (name, span, expr) in items {
+                    let value = self.const_eval(expr).map_err(illegal).map_err(at)?;
+                    self.check_new_constant(name, *span)?;
+                    self.constants.insert(name.clone(), (value, *span));
+                }
+            }
+            StmtKind::Enum(items) => {
+                let mut next = 0i32;
+                for (name, span, expr) in items {
+                    self.check_new_constant(name, *span)?;
+                    let n = match expr {
+                        None => next,
+                        Some((e, place)) => {
+                            let value = match self.const_eval(e).map_err(illegal).map_err(at)? {
+                                Literal::Int(n) => Ok(n),
+                                Literal::Real(x) => enum_int(x),
+                                Literal::Str(_) => Err(ErrorKind::TypeMismatch),
+                            };
+                            value.map_err(|kind| Error::from(kind).at_pos(place.line, place.col))?
+                        }
+                    };
+                    self.constants
+                        .insert(name.clone(), (Literal::Int(n), *span));
+                    next = n.wrapping_add(1);
+                }
+            }
+            StmtKind::Data(items) => {
+                for e in items {
+                    let value = self.const_eval(e).map_err(at)?;
+                    self.out.data.push(value);
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -731,11 +779,26 @@ impl Compiler<'_> {
 
     // ---- statements ----
 
+    /// The pre-pass's error in `stmt`, if any.
+    fn take_pending(&mut self, stmt: &Stmt) -> Option<Error> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let i = self
+            .pending
+            .iter()
+            .position(|(s, _)| std::ptr::eq(*s, stmt))?;
+        Some(self.pending.swap_remove(i).1)
+    }
+
     fn block(&mut self, stmts: &[Stmt]) -> Result<()> {
         stmts.iter().try_for_each(|s| self.stmt(s))
     }
 
     fn stmt(&mut self, stmt: &Stmt) -> Result<()> {
+        if let Some(e) = self.take_pending(stmt) {
+            return Err(e);
+        }
         (self.line, self.col) = (stmt.line, stmt.col);
         let start = self.out.code.len();
         self.constant_bytes.set(0);

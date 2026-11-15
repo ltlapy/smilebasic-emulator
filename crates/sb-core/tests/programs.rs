@@ -2292,10 +2292,36 @@ fn compile_errors_before_a_syntax_error_come_first() {
         let _ = sb_core::compile(&src[..end], &host);
         let _ = sb_core::compile_direct(&src[..end], &host, 0);
     }
-    // Ours reads the whole program into tokens first.
-    // UNVERIFIED: SmileBASIC 4 reads tokens as it compiles, and may give
-    // Undefined constant here.
-    assert_eq!(at("?#ZZ:?&H100000000").0, ErrorKind::Overflow);
+    // SmileBASIC 4 reads tokens as it compiles: a token that does not
+    // lex is an error where it stands, after the ones before it.
+    assert_eq!(at("?#ZZ:?&H100000000").0, undefined);
+    assert_eq!(at("?#ZZ\n?1\n?2\n?3\nA=&H100000000"), (undefined, 1, 2));
+    assert_eq!(at("?(\nA=&H100000000").0, ErrorKind::SyntaxError);
+    assert_eq!(
+        at("FOR I=0 TO 1\nA=&H100000000\nNEXT"),
+        (ErrorKind::Overflow, 2, 3)
+    );
+    assert_eq!(at("?1:A=&H100000000"), (ErrorKind::Overflow, 1, 6));
+    // The pre-pass's errors come where their statements stand too.
+    assert_eq!(at("?#ZZ\nCONST #A=1,#A=2"), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ\nOPTION FOO"), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ\nDEF F\nEND\nDEF F\nEND"), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ\nDEF LAST\nEND"), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ\nENUM #A=1.5"), (undefined, 1, 2));
+    assert_eq!(at("?#ZZ\nDATA A"), (undefined, 1, 2));
+    assert_eq!(at("DEF F\nCONST #A=1/0\nEND\n?#ZZ").1, 2);
+    assert_eq!(
+        at("CONST #A=1,#A=2\n?#ZZ"),
+        (ErrorKind::DuplicateConstant, 1, 12)
+    );
+    assert_eq!(
+        at("DEF F\nEND\nDEF F\nEND\n?#ZZ").0,
+        ErrorKind::DuplicateFunction
+    );
+    // A DEF's body compiles where it stands, before the code after it.
+    assert_eq!(at("DEF F\n?#ZZ\nEND\n?\"A\"*-1"), (undefined, 2, 2));
+    assert_eq!(at("?\"A\"*-1\nDEF F\n?#ZZ\nEND").1, 1);
+    assert_eq!(at("DEF F\n?1\nEND\nDEF G\n?#ZZ\nEND\n?#YY").1, 5);
 }
 
 /// A block that does not close is named by its own error and the line

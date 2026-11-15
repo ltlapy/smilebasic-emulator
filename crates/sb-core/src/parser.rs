@@ -106,10 +106,7 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
 /// statements before it comes first. `direct` for a line typed in DIRECT
 /// mode, which refuses some statements as they start.
 pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>) {
-    let tokens = match lexer::tokenize(source) {
-        Ok(tokens) => tokens,
-        Err(e) => return (Program { stmts: Vec::new() }, Some(e.into())),
-    };
+    let (tokens, _) = lexer::tokenize_partial(source);
     let mut parser = Parser {
         tokens,
         pos: 0,
@@ -127,6 +124,12 @@ pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>
         parser.failed.get_or_insert(e);
         Vec::new()
     });
+    // A lexer error stands at its token, not at its statement.
+    if let Some(e) = &mut parser.failed
+        && matches!(e.kind, ParseErrorKind::Lex(_))
+    {
+        e.stmt = None;
+    }
     (Program { stmts }, parser.failed)
 }
 
@@ -297,6 +300,13 @@ impl Parser {
     }
 
     fn expected<T>(&self, expected: &'static str) -> PResult<T> {
+        if let TokenKind::Invalid(kind) = self.peek() {
+            return Err(LexError {
+                kind: kind.clone(),
+                span: self.span(),
+            }
+            .into());
+        }
         Err(ParseError {
             kind: ParseErrorKind::Expected {
                 expected,
