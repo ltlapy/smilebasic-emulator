@@ -1731,6 +1731,15 @@ Expected but not yet seen on hardware:
   `:1[C]2:2D` passes (TEST74). A `:` naming the channel it is in changes no
   channel, so `[:0C]` passes. A channel past 15 fails at its number: `:16C`
   gives 1 (TEST74).
+- `BGMPLAY` and `BGMSET` stop with
+  `Illegal MML`, error 81, only for faults with no error of their own. The
+  MML errors 82 to 106 name the rest: `V200C` is `MML:Volume out of range`
+  (94), `C200` and `C5` are `MML:Length out of range` (93), `{AB}C` is
+  `MML:Undefined macro` (87), `C]` is `MML:RepeatEnd without repeat` (84),
+  `[C` and `[C:1D]2` are `MML:Repeat without repeatEnd` (85), and `C:1D:0E`
+  is `MML:Track already defined` (83). A value out of range in `@E` is
+  `MML:Envelope out of range` (101), and in `@MP`, `@MA` or `@ML`
+  `MML:Modulation out of range` (102). (Not yet seen on hardware.)
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so

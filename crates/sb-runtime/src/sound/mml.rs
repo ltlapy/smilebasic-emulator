@@ -5,6 +5,8 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use sb_core::error::ErrorKind;
+
 pub const CHANNELS: usize = 16;
 /// Ticks in a whole note: every length divides it.
 pub const WHOLE: u32 = 192;
@@ -132,14 +134,25 @@ impl Song {
     }
 }
 
-/// Where the MML could not be read, as a character index in the text as
-/// given, comments and macro definitions counted.
-pub type Error = usize;
+/// Why the MML could not be read, and where, as a character index in the
+/// text as given, comments and macro definitions counted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Error {
+    pub at: usize,
+    /// [`ErrorKind::IllegalMml`], or one of the MML errors after it that
+    /// SmileBASIC 4's parser gives for this fault.
+    pub kind: ErrorKind,
+}
+
+/// An error at `at`.
+fn fail(at: usize, kind: ErrorKind) -> Error {
+    Error { at, kind }
+}
 
 /// Why macros could not be put in, with where.
 enum Stop {
     Bad(Error),
-    OverLimit(Error),
+    OverLimit(usize),
 }
 
 /// MML with comments taken out and macros put in, and where each of its
@@ -217,7 +230,7 @@ fn expand_into(
                 }
                 open == 0
             })
-            .ok_or(Stop::Bad(at))?;
+            .ok_or(Stop::Bad(fail(at, ErrorKind::IllegalMml)))?;
         let inside = &text[i + 1..close];
         let (name, body) = match inside.iter().position(|&(c, _)| c == '=') {
             Some(eq) => (&inside[..eq], Some(&inside[eq + 1..])),
@@ -225,7 +238,7 @@ fn expand_into(
         };
         let is_name = |&(c, _): &(char, u32)| c.is_ascii_alphanumeric() || c == '_';
         if name.is_empty() || !name.iter().all(is_name) {
-            return Err(Stop::Bad(at));
+            return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
         }
         let name: String = name.iter().map(|&(c, _)| c).collect();
         match body {
@@ -236,9 +249,10 @@ fn expand_into(
                 macros.insert(name, body.to_vec());
             }
             None => {
-                let body = macros.get(&name).ok_or(Stop::Bad(at))?;
+                let undefined = fail(at, ErrorKind::MmlUndefinedMacro);
+                let body = macros.get(&name).ok_or(Stop::Bad(undefined))?;
                 if depth == MACRO_DEPTH {
-                    return Err(Stop::Bad(at));
+                    return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
                 }
                 // The 1 is for empty macros, which cost time all the same.
                 *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
@@ -281,17 +295,17 @@ struct Parser {
 type Range = std::ops::RangeInclusive<i32>;
 
 impl Parser {
-    /// An error at the character at `p`, where it was written.
-    fn start(&self, p: usize) -> Error {
+    /// Where the character at `p` was written.
+    fn start(&self, p: usize) -> usize {
         match self.source.get(p) {
             Some(&i) => (i & !USED) as usize,
             None => self.end_of(p),
         }
     }
 
-    /// An error just after what comes before `p`, where that was written:
+    /// Just after what comes before `p`, where that was written:
     /// SmileBASIC 4 gives the end of what it stopped on.
-    fn end_of(&self, p: usize) -> Error {
+    fn end_of(&self, p: usize) -> usize {
         match p.checked_sub(1).and_then(|i| self.source.get(i)) {
             Some(&i) if i & USED != 0 => (i & !USED) as usize,
             Some(&i) => i as usize + 1,
@@ -299,8 +313,8 @@ impl Parser {
         }
     }
 
-    /// An error just after what has been read.
-    fn end(&self) -> Error {
+    /// Just after what has been read.
+    fn end(&self) -> usize {
         self.end_of(self.at)
     }
 
@@ -342,8 +356,9 @@ impl Parser {
         s.parse().ok()
     }
 
-    /// A number or a variable, if there is one.
-    fn opt_num(&mut self, range: Range) -> Result<Option<Num>, Error> {
+    /// A number or a variable, if there is one. A number out of `range`
+    /// is `kind`.
+    fn opt_num(&mut self, range: Range, kind: ErrorKind) -> Result<Option<Num>, Error> {
         self.skip_space();
         let start = self.at;
         if self.peek() == Some('$') {
@@ -358,19 +373,22 @@ impl Parser {
             self.at += 1;
             return match self.int() {
                 Some(n @ 0..=7) => Ok(Some(Num::Var(n as u8))),
-                _ => Err(self.start(start)),
+                _ => Err(fail(self.start(start), ErrorKind::IllegalMml)),
             };
         }
         match self.int() {
             None => Ok(None),
             Some(n) if range.contains(&n) => Ok(Some(Num::Lit(n))),
-            Some(_) => Err(self.start(start)),
+            Some(_) => Err(fail(self.start(start), kind)),
         }
     }
 
-    fn num(&mut self, range: Range) -> Result<Num, Error> {
+    fn num(&mut self, range: Range, kind: ErrorKind) -> Result<Num, Error> {
         let at = self.at;
-        self.opt_num(range)?.ok_or_else(|| self.start(at))
+        match self.opt_num(range, kind)? {
+            Some(n) => Ok(n),
+            None => Err(fail(self.start(at), ErrorKind::IllegalMml)),
+        }
     }
 
     /// `O`'s octave, which `<` and `>` count from. It takes a number only,
@@ -379,9 +397,9 @@ impl Parser {
         let after_o = self.at;
         self.skip_space();
         if self.peek() == Some('$') {
-            return Err(self.end_of(after_o));
+            return Err(fail(self.end_of(after_o), ErrorKind::MmlCantUseVariable));
         }
-        let n = self.num(-1..=9)?;
+        let n = self.num(-1..=9, ErrorKind::MmlOctaveOutOfRange)?;
         if let Num::Lit(n) = n {
             self.octaves[self.channel] = n;
         }
@@ -398,22 +416,23 @@ impl Parser {
         if (-1..=9).contains(octave) {
             Ok(())
         } else {
-            Err(self.end())
+            Err(fail(self.end(), ErrorKind::MmlOctaveOutOfRange))
         }
     }
 
     /// The four values of `@E`, `@MP`, `@MA` and `@ML`, 0 to 127, each
     /// refused where the text stands after it. A negative one too: `-1` is
-    /// read as one number, and refused after its 1.
-    fn four(&mut self) -> Result<[Num; 4], Error> {
+    /// read as one number, and refused after its 1. A value out of range
+    /// is `kind`.
+    fn four(&mut self, kind: ErrorKind) -> Result<[Num; 4], Error> {
         let mut v = [Num::Lit(0); 4];
         for (i, n) in v.iter_mut().enumerate() {
             if i > 0 && !self.eat(',') {
-                return Err(self.end());
+                return Err(fail(self.end(), ErrorKind::IllegalMml));
             }
-            *n = self.num(i32::MIN..=i32::MAX)?;
+            *n = self.num(i32::MIN..=i32::MAX, kind)?;
             if matches!(*n, Num::Lit(n) if !(0..=127).contains(&n)) {
-                return Err(self.end());
+                return Err(fail(self.end(), kind));
             }
         }
         Ok(v)
@@ -423,10 +442,13 @@ impl Parser {
     /// added, so it is refused, after the last dot, on an odd number of
     /// ticks: `C4...` passes and `C192.` does not.
     fn len(&mut self) -> Result<Len, Error> {
+        const KIND: ErrorKind = ErrorKind::MmlLengthOutOfRange;
         let at = self.at;
-        let div = self.opt_num(1..=WHOLE as i32)?;
+        let div = self.opt_num(1..=WHOLE as i32, KIND)?;
         let mut ticks = match div {
-            Some(Num::Lit(n)) if !WHOLE.is_multiple_of(n as u32) => return Err(self.start(at)),
+            Some(Num::Lit(n)) if !WHOLE.is_multiple_of(n as u32) => {
+                return Err(fail(self.start(at), KIND));
+            }
             Some(Num::Lit(n)) => Some(WHOLE / n as u32),
             Some(Num::Var(_)) => None,
             None => self.lengths[self.channel],
@@ -441,7 +463,7 @@ impl Parser {
             }
         }
         if odd {
-            return Err(self.end());
+            return Err(fail(self.end(), KIND));
         }
         Ok(Len { div, dots })
     }
@@ -500,7 +522,7 @@ impl Parser {
                 *l = link;
                 Ok(())
             }
-            _ => Err(self.start(at)),
+            _ => Err(fail(self.start(at), ErrorKind::IllegalMml)),
         }
     }
 
@@ -516,7 +538,7 @@ impl Parser {
     fn chord(&mut self) -> Result<Cmd, Error> {
         const NOTES: std::ops::RangeInclusive<usize> = 2..=6;
         let octave = self.octaves[self.channel];
-        let bar = self.end();
+        let bar = fail(self.end(), ErrorKind::IllegalMml);
         let mut parts = Vec::new();
         let mut notes = 0;
         // Where a `<` or `>` first left the octaves, if one did.
@@ -525,7 +547,7 @@ impl Parser {
         let mut last = bar;
         loop {
             if self.at > 0 && self.text[self.at - 1] != '|' {
-                last = self.end();
+                last = fail(self.end(), ErrorKind::IllegalMml);
             }
             self.skip_space();
             let Some(c) = self.peek() else {
@@ -573,7 +595,8 @@ impl Parser {
     /// at its end: `@MPOXC` gives 6, `@MPO C` 4.
     fn at_command(&mut self, at: usize) -> Result<Cmd, Error> {
         if self.peek().is_some_and(|c| c.is_ascii_digit() || c == '$') {
-            return Ok(Cmd::Program(self.num(0..=432)?));
+            let n = self.num(0..=432, ErrorKind::MmlInstrumentOutOfRange)?;
+            return Ok(Cmd::Program(n));
         }
         let mut end = self.at;
         while self
@@ -590,13 +613,13 @@ impl Parser {
         let word: String = self.text[at + 1..end].iter().collect();
         self.at = end;
         Ok(match word.as_str() {
-            "V" => Cmd::Velocity(self.num(0..=127)?),
-            "D" => Cmd::Detune(self.num(-128..=127)?),
-            "E" => Cmd::Envelope(self.four()?),
+            "V" => Cmd::Velocity(self.num(0..=127, ErrorKind::MmlVelocityOutOfRange)?),
+            "D" => Cmd::Detune(self.num(-128..=127, ErrorKind::MmlDetuneOutOfRange)?),
+            "E" => Cmd::Envelope(self.four(ErrorKind::MmlEnvelopeOutOfRange)?),
             "ER" => Cmd::EnvelopeOff,
             "MP" | "MA" | "ML" => {
                 self.lfo_given = true;
-                let v = self.four()?;
+                let v = self.four(ErrorKind::MmlModulationOutOfRange)?;
                 match word.as_str() {
                     "MP" => Cmd::Vibrato(v),
                     "MA" => Cmd::Tremolo(v),
@@ -611,7 +634,7 @@ impl Parser {
             "MLON" => Cmd::PanWaveOn,
             "MOF" => Cmd::ModulationOff,
             "MON" => Cmd::ModulationOn,
-            _ => return Err(self.end()),
+            _ => return Err(fail(self.end(), ErrorKind::IllegalMml)),
         })
     }
 
@@ -638,10 +661,14 @@ impl Parser {
                 match self.int() {
                     Some(n @ 0..=15) => {
                         let n = n as usize;
-                        if n != self.channel
-                            && (self.chosen & 1 << n != 0 || self.repeats[self.channel] > 0)
-                        {
-                            return Err(number);
+                        if n != self.channel {
+                            if self.repeats[self.channel] > 0 {
+                                let kind = ErrorKind::MmlRepeatWithoutRepeatEnd;
+                                return Err(fail(number, kind));
+                            }
+                            if self.chosen & 1 << n != 0 {
+                                return Err(fail(number, ErrorKind::MmlTrackAlreadyDefined));
+                            }
                         }
                         self.chosen |= 1 << n;
                         self.channel = n;
@@ -652,8 +679,11 @@ impl Parser {
                             self.song.channels[n].push(Cmd::ForgetLfos);
                         }
                     }
-                    Some(_) => return Err(number),
-                    None => return Err(self.start(at)),
+                    Some(_) => return Err(fail(number, ErrorKind::IllegalMml)),
+                    None if self.peek() == Some('$') => {
+                        return Err(fail(self.start(at), ErrorKind::MmlCantUseVariable));
+                    }
+                    None => return Err(fail(self.start(at), ErrorKind::IllegalMml)),
                 }
                 self.in_channel = true;
                 return Ok(());
@@ -664,7 +694,7 @@ impl Parser {
                 link: Link::None,
             },
             'N' => {
-                let key = self.num(0..=127)?;
+                let key = self.num(0..=127, ErrorKind::MmlNoteOutOfRange)?;
                 // Without `,length`, the note takes L's length.
                 let len = match self.eat(',') {
                     true => self.len()?,
@@ -696,15 +726,28 @@ impl Parser {
                 self.song.reversed = true;
                 return Ok(());
             }
-            'T' => Cmd::Tempo(self.num(1..=1023)?),
+            'T' => Cmd::Tempo(self.num(1..=1023, ErrorKind::MmlTempoOutOfRange)?),
             '@' => self.at_command(at)?,
-            'V' => Cmd::Volume(self.num(0..=127)?),
-            '(' => Cmd::Louder(self.opt_num(0..=127)?.unwrap_or(Num::Lit(1))),
-            ')' => Cmd::Softer(self.opt_num(0..=127)?.unwrap_or(Num::Lit(1))),
-            'P' => Cmd::Pan(self.num(0..=127)?),
-            'Q' => Cmd::Gate(self.num(0..=32)?),
-            'K' if self.in_channel => Cmd::Key(self.num(-115..=115)?),
-            'K' => Cmd::SongKey(self.num(-115..=115)?),
+            'V' => Cmd::Volume(self.num(0..=127, ErrorKind::MmlVolumeOutOfRange)?),
+            // UNVERIFIED: SmileBASIC 4 checks the volume these reach, with
+            // the same error.
+            '(' | ')' => {
+                let by = self.opt_num(0..=127, ErrorKind::MmlVolumeOutOfRange)?;
+                let by = by.unwrap_or(Num::Lit(1));
+                match c {
+                    '(' => Cmd::Louder(by),
+                    _ => Cmd::Softer(by),
+                }
+            }
+            'P' => Cmd::Pan(self.num(0..=127, ErrorKind::MmlPanpotOutOfRange)?),
+            'Q' => Cmd::Gate(self.num(0..=32, ErrorKind::MmlGateTimeOutOfRange)?),
+            'K' => {
+                let key = self.num(-115..=115, ErrorKind::MmlTransposeOutOfRange)?;
+                match self.in_channel {
+                    true => Cmd::Key(key),
+                    false => Cmd::SongKey(key),
+                }
+            }
             '[' => {
                 self.repeats[self.channel] += 1;
                 Cmd::RepeatStart
@@ -714,22 +757,31 @@ impl Parser {
             ']' => {
                 let open = &mut self.repeats[self.channel];
                 if *open == 0 {
-                    return Err(self.end());
+                    return Err(fail(self.end(), ErrorKind::MmlRepeatEndWithoutRepeat));
                 }
                 *open -= 1;
-                Cmd::RepeatEnd(self.opt_num(0..=255)?.unwrap_or(Num::Lit(0)))
+                let count = self.opt_num(0..=255, ErrorKind::MmlRepeatCountOutOfRange)?;
+                Cmd::RepeatEnd(count.unwrap_or(Num::Lit(0)))
             }
             '$' => {
                 let n = match self.int() {
                     Some(n @ 0..=7) => n as u8,
-                    _ => return Err(self.start(at)),
+                    Some(_) => {
+                        let kind = ErrorKind::MmlVariableNumberOutOfRange;
+                        return Err(fail(self.start(at), kind));
+                    }
+                    None => return Err(fail(self.start(at), ErrorKind::IllegalMml)),
                 };
                 if !self.eat('=') {
-                    return Err(self.end());
+                    return Err(fail(self.end(), ErrorKind::IllegalMml));
                 }
                 match self.int() {
                     Some(v @ -32768..=32767) => Cmd::SetVar(n, v),
-                    _ => return Err(self.end()),
+                    Some(_) => {
+                        let kind = ErrorKind::MmlVariableValueOutOfRange;
+                        return Err(fail(self.end(), kind));
+                    }
+                    None => return Err(fail(self.end(), ErrorKind::IllegalMml)),
                 }
             }
             // Singing: the next note sings the phonemes. It takes three
@@ -743,7 +795,7 @@ impl Parser {
                 let letters: String = self.text[start..self.at].iter().collect();
                 let after = self.end();
                 if !self.eat(',') {
-                    return Err(after);
+                    return Err(fail(after, ErrorKind::IllegalMml));
                 }
                 if letters.is_empty() {
                     return Ok(());
@@ -756,7 +808,7 @@ impl Parser {
             // UNVERIFIED: the bare length holds the whole chord.
             c if c.is_ascii_digit() => {
                 let Some(mut cmd) = self.tied() else {
-                    return Err(self.start(at));
+                    return Err(fail(self.start(at), ErrorKind::IllegalMml));
                 };
                 self.at = at;
                 if let Cmd::Note { len, link, .. } | Cmd::Chord { len, link, .. } = &mut cmd {
@@ -777,7 +829,7 @@ impl Parser {
                         link,
                     }
                 }
-                None => return Err(self.start(at)),
+                None => return Err(fail(self.start(at), ErrorKind::IllegalMml)),
             },
         };
         self.push(cmd);
@@ -816,7 +868,8 @@ pub fn parse(text: &str) -> Result<Song, Error> {
     let chars: Vec<char> = text.chars().collect();
     match expand(&chars, None) {
         Ok(plain) => parse_plain(plain, text),
-        Err(Stop::Bad(at) | Stop::OverLimit(at)) => Err(at),
+        Err(Stop::Bad(e)) => Err(e),
+        Err(Stop::OverLimit(at)) => Err(fail(at, ErrorKind::IllegalMml)),
     }
 }
 
@@ -831,7 +884,8 @@ pub fn check(text: &str) -> Result<(), Error> {
     };
     match plain {
         Ok(plain) => parse_plain(plain, text).map(drop),
-        Err(Stop::Bad(at) | Stop::OverLimit(at)) => Err(at),
+        Err(Stop::Bad(e)) => Err(e),
+        Err(Stop::OverLimit(at)) => Err(fail(at, ErrorKind::IllegalMml)),
     }
 }
 
@@ -859,7 +913,8 @@ fn parse_plain(plain: Plain, text: &str) -> Result<Song, Error> {
     }
     // Repeats must close within their channel.
     if p.repeats.iter().any(|&open| open > 0) {
-        return Err(p.end_of(p.text.len()));
+        let at = p.end_of(p.text.len());
+        return Err(fail(at, ErrorKind::MmlRepeatWithoutRepeatEnd));
     }
     Ok(p.song)
 }
@@ -891,6 +946,16 @@ pub fn ticks(len: Len, default: u32, var: impl Fn(u8) -> i32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`super::parse`], with where it failed.
+    fn parse(text: &str) -> Result<Song, usize> {
+        super::parse(text).map_err(|e| e.at)
+    }
+
+    /// [`super::check`], with where it failed.
+    fn check(text: &str) -> Result<(), usize> {
+        super::check(text).map_err(|e| e.at)
+    }
 
     fn note(s: i32, div: Option<i32>) -> Cmd {
         Cmd::Note {
@@ -1202,6 +1267,45 @@ mod tests {
             song.channels[0],
             [Cmd::SongKey(Num::Lit(2)), Cmd::Key(Num::Lit(-1))]
         );
+    }
+
+    /// Each fault is the error SmileBASIC 4's parser gives for it.
+    #[test]
+    fn errors_say_what() {
+        use ErrorKind::*;
+        for (mml, kind) in [
+            ("CDX", IllegalMml),
+            ("@MPOXC", IllegalMml),
+            ("{NOPE}", MmlUndefinedMacro),
+            ("C:1D:0E", MmlTrackAlreadyDefined),
+            ("[C:1D]2", MmlRepeatWithoutRepeatEnd),
+            ("[C", MmlRepeatWithoutRepeatEnd),
+            ("C]0", MmlRepeatEndWithoutRepeat),
+            ("[C]256", MmlRepeatCountOutOfRange),
+            (":$0C", MmlCantUseVariable),
+            ("$0=9O$0C", MmlCantUseVariable),
+            ("K116C", MmlTransposeOutOfRange),
+            ("O10C", MmlOctaveOutOfRange),
+            ("O9<C", MmlOctaveOutOfRange),
+            ("C5", MmlLengthOutOfRange),
+            ("C192.", MmlLengthOutOfRange),
+            ("L0C", MmlLengthOutOfRange),
+            ("V128C", MmlVolumeOutOfRange),
+            ("@V128C", MmlVelocityOutOfRange),
+            ("P128C", MmlPanpotOutOfRange),
+            ("Q33C", MmlGateTimeOutOfRange),
+            ("T1024C", MmlTempoOutOfRange),
+            ("N128", MmlNoteOutOfRange),
+            ("@D128C", MmlDetuneOutOfRange),
+            ("@E128,0,0,0C", MmlEnvelopeOutOfRange),
+            ("@MA1,128,1,1C", MmlModulationOutOfRange),
+            ("$8=1", MmlVariableNumberOutOfRange),
+            ("$0=32768", MmlVariableValueOutOfRange),
+            ("@433C", MmlInstrumentOutOfRange),
+        ] {
+            assert_eq!(super::check(mml).map_err(|e| e.kind), Err(kind), "{mml}");
+        }
+        assert_eq!(check(":0C:0D"), Ok(()));
     }
 
     #[test]

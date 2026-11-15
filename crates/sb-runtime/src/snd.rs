@@ -258,7 +258,7 @@ fn text(v: &Value) -> Result<String> {
 }
 
 fn parse(mml: &str) -> Result<Song> {
-    mml::parse(mml).map_err(|at| Error::with_detail(ErrorKind::IllegalMml, format!("at {at}")))
+    mml::parse(mml).map_err(|e| Error::with_detail(e.kind, format!("at {}", e.at)))
 }
 
 /// An omittable track, then the arguments after it: `[track,] rest...`
@@ -449,7 +449,7 @@ impl Runtime {
             (Command::Chkmml, Want::Outs(1) | Want::Value, 1) => {
                 let at = match mml::check(&text(&args[0])?) {
                     Ok(()) => -1,
-                    Err(at) => at as i32,
+                    Err(e) => e.at as i32,
                 };
                 Ok(vec![Value::Int(at)])
             }

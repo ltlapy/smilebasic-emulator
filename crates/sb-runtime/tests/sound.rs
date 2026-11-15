@@ -145,8 +145,27 @@ fn checking_mml() {
     );
     assert_eq!(
         run_on(&mut rt, "BGMSET 128,\"C5\"").unwrap_err().kind,
-        ErrorKind::IllegalMml
+        ErrorKind::MmlLengthOutOfRange
     );
+    // SmileBASIC 4's MML errors: 81 and the parser's own number.
+    for (mml, code) in [
+        ("CDX", 81),
+        ("V200C", 94),
+        ("C200", 93),
+        ("{AB}C", 87),
+        ("[C", 85),
+        ("C]", 84),
+        ("C:1D:0E", 83),
+        ("@MP128,1,1,1C", 102),
+        ("@E0,0,0,128C", 101),
+        ("O9C<C", 92),
+        ("$8=1", 103),
+    ] {
+        let e = run_on(&mut rt, &format!("BGMPLAY \"{mml}\"")).unwrap_err();
+        assert_eq!(e.kind.code(), code, "{mml}");
+    }
+    // A `:` naming the channel in use is no new channel (TEST74).
+    run_on(&mut rt, "BGMPLAY \":0C:0D\":BGMSTOP").unwrap();
     assert_eq!(
         run_on(&mut rt, "BGMPLAY 74").unwrap_err().kind,
         ErrorKind::OutOfRange
