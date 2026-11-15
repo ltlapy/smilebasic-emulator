@@ -12,6 +12,8 @@ pub const CHANNELS: usize = 16;
 pub const WHOLE: u32 = 192;
 /// How deep macros may use other macros.
 const MACRO_DEPTH: usize = 16;
+/// The longest name a macro may have.
+const MACRO_NAME_CHARS: usize = 256;
 /// Characters macros may copy for one song, counting a macro's whole body
 /// each time it is defined or used. Macros using macros multiply, so a few
 /// hundred bytes could otherwise ask for gigabytes. MML with no macros
@@ -236,13 +238,19 @@ fn expand_into(
             Some(eq) => (&inside[..eq], Some(&inside[eq + 1..])),
             None => (inside, None),
         };
-        let is_name = |&(c, _): &(char, u32)| c.is_ascii_alphanumeric() || c == '_';
-        if name.is_empty() || !name.iter().all(is_name) {
+        if name.is_empty() || !name.iter().all(|&(c, _)| is_name_char(c)) {
             return Err(Stop::Bad(fail(at, ErrorKind::IllegalMml)));
+        }
+        if name.len() > MACRO_NAME_CHARS {
+            return Err(Stop::Bad(fail(at, ErrorKind::MmlMacroNameTooLong)));
         }
         let name: String = name.iter().map(|&(c, _)| c).collect();
         match body {
             Some(body) => {
+                if macros.contains_key(&name) {
+                    return Err(Stop::Bad(fail(at, ErrorKind::MmlMacroAlreadyDefined)));
+                }
+                check_body(body, macros).map_err(|kind| Stop::Bad(fail(at, kind)))?;
                 // Counted too: a macro that only defines others puts out
                 // nothing, however many times it runs.
                 *left = (left.checked_sub(body.len() + 1)).ok_or(Stop::OverLimit(at))?;
@@ -264,6 +272,44 @@ fn expand_into(
             }
         }
         i = close + 1;
+    }
+    Ok(())
+}
+
+fn is_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// What SmileBASIC 4 refuses in a macro's body as it is defined, before
+/// it is ever used: a definition inside it, and the use of a macro not
+/// defined yet, which also keeps a macro from using itself.
+// UNVERIFIED: these stand at the definition's `{`, as ours puts them.
+fn check_body(
+    body: &[(char, u32)],
+    macros: &HashMap<String, Vec<(char, u32)>>,
+) -> Result<(), ErrorKind> {
+    let mut i = 0;
+    while i < body.len() {
+        if body[i].0 != '{' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut end = start;
+        while body.get(end).is_some_and(|&(c, _)| is_name_char(c)) {
+            end += 1;
+        }
+        if end - start > MACRO_NAME_CHARS {
+            return Err(ErrorKind::MmlMacroNameTooLong);
+        }
+        if body.get(end).is_some_and(|&(c, _)| c == '=') {
+            return Err(ErrorKind::MmlIllegalMacroName);
+        }
+        let name: String = body[start..end].iter().map(|&(c, _)| c).collect();
+        if !macros.contains_key(&name) {
+            return Err(ErrorKind::MmlUndefinedMacro);
+        }
+        i = end;
     }
     Ok(())
 }
@@ -1277,6 +1323,10 @@ mod tests {
             ("CDX", IllegalMml),
             ("@MPOXC", IllegalMml),
             ("{NOPE}", MmlUndefinedMacro),
+            ("{X=C}{X=D}", MmlMacroAlreadyDefined),
+            ("{X={Y=C}}", MmlIllegalMacroName),
+            ("{X={Y}}C", MmlUndefinedMacro),
+            ("{X={X}}C", MmlUndefinedMacro),
             ("C:1D:0E", MmlTrackAlreadyDefined),
             ("[C:1D]2", MmlRepeatWithoutRepeatEnd),
             ("[C", MmlRepeatWithoutRepeatEnd),
@@ -1306,6 +1356,13 @@ mod tests {
             assert_eq!(super::check(mml).map_err(|e| e.kind), Err(kind), "{mml}");
         }
         assert_eq!(check(":0C:0D"), Ok(()));
+        // A macro's name takes 256 characters.
+        let long = |n: usize| format!("{{{0}=C}}{{{0}}}", "A".repeat(n));
+        assert_eq!(check(&long(256)), Ok(()));
+        let kind = super::check(&long(257)).map_err(|e| e.kind);
+        assert_eq!(kind, Err(MmlMacroNameTooLong));
+        let kind = super::check(&format!("{{X={{{}}}}}", "A".repeat(257))).map_err(|e| e.kind);
+        assert_eq!(kind, Err(MmlMacroNameTooLong));
     }
 
     #[test]

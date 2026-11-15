@@ -1833,6 +1833,12 @@ Expected but not yet seen on hardware:
   is `MML:Track already defined` (83). A value out of range in `@E` is
   `MML:Envelope out of range` (101), and in `@MP`, `@MA` or `@ML`
   `MML:Modulation out of range` (102). (Not yet seen on hardware.)
+- A macro's body is checked as it is defined, before it is used, if ever: a
+  macro it uses must be defined already, so `{X={Y}}` is `MML:Undefined macro`
+  (87) without Y, and no macro can use itself. A definition inside it, as in
+  `{X={Y=C}}`, is `MML:Illegal macro name` (88). Defining a macro again,
+  `{X=C}{X=D}`, is `MML:Macro already defined` (86), and a name of over 256
+  characters `MML:Macro name is too long` (89). (Not yet seen on hardware.)
 - `V` and `@V` (MML's volume and velocity) both start at 127 and both scale the
   level by their square: `V64` and `V127@V64` record alike.
 - `P64` is the middle, even on both sides. The pan's position is (P-64)/63, so
