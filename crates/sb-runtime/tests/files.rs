@@ -2121,6 +2121,36 @@ fn run_to_dialog_now(m: &mut Machine) -> sb_runtime::dialog::ProgramDialog {
     panic!("no dialog: {:?}", rows(m));
 }
 
+/// SmileBASIC 4: SAVEV of an array whose DAT or GRP body is
+/// over 16 MiB both as it is and compressed is Array is too large, with
+/// no number.
+#[test]
+fn savev_refuses_what_does_not_fit_in_16_mib() {
+    let dir = TempDir::new("savev-large");
+    let mut m = machine(&dir);
+    // Blocks of 256 KiB repeat too far apart for the compressor to see.
+    let fill = "DIM R%[65536],A%[4390912]:FOR I=0 TO 65535:R%[I]=RND(65536)<<16 OR RND(65536):NEXT:FOR K=0 TO 66:COPY A%,K*65536,R%:NEXT";
+    m.set_slot(0, format!("{fill}\nSAVEV \"DAT:BIG\",A%"));
+    enter(&mut m, "run");
+    let (said, number, arg) = program_error(&mut m);
+    assert_eq!((number, arg), (47, None), "{said}");
+    assert!(said.starts_with("Array is too large in 0:2"), "{said}");
+    enter(&mut m, "cls:?CHKFILE(\"DAT:BIG\")");
+    assert_eq!(tail(&m, 2), ["0", "OK"]);
+    // A GRP file of the largest image takes 32-bit pixels and the header.
+    let fill = "DIM R%[65536],G%[2048,2048]:FOR I=0 TO 65535:R%[I]=RND(65536)<<16 OR RND(65536):NEXT:FOR K=0 TO 63:COPY G%,K*65536,R%:NEXT";
+    m.set_slot(0, format!("{fill}\nSAVEV \"GRP:BIG\",G%"));
+    enter(&mut m, "run");
+    let (said, number, _) = program_error(&mut m);
+    assert_eq!(number, 47, "{said}");
+    // What compresses below it saves.
+    enter(
+        &mut m,
+        "cls:DIM B%[4400000]:SAVEV \"DAT:ZERO\",B%:?CHKFILE(\"DAT:ZERO\")",
+    );
+    assert_eq!(tail(&m, 2), ["1", "OK"]);
+}
+
 /// SmileBASIC 4: FILES of a number is Type mismatch naming
 /// it, whatever the OUT count.
 #[test]

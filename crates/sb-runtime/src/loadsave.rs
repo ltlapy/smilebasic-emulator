@@ -10,7 +10,7 @@ use std::rc::Rc;
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::memory;
-use sb_core::value::{Array, ArrayData, ArrayRef, Value, new_str};
+use sb_core::value::{Array, ArrayData, ArrayRef, Value, new_str, real_to_int};
 
 use crate::confirm::FileAction;
 use crate::files::{check_file_name, program_text, str_arg};
@@ -177,6 +177,21 @@ fn array_data(array: &Array) -> Data {
         dims: array.dims.clone(),
         values,
     }
+}
+
+/// The most SmileBASIC 4 saves of a DAT or GRP file's PCBN body, in bytes.
+const MAX_SAVED: usize = 0x100_0000;
+
+/// SmileBASIC 4 stores a DAT or GRP file's PCBN body compressed, or as it
+/// is when compressed is still too large; too large both ways is Array is
+/// too large, after the questions. Ours writes the
+/// body as it is, so this only checks, and compresses only what is too
+/// large as it is.
+fn check_saved_size(raw: usize, body: impl FnOnce() -> Vec<u8>) -> Result<()> {
+    if raw > MAX_SAVED && miniz_oxide::deflate::compress_to_vec_zlib(&body(), 6).len() > MAX_SAVED {
+        return Err(ErrorKind::ArrayTooLarge.into());
+    }
+    Ok(())
 }
 
 /// A 2D numeric array as an image, for SAVEV's GRP files.
@@ -373,6 +388,22 @@ impl Runtime {
                 };
                 if self.ask_save(&file) {
                     return Ok(vec![]);
+                }
+                match (file.as_ref().map(|f| f.kind), value) {
+                    (Ok(FileKind::Dat), _) => check_saved_size(bytes.len(), || bytes.clone())?,
+                    // SmileBASIC 4 saves the image as 32-bit integers.
+                    (Ok(FileKind::Grp), Value::Array(a)) => {
+                        let raw = sbfile::DATA_HEADER + a.borrow().len() * 4;
+                        check_saved_size(raw, || {
+                            let mut data = array_data(&a.borrow());
+                            if let DataValues::Real(v) = &data.values {
+                                let ints = v.iter().map(|&x| real_to_int(x).unwrap_or(0));
+                                data.values = DataValues::Int(ints.collect());
+                            }
+                            sbfile::data_body(&data)
+                        })?;
+                    }
+                    _ => {}
                 }
                 let outcome = file.and_then(|file| {
                     (self.storage).write_ref(&file, &bytes, Some(file.kind.backup_name()))

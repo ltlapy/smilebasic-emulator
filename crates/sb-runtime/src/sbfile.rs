@@ -299,7 +299,7 @@ fn argb_from_5551(p: u16) -> i32 {
 }
 
 pub const DATA_MAGIC: &[u8; 8] = b"PCBN0004";
-const DATA_HEADER: usize = 28;
+pub(crate) const DATA_HEADER: usize = 28;
 /// The longest string a DAT file can hold, in UTF-8 bytes.
 pub const MAX_STR_BYTES: usize = 0x7FFF;
 /// The most elements an array in a file holds, as for DIM.

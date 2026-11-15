@@ -2495,6 +2495,11 @@ Expected but not yet seen on hardware:
   `SAVEV "X",S$`. The name's errors 71 and 73 come first, and 75 and 74 for
   its project after. `EXEC` of a type other than TXT is error 77 before the
   name's other checks: `EXEC "DAT:",1` is 77, not 71. (Not yet seen on hardware.)
+- `SAVEV` stores a DAT or GRP file's array compressed, or as it is when
+  compressed it is still over 16 MiB. Over 16 MiB both ways is
+  `Array is too large`, error 47, with no number, after the question: an array
+  of over 4194297 random integers, or a 2048 by 2048 GRP of random pixels. An
+  array as large that compresses well saves. (Not yet seen on hardware.)
 - `SAVEG` checks its page, rectangle and quality before the file's name, so
   `SAVEG "A*",0,0,0,0,1` is `Out of range (SAVEG:5)`, not error 71. It takes
   the quality, 1 to 100, for a GRP file too and ignores it there:
