@@ -77,6 +77,33 @@ pub enum ErrorKind {
     /// instruction again. See [`crate::memory`].
     MemoryCheck,
     IllegalMml,
+    // What SmileBASIC 4's MML parser found wrong, each 81 plus the
+    // parser's own number.
+    MmlTooLong,
+    MmlTrackAlreadyDefined,
+    MmlRepeatEndWithoutRepeat,
+    MmlRepeatWithoutRepeatEnd,
+    MmlMacroAlreadyDefined,
+    MmlUndefinedMacro,
+    MmlIllegalMacroName,
+    MmlMacroNameTooLong,
+    MmlCantUseVariable,
+    MmlTransposeOutOfRange,
+    MmlOctaveOutOfRange,
+    MmlLengthOutOfRange,
+    MmlVolumeOutOfRange,
+    MmlVelocityOutOfRange,
+    MmlPanpotOutOfRange,
+    MmlGateTimeOutOfRange,
+    MmlTempoOutOfRange,
+    MmlNoteOutOfRange,
+    MmlDetuneOutOfRange,
+    MmlEnvelopeOutOfRange,
+    MmlModulationOutOfRange,
+    MmlVariableNumberOutOfRange,
+    MmlVariableValueOutOfRange,
+    MmlRepeatCountOutOfRange,
+    MmlInstrumentOutOfRange,
     WrongNumberOfArguments,
     IllegalFileName,
     IllegalFileFormat,
@@ -199,6 +226,31 @@ impl ErrorKind {
             ErrorKind::FileTypeMismatch => 77,
             ErrorKind::IllegalProjectName => 78,
             ErrorKind::IllegalMml => 81,
+            ErrorKind::MmlTooLong => 82,
+            ErrorKind::MmlTrackAlreadyDefined => 83,
+            ErrorKind::MmlRepeatEndWithoutRepeat => 84,
+            ErrorKind::MmlRepeatWithoutRepeatEnd => 85,
+            ErrorKind::MmlMacroAlreadyDefined => 86,
+            ErrorKind::MmlUndefinedMacro => 87,
+            ErrorKind::MmlIllegalMacroName => 88,
+            ErrorKind::MmlMacroNameTooLong => 89,
+            ErrorKind::MmlCantUseVariable => 90,
+            ErrorKind::MmlTransposeOutOfRange => 91,
+            ErrorKind::MmlOctaveOutOfRange => 92,
+            ErrorKind::MmlLengthOutOfRange => 93,
+            ErrorKind::MmlVolumeOutOfRange => 94,
+            ErrorKind::MmlVelocityOutOfRange => 95,
+            ErrorKind::MmlPanpotOutOfRange => 96,
+            ErrorKind::MmlGateTimeOutOfRange => 97,
+            ErrorKind::MmlTempoOutOfRange => 98,
+            ErrorKind::MmlNoteOutOfRange => 99,
+            ErrorKind::MmlDetuneOutOfRange => 100,
+            ErrorKind::MmlEnvelopeOutOfRange => 101,
+            ErrorKind::MmlModulationOutOfRange => 102,
+            ErrorKind::MmlVariableNumberOutOfRange => 103,
+            ErrorKind::MmlVariableValueOutOfRange => 104,
+            ErrorKind::MmlRepeatCountOutOfRange => 105,
+            ErrorKind::MmlInstrumentOutOfRange => 106,
             ErrorKind::IllegalControlStyle => 107,
             ErrorKind::CantEditRunningProgram => 111,
             ErrorKind::IllegalSystemArgumentName => 112,
@@ -263,6 +315,31 @@ impl ErrorKind {
             ErrorKind::SpriteNotSet => "Sprite not set",
             ErrorKind::StringTooLong => "String is too long",
             ErrorKind::IllegalMml => "Illegal MML",
+            ErrorKind::MmlTooLong => "MML:Too long",
+            ErrorKind::MmlTrackAlreadyDefined => "MML:Track already defined",
+            ErrorKind::MmlRepeatEndWithoutRepeat => "MML:RepeatEnd without repeat",
+            ErrorKind::MmlRepeatWithoutRepeatEnd => "MML:Repeat without repeatEnd",
+            ErrorKind::MmlMacroAlreadyDefined => "MML:Macro already defined",
+            ErrorKind::MmlUndefinedMacro => "MML:Undefined macro",
+            ErrorKind::MmlIllegalMacroName => "MML:Illegal macro name",
+            ErrorKind::MmlMacroNameTooLong => "MML:Macro name is too long",
+            ErrorKind::MmlCantUseVariable => "MML:Can't use variable",
+            ErrorKind::MmlTransposeOutOfRange => "MML:Transpose out of range",
+            ErrorKind::MmlOctaveOutOfRange => "MML:Octave out of range",
+            ErrorKind::MmlLengthOutOfRange => "MML:Length out of range",
+            ErrorKind::MmlVolumeOutOfRange => "MML:Volume out of range",
+            ErrorKind::MmlVelocityOutOfRange => "MML:Velocity out of range",
+            ErrorKind::MmlPanpotOutOfRange => "MML:Panpot out of range",
+            ErrorKind::MmlGateTimeOutOfRange => "MML:GateTime out of range",
+            ErrorKind::MmlTempoOutOfRange => "MML:Tempo out of range",
+            ErrorKind::MmlNoteOutOfRange => "MML:Note out of range",
+            ErrorKind::MmlDetuneOutOfRange => "MML:Detune out of range",
+            ErrorKind::MmlEnvelopeOutOfRange => "MML:Envelope out of range",
+            ErrorKind::MmlModulationOutOfRange => "MML:Modulation out of range",
+            ErrorKind::MmlVariableNumberOutOfRange => "MML:Variable number out of range",
+            ErrorKind::MmlVariableValueOutOfRange => "MML:Variable value out of range",
+            ErrorKind::MmlRepeatCountOutOfRange => "MML:Repeat count out of range",
+            ErrorKind::MmlInstrumentOutOfRange => "MML:Instrument out of range",
             ErrorKind::WrongNumberOfArguments => "Wrong number of arguments",
             ErrorKind::IllegalFileName => "Illegal file name",
             ErrorKind::IllegalFileFormat => "Illegal file format",
@@ -483,6 +560,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mml_errors_follow_illegal_mml() {
+        assert_eq!(ErrorKind::MmlTooLong.code(), 82);
+        assert_eq!(ErrorKind::MmlVolumeOutOfRange.code(), 94);
+        assert_eq!(ErrorKind::MmlInstrumentOutOfRange.code(), 106);
+        assert_eq!(
+            ErrorKind::MmlLengthOutOfRange.message(),
+            "MML:Length out of range"
+        );
+    }
 
     /// A line typed in direct mode names no place (TEST70).
     #[test]
