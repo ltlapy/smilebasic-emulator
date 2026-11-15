@@ -2935,7 +2935,9 @@ TTEST36.
 - `KEY` ignores a string over 256 characters; `PUSHKEY` from 64 is
   `String is too long`.
 - `XSUBSCREEN` and the undocumented `UISTATE` are there for the main program
-  too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0.
+  too: `XSUBSCREEN` does nothing and `UISTATE(0)` is 0. The main program's `XSUBSCREEN` looks at none of its
+  arguments, so `XSUBSCREEN 0,0,2000,0` is no error there. (Not yet seen on
+  hardware.)
 - `UISTATE(2)` read 648 in DIRECT mode after TEST63's earlier parts had run, and
   0, 1, 3, 4, 5 read 0. (TEST63)
 - `UISTATE(5)` is 0, and `UISTATE(6)` `Out of range (UISTATE:1)`. (TEST62)

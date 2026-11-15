@@ -205,15 +205,11 @@ impl Runtime {
                 let rect = self.sub_screen.unwrap_or([0, 0, 1280, 720]);
                 Ok(rect[..usize::from(n)].iter().map(|&v| int(v)).collect())
             }
-            // The sub-screen does nothing outside a subprogram, and gives
-            // 0s.
-            (Command::Xsubscreen, Want::Outs(0), [_] | [_, _, _, _]) => {
-                for a in args {
-                    a.to_int()?;
-                }
-                Ok(vec![])
+            // Outside a subprogram it does nothing, and gives 0s. It looks at
+            // no argument there, so nothing is an error.
+            (Command::Xsubscreen, Want::Outs(n), _) if self.env_type != 1 => {
+                Ok(vec![int(0); usize::from(n)])
             }
-            (Command::Xsubscreen, Want::Outs(n @ 2..=4), []) => Ok(vec![int(0); usize::from(n)]),
             // The system's own UI state (soft keyboard and help shown), which
             // reads 0 for the main interpreter.
             // The numbers go from 0 to 5; all read 0 and setting one does

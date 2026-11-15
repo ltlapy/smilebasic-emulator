@@ -166,6 +166,8 @@ fn what_only_subprograms_use() {
         run("XSUBSCREEN 0,0,400,240:XSUBSCREEN OUT X,Y:?UISTATE(0);X;Y").unwrap(),
         "000"
     );
+    // Outside a subprogram nothing is looked at.
+    run("XSUBSCREEN 0,0,1281,0:XSUBSCREEN \"A\":XSUBSCREEN 1,2").unwrap();
     assert_eq!(run("PUSHKEY 65622:PUSHKEY 65:?INKEY$()").unwrap(), "A");
 }
 
