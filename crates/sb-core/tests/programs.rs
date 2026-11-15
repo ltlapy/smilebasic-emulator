@@ -1896,13 +1896,10 @@ fn direct_mode_refuses_unknown_names() {
     assert_eq!(e.kind, ErrorKind::UndefinedConstant);
     let e = compile("NOSUCH #ZZ").unwrap_err();
     assert_eq!(e.kind, ErrorKind::UndefinedConstant);
-    // A DEF on the line is found, and a builtin in its other form is
-    // still an illegal call.
+    // A DEF on the line is found, and so is a function used as a
+    // command, whose call finds the OUT count wrong as it runs.
     compile("F 1:DEF F X:?X:END").unwrap();
-    assert_eq!(
-        compile("ABS 1").unwrap_err().kind,
-        ErrorKind::IllegalFunctionCall
-    );
+    compile("ABS 1").unwrap();
     // A program compiles it, and fails when it gets there.
     assert_eq!(
         run("?\"A\":NOSUCH").unwrap_err().kind,

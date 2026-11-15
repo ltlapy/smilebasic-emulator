@@ -1306,6 +1306,11 @@ impl Compiler<'_> {
             self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
+        } else if let Some(id) = builtins::lookup(&full, Form::Function) {
+            // A function with no OUT variable or more than one compiles,
+            // and the call finds the count wrong as it runs, as SmileBASIC
+            // 4's handlers look at it themselves.
+            self.emit(Op::CallBuiltin { id, argc, want });
         } else {
             self.call_common(&full, argc, want)?;
         }
