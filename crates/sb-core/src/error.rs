@@ -162,6 +162,11 @@ pub enum ErrorKind {
     IllegalArraySize,
     /// SPLINK of a sprite to one linked below it.
     CantLinkToDescendant,
+    /// RESIZE to more than 2^30 elements, or to a negative size.
+    ArrayTooLarge,
+    /// RESTORE "POP" when the latest GOSUB or DEF call came after the
+    /// last place RESTORE "PUSH" kept.
+    UseRestorePush,
 }
 
 impl ErrorKind {
@@ -270,6 +275,8 @@ impl ErrorKind {
             ErrorKind::CantEditRunningProgram => 111,
             ErrorKind::IllegalSystemArgumentName => 112,
             ErrorKind::ArrayTooSmall => 116,
+            ErrorKind::ArrayTooLarge => 47,
+            ErrorKind::UseRestorePush => 119,
             ErrorKind::UseRestorePop => 118,
             ErrorKind::CantUseSpecifiedSlot => 120,
             // The emulator's own: a statement out of its place, which
@@ -378,6 +385,8 @@ impl ErrorKind {
             ErrorKind::IllegalControlStyle => "Illegal control style",
             ErrorKind::IllegalFontType => "Illegal font type",
             ErrorKind::ArrayTooSmall => "Array is too small",
+            ErrorKind::ArrayTooLarge => "Array is too large",
+            ErrorKind::UseRestorePush => "Use RESTORE PUSH before RESTORE POP",
             ErrorKind::UseMultiplesOf4 => "Use multiples of 4",
             ErrorKind::IllegalControlStyleForIrCamera => {
                 "Illegal control style for using IR Camera"
