@@ -25,6 +25,26 @@ fn run(source: &str) -> Result<String, sb_core::error::Error> {
     Ok(String::from_utf16(&codes).unwrap())
 }
 
+/// A number where a string goes names the argument, `(CLIPBOARD:1)`.
+#[test]
+fn a_number_for_a_string_is_numbered() {
+    for source in [
+        "CLIPBOARD 0",
+        "METALOAD 0",
+        "?SYSPARAM(0)",
+        "SYSPARAM 0,0",
+        "DTREAD 0 OUT A,B,C",
+        "TMREAD 0 OUT A,B,C",
+        "?CHKMML(0)",
+        "?LOADV(0)",
+        "DIM A[1]:SAVEV 0,A",
+    ] {
+        let e = run(source).expect_err(source);
+        assert_eq!(e.kind, ErrorKind::TypeMismatch, "{source}");
+        assert_eq!(e.arg, Some(0), "{source}");
+    }
+}
+
 #[test]
 fn uistate_numbers_stop_at_5() {
     assert!(run("?UISTATE(5)").is_ok());

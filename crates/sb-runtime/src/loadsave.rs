@@ -264,7 +264,7 @@ impl Runtime {
     ) -> Result<Vec<Value>> {
         match (command, want, args) {
             (Command::Loadv, Want::Value, [spec]) => {
-                let spec = str_arg(spec)?;
+                let spec = checking(spec, || str_arg(spec))?;
                 check_file_name(&spec, 0)?;
                 value_type(&spec)?;
                 if self.ask_load(&spec, FileKind::Txt) {
@@ -284,7 +284,7 @@ impl Runtime {
                 Ok(vec![value.unwrap_or_else(|| failed_value(&spec))])
             }
             (Command::Loadv, Want::Outs(0), [spec, target]) => {
-                let spec = str_arg(spec)?;
+                let spec = checking(spec, || str_arg(spec))?;
                 check_file_name(&spec, 0)?;
                 value_type(&spec)?;
                 // The command form is for DAT and GRP files only, whatever
@@ -329,7 +329,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Savev, Want::Outs(0), [spec, value]) => {
-                let spec = str_arg(spec)?;
+                let spec = checking(spec, || str_arg(spec))?;
                 check_file_name(&spec, 0)?;
                 value_type(&spec)?;
                 self.refuse_save_project(&spec)?;
@@ -363,7 +363,7 @@ impl Runtime {
             (Command::Loadg, Want::Outs(0 | 2), [spec, page, rest @ ..])
                 if matches!(rest.len(), 0 | 2) =>
             {
-                let spec = str_arg(spec)?;
+                let spec = checking(spec, || str_arg(spec))?;
                 // The page first, then the name, then its type.
                 let page = page_arg(page)?;
                 check_file_name(&spec, 0)?;
@@ -397,7 +397,7 @@ impl Runtime {
             {
                 // The page, the rectangle and the quality come before the
                 // name, as SmileBASIC 4 checks them.
-                let spec = str_arg(spec)?;
+                let spec = checking(spec, || str_arg(spec))?;
                 let page = page_arg(page)?;
                 let (rect, quality) = match rest {
                     [] | [_] => ((0, 0, GRP_SIZE, GRP_SIZE), rest.first()),

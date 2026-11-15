@@ -17,7 +17,7 @@ use crate::confirm::{Ask, FileAction, project_label};
 use crate::files::str_arg;
 use crate::image::{self, Image};
 use crate::input::in_range;
-use crate::runtime::{Command, Request, Runtime, no_form, opt_int};
+use crate::runtime::{Command, Request, Runtime, checking, no_form, opt_int};
 use crate::sbfile;
 use crate::storage;
 
@@ -92,7 +92,12 @@ mod status {
 }
 
 fn str_units(v: &Value) -> Result<Vec<u16>> {
-    Ok(v.clone().into_str()?.borrow().clone())
+    checking(v, || Ok(v.clone().into_str()?.borrow().clone()))
+}
+
+/// [`str_arg`], naming the argument when it is not a string.
+fn string_arg(v: &Value) -> Result<String> {
+    checking(v, || str_arg(v))
 }
 
 impl Runtime {
@@ -236,7 +241,7 @@ impl Runtime {
             // Direct mode only: SUBRUN starts the file's program on the sub
             // interpreter, and the others stop, show or hide it.
             (Command::Subrun, Want::Outs(0), [file]) => {
-                let file = str_arg(file)?;
+                let file = string_arg(file)?;
                 self.request(Request::Subrun(file))
             }
             (Command::Substop, Want::Outs(0), []) => self.request(Request::Substop),
@@ -290,7 +295,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Metaload, Want::Outs(0), [name]) => {
-                let name = match str_arg(name)?.as_str() {
+                let name = match string_arg(name)?.as_str() {
                     "" => String::new(),
                     name => storage::check_project_name(name).map_err(|_| {
                         Error::with_detail(ErrorKind::IllegalProjectName, format!("{name:?}"))

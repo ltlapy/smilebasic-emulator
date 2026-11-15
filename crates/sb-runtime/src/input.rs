@@ -753,7 +753,7 @@ fn flag(b: bool) -> Value {
 }
 
 fn text(v: &Value) -> Result<Vec<u16>> {
-    Ok(v.clone().into_str()?.borrow().clone())
+    checking(v, || Ok(v.clone().into_str()?.borrow().clone()))
 }
 
 impl Runtime {

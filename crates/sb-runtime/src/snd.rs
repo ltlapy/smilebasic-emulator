@@ -254,7 +254,9 @@ fn samples(v: &Value) -> Result<Vec<f64>> {
 }
 
 fn text(v: &Value) -> Result<String> {
-    Ok(String::from_utf16_lossy(&v.clone().into_str()?.borrow()))
+    checking(v, || {
+        Ok(String::from_utf16_lossy(&v.clone().into_str()?.borrow()))
+    })
 }
 
 fn parse(mml: &str) -> Result<Song> {

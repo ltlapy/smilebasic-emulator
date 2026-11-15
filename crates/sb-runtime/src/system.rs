@@ -227,7 +227,9 @@ fn string(s: String) -> Value {
 }
 
 fn text(v: &Value) -> Result<String> {
-    Ok(String::from_utf16_lossy(&v.clone().into_str()?.borrow()))
+    checking(v, || {
+        Ok(String::from_utf16_lossy(&v.clone().into_str()?.borrow()))
+    })
 }
 
 /// Two-digit (or four, for the year) fields between `sep`s, as DTREAD and
