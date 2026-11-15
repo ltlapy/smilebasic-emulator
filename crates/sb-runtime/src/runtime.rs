@@ -2678,7 +2678,14 @@ impl Runtime {
                 | Command::Metasave,
                 _,
             ) => self.env_command(command, args, want),
-            (Command::Dialog, _) => self.dialog_command(command, args, want),
+            // SmileBASIC 4 checks the counts before the arguments.
+            (Command::Dialog, Want::Outs(0)) if (1..=4).contains(&args.len()) => {
+                self.dialog_command(command, args, want)
+            }
+            (Command::Dialog, Want::Value) if (2..=4).contains(&args.len()) => {
+                self.dialog_command(command, args, want)
+            }
+            (Command::Dialog, _) => Err(no_form()),
             (Command::Helpget | Command::Helpinfo, _) => self.help_command(command, args, want),
             (Command::Inspect, Want::Outs(0)) if args.len() == 1 => Ok(self.inspect(&args[0])),
             (Command::Loadg | Command::Loadv | Command::Saveg | Command::Savev, _) => {
@@ -3241,6 +3248,10 @@ mod tests {
             ("SPROT OUT Q0,Q1", ARGS),
             ("SPOFS Z,Z OUT Q0,Q1,Q2,Q3", OUTS),
             ("SPOFS Z,Z,Z OUT Q0", ARGS),
+            // DIALOG checks the counts before the arguments.
+            ("DIALOG S$,Z,S$,Z,Z", ARGS),
+            ("DIALOG S$,Z,S$,Z OUT Q0,Q1", OUTS),
+            ("Q=DIALOG(S$)", ARGS),
         ];
         for (line, expected) in cases {
             assert_eq!(error_of(line), expected, "{line}");
