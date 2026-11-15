@@ -9,7 +9,7 @@ use sb_runtime::confirm::project_label;
 use sb_runtime::env::ICON_SIZE;
 use sb_runtime::font::Font;
 use sb_runtime::screen::{Filter, ScreenMode};
-use sb_runtime::settings::HandheldFilter;
+use sb_runtime::settings::{HandheldFilter, HandheldUiSize, Settings};
 use sb_runtime::storage::{FileKind, Storage};
 use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
@@ -19,25 +19,35 @@ use crate::keyhint::{BUTTON_TEXT, draw_arrow};
 use crate::program_dialog::wrap;
 use crate::projects::{ERROR, FOLDER, Listed, PANEL, SEPARATOR, WELL, fit, usable};
 use crate::ui::{
-    BACKGROUND, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, draw_text_scaled,
-    fill, image_scaled, text_width,
+    BACKGROUND, CHAR, DISABLED, HIGHLIGHT, LINE, PAD, Rect, TEXT, draw_text, draw_text_double,
+    draw_text_scaled, fill, image_scaled, text_width,
 };
 
 /// The UI's height at a scale of 1: at a whole multiple of it or more,
 /// UI pixels are that many screen pixels across.
 const UI_LINES: u32 = 480;
+/// The smallest UI that handheld mode's screens are laid out for.
+const SMALLEST_UI: (u32, u32) = (320, 240);
 
-/// The whole number of screen pixels a UI pixel takes on an output this
-/// high.
-pub fn ui_scale(out_h: u32) -> u32 {
-    (out_h / UI_LINES).max(1)
+/// The whole number of screen pixels a UI pixel takes on an output of
+/// `out` pixels: one for every 480 lines, or twice that at
+/// [`HandheldUiSize::Large`] as long as the UI keeps 320x240 pixels.
+pub fn ui_scale((w, h): (u32, u32), size: HandheldUiSize) -> u32 {
+    let normal = (h / UI_LINES).max(1);
+    match size {
+        HandheldUiSize::Normal => normal,
+        HandheldUiSize::Large => {
+            let most = (w / SMALLEST_UI.0).min(h / SMALLEST_UI.1);
+            (2 * normal).min(most).max(normal)
+        }
+    }
 }
 
 /// The UI's size on an output of `out` pixels: the output at
 /// [`ui_scale`], so that the 16-pixel UI font stays sharp. 640x480 gives
-/// 640x480, 1920x1080 gives 960x540.
-pub fn ui_size((w, h): (u32, u32)) -> (u32, u32) {
-    let scale = ui_scale(h);
+/// 640x480, or 320x240 at Large; 1920x1080 gives 960x540, or 480x270.
+pub fn ui_size((w, h): (u32, u32), size: HandheldUiSize) -> (u32, u32) {
+    let scale = ui_scale((w, h), size);
     ((w / scale).max(1), (h / scale).max(1))
 }
 
@@ -136,75 +146,174 @@ pub enum Choice {
     Resume,
     /// Run the program that the game list ran from the start.
     Restart,
-    /// The screen filter changed to [`PauseMenu::filter`]; the menu stays
-    /// open.
-    Filter,
     /// Stop the program and show the game list.
     List,
     Quit,
+    /// A setting changed, as [`PauseMenu::settings`] has it now; the menu
+    /// stays open.
+    Filter,
+    UiSize,
+    Swap,
 }
 
-/// The menu that Select+A opens, over a program or the game list.
+impl Choice {
+    /// Whether it is one of the settings, which Left and Right change.
+    fn is_setting(self) -> bool {
+        matches!(self, Choice::Filter | Choice::UiSize | Choice::Swap)
+    }
+}
+
+/// The settings that the pause menu changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuSettings {
+    pub filter: HandheldFilter,
+    pub ui_size: HandheldUiSize,
+    pub swap: bool,
+}
+
+impl MenuSettings {
+    pub fn of(s: &Settings) -> MenuSettings {
+        MenuSettings {
+            filter: s.handheld_filter,
+            ui_size: s.handheld_ui_size,
+            swap: s.swap_ab_xy,
+        }
+    }
+
+    /// Puts them in `s`, to show at once and be kept.
+    pub fn apply(self, s: &mut Settings) {
+        s.handheld_filter = self.filter;
+        s.handheld_ui_size = self.ui_size;
+        s.swap_ab_xy = self.swap;
+    }
+}
+
+/// The menu that Select+A opens, over a program or the game list: what it
+/// does first, then, below a divider, the settings.
 pub struct PauseMenu {
-    items: Vec<Choice>,
+    /// Top to bottom; `None` is the divider over the settings.
+    rows: Vec<Option<Choice>>,
+    /// A row with a choice.
     focus: usize,
+    /// The first row shown, when they do not all fit.
+    scroll: usize,
     /// A program runs, which the menu pauses.
     running: bool,
-    filter: HandheldFilter,
+    settings: MenuSettings,
+    /// The UI's size.
+    size: (u32, u32),
 }
 
 impl PauseMenu {
     /// The menu for a program that `running` or waits after its error
-    /// (`program`), with Restart if `restart`, showing `filter` as the
-    /// screen filter.
-    pub fn new(running: bool, program: bool, restart: bool, filter: HandheldFilter) -> PauseMenu {
-        let mut items = vec![Choice::Resume];
+    /// (`program`), with Restart if `restart`, showing `settings`, in a
+    /// UI of `size`.
+    pub fn new(
+        running: bool,
+        program: bool,
+        restart: bool,
+        settings: MenuSettings,
+        size: (u32, u32),
+    ) -> PauseMenu {
+        let mut rows = vec![Some(Choice::Resume)];
         if restart && program {
-            items.push(Choice::Restart);
+            rows.push(Some(Choice::Restart));
         }
-        items.push(Choice::Filter);
         if program {
-            items.push(Choice::List);
+            rows.push(Some(Choice::List));
         }
-        items.push(Choice::Quit);
+        rows.extend([Some(Choice::Quit), None]);
+        rows.extend(SETTINGS.map(Some));
         PauseMenu {
-            items,
+            rows,
             focus: 0,
+            scroll: 0,
             running,
-            filter,
+            settings,
+            size,
         }
     }
 
-    /// The screen filter it shows.
-    pub fn filter(&self) -> HandheldFilter {
-        self.filter
+    /// The settings it shows.
+    pub fn settings(&self) -> MenuSettings {
+        self.settings
     }
 
-    /// Up and Down move, Enter chooses, Esc and Backspace close. On the
-    /// screen filter, Left and Right change it, and Enter steps it on.
-    pub fn key(&mut self, key: Keycode) -> Option<Choice> {
-        let on_filter = self.items[self.focus] == Choice::Filter;
-        let step = match key {
-            Keycode::Up => {
-                self.focus = self.focus.saturating_sub(1);
-                return None;
+    /// Lays the menu out for a UI of another size.
+    pub fn set_size(&mut self, size: (u32, u32)) {
+        if size != self.size {
+            self.size = size;
+            self.keep_in_sight();
+        }
+    }
+
+    fn focused(&self) -> Choice {
+        self.rows[self.focus].unwrap_or(Choice::Resume)
+    }
+
+    /// Moves the focus to the next choice up (-1) or down (1), past the
+    /// divider, and no further than the ends.
+    fn go(&mut self, by: isize) {
+        let mut at = self.focus;
+        while let Some(next) = at.checked_add_signed(by).filter(|&i| i < self.rows.len()) {
+            at = next;
+            if self.rows[at].is_some() {
+                self.focus = at;
+                break;
             }
-            Keycode::Down => {
-                self.focus = (self.focus + 1).min(self.items.len() - 1);
-                return None;
-            }
-            Keycode::Escape | Keycode::Backspace => return Some(Choice::Resume),
-            Keycode::Left if on_filter => -1,
-            Keycode::Right | Keycode::Return | Keycode::KpEnter if on_filter => 1,
-            Keycode::Return | Keycode::KpEnter => return Some(self.items[self.focus]),
+        }
+        self.keep_in_sight();
+    }
+
+    /// Scrolls so that the focus shows, with the divider over it when it
+    /// is the first setting.
+    fn keep_in_sight(&mut self) {
+        let shown = self.shown_rows();
+        let mut top = self.focus;
+        if top > 0 && self.rows[top - 1].is_none() && shown > 1 {
+            top -= 1;
+        }
+        if top < self.scroll {
+            self.scroll = top;
+        } else if self.focus >= self.scroll + shown {
+            self.scroll = self.focus + 1 - shown;
+        }
+        self.scroll = self.scroll.min(self.rows.len() - shown);
+    }
+
+    /// Steps the setting `choice` by `by`.
+    fn step(&mut self, choice: Choice, by: isize) -> Option<Choice> {
+        let s = &mut self.settings;
+        match choice {
+            Choice::Filter => s.filter = s.filter.step(by),
+            Choice::UiSize => s.ui_size = s.ui_size.step(by),
+            Choice::Swap => s.swap ^= true,
             _ => return None,
-        };
-        self.filter = self.filter.step(step);
-        Some(Choice::Filter)
+        }
+        Some(choice)
     }
 
-    /// A chooses and B closes, placed as SmileBASIC 4's are (SDL's East
-    /// and South).
+    /// Up and Down move, Enter chooses, Esc and Backspace close. On a
+    /// setting, Left and Right change it, and Enter steps it on.
+    pub fn key(&mut self, key: Keycode) -> Option<Choice> {
+        let focused = self.focused();
+        let setting = focused.is_setting();
+        match key {
+            Keycode::Up => self.go(-1),
+            Keycode::Down => self.go(1),
+            Keycode::Escape | Keycode::Backspace => return Some(Choice::Resume),
+            Keycode::Left if setting => return self.step(focused, -1),
+            Keycode::Right | Keycode::Return | Keycode::KpEnter if setting => {
+                return self.step(focused, 1);
+            }
+            Keycode::Return | Keycode::KpEnter => return Some(focused),
+            _ => {}
+        }
+        None
+    }
+
+    /// A chooses and B closes, A on the right and B at the bottom unless
+    /// the buttons are swapped.
     pub fn pad(&mut self, button: Button) -> Option<Choice> {
         match button {
             Button::DPadUp => self.key(Keycode::Up),
@@ -223,22 +332,24 @@ impl PauseMenu {
 
 /// The pause menu is at least this wide.
 const MENU_WIDTH: u32 = 256;
-/// The dim heading over the items.
+/// The dim heading over the rows.
 const MENU_HEADING: u32 = 32;
-const FILTER_LABEL: &str = "Screen filter:";
-/// The room for an arrow on either side of the filter's value.
+/// The heading of the settings, on the divider.
+const SETTINGS_HEADING: &str = "Settings";
+/// The room for an arrow on either side of a setting's value.
 const ARROW: u32 = 16;
 const MENU_HINTS: [Hint; 3] = [
     (&[Cap::Name("A")], "Choose"),
     (&[Cap::Name("B")], "Resume"),
-    (&[Cap::Left, Cap::Right], "Filter"),
+    (&[Cap::Left, Cap::Right], "Change"),
 ];
 /// The same where nothing is paused.
 const CLOSE_HINTS: [Hint; 3] = [
     (&[Cap::Name("A")], "Choose"),
     (&[Cap::Name("B")], "Close"),
-    (&[Cap::Left, Cap::Right], "Filter"),
+    (&[Cap::Left, Cap::Right], "Change"),
 ];
+const SETTINGS: [Choice; 3] = [Choice::Filter, Choice::UiSize, Choice::Swap];
 
 /// A filter's name in the menu.
 fn filter_name(filter: HandheldFilter) -> &'static str {
@@ -251,13 +362,30 @@ fn filter_name(filter: HandheldFilter) -> &'static str {
     }
 }
 
-/// The value's place: the widest filter name and a gap either side, so
-/// that the arrows stay put.
-fn filter_name_width() -> u32 {
-    let widest = HandheldFilter::ALL
-        .iter()
-        .map(|&f| text_width(filter_name(f)));
+fn ui_size_name(size: HandheldUiSize) -> &'static str {
+    match size {
+        HandheldUiSize::Normal => "Normal",
+        HandheldUiSize::Large => "Large",
+    }
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "On" } else { "Off" }
+}
+
+/// The values' place: the widest value of any setting and a gap either
+/// side, so that the arrows stay put and line up.
+fn value_width() -> u32 {
+    let filters = HandheldFilter::ALL.map(filter_name);
+    let sizes = HandheldUiSize::ALL.map(ui_size_name);
+    let switches = [on_off(true), on_off(false)];
+    let widest = (filters.iter().chain(&sizes).chain(&switches)).map(|name| text_width(name));
     widest.max().unwrap_or(0) + PAD
+}
+
+/// What the menu needs across for a setting labelled `label`.
+fn setting_width(label: &str) -> u32 {
+    text_width(label) + PAD + 2 * ARROW + value_width()
 }
 
 impl PauseMenu {
@@ -266,28 +394,53 @@ impl PauseMenu {
             Choice::Resume if self.running => "Resume",
             Choice::Resume => "Close",
             Choice::Restart => "Restart",
-            Choice::Filter => FILTER_LABEL,
             Choice::List => "Return to Game list",
             Choice::Quit => "Quit Emulator",
+            Choice::Filter => "Screen filter:",
+            Choice::UiSize => "UI size:",
+            Choice::Swap => "Swap A/B and X/Y:",
         }
     }
 
-    fn frame(&self, (w, h): (u32, u32)) -> Rect {
-        let filter_row = text_width(FILTER_LABEL) + PAD + 2 * ARROW + filter_name_width();
-        let widest = (self.items.iter().map(|&c| text_width(self.label(c))))
-            .chain([filter_row])
-            .max()
-            .unwrap_or(0);
-        let fw = (widest + 2 * PAD).max(MENU_WIDTH).min(w);
-        let fh = PAD + MENU_HEADING + self.items.len() as u32 * LINE + PAD;
+    /// What a setting is set to, or nothing for the other rows.
+    fn value(&self, choice: Choice) -> Option<&'static str> {
+        let s = &self.settings;
+        match choice {
+            Choice::Filter => Some(filter_name(s.filter)),
+            Choice::UiSize => Some(ui_size_name(s.ui_size)),
+            Choice::Swap => Some(on_off(s.swap)),
+            _ => None,
+        }
+    }
+
+    /// The rows that fit in the UI at once, between the heading and the
+    /// hints, and at least one.
+    fn shown_rows(&self) -> usize {
+        let room = (self.size.1.saturating_sub(LINE + 2 * PAD + MENU_HEADING) / LINE) as usize;
+        room.clamp(1, self.rows.len())
+    }
+
+    fn frame(&self) -> Rect {
+        let (w, h) = self.size;
+        let labels = (self.rows.iter().flatten()).map(|&c| match c.is_setting() {
+            true => setting_width(self.label(c)),
+            false => text_width(self.label(c)),
+        });
+        let widest = labels.chain([text_width(SETTINGS_HEADING)]).max();
+        // The padding either side, and the frame's border.
+        let fw = (widest.unwrap_or(0) + 2 * PAD + 2).max(MENU_WIDTH).min(w);
+        let fh = PAD + MENU_HEADING + self.shown_rows() as u32 * LINE + PAD;
+        // In the middle, or as low as it can go clear of the hints.
+        let above_hints = h.saturating_sub(LINE + fh);
         Rect {
             x: w.saturating_sub(fw) / 2,
-            y: h.saturating_sub(fh) / 2,
+            y: (h.saturating_sub(fh) / 2).min(above_hints),
             w: fw,
             h: fh,
         }
     }
 
+    /// The place of the row shown `i`th from the top.
     fn item(&self, f: Rect, i: usize) -> Rect {
         Rect {
             x: f.x + 1,
@@ -297,10 +450,28 @@ impl PauseMenu {
         }
     }
 
-    /// Where the filter's value and its arrows go in its row `r`: the
+    /// The scroll thumb, in the frame's right margin, when not every row
+    /// shows.
+    fn thumb(&self, f: Rect) -> Option<Rect> {
+        let (shown, total) = (self.shown_rows(), self.rows.len());
+        if shown >= total {
+            return None;
+        }
+        let track = shown as u32 * LINE;
+        let h = (track * shown as u32 / total as u32).max(LINE / 2);
+        let moved = (track - h) * self.scroll as u32 / (total - shown) as u32;
+        Some(Rect {
+            x: (f.x + f.w).saturating_sub(2 + THUMB),
+            y: f.y + PAD + MENU_HEADING + moved,
+            w: THUMB,
+            h,
+        })
+    }
+
+    /// Where a setting's value and its arrows go in its row `r`: the
     /// left arrow, the value's place, the right arrow.
     fn value_places(r: Rect) -> (Rect, Rect, Rect) {
-        let slot = filter_name_width();
+        let slot = value_width();
         let right = (r.x + r.w).saturating_sub(PAD);
         let arrow = |x| Rect {
             x,
@@ -320,7 +491,7 @@ impl PauseMenu {
     /// Draws the menu centered on `fb`, with its hints at the bottom.
     pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
         let size = (fb.width(), fb.height());
-        let f = self.frame(size);
+        let f = self.frame();
         let shadow = Rect {
             x: f.x.saturating_sub(1),
             y: f.y.saturating_sub(1),
@@ -332,23 +503,39 @@ impl PauseMenu {
         border(fb, f, DISABLED);
         let heading = if self.running { "Paused" } else { "Menu" };
         draw_text(fb, font, f.x + PAD, f.y + PAD + 4, heading, DISABLED);
-        for (i, &choice) in self.items.iter().enumerate() {
+        let shown = self.rows.iter().enumerate().skip(self.scroll);
+        for (i, (at, &row)) in shown.take(self.shown_rows()).enumerate() {
             let r = self.item(f, i);
-            let focused = i == self.focus;
+            let y = r.y + (LINE - CHAR) / 2;
+            let Some(choice) = row else {
+                // A dim heading, and a line on to the right.
+                draw_text(fb, font, f.x + PAD, y, SETTINGS_HEADING, DISABLED);
+                let x = f.x + 2 * PAD + text_width(SETTINGS_HEADING);
+                let line = Rect {
+                    x,
+                    y: r.y + LINE / 2,
+                    w: (f.x + f.w).saturating_sub(x + PAD),
+                    h: 1,
+                };
+                fill(fb, line, SEPARATOR);
+                continue;
+            };
+            let focused = at == self.focus;
             if focused {
                 fill(fb, r, HIGHLIGHT);
             }
-            let y = r.y + (LINE - CHAR) / 2;
             draw_text(fb, font, f.x + PAD, y, self.label(choice), TEXT);
-            if choice == Choice::Filter {
+            if let Some(name) = self.value(choice) {
                 let (left, value, right) = Self::value_places(r);
                 let arrows = if focused { TEXT } else { DISABLED };
                 draw_arrow(fb, left, (-1, 0), arrows);
                 draw_arrow(fb, right, (1, 0), arrows);
-                let name = filter_name(self.filter);
                 let x = value.x + value.w.saturating_sub(text_width(name)) / 2;
                 draw_text(fb, font, x, y, name, TEXT);
             }
+        }
+        if let Some(r) = self.thumb(f) {
+            fill(fb, r, DISABLED);
         }
         let hints = if self.running {
             &MENU_HINTS
@@ -356,6 +543,161 @@ impl PauseMenu {
             &CLOSE_HINTS
         };
         draw_hint_bar(fb, font, size, hints);
+    }
+}
+
+/// What the welcome screen says, below the emulator's name.
+const WELCOME_LINES: [&str; 3] = [
+    "Runs SmileBASIC 4 games and programs.",
+    "Select+A opens the menu.",
+    "Select+Start quits.",
+];
+/// Around the A on "Press A to continue".
+const PRESS: (&str, &str) = ("Press", "to continue");
+const WELCOME_NOTE: &str = "The button you press is used as A.";
+
+/// What the welcome screen asks for next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Welcomed {
+    Stay,
+    /// Go on to the game list, with Swap A/B and X/Y set to this if a
+    /// button said which is A.
+    Continue(Option<bool>),
+}
+
+/// The screen handheld mode shows the first time it starts: what this is,
+/// how to open the menu, and "Press A to continue". The button pressed for
+/// it is A from then on, the right or the bottom one, whatever the
+/// controller prints on it or the system's mapping makes of it.
+pub struct Welcome {
+    /// SDL's right or bottom face button, by its place, that went down
+    /// while the screen showed. Its release goes on, so that a button held
+    /// when the screen came does nothing, and the setting does not change
+    /// under a held button.
+    pressed: Option<Button>,
+    size: (u32, u32),
+    /// The lines, wrapped to the UI's width.
+    lines: Vec<String>,
+    note: Vec<String>,
+    /// The name is drawn twice its size where it fits.
+    big_title: bool,
+}
+
+impl Welcome {
+    pub fn new(size: (u32, u32)) -> Welcome {
+        let mut welcome = Welcome {
+            pressed: None,
+            size: (0, 0),
+            lines: Vec::new(),
+            note: Vec::new(),
+            big_title: false,
+        };
+        welcome.set_size(size);
+        welcome
+    }
+
+    pub fn set_size(&mut self, size: (u32, u32)) {
+        if size == self.size {
+            return;
+        }
+        self.size = size;
+        let room = size.0.saturating_sub(2 * PAD).max(CHAR);
+        let wrapped = |text: &str| wrap(text, room);
+        self.lines = WELCOME_LINES.iter().flat_map(|l| wrapped(l)).collect();
+        self.note = wrapped(WELCOME_NOTE);
+        self.big_title = 2 * text_width(crate::TITLE) <= room;
+    }
+
+    /// A button went down: `button` as [`crate::controls::face`] made it
+    /// with `swap`, the setting now.
+    pub fn pad_down(&mut self, button: Button, swap: bool) {
+        let placed = crate::controls::face(button, swap);
+        if self.pressed.is_none() && matches!(placed, Button::East | Button::South) {
+            self.pressed = Some(placed);
+        }
+    }
+
+    /// A button went up: the one pressed for the screen says which is A.
+    pub fn pad_up(&mut self, button: Button, swap: bool) -> Welcomed {
+        let placed = crate::controls::face(button, swap);
+        match self.pressed {
+            Some(pressed) if pressed == placed => Welcomed::Continue(Some(placed == Button::South)),
+            _ => Welcomed::Stay,
+        }
+    }
+
+    /// Enter goes on and leaves the setting alone.
+    pub fn key(&self, key: Keycode) -> Welcomed {
+        match key {
+            Keycode::Return | Keycode::KpEnter => Welcomed::Continue(None),
+            _ => Welcomed::Stay,
+        }
+    }
+
+    /// How high the text is, from the name to the note.
+    fn text_height(&self) -> u32 {
+        let title = if self.big_title { 2 * LINE } else { LINE };
+        let lines = (self.lines.len() + 1 + self.note.len()) as u32 * LINE;
+        title + PAD + lines + 2 * PAD
+    }
+
+    pub fn draw(&self, fb: &mut Framebuffer, font: &Font) {
+        let (w, h) = self.size;
+        fill(fb, Rect { x: 0, y: 0, w, h }, BACKDROP);
+        let centered = |text_w: u32| w.saturating_sub(text_w) / 2;
+        let mut y = h.saturating_sub(self.text_height()) / 2;
+        let name = crate::TITLE;
+        if self.big_title {
+            let x = centered(2 * text_width(name));
+            draw_text_double(fb, font, x, y + LINE - CHAR, name, TEXT);
+            y += 2 * LINE;
+        } else {
+            draw_text(fb, font, centered(text_width(name)), y + 4, name, TEXT);
+            y += LINE;
+        }
+        y += PAD;
+        let text_y = |y: u32| y + (LINE - CHAR) / 2;
+        for line in &self.lines {
+            draw_text(
+                fb,
+                font,
+                centered(text_width(line)),
+                text_y(y),
+                line,
+                FOLDER,
+            );
+            y += LINE;
+        }
+        y += PAD;
+        // "Press", the A as on the hints, "to continue".
+        let (before, after) = PRESS;
+        let cap = Cap::Name("A");
+        let gap = CHAR / 2;
+        let whole = text_width(before) + gap + cap_width(cap) + gap + text_width(after);
+        let mut x = centered(whole);
+        draw_text(fb, font, x, text_y(y), before, TEXT);
+        x += text_width(before) + gap;
+        let r = Rect {
+            x,
+            y: y + (LINE - CAP_HEIGHT) / 2,
+            w: cap_width(cap),
+            h: CAP_HEIGHT,
+        };
+        draw_cap(fb, font, r, cap);
+        x += r.w + gap;
+        draw_text(fb, font, x, text_y(y), after, TEXT);
+        y += LINE + PAD;
+        for line in &self.note {
+            draw_text(
+                fb,
+                font,
+                centered(text_width(line)),
+                text_y(y),
+                line,
+                DISABLED,
+            );
+            y += LINE;
+        }
     }
 }
 
@@ -1163,10 +1505,14 @@ mod tests {
     }
 
     /// UI sizes from the smallest handled to the largest expected.
-    const SIZES: [(u32, u32); 4] = [(320, 240), (640, 480), (960, 540), (1280, 720)];
+    const SIZES: [(u32, u32); 5] = [(320, 240), (640, 360), (640, 480), (960, 540), (1280, 720)];
+
+    const NORMAL: HandheldUiSize = HandheldUiSize::Normal;
+    const LARGE: HandheldUiSize = HandheldUiSize::Large;
 
     #[test]
     fn the_ui_keeps_whole_pixels() {
+        let ui_size = |out| super::ui_size(out, NORMAL);
         assert_eq!(ui_size((640, 480)), (640, 480));
         assert_eq!(ui_size((1920, 1080)), (960, 540));
         assert_eq!(ui_size((1280, 720)), (1280, 720));
@@ -1185,6 +1531,31 @@ mod tests {
         // An odd output loses a pixel's part rather than its whole scale.
         let r = display_rect(ui_size((2560, 1441)), (2560, 1441));
         assert_eq!(box_of(r), (0.5, 0.0, 2559.0, 1440.0));
+    }
+
+    #[test]
+    fn large_doubles_the_scale_down_to_320x240() {
+        for (out, normal, large) in [
+            ((640, 480), (640, 480), (320, 240)),
+            ((1280, 720), (1280, 720), (640, 360)),
+            ((1920, 1080), (960, 540), (480, 270)),
+            // No smaller than the smallest UI the screens are laid out for.
+            ((480, 272), (480, 272), (480, 272)),
+            ((320, 240), (320, 240), (320, 240)),
+            ((960, 544), (960, 544), (480, 272)),
+        ] {
+            assert_eq!(ui_size(out, NORMAL), normal, "{out:?}");
+            assert_eq!(ui_size(out, LARGE), large, "{out:?}");
+            // Either fills the output as the other does, so the program's
+            // screen keeps its place.
+            let place = |size| {
+                let r = display_rect(ui_size(out, size), out);
+                (r.x, r.y, r.w, r.h)
+            };
+            assert_eq!(place(NORMAL), place(LARGE), "{out:?}");
+        }
+        assert_eq!(ui_scale((640, 480), LARGE), 2);
+        assert_eq!(ui_scale((1920, 1080), LARGE), 4);
     }
 
     #[test]
@@ -1257,85 +1628,236 @@ mod tests {
         assert!(keys.start_up());
     }
 
+    fn menu_settings() -> MenuSettings {
+        MenuSettings::of(&Settings::default())
+    }
+
+    fn menu(running: bool, program: bool, restart: bool, size: (u32, u32)) -> PauseMenu {
+        PauseMenu::new(running, program, restart, menu_settings(), size)
+    }
+
+    /// The rows `actions` and the settings under the divider.
+    fn rows_of(actions: &[Choice]) -> Vec<Option<Choice>> {
+        let settings = [None].into_iter().chain(SETTINGS.map(Some));
+        actions.iter().copied().map(Some).chain(settings).collect()
+    }
+
     #[test]
     fn the_pause_menu_offers_what_applies() {
-        let auto = HandheldFilter::Auto;
-        let running = PauseMenu::new(true, true, true, auto);
-        let all = [
-            Choice::Resume,
-            Choice::Restart,
-            Choice::Filter,
-            Choice::List,
-            Choice::Quit,
-        ];
-        assert_eq!(running.items, all);
+        let running = menu(true, true, true, (640, 480));
+        let all = [Choice::Resume, Choice::Restart, Choice::List, Choice::Quit];
+        assert_eq!(running.rows, rows_of(&all));
         assert_eq!(running.label(Choice::Resume), "Resume");
-        let unknown = PauseMenu::new(true, true, false, auto);
-        let items = [Choice::Resume, Choice::Filter, Choice::List, Choice::Quit];
-        assert_eq!(unknown.items, items);
-        let list = PauseMenu::new(false, false, true, auto);
-        assert_eq!(list.items, [Choice::Resume, Choice::Filter, Choice::Quit]);
+        let unknown = menu(true, true, false, (640, 480));
+        let actions = [Choice::Resume, Choice::List, Choice::Quit];
+        assert_eq!(unknown.rows, rows_of(&actions));
+        let list = menu(false, false, true, (640, 480));
+        assert_eq!(list.rows, rows_of(&[Choice::Resume, Choice::Quit]));
         assert_eq!(list.label(Choice::Resume), "Close");
+        for choice in SETTINGS {
+            assert!(choice.is_setting());
+            assert!(list.value(choice).is_some());
+        }
+        assert_eq!(list.value(Choice::Quit), None);
     }
 
     #[test]
     fn the_pause_menu_answers_the_pad_and_keys() {
-        let mut menu = PauseMenu::new(true, true, true, HandheldFilter::Auto);
+        let mut menu = menu(true, true, true, (640, 480));
         assert_eq!(menu.pad(Button::DPadUp), None);
-        assert_eq!(menu.pad(Button::DPadRight), None, "not on the filter");
+        assert_eq!(menu.pad(Button::DPadRight), None, "not on a setting");
         assert_eq!(menu.pad(Button::East), Some(Choice::Resume));
         menu.pad(Button::DPadDown);
         assert_eq!(menu.pad(Button::East), Some(Choice::Restart));
+        menu.pad(Button::DPadDown);
+        menu.pad(Button::DPadDown);
+        assert_eq!(menu.key(Keycode::Return), Some(Choice::Quit));
+        // Down goes past the divider, and no further than the last.
+        menu.pad(Button::DPadDown);
+        assert_eq!(menu.focused(), Choice::Filter);
         for _ in 0..5 {
             menu.pad(Button::DPadDown);
         }
-        assert_eq!(menu.key(Keycode::Return), Some(Choice::Quit));
+        assert_eq!(menu.focused(), Choice::Swap);
+        for _ in 0..3 {
+            menu.key(Keycode::Up);
+        }
+        assert_eq!(menu.focused(), Choice::Quit, "back over the divider");
         // B and Esc close, wherever the focus is.
         assert_eq!(menu.pad(Button::South), Some(Choice::Resume));
         assert_eq!(menu.key(Keycode::Escape), Some(Choice::Resume));
         assert_eq!(menu.pad(Button::North), None);
-        assert_eq!(menu.filter(), HandheldFilter::Auto, "unchanged");
+        assert_eq!(menu.settings(), menu_settings(), "unchanged");
+    }
+
+    /// The menu with the focus on `choice`.
+    fn focused_on(mut menu: PauseMenu, choice: Choice) -> PauseMenu {
+        while menu.focused() != choice {
+            menu.key(Keycode::Down);
+        }
+        menu
     }
 
     #[test]
     fn the_screen_filter_steps_both_ways_and_round() {
-        let mut menu = PauseMenu::new(false, false, false, HandheldFilter::Auto);
-        menu.pad(Button::DPadDown);
-        assert_eq!(menu.items[menu.focus], Choice::Filter);
+        let mut menu = focused_on(menu(false, false, false, (640, 480)), Choice::Filter);
         assert_eq!(menu.pad(Button::DPadRight), Some(Choice::Filter));
-        assert_eq!(menu.filter(), HandheldFilter::PixelArt);
+        assert_eq!(menu.settings().filter, HandheldFilter::PixelArt);
         assert_eq!(menu.key(Keycode::Left), Some(Choice::Filter));
         assert_eq!(menu.pad(Button::DPadLeft), Some(Choice::Filter));
-        assert_eq!(menu.filter(), HandheldFilter::Xscreen, "round to the last");
+        assert_eq!(menu.settings().filter, HandheldFilter::Xscreen, "round");
         // A steps on, and the menu stays.
         assert_eq!(menu.pad(Button::East), Some(Choice::Filter));
-        assert_eq!(menu.filter(), HandheldFilter::Auto);
+        assert_eq!(menu.settings().filter, HandheldFilter::Auto);
         let names: Vec<&str> = (0..5)
             .map(|_| {
                 menu.key(Keycode::Right);
-                filter_name(menu.filter())
+                filter_name(menu.settings().filter)
             })
             .collect();
         assert_eq!(names, ["Pixel art", "Smooth", "Sharp", "Program", "Auto"]);
     }
 
     #[test]
-    fn the_pause_menu_fits_a_small_screen() {
-        let menu = PauseMenu::new(true, true, true, HandheldFilter::PixelArt);
-        for size in SIZES {
-            let f = menu.frame(size);
-            assert!(f.x + f.w <= size.0 && f.y + f.h <= size.1, "{f:?}");
-            let last = menu.item(f, menu.items.len() - 1);
-            assert!(last.y + last.h + PAD <= f.y + f.h);
-            // The filter's arrows and value stay right of its label.
-            let (left, value, right) = PauseMenu::value_places(menu.item(f, 2));
-            assert!(left.x >= f.x + PAD + text_width(FILTER_LABEL) + PAD);
-            assert!(value.x + value.w <= right.x && right.x + right.w < f.x + f.w);
-            // The window stays clear of the hints.
-            assert!(f.y + f.h <= size.1 - LINE, "{size:?}");
-            let mut fb = Framebuffer::new(size.0, size.1);
-            menu.draw(&mut fb, &Font::blank());
+    fn ui_size_and_the_swap_step_as_the_filter_does() {
+        let mut menu = focused_on(menu(true, true, true, (640, 480)), Choice::UiSize);
+        assert_eq!(menu.pad(Button::DPadRight), Some(Choice::UiSize));
+        assert_eq!(menu.settings().ui_size, LARGE);
+        assert_eq!(menu.pad(Button::East), Some(Choice::UiSize));
+        assert_eq!(menu.settings().ui_size, NORMAL);
+        assert_eq!(menu.key(Keycode::Left), Some(Choice::UiSize));
+        assert_eq!(menu.value(Choice::UiSize), Some("Large"));
+        menu.key(Keycode::Down);
+        for (step, on) in [(Button::East, true), (Button::DPadLeft, false)] {
+            assert_eq!(menu.pad(step), Some(Choice::Swap));
+            assert_eq!(menu.settings().swap, on);
         }
+        assert_eq!(menu.pad(Button::DPadRight), Some(Choice::Swap));
+        assert_eq!(menu.value(Choice::Swap), Some("On"));
+        // What it changed goes into the settings, and nothing else.
+        let mut settings = Settings::default();
+        menu.settings().apply(&mut settings);
+        let changed = Settings {
+            handheld_ui_size: LARGE,
+            swap_ab_xy: true,
+            ..Settings::default()
+        };
+        assert_eq!(settings, changed);
+        assert_eq!(MenuSettings::of(&changed), menu.settings());
+    }
+
+    #[test]
+    fn the_pause_menu_fits_a_small_screen() {
+        for size in SIZES {
+            for (running, program, restart) in [(true, true, true), (false, false, false)] {
+                let mut menu = menu(running, program, restart, size);
+                let f = menu.frame();
+                assert!(f.x + f.w <= size.0 && f.y + f.h <= size.1, "{f:?}");
+                // The window stays clear of the hints.
+                assert!(f.y + f.h <= size.1 - LINE, "{size:?}");
+                let shown = menu.shown_rows();
+                let last = menu.item(f, shown - 1);
+                assert!(last.y + last.h + PAD <= f.y + f.h);
+                // Every row comes into sight as the focus goes down, the
+                // divider with the first setting.
+                for _ in 0..menu.rows.len() {
+                    let at = menu.focus;
+                    assert!(menu.scroll <= at && at < menu.scroll + shown, "{size:?}");
+                    if menu.focused() == Choice::Filter {
+                        assert!(menu.scroll < at, "the divider shows");
+                    }
+                    let mut fb = Framebuffer::new(size.0, size.1);
+                    menu.draw(&mut fb, &Font::blank());
+                    menu.key(Keycode::Down);
+                }
+                let all_shown = shown == menu.rows.len();
+                assert_eq!(menu.thumb(f).is_none(), all_shown, "{size:?}");
+                // A value's arrows and place stay right of its label, and
+                // left of the thumb.
+                let (left, value, right) = PauseMenu::value_places(menu.item(f, 0));
+                for choice in SETTINGS {
+                    assert!(left.x >= f.x + PAD + text_width(menu.label(choice)) + PAD);
+                }
+                assert!(value.x + value.w <= right.x && right.x + right.w < f.x + f.w);
+                if let Some(thumb) = menu.thumb(f) {
+                    assert!(right.x + right.w <= thumb.x, "{size:?}");
+                }
+            }
+        }
+        // Everything shows at 640x480; the menu over a program scrolls at
+        // 320x240.
+        let big = menu(true, true, true, (640, 480));
+        assert_eq!(big.shown_rows(), big.rows.len());
+        let small = menu(true, true, true, (320, 240));
+        assert!(small.shown_rows() < small.rows.len());
+    }
+
+    #[test]
+    fn a_new_size_keeps_the_focus_in_sight() {
+        let mut menu = focused_on(menu(true, true, true, (640, 480)), Choice::Swap);
+        assert_eq!(menu.scroll, 0);
+        menu.set_size((320, 240));
+        assert!(menu.focus < menu.scroll + menu.shown_rows() && menu.scroll > 0);
+        menu.set_size((640, 480));
+        assert_eq!(menu.scroll, 0);
+    }
+
+    #[test]
+    fn the_welcome_screen_takes_whichever_button_is_pressed_as_a() {
+        for swap in [false, true] {
+            // The right one is A: the setting goes off; the bottom one
+            // turns it on. Either is read by its place, whatever the
+            // setting made of it.
+            for (placed, swapped) in [(Button::East, false), (Button::South, true)] {
+                let mut w = Welcome::new((640, 480));
+                let button = crate::controls::face(placed, swap);
+                w.pad_down(button, swap);
+                assert_eq!(w.pad_up(button, swap), Welcomed::Continue(Some(swapped)));
+            }
+        }
+        // Enter goes on and leaves the setting alone.
+        let w = Welcome::new((640, 480));
+        assert_eq!(w.key(Keycode::Return), Welcomed::Continue(None));
+        assert_eq!(w.key(Keycode::KpEnter), Welcomed::Continue(None));
+        assert_eq!(w.key(Keycode::Escape), Welcomed::Stay);
+    }
+
+    #[test]
+    fn the_welcome_screen_ignores_other_buttons_and_ones_held_before() {
+        let mut w = Welcome::new((640, 480));
+        // Held when it came: only the release is seen.
+        assert_eq!(w.pad_up(Button::East, false), Welcomed::Stay);
+        for other in [Button::North, Button::West, Button::DPadDown, Button::Start] {
+            w.pad_down(other, false);
+            assert_eq!(w.pad_up(other, false), Welcomed::Stay, "{other:?}");
+        }
+        // Two pressed together: the first counts, on its release.
+        w.pad_down(Button::South, false);
+        w.pad_down(Button::East, false);
+        assert_eq!(w.pad_up(Button::East, false), Welcomed::Stay);
+        assert_eq!(
+            w.pad_up(Button::South, false),
+            Welcomed::Continue(Some(true))
+        );
+    }
+
+    #[test]
+    fn the_welcome_screen_fits_a_small_screen() {
+        for size in SIZES {
+            let w = Welcome::new(size);
+            assert!(w.text_height() <= size.1, "{size:?}");
+            let room = size.0 - 2 * PAD;
+            assert!(w.lines.iter().chain(&w.note).all(|l| text_width(l) <= room));
+            // The name is large on all of them, 320 pixels across too.
+            assert!(w.big_title, "{size:?}");
+            let mut fb = Framebuffer::new(size.0, size.1);
+            w.draw(&mut fb, &Font::blank());
+        }
+        let mut w = Welcome::new((320, 240));
+        assert_eq!(w.lines.len(), WELCOME_LINES.len(), "no line wraps");
+        w.set_size((200, 240));
+        assert!(w.lines.len() > WELCOME_LINES.len());
+        assert!(!w.big_title);
     }
 
     #[test]

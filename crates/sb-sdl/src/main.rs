@@ -51,7 +51,7 @@ use dialog::{Answer, Dialog};
 use editor_layout::Layout;
 use file_dialogs::{FilePicker, SaveDialog};
 use grp_view::PageTexture;
-use handheld::{GameList, PauseMenu};
+use handheld::{GameList, MenuSettings, PauseMenu, Welcome, Welcomed};
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
@@ -423,7 +423,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut canvas = make_canvas(&window, &[])?;
     drop(window);
     if handheld {
-        (display_w, display_h) = handheld::ui_size(canvas.output_size()?);
+        let size = machine.rt.settings.handheld_ui_size;
+        (display_w, display_h) = handheld::ui_size(canvas.output_size()?, size);
     }
     // Vsync paces frames on a 60 Hz display; on others, without vsync,
     // or while the window is not shown, the loop goes by the clock.
@@ -522,6 +523,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // while it is open, and its pause menu, which takes all input.
     let mut game_list: Option<GameList> = None;
     let mut pause_menu: Option<PauseMenu> = None;
+    // The screen shown the first time handheld mode starts, over the
+    // list: it takes all input but a dialog's.
+    let mut welcome = (handheld && !machine.rt.settings.handheld_welcome_shown)
+        .then(|| Welcome::new((display_w, display_h)));
     // Select, for the menu and quitting; where the list was left; the
     // program it ran last, for Restart; and whether entering the mode
     // made the window fullscreen, for leaving it.
@@ -595,7 +600,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     macro_rules! lend {
         () => {
             standby::Lend {
-                frames: !((menu.shown || pause_menu.is_some()) && machine.is_running()),
+                frames: !((menu.shown || pause_menu.is_some() || welcome.is_some())
+                    && machine.is_running()),
                 machine: &mut *machine,
                 guard: &mut frame_guard,
                 toasts: &mut toasts,
@@ -829,7 +835,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         }
         // In handheld mode the UI follows the output's size.
         let wanted = match handheld {
-            true => handheld::ui_size(drawing!(canvas.output_size())),
+            true => handheld::ui_size(
+                drawing!(canvas.output_size()),
+                machine.rt.settings.handheld_ui_size,
+            ),
             false => profile_display,
         };
         if wanted != (display_w, display_h) {
@@ -838,6 +847,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 open.set_size(wanted);
             }
             if let Some(open) = &mut game_list {
+                open.set_size(wanted);
+            }
+            if let Some(open) = &mut pause_menu {
+                open.set_size(wanted);
+            }
+            if let Some(open) = &mut welcome {
                 open.set_size(wanted);
             }
             // Made again at the new size, from the machine's, below.
@@ -943,6 +958,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     || color_window.is_some()
                     || game_list.is_some()
                     || pause_menu.is_some()
+                    || welcome.is_some()
             };
         }
         if !modal_shown!() {
@@ -1257,6 +1273,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     || color_window.is_some()
                     || game_list.is_some()
                     || pause_menu.is_some()
+                    || welcome.is_some()
                     || debug_panel.typing()
                     || (side.is_some() && side_focus);
             }
@@ -1293,11 +1310,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     (settings_window, shortcuts_window, color_window) = (None, None, None);
                     menu.shown = false;
                     menu.leave();
+                    if !machine.rt.settings.handheld_welcome_shown {
+                        welcome = Some(Welcome::new((display_w, display_h)));
+                    }
                 } else {
                     if std::mem::take(&mut fullscreen_by_handheld) {
                         let _ = window.set_fullscreen(false);
                     }
-                    (game_list, pause_menu) = (None, None);
+                    (game_list, pause_menu, welcome) = (None, None, None);
                 }
                 plus_down = None;
                 continue;
@@ -1305,13 +1325,13 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             // Select+A, or F8, opens and closes handheld mode's pause menu,
             // over a dialog too; that A goes nowhere else. Select+Start
             // quits as the menu's Quit does, and the release of that Start
-            // is not the + button's.
+            // is not the + button's. The welcome screen opens no menu.
             if handheld {
                 let toggled = match event {
                     Event::GamepadButtonDown {
                         button: Button::East,
                         ..
-                    } => hotkeys.a_down(true),
+                    } => hotkeys.a_down(true) && welcome.is_none(),
                     Event::GamepadButtonDown {
                         button: Button::Start,
                         ..
@@ -1323,7 +1343,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         keycode: Some(Keycode::F8),
                         repeat: false,
                         ..
-                    } => true,
+                    } => welcome.is_none(),
                     _ => false,
                 };
                 if toggled {
@@ -1333,8 +1353,10 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             let running = machine.is_running();
                             let program = running || machine.home_waiting();
                             let restart = ran_from_list.is_some();
-                            let filter = machine.rt.settings.handheld_filter;
-                            Some(PauseMenu::new(running, program, restart, filter))
+                            let settings = MenuSettings::of(&machine.rt.settings);
+                            let size = (display_w, display_h);
+                            let open = PauseMenu::new(running, program, restart, settings, size);
+                            Some(open)
                         }
                     };
                     plus_down = None;
@@ -1358,11 +1380,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Event::GamepadButtonDown { button, .. } => open.pad(button),
                     _ => None,
                 };
-                // Shown at once, behind the menu, and kept.
-                let filter = open.filter();
+                // Shown at once, behind the menu, and kept. A button held
+                // as the swap changes reads as the other from the next
+                // event on, and the program sees neither: the menu has
+                // the controls.
+                let settings = open.settings();
                 match chosen {
                     Some(handheld::Choice::Resume) => pause_menu = None,
-                    Some(handheld::Choice::Filter) => machine.rt.settings.handheld_filter = filter,
+                    Some(
+                        handheld::Choice::Filter
+                        | handheld::Choice::UiSize
+                        | handheld::Choice::Swap,
+                    ) => settings.apply(&mut machine.rt.settings),
                     Some(handheld::Choice::Restart) => {
                         pause_menu = None;
                         if let Some(file) = &ran_from_list
@@ -1520,6 +1549,37 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     }
                     (Some(_), Asking::Notice) | (Some(Answer::Cancel), _) => dialog = None,
                     (None, _) => {}
+                }
+                continue;
+            }
+            // The welcome screen takes the button pressed for A as A, by
+            // its place, and keeps that and that it was shown.
+            if let Some(open) = &mut welcome {
+                let swap = machine.rt.settings.swap_ab_xy;
+                let welcomed = match event {
+                    Event::Quit { .. } => {
+                        quit = true;
+                        Welcomed::Stay
+                    }
+                    Event::KeyDown {
+                        keycode: Some(key),
+                        repeat: false,
+                        ..
+                    } => open.key(key),
+                    Event::GamepadButtonDown { button, .. } => {
+                        open.pad_down(button, swap);
+                        Welcomed::Stay
+                    }
+                    Event::GamepadButtonUp { button, .. } => open.pad_up(button, swap),
+                    _ => Welcomed::Stay,
+                };
+                if let Welcomed::Continue(chosen) = welcomed {
+                    welcome = None;
+                    let settings = &mut machine.rt.settings;
+                    settings.handheld_welcome_shown = true;
+                    if let Some(swap) = chosen {
+                        settings.swap_ab_xy = swap;
+                    }
                 }
                 continue;
             }
@@ -2635,7 +2695,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             || shortcuts_window.is_some()
             || file_dialog.is_some()
             || game_list.is_some()
-            || pause_menu.is_some();
+            || pause_menu.is_some()
+            || welcome.is_some();
         // The help opened in direct mode closes when the editor opens or
         // a program runs; the editor's panels close with the editor.
         if side_direct && (machine.is_editing() || machine.is_running())
@@ -2656,7 +2717,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.stop();
         }
         close_bar_on_start(&mut menu, &mut was_running, machine.is_running());
-        let paused = (menu.shown || pause_menu.is_some()) && machine.is_running();
+        let paused =
+            (menu.shown || pause_menu.is_some() || welcome.is_some()) && machine.is_running();
         menu.status = status_line(machine, paused);
         machine.focus_editor(editor_focused);
         let editor_keys = machine.editor_has_keys() && machine.program_dialog().is_none();
@@ -3287,6 +3349,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     open.draw(fb, font, cursor_on);
                 }
                 if let (true, Some(open)) = (i == ui && over, &game_list) {
+                    open.draw(fb, font);
+                }
+                if let (true, Some(open)) = (i == ui && over, &welcome) {
                     open.draw(fb, font);
                 }
                 if let (0, Some(open)) = (i, &program_dialog) {
@@ -4994,11 +5059,11 @@ mod tests {
 
     #[test]
     fn a_handheld_screen_fills_the_output() {
-        use sb_runtime::settings::HandheldFilter;
+        use sb_runtime::settings::{HandheldFilter, HandheldUiSize};
         let mode = ScreenMode::new(400, 240);
         let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
         let out = (640, 480);
-        let ui = handheld::ui_size(out);
+        let ui = handheld::ui_size(out, HandheldUiSize::Normal);
         let display = handheld::display_rect(ui, out);
         let settings = |handheld_filter| Settings {
             screen_filter: Some(Filter::Nearest),
@@ -5039,6 +5104,11 @@ mod tests {
         let large = ScreenMode::new(1280, 720);
         let half = ((0.0, 60.0, 640.0, 360.0), Filter::Bilinear);
         assert_eq!(place(&large, HandheldFilter::Auto, true), half);
+        // The UI's size leaves the program's screen as it is.
+        let large_ui = handheld::ui_size(out, HandheldUiSize::Large);
+        assert_eq!(large_ui, (320, 240));
+        let large_display = handheld::display_rect(large_ui, out);
+        assert_eq!(box_of(large_display), box_of(display));
     }
 
     #[test]

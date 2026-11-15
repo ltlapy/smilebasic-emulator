@@ -234,6 +234,12 @@ pub fn draw_text(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, 
     draw_glyphs(fb, font, (x, y), text, color, GLYPH_SCALE, true);
 }
 
+/// [`draw_text`] at twice its size, for a heading: twice [`text_width`]
+/// across and twice [`CHAR`] high.
+pub fn draw_text_double(fb: &mut Framebuffer, font: &Font, x: u32, y: u32, text: &str, color: u32) {
+    draw_glyphs(fb, font, (x, y), text, color, 2 * GLYPH_SCALE, true);
+}
+
 /// The font of UI text, as [`UiFont`] as u8: the 16-pixel and smooth
 /// fonts are drawn where text is drawn at an even scale.
 static UI_FONT: AtomicU8 = AtomicU8::new(UiFont::Large as u8);
