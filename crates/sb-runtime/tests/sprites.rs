@@ -193,6 +193,10 @@ fn errors() {
         ("SPDEF 0,0,0,16,16,0,0,32", "Out of range in 0:1(SPDEF:8)"),
         ("SPDEF 0,-1,0", "Out of range in 0:1(SPDEF:2)"),
         ("SPDEF 0 OUT A,B,C,D,E,F,G,H", "Wrong number of"),
+        ("DIM D[7]:D[2]=2049:SPDEF D", "Out of range in 0:1(SPDEF)"),
+        ("DIM D[7]:D[6]=-1:SPDEF D", "Out of range in 0:1(SPDEF)"),
+        ("DIM D[7]:SPDEF D,0,0", "Wrong number of arguments"),
+        ("SPDEF \"@D\"\n@D\nDATA 8193", "Out of range in 0:1(SPDEF)"),
         ("SPFUNC 0,0", "Type mismatch in 0:1(SPFUNC:2)"),
         ("SPFUNC 4096,0", "Out of range in 0:1(SPFUNC:1)"),
         ("TFUNC 0,0", "Type mismatch in 0:1(TFUNC:2)"),
@@ -217,6 +221,27 @@ fn errors() {
         let (_, out) = run(source);
         assert!(out.starts_with(error), "{source}: {out}");
     }
+}
+
+/// SPDEF from an array or DATA sets the templates up to the last and
+/// leaves the rest out, and a bad template stops it after those before.
+#[test]
+fn spdef_from_a_list_stops_at_the_last_template() {
+    let (_, out) = run("DIM D[14]:D[0]=5:D[2]=16:D[3]=16:D[9]=16:D[10]=16\n\
+         SPDEF D,8191:SPDEF 8191 OUT U,V,W,H:?U;W");
+    assert_eq!(out, "516");
+    let (_, out) = run(
+        "SPDEF \"@D\",8191:SPDEF 8191 OUT U,V:?U;V;:SPDEF \"@N\":?\"N\"\n\
+         @D\nDATA 2,5,6,16,16,0,0,1,7,8,16,16,0,0,1\n@N\nDATA -1",
+    );
+    assert_eq!(out, "56N");
+    let (_, out) = run("DIM D[14]:D[0]=3:D[2]=16:D[3]=16:D[9]=4096\n\
+         SPDEF D,9 OUT X\n?X");
+    assert!(out.starts_with("Wrong number of"), "{out}");
+    // The second template's width is out of range: the first is set.
+    let (m, out) = run("DIM D[14]:D[0]=3:D[2]=16:D[3]=16:D[9]=4096:SPDEF D,9");
+    assert!(out.starts_with("Out of range"), "{out}");
+    assert_eq!((m.rt.sprites.defs[9].u, m.rt.sprites.defs[9].w), (3, 16));
 }
 
 /// A DEF, a label in the program or in a DEF, and another slot's

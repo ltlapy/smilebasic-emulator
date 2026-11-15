@@ -1341,6 +1341,13 @@ Expected but not yet seen on hardware:
   template (nine arguments) takes U and V up to 2048 too, and the image must
   end within 2048. An array whose length 7 does not divide is
   `Illegal array size (SPDEF:1)`, error 117. (Not yet seen on hardware.)
+- `SPDEF` from an array or DATA sets templates up to 8191 and leaves the rest
+  out without an error. It checks each template's width, height, home point and
+  attributes as `SPDEF` with numbers does, but with no number: the first one out
+  of range stops it as `Out of range (SPDEF)`, with the templates before it
+  set. A DATA count over 8192 is `Out of range` too, while a negative one sets
+  nothing. (Not yet seen on
+  hardware.)
 - `SPLINK` of a sprite to itself is
   `Illegal function call (SPLINK:2)`, and to a sprite linked below it
   `Can't link to decendent sprite (SPLINK:2)`, error 113, spelled so.

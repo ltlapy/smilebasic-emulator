@@ -788,37 +788,79 @@ impl Runtime {
                     let e = Error::with_detail(ErrorKind::IllegalArraySize, "needs 7 values each");
                     return Err(e.of_arg(0));
                 }
+                // A label's count of templates comes first, then seven
+                // values for each. A negative count sets none.
+                let mut data = match source {
+                    Value::Str(_) => {
+                        let mut data = self.label_data(source)?;
+                        let n = data.number()? as i32;
+                        if n > DEFS as i32 {
+                            return Err(out_of_range("data count", n));
+                        }
+                        Some((data, n.max(0) as usize))
+                    }
+                    _ => None,
+                };
                 let offset = rest.first().map(def_id).transpose()?.unwrap_or(0);
                 let (du, dv) = match rest {
                     [_, u, v] => (int(u)?, int(v)?),
                     [] | [_] => (0, 0),
-                    _ => return Err(illegal()),
+                    _ => return Err(no_form()),
                 };
-                let values = match source {
-                    Value::Array(array) => numbers(&array.borrow().data)?,
-                    // The count of templates, then seven values for each.
-                    _ => {
-                        let mut data = self.label_data(source)?;
-                        let n = data_count(data.number()?, DEFS)?;
-                        data.numbers(n * 7)?
+                // Templates past the last are left out.
+                let room = self.sprites.defs.len().saturating_sub(offset);
+                // DATA is read up to the first value missing, whose error
+                // comes after the templates before it are set.
+                let (values, missing) = match &mut data {
+                    Some((data, n)) => {
+                        let mut values = Vec::new();
+                        let mut missing = None;
+                        for _ in 0..(*n).min(room) {
+                            match data.numbers(7) {
+                                Ok(d) => values.extend(d.iter().map(|&x| f64::from(x as i32))),
+                                Err(e) => {
+                                    missing = Some(e);
+                                    break;
+                                }
+                            }
+                        }
+                        (values, missing)
                     }
+                    None => match source {
+                        Value::Array(array) => (numbers(&array.borrow().data)?, None),
+                        _ => unreachable!("an array or a label"),
+                    },
                 };
-                let values: Vec<i32> = values.iter().map(|&x| x as i32).collect();
-                if offset + values.len() / 7 > DEFS {
-                    return Err(ErrorKind::OutOfRange.into());
-                }
-                for (i, d) in values.chunks_exact(7).enumerate() {
+                drop(data);
+                let count = (values.len() / 7).min(room);
+                // Each is checked as it is set.
+                for i in 0..count {
+                    let d = &values[i * 7..i * 7 + 7];
+                    let size = 0.0..=2048.0;
+                    let home = -32768.0..=32767.0;
+                    if !(size.contains(&d[2])
+                        && size.contains(&d[3])
+                        && home.contains(&d[4])
+                        && home.contains(&d[5])
+                        && (0.0..=31.0).contains(&d[6]))
+                    {
+                        let what = format!("template {}", offset + i);
+                        return Err(Error::with_detail(ErrorKind::OutOfRange, what));
+                    }
                     self.sprites.defs[offset + i] = SpriteDef {
-                        u: d[0].wrapping_add(du),
-                        v: d[1].wrapping_add(dv),
-                        w: d[2],
-                        h: d[3],
-                        hx: d[4],
-                        hy: d[5],
-                        attr: d[6],
+                        u: (d[0] as i32).wrapping_add(du),
+                        v: (d[1] as i32).wrapping_add(dv),
+                        w: d[2] as i32,
+                        h: d[3] as i32,
+                        hx: d[4] as i32,
+                        hy: d[5] as i32,
+                        attr: d[6] as i32,
                     };
                 }
-                Ok(vec![])
+                match missing {
+                    Some(e) => Err(e),
+                    None => Ok(vec![]),
+                }
             }
             // SPDEF id,source,[U],[V],[W],[H],[HX],[HY],[attributes]
             // Each value given is checked, and then that the image stays
