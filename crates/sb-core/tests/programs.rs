@@ -732,6 +732,24 @@ fn duplicate_constants() {
     assert_eq!(at("DATA Z").0, ErrorKind::SyntaxError);
 }
 
+/// Number literals as SmileBASIC 4.4.8 reads them.
+#[test]
+fn number_literals() {
+    assert_eq!(output("?00000000001;TYPEOF(00000000001)"), "12\n");
+    assert_eq!(output("?2147483647;TYPEOF(0000000001)"), "21474836471\n");
+    assert_eq!(error("A=&H000000001"), (ErrorKind::SyntaxError, 1));
+    assert_eq!(
+        error("?1\nA=&B1_0000_0000_0000_0000_0000_0000_0000_0000"),
+        (ErrorKind::SyntaxError, 2)
+    );
+    assert_eq!(error("A=1E1000").0, ErrorKind::SyntaxError);
+    assert_eq!(error("A=1E400").0, ErrorKind::SyntaxError);
+    // `_` that leads to no digit is the next token: here a call to `_`,
+    // found nowhere, which is a Syntax error when it runs.
+    let e = run("?&HFF_").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::SyntaxError);
+}
+
 /// A constant exists from where its CONST or ENUM stands in the source,
 /// for every line after it, DEFs and top level alike: SmileBASIC 4
 /// compiles in one pass, and DEFs where they stand.
@@ -2296,12 +2314,13 @@ fn compile_errors_before_a_syntax_error_come_first() {
     // lex is an error where it stands, after the ones before it.
     assert_eq!(at("?#ZZ:?&H100000000").0, undefined);
     assert_eq!(at("?#ZZ\n?1\n?2\n?3\nA=&H100000000"), (undefined, 1, 2));
-    assert_eq!(at("?(\nA=&H100000000").0, ErrorKind::SyntaxError);
+    assert_eq!(at("?(\nA=&H100000000").1, 1);
     assert_eq!(
         at("FOR I=0 TO 1\nA=&H100000000\nNEXT"),
-        (ErrorKind::Overflow, 2, 3)
+        (ErrorKind::SyntaxError, 2, 3)
     );
-    assert_eq!(at("?1:A=&H100000000"), (ErrorKind::Overflow, 1, 6));
+    assert_eq!(at("?1:A=&H100000000"), (ErrorKind::SyntaxError, 1, 6));
+    assert_eq!(at("?#ZZ\nA=1E309"), (undefined, 1, 2));
     // The pre-pass's errors come where their statements stand too.
     assert_eq!(at("?#ZZ\nCONST #A=1,#A=2"), (undefined, 1, 2));
     assert_eq!(at("?#ZZ\nOPTION FOO"), (undefined, 1, 2));

@@ -282,7 +282,13 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 
 - A variable's suffix only sets its starting value. `A%=1E10` keeps the real,
   `A$=1` stores a number and `A%="X"` a string.
-- The literal `2147483648` is a real.
+- The literal `2147483648` is a real. So is a decimal integer of more than
+  10 digits, leading zeros included: `00000000001` is the real 1. A decimal
+  literal of more than 99 characters, with an exponent of more than 3 digits,
+  or too large for a real (`1E309`) is a `Syntax error`. (4.4.8); not yet seen on hardware.
+- `&H` takes up to 8 digits and `&B` up to 32, leading zeros included: more,
+  as in `&H100000000` or `&H000000001`, is a `Syntax error` as the program
+  compiles. (Not yet seen on hardware.)
 - `CONST` and `DATA` take `HSV` as well as `RGB`.
 - `OPTION STRICT` holds from where it stands. A variable used before it without
   `VAR` can be used after it, and a DEF before it is not checked.
@@ -302,8 +308,11 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `?1\ XYZ` and `+2` on the next line prints 3.
 - A comment line after a `\` line end is no blank line: `?1\`, `'COMMENT`, `+2`
   is a `Syntax error` at the `+` (TEST62).
-- `_` in a group of digits must lead to a digit: `?&HFF_` and `?&H_` are
-  `Syntax error`, and so is `?1_000`, as a decimal number takes none (TEST60).
+- `_` may stand anywhere among the digits of `&H` and `&B`. Ones after the
+  last digit are not part of the number but the next token, a name: in
+  DIRECT mode `?&HFF_` and `?&H_` are a `Syntax error` (TEST60), and in a
+  program `?&HFF_` calls `_`. A decimal number takes no `_`: `?1_000` is a
+  `Syntax error` (TEST60).
 - A string with no closing quote ends with its line (TEST62).
 - A string has no escape for a quote: `?"A""B"` is a `Syntax error` (TEST71).
 - `NEXT` (also `NEXT I`), `WEND` and `ENDLOOP` inside an `IF` or another block

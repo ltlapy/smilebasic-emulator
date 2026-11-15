@@ -153,8 +153,8 @@ pub enum LexErrorKind {
     UnexpectedChar(char),
     /// `&H`, `&B`, `@` or `#` with nothing valid after it.
     MissingDigits,
-    /// A hexadecimal or binary literal wider than 32 bits.
-    Overflow,
+    /// A number SmileBASIC 4 does not take, a Syntax error: why.
+    BadNumber(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,7 +168,7 @@ impl fmt::Display for LexError {
         let what = match &self.kind {
             LexErrorKind::UnexpectedChar(c) => format!("Syntax error (unexpected {c:?})"),
             LexErrorKind::MissingDigits => "Syntax error".to_string(),
-            LexErrorKind::Overflow => "Overflow".to_string(),
+            LexErrorKind::BadNumber(why) => format!("Syntax error ({why})"),
         };
         write!(f, "{what} in {}", self.span.line)
     }
@@ -417,10 +417,14 @@ impl Lexer {
         self.push(TokenKind::Str(text), start);
     }
 
+    /// A decimal number. SmileBASIC 4 takes up to 99
+    /// characters, an exponent of up to 3 digits and a finite value; an
+    /// int has up to 10 digits.
     fn number(&mut self, start: Span) -> Result<(), LexError> {
         let mut text = String::new();
         let mut is_real = false;
         self.take_digits(&mut text);
+        let int_digits = text.len();
         if self.peek() == Some('.') {
             is_real = true;
             text.push('.');
@@ -440,8 +444,15 @@ impl Lexer {
                 if digits_at == 2 {
                     text.push(self.bump().expect("sign was peeked"));
                 }
+                let from = text.len();
                 self.take_digits(&mut text);
+                if text.len() - from > 3 {
+                    return Err(self.error(LexErrorKind::BadNumber("exponent too long"), start));
+                }
             }
+        }
+        if text.len() > 99 {
+            return Err(self.error(LexErrorKind::BadNumber("number too long"), start));
         }
         // `1_000` is a Syntax error: only `&H` and `&B` take `_`.
         if self.peek() == Some('_') {
@@ -452,11 +463,21 @@ impl Lexer {
             is_real = true;
             self.bump();
         }
-        // Integer literals go up to 2147483647.
-        // A larger decimal literal becomes real instead of an error.
-        let kind = match text.parse::<i32>() {
-            Ok(n) if !is_real => TokenKind::Int(n),
-            _ => TokenKind::Real(text.parse().expect("lexed digits form a valid float")),
+        // Integer literals go up to 2147483647, in up to 10 digits.
+        // Another decimal literal becomes real instead of an error.
+        let int = match is_real || int_digits > 10 {
+            true => None,
+            false => text.parse::<i32>().ok(),
+        };
+        let kind = match int {
+            Some(n) => TokenKind::Int(n),
+            None => {
+                let x: f64 = text.parse().expect("lexed digits form a valid float");
+                if x.is_infinite() {
+                    return Err(self.error(LexErrorKind::BadNumber("number too large"), start));
+                }
+                TokenKind::Real(x)
+            }
         };
         self.push(kind, start);
         Ok(())
@@ -469,7 +490,8 @@ impl Lexer {
         }
     }
 
-    /// `&H..` or `&B..`.
+    /// `&H..` or `&B..`, of up to 32 bits by their number of digits:
+    /// `&H000000001` is a Syntax error.
     fn ampersand(&mut self, start: Span) -> Result<(), LexError> {
         self.bump();
         let radix = match self.peek() {
@@ -480,38 +502,35 @@ impl Lexer {
             }
         };
         self.bump();
-        let mut value: u64 = 0;
+        let most = if radix == 16 { 8 } else { 32 };
+        let mut value: u32 = 0;
         let mut digits = 0;
         loop {
             // `_` separates digit groups, as in `&B0000_0001`, and may
-            // also lead and repeat, as in `&H_3F__BF_BF`.
-            if self.peek() == Some('_') {
-                self.bump();
-                // It must lead to a digit: `&HFF_` is a Syntax error.
-                let mut next = 0;
-                while self.peek_at(next) == Some('_') {
-                    next += 1;
-                }
-                if !self.peek_at(next).is_some_and(|c| c.is_digit(radix)) {
-                    return Err(self.error(LexErrorKind::MissingDigits, start));
-                }
-                continue;
+            // also lead and repeat, as in `&H_3F__BF_BF`. Ones that lead
+            // to no digit are left for the next token: `&HFF_` is 255
+            // and `_`.
+            let mut next = 0;
+            while self.peek_at(next) == Some('_') {
+                next += 1;
             }
-            let Some(d) = self.peek().and_then(|c| c.to_digit(radix)) else {
+            let Some(d) = self.peek_at(next).and_then(|c| c.to_digit(radix)) else {
                 break;
             };
-            self.bump();
-            value = value * u64::from(radix) + u64::from(d);
-            digits += 1;
-            if value > u64::from(u32::MAX) {
-                return Err(self.error(LexErrorKind::Overflow, start));
+            for _ in 0..=next {
+                self.bump();
             }
+            digits += 1;
+            if digits > most {
+                return Err(self.error(LexErrorKind::BadNumber("too many digits"), start));
+            }
+            value = value.wrapping_mul(radix) | d;
         }
         if digits == 0 {
             return Err(self.error(LexErrorKind::MissingDigits, start));
         }
         // `&HFFFFFFFF` is -1: the 32 bits are reinterpreted as signed.
-        self.push(TokenKind::Int(value as u32 as i32), start);
+        self.push(TokenKind::Int(value as i32), start);
         Ok(())
     }
 
@@ -592,12 +611,31 @@ mod tests {
     }
 
     #[test]
+    fn decimal_limits() {
+        assert_eq!(kinds("00000000001"), [T::Real(1.0)]);
+        assert_eq!(kinds("0000000001"), [T::Int(1)]);
+        assert_eq!(kinds("1E308 1E-999"), [T::Real(1E308), T::Real(0.0)]);
+        let bad = |why| LexErrorKind::BadNumber(why);
+        assert_eq!(error("1E309"), bad("number too large"));
+        assert_eq!(error("1E0001"), bad("exponent too long"));
+        assert_eq!(error(&"1".repeat(100)), bad("number too long"));
+        assert_eq!(kinds(&format!("0.{}", "0".repeat(97))), [T::Real(0.0)]);
+    }
+
+    #[test]
     fn hex_and_binary() {
         assert_eq!(
             kinds("&HFF &hff &B101 &HFFFFFFFF"),
             [T::Int(255), T::Int(255), T::Int(5), T::Int(-1)]
         );
-        assert_eq!(error("&H100000000"), LexErrorKind::Overflow);
+        let long = LexErrorKind::BadNumber("too many digits");
+        assert_eq!(error("&H100000000"), long);
+        assert_eq!(error("&H000000001"), long);
+        assert_eq!(error(&format!("&B1{}", "0".repeat(32))), long);
+        assert_eq!(
+            kinds(&format!("&H0000_0001 &B{}", "1".repeat(32))),
+            [T::Int(1), T::Int(-1)]
+        );
         assert_eq!(error("&H"), LexErrorKind::MissingDigits);
         assert_eq!(error("&X1"), LexErrorKind::UnexpectedChar('X'));
     }
@@ -702,8 +740,9 @@ mod tests {
             ]
         );
         assert_eq!(error("&H_"), LexErrorKind::MissingDigits);
-        assert_eq!(error("&HFF_"), LexErrorKind::MissingDigits);
-        assert_eq!(error("&HFF_:A=1"), LexErrorKind::MissingDigits);
+        assert_eq!(kinds("&HFF_"), [T::Int(255), ident("_")]);
+        assert_eq!(kinds("&HFF__G"), [T::Int(255), ident("__G")]);
+        assert_eq!(kinds("&B1_2"), [T::Int(1), ident("_2")]);
         assert_eq!(error("1_000"), LexErrorKind::MissingDigits);
     }
 
@@ -860,7 +899,7 @@ mod tests {
                     suffix: None
                 },
                 T::Assign,
-                T::Invalid(LexErrorKind::Overflow),
+                T::Invalid(LexErrorKind::BadNumber("too many digits")),
                 T::Eof
             ]
         );
@@ -868,7 +907,7 @@ mod tests {
         assert_eq!(
             e,
             Some(LexError {
-                kind: LexErrorKind::Overflow,
+                kind: LexErrorKind::BadNumber("too many digits"),
                 span: at
             })
         );
