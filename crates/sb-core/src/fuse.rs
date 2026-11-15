@@ -99,6 +99,17 @@ pub enum FastOp {
         want: Want,
         cost: u32,
     },
+    /// `CallDef` of one to three arguments that are each a variable or a
+    /// number, `argc` of `args` in order, read where they are instead of
+    /// pushed: `a, CallDef`, `b, a, Swap, CallDef` or `c, b, a, Reverse(3),
+    /// CallDef`.
+    CallArgs {
+        def: u16,
+        argc: u8,
+        want: Want,
+        cost: u16,
+        args: [Var; 3],
+    },
     /// RETURN with a value from a DEF called in the running slot.
     ReturnValue,
     /// A call of a builtin that [`FastOp::Builtin`] does not stand for, which
@@ -473,6 +484,7 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
         return;
     };
     add(F::Push(a), 1);
+    call_args(code, defs, &[a], 1, add);
     if let Some(to) = store(code.get(1)) {
         add(F::Move { from: a, to }, 2);
     }
@@ -494,6 +506,7 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
     // Two arguments, pushed last first and put back in order.
     if let Some(Op::Swap) = code.get(2) {
         add(F::Push2(b, a), 3);
+        call_args(code, defs, &[b, a], 3, add);
     }
     match code.get(2) {
         Some(Op::Binary(op)) => {
@@ -549,6 +562,9 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
         _ => {}
     }
     let third = c.source(code.get(2));
+    if let (Some(c3), Some(Op::Reverse(3))) = (third, code.get(3)) {
+        call_args(code, defs, &[c3, b, a], 4, add);
+    }
     if let Some(i) = third {
         let (base, inner) = (a, b);
         match code.get(3..5) {
@@ -614,6 +630,41 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
                 apart,
             },
             14,
+        );
+    }
+}
+
+/// Offers [`FastOp::CallArgs`] for a call at `code[at]` of `args`, which the
+/// code before it pushes.
+fn call_args(
+    code: &[Op],
+    defs: &[DefInfo],
+    args: &[Var],
+    at: usize,
+    add: &mut dyn FnMut(FastOp, usize),
+) {
+    let Some(&Op::CallDef { def, argc, want }) = code.get(at) else {
+        return;
+    };
+    let info = defs.get(def as usize);
+    let cost = info.and_then(|info| crate::vm::fixed_call_cost(info, argc, want));
+    if let (Ok(def), Some(Ok(cost)), true) = (
+        u16::try_from(def),
+        cost.map(u16::try_from),
+        usize::from(argc) == args.len(),
+    ) {
+        let mut all = [args[0]; 3];
+        all[..args.len()].copy_from_slice(args);
+        let args = all;
+        add(
+            FastOp::CallArgs {
+                def,
+                argc,
+                want,
+                cost,
+                args,
+            },
+            at + 1,
         );
     }
 }

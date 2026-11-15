@@ -1802,6 +1802,45 @@ impl Vm {
                     vars = [&mut globals[..], &mut locals[base..]];
                     next = info.entry as usize;
                 }
+                FastOp::CallArgs {
+                    def,
+                    argc,
+                    want,
+                    cost,
+                    args,
+                } => {
+                    // As `CallDef`, with the arguments read from where they are,
+                    // before the view of the caller's variables goes.
+                    let cost = usize::from(cost);
+                    if room_for(calls, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
+                        break;
+                    }
+                    let first = get(&vars, args[0]).clone();
+                    let second = (argc > 1).then(|| get(&vars, args[1]).clone());
+                    let third = (argc > 2).then(|| get(&vars, args[2]).clone());
+                    let info = &program.defs[usize::from(def)];
+                    *def_calls += 1;
+                    base = locals.len();
+                    locals.push(first);
+                    locals.extend(second);
+                    locals.extend(third);
+                    start_locals(locals, base, info);
+                    frames.push(Frame {
+                        def: u32::from(def),
+                        home: slot,
+                        caller: slot,
+                        base,
+                        variadic: None,
+                        want,
+                        return_pc: next,
+                        gosub_base: gosubs.len(),
+                        stack_base: stack.len(),
+                        stack_to: calls + cost,
+                    });
+                    (calls, gosub_base) = (calls + cost, gosubs.len());
+                    vars = [&mut globals[..], &mut locals[base..]];
+                    next = info.entry as usize;
+                }
                 FastOp::ReturnValue => {
                     // From a function called in this slot: as `leave_def_with`.
                     let Some(frame) = frames.last() else {

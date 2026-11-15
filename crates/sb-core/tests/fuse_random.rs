@@ -78,6 +78,9 @@ const DEFS: &[&str] = &["SQ", "LC", "TS", "OU", "GS", "GR", "GC"];
 /// local, a recursive one, a host command inside, GOSUBs inside and returns
 /// from them, and errors on strings.
 const DEFS_SOURCE: &str = "\
+DEF T3(X,Y,Z)
+ RETURN X*100+Y*10-Z
+END
 DEF ONE()
  RETURN 1
 END
@@ -136,7 +139,7 @@ END
 ";
 
 fn leaf(r: &mut Rng, depth: u32) -> String {
-    match r.below(16) {
+    match r.below(17) {
         0..=3 => r.pick(VARIABLES).to_string(),
         4..=6 => r.pick(NUMBERS).to_string(),
         7 if depth < 3 => element(r, depth),
@@ -147,6 +150,12 @@ fn leaf(r: &mut Rng, depth: u32) -> String {
         12 if depth < 2 => format!("RC({})", r.pick(&["0", "1", "2", "I", "A AND 3"])),
         13 if depth < 3 => format!("LEN(STR$({}))", expr(r, depth + 1)),
         14 => "INSTR(S$,\"B\")".to_string(),
+        15 if depth < 3 => format!(
+            "T3({},{},{})",
+            leaf(r, depth + 1),
+            leaf(r, depth + 1),
+            leaf(r, depth + 1)
+        ),
         _ => r.pick(VARIABLES).to_string(),
     }
 }

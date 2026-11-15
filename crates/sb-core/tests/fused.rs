@@ -375,6 +375,12 @@ fn def_calls_are_fused() {
         .filter(|f| matches!(f.op, FastOp::CallDef { .. }))
         .count();
     assert_eq!(calls, 2);
+    // F(I) reads its argument where it is.
+    assert!(
+        (program.fast.iter()).any(|f| matches!(f.op, FastOp::CallArgs { argc: 1, .. })),
+        "{:?}",
+        program.fast
+    );
     for op in [FastOp::ReturnValue, FastOp::Return] {
         assert!(program.fast.iter().any(|f| f.op == op), "{op:?}");
     }
