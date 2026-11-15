@@ -585,8 +585,6 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut watch = RendererWatch::default();
     // A USB key that reads as down for a frame, for the bench.
     let mut bench_usb: Option<u8> = None;
-    // Buttons held on the first controller, for the bench.
-    let mut bench_pad = 0;
     // Renderers to refuse, for the bench.
     let mut refusals = 0;
     let mut suspend = SuspendWatch::new();
@@ -781,14 +779,14 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let (state, name) = what.split_once(':').expect("checked");
                     Button::from_string(name).map(|button| {
                         if state == "pad" {
-                            bench_pad |= controls::button_bit(button);
+                            controls.bench |= controls::button_bit(button);
                             Event::GamepadButtonDown {
                                 timestamp,
                                 which,
                                 button,
                             }
                         } else {
-                            bench_pad &= !controls::button_bit(button);
+                            controls.bench &= !controls::button_bit(button);
                             Event::GamepadButtonUp {
                                 timestamp,
                                 which,
@@ -1057,7 +1055,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 b.kept(kept);
             }
         }
-        for (repeated, event) in
+        for (repeated, mut event) in
             (repeats.into_iter().map(|e| (true, e))).chain(polled.drain(..).map(|e| (false, e)))
         {
             // A repeat that changes the screen ends the rest of them.
@@ -1071,7 +1069,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 continue;
             }
             if !repeated {
-                controls.event(&event);
+                // A, B, X and Y are what the setting makes them from here
+                // on, for every screen and the program, even after a
+                // change an event before made.
+                controls.swap = machine.rt.settings.swap_ab_xy;
+                controls.event(&mut event);
                 match event {
                     Event::GamepadButtonDown {
                         button: Button::Back,
@@ -2662,12 +2664,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // alone, and after a Projects run's error only its A goes anywhere.
         let waiting = machine.home_waiting() && program_dialog.is_none();
         let beside = side_direct && side_focus && side.is_some();
-        let mut held = controls.state(
+        controls.swap = machine.rt.settings.swap_ab_xy;
+        let held = controls.state(
             &events.keyboard_state(),
             events.mouse_state(),
             machine.rt.settings.keyboard_buttons,
         );
-        held.pads[0].buttons |= bench_pad;
         typing.hold(&held);
         typing.upper_case = machine.rt.settings.upper_case_letters;
         let screen = modal || paused || editor_keys || waiting || beside;
@@ -3674,8 +3676,8 @@ fn new_renderer(
         }
         let until = Instant::now() + recovery::RETRY;
         while Instant::now() < until {
-            for event in waiting.events.poll_iter() {
-                waiting.controls.event(&event);
+            for mut event in waiting.events.poll_iter() {
+                waiting.controls.event(&mut event);
                 let closed = matches!(
                     event,
                     Event::Quit { .. }

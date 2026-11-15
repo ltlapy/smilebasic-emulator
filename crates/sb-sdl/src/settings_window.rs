@@ -215,6 +215,14 @@ const PAGES: &[Page] = &[
                 |s| s.keyboard_buttons ^= true,
             ),
             check(
+                "Swap A/B and X/Y",
+                "Gamepads' A and B trade places, as do X and Y, for programs (BUTTON) \
+                 and for the emulator's own screens. For gamepads with A at the bottom. \
+                 The keyboard's keys stay as they are. Not SmileBASIC 4's. Off by default.",
+                |s| s.swap_ab_xy,
+                |s| s.swap_ab_xy ^= true,
+            ),
+            check(
                 "Ignore mouse cursor commands",
                 "The cursor stays visible even while a program hides it with SYSPARAM \
                  \"MOUSECURSOR\",0, and stays where it is when a program moves it \

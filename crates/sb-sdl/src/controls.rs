@@ -15,6 +15,44 @@ pub fn button_bit(button: Button) -> u32 {
         .map_or(0, |(_, id)| 1 << id)
 }
 
+/// The button a press of SDL's `button` stands for: itself, or with
+/// `swap` (the setting Swap A/B and X/Y) the face button across from it,
+/// A for B and X for Y. Everything that reads a controller goes through
+/// this or [`pad_buttons`], so that programs and the emulator's own
+/// screens agree on which button is A. It is its own inverse.
+pub fn face(button: Button, swap: bool) -> Button {
+    match (swap, button) {
+        (true, Button::East) => Button::South,
+        (true, Button::South) => Button::East,
+        (true, Button::North) => Button::West,
+        (true, Button::West) => Button::North,
+        (_, button) => button,
+    }
+}
+
+/// A button event with its button as [`face`] has it. The first thing
+/// done with every event the system gives.
+pub fn swap_event(event: &mut Event, swap: bool) {
+    if let Event::GamepadButtonDown { button, .. } | Event::GamepadButtonUp { button, .. } = event {
+        *button = face(*button, swap);
+    }
+}
+
+/// SDL's buttons to read for BUTTON's ids: [`PAD_BUTTONS`], or with
+/// `swap` the same with A and B, and X and Y, traded as [`face`] trades
+/// them.
+fn pad_buttons(swap: bool) -> &'static [(Button, u32); 12] {
+    if swap { &SWAPPED_BUTTONS } else { &PAD_BUTTONS }
+}
+
+/// BUTTON's bits for the buttons `down` says are held, as [`face`] reads
+/// them.
+fn held_buttons(down: impl Fn(Button) -> bool, swap: bool) -> u32 {
+    (pad_buttons(swap).iter())
+        .filter(|&&(button, _)| down(button))
+        .fold(0, |bits, (_, id)| bits | 1 << id)
+}
+
 /// SDL's buttons for BUTTON's ids, by position: the top face button is
 /// #B_RUP whatever its label says.
 const PAD_BUTTONS: [(Button, u32); 12] = [
@@ -22,6 +60,23 @@ const PAD_BUTTONS: [(Button, u32); 12] = [
     (Button::South, 1),
     (Button::West, 2),
     (Button::East, 3),
+    (Button::DPadUp, 4),
+    (Button::DPadDown, 5),
+    (Button::DPadLeft, 6),
+    (Button::DPadRight, 7),
+    (Button::LeftShoulder, 8),
+    (Button::RightShoulder, 9),
+    (Button::LeftStick, 12),
+    (Button::RightStick, 13),
+];
+
+/// [`PAD_BUTTONS`] with the face buttons traded: #B_RUP is the left one,
+/// #B_RRIGHT the bottom one.
+const SWAPPED_BUTTONS: [(Button, u32); 12] = [
+    (Button::West, 0),
+    (Button::East, 1),
+    (Button::North, 2),
+    (Button::South, 3),
     (Button::DPadUp, 4),
     (Button::DPadDown, 5),
     (Button::DPadLeft, 6),
@@ -456,6 +511,11 @@ pub struct Controls {
     pub mouse: Mouse,
     pub key_buttons: KeyButtons,
     pub carried: Carried,
+    /// The setting Swap A/B and X/Y, for the next event and state.
+    pub swap: bool,
+    /// Buttons held on the first controller, as SDL places them, for the
+    /// bench.
+    pub bench: u32,
 }
 
 fn stick(pad: &Gamepad, x: Axis, y: Axis) -> (f64, f64) {
@@ -476,6 +536,8 @@ impl Controls {
             mouse: Mouse::default(),
             key_buttons: KeyButtons::default(),
             carried: Carried::default(),
+            swap: false,
+            bench: 0,
         })
     }
 
@@ -484,8 +546,11 @@ impl Controls {
         self.pads.len()
     }
 
-    /// Opens controllers as they are connected, and lets go of them.
-    pub fn event(&mut self, event: &Event) {
+    /// Opens controllers as they are connected, and lets go of them; a
+    /// button's event gets the button [`face`] makes of it. Goes first
+    /// for every event the system gives.
+    pub fn event(&mut self, event: &mut Event) {
+        swap_event(event, self.swap);
         match *event {
             Event::GamepadAdded { which, .. } if self.pads.len() < PADS => {
                 match self.subsystem.open(which) {
@@ -513,11 +578,7 @@ impl Controls {
             let p = &mut state.pads[i];
             p.connected = true;
             p.gamepad = true;
-            for (button, id) in PAD_BUTTONS {
-                if pad.button(button) {
-                    p.buttons |= 1 << id;
-                }
-            }
+            p.buttons = held_buttons(|button| pad.button(button), self.swap);
             for (axis, id) in [(Axis::TriggerLeft, 10), (Axis::TriggerRight, 11)] {
                 if pad.axis(axis) > TRIGGER {
                     p.buttons |= 1 << id;
@@ -527,6 +588,10 @@ impl Controls {
                 stick(pad, Axis::LeftX, Axis::LeftY),
                 stick(pad, Axis::RightX, Axis::RightY),
             ];
+        }
+        if self.bench != 0 {
+            let bench = held_buttons(|b| self.bench & button_bit(b) != 0, self.swap);
+            state.pads[0].buttons |= bench;
         }
         for (scancode, down) in keyboard.scancodes() {
             if let Ok(usage) = u8::try_from(scancode as i32) {
@@ -618,6 +683,92 @@ mod tests {
         assert_eq!(typed_after(&again), 1);
         // Pressed with the screen long gone.
         assert_eq!(typed_after(&[(0, true), (0, false), (A_BUTTON, false)]), 1);
+    }
+
+    /// #B_RDOWN, which is B.
+    const B_BUTTON: u32 = 1 << 1;
+
+    #[test]
+    fn the_swap_trades_a_with_b_and_x_with_y_only() {
+        let traded = [(Button::East, Button::South), (Button::North, Button::West)];
+        for (a, b) in traded {
+            assert_eq!((face(a, true), face(b, true)), (b, a));
+            assert_eq!((face(a, false), face(b, false)), (a, b));
+        }
+        for button in [
+            Button::DPadUp,
+            Button::Back,
+            Button::Start,
+            Button::LeftShoulder,
+        ] {
+            assert_eq!(face(button, true), button);
+        }
+        // The table programs read by is the same trade.
+        for ((button, id), (swapped, swapped_id)) in PAD_BUTTONS.iter().zip(&SWAPPED_BUTTONS) {
+            assert_eq!((face(*button, true), *id), (*swapped, *swapped_id));
+        }
+    }
+
+    #[test]
+    fn events_and_held_buttons_swap_alike() {
+        let down = |button| Event::GamepadButtonDown {
+            timestamp: 0,
+            which: 0.into(),
+            button,
+        };
+        let up = |button| Event::GamepadButtonUp {
+            timestamp: 0,
+            which: 0.into(),
+            button,
+        };
+        let button_of = |event: &Event| match *event {
+            Event::GamepadButtonDown { button, .. } | Event::GamepadButtonUp { button, .. } => {
+                Some(button)
+            }
+            _ => None,
+        };
+        for (swap, a) in [(false, Button::East), (true, Button::South)] {
+            // What the emulator's screens take as A...
+            for mut event in [down(a), up(a)] {
+                swap_event(&mut event, swap);
+                assert_eq!(button_of(&event), Some(Button::East), "swap {swap}");
+            }
+            // ...and what BUTTON reads as A.
+            assert_eq!(held_buttons(|b| b == a, swap), A_BUTTON);
+        }
+        assert_eq!(held_buttons(|b| b == Button::East, true), B_BUTTON);
+        assert_eq!(held_buttons(|b| b == Button::West, true), 1 << 0, "X");
+        assert_eq!(held_buttons(|b| b == Button::DPadUp, true), 1 << 4);
+        let mut quit = Event::Quit { timestamp: 0 };
+        swap_event(&mut quit, true);
+        assert!(matches!(quit, Event::Quit { .. }));
+    }
+
+    /// The A that turns the swap on, in the pause menu, is held on as the
+    /// setting changes: as B now. The program sees neither, not even once
+    /// the menu has closed, until it is released.
+    #[test]
+    fn a_button_held_through_the_swap_reads_as_nothing() {
+        let east = |b| b == Button::East;
+        let none = |_| false;
+        let mut carried = Carried::default();
+        let mut sees = |held: u32, screen| carried.program_sees(holding(held), screen);
+        // Pressed for the menu, then the setting flips.
+        assert_eq!(sees(held_buttons(east, false), true).pads[0].buttons, 0);
+        assert_eq!(sees(held_buttons(east, true), true).pads[0].buttons, 0);
+        // The menu closes with the button still down.
+        for _ in 0..3 {
+            assert_eq!(sees(held_buttons(east, true), false).pads[0].buttons, 0);
+        }
+        assert_eq!(sees(held_buttons(none, true), false).pads[0].buttons, 0);
+        // Pressed again, it is B.
+        let again = sees(held_buttons(east, true), false);
+        assert_eq!(again.pads[0].buttons, B_BUTTON);
+        // Nor does it type anything for INKEY$.
+        let a = held_buttons(east, false);
+        let b = held_buttons(east, true);
+        let frames = [(a, true), (b, true), (b, false), (b, false), (0, false)];
+        assert_eq!(typed_after(&frames), 0);
     }
 
     /// With no screen in sight, a program sees what is held as ever.
