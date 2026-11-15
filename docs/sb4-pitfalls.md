@@ -202,6 +202,11 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   later.
 - `GOTO` and `GOSUB` to a label that is not there are `Undefined label` only
   when they run.
+- `GOTO` and `GOSUB` take a string `"@NAME"` or `"n:@NAME"`, with a slot n of
+  0 to 5. Another string, such as `"L"`
+  or `"6:@L"`, is `Illegal label string` (35), and a number `Type mismatch`.
+  In a `DEF`, `"@NAME"` looks only at the `DEF`'s own labels, and `"n:@NAME"`
+  is always `Undefined label`. (Not yet seen on hardware.)
 - `GOTO` or `GOSUB` with nothing after it runs the lines before it and stops
   there with `Type mismatch` (TTEST39).
 - Operations on constants are worked out when the program compiles, so `?"A"*-1`

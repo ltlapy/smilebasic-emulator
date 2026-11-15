@@ -583,6 +583,27 @@ fn slot_and_name(value: &Value) -> Result<(Option<usize>, String)> {
     Ok((slot, rest.strip_prefix('@').unwrap_or(rest).to_string()))
 }
 
+/// The program slots a label string may name.
+const LAST_SLOT: usize = 5;
+
+/// A label string for GOTO, GOSUB and RESTORE, `"@NAME"` or `"n:@NAME"`
+/// with slot n of 0 to [`LAST_SLOT`], to the slot and `"NAME"`. Anything
+/// else is `Illegal label string`.
+fn label_string(value: &Value) -> Result<(Option<usize>, String)> {
+    let text = value.clone().into_str()?;
+    let s = String::from_utf16_lossy(&text.borrow()).to_ascii_uppercase();
+    let illegal = || Error::with_detail(ErrorKind::IllegalLabelString, format!("{s:?}"));
+    let (slot, rest) = match s.split_once(':') {
+        Some((slot, rest)) => {
+            let slot = slot.trim().parse().ok().filter(|&n| n <= LAST_SLOT);
+            (Some(slot.ok_or_else(illegal)?), rest)
+        }
+        None => (None, s.as_str()),
+    };
+    let name = rest.strip_prefix('@').ok_or_else(illegal)?;
+    Ok((slot, name.to_string()))
+}
+
 /// An error in argument `arg` of `command`, named as SmileBASIC 4 does.
 #[cold]
 fn arg_error(e: Error, arg: usize, command: &str) -> Error {
@@ -1967,14 +1988,19 @@ impl Vm {
     }
 
     /// A label's slot and address: in this slot (or the DEF running), or
-    /// at the top level of another slot that EXEC has run, as `"1:@NAME"`.
+    /// at the top level of a slot that EXEC has run, as `"1:@NAME"`. In a
+    /// DEF, a label with a slot is never found (4.4.8).
     fn find_label(&self, value: &Value) -> Result<(usize, usize)> {
-        let (slot, name) = slot_and_name(value)?;
+        let (slot, name) = label_string(value)?;
         let found = match slot {
-            Some(slot) if slot != self.slot => (self.program_in(slot))
+            Some(_) if self.own_frame().is_some() => None,
+            Some(slot) if slot == self.slot => {
+                (self.program.labels.get(&name)).map(|&a| (slot, a as usize))
+            }
+            Some(slot) => (self.program_in(slot))
                 .and_then(|p| p.labels.get(&name))
                 .map(|&a| (slot, a as usize)),
-            _ => self.labels().get(&name).map(|&a| (self.slot, a as usize)),
+            None => self.labels().get(&name).map(|&a| (self.slot, a as usize)),
         };
         found.ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))
     }

@@ -1908,6 +1908,25 @@ fn labels_keep_their_case_as_strings() {
     assert_eq!(output("ON BREAK GOTO \"\":?4"), "4\n");
 }
 
+/// GOTO and GOSUB take `"@NAME"` or `"n:@NAME"` with a slot of 0 to 5.
+#[test]
+fn label_strings() {
+    let illegal = ErrorKind::IllegalLabelString;
+    assert_eq!(error("GOTO \"L\"\n@L"), (illegal, 1));
+    assert_eq!(error("GOSUB \"0:L\"\n@L"), (illegal, 1));
+    assert_eq!(error("GOTO \"6:@L\"\n@L"), (illegal, 1));
+    assert_eq!(error("GOTO \"X:@L\"\n@L"), (illegal, 1));
+    assert_eq!(error("GOTO 1").0, ErrorKind::TypeMismatch);
+    assert_eq!(error("GOTO \"@M\"\n@L").0, ErrorKind::UndefinedLabel);
+    assert_eq!(output("GOTO \"0:@L\"\n?1\n@L\n?2"), "2\n");
+    // In a DEF, only the DEF's own labels, and none with a slot.
+    assert_eq!(output("F\nDEF F\nGOTO \"@L\"\n?1\n@L\n?2\nEND"), "2\n");
+    let src = "F\n@L\nDEF F\nGOTO \"@L\"\nEND";
+    assert_eq!(error(src), (ErrorKind::UndefinedLabel, 4));
+    let src = "F\n@L\nDEF F\nGOSUB \"0:@L\"\n@L\nEND";
+    assert_eq!(error(src), (ErrorKind::UndefinedLabel, 4));
+}
+
 #[test]
 fn arrays_hold_nothing_until_their_dim_runs() {
     assert_eq!(
