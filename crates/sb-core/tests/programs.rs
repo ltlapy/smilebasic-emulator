@@ -482,6 +482,13 @@ fn duplicate_constants() {
     // CONST works out its value first, ENUM checks its name first.
     assert_eq!(at("CONST #ON=#NONE").0, ErrorKind::UndefinedConstant);
     assert_eq!(at("ENUM #ON=#NONE").0, ErrorKind::DuplicateConstant);
+    // A value not worked out as the program compiles: its own error in
+    // CONST and ENUM, a Syntax error in DATA (SmileBASIC 4.4.8).
+    let illegal = ErrorKind::IllegalConstantExpression;
+    assert_eq!(at("?1\nCONST #A=Z"), (illegal, 2, 1));
+    assert_eq!(at("CONST #A=1+LEN(Z$)").0, illegal);
+    assert_eq!(at("ENUM #A,#B=Z").0, illegal);
+    assert_eq!(at("DATA Z").0, ErrorKind::SyntaxError);
 }
 
 /// ENUM takes a real only as a whole number in the 32-bit range, as

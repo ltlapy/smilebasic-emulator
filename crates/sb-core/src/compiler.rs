@@ -285,6 +285,14 @@ impl Compiler<'_> {
             (self.line, self.col) = (stmt.line, stmt.col);
             self.constant_bytes.set(0);
             let at = |e: Error| e.at_pos(stmt.line, stmt.col);
+            // A value that is not worked out as the program compiles is a
+            // Syntax error in DATA, but its own error in CONST and ENUM.
+            let illegal = |mut e: Error| {
+                if e.kind == ErrorKind::SyntaxError {
+                    e.kind = ErrorKind::IllegalConstantExpression;
+                }
+                e
+            };
             match &stmt.kind {
                 StmtKind::Label(name) => {
                     data_labels
@@ -295,7 +303,7 @@ impl Compiler<'_> {
                 // value, and an ENUM name before.
                 StmtKind::Const(items) => {
                     for (name, span, expr) in items {
-                        let value = self.const_eval(expr).map_err(at)?;
+                        let value = self.const_eval(expr).map_err(illegal).map_err(at)?;
                         self.check_new_constant(name, *span)?;
                         self.constants.insert(name.clone(), value);
                     }
@@ -307,7 +315,7 @@ impl Compiler<'_> {
                         let n = match expr {
                             None => next,
                             Some((e, place)) => {
-                                let value = match self.const_eval(e).map_err(at)? {
+                                let value = match self.const_eval(e).map_err(illegal).map_err(at)? {
                                     Literal::Int(n) => Ok(n),
                                     Literal::Real(x) => enum_int(x),
                                     Literal::Str(_) => Err(ErrorKind::TypeMismatch),
