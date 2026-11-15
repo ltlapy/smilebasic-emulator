@@ -2001,6 +2001,10 @@ Expected but not yet seen on hardware:
     plays the sine's one cycle and then the rest of the square on each pass,
     near the square's level (2981 to 3023 against 3063) with twice the
     crossings.
+- `WAVSET` checks its reference pitch before it reads the waveform:
+  `WAVSET 224,0,0,0,0,"A",128` is `Out of range (WAVSET:7)`, not the bad
+  waveform's error. A waveform it cannot read is
+  `Illegal function call (WAVSET:6)`, as `WAVSET 224,0,0,0,0,"Z"` is. (Not yet seen on hardware.)
 - `WAVSETA` with an empty array is `Illegal function call` (TEST51, TEST52).
 - `WAVSETA`'s arguments after the array can be left off the end, but one left
   out in between is `Type mismatch` with its number, in both forms and ahead of

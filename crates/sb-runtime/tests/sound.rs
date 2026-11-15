@@ -377,6 +377,30 @@ fn wavseta_refuses_omitted_arguments() {
     }
 }
 
+/// WAVSET checks the reference pitch before the waveform, and names the
+/// waveform when it is wrong.
+#[test]
+fn wavset_checks_the_pitch_first() {
+    for (source, kind, arg) in [
+        ("WAVSET 224,0,0,0,0,\"A\",128", ErrorKind::OutOfRange, 6),
+        ("WAVSET 224,0,0,0,0,\"A\",-1", ErrorKind::OutOfRange, 6),
+        (
+            "WAVSET 224,0,0,0,0,\"Z\"",
+            ErrorKind::IllegalFunctionCall,
+            5,
+        ),
+        (
+            "WAVSET 224,0,0,0,0,\"[0\"",
+            ErrorKind::IllegalFunctionCall,
+            5,
+        ),
+        ("WAVSET 224,0,0,0,0,1", ErrorKind::TypeMismatch, 5),
+    ] {
+        let e = run_on(&mut runtime(), source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, Some(arg)), "{source}");
+    }
+}
+
 /// CHKMML reads macros that BGMPLAY would refuse for how much they copy.
 #[test]
 fn chkmml_takes_macros_bgmplay_refuses() {

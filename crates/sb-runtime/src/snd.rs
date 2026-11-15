@@ -479,12 +479,15 @@ impl Runtime {
             (Command::Sndmvol, Want::Outs(1) | Want::Value, 0) => {
                 Ok(vec![Value::Int(self.sound.master_volume())])
             }
+            // SmileBASIC 4 checks the reference pitch before it
+            // reads the waveform, and names the waveform when it is wrong.
             (Command::Wavset, Want::Outs(0), 6..=7) => {
                 let (n, envelope) = wave_head(args)?;
+                let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let hex = text(&args[5])?;
-                let illegal = || Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform");
+                let illegal =
+                    || Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform").of_arg(5);
                 if let Some(bytes) = wave_groups(&hex).ok_or_else(illegal)? {
-                    let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                     let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
                     let wave = wavset_wave(&bytes, base_note, envelope);
                     self.sound.waves.borrow_mut().define(n, wave);
@@ -503,7 +506,6 @@ impl Runtime {
                         hex.len() % 2 == 0 && [16, 32, 64, 128, 256, 512].contains(&b.len())
                     })
                     .ok_or_else(illegal)?;
-                let base_note = opt_in_range("pitch", args.get(6), 0..=127, 69)?;
                 let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
                 let wave = wavset_wave(&bytes, base_note, envelope);
                 self.sound.waves.borrow_mut().define(n, wave);
