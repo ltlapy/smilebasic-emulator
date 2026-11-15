@@ -26,7 +26,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::bytecode::{Addr, Compiled, Literal, Op, Slot, Want};
+use crate::bytecode::{Addr, Compiled, DefInfo, Literal, Op, Slot, Want};
 
 /// A number's place, for [`FastOp`]s: a variable of the running DEF or of the
 /// slot, or a constant. Constants follow the globals in the VM's table of
@@ -90,11 +90,14 @@ pub enum FastOp {
     Gosub(Addr),
     /// RETURN from a GOSUB of the running slot, or from a DEF called there.
     Return,
-    /// A call of a DEF of the running slot.
+    /// A call of a DEF of the running slot with fixed numbers of arguments
+    /// and OUTs, that fits them: `cost` is what it takes of the stack calls
+    /// share. A call that does not fit is left to `code`, which fails.
     CallDef {
         def: u32,
         argc: u8,
         want: Want,
+        cost: u32,
     },
     /// RETURN with a value from a DEF called in the running slot.
     ReturnValue,
@@ -391,7 +394,7 @@ impl Constants<'_> {
 
 /// Offers each form the code from its start can take, with the instructions
 /// each stands for.
-fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
+fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
     use FastOp as F;
     let store = |op: Option<&Op>| match op {
         Some(Op::Store(slot)) => Var::of(*slot),
@@ -428,7 +431,20 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         Op::Gosub(a) => add(F::Gosub(a), 1),
         Op::Return => add(F::Return, 1),
         Op::ReturnValue => add(F::ReturnValue, 1),
-        Op::CallDef { def, argc, want } => add(F::CallDef { def, argc, want }, 1),
+        Op::CallDef { def, argc, want } => {
+            let info = defs.get(def as usize);
+            if let Some(cost) = info.and_then(|info| crate::vm::fixed_call_cost(info, argc, want)) {
+                add(
+                    F::CallDef {
+                        def,
+                        argc,
+                        want,
+                        cost,
+                    },
+                    1,
+                );
+            }
+        }
         Op::CallHost { id, argc, want } => add(F::Host { id, argc, want }, 1),
         Op::CallBuiltin {
             id,
@@ -951,7 +967,7 @@ pub fn fuse(program: &mut Compiled) {
     for pc in (0..n).rev() {
         let mut best = slow;
         let mut least = runs[pc + 1] + ENTRY_COST;
-        forms(&code[pc..], &mut c, &mut |op, len| {
+        forms(&code[pc..], &program.defs, &mut c, &mut |op, len| {
             let after = runs[pc + len] + ENTRY_COST;
             if after < least || (after == least && len >= usize::from(best.len)) {
                 least = after;

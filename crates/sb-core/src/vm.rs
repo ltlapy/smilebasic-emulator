@@ -1530,39 +1530,25 @@ impl Vm {
         host: &mut dyn Host,
     ) -> Option<(usize, Result<Option<Status>>)> {
         loop {
-            // A call or return changes the variables `run_fused` holds, so it
-            // hands them back for that.
-            let done = match self.run_fused(program, stop) {
-                Fused::Slow => return None,
-                Fused::Call { def, argc, want } => {
-                    // The Nops of a FOR may lead the call in its entry.
-                    let nops = usize::from(program.fast[self.pc].len) - 1;
-                    self.pc += nops;
-                    self.executed += nops as u64;
-                    self.fast_call(program, def, argc, want)
-                }
-                Fused::Return => self.fast_return(program),
-                Fused::ReturnValue => self.fast_return_value(),
-                Fused::Host { id, argc, want } => {
-                    let nops = usize::from(program.fast[self.pc].len) - 1;
-                    self.pc += nops;
-                    self.executed += nops as u64;
-                    let pc = self.pc;
-                    self.executed += 1;
-                    match self.host_call(host, id, argc, want) {
-                        Ok(None) => continue,
-                        outcome => return Some((pc, outcome)),
-                    }
-                }
-            };
-            if !done {
+            let Fused::Host { id, argc, want } = self.run_fused(program, stop) else {
                 return None;
-            }
+            };
+            // The Nops of a FOR may lead the call in its entry.
+            let nops = usize::from(program.fast[self.pc].len) - 1;
+            self.pc += nops;
+            self.executed += nops as u64;
+            let pc = self.pc;
             self.executed += 1;
+            match self.host_call(host, id, argc, want) {
+                Ok(None) => {}
+                outcome => return Some((pc, outcome)),
+            }
         }
     }
 
-    /// [`Vm::run_fast`] up to a DEF call or return.
+    /// [`Vm::run_fast`] up to a host call. DEF calls and returns within the
+    /// slot are made here, as [`Vm::enter_def_on_stack`] and
+    /// [`Vm::return_op`] make them.
     #[inline(always)]
     fn run_fused(&mut self, program: &Compiled, stop: u64) -> Fused {
         let Vm {
@@ -1575,15 +1561,14 @@ impl Vm {
             slot,
             pc: at,
             executed,
+            def_calls,
             ..
         } = self;
         let slot = *slot;
-        // GOSUB and RETURN look at the running DEF too, which stays.
-        let (locals, calls, gosub_base): (&mut [Value], _, _) = match frames.last() {
-            Some(f) => (&mut locals[f.base..], f.stack_to, f.gosub_base),
-            None => (&mut [], 0, 0),
-        };
-        let vars: &mut Vars = &mut [globals, locals];
+        // The running DEF's stack taken, GOSUBs and variables, which
+        // GOSUB and RETURN look at.
+        let (mut calls, mut gosub_base, mut base) = innermost(frames, locals);
+        let mut vars: Vars = [&mut globals[..], &mut locals[base..]];
         let mut pc = *at;
         let mut left = stop.saturating_sub(*executed);
         let mut exit = Fused::Slow;
@@ -1597,15 +1582,15 @@ impl Vm {
             // An operator the entry's kind names, worked out on its own.
             macro_rules! store {
                 ($op:expr, $a:expr, $b:expr, $to:expr) => {{
-                    let Some(n) = ops::binary_numbers($op, get(vars, $a), get(vars, $b)) else {
+                    let Some(n) = ops::binary_numbers($op, get(&vars, $a), get(&vars, $b)) else {
                         break;
                     };
-                    put(at_var(vars, $to), n);
+                    put(at_var(&mut vars, $to), n);
                 }};
             }
             macro_rules! unless {
                 ($op:expr, $a:expr, $b:expr, $target:expr) => {{
-                    let Some(n) = ops::binary_numbers($op, get(vars, $a), get(vars, $b)) else {
+                    let Some(n) = ops::binary_numbers($op, get(&vars, $a), get(&vars, $b)) else {
                         break;
                     };
                     if !num_truth(n) {
@@ -1616,13 +1601,13 @@ impl Vm {
             match fast.op {
                 FastOp::Slow => break,
                 FastOp::Nop => {}
-                FastOp::Push(a) => push_copy(stack, get(vars, a)),
+                FastOp::Push(a) => push_copy(stack, get(&vars, a)),
                 FastOp::Push2(a, b) => {
-                    push_copy(stack, get(vars, a));
-                    push_copy(stack, get(vars, b));
+                    push_copy(stack, get(&vars, a));
+                    push_copy(stack, get(&vars, b));
                 }
                 FastOp::Store(to) => {
-                    let slot = at_var(vars, to);
+                    let slot = at_var(&mut vars, to);
                     let value = top(stack);
                     match *value {
                         Value::Int(n) => *slot = Value::Int(n),
@@ -1632,7 +1617,7 @@ impl Vm {
                     drop_top(stack);
                 }
                 FastOp::Move { from, to } => {
-                    copy_var(vars, from, to);
+                    copy_var(&mut vars, from, to);
                 }
                 FastOp::Swap => {
                     let n = stack.len();
@@ -1668,9 +1653,9 @@ impl Vm {
                 FastOp::On { from, count, gosub } => {
                     let selector = match from {
                         Selector::Stack => stack.last().and_then(index_number),
-                        Selector::Var(v) => index_number(get(vars, v)),
+                        Selector::Var(v) => index_number(get(&vars, v)),
                         Selector::Index(base, i) => {
-                            element1(get(vars, base), get(vars, i)).and_then(num_index)
+                            element1(get(&vars, base), get(&vars, i)).and_then(num_index)
                         }
                     };
                     let Some(selector) = selector else {
@@ -1705,11 +1690,46 @@ impl Vm {
                     gosubs.push((slot, pc + 1, data_kept.len()));
                     next = target as usize;
                 }
-                FastOp::Return => {
-                    if gosubs.len() <= gosub_base {
-                        exit = Fused::Return;
+                FastOp::Return if gosubs.len() <= gosub_base => {
+                    // Out of a DEF called in this slot, with no GOSUB of the DEF
+                    // pending: as `return_op`. Others are for `step`.
+                    let Some(frame) = frames.last() else {
+                        break;
+                    };
+                    if frame.caller != slot || frame.home != slot {
                         break;
                     }
+                    let info = &program.defs[frame.def as usize];
+                    // The OUT variables, or the one value of a function.
+                    let (start, count) = match (info.is_function, info.outs) {
+                        (true, _) => (0, 0),
+                        (false, Some(n)) => (usize::from(info.params.unwrap_or(0)), usize::from(n)),
+                        (false, None) => break,
+                    };
+                    let given = match (info.is_function, frame.want) {
+                        (true, _) => 1,
+                        (false, Want::Value) => count.min(1),
+                        (false, Want::Outs(_)) => count,
+                    };
+                    if given != frame.want.count() {
+                        break;
+                    }
+                    let frame = frames.pop().expect("checked above");
+                    stack.truncate(frame.stack_base);
+                    if info.is_function {
+                        // A bare RETURN in a function gives no value.
+                        stack.push(Value::Default);
+                    } else {
+                        let start = frame.base + start;
+                        move_values(&mut locals[start..start + given], stack);
+                    }
+                    locals.truncate(frame.base);
+                    next = frame.return_pc;
+                    drop_frame(frame);
+                    (calls, gosub_base, base) = innermost(frames, locals);
+                    vars = [&mut globals[..], &mut locals[base..]];
+                }
+                FastOp::Return => {
                     // Back into another slot, or with RESTORE "PUSH" places
                     // left: for `step`.
                     let Some(&(to_slot, back, kept)) = gosubs.last() else {
@@ -1721,13 +1741,60 @@ impl Vm {
                     gosubs.pop();
                     next = back;
                 }
-                FastOp::CallDef { def, argc, want } => {
-                    exit = Fused::Call { def, argc, want };
-                    break;
+                FastOp::CallDef {
+                    def,
+                    argc,
+                    want,
+                    cost,
+                } => {
+                    // As `enter_def_on_stack`, which the fuser has made sure
+                    // the call fits, but for the stack's room.
+                    let cost = cost as usize;
+                    if room_for(calls, gosubs.len(), data_kept.len(), cost) > STACK_SIZE {
+                        break;
+                    }
+                    let info = &program.defs[def as usize];
+                    *def_calls += 1;
+                    base = locals.len();
+                    take_args(stack, locals, usize::from(argc));
+                    start_locals(locals, base, info);
+                    frames.push(Frame {
+                        def,
+                        home: slot,
+                        caller: slot,
+                        base,
+                        args: Vec::new(),
+                        outs: Vec::new(),
+                        want,
+                        return_pc: next,
+                        gosub_base: gosubs.len(),
+                        stack_base: stack.len(),
+                        stack_to: calls + cost,
+                    });
+                    (calls, gosub_base) = (calls + cost, gosubs.len());
+                    vars = [&mut globals[..], &mut locals[base..]];
+                    next = info.entry as usize;
                 }
                 FastOp::ReturnValue => {
-                    exit = Fused::ReturnValue;
-                    break;
+                    // From a function called in this slot: as `leave_def_with`.
+                    let Some(frame) = frames.last() else {
+                        break;
+                    };
+                    if frame.caller != slot || frame.want.count() != 1 {
+                        break;
+                    }
+                    let frame = frames.pop().expect("checked above");
+                    locals.truncate(frame.base);
+                    gosubs.truncate(frame.gosub_base);
+                    let len = stack.len();
+                    if len - 1 != frame.stack_base {
+                        stack.swap(len - 1, frame.stack_base);
+                        stack.truncate(frame.stack_base + 1);
+                    }
+                    next = frame.return_pc;
+                    drop_frame(frame);
+                    (calls, gosub_base, base) = innermost(frames, locals);
+                    vars = [&mut globals[..], &mut locals[base..]];
                 }
                 FastOp::Host { id, argc, want } => {
                     exit = Fused::Host { id, argc, want };
@@ -1784,19 +1851,19 @@ impl Vm {
                     };
                     drop_top(stack);
                     drop_top(stack);
-                    put(at_var(vars, to), n);
+                    put(at_var(&mut vars, to), n);
                 }
                 FastOp::Vars { op, a, b } => {
-                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                    let Some(n) = ops::binary_numbers(op, get(&vars, a), get(&vars, b)) else {
                         break;
                     };
                     push_num(stack, n);
                 }
                 FastOp::VarsStore { op, a, b, to } => {
-                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                    let Some(n) = ops::binary_numbers(op, get(&vars, a), get(&vars, b)) else {
                         break;
                     };
-                    put(at_var(vars, to), n);
+                    put(at_var(&mut vars, to), n);
                 }
                 FastOp::AddStore(a, b, to) => store!(BinaryOp::Add, a, b, to),
                 FastOp::SubStore(a, b, to) => store!(BinaryOp::Sub, a, b, to),
@@ -1808,7 +1875,7 @@ impl Vm {
                 FastOp::UnlessGreater(a, b, t) => unless!(BinaryOp::Greater, a, b, t),
                 FastOp::UnlessGreaterEq(a, b, t) => unless!(BinaryOp::GreaterEq, a, b, t),
                 FastOp::VarsJump { op, a, b, target } => {
-                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                    let Some(n) = ops::binary_numbers(op, get(&vars, a), get(&vars, b)) else {
                         break;
                     };
                     if !num_truth(n) {
@@ -1816,7 +1883,7 @@ impl Vm {
                     }
                 }
                 FastOp::VarsJumpTrue { op, a, b, target } => {
-                    let Some(n) = ops::binary_numbers(op, get(vars, a), get(vars, b)) else {
+                    let Some(n) = ops::binary_numbers(op, get(&vars, a), get(&vars, b)) else {
                         break;
                     };
                     if num_truth(n) {
@@ -1825,17 +1892,17 @@ impl Vm {
                 }
                 FastOp::Under { op, a } => {
                     let rhs = top(stack);
-                    let Some(n) = ops::binary_numbers(op, get(vars, a), rhs) else {
+                    let Some(n) = ops::binary_numbers(op, get(&vars, a), rhs) else {
                         break;
                     };
                     put(rhs, n);
                 }
                 FastOp::UnderStore { op, a, to } => {
-                    let Some(n) = ops::binary_numbers(op, get(vars, a), top(stack)) else {
+                    let Some(n) = ops::binary_numbers(op, get(&vars, a), top(stack)) else {
                         break;
                     };
                     drop_top(stack);
-                    put(at_var(vars, to), n);
+                    put(at_var(&mut vars, to), n);
                 }
                 FastOp::Index1 => {
                     let Some(n) = on_two(stack, element1) else {
@@ -1854,31 +1921,31 @@ impl Vm {
                     put(top(stack), v);
                 }
                 FastOp::Index1Vars { base, i } => {
-                    let Some(n) = element1(get(vars, base), get(vars, i)) else {
+                    let Some(n) = element1(get(&vars, base), get(&vars, i)) else {
                         break;
                     };
                     push_num(stack, n);
                 }
                 FastOp::Index1Store { base, i, to } => {
-                    let Some(n) = element1(get(vars, base), get(vars, i)) else {
+                    let Some(n) = element1(get(&vars, base), get(&vars, i)) else {
                         break;
                     };
-                    put(at_var(vars, to), n);
+                    put(at_var(&mut vars, to), n);
                 }
                 FastOp::Index1Nested { base, inner, i } => {
-                    let Some(k) = element1(get(vars, inner), get(vars, i)) else {
+                    let Some(k) = element1(get(&vars, inner), get(&vars, i)) else {
                         break;
                     };
-                    let Some(n) = element1(get(vars, base), &Value::from(k)) else {
+                    let Some(n) = element1(get(&vars, base), &Value::from(k)) else {
                         break;
                     };
                     push_num(stack, n);
                 }
                 FastOp::StoreIndex1Nested { base, inner, i } => {
-                    let Some(k) = element1(get(vars, inner), get(vars, i)) else {
+                    let Some(k) = element1(get(&vars, inner), get(&vars, i)) else {
                         break;
                     };
-                    if !set_element1(get(vars, base), &Value::from(k), top(stack)) {
+                    if !set_element1(get(&vars, base), &Value::from(k), top(stack)) {
                         break;
                     }
                     drop_top(stack);
@@ -1904,7 +1971,7 @@ impl Vm {
                     drop_top(stack);
                 }
                 FastOp::StoreIndex1Vars { base, i } => {
-                    if !set_element1(get(vars, base), get(vars, i), top(stack)) {
+                    if !set_element1(get(&vars, base), get(&vars, i), top(stack)) {
                         break;
                     }
                     drop_top(stack);
@@ -1915,7 +1982,7 @@ impl Vm {
                     step,
                     exit,
                 } => {
-                    let more = for_continues(get(vars, var), get(vars, to), get(vars, step));
+                    let more = for_continues(get(&vars, var), get(&vars, to), get(&vars, step));
                     let Some(more) = more else { break };
                     if !more {
                         next = exit as usize;
@@ -1944,14 +2011,15 @@ impl Vm {
                         }
                         macro_rules! binary {
                             ($op:expr, $a:expr, $b:expr, $to:expr) => {{
-                                let n = ops::binary_numbers($op, get(vars, $a), get(vars, $b));
+                                let n = ops::binary_numbers($op, get(&vars, $a), get(&vars, $b));
                                 let Some(n) = n else { fail!() };
-                                put(at_var(vars, $to), n);
+                                put(at_var(&mut vars, $to), n);
                             }};
                         }
                         macro_rules! jump {
                             ($op:expr, $j:expr) => {{
-                                let n = ops::binary_numbers($op, get(vars, $j.a), get(vars, $j.b));
+                                let n =
+                                    ops::binary_numbers($op, get(&vars, $j.a), get(&vars, $j.b));
                                 let Some(n) = n else { fail!() };
                                 if num_truth(n) == $j.when {
                                     next = $j.target as usize;
@@ -1980,33 +2048,33 @@ impl Vm {
                             M::GreaterEq(a, b, to) => binary!(B::GreaterEq, a, b, to),
                             M::Binary(op, a, b, to) => binary!(op, a, b, to),
                             M::Neg(a, to) => {
-                                let n = ops::unary_number(UnaryOp::Neg, get(vars, a));
+                                let n = ops::unary_number(UnaryOp::Neg, get(&vars, a));
                                 let Some(n) = n else { fail!() };
-                                put(at_var(vars, to), n);
+                                put(at_var(&mut vars, to), n);
                             }
                             M::Unary(op, a, to) => {
-                                let Some(n) = ops::unary_number(op, get(vars, a)) else {
+                                let Some(n) = ops::unary_number(op, get(&vars, a)) else {
                                     fail!();
                                 };
-                                put(at_var(vars, to), n);
+                                put(at_var(&mut vars, to), n);
                             }
                             M::Index1 { base, i, to } => {
-                                let Some(n) = element1(get(vars, base), get(vars, i)) else {
+                                let Some(n) = element1(get(&vars, base), get(&vars, i)) else {
                                     fail!();
                                 };
-                                put(at_var(vars, to), n);
+                                put(at_var(&mut vars, to), n);
                             }
                             M::Index2 { base, i, j, to } => {
-                                let n = element2(get(vars, base), get(vars, i), get(vars, j));
+                                let n = element2(get(&vars, base), get(&vars, i), get(&vars, j));
                                 let Some(n) = n else { fail!() };
-                                put(at_var(vars, to), n);
+                                put(at_var(&mut vars, to), n);
                             }
                             M::Builtin { id, argc, args, to } => {
                                 let builtins::Kind::Function(f) = builtins::get(id).kind else {
                                     unreachable!("only functions are fused");
                                 };
                                 let result = match argc {
-                                    1 => f(std::slice::from_ref(get(vars, args))),
+                                    1 => f(std::slice::from_ref(get(&vars, args))),
                                     n => {
                                         let at = args.index();
                                         f(&vars[args.table()][at..at + usize::from(n)])
@@ -2017,27 +2085,28 @@ impl Vm {
                                     Ok(Value::Real(x)) => Num::Real(x),
                                     _ => fail!(),
                                 };
-                                put(at_var(vars, to), n);
+                                put(at_var(&mut vars, to), n);
                             }
                             M::Move { from, to } => {
-                                let Some(n) = number(get(vars, from)) else {
+                                let Some(n) = number(get(&vars, from)) else {
                                     fail!();
                                 };
-                                put(at_var(vars, to), n);
+                                put(at_var(&mut vars, to), n);
                             }
                             M::StoreIndex1 { value, base, i } => {
-                                if !set_element1(get(vars, base), get(vars, i), get(vars, value)) {
+                                if !set_element1(get(&vars, base), get(&vars, i), get(&vars, value))
+                                {
                                     fail!();
                                 }
                             }
                             M::StoreIndex2 { value, base, i, j } => {
-                                let (b, v) = (get(vars, base), get(vars, value));
-                                if !set_element2(b, get(vars, i), get(vars, j), v) {
+                                let (b, v) = (get(&vars, base), get(&vars, value));
+                                if !set_element2(b, get(&vars, i), get(&vars, j), v) {
                                     fail!();
                                 }
                             }
                             M::JumpIfFalse { cond, target } => {
-                                let Some(yes) = truth(get(vars, cond)) else {
+                                let Some(yes) = truth(get(&vars, cond)) else {
                                     fail!();
                                 };
                                 if !yes {
@@ -2045,7 +2114,7 @@ impl Vm {
                                 }
                             }
                             M::JumpIfTrue { cond, target } => {
-                                let Some(yes) = truth(get(vars, cond)) else {
+                                let Some(yes) = truth(get(&vars, cond)) else {
                                     fail!();
                                 };
                                 if yes {
@@ -2060,13 +2129,13 @@ impl Vm {
                             M::JumpGreaterEq(j) => jump!(B::GreaterEq, j),
                             M::Commit { to, charged } => done = (to as usize, u64::from(charged)),
                             M::Truthy(a, to) => {
-                                let Some(yes) = truth(get(vars, a)) else {
+                                let Some(yes) = truth(get(&vars, a)) else {
                                     fail!();
                                 };
-                                put(at_var(vars, to), Num::Int(i32::from(yes)));
+                                put(at_var(&mut vars, to), Num::Int(i32::from(yes)));
                             }
                             M::Push(a) => {
-                                let Some(n) = number(get(vars, a)) else {
+                                let Some(n) = number(get(&vars, a)) else {
                                     fail!();
                                 };
                                 push_num(stack, n);
@@ -2092,13 +2161,13 @@ impl Vm {
                     // steps below do on them, each value read once.
                     if apart
                         && let (Value::Int(v), Value::Int(s0)) =
-                            (get(vars, var), get(vars, step_slot))
+                            (get(&vars, var), get(&vars, step_slot))
                         && let Some(n) = v.checked_add(*s0)
-                        && let (&Value::Int(s), &Value::Int(t)) = (get(vars, step), get(vars, to))
+                        && let (&Value::Int(s), &Value::Int(t)) = (get(&vars, step), get(&vars, to))
                     {
-                        put(at_var(vars, var), Num::Int(n));
-                        put(at_var(vars, step_slot), Num::Int(s));
-                        put(at_var(vars, to_slot), Num::Int(t));
+                        put(at_var(&mut vars, var), Num::Int(n));
+                        put(at_var(&mut vars, step_slot), Num::Int(s));
+                        put(at_var(&mut vars, to_slot), Num::Int(t));
                         if !(if s >= 0 { n <= t } else { n >= t }) {
                             next = exit as usize;
                         }
@@ -2107,13 +2176,13 @@ impl Vm {
                         continue;
                     }
                     let n =
-                        ops::binary_numbers(BinaryOp::Add, get(vars, var), get(vars, step_slot));
+                        ops::binary_numbers(BinaryOp::Add, get(&vars, var), get(&vars, step_slot));
                     let Some(n) = n else { break };
-                    put(at_var(vars, var), n);
-                    copy_var(vars, step, step_slot);
-                    copy_var(vars, to, to_slot);
+                    put(at_var(&mut vars, var), n);
+                    copy_var(&mut vars, step, step_slot);
+                    copy_var(&mut vars, to, to_slot);
                     let more =
-                        for_continues(get(vars, var), get(vars, to_slot), get(vars, step_slot));
+                        for_continues(get(&vars, var), get(&vars, to_slot), get(&vars, step_slot));
                     let Some(more) = more else {
                         // All but the test has run, and that must not.
                         pc += size - FOR_TEST_LEN;
@@ -3513,29 +3582,6 @@ impl Vm {
         Ok(())
     }
 
-    /// [`Vm::enter_def_on_stack`] for [`Vm::run_fast`], from a DEF of the
-    /// running slot. False where that would fail or the DEF is declared with
-    /// `*`, and nothing done.
-    fn fast_call(&mut self, program: &Compiled, def: u32, argc: u8, want: Want) -> bool {
-        let info = &program.defs[def as usize];
-        let (Some(params), Some(outs)) = (info.params, info.outs) else {
-            return false;
-        };
-        // The checks of `enter_def_on_stack` on fixed numbers of each.
-        let fits = match want {
-            Want::Value => (info.is_function || outs > 0) && outs <= 1,
-            Want::Outs(n) if info.is_function => n == 1,
-            Want::Outs(n) => outs == n,
-        };
-        let argc = usize::from(argc);
-        let cost = call_cost(info, argc);
-        if usize::from(params) != argc || !fits || !self.stack_has_room(cost) {
-            return false;
-        }
-        self.push_frame(info, def, argc, want, self.slot, cost);
-        true
-    }
-
     /// Starts a call of DEF `def` of the running slot, `info`, which has room,
     /// taking its arguments off the stack.
     #[inline(always)]
@@ -3552,30 +3598,15 @@ impl Vm {
         let at = self.stack.len() - argc;
         let stack_to = self.frames.last().map_or(0, |f| f.stack_to) + cost;
         let base = self.locals.len();
-        let count = info.locals.len();
-        self.locals.reserve(count);
         // Arguments of a `*` DEF are kept apart from its variables.
         let variadic_args = match info.params {
             Some(_) => {
-                move_values(&mut self.stack[at..], &mut self.locals);
-                // SAFETY: what is left from `at` on is numbers, which need no
-                // dropping.
-                unsafe { self.stack.set_len(at) };
+                take_args(&mut self.stack, &mut self.locals, argc);
                 Vec::new()
             }
             None => self.stack.split_off(at),
         };
-        // OUT variables hold nothing until set: a DEF that never sets
-        // one gives the omitted value, as SmileBASIC Debugger's EMPTY()
-        // relies on.
-        let first_out = usize::from(info.params.unwrap_or(0));
-        let out_end = first_out + usize::from(info.outs.unwrap_or(0));
-        for i in self.locals.len() - base..count {
-            self.locals.push(match i < out_end {
-                true => Value::Default,
-                false => initial_value(&info.locals[i]),
-            });
-        }
+        start_locals(&mut self.locals, base, info);
         let outs = match info.outs {
             None => vec![Value::Default; want.count()],
             Some(_) => Vec::new(),
@@ -3678,69 +3709,6 @@ impl Vm {
         self.switch_to(caller, host);
         Ok(back)
     }
-
-    /// [`Vm::return_op`] out of a DEF, for [`Vm::run_fast`]: back into the
-    /// running slot, with no GOSUB of the DEF pending. False otherwise, and
-    /// nothing done.
-    fn fast_return(&mut self, program: &Compiled) -> bool {
-        let Some(frame) = self.frames.last() else {
-            return false;
-        };
-        if frame.caller != self.slot || self.gosubs.len() > frame.gosub_base {
-            return false;
-        }
-        let info = &program.defs[frame.def as usize];
-        // The OUT variables, or the one value of a function.
-        let (start, count) = match (info.is_function, info.outs) {
-            (true, _) => (0, 0),
-            (false, Some(n)) => (usize::from(info.params.unwrap_or(0)), usize::from(n)),
-            (false, None) => return false,
-        };
-        let given = match (info.is_function, frame.want) {
-            (true, _) => 1,
-            (false, Want::Value) => count.min(1),
-            (false, Want::Outs(_)) => count,
-        };
-        if given != frame.want.count() {
-            return false;
-        }
-        let frame = self.frames.pop().expect("checked above");
-        self.stack.truncate(frame.stack_base);
-        if info.is_function {
-            // A bare RETURN in a function gives no value.
-            self.stack.push(Value::Default);
-        } else {
-            let start = frame.base + start;
-            move_values(&mut self.locals[start..start + given], &mut self.stack);
-        }
-        self.locals.truncate(frame.base);
-        self.pc = frame.return_pc;
-        drop_frame(frame);
-        true
-    }
-
-    /// [`Vm::leave_def_with`] for [`Vm::run_fast`]: from a function called in
-    /// the running slot. False otherwise, and nothing done.
-    fn fast_return_value(&mut self) -> bool {
-        let Some(frame) = self.frames.last() else {
-            return false;
-        };
-        if frame.caller != self.slot || frame.want.count() != 1 {
-            return false;
-        }
-        let frame = self.pop_frame().expect("checked above");
-        self.gosubs.truncate(frame.gosub_base);
-        let len = self.stack.len();
-        if len - 1 == frame.stack_base {
-            // The value stays where it is.
-        } else {
-            self.stack.swap(len - 1, frame.stack_base);
-            self.stack.truncate(frame.stack_base + 1);
-        }
-        self.pc = frame.return_pc;
-        drop_frame(frame);
-        true
-    }
 }
 
 /// Drops a frame that has ended, without a call for the lists most frames
@@ -3756,18 +3724,68 @@ fn drop_frame(frame: Frame) {
 enum Fused {
     /// At an entry for `step`, or with the budget spent.
     Slow,
-    Call {
-        def: u32,
-        argc: u8,
-        want: Want,
-    },
-    Return,
-    ReturnValue,
     Host {
         id: u32,
         argc: u8,
         want: Want,
     },
+}
+
+/// What a call of `info` with `argc` arguments, wanting `want`, takes of
+/// [`STACK_SIZE`], when the DEF has fixed numbers of arguments and OUTs and
+/// the call fits them as [`Vm::enter_def_on_stack`] checks. `None` for the
+/// others, which the fuser leaves to it.
+pub(crate) fn fixed_call_cost(info: &DefInfo, argc: u8, want: Want) -> Option<u32> {
+    let (Some(params), Some(outs)) = (info.params, info.outs) else {
+        return None;
+    };
+    let fits = match want {
+        Want::Value => (info.is_function || outs > 0) && outs <= 1,
+        Want::Outs(n) if info.is_function => n == 1,
+        Want::Outs(n) => outs == n,
+    };
+    match params == argc && fits {
+        true => u32::try_from(call_cost(info, argc.into())).ok(),
+        false => None,
+    }
+}
+
+/// The innermost DEF call's stack taken, first GOSUB and first variable, or
+/// the top level's.
+#[inline(always)]
+fn innermost(frames: &[Frame], locals: &[Value]) -> (usize, usize, usize) {
+    match frames.last() {
+        Some(f) => (f.stack_to, f.gosub_base, f.base),
+        None => (0, 0, locals.len()),
+    }
+}
+
+/// Moves the `argc` arguments on top of the stack on to the end of a call's
+/// variables.
+#[inline(always)]
+fn take_args(stack: &mut Vec<Value>, locals: &mut Vec<Value>, argc: usize) {
+    let at = stack.len() - argc;
+    move_values(&mut stack[at..], locals);
+    // SAFETY: what is left from `at` on is numbers, which need no dropping.
+    unsafe { stack.set_len(at) };
+}
+
+/// Gives a call's variables after its arguments, from `base` on, their
+/// starting values. OUT variables hold nothing until set: a DEF that never
+/// sets one gives the omitted value, as SmileBASIC Debugger's EMPTY() relies
+/// on.
+#[inline(always)]
+fn start_locals(locals: &mut Vec<Value>, base: usize, info: &DefInfo) {
+    let count = info.locals.len();
+    locals.reserve(count - (locals.len() - base));
+    let first_out = usize::from(info.params.unwrap_or(0));
+    let out_end = first_out + usize::from(info.outs.unwrap_or(0));
+    for i in locals.len() - base..count {
+        locals.push(match i < out_end {
+            true => Value::Default,
+            false => initial_value(&info.locals[i]),
+        });
+    }
 }
 
 /// How much of [`STACK_SIZE`] a call of `info` takes.

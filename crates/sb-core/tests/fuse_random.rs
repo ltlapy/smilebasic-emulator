@@ -72,11 +72,41 @@ fn element(r: &mut Rng, depth: u32) -> String {
 }
 
 /// Function DEFs [`DEFS_SOURCE`] has, of one argument.
-const DEFS: &[&str] = &["SQ", "LC", "TS", "OU"];
+const DEFS: &[&str] = &["SQ", "LC", "TS", "OU", "GS", "GR", "GC"];
 
 /// DEFs the programs call: functions, commands, OUT variables, a string
-/// local, a recursive one, a host command inside, and errors on strings.
+/// local, a recursive one, a host command inside, GOSUBs inside and returns
+/// from them, and errors on strings.
 const DEFS_SOURCE: &str = "\
+DEF ONE()
+ RETURN 1
+END
+DEF GS(V)
+ GOSUB @IN
+ RETURN V+1
+@IN
+ A=A+V
+ RETURN
+END
+DEF GR(V)
+ GOSUB @IN
+ RETURN 0
+@IN
+ RETURN V*2
+END
+DEF GC(V)
+ VAR R
+ GT V OUT R
+ RETURN R
+END
+DEF GT X OUT Y
+ GOSUB @IN
+ Y=X
+ RETURN
+@IN
+ Y=X+1:RETURN
+END
+
 DEF SQ(V)
  RETURN V*V
 END
@@ -196,8 +226,11 @@ fn program(r: &mut Rng) -> String {
     let mut s = setup(r);
     let body: Vec<String> = (0..1 + r.below(3)).map(|_| statement(r)).collect();
     let body = body.join("\n");
-    match r.below(6) {
+    match r.below(8) {
         0 => s += &format!("FOR I=0 TO 2\n{body}\nNEXT\n"),
+        // Calls that STEP makes, which the FOR's Nop leads.
+        5 => s += &format!("FOR I=0 TO 3 STEP ONE()\n{body}\nNEXT\n"),
+        6 => s += &format!("FOR I=0 TO 9 STEP GET()\n{body}\nNEXT\n"),
         1 => s += &format!("DEF F I\n{body}\nEND\nFOR Q=0 TO 2:F Q:NEXT\n"),
         2 => s += &format!("DEF F(I)\n{body}\nRETURN A+I\nEND\nFOR Q=0 TO 2:B=F(Q)+F(Q+1):NEXT\n"),
         3 => s += &format!("DEF F I OUT Z\n{body}\nZ=I\nEND\nFOR Q=0 TO 2:F Q OUT C:NEXT\n"),
