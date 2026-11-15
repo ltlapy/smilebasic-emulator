@@ -2598,6 +2598,12 @@ Expected but not yet seen on hardware:
   function, `S$=LOADV("DAT:F")` of a DAT file of 3 values gives a string of 3
   characters and `RESULT` 1 (TEST69). `LOADV "GRP:X",S$` is the same
   `Type mismatch (LOADV:2)` (TEST71).
+- Other wrong counts depend on the type too. A `DAT:` or `GRP:` name with two
+  or more OUT variables, `LOADV "DAT:X" OUT A,B`, is `Wrong number of OUT
+  arguments`, error 53, and with no OUT variable and one argument error 52. A
+  `TXT:` name with one argument and no OUT variable, `LOADV "TXT:X"`, or with
+  two, is 53. (Not yet seen
+  on hardware.)
 - `LOADV` of a `JPG:` or `PNG:` name, as a function and as a command, and of
   a name without a type in either form, is `File type mismatch (LOADV)`, error
   77, with no number (TEST71; the `PNG:` function form in TEST72).

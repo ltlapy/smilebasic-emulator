@@ -330,11 +330,23 @@ impl Runtime {
             }
             // A name it cannot load is refused before the count of
             // arguments and OUT variables.
+            // Then a TXT file wants one argument and one OUT variable, the
+            // argument count first; DAT and GRP files the OUT count first,
+            // 0 or 1.
             (Command::Loadv, _, [spec, ..]) => {
                 let spec = checking(spec, || str_arg(spec))?;
                 check_file_name(&spec, 0)?;
                 value_type(&spec)?;
-                Err(no_form())
+                let outs = want.count();
+                let out_error = match read_kind(&spec) {
+                    Some(FileKind::Txt) => args.len() == 1 && outs != 1,
+                    _ => outs > 1,
+                };
+                match out_error {
+                    true => Err(ErrorKind::WrongNumberOfOutArguments.into()),
+                    // One OUT variable runs as the function.
+                    false => Err(no_form()),
+                }
             }
             (Command::Savev, Want::Outs(0), [spec, value]) => {
                 let spec = checking(spec, || str_arg(spec))?;

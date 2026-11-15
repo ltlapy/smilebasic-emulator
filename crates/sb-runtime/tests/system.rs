@@ -54,6 +54,27 @@ fn loadv_checks_the_name_first() {
     }
 }
 
+/// Then a TXT file counts the arguments first, and DAT and GRP files the
+/// OUT variables.
+#[test]
+fn loadv_counts_by_the_files_type() {
+    const ARGS: ErrorKind = ErrorKind::WrongNumberOfArguments;
+    const OUTS: ErrorKind = ErrorKind::WrongNumberOfOutArguments;
+    for (source, kind) in [
+        ("LOADV \"DAT:X\" OUT A,B", OUTS),
+        ("LOADV \"GRP:X\",A OUT B,C", OUTS),
+        ("LOADV \"DAT:X\"", ARGS),
+        ("Q=LOADV(\"DAT:X\",1)", ARGS),
+        ("LOADV \"TXT:X\" OUT A,B", OUTS),
+        ("LOADV \"TXT:X\"", OUTS),
+        ("LOADV \"TXT:X\",1 OUT A,B", ARGS),
+        ("Q$=LOADV(\"TXT:X\",1)", ARGS),
+    ] {
+        let e = run(source).expect_err(source);
+        assert_eq!(e.kind, kind, "{source}");
+    }
+}
+
 #[test]
 fn uistate_numbers_stop_at_5() {
     assert!(run("?UISTATE(5)").is_ok());
