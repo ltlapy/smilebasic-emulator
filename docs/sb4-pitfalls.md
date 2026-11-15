@@ -681,6 +681,14 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   number ends it: in `"..",5,"..",0` the strings after the 5 are not played.
 - `RESTORE @LABEL` to a label that is not there is `Undefined label` only when
   it runs.
+- A label in a `DEF` belongs to that `DEF`, for `RESTORE` as for `GOTO`.
+  `RESTORE @L` and `RESTORE "@L"` at top
+  level look only at top-level labels; in a `DEF` they look at the `DEF`'s
+  labels, then the top level's, a later one included. `RESTORE "n:@L"` looks
+  at the top level of slot n, also from a `DEF`. Another string than
+  `"PUSH"`, `"POP"` or a label, such as `"L"` or `"6:@L"`, is
+  `Illegal label string`. `COPY` from `"@L"` looks as `RESTORE "@L"` does.
+  (Not yet seen on hardware.)
 - There is one `READ` place for all slots. A `READ` in another slot's
   `COMMON DEF` reads on from the running program's place: a program in slot 3
   with no DATA, after `EXEC 1`, calling a `COMMON DEF` of slot 1 that `READ`s

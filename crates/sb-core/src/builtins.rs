@@ -21,6 +21,8 @@ pub enum Kind {
 /// The program's DATA and READ's place in it, for [`Kind::Data`].
 pub struct Data<'a> {
     pub(crate) program: &'a Compiled,
+    /// The DEF of `program` running, whose labels come first.
+    pub(crate) def: Option<u32>,
     pub(crate) pos: &'a mut usize,
     /// Whether a RESTORE has moved READ's place into `program`.
     pub(crate) moved: bool,
@@ -30,10 +32,11 @@ impl Data<'_> {
     /// RESTORE to a `"@label"`.
     pub fn restore(&mut self, label: &Value) -> Result<()> {
         let name = crate::vm::label_name(label)?;
-        let pos = self
-            .program
-            .data_labels
-            .get(&name)
+        let own = (self.def)
+            .and_then(|d| self.program.def_data_labels.get(d as usize))
+            .and_then(|labels| labels.get(&name));
+        let pos = own
+            .or_else(|| self.program.data_labels.get(&name))
             .ok_or_else(|| Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}")))?;
         *self.pos = *pos as usize;
         self.moved = true;

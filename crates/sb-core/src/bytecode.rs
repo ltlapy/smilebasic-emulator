@@ -325,8 +325,11 @@ pub struct Compiled {
     pub defs: Vec<DefInfo>,
     pub def_names: HashMap<String, u32>,
     pub data: Vec<Literal>,
-    /// DATA position each label refers to for RESTORE.
+    /// DATA position each top-level label refers to for RESTORE.
     pub data_labels: HashMap<String, u32>,
+    /// The same for the labels in each DEF, by DEF index: a DEF's labels
+    /// are its own, as for GOTO.
+    pub def_data_labels: Vec<HashMap<String, u32>>,
     /// OPTION DEFINT stands somewhere in the program (see
     /// [`VarInfo::int`]).
     pub default_int: bool,

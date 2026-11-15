@@ -344,11 +344,10 @@ impl Compiler<'_> {
             }
         }
         self.pending.extend(failed);
-        let mut data_labels = HashMap::new();
-        if let Err(failed) = self.walk_source_order(&program.stmts, &mut data_labels) {
+        self.out.def_data_labels = vec![HashMap::new(); self.out.defs.len()];
+        if let Err(failed) = self.walk_source_order(&program.stmts, None) {
             self.pending.push(failed);
         }
-        self.out.data_labels = data_labels;
         self.out.default_int = self.defint_at.is_some();
         if self.defint_at.is_some() {
             let top = program
@@ -384,25 +383,30 @@ impl Compiler<'_> {
         strict_at
     }
 
-    /// CONST/ENUM definitions and DATA, in source order across DEFs, up
-    /// to the first statement with an error, which it gives.
+    /// CONST/ENUM definitions, DATA and its labels, in source order across
+    /// DEFs, up to the first statement with an error, which it gives.
+    /// `def` is the index of the DEF `stmts` are in.
     fn walk_source_order(
         &mut self,
         stmts: &[Stmt],
-        data_labels: &mut HashMap<String, u32>,
+        def: Option<u32>,
     ) -> std::result::Result<(), (*const Stmt, Error)> {
         for stmt in stmts {
-            self.walk_stmt(stmt, data_labels)
+            self.walk_stmt(stmt, def)
                 .map_err(|e| (stmt as *const Stmt, e))?;
+            let def = match &stmt.kind {
+                StmtKind::Def(d) => self.out.def_names.get(&call_name(&d.name)).copied(),
+                _ => def,
+            };
             for body in child_blocks(&stmt.kind) {
-                self.walk_source_order(body, data_labels)?;
+                self.walk_source_order(body, def)?;
             }
         }
         Ok(())
     }
 
     /// [`Self::walk_source_order`] of `stmt` without the blocks in it.
-    fn walk_stmt(&mut self, stmt: &Stmt, data_labels: &mut HashMap<String, u32>) -> Result<()> {
+    fn walk_stmt(&mut self, stmt: &Stmt, def: Option<u32>) -> Result<()> {
         (self.line, self.col) = (stmt.line, stmt.col);
         self.constant_bytes.set(0);
         let at = |e: Error| e.at_pos(stmt.line, stmt.col);
@@ -416,7 +420,11 @@ impl Compiler<'_> {
         };
         match &stmt.kind {
             StmtKind::Label(name) => {
-                data_labels
+                let labels = match def {
+                    Some(d) => &mut self.out.def_data_labels[d as usize],
+                    None => &mut self.out.data_labels,
+                };
+                labels
                     .entry(name.clone())
                     .or_insert(self.out.data.len() as u32);
             }
@@ -1143,9 +1151,13 @@ impl Compiler<'_> {
                     self.store(t)?;
                 }
             }
-            // A label that is not there is an error only when the RESTORE
-            // runs.
-            StmtKind::Restore(Target::Label(l)) => match self.out.data_labels.get(l) {
+            // A DEF's own labels first, then the top level's, all known by
+            // now. A label that is not there is an error only when the
+            // RESTORE runs.
+            StmtKind::Restore(Target::Label(l)) => match (self.def.as_ref())
+                .and_then(|d| self.out.def_data_labels[d.index as usize].get(l))
+                .or_else(|| self.out.data_labels.get(l))
+            {
                 Some(&pos) => _ = self.emit(Op::Restore(pos)),
                 None => {
                     let name = self.string_const(format!("@{l}").encode_utf16().collect());

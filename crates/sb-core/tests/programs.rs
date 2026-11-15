@@ -1951,6 +1951,42 @@ fn label_strings() {
     assert_eq!(error(src), (ErrorKind::UndefinedLabel, 4));
 }
 
+/// RESTORE finds a DEF's labels only in that DEF, and from a DEF falls
+/// back to the top level.
+#[test]
+fn restore_label_scope() {
+    let undefined = ErrorKind::UndefinedLabel;
+    let src = "DEF F\n@L\nDATA 1\nEND\n@L\nDATA 2\nRESTORE @L:READ A:?A";
+    assert_eq!(output(src), "2\n");
+    let src = "RESTORE @L:READ A\nDEF F\n@L\nDATA 1\nEND";
+    assert_eq!(error(src), (undefined, 1));
+    let src = "RESTORE \"@L\":READ A\nDEF F\n@L\nDATA 1\nEND";
+    assert_eq!(error(src), (undefined, 1));
+    // In a DEF, its own label first, then the top level's, also one
+    // defined later.
+    let src = "@L\nDATA 2\nF\nDEF F\nRESTORE @L:READ A:?A\n@L\nDATA 1\nEND";
+    assert_eq!(output(src), "1\n");
+    let src = "F\nDEF F\nRESTORE @M:READ A:?A\nEND\n@M\nDATA 3";
+    assert_eq!(output(src), "3\n");
+    let src = "F\nDEF F\nRESTORE \"@L\":READ A:?A\n@L\nDATA 1\nEND\n@L\nDATA 2";
+    assert_eq!(output(src), "1\n");
+    let src = "F\nDEF F\nRESTORE \"@M\":READ A:?A\nEND\n@M\nDATA 3";
+    assert_eq!(output(src), "3\n");
+    let src = "F\nDEF F\nRESTORE \"0:@L\":READ A:?A\n@L\nDATA 1\nEND\n@L\nDATA 2";
+    assert_eq!(output(src), "2\n");
+    assert_eq!(error("F\nDEF F\nRESTORE @N\nEND"), (undefined, 3));
+    // A label string is parsed as GOTO's is.
+    let illegal = ErrorKind::IllegalLabelString;
+    assert_eq!(error("RESTORE \"L\"\n@L\nDATA 1"), (illegal, 1));
+    assert_eq!(error("RESTORE \"6:@L\"\n@L\nDATA 1"), (illegal, 1));
+    assert_eq!(output("RESTORE \"PUSH\":RESTORE \"POP\":?1"), "1\n");
+    // COPY from DATA looks the same way.
+    let src = "F\nDEF F\nDIM A[1]:COPY A,\"@L\":?A[0]\n@L\nDATA 7\nEND\n@L\nDATA 8";
+    assert_eq!(output(src), "7\n");
+    let src = "DIM A[1]:COPY A,\"@L\"\nDEF F\n@L\nDATA 7\nEND";
+    assert_eq!(error(src).0, undefined);
+}
+
 #[test]
 fn arrays_hold_nothing_until_their_dim_runs() {
     assert_eq!(

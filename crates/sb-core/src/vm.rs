@@ -2998,20 +2998,29 @@ impl Vm {
                 if !self.restore_special(&target)? {
                     // "n:@LABEL" sends READ to another slot's DATA, as
                     // FINITI does to read models from the program that
-                    // calls it.
-                    // A slot EXEC has not run gives Undefined label.
-                    let (slot, name) = slot_and_name(&target)?;
+                    // calls it, also from a DEF: the top level of that
+                    // slot. A slot EXEC has not run gives Undefined label.
+                    // "@LABEL" looks in the DEF running, then the top level.
+                    let (slot, name) = label_string(&target)?;
                     let from = slot
                         .filter(|&s| s != self.slot)
                         .map(|s| self.program_in(s).cloned());
                     let undefined =
                         || Error::with_detail(ErrorKind::UndefinedLabel, format!("@{name}"));
+                    let own = match slot {
+                        None => self.own_frame().and_then(|f| {
+                            self.program.def_data_labels.get(f.def as usize)?.get(&name)
+                        }),
+                        Some(_) => None,
+                    };
                     let from = match from {
                         Some(None) => return Err(undefined()),
                         Some(Some(p)) => p,
                         None => Rc::clone(&self.program),
                     };
-                    let pos = *from.data_labels.get(&name).ok_or_else(undefined)?;
+                    let pos = *own
+                        .or_else(|| from.data_labels.get(&name))
+                        .ok_or_else(undefined)?;
                     (self.data_pos, self.data_from) = (pos as usize, from);
                 }
             }
@@ -3139,8 +3148,10 @@ impl Vm {
             Kind::Function(f) => vec![f(args).map_err(|e| builtin_error(e, b.name, args))?],
             Kind::Command(f) => f(args, outs).map_err(|e| builtin_error(e, b.name, args))?,
             Kind::Data(f) => {
+                let def = self.own_frame().map(|f| f.def);
                 let mut data = builtins::Data {
                     program,
+                    def,
                     pos: &mut self.data_pos,
                     moved: false,
                 };
