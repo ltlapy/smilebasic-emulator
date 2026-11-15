@@ -1044,7 +1044,8 @@ pub(crate) fn illegal() -> Error {
 }
 
 /// No form of a command takes the arguments given: SmileBASIC 4 says
-/// Wrong number of arguments, a command used as a function too.
+/// Wrong number of arguments, a command used as a function too, or Wrong
+/// number of OUT arguments as [`counts`] has it for the command.
 pub(crate) fn no_form() -> Error {
     ErrorKind::WrongNumberOfArguments.into()
 }
@@ -1066,6 +1067,279 @@ pub(crate) fn command_error(e: Error, name: &str, args: &[Value]) -> Error {
 
 fn is_no_form(e: &Error) -> bool {
     e.kind == ErrorKind::WrongNumberOfArguments && e.detail.is_none()
+}
+
+/// How SmileBASIC 4 tells a call no form takes: `Wrong number of OUT
+/// arguments` (53) when its argument count is one of `args` and its OUT
+/// count none of `outs`, `Wrong number of arguments` (52) otherwise. Each
+/// command's handler checks the two counts itself, in its own order. Most
+/// check the OUT count first ([`Counts::outs`]), some the argument count
+/// ([`Counts::args`]), and some sprite commands want a sprite before the
+/// OUT count. Bit n of a mask stands for n, bit 31 for 31 and more.
+#[derive(Clone, Copy)]
+struct Counts {
+    args: u32,
+    outs: u32,
+}
+
+const fn mask(counts: &[u8]) -> u32 {
+    let mut m = 0;
+    let mut i = 0;
+    while i < counts.len() {
+        m |= 1 << counts[i];
+        i += 1;
+    }
+    m
+}
+
+const fn at_least(n: u8) -> u32 {
+    u32::MAX << n
+}
+
+impl Counts {
+    /// Never 53.
+    const NONE: Counts = Counts { args: 0, outs: 0 };
+
+    /// The OUT count is checked first: any but `outs` is 53.
+    const fn outs(outs: &[u8]) -> Counts {
+        Counts::new(u32::MAX, outs)
+    }
+
+    /// The argument count is checked first: with one of `args`, a wrong OUT
+    /// count is 53.
+    const fn args(args: &[u8]) -> Counts {
+        Counts::new(mask(args), &[])
+    }
+
+    const fn new(args: u32, outs: &[u8]) -> Counts {
+        Counts {
+            args,
+            outs: mask(outs),
+        }
+    }
+
+    fn out_error(self, args: usize, outs: usize) -> bool {
+        let bit = |n: usize| 1u32 << n.min(31);
+        self.args & bit(args) != 0 && self.outs & bit(outs) == 0
+    }
+}
+
+/// The counts SmileBASIC 4's handler for `command` checks (4.4.8).
+fn counts(command: Command) -> Counts {
+    match command {
+        Command::Prgedit => Counts::outs(&[0, 1, 2]),
+        Command::Envstat => Counts::outs(&[0, 1, 3, 6]),
+        Command::Attr => Counts::outs(&[0, 1, 3]),
+        Command::Backcolor
+        | Command::Beep
+        | Command::Bgmvar
+        | Command::Clipboard
+        | Command::Color
+        | Command::Dialog
+        | Command::Envfocus
+        | Command::Fade
+        | Command::Gcolor
+        | Command::Gputchrp
+        | Command::Gsample
+        | Command::Gtarget
+        | Command::Key
+        | Command::Lfilter
+        | Command::Metaedit
+        | Command::Pcmpos
+        | Command::Project
+        | Command::Sndmvol
+        | Command::Sphide
+        | Command::Splayer
+        | Command::Splink
+        | Command::Sppage
+        | Command::Spset
+        | Command::Spshow
+        | Command::Spvar
+        | Command::Tblend
+        | Command::Tcolor
+        | Command::Thide
+        | Command::Tlayer
+        | Command::Trot
+        | Command::Tshow
+        | Command::Tvar
+        | Command::Vibrate
+        | Command::Uistate => Counts::outs(&[0, 1]),
+        Command::Xscreen => Counts::outs(&[0, 2, 3, 4, 5]),
+        Command::Tofs => Counts::outs(&[0, 2, 3]),
+        Command::Brepeat
+        | Command::Loadg
+        | Command::Locate
+        | Command::Thome
+        | Command::Tscale
+        | Command::Xctrlstyle => Counts::outs(&[0, 2]),
+        Command::Tpage => Counts::outs(&[0, 3]),
+        Command::Gclip | Command::Lclip | Command::Tscreen | Command::Xsubscreen => {
+            Counts::outs(&[0, 4])
+        }
+        Command::Acls
+        | Command::Animdef
+        | Command::Beeppan
+        | Command::Beeppit
+        | Command::Beepstop
+        | Command::Beepvol
+        | Command::Bgmclear
+        | Command::Bgmcont
+        | Command::Bgmpause
+        | Command::Bgmpitch
+        | Command::Bgmplay
+        | Command::Bgmset
+        | Command::Bgmsetd
+        | Command::Bgmstop
+        | Command::Bgmvol
+        | Command::Bgmwet
+        | Command::Cls
+        | Command::Efcset
+        | Command::Efcwet
+        | Command::Envload
+        | Command::Envsave
+        | Command::Gbox
+        | Command::Gcircle
+        | Command::Gcls
+        | Command::Gcopy
+        | Command::Gfill
+        | Command::Gline
+        | Command::Gload
+        | Command::Gpaint
+        | Command::Gpset
+        | Command::Gputchr
+        | Command::Gsave
+        | Command::Gtri
+        | Command::Gupdate
+        | Command::Gyrosync
+        | Command::Inspect
+        | Command::Irsprite
+        | Command::Irstart
+        | Command::Irstop
+        | Command::Layer
+        | Command::Lmatrix
+        | Command::Load
+        | Command::Metaload
+        | Command::Perfbegin
+        | Command::Pcmcont
+        | Command::Pcmstop
+        | Command::Pcmstream
+        | Command::Pcmvol
+        | Command::Prgdel
+        | Command::Prgins
+        | Command::Recsave
+        | Command::Recstart
+        | Command::Recstop
+        | Command::Save
+        | Command::Saveg
+        | Command::Savev
+        | Command::Scroll
+        | Command::Spanim
+        | Command::Spclr
+        | Command::Spfunc
+        | Command::Spstart
+        | Command::Spstop
+        | Command::Talk
+        | Command::Talkstop
+        | Command::Tanim
+        | Command::Tcopy
+        | Command::Tfill
+        | Command::Tfunc
+        | Command::Tload
+        | Command::Tput
+        | Command::Tsave
+        | Command::Tstart
+        | Command::Tstop
+        | Command::Tupdate
+        | Command::Wavset
+        | Command::Wavseta => Counts::outs(&[0]),
+        Command::Chkchr => Counts::outs(&[1, 2]),
+        Command::Bgmchk
+        | Command::Button
+        | Command::Chkmml
+        | Command::Envinput
+        | Command::Inkey
+        | Command::Irstate
+        | Command::Mbutton
+        | Command::Prgget
+        | Command::Prgname
+        | Command::Prgsize
+        | Command::Recchk
+        | Command::Reclen
+        | Command::Recpos
+        | Command::Rnd
+        | Command::Sphitrc
+        | Command::Sphitsp
+        | Command::Talkchk
+        | Command::Tarray => Counts::outs(&[1]),
+        Command::Recdata | Command::Stick | Command::Tcoord => Counts::outs(&[2]),
+        Command::Accel | Command::Gyroa | Command::Gyrov => Counts::outs(&[3]),
+        Command::Irread => Counts::outs(&[4]),
+        // Two arguments take the same way out as a wrong OUT count.
+        Command::Rndf => Counts::outs(&[]),
+        Command::Files | Command::Sndmsbal | Command::Touch => Counts::args(&[0, 1, 2]),
+        Command::Mouse => Counts::new(mask(&[0, 1]), &[0]),
+        Command::Dtread
+        | Command::Efcen
+        | Command::Helpinfo
+        | Command::Prgseek
+        | Command::Tmread => Counts::args(&[0, 1]),
+        Command::Date
+        | Command::Envlocate
+        | Command::Envproject
+        | Command::Envtype
+        | Command::Fadechk
+        | Command::Maincnt
+        | Command::Metasave
+        | Command::Millisec
+        | Command::Result
+        | Command::Sndstop
+        | Command::Sphitinfo
+        | Command::Time => Counts::args(&[0]),
+        Command::Spofs => Counts::new(mask(&[1, 2]), &[0]),
+        Command::Keyboard | Command::Randomize => Counts::args(&[1, 2]),
+        Command::Spcolvec => Counts::args(&[1, 3]),
+        Command::Spchr | Command::Spdef => Counts::new(mask(&[1]), &[0]),
+        Command::Chkfile
+        | Command::Controller
+        | Command::Delete
+        | Command::Garray
+        | Command::Perfend
+        | Command::Prgset
+        | Command::Pushkey
+        | Command::Spchk
+        | Command::Spunlink
+        | Command::Spused
+        | Command::Tcbike
+        | Command::Tccar
+        | Command::Tcfishing
+        | Command::Tchk
+        | Command::Tchouse
+        | Command::Tcpiano
+        | Command::Tcplane
+        | Command::Tcrobot
+        | Command::Tcsubm
+        | Command::Tcvehicle
+        | Command::Tcvisor => Counts::args(&[1]),
+        Command::Fontinfo | Command::Gpget | Command::Helpget | Command::Rename => {
+            Counts::args(&[2])
+        }
+        Command::Spcolor | Command::Sprot => Counts::new(at_least(1), &[0, 1]),
+        Command::Sphome | Command::Spscale => Counts::new(at_least(1), &[0, 2]),
+        Command::Spcol | Command::Sysparam => Counts::new(at_least(1), &[0]),
+        // LOADV checks the counts after the file name, by the file's type.
+        _ => Counts::NONE,
+    }
+}
+
+/// The error for a call of `command` with `args` arguments and `outs` OUT
+/// variables that no form takes.
+#[cold]
+fn no_form_error(command: Command, args: usize, outs: usize) -> Error {
+    if counts(command).out_error(args, outs) {
+        ErrorKind::WrongNumberOfOutArguments.into()
+    } else {
+        no_form()
+    }
 }
 
 /// Runs `check` on `v`, so that an error it gives names `v` as the
@@ -2666,7 +2940,14 @@ impl Host for Runtime {
         if let Some((i, before)) = before {
             self.changed |= self.sprites.list()[i].appearance() != before;
         }
-        result.map_err(|e| command_error(e, COMMANDS[id as usize].0, args))
+        result.map_err(|e| {
+            let e = if is_no_form(&e) {
+                no_form_error(command, args.len(), want.count())
+            } else {
+                e
+            };
+            command_error(e, COMMANDS[id as usize].0, args)
+        })
     }
 
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {
@@ -2894,4 +3175,75 @@ impl Host for Runtime {
 /// darker.
 fn dim(fb: &mut Framebuffer) {
     darken(fb.pixels_mut());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sb_core::vm::{Status, Vm};
+
+    /// The error `line` gives after the setup line, if any.
+    fn error_of(line: &str) -> Option<ErrorKind> {
+        let source = format!("SPSET 0,0:DIM A[16]:Z=0:S$=\"A\"\n{line}");
+        let mut rt = Runtime::for_tests(Font::blank());
+        rt.begin_frame();
+        let mut vm = Vm::new(sb_core::compile(&source, &rt).expect("compiles"));
+        for _ in 0..100 {
+            match vm.run(&mut rt, 1_000_000) {
+                Err(e) => return Some(e.kind),
+                Ok(Status::Ended) => return None,
+                Ok(Status::Retry) => rt.begin_frame(),
+                Ok(_) => {}
+            }
+        }
+        None
+    }
+
+    // Each command's handler in SmileBASIC 4 (4.4.8) checks
+    // the argument and OUT counts in its own order.
+    #[test]
+    fn wrong_counts_are_52_or_53_as_the_handler_checks_them() {
+        const ARGS: Option<ErrorKind> = Some(ErrorKind::WrongNumberOfArguments);
+        const OUTS: Option<ErrorKind> = Some(ErrorKind::WrongNumberOfOutArguments);
+        let cases = [
+            // The OUT count first.
+            ("ACLS OUT Q0", OUTS),
+            ("CLS OUT Q0", OUTS),
+            ("LOCATE Z OUT Q0,Q1,Q2", OUTS),
+            ("LOCATE 0,0,0,0,0", ARGS),
+            ("LOCATE 0", ARGS),
+            ("TOFS 0,30", ARGS),
+            ("COLOR Z OUT Q0,Q1", OUTS),
+            ("COLOR Z,Z OUT Q0", ARGS),
+            ("BACKCOLOR OUT Q0,Q1", OUTS),
+            ("BACKCOLOR Z OUT Q0", ARGS),
+            ("Q=BACKCOLOR(Z)", ARGS),
+            ("GCLIP OUT Q0,Q1,Q2,Q3,Q4", OUTS),
+            ("BGMPLAY Z,Z,64,Z OUT Q0", OUTS),
+            ("XSCREEN OUT Q0,Q1,Q2,Q3,Q4,Q5", OUTS),
+            ("INKEY$ 1 OUT Q0,Q1", OUTS),
+            ("Q$=INKEY$(1,2)", ARGS),
+            ("SPSET Z,Z,Z,Z,16,16,1,Z OUT Q0,Q1", OUTS),
+            ("ENVSTAT OUT Q0,Q1,Q2,Q3,Q4,Q5,Q6", OUTS),
+            // The argument count first.
+            ("DATE$ OUT Q0,Q1", OUTS),
+            ("Q$=DATE$(1)", ARGS),
+            ("DTREAD OUT Q0,Q1,Q2,Q3,Q4", OUTS),
+            ("RANDOMIZE Z,Z OUT Q0", OUTS),
+            ("RANDOMIZE Z,Z,Z OUT Q0", ARGS),
+            ("DELETE S$ OUT Q0", OUTS),
+            ("DELETE Z,Z,S$ OUT Q0", ARGS),
+            ("MOUSE Z OUT Q0", OUTS),
+            ("MOUSE Z,Z OUT Q0", ARGS),
+            ("Q=RNDF(Z,Z)", OUTS),
+            // A sprite first.
+            ("SPROT Z OUT Q0,Q1", OUTS),
+            ("SPROT OUT Q0,Q1", ARGS),
+            ("SPOFS Z,Z OUT Q0,Q1,Q2,Q3", OUTS),
+            ("SPOFS Z,Z,Z OUT Q0", ARGS),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(error_of(line), expected, "{line}");
+        }
+    }
 }
