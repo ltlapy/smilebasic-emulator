@@ -369,10 +369,16 @@ pub(super) fn find_fn(args: &[Value]) -> Result<Value> {
     Ok(Value::Int(find_in(args)?.1.map_or(-1, |i| i as i32)))
 }
 
+/// `FIND array, value OUT I` gives the place by element order, as the
+/// function does; more OUT variables need one for each of the array's
+/// sizes. The count is looked at after the search.
 pub(super) fn find(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     let (dims, found) = find_in(args)?;
+    if outs == 1 {
+        return Ok(vec![Value::Int(found.map_or(-1, |i| i as i32))]);
+    }
     if outs != dims.len() {
-        return Err(ErrorKind::IllegalFunctionCall.into());
+        return Err(ErrorKind::WrongNumberOfOutArguments.into());
     }
     let Some(mut i) = found else {
         return Ok(vec![Value::Int(-1); outs]);
@@ -541,9 +547,6 @@ fn ring_int(args: &[Value], i: usize) -> Result<i64> {
 /// numbers can be copied, but string arrays are refused only when there is
 /// something to copy.
 pub(super) fn ringcopy(args: &[Value], outs: usize) -> Result<Vec<Value>> {
-    if outs > 1 || args.len() > 5 {
-        return Err(ErrorKind::IllegalFunctionCall.into());
-    }
     let mismatch = |i| Error::from(ErrorKind::TypeMismatch).of_arg(i);
     let Value::Array(dest) = &args[0] else {
         return Err(mismatch(0));

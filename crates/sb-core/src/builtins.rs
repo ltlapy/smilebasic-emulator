@@ -71,34 +71,99 @@ pub struct Builtin {
     pub min_args: u8,
     pub max_args: u8,
     pub kind: Kind,
+    pub outs: Outs,
+}
+
+/// The numbers of OUT variables a builtin takes, and when it looks at
+/// them; a call as a function has one. SmileBASIC 4's handlers check the
+/// count themselves, as the call runs, some before the number of
+/// arguments and some after.
+#[derive(Clone, Copy)]
+pub struct Outs {
+    /// Bit n is set if n OUT variables are taken.
+    counts: u16,
+    /// The count is looked at before the number of arguments. A builtin
+    /// with two forms then takes the form from it, so arguments that only
+    /// the other form takes are a `Wrong number of arguments`.
+    pub first: bool,
+}
+
+impl Outs {
+    /// A function's: one value.
+    pub const FUNCTION: Outs = Outs::of(&[1]);
+    /// A command's: none.
+    pub const NONE: Outs = Outs::of(&[0]);
+    /// Any count, which the command checks itself.
+    pub const OWN: Outs = Outs {
+        counts: u16::MAX,
+        first: false,
+    };
+
+    pub const fn of(counts: &[u8]) -> Outs {
+        let mut mask = 0;
+        let mut i = 0;
+        while i < counts.len() {
+            mask |= 1 << counts[i];
+            i += 1;
+        }
+        Outs {
+            counts: mask,
+            first: false,
+        }
+    }
+
+    /// The same, looked at before the arguments.
+    pub const fn first(self) -> Outs {
+        Outs {
+            first: true,
+            ..self
+        }
+    }
+
+    pub fn takes(self, n: usize) -> bool {
+        n < 16 && self.counts & 1 << n != 0
+    }
 }
 
 const VARIADIC: u8 = u8::MAX;
 
+/// Name, argument counts, kind and the function that runs it, then the
+/// OUT counts when they are not the kind's usual ([`Outs::FUNCTION`] or
+/// [`Outs::NONE`]). Which handlers look at the OUT count first is from
+/// SmileBASIC 4's.
 macro_rules! table {
-    ($($name:literal $min:literal..=$max:tt $kind:ident $f:expr;)*) => {
+    ($($name:literal $min:literal..=$max:tt $kind:ident $f:expr $(, $outs:expr)?;)*) => {
         static BUILTINS: &[Builtin] = &[
-            $(Builtin { name: $name, min_args: $min, max_args: table!(@max $max), kind: Kind::$kind($f) },)*
+            $(Builtin {
+                name: $name,
+                min_args: $min,
+                max_args: table!(@max $max),
+                kind: Kind::$kind($f),
+                outs: table!(@outs $kind $($outs)?),
+            },)*
         ];
     };
     (@max N) => { VARIADIC };
     (@max $n:literal) => { $n };
+    (@outs Function) => { Outs::FUNCTION };
+    (@outs $kind:ident) => { Outs::NONE };
+    (@outs $kind:ident $outs:expr) => { $outs };
 }
 
 table! {
     "LEN" 1..=1 Function len;
     "LAST" 1..=1 Function |a| Ok(Value::Int(length(&a[0])? - 1));
-    "STR$" 1..=2 Function str;
+    "STR$" 1..=2 Function str, Outs::FUNCTION.first();
     "VAL" 1..=1 Function val;
     "CHR$" 1..=1 Function chr;
     "ASC" 1..=1 Function asc;
-    "MID$" 2..=3 Function mid;
+    "MID$" 2..=3 Function mid, Outs::FUNCTION.first();
     "LEFT$" 2..=2 Function left;
     "RIGHT$" 2..=2 Function right;
-    "INSTR" 2..=3 Function instr;
-    "SUBST$" 3..=4 Function subst;
-    "HEX$" 1..=2 Function |a| radix_str(a, 16, 8);
-    "BIN$" 1..=2 Function |a| radix_str(a, 2, 32);
+    "INSTR" 2..=3 Function instr, Outs::FUNCTION.first();
+    "SUBST$" 3..=4 Function subst, Outs::FUNCTION.first();
+    "HEX$" 1..=2 Function |a| radix_str(a, 16, 8), Outs::FUNCTION.first();
+    "BIN$" 1..=2 Function |a| radix_str(a, 2, 32), Outs::FUNCTION.first();
     "INT" 1..=1 Function |a| Ok(Value::Int(a[0].to_int()?));
     "FLOAT" 1..=1 Function |a| Ok(Value::Real(a[0].to_real()?));
     "FLOOR" 1..=1 Function |a| real_fn(a, f64::floor);
@@ -108,57 +173,57 @@ table! {
     "SGN" 1..=1 Function |a| Ok(Value::Int(sign(a[0].to_real()?)));
     "SQR" 1..=1 Function |a| checked_real(a, |x| (x >= 0.0).then(|| x.sqrt()));
     "POW" 2..=2 Function |a| Ok(Value::Real(a[0].to_real()?.powf(a[1].to_real()?)));
-    "EXP" 0..=1 Function exp;
-    "LOG" 1..=2 Function log;
+    "EXP" 0..=1 Function exp, Outs::FUNCTION.first();
+    "LOG" 1..=2 Function log, Outs::FUNCTION.first();
     "SIN" 1..=1 Function |a| real_fn(a, f64::sin);
     "COS" 1..=1 Function |a| real_fn(a, f64::cos);
     "TAN" 1..=1 Function |a| real_fn(a, f64::tan);
     "ASIN" 1..=1 Function |a| checked_real(a, |x| (-1.0..=1.0).contains(&x).then(|| x.asin()));
     "ACOS" 1..=1 Function |a| checked_real(a, |x| (-1.0..=1.0).contains(&x).then(|| x.acos()));
-    "ATAN" 1..=2 Function atan;
+    "ATAN" 1..=2 Function atan, Outs::FUNCTION.first();
     "SINH" 1..=1 Function |a| real_fn(a, f64::sinh);
     "COSH" 1..=1 Function |a| real_fn(a, f64::cosh);
     "TANH" 1..=1 Function |a| real_fn(a, f64::tanh);
     "DEG" 1..=1 Function |a| real_fn(a, f64::to_degrees);
     "RAD" 1..=1 Function |a| real_fn(a, f64::to_radians);
-    "MIN" 1..=N Function |a| extreme(a, std::cmp::Ordering::Less);
-    "MAX" 1..=N Function |a| extreme(a, std::cmp::Ordering::Greater);
+    "MIN" 1..=N Function |a| extreme(a, std::cmp::Ordering::Less), Outs::FUNCTION.first();
+    "MAX" 1..=N Function |a| extreme(a, std::cmp::Ordering::Greater), Outs::FUNCTION.first();
     "TYPEOF" 1..=1 Function |a| Ok(Value::Int(a[0].type_code()));
     "ARRAY%" 1..=4 Function |a| new_array(a, ElemType::Int);
     "ARRAY#" 1..=4 Function |a| new_array(a, ElemType::Real);
     "ARRAY$" 1..=4 Function |a| new_array(a, ElemType::Str);
-    "DIM" 1..=2 Function dim;
+    "DIM" 1..=2 Function dim, Outs::FUNCTION.first();
     "POP" 1..=1 Function |a| take(&a[0], End::Back);
     "SHIFT" 1..=1 Function |a| take(&a[0], End::Front);
     "PUSH" 2..=2 Command |a, _| put(&a[0], a[1].clone(), End::Back).map(|()| Vec::new());
     "UNSHIFT" 2..=2 Command |a, _| put(&a[0], a[1].clone(), End::Front).map(|()| Vec::new());
-    "FILL" 2..=4 Command |a, _| fill(a).map(|()| Vec::new());
-    "RGB" 3..=5 Function rgb;
-    "RGB" 1..=1 Command rgb_out;
-    "RGBF" 3..=5 Function rgbf;
-    "RGBF" 1..=1 Command rgbf_out;
+    "FILL" 2..=4 Command |a, _| fill(a).map(|()| Vec::new()), Outs::NONE.first();
+    "RGB" 3..=5 Function rgb, Outs::FUNCTION.first();
+    "RGB" 1..=1 Command rgb_out, Outs::of(&[3, 4]).first();
+    "RGBF" 3..=5 Function rgbf, Outs::FUNCTION.first();
+    "RGBF" 1..=1 Command rgbf_out, Outs::of(&[3, 4]).first();
     "HSV" 3..=4 Function |a| hsv(a, false);
-    "HSV" 1..=1 Command |a, outs| hsv_out(a, outs, false);
+    "HSV" 1..=1 Command |a, outs| hsv_out(a, outs, false), Outs::of(&[3, 4]);
     "HSVF" 3..=4 Function |a| hsv(a, true);
-    "HSVF" 1..=1 Command |a, outs| hsv_out(a, outs, true);
+    "HSVF" 1..=1 Command |a, outs| hsv_out(a, outs, true), Outs::of(&[3, 4]);
     "FORMAT$" 1..=N Function format;
-    "COPY" 1..=3 Function arrays::copy_fn;
-    "COPY" 2..=5 Data arrays::copy;
-    "SORT" 1..=10 Command arrays::sort_up;
-    "RSORT" 1..=10 Command arrays::sort_down;
-    "INSERT" 2..=4 Command arrays::insert;
-    "REMOVE" 2..=3 Command arrays::remove;
+    "COPY" 1..=3 Function arrays::copy_fn, Outs::FUNCTION.first();
+    "COPY" 2..=5 Data arrays::copy, Outs::NONE.first();
+    "SORT" 1..=10 Command arrays::sort_up, Outs::NONE.first();
+    "RSORT" 1..=10 Command arrays::sort_down, Outs::NONE.first();
+    "INSERT" 2..=4 Command arrays::insert, Outs::NONE.first();
+    "REMOVE" 2..=3 Command arrays::remove, Outs::NONE.first();
     "FIND" 2..=2 Function arrays::find_fn;
-    "FIND" 2..=2 Command arrays::find;
-    "RESIZE" 2..=5 Command arrays::resize;
-    "ARYOP" 4..=5 Command arrays::aryop;
-    "RINGCOPY" 3..=5 Command arrays::ringcopy;
+    "FIND" 2..=2 Command arrays::find, Outs::OWN;
+    "RESIZE" 2..=5 Command arrays::resize, Outs::NONE.first();
+    "ARYOP" 4..=5 Command arrays::aryop, Outs::NONE.first();
+    "RINGCOPY" 3..=5 Command arrays::ringcopy, Outs::of(&[0, 1]).first();
     "CLASSIFY" 1..=1 Function signal::classify;
-    "FFT" 4..=5 Command signal::fft;
-    "IFFT" 4..=4 Command signal::ifft;
-    "FFTWFN" 2..=2 Command signal::fftwfn;
-    "BIQUAD" 3..=3 Command signal::biquad;
-    "BQPARAM" 5..=6 Command signal::bqparam;
+    "FFT" 4..=5 Command signal::fft, Outs::NONE.first();
+    "IFFT" 4..=4 Command signal::ifft, Outs::NONE.first();
+    "FFTWFN" 2..=2 Command signal::fftwfn, Outs::NONE.first();
+    "BIQUAD" 3..=3 Command signal::biquad, Outs::NONE.first();
+    "BQPARAM" 5..=6 Command signal::bqparam, Outs::NONE.first();
 }
 
 pub fn lookup(name: &str, form: Form) -> Option<u16> {
@@ -778,7 +843,7 @@ fn rgb_out(args: &[Value], outs: usize) -> Result<Vec<Value>> {
     match outs {
         3 => Ok(parts(&[16, 8, 0])),
         4 => Ok(parts(&[24, 16, 8, 0])),
-        _ => Err(ErrorKind::IllegalFunctionCall.into()),
+        _ => Err(ErrorKind::WrongNumberOfOutArguments.into()),
     }
 }
 

@@ -2991,13 +2991,19 @@ impl Vm {
     ) -> Result<()> {
         let b = builtins::get(id);
         if want == Want::Outs(1)
-            && !b.accepts(args.len())
+            && b.form() == Form::Command
             && let Some(f) = builtins::lookup(b.name, Form::Function)
-            && builtins::get(f).accepts(args.len())
+            && (b.outs.first || !b.accepts(args.len()) && builtins::get(f).accepts(args.len()))
         {
             // `HSV H,S,V OUT C`: arguments that only the function form
-            // takes, with one OUT variable for its result.
+            // takes, with one OUT variable for its result. A builtin that
+            // takes its form from the OUT count has only that one then.
             return self.call_builtin(program, f, args, Want::Value);
+        }
+        let outs = want.count();
+        let outs_taken = b.outs.takes(outs);
+        if !outs_taken && b.outs.first {
+            return Err(Error::new(ErrorKind::WrongNumberOfOutArguments).of_command(b.name));
         }
         if !b.accepts(args.len()) {
             // Arguments that fit the other form make the results the
@@ -3007,34 +3013,33 @@ impl Vm {
                 Form::Function => Form::Command,
                 Form::Command => Form::Function,
             };
-            let fits_other = builtins::lookup(b.name, other)
-                .is_some_and(|o| builtins::get(o).accepts(args.len()));
+            let fits_other = !b.outs.first
+                && builtins::lookup(b.name, other)
+                    .is_some_and(|o| builtins::get(o).accepts(args.len()));
             let kind = match fits_other {
                 true => ErrorKind::WrongNumberOfOutArguments,
                 false => ErrorKind::WrongNumberOfArguments,
             };
             return Err(Error::new(kind).of_command(b.name));
         }
-        let results = match (b.kind, want) {
-            (Kind::Function(f), Want::Value) => {
-                vec![f(args).map_err(|e| builtin_error(e, b.name, args))?]
-            }
-            (Kind::Command(f), Want::Outs(n)) => {
-                f(args, n.into()).map_err(|e| builtin_error(e, b.name, args))?
-            }
-            (Kind::Data(f), Want::Outs(n)) => {
+        if !outs_taken {
+            return Err(Error::new(ErrorKind::WrongNumberOfOutArguments).of_command(b.name));
+        }
+        let results = match b.kind {
+            Kind::Function(f) => vec![f(args).map_err(|e| builtin_error(e, b.name, args))?],
+            Kind::Command(f) => f(args, outs).map_err(|e| builtin_error(e, b.name, args))?,
+            Kind::Data(f) => {
                 let mut data = builtins::Data {
                     program,
                     pos: &mut self.data_pos,
                     moved: false,
                 };
-                let results = f(args, n.into(), &mut data);
+                let results = f(args, outs, &mut data);
                 if data.moved {
                     self.data_from = Rc::clone(&self.program);
                 }
                 results.map_err(|e| builtin_error(e, b.name, args))?
             }
-            _ => return Err(Error::new(ErrorKind::IllegalFunctionCall).of_command(b.name)),
         };
         self.push_results(results, want)
     }

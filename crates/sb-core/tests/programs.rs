@@ -739,7 +739,7 @@ fn compile_errors() {
     // on hardware), since another slot may define it.
     assert_eq!(error("?1\nFOO 1").0, ErrorKind::SyntaxError);
     assert_eq!(error("?1\n?(").0, ErrorKind::SyntaxError);
-    assert_eq!(error("LEN 1").0, ErrorKind::IllegalFunctionCall);
+    assert_eq!(error("LEN 1").0, ErrorKind::WrongNumberOfOutArguments);
     assert_eq!(error("@A\n@A").0, ErrorKind::DuplicateLabel);
     // BREAK and CONTINUE outside a loop.
     assert_eq!(error("?1\nBREAK"), (ErrorKind::SyntaxError, 2));
@@ -2096,6 +2096,72 @@ fn errors_name_their_arguments() {
     wrong(&format!("{arrays}RINGCOPY A,0,B,0,-1 OUT E"), illegal, 4);
     wrong(&format!("{arrays}RINGCOPY X,0,B"), mismatch, 0);
     wrong(&format!("{arrays}RINGCOPY A,0,X"), mismatch, 2);
+}
+
+/// Builtins look at their number of OUT variables as they run, some
+/// before the number of arguments and some after.
+#[test]
+fn builtins_check_their_out_count_as_they_run() {
+    let wrong = |source: &str, kind: ErrorKind| {
+        let e = run(source).unwrap_err();
+        assert_eq!((e.kind, e.line), (kind, 2), "{source}");
+    };
+    let outs = ErrorKind::WrongNumberOfOutArguments;
+    let args = ErrorKind::WrongNumberOfArguments;
+    // Not reached, so no error.
+    assert_eq!(output("END\nABS 1 OUT X,Y\nLEN \"A\""), "");
+    let arrays = "VAR Q,R,S,T,U,Z,S$=\"A\":DIM A[4],B[4],C[13]\n";
+    for call in [
+        "ABS Z OUT Q,R",
+        "ABS Z",
+        "LEN S$ OUT Q,R",
+        "MID$ S$,0,1 OUT Q,R",
+        "MAX A OUT Q,R",
+        "TYPEOF Z OUT Q,R",
+        "PUSH A,Z OUT Q",
+        "UNSHIFT A,Z OUT Q",
+        "FILL A,Z OUT Q",
+        "INSERT A,Z OUT Q",
+        "REMOVE A,Z OUT Q",
+        "SORT A OUT Q",
+        "RESIZE A,3 OUT Q",
+        "ARYOP 0,A,B,B OUT Q",
+        "RINGCOPY A,0,B OUT Q,R",
+        "FIND A,Z OUT Q,R,S",
+        "FIND A,Z",
+        "COPY A,B OUT Q,R",
+        "RGB Z OUT Q,R,S,T,U",
+        "RGB S$ OUT Q,R,S,T,U",
+        "HSV Z OUT Q,R",
+        "FFT A,B,A,B OUT Q",
+        "IFFT A,B,A,B OUT Q",
+        "FFTWFN A,0 OUT Q",
+        "BIQUAD A,B,C OUT Q",
+        "BQPARAM C,0,8000,1000,1 OUT Q",
+    ] {
+        wrong(&format!("{arrays}{call}"), outs);
+    }
+    // The number of arguments first.
+    wrong(&format!("{arrays}ABS OUT Q,R"), args);
+    wrong(&format!("{arrays}PUSH A OUT Q"), args);
+    // The OUT count first.
+    wrong(&format!("{arrays}MID$ S$ OUT Q,R"), outs);
+    wrong(&format!("{arrays}FILL A OUT Q"), outs);
+    wrong(&format!("{arrays}RESIZE A OUT Q"), outs);
+    // These take their form from the OUT count: with one, the function's
+    // arguments.
+    wrong(&format!("{arrays}Q=COPY(A,0,1,0)"), args);
+    wrong(&format!("{arrays}COPY A,0,B,0,1 OUT Q"), args);
+    wrong(&format!("{arrays}Q=RGB(Z)"), args);
+    wrong(&format!("{arrays}RGB Z OUT Q"), args);
+    // HSV does not: HSV(120) is read as its OUT form (hardware).
+    wrong(&format!("{arrays}Q=HSV(Z)"), outs);
+    // FIND with one OUT gives the place by element order.
+    assert_eq!(output("DIM A[2,3]:A[1,1]=5:FIND A,5 OUT I:?I"), "4\n");
+    assert_eq!(
+        output("DIM A[2,3]:A[1,1]=5:FIND A,5 OUT I,J:?I*10+J"),
+        "11\n"
+    );
 }
 
 /// What RINGCOPY looks at and in what order (TEST57).
