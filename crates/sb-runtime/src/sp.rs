@@ -113,13 +113,17 @@ impl Runtime {
         }
     }
 
-    /// The image part of SPSET and SPCHR: U,V,W,H and attributes.
+    /// The image part of SPSET: U,V,W,H and attributes, 0 to 31 in every
+    /// form.
     fn image_args(args: &[Value]) -> Result<(i32, i32, i32, i32, i32)> {
         let u = int(&args[0])?;
         let v = int(&args[1])?;
         let w = in_range(&args[2], "width", 0..=2048)?;
         let h = in_range(&args[3], "height", 0..=2048)?;
-        let attr = args.get(4).map(opt_int).transpose()?.flatten().unwrap_or(0);
+        let attr = match args.get(4) {
+            None | Some(Value::Default) => 0,
+            Some(a) => in_range(a, "attribute", 0..=31)?,
+        };
         Ok((u, v, w, h, attr))
     }
 

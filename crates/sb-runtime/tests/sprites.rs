@@ -214,6 +214,15 @@ fn errors() {
         ("TFUNC 0,\"3:F\"", "Illegal label string in 0:1(TFUNC)"),
         ("SPFUNC 0,\"@NOPE\"", "Undefined label in 0:1(SPFUNC:2)"),
         ("SPFUNC 4096,\"NOPE\"", "Out of range in 0:1(SPFUNC:1)"),
+        ("SPSET 0,0,0,16,16,32", "Out of range in 0:1(SPSET:6)"),
+        ("SPSET 0,0,0,16,16,-1,1", "Out of range in 0:1(SPSET:6)"),
+        ("Q=SPSET(0,0,16,16,32)", "Out of range in 0:1(SPSET:5)"),
+        ("Q=SPSET(0,0,16,16,32,1)", "Out of range in 0:1(SPSET:5)"),
+        ("Q=SPSET(5,9,0,0,16,16,32)", "Out of range in 0:1(SPSET:7)"),
+        (
+            "Q=SPSET(5,9,0,0,16,16,-1,1)",
+            "Out of range in 0:1(SPSET:7)",
+        ),
         ("SPSET 0,0:SPCOL 0,0,0,16", "Wrong number of arguments"),
         (
             "SPSET 0,0:SPCOL 0,0,0,16,16,1,0,0",

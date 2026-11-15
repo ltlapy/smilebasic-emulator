@@ -1356,6 +1356,9 @@ Expected but not yet seen on hardware:
 - When a parent is cleared, children without link bit 0 stay where they showed,
   Z included.
 - `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set already.
+- `SPSET` with an image takes attributes 0 to 31 in every form, as `SPDEF`
+  does: `SPSET 0,0,0,16,16,32` is `Out of range (SPSET:6)`, and
+  `SPSET(0,0,16,16,32)` `(SPSET:5)`. (Not yet seen on hardware.)
 - `SPDEF` checks what it is given: U and
   V 0 or more, width and height 0 to 2048, home point -32768 to 32767 and
   attributes 0 to 31, each named after its argument. Copying from another
