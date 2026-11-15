@@ -169,6 +169,16 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   number is given before the `OUT` count, so `SPROT OUT A,B` is
   `Wrong number of arguments`. (Not yet seen on hardware.)
 - `RNDF` with two arguments is `Wrong number of OUT arguments`. (Not yet seen on hardware.)
+- The functions and array commands do the same: a function used as a command
+  with other than one `OUT` variable (`ABS Z OUT A,B`, `LEN S$`), or
+  `PUSH A,1 OUT X`, is `Wrong number of OUT arguments` when the call runs.
+  `FILL A OUT X` checks the `OUT` count first (error 53), `ABS OUT A,B` the
+  arguments (error 52). `COPY` and `RGB` take their form from the `OUT` count,
+  so `Q=COPY(A,0,1,0)` and `Q=RGB(1)` are `Wrong number of arguments`.
+  `FIND A,V OUT I` gives the place by element order, as `FIND(A,V)` does. (Not yet seen on hardware.)
+- A string or array argument of the wrong type is named by its place:
+  `LEN(1)` is `Type mismatch (LEN:1)`, `INSTR(0,1,S$)` `(INSTR:2)` and
+  `PUSH 1,1` `(PUSH:1)`, as numbers are. (Not yet seen on hardware.)
 - A call to a name defined nowhere compiles, and is a `Syntax error` only when
   it is reached: the name may be a `COMMON DEF` of a slot that `EXEC` runs
   later.
@@ -524,6 +534,10 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   array and at the position just past the end.
 - `ARYOP 6` (clamp) takes the lower bound first: 5 between 9 and 1 gives 9, and
   a NaN stays. (TEST63)
+- `ARYOP` reads a parameter array shorter than the result over again from its
+  start. An empty one is `Array is too small`, error 116, naming it:
+  `ARYOP 0,R,E,1` is `(ARYOP:3)`. The wrong number of arguments for the
+  operation is `Wrong number of arguments`. (Not yet seen on hardware.)
 - `RINGCOPY A,0,A` on an array left by `RESIZE A,0,3` does nothing and is no
   error (TEST51).
 - `RINGCOPY` looks at things in this order (TEST57):
@@ -2096,6 +2110,12 @@ Expected but not yet seen on hardware:
 - `BQPARAM` looks at the number of its arguments before their values: type 5
   with no gain is `Wrong number of arguments (BQPARAM:2)`. A Q of 0 is
   `Illegal function call (BQPARAM:5)`. (TEST62)
+- SmileBASIC 4 (4.4.8) names more of these arguments: a rate of 0
+  is `(BQPARAM:3)`, a type out of 0 to 7 `Out of range (BQPARAM:2)`, fewer than
+  13 coefficients `Illegal function call (BQPARAM:1)` and `(BIQUAD:3)`, and a
+  window type out of 0 to 3 `Out of range (FFTWFN:2)`. `FFTWFN` looks at the
+  length before the window type, and `BIQUAD` at the channels before the
+  coefficients. (Not yet seen on hardware.)
 
 ## DIRECT mode
 
