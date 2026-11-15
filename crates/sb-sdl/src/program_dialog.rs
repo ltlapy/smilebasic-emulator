@@ -342,7 +342,7 @@ mod tests {
         assert!(v.frame().w <= 1280);
     }
 
-    /// Console mode's UI can be 320x240: a DIALOG of the longest text,
+    /// The Simple UI can be 320x240: a DIALOG of the longest text,
     /// caption and name still fits it.
     #[test]
     fn a_dialog_fits_a_320x240_display() {

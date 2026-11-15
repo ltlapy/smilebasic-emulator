@@ -150,7 +150,7 @@ mod tests {
         assert!(!t.visible());
     }
 
-    /// Console mode's UI can be 320x240: a long notice wraps, and none
+    /// The Simple UI can be 320x240: a long notice wraps, and none
     /// goes past the frame's edges.
     #[test]
     fn notices_fit_a_320x240_frame() {

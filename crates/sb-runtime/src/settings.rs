@@ -58,10 +58,10 @@ impl Renderer {
     }
 }
 
-/// How console mode scales the screen to its display, which is rarely a
+/// How the Simple UI scales the screen to its display, which is rarely a
 /// whole number of times the screen's size and can be smaller than it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ConsoleModeFilter {
+pub enum SimpleUiFilter {
     /// The pixel art filter where the screen is drawn larger than its
     /// frame, bilinear where it is drawn smaller, and nearest at a whole
     /// factor.
@@ -75,29 +75,29 @@ pub enum ConsoleModeFilter {
     Xscreen,
 }
 
-impl ConsoleModeFilter {
+impl SimpleUiFilter {
     /// Every choice, in the order the pause menu steps through them.
-    pub const ALL: [ConsoleModeFilter; 5] = [
-        ConsoleModeFilter::Auto,
-        ConsoleModeFilter::PixelArt,
-        ConsoleModeFilter::Bilinear,
-        ConsoleModeFilter::Nearest,
-        ConsoleModeFilter::Xscreen,
+    pub const ALL: [SimpleUiFilter; 5] = [
+        SimpleUiFilter::Auto,
+        SimpleUiFilter::PixelArt,
+        SimpleUiFilter::Bilinear,
+        SimpleUiFilter::Nearest,
+        SimpleUiFilter::Xscreen,
     ];
 
     /// The choice `step` places after this one, round from the last to
     /// the first.
-    pub fn step(self, step: isize) -> ConsoleModeFilter {
+    pub fn step(self, step: isize) -> SimpleUiFilter {
         let n = Self::ALL.len() as isize;
         let at = Self::ALL.iter().position(|&f| f == self).unwrap_or(0) as isize;
         Self::ALL[(at + step).rem_euclid(n) as usize]
     }
 }
 
-/// How large console mode draws its own screens: the game list, the
+/// How large the Simple UI draws its own screens: the game list, the
 /// pause menu, dialogs and notices. The program's screen keeps its size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ConsoleModeUiSize {
+pub enum SimpleUiSize {
     /// The largest whole scale that leaves 480 lines or more: 640x480 on
     /// a 640x480 display.
     #[default]
@@ -107,13 +107,13 @@ pub enum ConsoleModeUiSize {
     Large,
 }
 
-impl ConsoleModeUiSize {
+impl SimpleUiSize {
     /// Every choice, in the order the pause menu steps through them.
-    pub const ALL: [ConsoleModeUiSize; 2] = [ConsoleModeUiSize::Normal, ConsoleModeUiSize::Large];
+    pub const ALL: [SimpleUiSize; 2] = [SimpleUiSize::Normal, SimpleUiSize::Large];
 
     /// The choice `step` places after this one, round from the last to
     /// the first.
-    pub fn step(self, step: isize) -> ConsoleModeUiSize {
+    pub fn step(self, step: isize) -> SimpleUiSize {
         let n = Self::ALL.len() as isize;
         let at = Self::ALL.iter().position(|&s| s == self).unwrap_or(0) as isize;
         Self::ALL[(at + step).rem_euclid(n) as usize]
@@ -239,18 +239,18 @@ pub struct Settings {
     /// The programs F9 to F11 start, which SYSPARAM "TOOL1" to "TOOL3"
     /// reads, as SmileBASIC 4's settings set them.
     pub tools: [String; 3],
-    /// Console mode: the frontend is laid out for a gamepad alone and a
-    /// small screen: fullscreen, a game list instead of DIRECT mode, no
+    /// The Simple UI: the frontend is laid out for a gamepad alone and
+    /// a small screen: fullscreen, a game list instead of DIRECT mode, no
     /// menu bar.
-    pub console_mode: bool,
-    /// How console mode scales the screen; `screen_filter` is the
+    pub simple_ui: bool,
+    /// How the Simple UI scales the screen; `screen_filter` is the
     /// desktop's.
-    pub console_mode_filter: ConsoleModeFilter,
-    /// How large console mode draws its own screens.
-    pub console_mode_ui_size: ConsoleModeUiSize,
-    /// Console mode's welcome screen has been shown. It asks for A and
-    /// sets `swap_ab_xy` by the button pressed.
-    pub console_mode_welcome_shown: bool,
+    pub simple_ui_filter: SimpleUiFilter,
+    /// How large the Simple UI draws its own screens.
+    pub simple_ui_size: SimpleUiSize,
+    /// The Simple UI's welcome screen has been shown. It asks for A
+    /// and sets `swap_ab_xy` by the button pressed.
+    pub simple_ui_welcome_shown: bool,
 }
 
 /// F1 to F5 as SmileBASIC 4 starts (checked on hardware).
@@ -310,10 +310,10 @@ impl Default for Settings {
             speed: Speed::Unlimited,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
-            console_mode: false,
-            console_mode_filter: ConsoleModeFilter::Auto,
-            console_mode_ui_size: ConsoleModeUiSize::Normal,
-            console_mode_welcome_shown: false,
+            simple_ui: false,
+            simple_ui_filter: SimpleUiFilter::Auto,
+            simple_ui_size: SimpleUiSize::Normal,
+            simple_ui_welcome_shown: false,
         }
     }
 }
@@ -373,10 +373,10 @@ impl Settings {
             speed: Speed::Unlimited,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
-            console_mode: false,
-            console_mode_filter: ConsoleModeFilter::Auto,
-            console_mode_ui_size: ConsoleModeUiSize::Normal,
-            console_mode_welcome_shown: false,
+            simple_ui: false,
+            simple_ui_filter: SimpleUiFilter::Auto,
+            simple_ui_size: SimpleUiSize::Normal,
+            simple_ui_welcome_shown: false,
         }
     }
 }
@@ -393,17 +393,17 @@ const SCREEN_FILTER: [(Option<Filter>, &str); 4] = [
     (Some(Filter::Bilinear), "bilinear"),
 ];
 
-const CONSOLE_MODE_FILTER: [(ConsoleModeFilter, &str); 5] = [
-    (ConsoleModeFilter::Auto, "auto"),
-    (ConsoleModeFilter::PixelArt, "pixel_art"),
-    (ConsoleModeFilter::Bilinear, "bilinear"),
-    (ConsoleModeFilter::Nearest, "nearest"),
-    (ConsoleModeFilter::Xscreen, "xscreen"),
+const SIMPLE_UI_FILTER: [(SimpleUiFilter, &str); 5] = [
+    (SimpleUiFilter::Auto, "auto"),
+    (SimpleUiFilter::PixelArt, "pixel_art"),
+    (SimpleUiFilter::Bilinear, "bilinear"),
+    (SimpleUiFilter::Nearest, "nearest"),
+    (SimpleUiFilter::Xscreen, "xscreen"),
 ];
 
-const CONSOLE_MODE_UI_SIZE: [(ConsoleModeUiSize, &str); 2] = [
-    (ConsoleModeUiSize::Normal, "normal"),
-    (ConsoleModeUiSize::Large, "large"),
+const SIMPLE_UI_SIZE: [(SimpleUiSize, &str); 2] = [
+    (SimpleUiSize::Normal, "normal"),
+    (SimpleUiSize::Large, "large"),
 ];
 
 const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
@@ -539,8 +539,8 @@ impl Settings {
                 "debug_open_editor" => &mut s.debug_open_editor,
                 "complete_hints" => &mut s.complete_hints,
                 "complete_above" => &mut s.complete_above,
-                "console_mode" => &mut s.console_mode,
-                "console_mode_welcome_shown" => &mut s.console_mode_welcome_shown,
+                "simple_ui" => &mut s.simple_ui,
+                "simple_ui_welcome_shown" => &mut s.simple_ui_welcome_shown,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -639,15 +639,15 @@ impl Settings {
                     }
                     continue;
                 }
-                "console_mode_filter" => {
-                    if let Some(f) = choice(&CONSOLE_MODE_FILTER, value) {
-                        s.console_mode_filter = f;
+                "simple_ui_filter" => {
+                    if let Some(f) = choice(&SIMPLE_UI_FILTER, value) {
+                        s.simple_ui_filter = f;
                     }
                     continue;
                 }
-                "console_mode_ui_size" => {
-                    if let Some(size) = choice(&CONSOLE_MODE_UI_SIZE, value) {
-                        s.console_mode_ui_size = size;
+                "simple_ui_size" => {
+                    if let Some(size) = choice(&SIMPLE_UI_SIZE, value) {
+                        s.simple_ui_size = size;
                     }
                     continue;
                 }
@@ -730,10 +730,10 @@ impl Settings {
              debug_open_editor={}\n\
              debug_text_size={}\n\
              speed={}\n\
-             console_mode={}\n\
-             console_mode_filter={}\n\
-             console_mode_ui_size={}\n\
-             console_mode_welcome_shown={}\n\
+             simple_ui={}\n\
+             simple_ui_filter={}\n\
+             simple_ui_size={}\n\
+             simple_ui_welcome_shown={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -780,10 +780,10 @@ impl Settings {
             self.debug_open_editor,
             self.debug_text_size,
             self.speed.name(),
-            self.console_mode,
-            choice_name(&CONSOLE_MODE_FILTER, &self.console_mode_filter),
-            choice_name(&CONSOLE_MODE_UI_SIZE, &self.console_mode_ui_size),
-            self.console_mode_welcome_shown,
+            self.simple_ui,
+            choice_name(&SIMPLE_UI_FILTER, &self.simple_ui_filter),
+            choice_name(&SIMPLE_UI_SIZE, &self.simple_ui_size),
+            self.simple_ui_welcome_shown,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),
@@ -839,10 +839,10 @@ mod tests {
             speed: Speed::Switch1,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
-            console_mode: true,
-            console_mode_filter: ConsoleModeFilter::Xscreen,
-            console_mode_ui_size: ConsoleModeUiSize::Large,
-            console_mode_welcome_shown: true,
+            simple_ui: true,
+            simple_ui_filter: SimpleUiFilter::Xscreen,
+            simple_ui_size: SimpleUiSize::Large,
+            simple_ui_welcome_shown: true,
             swap_ab_xy: true,
             ..Settings::default()
         };
@@ -854,58 +854,58 @@ mod tests {
     }
 
     #[test]
-    fn the_console_mode_filter_has_its_own_key_and_steps_round() {
-        for f in ConsoleModeFilter::ALL {
+    fn the_simple_ui_filter_has_its_own_key_and_steps_round() {
+        for f in SimpleUiFilter::ALL {
             let s = Settings {
-                console_mode_filter: f,
+                simple_ui_filter: f,
                 ..Settings::default()
             };
             let back = Settings::from_text(&s.to_text());
-            assert_eq!(back.console_mode_filter, f);
+            assert_eq!(back.simple_ui_filter, f);
             assert_eq!(back.screen_filter, Settings::default().screen_filter);
         }
-        let s = Settings::from_text("console_mode_filter=blurry\nscreen_filter=bilinear\n");
-        assert_eq!(s.console_mode_filter, ConsoleModeFilter::Auto);
+        let s = Settings::from_text("simple_ui_filter=blurry\nscreen_filter=bilinear\n");
+        assert_eq!(s.simple_ui_filter, SimpleUiFilter::Auto);
         assert_eq!(s.screen_filter, Some(Filter::Bilinear));
-        let s = Settings::from_text("console_mode_filter=xscreen\n");
-        assert_eq!(s.console_mode_filter, ConsoleModeFilter::Xscreen);
+        let s = Settings::from_text("simple_ui_filter=xscreen\n");
+        assert_eq!(s.simple_ui_filter, SimpleUiFilter::Xscreen);
         assert_eq!(s.screen_filter, Settings::default().screen_filter);
-        let f = ConsoleModeFilter::Auto;
-        assert_eq!(f.step(1), ConsoleModeFilter::PixelArt);
-        assert_eq!(f.step(-1), ConsoleModeFilter::Xscreen);
-        assert_eq!(ConsoleModeFilter::Xscreen.step(1), f);
+        let f = SimpleUiFilter::Auto;
+        assert_eq!(f.step(1), SimpleUiFilter::PixelArt);
+        assert_eq!(f.step(-1), SimpleUiFilter::Xscreen);
+        assert_eq!(SimpleUiFilter::Xscreen.step(1), f);
         assert_eq!(f.step(5), f);
     }
 
     #[test]
-    fn the_console_mode_settings_have_keys_of_their_own() {
-        for size in ConsoleModeUiSize::ALL {
+    fn the_simple_ui_settings_have_keys_of_their_own() {
+        for size in SimpleUiSize::ALL {
             let s = Settings {
-                console_mode_ui_size: size,
+                simple_ui_size: size,
                 ..Settings::default()
             };
-            assert_eq!(Settings::from_text(&s.to_text()).console_mode_ui_size, size);
+            assert_eq!(Settings::from_text(&s.to_text()).simple_ui_size, size);
         }
         let text = Settings::default().to_text();
         for line in [
-            "console_mode_ui_size=normal\n",
-            "console_mode_welcome_shown=false\n",
+            "simple_ui_size=normal\n",
+            "simple_ui_welcome_shown=false\n",
             "swap_ab_xy=false\n",
         ] {
             assert!(text.contains(line), "{line}");
         }
         let s = Settings::from_text(
-            "console_mode_ui_size=large\nconsole_mode_welcome_shown=true\nswap_ab_xy=true\n",
+            "simple_ui_size=large\nsimple_ui_welcome_shown=true\nswap_ab_xy=true\n",
         );
-        assert_eq!(s.console_mode_ui_size, ConsoleModeUiSize::Large);
-        assert!(s.console_mode_welcome_shown && s.swap_ab_xy);
-        assert!(!s.console_mode, "each has a key of its own");
-        let s = Settings::from_text("console_mode_ui_size=huge\nswap_ab_xy=1\n");
+        assert_eq!(s.simple_ui_size, SimpleUiSize::Large);
+        assert!(s.simple_ui_welcome_shown && s.swap_ab_xy);
+        assert!(!s.simple_ui, "each has a key of its own");
+        let s = Settings::from_text("simple_ui_size=huge\nswap_ab_xy=1\n");
         assert_eq!(s, Settings::default());
-        let large = ConsoleModeUiSize::Large;
-        assert_eq!(ConsoleModeUiSize::Normal.step(1), large);
-        assert_eq!(ConsoleModeUiSize::Normal.step(-1), large);
-        assert_eq!(large.step(1), ConsoleModeUiSize::Normal);
+        let large = SimpleUiSize::Large;
+        assert_eq!(SimpleUiSize::Normal.step(1), large);
+        assert_eq!(SimpleUiSize::Normal.step(-1), large);
+        assert_eq!(large.step(1), SimpleUiSize::Normal);
     }
 
     #[test]

@@ -102,16 +102,16 @@ The menu needs the mouse or keys.
 | B | Go back |
 | Left stick | D-pad |
 
-## Console mode
+## Simple UI
 
-For a gamepad without a keyboard, as on a Linux handheld: fullscreen, no menu
-bar or editor, and a list of the projects instead of DIRECT mode. Start it
-with `smilebasic --console-mode`, or turn it on and off with Ctrl+Shift+F12,
-which keeps the choice. Programs never see − (Select).
+The Simple UI is for a gamepad without a keyboard, as on a Linux handheld:
+fullscreen, no menu bar or editor, and a list of the projects instead of
+DIRECT mode. Start it with `smilebasic --simple-ui`, or turn it on and off
+with Ctrl+Shift+F12, which keeps the choice. Programs never see − (Select).
 
-The first time the mode starts, a welcome screen asks you to press A. The
-button you press, the right or the bottom one, works as A from then on, and
-the one across from it as B. Enter continues without changing this.
+The first time the Simple UI starts, a welcome screen asks you to press A.
+The button you press, the right or the bottom one, works as A from then on,
+and the one across from it as B. Enter continues without changing this.
 
 The pause menu pauses the program. It has Resume, Restart, Return to Game
 list and Quit Emulator; over the list it has Close and Quit Emulator. Under
@@ -128,10 +128,10 @@ A change shows at once and is kept.
 
 | Key | Action |
 |---|---|
-| Ctrl+Shift+F12 | Turn console mode on or off |
+| Ctrl+Shift+F12 | Turn the Simple UI on or off |
 | − (Select) and A, F8 | Open or close the pause menu |
 | − (Select) and + | Quit the emulator |
-| + | As in the other modes; it does nothing in the list |
+| + | As on the desktop; it does nothing in the list |
 | A, Enter | Run the project's MAIN.PRG or the chosen program; choose in the menu |
 | X, Tab | The project's programs |
 | B, Esc, Backspace | Back to the projects; close the menu |

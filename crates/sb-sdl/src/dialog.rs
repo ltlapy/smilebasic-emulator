@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(d.lines.len(), 2);
     }
 
-    /// Console mode's UI can be 320x240: a dialog is cut to fit it,
+    /// The Simple UI can be 320x240: a dialog is cut to fit it,
     /// however much it has to say.
     #[test]
     fn a_dialog_fits_a_320x240_display() {

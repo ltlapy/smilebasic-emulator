@@ -151,7 +151,7 @@ apart from the macro hang below.
   takes everything else from `BUTTON` therefore needs a gamepad.
 - `INKEY$` gets nothing from buttons the keyboard presses; the keys themselves
   do the typing.
-- Swap A/B and X/Y (File > Settings > Input, or console mode's pause menu;
+- Swap A/B and X/Y (File > Settings > Input, or the Simple UI's pause menu;
   `swap_ab_xy` in `settings.txt`), off by default, is for gamepads that
   print A at the bottom. A gamepad's bottom button then reads as `#B_RRIGHT`
   (A) in `BUTTON` and types what A types, the right one as `#B_RDOWN` (B),
@@ -370,8 +370,8 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   `XSCREEN`. Following `XSCREEN` is one of its choices, Program (XSCREEN). The
   default is Nearest, which scales by whole factors. No `XSCREEN` mode does
   that.
-- In console mode the screen fills the display at its aspect ratio, and
-  the filter is the pause menu's Screen filter (`console_mode_filter` in
+- With the Simple UI on, the screen fills the display at its aspect ratio, and
+  the filter is the pause menu's Screen filter (`simple_ui_filter` in
   `settings.txt`), not View > Screen filter. A 640x480 display seldom holds
   the screen a whole number of times (400x240 is 1.6 times) and can show it
   smaller than it is (`XSCREEN 1280,720` is half size). SmileBASIC 4's
@@ -429,13 +429,13 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   program ends or is stopped. After an error the screen stays, with the
   emulator's own line `=== Press A Button or Enter to return.===` below it,
   until A (any controller) or Enter is pressed.
-- Console mode (`--console-mode`, or Ctrl+Shift+F12) has no DIRECT mode or
+- The Simple UI (`--simple-ui`, or Ctrl+Shift+F12) has no DIRECT mode or
   editor. It starts in a list of the projects, runs a project's MAIN.PRG or one
   of its programs, and returns to the list as Run in the project manager does.
   − (Select) with A opens the emulator's pause menu, which pauses the program and gives it
   no input; neither that A nor the Enter it would type reaches the program.
   − (Select) with + quits the emulator. SmileBASIC 4 has none of these.
-- Console mode leaves the screens as `ACLS` does and stops the sound as
+- The Simple UI leaves the screens as `ACLS` does and stops the sound as
   `SNDSTOP` does each time it goes back to its list: after `END`, `STOP` or
   the + button, after an error once A is pressed, and on Return to Game list
   and Restart. The desktop does this only with Run > "Clear screen and sound

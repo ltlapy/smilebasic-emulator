@@ -2268,7 +2268,7 @@ impl Machine {
     }
 
     /// Leaves the screens as ACLS does and the sound stopped, as a program
-    /// that ends does with the setting `tidy_on_end`. Console mode does
+    /// that ends does with the setting `tidy_on_end`. The Simple UI does
     /// this whenever it goes back to its game list, whatever the setting.
     pub fn tidy(&mut self) {
         self.rt.acls(false, false, false, false);
