@@ -92,16 +92,21 @@ fn out_of_range(what: &str, n: i32) -> Error {
     Error::with_detail(ErrorKind::OutOfRange, format!("{what} {n}"))
 }
 
-/// TSCREEN's font type: 8 to 64 in steps of 8.
-fn font_type(v: &Value) -> Result<u32> {
-    checking(v, || {
-        let n = v.to_int()?;
-        if (8..=64).contains(&n) && n % 8 == 0 {
-            Ok(n as u32)
-        } else {
-            Err(out_of_range("font type", n))
-        }
+fn in_range(what: &str, v: &Value, range: std::ops::RangeInclusive<i32>) -> Result<i32> {
+    checking(v, || match v.to_int()? {
+        n if range.contains(&n) => Ok(n),
+        n => Err(out_of_range(what, n)),
     })
+}
+
+/// TSCREEN's font type: 8 to 64 in steps of 8.
+fn font_type(n: i32) -> Result<u32> {
+    if (8..=64).contains(&n) && n % 8 == 0 {
+        Ok(n as u32)
+    } else {
+        let detail = format!("font type {n}");
+        Err(Error::with_detail(ErrorKind::IllegalFontType, detail))
+    }
 }
 
 /// FADE: a color over the whole screen, and its way to another one.
@@ -246,8 +251,10 @@ impl Runtime {
                     v => real(v).map(Some),
                 };
                 let (x, y) = (coord(&args[1])?, coord(&args[2])?);
-                let z = args.get(3).map(opt_int).transpose()?.flatten();
-                let z = z.map(|n| self::z(&Value::Int(n))).transpose()?;
+                let z = match args.get(3) {
+                    None | Some(Value::Default) => None,
+                    Some(v) => Some(self::z(v)?),
+                };
                 let t = &mut self.text[screen_id(&args[0])?];
                 t.pos = (x.unwrap_or(t.pos.0), y.unwrap_or(t.pos.1));
                 t.z = z.unwrap_or(t.z);
@@ -372,10 +379,8 @@ impl Runtime {
             (Command::Lfilter, Want::Outs(0), 1..=5) => {
                 let id = layer_id(&args[0])?;
                 let kind = args.get(1).map(opt_int).transpose()?.flatten().unwrap_or(0);
-                let size = |v: &Value| -> Result<u32> {
-                    let n = v.to_int()?;
-                    u32::try_from(n).map_err(|_| out_of_range("filter size", n))
-                };
+                let size =
+                    |v: &Value| -> Result<u32> { Ok(in_range("filter size", v, 0..=1280)? as u32) };
                 // Raster deformation needs the repeat flag: with the array
                 // alone it is Out of range for the type. An array that is
                 // not a real [n,2] or [n,4] is Type mismatch. The array is
@@ -385,14 +390,18 @@ impl Runtime {
                     (0, []) => LayerFilter::None,
                     (1, [n]) => LayerFilter::Mosaic(size(n)?),
                     (2, [n]) => LayerFilter::Blur(size(n)?),
-                    (3 | 4, [Value::Array(info), repeat]) => {
+                    (3 | 4, [info, repeat]) => {
+                        let repeat = repeat.to_int()? != 0;
+                        let wrong = || Error::new(ErrorKind::TypeMismatch).of_value(info);
+                        let Value::Array(info) = info else {
+                            return Err(wrong());
+                        };
                         let a = info.borrow();
                         if a.elem_type() != sb_core::value::ElemType::Real
                             || !matches!(a.dims[..], [_, 2 | 4])
                         {
-                            return Err(ErrorKind::TypeMismatch.into());
+                            return Err(wrong());
                         }
-                        let repeat = repeat.to_int()? != 0;
                         let mut rows = match std::mem::take(&mut self.filters[id]) {
                             LayerFilter::Raster { rows, .. } => rows,
                             _ => Vec::new(),
@@ -410,8 +419,8 @@ impl Runtime {
                         saturation: real(s)?,
                         value: real(v)?,
                     },
-                    (_, [Value::Array(_), _]) => return Err(ErrorKind::TypeMismatch.into()),
-                    (n, _) => return Err(out_of_range("filter type", n)),
+                    // A type that does not go with this many arguments.
+                    (n, _) => return Err(out_of_range("filter type", n).of_arg(1)),
                 };
                 Ok(vec![])
             }
@@ -423,16 +432,19 @@ impl Runtime {
             // Past the first 16 elements nothing is looked at.
             (Command::Lmatrix, Want::Outs(0), 2) => {
                 let id = layer_id(&args[0])?;
-                let a = args[1].clone().into_array()?;
+                let wrong = || Error::new(ErrorKind::TypeMismatch).of_arg(1);
+                let Value::Array(a) = &args[1] else {
+                    return Err(wrong());
+                };
                 let a = a.borrow();
                 if a.elem_type() != sb_core::value::ElemType::Real || a.len() < 16 {
-                    return Err(ErrorKind::TypeMismatch.into());
+                    return Err(wrong());
                 }
                 let mut m = [0.0; 16];
                 for (i, v) in m.iter_mut().enumerate() {
                     let x = a.get(i).to_real()?;
                     if x.is_finite() && x.abs() > f64::from(f32::MAX) {
-                        return Err(out_of_range("matrix", i as i32));
+                        return Err(out_of_range("matrix", i as i32).of_arg(1));
                     }
                     // Kept as the GPU takes it.
                     *v = f64::from(x as f32);
@@ -454,31 +466,28 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Tscreen, Want::Outs(0), 1..=5) => {
-                let (id, ft, cs, size) = match args {
-                    [ft] => (CONSOLE, font_type(ft)?, None, None),
-                    [ft, cs] => (CONSOLE, font_type(ft)?, Some(char_size(cs)?), None),
-                    [id, ft, cs] => (screen_id(id)?, font_type(ft)?, Some(char_size(cs)?), None),
-                    [id, ft, w, h] => (screen_id(id)?, font_type(ft)?, None, Some((w, h))),
-                    [id, ft, cs, w, h] => (
-                        screen_id(id)?,
-                        font_type(ft)?,
-                        Some(char_size(cs)?),
-                        Some((w, h)),
-                    ),
+                // The font type is checked after the other arguments.
+                let ft_at = usize::from(args.len() >= 3);
+                let id = match ft_at {
+                    0 => CONSOLE,
+                    _ => screen_id(&args[0])?,
+                };
+                let ft = checking(&args[ft_at], || args[ft_at].to_int())?;
+                let cells = |v: &Value| -> Result<u32> {
+                    Ok(in_range("text screen size", v, 1..=32768)? as u32)
+                };
+                let (cs, size) = match args {
+                    [_] => (None, None),
+                    [_, cs] | [_, _, cs] => (Some(char_size(cs)?), None),
+                    [_, _, w, h] => (None, Some((cells(w)?, cells(h)?))),
+                    [_, _, cs, w, h] => (Some(char_size(cs)?), Some((cells(w)?, cells(h)?))),
                     _ => unreachable!("one to five"),
                 };
+                let ft = font_type(ft).map_err(|e| e.of_arg(ft_at))?;
                 let cs = cs.unwrap_or(ft);
                 let (fw, fh) = self.frame_size();
-                // 0 or omitted: as many characters as fill the frame.
-                let fill = |v: Option<&Value>, frame: u32| -> Result<u32> {
-                    match v.map(Value::to_int).transpose()?.unwrap_or(0) {
-                        0 => Ok(frame / cs),
-                        n if n > 0 => Ok(n as u32),
-                        n => Err(out_of_range("text screen size", n)),
-                    }
-                };
-                let w = fill(size.map(|s| s.0), fw)?;
-                let h = fill(size.map(|s| s.1), fh)?;
+                // Omitted: as many characters as fill the frame.
+                let (w, h) = size.unwrap_or((fw / cs, fh / cs));
                 if u64::from(w) * u64::from(h) > 32768 {
                     return Err(Error::with_detail(
                         ErrorKind::OutOfRange,
@@ -497,11 +506,9 @@ impl Runtime {
             }
             (Command::Tpage, Want::Outs(0), 3 | 4) => {
                 let (id, rest) = with_screen(args, 3)?;
-                let page = rest[0].to_int()?;
-                if !(-1..=5).contains(&page) {
-                    return Err(out_of_range("graphic page", page));
-                }
-                let origin = (rest[1].to_int()?, rest[2].to_int()?);
+                let page = in_range("graphic page", &rest[0], -1..=5)?;
+                let origin = |v: &Value| in_range("origin", v, -32768..=32767);
+                let origin = (origin(&rest[1])?, origin(&rest[2])?);
                 let t = &mut self.text[id];
                 (t.page, t.page_origin) = (page, origin);
                 Ok(vec![])
@@ -570,32 +577,37 @@ impl Runtime {
             // It holds the program until the frame job has taken the new mode.
             (Command::Xscreen, Want::Outs(0), 2..=5) if self.mode_taken() => Ok(vec![]),
             (Command::Xscreen, Want::Outs(0), 2..=5) => {
-                let (w, h) = (args[0].to_int()?, args[1].to_int()?);
-                if !(128..=1280).contains(&w) || w % 4 != 0 {
-                    return Err(out_of_range("width", w));
-                }
-                if !(128..=720).contains(&h) || h % 4 != 0 {
-                    return Err(out_of_range("height", h));
-                }
-                let opt = |i: usize| args.get(i).map(opt_int).transpose().map(Option::flatten);
-                let sample = opt(2)?.unwrap_or(1);
-                if sample < 1 || w * sample > 1280 || h * sample > 720 {
-                    return Err(out_of_range("sample", sample));
-                }
-                let mode = opt(3)?.unwrap_or(0);
-                let filter = Filter::from_int(mode).ok_or_else(|| out_of_range("mode", mode))?;
+                let w = in_range("width", &args[0], 128..=1280)?;
+                let h = in_range("height", &args[1], 128..=720)?;
+                let opt = |i: usize, what, range, default| match args.get(i) {
+                    None | Some(Value::Default) => Ok(default),
+                    Some(v) => in_range(what, v, range),
+                };
+                let sample = opt(2, "sample", 1..=10, 1)?;
+                let mode = opt(3, "mode", 0..=2, 0)?;
+                let filter = Filter::from_int(mode).expect("0 to 2");
                 let aspect = match args.get(4) {
                     None | Some(Value::Default) => None,
-                    Some(v) => match real(v)? {
-                        a if (0.1..=10.0).contains(&a) => Some(a),
-                        a => {
-                            return Err(Error::with_detail(
-                                ErrorKind::OutOfRange,
-                                format!("aspect {a}"),
-                            ));
-                        }
-                    },
+                    Some(v) => Some(checking(v, || match real(v)? {
+                        a if (0.1..=10.0).contains(&a) => Ok(a),
+                        a => Err(Error::with_detail(
+                            ErrorKind::OutOfRange,
+                            format!("aspect {a}"),
+                        )),
+                    })?),
                 };
+                // After every range.
+                for (i, n) in [w, h].into_iter().enumerate() {
+                    if n % 4 != 0 {
+                        return Err(Error::new(ErrorKind::UseMultiplesOf4).of_arg(i));
+                    }
+                }
+                if w * sample > 1280 || h * sample > 720 {
+                    // SmileBASIC 4 names the fourth argument when all five
+                    // are given.
+                    let arg = if args.len() == 5 { 3 } else { 2 };
+                    return Err(out_of_range("sample", sample).of_arg(arg));
+                }
                 self.set_mode(ScreenMode {
                     width: w as u32,
                     height: h as u32,

@@ -1162,7 +1162,20 @@ Expected but not yet seen on hardware:
   keeps their `THOME`, `TROT`, `TSCALE`, `TOFS` and `TCOLOR`.
 - `XSCREEN OUT` gives the aspect ratio in single precision: 1.66666663 for
   400x240.
+- `XSCREEN` checks each argument's range
+  first and names it: width 128 to 1280 (`XSCREEN:1`), height 128 to 720
+  (`:2`), sample 1 to 10 (`:3`), mode 0 to 2 (`:4`). A width or height that 4
+  does not divide is `Use multiples of 4`, error 69, after that, as
+  `(XSCREEN:1)` or `(XSCREEN:2)`. A width or height that the sample takes past
+  1280 or 720 is `Out of range (XSCREEN:3)`, and `(XSCREEN:4)` when all five
+  arguments are given. (Not yet seen on hardware.)
 - `TSCREEN` clears the screen. Without a character size it uses the font type.
+- A width or height given to `TSCREEN`
+  is 1 to 32768: 0 is `Out of range`, though the manual says 0 fills the
+  screen, as leaving both out does. A font type other than 8 to 64 in steps of
+  8 is `Illegal font type`, error 58, named as `(TSCREEN:1)` or
+  `(TSCREEN:2)`, and checked after the character size, width and height.
+  (Not yet seen on hardware.)
 - `TSCREEN` also stops the screen's animations and undoes `THOME`, `TROT`,
   `TSCALE`, `TCOLOR` and `TBLEND`. `TOFS` goes back to 0,0 but keeps its depth.
   `TLAYER`, `TPAGE` and `TVAR` stay (TEST47), and so does `TFUNC` (TEST48).
@@ -1532,6 +1545,10 @@ Expected but not yet seen on hardware:
 - `LFILTER` copies a raster array when it is called: writing to the array later
   changes nothing on the screen until the next `LFILTER` (TEST60).
 - `LFILTER layer,0,n` is `Out of range`.
+- A type that does not go with the
+  number of arguments is `Out of range (LFILTER:2)`, as in `LFILTER 0,0,1`.
+  The mosaic and blur size is 0 to 1280 (`LFILTER:3`). (Not yet seen on
+  hardware.)
 - `LFILTER`'s raster deformation (types 3 and 4) needs the repeat flag:
   `LFILTER 1,3,A,#TRUE` with a real `A[240,4]` or `A[240,2]` works, while
   without the flag it is `Out of range` for the type whatever the array.

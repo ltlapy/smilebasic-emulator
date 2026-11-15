@@ -212,14 +212,19 @@ fn first_row(source: &str) -> String {
 fn tscreen_sizes_and_attributes() {
     assert_eq!(
         first_row(
-            "TSCREEN 16:TSCREEN 1,8,16,10,5:TSCREEN 2,32,0,3\n\
+            "TSCREEN 16:TSCREEN 1,8,16,10,5:TSCREEN 2,32,32\n\
              TSCREEN OUT A,B,C,D:TSCREEN 1 OUT E,F,G,H:TSCREEN 2 OUT I,J,K,L\n\
              ATTR 1,1,3:ATTR OUT P,Q,R:ATTR 2,6:TPAGE 2,-1,8,9:TPAGE 2 OUT S,T,U\n\
              ?A;B;C;D;\" \";E;F;G;H;\" \";I;J;K;L;\" \";ATTR();P;Q;R;ATTR(2);S;T;U"
         ),
-        "16162515 816105 3232123 151136-189"
+        "16162515 816105 3232127 151136-189"
     );
-    assert!(first_row("CLS:TSCREEN 12").starts_with("Out of range"));
+    // A font type SmileBASIC 4 has no font for, checked after the sizes.
+    assert!(first_row("CLS:TSCREEN 12").starts_with("Illegal font type"));
+    assert!(first_row("CLS:TSCREEN 1,12,8,0,3").starts_with("Out of range"));
+    assert!(first_row("CLS:TSCREEN 1,12,8,3,3").starts_with("Illegal font type"));
+    // A size given is 1 or more.
+    assert!(first_row("CLS:TSCREEN 2,32,0,3").starts_with("Out of range"));
     assert!(first_row("CLS:TSCREEN 1,8,8,300,300").starts_with("Out of range"));
     // More cells than 32 bits count.
     assert!(first_row("CLS:TSCREEN 1,8,8,65536,65536").starts_with("Out of range"));
@@ -266,10 +271,40 @@ fn xscreen_sets_the_resolution() {
         ),
         "32020021160 884025"
     );
-    assert!(first_row("CLS:XSCREEN 130,240").starts_with("Out of range"));
+    assert!(first_row("CLS:XSCREEN 130,240").starts_with("Use multiples of 4"));
+    assert!(first_row("CLS:XSCREEN 126,240").starts_with("Out of range"));
     assert!(first_row("CLS:XSCREEN 400,240,4").starts_with("Out of range"));
     assert!(first_row("CLS:XSCREEN 400,240,1,3").starts_with("Out of range"));
     assert!(first_row("CLS:XSCREEN 400,240,1,0,20").starts_with("Out of range"));
+}
+
+/// Errors name the argument that was wrong, as SmileBASIC 4's do.
+#[test]
+fn screen_errors_name_the_argument() {
+    for (source, named) in [
+        ("XSCREEN 16,240", "(XSCREEN:1)"),
+        ("XSCREEN 400,721", "(XSCREEN:2)"),
+        ("XSCREEN 400,240,11", "(XSCREEN:3)"),
+        ("XSCREEN 400,240,1,3", "(XSCREEN:4)"),
+        ("XSCREEN 400,240,1,0,20", "(XSCREEN:5)"),
+        ("XSCREEN 400,242", "(XSCREEN:2)"),
+        ("XSCREEN 400,240,4,0", "(XSCREEN:3)"),
+        ("XSCREEN 400,240,4,0,1", "(XSCREEN:4)"),
+        ("TSCREEN 0,8,8,32769,1", "(TSCREEN:4)"),
+        ("TSCREEN 0,9,8,8", "(TSCREEN:2)"),
+        ("TPAGE 0,6,0,0", "(TPAGE:2)"),
+        ("TPAGE 0,0,0,32768", "(TPAGE:4)"),
+        ("TPAGE 0,32768,0", "(TPAGE:2)"),
+        ("TOFS 0,0,0,4096", "(TOFS:4)"),
+        ("LFILTER 0,0,1", "(LFILTER:2)"),
+        ("LFILTER 0,1,1281", "(LFILTER:3)"),
+        ("DIM A%[240,4]:LFILTER 0,3,A%,1", "(LFILTER:3)"),
+        ("DIM M#[15]:LMATRIX 0,M#", "(LMATRIX:2)"),
+        ("DIM M#[16]:M#[0]=1E39:LMATRIX 0,M#", "(LMATRIX:2)"),
+    ] {
+        let said = first_row(&format!("CLS:{source}"));
+        assert!(said.contains(named), "{source}: {said}");
+    }
 }
 
 #[test]
