@@ -86,6 +86,30 @@ fn bqparam_checks_the_gain_count_first() {
     );
 }
 
+/// MIN and MAX take an array or two numbers or more.
+#[test]
+fn min_and_max_check_their_arguments() {
+    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
+    let mismatch = ErrorKind::TypeMismatch;
+    for f in ["MIN", "MAX"] {
+        let call = |args: &str| kind(&format!("VAR Z:DIM A[4],E[0],S$[2]:?{f}({args})"));
+        assert_eq!(call("Z"), Some((mismatch, Some(0))), "{f}");
+        assert_eq!(call("\"A\""), Some((mismatch, Some(0))), "{f}");
+        assert_eq!(call("1,\"A\""), Some((mismatch, Some(1))), "{f}");
+        assert_eq!(call("\"A\",\"B\""), Some((mismatch, Some(0))), "{f}");
+        assert_eq!(
+            call("E"),
+            Some((ErrorKind::IllegalFunctionCall, None)),
+            "{f}"
+        );
+        assert_eq!(call("S$"), Some((mismatch, None)), "{f}");
+    }
+    assert_eq!(
+        output("DIM A[]=[3,1,2]:?MIN(A);MAX(A);MIN(4,2,9);MAX(4,2,9)"),
+        "1329\n"
+    );
+}
+
 /// FFTWFN, BQPARAM and BIQUAD take their window or coefficients in an
 /// array of reals only.
 #[test]

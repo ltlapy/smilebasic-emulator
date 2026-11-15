@@ -364,25 +364,35 @@ fn atan(args: &[Value]) -> Result<Value> {
 
 /// MIN/MAX over the arguments, or over the elements of a single array.
 /// The winning value keeps its type.
+/// MIN and MAX of an array, or of two numbers or more. SmileBASIC 4
+/// refuses one number, naming it, an empty array with
+/// Illegal function call and a string array, both naming nothing.
 fn extreme(args: &[Value], want: std::cmp::Ordering) -> Result<Value> {
-    let values: Vec<Value> = match args {
+    let elements: Vec<Value>;
+    let values = match args {
         [Value::Array(a)] => {
             let a = a.borrow();
-            if a.elem_type() == ElemType::Str || a.is_empty() {
+            if a.is_empty() {
+                return Err(ErrorKind::IllegalFunctionCall.into());
+            }
+            if a.elem_type() == ElemType::Str {
                 return Err(ErrorKind::TypeMismatch.into());
             }
-            (0..a.len()).map(|i| a.get(i)).collect()
+            elements = (0..a.len()).map(|i| a.get(i)).collect();
+            &elements[..]
         }
-        _ => args.to_vec(),
+        [v] => return Err(mismatch(v)),
+        _ => args,
     };
-    let mut best = values[0].clone();
+    let mut best = &values[0];
+    let mut best_x = best.to_real()?;
     for v in &values[1..] {
-        if v.to_real()?.partial_cmp(&best.to_real()?) == Some(want) {
-            best = v.clone();
+        let x = v.to_real()?;
+        if x.partial_cmp(&best_x) == Some(want) {
+            (best, best_x) = (v, x);
         }
     }
-    best.to_real()?;
-    Ok(best)
+    Ok(best.clone())
 }
 
 // ---- strings ----
