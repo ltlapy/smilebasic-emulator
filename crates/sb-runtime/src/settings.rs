@@ -58,10 +58,10 @@ impl Renderer {
     }
 }
 
-/// How handheld mode scales the screen to its display, which is rarely a
+/// How console mode scales the screen to its display, which is rarely a
 /// whole number of times the screen's size and can be smaller than it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum HandheldFilter {
+pub enum ConsoleModeFilter {
     /// The pixel art filter where the screen is drawn larger than its
     /// frame, bilinear where it is drawn smaller, and nearest at a whole
     /// factor.
@@ -75,29 +75,29 @@ pub enum HandheldFilter {
     Xscreen,
 }
 
-impl HandheldFilter {
+impl ConsoleModeFilter {
     /// Every choice, in the order the pause menu steps through them.
-    pub const ALL: [HandheldFilter; 5] = [
-        HandheldFilter::Auto,
-        HandheldFilter::PixelArt,
-        HandheldFilter::Bilinear,
-        HandheldFilter::Nearest,
-        HandheldFilter::Xscreen,
+    pub const ALL: [ConsoleModeFilter; 5] = [
+        ConsoleModeFilter::Auto,
+        ConsoleModeFilter::PixelArt,
+        ConsoleModeFilter::Bilinear,
+        ConsoleModeFilter::Nearest,
+        ConsoleModeFilter::Xscreen,
     ];
 
     /// The choice `step` places after this one, round from the last to
     /// the first.
-    pub fn step(self, step: isize) -> HandheldFilter {
+    pub fn step(self, step: isize) -> ConsoleModeFilter {
         let n = Self::ALL.len() as isize;
         let at = Self::ALL.iter().position(|&f| f == self).unwrap_or(0) as isize;
         Self::ALL[(at + step).rem_euclid(n) as usize]
     }
 }
 
-/// How large handheld mode draws its own screens: the game list, the
+/// How large console mode draws its own screens: the game list, the
 /// pause menu, dialogs and notices. The program's screen keeps its size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum HandheldUiSize {
+pub enum ConsoleModeUiSize {
     /// The largest whole scale that leaves 480 lines or more: 640x480 on
     /// a 640x480 display.
     #[default]
@@ -107,13 +107,13 @@ pub enum HandheldUiSize {
     Large,
 }
 
-impl HandheldUiSize {
+impl ConsoleModeUiSize {
     /// Every choice, in the order the pause menu steps through them.
-    pub const ALL: [HandheldUiSize; 2] = [HandheldUiSize::Normal, HandheldUiSize::Large];
+    pub const ALL: [ConsoleModeUiSize; 2] = [ConsoleModeUiSize::Normal, ConsoleModeUiSize::Large];
 
     /// The choice `step` places after this one, round from the last to
     /// the first.
-    pub fn step(self, step: isize) -> HandheldUiSize {
+    pub fn step(self, step: isize) -> ConsoleModeUiSize {
         let n = Self::ALL.len() as isize;
         let at = Self::ALL.iter().position(|&s| s == self).unwrap_or(0) as isize;
         Self::ALL[(at + step).rem_euclid(n) as usize]
@@ -239,17 +239,18 @@ pub struct Settings {
     /// The programs F9 to F11 start, which SYSPARAM "TOOL1" to "TOOL3"
     /// reads, as SmileBASIC 4's settings set them.
     pub tools: [String; 3],
-    /// The frontend is laid out for a handheld with a gamepad alone:
-    /// fullscreen, a game list instead of DIRECT mode, no menu bar.
-    pub handheld: bool,
-    /// How handheld mode scales the screen; `screen_filter` is the
+    /// Console mode: the frontend is laid out for a gamepad alone and a
+    /// small screen: fullscreen, a game list instead of DIRECT mode, no
+    /// menu bar.
+    pub console_mode: bool,
+    /// How console mode scales the screen; `screen_filter` is the
     /// desktop's.
-    pub handheld_filter: HandheldFilter,
-    /// How large handheld mode draws its own screens.
-    pub handheld_ui_size: HandheldUiSize,
-    /// Handheld mode's welcome screen has been shown. It asks for A and
+    pub console_mode_filter: ConsoleModeFilter,
+    /// How large console mode draws its own screens.
+    pub console_mode_ui_size: ConsoleModeUiSize,
+    /// Console mode's welcome screen has been shown. It asks for A and
     /// sets `swap_ab_xy` by the button pressed.
-    pub handheld_welcome_shown: bool,
+    pub console_mode_welcome_shown: bool,
 }
 
 /// F1 to F5 as SmileBASIC 4 starts (checked on hardware).
@@ -309,10 +310,10 @@ impl Default for Settings {
             speed: Speed::Unlimited,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
-            handheld: false,
-            handheld_filter: HandheldFilter::Auto,
-            handheld_ui_size: HandheldUiSize::Normal,
-            handheld_welcome_shown: false,
+            console_mode: false,
+            console_mode_filter: ConsoleModeFilter::Auto,
+            console_mode_ui_size: ConsoleModeUiSize::Normal,
+            console_mode_welcome_shown: false,
         }
     }
 }
@@ -372,10 +373,10 @@ impl Settings {
             speed: Speed::Unlimited,
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
-            handheld: false,
-            handheld_filter: HandheldFilter::Auto,
-            handheld_ui_size: HandheldUiSize::Normal,
-            handheld_welcome_shown: false,
+            console_mode: false,
+            console_mode_filter: ConsoleModeFilter::Auto,
+            console_mode_ui_size: ConsoleModeUiSize::Normal,
+            console_mode_welcome_shown: false,
         }
     }
 }
@@ -392,17 +393,17 @@ const SCREEN_FILTER: [(Option<Filter>, &str); 4] = [
     (Some(Filter::Bilinear), "bilinear"),
 ];
 
-const HANDHELD_FILTER: [(HandheldFilter, &str); 5] = [
-    (HandheldFilter::Auto, "auto"),
-    (HandheldFilter::PixelArt, "pixel_art"),
-    (HandheldFilter::Bilinear, "bilinear"),
-    (HandheldFilter::Nearest, "nearest"),
-    (HandheldFilter::Xscreen, "xscreen"),
+const CONSOLE_MODE_FILTER: [(ConsoleModeFilter, &str); 5] = [
+    (ConsoleModeFilter::Auto, "auto"),
+    (ConsoleModeFilter::PixelArt, "pixel_art"),
+    (ConsoleModeFilter::Bilinear, "bilinear"),
+    (ConsoleModeFilter::Nearest, "nearest"),
+    (ConsoleModeFilter::Xscreen, "xscreen"),
 ];
 
-const HANDHELD_UI_SIZE: [(HandheldUiSize, &str); 2] = [
-    (HandheldUiSize::Normal, "normal"),
-    (HandheldUiSize::Large, "large"),
+const CONSOLE_MODE_UI_SIZE: [(ConsoleModeUiSize, &str); 2] = [
+    (ConsoleModeUiSize::Normal, "normal"),
+    (ConsoleModeUiSize::Large, "large"),
 ];
 
 const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
@@ -538,8 +539,8 @@ impl Settings {
                 "debug_open_editor" => &mut s.debug_open_editor,
                 "complete_hints" => &mut s.complete_hints,
                 "complete_above" => &mut s.complete_above,
-                "handheld" => &mut s.handheld,
-                "handheld_welcome_shown" => &mut s.handheld_welcome_shown,
+                "console_mode" => &mut s.console_mode,
+                "console_mode_welcome_shown" => &mut s.console_mode_welcome_shown,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -638,15 +639,15 @@ impl Settings {
                     }
                     continue;
                 }
-                "handheld_filter" => {
-                    if let Some(f) = choice(&HANDHELD_FILTER, value) {
-                        s.handheld_filter = f;
+                "console_mode_filter" => {
+                    if let Some(f) = choice(&CONSOLE_MODE_FILTER, value) {
+                        s.console_mode_filter = f;
                     }
                     continue;
                 }
-                "handheld_ui_size" => {
-                    if let Some(size) = choice(&HANDHELD_UI_SIZE, value) {
-                        s.handheld_ui_size = size;
+                "console_mode_ui_size" => {
+                    if let Some(size) = choice(&CONSOLE_MODE_UI_SIZE, value) {
+                        s.console_mode_ui_size = size;
                     }
                     continue;
                 }
@@ -729,10 +730,10 @@ impl Settings {
              debug_open_editor={}\n\
              debug_text_size={}\n\
              speed={}\n\
-             handheld={}\n\
-             handheld_filter={}\n\
-             handheld_ui_size={}\n\
-             handheld_welcome_shown={}\n\
+             console_mode={}\n\
+             console_mode_filter={}\n\
+             console_mode_ui_size={}\n\
+             console_mode_welcome_shown={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -779,10 +780,10 @@ impl Settings {
             self.debug_open_editor,
             self.debug_text_size,
             self.speed.name(),
-            self.handheld,
-            choice_name(&HANDHELD_FILTER, &self.handheld_filter),
-            choice_name(&HANDHELD_UI_SIZE, &self.handheld_ui_size),
-            self.handheld_welcome_shown,
+            self.console_mode,
+            choice_name(&CONSOLE_MODE_FILTER, &self.console_mode_filter),
+            choice_name(&CONSOLE_MODE_UI_SIZE, &self.console_mode_ui_size),
+            self.console_mode_welcome_shown,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),
@@ -838,10 +839,10 @@ mod tests {
             speed: Speed::Switch1,
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
-            handheld: true,
-            handheld_filter: HandheldFilter::Xscreen,
-            handheld_ui_size: HandheldUiSize::Large,
-            handheld_welcome_shown: true,
+            console_mode: true,
+            console_mode_filter: ConsoleModeFilter::Xscreen,
+            console_mode_ui_size: ConsoleModeUiSize::Large,
+            console_mode_welcome_shown: true,
             swap_ab_xy: true,
             ..Settings::default()
         };
@@ -853,58 +854,58 @@ mod tests {
     }
 
     #[test]
-    fn the_handheld_filter_has_its_own_key_and_steps_round() {
-        for f in HandheldFilter::ALL {
+    fn the_console_mode_filter_has_its_own_key_and_steps_round() {
+        for f in ConsoleModeFilter::ALL {
             let s = Settings {
-                handheld_filter: f,
+                console_mode_filter: f,
                 ..Settings::default()
             };
             let back = Settings::from_text(&s.to_text());
-            assert_eq!(back.handheld_filter, f);
+            assert_eq!(back.console_mode_filter, f);
             assert_eq!(back.screen_filter, Settings::default().screen_filter);
         }
-        let s = Settings::from_text("handheld_filter=blurry\nscreen_filter=bilinear\n");
-        assert_eq!(s.handheld_filter, HandheldFilter::Auto);
+        let s = Settings::from_text("console_mode_filter=blurry\nscreen_filter=bilinear\n");
+        assert_eq!(s.console_mode_filter, ConsoleModeFilter::Auto);
         assert_eq!(s.screen_filter, Some(Filter::Bilinear));
-        let s = Settings::from_text("handheld_filter=xscreen\n");
-        assert_eq!(s.handheld_filter, HandheldFilter::Xscreen);
+        let s = Settings::from_text("console_mode_filter=xscreen\n");
+        assert_eq!(s.console_mode_filter, ConsoleModeFilter::Xscreen);
         assert_eq!(s.screen_filter, Settings::default().screen_filter);
-        let f = HandheldFilter::Auto;
-        assert_eq!(f.step(1), HandheldFilter::PixelArt);
-        assert_eq!(f.step(-1), HandheldFilter::Xscreen);
-        assert_eq!(HandheldFilter::Xscreen.step(1), f);
+        let f = ConsoleModeFilter::Auto;
+        assert_eq!(f.step(1), ConsoleModeFilter::PixelArt);
+        assert_eq!(f.step(-1), ConsoleModeFilter::Xscreen);
+        assert_eq!(ConsoleModeFilter::Xscreen.step(1), f);
         assert_eq!(f.step(5), f);
     }
 
     #[test]
-    fn the_handheld_settings_have_keys_of_their_own() {
-        for size in HandheldUiSize::ALL {
+    fn the_console_mode_settings_have_keys_of_their_own() {
+        for size in ConsoleModeUiSize::ALL {
             let s = Settings {
-                handheld_ui_size: size,
+                console_mode_ui_size: size,
                 ..Settings::default()
             };
-            assert_eq!(Settings::from_text(&s.to_text()).handheld_ui_size, size);
+            assert_eq!(Settings::from_text(&s.to_text()).console_mode_ui_size, size);
         }
         let text = Settings::default().to_text();
         for line in [
-            "handheld_ui_size=normal\n",
-            "handheld_welcome_shown=false\n",
+            "console_mode_ui_size=normal\n",
+            "console_mode_welcome_shown=false\n",
             "swap_ab_xy=false\n",
         ] {
             assert!(text.contains(line), "{line}");
         }
         let s = Settings::from_text(
-            "handheld_ui_size=large\nhandheld_welcome_shown=true\nswap_ab_xy=true\n",
+            "console_mode_ui_size=large\nconsole_mode_welcome_shown=true\nswap_ab_xy=true\n",
         );
-        assert_eq!(s.handheld_ui_size, HandheldUiSize::Large);
-        assert!(s.handheld_welcome_shown && s.swap_ab_xy);
-        assert!(!s.handheld, "each has a key of its own");
-        let s = Settings::from_text("handheld_ui_size=huge\nswap_ab_xy=1\n");
+        assert_eq!(s.console_mode_ui_size, ConsoleModeUiSize::Large);
+        assert!(s.console_mode_welcome_shown && s.swap_ab_xy);
+        assert!(!s.console_mode, "each has a key of its own");
+        let s = Settings::from_text("console_mode_ui_size=huge\nswap_ab_xy=1\n");
         assert_eq!(s, Settings::default());
-        let large = HandheldUiSize::Large;
-        assert_eq!(HandheldUiSize::Normal.step(1), large);
-        assert_eq!(HandheldUiSize::Normal.step(-1), large);
-        assert_eq!(large.step(1), HandheldUiSize::Normal);
+        let large = ConsoleModeUiSize::Large;
+        assert_eq!(ConsoleModeUiSize::Normal.step(1), large);
+        assert_eq!(ConsoleModeUiSize::Normal.step(-1), large);
+        assert_eq!(large.step(1), ConsoleModeUiSize::Normal);
     }
 
     #[test]

@@ -48,7 +48,7 @@ See [importing.md](docs/importing.md).
 ```sh
 smilebasic           # start in DIRECT mode
 smilebasic PROGRAM   # load PROGRAM into PRG0 and run it
-smilebasic --handheld  # fullscreen, a game list and gamepad controls
+smilebasic --console-mode  # fullscreen, a game list and gamepad controls
 ```
 
 `PROGRAM` is a SmileBASIC 4 `TXT` file or plain UTF-8 text. Its folder becomes

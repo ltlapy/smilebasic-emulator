@@ -1,4 +1,4 @@
-//! Handheld mode: the frontend laid out for a small screen and a gamepad
+//! Console mode: the frontend laid out for a small screen and a gamepad
 //! alone. The UI is as many pixels as the screen at a whole scale, the
 //! emulator starts in a list of the projects instead of DIRECT mode,
 //! Select (SDL's Back, the − button) with A opens a pause menu, and Select
@@ -9,7 +9,7 @@ use sb_runtime::confirm::project_label;
 use sb_runtime::env::ICON_SIZE;
 use sb_runtime::font::Font;
 use sb_runtime::screen::{Filter, ScreenMode};
-use sb_runtime::settings::{HandheldFilter, HandheldUiSize, Settings};
+use sb_runtime::settings::{ConsoleModeFilter, ConsoleModeUiSize, Settings};
 use sb_runtime::storage::{FileKind, Storage};
 use sdl3::gamepad::Button;
 use sdl3::keyboard::Keycode;
@@ -26,17 +26,17 @@ use crate::ui::{
 /// The UI's height at a scale of 1: at a whole multiple of it or more,
 /// UI pixels are that many screen pixels across.
 const UI_LINES: u32 = 480;
-/// The smallest UI that handheld mode's screens are laid out for.
+/// The smallest UI that console mode's screens are laid out for.
 const SMALLEST_UI: (u32, u32) = (320, 240);
 
 /// The whole number of screen pixels a UI pixel takes on an output of
 /// `out` pixels: one for every 480 lines, or twice that at
-/// [`HandheldUiSize::Large`] as long as the UI keeps 320x240 pixels.
-pub fn ui_scale((w, h): (u32, u32), size: HandheldUiSize) -> u32 {
+/// [`ConsoleModeUiSize::Large`] as long as the UI keeps 320x240 pixels.
+pub fn ui_scale((w, h): (u32, u32), size: ConsoleModeUiSize) -> u32 {
     let normal = (h / UI_LINES).max(1);
     match size {
-        HandheldUiSize::Normal => normal,
-        HandheldUiSize::Large => {
+        ConsoleModeUiSize::Normal => normal,
+        ConsoleModeUiSize::Large => {
             let most = (w / SMALLEST_UI.0).min(h / SMALLEST_UI.1);
             (2 * normal).min(most).max(normal)
         }
@@ -46,7 +46,7 @@ pub fn ui_scale((w, h): (u32, u32), size: HandheldUiSize) -> u32 {
 /// The UI's size on an output of `out` pixels: the output at
 /// [`ui_scale`], so that the 16-pixel UI font stays sharp. 640x480 gives
 /// 640x480, or 320x240 at Large; 1920x1080 gives 960x540, or 480x270.
-pub fn ui_size((w, h): (u32, u32), size: HandheldUiSize) -> (u32, u32) {
+pub fn ui_size((w, h): (u32, u32), size: ConsoleModeUiSize) -> (u32, u32) {
     let scale = ui_scale((w, h), size);
     ((w / scale).max(1), (h / scale).max(1))
 }
@@ -65,14 +65,14 @@ pub fn display_rect((w, h): (u32, u32), (out_w, out_h): (u32, u32)) -> FRect {
     )
 }
 
-/// The filter handheld mode scales the screen with, by `choice`, when the
+/// The filter console mode scales the screen with, by `choice`, when the
 /// frame of `mode` is drawn `shown` pixels large. The screen fits the
 /// display at its aspect ratio whatever the filter, so it is seldom a
 /// whole number of times its size, and it can be smaller than its frame:
 /// XSCREEN goes up to 1280x720.
-pub fn screen_filter(choice: HandheldFilter, mode: &ScreenMode, (w, h): (f32, f32)) -> Filter {
+pub fn screen_filter(choice: ConsoleModeFilter, mode: &ScreenMode, (w, h): (f32, f32)) -> Filter {
     match choice {
-        HandheldFilter::Auto => {
+        ConsoleModeFilter::Auto => {
             let (fw, fh) = mode.frame();
             let (sx, sy) = (w / fw.max(1) as f32, h / fh.max(1) as f32);
             let whole = |s: f32| s >= 1.0 && (s - s.round()).abs() < 0.001;
@@ -84,24 +84,24 @@ pub fn screen_filter(choice: HandheldFilter, mode: &ScreenMode, (w, h): (f32, f3
                 Filter::Bilinear
             }
         }
-        HandheldFilter::PixelArt => Filter::SmartNearest,
-        HandheldFilter::Bilinear => Filter::Bilinear,
-        HandheldFilter::Nearest => Filter::Nearest,
-        HandheldFilter::Xscreen => mode.filter,
+        ConsoleModeFilter::PixelArt => Filter::SmartNearest,
+        ConsoleModeFilter::Bilinear => Filter::Bilinear,
+        ConsoleModeFilter::Nearest => Filter::Nearest,
+        ConsoleModeFilter::Xscreen => mode.filter,
     }
 }
 
 /// What a press of Start is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
-    /// With Select held, in handheld mode: quit the emulator, as the
+    /// With Select held, in console mode: quit the emulator, as the
     /// frontends of such handhelds do.
     Quit,
     /// The + button, as ever.
     Plus,
 }
 
-/// Select as the modifier of handheld mode's hotkeys.
+/// Select as the modifier of console mode's hotkeys.
 #[derive(Debug, Default)]
 pub struct Hotkeys {
     select: bool,
@@ -116,15 +116,15 @@ impl Hotkeys {
         self.select = down;
     }
 
-    /// A went down: true when, with Select held in handheld mode, it opens
+    /// A went down: true when, with Select held in console mode, it opens
     /// or closes the pause menu and is no press of A.
-    pub fn a_down(&self, handheld: bool) -> bool {
-        handheld && self.select
+    pub fn a_down(&self, console_mode: bool) -> bool {
+        console_mode && self.select
     }
 
     /// Start went down.
-    pub fn start_down(&mut self, handheld: bool) -> Start {
-        if handheld && self.select {
+    pub fn start_down(&mut self, console_mode: bool) -> Start {
+        if console_mode && self.select {
             self.select_start = true;
             Start::Quit
         } else {
@@ -166,24 +166,24 @@ impl Choice {
 /// The settings that the pause menu changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuSettings {
-    pub filter: HandheldFilter,
-    pub ui_size: HandheldUiSize,
+    pub filter: ConsoleModeFilter,
+    pub ui_size: ConsoleModeUiSize,
     pub swap: bool,
 }
 
 impl MenuSettings {
     pub fn of(s: &Settings) -> MenuSettings {
         MenuSettings {
-            filter: s.handheld_filter,
-            ui_size: s.handheld_ui_size,
+            filter: s.console_mode_filter,
+            ui_size: s.console_mode_ui_size,
             swap: s.swap_ab_xy,
         }
     }
 
     /// Puts them in `s`, to show at once and be kept.
     pub fn apply(self, s: &mut Settings) {
-        s.handheld_filter = self.filter;
-        s.handheld_ui_size = self.ui_size;
+        s.console_mode_filter = self.filter;
+        s.console_mode_ui_size = self.ui_size;
         s.swap_ab_xy = self.swap;
     }
 }
@@ -352,20 +352,20 @@ const CLOSE_HINTS: [Hint; 3] = [
 const SETTINGS: [Choice; 3] = [Choice::Filter, Choice::UiSize, Choice::Swap];
 
 /// A filter's name in the menu.
-fn filter_name(filter: HandheldFilter) -> &'static str {
+fn filter_name(filter: ConsoleModeFilter) -> &'static str {
     match filter {
-        HandheldFilter::Auto => "Auto",
-        HandheldFilter::PixelArt => "Pixel art",
-        HandheldFilter::Bilinear => "Smooth",
-        HandheldFilter::Nearest => "Sharp",
-        HandheldFilter::Xscreen => "Program",
+        ConsoleModeFilter::Auto => "Auto",
+        ConsoleModeFilter::PixelArt => "Pixel art",
+        ConsoleModeFilter::Bilinear => "Smooth",
+        ConsoleModeFilter::Nearest => "Sharp",
+        ConsoleModeFilter::Xscreen => "Program",
     }
 }
 
-fn ui_size_name(size: HandheldUiSize) -> &'static str {
+fn ui_size_name(size: ConsoleModeUiSize) -> &'static str {
     match size {
-        HandheldUiSize::Normal => "Normal",
-        HandheldUiSize::Large => "Large",
+        ConsoleModeUiSize::Normal => "Normal",
+        ConsoleModeUiSize::Large => "Large",
     }
 }
 
@@ -376,8 +376,8 @@ fn on_off(on: bool) -> &'static str {
 /// The values' place: the widest value of any setting and a gap either
 /// side, so that the arrows stay put and line up.
 fn value_width() -> u32 {
-    let filters = HandheldFilter::ALL.map(filter_name);
-    let sizes = HandheldUiSize::ALL.map(ui_size_name);
+    let filters = ConsoleModeFilter::ALL.map(filter_name);
+    let sizes = ConsoleModeUiSize::ALL.map(ui_size_name);
     let switches = [on_off(true), on_off(false)];
     let widest = (filters.iter().chain(&sizes).chain(&switches)).map(|name| text_width(name));
     widest.max().unwrap_or(0) + PAD
@@ -565,7 +565,7 @@ pub enum Welcomed {
     Continue(Option<bool>),
 }
 
-/// The screen handheld mode shows the first time it starts: what this is,
+/// The screen console mode shows the first time it starts: what this is,
 /// how to open the menu, and "Press A to continue". The button pressed for
 /// it is A from then on, the right or the bottom one, whatever the
 /// controller prints on it or the system's mapping makes of it.
@@ -701,7 +701,7 @@ impl Welcome {
     }
 }
 
-// The bars at the top and the bottom of handheld mode's screens, which
+// The bars at the top and the bottom of console mode's screens, which
 // the game list and the pause menu share.
 
 /// What a hint shows for a button: its name, or an arrow for the D-pad.
@@ -721,7 +721,7 @@ const CAP_HEIGHT: u32 = 20;
 const CAP_GAP: u32 = 2;
 /// Between hints.
 const HINT_GAP: u32 = 16;
-/// Behind everything: handheld mode's screens cover the program's.
+/// Behind everything: console mode's screens cover the program's.
 const BACKDROP: u32 = BACKGROUND | 0xFF00_0000;
 
 fn cap_width(cap: Cap) -> u32 {
@@ -910,7 +910,7 @@ struct Programs {
     scroll: usize,
 }
 
-/// The list of projects that handheld mode starts in and comes back to.
+/// The list of projects that console mode starts in and comes back to.
 /// It runs a project's MAIN.PRG, or one of its programs, and manages no
 /// files. This is what it lists and where the selection is; how it looks
 /// is [`ListView`]'s.
@@ -1473,7 +1473,7 @@ mod tests {
     impl TempDir {
         fn new(tag: &str) -> TempDir {
             let dir =
-                std::env::temp_dir().join(format!("sb-handheld-{tag}-{}", std::process::id()));
+                std::env::temp_dir().join(format!("sb-console-mode-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             TempDir(dir)
         }
@@ -1507,8 +1507,8 @@ mod tests {
     /// UI sizes from the smallest handled to the largest expected.
     const SIZES: [(u32, u32); 5] = [(320, 240), (640, 360), (640, 480), (960, 540), (1280, 720)];
 
-    const NORMAL: HandheldUiSize = HandheldUiSize::Normal;
-    const LARGE: HandheldUiSize = HandheldUiSize::Large;
+    const NORMAL: ConsoleModeUiSize = ConsoleModeUiSize::Normal;
+    const LARGE: ConsoleModeUiSize = ConsoleModeUiSize::Large;
 
     #[test]
     fn the_ui_keeps_whole_pixels() {
@@ -1560,7 +1560,7 @@ mod tests {
 
     #[test]
     fn auto_smooths_a_smaller_screen_and_keeps_pixels_sharp_otherwise() {
-        let auto = |mode: &ScreenMode, shown| screen_filter(HandheldFilter::Auto, mode, shown);
+        let auto = |mode: &ScreenMode, shown| screen_filter(ConsoleModeFilter::Auto, mode, shown);
         // 0.5x, 1x, 1.6x and 2x on a 640x480 display.
         assert_eq!(
             auto(&ScreenMode::new(1280, 720), (640.0, 360.0)),
@@ -1588,9 +1588,9 @@ mod tests {
         // The other choices take no notice of the scale, and Program
         // takes XSCREEN's.
         for (choice, filter) in [
-            (HandheldFilter::PixelArt, Filter::SmartNearest),
-            (HandheldFilter::Bilinear, Filter::Bilinear),
-            (HandheldFilter::Nearest, Filter::Nearest),
+            (ConsoleModeFilter::PixelArt, Filter::SmartNearest),
+            (ConsoleModeFilter::Bilinear, Filter::Bilinear),
+            (ConsoleModeFilter::Nearest, Filter::Nearest),
         ] {
             for (mode, shown) in [(small, (640.0, 384.0)), (small, (400.0, 240.0))] {
                 assert_eq!(screen_filter(choice, &mode, shown), filter);
@@ -1600,7 +1600,7 @@ mod tests {
             filter: Filter::SmartNearest,
             ..small
         };
-        let program = |mode| screen_filter(HandheldFilter::Xscreen, mode, (640.0, 384.0));
+        let program = |mode| screen_filter(ConsoleModeFilter::Xscreen, mode, (640.0, 384.0));
         assert_eq!(program(&mode_1), Filter::SmartNearest);
         assert_eq!(program(&small), Filter::Bilinear);
     }
@@ -1702,13 +1702,13 @@ mod tests {
     fn the_screen_filter_steps_both_ways_and_round() {
         let mut menu = focused_on(menu(false, false, false, (640, 480)), Choice::Filter);
         assert_eq!(menu.pad(Button::DPadRight), Some(Choice::Filter));
-        assert_eq!(menu.settings().filter, HandheldFilter::PixelArt);
+        assert_eq!(menu.settings().filter, ConsoleModeFilter::PixelArt);
         assert_eq!(menu.key(Keycode::Left), Some(Choice::Filter));
         assert_eq!(menu.pad(Button::DPadLeft), Some(Choice::Filter));
-        assert_eq!(menu.settings().filter, HandheldFilter::Xscreen, "round");
+        assert_eq!(menu.settings().filter, ConsoleModeFilter::Xscreen, "round");
         // A steps on, and the menu stays.
         assert_eq!(menu.pad(Button::East), Some(Choice::Filter));
-        assert_eq!(menu.settings().filter, HandheldFilter::Auto);
+        assert_eq!(menu.settings().filter, ConsoleModeFilter::Auto);
         let names: Vec<&str> = (0..5)
             .map(|_| {
                 menu.key(Keycode::Right);
@@ -1738,7 +1738,7 @@ mod tests {
         let mut settings = Settings::default();
         menu.settings().apply(&mut settings);
         let changed = Settings {
-            handheld_ui_size: LARGE,
+            console_mode_ui_size: LARGE,
             swap_ab_xy: true,
             ..Settings::default()
         };

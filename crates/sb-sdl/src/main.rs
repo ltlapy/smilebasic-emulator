@@ -3,6 +3,7 @@
 mod audio;
 mod bench;
 mod colors;
+mod console_mode;
 mod controls;
 mod debug_panel;
 mod dialog;
@@ -13,7 +14,6 @@ mod gpu;
 mod gpu_golden;
 mod gpu_project;
 mod grp_view;
-mod handheld;
 mod help;
 mod index;
 mod keyhint;
@@ -45,13 +45,13 @@ use crate::pad_repeat::{Dir, PadRepeat};
 
 use audio::Audio;
 use colors::ColorWindow;
+use console_mode::{GameList, MenuSettings, PauseMenu, Welcome, Welcomed};
 use controls::Controls;
 use debug_panel::{DebugPanel, Hit, Tab, Typed, View, value_text};
 use dialog::{Answer, Dialog};
 use editor_layout::Layout;
 use file_dialogs::{FilePicker, SaveDialog};
 use grp_view::PageTexture;
-use handheld::{GameList, MenuSettings, PauseMenu, Welcome, Welcomed};
 use help::HelpViewer;
 use index::IndexPanel;
 use keyhint::KeyHint;
@@ -108,8 +108,8 @@ const USAGE: &str = "usage:
                                 program loads and saves the files beside it
                                 (HGLIB.PRG.txt, HGLIB.PRG or THGLIB.PRG are
                                 all TXT:HGLIB.PRG)
-  smilebasic --handheld [PROGRAM]
-                                the same in handheld mode, for this run only:
+  smilebasic --console-mode [PROGRAM]
+                                the same in console mode, for this run only:
                                 fullscreen, for a gamepad alone, starting in
                                 a list of the projects
 
@@ -141,7 +141,7 @@ type AnyError = Box<dyn std::error::Error>;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match parse_args(&args) {
-        Some((program, handheld)) => run(program.map(Path::new), handheld),
+        Some((program, console_mode)) => run(program.map(Path::new), console_mode),
         None => Err(USAGE.into()),
     };
     if let Err(e) = result {
@@ -154,20 +154,20 @@ fn main() {
     }
 }
 
-/// The program to run and whether `--handheld` was given, from the
+/// The program to run and whether `--console-mode` was given, from the
 /// command line; `None` for anything else, which gets the usage.
 fn parse_args(args: &[String]) -> Option<(Option<&str>, bool)> {
     let mut program = None;
-    let mut handheld = false;
+    let mut console_mode = false;
     for arg in args {
         match arg.as_str() {
-            "--handheld" if !handheld => handheld = true,
+            "--console-mode" if !console_mode => console_mode = true,
             arg if arg.starts_with('-') => return None,
             arg if program.is_none() => program = Some(arg),
             _ => return None,
         }
     }
-    Some((program, handheld))
+    Some((program, console_mode))
 }
 
 /// Panics on frames in a row after which frames stop: the machine cannot be
@@ -280,7 +280,7 @@ fn open_program_folder(storage: &mut Storage, program: &Path) -> Option<String> 
     }
 }
 
-fn run(program: Option<&Path>, handheld_flag: bool) -> Result<(), AnyError> {
+fn run(program: Option<&Path>, console_mode_flag: bool) -> Result<(), AnyError> {
     let source = program.map(load_source).transpose()?;
     let font = resources::load_font(&resource_dir()?).unwrap_or_else(|e| {
         eprintln!("using the fallback font: {e} (see `smilebasic-import`)");
@@ -315,7 +315,7 @@ fn run(program: Option<&Path>, handheld_flag: bool) -> Result<(), AnyError> {
     rt.help = help.clone();
     let saved_settings = rt.settings.clone();
     // The flag is for this run: the setting stays as it was saved.
-    let handheld = handheld_flag || rt.settings.handheld;
+    let console_mode = console_mode_flag || rt.settings.console_mode;
     let mut machine = Machine::new(rt);
     machine.boot();
     let mut restart = None;
@@ -326,9 +326,9 @@ fn run(program: Option<&Path>, handheld_flag: bool) -> Result<(), AnyError> {
         if !loaded {
             machine.set_slot(0, source);
         }
-        // In handheld mode it ends in the game list, after an error once
+        // In console mode it ends in the game list, after an error once
         // A is pressed, as a program run from there does.
-        match program_name.filter(|_| loaded && handheld) {
+        match program_name.filter(|_| loaded && console_mode) {
             Some(name) if machine.run_home(&name).is_ok() => restart = Some(name),
             _ => machine.run_slot(0),
         }
@@ -340,7 +340,7 @@ fn run(program: Option<&Path>, handheld_flag: bool) -> Result<(), AnyError> {
         help,
         settings_path,
         saved_settings,
-        handheld,
+        console_mode,
         restart,
     };
     let ended = catch_unwind(AssertUnwindSafe(|| {
@@ -371,10 +371,10 @@ struct Start {
     help: Option<std::rc::Rc<Help>>,
     settings_path: PathBuf,
     saved_settings: Settings,
-    /// Handheld mode is on, by the setting or `--handheld`.
-    handheld: bool,
+    /// Console mode is on, by the setting or `--console-mode`.
+    console_mode: bool,
     /// The program of the current project that runs from the command line
-    /// in handheld mode, for the pause menu's Restart.
+    /// in console mode, for the pause menu's Restart.
     restart: Option<String>,
 }
 
@@ -386,18 +386,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         help,
         settings_path,
         mut saved_settings,
-        mut handheld,
+        mut console_mode,
         restart,
     } = start;
     let sdl = sdl3::init()?;
     let video = sdl.video()?;
     // The UI's size: the profile's display on the desktop, or in
-    // handheld mode the output's at a whole scale.
+    // console mode the output's at a whole scale.
     let profile_display = screen.display;
     let (mut display_w, mut display_h) = profile_display;
     let mut builder = video.window(TITLE, display_w, display_h);
     builder.position_centered().resizable().high_pixel_density();
-    if handheld {
+    if console_mode {
         builder.fullscreen();
     }
     let window = builder.build()?;
@@ -422,9 +422,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let (chosen_folder, folder_choice) = std::sync::mpsc::channel::<(PathBuf, Transfer)>();
     let mut canvas = make_canvas(&window, &[])?;
     drop(window);
-    if handheld {
-        let size = machine.rt.settings.handheld_ui_size;
-        (display_w, display_h) = handheld::ui_size(canvas.output_size()?, size);
+    if console_mode {
+        let size = machine.rt.settings.console_mode_ui_size;
+        (display_w, display_h) = console_mode::ui_size(canvas.output_size()?, size);
     }
     // Vsync paces frames on a 60 Hz display; on others, without vsync,
     // or while the window is not shown, the loop goes by the clock.
@@ -440,7 +440,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut mode = machine.screen_mode();
     let (out_w, out_h) = canvas.output_size()?;
     let settings = &machine.rt.settings;
-    let (_, mut filter) = screen_place(&mode, settings, handheld, out_w, out_h as f32);
+    let (_, mut filter) = screen_place(&mode, settings, console_mode, out_w, out_h as f32);
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
@@ -519,21 +519,21 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut manager: Option<ProjectManager> = None;
     // Where the manager was when Run left it, for the return to it.
     let mut home_memory = Memory::default();
-    // Handheld mode's game list, which takes all input but a dialog's
+    // Console mode's game list, which takes all input but a dialog's
     // while it is open, and its pause menu, which takes all input.
     let mut game_list: Option<GameList> = None;
     let mut pause_menu: Option<PauseMenu> = None;
-    // The screen shown the first time handheld mode starts, over the
+    // The screen shown the first time console mode starts, over the
     // list: it takes all input but a dialog's.
-    let mut welcome = (handheld && !machine.rt.settings.handheld_welcome_shown)
+    let mut welcome = (console_mode && !machine.rt.settings.console_mode_welcome_shown)
         .then(|| Welcome::new((display_w, display_h)));
     // Select, for the menu and quitting; where the list was left; the
     // program it ran last, for Restart; and whether entering the mode
     // made the window fullscreen, for leaving it.
-    let mut hotkeys = handheld::Hotkeys::default();
-    let mut list_memory = handheld::Memory::default();
+    let mut hotkeys = console_mode::Hotkeys::default();
+    let mut list_memory = console_mode::Memory::default();
     let mut ran_from_list = restart;
-    let mut fullscreen_by_handheld = handheld;
+    let mut fullscreen_by_console_mode = console_mode;
     let mut color_window: Option<ColorWindow> = None;
     let mut settings_window: Option<SettingsWindow> = None;
     let mut shortcuts_window: Option<ShortcutsWindow> = None;
@@ -833,11 +833,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let _ = sdl.event().and_then(|e| e.push_event(event));
             }
         }
-        // In handheld mode the UI follows the output's size.
-        let wanted = match handheld {
-            true => handheld::ui_size(
+        // In console mode the UI follows the output's size.
+        let wanted = match console_mode {
+            true => console_mode::ui_size(
                 drawing!(canvas.output_size()),
-                machine.rt.settings.handheld_ui_size,
+                machine.rt.settings.console_mode_ui_size,
             ),
             false => profile_display,
         };
@@ -887,9 +887,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // some other way, a wait for a button is over.
         if manager.is_some() {
             machine.home_leave();
-        } else if handheld {
+        } else if console_mode {
             // The game list opens below, whenever nothing runs.
-            handheld_ended(machine);
+            console_mode_ended(machine);
         } else if machine.home_done() {
             let size = (display_w, display_h);
             manager = Some(ProjectManager::reopen(
@@ -898,9 +898,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 &home_memory,
             ));
         }
-        // Handheld mode rests in the game list, never in DIRECT mode or
+        // Console mode rests in the game list, never in DIRECT mode or
         // the editor, which a breakpoint may open.
-        if handheld {
+        if console_mode {
             if machine.is_editing() {
                 machine.toggle_editor();
             }
@@ -970,12 +970,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             b.window_size((out_w, out_h));
         }
         let (win_w, _) = canvas.window().size();
-        let display = match handheld {
-            true => handheld::display_rect((display_w, display_h), (out_w, out_h)),
+        let display = match console_mode {
+            true => console_mode::display_rect((display_w, display_h), (out_w, out_h)),
             false => display_rect(display_w, display_h, out_w, out_h),
         };
         let settings = &machine.rt.settings;
-        let (shown, _) = screen_place(&mode, settings, handheld, out_w, display.h);
+        let (shown, _) = screen_place(&mode, settings, console_mode, out_w, display.h);
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
             display,
@@ -1289,7 +1289,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             if pointer && modal_shown!() && !ui_window {
                 continue;
             }
-            // Ctrl+Shift+F12 turns handheld mode on or off, whatever shows.
+            // Ctrl+Shift+F12 turns console mode on or off, whatever shows.
             if let Event::KeyDown {
                 keycode: Some(Keycode::F12),
                 keymod,
@@ -1299,22 +1299,22 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 && ctrl(keymod)
                 && shift(keymod)
             {
-                handheld = !handheld;
-                machine.rt.settings.handheld = handheld;
+                console_mode = !console_mode;
+                machine.rt.settings.console_mode = console_mode;
                 let window = canvas.window_mut();
-                if handheld {
-                    fullscreen_by_handheld = window.fullscreen_state() == FullscreenType::Off;
+                if console_mode {
+                    fullscreen_by_console_mode = window.fullscreen_state() == FullscreenType::Off;
                     let _ = window.set_fullscreen(true);
                     // What needs a keyboard or a mouse closes.
                     (manager, file_dialog, side, debug_menu) = (None, None, None, None);
                     (settings_window, shortcuts_window, color_window) = (None, None, None);
                     menu.shown = false;
                     menu.leave();
-                    if !machine.rt.settings.handheld_welcome_shown {
+                    if !machine.rt.settings.console_mode_welcome_shown {
                         welcome = Some(Welcome::new((display_w, display_h)));
                     }
                 } else {
-                    if std::mem::take(&mut fullscreen_by_handheld) {
+                    if std::mem::take(&mut fullscreen_by_console_mode) {
                         let _ = window.set_fullscreen(false);
                     }
                     (game_list, pause_menu, welcome) = (None, None, None);
@@ -1322,11 +1322,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 plus_down = None;
                 continue;
             }
-            // Select+A, or F8, opens and closes handheld mode's pause menu,
+            // Select+A, or F8, opens and closes console mode's pause menu,
             // over a dialog too; that A goes nowhere else. Select+Start
             // quits as the menu's Quit does, and the release of that Start
             // is not the + button's. The welcome screen opens no menu.
-            if handheld {
+            if console_mode {
                 let toggled = match event {
                     Event::GamepadButtonDown {
                         button: Button::East,
@@ -1335,7 +1335,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Event::GamepadButtonDown {
                         button: Button::Start,
                         ..
-                    } if hotkeys.start_down(true) == handheld::Start::Quit => {
+                    } if hotkeys.start_down(true) == console_mode::Start::Quit => {
                         (pause_menu, plus_down, quit) = (None, None, true);
                         continue;
                     }
@@ -1373,7 +1373,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             }
             if let Some(open) = &mut pause_menu {
                 let chosen = match event {
-                    Event::Quit { .. } => Some(handheld::Choice::Quit),
+                    Event::Quit { .. } => Some(console_mode::Choice::Quit),
                     Event::KeyDown {
                         keycode: Some(key), ..
                     } => open.key(key),
@@ -1386,28 +1386,28 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 // the controls.
                 let settings = open.settings();
                 match chosen {
-                    Some(handheld::Choice::Resume) => pause_menu = None,
+                    Some(console_mode::Choice::Resume) => pause_menu = None,
                     Some(
-                        handheld::Choice::Filter
-                        | handheld::Choice::UiSize
-                        | handheld::Choice::Swap,
+                        console_mode::Choice::Filter
+                        | console_mode::Choice::UiSize
+                        | console_mode::Choice::Swap,
                     ) => settings.apply(&mut machine.rt.settings),
-                    Some(handheld::Choice::Restart) => {
+                    Some(console_mode::Choice::Restart) => {
                         pause_menu = None;
                         if let Some(file) = &ran_from_list {
-                            handheld_leave(machine);
+                            console_mode_leave(machine);
                             if let Err(e) = machine.run_home(file) {
                                 toasts.push(format!("Could not load {file}: {e}"));
                             }
                         }
                     }
-                    Some(handheld::Choice::List) => {
+                    Some(console_mode::Choice::List) => {
                         pause_menu = None;
-                        handheld_leave(machine);
+                        console_mode_leave(machine);
                         let size = (display_w, display_h);
                         game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
                     }
-                    Some(handheld::Choice::Quit) => {
+                    Some(console_mode::Choice::Quit) => {
                         pause_menu = None;
                         quit = true;
                     }
@@ -1430,11 +1430,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         ..
                     } => {
                         if machine.home_press() {
-                            if handheld {
+                            if console_mode {
                                 machine.tidy();
                             }
                             let (storage, size) = (&machine.rt.storage, (display_w, display_h));
-                            if handheld {
+                            if console_mode {
                                 game_list = Some(GameList::new(storage, size, &list_memory));
                             } else {
                                 manager = Some(ProjectManager::reopen(storage, size, &home_memory));
@@ -1578,7 +1578,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 if let Welcomed::Continue(chosen) = welcomed {
                     welcome = None;
                     let settings = &mut machine.rt.settings;
-                    settings.handheld_welcome_shown = true;
+                    settings.console_mode_welcome_shown = true;
                     if let Some(swap) = chosen {
                         settings.swap_ab_xy = swap;
                     }
@@ -1743,18 +1743,18 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 let outcome = match event {
                     Event::Quit { .. } => {
                         quit = true;
-                        handheld::Outcome::Stay
+                        console_mode::Outcome::Stay
                     }
                     Event::KeyDown {
                         keycode: Some(key), ..
                     } => open.key(key, storage),
                     Event::GamepadButtonDown { button, .. } => open.pad(button, storage),
-                    _ => handheld::Outcome::Stay,
+                    _ => console_mode::Outcome::Stay,
                 };
                 match outcome {
-                    handheld::Outcome::Stay => {}
-                    handheld::Outcome::Notice(text) => toasts.push(text),
-                    handheld::Outcome::Run { project, file } => {
+                    console_mode::Outcome::Stay => {}
+                    console_mode::Outcome::Notice(text) => toasts.push(text),
+                    console_mode::Outcome::Run { project, file } => {
                         list_memory = open.memory();
                         let unsaved = machine.unsaved_slots();
                         if !unsaved.is_empty() {
@@ -2152,12 +2152,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             match event {
                 Event::Quit { .. } => quit = true,
                 // The desktop's windows and tools are not to be had in
-                // handheld mode.
+                // console mode.
                 Event::KeyDown {
                     keycode: Some(key),
                     keymod,
                     ..
-                } if handheld && desktop_key(key, keymod) => {}
+                } if console_mode && desktop_key(key, keymod) => {}
                 Event::MouseMotion {
                     x, y, mousestate, ..
                 } => {
@@ -2216,7 +2216,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     y,
                     clicks,
                     ..
-                } => match if ui_window && !handheld {
+                } => match if ui_window && !console_mode {
                     menu.click(to_display(x, y), menu_context(machine))
                 } else {
                     Click::Ignored
@@ -2527,7 +2527,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 Event::GamepadButtonDown {
                     button: Button::Back,
                     ..
-                } if !machine.is_running() && !on_editor && !handheld => {
+                } if !machine.is_running() && !on_editor && !console_mode => {
                     let size = (display_w, display_h);
                     manager = Some(ProjectManager::new(&machine.rt.storage, size));
                 }
@@ -2915,7 +2915,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         mode = machine.screen_mode();
         let settings = &machine.rt.settings;
         let rect;
-        (rect, filter) = screen_place(&mode, settings, handheld, out_w, display.h);
+        (rect, filter) = screen_place(&mode, settings, console_mode, out_w, display.h);
         let editing = machine.is_editing() && !machine.is_detached();
         let renderer = machine.rt.settings.renderer;
         if renderer_applied != Some(renderer) {
@@ -3203,8 +3203,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // A running program shows the mouse cursor only if it asks to,
         // unless the emulator's own screens or the editor's window need
         // it.
-        // Handheld mode has no mouse.
-        let show_cursor = !handheld
+        // Console mode has no mouse.
+        let show_cursor = !console_mode
             && (!machine.is_running()
                 || modal
                 || dims
@@ -3266,7 +3266,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         // The menu bar shows over everything in the window with the keys,
         // and the editor's window always shows it.
         let mut bar_shown = [false; 2];
-        bar_shown[ui] = !handheld && dialog.is_none() && !modal && menu.visible();
+        bar_shown[ui] = !console_mode && dialog.is_none() && !modal && menu.visible();
         bar_shown[1] |= apart && ui == 0;
         let closed_bar = menu.closed();
         let font = machine.rt.font();
@@ -3509,14 +3509,14 @@ fn input_screen(pause: bool, dialog: bool, manager: Option<usize>, list: Option<
     }
 }
 
-// Handheld mode goes back to its game list with the screens as ACLS
+// Console mode goes back to its game list with the screens as ACLS
 // leaves them and the sound stopped, as `tidy_on_end` has a program end,
 // whatever that setting says: after END, STOP, the + button, an error
 // once A is pressed, Return to Game list and Restart.
 
 /// Whether the program the game list ran has ended by itself or by the +
 /// button, tidied if so. An error waits for A instead.
-fn handheld_ended(machine: &mut Machine) -> bool {
+fn console_mode_ended(machine: &mut Machine) -> bool {
     let done = machine.home_done();
     if done {
         machine.tidy();
@@ -3526,14 +3526,14 @@ fn handheld_ended(machine: &mut Machine) -> bool {
 
 /// Stops the program the game list ran, or ends the wait after its error,
 /// for the game list or a restart.
-fn handheld_leave(machine: &mut Machine) {
+fn console_mode_leave(machine: &mut Machine) {
     machine.stop();
     machine.home_leave();
     machine.home_done();
     machine.tidy();
 }
 
-/// The keys of the desktop's windows and tools, which handheld mode leaves
+/// The keys of the desktop's windows and tools, which console mode leaves
 /// alone: the function keys, but for F5 alone, which is the + button.
 fn desktop_key(key: Keycode, keymod: Mod) -> bool {
     let held = Mod::LCTRLMOD | Mod::RCTRLMOD | Mod::LSHIFTMOD | Mod::RSHIFTMOD;
@@ -4926,19 +4926,20 @@ fn screen_rect(mode: &ScreenMode, screen_filter: Option<Filter>, out_w: u32, out
 }
 
 /// Where the screen goes, as [`screen_rect`] says, and the filter it is
-/// scaled with: View > Screen filter's on the desktop. Handheld mode
+/// scaled with: View > Screen filter's on the desktop. Console mode
 /// always fits the screen to the display and has a filter setting of its
 /// own, as its display seldom holds the screen a whole number of times.
 fn screen_place(
     mode: &ScreenMode,
     settings: &Settings,
-    handheld: bool,
+    console_mode: bool,
     out_w: u32,
     out_h: f32,
 ) -> (FRect, Filter) {
-    if handheld {
+    if console_mode {
         let rect = screen_rect(mode, None, out_w, out_h);
-        let filter = handheld::screen_filter(settings.handheld_filter, mode, (rect.w, rect.h));
+        let filter =
+            console_mode::screen_filter(settings.console_mode_filter, mode, (rect.w, rect.h));
         return (rect, filter);
     }
     let chosen = settings.screen_filter;
@@ -5084,75 +5085,80 @@ mod tests {
     }
 
     #[test]
-    fn a_handheld_screen_fills_the_output() {
-        use sb_runtime::settings::{HandheldFilter, HandheldUiSize};
+    fn a_console_mode_screen_fills_the_output() {
+        use sb_runtime::settings::{ConsoleModeFilter, ConsoleModeUiSize};
         let mode = ScreenMode::new(400, 240);
         let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
         let out = (640, 480);
-        let ui = handheld::ui_size(out, HandheldUiSize::Normal);
-        let display = handheld::display_rect(ui, out);
-        let settings = |handheld_filter| Settings {
+        let ui = console_mode::ui_size(out, ConsoleModeUiSize::Normal);
+        let display = console_mode::display_rect(ui, out);
+        let settings = |console_mode_filter| Settings {
             screen_filter: Some(Filter::Nearest),
-            handheld_filter,
+            console_mode_filter,
             ..Settings::default()
         };
-        let place = |mode: &ScreenMode, chosen, handheld| {
-            let (rect, filter) = screen_place(mode, &settings(chosen), handheld, out.0, display.h);
+        let place = |mode: &ScreenMode, chosen, console_mode| {
+            let (rect, filter) =
+                screen_place(mode, &settings(chosen), console_mode, out.0, display.h);
             (box_of(rect), filter)
         };
         // Whatever the filter, it fits at 1.6 times.
-        for chosen in HandheldFilter::ALL {
+        for chosen in ConsoleModeFilter::ALL {
             assert_eq!(place(&mode, chosen, true).0, (0.0, 48.0, 640.0, 384.0));
         }
         assert_eq!(
-            place(&mode, HandheldFilter::Auto, true).1,
+            place(&mode, ConsoleModeFilter::Auto, true).1,
             Filter::SmartNearest
         );
         assert_eq!(
-            place(&mode, HandheldFilter::Nearest, true).1,
+            place(&mode, ConsoleModeFilter::Nearest, true).1,
             Filter::Nearest
         );
         assert_eq!(
-            place(&mode, HandheldFilter::Xscreen, true).1,
+            place(&mode, ConsoleModeFilter::Xscreen, true).1,
             Filter::Bilinear
         );
         // On the desktop the sharp choice keeps to whole factors, and the
-        // handheld setting is not looked at.
+        // console mode's setting is not looked at.
         let desktop = ((120.0, 120.0, 400.0, 240.0), Filter::Nearest);
-        for chosen in HandheldFilter::ALL {
+        for chosen in ConsoleModeFilter::ALL {
             assert_eq!(place(&mode, chosen, false), desktop);
         }
         // A 4:3 mode fills the screen, at a whole factor; XSCREEN's
         // largest is half its size.
         let square = ScreenMode::new(320, 240);
         let full = ((0.0, 0.0, 640.0, 480.0), Filter::Nearest);
-        assert_eq!(place(&square, HandheldFilter::Auto, true), full);
+        assert_eq!(place(&square, ConsoleModeFilter::Auto, true), full);
         let large = ScreenMode::new(1280, 720);
         let half = ((0.0, 60.0, 640.0, 360.0), Filter::Bilinear);
-        assert_eq!(place(&large, HandheldFilter::Auto, true), half);
+        assert_eq!(place(&large, ConsoleModeFilter::Auto, true), half);
         // The UI's size leaves the program's screen as it is.
-        let large_ui = handheld::ui_size(out, HandheldUiSize::Large);
+        let large_ui = console_mode::ui_size(out, ConsoleModeUiSize::Large);
         assert_eq!(large_ui, (320, 240));
-        let large_display = handheld::display_rect(large_ui, out);
+        let large_display = console_mode::display_rect(large_ui, out);
         assert_eq!(box_of(large_display), box_of(display));
     }
 
     #[test]
-    fn the_command_line_takes_handheld_and_a_program() {
+    fn the_command_line_takes_console_mode_and_a_program() {
         let args = |list: &[&str]| list.iter().map(|a| a.to_string()).collect::<Vec<_>>();
         assert_eq!(parse_args(&args(&[])), Some((None, false)));
         assert_eq!(parse_args(&args(&["A.TXT"])), Some((Some("A.TXT"), false)));
-        assert_eq!(parse_args(&args(&["--handheld"])), Some((None, true)));
-        for both in [["--handheld", "A.TXT"], ["A.TXT", "--handheld"]] {
+        assert_eq!(parse_args(&args(&["--console-mode"])), Some((None, true)));
+        for both in [["--console-mode", "A.TXT"], ["A.TXT", "--console-mode"]] {
             assert_eq!(parse_args(&args(&both)), Some((Some("A.TXT"), true)));
         }
-        for bad in [&["-x"][..], &["A", "B"], &["--handheld", "--handheld"]] {
+        for bad in [
+            &["-x"][..],
+            &["A", "B"],
+            &["--console-mode", "--console-mode"],
+        ] {
             assert_eq!(parse_args(&args(bad)), None, "{bad:?}");
         }
     }
 
     #[test]
-    fn handheld_mode_leaves_the_desktops_keys_alone() {
+    fn console_mode_mode_leaves_the_desktops_keys_alone() {
         assert!(!desktop_key(Keycode::F5, Mod::NOMOD), "the + button");
         assert!(desktop_key(Keycode::F5, Mod::LSHIFTMOD));
         assert!(desktop_key(Keycode::F5, Mod::RCTRLMOD));
@@ -5271,7 +5277,7 @@ mod tests {
     const UNTIDY: &str = "BACKCOLOR #C_RED\nBGMPLAY 1\n";
 
     #[test]
-    fn handheld_mode_tidies_whenever_it_goes_back_to_the_list() {
+    fn console_mode_mode_tidies_whenever_it_goes_back_to_the_list() {
         let ends = format!("{UNTIDY}END\n");
         let spins = format!("{UNTIDY}WHILE 1:VSYNC:WEND\n");
         let fails = format!("{UNTIDY}DIM A[2]\nA[5]=1\n");
@@ -5291,23 +5297,23 @@ mod tests {
         // END.
         run(&mut m, "MAIN.PRG");
         assert!(!m.is_running() && !tidy(&m));
-        assert!(handheld_ended(&mut m));
+        assert!(console_mode_ended(&mut m));
         assert!(tidy(&m));
         // The + button.
         run(&mut m, "SPIN.PRG");
-        assert!(m.is_running() && !handheld_ended(&mut m) && !tidy(&m));
+        assert!(m.is_running() && !console_mode_ended(&mut m) && !tidy(&m));
         m.sysreq();
         m.frame();
-        assert!(handheld_ended(&mut m));
+        assert!(console_mode_ended(&mut m));
         assert!(tidy(&m));
         // Return to Game list, and Restart, which goes the same way.
         run(&mut m, "SPIN.PRG");
-        handheld_leave(&mut m);
+        console_mode_leave(&mut m);
         assert!(!m.is_running() && tidy(&m));
-        assert!(!handheld_ended(&mut m), "nothing more to do");
+        assert!(!console_mode_ended(&mut m), "nothing more to do");
         // An error stays readable until A, and its press tidies.
         run(&mut m, "FAIL.PRG");
-        assert!(m.home_waiting() && !handheld_ended(&mut m));
+        assert!(m.home_waiting() && !console_mode_ended(&mut m));
         assert!(!tidy(&m), "the message stays as it was");
         for _ in 0..30 {
             m.frame();
@@ -5317,7 +5323,7 @@ mod tests {
         assert!(tidy(&m));
         // An error left for Return to Game list.
         run(&mut m, "FAIL.PRG");
-        handheld_leave(&mut m);
+        console_mode_leave(&mut m);
         assert!(!m.home_waiting() && tidy(&m));
         // On the desktop the setting decides, as before.
         run(&mut m, "MAIN.PRG");
