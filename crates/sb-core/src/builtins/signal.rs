@@ -5,18 +5,19 @@ use std::f64::consts::{LN_2, PI};
 use crate::error::{Error, ErrorKind, Result};
 use crate::value::{Array, ArrayRef, ElemType, Value};
 
-use super::opt;
+use super::{mismatch, opt};
 
 /// BIQUAD's and BQPARAM's coefficient array: five coefficients, then the
 /// last two inputs and outputs of each channel.
 const COEFFICIENTS: usize = 13;
 
+/// An array of numbers; anything else is a `Type mismatch` naming the
+/// argument.
 fn number_array(v: &Value) -> Result<ArrayRef> {
-    let a = v.clone().into_array()?;
-    if a.borrow().elem_type() == ElemType::Str {
-        return Err(ErrorKind::TypeMismatch.into());
+    match v {
+        Value::Array(a) if a.borrow().elem_type() != ElemType::Str => Ok(a.clone()),
+        _ => Err(mismatch(v)),
     }
-    Ok(a)
 }
 
 fn reals(a: &Array) -> Result<Vec<f64>> {

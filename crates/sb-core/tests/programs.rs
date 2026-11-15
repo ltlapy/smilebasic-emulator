@@ -2098,6 +2098,59 @@ fn errors_name_their_arguments() {
     wrong(&format!("{arrays}RINGCOPY A,0,X"), mismatch, 2);
 }
 
+/// A string or array argument of the wrong type is named by its place.
+#[test]
+fn type_mismatches_name_their_arguments() {
+    let wrong = |call: &str, arg: Option<u8>| {
+        let source = format!("VAR Q,Z,S$=\"A\":DIM A[4],B$[2],C[13]:{call}");
+        let e = run(&source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, arg), "{call}");
+    };
+    for call in [
+        "Q=LEN(Z)",
+        "Q=LAST(Z)",
+        "Q=ASC(Z)",
+        "Q=VAL(Z)",
+        "Q=STR$(S$)",
+        "Q=MID$(Z,0,1)",
+        "Q=LEFT$(Z,1)",
+        "Q=RIGHT$(Z,1)",
+        "Q=INSTR(Z,S$)",
+        "Q=SUBST$(Z,0,S$)",
+        "Q=SUBST$(Z,0,1,S$)",
+        "Q=FORMAT$(Z)",
+        "Q=DIM(Z)",
+        "Q=DIM(Z,0)",
+        "Q=POP(Z)",
+        "Q=SHIFT(Z)",
+        "PUSH Z,Z",
+        "UNSHIFT Z,Z",
+        "FILL Z,Z",
+        "Q=FIND(Z,Z)",
+        "FIND Z,Z OUT Q",
+        "INSERT Z,0",
+        "REMOVE Z,0",
+        "RESIZE Z,1",
+        "BIQUAD Z,A,C",
+        "BIQUAD B$,A,C",
+        "FFTWFN Z,0",
+    ] {
+        wrong(call, Some(0));
+    }
+    // Later arguments by their places.
+    wrong("Q=INSTR(S$,Z)", Some(1));
+    wrong("Q=INSTR(0,Z,S$)", Some(1));
+    wrong("Q=INSTR(0,S$,Z)", Some(2));
+    wrong("Q=SUBST$(S$,0,Z)", Some(2));
+    wrong("SORT A,Z", Some(1));
+    wrong("SORT 0,4,Z", Some(2));
+    wrong("ARYOP 0,Z,A,A", Some(1));
+    wrong("BIQUAD A,Z,C", Some(1));
+    wrong("FFT A,A,A,Z", Some(3));
+    // What is put into a string is no argument of its own.
+    wrong("PUSH S$,1", None);
+}
+
 /// Builtins look at their number of OUT variables as they run, some
 /// before the number of arguments and some after.
 #[test]

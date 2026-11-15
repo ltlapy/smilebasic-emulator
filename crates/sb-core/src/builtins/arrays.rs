@@ -3,7 +3,7 @@
 
 use std::cmp::Ordering;
 
-use super::{Data, check_1d, index_arg, opt, string};
+use super::{Data, check_1d, index_arg, mismatch, opt, string};
 use crate::error::{Error, ErrorKind, Result};
 use crate::memory;
 use crate::value::{Array, ArrayData, ArrayRef, ElemType, Value};
@@ -12,8 +12,12 @@ fn out_of_range(what: &str) -> Error {
     Error::with_detail(ErrorKind::OutOfRange, what)
 }
 
+/// An array argument; anything else is a `Type mismatch` naming it.
 fn array(v: &Value) -> Result<ArrayRef> {
-    v.clone().into_array()
+    match v {
+        Value::Array(a) => Ok(a.clone()),
+        _ => Err(mismatch(v)),
+    }
 }
 
 fn is_source(v: &Value) -> bool {

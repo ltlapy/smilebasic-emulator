@@ -252,10 +252,18 @@ impl Builtin {
 
 // ---- argument helpers ----
 
+/// `Type mismatch` of `v`. When `v` is one of the call's arguments, as
+/// it is for an argument of the wrong type, the error names it as
+/// SmileBASIC 4 does: `Q=LEN(1)` is `(LEN:1)`.
+#[cold]
+fn mismatch(v: &Value) -> Error {
+    Error::new(ErrorKind::TypeMismatch).of_value(v)
+}
+
 fn text(v: &Value) -> Result<Str> {
     match v {
         Value::Str(s) => Ok(s.borrow().clone()),
-        _ => Err(ErrorKind::TypeMismatch.into()),
+        _ => Err(mismatch(v)),
     }
 }
 
@@ -368,7 +376,7 @@ fn length(v: &Value) -> Result<i32> {
     let n = match v {
         Value::Str(s) => s.borrow().len(),
         Value::Array(a) => a.borrow().len(),
-        _ => return Err(ErrorKind::TypeMismatch.into()),
+        _ => return Err(mismatch(v)),
     };
     Ok(n as i32)
 }
@@ -379,7 +387,7 @@ fn len(args: &[Value]) -> Result<Value> {
 
 fn str(args: &[Value]) -> Result<Value> {
     if !args[0].is_number() {
-        return Err(ErrorKind::TypeMismatch.into());
+        return Err(mismatch(&args[0]));
     }
     let digits = opt(args, 1).map_or(Ok(0), index_arg)?;
     if digits > 63 {
@@ -979,13 +987,14 @@ fn new_array(args: &[Value], elem: ElemType) -> Result<Value> {
 
 fn dim(args: &[Value]) -> Result<Value> {
     let Value::Array(a) = &args[0] else {
-        return Err(ErrorKind::TypeMismatch.into());
+        return Err(mismatch(&args[0]));
     };
     let a = a.borrow();
     match opt(args, 1) {
         None => Ok(Value::Int(a.dims.len() as i32)),
         Some(d) => {
-            let size = a.dims.get(index_arg(d)?).ok_or(ErrorKind::OutOfRange)?;
+            let size = (a.dims.get(index_arg(d)?))
+                .ok_or_else(|| Error::new(ErrorKind::OutOfRange).of_value(d))?;
             Ok(Value::Int(*size as i32))
         }
     }
@@ -1069,7 +1078,7 @@ fn put(target: &Value, value: Value, end: End) -> Result<()> {
             }
             a.dims[0] = a.len();
         }
-        _ => return Err(ErrorKind::TypeMismatch.into()),
+        _ => return Err(mismatch(target)),
     }
     Ok(())
 }
@@ -1171,12 +1180,14 @@ fn take(target: &Value, end: End) -> Result<Value> {
             a.dims[0] = a.len();
             Ok(value)
         }
-        _ => Err(ErrorKind::TypeMismatch.into()),
+        _ => Err(mismatch(target)),
     }
 }
 
 fn fill(args: &[Value]) -> Result<()> {
-    let a = args[0].clone().into_array()?;
+    let Value::Array(a) = &args[0] else {
+        return Err(mismatch(&args[0]));
+    };
     let mut a = a.borrow_mut();
     let start = opt(args, 2).map_or(Ok(0), index_arg)?;
     let count = opt(args, 3).map_or(Ok(usize::MAX), index_arg)?;
