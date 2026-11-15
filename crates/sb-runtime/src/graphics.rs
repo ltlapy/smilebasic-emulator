@@ -95,6 +95,31 @@ pub fn multiply(a: u32, b: u32) -> u32 {
     }))
 }
 
+/// GCOPY's rows: each source row onto its target row, the two of a
+/// length, multiplied by `tint` and blended. The mode is chosen once for
+/// all the rows, so that each row runs a loop of its own mode.
+fn copy_rows<'a>(
+    rows: impl Iterator<Item = (&'a mut [u32], &'a [u32])>,
+    tint: Option<u32>,
+    blend: Blend,
+) {
+    fn each<'a>(
+        rows: impl Iterator<Item = (&'a mut [u32], &'a [u32])>,
+        pixel: impl Fn(u32, u32) -> u32,
+    ) {
+        for (to, from) in rows {
+            for (d, &p) in to.iter_mut().zip(from) {
+                *d = pixel(*d, p);
+            }
+        }
+    }
+    match (tint, blend) {
+        (None, Blend::Normal) => rows.for_each(|(to, from)| to.copy_from_slice(from)),
+        (None, blend) => each(rows, |d, p| blend.apply(d, p)),
+        (Some(t), blend) => each(rows, |d, p| blend.apply(d, multiply(p, t))),
+    }
+}
+
 /// How a sprite's color tints its image as it is drawn.
 // Made for one sprite on the stack and dropped; boxing the tables would
 // only add an allocation.
@@ -649,7 +674,23 @@ impl Graphics {
         let (left, right) = (x0.min(x1), x0.max(x1));
         let (top, bottom) = (y0.min(y1), y0.max(y1));
         self.mark_inside(left, top, right, bottom);
-        self.fill_rows(top..=bottom, |_| Some((left, right)), color, blend);
+        let page = self.target;
+        if self.arrays[page].is_some() || blend != Blend::Normal {
+            self.fill_rows(top..=bottom, |_| Some((left, right)), color, blend);
+            return;
+        }
+        // Plain fills without a GARRAY array: the same columns of each row.
+        let c = self.clip;
+        let (l, r) = (left.max(c.x0), right.min(c.x1));
+        let (t, b) = (top.max(c.y0), bottom.min(c.y1));
+        if l > r || t > b {
+            return;
+        }
+        let (n, rows) = ((r - l + 1) as usize, (b - t + 1) as usize);
+        let pixels = &mut self.pixels_to_change(page)[index(l, t)..];
+        for row in pixels.chunks_mut(GRP_SIZE as usize).take(rows) {
+            row[..n].fill(color);
+        }
     }
 
     /// Fills, in each row of `rows`, the columns `span` gives for it, both
@@ -853,6 +894,46 @@ impl Graphics {
     ) {
         let from = Clip::new(x0, y0, x1, y1);
         let (w, h) = (from.x1 - from.x0 + 1, from.y1 - from.y0 + 1);
+        let c = self.clip;
+        let (ys, xs) = (
+            // Past the largest coordinate wraps, to nothing on the page.
+            c.y0.wrapping_sub(dy).max(0)..=c.y1.wrapping_sub(dy).min(h - 1),
+            c.x0.wrapping_sub(dx).max(0)..=c.x1.wrapping_sub(dx).min(w - 1),
+        );
+        if ys.is_empty() || xs.is_empty() {
+            return;
+        }
+        let target = self.target;
+        let (n, rows) = (
+            (xs.end() - xs.start() + 1) as usize,
+            (ys.end() - ys.start() + 1) as usize,
+        );
+        // Without a GARRAY array to keep the same, rows go straight into
+        // the target page, inside the clipping rectangle.
+        let area = Clip {
+            x0: dx + xs.start(),
+            y0: dy + ys.start(),
+            x1: dx + xs.end(),
+            y1: dy + ys.end(),
+        };
+        let size = GRP_SIZE as usize;
+        // Rows of another page that is not blank are read where they are,
+        // as nothing written can be read again.
+        if src != target
+            && self.arrays[src].is_none()
+            && self.arrays[target].is_none()
+            && !self.pages[src].is_empty()
+        {
+            self.page_pixels(target, area);
+            if let Ok([from_page, to_page]) = self.pages.get_disjoint_mut([src, target]) {
+                let first = index(from.x0 + xs.start(), from.y0 + ys.start());
+                let from_rows = from_page[first..].chunks(size);
+                let to_rows = to_page[index(area.x0, area.y0)..].chunks_mut(size);
+                let pairs = to_rows.zip(from_rows).take(rows);
+                copy_rows(pairs.map(|(d, s)| (&mut d[..n], &s[..n])), tint, blend);
+                return;
+            }
+        }
         // Read first, so that a copy within one page may overlap.
         let mut pixels = Vec::with_capacity((w * h) as usize);
         if self.arrays[src].is_none() {
@@ -872,38 +953,13 @@ impl Graphics {
                 }
             }
         }
-        let c = self.clip;
-        let (ys, xs) = (
-            // Past the largest coordinate wraps, to nothing on the page.
-            c.y0.wrapping_sub(dy).max(0)..=c.y1.wrapping_sub(dy).min(h - 1),
-            c.x0.wrapping_sub(dx).max(0)..=c.x1.wrapping_sub(dx).min(w - 1),
-        );
-        if ys.is_empty() || xs.is_empty() {
-            return;
-        }
-        if self.arrays[self.target].is_none() {
-            // Without a GARRAY array to keep the same, rows go straight
-            // into the page, inside the clipping rectangle.
-            let n = (xs.end() - xs.start() + 1) as usize;
-            let area = Clip {
-                x0: dx + xs.start(),
-                y0: dy + ys.start(),
-                x1: dx + xs.end(),
-                y1: dy + ys.end(),
-            };
-            let target = self.page_pixels(self.target, area);
-            for y in ys {
-                let from = &pixels[(y * w + xs.start()) as usize..][..n];
-                let to = &mut target[index(dx + xs.start(), dy + y)..][..n];
-                match (tint, blend) {
-                    (None, Blend::Normal) => to.copy_from_slice(from),
-                    _ => {
-                        for (d, &p) in to.iter_mut().zip(from) {
-                            *d = blend.apply(*d, tint.map_or(p, |t| multiply(p, t)));
-                        }
-                    }
-                }
-            }
+        if self.arrays[target].is_none() {
+            let to_page = self.page_pixels(target, area);
+            let first = (ys.start() * w + xs.start()) as usize;
+            let from_rows = pixels[first..].chunks(w as usize);
+            let to_rows = to_page[index(area.x0, area.y0)..].chunks_mut(size);
+            let pairs = to_rows.zip(from_rows).take(rows);
+            copy_rows(pairs.map(|(d, s)| (&mut d[..n], &s[..n])), tint, blend);
             return;
         }
         for y in ys {
@@ -2199,6 +2255,30 @@ mod tests {
         assert_eq!(g.pixel(0, 0, 1), 0xFF00_0000);
     }
 
+    /// Plain fills give what pages with GARRAY arrays give, clipped and at
+    /// the page's edges.
+    #[test]
+    fn plain_fills_match_fills_with_arrays() {
+        let draw = |arrays: bool| {
+            let mut g = Graphics::default();
+            if arrays {
+                g.array(0);
+            }
+            g.fill(-5, -5, 3, 2, RED, Blend::Normal);
+            g.fill(2047, 2040, 2030, 2050, 0x8012_3456, Blend::Normal);
+            g.fill(10, 1, 4, 8, 0xFF00_FF00, Blend::Alpha);
+            g.clip = Clip::new(5, 3, 9, 6);
+            g.fill(0, 0, 20, 20, 0x4000_00FF, Blend::Normal);
+            g.fill(10, 0, 20, 20, 0xFFFF_FFFF, Blend::Normal);
+            let rows = (0..10).chain(2036..GRP_SIZE);
+            (0..GRP_SIZE)
+                .flat_map(|x| rows.clone().map(move |y| (x, y)))
+                .map(|(x, y)| g.pixel(0, x, y))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(draw(false), draw(true));
+    }
+
     /// Rows copied straight into a page give what drawing pixel by pixel
     /// gives, which pages with GARRAY arrays still do.
     #[test]
@@ -2220,11 +2300,29 @@ mod tests {
             g.copy(0, (0, 0, 15, 8), (1, 1), None, Blend::Normal2);
             g.copy(2, (0, 0, 15, 8), (0, 5), None, Blend::Add);
             g.clip = Clip::PAGE;
+            // The last rows of the page, as source and as target.
+            g.fill(2040, 2044, 2047, 2047, 0xFF65_4321, Blend::Normal);
+            g.copy(
+                0,
+                (2036, 2040, 2047, 2047),
+                (7, 2),
+                Some(0x80FF_FFFF),
+                Blend::Normal2,
+            );
+            g.copy(0, (0, 0, 15, 8), (2040, 2043), None, Blend::Alpha2);
             g.target = 0;
             g.copy(0, (0, 0, 12, 6), (2, 1), None, Blend::Normal);
+            g.copy(
+                1,
+                (2040, 2040, 2047, 2047),
+                (100, 2045),
+                None,
+                Blend::Normal,
+            );
+            let rows = (0..12).chain(2036..GRP_SIZE);
             (0..2)
                 .flat_map(|page| (0..GRP_SIZE).map(move |x| (page, x)))
-                .flat_map(|(page, x)| (0..12).map(move |y| (page, x, y)))
+                .flat_map(|(page, x)| rows.clone().map(move |y| (page, x, y)))
                 .map(|(page, x, y)| g.pixel(page, x, y))
                 .collect::<Vec<_>>()
         };
