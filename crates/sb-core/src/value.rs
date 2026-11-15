@@ -70,6 +70,10 @@ pub struct Array {
     /// can also be indexed as one-dimensional.
     pub dims: Vec<usize>,
     pub data: ArrayData,
+    /// The array is the system's own memory, as GARRAY's and TARRAY's are:
+    /// RESIZE and RECSAVE refuse it, and LOADV fills it without changing
+    /// its size. Every variable it is assigned to shares it.
+    pub system: bool,
 }
 
 pub const MAX_DIMS: usize = 4;
@@ -82,7 +86,11 @@ impl Array {
             ElemType::Real => ArrayData::Real(vec![0.0; len]),
             ElemType::Str => ArrayData::Str((0..len).map(|_| new_str(Vec::new())).collect()),
         };
-        Array { dims, data }
+        Array {
+            dims,
+            data,
+            system: false,
+        }
     }
 
     pub fn elem_type(&self) -> ElemType {

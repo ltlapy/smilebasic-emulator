@@ -343,6 +343,7 @@ impl Runtime {
                     2 => Value::Array(Rc::new(RefCell::new(Array {
                         dims: vec![ICON_SIZE, ICON_SIZE],
                         data: ArrayData::Int(self.meta().icon.clone()),
+                        system: false,
                     }))),
                     n => {
                         return Err(Error::with_detail(

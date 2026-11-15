@@ -57,6 +57,7 @@ fn str_array(items: Vec<String>) -> Array {
     Array {
         dims: vec![items.len()],
         data: ArrayData::Str(data),
+        system: false,
     }
 }
 

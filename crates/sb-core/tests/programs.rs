@@ -1680,6 +1680,20 @@ fn resizing_checks_each_size() {
     assert_eq!(output("DIM M[2,3]:RESIZE M,0,3:?LEN(M)"), "0\n");
 }
 
+/// Only arrays of the system's are Can't RESIZE this array: the program's
+/// own resize, made at the top, in a DEF, or given back through OUT.
+#[test]
+fn programs_arrays_can_be_resized() {
+    assert_eq!(
+        output(
+            "DEF MK OUT R:DIM L[2]:RESIZE L,3:R=L:END\n\
+             MK OUT X:RESIZE X,5:Y=X:RESIZE Y,6:DIM C[]=[1,2]:RESIZE C,4\n\
+             ?LEN(X);\",\";LEN(C)"
+        ),
+        "6,4\n"
+    );
+}
+
 #[test]
 fn array_operations() {
     assert_eq!(

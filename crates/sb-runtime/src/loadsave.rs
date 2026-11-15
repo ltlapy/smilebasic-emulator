@@ -102,6 +102,7 @@ fn data_array(data: Data) -> Array {
     Array {
         dims: data.dims,
         data: data_values,
+        system: false,
     }
 }
 
@@ -109,6 +110,7 @@ fn image_array(image: Image) -> Array {
     Array {
         dims: vec![image.height, image.width],
         data: ArrayData::Int(image.pixels.into_iter().map(|p| p as i32).collect()),
+        system: false,
     }
 }
 
@@ -162,6 +164,7 @@ fn fill(target: &ArrayRef, source: Array) -> Result<()> {
     *target = Array {
         dims: source.dims,
         data,
+        system: false,
     };
     Ok(())
 }

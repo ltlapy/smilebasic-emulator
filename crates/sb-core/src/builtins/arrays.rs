@@ -420,15 +420,18 @@ const RESIZE_MOST: u64 = 1 << 30;
 
 /// `RESIZE array, n1 [, n2...]`: only the first size can change, and the
 /// others are given as they are (checked on hardware).
-// SmileBASIC 4 looks at the number of sizes first, then at each
-// size in turn: its type, the elements so far, past 2^30 Array is too
-// large naming it, and a later size other than the array's an Illegal
-// function call naming it. The elements are multiplied as 64-bit unsigned
+// SmileBASIC 4 refuses an array of the system's, naming it,
+// before it looks at the number of sizes, then at each size in turn: its
+// type, the elements so far, past 2^30 Array is too large naming it, and a
+// later size other than the array's an Illegal function call naming it. The elements are multiplied as 64-bit unsigned
 // numbers, so a negative size is too large unless a 0 came before it.
 // Exactly 2^30 is too large too, naming nothing.
 pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     let a = array(&args[0])?;
     let mut a = a.borrow_mut();
+    if a.system {
+        return Err(Error::new(ErrorKind::CantResizeThisArray).of_arg(0));
+    }
     if args.len() != a.dims.len() + 1 {
         return Err(ErrorKind::WrongNumberOfArguments.into());
     }

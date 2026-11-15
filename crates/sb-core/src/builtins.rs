@@ -1596,6 +1596,26 @@ mod tests {
     }
 
     #[test]
+    fn resize_refuses_an_array_of_the_system_before_counting_sizes() {
+        let a = int_array(4);
+        if let Value::Array(r) = &a {
+            r.borrow_mut().system = true;
+        }
+        // The wrong number of sizes comes after.
+        for args in [
+            vec![a.clone(), Value::Int(8)],
+            vec![a.clone(), Value::Int(1), Value::Int(2)],
+        ] {
+            let e = call("RESIZE", &args).unwrap_err();
+            assert_eq!((e.kind, e.arg), (ErrorKind::CantResizeThisArray, Some(0)));
+        }
+        assert_eq!(as_int(one("LEN", &a)), 4);
+        // Other commands that change the size do not look.
+        call("PUSH", &[a.clone(), Value::Int(1)]).unwrap();
+        assert_eq!(as_int(one("LEN", &a)), 5);
+    }
+
+    #[test]
     fn arrays() {
         let a = call("ARRAY%", &[Value::Int(2)]).unwrap();
         call("PUSH", &[a.clone(), Value::Real(5.9)]).unwrap();

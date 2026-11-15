@@ -164,6 +164,9 @@ pub enum ErrorKind {
     CantLinkToDescendant,
     /// RESIZE to more than 2^30 elements, or to a negative size.
     ArrayTooLarge,
+    /// RESIZE or RECSAVE of an array in the system's own memory, such as
+    /// the one GARRAY gives.
+    CantResizeThisArray,
     /// RESTORE "POP" when the latest GOSUB or DEF call came after the
     /// last place RESTORE "PUSH" kept.
     UseRestorePush,
@@ -293,6 +296,7 @@ impl ErrorKind {
             ErrorKind::IllegalSystemArgumentName => 112,
             ErrorKind::ArrayTooSmall => 116,
             ErrorKind::ArrayTooLarge => 47,
+            ErrorKind::CantResizeThisArray => 65,
             ErrorKind::UseRestorePush => 119,
             ErrorKind::UseRestorePop => 118,
             ErrorKind::CantUseSpecifiedSlot => 120,
@@ -403,6 +407,7 @@ impl ErrorKind {
             ErrorKind::IllegalFontType => "Illegal font type",
             ErrorKind::ArrayTooSmall => "Array is too small",
             ErrorKind::ArrayTooLarge => "Array is too large",
+            ErrorKind::CantResizeThisArray => "Can't RESIZE this array",
             ErrorKind::UseRestorePush => "Use RESTORE PUSH before RESTORE POP",
             ErrorKind::UseMultiplesOf4 => "Use multiples of 4",
             ErrorKind::IllegalControlStyleForIrCamera => {
