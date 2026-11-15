@@ -382,12 +382,13 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Tfunc, Want::Outs(0), 1 | 2) => {
+                let id = screen_id(&args[0])?;
                 let func = match args.get(1) {
                     Some(Value::Str(name)) => Some(self.callback_name(&name.borrow())),
-                    Some(_) => return Err(ErrorKind::TypeMismatch.into()),
+                    Some(_) => return Err(Error::new(ErrorKind::TypeMismatch).of_arg(1)),
                     None => None,
                 };
-                self.text[screen_id(&args[0])?].func = func;
+                self.text[id].func = func;
                 Ok(vec![])
             }
             _ => Err(no_form()),

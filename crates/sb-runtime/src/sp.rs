@@ -291,6 +291,20 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
+        // These check the sprite's number before how many arguments and
+        // OUT variables there are.
+        if let (
+            Command::Spofs
+            | Command::Spcol
+            | Command::Spcolor
+            | Command::Sphome
+            | Command::Sprot
+            | Command::Spscale,
+            Some(id),
+        ) = (command, args.first())
+        {
+            sprite_id(id)?;
+        }
         match (command, want, args.len()) {
             (Command::Spset, Want::Outs(0), 2 | 3 | 5..=7) => {
                 let id = sprite_id(&args[0])?;
@@ -352,11 +366,9 @@ impl Runtime {
             (Command::Spofs, Want::Outs(0), 2..=4) => {
                 let x = args.get(1).map(optional_real).transpose()?.flatten();
                 let y = args.get(2).map(optional_real).transpose()?.flatten();
-                let z = match args.get(3).map(opt_int).transpose()?.flatten() {
-                    Some(z) if !(-4095..=4095).contains(&z) => {
-                        return Err(out_of_range("Z", z));
-                    }
-                    z => z,
+                let z = match args.get(3) {
+                    None | Some(Value::Default) => None,
+                    Some(z) => Some(in_range(z, "Z", -4095..=4095)?),
                 };
                 let s = self.sprite(&args[0])?;
                 if x.is_some() || y.is_some() {
@@ -442,13 +454,13 @@ impl Runtime {
                     5 => (field(3)?, field(4)?, None),
                     _ => (field(3)?, field(4)?, field(5)?),
                 };
-                for (size, what) in [(w, "width"), (h, "height")] {
+                for (size, what, at) in [(w, "width", 3), (h, "height", 4)] {
                     if let Some(n) = size.filter(|n| !(0..=2048).contains(n)) {
-                        return Err(out_of_range(what, n));
+                        return Err(out_of_range(what, n).of_arg(at));
                     }
                 }
                 if let Some(a) = attr.filter(|a| !(0..=0x1F).contains(a)) {
-                    return Err(out_of_range("attribute", a));
+                    return Err(out_of_range("attribute", a).of_arg(n - 1));
                 }
                 let s = self.sprite(&args[0])?;
                 stop(s, Target::Uv);
@@ -684,17 +696,20 @@ impl Runtime {
             }
             (Command::Splink, Want::Outs(0), 2 | 3) => {
                 let (child, parent) = (sprite_id(&args[0])?, sprite_id(&args[1])?);
-                let flags = match args.get(2).map(opt_int).transpose()?.flatten() {
-                    Some(f) if !(0..32).contains(&f) => return Err(out_of_range("link flags", f)),
-                    f => f.unwrap_or(0),
+                let flags = match args.get(2) {
+                    None | Some(Value::Default) => 0,
+                    Some(f) => in_range(f, "link flags", 0..=31)?,
                 };
-                self.sprite(&args[1])?;
-                self.sprite(&args[0])?;
+                if child == parent {
+                    let e = Error::with_detail(ErrorKind::IllegalFunctionCall, "link to itself");
+                    return Err(e.of_arg(1));
+                }
+                // Named here, unlike elsewhere.
+                self.sprite(&args[0]).map_err(|e| e.of_arg(0))?;
+                self.sprite(&args[1]).map_err(|e| e.of_arg(1))?;
                 if self.sprites.descends_from(parent, child) {
-                    return Err(Error::with_detail(
-                        ErrorKind::IllegalFunctionCall,
-                        "link loop",
-                    ));
+                    let e = Error::with_detail(ErrorKind::CantLinkToDescendant, "link loop");
+                    return Err(e.of_arg(1));
                 }
                 self.sprites.linked = true;
                 let s = self.sprites.sprite_mut(child);
@@ -722,13 +737,14 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Spfunc, Want::Outs(0), 1 | 2) => {
+                let id = sprite_id(&args[0])?;
                 let func = match args.get(1) {
                     Some(Value::Str(name)) => Some(self.callback_name(&name.borrow())),
-                    Some(_) => return Err(ErrorKind::TypeMismatch.into()),
+                    Some(_) => return Err(Error::new(ErrorKind::TypeMismatch).of_arg(1)),
                     None => None,
                 };
                 // A sprite that is not set takes it too.
-                self.sprites.sprite_mut(sprite_id(&args[0])?).func = func;
+                self.sprites.sprite_mut(id).func = func;
                 Ok(vec![])
             }
             (Command::Spused, Want::Value, 1) => {
@@ -755,13 +771,20 @@ impl Runtime {
                     5 => vec![d.u, d.v, d.w, d.h, d.attr],
                     6 => vec![d.u, d.v, d.w, d.h, d.hx, d.hy],
                     7 => vec![d.u, d.v, d.w, d.h, d.hx, d.hy, d.attr],
-                    _ => return Err(illegal()),
+                    _ => return Err(no_form()),
                 };
                 Ok(ints(&out))
             }
             (Want::Outs(0), [source @ (Value::Array(_) | Value::Str(_)), rest @ ..])
                 if rest.len() <= 3 =>
             {
+                // An array's length is checked before anything else.
+                if let Value::Array(a) = source
+                    && !a.borrow().len().is_multiple_of(7)
+                {
+                    let e = Error::with_detail(ErrorKind::IllegalArraySize, "needs 7 values each");
+                    return Err(e.of_arg(0));
+                }
                 let offset = rest.first().map(def_id).transpose()?.unwrap_or(0);
                 let (du, dv) = match rest {
                     [_, u, v] => (int(u)?, int(v)?),
@@ -778,12 +801,6 @@ impl Runtime {
                     }
                 };
                 let values: Vec<i32> = values.iter().map(|&x| x as i32).collect();
-                if !values.len().is_multiple_of(7) {
-                    return Err(Error::with_detail(
-                        ErrorKind::IllegalFunctionCall,
-                        "needs 7 values each",
-                    ));
-                }
                 if offset + values.len() / 7 > DEFS {
                     return Err(ErrorKind::OutOfRange.into());
                 }
@@ -801,22 +818,27 @@ impl Runtime {
                 Ok(vec![])
             }
             // SPDEF id,source,[U],[V],[W],[H],[HX],[HY],[attributes]
+            // Each value given is checked, and then that the image stays
+            // on the page.
             (Want::Outs(0), [id, source, fields @ ..]) if fields.len() == 7 => {
                 let id = def_id(id)?;
                 let mut d = self.sprites.defs[def_id(source)?];
                 let mut slots = [
-                    &mut d.u,
-                    &mut d.v,
-                    &mut d.w,
-                    &mut d.h,
-                    &mut d.hx,
-                    &mut d.hy,
-                    &mut d.attr,
+                    (&mut d.u, "U", 0..=2048),
+                    (&mut d.v, "V", 0..=2048),
+                    (&mut d.w, "width", 0..=2048),
+                    (&mut d.h, "height", 0..=2048),
+                    (&mut d.hx, "home X", -32768..=32767),
+                    (&mut d.hy, "home Y", -32768..=32767),
+                    (&mut d.attr, "attribute", 0..=31),
                 ];
-                for (slot, field) in slots.iter_mut().zip(fields) {
-                    if let Some(n) = opt_int(field)? {
-                        **slot = n;
+                for ((slot, what, range), field) in slots.iter_mut().zip(fields) {
+                    if !matches!(field, Value::Default) {
+                        **slot = in_range(field, what, range.clone())?;
                     }
+                }
+                if d.u + d.w > 2048 || d.v + d.h > 2048 {
+                    return Err(out_of_range("image corner", d.u + d.w));
                 }
                 self.sprites.defs[id] = d;
                 Ok(vec![])
@@ -824,8 +846,11 @@ impl Runtime {
             // SPDEF id,U,V[,W,H[,HX,HY]][,attributes]
             (Want::Outs(0), [id, u, v, rest @ ..]) if rest.len() <= 5 => {
                 let id = def_id(id)?;
-                let n = |v: &Value| int(v);
-                let (size, home, attr) = match rest {
+                let (u, v) = (
+                    in_range(u, "U", 0..=i32::MAX)?,
+                    in_range(v, "V", 0..=i32::MAX)?,
+                );
+                let (size_args, home_args, attr) = match rest {
                     [] => (None, None, None),
                     [a] => (None, None, Some(a)),
                     [w, h] => (Some((w, h)), None, None),
@@ -834,22 +859,25 @@ impl Runtime {
                     [w, h, x, y, a] => (Some((w, h)), Some((x, y)), Some(a)),
                     _ => unreachable!("at most five"),
                 };
-                let (w, h) = match size {
-                    Some((w, h)) => (n(w)?, n(h)?),
+                let size = |v| in_range(v, "size", 0..=2048);
+                let (w, h) = match size_args {
+                    Some((w, h)) => (size(w)?, size(h)?),
                     None => (16, 16),
                 };
-                let (hx, hy) = match home {
-                    Some((x, y)) => (n(x)?, n(y)?),
+                let home = |v| in_range(v, "home", -32768..=32767);
+                let (hx, hy) = match home_args {
+                    Some((x, y)) => (home(x)?, home(y)?),
                     None => (0, 0),
                 };
+                let attr = attr.map(|a| in_range(a, "attribute", 0..=31));
                 self.sprites.defs[id] = SpriteDef {
-                    u: n(u)?,
-                    v: n(v)?,
+                    u,
+                    v,
                     w,
                     h,
                     hx,
                     hy,
-                    attr: attr.map(n).transpose()?.unwrap_or(0),
+                    attr: attr.transpose()?.unwrap_or(0),
                 };
                 Ok(vec![])
             }

@@ -1273,6 +1273,17 @@ Expected but not yet seen on hardware:
 - When a parent is cleared, children without link bit 0 stay where they showed,
   Z included.
 - `SPSET` drops the sprite's `SPFUNC`, also on a sprite that was set already.
+- `SPDEF` checks what it is given: U and
+  V 0 or more, width and height 0 to 2048, home point -32768 to 32767 and
+  attributes 0 to 31, each named after its argument. Copying from another
+  template (nine arguments) takes U and V up to 2048 too, and the image must
+  end within 2048. An array whose length 7 does not divide is
+  `Illegal array size (SPDEF:1)`, error 117. (Not yet seen on hardware.)
+- `SPLINK` of a sprite to itself is
+  `Illegal function call (SPLINK:2)`, and to a sprite linked below it
+  `Can't link to decendent sprite (SPLINK:2)`, error 113, spelled so.
+  `SPOFS`, `SPCOL`, `SPCOLOR`, `SPHOME`, `SPROT` and `SPSCALE` check the
+  sprite's number before anything else. (Not yet seen on hardware.)
 - `SPHIDE id,flag` shows the sprite on a flag of 0 and hides it on any other
   value, 2 and -1 among them. `SPHIDE id` with no flag hides it
   (TEST71).
