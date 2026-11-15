@@ -1288,7 +1288,7 @@ fn on_page((x, y, w, h): (i32, i32, i32, i32)) -> impl Iterator<Item = (usize, u
 }
 
 /// The pixels of the circle of radius `r` around `(cx, cy)` that lie on
-/// the page, without repeats: the midpoint circle, whose pixel in each
+/// the page, without repeats and in no set order: the midpoint circle, whose pixel in each
 /// row of the first octant is the largest `x` with `x² - x + y² < r²`.
 /// Only the rows and columns that reach the page are worked out, so that
 /// huge circles take no longer than small ones.
@@ -1334,23 +1334,31 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
         // All on the page: one walk of the octant.
         let (mut x, at) = (r, |x: i64, y: i64| ((cx + x) as i32, (cy + y) as i32));
         points.reserve(8 * (last as usize + 1));
+        // A row's eight points can only repeat each other on the axes
+        // (y 0) and on the diagonal (x = y), and never another row's, so
+        // those rows give four and nothing needs sorting out: sorting took
+        // 40% of TPERF's GCIRCLE scene.
         for y in 0..=last {
             while x * (x - 1) >= rr - y * y {
                 x -= 1;
             }
-            points.extend([
-                at(x, y),
-                at(y, x),
-                at(-y, x),
-                at(-x, y),
-                at(-x, -y),
-                at(-y, -x),
-                at(y, -x),
-                at(x, -y),
-            ]);
+            if y == 0 {
+                points.extend([at(x, 0), at(0, x), at(-x, 0), at(0, -x)]);
+            } else if x == y {
+                points.extend([at(x, x), at(-x, x), at(-x, -x), at(x, -x)]);
+            } else {
+                points.extend([
+                    at(x, y),
+                    at(y, x),
+                    at(-y, x),
+                    at(-x, y),
+                    at(-x, -y),
+                    at(-y, -x),
+                    at(y, -x),
+                    at(x, -y),
+                ]);
+            }
         }
-        points.sort_unstable();
-        points.dedup();
         return points;
     }
     // Rows of the octant whose points land on the page: those whose
@@ -2267,6 +2275,14 @@ mod tests {
         points
     }
 
+    /// [`circle_points`] in order, repeats kept, to compare as a set that
+    /// must have none.
+    fn sorted_circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
+        let mut points = circle_points(cx, cy, r);
+        points.sort_unstable();
+        points
+    }
+
     #[test]
     fn circle_points_are_the_midpoint_circle() {
         for r in 0..600 {
@@ -2275,7 +2291,7 @@ mod tests {
                 .map(|(x, y)| (x + 1000, y + 900))
                 .collect();
             expected.sort_unstable();
-            assert_eq!(circle_points(1000, 900, r), expected, "radius {r}");
+            assert_eq!(sorted_circle_points(1000, 900, r), expected, "radius {r}");
         }
         // Off the edges, only what lands on the page.
         let mut expected: Vec<(i32, i32)> = midpoint(300)
@@ -2284,7 +2300,7 @@ mod tests {
             .filter(|&(x, y)| x >= 0 && y >= 0)
             .collect();
         expected.sort_unstable();
-        assert_eq!(circle_points(100, -50, 300), expected);
+        assert_eq!(sorted_circle_points(100, -50, 300), expected);
     }
 
     /// TEST47 part 17: circles of radius 1000 and 70000 whose right edge
