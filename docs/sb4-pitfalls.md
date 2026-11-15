@@ -1328,6 +1328,9 @@ Expected but not yet seen on hardware:
 ### Drawing on pages
 
 - `GCLIP` is shared by all pages.
+- Each of `GCLIP`'s four coordinates is
+  0 to 2047, or `Out of range` named after it (`GCLIP:1` to `GCLIP:4`). (Not
+  yet seen on hardware.)
 - `GCIRCLE` with equal start and end angles draws nothing; the sector flag draws
   only the outline.
 - Drawing rules read back with `GPGET` (TEST47, all 23 parts matched):

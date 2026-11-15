@@ -19,6 +19,14 @@ fn out_of_range(what: &str, n: i32) -> Error {
     Error::with_detail(ErrorKind::OutOfRange, format!("{what} {n}"))
 }
 
+/// A point on a graphic page, 0 to 2047, as GCLIP and GUPDATE take it.
+fn coordinate(v: &Value) -> Result<i32> {
+    checking(v, || match int(v)? {
+        n if (0..GRP_SIZE).contains(&n) => Ok(n),
+        n => Err(out_of_range("coordinate", n)),
+    })
+}
+
 fn page_arg(v: &Value) -> Result<usize> {
     checking(v, || {
         let n = int(v)?;
@@ -160,7 +168,7 @@ impl Runtime {
                 Ok(vec![])
             }
             (Command::Gclip, Want::Outs(0), 4) => {
-                let v = ints(4)?;
+                let v = args.iter().map(coordinate).collect::<Result<Vec<_>>>()?;
                 self.grp.clip = Clip::new(v[0], v[1], v[2], v[3]);
                 Ok(vec![])
             }
@@ -403,16 +411,7 @@ impl Runtime {
                 let rect = match &args[1..] {
                     [] => Clip::PAGE,
                     corners => {
-                        let c = corners
-                            .iter()
-                            .map(|v| {
-                                let n = int(v)?;
-                                (0..GRP_SIZE)
-                                    .contains(&n)
-                                    .then_some(n)
-                                    .ok_or_else(|| out_of_range("coordinate", n))
-                            })
-                            .collect::<Result<Vec<_>>>()?;
+                        let c = corners.iter().map(coordinate).collect::<Result<Vec<_>>>()?;
                         Clip::new(c[0], c[1], c[2], c[3])
                     }
                 };

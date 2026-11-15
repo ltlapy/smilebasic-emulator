@@ -106,6 +106,11 @@ fn ranges_are_numbered_by_argument() {
         ("DIM A[4]:TLOAD 4,0,0,0,1,A", "TLOAD:4"),
         ("DIM A[4]:TLOAD 4,0,0,1,0,A", "TLOAD:5"),
         ("DIM A[4]:GLOAD 0,0,-1,1,A,0", "GLOAD:3"),
+        ("GCLIP 2048,0,1,1", "GCLIP:1"),
+        ("GCLIP 0,0,-1,1", "GCLIP:3"),
+        ("GCLIP 0,0,1,2048", "GCLIP:4"),
+        ("GUPDATE 0,0,2048,0,0", "GUPDATE:3"),
+        ("GUPDATE 0,0,0,0,-1", "GUPDATE:5"),
     ] {
         let (_, out) = run(source);
         assert!(out.starts_with("Out of range"), "{source}: {out}");
