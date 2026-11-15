@@ -122,6 +122,9 @@ pub enum ErrorKind {
     IllegalControlStyle,
     /// GPUTCHR with a font type other than 8 or 16.
     IllegalFontType,
+    /// An array with fewer elements than a command needs, such as an empty
+    /// parameter array of ARYOP.
+    ArrayTooSmall,
 }
 
 impl ErrorKind {
@@ -199,6 +202,7 @@ impl ErrorKind {
             ErrorKind::IllegalControlStyle => 107,
             ErrorKind::CantEditRunningProgram => 111,
             ErrorKind::IllegalSystemArgumentName => 112,
+            ErrorKind::ArrayTooSmall => 116,
             ErrorKind::UseRestorePop => 118,
             ErrorKind::CantUseSpecifiedSlot => 120,
             // The emulator's own: a statement out of its place, which
@@ -281,6 +285,7 @@ impl ErrorKind {
             ErrorKind::IllegalIrCameraMode => "Illegal IR Camera mode",
             ErrorKind::IllegalControlStyle => "Illegal control style",
             ErrorKind::IllegalFontType => "Illegal font type",
+            ErrorKind::ArrayTooSmall => "Array is too small",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }
