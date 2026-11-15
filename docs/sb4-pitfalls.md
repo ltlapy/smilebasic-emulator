@@ -167,6 +167,10 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   or `?1/0` stops the program before it runs, even on a line that is never
   reached.
 - An unknown `#constant` is `Undefined constant`.
+- SmileBASIC 4 compiles a program a statement at a time, by SmileBASIC 4
+  (4.4.8). A compile error in a statement comes before a `Syntax error` in a
+  later one: `?#ZZ:?(` is `Undefined constant`, and so is `IF #ZZ THEN ?(`.
+  (Not yet seen on hardware.)
 - `CONST` or `ENUM` of a built-in constant's name is `Duplicate constant`,
   error 49, as the program compiles: `CONST #ON=#C_YELLOW,#OFF=#C_WHITE` on
   line 38 of slot 0 stops with `Duplicate constant in 0:38` (checked on
@@ -2045,10 +2049,25 @@ Expected but not yet seen on hardware:
 - A declaration that fails still declares. After `DIM D[0,3]` fails, `D` is the
   omitted value (`TYPEOF` 0, and `?D` is `Type mismatch`); after `VAR G=SQR(-1)`
   fails, `G` is 0. A line that does not compile declares nothing.
-- `CONST` and `ENUM` typed in DIRECT mode are `Can't use from direct mode`,
-  error 43. The error comes as the
-  line compiles, so nothing on the line runs, and the message names no
-  place. (Not yet seen on hardware.)
+- `CONST`, `ENUM`, `RETURN`, `BREAK`, `CONTINUE`, `DEFOUT`, `DATA`, `READ`,
+  `RESTORE`, `OPTION` and `STOP` typed in DIRECT mode are
+  `Can't use from direct mode`, error 43. The error comes as the line compiles, so nothing on the line
+  runs, and the message names no place. SmileBASIC 4 refuses the statement
+  before it reads what follows the keyword, so `RESTORE @X`, `BREAK 1`,
+  `DATA A` and `STOP 1,2` are error 43 too. A statement before it on the
+  line still gives its own error first: `?#B:RETURN` is
+  `Undefined constant`. `OPTION` and `STOP` are names, so `STOP=1` assigns
+  a variable; `CONST` and `ENUM` are keywords. (Not yet seen on hardware.)
+- A call to a name defined nowhere, such as `NOSUCH 1` or `?NOSUCH(1)`, is
+  a `Syntax error` as a DIRECT mode line compiles, after its arguments: `?"A":NOSUCH` prints nothing. In a
+  program it is a `Syntax error` only when the call runs. (Not yet seen on
+  hardware.)
+- `#_LINE` is 0 in DIRECT mode. (Not
+  yet seen on hardware.)
+- `DEF`, labels, `VAR` and `DIM` compile in DIRECT mode. Inside a `DEF`
+  typed there, `VAR`, `DIM` and new variables make globals, not the
+  `DEF`'s own; its parameters stay its
+  own. (Not yet seen on hardware.)
 - `CLEAR` in a program is a `Syntax error` when it runs. `PROJECT` in a program
   is `Can't use in program`, error 44, when it runs: after `?"A"` it prints A,
   then `Can't use in program in 3:1(PROJECT)` (TEST71).
