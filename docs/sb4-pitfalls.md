@@ -563,9 +563,14 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   array's is `Illegal function call` naming it: `RESIZE A,2,4` on `DIM A[2,3]`
   is `(RESIZE:3)`. (Not yet seen
   on hardware.)
-- `RESIZE` of the array `GARRAY` or `TARRAY` gives is `Can't RESIZE this
-  array`, error 65: those arrays are the system's own memory. (Not yet seen on hardware.) The emulator
-  resizes them.
+- The arrays `GARRAY`, `TARRAY` and `UIGETCMPL` give are the system's own
+  memory, and so is any variable they are assigned to. `RESIZE` of one is
+  `Can't RESIZE this array`, error 65, naming it, before the number of sizes
+  is looked at: `G=GARRAY(0):RESIZE G,9` is `(RESIZE:1)`. `RECSAVE` into one
+  is the same error, after the count, the position and the array's type.
+  `LOADV` into one keeps its size: it reads only the elements that fit and
+  leaves the rest as they were. The other array commands do not look, and an
+  array that `COPY` fills or `LOADV` makes is the program's. (Not yet seen on hardware.)
 - `ARRAY%`, `ARRAY#` and `ARRAY$` with a 0 among two sizes or more are
   `Subscript out of range` naming the 0: `ARRAY%(2,0)` is `(ARRAY%:2)`.
   `ARRAY%(0)` is an empty array. (Not yet seen on hardware.)
@@ -2200,7 +2205,9 @@ Expected but not yet seen on hardware:
   `RECSAVE` from -1000, from past what this recording has reached, or of 1000
   samples from 500 before its end gives those older samples where this
   recording has none (TEST71).
-- `RECSAVE` of a number is `Type mismatch (RECSAVE:1)`: `RECSAVE Z,Z,Z`. (Not yet seen on hardware.)
+- `RECSAVE` of a number is `Type mismatch (RECSAVE:1)`: `RECSAVE Z,Z,Z`. So is
+  `RECSAVE` into a string array or one of three dimensions, after the count
+  and the position are read. (Not yet seen on hardware.)
 - `RECSTART` does not record `PCMSTREAM`: streams played at full volume
   recorded 0, while the person heard them (TEST74).
 - A subprogram's `RECSTART` records nothing of its own, and its `RECSAVE` gives
@@ -2995,7 +3002,8 @@ TTEST36.
   4216464 free is `Out of memory (LOADV)` (TEST57).
 - `LOADV "DAT:Q",A%` fills the array, gives no error and leaves `FREEMEM` as it
   was (TEST57). If the file is longer, the array grows the way `RESIZE` does,
-  and `A$=LOADV("TXT:Q")` makes its string the same way.
+  unless it is one of the system's, such as `GARRAY`'s, and
+  `A$=LOADV("TXT:Q")` makes its string the same way.
 - `LOADV` as TEST58 saw it:
   - `S$=LOADV("TXT:Q")` of 1,000,000 characters (2000064 bytes) over a string as
     long is `Out of memory (LOADV)` with 1000016 free and works with 3000016
