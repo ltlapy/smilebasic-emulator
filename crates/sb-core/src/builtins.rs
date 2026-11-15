@@ -1001,9 +1001,25 @@ fn hsv_out(args: &[Value], outs: usize, unit: bool) -> Result<Vec<Value>> {
 
 // ---- arrays ----
 
+/// ARRAY%, ARRAY# and ARRAY$. SmileBASIC 4 gives Out of memory
+/// as soon as the sizes so far reach 2^30 elements, and a 0 in an array
+/// of more than one dimension as Subscript out of range, naming it.
 fn new_array(args: &[Value], elem: ElemType) -> Result<Value> {
-    let dims = args.iter().map(index_arg).collect::<Result<Vec<_>>>()?;
-    let total = dims.iter().fold(1usize, |acc, &d| acc.saturating_mul(d));
+    let mut dims = Vec::with_capacity(args.len());
+    let mut total = 1usize;
+    for v in args {
+        let n = index_arg(v)?;
+        total = total.saturating_mul(n);
+        if total >= 1 << 30 {
+            return Err(ErrorKind::OutOfMemory.into());
+        }
+        dims.push(n);
+    }
+    if dims.len() > 1
+        && let Some(zero) = dims.iter().position(|&n| n == 0)
+    {
+        return Err(Error::new(ErrorKind::SubscriptOutOfRange).of_value(&args[zero]));
+    }
     crate::memory::request(crate::memory::array_bytes(elem, total))?;
     Ok(Value::Array(std::rc::Rc::new(std::cell::RefCell::new(
         Array::new(elem, dims),

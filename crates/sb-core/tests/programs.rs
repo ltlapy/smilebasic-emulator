@@ -86,6 +86,25 @@ fn bqparam_checks_the_gain_count_first() {
     );
 }
 
+/// ARRAY% and the like refuse a 0 among more than one size, naming it,
+/// and 2^30 elements as soon as the sizes reach it.
+#[test]
+fn new_arrays_check_their_sizes() {
+    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
+    let subscript = ErrorKind::SubscriptOutOfRange;
+    assert_eq!(kind("A=ARRAY%(2,0)"), Some((subscript, Some(1))));
+    assert_eq!(kind("A=ARRAY#(0,0,3)"), Some((subscript, Some(0))));
+    assert_eq!(
+        kind("A=ARRAY$(-1,0)"),
+        Some((ErrorKind::OutOfRange, Some(0)))
+    );
+    assert_eq!(
+        kind("A=ARRAY%(1073741824,0)"),
+        Some((ErrorKind::OutOfMemory, None))
+    );
+    assert_eq!(output("A=ARRAY%(0):?LEN(A)"), "0\n");
+}
+
 /// MIN and MAX take an array or two numbers or more.
 #[test]
 fn min_and_max_check_their_arguments() {
