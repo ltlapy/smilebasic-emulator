@@ -101,6 +101,14 @@ pub enum FastOp {
     },
     /// RETURN with a value from a DEF called in the running slot.
     ReturnValue,
+    /// A call of a builtin that [`FastOp::Builtin`] does not stand for, which
+    /// [`crate::vm::Vm`] makes as `code`'s instruction does, without leaving
+    /// the fused code.
+    Call {
+        id: u16,
+        argc: u8,
+        want: Want,
+    },
     /// A call of a host's command or function, which [`crate::vm::Vm`]
     /// makes as `code`'s instruction does, without leaving the fused code.
     Host {
@@ -451,6 +459,7 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
             argc,
             want: Want::Value,
         } if crate::builtins::is_pure_call(id, argc.into()) => add(F::Builtin { id, argc }, 1),
+        Op::CallBuiltin { id, argc, want } => add(F::Call { id, argc, want }, 1),
         Op::Unary(op) => add(F::Unary(op), 1),
         Op::Truthy => add(F::Truthy, 1),
         Op::Binary(op) => add(F::Binary(op), 1),

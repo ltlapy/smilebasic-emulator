@@ -1530,23 +1530,37 @@ impl Vm {
         host: &mut dyn Host,
     ) -> Option<(usize, Result<Option<Status>>)> {
         loop {
-            let Fused::Host { id, argc, want } = self.run_fused(program, stop) else {
+            let exit = self.run_fused(program, stop);
+            if let Fused::Slow = exit {
                 return None;
-            };
+            }
             // The Nops of a FOR may lead the call in its entry.
             let nops = usize::from(program.fast[self.pc].len) - 1;
             self.pc += nops;
             self.executed += nops as u64;
             let pc = self.pc;
             self.executed += 1;
-            match self.host_call(host, id, argc, want) {
-                Ok(None) => {}
-                outcome => return Some((pc, outcome)),
-            }
+            let outcome = match exit {
+                Fused::Slow => unreachable!("handed back above"),
+                Fused::Builtin { id, argc, want } => {
+                    match self.builtin_call(program, id, argc, want) {
+                        Ok(()) => {
+                            self.pc += 1;
+                            continue;
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Fused::Host { id, argc, want } => match self.host_call(host, id, argc, want) {
+                    Ok(None) => continue,
+                    outcome => outcome,
+                },
+            };
+            return Some((pc, outcome));
         }
     }
 
-    /// [`Vm::run_fast`] up to a host call. DEF calls and returns within the
+    /// [`Vm::run_fast`] up to a builtin's or host's call. DEF calls and returns within the
     /// slot are made here, as [`Vm::enter_def_on_stack`] and
     /// [`Vm::return_op`] make them.
     #[inline(always)]
@@ -1798,6 +1812,10 @@ impl Vm {
                 }
                 FastOp::Host { id, argc, want } => {
                     exit = Fused::Host { id, argc, want };
+                    break;
+                }
+                FastOp::Call { id, argc, want } => {
+                    exit = Fused::Builtin { id, argc, want };
                     break;
                 }
                 FastOp::Builtin { id, argc } => {
@@ -2918,75 +2936,7 @@ impl Vm {
                 self.call_in(slot, def, args, *want, host)?;
                 return Ok(None);
             }
-            Op::CallBuiltin { id, argc, want } => {
-                let b = builtins::get(*id);
-                // CHR$ costs more than a call (TEST68, TEST69).
-                // UNVERIFIED: that the builtins not timed cost what the
-                // meter charges a call.
-                let charge = match self.report_work {
-                    true => self.charges.get(usize::from(*id)).copied(),
-                    false => None,
-                };
-                let call = match charge {
-                    None | Some(Charge::Call) => true,
-                    Some(Charge::Free) => false,
-                    Some(Charge::FreeWithTwo) => *argc != 2,
-                    // A CHR$ of the code the last one made costs only its
-                    // call (TEST71 to TEST74 time U$=CHR$(C) so).
-                    // UNVERIFIED: that SmileBASIC 4 keeps the last string
-                    // CHR$ made, as HGCNV$ and TPERF's VSTR, which make a
-                    // new code each time, need CHR$'s cost.
-                    Some(Charge::Chr) => {
-                        let code = self.stack.last().and_then(|v| v.to_int().ok());
-                        if code.is_none() || std::mem::replace(&mut self.last_chr, code) != code {
-                            self.chr_calls += 1;
-                        }
-                        true
-                    }
-                    Some(Charge::Costly(i)) => {
-                        self.costly_calls[usize::from(i)] += 1;
-                        true
-                    }
-                    Some(Charge::Cheap(i)) => {
-                        self.cheap_calls[usize::from(i)] += 1;
-                        let far = |v: &Value| {
-                            v.to_real()
-                                .is_ok_and(|x| x.abs() > std::f64::consts::FRAC_PI_4)
-                        };
-                        if i < 3 && self.stack.last().is_some_and(far) {
-                            self.trig_reductions += 1;
-                        }
-                        false
-                    }
-                };
-                if call {
-                    self.builtin_calls += 1;
-                    self.builtin_args += u64::from(*argc);
-                }
-                let argc = usize::from(*argc);
-                if let (Kind::Function(f), Want::Value, true) = (b.kind, *want, b.accepts(argc)) {
-                    // Most calls: no need to take the arguments off the stack
-                    // for the call, or to make a list of one result.
-                    let at = self.stack.len() - argc;
-                    let result = f(&self.stack[at..]);
-                    let result = result.map_err(|e| builtin_error(e, b.name, &self.stack[at..]));
-                    match result {
-                        Ok(v) => {
-                            self.stack.truncate(at);
-                            self.stack.push(v);
-                        }
-                        Err(e) => return Err(self.failed_with_args(e, at)),
-                    }
-                } else {
-                    let args = self.pop_n(argc);
-                    if self.report_work && b.name == "FILL" {
-                        self.filled += fill_count(&args);
-                    }
-                    if let Err(e) = self.call_builtin(program, *id, &args, *want) {
-                        return Err(self.run_again(e, args));
-                    }
-                }
-            }
+            Op::CallBuiltin { id, argc, want } => self.builtin_call(program, *id, *argc, *want)?,
             Op::CallHost { id, argc, want } => return self.host_call(host, *id, *argc, *want),
             Op::CallDyn { argc, want } => {
                 self.lookups += 1;
@@ -3466,6 +3416,81 @@ impl Vm {
         }
     }
 
+    /// [`Op::CallBuiltin`], for [`Vm::step`] and [`Vm::run_fast`]: the
+    /// arguments stay on the stack for a function's call, and an error takes
+    /// them off.
+    #[inline(never)]
+    fn builtin_call(&mut self, program: &Compiled, id: u16, argc: u8, want: Want) -> Result<()> {
+        let b = builtins::get(id);
+        // CHR$ costs more than a call (TEST68, TEST69).
+        // UNVERIFIED: that the builtins not timed cost what the
+        // meter charges a call.
+        let charge = match self.report_work {
+            true => self.charges.get(usize::from(id)).copied(),
+            false => None,
+        };
+        let call = match charge {
+            None | Some(Charge::Call) => true,
+            Some(Charge::Free) => false,
+            Some(Charge::FreeWithTwo) => argc != 2,
+            // A CHR$ of the code the last one made costs only its
+            // call (TEST71 to TEST74 time U$=CHR$(C) so).
+            // UNVERIFIED: that SmileBASIC 4 keeps the last string
+            // CHR$ made, as HGCNV$ and TPERF's VSTR, which make a
+            // new code each time, need CHR$'s cost.
+            Some(Charge::Chr) => {
+                let code = self.stack.last().and_then(|v| v.to_int().ok());
+                if code.is_none() || std::mem::replace(&mut self.last_chr, code) != code {
+                    self.chr_calls += 1;
+                }
+                true
+            }
+            Some(Charge::Costly(i)) => {
+                self.costly_calls[usize::from(i)] += 1;
+                true
+            }
+            Some(Charge::Cheap(i)) => {
+                self.cheap_calls[usize::from(i)] += 1;
+                let far = |v: &Value| {
+                    v.to_real()
+                        .is_ok_and(|x| x.abs() > std::f64::consts::FRAC_PI_4)
+                };
+                if i < 3 && self.stack.last().is_some_and(far) {
+                    self.trig_reductions += 1;
+                }
+                false
+            }
+        };
+        if call {
+            self.builtin_calls += 1;
+            self.builtin_args += u64::from(argc);
+        }
+        let argc = usize::from(argc);
+        if let (Kind::Function(f), Want::Value, true) = (b.kind, want, b.accepts(argc)) {
+            // Most calls: no need to take the arguments off the stack
+            // for the call, or to make a list of one result.
+            let at = self.stack.len() - argc;
+            let result = f(&self.stack[at..]);
+            let result = result.map_err(|e| builtin_error(e, b.name, &self.stack[at..]));
+            match result {
+                Ok(v) => {
+                    self.stack.truncate(at);
+                    self.stack.push(v);
+                }
+                Err(e) => return Err(self.failed_with_args(e, at)),
+            }
+        } else {
+            let args = self.pop_n(argc);
+            if self.report_work && b.name == "FILL" {
+                self.filled += fill_count(&args);
+            }
+            if let Err(e) = self.call_builtin(program, id, &args, want) {
+                return Err(self.run_again(e, args));
+            }
+        }
+        Ok(())
+    }
+
     /// [`Op::CallHost`] at `pc`, for [`Vm::step`] and [`Vm::run_fast`]: the
     /// arguments stay on the stack for the call, and an error takes them off.
     #[inline(never)]
@@ -3733,6 +3758,11 @@ fn drop_frame(frame: Frame) {
 enum Fused {
     /// At an entry for `step`, or with the budget spent.
     Slow,
+    Builtin {
+        id: u16,
+        argc: u8,
+        want: Want,
+    },
     Host {
         id: u32,
         argc: u8,

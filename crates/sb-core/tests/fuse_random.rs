@@ -136,7 +136,7 @@ END
 ";
 
 fn leaf(r: &mut Rng, depth: u32) -> String {
-    match r.below(14) {
+    match r.below(16) {
         0..=3 => r.pick(VARIABLES).to_string(),
         4..=6 => r.pick(NUMBERS).to_string(),
         7 if depth < 3 => element(r, depth),
@@ -145,6 +145,8 @@ fn leaf(r: &mut Rng, depth: u32) -> String {
         10 if depth < 3 => format!("{}({})", r.pick(DEFS), expr(r, depth + 1)),
         11 => "GET()".to_string(),
         12 if depth < 2 => format!("RC({})", r.pick(&["0", "1", "2", "I", "A AND 3"])),
+        13 if depth < 3 => format!("LEN(STR$({}))", expr(r, depth + 1)),
+        14 => "INSTR(S$,\"B\")".to_string(),
         _ => r.pick(VARIABLES).to_string(),
     }
 }
@@ -173,7 +175,7 @@ fn target(r: &mut Rng) -> String {
 }
 
 fn statement(r: &mut Rng) -> String {
-    match r.below(16) {
+    match r.below(20) {
         0..=5 => format!("{}={}", target(r), expr(r, 0)),
         6 => format!(
             "{0}={0}{1}{2}",
@@ -205,6 +207,11 @@ fn statement(r: &mut Rng) -> String {
             r.pick(&["C", "X#"])
         ),
         14 => format!("{}=GET()+{}", target(r), leaf(r, 1)),
+        // Builtins of strings and arrays, functions and commands.
+        15 => format!("S$=LEFT$(S$+STR$({}),3)", expr(r, 1)),
+        16 => format!("A=POP(M):PUSH M,{}", expr(r, 1)),
+        17 => "SORT N%".to_string(),
+        18 => format!("?MID$(S$,{},2)", expr(r, 1)),
         _ => format!("?{}", expr(r, 0)),
     }
 }
@@ -276,7 +283,7 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
 #[test]
 fn random_programs_run_the_same_fused_or_not() {
     let mut r = Rng(0x5EED_1234_ABCD_0001);
-    let (mut compiled, mut chains, mut calls, mut hosts) = (0, 0, 0, 0);
+    let (mut compiled, mut chains, mut calls, mut hosts, mut builtins) = (0, 0, 0, 0, 0);
     for _ in 0..1500 {
         let source = program(&mut r);
         let host = CmdHost::default();
@@ -295,6 +302,9 @@ fn random_programs_run_the_same_fused_or_not() {
         hosts += (p.fast.iter())
             .filter(|f| matches!(f.op, FastOp::Host { .. }))
             .count();
+        builtins += (p.fast.iter())
+            .filter(|f| matches!(f.op, FastOp::Call { .. }))
+            .count();
         for budget in [1, 2, 5, 13, 1_000_000] {
             assert_eq!(
                 run(&source, budget, true),
@@ -309,4 +319,5 @@ fn random_programs_run_the_same_fused_or_not() {
     assert!(chains > 8000, "{chains} chains");
     assert!(calls > 4000, "{calls} DEF calls");
     assert!(hosts > 3000, "{hosts} host calls");
+    assert!(builtins > 1000, "{builtins} builtin calls");
 }
