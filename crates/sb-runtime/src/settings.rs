@@ -58,6 +58,42 @@ impl Renderer {
     }
 }
 
+/// How handheld mode scales the screen to its display, which is rarely a
+/// whole number of times the screen's size and can be smaller than it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HandheldFilter {
+    /// The pixel art filter where the screen is drawn larger than its
+    /// frame, bilinear where it is drawn smaller, and nearest at a whole
+    /// factor.
+    #[default]
+    Auto,
+    PixelArt,
+    Bilinear,
+    /// Nearest at the fitted size, so that pixels differ in width.
+    Nearest,
+    /// XSCREEN's composite mode, as SmileBASIC 4 shows it.
+    Xscreen,
+}
+
+impl HandheldFilter {
+    /// Every choice, in the order the pause menu steps through them.
+    pub const ALL: [HandheldFilter; 5] = [
+        HandheldFilter::Auto,
+        HandheldFilter::PixelArt,
+        HandheldFilter::Bilinear,
+        HandheldFilter::Nearest,
+        HandheldFilter::Xscreen,
+    ];
+
+    /// The choice `step` places after this one, round from the last to
+    /// the first.
+    pub fn step(self, step: isize) -> HandheldFilter {
+        let n = Self::ALL.len() as isize;
+        let at = Self::ALL.iter().position(|&f| f == self).unwrap_or(0) as isize;
+        Self::ALL[(at + step).rem_euclid(n) as usize]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
@@ -176,6 +212,9 @@ pub struct Settings {
     /// The frontend is laid out for a handheld with a gamepad alone:
     /// fullscreen, a game list instead of DIRECT mode, no menu bar.
     pub handheld: bool,
+    /// How handheld mode scales the screen; `screen_filter` is the
+    /// desktop's.
+    pub handheld_filter: HandheldFilter,
 }
 
 /// F1 to F5 as SmileBASIC 4 starts (checked on hardware).
@@ -235,6 +274,7 @@ impl Default for Settings {
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
             handheld: false,
+            handheld_filter: HandheldFilter::Auto,
         }
     }
 }
@@ -294,6 +334,7 @@ impl Settings {
             function_keys: FUNCTION_KEYS.map(String::from),
             tools: TOOLS.map(String::from),
             handheld: false,
+            handheld_filter: HandheldFilter::Auto,
         }
     }
 }
@@ -308,6 +349,14 @@ const SCREEN_FILTER: [(Option<Filter>, &str); 4] = [
     (Some(Filter::Nearest), "nearest"),
     (Some(Filter::SmartNearest), "pixel_art"),
     (Some(Filter::Bilinear), "bilinear"),
+];
+
+const HANDHELD_FILTER: [(HandheldFilter, &str); 5] = [
+    (HandheldFilter::Auto, "auto"),
+    (HandheldFilter::PixelArt, "pixel_art"),
+    (HandheldFilter::Bilinear, "bilinear"),
+    (HandheldFilter::Nearest, "nearest"),
+    (HandheldFilter::Xscreen, "xscreen"),
 ];
 
 const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
@@ -541,6 +590,12 @@ impl Settings {
                     }
                     continue;
                 }
+                "handheld_filter" => {
+                    if let Some(f) = choice(&HANDHELD_FILTER, value) {
+                        s.handheld_filter = f;
+                    }
+                    continue;
+                }
                 "screen_filter" => {
                     if let Some(&(f, _)) = SCREEN_FILTER.iter().find(|(_, n)| *n == value) {
                         s.screen_filter = f;
@@ -620,6 +675,7 @@ impl Settings {
              debug_text_size={}\n\
              speed={}\n\
              handheld={}\n\
+             handheld_filter={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -666,6 +722,7 @@ impl Settings {
             self.debug_text_size,
             self.speed.name(),
             self.handheld,
+            choice_name(&HANDHELD_FILTER, &self.handheld_filter),
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),
@@ -722,6 +779,7 @@ mod tests {
             function_keys: ["A", "B", "", "LIST ERR", "\"Q"].map(String::from),
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             handheld: true,
+            handheld_filter: HandheldFilter::Xscreen,
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);
@@ -729,6 +787,30 @@ mod tests {
             Settings::from_text(&Settings::default().to_text()),
             Settings::default()
         );
+    }
+
+    #[test]
+    fn the_handheld_filter_has_its_own_key_and_steps_round() {
+        for f in HandheldFilter::ALL {
+            let s = Settings {
+                handheld_filter: f,
+                ..Settings::default()
+            };
+            let back = Settings::from_text(&s.to_text());
+            assert_eq!(back.handheld_filter, f);
+            assert_eq!(back.screen_filter, Settings::default().screen_filter);
+        }
+        let s = Settings::from_text("handheld_filter=blurry\nscreen_filter=bilinear\n");
+        assert_eq!(s.handheld_filter, HandheldFilter::Auto);
+        assert_eq!(s.screen_filter, Some(Filter::Bilinear));
+        let s = Settings::from_text("handheld_filter=xscreen\n");
+        assert_eq!(s.handheld_filter, HandheldFilter::Xscreen);
+        assert_eq!(s.screen_filter, Settings::default().screen_filter);
+        let f = HandheldFilter::Auto;
+        assert_eq!(f.step(1), HandheldFilter::PixelArt);
+        assert_eq!(f.step(-1), HandheldFilter::Xscreen);
+        assert_eq!(HandheldFilter::Xscreen.step(1), f);
+        assert_eq!(f.step(5), f);
     }
 
     #[test]
