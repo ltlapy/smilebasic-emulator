@@ -152,6 +152,14 @@ pub enum ErrorKind {
     /// An array with fewer elements than a command needs, such as an empty
     /// parameter array of ARYOP.
     ArrayTooSmall,
+    /// XSCREEN with a width or height that 4 does not divide.
+    UseMultiplesOf4,
+    /// XCTRLSTYLE asking for the IR Motion Camera with a style other than 1.
+    IllegalControlStyleForIrCamera,
+    /// XCTRLSTYLE with a pair of Toy-Con types that do not go together.
+    IllegalToyConType,
+    /// SPDEF from an array whose length 7 does not divide.
+    IllegalArraySize,
 }
 
 impl ErrorKind {
@@ -214,6 +222,10 @@ impl ErrorKind {
             ErrorKind::WrongNumberOfOutArguments => 53,
             ErrorKind::SpriteNotSet => 57,
             ErrorKind::IllegalFontType => 58,
+            ErrorKind::UseMultiplesOf4 => 69,
+            ErrorKind::IllegalControlStyleForIrCamera => 109,
+            ErrorKind::IllegalToyConType => 110,
+            ErrorKind::IllegalArraySize => 117,
             ErrorKind::IrCameraNotAvailable => 63,
             ErrorKind::IllegalIrCameraMode => 64,
             ErrorKind::CantUseEmptyString => 67,
@@ -363,6 +375,12 @@ impl ErrorKind {
             ErrorKind::IllegalControlStyle => "Illegal control style",
             ErrorKind::IllegalFontType => "Illegal font type",
             ErrorKind::ArrayTooSmall => "Array is too small",
+            ErrorKind::UseMultiplesOf4 => "Use multiples of 4",
+            ErrorKind::IllegalControlStyleForIrCamera => {
+                "Illegal control style for using IR Camera"
+            }
+            ErrorKind::IllegalToyConType => "Illegal Toy-Con type",
+            ErrorKind::IllegalArraySize => "Illegal array size",
             ErrorKind::WrongNumberOfOutArguments => "Wrong number of OUT arguments",
         }
     }
