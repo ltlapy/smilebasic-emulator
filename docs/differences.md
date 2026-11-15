@@ -475,6 +475,12 @@ For a subprogram's screen, see `FADE` under
   and writes all the results into it.
 - `RESIZE` of the array `GARRAY` or `TARRAY` gives goes ahead. SmileBASIC 4
   refuses it with `Can't RESIZE this array`.
+- Two sound errors never come: `Sound request too much` (79), which SmileBASIC 4
+  raises when `BEEP` or a `BGM` command finds its sound thread's request queue
+  full, and `Out of sound memory` (80), which it raises when its 8 MiB sound
+  memory cannot take a `WAVSET` waveform or a song `BGMPLAY` or `BGMSET`
+  compiles. The emulator carries out sound requests at once and has no sound
+  memory limit.
 - `Internal Error`: if the emulator itself fails while a program runs, it stops
   the program and prints `Internal Error` with the reason, keeping the slots and
   the editor's text. The stopped program cannot go on with `CONT`. SmileBASIC 4
