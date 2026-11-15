@@ -179,6 +179,19 @@ const PROGRAMS: &[&str] = &[
     "DEF F\nRETURN\nEND\nF:?1:RETURN",
     "DEF F()\nRETURN 2\nEND\nFOR I=0 TO 9 STEP F():?I:NEXT",
     "DEF F()\nRETURN 4\nEND\nFOR I=0 TO F():?I:NEXT",
+    // Builtins called in fused steps: on numbers, strings and arrays, and
+    // each way they fail there.
+    "FOR I=-2 TO 2:?ABS(I);SGN(I);INT(I/3);FLOOR(I/3);CEIL(I/3);ROUND(I/3):NEXT",
+    "X=0.5:?SIN(X)+COS(X)*TAN(X):?SQR(X)*EXP(X)+LOG(2)+LOG(8,2):?POW(2,X):?ATAN(X,2)",
+    "A=3:B=7:?MIN(A,B)*MAX(A,B,1.5):?MIN(A):DIM M[3]:M[1]=-4:?MAX(M)+MIN(M)",
+    "S$=\"AB\":?LEN(S$)+ASC(S$):DIM Q[5]:?LEN(Q)*2:?DEG(1)+RAD(90):?FLOAT(3)/2",
+    "X=-1\n?1:Y=SQR(X):?2",
+    "X=0\n?1:Y=LOG(X)+1:?2",
+    "S$=\"\"\n?1:Y=ASC(S$)+1:?2",
+    "X=1E300\n?1:Y=INT(X):?2",
+    "X$=\"A\"\n?1:Y=ABS(X$):?2",
+    "DIM M$[2]\n?1:Y=MAX(M$):?2",
+    "X=2\n?1:Y=ASIN(X):?2",
 ];
 
 const DEF_OUT: &str = "\

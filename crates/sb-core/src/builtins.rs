@@ -252,6 +252,23 @@ pub fn get(id: u16) -> &'static Builtin {
     &BUILTINS[usize::from(id)]
 }
 
+/// Functions that only look at their arguments and give a number: no
+/// memory taken, no state read or changed. Running one again after it
+/// failed fails the same way, so [`crate::fuse`] may call them and leave a
+/// failure to the VM's single steps.
+const PURE: &[&str] = &[
+    "LEN", "ASC", "INT", "FLOAT", "FLOOR", "ROUND", "CEIL", "ABS", "SGN", "SQR", "POW", "EXP",
+    "LOG", "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "SINH", "COSH", "TANH", "DEG", "RAD",
+    "MIN", "MAX",
+];
+
+/// Whether the call of builtin `id` with `argc` arguments, as a function,
+/// is one of [`PURE`]'s.
+pub fn is_pure_call(id: u16, argc: usize) -> bool {
+    let b = get(id);
+    matches!(b.kind, Kind::Function(_)) && b.accepts(argc) && PURE.contains(&b.name)
+}
+
 impl Builtin {
     pub fn form(&self) -> Form {
         match self.kind {
@@ -472,9 +489,13 @@ fn chr(args: &[Value]) -> Result<Value> {
 
 /// ASC: an empty string is "Can't use empty string".
 fn asc(args: &[Value]) -> Result<Value> {
-    let s = text(&args[0])?;
-    let first = (s.first()).ok_or_else(|| Error::new(ErrorKind::CantUseEmptyString).of_arg(0))?;
-    Ok(Value::Int(i32::from(*first)))
+    // The first character, without a copy of the string.
+    let Value::Str(s) = &args[0] else {
+        return Err(mismatch(&args[0]));
+    };
+    let first = (s.borrow().first().copied())
+        .ok_or_else(|| Error::new(ErrorKind::CantUseEmptyString).of_arg(0))?;
+    Ok(Value::Int(i32::from(first)))
 }
 
 /// A start past the end gives "" and counts are clamped, while negative

@@ -87,6 +87,12 @@ pub enum FastOp {
     },
     /// RETURN with a value from a DEF called in the running slot.
     ReturnValue,
+    /// A call of one of the builtins [`crate::builtins::is_pure_call`]
+    /// names, as a function.
+    Builtin {
+        id: u16,
+        argc: u8,
+    },
     Unary(UnaryOp),
     Binary(BinaryOp),
     /// `Swap, Binary`
@@ -274,6 +280,11 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         Op::Return => add(F::Return, 1),
         Op::ReturnValue => add(F::ReturnValue, 1),
         Op::CallDef { def, argc, want } => add(F::CallDef { def, argc, want }, 1),
+        Op::CallBuiltin {
+            id,
+            argc,
+            want: Want::Value,
+        } if crate::builtins::is_pure_call(id, argc.into()) => add(F::Builtin { id, argc }, 1),
         Op::Unary(op) => add(F::Unary(op), 1),
         Op::Binary(op) => add(F::Binary(op), 1),
         Op::Index(1) => add(F::Index1, 1),

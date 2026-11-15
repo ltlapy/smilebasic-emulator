@@ -1636,6 +1636,23 @@ impl Vm {
                     exit = Fused::ReturnValue;
                     break;
                 }
+                FastOp::Builtin { id, argc } => {
+                    let builtins::Kind::Function(f) = builtins::get(id).kind else {
+                        unreachable!("only functions are fused");
+                    };
+                    let at = stack.len() - usize::from(argc);
+                    // A failure is left to `step`, which calls it again and
+                    // fails as it always does: these change nothing.
+                    let n = match f(&stack[at..]) {
+                        Ok(Value::Int(n)) => Num::Int(n),
+                        Ok(Value::Real(x)) => Num::Real(x),
+                        _ => break,
+                    };
+                    for _ in 0..argc {
+                        drop_top(stack);
+                    }
+                    push_num(stack, n);
+                }
                 FastOp::Unary(op) => {
                     let value = top(stack);
                     let Some(n) = ops::unary_number(op, value) else {
