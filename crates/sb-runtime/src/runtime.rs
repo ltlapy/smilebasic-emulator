@@ -3242,7 +3242,7 @@ mod tests {
             ("DELETE Z,Z,S$ OUT Q0", ARGS),
             ("MOUSE Z OUT Q0", OUTS),
             ("MOUSE Z,Z OUT Q0", ARGS),
-            ("Q=RNDF(Z,Z)", OUTS),
+            ("RNDF Z,Z OUT Q", OUTS),
             // A sprite first.
             ("SPROT Z OUT Q0,Q1", OUTS),
             ("SPROT OUT Q0,Q1", ARGS),

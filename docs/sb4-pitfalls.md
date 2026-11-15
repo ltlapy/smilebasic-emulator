@@ -151,9 +151,19 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 - An error message longer than the console's width wraps as `PRINT` does
   (TEST71).
 - `Wrong number of arguments` comes when a command or function gets a number of
-  arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). The call
-  finds this as it runs, not as the program compiles, so the lines before it
-  run.
+  arguments none of its forms takes (`LOCATE` with five, `TOFS 0,30`). Most
+  calls find this as they run, not as the program compiles, so the lines before
+  them run.
+- The functions it compiles in place find
+  it as the program compiles when called with brackets: a line `?ABS(1,2)`
+  stops the program before its first line runs. They are `ABS`, `ACOS`, `ASC`, `ASIN`, `ATAN`, `CEIL`, `CHKCALL`,
+  `CHKLABEL`, `CHKVAR`, `CHR$`, `COS`, `COSH`, `DEFARG`, `DEFARGC`, `DEFOUTC`,
+  `DEG`, `DIM`, `EXP`, `FLOAT`, `FLOOR`, `HEX$`, `INT`, `LAST`, `LEFT$`, `LEN`,
+  `LOG`, `POP`, `POW`, `RAD`, `RIGHT$`, `RND`, `RNDF`, `ROUND`, `SGN`, `SHIFT`,
+  `SIN`, `SINH`, `SQR`, `STR$`, `TAN`, `TANH`, `TYPEOF` and `VAL`. `MIN` and
+  `MAX` are compiled in place with two arguments only; with any other number
+  they are called, and `MIN()` fails as it runs. As commands (`ABS 1,2 OUT A`)
+  all of them check as they run. (Not yet seen on hardware.)
 - `?VSYNC()` is `Wrong number of OUT arguments (VSYNC)`, and `FREEMEM 1` and
   `?FREEMEM(1)` are `Wrong number of arguments (FREEMEM)`. (TEST62)
 - Whether a call no form takes is `Wrong number of arguments` or
@@ -168,7 +178,10 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `SPROT`, `SPCOLOR`, `SPHOME`, `SPSCALE` and `SPCOL` check that a sprite
   number is given before the `OUT` count, so `SPROT OUT A,B` is
   `Wrong number of arguments`. (Not yet seen on hardware.)
-- `RNDF` with two arguments is `Wrong number of OUT arguments`. (Not yet seen on hardware.)
+- `RNDF 0,1 OUT X`, with two arguments, is `Wrong number of OUT arguments` as
+  it runs. `RNDF(0,1)` is
+  `Wrong number of arguments` as the program compiles. (Not yet seen on
+  hardware.)
 - The functions and array commands do the same: a function used as a command
   with other than one `OUT` variable (`ABS Z OUT A,B`, `LEN S$`), or
   `PUSH A,1 OUT X`, is `Wrong number of OUT arguments` when the call runs.

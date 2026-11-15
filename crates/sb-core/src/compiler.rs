@@ -160,6 +160,34 @@ fn err(kind: ErrorKind, detail: impl Into<String>) -> Error {
     Error::with_detail(kind, detail)
 }
 
+/// The numbers of arguments of a function SmileBASIC 4 compiles in place
+/// when it is called with brackets. Another number is `Wrong number of arguments`
+/// as the program compiles. MIN and MAX are in the table too, but only
+/// two arguments are compiled in place; other numbers are calls, which
+/// check as they run.
+fn in_place_counts(name: &str) -> Option<std::ops::RangeInclusive<usize>> {
+    Some(match name {
+        "DEFARGC" | "DEFOUTC" => 0..=0,
+        "ABS" | "ACOS" | "ASC" | "ASIN" | "CEIL" | "CHKCALL" | "CHKVAR" | "CHR$" | "COS"
+        | "COSH" | "DEFARG" | "DEG" | "FLOAT" | "FLOOR" | "INT" | "LAST" | "LEN" | "POP"
+        | "RAD" | "ROUND" | "SGN" | "SHIFT" | "SIN" | "SINH" | "SQR" | "TAN" | "TANH"
+        | "TYPEOF" | "VAL" => 1..=1,
+        "LEFT$" | "POW" | "RIGHT$" => 2..=2,
+        "ATAN" | "CHKLABEL" | "DIM" | "HEX$" | "LOG" | "RND" | "STR$" => 1..=2,
+        "EXP" | "RNDF" => 0..=1,
+        _ => return None,
+    })
+}
+
+/// `Wrong number of arguments` for a function compiled in place called
+/// with `argc` arguments it does not take, before they are compiled.
+fn check_in_place(name: &str, argc: usize) -> Result<()> {
+    match in_place_counts(name) {
+        Some(takes) if !takes.contains(&argc) => Err(err(ErrorKind::WrongNumberOfArguments, name)),
+        _ => Ok(()),
+    }
+}
+
 fn elem_type(suffix: Option<Suffix>, default_int: bool) -> ElemType {
     match suffix {
         Some(Suffix::Int) => ElemType::Int,
@@ -1354,14 +1382,7 @@ impl Compiler<'_> {
     /// of their handlers, and checks as the program compiles how many
     /// arguments they have, then that the DEF ones are inside a DEF.
     fn in_place(&mut self, name: &str, args: &[Option<Expr>]) -> Result<()> {
-        let takes = match name {
-            "DEFARGC" | "DEFOUTC" => 0..=0,
-            "CHKLABEL" => 1..=2,
-            _ => 1..=1,
-        };
-        if !takes.contains(&args.len()) {
-            return Err(err(ErrorKind::WrongNumberOfArguments, name));
-        }
+        check_in_place(name, args.len())?;
         if name.starts_with("DEF") && self.def.is_none() {
             return Err(err(ErrorKind::CantUseOutsideDef, name));
         }
@@ -1877,6 +1898,7 @@ impl Compiler<'_> {
             }
             _ => {}
         }
+        check_in_place(&full, args.len())?;
         let start = self.out.code.len();
         self.args(args)?;
         let argc = args.len() as u8;

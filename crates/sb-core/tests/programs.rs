@@ -397,6 +397,52 @@ fn too_many_arguments() {
     assert_eq!(error(&format!("CALL \"F\" OUT {}", list(255, "A"))).0, kind);
 }
 
+/// The functions SmileBASIC 4 compiles in place with brackets check
+/// their number of arguments as the program compiles, so the lines
+/// before do not run; the others, and these as commands, check as the
+/// call runs.
+#[test]
+fn functions_compiled_in_place_check_their_counts() {
+    let compiling = |src: &str| match sb_core::compile(src, &TextHost::default()) {
+        Err(e) => Some((e.kind, e.line)),
+        Ok(_) => None,
+    };
+    let wrong = Some((ErrorKind::WrongNumberOfArguments, 2));
+    for call in [
+        "ABS(1,2)",
+        "SIN()",
+        "TYPEOF(1,2)",
+        "POP()",
+        "LEN(\"A\",1)",
+        "CHR$()",
+        "LEFT$(\"A\")",
+        "RIGHT$(\"A\",1,2)",
+        "POW(2)",
+        "STR$()",
+        "HEX$(1,2,3)",
+        "LOG(1,2,3)",
+        "ATAN()",
+        "DIM()",
+        "RND()",
+        "RND(0,1,2)",
+        "RNDF(0,1)",
+        "EXP(1,2)",
+    ] {
+        assert_eq!(compiling(&format!("?1\n?{call}")), wrong, "{call}");
+    }
+    // Other functions, and MIN and MAX with other than two arguments,
+    // are calls.
+    for call in ["MID$(\"A\")", "BIN$(1,2,3)", "MIN()", "MAX(1,2,3,4)"] {
+        assert_eq!(compiling(&format!("?1\n?{call}")), None, "{call}");
+    }
+    assert_eq!(output("DIM A[2]:?MAX(1,2,3);MIN(4,5);EXP()>2.7"), "341\n");
+    assert_eq!(error("?1\n?MIN()"), (ErrorKind::WrongNumberOfArguments, 2));
+    assert_eq!(
+        error("?1\nABS 1,2 OUT A"),
+        (ErrorKind::WrongNumberOfArguments, 2)
+    );
+}
+
 /// DEFARG, DEFARGC, DEFOUTC and the CHK functions with brackets are
 /// compiled in place, their arguments and DEF checked as the program
 /// compiles; as commands they call their handlers, which check as they
@@ -1309,7 +1355,7 @@ fn initialized_arrays_keep_their_sizes() {
         ErrorKind::WrongNumberOfOutArguments
     );
     assert_eq!(
-        error("IF 0 THEN ?ABS(1,2)\n?ABS(1,2)"),
+        error("IF 0 THEN ?MID$(\"A\")\n?MID$(\"A\")"),
         (ErrorKind::WrongNumberOfArguments, 2)
     );
     assert_eq!(error("?ABS(#NOSUCH)").0, ErrorKind::UndefinedConstant);

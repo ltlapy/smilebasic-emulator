@@ -423,7 +423,7 @@ fn calls_leave_the_stack_as_it_should_be() {
 fn failed_calls_name_what_they_always_named() {
     use sb_core::error::ErrorKind as E;
     for (source, kind, line) in [
-        ("A=1\n?ABS()", E::WrongNumberOfArguments, 2),
+        ("A=1\n?MID$(\"X\")", E::WrongNumberOfArguments, 2),
         ("A=1\n?ABS(\"X\")", E::TypeMismatch, 2),
         ("A=1\nB=SQR(-1)", E::OutOfRange, 2),
         (
