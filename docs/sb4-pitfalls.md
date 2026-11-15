@@ -187,8 +187,10 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   `PUSH A,1 OUT X`, is `Wrong number of OUT arguments` when the call runs.
   `FILL A OUT X` checks the `OUT` count first (error 53), `ABS OUT A,B` the
   arguments (error 52). `COPY` and `RGB` take their form from the `OUT` count,
-  so `Q=COPY(A,0,1,0)` and `Q=RGB(1)` are `Wrong number of arguments`.
-  `FIND A,V OUT I` gives the place by element order, as `FIND(A,V)` does. (Not yet seen on hardware.)
+  so `Q=COPY(A,0,1,0)` and `Q=RGB(1)` are `Wrong number of arguments`. A
+  command used as a function has one `OUT` variable: `Q=PUSH(A,1)` and
+  `Q=FILL(A,0)` compile, and are `Wrong number of OUT arguments` when the call
+  runs, and `Q=PUSH(A)` `Wrong number of arguments`. `FIND A,V OUT I` gives the place by element order, as `FIND(A,V)` does. (Not yet seen on hardware.)
 - A string or array argument of the wrong type is named by its place:
   `LEN(1)` is `Type mismatch (LEN:1)`, `INSTR(0,1,S$)` `(INSTR:2)` and
   `PUSH 1,1` `(PUSH:1)`, as numbers are. (Not yet seen on hardware.)

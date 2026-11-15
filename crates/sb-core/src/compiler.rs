@@ -1345,18 +1345,6 @@ impl Compiler<'_> {
         self.store_outs(outs)
     }
 
-    /// A name that resolves to nothing in the form it is called in: a builtin
-    /// used in its other form is an illegal call, anything else is undefined.
-    fn unknown_call(&self, name: &str) -> Error {
-        let exists = builtins::lookup(name, Form::Function).is_some()
-            || builtins::lookup(name, Form::Command).is_some();
-        if exists {
-            self.illegal_call(name)
-        } else {
-            err(ErrorKind::UndefinedFunction, name.to_string())
-        }
-    }
-
     fn illegal_call(&self, name: &str) -> Error {
         err(ErrorKind::IllegalFunctionCall, name.to_string())
     }
@@ -1942,6 +1930,10 @@ impl Compiler<'_> {
             // The VM checks the argument count when the call runs, as
             // SmileBASIC 4 does (checked on hardware).
             self.emit(Op::CallBuiltin { id, argc, want });
+        } else if let Some(id) = builtins::lookup(&full, Form::Command) {
+            // `Q=PUSH(A,1)` calls the command with one OUT variable, and
+            // its handler finds the counts wrong as it runs.
+            self.emit(Op::CallBuiltin { id, argc, want });
         } else if let Some(id) = self.host.lookup(&full) {
             self.emit(Op::CallHost { id, argc, want });
         } else {
@@ -1953,13 +1945,8 @@ impl Compiler<'_> {
     /// A call to a name defined nowhere in this program: a COMMON DEF of
     /// another slot, found when it runs (it may be EXEC'd only then). A
     /// name found nowhere is a Syntax error only when the call is reached
-    /// (checked on hardware). A builtin used in its other form is still
-    /// an illegal call.
+    /// (checked on hardware).
     fn call_common(&mut self, name: &str, argc: u8, want: Want) -> Result<()> {
-        let err = self.unknown_call(name);
-        if err.kind != ErrorKind::UndefinedFunction {
-            return Err(err);
-        }
         // A DIRECT mode line leaves no name for later: SmileBASIC 4 gives
         // the Syntax error as the call compiles, after its arguments.
         if self.direct {

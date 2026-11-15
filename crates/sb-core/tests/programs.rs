@@ -2445,3 +2445,18 @@ fn shift_of_a_constant_needs_a_block() {
     let empty = run("?SHIFT(\"\"+\"\")").unwrap_err();
     assert_eq!(empty.kind, ErrorKind::SubscriptOutOfRange);
 }
+
+/// A command called as a function, `Q=PUSH(A,1)`, is called with one
+/// OUT variable, and finds the counts wrong as it runs.
+#[test]
+fn commands_called_as_functions_check_as_they_run() {
+    let outs = ErrorKind::WrongNumberOfOutArguments;
+    let args = ErrorKind::WrongNumberOfArguments;
+    assert_eq!(error("DIM A[0]\n?1\nQ=PUSH(A,1)"), (outs, 3));
+    assert_eq!(error("DIM A[0]\nQ=UNSHIFT(A)"), (args, 2));
+    assert_eq!(error("DIM A[4]\nQ=FILL(A,1)"), (outs, 2));
+    assert_eq!(error("DIM A[4]\nQ=SORT(A)"), (outs, 2));
+    assert_eq!(error("DIM A[4]\nQ=ARYOP(0,A,A,A)").0, outs);
+    let e = run("DIM A[0]\nQ=PUSH(A,1)").unwrap_err();
+    assert_eq!(e.to_string(), "Wrong number of OUT arguments in 2(PUSH)");
+}
