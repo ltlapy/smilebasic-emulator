@@ -379,15 +379,146 @@ Larger changes, not made, by what they would save against what they cost:
 - **A register-based form of the fused code**, three-address steps that name
   their operands and their result, with the operator in the step's own kind
   instead of a second switch: about half the steps and indirect branches an
-  iteration of VINT, perhaps 30 to 40% of the interpreter's time. It is a
-  second compiler beside `fuse.rs`, with the same one-step fallback to keep
-  errors and time slices as they are.
+  iteration of VINT, perhaps 30 to 40% of the interpreter's time. Made as
+  the chains of the next set, it took VINT's loop from 8 entries to 2 but its
+  instructions down by 12%, as reading and writing a variable, not choosing
+  an entry, is most of what a step costs.
 - **Values of 8 bytes** (NaN-boxing, or a separate tag array): halves the
   stack's and the variables' memory traffic. It changes every use of `Value`
   and needs `unsafe` for the boxing.
 - **A JIT** for the fused forms: the largest gain, perhaps 5 to 10 times on
   loops, and the largest risk: writable code memory for untrusted programs,
   per CPU architecture.
+
+### Three-address chains, from `018017d`
+
+This set counts instructions only: x86-64 with `perf stat -e instructions:u`
+on the `release` build, and aarch64 with qemu's Cortex-A35 model on the
+`dist` build cross-built by `tools/build_handheld.py`, one instruction a
+block, counted from the `exec` log under `setarch -R`. Without `setarch -R`
+the address space moves between runs, and a loop's count with it by up to
+10%. Scenes are TPERF's, run alone with `#ONLY`: x86-64 over frames 3 to 83,
+aarch64 over frames 3 to 6. Loops are small programs run 3200 and 6400 times
+round, the difference over 3200. Every TPERF checksum is the same before and
+after, `e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at 3600, on
+both machines.
+
+The loops:
+
+| Loop | What it does |
+|---|---|
+| Empty | `FOR I=1 TO N:NEXT` |
+| Sprites | 64 sprites' `X#[J]`, `Y#[J]` moved by `DX#[J]`, `DY#[J]` and bounced off the edges with `IF X#[J]<0 \|\| X#[J]>=400 THEN DX#[J]=-DX#[J]` |
+| Counters | integer counters and comparisons in a DEF: `C=C+1`, `IF C>=60 THEN C=0:T=T+1`, `IF S<100 THEN S=S+2 ELSE S=S-100`, `L=L+(I AND 3)` |
+| IF chain | `K=I MOD 5` and an `IF`/`ELSEIF` chain on it |
+| DEF a sprite | a DEF called for each of 64 sprites, which moves and wraps one |
+| Reals | `X#=X#+DX#*T#`, `Y#=Y#+DY#*T#`, `IF X#>100 THEN X#=X#-100`, `DY#=DY#+0.01` |
+| GOSUB | `GOSUB @S` to `A=A+I:RETURN` |
+| Array | `J=I AND 255:M%[J]=M%[J]+1:C%[J]=M%[(J+1) AND 255]` |
+| VINT, VARRAY, VREAL | the loop bodies of those scenes, in a DEF |
+
+What the fused code ran before, from a count of each entry over 80 frames:
+VINT's loop took 8 entries an iteration (the NEXT, the jump back, and 6 for
+its two statements), VREAL's 11, VARRAY's 28. Many entries only pushed a
+value or swapped two, a third of VARRAY's and an eighth of VINT's, because
+the compiler pushes the right side of `X#[J]<0` or `(A%+I*3) AND 1023`
+first. Rebuilding each statement's expression from the stack code, with a
+step for each operator and a step counted as half an entry, chains would
+save 30% of VINT's entries, 40% of VREAL's, 58% of VARRAY's, 22% of GAME's,
+13% of VSTR's and none of VDEF's, whose entries go to its DEF calls.
+
+What was made:
+
+- `0a28023`: a chain entry stands for whole statements. Its steps
+  (`fuse::Micro`) read variables and constants where they are, keep what
+  they make in eight hidden variables after the constants, and write the
+  result straight to its variable or element, or jump on a comparison. Each
+  common operator is a step kind of its own. A statement's steps write
+  nothing the program sees before its last, and a `Commit` step between
+  statements says where `code` goes on from. A step that cannot do its work
+  leaves the statement to `step` from its start. VINT's loop now runs 2
+  entries an iteration, the NEXT and one chain for both statements and the
+  jump back; VREAL's and VARRAY's 2 as well.
+- `39969a0`: `A=B+C`, `-` and `*`, and `IF A<B THEN` with the six
+  comparisons, which stay single entries, have entry kinds of their own
+  instead of a second switch on the operator.
+- `63c1a38`: `Load, Load, Swap`, two arguments put back in order, is one
+  `Push2`.
+
+aarch64 instructions an iteration:
+
+| Loop | `018017d` | Branch | Change |
+|---|---|---|---|
+| Empty | 132 | 136 | +3.0% |
+| Sprites | 2130 | 1763 | -17.2% |
+| Counters | 604 | 552 | -8.6% |
+| IF chain | 505 | 477 | -5.6% |
+| DEF a sprite | 1123 | 1090 | -3.0% |
+| Reals | 603 | 589 | -2.3% |
+| GOSUB | 298 | 284 | -4.7% |
+| Array | 853 | 733 | -14.0% |
+| VINT's loop | 537 | 471 | -12.3% |
+| VARRAY's loop | 1984 | 1342 | -32.4% |
+| VREAL's loop | 965 | 808 | -16.2% |
+
+aarch64 instructions a frame, in millions:
+
+| Scene | `018017d` | Branch | Change |
+|---|---|---|---|
+| VINT | 10.15 | 8.95 | -11.8% |
+| VREAL | 8.86 | 7.45 | -15.9% |
+| VSTR | 13.14 | 12.85 | -2.2% |
+| VARRAY | 19.96 | 13.55 | -32.1% |
+| VDEF | 7.31 | 7.00 | -4.3% |
+| GAME | 20.56 | 20.21 | -1.7% |
+
+x86-64 instructions a frame, in millions, and an iteration:
+
+| Scene or loop | `018017d` | Branch | Change |
+|---|---|---|---|
+| Empty | 153 | 152 | -0.5% |
+| Sprites | 2285 | 1913 | -16.3% |
+| Counters | 650 | 596 | -8.4% |
+| IF chain | 544 | 514 | -5.3% |
+| DEF a sprite | 1244 | 1219 | -2.0% |
+| Reals | 650 | 658 | +1.3% |
+| GOSUB | 318 | 308 | -3.3% |
+| Array | 919 | 792 | -13.8% |
+| VINT's loop | 584 | 508 | -13.0% |
+| VARRAY's loop | 2159 | 1443 | -33.2% |
+| VREAL's loop | 1033 | 872 | -15.7% |
+| VINT | 10.81 | 9.44 | -12.7% |
+| VREAL | 9.12 | 7.66 | -16.0% |
+| VSTR | 11.64 | 11.49 | -1.3% |
+| VARRAY | 21.35 | 14.19 | -33.5% |
+| VDEF | 7.82 | 7.66 | -2.1% |
+| GAME | 28.72 | 28.52 | -0.7% |
+
+The empty loop runs the same entries as before; it moves because LLVM lays
+out `run_fused`'s registers anew, which costs the NEXT entry 4 aarch64
+instructions more. The scalar reals' statements have two operators each,
+which chains leave to entries; on x86-64 the new layout costs them more than
+the operators' own entries save. GAME runs half the entries it did, but the interpreter
+is about a quarter of its frame, by its entries' counts, and most of its
+statements read one element, which an entry did in one already. VSTR's time
+goes to strings, which chains leave alone.
+
+Where an iteration's instructions go now, on aarch64: choosing an entry
+takes 17 to 20, starting a chain 14 more, choosing a chain's step 14, and
+each variable or hidden variable read about 13 (the table, its length, the
+address, the tag) and written about 17, as a write looks at the old value's
+tag in case it holds a string to drop. A step of two operands and a result
+is about 60 against an entry's 70: what the chains save is the entries that
+only moved values about, and the second switch. `pc`, the budget left and
+the entry table's address and length stay in registers through the loop in
+this build; in `018017d`'s the table's address was reloaded from the stack
+for every entry. That is LLVM's choice and may change with the code around
+it or the compiler's version.
+
+`run_fast` grew from 27.2 KB to 40.9 KB of aarch64 code, against the A35's
+32 KB instruction cache. A loop runs only the entries and steps it uses, so
+what this costs depends on the program; qemu's counts do not show it, and a
+run on the device would.
 
 ## Tried and left out
 
@@ -410,6 +541,24 @@ Each of these was measured and not kept.
   tables indexed by the variable's table bit, for a select in place of a
   load: VINT's loop 583 to 580 aarch64 instructions, the others within 2%
   either way, as the tables' pointers still went to the stack (2026-11-15).
+- **Chain registers in `run_fused`'s own locals** instead of hidden
+  variables: as an array of `Num`, LLVM kept the numbers on the stack and
+  copied them in and out of every step, a loop of scalar real updates 588 to
+  701 aarch64 instructions an iteration; as an array of `Value`, 670. The
+  hidden variables cost a variable's read and write but no branch on what
+  kind of operand a step has (2026-11-16).
+- **A chain's steps in a function of their own** (`#[inline(never)]`), to
+  keep their registers out of the other entries': the call and the variables
+  passed through memory took a loop of scalar real updates from 683 to 1005
+  x86-64 instructions an iteration, VINT's frame from 9.9 to 13.4 million
+  (2026-11-16).
+- **Chains for every statement of two operators**, at a cost of 30 to start
+  and 40 a step: a chain's step costs about 60 aarch64 instructions against
+  70 for an entry, so two steps and the start cost more than two entries.
+  With that weighting a loop of sprite updates in reals went from 2294 to
+  2426 x86-64 instructions an iteration and one of scalar reals from 652 to
+  683; the weighting in `fuse.rs` takes a chain only where it leaves out an
+  entry (2026-11-16).
 - **`-C target-cpu=cortex-a35` and `opt-level`** were counted under qemu
   only (see the handheld set): `cortex-a35` adds 0 to 2% instructions,
   `opt-level=2` moves loops by -3 to +4% and shrinks `run_fast` by 13%,

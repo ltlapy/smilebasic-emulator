@@ -669,3 +669,21 @@ commands, including one for the GPU path under GLES2.
 
 On such a core, trust instruction, cache-miss and branch-miss counts over a
 desktop's times. [benchmark-results.md](benchmark-results.md) says why.
+
+Without the device, qemu counts the aarch64 build's instructions exactly:
+with one instruction a block and no chaining, its `exec` log has one line
+for each instruction run, so counting the lines counts them. Write the log
+to a named pipe and count it as it comes, as it runs to gigabytes:
+
+```
+mkfifo log && wc -l < log &
+setarch -R qemu-aarch64 -cpu cortex-a35 -one-insn-per-tb -d nochain,exec -D log \
+    smilebasic-check --bench --fixed 6 PROJECT PROGRAM
+```
+
+Set `QEMU_LD_PREFIX` to the libc's root, as `tools/build_handheld.py --run`
+does. `setarch -R` keeps the address space where it was: without it, the
+count of a small loop moves by up to 10% between runs. qemu runs about a
+million instructions a second this way. Take a scene's count over a few
+frames as the difference of two runs, such as 6 frames and 3, and a loop's
+as that of two programs that run it a different number of times.
