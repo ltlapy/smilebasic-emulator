@@ -1322,6 +1322,39 @@ fn sorting() {
     assert_eq!(output(&ties.replace("{}", "RSORT ")), "20341");
 }
 
+/// SORT and RSORT check their arguments as SmileBASIC 4 does.
+#[test]
+fn sorting_checks_its_arguments() {
+    let wrong = |call: &str, kind: ErrorKind, arg: Option<u8>| {
+        for command in ["SORT", "RSORT"] {
+            let source = format!("VAR Z:DIM A[4],B[3],E[0],M[2,2]:{command} {call}");
+            let e = run(&source).unwrap_err();
+            assert_eq!((e.kind, e.arg), (kind, arg), "{command} {call}");
+        }
+    };
+    let args = ErrorKind::WrongNumberOfArguments;
+    let range = ErrorKind::OutOfRange;
+    let mismatch = ErrorKind::TypeMismatch;
+    // A number first takes a count and an array after it.
+    wrong("Z", args, None);
+    wrong("0,1", args, None);
+    wrong("A,A,A,A,A,A,A,A,A", args, None);
+    wrong("-1,1,A", range, Some(0));
+    wrong("0,-1,A", range, Some(1));
+    // Each array must be one-dimensional and hold the span.
+    wrong("M", mismatch, Some(0));
+    wrong("A,M", mismatch, Some(1));
+    wrong("\"A\"", mismatch, Some(0));
+    wrong("A,B", range, Some(1));
+    wrong("1,3,A,B", range, Some(3));
+    wrong("4,0,A", range, Some(2));
+    wrong("E", range, Some(0));
+    assert_eq!(
+        output("DIM A[4],B[4]:SORT 3,1,A,B:SORT 0,0,A:?\"OK\""),
+        "OK\n"
+    );
+}
+
 #[test]
 fn inserting_and_removing() {
     assert_eq!(

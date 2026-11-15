@@ -29,19 +29,6 @@ fn count(v: &Value) -> Result<usize> {
     index_arg(v)
 }
 
-/// `offset` and `count` within `len`: the count defaults to the rest.
-fn span(len: usize, offset: Option<&Value>, n: Option<&Value>) -> Result<(usize, usize)> {
-    let offset = offset.map_or(Ok(0), count)?;
-    if offset > len {
-        return Err(out_of_range("offset"));
-    }
-    let n = n.map_or(Ok(len - offset), count)?;
-    if offset + n > len {
-        return Err(out_of_range("count"));
-    }
-    Ok((offset, n))
-}
-
 /// COPY's source `offset` and `count` within `len`. Past the end is
 /// Subscript out of range; the function form names the argument, the
 /// command form does not. An offset at the end of a source that is not
@@ -223,23 +210,42 @@ fn compare(a: &Value, b: &Value) -> Ordering {
 /// SORT and RSORT: `[start, count,] key [, arrays...]`. The other arrays
 /// are put in the key's new order. SORT keeps equal keys in order; RSORT
 /// is SORT turned round, so it reverses them (checked on hardware).
+// SmileBASIC 4 takes the form from the first
+// argument: a number needs a count and an array after it, else Wrong
+// number of arguments, as do more than eight arrays. Each array in turn
+// must be one-dimensional (else Type mismatch) and hold the start and the
+// count (else Out of range), both naming it; the start must be inside the
+// array, so an empty one is Out of range even with a count of 0.
 fn sort(args: &[Value], descending: bool) -> Result<Vec<Value>> {
-    let (start, n, arrays) = if matches!(args[0], Value::Array(_)) {
-        (None, None, args)
-    } else if args.len() >= 3 {
-        (Some(&args[0]), Some(&args[1]), &args[2..])
+    let (start, mut n, values) = if args[0].is_number() {
+        if args.len() < 3 {
+            return Err(ErrorKind::WrongNumberOfArguments.into());
+        }
+        (count(&args[0])?, Some(count(&args[1])?), &args[2..])
     } else {
-        return Err(ErrorKind::IllegalFunctionCall.into());
+        if args.len() > 8 {
+            return Err(ErrorKind::WrongNumberOfArguments.into());
+        }
+        (0, None, args)
     };
-    if arrays.len() > 8 {
-        return Err(ErrorKind::IllegalFunctionCall.into());
+    let mut arrays = Vec::with_capacity(values.len());
+    for v in values {
+        let a = array(v)?;
+        let len = {
+            let a = a.borrow();
+            if a.dims.len() != 1 {
+                return Err(mismatch(v));
+            }
+            a.len()
+        };
+        // The whole of the first array, when no count is given.
+        let n = *n.get_or_insert(len);
+        if len <= start || len < start + n {
+            return Err(Error::new(ErrorKind::OutOfRange).of_value(v));
+        }
+        arrays.push(a);
     }
-    let arrays: Vec<ArrayRef> = arrays.iter().map(array).collect::<Result<_>>()?;
-    let len = arrays[0].borrow().len();
-    let (start, n) = span(len, start, n)?;
-    if arrays.iter().any(|a| a.borrow().len() < start + n) {
-        return Err(ErrorKind::SubscriptOutOfRange.into());
-    }
+    let n = n.unwrap_or(0);
     let keys: Vec<Value> = {
         let key = arrays[0].borrow();
         (start..start + n).map(|i| key.get(i)).collect()
