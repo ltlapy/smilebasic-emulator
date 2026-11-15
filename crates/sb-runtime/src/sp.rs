@@ -556,18 +556,18 @@ impl Runtime {
                 self.sprite(&args[0])?.anims = Default::default();
                 Ok(vec![])
             }
+            // The sprite is checked first, and named.
             (Command::Spanim, Want::Outs(0), 2) => {
+                self.sprite(&args[0]).map_err(|e| e.of_arg(0))?;
                 let n = anim_id(&args[1])?;
                 // A number ANIMDEF never set starts nothing.
                 match self.sprites.anim_defs[n].clone() {
                     Some(anim) => self.start_anim(&args[0], anim),
-                    None => {
-                        self.sprite(&args[0])?;
-                        Ok(vec![])
-                    }
+                    None => Ok(vec![]),
                 }
             }
             (Command::Spanim, Want::Outs(0), _) => {
+                self.sprite(&args[0]).map_err(|e| e.of_arg(0))?;
                 let anim = self.anim_args(&args[1..])?;
                 self.start_anim(&args[0], anim)
             }

@@ -803,8 +803,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   DATA, is `Animation is too long`, error 40, without a number. A DATA count
   below 1 is `Illegal animation data`. A target that is an array, as in
   `SPANIM 0,A,1,2`, is `Animation type mismatch (SPANIM:2)`, error 66, in
-  `TANIM` and `ANIMDEF` too.
-  (Not yet seen on hardware.)
+  `TANIM` and `ANIMDEF` too. `SPANIM` checks its sprite before anything else:
+  one not set is `Sprite not set (SPANIM:1)`, whatever comes after it. (Not yet seen on hardware.)
 - `SPANIM` keys for XY, Z, UV and I outside -32768 to 32767 are
   `Out of range (SPANIM)`, and `TANIM` and `ANIMDEF` go through the same code. R
   has no such limit (TEST60).

@@ -222,6 +222,11 @@ fn errors() {
             "Animation type mismatch in 0:1(SPANIM:2)",
         ),
         (
+            "DIM K[4]:SPANIM 0,\"XY\",K",
+            "Sprite not set in 0:1(SPANIM:1)",
+        ),
+        ("SPANIM 0,1024", "Sprite not set in 0:1(SPANIM:1)"),
+        (
             "DIM A[2]:TANIM 0,A,1,2",
             "Animation type mismatch in 0:1(TANIM:2)",
         ),
