@@ -208,6 +208,11 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   or `?1/0` stops the program before it runs, even on a line that is never
   reached.
 - An unknown `#constant` is `Undefined constant`.
+- A `CONST` or `ENUM` constant exists from where it stands in the source. Used on an earlier line, also in a `DEF`
+  above it, in `DATA` or in another `CONST` (`CONST #A=#B,#B=1`), it is
+  `Undefined constant`. One defined in a `DEF` counts on the lines after it,
+  top level included. The program compiles before it runs, so a `GOTO` past
+  the `CONST` does not matter. (Not yet seen on hardware.)
 - SmileBASIC 4 compiles a program a statement at a time, by SmileBASIC 4
   (4.4.8). A compile error in a statement comes before a `Syntax error` in a
   later one: `?#ZZ:?(` is `Undefined constant`, and so is `IF #ZZ THEN ?(`.

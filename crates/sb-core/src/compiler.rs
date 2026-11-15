@@ -126,7 +126,10 @@ struct Compiler<'h> {
     /// The program slot compiled for, `#_SLOT`.
     slot: i32,
     strict: bool,
-    constants: HashMap<String, Literal>,
+    /// The program's constants, each with where its name stands: a use
+    /// before that place is Undefined constant, as SmileBASIC 4 compiles
+    /// in one pass.
+    constants: HashMap<String, (Literal, Span)>,
     def: Option<DefScope>,
     loops: Vec<Loop>,
     /// Jumps to labels, resolved when their scope is finished.
@@ -350,7 +353,7 @@ impl Compiler<'_> {
                     for (name, span, expr) in items {
                         let value = self.const_eval(expr).map_err(illegal).map_err(at)?;
                         self.check_new_constant(name, *span)?;
-                        self.constants.insert(name.clone(), value);
+                        self.constants.insert(name.clone(), (value, *span));
                     }
                 }
                 StmtKind::Enum(items) => {
@@ -370,7 +373,8 @@ impl Compiler<'_> {
                                 })?
                             }
                         };
-                        self.constants.insert(name.clone(), Literal::Int(n));
+                        self.constants
+                            .insert(name.clone(), (Literal::Int(n), *span));
                         next = n.wrapping_add(1);
                     }
                 }
@@ -407,8 +411,17 @@ impl Compiler<'_> {
     /// constant is placed there, not at the statement or its `=`.
     // UNVERIFIED: for constants outside an assignment's value.
     fn constant(&self, name: &str, at: Span) -> Result<Literal> {
-        if let Some(v) = self.constants.get(name) {
-            return Ok(v.clone());
+        match self.constants.get(name) {
+            Some((v, defined)) if (defined.line, defined.col) < (at.line, at.col) => {
+                return Ok(v.clone());
+            }
+            // Defined later on: no built-in has its name.
+            Some(_) => {
+                return Err(
+                    err(ErrorKind::UndefinedConstant, format!("#{name}")).at_pos(at.line, at.col)
+                );
+            }
+            None => {}
         }
         match name {
             // 0 in DIRECT mode.

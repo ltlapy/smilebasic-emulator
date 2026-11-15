@@ -732,6 +732,35 @@ fn duplicate_constants() {
     assert_eq!(at("DATA Z").0, ErrorKind::SyntaxError);
 }
 
+/// A constant exists from where its CONST or ENUM stands in the source,
+/// for every line after it, DEFs and top level alike: SmileBASIC 4
+/// compiles in one pass, and DEFs where they stand.
+#[test]
+fn constants_exist_from_where_they_stand() {
+    let at = |src: &str| {
+        let e = run(src).unwrap_err();
+        (e.kind, e.line, e.col)
+    };
+    let undefined = ErrorKind::UndefinedConstant;
+    assert_eq!(at("?#A\nCONST #A=1"), (undefined, 1, 2));
+    assert_eq!(at("ENUM #B=#A\nENUM #A").0, undefined);
+    assert_eq!(at("DEF F\n?#A\nEND\nCONST #A=1"), (undefined, 2, 2));
+    assert_eq!(at("CONST #A=#B,#B=1"), (undefined, 1, 10));
+    assert_eq!(at("CONST #A=#A"), (undefined, 1, 10));
+    assert_eq!(at("DATA #A\nCONST #A=1"), (undefined, 1, 6));
+    assert_eq!(at("?1:?#A:CONST #A=1").2, 5);
+    // A CONST in a DEF counts for the lines after it.
+    assert_eq!(output("DEF F\nCONST #A=2\nEND\n?#A"), "2\n");
+    assert_eq!(output("DEF F\nCONST #A=2\nEND\nDEF G\n?#A\nEND\nG"), "2\n");
+    assert_eq!(output("CONST #A=1,#B=#A+1:?#A;#B"), "12\n");
+    assert_eq!(output("CONST #A=3\nREAD X:?X\nDATA #A"), "3\n");
+    // The table fills as the program compiles, not as it runs.
+    assert_eq!(output("GOTO @L\nCONST #A=1\n@L\n?#A"), "1\n");
+    assert_eq!(output("IF 0 THEN CONST #A=4\n?#A"), "4\n");
+    // Built-in constants are there from the start.
+    assert_eq!(output("?#_LINE;#C_RED==&HFFFF0000;#TRUE"), "111\n");
+}
+
 /// ENUM takes a real only as a whole number in the 32-bit range, as
 /// SmileBASIC 4's compiler does.
 #[test]
