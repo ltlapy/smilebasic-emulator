@@ -99,6 +99,29 @@ fn control_style_errors_name_the_argument() {
     .unwrap();
 }
 
+/// DIALOG checks each form's arguments in order and names the one that
+/// was wrong, as SmileBASIC 4's handler does (4.4.8).
+#[test]
+fn dialog_errors_name_the_argument() {
+    for (source, kind, arg) in [
+        ("DIALOG 0,0,\"C\",0", ErrorKind::TypeMismatch, 0),
+        ("DIALOG \"S\",6", ErrorKind::OutOfRange, 1),
+        ("DIALOG \"S\",-1", ErrorKind::OutOfRange, 1),
+        ("DIALOG \"S\",0,0", ErrorKind::TypeMismatch, 2),
+        ("Q=DIALOG(0,\"S\",1)", ErrorKind::TypeMismatch, 0),
+        ("Q=DIALOG(0,\"S\",40)", ErrorKind::TypeMismatch, 0),
+        ("Q=DIALOG(\"S\",0,\"C\",0)", ErrorKind::OutOfRange, 1),
+        ("Q=DIALOG(\"S\",&H40000)", ErrorKind::OutOfRange, 1),
+        ("Q=DIALOG(\"S\",8,0)", ErrorKind::TypeMismatch, 2),
+        ("Q$=DIALOG(\"A\",\"X\",33)", ErrorKind::OutOfRange, 2),
+        // One OUT variable is the function form.
+        ("DIALOG \"S\",0,\"C\",0 OUT Q", ErrorKind::OutOfRange, 1),
+    ] {
+        let e = run(&[], source).unwrap_err();
+        assert_eq!((e.kind, e.arg), (kind, Some(arg)), "{source}");
+    }
+}
+
 #[test]
 fn repeat_settings() {
     assert_eq!(
@@ -450,7 +473,7 @@ fn a_button_held_past_the_end_of_a_program_types_nothing() {
 fn the_press_that_answers_a_dialog_types_only_its_repeats() {
     let a = pressed(1 << 3);
     let mut rt = Runtime::for_tests(Font::blank());
-    let source = "R=DIALOG(\"Q\",-1):P=BUTTON(0,-1,2):H=BUTTON(0):N=0:REPEAT:VSYNC:INC N:UNTIL N==22\n\
+    let source = "R=DIALOG(\"Q\",&H3FFFF):P=BUTTON(0,-1,2):H=BUTTON(0):N=0:REPEAT:VSYNC:INC N:UNTIL N==22\n\
                   K=0:WHILE INKEY$()==CHR$(13):INC K:WEND:?R;\" \";P;\" \";H;\" \";K";
     let mut vm = Vm::new(sb_core::compile(source, &rt).unwrap());
     let mut frames = 0;

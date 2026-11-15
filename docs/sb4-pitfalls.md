@@ -833,6 +833,13 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
     then every 3.
 - `DIALOG` covers the whole screen, so nothing else shows while it's open, and a
   screenshot of it shows only the dialog.
+- `DIALOG(text,buttons)` takes button masks 1 to `&H3FFFF`: 0 and -1 are
+  `Out of range (DIALOG:2)`. Each form checks its arguments in order and names
+  the one that is wrong: `DIALOG 0,0` is `Type mismatch (DIALOG:1)`, and a
+  caption that is not a string `(DIALOG:3)`. `DIALOG(0,"S",1)` waits for
+  buttons rather than asking for a name, since a name needs two strings, so it
+  is `(DIALOG:1)` too. (Not
+  yet seen on hardware.)
 - `BREPEAT` starts at 20,3 for buttons 0 to 7 and at 15,4 for 8 to 16. It
   doesn't touch what controllers type for `INKEY$`.
 - `BREPEAT` repeats a held button at its start frame and then every interval

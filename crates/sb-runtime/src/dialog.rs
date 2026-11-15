@@ -8,7 +8,7 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::value::Value;
 
 use crate::input::{A, B};
-use crate::runtime::{Command, Runtime, illegal, opt_int};
+use crate::runtime::{Command, Runtime, checking, illegal, opt_int};
 use crate::storage;
 
 const TEXT_CHARS: usize = 256;
@@ -20,6 +20,8 @@ const DEFAULT_CAPTION: &str = "DIALOG";
 const TOUCH_BIT: u32 = 1 << 17;
 /// #B_RANY, #B_LANY and #B_ANY.
 const ANY_BITS: u32 = 0b111 << 14;
+/// Every button DIALOG can wait for, the touch screen's bit included.
+const BUTTON_BITS: i32 = (TOUCH_BIT << 1) as i32 - 1;
 const FRAMES_PER_SECOND: i32 = 60;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,7 +122,9 @@ fn choice_result(buttons: usize, chosen: usize) -> i32 {
 }
 
 fn text(v: &Value) -> Result<String> {
-    Ok(String::from_utf16_lossy(&v.clone().into_str()?.borrow()))
+    checking(v, || {
+        Ok(String::from_utf16_lossy(&v.clone().into_str()?.borrow()))
+    })
 }
 
 fn shortened(text: &str, max: usize) -> String {
@@ -182,22 +186,33 @@ impl Runtime {
         args: &[Value],
         want: Want,
     ) -> Result<Vec<Value>> {
+        // Each form checks its arguments in order, as SmileBASIC 4's
+        // handler does (4.4.8).
         let (dialog, frames) = match (want, args) {
             (Want::Outs(0), [message, rest @ ..]) if rest.len() <= 3 => {
-                let kind = rest.first().map(opt_int).transpose()?.flatten();
+                let lines = lines(&text(message)?);
+                let kind = match rest.first() {
+                    Some(kind) => checking(kind, || choices(opt_int(kind)?.unwrap_or(0)))?,
+                    None => choices(0)?,
+                };
                 let dialog = ProgramDialog {
                     caption: caption(rest.get(1), CAPTION_CHARS)?,
-                    lines: lines(&text(message)?),
-                    kind: DialogKind::Choice(choices(kind.unwrap_or(0))?),
+                    lines,
+                    kind: DialogKind::Choice(kind),
                 };
                 (dialog, timeout(rest.get(2))?)
             }
-            (Want::Value, [initial, Value::Str(_), rest @ ..]) if rest.len() <= 1 => {
+            // Two strings ask for a file name; a number after the message
+            // waits for buttons.
+            (Want::Value, [initial @ Value::Str(_), Value::Str(_), rest @ ..])
+                if rest.len() <= 1 =>
+            {
                 let max = match rest.first().map(opt_int).transpose()?.flatten() {
                     None => NAME_CHARS,
                     Some(n @ 1..=32) => n as usize,
                     Some(n) => {
-                        return Err(Error::with_detail(ErrorKind::OutOfRange, format!("{n}")));
+                        let e = Error::with_detail(ErrorKind::OutOfRange, format!("{n}"));
+                        return Err(e.of_arg(2));
                     }
                 };
                 // Cut to the most it takes, the initial name is checked as
@@ -217,13 +232,17 @@ impl Runtime {
                 (dialog, None)
             }
             (Want::Value, [message, mask, rest @ ..]) if rest.len() <= 2 => {
-                let mask = mask.to_int()? as u32;
-                if mask == 0 {
-                    return Err(Error::with_detail(ErrorKind::OutOfRange, "no buttons"));
-                }
+                let lines = lines(&text(message)?);
+                let mask = checking(mask, || match mask.to_int()? {
+                    m @ 1..=BUTTON_BITS => Ok(m as u32),
+                    m => Err(Error::with_detail(
+                        ErrorKind::OutOfRange,
+                        format!("buttons {m}"),
+                    )),
+                })?;
                 let dialog = ProgramDialog {
                     caption: caption(rest.first(), CAPTION_CHARS)?,
-                    lines: lines(&text(message)?),
+                    lines,
                     kind: DialogKind::Buttons(mask),
                 };
                 (dialog, timeout(rest.get(1))?)
