@@ -520,7 +520,8 @@ mod tests {
         b[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
         let read = WaveInfo::read(&b);
         if usize::BITS == 64 {
-            assert_eq!(read.unwrap().data.end, (1 << 32) - 1 + (1 << 33) - 2);
+            let end = read.unwrap().data.end as u64;
+            assert_eq!(end, (1 << 32) - 1 + (1 << 33) - 2);
         } else {
             assert_eq!(read, None);
         }
