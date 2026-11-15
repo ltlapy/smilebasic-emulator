@@ -1376,6 +1376,12 @@ Expected but not yet seen on hardware:
 - A callback `SPFUNC` names is a DEF or label of the slot `SPFUNC` ran in, or a
   `COMMON DEF`; `CALL SPRITE` finds it from any slot.
 - `SPFUNC` takes a sprite that is not set.
+- `SPFUNC` and `TFUNC` look the name up as they run, not when the callback
+  is called. A name the program or SmileBASIC knows that is no DEF, such as
+  `"SPSET"`, is `Function must be user defined (SPFUNC:2)`, error 114. Any
+  other name must be a label: `"NOPE"` and `"@"` are `Illegal label string`,
+  error 35, without a number, and a label the program does not have is
+  `Undefined label (SPFUNC:2)`. (Not yet seen on hardware.)
 
 ### `SPCHR`
 

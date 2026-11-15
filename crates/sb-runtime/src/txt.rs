@@ -384,7 +384,10 @@ impl Runtime {
             (Command::Tfunc, Want::Outs(0), 1 | 2) => {
                 let id = screen_id(&args[0])?;
                 let func = match args.get(1) {
-                    Some(Value::Str(name)) => Some(self.callback_name(&name.borrow())),
+                    Some(Value::Str(name)) => {
+                        self.check_callback(&name.borrow())?;
+                        Some(self.callback_name(&name.borrow()))
+                    }
                     Some(_) => return Err(Error::new(ErrorKind::TypeMismatch).of_arg(1)),
                     None => None,
                 };

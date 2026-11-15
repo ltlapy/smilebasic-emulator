@@ -1594,6 +1594,65 @@ impl Runtime {
         }
     }
 
+    /// SPFUNC's and TFUNC's name, checked as SmileBASIC 4's handlers check
+    /// it when it is set (4.4.8): a DEF of the program's (or a COMMON DEF)
+    /// passes, any other name the program or SmileBASIC knows is Function
+    /// must be user defined, and else it must be a label, `@` and a name,
+    /// that the program has. `"n:"` before it looks in slot n.
+    // UNVERIFIED: a variable's name is no symbol here; a label inside any
+    // DEF passes.
+    pub(crate) fn check_callback(&self, name: &[u16]) -> Result<()> {
+        let text = String::from_utf16_lossy(name).to_ascii_uppercase();
+        let (program, rest) = match text.split_once(':') {
+            Some((slot, rest)) => {
+                let slot = slot.parse::<usize>().ok();
+                let program = slot.and_then(|s| self.slot_programs.get(s).cloned().flatten());
+                (program, rest)
+            }
+            None => (self.program.clone(), text.as_str()),
+        };
+        let illegal = || Err(ErrorKind::IllegalLabelString.into());
+        if let Some(label) = rest.strip_prefix('@') {
+            if label.is_empty() {
+                return illegal();
+            }
+            let found = program.is_some_and(|p| {
+                p.labels.contains_key(label) || p.defs.iter().any(|d| d.labels.contains_key(label))
+            });
+            return match found {
+                true => Ok(()),
+                false => {
+                    let e = Error::with_detail(ErrorKind::UndefinedLabel, format!("@{label}"));
+                    Err(e.of_arg(1))
+                }
+            };
+        }
+        // A slot's name with no label after it is no label either.
+        if text.contains(':') && program.is_none() {
+            return illegal();
+        }
+        let own = program
+            .as_ref()
+            .is_some_and(|p| p.def_names.contains_key(rest));
+        let common = || {
+            (self.slot_programs.iter().flatten()).any(|p| {
+                p.def_names
+                    .get(rest)
+                    .is_some_and(|&d| p.defs[d as usize].common)
+            })
+        };
+        if own || common() {
+            return Ok(());
+        }
+        let builtin = COMMANDS.iter().any(|(n, _)| *n == rest)
+            || sb_core::builtins::lookup(rest, sb_core::builtins::Form::Function).is_some()
+            || sb_core::builtins::lookup(rest, sb_core::builtins::Form::Command).is_some();
+        match builtin {
+            true => Err(Error::new(ErrorKind::FunctionMustBeUserDefined).of_arg(1)),
+            false => illegal(),
+        }
+    }
+
     /// `"n:@LABEL"` reads slot n's DATA, once the run has gone on there.
     pub(crate) fn label_data(&self, label: &Value) -> Result<DataReader<'_>> {
         let text =

@@ -196,6 +196,20 @@ fn errors() {
         ("SPFUNC 0,0", "Type mismatch in 0:1(SPFUNC:2)"),
         ("SPFUNC 4096,0", "Out of range in 0:1(SPFUNC:1)"),
         ("TFUNC 0,0", "Type mismatch in 0:1(TFUNC:2)"),
+        // The name must be a DEF, or else a label, as it is set.
+        (
+            "SPFUNC 0,\"SPSET\"",
+            "Function must be user defined in 0:1(SPFUNC:2)",
+        ),
+        (
+            "TFUNC 0,\"ABS\"",
+            "Function must be user defined in 0:1(TFUNC:2)",
+        ),
+        ("SPFUNC 0,\"NOPE\"", "Illegal label string in 0:1(SPFUNC)"),
+        ("SPFUNC 0,\"@\"", "Illegal label string in 0:1(SPFUNC)"),
+        ("TFUNC 0,\"3:F\"", "Illegal label string in 0:1(TFUNC)"),
+        ("SPFUNC 0,\"@NOPE\"", "Undefined label in 0:1(SPFUNC:2)"),
+        ("SPFUNC 4096,\"NOPE\"", "Out of range in 0:1(SPFUNC:1)"),
         ("SPSET 0,0:SPANIM 0,\"XY\",1,2", "Illegal function call"),
         ("SPSET 0,0:SPANIM 0,\"Q\",1,2", "Out of range"),
         ("SPSET 0,0:SPANIM 0,\"Z\",\"@NOPE\"", "Undefined label"),
@@ -203,6 +217,15 @@ fn errors() {
         let (_, out) = run(source);
         assert!(out.starts_with(error), "{source}: {out}");
     }
+}
+
+/// A DEF, a label in the program or in a DEF, and another slot's
+/// COMMON DEF may be set.
+#[test]
+fn callbacks_name_what_the_program_has() {
+    let (_, out) = run("SPFUNC 0,\"F\":SPFUNC 1,\"@L\":TFUNC 0,\"@M\":?\"OK\"\n\
+         @L\nDEF F\n@M\nEND");
+    assert_eq!(out, "OK");
 }
 
 #[test]
