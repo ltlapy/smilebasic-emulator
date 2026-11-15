@@ -458,6 +458,10 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         return;
     };
     add(F::Push2(a, b), 2);
+    // Two arguments, pushed last first and put back in order.
+    if let Some(Op::Swap) = code.get(2) {
+        add(F::Push2(b, a), 3);
+    }
     match code.get(2) {
         Some(Op::Binary(op)) => {
             let op = *op;
