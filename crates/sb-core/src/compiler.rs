@@ -906,7 +906,8 @@ impl Compiler<'_> {
             }
             StmtKind::Break | StmtKind::Continue => {
                 let j = self.emit(Op::Jump(0));
-                let lp = self.loops.last_mut().ok_or(ErrorKind::IllegalStatement)?;
+                // Outside a loop, a Syntax error as it compiles.
+                let lp = self.loops.last_mut().ok_or(ErrorKind::SyntaxError)?;
                 match kind {
                     StmtKind::Break => lp.breaks.push(j),
                     _ => lp.continues.push(j),

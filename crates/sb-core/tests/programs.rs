@@ -628,7 +628,11 @@ fn compile_errors() {
     assert_eq!(error("?1\n?(").0, ErrorKind::SyntaxError);
     assert_eq!(error("LEN 1").0, ErrorKind::IllegalFunctionCall);
     assert_eq!(error("@A\n@A").0, ErrorKind::DuplicateLabel);
-    assert_eq!(error("BREAK").0, ErrorKind::IllegalStatement);
+    // BREAK and CONTINUE outside a loop.
+    assert_eq!(error("?1\nBREAK"), (ErrorKind::SyntaxError, 2));
+    assert_eq!(error("CONTINUE").0, ErrorKind::SyntaxError);
+    let e = sb_core::compile("BREAK", &TextHost::default()).unwrap_err();
+    assert_eq!(e.to_string(), "Syntax error in 1");
     // A DEF with a system function's name, at the DEF, before anything runs.
     assert_eq!(
         error("?1\nDEF LAST(T)\nRETURN T\nEND"),
