@@ -2,10 +2,14 @@
 //! time: what they print, their errors, and where each time slice ends must
 //! be the same. The statements are the kind the fuser's chains take, with
 //! values of every type in the variables, so that each step of a chain meets
-//! what it cannot do as well as what it can.
+//! what it cannot do as well as what it can. DEFs of every form and a host's
+//! commands are called from them, in expressions and chains, so that each
+//! call's fast path meets errors in its callee and slices that end inside it.
 
+mod common;
+
+use common::CmdHost;
 use sb_core::fuse::FastOp;
-use sb_core::host::TextHost;
 use sb_core::vm::{Status, Vm};
 
 /// xorshift64*, so that the programs are the same on every run.
@@ -67,13 +71,50 @@ fn element(r: &mut Rng, depth: u32) -> String {
     }
 }
 
+/// Function DEFs [`DEFS_SOURCE`] has, of one argument.
+const DEFS: &[&str] = &["SQ", "LC", "TS", "OU"];
+
+/// DEFs the programs call: functions, commands, OUT variables, a string
+/// local, a recursive one, a host command inside, and errors on strings.
+const DEFS_SOURCE: &str = "\
+DEF SQ(V)
+ RETURN V*V
+END
+DEF LC(V)
+ VAR T=V+1,U$=\"L\"
+ RETURN T*2
+END
+DEF TS(V)
+ PUT V
+ RETURN GET()+V
+END
+DEF OU(V)
+ VAR P,Q
+ TW V,V+1 OUT P,Q
+ RETURN P-Q
+END
+DEF TW X,Y OUT P,Q
+ P=X*2:Q=Y-1
+END
+DEF CM X
+ A=A+X:B=X
+END
+DEF RC(N)
+ IF N<1 THEN RETURN 1
+ RETURN RC(N-1)*2+N
+END
+";
+
 fn leaf(r: &mut Rng, depth: u32) -> String {
-    match r.below(10) {
+    match r.below(14) {
         0..=3 => r.pick(VARIABLES).to_string(),
         4..=6 => r.pick(NUMBERS).to_string(),
         7 if depth < 3 => element(r, depth),
         8 if depth < 3 => format!("{}({})", r.pick(FUNCTIONS), expr(r, depth + 1)),
         9 if depth < 3 => format!("MAX({},{})", expr(r, depth + 1), leaf(r, depth + 1)),
+        10 if depth < 3 => format!("{}({})", r.pick(DEFS), expr(r, depth + 1)),
+        11 => "GET()".to_string(),
+        12 if depth < 2 => format!("RC({})", r.pick(&["0", "1", "2", "I", "A AND 3"])),
         _ => r.pick(VARIABLES).to_string(),
     }
 }
@@ -102,7 +143,7 @@ fn target(r: &mut Rng) -> String {
 }
 
 fn statement(r: &mut Rng) -> String {
-    match r.below(10) {
+    match r.below(16) {
         0..=5 => format!("{}={}", target(r), expr(r, 0)),
         6 => format!(
             "{0}={0}{1}{2}",
@@ -117,6 +158,23 @@ fn statement(r: &mut Rng) -> String {
             format_args!("{}={}", target(r), leaf(r, 1))
         ),
         8 => format!("WHILE ({}) AND (J<3):J=J+1:WEND", expr(r, 1)),
+        9 => format!("?{}", expr(r, 0)),
+        10 => format!("CM {}", expr(r, 1)),
+        11 => format!(
+            "TW {},{} OUT {},{}",
+            leaf(r, 1),
+            expr(r, 1),
+            r.pick(&["A", "B"]),
+            r.pick(&["C", "X#"])
+        ),
+        12 => format!("PUT {}", expr(r, 1)),
+        13 => format!(
+            "PAIR {} OUT {},{}",
+            expr(r, 1),
+            r.pick(&["A", "B"]),
+            r.pick(&["C", "X#"])
+        ),
+        14 => format!("{}=GET()+{}", target(r), leaf(r, 1)),
         _ => format!("?{}", expr(r, 0)),
     }
 }
@@ -138,22 +196,25 @@ fn program(r: &mut Rng) -> String {
     let mut s = setup(r);
     let body: Vec<String> = (0..1 + r.below(3)).map(|_| statement(r)).collect();
     let body = body.join("\n");
-    match r.below(3) {
+    match r.below(6) {
         0 => s += &format!("FOR I=0 TO 2\n{body}\nNEXT\n"),
         1 => s += &format!("DEF F I\n{body}\nEND\nFOR Q=0 TO 2:F Q:NEXT\n"),
+        2 => s += &format!("DEF F(I)\n{body}\nRETURN A+I\nEND\nFOR Q=0 TO 2:B=F(Q)+F(Q+1):NEXT\n"),
+        3 => s += &format!("DEF F I OUT Z\n{body}\nZ=I\nEND\nFOR Q=0 TO 2:F Q OUT C:NEXT\n"),
+        4 => s += &format!("DEF F I\n{body}\nIF I>0 THEN F I-1\nEND\nF 2\n"),
         _ => s += &format!("I=1\n{body}\n"),
     }
-    s + "?A,B,C,X#,K%,S$,M[0],M[1],N%[0],R#[0,0],T$[0]\n"
+    s + "?A,B,C,X#,K%,S$,M[0],M[1],N%[0],R#[0,0],T$[0]\nEND\n" + DEFS_SOURCE
 }
 
 /// What can be seen of a run in slices of `budget` instructions.
 fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
-    let host = TextHost::default();
+    let host = CmdHost::default();
     let mut program = sb_core::compile(source, &host).ok()?;
     if !fused {
         program.fast.clear();
     }
-    let mut host = TextHost::default();
+    let mut host = CmdHost::default();
     let mut vm = Vm::new(program);
     let mut seen = Vec::new();
     for _ in 0..100_000 {
@@ -170,7 +231,7 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
         ));
         match result {
             Ok(Status::Ended) | Err(_) => {
-                seen.push(host.output);
+                seen.push(format!("{} {}", host.text.output, host.count));
                 return Some(seen);
             }
             Ok(_) => {}
@@ -182,10 +243,10 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
 #[test]
 fn random_programs_run_the_same_fused_or_not() {
     let mut r = Rng(0x5EED_1234_ABCD_0001);
-    let (mut compiled, mut chains) = (0, 0);
+    let (mut compiled, mut chains, mut calls, mut hosts) = (0, 0, 0, 0);
     for _ in 0..1500 {
         let source = program(&mut r);
-        let host = TextHost::default();
+        let host = CmdHost::default();
         let Ok(p) = sb_core::compile(&source, &host) else {
             continue;
         };
@@ -195,6 +256,12 @@ fn random_programs_run_the_same_fused_or_not() {
             .iter()
             .filter(|f| matches!(f.op, FastOp::Chain { .. }))
             .count();
+        calls += (p.fast.iter())
+            .filter(|f| matches!(f.op, FastOp::CallDef { .. }))
+            .count();
+        hosts += (p.fast.iter())
+            .filter(|f| matches!(f.op, FastOp::Host { .. }))
+            .count();
         for budget in [1, 2, 5, 13, 1_000_000] {
             assert_eq!(
                 run(&source, budget, true),
@@ -203,7 +270,10 @@ fn random_programs_run_the_same_fused_or_not() {
             );
         }
     }
-    // The generator must make programs that compile and that chains take.
+    // The generator must make programs that compile, that chains take, and
+    // that call DEFs and the host.
     assert!(compiled > 1000, "{compiled} compiled");
     assert!(chains > 8000, "{chains} chains");
+    assert!(calls > 4000, "{calls} DEF calls");
+    assert!(hosts > 3000, "{hosts} host calls");
 }

@@ -1050,3 +1050,94 @@ fn builtin_errors_name_the_command() {
         assert_eq!((e.to_string().as_str(), e.arg), (message, arg), "{source}");
     }
 }
+
+mod common;
+use common::CmdHost;
+
+/// [`run`] on a host with commands of its own, which it compiles with.
+fn run_on_host(source: &str, budget: u32, fused: bool) -> (Vec<String>, String) {
+    let mut host = CmdHost::default();
+    let mut program = sb_core::compile(source, &host).unwrap_or_else(|e| panic!("{source}: {e}"));
+    if !fused {
+        program.fast.clear();
+    }
+    let mut vm = Vm::new(program).in_slot(0);
+    let mut seen = Vec::new();
+    for _ in 0..200_000 {
+        let result = vm.run(&mut host, budget);
+        let shown = match &result {
+            Ok(status) => format!("{status:?}"),
+            Err(e) => format!("{e} {:?} {} {} {:?}", e.kind, e.line, e.col, e.detail),
+        };
+        let (executed, line, col) = (vm.executed(), vm.line(), vm.col());
+        seen.push(format!("{shown} executed {executed} line {line} col {col}"));
+        match result {
+            Ok(Status::Ended) | Err(_) => {
+                seen.push(format!("count {} held {}", host.count, host.held));
+                return (seen, host.text.output);
+            }
+            Ok(_) => {}
+        }
+    }
+    panic!("{source}: did not end");
+}
+
+const HOST_PROGRAMS: &[&str] = &[
+    "FOR I=0 TO 5:PUT I,I*2:A=GET():?A:NEXT",
+    "DEF F N\nPUT N:GET N\nRETURN\nEND\nFOR I=0 TO 3:F I:?GET():NEXT",
+    "FOR I=0 TO 3:PAIR I OUT B,C:?B;C:GET OUT D:?D:NEXT",
+    "?GET()+GET()*2:A=1+GET()*GET():?A:B=MAX(GET(),3)+ABS(GET()):?B",
+    "DEF R(N)\nPUT N\nIF N<1 THEN RETURN GET()\nRETURN R(N-1)+GET()\nEND\n?R(4)",
+    "DEF F(N)\nPUT N\nRETURN N\nEND\nFOR I=2 TO -2 STEP -1:A=F(I):?A:NEXT",
+    "FOR I=0 TO 3:HOLD:?I:NEXT:HOLD:HOLD:?\"END\"",
+    "FOR I=0 TO 2:S$=NOTE$():?S$;LEN(S$):NEXT",
+    "FOR I=3 TO -1 STEP -1:PUT I:NEXT",
+    "A$=\"X\"\n?1:PUT 1,A$:?2",
+    "A=1\n?1:B=BAD():?2",
+    "A=1\nFOR I=0 TO 2\nPUT I OUT X\nNEXT",
+    "DEF G A OUT B\nPUT A:B=GET()\nEND\nFOR I=0 TO 3:G I OUT C:?C:NEXT:G -1 OUT C",
+    "DEF H(A)\nPAIR A OUT B,C\nRETURN B*C\nEND\nFOR I=0 TO 3:?H(I)+H(I+1):NEXT",
+];
+
+/// Host calls made fused leave the same stops, output, errors and counts as
+/// made by `step`, in slices that end anywhere.
+#[test]
+fn host_calls_run_the_same_fused_or_not() {
+    for program in HOST_PROGRAMS {
+        for budget in [1, 2, 3, 5, 7, 13, 100, 1_000_000] {
+            let fused = run_on_host(program, budget, true);
+            let plain = run_on_host(program, budget, false);
+            assert_eq!(fused, plain, "{program} in slices of {budget}");
+        }
+    }
+    // GOSUBs that fill the stack's room for values, which a command given
+    // arguments then finds full, in the longer slices that take.
+    for program in [
+        "?1:GOSUB @S\n@S:PUT 1:GOSUB @S",
+        "?1:GOSUB @S\n@S:A=GET():GOSUB @S",
+    ] {
+        for budget in [5, 7, 1_000_000] {
+            let fused = run_on_host(program, budget, true);
+            assert!(
+                fused.0.iter().any(|s| s.contains("StackOverflow")),
+                "{fused:?}"
+            );
+            assert_eq!(
+                fused,
+                run_on_host(program, budget, false),
+                "{program} in {budget}"
+            );
+        }
+    }
+}
+
+/// Host calls are fused entries.
+#[test]
+fn host_calls_are_fused() {
+    let host = CmdHost::default();
+    let program = sb_core::compile("FOR I=0 TO 3:PUT I:A=GET():NEXT", &host).unwrap();
+    let calls = (program.fast.iter())
+        .filter(|f| matches!(f.op, FastOp::Host { .. }))
+        .count();
+    assert_eq!(calls, 2, "{:?}", program.fast);
+}

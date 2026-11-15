@@ -1394,7 +1394,12 @@ impl Vm {
                     // `!=` would call FastOp's PartialEq on every step.
                     .is_some_and(|f| !matches!(f.op, FastOp::Slow))
             {
-                self.run_fast(&program, stop);
+                if let Some((pc, outcome)) = self.run_fast(&program, stop, host) {
+                    if let Some(end) = self.settle(pc, outcome, host) {
+                        return end;
+                    }
+                    continue;
+                }
             }
             if self.executed >= stop {
                 break;
@@ -1457,42 +1462,62 @@ impl Vm {
             if !Rc::ptr_eq(&program, &self.program) {
                 program = Rc::clone(&self.program);
             }
-            match outcome {
-                Ok(None) => {}
-                Ok(Some(status)) => {
-                    if status == Status::Ended {
-                        self.ended = true;
-                    }
-                    return Ok(status);
-                }
-                Err(e) => {
-                    self.executed -= 1;
-                    // The stack may run out on what follows a GOSUB or call.
-                    let pc = match e.kind {
-                        ErrorKind::StackOverflow => self.pc,
-                        _ => pc,
-                    };
-                    if let Some(e) = self.failed(pc, e, host) {
-                        self.executed += 1;
-                        return Err(e);
-                    }
-                }
+            if let Some(end) = self.settle(pc, outcome, host) {
+                return end;
             }
         }
         Ok(Status::Running)
     }
 
+    /// What [`Vm::run_code`] does with the outcome of instruction `pc`, which
+    /// it counted as run: `Some` ends the slice.
+    #[inline(always)]
+    fn settle(
+        &mut self,
+        pc: usize,
+        outcome: Result<Option<Status>>,
+        host: &dyn Host,
+    ) -> Option<Result<Status>> {
+        match outcome {
+            Ok(None) => None,
+            Ok(Some(status)) => {
+                if status == Status::Ended {
+                    self.ended = true;
+                }
+                Some(Ok(status))
+            }
+            Err(e) => {
+                self.executed -= 1;
+                // The stack may run out on what follows a GOSUB or call.
+                let pc = match e.kind {
+                    ErrorKind::StackOverflow => self.pc,
+                    _ => pc,
+                };
+                let e = self.failed(pc, e, host)?;
+                self.executed += 1;
+                Some(Err(e))
+            }
+        }
+    }
+
     /// Runs [`Compiled::fast`] until the budget is spent or something needs
-    /// [`Vm::step`]: anything other than plain work on numbers and DEF calls
-    /// within the slot, every failure included. An entry that cannot do its
-    /// work leaves everything as it was, so that `step` goes on from the same
-    /// place.
-    fn run_fast(&mut self, program: &Compiled, stop: u64) {
+    /// [`Vm::step`]: anything other than plain work on numbers, DEF calls
+    /// within the slot and host calls, every failure included. An entry that
+    /// cannot do its work leaves everything as it was, so that `step` goes on
+    /// from the same place. A host call is made here as `step` makes it, and
+    /// what comes of it other than going on is handed back with the
+    /// instruction's address, for [`Vm::settle`].
+    fn run_fast(
+        &mut self,
+        program: &Compiled,
+        stop: u64,
+        host: &mut dyn Host,
+    ) -> Option<(usize, Result<Option<Status>>)> {
         loop {
             // A call or return changes the variables `run_fused` holds, so it
             // hands them back for that.
             let done = match self.run_fused(program, stop) {
-                Fused::Slow => return,
+                Fused::Slow => return None,
                 Fused::Call { def, argc, want } => {
                     // The Nops of a FOR may lead the call in its entry.
                     let nops = usize::from(program.fast[self.pc].len) - 1;
@@ -1502,9 +1527,20 @@ impl Vm {
                 }
                 Fused::Return => self.fast_return(program),
                 Fused::ReturnValue => self.fast_return_value(),
+                Fused::Host { id, argc, want } => {
+                    let nops = usize::from(program.fast[self.pc].len) - 1;
+                    self.pc += nops;
+                    self.executed += nops as u64;
+                    let pc = self.pc;
+                    self.executed += 1;
+                    match self.host_call(host, id, argc, want) {
+                        Ok(None) => continue,
+                        outcome => return Some((pc, outcome)),
+                    }
+                }
             };
             if !done {
-                return;
+                return None;
             }
             self.executed += 1;
         }
@@ -1674,6 +1710,10 @@ impl Vm {
                 }
                 FastOp::ReturnValue => {
                     exit = Fused::ReturnValue;
+                    break;
+                }
+                FastOp::Host { id, argc, want } => {
+                    exit = Fused::Host { id, argc, want };
                     break;
                 }
                 FastOp::Builtin { id, argc } => {
@@ -2863,34 +2903,7 @@ impl Vm {
                     }
                 }
             }
-            Op::CallHost { id, argc, want } => {
-                let at = self.stack.len() - usize::from(*argc);
-                if self.values_room_taken(usize::from(*argc)) {
-                    return Err(self.failed_with_args(ErrorKind::StackOverflow.into(), at));
-                }
-                if self.report_work {
-                    host.work(self.work());
-                }
-                host.set_data_pos(self.data_pos, self.own_frame().map(|f| f.def));
-                let results = host.call(*id, &self.stack[at..], *want);
-                self.data_moved(host);
-                let results = match results {
-                    Ok(results) => results,
-                    Err(e) => {
-                        let e = e.in_args(&self.stack[at..]);
-                        return Err(self.failed_with_args(e, at));
-                    }
-                };
-                if host.retry() {
-                    return Ok(Some(RETRY));
-                }
-                self.stack.truncate(at);
-                self.push_results(results, *want)?;
-                if self.report_work && host.out_of_time() {
-                    self.pc = next;
-                    return Ok(Some(Status::Running));
-                }
-            }
+            Op::CallHost { id, argc, want } => return self.host_call(host, *id, *argc, *want),
             Op::CallDyn { argc, want } => {
                 self.lookups += 1;
                 let args = self.pop_n((*argc).into());
@@ -3369,6 +3382,45 @@ impl Vm {
         }
     }
 
+    /// [`Op::CallHost`] at `pc`, for [`Vm::step`] and [`Vm::run_fast`]: the
+    /// arguments stay on the stack for the call, and an error takes them off.
+    #[inline(never)]
+    fn host_call(
+        &mut self,
+        host: &mut dyn Host,
+        id: u32,
+        argc: u8,
+        want: Want,
+    ) -> Result<Option<Status>> {
+        let at = self.stack.len() - usize::from(argc);
+        if self.values_room_taken(usize::from(argc)) {
+            return Err(self.failed_with_args(ErrorKind::StackOverflow.into(), at));
+        }
+        if self.report_work {
+            host.work(self.work());
+        }
+        host.set_data_pos(self.data_pos, self.own_frame().map(|f| f.def));
+        let results = host.call(id, &self.stack[at..], want);
+        self.data_moved(host);
+        let results = match results {
+            Ok(results) => results,
+            Err(e) => {
+                let e = e.in_args(&self.stack[at..]);
+                return Err(self.failed_with_args(e, at));
+            }
+        };
+        if host.retry() {
+            return Ok(Some(RETRY));
+        }
+        self.stack.truncate(at);
+        self.push_results(results, want)?;
+        self.pc += 1;
+        if self.report_work && host.out_of_time() {
+            return Ok(Some(Status::Running));
+        }
+        Ok(None)
+    }
+
     /// Returns false, leaving the stack alone, if the host asked for the
     /// call to be made again on the next frame.
     fn call_host(
@@ -3694,6 +3746,11 @@ enum Fused {
     },
     Return,
     ReturnValue,
+    Host {
+        id: u32,
+        argc: u8,
+        want: Want,
+    },
 }
 
 /// How much of [`STACK_SIZE`] a call of `info` takes.

@@ -98,6 +98,13 @@ pub enum FastOp {
     },
     /// RETURN with a value from a DEF called in the running slot.
     ReturnValue,
+    /// A call of a host's command or function, which [`crate::vm::Vm`]
+    /// makes as `code`'s instruction does, without leaving the fused code.
+    Host {
+        id: u32,
+        argc: u8,
+        want: Want,
+    },
     /// A call of one of the builtins [`crate::builtins::is_pure_call`]
     /// names, as a function.
     Builtin {
@@ -422,6 +429,7 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         Op::Return => add(F::Return, 1),
         Op::ReturnValue => add(F::ReturnValue, 1),
         Op::CallDef { def, argc, want } => add(F::CallDef { def, argc, want }, 1),
+        Op::CallHost { id, argc, want } => add(F::Host { id, argc, want }, 1),
         Op::CallBuiltin {
             id,
             argc,
