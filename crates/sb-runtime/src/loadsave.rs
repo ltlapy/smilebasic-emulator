@@ -328,6 +328,14 @@ impl Runtime {
                 }
                 Ok(vec![])
             }
+            // A name it cannot load is refused before the count of
+            // arguments and OUT variables.
+            (Command::Loadv, _, [spec, ..]) => {
+                let spec = checking(spec, || str_arg(spec))?;
+                check_file_name(&spec, 0)?;
+                value_type(&spec)?;
+                Err(no_form())
+            }
             (Command::Savev, Want::Outs(0), [spec, value]) => {
                 let spec = checking(spec, || str_arg(spec))?;
                 check_file_name(&spec, 0)?;

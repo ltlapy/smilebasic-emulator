@@ -45,6 +45,15 @@ fn a_number_for_a_string_is_numbered() {
     }
 }
 
+/// LOADV refuses a name it cannot load before it counts what it is given.
+#[test]
+fn loadv_checks_the_name_first() {
+    for source in ["LOADV \"X\" OUT A,B", "LOADV \"PNG:X\",1,2"] {
+        let e = run(source).expect_err(source);
+        assert_eq!(e.kind, ErrorKind::FileTypeMismatch, "{source}");
+    }
+}
+
 #[test]
 fn uistate_numbers_stop_at_5() {
     assert!(run("?UISTATE(5)").is_ok());
