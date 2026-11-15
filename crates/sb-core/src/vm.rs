@@ -3497,7 +3497,16 @@ impl Vm {
             return Ok(Some(RETRY));
         }
         self.stack.truncate(at);
-        self.push_results(results, want)?;
+        // As `push_results`, without going through a list for none or one.
+        if results.len() != want.count() {
+            return Err(ErrorKind::IllegalFunctionCall.into());
+        }
+        let mut results = results;
+        match results.len() {
+            0 => {}
+            1 => self.stack.push(results.pop().expect("one value")),
+            _ => self.stack.extend(results),
+        }
         self.pc += 1;
         if self.report_work && host.out_of_time() {
             return Ok(Some(Status::Running));
