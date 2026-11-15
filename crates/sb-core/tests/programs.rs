@@ -1983,6 +1983,29 @@ fn block_errors() {
     assert_eq!(at("WHILE 1\nDEF F\nEND\nWEND"), (E::WhileWithoutWend, 1));
     assert_eq!(at("IF 1 THEN DEF F"), (E::ThenWithoutEndif, 1));
     assert_eq!(at("?1\nDEF F\nDEF G\nEND\nEND"), (E::NestedDef, 3));
+    // The blocks in a one-line IF end with its line.
+    assert_eq!(output("IF 1 THEN FOR I=0 TO 2:?I;:NEXT:?"), "012\n");
+    assert_eq!(
+        at("?1\nIF 1 THEN FOR I=0 TO 1\nNEXT"),
+        (E::ForWithoutNext, 2)
+    );
+    assert_eq!(
+        at("IF 0 THEN ?0 ELSE WHILE 0\nWEND"),
+        (E::WhileWithoutWend, 1)
+    );
+    assert_eq!(
+        at("IF 1 THEN CASE 1\nWHEN 1\nENDCASE"),
+        (E::CaseWithoutEndcase, 1)
+    );
+    // An IF in it that goes on past the line takes its blocks along.
+    assert_eq!(
+        output("IF 1 THEN IF 1 THEN\nFOR I=0 TO 1\n?I;\nNEXT\nENDIF:?"),
+        "01\n"
+    );
+    assert_eq!(
+        output("IF 0 THEN ?0 ELSE\nREPEAT\n?1\nUNTIL 1\nENDIF"),
+        "1\n"
+    );
     // Closing keywords with nothing to close.
     assert_eq!(at("?1\nNEXT"), (E::NextWithoutFor, 2));
     assert_eq!(at("WHILE 1\nNEXT\nWEND"), (E::NextWithoutFor, 2));

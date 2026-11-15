@@ -117,6 +117,7 @@ pub fn parse_partial(source: &str, direct: bool) -> (Program, Option<ParseError>
         in_command_def: false,
         loops: Vec::new(),
         open: Vec::new(),
+        one_line: false,
         depth: 0,
         failed: None,
         direct,
@@ -139,6 +140,7 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseError> {
         in_command_def: false,
         loops: Vec::new(),
         open: Vec::new(),
+        one_line: false,
         depth: 0,
         failed: None,
         direct: false,
@@ -166,6 +168,8 @@ struct Parser {
     loops: Vec<Keyword>,
     /// The blocks being parsed, innermost last, but for DEF.
     open: Vec<Open>,
+    /// In a one-line IF, where the blocks it holds end with the line.
+    one_line: bool,
     /// The error of the statement that did not parse. The parse then
     /// stands at the end of the input, and the blocks around it close
     /// without their closing keywords.
@@ -352,11 +356,16 @@ impl Parser {
     fn block(&mut self, until: &[Keyword]) -> PResult<Vec<Stmt>> {
         let mut stmts = Vec::new();
         loop {
-            while matches!(self.peek(), TokenKind::Newline | TokenKind::Colon) {
+            while *self.peek() == TokenKind::Colon
+                || (*self.peek() == TokenKind::Newline && !self.one_line)
+            {
                 self.advance();
             }
             match self.peek() {
                 TokenKind::Eof => return Ok(stmts),
+                // A one-line IF ends with its line, and the blocks inside
+                // it with it.
+                TokenKind::Newline => return Ok(stmts),
                 TokenKind::Keyword(k) if until.contains(k) => return Ok(stmts),
                 // END closes a DEF; at top level it is the END statement.
                 TokenKind::Keyword(Keyword::End) if self.in_def => return Ok(stmts),
@@ -421,16 +430,31 @@ impl Parser {
 
     /// Statements of a one-line IF branch, up to the end of the line or ELSE.
     fn line_stmts(&mut self) -> PResult<Vec<Stmt>> {
+        let one_line = std::mem::replace(&mut self.one_line, true);
         let mut stmts = Vec::new();
-        loop {
+        let stmts = loop {
             if self.eat(&TokenKind::Colon) {
                 continue;
             }
             if self.at_stmt_end() {
-                return Ok(stmts);
+                break Ok(stmts);
             }
-            stmts.push(self.statement()?);
-        }
+            match self.statement() {
+                Ok(stmt) => stmts.push(stmt),
+                Err(e) => break Err(e),
+            }
+        };
+        self.one_line = one_line;
+        stmts
+    }
+
+    /// The blocks of an IF or ELSE that goes on past its line, which may
+    /// stand in a one-line IF: `IF A THEN IF B THEN` ends with an ENDIF.
+    fn lines<T>(&mut self, parse: impl FnOnce(&mut Self) -> PResult<T>) -> PResult<T> {
+        let one_line = std::mem::replace(&mut self.one_line, false);
+        let parsed = parse(self);
+        self.one_line = one_line;
+        parsed
     }
 
     // ---- statements ----
@@ -954,6 +978,13 @@ impl Parser {
             });
         }
 
+        self.lines(|p| p.if_block(cond, then))
+    }
+
+    /// The branches of an IF that goes on past its line.
+    fn if_block(&mut self, cond: Expr, then: Open) -> PResult<StmtKind> {
+        let at = then.at;
+        let mut branches = Vec::new();
         let ends = [Keyword::Elseif, Keyword::Else, Keyword::Endif];
         self.open.push(then);
         let body = self.block(&ends);
@@ -1042,7 +1073,7 @@ impl Parser {
             None
         } else if *self.peek() == TokenKind::Newline {
             // `ELSE` followed by a newline opens a block that ENDIF closes.
-            return Ok(Some(self.block_until(Keyword::Endif, block)?));
+            return Ok(Some(self.lines(|p| p.block_until(Keyword::Endif, block))?));
         } else {
             Some(self.one_line_branch(block)?)
         };
