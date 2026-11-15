@@ -589,7 +589,7 @@ const LAST_SLOT: usize = 5;
 /// A label string for GOTO, GOSUB and RESTORE, `"@NAME"` or `"n:@NAME"`
 /// with slot n of 0 to [`LAST_SLOT`], to the slot and `"NAME"`. Anything
 /// else is `Illegal label string`.
-fn label_string(value: &Value) -> Result<(Option<usize>, String)> {
+pub fn label_string(value: &Value) -> Result<(Option<usize>, String)> {
     let text = value.clone().into_str()?;
     let s = String::from_utf16_lossy(&text.borrow()).to_ascii_uppercase();
     let illegal = || Error::with_detail(ErrorKind::IllegalLabelString, format!("{s:?}"));

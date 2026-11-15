@@ -687,7 +687,8 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   labels, then the top level's, a later one included. `RESTORE "n:@L"` looks
   at the top level of slot n, also from a `DEF`. Another string than
   `"PUSH"`, `"POP"` or a label, such as `"L"` or `"6:@L"`, is
-  `Illegal label string`. `COPY` from `"@L"` looks as `RESTORE "@L"` does.
+  `Illegal label string`. `SPDEF`, `SPANIM` and `BGMSETD` take their DATA
+  label strings the same way, and `COPY` from `"@L"` finds the label so too.
   (Not yet seen on hardware.)
 - There is one `READ` place for all slots. A `READ` in another slot's
   `COMMON DEF` reads on from the running program's place: a program in slot 3

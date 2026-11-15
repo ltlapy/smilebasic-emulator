@@ -515,6 +515,11 @@ fn label_data_finds_the_labels_of_the_def_running() {
     assert_eq!(out, "5799");
     let (_, out) = run("SPDEF \"@D\"\nDEF F\n@D:DATA 1,5,5,16,16,0,0,1\nEND");
     assert!(out.starts_with("Undefined label"), "{out}");
+    // The label string is parsed as RESTORE's is.
+    for bad in ["D", "6:@D", "X:@D"] {
+        let (_, out) = run(&format!("SPDEF \"{bad}\"\n@D:DATA 1,5,5,16,16,0,0,1"));
+        assert!(out.starts_with("Illegal label string"), "{bad}: {out}");
+    }
 }
 
 #[test]
