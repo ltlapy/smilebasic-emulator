@@ -186,6 +186,10 @@ pub enum FastOp {
         to: Var,
         to_slot: Var,
         exit: Addr,
+        /// Whether `step` and `to` are places apart from `var`, `step_slot`
+        /// and `to_slot`, as nearly always, so that reading them before
+        /// any of those is written reads the same.
+        apart: bool,
     },
 }
 
@@ -396,6 +400,9 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
         && let (Some(var), Some(step_slot), Some(to_slot)) =
             (Var::of(var), Var::of(step_slot), Var::of(to_slot))
     {
+        let apart = [step, to]
+            .iter()
+            .all(|v| ![var, step_slot, to_slot].contains(v));
         add(
             F::ForNext {
                 var,
@@ -404,6 +411,7 @@ fn forms(code: &[Op], c: &mut Constants, add: &mut dyn FnMut(FastOp, usize)) {
                 to,
                 to_slot,
                 exit,
+                apart,
             },
             14,
         );

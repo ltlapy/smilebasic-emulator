@@ -1815,7 +1815,26 @@ impl Vm {
                     to,
                     to_slot,
                     exit,
+                    apart,
                 } => {
+                    // Integers, as nearly all FORs count: what the general
+                    // steps below do on them, each value read once.
+                    if apart
+                        && let (Value::Int(v), Value::Int(s0)) =
+                            (get(vars, var), get(vars, step_slot))
+                        && let Some(n) = v.checked_add(*s0)
+                        && let (&Value::Int(s), &Value::Int(t)) = (get(vars, step), get(vars, to))
+                    {
+                        put(at_var(vars, var), Num::Int(n));
+                        put(at_var(vars, step_slot), Num::Int(s));
+                        put(at_var(vars, to_slot), Num::Int(t));
+                        if !(if s >= 0 { n <= t } else { n >= t }) {
+                            next = exit as usize;
+                        }
+                        pc = next;
+                        left -= len;
+                        continue;
+                    }
                     let n =
                         ops::binary_numbers(BinaryOp::Add, get(vars, var), get(vars, step_slot));
                     let Some(n) = n else { break };

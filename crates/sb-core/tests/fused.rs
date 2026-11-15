@@ -192,6 +192,11 @@ const PROGRAMS: &[&str] = &[
     "X$=\"A\"\n?1:Y=ABS(X$):?2",
     "DIM M$[2]\n?1:Y=MAX(M$):?2",
     "X=2\n?1:Y=ASIN(X):?2",
+    // FORs whose TO or STEP is the counter, and counters that overflow.
+    "J=2:FOR K=0 TO 9 STEP J:J=J+1:?K:NEXT:FOR K=0 TO 3 STEP K+1:?K:NEXT",
+    "I=3:FOR I=0 TO I:?I:IF I>5 THEN BREAK\nNEXT",
+    "FOR I%=2147483640 TO 2147483647 STEP 3:?I%:NEXT:?I%",
+    "FOR I=5 TO 1 STEP -1:?I:NEXT:FOR I=1 TO 0:?\"NO\":NEXT:?I",
 ];
 
 const DEF_OUT: &str = "\
