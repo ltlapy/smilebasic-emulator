@@ -1669,6 +1669,16 @@ fn long_constant_strings_stop_the_program_compiling() {
     assert_eq!(output("N=1<<21:A$=\"A\"*N:?LEN(A$)"), "2097152\n");
 }
 
+/// `#_LINE` is 0 in a line typed in DIRECT mode.
+#[test]
+fn direct_mode_line_is_0() {
+    let mut host = TextHost::default();
+    let compiled = sb_core::compile_direct("?#_LINE;#_LINE+1", &host, 0).unwrap();
+    let status = Vm::new(compiled).run(&mut host, 1000).unwrap();
+    assert_eq!(status, Status::Ended);
+    assert_eq!(host.output, "01\n");
+}
+
 /// Direct mode has far less code memory than a slot (TEST57).
 #[test]
 fn direct_mode_has_little_code_memory() {

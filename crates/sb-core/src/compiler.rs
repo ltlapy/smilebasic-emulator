@@ -358,6 +358,8 @@ impl Compiler<'_> {
             return Ok(v.clone());
         }
         match name {
+            // 0 in DIRECT mode.
+            "_LINE" if self.direct => return Ok(Literal::Int(0)),
             "_LINE" => return Ok(Literal::Int(self.line as i32)),
             "_SLOT" => return Ok(Literal::Int(self.slot)),
             // PRGNAME$'s name in a program, empty in direct mode.
