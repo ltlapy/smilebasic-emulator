@@ -184,6 +184,45 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   (4.4.8). A compile error in a statement comes before a `Syntax error` in a
   later one: `?#ZZ:?(` is `Undefined constant`, and so is `IF #ZZ THEN ?(`.
   (Not yet seen on hardware.)
+- A block that does not close is its
+  own error, on the line its statement starts on, as the program compiles:
+  `FOR without NEXT` (20), `WHILE without WEND` (24), `REPEAT without UNTIL`
+  (22), `LOOP without ENDLOOP` (54), `CASE without ENDCASE` (62) and
+  `THEN without ENDIF` (26). After an `ELSE` it is `ELSE without ENDIF` (27),
+  still on the `IF`'s line, and `ELSEIF` keeps 26. A `DEF` with no `END` is
+  `DEF without END` (29) on the `DEF`'s line. Of blocks inside each other,
+  the innermost is named. The statements before the end compile first, so an
+  `Undefined constant` in the block comes before it. (Not yet seen on
+  hardware.)
+- By the same, a `DEF` that starts inside a block, or a `DEF`'s `END` inside
+  one, is that block's error: `FOR I=0 TO 9`, `DEF F` is `FOR without NEXT`
+  on the `FOR`'s line, and so is a `DEF`'s `END` before its `NEXT`.
+  `IF A THEN END` in a `DEF` is `THEN without ENDIF`. A `DEF` inside a `DEF`
+  is `Nested DEF` (32), on the inner one's line. (Not yet seen on hardware.)
+- By the same, a closing keyword with no block of its own to close is an
+  error on its line: `NEXT without FOR` (21), `WEND without WHILE` (25),
+  `ENDLOOP without LOOP` (55), `UNTIL without REPEAT` (23), `ENDIF without
+  IF` (28), `WHEN without CASE` (59), `OTHERWISE without CASE` (60) and
+  `ENDCASE without CASE` (61). `NEXT`, `WEND` and `ENDLOOP` look past `IF`s
+  and `CASE`s to the innermost loop, which has to be theirs; the others look
+  at the innermost block only, so an `UNTIL` inside an `IF` is error 23, and
+  so is an `ENDIF` inside a `FOR` error 28. A stray `ELSE` or `ELSEIF` is a
+  `Syntax error`, on the line of the block it stands in. (Not yet seen on
+  hardware.)
+- By the same, a one-line `IF` lasts until its line ends, and so do the
+  blocks it holds: `IF A THEN FOR I=0 TO 9` with the `NEXT` on a later line
+  is `FOR without NEXT`. An `IF` or `ELSE` in it that goes on past the line
+  takes its blocks along: `IF A THEN IF B THEN` ends at an `ENDIF`. (Not yet
+  seen on hardware.)
+- `BREAK` and `CONTINUE` outside a loop are a `Syntax error` as the program
+  compiles. (Not yet seen on
+  hardware.)
+- `CASE` takes `WHEN` or `OTHERWISE` next, on its line or a later one:
+  `CASE A:ENDCASE` is a `Syntax error`, on the `ENDCASE`'s line. (Not yet seen on hardware.)
+- A call with more than 254 arguments or `OUT` variables, and a `DEF` with
+  more than 254 parameters or `OUT`s, is `Too many arguments`, error 48, as
+  the program compiles. (Not yet seen
+  on hardware.)
 - `CONST` or `ENUM` of a built-in constant's name is `Duplicate constant`,
   error 49, as the program compiles: `CONST #ON=#C_YELLOW,#OFF=#C_WHITE` on
   line 38 of slot 0 stops with `Duplicate constant in 0:38` (checked on
@@ -201,6 +240,9 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   is `Type mismatch`. These errors, and `Type mismatch` for a string, are
   placed at the value's first operand: at `1.5` in `-1.5`, at `1` in
   `(1)+0.5`. (Not yet seen on hardware.)
+- A `CONST` or `ENUM` value that is not worked out as the program compiles,
+  such as `CONST #A=Z`, is `Illegal constant expression`, error 51. In `DATA` it is a `Syntax error`. (Not
+  yet seen on hardware.)
 
 ### Statements, literals and names
 
@@ -267,6 +309,18 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   - `RETURN UNDECLARED` compiles too, under `OPTION STRICT` (SMILEBOY).
 - A function that ends without `RETURN`, or leaves by a bare one, gives no
   value: `TYPEOF` 0 (TEST62).
+- `DEFARG()`, `DEFARGC()`, `DEFOUTC()`,
+  `CHKLABEL()`, `CHKCALL()` and `CHKVAR()` are compiled in place, not called.
+  As the program compiles, another number of arguments is
+  `Wrong number of arguments`, and then the `DEF` ones outside a `DEF` are
+  `Can't use outside DEF`, error 56. `DEFOUT` outside a `DEF` is error 56
+  too, before what follows it is read. `CALLIDX(1)` is called, and is
+  `Wrong number of arguments` when it runs. (Not yet seen on hardware.)
+- By the same, all of them called as commands, as `CHKVAR "A" OUT F` or
+  `DEFARGC OUT N`, run their handlers, which check as they run: two `OUT`s
+  are `Wrong number of OUT arguments`. `DEFARG 0 OUT A` outside a `DEF` is
+  error 56 as it runs, while `DEFARGC` and `DEFOUTC` give 0 there. (Not yet
+  seen on hardware.)
 - A `DEF` with the name of a system function is `Duplicate function` when the
   program compiles, at the `DEF`, as two `DEF`s of one name are:
   `DEF LAST(T)` on line 41 of slot 3 is `Duplicate function in 3:41` (TEST71).
@@ -565,6 +619,9 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   waits 2 frames (TEST71S).
 - `WAIT`, `WAIT 0` included, starts `VSYNC`'s count anew; waiting in `INPUT`
   does not.
+- `VSYNC` and `WAIT` read only their first argument: `VSYNC 1,2` waits a
+  frame. An `OUT` variable is `Wrong number of OUT arguments` as the call
+  runs. (Not yet seen on hardware.)
 - `RUN` leaves `VSYNC`'s count where it was, so the first `VSYNC` of a program,
   `VSYNC 5` too, finds its frames gone by: `T=MAINCNT():VSYNC 5:?MAINCNT()-T` as
   a program's first line prints 0 (TEST62, on a Switch 2). A subprogram's first
