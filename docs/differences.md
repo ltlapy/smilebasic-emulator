@@ -470,6 +470,11 @@ For a subprogram's screen, see `FADE` under
   `TLOAD`'s, `TSAVE`'s, `GLOAD`'s and `GSAVE`'s sizes, `ENVSAVE`'s kind and
   the offset and count of `COPY`'s function form. Other errors found by
   checking several arguments together give -1, which SmileBASIC 4 may number.
+- `FFT` and `IFFT` refuse a first array shorter than the others with
+  `Illegal function call` naming it. SmileBASIC 4 does not look at its length
+  and writes all the results into it.
+- `RESIZE` of the array `GARRAY` or `TARRAY` gives goes ahead. SmileBASIC 4
+  refuses it with `Can't RESIZE this array`.
 - `Internal Error`: if the emulator itself fails while a program runs, it stops
   the program and prints `Internal Error` with the reason, keeping the slots and
   the editor's text. The stopped program cannot go on with `CONT`. SmileBASIC 4

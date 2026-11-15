@@ -542,9 +542,33 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   round, so equal keys come out reversed.
 - `SORT` orders strings by character code: `""`, `"A"`, `"AA"`, `"B"`, `"a"`,
   `"b"`.
+- `SORT` and `RSORT` take their form from the first argument. A number needs a
+  count and an array after it: `SORT 0,1` is `Wrong number of arguments`, as
+  are more than eight arrays. Each array must be one-dimensional (else
+  `Type mismatch`) and hold the start and the count (else `Out of range`), both
+  naming it: `SORT 1,3,A,B` with `B` of 3 elements is `(SORT:4)`. The start must
+  be inside the array, so `SORT E` of an empty array is `Out of range`, and so
+  is `SORT 4,0,A` of 4 elements. `SORT OUT Q` is `Wrong number of arguments`,
+  `SORT A OUT Q` `Wrong number of OUT arguments`. (Not yet seen on hardware.)
 - `RESIZE` of a 2D array takes every size, the later ones as they are:
   `RESIZE A,3` on `DIM A[2,3]` is `Wrong number of arguments`, and changing a
   later size `Illegal function call`.
+- `RESIZE` looks at each size in turn. Past 2^30 elements so far it is
+  `Array is too large`, error 47, naming the size; a negative size counts as
+  far too large, unless a 0 came before it: `RESIZE A,-1` is `(RESIZE:2)`.
+  Exactly 2^30 elements is error 47 naming nothing. A later size other than the
+  array's is `Illegal function call` naming it: `RESIZE A,2,4` on `DIM A[2,3]`
+  is `(RESIZE:3)`. (Not yet seen
+  on hardware.)
+- `RESIZE` of the array `GARRAY` or `TARRAY` gives is `Can't RESIZE this
+  array`, error 65: those arrays are the system's own memory. (Not yet seen on hardware.) The emulator
+  resizes them.
+- `ARRAY%`, `ARRAY#` and `ARRAY$` with a 0 among two sizes or more are
+  `Subscript out of range` naming the 0: `ARRAY%(2,0)` is `(ARRAY%:2)`.
+  `ARRAY%(0)` is an empty array. (Not yet seen on hardware.)
+- `MIN` and `MAX` take one argument only as an array: `MIN(1)` is
+  `Type mismatch (MIN:1)`. An empty array is `Illegal function call`, a string
+  array `Type mismatch`, neither naming it. (Not yet seen on hardware.)
 - `RESIZE A,0,3` on `DIM A[1,3]` leaves `LEN` 0 and `DIM(A,0)` 0, and `SAVEV`
   and `LOADV` bring that back (TEST51).
 - `LOADV` loads array files with a zero in any size and keeps the sizes: `[0,3]`
@@ -635,6 +659,10 @@ side effects (a DEF that prints, `RND`, `INKEY$`, `BEEP`):
   DATA: slot 3 read 11, a `COMMON DEF` of slot 1 read on with 12, slot 3 with
   13, and after `RESTORE "1:@OTHER"` the `COMMON DEF` read 21 (TEST72).
 - `RESTORE "POP"` with nothing kept by `RESTORE "PUSH"` is `Stack underflow`.
+- `RESTORE "PUSH"`, `GOSUB` and DEF calls share one stack, and `RESTORE "POP"`
+  takes only a place on top of it: in a subroutine or DEF that kept none since
+  it was called, it is `Use RESTORE PUSH before RESTORE POP`, error 119, even
+  with places kept before the call. (Not yet seen on hardware.)
 - `RESTORE "PUSH"` can keep a thousand places, and many more: see the stack
   under `DEF`, `OUT` and `RETURN`. A subroutine that keeps a place must take it
   back before `RETURN`, which is otherwise `Use RESTORE POP before RETURN`.
@@ -2184,6 +2212,14 @@ Expected but not yet seen on hardware:
   window type out of 0 to 3 `Out of range (FFTWFN:2)`. `FFTWFN` looks at the
   length before the window type, and `BIQUAD` at the channels before the
   coefficients. (Not yet seen on hardware.)
+- `FFTWFN`'s window and the coefficients of `BQPARAM` and `BIQUAD` must be real
+  arrays: an int array is `Type mismatch`, `(FFTWFN:1)`, `(BQPARAM:1)` and
+  `(BIQUAD:3)`. `FFT`'s window too, `(FFT:5)`. `BIQUAD`'s sounds may be ints. (Not yet seen on hardware.)
+- `FFT` and `IFFT` take the length from the third array, the input's real part.
+  Not a power of two is `Illegal function call` naming nothing; a later array of
+  another length is named, as `(FFT:2)`. The first array's length is not looked
+  at. (Not yet seen on
+  hardware.)
 
 ## DIRECT mode
 
