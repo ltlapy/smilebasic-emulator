@@ -425,6 +425,29 @@ fn recsave_names_an_array_it_cannot_fill() {
     assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, Some(1)));
 }
 
+/// RECSAVE, which gives its array a new size, refuses GARRAY's and TARRAY's
+/// after looking at the count and the array's type.
+#[test]
+fn recsave_refuses_an_array_of_the_system() {
+    let mut rt = runtime();
+    for source in ["G=GARRAY(0):RECSAVE G,0", "T=TARRAY(1):U=T:RECSAVE U"] {
+        let e = run_on(&mut rt, source).unwrap_err();
+        let want = (ErrorKind::CantResizeThisArray, Some(0));
+        assert_eq!((e.kind, e.arg), want, "{source}");
+    }
+    let e = run_on(&mut rt, "RECSAVE GARRAY(0),\"\"").unwrap_err();
+    assert_eq!((e.kind, e.arg), (ErrorKind::TypeMismatch, Some(1)));
+    assert_eq!(
+        run_on(&mut rt, "?DIM(GARRAY(0),0);\",\";DIM(TARRAY(1),1)").unwrap(),
+        "2048,50"
+    );
+    // The program's own arrays take the size.
+    assert_eq!(
+        run_on(&mut rt, "DIM A[2,9]:RECSAVE A,0:?DIM(A,1)").unwrap(),
+        "0"
+    );
+}
+
 /// CHKMML reads macros that BGMPLAY would refuse for how much they copy.
 #[test]
 fn chkmml_takes_macros_bgmplay_refuses() {

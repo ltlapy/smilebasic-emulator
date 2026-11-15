@@ -853,6 +853,10 @@ impl Runtime {
                 if elem == ElemType::Str || a.dims.len() > 2 {
                     return Err(Error::new(ErrorKind::TypeMismatch).of_arg(0));
                 }
+                // An array of the system's cannot take a new size.
+                if a.system {
+                    return Err(Error::new(ErrorKind::CantResizeThisArray).of_arg(0));
+                }
                 // The array takes the size of what it gets.
                 match a.dims.len() {
                     1 => {
