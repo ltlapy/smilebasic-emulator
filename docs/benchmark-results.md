@@ -1,9 +1,9 @@
 # Benchmark results
 
 [benchmarking.md](benchmarking.md) says how to take these numbers. They date
-from 2026-11-05, except the handheld set, from 2026-11-15. Each set says what
-it ran on and which commits it compares. Compare rows within one table, as
-frame counts differ between sets.
+from 2026-11-05, except the handheld sets, from 2026-11-15 and 2026-11-16.
+Each set says what it ran on and which commits it compares. Compare rows
+within one table, as frame counts differ between sets.
 
 ## The CPU path on weak machines
 
@@ -209,7 +209,11 @@ Each scene of TPERF ran alone (`#ONLY`), with `--bench --fixed 80 --log`, the
 median of `run_us` over frames 10 to 69, the best of three runs on the device
 and of three to five on the desktop, pinned to one core. `run_us` is the
 program's part of the frame with its sound, which is silent here. The
-desktop's times swing with its load; its instruction counts do not.
+desktop's times swing with its load; its instruction counts do not. The
+device's first two sessions ran unpinned; the later ones, for the
+[layout set](#code-layout-on-the-handheld-44fd91e-to-314459c) and the
+[chains](#three-address-chains-from-018017d), ran with the system's front end
+stopped and the benchmark pinned to one core.
 
 The device ran `44fd91e`, an older `main`. The interpreter changed little up
 to `cc49c48`: up to 5% fewer instructions on loops of DEF calls and GOSUBs,
@@ -304,21 +308,28 @@ by under 0.5%:
 | GCOPY | 21.52 | 21.67 | +0.7% |
 
 The same on aarch64, qemu's exact count over frames 3 to 5 (program and CPU
-drawing), and the device's time each would give at the ratio of the counts.
-The device has not run the branch yet.
+drawing), and the device's times. The device ran `44fd91e` and `314459c`,
+which take in the branch and the error-number work around it, in one
+session, with the system's front end running (about 6% of a core). Every
+checksum is the same.
 
-| Scene | `cc49c48` (M) | Branch (M) | Change | Device (ms), at that ratio |
-|---|---|---|---|---|
-| VINT | 11.02 | 10.35 | -6.1% | 10.6 to 9.9 |
-| VREAL | 12.89 | 9.18 | -28.8% | 14.1 to 10.1 |
-| VSTR | 14.13 | 13.29 | -6.0% | 17.1 to 16.1 |
-| VARRAY | 20.40 | 20.39 | -0.1% | 22.0 |
-| VDEF | 7.74 | 7.73 | -0.2% | 8.1 |
-| GCIRCLE | 32.31 | 16.86 | -47.8% | 28.4 to 14.8 |
-| GAME | 20.45 | 20.59 | +0.7% | 9.3 to 9.4 |
+| Scene | `cc49c48` (M) | Branch (M) | Change | Device, `44fd91e` (ms) | Device, `314459c` (ms) | Change |
+|---|---|---|---|---|---|---|
+| VINT | 11.02 | 10.35 | -6.1% | 10.55 | 9.84 | -6.8% |
+| VREAL | 12.89 | 9.18 | -28.8% | 14.14 | 9.01 | -36.3% |
+| VSTR | 14.13 | 13.29 | -6.0% | 17.31 | 17.03 | -1.6% |
+| VARRAY | 20.40 | 20.39 | -0.1% | 22.16 | 22.46 | +1.4% |
+| VDEF | 7.74 | 7.73 | -0.2% | 8.06 | 8.23 | +2.1% |
+| GCIRCLE | 32.31 | 16.86 | -47.8% | 28.09 | 14.16 | -49.6% |
+| GAME | 20.45 | 20.59 | +0.7% | 9.37 | 9.14 | -2.4% |
 
 GAME's +0.7% and GCOPY's +0.7% on x86-64 come from LLVM laying out
-`run_fused`'s registers anew; neither scene's own steps changed.
+`run_fused`'s registers anew; neither scene's own steps changed. The other
+scenes moved by under 7% on the device, except three sprite scenes, which
+came out slower: SPMOVE +5.8%, SPROT +8.4%, SPHIT +8.5%. Run again with the
+front end stopped and pinned, in two rounds of five runs alternating the
+builds, they came to +2.4%, +7.5% and +7.4%. That is code layout, not work, as the
+[layout set](#code-layout-on-the-handheld-44fd91e-to-314459c) shows.
 
 What changed:
 
@@ -353,9 +364,15 @@ qemu counts only:
 except the CRC and crypto ones, which nothing here asks for; with
 `-C target-feature=-aes,-sha2,-crc` it only tunes, for the A35's pipeline,
 and runs on any aarch64. What tuning gains is the order of instructions on an
-in-order core, which qemu does not time, so it waits for a run on the device.
-Profile-guided optimization needs `llvm-profdata`, which the toolchain here
-lacks (rustup's `llvm-tools` component has it); the aarch64 standard library
+in-order core, which qemu does not time. On the device, each build ran every
+scene once, best of three, against the plain `dist` build of `314459c` in the
+same session. Leaving out GFILL, GCOPY, GLOAD and GUPLOAD, whose times fall
+in two clusters ([benchmarking.md](benchmarking.md#measuring-on-a-handheld)),
+`cortex-a35` with `-aes,-sha2,-crc` was 1.4% slower by geometric mean, with
+5 scenes faster by more than 1% and 18 slower (GPUTCHR +9.7%, GALPHA +4.9%),
+and `opt-level=2` 0.1% faster, with 11 faster and 15 slower, by swings of 4
+to 7% either way that look like layout. Neither is adopted. Profile-guided
+optimization needs `llvm-profdata`, which the toolchain here lacks (rustup's `llvm-tools` component has it); the aarch64 standard library
 ships the profiler runtime, so an instrumented build can run under qemu.
 
 Larger changes, not made, by what they would save against what they cost:
@@ -380,7 +397,7 @@ Larger changes, not made, by what they would save against what they cost:
   their operands and their result, with the operator in the step's own kind
   instead of a second switch: about half the steps and indirect branches an
   iteration of VINT, perhaps 30 to 40% of the interpreter's time. Made as
-  the chains of the next set, it took VINT's loop from 8 entries to 2 but its
+  the [chains](#three-address-chains-from-018017d) below, it took VINT's loop from 8 entries to 2 but its
   instructions down by 12%, as reading and writing a variable, not choosing
   an entry, is most of what a step costs.
 - **Values of 8 bytes** (NaN-boxing, or a separate tag array): halves the
@@ -390,12 +407,56 @@ Larger changes, not made, by what they would save against what they cost:
   loops, and the largest risk: writable code memory for untrusted programs,
   per CPU architecture.
 
+### Code layout on the handheld, `44fd91e` to `314459c`
+
+This set ran on the handheld of the set above, with the front end stopped
+and the benchmark pinned, on 16 builds of the commits from `44fd91e` to
+`314459c`, with the method of that set. Instruction counts come from qemu's Cortex-A35 model over frames 3
+to 5, program and CPU drawing. It explains why SPMOVE, SPROT and SPHIT came
+out slower in the handheld set: where the code lies, not what it runs.
+
+| Scene | qemu (M) | Of which drawing (M) | Device, best of three (ms) |
+|---|---|---|---|
+| SPMOVE | 219.79 to 220.26 | 196.43 | 11.42 to 11.94 |
+| SPROT | 659.59 to 660.07 | 644.48 | 6.94 to 7.67 |
+| SPHIT | 154.22 to 154.71 | 80.14 | 25.73 to 27.96 |
+
+The drawing's count is the same in each of the four builds whose count was
+split by function, and `run_us` leaves drawing out. So the program's part
+moves by under 0.5 million instructions, at most 3% of it, while the
+device's times move by 4 to 11%. SPHIT's hot functions, `Sprites::next_hit` and
+`collision::sweep`, run the same number of instructions in each of those
+builds. The times move up and down along the history with no lasting step.
+SPHIT's last step, to 27.96 ms, came with `d74d9ba`, which changes only
+LOADV code that the scene never runs.
+
+Functions are aligned to 4 bytes, so any commit moves the code after it.
+Builds whose hot functions start at the same place in a 64-byte line take
+alike: with `next_hit` and `sweep` at bytes 44 and 16 of a line, SPHIT took
+25.97 to 26.43 ms in four builds; at 28 and 0, 25.82 and 25.87; at 52 and
+24, 26.62 and 26.95.
+
+A simulated instruction cache of 32 KB, 2 ways and 64-byte lines, run over
+qemu's trace of three frames, misses 85 thousand times in SPMOVE at
+`44fd91e` and 168 thousand at `314459c`, and 26 and 127 thousand times in
+SPROT. At 10 to 15 cycles a miss, that accounts for most of those two
+scenes' change. SPHIT's misses grow by only 12 thousand a frame; its extra
+time comes to about 8 to 9 cycles on each pass of its scan loop, the cost of
+one missed branch. The device's kernel has no performance counters to
+confirm it.
+
+One change in the range is real work: SPROT's program part gained about
+1.5% instructions in `44fd91e..3ff6177`, which adds a check of the sprite
+number before each SPOFS, SPROT and SPSCALE. A fast path for that check is
+under [Tried and left out](#tried-and-left-out).
+
 ### Three-address chains, from `018017d`
 
-This set counts instructions only: x86-64 with `perf stat -e instructions:u`
-on the `release` build, and aarch64 with qemu's Cortex-A35 model on the
-`dist` build cross-built by `tools/build_handheld.py`, one instruction a
-block, counted from the `exec` log under `setarch -R`. Without `setarch -R`
+This set counts instructions, and ends with the handheld's times. Counts
+come from x86-64 with `perf stat -e instructions:u` on the `release` build,
+and aarch64 with qemu's Cortex-A35 model on the `dist` build cross-built by
+`tools/build_handheld.py`, one instruction a block, counted from the `exec`
+log under `setarch -R`. Without `setarch -R`
 the address space moves between runs, and a loop's count with it by up to
 10%. Scenes are TPERF's, run alone with `#ONLY`: x86-64 over frames 3 to 83,
 aarch64 over frames 3 to 6. Loops are small programs run 3200 and 6400 times
@@ -515,10 +576,57 @@ this build; in `018017d`'s the table's address was reloaded from the stack
 for every entry. That is LLVM's choice and may change with the code around
 it or the compiler's version.
 
-`run_fast` grew from 27.2 KB to 40.9 KB of aarch64 code, against the A35's
-32 KB instruction cache. A loop runs only the entries and steps it uses, so
-what this costs depends on the program; qemu's counts do not show it, and a
-run on the device would.
+`run_fast` grew from 27.2 KB to 40.9 KB of aarch64 code, past the A35's
+32 KB instruction cache. A loop runs only the entries and steps it uses, and
+the device's times below show no cost from the size.
+
+The handheld of the handheld set ran `018017d` and the branch as merged,
+`0dc842c`, with that set's method, quiet and pinned. Every checksum is the
+same.
+
+| Scene | `018017d` (ms) | `0dc842c` (ms) | Change |
+|---|---|---|---|
+| VINT | 9.96 | 8.27 | -17.0% |
+| VREAL | 8.74 | 7.35 | -15.9% |
+| VSTR | 15.71 | 15.33 | -2.4% |
+| VARRAY | 21.71 | 13.41 | -38.2% |
+| VDEF | 7.69 | 7.36 | -4.2% |
+| VVAR | 41.38 | 44.04 | +6.4% |
+| SPMOVE | 11.95 | 10.59 | -11.5% |
+| SPROT | 7.58 | 7.35 | -3.1% |
+| SPCHURN | 30.57 | 29.54 | -3.4% |
+| SPHIT | 26.26 | 25.98 | -1.1% |
+| SPANIM | 8.02 | 7.93 | -1.2% |
+| TPRINT | 3.44 | 3.51 | +2.2% |
+| TPUT | 18.34 | 17.95 | -2.2% |
+| TSCROLL | 4.28 | 4.25 | -0.8% |
+| TMULTI | 0.73 | 0.73 | 0.0% |
+| GFILL | 12.54 | 13.81 | +10.1% |
+| GALPHA | 60.35 | 60.32 | -0.1% |
+| GLINE | 18.99 | 19.00 | 0.0% |
+| GCIRCLE | 14.28 | 14.12 | -1.1% |
+| GTRI | 21.81 | 21.91 | +0.5% |
+| GPUTCHR | 12.00 | 12.19 | +1.6% |
+| GCOPY | 54.95 | 54.41 | -1.0% |
+| GLOAD | 2.57 | 2.57 | +0.1% |
+| GUPLOAD | 0.22 | 0.21 | -7.8% |
+| GARRAY | 12.64 | 10.19 | -19.4% |
+| LCOMP | 0.89 | 0.86 | -3.1% |
+| LBLUR | 0.53 | 0.52 | -1.9% |
+| LMOSAIC | 0.49 | 0.48 | -1.6% |
+| LCOLOR | 0.63 | 0.61 | -2.6% |
+| LMATRIX | 0.66 | 0.63 | -4.0% |
+| LRASTER | 1.45 | 1.06 | -26.9% |
+| GAME | 9.16 | 8.73 | -4.7% |
+
+The device gains as much as the aarch64 counts say or more: VINT -17.0%
+against -11.8% of instructions, VREAL -15.9% against -15.9%, VARRAY -38.2%
+against -32.1%, VDEF -4.2% against -4.3%, GAME -4.7% against -1.7%.
+SPMOVE, GARRAY and LRASTER, whose loops work on array elements as VARRAY's
+does, gain 11 to 27%. VVAR's +6.4% is within the
+[noise of code layout](benchmarking.md#measuring-on-a-handheld), and GFILL's
++10.1% and GUPLOAD's -7.8% within that of their two clusters. The other
+scenes move by 4% or less.
 
 ## Tried and left out
 
@@ -559,11 +667,15 @@ Each of these was measured and not kept.
   2426 x86-64 instructions an iteration and one of scalar reals from 652 to
   683; the weighting in `fuse.rs` takes a chain only where it leaves out an
   entry (2026-11-16).
-- **`-C target-cpu=cortex-a35` and `opt-level`** were counted under qemu
-  only (see the handheld set): `cortex-a35` adds 0 to 2% instructions,
-  `opt-level=2` moves loops by -3 to +4% and shrinks `run_fast` by 13%,
-  `opt-level=s` adds 6 to 14%. Their times on the device are not known, so
-  `dist` stays as it is.
+- **`-C target-cpu=cortex-a35` and `opt-level`** (see the handheld set).
+  Under qemu, `cortex-a35` adds 0 to 2% instructions, `opt-level=2` moves
+  loops by -3 to +4% and shrinks `run_fast` by 13%, and `opt-level=s` adds 6
+  to 14%. On the device, `cortex-a35` with `-aes,-sha2,-crc` ran 1.4% slower
+  by geometric mean, and `opt-level=2` 0.1% faster, within the noise of code
+  layout. `dist` stays as it is (2026-11-16).
+- **A fast path for the sprite-number check** before SPOFS, SPROT and
+  SPSCALE: it saved about 5 aarch64 instructions a call, and SPROT's time
+  on the device did not change (2026-11-16).
 - **Comparing scenes to skip a frame:** the emulator draws a frame only after
   a command changed what shows. Of about 1100 frames each in five projects, 0
   to 3 had a scene, pages and cells like the last, so a hash would cost every

@@ -670,6 +670,25 @@ commands, including one for the GPU path under GLES2.
 On such a core, trust instruction, cache-miss and branch-miss counts over a
 desktop's times. [benchmark-results.md](benchmark-results.md) says why.
 
+For times on the device, stop the system's front end, pin the benchmark to
+one core (`taskset -c N`), run each TPERF scene alone with
+`--bench --fixed 80 --log`, and take the median of `run_us` over frames 10
+to 69, best of three runs. On an RK3326's Cortex-A35, read the results this
+way:
+
+- One binary repeats within about 1% from session to session.
+- Between two builds, a difference under about 10% on a scene that spends
+  its time in a hot loop is noise unless the exact instruction counts,
+  qemu's below, move with it. Functions are aligned to 4 bytes, so any
+  commit moves the code after it, and how the hot code falls into cache
+  lines changes the time. SPHIT took 25.7 to 28.0 ms in 16 builds that ran
+  the same instructions
+  ([benchmark-results.md](benchmark-results.md#code-layout-on-the-handheld-44fd91e-to-314459c)).
+- GFILL, GCOPY, GLOAD and GUPLOAD give two clusters of times for one
+  binary: three runs of GCOPY took 45.6, 46.4 and 55.3 ms, and of GLOAD
+  2.09, 2.56 and 2.57. Where a run's page buffers land in memory is the
+  likely cause. Give these scenes five runs or more.
+
 Without the device, qemu counts the aarch64 build's instructions exactly:
 with one instruction a block and no chaining, its `exec` log has one line
 for each instruction run, so counting the lines counts them. Write the log
