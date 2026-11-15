@@ -574,6 +574,22 @@ fn slot_and_name(value: &Value) -> Result<(Option<usize>, String)> {
     Ok((slot, rest.strip_prefix('@').unwrap_or(rest).to_string()))
 }
 
+/// An error in argument `arg` of `command`, named as SmileBASIC 4 does.
+#[cold]
+fn arg_error(e: Error, arg: usize, command: &str) -> Error {
+    e.of_arg(arg).of_command(command)
+}
+
+/// The name CHKLABEL, CHKCALL and CHKVAR look for: anything but a string
+/// is `Type mismatch` naming it.
+#[inline]
+fn name_arg(value: &Value, command: &str) -> Result<()> {
+    match value {
+        Value::Str(_) => Ok(()),
+        _ => Err(arg_error(ErrorKind::TypeMismatch.into(), 0, command)),
+    }
+}
+
 fn name_of(value: &Value) -> Result<String> {
     let s = String::from_utf16_lossy(&value.clone().into_str()?.borrow()).to_ascii_uppercase();
     Ok(s.split_once(':')
@@ -2710,16 +2726,19 @@ impl Vm {
                     false => false,
                 };
                 let name = self.pop();
+                name_arg(&name, "CHKLABEL")?;
                 let found = self.has_label(&name, outer)?;
                 self.stack.push(Value::Int(found.into()));
             }
             Op::ChkCall => {
                 let name = self.pop();
+                name_arg(&name, "CHKCALL")?;
                 let found = self.has_call(&name, host)?;
                 self.stack.push(Value::Int(found.into()));
             }
             Op::ChkVar => {
                 let target = self.pop();
+                name_arg(&target, "CHKVAR")?;
                 let name = name_of(&target)?;
                 // Another slot's, as VAR("n:NAME") would find it.
                 let found = match self.other_global(&target) {
@@ -2819,7 +2838,13 @@ impl Vm {
                 host.print_newline(screen)?;
             }
             Op::Wait { vsync, has_arg } => {
-                let frames = if *has_arg { self.pop().to_int()? } else { 1 };
+                let frames = match *has_arg {
+                    true => (self.pop().to_int()).map_err(|e| {
+                        let name = if *vsync { "VSYNC" } else { "WAIT" };
+                        arg_error(e, 0, name)
+                    })?,
+                    false => 1,
+                };
                 // Zero or negative counts do not wait.
                 self.pc = next;
                 return Ok(Some(Status::Wait {

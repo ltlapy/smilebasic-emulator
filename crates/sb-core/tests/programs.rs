@@ -2215,6 +2215,28 @@ fn type_mismatches_name_their_arguments() {
     wrong("PUSH S$,1", None);
 }
 
+/// The statements and functions the compiler makes instructions of name
+/// an argument of the wrong type too.
+#[test]
+fn compiled_commands_name_a_wrong_type() {
+    for (call, name) in [
+        ("WAIT S$", "WAIT"),
+        ("VSYNC S$", "VSYNC"),
+        ("Q=CHKLABEL(Z)", "CHKLABEL"),
+        ("Q=CHKLABEL(Z,1)", "CHKLABEL"),
+        ("Q=CHKCALL(Z)", "CHKCALL"),
+        ("Q=CHKVAR(Z)", "CHKVAR"),
+    ] {
+        let e = run(&format!("VAR Q,Z,S$=\"A\":{call}")).unwrap_err();
+        assert_eq!(
+            (e.kind, e.arg),
+            (ErrorKind::TypeMismatch, Some(0)),
+            "{call}"
+        );
+        assert_eq!(e.detail.as_deref(), Some(&*format!("({name}:1)")), "{call}");
+    }
+}
+
 /// Builtins look at their number of OUT variables as they run, some
 /// before the number of arguments and some after.
 #[test]
