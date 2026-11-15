@@ -295,8 +295,16 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
   as in `&H100000000` or `&H000000001`, is a `Syntax error` as the program
   compiles. (Not yet seen on hardware.)
 - `CONST` and `DATA` take `HSV` as well as `RGB`.
-- `OPTION STRICT` holds from where it stands. A variable used before it without
-  `VAR` can be used after it, and a DEF before it is not checked.
+- `OPTION STRICT` holds from where it stands in the source to the end of the
+  program, in and out of `DEF`s, and may stand in a `DEF` or a block. Nothing
+  turns it off. Each use of a variable is checked against the variables made so
+  far: one used before it without `VAR` can be used after it, a `DEF` above it
+  is not checked, and a `VAR` further down does not count yet
+  (`OPTION STRICT:?A:VAR A` is `Undefined variable` at `?A`). Only `VAR`, `DIM`
+  and a `DEF`'s parameters and `OUT`s make variables; `FOR`, `READ`, `INPUT`,
+  `LINPUT`, `SWAP`, `INC`, `DEC` and `OUT` targets of a call are uses. An
+  `OPTION` with another name is a `Syntax error` where it stands, in a `DEF`
+  too. (4.4.8); not yet seen on hardware.
 - `OPTION DEFINT` holds from where it stands in the source to the end of the
   program, in and out of `DEF`s, and may stand in a `DEF`. A variable without
   a suffix starts as an int only if it is first seen after it:

@@ -38,12 +38,12 @@ pub fn compile(
         slot,
         out: Compiled::default(),
         global_slots: HashMap::new(),
-        global_declared: HashSet::new(),
         global_var_seen: HashSet::new(),
         global_used: HashSet::new(),
+        global_made: Vec::new(),
         global_first: HashMap::new(),
         def_at: 0,
-        strict: false,
+        strict_at: None,
         constants: HashMap::new(),
         pending: Vec::new(),
         defint_at: None,
@@ -58,14 +58,11 @@ pub fn compile(
         constant_bytes: Cell::new(0),
         string_words: Cell::new(0),
     };
-    let strict_at = c.prepare(program);
-    // OPTION STRICT holds from where it stands, DEFs included.
-    let strict = |i: usize| strict_at.is_some_and(|at| i >= at);
+    c.prepare(program);
     // The first error in top-level code, and the statement it is in.
     let mut failed = None;
     for (i, stmt) in program.stmts.iter().enumerate() {
         if !matches!(stmt.kind, StmtKind::Def(_)) {
-            c.strict = strict(i);
             if let Err(e) = c.stmt(stmt) {
                 failed = Some((i, e));
                 break;
@@ -90,7 +87,6 @@ pub fn compile(
             if let Some(e) = c.take_pending(stmt) {
                 return Err(e);
             }
-            c.strict = strict(i);
             c.line = stmt.line;
             c.def_at = i;
             c.def(def, (stmt.line, stmt.col))?;
@@ -115,6 +111,10 @@ struct DefScope {
     is_function: bool,
     locals: HashMap<Key, u32>,
     declared: HashSet<Key>,
+    /// By local slot, whether the local was made ahead of time for a VAR
+    /// further down that neither it nor a use has reached yet. Kept only
+    /// with an OPTION STRICT, under which such a local does not exist yet.
+    ahead: Vec<bool>,
 }
 
 struct Loop {
@@ -134,12 +134,13 @@ struct Compiler<'h> {
     host: &'h dyn Host,
     out: Compiled,
     global_slots: HashMap<Key, u32>,
-    /// Names declared by VAR at top level (used by OPTION STRICT).
-    global_declared: HashSet<Key>,
     /// VAR statements compiled so far at top level, to report duplicates.
     global_var_seen: HashSet<Key>,
     /// Globals that top-level code has used so far, in source order.
     global_used: HashSet<Key>,
+    /// By global slot, whether a top-level VAR or use compiled so far made
+    /// the global. Kept only with an OPTION STRICT.
+    global_made: Vec<bool>,
     /// The top-level statement each global first appears in. A DEF sees
     /// only those from before it: SmileBASIC compiles in one pass.
     global_first: HashMap<Key, usize>,
@@ -153,7 +154,10 @@ struct Compiler<'h> {
     first: Option<(u32, u32)>,
     /// The program slot compiled for, `#_SLOT`.
     slot: i32,
-    strict: bool,
+    /// Where the first OPTION STRICT stands. From there on, through and out
+    /// of DEFs, a variable must exist before it is used, as SmileBASIC 4
+    /// keeps the flag in its compile state.
+    strict_at: Option<(u32, u32)>,
     /// The program's constants, each with where its name stands: a use
     /// before that place is Undefined constant, as SmileBASIC 4 compiles
     /// in one pass.
@@ -282,66 +286,52 @@ fn expr_to_lvalue(expr: &Expr) -> Option<LValue> {
 impl Compiler<'_> {
     // ---- pre-pass ----
 
-    /// Returns where OPTION STRICT is among the statements, if anywhere.
-    /// The errors it finds wait in [`Compiler::pending`]: the first of
-    /// OPTION and the DEF lines, and the first of [`Self::walk_source_order`].
-    fn prepare(&mut self, program: &Program) -> Option<usize> {
-        let mut strict_at = None;
+    /// The errors it finds wait in [`Compiler::pending`]: the first of the
+    /// DEF lines, and the first of [`Self::walk_source_order`].
+    fn prepare(&mut self, program: &Program) {
         let mut failed = None;
-        for (i, stmt) in program.stmts.iter().enumerate() {
+        for stmt in &program.stmts {
             (self.line, self.col) = (stmt.line, stmt.col);
             let mut fail = |e: Error| _ = failed.get_or_insert((stmt as *const Stmt, e));
-            match &stmt.kind {
-                StmtKind::Option(o) if o == "STRICT" => _ = strict_at.get_or_insert(i),
-                StmtKind::Option(o) if o == "DEFINT" => {}
-                StmtKind::Option(o) => {
-                    fail(
-                        err(ErrorKind::SyntaxError, format!("OPTION {o}"))
-                            .at_pos(stmt.line, stmt.col),
-                    );
-                }
-                StmtKind::Def(def) => {
-                    let name = call_name(&def.name);
-                    let index = self.out.defs.len() as u32;
-                    // A DEF may not take the name of a system function,
-                    // such as LAST. UNVERIFIED: that a command's name is
-                    // refused too.
-                    // The DEFs after an error are still named, for the
-                    // code before it.
-                    if crate::vm::is_system_call(&name, self.host)
-                        || self.out.def_names.contains_key(&name)
-                    {
-                        fail(err(ErrorKind::DuplicateFunction, name).at_pos(stmt.line, stmt.col));
-                        continue;
-                    }
-                    self.out.def_names.insert(name.clone(), index);
-                    for list in [&def.params, &def.outs] {
-                        if let Params::Fixed(list) = list
-                            && let Err(e) = too_many(list.len())
-                        {
-                            fail(e.at_pos(stmt.line, stmt.col));
-                        }
-                    }
-                    self.out.defs.push(DefInfo {
-                        name,
-                        entry: 0,
-                        end: 0,
-                        is_function: def.is_function,
-                        common: def.common,
-                        params: match &def.params {
-                            Params::Fixed(p) => Some(p.len() as u8),
-                            Params::Variadic => None,
-                        },
-                        outs: match &def.outs {
-                            Params::Fixed(o) => Some(o.len() as u8),
-                            Params::Variadic => None,
-                        },
-                        locals: Vec::new(),
-                        labels: HashMap::new(),
-                    });
-                }
-                _ => {}
+            let StmtKind::Def(def) = &stmt.kind else {
+                continue;
+            };
+            let name = call_name(&def.name);
+            let index = self.out.defs.len() as u32;
+            // A DEF may not take the name of a system function, such as
+            // LAST. UNVERIFIED: that a command's name is refused too.
+            // The DEFs after an error are still named, for the code
+            // before it.
+            if crate::vm::is_system_call(&name, self.host) || self.out.def_names.contains_key(&name)
+            {
+                fail(err(ErrorKind::DuplicateFunction, name).at_pos(stmt.line, stmt.col));
+                continue;
             }
+            self.out.def_names.insert(name.clone(), index);
+            for list in [&def.params, &def.outs] {
+                if let Params::Fixed(list) = list
+                    && let Err(e) = too_many(list.len())
+                {
+                    fail(e.at_pos(stmt.line, stmt.col));
+                }
+            }
+            self.out.defs.push(DefInfo {
+                name,
+                entry: 0,
+                end: 0,
+                is_function: def.is_function,
+                common: def.common,
+                params: match &def.params {
+                    Params::Fixed(p) => Some(p.len() as u8),
+                    Params::Variadic => None,
+                },
+                outs: match &def.outs {
+                    Params::Fixed(o) => Some(o.len() as u8),
+                    Params::Variadic => None,
+                },
+                locals: Vec::new(),
+                labels: HashMap::new(),
+            });
         }
         self.pending.extend(failed);
         self.out.def_data_labels = vec![HashMap::new(); self.out.defs.len()];
@@ -370,17 +360,10 @@ impl Compiler<'_> {
                     self.global_first.entry(k.clone()).or_insert(i);
                 }
             }
-            // Variables made by using them before OPTION STRICT count as
-            // declared after it.
-            if strict_at == Some(i + 1) {
-                declared.extend(used.iter().cloned());
-            }
         }
-        for k in used.into_iter().chain(declared.iter().cloned()) {
+        for k in used.into_iter().chain(declared) {
             self.global_slot(k);
         }
-        self.global_declared.extend(declared);
-        strict_at
     }
 
     /// CONST/ENUM definitions, DATA and its labels, in source order across
@@ -428,9 +411,7 @@ impl Compiler<'_> {
                     .entry(name.clone())
                     .or_insert(self.out.data.len() as u32);
             }
-            StmtKind::Option(o) if o == "DEFINT" => {
-                _ = self.defint_at.get_or_insert((stmt.line, stmt.col));
-            }
+            StmtKind::Option(o) => self.option(o, stmt)?,
             // SmileBASIC 4 checks a CONST name after working out its
             // value, and an ENUM name before.
             StmtKind::Const(items) => {
@@ -467,6 +448,22 @@ impl Compiler<'_> {
                 }
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// OPTION, which may stand anywhere, in a DEF too, and holds from
+    /// there on. Another name is a Syntax error.
+    #[cold]
+    fn option(&mut self, name: &str, stmt: &Stmt) -> Result<()> {
+        let at = Some((stmt.line, stmt.col));
+        match name {
+            "DEFINT" => self.defint_at = self.defint_at.or(at),
+            "STRICT" => self.strict_at = self.strict_at.or(at),
+            _ => {
+                return Err(err(ErrorKind::SyntaxError, format!("OPTION {name}"))
+                    .at_pos(stmt.line, stmt.col));
+            }
         }
         Ok(())
     }
@@ -758,6 +755,9 @@ impl Compiler<'_> {
             return slot;
         }
         let slot = self.out.globals.len() as u32;
+        if self.strict_at.is_some() {
+            self.global_made.push(false);
+        }
         let int = self.starts_int(&k);
         self.out.globals.push(VarInfo {
             name: k.0.clone(),
@@ -787,38 +787,128 @@ impl Compiler<'_> {
         slot
     }
 
+    /// The variable `var` names. A use makes one that does not exist yet,
+    /// except under OPTION STRICT.
     fn slot(&mut self, var: &Var) -> Result<Slot> {
+        if self.strict_at.is_some() {
+            return self.strict_slot(var);
+        }
         let k = key(var);
         if let Some(def) = &self.def {
             if let Some(&slot) = def.locals.get(&k) {
                 return Ok(Slot::Local(slot));
             }
             if let Some(&slot) = self.global_slots.get(&k) {
-                let before = self.global_first.get(&k).is_some_and(|&i| i < self.def_at);
-                if before && (!self.strict || self.global_declared.contains(&k)) {
+                // A DEF sees the globals top-level code above it made.
+                if self.global_first.get(&k).is_some_and(|&i| i < self.def_at) {
                     return Ok(Slot::Global(slot));
                 }
             }
         } else if let Some(&slot) = self.global_slots.get(&k) {
-            self.global_used.insert(k.clone());
-            if self.strict && !self.global_declared.contains(&k) {
-                return Err(err(
-                    ErrorKind::UndefinedVariable,
-                    full_name(&var.name, var.suffix),
-                ));
+            if !self.global_used.contains(&k) {
+                self.global_used.insert(k);
             }
             return Ok(Slot::Global(slot));
-        }
-        if self.strict {
-            return Err(err(
-                ErrorKind::UndefinedVariable,
-                full_name(&var.name, var.suffix),
-            ));
         }
         Ok(match self.def {
             Some(_) => Slot::Local(self.local_slot(k)),
             None => Slot::Global(self.global_slot(k)),
         })
+    }
+
+    /// [`Self::slot`] in a program with an OPTION STRICT. From where it
+    /// stands, a use of a variable that does not exist yet is `Undefined
+    /// variable`. SmileBASIC 4 looks in the DEF's variables, then in the
+    /// globals made so far, all in one pass.
+    #[inline(never)]
+    fn strict_slot(&mut self, var: &Var) -> Result<Slot> {
+        let k = key(var);
+        let strict = self.strict_at.is_some_and(|at| (self.line, self.col) >= at);
+        let found = match &self.def {
+            Some(def) => match def.locals.get(&k) {
+                Some(&n) => Some(Slot::Local(n)),
+                // A DEF sees the globals top-level code above it made, by
+                // now compiled past this DEF.
+                None => match self.global_first.get(&k) {
+                    Some(&i) if i < self.def_at => {
+                        self.global_slots.get(&k).map(|&n| Slot::Global(n))
+                    }
+                    _ => None,
+                },
+            },
+            None => self.global_slots.get(&k).map(|&n| Slot::Global(n)),
+        };
+        if let Some(slot) = found {
+            if self.exists(slot) {
+                return Ok(slot);
+            }
+            if !strict {
+                match slot {
+                    // A DEF makes no global.
+                    Slot::Global(_) if self.def.is_some() => {}
+                    Slot::Global(_) => {
+                        self.global_used.insert(k);
+                        self.made(slot);
+                    }
+                    Slot::Local(_) => self.made(slot),
+                }
+                return Ok(slot);
+            }
+            // A local made ahead for a VAR further down, where SmileBASIC 4
+            // takes a global of the name if top-level code above made one.
+            // This keeps the local, as it does without OPTION STRICT.
+            if let Slot::Local(_) = slot {
+                let global = match self.global_first.get(&k) {
+                    Some(&i) if i < self.def_at => self.global_slots.get(&k).copied(),
+                    _ => None,
+                };
+                if global.is_some_and(|n| self.exists(Slot::Global(n))) {
+                    return Ok(slot);
+                }
+            }
+        }
+        if strict {
+            return Err(err(
+                ErrorKind::UndefinedVariable,
+                full_name(&var.name, var.suffix),
+            ));
+        }
+        let slot = match self.def {
+            Some(_) => Slot::Local(self.local_slot(k)),
+            None => {
+                let n = self.global_slot(k.clone());
+                self.global_used.insert(k);
+                Slot::Global(n)
+            }
+        };
+        self.made(slot);
+        Ok(slot)
+    }
+
+    /// Whether `slot` exists by now, in a program with an OPTION STRICT:
+    /// a global that a top-level VAR or use above made, or a local that is
+    /// not waiting for its VAR.
+    fn exists(&self, slot: Slot) -> bool {
+        match slot {
+            Slot::Global(n) => self.global_made[n as usize],
+            Slot::Local(n) => {
+                let ahead = &self.def.as_ref().expect("a local is in a DEF").ahead;
+                !ahead.get(n as usize).copied().unwrap_or(false)
+            }
+        }
+    }
+
+    /// Records that `slot` exists from here on (see [`Self::exists`]).
+    fn made(&mut self, slot: Slot) {
+        match slot {
+            Slot::Global(n) => self.global_made[n as usize] = true,
+            Slot::Local(n) => {
+                let ahead = &mut self.def.as_mut().expect("a local is in a DEF").ahead;
+                if let Some(a) = ahead.get_mut(n as usize) {
+                    *a = false;
+                }
+            }
+        }
     }
 
     /// A hidden variable for FOR limits, CASE subjects and TPRINT screens.
@@ -1226,6 +1316,9 @@ impl Compiler<'_> {
             Some(_) => Slot::Local(self.local_slot(k)),
             None => Slot::Global(self.global_slot(k)),
         };
+        if self.strict_at.is_some() {
+            self.made(slot);
+        }
         if d.dims.is_some() {
             let info = match slot {
                 Slot::Global(n) => &mut self.out.globals[n as usize],
@@ -2103,6 +2196,7 @@ impl Compiler<'_> {
             is_function: def.is_function,
             locals: HashMap::new(),
             declared: HashSet::new(),
+            ahead: Vec::new(),
         });
         let params = match &def.params {
             Params::Fixed(p) => p.as_slice(),
@@ -2140,8 +2234,15 @@ impl Compiler<'_> {
         let mut used = Vec::new();
         let mut declared = Vec::new();
         collect_vars(&def.body, &mut used, &mut declared);
+        let strict = self.strict_at.is_some();
         for k in declared {
-            self.local_slot(k);
+            let made = self.out.defs[index as usize].locals.len();
+            let slot = self.local_slot(k) as usize;
+            let ahead = &mut self.def.as_mut().expect("set above").ahead;
+            if strict && slot >= made {
+                ahead.resize(slot, false);
+                ahead.push(true);
+            }
         }
         self.block(&def.body)?;
         if def.is_function {

@@ -825,6 +825,87 @@ fn option_strict() {
     assert_eq!(output("OPTION DEFINT\n?TYPEOF(A)"), "1\n");
 }
 
+/// OPTION STRICT holds from where it stands in the source to the end of
+/// the program, in and out of DEFs, and checks each use against the
+/// variables made so far.
+#[test]
+fn option_strict_holds_from_where_it_stands() {
+    let at = |src: &str| {
+        let e = run(src).expect_err(src);
+        (e.kind, e.line, e.col)
+    };
+    let undefined = ErrorKind::UndefinedVariable;
+    assert_eq!(output("A=1:OPTION STRICT:?A"), "1\n");
+    assert_eq!(at("OPTION STRICT:?B"), (undefined, 1, 15));
+    assert_eq!(at("?1:OPTION STRICT:?1:B=2").2, 21);
+    // A VAR further down does not count yet.
+    assert_eq!(at("OPTION STRICT\n?A\nVAR A"), (undefined, 2, 1));
+    assert_eq!(output("OPTION STRICT:VAR A=1:?A"), "1\n");
+    assert_eq!(output("OPTION STRICT:VAR A=A+1:?A"), "1\n");
+    // In a block, and through to the end of the program.
+    assert_eq!(at("IF 1 THEN\nOPTION STRICT\nENDIF\n?B").1, 4);
+    assert_eq!(at("IF 1 THEN OPTION STRICT ELSE ?1\nB=1").1, 2);
+    assert_eq!(at("REPEAT:OPTION STRICT:UNTIL B").0, undefined);
+    assert_eq!(output("WHILE A:OPTION STRICT:WEND:?A"), "0\n");
+    // In a DEF, for the rest of it and the lines after it.
+    assert_eq!(at("DEF F\nOPTION STRICT\nEND\n?B").1, 4);
+    assert_eq!(
+        at("DEF F\n?A\nOPTION STRICT\n?A\n?B\nEND"),
+        (undefined, 5, 1)
+    );
+    assert_eq!(at("DEF F\nOPTION STRICT\nEND\nDEF G\n?B\nEND").1, 5);
+    assert_eq!(at("DEF F\nOPTION STRICT\n?L\nVAR L\nEND").1, 3);
+    assert_eq!(
+        output("DEF F X\nOPTION STRICT\nVAR L=X\n?L\nEND\nF 5"),
+        "5\n"
+    );
+    let src = "OPTION STRICT\nDEF F X\n?X\nVAR X\nEND";
+    assert_eq!(error(src), (ErrorKind::DuplicateVariable, 4));
+    // A DEF above it is not checked, nor a global made above it.
+    assert_eq!(output("DEF F\n?A\nEND\nOPTION STRICT\nF"), "0\n");
+    assert_eq!(output("A=3\nOPTION STRICT\nDEF F\n?A\nEND\nF"), "3\n");
+    assert_eq!(at("OPTION STRICT\nDEF F\n?A\nEND\nVAR A").1, 3);
+    // The first error in the source comes first.
+    assert_eq!(at("DEF F\n?B\nEND\nOPTION STRICT\n?C"), (undefined, 5, 1));
+    assert_eq!(at("OPTION STRICT\nDEF F\n?B\nEND\n?C").1, 3);
+    assert_eq!(at("OPTION STRICT\n?C\nDEF F\n?B\nEND").1, 2);
+    // A second OPTION STRICT changes nothing.
+    assert_eq!(at("OPTION STRICT:VAR A:OPTION STRICT:?A;B").0, undefined);
+    // Only VAR, DIM and a DEF's parameters and OUTs make variables; what
+    // a statement stores into is a use.
+    for stmt in [
+        "FOR I=0 TO 1:NEXT",
+        "READ X:DATA 1",
+        "INPUT X",
+        "LINPUT X$",
+        "VAR A:SWAP A,X",
+        "INC X",
+        "DEC X",
+        "T OUT X:DEF T OUT Y:END",
+    ] {
+        assert_eq!(at(&format!("OPTION STRICT:{stmt}")).0, undefined, "{stmt}");
+    }
+    let src = "OPTION STRICT:DIM A[1]:VAR B\nDEF F X OUT Y:Y=X:END\nF 1 OUT B:?A[0];B";
+    assert_eq!(output(src), "01\n");
+}
+
+/// OPTION with a name other than STRICT or DEFINT is a Syntax error
+/// where it stands, in a DEF or a block too.
+#[test]
+fn a_bad_option_is_an_error_where_it_stands() {
+    let at = |src: &str| {
+        let e = run(src).expect_err(src);
+        (e.kind, e.line, e.col)
+    };
+    let syntax = ErrorKind::SyntaxError;
+    assert_eq!(at("?1:OPTION FOO"), (syntax, 1, 4));
+    assert_eq!(at("DEF F\n?1\nOPTION FOO\nEND"), (syntax, 3, 1));
+    assert_eq!(at("IF 1 THEN\nOPTION FOO\nENDIF"), (syntax, 2, 1));
+    assert_eq!(at("DEF F\nOPTION FOO\nEND\n?#ZZ").1, 2);
+    assert_eq!(at("?#ZZ\nDEF F\nOPTION FOO\nEND").1, 1);
+    assert_eq!(at("OPTION STRICT\nDEF F\n?B\nOPTION FOO\nEND").1, 3);
+}
+
 /// OPTION DEFINT makes int the type of the variables first seen after
 /// it in the source, to the end of the program and through DEFs.
 #[test]
