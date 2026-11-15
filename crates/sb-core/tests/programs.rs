@@ -86,6 +86,33 @@ fn bqparam_checks_the_gain_count_first() {
     );
 }
 
+/// FFTWFN, BQPARAM and BIQUAD take their window or coefficients in an
+/// array of reals only.
+#[test]
+fn windows_and_coefficients_are_reals() {
+    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
+    let mismatch = ErrorKind::TypeMismatch;
+    let illegal = ErrorKind::IllegalFunctionCall;
+    let arrays = "DIM W%[8],V%[6],F%[13],G%[12],A[4],B[4]:";
+    let call = |s: &str| kind(&format!("{arrays}{s}"));
+    assert_eq!(call("FFTWFN W%,0"), Some((mismatch, Some(0))));
+    // Before the length, after the type's argument.
+    assert_eq!(call("FFTWFN V%,0"), Some((mismatch, Some(0))));
+    assert_eq!(call("FFTWFN W%,\"\""), Some((mismatch, Some(1))));
+    // After the other arguments' types, before the length.
+    assert_eq!(call("BQPARAM F%,0,8000,1,1"), Some((mismatch, Some(0))));
+    assert_eq!(call("BQPARAM G%,0,8000,1,1"), Some((mismatch, Some(0))));
+    assert_eq!(call("BQPARAM F%,0,8000,1,\"\""), Some((mismatch, Some(4))));
+    // After the length.
+    assert_eq!(call("BIQUAD A,B,F%"), Some((mismatch, Some(2))));
+    assert_eq!(call("BIQUAD A,B,G%"), Some((illegal, Some(2))));
+    // Int sounds are fine.
+    assert_eq!(
+        kind("DIM A%[4],B%[4],F[13]:BQPARAM F,0,8000,1,1:BIQUAD A%,B%,F"),
+        None
+    );
+}
+
 /// FFT and IFFT take the length from the third array and name another
 /// array of another length.
 #[test]

@@ -28,6 +28,15 @@ fn array(v: &Value) -> Result<ArrayRef> {
     }
 }
 
+/// `a`, argument `v`, must hold reals: SmileBASIC 4 writes FFTWFN's
+/// window and BQPARAM's coefficients as reals, and BIQUAD reads them so.
+fn check_reals(a: &ArrayRef, v: &Value) -> Result<()> {
+    if a.borrow().elem_type() != ElemType::Real {
+        return Err(mismatch(v));
+    }
+    Ok(())
+}
+
 fn reals(a: &Array) -> Result<Vec<f64>> {
     (0..a.len()).map(|i| a.get(i).to_real()).collect()
 }
@@ -168,8 +177,9 @@ pub(super) fn ifft(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 /// length, which must be a power of two (both checked on hardware). The
 /// length is looked at before the type's range.
 pub(super) fn fftwfn(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
-    let array = number_array(&args[0])?;
+    let array = array(&args[0])?;
     let kind = args[1].to_int()?;
+    check_reals(&array, &args[0])?;
     let n = array.borrow().len();
     if !n.is_power_of_two() {
         return Err(Error::with_detail(
@@ -251,6 +261,7 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
             .of_value(&args[1]));
         }
         check_coefficients(&params, &args[2])?;
+        check_reals(&params, &args[2])?;
         (reals(&input)?, ch, len, out_len)
     };
     let mut fp = reals(&params.borrow())?;
@@ -289,10 +300,11 @@ pub(super) fn biquad(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
 // a zero rate or Q is an Illegal function call naming it (TEST62). The
 // types of all the arguments come before the array's length.
 pub(super) fn bqparam(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
-    let params = number_array(&args[0])?;
+    let params = array(&args[0])?;
     if let Some(v) = (args[1..].iter()).find(|v| !v.is_number() && !matches!(v, Value::Default)) {
         return Err(mismatch(v));
     }
+    check_reals(&params, &args[0])?;
     check_coefficients(&params, &args[0])?;
     let kind = args[1].to_int()?;
     if !(0..=7).contains(&kind) {
