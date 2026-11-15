@@ -66,9 +66,9 @@ const MAX_TYPED: usize = 40;
 const INFO_HEIGHT: u32 = 136;
 const INFO_EXPANDED: u32 = 420;
 /// The face of the info area and of the lists.
-const PANEL: u32 = 0xFF12_141A;
+pub(crate) const PANEL: u32 = 0xFF12_141A;
 /// Where text and pictures are shown inside the info area.
-const WELL: u32 = 0xFF0B_0C10;
+pub(crate) const WELL: u32 = 0xFF0B_0C10;
 /// The project's icon in the info area: the 40-pixel one at twice its
 /// size, each pixel a 2x2 square.
 const BIG_ICON: u32 = 2 * ICON_SIZE as u32;
@@ -86,7 +86,7 @@ const VIEW: (u32, u32) = (0xFF1E_4E9A, HIGHLIGHT);
 const DIM_TEXT: u32 = 0xFF50_5050;
 const DIM_BORDER: u32 = 0xFF40_4040;
 /// A menu's line between groups of items.
-const SEPARATOR: u32 = 0xFF44_485A;
+pub(crate) const SEPARATOR: u32 = 0xFF44_485A;
 /// The program that Run runs.
 const MAIN: &str = "MAIN.PRG";
 

@@ -17,7 +17,7 @@ const CAP: u32 = 40;
 const GAP: u32 = 4;
 const STEP: u32 = CAP + GAP;
 /// Button names stand out from the keys.
-const BUTTON_TEXT: u32 = 0xFF7F_BFFF;
+pub(crate) const BUTTON_TEXT: u32 = 0xFF7F_BFFF;
 const TITLE: &str = "Keys for the buttons";
 const FOOTER: &str = "Off: Run menu";
 
@@ -113,7 +113,7 @@ fn draw_cap(fb: &mut Framebuffer, font: &Font, cap: Rect, key: Scancode, button:
         _ => None,
     };
     if let Some(dir) = arrow {
-        draw_arrow(fb, cap, dir);
+        draw_arrow(fb, cap, dir, TEXT);
         return;
     }
     let name = key.name();
@@ -130,8 +130,8 @@ fn draw_cap(fb: &mut Framebuffer, font: &Font, cap: Rect, key: Scancode, button:
 }
 
 /// A filled triangle pointing `dir` in the middle of `cap`.
-fn draw_arrow(fb: &mut Framebuffer, cap: Rect, (dx, dy): (i32, i32)) {
-    if crate::ui::dry(fb, cap, ("arrow", cap, dx, dy)) {
+pub(crate) fn draw_arrow(fb: &mut Framebuffer, cap: Rect, (dx, dy): (i32, i32), color: u32) {
+    if crate::ui::dry(fb, cap, ("arrow", cap, dx, dy, color)) {
         return;
     }
     let size = cap.w as i32 / 4;
@@ -146,7 +146,7 @@ fn draw_arrow(fb: &mut Framebuffer, cap: Rect, (dx, dy): (i32, i32)) {
                 (cx + across, cy + along * dy)
             };
             if x >= 0 && y >= 0 {
-                fb.set(x as u32, y as u32, TEXT);
+                fb.set(x as u32, y as u32, color);
             }
         }
     }

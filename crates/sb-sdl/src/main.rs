@@ -437,8 +437,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     let mut creator = OwnedCreator::new(&canvas);
     let mut texture_creator = creator.get();
     let mut mode = machine.screen_mode();
-    let chosen_filter = handheld::shown_filter(machine.rt.settings.screen_filter, handheld);
-    let mut filter = chosen_filter.unwrap_or(mode.filter);
+    let (out_w, out_h) = canvas.output_size()?;
+    let settings = &machine.rt.settings;
+    let (_, mut filter) = screen_place(&mode, settings, handheld, out_w, out_h as f32);
     // The frame's size and filter, which the texture is made for.
     let mut texture_kind = (mode.frame(), filter);
     let mut texture = frame_texture(&canvas, texture_creator, texture_kind)?;
@@ -521,7 +522,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
     // while it is open, and its pause menu, which takes all input.
     let mut game_list: Option<GameList> = None;
     let mut pause_menu: Option<PauseMenu> = None;
-    // Select and Start, for the menu; where the list was left; the
+    // Select, for the menu and quitting; where the list was left; the
     // program it ran last, for Restart; and whether entering the mode
     // made the window fullscreen, for leaving it.
     let mut hotkeys = handheld::Hotkeys::default();
@@ -959,8 +960,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             true => handheld::display_rect((display_w, display_h), (out_w, out_h)),
             false => display_rect(display_w, display_h, out_w, out_h),
         };
-        let chosen_filter = handheld::shown_filter(machine.rt.settings.screen_filter, handheld);
-        let shown = screen_rect(&mode, chosen_filter, out_w, display.h);
+        let settings = &machine.rt.settings;
+        let (shown, _) = screen_place(&mode, settings, handheld, out_w, display.h);
         let main_map = Mapping {
             px: out_w as f32 / win_w.max(1) as f32,
             display,
@@ -1299,15 +1300,23 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 plus_down = None;
                 continue;
             }
-            // Select+Start, or F8, opens and closes handheld mode's pause
-            // menu, over a dialog too. The release of that Start is not the
-            // + button's.
+            // Select+A, or F8, opens and closes handheld mode's pause menu,
+            // over a dialog too; that A goes nowhere else. Select+Start
+            // quits as the menu's Quit does, and the release of that Start
+            // is not the + button's.
             if handheld {
                 let toggled = match event {
                     Event::GamepadButtonDown {
+                        button: Button::East,
+                        ..
+                    } => hotkeys.a_down(true),
+                    Event::GamepadButtonDown {
                         button: Button::Start,
                         ..
-                    } => hotkeys.start_down(true) == handheld::Start::Menu,
+                    } if hotkeys.start_down(true) == handheld::Start::Quit => {
+                        (pause_menu, plus_down, quit) = (None, None, true);
+                        continue;
+                    }
                     Event::KeyDown {
                         keycode: Some(Keycode::F8),
                         repeat: false,
@@ -1322,7 +1331,8 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                             let running = machine.is_running();
                             let program = running || machine.home_waiting();
                             let restart = ran_from_list.is_some();
-                            Some(PauseMenu::new(running, program, restart))
+                            let filter = machine.rt.settings.handheld_filter;
+                            Some(PauseMenu::new(running, program, restart, filter))
                         }
                     };
                     plus_down = None;
@@ -1346,8 +1356,11 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     Event::GamepadButtonDown { button, .. } => open.pad(button),
                     _ => None,
                 };
+                // Shown at once, behind the menu, and kept.
+                let filter = open.filter();
                 match chosen {
                     Some(handheld::Choice::Resume) => pause_menu = None,
+                    Some(handheld::Choice::Filter) => machine.rt.settings.handheld_filter = filter,
                     Some(handheld::Choice::Restart) => {
                         pause_menu = None;
                         if let Some(file) = &ran_from_list
@@ -2834,9 +2847,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             b.skip();
         }
         mode = machine.screen_mode();
-        let chosen_filter = handheld::shown_filter(machine.rt.settings.screen_filter, handheld);
-        filter = chosen_filter.unwrap_or(mode.filter);
-        let rect = screen_rect(&mode, chosen_filter, out_w, display.h);
+        let settings = &machine.rt.settings;
+        let rect;
+        (rect, filter) = screen_place(&mode, settings, handheld, out_w, display.h);
         let editing = machine.is_editing() && !machine.is_detached();
         let renderer = machine.rt.settings.renderer;
         if renderer_applied != Some(renderer) {
@@ -4819,6 +4832,27 @@ fn screen_rect(mode: &ScreenMode, screen_filter: Option<Filter>, out_w: u32, out
     FRect::new((out_w as f32 - w) / 2.0, (out_h - h) / 2.0, w, h)
 }
 
+/// Where the screen goes, as [`screen_rect`] says, and the filter it is
+/// scaled with: View > Screen filter's on the desktop. Handheld mode
+/// always fits the screen to the display and has a filter setting of its
+/// own, as its display seldom holds the screen a whole number of times.
+fn screen_place(
+    mode: &ScreenMode,
+    settings: &Settings,
+    handheld: bool,
+    out_w: u32,
+    out_h: f32,
+) -> (FRect, Filter) {
+    if handheld {
+        let rect = screen_rect(mode, None, out_w, out_h);
+        let filter = handheld::screen_filter(settings.handheld_filter, mode, (rect.w, rect.h));
+        return (rect, filter);
+    }
+    let chosen = settings.screen_filter;
+    let rect = screen_rect(mode, chosen, out_w, out_h);
+    (rect, chosen.unwrap_or(mode.filter))
+}
+
 /// How the editor's frame is scaled into `rect`: sharp when it fits a
 /// whole number of times, and otherwise with the pixel art filter, unless
 /// the screen is filtered smoothly.
@@ -4958,24 +4992,51 @@ mod tests {
 
     #[test]
     fn a_handheld_screen_fills_the_output() {
+        use sb_runtime::settings::HandheldFilter;
         let mode = ScreenMode::new(400, 240);
         let box_of = |r: FRect| (r.x, r.y, r.w, r.h);
-        let sharp = Some(Filter::Nearest);
         let out = (640, 480);
         let ui = handheld::ui_size(out);
         let display = handheld::display_rect(ui, out);
-        let shown = |handheld| {
-            let filter = handheld::shown_filter(sharp, handheld);
-            box_of(screen_rect(&mode, filter, out.0, display.h))
+        let settings = |handheld_filter| Settings {
+            screen_filter: Some(Filter::Nearest),
+            handheld_filter,
+            ..Settings::default()
         };
-        assert_eq!(shown(true), (0.0, 48.0, 640.0, 384.0));
-        // On the desktop the sharp choice keeps to whole factors.
-        assert_eq!(shown(false), (120.0, 120.0, 400.0, 240.0));
-        // A 4:3 mode fills the screen.
+        let place = |mode: &ScreenMode, chosen, handheld| {
+            let (rect, filter) = screen_place(mode, &settings(chosen), handheld, out.0, display.h);
+            (box_of(rect), filter)
+        };
+        // Whatever the filter, it fits at 1.6 times.
+        for chosen in HandheldFilter::ALL {
+            assert_eq!(place(&mode, chosen, true).0, (0.0, 48.0, 640.0, 384.0));
+        }
+        assert_eq!(
+            place(&mode, HandheldFilter::Auto, true).1,
+            Filter::SmartNearest
+        );
+        assert_eq!(
+            place(&mode, HandheldFilter::Nearest, true).1,
+            Filter::Nearest
+        );
+        assert_eq!(
+            place(&mode, HandheldFilter::Xscreen, true).1,
+            Filter::Bilinear
+        );
+        // On the desktop the sharp choice keeps to whole factors, and the
+        // handheld setting is not looked at.
+        let desktop = ((120.0, 120.0, 400.0, 240.0), Filter::Nearest);
+        for chosen in HandheldFilter::ALL {
+            assert_eq!(place(&mode, chosen, false), desktop);
+        }
+        // A 4:3 mode fills the screen, at a whole factor; XSCREEN's
+        // largest is half its size.
         let square = ScreenMode::new(320, 240);
-        let filter = handheld::shown_filter(sharp, true);
-        let r = screen_rect(&square, filter, out.0, display.h);
-        assert_eq!(box_of(r), (0.0, 0.0, 640.0, 480.0));
+        let full = ((0.0, 0.0, 640.0, 480.0), Filter::Nearest);
+        assert_eq!(place(&square, HandheldFilter::Auto, true), full);
+        let large = ScreenMode::new(1280, 720);
+        let half = ((0.0, 60.0, 640.0, 360.0), Filter::Bilinear);
+        assert_eq!(place(&large, HandheldFilter::Auto, true), half);
     }
 
     #[test]

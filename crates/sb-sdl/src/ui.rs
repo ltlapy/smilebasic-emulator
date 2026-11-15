@@ -575,6 +575,42 @@ pub fn image(fb: &mut Framebuffer, x: u32, y: u32, w: u32, pixels: &[u32], key: 
     }
 }
 
+/// Draws `pixels` as [`image`] does, each as a `scale` x `scale` square,
+/// with no copy of them made larger.
+pub fn image_scaled(
+    fb: &mut Framebuffer,
+    (x, y): (u32, u32),
+    w: u32,
+    pixels: &[u32],
+    key: u64,
+    scale: u32,
+) {
+    let h = pixels.len() as u32 / w.max(1);
+    let area = Rect {
+        x,
+        y,
+        w: w * scale,
+        h: h * scale,
+    };
+    if dry(fb, area, ("image", x, y, w, key, scale)) {
+        return;
+    }
+    for (i, &src) in pixels.iter().enumerate() {
+        let a = src >> 24;
+        if a == 0 {
+            continue;
+        }
+        let (px, py) = (x + i as u32 % w * scale, y + i as u32 / w * scale);
+        for (sx, sy) in (0..scale * scale).map(|n| (n % scale, n / scale)) {
+            let Some(dst) = fb.get(px + sx, py + sy) else {
+                continue;
+            };
+            let out = if a == 0xFF { src } else { blend(dst, src, a) };
+            fb.set(px + sx, py + sy, (dst & 0xFF00_0000) | (out & 0x00FF_FFFF));
+        }
+    }
+}
+
 /// `src` over `dst` at alpha `a` of 255, by channel.
 fn blend(dst: u32, src: u32, a: u32) -> u32 {
     let mix = |shift: u32| {
