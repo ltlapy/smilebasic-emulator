@@ -326,6 +326,40 @@ fn variadic_outs_as_a_function() {
     assert_eq!(output(src), "41\n");
 }
 
+/// Calls and DEFs take up to 254 arguments and OUT variables.
+#[test]
+fn too_many_arguments() {
+    let list = |n: usize, name: &str| {
+        (0..n)
+            .map(|i| format!("{name}{i}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let def = |n: usize| {
+        format!(
+            "DEF F {} OUT {}\nEND\nF {} OUT {}",
+            list(n, "P"),
+            list(n, "O"),
+            list(n, "A"),
+            list(n, "B")
+        )
+    };
+    assert_eq!(output(&def(254)), "");
+    let kind = ErrorKind::TooManyArguments;
+    assert_eq!(
+        error(&format!("?1\nDEF F {}\nEND", list(255, "P"))),
+        (kind, 2)
+    );
+    assert_eq!(error(&format!("DEF F OUT {}\nEND", list(255, "P"))).0, kind);
+    assert_eq!(error(&format!("?1\nLOCATE {}", list(255, "A"))), (kind, 2));
+    assert_eq!(error(&format!("?MAX({})", list(255, "A"))).0, kind);
+    assert_eq!(
+        error(&format!("DEF F\nEND\nF OUT {}", list(255, "A"))).0,
+        kind
+    );
+    assert_eq!(error(&format!("CALL \"F\" OUT {}", list(255, "A"))).0, kind);
+}
+
 /// DEFARG, DEFARGC, DEFOUTC and the CHK functions with brackets are
 /// compiled in place, their arguments and DEF checked as the program
 /// compiles; as commands they call their handlers, which check as they

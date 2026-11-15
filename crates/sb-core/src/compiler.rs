@@ -144,6 +144,18 @@ struct Compiler<'h> {
     string_words: Cell<usize>,
 }
 
+/// SmileBASIC 4 takes up to 254 arguments or OUT variables in a call,
+/// and parameters or OUTs in a DEF.
+const MOST_ARGUMENTS: usize = 254;
+
+/// `Too many arguments` for more than [`MOST_ARGUMENTS`].
+fn too_many(n: usize) -> Result<()> {
+    match n > MOST_ARGUMENTS {
+        true => Err(ErrorKind::TooManyArguments.into()),
+        false => Ok(()),
+    }
+}
+
 fn err(kind: ErrorKind, detail: impl Into<String>) -> Error {
     Error::with_detail(kind, detail)
 }
@@ -225,6 +237,11 @@ impl Compiler<'_> {
                         return Err(
                             err(ErrorKind::DuplicateFunction, name).at_pos(stmt.line, stmt.col)
                         );
+                    }
+                    for list in [&def.params, &def.outs] {
+                        if let Params::Fixed(list) = list {
+                            too_many(list.len()).map_err(|e| e.at_pos(stmt.line, stmt.col))?;
+                        }
                     }
                     self.out.defs.push(DefInfo {
                         name,
@@ -721,6 +738,7 @@ impl Compiler<'_> {
             StmtKind::Const(_) | StmtKind::Enum(_) | StmtKind::Option(_) | StmtKind::Data(_) => {}
             StmtKind::Command { name, args, outs } => self.command(name, args, outs)?,
             StmtKind::Call { name, args, outs } => {
+                too_many(outs.len())?;
                 // The arguments before the name (checked on hardware).
                 self.args(args)?;
                 self.expr(name)?;
@@ -1158,6 +1176,7 @@ impl Compiler<'_> {
         outs: &[Option<LValue>],
     ) -> Result<()> {
         let full = call_name(name);
+        too_many(args.len().max(outs.len()))?;
         // A DIRECT mode line runs its commands only as its first word.
         // Anywhere else, after a `:`, THEN or ELSE, they are a Syntax
         // error, and nothing on the line runs.
@@ -1407,9 +1426,7 @@ impl Compiler<'_> {
     }
 
     fn args(&mut self, args: &[Option<Expr>]) -> Result<()> {
-        if args.len() > u8::MAX as usize {
-            return Err(err(ErrorKind::SyntaxError, "too many arguments"));
-        }
+        too_many(args.len())?;
         // The last argument first, as SmileBASIC does (checked on
         // hardware for builtins, DEFs and commands).
         for a in args.iter().rev() {
