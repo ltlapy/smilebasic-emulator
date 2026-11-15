@@ -36,6 +36,15 @@ fn in_range(v: &Value, what: &str, range: std::ops::RangeInclusive<i32>) -> Resu
     })
 }
 
+/// Why an image's attribute is refused; off SPSET's usual path.
+#[cold]
+fn attribute_error(v: &Value) -> Error {
+    match in_range(v, "attribute", 0..=31) {
+        Err(e) => e,
+        Ok(_) => unreachable!("attribute_error of an attribute in range"),
+    }
+}
+
 pub(crate) fn sprite_id(v: &Value) -> Result<usize> {
     Ok(in_range(v, "sprite", 0..=SPRITES as i32 - 1)? as usize)
 }
@@ -97,14 +106,6 @@ fn ints(values: &[i32]) -> Vec<Value> {
     values.iter().map(|&n| Value::Int(n)).collect()
 }
 
-/// What [`Runtime::spset_args`] reads: the show flag, then a template's
-/// number and the template, or the image's fields.
-type SpsetArgs = (
-    bool,
-    Option<(usize, SpriteDef)>,
-    Option<(i32, i32, i32, i32, i32)>,
-);
-
 impl Runtime {
     /// A sprite that SPSET has created; others are "Sprite not set"
     /// (checked on hardware).
@@ -130,7 +131,10 @@ impl Runtime {
         let h = in_range(&args[3], "height", 0..=2048)?;
         let attr = match args.get(4) {
             None | Some(Value::Default) => 0,
-            Some(a) => in_range(a, "attribute", 0..=31)?,
+            Some(a) => match a.to_int() {
+                Ok(n) if (0..=31).contains(&n) => n,
+                _ => return Err(attribute_error(a)),
+            },
         };
         Ok((u, v, w, h, attr))
     }
@@ -145,36 +149,27 @@ impl Runtime {
         }
     }
 
-    /// SPSET's template or image arguments: the show flag, then the
-    /// template or the image's fields.
-    fn spset_args(&self, image: &[Value]) -> Result<SpsetArgs> {
-        let shown;
-        let def = match image.len() {
+    /// Creates sprite `id` from a template or from image arguments. With
+    /// no `id`, when no sprite is free, it only checks them: SmileBASIC 4
+    /// checks the arguments before it looks for a free sprite.
+    fn spset(&mut self, id: Option<usize>, image: &[Value]) -> Result<()> {
+        match image.len() {
             1 | 2 => {
                 let n = def_id(&image[0])?;
-                shown = flag(image.get(1))?;
-                Some((n, self.sprites.defs[n]))
+                let shown = flag(image.get(1))?;
+                if let Some(id) = id {
+                    let d = self.sprites.defs[n];
+                    self.sprites.create(id, shown).set_def(n as i32, &d);
+                }
             }
             _ => {
-                shown = flag(image.get(5))?;
-                None
+                let shown = flag(image.get(5))?;
+                let (u, v, w, h, attr) = Runtime::image_args(&image[..image.len().min(5)])?;
+                if let Some(id) = id {
+                    let s = self.sprites.create(id, shown);
+                    (s.u, s.v, s.w, s.h, s.attr) = (u, v, w, h, attr);
+                }
             }
-        };
-        let fields = match def {
-            Some(_) => None,
-            None => Some(Runtime::image_args(&image[..image.len().min(5)])?),
-        };
-        Ok((shown, def, fields))
-    }
-
-    /// Creates sprite `id` from a template or from image arguments.
-    fn spset(&mut self, id: usize, image: &[Value]) -> Result<()> {
-        let (shown, def, fields) = self.spset_args(image)?;
-        let s = self.sprites.create(id, shown);
-        match (def, fields) {
-            (Some((n, d)), _) => s.set_def(n as i32, &d),
-            (None, Some((u, v, w, h, attr))) => (s.u, s.v, s.w, s.h, s.attr) = (u, v, w, h, attr),
-            (None, None) => unreachable!("one of the two forms"),
         }
         Ok(())
     }
@@ -329,7 +324,7 @@ impl Runtime {
         match (command, want, args.len()) {
             (Command::Spset, Want::Outs(0), 2 | 3 | 5..=7) => {
                 let id = sprite_id(&args[0])?;
-                self.spset(id, &args[1..])?;
+                self.spset(Some(id), &args[1..])?;
                 Ok(vec![])
             }
             (Command::Spset, Want::Value, 1..=8) => {
@@ -342,13 +337,11 @@ impl Runtime {
                 };
                 match self.free_sprite(range.0, range.1) {
                     Some(id) => {
-                        self.spset(id, image)?;
+                        self.spset(Some(id), image)?;
                         Ok(vec![Value::Int(id as i32)])
                     }
-                    // SmileBASIC 4 checks the arguments before
-                    // it looks for a free sprite.
                     None => {
-                        self.spset_args(image)?;
+                        self.spset(None, image)?;
                         Ok(vec![Value::Int(-1)])
                     }
                 }
