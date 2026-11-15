@@ -1089,7 +1089,12 @@ fn recording_what_plays() {
         run_on(&mut rt, "RECSTART:RECDATA -1 OUT L,R:?\"OK\"").unwrap(),
         "OK"
     );
-    assert!(run_on(&mut rt, "RECSTART 1:RECDATA -1 OUT L,R").is_err());
+    // With a time, a position outside the recording reads 0s (TEST32).
+    assert_eq!(
+        run_on(&mut rt, "RECSTART 1:RECDATA -1 OUT L,R:?L;R").unwrap(),
+        "00"
+    );
+    assert_eq!(run_on(&mut rt, "RECDATA 48000 OUT L,R:?L;R").unwrap(), "00");
 }
 
 /// RECSTART does not hear PCMSTREAM, which still plays.

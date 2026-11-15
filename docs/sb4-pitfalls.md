@@ -2042,7 +2042,8 @@ Expected but not yet seen on hardware:
 - A subprogram's `SNDMVOL` does nothing.
 - `RECDATA` positions go round the buffer too while `RECSTART` without a time
   records round it (-1 is the last sample, `RECLEN()` the first). With a time,
-  -1 is `Out of range`.
+  -1 is no error (TEST32). A position
+  outside such a recording reads 0 on both sides. (Not yet seen on hardware.)
 - `RECSTART` leaves the older recordings in the buffer. Recording round it,
   `RECSAVE` from -1000, from past what this recording has reached, or of 1000
   samples from 500 before its end gives those older samples where this

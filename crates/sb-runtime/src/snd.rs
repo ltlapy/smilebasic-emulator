@@ -802,11 +802,14 @@ impl Runtime {
                 let len = samples.len() as i32;
                 // Recording round the buffer, positions go round it too:
                 // NK8_SOUNDVISUAL reads RECPOS()-I-1 from the start.
+                // With a time, a position outside the recording reads 0s
+                // with no error, -1 too (TEST32).
+                let at = args[0].to_int()?;
                 let at = match rec.ring && len > 0 {
-                    true => args[0].to_int()?.rem_euclid(len),
-                    false => in_range("position", &args[0], 0..=len - 1)?,
+                    true => Some(at.rem_euclid(len)),
+                    false => (0..len).contains(&at).then_some(at),
                 };
-                let [l, r] = samples[at as usize];
+                let [l, r] = at.map_or([0, 0], |at| samples[at as usize]);
                 Ok(vec![Value::Int(i32::from(l)), Value::Int(i32::from(r))])
             }
             (Command::Recsave, Want::Outs(0), 1..=3) => {
