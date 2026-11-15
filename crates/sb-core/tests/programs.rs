@@ -86,6 +86,35 @@ fn bqparam_checks_the_gain_count_first() {
     );
 }
 
+/// FFT and IFFT take the length from the third array and name another
+/// array of another length.
+#[test]
+fn fft_names_the_array_of_another_length() {
+    let kind = |src: &str| run(src).err().map(|e| (e.kind, e.arg));
+    let illegal = ErrorKind::IllegalFunctionCall;
+    let arrays = "DIM A[4],B[4],C[4],D[4],F[8],G[3],W%[4]:";
+    for command in ["FFT", "IFFT"] {
+        let call = |args: &str| kind(&format!("{arrays}{command} {args}"));
+        assert_eq!(call("A,F,C,D"), Some((illegal, Some(1))), "{command}");
+        assert_eq!(call("A,B,C,F"), Some((illegal, Some(3))), "{command}");
+        // Not a power of two names nothing, even with the others unlike.
+        assert_eq!(call("A,F,G,D"), Some((illegal, None)), "{command}");
+        // The first output's length is not looked at; ours refuses a
+        // shorter one, naming it.
+        assert_eq!(call("G,B,C,D"), Some((illegal, Some(0))), "{command}");
+        assert_eq!(kind(&format!("{arrays}{command} F,B,C,D")), None);
+    }
+    assert_eq!(
+        kind(&format!("{arrays}FFT A,B,C,D,F")),
+        Some((illegal, Some(4)))
+    );
+    // The window must be of reals.
+    assert_eq!(
+        kind(&format!("{arrays}FFT A,B,C,D,W%")),
+        Some((ErrorKind::TypeMismatch, Some(4)))
+    );
+}
+
 #[test]
 fn print_separators() {
     assert_eq!(output("PRINT 1;2\n?\"A\",\"B\"\nPRINT"), "12\nA   B\n\n");

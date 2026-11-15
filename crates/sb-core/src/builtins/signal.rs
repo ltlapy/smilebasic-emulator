@@ -20,6 +20,14 @@ fn number_array(v: &Value) -> Result<ArrayRef> {
     }
 }
 
+/// An array of any type; anything else is a `Type mismatch` naming it.
+fn array(v: &Value) -> Result<ArrayRef> {
+    match v {
+        Value::Array(a) => Ok(a.clone()),
+        _ => Err(mismatch(v)),
+    }
+}
+
 fn reals(a: &Array) -> Result<Vec<f64>> {
     (0..a.len()).map(|i| a.get(i).to_real()).collect()
 }
@@ -91,15 +99,42 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
 /// FFT and IFFT: `out_re, out_im, in_re, in_im [, window]`, all arrays of
 /// one power-of-two length; the outputs may be the inputs.
 // The forward transform is not scaled and the inverse divides by the
-// length; a bad length is an Illegal function call.
+// length; a bad length is an Illegal function call. SmileBASIC 4
+// takes the length from in_re: not a power of two names nothing,
+// and another array of another length is named. The window must be an
+// array of reals, named if not. It does not look at out_re's length and
+// writes the length's worth of results into it; ours refuses a shorter
+// one, naming it.
 fn fourier(args: &[Value], inverse: bool) -> Result<Vec<Value>> {
-    let arrays = args.iter().map(number_array).collect::<Result<Vec<_>>>()?;
-    let n = arrays[0].borrow().len();
-    if !n.is_power_of_two() || arrays.iter().any(|a| a.borrow().len() != n) {
+    let arrays = args.iter().map(array).collect::<Result<Vec<_>>>()?;
+    let n = arrays[2].borrow().len();
+    if !n.is_power_of_two() {
         return Err(Error::with_detail(
             ErrorKind::IllegalFunctionCall,
             "array length",
         ));
+    }
+    for (a, v) in arrays.iter().zip(args).skip(1) {
+        if a.borrow().len() != n {
+            return Err(
+                Error::with_detail(ErrorKind::IllegalFunctionCall, "array length").of_value(v),
+            );
+        }
+    }
+    if let Some(window) = arrays.get(4)
+        && window.borrow().elem_type() != ElemType::Real
+    {
+        return Err(mismatch(&args[4]));
+    }
+    for (a, v) in arrays.iter().zip(args) {
+        if a.borrow().elem_type() == ElemType::Str {
+            return Err(mismatch(v));
+        }
+    }
+    if arrays[0].borrow().len() < n {
+        return Err(
+            Error::with_detail(ErrorKind::IllegalFunctionCall, "array length").of_value(&args[0]),
+        );
     }
     let mut re = reals(&arrays[2].borrow())?;
     let mut im = reals(&arrays[3].borrow())?;
