@@ -97,7 +97,7 @@ impl Runtime {
                 copy_across(main, self, load, kind, from, to).map(|()| vec![])
             }
             (Command::Envinput | Command::Envlocate | Command::Clipboard, _, _) => {
-                main.run(command, args, want)
+                main.run_counted(command, args, want)
             }
             // The main interpreter's cursor, if this program may see it.
             (Command::Helpinfo, Want::Outs(2), []) => {

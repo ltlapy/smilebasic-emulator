@@ -1278,3 +1278,29 @@ fn sndmsbal_moves_over_its_time_and_starts_halfway() {
         frames(&mut m, 1);
     }
 }
+
+/// ENVINPUT$, ENVLOCATE and CLIPBOARD reach the main interpreter, and
+/// a wrong count of OUT variables is the error SmileBASIC 4's handler
+/// gives for it there too.
+#[test]
+fn linked_commands_tell_a_wrong_out_count() {
+    for (source, error) in [
+        ("ENVLOCATE OUT A,B,C\n", "Wrong number of OUT arguments"),
+        ("ENVINPUT$ 0 OUT A$,B$\n", "Wrong number of OUT arguments"),
+        // One OUT variable is the function form, which takes nothing.
+        ("CLIPBOARD \"A\" OUT A$\n", "Wrong number of arguments"),
+        ("CLIPBOARD OUT A$,B$\n", "Wrong number of OUT arguments"),
+        ("ENVLOCATE 0 OUT A,B\n", "Wrong number of arguments"),
+    ] {
+        let dir = TempDir::new("linkedcount");
+        let mut m = machine(&dir, source);
+        enter(&mut m, "subrun \"sub\"");
+        frames(&mut m, 5);
+        let rows = rows(&m);
+        assert!(
+            rows.iter()
+                .any(|r| r.starts_with(&format!("{error} in 0:1"))),
+            "{source}: {rows:?}"
+        );
+    }
+}

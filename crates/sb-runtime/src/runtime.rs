@@ -2529,6 +2529,27 @@ impl Runtime {
         }
     }
 
+    /// Runs `command` as a call: a function called as a command with one
+    /// OUT variable, such as `SPSET 242 OUT IX`, runs as the function, and
+    /// a call no form takes is the count error SmileBASIC 4 gives for it.
+    pub(crate) fn run_counted(
+        &mut self,
+        command: Command,
+        args: &[Value],
+        want: Want,
+    ) -> Result<Vec<Value>> {
+        let result = match self.run(command, args, want) {
+            Err(e) if want == Want::Outs(1) && is_no_form(&e) => {
+                self.run(command, args, Want::Value)
+            }
+            result => result,
+        };
+        result.map_err(|e| match is_no_form(&e) {
+            true => no_form_error(command, args.len(), want.count()),
+            false => e,
+        })
+    }
+
     pub(crate) fn run(
         &mut self,
         command: Command,
@@ -2936,25 +2957,11 @@ impl Host for Runtime {
                 None
             }
         };
-        let result = match self.run(command, args, want) {
-            // A function called as a command with one OUT variable, such
-            // as `SPSET 242 OUT IX`, runs as the function.
-            Err(e) if want == Want::Outs(1) && is_no_form(&e) => {
-                self.run(command, args, Want::Value)
-            }
-            result => result,
-        };
+        let result = self.run_counted(command, args, want);
         if let Some((i, before)) = before {
             self.changed |= self.sprites.list()[i].appearance() != before;
         }
-        result.map_err(|e| {
-            let e = if is_no_form(&e) {
-                no_form_error(command, args.len(), want.count())
-            } else {
-                e
-            };
-            command_error(e, COMMANDS[id as usize].0, args)
-        })
+        result.map_err(|e| command_error(e, COMMANDS[id as usize].0, args))
     }
 
     fn print(&mut self, screen: Option<i32>, text: &[u16]) -> Result<()> {
