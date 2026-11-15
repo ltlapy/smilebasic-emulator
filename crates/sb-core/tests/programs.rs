@@ -326,6 +326,67 @@ fn variadic_outs_as_a_function() {
     assert_eq!(output(src), "41\n");
 }
 
+/// DEFARG, DEFARGC, DEFOUTC and the CHK functions with brackets are
+/// compiled in place, their arguments and DEF checked as the program
+/// compiles; as commands they call their handlers, which check as they
+/// run.
+#[test]
+fn def_and_chk_functions_check_their_counts() {
+    use ErrorKind as E;
+    let at = |src: &str| {
+        let e = run(src).expect_err(src);
+        (e.kind, e.line)
+    };
+    let compiling = |src: &str| {
+        sb_core::compile(src, &TextHost::default())
+            .unwrap_err()
+            .kind
+    };
+    assert_eq!(compiling("?1\n?DEFARG(0)"), E::CantUseOutsideDef);
+    assert_eq!(compiling("?1\n?DEFARGC()"), E::CantUseOutsideDef);
+    assert_eq!(compiling("?1\n?DEFOUTC()"), E::CantUseOutsideDef);
+    assert_eq!(compiling("?1\nDEFOUT 0,1"), E::CantUseOutsideDef);
+    // The count comes first.
+    assert_eq!(compiling("?DEFARG(0,1)"), E::WrongNumberOfArguments);
+    assert_eq!(compiling("?DEFARGC(1)"), E::WrongNumberOfArguments);
+    assert_eq!(compiling("?DEFOUTC(1)"), E::WrongNumberOfArguments);
+    assert_eq!(compiling("?CHKCALL(\"A\",1)"), E::WrongNumberOfArguments);
+    assert_eq!(compiling("?CHKVAR()"), E::WrongNumberOfArguments);
+    assert_eq!(
+        compiling("?CHKLABEL(\"@A\",0,1)"),
+        E::WrongNumberOfArguments
+    );
+    // CALLIDX is called, and fails as it runs.
+    assert_eq!(at("?1\nQ=CALLIDX(0)"), (E::WrongNumberOfArguments, 2));
+    // As commands.
+    assert_eq!(output("CALLIDX OUT A:?A"), "0\n");
+    assert_eq!(
+        output("CHKVAR \"A\" OUT F:CHKCALL \"SIN\" OUT G:?F;G"),
+        "01\n"
+    );
+    assert_eq!(output("CHKLABEL \"@L\" OUT F:?F\n@L"), "1\n");
+    assert_eq!(output("DEFARGC OUT A:DEFOUTC OUT B:?A;B"), "00\n");
+    assert_eq!(
+        output("DEF F *\nDEFARG 1 OUT A:DEFARGC OUT B:?A;B\nEND\nF 4,5"),
+        "52\n"
+    );
+    assert_eq!(at("?1\nCALLIDX OUT A,B"), (E::WrongNumberOfOutArguments, 2));
+    assert_eq!(at("CALLIDX 1 OUT A,B").0, E::WrongNumberOfArguments);
+    assert_eq!(at("CHKLABEL 1,2,3 OUT A,B").0, E::WrongNumberOfOutArguments);
+    assert_eq!(at("CHKCALL \"A\" OUT A,B").0, E::WrongNumberOfOutArguments);
+    assert_eq!(at("CHKVAR \"A\",1 OUT A,B").0, E::WrongNumberOfArguments);
+    assert_eq!(at("DEFARGC OUT A,B").0, E::WrongNumberOfOutArguments);
+    assert_eq!(at("DEFOUTC 1 OUT A").0, E::WrongNumberOfArguments);
+    // DEFARG's handler checks for a DEF first.
+    assert_eq!(at("?1\nDEFARG 0,1 OUT A,B"), (E::CantUseOutsideDef, 2));
+    assert_eq!(
+        at("DEF F\nDEFARG 0 OUT A,B\nEND\nF").0,
+        E::WrongNumberOfOutArguments
+    );
+    let e = run("CALLIDX OUT A,B").unwrap_err();
+    assert_eq!(e.to_string(), "Wrong number of OUT arguments in 1(CALLIDX)");
+}
+
 #[test]
 fn array_parameters_may_say_so() {
     let src = "DEF F(A[],B)\nRETURN A[1]+B\nEND\nDEF G A[] OUT C\nC=A[0]\nEND\nDIM X[]=[1,2]\nG X OUT D\n?F(X,3);D";

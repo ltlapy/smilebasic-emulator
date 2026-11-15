@@ -593,6 +593,10 @@ impl Parser {
                 self.expect(&TokenKind::Comma, "','")?;
                 StmtKind::Swap(a, self.lvalue()?)
             }
+            // Refused before what follows it is read.
+            K::Defout if !self.in_def => {
+                return Err(compile_error(ErrorKind::CantUseOutsideDef, span));
+            }
             // Reserved, but called like ordinary commands.
             K::Exec | K::Defout => {
                 let name = Var {
@@ -1599,9 +1603,16 @@ mod tests {
                 outs: vec![Some(LValue::Var(var("P"))), Some(LValue::Var(var("M")))],
             }
         );
+        let [StmtKind::Def(def)] = &stmts("DEF F * OUT *\nDEFOUT 0,10\nEND")[..] else {
+            panic!()
+        };
         assert_eq!(
-            one("DEFOUT 0,10"),
+            def.body[0].kind,
             cmd("DEFOUT", vec![Some(Expr::Int(0)), Some(Expr::Int(10))])
+        );
+        assert_eq!(
+            err("DEFOUT 0,10"),
+            ParseErrorKind::Compile(ErrorKind::CantUseOutsideDef)
         );
     }
 

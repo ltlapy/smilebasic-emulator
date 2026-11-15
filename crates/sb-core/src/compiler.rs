@@ -1189,6 +1189,9 @@ impl Compiler<'_> {
                 self.store_place(&place);
                 return Ok(());
             }
+            "CALLIDX" | "CHKLABEL" | "CHKCALL" | "CHKVAR" | "DEFARG" | "DEFARGC" | "DEFOUTC" => {
+                return self.handler_command(&full, args, outs);
+            }
             "VSYNC" | "WAIT" => {
                 no_outs(self)?;
                 let has_arg = match args {
@@ -1300,9 +1303,88 @@ impl Compiler<'_> {
 
     fn require_def(&self) -> Result<()> {
         if self.def.is_none() {
-            return Err(err(ErrorKind::IllegalStatement, "only valid inside DEF"));
+            return Err(err(ErrorKind::CantUseOutsideDef, "only valid inside DEF"));
         }
         Ok(())
+    }
+
+    /// Works out `args` and fails with `kind` as the call runs, as the
+    /// handler of builtin `name` does when it checks them.
+    fn fail_after(&mut self, kind: ErrorKind, name: &str, args: &[Option<Expr>]) -> Result<()> {
+        self.args(args)?;
+        let name = self.string_const(name.encode_utf16().collect());
+        self.emit(Op::Fail(kind, Some(name)));
+        Ok(())
+    }
+
+    /// A call of DEFARG, DEFARGC, DEFOUTC, CHKLABEL, CHKCALL or CHKVAR
+    /// with brackets. SmileBASIC 4 compiles these in place, not as calls
+    /// of their handlers, and checks as the program compiles how many
+    /// arguments they have, then that the DEF ones are inside a DEF.
+    fn in_place(&mut self, name: &str, args: &[Option<Expr>]) -> Result<()> {
+        let takes = match name {
+            "DEFARGC" | "DEFOUTC" => 0..=0,
+            "CHKLABEL" => 1..=2,
+            _ => 1..=1,
+        };
+        if !takes.contains(&args.len()) {
+            return Err(err(ErrorKind::WrongNumberOfArguments, name));
+        }
+        if name.starts_with("DEF") && self.def.is_none() {
+            return Err(err(ErrorKind::CantUseOutsideDef, name));
+        }
+        for arg in args {
+            match arg {
+                Some(e) => self.expr(e)?,
+                None => _ = self.emit(Op::Default),
+            }
+        }
+        self.emit(match name {
+            "DEFARGC" => Op::DefArgc,
+            "DEFOUTC" => Op::DefOutc,
+            "DEFARG" => Op::DefArg,
+            "CHKCALL" => Op::ChkCall,
+            "CHKVAR" => Op::ChkVar,
+            _ => Op::ChkLabel {
+                has_flag: args.len() == 2,
+            },
+        });
+        Ok(())
+    }
+
+    /// CALLIDX, CHKLABEL, CHKCALL, CHKVAR and the DEF functions as
+    /// commands, `CHKVAR "A" OUT F`: these call their handlers, which
+    /// check the counts as they run, each in its own order.
+    fn handler_command(
+        &mut self,
+        name: &str,
+        args: &[Option<Expr>],
+        outs: &[Option<LValue>],
+    ) -> Result<()> {
+        use ErrorKind::{WrongNumberOfArguments, WrongNumberOfOutArguments};
+        let argc_fits = match name {
+            "CALLIDX" | "DEFARGC" | "DEFOUTC" => args.is_empty(),
+            "CHKLABEL" => matches!(args.len(), 1 | 2),
+            _ => args.len() == 1,
+        };
+        let outc_fits = outs.len() == 1;
+        let fail = match name {
+            "DEFARG" if self.def.is_none() => Some(ErrorKind::CantUseOutsideDef),
+            "CHKLABEL" if !outc_fits => Some(WrongNumberOfOutArguments),
+            _ if !argc_fits => Some(WrongNumberOfArguments),
+            _ if !outc_fits => Some(WrongNumberOfOutArguments),
+            _ => None,
+        };
+        if let Some(kind) = fail {
+            return self.fail_after(kind, name, args);
+        }
+        match name {
+            "CALLIDX" => _ = self.emit(Op::CallIdx),
+            // Outside a DEF, the handlers give 0.
+            "DEFARGC" | "DEFOUTC" if self.def.is_none() => _ = self.emit(Op::Int(0)),
+            _ => self.in_place(name, args)?,
+        }
+        self.store_outs(outs)
     }
 
     fn store_outs(&mut self, outs: &[Option<LValue>]) -> Result<()> {
@@ -1740,30 +1822,12 @@ impl Compiler<'_> {
                 self.emit(Op::CallIdx);
                 return Ok(());
             }
-            ("DEFARGC", []) | ("DEFOUTC", []) => {
-                self.require_def()?;
-                self.emit(if full == "DEFARGC" {
-                    Op::DefArgc
-                } else {
-                    Op::DefOutc
-                });
-                return Ok(());
+            // Its handler checks the arguments as it runs.
+            ("CALLIDX", _) => {
+                return self.fail_after(ErrorKind::WrongNumberOfArguments, &full, args);
             }
-            ("DEFARG", [Some(n)]) => {
-                self.require_def()?;
-                self.expr(n)?;
-                self.emit(Op::DefArg);
-                return Ok(());
-            }
-            ("CHKLABEL", [Some(name)]) | ("CHKLABEL", [Some(name), Some(_)]) => {
-                self.expr(name)?;
-                if let [_, Some(flag)] = args {
-                    self.expr(flag)?;
-                }
-                self.emit(Op::ChkLabel {
-                    has_flag: args.len() == 2,
-                });
-                return Ok(());
+            ("DEFARGC" | "DEFOUTC" | "DEFARG" | "CHKLABEL" | "CHKCALL" | "CHKVAR", _) => {
+                return self.in_place(&full, args);
             }
             ("FREEMEM", []) => {
                 self.emit(Op::FreeMem { both: false });
@@ -1779,15 +1843,6 @@ impl Compiler<'_> {
             ("VSYNC" | "WAIT", _) => {
                 self.args(args)?;
                 self.emit(Op::Fail(ErrorKind::WrongNumberOfOutArguments, None));
-                return Ok(());
-            }
-            ("CHKCALL", [Some(name)]) | ("CHKVAR", [Some(name)]) => {
-                self.expr(name)?;
-                self.emit(if full == "CHKCALL" {
-                    Op::ChkCall
-                } else {
-                    Op::ChkVar
-                });
                 return Ok(());
             }
             _ => {}
