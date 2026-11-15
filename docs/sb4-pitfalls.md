@@ -1056,7 +1056,8 @@ Expected but not yet seen on hardware:
   keyboard plugged in or not (TEST71, TEST71K).
 - `PUSHKEY` of a string of 64 characters is `String is too long (PUSHKEY:1)`; 63
   goes (TEST60).
-- `PUSHKEY &H10FFF` goes and `&H11001` is `Out of range` (TEST62).
+- `PUSHKEY &H10FFF` goes and `&H11001` is `Out of range` (TEST62). It names the code: `PUSHKEY 70000` is
+  `Out of range (PUSHKEY:1)`. (Not yet seen on hardware.)
 - `INKEY$` after `PUSHKEY &H10009` (HOME) gives one character of code 2, and
   after `PUSHKEY &H10000` (up) code `&H1E` (TEST62).
 - Keys pass through two buffers of 128, each losing its oldest when full. Typed

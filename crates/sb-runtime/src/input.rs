@@ -1107,7 +1107,8 @@ impl Runtime {
         if !matches!(keys, Value::Str(_)) {
             let code = keys.to_int()? as u32;
             if code > PUSHKEY_CODES {
-                return Err(out_of_range("key code", code as i32));
+                // Named.
+                return Err(out_of_range("key code", code as i32).of_value(keys));
             }
             self.push_code(code);
             return Ok(());

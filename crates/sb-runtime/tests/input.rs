@@ -65,7 +65,7 @@ fn bad_ids() {
 }
 
 /// XCTRLSTYLE's errors and the argument each names, in SmileBASIC 4's
-/// order; PUSHKEY's too long string (TEST60).
+/// order; PUSHKEY's too long string (TEST60) and key code past &H10FFF.
 #[test]
 fn control_style_errors_name_the_argument() {
     for (source, kind, arg) in [
@@ -88,6 +88,7 @@ fn control_style_errors_name_the_argument() {
         ("XCTRLSTYLE 1,100,6,6", ErrorKind::IllegalToyConType, 3),
         ("XCTRLSTYLE 2,100,0,1", ErrorKind::OutOfRange, 0),
         ("PUSHKEY \"A\"*64", ErrorKind::StringTooLong, 0),
+        ("PUSHKEY 70000", ErrorKind::OutOfRange, 0),
     ] {
         let e = run(&[], source).unwrap_err();
         assert_eq!((e.kind, e.arg), (kind, Some(arg)), "{source}");
