@@ -889,7 +889,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
             machine.home_leave();
         } else if handheld {
             // The game list opens below, whenever nothing runs.
-            machine.home_done();
+            handheld_ended(machine);
         } else if machine.home_done() {
             let size = (display_w, display_h);
             manager = Some(ProjectManager::reopen(
@@ -1394,17 +1394,16 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     ) => settings.apply(&mut machine.rt.settings),
                     Some(handheld::Choice::Restart) => {
                         pause_menu = None;
-                        if let Some(file) = &ran_from_list
-                            && let Err(e) = machine.run_home(file)
-                        {
-                            toasts.push(format!("Could not load {file}: {e}"));
+                        if let Some(file) = &ran_from_list {
+                            handheld_leave(machine);
+                            if let Err(e) = machine.run_home(file) {
+                                toasts.push(format!("Could not load {file}: {e}"));
+                            }
                         }
                     }
                     Some(handheld::Choice::List) => {
                         pause_menu = None;
-                        machine.stop();
-                        machine.home_leave();
-                        machine.home_done();
+                        handheld_leave(machine);
                         let size = (display_w, display_h);
                         game_list = Some(GameList::new(&machine.rt.storage, size, &list_memory));
                     }
@@ -1431,6 +1430,9 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         ..
                     } => {
                         if machine.home_press() {
+                            if handheld {
+                                machine.tidy();
+                            }
                             let (storage, size) = (&machine.rt.storage, (display_w, display_h));
                             if handheld {
                                 game_list = Some(GameList::new(storage, size, &list_memory));
@@ -3507,6 +3509,30 @@ fn input_screen(pause: bool, dialog: bool, manager: Option<usize>, list: Option<
     }
 }
 
+// Handheld mode goes back to its game list with the screens as ACLS
+// leaves them and the sound stopped, as `tidy_on_end` has a program end,
+// whatever that setting says: after END, STOP, the + button, an error
+// once A is pressed, Return to Game list and Restart.
+
+/// Whether the program the game list ran has ended by itself or by the +
+/// button, tidied if so. An error waits for A instead.
+fn handheld_ended(machine: &mut Machine) -> bool {
+    let done = machine.home_done();
+    if done {
+        machine.tidy();
+    }
+    done
+}
+
+/// Stops the program the game list ran, or ends the wait after its error,
+/// for the game list or a restart.
+fn handheld_leave(machine: &mut Machine) {
+    machine.stop();
+    machine.home_leave();
+    machine.home_done();
+    machine.tidy();
+}
+
 /// The keys of the desktop's windows and tools, which handheld mode leaves
 /// alone: the function keys, but for F5 alone, which is the + button.
 fn desktop_key(key: Keycode, keymod: Mod) -> bool {
@@ -5217,6 +5243,85 @@ mod tests {
             open_file_dialog(&m, true, size),
             Ok(FileDialog::Save(_))
         ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A machine with a project GAME whose programs are `programs`, as
+    /// (name, source), with the desktop's `tidy_on_end` off.
+    fn game_machine(tag: &str, programs: &[(&str, &str)]) -> (Machine, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("sb-main-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut rt = Runtime::for_tests(Font::blank());
+        rt.settings.tidy_on_end = false;
+        rt.storage = Storage::new(dir.clone());
+        rt.storage.create_project("GAME").unwrap();
+        for (name, source) in programs {
+            std::fs::write(dir.join("GAME").join(format!("T{name}")), source).unwrap();
+        }
+        let mut m = Machine::new(rt);
+        m.boot();
+        (m, dir)
+    }
+
+    /// Whether the screens and sound are as ACLS and SNDSTOP leave them.
+    fn tidy(m: &Machine) -> bool {
+        m.rt.back_color == 0xFF00_0000 && m.rt.sound.inspect_tracks().is_empty()
+    }
+
+    const UNTIDY: &str = "BACKCOLOR #C_RED\nBGMPLAY 1\n";
+
+    #[test]
+    fn handheld_mode_tidies_whenever_it_goes_back_to_the_list() {
+        let ends = format!("{UNTIDY}END\n");
+        let spins = format!("{UNTIDY}WHILE 1:VSYNC:WEND\n");
+        let fails = format!("{UNTIDY}DIM A[2]\nA[5]=1\n");
+        let programs = [
+            ("MAIN.PRG", ends.as_str()),
+            ("SPIN.PRG", spins.as_str()),
+            ("FAIL.PRG", fails.as_str()),
+        ];
+        let (mut m, dir) = game_machine("tidy", &programs);
+        let mut toasts = Toasts::default();
+        let mut run = |m: &mut Machine, file: &str| {
+            assert!(run_from_list(m, "GAME", file, &mut toasts));
+            for _ in 0..3 {
+                m.frame();
+            }
+        };
+        // END.
+        run(&mut m, "MAIN.PRG");
+        assert!(!m.is_running() && !tidy(&m));
+        assert!(handheld_ended(&mut m));
+        assert!(tidy(&m));
+        // The + button.
+        run(&mut m, "SPIN.PRG");
+        assert!(m.is_running() && !handheld_ended(&mut m) && !tidy(&m));
+        m.sysreq();
+        m.frame();
+        assert!(handheld_ended(&mut m));
+        assert!(tidy(&m));
+        // Return to Game list, and Restart, which goes the same way.
+        run(&mut m, "SPIN.PRG");
+        handheld_leave(&mut m);
+        assert!(!m.is_running() && tidy(&m));
+        assert!(!handheld_ended(&mut m), "nothing more to do");
+        // An error stays readable until A, and its press tidies.
+        run(&mut m, "FAIL.PRG");
+        assert!(m.home_waiting() && !handheld_ended(&mut m));
+        assert!(!tidy(&m), "the message stays as it was");
+        for _ in 0..30 {
+            m.frame();
+        }
+        assert!(m.home_press());
+        m.tidy();
+        assert!(tidy(&m));
+        // An error left for Return to Game list.
+        run(&mut m, "FAIL.PRG");
+        handheld_leave(&mut m);
+        assert!(!m.home_waiting() && tidy(&m));
+        // On the desktop the setting decides, as before.
+        run(&mut m, "MAIN.PRG");
+        assert!(m.home_done() && !tidy(&m));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

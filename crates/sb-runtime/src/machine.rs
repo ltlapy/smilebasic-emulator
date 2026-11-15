@@ -2263,9 +2263,16 @@ impl Machine {
     /// STOP, errors and the debugger's stops leave everything to look at.
     fn tidy_after_run(&mut self) {
         if self.rt.settings.tidy_on_end && self.rt.env_type == 0 {
-            self.rt.acls(false, false, false, false);
-            self.rt.sound.stop_all();
+            self.tidy();
         }
+    }
+
+    /// Leaves the screens as ACLS does and the sound stopped, as a program
+    /// that ends does with the setting `tidy_on_end`. Handheld mode does
+    /// this whenever it goes back to its game list, whatever the setting.
+    pub fn tidy(&mut self) {
+        self.rt.acls(false, false, false, false);
+        self.rt.sound.stop_all();
     }
 
     /// A line typed in direct mode failed: ENVSTAT's status says so, and
