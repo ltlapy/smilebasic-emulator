@@ -39,7 +39,10 @@ pub(crate) fn instrument_volume(volume: i32) -> i32 {
 /// step at a time, 0.96 of these ticks in each, the first step included;
 /// the note's level then takes one more step to fall.
 fn note_end(ticks: u64) -> usize {
-    ((ticks * 25).div_ceil(24) - 1) as usize * TICK
+    // A waveform WAVSETA gives 1 Hz holds its note for billions of ticks, more samples
+    // than a 32-bit usize counts.
+    let samples = ((ticks * 25).div_ceil(24) - 1).saturating_mul(TICK as u64);
+    usize::try_from(samples).unwrap_or(usize::MAX)
 }
 
 /// Adds `voice` to `notes`, which holds [`MAX_VOICES`] at most: the oldest
@@ -446,7 +449,7 @@ impl Beeps {
                     wr.fill(0.0);
                     let mut at = 0;
                     while at < n {
-                        let until = b.hold.map_or(n, |hold| (at + hold).min(n));
+                        let until = b.hold.map_or(n, |hold| at.saturating_add(hold).min(n));
                         note.render(&mut wl[at..until], &mut wr[at..until]);
                         if let Some(hold) = &mut b.hold {
                             *hold -= until - at;
@@ -579,6 +582,14 @@ mod tests {
             Sounding::Wave(note) => note.old.len(),
             _ => panic!("a waveform's note"),
         }
+    }
+
+    #[test]
+    fn long_notes_do_not_wrap_round() {
+        let ticks = u64::from(u32::MAX);
+        let samples = ((ticks * 25).div_ceil(24) - 1) * TICK as u64;
+        assert_eq!(note_end(ticks) as u64, samples.min(usize::MAX as u64));
+        assert!(note_end(ticks) >= note_end(ticks / 2));
     }
 
     #[test]
