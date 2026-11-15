@@ -686,8 +686,10 @@ way:
   ([benchmark-results.md](benchmark-results.md#code-layout-on-the-handheld-44fd91e-to-314459c)).
 - GFILL, GCOPY, GLOAD and GUPLOAD give two clusters of times for one
   binary: three runs of GCOPY took 45.6, 46.4 and 55.3 ms, and of GLOAD
-  2.09, 2.56 and 2.57. Where a run's page buffers land in memory is the
-  likely cause. Give these scenes five runs or more.
+  2.09, 2.56 and 2.57. A cache simulation matches GCOPY's clusters to
+  where the kernel puts a page's physical frames, contiguous or scattered
+  ([benchmark-results.md](benchmark-results.md#grp-pages-and-the-caches-from-da44ce5));
+  that is not confirmed on the device. Give these scenes five runs or more.
 
 Without the device, qemu counts the aarch64 build's instructions exactly:
 with one instruction a block and no chaining, its `exec` log has one line

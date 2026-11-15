@@ -282,15 +282,10 @@ iteration:
   outside the fused steps about 440, a `VAR("name")` about 3000, as it
   makes four `String`s and compares the name with each global's.
 
-The scenes far above the others draw on GRP pages. A page is 2048 pixels
-wide, so its rows lie 8 KB apart, and the same column of successive rows
-falls in the same set of a cache whose way size divides 8 KB. Cortex-A35's
-32 KB 4-way L1 has 8 KB ways: GCOPY's 48 rows of 48 pixels at one column
-compete for 4 lines a set, and its 400x240 working area, 1.9 MB of address
-space, does not stay in the 256 KB L2. The desktop's larger and more
-associative caches hide this. That this is the cause is inferred from the
-layout and the ratios, not measured on the device. GLOAD and GUPLOAD write
-whole rows and suffer less.
+The scenes far above the others, GCOPY, GLOAD and GUPLOAD, draw on GRP
+pages or do almost nothing. [GRP pages and the caches](#grp-pages-and-the-caches-from-da44ce5)
+takes them apart: GCOPY ran 5 to 7 cycles an instruction, which points
+at memory, and GLOAD moves more data than the L2 holds.
 
 Changes, x86-64 instructions a frame (program and CPU drawing, frames 3 to
 83) of `cc49c48` against the branch, same checksums; scenes not listed moved
@@ -378,11 +373,12 @@ ships the profiler runtime, so an instrumented build can run under qemu.
 Larger changes, not made, by what they would save against what they cost:
 
 - **Padding a GRP page's rows**, to a stride that is not a multiple of the
-  caches' way size (2048 plus 16 pixels, say). It would take GCOPY's 74 times
-  and GLOAD's 45 back toward the others' 22, a gain of up to two thirds of
-  those scenes on the device, by the ratios. Every reader of a page's pixels
-  assumes the 2048 stride: `index`, the raster, GSAVE and GLOAD, and the GPU
-  path's uploads in `sb-sdl`.
+  caches' way size (2048 plus 16 pixels, say). A cache simulation cuts
+  GCOPY's misses to memory 2 to 5.6 times and leaves GLOAD's as they are;
+  what that saves on the device is not measured yet
+  ([GRP pages and the caches](#grp-pages-and-the-caches-from-da44ce5)).
+  Every reader of a page's pixels assumes the 2048 stride: `index`, the
+  raster, GSAVE and GLOAD, GARRAY, and the GPU path's uploads in `sb-sdl`.
 - **A cache for `VAR("name")`**, keyed by the string and the running DEF,
   emptied when the program changes. A look-up costs about 3000 instructions
   now, mostly in making `String`s; VVAR would fall from 40 ms toward 5 ms on
@@ -627,6 +623,108 @@ does, gain 11 to 27%. VVAR's +6.4% is within the
 [noise of code layout](benchmarking.md#measuring-on-a-handheld), and GFILL's
 +10.1% and GUPLOAD's -7.8% within that of their two clusters. The other
 scenes move by 4% or less.
+
+### GRP pages and the caches, from `da44ce5`
+
+This set asks why GCOPY, GLOAD and GUPLOAD take 37 to 74 times as long on
+the handheld as on the desktop when the other scenes take 20 to 27, and
+whether a GRP page's row stride is the cause. A page is 2048 pixels of 4
+bytes, so its rows lie 8 KB apart: one way of the Cortex-A35's 32 KB
+4-way L1, and a quarter of a way of its 256 KB L2, taken here as 8-way.
+The same column of successive rows falls in one L1 set, and in one of four
+L2 sets. Counts come from qemu's Cortex-A35 model
+over frames 3 to 6 of the `dist` build, as in the
+[chains](#three-address-chains-from-018017d) set, and from `perf stat` on
+x86-64 over frames 3 to 83. The device was off the network for this set:
+its times below are those of the sets above, and the new build's are not
+measured yet.
+
+What each scene's program does a frame, and what it costs:
+
+| Scene | Work a frame | Program, aarch64 (M) | Device (ms) | Cycles an instruction |
+|---|---|---|---|---|
+| GFILL | 2000 fills of 32x32 | about 8.0 | 12.5 to 13.8 | about 2.1 |
+| GCOPY | 900 copies of 48x48, page 1 to page 0, mode 1 (clear pixels skipped) | about 11.5 | 45.6 to 59.4 | 5.1 to 6.7 |
+| GLOAD | 6 loads of 400x240 from an integer array | about 0.8 | 2.09 to 2.64 | 3.4 to 4.3 |
+| GUPLOAD | 9 GPSETs | under 0.1 | 0.21 | - |
+
+The program's part is the frame's count less the CPU drawing's (about 6.6
+million), split by function. The interpreter's scenes run 1.3 to 1.8
+cycles an instruction on the device (VINT to VSTR). GCOPY's 4 to 5 extra
+cycles an instruction are 33 to 47 ms of stalls a frame.
+
+- **GLOAD** reads 384 KB and writes 384 KB six times a frame, 4.6 MB, at
+  1.7 to 2.2 GB/s: memory bandwidth. Neither array fits in the L2, with any
+  stride; the desktop keeps both in its 32 MB L3.
+- **GUPLOAD** in `smilebasic-check` uploads nothing: its program part is
+  6 µs on the desktop and 0.21 ms on the device. Its ratio is that of two
+  tiny numbers on caches the drawing has just emptied, and says nothing
+  about pages.
+
+A standalone benchmark ran the emulator's inner loops for GCOPY, GLOAD and
+GFILL, copied from `graphics.rs`, on page buffers of other strides, with
+TPERF's sizes and places, and fed the same order of accesses to a cache
+simulator: L1 32 KB 4-way, L2 256 KB 8-way, 64-byte lines, LRU, physically
+indexed, with a pass over the 400x240 target area each frame as the CPU
+drawing makes. Physical frames were taken either as contiguous (as huge
+pages or an unfragmented free list give) or as scattered 4 KB frames.
+Misses to memory a frame, in thousands; the L2 with 16 ways gives the same
+within 2%:
+
+| Kernel | Frames | 2048 | 2064 | 2112 | 3072 |
+|---|---|---|---|---|---|
+| GCOPY, `da44ce5` | contiguous | 330 | 65 | 59 | 150 |
+| GCOPY, `da44ce5` | scattered | 150 | 72 | 65 | 151 |
+| GCOPY, this branch | contiguous | 289 | 62 | 59 | 149 |
+| GCOPY, this branch | scattered | 149 | 69 | 62 | 149 |
+| GFILL | contiguous | 172 | 69 | 65 | 147 |
+| GFILL | scattered | 148 | 75 | 65 | 146 |
+| GLOAD | either | 86 | 86 | 86 | 86 |
+
+Padding the rows by 16 or 64 pixels cuts GCOPY's and GFILL's misses to
+memory 2 to 5.6 times; a stride of 3072 (4 KB more) aliases in the L2
+as 2048 does with scattered frames. Moving the source page against the
+target by 2, 4 or 6 KB changes nothing (330 to 338 thousand): the rows
+that alias are those of the target page, whose 400x240 area is 384 KB and
+uses 100 of the L2's 512 sets with contiguous frames, 200 with scattered
+ones. GLOAD misses on every line with any stride.
+
+The two clusters of times fit the two placements: scattered frames give
+GCOPY 180 thousand fewer misses a frame than contiguous ones, and the
+clusters lie about 10 ms apart, which prices a miss at about 55 ns. At that
+price, padding would save GCOPY about 5 ms a frame with scattered frames
+and 15 ms with contiguous ones, of 45 to 55: 10 to 27%. Neither the
+placement nor the price is measured on the device yet, and translation
+misses are not modeled: the target's rows lie in 240 different 4 KB pages.
+
+So no stride was changed. The device has to show a gain of a third or more
+in GCOPY or GFILL at a padded stride first, in every run.
+
+What did change, as it costs instructions whatever the caches do:
+
+- GCOPY copied its whole source rectangle into a new `Vec`, a `memcpy` a
+  row, then matched the drawing mode again on each row. From another page
+  that is not blank, with no GARRAY array on either, rows now go straight
+  from page to page, and the mode is chosen once. The standalone kernel
+  went from 9.0 to 3.8 million aarch64 instructions a frame; its inner loop
+  stays NEON, 11 instructions for 8 pixels. A copy within one page still
+  reads its source first.
+- A plain GFILL on a page without a GARRAY array fills each row's columns
+  directly instead of through `fill_rows`, which asked a closure for each
+  row's span and matched the mode on each row: about 45 instructions a row
+  before.
+
+| Scene | aarch64, `da44ce5` (M) | aarch64, branch (M) | Change | x86-64, `da44ce5` (M) | x86-64, branch (M) | Change |
+|---|---|---|---|---|---|---|
+| GFILL | 14.64 | 13.10 | -10.5% | 16.94 | 14.42 | -14.8% |
+| GCOPY | 18.30 | 13.26 | -27.5% | 21.19 | 17.38 | -18.0% |
+
+These are whole frames, the CPU drawing included; GCOPY's program part
+falls from about 11.5 to 6.7 million aarch64 instructions. Of the other
+scenes on x86-64, GPUTCHR moves by +0.4% as LLVM inlines `put_chars`
+differently, and the rest by under 0.5%. TPERF's checksums stay
+`e8e5f6dc467db861` at 400 frames, `a6e1ed07824b1ad8` at 3600 and
+`5d9bb17a39eefb70` at 10500.
 
 ## Tried and left out
 
