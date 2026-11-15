@@ -60,14 +60,15 @@ fn unrecognized(outs: usize, allowed: &[usize]) -> Result<Vec<Value>> {
 impl Runtime {
     /// The Toy-Con that XCTRLSTYLE set up for a controller must be one of
     /// `types` on either side: Illegal control style otherwise (checked
-    /// on hardware without any Toy-Con set up).
+    /// on hardware without any Toy-Con set up). SmileBASIC 4 names the
+    /// controller.
     fn toycon_set(&self, pad: usize, types: &[i32]) -> Result<()> {
         let input = &self.input;
         let sides = &input.toycons[pad * 2..pad * 2 + 2];
         if input.style.1 == TOYCON_STYLE && sides.iter().any(|t| types.contains(t)) {
             Ok(())
         } else {
-            Err(ErrorKind::IllegalControlStyle.into())
+            Err(Error::new(ErrorKind::IllegalControlStyle).of_arg(0))
         }
     }
 
@@ -218,8 +219,13 @@ impl Runtime {
                 self.toycon_set(pad(&args[0])?, &[1])?;
                 unrecognized(outs, &[1, 2, 3, 4])
             }
-            (Command::Tchouse, Want::Outs(2), 1) => {
+            // TCHOUSE and TCROBOT check the Toy-Con before the OUT count;
+            // TCVISOR after it.
+            (Command::Tchouse, Want::Outs(_), 1) => {
                 self.toycon_set(pad(&args[0])?, &[2])?;
+                if outs != 2 {
+                    return Err(no_form());
+                }
                 Ok(vec![Value::Int(0), zeros(ElemType::Real, vec![3, 4])])
             }
             (Command::Tcbike, Want::Outs(_), 1) => {
@@ -230,8 +236,11 @@ impl Runtime {
                 self.toycon_set(pad(&args[0])?, &[4])?;
                 unrecognized(outs, &[1, 6])
             }
-            (Command::Tcrobot, Want::Outs(2 | 5), 1) => {
+            (Command::Tcrobot, Want::Outs(_), 1) => {
                 self.toycon_set(pad(&args[0])?, &[5])?;
+                if outs != 2 && outs != 5 {
+                    return Err(no_form());
+                }
                 let mut out = vec![Value::Int(0), zeros(ElemType::Real, vec![4, 5])];
                 out.extend(reals(&vec![0.0; outs - 2]));
                 Ok(out)

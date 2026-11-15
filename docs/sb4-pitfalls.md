@@ -1193,8 +1193,12 @@ Expected but not yet seen on hardware:
   `Wrong number of arguments for this IR Camera mode`, error 108, without a
   number, and 3, 4, 7 or over 8 arguments in all error 52. The settings are 0 to
   3, 1 to 16 and 7 to 600, then 0 to 4 for image transfer, and 0 to 76800,
-  0 to 76800 and 0 to 255 for clustering, each named when out of range. (Not yet seen on hardware.)
-- `TCPIANO` without Toy-Con set up is `Illegal control style`.
+  0 to 76800 and 0 to 255 for clustering, each named when out of range. (Not yet
+  seen on hardware.)
+- `TCPIANO` without Toy-Con set up is `Illegal control style`. It names the
+  controller, as `(TCPIANO:1)`, and so do the other nine Toy-Con commands,
+  `TCHOUSE` to `TCVEHICLE`. All but `TCVISOR` check this before the `OUT`
+  count: `TCHOUSE 1 OUT F` is error 107, `TCVISOR 1 OUT F` error 53. (Not yet seen on hardware.)
 - `XCTRLSTYLE` takes two arguments, or
   four or five, or six or seven for Toy-Con on two controllers, where the first
   must be 2 (`Out of range (XCTRLSTYLE:1)`) and the style 100

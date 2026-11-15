@@ -473,6 +473,35 @@ fn hardware_the_emulator_lacks() {
     );
     // Toy-Con are set up but never recognized.
     assert_eq!(err("TCPIANO 1 OUT F"), ErrorKind::IllegalControlStyle);
+    // SmileBASIC 4 names the controller, in each of the ten.
+    for source in [
+        "TCPIANO 1 OUT F",
+        "TCHOUSE 1 OUT F,A",
+        "TCBIKE 1 OUT F",
+        "TCFISHING 1 OUT F",
+        "TCROBOT 1 OUT F,A",
+        "TCVISOR 1 OUT F,A,B,C",
+        "TCCAR 1 OUT F",
+        "TCPLANE 1 OUT F",
+        "TCSUBM 1 OUT F",
+        "Q=TCVEHICLE(1)",
+    ] {
+        let e = run(&[], source).unwrap_err();
+        assert_eq!(
+            (e.kind, e.arg),
+            (ErrorKind::IllegalControlStyle, Some(0)),
+            "{source}"
+        );
+    }
+    // TCHOUSE and TCROBOT look for the Toy-Con before the OUT count,
+    // TCVISOR after it.
+    assert_eq!(err("TCHOUSE 1 OUT F"), ErrorKind::IllegalControlStyle);
+    assert_eq!(err("TCROBOT 1 OUT F"), ErrorKind::IllegalControlStyle);
+    assert_eq!(err("TCVISOR 1 OUT F"), ErrorKind::WrongNumberOfOutArguments);
+    assert_eq!(
+        err("XCTRLSTYLE 2,100,10,10,6,5:TCROBOT 2 OUT F"),
+        ErrorKind::WrongNumberOfOutArguments
+    );
     assert_eq!(
         ok("XCTRLSTYLE 1,100,0,1:TCPIANO 1 OUT F,K,D,V:?F;K;D;V;TCVEHICLE(1)"),
         "00000"
