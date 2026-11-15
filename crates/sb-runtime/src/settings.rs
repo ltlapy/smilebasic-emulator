@@ -94,6 +94,32 @@ impl HandheldFilter {
     }
 }
 
+/// How large handheld mode draws its own screens: the game list, the
+/// pause menu, dialogs and notices. The program's screen keeps its size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HandheldUiSize {
+    /// The largest whole scale that leaves 480 lines or more: 640x480 on
+    /// a 640x480 display.
+    #[default]
+    Normal,
+    /// Twice that scale, so that the text is twice as tall: 320x240 on a
+    /// 640x480 display.
+    Large,
+}
+
+impl HandheldUiSize {
+    /// Every choice, in the order the pause menu steps through them.
+    pub const ALL: [HandheldUiSize; 2] = [HandheldUiSize::Normal, HandheldUiSize::Large];
+
+    /// The choice `step` places after this one, round from the last to
+    /// the first.
+    pub fn step(self, step: isize) -> HandheldUiSize {
+        let n = Self::ALL.len() as isize;
+        let at = Self::ALL.iter().position(|&s| s == self).unwrap_or(0) as isize;
+        Self::ALL[(at + step).rem_euclid(n) as usize]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Letters type in upper case unless Shift or Caps Lock is on.
@@ -158,6 +184,10 @@ pub struct Settings {
     pub renderer: Renderer,
     /// Keys also press the first controller's buttons.
     pub keyboard_buttons: bool,
+    /// Controllers' A and B trade places, as do X and Y, for programs and
+    /// for the emulator's own screens: for controllers with A at the
+    /// bottom. Not SmileBASIC 4's.
+    pub swap_ab_xy: bool,
     /// Play SmileBASIC 4's own instruments when they are imported.
     pub smilebasic_instruments: bool,
     /// The SoundFont file instruments come from otherwise; `None` for the
@@ -215,6 +245,11 @@ pub struct Settings {
     /// How handheld mode scales the screen; `screen_filter` is the
     /// desktop's.
     pub handheld_filter: HandheldFilter,
+    /// How large handheld mode draws its own screens.
+    pub handheld_ui_size: HandheldUiSize,
+    /// Handheld mode's welcome screen has been shown. It asks for A and
+    /// sets `swap_ab_xy` by the button pressed.
+    pub handheld_welcome_shown: bool,
 }
 
 /// F1 to F5 as SmileBASIC 4 starts (checked on hardware).
@@ -251,6 +286,7 @@ impl Default for Settings {
             screen_filter: Some(Filter::Nearest),
             renderer: Renderer::DEFAULT,
             keyboard_buttons: true,
+            swap_ab_xy: false,
             smilebasic_instruments: true,
             sound_font: None,
             language: Language::English,
@@ -275,6 +311,8 @@ impl Default for Settings {
             tools: TOOLS.map(String::from),
             handheld: false,
             handheld_filter: HandheldFilter::Auto,
+            handheld_ui_size: HandheldUiSize::Normal,
+            handheld_welcome_shown: false,
         }
     }
 }
@@ -311,6 +349,7 @@ impl Settings {
             screen_filter: Some(Filter::Nearest),
             renderer: Renderer::Auto,
             keyboard_buttons: true,
+            swap_ab_xy: false,
             smilebasic_instruments: true,
             sound_font: None,
             language: Language::English,
@@ -335,6 +374,8 @@ impl Settings {
             tools: TOOLS.map(String::from),
             handheld: false,
             handheld_filter: HandheldFilter::Auto,
+            handheld_ui_size: HandheldUiSize::Normal,
+            handheld_welcome_shown: false,
         }
     }
 }
@@ -357,6 +398,11 @@ const HANDHELD_FILTER: [(HandheldFilter, &str); 5] = [
     (HandheldFilter::Bilinear, "bilinear"),
     (HandheldFilter::Nearest, "nearest"),
     (HandheldFilter::Xscreen, "xscreen"),
+];
+
+const HANDHELD_UI_SIZE: [(HandheldUiSize, &str); 2] = [
+    (HandheldUiSize::Normal, "normal"),
+    (HandheldUiSize::Large, "large"),
 ];
 
 const FILE_CONFIRM: [(FileConfirm, &str); 3] = [
@@ -479,6 +525,7 @@ impl Settings {
                 "tidy_on_end" => &mut s.tidy_on_end,
                 "file_hint_shown" => &mut s.file_hint_shown,
                 "keyboard_buttons" => &mut s.keyboard_buttons,
+                "swap_ab_xy" => &mut s.swap_ab_xy,
                 "smilebasic_instruments" => &mut s.smilebasic_instruments,
                 "keep_mouse_cursor" => &mut s.keep_mouse_cursor,
                 "helpinfo_cursor" => &mut s.helpinfo_cursor,
@@ -492,6 +539,7 @@ impl Settings {
                 "complete_hints" => &mut s.complete_hints,
                 "complete_above" => &mut s.complete_above,
                 "handheld" => &mut s.handheld,
+                "handheld_welcome_shown" => &mut s.handheld_welcome_shown,
                 "complete_after" => {
                     if let Some(n) = value.parse().ok().filter(|n| COMPLETE_AFTER.contains(n)) {
                         s.complete_after = n;
@@ -596,6 +644,12 @@ impl Settings {
                     }
                     continue;
                 }
+                "handheld_ui_size" => {
+                    if let Some(size) = choice(&HANDHELD_UI_SIZE, value) {
+                        s.handheld_ui_size = size;
+                    }
+                    continue;
+                }
                 "screen_filter" => {
                     if let Some(&(f, _)) = SCREEN_FILTER.iter().find(|(_, n)| *n == value) {
                         s.screen_filter = f;
@@ -654,6 +708,7 @@ impl Settings {
              screen_filter={filter}\n\
              {renderer}\
              keyboard_buttons={}\n\
+             swap_ab_xy={}\n\
              smilebasic_instruments={}\n\
              sound_font={}\n\
              language={}\n\
@@ -676,6 +731,8 @@ impl Settings {
              speed={}\n\
              handheld={}\n\
              handheld_filter={}\n\
+             handheld_ui_size={}\n\
+             handheld_welcome_shown={}\n\
              {}{}",
             self.upper_case_letters,
             self.ctrl_c_stops,
@@ -701,6 +758,7 @@ impl Settings {
             choice_name(&BUNDLED_SET, &self.bundled_glyphs16),
             self.file_hint_shown,
             self.keyboard_buttons,
+            self.swap_ab_xy,
             self.smilebasic_instruments,
             self.sound_font.as_deref().unwrap_or(""),
             choice_name(&LANGUAGE, &self.language),
@@ -723,6 +781,8 @@ impl Settings {
             self.speed.name(),
             self.handheld,
             choice_name(&HANDHELD_FILTER, &self.handheld_filter),
+            choice_name(&HANDHELD_UI_SIZE, &self.handheld_ui_size),
+            self.handheld_welcome_shown,
             (self.function_keys.iter().enumerate())
                 .map(|(i, k)| format!("{FUNCTION_KEY}{}={k}\n", i + 1))
                 .collect::<String>(),
@@ -780,6 +840,9 @@ mod tests {
             tools: ["#TOOL/X.PRG", "", "MINE/EDIT.PRG"].map(String::from),
             handheld: true,
             handheld_filter: HandheldFilter::Xscreen,
+            handheld_ui_size: HandheldUiSize::Large,
+            handheld_welcome_shown: true,
+            swap_ab_xy: true,
             ..Settings::default()
         };
         assert_eq!(Settings::from_text(&s.to_text()), s);
@@ -811,6 +874,37 @@ mod tests {
         assert_eq!(f.step(-1), HandheldFilter::Xscreen);
         assert_eq!(HandheldFilter::Xscreen.step(1), f);
         assert_eq!(f.step(5), f);
+    }
+
+    #[test]
+    fn the_handheld_settings_have_keys_of_their_own() {
+        for size in HandheldUiSize::ALL {
+            let s = Settings {
+                handheld_ui_size: size,
+                ..Settings::default()
+            };
+            assert_eq!(Settings::from_text(&s.to_text()).handheld_ui_size, size);
+        }
+        let text = Settings::default().to_text();
+        for line in [
+            "handheld_ui_size=normal\n",
+            "handheld_welcome_shown=false\n",
+            "swap_ab_xy=false\n",
+        ] {
+            assert!(text.contains(line), "{line}");
+        }
+        let s = Settings::from_text(
+            "handheld_ui_size=large\nhandheld_welcome_shown=true\nswap_ab_xy=true\n",
+        );
+        assert_eq!(s.handheld_ui_size, HandheldUiSize::Large);
+        assert!(s.handheld_welcome_shown && s.swap_ab_xy);
+        assert!(!s.handheld, "each has a key of its own");
+        let s = Settings::from_text("handheld_ui_size=huge\nswap_ab_xy=1\n");
+        assert_eq!(s, Settings::default());
+        let large = HandheldUiSize::Large;
+        assert_eq!(HandheldUiSize::Normal.step(1), large);
+        assert_eq!(HandheldUiSize::Normal.step(-1), large);
+        assert_eq!(large.step(1), HandheldUiSize::Normal);
     }
 
     #[test]
