@@ -2150,7 +2150,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                         let save = action == Action::SaveSlot;
                         match open_file_dialog(machine, save, size) {
                             Ok(open) => file_dialog = Some(open),
-                            Err(refused) => dialog = Some((refused, Asking::Notice)),
+                            Err(refused) => dialog = Some((*refused, Asking::Notice)),
                         }
                     }
                     Click::Chosen(Action::Undo) => machine.edit().undo(),
@@ -2485,7 +2485,7 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                     let size = (display_w, display_h);
                     match open_file_dialog(machine, key == Keycode::S, size) {
                         Ok(open) => file_dialog = Some(open),
-                        Err(refused) => dialog = Some((refused, Asking::Notice)),
+                        Err(refused) => dialog = Some((*refused, Asking::Notice)),
                     }
                 }
                 Event::KeyDown {
@@ -4552,7 +4552,11 @@ fn status_line(machine: &Machine, paused: bool) -> String {
 /// Ctrl+S's window to save the edited slot, or Ctrl+L's to load into it.
 /// In a `#` project, which takes no files, Ctrl+S says so instead and
 /// asks for no name, as SmileBASIC 4's editor does.
-fn open_file_dialog(machine: &Machine, save: bool, size: (u32, u32)) -> Result<FileDialog, Dialog> {
+fn open_file_dialog(
+    machine: &Machine,
+    save: bool,
+    size: (u32, u32),
+) -> Result<FileDialog, Box<Dialog>> {
     let slot = machine.edited_slot();
     let storage = &machine.rt.storage;
     if save && machine.rt.current_project_read_only() {
@@ -4564,7 +4568,7 @@ fn open_file_dialog(machine: &Machine, save: bool, size: (u32, u32)) -> Result<F
             "Files in system (#) projects are read-only.".to_string(),
             "File > Settings > Files can allow writing to them.".to_string(),
         ];
-        return Err(Dialog::notice("Save file", lines, size));
+        return Err(Box::new(Dialog::notice("Save file", lines, size)));
     }
     Ok(if save {
         let name = &machine.rt.slot_names[slot];
