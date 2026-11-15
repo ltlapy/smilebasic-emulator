@@ -525,6 +525,10 @@ TEST71, TEST72 and TEST74 ran on 4.4.9 on a Switch 1 and a Switch 2.
 - An array holds nothing (`TYPEOF` 0) until its `DIM` runs, as when a DEF reads
   it before.
 - `DIM A[,]` compiles, and is `Type mismatch` when it runs.
+- `DIM` at the start of a statement always declares, never calls the `DIM()`
+  function, so `DIM A,Z OUT X` declares `A` and `Z`. When `A` is already
+  declared that is `Duplicate variable`, and after new names the `OUT` is a
+  `Syntax error`, both as the program compiles. (Not yet seen on hardware.)
 - `DIM A[3]=[1,2,3,4]`, with more values than elements, is
   `Subscript out of range` (TEST71).
 - An int array takes a real by truncating it toward zero (-3.9 gives -3, -0.5

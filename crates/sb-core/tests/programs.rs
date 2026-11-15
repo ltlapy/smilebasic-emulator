@@ -2446,6 +2446,21 @@ fn shift_of_a_constant_needs_a_block() {
     assert_eq!(empty.kind, ErrorKind::SubscriptOutOfRange);
 }
 
+/// `DIM` starting a statement declares: with an OUT it is not the DIM
+/// function as a command.
+#[test]
+fn dim_with_out_is_a_declaration() {
+    let compiling = |src: &str| {
+        let e = sb_core::compile(src, &TextHost::default()).unwrap_err();
+        (e.kind, e.line)
+    };
+    assert_eq!(
+        compiling("DIM A[16]:Z=0\nDIM A,Z OUT Q0,Q1"),
+        (ErrorKind::DuplicateVariable, 2)
+    );
+    assert_eq!(compiling("?1\nDIM X,Y OUT Q"), (ErrorKind::SyntaxError, 2));
+}
+
 /// A command called as a function, `Q=PUSH(A,1)`, is called with one
 /// OUT variable, and finds the counts wrong as it runs.
 #[test]
