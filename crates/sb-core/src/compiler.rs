@@ -1192,19 +1192,19 @@ impl Compiler<'_> {
             "CALLIDX" | "CHKLABEL" | "CHKCALL" | "CHKVAR" | "DEFARG" | "DEFARGC" | "DEFOUTC" => {
                 return self.handler_command(&full, args, outs);
             }
+            // The handlers check for no OUT as they run, and read the
+            // first argument only, past any others.
             "VSYNC" | "WAIT" => {
-                no_outs(self)?;
-                let has_arg = match args {
-                    [] => false,
-                    [Some(e)] => {
-                        self.expr(e)?;
-                        true
-                    }
-                    _ => return Err(self.illegal_call(&full)),
-                };
+                if !outs.is_empty() {
+                    return self.fail_after(ErrorKind::WrongNumberOfOutArguments, &full, args);
+                }
+                self.args(args)?;
+                for _ in 1..args.len() {
+                    self.emit(Op::Pop);
+                }
                 self.emit(Op::Wait {
                     vsync: full == "VSYNC",
-                    has_arg,
+                    has_arg: !args.is_empty(),
                 });
                 return Ok(());
             }
@@ -1840,10 +1840,9 @@ impl Compiler<'_> {
                 self.emit(Op::Fail(ErrorKind::WrongNumberOfArguments, Some(name)));
                 return Ok(());
             }
+            // `Wrong number of OUT arguments (VSYNC)` (TEST62).
             ("VSYNC" | "WAIT", _) => {
-                self.args(args)?;
-                self.emit(Op::Fail(ErrorKind::WrongNumberOfOutArguments, None));
-                return Ok(());
+                return self.fail_after(ErrorKind::WrongNumberOfOutArguments, &full, args);
             }
             _ => {}
         }

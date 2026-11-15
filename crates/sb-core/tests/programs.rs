@@ -572,6 +572,17 @@ fn vsync_and_freemem_as_functions() {
     assert_eq!(output("IF 0 THEN ?VSYNC()\n?1"), "1\n");
     let e = run("?FREEMEM(1)").unwrap_err();
     assert_eq!(e.detail.as_deref(), Some("(FREEMEM)"));
+    let e = run("?VSYNC()").unwrap_err();
+    assert_eq!(e.detail.as_deref(), Some("(VSYNC)"));
+    // As commands, the handlers check for no OUT as they run, and read
+    // the first argument only.
+    assert_eq!(
+        error("?1\nVSYNC 1 OUT A"),
+        (ErrorKind::WrongNumberOfOutArguments, 2)
+    );
+    assert_eq!(error("WAIT OUT A").0, ErrorKind::WrongNumberOfOutArguments);
+    assert_eq!(output("VSYNC 1,2:WAIT 0,\"A\",3:?1"), "1\n");
+    assert_eq!(error("WAIT 1,Z#[0]").0, ErrorKind::TypeMismatch);
     // One OUT variable is FREEMEM()'s value.
     assert_eq!(output("FREEMEM OUT A:?A==FREEMEM()"), "1\n");
 }
