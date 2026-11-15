@@ -65,8 +65,10 @@ program ends or is stopped; after an error it waits for A or Enter.
 File > Settings > Screen > Renderer: Auto, the default, uses GPU rendering if
 the start-up test passes; CPU is exact but slower.
 
-Gamepads work as controllers 1 to 4, and the keyboard as controller 1. Help >
-Keyboard shortcuts lists the keys, as does [shortcuts.md](docs/shortcuts.md).
+Gamepads work as controllers 1 to 4, and the keyboard as controller 1. For a
+gamepad with A at the bottom, turn on File > Settings > Input > Swap A/B and
+X/Y. Help > Keyboard shortcuts lists the keys, as does
+[shortcuts.md](docs/shortcuts.md).
 
 ## Documentation
 

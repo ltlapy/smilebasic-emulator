@@ -151,6 +151,13 @@ apart from the macro hang below.
   takes everything else from `BUTTON` therefore needs a gamepad.
 - `INKEY$` gets nothing from buttons the keyboard presses; the keys themselves
   do the typing.
+- Swap A/B and X/Y (File > Settings > Input, or the handheld pause menu;
+  `swap_ab_xy` in `settings.txt`), off by default, is for gamepads that
+  print A at the bottom. A gamepad's bottom button then reads as `#B_RRIGHT`
+  (A) in `BUTTON` and types what A types, the right one as `#B_RDOWN` (B),
+  and X and Y trade the same way. The emulator's own screens follow it too.
+  The keyboard's keys for buttons stay as they are. SmileBASIC 4 has no such
+  setting: the Switch's buttons are where their letters say.
 - Caps Lock: programs, DIRECT mode and the editor get letters by SmileBASIC 4's
   own Caps Lock, which is on at start and which the Caps Lock key toggles in
   any of the emulator's windows. The computer's Caps Lock light disagrees with
@@ -428,6 +435,11 @@ the CPU renderer's, which `smilebasic-check` always uses, in these ways:
   with A opens the emulator's pause menu, which pauses the program and gives it
   no input; neither that A nor the Enter it would type reaches the program.
   − (Select) with + quits the emulator. SmileBASIC 4 has none of these.
+- Handheld mode leaves the screens as `ACLS` does and stops the sound as
+  `SNDSTOP` does each time it goes back to its list: after `END`, `STOP` or
+  the + button, after an error once A is pressed, and on Return to Game list
+  and Restart. The desktop does this only with Run > "Clear screen and sound
+  when a program ends".
 
 ## Subprograms
 

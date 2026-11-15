@@ -109,11 +109,22 @@ editor, and a list of the projects instead of DIRECT mode. Start it with
 `smilebasic --handheld`, or turn it on and off with Ctrl+Shift+F12, which
 keeps the choice. Programs never see − (Select).
 
-The pause menu pauses the program. It has Resume, Restart, Screen filter,
-Return to Game list and Quit Emulator; over the list it has Close, Screen
-filter and Quit Emulator. A screen filter change shows at once and is kept.
-The filters are described in
-[differences.md](differences.md#screen-scaling).
+The first time the mode starts, a welcome screen asks you to press A. The
+button you press, the right or the bottom one, works as A from then on, and
+the one across from it as B. Enter continues without changing this.
+
+The pause menu pauses the program. It has Resume, Restart, Return to Game
+list and Quit Emulator; over the list it has Close and Quit Emulator. Under
+Settings it has:
+
+- Screen filter: how the screen is scaled, described in
+  [differences.md](differences.md#screen-scaling).
+- UI size: Normal, or Large to draw the list, menus and dialogs twice as
+  large (320x240 on a 640x480 display). The program's screen keeps its size.
+- Swap A/B and X/Y: A and B trade places, as do X and Y, for programs too.
+  The desktop has it in File > Settings > Input.
+
+A change shows at once and is kept.
 
 | Key | Action |
 |---|---|
@@ -126,4 +137,4 @@ The filters are described in
 | B, Esc, Backspace | Back to the projects; close the menu |
 | L, R, Page Up, Page Down | Move a page |
 | D-pad, left stick, cursor keys | Move |
-| Left, Right | Change the screen filter in the menu |
+| Left, Right | Change a setting in the menu |
