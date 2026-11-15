@@ -467,6 +467,7 @@ impl Graphics {
         // Only read: a blank page takes memory, but its pixels stay as they were.
         let pixels = self.pixels_to_change(page);
         array.data = ArrayData::Int(pixels.iter().map(|&p| p as i32).collect());
+        array.system = true;
         let array = Rc::new(RefCell::new(array));
         self.arrays[page] = Some(array.clone());
         array

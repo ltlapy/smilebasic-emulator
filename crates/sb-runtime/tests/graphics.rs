@@ -203,6 +203,18 @@ fn garray_follows_the_page() {
 }
 
 #[test]
+fn garray_cannot_be_resized() {
+    // Every variable given the array shares it, and the sizes are not
+    // counted first.
+    let (mut m, out) = run("G=GARRAY(3):H=G:RESIZE H,9");
+    assert_eq!(out, "Can't RESIZE this array in 0:1(RESIZE:1)");
+    assert_eq!(m.rt.grp.array(3).borrow().dims, [2048, 2048]);
+    // A copy of its pixels is the program's to resize.
+    let (_, out) = run("DIM B[0]:COPY B,0,GARRAY(0),0,4:RESIZE B,9:?LEN(B)");
+    assert_eq!(out, "9");
+}
+
+#[test]
 fn gsave_takes_rows_wider_than_the_page() {
     // TEST47 part 23: hardware takes 2049 and 4096 pixels.
     let (_, out) = run("DIM A%[1]:GSAVE 0,0,0,2049,1,A%:GLOAD 0,0,2049,1,A%,0\n\

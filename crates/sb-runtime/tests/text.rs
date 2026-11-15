@@ -282,6 +282,15 @@ fn tarray_follows_tscreen_and_acls_resets_gsample() {
     assert_eq!(row(&rt, 4, 0, 20).trim_end_matches('.'), "65300010");
 }
 
+#[test]
+fn tarray_cannot_be_resized() {
+    let e = run("T=TARRAY(0):U=T:RESIZE U,1,DIM(U,1)").err().unwrap();
+    assert_eq!((e.kind, e.arg), (ErrorKind::CantResizeThisArray, Some(0)));
+    // TSCREEN still gives it the screen's size.
+    let rt = run("T=TARRAY(0):TSCREEN 0,8,8,4,2:?DIM(T,0);DIM(T,1)").unwrap();
+    assert_eq!(row(&rt, 4, 0, 10).trim_end_matches('.'), "28");
+}
+
 /// A cell TSCREEN or CLS cleared has COLOR and ATTR in it; SCROLL's are empty.
 #[test]
 fn cleared_cells_keep_color_and_attr() {

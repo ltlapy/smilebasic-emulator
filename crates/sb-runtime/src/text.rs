@@ -388,6 +388,7 @@ impl TextScreen {
             vec![self.height as usize, self.width as usize * 2],
         );
         array.data = ArrayData::Int(self.cells.iter().flat_map(|c| c.to_ints()).collect());
+        array.system = true;
         let array = ArrayRef::new(array.into());
         self.array = Some(array.clone());
         array
