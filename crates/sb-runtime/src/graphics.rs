@@ -103,6 +103,7 @@ fn copy_rows<'a>(
     rows: impl Iterator<Item = (&'a mut [u32], &'a [u32])>,
     tint: Option<u32>,
     blend: Blend,
+    pixels: usize,
 ) {
     fn each<'a>(
         rows: impl Iterator<Item = (&'a mut [u32], &'a [u32])>,
@@ -114,11 +115,51 @@ fn copy_rows<'a>(
             }
         }
     }
-    match (tint, blend) {
-        (None, Blend::Normal) => rows.for_each(|(to, from)| to.copy_from_slice(from)),
-        (None, blend) => each(rows, |d, p| blend.apply(d, p)),
-        (Some(t), blend) => each(rows, |d, p| blend.apply(d, multiply(p, t))),
+    fn tinted<'a>(
+        rows: impl Iterator<Item = (&'a mut [u32], &'a [u32])>,
+        blend: Blend,
+        times: impl Fn(u32) -> u32,
+    ) {
+        match blend {
+            Blend::Normal => each(rows, |_, p| times(p)),
+            // A clear pixel is clear tinted too, and leaves the page as it
+            // is: most of a glyph or a sprite's cell.
+            Blend::Normal2 => each(rows, |d, p| match p >> 24 {
+                0 => d,
+                _ => Blend::Normal2.apply(d, times(p)),
+            }),
+            blend => each(rows, |d, p| blend.apply(d, times(p))),
+        }
     }
+    match (tint, blend) {
+        (None | Some(0xFFFF_FFFF), Blend::Normal) => {
+            rows.for_each(|(to, from)| to.copy_from_slice(from))
+        }
+        (None | Some(0xFFFF_FFFF), blend) => each(rows, |d, p| blend.apply(d, p)),
+        // Four lookups a pixel instead of four products and divisions, for
+        // a table that takes about as long to make as 100 pixels take.
+        (Some(t), blend) if pixels >= TINT_TABLE_PIXELS => {
+            let table = tint_table(t);
+            tinted(rows, blend, |p| {
+                let at = |i: u32| u32::from(table[i as usize][(p >> (8 * i) & 0xFF) as usize]);
+                at(0) | at(1) << 8 | at(2) << 16 | at(3) << 24
+            })
+        }
+        (Some(t), blend) => tinted(rows, blend, |p| multiply(p, t)),
+    }
+}
+
+/// How many pixels a tinted GCOPY copies at least for [`tint_table`] to
+/// pay.
+const TINT_TABLE_PIXELS: usize = 256;
+
+/// Of each channel of `tint`, from blue (bits 0 to 7) to alpha, what
+/// [`multiply`] makes of each value of that channel.
+fn tint_table(tint: u32) -> [[u8; 256]; 4] {
+    std::array::from_fn(|i| {
+        let t = tint >> (8 * i) & 0xFF;
+        std::array::from_fn(|v| (v as u32 * t / 255) as u8)
+    })
 }
 
 /// How a sprite's color tints its image as it is drawn.
@@ -1023,7 +1064,7 @@ impl Graphics {
                 );
                 let from_rows = from_page.spans(sx, n, sy..sy + rows);
                 let to_rows = to_page.spans_mut(tx, n, ty..ty + rows);
-                copy_rows(to_rows.zip(from_rows), tint, blend);
+                copy_rows(to_rows.zip(from_rows), tint, blend, n * rows);
                 return;
             }
         }
@@ -1053,7 +1094,7 @@ impl Graphics {
             let from_rows = pixels[first..].chunks(w as usize);
             let to_rows = to_page.spans_mut(tx, n, ty..ty + rows);
             let pairs = to_rows.zip(from_rows);
-            copy_rows(pairs.map(|(d, s)| (d, &s[..n])), tint, blend);
+            copy_rows(pairs.map(|(d, s)| (d, &s[..n])), tint, blend, n * rows);
             return;
         }
         for y in ys {
@@ -2512,6 +2553,52 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(draw(false), draw(true));
+    }
+
+    /// Tinted rows, by tables or not, give what multiplying and blending
+    /// each pixel gives.
+    #[test]
+    fn tinted_rows_match_multiplying_each_pixel() {
+        let mut seed = 0x1234_5678_9ABC_DEF0_u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            // Clear pixels often, as in glyphs.
+            match seed % 4 {
+                0 => (seed >> 8) as u32 & 0x00FF_FFFF,
+                _ => (seed >> 16) as u32,
+            }
+        };
+        let src: Vec<u32> = (0..600).map(|_| next()).collect();
+        let dst: Vec<u32> = (0..600).map(|_| next()).collect();
+        let blends = [
+            Blend::Normal,
+            Blend::Normal2,
+            Blend::Alpha,
+            Blend::Alpha2,
+            Blend::Add,
+        ];
+        for tint in [
+            0xFF80_80FF,
+            0x8000_0000,
+            0x1234_5678,
+            0xFFFF_FFFF,
+            0,
+            0x01FF_FF00,
+        ] {
+            for blend in blends {
+                let want: Vec<u32> = (dst.iter().zip(&src))
+                    .map(|(&d, &p)| blend.apply(d, multiply(p, tint)))
+                    .collect();
+                for pixels in [1, src.len()] {
+                    let mut got = dst.clone();
+                    let rows = got.chunks_mut(100).zip(src.chunks(100));
+                    copy_rows(rows, Some(tint), blend, pixels);
+                    assert_eq!(got, want, "tint {tint:08X}, {blend:?}, {pixels} pixels");
+                }
+            }
+        }
     }
 
     /// Rows copied straight into a page give what drawing pixel by pixel
