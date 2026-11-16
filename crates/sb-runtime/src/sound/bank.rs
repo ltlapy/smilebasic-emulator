@@ -335,6 +335,21 @@ impl Reader {
         self.decode(wave, data)
     }
 
+    /// The samples decoded already that [`Reader::next_of`] gives next, for
+    /// a loop that takes them itself, with [`Reader::skip`].
+    #[inline(always)]
+    pub(crate) fn ahead(&self) -> &[i16] {
+        &self.ahead[usize::from(self.next)..usize::from(self.end.max(self.next))]
+    }
+
+    /// Moves on past `n` of [`Reader::ahead`]'s samples.
+    #[inline(always)]
+    pub(crate) fn skip(&mut self, n: usize) {
+        debug_assert!(n <= self.ahead().len());
+        self.next += n as u8;
+        self.pos += n as u32;
+    }
+
     /// Decodes from `pos` to the end of its frame, or of the waveform, and
     /// gives the first of those samples.
     #[inline(never)]

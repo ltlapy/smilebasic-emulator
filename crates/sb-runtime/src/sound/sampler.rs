@@ -537,33 +537,62 @@ impl Voice {
             let step = self.step;
             let (lp, ll) = ls.split_at_mut(plain);
             let (rp, rl) = rs.split_at_mut(plain);
-            let mut went = true;
-            for (l, r) in lp.iter_mut().zip(rp.iter_mut()) {
-                // SmileBASIC 4 reads instruments through the waveforms'
-                // filter too, over the sample before and the two after:
-                // let s = interpolate(&[before, s0, s1, after], frac);
-                // Here they stay linear: the filter made songs of many notes
-                // take a quarter longer to mix, and the instruments' samples
-                // are 32 kHz and more, where the two sound nearly alike.
-                let s = s0 + (s1 - s0) * frac as f32;
-                frac += step;
-                if frac >= 1.0 {
-                    (s0, s1, frac) = self.read(wave, data, s0, s1, frac);
-                    went = !self.done;
+            let reader = &mut self.reader;
+            let (mut ended, mut done) = (self.wave_ended, false);
+            let mut i = 0;
+            while i < lp.len() {
+                // Samples go on from what the reader has decoded already,
+                // with no call in the loop: around one, every float would
+                // have to leave the registers. A sample's reads come after
+                // its output, which does not hang on them, so that the loop
+                // can stop between two reads for the reader to decode more.
+                let ahead = if ended { &[][..] } else { reader.ahead() };
+                let mut taken = 0;
+                let mut more = false;
+                for (l, r) in lp[i..].iter_mut().zip(rp[i..].iter_mut()) {
+                    // SmileBASIC 4 reads instruments through the waveforms'
+                    // filter too, over the sample before and the two after:
+                    // let s = interpolate(&[before, s0, s1, after], frac);
+                    // Here they stay linear: the filter made songs of many
+                    // notes take a quarter longer to mix, and the
+                    // instruments' samples are 32 kHz and more, where the
+                    // two sound nearly alike.
+                    let s = s0 + (s1 - s0) * frac as f32;
+                    frac += step;
+                    g0 += d0;
+                    g1 += d1;
+                    *l += s * g0;
+                    *r += s * g1;
+                    i += 1;
+                    while frac >= 1.0 {
+                        let Some(&next) = ahead.get(taken) else {
+                            more = true;
+                            break;
+                        };
+                        frac -= 1.0;
+                        s0 = s1;
+                        s1 = f32::from(next) / 32768.0;
+                        taken += 1;
+                    }
+                    if more {
+                        break;
+                    }
                 }
-                g0 += d0;
-                g1 += d1;
-                *l += s * g0;
-                *r += s * g1;
-                if !went {
-                    break;
+                reader.skip(taken);
+                if more {
+                    let at = (s0, s1, frac);
+                    (s0, s1, frac) = read(reader, wave, data, at, &mut ended, &mut done);
+                    if done {
+                        break;
+                    }
                 }
             }
-            if went && last == 1 {
+            if !done && last == 1 {
                 let s = s0 + (s1 - s0) * frac as f32;
                 frac += step;
                 if frac >= 1.0 {
-                    (s0, s1, frac) = self.read(wave, data, s0, s1, frac);
+                    let at = (s0, s1, frac);
+                    (s0, s1, frac) = read(reader, wave, data, at, &mut ended, &mut done);
                 }
                 g0 += d0;
                 g1 += d1;
@@ -573,37 +602,11 @@ impl Voice {
                 rl[0] += s * g1;
             }
             (self.s0, self.s1, self.frac, self.gains) = (s0, s1, frac, [g0, g1]);
-            if self.done {
+            (self.wave_ended, self.done) = (ended, done);
+            if done {
                 return;
             }
         }
-    }
-
-    /// What goes on when the position passes a sample of the waveform.
-    #[inline]
-    fn read(
-        &mut self,
-        wave: &WaveInfo,
-        data: &[u8],
-        mut s0: f32,
-        mut s1: f32,
-        mut frac: f64,
-    ) -> (f32, f32, f64) {
-        while frac >= 1.0 {
-            frac -= 1.0;
-            if self.wave_ended {
-                self.done = true;
-            }
-            s0 = s1;
-            s1 = match self.reader.next_of(wave, data) {
-                Some(s) => f32::from(s) / 32768.0,
-                None => {
-                    self.wave_ended = true;
-                    0.0
-                }
-            };
-        }
-        (s0, s1, frac)
     }
 
     /// [`Voice::render`] a sample at a time, as it was first written, to
@@ -631,6 +634,35 @@ impl Voice {
             *r += s * self.gains[1];
         }
     }
+}
+
+/// What goes on when the position passes a sample of the waveform: the
+/// samples either side move on, and the note is done once the position
+/// passes the silence after the waveform's end.
+#[inline(always)]
+fn read(
+    reader: &mut Reader,
+    wave: &WaveInfo,
+    data: &[u8],
+    (mut s0, mut s1, mut frac): (f32, f32, f64),
+    ended: &mut bool,
+    done: &mut bool,
+) -> (f32, f32, f64) {
+    while frac >= 1.0 {
+        frac -= 1.0;
+        if *ended {
+            *done = true;
+        }
+        s0 = s1;
+        s1 = match reader.next_of(wave, data) {
+            Some(s) => f32::from(s) / 32768.0,
+            None => {
+                *ended = true;
+                0.0
+            }
+        };
+    }
+    (s0, s1, frac)
 }
 
 pub(crate) struct Sampler {
