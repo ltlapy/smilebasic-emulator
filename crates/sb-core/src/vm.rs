@@ -305,6 +305,8 @@ impl Unit {
     fn new(mut program: Compiled) -> Unit {
         // Fused code that names a place out of range is left out.
         crate::fuse::check(&mut program);
+        #[cfg(feature = "jit")]
+        crate::jit::attach(&mut program);
         let globals = (program.globals.iter())
             .map(initial_value)
             .chain(program.constants.iter().map(constant_value))
@@ -654,6 +656,8 @@ impl Vm {
     pub fn with_globals(mut program: Compiled, values: &HashMap<String, Value>) -> Self {
         // Fused code that names a place out of range is left out.
         crate::fuse::check(&mut program);
+        #[cfg(feature = "jit")]
+        crate::jit::attach(&mut program);
         // Variables from earlier lines exist already, for Op::Declare.
         let declared = (program.globals.iter())
             .map(|g| values.contains_key(&g.full_name()))
@@ -1666,6 +1670,22 @@ impl Vm {
             }
             match fast.op {
                 FastOp::Slow => break,
+                // A loop with native code runs it, and goes on from where
+                // it stops. A failure is a chain's, for `step`, and so is a
+                // loop native code does not take now: `step` runs the
+                // instruction, and the entries after it go on.
+                #[cfg(feature = "jit")]
+                FastOp::Native(region) => {
+                    let ran = program.native.enter(region, &mut vars, pc, left);
+                    let crate::jit::Entered::Ran { pc: to, left: rest } = ran else {
+                        if let crate::jit::Entered::Failed { pc: to, left: rest } = ran {
+                            (pc, left) = (to, rest);
+                        }
+                        break;
+                    };
+                    (pc, left) = (to, rest);
+                    continue;
+                }
                 FastOp::Nop => {}
                 FastOp::Push(a) => push_copy(stack, get(&vars, a)),
                 FastOp::Push2(a, b) => {

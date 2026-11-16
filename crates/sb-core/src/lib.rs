@@ -12,6 +12,8 @@ pub mod error;
 pub mod fuse;
 pub mod host;
 pub mod inspect;
+#[cfg(feature = "jit")]
+pub mod jit;
 pub mod lexer;
 pub mod memory;
 pub mod ops;
@@ -26,12 +28,13 @@ use error::{Error, ErrorKind};
 use parser::ParseErrorKind;
 
 /// The build's options that change how the VM runs, for version lines so
-/// that a report shows which build it came from: empty, or
-/// `unchecked-vars` with that feature on.
-pub const BUILD_OPTIONS: &str = if cfg!(feature = "unchecked-vars") {
-    "unchecked-vars"
-} else {
-    ""
+/// that a report shows which build it came from: empty, or the names of
+/// the features on, `unchecked-vars` and `jit`.
+pub const BUILD_OPTIONS: &str = match (cfg!(feature = "unchecked-vars"), cfg!(feature = "jit")) {
+    (false, false) => "",
+    (true, false) => "unchecked-vars",
+    (false, true) => "jit",
+    (true, true) => "unchecked-vars jit",
 };
 
 /// Parses and compiles a program.

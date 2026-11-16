@@ -285,6 +285,12 @@ pub enum FastOp {
         /// any of those is written reads the same.
         apart: bool,
     },
+    /// The start of a loop compiled to native code, the region of this
+    /// number in [`Compiled::native`]. Where native code does not run,
+    /// `step` runs the instruction, and the entries after it go on. Only
+    /// the VM puts it there, after [`check`].
+    #[cfg(feature = "jit")]
+    Native(u32),
 }
 
 /// One three-address step of a [`FastOp::Chain`]. A chain stands for one or
@@ -784,7 +790,7 @@ fn call_args(
 }
 
 /// How many hidden places a chain has for the values it makes.
-const TEMPS: usize = 8;
+pub(crate) const TEMPS: usize = 8;
 
 /// A chain being built: the places of the values a stack machine would
 /// have, and which hidden places hold one still to be used.
@@ -1179,8 +1185,13 @@ fn chain_cost(steps: &[Micro]) -> u32 {
         .iter()
         .filter(|m| matches!(m, Micro::Commit { .. }))
         .count() as u32;
-    3 + 6 * (steps.len() as u32 - commits) + 2 * commits
+    3 + STEP_COST * (steps.len() as u32 - commits) + 2 * commits
 }
+
+/// A chain's step, as [`chain_cost`] weighs it. With the `jit` feature a
+/// chain that stands for two entries or more wins: native code has chains'
+/// forms, but not those of entries that work on the stack.
+const STEP_COST: u32 = if cfg!(feature = "jit") { 5 } else { 6 };
 
 /// Works out [`Compiled::fast`], [`Compiled::micro`] and
 /// [`Compiled::constants`]. Each address takes the form that costs least to
@@ -1404,6 +1415,9 @@ fn places(op: &FastOp, micro: &[Micro], place: &mut dyn FnMut(Var, usize)) -> bo
                 micro_places(m, place);
             }
         }
+        // Native code of another VM's: this program runs unfused.
+        #[cfg(feature = "jit")]
+        F::Native(_) => return false,
     }
     true
 }

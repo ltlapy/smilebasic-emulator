@@ -70,3 +70,7 @@ pub const VERSION: &str = env!("SB_VERSION");
 /// [`sb_core::BUILD_OPTIONS`]: empty in a default build, `unchecked-vars`
 /// in one with that feature.
 pub const BUILD_OPTIONS: &str = sb_core::BUILD_OPTIONS;
+
+/// The native code's switch and costs, with the `jit` feature.
+#[cfg(feature = "jit")]
+pub use sb_core::jit;

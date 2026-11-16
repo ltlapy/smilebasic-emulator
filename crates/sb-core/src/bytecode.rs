@@ -335,4 +335,8 @@ pub struct Compiled {
     /// OPTION DEFINT stands somewhere in the program (see
     /// [`VarInfo::int`]).
     pub default_int: bool,
+    /// Native code for some of `fast`'s loops, made when the VM takes the
+    /// program.
+    #[cfg(feature = "jit")]
+    pub native: crate::jit::Native,
 }

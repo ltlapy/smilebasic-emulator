@@ -6,7 +6,8 @@
 
 | Crate | May depend on | Must not touch |
 |---|---|---|
-| `sb-core` | std, `stacker` | rendering, audio, input, files |
+| `sb-core` | std, `stacker`; `sb-jit` with the `jit` feature | rendering, audio, input, files |
+| `sb-jit` | std, Cranelift | SmileBASIC's rules, files, OS APIs but executable memory |
 | `sb-runtime` | `sb-core` | SDL, OS APIs |
 | `sb-profiles` | `sb-core`, `sb-runtime` | SDL, OS APIs |
 | `sb-import` | `sb-runtime` | SDL |
@@ -46,7 +47,11 @@ headless on Windows, macOS and Linux.
 - `cargo test --workspace` passes before every commit.
 - A change to `sb-core`'s VM or fused code also passes clippy and the tests with
   `--features unchecked-vars`, the build without bounds checks on variables
-  (see [docs/security.md](docs/security.md)).
+  (see [docs/security.md](docs/security.md)), and with `--features jit`, the
+  build that runs hot loops as native code (see
+  [docs/jit-design.md](docs/jit-design.md)). Its tests check that native
+  code ran; `tools/build_handheld.py --jit --test` runs them on aarch64
+  under qemu.
 - Optional, with a nightly toolchain and Miri installed:
   `cargo +nightly miri test -p sb-core --features unchecked-vars --test fused -- entries_naming`
   checks that build's `unsafe` reads for undefined behavior, in about ten minutes;

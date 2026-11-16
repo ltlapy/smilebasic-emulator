@@ -6,6 +6,20 @@ use sb_core::error::{Error, ErrorKind, Result};
 use sb_core::fuse::FastOp;
 use sb_core::host::{Exec, Host, TextHost};
 use sb_core::value::Value;
+use sb_core::vm::Vm;
+
+/// How many times native code ran in `vm`'s running program: 0 without
+/// the `jit` feature.
+#[allow(dead_code)]
+pub fn native_runs(vm: &Vm) -> u64 {
+    #[cfg(feature = "jit")]
+    return vm.program().native.runs();
+    #[cfg(not(feature = "jit"))]
+    {
+        let _ = vm;
+        0
+    }
+}
 
 /// The commands, by id:
 ///

@@ -45,6 +45,20 @@ runs on an open system and has to do it itself.
   `fuse::check` panics, which stops the program with `Internal Error`.
   `crates/sb-runtime/tests/scene.rs` has a counting allocator, used only by
   that test.
+- **Native code.** The `jit` feature of `sb-core`, off by default and a
+  prototype, compiles loops of the fused code to machine code with
+  Cranelift (`crates/sb-jit`) and runs it on the variables' tables. Its
+  `unsafe` is in three parts: `sb-jit`'s executable memory
+  (`exec.rs`: `mmap`, `mprotect`, `munmap`, and the aarch64 cache
+  maintenance), the call into generated code (`Code::run`), and the one
+  call of it in `crates/sb-core/src/jit.rs`, which checks the tables'
+  lengths against what the code names first. Generated code is outside
+  Rust's checks and outside Miri. Its addresses are a table's start plus a
+  constant offset, bounded by construction; the argument, the invariants
+  and the tests are in [jit-design.md](jit-design.md#memory-safety). A bug
+  in it, or in Cranelift, could be memory unsafety that an untrusted
+  program can reach: as with `unchecked-vars`, leave the feature off in
+  any build you hand to others. A default build contains none of it.
 - **File names.** Every name goes through the checks in
   `crates/sb-runtime/src/storage.rs`: a limited set of characters, 32 at
   most, no leading dot. Symbolic links are not followed.

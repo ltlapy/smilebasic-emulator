@@ -1,0 +1,13 @@
+[package]
+name = "sb-jit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Native code for the interpreter's fused entries: see docs/jit-design.md.
+# Only sb-core's `jit` feature, off by default, pulls this crate in.
+[dependencies]
+cranelift-codegen = { version = "0.124", default-features = false, features = ["std", "host-arch"] }
+cranelift-frontend = { version = "0.124", default-features = false, features = ["std"] }
+target-lexicon = { version = "0.13", default-features = false }

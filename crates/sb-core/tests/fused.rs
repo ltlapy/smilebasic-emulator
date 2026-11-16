@@ -684,6 +684,60 @@ fn chains_take_statements_of_several_operators() {
     );
 }
 
+/// Loops of the kinds the `jit` feature compiles, and what makes native
+/// code leave a statement to the interpreter: an integer that overflows, a
+/// string written over, an error, a real FOR, a NaN.
+const NATIVE_LOOPS: &[&str] = &[
+    "VAR A%,B%\nFOR I=1 TO 300\nA%=(A%+I*3) AND 1023\nB%=B% XOR (A%<<1)\nNEXT\n?A%,B%",
+    "VAR C,T,S,L\nFOR I=1 TO 200\nC=C+1:IF C>=60 THEN C=0:T=T+1\nIF S<100 THEN S=S+2 ELSE S=S-100\nL=L+(I AND 3)\nNEXT\n?C,T,S,L",
+    "FOR I=1 TO 100\nK=I MOD 5\nIF K==0 THEN R=R+1 ELSEIF K==1 THEN R=R+2 ELSEIF K==2 THEN R=R-3 ELSE R=R+4\nNEXT\n?R",
+    "VAR X#,Y#,U#=1.5,W#=-0.5,T#=0.5\nFOR I=1 TO 200\nX#=X#+U#*T#:Y#=Y#+W#*T#\nIF X#>100 THEN X#=X#-100\nW#=W#+0.01\nNEXT\n?X#,Y#,W#",
+    "A=2147483000\nFOR I=1 TO 50\nA=A+I*7:B=A*3\nNEXT\n?A,B",
+    "A=1:S$=\"X\"\nFOR I=1 TO 40\nIF I==20 THEN B=S$ ELSE B=A+I\nNEXT\n?B",
+    "A=1:Z=0\nFOR I=1 TO 10\nA=A+1\nIF I==5 THEN A=A DIV Z\nNEXT",
+    "FOR I=0 TO 5 STEP 0.5\nA=A+I\nNEXT\n?A,I",
+    "FOR J=1 TO 5\nFOR I=1 TO 5\nA=A+I*J\nNEXT\nNEXT\n?A",
+    "DEF F\nVAR I,A%\nFOR I=1 TO 100\nA%=A%+I\nNEXT\n?A%\nEND\nF",
+    "WHILE A<1000\nA=A+3\nWEND\n?A",
+    "A=1E308*10:B=A-A\nFOR I=1 TO 5\nIF B==B THEN C=C+1\nIF B!=B THEN D=D+1\nNEXT\n?C,D",
+    "FOR I%=2147483640 TO 2147483647\nA=A+1\nNEXT\n?A,I%",
+];
+
+#[test]
+fn native_loops_run_as_the_interpreter() {
+    for source in NATIVE_LOOPS {
+        for budget in [1, 2, 3, 5, 7, 13, 100, 1_000_000] {
+            let fused = run(source, budget, true);
+            assert_eq!(
+                fused,
+                run(source, budget, false),
+                "{source} in slices of {budget}"
+            );
+            // And fused without native code, the third way.
+            #[cfg(feature = "jit")]
+            {
+                sb_core::jit::set_enabled(false);
+                let plain = run(source, budget, true);
+                sb_core::jit::set_enabled(true);
+                assert_eq!(
+                    fused, plain,
+                    "{source} in slices of {budget}, no native code"
+                );
+            }
+        }
+    }
+    // With the feature, the native code is what ran them, but for the
+    // real FOR, which it leaves to the interpreter.
+    if cfg!(feature = "jit") {
+        for source in NATIVE_LOOPS.iter().filter(|s| !s.contains("STEP 0.5")) {
+            let mut host = TextHost::default();
+            let mut vm = Vm::new(compiled(source, true));
+            while let Ok(Status::Running) = vm.run(&mut host, 1_000_000) {}
+            assert!(common::native_runs(&vm) > 0, "{source}");
+        }
+    }
+}
+
 #[test]
 fn most_loops_are_fused() {
     let program = compiled("FOR I=1 TO 9:A=A+I*2:NEXT", true);

@@ -20,7 +20,11 @@ pub fn str_from(s: &str) -> StrRef {
     new_str(crate::wtf8::to_utf16(s))
 }
 
+/// With the `jit` feature, native code reads and writes numbers in place,
+/// so the layout is fixed: the tag byte first, numbered in the order of
+/// the variants, which `crate::jit` names and checks.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "jit", repr(u8))]
 pub enum Value {
     /// The value of an omitted argument. Any operation on it is an error.
     Default,

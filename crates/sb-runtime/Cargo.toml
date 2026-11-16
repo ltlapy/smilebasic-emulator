@@ -25,3 +25,4 @@ miniz_oxide = "0.9.1"
 [features]
 # See sb-core.
 unchecked-vars = ["sb-core/unchecked-vars"]
+jit = ["sb-core/jit"]

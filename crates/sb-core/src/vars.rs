@@ -74,6 +74,18 @@ mod checked {
             let index = var.index();
             self.tables[var.table()].get(index..index.checked_add(n)?)
         }
+
+        /// Where both tables start and how long they are, for native code,
+        /// which may use them while this borrow lasts.
+        #[cfg(feature = "jit")]
+        #[inline(always)]
+        pub(crate) fn native_tables(&mut self) -> [(*mut Value, usize); 2] {
+            let [globals, locals] = &mut self.tables;
+            [
+                (globals.as_mut_ptr(), globals.len()),
+                (locals.as_mut_ptr(), locals.len()),
+            ]
+        }
     }
 }
 
@@ -185,6 +197,17 @@ mod unchecked {
             // SAFETY: `index..end` is within the table, checked just above,
             // and the pointer comes from a slice this view borrows for `'a`.
             Some(unsafe { std::slice::from_raw_parts(self.tables[table].add(index), n) })
+        }
+
+        /// Where both tables start and how long they are, for native code,
+        /// which may use them while this borrow lasts.
+        #[cfg(feature = "jit")]
+        #[inline(always)]
+        pub(crate) fn native_tables(&mut self) -> [(*mut Value, usize); 2] {
+            [
+                (self.tables[0], self.lens[0]),
+                (self.tables[1], self.lens[1]),
+            ]
         }
     }
 }

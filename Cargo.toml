@@ -10,6 +10,7 @@ rust-version = "1.87"
 
 [workspace.dependencies]
 sb-core = { path = "crates/sb-core" }
+sb-jit = { path = "crates/sb-jit" }
 sb-runtime = { path = "crates/sb-runtime" }
 sb-profiles = { path = "crates/sb-profiles" }
 # Built from source and linked statically on every OS so releases do not

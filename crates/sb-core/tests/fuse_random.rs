@@ -302,6 +302,11 @@ fn program(r: &mut Rng) -> String {
     s + "?A,B,C,X#,K%,S$,M[0],M[1],N%[0],R#[0,0],T$[0]\nEND\n" + DEFS_SOURCE
 }
 
+thread_local! {
+    /// How many times native code ran, with the `jit` feature.
+    static NATIVE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// What can be seen of a run in slices of `budget` instructions.
 fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
     let host = CmdHost::default();
@@ -330,6 +335,7 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
         ));
         match result {
             Ok(Status::Ended) | Err(_) => {
+                NATIVE.with(|n| n.set(n.get() + common::native_runs(&vm)));
                 seen.push(format!("{} {}", host.text.output, host.count));
                 return Some(seen);
             }
@@ -387,8 +393,14 @@ fn random_programs_run_the_same_fused_or_not() {
     }
     // The generator must make programs that compile, that chains take, and
     // that call DEFs and the host.
+    // With the `jit` feature, native code ran in the fused runs.
+    let native = NATIVE.with(|n| n.get());
+    assert!(
+        !cfg!(feature = "jit") || native > 0,
+        "native code never ran"
+    );
     if count < ALL {
-        println!("{count} programs, {compiled} compiled, {ended} ended");
+        println!("{count} programs, {compiled} compiled, {ended} ended, native {native}");
         return;
     }
     assert!(compiled > 1000, "{compiled} compiled");
