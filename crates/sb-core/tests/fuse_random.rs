@@ -349,6 +349,8 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
 fn random_programs_run_the_same_fused_or_not() {
     let mut r = Rng(0x5EED_1234_ABCD_0001);
     let (mut compiled, mut chains, mut calls, mut hosts, mut builtins) = (0, 0, 0, 0, 0);
+    // Chains that make calls of DEFs in their steps.
+    let mut call_chains = 0;
     // Programs that run to their end, past the EXEC and every call.
     let mut ended = 0;
     // Miri runs a program thousands of times slower, so there it runs a few
@@ -373,6 +375,9 @@ fn random_programs_run_the_same_fused_or_not() {
             .count();
         calls += (p.fast.iter())
             .filter(|f| matches!(f.op, FastOp::CallDef { .. }))
+            .count();
+        call_chains += (p.fast.iter())
+            .filter(|f| matches!(f.op, FastOp::CallChain { .. }))
             .count();
         hosts += (p.fast.iter())
             .filter(|f| matches!(f.op, FastOp::Host { .. }))
@@ -406,6 +411,7 @@ fn random_programs_run_the_same_fused_or_not() {
     assert!(compiled > 1000, "{compiled} compiled");
     assert!(chains > 8000, "{chains} chains");
     assert!(calls > 4000, "{calls} DEF calls");
+    assert!(call_chains > 500, "{call_chains} chains that call DEFs");
     assert!(hosts > 3000, "{hosts} host calls");
     assert!(builtins > 1000, "{builtins} builtin calls");
     assert!(ended > 500, "{ended} ended");

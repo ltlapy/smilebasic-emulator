@@ -280,6 +280,16 @@ pub enum FastOp {
         count: u16,
         next: Addr,
     },
+    /// A `Chain` that makes calls of DEFs in its steps, the bodies worked
+    /// out on the arguments where they are (see `inline`). It runs only when
+    /// the stack has room for a call that takes `cost`, the most any of
+    /// them takes, as those calls would fail on it: else `code` runs it.
+    CallChain {
+        first: u32,
+        count: u16,
+        next: Addr,
+        cost: u16,
+    },
     /// NEXT with a FOR whose TO and STEP are single values: `var, step_slot,
     /// Binary(Add), Store(var), Nop, step, Store(step_slot), to, Store(to_slot),
     /// var, to_slot, step_slot, ForTest, JumpIfFalse(exit)`.
@@ -414,7 +424,8 @@ pub enum Micro {
     },
     /// `a` as 0 or 1, as [`Op::Truthy`].
     Truthy(Var, Var),
-    /// The chain's last step: `a` left on the stack.
+    /// One of the chain's last steps: `a`, a hidden place, left on the
+    /// stack.
     Push(Var),
 }
 
@@ -807,12 +818,17 @@ pub(crate) const TEMPS: usize = 8;
 
 /// A chain being built: the places of the values a stack machine would
 /// have, and which hidden places hold one still to be used.
+#[derive(Clone)]
 struct Chain {
     micro: Vec<Micro>,
     stack: Vec<Var>,
     /// The first hidden place.
     temps: usize,
     used: u16,
+    /// Hidden places that stay used when taken off the stack: those of
+    /// the arguments of a call made in the chain, which its body may read
+    /// more than once.
+    pinned: u16,
 }
 
 impl Chain {
@@ -823,7 +839,9 @@ impl Chain {
 
     fn pop(&mut self) -> Option<Var> {
         let v = self.stack.pop()?;
-        if let Some(k) = self.temp(v) {
+        if let Some(k) = self.temp(v)
+            && self.pinned & (1 << k) == 0
+        {
             self.used &= !(1 << k);
         }
         Some(v)
@@ -964,24 +982,248 @@ fn binary_micro(c: &Constants, op: BinaryOp, a: Var, b: Var, to: Var) -> Micro {
     }
 }
 
-/// A chain the code from an address can take: its steps, how many
-/// instructions it stands for, and where it goes on.
-type Candidate = (Vec<Micro>, usize, Addr);
+/// A chain the code from an address can take.
+struct Candidate {
+    steps: Vec<Micro>,
+    /// How many instructions of `code` from the address it stands for,
+    len: usize,
+    /// and how many it counts as run: more when it makes calls.
+    charge: usize,
+    /// Where it goes on.
+    next: Addr,
+    calls: Calls,
+}
+
+/// What the calls a chain makes in its steps add to it.
+#[derive(Clone, Copy, Default)]
+struct Calls {
+    /// The instructions of the DEFs' bodies, their RETURNs included.
+    run: usize,
+    /// The most of the stack one of them takes, 0 for none.
+    cost: u16,
+    /// What they save against the entries that would make them, in
+    /// [`chain_cost`]'s units.
+    saving: u32,
+}
+
+impl Calls {
+    fn and(self, other: Calls) -> Calls {
+        Calls {
+            run: self.run + other.run,
+            cost: self.cost.max(other.cost),
+            saving: self.saving + other.saving,
+        }
+    }
+}
 
 /// The longest chain a chain may be, in instructions: [`Fast::len`].
 const MAX_CHAIN: usize = 200;
 
 /// The chains for the code from `code[0]` at `pc`, each a statement longer
-/// than the one before. `temps` is the first of its hidden places.
-fn chains(code: &[Op], pc: usize, c: &mut Constants, temps: usize) -> Vec<Candidate> {
+/// than the one before. `temps` is the first of its hidden places. `whole`
+/// is all of the code, which the bodies of DEFs it calls are in.
+fn chains(
+    code: &[Op],
+    pc: usize,
+    whole: &[Op],
+    defs: &[DefInfo],
+    c: &mut Constants,
+    temps: usize,
+) -> Vec<Candidate> {
     let mut found = Vec::new();
-    chain(code, pc, c, temps, &mut found);
+    chain(code, pc, whole, defs, c, temps, &mut found);
     found
+}
+
+/// What [`Chain::expression`] made of an instruction.
+enum Worked {
+    Done,
+    /// One of an expression's that the chain cannot work out.
+    Failed,
+    /// Not one of an expression's.
+    Other,
+}
+
+impl Chain {
+    /// Works an instruction of an expression into the chain's steps.
+    fn expression(&mut self, op: &Op, c: &mut Constants) -> Worked {
+        match self.expression_or_fail(op, c) {
+            Some(worked) => worked,
+            None => Worked::Failed,
+        }
+    }
+
+    fn expression_or_fail(&mut self, op: &Op, c: &mut Constants) -> Option<Worked> {
+        match *op {
+            Op::Nop => {}
+            Op::Int(_) | Op::Real(_) | Op::Load(_) => {
+                let v = c.source(Some(op))?;
+                self.stack.push(v);
+            }
+            Op::Swap => {
+                let n = self.stack.len();
+                if n < 2 {
+                    return None;
+                }
+                self.stack.swap(n - 1, n - 2);
+            }
+            Op::Reverse(n) => {
+                let from = self.stack.len().checked_sub(n as usize)?;
+                self.stack[from..].reverse();
+            }
+            Op::Binary(op) => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.make(|to| binary_micro(c, op, a, b, to))?;
+            }
+            Op::Unary(op) => {
+                let a = self.pop()?;
+                self.make(|to| match op {
+                    UnaryOp::Neg => Micro::Neg(a, to),
+                    op => Micro::Unary(op, a, to),
+                })?;
+            }
+            Op::Truthy => {
+                let a = self.pop()?;
+                self.make(|to| Micro::Truthy(a, to))?;
+            }
+            Op::Index(1) => {
+                let i = self.pop()?;
+                let base = self.pop()?;
+                self.make(|to| Micro::Index1 { base, i, to })?;
+            }
+            Op::Index(2) => {
+                let j = self.pop()?;
+                let i = self.pop()?;
+                let base = self.pop()?;
+                self.make(|to| Micro::Index2 { base, i, j, to })?;
+            }
+            Op::CallBuiltin {
+                id,
+                argc,
+                want: Want::Value,
+            } if crate::builtins::is_pure_call(id, argc.into()) => {
+                let n = usize::from(argc);
+                let from = self.stack.len().checked_sub(n)?;
+                let args = match n {
+                    0 => Var::global(self.temps)?,
+                    // One place is a slice of one already.
+                    1 => self.stack[from],
+                    _ => {
+                        let args = self.alloc_run(n)?;
+                        for (k, &from) in self.stack[from..].iter().enumerate() {
+                            let to = Var::global(args.index() + k)?;
+                            self.micro.push(Micro::Move { from, to });
+                        }
+                        args
+                    }
+                };
+                for _ in 0..n {
+                    self.pop()?;
+                }
+                if n > 1 {
+                    self.used &= !(((1u16 << n) - 1) << (args.index() - self.temps));
+                }
+                self.make(|to| Micro::Builtin { id, argc, args, to })?;
+            }
+            _ => return Some(Worked::Other),
+        }
+        Some(Worked::Done)
+    }
+}
+
+/// The most instructions of a DEF's body [`inline`] takes in.
+const MOST_INLINED: usize = 48;
+
+/// What a call made in a chain saves, in [`chain_cost`]'s units, besides
+/// the steps of its body: the call's entry, its RETURN's, and frames made
+/// and ended, about 300 aarch64 instructions.
+const CALL_SAVING: u32 = 30;
+
+/// `ch` with the call of DEF `def` on the `argc` values on top of its
+/// stack made in its steps, and what that adds to the chain, for a
+/// function whose body is one RETURN of a value worked out, as a chain
+/// works out an expression, from its arguments, the slot's globals and
+/// constants. Nothing of a call can be seen but its value, with these:
+///
+/// - The arguments are read where they are. A chain's steps write nothing
+///   but its hidden places before its statement's last, so they hold what
+///   the call would have taken.
+/// - A step of the body that cannot do its work leaves the statement to
+///   `code`, which makes the call: errors in the body come from there,
+///   naming its lines.
+/// - The chain counts the instructions of the body and its RETURN as run,
+///   and runs whole or not at all, so time slices end where they would.
+/// - It runs only when the stack has room for the call
+///   ([`FastOp::CallChain`]); else `code` fails on the call.
+/// - The DEF has no variables but its arguments, so there are none to
+///   start, and it calls nothing, so it makes no calls in turn.
+fn inline(
+    ch: &Chain,
+    c: &mut Constants,
+    code: &[Op],
+    defs: &[DefInfo],
+    def: u32,
+    argc: u8,
+) -> Option<(Chain, Calls)> {
+    let info = defs.get(def as usize)?;
+    let cost = crate::vm::fixed_call_cost(info, argc, Want::Value)?;
+    let cost = u16::try_from(cost).ok()?;
+    if !info.is_function || info.locals.len() != usize::from(argc) {
+        return None;
+    }
+    let from = ch.stack.len().checked_sub(usize::from(argc))?;
+    let mut ch = ch.clone();
+    let args = ch.stack[from..].to_vec();
+    let pinned = ch.pinned;
+    for &a in &args {
+        if let Some(k) = ch.temp(a) {
+            ch.pinned |= 1 << k;
+        }
+    }
+    let steps = ch.micro.len();
+    let body = code.get(info.entry as usize..)?;
+    for (k, op) in body.iter().enumerate().take(MOST_INLINED) {
+        match *op {
+            Op::Load(Slot::Local(i)) => ch.stack.push(*args.get(i as usize)?),
+            Op::ReturnValue => {
+                if ch.stack.len() != from + args.len() + 1 {
+                    return None;
+                }
+                let value = ch.stack.pop()?;
+                ch.stack.truncate(from);
+                ch.pinned = pinned;
+                for &a in &args {
+                    if let Some(k) = ch.temp(a)
+                        && ch.temp(value) != Some(k)
+                        && pinned & (1 << k) == 0
+                    {
+                        ch.used &= !(1 << k);
+                    }
+                }
+                ch.stack.push(value);
+                let body_steps = u32::try_from(ch.micro.len() - steps).ok()?;
+                let calls = Calls {
+                    run: k + 1,
+                    cost,
+                    saving: CALL_SAVING + STEP_COST * body_steps,
+                };
+                return Some((ch, calls));
+            }
+            ref op => match ch.expression(op, c) {
+                Worked::Done => {}
+                Worked::Failed | Worked::Other => return None,
+            },
+        }
+    }
+    None
 }
 
 fn chain(
     code: &[Op],
     pc: usize,
+    whole: &[Op],
+    defs: &[DefInfo],
     c: &mut Constants,
     temps: usize,
     found: &mut Vec<Candidate>,
@@ -991,7 +1233,9 @@ fn chain(
         stack: Vec::new(),
         temps,
         used: 0,
+        pinned: 0,
     };
+    let mut calls = Calls::default();
     let addr = |at: usize| Addr::try_from(pc + at).ok();
     // A store or a jump ends it. A Jump right after a store goes with it.
     let after_store = |at: usize| match code.get(at + 1) {
@@ -999,93 +1243,47 @@ fn chain(
         _ => Some((at + 1, addr(at + 1)?)),
     };
     // After a store, the chain may go on to the next statement.
-    let mut stored = |ch: &mut Chain, at: usize| -> Option<bool> {
+    let mut stored = |ch: &mut Chain, at: usize, calls: Calls| -> Option<bool> {
         let (len, next) = after_store(at)?;
         if len > MAX_CHAIN {
             return None;
         }
-        found.push((ch.micro.clone(), len, next));
+        found.push(Candidate {
+            steps: ch.micro.clone(),
+            len,
+            charge: len + calls.run,
+            next,
+            calls,
+        });
         if len == at + 2 {
             return Some(false);
         }
-        let charged = u8::try_from(len).ok()?;
+        let charged = u8::try_from(len + calls.run).ok()?;
         ch.micro.push(Micro::Commit { to: next, charged });
         Some(true)
     };
     let mut end = code.len();
     for (at, op) in code.iter().enumerate() {
+        match ch.expression(op, c) {
+            Worked::Done => continue,
+            Worked::Failed => return None,
+            Worked::Other => {}
+        }
         match *op {
-            Op::Nop => {}
-            Op::Int(_) | Op::Real(_) | Op::Load(_) => {
-                let v = c.source(Some(op))?;
-                ch.stack.push(v);
-            }
-            Op::Swap => {
-                let n = ch.stack.len();
-                if n < 2 {
-                    return None;
-                }
-                ch.stack.swap(n - 1, n - 2);
-            }
-            Op::Reverse(n) => {
-                let from = ch.stack.len().checked_sub(n as usize)?;
-                ch.stack[from..].reverse();
-            }
-            Op::Binary(op) => {
-                let b = ch.pop()?;
-                let a = ch.pop()?;
-                ch.make(|to| binary_micro(c, op, a, b, to))?;
-            }
-            Op::Unary(op) => {
-                let a = ch.pop()?;
-                ch.make(|to| match op {
-                    UnaryOp::Neg => Micro::Neg(a, to),
-                    op => Micro::Unary(op, a, to),
-                })?;
-            }
-            Op::Truthy => {
-                let a = ch.pop()?;
-                ch.make(|to| Micro::Truthy(a, to))?;
-            }
-            Op::Index(1) => {
-                let i = ch.pop()?;
-                let base = ch.pop()?;
-                ch.make(|to| Micro::Index1 { base, i, to })?;
-            }
-            Op::Index(2) => {
-                let j = ch.pop()?;
-                let i = ch.pop()?;
-                let base = ch.pop()?;
-                ch.make(|to| Micro::Index2 { base, i, j, to })?;
-            }
-            Op::CallBuiltin {
-                id,
+            Op::CallDef {
+                def,
                 argc,
                 want: Want::Value,
-            } if crate::builtins::is_pure_call(id, argc.into()) => {
-                let n = usize::from(argc);
-                let from = ch.stack.len().checked_sub(n)?;
-                let args = match n {
-                    0 => Var::global(temps)?,
-                    // One place is a slice of one already.
-                    1 => ch.stack[from],
-                    _ => {
-                        let args = ch.alloc_run(n)?;
-                        for (k, &from) in ch.stack[from..].iter().enumerate() {
-                            let to = Var::global(args.index() + k)?;
-                            ch.micro.push(Micro::Move { from, to });
-                        }
-                        args
-                    }
-                };
-                for _ in 0..n {
-                    ch.pop()?;
+            } => match inline(&ch, c, whole, defs, def, argc) {
+                Some((made, more)) => {
+                    ch = made;
+                    calls = calls.and(more);
                 }
-                if n > 1 {
-                    ch.used &= !(((1u16 << n) - 1) << (args.index() - temps));
+                None => {
+                    end = at;
+                    break;
                 }
-                ch.make(|to| Micro::Builtin { id, argc, args, to })?;
-            }
+            },
             Op::Store(slot) => {
                 let to = Var::of(slot)?;
                 let v = ch.pop()?;
@@ -1097,7 +1295,7 @@ fn chain(
                     Some(last) if made => *last = to,
                     _ => ch.micro.push(Micro::Move { from: v, to }),
                 }
-                if !stored(&mut ch, at)? {
+                if !stored(&mut ch, at, calls)? {
                     return Some(());
                 }
             }
@@ -1113,7 +1311,7 @@ fn chain(
                     Some(j) => Micro::StoreIndex2 { value, base, i, j },
                     None => Micro::StoreIndex1 { value, base, i },
                 });
-                if !stored(&mut ch, at)? {
+                if !stored(&mut ch, at, calls)? {
                     return Some(());
                 }
             }
@@ -1166,7 +1364,13 @@ fn chain(
                 }
                 ch.micro.push(last);
                 if at < MAX_CHAIN {
-                    found.push((ch.micro, at + 1, addr(at + 1)?));
+                    found.push(Candidate {
+                        steps: ch.micro,
+                        len: at + 1,
+                        charge: at + 1 + calls.run,
+                        next: addr(at + 1)?,
+                        calls,
+                    });
                 }
                 return Some(());
             }
@@ -1176,13 +1380,20 @@ fn chain(
             }
         }
     }
-    // A value made for what follows.
-    match ch.stack[..] {
-        [v] if ch.temp(v).is_some() && end <= MAX_CHAIN => {
-            ch.micro.push(Micro::Push(v));
-            found.push((ch.micro, end, addr(end)?));
-        }
-        _ => {}
+    // A value made for what follows, or the values of calls made in the
+    // chain, such as the arguments of a builtin that cannot be. Each is in
+    // a hidden place, which holds a number, so none of the pushes fails.
+    let values = ch.stack.clone();
+    let made = !values.is_empty() && values.iter().all(|&v| ch.temp(v).is_some());
+    if made && end <= MAX_CHAIN && (values.len() == 1 || calls.cost > 0) {
+        ch.micro.extend(values.into_iter().map(Micro::Push));
+        found.push(Candidate {
+            steps: ch.micro,
+            len: end,
+            charge: end + calls.run,
+            next: addr(end)?,
+            calls,
+        });
     }
     Some(())
 }
@@ -1244,16 +1455,33 @@ pub fn fuse(program: &mut Compiled) {
             }
         });
         let mut chosen = None;
-        for (steps, len, next) in chains(&code[pc..], pc, &mut c, temps) {
-            let cost = runs[pc + len] + chain_cost(&steps);
-            if let (Ok(short), Ok(count)) = (u8::try_from(len), u16::try_from(steps.len()))
+        let found = chains(&code[pc..], pc, code, &program.defs, &mut c, temps);
+        for Candidate {
+            steps,
+            len,
+            charge,
+            next,
+            calls,
+        } in found
+        {
+            let cost = runs[pc + len] + chain_cost(&steps).saturating_sub(calls.saving);
+            if let (Ok(charge), Ok(count)) = (u8::try_from(charge), u16::try_from(steps.len()))
                 && cost < least
             {
                 least = cost;
                 let first = u32::try_from(micro.len()).unwrap_or(u32::MAX);
+                let op = match calls.cost {
+                    0 => FastOp::Chain { first, count, next },
+                    cost => FastOp::CallChain {
+                        first,
+                        count,
+                        next,
+                        cost,
+                    },
+                };
                 best = Fast {
-                    op: FastOp::Chain { first, count, next },
-                    len: short,
+                    op,
+                    len: charge,
                     need: 0,
                 };
                 chosen = Some(steps);
@@ -1422,7 +1650,7 @@ fn places(op: &FastOp, micro: &[Micro], place: &mut dyn FnMut(Var, usize)) -> bo
                 one(v);
             }
         }
-        F::Chain { first, count, .. } => {
+        F::Chain { first, count, .. } | F::CallChain { first, count, .. } => {
             let first = first as usize;
             let Some(steps) = micro.get(first..first + usize::from(count)) else {
                 return false;

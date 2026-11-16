@@ -265,6 +265,22 @@ const PROGRAMS: &[&str] = &[
     "DEF P A\n?A\nEND\nFOR I=0 TO 2:CALL \"P\",I:NEXT\nCALL \"P\" OUT X",
     "DEF P A\n?A\nEND\nN$=\"P\":FOR I=0 TO 2:CALL N$,I:N$=N$+\"Q\":NEXT",
     "DEF P A\n?A\nEND\nFOR I=0 TO 9:CALL \"P\",I:CALL \"P\",\"S\":NEXT",
+    // Functions made in the chains that call them: failing in their bodies,
+    // given the same value twice, called in each other's arguments, after
+    // a statement that writes what they read, and from DEFs.
+    "DEF F(A,B)\nRETURN A/B\nEND\n?F(4,2)\n?1:X=F(1,0):?2",
+    "DEF F(A)\nRETURN A+1\nEND\nS$=\"X\"\n?F(1)\n?F(S$)",
+    "DEF F(A)\nRETURN A+1\nEND\nS$=\"X\"\n?F(1)\nX=F(S$)+1",
+    "DEF F(A)\nRETURN A\nEND\nS$=\"X\"\nT$=F(S$):?T$:X=F(2)*F(3):?X",
+    "DEF F(A,B)\nRETURN A*A+B*B+A\nEND\nX=3:?F(X+1,X*2)+F(X-1,2):Y=F(F(1,2),F(X,X+1)):?Y",
+    "DEF F(A,B)\nRETURN A-B\nEND\nFOR I=0 TO 5:IF F(I,2)>1 THEN ?I\nNEXT",
+    "DEF F(A)\nRETURN 10/A\nEND\nA=1:B=0\n?1:C=F(A)+1:D=C*2:E=F(B):?2",
+    "VAR G=1\nDEF F(A)\nRETURN A+G\nEND\nG=5:X=F(1):?X:G=X*2:Y=F(G):?Y",
+    "DEF F(M[],K)\nRETURN M[K]*2\nEND\nDIM M[3]:M[1]=4:?F(M,1)\n?F(M,5)",
+    "DEF F(A,B)\nRETURN (A-B)*0.5+B\nEND\nDEF H(X)\nVAR Y=2\nRETURN F(X,Y)+F(Y,X)\nEND\n?H(3);H(1.5)",
+    "DEF F(A)\nRETURN A*2\nEND\nDEF G(N)\nIF N==0 THEN RETURN 0\nRETURN G(N-1)+F(N)\nEND\n?G(50)",
+    "DEF F(A,B,C,D,E)\nRETURN A+(B-A)*(C-D)/(E-D)\nEND\nFOR I=0 TO 4:?F(0,100,I*16,0,64):NEXT",
+    "DEF F(A%)\nRETURN A%*3\nEND\nX#=1.5:?F(X#):A%=2147483647:?F(A%)",
 ];
 
 /// CALL of one DEF in other cases and with its slot.
@@ -471,6 +487,10 @@ fn def_calls_overflow_as_without_fusing() {
         "DEF F(N)\nGOSUB @S\nRETURN 0\n@S\nA=F(N+1)\nRETURN\nEND\n?1:A=F(0)",
         "DEF F(N)\nCALL \"F\",N+1 OUT R\nRETURN R\nEND\n?1:CALL \"F\",0 OUT X",
         "DEF F N\nCALL \"F\",N+1\nEND\n?1:F 0",
+        // Calls made in chains, one of them the first that does not fit.
+        "DEF F(A)\nRETURN A+1\nEND\nDEF G(N)\nRETURN G(F(N))\nEND\n?1:?G(0)",
+        "DEF F(A,B,C)\nRETURN A+B+C\nEND\nDEF G(N)\nRETURN G(F(N,1,2))\nEND\n?1:?G(0)",
+        "DEF F(A,B,C)\nRETURN A+B+C\nEND\nDEF G N\nX=F(N,1,2):G X\nEND\n?1:G 0",
     ] {
         for budget in [5, 7, 1_000_000] {
             let fused = run(program, budget, true);
@@ -487,7 +507,7 @@ fn def_calls_overflow_as_without_fusing() {
 #[test]
 fn def_calls_are_fused() {
     let program = compiled(
-        "DEF F(A)\nRETURN A+1\nEND\nDEF G A OUT B\nB=A\nEND\nFOR I=0 TO 3:G F(I) OUT C:NEXT",
+        "DEF F(A)\nA=A+1\nRETURN A\nEND\nDEF G A OUT B\nB=A\nEND\nFOR I=0 TO 3:G F(I) OUT C:NEXT",
         true,
     );
     let calls = program
@@ -504,6 +524,45 @@ fn def_calls_are_fused() {
     );
     for op in [FastOp::ReturnValue, FastOp::Return] {
         assert!(program.fast.iter().any(|f| f.op == op), "{op:?}");
+    }
+}
+
+/// A function whose body is one RETURN of numbers worked out from its
+/// arguments, globals and constants is made in the chain of the statement
+/// that calls it; one with anything else in its body is called.
+#[test]
+fn leaf_functions_are_made_in_chains() {
+    for (source, made) in [
+        (
+            "DEF F(A,B)\nRETURN (A-B)*2+B\nEND\nFOR I=0 TO 3:X=F(I,X):NEXT",
+            true,
+        ),
+        ("DEF F(A)\nRETURN SQR(A*A+1)\nEND\nX=F(2)", true),
+        (
+            "VAR G\nDEF F(A[],K)\nRETURN A[K]+G\nEND\nDIM M[2]\nX=F(M,1)",
+            true,
+        ),
+        (
+            "DEF F(A,B,C,D,E)\nRETURN A+B*C-D/E\nEND\nX=F(1,2,3,4,5)",
+            true,
+        ),
+        ("DEF F(A)\nRETURN A\nEND\nIF F(X+1)>0 THEN X=1", true),
+        ("DEF F(A)\nVAR B=A\nRETURN B\nEND\nX=F(2)", false),
+        ("DEF F(A)\nA=A+1\nRETURN A\nEND\nX=F(2)", false),
+        (
+            "DEF F(A)\nRETURN G(A)\nEND\nDEF G(A)\nRETURN A\nEND\nX=F(2)",
+            false,
+        ),
+        ("DEF F(A)\nRETURN A && 1\nEND\nX=F(2)", false),
+        ("DEF F(A)\nRETURN \"S\"\nEND\nX$=F(2)", false),
+        ("DEF F A OUT B\nB=A\nEND\nX=F(2)", false),
+        ("DEF F(*)\nRETURN 1\nEND\nX=F(2)", false),
+    ] {
+        let program = compiled(source, true);
+        let chains = (program.fast.iter())
+            .filter(|f| matches!(f.op, FastOp::CallChain { .. }))
+            .count();
+        assert_eq!(chains > 0, made, "{source}: {:?}", program.fast);
     }
 }
 

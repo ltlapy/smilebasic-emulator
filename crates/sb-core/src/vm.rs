@@ -2169,7 +2169,22 @@ impl Vm {
                     first,
                     count,
                     next: to,
+                }
+                | FastOp::CallChain {
+                    first,
+                    count,
+                    next: to,
+                    ..
                 } => {
+                    // The calls a chain makes need the stack's room, as
+                    // `enter_def_on_stack` makes sure; without, `step`
+                    // fails on them.
+                    if let FastOp::CallChain { cost, .. } = fast.op
+                        && room_for(calls, gosubs.len(), data_kept.len(), usize::from(cost))
+                            > STACK_SIZE
+                    {
+                        break;
+                    }
                     next = to as usize;
                     let first = first as usize;
                     // Where `step` goes on from if a step cannot do its

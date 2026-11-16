@@ -147,7 +147,7 @@ impl Host for CmdHost {
 pub fn check_needs(program: &Compiled, source: &str) {
     for (pc, f) in program.fast.iter().enumerate() {
         let mut text = format!("{:?}", f.op);
-        if let FastOp::Chain { first, count, .. } = f.op {
+        if let FastOp::Chain { first, count, .. } | FastOp::CallChain { first, count, .. } = f.op {
             for m in &program.micro[first as usize..][..usize::from(count)] {
                 text += &format!("{m:?}");
             }
