@@ -15,3 +15,7 @@ sb-runtime.workspace = true
 sb-profiles.workspace = true
 
 sdl3.workspace = true
+
+[features]
+# See sb-core.
+unchecked-vars = ["sb-core/unchecked-vars", "sb-runtime/unchecked-vars"]

@@ -12,3 +12,7 @@ path = "src/main.rs"
 [dependencies]
 sb-profiles.workspace = true
 sb-runtime.workspace = true
+
+[features]
+# See sb-core.
+unchecked-vars = ["sb-runtime/unchecked-vars"]
