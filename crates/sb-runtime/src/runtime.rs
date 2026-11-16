@@ -357,6 +357,26 @@ impl Command {
 
     /// Whether the command's forms that give values only read, so that
     /// they leave the screens as they are.
+    /// The function of [`Runtime::run`] that runs this.
+    #[inline]
+    fn group(self) -> Group {
+        use Command::*;
+        match self {
+            Animdef | Spanim | Spchk | Spchr | Spclr | Spcol | Spcolor | Spcolvec | Spdef
+            | Spfunc | Sphide | Sphitinfo | Sphitrc | Sphitsp | Sphome | Splayer | Splink
+            | Spofs | Sppage | Sprot | Spscale | Spset | Spshow | Spstart | Spstop | Spunlink
+            | Spused | Spvar => Group::Sprite,
+            Accel | Brepeat | Button | Controller | Gyroa | Gyrosync | Gyrov | Key | Keyboard
+            | Mbutton | Mouse | Pushkey | Stick | Touch | Xctrlstyle => Group::Input,
+            Date | Dtread | Fontinfo | Maincnt | Millisec | Perfbegin | Perfend | Randomize
+            | Rnd | Rndf | Sysparam | Time | Tmread => Group::System,
+            Gbox | Gcircle | Gclip | Gcls | Gcolor | Gcopy | Gfill | Gline | Gload | Gpaint
+            | Gpget | Gpset | Gputchr | Gputchrp | Gsample | Gsave | Garray | Gtarget | Gtri
+            | Gupdate => Group::Grp,
+            _ => Group::Other,
+        }
+    }
+
     fn reads(self) -> bool {
         use Command::*;
         matches!(
@@ -390,6 +410,16 @@ impl Command {
                 | Xscreen
         )
     }
+}
+
+/// Which function [`Runtime::run`] hands a command to.
+#[derive(Clone, Copy)]
+enum Group {
+    Sprite,
+    Input,
+    System,
+    Grp,
+    Other,
 }
 
 /// What a command call can do to the screens.
@@ -2667,8 +2697,27 @@ impl Runtime {
         })
     }
 
-    /// Runs `command`, putting its values in `out`, which is empty.
+    /// Runs `command`, putting its values in `out`, which is empty: the
+    /// groups of the commands called most go straight to their function.
+    #[inline(always)]
     pub(crate) fn run(
+        &mut self,
+        command: Command,
+        args: &[Value],
+        want: Want,
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
+        match command.group() {
+            Group::Sprite => self.sp_command(command, args, want, out),
+            Group::Input => self.input_command(command, args, want, out),
+            Group::System => self.system_command(command, args, want, out),
+            Group::Grp => self.grp_command(command, args, want, out),
+            Group::Other => self.run_other(command, args, want, out),
+        }
+    }
+
+    /// [`Runtime::run`] for the commands of no group of their own.
+    fn run_other(
         &mut self,
         command: Command,
         args: &[Value],
@@ -2849,29 +2898,6 @@ impl Runtime {
                 _,
             ) => give(out, self.file_command(command, args, want)),
             (
-                Command::Gbox
-                | Command::Gcircle
-                | Command::Gclip
-                | Command::Gcls
-                | Command::Gcolor
-                | Command::Gcopy
-                | Command::Gfill
-                | Command::Gline
-                | Command::Gload
-                | Command::Gpaint
-                | Command::Gpget
-                | Command::Gpset
-                | Command::Gputchr
-                | Command::Gputchrp
-                | Command::Gsample
-                | Command::Gsave
-                | Command::Garray
-                | Command::Gtarget
-                | Command::Gtri
-                | Command::Gupdate,
-                _,
-            ) => self.grp_command(command, args, want, out),
-            (
                 Command::Acls
                 | Command::Attr
                 | Command::Backcolor
@@ -2896,37 +2922,6 @@ impl Runtime {
                 _,
             ) => give(out, self.screen_command(command, args, want)),
             (
-                Command::Animdef
-                | Command::Spanim
-                | Command::Spchk
-                | Command::Spchr
-                | Command::Spclr
-                | Command::Spcol
-                | Command::Spcolor
-                | Command::Spcolvec
-                | Command::Spdef
-                | Command::Spfunc
-                | Command::Sphide
-                | Command::Sphitinfo
-                | Command::Sphitrc
-                | Command::Sphitsp
-                | Command::Sphome
-                | Command::Splayer
-                | Command::Splink
-                | Command::Spofs
-                | Command::Sppage
-                | Command::Sprot
-                | Command::Spscale
-                | Command::Spset
-                | Command::Spshow
-                | Command::Spstart
-                | Command::Spstop
-                | Command::Spunlink
-                | Command::Spused
-                | Command::Spvar,
-                _,
-            ) => self.sp_command(command, args, want, out),
-            (
                 Command::Chkchr
                 | Command::Scroll
                 | Command::Tarray
@@ -2945,40 +2940,6 @@ impl Runtime {
                 | Command::Tvar,
                 _,
             ) => give(out, self.text_command(command, args, want)),
-            (
-                Command::Accel
-                | Command::Brepeat
-                | Command::Button
-                | Command::Controller
-                | Command::Gyroa
-                | Command::Gyrosync
-                | Command::Gyrov
-                | Command::Key
-                | Command::Keyboard
-                | Command::Mbutton
-                | Command::Mouse
-                | Command::Pushkey
-                | Command::Stick
-                | Command::Touch
-                | Command::Xctrlstyle,
-                _,
-            ) => self.input_command(command, args, want, out),
-            (
-                Command::Date
-                | Command::Dtread
-                | Command::Fontinfo
-                | Command::Maincnt
-                | Command::Millisec
-                | Command::Perfbegin
-                | Command::Perfend
-                | Command::Randomize
-                | Command::Rnd
-                | Command::Rndf
-                | Command::Sysparam
-                | Command::Time
-                | Command::Tmread,
-                _,
-            ) => self.system_command(command, args, want, out),
             (
                 Command::Beep
                 | Command::Recchk
