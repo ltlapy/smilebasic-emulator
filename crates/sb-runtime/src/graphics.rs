@@ -728,7 +728,35 @@ impl Graphics {
 
     /// GLINE: both ends included.
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
-        self.plot_all(&line_points(x0, y0, x1, y1, self.clip), color, blend);
+        let (clip, page) = (self.clip, self.target);
+        if self.arrays[page].is_some() {
+            self.plot_all(&line_points(x0, y0, x1, y1, clip), color, blend);
+            return;
+        }
+        // As `plot_all` does without a GARRAY array, as the points come.
+        let Graphics {
+            pages,
+            changes,
+            dirty,
+            ink,
+            ..
+        } = self;
+        let (pixels, dirty, ink) = (&mut pages[page], dirty[page].get_mut(), &mut ink[page]);
+        let mut landed = false;
+        line_each(x0, y0, x1, y1, clip, |x, y| {
+            if clip.contains(x, y) {
+                // A page nothing lands on stays as it is.
+                if !landed {
+                    landed = true;
+                    changes[page] += 1;
+                    pixels.make_room();
+                }
+                dirty.mark_pixel(x, y);
+                ink.mark_pixel(x, y);
+                let pixel = pixels.pixel_mut(x, y);
+                *pixel = blend.apply(*pixel, color);
+            }
+        });
     }
 
     /// GBOX: the outline as four lines: the top and bottom rows, then the
@@ -1624,6 +1652,14 @@ fn circle_points(cx: i32, cy: i32, r: i32) -> Vec<(i32, i32)> {
 /// line itself rounded (halves up), counted from its real start; only
 /// the steps on the page are worked out.
 fn line_points(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip) -> Vec<(i32, i32)> {
+    let mut points = Vec::new();
+    line_each(x0, y0, x1, y1, clip, |x, y| points.push((x, y)));
+    points
+}
+
+/// Calls `f` with each pixel of [`line_points`], in its order.
+#[inline]
+fn line_each(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip, mut f: impl FnMut(i32, i32)) {
     let x_major = (i64::from(x1) - i64::from(x0)).abs() >= (i64::from(y1) - i64::from(y0)).abs();
     let swap = |(x, y): (i64, i64)| if x_major { (x, y) } else { (y, x) };
     let ends = (
@@ -1635,9 +1671,10 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip) -> Vec<(i32, i32)
     } else {
         (ends.1, ends.0)
     };
-    let major = i128::from(b.0 - a.0);
-    let minor = i128::from(b.1 - a.1);
-    let (across, sign) = (minor.abs(), minor.signum() as i64);
+    // The ends' coordinates are of i32, so these and `k` fit in i64.
+    let major = b.0 - a.0;
+    let minor = b.1 - a.1;
+    let (across, sign) = (minor.abs(), minor.signum());
     let page = i64::from(GRP_SIZE) - 1;
     let (sx, sy) = swap(a);
     let starts_inside = (i64::from(clip.x0)..=i64::from(clip.x1)).contains(&sx)
@@ -1649,19 +1686,25 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip) -> Vec<(i32, i32)
     };
     let from = (-a.0).max(0);
     let to = (page - a.0).min(b.0 - a.0);
-    let mut points = Vec::with_capacity((to - from + 1).max(0) as usize);
     if from > to {
-        return points;
+        return;
     }
     // The offset and what is left over, stepped along without dividing.
     let step = 2 * major.max(1);
-    let start = 2 * i128::from(from) * across + k;
-    let (mut offset, mut left) = ((start / step) as i64, (start % step) as i64);
-    let (step, rise) = (step as i64, 2 * across as i64);
+    // In i128 only where i64 would overflow, as dividing i128s is slow.
+    let (mut offset, mut left) = match (2 * from).checked_mul(across).map(|v| v.checked_add(k)) {
+        Some(Some(start)) => (start / step, start % step),
+        _ => {
+            let start = 2 * i128::from(from) * i128::from(across) + i128::from(k);
+            let step = i128::from(step);
+            ((start / step) as i64, (start % step) as i64)
+        }
+    };
+    let rise = 2 * across;
     for t in from..=to {
         let (x, y) = swap((a.0 + t, a.1 + sign * offset));
         if (0..=page).contains(&x) && (0..=page).contains(&y) {
-            points.push((x as i32, y as i32));
+            f(x as i32, y as i32);
         }
         left += rise;
         if left >= step {
@@ -1669,7 +1712,6 @@ fn line_points(x0: i32, y0: i32, x1: i32, y1: i32, clip: Clip) -> Vec<(i32, i32)
             offset += 1;
         }
     }
-    points
 }
 
 /// The pixels a GTRI edge takes in row `y`, as the first and last column,
