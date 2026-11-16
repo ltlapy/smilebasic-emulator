@@ -708,3 +708,25 @@ count of a small loop moves by up to 10% between runs. qemu runs about a
 million instructions a second this way. Take a scene's count over a few
 frames as the difference of two runs, such as 6 frames and 3, and a loop's
 as that of two programs that run it a different number of times.
+
+The same count comes about six times as fast from whole blocks. Without
+`-one-insn-per-tb`, add `in_asm` to the log: each block is listed once,
+when it is translated, with its instructions, and the `exec` line of each
+run names it by its host address. A small program that reads the log keeps
+each block's size by that address and adds it for each `exec` line. With
+`nochain` every block runs to its end in user mode, so the sum is the same
+as the line count above: a loop of DEF calls gave 842.0 instructions an
+iteration both ways.
+
+```
+setarch -R qemu-aarch64 -cpu cortex-a35 -d nochain,exec,in_asm -D /dev/stdout \
+    smilebasic-check --bench --fixed 6 PROJECT PROGRAM | block-count
+```
+
+Kept with each block's guest address, the counts of two runs give each
+instruction's count an iteration, and `addr2line -i` on a build with
+symbols and line tables (`CARGO_PROFILE_DIST_STRIP=none`,
+`CARGO_PROFILE_DIST_DEBUG=line-tables-only`, which run the same
+instructions) names the source line and the functions inlined there.
+Recording the blocks between two runs of one that runs once an iteration
+gives the iteration's instructions in order.

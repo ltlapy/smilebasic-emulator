@@ -726,9 +726,229 @@ differently, and the rest by under 0.5%. TPERF's checksums stay
 `e8e5f6dc467db861` at 400 frames, `a6e1ed07824b1ad8` at 3600 and
 `5d9bb17a39eefb70` at 10500.
 
+### Calls, from `48f7cfc`
+
+This set counts what a call costs: a DEF's, a builtin's that the fused
+steps do not stand for, and a runtime command's, which most game loops are
+made of. Counts come from x86-64 with `perf stat -e instructions:u` on the
+`release` build, and aarch64 with qemu's Cortex-A35 model on the `dist`
+build under `setarch -R`, counted from whole blocks
+([benchmarking.md](benchmarking.md#measuring-on-a-handheld)). A loop's count
+is the difference of programs that run it 3200 and 9600 times (the game
+loops 50 and 150), over 6400; the two give the same count to within a
+couple of instructions, as the start-up varies a little with the hash
+tables' seeds. Scenes are TPERF's, run alone with `#ONLY`, x86-64 over
+frames 3 to 83 and aarch64 over frames 3 to 6. Every checksum is the same
+before and after: TPERF's `e8e5f6dc467db861` at 400 frames and
+`a6e1ed07824b1ad8` at 3600 on both machines, and each scene's and loop's.
+
+The loops, each in a DEF of its own locals, `FOR I=1 TO N` round the
+statement:
+
+| Loop | Statement |
+|---|---|
+| Empty | none |
+| Command DEF | `P I,R`, `DEF P A,B` sets a global to `A+B` |
+| Function DEF | `R=F(I,R)`, `RETURN (A+B) AND 255` |
+| Two OUTs | `TW R,I OUT S,T`, `DEF TW A,B OUT C,D: C=B:D=A` |
+| One OUT | `ONEOUT I OUT R`, `R=K+1` |
+| String argument | `R=SL(A$)`, `RETURN LEN(S$)` |
+| Array argument | `R=AG(ARR,I AND 15)`, `RETURN A[K]` |
+| Locals | `LV I`, a DEF of two `VAR`s and three statements |
+| Recursion | `R=FB(4)`, a recursive Fibonacci: 9 calls |
+| `CALL` | `CALL "P",I,R` |
+| GOSUB | `GOSUB @S` to `G=G+1:RETURN`, at the top level |
+| STR$, MID$, INSTR, CHR$ | `S$=STR$(I)`, `S$=MID$(A$,1,2)`, `R=INSTR(A$,"D")`, `S$=CHR$(65+(I AND 7))` |
+| RND, BUTTON | `R=RND(100)`, `R=BUTTON(0)`, `R=BUTTON(0,4,1)` |
+| SPOFS | `SPOFS 0,I AND 255,R` and `SPOFS 0 OUT S,T` |
+| LOCATE, GPSET | `LOCATE I AND 31,3`, `GPSET I AND 255,7,R` |
+| Game 1 | `B=BUTTON(0)`, then for 64 sprites: `MOVE K` (a DEF that adds a velocity to two real arrays and bounces off the edges), `SPOFS K,PX#[K],PY#[K]`, `IF NEAR(K,200,120) THEN INC HIT` |
+| Game 2 | the same with the movement and the test written out in the loop |
+| Game 3 | `B=BUTTON(0)`, then for 32 sprites `SPOFS K OUT X,Y`, `IF RND(8)==0 THEN X=X+1`, `SPOFS K,X,Y`, and a `LOCATE` |
+
+Where a call's aarch64 instructions went, from one iteration's trace, in the
+fused entries the loop runs (choosing each entry included). The function
+DEF loop:
+
+| Part | `48f7cfc` | Branch |
+|---|---|---|
+| Pushing `I` and `R` | 72 | read in the call's entry |
+| The call: leaving the fused loop, `fast_call`, the frame, coming back | 275 | 188 |
+| The return: the same | 131 | 86 |
+| The callee's two entries, the store, the FOR | 364 | 356 |
+| An iteration | 842 | 630 |
+
+A command DEF's call takes 75 + 275 + 166 of 723 before and 187 + 140 of
+529 after. Before, a call left the fused loop and its view of the
+variables, took a list for the DEF's variables from a pile of spare ones,
+moved each argument into it with a push and its own check of the room,
+wrote a frame of 112 bytes, and came back; a return read the frame back,
+scanned the variables for strings to drop and gave the list back to the
+pile.
+
+A runtime command, from the `CallHost` instruction to the fused code
+again: SPOFS 758 aarch64 instructions before, 543 after. Of the 758, about 115
+were `run_code`'s checks and `step`'s match around the call, and 80
+telling whether the screens changed: `sight`, and the sprite's appearance
+taken before and after and compared. Of the 543, about 150 are the VM's (the call, cutting the
+arguments, handing READ's place to the host and back), about 390 the
+runtime's: `Host::call`'s dispatch on the command (`run`, `run_counted`,
+`sp_command`'s own match) and SPOFS's work. BUTTON(0) takes 975 an
+iteration before and 868 after, of which 137 are still `malloc` and `free`
+for the one-value list every function of the runtime returns. STR$ went
+from 1295 to 1192; 423 of them are allocations in making the string.
+
+What was made:
+
+- `8937306`: a host call is a fused entry. `run_fast` makes it with the code
+  `step` uses, factored out as `host_call`, and hands anything other than
+  going on back to `run_code`, which settles it as `step`'s outcome.
+- `208e0ee`: the variables of all DEF calls under way follow each other in
+  one list, and a frame holds where its own start.
+- `9fa9146`: a DEF call and its return are made inside the fused loop, which
+  only points its view of the variables at the new frame. The fuser checks
+  once that a call fits its DEF and keeps what it takes of the stack in the
+  entry.
+- `8edef75`: once the frame has changed, `Host::call` skips telling whether a
+  command changes the screens: only drawing a frame clears that.
+- `23907aa`: a host call's one result is pushed without extending from a
+  list.
+- `daf54eb`: a builtin's call is a fused entry, made by `builtin_call`, the
+  code `step` uses.
+- `b08aba3`: a frame keeps the lists of `*` DEFs in one box most frames do
+  without, 112 bytes to 72, and a return cuts the stack and the variables
+  with a check that what goes is numbers.
+- `bd8e2c7`: a call of one to three arguments that are variables or numbers
+  reads them where they are, in one entry.
+- `72fd0be`: `run_fused` only says that it stopped before a builtin's or
+  host's call, and `run_fast` reads the call from the entry.
+
+aarch64 instructions an iteration:
+
+| Loop | `48f7cfc` | Branch | Change |
+|---|---|---|---|
+| Empty | 136 | 132 | -2.8% |
+| Command DEF | 723 | 529 | -26.9% |
+| Function DEF | 842 | 630 | -25.2% |
+| Two OUTs | 961 | 753 | -21.7% |
+| One OUT | 768 | 600 | -21.9% |
+| String argument | 811 | 630 | -22.3% |
+| Array argument | 870 | 709 | -18.5% |
+| Locals | 865 | 704 | -18.6% |
+| Recursion | 5226 | 3717 | -28.9% |
+| `CALL` | 2827 | 2798 | -1.0% |
+| GOSUB | 284 | 279 | -1.7% |
+| STR$ | 1295 | 1192 | -8.0% |
+| MID$ | 1281 | 1169 | -8.7% |
+| INSTR | 1603 | 1516 | -5.4% |
+| CHR$ | 952 | 848 | -10.9% |
+| RND | 934 | 828 | -11.4% |
+| SPOFS | 1158 | 929 | -19.8% |
+| SPOFS OUT | 1133 | 1025 | -9.5% |
+| LOCATE | 854 | 734 | -14.1% |
+| BUTTON(0) | 975 | 868 | -11.0% |
+| BUTTON(0,4,1) | 1379 | 1263 | -8.4% |
+| GPSET | 1232 | 1109 | -10.0% |
+| Game 1 (64 sprites) | 277027 | 229619 | -17.1% |
+| Game 2 (64 sprites) | 141539 | 125990 | -11.0% |
+| Game 3 (32 sprites) | 97836 | 82969 | -15.2% |
+
+x86-64 instructions an iteration:
+
+| Loop | `48f7cfc` | Branch | Change |
+|---|---|---|---|
+| Empty | 152 | 157 | +3.2% |
+| Command DEF | 823 | 610 | -25.9% |
+| Function DEF | 950 | 730 | -23.1% |
+| Two OUTs | 1094 | 863 | -21.1% |
+| One OUT | 883 | 679 | -23.2% |
+| String argument | 931 | 721 | -22.6% |
+| Array argument | 1004 | 815 | -18.8% |
+| Locals | 980 | 790 | -19.4% |
+| Recursion | 5824 | 4134 | -29.0% |
+| `CALL` | 2639 | 2656 | +0.6% |
+| GOSUB | 308 | 315 | +2.2% |
+| STR$ | 1179 | 1088 | -7.7% |
+| MID$ | 1191 | 1098 | -7.8% |
+| INSTR | 1461 | 1393 | -4.7% |
+| CHR$ | 890 | 800 | -10.1% |
+| RND | 972 | 847 | -12.9% |
+| SPOFS | 1250 | 1015 | -18.8% |
+| SPOFS OUT | 1202 | 1086 | -9.6% |
+| LOCATE | 963 | 824 | -14.4% |
+| BUTTON(0) | 1023 | 898 | -12.2% |
+| BUTTON(0,4,1) | 1427 | 1296 | -9.2% |
+| GPSET | 1282 | 1138 | -11.2% |
+| Game 1 (64 sprites) | 303732 | 256023 | -15.7% |
+| Game 2 (64 sprites) | 152602 | 139635 | -8.5% |
+| Game 3 (32 sprites) | 103245 | 86918 | -15.8% |
+
+Instructions a frame, in millions, program and CPU drawing:
+
+| Scene | aarch64 `48f7cfc` | aarch64 branch | Change | x86-64 `48f7cfc` | x86-64 branch | Change |
+|---|---|---|---|---|---|---|
+| VINT | 8.98 | 8.93 | -0.6% | 9.44 | 9.53 | +0.9% |
+| VREAL | 7.48 | 7.45 | -0.5% | 7.66 | 7.90 | +3.2% |
+| VSTR | 12.86 | 12.86 | +0.0% | 11.46 | 11.60 | +1.2% |
+| VARRAY | 13.58 | 13.61 | +0.2% | 14.19 | 14.32 | +0.9% |
+| VDEF | 7.01 | 5.38 | -23.3% | 7.66 | 5.85 | -23.6% |
+| VVAR | - | - | - | 33.41 | 33.72 | +0.9% |
+| SPMOVE | - | - | - | 78.81 | 78.30 | -0.7% |
+| SPROT | - | - | - | 304.20 | 303.38 | -0.3% |
+| SPCHURN | - | - | - | 108.66 | 108.19 | -0.4% |
+| SPHIT | 51.31 | 50.95 | -0.7% | 55.52 | 55.11 | -0.7% |
+| SPANIM | - | - | - | 294.66 | 294.65 | -0.0% |
+| TPRINT | - | - | - | 42.42 | 42.36 | -0.1% |
+| TPUT | 32.33 | 31.87 | -1.4% | 52.90 | 52.02 | -1.7% |
+| TSCROLL | - | - | - | 44.76 | 44.75 | -0.0% |
+| GAME | 20.27 | 20.14 | -0.6% | 28.56 | 28.57 | +0.0% |
+
+VDEF, whose loop is a function call and a command call with two OUTs, goes
+down by a quarter. The other scenes move by under 2% of their frames: their
+program parts call little, and the sprite and text scenes' counts are
+mostly drawing. GAME calls GTRI, SPOFS and LOCATE a few hundred times a
+frame, under 1% of its count. On x86-64 the scenes and loops that make no
+calls (VINT, VREAL, VSTR, VARRAY, the empty FOR and GOSUB) cost 1 to 3%
+more, as LLVM lays out `run_fused`'s registers anew; on aarch64 they move
+by under 3%, the empty FOR and GOSUB down.
+
+`run_fast` is 40872 bytes of aarch64 code at `48f7cfc` and 40612 on the
+branch, with `host_call` (1828 bytes) and `builtin_call` (1708) outside it.
+Making the calls in the fused loop added little to it; `step` shrank from
+16648 to 15056 bytes, as its call arms went to those functions.
+
+What calls still cost, for later work:
+
+- A function of the runtime returns its value in a `Vec`: 137 aarch64
+  instructions of `malloc` and `free` in each BUTTON(0), RND or similar. Its
+  commands return results through `Result<Vec<Value>>` throughout, so a way
+  round it is a method on `Host` for one value, which the hot functions would
+  need code of their own for.
+- `Host::call`'s dispatch, `run`'s match on the command and the form, then
+  each group's own match on the command, the form and the count, about 100
+  instructions before a command's work.
+- A DEF's RETURN out of a command DEF, 140 instructions with choosing the
+  entry, against 86 for a function's: it works out the OUT variables from
+  the DEF's description on each return.
+- `CALL "NAME"` (2798) makes a `String` of the name and looks it up in a
+  hash table on each call. A cache of the last name, valid for the running
+  program, would leave out most of it.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
+
+- **Handing a builtin's or host's call back from `run_fused` with its id
+  and counts**, in an enum: LLVM kept copies of the entry's tag in six
+  registers for it and the table of entries on the stack, about 6 aarch64
+  instructions more to choose every entry. An empty FOR took 143 instead
+  of 132, a GOSUB loop 305 instead of 279; `run_fast` read the call from
+  the entry instead (2026-11-16).
+- **LLVM's own inlining of `Vec::truncate`** where a fused DEF return
+  drops the callee's variables: 0.7 KB more of `run_fast` for the drop of
+  strings and arrays, which a return rarely has to do. `cut` checks that
+  what goes is numbers and leaves the rest to a function of its own
+  (2026-11-16).
 
 - **Dropping the memos on missed branches.** SPANIM's and LCOMP's branch
   misses come from working out a paint or a blend only when the pixel differs
