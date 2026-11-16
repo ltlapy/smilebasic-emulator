@@ -12,7 +12,7 @@ use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::talk::{Singer, key_hz};
 use super::wave::{self, Envelope, Waves};
-use super::{RATE, Ramp};
+use super::{RATE, Ramp, add_scaled};
 
 /// Ticks in a quarter note; T counts quarter notes a minute.
 const QUARTER: u32 = WHOLE / 4;
@@ -890,12 +890,26 @@ impl Track {
             }
         }
         let n = left.len();
+        // Nothing sounds, and nothing plays that could start a note: the
+        // track would add zeros, which leave the mix as it is.
+        let quiet = self.voices.is_empty()
+            && !self.singers.iter().any(|(_, s)| s.sounding())
+            && self.synth.as_ref().is_none_or(|s| s.silent());
+        if quiet && (self.paused || !self.playing) {
+            if !self.fade.done() {
+                (0..n).for_each(|_| self.fade.step_sample());
+            }
+            self.end_fade();
+            return;
+        }
         let [l, r] = scratch;
         l.resize(n, 0.0);
         r.resize(n, 0.0);
         if let Some(p) = &mut self.seq {
             p.begin_block();
         }
+        // Whether anything was rendered that may not be silence.
+        let mut sounded = false;
         let mut done = 0;
         while done < n {
             if !self.paused && self.playing && self.until_tick <= 0.0 {
@@ -911,6 +925,9 @@ impl Track {
                 ((self.until_tick.ceil() as usize).max(1)).min(n - done)
             };
             let (cl, cr) = (&mut l[done..done + chunk], &mut r[done..done + chunk]);
+            sounded |= self.synth.as_ref().is_some_and(|s| !s.silent())
+                || !self.voices.is_empty()
+                || self.singers.iter().any(|(_, s)| s.sounding());
             match &mut self.synth {
                 Some(s) => s.render(cl, cr),
                 None => cl.iter_mut().chain(cr.iter_mut()).for_each(|x| *x = 0.0),
@@ -945,16 +962,39 @@ impl Track {
         // Levels are measured at BGMPLAY's own volume of 64; BGMVOL goes
         // on up to twice that.
         let volume = self.volume as f32 / 64.0 * self.seq.as_ref().map_or(1.0, Player::volume);
-        for i in 0..n {
-            let gain = volume * self.fade.value as f32;
-            let (x, y) = (l[i] * gain, r[i] * gain);
-            left[i] += x;
-            right[i] += y;
-            if let Some((al, ar, send)) = &mut aux {
-                al[i] += x * *send;
-                ar[i] += y * *send;
+        if !sounded {
+            // Zeros, which adding leaves the mix as it is: the mix and the
+            // effector's bus start at 0 and only take sums, and so never
+            // hold -0.
+            if !self.fade.done() {
+                (0..n).for_each(|_| self.fade.step_sample());
             }
-            self.fade.step_sample();
+        } else if self.fade.done() {
+            // The gain stays as it is, and the loops do as the one below
+            // with nothing else in them.
+            let gain = volume * self.fade.value as f32;
+            add_scaled(left, &l[..n], gain);
+            add_scaled(right, &r[..n], gain);
+            if let Some((al, ar, send)) = aux {
+                for (a, &x) in al.iter_mut().zip(&l[..n]) {
+                    *a += x * gain * send;
+                }
+                for (a, &y) in ar.iter_mut().zip(&r[..n]) {
+                    *a += y * gain * send;
+                }
+            }
+        } else {
+            for i in 0..n {
+                let gain = volume * self.fade.value as f32;
+                let (x, y) = (l[i] * gain, r[i] * gain);
+                left[i] += x;
+                right[i] += y;
+                if let Some((al, ar, send)) = &mut aux {
+                    al[i] += x * *send;
+                    ar[i] += y * *send;
+                }
+                self.fade.step_sample();
+            }
         }
         self.end_fade();
     }

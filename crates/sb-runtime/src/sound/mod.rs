@@ -99,11 +99,22 @@ const MOST_SENT: f32 = 8.0;
 /// Looking first keeps this out of the way of the mix's own loops.
 #[inline(never)]
 fn silence_nans(samples: &mut [f32]) {
-    if samples.iter().any(|s| s.is_nan()) {
+    // All of them, not stopping at the first: several at a time.
+    if samples.iter().fold(false, |nan, s| nan | s.is_nan()) {
         samples
             .iter_mut()
             .filter(|s| s.is_nan())
             .for_each(|s| *s = 0.0);
+    }
+}
+
+/// Adds `from` times `gain` into `to`, sample by sample: the loop of a
+/// sound whose gain does not move, which the compiler can do several
+/// samples at a time.
+#[inline(always)]
+pub(crate) fn add_scaled(to: &mut [f32], from: &[f32], gain: f32) {
+    for (t, &x) in to.iter_mut().zip(from) {
+        *t += x * gain;
     }
 }
 
@@ -679,6 +690,8 @@ impl Sound {
         // RECSTART does not hear PCMSTREAM, which goes in after the
         // recording, still sending to the effector.
         let pcm_apart = record && self.pcm.playing;
+        // Whether PCMSTREAM or TALK may write into `whole` this frame.
+        let whole_used = self.pcm.playing && !pcm_apart || self.talk.speaking();
         if pcm_apart {
             let [l, r] = &mut self.pcm_part;
             l.clear();
@@ -763,10 +776,12 @@ impl Sound {
             }
             r.process(aux_l, aux_r, [late_l, late_r]);
         }
-        // The mix, as RECSTART and the main program hear it.
-        for i in 0..n {
-            left[i] += whole_l[i];
-            right[i] += whole_r[i];
+        // The mix, as RECSTART and the main program hear it. Without
+        // PCMSTREAM or TALK this adds zeros, which leave it as it is.
+        if whole_used {
+            for (to, from) in [(&mut *left, &*whole_l), (&mut *right, &*whole_r)] {
+                to.iter_mut().zip(from).for_each(|(t, &x)| *t += x);
+            }
         }
         for (i, shown) in self.shown.iter_mut().enumerate() {
             *shown = match &self.tracks[i] {
@@ -793,6 +808,41 @@ impl Sound {
         let keep = passed.unwrap_or(HALF);
         let rest = 1.0 - keep;
         let mut rec = self.recorder.borrow_mut();
+        if !record && self.master.done() {
+            // The loop below with its gain fixed and nothing to record:
+            // the same sums, in loops the compiler can do several samples
+            // at a time.
+            let gain = self.master.value as f32;
+            self.out.resize(start + 2 * n, 0.0);
+            let out = &mut self.out[start..];
+            for (o, (&l, &w)) in out.iter_mut().step_by(2).zip(left.iter().zip(whole_l)) {
+                *o = l * gain * keep + w * gain * rest;
+            }
+            for (o, (&r, &w)) in out
+                .iter_mut()
+                .skip(1)
+                .step_by(2)
+                .zip(right.iter().zip(whole_r))
+            {
+                *o = r * gain * keep + w * gain * rest;
+            }
+            let both = |side: [&Vec<f32>; 2], out: &mut [f32]| {
+                if side[0].len() == n && side[1].len() == n {
+                    let pairs = out.chunks_exact_mut(2).zip(side[0].iter().zip(side[1]));
+                    for (o, (&l, &r)) in pairs {
+                        o[0] += l * gain;
+                        o[1] += r * gain;
+                    }
+                }
+            };
+            both(sent, out);
+            if pcm_apart {
+                both([pcm_l, pcm_r], out);
+            }
+            out.iter_mut().for_each(|s| *s = s.clamp(-1.0, 1.0));
+            silence_nans(out);
+            return;
+        }
         for i in 0..n {
             let gain = self.master.value as f32;
             let (l, r) = (left[i] * gain, right[i] * gain);
@@ -906,6 +956,56 @@ mod tests {
         main.set_master(127, 0);
         assert_eq!(main.master_volume(), 127);
         assert!((main.master.value - 127.0 / 88.9).abs() < 1e-9);
+    }
+
+    /// The mix's loops for a gain that does not move give what its loop
+    /// a sample at a time gives, which a recording takes: to the bit,
+    /// through fades of the song and of SNDMVOL, sends to the effector and
+    /// the silence after the song.
+    #[test]
+    fn the_mix_is_the_same_recorded_or_not() {
+        let song = Rc::new(mml::parse("T150@219L8O4CDE@220GAB<C>R2").unwrap());
+        let mixed = |record: bool| {
+            let mut s = Sound::default();
+            if record {
+                s.recorder.borrow_mut().start(100 * FRAME_SAMPLES, false);
+            }
+            s.play(0, Some(song.clone()), 100, 20);
+            s.play(1, Some(song.clone()), 64, 0);
+            let mut out = Vec::new();
+            for frame in 0..90 {
+                match frame {
+                    10 => s.set_master(40, 15),
+                    30 => s.set_sends([127, 60, 127, 127]),
+                    40 => s.stop(1, 12),
+                    _ => {}
+                }
+                s.render_frame();
+                out.extend(s.take_samples().iter().map(|x| x.to_bits()));
+            }
+            out
+        };
+        let plain = mixed(false);
+        assert!(plain.iter().any(|&x| f32::from_bits(x) != 0.0));
+        assert_eq!(plain, mixed(true));
+    }
+
+    /// A track that has played and stopped, and BEEP with nothing to play,
+    /// do no work a sample at a time: they leave their buffers untouched.
+    #[test]
+    fn idle_sounds_do_nothing_a_sample_at_a_time() {
+        let mut s = Sound::default();
+        s.play(0, Some(Rc::new(mml::parse("@219C64").unwrap())), 100, 0);
+        for _ in 0..5 {
+            s.render_frame();
+        }
+        assert!(s.take_samples().iter().any(|&x| x != 0.0));
+        s.stop(0, 0);
+        s.scratch = Default::default();
+        s.render_frame();
+        assert!(s.scratch.iter().all(|b| b.capacity() == 0));
+        assert!(s.mix[0].iter().chain(&s.mix[1]).all(|&x| x.to_bits() == 0));
+        assert!(s.take_samples().iter().all(|&x| x.to_bits() == 0));
     }
 
     /// The sub interpreter shares the main one's recorder and records

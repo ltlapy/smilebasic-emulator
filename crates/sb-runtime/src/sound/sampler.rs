@@ -837,6 +837,10 @@ impl Synth for Sampler {
         true
     }
 
+    fn silent(&self) -> bool {
+        self.voices.is_empty()
+    }
+
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         left.fill(0.0);
         right.fill(0.0);

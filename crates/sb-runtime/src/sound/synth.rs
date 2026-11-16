@@ -79,6 +79,12 @@ pub(crate) trait Synth {
     fn reset(&mut self);
     /// Writes `left.len()` samples over the buffers.
     fn render(&mut self, left: &mut [f32], right: &mut [f32]);
+    /// Whether nothing sounds: [`Synth::render`] would write zeros and
+    /// change nothing, so that it can be left out. False when the
+    /// synthesizer cannot tell.
+    fn silent(&self) -> bool {
+        false
+    }
 }
 
 /// MIDI's channel for drums in rustysynth, which adds 128 to its bank.

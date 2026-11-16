@@ -9,7 +9,7 @@ use super::sampler::{MAX_VOICES, TICK};
 use super::seq::{Player, Sequence};
 use super::synth::{Instruments, Synth};
 use super::wave::{self, Wave};
-use super::{RATE, Ramp};
+use super::{RATE, Ramp, add_scaled};
 
 pub const HANDLES: usize = 16;
 /// The note BEEP plays instruments at.
@@ -416,17 +416,19 @@ impl Beeps {
                 self.synth(|s| s.expression(h, expression));
             }
         }
-        let [l, r] = &mut self.scratch;
-        l.clear();
-        l.resize(n, 0.0);
-        r.clear();
-        r.resize(n, 0.0);
-        if let Some(s) = &mut self.synth {
+        // A synthesizer with nothing sounding would add zeros, which leave
+        // the buffers as they are: they start at 0 and only take sums, and
+        // so never hold -0.
+        if let Some(s) = self.synth.as_mut().filter(|s| !s.silent()) {
+            let [l, r] = &mut self.scratch;
+            l.clear();
+            l.resize(n, 0.0);
+            r.clear();
+            r.resize(n, 0.0);
             s.render(l, r);
-        }
-        for i in 0..n {
-            left[i] += l[i];
-            right[i] += r[i];
+            for (to, from) in [(&mut *left, &*l), (&mut *right, &*r)] {
+                to.iter_mut().zip(from).for_each(|(t, &x)| *t += x);
+            }
         }
         let old_notes: usize = (self.beeps.iter().flatten())
             .map(|b| match &b.sounding {
@@ -460,11 +462,17 @@ impl Beeps {
                         at = until;
                     }
                     let volume = b.volume as f32 / WAVE_VOLUME;
-                    for i in 0..n {
+                    if b.fade.done() {
                         let gain = b.fade.value as f32 * volume;
-                        left[i] += wl[i] * gain;
-                        right[i] += wr[i] * gain;
-                        b.fade.step_sample();
+                        add_scaled(left, &wl, gain);
+                        add_scaled(right, &wr, gain);
+                    } else {
+                        for i in 0..n {
+                            let gain = b.fade.value as f32 * volume;
+                            left[i] += wl[i] * gain;
+                            right[i] += wr[i] * gain;
+                            b.fade.step_sample();
+                        }
                     }
                     note.voice.done() && note.old.is_empty()
                 }
@@ -476,6 +484,8 @@ impl Beeps {
                     own_pan,
                 } => {
                     player.begin_block();
+                    // Whether a note may have sounded.
+                    let mut sounded = false;
                     let mut done = 0;
                     while done < n {
                         let ended = player.ended();
@@ -490,6 +500,7 @@ impl Beeps {
                             true => n - done,
                             false => ((until_tick.ceil() as usize).max(1)).min(n - done),
                         };
+                        sounded |= !synth.silent();
                         synth.render(&mut wl[done..done + chunk], &mut wr[done..done + chunk]);
                         *until_tick -= chunk as f64;
                         done += chunk;
@@ -499,11 +510,25 @@ impl Beeps {
                         true => (1.0, 1.0),
                         false => balance(b.pan),
                     };
-                    for i in 0..n {
+                    if !sounded {
+                        // Zeros, which leave the buffers as they are.
+                        if !b.fade.done() {
+                            (0..n).for_each(|_| b.fade.step_sample());
+                        }
+                    } else if b.fade.done() {
                         let gain = volume * b.fade.value as f32;
-                        left[i] += wl[i] * gain * pl;
-                        right[i] += wr[i] * gain * pr;
-                        b.fade.step_sample();
+                        for (to, from, side) in [(&mut *left, &wl, pl), (&mut *right, &wr, pr)] {
+                            for (t, &x) in to.iter_mut().zip(from) {
+                                *t += x * gain * side;
+                            }
+                        }
+                    } else {
+                        for i in 0..n {
+                            let gain = volume * b.fade.value as f32;
+                            left[i] += wl[i] * gain * pl;
+                            right[i] += wr[i] * gain * pr;
+                            b.fade.step_sample();
+                        }
                     }
                     if player.ended() {
                         *tail = tail.saturating_sub(1);
@@ -511,8 +536,8 @@ impl Beeps {
                     *tail == 0
                 }
                 Sounding::Instrument { key, hold, release } => {
-                    for _ in 0..n {
-                        b.fade.step_sample();
+                    if !b.fade.done() {
+                        (0..n).for_each(|_| b.fade.step_sample());
                     }
                     if *hold > 0 {
                         *hold -= 1;
@@ -708,6 +733,20 @@ mod tests {
             assert_eq!(bits(&r), bits(&expect(&wr)), "frame {frame}");
         }
         assert!(heard && player.ended());
+    }
+
+    /// With nothing sounding, the instruments' synthesizer is not run: its
+    /// buffers stay untouched.
+    #[test]
+    fn a_silent_synthesizer_is_left_out() {
+        use crate::sound::sampler::tests::{ORGAN, bank};
+        let instruments = Instruments::Bank(Arc::new(bank(ORGAN, false)));
+        let mut beeps = Beeps::new(Some(&instruments));
+        render(&mut beeps, 3);
+        assert!(beeps.scratch.iter().all(|b| b.capacity() == 0));
+        beeps.play(256, BeepSound::Instrument(0), 0, 64, 64, false);
+        render(&mut beeps, 1);
+        assert!(beeps.scratch.iter().all(|b| b.len() == 800));
     }
 
     #[test]
