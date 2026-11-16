@@ -9,6 +9,7 @@ use sb_core::value::{Array, ArrayData, ArrayRef, ElemType};
 
 use crate::compose::{Lit, Over1, Over3, Paint};
 use crate::font::{Font, FontSize, Span};
+use crate::page::Page;
 use crate::text::{FONT_PAGE, USER_CHARS, UserPage, glyph_origin_px, glyph_pixel_px};
 
 pub const PAGES: usize = 6;
@@ -295,8 +296,8 @@ impl Dirty {
 }
 
 pub struct Graphics {
-    /// Empty until drawn on.
-    pages: Vec<Vec<u32>>,
+    /// Blank until drawn on.
+    pages: Vec<Page>,
     /// GTARGET: the page drawing commands work on.
     pub target: usize,
     /// GCOLOR: the color used when a command leaves it out.
@@ -352,7 +353,7 @@ impl Default for Graphics {
     fn default() -> Self {
         let from = CHANGES_FROM.fetch_add(1, Ordering::Relaxed) << COUNT_BITS;
         Graphics {
-            pages: vec![Vec::new(); PAGES],
+            pages: vec![Page::default(); PAGES],
             target: 0,
             color: 0xFFFF_FFFF,
             clip: Clip::PAGE,
@@ -365,24 +366,24 @@ impl Default for Graphics {
     }
 }
 
-fn index(x: i32, y: i32) -> usize {
+/// Where a pixel lies in an image of [`GRP_SIZE`] rows of [`GRP_SIZE`]
+/// pixels one after another, as GARRAY arrays and files hold a page. The
+/// page itself lies otherwise; see [`crate::page`].
+fn row_major(x: i32, y: i32) -> usize {
     (y * GRP_SIZE + x) as usize
 }
 
 impl Graphics {
     /// A pixel of a page; 0 outside it.
+    #[inline]
     pub fn pixel(&self, page: usize, x: i32, y: i32) -> u32 {
-        let pixels = &self.pages[page];
-        if pixels.is_empty() || !Clip::PAGE.contains(x, y) {
-            return 0;
-        }
-        pixels[index(x, y)]
+        self.pages[page].pixel(x, y)
     }
 
     /// A page's pixels row by row as shown, 2048 to a row; empty while the
     /// page is blank.
     pub fn page(&self, page: usize) -> &[u32] {
-        &self.pages[page]
+        self.pages[page].raw()
     }
 
     /// A pixel of a page as programs read it: from its GARRAY array if it
@@ -392,7 +393,7 @@ impl Graphics {
             && Clip::PAGE.contains(x, y)
             && let Ok(array) = array.try_borrow()
             && let ArrayData::Int(v) = &array.data
-            && let Some(&p) = v.get(index(x, y))
+            && let Some(&p) = v.get(row_major(x, y))
         {
             return p as u32;
         }
@@ -401,7 +402,7 @@ impl Graphics {
 
     /// Whether a page is empty, as at start-up or after GCLS with 0.
     pub fn is_blank(&self, page: usize) -> bool {
-        self.pages[page].is_empty()
+        self.pages[page].is_blank()
     }
 
     /// A count that differs from the last one read whenever the page's
@@ -436,7 +437,7 @@ impl Graphics {
         }
         let mut missing = want & !c.known[y];
         if missing != 0 {
-            let row = &self.pages[page][y * rows..][..rows];
+            let row = self.pages[page].row(y);
             c.known[y] |= missing;
             c.filled[y] &= !missing;
             while missing != 0 {
@@ -454,8 +455,7 @@ impl Graphics {
     /// Replaces a whole page, such as GRP4 with the default sprite image.
     /// `pixels` holds 2048x2048 pixels row by row.
     pub fn set_page(&mut self, page: usize, pixels: Vec<u32>) {
-        assert_eq!(pixels.len(), (GRP_SIZE * GRP_SIZE) as usize);
-        self.pages[page] = pixels;
+        self.pages[page] = Page::from_rows(pixels);
         self.changes[page] += 1;
         self.dirty[page].set(Dirty::ALL);
         self.mirror_page(page);
@@ -463,7 +463,7 @@ impl Graphics {
 
     /// Empties a page, as GCLS does with 0.
     pub fn clear_page(&mut self, page: usize) {
-        self.pages[page] = Vec::new();
+        self.pages[page] = Page::default();
         self.changes[page] += 1;
         self.dirty[page].set(Dirty::ALL);
         self.mirror_page(page);
@@ -491,7 +491,11 @@ impl Graphics {
         let mut array = Array::new(ElemType::Int, vec![size, size]);
         // Only read: a blank page takes memory, but its pixels stay as they were.
         let pixels = self.pixels_to_change(page);
-        array.data = ArrayData::Int(pixels.iter().map(|&p| p as i32).collect());
+        let mut ints = Vec::with_capacity(size * size);
+        for row in pixels.rows(0..size) {
+            ints.extend(row.iter().map(|&p| p as i32));
+        }
+        array.data = ArrayData::Int(ints);
         array.system = true;
         let array = Rc::new(RefCell::new(array));
         self.arrays[page] = Some(array.clone());
@@ -512,9 +516,19 @@ impl Graphics {
         if let Ok(mut array) = array.try_borrow_mut()
             && let ArrayData::Int(v) = &mut array.data
         {
-            for (i, d) in v.iter_mut().enumerate() {
-                *d = pixels.get(i).map_or(0, |&p| p as i32);
+            // Row by row as far as the array goes, and 0 past the page.
+            let size = GRP_SIZE as usize;
+            let mut rest = &mut v[..];
+            if !pixels.is_blank() {
+                for row in pixels.rows(0..size) {
+                    let (to, after) = rest.split_at_mut(rest.len().min(size));
+                    for (d, &p) in to.iter_mut().zip(row) {
+                        *d = p as i32;
+                    }
+                    rest = after;
+                }
             }
+            rest.fill(0);
         }
     }
 
@@ -534,10 +548,11 @@ impl Graphics {
             return;
         }
         let pixels = self.page_pixels(page, rect);
+        let (x0, x1) = (rect.x0 as usize, rect.x1 as usize);
         for y in rect.y0..=rect.y1 {
-            let row = index(rect.x0, y)..=index(rect.x1, y);
-            for i in row {
-                pixels[i] = v[i] as u32;
+            let from = &v[row_major(rect.x0, y)..=row_major(rect.x1, y)];
+            for (d, &p) in pixels.row_mut(y as usize)[x0..=x1].iter_mut().zip(from) {
+                *d = p as u32;
             }
         }
     }
@@ -559,19 +574,17 @@ impl Graphics {
 
     /// A page's pixels to change, in `area` alone.
     #[inline]
-    fn page_pixels(&mut self, page: usize, area: Clip) -> &mut Vec<u32> {
+    fn page_pixels(&mut self, page: usize, area: Clip) -> &mut Page {
         self.dirty[page].get_mut().mark_area(area);
         self.pixels_to_change(page)
     }
 
     /// A page's pixels, with what will change on them marked by the caller.
     #[inline]
-    fn pixels_to_change(&mut self, page: usize) -> &mut Vec<u32> {
+    fn pixels_to_change(&mut self, page: usize) -> &mut Page {
         self.changes[page] += 1;
         let pixels = &mut self.pages[page];
-        if pixels.is_empty() {
-            *pixels = vec![0; (GRP_SIZE * GRP_SIZE) as usize];
-        }
+        pixels.make_room();
         pixels
     }
 
@@ -587,21 +600,21 @@ impl Graphics {
     /// Draws a pixel inside the clipping rectangle, already marked.
     #[inline]
     fn plot_marked(&mut self, x: i32, y: i32, color: u32, blend: Blend) {
-        let i = index(x, y);
+        let (px, py) = (x as usize, y as usize);
         let page = self.target;
         // Without a GARRAY array, the page is the only copy.
         if self.arrays[page].is_none() {
-            let pixel = &mut self.pixels_to_change(page)[i];
+            let pixel = self.pixels_to_change(page).pixel_mut(px, py);
             *pixel = blend.apply(*pixel, color);
             return;
         }
         let dst = self.read(page, x, y);
         let p = blend.apply(dst, color);
-        self.pixels_to_change(page)[i] = p;
+        *self.pixels_to_change(page).pixel_mut(px, py) = p;
         if let Some(array) = &self.arrays[self.target]
             && let Ok(mut array) = array.try_borrow_mut()
             && let ArrayData::Int(v) = &mut array.data
-            && let Some(d) = v.get_mut(i)
+            && let Some(d) = v.get_mut(row_major(x, y))
         {
             *d = p as i32;
         }
@@ -628,7 +641,7 @@ impl Graphics {
         for &(x, y) in &points[first..] {
             if clip.contains(x, y) {
                 dirty.mark_pixel(x, y);
-                let pixel = &mut pixels[index(x, y)];
+                let pixel = pixels.pixel_mut(x as usize, y as usize);
                 *pixel = blend.apply(*pixel, color);
             }
         }
@@ -686,10 +699,9 @@ impl Graphics {
         if l > r || t > b {
             return;
         }
-        let (n, rows) = ((r - l + 1) as usize, (b - t + 1) as usize);
-        let pixels = &mut self.pixels_to_change(page)[index(l, t)..];
-        for row in pixels.chunks_mut(GRP_SIZE as usize).take(rows) {
-            row[..n].fill(color);
+        let (l, r, rows) = (l as usize, r as usize, t as usize..b as usize + 1);
+        for row in self.pixels_to_change(page).rows_mut(rows) {
+            row[l..=r].fill(color);
         }
     }
 
@@ -731,8 +743,7 @@ impl Graphics {
         };
         let pixels = &mut self.pages[page];
         for (y, (left, right)) in rows {
-            let (from, to) = (index(left, y), index(right, y) + 1);
-            let row = &mut pixels[from..to];
+            let row = &mut pixels.row_mut(y as usize)[left as usize..=right as usize];
             match mirror.as_deref_mut() {
                 None if blend == Blend::Normal => row.fill(color),
                 None => {
@@ -741,7 +752,7 @@ impl Graphics {
                     }
                 }
                 Some(v) => {
-                    for (i, p) in (from..to).zip(row) {
+                    for (i, p) in (row_major(left, y)..).zip(row) {
                         let dst = v.get(i).map_or(*p, |&d| d as u32);
                         *p = blend.apply(dst, color);
                         if let Some(d) = v.get_mut(i) {
@@ -916,21 +927,28 @@ impl Graphics {
             x1: dx + xs.end(),
             y1: dy + ys.end(),
         };
-        let size = GRP_SIZE as usize;
+        let (tx, ty) = (area.x0 as usize, area.y0 as usize);
         // Rows of another page that is not blank are read where they are,
         // as nothing written can be read again.
         if src != target
             && self.arrays[src].is_none()
             && self.arrays[target].is_none()
-            && !self.pages[src].is_empty()
+            && !self.pages[src].is_blank()
         {
             self.page_pixels(target, area);
             if let Ok([from_page, to_page]) = self.pages.get_disjoint_mut([src, target]) {
-                let first = index(from.x0 + xs.start(), from.y0 + ys.start());
-                let from_rows = from_page[first..].chunks(size);
-                let to_rows = to_page[index(area.x0, area.y0)..].chunks_mut(size);
-                let pairs = to_rows.zip(from_rows).take(rows);
-                copy_rows(pairs.map(|(d, s)| (&mut d[..n], &s[..n])), tint, blend);
+                let (sx, sy) = (
+                    (from.x0 + xs.start()) as usize,
+                    (from.y0 + ys.start()) as usize,
+                );
+                let from_rows = from_page.rows(sy..sy + rows);
+                let to_rows = to_page.rows_mut(ty..ty + rows);
+                let pairs = to_rows.zip(from_rows);
+                copy_rows(
+                    pairs.map(|(d, s)| (&mut d[tx..tx + n], &s[sx..sx + n])),
+                    tint,
+                    blend,
+                );
                 return;
             }
         }
@@ -939,11 +957,12 @@ impl Graphics {
         if self.arrays[src].is_none() {
             // The source lies within the page; read it a row at a time.
             let page = &self.pages[src];
-            if page.is_empty() {
+            if page.is_blank() {
                 pixels.resize((w * h) as usize, 0);
             } else {
-                for y in from.y0..=from.y1 {
-                    pixels.extend_from_slice(&page[index(from.x0, y)..=index(from.x1, y)]);
+                let (x0, x1) = (from.x0 as usize, from.x1 as usize);
+                for row in page.rows(from.y0 as usize..from.y1 as usize + 1) {
+                    pixels.extend_from_slice(&row[x0..=x1]);
                 }
             }
         } else {
@@ -957,9 +976,13 @@ impl Graphics {
             let to_page = self.page_pixels(target, area);
             let first = (ys.start() * w + xs.start()) as usize;
             let from_rows = pixels[first..].chunks(w as usize);
-            let to_rows = to_page[index(area.x0, area.y0)..].chunks_mut(size);
-            let pairs = to_rows.zip(from_rows).take(rows);
-            copy_rows(pairs.map(|(d, s)| (&mut d[..n], &s[..n])), tint, blend);
+            let to_rows = to_page.rows_mut(ty..ty + rows);
+            let pairs = to_rows.zip(from_rows);
+            copy_rows(
+                pairs.map(|(d, s)| (&mut d[tx..tx + n], &s[..n])),
+                tint,
+                blend,
+            );
             return;
         }
         for y in ys {
@@ -1214,7 +1237,7 @@ impl Graphics {
             for (col, &p) in line.iter().enumerate() {
                 let px = x + col as i32;
                 if Clip::PAGE.contains(px, py) {
-                    pixels[index(px, py)] = p;
+                    *pixels.pixel_mut(px as usize, py as usize) = p;
                 }
             }
         }
@@ -1303,8 +1326,7 @@ impl Graphics {
         for py in top..=bottom {
             let line = pixels.get(line_at(py) as usize..).unwrap_or(&[]);
             let line = &line[..line.len().min((right - left + 1) as usize)];
-            let start = index(left as i32, py as i32);
-            let row = &mut page[start..start + line.len()];
+            let row = &mut page.row_mut(py as usize)[left as usize..][..line.len()];
             match blend {
                 Blend::Normal if tint == 0xFFFF_FFFF => {
                     for (d, &p) in row.iter_mut().zip(line) {
@@ -1849,7 +1871,7 @@ mod tests {
                 check("GUPDATE", &|g| {
                     let array = g.array(0);
                     if let ArrayData::Int(v) = &mut array.borrow_mut().data {
-                        v[index(160, 170)] = 0x0102_0304;
+                        v[row_major(160, 170)] = 0x0102_0304;
                     }
                     g.update(0, Clip::new(0, 0, 2047, 2047));
                 });
@@ -3351,7 +3373,7 @@ mod tests {
                         let glyph = glyph_pixel_px(&font, &g, CODE, 16, gx as u32, gy as u32);
                         multiply(glyph, RED)
                     } else {
-                        base[index(px, py)]
+                        base[row_major(px, py)]
                     };
                     assert_eq!(g.pixel(0, px, py), want, "{x},{y} {sx}x{sy} at {px},{py}");
                 }

@@ -1,0 +1,205 @@
+//! How a GRP page's pixels lie in memory.
+//!
+//! A page is [`GRP_SIZE`] rows of [`GRP_SIZE`] pixels, each row starting
+//! [`STRIDE`] pixels after the one before. Only [`Page`] knows the stride:
+//! everything else takes rows from it as slices of exactly [`GRP_SIZE`]
+//! pixels, or, where a loop steps through a page by offsets (the sprite
+//! rasterizer, GPU uploads), uses [`STRIDE`] and [`at`] by name. What lies
+//! past a row's end within its stride is never written and never read.
+
+use crate::graphics::GRP_SIZE;
+
+/// The pixels of a row.
+const SIDE: usize = GRP_SIZE as usize;
+
+/// Pixels from the start of one row of a page to the start of the next.
+pub const STRIDE: usize = SIDE;
+
+/// The pixels a page that is not blank holds, rows and what lies between
+/// them.
+pub const LEN: usize = SIDE * STRIDE;
+
+/// Where pixel `(x, y)` of a page lies in [`Page::raw`].
+#[inline]
+pub const fn at(x: usize, y: usize) -> usize {
+    y * STRIDE + x
+}
+
+/// A page's pixels, `0xAARRGGBB`. A blank page holds none and reads 0
+/// everywhere, as at start-up.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Page {
+    /// Empty, or [`LEN`] pixels laid out as the module says.
+    pixels: Vec<u32>,
+}
+
+impl Page {
+    /// A page that is not blank, every pixel 0.
+    pub fn cleared() -> Page {
+        Page {
+            pixels: vec![0; LEN],
+        }
+    }
+
+    /// A page from an image of [`GRP_SIZE`] rows of [`GRP_SIZE`] pixels,
+    /// one after another, as files and arrays hold pages.
+    pub fn from_rows(rows: Vec<u32>) -> Page {
+        assert_eq!(rows.len(), SIDE * SIDE, "a page image is 2048x2048");
+        if STRIDE == SIDE {
+            return Page { pixels: rows };
+        }
+        let mut page = Page::cleared();
+        for (to, from) in page.rows_mut(0..SIDE).zip(rows.chunks_exact(SIDE)) {
+            to.copy_from_slice(from);
+        }
+        page
+    }
+
+    /// The page as an image of [`GRP_SIZE`] rows of [`GRP_SIZE`] pixels,
+    /// one after another; all 0 when it is blank.
+    pub fn to_rows(&self) -> Vec<u32> {
+        if self.is_blank() {
+            return vec![0; SIDE * SIDE];
+        }
+        if STRIDE == SIDE {
+            return self.pixels.clone();
+        }
+        let mut rows = Vec::with_capacity(SIDE * SIDE);
+        for row in self.rows(0..SIDE) {
+            rows.extend_from_slice(row);
+        }
+        rows
+    }
+
+    pub fn is_blank(&self) -> bool {
+        self.pixels.is_empty()
+    }
+
+    /// Makes a blank page one that is not, every pixel 0.
+    #[inline]
+    pub fn make_room(&mut self) {
+        if self.is_blank() {
+            *self = Page::cleared();
+        }
+    }
+
+    /// A pixel; 0 off the page and on a blank one.
+    #[inline]
+    pub fn pixel(&self, x: i32, y: i32) -> u32 {
+        // A negative coordinate is past the page as unsigned.
+        let (x, y) = (x as u32 as usize, y as u32 as usize);
+        if self.is_blank() || x >= SIDE || y >= SIDE {
+            return 0;
+        }
+        self.pixels[at(x, y)]
+    }
+
+    /// A pixel on the page to change, on a page that is not blank.
+    #[inline]
+    pub fn pixel_mut(&mut self, x: usize, y: usize) -> &mut u32 {
+        // Callers clip to the page; an `x` past it would land between rows
+        // or on the next row, still within the buffer, which is checked.
+        debug_assert!(x < SIDE && y < SIDE);
+        &mut self.pixels[at(x, y)]
+    }
+
+    /// Row `y` of a page that is not blank, [`GRP_SIZE`] pixels.
+    #[inline]
+    pub fn row(&self, y: usize) -> &[u32] {
+        &self.pixels[at(0, y)..][..SIDE]
+    }
+
+    /// Row `y` of a page that is not blank, to change.
+    #[inline]
+    pub fn row_mut(&mut self, y: usize) -> &mut [u32] {
+        &mut self.pixels[at(0, y)..][..SIDE]
+    }
+
+    /// Rows `ys` of a page that is not blank, top to bottom.
+    #[inline]
+    pub fn rows(&self, ys: std::ops::Range<usize>) -> impl Iterator<Item = &[u32]> {
+        self.pixels[ys.start * STRIDE..ys.end * STRIDE]
+            .chunks_exact(STRIDE)
+            .map(|row| &row[..SIDE])
+    }
+
+    /// Rows `ys` of a page that is not blank, to change.
+    #[inline]
+    pub fn rows_mut(&mut self, ys: std::ops::Range<usize>) -> impl Iterator<Item = &mut [u32]> {
+        self.pixels[ys.start * STRIDE..ys.end * STRIDE]
+            .chunks_exact_mut(STRIDE)
+            .map(|row| &mut row[..SIDE])
+    }
+
+    /// The pixels as they lie, for loops that step through them by offsets
+    /// from [`at`] and [`STRIDE`]: rows apart, and empty when blank. An
+    /// offset of a pixel on the page is always in range; what lies between
+    /// rows is never to be read.
+    #[inline]
+    pub fn raw(&self) -> &[u32] {
+        &self.pixels
+    }
+
+    /// The memory the page takes, in bytes.
+    pub fn bytes(&self) -> usize {
+        self.pixels.len() * 4
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image() -> Vec<u32> {
+        (0..(SIDE * SIDE) as u32)
+            .map(|i| i.wrapping_mul(0x9E37_79B9))
+            .collect()
+    }
+
+    #[test]
+    fn rows_go_in_and_come_out_as_they_were() {
+        let rows = image();
+        let page = Page::from_rows(rows.clone());
+        assert_eq!(page.to_rows(), rows);
+        for y in [0, 1, 1000, SIDE - 1] {
+            assert_eq!(page.row(y), &rows[y * SIDE..][..SIDE]);
+            for x in [0, 1, 777, SIDE - 1] {
+                assert_eq!(page.pixel(x as i32, y as i32), rows[y * SIDE + x]);
+                assert_eq!(page.raw()[at(x, y)], rows[y * SIDE + x]);
+            }
+        }
+        let some: Vec<&[u32]> = page.rows(5..9).collect();
+        assert_eq!(some.len(), 4);
+        assert!(some.iter().enumerate().all(|(i, r)| *r == page.row(5 + i)));
+    }
+
+    #[test]
+    fn nothing_past_a_row_is_written() {
+        let mut page = Page::from_rows(image());
+        for row in page.rows_mut(0..SIDE) {
+            row.fill(0xFFFF_FFFF);
+        }
+        page.row_mut(3).fill(1);
+        *page.pixel_mut(SIDE - 1, SIDE - 1) = 2;
+        let raw = page.raw();
+        assert_eq!(raw.len(), LEN);
+        for y in 0..SIDE {
+            assert!(raw[at(SIDE, y)..at(0, y + 1)].iter().all(|&p| p == 0));
+        }
+    }
+
+    #[test]
+    fn a_blank_page_reads_zero() {
+        let page = Page::default();
+        assert!(page.is_blank());
+        assert_eq!(page.pixel(0, 0), 0);
+        assert_eq!(page.to_rows(), vec![0; SIDE * SIDE]);
+        assert_eq!(page.bytes(), 0);
+        let mut page = page;
+        page.make_room();
+        assert!(!page.is_blank());
+        assert_eq!(page.bytes(), LEN * 4);
+        assert_eq!(page.pixel(-1, 0), 0);
+        assert_eq!(page.pixel(0, GRP_SIZE), 0);
+    }
+}

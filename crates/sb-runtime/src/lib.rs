@@ -31,6 +31,7 @@ pub mod input;
 pub mod line;
 mod loadsave;
 pub mod machine;
+pub mod page;
 pub mod palette;
 mod prg;
 mod program_font;
