@@ -18,6 +18,8 @@
 
 use std::ops::Range;
 
+use super::decoded::Cached;
+
 const MAGIC: &[u8; 8] = b"SBBANK01";
 const REGION_BYTES: usize = 12;
 const WAVE_BYTES: usize = 64;
@@ -299,7 +301,8 @@ impl<'a> Cursor<'a> {
 /// and hands them out of a small buffer: decoding a sample at a time took
 /// about as long as all the rest of a voice's work. A 16-bit waveform goes
 /// through the same buffer, so that taking a sample is the same few
-/// instructions for both.
+/// instructions for both. A reader of a waveform kept decoded
+/// ([`super::decoded`]) takes its samples from there instead.
 #[derive(Clone, Debug, Default)]
 pub struct Reader {
     /// The position of the next sample, which `ahead[next]` holds while
@@ -313,6 +316,8 @@ pub struct Reader {
     ahead: [i16; FRAME_SAMPLES as usize],
     next: u8,
     end: u8,
+    /// The waveform kept decoded, while this takes from there.
+    cached: Option<Cached>,
 }
 
 impl Reader {
@@ -332,28 +337,92 @@ impl Reader {
             self.pos += 1;
             return Some(s);
         }
+        if let Some(c) = &mut self.cached
+            && let Some(&s) = c.chunk.get(c.at)
+        {
+            c.at += 1;
+            self.pos += 1;
+            return Some(s);
+        }
         self.decode(wave, data)
+    }
+
+    /// A reader that takes a kept waveform's samples.
+    pub(super) fn from_cache(cached: Cached) -> Reader {
+        Reader {
+            cached: Some(cached),
+            ..Reader::default()
+        }
     }
 
     /// The samples decoded already that [`Reader::next_of`] gives next, for
     /// a loop that takes them itself, with [`Reader::skip`].
     #[inline(always)]
     pub(crate) fn ahead(&self) -> &[i16] {
-        &self.ahead[usize::from(self.next)..usize::from(self.end.max(self.next))]
+        match &self.cached {
+            Some(c) => c.chunk.get(c.at..).unwrap_or_default(),
+            None => &self.ahead[usize::from(self.next)..usize::from(self.end.max(self.next))],
+        }
     }
 
     /// Moves on past `n` of [`Reader::ahead`]'s samples.
     #[inline(always)]
     pub(crate) fn skip(&mut self, n: usize) {
         debug_assert!(n <= self.ahead().len());
-        self.next += n as u8;
+        match &mut self.cached {
+            Some(c) => c.at += n,
+            None => self.next += n as u8,
+        }
         self.pos += n as u32;
+    }
+
+    /// [`Reader::next_of`] past the end of the chunk a kept waveform's
+    /// reader is in: the next chunk, round the loop, or decoding on alone
+    /// where the waveform is not kept.
+    #[inline(never)]
+    fn next_kept(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
+        let c = self.cached.as_mut()?;
+        if self.pos >= wave.len {
+            let start = wave.loop_start?;
+            if let Encoding::Adpcm { loop_history, .. } = wave.encoding
+                && !c.loops_same(start as usize, loop_history)
+            {
+                // Later passes start from the loop's own history.
+                self.cached = None;
+                self.pos = start;
+                self.history = loop_history;
+                return self.decode(wave, data);
+            }
+            self.pos = start;
+        }
+        let pos = self.pos as usize;
+        match c.chunk_at(pos, wave, data) {
+            Some((chunk, at)) => {
+                let s = chunk[at];
+                (c.chunk, c.at) = (chunk, at + 1);
+                self.pos += 1;
+                Some(s)
+            }
+            None => {
+                // Not kept: decoding goes on from here, from the two samples
+                // before, which are.
+                let history = c.history_at(pos);
+                self.cached = None;
+                // Without them, decoding gave out before here: missing
+                // bytes, where decoding alone gives out too.
+                self.history = history?;
+                self.decode(wave, data)
+            }
+        }
     }
 
     /// Decodes from `pos` to the end of its frame, or of the waveform, and
     /// gives the first of those samples.
     #[inline(never)]
     fn decode(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
+        if self.cached.is_some() {
+            return self.next_kept(wave, data);
+        }
         if self.pos >= wave.len {
             let start = wave.loop_start?;
             self.pos = start;

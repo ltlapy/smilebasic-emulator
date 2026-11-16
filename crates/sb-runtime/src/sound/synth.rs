@@ -9,6 +9,7 @@ use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use super::RATE;
 use super::bank::Bank;
+use super::decoded::Shared;
 use super::sampler::{Lfo, LfoTarget, Sampler};
 use super::wave::Envelope;
 
@@ -23,10 +24,12 @@ pub enum Instruments {
 }
 
 impl Instruments {
-    pub(crate) fn synth(&self) -> Box<dyn Synth> {
+    /// A synthesizer of these instruments, which keeps the waveforms it
+    /// decodes in `decoded`.
+    pub(crate) fn synth(&self, decoded: &Shared) -> Box<dyn Synth> {
         match self {
             Instruments::Font(f) => Box::new(FontSynth::new(f)),
-            Instruments::Bank(b) => Box::new(Sampler::new(b.clone())),
+            Instruments::Bank(b) => Box::new(Sampler::new(b.clone(), decoded.clone())),
         }
     }
 }

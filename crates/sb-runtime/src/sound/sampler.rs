@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::RATE;
 use super::bank::{Adshr, Bank, Reader, Region, WaveInfo};
+use super::decoded::{Decoded, Shared};
 use super::synth::{CHANNELS, Synth};
 use super::wave::Envelope as MmlEnvelope;
 
@@ -667,14 +668,18 @@ fn read(
 
 pub(crate) struct Sampler {
     bank: Arc<Bank>,
+    /// The waveforms kept decoded, which the sound system's synthesizers
+    /// share.
+    decoded: Shared,
     channels: [Channel; CHANNELS],
     voices: Vec<Voice>,
 }
 
 impl Sampler {
-    pub(crate) fn new(bank: Arc<Bank>) -> Sampler {
+    pub(crate) fn new(bank: Arc<Bank>, decoded: Shared) -> Sampler {
         Sampler {
             bank,
+            decoded,
             channels: [Channel::default(); CHANNELS],
             voices: Vec::new(),
         }
@@ -683,7 +688,7 @@ impl Sampler {
     /// Starts a note of `region` on `channel`, its pan moved by `side`.
     fn start(&mut self, channel: usize, key: i32, velocity: i32, region: Region, side: f32) {
         let wave = &self.bank.waves[usize::from(region.wave)];
-        let mut reader = Reader::default();
+        let mut reader = Decoded::reader(&self.decoded, &self.bank, usize::from(region.wave));
         let mut sample = || {
             reader
                 .next(wave, &self.bank.data)
@@ -905,7 +910,7 @@ pub(crate) mod tests {
     /// One instrument: a looping square wave at 48 kHz, eight samples a
     /// cycle, sounding at key 60.
     fn sampler(adshr: Adshr, ignore_note_off: bool) -> Sampler {
-        Sampler::new(Arc::new(bank(adshr, ignore_note_off)))
+        Sampler::new(Arc::new(bank(adshr, ignore_note_off)), Decoded::new())
     }
 
     pub(crate) fn bank(adshr: Adshr, ignore_note_off: bool) -> Bank {
@@ -973,7 +978,7 @@ pub(crate) mod tests {
             beeps.play(0, what, 0, volume, 64, false).unwrap();
             settled_peak(|l, r| beeps.render(l, r))
         };
-        let mut synth = instruments.synth();
+        let mut synth = instruments.synth(&Decoded::new());
         let mut player = Player::new(effect());
         player.begin_block();
         player.tick(synth.as_mut());
@@ -1027,7 +1032,7 @@ pub(crate) mod tests {
         b.waves[0].right = Some(1);
         b.waves.push(right);
         let sides = |pan: i32| {
-            let mut s = Sampler::new(Arc::new(b.clone()));
+            let mut s = Sampler::new(Arc::new(b.clone()), Decoded::new());
             s.pan(0, pan);
             s.note_on(0, 60, 127);
             let (mut l, mut r) = (vec![0.0; 960], vec![0.0; 960]);
@@ -1128,7 +1133,7 @@ pub(crate) mod tests {
                 hold: next(20) as u8,
                 release: next(128) as u8,
             };
-            let mut a = Sampler::new(Arc::new(mixed_bank(adshr)));
+            let mut a = Sampler::new(Arc::new(mixed_bank(adshr)), Decoded::new());
             for c in 0..3 {
                 a.program(c, next(4) as i32);
                 a.pan(c, next(128) as i32);

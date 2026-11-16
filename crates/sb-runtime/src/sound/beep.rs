@@ -4,6 +4,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::decoded::{Decoded, Shared};
 use super::inspect::{BeepInfo, BeepKind};
 use super::sampler::{MAX_VOICES, TICK};
 use super::seq::{Player, Sequence};
@@ -172,6 +173,9 @@ struct Beep {
 
 pub struct Beeps {
     instruments: Option<Instruments>,
+    /// The waveforms kept decoded, which the sound system's synthesizers
+    /// share.
+    decoded: Shared,
     synth: Option<Box<dyn Synth>>,
     beeps: Vec<Option<Beep>>,
     /// Which handle the next BEEP tries first: it goes on rising, whether
@@ -186,9 +190,16 @@ pub struct Beeps {
 
 impl Beeps {
     pub fn new(instruments: Option<&Instruments>) -> Beeps {
+        Beeps::sharing(instruments, &Decoded::new())
+    }
+
+    /// BEEP's sounds on `instruments`, keeping the waveforms they decode in
+    /// `decoded`.
+    pub(crate) fn sharing(instruments: Option<&Instruments>, decoded: &Shared) -> Beeps {
         Beeps {
             instruments: instruments.cloned(),
-            synth: instruments.map(Instruments::synth),
+            decoded: decoded.clone(),
+            synth: instruments.map(|i| i.synth(decoded)),
             beeps: (0..HANDLES).map(|_| None).collect(),
             next: 0,
             falling: Vec::new(),
@@ -256,7 +267,7 @@ impl Beeps {
             BeepSound::Preset => Sounding::Preset,
             BeepSound::Sequence(seq) => match &self.instruments {
                 Some(instruments) => {
-                    let mut synth = instruments.synth();
+                    let mut synth = instruments.synth(&self.decoded);
                     let mut player = Box::new(Player::new(seq));
                     player.set_pitch(pitch, synth.as_mut());
                     Sounding::Sequence {
@@ -698,7 +709,7 @@ mod tests {
         let mut beeps = Beeps::new(Some(&instruments));
         beeps.play(0, BeepSound::Sequence(seq.clone()), 0, 64, 64, false);
         // The loop as it was, which rendered the tail a sample at a time.
-        let mut synth = instruments.synth();
+        let mut synth = instruments.synth(&Decoded::new());
         let mut player = Player::new(seq);
         player.set_pitch(0, synth.as_mut());
         let own_pan = synth.pan_offset(64);

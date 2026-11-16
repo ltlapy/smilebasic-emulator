@@ -3,6 +3,7 @@
 
 pub mod bank;
 pub mod beep;
+pub(crate) mod decoded;
 pub mod inspect;
 pub mod mml;
 pub mod output;
@@ -23,6 +24,7 @@ use std::sync::Arc;
 pub use rustysynth::SoundFont;
 
 use beep::Beeps;
+use decoded::{Decoded, Shared};
 use inspect::{BeepInfo, TrackInfo};
 use mml::Song;
 use pcm::Pcm;
@@ -294,6 +296,9 @@ pub struct Sound {
     pub(crate) songs: HashMap<i32, Rc<Song>>,
     /// The PSG and WAVSET's waveforms, shared with the tracks.
     pub(crate) waves: Rc<RefCell<Waves>>,
+    /// The instruments' waveforms kept decoded, shared by the tracks and
+    /// BEEP.
+    decoded: Shared,
     pub(crate) beeps: Beeps,
     pub(crate) pcm: Pcm,
     pub(crate) talk: Talk,
@@ -333,13 +338,15 @@ pub struct Sound {
 
 impl Default for Sound {
     fn default() -> Self {
+        let decoded = Decoded::new();
         Sound {
             instruments: None,
             sequences: None,
             tracks: (0..TRACKS).map(|_| None).collect(),
             songs: HashMap::new(),
             waves: Rc::default(),
-            beeps: Beeps::new(None),
+            beeps: Beeps::sharing(None, &decoded),
+            decoded,
             pcm: Pcm::default(),
             talk: Talk::default(),
             effector: Rc::default(),
@@ -364,7 +371,7 @@ impl Default for Sound {
 impl Sound {
     /// Where instruments come from; without any, BGM is silent.
     pub fn set_instruments(&mut self, instruments: Option<Instruments>) {
-        self.beeps = Beeps::new(instruments.as_ref());
+        self.beeps = Beeps::sharing(instruments.as_ref(), &self.decoded);
         self.waves.borrow_mut().set_bank(match &instruments {
             Some(Instruments::Bank(bank)) => Some(bank.clone()),
             _ => None,
@@ -392,8 +399,8 @@ impl Sound {
 
     pub(crate) fn track(&mut self, n: usize) -> &mut Track {
         let instruments = self.instruments.as_ref();
-        let waves = &self.waves;
-        self.tracks[n].get_or_insert_with(|| Track::new(instruments, waves.clone()))
+        let (waves, decoded) = (&self.waves, &self.decoded);
+        self.tracks[n].get_or_insert_with(|| Track::new(instruments, waves.clone(), decoded))
     }
 
     /// The tracks that exist, which are all that can be playing.

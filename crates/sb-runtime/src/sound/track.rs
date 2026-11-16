@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use super::decoded::Shared;
 use super::inspect::{ChannelInfo, State, TrackInfo};
 use super::mml::{ChordPart, Cmd, Link, Num, Pitch, Song, WHOLE, ticks};
 use super::sampler::{self, Lfo, LfoTarget};
@@ -181,9 +182,13 @@ pub(crate) enum AfterFade {
 }
 
 impl Track {
-    pub(crate) fn new(instruments: Option<&Instruments>, waves: Rc<RefCell<Waves>>) -> Track {
+    pub(crate) fn new(
+        instruments: Option<&Instruments>,
+        waves: Rc<RefCell<Waves>>,
+        decoded: &Shared,
+    ) -> Track {
         Track {
-            synth: instruments.map(Instruments::synth),
+            synth: instruments.map(|i| i.synth(decoded)),
             waves,
             voices: Vec::new(),
             singers: Vec::new(),
@@ -1022,6 +1027,7 @@ impl Track {
 mod tests {
     use super::*;
     use crate::sound::FRAME_SAMPLES;
+    use crate::sound::decoded::Decoded;
     use crate::sound::mml::parse;
 
     #[test]
@@ -1037,7 +1043,7 @@ mod tests {
             beep_repeats: false,
             ..wave::pulse(219)
         }));
-        let mut t = Track::new(None, waves);
+        let mut t = Track::new(None, waves, &Decoded::new());
         t.play(Some(Rc::new(parse("@224 A1").unwrap())), 127, 0);
         let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
         let mut scratch = Default::default();
@@ -1057,7 +1063,7 @@ mod tests {
                 let bank = wave::tests::sine_bank();
                 waves.borrow_mut().set_bank(Some(std::sync::Arc::new(bank)));
             }
-            let mut t = Track::new(None, waves);
+            let mut t = Track::new(None, waves, &Decoded::new());
             t.play(Some(Rc::new(parse("@250 V127 A1").unwrap())), 127, 0);
             let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
             let mut scratch = Default::default();
@@ -1073,7 +1079,7 @@ mod tests {
     #[test]
     fn portamento_glides_over_the_first_note_and_holds_the_next() {
         let waves = Rc::new(RefCell::new(Waves::default()));
-        let mut t = Track::new(None, waves);
+        let mut t = Track::new(None, waves, &Decoded::new());
         t.play(Some(Rc::new(parse("T120@219O4C2_G2").unwrap())), 127, 0);
         let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
         let mut scratch = Default::default();
@@ -1097,7 +1103,7 @@ mod tests {
     fn a_colon_forgets_the_lfo_settings() {
         let vibrato = |mml: &str| {
             let waves = Rc::new(RefCell::new(Waves::default()));
-            let mut t = Track::new(None, waves);
+            let mut t = Track::new(None, waves, &Decoded::new());
             t.play(Some(Rc::new(parse(mml).unwrap())), 127, 0);
             let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
             let mut scratch = Default::default();
@@ -1113,7 +1119,7 @@ mod tests {
     #[test]
     fn a_slur_goes_on_at_the_new_key_without_striking_again() {
         let waves = Rc::new(RefCell::new(Waves::default()));
-        let mut t = Track::new(None, waves);
+        let mut t = Track::new(None, waves, &Decoded::new());
         t.play(Some(Rc::new(parse("T120@219O4C2&G2").unwrap())), 127, 0);
         let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
         let mut scratch = Default::default();
@@ -1134,7 +1140,7 @@ mod tests {
             },
             ..wave::pulse(219)
         }));
-        let mut t = Track::new(None, waves);
+        let mut t = Track::new(None, waves, &Decoded::new());
         t.play(
             Some(Rc::new(parse("T240 @224 L32 [CDEFGAB]").unwrap())),
             127,
@@ -1165,7 +1171,7 @@ mod tests {
         let mut scratch = Default::default();
         let (mut l, mut r) = (vec![0.0; FRAME_SAMPLES], vec![0.0; FRAME_SAMPLES]);
         for (mml, hz) in [("T120O3*A,A2", 220.0), ("T120O4*KA,A2", 440.0)] {
-            let mut t = Track::new(None, waves.clone());
+            let mut t = Track::new(None, waves.clone(), &Decoded::new());
             t.play(Some(Rc::new(parse(mml).unwrap())), 127, 0);
             let mut sound = Vec::new();
             for _ in 0..50 {
@@ -1186,7 +1192,7 @@ mod tests {
             assert!(l.iter().all(|s| s.abs() < 1e-3), "{mml} ends");
         }
         // Without the phonemes, there is no instrument to hear.
-        let mut t = Track::new(None, waves);
+        let mut t = Track::new(None, waves, &Decoded::new());
         t.play(Some(Rc::new(parse("T120O4A2").unwrap())), 127, 0);
         l.fill(0.0);
         for _ in 0..20 {
