@@ -18,7 +18,7 @@ integer FORs, and leaves everything else to the interpreter. On the
 handheld, TPERF's VINT scene takes 1.80 ms of program time a frame instead
 of 7.99 (4.4 times as fast) and 3.9 times as fast as the `unchecked-vars`
 build; the covered loops run 2.2 to 3.7 times as fast, in step with
-aarch64 instruction counts that fall ARM_LOOP_RANGE. Scenes it does not
+aarch64 instruction counts that fall by 48 to 72%. Scenes it does not
 cover move by 5% or less, within the noise of code layout, and every
 checksum is the same.
 
@@ -289,8 +289,8 @@ compare and a branch (2), a write's string test a load, compare and branch
 overflow test one branch. There is no bounds check per access: `need` is
 compared once per call. Keeping one on each access, a compare with a length
 in a register and a branch, would add 2 instructions to each of the
-ACCESSES reads and writes of VINT's iteration, ACCESSCOST of its
-NATIVEVINT.
+14 reads and writes of VINT's iteration (6 for the NEXT, 8 for the two
+statements), 28 instructions, a quarter of its 120 natively on aarch64.
 
 ### W^X
 
@@ -437,7 +437,19 @@ Instructions an iteration:
 
 | Loop | aarch64 default | aarch64 unchecked | aarch64 jit | aarch64 jit off | x86-64 default | x86-64 unchecked | x86-64 jit | x86-64 jit off |
 |---|---|---|---|---|---|---|---|---|
-ARM_LOOP_ROWS
+| Empty FOR | 130.8 | 118.9 | 43.9 | 134.1 | 156.6 | 135.9 | 39.6 | 160.1 |
+| VINT's | 429.0 | 374.8 | 119.6 | 443.7 | 478.2 | 369.7 | 97.8 | 492.3 |
+| Counters | 466.3 | 428.5 | 204.9 | 478.3 | 542.5 | 459.4 | 178.8 | 557.8 |
+| IF chain | 388.1 | 355.6 | 156.3 | 395.7 | 449.4 | 395.9 | 137.1 | 456.5 |
+| Scalar reals | 536.9 | 492.3 | 280.5 | 540.4 | 618.9 | 564.8 | 237.8 | 615.4 |
+| GOSUB | 261.8 | 259.2 | 265.0 | 264.9 | 303.1 | 281.0 | 309.1 | 309.4 |
+| Function DEF | 623.6 | 626.9 | 653.6 | 653.8 | 728.9 | 711.0 | 764.2 | 763.9 |
+| VREAL's | 720.8 | 634.3 | 730.7 | 730.3 | 763.9 | 625.9 | 781.1 | 780.8 |
+| VARRAY's | 1143.9 | 973.0 | 1163.5 | 1163.0 | 1229.0 | 922.3 | 1265.4 | 1267.1 |
+
+With native code off, the jit build runs 2 to 4% more instructions than
+the default on the loops that native code would cover (VINT's 443.7 on
+aarch64, 492.3 on x86-64), and the same as with it on the others.
 
 Device, ms of program time a frame:
 
@@ -452,7 +464,7 @@ Device, ms of program time a frame:
 
 The covered loops run 2.2 to 3.7 times as fast as the default build and 1.9
 to 3.2 times as fast as `unchecked-vars`, on the device as in the counts.
-The empty FOR, ARM_EMPTY aarch64 instructions natively, shows what is left:
+The empty FOR, 44 aarch64 instructions natively, shows what is left:
 the loop reads its counter and its STEP slot from memory each round,
 tests their tags, and writes the counter and both slots back.
 
@@ -462,7 +474,12 @@ Instructions a frame, in millions:
 
 | Scene | aarch64 default | aarch64 unchecked | aarch64 jit | aarch64 jit off | x86-64 default | x86-64 unchecked | x86-64 jit | x86-64 jit off |
 |---|---|---|---|---|---|---|---|---|
-ARM_SCENE_ROWS
+| VINT | 8.14 | 7.17 | 2.58 | 8.40 | 8.74 | 6.81 | 2.02 | 9.01 |
+| VREAL | 6.87 | 6.12 | 6.95 | 6.96 | 7.00 | 5.76 | 7.16 | 7.16 |
+| VSTR | 12.82 | 13.03 | 12.96 | 12.93 | 11.53 | 11.60 | 11.81 | 11.81 |
+| VARRAY | 11.85 | 10.14 | 12.04 | 12.04 | 12.44 | 9.37 | 12.82 | 12.82 |
+| VDEF | 5.36 | 5.36 | 5.59 | 5.58 | 5.85 | 5.79 | 6.17 | 6.17 |
+| GAME | 19.94 | 19.42 | 19.97 | 19.97 | 28.22 | 27.45 | 28.36 | 28.36 |
 
 Device, ms of program time a frame:
 
@@ -477,11 +494,16 @@ Device, ms of program time a frame:
 | GAME | 8.47 | 7.95 | 8.52 | 8.53 | +0.5% | +7.2% |
 
 VINT, the one scene the prototype covers, takes 1.80 ms instead of 7.99,
-4.4 times as fast, and 3.9 times as fast as `unchecked-vars`. The scene's
-frame includes the CPU drawing, about ARM_DRAW million aarch64 instructions,
-which native code does not touch. The other scenes move by 5% or less
+4.4 times as fast, and 3.9 times as fast as `unchecked-vars`, for 3.2
+times fewer aarch64 instructions: native code also runs more instructions a
+cycle on the in-order core (0.49 ms a million against 0.98 for the
+default build). The scene's count includes the CPU drawing, about 0.4
+million aarch64 instructions, which native code does not touch. The other scenes move by 5% or less
 against the default build, within the noise of code layout; their counts
-move by ARM_UNCOVERED. `unchecked-vars` stays ahead of the jit build on every
+move by +0.2% (GAME) to +4.3% (VDEF) on aarch64 and +0.5% to +5.5% on
+x86-64, the same with native code off: what the feature costs where it
+does not apply, from `Value`'s fixed layout, the lower chain weight and
+where LLVM lays out `run_fused`. `unchecked-vars` stays ahead of the jit build on every
 uncovered scene, as the jit build does not take its unchecked reads; both
 features build together.
 
@@ -543,7 +565,7 @@ about 10% counts only where the instruction counts move with it.
    memory; the replaced entry kept so that a region native code gives up
    on runs interpreted rather than a `step` each time round; real FOR
    loops; counters, step and limit slots kept in registers through a
-   loop and written back at its exits (the empty FOR is 47 aarch64
+   loop and written back at its exits (the empty FOR is 44 aarch64
    instructions natively, mostly loads and stores of the three slots);
    the fuzzer. Exit: VINT and the scalar loops as measured here; no
    scene slower by more than the noise with instruction counts behind it;
