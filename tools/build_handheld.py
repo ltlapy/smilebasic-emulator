@@ -449,10 +449,16 @@ def build_env(arch: Arch, glibc: str, rootless: bool) -> dict[str, str]:
     return env
 
 
-def build(arch: Arch, glibc: str, rootless: bool) -> None:
+def features(unchecked_vars: bool) -> list[str]:
+    """Cargo's arguments for the optional features asked for."""
+    return ["--features", "unchecked-vars"] if unchecked_vars else []
+
+
+def build(arch: Arch, glibc: str, rootless: bool, unchecked_vars: bool) -> None:
     subprocess.run(
         ["cargo", "zigbuild", "--profile", "dist", "--target", f"{arch.rust_target}.{glibc}"]
-        + ["-p", "sb-sdl", "-p", "sb-check"],
+        + ["-p", "sb-sdl", "-p", "sb-check"]
+        + features(unchecked_vars),
         cwd=REPO,
         env=build_env(arch, glibc, rootless),
         check=True,
@@ -525,13 +531,14 @@ def run(arch: Arch, command: list[str], rootless: bool) -> int:
     return subprocess.run([arch.qemu, str(binary), *command[1:]], env=env).returncode
 
 
-def test(arch: Arch, extra: list[str], rootless: bool) -> int:
+def test(arch: Arch, extra: list[str], rootless: bool, unchecked_vars: bool) -> int:
     """Runs the tests that need no SDL under qemu."""
     env = qemu_env(arch, build_env(arch, GLIBC, rootless), rootless)
     env[f"CARGO_TARGET_{arch.env_suffix.upper()}_RUNNER"] = arch.qemu
     crates = ["-p", "sb-core", "-p", "sb-runtime", "-p", "sb-profiles", "-p", "sb-check", "-p", "sb-import"]
     command = ["cargo-zigbuild", "test", "--release", "--target", f"{arch.rust_target}.{GLIBC}"]
-    return subprocess.run(command + crates + extra, cwd=REPO, env=env).returncode
+    command += crates + features(unchecked_vars) + extra
+    return subprocess.run(command, cwd=REPO, env=env).returncode
 
 
 def main() -> int:
@@ -547,6 +554,12 @@ def main() -> int:
         action="store_true",
         help="build without installing anything as root: fetch zig, cargo-zigbuild and Debian 10's "
         "headers and libc into local/cross or SB_CROSS_HOME; put this before --run or --test",
+    )
+    parser.add_argument(
+        "--unchecked-vars",
+        action="store_true",
+        help="build with sb-core's unchecked-vars feature: faster arithmetic, but no bounds check on "
+        "each variable access (see docs/security.md); off by default; put this before --test",
     )
     parser.add_argument(
         "--glibc",
@@ -570,8 +583,8 @@ def main() -> int:
     if args.run:
         return run(arch, args.run, args.rootless)
     if args.test is not None:
-        return test(arch, args.test, args.rootless)
-    build(arch, args.glibc, args.rootless)
+        return test(arch, args.test, args.rootless, args.unchecked_vars)
+    build(arch, args.glibc, args.rootless, args.unchecked_vars)
     report(arch)
     return 0
 

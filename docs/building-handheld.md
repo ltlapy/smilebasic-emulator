@@ -47,6 +47,12 @@ python3 tools/build_handheld.py --arch armhf
 If something is missing, the tool lists the commands to install it and stops. It downloads
 nothing.
 
+`--unchecked-vars`, off by default, builds with sb-core's `unchecked-vars` feature, and
+goes with `--test` too. The fused code then reads and writes variables without a bounds
+check on each, for about a tenth fewer instructions on arithmetic on a Cortex-A35. A bug in
+what stands in for that check would be memory unsafety that a program can reach; see
+[security.md](security.md). Help > About shows `unchecked-vars` after the version.
+
 ## What you get
 
 `target/TRIPLE/dist/` holds `smilebasic` and `smilebasic-check`, where `TRIPLE` is the Rust
