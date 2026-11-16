@@ -425,37 +425,96 @@ impl Voice {
 
     /// The waveform at the position, read through the instruments' filter
     /// ([`sampler::interpolate`]).
-    #[inline]
+    #[cfg(test)]
     fn sample(&self, samples: &[f32]) -> f32 {
-        let i = self.pos as usize;
-        let frac = self.pos - i as f64;
-        let (start, end) = self.looped;
-        let h = match samples.get(i.wrapping_sub(1)..i + 3) {
-            Some(h) if i + 2 < end => [h[0], h[1], h[2], h[3]],
-            _ => {
-                let at = |j: usize| {
-                    let j = if j >= end && self.loops {
-                        start + (j - end) % (end - start)
-                    } else {
-                        j
-                    };
-                    samples.get(j).copied().filter(|_| j < end).unwrap_or(0.0)
-                };
-                let before = if i == start && self.wrapped {
-                    at(end - 1)
-                } else if i == 0 {
-                    0.0
-                } else {
-                    at(i - 1)
-                };
-                [before, at(i), at(i + 1), at(i + 2)]
-            }
-        };
-        sampler::interpolate(&h, frac)
+        sample(samples, self.pos, self.looped, self.loops, self.wrapped)
     }
 
-    /// Adds the voice into the buffers.
+    /// Steps the envelope and the LFOs, and aims the levels and pitch at
+    /// where they should be by the end of the next step.
+    fn tick(&mut self) {
+        self.envelope.step();
+        let (cents, tremolo, pan) = self.lfos.step(&self.lfo);
+        let level = if self.envelope.done() {
+            0.0
+        } else {
+            self.envelope.gain() * self.gain * tremolo
+        };
+        let [gl, gr] = sampler::pan_gains(self.pan + pan);
+        self.targets = [level * gl, level * gr];
+        if self.pos == 0.0 {
+            // The note starts at its first step's level: a square
+            // with attack 127 is at full level from its first
+            // sample (TEST40).
+            self.levels = self.targets;
+        }
+        let tick = sampler::TICK as f32;
+        self.steps = [0, 1].map(|i| (self.targets[i] - self.levels[i]) / tick);
+        self.step = match cents + self.porta {
+            0.0 => self.base_step,
+            cents => self.base_step * f64::from(2f32.powf(cents / 1200.0)),
+        };
+    }
+
+    /// Adds the voice into the buffers. A step of the envelope goes as a
+    /// run, in which only the position moves and the levels slide, kept in
+    /// locals; each sample's sums are those of
+    /// [`Voice::render_by_sample`], in the same order.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
+        let wave = self.wave.clone();
+        let samples = &wave.samples;
+        if samples.is_empty() {
+            self.done = true;
+            return;
+        }
+        let (start, end) = self.looped;
+        let n = left.len().min(right.len());
+        let mut at = 0;
+        while at < n {
+            if self.in_tick == 0 {
+                self.tick();
+            }
+            let run = (sampler::TICK - self.in_tick).min(n - at);
+            let (mut pos, mut levels, mut wrapped) = (self.pos, self.levels, self.wrapped);
+            let (step, steps, loops) = (self.step, self.steps, self.loops);
+            let outs = left[at..at + run].iter_mut().zip(&mut right[at..at + run]);
+            for (k, (l, r)) in outs.enumerate() {
+                if pos >= end as f64 {
+                    if loops {
+                        pos = start as f64 + (pos - end as f64) % (end - start) as f64;
+                        wrapped = true;
+                    } else {
+                        (self.pos, self.levels, self.wrapped) = (pos, levels, wrapped);
+                        self.in_tick = (self.in_tick + k + 1) % sampler::TICK;
+                        self.done = true;
+                        return;
+                    }
+                }
+                let s = sample(samples, pos, self.looped, loops, wrapped);
+                *l += s * levels[0];
+                *r += s * levels[1];
+                pos += step;
+                levels[0] += steps[0];
+                levels[1] += steps[1];
+            }
+            (self.pos, self.levels, self.wrapped) = (pos, levels, wrapped);
+            self.in_tick = (self.in_tick + run) % sampler::TICK;
+            at += run;
+            if self.in_tick == 0 {
+                // Land exactly on the step's level, which may be silence.
+                self.levels = self.targets;
+                if self.envelope.done() && self.levels == [0.0; 2] {
+                    self.done = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// [`Voice::render`] a sample at a time, as it was first written, to
+    /// compare with.
+    #[cfg(test)]
+    fn render_by_sample(&mut self, left: &mut [f32], right: &mut [f32]) {
         let wave = self.wave.clone();
         let samples = &wave.samples;
         if samples.is_empty() {
@@ -465,27 +524,7 @@ impl Voice {
         let (start, end) = self.looped;
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             if self.in_tick == 0 {
-                self.envelope.step();
-                let (cents, tremolo, pan) = self.lfos.step(&self.lfo);
-                let level = if self.envelope.done() {
-                    0.0
-                } else {
-                    self.envelope.gain() * self.gain * tremolo
-                };
-                let [gl, gr] = sampler::pan_gains(self.pan + pan);
-                self.targets = [level * gl, level * gr];
-                if self.pos == 0.0 {
-                    // The note starts at its first step's level: a square
-                    // with attack 127 is at full level from its first
-                    // sample (TEST40).
-                    self.levels = self.targets;
-                }
-                let tick = sampler::TICK as f32;
-                self.steps = [0, 1].map(|i| (self.targets[i] - self.levels[i]) / tick);
-                self.step = match cents + self.porta {
-                    0.0 => self.base_step,
-                    cents => self.base_step * f64::from(2f32.powf(cents / 1200.0)),
-                };
+                self.tick();
             }
             self.in_tick = (self.in_tick + 1) % sampler::TICK;
             if self.pos >= end as f64 {
@@ -515,6 +554,44 @@ impl Voice {
     }
 }
 
+/// The waveform at `pos`, read through the instruments' filter
+/// ([`sampler::interpolate`]): the sample before and the two after, round
+/// the loop when it `loops`, which after `wrapped` also gives the sample
+/// before its start.
+#[inline(always)]
+fn sample(
+    samples: &[f32],
+    pos: f64,
+    (start, end): (usize, usize),
+    loops: bool,
+    wrapped: bool,
+) -> f32 {
+    let i = pos as usize;
+    let frac = pos - i as f64;
+    let h = match samples.get(i.wrapping_sub(1)..i + 3) {
+        Some(h) if i + 2 < end => [h[0], h[1], h[2], h[3]],
+        _ => {
+            let at = |j: usize| {
+                let j = if j >= end && loops {
+                    start + (j - end) % (end - start)
+                } else {
+                    j
+                };
+                samples.get(j).copied().filter(|_| j < end).unwrap_or(0.0)
+            };
+            let before = if i == start && wrapped {
+                at(end - 1)
+            } else if i == 0 {
+                0.0
+            } else {
+                at(i - 1)
+            };
+            [before, at(i), at(i + 1), at(i + 2)]
+        }
+    };
+    sampler::interpolate(&h, frac)
+}
+
 /// A full-scale waveform at V127 in the middle records at an eighth of
 /// full scale on each side (TEST40), the pan taking 3 dB.
 const WAVE_GAIN: f32 = 0.125 * std::f32::consts::SQRT_2;
@@ -522,6 +599,69 @@ const WAVE_GAIN: f32 = 0.125 * std::f32::consts::SQRT_2;
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Runs of a step give what each sample gave, to the bit: over loops
+    /// that start anywhere, waveforms that end, samples and cycles at any
+    /// pitch, LFOs, portamento and release, in blocks of any length.
+    #[test]
+    fn runs_of_samples_give_what_each_sample_gave() {
+        let mut seed = 0x2545_F491u32;
+        let mut next = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % n
+        };
+        for round in 0..300 {
+            let len = 1 + next(600) as usize;
+            let looped = match next(3) {
+                0 => (0, len),
+                1 => (next(len as u32) as usize, len),
+                _ => (len, len),
+            };
+            let wave = Rc::new(Wave {
+                samples: (0..len).map(|_| next(2001) as f32 / 1000.0 - 1.0).collect(),
+                rate: (next(2) == 0).then(|| f64::from(8000 + next(40000))),
+                cycle: f64::from(1 + next(64)),
+                looped,
+                envelope: Envelope {
+                    attack: next(128) as i32,
+                    decay: next(128) as i32,
+                    sustain: next(128) as i32,
+                    release: next(128) as i32,
+                },
+                ..pulse(219)
+            });
+            let mut a = Voice::new(wave, None, 40 + next(60) as i32, 0, next(2) == 0);
+            a.set_mix(next(128) as i32, 1 + next(127) as i32, next(128) as i32);
+            a.lfo[0] = sampler::Lfo {
+                depth: next(64) as i32,
+                range: 1,
+                speed: next(40) as i32,
+                delay: 0,
+            };
+            let mut b = a.clone();
+            for block in 0..40 {
+                let n = 1 + next(900) as usize;
+                let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+                let (mut lw, mut rw) = (vec![0.0; n], vec![0.0; n]);
+                a.render(&mut l, &mut r);
+                b.render_by_sample(&mut lw, &mut rw);
+                let bits = |v: &[f32]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(&l), bits(&lw), "round {round} block {block}");
+                assert_eq!(bits(&r), bits(&rw), "round {round} block {block}");
+                assert_eq!((a.pos, a.in_tick, a.done), (b.pos, b.in_tick, b.done));
+                assert_eq!((a.levels, a.wrapped), (b.levels, b.wrapped));
+                for v in [&mut a, &mut b] {
+                    match block {
+                        10 => v.porta = 250.0,
+                        20 => v.release(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn envelopes_rise_hold_and_end() {
