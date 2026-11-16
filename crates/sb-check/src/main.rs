@@ -492,6 +492,10 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     let started = Instant::now();
     m.run_file(program).map_err(|e| format!("{program}: {e}"))?;
     println!("loaded and compiled in {:?}", started.elapsed());
+    // Only a build with options says so, as in "build unchecked-vars".
+    if !sb_runtime::BUILD_OPTIONS.is_empty() {
+        println!("build {}", sb_runtime::BUILD_OPTIONS);
+    }
     let mut wav = start_wav(&mut m, options.wav.as_deref())?;
     let mut outcome = Outcome::default();
     let shots = png.and_then(Path::parent).unwrap_or(Path::new("."));
