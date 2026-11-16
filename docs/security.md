@@ -15,9 +15,12 @@ runs on an open system and has to do it itself.
   starts no other programs. The one exception is the menu command that
   opens the projects folder, which asks the system to show that folder.
 - **`unsafe` code.** Most of it is in `sb-sdl`, around SDL and GL calls.
-  `crates/sb-core/src/vm.rs` has two uses with `SAFETY` comments, kept on
-  purpose for speed: `set_len` on the VM stack in `push_num` and
-  `drop_top`. A program cannot reach them other than through the VM stack.
+  `crates/sb-core/src/vm.rs` has four uses with `SAFETY` comments, kept on
+  purpose for speed, each a `set_len` over values it has just checked or
+  made numbers: on the VM stack in `push_num` and `drop_top`, on the stack
+  after a DEF call's arguments are moved out in `take_args`, and on the stack
+  or the DEF variables when a call ends in `cut`. A program cannot reach them
+  other than through the VM stack and DEF calls.
   `crates/sb-runtime/tests/scene.rs` has a counting allocator, used only by
   that test.
 - **File names.** Every name goes through the checks in

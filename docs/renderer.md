@@ -319,7 +319,8 @@ frame (`self.raster.frame()`) when all of these hold:
   `Sprite::appearance()` before and after. `Runtime::sight` also leaves it alone
   for text-cell commands while no line is typed (the cells report their own
   changes), for one-argument `SPPAGE`/`SPLAYER`, and for a `DIALOG` still
-  waiting. Every other command sets it.
+  waiting. Every other command sets it. Once it is set, later calls skip
+  `sight` and the comparison: only drawing a frame clears it.
 - `Runtime::animate` when a fade, sprite or text animation moved something;
 - `key_press`, `touch`, and printing while a line is typed.
 

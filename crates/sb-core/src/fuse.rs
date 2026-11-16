@@ -12,6 +12,12 @@
 //! An entry counts as the instructions it stands for, so that time slices end
 //! where they would.
 //!
+//! Calls are the exception. A DEF call or return of the running slot is made
+//! in the fused code, as `code`'s would be, when the call fits the DEF; the
+//! fuser checks that once. A builtin's or host's call, [`FastOp::Call`] and
+//! [`FastOp::Host`], is made by the code `code`'s instruction uses, and what
+//! it does or fails with is what that instruction does or fails with.
+//!
 //! Most entries are a few stack instructions in one. A [`FastOp::Chain`]
 //! stands for whole statements instead: the stack code of their expressions
 //! worked out again as three-address [`Micro`] steps, which read variables
