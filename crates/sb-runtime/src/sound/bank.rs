@@ -294,10 +294,25 @@ impl<'a> Cursor<'a> {
 }
 
 /// Reads a waveform's samples one after another, going round its loop.
+///
+/// It decodes the rest of a DSP-ADPCM frame at once, up to 14 samples,
+/// and hands them out of a small buffer: decoding a sample at a time took
+/// about as long as all the rest of a voice's work. A 16-bit waveform goes
+/// through the same buffer, so that taking a sample is the same few
+/// instructions for both.
 #[derive(Clone, Debug, Default)]
 pub struct Reader {
+    /// The position of the next sample, which `ahead[next]` holds while
+    /// `next < end`.
     pos: u32,
+    /// The two samples before the last one decoded, which the next is
+    /// predicted from.
     history: [i16; 2],
+    /// Samples of the frame `pos` is in, decoded ahead: `next..end` are
+    /// those still to come.
+    ahead: [i16; FRAME_SAMPLES as usize],
+    next: u8,
+    end: u8,
 }
 
 impl Reader {
@@ -309,8 +324,100 @@ impl Reader {
 
     /// [`Reader::next`] with the waveform's own bytes found already: this is
     /// for each sample of each voice.
-    #[inline]
+    #[inline(always)]
     pub fn next_of(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
+        if self.next < self.end {
+            let s = self.ahead[usize::from(self.next)];
+            self.next += 1;
+            self.pos += 1;
+            return Some(s);
+        }
+        self.decode(wave, data)
+    }
+
+    /// Decodes from `pos` to the end of its frame, or of the waveform, and
+    /// gives the first of those samples.
+    #[inline(never)]
+    fn decode(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
+        if self.pos >= wave.len {
+            let start = wave.loop_start?;
+            self.pos = start;
+            if let Encoding::Adpcm { loop_history, .. } = wave.encoding {
+                self.history = loop_history;
+            }
+        }
+        let pos = self.pos as usize;
+        let from = pos % FRAME_SAMPLES as usize;
+        let frame = pos - from;
+        let to = (FRAME_SAMPLES as usize).min(wave.len as usize - frame);
+        let to = match &wave.encoding {
+            Encoding::Pcm16 => {
+                // Only the samples whose bytes are there: a wave that the
+                // bank's checks let through always has them all.
+                let bytes = data.get(2 * frame..).unwrap_or_default();
+                let to = to.min(bytes.len() / 2);
+                for n in from..to {
+                    self.ahead[n] = i16::from_le_bytes([bytes[2 * n], bytes[2 * n + 1]]);
+                }
+                to
+            }
+            Encoding::Adpcm { coefs, .. } => {
+                let bytes = data
+                    .get(frame / FRAME_SAMPLES as usize * 8..)
+                    .unwrap_or_default();
+                let bytes = &bytes[..bytes.len().min(8)];
+                let to = to.min(bytes.len().saturating_sub(1) * 2);
+                let whole = <[u8; 8]>::try_from(bytes).unwrap_or_else(|_| {
+                    let mut short = [0u8; 8];
+                    short[..bytes.len()].copy_from_slice(bytes);
+                    short
+                });
+                let header = whole[0];
+                let predictor = usize::from(header >> 4 & 7);
+                let [c1, c2] = [coefs[2 * predictor], coefs[2 * predictor + 1]].map(i32::from);
+                // What each nibble adds, which does not hang on the samples
+                // before: worked out first, apart from the chain of
+                // predictions. The sums wrap (a damaged bank's coefficients
+                // can overflow, as they would unchecked; real waveforms
+                // stay far inside i32), so their order does not matter.
+                let mut add = [0i32; FRAME_SAMPLES as usize];
+                for (pair, &byte) in add.chunks_exact_mut(2).zip(&whole[1..]) {
+                    // Sign-extend each four bits.
+                    let [high, low] = [byte as i8 >> 4, ((byte << 4) as i8) >> 4];
+                    for (a, nibble) in pair.iter_mut().zip([high, low]) {
+                        *a = ((i32::from(nibble) << (header & 15)) << 11).wrapping_add(1024);
+                    }
+                }
+                let [mut h1, mut h2] = self.history.map(i32::from);
+                let run = from..to.max(from);
+                for (out, &a) in self.ahead[run.clone()].iter_mut().zip(&add[run]) {
+                    let value = a
+                        .wrapping_add(c1.wrapping_mul(h1))
+                        .wrapping_add(c2.wrapping_mul(h2));
+                    let s = (value >> 11).clamp(-32768, 32767) as i16;
+                    *out = s;
+                    (h1, h2) = (i32::from(s), h1);
+                }
+                self.history = [h1 as i16, h2 as i16];
+                to
+            }
+        };
+        if from >= to {
+            // Bytes missing from a waveform the checks would refuse: it
+            // ends here rather than read outside it.
+            self.end = 0;
+            return None;
+        }
+        // The buffer goes by the place in the frame.
+        (self.next, self.end) = (from as u8 + 1, to as u8);
+        self.pos += 1;
+        Some(self.ahead[from])
+    }
+
+    /// [`Reader::next_of`] as it was first written, a sample decoded at a
+    /// time, to compare with.
+    #[cfg(test)]
+    fn next_by_sample(&mut self, wave: &WaveInfo, data: &[u8]) -> Option<i16> {
         if self.pos >= wave.len {
             let start = wave.loop_start?;
             self.pos = start;
@@ -332,13 +439,10 @@ impl Reader {
                 } else {
                     byte & 15
                 };
-                // Sign-extend the four bits.
                 let nibble = i32::from((nibble << 4) as i8 >> 4);
                 let predictor = usize::from(header >> 4 & 7);
                 let [c1, c2] = [coefs[2 * predictor], coefs[2 * predictor + 1]].map(i32::from);
                 let [h1, h2] = self.history.map(i32::from);
-                // A damaged bank's coefficients can overflow: it wraps, as
-                // it would unchecked. Real waveforms stay far inside i32.
                 let value = ((nibble << (header & 15)) << 11)
                     .wrapping_add(1024)
                     .wrapping_add(c1.wrapping_mul(h1))
@@ -509,6 +613,102 @@ mod tests {
             h = [s, h[0]];
             assert_eq!(r.next(&w, &data), Some(s as i16), "sample {pos}");
         }
+    }
+
+    /// Decoding a frame at a time gives what decoding a sample at a time
+    /// gave, across frames, round loops that start anywhere in a frame,
+    /// and at the end of waveforms that do not loop, of any length.
+    #[test]
+    fn frames_decode_as_samples_did() {
+        let mut seed = 0x1234_5678u32;
+        let mut next = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % n
+        };
+        for round in 0..400 {
+            let len = 1 + next(200);
+            let loop_start = match next(4) {
+                0 => None,
+                1 => Some(0),
+                2 => Some(len - 1),
+                _ => Some(next(len)),
+            };
+            let encoding = if round % 4 == 3 {
+                Encoding::Pcm16
+            } else {
+                let mut coefs = [0i16; 16];
+                coefs.iter_mut().for_each(|c| *c = next(4096) as i16 - 1024);
+                Encoding::Adpcm {
+                    coefs,
+                    loop_history: [next(2000) as i16 - 1000, next(2000) as i16 - 1000],
+                }
+            };
+            let bytes = WaveInfo::bytes_for(&encoding, len).unwrap();
+            let data: Vec<u8> = (0..bytes)
+                .map(|i| {
+                    let b = next(256) as u8;
+                    // Frame headers: scales up to 2^11.
+                    match (&encoding, i % 8) {
+                        (Encoding::Adpcm { .. }, 0) => (b & 0x70) | ((b & 15) % 12),
+                        _ => b,
+                    }
+                })
+                .collect();
+            let w = WaveInfo {
+                right: None,
+                rate: 32000,
+                len,
+                loop_start,
+                encoding,
+                data: 0..bytes,
+            };
+            let (mut block, mut plain) = (Reader::default(), Reader::default());
+            for i in 0..3 * len + 30 {
+                let got = block.next_of(&w, &data);
+                assert_eq!(
+                    got,
+                    plain.next_by_sample(&w, &data),
+                    "round {round} sample {i}"
+                );
+                if got.is_none() {
+                    assert_eq!(block.next_of(&w, &data), None);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// A waveform whose bytes stop short of its length, which the bank's
+    /// checks refuse, ends where they do.
+    #[test]
+    fn missing_bytes_end_the_waveform() {
+        let w = WaveInfo {
+            right: None,
+            rate: 32000,
+            len: 28,
+            loop_start: Some(0),
+            encoding: Encoding::Adpcm {
+                coefs: [0; 16],
+                loop_history: [0; 2],
+            },
+            data: 0..16,
+        };
+        let data = [0x01; 11];
+        let mut r = Reader::default();
+        let got: Vec<_> = (0..30).map(|_| r.next_of(&w, &data)).collect();
+        // Eleven bytes: a whole frame, and four samples of the next.
+        assert!(got[..18].iter().all(Option::is_some));
+        assert!(got[18..].iter().all(Option::is_none));
+        let pcm = WaveInfo {
+            encoding: Encoding::Pcm16,
+            loop_start: None,
+            ..w
+        };
+        let mut r = Reader::default();
+        let got: Vec<_> = (0..8).map(|_| r.next_of(&pcm, &data)).collect();
+        assert!(got[..5].iter().all(Option::is_some) && got[5..].iter().all(Option::is_none));
     }
 
     #[test]
