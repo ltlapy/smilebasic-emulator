@@ -345,7 +345,14 @@ fn random_programs_run_the_same_fused_or_not() {
     let (mut compiled, mut chains, mut calls, mut hosts, mut builtins) = (0, 0, 0, 0, 0);
     // Programs that run to their end, past the EXEC and every call.
     let mut ended = 0;
-    for _ in 0..1500 {
+    // Miri runs a program thousands of times slower, so there it runs a few
+    // unless SB_RANDOM_PROGRAMS says how many. The counts below hold for
+    // all of them.
+    const ALL: usize = 1500;
+    let count = (std::env::var("SB_RANDOM_PROGRAMS").ok())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(if cfg!(miri) { 5 } else { ALL });
+    for _ in 0..count {
         let source = program(&mut r);
         let host = CmdHost::default();
         let Ok(p) = sb_core::compile(&source, &host) else {
@@ -380,6 +387,10 @@ fn random_programs_run_the_same_fused_or_not() {
     }
     // The generator must make programs that compile, that chains take, and
     // that call DEFs and the host.
+    if count < ALL {
+        println!("{count} programs, {compiled} compiled, {ended} ended");
+        return;
+    }
     assert!(compiled > 1000, "{compiled} compiled");
     assert!(chains > 8000, "{chains} chains");
     assert!(calls > 4000, "{calls} DEF calls");
