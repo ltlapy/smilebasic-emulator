@@ -131,6 +131,16 @@ pub enum FastOp {
     },
     /// RETURN with a value from a DEF called in the running slot.
     ReturnValue,
+    /// A string of [`Compiled::strings`] pushed, as a new string, as
+    /// `code`'s instruction does: a DEF's name for SPVAR, CALL or a
+    /// callback's lookup.
+    Str(u32),
+    /// CALLIDX().
+    CallIdx,
+    /// The next callback of CALL SPRITE or CALL TEXT, which
+    /// [`crate::vm::Vm`] makes as `code`'s instruction does, outside the
+    /// fused loop, as it asks the host.
+    CallbackNext(Addr),
     /// A call of a builtin that [`FastOp::Builtin`] does not stand for, which
     /// [`crate::vm::Vm`] makes as `code`'s instruction does, without leaving
     /// the fused code.
@@ -554,6 +564,9 @@ fn forms(code: &[Op], defs: &[DefInfo], c: &mut Constants, add: &mut dyn FnMut(F
         Op::Gosub(a) => add(F::Gosub(a), 1),
         Op::Return => add(F::Return, 1),
         Op::ReturnValue => add(F::ReturnValue, 1),
+        Op::Str(i) => add(F::Str(i), 1),
+        Op::CallIdx => add(F::CallIdx, 1),
+        Op::CallbackNext(end) => add(F::CallbackNext(end), 1),
         Op::CallDef { def, argc, want } => {
             let info = defs.get(def as usize);
             if let Some(cost) = info.and_then(|info| crate::vm::fixed_call_cost(info, argc, want)) {
@@ -1318,6 +1331,9 @@ fn places(op: &FastOp, micro: &[Micro], place: &mut dyn FnMut(Var, usize)) -> bo
         | F::Return
         | F::CallDef { .. }
         | F::ReturnValue
+        | F::Str(_)
+        | F::CallIdx
+        | F::CallbackNext(_)
         | F::Call { .. }
         | F::Host { .. }
         | F::Builtin { .. }

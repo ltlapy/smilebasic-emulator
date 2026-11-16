@@ -1566,6 +1566,14 @@ END
     }
     let ran = run_callbacks(SOURCE, LISTS[0], 1_000_000, true).1;
     assert!(ran.starts_with("b1a3b4c12t2b9b12/4096"), "{ran}");
+    let program = compiled(SOURCE, true);
+    for op in [FastOp::CallIdx, FastOp::CallbackNext(0)] {
+        let kind = std::mem::discriminant(&op);
+        assert!(
+            (program.fast.iter()).any(|f| std::mem::discriminant(&f.op) == kind),
+            "{op:?}"
+        );
+    }
 }
 
 const BIG_AND_SMALL: &str = "\

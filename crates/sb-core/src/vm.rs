@@ -1462,6 +1462,10 @@ impl Vm {
                     if let Some(end) = self.settle(pc, outcome, host) {
                         return end;
                     }
+                    // A callback may have gone on in another slot.
+                    if !Rc::ptr_eq(&program, &self.program) {
+                        program = Rc::clone(&self.program);
+                    }
                     continue;
                 }
             }
@@ -1604,6 +1608,13 @@ impl Vm {
                     Ok(None) => continue,
                     outcome => outcome,
                 },
+                FastOp::CallbackNext(end) => match self.next_callback(program, end, host) {
+                    // A callback in another slot changes the running
+                    // program, which `run_code` takes up again.
+                    Ok(()) if std::ptr::eq(program, Rc::as_ptr(&self.program)) => continue,
+                    Ok(()) => Ok(None),
+                    Err(e) => Err(e),
+                },
                 _ => unreachable!("`run_fused` stops before calls only"),
             };
             return Some((pc, outcome));
@@ -1626,6 +1637,7 @@ impl Vm {
             pc: at,
             executed,
             def_calls,
+            call_idx,
             ..
         } = self;
         let slot = *slot;
@@ -1942,10 +1954,17 @@ impl Vm {
                     (calls, gosub_base, base) = innermost(frames, locals);
                     vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                 }
-                FastOp::Host { .. } | FastOp::Call { .. } => {
+                FastOp::Host { .. } | FastOp::Call { .. } | FastOp::CallbackNext(_) => {
                     call = true;
                     break;
                 }
+                FastOp::Str(i) => {
+                    // As `step` makes it.
+                    let s = &program.strings[i as usize];
+                    memory::charge(memory::string_bytes(s.len()));
+                    stack.push(Value::Str(new_str(s.clone())));
+                }
+                FastOp::CallIdx => push_num(stack, Num::Int(*call_idx)),
                 FastOp::Builtin { id, argc } => {
                     let builtins::Kind::Function(f) = builtins::get(id).kind else {
                         unreachable!("only functions are fused");
