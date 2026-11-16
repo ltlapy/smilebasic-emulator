@@ -449,16 +449,17 @@ def build_env(arch: Arch, glibc: str, rootless: bool) -> dict[str, str]:
     return env
 
 
-def features(unchecked_vars: bool) -> list[str]:
+def features(unchecked_vars: bool, jit: bool) -> list[str]:
     """Cargo's arguments for the optional features asked for."""
-    return ["--features", "unchecked-vars"] if unchecked_vars else []
+    asked = [name for name, on in (("unchecked-vars", unchecked_vars), ("jit", jit)) if on]
+    return ["--features", ",".join(asked)] if asked else []
 
 
-def build(arch: Arch, glibc: str, rootless: bool, unchecked_vars: bool) -> None:
+def build(arch: Arch, glibc: str, rootless: bool, unchecked_vars: bool, jit: bool) -> None:
     subprocess.run(
         ["cargo", "zigbuild", "--profile", "dist", "--target", f"{arch.rust_target}.{glibc}"]
         + ["-p", "sb-sdl", "-p", "sb-check"]
-        + features(unchecked_vars),
+        + features(unchecked_vars, jit),
         cwd=REPO,
         env=build_env(arch, glibc, rootless),
         check=True,
@@ -531,13 +532,13 @@ def run(arch: Arch, command: list[str], rootless: bool) -> int:
     return subprocess.run([arch.qemu, str(binary), *command[1:]], env=env).returncode
 
 
-def test(arch: Arch, extra: list[str], rootless: bool, unchecked_vars: bool) -> int:
+def test(arch: Arch, extra: list[str], rootless: bool, unchecked_vars: bool, jit: bool) -> int:
     """Runs the tests that need no SDL under qemu."""
     env = qemu_env(arch, build_env(arch, GLIBC, rootless), rootless)
     env[f"CARGO_TARGET_{arch.env_suffix.upper()}_RUNNER"] = arch.qemu
     crates = ["-p", "sb-core", "-p", "sb-runtime", "-p", "sb-profiles", "-p", "sb-check", "-p", "sb-import"]
     command = ["cargo-zigbuild", "test", "--release", "--target", f"{arch.rust_target}.{GLIBC}"]
-    command += crates + features(unchecked_vars) + extra
+    command += crates + features(unchecked_vars, jit) + extra
     return subprocess.run(command, cwd=REPO, env=env).returncode
 
 
@@ -562,6 +563,12 @@ def main() -> int:
         "each variable access (see docs/security.md); off by default; put this before --test",
     )
     parser.add_argument(
+        "--jit",
+        action="store_true",
+        help="build with sb-core's jit feature: native code for hot loops, aarch64 only (see "
+        "docs/jit-design.md); off by default; put this before --test",
+    )
+    parser.add_argument(
         "--glibc",
         default=GLIBC,
         help=f"oldest glibc to run on, default {GLIBC}; after changing it, delete target/TRIPLE",
@@ -583,8 +590,8 @@ def main() -> int:
     if args.run:
         return run(arch, args.run, args.rootless)
     if args.test is not None:
-        return test(arch, args.test, args.rootless, args.unchecked_vars)
-    build(arch, args.glibc, args.rootless, args.unchecked_vars)
+        return test(arch, args.test, args.rootless, args.unchecked_vars, args.jit)
+    build(arch, args.glibc, args.rootless, args.unchecked_vars, args.jit)
     report(arch)
     return 0
 

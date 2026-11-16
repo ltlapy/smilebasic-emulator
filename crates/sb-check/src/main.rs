@@ -147,6 +147,12 @@ const EXIT_ERROR: u8 = 2;
 const EXIT_STOP: u8 = 3;
 
 fn main() -> std::process::ExitCode {
+    // SB_JIT=0 runs a `jit` build without native code, to compare the two
+    // in one binary.
+    #[cfg(feature = "jit")]
+    if std::env::var_os("SB_JIT").is_some_and(|v| v == "0") {
+        sb_runtime::jit::set_enabled(false);
+    }
     match run(std::env::args().skip(1).collect()) {
         Ok(status) => status.into(),
         Err(e) => {
@@ -495,6 +501,21 @@ fn bench(options: &BenchOptions, project: &Path, program: &str) -> Result<u8, An
     // Only a build with options says so, as in "build unchecked-vars".
     if !sb_runtime::BUILD_OPTIONS.is_empty() {
         println!("build {}", sb_runtime::BUILD_OPTIONS);
+    }
+    // What making the program's native code cost.
+    #[cfg(feature = "jit")]
+    {
+        let s = sb_runtime::jit::stats();
+        println!(
+            "jit regions {} entries {} bytes {} refused {} compile_us {:.1} most_us {:.1} setup_us {:.1}",
+            s.regions,
+            s.entries,
+            s.bytes,
+            s.refused,
+            s.nanos as f64 / 1000.0,
+            s.most_nanos as f64 / 1000.0,
+            s.setup_nanos as f64 / 1000.0
+        );
     }
     let mut wav = start_wav(&mut m, options.wav.as_deref())?;
     let mut outcome = Outcome::default();

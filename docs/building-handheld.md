@@ -53,6 +53,12 @@ check on each, for about a tenth fewer instructions on arithmetic on a Cortex-A3
 what stands in for that check would be memory unsafety that a program can reach; see
 [security.md](security.md). Help > About shows `unchecked-vars` after the version.
 
+`--jit`, off by default and a prototype, builds with sb-core's `jit` feature, and goes with
+`--test` too, which then runs the generated aarch64 code under qemu. Hot loops of numbers
+run as native code; see [jit-design.md](jit-design.md) for what it covers, what it costs and
+why it stays off. `--bench` prints what compiling took, and `SB_JIT=0` runs the same binary
+without native code. armhf builds stay interpreted: build them without `--jit`.
+
 ## What you get
 
 `target/TRIPLE/dist/` holds `smilebasic` and `smilebasic-check`, where `TRIPLE` is the Rust
