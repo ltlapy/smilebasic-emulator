@@ -262,6 +262,23 @@ fn drawing_on_grp5_changes_the_font() {
     assert_eq!(font.pixel(u16::from(b'A'), FontSize::Small, x, y), WHITE);
 }
 
+/// A program that draws its own font page for SmileBASIC 4 draws "A" at
+/// (8,8) and "漢" at (384,1376), where FONTINFO puts them on hardware; the
+/// bundled font reads them there too.
+#[test]
+fn a_font_page_drawn_for_smilebasic_4_shows_with_the_bundled_font() {
+    let page = "GTARGET 5:GCLS:GFILL 8,8,15,15,#C_RED\n\
+         GFILL 384,1376,399,1391,#C_BLUE:GTARGET 0\n";
+    let mut m = run(&format!("{page}CLS:PRINT \"A\""));
+    let fb = m.render();
+    assert_eq!(fb.get(0, 0), Some(RED));
+    assert_eq!(fb.get(7, 7), Some(RED));
+    let mut m = run(&format!("{page}TSCREEN 16:PRINT \"漢\""));
+    let fb = m.render();
+    assert_eq!(fb.get(0, 0), Some(BLUE));
+    assert_eq!(fb.get(15, 15), Some(BLUE));
+}
+
 #[test]
 fn xscreen_sets_the_resolution() {
     assert_eq!(
