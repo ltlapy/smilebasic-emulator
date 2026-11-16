@@ -7,6 +7,8 @@
 //! rasterizer, GPU uploads), uses [`STRIDE`] and [`at`] by name. What lies
 //! past a row's end within its stride is never written and never read.
 
+use std::ops::Range;
+
 use crate::graphics::GRP_SIZE;
 
 /// The pixels of a row.
@@ -117,7 +119,7 @@ impl Page {
 
     /// Rows `ys` of a page that is not blank, top to bottom.
     #[inline]
-    pub fn rows(&self, ys: std::ops::Range<usize>) -> impl Iterator<Item = &[u32]> {
+    pub fn rows(&self, ys: Range<usize>) -> impl Iterator<Item = &[u32]> {
         self.pixels[ys.start * STRIDE..ys.end * STRIDE]
             .chunks_exact(STRIDE)
             .map(|row| &row[..SIDE])
@@ -125,10 +127,52 @@ impl Page {
 
     /// Rows `ys` of a page that is not blank, to change.
     #[inline]
-    pub fn rows_mut(&mut self, ys: std::ops::Range<usize>) -> impl Iterator<Item = &mut [u32]> {
+    pub fn rows_mut(&mut self, ys: Range<usize>) -> impl Iterator<Item = &mut [u32]> {
         self.pixels[ys.start * STRIDE..ys.end * STRIDE]
             .chunks_exact_mut(STRIDE)
             .map(|row| &mut row[..SIDE])
+    }
+
+    /// Pixels `x0..=x1` of row `y` of a page that is not blank, to change.
+    #[inline]
+    pub fn span_mut(&mut self, y: usize, x0: usize, x1: usize) -> &mut [u32] {
+        // As for `pixel_mut`: callers clip to the page, and the slice is
+        // checked against the buffer. A check here would cost GALPHA and
+        // GTRI 0.1 to 0.3% of their instructions.
+        debug_assert!(x1 < SIDE, "a span ends on its row");
+        &mut self.pixels[at(x0, y)..at(x1, y) + 1]
+    }
+
+    /// Of rows `ys` of a page that is not blank, the `n` pixels from column
+    /// `x` of each, top to bottom: a rectangle, checked once for all its
+    /// rows.
+    #[inline]
+    pub fn spans(&self, x: usize, n: usize, ys: Range<usize>) -> impl Iterator<Item = &[u32]> {
+        assert!(x + n <= SIDE && ys.end <= SIDE, "a rectangle on the page");
+        // The last row's piece is shorter than STRIDE, but holds `n`.
+        let rows = ys.len();
+        let start = at(x, ys.start).min(self.pixels.len());
+        self.pixels[start..]
+            .chunks(STRIDE)
+            .take(rows)
+            .map(move |row| &row[..n])
+    }
+
+    /// [`Page::spans`] to change.
+    #[inline]
+    pub fn spans_mut(
+        &mut self,
+        x: usize,
+        n: usize,
+        ys: Range<usize>,
+    ) -> impl Iterator<Item = &mut [u32]> {
+        assert!(x + n <= SIDE && ys.end <= SIDE, "a rectangle on the page");
+        let rows = ys.len();
+        let start = at(x, ys.start).min(self.pixels.len());
+        self.pixels[start..]
+            .chunks_mut(STRIDE)
+            .take(rows)
+            .map(move |row| &mut row[..n])
     }
 
     /// The pixels as they lie, for loops that step through them by offsets
@@ -171,6 +215,29 @@ mod tests {
         let some: Vec<&[u32]> = page.rows(5..9).collect();
         assert_eq!(some.len(), 4);
         assert!(some.iter().enumerate().all(|(i, r)| *r == page.row(5 + i)));
+        // Rectangles, the last row's included.
+        let spans: Vec<&[u32]> = page.spans(SIDE - 3, 3, SIDE - 2..SIDE).collect();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[1], &rows[SIDE * SIDE - 3..]);
+        assert_eq!(page.spans(0, 1, SIDE..SIDE).count(), 0);
+    }
+
+    #[test]
+    fn spans_change_only_their_pixels() {
+        let mut page = Page::cleared();
+        for span in page.spans_mut(10, 4, 20..23) {
+            span.fill(7);
+        }
+        page.span_mut(SIDE - 1, SIDE - 2, SIDE - 1).fill(9);
+        let rows = page.to_rows();
+        let at = |x: usize, y: usize| rows[y * SIDE + x];
+        assert_eq!(rows.iter().filter(|&&p| p == 7).count(), 12);
+        assert_eq!(
+            (at(10, 20), at(13, 22), at(14, 22), at(10, 23)),
+            (7, 7, 0, 0)
+        );
+        assert_eq!(rows.iter().filter(|&&p| p == 9).count(), 2);
+        assert_eq!(at(SIDE - 1, SIDE - 1), 9);
     }
 
     #[test]

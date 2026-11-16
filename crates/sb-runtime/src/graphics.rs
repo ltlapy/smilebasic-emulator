@@ -742,7 +742,7 @@ impl Graphics {
         };
         let pixels = &mut self.pages[page];
         for (y, (left, right)) in rows {
-            let row = &mut pixels.row_mut(y as usize)[left as usize..=right as usize];
+            let row = pixels.span_mut(y as usize, left as usize, right as usize);
             match mirror.as_deref_mut() {
                 None if blend == Blend::Normal => row.fill(color),
                 None => {
@@ -940,14 +940,9 @@ impl Graphics {
                     (from.x0 + xs.start()) as usize,
                     (from.y0 + ys.start()) as usize,
                 );
-                let from_rows = from_page.rows(sy..sy + rows);
-                let to_rows = to_page.rows_mut(ty..ty + rows);
-                let pairs = to_rows.zip(from_rows);
-                copy_rows(
-                    pairs.map(|(d, s)| (&mut d[tx..tx + n], &s[sx..sx + n])),
-                    tint,
-                    blend,
-                );
+                let from_rows = from_page.spans(sx, n, sy..sy + rows);
+                let to_rows = to_page.spans_mut(tx, n, ty..ty + rows);
+                copy_rows(to_rows.zip(from_rows), tint, blend);
                 return;
             }
         }
@@ -975,13 +970,9 @@ impl Graphics {
             let to_page = self.page_pixels(target, area);
             let first = (ys.start() * w + xs.start()) as usize;
             let from_rows = pixels[first..].chunks(w as usize);
-            let to_rows = to_page.rows_mut(ty..ty + rows);
+            let to_rows = to_page.spans_mut(tx, n, ty..ty + rows);
             let pairs = to_rows.zip(from_rows);
-            copy_rows(
-                pairs.map(|(d, s)| (&mut d[tx..tx + n], &s[..n])),
-                tint,
-                blend,
-            );
+            copy_rows(pairs.map(|(d, s)| (d, &s[..n])), tint, blend);
             return;
         }
         for y in ys {
