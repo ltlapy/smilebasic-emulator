@@ -256,7 +256,40 @@ const PROGRAMS: &[&str] = &[
     "DIM A[2]:?1:IF A>=0 THEN ?2",
     "A=5:B=10-A:C=2-(A*2):D=100/(A+1):E=7 MOD (A-1):F=1<<(A-3):G=3<A:H=(A*2)<4:?B;C;D;E;F;G;H",
     "K=0:IF 0==K THEN ?\"Z\"\nIF 1!=K THEN ?\"N\"\nIF K+1==1 THEN ?\"O\"\nIF (K+1)*2>=2 THEN ?\"T\"",
+    // CALL by name, found again from what it found before: in other cases,
+    // with a slot, as a function, past the names it keeps, and wrongly.
+    CALL_CASES,
+    CALL_FUNCTION,
+    CALLS_BY_NAME,
+    "DEF P A\n?A\nEND\nFOR I=0 TO 2:CALL \"P\",I:NEXT\nCALL \"P\",1,2",
+    "DEF P A\n?A\nEND\nFOR I=0 TO 2:CALL \"P\",I:NEXT\nCALL \"P\" OUT X",
+    "DEF P A\n?A\nEND\nN$=\"P\":FOR I=0 TO 2:CALL N$,I:N$=N$+\"Q\":NEXT",
+    "DEF P A\n?A\nEND\nFOR I=0 TO 9:CALL \"P\",I:CALL \"P\",\"S\":NEXT",
 ];
+
+/// CALL of one DEF in other cases and with its slot.
+const CALL_CASES: &str =
+    "DEF P A,B\n?A+B\nEND\nFOR I=0 TO 3:CALL \"P\",I,2:CALL \"p\",I,3:CALL \"0:P\",I,4:NEXT";
+
+/// CALL of a function DEF and of a builtin.
+const CALL_FUNCTION: &str =
+    "DEF F(A)\nRETURN A*2\nEND\nFOR I=0 TO 2:CALL \"F\",I OUT X:?X:CALL \"ABS\",-I OUT Y:?Y:NEXT";
+
+/// Nine DEFs called by name in turn, one more than the VM keeps found.
+const CALLS_BY_NAME: &str = "\
+DEF D1 A:?1;A:END
+DEF D2 A:?2;A:END
+DEF D3 A:?3;A:END
+DEF D4 A:?4;A:END
+DEF D5 A:?5;A:END
+DEF D6 A:?6;A:END
+DEF D7 A:?7;A:END
+DEF D8 A:?8;A:END
+DEF D9 A:?9;A:END
+FOR I=0 TO 20
+CALL \"D\"+STR$(I MOD 9+1),I
+NEXT
+";
 
 /// Constants on both sides of each operator, in entries and in chains, the
 /// variables changing kind as they go.
@@ -406,6 +439,28 @@ fn def_calls_print_what_they_should() {
     }
 }
 
+/// What CALL prints when it finds DEFs by names it found before.
+#[test]
+fn calls_by_name_print_what_they_should() {
+    let nine = (0..=20)
+        .map(|i| format!("{}{i}\n", i % 9 + 1))
+        .collect::<String>();
+    for (source, expected) in [
+        (CALL_CASES, "2\n3\n4\n3\n4\n5\n4\n5\n6\n5\n6\n7\n"),
+        (CALL_FUNCTION, "0\n0\n2\n1\n4\n2\n"),
+        (CALLS_BY_NAME, &nine),
+    ] {
+        let mut host = TextHost::default();
+        let mut vm = Vm::new(compiled(source, true));
+        assert_eq!(
+            vm.run(&mut host, 1_000_000).unwrap(),
+            Status::Ended,
+            "{source}"
+        );
+        assert_eq!(host.output, expected, "{source}");
+    }
+}
+
 /// DEF calls fill the stack as without fusing.
 #[test]
 fn def_calls_overflow_as_without_fusing() {
@@ -414,6 +469,8 @@ fn def_calls_overflow_as_without_fusing() {
         "DEF F N\nF N+1\nEND\n?1:F 0",
         "DEF F N OUT R\nVAR A$=\"S\"\nF N+1 OUT R\nEND\n?1:F 0 OUT X",
         "DEF F(N)\nGOSUB @S\nRETURN 0\n@S\nA=F(N+1)\nRETURN\nEND\n?1:A=F(0)",
+        "DEF F(N)\nCALL \"F\",N+1 OUT R\nRETURN R\nEND\n?1:CALL \"F\",0 OUT X",
+        "DEF F N\nCALL \"F\",N+1\nEND\n?1:F 0",
     ] {
         for budget in [5, 7, 1_000_000] {
             let fused = run(program, budget, true);
@@ -1376,6 +1433,139 @@ fn run_program(program: Compiled, budget: u32) -> (Vec<String>, String) {
         }
     }
     panic!("did not end");
+}
+
+/// A host whose CALL SPRITE goes through a fixed list of callbacks, set by
+/// sprite number, with CALL TEXT's one.
+struct Callbacking {
+    text: TextHost,
+    sprites: &'static [(i32, &'static str)],
+}
+
+impl sb_core::host::Host for Callbacking {
+    fn lookup(&self, _name: &str) -> Option<u32> {
+        None
+    }
+
+    fn call(
+        &mut self,
+        _id: u32,
+        _args: &[sb_core::value::Value],
+        _want: sb_core::bytecode::Want,
+    ) -> sb_core::error::Result<Vec<sb_core::value::Value>> {
+        unreachable!("no host commands")
+    }
+
+    fn print(&mut self, s: Option<i32>, t: &[u16]) -> sb_core::error::Result<()> {
+        self.text.print(s, t)
+    }
+
+    fn print_tab(&mut self, s: Option<i32>) -> sb_core::error::Result<()> {
+        self.text.print_tab(s)
+    }
+
+    fn print_newline(&mut self, s: Option<i32>) -> sb_core::error::Result<()> {
+        self.text.print_newline(s)
+    }
+
+    fn input_start(&mut self) -> sb_core::error::Result<()> {
+        Ok(())
+    }
+
+    fn input_poll(&mut self) -> sb_core::error::Result<Option<Vec<u16>>> {
+        Ok(None)
+    }
+
+    fn next_callback(
+        &mut self,
+        kind: sb_core::bytecode::Callbacks,
+        after: i32,
+    ) -> Option<(i32, Vec<u16>)> {
+        let list: &[(i32, &str)] = match kind {
+            sb_core::bytecode::Callbacks::Sprite => self.sprites,
+            sb_core::bytecode::Callbacks::Text => &[(2, "T")],
+        };
+        list.iter()
+            .find(|&&(i, _)| i > after)
+            .map(|&(i, t)| (i, t.encode_utf16().collect()))
+    }
+
+    fn callbacks_end(&self, kind: sb_core::bytecode::Callbacks) -> i32 {
+        match kind {
+            sb_core::bytecode::Callbacks::Sprite => 4096,
+            sb_core::bytecode::Callbacks::Text => 5,
+        }
+    }
+}
+
+/// [`run`] with the callbacks of `sprites`.
+fn run_callbacks(
+    source: &str,
+    sprites: &'static [(i32, &'static str)],
+    budget: u32,
+    fused: bool,
+) -> (Vec<String>, String) {
+    let mut host = Callbacking {
+        text: TextHost::default(),
+        sprites,
+    };
+    let mut vm = Vm::new(compiled(source, fused));
+    let mut seen = Vec::new();
+    for _ in 0..200_000 {
+        let result = vm.run(&mut host, budget);
+        let shown = match &result {
+            Ok(status) => format!("{status:?}"),
+            Err(e) => format!("{e} {:?} {} {} {:?}", e.kind, e.line, e.col, e.detail),
+        };
+        let (executed, line, col) = (vm.executed(), vm.line(), vm.col());
+        seen.push(format!("{shown} executed {executed} line {line} col {col}"));
+        match result {
+            Ok(Status::Ended) | Err(_) => return (seen, host.text.output),
+            Ok(_) => {}
+        }
+    }
+    panic!("{source}: did not end");
+}
+
+/// Callbacks of CALL SPRITE, fused, run as one instruction at a time: DEFs
+/// found by name again, labels, CALL TEXT inside one, CALLIDX(), and DEFs
+/// that cannot be callbacks.
+#[test]
+fn callbacks_run_the_same_fused_or_not() {
+    const SOURCE: &str = "\
+VAR N
+DEF B:N=N+CALLIDX():?\"b\";CALLIDX();:END
+DEF C:?\"c\";CALLIDX()*2;:CALL TEXT:END
+DEF T:?\"t\";CALLIDX();:END
+DEF P A:?A:END
+DEF F(A):RETURN A:END
+FOR I=0 TO 2:CALL SPRITE:?\"/\";CALLIDX();N:NEXT
+END
+@A:?\"a\";CALLIDX();:RETURN
+";
+    const LISTS: &[&[(i32, &str)]] = &[
+        &[
+            (1, "B"),
+            (3, "@A"),
+            (4, "b"),
+            (6, "C"),
+            (9, "B"),
+            (12, "0:B"),
+        ],
+        &[(1, "B"), (2, "B"), (5, "P")],
+        &[(1, "B"), (2, "F")],
+        &[(1, "B"), (2, "NONE")],
+        &[(1, "B"), (2, "1:B")],
+    ];
+    for &sprites in LISTS {
+        for budget in [1, 2, 3, 5, 7, 13, 100, 1_000_000] {
+            let fused = run_callbacks(SOURCE, sprites, budget, true);
+            let plain = run_callbacks(SOURCE, sprites, budget, false);
+            assert_eq!(fused, plain, "{sprites:?} in slices of {budget}");
+        }
+    }
+    let ran = run_callbacks(SOURCE, LISTS[0], 1_000_000, true).1;
+    assert!(ran.starts_with("b1a3b4c12t2b9b12/4096"), "{ran}");
 }
 
 const BIG_AND_SMALL: &str = "\

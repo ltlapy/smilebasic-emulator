@@ -5,7 +5,7 @@
 //! VSYNC and WAIT return [`Status::Wait`] and resume on the next call.
 
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::builtins::{self, Form, Kind};
@@ -293,6 +293,23 @@ impl Frame {
     }
 }
 
+/// A name that `CALL` or a callback of CALL SPRITE or CALL TEXT found to be
+/// a DEF of the running slot. Finding it takes the name apart and looks it
+/// up, which costs more than most DEFs' bodies; what it finds depends only
+/// on the text, the slot and its program, which is never changed once made.
+/// The weak reference keeps the program's allocation, so that no other
+/// program can take its address.
+struct Resolved {
+    program: Weak<Compiled>,
+    slot: usize,
+    text: Box<[u16]>,
+    def: u32,
+}
+
+/// How many names [`Vm::resolved`] keeps: CALL SPRITE often goes through a
+/// few names in turn.
+const RESOLVED_KEPT: usize = 8;
+
 /// A program slot's program with its variables. The VM keeps the running
 /// slot's in its own fields, and the others here.
 struct Unit {
@@ -407,6 +424,8 @@ pub struct Vm {
     /// callback it last ran (-1 before the first).
     callbacks: Vec<(Callbacks, i32)>,
     call_idx: i32,
+    /// Names CALL and callbacks found last, the newest last.
+    resolved: Vec<Resolved>,
     /// Instructions run so far.
     executed: u64,
     /// What [`Vm::work`] counts. Only a run that reports it counts
@@ -700,6 +719,7 @@ impl Vm {
             reading_input: false,
             callbacks: Vec::new(),
             call_idx: 0,
+            resolved: Vec::new(),
             executed: 0,
             statements: 0,
             def_calls: 0,
@@ -2745,6 +2765,57 @@ impl Vm {
         Ok(Some(Status::Running))
     }
 
+    /// The DEF of the running slot that `text` was found to name, if it is
+    /// among [`Vm::resolved`].
+    #[inline]
+    fn resolved(&self, program: &Compiled, text: &[u16]) -> Option<u32> {
+        (self.resolved.iter().rev())
+            .find(|r| {
+                std::ptr::eq(r.program.as_ptr(), program) && r.slot == self.slot && *r.text == *text
+            })
+            .map(|r| r.def)
+    }
+
+    /// Keeps that `text` names DEF `def` of the running slot, `program`.
+    #[cold]
+    fn resolve(&mut self, program: &Compiled, text: &[u16], def: u32) {
+        // `program` is the running slot's, held in `self.program`.
+        if !std::ptr::eq(Rc::as_ptr(&self.program), program) {
+            return;
+        }
+        if self.resolved.len() == RESOLVED_KEPT {
+            self.resolved.remove(0);
+        }
+        self.resolved.push(Resolved {
+            program: Rc::downgrade(&self.program),
+            slot: self.slot,
+            text: text.into(),
+            def,
+        });
+    }
+
+    /// Goes on to the next callback of the CALL SPRITE or CALL TEXT under
+    /// way, or to `end` after the last.
+    fn next_callback(&mut self, program: &Compiled, end: Addr, host: &mut dyn Host) -> Result<()> {
+        let (kind, at) = (self.callbacks.last_mut()).ok_or(ErrorKind::IllegalStatement)?;
+        match host.next_callback(*kind, *at) {
+            None => {
+                self.call_idx = host.callbacks_end(*kind);
+                self.callbacks.pop();
+                self.pc = end as usize;
+            }
+            Some((idx, target)) => {
+                *at = idx;
+                self.call_idx = idx;
+                match self.resolved(program, &target) {
+                    Some(def) => self.enter_found(program, def, 0, Want::Outs(0))?,
+                    None => self.run_callback(program, &Value::Str(new_str(target)), host)?,
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Calls one callback of CALL SPRITE or CALL TEXT: GOSUB to a
     /// `"@label"`, or a DEF command without arguments.
     fn run_callback(
@@ -2774,10 +2845,12 @@ impl Vm {
             false => self.program_in(slot).map(|p| &**p),
         };
         if let Some(&def) = own.and_then(|p| p.def_names.get(&name)) {
-            return match slot == self.slot {
-                true => self.enter_def(def, Vec::new(), Want::Outs(0), self.slot),
-                false => self.call_in(slot, def, Vec::new(), Want::Outs(0), host),
-            };
+            if slot == self.slot {
+                let text = target.clone().into_str()?;
+                self.resolve(program, &text.borrow(), def);
+                return self.enter_def(def, Vec::new(), Want::Outs(0), self.slot);
+            }
+            return self.call_in(slot, def, Vec::new(), Want::Outs(0), host);
         }
         let (slot, def) = self
             .find_common(&name)
@@ -3097,6 +3170,16 @@ impl Vm {
             Op::CallHost { id, argc, want } => return self.host_call(host, *id, *argc, *want),
             Op::CallDyn { argc, want } => {
                 self.lookups += 1;
+                let at = self.stack.len() - usize::from(*argc) - 1;
+                let found = match &self.stack[at] {
+                    Value::Str(s) => self.resolved(program, &s.borrow()),
+                    _ => None,
+                };
+                if let Some(def) = found {
+                    self.stack.remove(at);
+                    self.enter_found(program, def, (*argc).into(), *want)?;
+                    return Ok(None);
+                }
                 let args = self.pop_n((*argc).into());
                 let name_value = self.pop();
                 let (slot, name) = slot_and_name(&name_value)?;
@@ -3109,6 +3192,9 @@ impl Vm {
                     return Ok(None);
                 }
                 if let Some(&def) = program.def_names.get(&name) {
+                    if let Value::Str(s) = &name_value {
+                        self.resolve(program, &s.borrow(), def);
+                    }
                     self.enter_def(def, args, *want, self.slot)?;
                     return Ok(None);
                 } else if let Some((slot, def)) = self.find_common(&name) {
@@ -3183,23 +3269,8 @@ impl Vm {
             }
             Op::CallbacksStart(kind) => self.callbacks.push((*kind, -1)),
             Op::CallbackNext(end) => {
-                let (kind, at) = self
-                    .callbacks
-                    .last_mut()
-                    .ok_or(ErrorKind::IllegalStatement)?;
-                match host.next_callback(*kind, *at) {
-                    None => {
-                        self.call_idx = host.callbacks_end(*kind);
-                        self.callbacks.pop();
-                        next = *end as usize;
-                    }
-                    Some((idx, target)) => {
-                        *at = idx;
-                        self.call_idx = idx;
-                        self.run_callback(program, &Value::Str(new_str(target)), host)?;
-                        return Ok(None);
-                    }
-                }
+                self.next_callback(program, *end, host)?;
+                return Ok(None);
             }
             Op::CallIdx => self.stack.push(Value::Int(self.call_idx)),
             Op::ChkLabel { has_flag } => {
@@ -3775,6 +3846,24 @@ impl Vm {
         let program = Rc::clone(&self.program);
         self.push_frame(&program.defs[def as usize], def, argc, want, caller, cost);
         Ok(())
+    }
+
+    /// [`Vm::enter_def_on_stack`] for a DEF of the running slot, `program`,
+    /// found by name: a call that fits the DEF and has room starts here, as
+    /// the fused code starts one, and the others go there.
+    #[inline]
+    fn enter_found(&mut self, program: &Compiled, def: u32, argc: usize, want: Want) -> Result<()> {
+        let info = &program.defs[def as usize];
+        let cost = u8::try_from(argc)
+            .ok()
+            .and_then(|argc| fixed_call_cost(info, argc, want));
+        match cost {
+            Some(cost) if self.stack_has_room(cost as usize) => {
+                self.push_frame(info, def, argc, want, self.slot, cost as usize);
+                Ok(())
+            }
+            _ => self.enter_def_on_stack(def, argc, want, self.slot),
+        }
     }
 
     /// Starts a call of DEF `def` of the running slot, `info`, which has room,
