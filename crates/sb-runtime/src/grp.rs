@@ -11,6 +11,17 @@ use crate::graphics::{Blend, Clip, GRP_SIZE, PAGES};
 use crate::runtime::{Command, Runtime, checking, illegal, many, no_form, one, opt_int};
 use crate::text::CONSOLE;
 
+/// The first `N` arguments as integers, in order, the first that is not
+/// one failing: in an array, as a list for a few numbers would be one
+/// allocation a call.
+fn ints<const N: usize>(args: &[Value]) -> Result<[i32; N]> {
+    let mut v = [0; N];
+    for (d, a) in v.iter_mut().zip(&args[..N]) {
+        *d = int(a)?;
+    }
+    Ok(v)
+}
+
 fn int(v: &Value) -> Result<i32> {
     v.to_int()
 }
@@ -109,7 +120,7 @@ const MOST_PIXELS: i64 = sb_core::memory::TOTAL as i64 / 4;
 // A rectangle with more pixels than memory holds here is Out of range too,
 // standing in for SmileBASIC 4's Out of memory.
 fn rect_args(args: &[Value]) -> Result<(i32, i32, i32, i32)> {
-    let v: Vec<i32> = args[..4].iter().map(int).collect::<Result<_>>()?;
+    let v = ints::<4>(args)?;
     let (x, y, w, h) = (v[0], v[1], v[2], v[3]);
     if w >= 0 && h >= 0 && i64::from(w) * i64::from(h) <= MOST_PIXELS {
         return Ok((x, y, w, h));
@@ -152,7 +163,6 @@ impl Runtime {
         want: Want,
         out: &mut Vec<Value>,
     ) -> Result<()> {
-        let ints = |n: usize| -> Result<Vec<i32>> { args[..n].iter().map(int).collect() };
         match (command, want, args.len()) {
             (Command::Gtarget, Want::Value, 0) => one(out, Value::Int(self.grp.target as i32)),
             (Command::Gtarget, Want::Outs(0), 1) => {
@@ -183,18 +193,18 @@ impl Runtime {
                 Ok(())
             }
             (Command::Gpget, Want::Value, 2) => {
-                let v = ints(2)?;
+                let v = ints::<2>(args)?;
                 let p = self.grp.read(self.grp.target, v[0], v[1]);
                 one(out, Value::Int(p as i32))
             }
             (Command::Gpset, Want::Outs(0), 2..=4) => {
-                let v = ints(2)?;
+                let v = ints::<2>(args)?;
                 let (color, blend) = self.color_and_blend(&args[2..])?;
                 self.grp.pset(v[0], v[1], color, blend);
                 Ok(())
             }
             (Command::Gline | Command::Gbox | Command::Gfill, Want::Outs(0), 4..=6) => {
-                let v = ints(4)?;
+                let v = ints::<4>(args)?;
                 let (color, blend) = self.color_and_blend(&args[4..])?;
                 let draw = match command {
                     Command::Gline => crate::graphics::Graphics::line,
@@ -205,13 +215,13 @@ impl Runtime {
                 Ok(())
             }
             (Command::Gcircle, Want::Outs(0), 3..=5) => {
-                let v = ints(3)?;
+                let v = ints::<3>(args)?;
                 let (color, blend) = self.color_and_blend(&args[3..])?;
                 self.grp.circle((v[0], v[1], v[2]), None, color, blend);
                 Ok(())
             }
             (Command::Gcircle, Want::Outs(0), 6..=8) => {
-                let v = ints(6)?;
+                let v = ints::<6>(args)?;
                 let sector = match v[5] {
                     0 => false,
                     1 => true,
@@ -223,14 +233,14 @@ impl Runtime {
                 Ok(())
             }
             (Command::Gtri, Want::Outs(0), 6..=8) => {
-                let v = ints(6)?;
+                let v = ints::<6>(args)?;
                 let (color, blend) = self.color_and_blend(&args[6..])?;
                 let points = [(v[0], v[1]), (v[2], v[3]), (v[4], v[5])];
                 self.grp.triangle(points, color, blend);
                 Ok(())
             }
             (Command::Gpaint, Want::Outs(0), 2..=4) => {
-                let v = ints(2)?;
+                let v = ints::<2>(args)?;
                 let color = match args.get(2).map(opt_int).transpose()?.flatten() {
                     Some(c) => c as u32,
                     None => self.grp.color,
@@ -247,7 +257,7 @@ impl Runtime {
                     7 => (self.grp.target, args),
                     _ => (page_arg(&args[0])?, &args[1..]),
                 };
-                let v: Vec<i32> = rest[..6].iter().map(int).collect::<Result<_>>()?;
+                let v = ints::<6>(rest)?;
                 let (tint, blend) = match &rest[6..] {
                     [blend] => (None, blend_arg(blend)?),
                     [tint, blend] => (Some(color_arg(tint)?), blend_arg(blend)?),
@@ -258,7 +268,7 @@ impl Runtime {
                 Ok(())
             }
             (Command::Gputchr, Want::Outs(0), 3..=8) => {
-                let v = ints(2)?;
+                let v = ints::<2>(args)?;
                 let text = chars_arg(&args[2])?;
                 // Left out, it is the console's font type, 24 and up too
                 // (checked on hardware after TSCREEN 24).
@@ -281,7 +291,7 @@ impl Runtime {
             // proportional characters, drawn over transparent pixels by
             // default.
             (Command::Gputchrp, Want::Outs(0), 3..=9) => {
-                let v = ints(2)?;
+                let v = ints::<2>(args)?;
                 let text = chars_arg(&args[2])?;
                 let size = font_size_arg(args.get(3))?;
                 let (scale, rest) = match args.len() {
