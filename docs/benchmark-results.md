@@ -1,7 +1,8 @@
 # Benchmark results
 
 [benchmarking.md](benchmarking.md) says how to take these numbers. They date
-from 2026-11-05, except the handheld sets, from 2026-11-15 and 2026-11-16.
+from 2026-11-05, except the handheld sets, from 2026-11-15 and 2026-11-16,
+and the runtime commands set, from 2026-11-17.
 Each set says what it ran on and which commits it compares. Compare rows
 within one table, as frame counts differ between sets.
 
@@ -1486,6 +1487,131 @@ VSTR and game 3 run many entries that read little, where the check before
 each entry costs more than the reads save. `run_fast` shrinks from 46236
 to 41436 bytes with the feature, as the panics of the bounds checks go.
 
+### Runtime commands, from `7021a05`
+
+This set asks where real games spend the program's part of a frame
+outside the interpreter: the runtime's commands, the builtins that are not
+fused, and the runtime's own work each frame. It ran eleven census
+projects with their input scripts (`--bench --fixed --script`, start-up
+and the first menus left out) and TPERF's scenes alone, on an x86-64
+desktop loaded by other work. Times come from a scratch build that reads
+the time stamp counter around each host call, builtin call, PRINT, CALL
+SPRITE step, the sound, the animations and the VM; they move with the
+load, so only their split is used. Counts come from `perf stat -e
+instructions:u` on the `release` build: of whole runs, of loops of 3200
+and 6400 iterations as in the [calls](#calls-from-48f7cfc) set, and of
+`Machine::frame` alone over the measured frames, with perf's counters
+switched on and off around it through `--control`. aarch64 counts come
+from qemu's Cortex-A35 model on the `dist` build, as in the earlier sets.
+Every project's and scene's checksum is the same before and after, and
+TPERF's are `e8e5f6dc467db861` at 400 frames, `a6e1ed07824b1ad8` at
+3600 and `5d9bb17a39eefb70` at 10500.
+
+The program's part a frame at `7021a05`, x86-64 ms (CPU drawing is the
+GPU's in the front end and is left out); the runs had no sound bank, so
+the sound is the silent minimum (with one, TENSMA's sound takes 0.39 ms
+of its 0.61):
+
+| Project | Program | Interpreter | Commands and builtins | Sound, animations | Largest |
+|---|---|---|---|---|---|
+| S51_MEDAL4 | 4.15 | 2.65 | 1.47 | 0.02 | TOUCH OUT 0.74, BUTTON() 0.69 (25000 each a frame) |
+| SOLIDGUNNER_V | 1.90 | 0.39 | 1.41 | 0.10 | GCLS 1.19 (1 a frame), SPVAR 0.11 (1000) |
+| NEON_DRIFTWAY | 1.33 | 0.52 | 0.74 | 0.08 | ARYOP 0.16 (308), COPY 0.15 (171), GFILL 0.11, GLINE 0.09 (534), GCLS 0.08 |
+| ELE2020 | 0.74 | 0.10 | 0.56 | 0.08 | GCOPY 0.42 (56 tinted glyphs), SPHITSP 0.05, GFILL 0.05, CALL SPRITE 0.03 |
+| OTAKA_PAC | 0.59 | 0.39 | 0.15 | 0.06 | SPVAR 0.09 (961), CALL SPRITE 0.02 (732) |
+| MOH_MOHAN | 0.50 | 0.00 | 0.48 | 0.02 | COPY 0.25, LOADG 0.11, GSAVE 0.10 (rare and large) |
+| NK8_ROGUE2020 | 0.43 | 0.12 | 0.17 | 0.14 | GCOPY 0.13 (18) |
+| FINITI | 0.31 | 0.07 | 0.23 | 0.02 | GFILL 0.12, GTRI 0.08, ARYOP 0.01 |
+| MAMANATSU | 0.20 | 0.09 | 0.05 | 0.06 | CALL SPRITE 0.01, SPHITSP 0.01 |
+| RYUSI | 0.10 | 0.06 | 0.01 | 0.04 | GCIRCLE |
+| TENSMA | 0.07 | 0.04 | 0.01 | 0.02 | CLS |
+
+What was made:
+
+- `5d7aef8`: each page keeps a ground color, which every pixel outside a
+  set of tiles drawn on since holds, and a plain fill in that color writes
+  only those tiles. GCLS on a page with nothing drawn since went from
+  2.66 million x86-64 instructions to 1600; on one drawn on in a 400x240
+  corner it writes 28 of the 1024 tiles.
+- `181b8f9`, `44821d3`: `Host::call_into` hands the runtime the list the
+  VM keeps for a call's results, and the sprite, input, system and GRP
+  groups put their values there instead of in a new `Vec` a call.
+- `f00a654`: a tinted GCOPY of 256 pixels or more multiplies through
+  tables of the tint's products, with a loop for each blend, and
+  `#G_NORMAL2` passes clear pixels by untinted.
+- `a066657`: GLINE draws its pixels as it works them out, in i64, instead
+  of making a list and dividing i128s.
+- `541ddd8`: GRP commands read their coordinates into arrays, not lists.
+- `8912894`: SPVAR's and TVAR's maps hash with a multiply, not SipHash.
+- `2970908`, `6ba52d7`: `Command::group` sends the sprite, input, system,
+  GRP and text commands straight to their group's function.
+- `cd278c3`: COPY of numbers into an array of their type copies slices.
+- `e6921c5`: ARYOP reads real arrays other than its result in place and
+  runs a loop for each operation.
+
+Instructions an iteration:
+
+| Loop | x86-64 `7021a05` | x86-64 `6ba52d7` | Change | aarch64 `7021a05` | aarch64 `e6921c5` | Change |
+|---|---|---|---|---|---|---|
+| `R=BUTTON(0)` | 908 | 779 | -14% | 864 | 694 | -20% |
+| `TOUCH OUT S,T,R` | 1038 | 860 | -17% | 924 | 729 | -21% |
+| `SPOFS 0,I AND 255,R` | 1015 | 956 | -6% | 929 | 869 | -6% |
+| `R=SPUSED(I AND 63)` | 891 | 763 | -14% | 872 | 680 | -22% |
+| `SPHIDE I AND 63` | 753 | 694 | -8% | 655 | 627 | -4% |
+| `SPVAR I AND 63,1,R` | 1249 | 995 | -20% | 1112 | 905 | -19% |
+| `GPSET I AND 255,7,R` | 1137 | 918 | -19% | 1110 | 851 | -23% |
+| GFILL of 4x5 | 1694 | 1303 | -23% | 1588 | 1143 | -28% |
+| GTRI, small | 6700 | 5828 | -13% | 5249 | 4576 | -13% |
+| GLINE of up to 8 pixels | 2132 | 1663 | -22% | 2027 | 1438 | -29% |
+| GLINE of up to 255 pixels | 11073 | 9931 | -10% | 9939 | 7814 | -21% |
+| tinted 32x48 GCOPY, `#G_NORMAL2` | 70694 | 29975 | -58% | 54093 | 22113 | -59% |
+| GCLS | 2661103 | 1601 | -99.9% | 2132619 | 1025 | -99.9% |
+| `ARYOP 0,PX#,PX#,DX#`, 64 reals | 4483 | 3399 | -24% | 4313 | 3292 | -24% |
+| `COPY PY#,PX#`, 64 reals | 7669 | 1007 | -87% | 6651 | 996 | -85% |
+| `TPUT 0,I AND 15,3,"A"` | 1748 | 1742 | -0.3% | | | |
+| `LOCATE I AND 31,3` | 825 | 801 | -3% | | | |
+
+The program's part a frame (`Machine::frame`), x86-64 instructions in
+millions, `7021a05` against `e6921c5`:
+
+| Project | Before | After | Change |
+|---|---|---|---|
+| S51_MEDAL4 | 56.12 | 48.29 | -13.9% |
+| NEON_DRIFTWAY | 13.45 | 11.64 | -13.4% |
+| SOLIDGUNNER_V | 8.34 | 5.25 | -37.1% |
+| OTAKA_PAC | 6.06 | 5.70 | -5.8% |
+| MOH_MOHAN | 5.88 | 3.25 | -44.8% |
+| ELE2020 | 5.35 | 3.30 | -38.4% |
+| NK8_ROGUE2020 | 4.38 | 4.24 | -3.0% |
+| FINITI | 2.51 | 2.02 | -19.4% |
+| MAMANATSU | 1.95 | 1.87 | -4.3% |
+| RYUSI | 1.17 | 1.17 | -0.3% |
+| TENSMA | 0.69 | 0.68 | -0.7% |
+
+Of TPERF's scenes the same way: GLINE 15.00 to 13.28 (-11.5%), GCOPY 10.08
+to 9.33, GAME 8.57 to 8.02, GTRI 25.39 to 23.99, GFILL 6.64 to 6.29, SPROT
+4.42 to 4.19; the interpreter's scenes within 0.05%. TPUT rose 1.2% at
+`e6921c5`, which `6ba52d7` takes back. On aarch64, whole frames with the
+CPU drawing over frames 3 to 6, millions: GLINE 20.42 to 17.58 (-13.9%),
+GTRI 26.12 to 25.12, GCOPY 12.82 to 12.28, GAME 19.96 to 19.58, with the
+same checksums.
+
+Where the rest goes, for later work:
+
+- **Sound** with a bank is most of what an idle game's frame costs:
+  TENSMA's sound takes 0.39 of 0.61 ms on the desktop, about half of it
+  in decoding ADPCM one sample at a time (`bank::Reader::next_of`) and the
+  rest in the sampler's loop.
+- **The interpreter's side of a host call**, about 150 aarch64
+  instructions: the entry, `host_call`, the three calls through `dyn Host`
+  around it for READ's place and a retry, and cutting the arguments.
+- **GTRI** works out each edge's ends for each row with two divisions;
+  stepping along the rows would leave them out.
+- **CALL SPRITE** copies the callback's name for each sprite, and the VM
+  looks the name up for each.
+- **SPHITSP** and **GCIRCLE**, which make a list of points, at a few
+  hundred to a few thousand instructions a call.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
@@ -1564,6 +1690,11 @@ Each of these was measured and not kept.
   to 14%. On the device, `cortex-a35` with `-aes,-sha2,-crc` ran 1.4% slower
   by geometric mean, and `opt-level=2` 0.1% faster, within the noise of code
   layout. `dist` stays as it is (2026-11-16).
+- **ARYOP reading every array in place**, the result too, with a match
+  on each parameter's type for each element: `ARYOP 0,PX#,PX#,DX#` 4482
+  to 5575 x86-64 instructions an iteration, against 3399 for reading
+  only other real arrays in place and a loop for each operation
+  (2026-11-17).
 - **A fast path for the sprite-number check** before SPOFS, SPROT and
   SPSCALE: it saved about 5 aarch64 instructions a call, and SPROT's time
   on the device did not change (2026-11-16).
