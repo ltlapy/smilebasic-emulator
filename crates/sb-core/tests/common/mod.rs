@@ -3,7 +3,7 @@
 
 use sb_core::bytecode::Want;
 use sb_core::error::{Error, ErrorKind, Result};
-use sb_core::host::{Host, TextHost};
+use sb_core::host::{Exec, Host, TextHost};
 use sb_core::value::Value;
 
 /// The commands, by id:
@@ -16,11 +16,14 @@ use sb_core::value::Value;
 /// - `HOLD` waits a frame on every other call, as a confirmation does.
 /// - `BAD()` gives no value, which the VM refuses.
 /// - `NOTE$()` gives a new string each call.
+///
+/// `EXEC n` runs `slots[n]`.
 #[derive(Debug, Default)]
 pub struct CmdHost {
     pub text: TextHost,
     pub count: i32,
     pub held: bool,
+    pub slots: Vec<String>,
     retry: bool,
 }
 
@@ -82,6 +85,16 @@ impl Host for CmdHost {
                 ))])
             }
             _ => Err(wrong()),
+        }
+    }
+
+    fn exec_source(&mut self, file: Option<&[u16]>, slot: i32) -> Result<Exec> {
+        match (
+            file,
+            usize::try_from(slot).ok().and_then(|s| self.slots.get(s)),
+        ) {
+            (None, Some(source)) => Ok(Exec::Run(source.clone())),
+            _ => Err(ErrorKind::IllegalFunctionCall.into()),
         }
     }
 

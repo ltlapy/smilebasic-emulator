@@ -5,6 +5,10 @@
 //! what it cannot do as well as what it can. DEFs of every form and a host's
 //! commands are called from them, in expressions and chains, so that each
 //! call's fast path meets errors in its callee and slices that end inside it.
+//! Each program first runs slot 1 with EXEC, whose COMMON DEFs it calls, so
+//! that the view of the running DEF's variables follows calls into another
+//! slot and back; DEFs whose variables have the globals' names, and deep
+//! recursion, move it too.
 
 mod common;
 
@@ -71,8 +75,28 @@ fn element(r: &mut Rng, depth: u32) -> String {
     }
 }
 
-/// Function DEFs [`DEFS_SOURCE`] has, of one argument.
-const DEFS: &[&str] = &["SQ", "LC", "TS", "OU", "GS", "GR", "GC"];
+/// Function DEFs [`DEFS_SOURCE`] and [`SLOT1`] have, of one argument.
+const DEFS: &[&str] = &["SQ", "LC", "TS", "OU", "GS", "GR", "GC", "SH", "CA"];
+
+/// Slot 1, which each program runs with EXEC first: COMMON DEFs whose
+/// variables have the names of slot 0's globals, and a global of its own.
+const SLOT1: &str = "\
+VAR A=7,Q
+A=A+1
+END
+COMMON DEF CA(V)
+ VAR A=V*2,T,S$=\"C\"
+ T=A+Q:Q=Q+1
+ RETURN T+A
+END
+COMMON DEF CB V OUT W
+ W=V*3+A
+END
+COMMON DEF CR(N)
+ IF N<1 THEN RETURN A
+ RETURN CR(N-1)+N
+END
+";
 
 /// DEFs the programs call: functions, commands, OUT variables, a string
 /// local, a recursive one, a host command inside, GOSUBs inside and returns
@@ -136,6 +160,16 @@ DEF RC(N)
  IF N<1 THEN RETURN 1
  RETURN RC(N-1)*2+N
 END
+DEF RD(N)
+ VAR T=N*2,U$=STR$(N)
+ IF N<1 THEN RETURN T
+ RETURN RD(N-1)+T+LEN(U$)
+END
+DEF SH(V)
+ VAR A=V*2,B=A+1,K%=3
+ A=A+B:B=A*K%
+ RETURN A+B+C
+END
 ";
 
 fn leaf(r: &mut Rng, depth: u32) -> String {
@@ -147,7 +181,11 @@ fn leaf(r: &mut Rng, depth: u32) -> String {
         9 if depth < 3 => format!("MAX({},{})", expr(r, depth + 1), leaf(r, depth + 1)),
         10 if depth < 3 => format!("{}({})", r.pick(DEFS), expr(r, depth + 1)),
         11 => "GET()".to_string(),
-        12 if depth < 2 => format!("RC({})", r.pick(&["0", "1", "2", "I", "A AND 3"])),
+        12 if depth < 2 => match r.below(3) {
+            0 => format!("RD({})", r.pick(&["0", "3", "40", "I", "A AND 63"])),
+            1 => format!("CR({})", r.pick(&["0", "5", "I", "B AND 7"])),
+            _ => format!("RC({})", r.pick(&["0", "1", "2", "I", "A AND 3"])),
+        },
         13 if depth < 3 => format!("LEN(STR$({}))", expr(r, depth + 1)),
         14 => "INSTR(S$,\"B\")".to_string(),
         15 if depth < 3 => format!(
@@ -184,7 +222,15 @@ fn target(r: &mut Rng) -> String {
 }
 
 fn statement(r: &mut Rng) -> String {
-    match r.below(20) {
+    match r.below(22) {
+        // A variable takes another kind of value: a string, an array, a
+        // real or an integer, whatever its suffix.
+        19 => format!(
+            "{}={}",
+            r.pick(&["A", "B", "C", "X#", "K%"]),
+            r.pick(&["S$", "\"Z\"", "M", "1.5", "7", "-2147483648", "N%"])
+        ),
+        20 => format!("CB {} OUT {}", expr(r, 1), r.pick(&["A", "B", "C", "X#"])),
         0..=5 => format!("{}={}", target(r), expr(r, 0)),
         6 => format!(
             "{0}={0}{1}{2}",
@@ -226,7 +272,7 @@ fn statement(r: &mut Rng) -> String {
 }
 
 fn setup(r: &mut Rng) -> String {
-    let mut s = String::from("VAR A,B,C,X#,K%,S$,J\nDIM M[4],N%[4],R#[4,2],T$[4]\n");
+    let mut s = String::from("VAR A,B,C,X#,K%,S$,J\nDIM M[4],N%[4],R#[4,2],T$[4]\nEXEC 1\n");
     for v in ["A", "B", "C", "X#", "K%"] {
         s += &format!("{v}={}:", r.pick(NUMBERS));
     }
@@ -264,7 +310,11 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
         program.fast.clear();
     }
     let mut host = CmdHost::default();
+    host.slots = vec![String::new(), SLOT1.to_string()];
     let mut vm = Vm::new(program);
+    // Slot 1's program is fused when EXEC compiles it: a run that reports
+    // its work goes one instruction at a time everywhere.
+    vm.report_work(!fused);
     let mut seen = Vec::new();
     for _ in 0..100_000 {
         let result = vm.run(&mut host, budget);
@@ -293,6 +343,8 @@ fn run(source: &str, budget: u32, fused: bool) -> Option<Vec<String>> {
 fn random_programs_run_the_same_fused_or_not() {
     let mut r = Rng(0x5EED_1234_ABCD_0001);
     let (mut compiled, mut chains, mut calls, mut hosts, mut builtins) = (0, 0, 0, 0, 0);
+    // Programs that run to their end, past the EXEC and every call.
+    let mut ended = 0;
     for _ in 0..1500 {
         let source = program(&mut r);
         let host = CmdHost::default();
@@ -315,11 +367,14 @@ fn random_programs_run_the_same_fused_or_not() {
             .filter(|f| matches!(f.op, FastOp::Call { .. }))
             .count();
         for budget in [1, 2, 5, 13, 1_000_000] {
+            let fused = run(&source, budget, true);
             assert_eq!(
-                run(&source, budget, true),
+                fused,
                 run(&source, budget, false),
                 "{source}\nin slices of {budget}"
             );
+            let end = fused.as_ref().map(|seen| &seen[seen.len() - 2]);
+            ended += usize::from(budget == 1 && end.is_some_and(|e| e.starts_with("Ended")));
         }
     }
     // The generator must make programs that compile, that chains take, and
@@ -329,4 +384,5 @@ fn random_programs_run_the_same_fused_or_not() {
     assert!(calls > 4000, "{calls} DEF calls");
     assert!(hosts > 3000, "{hosts} host calls");
     assert!(builtins > 1000, "{builtins} builtin calls");
+    assert!(ended > 500, "{ended} ended");
 }
