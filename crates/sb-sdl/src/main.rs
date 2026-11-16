@@ -218,8 +218,13 @@ impl FrameGuard {
 /// What Help > About says.
 fn about_lines(drawn_by: &str) -> Vec<String> {
     let version = sb_runtime::VERSION;
+    // A bug report then shows a build with options, such as unchecked-vars.
+    let options = match sb_runtime::BUILD_OPTIONS {
+        "" => String::new(),
+        options => format!(" {options}"),
+    };
     vec![
-        format!("SmileBASIC emulator {version}"),
+        format!("SmileBASIC emulator {version}{options}"),
         "An emulator for SmileBASIC 4 programs.".to_string(),
         String::new(),
         "MIT OR Apache-2.0.".to_string(),

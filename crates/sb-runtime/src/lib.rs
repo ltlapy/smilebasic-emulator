@@ -65,3 +65,7 @@ pub use system::PerfStats;
 /// the build knows it, as in `0.1.0+4e42491`. `SB_COMMIT` at build time
 /// sets the commit, or leaves it out when empty.
 pub const VERSION: &str = env!("SB_VERSION");
+
+/// [`sb_core::BUILD_OPTIONS`]: empty in a default build, `unchecked-vars`
+/// in one with that feature.
+pub const BUILD_OPTIONS: &str = sb_core::BUILD_OPTIONS;
