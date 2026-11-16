@@ -17,6 +17,7 @@ use crate::lexer::Suffix;
 use crate::memory;
 use crate::ops;
 use crate::value::{Array, ArrayData, ElemType, Num, Str, Value, format_number, new_str};
+use crate::vars::Vars;
 use crate::watch::Watch;
 
 /// The stack GOSUBs, DEF calls and RESTORE "PUSH" share, in half slots: 259072
@@ -1603,7 +1604,13 @@ impl Vm {
         // The running DEF's stack taken, GOSUBs and variables, which
         // GOSUB and RETURN look at.
         let (mut calls, mut gosub_base, mut base) = innermost(frames, locals);
-        let mut vars: Vars = [&mut globals[..], &mut locals[base..]];
+        // The places fused entries name, which `fuse::check` bounded. Only
+        // the `unchecked-vars` view tests these two; see `vars`.
+        let places = crate::fuse::global_places(program);
+        if !Vars::fits(globals, places) {
+            return false;
+        }
+        let mut vars = Vars::new(&mut globals[..], &mut locals[base..], places);
         let mut pc = *at;
         let mut left = stop.saturating_sub(*executed);
         // Whether it stopped before a builtin's or host's call.
@@ -1611,6 +1618,9 @@ impl Vm {
         while let Some(fast) = program.fast.get(pc) {
             let len = u64::from(fast.len);
             if len > left {
+                break;
+            }
+            if !vars.covers(fast) {
                 break;
             }
             let size = usize::from(fast.len);
@@ -1782,7 +1792,7 @@ impl Vm {
                     cut(locals, frame.base);
                     next = frame.return_pc;
                     (calls, gosub_base, base) = innermost(frames, locals);
-                    vars = [&mut globals[..], &mut locals[base..]];
+                    vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                 }
                 FastOp::Return => {
                     // Back into another slot, or with RESTORE "PUSH" places
@@ -1826,7 +1836,7 @@ impl Vm {
                         stack_to: calls + cost,
                     });
                     (calls, gosub_base) = (calls + cost, gosubs.len());
-                    vars = [&mut globals[..], &mut locals[base..]];
+                    vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                     next = info.entry as usize;
                 }
                 FastOp::CallArgs {
@@ -1865,7 +1875,7 @@ impl Vm {
                         stack_to: calls + cost,
                     });
                     (calls, gosub_base) = (calls + cost, gosubs.len());
-                    vars = [&mut globals[..], &mut locals[base..]];
+                    vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                     next = info.entry as usize;
                 }
                 FastOp::ReturnValue => {
@@ -1886,7 +1896,7 @@ impl Vm {
                     }
                     next = frame.return_pc;
                     (calls, gosub_base, base) = innermost(frames, locals);
-                    vars = [&mut globals[..], &mut locals[base..]];
+                    vars = Vars::new(&mut globals[..], &mut locals[base..], places);
                 }
                 FastOp::Host { .. } | FastOp::Call { .. } => {
                     call = true;
@@ -2209,8 +2219,10 @@ impl Vm {
                                 let result = match argc {
                                     1 => f(std::slice::from_ref(get(&vars, args))),
                                     n => {
-                                        let at = args.index();
-                                        f(&vars[args.table()][at..at + usize::from(n)])
+                                        let Some(args) = vars.run(args, usize::from(n)) else {
+                                            fail!();
+                                        };
+                                        f(args)
                                     }
                                 };
                                 let n = match result {
@@ -3972,9 +3984,6 @@ fn move_values(from: &mut [Value], to: &mut Vec<Value>) {
     }));
 }
 
-/// The variables [`Vm::run_fast`] reads and writes, by [`Var::table`].
-type Vars<'a> = [&'a mut [Value]; 2];
-
 /// The stack in use with `cost` more, from the stack the DEF calls take and
 /// the GOSUBs and RESTORE "PUSH" places held.
 #[inline(always)]
@@ -3991,12 +4000,12 @@ fn gosub_fits(calls: usize, gosubs: usize, kept: usize) -> bool {
 
 #[inline(always)]
 fn get<'a>(vars: &'a Vars, var: Var) -> &'a Value {
-    &vars[var.table()][var.index()]
+    vars.get(var)
 }
 
 #[inline(always)]
 fn at_var<'a>(vars: &'a mut Vars, var: Var) -> &'a mut Value {
-    &mut vars[var.table()][var.index()]
+    vars.at(var)
 }
 
 /// Pushes a number. Pushing a whole [`Value`] made just now would make it first

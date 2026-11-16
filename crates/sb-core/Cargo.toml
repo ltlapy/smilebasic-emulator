@@ -7,3 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 stacker = "0.1.25"
+
+[features]
+# Reads and writes the fused code's variables without a bounds check on
+# each. Off by default: see docs/security.md before turning it on.
+unchecked-vars = []

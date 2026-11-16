@@ -6,6 +6,7 @@ use sb_core::fuse::FastOp;
 use sb_core::host::TextHost;
 use sb_core::vm::{Status, Step, Vm};
 use sb_core::watch::Watch;
+use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
 fn compiled(source: &str, fused: bool) -> Compiled {
@@ -1334,6 +1335,48 @@ DEF SMALL
 END
 BIG:SMALL:BIG:SMALL
 ";
+
+/// An entry that names more of a DEF's variables than the running DEF has,
+/// wherever it came from: here one of BIG's entries, put in SMALL's place.
+/// With `unchecked-vars`, which reads places without checking each, the VM
+/// must leave it to `step`, and the program prints what it prints unfused;
+/// in a debug build, a read past the DEF's variables would fail its
+/// assertion. Without the feature, the read's own bounds check stops it.
+#[test]
+fn entries_naming_more_variables_than_the_def_has_run_from_code() {
+    let mut program = compiled(BIG_AND_SMALL, true);
+    let adds: Vec<usize> = (0..program.fast.len())
+        .filter(|&i| matches!(program.fast[i].op, FastOp::AddStoreInt(..)))
+        .collect();
+    assert_eq!(adds.len(), 2, "{:?}", program.fast);
+    let (big, small) = (adds[0], adds[1]);
+    assert_eq!((program.fast[big].need, program.fast[small].need), (10, 1));
+    program.fast[small].op = program.fast[big].op;
+    // A need set by hand does not count: the VM works it out again.
+    program.fast[small].need = 0;
+    let expected = run(BIG_AND_SMALL, 1_000_000, false);
+    assert_eq!(expected.1, "1\n1\n1\n1\n");
+    let mut stopped = 0;
+    for budget in [1, 3, 1_000_000] {
+        let tampered = program.clone();
+        if cfg!(feature = "unchecked-vars") {
+            assert_eq!(run_program(tampered, budget).1, expected.1);
+            continue;
+        }
+        let run = std::panic::catch_unwind(AssertUnwindSafe(|| run_program(tampered, budget)));
+        match run {
+            Ok(run) => assert_eq!(run.1, expected.1),
+            Err(panic) => {
+                let text = (panic.downcast_ref::<String>().cloned())
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                assert!(text.contains("index out of bounds"), "{text}");
+                stopped += 1;
+            }
+        }
+    }
+    assert!(cfg!(feature = "unchecked-vars") || stopped > 0);
+}
 
 /// Each entry's need is the locals it names, by a count of its own.
 #[test]

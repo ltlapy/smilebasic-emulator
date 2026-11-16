@@ -17,12 +17,22 @@ pub mod memory;
 pub mod ops;
 pub mod parser;
 pub mod value;
+mod vars;
 pub mod vm;
 pub mod watch;
 pub mod wtf8;
 
 use error::{Error, ErrorKind};
 use parser::ParseErrorKind;
+
+/// The build's options that change how the VM runs, for version lines so
+/// that a report shows which build it came from: empty, or
+/// `unchecked-vars` with that feature on.
+pub const BUILD_OPTIONS: &str = if cfg!(feature = "unchecked-vars") {
+    "unchecked-vars"
+} else {
+    ""
+};
 
 /// Parses and compiles a program.
 pub fn compile(source: &str, host: &dyn host::Host) -> error::Result<bytecode::Compiled> {
