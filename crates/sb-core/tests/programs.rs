@@ -1486,6 +1486,18 @@ fn copying() {
         output("DIM D[2]:COPY D,1,\"@N\",3:READ X:?LEN(D);D[1];D[3];X\n@N:DATA 5,6,7,8"),
         "4578\n"
     );
+    // An array into itself, either way, and into a longer one; integers,
+    // reals, and one type into the other.
+    assert_eq!(
+        output(
+            "DIM A%[]=[1,2,3,4,5]:COPY A%,1,A%,0,4:?A%[0];A%[1];A%[2];A%[3];A%[4]\n\
+             COPY A%,0,A%,2,3:?A%[0];A%[1];A%[2];A%[3];A%[4]\n\
+             COPY A%,4,A%,0,3:?LEN(A%);A%[4];A%[5];A%[6]\n\
+             DIM R#[]=[1.5,2.5]:DIM Q#[1]:COPY Q#,1,R#:?LEN(Q#);Q#[0];Q#[1];Q#[2]\n\
+             COPY A%,R#:?A%[0];A%[1]:COPY R#,A%,2:?R#[0];R#[1]"
+        ),
+        "11234\n23434\n7234\n301.52.5\n12\n12\n"
+    );
 }
 
 /// TEST72: a Syntax error in an assignment's value is placed at its `=`;

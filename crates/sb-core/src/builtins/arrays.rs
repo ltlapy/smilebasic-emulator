@@ -182,11 +182,43 @@ pub(super) fn copy(args: &[Value], _outs: usize, data: &mut Data) -> Result<Vec<
         (Value::Array(dest), Value::Array(source)) => {
             let len = source.borrow().len();
             let (offset, n) = copy_span(len, offset, n, false)?;
-            {
+            let same = {
                 let dest = dest.borrow();
                 if dest.dims.len() == 1 && dest.len() < dest_offset + n {
                     make_room(&dest, dest_offset + n)?;
                 }
+                let elem = dest.elem_type();
+                elem == source.borrow().elem_type() && elem != ElemType::Str
+            };
+            // Numbers into an array of their type go across as they are,
+            // rather than as a value each: what the elements are set to
+            // is the same, and an array copied into itself is read before
+            // it is written, as `copy_within` does.
+            if same {
+                let to = dest_offset..dest_offset + n;
+                if std::rc::Rc::ptr_eq(dest, source) {
+                    let mut dest = dest.borrow_mut();
+                    grow(&mut dest, to.end)?;
+                    match &mut dest.data {
+                        ArrayData::Int(v) => v.copy_within(offset..offset + n, to.start),
+                        ArrayData::Real(v) => v.copy_within(offset..offset + n, to.start),
+                        ArrayData::Str(_) => unreachable!("numbers only"),
+                    }
+                } else {
+                    let source = source.borrow();
+                    let mut dest = dest.borrow_mut();
+                    grow(&mut dest, to.end)?;
+                    match (&mut dest.data, &source.data) {
+                        (ArrayData::Int(d), ArrayData::Int(s)) => {
+                            d[to].copy_from_slice(&s[offset..offset + n])
+                        }
+                        (ArrayData::Real(d), ArrayData::Real(s)) => {
+                            d[to].copy_from_slice(&s[offset..offset + n])
+                        }
+                        _ => unreachable!("numbers of one type"),
+                    }
+                }
+                return Ok(vec![]);
             }
             let values: Vec<Value> = {
                 let source = source.borrow();
