@@ -1712,6 +1712,54 @@ mod tests {
         assert_eq!(g.pixel(1, 5, 5), 0);
     }
 
+    /// Drawing up to and past the right and bottom edges never writes what
+    /// lies between a page's rows, with or without a GARRAY array.
+    #[test]
+    fn drawing_stays_within_rows() {
+        let mut g = Graphics::default();
+        g.array(1);
+        let last = GRP_SIZE - 1;
+        let pixels = vec![RED; 40 * 40];
+        for page in [0, 1] {
+            g.target = page;
+            for blend in [Blend::Normal, Blend::Alpha] {
+                g.fill(last - 5, 0, last + 5, last + 5, RED, blend);
+                g.line(last - 9, 3, last + 9, 9, RED, blend);
+                g.circle((last, 50, 20), None, RED, blend);
+                g.triangle(
+                    [(last - 30, 100), (last + 30, 110), (last, 140)],
+                    RED,
+                    blend,
+                );
+                g.load_rect((last - 20, last - 20, 40, 40), &pixels, None, None, blend);
+                g.copy(
+                    1 - page,
+                    (0, 0, 63, 63),
+                    (last - 31, last - 31),
+                    None,
+                    blend,
+                );
+            }
+            g.copy(
+                page,
+                (last - 63, 0, last, 63),
+                (last - 10, 200),
+                None,
+                Blend::Normal,
+            );
+            g.update(page, Clip::PAGE);
+        }
+        for page in [0, 1] {
+            let raw = g.page(page).raw();
+            for y in 0..GRP_SIZE as usize {
+                let between =
+                    &raw[crate::page::at(GRP_SIZE as usize, y)..crate::page::at(0, y + 1)];
+                assert!(between.iter().all(|&p| p == 0), "page {page} after row {y}");
+            }
+            assert_ne!(g.pixel(page, last, last), 0, "page {page}");
+        }
+    }
+
     /// Runs `draw` and checks that every pixel it changed, on any page, is in
     /// a tile marked as changed.
     fn check_marks(g: &mut Graphics, name: &str, draw: impl FnOnce(&mut Graphics)) {

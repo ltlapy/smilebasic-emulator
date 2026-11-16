@@ -15,7 +15,15 @@ use crate::graphics::GRP_SIZE;
 const SIDE: usize = GRP_SIZE as usize;
 
 /// Pixels from the start of one row of a page to the start of the next.
-pub const STRIDE: usize = SIDE;
+///
+/// Rows 2048 pixels apart lie 8 KiB apart, one way of a 32 KiB 4-way L1
+/// data cache such as the Cortex-A35's, so the same column of successive
+/// rows falls in one cache set. 64 pixels more, 256 bytes, spreads the rows
+/// over the sets: on an RK3326, GCOPY's scene took 52% less time and
+/// GFILL's 23% less, for 3% more memory a page. See
+/// docs/benchmark-results.md, "GRP rows padded".
+pub const STRIDE: usize = SIDE + 64;
+const _: () = assert!(STRIDE >= SIDE);
 
 /// The pixels a page that is not blank holds, rows and what lies between
 /// them.
