@@ -494,11 +494,11 @@ Device, ms of program time a frame:
 | GAME | 8.47 | 7.95 | 8.52 | 8.53 | +0.5% | +7.2% |
 
 VINT, the one scene the prototype covers, takes 1.80 ms instead of 7.99,
-4.4 times as fast, and 3.9 times as fast as `unchecked-vars`, for 3.2
-times fewer aarch64 instructions: native code also runs more instructions a
-cycle on the in-order core (0.49 ms a million against 0.98 for the
-default build). The scene's count includes the CPU drawing, about 0.4
-million aarch64 instructions, which native code does not touch. The other scenes move by 5% or less
+4.4 times as fast, and 3.9 times as fast as `unchecked-vars`. Its
+program runs 3.6 times fewer aarch64 instructions (7.7 against 2.2 million
+a frame, leaving out the CPU drawing's 0.4 million in the counts above),
+and native code runs about a fifth more of them a cycle on the in-order
+core: 0.83 ms a million against 1.03. The other scenes move by 5% or less
 against the default build, within the noise of code layout; their counts
 move by +0.2% (GAME) to +4.3% (VDEF) on aarch64 and +0.5% to +5.5% on
 x86-64, the same with native code off: what the feature costs where it
