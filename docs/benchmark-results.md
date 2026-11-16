@@ -1229,8 +1229,8 @@ the kinds it uses.
 
 The handheld ran `d081e7a`, `500b8ca` (this set as merged) and `0f41de0`
 in the same rounds as the [calls](#calls-from-48f7cfc) set's builds, with
-the same method. `0f41de0`, on branch `vars-unchecked` and not in `main`,
-reads the fused code's places without a bounds check on each; its
+the same method. `0f41de0`, the code that the `unchecked-vars` feature
+builds, reads the fused code's places without a bounds check on each; its
 `run_fast` is 41436 bytes. Times are the best of three runs, the median of
 five for GFILL, GCOPY, GLOAD and GUPLOAD. The instruction columns are the
 change in aarch64 instructions a frame, in millions: for VINT to VDEF,
