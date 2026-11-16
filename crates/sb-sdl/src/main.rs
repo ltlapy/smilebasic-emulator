@@ -653,11 +653,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
                 return Err(format!("Drawing keeps failing: {why}").into());
             }
             // The editor's window opens again when it is next wanted.
-            if let Some(gfx) = editor_gfx.take() {
-                if machine.rt.settings.editor_window_keep_place && editor_shown {
-                    let place = window_place(gfx.canvas.borrow().window());
-                    machine.rt.settings.editor_window_place = Some(place);
-                }
+            if let Some(gfx) = editor_gfx.take()
+                && machine.rt.settings.editor_window_keep_place
+                && editor_shown
+            {
+                let place = window_place(gfx.canvas.borrow().window());
+                machine.rt.settings.editor_window_place = Some(place);
             }
             (editor_shown, editor_focused, pointer_in_editor) = (false, false, false);
             editor_presents = None;
@@ -2826,11 +2827,12 @@ fn frontend(machine: &mut Machine, recovery: &mut Recovery, start: Start) -> Res
         if step_waits && editor_shown && editor_focused && !keys_lent {
             canvas.window_mut().raise();
             keys_lent = true;
-        } else if !step_waits && std::mem::take(&mut keys_lent) && canvas.window().has_input_focus()
+        } else if !step_waits
+            && std::mem::take(&mut keys_lent)
+            && canvas.window().has_input_focus()
+            && let Some(gfx) = editor_gfx.get().filter(|_| editor_shown)
         {
-            if let Some(gfx) = editor_gfx.get().filter(|_| editor_shown) {
-                gfx.canvas.borrow_mut().window_mut().raise();
-            }
+            gfx.canvas.borrow_mut().window_mut().raise();
         }
         // A pointer the program moved with MOUSE stays there until the
         // real one moves, and the real one goes there too, unless Settings

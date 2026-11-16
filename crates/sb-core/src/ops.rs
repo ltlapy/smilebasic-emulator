@@ -21,10 +21,10 @@ fn arith(
     int: fn(i32, i32) -> Option<i32>,
     real: fn(f64, f64) -> f64,
 ) -> Result<Value> {
-    if let (Value::Int(a), Value::Int(b)) = (lhs, rhs) {
-        if let Some(n) = int(*a, *b) {
-            return Ok(Value::Int(n));
-        }
+    if let (Value::Int(a), Value::Int(b)) = (lhs, rhs)
+        && let Some(n) = int(*a, *b)
+    {
+        return Ok(Value::Int(n));
     }
     Ok(Value::Real(real(lhs.to_real()?, rhs.to_real()?)))
 }

@@ -26,3 +26,6 @@ miniz_oxide = "0.9.1"
 # See sb-core.
 unchecked-vars = ["sb-core/unchecked-vars"]
 jit = ["sb-core/jit"]
+
+[lints]
+workspace = true

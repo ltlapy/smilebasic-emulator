@@ -6,7 +6,13 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-rust-version = "1.87"
+rust-version = "1.97"
+
+# From Rust 1.88 on, Clippy asks for `as_chunks` where `chunks_exact` takes
+# a constant size. The pixel, font and sound loops it names would change
+# types; that change waits for its own measurements.
+[workspace.lints.clippy]
+chunks_exact_to_as_chunks = "allow"
 
 [workspace.dependencies]
 sb-core = { path = "crates/sb-core" }

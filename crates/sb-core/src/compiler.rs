@@ -62,11 +62,11 @@ pub fn compile(
     // The first error in top-level code, and the statement it is in.
     let mut failed = None;
     for (i, stmt) in program.stmts.iter().enumerate() {
-        if !matches!(stmt.kind, StmtKind::Def(_)) {
-            if let Err(e) = c.stmt(stmt) {
-                failed = Some((i, e));
-                break;
-            }
+        if !matches!(stmt.kind, StmtKind::Def(_))
+            && let Err(e) = c.stmt(stmt)
+        {
+            failed = Some((i, e));
+            break;
         }
     }
     match failed {

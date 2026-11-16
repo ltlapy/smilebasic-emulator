@@ -2414,12 +2414,10 @@ impl SceneBackend for Gpu {
                     first,
                 };
             }
-            if dump_now {
-                if let Some(path) = &self.dump {
-                    let gpu: Vec<u32> = (0..h).flat_map(|y| row(y).iter().copied()).collect();
-                    save_pam(&format!("{path}-gpu.pam"), w, h, &gpu);
-                    save_pam(&format!("{path}-cpu.pam"), w, h, cpu.pixels());
-                }
+            if dump_now && let Some(path) = &self.dump {
+                let gpu: Vec<u32> = (0..h).flat_map(|y| row(y).iter().copied()).collect();
+                save_pam(&format!("{path}-gpu.pam"), w, h, &gpu);
+                save_pam(&format!("{path}-cpu.pam"), w, h, cpu.pixels());
             }
             self.compared.dumped = dumped;
             SDL_UnlockSurface(shot);

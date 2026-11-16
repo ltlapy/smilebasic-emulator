@@ -17,3 +17,6 @@ sb-runtime.workspace = true
 # See sb-core.
 unchecked-vars = ["sb-runtime/unchecked-vars"]
 jit = ["sb-runtime/jit"]
+
+[lints]
+workspace = true

@@ -16,3 +16,6 @@ unchecked-vars = []
 # Runs the fused code's hot loops as native code. Off by default: see
 # docs/jit-design.md and docs/security.md before turning it on.
 jit = ["dep:sb-jit"]
+
+[lints]
+workspace = true

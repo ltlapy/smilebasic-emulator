@@ -20,3 +20,6 @@ sdl3.workspace = true
 # See sb-core.
 unchecked-vars = ["sb-core/unchecked-vars", "sb-runtime/unchecked-vars"]
 jit = ["sb-core/jit", "sb-runtime/jit"]
+
+[lints]
+workspace = true

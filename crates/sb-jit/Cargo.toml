@@ -11,3 +11,6 @@ rust-version.workspace = true
 cranelift-codegen = { version = "0.124", default-features = false, features = ["std", "host-arch"] }
 cranelift-frontend = { version = "0.124", default-features = false, features = ["std"] }
 target-lexicon = { version = "0.13", default-features = false }
+
+[lints]
+workspace = true

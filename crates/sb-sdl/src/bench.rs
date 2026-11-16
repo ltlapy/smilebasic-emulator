@@ -307,10 +307,10 @@ impl Bench {
                 machine.show_panel(true);
             }
         }
-        if self.frame == set_up + SETTLE / 2 {
-            if let Some(text) = &self.typed {
-                machine.type_text(text);
-            }
+        if self.frame == set_up + SETTLE / 2
+            && let Some(text) = &self.typed
+        {
+            machine.type_text(text);
         }
         if self.frame >= set_up + self.settle && self.last.is_some() {
             let uploaded = UPLOADED.load(Ordering::Relaxed);

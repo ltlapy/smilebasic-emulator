@@ -8,3 +8,6 @@ rust-version.workspace = true
 [dependencies]
 sb-core.workspace = true
 sb-runtime.workspace = true
+
+[lints]
+workspace = true

@@ -1457,17 +1457,16 @@ impl Vm {
                     .get(self.pc)
                     // `!=` would call FastOp's PartialEq on every step.
                     .is_some_and(|f| !matches!(f.op, FastOp::Slow))
+                && let Some((pc, outcome)) = self.run_fast(&program, stop, host)
             {
-                if let Some((pc, outcome)) = self.run_fast(&program, stop, host) {
-                    if let Some(end) = self.settle(pc, outcome, host) {
-                        return end;
-                    }
-                    // A callback may have gone on in another slot.
-                    if !Rc::ptr_eq(&program, &self.program) {
-                        program = Rc::clone(&self.program);
-                    }
-                    continue;
+                if let Some(end) = self.settle(pc, outcome, host) {
+                    return end;
                 }
+                // A callback may have gone on in another slot.
+                if !Rc::ptr_eq(&program, &self.program) {
+                    program = Rc::clone(&self.program);
+                }
+                continue;
             }
             if self.executed >= stop {
                 break;
