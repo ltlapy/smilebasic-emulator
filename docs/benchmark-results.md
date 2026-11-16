@@ -1612,6 +1612,199 @@ Where the rest goes, for later work:
 - **SPHITSP** and **GCIRCLE**, which make a list of points, at a few
   hundred to a few thousand instructions a call.
 
+### Calls by name and leaf functions, from `7021a05`
+
+This set counts what a DEF call costs where games make most of them: in
+leaf functions of one expression, called hundreds of times a frame outside
+any loop, and in callbacks of CALL SPRITE. Counts are taken as in the
+[calls](#calls-from-48f7cfc) set: x86-64 with `perf stat -e instructions:u`
+on the `release` build, aarch64 with qemu's Cortex-A35 model on the `dist`
+build under `setarch -R`, from whole blocks. A loop's count is the
+difference of programs that run it 3200 and 6400 times (recursion 800 and
+1600, CALL SPRITE 20 and 40, the game loop 50 and 100), over the
+difference. Every checksum is the same before and after: TPERF's
+`e8e5f6dc467db861` at 400 frames and `a6e1ed07824b1ad8` at 3600 on both
+machines, each scene's, and each game's on x86-64.
+
+The loops are those of the [calls](#calls-from-48f7cfc) and
+[variables](#variables-and-constants-from-d081e7a) sets, each in a DEF of
+its own locals, and these:
+
+| Loop | Statement |
+|---|---|
+| LINTP | `R=LINTP(I,R,3)`, `DEF LINTP(X1,X0,T): RETURN (X1-X0)*T+X0` |
+| LINTP, constants | `X#=LINTP(X#,100,0.25)` |
+| Five arguments | `R=LIN5(0,100,I AND 63,0,64)`, `RETURN A+(B-A)*(T-T0)/(T1-T0)` |
+| Two locals | `R=L2(I,R AND 255)`, a DEF of two `VAR`s and three statements |
+| Globals | `R=GG(I)`, `RETURN G+H+K` |
+| One OUT as a function | `R=WG(I)`, `DEF WG NAME OUT N: N=G+NAME` |
+| CALL SPRITE | 256 sprites with `SPFUNC K,"CB"`, `DEF CB: G=G+CALLIDX()` |
+
+Where the aarch64 instructions of an iteration of the LINTP loop went at
+`7021a05`, from qemu's trace, by fused entry (choosing each included):
+
+| Part | Instructions |
+|---|---|
+| The call's entry: the stack's room, reading 3 arguments, the variables, the frame | 208 |
+| The body's chain: 3 operators and pushing the value | 265 |
+| RETURN's entry: the frame, the variables, the value on the stack | 82 |
+| Storing the value in `R` | 55 |
+| The FOR and its jump | 140 |
+| An iteration | 750 |
+
+So the call, its return and the store took 345, more than the body. A
+callback of CALL SPRITE, `DEF CB: G=G+CALLIDX()` on 256 sprites, by the
+function each instruction is in (inlined ones in the function they are
+inlined into), aarch64 instructions a callback from qemu's counts of each
+instruction:
+
+| Part | `7021a05` | `b799de0` |
+|---|---|---|
+| `malloc`, `free`, `memcmp` | 728 | 165 |
+| The runtime's `next_callback` and the VM's | 267 | 360 |
+| The name: `slot_and_name`, the `String`, its hash | 458 | 0 |
+| `run_callback`, `enter_def_on_stack` / `enter_found` | 308 | 156 |
+| `step` and `run`, for the callback step, CALLIDX() and the call | 249 | 0 |
+| The fused loop: the body, its RETURN, the jump back | 317 | 327 |
+| Other | 198 | 17 |
+| A callback | 2525 | 1025 |
+
+What was made:
+
+- `263fac8`: CALL and the callbacks keep the last 8 names that named a DEF
+  of the running slot, with a weak reference to the slot's program, and go
+  straight to the DEF when text, slot and program match. A call found
+  that way that fits its DEF starts as the fused code starts one.
+- `a1d2a12`: a string constant, CALLIDX() and the step to the next
+  callback are fused entries. The step stops the fused loop, as a host's
+  call does, and `run_fast` makes it with `step`'s code.
+- `b799de0`: a chain takes in the call of a function whose body is one
+  RETURN of numbers worked out from its arguments, the slot's globals and
+  constants. The body's steps read the arguments where they are. Nothing
+  of the call can be seen but its value: before its statement's last step
+  a chain writes only its hidden places; a step that cannot do its work
+  leaves the statement to `code`, which makes the call and fails there,
+  on the body's line; the chain counts the body's instructions and its
+  RETURN as run and runs whole or not at all, so slices end where they
+  did; it runs only when the stack has room for its largest call
+  (`FastOp::CallChain`), so a call that overflows is made by `code`; and
+  the DEF has no variables but its arguments and calls nothing. Such a
+  chain may end in pushing several values, as for
+  `RGB(LINTP(..),LINTP(..),LINTP(..),LINTP(..))`, where RGB is not a
+  builtin chains take.
+
+After it, the LINTP loop is one chain of four steps and the room check,
+about 200 instructions, and the FOR.
+
+aarch64 instructions an iteration:
+
+| Loop | `7021a05` | `b799de0` | Change |
+|---|---|---|---|
+| Empty | 130.9 | 130.8 | -0.1% |
+| Function DEF | 624.2 | 265.9 | -57.4% |
+| LINTP | 751.0 | 334.2 | -55.5% |
+| LINTP, constants | 746.8 | 300.5 | -59.8% |
+| Five arguments | 1208.1 | 518.1 | -57.1% |
+| Globals | 603.9 | 283.9 | -53.0% |
+| String argument | 624.8 | 249.8 | -60.0% |
+| Array argument | 702.8 | 280.8 | -60.0% |
+| Two locals | 876.0 | 879.1 | +0.4% |
+| Locals | 677.0 | 672.0 | -0.7% |
+| Command DEF | 531.5 | 528.2 | -0.6% |
+| One OUT as a function | 607.1 | 600.0 | -1.2% |
+| One OUT | 586.8 | 581.1 | -1.0% |
+| Two OUTs | 752.1 | 748.1 | -0.5% |
+| Recursion | 3551.5 | 3543.8 | -0.2% |
+| `CALL` | 2806.1 | 1516.3 | -46.0% |
+| GOSUB | 262.2 | 261.9 | -0.1% |
+| CALL SPRITE (256 callbacks) | 652263 | 262425 | -59.8% |
+| Game 1 (64 sprites) | 222405 | 222754 | +0.2% |
+| VINT's loop | 429.0 | 429.0 | +0.0% |
+| Reals | 536.5 | 538.0 | +0.3% |
+
+x86-64 instructions an iteration:
+
+| Loop | `7021a05` | `b799de0` | Change |
+|---|---|---|---|
+| Empty | 157.2 | 157.7 | +0.3% |
+| Function DEF | 730.1 | 295.8 | -59.5% |
+| LINTP | 875.2 | 372.6 | -57.4% |
+| LINTP, constants | 872.3 | 337.9 | -61.3% |
+| Five arguments | 1363.1 | 571.5 | -58.1% |
+| Globals | 693.9 | 315.2 | -54.6% |
+| String argument | 721.9 | 280.5 | -61.1% |
+| Array argument | 814.9 | 308.4 | -62.2% |
+| Two locals | 1004.3 | 1008.7 | +0.4% |
+| Locals | 760.0 | 782.0 | +2.9% |
+| Command DEF | 610.4 | 630.1 | +3.2% |
+| One OUT as a function | 681.6 | 703.0 | +3.1% |
+| One OUT | 663.7 | 683.4 | +3.0% |
+| Two OUTs | 863.5 | 886.6 | +2.7% |
+| Recursion | 4022.2 | 4094.2 | +1.8% |
+| `CALL` | 2657.1 | 1582.2 | -40.5% |
+| GOSUB | 302.6 | 307.5 | +1.6% |
+| CALL SPRITE (256 callbacks) | 586240 | 249022 | -57.5% |
+| Game 1 (64 sprites) | 245051 | 245258 | +0.1% |
+| VINT's loop | 476.1 | 473.2 | -0.6% |
+| Reals | 620.6 | 619.7 | -0.1% |
+
+Calls that are not taken in move by -1.2 to +0.4% on aarch64 and by
++0.4 to +3.2% on x86-64, where LLVM laid out `run_fused` anew at
+`b799de0`; leaving out the room check does not bring x86-64 back. The
+string argument's DEF, `RETURN LEN(S$)`, is taken in, as LEN is a builtin
+chains take.
+
+Instructions a frame, in millions, program and CPU drawing, aarch64 over
+frames 3 to 6 and x86-64 over frames 3 to 83:
+
+| Scene | aarch64 `7021a05` | aarch64 `b799de0` | Change | x86-64 `7021a05` | x86-64 `b799de0` | Change |
+|---|---|---|---|---|---|---|
+| VINT | 8.13 | 8.14 | +0.2% | 8.74 | 8.67 | -0.8% |
+| VREAL | 6.87 | 6.87 | -0.0% | 7.00 | 6.82 | -2.6% |
+| VSTR | 12.83 | 12.24 | -4.6% | 11.53 | 10.97 | -4.8% |
+| VARRAY | 11.84 | 11.80 | -0.4% | 12.44 | 12.20 | -1.9% |
+| VDEF | 5.36 | 3.98 | -25.8% | 5.85 | 4.31 | -26.4% |
+| VVAR | - | - | - | 33.47 | 33.67 | +0.6% |
+| SPHIT | - | - | - | 55.05 | 55.11 | +0.1% |
+| TPUT | - | - | - | 51.63 | 51.73 | +0.2% |
+| GAME | 19.94 | 19.96 | +0.1% | 28.21 | 28.20 | -0.0% |
+
+Two games, run headless on copies with `--bench --fixed` and the
+same input script, x86-64 instructions a frame in play, in millions,
+drawing included, over frames 700 to 1800 of a shooting game and 1200 to
+2500 of a maze game (aarch64 was not counted, as qemu takes too long
+over that many frames):
+
+| Game | `7021a05` | `263fac8` | `a1d2a12` | `b799de0` | Change |
+|---|---|---|---|---|---|
+| Shooting game | 22.20 | 22.20 | 21.95 | 21.66 | -2.4% |
+| Maze game | 23.98 | 22.71 | 22.34 | 22.39 | -6.6% |
+
+The shooting game fades colors with a DEF that calls LINTP four times,
+some 1100 calls a frame, and calls a one-OUT DEF that reads SPVAR with a
+string constant some 840 times a frame. The maze game calls four DEFs by
+CALL SPRITE on 240 to 490 sprites a frame, and has no leaf function
+that is hot, so `b799de0` costs it what the calls not taken in cost on
+x86-64. Their times were not compared: other builds shared the machine.
+
+What calls still cost, for later work:
+
+- A callback of CALL SPRITE, 1025 aarch64 instructions with the
+  body: about 360 in the runtime's `next_callback`, which walks the
+  sprites and copies the name into a new `Vec` each time (165 more in
+  `malloc`, `free` and the comparison), and about 160 in `enter_found`.
+  `Host::next_callback` handing out an `Rc<[u16]>`, with the sprites' and
+  text screens' callbacks kept as one, would leave out the copy.
+- A DEF that calls the host, such as `DEF WKGET NAME OUT N: N=SPVAR(..)`,
+  is still called: its string argument is made and dropped on each call,
+  SPVAR's value comes back in a `Vec`, and a command DEF's RETURN works
+  out its OUTs from the DEF's description.
+- A command DEF of one statement that writes a variable, `DEF P A,B:
+  G=A+B`, could be made in a chain the same way, its store the statement's
+  last step: no game measured here has one that is hot.
+- On x86-64, the calls that are not taken in cost 20 instructions more
+  since `b799de0`; aarch64 shows no change.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
@@ -1648,6 +1841,12 @@ Each of these was measured and not kept.
   strings and arrays, which a return rarely has to do. `cut` checks that
   what goes is numbers and leaves the rest to a function of its own
   (2026-11-16).
+- **The room check of a chain that makes calls out of line**, a function
+  of its own that reads the frames: the LINTP loop of the
+  [leaf functions](#calls-by-name-and-leaf-functions-from-7021a05) set
+  went from 372 to 395 x86-64 instructions an iteration and the function
+  DEF's from 297 to 317, and the calls not taken in were no cheaper
+  (2026-11-17).
 
 - **Dropping the memos on missed branches.** SPANIM's and LCOMP's branch
   misses come from working out a paint or a blend only when the pixel differs
