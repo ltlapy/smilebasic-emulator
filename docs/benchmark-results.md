@@ -1961,6 +1961,32 @@ Where the rest goes, for later work:
 - **The first note of a waveform** decodes a chunk ahead, about 10 000
   instructions, where it decoded 14 samples before.
 
+### Games on the handheld, `7021a05` to `dac7ad2`
+
+The runtime command, call and sound passes together, timed on the
+Cortex-A35 handheld with the imported instrument bank: program time a frame
+in milliseconds, the median over each project's measured frames, best of
+three rounds with the two builds alternating. Both are `dist` builds with
+`unchecked-vars`, run without drawing, pinned to one core with the front end
+stopped. Every project's checksum is the same in both builds.
+
+| Project | `7021a05` | `dac7ad2` | Change |
+|---|---|---|---|
+| S51_MEDAL4 | 127.03 | 91.96 | -28% |
+| NEON_DRIFTWAY | 25.23 | 20.60 | -18% |
+| SOLIDGUNNER_V | 13.71 | 7.14 | -48% |
+| OTAKA_PAC | 9.69 | 6.32 | -35% |
+| ELE2020 | 7.80 | 5.03 | -35% |
+| NK8_ROGUE2020 | 5.46 | 4.41 | -19% |
+| FINITI | 4.97 | 3.36 | -32% |
+| MAMANATSU | 3.27 | 2.44 | -25% |
+| TENSMA | 3.09 | 1.89 | -39% |
+| RYUSI | 1.81 | 1.25 | -31% |
+| MOH_MOHAN | 0.70 | 0.67 | -4% |
+
+The run does not separate the three passes. S51_MEDAL4 and NEON_DRIFTWAY
+still take more than a 16.7 ms frame.
+
 ## Tried and left out
 
 Each of these was measured and not kept.
