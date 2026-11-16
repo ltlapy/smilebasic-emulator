@@ -196,7 +196,7 @@ fn wave_groups(text: &str) -> Option<Option<Vec<u8>>> {
 
 /// WAVSET's waveform: 512 samples, with a second's note for BEEP whatever
 /// their length.
-fn wavset_wave(bytes: &[f64], base_note: i32, envelope: Envelope) -> Wave {
+fn wavset_wave(bytes: &[u8], base_note: i32, envelope: Envelope) -> Wave {
     Wave {
         beep_ticks: Some(BEEP_TICKS_A_SECOND),
         ..eight_bit(bytes, 512, base_note, envelope)
@@ -488,7 +488,6 @@ impl Runtime {
                 let illegal =
                     || Error::with_detail(ErrorKind::IllegalFunctionCall, "waveform").of_arg(5);
                 if let Some(bytes) = wave_groups(&hex).ok_or_else(illegal)? {
-                    let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
                     let wave = wavset_wave(&bytes, base_note, envelope);
                     self.sound.waves.borrow_mut().define(n, wave);
                     return Ok(vec![]);
@@ -506,7 +505,6 @@ impl Runtime {
                         hex.len() % 2 == 0 && [16, 32, 64, 128, 256, 512].contains(&b.len())
                     })
                     .ok_or_else(illegal)?;
-                let bytes: Vec<f64> = bytes.iter().map(|&b| f64::from(b)).collect();
                 let wave = wavset_wave(&bytes, base_note, envelope);
                 self.sound.waves.borrow_mut().define(n, wave);
                 Ok(vec![])
@@ -538,10 +536,13 @@ impl Runtime {
                 }
                 let (start, end) = (start as usize, end as usize);
                 if args.len() < 10 {
+                    // Each value is cut to an integer towards zero and then
+                    // to its low 8 bits, so 256 is 0 and -1 is 255.
                     let all = samples(&args[5])?;
-                    let bytes = &all[start..=end];
-                    let wave =
-                        eight_bit(bytes, bytes.len().next_power_of_two(), base_note, envelope);
+                    let bytes: Vec<u8> = all[start..=end].iter().map(|&x| x as i32 as u8).collect();
+                    // The pass is the next power of two, at most 1M samples.
+                    let pass = bytes.len().next_power_of_two().min(1 << 20);
+                    let wave = eight_bit(&bytes, pass, base_note, envelope);
                     self.sound.waves.borrow_mut().define(n, wave);
                     return Ok(vec![]);
                 }
@@ -553,11 +554,12 @@ impl Runtime {
                     let e = Error::with_detail(ErrorKind::OutOfRange, "offset leaves too little");
                     return Err(e.of_arg(10));
                 }
-                // Values are cut to 16 bits, reals towards zero first.
+                // Values are cut to 16 bits, reals towards zero first and
+                // held to 32 bits.
                 let all = samples(&args[5])?;
                 let samples: Vec<f32> = all[offset..=offset + end]
                     .iter()
-                    .map(|&x| f32::from(x.trunc() as i64 as i16) / 32768.0)
+                    .map(|&x| f32::from(x as i32 as i16) / 32768.0)
                     .collect();
                 let looped = (start, end + 1);
                 // The flag repeats BEEP's note for ever, if it has one.

@@ -545,6 +545,35 @@ fn beep_of_a_waveform_is_as_loud_as_a_song() {
     assert_eq!(default, at_64);
 }
 
+/// WAVSETA's 8-bit form cuts each value to an integer and keeps its low
+/// 8 bits, so a waveform written as 16-bit numbers, as a song's noise from
+/// a 16-bit shift register is, sounds no louder than its bytes.
+#[test]
+fn wavseta_8_bit_values_keep_their_low_byte() {
+    let square = |low: &str, high: &str| {
+        beep_recording(
+            &format!(
+                "DIM W[64]:FOR I=0 TO 63:W[I]=({low})*(I<32)+({high})*(I>=32):NEXT\nWAVSETA 224,127,127,127,127,W:BGMPLAY \"@224O4A1\""
+            ),
+            30,
+        )
+        .0
+    };
+    let bytes = square("0", "255");
+    assert!((4000..5000).contains(&bytes), "{bytes}");
+    for (low, high) in [
+        ("256", "65535"),
+        ("-256", "-1"),
+        ("0.9", "255.9"),
+        ("&H12300", "&H7FFFFFFF"),
+    ] {
+        assert_eq!(square(low, high), bytes, "{low}, {high}");
+    }
+    // Two bytes apart by 128 make half the swing.
+    let half = square("&HFF40", "&HC0");
+    assert!((half - bytes / 2).abs() <= bytes / 50, "{half} for {bytes}");
+}
+
 /// The last step of a note, of 5 ms, is its fall.
 #[test]
 fn beep_of_a_waveform_ends_on_the_sound_engines_steps() {

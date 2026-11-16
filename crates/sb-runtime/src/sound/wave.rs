@@ -90,10 +90,15 @@ pub fn beep_ticks(samples: usize, rate: u32) -> u32 {
 /// each, and played at [`EIGHT_BIT_RATE`] at the base note. WAVSET
 /// stretches to 512 samples, so a pass of any length is 55 Hz; WAVSETA
 /// to the next power of two.
-pub fn eight_bit(bytes: &[f64], pass: usize, base_note: i32, envelope: Envelope) -> Wave {
-    let n = bytes.len();
-    let samples: Vec<f32> = (0..pass)
-        .map(|i| (bytes[i * n / pass] as f32 - 128.0) * EIGHT_BIT)
+///
+/// The stretch steps in 8.8 fixed point, as SmileBASIC 4 does, so a
+/// length just under a power of two leaves its last few samples out.
+pub fn eight_bit(bytes: &[u8], pass: usize, base_note: i32, envelope: Envelope) -> Wave {
+    // SmileBASIC 4 counts in 32 bits, which overflow past 8M samples; 64
+    // bits keep those in the array.
+    let step = (bytes.len() as i64 * 256) / pass as i64;
+    let samples: Vec<f32> = (0..pass as i64)
+        .map(|i| (f32::from(bytes[((i * step) >> 8) as usize]) - 128.0) * EIGHT_BIT)
         .collect();
     Wave {
         samples,
@@ -829,7 +834,7 @@ pub(crate) mod tests {
     fn waveforms_are_as_loud_as_measured() {
         // A full-scale square at V127 in the middle: an eighth of full
         // scale on each side.
-        let bytes: Vec<f64> = (0..32).map(|i| if i < 16 { 0.0 } else { 256.0 }).collect();
+        let bytes: Vec<u8> = (0..32).map(|i| if i < 16 { 0 } else { 255 }).collect();
         let w = eight_bit(&bytes, 512, 69, Envelope::ORGAN);
         let mut v = Voice::new(Rc::new(w), None, 69, 0, true);
         v.set_mix(127, 127, 64);
@@ -919,7 +924,7 @@ pub(crate) mod tests {
     fn eight_bit_waveforms_play_a_pass_at_their_rate() {
         // WAVSET's 32 samples at A, stretched to 512: a pass at 55 Hz,
         // three octaves down.
-        let bytes: Vec<f64> = (0..32).map(f64::from).collect();
+        let bytes: Vec<u8> = (0..32).collect();
         let w = eight_bit(&bytes, 512, 69, Envelope::ORGAN);
         assert_eq!(w.samples[15], w.samples[0]);
         assert_ne!(w.samples[16], w.samples[0]);
@@ -933,6 +938,16 @@ pub(crate) mod tests {
         let w = eight_bit(&bytes, 32, 69, Envelope::ORGAN);
         let v = Voice::new(Rc::new(w), None, 69, 0, false);
         assert!((v.step - 32.0 * 880.0 / 48000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn eight_bit_waveforms_stretch_in_fixed_point() {
+        // 513 samples over 1024 step by 128/256 of a sample, short of
+        // 513/1024, so the pass never reaches the last sample.
+        let bytes: Vec<u8> = (0..513).map(|i| (i % 256) as u8).collect();
+        let w = eight_bit(&bytes, 1024, 69, Envelope::ORGAN);
+        let at = |i: usize| (w.samples[i] / EIGHT_BIT + 128.0) as u8;
+        assert_eq!((at(1), at(2), at(1023)), (0, 1, (511 % 256) as u8));
     }
 
     /// A 1 kHz sine at 8000 Hz: the images at 7 and 9 kHz are about 38 and

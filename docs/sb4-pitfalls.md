@@ -2046,6 +2046,14 @@ Expected but not yet seen on hardware:
   at 28160 Hz over the next power of two at or above n. At reference pitch 69,
   `O4A` with one cycle of 64 samples is in tune, 16 samples sound 2400 cents up,
   512 3600 cents down, 2048 6000 down.
+  - Each value is cut to an integer towards zero and keeps only its low 8 bits
+    before 128 is taken off: 256 plays as 0, 65535 and -1 as 255. A waveform
+    written as 16-bit numbers, such as noise from a 16-bit shift register, is
+    no louder than a full-scale 8-bit one. (Not yet seen on hardware.)
+  - The stretch steps through the samples in 8.8 fixed point, n × 256 / pass
+    rounded down, so some lengths leave out their last samples: 32767 samples
+    over 32768 never reach the last 127, 513 over 1024 the last one. The pass
+    is at most 1048576 samples. (Not yet seen on hardware.)
 - `WAVSETA`'s 16-bit form (10 arguments or more) takes the loop's end + 1 values
   from the offset on, with the loop counted from the offset, and drops what
   comes after; values are cut to 16 bits. A value v sounds like the 8-bit form's
