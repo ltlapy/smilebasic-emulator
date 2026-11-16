@@ -1545,19 +1545,20 @@ impl Vm {
         host: &mut dyn Host,
     ) -> Option<(usize, Result<Option<Status>>)> {
         loop {
-            let exit = self.run_fused(program, stop);
-            if let Fused::Slow = exit {
+            // The call is read again here rather than handed back, which
+            // keeps it out of the registers of `run_fused`'s other entries.
+            if !self.run_fused(program, stop) {
                 return None;
             }
+            let fast = program.fast[self.pc];
             // The Nops of a FOR may lead the call in its entry.
-            let nops = usize::from(program.fast[self.pc].len) - 1;
+            let nops = usize::from(fast.len) - 1;
             self.pc += nops;
             self.executed += nops as u64;
             let pc = self.pc;
             self.executed += 1;
-            let outcome = match exit {
-                Fused::Slow => unreachable!("handed back above"),
-                Fused::Builtin { id, argc, want } => {
+            let outcome = match fast.op {
+                FastOp::Call { id, argc, want } => {
                     match self.builtin_call(program, id, argc, want) {
                         Ok(()) => {
                             self.pc += 1;
@@ -1566,10 +1567,11 @@ impl Vm {
                         Err(e) => Err(e),
                     }
                 }
-                Fused::Host { id, argc, want } => match self.host_call(host, id, argc, want) {
+                FastOp::Host { id, argc, want } => match self.host_call(host, id, argc, want) {
                     Ok(None) => continue,
                     outcome => outcome,
                 },
+                _ => unreachable!("`run_fused` stops before calls only"),
             };
             return Some((pc, outcome));
         }
@@ -1579,7 +1581,7 @@ impl Vm {
     /// slot are made here, as [`Vm::enter_def_on_stack`] and
     /// [`Vm::return_op`] make them.
     #[inline(always)]
-    fn run_fused(&mut self, program: &Compiled, stop: u64) -> Fused {
+    fn run_fused(&mut self, program: &Compiled, stop: u64) -> bool {
         let Vm {
             stack,
             globals,
@@ -1600,7 +1602,8 @@ impl Vm {
         let mut vars: Vars = [&mut globals[..], &mut locals[base..]];
         let mut pc = *at;
         let mut left = stop.saturating_sub(*executed);
-        let mut exit = Fused::Slow;
+        // Whether it stopped before a builtin's or host's call.
+        let mut call = false;
         while let Some(fast) = program.fast.get(pc) {
             let len = u64::from(fast.len);
             if len > left {
@@ -1861,12 +1864,8 @@ impl Vm {
                     (calls, gosub_base, base) = innermost(frames, locals);
                     vars = [&mut globals[..], &mut locals[base..]];
                 }
-                FastOp::Host { id, argc, want } => {
-                    exit = Fused::Host { id, argc, want };
-                    break;
-                }
-                FastOp::Call { id, argc, want } => {
-                    exit = Fused::Builtin { id, argc, want };
+                FastOp::Host { .. } | FastOp::Call { .. } => {
+                    call = true;
                     break;
                 }
                 FastOp::Builtin { id, argc } => {
@@ -2268,7 +2267,7 @@ impl Vm {
         }
         *at = pc;
         *executed = stop - left;
-        exit
+        call
     }
 
     /// Ends the program with an error at instruction `pc`.
@@ -3803,22 +3802,6 @@ impl Vm {
         self.switch_to(caller, host);
         Ok(back)
     }
-}
-
-/// How fused entries end, for [`Vm::run_fast`].
-enum Fused {
-    /// At an entry for `step`, or with the budget spent.
-    Slow,
-    Builtin {
-        id: u16,
-        argc: u8,
-        want: Want,
-    },
-    Host {
-        id: u32,
-        argc: u8,
-        want: Want,
-    },
 }
 
 /// What a call of `info` with `argc` arguments, wanting `want`, takes of
