@@ -17,6 +17,9 @@
 //! fuser checks that once. A builtin's or host's call, [`FastOp::Call`] and
 //! [`FastOp::Host`], is made by the code `code`'s instruction uses, and what
 //! it does or fails with is what that instruction does or fails with.
+//! A chain may take in the call of a function whose body is one RETURN of
+//! numbers ([`FastOp::CallChain`]): its steps work the body out on the
+//! arguments where they are, and anything else leaves the call to `code`.
 //!
 //! Most entries are a few stack instructions in one. A [`FastOp::Chain`]
 //! stands for whole statements instead: the stack code of their expressions
