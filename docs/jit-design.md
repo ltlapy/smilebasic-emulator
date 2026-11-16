@@ -32,8 +32,7 @@ Three findings limit what it is worth as it stands:
   compiling only hot loops (stage 2) must come first.
 - **Size and trust.** 1.6 MB more in the aarch64 binary, about twice the
   CPU time for a clean build, and generated code that no Rust check or
-  Miri covers. The operator tests found a Cranelift miscompilation in the
-  first hour.
+  Miri covers. The operator tests found a Cranelift miscompilation.
 
 The boundary with the VM is clean: a region is entered at one entry,
 returns an address and the budget left, and fails back to `step` as a
@@ -382,18 +381,18 @@ the default build's.
   as before, with no new `unsafe` and no new dependency in its binary.
 - **What every later change must also touch.** An operator's rules in
   `ops.rs`: its lowering in `sb-jit`, or a failure there; the operator
-  tests catch a mismatch. A new `FastOp` or `Micro` kind: nothing, as
-  `jit::lower` returns `None` for kinds it does not know (the matches have
-  no wildcard for `Micro`, so a new step kind must be named there). A
+  tests catch a mismatch. A new `FastOp` kind: nothing, as `jit::lower`
+  leaves kinds it does not know to the interpreter; a new `Micro` kind: an
+  arm in `jit::lower_micro`, whose match has no wildcard. A
   change to how `run_fused` charges the budget or where it stops: the same
   in `sb-jit`'s entry blocks. `Value`'s variants: their order, which the
   layout test checks.
-- **Build time and size.** Cranelift adds about 120 s of CPU to a clean build (x86-64 `release`, 105 to 224 s) and 1.6 MB to an
-  aarch64 `smilebasic-check` (6.13 to 7.70 MB, `dist`, stripped).
+- **Build time and size.** Cranelift adds about 120 s of CPU to a clean
+  build (x86-64 `release`, 105 to 224 s) and 1.6 MB to an aarch64
+  `smilebasic-check` (6.13 to 7.70 MB, `dist`, stripped).
 - **CI.** Clippy and the tests with `--features jit` on x86-64 (and
   aarch64 hosts), `tools/build_handheld.py --jit --test` under qemu for
   aarch64, the operator tests on both, and later the fuzzer.
-
 
 ## The prototype's numbers
 
