@@ -321,6 +321,16 @@ pub struct Graphics {
     /// [`Graphics::take_dirty`]. Everything that hands out a page's pixels
     /// to write marks what it will write: [`Graphics::page_pixels`] asks.
     dirty: [Cell<Dirty>; PAGES],
+    /// Of each page, a color that every pixel outside the tiles of
+    /// [`Graphics::ink`] holds, if one is known: the color of the last
+    /// fill of the whole page, or 0 for a blank one. A fill in that color
+    /// then writes the tiles of `ink` alone, so that GCLS on a page drawn
+    /// on in one corner does not write all of its 4 million pixels.
+    ground: [Option<u32>; PAGES],
+    /// Of each page, the tiles drawn on since its `ground` was set, which
+    /// may hold other colors. Everything that marks `dirty` marks this
+    /// too, but taking `dirty` leaves it.
+    ink: [Dirty; PAGES],
     /// Which parts of each page's rows hold something, for sprites to
     /// pass over the clear rest; see [`Graphics::pieces`].
     coverage: RefCell<[Coverage; PAGES]>,
@@ -361,6 +371,8 @@ impl Default for Graphics {
             arrays: Default::default(),
             changes: [from; PAGES],
             dirty: Default::default(),
+            ground: [Some(0); PAGES],
+            ink: Default::default(),
             coverage: RefCell::new(std::array::from_fn(|_| Coverage::default())),
         }
     }
@@ -454,6 +466,8 @@ impl Graphics {
     /// Replaces a whole page, such as GRP4 with the default sprite image;
     /// a blank one empties it, as [`Graphics::clear_page`] does.
     pub fn set_page(&mut self, page: usize, pixels: Page) {
+        self.ground[page] = pixels.is_blank().then_some(0);
+        self.ink[page] = Dirty::default();
         self.pages[page] = pixels;
         self.changes[page] += 1;
         self.dirty[page].set(Dirty::ALL);
@@ -462,6 +476,8 @@ impl Graphics {
 
     /// Empties a page, as GCLS does with 0.
     pub fn clear_page(&mut self, page: usize) {
+        self.ground[page] = Some(0);
+        self.ink[page] = Dirty::default();
         self.pages[page] = Page::default();
         self.changes[page] += 1;
         self.dirty[page].set(Dirty::ALL);
@@ -477,6 +493,8 @@ impl Graphics {
             arrays,
             changes: self.changes,
             dirty: std::mem::take(&mut self.dirty),
+            ground: self.ground,
+            ink: self.ink,
             ..Graphics::default()
         };
     }
@@ -562,19 +580,29 @@ impl Graphics {
     fn mark_inside(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
         let c = self.clip;
         if x0 <= c.x1 && x1 >= c.x0 && y0 <= c.y1 && y1 >= c.y0 {
-            self.dirty[self.target].get_mut().mark_area(Clip {
-                x0: x0.max(c.x0),
-                y0: y0.max(c.y0),
-                x1: x1.min(c.x1),
-                y1: y1.min(c.y1),
-            });
+            self.mark(
+                self.target,
+                Clip {
+                    x0: x0.max(c.x0),
+                    y0: y0.max(c.y0),
+                    x1: x1.min(c.x1),
+                    y1: y1.min(c.y1),
+                },
+            );
         }
+    }
+
+    /// Marks `area`, which lies on the page, as changed and drawn on.
+    #[inline]
+    fn mark(&mut self, page: usize, area: Clip) {
+        self.dirty[page].get_mut().mark_area(area);
+        self.ink[page].mark_area(area);
     }
 
     /// A page's pixels to change, in `area` alone.
     #[inline]
     fn page_pixels(&mut self, page: usize, area: Clip) -> &mut Page {
-        self.dirty[page].get_mut().mark_area(area);
+        self.mark(page, area);
         self.pixels_to_change(page)
     }
 
@@ -593,6 +621,7 @@ impl Graphics {
             return;
         }
         self.dirty[self.target].get_mut().mark_pixel(x, y);
+        self.ink[self.target].mark_pixel(x, y);
         self.plot_marked(x, y, color, blend);
     }
 
@@ -636,9 +665,11 @@ impl Graphics {
         self.pixels_to_change(page);
         let pixels = &mut self.pages[page];
         let dirty = self.dirty[page].get_mut();
+        let ink = &mut self.ink[page];
         for &(x, y) in &points[first..] {
             if clip.contains(x, y) {
                 dirty.mark_pixel(x, y);
+                ink.mark_pixel(x, y);
                 let pixel = pixels.pixel_mut(x, y);
                 *pixel = blend.apply(*pixel, color);
             }
@@ -684,9 +715,9 @@ impl Graphics {
     pub fn fill(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: u32, blend: Blend) {
         let (left, right) = (x0.min(x1), x0.max(x1));
         let (top, bottom) = (y0.min(y1), y0.max(y1));
-        self.mark_inside(left, top, right, bottom);
         let page = self.target;
         if self.arrays[page].is_some() || blend != Blend::Normal {
+            self.mark_inside(left, top, right, bottom);
             self.fill_rows(top..=bottom, |_| Some((left, right)), color, blend);
             return;
         }
@@ -697,9 +728,60 @@ impl Graphics {
         if l > r || t > b {
             return;
         }
+        let area = Clip {
+            x0: l,
+            y0: t,
+            x1: r,
+            y1: b,
+        };
+        if self.ground[page] == Some(color) {
+            self.fill_ink(page, area, color);
+            return;
+        }
+        self.mark(page, area);
         let (l, r, rows) = (l as usize, r as usize, t as usize..b as usize + 1);
         for row in self.pixels_to_change(page).rows_mut(rows) {
             row[l..=r].fill(color);
+        }
+        if area == Clip::PAGE {
+            self.ground[page] = Some(color);
+            self.ink[page] = Dirty::default();
+        }
+    }
+
+    /// A plain fill of `area` in the page's ground color: only the tiles
+    /// drawn on since can hold another color, so only they are written,
+    /// and marked.
+    fn fill_ink(&mut self, page: usize, area: Clip, color: u32) {
+        let ink = self.ink[page];
+        let columns = Dirty::columns(area.x0, area.x1);
+        let dirty = self.dirty[page].get_mut();
+        for y in (area.y0 >> TILE_BITS) as usize..=(area.y1 >> TILE_BITS) as usize {
+            dirty.rows[y] |= ink.rows[y] & columns;
+        }
+        let pixels = self.pixels_to_change(page);
+        for ty in (area.y0 >> TILE_BITS)..=(area.y1 >> TILE_BITS) {
+            let tiles = ink.rows[ty as usize] & columns;
+            if tiles == 0 {
+                continue;
+            }
+            let top = (ty << TILE_BITS).max(area.y0) as usize;
+            let bottom = ((ty + 1) << TILE_BITS).min(area.y1 + 1) as usize;
+            for row in pixels.rows_mut(top..bottom) {
+                let mut tiles = tiles;
+                while tiles != 0 {
+                    let first = tiles.trailing_zeros();
+                    let run = (tiles >> first).trailing_ones();
+                    tiles &= !((u32::MAX >> (32 - run)) << first);
+                    let from = ((first as i32) << TILE_BITS).max(area.x0) as usize;
+                    let to = (((first + run) as i32) << TILE_BITS).min(area.x1 + 1) as usize;
+                    row[from..to].fill(color);
+                }
+            }
+        }
+        // The whole page holds the ground color now.
+        if area == Clip::PAGE {
+            self.ink[page] = Dirty::default();
         }
     }
 
@@ -1790,6 +1872,91 @@ mod tests {
             }
         }
         assert!(changed > 0, "{name}: this case changes nothing");
+        check_ground(g, name);
+    }
+
+    /// Every pixel of a page that has a ground color and is not that color
+    /// lies in a tile marked as drawn on.
+    fn check_ground(g: &Graphics, name: &str) {
+        for p in 0..PAGES {
+            let Some(ground) = g.ground[p] else {
+                continue;
+            };
+            let rows = g.page(p).to_rows();
+            for (i, &pixel) in rows.iter().enumerate() {
+                let (x, y) = (
+                    (i % GRP_SIZE as usize) as i32,
+                    (i / GRP_SIZE as usize) as i32,
+                );
+                assert!(
+                    pixel == ground || g.ink[p].holds(x, y),
+                    "{name}: page {p} pixel {x},{y} is {pixel:08X}, not ground {ground:08X}, and not marked"
+                );
+            }
+        }
+    }
+
+    /// Fills in a page's ground color, which write only what was drawn on
+    /// since, leave the page as filling every pixel does.
+    #[test]
+    fn fills_in_the_ground_color_match_plain_fills() {
+        let n = Blend::Normal;
+        let mut g = Graphics::default();
+        let check = |g: &Graphics, area: Clip, color: u32, before: &[u32], name: &str| {
+            let now = g.page(0).to_rows();
+            for (i, (&b, &a)) in before.iter().zip(&now).enumerate() {
+                let (x, y) = (
+                    (i % GRP_SIZE as usize) as i32,
+                    (i / GRP_SIZE as usize) as i32,
+                );
+                let want = if area.contains(x, y) { color } else { b };
+                assert_eq!(a, want, "{name}: pixel {x},{y}");
+            }
+            check_ground(g, name);
+        };
+        type Step<'a> = (&'a str, &'a dyn Fn(&mut Graphics));
+        let steps: [Step; 6] = [
+            ("lines", &|g| {
+                g.line(10, 10, 300, 200, RED, n);
+                g.line(2000, 5, 70, 2040, 0xFF00_FF00, n);
+            }),
+            ("box", &|g| g.fill(500, 600, 700, 900, 0xFF12_3456, n)),
+            ("blend", &|g| {
+                g.fill(60, 60, 200, 90, 0x80FF_FFFF, Blend::Alpha)
+            }),
+            ("pixel", &|g| g.pset(2047, 2047, RED, n)),
+            ("circle", &|g| g.circle((1000, 1000, 70), None, RED, n)),
+            ("copy", &|g| {
+                g.copy(0, (0, 0, 400, 300), (1500, 1500), None, n)
+            }),
+        ];
+        for (color, clip) in [
+            (0, Clip::PAGE),
+            (0, Clip::new(30, 40, 900, 700)),
+            (0xFF40_4040, Clip::PAGE),
+            (0xFF40_4040, Clip::PAGE),
+            (0, Clip::PAGE),
+            (0, Clip::PAGE),
+        ] {
+            for (name, step) in steps {
+                g.clip = Clip::PAGE;
+                step(&mut g);
+                g.clip = clip;
+                let before = g.page(0).to_rows();
+                g.cls(color);
+                check(&g, clip, color, &before, &format!("GCLS after {name}"));
+                // A part of the page, in the ground color and in another.
+                g.clip = Clip::PAGE;
+                step(&mut g);
+                let ground = g.ground[0].unwrap_or(color);
+                for c in [ground, 0xFF55_6677] {
+                    let area = Clip::new(5, 7, 1200, 333);
+                    let before = g.page(0).to_rows();
+                    g.fill(5, 7, 1200, 333, c, n);
+                    check(&g, area, c, &before, &format!("GFILL after {name}"));
+                }
+            }
+        }
     }
 
     /// Each way of writing on a page, on a page with something on it so
