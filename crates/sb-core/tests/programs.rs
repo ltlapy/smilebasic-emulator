@@ -1871,6 +1871,18 @@ fn array_operations() {
         output("DIM R[3]:DIM X[]=[0,5,9]:ARYOP #AOPCLP,R,X,2,X:?R[0];R[1];R[2]"),
         "259\n"
     );
+    // The result as its own parameter, real and integer, beside another
+    // array, one shorter that goes round, and an integer one.
+    assert_eq!(
+        output(
+            "DIM A#[4]:A#[0]=1:A#[1]=2:A#[2]=3:A#[3]=4:DIM B#[]=[10,20]:DIM N%[]=[1,2,3,4]\n\
+             ARYOP #AOPADD,A#,A#,1:?A#[0];A#[1];A#[2];A#[3]\n\
+             ARYOP #AOPLIP,A#,A#,B#,0.5:?A#[0];A#[1];A#[2];A#[3]\n\
+             ARYOP #AOPMUL,N%,N%,A#:?N%[0];N%[1];N%[2];N%[3]\n\
+             ARYOP #AOPMAD,A#,N%,A#,A#:?A#[0];A#[1];A#[2];A#[3]"
+        ),
+        "2345\n611.5712.5\n6232150\n42276154637.5\n"
+    );
     let wrong = |source: &str, kind: ErrorKind, arg: Option<u8>| {
         let e = run(source).unwrap_err();
         assert_eq!((e.kind, e.arg), (kind, arg), "{source}");

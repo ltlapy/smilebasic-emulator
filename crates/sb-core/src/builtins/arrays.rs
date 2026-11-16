@@ -509,33 +509,72 @@ pub(super) fn resize(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
     Ok(vec![])
 }
 
-/// An ARYOP parameter: a number, or an array read over and over.
-enum Param {
+/// An ARYOP parameter as checked: a number, a real array other than the
+/// result read where it lies, or the values of any other array, taken
+/// before the result is written, as the result may be one of them.
+enum Given<'a> {
     Number(f64),
-    Array(Vec<f64>),
+    Reals(std::cell::Ref<'a, Array>),
+    Copied(Vec<f64>),
 }
 
-impl Param {
-    fn new(v: &Value) -> Result<Param> {
+impl<'a> Given<'a> {
+    fn new(v: &'a Value, result: &ArrayRef) -> Result<Given<'a>> {
         match v {
             Value::Array(a) => {
-                let a = a.borrow();
-                if a.elem_type() == ElemType::Str {
+                let array = a.borrow();
+                if array.elem_type() == ElemType::Str {
                     return Err(mismatch(v));
                 }
-                if a.is_empty() {
+                if array.is_empty() {
                     return Err(Error::new(ErrorKind::ArrayTooSmall).of_value(v));
                 }
-                Ok(Param::Array(match &a.data {
-                    ArrayData::Real(v) => v.clone(),
-                    ArrayData::Int(v) => v.iter().map(|n| f64::from(*n)).collect(),
+                Ok(match &array.data {
+                    ArrayData::Real(_) if !std::rc::Rc::ptr_eq(a, result) => Given::Reals(array),
+                    ArrayData::Real(v) => Given::Copied(v.clone()),
+                    ArrayData::Int(v) => Given::Copied(v.iter().map(|n| f64::from(*n)).collect()),
                     ArrayData::Str(_) => unreachable!("checked above"),
-                }))
+                })
             }
-            v => v.to_real().map(Param::Number),
+            v => v.to_real().map(Given::Number),
         }
     }
 
+    fn param(&self) -> Param<'_> {
+        match self {
+            Given::Number(x) => Param::Number(*x),
+            Given::Reals(a) => match &a.data {
+                ArrayData::Real(v) => Param::Array(v),
+                _ => unreachable!("reals"),
+            },
+            Given::Copied(v) => Param::Array(v),
+        }
+    }
+}
+
+/// Sets each element of ARYOP's result to `value` of its index.
+#[inline(always)]
+fn fill(result: &mut Array, value: impl Fn(usize) -> f64) -> Result<()> {
+    if let ArrayData::Real(elements) = &mut result.data {
+        for (i, element) in elements.iter_mut().enumerate() {
+            *element = value(i);
+        }
+    } else {
+        for i in 0..result.len() {
+            result.set(i, Value::Real(value(i)))?;
+        }
+    }
+    Ok(())
+}
+
+/// An ARYOP parameter: a number, or an array read over and over.
+enum Param<'a> {
+    Number(f64),
+    Array(&'a [f64]),
+}
+
+impl Param<'_> {
+    #[inline(always)]
     fn at(&self, i: usize) -> f64 {
         match self {
             Param::Number(x) => *x,
@@ -565,41 +604,38 @@ pub(super) fn aryop(args: &[Value], _outs: usize) -> Result<Vec<Value>> {
         return Err(mismatch(&args[1]));
     }
     // A parameter may be the result array itself.
-    let params: Vec<Param> = args[2..].iter().map(Param::new).collect::<Result<_>>()?;
+    let given = (args[2..].iter())
+        .map(|v| Given::new(v, &result))
+        .collect::<Result<Vec<_>>>()?;
+    let params: Vec<Param> = given.iter().map(Given::param).collect();
     let mut result = result.borrow_mut();
-    let value = |i: usize| {
-        let p = |n: usize| params[n].at(i);
-        match op {
-            0 => p(0) + p(1),
-            1 => p(0) - p(1),
-            2 => p(0) * p(1),
-            3 => p(0) / p(1),
-            4 => p(0) * p(1) + p(2),
-            5 => p(0) * p(2) + p(1) * (1.0 - p(2)),
-            // A plain comparison, the lower bound first: FINITI gives a
-            // bound above the other to mean "at least" and "at most". The
-            // lower bound wins when both apply, and NaN goes through.
-            _ => {
-                let (x, lo, hi) = (p(0), p(1), p(2));
-                if x < lo {
-                    lo
-                } else if x > hi {
-                    hi
-                } else {
-                    x
-                }
+    // The operation and the parameters are chosen once, for a loop of
+    // their own.
+    let (p0, p1) = (&params[0], &params[1]);
+    let p2 = params.get(2).unwrap_or(&Param::Number(0.0));
+    match op {
+        0 => fill(&mut result, |i| p0.at(i) + p1.at(i)),
+        1 => fill(&mut result, |i| p0.at(i) - p1.at(i)),
+        2 => fill(&mut result, |i| p0.at(i) * p1.at(i)),
+        3 => fill(&mut result, |i| p0.at(i) / p1.at(i)),
+        4 => fill(&mut result, |i| p0.at(i) * p1.at(i) + p2.at(i)),
+        5 => fill(&mut result, |i| {
+            p0.at(i) * p2.at(i) + p1.at(i) * (1.0 - p2.at(i))
+        }),
+        // A plain comparison, the lower bound first: FINITI gives a
+        // bound above the other to mean "at least" and "at most". The
+        // lower bound wins when both apply, and NaN goes through.
+        _ => fill(&mut result, |i| {
+            let (x, lo, hi) = (p0.at(i), p1.at(i), p2.at(i));
+            if x < lo {
+                lo
+            } else if x > hi {
+                hi
+            } else {
+                x
             }
-        }
-    };
-    if let ArrayData::Real(elements) = &mut result.data {
-        for (i, element) in elements.iter_mut().enumerate() {
-            *element = value(i);
-        }
-    } else {
-        for i in 0..result.len() {
-            result.set(i, Value::Real(value(i)))?;
-        }
-    }
+        }),
+    }?;
     Ok(vec![])
 }
 
