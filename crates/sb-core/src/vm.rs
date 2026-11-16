@@ -2067,7 +2067,9 @@ impl Vm {
                     // work, and the instructions run by then.
                     let mut done = (pc, 0);
                     let mut failed = false;
-                    'micro: for &m in &program.micro[first..first + usize::from(count)] {
+                    // Each step is matched where it is: copied out first,
+                    // all of its fields were loaded whatever its kind.
+                    'micro: for m in &program.micro[first..first + usize::from(count)] {
                         // A step that cannot do its work leaves the chain to
                         // `step` from its start: those before it wrote only
                         // the chain's own places.
@@ -2096,7 +2098,7 @@ impl Vm {
                         }
                         use BinaryOp as B;
                         use Micro as M;
-                        match m {
+                        match *m {
                             M::Add(a, b, to) => binary!(B::Add, a, b, to),
                             M::Sub(a, b, to) => binary!(B::Sub, a, b, to),
                             M::Mul(a, b, to) => binary!(B::Mul, a, b, to),
